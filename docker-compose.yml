@@ -1,0 +1,22 @@
+# Start-Setup (Phase 0/1). Wird schrittweise um die weiteren Services ergänzt.
+# Wachstumspfad: docker-compose -> Kubernetes ab Roadmap-Phase 7 (Multi-Worker-Skalierung).
+
+version: "3.9"
+
+services:
+  netbox:
+    image: netboxcommunity/netbox:latest
+    # Platzhalter - vollständige NetBox-Config (Postgres, Redis) folgt in source-of-truth/
+    profiles: ["sot"]
+
+  orchestrator:
+    build: ./orchestrator
+    profiles: ["core"]
+
+  documentation-engine:
+    build: ./documentation-engine
+    profiles: ["core"]
+
+  web-ui:
+    build: ./web-ui
+    profiles: ["core"]

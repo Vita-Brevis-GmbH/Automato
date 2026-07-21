@@ -1,0 +1,6 @@
+# Worker: cisco-switches
+
+Führt Ansible-Jobs gegen cisco-switches-Zielsysteme aus. Nimmt Aufträge ausschließlich vom
+Orchestrator entgegen, ruft entsprechende Rollen/Playbooks aus `/ansible` auf.
+
+Status: 🚧 noch nicht implementiert
