@@ -60,7 +60,15 @@ Fragen und DoD-Entwurf: `docs/usecases/uc1-firewall-regel-dokumentation.md`
 (**DoD noch zu bestätigen**). Die Regel-Automatisierung gemäss ADR 0002 folgt als
 späterer Use Case.
 
-Als Nächstes: DoD bestätigen (M1-Exit), dann **M2 Risiken-Review**, **M3
-Architektur-/Security-Review** und **M5 – Datenmodell** (normalisierte Ist-Regeln,
-Adressobjekt-Referenzen, Service-Objekte). Offene Fragen dazu siehe ADR 0002,
-Abschnitt "Offene Punkte", und das UC1-Dokument.
+Der **Grundaufbau (M6) ist als Code-Gerüst umgesetzt** (Entscheide: ADR 0003):
+uv-Workspace mit `orchestrator/` (FastAPI, Alembic, Audit-Log, Job-Kreislauf),
+`collectors/` (FortiGate/ACI-Skeleton, Beispieldaten bis zum Lab), `sot-gateway/`
+(Infoblox-Adapter lesend, NetBox-Stub), `web-ui/frontend/` (React/Vite-Skeleton);
+dazu docker-compose (Profile core/collectors), CI (`.github/workflows/ci.yml`)
+und pre-commit/gitleaks. Tests: `uv run --package <name> pytest <name>/tests`.
+
+Als Nächstes: DoD bestätigen (M1-Exit), **M2 Risiken-Review**, **M3
+Architektur-/Security-Review**, **M5 – Datenmodell** (normalisierte Ist-Regeln,
+Adressobjekt-Referenzen, Service-Objekte) sowie Lab + Infoblox-Anbindung
+(Rest von M6). Offene Fragen siehe ADR 0002, Abschnitt "Offene Punkte", und
+das UC1-Dokument.

@@ -113,14 +113,20 @@ Löst die offenen Punkte aus ADR 0002.
 
 ## M6 – Grundaufbau: Skripte, Installation, Laborumgebung
 
-- [ ] Basis-CI (Lint, Tests) einrichten – selektiv pro Komponente (Konsequenz aus ADR 0001)
-- [ ] `docker-compose` vervollständigen (NetBox inkl. Postgres/Redis, Orchestrator-Grundgerüst)
+- [x] Basis-CI (Lint, Tests) eingerichtet – selektiv pro Komponente
+  (`.github/workflows/ci.yml`: Ruff + pytest je Package, Frontend-Build, gitleaks)
+- [x] Code-Gerüst steht (siehe ADR 0003): Orchestrator (FastAPI, Alembic, Audit-Log,
+  Jobs), Collectors (FortiGate/ACI-Skeleton mit Beispieldaten), `sot-gateway`
+  (Infoblox-Adapter lesend, getestet gegen Fixtures), Web-UI-Skeleton (React/Vite)
+- [x] `docker-compose` vervollständigt (Postgres, Redis, Orchestrator, Collector,
+  Web-UI; Profile `core`/`collectors`, Healthchecks, `.env.example`)
+- [x] Secrets-Handling Grundausbau: `.env` (nie committet), gitleaks in pre-commit
+  und CI; Ansible Vault folgt, sobald Lab-Credentials existieren (SECURITY.md)
 - [ ] Source of Truth anbinden (M1-Entscheid: **Infoblox DDI** – Test-/Kundeninstanz
   bzw. vNIOS-Eval klären), Naming-/Tagging-Standards definieren
 - [ ] **Laborumgebung** mit Zielsystemen für Use Case #1 bereitstellen
   (FortiGate-VM; Cisco ACI via DevNet-Sandbox oder ACI-Simulator; Infoblox-Testinstanz)
   – der Durchstich läuft **nie** gegen Produktion
-- [ ] Secrets-Handling von Anfang an korrekt: Ansible Vault, keine Klartext-Credentials (SECURITY.md)
 
 **Exit-Kriterium:** Alle für den Durchstich nötigen Komponenten sind installierbar,
 das Lab ist erreichbar.

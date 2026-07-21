@@ -26,8 +26,10 @@ Automatisierungsplattform für heterogene Infrastruktur mit den Kernzielen:
 
 ```
 automation-platform/
-├── orchestrator/          Zentrale Steuerung: API, Jobs, Auth, Scheduling
-├── workers/                Worker Nodes je Zielplattform
+├── orchestrator/          Zentrale Steuerung: API, Jobs, Audit-Log, Rule & Service Store
+├── collectors/             Read-only Collectors (UC1): fortigate/, cisco_aci/
+├── sot-gateway/            Adapter-Package IPAM/SoT (Infoblox lesend, NetBox-Stub)
+├── workers/                Worker Nodes je Zielplattform (schreibend, spätere Use Cases)
 │   ├── fortigate/
 │   ├── cisco-aci/
 │   ├── vmware/
@@ -36,7 +38,7 @@ automation-platform/
 │   ├── linux/
 │   └── cisco-switches/
 ├── ansible/                 Playbooks, Rollen, Inventories
-├── source-of-truth/         NetBox-Integration (Soll-Zustand)
+├── source-of-truth/         IPAM-/SoT-Anbindung (Deployment/Standards; Zugriff via sot-gateway)
 ├── documentation-engine/    Ist-Dokumentation + Compliance-Reports
 ├── web-ui/                  Frontend inkl. Wizards
 │   └── wizards/
@@ -48,5 +50,9 @@ automation-platform/
 
 ## Status
 
-🚧 Planungsphase – Struktur steht (M0 weitgehend erledigt), als Nächstes M1: Use Cases
-erarbeiten und priorisieren (siehe ROADMAP.md).
+🚧 Grundaufbau (M6) in Arbeit: Code-Gerüst, CI und docker-compose stehen (ADR 0003);
+offen sind Laborumgebung und Infoblox-Anbindung. Use Case #1 = Firewall-Regel-
+Dokumentation, read-only (siehe ROADMAP.md und docs/usecases/).
+
+Lokal starten: `docker compose --profile core --profile collectors up --build`
+– danach Web-UI auf http://localhost:5173, API auf http://localhost:8000.

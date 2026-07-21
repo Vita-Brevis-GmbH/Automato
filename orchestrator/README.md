@@ -9,8 +9,13 @@ Zentrale Steuerungseinheit. Getrennt von den Workern.
 - Job-Historie & Audit-Log-Schreibzugriff
 - Kennt Worker-Typen, führt selbst **keine** Ansible-Jobs aus
 
-## Geplanter Stack
-Python (FastAPI), Redis + Celery/RQ als Job-Queue.
+## Stack
+Python (FastAPI, SQLAlchemy/Alembic auf Postgres), Celery + Redis als Job-Queue
+(Entscheide: ADR 0003). Enthält im Grundaufbau auch den Rule & Service Store
+(`app/store`) als herauslösbares Package.
 
-Status: 🚧 noch nicht implementiert (Schnittstellen: M4, erster Aufbau im Durchstich: M7 –
-siehe ROADMAP.md)
+Status: 🏗️ Grundgerüst vorhanden (Health, Job-Kreislauf, Audit-Log, interne
+Collector-API). Regel-Datenmodell folgt in M5, Auth/RBAC in M3/M4.
+
+Lokal: `uv run --package orchestrator pytest orchestrator/tests` ·
+`uv run uvicorn app.main:app --app-dir orchestrator`

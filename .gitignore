@@ -17,8 +17,16 @@ build/
 # Secrets / env
 .env
 .env.*
+!.env.example
 *.pem
 *.key
+
+# Tooling-Caches
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
 
 # OS
 .DS_Store

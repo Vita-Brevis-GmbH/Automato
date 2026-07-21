@@ -1,0 +1,79 @@
+# CI - selektiv pro Komponente (Vorgabe aus ADR 0001).
+# Secret-Scan laeuft immer; Python-/Frontend-Jobs nur bei Aenderungen im Pfad.
+name: ci
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  pull_request:
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'orchestrator/**'
+              - 'collectors/**'
+              - 'sot-gateway/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+            frontend:
+              - 'web-ui/frontend/**'
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret-Scan (gitleaks CLI)
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.18.4 \
+            detect --source /repo --no-banner --redact
+
+  python:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Sync workspace
+        run: uv sync --all-packages
+      - name: Lint (ruff)
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Tests orchestrator
+        run: uv run --package orchestrator pytest orchestrator/tests -q
+      - name: Tests collectors
+        run: uv run --package collectors pytest collectors/tests -q
+      - name: Tests sot-gateway
+        run: uv run --package sot-gateway pytest sot-gateway/tests -q
+
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-ui/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run lint
+      - run: npm run build

@@ -1,22 +1,82 @@
-# Start-Setup (Grundaufbau, Meilenstein M6). Wird schrittweise um die weiteren Services ergänzt.
-# Wachstumspfad: docker-compose -> Kubernetes bei Multi-Worker-Skalierung (ROADMAP.md, Ausblick).
-
-version: "3.9"
+# Grundaufbau (Meilenstein M6). Profile:
+#   core       -> postgres, redis, orchestrator, web-ui
+#   collectors -> Collector-Worker (FortiGate/ACI, liest Beispieldaten bis M7)
+# Start: docker compose --profile core --profile collectors up --build
+#
+# Infoblox DDI (M1-Entscheid) ist ein externes System (Test-/Kundeninstanz) und
+# laeuft nicht im Compose; Zugang wird ueber AUTOMATO_-Variablen konfiguriert.
+# Wachstumspfad: docker compose -> Kubernetes bei Multi-Worker-Skalierung.
 
 services:
-  netbox:
-    image: netboxcommunity/netbox:latest
-    # Platzhalter - vollständige NetBox-Config (Postgres, Redis) folgt in source-of-truth/
-    profiles: ["sot"]
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["core"]
+    environment:
+      POSTGRES_DB: automato
+      POSTGRES_USER: automato
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-automato}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U automato -d automato"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["core"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   orchestrator:
-    build: ./orchestrator
+    build:
+      context: .
+      dockerfile: orchestrator/Dockerfile
     profiles: ["core"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AUTOMATO_DATABASE_URL: postgresql+psycopg://automato:${POSTGRES_PASSWORD:-automato}@postgres:5432/automato
+      AUTOMATO_REDIS_URL: redis://redis:6379/0
+      AUTOMATO_INTERNAL_API_TOKEN: ${AUTOMATO_INTERNAL_API_TOKEN:-dev-only-token}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-  documentation-engine:
-    build: ./documentation-engine
-    profiles: ["core"]
+  collector:
+    build:
+      context: .
+      dockerfile: collectors/Dockerfile
+    profiles: ["collectors"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      AUTOMATO_REDIS_URL: redis://redis:6379/0
+      AUTOMATO_ORCHESTRATOR_URL: http://orchestrator:8000
+      AUTOMATO_INTERNAL_API_TOKEN: ${AUTOMATO_INTERNAL_API_TOKEN:-dev-only-token}
 
   web-ui:
-    build: ./web-ui
+    build:
+      context: web-ui/frontend
     profiles: ["core"]
+    environment:
+      ORCHESTRATOR_URL: http://orchestrator:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - orchestrator
+
+volumes:
+  postgres-data:
