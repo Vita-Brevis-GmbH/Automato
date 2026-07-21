@@ -23,6 +23,10 @@ Siehe `docs/adr/0002-sot-gateway-adapter-pattern.md` für das Detail-Design.
 ## Bevorzugter Tech-Stack (Stand jetzt)
 
 - Sprache: Python (Orchestrator, Worker, Services)
+- Schreibpfad (spätere Use Cases): Worker mit **Runner-Abstraktion** – Ansible
+  primär, Terraform/OpenTofu je Use Case (z. B. VM-Templates auf VMware/Proxmox);
+  State-Backend-Entscheid als ADR vor dem ersten schreibenden Use Case
+  (siehe ARCHITECTURE.md, Abschnitt Automatisierung)
 - Firewall-Regel-Compiler: **Aerleon** (Apache-2.0, Fork von Google Capirca, aktiv
   gepflegt, YAML-Policy-Sprache, Fortinet- und Proxmox-Generatoren vorhanden)
 - Source of Truth: NetBox und/oder Infoblox DDI, je nach Kunde, über SoT-Gateway

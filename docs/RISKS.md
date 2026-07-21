@@ -20,6 +20,7 @@ Bewertung: Auswirkung und Eintrittswahrscheinlichkeit jeweils **hoch / mittel / 
 | R8 | Offene Contract-Entscheidung (ServiceNow vs. iTop vs. eigenes Modul) blockiert später Wizards/Integrationen | mittel | mittel | Entscheid pro Kunde in M1; Contracts wie das IPAM hinter ein Adapter-Interface legen | M1, ADR 0002 |
 | R9 | Schlüsselpersonen-Risiko: Planungs- und Architekturwissen konzentriert sich auf wenige Köpfe | mittel | mittel | Entscheidungen konsequent als ADRs festhalten; README/CLAUDE.md/ROADMAP aktuell halten; generierte Doku (Documentation Engine) als Ziel beibehalten | M0, docs/adr/ |
 | R10 | Vendor-Mapping unterschätzt (UC1): ACI-Contracts/EPGs und weitere Hersteller-Formate lassen sich schwerer auf ein einheitliches Regelmodell abbilden als geplant | mittel | hoch | ACI-Mapping vor M5 prototypisieren; pro zusätzlichem Hersteller eigenen Collector einplanen; nicht abbildbare Regeln sichtbar ausweisen statt verwerfen | M4, M5, M7, UC1 |
+| R11 | Werkzeug-Wildwuchs im Schreibpfad: Ansible + Terraform parallel erhöht Komplexität (tfstate-Verwaltung, Drift, doppelte Zuständigkeiten) | mittel | mittel | Runner-Abstraktion im Worker (ARCHITECTURE.md); pro Use Case genau **ein** Werkzeug festlegen; ADR zu Terraform-State-Backend und Ansible/Terraform-Abgrenzung **vor** dem ersten schreibenden Use Case | Ausblick, ARCHITECTURE.md |
 
 ## Geschlossene Risiken
 

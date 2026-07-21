@@ -172,10 +172,16 @@ Use Case #1 ist produktiv nutzbar.
 Weitere Use Cases durchlaufen denselben Zyklus in verkürzter Form (M1 → M5 → M7 → M9),
 da Struktur, Architektur und Grundaufbau dann stehen. Geplante Ausbaustufen:
 
-- **Weitere Use Cases**: Read-only-Dokumentation & Compliance/Drift, VM-Provisioning, …
-  (je nach M1-Priorisierung)
-- **Worker-Ausbau**: weitere Plattformen (Fortigate, Cisco ACI, VMware, Proxmox, Windows,
-  Linux, Cisco Switches), Ansible-Rollen je Plattform konsolidieren
+- **Weitere Use Cases**: Compliance/Drift-Bewertung (Soll/Ist);
+  **Firewall-Regel-Automatisierung** (ADR 0002: Rule-Intents, Aerleon,
+  Primary/Backup); **VM-Provisionierung aus Templates** auf VMware/Proxmox
+  (Linux & Windows, inkl. cloud-init/sysprep und IPAM-Integration –
+  nächste freie IP via SoT Gateway)
+- **Worker-Ausbau (Schreibpfad)**: weitere Plattformen (Fortigate, Cisco ACI, VMware,
+  Proxmox, Windows, Linux, Cisco Switches); Runner-Abstraktion pro Worker
+  (Ansible und/oder Terraform/OpenTofu je Use Case – State-Backend-Entscheid als
+  ADR **vor** dem ersten schreibenden Use Case); Job-Modell um
+  Plan → Approve → Apply und Rollback erweitern; Ansible-Rollen konsolidieren
 - **Web UI & Wizards**: Grundgerüst (Auth gegen Orchestrator), Contract-Wizard,
   Neue-VM-Wizard, weitere nach Bedarf
 - **Integrationen**: ServiceNow-Anbindung, weitere Schnittstellen (Monitoring, CMDB, Ticketing)
