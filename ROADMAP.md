@@ -35,18 +35,26 @@ Umsetzung. Das Risikoregister (`docs/RISKS.md`) wird an jedem Meilenstein aktual
 
 Zuerst dorthin, wo der Need am grössten ist.
 
-- [ ] Use-Case-Kandidaten sammeln und beschreiben, u. a.:
-  - Firewall-Regel-Automatisierung (FortiGate; Vorarbeit in ADR 0002 vorhanden → aktueller Favorit)
-  - Read-only-Dokumentation & Compliance/Drift-Erkennung
-  - VM-Provisioning (Proxmox/VMware)
-- [ ] Priorisierung nach grösstem Need (Kunde/Betrieb) → **Use Case #1 festlegen**
-- [ ] **Definition of Done / Erfolgskriterien** für Use Case #1 schriftlich festhalten
-  (inkl. erwartetem Fehler-/Rollback-Verhalten), damit „abschliessen" in M9 messbar ist
-- [ ] Kunden-Tool-Paar für das erste Projekt fixieren (NetBox vs. Infoblox als IPAM;
-  ServiceNow vs. iTop/eigenes Modul für Contracts) – Austauschbarkeit bleibt über die
+- [x] Use-Case-Kandidaten gesammelt (Firewall-Regel-Automatisierung,
+  Read-only-Dokumentation & Compliance, VM-Provisioning)
+- [x] Priorisierung nach grösstem Need → **Use Case #1 festgelegt:
+  Firewall-Regel-Dokumentation (read-only)** – Regeln von FortiGate und Cisco ACI
+  lesen, mit Infoblox-Adressobjekten verknüpfen, Service-Objekt-DB, Web-UI mit
+  Filtern (Systeme/Netzwerke/Zonen), Applikations-Doku.
+  Details: [docs/usecases/uc1-firewall-regel-dokumentation.md](docs/usecases/uc1-firewall-regel-dokumentation.md)
+- [ ] **Definition of Done** für Use Case #1 bestätigen (Entwurf liegt im
+  UC1-Dokument), damit „abschliessen" in M9 messbar ist
+- [x] Kunden-Tool-Paar fixiert: IPAM = **Infoblox DDI** (lesend). Contracts
+  (ServiceNow vs. iTop) sind für UC1 nicht relevant – Entscheid vertagt auf den
+  ersten schreibenden Use Case. Austauschbarkeit bleibt über die
   Adapter-Interfaces gewährleistet (ADR 0002)
 
-**Exit-Kriterium:** Use Case #1 ist mit messbarer Definition of Done dokumentiert.
+Die Firewall-Regel-**Automatisierung** (ADR 0002: Rule-Intents, Aerleon,
+Primary/Backup-Pfade) folgt als späterer Use Case und baut auf den in UC1
+erfassten Daten auf.
+
+**Exit-Kriterium:** Use Case #1 ist mit messbarer, **bestätigter** Definition of
+Done dokumentiert.
 
 ## M2 – Grösste Risiken identifizieren
 
@@ -73,9 +81,13 @@ ADR-Nummer oder sind bewusst und dokumentiert vertagt.
 
 Feinschnitt der Services, so weit, dass der Durchstich ohne Grundsatzdiskussionen baubar ist.
 
-- [ ] Orchestrator-API, Job-Modell und Worker-Protokoll (Job annehmen, Ergebnis melden) spezifizieren
-- [ ] SoT-Gateway-Adapter-Interface (NetBox/Infoblox) spezifizieren (kanonisches Datenmodell, ADR 0002)
-- [ ] Topology-Service-Schnittstelle (Zonen, Connections, Primary/Backup, Priorität) spezifizieren
+- [ ] Orchestrator-API, Job-Modell und Worker-/Collector-Protokoll (Job annehmen, Ergebnis melden) spezifizieren
+- [ ] Collector-Interface (read-only) für FortiGate und Cisco ACI spezifizieren –
+  inkl. Mapping ACI-Contracts/EPGs → normalisiertes Regelmodell (UC1)
+- [ ] SoT-Gateway-Adapter-Interface spezifizieren (kanonisches Datenmodell, ADR 0002;
+  erster Adapter: Infoblox, lesend – NetBox-Adapter später)
+- [ ] Topology-Service-Schnittstelle spezifizieren (für UC1 nur das Zonen-Modell zur
+  Filterung; Connections/Primary/Backup erst für die spätere Automatisierung)
 - [ ] Kommunikationswege und Authentisierung zwischen den Services festlegen (mTLS, signierte Jobs)
 
 **Exit-Kriterium:** Schnittstellen-Verträge dokumentiert; Durchstich (M7) ist damit planbar.
@@ -84,12 +96,17 @@ Feinschnitt der Services, so weit, dass der Durchstich ohne Grundsatzdiskussione
 
 Löst die offenen Punkte aus ADR 0002.
 
-- [ ] Datenmodell Rule & Service Store: Adressobjekt-Referenzen, Service-Objekte,
-  Firewall-Rule-Intents, Verknüpfung zum Topology Service
+- [ ] Datenmodell Rule & Service Store: für UC1 die normalisierten **Ist-Regeln**
+  (Quellsystem, Quell-/Ziel-Referenzen, Service, Aktion, Zone, Erfassungszeitpunkt)
+  plus Adressobjekt-Referenzen und Service-Objekte; Firewall-Rule-**Intents** und
+  Topology-Verknüpfung so vorsehen, dass die spätere Automatisierung andockt
+- [ ] Applikations-Zuordnung entscheiden: wie werden Regeln Applikationen zugeordnet
+  (Infoblox Extensible Attributes, Naming-Konvention, manuelle Pflege) – siehe UC1, offene Fragen
 - [ ] Persistenz-Entscheid Rule Store: Git-only vs. DB + Git-Sync → als ADR festhalten
 - [ ] Zonen-Zuordnung entscheiden: automatisch aus IPAM-Tags oder manuell im Topology Service
-- [ ] Speicherorte für das erste Projekt fixieren: welche Daten liegen im IPAM (via SoT Gateway),
-  welche im Rule & Service Store, welche im Topology Service
+  (inkl. Normalisierung FortiGate-Zonen vs. ACI-EPGs/Tenants)
+- [ ] Speicherorte für das erste Projekt fixieren: welche Daten liegen im IPAM/Infoblox
+  (via SoT Gateway), welche im Rule & Service Store, welche im Topology Service
 
 **Exit-Kriterium:** Datenmodell und Speicherorte als ADR/Schema dokumentiert; Abschnitt
 „Offene Punkte" in ADR 0002 ist abgearbeitet.
@@ -98,9 +115,11 @@ Löst die offenen Punkte aus ADR 0002.
 
 - [ ] Basis-CI (Lint, Tests) einrichten – selektiv pro Komponente (Konsequenz aus ADR 0001)
 - [ ] `docker-compose` vervollständigen (NetBox inkl. Postgres/Redis, Orchestrator-Grundgerüst)
-- [ ] Source of Truth aufsetzen (gemäss M1-Entscheid), Naming-/Tagging-Standards definieren
+- [ ] Source of Truth anbinden (M1-Entscheid: **Infoblox DDI** – Test-/Kundeninstanz
+  bzw. vNIOS-Eval klären), Naming-/Tagging-Standards definieren
 - [ ] **Laborumgebung** mit Zielsystemen für Use Case #1 bereitstellen
-  (z. B. FortiGate-VM, Proxmox-Testnode) – der Durchstich läuft **nie** gegen Produktion
+  (FortiGate-VM; Cisco ACI via DevNet-Sandbox oder ACI-Simulator; Infoblox-Testinstanz)
+  – der Durchstich läuft **nie** gegen Produktion
 - [ ] Secrets-Handling von Anfang an korrekt: Ansible Vault, keine Klartext-Credentials (SECURITY.md)
 
 **Exit-Kriterium:** Alle für den Durchstich nötigen Komponenten sind installierbar,
@@ -108,16 +127,17 @@ das Lab ist erreichbar.
 
 ## M7 – Durchstich (Walking Skeleton)
 
-Eine bewusst **kleine Tätigkeit**, aber über den kompletten Pfad.
+Eine bewusst **kleine Tätigkeit**, aber über den kompletten Pfad. Für UC1
+(read-only) heisst das: **lesen statt schreiben**.
 
-- [ ] Dünnster Ende-zu-Ende-Pfad: CLI/Minimal-UI → Orchestrator → Job-Queue → 1 Worker →
-  Ansible → Lab-Zielsystem
-- [ ] Ergebnis-Rückmeldung an den Orchestrator + Audit-Log-Eintrag (wer, wann, was, Ergebnis)
-- [ ] Umfang klein halten (z. B. ein einzelnes Adressobjekt anlegen oder eine triviale
-  Konfig-Änderung im Lab)
+- [ ] Dünnster Ende-zu-Ende-Pfad: Auftrag (CLI/Minimal-UI) → Orchestrator → Job-Queue →
+  Collector liest Regeln der Lab-FortiGate → normalisiert in den Rule Store →
+  Anzeige der Regeln
+- [ ] Eine Regel-Adresse via Infoblox-Adapter auflösen (ein Matching-Fall genügt)
+- [ ] Job-Rückmeldung + Audit-Log-Eintrag (wer, wann, was, Ergebnis)
 
-**Exit-Kriterium:** Ein Auftrag erzeugt nachvollziehbar eine Änderung im Lab –
-inklusive Audit-Trail.
+**Exit-Kriterium:** Ein Auftrag liest nachvollziehbar Regeln aus dem Lab, speichert
+sie normalisiert und zeigt sie an – inklusive Audit-Trail.
 
 ## M8 – Review-Checkpoint nach dem Durchstich
 
@@ -133,7 +153,8 @@ solange sie noch billig sind.
 ## M9 – Ersten Use Case abschliessen
 
 - [ ] Use Case #1 vollständig gemäss Definition of Done aus M1 umsetzen
-- [ ] Fehlerbehandlung und Rollback-Verhalten umgesetzt und getestet
+- [ ] Fehlerbehandlung umgesetzt und getestet (Collector-Ausfälle, unvollständige
+  Daten, nicht zuordenbare Adressen sichtbar ausweisen)
 - [ ] Security-/Hardening-Check vor Abschluss (Secrets, Least Privilege, Audit-Log vollständig)
 - [ ] Dokumentation erstellt (Betrieb + Anwender)
 

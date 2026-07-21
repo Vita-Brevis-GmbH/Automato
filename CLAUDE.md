@@ -52,9 +52,15 @@ Planungsphase. Die Roadmap ist als Meilenstein-Plan **M0–M9 mit Exit-Kriterien
 aufgebaut (siehe `ROADMAP.md`); Risiken werden im Risikoregister `docs/RISKS.md`
 geführt und an jedem Meilenstein aktualisiert.
 
-Als Nächstes: **M1 – Use Cases erarbeiten und priorisieren** (Use Case #1 mit
-Definition of Done festlegen, Kunden-Tool-Paar fixieren; Favorit gemäss Vorarbeit:
-Firewall-Regel-Automatisierung). Danach folgt u. a. **M5 – Datenmodell** für den
-Rule & Service Store (Adressobjekt-Referenzen, Service-Objekte,
-Firewall-Rule-Intents, Verknüpfung zum Topology Service). Offene Fragen dazu
-siehe ADR 0002, Abschnitt "Offene Punkte".
+M1 ist inhaltlich entschieden: **Use Case #1 = Firewall-Regel-Dokumentation
+(read-only)** – Regeln von FortiGate und Cisco ACI lesen, mit Adressobjekten aus
+**Infoblox DDI** verknüpfen (IPAM-Entscheid für das erste Projekt), Service-Objekt-DB,
+Web-UI mit Filtern (Systeme/Netzwerke/Zonen), Applikations-Doku. Details, offene
+Fragen und DoD-Entwurf: `docs/usecases/uc1-firewall-regel-dokumentation.md`
+(**DoD noch zu bestätigen**). Die Regel-Automatisierung gemäss ADR 0002 folgt als
+späterer Use Case.
+
+Als Nächstes: DoD bestätigen (M1-Exit), dann **M2 Risiken-Review**, **M3
+Architektur-/Security-Review** und **M5 – Datenmodell** (normalisierte Ist-Regeln,
+Adressobjekt-Referenzen, Service-Objekte). Offene Fragen dazu siehe ADR 0002,
+Abschnitt "Offene Punkte", und das UC1-Dokument.

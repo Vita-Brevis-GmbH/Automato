@@ -19,6 +19,7 @@ Bewertung: Auswirkung und Eintrittswahrscheinlichkeit jeweils **hoch / mittel / 
 | R7 | Secrets-Handling-Fehler: Klartext-Credentials in Repo, Logs oder Inventories | hoch | mittel | Ansible Vault ab M6 (vor dem ersten Zielsystem-Zugriff); Secret-Scanning in der CI; Wachstumspfad HashiCorp Vault | M6, SECURITY.md |
 | R8 | Offene Contract-Entscheidung (ServiceNow vs. iTop vs. eigenes Modul) blockiert später Wizards/Integrationen | mittel | mittel | Entscheid pro Kunde in M1; Contracts wie das IPAM hinter ein Adapter-Interface legen | M1, ADR 0002 |
 | R9 | Schlüsselpersonen-Risiko: Planungs- und Architekturwissen konzentriert sich auf wenige Köpfe | mittel | mittel | Entscheidungen konsequent als ADRs festhalten; README/CLAUDE.md/ROADMAP aktuell halten; generierte Doku (Documentation Engine) als Ziel beibehalten | M0, docs/adr/ |
+| R10 | Vendor-Mapping unterschätzt (UC1): ACI-Contracts/EPGs und weitere Hersteller-Formate lassen sich schwerer auf ein einheitliches Regelmodell abbilden als geplant | mittel | hoch | ACI-Mapping vor M5 prototypisieren; pro zusätzlichem Hersteller eigenen Collector einplanen; nicht abbildbare Regeln sichtbar ausweisen statt verwerfen | M4, M5, M7, UC1 |
 
 ## Geschlossene Risiken
 
