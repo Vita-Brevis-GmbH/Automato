@@ -17,8 +17,9 @@ Automatisierungsplattform für heterogene Infrastruktur mit den Kernzielen:
 | Dokument | Inhalt |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Architektur, Komponenten, Datenflüsse, Tech-Stack |
-| [ROADMAP.md](ROADMAP.md) | Phasenplan vom MVP bis zur Full-Stack-Automatisierung |
+| [ROADMAP.md](ROADMAP.md) | Meilenstein-Plan (M0–M9) mit Exit-Kriterien, bis zur Full-Stack-Automatisierung |
 | [SECURITY.md](SECURITY.md) | Sicherheitskonzept |
+| [docs/RISKS.md](docs/RISKS.md) | Risikoregister (lebendes Dokument) |
 | [docs/adr/](docs/adr/) | Architecture Decision Records |
 
 ## Repository-Struktur
@@ -47,4 +48,5 @@ automation-platform/
 
 ## Status
 
-🚧 Planungsphase – Struktur steht, Implementierung startet mit Phase 0 (siehe ROADMAP.md).
+🚧 Planungsphase – Struktur steht (M0 weitgehend erledigt), als Nächstes M1: Use Cases
+erarbeiten und priorisieren (siehe ROADMAP.md).

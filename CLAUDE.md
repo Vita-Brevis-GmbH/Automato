@@ -48,7 +48,13 @@ umgekehrt) = neuer/anderer Adapter, keine Änderung am Rest der Plattform.
 
 ## Aktueller Stand / nächster Schritt
 
-Planungsphase (Phase 0 der Roadmap). Als Nächstes: **Datenmodell** für den
-Rule & Service Store entwerfen (Adressobjekt-Referenzen, Service-Objekte,
+Planungsphase. Die Roadmap ist als Meilenstein-Plan **M0–M9 mit Exit-Kriterien**
+aufgebaut (siehe `ROADMAP.md`); Risiken werden im Risikoregister `docs/RISKS.md`
+geführt und an jedem Meilenstein aktualisiert.
+
+Als Nächstes: **M1 – Use Cases erarbeiten und priorisieren** (Use Case #1 mit
+Definition of Done festlegen, Kunden-Tool-Paar fixieren; Favorit gemäss Vorarbeit:
+Firewall-Regel-Automatisierung). Danach folgt u. a. **M5 – Datenmodell** für den
+Rule & Service Store (Adressobjekt-Referenzen, Service-Objekte,
 Firewall-Rule-Intents, Verknüpfung zum Topology Service). Offene Fragen dazu
 siehe ADR 0002, Abschnitt "Offene Punkte".

@@ -9,4 +9,5 @@ NetBox liefert den Soll-Zustand der Infrastruktur (Geräte, IPAM, VLANs, VMs, Ve
 
 NetBox selbst wird nicht neu entwickelt, sondern als etabliertes Standard-Tool eingebunden.
 
-Status: 🚧 noch nicht aufgesetzt (siehe ROADMAP.md, Phase 0)
+Status: 🚧 noch nicht aufgesetzt (siehe ROADMAP.md, M6 „Grundaufbau"; Tool-Entscheid
+NetBox vs. Infoblox pro Kunde fällt in M1)

@@ -1,5 +1,5 @@
-# Start-Setup (Phase 0/1). Wird schrittweise um die weiteren Services ergänzt.
-# Wachstumspfad: docker-compose -> Kubernetes ab Roadmap-Phase 7 (Multi-Worker-Skalierung).
+# Start-Setup (Grundaufbau, Meilenstein M6). Wird schrittweise um die weiteren Services ergänzt.
+# Wachstumspfad: docker-compose -> Kubernetes bei Multi-Worker-Skalierung (ROADMAP.md, Ausblick).
 
 version: "3.9"
 

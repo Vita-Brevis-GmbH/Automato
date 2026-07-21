@@ -12,4 +12,5 @@ Zentrale Steuerungseinheit. Getrennt von den Workern.
 ## Geplanter Stack
 Python (FastAPI), Redis + Celery/RQ als Job-Queue.
 
-Status: 🚧 noch nicht implementiert (siehe ROADMAP.md, Phase 3)
+Status: 🚧 noch nicht implementiert (Schnittstellen: M4, erster Aufbau im Durchstich: M7 –
+siehe ROADMAP.md)
