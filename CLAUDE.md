@@ -71,7 +71,7 @@ späterer Use Case.
 Der **Grundaufbau (M6) ist als Code-Gerüst umgesetzt** (Entscheide: ADR 0003):
 uv-Workspace mit `orchestrator/` (FastAPI, Alembic, Audit-Log, Job-Kreislauf),
 `collectors/` (FortiGate/ACI-Skeleton, Beispieldaten bis zum Lab), `sot-gateway/`
-(Infoblox-Adapter lesend, NetBox-Stub), `web-ui/frontend/` (React/Vite-Skeleton);
+(NetBox- und Infoblox-Adapter lesend), `web-ui/frontend/` (React/Vite-Skeleton);
 dazu docker-compose (Profile core/collectors), CI (`.github/workflows/ci.yml`)
 und pre-commit/gitleaks. Tests: `uv run --package <name> pytest <name>/tests`.
 
@@ -85,7 +85,11 @@ Die Gates **M1 (DoD bestätigt), M2 (Risikoregister R1–R14) und M3 (Security-R
 ADR 0005)** sind erledigt; erste Sofort-Härtungen umgesetzt (Fail-closed Token-Check,
 CORS aus Konfiguration).
 
-Als Nächstes: **M7-Durchstich** (Model 2: NetBox-Adapter ausbauen, FortiGate-Collector →
-Persistenz ins Datenmodell + Matching → Findings) samt Lab (FortiGate-VM + NetBox).
-Offene Fragen siehe ADR 0004 (Phasenplan) und das UC1-Dokument; RBAC/Secrets/mTLS/
-Netzsegmentierung sind als Folge-ADRs terminiert (ADR 0005).
+Der **M7-Durchstich ist codeseitig fertig und fixture-getestet** (Model 2): NetBox-Adapter
+(lesend), Ingest/Matching in den Rule & Service Store, Findings, interne API verdrahtet
+(`app/store/ingest.py`, `app/sot.py`, Tests `test_ingest.py`/`test_internal_ingest.py`).
+Lab-Setup ist skriptet/dokumentiert (`source-of-truth/netbox/`, `collectors/fortigate/LAB.md`).
+
+Als Nächstes: Lauf gegen das **echte Lab** (FortiGate-Collector-Abruf statt Beispieldaten)
++ Minimal-UI/CLI-Auslöser, dann M8/M9. Offene Fragen siehe ADR 0004 (Phasenplan) und das
+UC1-Dokument; RBAC/Secrets/mTLS/Netzsegmentierung sind als Folge-ADRs terminiert (ADR 0005).

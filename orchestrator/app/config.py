@@ -21,6 +21,16 @@ class Settings(BaseSettings):
     # Erlaubte CORS-Origins fuers Web-UI; in Produktion explizit setzen.
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # SoT-Zugaenge (lesend) - je Mandant wird der passende Adapter gebaut (ADR 0004).
+    # Model 2 (NetBox) zuerst; Infoblox (Model 1) in Phase 2.
+    netbox_url: str = ""
+    netbox_token: str = ""
+    netbox_verify_tls: bool = True
+    infoblox_url: str = ""
+    infoblox_username: str = ""
+    infoblox_password: str = ""
+    infoblox_verify_tls: bool = True
+
 
 def check_security_config(settings: "Settings") -> None:
     """Fail-closed: verhindert unsichere Defaults ausserhalb der Entwicklung (ADR 0005)."""

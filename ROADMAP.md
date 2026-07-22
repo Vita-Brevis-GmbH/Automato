@@ -125,7 +125,9 @@ umgesetzt und migrierbar, Speicherorte fixiert. ✓
   (`.github/workflows/ci.yml`: Ruff + pytest je Package, Frontend-Build, gitleaks)
 - [x] Code-Gerüst steht (siehe ADR 0003): Orchestrator (FastAPI, Alembic, Audit-Log,
   Jobs), Collectors (FortiGate/ACI-Skeleton mit Beispieldaten), `sot-gateway`
-  (Infoblox-Adapter lesend, getestet gegen Fixtures), Web-UI-Skeleton (React/Vite)
+  (NetBox- und Infoblox-Adapter lesend, gegen Fixtures getestet), Web-UI-Skeleton (React/Vite)
+- [x] Lab-Setup dokumentiert/skriptet: NetBox (`source-of-truth/netbox/setup.sh` + seed),
+  FortiGate (`collectors/fortigate/LAB.md`)
 - [x] `docker-compose` vervollständigt (Postgres, Redis, Orchestrator, Collector,
   Web-UI; Profile `core`/`collectors`, Healthchecks, `.env.example`)
 - [x] Secrets-Handling Grundausbau: `.env` (nie committet), gitleaks in pre-commit
@@ -145,12 +147,19 @@ Eine bewusst **kleine Tätigkeit**, aber über den kompletten Pfad. Für UC1
 (read-only) heisst das: **lesen statt schreiben** – und zwar gegen **Model 2**
 (FortiGate + NetBox, kein ACI, kein NAT).
 
-- [ ] Dünnster Ende-zu-Ende-Pfad: Auftrag (CLI/Minimal-UI) → Orchestrator → Job-Queue →
-  Collector liest Regeln der Lab-FortiGate → normalisiert in den Rule Store →
-  Anzeige der Regeln
-- [ ] Eine Regel-Adresse via **NetBox-Adapter** auflösen (ein Matching-Fall genügt);
-  ein nicht auflösbares Objekt als Finding sichtbar machen
-- [ ] Job-Rückmeldung + Audit-Log-Eintrag (wer, wann, was, Ergebnis)
+**Code-Pfad implementiert und fixture-getestet** (kein Lab nötig): NetBox-Adapter
+(lesend), Ingest/Matching in den Rule & Service Store, Findings für nicht
+auflösbare Objekte, interne API verdrahtet. Offen ist der Lauf gegen das **echte
+Lab** und ein Minimal-UI/CLI-Auslöser.
+
+- [x] Persistenz-/Matching-Pfad: Collector-Ergebnis → interne API → Rule & Service Store
+  → Anzeige über `/rules` (fixture-getestet, `test_internal_ingest.py`)
+- [x] Adress-Matching via **NetBox-Adapter**; nicht auflösbares Objekt wird als Finding
+  ausgewiesen; `H-EXT_` als `expected_external` ohne Fehler (fixture-getestet)
+- [x] Job-Rückmeldung + Audit-Log-Eintrag (wer, wann, was, Ergebnis)
+- [ ] Lauf gegen das echte Lab (FortiGate-Collector-Abruf statt Beispieldaten) + Auslöser
+  (Minimal-UI/CLI) — sobald das Lab steht (`collectors/fortigate/LAB.md`,
+  `source-of-truth/netbox/`)
 
 **Exit-Kriterium:** Ein Auftrag liest nachvollziehbar Regeln aus dem Lab, speichert
 sie normalisiert und zeigt sie an – inklusive Audit-Trail.

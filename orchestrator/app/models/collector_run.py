@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Enum, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -22,6 +22,12 @@ class CollectorRun(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     platform: Mapped[str] = mapped_column(String(32), index=True)
+    # Ziel der Erfassung; noetig, um Regeln dem Mandanten/Quellsystem zuzuordnen (M7).
+    # Nullable: ohne diese Angaben wird nur gezaehlt/auditiert, nicht persistiert.
+    tenant_id: Mapped[int | None] = mapped_column(ForeignKey("tenant.id"), nullable=True)
+    source_system_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_system.id"), nullable=True
+    )
     status: Mapped[RunStatus] = mapped_column(
         Enum(RunStatus, native_enum=False, length=16), default=RunStatus.QUEUED
     )

@@ -1,0 +1,9 @@
+[
+  {
+    "id": 1,
+    "address": "10.10.10.5/24",
+    "dns_name": "web01.lab.local",
+    "status": {"value": "active"},
+    "tags": [{"slug": "zone-server"}]
+  }
+]

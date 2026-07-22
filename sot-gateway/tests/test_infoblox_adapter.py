@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import httpx
-import pytest
 from sot_gateway import NetworkObjectType, SoTAdapter
 from sot_gateway.adapters import InfobloxAdapter
 
@@ -49,10 +48,3 @@ def test_search_by_ip_sortiert_longest_prefix_zuerst():
     assert len(hosts) == 1
     prefixes = [int(n.value.split("/")[1]) for n in networks]
     assert prefixes == sorted(prefixes, reverse=True)
-
-
-def test_netbox_stub_meldet_not_implemented():
-    from sot_gateway.adapters import NetBoxAdapter
-
-    with pytest.raises(NotImplementedError):
-        NetBoxAdapter().get_by_name("x")

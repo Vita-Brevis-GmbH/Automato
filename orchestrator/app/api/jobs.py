@@ -14,7 +14,11 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 @router.post("/collect", response_model=CollectJobResponse, status_code=202)
 def start_collect(payload: CollectJobRequest, session: Session = Depends(get_session)):
-    run = CollectorRun(platform=payload.platform)
+    run = CollectorRun(
+        platform=payload.platform,
+        tenant_id=payload.tenant_id,
+        source_system_id=payload.source_system_id,
+    )
     session.add(run)
     session.flush()  # run.id verfuegbar machen
 
@@ -24,7 +28,11 @@ def start_collect(payload: CollectJobRequest, session: Session = Depends(get_ses
         actor="api",
         action="collector_run.queued",
         subject=run.id,
-        detail={"platform": payload.platform},
+        detail={
+            "platform": payload.platform,
+            "tenant_id": payload.tenant_id,
+            "source_system_id": payload.source_system_id,
+        },
     )
     celery_app.dispatch_collect(payload.platform, run.id)
     return CollectJobResponse(run_id=run.id, status=run.status)
@@ -39,6 +47,8 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
         id=run.id,
         platform=run.platform,
         status=run.status,
+        tenant_id=run.tenant_id,
+        source_system_id=run.source_system_id,
         rule_count=run.rule_count,
         message=run.message,
     )
