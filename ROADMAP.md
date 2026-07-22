@@ -105,12 +105,16 @@ als First-Class-Signal). Löst zugleich offene Punkte aus ADR 0002.
 - [x] Zonen-Zuordnung entschieden: Zone am Subnetz, im SoT gepflegt, von Automato gelesen
 - [x] Applikations-Zuordnung: vorgesehen (`application` am Objekt), Befüllung später
   (Namenskonvention/CMDB)
-- [ ] Speicherorte fixieren: welche Daten liegen im IPAM (via SoT Gateway) vs. im
-  Rule & Service Store (Postgres führend; Git-Sync erst mit den Rule-Intents, ADR 0004)
-- [ ] DDL/SQLAlchemy + Alembic-Migration aus ADR 0004 umsetzen (beim M5-Bau)
+- [x] Speicherorte fixiert: IPAM-Objekte via SoT Gateway; Regeln/Objekte/Services/
+  Findings im Rule & Service Store (Postgres führend; Git-Sync erst mit den
+  Rule-Intents, ADR 0004)
+- [x] DDL/SQLAlchemy + Alembic-Migration **Phase 1** umgesetzt (`orchestrator/app/models/`,
+  Migration `0002`: tenant, zone, network_object, service_object, rule, rule_endpoint,
+  rule_service, finding) inkl. Namenskonvention-Parser (`app/naming.py`) und Tests.
+  ACI-Tabellen (`epg*`) und `nat_rule` folgen mit ihrer Phase.
 
-**Exit-Kriterium:** Datenmodell als ADR dokumentiert (✓ ADR 0004), Schema umgesetzt und
-Speicherorte fixiert.
+**Exit-Kriterium:** Datenmodell als ADR dokumentiert (✓ ADR 0004), Schema (Phase 1)
+umgesetzt und migrierbar, Speicherorte fixiert. ✓
 
 ## M6 – Grundaufbau: Skripte, Installation, Laborumgebung
 

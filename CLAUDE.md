@@ -75,7 +75,13 @@ uv-Workspace mit `orchestrator/` (FastAPI, Alembic, Audit-Log, Job-Kreislauf),
 dazu docker-compose (Profile core/collectors), CI (`.github/workflows/ci.yml`)
 und pre-commit/gitleaks. Tests: `uv run --package <name> pytest <name>/tests`.
 
+Das **Datenmodell (M5, ADR 0004) ist als Code umgesetzt (Phase 1)**: SQLAlchemy-Modelle
+in `orchestrator/app/models/` (tenant, zone, network_object, service_object, rule,
+rule_endpoint, rule_service, finding), Alembic-Migration `0002`, Namenskonvention-Parser
+`app/naming.py`, Store-Query + `/rules`-Endpunkt, Tests. ACI-Tabellen (`epg*`) und
+`nat_rule` folgen mit ihrer Phase.
+
 Als Nächstes: DoD bestätigen (M1-Exit), **M2 Risiken-Review**, **M3
-Architektur-/Security-Review**, dann **M5-Bau** (DDL/SQLAlchemy + Alembic aus ADR 0004)
-sowie Lab + NetBox-Anbindung für den Model-2-Durchstich (Rest von M6). Offene Fragen
-siehe ADR 0004 (Phasenplan), ADR 0002 ("Offene Punkte") und das UC1-Dokument.
+Architektur-/Security-Review**; dann **M7-Durchstich** (Model 2: NetBox-Adapter ausbauen,
+FortiGate-Collector → Persistenz ins Datenmodell + Matching → Findings) samt Lab.
+Offene Fragen siehe ADR 0004 (Phasenplan), ADR 0002 ("Offene Punkte") und das UC1-Dokument.
