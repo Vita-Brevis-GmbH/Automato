@@ -1,7 +1,7 @@
 # Use Case #1 – Firewall-Regel-Dokumentation (read-only)
 
-Status: In M1 festgelegt (2026-07-21) · Datenmodell: **ADR 0004** · Definition of
-Done: **Entwurf, zu bestätigen**
+Status: In M1 festgelegt (2026-07-21) · Datenmodell: **ADR 0004** · Security: **ADR 0005**
+· Definition of Done: **bestätigt (2026-07-22)**
 
 ## Beschreibung
 
@@ -63,18 +63,25 @@ trägt seine SoT-Bindung; cross-tenant-Überblick + per-tenant-Sicht).
   Kandidat für den nächsten Use Case)
 - Contracts/ServiceNow/iTop
 
-## Definition of Done (Entwurf – zu bestätigen)
+## Definition of Done (bestätigt)
 
-- [ ] Regeln von mindestens 1 FortiGate und 1 ACI-Fabric werden automatisch
-  (zyklisch oder auf Knopfdruck) eingelesen
-- [ ] Regel-Adressen sind Infoblox-Objekten zugeordnet; „unmatched" ist als solches
-  sichtbar (Ziel-Quote festlegen, z. B. ≥ 90 %)
+Die DoD gilt für den **Abschluss von UC1 = Model 2** (FortiGate + NetBox, M9). Model 1
+(ACI + Infoblox + strikte Namenskonvention + Firewalls in Serie) ist eine **Erweiterung
+von UC1** und durchläuft danach denselben Zyklus (M5-Phase 2 / M7-Phase 2).
+
+- [ ] Regeln von mindestens 1 (Lab-)FortiGate werden automatisch (zyklisch oder auf
+  Knopfdruck) eingelesen und normalisiert gespeichert
+- [ ] Regel-Adressen werden gegen NetBox gematcht; **jedes nicht auflösbare Objekt ist
+  als Finding sichtbar und triage-bar** (open → acknowledged/resolved/ignored).
+  Die Ziel-Matching-Quote als Kennzahl wird **nach dem ersten realen Lauf** festgelegt
+  (nicht vorab hart gesetzt – Datenqualität ist erst dann bekannt, R4)
 - [ ] Service-Objekte sind dedupliziert als kanonische Services abgebildet
-- [ ] Web-UI filtert nach System, Netzwerk und Zone
+- [ ] Web-UI filtert nach System, Netzwerk und Zone; Findings-Sicht vorhanden
 - [ ] Pro Applikation ist ein Dokument generierbar
 - [ ] Read-only garantiert: Service-Accounts der Collectors haben keine Schreibrechte
-  (Least Privilege, SECURITY.md)
-- [ ] Collector-Läufe sind im Audit-Log nachvollziehbar (wann, was, Ergebnis)
+  (Least Privilege, SECURITY.md / ADR 0005)
+- [ ] Collector-Läufe und Finding-Statusänderungen sind im Audit-Log nachvollziehbar
+- [ ] Security-Check für den Model-2-Scope bestanden (ADR 0005)
 
 ## Architektur-Zuordnung
 

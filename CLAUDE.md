@@ -64,8 +64,8 @@ Model 1 (FortiGate + ACI + **Infoblox**). Umsetzung deshalb **NetBox-Adapter zue
 Das **Datenmodell ist als ADR 0004** entworfen (mandantenfähig; eine `rule`-Tabelle mit
 polymorphen Endpunkten host|network|epg|zone; Zonen aus dem SoT; Services inkl.
 ICMP/Dual-Stack; NAT-Schema; Findings für Datenqualität; Namenskonvention als
-First-Class-Signal). Details/DoD-Entwurf: `docs/usecases/uc1-firewall-regel-dokumentation.md`
-(**DoD noch zu bestätigen**). Die Regel-Automatisierung gemäss ADR 0002 folgt als
+First-Class-Signal). Details/DoD: `docs/usecases/uc1-firewall-regel-dokumentation.md`
+(**DoD bestätigt**, Model-2-Scope). Die Regel-Automatisierung gemäss ADR 0002 folgt als
 späterer Use Case.
 
 Der **Grundaufbau (M6) ist als Code-Gerüst umgesetzt** (Entscheide: ADR 0003):
@@ -81,7 +81,11 @@ rule_endpoint, rule_service, finding), Alembic-Migration `0002`, Namenskonventio
 `app/naming.py`, Store-Query + `/rules`-Endpunkt, Tests. ACI-Tabellen (`epg*`) und
 `nat_rule` folgen mit ihrer Phase.
 
-Als Nächstes: DoD bestätigen (M1-Exit), **M2 Risiken-Review**, **M3
-Architektur-/Security-Review**; dann **M7-Durchstich** (Model 2: NetBox-Adapter ausbauen,
-FortiGate-Collector → Persistenz ins Datenmodell + Matching → Findings) samt Lab.
-Offene Fragen siehe ADR 0004 (Phasenplan), ADR 0002 ("Offene Punkte") und das UC1-Dokument.
+Die Gates **M1 (DoD bestätigt), M2 (Risikoregister R1–R14) und M3 (Security-Review,
+ADR 0005)** sind erledigt; erste Sofort-Härtungen umgesetzt (Fail-closed Token-Check,
+CORS aus Konfiguration).
+
+Als Nächstes: **M7-Durchstich** (Model 2: NetBox-Adapter ausbauen, FortiGate-Collector →
+Persistenz ins Datenmodell + Matching → Findings) samt Lab (FortiGate-VM + NetBox).
+Offene Fragen siehe ADR 0004 (Phasenplan) und das UC1-Dokument; RBAC/Secrets/mTLS/
+Netzsegmentierung sind als Folge-ADRs terminiert (ADR 0005).

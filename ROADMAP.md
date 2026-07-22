@@ -42,8 +42,8 @@ Zuerst dorthin, wo der Need am grössten ist.
   lesen, mit Infoblox-Adressobjekten verknüpfen, Service-Objekt-DB, Web-UI mit
   Filtern (Systeme/Netzwerke/Zonen), Applikations-Doku.
   Details: [docs/usecases/uc1-firewall-regel-dokumentation.md](docs/usecases/uc1-firewall-regel-dokumentation.md)
-- [ ] **Definition of Done** für Use Case #1 bestätigen (Entwurf liegt im
-  UC1-Dokument), damit „abschliessen" in M9 messbar ist
+- [x] **Definition of Done** für Use Case #1 bestätigt (2026-07-22; Model-2-Scope,
+  outcome-basiertes Matching-Kriterium – siehe UC1-Dokument)
 - [x] Kunden-Tool-Paar fixiert (zwei Modelle, siehe UC1-Dokument): **Model 2 zuerst**
   (FortiGate, IPAM = **NetBox**, DNS = AD), danach Model 1 (FortiGate + ACI, IPAM =
   **Infoblox**). Umsetzungsreihenfolge deshalb: **NetBox-Adapter zuerst**, Infoblox in
@@ -55,29 +55,32 @@ Die Firewall-Regel-**Automatisierung** (ADR 0002: Rule-Intents, Aerleon,
 Primary/Backup-Pfade) folgt als späterer Use Case und baut auf den in UC1
 erfassten Daten auf.
 
-**Exit-Kriterium:** Use Case #1 ist mit messbarer, **bestätigter** Definition of
-Done dokumentiert.
+**Exit-Kriterium:** Use Case #1 ist mit **bestätigter** Definition of Done dokumentiert. ✓
 
 ## M2 – Grösste Risiken identifizieren
 
 Bewusst **vor** der Architektur-Finalisierung, damit Risiken die Architektur beeinflussen können.
 
-- [ ] Initiales Risikoregister erstellen → [docs/RISKS.md](docs/RISKS.md)
-- [ ] Top-Risiken mit Gegenmassnahmen und Meilenstein-Bezug versehen
-- [ ] Review-Rhythmus festlegen: Register wird an jedem Meilenstein-Abschluss aktualisiert
+- [x] Risikoregister erstellt → [docs/RISKS.md](docs/RISKS.md) (R1–R14)
+- [x] Top-Risiken mit Gegenmassnahmen und Meilenstein-Bezug versehen
+- [x] Review-Rhythmus festgelegt: Register wird an jedem Meilenstein-Abschluss aktualisiert
+  (Review-Datum im Register vermerkt); R13/R14 aus der Mandantenfähigkeit ergänzt
 
-**Exit-Kriterium:** Register existiert, jedes Top-Risiko hat eine Gegenmassnahme.
+**Exit-Kriterium:** Register existiert, jedes Top-Risiko hat eine Gegenmassnahme. ✓
 
 ## M3 – Architektur definieren & mit Security prüfen
 
-- [ ] Architektur (`ARCHITECTURE.md`) gegen Use Case #1 und das Risikoregister validieren
-- [ ] Security-Review der Architektur anhand `SECURITY.md`
-- [ ] Offene Security-Punkte als ADRs anstossen: Secrets-Backend, Netzwerksegmentierung,
-  RBAC-Rollenmodell, Zertifikatsverwaltung/mTLS
-- [ ] Notwendige Anpassungen als ADRs dokumentieren
+- [x] Architektur gegen Use Case #1 und das Risikoregister validiert (ADR 0005: trägt UC1,
+  Tenant-Scoping als einzige substanzielle Ergänzung, kein Blocker)
+- [x] Security-Review anhand `SECURITY.md` durchgeführt → **ADR 0005** (8 Prinzipien,
+  Befund/Entscheid je Punkt)
+- [x] Offene Security-Punkte terminiert: Secrets-Backend, Netzwerksegmentierung,
+  RBAC-Rollenmodell, mTLS/Zertifikate als Folge-ADRs vermerkt (ADR 0005)
+- [x] Sofort-Härtungen umgesetzt: Fail-closed Token-Check, CORS aus Konfiguration,
+  Tenant-Scoping-Pflicht in Store-Queries
 
-**Exit-Kriterium:** Architektur ist security-seitig freigegeben; offene Punkte haben eine
-ADR-Nummer oder sind bewusst und dokumentiert vertagt.
+**Exit-Kriterium:** Architektur security-seitig freigegeben; offene Punkte haben eine
+ADR-Nummer oder sind bewusst und dokumentiert vertagt. ✓ (ADR 0005)
 
 ## M4 – Microarchitektur definieren
 

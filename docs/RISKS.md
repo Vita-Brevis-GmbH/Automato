@@ -3,6 +3,10 @@
 Lebendes Dokument: wird an **jedem Meilenstein-Abschluss** (siehe `ROADMAP.md`) überprüft und
 aktualisiert – neue Risiken aufnehmen, erledigte schliessen, Bewertungen nachziehen.
 
+Letzter Review: M2/M3 (2026-07-22) – R13/R14 aus der Mandantenfähigkeit ergänzt,
+R4 auf das Finding-Konstrukt (ADR 0004) und R7 auf den Fail-closed-Token-Check
+(ADR 0005) aktualisiert.
+
 Bewertung: Auswirkung und Eintrittswahrscheinlichkeit jeweils **hoch / mittel / tief**.
 „Bezug" nennt den Meilenstein bzw. das Dokument, in dem die Gegenmassnahme verankert ist.
 
@@ -16,12 +20,14 @@ Bewertung: Auswirkung und Eintrittswahrscheinlichkeit jeweils **hoch / mittel / 
 | R4 | Datenqualität im Kunden-IPAM: unvollständige/falsche SoT-Daten führen zu falschen Regeln (ungültige/fehlende Namen, IP auf mehreren Objekten, Präfix↔Typ-Konflikt) | hoch | mittel | **Finding-Konstrukt** (ADR 0004) macht Abweichungen read-only sichtbar und quittierbar; Namenskonvention-Parser prüft Objektklasse/FQDN; schreibende Bereinigung erst im Schreibpfad | M5, ADR 0004 |
 | R5 | Laborumgebung fehlt oder kommt zu spät → Durchstich verzögert sich oder läuft gegen Produktion | hoch | mittel | Lab ist Exit-Kriterium von M6; virtuelle Appliances nutzen (FortiGate-VM, Proxmox-Testnode) | M6 |
 | R6 | Scope Creep durch Multi-Kunden-Anspruch: alles soll sofort austauschbar/generisch sein | mittel | hoch | Pro Projekt genau **ein** Tool-Paar fixieren (M1); Austauschbarkeit über Interfaces sichern, nicht über parallele Implementierungen | M1, ADR 0002 |
-| R7 | Secrets-Handling-Fehler: Klartext-Credentials in Repo, Logs oder Inventories | hoch | mittel | Ansible Vault ab M6 (vor dem ersten Zielsystem-Zugriff); Secret-Scanning in der CI; Wachstumspfad HashiCorp Vault | M6, SECURITY.md |
+| R7 | Secrets-Handling-Fehler: Klartext-Credentials in Repo, Logs oder Inventories; unsichere Default-Tokens in Produktion | hoch | mittel | gitleaks in CI+pre-commit; `.env` nie committet; **Fail-closed-Check** lehnt Default-Token ausserhalb `dev` ab (ADR 0005); Ansible Vault ab M6, Wachstumspfad HashiCorp Vault | M6, ADR 0005, SECURITY.md |
 | R8 | Offene Contract-Entscheidung (ServiceNow vs. iTop vs. eigenes Modul) blockiert später Wizards/Integrationen | mittel | mittel | Entscheid pro Kunde in M1; Contracts wie das IPAM hinter ein Adapter-Interface legen | M1, ADR 0002 |
 | R9 | Schlüsselpersonen-Risiko: Planungs- und Architekturwissen konzentriert sich auf wenige Köpfe | mittel | mittel | Entscheidungen konsequent als ADRs festhalten; README/CLAUDE.md/ROADMAP aktuell halten; generierte Doku (Documentation Engine) als Ziel beibehalten | M0, docs/adr/ |
 | R10 | Vendor-Mapping unterschätzt (UC1): ACI-Contracts/EPGs und weitere Hersteller-Formate lassen sich schwerer auf ein einheitliches Regelmodell abbilden als geplant | mittel | hoch | ACI-Mapping vor M5 prototypisieren; pro zusätzlichem Hersteller eigenen Collector einplanen; nicht abbildbare Regeln sichtbar ausweisen statt verwerfen | M4, M5, M7, UC1 |
 | R11 | Werkzeug-Wildwuchs im Schreibpfad: Ansible + Terraform parallel erhöht Komplexität (tfstate-Verwaltung, Drift, doppelte Zuständigkeiten) | mittel | mittel | Runner-Abstraktion im Worker (ARCHITECTURE.md); pro Use Case genau **ein** Werkzeug festlegen; ADR zu Terraform-State-Backend und Ansible/Terraform-Abgrenzung **vor** dem ersten schreibenden Use Case | Ausblick, ARCHITECTURE.md |
 | R12 | ACI-Endpunkt-Volatilität: ACI lernt Host-IPs nur bei Traffic, nach ~30 min altert der Endpunkt aus → unvollständige Host↔EPG-Zuordnung | mittel | hoch | Gelernte Endpunkte **akkumulierend** speichern (`epg_endpoint`, `last_seen`, nie ersetzen); stabile `epg_subnet`-Zuordnung (Config) als verlässliche Basis; regelmässige Collector-Läufe | M5 (Phase 2), ADR 0004 |
+| R13 | Mandanten-Isolation: eine Instanz hält mehrere Kunden/Security-Tenants; fehlendes Tenant-Scoping oder RBAC leakt Regeln zwischen Mandanten | hoch | mittel | `tenant_id`-Scoping in **jeder** Store-Query ab Start; RBAC-Rollenmodell (Folge-ADR) vor UI-Exposition realer Daten; read-access ins Audit-Log | M3, ADR 0005 |
+| R14 | Daten-Aggregation: die zentrale DB enthält die vollständige Firewall-/Netz-Topologie aller Kunden → attraktives, hochsensibles Angriffsziel | hoch | mittel | Verschlüsselung at-rest/in-transit (mTLS-Folge-ADR); Least-Privilege-DB-Zugriff; Netzwerksegmentierung; read-only wo möglich; Zugriff über RBAC begrenzt | M3, ADR 0005, SECURITY.md |
 
 ## Geschlossene Risiken
 

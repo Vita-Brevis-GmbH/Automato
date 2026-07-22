@@ -2,15 +2,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import health, internal, jobs, rules
+from app.config import check_security_config, get_settings
 
 
 def create_app() -> FastAPI:
+    settings = get_settings()
+    check_security_config(settings)  # Fail-closed bei unsicheren Defaults (ADR 0005)
+
     app = FastAPI(title="Automato Orchestrator", version="0.1.0")
 
-    # Dev-CORS fuer das Web-UI (Vite auf :5173); produktiv einschraenken (M3)
+    # CORS aus Konfiguration; Default nur localhost (Dev), Produktion explizit setzen
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173"],
+        allow_origins=settings.cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
