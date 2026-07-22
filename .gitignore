@@ -21,6 +21,9 @@ build/
 *.pem
 *.key
 
+# Lab: geklontes netbox-docker (nicht einchecken)
+source-of-truth/netbox/netbox-docker/
+
 # Tooling-Caches
 .ruff_cache/
 .pytest_cache/

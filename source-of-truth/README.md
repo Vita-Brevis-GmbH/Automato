@@ -9,5 +9,12 @@ NetBox liefert den Soll-Zustand der Infrastruktur (Geräte, IPAM, VLANs, VMs, Ve
 
 NetBox selbst wird nicht neu entwickelt, sondern als etabliertes Standard-Tool eingebunden.
 
-Status: 🚧 noch nicht aufgesetzt (siehe ROADMAP.md, M6 „Grundaufbau"; Tool-Entscheid
-NetBox vs. Infoblox pro Kunde fällt in M1)
+## Lab-Setup
+
+- `netbox/` – Bootstrapping einer NetBox-Instanz für den Model-2-Durchstich:
+  `./netbox/setup.sh` (netbox-docker, Admin-User, read-only Collector-Token),
+  optional `netbox/seed_lab.py` für minimale Lab-Daten. Siehe `netbox/README.md`.
+  Infoblox (Model 1) folgt in Phase 2.
+
+Status: 🧪 Lab-Setup-Skript vorhanden (NetBox), Instanz noch aufzusetzen
+(siehe ROADMAP.md, M6 „Grundaufbau")

@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Lab-Setup fuer NetBox als Source of Truth (Model 2, UC1). NUR fuer Labor/Test.
+#
+# Nutzt das offizielle netbox-docker (release-Branch = jeweils aktuelle stabile
+# Version), startet den Stack, legt einen Admin-User (UI-Login) und einen
+# read-only Collector-Token an (Least Privilege, ADR 0005) sowie einen
+# Schreib-Token fuer das Seeding. Idempotent - mehrfaches Ausfuehren ist ok.
+#
+# Voraussetzungen: docker + docker compose v2, git, curl, openssl.
+# Verwendung:
+#   ./setup.sh                       # Standardwerte
+#   NETBOX_PORT=8080 ./setup.sh      # anderer Port
+set -euo pipefail
+
+NETBOX_DIR="${NETBOX_DIR:-netbox-docker}"
+NETBOX_PORT="${NETBOX_PORT:-8000}"
+ADMIN_USER="${ADMIN_USER:-admin}"
+ADMIN_PASS="${ADMIN_PASS:-admin1234!}"
+COLLECTOR_TOKEN="${COLLECTOR_TOKEN:-$(openssl rand -hex 20)}"
+ADMIN_TOKEN="${ADMIN_TOKEN:-$(openssl rand -hex 20)}"
+
+for tool in docker git curl openssl; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "FEHLER: '$tool' nicht gefunden"; exit 1; }
+done
+docker compose version >/dev/null 2>&1 || { echo "FEHLER: docker compose v2 noetig"; exit 1; }
+
+# 1. netbox-docker holen bzw. aktualisieren
+if [ ! -d "$NETBOX_DIR" ]; then
+  git clone -b release --depth 1 https://github.com/netbox-community/netbox-docker.git "$NETBOX_DIR"
+fi
+cd "$NETBOX_DIR"
+
+# 2. Port-Override (netbox-docker liefert selbst kein Host-Port-Mapping)
+cat > docker-compose.override.yml <<YAML
+services:
+  netbox:
+    ports:
+      - "${NETBOX_PORT}:8080"
+YAML
+
+# 3. Stack starten
+docker compose pull
+docker compose up -d
+
+# 4. Auf Erreichbarkeit warten (NetBox-Migrationen brauchen beim ersten Start Zeit)
+echo "Warte auf NetBox unter http://localhost:${NETBOX_PORT}/ ..."
+ok=""
+for _ in $(seq 1 60); do
+  if curl -fsS "http://localhost:${NETBOX_PORT}/login/" >/dev/null 2>&1; then ok=1; break; fi
+  sleep 5
+done
+[ -n "$ok" ] || { echo "FEHLER: NetBox nicht rechtzeitig erreichbar"; exit 1; }
+
+# 5. User + Tokens anlegen (idempotent, via Django-Shell im Container)
+COLLECTOR_TOKEN="$COLLECTOR_TOKEN" ADMIN_TOKEN="$ADMIN_TOKEN" \
+ADMIN_USER="$ADMIN_USER" ADMIN_PASS="$ADMIN_PASS" \
+docker compose exec -T \
+  -e COLLECTOR_TOKEN -e ADMIN_TOKEN -e ADMIN_USER -e ADMIN_PASS \
+  netbox /opt/netbox/netbox/manage.py shell <<'PY'
+import os
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group, Permission
+
+try:
+    from users.models import Token
+except ImportError:  # falls sich das App-Layout in kuenftigen Versionen aendert
+    from netbox.users.models import Token  # type: ignore
+
+User = get_user_model()
+
+# Admin fuer UI-Login + Schreib-Token fuers Seeding
+admin, _ = User.objects.get_or_create(username=os.environ["ADMIN_USER"])
+admin.is_superuser = admin.is_staff = True
+admin.set_password(os.environ["ADMIN_PASS"])
+admin.save()
+at, created = Token.objects.get_or_create(user=admin, defaults={"key": os.environ["ADMIN_TOKEN"]})
+if not created:
+    at.key = os.environ["ADMIN_TOKEN"]; at.save()
+
+# Read-only-Gruppe (alle view_*-Rechte) + Collector-User ohne Superuser
+grp, _ = Group.objects.get_or_create(name="automato-readonly")
+grp.permissions.set(Permission.objects.filter(codename__startswith="view_"))
+collector, _ = User.objects.get_or_create(username="automato-collector")
+collector.is_superuser = collector.is_staff = False
+collector.save()
+collector.groups.add(grp)
+
+# Read-only Token (write_enabled=False -> kann nur lesen)
+ct, created = Token.objects.get_or_create(
+    user=collector,
+    defaults={"key": os.environ["COLLECTOR_TOKEN"], "write_enabled": False},
+)
+if not created:
+    ct.key = os.environ["COLLECTOR_TOKEN"]; ct.write_enabled = False; ct.save()
+
+print("SETUP_OK")
+PY
+
+cat <<EOF
+
+=== NetBox-Lab bereit ===
+URL:                         http://localhost:${NETBOX_PORT}/
+Admin-Login (UI):            ${ADMIN_USER} / ${ADMIN_PASS}
+Collector-Token (read-only): ${COLLECTOR_TOKEN}
+Admin-Token (Schreiben/Seed):${ADMIN_TOKEN}
+
+Fuer Automato in die .env (Model-2-Mandant):
+  AUTOMATO_NETBOX_URL=http://localhost:${NETBOX_PORT}
+  AUTOMATO_NETBOX_TOKEN=${COLLECTOR_TOKEN}
+
+Optional Lab-Daten seeden:
+  NETBOX_URL=http://localhost:${NETBOX_PORT} NETBOX_TOKEN=${ADMIN_TOKEN} python3 ../seed_lab.py
+EOF
