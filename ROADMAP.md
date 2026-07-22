@@ -44,10 +44,12 @@ Zuerst dorthin, wo der Need am grössten ist.
   Details: [docs/usecases/uc1-firewall-regel-dokumentation.md](docs/usecases/uc1-firewall-regel-dokumentation.md)
 - [ ] **Definition of Done** für Use Case #1 bestätigen (Entwurf liegt im
   UC1-Dokument), damit „abschliessen" in M9 messbar ist
-- [x] Kunden-Tool-Paar fixiert: IPAM = **Infoblox DDI** (lesend). Contracts
-  (ServiceNow vs. iTop) sind für UC1 nicht relevant – Entscheid vertagt auf den
-  ersten schreibenden Use Case. Austauschbarkeit bleibt über die
-  Adapter-Interfaces gewährleistet (ADR 0002)
+- [x] Kunden-Tool-Paar fixiert (zwei Modelle, siehe UC1-Dokument): **Model 2 zuerst**
+  (FortiGate, IPAM = **NetBox**, DNS = AD), danach Model 1 (FortiGate + ACI, IPAM =
+  **Infoblox**). Umsetzungsreihenfolge deshalb: **NetBox-Adapter zuerst**, Infoblox in
+  Phase 2 (kehrt die frühere „Infoblox-first"-Notiz um). Contracts (ServiceNow vs. iTop)
+  für UC1 nicht relevant – vertagt. Austauschbarkeit über die Adapter-Interfaces (ADR 0002);
+  Mandantenfähigkeit über die per-Mandant-SoT-Bindung (ADR 0004)
 
 Die Firewall-Regel-**Automatisierung** (ADR 0002: Rule-Intents, Aerleon,
 Primary/Backup-Pfade) folgt als späterer Use Case und baut auf den in UC1
@@ -85,7 +87,7 @@ Feinschnitt der Services, so weit, dass der Durchstich ohne Grundsatzdiskussione
 - [ ] Collector-Interface (read-only) für FortiGate und Cisco ACI spezifizieren –
   inkl. Mapping ACI-Contracts/EPGs → normalisiertes Regelmodell (UC1)
 - [ ] SoT-Gateway-Adapter-Interface spezifizieren (kanonisches Datenmodell, ADR 0002;
-  erster Adapter: Infoblox, lesend – NetBox-Adapter später)
+  **erster Adapter: NetBox** für Model 2 – Infoblox in Phase 2)
 - [ ] Topology-Service-Schnittstelle spezifizieren (für UC1 nur das Zonen-Modell zur
   Filterung; Connections/Primary/Backup erst für die spätere Automatisierung)
 - [ ] Kommunikationswege und Authentisierung zwischen den Services festlegen (mTLS, signierte Jobs)
@@ -94,22 +96,21 @@ Feinschnitt der Services, so weit, dass der Durchstich ohne Grundsatzdiskussione
 
 ## M5 – Datenmodell definieren & Speicherorte fixieren
 
-Löst die offenen Punkte aus ADR 0002.
+Datenmodell ist als **ADR 0004** entworfen (mandantenfähig, eine `rule`-Tabelle mit
+polymorphen Endpunkten, Zonen aus dem SoT, Services, NAT, Findings; Namenskonvention
+als First-Class-Signal). Löst zugleich offene Punkte aus ADR 0002.
 
-- [ ] Datenmodell Rule & Service Store: für UC1 die normalisierten **Ist-Regeln**
-  (Quellsystem, Quell-/Ziel-Referenzen, Service, Aktion, Zone, Erfassungszeitpunkt)
-  plus Adressobjekt-Referenzen und Service-Objekte; Firewall-Rule-**Intents** und
-  Topology-Verknüpfung so vorsehen, dass die spätere Automatisierung andockt
-- [ ] Applikations-Zuordnung entscheiden: wie werden Regeln Applikationen zugeordnet
-  (Infoblox Extensible Attributes, Naming-Konvention, manuelle Pflege) – siehe UC1, offene Fragen
-- [ ] Persistenz-Entscheid Rule Store: Git-only vs. DB + Git-Sync → als ADR festhalten
-- [ ] Zonen-Zuordnung entscheiden: automatisch aus IPAM-Tags oder manuell im Topology Service
-  (inkl. Normalisierung FortiGate-Zonen vs. ACI-EPGs/Tenants)
-- [ ] Speicherorte für das erste Projekt fixieren: welche Daten liegen im IPAM/Infoblox
-  (via SoT Gateway), welche im Rule & Service Store, welche im Topology Service
+- [x] Datenmodell-Entwurf als ADR 0004 festgehalten (Ist-Regeln, Objekte, Services,
+  NAT-Schema, Findings; Rule-**Intents**/Topology für den späteren Schreibpfad vorgesehen)
+- [x] Zonen-Zuordnung entschieden: Zone am Subnetz, im SoT gepflegt, von Automato gelesen
+- [x] Applikations-Zuordnung: vorgesehen (`application` am Objekt), Befüllung später
+  (Namenskonvention/CMDB)
+- [ ] Speicherorte fixieren: welche Daten liegen im IPAM (via SoT Gateway) vs. im
+  Rule & Service Store (Postgres führend; Git-Sync erst mit den Rule-Intents, ADR 0004)
+- [ ] DDL/SQLAlchemy + Alembic-Migration aus ADR 0004 umsetzen (beim M5-Bau)
 
-**Exit-Kriterium:** Datenmodell und Speicherorte als ADR/Schema dokumentiert; Abschnitt
-„Offene Punkte" in ADR 0002 ist abgearbeitet.
+**Exit-Kriterium:** Datenmodell als ADR dokumentiert (✓ ADR 0004), Schema umgesetzt und
+Speicherorte fixiert.
 
 ## M6 – Grundaufbau: Skripte, Installation, Laborumgebung
 
@@ -122,11 +123,11 @@ Löst die offenen Punkte aus ADR 0002.
   Web-UI; Profile `core`/`collectors`, Healthchecks, `.env.example`)
 - [x] Secrets-Handling Grundausbau: `.env` (nie committet), gitleaks in pre-commit
   und CI; Ansible Vault folgt, sobald Lab-Credentials existieren (SECURITY.md)
-- [ ] Source of Truth anbinden (M1-Entscheid: **Infoblox DDI** – Test-/Kundeninstanz
-  bzw. vNIOS-Eval klären), Naming-/Tagging-Standards definieren
-- [ ] **Laborumgebung** mit Zielsystemen für Use Case #1 bereitstellen
-  (FortiGate-VM; Cisco ACI via DevNet-Sandbox oder ACI-Simulator; Infoblox-Testinstanz)
-  – der Durchstich läuft **nie** gegen Produktion
+- [ ] Source of Truth anbinden: **Model 2 zuerst → NetBox** (Testinstanz), Infoblox in
+  Phase 2; Naming-/Tagging-Standards inkl. Zonen-Tag am Subnetz definieren
+- [ ] **Laborumgebung** für den ersten Durchstich (Model 2): FortiGate-VM + NetBox.
+  Model 1 (Phase 2): Infoblox-Testinstanz + Cisco ACI (DevNet-Sandbox / ACI-Simulator).
+  Der Durchstich läuft **nie** gegen Produktion
 
 **Exit-Kriterium:** Alle für den Durchstich nötigen Komponenten sind installierbar,
 das Lab ist erreichbar.
@@ -134,12 +135,14 @@ das Lab ist erreichbar.
 ## M7 – Durchstich (Walking Skeleton)
 
 Eine bewusst **kleine Tätigkeit**, aber über den kompletten Pfad. Für UC1
-(read-only) heisst das: **lesen statt schreiben**.
+(read-only) heisst das: **lesen statt schreiben** – und zwar gegen **Model 2**
+(FortiGate + NetBox, kein ACI, kein NAT).
 
 - [ ] Dünnster Ende-zu-Ende-Pfad: Auftrag (CLI/Minimal-UI) → Orchestrator → Job-Queue →
   Collector liest Regeln der Lab-FortiGate → normalisiert in den Rule Store →
   Anzeige der Regeln
-- [ ] Eine Regel-Adresse via Infoblox-Adapter auflösen (ein Matching-Fall genügt)
+- [ ] Eine Regel-Adresse via **NetBox-Adapter** auflösen (ein Matching-Fall genügt);
+  ein nicht auflösbares Objekt als Finding sichtbar machen
 - [ ] Job-Rückmeldung + Audit-Log-Eintrag (wer, wann, was, Ergebnis)
 
 **Exit-Kriterium:** Ein Auftrag liest nachvollziehbar Regeln aus dem Lab, speichert

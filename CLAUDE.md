@@ -57,10 +57,14 @@ aufgebaut (siehe `ROADMAP.md`); Risiken werden im Risikoregister `docs/RISKS.md`
 geführt und an jedem Meilenstein aktualisiert.
 
 M1 ist inhaltlich entschieden: **Use Case #1 = Firewall-Regel-Dokumentation
-(read-only)** – Regeln von FortiGate und Cisco ACI lesen, mit Adressobjekten aus
-**Infoblox DDI** verknüpfen (IPAM-Entscheid für das erste Projekt), Service-Objekt-DB,
-Web-UI mit Filtern (Systeme/Netzwerke/Zonen), Applikations-Doku. Details, offene
-Fragen und DoD-Entwurf: `docs/usecases/uc1-firewall-regel-dokumentation.md`
+(read-only)** – Firewall-Regeln lesen, mit IPAM-Adressobjekten verknüpfen,
+Service-Objekt-DB, Web-UI mit Filtern (Systeme/Netzwerke/Zonen), Applikations-Doku.
+Zwei Kundenmodelle, **Model 2 zuerst** (FortiGate + **NetBox**, kein ACI), danach
+Model 1 (FortiGate + ACI + **Infoblox**). Umsetzung deshalb **NetBox-Adapter zuerst**.
+Das **Datenmodell ist als ADR 0004** entworfen (mandantenfähig; eine `rule`-Tabelle mit
+polymorphen Endpunkten host|network|epg|zone; Zonen aus dem SoT; Services inkl.
+ICMP/Dual-Stack; NAT-Schema; Findings für Datenqualität; Namenskonvention als
+First-Class-Signal). Details/DoD-Entwurf: `docs/usecases/uc1-firewall-regel-dokumentation.md`
 (**DoD noch zu bestätigen**). Die Regel-Automatisierung gemäss ADR 0002 folgt als
 späterer Use Case.
 
@@ -72,7 +76,6 @@ dazu docker-compose (Profile core/collectors), CI (`.github/workflows/ci.yml`)
 und pre-commit/gitleaks. Tests: `uv run --package <name> pytest <name>/tests`.
 
 Als Nächstes: DoD bestätigen (M1-Exit), **M2 Risiken-Review**, **M3
-Architektur-/Security-Review**, **M5 – Datenmodell** (normalisierte Ist-Regeln,
-Adressobjekt-Referenzen, Service-Objekte) sowie Lab + Infoblox-Anbindung
-(Rest von M6). Offene Fragen siehe ADR 0002, Abschnitt "Offene Punkte", und
-das UC1-Dokument.
+Architektur-/Security-Review**, dann **M5-Bau** (DDL/SQLAlchemy + Alembic aus ADR 0004)
+sowie Lab + NetBox-Anbindung für den Model-2-Durchstich (Rest von M6). Offene Fragen
+siehe ADR 0004 (Phasenplan), ADR 0002 ("Offene Punkte") und das UC1-Dokument.

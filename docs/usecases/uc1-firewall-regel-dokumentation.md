@@ -1,35 +1,58 @@
 # Use Case #1 – Firewall-Regel-Dokumentation (read-only)
 
-Status: In M1 festgelegt (2026-07-21) · Definition of Done: **Entwurf, zu bestätigen**
+Status: In M1 festgelegt (2026-07-21) · Datenmodell: **ADR 0004** · Definition of
+Done: **Entwurf, zu bestätigen**
 
 ## Beschreibung
 
-Firewall-Regeln von diversen Firewalls (Start: FortiGate) und Cisco ACI **auslesen**
-und zentral abspeichern (Dokumentation). Die Regel-Adressen werden Adressobjekten aus
-**Infoblox DDI** zugeordnet; Service-Objekte (TCP/UDP) werden in einer eigenen
-Datenbank normalisiert abgebildet. Ein Web-UI stellt die Regeln dar, filterbar nach
-Systemen, Netzwerken und Zonen. Pro Applikation lassen sich Dokumente generieren.
+Firewall-Regeln von FortiGate (und später Cisco ACI) **auslesen** und zentral
+abspeichern (Dokumentation). Die Regel-Adressen werden Adressobjekten aus dem aktiven
+IPAM (NetBox bzw. Infoblox, je Mandant) zugeordnet; Service-Objekte werden dedupliziert
+abgebildet. Ein Web-UI stellt die Regeln dar, filterbar nach Systemen, Netzwerken und
+Zonen. Pro Applikation lassen sich Dokumente generieren.
 
 Kein Schreibzugriff auf Zielsysteme – damit ist UC1 der risikoärmste Einstieg
 (vgl. Risikoregister R1) und legt zugleich die Datenbasis für die spätere
 Firewall-Regel-Automatisierung (ADR 0002).
 
+## Kundenmodelle & Umsetzungsreihenfolge
+
+Zwei reale Umgebungen; **Model 2 wird zuerst umgesetzt** (einfacher, kein ACI → meidet
+Risiko R10 im Durchstich), Model 1 danach. Details und Datenmodell: **ADR 0004**.
+
+- **Model 2 (zuerst):** FortiGate + Switches (nur VLAN/L3), **NetBox** als IPAM,
+  DNS = Active Directory. Einfache Struktur, VPN mit statischem/dynamischem Routing.
+- **Model 1 (danach):** FortiGate + Cisco ACI + Switches, **Infoblox** als IPAM/DNS,
+  ACI mit Microsegmentierung und mehreren Security-Tenants, strikte Namenskonvention,
+  mehrere Firewalls in Serie. Contracts zu den Firewalls sind vzAny – die Enforcement
+  macht die FortiGate; die dokumentationsrelevanten ACI-Regeln sind die
+  East-West-Contracts zwischen EPGs.
+
+Switches sind **keine Regelquelle** (nur VLAN/L3-Switching); Switch-ACLs sind selten
+und bleiben für später offen gehalten. Automato ist **mandantenfähig** (ein Mandant
+trägt seine SoT-Bindung; cross-tenant-Überblick + per-tenant-Sicht).
+
 ## Umfang (in scope)
 
 1. **Collector FortiGate** (REST API, read-only): Policies, Adress-/Service-Objekte,
-   Zonen/Interfaces
-2. **Collector Cisco ACI** (APIC REST API, read-only): Contracts, Filter, EPGs –
-   Abbildung auf das normalisierte Regelmodell
-3. **Normalisiertes Datenmodell + Speicher** (Rule & Service Store, Postgres):
-   Regeln, Adress-Referenzen, Service-Objekte, Zonen, Quellsystem, Erfassungszeitpunkt
-4. **Infoblox-DDI-Adapter** (SoT Gateway, lesend): Matching Regel-Adressen ↔
-   Infoblox-Objekte (exakt + longest-prefix); nicht zuordenbare Adressen werden als
-   „unmatched" ausgewiesen, nicht verworfen
-5. **Service-Objekt-Datenbank**: Vendor-Definitionen dedupliziert auf kanonische
-   Services (z. B. `tcp/443` einmal, egal wie FortiGate/ACI es nennen)
-6. **Web-UI**: Regel-Tabelle mit Filtern nach System, Netzwerk und Zone;
-   Detailansichten, Suche
-7. **Dokumenten-Generierung** pro Applikation (Export, Format offen – siehe offene Fragen)
+   Zonen
+2. **Collector Cisco ACI** (APIC REST API, read-only, **Model 1 / Phase 2**): Contracts,
+   Filter, EPGs; **Autorität für IP↔EPG** (gelernte Endpunkte, akkumulierend gegen das
+   30-min-Aging – siehe ADR 0004)
+3. **Datenmodell + Speicher** (Rule & Service Store, Postgres): mandantenfähig,
+   eine `rule`-Tabelle mit polymorphen Endpunkten, Zonen, Services, NAT, Findings –
+   Schema in **ADR 0004**
+4. **SoT-Adapter** (SoT Gateway, lesend): Matching Regel-Adressen ↔ IPAM-Objekte
+   (exakt + longest-prefix). **NetBox zuerst** (Model 2), Infoblox in Phase 2.
+   Nicht zuordenbare Adressen werden als Finding ausgewiesen, nicht verworfen
+5. **Service-Objekt-Datenbank**: dedupliziert auf kanonische Services (`tcp/443`,
+   ICMP/ICMPv6, IP-Protokolle; Dual-Stack)
+6. **Web-UI**: Regel-Tabelle mit Filtern nach System, Netzwerk und Zone; Findings-Sicht
+   (Datenqualität); bei FortiGate-Regeln die EPG-Zugehörigkeit der Hosts eingeblendet
+7. **Datenqualität/Reconciliation**: Abweichungen (ungültige/fehlende Namen, IP auf
+   mehreren Objekten, fehlende IPAM-Objekte, Präfix↔Typ-Konflikt) sichtbar machen und
+   quittierbar – schreibende Bereinigung erst im Schreibpfad
+8. **Dokumenten-Generierung** pro Applikation (Export, Format offen – siehe offene Fragen)
 
 ## Nicht im Umfang (spätere Use Cases)
 
@@ -58,24 +81,34 @@ Firewall-Regel-Automatisierung (ADR 0002).
 | UC1-Baustein | Plattform-Komponente |
 |---|---|
 | Collectors FortiGate/ACI | Documentation Engine bzw. read-only Worker |
-| Normalisierte Regeln + Service-Objekte | Rule & Service Store |
-| Infoblox-Zuordnung | SoT Gateway (`infoblox-adapter`, lesend) |
-| Zonen-Filter | Topology Service (nur Zonen-Modell; Primary/Backup erst später) |
-| Darstellung + Filter | Web UI |
+| Regeln, Objekte, Services, NAT, Findings | Rule & Service Store (ADR 0004) |
+| IPAM-Zuordnung | SoT Gateway (`netbox-adapter` zuerst, `infoblox-adapter` Phase 2) |
+| Zonen-Filter | Zone am Subnetz, aus dem SoT gelesen (Topology Service nur Zonen-Modell) |
+| Darstellung + Filter + Findings | Web UI |
 | Applikations-Doku | Documentation Engine (Export) |
 
-## Offene Fragen (vor M4/M5 klären)
+## Geklärte Punkte (aus den Planungsrunden → ADR 0004)
 
-1. **Welche „diversen Firewalls"** konkret, ausser FortiGate? Jeder weitere
-   Hersteller ist ein eigener Collector (grober Zusatzaufwand: siehe Schätzung).
-2. **Applikations-Zuordnung**: Wie werden Regeln Applikationen zugeordnet –
-   Infoblox Extensible Attributes, Naming-Konventionen, manuelle Pflege im Store?
-3. **Zonen-Normalisierung**: FortiGate-Zonen vs. ACI-EPGs/Tenants – gemeinsamer
-   Zonen-Begriff für den Filter?
-4. **Historisierung**: nur aktueller Stand, oder Änderungen über Zeit nachvollziehbar?
-5. **Dokumentformat** für die Applikations-Doku: Markdown, PDF, Word?
-6. **Lab-Zugang**: FortiGate-VM und Infoblox-Testinstanz (vNIOS) verfügbar?
-   ACI: echte Fabric, Cisco-DevNet-Sandbox oder ACI-Simulator?
+- **Zonen-Normalisierung:** Zone ist ein Attribut am Subnetz, im SoT gepflegt und von
+  Automato nur gelesen. Eine Zone umfasst mehrere Subnetze (DMZ, Server, Transfer,
+  Internet, Edge, Office, Gäste, Partner …). ACI-L3Outs (5, zweckgebunden) entsprechen
+  Zonen von der ACI-Seite.
+- **Applikations-Zuordnung:** vorgesehen (`application` am Objekt), Quelle später über
+  Namenskonvention bzw. die im Aufbau befindliche CMDB. ServiceNow ist heute **nicht**
+  SoT.
+- **Namenskonvention** (Model 1) wird geparst: Präfixe `H_`/`N_`/`VIP_`/`R_`/`H-EXT_`
+  → Objektklasse, FQDN → Domain (löst Mehr-AD-Situation). `H-EXT_` = bewusst extern
+  (kein IPAM-Match erwartet).
+- **Historisierung:** aktueller Stand + `last_seen`; volle Änderungshistorie vertagt.
+  Ausnahme: gelernte ACI-Endpunkte werden akkumuliert (30-min-Aging).
+
+## Offene Fragen (Rest)
+
+1. **Definition of Done bestätigen** (Ziel-Matching-Quote festlegen).
+2. **Dokumentformat** für die Applikations-Doku: Markdown, PDF, Word?
+3. **Lab-Zugang:** Model 2 zuerst → FortiGate-VM + NetBox-Testinstanz. Model 1 (Phase 2):
+   Infoblox-Testinstanz (vNIOS) und ACI via echte Fabric / Cisco-DevNet-Sandbox /
+   ACI-Simulator.
 
 ## Grobschätzung Entwicklungsaufwand
 
