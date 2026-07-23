@@ -147,18 +147,23 @@ Eine bewusst **kleine Tätigkeit**, aber über den kompletten Pfad. Für UC1
 (read-only) heisst das: **lesen statt schreiben** – und zwar gegen **Model 2**
 (FortiGate + NetBox, kein ACI, kein NAT).
 
-**Code-Pfad implementiert und fixture-getestet** (kein Lab nötig): NetBox-Adapter
-(lesend), Ingest/Matching in den Rule & Service Store, Findings für nicht
-auflösbare Objekte, interne API verdrahtet. Offen ist der Lauf gegen das **echte
-Lab** und ein Minimal-UI/CLI-Auslöser.
+**Code-Pfad implementiert und fixture-getestet** (kein Lab nötig): FortiGate-Collector
+mit echtem FortiOS-REST-Abruf (rein lesend) inkl. Adress-/Service-Auflösung,
+NetBox-Adapter (lesend), Ingest/Matching in den Rule & Service Store, Findings für
+nicht auflösbare Objekte, interne API verdrahtet. Offen ist nur noch der Lauf gegen
+das **echte Lab** und ein Minimal-UI/CLI-Auslöser.
 
+- [x] FortiGate-Collector: echter FortiOS-REST-Abruf (read-only) über injizierbaren
+  httpx-Client; Adressobjekt-Namen → Werte aufgelöst (ipmask→CIDR/Host-IP, iprange,
+  Gruppen rekursiv), FQDN/`H-EXT_` bleiben Name; Services → kanonische Tokens
+  (MockTransport-getestet, `test_fortigate_client.py`); ohne Lab-Creds Beispieldaten
 - [x] Persistenz-/Matching-Pfad: Collector-Ergebnis → interne API → Rule & Service Store
   → Anzeige über `/rules` (fixture-getestet, `test_internal_ingest.py`)
 - [x] Adress-Matching via **NetBox-Adapter**; nicht auflösbares Objekt wird als Finding
   ausgewiesen; `H-EXT_` als `expected_external` ohne Fehler (fixture-getestet)
 - [x] Job-Rückmeldung + Audit-Log-Eintrag (wer, wann, was, Ergebnis)
-- [ ] Lauf gegen das echte Lab (FortiGate-Collector-Abruf statt Beispieldaten) + Auslöser
-  (Minimal-UI/CLI) — sobald das Lab steht (`collectors/fortigate/LAB.md`,
+- [ ] Lauf gegen das echte Lab (Lab-Creds setzen, echter Abruf statt Beispieldaten) +
+  Auslöser (Minimal-UI/CLI) — sobald das Lab steht (`collectors/fortigate/LAB.md`,
   `source-of-truth/netbox/`)
 
 **Exit-Kriterium:** Ein Auftrag liest nachvollziehbar Regeln aus dem Lab, speichert

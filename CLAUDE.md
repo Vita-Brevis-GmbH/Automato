@@ -85,11 +85,15 @@ Die Gates **M1 (DoD bestätigt), M2 (Risikoregister R1–R14) und M3 (Security-R
 ADR 0005)** sind erledigt; erste Sofort-Härtungen umgesetzt (Fail-closed Token-Check,
 CORS aus Konfiguration).
 
-Der **M7-Durchstich ist codeseitig fertig und fixture-getestet** (Model 2): NetBox-Adapter
-(lesend), Ingest/Matching in den Rule & Service Store, Findings, interne API verdrahtet
-(`app/store/ingest.py`, `app/sot.py`, Tests `test_ingest.py`/`test_internal_ingest.py`).
-Lab-Setup ist skriptet/dokumentiert (`source-of-truth/netbox/`, `collectors/fortigate/LAB.md`).
+Der **M7-Durchstich ist codeseitig fertig und fixture-getestet** (Model 2): FortiGate-Collector
+mit echtem FortiOS-REST-Abruf (rein lesend, `collectors/fortigate/client.py`) inkl.
+Adress-/Service-Auflösung (`normalize.py`: Objektnamen→Werte, FQDN/`H-EXT_` bleiben Name),
+NetBox-Adapter (lesend), Ingest/Matching in den Rule & Service Store, Findings, interne
+API verdrahtet (`app/store/ingest.py`, `app/sot.py`, Tests `test_ingest.py`/
+`test_internal_ingest.py`/`test_fortigate_client.py`). Ohne Lab-Creds liest der Collector
+Beispieldaten; mit `AUTOMATO_FORTIGATE_URL`/`_TOKEN` den echten Abruf. Lab-Setup ist
+skriptet/dokumentiert (`source-of-truth/netbox/`, `collectors/fortigate/LAB.md`).
 
-Als Nächstes: Lauf gegen das **echte Lab** (FortiGate-Collector-Abruf statt Beispieldaten)
-+ Minimal-UI/CLI-Auslöser, dann M8/M9. Offene Fragen siehe ADR 0004 (Phasenplan) und das
+Als Nächstes: Lauf gegen das **echte Lab** (Lab-Creds setzen, echter Abruf statt
+Beispieldaten) + Minimal-UI/CLI-Auslöser, dann M8/M9. Offene Fragen siehe ADR 0004 (Phasenplan) und das
 UC1-Dokument; RBAC/Secrets/mTLS/Netzsegmentierung sind als Folge-ADRs terminiert (ADR 0005).
