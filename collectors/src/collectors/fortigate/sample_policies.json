@@ -1,22 +1,32 @@
 [
   {
     "policyid": 1,
-    "name": "dmz-to-web-backend",
+    "name": "allow-dmz-to-web",
     "action": "accept",
-    "srcintf": [{"name": "dmz"}],
-    "dstintf": [{"name": "internal"}],
-    "srcaddr": [{"name": "net-dmz-web"}],
-    "dstaddr": [{"name": "host-app-backend"}],
+    "srcintf": [{"name": "port2"}],
+    "dstintf": [{"name": "port3"}],
+    "srcaddr": [{"name": "N_dmz-net"}],
+    "dstaddr": [{"name": "H_web01"}],
     "service": [{"name": "HTTPS"}]
   },
   {
     "policyid": 2,
     "name": "deny-dmz-to-mgmt",
     "action": "deny",
-    "srcintf": [{"name": "dmz"}],
-    "dstintf": [{"name": "mgmt"}],
-    "srcaddr": [{"name": "all"}],
-    "dstaddr": [{"name": "net-mgmt"}],
+    "srcintf": [{"name": "port2"}],
+    "dstintf": [{"name": "port1"}],
+    "srcaddr": [{"name": "N_dmz-net"}],
+    "dstaddr": [{"name": "all"}],
     "service": [{"name": "ALL"}]
+  },
+  {
+    "policyid": 3,
+    "name": "allow-web-to-partner",
+    "action": "accept",
+    "srcintf": [{"name": "port3"}],
+    "dstintf": [{"name": "port1"}],
+    "srcaddr": [{"name": "H_web01"}],
+    "dstaddr": [{"name": "H-EXT_partner-api"}],
+    "service": [{"name": "APP-8443"}]
   }
 ]

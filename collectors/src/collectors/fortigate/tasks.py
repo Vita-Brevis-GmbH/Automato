@@ -1,9 +1,9 @@
 """FortiGate-Collector-Task.
 
-GRUNDAUFBAU: Liest Beispieldaten (sample_policies.json) statt einer echten
-FortiGate - der Kreislauf Orchestrator -> Queue -> Collector -> Ergebnis-Upload
-ist damit komplett testbar. Der echte REST-Abruf (FortiOS API, read-only
-Token) kommt im Durchstich (M7), sobald das Lab steht.
+Liest die Regeln per FortiOS-REST-API (read-only), sobald `AUTOMATO_FORTIGATE_URL`
+und `AUTOMATO_FORTIGATE_TOKEN` gesetzt sind - sonst Beispieldaten (Lab noch nicht da).
+In beiden Faellen laeuft dieselbe Normalisierung inkl. Adress-/Service-Aufloesung.
+Ergebnis geht per HTTP an die interne Orchestrator-API (kein DB-Zugriff).
 """
 
 import json
@@ -12,19 +12,38 @@ from importlib import resources
 from collectors.celery_app import app
 from collectors.common.dto import CollectorResult
 from collectors.common.upload import submit_result
-from collectors.fortigate.normalize import normalize_policy
+from collectors.config import get_settings
+from collectors.fortigate import normalize as norm
+from collectors.fortigate.client import FortiGateClient
 
 
-def fetch_policies() -> list[dict]:
-    # TODO(M7): echte FortiOS-REST-Abfrage (GET /api/v2/cmdb/firewall/policy)
-    sample = resources.files("collectors.fortigate").joinpath("sample_policies.json")
-    return json.loads(sample.read_text())
+def _sample(name: str) -> list[dict]:
+    return json.loads(resources.files("collectors.fortigate").joinpath(name).read_text())
+
+
+def gather() -> tuple[list, list, list, list]:
+    """(policies, addresses, address_groups, services) - vom Lab oder aus Beispieldaten."""
+    settings = get_settings()
+    if settings.fortigate_url and settings.fortigate_token:
+        client = FortiGateClient(
+            settings.fortigate_url,
+            settings.fortigate_token,
+            verify_tls=settings.fortigate_verify_tls,
+        )
+        return client.gather()
+    return (
+        _sample("sample_policies.json"),
+        _sample("sample_addresses.json"),
+        _sample("sample_addrgrps.json"),
+        _sample("sample_services.json"),
+    )
 
 
 @app.task(name="collectors.fortigate.collect")
 def collect(run_id: str) -> None:
     try:
-        rules = [normalize_policy(p) for p in fetch_policies()]
+        policies, addresses, groups, services = gather()
+        rules = norm.normalize(policies, addresses, groups, services)
         result = CollectorResult(status="completed", rules=rules)
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
         result = CollectorResult(status="failed", message=str(exc))

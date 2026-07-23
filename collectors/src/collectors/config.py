@@ -12,8 +12,12 @@ class Settings(BaseSettings):
     orchestrator_url: str = "http://localhost:8000"
     internal_api_token: str = "dev-only-token"  # noqa: S105 - nur lokaler Default
 
-    # Zielsystem-Zugaenge (read-only!) folgen mit M7/Lab, z. B.:
-    # fortigate_url / fortigate_api_token, aci_url / aci_username / aci_password
+    # Zielsystem-Zugang FortiGate (read-only!). Ohne URL/Token liest der Collector
+    # Beispieldaten (Lab noch nicht da). verify_tls im Lab i. d. R. false (selbstsigniert).
+    fortigate_url: str = ""
+    fortigate_token: str = ""
+    fortigate_verify_tls: bool = True
+    # Cisco ACI folgt in Phase 2: aci_url / aci_username / aci_password
 
 
 @lru_cache
