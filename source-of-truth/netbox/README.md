@@ -53,6 +53,34 @@ FortiGate auf dieselben Netze/IPs aus, damit das Matching Treffer erzeugt.
 - Stoppen: `cd netbox-docker && docker compose down`
 - Komplett zurücksetzen (inkl. Daten): `cd netbox-docker && docker compose down -v`
 
+## Fehlerbehebung
+
+**`dependency failed to start: container netbox-docker-netbox-1 is unhealthy`**
+
+Der `netbox`-Container wurde nicht rechtzeitig „healthy", darum brechen die
+abhängigen Dienste (`netbox-worker`, `netbox-housekeeping`) ab. Fast immer ist es
+ein **langsamer Erststart** (DB-Migrationen + gunicorn) oder **zu wenig RAM**.
+Das aktuelle `setup.sh` fängt das ab (relaxter Healthcheck, startet zuerst nur
+`netbox`), also am einfachsten neu ausführen: `NETBOX_PORT=8080 ./setup.sh`.
+
+Diagnose (im `netbox-docker/`-Verzeichnis):
+
+```bash
+cd source-of-truth/netbox/netbox-docker
+docker compose ps                       # Zustand aller Container
+docker compose logs --tail=80 netbox    # echte Ursache
+free -h                                 # RAM: der NetBox-Stack braucht ~3-4 GB
+```
+
+- **Log zeigt Migrationen/„Starting gunicorn"** → nur langsam. Warten, dann
+  `docker compose up -d`. Für UC1 (Lesen über die REST-API) genügt der
+  `netbox`-Container; `worker`/`housekeeping` sind dafür nicht nötig.
+- **RAM knapp / OOM-Kill im Log** → VM mehr Speicher geben (≥ 4 GB empfohlen).
+- **Echter Fehler im Log** (DB-Verbindung, Konfig) → Meldung zurückmelden.
+
+Sobald `curl -fsS http://localhost:8080/login/` antwortet, ist die API bereit –
+auch wenn `worker`/`housekeeping` noch nicht healthy sind.
+
 ## Hinweise
 
 - Die Token-Anlage nutzt `from users.models import Token`. Sollte sich das App-Layout

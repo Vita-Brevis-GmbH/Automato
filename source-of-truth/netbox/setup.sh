@@ -30,17 +30,28 @@ if [ ! -d "$NETBOX_DIR" ]; then
 fi
 cd "$NETBOX_DIR"
 
-# 2. Port-Override (netbox-docker liefert selbst kein Host-Port-Mapping)
+# 2. Overrides: Host-Port + grosszuegigerer Healthcheck.
+# netbox-docker liefert kein Host-Port-Mapping; und der erste Start (Migrationen +
+# gunicorn) dauert auf frischer VM/DB laenger, als der Default-Healthcheck erlaubt -
+# sonst gelten die abhaengigen Container (worker/housekeeping) als "unhealthy".
 cat > docker-compose.override.yml <<YAML
 services:
   netbox:
     ports:
       - "${NETBOX_PORT}:8080"
+    healthcheck:
+      start_period: 300s
+      interval: 15s
+      retries: 15
 YAML
 
-# 3. Stack starten
+# 3. Stack starten - bewusst NUR den netbox-Dienst (+ seine Abhaengigkeiten
+# postgres/redis). Die Worker haengen an "netbox: healthy"; wuerde man sie hier
+# schon mitstarten, bricht ein langsamer Erststart mit
+# "container ... is unhealthy" ab. Fuer UC1 (lesend ueber die REST-API) reicht
+# der netbox-Dienst; die Worker kommen am Ende best-effort dazu.
 docker compose pull
-docker compose up -d
+docker compose up -d netbox
 
 # 4. Auf Erreichbarkeit warten (NetBox-Migrationen brauchen beim ersten Start Zeit)
 echo "Warte auf NetBox unter http://localhost:${NETBOX_PORT}/ ..."
@@ -95,6 +106,13 @@ if not created:
 
 print("SETUP_OK")
 PY
+
+# 6. Restliche Dienste (worker/housekeeping) best-effort nachziehen. Fuer UC1
+# (lesend) nicht noetig; ein Fehler hier darf das Setup nicht scheitern lassen.
+if ! docker compose up -d; then
+  echo "Hinweis: worker/housekeeping noch nicht healthy - fuer UC1 (nur Lesen ueber" >&2
+  echo "die REST-API) unkritisch. Spaeter erneut: 'docker compose up -d'." >&2
+fi
 
 cat <<EOF
 
