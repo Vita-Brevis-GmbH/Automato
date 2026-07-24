@@ -15,6 +15,9 @@ dependencies = [
     "sot-gateway",
 ]
 
+[project.scripts]
+automato = "app.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

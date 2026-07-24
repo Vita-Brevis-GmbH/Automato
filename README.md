@@ -28,7 +28,8 @@ Automatisierungsplattform für heterogene Infrastruktur mit den Kernzielen:
 automation-platform/
 ├── orchestrator/          Zentrale Steuerung: API, Jobs, Audit-Log, Rule & Service Store
 ├── collectors/             Read-only Collectors (UC1): fortigate/, cisco_aci/
-├── sot-gateway/            Adapter-Package IPAM/SoT (Infoblox lesend, NetBox-Stub)
+├── sot-gateway/            Adapter-Package IPAM/SoT (NetBox lesend, Infoblox folgt)
+├── lab/                     Scriptbares Lab-Setup einer VM (NetBox + Automato-Stack)
 ├── workers/                Worker Nodes je Zielplattform (schreibend, spätere Use Cases)
 │   ├── fortigate/
 │   ├── cisco-aci/

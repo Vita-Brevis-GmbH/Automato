@@ -162,8 +162,13 @@ das **echte Lab** und ein Minimal-UI/CLI-Auslöser.
 - [x] Adress-Matching via **NetBox-Adapter**; nicht auflösbares Objekt wird als Finding
   ausgewiesen; `H-EXT_` als `expected_external` ohne Fehler (fixture-getestet)
 - [x] Job-Rückmeldung + Audit-Log-Eintrag (wer, wann, was, Ergebnis)
-- [ ] Lauf gegen das echte Lab (Lab-Creds setzen, echter Abruf statt Beispieldaten) +
-  Auslöser (Minimal-UI/CLI) — sobald das Lab steht (`collectors/fortigate/LAB.md`,
+- [x] CLI-Auslöser (`automato` im Orchestrator): Mandant/Quellsystem idempotent
+  anlegen + Collect-Lauf starten/abfragen — gleicher Pfad wie `POST /jobs/collect`
+  (fixture-getestet, `test_cli.py`)
+- [x] Scriptbares Lab-Setup einer VM (`lab/`): Prereqs, NetBox (Port 8080) + Automato-Stack
+  verdrahtet, Compose reicht NetBox-/FortiGate-Creds durch (`lab/README.md`)
+- [ ] Lauf gegen das echte Lab (Lab-Creds setzen, echter Abruf statt Beispieldaten) —
+  sobald FortiGate + NetBox stehen (`lab/README.md`, `collectors/fortigate/LAB.md`,
   `source-of-truth/netbox/`)
 
 **Exit-Kriterium:** Ein Auftrag liest nachvollziehbar Regeln aus dem Lab, speichert

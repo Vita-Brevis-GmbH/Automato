@@ -43,9 +43,18 @@ services:
       redis:
         condition: service_healthy
     environment:
+      AUTOMATO_ENVIRONMENT: ${AUTOMATO_ENVIRONMENT:-dev}
       AUTOMATO_DATABASE_URL: postgresql+psycopg://automato:${POSTGRES_PASSWORD:-automato}@postgres:5432/automato
       AUTOMATO_REDIS_URL: redis://redis:6379/0
       AUTOMATO_INTERNAL_API_TOKEN: ${AUTOMATO_INTERNAL_API_TOKEN:-dev-only-token}
+      AUTOMATO_CORS_ORIGINS: ${AUTOMATO_CORS_ORIGINS:-["http://localhost:5173"]}
+      # SoT-Zugang (lesend) fuer das Matching. NetBox laeuft als eigener Stack auf
+      # dem Host -> ueber host.docker.internal:<port> erreichbar (siehe lab/README.md).
+      AUTOMATO_NETBOX_URL: ${AUTOMATO_NETBOX_URL:-}
+      AUTOMATO_NETBOX_TOKEN: ${AUTOMATO_NETBOX_TOKEN:-}
+      AUTOMATO_NETBOX_VERIFY_TLS: ${AUTOMATO_NETBOX_VERIFY_TLS:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     healthcheck:
@@ -66,6 +75,13 @@ services:
       AUTOMATO_REDIS_URL: redis://redis:6379/0
       AUTOMATO_ORCHESTRATOR_URL: http://orchestrator:8000
       AUTOMATO_INTERNAL_API_TOKEN: ${AUTOMATO_INTERNAL_API_TOKEN:-dev-only-token}
+      # FortiGate-Zugang (read-only!). Leer -> Collector liest Beispieldaten.
+      # Die FortiGate-VM ist per LAN-IP direkt erreichbar (kein host.docker.internal noetig).
+      AUTOMATO_FORTIGATE_URL: ${AUTOMATO_FORTIGATE_URL:-}
+      AUTOMATO_FORTIGATE_TOKEN: ${AUTOMATO_FORTIGATE_TOKEN:-}
+      AUTOMATO_FORTIGATE_VERIFY_TLS: ${AUTOMATO_FORTIGATE_VERIFY_TLS:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   web-ui:
     build:

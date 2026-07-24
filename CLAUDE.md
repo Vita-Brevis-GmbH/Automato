@@ -91,9 +91,14 @@ Adress-/Service-Auflösung (`normalize.py`: Objektnamen→Werte, FQDN/`H-EXT_` b
 NetBox-Adapter (lesend), Ingest/Matching in den Rule & Service Store, Findings, interne
 API verdrahtet (`app/store/ingest.py`, `app/sot.py`, Tests `test_ingest.py`/
 `test_internal_ingest.py`/`test_fortigate_client.py`). Ohne Lab-Creds liest der Collector
-Beispieldaten; mit `AUTOMATO_FORTIGATE_URL`/`_TOKEN` den echten Abruf. Lab-Setup ist
-skriptet/dokumentiert (`source-of-truth/netbox/`, `collectors/fortigate/LAB.md`).
+Beispieldaten; mit `AUTOMATO_FORTIGATE_URL`/`_TOKEN` den echten Abruf. Der
+**CLI-Auslöser** ist gebaut (`orchestrator/app/cli.py`, Konsolen-Command `automato`:
+ensure-tenant/ensure-source/collect/status/lab, `test_cli.py`). Das **Lab-Setup ist
+scriptbar** (`lab/install-prereqs.sh`, `lab/up-automato.sh`, `lab/README.md`;
+`source-of-truth/netbox/`, `collectors/fortigate/LAB.md`); docker-compose reicht die
+NetBox-/FortiGate-Creds an Orchestrator/Collector durch, NetBox läuft als eigener
+Stack auf Port 8080 (Orchestrator auf 8000).
 
 Als Nächstes: Lauf gegen das **echte Lab** (Lab-Creds setzen, echter Abruf statt
-Beispieldaten) + Minimal-UI/CLI-Auslöser, dann M8/M9. Offene Fragen siehe ADR 0004 (Phasenplan) und das
+Beispieldaten via `lab/README.md`), dann M8/M9. Offene Fragen siehe ADR 0004 (Phasenplan) und das
 UC1-Dokument; RBAC/Secrets/mTLS/Netzsegmentierung sind als Folge-ADRs terminiert (ADR 0005).
