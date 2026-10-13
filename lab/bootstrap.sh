@@ -16,9 +16,11 @@ NETBOX_PORT="${NETBOX_PORT:-8080}"
 NETBOX_RESET="${NETBOX_RESET:-0}"
 FORTIGATE_URL="${FORTIGATE_URL:-}"
 FORTIGATE_TOKEN="${FORTIGATE_TOKEN:-}"
-# Tokens einmal erzeugen und ueberall wiederverwenden (kein Copy&Paste noetig).
-COLLECTOR_TOKEN="${COLLECTOR_TOKEN:-$(openssl rand -hex 20)}"
-ADMIN_TOKEN="${ADMIN_TOKEN:-$(openssl rand -hex 20)}"
+# Tokens immer frisch erzeugen (ephemere Lab-Tokens). Bewusst KEINE Env-Vererbung,
+# damit versehentlich gesetzte COLLECTOR_TOKEN/ADMIN_TOKEN (oder ein stray Export)
+# die NetBox-Tokens nicht ueberschreiben.
+COLLECTOR_TOKEN="$(openssl rand -hex 20)"
+ADMIN_TOKEN="$(openssl rand -hex 20)"
 
 # -- Preflight ----------------------------------------------------------------
 command -v docker >/dev/null 2>&1 || { echo "docker fehlt -> erst 'sudo bash lab/install-prereqs.sh'"; exit 1; }

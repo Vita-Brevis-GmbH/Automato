@@ -25,6 +25,9 @@ ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_PASS="${ADMIN_PASS:-admin1234!}"
 COLLECTOR_TOKEN="${COLLECTOR_TOKEN:-$(openssl rand -hex 20)}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-$(openssl rand -hex 20)}"
+# v1-Tokens brauchen genau 40 Zeichen; ungueltige Werte verwerfen und neu erzeugen.
+[ "${#COLLECTOR_TOKEN}" -eq 40 ] || { echo "WARN: COLLECTOR_TOKEN ungueltig -> neu erzeugt"; COLLECTOR_TOKEN="$(openssl rand -hex 20)"; }
+[ "${#ADMIN_TOKEN}" -eq 40 ] || { echo "WARN: ADMIN_TOKEN ungueltig -> neu erzeugt"; ADMIN_TOKEN="$(openssl rand -hex 20)"; }
 
 for tool in docker git curl openssl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "FEHLER: '$tool' nicht gefunden"; exit 1; }
