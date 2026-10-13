@@ -149,5 +149,10 @@ darüber trägt NetBox + Namensprofil; Global-Admin-Gesamtsicht; Applikation = S
 (Container/VM/Server) mit AP/Projekt-Klammer (~90 % automatisch, Rest via Designer);
 Ausnahmen-Kaskade (Konvention→Typ/Farbcode→Override→Finding); neue Collector-Felder
 (UTM-Schutzprofile, SNAT-IP-Pools `IPP_`, externer DNS aus `V-EXT_`, FortiGate-Farbcode).
-**Noch ausstehend:** Parser-Wörterbücher (Kap. 3.1 GG-Abkürzungen, 3.2 Projektnummern/
-Funktionscodes) + Struktur-Samples (→ Fixtures/ACI-Collector).
+**Samples erhalten** (ACI-Tenant-Export `TE_share` + FortiGate-Config, SOP) →
+**Collector-Lesevertrag** `docs/collectors-read-contract.md` (FortiGate+ACI; Samples
+bleiben ausserhalb Repo, Secrets gestrippt; `color` = numerischer Code, optional; reale
+UTM-Prefixe `AV_/WF_/DF_/AC_/IPS_/WAF_/SSL_`; Zusatz-Prefixe `N-EXT_`/`T_`/Geography;
+Contract-`scope`→Doku-Kategorie, `fvRsBDToOut`→L3O, Dual-Stack). **Noch ausstehend:**
+Wörterbücher (Kap. 3.1 GG-Abkürzungen, 3.2 Projektnummern/Funktionscodes) — als in-App
+pflegbare, erweiterbare Daten (Namensprofil), CSV als Seed.

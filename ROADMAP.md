@@ -270,5 +270,6 @@ das Plan→Approve→Apply→Rollback-Jobmodell (E4) abgedeckt.
 (`docs/naming-conventions.md`), Tenant-Modell Kunde/GG und die Applikations-Doku-Zieltabellen
 (`docs/usecases/uc1-applikations-doku-spec.md`) → **ADR-0004-Ergänzung** (Mandant = GG,
 Kunde/Umgebung darüber mit SoT + Namensprofil, Applikation = System mit AP/Projekt-Klammer,
-Ausnahmen-Kaskade, neue Collector-Felder). **Noch offen:** Parser-Wörterbücher
-(Kap. 3.1/3.2) + Struktur-Samples (Fixtures/ACI-Collector).
+Ausnahmen-Kaskade, neue Collector-Felder). **Samples erhalten** (ACI + FortiGate) →
+Lesevertrag `docs/collectors-read-contract.md`. **Noch offen:** Wörterbücher (Kap. 3.1/3.2)
+als in-App pflegbare Daten (Namensprofil).

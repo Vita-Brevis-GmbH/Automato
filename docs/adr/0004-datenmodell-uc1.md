@@ -180,7 +180,9 @@ Profil. Gemeinsame Basis-Grammatik (Prefix→Typ) + kundenspezifische Overrides.
 **E3 — Ausnahmen-Kaskade (erstklassig).** Einordnung läuft: (1) Konvention → (2) Objekttyp
 / FortiGate-**Farbcode** → (3) manuell/Designer-Override → (4) sonst `finding`. „Es gibt
 immer Ausnahmen" ist damit Teil des Modells, nicht ein Sonderfall. Das `color`-Signal
-(SOP/Swisscom/MPLS/VPN/Extern × Host/Network) wird am `network_object` mitgeführt.
+(SOP/Swisscom/MPLS/VPN/Extern × Host/Network) wird am `network_object` als **numerischer
+Code** und **optional** mitgeführt (nicht jedes Objekt hat eine Farbe → Fallback
+Prefix/Typ). Feld-Mapping der Collectors: `docs/collectors-read-contract.md`.
 
 **E4 — Applikation = System, mit AP/Projekt-Klammer.** `application` wird **systemzentriert**
 genutzt: eine Applikation ist am Ende ein Container/VM/Server (`network_object` host).

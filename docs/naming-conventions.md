@@ -273,3 +273,25 @@ Loadbalancer-Cluster · `lic` Lizenzserver · `lsw` Leaf-Switch · `mon` Monitor
 `stc` Storage-Cluster · `stm` Storage-Manager · `sto` Storage · `swi` Switch · `orc`
 Orchestrator · `uds` Update-Server · `ucs` UCS-Chassis · `vce` vCenter · `vpn`
 VPN-Concentrator · `vho` VMware-Host · `web` Webserver · `wap` Wireless Access Point.
+
+## Ergänzungen aus realen Samples (2026-10-13)
+
+Aus echten SOP-Ausschnitten (FortiGate-Config, ACI-Tenant `TE_share`) beobachtet; fliesst
+in die (in-App pflegbaren) Prefix-Wörterbücher und die Ausnahmen-Kaskade ein:
+
+- **Zusätzliche Objekt-Prefixe:** `N-EXT_` (externes Netz), `T_` (Transfernetz,
+  z. B. `T_sopdo-000-l3o-inet_edge`). Bare-name **Geography**-Objekte (`type geography`,
+  `country`, z. B. `SE`) → `not_applicable`. **Freitext-Adressgruppen** (Vendor-Ranges,
+  z. B. „Atlassian Cloud …") → Mitglieder `expected_external`.
+- **Reale UTM-Profil-Prefixe** (weichen vom Abschnitt „Schutzmechanismen" ab, können je
+  FortiGate variieren): `AV_` (antivirus), `WF_` (webfilter), `DF_` (dnsfilter),
+  `AC_` (application-list), `IPS_`, `WAF_`, `SSL_`. Für die Doku zählen nur die an der
+  Policy **referenzierten Profilnamen**.
+- **`color` ist optional** und wird als **numerischer Code** geführt (Tabelle oben); nicht
+  jedes Objekt hat eine Farbe → dann Fallback auf Prefix/Typ.
+- **IPv4/IPv6 getrennt** (`firewall/address` vs. `address6`, Policy `srcaddr`/`srcaddr6`);
+  Dual-Stack auch in ACI real (`fvSubnet` v4+v6).
+- **`comment`/`comments`** tragen oft `CTASK…` (ServiceNow-Change) bzw. `CT_…`
+  (ACI-Contract-Bezug) → nutzbar für „Description"/Rückverfolgbarkeit.
+
+Lesevertrag/Feld-Mapping: `docs/collectors-read-contract.md`.
