@@ -33,18 +33,24 @@ docker info >/dev/null 2>&1 || {
 # Guard: ohne vorhandene .env wuerde sed unter 'set -euo pipefail' das Skript
 # lautlos beenden - deshalb nur lesen, wenn die Datei existiert.
 INTERNAL_TOKEN=""
+PG_PASSWORD=""
 if [ -f .env ]; then
   INTERNAL_TOKEN="$(sed -n 's/^AUTOMATO_INTERNAL_API_TOKEN=//p' .env | head -n1 || true)"
+  PG_PASSWORD="$(sed -n 's/^POSTGRES_PASSWORD=//p' .env | head -n1 || true)"
 fi
 if [ -z "${INTERNAL_TOKEN}" ] || [ "${INTERNAL_TOKEN}" = "dev-only-token" ]; then
   INTERNAL_TOKEN="$(openssl rand -hex 32)"
 fi
+# POSTGRES_PASSWORD MUSS ueber Laeufe stabil bleiben: Postgres setzt es nur bei der
+# Erst-Initialisierung des Volumes; ein neuer Wert in .env wuerde den Orchestrator
+# mit falschem Passwort verbinden lassen (unhealthy). Nur neu, wenn noch keiner da.
+[ -n "${PG_PASSWORD}" ] || PG_PASSWORD="$(openssl rand -hex 16)"
 
 [ -f .env ] && cp .env .env.bak && echo "Vorhandene .env nach .env.bak gesichert."
 
 cat > .env <<EOF
 # Von lab/up-automato.sh erzeugt - NICHT committen. Lab/Test.
-POSTGRES_PASSWORD=$(openssl rand -hex 16)
+POSTGRES_PASSWORD=${PG_PASSWORD}
 
 AUTOMATO_ENVIRONMENT=dev
 AUTOMATO_INTERNAL_API_TOKEN=${INTERNAL_TOKEN}
@@ -59,6 +65,13 @@ AUTOMATO_FORTIGATE_TOKEN=${FORTIGATE_TOKEN}
 AUTOMATO_FORTIGATE_VERIFY_TLS=false
 EOF
 echo ".env geschrieben."
+
+# Optional: Automato-Volumes vorher loeschen (z. B. nach einem Postgres-Passwort-
+# Mismatch). Harmlos im Lab - die Regeln werden beim Collect-Lauf neu befuellt.
+if [ "${AUTOMATO_RESET:-0}" = "1" ]; then
+  echo "AUTOMATO_RESET=1 -> loesche Automato-Volumes ..."
+  docker compose --profile core --profile collectors down -v --remove-orphans 2>/dev/null || true
+fi
 
 echo "== Stack bauen und starten =="
 docker compose --profile core --profile collectors up -d --build

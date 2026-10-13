@@ -49,6 +49,7 @@ echo; echo "== 2/4 NetBox mit Lab-Daten seeden =="
 echo; echo "== 3/4 Automato-Stack hochfahren =="
 NETBOX_TOKEN="$COLLECTOR_TOKEN" NETBOX_PORT="$NETBOX_PORT" \
   FORTIGATE_URL="$FORTIGATE_URL" FORTIGATE_TOKEN="$FORTIGATE_TOKEN" \
+  AUTOMATO_RESET="${AUTOMATO_RESET:-0}" \
   bash lab/up-automato.sh
 
 # -- 4/4 Erster Lauf ----------------------------------------------------------
