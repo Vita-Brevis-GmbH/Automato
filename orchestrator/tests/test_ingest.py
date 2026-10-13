@@ -235,3 +235,38 @@ def test_vip_matcht_ueber_externe_ip(session_factory):
     assert vip.match_status is MatchStatus.MATCHED
     # VIP-Name bleibt erhalten, kein Finding
     assert not any(f.subject_id == "VIP_web" for f in session.query(Finding).all())
+
+
+def test_nat_rules_werden_persistiert_und_ersetzt(session_factory):
+    from app.models import NatRule
+
+    session = session_factory()
+    run = _seed_run(session)
+    result = CollectorResult.model_validate(
+        {
+            "status": "completed",
+            "rules": [],
+            "nat_rules": [
+                {
+                    "source_platform": "fortigate",
+                    "external_id": "VIP_web01",
+                    "name": "VIP_web01",
+                    "ext_ip": "203.0.113.10",
+                    "ext_port": "443",
+                    "mapped_ip": "10.10.10.5",
+                    "mapped_port": "8443",
+                    "protocol": "tcp",
+                    "portforward": True,
+                }
+            ],
+        }
+    )
+    ingest.persist_result(session, run, result, _fake_sot())
+    ingest.persist_result(session, run, result, _fake_sot())  # idempotent -> ersetzt
+    session.commit()
+
+    nats = session.query(NatRule).filter_by(source_system_id=run.source_system_id).all()
+    assert len(nats) == 1
+    assert nats[0].mapped_ip == "10.10.10.5"
+    assert nats[0].mapped_port == "8443"
+    assert nats[0].portforward is True

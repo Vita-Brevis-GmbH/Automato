@@ -24,6 +24,7 @@ from app.models import (
     Finding,
     FindingType,
     MatchStatus,
+    NatRule,
     NetworkObject,
     ObjectClass,
     Proto,
@@ -36,7 +37,7 @@ from app.models import (
     SubjectKind,
     Zone,
 )
-from app.schemas.collector import CollectorResult, NormalizedRule
+from app.schemas.collector import CollectorResult, NormalizedNat, NormalizedRule
 
 _ANY_VALUES = {"all", "any", "*"}
 # Typ-praefixe, die der Collector fuer nicht-IP-aufloesbare Objekte setzt.
@@ -76,10 +77,38 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     # sobald mehrere Quellen je Mandant und ein Quittierungs-Workflow existieren.
     for old_f in session.scalars(select(Finding).where(Finding.tenant_id == run.tenant_id)):
         session.delete(old_f)
+    # NAT-/VIP-Regeln des Quellsystems ebenfalls ersetzen (aktueller Stand)
+    for old_nat in session.scalars(
+        select(NatRule).where(NatRule.source_system_id == run.source_system_id)
+    ):
+        session.delete(old_nat)
     session.flush()
 
     for normalized in result.rules:
         _persist_rule(session, run, normalized, sot)
+    for nat in result.nat_rules:
+        _persist_nat(session, run, nat)
+
+
+def _persist_nat(session: Session, run, nat: NormalizedNat) -> None:
+    session.add(
+        NatRule(
+            tenant_id=run.tenant_id,
+            source_system_id=run.source_system_id,
+            name=nat.name or nat.external_id,
+            external_id=nat.external_id,
+            ext_ip=nat.ext_ip,
+            ext_port=nat.ext_port,
+            mapped_ip=nat.mapped_ip,
+            mapped_port=nat.mapped_port,
+            protocol=nat.protocol,
+            portforward=nat.portforward,
+            collector_run_id=run.id,
+            last_seen=datetime.now(UTC),
+            raw=nat.raw,
+        )
+    )
+    session.flush()
 
 
 def _persist_rule(session: Session, run, nr: NormalizedRule, sot) -> None:

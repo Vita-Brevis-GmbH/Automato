@@ -9,6 +9,7 @@ from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.collector_run import CollectorRun, RunStatus
 from app.models.finding import Finding, FindingStatus, FindingType, Severity, SubjectKind
+from app.models.nat_rule import NatRule
 from app.models.network_object import (
     Family,
     MatchStatus,
@@ -44,6 +45,7 @@ __all__ = [
     "FindingType",
     "IpamType",
     "MatchStatus",
+    "NatRule",
     "NetworkObject",
     "ObjectClass",
     "ObjectType",

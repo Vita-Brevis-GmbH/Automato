@@ -31,6 +31,7 @@ export interface Endpoint {
   zone: string | null;
   object_class: string | null;
   fqdn: string | null;
+  nat_target: string | null;
 }
 
 export interface RuleDetail extends Rule {
@@ -61,6 +62,18 @@ export interface System {
   enabled: boolean;
 }
 
+export interface Nat {
+  id: number;
+  name: string;
+  external_id: string;
+  ext_ip: string | null;
+  ext_port: string | null;
+  mapped_ip: string | null;
+  mapped_port: string | null;
+  protocol: string | null;
+  portforward: boolean;
+}
+
 async function getJSON<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -70,6 +83,7 @@ async function getJSON<T>(url: string): Promise<T> {
 export const fetchHealth = () => getJSON<HealthStatus>("/api/health");
 export const fetchSystems = () => getJSON<System[]>("/api/systems");
 export const fetchFindings = () => getJSON<Finding[]>("/api/findings");
+export const fetchNat = () => getJSON<Nat[]>("/api/nat");
 export const fetchRuleDetail = (id: number) => getJSON<RuleDetail>(`/api/rules/${id}`);
 
 export function fetchRules(q?: string): Promise<Rule[]> {

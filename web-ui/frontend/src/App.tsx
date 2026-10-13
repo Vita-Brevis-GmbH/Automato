@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { fetchHealth, HealthStatus } from "./api";
 import Findings from "./Findings";
+import NatTable from "./Nat";
 import RulesTable from "./RulesTable";
 
 export default function App() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [tab, setTab] = useState<"rules" | "findings">("rules");
+  const [tab, setTab] = useState<"rules" | "nat" | "findings">("rules");
 
   useEffect(() => {
     fetchHealth()
@@ -30,6 +31,9 @@ export default function App() {
         >
           Regeln
         </button>
+        <button className={`tab ${tab === "nat" ? "active" : ""}`} onClick={() => setTab("nat")}>
+          NAT / VIPs
+        </button>
         <button
           className={`tab ${tab === "findings" ? "active" : ""}`}
           onClick={() => setTab("findings")}
@@ -38,7 +42,9 @@ export default function App() {
         </button>
       </div>
 
-      {tab === "rules" ? <RulesTable /> : <Findings />}
+      {tab === "rules" && <RulesTable />}
+      {tab === "nat" && <NatTable />}
+      {tab === "findings" && <Findings />}
     </div>
   );
 }

@@ -26,6 +26,7 @@ class EndpointOut(BaseModel):
     zone: str | None = None
     object_class: str | None = None  # aus der Namenskonvention (H_/N_/VIP_/...)
     fqdn: str | None = None
+    nat_target: str | None = None  # bei VIPs: internes Ziel (mapped_ip[:port][/proto])
 
 
 class RuleDetailOut(RuleOut):

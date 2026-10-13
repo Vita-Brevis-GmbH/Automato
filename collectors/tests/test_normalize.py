@@ -77,6 +77,30 @@ def test_fortigate_resolve_address_typen():
     ]
 
 
+def test_fortigate_normalize_nat():
+    vips = [
+        {
+            "name": "VIP_web01",
+            "extip": "203.0.113.10",
+            "mappedip": [{"range": "10.10.10.5"}],
+            "extport": "443",
+            "mappedport": "8443",
+            "protocol": "tcp",
+            "portforward": "enable",
+        }
+    ]
+    nat = norm.normalize_nat(vips)
+    assert len(nat) == 1
+    n = nat[0]
+    assert n.name == "VIP_web01"
+    assert n.ext_ip == "203.0.113.10"
+    assert n.mapped_ip == "10.10.10.5"
+    assert n.ext_port == "443"
+    assert n.mapped_port == "8443"
+    assert n.protocol == "tcp"
+    assert n.portforward is True
+
+
 def test_aci_contract_wird_auf_regeln_abgebildet():
     contracts = fetch_contracts()
     rules = [r for c in contracts for r in normalize_contract(c)]

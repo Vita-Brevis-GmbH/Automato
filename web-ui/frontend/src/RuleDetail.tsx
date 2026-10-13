@@ -22,6 +22,7 @@ function EndpointList({ items }: { items: Endpoint[] }) {
               {e.name && e.value && e.name !== e.value ? (
                 <div className="muted">{e.name}</div>
               ) : null}
+              {e.nat_target ? <div className="muted">→ {e.nat_target}</div> : null}
             </td>
             <td>{e.kind}</td>
             <td>

@@ -24,7 +24,23 @@ class NormalizedRule(BaseModel):
     raw: dict[str, Any] | None = None  # Original-Payload fuer Nachvollziehbarkeit
 
 
+class NormalizedNat(BaseModel):
+    """VIP/DNAT: externe IP (+Port) -> internes Ziel (+Port)."""
+
+    source_platform: Literal["fortigate", "cisco_aci"]
+    external_id: str
+    name: str = ""
+    ext_ip: str | None = None
+    ext_port: str | None = None
+    mapped_ip: str | None = None
+    mapped_port: str | None = None
+    protocol: str | None = None
+    portforward: bool = False
+    raw: dict[str, Any] | None = None
+
+
 class CollectorResult(BaseModel):
     status: Literal["completed", "failed"]
     rules: list[NormalizedRule] = Field(default_factory=list)
+    nat_rules: list[NormalizedNat] = Field(default_factory=list)
     message: str | None = None

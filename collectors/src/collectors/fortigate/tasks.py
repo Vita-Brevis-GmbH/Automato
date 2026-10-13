@@ -45,7 +45,8 @@ def collect(run_id: str) -> None:
     try:
         policies, addresses, groups, services, vips = gather()
         rules = norm.normalize(policies, addresses, groups, services, vips)
-        result = CollectorResult(status="completed", rules=rules)
+        nat_rules = norm.normalize_nat(vips)
+        result = CollectorResult(status="completed", rules=rules, nat_rules=nat_rules)
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
         result = CollectorResult(status="failed", message=str(exc))
     submit_result(run_id, result)

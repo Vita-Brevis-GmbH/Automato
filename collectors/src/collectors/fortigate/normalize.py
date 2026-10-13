@@ -13,7 +13,7 @@ FortiOS-Built-ins (HTTPS, ALL, ...) sind als Fallback hinterlegt.
 import ipaddress
 from typing import Any
 
-from collectors.common.dto import NormalizedRule
+from collectors.common.dto import NormalizedNat, NormalizedRule
 
 _ANY = "all"
 
@@ -193,3 +193,43 @@ def _dedup(items: list[str]) -> list[str]:
     for item in items:
         seen.setdefault(item, None)
     return list(seen)
+
+
+# -- VIPs / NAT ---------------------------------------------------------------
+
+
+def _first_mapped_ip(vip: dict) -> str | None:
+    mapped = vip.get("mappedip")
+    if isinstance(mapped, list) and mapped:
+        first = mapped[0]
+        return first.get("range") if isinstance(first, dict) else str(first)
+    if isinstance(mapped, str):
+        return mapped or None
+    return None
+
+
+def normalize_nat(vips: list[dict] | None) -> list[NormalizedNat]:
+    """FortiGate-VIPs -> NAT-/DNAT-Dokumentation (extip -> mappedip:port)."""
+    out: list[NormalizedNat] = []
+    for vip in vips or []:
+        extip = vip.get("extip") or ""
+        if isinstance(extip, list):
+            extip = (
+                extip[0].get("range", "") if extip and isinstance(extip[0], dict) else ""
+            ) or ""
+        portforward = str(vip.get("portforward", "")).lower() == "enable"
+        out.append(
+            NormalizedNat(
+                source_platform="fortigate",
+                external_id=vip.get("name", ""),
+                name=vip.get("name", ""),
+                ext_ip=str(extip).strip() or None,
+                ext_port=(vip.get("extport") or None) if portforward else None,
+                mapped_ip=_first_mapped_ip(vip),
+                mapped_port=(vip.get("mappedport") or None) if portforward else None,
+                protocol=(vip.get("protocol") or None) if portforward else None,
+                portforward=portforward,
+                raw=vip,
+            )
+        )
+    return out

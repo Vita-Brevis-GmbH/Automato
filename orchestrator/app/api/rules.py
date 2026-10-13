@@ -12,8 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.models import EndpointRole, MatchStatus
+from app.models import EndpointRole, MatchStatus, ObjectClass
 from app.schemas.rules import EndpointOut, RuleDetailOut, RuleOut
+from app.store import nat as nat_store
 from app.store import rules as rules_store
 
 router = APIRouter(prefix="/rules", tags=["rules"])
@@ -90,10 +91,12 @@ def get_rule(rule_id: int, session: Session = Depends(get_session)):
     objs = rules_store.objects_by_ids(session, obj_ids)
     zone_ids = {r.src_zone_id, r.dst_zone_id} | {o.zone_id for o in objs.values() if o.zone_id}
     zones = rules_store.zone_names(session, zone_ids)
+    nat_map = nat_store.nat_by_name(session, r.tenant_id)
 
     endpoints: list[EndpointOut] = []
     for e in r.endpoints:
         obj = objs.get(e.network_object_id) if e.network_object_id else None
+        nat = nat_map.get(obj.name) if obj and obj.object_class is ObjectClass.VIP else None
         endpoints.append(
             EndpointOut(
                 role=e.role.value,
@@ -104,6 +107,7 @@ def get_rule(rule_id: int, session: Session = Depends(get_session)):
                 zone=zones.get(obj.zone_id) if obj and obj.zone_id else None,
                 object_class=obj.object_class.value if obj else None,
                 fqdn=obj.fqdn if obj else None,
+                nat_target=nat_store.nat_target(nat) if nat else None,
             )
         )
 
