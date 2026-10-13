@@ -18,12 +18,21 @@ cd source-of-truth/netbox
 Das Skript:
 
 1. holt `netbox-docker` (release-Branch) nach `./netbox-docker/` (nicht eingecheckt),
-2. startet den Stack und mappt NetBox auf `http://localhost:8000` (via `NETBOX_PORT` änderbar),
+2. **pinnt die NetBox-Version auf die 4.6er-Linie** (`NETBOX_VERSION`, Default
+   `v4.6.10-5.0.2`) und startet den Stack, mappt NetBox auf `http://localhost:8000`
+   (via `NETBOX_PORT` änderbar),
 3. legt idempotent an:
    - **Admin-User** (UI-Login, Default `admin` / `admin1234!`) + Schreib-Token (Seeding),
    - **`automato-collector`** (kein Superuser, Gruppe mit `view_*`-Rechten) + einen
      **read-only Token** (`write_enabled=false`) — das ist der Least-Privilege-Zugang
      für den Collector (ADR 0005).
+
+> **Warum die Version gepinnt ist:** Ab **NetBox 4.7** werden API-Tokens gehasht
+> gespeichert (v2, Header `Bearer nbt_<key>.<token>`); ein fester Token-Wert lässt
+> sich nicht mehr vorgeben (Fehler `value too long for type character varying(12)`
+> beim Anlegen). Der Automato-NetBox-Adapter nutzt die klassischen Tokens
+> (`Authorization: Token <key>`), die es in 4.6.x noch gibt. Neuere Version testen:
+> `NETBOX_VERSION=v4.7-5.1.1 ./setup.sh` — erfordert dann aber Anpassungen am Adapter.
 
 Am Ende werden URL, Logins und beide Tokens ausgegeben.
 
@@ -54,6 +63,18 @@ FortiGate auf dieselben Netze/IPs aus, damit das Matching Treffer erzeugt.
 - Komplett zurücksetzen (inkl. Daten): `cd netbox-docker && docker compose down -v`
 
 ## Fehlerbehebung
+
+**`value too long for type character varying(12)` bei der Token-Anlage**
+
+Dann läuft eine **NetBox ≥ 4.7** (gehashte v2-Tokens). Das Setup pinnt bewusst 4.6.x;
+du hast vermutlich noch eine ältere/4.7-DB im Volume. Einmalig zurücksetzen und neu
+aufsetzen (löscht die NetBox-Daten – im Lab unkritisch):
+
+```bash
+cd source-of-truth/netbox
+NETBOX_RESET=1 NETBOX_PORT=8080 ./setup.sh
+# oder ueber den Bootstrap:   NETBOX_RESET=1 bash lab/bootstrap.sh
+```
 
 **`dependency failed to start: container netbox-docker-netbox-1 is unhealthy`**
 

@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 # Lab-Setup fuer NetBox als Source of Truth (Model 2, UC1). NUR fuer Labor/Test.
 #
-# Nutzt das offizielle netbox-docker (release-Branch = jeweils aktuelle stabile
-# Version), startet den Stack, legt einen Admin-User (UI-Login) und einen
-# read-only Collector-Token an (Least Privilege, ADR 0005) sowie einen
-# Schreib-Token fuer das Seeding. Idempotent - mehrfaches Ausfuehren ist ok.
+# Nutzt das offizielle netbox-docker und pinnt die NetBox-Version bewusst auf die
+# 4.6er-Linie: ab NetBox 4.7 werden API-Tokens gehasht (v2, Header
+# "Bearer nbt_<key>.<token>") und koennen nicht mehr mit festem Wert angelegt
+# werden - der Automato-NetBox-Adapter nutzt die klassischen Tokens
+# ("Authorization: Token <key>"). 4.6.x hat diese noch.
+# Legt Admin-User (UI-Login) + Schreib-Token (Seeding) und einen read-only
+# Collector-Token an (Least Privilege, ADR 0005). Idempotent.
 #
 # Voraussetzungen: docker + docker compose v2, git, curl, openssl.
 # Verwendung:
 #   ./setup.sh                       # Standardwerte
 #   NETBOX_PORT=8080 ./setup.sh      # anderer Port
+#   NETBOX_RESET=1 ./setup.sh        # DB/Volumes zuvor loeschen (z. B. Versionswechsel)
 set -euo pipefail
 
 NETBOX_DIR="${NETBOX_DIR:-netbox-docker}"
 NETBOX_PORT="${NETBOX_PORT:-8000}"
+# Gepinnte NetBox-Version (klassische Tokens). Ueberschreibbar via NETBOX_VERSION.
+NETBOX_VERSION="${NETBOX_VERSION:-v4.6.10-5.0.2}"
+NETBOX_RESET="${NETBOX_RESET:-0}"
 ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_PASS="${ADMIN_PASS:-admin1234!}"
 COLLECTOR_TOKEN="${COLLECTOR_TOKEN:-$(openssl rand -hex 20)}"
@@ -29,6 +36,18 @@ if [ ! -d "$NETBOX_DIR" ]; then
   git clone -b release --depth 1 https://github.com/netbox-community/netbox-docker.git "$NETBOX_DIR"
 fi
 cd "$NETBOX_DIR"
+
+# 1b. NetBox-Image-Version pinnen (compose liest VERSION aus dieser .env).
+echo "VERSION=${NETBOX_VERSION}" > .env
+export VERSION="${NETBOX_VERSION}"
+
+# 1c. Optional: bestehende DB/Volumes loeschen. Noetig u. a. beim Wechsel von einer
+# hoeheren NetBox-Version (z. B. 4.7) zurueck auf die gepinnte - deren Schema laesst
+# sich nicht "downgraden", der Container bliebe sonst crashen.
+if [ "$NETBOX_RESET" = "1" ]; then
+  echo "NETBOX_RESET=1 -> loesche vorhandene NetBox-Volumes ..."
+  docker compose down -v --remove-orphans 2>/dev/null || true
+fi
 
 # 2. Overrides: Host-Port + grosszuegigerer Healthcheck.
 # netbox-docker liefert kein Host-Port-Mapping; und der erste Start (Migrationen +
@@ -50,17 +69,18 @@ YAML
 # schon mitstarten, bricht ein langsamer Erststart mit
 # "container ... is unhealthy" ab. Fuer UC1 (lesend ueber die REST-API) reicht
 # der netbox-Dienst; die Worker kommen am Ende best-effort dazu.
+echo "NetBox-Version: ${NETBOX_VERSION}"
 docker compose pull
 docker compose up -d netbox
 
 # 4. Auf Erreichbarkeit warten (NetBox-Migrationen brauchen beim ersten Start Zeit)
 echo "Warte auf NetBox unter http://localhost:${NETBOX_PORT}/ ..."
 ok=""
-for _ in $(seq 1 60); do
+for _ in $(seq 1 90); do
   if curl -fsS "http://localhost:${NETBOX_PORT}/login/" >/dev/null 2>&1; then ok=1; break; fi
   sleep 5
 done
-[ -n "$ok" ] || { echo "FEHLER: NetBox nicht rechtzeitig erreichbar"; exit 1; }
+[ -n "$ok" ] || { echo "FEHLER: NetBox nicht rechtzeitig erreichbar (docker compose logs netbox)"; exit 1; }
 
 # 5. User + Tokens anlegen (idempotent, via Django-Shell im Container)
 COLLECTOR_TOKEN="$COLLECTOR_TOKEN" ADMIN_TOKEN="$ADMIN_TOKEN" \

@@ -13,6 +13,7 @@ set -euo pipefail
 [ -f docker-compose.yml ] || { echo "Bitte aus dem Repo-Root (Automato/) ausfuehren."; exit 1; }
 
 NETBOX_PORT="${NETBOX_PORT:-8080}"
+NETBOX_RESET="${NETBOX_RESET:-0}"
 FORTIGATE_URL="${FORTIGATE_URL:-}"
 FORTIGATE_TOKEN="${FORTIGATE_TOKEN:-}"
 # Tokens einmal erzeugen und ueberall wiederverwenden (kein Copy&Paste noetig).
@@ -34,7 +35,8 @@ echo "VM-RAM: ${mem_gb} GB (NetBox-Stack braucht ~3-4 GB)."
 # -- 1/4 NetBox ---------------------------------------------------------------
 echo; echo "== 1/4 NetBox hochfahren (Port ${NETBOX_PORT}) =="
 ( cd source-of-truth/netbox \
-  && NETBOX_PORT="$NETBOX_PORT" COLLECTOR_TOKEN="$COLLECTOR_TOKEN" ADMIN_TOKEN="$ADMIN_TOKEN" ./setup.sh )
+  && NETBOX_PORT="$NETBOX_PORT" NETBOX_RESET="$NETBOX_RESET" \
+     COLLECTOR_TOKEN="$COLLECTOR_TOKEN" ADMIN_TOKEN="$ADMIN_TOKEN" ./setup.sh )
 
 # -- 2/4 Seed -----------------------------------------------------------------
 echo; echo "== 2/4 NetBox mit Lab-Daten seeden =="
