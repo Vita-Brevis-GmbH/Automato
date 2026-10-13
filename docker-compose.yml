@@ -94,5 +94,22 @@ services:
     depends_on:
       - orchestrator
 
+  # AuthN/RBAC-IdP (E1, ADR 0007). Eigenes Profil "auth" -> beeinflusst core/collectors
+  # nicht. Importiert den Realm "automato" (Rollen viewer/operator/admin, Clients
+  # automato-web [PKCE]/automato-api, tenant_ids-Mapper, geseedter Admin mit OTP-Pflicht).
+  # Produktiv: eigener Container -> eigene VM, eigene URL, TLS/Proxy davor (siehe
+  # deploy/keycloak/README.md). Orchestrator koppeln via AUTOMATO_AUTH_MODE=oidc.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    profiles: ["auth"]
+    command: ["start-dev", "--import-realm", "--http-port=8081"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./deploy/keycloak:/opt/keycloak/data/import:ro
+    ports:
+      - "8081:8081"
+
 volumes:
   postgres-data:

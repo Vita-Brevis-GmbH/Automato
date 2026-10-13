@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""
     oidc_jwks_url: str = ""
-    oidc_roles_claim: str = "roles"
+    oidc_roles_claim: str = "realm_access.roles"  # Keycloak-Realm-Rollen
     oidc_tenants_claim: str = "tenant_ids"
 
     # SoT-Zugaenge (lesend) - je Mandant wird der passende Adapter gebaut (ADR 0004).

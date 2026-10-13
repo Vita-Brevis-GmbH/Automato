@@ -1,0 +1,59 @@
+{
+  "realm": "automato",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "roles": {
+    "realm": [
+      { "name": "viewer", "description": "UC1-Doku lesen (mandantsbeschraenkt)" },
+      { "name": "operator", "description": "zusaetzlich Collect ausloesen / Findings triagieren" },
+      { "name": "admin", "description": "Verwaltung; mandantsuebergreifend (Global-Admin)" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "automato-web",
+      "name": "Automato Web-UI",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "redirectUris": ["http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:5173"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "protocolMappers": [
+        {
+          "name": "tenant_ids",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "tenant_ids",
+            "claim.name": "tenant_ids",
+            "jsonType.label": "int",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "automato-api",
+      "name": "Automato Orchestrator API",
+      "enabled": true,
+      "bearerOnly": true
+    }
+  ],
+  "users": [
+    {
+      "username": "automato-admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "admin@example.ch",
+      "realmRoles": ["admin"],
+      "requiredActions": ["UPDATE_PASSWORD", "CONFIGURE_TOTP"],
+      "attributes": { "tenant_ids": [] }
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 
 from fastapi import Depends, Header, HTTPException
 
+from app.auth import oidc
 from app.auth import roles as R
 from app.auth.principal import Principal
 from app.config import get_settings
@@ -20,9 +21,12 @@ def get_principal(
 ) -> Principal:
     settings = get_settings()
     if settings.auth_mode == "oidc":
-        # E1.1b: JWT gegen Keycloak validieren (Issuer/JWKS/Audience), Rollen/Mandanten
-        # aus Claims. Bis dahin bewusst nicht aktiv (kein stiller Durchlass).
-        raise HTTPException(status_code=501, detail="OIDC/Keycloak-Auth noch nicht aktiviert")
+        try:
+            return oidc.principal_from_bearer(authorization, settings)
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - jede Validierungs-/JWKS-Panne -> 401
+            raise HTTPException(status_code=401, detail="invalid token") from exc
     # dev-Modus: Standard = Admin (alle Mandanten) -> unveraendertes Verhalten.
     # Override via X-Dev-Roles/X-Dev-Tenants zum Testen/Vorfuehren von RBAC + Scoping.
     if x_dev_roles is not None or x_dev_tenants is not None:

@@ -130,7 +130,7 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 38, sot-gateway 6.
+Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 41, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -183,6 +183,13 @@ Mandanten, fremder `tenant_id` → 403 (schliesst R13/ADR 0005 #6). Verdrahtet a
 `/rules/{id}`, `/nat`, `/findings`, `/applications`, `/tenants`, `/systems`. `auth_mode`
 (dev|oidc): **dev** = Standard-Admin (unverändertes Verhalten), Override via
 `X-Dev-Roles`/`X-Dev-Tenants` zum Testen; **oidc** = Keycloak-JWT, noch nicht aktiv (501).
-Tests `test_auth.py`. **Als Nächstes in E1:** E1.1b OIDC/Keycloak-JWT-Validierung (PyJWT
-+ JWKS, Rollen/Mandanten aus Claims) + Keycloak-Container/Realm mit geseedtem Admin;
-E1.3 Rollen an Schreibpfaden (Collect=operator, Admin-APIs=admin); E1.4 Audit; E1.5 Vault.
+Tests `test_auth.py`. **E1.1b OIDC/Keycloak umgesetzt**: `app/auth/oidc.py` validiert
+Bearer-JWT (PyJWT + JWKS, Issuer/Audience), mappt Claims → Principal (`realm_access.roles`,
+`tenant_ids`-Claim; `admin`=alle Mandanten); `auth_mode=oidc` aktiv. Keycloak-Scaffold
+`deploy/keycloak/` (Realm-Export: Rollen viewer/operator/admin, Clients automato-web
+[PKCE]/automato-api, `tenant_ids`-Mapper, geseedter Admin mit OTP-/Passwort-Pflicht) +
+Compose-Service (Profil `auth`, Port 8081). Tests `test_auth_oidc.py` (Claim-Mapping,
+RSA-Roundtrip, Bearer-Scoping). **Als Nächstes in E1:** E1.3 Rollen an Schreibpfaden
+(Collect=operator, Namensprofil-/Admin-APIs=admin) + Web-UI-OIDC-Login-Flow; E1.4 Audit
+auf Principal+Aktion; E1.5 Secrets/Vault-Provider. Keycloak-Hardening (TLS/Proxy,
+persistente DB, SAML-Broker je Kunde) als Folge.

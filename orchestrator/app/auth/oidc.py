@@ -1,0 +1,68 @@
+"""OIDC/Keycloak-JWT-Validierung + Claim-Mapping (E1.1b, ADR 0007).
+
+Validiert ein Bearer-JWT gegen Keycloak (JWKS/Issuer/Audience) und bildet die Claims
+auf einen `Principal` ab: Rollen aus `oidc_roles_claim` (Default Keycloak-Realm-Rollen
+`realm_access.roles`), Mandanten aus `oidc_tenants_claim`. Admin ⇒ alle Mandanten
+(Global-Admin-Gesamtsicht); sonst nur die zugewiesenen (fehlt die Zuweisung ⇒ keine).
+"""
+
+import jwt
+from fastapi import HTTPException
+from jwt import PyJWKClient
+
+from app.auth.principal import Principal
+
+
+def _dig(claims: dict, dotted: str):
+    cur = claims
+    for part in dotted.split("."):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+def _parse_tenant_ids(raw) -> tuple[int, ...]:
+    if raw is None:
+        return ()  # keine Zuweisung -> fail-closed (sieht nichts)
+    if isinstance(raw, int | str):
+        raw = [raw]
+    out: list[int] = []
+    for x in raw:
+        try:
+            out.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    return tuple(out)
+
+
+def claims_to_principal(claims: dict, settings) -> Principal:
+    subject = claims.get("sub") or claims.get("preferred_username") or "unknown"
+    raw_roles = _dig(claims, settings.oidc_roles_claim) or []
+    roles = (
+        frozenset(str(r) for r in raw_roles) if isinstance(raw_roles, list | tuple) else frozenset()
+    )
+    tenant_ids = (
+        None if "admin" in roles else _parse_tenant_ids(_dig(claims, settings.oidc_tenants_claim))
+    )
+    return Principal(subject=str(subject), roles=roles, tenant_ids=tenant_ids)
+
+
+def verify_token(token: str, settings) -> dict:
+    """JWT gegen die Keycloak-JWKS validieren; wirft bei ungueltigem Token."""
+    signing_key = PyJWKClient(settings.oidc_jwks_url).get_signing_key_from_jwt(token)
+    return jwt.decode(
+        token,
+        signing_key.key,
+        algorithms=["RS256"],
+        audience=settings.oidc_audience or None,
+        issuer=settings.oidc_issuer or None,
+        options={"verify_aud": bool(settings.oidc_audience)},
+    )
+
+
+def principal_from_bearer(authorization: str | None, settings) -> Principal:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    return claims_to_principal(verify_token(token, settings), settings)
