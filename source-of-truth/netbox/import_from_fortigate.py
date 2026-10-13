@@ -49,6 +49,7 @@ if not FG_VERIFY:
 
 TAG = "automato-import"
 _DNS_SAFE = re.compile(r"[A-Za-z0-9._-]+")
+_SLUG = re.compile(r"[^a-z0-9]+")
 
 fg = requests.Session()
 fg.headers.update({"Authorization": f"Bearer {FG_TOKEN}", "Accept": "application/json"})
@@ -83,8 +84,45 @@ def to_network(subnet: str):
     return ipaddress.ip_network(subnet, strict=False)
 
 
+def zone_slug(name: str) -> str:
+    base = _SLUG.sub("-", name.lower()).strip("-")
+    return f"zone-{base}" if base else "zone-unbenannt"
+
+
+def interface_zone_map() -> dict[str, str]:
+    """Interface-Name -> FortiGate-Zonenname (aus system/zone); leer, falls keine Zonen."""
+    out: dict[str, str] = {}
+    try:
+        zones = fg_get("system/zone")
+    except requests.HTTPError:
+        return out
+    for z in zones:
+        zname = z.get("name", "")
+        for member in z.get("interface", []) or []:
+            iface = member.get("interface-name") or member.get("name")
+            if iface:
+                out[iface] = zname
+    return out
+
+
+def set_prefix_zone(prefix_obj: dict, slug: str, zone_name: str) -> None:
+    """Zonen-Tag idempotent an ein Prefix haengen (PATCH; upsert aktualisiert Tags nicht)."""
+    nb_upsert("extras/tags/", {"slug": slug}, {"name": f"Zone {zone_name}"})
+    have = {t["slug"] for t in prefix_obj.get("tags", []) if "slug" in t}
+    want = have | {TAG, slug}
+    if want == have:
+        return
+    r = nb.patch(
+        f"{NB_URL}/api/ipam/prefixes/{prefix_obj['id']}/",
+        json={"tags": [{"slug": s} for s in sorted(want)]},
+        timeout=15,
+    )
+    r.raise_for_status()
+
+
 def main() -> None:
     nb_upsert("extras/tags/", {"slug": TAG}, {"name": "Automato Import"})
+    iface_zone = interface_zone_map()  # Interface -> logische Zone (aus system/zone)
 
     addresses = fg_get("firewall/address")
     counts = Counter()
@@ -112,12 +150,18 @@ def main() -> None:
                 _, created = nb_upsert("ipam/ip-addresses/", {"address": host}, data)
                 counts["ip_neu" if created else "ip_vorhanden"] += 1
             else:  # Netz
-                _, created = nb_upsert(
+                prefix_obj, created = nb_upsert(
                     "ipam/prefixes/",
                     {"prefix": str(net)},
                     {"status": "active", "description": name, "tags": [{"slug": TAG}]},
                 )
                 counts["prefix_neu" if created else "prefix_vorhanden"] += 1
+                # Zone aus dem Interface verorten (interface-subnet -> zone-<name>)
+                iface = obj.get("interface")
+                if otype == "interface-subnet" and iface:
+                    zname = iface_zone.get(iface, iface)  # Zone, sonst Interface-Name
+                    set_prefix_zone(prefix_obj, zone_slug(zname), zname)
+                    counts["zone_verortet"] += 1
         elif otype == "iprange" and obj.get("start-ip"):
             start = obj["start-ip"]
             end = obj.get("end-ip", start)
@@ -165,6 +209,7 @@ def main() -> None:
         f"IP-Ranges neu={counts['range_neu']} (vorhanden {counts['range_vorhanden']}), "
         f"VIP-extips neu={counts['vip_neu']} (vorhanden {counts['vip_vorhanden']})"
     )
+    print(f"Zonen aus Interfaces an Subnetzen verortet: {counts['zone_verortet']}")
     if skipped:
         detail = ", ".join(f"{k}={v}" for k, v in sorted(skipped.items()))
         print(f"Uebersprungen (nicht als IPAM-Objekt abbildbar): {detail}")
