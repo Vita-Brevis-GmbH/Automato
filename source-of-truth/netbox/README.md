@@ -27,12 +27,13 @@ Das Skript:
      **read-only Token** (`write_enabled=false`) — das ist der Least-Privilege-Zugang
      für den Collector (ADR 0005).
 
-> **Warum die Version gepinnt ist:** Ab **NetBox 4.7** werden API-Tokens gehasht
-> gespeichert (v2, Header `Bearer nbt_<key>.<token>`); ein fester Token-Wert lässt
-> sich nicht mehr vorgeben (Fehler `value too long for type character varying(12)`
-> beim Anlegen). Der Automato-NetBox-Adapter nutzt die klassischen Tokens
-> (`Authorization: Token <key>`), die es in 4.6.x noch gibt. Neuere Version testen:
-> `NETBOX_VERSION=v4.7-5.1.1 ./setup.sh` — erfordert dann aber Anpassungen am Adapter.
+> **Zu den Tokens:** Seit **NetBox 4.6** werden *neue* API-Tokens (v2) gehasht
+> gespeichert (Header `Bearer nbt_<key>.<token>`); ein fester Token-Wert lässt sich
+> dafür nicht mehr vorgeben (sonst `value too long for type character varying(12)`).
+> Das Setup legt deshalb bewusst **Legacy-v1-Tokens** an (Klartext in der DB, Header
+> `Authorization: Token <wert>`) — die NetBox weiterhin akzeptiert und die der
+> Automato-NetBox-Adapter nutzt. Die NetBox-Version ist zusätzlich auf eine
+> verifizierte 4.6er-Linie gepinnt (`NETBOX_VERSION`, Default `v4.6.10-5.0.2`).
 
 Am Ende werden URL, Logins und beide Tokens ausgegeben.
 
@@ -66,14 +67,21 @@ FortiGate auf dieselben Netze/IPs aus, damit das Matching Treffer erzeugt.
 
 **`value too long for type character varying(12)` bei der Token-Anlage**
 
-Dann läuft eine **NetBox ≥ 4.7** (gehashte v2-Tokens). Das Setup pinnt bewusst 4.6.x;
-du hast vermutlich noch eine ältere/4.7-DB im Volume. Einmalig zurücksetzen und neu
-aufsetzen (löscht die NetBox-Daten – im Lab unkritisch):
+Alte `setup.sh`, die noch versucht, einen festen Token-Wert in das (ab NetBox 4.6
+gehashte, kurze) `key`-Feld zu schreiben. Behoben: das Setup legt jetzt Legacy-v1-
+Tokens an. **Repo aktualisieren und erneut ausführen**, ein DB-Reset ist dafür nicht
+nötig:
 
 ```bash
-cd source-of-truth/netbox
-NETBOX_RESET=1 NETBOX_PORT=8080 ./setup.sh
-# oder ueber den Bootstrap:   NETBOX_RESET=1 bash lab/bootstrap.sh
+git pull
+bash lab/bootstrap.sh
+```
+
+Nur falls die DB von einer *höheren* NetBox-Version stammt (Schema lässt sich nicht
+downgraden), einmalig mit Reset:
+
+```bash
+NETBOX_RESET=1 bash lab/bootstrap.sh
 ```
 
 **`dependency failed to start: container netbox-docker-netbox-1 is unhealthy`**

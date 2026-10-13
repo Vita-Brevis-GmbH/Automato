@@ -99,14 +99,22 @@ except ImportError:  # falls sich das App-Layout in kuenftigen Versionen aendert
 
 User = get_user_model()
 
+
+def set_v1_token(user, value, *, write_enabled):
+    # Legacy-v1-Token: Klartext in der DB, Auth-Header "Token <value>" (klassisch).
+    # Ab NetBox 4.6 sind neue (v2) Tokens gehasht und koennen nicht mit festem Wert
+    # angelegt werden; v1 wird weiter unterstuetzt. Vorhandene Tokens des Users
+    # entfernen -> fester, bekannter Wert (idempotent). value muss 40 Zeichen haben.
+    Token.objects.filter(user=user).delete()
+    Token(user=user, version=1, token=value, write_enabled=write_enabled).save()
+
+
 # Admin fuer UI-Login + Schreib-Token fuers Seeding
 admin, _ = User.objects.get_or_create(username=os.environ["ADMIN_USER"])
 admin.is_superuser = admin.is_staff = True
 admin.set_password(os.environ["ADMIN_PASS"])
 admin.save()
-at, created = Token.objects.get_or_create(user=admin, defaults={"key": os.environ["ADMIN_TOKEN"]})
-if not created:
-    at.key = os.environ["ADMIN_TOKEN"]; at.save()
+set_v1_token(admin, os.environ["ADMIN_TOKEN"], write_enabled=True)
 
 # Read-only-Gruppe (alle view_*-Rechte) + Collector-User ohne Superuser
 grp, _ = Group.objects.get_or_create(name="automato-readonly")
@@ -117,12 +125,7 @@ collector.save()
 collector.groups.add(grp)
 
 # Read-only Token (write_enabled=False -> kann nur lesen)
-ct, created = Token.objects.get_or_create(
-    user=collector,
-    defaults={"key": os.environ["COLLECTOR_TOKEN"], "write_enabled": False},
-)
-if not created:
-    ct.key = os.environ["COLLECTOR_TOKEN"]; ct.write_enabled = False; ct.save()
+set_v1_token(collector, os.environ["COLLECTOR_TOKEN"], write_enabled=False)
 
 print("SETUP_OK")
 PY
