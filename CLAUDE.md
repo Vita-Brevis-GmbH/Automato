@@ -131,3 +131,16 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
 Schreibpfad (ADR 0002). Tests: collectors 7, orchestrator 28, sot-gateway 6.
+
+**Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
+Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
+starker **Synergie zu Projekt Magister** (`Vita-Brevis-GmbH/magister`, fast identischer
+Stack → gemeinsame Bausteine Auth/Cockpit/Deploy, Module später vereinen). Epics W1–E7
+in `ROADMAP.md` (Abschnitt „Ausbaustufe B"). Entschieden: **AuthN/RBAC via Keycloak**
+(dedizierter IdP, eigener Container→VM, eigene URL, OIDC+PKCE; lokal + SAML + OTP;
+geseedter globaler Admin; Mandanten-Scoping zentral erzwingen; Rollen `viewer/operator/
+admin`; Secrets-/Vault-Provider) — **ADR 0007**. Reihenfolge: **Web-UI (W1) vorgezogen**,
+dann **E1 Härtung/RBAC** als Schwerpunkt. UI-Mockup liegt als Artifact vor (nicht im Repo).
+**Ausstehend vom Kunden:** UC1-Fachdaten (ACI, Namenskonventionen, Tenant-Struktur,
+Confluence-Feldschema) → präzisieren „Applikationen" (= bestimmte Systeme, nicht VIPs)
+und Model 1; blockieren E1/E2 nicht.

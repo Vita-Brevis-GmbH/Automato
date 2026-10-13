@@ -236,3 +236,37 @@ da Struktur, Architektur und Grundaufbau dann stehen. Geplante Ausbaustufen:
 - **Hardening & Full Stack**: Security-Audit, HashiCorp Vault statt Ansible Vault,
   vollständiges RBAC, Monitoring/Alerting (z. B. Prometheus/Grafana), vollständige
   CI/CD-Pipeline, Disaster Recovery
+
+## Ausbaustufe B – Plattform-Ausbau & Produktions-Härtung
+
+Nach dem UC1-Durchstich (M0–M9) wird Automato von der read-only-Dokumentation zur
+**allgemeinen Workflow-Plattform** ausgebaut. Leitplanken: **Open Source bevorzugt**,
+**Vereinfachung**, und die Vision reicht über Firewalls/ACI hinaus (VMs ausrollen,
+Applikationen installieren, automatische Doku). Starke **Synergie mit Projekt
+Magister** (`Vita-Brevis-GmbH/magister`, nahezu identischer Stack): gemeinsame
+Bausteine für Auth, Cockpit und Deploy, mit dem Ziel, die Module später zu vereinen.
+
+Diese Stufe läuft weiter im Meilenstein-Rhythmus (jedes Epic liefert ein
+überprüfbares Ergebnis, Risikoregister wird fortgeschrieben). Reihenfolge
+dependency-getrieben; die **Web-UI (W1)** ist **vorgezogen**, das Auth-Fundament
+**(E1)** hebt das offene Produktions-Gate aus ADR 0005.
+
+| Epic | Inhalt | Status |
+|---|---|---|
+| **W1 — Web-UI-Ausbau** | Übersicht/Dashboard, bessere Filter, Regel-Detail, Mandanten-Switcher; zunächst gegen die bestehende (fail-closed) API. Mockup liegt vor. | geplant (vorgezogen) |
+| **E1 — Härtung / RBAC** | AuthN/RBAC via **Keycloak** (lokal + SAML + OTP, geseedter globaler Admin), Mandanten-Scoping erzwingen, Rollen `viewer/operator/admin`, Audit-Erweiterung, Secrets-/Vault-Provider. Details: **ADR 0007**. | geplant (Schwerpunkt) |
+| **E2 — Gemeinsame Basis (Magister-Synergie)** | Keycloak-Container, **Cockpit** (Multi-Instanz: Health, Version, Update-Trigger, `stable`/`latest` + Rollback-Snapshot), Deploy-/Caddy-Security-Skelett, Audit-/Scope-Muster. Magister-Migration als eigener Magister-Meilenstein. | geplant |
+| **E3 — Import-Wizard** | Firewall-Import geführt per Wizard (statt CLI-Bootstrap). | geplant |
+| **E4 — Schreibpfad-Fundament** | Worker + **Runner-Abstraktion** (Ansible primär, Terraform/OpenTofu je Use Case) für read/write/delete; State-Backend-Entscheid als ADR **vor** dem ersten schreibenden Use Case (ADR 0002). Plan → Approve → Apply → Rollback. | später |
+| **E5 — Workflows** | Kleine, **verkettbare** Workflows (Bausteine zu Abläufen kombinieren) — Kern der allgemeinen Orchestrierung. | später |
+| **E6 — Mikroprogramme / modulare Funktionen** | Kleine, wiederverwendbare Funktionsmodule (vgl. Magister ADR 0008 „modulare Funktionen"). | später |
+| **E7 — Design-/Topologie-Modul** | Verbindungen über **redundante Pfade** und **Firewalls in Serie** zusammenführen; optional **draw.io-Integration** für Netzwerkpläne (pro Mandant versioniert, Knoten mit Zonen/VIPs verknüpfbar). | später / optional |
+
+**Änderungen sichtbar + Rollback** (eigenes Querschnitts-Thema) wird über das
+Cockpit (Update-Channels + Rollback-Snapshot, E2) und — für den Schreibpfad — über
+das Plan→Approve→Apply→Rollback-Jobmodell (E4) abgedeckt.
+
+**Offener Eingang (blockiert nur Fachliches, nicht E1/E2):** UC1-Fachdaten — **ACI,
+Namenskonventionen, Tenant-Struktur** und das **Confluence-Feldschema**. Diese
+präzisieren das **„Applikationen"-Modell** (Applikationen = bestimmte Systeme, nicht
+VIPs) und **Model 1** (FortiGate + ACI + Infoblox).
