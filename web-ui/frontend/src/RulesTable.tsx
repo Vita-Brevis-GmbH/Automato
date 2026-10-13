@@ -3,7 +3,22 @@ import { fetchRules, fetchSystems, Rule, System } from "./api";
 import RuleDetailDrawer from "./RuleDetail";
 import { ActionBadge } from "./ui";
 
-export default function RulesTable() {
+function ObjCell({ items }: { items: string[] }) {
+  if (!items.length) return <span className="muted">–</span>;
+  const shown = items.slice(0, 4);
+  return (
+    <div className="objs">
+      {shown.map((s, i) => (
+        <code key={i}>{s}</code>
+      ))}
+      {items.length > shown.length && (
+        <span className="muted">+{items.length - shown.length}</span>
+      )}
+    </div>
+  );
+}
+
+export default function RulesTable({ tenantId }: { tenantId: number | null }) {
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [systems, setSystems] = useState<System[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -26,12 +41,12 @@ export default function RulesTable() {
     const timer = setTimeout(() => {
       setRules(null);
       setError(null);
-      fetchRules(q)
+      fetchRules(q, tenantId)
         .then(setRules)
         .catch((e) => setError(String(e)));
     }, 300);
     return () => clearTimeout(timer);
-  }, [q]);
+  }, [q, tenantId]);
 
   const systemName = (id: number) => systems.find((s) => s.id === id)?.name ?? `#${id}`;
 
@@ -106,8 +121,8 @@ export default function RulesTable() {
                 <th>System</th>
                 <th>Quell-Zone</th>
                 <th>Ziel-Zone</th>
-                <th className="num">Quellen</th>
-                <th className="num">Ziele</th>
+                <th>Quelle</th>
+                <th>Ziel</th>
                 <th className="num">Dienste</th>
                 <th className="num" title="nicht aufgelöste Objekte">
                   ⚠
@@ -124,8 +139,12 @@ export default function RulesTable() {
                   <td>{systemName(r.source_system_id)}</td>
                   <td>{r.src_zone ?? <span className="muted">–</span>}</td>
                   <td>{r.dst_zone ?? <span className="muted">–</span>}</td>
-                  <td className="num">{r.num_src}</td>
-                  <td className="num">{r.num_dst}</td>
+                  <td>
+                    <ObjCell items={r.sources} />
+                  </td>
+                  <td>
+                    <ObjCell items={r.destinations} />
+                  </td>
                   <td className="num">{r.num_services}</td>
                   <td className="num">
                     {r.num_unmatched > 0 ? (

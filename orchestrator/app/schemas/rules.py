@@ -15,6 +15,8 @@ class RuleOut(BaseModel):
     num_dst: int = 0
     num_services: int = 0
     num_unmatched: int = 0  # Endpunkte mit Objekt, das nicht im SoT aufgeloest wurde
+    sources: list[str] = []  # Quell-Objektnamen (mehrere moeglich)
+    destinations: list[str] = []  # Ziel-Objektnamen (mehrere moeglich)
 
 
 class EndpointOut(BaseModel):

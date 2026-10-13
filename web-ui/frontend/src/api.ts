@@ -20,6 +20,8 @@ export interface Rule {
   num_dst: number;
   num_services: number;
   num_unmatched: number;
+  sources: string[];
+  destinations: string[];
 }
 
 export interface Endpoint {
@@ -60,6 +62,13 @@ export interface System {
   name: string;
   platform: string;
   enabled: boolean;
+}
+
+export interface Tenant {
+  id: number;
+  name: string;
+  ipam_type: string;
+  dns_type: string;
 }
 
 export interface Nat {
@@ -106,6 +115,7 @@ async function getJSON<T>(url: string): Promise<T> {
 
 export const fetchHealth = () => getJSON<HealthStatus>("/api/health");
 export const fetchSystems = () => getJSON<System[]>("/api/systems");
+export const fetchTenants = () => getJSON<Tenant[]>("/api/tenants");
 export const fetchFindings = () => getJSON<Finding[]>("/api/findings");
 export const fetchNat = () => getJSON<Nat[]>("/api/nat");
 export const fetchApplications = () => getJSON<Application[]>("/api/applications");
@@ -113,7 +123,10 @@ export const fetchApplication = (name: string) =>
   getJSON<ApplicationDetail>(`/api/applications/${encodeURIComponent(name)}`);
 export const fetchRuleDetail = (id: number) => getJSON<RuleDetail>(`/api/rules/${id}`);
 
-export function fetchRules(q?: string): Promise<Rule[]> {
-  const query = q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
-  return getJSON<Rule[]>(`/api/rules${query}`);
+export function fetchRules(q?: string, tenantId?: number | null): Promise<Rule[]> {
+  const params = new URLSearchParams();
+  if (q && q.trim()) params.set("q", q.trim());
+  if (tenantId != null) params.set("tenant_id", String(tenantId));
+  const qs = params.toString();
+  return getJSON<Rule[]>(`/api/rules${qs ? `?${qs}` : ""}`);
 }

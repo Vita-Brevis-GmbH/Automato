@@ -130,7 +130,7 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 7, orchestrator 31, sot-gateway 6.
+Schreibpfad (ADR 0002). Tests: collectors 7, orchestrator 33, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -164,5 +164,9 @@ pre-commit; CI grün). **(1) Namensprofil-Wörterbücher als Code umgesetzt**: M
 (up/down geprüft), Store + idempotenter SOP-Seed, API `/naming-profiles` (Lesen offen,
 Schreiben per internem Token bis RBAC), Tests. Mockup-Screen „Namensprofile" + Regeln
 mit getrennten Quelle/Ziel-Spalten (mehrere Objekte) + 3-stelliger Standort-Code.
-Als Nächstes: **(2) W1 Web-UI**, **(3) FortiGate-Collector Phase 1.5** (address6/UTM/ippool/
-color). `app/naming.py` auf die Profil-Wörterbücher umstellen ist ein Folgeschritt.
+**(2) W1 Web-UI umgesetzt**: Übersicht/Dashboard (KPIs Regeln/NAT/Findings/unmatched,
+Regeln je Ziel-Zone, neueste Findings), **Mandanten-Switcher** (neuer `/tenants`-Endpunkt),
+Regelliste mit getrennten **Quelle/Ziel**-Spalten inkl. mehrerer Adressobjekte (`/rules`
+um `sources`/`destinations` erweitert), Regel-Detail unverändert. Frontend `tsc`+`vite`
+grün. Als Nächstes: **(3) FortiGate-Collector Phase 1.5** (address6/UTM/ippool/color).
+`app/naming.py` auf die Profil-Wörterbücher umstellen bleibt Folgeschritt.

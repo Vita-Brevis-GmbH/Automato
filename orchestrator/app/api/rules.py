@@ -32,6 +32,14 @@ def _count_unmatched(endpoints, objs) -> int:
     return sum(1 for e in endpoints if _is_unmatched(objs.get(e.network_object_id)))
 
 
+def _endpoint_label(e, objs) -> str:
+    """Anzeigename eines Endpunkts: Objektname (Konvention) bevorzugt, sonst Wert/inline."""
+    obj = objs.get(e.network_object_id) if e.network_object_id else None
+    if obj:
+        return obj.name or obj.value or "?"
+    return e.inline_value or e.kind.value
+
+
 def _rule_matches_q(rule, objs, ql: str) -> bool:
     if ql in rule.name.lower() or ql in (rule.external_id or "").lower():
         return True
@@ -76,6 +84,12 @@ def list_rules(
                 num_dst=sum(1 for e in r.endpoints if e.role is EndpointRole.DST),
                 num_services=len(r.services),
                 num_unmatched=_count_unmatched(r.endpoints, objs),
+                sources=[
+                    _endpoint_label(e, objs) for e in r.endpoints if e.role is EndpointRole.SRC
+                ],
+                destinations=[
+                    _endpoint_label(e, objs) for e in r.endpoints if e.role is EndpointRole.DST
+                ],
             )
         )
     return out
