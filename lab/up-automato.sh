@@ -1,26 +1,33 @@
 #!/usr/bin/env bash
 # Bringt den Automato-Stack (core+collectors) hoch und verdrahtet ihn mit der
-# bereits laufenden NetBox- und FortiGate-Lab-Umgebung. NUR fuer Labor/Test.
+# bereits laufenden NetBox- und (optional) FortiGate-Lab-Umgebung. NUR Labor/Test.
 # Aus dem Repo-Root ausfuehren.
 #
 # Eingaben ueber Umgebungsvariablen:
 #   NETBOX_TOKEN     (Pflicht) read-only Collector-Token aus source-of-truth/netbox/setup.sh
-#   FORTIGATE_URL    (Pflicht) z. B. https://10.10.0.1
-#   FORTIGATE_TOKEN  (Pflicht) API-Token des read-only FortiGate-Users (LAB.md)
+#   FORTIGATE_URL    (optional) z. B. https://10.10.0.1 - leer -> Collector liest Beispieldaten
+#   FORTIGATE_TOKEN  (optional) API-Token des read-only FortiGate-Users (LAB.md)
 #   NETBOX_PORT      (optional) Host-Port der NetBox-Instanz (Default 8080)
 #
-# Beispiel:
+# Beispiel (mit echtem FortiGate):
 #   NETBOX_TOKEN=abc... FORTIGATE_URL=https://10.10.0.1 FORTIGATE_TOKEN=xyz... \
 #     bash lab/up-automato.sh
 set -euo pipefail
 
+[ -f docker-compose.yml ] || { echo "Bitte aus dem Repo-Root ausfuehren."; exit 1; }
 NETBOX_PORT="${NETBOX_PORT:-8080}"
+FORTIGATE_URL="${FORTIGATE_URL:-}"
+FORTIGATE_TOKEN="${FORTIGATE_TOKEN:-}"
 : "${NETBOX_TOKEN:?NETBOX_TOKEN fehlt (read-only Collector-Token aus der NetBox-setup.sh)}"
-: "${FORTIGATE_URL:?FORTIGATE_URL fehlt (z. B. https://10.10.0.1)}"
-: "${FORTIGATE_TOKEN:?FORTIGATE_TOKEN fehlt (API-Token des read-only FortiGate-Users)}"
+if [ -z "$FORTIGATE_URL" ] || [ -z "$FORTIGATE_TOKEN" ]; then
+  echo "Hinweis: ohne FORTIGATE_URL/FORTIGATE_TOKEN liest der Collector Beispieldaten."
+fi
 
-command -v docker >/dev/null 2>&1 || { echo "docker fehlt -> erst lab/install-prereqs.sh"; exit 1; }
+command -v docker >/dev/null 2>&1 || { echo "docker fehlt -> erst 'sudo bash lab/install-prereqs.sh'"; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "docker compose v2 fehlt"; exit 1; }
+docker info >/dev/null 2>&1 || {
+  echo "Docker-Daemon nicht erreichbar. Nach install-prereqs neu einloggen oder 'newgrp docker'."; exit 1
+}
 
 # Internen Service-Token stabil halten (aus vorhandener .env uebernehmen), sonst neu.
 INTERNAL_TOKEN="$(sed -n 's/^AUTOMATO_INTERNAL_API_TOKEN=//p' .env 2>/dev/null | head -n1)"

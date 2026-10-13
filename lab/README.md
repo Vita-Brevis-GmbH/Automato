@@ -14,6 +14,37 @@ FortiGate-VM ──(read-only REST)──▶ Collector ─┐
 NetBox-Stack (Host :8080) ◀───────────────────┘        (Rule & Service Store, /rules)
 ```
 
+## Schnellstart (ein Kommando)
+
+Für die eilige Variante: Repo holen, einmal die Grundpakete installieren, dann
+**ein** Skript, das NetBox + Automato hochfährt, verdrahtet und einen ersten Lauf
+auslöst. Ohne FortiGate-Creds läuft es gegen **Beispieldaten** (gut zum Testen des
+Stacks); mit Creds macht es den echten Abruf.
+
+```bash
+# 1. Repo holen
+sudo apt-get update && sudo apt-get install -y git      # falls git noch fehlt
+git clone <dieses-repo> automato && cd automato
+git checkout claude/projekt-roadmap-planung-0mk5v0
+
+# 2. Grundpakete (Docker etc.) - einmalig, braucht root; danach neu einloggen
+sudo bash lab/install-prereqs.sh
+newgrp docker        # oder aus-/einloggen
+
+# 3a. Stack-Test mit Beispieldaten (noch ohne FortiGate):
+bash lab/bootstrap.sh
+
+# 3b. ... oder gleich mit echtem FortiGate (read-only API-User, siehe LAB.md):
+FORTIGATE_URL=https://<fortigate-ip> FORTIGATE_TOKEN=<api-token> bash lab/bootstrap.sh
+```
+
+Am Ende zeigt das Skript NetBox-/Orchestrator-URLs und den Status des ersten Laufs.
+`bootstrap.sh` ist **idempotent** — du kannst es gefahrlos erneut ausführen (z. B.
+später mit FortiGate-Creds). Die Einzelschritte dahinter stehen unten, falls du etwas
+gezielt nachvollziehen oder anpassen willst.
+
+---
+
 ## 0. Repo auf die VM holen
 
 ```bash
