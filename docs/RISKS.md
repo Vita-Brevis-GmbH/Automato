@@ -28,7 +28,16 @@ Bewertung: Auswirkung und Eintrittswahrscheinlichkeit jeweils **hoch / mittel / 
 | R12 | ACI-Endpunkt-Volatilität: ACI lernt Host-IPs nur bei Traffic, nach ~30 min altert der Endpunkt aus → unvollständige Host↔EPG-Zuordnung | mittel | hoch | Gelernte Endpunkte **akkumulierend** speichern (`epg_endpoint`, `last_seen`, nie ersetzen); stabile `epg_subnet`-Zuordnung (Config) als verlässliche Basis; regelmässige Collector-Läufe | M5 (Phase 2), ADR 0004 |
 | R13 | Mandanten-Isolation: eine Instanz hält mehrere Kunden/Security-Tenants; fehlendes Tenant-Scoping oder RBAC leakt Regeln zwischen Mandanten | hoch | mittel | `tenant_id`-Scoping in **jeder** Store-Query ab Start; RBAC-Rollenmodell (Folge-ADR) vor UI-Exposition realer Daten; read-access ins Audit-Log | M3, ADR 0005 |
 | R14 | Daten-Aggregation: die zentrale DB enthält die vollständige Firewall-/Netz-Topologie aller Kunden → attraktives, hochsensibles Angriffsziel | hoch | mittel | Verschlüsselung at-rest/in-transit (mTLS-Folge-ADR); Least-Privilege-DB-Zugriff; Netzwerksegmentierung; read-only wo möglich; Zugriff über RBAC begrenzt | M3, ADR 0005, SECURITY.md |
+| R15 | SoT-API-/Versionsdrift: NetBox änderte das Token-Modell (gehashte v2-Tokens ab 4.6, eigenes Group-Modell) und bricht Setup/Adapter; gilt analog für künftige NetBox-/Infoblox-Versionen | mittel | hoch | NetBox-Version im Lab **gepinnt** (`NETBOX_VERSION`); v1-Legacy-Tokens + ObjectPermission (ADR 0006); Adapter nur über das stabile SoTAdapter-Protokoll; Versions-Upgrades bewusst testen | M7, M8, ADR 0006 |
+| R16 | Zielsystem-Auth zu schwach: beobachtet, dass die FortiGate-REST-API Requests dieser VM auch mit beliebigem Token liefert (Trusted-Host-only) → kompromittierte VM = Lese-Zugriff auf die Firewall-Config | mittel | mittel | Für Produktion echten, geprüften API-Token + enge Trusted-Hosts fordern; Collector-Host härten/segmentieren; read-only-API-Profil (Least Privilege) | M9, SECURITY.md, ADR 0006 |
+| R17 | Bootstrap-Import schreibt in den SoT: `import_from_fortigate.py` nutzt einen Admin-Schreib-Token; Fehlbedienung/falscher Scope könnte NetBox-Daten verändern | mittel | niedrig | Bewusst **separates, opt-in Admin-Werkzeug** ausserhalb des read-only Collector-Pfads; Objekte mit Tag `automato-import` markiert; NetBox danach als gepflegte SoT; Schreibpfad-Governance mit dem künftigen Write-Path-ADR | M8, ADR 0006 |
 
 ## Geschlossene Risiken
 
-*(noch keine)*
+- **R5 (Laborumgebung fehlt/kommt zu spät)** – *erledigt (M7/M8):* Lab steht und ist
+  per `lab/bootstrap.sh` reproduzierbar; Durchstich lief gegen echte FortiGate + NetBox.
+
+*Hinweis zu R4 (Datenqualität):* durch den Durchstich bestätigt und erweitert – neben
+dem Finding-Konstrukt wird der **FortiGate-Objekttyp** zur Einordnung genutzt
+(fqdn=extern, geo/mac/dynamic=n/a), sodass nur echte IPAM-Lücken als Findings erscheinen
+(ADR 0006).

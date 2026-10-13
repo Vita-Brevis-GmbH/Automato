@@ -180,15 +180,24 @@ speichert sie normalisiert und zeigt sie an (`/rules`) – inklusive Audit-Trail
 Expliziter Halt, **bevor** der volle Use Case gebaut wird – hier werden Änderungen erkannt,
 solange sie noch billig sind.
 
-- [ ] Lessons Learned: Was hat nicht wie geplant funktioniert?
-- [ ] Architektur, Microarchitektur und Datenmodell nachziehen, betroffene ADRs aktualisieren
-- [ ] Risikoregister aktualisieren
+- [x] Lessons Learned: Erkenntnisse aus dem echten Lab festgehalten (ADR 0006) –
+  NetBox-v2-Token/-Versionspin, typ-bewusste Objekt-Einordnung statt rein
+  namensbasiert, Bootstrap-Import als SoT-Seeding, VIPs über extip, Findings als
+  abgeleiteter Zustand.
+- [x] Architektur/Datenmodell nachgezogen: ADR 0006 ergänzt (verweist auf 0004/0005);
+  Collector liefert Objekttyp mit, `MatchStatus.NOT_APPLICABLE` ergänzt.
+- [x] Risikoregister aktualisiert (R4/R5 angepasst; R15–R17 ergänzt).
 
-**Exit-Kriterium:** Entscheidungen sind bestätigt oder angepasst – erst dann startet M9.
+**Exit-Kriterium (erfüllt):** Entscheidungen bestätigt/angepasst (ADR 0006) – M9 kann starten.
+
+**Ergebnis des Durchstichs (echtes Lab):** 75 FortiGate-Policies gelesen, nach
+NetBox-Seeding **0 nicht aufgelöste Endpunkte, 0 offene Findings**; Web-UI mit
+Filtern (System/Zone/Aktion/Freitext), Regel-Detail und Findings-Ansicht steht.
 
 ## M9 – Ersten Use Case abschliessen
 
 - [ ] Use Case #1 vollständig gemäss Definition of Done aus M1 umsetzen
+  (offen: Applikations-Doku/Export, VIP-NAT-Mapping, Zonen aus Interfaces/SoT)
 - [ ] Fehlerbehandlung umgesetzt und getestet (Collector-Ausfälle, unvollständige
   Daten, nicht zuordenbare Adressen sichtbar ausweisen)
 - [ ] Security-/Hardening-Check vor Abschluss (Secrets, Least Privilege, Audit-Log vollständig)

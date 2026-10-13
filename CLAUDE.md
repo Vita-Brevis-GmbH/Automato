@@ -102,10 +102,19 @@ Stack auf Port 8080 (Orchestrator auf 8000).
 Als Nächstes: Lauf gegen das **echte Lab** (Lab-Creds setzen, echter Abruf statt
 Beispieldaten via `lab/README.md`), dann M8/M9.
 
-**M7 real erreicht:** Auf einer VM wurden per `lab/bootstrap.sh` 75 echte FortiGate-Policies
-read-only via FortiOS-REST gelesen und End-to-End in den Store geschrieben
-(`status=completed rules=75`, sichtbar über `/rules`). Für echte Adress-Treffer muss
-NetBox mit echten IPAM-Daten gefüllt werden (der Lab-Seed enthält nur Spielzeugdaten).
-Nächste Schritte: M8 (Review) und M9 (voller UC1: Regel-Detail/Findings sichtbar machen,
-Web-UI mit Filtern, Applikations-Doku). Offene Fragen siehe ADR 0004 (Phasenplan) und das
-UC1-Dokument; RBAC/Secrets/mTLS/Netzsegmentierung sind als Folge-ADRs terminiert (ADR 0005).
+**M7 real erreicht + M8-Review erledigt:** Auf einer VM wurden per `lab/bootstrap.sh`
+75 echte FortiGate-Policies read-only via FortiOS-REST gelesen und End-to-End in den
+Store geschrieben. Nach Bootstrap-Import der FortiGate-Objekte nach NetBox
+(`source-of-truth/netbox/import_from_fortigate.py`, opt-in, schreibt mit Admin-Token;
+Collector bleibt read-only) und typ-bewusster Einordnung: **0 nicht aufgelöste
+Endpunkte, 0 offene Findings**. Der Collector liefert den FortiGate-Objekttyp mit
+(ipmask/interface-subnet/iprange/fqdn/geo/mac/dynamic/vip); der Orchestrator ordnet ein
+(fqdn=expected_external, geo/mac/dynamic=not_applicable, VIP über extip). **Web-UI**
+(`web-ui/frontend/`) zeigt Regeln-Tabelle, Regel-Detail (aufgelöste Endpunkte/Zonen/
+Services) und Findings mit Filtern (System/Zone/Aktion/Freitext); API: `/rules`,
+`/rules/{id}`, `/findings`, `/systems`. Erkenntnisse/Entscheide: **ADR 0006**;
+Risiken R15–R17 ergänzt.
+
+Als Nächstes (M9, UC1 abschliessen): Applikations-Doku/Export, VIP-NAT-Mapping
+(extip→mappedip, Phase 1.5), Zonen aus Interfaces/SoT, Betriebs-/Anwender-Doku,
+Security-/Hardening-Check. RBAC/Secrets/mTLS/Netzsegmentierung als Folge-ADRs (ADR 0005).
