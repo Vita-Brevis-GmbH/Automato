@@ -130,7 +130,7 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 7, orchestrator 28, sot-gateway 6.
+Schreibpfad (ADR 0002). Tests: collectors 7, orchestrator 31, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -156,3 +156,13 @@ UTM-Prefixe `AV_/WF_/DF_/AC_/IPS_/WAF_/SSL_`; Zusatz-Prefixe `N-EXT_`/`T_`/Geogr
 Contract-`scope`→Doku-Kategorie, `fvRsBDToOut`→L3O, Dual-Stack). **Noch ausstehend:**
 Wörterbücher (Kap. 3.1 GG-Abkürzungen, 3.2 Projektnummern/Funktionscodes) — als in-App
 pflegbare, erweiterbare Daten (Namensprofil), CSV als Seed.
+
+**Umsetzung Ausbaustufe B läuft (Reihenfolge W1→E1, davor Wörterbücher):** CI war rot
+(ruff nicht als Dep deklariert) → behoben (ruff==0.5.5 als Dev-Dependency, identisch zu
+pre-commit; CI grün). **(1) Namensprofil-Wörterbücher als Code umgesetzt**: Modelle
+`naming_profile`/`dictionary_entry` (offenes `kind` = erweiterbar), Alembic `0005`
+(up/down geprüft), Store + idempotenter SOP-Seed, API `/naming-profiles` (Lesen offen,
+Schreiben per internem Token bis RBAC), Tests. Mockup-Screen „Namensprofile" + Regeln
+mit getrennten Quelle/Ziel-Spalten (mehrere Objekte) + 3-stelliger Standort-Code.
+Als Nächstes: **(2) W1 Web-UI**, **(3) FortiGate-Collector Phase 1.5** (address6/UTM/ippool/
+color). `app/naming.py` auf die Profil-Wörterbücher umstellen ist ein Folgeschritt.

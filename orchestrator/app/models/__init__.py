@@ -9,6 +9,7 @@ from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.collector_run import CollectorRun, RunStatus
 from app.models.finding import Finding, FindingStatus, FindingType, Severity, SubjectKind
+from app.models.naming_profile import DictionaryEntry, NamingProfile
 from app.models.nat_rule import NatRule
 from app.models.network_object import (
     Family,
@@ -36,6 +37,7 @@ __all__ = [
     "AuditLog",
     "Base",
     "CollectorRun",
+    "DictionaryEntry",
     "DnsType",
     "EndpointKind",
     "EndpointRole",
@@ -45,6 +47,7 @@ __all__ = [
     "FindingType",
     "IpamType",
     "MatchStatus",
+    "NamingProfile",
     "NatRule",
     "NetworkObject",
     "ObjectClass",

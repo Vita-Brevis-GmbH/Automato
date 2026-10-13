@@ -7,6 +7,7 @@ from app.api import (
     health,
     internal,
     jobs,
+    naming_profiles,
     nat,
     rules,
     systems,
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(systems.router)
     app.include_router(nat.router)
     app.include_router(applications.router)
+    app.include_router(naming_profiles.router)
     return app
 
 
