@@ -266,7 +266,9 @@ dependency-getrieben; die **Web-UI (W1)** ist **vorgezogen**, das Auth-Fundament
 Cockpit (Update-Channels + Rollback-Snapshot, E2) und — für den Schreibpfad — über
 das Plan→Approve→Apply→Rollback-Jobmodell (E4) abgedeckt.
 
-**Offener Eingang (blockiert nur Fachliches, nicht E1/E2):** UC1-Fachdaten — **ACI,
-Namenskonventionen, Tenant-Struktur** und das **Confluence-Feldschema**. Diese
-präzisieren das **„Applikationen"-Modell** (Applikationen = bestimmte Systeme, nicht
-VIPs) und **Model 1** (FortiGate + ACI + Infoblox).
+**UC1-Fachdaten erhalten & festgehalten:** SOP-Namenskonvention
+(`docs/naming-conventions.md`), Tenant-Modell Kunde/GG und die Applikations-Doku-Zieltabellen
+(`docs/usecases/uc1-applikations-doku-spec.md`) → **ADR-0004-Ergänzung** (Mandant = GG,
+Kunde/Umgebung darüber mit SoT + Namensprofil, Applikation = System mit AP/Projekt-Klammer,
+Ausnahmen-Kaskade, neue Collector-Felder). **Noch offen:** Parser-Wörterbücher
+(Kap. 3.1/3.2) + Struktur-Samples (Fixtures/ACI-Collector).

@@ -154,3 +154,52 @@ kein fest kodiertes Schema).
 - Persistenz Rule Store: DB (Postgres) als führendes System; Git-Sync des Rule Store
   (offener Punkt aus ADR 0002) ist für die reine Ist-Dokumentation nicht nötig und wird
   erst mit den Rule-**Intents** (Schreibpfad) entschieden.
+
+## Ergänzung 2026-10-13 — reale SOP-Namenskonvention & Mandanten-Modell
+
+Nach Erhalt der produktiven Namenskonvention (`docs/naming-conventions.md`, Profil „SOP")
+und der Ziel-Ausgabe (`docs/usecases/uc1-applikations-doku-spec.md`) werden folgende
+Punkte präzisiert; Bezug ADR 0006 (Objekttyp/Farbe-Signal), ADR 0007 (AuthN/RBAC).
+
+**E1 — Zwei Ebenen: Kunde/Umgebung über Mandant.** Prinzip 1 wird verfeinert:
+- **Mandant = Gruppengesellschaft (GG)** = ein ACI-Tenant `TE_<gg>` + `VRF_<gg>`; die
+  Scoping-Einheit für `viewer`/`operator`.
+- **Neue Ebene `customer`/`environment`** (z. B. SOP) **über** dem Mandanten: trägt die
+  **SoT-Bindung** (NetBox/Infoblox) **und das Namensprofil**. Andere Kunden = eigene
+  Umgebung, eigene NetBox, eigenes (ähnliches) Profil. `ipam_type`/`dns_type`/
+  `naming_convention` wandern damit von `tenant` auf `customer`.
+- **Übergreifende Tenants** (`TE_res01`, `TE_soprz01`, `share`) = Mandanten mit Flag
+  „übergreifend/shared".
+- **Global-Admin-Gesamtsicht**: ein Scope (RBAC, ADR 0007), keine Datenänderung — die UI
+  bietet eine „Alle Mandanten"-Sicht im selben Kontext/derselben NetBox.
+
+**E2 — Namensprofil als austauschbare Komponente.** Der Parser ist nicht hartkodiert,
+sondern ein **Profil pro Kunde** (Adapter-Prinzip wie SoT-Gateway); SOP ist das erste
+Profil. Gemeinsame Basis-Grammatik (Prefix→Typ) + kundenspezifische Overrides.
+
+**E3 — Ausnahmen-Kaskade (erstklassig).** Einordnung läuft: (1) Konvention → (2) Objekttyp
+/ FortiGate-**Farbcode** → (3) manuell/Designer-Override → (4) sonst `finding`. „Es gibt
+immer Ausnahmen" ist damit Teil des Modells, nicht ein Sonderfall. Das `color`-Signal
+(SOP/Swisscom/MPLS/VPN/Extern × Host/Network) wird am `network_object` mitgeführt.
+
+**E4 — Applikation = System, mit AP/Projekt-Klammer.** `application` wird **systemzentriert**
+genutzt: eine Applikation ist am Ende ein Container/VM/Server (`network_object` host).
+Gruppierungsschlüssel ist `AP_<projektnr>` (ACI) bzw. die 3-stellige Projektnummer aus dem
+Namen (Model 2). Die Zuordnung gilt „zu ~90 %" über `AP_`/Projektnummer, mit
+Override-Pfad (Designer) für den Rest.
+
+**E5 — Zusätzliche Collector-Felder** (für die Applikations-Doku, siehe Spec):
+- **UTM-Schutzprofile** pro FortiGate-Policy (`webfilter`/`application-list`/`ips-sensor`/
+  `waf`/`ssl-ssh-profile`/`av`) → am `rule`.
+- **Source-NAT IP-Pools** (`IPP_`) → `nat_rule.nat_type=snat_pool` (Schema vorhanden).
+- **Externer DNS-Name** aus `V-EXT_`-Objektnamen → am `nat_rule` (dnat_vip).
+
+**E6 — Zonen/Transfernetze aus ACI.** Die `L3O_`-Outputs (`inet`/`res`/`vpn`/`bit`/`sra`)
+sind Zonen vom ACI-Rand und steuern die Kategorisierung der Applikations-Doku
+(Tabellen 1–10 der Spec). ACI-Hierarchie: `TE_` → `VRF_` → `BD_` (→ `zone`) → `EG_`
+(→ `epg`), Contracts `CT_/SJ_/FT_` → `rule`/`rule_service`/`service_object`.
+
+Die Präfix-Liste aus Prinzip „Namenskonvention" wird durch `docs/naming-conventions.md`
+ersetzt/erweitert (u. a. `IPP_`, `V-EXT_`, UTM-Profile, ACI-/LB-/PBR-Präfixe). Die
+Parser-Wörterbücher (Kapitel 3.1 GG-Abkürzungen, 3.2 Projektnummern/Funktionscodes) und
+Struktur-Samples sind noch nachzureichen.

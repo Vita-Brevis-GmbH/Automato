@@ -141,6 +141,13 @@ in `ROADMAP.md` (Abschnitt „Ausbaustufe B"). Entschieden: **AuthN/RBAC via Key
 geseedter globaler Admin; Mandanten-Scoping zentral erzwingen; Rollen `viewer/operator/
 admin`; Secrets-/Vault-Provider) — **ADR 0007**. Reihenfolge: **Web-UI (W1) vorgezogen**,
 dann **E1 Härtung/RBAC** als Schwerpunkt. UI-Mockup liegt als Artifact vor (nicht im Repo).
-**Ausstehend vom Kunden:** UC1-Fachdaten (ACI, Namenskonventionen, Tenant-Struktur,
-Confluence-Feldschema) → präzisieren „Applikationen" (= bestimmte Systeme, nicht VIPs)
-und Model 1; blockieren E1/E2 nicht.
+**UC1-Fachdaten erhalten & festgehalten:** SOP-Namenskonvention
+(`docs/naming-conventions.md`, austauschbares Profil pro Kunde), Tenant-Modell Kunde/GG
+und Applikations-Doku-Spec (9+ Tabellen, `docs/usecases/uc1-applikations-doku-spec.md`)
+→ **ADR-0004-Ergänzung**. Kernpunkte: Mandant = Gruppengesellschaft; Kunde/Umgebung (SOP)
+darüber trägt NetBox + Namensprofil; Global-Admin-Gesamtsicht; Applikation = System
+(Container/VM/Server) mit AP/Projekt-Klammer (~90 % automatisch, Rest via Designer);
+Ausnahmen-Kaskade (Konvention→Typ/Farbcode→Override→Finding); neue Collector-Felder
+(UTM-Schutzprofile, SNAT-IP-Pools `IPP_`, externer DNS aus `V-EXT_`, FortiGate-Farbcode).
+**Noch ausstehend:** Parser-Wörterbücher (Kap. 3.1 GG-Abkürzungen, 3.2 Projektnummern/
+Funktionscodes) + Struktur-Samples (→ Fixtures/ACI-Collector).
