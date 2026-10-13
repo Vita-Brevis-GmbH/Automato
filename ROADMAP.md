@@ -167,12 +167,13 @@ das **echte Lab** und ein Minimal-UI/CLI-Auslöser.
   (fixture-getestet, `test_cli.py`)
 - [x] Scriptbares Lab-Setup einer VM (`lab/`): Prereqs, NetBox (Port 8080) + Automato-Stack
   verdrahtet, Compose reicht NetBox-/FortiGate-Creds durch (`lab/README.md`)
-- [ ] Lauf gegen das echte Lab (Lab-Creds setzen, echter Abruf statt Beispieldaten) —
-  sobald FortiGate + NetBox stehen (`lab/README.md`, `collectors/fortigate/LAB.md`,
-  `source-of-truth/netbox/`)
+- [x] Lauf gegen das echte Lab: 75 echte FortiGate-Policies read-only via FortiOS-REST
+  gelesen und normalisiert (`status=completed rules=75`), End-to-End auf einer VM
+  (`lab/bootstrap.sh`). Offen für echte Treffer: NetBox mit echten IPAM-Daten füllen
+  (Lab-Seed enthält nur Spielzeugdaten) — nicht Teil des Durchstich-Ziels.
 
-**Exit-Kriterium:** Ein Auftrag liest nachvollziehbar Regeln aus dem Lab, speichert
-sie normalisiert und zeigt sie an – inklusive Audit-Trail.
+**Exit-Kriterium (erfüllt):** Ein Auftrag liest nachvollziehbar Regeln aus dem Lab,
+speichert sie normalisiert und zeigt sie an (`/rules`) – inklusive Audit-Trail.
 
 ## M8 – Review-Checkpoint nach dem Durchstich
 

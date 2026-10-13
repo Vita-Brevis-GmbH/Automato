@@ -100,5 +100,12 @@ NetBox-/FortiGate-Creds an Orchestrator/Collector durch, NetBox läuft als eigen
 Stack auf Port 8080 (Orchestrator auf 8000).
 
 Als Nächstes: Lauf gegen das **echte Lab** (Lab-Creds setzen, echter Abruf statt
-Beispieldaten via `lab/README.md`), dann M8/M9. Offene Fragen siehe ADR 0004 (Phasenplan) und das
+Beispieldaten via `lab/README.md`), dann M8/M9.
+
+**M7 real erreicht:** Auf einer VM wurden per `lab/bootstrap.sh` 75 echte FortiGate-Policies
+read-only via FortiOS-REST gelesen und End-to-End in den Store geschrieben
+(`status=completed rules=75`, sichtbar über `/rules`). Für echte Adress-Treffer muss
+NetBox mit echten IPAM-Daten gefüllt werden (der Lab-Seed enthält nur Spielzeugdaten).
+Nächste Schritte: M8 (Review) und M9 (voller UC1: Regel-Detail/Findings sichtbar machen,
+Web-UI mit Filtern, Applikations-Doku). Offene Fragen siehe ADR 0004 (Phasenplan) und das
 UC1-Dokument; RBAC/Secrets/mTLS/Netzsegmentierung sind als Folge-ADRs terminiert (ADR 0005).
