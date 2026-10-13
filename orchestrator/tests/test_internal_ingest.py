@@ -115,3 +115,62 @@ def test_durchstich_collector_result_landet_in_rules(client, session_factory, mo
 
 def test_rule_detail_404_fuer_unbekannte_regel(client):
     assert client.get("/rules/999999").status_code == 404
+
+
+def test_applications_aus_vips(client, session_factory):
+    session = session_factory()
+    tenant = Tenant(name="k", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+    fw = SourceSystem(
+        name="fw-01", platform=Platform.FORTIGATE, base_url="https://fw", enabled=True
+    )
+    session.add_all([tenant, fw])
+    session.commit()
+    tid, sid = tenant.id, fw.id
+    session.close()
+
+    run_id = client.post(
+        "/jobs/collect",
+        json={"platform": "fortigate", "tenant_id": tid, "source_system_id": sid},
+    ).json()["run_id"]
+    resp = client.post(
+        f"/internal/collector-runs/{run_id}/result",
+        headers=TOKEN,
+        json={
+            "status": "completed",
+            "rules": [
+                {
+                    "source_platform": "fortigate",
+                    "external_id": "5",
+                    "name": "allow-to-web",
+                    "action": "allow",
+                    "sources": ["10.10.20.0/24"],
+                    "destinations": ["vip:VIP_web=203.0.113.10"],
+                    "services": ["tcp/443"],
+                }
+            ],
+            "nat_rules": [
+                {
+                    "source_platform": "fortigate",
+                    "external_id": "VIP_web",
+                    "name": "VIP_web",
+                    "ext_ip": "203.0.113.10",
+                    "ext_port": "443",
+                    "mapped_ip": "10.10.10.5",
+                    "mapped_port": "8443",
+                    "protocol": "tcp",
+                    "portforward": True,
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 204
+
+    apps = client.get("/applications").json()
+    assert any(a["name"] == "VIP_web" and a["rule_count"] == 1 for a in apps)
+
+    detail = client.get("/applications/VIP_web").json()
+    assert detail["mapped_ip"] == "10.10.10.5"
+    assert detail["rules"][0]["services"] == ["tcp/443"]
+    assert detail["rules"][0]["sources"] == ["10.10.20.0/24"]
+
+    assert client.get("/applications/nicht-da").status_code == 404

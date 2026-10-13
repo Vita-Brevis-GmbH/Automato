@@ -1,18 +1,28 @@
 import { useEffect, useState } from "react";
 import { fetchHealth, HealthStatus } from "./api";
+import Applications from "./Applications";
 import Findings from "./Findings";
 import NatTable from "./Nat";
 import RulesTable from "./RulesTable";
 
+type Tab = "rules" | "apps" | "nat" | "findings";
+
 export default function App() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [tab, setTab] = useState<"rules" | "nat" | "findings">("rules");
+  const [tab, setTab] = useState<Tab>("rules");
 
   useEffect(() => {
     fetchHealth()
       .then(setHealth)
       .catch(() => setHealth(null));
   }, []);
+
+  const tabs: [Tab, string][] = [
+    ["rules", "Regeln"],
+    ["apps", "Applikationen"],
+    ["nat", "NAT / VIPs"],
+    ["findings", "Findings"],
+  ];
 
   return (
     <div className="app">
@@ -25,24 +35,19 @@ export default function App() {
       </div>
 
       <div className="tabs">
-        <button
-          className={`tab ${tab === "rules" ? "active" : ""}`}
-          onClick={() => setTab("rules")}
-        >
-          Regeln
-        </button>
-        <button className={`tab ${tab === "nat" ? "active" : ""}`} onClick={() => setTab("nat")}>
-          NAT / VIPs
-        </button>
-        <button
-          className={`tab ${tab === "findings" ? "active" : ""}`}
-          onClick={() => setTab("findings")}
-        >
-          Findings
-        </button>
+        {tabs.map(([key, label]) => (
+          <button
+            key={key}
+            className={`tab ${tab === key ? "active" : ""}`}
+            onClick={() => setTab(key)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {tab === "rules" && <RulesTable />}
+      {tab === "apps" && <Applications />}
       {tab === "nat" && <NatTable />}
       {tab === "findings" && <Findings />}
     </div>

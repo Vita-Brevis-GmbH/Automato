@@ -1,7 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import findings, health, internal, jobs, nat, rules, systems
+from app.api import (
+    applications,
+    findings,
+    health,
+    internal,
+    jobs,
+    nat,
+    rules,
+    systems,
+)
 from app.config import check_security_config, get_settings
 
 
@@ -26,6 +35,7 @@ def create_app() -> FastAPI:
     app.include_router(findings.router)
     app.include_router(systems.router)
     app.include_router(nat.router)
+    app.include_router(applications.router)
     return app
 
 

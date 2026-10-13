@@ -74,6 +74,30 @@ export interface Nat {
   portforward: boolean;
 }
 
+export interface Application {
+  name: string;
+  ext_ip: string | null;
+  ext_port: string | null;
+  mapped_ip: string | null;
+  mapped_port: string | null;
+  protocol: string | null;
+  portforward: boolean;
+  rule_count: number;
+}
+
+export interface AppRule {
+  id: number;
+  name: string;
+  action: string;
+  src_zone: string | null;
+  sources: string[];
+  services: string[];
+}
+
+export interface ApplicationDetail extends Application {
+  rules: AppRule[];
+}
+
 async function getJSON<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -84,6 +108,9 @@ export const fetchHealth = () => getJSON<HealthStatus>("/api/health");
 export const fetchSystems = () => getJSON<System[]>("/api/systems");
 export const fetchFindings = () => getJSON<Finding[]>("/api/findings");
 export const fetchNat = () => getJSON<Nat[]>("/api/nat");
+export const fetchApplications = () => getJSON<Application[]>("/api/applications");
+export const fetchApplication = (name: string) =>
+  getJSON<ApplicationDetail>(`/api/applications/${encodeURIComponent(name)}`);
 export const fetchRuleDetail = (id: number) => getJSON<RuleDetail>(`/api/rules/${id}`);
 
 export function fetchRules(q?: string): Promise<Rule[]> {
