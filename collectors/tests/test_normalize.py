@@ -5,7 +5,6 @@ from importlib import resources
 
 from collectors.cisco_aci.normalize import normalize_contract
 from collectors.cisco_aci.tasks import fetch_contracts
-
 from collectors.fortigate import normalize as norm
 
 

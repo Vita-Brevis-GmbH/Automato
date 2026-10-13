@@ -4,6 +4,12 @@ version = "0.1.0"
 description = "Automatisierungsplattform - Monorepo-Workspace (siehe README.md)"
 requires-python = ">=3.11"
 
+# Dev-Werkzeuge fuer CI + lokal (ruff-Version identisch zu .pre-commit-config.yaml,
+# damit Lint/Format in CI, pre-commit und lokal deckungsgleich sind). Wird von
+# `uv sync --all-packages` installiert (Default-Gruppe), daher findet `uv run ruff` es.
+[dependency-groups]
+dev = ["ruff==0.5.5"]
+
 [tool.uv]
 package = false
 

@@ -8,9 +8,9 @@ import json
 from importlib import resources
 
 import httpx
-from collectors.fortigate.client import FortiGateClient
 
 from collectors.fortigate import normalize as norm
+from collectors.fortigate.client import FortiGateClient
 
 
 def _sample(name: str):
