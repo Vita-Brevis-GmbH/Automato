@@ -22,7 +22,7 @@ def _client_with_mock() -> FortiGateClient:
         "/api/v2/cmdb/firewall/policy": "sample_policies.json",
         "/api/v2/cmdb/firewall/address": "sample_addresses.json",
         "/api/v2/cmdb/firewall/addrgrp": "sample_addrgrps.json",
-        "/api/v2/cmdb/firewall/service/custom": "sample_services.json",
+        "/api/v2/cmdb/firewall.service/custom": "sample_services.json",
     }
 
     def handler(request: httpx.Request) -> httpx.Response:

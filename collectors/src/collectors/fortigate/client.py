@@ -38,7 +38,10 @@ class FortiGateClient:
         return self._get("firewall/addrgrp")
 
     def services(self) -> list[dict[str, Any]]:
-        return self._get("firewall/service/custom")
+        # FortiOS-CMDB: Service-Objekte liegen unter dem gepunkteten Pfad
+        # "firewall.service/custom" (= config firewall service custom), NICHT
+        # "firewall/service/custom" (das liefert 400 Bad Request).
+        return self._get("firewall.service/custom")
 
     def gather(self) -> tuple[list, list, list, list]:
         """Alles einlesen, was die Normalisierung braucht."""
