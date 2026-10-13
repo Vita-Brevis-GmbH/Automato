@@ -148,9 +148,11 @@ PY
 
 # 6. Restliche Dienste (worker/housekeeping) best-effort nachziehen. Fuer UC1
 # (lesend) nicht noetig; ein Fehler hier darf das Setup nicht scheitern lassen.
-if ! docker compose up -d; then
-  echo "Hinweis: worker/housekeeping noch nicht healthy - fuer UC1 (nur Lesen ueber" >&2
-  echo "die REST-API) unkritisch. Spaeter erneut: 'docker compose up -d'." >&2
+# Ausgabe unterdruecken, damit der (erwartbare) "unhealthy"-Hinweis nicht alarmiert.
+if ! docker compose up -d >/dev/null 2>&1; then
+  echo "Hinweis: optionale NetBox-Hintergrunddienste (worker/housekeeping) nicht" >&2
+  echo "gestartet - fuer UC1 (nur Lesen ueber die REST-API) unkritisch. Details:" >&2
+  echo "  cd $(pwd) && docker compose up -d" >&2
 fi
 
 cat <<EOF
