@@ -30,7 +30,12 @@ docker info >/dev/null 2>&1 || {
 }
 
 # Internen Service-Token stabil halten (aus vorhandener .env uebernehmen), sonst neu.
-INTERNAL_TOKEN="$(sed -n 's/^AUTOMATO_INTERNAL_API_TOKEN=//p' .env 2>/dev/null | head -n1)"
+# Guard: ohne vorhandene .env wuerde sed unter 'set -euo pipefail' das Skript
+# lautlos beenden - deshalb nur lesen, wenn die Datei existiert.
+INTERNAL_TOKEN=""
+if [ -f .env ]; then
+  INTERNAL_TOKEN="$(sed -n 's/^AUTOMATO_INTERNAL_API_TOKEN=//p' .env | head -n1 || true)"
+fi
 if [ -z "${INTERNAL_TOKEN}" ] || [ "${INTERNAL_TOKEN}" = "dev-only-token" ]; then
   INTERNAL_TOKEN="$(openssl rand -hex 32)"
 fi

@@ -53,9 +53,9 @@ NETBOX_TOKEN="$COLLECTOR_TOKEN" NETBOX_PORT="$NETBOX_PORT" \
 
 # -- 4/4 Erster Lauf ----------------------------------------------------------
 echo; echo "== 4/4 Ersten Collect-Lauf ausloesen =="
-out="$(docker compose exec -T orchestrator automato lab --base-url "${FORTIGATE_URL:-beispieldaten}")"
+out="$(docker compose exec -T orchestrator automato lab --base-url "${FORTIGATE_URL:-beispieldaten}" || true)"
 echo "$out"
-run_id="$(printf '%s\n' "$out" | sed -n 's/.*run_id=\([^ ]*\).*/\1/p' | head -n1)"
+run_id="$(printf '%s\n' "$out" | sed -n 's/.*run_id=\([^ ]*\).*/\1/p' | head -n1 || true)"
 
 if [ -n "$run_id" ]; then
   echo "Warte auf Ergebnis (run_id=${run_id}) ..."
