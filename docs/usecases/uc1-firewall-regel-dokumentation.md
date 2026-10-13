@@ -69,19 +69,49 @@ Die DoD gilt für den **Abschluss von UC1 = Model 2** (FortiGate + NetBox, M9). 
 (ACI + Infoblox + strikte Namenskonvention + Firewalls in Serie) ist eine **Erweiterung
 von UC1** und durchläuft danach denselben Zyklus (M5-Phase 2 / M7-Phase 2).
 
-- [ ] Regeln von mindestens 1 (Lab-)FortiGate werden automatisch (zyklisch oder auf
-  Knopfdruck) eingelesen und normalisiert gespeichert
-- [ ] Regel-Adressen werden gegen NetBox gematcht; **jedes nicht auflösbare Objekt ist
+- [x] Regeln von mindestens 1 (Lab-)FortiGate werden automatisch (zyklisch oder auf
+  Knopfdruck) eingelesen und normalisiert gespeichert — *75 Policies, `automato collect`/`lab`.*
+- [~] Regel-Adressen werden gegen NetBox gematcht; **jedes nicht auflösbare Objekt ist
   als Finding sichtbar und triage-bar** (open → acknowledged/resolved/ignored).
   Die Ziel-Matching-Quote als Kennzahl wird **nach dem ersten realen Lauf** festgelegt
-  (nicht vorab hart gesetzt – Datenqualität ist erst dann bekannt, R4)
-- [ ] Service-Objekte sind dedupliziert als kanonische Services abgebildet
-- [ ] Web-UI filtert nach System, Netzwerk und Zone; Findings-Sicht vorhanden
-- [ ] Pro Applikation ist ein Dokument generierbar
-- [ ] Read-only garantiert: Service-Accounts der Collectors haben keine Schreibrechte
-  (Least Privilege, SECURITY.md / ADR 0005)
-- [ ] Collector-Läufe und Finding-Statusänderungen sind im Audit-Log nachvollziehbar
-- [ ] Security-Check für den Model-2-Scope bestanden (ADR 0005)
+  (nicht vorab hart gesetzt – Datenqualität ist erst dann bekannt, R4) — *Matching ✓
+  (nach Import unmatched 0), Findings sichtbar ✓; **Status-Triage (open→…) ist eine
+  Schreibaktion und folgt mit dem Schreibpfad** — Findings werden derzeit pro Lauf neu
+  aufgebaut (ADR 0006).*
+- [x] Service-Objekte sind dedupliziert als kanonische Services abgebildet
+- [x] Web-UI filtert nach System, Netzwerk und Zone; Findings-Sicht vorhanden —
+  *Filter System/Zone/Aktion + Freitext/IP-Suche (Netzwerk); Reiter Findings.*
+- [x] Pro Applikation ist ein Dokument generierbar — *Reiter Applikationen, Markdown-Export.*
+- [x] Read-only garantiert: Service-Accounts der Collectors haben keine Schreibrechte
+  (Least Privilege, SECURITY.md / ADR 0005) — *FortiGate read-only, NetBox-Collector-Token
+  `write_enabled=false` + nur view-ObjectPermission; der NetBox-Import ist ein separates
+  Admin-Werkzeug, kein Collector-Pfad.*
+- [~] Collector-Läufe und Finding-Statusänderungen sind im Audit-Log nachvollziehbar —
+  *Collector-Läufe (queued) + Ergebnis-Eingang auditiert; Finding-Statusänderungen gibt es
+  noch nicht (Schreibpfad). Lese-Zugriffe noch nicht auditiert.*
+- [~] Security-Check für den Model-2-Scope bestanden (ADR 0005) — *siehe „M9 – Abschluss"
+  unten: für Lab-/Review-Scope bestanden; **Produktions-Gate: AuthN/RBAC vor der öffentlichen
+  Read-API** (fail-closed erzwungen ausserhalb `dev`).*
+
+## M9 – Abschluss: Security-/Hardening-Check & offene Gates
+
+Stand der 8 SECURITY.md-Prinzipien (ADR 0005) für den Model-2-Scope:
+
+| Prinzip | Status | Anmerkung |
+|---|---|---|
+| Least Privilege | ✅ | Collector-Creds rein lesend (FortiGate + NetBox read-only Token/Permission). |
+| Secrets-Handling | ✅ | `.env` nie committet, gitleaks, Fail-closed-Default-Token-Check. |
+| Fail-closed Defaults | ✅ | Default-Token **und** unauthentifizierte Read-API ausserhalb `dev` abgelehnt. |
+| Mandanten-Scoping | ⚠️ | `tenant_id` in Store-Queries vorhanden; öffentliche API erlaubt noch `tenant_id=None` (alle) → mit RBAC schliessen. |
+| Audit-Log | ⚠️ | Läufe + Ergebnis-Eingang auditiert; Lese-Zugriffe und Finding-Triage offen. |
+| AuthN/RBAC | ❌ (Gate) | Öffentliche Read-API (`/rules`,`/findings`,`/nat`,`/applications`) **nicht authentifiziert** → Folge-ADR vor Produktion; per `AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API` fail-closed ausserhalb `dev`. |
+| Transport/at-rest-Verschlüsselung | ❌ (geplant) | mTLS/at-rest als Folge-ADR (R14). |
+| Netzwerksegmentierung | ❌ (geplant) | Folge-ADR; bis dahin Read-API nur in vertrauenswürdigem Netz. |
+
+**Fazit:** UC1 Model 2 ist **funktional vollständig und Lab-/Review-reif**. Die produktive
+Freigabe erfordert den **AuthN/RBAC-Gate** (und optional den Finding-Triage-Schreibpfad);
+beide sind in ADR 0005/0006 bewusst als Folgearbeiten terminiert. Betrieb/Bedienung:
+`docs/BETRIEB.md`.
 
 ## Architektur-Zuordnung
 

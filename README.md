@@ -51,9 +51,16 @@ automation-platform/
 
 ## Status
 
-🚧 Grundaufbau (M6) in Arbeit: Code-Gerüst, CI und docker-compose stehen (ADR 0003);
-offen sind Laborumgebung und Infoblox-Anbindung. Use Case #1 = Firewall-Regel-
-Dokumentation, read-only (siehe ROADMAP.md und docs/usecases/).
+✅ **Use Case #1 (Model 2: FortiGate + NetBox) ist funktional vollständig und Lab-/Review-reif**
+(M0–M9): read-only einlesen, Matching gegen NetBox, kanonische Services, Web-UI mit Filtern
+(Systeme/Netzwerke/Zonen), Regel-Detail, NAT/VIPs, **Applikations-Doku/Export** und
+Findings (Datenqualität). Reproduzierbar per `lab/bootstrap.sh`. Betrieb/Bedienung:
+[docs/BETRIEB.md](docs/BETRIEB.md).
 
-Lokal starten: `docker compose --profile core --profile collectors up --build`
-– danach Web-UI auf http://localhost:5173, API auf http://localhost:8000.
+**Produktions-Gate (offen):** Die öffentliche Read-API hat noch kein AuthN/RBAC
+(Folge-ADR, ADR 0005); ausserhalb `dev` ist der Start fail-closed. Weiter offen:
+Model 1 (ACI + Infoblox), Schreibpfad. Details: [ROADMAP.md](ROADMAP.md),
+[docs/usecases/](docs/usecases/).
+
+Lab starten: `lab/bootstrap.sh` (siehe [lab/README.md](lab/README.md)) – danach
+Web-UI auf http://localhost:5173, API auf http://localhost:8000.

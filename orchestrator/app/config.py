@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     internal_api_token: str = DEFAULT_INTERNAL_TOKEN
     # Erlaubte CORS-Origins fuers Web-UI; in Produktion explizit setzen.
     cors_origins: list[str] = ["http://localhost:5173"]
+    # Die oeffentliche Read-API (/rules, /findings, /nat, /applications) ist noch
+    # NICHT authentifiziert (AuthN/RBAC = Folge-ADR, ADR 0005). Ausserhalb "dev" muss
+    # ein bewusstes Opt-in gesetzt werden, sonst faellt der Start fail-closed aus -
+    # verhindert versehentliche Exposition echter Kundendaten ohne RBAC.
+    allow_unauthenticated_read_api: bool = False
 
     # SoT-Zugaenge (lesend) - je Mandant wird der passende Adapter gebaut (ADR 0004).
     # Model 2 (NetBox) zuerst; Infoblox (Model 1) in Phase 2.
@@ -39,6 +44,13 @@ def check_security_config(settings: "Settings") -> None:
             "AUTOMATO_INTERNAL_API_TOKEN nutzt den Entwicklungs-Default in einer "
             f"'{settings.environment}'-Umgebung. Bitte ein echtes Token setzen "
             "(z. B. openssl rand -hex 32)."
+        )
+    if settings.environment != "dev" and not settings.allow_unauthenticated_read_api:
+        raise RuntimeError(
+            "Die oeffentliche Read-API ist ohne AuthN/RBAC in einer "
+            f"'{settings.environment}'-Umgebung nicht freigegeben (ADR 0005). Entweder RBAC "
+            "umsetzen oder bewusst AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API=true setzen "
+            "(nur mit Netzsegmentierung/Reverse-Proxy-Auth davor)."
         )
 
 

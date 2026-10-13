@@ -16,4 +16,18 @@ def test_prod_mit_default_token_wird_abgelehnt():
 
 
 def test_prod_mit_eigenem_token_ist_erlaubt():
-    check_security_config(Settings(environment="prod", internal_api_token="s3cr3t-random"))  # noqa: S106
+    # Prod ohne RBAC: Read-API muss bewusst freigegeben werden (Netzsegmentierung davor).
+    check_security_config(
+        Settings(
+            environment="prod",
+            internal_api_token="s3cr3t-random",  # noqa: S106
+            allow_unauthenticated_read_api=True,
+        )
+    )
+
+
+def test_prod_ohne_readapi_optin_wird_abgelehnt():
+    with pytest.raises(RuntimeError):
+        check_security_config(
+            Settings(environment="prod", internal_api_token="s3cr3t-random")  # noqa: S106
+        )

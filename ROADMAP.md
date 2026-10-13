@@ -196,15 +196,22 @@ Filtern (System/Zone/Aktion/Freitext), Regel-Detail und Findings-Ansicht steht.
 
 ## M9 – Ersten Use Case abschliessen
 
-- [ ] Use Case #1 vollständig gemäss Definition of Done aus M1 umsetzen
-  (offen: Applikations-Doku/Export, VIP-NAT-Mapping, Zonen aus Interfaces/SoT)
-- [ ] Fehlerbehandlung umgesetzt und getestet (Collector-Ausfälle, unvollständige
-  Daten, nicht zuordenbare Adressen sichtbar ausweisen)
-- [ ] Security-/Hardening-Check vor Abschluss (Secrets, Least Privilege, Audit-Log vollständig)
-- [ ] Dokumentation erstellt (Betrieb + Anwender)
+- [x] Use Case #1 (Model 2) gemäss DoD umgesetzt: FortiGate read-only einlesen,
+  Matching gegen NetBox (unmatched 0 nach Import), kanonische Services, Web-UI mit
+  Filtern (System/Netzwerk/Zone), **Applikations-Doku/Export**, VIP-NAT-Mapping,
+  Zonen aus Interfaces. DoD-Abgleich: `docs/usecases/uc1-firewall-regel-dokumentation.md`.
+- [x] Fehlerbehandlung: Collector-Fehler → `failed`-Result mit Meldung; unvollständige/
+  nicht zuordenbare Objekte als Findings sichtbar; SoT-Fehler werden abgefangen.
+- [x] Security-/Hardening-Check durchgeführt (DoD-Abgleich + 8-Prinzipien-Tabelle im
+  UC1-Dokument). Sofort-Härtung: Read-API fail-closed ausserhalb `dev`.
+- [x] Dokumentation erstellt: Betrieb + Anwender (`docs/BETRIEB.md`).
+- [ ] **Produktions-Gate (offen):** AuthN/RBAC vor der öffentlichen Read-API; optional
+  Finding-Triage-Schreibpfad; Transport-/at-rest-Verschlüsselung, Netzsegmentierung
+  (Folge-ADRs, ADR 0005).
 
-**Exit-Kriterium:** Definition of Done erfüllt, Security-Check bestanden →
-Use Case #1 ist produktiv nutzbar.
+**Exit-Kriterium:** UC1 Model 2 ist **funktional vollständig und Lab-/Review-reif**
+(DoD erfüllt, Security-Check für den Scope bestanden). Die **produktive Freigabe**
+ist an das AuthN/RBAC-Gate gebunden (fail-closed erzwungen).
 
 ## Ausblick nach M9
 

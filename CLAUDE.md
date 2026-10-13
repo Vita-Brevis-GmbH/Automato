@@ -118,3 +118,16 @@ Risiken R15–R17 ergänzt.
 Als Nächstes (M9, UC1 abschliessen): Applikations-Doku/Export, VIP-NAT-Mapping
 (extip→mappedip, Phase 1.5), Zonen aus Interfaces/SoT, Betriebs-/Anwender-Doku,
 Security-/Hardening-Check. RBAC/Secrets/mTLS/Netzsegmentierung als Folge-ADRs (ADR 0005).
+
+**M9 erledigt – UC1 Model 2 funktional vollständig & Lab-/Review-reif:** Zusätzlich zum
+Obigen umgesetzt: VIP-NAT (`nat_rule`, Alembic 0004; `/nat`; Regel-Detail zeigt extip→
+mapped), Zonen aus FortiGate-Interfaces am Subnetz verortet (Import tagt interface-subnets),
+**Applikations-Doku** (`/applications`, Markdown-Export im UI). API gesamt: `/rules`,
+`/rules/{id}`, `/findings`, `/nat`, `/applications`, `/systems`, `/jobs`. DoD-Abgleich +
+8-Prinzipien-Security-Check im UC1-Dokument; Betriebs-/Anwenderhandbuch `docs/BETRIEB.md`.
+Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
+(`AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API`), da AuthN/RBAC noch fehlt.
+
+**Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
+Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
+Schreibpfad (ADR 0002). Tests: collectors 7, orchestrator 28, sot-gateway 6.
