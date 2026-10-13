@@ -76,7 +76,33 @@ def test_durchstich_collector_result_landet_in_rules(client, session_factory, mo
     assert len(rules) == 1
     assert rules[0]["name"] == "allow-web"
     assert rules[0]["tenant_id"] == tenant_id
+    # Angereicherte Liste: Zonen + Zaehler
+    assert rules[0]["dst_zone"] == "server"
+    assert rules[0]["num_src"] == 1
+    assert rules[0]["num_dst"] == 1
+    assert rules[0]["num_services"] == 1
+    assert rules[0]["num_unmatched"] == 1  # 10.10.20.0/24 nicht im Fake-SoT
 
     run = client.get(f"/jobs/{run_id}").json()
     assert run["status"] == "completed"
     assert run["rule_count"] == 1
+
+    # Detail: aufgeloeste Endpunkte + Services
+    detail = client.get(f"/rules/{rules[0]['id']}").json()
+    assert detail["external_id"] == "1"
+    assert detail["services"] == ["tcp/443"]
+    by_role = {e["role"]: e for e in detail["endpoints"]}
+    assert by_role["dst"]["value"] == "10.10.10.5"
+    assert by_role["dst"]["match_status"] == "matched"
+    assert by_role["dst"]["zone"] == "server"
+    assert by_role["src"]["value"] == "10.10.20.0/24"
+    assert by_role["src"]["match_status"] == "unmatched"
+
+    # Findings: nicht aufgeloestes Objekt wird ausgewiesen
+    findings = client.get("/findings").json()
+    unmatched = [f for f in findings if f["type"] == "unmatched_object"]
+    assert any(f["subject_id"] == "10.10.20.0/24" for f in unmatched)
+
+
+def test_rule_detail_404_fuer_unbekannte_regel(client):
+    assert client.get("/rules/999999").status_code == 404

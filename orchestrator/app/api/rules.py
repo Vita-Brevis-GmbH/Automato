@@ -1,31 +1,110 @@
 """Regel-Endpunkte (ADR 0004).
 
-Liest Regeln aus dem Rule & Service Store. Bis Collectors Regeln persistieren
-(M7) ist die Liste leer; der Router und der API-Vertrag stehen aber bereits,
-damit das Web-UI andocken kann. Filter nach System/Netzwerk/Zone folgen mit dem UI-Ausbau.
+Liest Regeln aus dem Rule & Service Store:
+- `GET /rules`         Liste mit Zonen + Zaehlern (Quell-/Ziel-/Service-Anzahl, nicht
+                       aufgeloeste Objekte) und Anzeigenamen-Fallback.
+- `GET /rules/{id}`    Detail inkl. aufgeloester Endpunkte (IP/CIDR/Name, Zone,
+                       Match-Status) und kanonischer Services.
+Filter nach System/Netzwerk/Zone folgen mit dem UI-Ausbau (M9).
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.schemas.rules import RuleOut
+from app.models import EndpointRole, MatchStatus
+from app.schemas.rules import EndpointOut, RuleDetailOut, RuleOut
 from app.store import rules as rules_store
 
 router = APIRouter(prefix="/rules", tags=["rules"])
 
 
+def _display_name(rule) -> str:
+    return rule.name or f"#{rule.external_id}"
+
+
+def _is_unmatched(obj) -> bool:
+    return obj is not None and obj.match_status is MatchStatus.UNMATCHED
+
+
+def _count_unmatched(endpoints, objs) -> int:
+    return sum(1 for e in endpoints if _is_unmatched(objs.get(e.network_object_id)))
+
+
 @router.get("", response_model=list[RuleOut])
 def list_rules(tenant_id: int | None = None, session: Session = Depends(get_session)):
-    return [
-        RuleOut(
-            id=r.id,
-            tenant_id=r.tenant_id,
-            source_system_id=r.source_system_id,
-            domain=r.domain,
-            name=r.name,
-            action=r.action,
-            section_label=r.section_label,
+    rules = rules_store.list_rules(session, tenant_id=tenant_id)
+    obj_ids = {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id}
+    objs = rules_store.objects_by_ids(session, obj_ids)
+    zone_ids = {r.src_zone_id for r in rules} | {r.dst_zone_id for r in rules}
+    zone_ids |= {o.zone_id for o in objs.values() if o.zone_id}
+    zones = rules_store.zone_names(session, zone_ids)
+
+    out: list[RuleOut] = []
+    for r in rules:
+        out.append(
+            RuleOut(
+                id=r.id,
+                tenant_id=r.tenant_id,
+                source_system_id=r.source_system_id,
+                domain=r.domain.value,
+                name=_display_name(r),
+                action=r.action.value,
+                section_label=r.section_label,
+                src_zone=zones.get(r.src_zone_id),
+                dst_zone=zones.get(r.dst_zone_id),
+                num_src=sum(1 for e in r.endpoints if e.role is EndpointRole.SRC),
+                num_dst=sum(1 for e in r.endpoints if e.role is EndpointRole.DST),
+                num_services=len(r.services),
+                num_unmatched=_count_unmatched(r.endpoints, objs),
+            )
         )
-        for r in rules_store.list_rules(session, tenant_id=tenant_id)
-    ]
+    return out
+
+
+@router.get("/{rule_id}", response_model=RuleDetailOut)
+def get_rule(rule_id: int, session: Session = Depends(get_session)):
+    r = rules_store.get_rule(session, rule_id)
+    if r is None:
+        raise HTTPException(status_code=404, detail="rule not found")
+
+    obj_ids = {e.network_object_id for e in r.endpoints if e.network_object_id}
+    objs = rules_store.objects_by_ids(session, obj_ids)
+    zone_ids = {r.src_zone_id, r.dst_zone_id} | {o.zone_id for o in objs.values() if o.zone_id}
+    zones = rules_store.zone_names(session, zone_ids)
+
+    endpoints: list[EndpointOut] = []
+    for e in r.endpoints:
+        obj = objs.get(e.network_object_id) if e.network_object_id else None
+        endpoints.append(
+            EndpointOut(
+                role=e.role.value,
+                kind=e.kind.value,
+                name=obj.name if obj else None,
+                value=(obj.value if obj and obj.value else e.inline_value),
+                match_status=obj.match_status.value if obj else None,
+                zone=zones.get(obj.zone_id) if obj and obj.zone_id else None,
+                object_class=obj.object_class.value if obj else None,
+                fqdn=obj.fqdn if obj else None,
+            )
+        )
+
+    return RuleDetailOut(
+        id=r.id,
+        tenant_id=r.tenant_id,
+        source_system_id=r.source_system_id,
+        domain=r.domain.value,
+        name=_display_name(r),
+        action=r.action.value,
+        section_label=r.section_label,
+        src_zone=zones.get(r.src_zone_id),
+        dst_zone=zones.get(r.dst_zone_id),
+        num_src=sum(1 for e in r.endpoints if e.role is EndpointRole.SRC),
+        num_dst=sum(1 for e in r.endpoints if e.role is EndpointRole.DST),
+        num_services=len(r.services),
+        num_unmatched=_count_unmatched(r.endpoints, objs),
+        external_id=r.external_id,
+        sequence=r.sequence,
+        endpoints=endpoints,
+        services=[s.canonical_name for s in r.services],
+    )
