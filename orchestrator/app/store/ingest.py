@@ -40,7 +40,7 @@ from app.schemas.collector import CollectorResult, NormalizedRule
 
 _ANY_VALUES = {"all", "any", "*"}
 # Typ-praefixe, die der Collector fuer nicht-IP-aufloesbare Objekte setzt.
-_TYPED_KINDS = {"fqdn", "geo", "mac", "dynamic", "range"}
+_TYPED_KINDS = {"fqdn", "geo", "mac", "dynamic", "range", "vip"}
 _DOMAIN_BY_PLATFORM = {
     "fortigate": RuleDomain.FIREWALL,
     "cisco_aci": RuleDomain.ACI_CONTRACT,
@@ -148,8 +148,23 @@ def _typed_object(session: Session, tenant_id: int, kind_tag: str, rest: str, so
             session, tenant_id, name=rest, object_class=ObjectClass.RANGE, value=rest
         )
         start_ip = rest.split("-")[0].strip()
-        found = _safe_search_by_ip(sot, start_ip)  # Treffer ueber umschliessendes Prefix
+        found = _safe_search_by_ip(sot, start_ip)  # Treffer ueber umschliessendes Prefix/Range
         _apply_match(session, tenant_id, obj, found)
+        return obj
+
+    if kind_tag == "vip":
+        # Virtual IP (DNAT): "vip:<name>=<extip>". Ueber die externe IP matchen,
+        # den VIP-Namen als Objektname behalten (publizierter Dienst).
+        vip_name, _, extip = rest.partition("=")
+        obj = _get_or_create_object(
+            session, tenant_id, name=vip_name, object_class=ObjectClass.VIP, value=extip or None
+        )
+        if extip:
+            _apply_match(session, tenant_id, obj, _safe_search_by_ip(sot, extip))
+        else:
+            obj.match_status = MatchStatus.NOT_APPLICABLE
+            obj.last_seen = datetime.now(UTC)
+            session.flush()
         return obj
 
     # geo / mac / dynamic -> kein IPAM-Objekt -> not_applicable, kein Finding

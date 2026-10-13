@@ -23,6 +23,7 @@ def _client_with_mock() -> FortiGateClient:
         "/api/v2/cmdb/firewall/address": "sample_addresses.json",
         "/api/v2/cmdb/firewall/addrgrp": "sample_addrgrps.json",
         "/api/v2/cmdb/firewall.service/custom": "sample_services.json",
+        "/api/v2/cmdb/firewall/vip": "sample_vips.json",
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -50,8 +51,8 @@ def test_client_gather_und_auth_header():
 
 
 def test_abruf_und_normalisierung_ueber_client():
-    policies, addresses, groups, services = _client_with_mock().gather()
-    rules = {r.external_id: r for r in norm.normalize(policies, addresses, groups, services)}
+    policies, addresses, groups, services, vips = _client_with_mock().gather()
+    rules = {r.external_id: r for r in norm.normalize(policies, addresses, groups, services, vips)}
     assert rules["1"].destinations == ["10.10.10.5"]
     assert rules["1"].services == ["tcp/443"]
     assert rules["3"].destinations == ["fqdn:api.partner.example"]

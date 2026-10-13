@@ -133,12 +133,37 @@ def main() -> None:
         else:
             skipped[otype] += 1
 
+    # Virtual IPs (firewall/vip): externe IP als IP-Adresse importieren (publizierter
+    # Dienst). Das interne Mapping (mappedip/Ports) ist NAT -> spaetere Phase.
+    for vip in fg_get("firewall/vip"):
+        extip = vip.get("extip") or ""
+        if isinstance(extip, list):
+            extip = (
+                extip[0].get("range", "") if extip and isinstance(extip[0], dict) else ""
+            ) or ""
+        extip = str(extip).split("-")[0].strip()
+        if not extip:
+            skipped["vip(ohne extip)"] += 1
+            continue
+        try:
+            host = str(ipaddress.ip_address(extip))
+        except ValueError:
+            skipped["vip(ungueltig)"] += 1
+            continue
+        _, created = nb_upsert(
+            "ipam/ip-addresses/",
+            {"address": f"{host}/32"},
+            {"status": "active", "description": vip.get("name", ""), "tags": [{"slug": TAG}]},
+        )
+        counts["vip_neu" if created else "vip_vorhanden"] += 1
+
     print(f"FortiGate-Adressobjekte gelesen: {len(addresses)}")
     print(
         "In NetBox: "
         f"Prefixe neu={counts['prefix_neu']} (vorhanden {counts['prefix_vorhanden']}), "
         f"IP-Adressen neu={counts['ip_neu']} (vorhanden {counts['ip_vorhanden']}), "
-        f"IP-Ranges neu={counts['range_neu']} (vorhanden {counts['range_vorhanden']})"
+        f"IP-Ranges neu={counts['range_neu']} (vorhanden {counts['range_vorhanden']}), "
+        f"VIP-extips neu={counts['vip_neu']} (vorhanden {counts['vip_vorhanden']})"
     )
     if skipped:
         detail = ", ".join(f"{k}={v}" for k, v in sorted(skipped.items()))

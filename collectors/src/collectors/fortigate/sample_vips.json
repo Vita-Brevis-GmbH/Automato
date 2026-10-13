@@ -1,0 +1,10 @@
+[
+  {
+    "name": "VIP_web01",
+    "extip": "203.0.113.10",
+    "mappedip": [{"range": "10.10.10.5"}],
+    "extport": "443",
+    "mappedport": "443",
+    "portforward": "enable"
+  }
+]

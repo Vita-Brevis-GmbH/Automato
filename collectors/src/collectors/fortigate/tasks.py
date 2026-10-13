@@ -21,8 +21,8 @@ def _sample(name: str) -> list[dict]:
     return json.loads(resources.files("collectors.fortigate").joinpath(name).read_text())
 
 
-def gather() -> tuple[list, list, list, list]:
-    """(policies, addresses, address_groups, services) - vom Lab oder aus Beispieldaten."""
+def gather() -> tuple[list, list, list, list, list]:
+    """(policies, addresses, address_groups, services, vips) - Lab oder Beispieldaten."""
     settings = get_settings()
     if settings.fortigate_url and settings.fortigate_token:
         client = FortiGateClient(
@@ -36,14 +36,15 @@ def gather() -> tuple[list, list, list, list]:
         _sample("sample_addresses.json"),
         _sample("sample_addrgrps.json"),
         _sample("sample_services.json"),
+        _sample("sample_vips.json"),
     )
 
 
 @app.task(name="collectors.fortigate.collect")
 def collect(run_id: str) -> None:
     try:
-        policies, addresses, groups, services = gather()
-        rules = norm.normalize(policies, addresses, groups, services)
+        policies, addresses, groups, services, vips = gather()
+        rules = norm.normalize(policies, addresses, groups, services, vips)
         result = CollectorResult(status="completed", rules=rules)
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
         result = CollectorResult(status="failed", message=str(exc))

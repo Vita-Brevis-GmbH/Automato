@@ -58,6 +58,23 @@ class NetBoxAdapter:
                     source=self.name,
                 )
             )
+        # IP-Ranges, die die IP enthalten (z. B. FortiGate-iprange-Objekte). Lokal
+        # gekapselt: faellt der contains-Filter weg, bleiben Host-/Prefix-Treffer erhalten.
+        try:
+            for rec in self._get("ipam/ip-ranges/", {"contains": ip}):
+                start = str(rec.get("start_address", "")).split("/")[0]
+                end = str(rec.get("end_address", "")).split("/")[0]
+                results.append(
+                    NetworkObject(
+                        name=rec.get("description") or f"{start}-{end}",
+                        type=NetworkObjectType.NETWORK,
+                        value=f"{start}-{end}",
+                        tags=self._tags(rec),
+                        source=self.name,
+                    )
+                )
+        except httpx.HTTPError:
+            pass
         return results
 
     # -- intern ---------------------------------------------------------------

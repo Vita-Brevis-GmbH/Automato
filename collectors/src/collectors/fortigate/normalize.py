@@ -39,17 +39,36 @@ def build_address_map(addresses: list[dict], groups: list[dict]) -> dict[str, di
     return amap
 
 
-def resolve_address(name: str, amap: dict[str, dict], _depth: int = 0) -> list[str]:
+def build_vip_map(vips: list[dict] | None) -> dict[str, str]:
+    """VIP-Name -> externe IP (extip). Range-extip -> erste IP."""
+    out: dict[str, str] = {}
+    for v in vips or []:
+        extip = v.get("extip") or ""
+        if isinstance(extip, list):  # manche FortiOS-Versionen liefern eine Liste
+            extip = (
+                extip[0].get("range", "") if extip and isinstance(extip[0], dict) else ""
+            ) or ""
+        out[v["name"]] = str(extip).split("-")[0].strip()
+    return out
+
+
+def resolve_address(
+    name: str, amap: dict[str, dict], vipmap: dict[str, str] | None = None, _depth: int = 0
+) -> list[str]:
     """Objektname -> Liste von Endpunktwerten (IP/CIDR/Range) oder [name] als Fallback."""
+    vipmap = vipmap or {}
     if name == _ANY:
         return [_ANY]
     obj = amap.get(name)
     if obj is None:
+        # Kein Adressobjekt - evtl. eine Virtual IP (DNAT): externe IP + Name mitgeben.
+        if name in vipmap:
+            return [f"vip:{name}={vipmap[name]}"]
         return [name]  # nicht bekannt -> Name (Orchestrator nutzt Namenskonvention)
     if "member" in obj and _depth < 3:  # Adressgruppe -> Mitglieder aufloesen
         out: list[str] = []
         for member in obj["member"]:
-            out.extend(resolve_address(member["name"], amap, _depth + 1))
+            out.extend(resolve_address(member["name"], amap, vipmap, _depth + 1))
         return out or [name]
 
     obj_type = obj.get("type", "ipmask")
@@ -132,19 +151,21 @@ def normalize(
     addresses: list[dict],
     groups: list[dict],
     services: list[dict],
+    vips: list[dict] | None = None,
 ) -> list[NormalizedRule]:
     amap = build_address_map(addresses, groups)
     smap = build_service_map(services)
-    return [_normalize_policy(p, amap, smap) for p in policies]
+    vipmap = build_vip_map(vips)
+    return [_normalize_policy(p, amap, smap, vipmap) for p in policies]
 
 
-def _normalize_policy(policy: dict, amap: dict, smap: dict) -> NormalizedRule:
+def _normalize_policy(policy: dict, amap: dict, smap: dict, vipmap: dict) -> NormalizedRule:
     sources: list[str] = []
     for entry in policy.get("srcaddr", []):
-        sources.extend(resolve_address(entry["name"], amap))
+        sources.extend(resolve_address(entry["name"], amap, vipmap))
     destinations: list[str] = []
     for entry in policy.get("dstaddr", []):
-        destinations.extend(resolve_address(entry["name"], amap))
+        destinations.extend(resolve_address(entry["name"], amap, vipmap))
     svc: list[str] = []
     for entry in policy.get("service", []):
         svc.extend(resolve_service(entry["name"], smap))

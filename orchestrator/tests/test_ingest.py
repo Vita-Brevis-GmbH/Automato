@@ -199,3 +199,39 @@ def test_typisierte_endpunkte_werden_klassifiziert(session_factory):
     # fqdn/geo erzeugen KEINE Fehl-Findings
     findings = session.query(Finding).all()
     assert not any(f.subject_id in ("ntp.example", "GEO_ch") for f in findings)
+
+
+def test_vip_matcht_ueber_externe_ip(session_factory):
+    from app.models import NetworkObject as NObj
+    from app.models import ObjectClass
+
+    session = session_factory()
+    run = _seed_run(session)
+    result = CollectorResult.model_validate(
+        {
+            "status": "completed",
+            "rules": [
+                {
+                    "source_platform": "fortigate",
+                    "external_id": "20",
+                    "name": "inbound-vip",
+                    "action": "allow",
+                    "sources": ["all"],
+                    "destinations": ["vip:VIP_web=203.0.113.10"],
+                    "services": ["tcp/443"],
+                }
+            ],
+        }
+    )
+    extip = NetworkObject(
+        name="vip-web", type=NetworkObjectType.HOST, value="203.0.113.10", source="netbox"
+    )
+    ingest.persist_result(session, run, result, FakeSoT(by_ip={"203.0.113.10": [extip]}))
+    session.commit()
+
+    vip = session.query(NObj).filter_by(name="VIP_web").one()
+    assert vip.object_class is ObjectClass.VIP
+    assert vip.value == "203.0.113.10"
+    assert vip.match_status is MatchStatus.MATCHED
+    # VIP-Name bleibt erhalten, kein Finding
+    assert not any(f.subject_id == "VIP_web" for f in session.query(Finding).all())

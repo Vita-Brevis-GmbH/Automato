@@ -71,6 +71,10 @@ def test_fortigate_resolve_address_typen():
     assert norm.resolve_address("GEO", amap) == ["geo:GEO"]
     assert norm.resolve_address("MC", amap) == ["mac:MC"]
     assert norm.resolve_address("DYN", amap) == ["dynamic:DYN"]
+    # VIP (nicht in der Adress-Tabelle) wird ueber die VIP-Map zu externer IP + Name
+    assert norm.resolve_address("VIP_web", {}, {"VIP_web": "203.0.113.10"}) == [
+        "vip:VIP_web=203.0.113.10"
+    ]
 
 
 def test_aci_contract_wird_auf_regeln_abgebildet():
