@@ -94,7 +94,8 @@ def main() -> None:
         name = obj.get("name", "")
         otype = obj.get("type", "ipmask")
 
-        if otype == "ipmask" and obj.get("subnet"):
+        # interface-subnet traegt das Interface-Subnetz im selben Feld wie ipmask.
+        if otype in ("ipmask", "interface-subnet") and obj.get("subnet"):
             try:
                 net = to_network(obj["subnet"])
             except ValueError:
@@ -117,6 +118,18 @@ def main() -> None:
                     {"status": "active", "description": name, "tags": [{"slug": TAG}]},
                 )
                 counts["prefix_neu" if created else "prefix_vorhanden"] += 1
+        elif otype == "iprange" and obj.get("start-ip"):
+            start = obj["start-ip"]
+            end = obj.get("end-ip", start)
+            try:
+                _, created = nb_upsert(
+                    "ipam/ip-ranges/",
+                    {"start_address": f"{start}/32", "end_address": f"{end}/32"},
+                    {"status": "active", "description": name, "tags": [{"slug": TAG}]},
+                )
+                counts["range_neu" if created else "range_vorhanden"] += 1
+            except requests.HTTPError:
+                skipped["iprange(fehler)"] += 1
         else:
             skipped[otype] += 1
 
@@ -124,7 +137,8 @@ def main() -> None:
     print(
         "In NetBox: "
         f"Prefixe neu={counts['prefix_neu']} (vorhanden {counts['prefix_vorhanden']}), "
-        f"IP-Adressen neu={counts['ip_neu']} (vorhanden {counts['ip_vorhanden']})"
+        f"IP-Adressen neu={counts['ip_neu']} (vorhanden {counts['ip_vorhanden']}), "
+        f"IP-Ranges neu={counts['range_neu']} (vorhanden {counts['range_vorhanden']})"
     )
     if skipped:
         detail = ", ".join(f"{k}={v}" for k, v in sorted(skipped.items()))

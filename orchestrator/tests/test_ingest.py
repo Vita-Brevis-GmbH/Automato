@@ -153,3 +153,49 @@ def test_ingest_ist_idempotent(session_factory):
 
     # Regeln des Quellsystems werden ersetzt, nicht dupliziert
     assert session.query(Rule).filter_by(source_system_id=run.source_system_id).count() == 3
+
+
+def test_typisierte_endpunkte_werden_klassifiziert(session_factory):
+    from app.models import NetworkObject as NObj
+
+    session = session_factory()
+    run = _seed_run(session)
+    result = CollectorResult.model_validate(
+        {
+            "status": "completed",
+            "rules": [
+                {
+                    "source_platform": "fortigate",
+                    "external_id": "10",
+                    "name": "mix",
+                    "action": "allow",
+                    "sources": [
+                        "fqdn:ntp.example",
+                        "geo:GEO_ch",
+                        "range:172.26.0.100-172.26.0.150",
+                    ],
+                    "destinations": ["all"],
+                    "services": ["udp/53"],
+                }
+            ],
+        }
+    )
+    # Range-Start liegt in einem importierten Prefix -> Range matcht ueber das Prefix
+    net = NetworkObject(
+        name="ra", type=NetworkObjectType.NETWORK, value="172.26.0.0/24", source="netbox"
+    )
+    ingest.persist_result(session, run, result, FakeSoT(by_ip={"172.26.0.100": [net]}))
+    session.commit()
+
+    assert session.query(NObj).filter_by(name="ntp.example").one().match_status is (
+        MatchStatus.EXPECTED_EXTERNAL
+    )
+    assert session.query(NObj).filter_by(name="GEO_ch").one().match_status is (
+        MatchStatus.NOT_APPLICABLE
+    )
+    assert session.query(NObj).filter_by(name="172.26.0.100-172.26.0.150").one().match_status is (
+        MatchStatus.MATCHED
+    )
+    # fqdn/geo erzeugen KEINE Fehl-Findings
+    findings = session.query(Finding).all()
+    assert not any(f.subject_id in ("ntp.example", "GEO_ch") for f in findings)

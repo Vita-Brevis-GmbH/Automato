@@ -43,6 +43,7 @@ class MatchStatus(enum.StrEnum):
     UNMATCHED = "unmatched"
     AMBIGUOUS = "ambiguous"
     EXPECTED_EXTERNAL = "expected_external"  # H-EXT_: nicht im IPAM erwartet
+    NOT_APPLICABLE = "not_applicable"  # kein IPAM-Typ (geography/mac/dynamic)
 
 
 class SourceOfRecord(enum.StrEnum):

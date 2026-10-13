@@ -39,6 +39,8 @@ from app.models import (
 from app.schemas.collector import CollectorResult, NormalizedRule
 
 _ANY_VALUES = {"all", "any", "*"}
+# Typ-praefixe, die der Collector fuer nicht-IP-aufloesbare Objekte setzt.
+_TYPED_KINDS = {"fqdn", "geo", "mac", "dynamic", "range"}
 _DOMAIN_BY_PLATFORM = {
     "fortigate": RuleDomain.FIREWALL,
     "cisco_aci": RuleDomain.ACI_CONTRACT,
@@ -106,11 +108,15 @@ def _endpoint(session: Session, tenant_id: int, role: EndpointRole, raw: str, so
     if value.lower() in _ANY_VALUES:
         return RuleEndpoint(role=role, kind=EndpointKind.ANY, inline_value=value, matched=False)
 
-    net = _as_ip_or_net(value)
-    if net is not None:
-        obj = _object_by_value(session, tenant_id, value, net, sot)
+    kind_tag, sep, rest = value.partition(":")
+    if sep and kind_tag in _TYPED_KINDS:
+        obj = _typed_object(session, tenant_id, kind_tag, rest or value, sot)
     else:
-        obj = _object_by_name(session, tenant_id, value, sot)
+        net = _as_ip_or_net(value)
+        if net is not None:
+            obj = _object_by_value(session, tenant_id, value, net, sot)
+        else:
+            obj = _object_by_name(session, tenant_id, value, sot)
 
     return RuleEndpoint(
         role=role,
@@ -118,6 +124,34 @@ def _endpoint(session: Session, tenant_id: int, role: EndpointRole, raw: str, so
         network_object_id=obj.id,
         matched=obj.match_status is MatchStatus.MATCHED,
     )
+
+
+def _typed_object(session: Session, tenant_id: int, kind_tag: str, rest: str, sot) -> NetworkObject:
+    """Nicht-IP-Typen vom Collector (fqdn/geo/mac/dynamic/range) einordnen."""
+    if kind_tag == "fqdn":
+        obj = _get_or_create_object(
+            session, tenant_id, name=rest, object_class=ObjectClass.EXTERNAL, fqdn=rest
+        )
+        obj.match_status = MatchStatus.EXPECTED_EXTERNAL  # extern erwartet, kein Finding
+        obj.last_seen = datetime.now(UTC)
+        session.flush()
+        return obj
+
+    if kind_tag == "range":
+        obj = _get_or_create_object(
+            session, tenant_id, name=rest, object_class=ObjectClass.RANGE, value=rest
+        )
+        start_ip = rest.split("-")[0].strip()
+        found = _safe_search_by_ip(sot, start_ip)  # Treffer ueber umschliessendes Prefix
+        _apply_match(session, tenant_id, obj, found)
+        return obj
+
+    # geo / mac / dynamic -> kein IPAM-Objekt -> not_applicable, kein Finding
+    obj = _get_or_create_object(session, tenant_id, name=rest, object_class=ObjectClass.UNKNOWN)
+    obj.match_status = MatchStatus.NOT_APPLICABLE
+    obj.last_seen = datetime.now(UTC)
+    session.flush()
+    return obj
 
 
 def _object_by_value(session: Session, tenant_id: int, value: str, net, sot) -> NetworkObject:

@@ -54,4 +54,4 @@ def test_abruf_und_normalisierung_ueber_client():
     rules = {r.external_id: r for r in norm.normalize(policies, addresses, groups, services)}
     assert rules["1"].destinations == ["10.10.10.5"]
     assert rules["1"].services == ["tcp/443"]
-    assert rules["3"].destinations == ["H-EXT_partner-api"]
+    assert rules["3"].destinations == ["fqdn:api.partner.example"]

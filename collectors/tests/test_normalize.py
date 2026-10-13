@@ -39,12 +39,38 @@ def test_fortigate_adressen_werden_zu_werten_aufgeloest():
     assert r2.services == ["all"]
 
 
-def test_fortigate_fqdn_bleibt_name_und_custom_service():
+def test_fortigate_fqdn_wird_typisiert_und_custom_service():
     r3 = {r.external_id: r for r in _fortigate_rules()}["3"]
-    # FQDN-Objekt ist nicht als IP aufloesbar -> Name bleibt (H-EXT_ -> extern im Ingest)
-    assert r3.destinations == ["H-EXT_partner-api"]
+    # FQDN-Objekt -> typisierter Wert (Orchestrator: expected_external, kein Fehler)
+    assert r3.destinations == ["fqdn:api.partner.example"]
     # Custom-Service aufgeloest
     assert r3.services == ["tcp/8443"]
+
+
+def test_fortigate_resolve_address_typen():
+    amap = {
+        "IFSUB": {
+            "name": "IFSUB",
+            "type": "interface-subnet",
+            "subnet": "172.25.15.0 255.255.255.0",
+        },
+        "RNG": {
+            "name": "RNG",
+            "type": "iprange",
+            "start-ip": "172.26.0.100",
+            "end-ip": "172.26.0.150",
+        },
+        "FQ": {"name": "FQ", "type": "fqdn", "fqdn": "ntp.example"},
+        "GEO": {"name": "GEO", "type": "geography", "country": "CH"},
+        "MC": {"name": "MC", "type": "mac"},
+        "DYN": {"name": "DYN", "type": "dynamic"},
+    }
+    assert norm.resolve_address("IFSUB", amap) == ["172.25.15.0/24"]  # echtes Subnetz
+    assert norm.resolve_address("RNG", amap) == ["range:172.26.0.100-172.26.0.150"]
+    assert norm.resolve_address("FQ", amap) == ["fqdn:ntp.example"]
+    assert norm.resolve_address("GEO", amap) == ["geo:GEO"]
+    assert norm.resolve_address("MC", amap) == ["mac:MC"]
+    assert norm.resolve_address("DYN", amap) == ["dynamic:DYN"]
 
 
 def test_aci_contract_wird_auf_regeln_abgebildet():

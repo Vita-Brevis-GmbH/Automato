@@ -53,11 +53,22 @@ def resolve_address(name: str, amap: dict[str, dict], _depth: int = 0) -> list[s
         return out or [name]
 
     obj_type = obj.get("type", "ipmask")
-    if obj_type == "ipmask" and obj.get("subnet"):
+    # interface-subnet traegt das Subnetz des Interfaces im selben Feld wie ipmask.
+    if obj_type in ("ipmask", "interface-subnet") and obj.get("subnet"):
         return [_subnet_to_value(obj["subnet"])]
     if obj_type == "iprange" and obj.get("start-ip"):
-        return [f"{obj['start-ip']}-{obj.get('end-ip', obj['start-ip'])}"]
-    # fqdn / geography / mac / ... -> nicht als IP aufloesbar -> Name behalten
+        return [f"range:{obj['start-ip']}-{obj.get('end-ip', obj['start-ip'])}"]
+    # Nicht als IP/CIDR aufloesbare Typen: mit Typ-Praefix markieren, damit der
+    # Orchestrator sie korrekt einordnet (fqdn=extern, geo/mac/dynamic=n/a) statt
+    # pauschal als Fehler. Unbekanntes bleibt der nackte Name (Namenskonvention).
+    if obj_type == "fqdn" and obj.get("fqdn"):
+        return [f"fqdn:{obj['fqdn']}"]
+    if obj_type == "geography":
+        return [f"geo:{name}"]
+    if obj_type == "mac":
+        return [f"mac:{name}"]
+    if obj_type == "dynamic":
+        return [f"dynamic:{name}"]
     return [name]
 
 
