@@ -8,6 +8,8 @@ dem Schreibpfad.
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.auth.deps import require_viewer, tenant_scope
+from app.auth.principal import Principal
 from app.db import get_session
 from app.schemas.findings import FindingOut
 from app.store import findings as findings_store
@@ -19,8 +21,10 @@ router = APIRouter(prefix="/findings", tags=["findings"])
 def list_findings(
     tenant_id: int | None = None,
     status: str | None = None,
+    principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session),
 ):
+    tenant_id = tenant_scope(principal, tenant_id)
     return [
         FindingOut(
             id=f.id,

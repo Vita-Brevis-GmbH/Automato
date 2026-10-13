@@ -11,6 +11,8 @@ Filter nach System/Netzwerk/Zone folgen mit dem UI-Ausbau (M9).
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.auth.deps import require_viewer, tenant_scope
+from app.auth.principal import Principal
 from app.db import get_session
 from app.models import EndpointRole, MatchStatus, ObjectClass
 from app.schemas.rules import EndpointOut, RuleDetailOut, RuleOut
@@ -55,8 +57,10 @@ def _rule_matches_q(rule, objs, ql: str) -> bool:
 def list_rules(
     tenant_id: int | None = None,
     q: str | None = None,
+    principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session),
 ):
+    tenant_id = tenant_scope(principal, tenant_id)
     rules = rules_store.list_rules(session, tenant_id=tenant_id)
     obj_ids = {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id}
     objs = rules_store.objects_by_ids(session, obj_ids)
@@ -96,10 +100,15 @@ def list_rules(
 
 
 @router.get("/{rule_id}", response_model=RuleDetailOut)
-def get_rule(rule_id: int, session: Session = Depends(get_session)):
+def get_rule(
+    rule_id: int,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session),
+):
     r = rules_store.get_rule(session, rule_id)
     if r is None:
         raise HTTPException(status_code=404, detail="rule not found")
+    tenant_scope(principal, r.tenant_id)  # Mandanten-Zugriff pruefen (403 bei fremd)
 
     obj_ids = {e.network_object_id for e in r.endpoints if e.network_object_id}
     objs = rules_store.objects_by_ids(session, obj_ids)

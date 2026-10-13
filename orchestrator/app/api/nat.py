@@ -3,6 +3,8 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.auth.deps import require_viewer, tenant_scope
+from app.auth.principal import Principal
 from app.db import get_session
 from app.schemas.nat import NatOut
 from app.store import nat as nat_store
@@ -11,7 +13,12 @@ router = APIRouter(prefix="/nat", tags=["nat"])
 
 
 @router.get("", response_model=list[NatOut])
-def list_nat(tenant_id: int | None = None, session: Session = Depends(get_session)):
+def list_nat(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session),
+):
+    tenant_id = tenant_scope(principal, tenant_id)
     return [
         NatOut(
             id=n.id,

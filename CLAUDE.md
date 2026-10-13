@@ -130,7 +130,7 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 34, sot-gateway 6.
+Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 38, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -176,3 +176,13 @@ FortiGate-**Farbcode** als Objekt-Katalog (`network_object.color`, via Name/Wert
 `0006` (up/down geprüft). Collector-Fixtures `sample_addresses6/addrgrps6/ippools.json`.
 Folgeschritte: `app/naming.py` auf die Profil-Wörterbücher umstellen; Applikations-Doku-API
 (die 10 Kategorien aus `uc1-applikations-doku-spec.md`) nutzt künftig protections/nat_type.
+**E1 Härtung/RBAC gestartet (E1.1 Gerüst)**: `app/auth/` mit `Principal`, Rollen
+`viewer/operator/admin` (Hierarchie), FastAPI-Dependencies (`require_viewer/operator/admin`)
+und **zentralem Mandanten-Scoping** (`tenant_scope`): Nicht-Admin nur innerhalb erlaubter
+Mandanten, fremder `tenant_id` → 403 (schliesst R13/ADR 0005 #6). Verdrahtet an `/rules`,
+`/rules/{id}`, `/nat`, `/findings`, `/applications`, `/tenants`, `/systems`. `auth_mode`
+(dev|oidc): **dev** = Standard-Admin (unverändertes Verhalten), Override via
+`X-Dev-Roles`/`X-Dev-Tenants` zum Testen; **oidc** = Keycloak-JWT, noch nicht aktiv (501).
+Tests `test_auth.py`. **Als Nächstes in E1:** E1.1b OIDC/Keycloak-JWT-Validierung (PyJWT
++ JWKS, Rollen/Mandanten aus Claims) + Keycloak-Container/Realm mit geseedtem Admin;
+E1.3 Rollen an Schreibpfaden (Collect=operator, Admin-APIs=admin); E1.4 Audit; E1.5 Vault.

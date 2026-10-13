@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     # verhindert versehentliche Exposition echter Kundendaten ohne RBAC.
     allow_unauthenticated_read_api: bool = False
 
+    # AuthN/RBAC (E1, ADR 0007). dev: Standard-Admin-Principal (unveraendertes Verhalten),
+    # Override via X-Dev-Roles/X-Dev-Tenants fuer Tests/Demo. oidc: JWT gegen Keycloak
+    # (Issuer/JWKS/Audience, Rollen/Mandanten aus Claims) - Folgeschritt E1.1b.
+    auth_mode: str = "dev"  # dev | oidc
+    oidc_issuer: str = ""
+    oidc_audience: str = ""
+    oidc_jwks_url: str = ""
+    oidc_roles_claim: str = "roles"
+    oidc_tenants_claim: str = "tenant_ids"
+
     # SoT-Zugaenge (lesend) - je Mandant wird der passende Adapter gebaut (ADR 0004).
     # Model 2 (NetBox) zuerst; Infoblox (Model 1) in Phase 2.
     netbox_url: str = ""
