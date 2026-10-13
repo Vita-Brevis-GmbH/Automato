@@ -21,8 +21,8 @@ def _sample(name: str) -> list[dict]:
     return json.loads(resources.files("collectors.fortigate").joinpath(name).read_text())
 
 
-def gather() -> tuple[list, list, list, list, list]:
-    """(policies, addresses, address_groups, services, vips) - Lab oder Beispieldaten."""
+def gather() -> dict[str, list]:
+    """FortiGate-Rohdaten (IPv4+IPv6, NAT) - Lab oder Beispieldaten."""
     settings = get_settings()
     if settings.fortigate_url and settings.fortigate_token:
         client = FortiGateClient(
@@ -31,22 +31,36 @@ def gather() -> tuple[list, list, list, list, list]:
             verify_tls=settings.fortigate_verify_tls,
         )
         return client.gather()
-    return (
-        _sample("sample_policies.json"),
-        _sample("sample_addresses.json"),
-        _sample("sample_addrgrps.json"),
-        _sample("sample_services.json"),
-        _sample("sample_vips.json"),
-    )
+    return {
+        "policies": _sample("sample_policies.json"),
+        "addresses": _sample("sample_addresses.json"),
+        "addresses6": _sample("sample_addresses6.json"),
+        "groups": _sample("sample_addrgrps.json"),
+        "groups6": _sample("sample_addrgrps6.json"),
+        "services": _sample("sample_services.json"),
+        "vips": _sample("sample_vips.json"),
+        "ippools": _sample("sample_ippools.json"),
+    }
 
 
 @app.task(name="collectors.fortigate.collect")
 def collect(run_id: str) -> None:
     try:
-        policies, addresses, groups, services, vips = gather()
-        rules = norm.normalize(policies, addresses, groups, services, vips)
-        nat_rules = norm.normalize_nat(vips)
-        result = CollectorResult(status="completed", rules=rules, nat_rules=nat_rules)
+        d = gather()
+        rules = norm.normalize(
+            d["policies"],
+            d["addresses"],
+            d["groups"],
+            d["services"],
+            d["vips"],
+            d["addresses6"],
+            d["groups6"],
+        )
+        nat_rules = norm.normalize_nat(d["vips"]) + norm.normalize_snat(d["ippools"])
+        objects = norm.build_object_catalog(d["addresses"], d["addresses6"])
+        result = CollectorResult(
+            status="completed", rules=rules, nat_rules=nat_rules, objects=objects
+        )
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
         result = CollectorResult(status="failed", message=str(exc))
     submit_result(run_id, result)

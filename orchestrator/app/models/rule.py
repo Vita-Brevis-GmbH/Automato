@@ -70,6 +70,8 @@ class Rule(Base):
     collector_run_id: Mapped[str | None] = mapped_column(
         ForeignKey("collector_run.id"), nullable=True
     )
+    # Schutzmechanismen (FortiGate-UTM-Profile an der Policy) fuer die Applikations-Doku
+    protections: Mapped[list | None] = mapped_column(JSON, nullable=True)
     raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     endpoints: Mapped[list["RuleEndpoint"]] = relationship(

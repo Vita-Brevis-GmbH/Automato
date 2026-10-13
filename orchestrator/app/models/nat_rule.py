@@ -19,8 +19,10 @@ class NatRule(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
     source_system_id: Mapped[int] = mapped_column(ForeignKey("source_system.id"), index=True)
-    name: Mapped[str] = mapped_column(String(300))  # VIP-Name
+    name: Mapped[str] = mapped_column(String(300))  # VIP-/Pool-Name
     external_id: Mapped[str] = mapped_column(String(200))  # Ref im Quellsystem
+    # dnat_vip (eingehend, extip->mappedip) | snat_pool (ausgehend, externe Quell-IP)
+    nat_type: Mapped[str] = mapped_column(String(16), default="dnat_vip")
     ext_ip: Mapped[str | None] = mapped_column(String(200), nullable=True)
     ext_port: Mapped[str | None] = mapped_column(String(64), nullable=True)
     mapped_ip: Mapped[str | None] = mapped_column(String(200), nullable=True)

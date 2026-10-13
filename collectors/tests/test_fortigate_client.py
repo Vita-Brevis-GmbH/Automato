@@ -21,9 +21,12 @@ def _client_with_mock() -> FortiGateClient:
     routes = {
         "/api/v2/cmdb/firewall/policy": "sample_policies.json",
         "/api/v2/cmdb/firewall/address": "sample_addresses.json",
+        "/api/v2/cmdb/firewall/address6": "sample_addresses6.json",
         "/api/v2/cmdb/firewall/addrgrp": "sample_addrgrps.json",
+        "/api/v2/cmdb/firewall/addrgrp6": "sample_addrgrps6.json",
         "/api/v2/cmdb/firewall.service/custom": "sample_services.json",
         "/api/v2/cmdb/firewall/vip": "sample_vips.json",
+        "/api/v2/cmdb/firewall/ippool": "sample_ippools.json",
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -51,8 +54,28 @@ def test_client_gather_und_auth_header():
 
 
 def test_abruf_und_normalisierung_ueber_client():
-    policies, addresses, groups, services, vips = _client_with_mock().gather()
-    rules = {r.external_id: r for r in norm.normalize(policies, addresses, groups, services, vips)}
+    d = _client_with_mock().gather()
+    rules = {
+        r.external_id: r
+        for r in norm.normalize(
+            d["policies"],
+            d["addresses"],
+            d["groups"],
+            d["services"],
+            d["vips"],
+            d["addresses6"],
+            d["groups6"],
+        )
+    }
     assert rules["1"].destinations == ["10.10.10.5"]
     assert rules["1"].services == ["tcp/443"]
     assert rules["3"].destinations == ["fqdn:api.partner.example"]
+
+
+def test_gather_liefert_v6_und_ippools():
+    d = _client_with_mock().gather()
+    assert {a["name"] for a in d["addresses6"]} == {
+        "H_adf04-001-ssgch.secn.ch",
+        "N_share-000-v6",
+    }
+    assert d["ippools"][0]["name"] == "IPP_share-000-inet01"

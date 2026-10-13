@@ -8,7 +8,7 @@ match_status haelt fest, ob das Objekt im IPAM aufgeloest werden konnte.
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -73,6 +73,8 @@ class NetworkObject(Base):
     domain: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
     zone_id: Mapped[int | None] = mapped_column(ForeignKey("zone.id"), nullable=True, index=True)
     vlan: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # FortiGate-Farbcode als Herkunfts-/Typ-Signal (optional, numerisch; ADR 0006)
+    color: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_of_record: Mapped[SourceOfRecord | None] = mapped_column(
         Enum(SourceOfRecord, native_enum=False, length=16), nullable=True
     )

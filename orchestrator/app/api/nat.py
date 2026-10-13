@@ -19,6 +19,7 @@ def list_nat(tenant_id: int | None = None, session: Session = Depends(get_sessio
             source_system_id=n.source_system_id,
             name=n.name,
             external_id=n.external_id,
+            nat_type=n.nat_type,
             ext_ip=n.ext_ip,
             ext_port=n.ext_port,
             mapped_ip=n.mapped_ip,

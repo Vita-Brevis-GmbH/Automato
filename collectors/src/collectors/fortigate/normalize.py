@@ -13,7 +13,7 @@ FortiOS-Built-ins (HTTPS, ALL, ...) sind als Fallback hinterlegt.
 import ipaddress
 from typing import Any
 
-from collectors.common.dto import NormalizedNat, NormalizedRule
+from collectors.common.dto import NormalizedNat, NormalizedObject, NormalizedRule
 
 _ANY = "all"
 
@@ -32,9 +32,16 @@ _BUILTIN_SERVICES: dict[str, list[str]] = {
 # -- Adressen -----------------------------------------------------------------
 
 
-def build_address_map(addresses: list[dict], groups: list[dict]) -> dict[str, dict]:
+def build_address_map(
+    addresses: list[dict],
+    groups: list[dict],
+    addresses6: list[dict] | None = None,
+    groups6: list[dict] | None = None,
+) -> dict[str, dict]:
     amap = {a["name"]: a for a in addresses}
-    for g in groups:
+    for a in addresses6 or []:
+        amap[a["name"]] = a
+    for g in list(groups) + list(groups6 or []):
         amap[g["name"]] = g
     return amap
 
@@ -75,6 +82,8 @@ def resolve_address(
     # interface-subnet traegt das Subnetz des Interfaces im selben Feld wie ipmask.
     if obj_type in ("ipmask", "interface-subnet") and obj.get("subnet"):
         return [_subnet_to_value(obj["subnet"])]
+    if obj.get("ip6"):  # IPv6-Adressobjekt (address6): CIDR/Host im Feld ip6
+        return [_subnet_to_value(obj["ip6"])]
     if obj_type == "iprange" and obj.get("start-ip"):
         return [f"range:{obj['start-ip']}-{obj.get('end-ip', obj['start-ip'])}"]
     # Nicht als IP/CIDR aufloesbare Typen: mit Typ-Praefix markieren, damit der
@@ -152,20 +161,40 @@ def normalize(
     groups: list[dict],
     services: list[dict],
     vips: list[dict] | None = None,
+    addresses6: list[dict] | None = None,
+    groups6: list[dict] | None = None,
 ) -> list[NormalizedRule]:
-    amap = build_address_map(addresses, groups)
+    amap = build_address_map(addresses, groups, addresses6, groups6)
     smap = build_service_map(services)
     vipmap = build_vip_map(vips)
     return [_normalize_policy(p, amap, smap, vipmap) for p in policies]
 
 
+# FortiGate-UTM-Profilfelder an der Policy (Referenznamen = "Schutzmechanismen").
+_UTM_FIELDS = (
+    "av-profile",
+    "webfilter-profile",
+    "dnsfilter-profile",
+    "application-list",
+    "ips-sensor",
+    "waf-profile",
+    "ssl-ssh-profile",
+)
+
+
+def _policy_protections(policy: dict) -> list[str]:
+    return [str(policy[f]) for f in _UTM_FIELDS if policy.get(f)]
+
+
 def _normalize_policy(policy: dict, amap: dict, smap: dict, vipmap: dict) -> NormalizedRule:
     sources: list[str] = []
-    for entry in policy.get("srcaddr", []):
-        sources.extend(resolve_address(entry["name"], amap, vipmap))
+    for key in ("srcaddr", "srcaddr6"):  # Dual-Stack: IPv4- und IPv6-Adressfelder
+        for entry in policy.get(key, []):
+            sources.extend(resolve_address(entry["name"], amap, vipmap))
     destinations: list[str] = []
-    for entry in policy.get("dstaddr", []):
-        destinations.extend(resolve_address(entry["name"], amap, vipmap))
+    for key in ("dstaddr", "dstaddr6"):
+        for entry in policy.get(key, []):
+            destinations.extend(resolve_address(entry["name"], amap, vipmap))
     svc: list[str] = []
     for entry in policy.get("service", []):
         svc.extend(resolve_service(entry["name"], smap))
@@ -175,11 +204,12 @@ def _normalize_policy(policy: dict, amap: dict, smap: dict, vipmap: dict) -> Nor
         external_id=str(policy["policyid"]),
         name=policy.get("name", ""),
         action="allow" if policy.get("action") == "accept" else "deny",
-        sources=sources,
-        destinations=destinations,
+        sources=_dedup(sources),
+        destinations=_dedup(destinations),
         services=_dedup(svc),
         src_zone=_first_name(policy.get("srcintf")),
         dst_zone=_first_name(policy.get("dstintf")),
+        protections=_policy_protections(policy),
         raw=policy,
     )
 
@@ -233,3 +263,65 @@ def normalize_nat(vips: list[dict] | None) -> list[NormalizedNat]:
             )
         )
     return out
+
+
+def normalize_snat(ippools: list[dict] | None) -> list[NormalizedNat]:
+    """FortiGate IP-Pools (IPP_) -> Source-NAT-Dokumentation (externe Quell-IP)."""
+    out: list[NormalizedNat] = []
+    for pool in ippools or []:
+        start = str(pool.get("startip") or "").strip()
+        end = str(pool.get("endip") or "").strip()
+        ext = f"{start}-{end}" if end and end != start else (start or None)
+        out.append(
+            NormalizedNat(
+                source_platform="fortigate",
+                external_id=pool.get("name", ""),
+                name=pool.get("name", ""),
+                nat_type="snat_pool",
+                ext_ip=ext,
+                raw=pool,
+            )
+        )
+    return out
+
+
+# -- Objekt-Katalog (Typ + Farbcode-Signal) -----------------------------------
+
+
+def build_object_catalog(
+    addresses: list[dict], addresses6: list[dict] | None = None
+) -> list[NormalizedObject]:
+    """Adressobjekt-Metadaten: Typ + Farbcode (optional) + aufgeloester Wert je Objekt."""
+    out: list[NormalizedObject] = []
+    for a in list(addresses) + list(addresses6 or []):
+        if "member" in a:  # Gruppen gehoeren nicht in den Objekt-Katalog
+            continue
+        out.append(
+            NormalizedObject(
+                name=a["name"],
+                obj_type=a.get("type"),
+                color=_as_color(a.get("color")),
+                value=_catalog_value(a),
+                fqdn=a.get("fqdn"),
+            )
+        )
+    return out
+
+
+def _as_color(raw: Any) -> int | None:
+    try:
+        return int(raw) if raw not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _catalog_value(obj: dict) -> str | None:
+    """Nur echte IP/CIDR-Werte in den Katalog (keine fqdn/geo/range-Typpraefixe)."""
+    resolved = resolve_address(obj["name"], {obj["name"]: obj})
+    first = resolved[0] if resolved else None
+    if not first or first == obj["name"]:
+        return None
+    for tag in ("fqdn:", "geo:", "mac:", "dynamic:", "range:", "vip:"):
+        if first.startswith(tag):
+            return None
+    return first

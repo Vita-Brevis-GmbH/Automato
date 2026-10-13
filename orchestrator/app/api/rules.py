@@ -143,4 +143,5 @@ def get_rule(rule_id: int, session: Session = Depends(get_session)):
         sequence=r.sequence,
         endpoints=endpoints,
         services=[s.canonical_name for s in r.services],
+        protections=r.protections or [],
     )

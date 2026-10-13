@@ -111,3 +111,67 @@ def test_aci_contract_wird_auf_regeln_abgebildet():
     assert rule.destinations == ["prod/db"]
     assert rule.services == ["tcp/3306"]
     assert rule.external_id == "uni/tn-prod/brc-web-to-db/mysql"
+
+
+def test_fortigate_ipv6_adresse_wird_aufgeloest():
+    amap = {"H6": {"name": "H6", "type": "ipmask", "ip6": "2a07:c180:100:b032::1:26/128"}}
+    assert norm.resolve_address("H6", amap) == ["2a07:c180:100:b032::1:26"]
+    amap2 = {"N6": {"name": "N6", "type": "ipprefix", "ip6": "2a07:c180:100:a000::/56"}}
+    assert norm.resolve_address("N6", amap2) == ["2a07:c180:100:a000::/56"]
+
+
+def test_fortigate_dual_stack_policy_und_protections():
+    policies = [
+        {
+            "policyid": 9,
+            "name": "v6-web",
+            "action": "accept",
+            "srcintf": [{"name": "wan"}],
+            "dstintf": [{"name": "dmz"}],
+            "srcaddr6": [{"name": "N6"}],
+            "dstaddr6": [{"name": "H6"}],
+            "service": [{"name": "HTTPS"}],
+            "utm-status": "enable",
+            "ips-sensor": "IPS_Media",
+            "ssl-ssh-profile": "SSL_Media",
+        }
+    ]
+    addr6 = [
+        {"name": "N6", "type": "ipprefix", "ip6": "2a07:c180:100:a000::/56"},
+        {"name": "H6", "type": "ipmask", "ip6": "2a07:c180:100:b032::1:26/128"},
+    ]
+    r = norm.normalize(policies, [], [], [], None, addr6, [])[0]
+    assert r.sources == ["2a07:c180:100:a000::/56"]
+    assert r.destinations == ["2a07:c180:100:b032::1:26"]
+    assert r.protections == ["IPS_Media", "SSL_Media"]
+
+
+def test_fortigate_normalize_snat():
+    nat = norm.normalize_snat([{"name": "IPP_x", "startip": "1.1.100.168", "endip": "1.1.100.168"}])
+    assert len(nat) == 1
+    assert nat[0].nat_type == "snat_pool"
+    assert nat[0].ext_ip == "1.1.100.168"
+    assert nat[0].mapped_ip is None
+
+
+def test_fortigate_object_catalog_farbe_und_wert():
+    cat = {
+        o.name: o
+        for o in norm.build_object_catalog(
+            [
+                {
+                    "name": "H_a",
+                    "type": "ipmask",
+                    "subnet": "10.0.0.5 255.255.255.255",
+                    "color": 13,
+                },
+                {"name": "H-EXT_x", "type": "fqdn", "fqdn": "x.example", "color": 9},
+            ],
+            [{"name": "H6", "type": "ipmask", "ip6": "2a07::1/128"}],
+        )
+    }
+    assert cat["H_a"].color == 13
+    assert cat["H_a"].value == "10.0.0.5"
+    assert cat["H-EXT_x"].color == 9
+    assert cat["H-EXT_x"].value is None  # fqdn -> kein IP-Wert im Katalog
+    assert cat["H6"].value == "2a07::1"

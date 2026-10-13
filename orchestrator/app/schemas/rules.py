@@ -36,3 +36,4 @@ class RuleDetailOut(RuleOut):
     sequence: int | None = None
     endpoints: list[EndpointOut] = []
     services: list[str] = []  # kanonische Service-Namen (tcp/443, ...)
+    protections: list[str] = []  # UTM-Profile ("Schutzmechanismen")

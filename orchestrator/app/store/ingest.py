@@ -13,7 +13,7 @@ get_by_name). `all`/`any` → Endpunkt-Kind ANY.
 import ipaddress
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app import naming
@@ -86,8 +86,24 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
 
     for normalized in result.rules:
         _persist_rule(session, run, normalized, sot)
+    _apply_object_catalog(session, run.tenant_id, result.objects)
     for nat in result.nat_rules:
         _persist_nat(session, run, nat)
+
+
+def _apply_object_catalog(session: Session, tenant_id: int, objects) -> None:
+    """Farbcode (Signal) auf bereits angelegte Adressobjekte uebertragen (Name oder Wert)."""
+    for o in objects:
+        if o.color is None:
+            continue
+        conds = [NetworkObject.name == o.name]
+        if o.value:
+            conds.append(NetworkObject.value == o.value)
+        for obj in session.scalars(
+            select(NetworkObject).where(NetworkObject.tenant_id == tenant_id, or_(*conds))
+        ):
+            obj.color = o.color
+    session.flush()
 
 
 def _persist_nat(session: Session, run, nat: NormalizedNat) -> None:
@@ -97,6 +113,7 @@ def _persist_nat(session: Session, run, nat: NormalizedNat) -> None:
             source_system_id=run.source_system_id,
             name=nat.name or nat.external_id,
             external_id=nat.external_id,
+            nat_type=nat.nat_type,
             ext_ip=nat.ext_ip,
             ext_port=nat.ext_port,
             mapped_ip=nat.mapped_ip,
@@ -123,6 +140,7 @@ def _persist_rule(session: Session, run, nr: NormalizedRule, sot) -> None:
         dst_zone_id=_zone_id(session, run.tenant_id, nr.dst_zone),
         last_seen=datetime.now(UTC),
         collector_run_id=run.id,
+        protections=nr.protections or None,
         raw=nr.raw,
     )
     for raw in nr.sources:

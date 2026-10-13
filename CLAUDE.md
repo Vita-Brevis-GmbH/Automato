@@ -130,7 +130,7 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 7, orchestrator 33, sot-gateway 6.
+Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 34, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -167,6 +167,12 @@ mit getrennten Quelle/Ziel-Spalten (mehrere Objekte) + 3-stelliger Standort-Code
 **(2) W1 Web-UI umgesetzt**: Übersicht/Dashboard (KPIs Regeln/NAT/Findings/unmatched,
 Regeln je Ziel-Zone, neueste Findings), **Mandanten-Switcher** (neuer `/tenants`-Endpunkt),
 Regelliste mit getrennten **Quelle/Ziel**-Spalten inkl. mehrerer Adressobjekte (`/rules`
-um `sources`/`destinations` erweitert), Regel-Detail unverändert. Frontend `tsc`+`vite`
-grün. Als Nächstes: **(3) FortiGate-Collector Phase 1.5** (address6/UTM/ippool/color).
-`app/naming.py` auf die Profil-Wörterbücher umstellen bleibt Folgeschritt.
+um `sources`/`destinations` erweitert), Regel-Detail unverändert. Frontend `tsc`+`vite` grün.
+**(3) FortiGate-Collector Phase 1.5 umgesetzt**: Dual-Stack (`address6`/`addrgrp6`,
+`srcaddr6`/`dstaddr6`), UTM-Schutzprofile pro Policy (`rule.protections` → Regel-Detail),
+SNAT-IP-Pools (`firewall/ippool` → `nat_rule.nat_type=snat_pool`, `/nat` zeigt `nat_type`),
+FortiGate-**Farbcode** als Objekt-Katalog (`network_object.color`, via Name/Wert-Match).
+`collector.gather()` liefert jetzt ein Dict; DTO + Orchestrator-Vertrag erweitert; Alembic
+`0006` (up/down geprüft). Collector-Fixtures `sample_addresses6/addrgrps6/ippools.json`.
+Folgeschritte: `app/naming.py` auf die Profil-Wörterbücher umstellen; Applikations-Doku-API
+(die 10 Kategorien aus `uc1-applikations-doku-spec.md`) nutzt künftig protections/nat_type.

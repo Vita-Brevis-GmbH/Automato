@@ -43,16 +43,29 @@ class FortiGateClient:
         # "firewall/service/custom" (das liefert 400 Bad Request).
         return self._get("firewall.service/custom")
 
+    def addresses6(self) -> list[dict[str, Any]]:
+        return self._get("firewall/address6")
+
+    def address_groups6(self) -> list[dict[str, Any]]:
+        return self._get("firewall/addrgrp6")
+
     def vips(self) -> list[dict[str, Any]]:
         # Virtual IPs (DNAT/Port-Forward): externe IP -> internes Ziel.
         return self._get("firewall/vip")
 
-    def gather(self) -> tuple[list, list, list, list, list]:
-        """Alles einlesen, was die Normalisierung braucht."""
-        return (
-            self.policies(),
-            self.addresses(),
-            self.address_groups(),
-            self.services(),
-            self.vips(),
-        )
+    def ippools(self) -> list[dict[str, Any]]:
+        # IP-Pools fuer Source-NAT (IPP_).
+        return self._get("firewall/ippool")
+
+    def gather(self) -> dict[str, list]:
+        """Alles einlesen, was die Normalisierung braucht (IPv4+IPv6, NAT)."""
+        return {
+            "policies": self.policies(),
+            "addresses": self.addresses(),
+            "addresses6": self.addresses6(),
+            "groups": self.address_groups(),
+            "groups6": self.address_groups6(),
+            "services": self.services(),
+            "vips": self.vips(),
+            "ippools": self.ippools(),
+        }

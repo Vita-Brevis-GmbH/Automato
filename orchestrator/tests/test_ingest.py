@@ -270,3 +270,63 @@ def test_nat_rules_werden_persistiert_und_ersetzt(session_factory):
     assert nats[0].mapped_ip == "10.10.10.5"
     assert nats[0].mapped_port == "8443"
     assert nats[0].portforward is True
+
+
+def test_phase15_protections_farbe_und_snat(session_factory):
+    from app.models import NatRule
+    from app.models import NetworkObject as NObj
+
+    session = session_factory()
+    run = _seed_run(session)
+    result = CollectorResult.model_validate(
+        {
+            "status": "completed",
+            "rules": [
+                {
+                    "source_platform": "fortigate",
+                    "external_id": "1",
+                    "name": "allow-web",
+                    "action": "allow",
+                    "sources": ["10.10.20.0/24"],
+                    "destinations": ["10.10.10.5"],
+                    "services": ["tcp/443"],
+                    "protections": ["WF_Client", "IPS_Media", "SSL_Media"],
+                }
+            ],
+            "nat_rules": [
+                {
+                    "source_platform": "fortigate",
+                    "external_id": "V-EXT_www",
+                    "name": "V-EXT_www",
+                    "nat_type": "dnat_vip",
+                    "ext_ip": "203.0.113.40",
+                    "mapped_ip": "10.20.4.10",
+                },
+                {
+                    "source_platform": "fortigate",
+                    "external_id": "IPP_inet",
+                    "name": "IPP_inet",
+                    "nat_type": "snat_pool",
+                    "ext_ip": "203.0.113.168",
+                },
+            ],
+            "objects": [
+                {"name": "H_web01", "obj_type": "ipmask", "color": 13, "value": "10.10.10.5"},
+                {"name": "N_dmz", "obj_type": "ipmask", "color": 16, "value": "10.10.20.0/24"},
+            ],
+        }
+    )
+    ingest.persist_result(session, run, result, _fake_sot())
+    session.commit()
+
+    rule = rules_store.list_rules(session, tenant_id=run.tenant_id)[0]
+    assert rule.protections == ["WF_Client", "IPS_Media", "SSL_Media"]
+
+    # Farbcode via Wert-Match auf die aufgeloesten Objekte uebertragen
+    assert session.query(NObj).filter_by(value="10.10.10.5").one().color == 13
+    assert session.query(NObj).filter_by(value="10.10.20.0/24").one().color == 16
+
+    nats = {n.name: n for n in session.query(NatRule).all()}
+    assert nats["V-EXT_www"].nat_type == "dnat_vip"
+    assert nats["IPP_inet"].nat_type == "snat_pool"
+    assert nats["IPP_inet"].mapped_ip is None

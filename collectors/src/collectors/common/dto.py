@@ -19,15 +19,19 @@ class NormalizedRule(BaseModel):
     services: list[str] = Field(default_factory=list)
     src_zone: str | None = None
     dst_zone: str | None = None
+    # Schutzmechanismen (FortiGate-UTM-Profile an der Policy): WEB/WF, APP/AC, IPS,
+    # WAF, SSL, AV, DNS-Filter - fuer die Applikations-Doku-Spalte "Schutzmechanismen".
+    protections: list[str] = Field(default_factory=list)
     raw: dict[str, Any] | None = None
 
 
 class NormalizedNat(BaseModel):
-    """VIP/DNAT: externe IP (+Port) -> internes Ziel (+Port)."""
+    """NAT: VIP/DNAT (extip -> mappedip) oder SNAT-IP-Pool (externe Quell-IP)."""
 
     source_platform: Literal["fortigate", "cisco_aci"]
     external_id: str
     name: str = ""
+    nat_type: Literal["dnat_vip", "snat_pool"] = "dnat_vip"
     ext_ip: str | None = None
     ext_port: str | None = None
     mapped_ip: str | None = None
@@ -37,8 +41,19 @@ class NormalizedNat(BaseModel):
     raw: dict[str, Any] | None = None
 
 
+class NormalizedObject(BaseModel):
+    """Adressobjekt-Metadaten (Katalog): Typ + Farbcode als Signal (ADR 0006)."""
+
+    name: str
+    obj_type: str | None = None  # ipmask | interface-subnet | iprange | fqdn | geography | ...
+    color: int | None = None  # FortiGate-Farbcode (optional)
+    value: str | None = None  # aufgeloeste IP/CIDR, falls vorhanden
+    fqdn: str | None = None
+
+
 class CollectorResult(BaseModel):
     status: Literal["completed", "failed"]
     rules: list[NormalizedRule] = Field(default_factory=list)
     nat_rules: list[NormalizedNat] = Field(default_factory=list)
+    objects: list[NormalizedObject] = Field(default_factory=list)
     message: str | None = None
