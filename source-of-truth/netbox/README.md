@@ -56,6 +56,33 @@ Legt Zonen-Tags, eine Site, zwei Prefixe (mit Zone-Tag am Subnetz – so verorte
 ADR 0004 die Zone) und drei IP-Adressen an. Richte die Adressobjekte auf der
 FortiGate auf dieselben Netze/IPs aus, damit das Matching Treffer erzeugt.
 
+### NetBox aus der FortiGate seeden (Bootstrap)
+
+Wenn NetBox noch keine echten IPAM-Daten hat, kannst du die **FortiGate-Adressobjekte
+als Ausgangsbasis** nach NetBox übernehmen – Netze werden zu Prefixen, Hosts zu
+IP-Adressen (markiert mit Tag `automato-import`). Danach matcht der (rein lesende)
+Collector die echten Regeln gegen diese Daten.
+
+```bash
+FORTIGATE_URL=https://<fortigate-ip> FORTIGATE_TOKEN=<readonly-key> \
+NETBOX_URL=http://localhost:8080 NETBOX_TOKEN=<admin-schreib-token> \
+  python3 import_from_fortigate.py
+```
+
+> **Wichtig:** Dieser Schritt **schreibt in NetBox** und nutzt daher den
+> **Schreib-Token** (Admin) – nicht den read-only Collector-Token. Der FortiGate-Zugriff
+> bleibt rein lesend. Es ist ein **einmaliger Bootstrap**: anschließend ist NetBox die
+> Source of Truth und sollte dort gepflegt/kuratiert werden (die Firewall ist nur der
+> Startpunkt). Ranges/FQDN/Geography werden übersprungen (nicht als IPAM-Objekt abbildbar).
+
+Am einfachsten über den Bootstrap mit einem Flag (nutzt automatisch den frischen
+Admin-Token, vor dem Collect-Lauf):
+
+```bash
+IMPORT_FORTIGATE=1 FORTIGATE_URL=https://<fortigate-ip> FORTIGATE_TOKEN=<key> \
+  bash lab/bootstrap.sh
+```
+
 ## Anpassen / Zurücksetzen
 
 - Werte überschreiben: `NETBOX_PORT`, `ADMIN_USER`, `ADMIN_PASS`, `COLLECTOR_TOKEN`,

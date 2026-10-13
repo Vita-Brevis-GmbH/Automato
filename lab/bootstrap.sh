@@ -45,6 +45,17 @@ echo; echo "== 2/4 NetBox mit Lab-Daten seeden =="
 ( cd source-of-truth/netbox \
   && NETBOX_URL="http://localhost:${NETBOX_PORT}" NETBOX_TOKEN="$ADMIN_TOKEN" python3 seed_lab.py )
 
+# Optional: FortiGate-Adressobjekte nach NetBox importieren (schreibt in NetBox!).
+# Nutzt den frischen Schreib-Token; FortiGate bleibt read-only. Vor dem Stack-Start,
+# damit der folgende Collect-Lauf die importierten Objekte matchen kann.
+if [ "${IMPORT_FORTIGATE:-0}" = "1" ] && [ -n "$FORTIGATE_URL" ] && [ -n "$FORTIGATE_TOKEN" ]; then
+  echo; echo "== 2b/4 FortiGate-Adressobjekte -> NetBox importieren =="
+  ( cd source-of-truth/netbox \
+    && FORTIGATE_URL="$FORTIGATE_URL" FORTIGATE_TOKEN="$FORTIGATE_TOKEN" \
+       NETBOX_URL="http://localhost:${NETBOX_PORT}" NETBOX_TOKEN="$ADMIN_TOKEN" \
+       python3 import_from_fortigate.py )
+fi
+
 # -- 3/4 Automato-Stack -------------------------------------------------------
 echo; echo "== 3/4 Automato-Stack hochfahren =="
 NETBOX_TOKEN="$COLLECTOR_TOKEN" NETBOX_PORT="$NETBOX_PORT" \
