@@ -90,12 +90,12 @@ docker compose exec -T \
   netbox /opt/netbox/netbox/manage.py shell <<'PY'
 import os
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group, Permission
+from django.contrib.contenttypes.models import ContentType
 
 try:
-    from users.models import Token
+    from users.models import ObjectPermission, Token
 except ImportError:  # falls sich das App-Layout in kuenftigen Versionen aendert
-    from netbox.users.models import Token  # type: ignore
+    from netbox.users.models import ObjectPermission, Token  # type: ignore
 
 User = get_user_model()
 
@@ -116,13 +116,26 @@ admin.set_password(os.environ["ADMIN_PASS"])
 admin.save()
 set_v1_token(admin, os.environ["ADMIN_TOKEN"], write_enabled=True)
 
-# Read-only-Gruppe (alle view_*-Rechte) + Collector-User ohne Superuser
-grp, _ = Group.objects.get_or_create(name="automato-readonly")
-grp.permissions.set(Permission.objects.filter(codename__startswith="view_"))
+# Collector: KEIN Superuser. In NetBox braucht ein Nicht-Superuser eine
+# ObjectPermission (actions=["view"]), um ueber die API lesen zu duerfen -
+# Django-Permissions allein genuegen nicht. Die eigene NetBox-Group ist dafuer
+# nicht noetig; wir haengen die view-Permission direkt an den User.
 collector, _ = User.objects.get_or_create(username="automato-collector")
 collector.is_superuser = collector.is_staff = False
 collector.save()
-collector.groups.add(grp)
+perm, _ = ObjectPermission.objects.get_or_create(
+    name="automato-readonly-view", defaults={"actions": ["view"]}
+)
+perm.enabled = True
+perm.actions = ["view"]
+perm.save()
+perm.object_types.set(ContentType.objects.all())  # alle Objekttypen lesen
+# Zuweisung an den User - Relationsname je nach NetBox-Version (M2M liegt auf der
+# User-Seite als object_permissions, Rueckname auf der Permission als users).
+try:
+    collector.object_permissions.add(perm)
+except AttributeError:
+    perm.users.add(collector)
 
 # Read-only Token (write_enabled=False -> kann nur lesen)
 set_v1_token(collector, os.environ["COLLECTOR_TOKEN"], write_enabled=False)
