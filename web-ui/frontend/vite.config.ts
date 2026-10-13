@@ -6,6 +6,8 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: true, // 0.0.0.0 - im Container/ueber die VM-IP erreichbar
+    allowedHosts: true, // Lab: Zugriff ueber beliebigen Host (VM-IP) erlauben
     proxy: {
       "/api": {
         target: process.env.ORCHESTRATOR_URL ?? "http://localhost:8000",

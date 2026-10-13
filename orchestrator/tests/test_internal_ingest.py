@@ -103,6 +103,15 @@ def test_durchstich_collector_result_landet_in_rules(client, session_factory, mo
     unmatched = [f for f in findings if f["type"] == "unmatched_object"]
     assert any(f["subject_id"] == "10.10.20.0/24" for f in unmatched)
 
+    # /systems fuer den UI-Filter
+    systems = client.get("/systems").json()
+    assert any(s["name"] == "fw-01" and s["platform"] == "fortigate" for s in systems)
+
+    # Freitext-/IP-Suche (q): nach Name und nach Endpunkt-Wert
+    assert len(client.get("/rules", params={"q": "allow-web"}).json()) == 1
+    assert len(client.get("/rules", params={"q": "10.10.10.5"}).json()) == 1  # Endpunkt-Wert
+    assert client.get("/rules", params={"q": "gibtsnicht"}).json() == []
+
 
 def test_rule_detail_404_fuer_unbekannte_regel(client):
     assert client.get("/rules/999999").status_code == 404

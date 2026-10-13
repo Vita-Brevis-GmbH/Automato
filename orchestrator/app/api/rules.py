@@ -31,11 +31,29 @@ def _count_unmatched(endpoints, objs) -> int:
     return sum(1 for e in endpoints if _is_unmatched(objs.get(e.network_object_id)))
 
 
+def _rule_matches_q(rule, objs, ql: str) -> bool:
+    if ql in rule.name.lower() or ql in (rule.external_id or "").lower():
+        return True
+    for e in rule.endpoints:
+        obj = objs.get(e.network_object_id) if e.network_object_id else None
+        for s in ((obj.name if obj else None), (obj.value if obj else None), e.inline_value):
+            if s and ql in s.lower():
+                return True
+    return False
+
+
 @router.get("", response_model=list[RuleOut])
-def list_rules(tenant_id: int | None = None, session: Session = Depends(get_session)):
+def list_rules(
+    tenant_id: int | None = None,
+    q: str | None = None,
+    session: Session = Depends(get_session),
+):
     rules = rules_store.list_rules(session, tenant_id=tenant_id)
     obj_ids = {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id}
     objs = rules_store.objects_by_ids(session, obj_ids)
+    if q:
+        ql = q.strip().lower()
+        rules = [r for r in rules if _rule_matches_q(r, objs, ql)]
     zone_ids = {r.src_zone_id for r in rules} | {r.dst_zone_id for r in rules}
     zone_ids |= {o.zone_id for o in objs.values() if o.zone_id}
     zones = rules_store.zone_names(session, zone_ids)
