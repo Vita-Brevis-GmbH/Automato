@@ -79,3 +79,19 @@ def test_ohne_rolle_403(session_factory, client):
     _tenant_with_rule(seed, "kunde-a")
     seed.commit()
     assert client.get("/rules", headers={"X-Dev-Roles": ""}).status_code == 403
+
+
+def test_collect_erfordert_operator(session_factory, client):
+    seed = session_factory()
+    t = Tenant(name="kunde-a", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+    fw = SourceSystem(name="fw", platform=Platform.FORTIGATE, base_url="https://fw", enabled=True)
+    seed.add_all([t, fw])
+    seed.flush()
+    body = {"platform": "fortigate", "tenant_id": t.id, "source_system_id": fw.id}
+    seed.commit()
+
+    viewer = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(body["tenant_id"])}
+    assert client.post("/jobs/collect", json=body, headers=viewer).status_code == 403
+
+    operator = {"X-Dev-Roles": "operator", "X-Dev-Tenants": str(body["tenant_id"])}
+    assert client.post("/jobs/collect", json=body, headers=operator).status_code == 202

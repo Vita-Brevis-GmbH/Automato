@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.auth.deps import require_operator, require_viewer, tenant_scope
+from app.auth.principal import Principal
 from app.db import get_session
 from app.jobs import celery_app
 from app.models import CollectorRun
@@ -13,24 +15,28 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 @router.post("/collect", response_model=CollectJobResponse, status_code=202)
-def start_collect(payload: CollectJobRequest, session: Session = Depends(get_session)):
+def start_collect(
+    payload: CollectJobRequest,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session),
+):
+    tenant_id = tenant_scope(principal, payload.tenant_id)  # Mandanten-Zugriff erzwingen
     run = CollectorRun(
         platform=payload.platform,
-        tenant_id=payload.tenant_id,
+        tenant_id=tenant_id,
         source_system_id=payload.source_system_id,
     )
     session.add(run)
     session.flush()  # run.id verfuegbar machen
 
-    # TODO(M3/M4): actor aus AuthN uebernehmen, sobald Auth umgesetzt ist
     audit.record(
         session,
-        actor="api",
+        actor=f"user:{principal.subject}",
         action="collector_run.queued",
         subject=run.id,
         detail={
             "platform": payload.platform,
-            "tenant_id": payload.tenant_id,
+            "tenant_id": tenant_id,
             "source_system_id": payload.source_system_id,
         },
     )
@@ -39,10 +45,15 @@ def start_collect(payload: CollectJobRequest, session: Session = Depends(get_ses
 
 
 @router.get("/{run_id}", response_model=CollectorRunOut)
-def get_run(run_id: str, session: Session = Depends(get_session)):
+def get_run(
+    run_id: str,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session),
+):
     run = session.get(CollectorRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
+    tenant_scope(principal, run.tenant_id)  # Mandanten-Zugriff pruefen
     return CollectorRunOut(
         id=run.id,
         platform=run.platform,

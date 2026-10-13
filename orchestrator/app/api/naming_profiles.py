@@ -1,15 +1,14 @@
 """Namensprofile & Wörterbücher (ADR 0004-Ergänzung).
 
-Lesen ist offen (wie die übrige Read-API; fail-closed ausserhalb `dev`). **Schreiben**
-(Profile/Einträge pflegen) ist bis RBAC (E1, ADR 0007) mit dem internen Service-Token
-geschützt. `kind` ist ein offener String → neue Namenskonventionsvorgaben ohne
-Schema-Änderung.
+Lesen = `viewer`, Schreiben (Profile/Einträge pflegen) = `admin` (RBAC, E1/ADR 0007).
+`kind` ist ein offener String → neue Namenskonventionsvorgaben ohne Schema-Änderung.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.internal import require_internal_token
+from app.auth.deps import require_admin, require_viewer
+from app.auth.principal import Principal
 from app.db import get_session
 from app.models import DictionaryEntry
 from app.schemas.naming_profile import (
@@ -36,7 +35,10 @@ def _entry_out(e: DictionaryEntry) -> DictionaryEntryOut:
 
 
 @router.get("", response_model=list[NamingProfileOut])
-def list_profiles(session: Session = Depends(get_session)):
+def list_profiles(
+    _: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session),
+):
     return [
         NamingProfileOut(id=p.id, customer=p.customer, name=p.name)
         for p in store.list_profiles(session)
@@ -47,7 +49,7 @@ def list_profiles(session: Session = Depends(get_session)):
     "",
     response_model=NamingProfileOut,
     status_code=201,
-    dependencies=[Depends(require_internal_token)],
+    dependencies=[Depends(require_admin)],
 )
 def create_profile(body: NamingProfileIn, session: Session = Depends(get_session)):
     p = store.get_or_create_profile(session, customer=body.customer, name=body.name)
@@ -55,7 +57,12 @@ def create_profile(body: NamingProfileIn, session: Session = Depends(get_session
 
 
 @router.get("/{profile_id}/dictionary", response_model=list[DictionaryEntryOut])
-def list_entries(profile_id: int, kind: str | None = None, session: Session = Depends(get_session)):
+def list_entries(
+    profile_id: int,
+    kind: str | None = None,
+    _: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session),
+):
     if store.get_profile(session, profile_id) is None:
         raise HTTPException(status_code=404, detail="profile not found")
     return [_entry_out(e) for e in store.list_entries(session, profile_id, kind=kind)]
@@ -64,7 +71,7 @@ def list_entries(profile_id: int, kind: str | None = None, session: Session = De
 @router.post(
     "/{profile_id}/dictionary",
     response_model=DictionaryEntryOut,
-    dependencies=[Depends(require_internal_token)],
+    dependencies=[Depends(require_admin)],
 )
 def upsert_entry(profile_id: int, body: DictionaryEntryIn, session: Session = Depends(get_session)):
     if store.get_profile(session, profile_id) is None:
@@ -76,7 +83,7 @@ def upsert_entry(profile_id: int, body: DictionaryEntryIn, session: Session = De
 @router.delete(
     "/dictionary/{entry_id}",
     status_code=204,
-    dependencies=[Depends(require_internal_token)],
+    dependencies=[Depends(require_admin)],
 )
 def delete_entry(entry_id: int, session: Session = Depends(get_session)):
     if not store.delete_entry(session, entry_id):

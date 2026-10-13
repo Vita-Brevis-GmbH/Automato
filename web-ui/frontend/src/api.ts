@@ -107,8 +107,18 @@ export interface ApplicationDetail extends Application {
   rules: AppRule[];
 }
 
+// Bearer-Token (gesetzt nach OIDC-Login, E1.3b). Im dev-Modus leer -> Standard-Admin.
+function authHeaders(): Record<string, string> {
+  try {
+    const t = localStorage.getItem("automato_token");
+    return t ? { Authorization: `Bearer ${t}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function getJSON<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+  const response = await fetch(url, { headers: authHeaders() });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
 }

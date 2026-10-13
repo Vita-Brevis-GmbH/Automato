@@ -130,7 +130,7 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 41, sot-gateway 6.
+Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 42, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -189,7 +189,11 @@ Bearer-JWT (PyJWT + JWKS, Issuer/Audience), mappt Claims → Principal (`realm_a
 `deploy/keycloak/` (Realm-Export: Rollen viewer/operator/admin, Clients automato-web
 [PKCE]/automato-api, `tenant_ids`-Mapper, geseedter Admin mit OTP-/Passwort-Pflicht) +
 Compose-Service (Profil `auth`, Port 8081). Tests `test_auth_oidc.py` (Claim-Mapping,
-RSA-Roundtrip, Bearer-Scoping). **Als Nächstes in E1:** E1.3 Rollen an Schreibpfaden
-(Collect=operator, Namensprofil-/Admin-APIs=admin) + Web-UI-OIDC-Login-Flow; E1.4 Audit
-auf Principal+Aktion; E1.5 Secrets/Vault-Provider. Keycloak-Hardening (TLS/Proxy,
-persistente DB, SAML-Broker je Kunde) als Folge.
+RSA-Roundtrip, Bearer-Scoping). **E1.3a Rollen an Schreibpfaden umgesetzt**: Collect
+(`POST /jobs/collect`) = `operator` + Mandanten-Scope; Namensprofil-Schreiben = `admin`,
+Lesen = `viewer`; `GET /jobs/{id}` mandantsgeprüft; Audit-Actor = `user:<principal>`.
+UI sendet Bearer aus `localStorage` (api.ts), wenn vorhanden. Tests erweitert. **Als
+Nächstes in E1:** E1.3b Web-UI-OIDC-Login (oidc-client-ts, Redirect/PKCE/Callback — gegen
+laufendes Keycloak zu verifizieren); E1.4 Audit auf Principal+Aktion (pgcrypto/Allowlist,
+Magister-Muster); E1.5 Secrets/Vault-Provider. Keycloak-Hardening (TLS/Proxy, persistente
+DB, SAML-Broker je Kunde) als Folge.

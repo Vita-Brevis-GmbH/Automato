@@ -1,6 +1,5 @@
 """Namensprofile & Wörterbücher (ADR 0004-Ergänzung): Store + API."""
 
-from app.config import get_settings
 from app.store import naming_profiles as store
 
 
@@ -58,18 +57,17 @@ def test_api_read_open_write_protected(session_factory, client):
     keys = {e["key"] for e in r.json()}
     assert {"WF_", "AC_", "SSL_"} <= keys
 
-    # Schreiben ohne internen Token -> abgelehnt
+    # Schreiben als viewer -> 403 (RBAC: nur admin)
     payload = {"kind": "site_code", "key": "010", "value": "Werk Ost"}
-    r = client.post(f"/naming-profiles/{profile.id}/dictionary", json=payload)
-    assert r.status_code in (401, 422)
-
-    # Schreiben mit Token -> ok
-    token = get_settings().internal_api_token
     r = client.post(
         f"/naming-profiles/{profile.id}/dictionary",
         json=payload,
-        headers={"X-Internal-Token": token},
+        headers={"X-Dev-Roles": "viewer"},
     )
+    assert r.status_code == 403
+
+    # Schreiben als admin (dev-Default ohne Header = Admin) -> ok
+    r = client.post(f"/naming-profiles/{profile.id}/dictionary", json=payload)
     assert r.status_code == 200
     assert r.json()["value"] == "Werk Ost"
 
