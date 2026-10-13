@@ -70,6 +70,12 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     # Regeln des Quellsystems ersetzen (aktueller Stand); ORM-Delete kaskadiert Endpunkte
     for old in session.scalars(select(Rule).where(Rule.source_system_id == run.source_system_id)):
         session.delete(old)
+    # Findings sind abgeleiteter Zustand -> pro Lauf neu aufbauen, sonst bleiben
+    # veraltete Befunde (z. B. frueher als unmatched eingestufte fqdn/geo-Objekte)
+    # stehen. TODO Multi-Source: auf das Quellsystem scopen bzw. "stale" aufloesen,
+    # sobald mehrere Quellen je Mandant und ein Quittierungs-Workflow existieren.
+    for old_f in session.scalars(select(Finding).where(Finding.tenant_id == run.tenant_id)):
+        session.delete(old_f)
     session.flush()
 
     for normalized in result.rules:
