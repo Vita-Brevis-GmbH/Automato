@@ -38,9 +38,13 @@ def start_collect(
             "platform": payload.platform,
             "tenant_id": tenant_id,
             "source_system_id": payload.source_system_id,
+            "execution": payload.execution,
         },
     )
-    celery_app.dispatch_collect(payload.platform, run.id)
+    # inprocess: zentraler Worker. external: externer Collector holt den Lauf per RUN_ID ab
+    # und liefert via /internal ab (ADR 0008) - hier wird NICHT dispatcht.
+    if payload.execution == "inprocess":
+        celery_app.dispatch_collect(payload.platform, run.id)
     return CollectJobResponse(run_id=run.id, status=run.status)
 
 

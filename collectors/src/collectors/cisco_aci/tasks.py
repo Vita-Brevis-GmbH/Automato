@@ -27,8 +27,8 @@ def fetch_mo_export() -> dict:
     return json.loads(sample.read_text())
 
 
-@app.task(name="collectors.cisco_aci.collect")
-def collect(run_id: str) -> None:
+def collect_once(run_id: str) -> CollectorResult:
+    """Eine Erfassung ohne Celery (Worker *und* externer Standalone-Collector)."""
     try:
         export = fetch_mo_export()
         rules = [rule for c in parse_mo_export(export) for rule in normalize_contract(c)]
@@ -37,3 +37,9 @@ def collect(run_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(status="failed", message=str(exc))
     submit_result(run_id, result)
+    return result
+
+
+@app.task(name="collectors.cisco_aci.collect")
+def collect(run_id: str) -> None:
+    collect_once(run_id)

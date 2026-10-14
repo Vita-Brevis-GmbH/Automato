@@ -10,6 +10,10 @@ dependencies = [
     "pydantic-settings>=2.3",
 ]
 
+# Externer Standalone-Collector (ADR 0008): laeuft ohne Celery/Redis, nur ausgehend HTTPS.
+[project.scripts]
+automato-collector = "collectors.run:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

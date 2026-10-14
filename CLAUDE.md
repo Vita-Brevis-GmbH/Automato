@@ -161,15 +161,26 @@ akkumulierend) + `epg.network_object_id` (EPG↔Server). DTO `NormalizedEpgEndpo
 `NormalizedEpg.endpoints`; MO-Parser liest `fvCEp`/`fvIp`; Ingest `_apply_epgs` persistiert
 Endpunkte und **verknüpft die EPG mit dem Host-Objekt** (Match gelernter Endpunkt-IP →
 `network_object.value`, „ein Server = eine EPG"); `_epg_doc` zeigt dann IP + Standort des
-Servers. Tests collectors/orchestrator. Offen: echter APIC-REST-Client (nur extern möglich →
-externer Collector, siehe Modularisierung).
+Servers. Tests collectors/orchestrator.
+**Externer Collector / Modularisierung umgesetzt (ADR 0008):** Zielsysteme stehen in
+Kundennetzen, die die zentrale Plattform nicht erreicht → der Collector läuft als
+**eigenständiger Agent** (z. B. Windows) nahe am Zielsystem, nur **ausgehend HTTPS** zum
+Orchestrator. Zugriffsmodul von Celery entkoppelt: je Plattform `collect_once(run_id)`
+(gather→normalize→submit), Celery-Task nur dünner Wrapper. **Standalone-Runner**
+`automato-collector --platform … --run-id …` (`collectors/run.py`, Konsolen-Script) ohne
+Celery/Redis, einziger Rückkanal `POST /internal/.../result` (`X-Internal-Token`).
+Lauf-Modell: `POST /jobs/collect` mit `execution=external` legt den Lauf an **ohne**
+Celery-Dispatch (Agent holt ihn per RUN_ID ab); `inprocess` = Default (zentraler Worker).
+Secrets liegen beim Agenten (ADR 0007). Doku `collectors/EXTERNAL.md`. Tests
+`collectors/tests/test_run.py` + `orchestrator/tests/test_jobs_external.py`. Offen:
+echter APIC-REST-Client im Agenten, Agent-Queue/Registrierung, mTLS Agent↔`/internal`.
 **Standort-Verortung umgesetzt** (Alembic `0010`): `network_object.site_id` (nullable FK → site)
 verortet ein System an einem Standort. `PATCH /appdoc/systems/{name}/site` (operator,
 mandantsgescoped, auditiert `system.site_assigned`; fremde Site → 422); `build_doc` liefert jetzt
 `tenant_code` (GG-Kürzel) + `site` (code/name). UI-Tab „Applikations-Doku" zeigt GG/Standort und
 erlaubt Zuordnung (Site-Dropdown aus den Mandanten-Standorten); Markdown-Export-Header enthält
 GG + Standort. Tests `test_appdoc.py`. Offen: EPG als System (ACI) in der Doku.
-Tests: collectors 15, orchestrator 87, sot-gateway 6.
+Tests: collectors 18, orchestrator 89, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -192,9 +203,10 @@ Ausnahmen-Kaskade (Konvention→Typ/Farbcode→Override→Finding); neue Collect
 **Collector-Lesevertrag** `docs/collectors-read-contract.md` (FortiGate+ACI; Samples
 bleiben ausserhalb Repo, Secrets gestrippt; `color` = numerischer Code, optional; reale
 UTM-Prefixe `AV_/WF_/DF_/AC_/IPS_/WAF_/SSL_`; Zusatz-Prefixe `N-EXT_`/`T_`/Geography;
-Contract-`scope`→Doku-Kategorie, `fvRsBDToOut`→L3O, Dual-Stack). **Noch ausstehend:**
-Wörterbücher (Kap. 3.1 GG-Abkürzungen, 3.2 Projektnummern/Funktionscodes) — als in-App
-pflegbare, erweiterbare Daten (Namensprofil), CSV als Seed.
+Contract-`scope`→Doku-Kategorie, `fvRsBDToOut`→L3O, Dual-Stack). Wörterbücher (Kap. 3.1
+GG-Abkürzungen, 3.2 Projektnummern/Funktionscodes) sind **in-App pflegbare, erweiterbare
+Daten** (Namensprofil) — **kein CSV-Import geplant**: der Kunde pflegt diese Daten bei der
+Inbetriebnahme direkt in der App (keine Funktionsabhängigkeit, Seed optional).
 
 **Umsetzung Ausbaustufe B läuft (Reihenfolge W1→E1, davor Wörterbücher):** CI war rot
 (ruff nicht als Dep deklariert) → behoben (ruff==0.5.5 als Dev-Dependency, identisch zu
@@ -298,4 +310,4 @@ listen/anlegen/löschen (3-stelliger Code), Schreibfehler (403/409/422) werden a
 Standort verorten; Kürzel in die Applikations-Doku. **Als Nächstes in E1:** optional per-Mandant zuschaltbares
 Lesezugriffs-Audit; Keycloak-Client-/Session-Secrets über denselben Provider (sobald
 Confidential-Client-Flow); SAML-Broker je Kunde. Offen (Eingang abwarten): echter Keycloak-
-End-to-End-Login-Test (E1.3b nur build-verifiziert); CSV-Wörterbücher Kap. 3.1/3.2 als Seed.
+End-to-End-Login-Test (E1.3b nur build-verifiziert).

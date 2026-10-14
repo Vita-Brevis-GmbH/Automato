@@ -43,8 +43,9 @@ def gather() -> dict[str, list]:
     }
 
 
-@app.task(name="collectors.fortigate.collect")
-def collect(run_id: str) -> None:
+def collect_once(run_id: str) -> CollectorResult:
+    """Eine Erfassung ohne Celery: gather -> normalize -> submit (HTTPS). Fuer den
+    Celery-Worker *und* den externen Standalone-Collector (collectors.run)."""
     try:
         d = gather()
         rules = norm.normalize(
@@ -64,3 +65,9 @@ def collect(run_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
         result = CollectorResult(status="failed", message=str(exc))
     submit_result(run_id, result)
+    return result
+
+
+@app.task(name="collectors.fortigate.collect")
+def collect(run_id: str) -> None:
+    collect_once(run_id)
