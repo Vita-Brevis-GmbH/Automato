@@ -26,12 +26,16 @@ from app.jobs import celery_app
 from app.models import CollectorRun, DnsType, IpamType, Platform, SourceSystem, Tenant
 
 
-def ensure_tenant(session: Session, name: str, ipam: str, dns: str) -> Tenant:
+def ensure_tenant(
+    session: Session, name: str, ipam: str, dns: str, code: str | None = None
+) -> Tenant:
     tenant = session.scalar(select(Tenant).where(Tenant.name == name))
     if tenant is None:
-        tenant = Tenant(name=name, ipam_type=IpamType(ipam), dns_type=DnsType(dns))
+        tenant = Tenant(name=name, ipam_type=IpamType(ipam), dns_type=DnsType(dns), code=code)
         session.add(tenant)
         session.flush()
+    elif code is not None:
+        tenant.code = code  # Kuerzel aktuell halten
     return tenant
 
 
@@ -85,9 +89,9 @@ def _find_source(session: Session, name: str | None) -> SourceSystem | None:
 
 
 def _cmd_ensure_tenant(session: Session, args: argparse.Namespace) -> int:
-    tenant = ensure_tenant(session, args.name, args.ipam, args.dns)
+    tenant = ensure_tenant(session, args.name, args.ipam, args.dns, code=args.code)
     session.commit()
-    print(f"tenant id={tenant.id} name={tenant.name} ipam={tenant.ipam_type}")
+    print(f"tenant id={tenant.id} name={tenant.name} code={tenant.code} ipam={tenant.ipam_type}")
     return 0
 
 
@@ -151,6 +155,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("ensure-tenant", help="Mandant idempotent anlegen")
     p.add_argument("--name", required=True)
+    p.add_argument("--code", default=None, help="GG-Kuerzel (optional)")
     p.add_argument("--ipam", choices=[e.value for e in IpamType], default="netbox")
     p.add_argument("--dns", choices=[e.value for e in DnsType], default="active_directory")
     p.set_defaults(func=_cmd_ensure_tenant)

@@ -130,7 +130,7 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 58, sot-gateway 6.
+Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 65, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -226,9 +226,15 @@ Browser-Security-Header, `registrationAllowed=false`. Doku `deploy/keycloak/ansi
 mehreren Standorten** und einem **Kürzel/Code** zur Identifikation bei VMs/Objekten. Die
 **Wörterbücher (GG-Kürzel etc.) sind kundenspezifische Laufzeitdaten** (kein Seed-Zwang) und
 **dürfen keine Funktionsrelevanz** haben — die Plattform muss ohne befüllte Wörterbücher
-voll funktionieren (so bereits gebaut: naming_profile/dictionary_entry sind optional). Folge-
-Schritt (klein, noch offen): `tenant.code` (Kürzel) + Standorte (3-stelliger Code, ADR-0004-
-Ergänzung) am Datenmodell. **Als Nächstes in E1:** optional per-Mandant zuschaltbares
+voll funktionieren (so bereits gebaut: naming_profile/dictionary_entry sind optional).
+**Mandant Kürzel + Standorte umgesetzt** (Alembic `0007`, ADR-0004-Ergänzung 2026-10-14):
+`tenant.code` (optionales GG-Kürzel, nullable/indiziert, keine Funktionsrelevanz; `PATCH
+/tenants/{id}` [admin], CLI `ensure-tenant --code`, in `/tenants` sichtbar) und Modell
+`site` (Standort: `tenant_id`, dreistelliger `code`, `name`, `description`; Code je Mandant
+eindeutig) mit `GET/POST /tenants/{id}/sites` + `DELETE …/sites/{sid}` (Lesen `viewer`,
+Schreiben `admin`, mandantsgescoped, auditiert via E1.4-Allowlist `tenant.updated`/
+`site.created`/`site.deleted`). Tests `test_tenants_api.py`. Offen (eigene Phase): Objekt/
+Applikation am Standort verorten; Kürzel in die Applikations-Doku. **Als Nächstes in E1:** optional per-Mandant zuschaltbares
 Lesezugriffs-Audit; Keycloak-Client-/Session-Secrets über denselben Provider (sobald
 Confidential-Client-Flow); SAML-Broker je Kunde. Offen (Eingang abwarten): echter Keycloak-
 End-to-End-Login-Test (E1.3b nur build-verifiziert); CSV-Wörterbücher Kap. 3.1/3.2 als Seed.

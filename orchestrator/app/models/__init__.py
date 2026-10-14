@@ -29,6 +29,7 @@ from app.models.rule import (
     rule_service,
 )
 from app.models.service_object import Proto, ServiceObject
+from app.models.site import Site
 from app.models.source_system import Platform, SourceSystem
 from app.models.tenant import DnsType, IpamType, Tenant
 from app.models.zone import Zone
@@ -61,6 +62,7 @@ __all__ = [
     "RunStatus",
     "ServiceObject",
     "Severity",
+    "Site",
     "SourceOfRecord",
     "SourceSystem",
     "SubjectKind",

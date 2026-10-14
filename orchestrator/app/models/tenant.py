@@ -28,6 +28,9 @@ class Tenant(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200), unique=True)
+    # Kuerzel/Code der GG (optional) - identifiziert den Mandanten bei VMs/Objekten.
+    # Stammdaten, keine Funktionsrelevanz; kundenspezifisch vergeben (ADR 0004-Ergaenzung).
+    code: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     ipam_type: Mapped[IpamType] = mapped_column(Enum(IpamType, native_enum=False, length=16))
     dns_type: Mapped[DnsType] = mapped_column(Enum(DnsType, native_enum=False, length=32))
     # ACI-Security-Tenant-Namen, die dieser Mandant umfasst (Model 1)

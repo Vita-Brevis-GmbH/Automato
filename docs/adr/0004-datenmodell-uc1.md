@@ -205,3 +205,24 @@ Die Präfix-Liste aus Prinzip „Namenskonvention" wird durch `docs/naming-conve
 ersetzt/erweitert (u. a. `IPP_`, `V-EXT_`, UTM-Profile, ACI-/LB-/PBR-Präfixe). Die
 Parser-Wörterbücher (Kapitel 3.1 GG-Abkürzungen, 3.2 Projektnummern/Funktionscodes) und
 Struktur-Samples sind noch nachzureichen.
+
+## Ergänzung 2026-10-14 — Mandant: Kürzel + Standorte (umgesetzt)
+
+Klarstellung Kunde: Ein **Mandant = Gruppengesellschaft (GG)** hat **einen oder mehrere
+Standorte** und bekommt ein **Kürzel/Code**, um bei VMs/Objekten identifizierbar zu sein.
+**Grundsatz:** Die kundenspezifischen Wörterbücher (GG-Kürzel, Projektnummern, …) sind
+**Laufzeitdaten ohne Funktionsrelevanz** — die Plattform muss ohne befüllte Wörterbücher
+voll funktionieren (so gebaut: `naming_profile`/`dictionary_entry` sind optional).
+
+Umgesetzt (Alembic `0007`):
+- **`tenant.code`** — optionales GG-Kürzel (nullable, indiziert, keine harte Eindeutigkeit
+  → Datenqualität, kein funktionaler Zwang). Pflegbar via `PATCH /tenants/{id}` (admin) und
+  CLI `ensure-tenant --code`; in `/tenants` sichtbar.
+- **`site`** (Standort) — `tenant_id`, **dreistelliger `code`** (SOP: numerisch, z. B. „000";
+  Schema erzwingt 3 Zeichen), `name`, `description`; Code je Mandant eindeutig. API
+  `GET/POST /tenants/{id}/sites`, `DELETE …/sites/{sid}` (Lesen `viewer`, Schreiben `admin`,
+  mandantsgescoped, auditiert). Schreiben ist admin-only, und **admin = Global-Admin**
+  (Gesamtsicht), daher mandantsübergreifend.
+
+Noch offen (eigene Phase): Verknüpfung `network_object`/Applikation → Standort (Objekt am
+Ort verorten); Übernahme des Kürzels in die Applikations-Doku.

@@ -18,6 +18,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "naming_profile.created": frozenset({"profile_id", "customer", "name"}),
     "dictionary_entry.upserted": frozenset({"profile_id", "kind", "key"}),
     "dictionary_entry.deleted": frozenset({"entry_id"}),
+    "tenant.updated": frozenset({"tenant_id", "code"}),
+    "site.created": frozenset({"tenant_id", "code"}),
+    "site.deleted": frozenset({"tenant_id", "site_id"}),
 }
 
 _DROPPED_KEY = "_dropped"
