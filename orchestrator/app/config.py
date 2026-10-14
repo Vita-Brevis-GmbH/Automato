@@ -42,6 +42,19 @@ class Settings(BaseSettings):
     # den Secrets-/Vault-Provider (E1.5) setzen, nie im Repo.
     audit_encryption_key: str = ""
 
+    # Secrets-Provider (E1.5, ADR 0007 D4). Secret-tragende Felder duerfen als Referenz
+    # "schema:locator" gesetzt werden und werden beim Start aufgeloest (app.secrets):
+    #   env:VARNAME            - Umgebungsvariable
+    #   file:NAME | file:/pfad - Datei (Docker-/K8s-Secret, SOPS/age-entschluesselt)
+    #   openbao:FELD | openbao:pfad#feld - OpenBao/Vault (KV v2)
+    #   literal:WERT           - Klartext mit ':' (Escape-Hatch)
+    # Klartext ohne bekanntes Schema bleibt unveraendert -> .env/dev wie bisher.
+    secrets_file_dir: str = "/run/secrets"
+    openbao_addr: str = ""
+    openbao_token: str = ""
+    openbao_kv_mount: str = "secret"
+    openbao_path: str = "automato"
+
     # SoT-Zugaenge (lesend) - je Mandant wird der passende Adapter gebaut (ADR 0004).
     # Model 2 (NetBox) zuerst; Infoblox (Model 1) in Phase 2.
     netbox_url: str = ""

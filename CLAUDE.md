@@ -130,7 +130,7 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 49, sot-gateway 6.
+Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 58, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -204,6 +204,16 @@ At-Rest-Verschlüsselung** (`audit/crypto.py`, Fernet, `AUTOMATO_AUDIT_ENCRYPTIO
 bewusst app-seitig statt pgcrypto (Schlüssel in App/Vault statt DB-nah, Tests DB-agnostisch);
 Default leer = Klartext (dev/Tests). Principal (`actor=user:<sub>`) nun auch an den
 Namensprofil-Schreibpfaden (create/upsert/delete). Lesen via `audit.decode_detail`. Tests
-`test_audit.py`. **Als Nächstes in E1:** E1.5 Secrets/Vault-Provider; optional per-Mandant
-zuschaltbares Lesezugriffs-Audit. Keycloak-Hardening (TLS/Proxy, persistente DB, SAML-Broker
-je Kunde) als Folge.
+`test_audit.py`. **E1.5 Secrets-/Vault-Provider umgesetzt**: `app/secrets/` mit
+`SecretProvider`-Interface (Adapter-Pattern wie SoT-Gateway) und Providern `EnvProvider`
+(Lab/Dev, `.env`), `FileProvider` (Docker-/K8s-Secrets, SOPS/age) und `OpenBaoProvider`
+(OpenBao/Vault KV v2 über HTTP, nur stdlib). Secret-tragende Settings dürfen als Referenz
+`schema:locator` gesetzt werden (`env:`/`file:`/`openbao:`/`literal:`); `resolve_settings`
+löst sie einmalig in `create_app()` auf, **bevor** `check_security_config` greift. Klartext
+ohne Schema bleibt unverändert (→ .env/dev wie bisher); nicht erreichbares Backend/fehlendes
+Secret = fail-closed. Betriebsanleitung `deploy/secrets/README.md`. Tests `test_secrets.py`.
+**Als Nächstes in E1:** optional per-Mandant zuschaltbares Lesezugriffs-Audit; Keycloak-
+Client-/Session-Secrets über denselben Provider (sobald Confidential-Client-Flow). Keycloak-
+Hardening (TLS/Proxy, persistente DB, SAML-Broker je Kunde) als Folge. Offen (Eingang
+abwarten): echter Keycloak-End-to-End-Login-Test (E1.3b nur build-verifiziert); CSV-
+Wörterbücher Kap. 3.1/3.2 zum Seeden.

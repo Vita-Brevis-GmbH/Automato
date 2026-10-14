@@ -94,6 +94,17 @@ Konkretisiert die in ADR 0005 geplante Folge-ADR „Secrets-Backend". Keycloak-
 Client-Secrets, Session-/CSRF-Secrets und Ziel-Credentials laufen über diesen
 Provider.
 
+**Umsetzung (E1.5):** `orchestrator/app/secrets/` mit `SecretProvider`-Interface und
+Providern `EnvProvider` (Lab/Dev, `.env`), `FileProvider` (Docker-/K8s-Secrets,
+SOPS/age-entschlüsselt) und `OpenBaoProvider` (OpenBao/Vault KV v2 über HTTP, nur
+stdlib). Secret-tragende Settings dürfen als **Referenz** `schema:locator` gesetzt
+werden (`env:` / `file:` / `openbao:` / `literal:`); `resolve_settings` löst sie einmalig
+in `create_app()` auf, **bevor** `check_security_config` greift. Klartext ohne bekanntes
+Schema bleibt unverändert → `.env`/Dev wie bisher; ein nicht erreichbares Backend oder
+fehlendes Secret ist **fail-closed** (App startet nicht). Betriebsanleitung:
+`deploy/secrets/README.md`. Noch offen: Keycloak-Client-/Session-Secrets über denselben
+Provider führen, sobald der serverseitige Auth-Flow (Confidential Client) dazukommt.
+
 ### D5 – Audit auf Principal + Aktion erweitern
 
 Audit-Log wird um **wer** (authentifizierter Principal) ergänzt. State-ändernde
