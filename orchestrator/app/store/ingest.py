@@ -35,9 +35,12 @@ from app.models import (
     ServiceObject,
     SourceOfRecord,
     SubjectKind,
+    Tenant,
     Zone,
 )
+from app.naming import PrefixList
 from app.schemas.collector import CollectorResult, NormalizedNat, NormalizedRule
+from app.store import naming_profiles as profile_store
 
 _ANY_VALUES = {"all", "any", "*"}
 # Typ-praefixe, die der Collector fuer nicht-IP-aufloesbare Objekte setzt.
@@ -84,11 +87,22 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         session.delete(old_nat)
     session.flush()
 
+    prefixes = _resolve_prefixes(session, run.tenant_id)  # Namensprofil des Mandanten
     for normalized in result.rules:
-        _persist_rule(session, run, normalized, sot)
+        _persist_rule(session, run, normalized, sot, prefixes)
     _apply_object_catalog(session, run.tenant_id, result.objects)
     for nat in result.nat_rules:
         _persist_nat(session, run, nat)
+
+
+def _resolve_prefixes(session: Session, tenant_id: int) -> PrefixList | None:
+    """Praefix-Liste aus dem Namensprofil des Mandanten; None = SOP-Default-Konvention."""
+    tenant = session.get(Tenant, tenant_id)
+    profile_id = getattr(tenant, "naming_profile_id", None)
+    if not profile_id:
+        return None
+    entries = profile_store.list_entries(session, profile_id, kind="object_prefix")
+    return naming.prefixes_from_entries((e.key, e.value) for e in entries)
 
 
 def _apply_object_catalog(session: Session, tenant_id: int, objects) -> None:
@@ -128,7 +142,9 @@ def _persist_nat(session: Session, run, nat: NormalizedNat) -> None:
     session.flush()
 
 
-def _persist_rule(session: Session, run, nr: NormalizedRule, sot) -> None:
+def _persist_rule(
+    session: Session, run, nr: NormalizedRule, sot, prefixes: PrefixList | None = None
+) -> None:
     rule = Rule(
         tenant_id=run.tenant_id,
         source_system_id=run.source_system_id,
@@ -144,9 +160,13 @@ def _persist_rule(session: Session, run, nr: NormalizedRule, sot) -> None:
         raw=nr.raw,
     )
     for raw in nr.sources:
-        rule.endpoints.append(_endpoint(session, run.tenant_id, EndpointRole.SRC, raw, sot))
+        rule.endpoints.append(
+            _endpoint(session, run.tenant_id, EndpointRole.SRC, raw, sot, prefixes)
+        )
     for raw in nr.destinations:
-        rule.endpoints.append(_endpoint(session, run.tenant_id, EndpointRole.DST, raw, sot))
+        rule.endpoints.append(
+            _endpoint(session, run.tenant_id, EndpointRole.DST, raw, sot, prefixes)
+        )
     for svc in nr.services:
         rule.services.append(_service(session, svc))
     session.add(rule)
@@ -156,7 +176,14 @@ def _persist_rule(session: Session, run, nr: NormalizedRule, sot) -> None:
 # -- Endpunkte + Matching -----------------------------------------------------
 
 
-def _endpoint(session: Session, tenant_id: int, role: EndpointRole, raw: str, sot) -> RuleEndpoint:
+def _endpoint(
+    session: Session,
+    tenant_id: int,
+    role: EndpointRole,
+    raw: str,
+    sot,
+    prefixes: PrefixList | None = None,
+) -> RuleEndpoint:
     value = raw.strip()
     if value.lower() in _ANY_VALUES:
         return RuleEndpoint(role=role, kind=EndpointKind.ANY, inline_value=value, matched=False)
@@ -169,7 +196,7 @@ def _endpoint(session: Session, tenant_id: int, role: EndpointRole, raw: str, so
         if net is not None:
             obj = _object_by_value(session, tenant_id, value, net, sot)
         else:
-            obj = _object_by_name(session, tenant_id, value, sot)
+            obj = _object_by_name(session, tenant_id, value, sot, prefixes)
 
     return RuleEndpoint(
         role=role,
@@ -238,8 +265,10 @@ def _object_by_value(session: Session, tenant_id: int, value: str, net, sot) -> 
     return obj
 
 
-def _object_by_name(session: Session, tenant_id: int, value: str, sot) -> NetworkObject:
-    parsed = naming.parse_object_name(value)
+def _object_by_name(
+    session: Session, tenant_id: int, value: str, sot, prefixes: PrefixList | None = None
+) -> NetworkObject:
+    parsed = naming.parse_object_name(value, prefixes)
     obj = _get_or_create_object(
         session,
         tenant_id,

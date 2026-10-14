@@ -130,7 +130,7 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 65, sot-gateway 6.
+Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 69, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -174,8 +174,14 @@ SNAT-IP-Pools (`firewall/ippool` → `nat_rule.nat_type=snat_pool`, `/nat` zeigt
 FortiGate-**Farbcode** als Objekt-Katalog (`network_object.color`, via Name/Wert-Match).
 `collector.gather()` liefert jetzt ein Dict; DTO + Orchestrator-Vertrag erweitert; Alembic
 `0006` (up/down geprüft). Collector-Fixtures `sample_addresses6/addrgrps6/ippools.json`.
-Folgeschritte: `app/naming.py` auf die Profil-Wörterbücher umstellen; Applikations-Doku-API
-(die 10 Kategorien aus `uc1-applikations-doku-spec.md`) nutzt künftig protections/nat_type.
+**`app/naming.py` auf Profil-Wörterbücher umgestellt** (Alembic `0008`): Parser ist jetzt
+profil-gesteuert — `parse_object_name(name, prefixes)` nimmt eine aus dem `object_prefix`-
+Wörterbuch gebaute Präfix-Liste (`prefixes_from_entries`), bleibt reine Funktion; `tenant.
+naming_profile_id` (nullable FK) verknüpft Mandant→Profil, Ingest löst die Liste je Lauf auf
+(`_resolve_prefixes`); ohne Profil gilt die **erweiterte SOP-Default-Konvention** (jetzt inkl.
+`N-EXT_`/`T_`/`V-EXT_`/`IPP_`). Keine Funktionsabhängigkeit von Daten (leeres Profil → Default).
+Tests `test_naming.py`/`test_ingest.py`. Folgeschritt: Applikations-Doku-API (die 10 Kategorien
+aus `uc1-applikations-doku-spec.md`) nutzt künftig protections/nat_type.
 **E1 Härtung/RBAC gestartet (E1.1 Gerüst)**: `app/auth/` mit `Principal`, Rollen
 `viewer/operator/admin` (Hierarchie), FastAPI-Dependencies (`require_viewer/operator/admin`)
 und **zentralem Mandanten-Scoping** (`tenant_scope`): Nicht-Admin nur innerhalb erlaubter

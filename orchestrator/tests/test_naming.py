@@ -1,7 +1,7 @@
-"""Namenskonvention-Parser (ADR 0004)."""
+"""Namenskonvention-Parser (ADR 0004 + Ergaenzung): Default + profil-gesteuert."""
 
 from app.models import ObjectClass
-from app.naming import expects_ipam_match, parse_object_name
+from app.naming import expects_ipam_match, parse_object_name, prefixes_from_entries
 
 
 def test_host_mit_fqdn():
@@ -40,3 +40,28 @@ def test_multi_domain_disambiguierung():
     # Mehrere AD-Domaenen pro Mandant: die Domain steckt im FQDN
     assert parse_object_name("H_dc01.ad1.local").domain == "ad1.local"
     assert parse_object_name("H_dc01.ad2.local").domain == "ad2.local"
+
+
+def test_erweiterte_sop_praefixe():
+    # Volle SOP-Konvention wird erkannt (frueher UNKNOWN):
+    assert parse_object_name("N-EXT_partnernetz").object_class is ObjectClass.EXTERNAL
+    assert parse_object_name("T_transfer01").object_class is ObjectClass.NETWORK
+    assert parse_object_name("V-EXT_my.testserver.de").object_class is ObjectClass.VIP
+    assert parse_object_name("IPP_share-inet01").object_class is ObjectClass.NETWORK
+    # N-EXT_ ist extern -> kein IPAM-Match erwartet
+    assert expects_ipam_match(parse_object_name("N-EXT_x").object_class) is False
+
+
+def test_prefixes_from_entries_steuert_parser():
+    # Kundenspezifisches Woerterbuch: eigenes Praefix -> Klasse
+    prefixes = prefixes_from_entries([("SRV_", "host"), ("NET_", "network")])
+    assert parse_object_name("SRV_app01.kunde.ch", prefixes).object_class is ObjectClass.HOST
+    assert parse_object_name("NET_dmz", prefixes).object_class is ObjectClass.NETWORK
+    # SOP-Praefix H_ ist in diesem Profil NICHT definiert -> unknown
+    assert parse_object_name("H_server", prefixes).object_class is ObjectClass.UNKNOWN
+
+
+def test_leeres_profil_faellt_auf_default_zurueck():
+    # Leeres/unbekanntes Woerterbuch -> SOP-Default (keine Funktionsabhaengigkeit)
+    prefixes = prefixes_from_entries([("XY_", "voellig_unbekannt")])
+    assert parse_object_name("H_server.kunde.ch", prefixes).object_class is ObjectClass.HOST

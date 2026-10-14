@@ -330,3 +330,28 @@ def test_phase15_protections_farbe_und_snat(session_factory):
     assert nats["V-EXT_www"].nat_type == "dnat_vip"
     assert nats["IPP_inet"].nat_type == "snat_pool"
     assert nats["IPP_inet"].mapped_ip is None
+
+
+def test_resolve_prefixes_nutzt_mandanten_profil(session_factory):
+    """tenant.naming_profile_id -> object_prefix-Woerterbuch steuert den Parser."""
+    from app import naming
+    from app.models import ObjectClass
+    from app.store import naming_profiles as pstore
+
+    s = session_factory()
+    tenant = Tenant(name="kunde-x", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+    s.add(tenant)
+    s.flush()
+
+    # ohne Profil -> None (SOP-Default)
+    assert ingest._resolve_prefixes(s, tenant.id) is None
+
+    # mit Profil + eigenem Praefix
+    p = pstore.get_or_create_profile(s, customer="ACME", name="Std")
+    pstore.upsert_entry(s, p.id, "object_prefix", "SRV_", "host")
+    tenant.naming_profile_id = p.id
+    s.flush()
+
+    prefixes = ingest._resolve_prefixes(s, tenant.id)
+    assert prefixes is not None
+    assert naming.parse_object_name("SRV_app01.kunde.ch", prefixes).object_class is ObjectClass.HOST
