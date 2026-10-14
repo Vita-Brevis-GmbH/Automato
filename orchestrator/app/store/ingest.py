@@ -188,6 +188,11 @@ def _endpoint(
     if value.lower() in _ANY_VALUES:
         return RuleEndpoint(role=role, kind=EndpointKind.ANY, inline_value=value, matched=False)
 
+    # ACI-EPG (Model 1): als typisierter Endpunkt ohne IPAM-Aufloesung/Finding fuehren;
+    # ein Server = genau eine EPG, Zuordnung/Subnetze folgen mit den epg-Tabellen.
+    if value.startswith("epg:"):
+        return RuleEndpoint(role=role, kind=EndpointKind.EPG, inline_value=value[4:], matched=False)
+
     kind_tag, sep, rest = value.partition(":")
     if sep and kind_tag in _TYPED_KINDS:
         obj = _typed_object(session, tenant_id, kind_tag, rest or value, sot)

@@ -355,3 +355,46 @@ def test_resolve_prefixes_nutzt_mandanten_profil(session_factory):
     prefixes = ingest._resolve_prefixes(s, tenant.id)
     assert prefixes is not None
     assert naming.parse_object_name("SRV_app01.kunde.ch", prefixes).object_class is ObjectClass.HOST
+
+
+def test_aci_epg_endpunkte_ohne_finding(session_factory):
+    """ACI-Regeln mit epg:-Endpunkten werden als EPG-Kind gefuehrt (kein invalid_name)."""
+    from app.models import CollectorRun, EndpointKind, RuleEndpoint
+
+    s = session_factory()
+    tenant = Tenant(name="kunde-aci", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+    fw = SourceSystem(
+        name="apic", platform=Platform.CISCO_ACI, base_url="https://apic", enabled=True
+    )
+    s.add_all([tenant, fw])
+    s.flush()
+    run = CollectorRun(platform="cisco_aci", tenant_id=tenant.id, source_system_id=fw.id)
+    s.add(run)
+    s.flush()
+
+    result = CollectorResult.model_validate(
+        {
+            "status": "completed",
+            "rules": [
+                {
+                    "source_platform": "cisco_aci",
+                    "external_id": "uni/tn-TE_share/brc-CT_web/SJ_mysql",
+                    "name": "CT_web:SJ_mysql",
+                    "action": "allow",
+                    "sources": ["epg:EG_web"],
+                    "destinations": ["epg:EG_db"],
+                    "services": ["tcp/3306"],
+                    "src_zone": "L3O_inet",
+                    "dst_zone": "BD_db",
+                }
+            ],
+        }
+    )
+    ingest.persist_result(s, run, result, FakeSoT())
+    s.commit()
+
+    eps = s.query(RuleEndpoint).all()
+    assert len(eps) == 2
+    assert all(e.kind is EndpointKind.EPG for e in eps)
+    assert {e.inline_value for e in eps} == {"EG_web", "EG_db"}
+    assert s.query(Finding).filter(Finding.type == FindingType.INVALID_NAME).count() == 0

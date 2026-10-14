@@ -107,8 +107,8 @@ def test_aci_contract_wird_auf_regeln_abgebildet():
 
     rule = rules[0]
     assert rule.source_platform == "cisco_aci"
-    assert rule.sources == ["prod/web"]
-    assert rule.destinations == ["prod/db"]
+    assert rule.sources == ["epg:prod/web"]  # EPGs typisiert (epg:)
+    assert rule.destinations == ["epg:prod/db"]
     assert rule.services == ["tcp/3306"]
     assert rule.external_id == "uni/tn-prod/brc-web-to-db/mysql"
 
@@ -175,3 +175,26 @@ def test_fortigate_object_catalog_farbe_und_wert():
     assert cat["H-EXT_x"].color == 9
     assert cat["H-EXT_x"].value is None  # fqdn -> kein IP-Wert im Katalog
     assert cat["H6"].value == "2a07::1"
+
+
+def test_aci_mo_export_wird_geparst_und_normalisiert():
+    from collectors.cisco_aci.mo import parse_mo_export
+    from collectors.cisco_aci.tasks import fetch_mo_export
+
+    contracts = parse_mo_export(fetch_mo_export())
+    assert len(contracts) == 1
+    c = contracts[0]
+    assert c["name"] == "CT_web"
+    assert c["consumer_epgs"] == ["EG_web"]
+    assert c["provider_epgs"] == ["EG_db"]
+    assert c["src_zone"] == "L3O_inet"  # EG_web -> BD_app -> L3O_inet
+    assert c["dst_zone"] == "BD_db"  # EG_db -> BD_db (ohne L3Out) -> BD-Name
+
+    rules = [r for c in contracts for r in normalize_contract(c)]
+    assert len(rules) == 1
+    rule = rules[0]
+    assert rule.sources == ["epg:EG_web"]
+    assert rule.destinations == ["epg:EG_db"]
+    assert rule.services == ["tcp/3306"]
+    assert rule.src_zone == "L3O_inet" and rule.dst_zone == "BD_db"
+    assert rule.external_id == "uni/tn-TE_share/brc-CT_web/SJ_mysql"

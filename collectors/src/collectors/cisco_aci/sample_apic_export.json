@@ -1,0 +1,82 @@
+{
+  "totalCount": "1",
+  "imdata": [
+    {
+      "fvTenant": {
+        "attributes": { "name": "TE_share", "dn": "uni/tn-TE_share" },
+        "children": [
+          {
+            "fvBD": {
+              "attributes": { "name": "BD_app", "dn": "uni/tn-TE_share/BD-BD_app" },
+              "children": [
+                { "fvRsBDToOut": { "attributes": { "tnL3extOutName": "L3O_inet" } } }
+              ]
+            }
+          },
+          {
+            "fvBD": {
+              "attributes": { "name": "BD_db", "dn": "uni/tn-TE_share/BD-BD_db" },
+              "children": []
+            }
+          },
+          {
+            "fvAEPg": {
+              "attributes": { "name": "EG_web", "dn": "uni/tn-TE_share/ap-AP_001/epg-EG_web" },
+              "children": [
+                { "fvRsBd": { "attributes": { "tnFvBDName": "BD_app" } } },
+                { "fvRsCons": { "attributes": { "tnVzBrCPName": "CT_web" } } }
+              ]
+            }
+          },
+          {
+            "fvAEPg": {
+              "attributes": { "name": "EG_db", "dn": "uni/tn-TE_share/ap-AP_001/epg-EG_db" },
+              "children": [
+                { "fvRsBd": { "attributes": { "tnFvBDName": "BD_db" } } },
+                { "fvRsProv": { "attributes": { "tnVzBrCPName": "CT_web" } } }
+              ]
+            }
+          },
+          {
+            "vzBrCP": {
+              "attributes": { "name": "CT_web", "dn": "uni/tn-TE_share/brc-CT_web", "scope": "context" },
+              "children": [
+                {
+                  "vzSubj": {
+                    "attributes": { "name": "SJ_mysql" },
+                    "children": [
+                      { "vzRsSubjFiltAtt": { "attributes": { "tnVzFilterName": "FT_mysql" } } }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "vzFilter": {
+              "attributes": { "name": "FT_mysql", "dn": "uni/tn-TE_share/flt-FT_mysql" },
+              "children": [
+                { "vzEntry": { "attributes": { "name": "mysql", "prot": "tcp", "dFromPort": "3306", "dToPort": "3306" } } }
+              ]
+            }
+          },
+          {
+            "l3extOut": {
+              "attributes": { "name": "L3O_inet", "dn": "uni/tn-TE_share/out-L3O_inet" },
+              "children": [
+                {
+                  "l3extInstP": {
+                    "attributes": { "name": "EN_inet" },
+                    "children": [
+                      { "l3extSubnet": { "attributes": { "ip": "0.0.0.0/0" } } }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

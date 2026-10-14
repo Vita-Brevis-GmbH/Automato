@@ -1,29 +1,38 @@
-"""Cisco-ACI-Collector-Task.
+"""Cisco-ACI-Collector-Task (Model 1, read-only).
 
-GRUNDAUFBAU: Beispieldaten statt echtem APIC (analog FortiGate-Collector).
-Der echte Abruf (APIC REST, Contracts/Filter/EPGs) kommt im Durchstich (M7).
+Liest einen APIC-MO-Export (Tenant-Subtree) und bildet Contracts auf Regeln ab. Ohne
+Lab liest der Collector die Beispieldatei; der echte Abruf (APIC REST: Login +
+`/api/mo/uni/tn-<TE>.json?query-target=subtree`) folgt mit Lab-Creds (analog FortiGate).
 """
 
 import json
 from importlib import resources
 
 from collectors.celery_app import app
+from collectors.cisco_aci.mo import parse_mo_export
 from collectors.cisco_aci.normalize import normalize_contract
 from collectors.common.dto import CollectorResult
 from collectors.common.upload import submit_result
 
 
 def fetch_contracts() -> list[dict]:
-    # TODO(M7): echte APIC-Abfrage (Login + /api/node/class/vzBrCP.json u. a.)
+    """Legacy-Beispiel (bereits vereinfachte Contract-Dicts) - Rueckwaertskompatibilitaet."""
     sample = resources.files("collectors.cisco_aci").joinpath("sample_contracts.json")
+    return json.loads(sample.read_text())
+
+
+def fetch_mo_export() -> dict:
+    """APIC-MO-Export (Beispiel bis Lab-Creds); spaeter echter APIC-REST-Abruf."""
+    sample = resources.files("collectors.cisco_aci").joinpath("sample_apic_export.json")
     return json.loads(sample.read_text())
 
 
 @app.task(name="collectors.cisco_aci.collect")
 def collect(run_id: str) -> None:
     try:
-        rules = [rule for contract in fetch_contracts() for rule in normalize_contract(contract)]
+        contracts = parse_mo_export(fetch_mo_export())
+        rules = [rule for c in contracts for rule in normalize_contract(c)]
         result = CollectorResult(status="completed", rules=rules)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(status="failed", message=str(exc))
     submit_result(run_id, result)

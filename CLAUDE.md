@@ -133,7 +133,17 @@ Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox), Schreibpfad (A
 **Finding-Triage-Schreibpfad umgesetzt**: `PATCH /findings/{id}` (operator, mandantsgescoped,
 auditiert `finding.triaged`) setzt Status (open/acknowledged/resolved/ignored) + Notiz;
 ungültiger Status → 422; UI-Findings-Tab mit Status-Dropdown. Tests `test_findings_triage.py`.
-Tests: collectors 12, orchestrator 81, sot-gateway 6.
+**Model 1 gestartet (ACI-Collector, read-only):** APIC-MO-Export-Parser
+`collectors/.../cisco_aci/mo.py` (`parse_mo_export`) nach Lesevertrag Abschnitt 2 — vzBrCP/
+vzSubj/vzRsSubjFiltAtt→Regel+Services (vzFilter/vzEntry), fvRsProv/fvRsCons→Provider/Consumer-
+EPGs, fvBD.fvRsBDToOut→L3O als Zone, l3extOut/l3extInstP→externe EPG/Zone. `normalize_contract`
+emittiert EPGs typisiert als `epg:<name>` + Zonen; Ingest führt `epg:`-Endpunkte als
+**EndpointKind.EPG inline** (kein IPAM-Match, kein Finding). Collector-Task nutzt den MO-Export
+(Beispiel bis Lab-Creds; echter APIC-REST-Abruf folgt). Infoblox-SoT-Adapter liegt bereits
+lesend vor. Tests: collectors `test_normalize.py` (MO-Parser), orchestrator `test_ingest.py`
+(EPG-Ingest). **Offen (eigene Phase):** epg-Tabellen (`epg`/`epg_subnet`/`epg_endpoint`),
+Contract-`scope`→Applikations-Doku-Kategorie, EPG als System in der Applikations-Doku,
+echter APIC-REST-Client. Tests: collectors 13, orchestrator 82, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
