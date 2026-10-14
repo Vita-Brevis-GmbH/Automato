@@ -71,6 +71,37 @@ export interface Tenant {
   dns_type: string;
 }
 
+export interface AuthConfig {
+  auth_mode: string; // dev | oidc
+  issuer: string;
+  client_id: string;
+  scope: string;
+}
+
+export function setAuthToken(token: string): void {
+  try {
+    localStorage.setItem("automato_token", token);
+  } catch {
+    /* localStorage nicht verfuegbar -> ignorieren */
+  }
+}
+
+export function clearAuthToken(): void {
+  try {
+    localStorage.removeItem("automato_token");
+  } catch {
+    /* ignorieren */
+  }
+}
+
+export function getAuthToken(): string | null {
+  try {
+    return localStorage.getItem("automato_token");
+  } catch {
+    return null;
+  }
+}
+
 export interface Nat {
   id: number;
   name: string;
@@ -124,6 +155,7 @@ async function getJSON<T>(url: string): Promise<T> {
 }
 
 export const fetchHealth = () => getJSON<HealthStatus>("/api/health");
+export const fetchAuthConfig = () => getJSON<AuthConfig>("/api/auth/config");
 export const fetchSystems = () => getJSON<System[]>("/api/systems");
 export const fetchTenants = () => getJSON<Tenant[]>("/api/tenants");
 export const fetchFindings = () => getJSON<Finding[]>("/api/findings");

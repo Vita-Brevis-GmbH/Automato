@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     oidc_jwks_url: str = ""
     oidc_roles_claim: str = "realm_access.roles"  # Keycloak-Realm-Rollen
     oidc_tenants_claim: str = "tenant_ids"
+    oidc_web_client_id: str = "automato-web"  # public Client fuer das SPA (PKCE)
 
     # SoT-Zugaenge (lesend) - je Mandant wird der passende Adapter gebaut (ADR 0004).
     # Model 2 (NetBox) zuerst; Infoblox (Model 1) in Phase 2.

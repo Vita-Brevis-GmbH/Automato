@@ -81,6 +81,14 @@ def test_ohne_rolle_403(session_factory, client):
     assert client.get("/rules", headers={"X-Dev-Roles": ""}).status_code == 403
 
 
+def test_auth_config_oeffentlich(client):
+    r = client.get("/auth/config")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["auth_mode"] == "dev"
+    assert body["client_id"] == "automato-web"
+
+
 def test_collect_erfordert_operator(session_factory, client):
     seed = session_factory()
     t = Tenant(name="kunde-a", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
