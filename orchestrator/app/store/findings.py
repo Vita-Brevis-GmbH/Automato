@@ -18,3 +18,7 @@ def list_findings(
     if status is not None:
         stmt = stmt.where(Finding.status == status)
     return list(session.scalars(stmt.limit(limit)))
+
+
+def get_finding(session: Session, finding_id: int) -> Finding | None:
+    return session.get(Finding, finding_id)

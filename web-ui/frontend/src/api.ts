@@ -218,6 +218,8 @@ export const fetchAppDocSystems = (tenantId?: number | null) =>
 export const fetchSystemDoc = (name: string, tenantId?: number | null) =>
   getJSON<SystemDoc>(`/api/appdoc/systems/${encodeURIComponent(name)}${tenantQuery(tenantId)}`);
 export const fetchFindings = () => getJSON<Finding[]>("/api/findings");
+export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
+  sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);
 export const fetchNat = () => getJSON<Nat[]>("/api/nat");
 export const fetchApplications = () => getJSON<Application[]>("/api/applications");
 export const fetchApplication = (name: string) =>

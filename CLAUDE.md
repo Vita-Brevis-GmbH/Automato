@@ -128,9 +128,12 @@ mapped), Zonen aus FortiGate-Interfaces am Subnetz verortet (Import tagt interfa
 Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 (`AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API`), da AuthN/RBAC noch fehlt.
 
-**Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
-Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 77, sot-gateway 6.
+**Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API (umgesetzt, E1); mTLS/at-rest,
+Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox), Schreibpfad (ADR 0002).
+**Finding-Triage-Schreibpfad umgesetzt**: `PATCH /findings/{id}` (operator, mandantsgescoped,
+auditiert `finding.triaged`) setzt Status (open/acknowledged/resolved/ignored) + Notiz;
+ungültiger Status → 422; UI-Findings-Tab mit Status-Dropdown. Tests `test_findings_triage.py`.
+Tests: collectors 12, orchestrator 81, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
