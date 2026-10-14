@@ -7,6 +7,8 @@
   `/internal/collector-runs/{run_id}/result`.
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -32,10 +34,15 @@ class AgentOut(BaseModel):
     name: str
     tenant_id: int | None
     enabled: bool
+    last_seen: datetime | None
 
 
 class AgentCreated(AgentOut):
     token: str  # einmalig
+
+
+class AgentPatch(BaseModel):
+    enabled: bool
 
 
 class NextRun(BaseModel):
@@ -50,7 +57,9 @@ class NextRunOut(BaseModel):
 
 
 def _out(a: Agent) -> AgentOut:
-    return AgentOut(id=a.id, name=a.name, tenant_id=a.tenant_id, enabled=a.enabled)
+    return AgentOut(
+        id=a.id, name=a.name, tenant_id=a.tenant_id, enabled=a.enabled, last_seen=a.last_seen
+    )
 
 
 @router.get("", response_model=list[AgentOut])
@@ -73,8 +82,33 @@ def create_agent(
         detail={"agent_id": agent.id, "name": agent.name, "tenant_id": agent.tenant_id},
     )
     return AgentCreated(
-        id=agent.id, name=agent.name, tenant_id=agent.tenant_id, enabled=agent.enabled, token=token
+        id=agent.id,
+        name=agent.name,
+        tenant_id=agent.tenant_id,
+        enabled=agent.enabled,
+        last_seen=agent.last_seen,
+        token=token,
     )
+
+
+@router.patch("/{agent_id}", response_model=AgentOut)
+def update_agent(
+    agent_id: int,
+    body: AgentPatch,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    agent = store.set_enabled(session, agent_id, body.enabled)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="agent.updated",
+        subject=str(agent.id),
+        detail={"agent_id": agent.id, "enabled": agent.enabled},
+    )
+    return _out(agent)
 
 
 def require_agent(x_agent_token: str = Header(), session: Session = Depends(get_session)) -> Agent:

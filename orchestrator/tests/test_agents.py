@@ -89,3 +89,40 @@ def test_heartbeat_ok(session_factory, client):
         client.post("/internal/agent/heartbeat", headers={"X-Agent-Token": token}).status_code
         == 204
     )
+
+
+def test_disable_agent_sperrt_token_und_zeigt_status(session_factory, client):
+    seed = session_factory()
+    tid, _ = _seed(seed)
+    seed.commit()
+    admin = {"X-Dev-Roles": "admin"}
+    created = client.post("/agents", json={"name": "a4", "tenant_id": tid}, headers=admin).json()
+    aid, token = created["id"], created["token"]
+
+    # deaktivieren (nur admin)
+    assert (
+        client.patch(
+            f"/agents/{aid}", json={"enabled": False}, headers={"X-Dev-Roles": "operator"}
+        ).status_code
+        == 403
+    )
+    r = client.patch(f"/agents/{aid}", json={"enabled": False}, headers=admin)
+    assert r.status_code == 200 and r.json()["enabled"] is False
+
+    # deaktivierter Agent authentisiert nicht mehr
+    assert (
+        client.get("/internal/agent/next-run", headers={"X-Agent-Token": token}).status_code == 401
+    )
+
+    # Liste zeigt Status + last_seen-Feld
+    row = next(a for a in client.get("/agents", headers=admin).json() if a["id"] == aid)
+    assert row["enabled"] is False and "last_seen" in row
+
+
+def test_patch_unbekannter_agent_404(client):
+    assert (
+        client.patch(
+            "/agents/999", json={"enabled": True}, headers={"X-Dev-Roles": "admin"}
+        ).status_code
+        == 404
+    )

@@ -87,6 +87,18 @@ export interface AuthConfig {
   scope: string;
 }
 
+export interface Agent {
+  id: number;
+  name: string;
+  tenant_id: number | null;
+  enabled: boolean;
+  last_seen: string | null;
+}
+
+export interface AgentCreated extends Agent {
+  token: string; // nur einmal sichtbar
+}
+
 export function setAuthToken(token: string): void {
   try {
     localStorage.setItem("automato_token", token);
@@ -226,6 +238,11 @@ export const assignSystemSite = (name: string, tenantId: number, siteId: number 
     "PATCH",
     { site_id: siteId },
   );
+export const fetchAgents = () => getJSON<Agent[]>("/api/agents");
+export const createAgent = (name: string, tenantId: number | null) =>
+  sendJSON<AgentCreated>("/api/agents", "POST", { name, tenant_id: tenantId });
+export const setAgentEnabled = (id: number, enabled: boolean) =>
+  sendJSON<Agent>(`/api/agents/${id}`, "PATCH", { enabled });
 export const fetchFindings = () => getJSON<Finding[]>("/api/findings");
 export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
   sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);

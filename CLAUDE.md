@@ -180,6 +180,13 @@ tenant_id, enabled, last_seen) + `collector_run.execution`. Admin-API `POST/GET 
 Tenant-Scope, QUEUED→RUNNING, auditiert `collector_run.claimed`) + `POST …/heartbeat`.
 Runner-Modus `automato-collector --poll` (`collectors/common/agent.py`); kein out-of-band-
 RUN_ID mehr nötig. Tests `test_agents.py` + `test_run.py`.
+**Agent-Verwaltung im UI umgesetzt**: `AgentOut` um `last_seen` erweitert, `PATCH /agents/{id}`
+(admin, `enabled`, auditiert `agent.updated`); deaktivierter Agent authentisiert nicht mehr
+(`agent_by_token` filtert `enabled`). UI-Tab „Agenten" (`web-ui/frontend/src/Agents.tsx`):
+Agenten anlegen (Token einmalig prominent zum Kopieren), Mandant wählen, Status/`last_seen`
+(Heartbeat), Aktivieren/Deaktivieren. **Dev-Einbindung dokumentiert**: `docs/DEV-SETUP-AGENT.md`
+(frische NetBox via `NETBOX_RESET=1`, frische Automato-DB via `AUTOMATO_RESET=1`, Agent im UI
+registrieren, externen Lauf `execution=external` + `--poll` durchspielen).
 **mTLS-Support umgesetzt** (client-seitig): zentraler HTTP-Layer `collectors/common/http.py`
 (`client_kwargs`) — Agent präsentiert optional Client-Zertifikat (`AUTOMATO_CLIENT_CERT/_KEY`)
 und pinnt die Server-CA (`AUTOMATO_ORCHESTRATOR_CA_BUNDLE`); `upload.py`/`agent.py` laufen
@@ -203,7 +210,7 @@ mandantsgescoped, auditiert `system.site_assigned`; fremde Site → 422); `build
 `tenant_code` (GG-Kürzel) + `site` (code/name). UI-Tab „Applikations-Doku" zeigt GG/Standort und
 erlaubt Zuordnung (Site-Dropdown aus den Mandanten-Standorten); Markdown-Export-Header enthält
 GG + Standort. Tests `test_appdoc.py`. Offen: EPG als System (ACI) in der Doku.
-Tests: collectors 29, orchestrator 94, sot-gateway 6.
+Tests: collectors 29, orchestrator 96, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
