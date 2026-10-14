@@ -101,6 +101,18 @@ Aktionen (Collect, Triage) **immer**; Lesezugriffe per-Mandant zuschaltbar
 (Firewall-Doku kann sensibel sein). Muster von Magister übernehmen:
 pgcrypto-verschlüsselter Payload + Allowlist gegen versehentliches Secret-Logging.
 
+**Umsetzung (E1.4):** Zentrale Schreibstelle `app/audit` mit zwei Schichten.
+(1) **Allowlist** (`app/audit/allowlist.py`): pro Aktion sind die erlaubten
+`detail`-Keys benannt; alles andere wird verworfen (fail-closed), verworfene Keys
+nur als *Name* unter `_dropped` vermerkt – so landen Secrets strukturell nie im Log.
+(2) **Optionale At-Rest-Verschlüsselung** (`app/audit/crypto.py`, Fernet, Schlüssel
+`AUTOMATO_AUDIT_ENCRYPTION_KEY`): bewusst **app-seitig statt pgcrypto** gewählt,
+damit der Schlüssel in der Anwendung/Vault (E1.5) liegt statt DB-nah und die Tests
+DB-agnostisch (SQLite) bleiben; die DB-seitige pgcrypto-Variante bleibt als Option.
+Default leer = Klartext (dev/Tests). Principal (`actor=user:<sub>`) nun auch an den
+Namensprofil-Schreibpfaden (create/upsert/delete). **Noch offen:** per-Mandant
+zuschaltbares Lesezugriffs-Audit.
+
 ### D6 – Magister-Synergie & -Integration (phasiert)
 
 - **Automato zuerst** (grüne Wiese fürs Auth): direkt als Keycloak-Client bauen.

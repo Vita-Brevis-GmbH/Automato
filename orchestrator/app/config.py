@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     oidc_tenants_claim: str = "tenant_ids"
     oidc_web_client_id: str = "automato-web"  # public Client fuer das SPA (PKCE)
 
+    # Audit-Log (E1.4): optionale At-Rest-Verschluesselung des (bereits per Allowlist
+    # gefilterten) detail-Payloads. Leer = Klartext (dev/Tests). In Produktion ueber
+    # den Secrets-/Vault-Provider (E1.5) setzen, nie im Repo.
+    audit_encryption_key: str = ""
+
     # SoT-Zugaenge (lesend) - je Mandant wird der passende Adapter gebaut (ADR 0004).
     # Model 2 (NetBox) zuerst; Infoblox (Model 1) in Phase 2.
     netbox_url: str = ""

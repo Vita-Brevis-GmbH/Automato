@@ -130,7 +130,7 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 43, sot-gateway 6.
+Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 49, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -196,6 +196,14 @@ UI sendet Bearer aus `localStorage` (api.ts), wenn vorhanden. Tests erweitert.
 **E1.3b Web-UI-OIDC-Login umgesetzt** (nur build-verifiziert; End-to-End gegen laufendes
 Keycloak): öffentlicher `/auth/config` (auth_mode/issuer/client_id); SPA `src/auth.ts`
 via **oidc-client-ts** (Authorization Code + PKCE, Callback → Token in `localStorage`,
-Abmelden); dev-Modus = kein Login. **Als Nächstes in E1:** E1.4 Audit auf Principal+Aktion
-(pgcrypto/Allowlist, Magister-Muster); E1.5 Secrets/Vault-Provider. Keycloak-Hardening
-(TLS/Proxy, persistente DB, SAML-Broker je Kunde) als Folge.
+Abmelden); dev-Modus = kein Login. **E1.4 Audit auf Principal+Aktion umgesetzt**: zentrale
+Schreibstelle `app/audit` mit zwei Schutzschichten — (1) **Allowlist** (`audit/allowlist.py`):
+pro Aktion erlaubte `detail`-Keys, alles andere verworfen (fail-closed), verworfene nur als
+Name unter `_dropped` → Secrets landen strukturell nie im Log; (2) **optionale
+At-Rest-Verschlüsselung** (`audit/crypto.py`, Fernet, `AUTOMATO_AUDIT_ENCRYPTION_KEY`) —
+bewusst app-seitig statt pgcrypto (Schlüssel in App/Vault statt DB-nah, Tests DB-agnostisch);
+Default leer = Klartext (dev/Tests). Principal (`actor=user:<sub>`) nun auch an den
+Namensprofil-Schreibpfaden (create/upsert/delete). Lesen via `audit.decode_detail`. Tests
+`test_audit.py`. **Als Nächstes in E1:** E1.5 Secrets/Vault-Provider; optional per-Mandant
+zuschaltbares Lesezugriffs-Audit. Keycloak-Hardening (TLS/Proxy, persistente DB, SAML-Broker
+je Kunde) als Folge.
