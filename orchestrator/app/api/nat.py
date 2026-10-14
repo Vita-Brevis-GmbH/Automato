@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
@@ -19,6 +20,7 @@ def list_nat(
     session: Session = Depends(get_session),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
+    reads.maybe_audit_read(session, principal, tenant_id, "nat")
     return [
         NatOut(
             id=n.id,

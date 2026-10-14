@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
@@ -44,6 +45,7 @@ def list_systems(
     session: Session = Depends(get_session),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
+    reads.maybe_audit_read(session, principal, tenant_id, "appdoc")
     return [
         SystemRefOut(name=s.name, ip=s.ip, rule_count=s.rule_count)
         for s in store.list_systems(session, tenant_id)
@@ -58,6 +60,7 @@ def system_doc(
     session: Session = Depends(get_session),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
+    reads.maybe_audit_read(session, principal, tenant_id, "appdoc")
     doc = store.build_doc(session, system, tenant_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="system not found")

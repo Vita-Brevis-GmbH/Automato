@@ -7,7 +7,7 @@ Ein Mandant kann mehrere ACI-Security-Tenants umfassen (aci_tenant_names);
 import enum
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, String, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -41,6 +41,11 @@ class Tenant(Base):
     # Default-Konvention (keine Funktionsabhaengigkeit von Daten).
     naming_profile_id: Mapped[int | None] = mapped_column(
         ForeignKey("naming_profile.id"), nullable=True
+    )
+    # Lesezugriffe auf die (sensible) Doku dieses Mandanten auditieren (E1, ADR 0007 D5).
+    # Default aus: per Mandant zuschaltbar.
+    audit_reads: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=false(), default=False
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

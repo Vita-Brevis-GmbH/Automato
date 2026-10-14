@@ -26,12 +26,14 @@ class TenantOut(BaseModel):
     id: int
     name: str
     code: str | None
+    audit_reads: bool
     ipam_type: str
     dns_type: str
 
 
 class TenantPatch(BaseModel):
     code: str | None = Field(default=None, max_length=20)
+    audit_reads: bool | None = None
 
 
 class SiteIn(BaseModel):
@@ -53,6 +55,7 @@ def _tenant_out(t: Tenant) -> TenantOut:
         id=t.id,
         name=t.name,
         code=t.code,
+        audit_reads=t.audit_reads,
         ipam_type=t.ipam_type.value,
         dns_type=t.dns_type.value,
     )
@@ -95,13 +98,17 @@ def update_tenant(
     session: Session = Depends(get_session),
 ):
     tenant = _get_scoped_tenant(session, principal, tenant_id)
-    tenant.code = body.code
+    data = body.model_dump(exclude_unset=True)  # nur gesetzte Felder aendern
+    if "code" in data:
+        tenant.code = data["code"]
+    if "audit_reads" in data and data["audit_reads"] is not None:
+        tenant.audit_reads = data["audit_reads"]
     audit.record(
         session,
         actor=f"user:{principal.subject}",
         action="tenant.updated",
         subject=str(tenant.id),
-        detail={"tenant_id": tenant.id, "code": tenant.code},
+        detail={"tenant_id": tenant.id, "code": tenant.code, "audit_reads": tenant.audit_reads},
     )
     return _tenant_out(tenant)
 

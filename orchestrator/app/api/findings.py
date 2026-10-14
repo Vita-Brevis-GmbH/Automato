@@ -8,6 +8,7 @@ dem Schreibpfad.
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
@@ -25,6 +26,7 @@ def list_findings(
     session: Session = Depends(get_session),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
+    reads.maybe_audit_read(session, principal, tenant_id, "findings")
     return [
         FindingOut(
             id=f.id,

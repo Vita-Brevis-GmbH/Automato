@@ -56,6 +56,33 @@ AUTOMATO_OIDC_JWKS_URL=http://localhost:8081/realms/automato/protocol/openid-con
 Der Orchestrator validiert dann das Bearer-JWT (JWKS/Issuer/Audience), liest Rollen aus
 `realm_access.roles` und Mandanten aus `tenant_ids`; `admin` = alle Mandanten.
 
+## SAML-Broker je Kunde
+
+Jeder Kunde mit eigenem IdP wird als **eigener SAML-Identity-Provider** (eigener `alias`)
+in den Realm `automato` gebrokert: Login-Flow Plattform → Keycloak → Kunden-IdP → zurück.
+Vorlagen (Platzhalter `<...>` ersetzen, `_hinweis`-Felder vor dem Import entfernen):
+
+- `saml-idp-broker.example.json` — der SAML-IdP (Entity-ID, SSO/SLO-URL, Signatur-Cert).
+- `saml-mappers.example.json` — **Attribut-Importer `tenant_ids`** (SAML-Attribut →
+  User-Attribut, steuert das Mandanten-Scoping) + Default-Rolle `viewer` (least privilege).
+
+Import per `kcadm` (im laufenden Keycloak-Container), ein alias pro Kunde:
+
+```bash
+kcadm.sh config credentials --server https://auth.example.com --realm master \
+  --user "$BOOTSTRAP_ADMIN"
+# 1) IdP anlegen
+kcadm.sh create identity-provider/instances -r automato -f saml-idp-broker.json
+# 2) Mapper anlegen (tenant_ids + Default-Rolle)
+kcadm.sh create identity-provider/instances/kunde-saml/mappers -r automato -f mapper-tenant_ids.json
+kcadm.sh create identity-provider/instances/kunde-saml/mappers -r automato -f mapper-viewer.json
+```
+
+Konvention: der SAML-IdP des Kunden liefert `tenant_ids` als Assertion-Attribut (die
+Mandanten-IDs dieses Kunden); `admin` wird **nie** per Broker-Default vergeben, sondern
+gezielt. OTP-Pflicht/Passwort-Policy gelten nur für lokale User; föderierte User
+authentifizieren am Kunden-IdP.
+
 ## Produktion
 
 Siehe `deploy/keycloak/ansible/README.md`. Das Playbook baut auf einer eigenen VM einen

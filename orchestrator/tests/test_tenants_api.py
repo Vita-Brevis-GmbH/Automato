@@ -122,7 +122,7 @@ def test_schreibpfade_werden_auditiert(session_factory, client):
     rows = s.query(AuditLog).order_by(AuditLog.id).all()
     assert [r.action for r in rows] == ["tenant.updated", "site.created", "site.deleted"]
     assert all(r.actor == "user:dev" for r in rows)
-    assert audit.decode_detail(rows[0]) == {"tenant_id": tid, "code": "ssgch"}
+    assert audit.decode_detail(rows[0]) == {"tenant_id": tid, "code": "ssgch", "audit_reads": False}
 
 
 def test_site_model_defaults(session_factory):

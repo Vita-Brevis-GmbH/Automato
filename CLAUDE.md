@@ -130,7 +130,7 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 73, sot-gateway 6.
+Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 77, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -188,6 +188,13 @@ res→T3–6/9, extern/inet→T1, sonst T10; ACI-intern T7/8 leer bis Model 1); 
 `rule.protections` (Schutzmechanismen) und `nat_rule` (VIP-IP/externer DNS aus `V-EXT_`).
 UI-Tab „Applikations-Doku" (`web-ui/frontend/src/AppDoc.tsx`): System-Auswahl, Tabellen,
 **Markdown-Export** (clientseitig). Tests `test_appdoc.py` (categorize + build_doc + API).
+**E1-Reste umgesetzt:** (a) **per-Mandant Lesezugriffs-Audit** — `tenant.audit_reads` (Alembic
+`0009`, Default aus) schaltet `read.<resource>` (rules/nat/findings/applications/appdoc) scharf,
+nur bei konkretem Mandanten (nicht Admin-Gesamtsicht); `app/audit/reads.py`, Allowlist-Einträge,
+pflegbar über `PATCH /tenants/{id}` (admin, auch im UI-Tenant-Tab erweiterbar); Tests
+`test_read_audit.py`. (b) **SAML-Broker je Kunde (Vorlage)** — `deploy/keycloak/saml-idp-broker.
+example.json` + `saml-mappers.example.json` (Attribut-Importer `tenant_ids`, Default-Rolle
+`viewer`), Import-Schritte (`kcadm`) im Keycloak-README. API gesamt jetzt inkl. `/appdoc`.
 **E1 Härtung/RBAC gestartet (E1.1 Gerüst)**: `app/auth/` mit `Principal`, Rollen
 `viewer/operator/admin` (Hierarchie), FastAPI-Dependencies (`require_viewer/operator/admin`)
 und **zentralem Mandanten-Scoping** (`tenant_scope`): Nicht-Admin nur innerhalb erlaubter

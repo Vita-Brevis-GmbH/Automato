@@ -1,0 +1,27 @@
+[
+  {
+    "_hinweis": "Attribut-Importer: SAML-Assertion-Attribut 'tenant_ids' -> User-Attribut 'tenant_ids' (steuert das Mandanten-Scoping im Orchestrator). Mehrwertig. Platzhalter ersetzen, _hinweis vor Import entfernen.",
+    "name": "tenant_ids-importer",
+    "identityProviderAlias": "kunde-saml",
+    "identityProviderMapper": "saml-user-attribute-idp-mapper",
+    "config": {
+      "syncMode": "FORCE",
+      "attribute.name": "tenant_ids",
+      "attribute.friendly.name": "",
+      "attribute.name.format": "ATTRIBUTE_FORMAT_BASIC",
+      "user.attribute": "tenant_ids"
+    }
+  },
+  {
+    "_hinweis": "Default-Rolle fuer broker-angelegte Kunden-User: viewer (least privilege). operator/admin gezielt vergeben.",
+    "name": "default-viewer",
+    "identityProviderAlias": "kunde-saml",
+    "identityProviderMapper": "saml-role-idp-mapper",
+    "config": {
+      "syncMode": "INHERIT",
+      "attribute.name": "",
+      "attribute.value": "",
+      "role": "viewer"
+    }
+  }
+]

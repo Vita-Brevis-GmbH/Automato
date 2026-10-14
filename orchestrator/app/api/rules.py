@@ -11,6 +11,7 @@ Filter nach System/Netzwerk/Zone folgen mit dem UI-Ausbau (M9).
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
@@ -61,6 +62,7 @@ def list_rules(
     session: Session = Depends(get_session),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
+    reads.maybe_audit_read(session, principal, tenant_id, "rules")
     rules = rules_store.list_rules(session, tenant_id=tenant_id)
     obj_ids = {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id}
     objs = rules_store.objects_by_ids(session, obj_ids)
@@ -109,6 +111,7 @@ def get_rule(
     if r is None:
         raise HTTPException(status_code=404, detail="rule not found")
     tenant_scope(principal, r.tenant_id)  # Mandanten-Zugriff pruefen (403 bei fremd)
+    reads.maybe_audit_read(session, principal, r.tenant_id, "rules")
 
     obj_ids = {e.network_object_id for e in r.endpoints if e.network_object_id}
     objs = rules_store.objects_by_ids(session, obj_ids)

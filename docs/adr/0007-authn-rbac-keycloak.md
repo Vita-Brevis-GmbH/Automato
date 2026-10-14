@@ -121,8 +121,12 @@ nur als *Name* unter `_dropped` vermerkt – so landen Secrets strukturell nie i
 damit der Schlüssel in der Anwendung/Vault (E1.5) liegt statt DB-nah und die Tests
 DB-agnostisch (SQLite) bleiben; die DB-seitige pgcrypto-Variante bleibt als Option.
 Default leer = Klartext (dev/Tests). Principal (`actor=user:<sub>`) nun auch an den
-Namensprofil-Schreibpfaden (create/upsert/delete). **Noch offen:** per-Mandant
-zuschaltbares Lesezugriffs-Audit.
+Namensprofil-Schreibpfaden (create/upsert/delete). **Per-Mandant zuschaltbares
+Lesezugriffs-Audit umgesetzt:** `tenant.audit_reads` (Alembic 0009, Default aus) schaltet
+pro Mandant das Protokollieren von Lesezugriffen (`read.<resource>` für rules/nat/findings/
+applications/appdoc) scharf — nur bei konkretem Mandanten, nicht bei der
+mandantsübergreifenden Admin-Gesamtsicht; umgelegt via `app/audit/reads.py`, pflegbar über
+`PATCH /tenants/{id}` (admin).
 
 **Deployment (Dev + Prod):** Dev läuft als Container in der Automato-VM
 (`docker-compose`, Profil `auth`): nur an `127.0.0.1` gebunden, persistentes Volume
@@ -176,6 +180,12 @@ Nicht Teil dieses ADR: mTLS/at-rest-Verschlüsselung und Netzsegmentierung
   als zentraler Ausfallpunkt / Break-Glass bei nicht erreichbarem IdP;
   Deployment-Footprint (JVM) auf kleinen Instanzen; korrekte SAML-Brokering-
   Konfiguration je Kunde.
+
+**SAML-Broker je Kunde (Vorlage umgesetzt):** `deploy/keycloak/saml-idp-broker.example.json`
+(SAML-IdP, eigener `alias` je Kunde) + `saml-mappers.example.json` (Attribut-Importer
+`tenant_ids` → Mandanten-Scoping; Default-Rolle `viewer`, nie `admin` per Broker-Default).
+Import-Schritte (`kcadm`) in `deploy/keycloak/README.md`. Login: Plattform → Keycloak →
+Kunden-IdP → zurück.
 - **Offen / Eingang abwarten:** UC1-Fachdaten (ACI, Namenskonventionen,
   Tenant-Struktur, Confluence-Feldschema). Sie präzisieren das
   „Applikationen"-Modell und Model 1 (ACI + Infoblox), **nicht** aber dieses

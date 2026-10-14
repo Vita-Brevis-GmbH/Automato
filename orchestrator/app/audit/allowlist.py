@@ -18,9 +18,15 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "naming_profile.created": frozenset({"profile_id", "customer", "name"}),
     "dictionary_entry.upserted": frozenset({"profile_id", "kind", "key"}),
     "dictionary_entry.deleted": frozenset({"entry_id"}),
-    "tenant.updated": frozenset({"tenant_id", "code"}),
+    "tenant.updated": frozenset({"tenant_id", "code", "audit_reads"}),
     "site.created": frozenset({"tenant_id", "code"}),
     "site.deleted": frozenset({"tenant_id", "site_id"}),
+    # Lesezugriffs-Audit (per Mandant zuschaltbar, ADR 0007 D5)
+    "read.rules": frozenset({"tenant_id", "resource"}),
+    "read.nat": frozenset({"tenant_id", "resource"}),
+    "read.findings": frozenset({"tenant_id", "resource"}),
+    "read.applications": frozenset({"tenant_id", "resource"}),
+    "read.appdoc": frozenset({"tenant_id", "resource"}),
 }
 
 _DROPPED_KEY = "_dropped"
