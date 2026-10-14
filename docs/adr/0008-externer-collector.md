@@ -55,5 +55,10 @@ Zentral:     Orchestrator /internal  ◀─────────────�
   `inprocess` an den zentralen Worker. Runner-Modus `automato-collector --poll`. Damit ist
   kein out-of-band-RUN_ID-Handling mehr nötig. Synergie Magister (ADR 0007 D6):
   gemeinsames Agent-/Cockpit-Muster.
-- **Noch offen:** echter APIC-REST-Client (Login + MO-Subtree) im Agenten; mTLS Agent↔
-  `/internal`; Agent-Deaktivierung/Rotation-UI; Windows-Paketierung.
+- **mTLS umgesetzt (Client-seitig):** der Agent präsentiert optional ein Client-Zertifikat
+  (`AUTOMATO_CLIENT_CERT/_KEY`) und pinnt die Server-CA (`AUTOMATO_ORCHESTRATOR_CA_BUNDLE`);
+  zentral an einer Stelle (`collectors/common/http.py`). Serverseitig erzwingt der
+  Reverse-Proxy vor `/internal` Client-Zertifikate (Caddy-Snippet in `collectors/EXTERNAL.md`);
+  der interne Token bleibt als zweite Schicht.
+- **Noch offen:** echter APIC-REST-Client (Login + MO-Subtree) im Agenten; Agent-
+  Deaktivierung/Rotation-UI; Windows-Paketierung.

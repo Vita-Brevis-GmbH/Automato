@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     internal_api_token: str = "dev-only-token"  # noqa: S105 - nur lokaler Default
     # Agent-Token fuer das Pull-Modell (ADR 0008); nur fuer den externen Standalone-Agent.
     agent_token: str = ""
+    # TLS zum Orchestrator (ADR 0008): optionale mTLS-Client-Zertifikate + CA-Pin.
+    orchestrator_verify_tls: bool = True
+    orchestrator_ca_bundle: str = ""  # CA-Pfad zur Server-Verifikation (Pinning)
+    client_cert: str = ""  # mTLS Client-Zertifikat (PEM)
+    client_key: str = ""  # mTLS Client-Key (PEM)
 
     # Zielsystem-Zugang FortiGate (read-only!). Ohne URL/Token liest der Collector
     # Beispieldaten (Lab noch nicht da). verify_tls im Lab i. d. R. false (selbstsigniert).

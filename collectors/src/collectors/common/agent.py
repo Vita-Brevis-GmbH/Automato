@@ -4,8 +4,7 @@ Nur fuer den externen Standalone-Agenten. Authentisiert sich mit `AUTOMATO_AGENT
 gegen `/internal/agent/*`; ausgehend HTTPS, kein DB-Zugriff.
 """
 
-import httpx
-
+from collectors.common import http
 from collectors.config import get_settings
 
 
@@ -17,20 +16,12 @@ def next_run(platform: str | None = None) -> dict | None:
     """Holt den naechsten offenen externen Lauf (oder None, wenn keiner ansteht)."""
     settings = get_settings()
     params = {"platform": platform} if platform else None
-    response = httpx.get(
-        f"{settings.orchestrator_url}/internal/agent/next-run",
-        params=params,
-        headers=_headers(),
-        timeout=30.0,
+    response = http.get_json(
+        f"{settings.orchestrator_url}/internal/agent/next-run", params, _headers()
     )
-    response.raise_for_status()
     return response.json().get("run")
 
 
 def heartbeat() -> None:
     settings = get_settings()
-    httpx.post(
-        f"{settings.orchestrator_url}/internal/agent/heartbeat",
-        headers=_headers(),
-        timeout=15.0,
-    ).raise_for_status()
+    http.post(f"{settings.orchestrator_url}/internal/agent/heartbeat", _headers())

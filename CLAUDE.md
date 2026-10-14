@@ -179,15 +179,20 @@ tenant_id, enabled, last_seen) + `collector_run.execution`. Admin-API `POST/GET 
 `GET /internal/agent/next-run` (X-Agent-Token; holt ältesten offenen **externen** Lauf im
 Tenant-Scope, QUEUED→RUNNING, auditiert `collector_run.claimed`) + `POST …/heartbeat`.
 Runner-Modus `automato-collector --poll` (`collectors/common/agent.py`); kein out-of-band-
-RUN_ID mehr nötig. Tests `test_agents.py` + `test_run.py`. Offen: echter APIC-REST-Client
-im Agenten, mTLS Agent↔`/internal`, Windows-Paketierung.
+RUN_ID mehr nötig. Tests `test_agents.py` + `test_run.py`.
+**mTLS-Support umgesetzt** (client-seitig): zentraler HTTP-Layer `collectors/common/http.py`
+(`client_kwargs`) — Agent präsentiert optional Client-Zertifikat (`AUTOMATO_CLIENT_CERT/_KEY`)
+und pinnt die Server-CA (`AUTOMATO_ORCHESTRATOR_CA_BUNDLE`); `upload.py`/`agent.py` laufen
+darüber. Serverseitig erzwingt der Reverse-Proxy (Caddy) Client-Zertifikate vor `/internal`
+(Snippet in `collectors/EXTERNAL.md`); interner Token bleibt zweite Schicht. Tests
+`test_http.py`. Offen: echter APIC-REST-Client im Agenten, Windows-Paketierung.
 **Standort-Verortung umgesetzt** (Alembic `0010`): `network_object.site_id` (nullable FK → site)
 verortet ein System an einem Standort. `PATCH /appdoc/systems/{name}/site` (operator,
 mandantsgescoped, auditiert `system.site_assigned`; fremde Site → 422); `build_doc` liefert jetzt
 `tenant_code` (GG-Kürzel) + `site` (code/name). UI-Tab „Applikations-Doku" zeigt GG/Standort und
 erlaubt Zuordnung (Site-Dropdown aus den Mandanten-Standorten); Markdown-Export-Header enthält
 GG + Standort. Tests `test_appdoc.py`. Offen: EPG als System (ACI) in der Doku.
-Tests: collectors 20, orchestrator 94, sot-gateway 6.
+Tests: collectors 25, orchestrator 94, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
