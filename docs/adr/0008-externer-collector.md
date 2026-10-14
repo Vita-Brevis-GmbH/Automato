@@ -47,8 +47,13 @@ Zentral:     Orchestrator /internal  ◀─────────────�
 - **Sicherheit:** Angriffsfläche minimal (nur ausgehend 443). Der interne Token sollte je
   Agent/Kunde rotierbar sein; mTLS zwischen Agent und `/internal` ist Folge-Hardening
   (ADR 0005). Read-only bleibt erzwungen (Collector schreibt nie ins Zielsystem).
-- **Trigger/Scheduling** des Agenten (Pull einer Lauf-Queue statt out-of-band-RUN_ID,
-  Agent-Registrierung/Heartbeat) ist ein Folgeschritt, sobald mehrere Agenten betrieben
-  werden. Synergie Magister (ADR 0007 D6): gemeinsames Agent-/Cockpit-Muster.
-- **Noch offen:** echter APIC-REST-Client (Login + MO-Subtree) im Agenten; Agent-Queue/
-  Registrierung; mTLS.
+- **Pull-Modell umgesetzt:** Agenten werden registriert (`POST /agents`, admin; Token
+  einmalig, nur Hash gespeichert) und holen Läufe per `GET /internal/agent/next-run`
+  (`X-Agent-Token`), der den ältesten offenen **externen** Lauf im Tenant-Scope auf RUNNING
+  schaltet; `POST /internal/agent/heartbeat` hält `last_seen` aktuell. Der Lauf trägt
+  `collector_run.execution` (inprocess|external); nur `external` geht an Agenten, nur
+  `inprocess` an den zentralen Worker. Runner-Modus `automato-collector --poll`. Damit ist
+  kein out-of-band-RUN_ID-Handling mehr nötig. Synergie Magister (ADR 0007 D6):
+  gemeinsames Agent-/Cockpit-Muster.
+- **Noch offen:** echter APIC-REST-Client (Login + MO-Subtree) im Agenten; mTLS Agent↔
+  `/internal`; Agent-Deaktivierung/Rotation-UI; Windows-Paketierung.

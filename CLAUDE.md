@@ -172,15 +172,22 @@ Celery/Redis, einziger Rückkanal `POST /internal/.../result` (`X-Internal-Token
 Lauf-Modell: `POST /jobs/collect` mit `execution=external` legt den Lauf an **ohne**
 Celery-Dispatch (Agent holt ihn per RUN_ID ab); `inprocess` = Default (zentraler Worker).
 Secrets liegen beim Agenten (ADR 0007). Doku `collectors/EXTERNAL.md`. Tests
-`collectors/tests/test_run.py` + `orchestrator/tests/test_jobs_external.py`. Offen:
-echter APIC-REST-Client im Agenten, Agent-Queue/Registrierung, mTLS Agent↔`/internal`.
+`collectors/tests/test_run.py` + `orchestrator/tests/test_jobs_external.py`.
+**Agent-Pull-Modell umgesetzt** (Alembic `0013`): Modell `agent` (name, token_hash,
+tenant_id, enabled, last_seen) + `collector_run.execution`. Admin-API `POST/GET /agents`
+(Token einmalig, nur Hash gespeichert, auditiert `agent.created`); Agent-API
+`GET /internal/agent/next-run` (X-Agent-Token; holt ältesten offenen **externen** Lauf im
+Tenant-Scope, QUEUED→RUNNING, auditiert `collector_run.claimed`) + `POST …/heartbeat`.
+Runner-Modus `automato-collector --poll` (`collectors/common/agent.py`); kein out-of-band-
+RUN_ID mehr nötig. Tests `test_agents.py` + `test_run.py`. Offen: echter APIC-REST-Client
+im Agenten, mTLS Agent↔`/internal`, Windows-Paketierung.
 **Standort-Verortung umgesetzt** (Alembic `0010`): `network_object.site_id` (nullable FK → site)
 verortet ein System an einem Standort. `PATCH /appdoc/systems/{name}/site` (operator,
 mandantsgescoped, auditiert `system.site_assigned`; fremde Site → 422); `build_doc` liefert jetzt
 `tenant_code` (GG-Kürzel) + `site` (code/name). UI-Tab „Applikations-Doku" zeigt GG/Standort und
 erlaubt Zuordnung (Site-Dropdown aus den Mandanten-Standorten); Markdown-Export-Header enthält
 GG + Standort. Tests `test_appdoc.py`. Offen: EPG als System (ACI) in der Doku.
-Tests: collectors 18, orchestrator 89, sot-gateway 6.
+Tests: collectors 20, orchestrator 94, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit

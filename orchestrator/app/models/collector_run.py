@@ -31,6 +31,10 @@ class CollectorRun(Base):
     status: Mapped[RunStatus] = mapped_column(
         Enum(RunStatus, native_enum=False, length=16), default=RunStatus.QUEUED
     )
+    # inprocess (zentraler Worker) | external (externer Agent holt per Pull, ADR 0008)
+    execution: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="inprocess", default="inprocess"
+    )
     queued_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

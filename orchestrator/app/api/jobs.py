@@ -25,6 +25,7 @@ def start_collect(
         platform=payload.platform,
         tenant_id=tenant_id,
         source_system_id=payload.source_system_id,
+        execution=payload.execution,
     )
     session.add(run)
     session.flush()  # run.id verfuegbar machen

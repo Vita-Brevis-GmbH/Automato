@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     orchestrator_url: str = "http://localhost:8000"
     internal_api_token: str = "dev-only-token"  # noqa: S105 - nur lokaler Default
+    # Agent-Token fuer das Pull-Modell (ADR 0008); nur fuer den externen Standalone-Agent.
+    agent_token: str = ""
 
     # Zielsystem-Zugang FortiGate (read-only!). Ohne URL/Token liest der Collector
     # Beispieldaten (Lab noch nicht da). verify_tls im Lab i. d. R. false (selbstsigniert).

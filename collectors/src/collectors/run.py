@@ -23,6 +23,7 @@ import sys
 from collections.abc import Callable, Sequence
 
 from collectors.cisco_aci.tasks import collect_once as _aci_collect
+from collectors.common import agent as agent_api
 from collectors.common.dto import CollectorResult
 from collectors.fortigate.tasks import collect_once as _fgt_collect
 
@@ -37,12 +38,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="automato-collector",
         description="Externer Standalone-Collector (eine Erfassung, read-only).",
     )
-    parser.add_argument("--platform", required=True, choices=sorted(RUNNERS))
-    parser.add_argument("--run-id", required=True, help="RUN_ID eines externen Laufs")
+    parser.add_argument(
+        "--platform", choices=sorted(RUNNERS), help="Plattform (ohne --poll Pflicht)"
+    )
+    parser.add_argument("--run-id", help="RUN_ID eines externen Laufs (ohne --poll Pflicht)")
+    parser.add_argument(
+        "--poll",
+        action="store_true",
+        help="naechsten externen Lauf aus der Agent-Queue holen (Agent-Token noetig)",
+    )
     args = parser.parse_args(argv)
 
-    result = RUNNERS[args.platform](args.run_id)
-    print(f"{args.platform} run {args.run_id}: {result.status}")
+    if args.poll:
+        run = agent_api.next_run(args.platform)  # --platform optional als Filter
+        if not run:
+            print("keine offenen Laeufe")
+            return 0
+        platform, run_id = run["platform"], run["run_id"]
+    else:
+        if not (args.platform and args.run_id):
+            parser.error("--platform und --run-id erforderlich (oder --poll)")
+        platform, run_id = args.platform, args.run_id
+
+    result = RUNNERS[platform](run_id)
+    print(f"{platform} run {run_id}: {result.status}")
     if result.message:
         print(result.message, file=sys.stderr)
     return 0 if result.status == "completed" else 1
