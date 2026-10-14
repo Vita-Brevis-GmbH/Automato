@@ -85,7 +85,10 @@ authentifizieren am Kunden-IdP.
 
 ## Produktion
 
-Siehe `deploy/keycloak/ansible/README.md`. Das Playbook baut auf einer eigenen VM einen
-gehärteten Stack: Caddy (TLS 1.3/ACME, HSTS, Security-Header) → Keycloak prod-mode
-(`start`, `KC_HOSTNAME`, Proxy-Header) → Postgres (persistent). Secrets via Ansible Vault
-(nichts im Repo), Firewall default-deny, OTP-Pflicht + Passwort-Policy aus dem Realm.
+Zwei Wege zum identischen, gehärteten Stack (Caddy TLS 1.3/ACME, HSTS, Security-Header →
+Keycloak prod-mode → Postgres persistent; Secrets ausserhalb Repo, Firewall default-deny,
+OTP-Pflicht + Passwort-Policy aus dem Realm):
+
+- **Manuelles Runbook (Paketinstallation + Konfiguration Schritt für Schritt):**
+  `deploy/keycloak/PROD-INSTALL.md` — am Beispiel `auth.vitabrevis.ch`.
+- **Ansible (ein Befehl):** `deploy/keycloak/ansible/README.md`.
