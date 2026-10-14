@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { AppDocSystem, DocTable, fetchAppDocSystems, fetchSystemDoc, SystemDoc } from "./api";
+import {
+  AppDocSystem,
+  assignSystemSite,
+  DocTable,
+  fetchAppDocSystems,
+  fetchSites,
+  fetchSystemDoc,
+  Site,
+  SystemDoc,
+} from "./api";
 
 // Applikations-Doku: pro System (Host) die 10 Kategorien-Tabellen (Spec
 // uc1-applikations-doku-spec.md) + Markdown-Export. tenantId kommt vom Switcher.
@@ -7,7 +16,18 @@ export default function AppDoc({ tenantId }: { tenantId: number | null }) {
   const [systems, setSystems] = useState<AppDocSystem[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [doc, setDoc] = useState<SystemDoc | null>(null);
+  const [sites, setSites] = useState<Site[]>([]);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tenantId == null) {
+      setSites([]);
+      return;
+    }
+    fetchSites(tenantId)
+      .then(setSites)
+      .catch(() => setSites([]));
+  }, [tenantId]);
 
   useEffect(() => {
     setSelected(null);
@@ -43,6 +63,15 @@ export default function AppDoc({ tenantId }: { tenantId: number | null }) {
     URL.revokeObjectURL(a.href);
   };
 
+  const assign = async (siteId: number | null) => {
+    if (tenantId == null || !doc) return;
+    try {
+      setDoc(await assignSystemSite(doc.system, tenantId, siteId));
+    } catch (e) {
+      setErr(`Verortung fehlgeschlagen: ${e} (erfordert operator)`);
+    }
+  };
+
   return (
     <div>
       <div className="form-row">
@@ -58,6 +87,33 @@ export default function AppDoc({ tenantId }: { tenantId: number | null }) {
           Markdown-Export
         </button>
       </div>
+
+      {doc && (
+        <div className="form-row" style={{ marginTop: "-.2rem" }}>
+          <span className="muted">
+            {doc.system_ip ? `IP ${doc.system_ip}` : ""}
+            {doc.tenant_code ? ` · GG ${doc.tenant_code}` : ""}
+          </span>
+          <span className="muted">Standort</span>
+          {tenantId == null ? (
+            <span className="muted">
+              {doc.site ? `${doc.site.code} ${doc.site.name}` : "–"} (Mandant wählen zum Ändern)
+            </span>
+          ) : (
+            <select
+              value={doc.site?.id ?? ""}
+              onChange={(e) => assign(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">– keiner –</option>
+              {sites.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.code} {s.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
 
       {doc &&
         doc.tables
@@ -103,7 +159,11 @@ function DocTableView({ table }: { table: DocTable }) {
 
 function toMarkdown(doc: SystemDoc): string {
   const lines: string[] = [`# Applikations-Doku – ${doc.system}`, ""];
-  if (doc.system_ip) lines.push(`IP: ${doc.system_ip}`, "");
+  const meta: string[] = [];
+  if (doc.system_ip) meta.push(`IP: ${doc.system_ip}`);
+  if (doc.tenant_code) meta.push(`GG: ${doc.tenant_code}`);
+  if (doc.site) meta.push(`Standort: ${doc.site.code} ${doc.site.name}`);
+  if (meta.length) lines.push(meta.join(" · "), "");
   for (const t of doc.tables) {
     if (t.rows.length === 0) continue;
     lines.push(`## ${t.index}. ${t.title}`, "");

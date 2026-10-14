@@ -143,7 +143,14 @@ emittiert EPGs typisiert als `epg:<name>` + Zonen; Ingest führt `epg:`-Endpunkt
 lesend vor. Tests: collectors `test_normalize.py` (MO-Parser), orchestrator `test_ingest.py`
 (EPG-Ingest). **Offen (eigene Phase):** epg-Tabellen (`epg`/`epg_subnet`/`epg_endpoint`),
 Contract-`scope`→Applikations-Doku-Kategorie, EPG als System in der Applikations-Doku,
-echter APIC-REST-Client. Tests: collectors 13, orchestrator 82, sot-gateway 6.
+echter APIC-REST-Client.
+**Standort-Verortung umgesetzt** (Alembic `0010`): `network_object.site_id` (nullable FK → site)
+verortet ein System an einem Standort. `PATCH /appdoc/systems/{name}/site` (operator,
+mandantsgescoped, auditiert `system.site_assigned`; fremde Site → 422); `build_doc` liefert jetzt
+`tenant_code` (GG-Kürzel) + `site` (code/name). UI-Tab „Applikations-Doku" zeigt GG/Standort und
+erlaubt Zuordnung (Site-Dropdown aus den Mandanten-Standorten); Markdown-Export-Header enthält
+GG + Standort. Tests `test_appdoc.py`. Offen: EPG als System (ACI) in der Doku.
+Tests: collectors 13, orchestrator 83, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit

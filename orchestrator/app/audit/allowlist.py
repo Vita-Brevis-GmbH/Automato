@@ -22,6 +22,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "tenant.updated": frozenset({"tenant_id", "code", "audit_reads"}),
     "site.created": frozenset({"tenant_id", "code"}),
     "site.deleted": frozenset({"tenant_id", "site_id"}),
+    "system.site_assigned": frozenset({"tenant_id", "site_id"}),
     # Lesezugriffs-Audit (per Mandant zuschaltbar, ADR 0007 D5)
     "read.rules": frozenset({"tenant_id", "resource"}),
     "read.nat": frozenset({"tenant_id", "resource"}),

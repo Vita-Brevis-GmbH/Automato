@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import NatRule, NetworkObject, ObjectClass, RuleEndpoint
+from app.models import NatRule, NetworkObject, ObjectClass, RuleEndpoint, Site, Tenant
 from app.store import rules as rules_store
 
 # Tabellen-Metadaten (Index -> Titel, Enforcement). Spaltenlisten siehe TABLE_COLUMNS.
@@ -246,4 +246,34 @@ def build_doc(session: Session, system_name: str, tenant_id: int | None) -> dict
         }
         for i, title, enf in TABLES
     ]
-    return {"system": system_name, "system_ip": sys_ip, "tables": tables}
+    tenant = session.get(Tenant, sys_obj.tenant_id)
+    site = session.get(Site, sys_obj.site_id) if sys_obj.site_id else None
+    return {
+        "system": system_name,
+        "system_ip": sys_ip,
+        "tenant_code": tenant.code if tenant else None,
+        "site": {"id": site.id, "code": site.code, "name": site.name} if site else None,
+        "tables": tables,
+    }
+
+
+def assign_site(
+    session: Session, system_name: str, tenant_id: int | None, site_id: int | None
+) -> NetworkObject | None:
+    """Verortet ein System (Host) an einem Standort. None, wenn System/Site ungueltig."""
+    sys_obj = session.scalars(
+        select(NetworkObject).where(
+            NetworkObject.name == system_name,
+            NetworkObject.object_class == ObjectClass.HOST,
+            *([NetworkObject.tenant_id == tenant_id] if tenant_id is not None else []),
+        )
+    ).first()
+    if sys_obj is None:
+        return None
+    if site_id is not None:
+        site = session.get(Site, site_id)
+        if site is None or site.tenant_id != sys_obj.tenant_id:
+            raise ValueError("site not found for tenant")
+    sys_obj.site_id = site_id
+    session.flush()
+    return sys_obj

@@ -12,6 +12,7 @@ from app.models import (
     RuleAction,
     RuleDomain,
     RuleEndpoint,
+    Site,
     SourceSystem,
     Tenant,
 )
@@ -204,3 +205,39 @@ def test_list_systems_und_api(session_factory, client):
     doc = client.get("/appdoc/systems/H_app01.kunde.ch").json()
     assert doc["system"] == "H_app01.kunde.ch"
     assert len(doc["tables"]) == 10
+
+
+def test_site_verortung_und_tenant_code(session_factory, client):
+    seed = session_factory()
+    tid = _seed(seed)
+    t = seed.get(Tenant, tid)
+    t.code = "ssgch"
+    site = Site(tenant_id=tid, code="000", name="RZ01 Hauptstandort")
+    seed.add(site)
+    seed.commit()
+    sid = site.id
+
+    # viewer darf nicht verorten
+    viewer = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid)}
+    r = client.patch(
+        f"/appdoc/systems/H_app01.kunde.ch/site?tenant_id={tid}",
+        json={"site_id": sid},
+        headers=viewer,
+    )
+    assert r.status_code == 403
+
+    # operator verortet -> Doc zeigt tenant_code + site
+    op = {"X-Dev-Roles": "operator", "X-Dev-Tenants": str(tid)}
+    r = client.patch(
+        f"/appdoc/systems/H_app01.kunde.ch/site?tenant_id={tid}",
+        json={"site_id": sid},
+        headers=op,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tenant_code"] == "ssgch"
+    assert body["site"]["code"] == "000" and body["site"]["name"] == "RZ01 Hauptstandort"
+
+    # auch im GET sichtbar
+    doc = client.get(f"/appdoc/systems/H_app01.kunde.ch?tenant_id={tid}").json()
+    assert doc["site"]["id"] == sid

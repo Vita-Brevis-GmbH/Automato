@@ -165,6 +165,8 @@ export interface DocTable {
 export interface SystemDoc {
   system: string;
   system_ip: string | null;
+  tenant_code: string | null;
+  site: { id: number; code: string; name: string } | null;
   tables: DocTable[];
 }
 
@@ -217,6 +219,12 @@ export const fetchAppDocSystems = (tenantId?: number | null) =>
   getJSON<AppDocSystem[]>(`/api/appdoc/systems${tenantQuery(tenantId)}`);
 export const fetchSystemDoc = (name: string, tenantId?: number | null) =>
   getJSON<SystemDoc>(`/api/appdoc/systems/${encodeURIComponent(name)}${tenantQuery(tenantId)}`);
+export const assignSystemSite = (name: string, tenantId: number, siteId: number | null) =>
+  sendJSON<SystemDoc>(
+    `/api/appdoc/systems/${encodeURIComponent(name)}/site?tenant_id=${tenantId}`,
+    "PATCH",
+    { site_id: siteId },
+  );
 export const fetchFindings = () => getJSON<Finding[]>("/api/findings");
 export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
   sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);
