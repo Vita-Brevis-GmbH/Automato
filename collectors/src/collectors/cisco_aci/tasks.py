@@ -27,6 +27,15 @@ def fetch_mo_export() -> dict:
     return json.loads(sample.read_text())
 
 
+def check() -> tuple[bool, str]:
+    """ACI-Erreichbarkeit: echter APIC-REST-Client folgt; aktuell MO-Export-Beispiel."""
+    try:
+        fetch_mo_export()
+    except Exception as exc:  # noqa: BLE001
+        return False, f"{type(exc).__name__}: {exc}"
+    return True, "MO-Export-Beispiel lesbar (echter APIC-Client folgt)"
+
+
 def collect_once(run_id: str) -> CollectorResult:
     """Eine Erfassung ohne Celery (Worker *und* externer Standalone-Collector)."""
     try:

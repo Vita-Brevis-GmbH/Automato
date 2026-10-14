@@ -22,14 +22,20 @@ import argparse
 import sys
 from collections.abc import Callable, Sequence
 
+from collectors.cisco_aci.tasks import check as _aci_check
 from collectors.cisco_aci.tasks import collect_once as _aci_collect
 from collectors.common import agent as agent_api
 from collectors.common.dto import CollectorResult
+from collectors.fortigate.tasks import check as _fgt_check
 from collectors.fortigate.tasks import collect_once as _fgt_collect
 
 RUNNERS: dict[str, Callable[[str], CollectorResult]] = {
     "fortigate": _fgt_collect,
     "cisco_aci": _aci_collect,
+}
+CHECKERS: dict[str, Callable[[], tuple[bool, str]]] = {
+    "fortigate": _fgt_check,
+    "cisco_aci": _aci_check,
 }
 
 
@@ -47,7 +53,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="naechsten externen Lauf aus der Agent-Queue holen (Agent-Token noetig)",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="nur Erreichbarkeit/Auth des Zielsystems pruefen (kein Ingest)",
+    )
     args = parser.parse_args(argv)
+
+    if args.check:
+        if not args.platform:
+            parser.error("--platform erforderlich fuer --check")
+        ok, msg = CHECKERS[args.platform]()
+        print(f"{args.platform} check: {'OK' if ok else 'FEHLER'} - {msg}")
+        return 0 if ok else 2
 
     if args.poll:
         run = agent_api.next_run(args.platform)  # --platform optional als Filter

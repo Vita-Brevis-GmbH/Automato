@@ -79,3 +79,26 @@ def test_gather_liefert_v6_und_ippools():
         "N_share-000-v6",
     }
     assert d["ippools"][0]["name"] == "IPP_share-000-inet01"
+
+
+def test_ping_ok_und_fehler():
+    import pytest
+
+    c = FortiGateClient(
+        "https://fg",
+        "t",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda r: httpx.Response(200, json={"results": {"hostname": "fg"}})
+            )
+        ),
+    )
+    c.ping()  # kein Fehler bei 200
+
+    c2 = FortiGateClient(
+        "https://fg",
+        "t",
+        client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(401, json={}))),
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        c2.ping()

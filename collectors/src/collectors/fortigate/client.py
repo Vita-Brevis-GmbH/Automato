@@ -57,6 +57,10 @@ class FortiGateClient:
         # IP-Pools fuer Source-NAT (IPP_).
         return self._get("firewall/ippool")
 
+    def ping(self) -> None:
+        """Leichter Lese-Zugriff zur Erreichbarkeits-/Auth-Pruefung (kein Ingest)."""
+        self._get("system/global")
+
     def gather(self) -> dict[str, list]:
         """Alles einlesen, was die Normalisierung braucht (IPv4+IPv6, NAT)."""
         return {

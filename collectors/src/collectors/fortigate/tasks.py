@@ -43,6 +43,23 @@ def gather() -> dict[str, list]:
     }
 
 
+def check() -> tuple[bool, str]:
+    """Erreichbarkeit/Auth des Zielsystems pruefen (read-only, kein Ingest)."""
+    settings = get_settings()
+    if not (settings.fortigate_url and settings.fortigate_token):
+        return False, "keine FortiGate-Creds (AUTOMATO_FORTIGATE_URL/_TOKEN)"
+    try:
+        client = FortiGateClient(
+            settings.fortigate_url,
+            settings.fortigate_token,
+            verify_tls=settings.fortigate_verify_tls,
+        )
+        client.ping()
+    except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
+        return False, f"{type(exc).__name__}: {exc}"
+    return True, f"erreichbar: {settings.fortigate_url}"
+
+
 def collect_once(run_id: str) -> CollectorResult:
     """Eine Erfassung ohne Celery: gather -> normalize -> submit (HTTPS). Fuer den
     Celery-Worker *und* den externen Standalone-Collector (collectors.run)."""

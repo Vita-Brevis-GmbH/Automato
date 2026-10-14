@@ -25,6 +25,17 @@ Orchestrator; read-only gegenüber dem Zielsystem.
 Der Agent erfasst (gather → normalize) und liefert das Ergebnis an
 `POST /internal/collector-runs/<RUN_ID>/result` ab. Exit 0 = `completed`, 1 = `failed`.
 
+## Erreichbarkeit vorab prüfen
+
+Vor dem ersten echten Lauf im Kundennetz die Verbindung/Authentisierung zum Zielsystem
+testen (read-only, kein Ingest):
+
+```bash
+automato-collector --check --platform fortigate
+# fortigate check: OK - erreichbar: https://fw.kunde.intern   (Exit 0)
+# fortigate check: FEHLER - ConnectError: ...                 (Exit 2)
+```
+
 ## Installation (Windows)
 
 - Python 3.11+.

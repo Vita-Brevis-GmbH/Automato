@@ -53,3 +53,26 @@ def test_runner_poll_ohne_lauf(monkeypatch):
 
     monkeypatch.setattr(run.agent_api, "next_run", lambda platform=None: None)
     assert run.main(["--poll"]) == 0
+
+
+def test_check_ok_exit0(monkeypatch):
+    import collectors.run as run
+
+    monkeypatch.setitem(run.CHECKERS, "fortigate", lambda: (True, "erreichbar"))
+    assert run.main(["--check", "--platform", "fortigate"]) == 0
+
+
+def test_check_fehler_exit2(monkeypatch):
+    import collectors.run as run
+
+    monkeypatch.setitem(run.CHECKERS, "fortigate", lambda: (False, "nope"))
+    assert run.main(["--check", "--platform", "fortigate"]) == 2
+
+
+def test_fortigate_check_ohne_creds(monkeypatch):
+    import collectors.fortigate.tasks as t
+    from collectors.config import Settings
+
+    monkeypatch.setattr(t, "get_settings", lambda: Settings(fortigate_url="", fortigate_token=""))
+    ok, msg = t.check()
+    assert ok is False and "Creds" in msg
