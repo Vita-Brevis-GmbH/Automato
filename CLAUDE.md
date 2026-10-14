@@ -233,8 +233,11 @@ voll funktionieren (so bereits gebaut: naming_profile/dictionary_entry sind opti
 `site` (Standort: `tenant_id`, dreistelliger `code`, `name`, `description`; Code je Mandant
 eindeutig) mit `GET/POST /tenants/{id}/sites` + `DELETE …/sites/{sid}` (Lesen `viewer`,
 Schreiben `admin`, mandantsgescoped, auditiert via E1.4-Allowlist `tenant.updated`/
-`site.created`/`site.deleted`). Tests `test_tenants_api.py`. Offen (eigene Phase): Objekt/
-Applikation am Standort verorten; Kürzel in die Applikations-Doku. **Als Nächstes in E1:** optional per-Mandant zuschaltbares
+`site.created`/`site.deleted`). Tests `test_tenants_api.py`. **UI**: Tab „Mandant/Standorte"
+(`web-ui/frontend/src/Tenants.tsx`) — Kürzel des gewählten Mandanten pflegen + Standorte
+listen/anlegen/löschen (3-stelliger Code), Schreibfehler (403/409/422) werden angezeigt;
+`/tenants` liefert `code` für den Switcher. Offen (eigene Phase): Objekt/Applikation am
+Standort verorten; Kürzel in die Applikations-Doku. **Als Nächstes in E1:** optional per-Mandant zuschaltbares
 Lesezugriffs-Audit; Keycloak-Client-/Session-Secrets über denselben Provider (sobald
 Confidential-Client-Flow); SAML-Broker je Kunde. Offen (Eingang abwarten): echter Keycloak-
 End-to-End-Login-Test (E1.3b nur build-verifiziert); CSV-Wörterbücher Kap. 3.1/3.2 als Seed.

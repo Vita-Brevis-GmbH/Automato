@@ -14,8 +14,9 @@ import Findings from "./Findings";
 import NatTable from "./Nat";
 import Overview from "./Overview";
 import RulesTable from "./RulesTable";
+import Tenants from "./Tenants";
 
-type Tab = "overview" | "rules" | "apps" | "nat" | "findings";
+type Tab = "overview" | "rules" | "apps" | "nat" | "findings" | "tenants";
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -63,14 +64,17 @@ export default function App() {
     })();
   }, []);
 
+  const loadTenants = () =>
+    fetchTenants()
+      .then(setTenants)
+      .catch(() => setTenants([]));
+
   useEffect(() => {
     if (!ready) return;
     fetchHealth()
       .then(setHealth)
       .catch(() => setHealth(null));
-    fetchTenants()
-      .then(setTenants)
-      .catch(() => setTenants([]));
+    loadTenants();
   }, [ready]);
 
   if (!ready) {
@@ -87,6 +91,7 @@ export default function App() {
     ["apps", "Applikationen"],
     ["nat", "NAT / VIPs"],
     ["findings", "Findings"],
+    ["tenants", "Mandant / Standorte"],
   ];
 
   return (
@@ -137,6 +142,9 @@ export default function App() {
       {tab === "apps" && <Applications />}
       {tab === "nat" && <NatTable />}
       {tab === "findings" && <Findings />}
+      {tab === "tenants" && (
+        <Tenants tenantId={tenantId} tenants={tenants} onTenantsChanged={loadTenants} />
+      )}
     </div>
   );
 }

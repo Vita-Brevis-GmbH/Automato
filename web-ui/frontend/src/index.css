@@ -139,3 +139,19 @@ button.kpi:hover { border-color: var(--accent); }
   .kpis { grid-template-columns: 1fr 1fr; }
   .ov-grid { grid-template-columns: 1fr; }
 }
+
+/* Formular-Zeilen + Buttons (Mandant/Standorte-Verwaltung) */
+.form-row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .6rem 0; }
+.form-row input {
+  padding: .35rem .5rem; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--bg); color: var(--text); font-size: .9rem;
+}
+.btn {
+  padding: .35rem .75rem; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--panel); color: var(--text); cursor: pointer; font-size: .85rem;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn.danger { color: var(--red); }
+.btn.danger:hover { border-color: var(--red); }
+.err { color: var(--red); background: var(--red-bg); padding: .5rem .7rem; border-radius: 8px; margin-bottom: .8rem; }

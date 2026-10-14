@@ -67,8 +67,17 @@ export interface System {
 export interface Tenant {
   id: number;
   name: string;
+  code: string | null;
   ipam_type: string;
   dns_type: string;
+}
+
+export interface Site {
+  id: number;
+  tenant_id: number;
+  code: string;
+  name: string;
+  description: string | null;
 }
 
 export interface AuthConfig {
@@ -154,10 +163,31 @@ async function getJSON<T>(url: string): Promise<T> {
   return response.json();
 }
 
+// Schreib-Helfer (POST/PATCH/DELETE). 204 -> kein Body.
+async function sendJSON<T>(url: string, method: string, body?: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method,
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return (response.status === 204 ? undefined : await response.json()) as T;
+}
+
 export const fetchHealth = () => getJSON<HealthStatus>("/api/health");
 export const fetchAuthConfig = () => getJSON<AuthConfig>("/api/auth/config");
 export const fetchSystems = () => getJSON<System[]>("/api/systems");
 export const fetchTenants = () => getJSON<Tenant[]>("/api/tenants");
+export const fetchSites = (tenantId: number) =>
+  getJSON<Site[]>(`/api/tenants/${tenantId}/sites`);
+export const createSite = (
+  tenantId: number,
+  body: { code: string; name: string; description?: string | null },
+) => sendJSON<Site>(`/api/tenants/${tenantId}/sites`, "POST", body);
+export const deleteSite = (tenantId: number, siteId: number) =>
+  sendJSON<void>(`/api/tenants/${tenantId}/sites/${siteId}`, "DELETE");
+export const patchTenantCode = (tenantId: number, code: string | null) =>
+  sendJSON<Tenant>(`/api/tenants/${tenantId}`, "PATCH", { code });
 export const fetchFindings = () => getJSON<Finding[]>("/api/findings");
 export const fetchNat = () => getJSON<Nat[]>("/api/nat");
 export const fetchApplications = () => getJSON<Application[]>("/api/applications");
