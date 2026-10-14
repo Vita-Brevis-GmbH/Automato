@@ -21,6 +21,11 @@ uv build --package collectors --out-dir dist
 
 ## 2. Auf der Windows-Station installieren
 
+**Voraussetzung:** Python 3.11+ auf der Station (https://www.python.org/downloads/windows/,
+beim Setup **„Add python.exe to PATH"** anhaken). `install.ps1` findet `py`, `python` oder
+`python3` automatisch; ohne Python bricht es mit einem Hinweis ab. Ganz ohne Python auf der
+Station: die PyInstaller-`.exe` bauen (siehe unten).
+
 Wheel + diesen Ordner (`deploy/collector-agent/`) auf die Station kopieren, dann in einer
 **administrativen** PowerShell:
 

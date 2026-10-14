@@ -10,9 +10,36 @@ $ErrorActionPreference = "Stop"
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
+# Python-Starter robust ermitteln: py -3 (python.org-Launcher), sonst python / python3.
+# Nicht jede Windows-Station hat den "py"-Launcher (nur der python.org-Installer bringt ihn).
+function Resolve-PythonCmd {
+    foreach ($c in @(, @("py", "-3"), , @("python"), , @("python3"))) {
+        if (Get-Command $c[0] -ErrorAction SilentlyContinue) {
+            $rest = @(); if ($c.Count -gt 1) { $rest = $c[1..($c.Count - 1)] }
+            try {
+                & $c[0] @rest --version *> $null
+                if ($LASTEXITCODE -eq 0) { return , $c }
+            }
+            catch { }
+        }
+    }
+    return $null
+}
+$pycmd = Resolve-PythonCmd
+if (-not $pycmd) {
+    Write-Error ("Kein Python 3 gefunden. Bitte Python 3.11+ installieren " +
+        "(https://www.python.org/downloads/windows/, beim Setup 'Add python.exe to PATH' " +
+        "aktivieren), eine NEUE PowerShell oeffnen und dieses Skript erneut ausfuehren.")
+    exit 1
+}
+$pyExe = $pycmd[0]
+$pyArgs = @(); if ($pycmd.Count -gt 1) { $pyArgs = $pycmd[1..($pycmd.Count - 1)] }
+Write-Host ("Nutze Python: " + ($pycmd -join " "))
+
 # venv + Wheel installieren (bringt das Konsolen-Script automato-collector mit)
-$py = Join-Path $InstallDir "venv\Scripts\python.exe"
-py -3 -m venv (Join-Path $InstallDir "venv")
+$venvDir = Join-Path $InstallDir "venv"
+& $pyExe @pyArgs -m venv $venvDir
+$py = Join-Path $venvDir "Scripts\python.exe"
 & $py -m pip install --upgrade pip | Out-Null
 & $py -m pip install $Wheel
 
