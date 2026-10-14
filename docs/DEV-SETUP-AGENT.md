@@ -7,18 +7,34 @@ Agenten im UI zu registrieren und einen externen Lauf durchzuspielen. Bezug: ADR
 > Warum frisch? Datenmodell/Namensprofil haben sich geändert (Alembic bis `0013`). Ein
 > sauberer Reset von NetBox **und** der Automato-DB vermeidet Altlasten.
 
-## 1. NetBox neu installieren (Daten löschen)
+## 1. NetBox neu installieren (Daten löschen, **leer lassen**)
 
 `NETBOX_RESET=1` löscht die NetBox-Volumes vor dem Neuaufbau:
 
 ```bash
 cd source-of-truth/netbox
 NETBOX_RESET=1 NETBOX_PORT=8080 ./setup.sh
-# Am Ende ausgegeben: Collector-Token (read-only) + Admin-Token -> notieren
 ```
 
-(Optional Lab-Daten seeden: `NETBOX_URL=http://localhost:8080 NETBOX_TOKEN=<admin-token>
-python3 seed_lab.py`.)
+**Der Collector-Token (read-only) wird am Ende ausgegeben** – notieren, das ist der Wert für
+`NETBOX_TOKEN` in Schritt 2:
+
+```
+Collector-Token (read-only): <40 Hex-Zeichen>
+Admin-Token (Schreiben/Seed): <40 Hex-Zeichen>
+```
+
+Token vergessen? Einfach mit festem Wert neu setzen (idempotent, löscht die alten Tokens):
+
+```bash
+NETBOX_RESET=1 NETBOX_PORT=8080 \
+  COLLECTOR_TOKEN=$(openssl rand -hex 20) ADMIN_TOKEN=$(openssl rand -hex 20) ./setup.sh
+```
+
+> **NetBox bleibt leer** – `setup.sh` legt nur Admin-/Collector-User + Tokens an, **keine
+> IPAM-Daten**. Für einen sauberen, leeren Stand das optionale `seed_lab.py` **nicht** laufen
+> lassen; auch den FortiGate→NetBox-Import (`import_from_fortigate.py`) weglassen. Die Plattform
+> funktioniert mit leerer NetBox – unaufgelöste Endpunkte landen dann als Findings.
 
 ## 2. Automato-Stack frisch hochfahren (leere Orchestrator-DB)
 
@@ -80,3 +96,11 @@ sind befüllt.
 In Produktion läuft der Agent **nicht** aus dem Repo, sondern als Dienst nahe am Zielsystem:
 `collectors/EXTERNAL.md` (Env, mTLS) und `deploy/collector-agent/` (Windows-`install.ps1`,
 Scheduled Task `--poll`). Nur ausgehend HTTPS, Agent-Token/Client-Zertifikat je Agent rotierbar.
+
+> **Hinweis zur Windows-Installation:** `install.ps1` baut ein venv und installiert das
+> Collector-Wheel per `pip`. Das Wheel zieht seine Abhängigkeiten (httpx, pydantic, …) nach,
+> daher braucht die Station beim Installieren **Internet-Zugang zu PyPI** – oder einen
+> vorbereiteten Offline-Wheelhouse (`pip download` auf einem Build-Host, dann
+> `pip install --no-index --find-links <wheelhouse> collectors`). Alternativ die
+> Python-freie `.exe` (PyInstaller, siehe `deploy/collector-agent/README.md`). Zur Laufzeit
+> spricht der Agent nur **ausgehend HTTPS** zum Orchestrator.
