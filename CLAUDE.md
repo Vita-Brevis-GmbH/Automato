@@ -212,8 +212,23 @@ Namensprofil-Schreibpfaden (create/upsert/delete). Lesen via `audit.decode_detai
 löst sie einmalig in `create_app()` auf, **bevor** `check_security_config` greift. Klartext
 ohne Schema bleibt unverändert (→ .env/dev wie bisher); nicht erreichbares Backend/fehlendes
 Secret = fail-closed. Betriebsanleitung `deploy/secrets/README.md`. Tests `test_secrets.py`.
-**Als Nächstes in E1:** optional per-Mandant zuschaltbares Lesezugriffs-Audit; Keycloak-
-Client-/Session-Secrets über denselben Provider (sobald Confidential-Client-Flow). Keycloak-
-Hardening (TLS/Proxy, persistente DB, SAML-Broker je Kunde) als Folge. Offen (Eingang
-abwarten): echter Keycloak-End-to-End-Login-Test (E1.3b nur build-verifiziert); CSV-
-Wörterbücher Kap. 3.1/3.2 zum Seeden.
+**Keycloak Dev+Prod-Deployment umgesetzt**: **Dev** = Container in der Automato-VM
+(docker-compose Profil `auth`), nun gehärtet — nur an `127.0.0.1` gebunden, persistentes
+Volume `keycloak-data` (User/OTP überleben Neustart), `KC_HEALTH_ENABLED`. **Prod** = kleines
+**Ansible-Playbook** `deploy/keycloak/ansible/` (keycloak.yml + Templates): Stack Caddy
+(TLS 1.3/ACME, HSTS, Security-Header) → Keycloak prod-mode (`start`, `KC_HOSTNAME`,
+Proxy-Header, HTTP nur intern) → Postgres (persistent); Secrets via Ansible Vault
+(`.gitignore` schützt inventory/vault), Firewall default-deny, fail-closed Pflicht-Var-Check,
+Wait auf OIDC-Discovery. **Realm-Härtung** im gemeinsamen `realm-automato.json` (gilt dev+prod):
+Brute-Force-Schutz, Passwort-Policy (12+, Mix, History, Ablauf), **OTP/TOTP-Pflicht**,
+Browser-Security-Header, `registrationAllowed=false`. Doku `deploy/keycloak/ansible/README.md`.
+**Mandanten-Klärung (GG):** Ein **Mandant = Gruppengesellschaft (GG)** mit **einem oder
+mehreren Standorten** und einem **Kürzel/Code** zur Identifikation bei VMs/Objekten. Die
+**Wörterbücher (GG-Kürzel etc.) sind kundenspezifische Laufzeitdaten** (kein Seed-Zwang) und
+**dürfen keine Funktionsrelevanz** haben — die Plattform muss ohne befüllte Wörterbücher
+voll funktionieren (so bereits gebaut: naming_profile/dictionary_entry sind optional). Folge-
+Schritt (klein, noch offen): `tenant.code` (Kürzel) + Standorte (3-stelliger Code, ADR-0004-
+Ergänzung) am Datenmodell. **Als Nächstes in E1:** optional per-Mandant zuschaltbares
+Lesezugriffs-Audit; Keycloak-Client-/Session-Secrets über denselben Provider (sobald
+Confidential-Client-Flow); SAML-Broker je Kunde. Offen (Eingang abwarten): echter Keycloak-
+End-to-End-Login-Test (E1.3b nur build-verifiziert); CSV-Wörterbücher Kap. 3.1/3.2 als Seed.

@@ -124,6 +124,16 @@ Default leer = Klartext (dev/Tests). Principal (`actor=user:<sub>`) nun auch an 
 Namensprofil-Schreibpfaden (create/upsert/delete). **Noch offen:** per-Mandant
 zuschaltbares Lesezugriffs-Audit.
 
+**Deployment (Dev + Prod):** Dev läuft als Container in der Automato-VM
+(`docker-compose`, Profil `auth`): nur an `127.0.0.1` gebunden, persistentes Volume
+(User/OTP überleben Neustarts), Realm-Härtung aus dem Import. Prod kommt als **kleines
+Ansible-Playbook** (`deploy/keycloak/ansible/`): eigener Stack Caddy (TLS 1.3/ACME, HSTS,
+Security-Header) → Keycloak **prod-mode** (`start`, `KC_HOSTNAME`, Proxy-Header, HTTP nur
+intern) → Postgres (persistent); Secrets via Ansible Vault, Firewall default-deny. Die
+**Realm-Härtung** (Brute-Force-Schutz, Passwort-Policy, **OTP-Pflicht**, Browser-Security-
+Header, `registrationAllowed=false`) steckt im gemeinsamen `realm-automato.json` und gilt
+dev **und** prod. Betriebsanleitung: `deploy/keycloak/ansible/README.md`.
+
 ### D6 – Magister-Synergie & -Integration (phasiert)
 
 - **Automato zuerst** (grüne Wiese fürs Auth): direkt als Keycloak-Client bauen.

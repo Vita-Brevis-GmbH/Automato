@@ -1,0 +1,75 @@
+# Verwaltet von Ansible (deploy/keycloak/ansible/keycloak.yml) - nicht von Hand editieren.
+# Produktions-Stack: Keycloak (prod-mode) + Postgres (persistent) + Caddy (TLS/ACME).
+# Nur Caddy veroeffentlicht Ports; Keycloak/Postgres sind nur im internen Netz erreichbar.
+
+services:
+  postgres:
+    image: {{ kc_postgres_image }}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KC_DB_PASSWORD}
+    volumes:
+      - kc-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [kc]
+
+  keycloak:
+    image: {{ kc_image }}
+    restart: unless-stopped
+    # Prod-Mode (nicht start-dev). --optimized entfaellt bewusst: der Auto-Build beim
+    # Start macht das Image portabel; --import-realm zieht den Realm beim ersten Start.
+    command: ["start", "--import-realm"]
+    environment:
+      # Datenbank
+      KC_DB: postgres
+      KC_DB_URL: "jdbc:postgresql://postgres:5432/keycloak"
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD}
+      # Oeffentliche URL + Proxy (TLS wird von Caddy terminiert)
+      KC_HOSTNAME: "https://{{ kc_domain }}"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"      # nur intern (nicht veroeffentlicht); Caddy spricht http an
+      # Health/Metrics auf Management-Port 9000 (nur intern)
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      # Temporaerer Boot-Admin (Master-Realm). Nach Setup eigenen Admin anlegen und
+      # diesen entfernen/rotieren (siehe README).
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+    volumes:
+      - {{ kc_base_dir }}/import:/opt/keycloak/data/import:ro
+      - kc-data:/opt/keycloak/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [kc]
+
+  caddy:
+    image: {{ kc_caddy_image }}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - {{ kc_base_dir }}/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - keycloak
+    networks: [kc]
+
+networks:
+  kc:
+    driver: bridge
+
+volumes:
+  kc-postgres:
+  kc-data:
+  caddy-data:
+  caddy-config:

@@ -106,10 +106,19 @@ services:
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Realm-Haertung (Brute-Force, Passwort-Policy, OTP, Security-Header) steckt im
+      # importierten Realm; Health-Endpoint fuers Monitoring aktiviert (Port 9000).
+      KC_HEALTH_ENABLED: "true"
     volumes:
+      # Realm-Import (read-only) ...
       - ./deploy/keycloak:/opt/keycloak/data/import:ro
+      # ... und persistente Daten (H2), damit lokal angelegte User/OTP einen Neustart
+      # ueberleben. Der Import-Bind liegt als Sub-Mount darueber.
+      - keycloak-data:/opt/keycloak/data
     ports:
-      - "8081:8081"
+      # Nur lokal; produktiv NICHT direkt veroeffentlichen (TLS/Proxy davor, s. Playbook).
+      - "127.0.0.1:8081:8081"
 
 volumes:
   postgres-data:
+  keycloak-data:

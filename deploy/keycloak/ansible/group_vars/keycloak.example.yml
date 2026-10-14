@@ -1,0 +1,18 @@
+---
+# Kopie nach group_vars/keycloak.yml (nicht-geheime Werte) + group_vars/vault.yml
+# (Secrets, mit `ansible-vault encrypt` verschluesseln). Beide werden fuer die Gruppe
+# [keycloak] automatisch geladen.
+
+# --- nicht geheim (group_vars/keycloak.yml) ---
+kc_domain: auth.example.com          # oeffentliche URL des IdP (eigene VM, eigene URL)
+kc_acme_email: ops@example.com       # Kontakt fuer Let's Encrypt
+kc_bootstrap_admin_user: bootstrap-admin
+kc_tls_internal: false               # true nur im Lab ohne oeffentliches DNS (Self-Signed)
+
+# --- GEHEIM: in group_vars/vault.yml und VERSCHLUESSELN ---
+# ansible-vault encrypt group_vars/vault.yml
+# kc_bootstrap_admin_password: "<min. 12 Zeichen, zufaellig>"   # openssl rand -base64 24
+# kc_db_password: "<min. 16 Zeichen, zufaellig>"                # openssl rand -base64 24
+#
+# Diese Secrets sollten aus demselben Vault/Secrets-Provider stammen wie der Rest der
+# Plattform (E1.5, deploy/secrets/README.md). Niemals im Klartext committen.

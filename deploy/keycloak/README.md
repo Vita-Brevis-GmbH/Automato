@@ -1,15 +1,29 @@
 # Keycloak (AuthN/RBAC, E1 · ADR 0007)
 
-Dedizierter IdP für Automato (und später Magister). Hier als **Starter** im
-docker-compose (Profil `auth`); produktiv zieht Keycloak auf einen **eigenen Container
-→ eigene VM, eigene URL** um (Plattform → Keycloak → zurück, OIDC + PKCE).
+Dedizierter IdP für Automato (und später Magister). **Dev** läuft als Container in der
+Automato-VM (docker-compose, Profil `auth`); **Produktion** zieht per Ansible-Playbook
+auf eine **eigene VM, eigene URL** mit TLS/Härtung um (Plattform → Keycloak → zurück,
+OIDC + PKCE).
 
-## Starten (lokal)
+- **Dev (hier):** `docker compose --profile auth up keycloak` (unten).
+- **Prod:** `deploy/keycloak/ansible/` (eigenes README) — gehärteter Stack
+  Caddy (TLS/ACME) + Keycloak prod-mode + Postgres.
+
+## Starten (lokal / Dev)
 
 ```bash
 docker compose --profile auth up keycloak
 # Admin-Konsole: http://localhost:8081  (Master-Admin: KEYCLOAK_ADMIN/KEYCLOAK_ADMIN_PASSWORD)
 ```
+
+Dev ist bewusst schlank, aber nicht nackt:
+- **Nur an `127.0.0.1` gebunden** (kein Zugriff aus dem Netz der VM).
+- **Persistentes Volume** `keycloak-data` → lokal angelegte User/OTP überleben Neustarts.
+- **Realm-Härtung** (Brute-Force, Passwort-Policy, OTP-Pflicht, Security-Header) steckt
+  im importierten `realm-automato.json` und gilt damit dev **und** prod.
+- Health-Endpoint aktiv (`KC_HEALTH_ENABLED`, Management-Port 9000).
+
+HTTPS/Reverse-Proxy, eigene VM und externe DB sind der Produktion vorbehalten (Playbook).
 
 Beim Start importiert Keycloak den Realm **`automato`** aus `realm-automato.json`:
 - Realm-Rollen **`viewer` / `operator` / `admin`**.
@@ -42,5 +56,9 @@ AUTOMATO_OIDC_JWKS_URL=http://localhost:8081/realms/automato/protocol/openid-con
 Der Orchestrator validiert dann das Bearer-JWT (JWKS/Issuer/Audience), liest Rollen aus
 `realm_access.roles` und Mandanten aus `tenant_ids`; `admin` = alle Mandanten.
 
-> Dies ist ein funktionsfähiger Ausgangspunkt, kein gehärtetes Prod-Setup (eigene VM,
-> TLS/Caddy davor, persistente DB für Keycloak, Realm-Hardening folgen).
+## Produktion
+
+Siehe `deploy/keycloak/ansible/README.md`. Das Playbook baut auf einer eigenen VM einen
+gehärteten Stack: Caddy (TLS 1.3/ACME, HSTS, Security-Header) → Keycloak prod-mode
+(`start`, `KC_HOSTNAME`, Proxy-Header) → Postgres (persistent). Secrets via Ansible Vault
+(nichts im Repo), Firewall default-deny, OTP-Pflicht + Passwort-Policy aus dem Realm.
