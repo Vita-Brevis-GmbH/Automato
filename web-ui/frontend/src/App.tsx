@@ -8,6 +8,7 @@ import {
   HealthStatus,
   Tenant,
 } from "./api";
+import AppDoc from "./AppDoc";
 import Applications from "./Applications";
 import * as auth from "./auth";
 import Findings from "./Findings";
@@ -16,7 +17,7 @@ import Overview from "./Overview";
 import RulesTable from "./RulesTable";
 import Tenants from "./Tenants";
 
-type Tab = "overview" | "rules" | "apps" | "nat" | "findings" | "tenants";
+type Tab = "overview" | "rules" | "apps" | "appdoc" | "nat" | "findings" | "tenants";
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -89,6 +90,7 @@ export default function App() {
     ["overview", "Übersicht"],
     ["rules", "Regeln"],
     ["apps", "Applikationen"],
+    ["appdoc", "Applikations-Doku"],
     ["nat", "NAT / VIPs"],
     ["findings", "Findings"],
     ["tenants", "Mandant / Standorte"],
@@ -140,6 +142,7 @@ export default function App() {
       {tab === "overview" && <Overview tenantId={tenantId} onOpenRules={() => setTab("rules")} />}
       {tab === "rules" && <RulesTable tenantId={tenantId} />}
       {tab === "apps" && <Applications />}
+      {tab === "appdoc" && <AppDoc tenantId={tenantId} />}
       {tab === "nat" && <NatTable />}
       {tab === "findings" && <Findings />}
       {tab === "tenants" && (

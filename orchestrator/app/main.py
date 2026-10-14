@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
+    appdoc,
     applications,
     auth_config,
     findings,
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(tenants.router)
     app.include_router(nat.router)
     app.include_router(applications.router)
+    app.include_router(appdoc.router)
     app.include_router(naming_profiles.router)
     return app
 

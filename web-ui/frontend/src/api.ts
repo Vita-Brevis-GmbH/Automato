@@ -147,6 +147,27 @@ export interface ApplicationDetail extends Application {
   rules: AppRule[];
 }
 
+// Applikations-Doku (systemzentriert, 10 Kategorien)
+export interface AppDocSystem {
+  name: string;
+  ip: string | null;
+  rule_count: number;
+}
+
+export interface DocTable {
+  index: number;
+  title: string;
+  enforcement: string;
+  columns: string[];
+  rows: Record<string, string>[];
+}
+
+export interface SystemDoc {
+  system: string;
+  system_ip: string | null;
+  tables: DocTable[];
+}
+
 // Bearer-Token (gesetzt nach OIDC-Login, E1.3b). Im dev-Modus leer -> Standard-Admin.
 function authHeaders(): Record<string, string> {
   try {
@@ -188,6 +209,14 @@ export const deleteSite = (tenantId: number, siteId: number) =>
   sendJSON<void>(`/api/tenants/${tenantId}/sites/${siteId}`, "DELETE");
 export const patchTenantCode = (tenantId: number, code: string | null) =>
   sendJSON<Tenant>(`/api/tenants/${tenantId}`, "PATCH", { code });
+
+function tenantQuery(tenantId?: number | null): string {
+  return tenantId != null ? `?tenant_id=${tenantId}` : "";
+}
+export const fetchAppDocSystems = (tenantId?: number | null) =>
+  getJSON<AppDocSystem[]>(`/api/appdoc/systems${tenantQuery(tenantId)}`);
+export const fetchSystemDoc = (name: string, tenantId?: number | null) =>
+  getJSON<SystemDoc>(`/api/appdoc/systems/${encodeURIComponent(name)}${tenantQuery(tenantId)}`);
 export const fetchFindings = () => getJSON<Finding[]>("/api/findings");
 export const fetchNat = () => getJSON<Nat[]>("/api/nat");
 export const fetchApplications = () => getJSON<Application[]>("/api/applications");

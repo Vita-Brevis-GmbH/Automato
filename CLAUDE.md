@@ -130,7 +130,7 @@ Sofort-Härtung: öffentliche Read-API ist **fail-closed ausserhalb `dev`**
 
 **Offenes Produktions-Gate:** AuthN/RBAC vor der Read-API; optional Finding-Triage-
 Schreibpfad; mTLS/at-rest, Netzsegmentierung (Folge-ADRs). Danach: Model 1 (ACI + Infoblox),
-Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 69, sot-gateway 6.
+Schreibpfad (ADR 0002). Tests: collectors 12, orchestrator 73, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -180,8 +180,14 @@ Wörterbuch gebaute Präfix-Liste (`prefixes_from_entries`), bleibt reine Funkti
 naming_profile_id` (nullable FK) verknüpft Mandant→Profil, Ingest löst die Liste je Lauf auf
 (`_resolve_prefixes`); ohne Profil gilt die **erweiterte SOP-Default-Konvention** (jetzt inkl.
 `N-EXT_`/`T_`/`V-EXT_`/`IPP_`). Keine Funktionsabhängigkeit von Daten (leeres Profil → Default).
-Tests `test_naming.py`/`test_ingest.py`. Folgeschritt: Applikations-Doku-API (die 10 Kategorien
-aus `uc1-applikations-doku-spec.md`) nutzt künftig protections/nat_type.
+Tests `test_naming.py`/`test_ingest.py`. **Applikations-Doku-API (systemzentriert, 10 Kategorien)
+umgesetzt**: `app/store/appdoc.py` + `GET /appdoc/systems` (Host-Systeme) und
+`/appdoc/systems/{name}` (die 10 Tabellen aus `uc1-applikations-doku-spec.md`, je Richtung×
+Scope×Enforcement). Pure `categorize()` (NAT dnat_vip→T2 / snat_pool, L3O-Zonen bit/vpn/sra/
+res→T3–6/9, extern/inet→T1, sonst T10; ACI-intern T7/8 leer bis Model 1); Spalten nutzen
+`rule.protections` (Schutzmechanismen) und `nat_rule` (VIP-IP/externer DNS aus `V-EXT_`).
+UI-Tab „Applikations-Doku" (`web-ui/frontend/src/AppDoc.tsx`): System-Auswahl, Tabellen,
+**Markdown-Export** (clientseitig). Tests `test_appdoc.py` (categorize + build_doc + API).
 **E1 Härtung/RBAC gestartet (E1.1 Gerüst)**: `app/auth/` mit `Principal`, Rollen
 `viewer/operator/admin` (Hierarchie), FastAPI-Dependencies (`require_viewer/operator/admin`)
 und **zentralem Mandanten-Scoping** (`tenant_scope`): Nicht-Admin nur innerhalb erlaubter
