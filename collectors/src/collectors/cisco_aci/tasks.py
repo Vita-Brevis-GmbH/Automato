@@ -9,9 +9,9 @@ import json
 from importlib import resources
 
 from collectors.celery_app import app
-from collectors.cisco_aci.mo import parse_mo_export
+from collectors.cisco_aci.mo import parse_epgs, parse_mo_export
 from collectors.cisco_aci.normalize import normalize_contract
-from collectors.common.dto import CollectorResult
+from collectors.common.dto import CollectorResult, NormalizedEpg
 from collectors.common.upload import submit_result
 
 
@@ -30,9 +30,10 @@ def fetch_mo_export() -> dict:
 @app.task(name="collectors.cisco_aci.collect")
 def collect(run_id: str) -> None:
     try:
-        contracts = parse_mo_export(fetch_mo_export())
-        rules = [rule for c in contracts for rule in normalize_contract(c)]
-        result = CollectorResult(status="completed", rules=rules)
+        export = fetch_mo_export()
+        rules = [rule for c in parse_mo_export(export) for rule in normalize_contract(c)]
+        epgs = [NormalizedEpg(**e) for e in parse_epgs(export)]
+        result = CollectorResult(status="completed", rules=rules, epgs=epgs)
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(status="failed", message=str(exc))
     submit_result(run_id, result)

@@ -20,6 +20,8 @@ from app import naming
 from app.models import (
     EndpointKind,
     EndpointRole,
+    Epg,
+    EpgSubnet,
     Family,
     Finding,
     FindingType,
@@ -87,12 +89,33 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         session.delete(old_nat)
     session.flush()
 
+    _apply_epgs(session, run.tenant_id, result.epgs)  # EPGs vor den Regeln (Endpunkt-Link)
     prefixes = _resolve_prefixes(session, run.tenant_id)  # Namensprofil des Mandanten
     for normalized in result.rules:
         _persist_rule(session, run, normalized, sot, prefixes)
     _apply_object_catalog(session, run.tenant_id, result.objects)
     for nat in result.nat_rules:
         _persist_nat(session, run, nat)
+
+
+def _apply_epgs(session: Session, tenant_id: int, epgs) -> None:
+    """EPGs (ACI) idempotent anlegen/aktualisieren; Subnetze je EPG ersetzen."""
+    for e in epgs:
+        epg = session.scalars(
+            select(Epg).where(Epg.tenant_id == tenant_id, Epg.name == e.name)
+        ).first()
+        if epg is None:
+            epg = Epg(tenant_id=tenant_id, name=e.name)
+            session.add(epg)
+        epg.ap = e.ap
+        epg.bd = e.bd
+        session.flush()
+        for old in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id == epg.id)):
+            session.delete(old)
+        for ip in e.subnets:
+            fam = "v6" if ":" in ip else "v4"
+            session.add(EpgSubnet(epg_id=epg.id, ip=ip, family=fam))
+    session.flush()
 
 
 def _resolve_prefixes(session: Session, tenant_id: int) -> PrefixList | None:
@@ -157,6 +180,7 @@ def _persist_rule(
         last_seen=datetime.now(UTC),
         collector_run_id=run.id,
         protections=nr.protections or None,
+        aci_scope=nr.aci_scope,
         raw=nr.raw,
     )
     for raw in nr.sources:
@@ -188,10 +212,20 @@ def _endpoint(
     if value.lower() in _ANY_VALUES:
         return RuleEndpoint(role=role, kind=EndpointKind.ANY, inline_value=value, matched=False)
 
-    # ACI-EPG (Model 1): als typisierter Endpunkt ohne IPAM-Aufloesung/Finding fuehren;
-    # ein Server = genau eine EPG, Zuordnung/Subnetze folgen mit den epg-Tabellen.
+    # ACI-EPG (Model 1): typisierter Endpunkt ohne IPAM-Aufloesung/Finding; ist die EPG
+    # bekannt (epg-Tabelle), wird sie referenziert, sonst nur inline gefuehrt.
     if value.startswith("epg:"):
-        return RuleEndpoint(role=role, kind=EndpointKind.EPG, inline_value=value[4:], matched=False)
+        epg_name = value[4:]
+        epg = session.scalars(
+            select(Epg).where(Epg.tenant_id == tenant_id, Epg.name == epg_name)
+        ).first()
+        return RuleEndpoint(
+            role=role,
+            kind=EndpointKind.EPG,
+            epg_id=epg.id if epg else None,
+            inline_value=epg_name,
+            matched=epg is not None,
+        )
 
     kind_tag, sep, rest = value.partition(":")
     if sep and kind_tag in _TYPED_KINDS:

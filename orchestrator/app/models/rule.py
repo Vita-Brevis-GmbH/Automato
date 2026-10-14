@@ -66,6 +66,8 @@ class Rule(Base):
     contract_dn: Mapped[str | None] = mapped_column(String(400), nullable=True)
     subject: Mapped[str | None] = mapped_column(String(200), nullable=True)
     is_inter_tenant: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Contract-Scope (application-profile|context|tenant|global) -> Applikations-Doku-Kategorie
+    aci_scope: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     collector_run_id: Mapped[str | None] = mapped_column(
         ForeignKey("collector_run.id"), nullable=True
@@ -90,7 +92,8 @@ class RuleEndpoint(Base):
     network_object_id: Mapped[int | None] = mapped_column(
         ForeignKey("network_object.id"), nullable=True
     )
-    # Phase 2 (ACI): epg_id ForeignKey("epg.id") wird hier ergaenzt
+    # ACI (Phase 2): EPG-Endpunkt-Referenz
+    epg_id: Mapped[int | None] = mapped_column(ForeignKey("epg.id"), nullable=True)
     inline_value: Mapped[str | None] = mapped_column(String(300), nullable=True)
     matched: Mapped[bool] = mapped_column(Boolean, default=False)
 

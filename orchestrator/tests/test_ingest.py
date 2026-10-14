@@ -398,3 +398,52 @@ def test_aci_epg_endpunkte_ohne_finding(session_factory):
     assert all(e.kind is EndpointKind.EPG for e in eps)
     assert {e.inline_value for e in eps} == {"EG_web", "EG_db"}
     assert s.query(Finding).filter(Finding.type == FindingType.INVALID_NAME).count() == 0
+
+
+def test_aci_epgs_persistiert_und_endpunkt_verlinkt(session_factory):
+    """EPGs werden angelegt (ap/bd/subnets), rule.aci_scope gesetzt, Endpunkt -> epg_id."""
+    from app.models import CollectorRun, Epg, EpgSubnet, Rule, RuleEndpoint
+
+    s = session_factory()
+    tenant = Tenant(name="kunde-aci2", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+    fw = SourceSystem(
+        name="apic2", platform=Platform.CISCO_ACI, base_url="https://apic", enabled=True
+    )
+    s.add_all([tenant, fw])
+    s.flush()
+    run = CollectorRun(platform="cisco_aci", tenant_id=tenant.id, source_system_id=fw.id)
+    s.add(run)
+    s.flush()
+
+    result = CollectorResult.model_validate(
+        {
+            "status": "completed",
+            "epgs": [
+                {"name": "EG_web", "ap": "AP_001", "bd": "BD_app", "subnets": ["10.20.1.1/24"]},
+                {"name": "EG_db", "ap": "AP_001", "bd": "BD_db", "subnets": []},
+            ],
+            "rules": [
+                {
+                    "source_platform": "cisco_aci",
+                    "external_id": "uni/tn-TE_share/brc-CT_web/SJ_mysql",
+                    "name": "CT_web:SJ_mysql",
+                    "action": "allow",
+                    "sources": ["epg:EG_web"],
+                    "destinations": ["epg:EG_db"],
+                    "services": ["tcp/3306"],
+                    "aci_scope": "context",
+                }
+            ],
+        }
+    )
+    ingest.persist_result(s, run, result, FakeSoT())
+    s.commit()
+
+    web = s.query(Epg).filter(Epg.name == "EG_web").one()
+    assert web.ap == "AP_001" and web.bd == "BD_app"
+    assert s.query(EpgSubnet).filter(EpgSubnet.epg_id == web.id).count() == 1
+
+    rule = s.query(Rule).one()
+    assert rule.aci_scope == "context"
+    eps = {e.inline_value: e for e in s.query(RuleEndpoint).all()}
+    assert eps["EG_web"].epg_id == web.id and eps["EG_web"].matched is True

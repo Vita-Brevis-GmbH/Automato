@@ -22,7 +22,17 @@ class NormalizedRule(BaseModel):
     src_zone: str | None = None
     dst_zone: str | None = None
     protections: list[str] = Field(default_factory=list)  # UTM-Profile ("Schutzmechanismen")
+    aci_scope: str | None = None  # Contract-Scope (ACI) -> Applikations-Doku-Kategorie
     raw: dict[str, Any] | None = None  # Original-Payload fuer Nachvollziehbarkeit
+
+
+class NormalizedEpg(BaseModel):
+    """ACI-EPG (Model 1): Server-Gruppierung mit AP-Klammer (Projekt) + Subnetzen."""
+
+    name: str
+    ap: str | None = None  # AP_### (Projekt)
+    bd: str | None = None  # BD_...
+    subnets: list[str] = Field(default_factory=list)  # fvSubnet (dual-stack)
 
 
 class NormalizedNat(BaseModel):
@@ -56,4 +66,5 @@ class CollectorResult(BaseModel):
     rules: list[NormalizedRule] = Field(default_factory=list)
     nat_rules: list[NormalizedNat] = Field(default_factory=list)
     objects: list[NormalizedObject] = Field(default_factory=list)
+    epgs: list[NormalizedEpg] = Field(default_factory=list)
     message: str | None = None

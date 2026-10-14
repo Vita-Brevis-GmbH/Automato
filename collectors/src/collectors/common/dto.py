@@ -22,7 +22,17 @@ class NormalizedRule(BaseModel):
     # Schutzmechanismen (FortiGate-UTM-Profile an der Policy): WEB/WF, APP/AC, IPS,
     # WAF, SSL, AV, DNS-Filter - fuer die Applikations-Doku-Spalte "Schutzmechanismen".
     protections: list[str] = Field(default_factory=list)
+    aci_scope: str | None = None  # Contract-Scope (ACI) -> Applikations-Doku-Kategorie
     raw: dict[str, Any] | None = None
+
+
+class NormalizedEpg(BaseModel):
+    """ACI-EPG (Model 1): Server-Gruppierung mit AP-Klammer (Projekt) + Subnetzen."""
+
+    name: str
+    ap: str | None = None
+    bd: str | None = None
+    subnets: list[str] = Field(default_factory=list)
 
 
 class NormalizedNat(BaseModel):
@@ -56,4 +66,5 @@ class CollectorResult(BaseModel):
     rules: list[NormalizedRule] = Field(default_factory=list)
     nat_rules: list[NormalizedNat] = Field(default_factory=list)
     objects: list[NormalizedObject] = Field(default_factory=list)
+    epgs: list[NormalizedEpg] = Field(default_factory=list)
     message: str | None = None

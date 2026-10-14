@@ -24,7 +24,8 @@
               "attributes": { "name": "EG_web", "dn": "uni/tn-TE_share/ap-AP_001/epg-EG_web" },
               "children": [
                 { "fvRsBd": { "attributes": { "tnFvBDName": "BD_app" } } },
-                { "fvRsCons": { "attributes": { "tnVzBrCPName": "CT_web" } } }
+                { "fvRsCons": { "attributes": { "tnVzBrCPName": "CT_web" } } },
+                { "fvSubnet": { "attributes": { "ip": "10.20.1.1/24" } } }
               ]
             }
           },

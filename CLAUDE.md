@@ -144,6 +144,14 @@ lesend vor. Tests: collectors `test_normalize.py` (MO-Parser), orchestrator `tes
 (EPG-Ingest). **Offen (eigene Phase):** epg-Tabellen (`epg`/`epg_subnet`/`epg_endpoint`),
 Contract-`scope`→Applikations-Doku-Kategorie, EPG als System in der Applikations-Doku,
 echter APIC-REST-Client.
+**ACI-epg-Phase (A) umgesetzt** (Alembic `0011`): Modelle `epg` (tenant, name, `ap`=Projekt,
+`bd`; unique je Mandant) + `epg_subnet` (fvSubnet, dual-stack); `rule.aci_scope` (Contract-Scope)
+und `rule_endpoint.epg_id`. DTO erweitert (`NormalizedEpg`, `NormalizedRule.aci_scope`,
+`CollectorResult.epgs`). MO-Parser `parse_epgs` (name/ap aus dn/bd/subnets) + `aci_scope` an der
+Regel; Ingest `_apply_epgs` persistiert EPGs/Subnetze **vor** den Regeln und verlinkt
+`epg:`-Endpunkte auf `epg_id` (matched, kein Finding). Tests collectors (`parse_epgs`/scope) +
+orchestrator (`test_ingest`). Offen (B): EPG als System in der Applikations-Doku (Tabellen 7/8/9
+via scope/AP).
 **Standort-Verortung umgesetzt** (Alembic `0010`): `network_object.site_id` (nullable FK → site)
 verortet ein System an einem Standort. `PATCH /appdoc/systems/{name}/site` (operator,
 mandantsgescoped, auditiert `system.site_assigned`; fremde Site → 422); `build_doc` liefert jetzt

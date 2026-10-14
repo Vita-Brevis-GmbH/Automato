@@ -198,3 +198,21 @@ def test_aci_mo_export_wird_geparst_und_normalisiert():
     assert rule.services == ["tcp/3306"]
     assert rule.src_zone == "L3O_inet" and rule.dst_zone == "BD_db"
     assert rule.external_id == "uni/tn-TE_share/brc-CT_web/SJ_mysql"
+
+
+def test_aci_parse_epgs_und_scope():
+    from collectors.cisco_aci.mo import parse_epgs, parse_mo_export
+    from collectors.cisco_aci.tasks import fetch_mo_export
+
+    export = fetch_mo_export()
+    epgs = {e["name"]: e for e in parse_epgs(export)}
+    assert set(epgs) == {"EG_web", "EG_db"}
+    assert epgs["EG_web"]["ap"] == "AP_001"
+    assert epgs["EG_web"]["bd"] == "BD_app"
+    assert epgs["EG_web"]["subnets"] == ["10.20.1.1/24"]
+
+    # Contract-Scope landet an der normalisierten Regel
+    from collectors.cisco_aci.normalize import normalize_contract
+
+    rules = [r for c in parse_mo_export(export) for r in normalize_contract(c)]
+    assert rules[0].aci_scope == "context"

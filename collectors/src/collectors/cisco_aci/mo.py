@@ -42,6 +42,14 @@ class _Bag:
         self.filters: dict[str, list[str]] = {}  # Filter-Name -> [Service-Strings]
 
 
+def _ap_from_dn(dn: str) -> str | None:
+    """AP-Klammer (Projekt) aus der EPG-DN: .../ap-<AP>/epg-<EG> -> <AP>."""
+    for part in dn.split("/"):
+        if part.startswith("ap-"):
+            return part[len("ap-") :]
+    return None
+
+
 def _entry_service(attrs: dict) -> str:
     prot = (attrs.get("prot") or "ip").lower()
     if prot in ("icmp", "icmpv4"):
@@ -70,8 +78,11 @@ def _walk(mo: dict, bag: _Bag, parent_l3out: str | None = None) -> None:
             bd = next((_attrs(c["fvRsBd"]).get("tnFvBDName") for c in kids if "fvRsBd" in c), None)
             provides = [_attrs(c["fvRsProv"]).get("tnVzBrCPName") for c in kids if "fvRsProv" in c]
             consumes = [_attrs(c["fvRsCons"]).get("tnVzBrCPName") for c in kids if "fvRsCons" in c]
+            subnets = [_attrs(c["fvSubnet"]).get("ip") for c in kids if "fvSubnet" in c]
             bag.epgs[name] = {
                 "bd": bd,
+                "ap": _ap_from_dn(attrs.get("dn", "")),
+                "subnets": [x for x in subnets if x],
                 "provides": [x for x in provides if x],
                 "consumes": [x for x in consumes if x],
             }
@@ -147,3 +158,19 @@ def parse_mo_export(data: Any) -> list[dict]:
             }
         )
     return contracts
+
+
+def parse_epgs(data: Any) -> list[dict]:
+    """APIC-MO-Export -> Liste von EPG-Dicts (name, ap, bd, subnets) fuer den Store."""
+    bag = _Bag()
+    for root in _roots(data):
+        _walk(root, bag)
+    return [
+        {
+            "name": name,
+            "ap": info.get("ap"),
+            "bd": info.get("bd"),
+            "subnets": info.get("subnets", []),
+        }
+        for name, info in sorted(bag.epgs.items())
+    ]

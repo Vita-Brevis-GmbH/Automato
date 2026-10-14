@@ -48,6 +48,7 @@ def normalize_contract(contract: dict[str, Any]) -> list[NormalizedRule]:
                 services=_subject_services(subject),
                 src_zone=src_zone,
                 dst_zone=dst_zone,
+                aci_scope=contract.get("scope"),
                 raw=contract,
             )
         )
