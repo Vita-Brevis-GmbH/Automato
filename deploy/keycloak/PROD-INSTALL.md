@@ -18,8 +18,9 @@ aussen erreichbar. Health/Metrics liegen auf Keycloaks Management-Port 9000 (nur
 
 ## 0. Voraussetzungen (vorher erledigen)
 
-- **VM:** Debian 12 oder Ubuntu 22.04/24.04 LTS, 2 vCPU / 2–4 GB RAM / 20 GB Disk, SSH mit
-  sudo. Dediziert nur für Keycloak (ADR 0007: eigener IdP, eigene VM).
+- **VM:** Ubuntu 26.04 LTS („Resolute") — oder 22.04/24.04 LTS bzw. Debian 12 — 2 vCPU /
+  2–4 GB RAM / 20 GB Disk, SSH mit sudo. Dediziert nur für Keycloak (ADR 0007: eigener IdP,
+  eigene VM).
 - **Wildcard-Zertifikat** (`*.vitabrevis.ch`) als **PEM** bereithalten — **kein Let's
   Encrypt/ACME**:
   - Zertifikatskette (Leaf **+** Intermediates) in **einer** Datei, z. B. `auth.vitabrevis.ch.crt`
@@ -48,28 +49,47 @@ neu starten.
 
 ---
 
-## 2. Docker Engine + Compose-Plugin installieren (offizielle Pakete)
+## 2. Docker + Compose installieren (Ubuntu 26.04 „Resolute")
+
+Auf Ubuntu 26.04 am einfachsten und zuverlässig die **Canonical-Pakete** aus `universe`:
+`docker-compose-v2` zieht `docker.io` (Engine) + `containerd` als Abhängigkeit mit. Docker
+veröffentlicht sein **Upstream-Repo für ein frisches Release oft verzögert** — deshalb
+scheitert der Fremd-Repo-Weg mit `404 … resolute Release`.
+
+**Falls die kaputte Docker-Repo-Zeile schon angelegt wurde (wie im Fehlerfall), zuerst weg:**
 
 ```bash
-sudo apt-get -y install ca-certificates curl gnupg
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/debian/gpg | \
-  sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg     # Ubuntu: .../ubuntu/gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-  https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null       # Ubuntu: .../linux/ubuntu
-
+sudo rm -f /etc/apt/sources.list.d/docker.list /etc/apt/keyrings/docker.gpg
 sudo apt-get update
-sudo apt-get -y install docker-ce docker-ce-cli containerd.io \
-  docker-buildx-plugin docker-compose-plugin
-sudo systemctl enable --now docker
-docker --version && docker compose version
 ```
 
-> Debian-eigene Pakete (`docker.io` + `docker-compose-plugin`) gehen auch; die obigen
-> Docker-Upstream-Pakete sind für Produktion aktueller.
+**Installieren (Ubuntu-Pakete):**
+
+```bash
+sudo apt-get -y install docker-compose-v2
+sudo systemctl enable --now docker
+docker --version && docker compose version    # beide müssen eine Version zeigen
+```
+
+> **Optional — Docker-Upstream-Pakete** (von Docker Inc., ggf. neuer): nur wenn ausdrücklich
+> gewünscht und **nicht mit den Ubuntu-Paketen mischen**. Repo mit **`linux/ubuntu`** (nicht
+> `debian`); fehlt euer Codename (`resolute`) noch bei Docker, auf das neueste unterstützte
+> LTS zeigen (z. B. `noble`):
+>
+> ```bash
+> sudo apt-get -y install ca-certificates curl
+> sudo install -m 0755 -d /etc/apt/keyrings
+> curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+>   sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+> sudo chmod a+r /etc/apt/keyrings/docker.gpg
+> CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")   # 404? -> CODENAME=noble
+> echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+>   https://download.docker.com/linux/ubuntu $CODENAME stable" | \
+>   sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+> sudo apt-get update
+> sudo apt-get -y install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+> sudo systemctl enable --now docker
+> ```
 
 ---
 
