@@ -190,8 +190,13 @@ darüber. Serverseitig erzwingt der Reverse-Proxy (Caddy) Client-Zertifikate vor
 `system/global`) + `check()` je Plattform; Runner-Modus `automato-collector --check
 --platform …` prüft Erreichbarkeit/Auth des Zielsystems read-only (Exit 0 OK / 2 Fehler),
 bevor ein echter Lauf im Kundennetz gestartet wird. Tests `test_fortigate_client.py`
-(ping) + `test_run.py` (check). Offen: echter APIC-REST-Client im Agenten, Windows-
-Paketierung.
+(ping) + `test_run.py` (check).
+**Windows-Paketierung umgesetzt**: `deploy/collector-agent/` — `install.ps1` (venv +
+collectors-Wheel + Scheduled Task „Automato Collector Agent" → `--poll` alle N min),
+`run-agent.ps1` (lädt `agent.env`, startet den Agenten), `agent.env.example` (Token/Ziel-
+Creds/TLS), `agent_entry.py` (PyInstaller-Entry für eine Python-freie `.exe`), README. Wheel
+baut via `uv build --package collectors`. Damit ist der externe Collector auf Windows
+rollbar. **Offen (Model-1-Rest):** echter APIC-REST-Client im Agenten (Login + MO-Subtree).
 **Standort-Verortung umgesetzt** (Alembic `0010`): `network_object.site_id` (nullable FK → site)
 verortet ein System an einem Standort. `PATCH /appdoc/systems/{name}/site` (operator,
 mandantsgescoped, auditiert `system.site_assigned`; fremde Site → 422); `build_doc` liefert jetzt
