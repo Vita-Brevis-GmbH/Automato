@@ -21,6 +21,7 @@ from app.models import (
     EndpointKind,
     EndpointRole,
     Epg,
+    EpgEndpoint,
     EpgSubnet,
     Family,
     Finding,
@@ -99,7 +100,8 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
 
 
 def _apply_epgs(session: Session, tenant_id: int, epgs) -> None:
-    """EPGs (ACI) idempotent anlegen/aktualisieren; Subnetze je EPG ersetzen."""
+    """EPGs (ACI) idempotent anlegen/aktualisieren; Subnetze + gelernte Endpunkte je EPG
+    ersetzen; EPG an den zugehoerigen Server (Host-Objekt) knuepfen, wenn aufloesbar."""
     for e in epgs:
         epg = session.scalars(
             select(Epg).where(Epg.tenant_id == tenant_id, Epg.name == e.name)
@@ -113,9 +115,30 @@ def _apply_epgs(session: Session, tenant_id: int, epgs) -> None:
         for old in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id == epg.id)):
             session.delete(old)
         for ip in e.subnets:
-            fam = "v6" if ":" in ip else "v4"
-            session.add(EpgSubnet(epg_id=epg.id, ip=ip, family=fam))
+            session.add(EpgSubnet(epg_id=epg.id, ip=ip, family="v6" if ":" in ip else "v4"))
+        for old in session.scalars(select(EpgEndpoint).where(EpgEndpoint.epg_id == epg.id)):
+            session.delete(old)
+        for ep in e.endpoints:
+            session.add(EpgEndpoint(epg_id=epg.id, ip=ep.ip, mac=ep.mac))
+        # EPG <-> Host: ersten gelernten Endpunkt, der auf ein Host-Objekt zeigt, verknuepfen
+        host = _host_by_ips(session, tenant_id, [ep.ip for ep in e.endpoints])
+        if host is not None:
+            epg.network_object_id = host.id
     session.flush()
+
+
+def _host_by_ips(session: Session, tenant_id: int, ips) -> NetworkObject | None:
+    for ip in ips:
+        host = session.scalars(
+            select(NetworkObject).where(
+                NetworkObject.tenant_id == tenant_id,
+                NetworkObject.object_class == ObjectClass.HOST,
+                NetworkObject.value == ip,
+            )
+        ).first()
+        if host is not None:
+            return host
+    return None
 
 
 def _resolve_prefixes(session: Session, tenant_id: int) -> PrefixList | None:

@@ -8,7 +8,7 @@ Die ACI-Tabellen (epg*) und nat_rule folgen mit ihrer Phase.
 from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.collector_run import CollectorRun, RunStatus
-from app.models.epg import Epg, EpgSubnet
+from app.models.epg import Epg, EpgEndpoint, EpgSubnet
 from app.models.finding import Finding, FindingStatus, FindingType, Severity, SubjectKind
 from app.models.naming_profile import DictionaryEntry, NamingProfile
 from app.models.nat_rule import NatRule
@@ -43,6 +43,7 @@ __all__ = [
     "DnsType",
     "EndpointKind",
     "Epg",
+    "EpgEndpoint",
     "EpgSubnet",
     "EndpointRole",
     "Family",

@@ -228,7 +228,15 @@ def _epg_doc(session: Session, epg: Epg) -> dict:
                 "Description": r.name or f"#{r.external_id}",
             }
         )
-    return _envelope(session, epg.name, epg.tenant_id, None, None, rows_by_table)
+    host = session.get(NetworkObject, epg.network_object_id) if epg.network_object_id else None
+    return _envelope(
+        session,
+        epg.name,
+        epg.tenant_id,
+        host.value if host else None,
+        host.site_id if host else None,
+        rows_by_table,
+    )
 
 
 def build_doc(session: Session, system_name: str, tenant_id: int | None) -> dict | None:

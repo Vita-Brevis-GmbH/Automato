@@ -42,6 +42,21 @@ class _Bag:
         self.filters: dict[str, list[str]] = {}  # Filter-Name -> [Service-Strings]
 
 
+def _cep_endpoints(kids: list[dict]) -> list[dict]:
+    """Gelernte Endpunkte aus fvCEp (mac) + fvIp (addr) unter einer EPG."""
+    out: list[dict] = []
+    for c in kids:
+        if "fvCEp" not in c:
+            continue
+        mac = _attrs(c["fvCEp"]).get("mac")
+        for ic in _children(c["fvCEp"]):
+            if "fvIp" in ic:
+                ip = _attrs(ic["fvIp"]).get("addr")
+                if ip:
+                    out.append({"ip": ip, "mac": mac})
+    return out
+
+
 def _ap_from_dn(dn: str) -> str | None:
     """AP-Klammer (Projekt) aus der EPG-DN: .../ap-<AP>/epg-<EG> -> <AP>."""
     for part in dn.split("/"):
@@ -83,6 +98,7 @@ def _walk(mo: dict, bag: _Bag, parent_l3out: str | None = None) -> None:
                 "bd": bd,
                 "ap": _ap_from_dn(attrs.get("dn", "")),
                 "subnets": [x for x in subnets if x],
+                "endpoints": _cep_endpoints(kids),
                 "provides": [x for x in provides if x],
                 "consumes": [x for x in consumes if x],
             }
@@ -171,6 +187,7 @@ def parse_epgs(data: Any) -> list[dict]:
             "ap": info.get("ap"),
             "bd": info.get("bd"),
             "subnets": info.get("subnets", []),
+            "endpoints": info.get("endpoints", []),
         }
         for name, info in sorted(bag.epgs.items())
     ]

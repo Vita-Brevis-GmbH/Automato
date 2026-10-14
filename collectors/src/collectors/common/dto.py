@@ -26,6 +26,11 @@ class NormalizedRule(BaseModel):
     raw: dict[str, Any] | None = None
 
 
+class NormalizedEpgEndpoint(BaseModel):
+    ip: str
+    mac: str | None = None
+
+
 class NormalizedEpg(BaseModel):
     """ACI-EPG (Model 1): Server-Gruppierung mit AP-Klammer (Projekt) + Subnetzen."""
 
@@ -33,6 +38,7 @@ class NormalizedEpg(BaseModel):
     ap: str | None = None
     bd: str | None = None
     subnets: list[str] = Field(default_factory=list)
+    endpoints: list[NormalizedEpgEndpoint] = Field(default_factory=list)  # fvCEp/fvIp
 
 
 class NormalizedNat(BaseModel):

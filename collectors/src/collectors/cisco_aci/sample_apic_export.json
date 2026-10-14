@@ -25,7 +25,13 @@
               "children": [
                 { "fvRsBd": { "attributes": { "tnFvBDName": "BD_app" } } },
                 { "fvRsCons": { "attributes": { "tnVzBrCPName": "CT_web" } } },
-                { "fvSubnet": { "attributes": { "ip": "10.20.1.1/24" } } }
+                { "fvSubnet": { "attributes": { "ip": "10.20.1.1/24" } } },
+                {
+                  "fvCEp": {
+                    "attributes": { "mac": "00:50:56:AA:BB:CC" },
+                    "children": [{ "fvIp": { "attributes": { "addr": "10.20.1.50" } } }]
+                  }
+                }
               ]
             }
           },

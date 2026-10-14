@@ -447,3 +447,48 @@ def test_aci_epgs_persistiert_und_endpunkt_verlinkt(session_factory):
     assert rule.aci_scope == "context"
     eps = {e.inline_value: e for e in s.query(RuleEndpoint).all()}
     assert eps["EG_web"].epg_id == web.id and eps["EG_web"].matched is True
+
+
+def test_aci_epg_endpoint_und_host_link(session_factory):
+    """Gelernte EPG-Endpunkte werden persistiert; EPG wird an das Host-Objekt geknuepft."""
+    from app.models import CollectorRun, Epg, EpgEndpoint, NetworkObject, ObjectClass
+
+    s = session_factory()
+    tenant = Tenant(name="kunde-aci3", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+    fw = SourceSystem(
+        name="apic3", platform=Platform.CISCO_ACI, base_url="https://apic", enabled=True
+    )
+    s.add_all([tenant, fw])
+    s.flush()
+    # Host-Objekt (z. B. aus einem FortiGate-Lauf) mit passender IP vorhanden
+    s.add(
+        NetworkObject(
+            tenant_id=tenant.id, name="H_app01", object_class=ObjectClass.HOST, value="10.20.1.50"
+        )
+    )
+    s.flush()
+    run = CollectorRun(platform="cisco_aci", tenant_id=tenant.id, source_system_id=fw.id)
+    s.add(run)
+    s.flush()
+
+    result = CollectorResult.model_validate(
+        {
+            "status": "completed",
+            "epgs": [
+                {
+                    "name": "EG_web",
+                    "ap": "AP_001",
+                    "bd": "BD_app",
+                    "subnets": ["10.20.1.1/24"],
+                    "endpoints": [{"ip": "10.20.1.50", "mac": "00:50:56:AA:BB:CC"}],
+                }
+            ],
+        }
+    )
+    ingest.persist_result(s, run, result, FakeSoT())
+    s.commit()
+
+    epg = s.query(Epg).filter(Epg.name == "EG_web").one()
+    assert s.query(EpgEndpoint).filter(EpgEndpoint.epg_id == epg.id).count() == 1
+    host = s.query(NetworkObject).filter(NetworkObject.value == "10.20.1.50").one()
+    assert epg.network_object_id == host.id  # EPG -> Server verknuepft

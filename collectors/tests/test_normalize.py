@@ -216,3 +216,13 @@ def test_aci_parse_epgs_und_scope():
 
     rules = [r for c in parse_mo_export(export) for r in normalize_contract(c)]
     assert rules[0].aci_scope == "context"
+
+
+def test_aci_parse_epgs_gelernte_endpunkte():
+    from collectors.cisco_aci.mo import parse_epgs
+    from collectors.cisco_aci.tasks import fetch_mo_export
+
+    epgs = {e["name"]: e for e in parse_epgs(fetch_mo_export())}
+    eps = epgs["EG_web"]["endpoints"]
+    assert eps == [{"ip": "10.20.1.50", "mac": "00:50:56:AA:BB:CC"}]
+    assert epgs["EG_db"]["endpoints"] == []
