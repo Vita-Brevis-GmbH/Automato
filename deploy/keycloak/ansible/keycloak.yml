@@ -24,6 +24,9 @@
     #   kc_bootstrap_admin_user    temporaerer Master-Admin (Boot)
     #   kc_bootstrap_admin_password (VAULT)
     #   kc_db_password             (VAULT)
+    # Eigenes Zertifikat (z. B. Wildcard, KEIN ACME) - beide auf dem Control-Host:
+    #   kc_tls_cert   Pfad zur Zertifikatskette (Leaf + Intermediates, PEM)
+    #   kc_tls_key    Pfad zum privaten Schluessel (PEM, ohne Passphrase)
     kc_tls_internal: false  # true = Caddy nutzt eigene CA (Lab/ohne oeffentliches DNS)
 
   pre_tasks:
@@ -68,6 +71,36 @@
         owner: root
         group: root
         mode: "0640"
+      notify: Keycloak neu starten
+
+    - name: PKI-Verzeichnis anlegen (eigenes Zertifikat)
+      when: kc_tls_cert is defined and kc_tls_cert | length > 0
+      ansible.builtin.file:
+        path: "{{ kc_base_dir }}/pki"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Zertifikatskette ausliefern (Leaf + Intermediates)
+      when: kc_tls_cert is defined and kc_tls_cert | length > 0
+      ansible.builtin.copy:
+        src: "{{ kc_tls_cert }}"
+        dest: "{{ kc_base_dir }}/pki/{{ kc_domain }}.crt"
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Keycloak neu starten
+
+    - name: Privaten Schluessel ausliefern - streng 0600
+      when: kc_tls_cert is defined and kc_tls_cert | length > 0
+      ansible.builtin.copy:
+        src: "{{ kc_tls_key }}"
+        dest: "{{ kc_base_dir }}/pki/{{ kc_domain }}.key"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
       notify: Keycloak neu starten
 
     - name: Compose-Datei rendern

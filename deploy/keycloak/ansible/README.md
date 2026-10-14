@@ -47,10 +47,20 @@ Das Playbook prüft zuerst die Pflicht-/Secret-Variablen (fail-closed), rendert 
 `.env` (Mode 0600), `Caddyfile`, setzt die Firewall (nur 22/80/443) und wartet am Ende,
 bis die öffentliche OIDC-Discovery von `kc_domain` antwortet.
 
+## TLS-Modus wählen
+
+- **Eigenes Zertifikat (z. B. Wildcard, kein ACME):** `kc_tls_cert` + `kc_tls_key` in
+  `group_vars` auf die PEM-Dateien (Control-Host) setzen — Kette (Leaf + Intermediates)
+  und Key **ohne Passphrase**. Das Playbook legt sie nach `/opt/automato-keycloak/pki`
+  (Key 0600) und Caddy serviert damit ohne ACME.
+- **Let's Encrypt (ACME):** `kc_tls_cert` weglassen, `kc_acme_email` setzen, DNS + Port 80.
+- **Lab/intern:** `kc_tls_internal: true` (Caddy-interne CA, Self-Signed).
+
 ## Härtung (eingebaut)
 
-- **TLS**: Caddy terminiert, automatische Zertifikate (ACME), **TLS 1.3 only** (wie
-  Projekt Magister; im `Caddyfile.j2` auf 1.2 lockerbar), HSTS + Security-Header.
+- **TLS**: Caddy terminiert, **TLS 1.3 only** (wie Projekt Magister; im `Caddyfile.j2` auf
+  1.2 lockerbar), HSTS + Security-Header. Zertifikat je nach Modus (oben): eigenes
+  Wildcard, ACME oder interne CA.
 - **Keycloak prod-mode** (`start`, nicht `start-dev`), `KC_HOSTNAME=https://…`,
   `KC_PROXY_HEADERS=xforwarded`; HTTP nur intern, nie veröffentlicht.
 - **Persistente DB** (Postgres mit Volume) statt H2 — User/OTP/Sessions überleben.

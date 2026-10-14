@@ -20,12 +20,14 @@ aussen erreichbar. Health/Metrics liegen auf Keycloaks Management-Port 9000 (nur
 
 - **VM:** Debian 12 oder Ubuntu 22.04/24.04 LTS, 2 vCPU / 2–4 GB RAM / 20 GB Disk, SSH mit
   sudo. Dediziert nur für Keycloak (ADR 0007: eigener IdP, eigene VM).
-- **DNS:** Ein A/AAAA-Record **`auth.vitabrevis.ch` → öffentliche IP der VM** muss gesetzt
-  und propagiert sein, **bevor** Caddy startet (Let's Encrypt validiert per HTTP-01 auf
-  Port 80). Prüfen: `dig +short auth.vitabrevis.ch`.
-- **Firewall am Perimeter/Cloud-Provider:** eingehend nur **22 (SSH), 80, 443** offen.
-  Port 80 wird nur für den ACME-Challenge/Redirect gebraucht.
-- **E-Mail für Let's Encrypt:** z. B. `ops@vitabrevis.ch` (Ablauf-Benachrichtigungen).
+- **Wildcard-Zertifikat** (`*.vitabrevis.ch`) als **PEM** bereithalten — **kein Let's
+  Encrypt/ACME**:
+  - Zertifikatskette (Leaf **+** Intermediates) in **einer** Datei, z. B. `auth.vitabrevis.ch.crt`
+  - privater Schlüssel **unverschlüsselt** (ohne Passphrase), z. B. `auth.vitabrevis.ch.key`
+- **DNS:** Ein A/AAAA-Record **`auth.vitabrevis.ch` → öffentliche IP der VM**. Prüfen:
+  `dig +short auth.vitabrevis.ch`. (Ohne ACME wird Port 80 dafür **nicht** gebraucht.)
+- **Firewall am Perimeter/Cloud-Provider:** eingehend nur **22 (SSH) + 443** offen; **80
+  nur**, falls ihr den automatischen HTTP→HTTPS-Redirect wollt (sonst weglassen).
 
 ---
 
@@ -78,8 +80,8 @@ sudo apt-get -y install ufw
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 sudo ufw allow 22/tcp
-sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
+sudo ufw allow 80/tcp     # optional: nur für HTTP->HTTPS-Redirect; ohne Redirect weglassen
 sudo ufw --force enable
 sudo ufw status verbose
 ```
@@ -113,6 +115,28 @@ Der Realm bringt die Härtung mit (Brute-Force, Passwort-Policy Länge ≥12 + M
 Ablauf, **OTP/TOTP-Pflicht**, Security-Header, `registrationAllowed=false`), die Rollen
 `viewer/operator/admin`, die Clients `automato-web` (PKCE) / `automato-api` (bearer-only),
 den `tenant_ids`-Mapper und den geseedten `automato-admin`.
+
+### Wildcard-Zertifikat + Key auf die VM bringen
+
+```bash
+sudo mkdir -p /opt/automato-keycloak/pki
+# vom Arbeitsplatz aus:
+scp auth.vitabrevis.ch.crt auth.vitabrevis.ch.key ops@<VM>:/tmp/
+# auf der VM:
+sudo mv /tmp/auth.vitabrevis.ch.crt /opt/automato-keycloak/pki/
+sudo mv /tmp/auth.vitabrevis.ch.key /opt/automato-keycloak/pki/
+sudo chmod 640 /opt/automato-keycloak/pki/auth.vitabrevis.ch.crt
+sudo chmod 600 /opt/automato-keycloak/pki/auth.vitabrevis.ch.key   # Key streng 0600
+```
+
+> - Die `.crt` muss die **vollständige Kette** enthalten: **Leaf zuerst, dann Intermediates**.
+>   Liegen sie getrennt vor:
+>   `cat leaf.crt intermediate.crt > auth.vitabrevis.ch.crt`.
+> - Der Key muss **ohne Passphrase** sein (Caddy entschlüsselt nicht interaktiv). Falls
+>   verschlüsselt: `openssl rsa -in verschluesselt.key -out auth.vitabrevis.ch.key`.
+> - Kette/Key prüfen (Modulus muss übereinstimmen):
+>   `openssl x509 -noout -modulus -in auth.vitabrevis.ch.crt | openssl md5` vs.
+>   `openssl rsa -noout -modulus -in auth.vitabrevis.ch.key | openssl md5`.
 
 ---
 
@@ -186,6 +210,7 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./pki:/etc/caddy/pki:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
@@ -203,12 +228,16 @@ volumes:
 EOF
 ```
 
-### 5c. `/opt/automato-keycloak/Caddyfile` (TLS 1.3, HSTS, Security-Header)
+### 5c. `/opt/automato-keycloak/Caddyfile` (eigenes Wildcard-Zertifikat, TLS 1.3, HSTS)
+
+Kein `email`/ACME — Caddy nutzt die Dateien aus `./pki` (Schritt 4). Dass hier ein
+**eigenes Zertifikat** angegeben ist, schaltet die automatische Zertifikatsverwaltung für
+diese Domain ab.
 
 ```bash
 sudo tee /opt/automato-keycloak/Caddyfile >/dev/null <<'EOF'
 {
-    email ops@vitabrevis.ch
+    # Eigenes (Wildcard-)Zertifikat -> kein ACME/Let's Encrypt.
     servers {
         protocols h1 h2
     }
@@ -217,8 +246,9 @@ sudo tee /opt/automato-keycloak/Caddyfile >/dev/null <<'EOF'
 auth.vitabrevis.ch {
     encode zstd gzip
 
-    # TLS 1.3 only. Nur falls Altclients zwingen: protocols tls1.2 tls1.3
-    tls {
+    # Wildcard-Zertifikat aus ./pki (im Container /etc/caddy/pki). TLS 1.3 only.
+    # Nur falls Altclients zwingen: protocols tls1.2 tls1.3
+    tls /etc/caddy/pki/auth.vitabrevis.ch.crt /etc/caddy/pki/auth.vitabrevis.ch.key {
         protocols tls1.3 tls1.3
     }
 
@@ -243,8 +273,6 @@ auth.vitabrevis.ch {
 EOF
 ```
 
-`ops@vitabrevis.ch` auf eure echte Kontakt-Adresse anpassen.
-
 ---
 
 ## 6. Stack starten
@@ -253,12 +281,13 @@ EOF
 cd /opt/automato-keycloak
 sudo docker compose up -d
 sudo docker compose ps
-sudo docker compose logs -f caddy      # ACME-Zertifikat für auth.vitabrevis.ch beobachten
+sudo docker compose logs -f caddy      # lädt das Wildcard-Zertifikat aus ./pki (kein ACME)
 sudo docker compose logs -f keycloak   # "Imported realm automato" + "started in ..."
 ```
 
-Beim ersten Start importiert Keycloak den Realm und Caddy holt automatisch ein
-Let's-Encrypt-Zertifikat (DNS muss zeigen, Port 80 erreichbar).
+Beim ersten Start importiert Keycloak den Realm; Caddy serviert sofort mit eurem
+Wildcard-Zertifikat (kein ACME, nichts zu holen). Fehlt/ungültig das Zertifikat, meldet
+Caddy das im Log.
 
 ---
 
@@ -331,7 +360,11 @@ erlaubten Mandanten-IDs setzen, Rolle `viewer`/`operator` zuweisen, Passwort set
 - **Updates:** Image-Tag in `docker-compose.yml` anheben, `docker compose pull && docker
   compose up -d`. DB-Volume bleibt. Vorher Backup. Keycloak-Release-Notes auf Breaking
   Changes prüfen.
-- **TLS:** Caddy erneuert automatisch. Nichts zu tun.
+- **TLS:** Kein ACME → **Erneuerung ist manuell/extern**. Beim Austausch des Wildcard-
+  Zertifikats die zwei Dateien in `./pki` ersetzen (gleiche Namen) und Caddy neu laden:
+  `sudo docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`
+  (oder `sudo docker compose restart caddy`). **Ablaufdatum überwachen** (z. B. Monitoring
+  auf `notAfter`): `openssl x509 -enddate -noout -in /opt/automato-keycloak/pki/auth.vitabrevis.ch.crt`.
 - **Logs:** `docker compose logs --since 1h keycloak`.
 - **Monitoring:** Health/Readiness intern auf `http://keycloak:9000/health/ready` (nicht
   veröffentlicht) — von einem internen Monitoring-Container im `kc`-Netz abfragen.
@@ -340,8 +373,9 @@ erlaubten Mandanten-IDs setzen, Rolle `viewer`/`operator` zuweisen, Passwort set
 
 ## 11. Sicherheits-Checkliste (vor Go-Live)
 
-- [ ] DNS zeigt auf die VM, **nur 22/80/443** eingehend offen (Perimeter **und** ufw).
-- [ ] Gültiges Let's-Encrypt-Zertifikat, **TLS 1.3**, HSTS aktiv (Schritt 7).
+- [ ] DNS zeigt auf die VM, **nur 22 + 443** eingehend offen (80 nur bei Redirect-Wunsch).
+- [ ] **Wildcard-Zertifikat** geladen (Kette komplett, Key 0600), **TLS 1.3**, HSTS aktiv
+      (Schritt 7); Key **ohne Passphrase**; Ablauf-Überwachung eingerichtet.
 - [ ] Keycloak läuft im **prod-mode** (`start`, nicht `start-dev`), `KC_HOSTNAME=https://…`.
 - [ ] Keycloak/Postgres haben **keinen** veröffentlichten Port (`docker compose ps` → nur
       Caddy auf 80/443).
@@ -362,6 +396,7 @@ Wer einen Control-Host hat, bekommt denselben Stack ohne Handarbeit:
 cd deploy/keycloak/ansible
 cp inventory.example.ini inventory.ini                      # VM eintragen
 cp group_vars/keycloak.example.yml group_vars/keycloak.yml  # kc_domain: auth.vitabrevis.ch
+#   + Wildcard statt ACME: kc_tls_cert / kc_tls_key auf die PEM-Dateien setzen
 cat > group_vars/vault.yml <<EOF
 kc_bootstrap_admin_password: "$(openssl rand -base64 18)"
 kc_db_password: "$(openssl rand -base64 24)"
@@ -371,4 +406,5 @@ ansible-galaxy collection install community.general
 ansible-playbook -i inventory.ini keycloak.yml --ask-vault-pass
 ```
 
-Details: `deploy/keycloak/ansible/README.md`.
+Für euer Wildcard-Zertifikat `kc_tls_cert`/`kc_tls_key` setzen (kein ACME) — Details und
+TLS-Modi: `deploy/keycloak/ansible/README.md`.

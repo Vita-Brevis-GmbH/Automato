@@ -58,6 +58,9 @@ services:
       - "443:443"
     volumes:
       - {{ kc_base_dir }}/Caddyfile:/etc/caddy/Caddyfile:ro
+{% if kc_tls_cert is defined and kc_tls_cert | length > 0 %}
+      - {{ kc_base_dir }}/pki:/etc/caddy/pki:ro
+{% endif %}
       - caddy-data:/data
       - caddy-config:/config
     depends_on:

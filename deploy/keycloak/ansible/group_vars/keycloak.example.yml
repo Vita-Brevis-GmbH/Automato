@@ -5,9 +5,14 @@
 
 # --- nicht geheim (group_vars/keycloak.yml) ---
 kc_domain: auth.example.com          # oeffentliche URL des IdP (eigene VM, eigene URL)
-kc_acme_email: ops@example.com       # Kontakt fuer Let's Encrypt
+kc_acme_email: ops@example.com       # Kontakt fuer Let's Encrypt (nur falls ACME genutzt)
 kc_bootstrap_admin_user: bootstrap-admin
 kc_tls_internal: false               # true nur im Lab ohne oeffentliches DNS (Self-Signed)
+
+# Eigenes Zertifikat (z. B. Wildcard *.example.com) statt Let's Encrypt -> KEIN ACME.
+# Pfade liegen auf dem Control-Host; das Playbook kopiert sie nach /opt/.../pki.
+# kc_tls_cert: files/auth.example.com.crt   # Kette: Leaf + Intermediates (PEM)
+# kc_tls_key:  files/auth.example.com.key   # privater Schluessel (PEM, ohne Passphrase)
 
 # --- GEHEIM: in group_vars/vault.yml und VERSCHLUESSELN ---
 # ansible-vault encrypt group_vars/vault.yml
