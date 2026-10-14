@@ -3,6 +3,7 @@
 from app.models import (
     EndpointKind,
     EndpointRole,
+    Epg,
     IpamType,
     NatRule,
     NetworkObject,
@@ -241,3 +242,81 @@ def test_site_verortung_und_tenant_code(session_factory, client):
     # auch im GET sichtbar
     doc = client.get(f"/appdoc/systems/H_app01.kunde.ch?tenant_id={tid}").json()
     assert doc["site"]["id"] == sid
+
+
+def test_categorize_aci_pure():
+    from app.store.appdoc import categorize_aci
+
+    assert categorize_aci("application-profile", False, True) == 7
+    assert categorize_aci("context", True, True) == 7  # gleiches AP
+    assert categorize_aci("context", False, True) == 8  # anderes AP, gleicher Tenant
+    assert categorize_aci("global", False, True) == 9
+    assert categorize_aci(None, False, False) == 9  # anderer Tenant
+
+
+def _seed_aci(session):
+    t = Tenant(name="kunde-aci-doc", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+    fw = SourceSystem(
+        name="apic", platform=Platform.CISCO_ACI, base_url="https://apic", enabled=True
+    )
+    session.add_all([t, fw])
+    session.flush()
+    epgs = {}
+    for name, ap in [("EG_a", "AP_001"), ("EG_b", "AP_001"), ("EG_c", "AP_002")]:
+        e = Epg(tenant_id=t.id, name=name, ap=ap)
+        session.add(e)
+        epgs[name] = e
+    session.flush()
+
+    def mk(ext, scope, src_name, dst_name):
+        r = Rule(
+            tenant_id=t.id,
+            source_system_id=fw.id,
+            domain=RuleDomain.ACI_CONTRACT,
+            external_id=ext,
+            name=ext,
+            action=RuleAction.ALLOW,
+            aci_scope=scope,
+        )
+        r.endpoints.append(
+            RuleEndpoint(
+                role=EndpointRole.SRC,
+                kind=EndpointKind.EPG,
+                epg_id=epgs[src_name].id if src_name in epgs else None,
+                inline_value=src_name,
+                matched=src_name in epgs,
+            )
+        )
+        r.endpoints.append(
+            RuleEndpoint(
+                role=EndpointRole.DST,
+                kind=EndpointKind.EPG,
+                epg_id=epgs[dst_name].id if dst_name in epgs else None,
+                inline_value=dst_name,
+                matched=dst_name in epgs,
+            )
+        )
+        session.add(r)
+
+    mk("CT1", "context", "EG_a", "EG_b")  # gleiches AP -> 7
+    mk("CT2", "context", "EG_a", "EG_c")  # anderes AP -> 8
+    mk("CT3", "global", "EG_a", "EG_ext")  # global -> 9
+    session.commit()
+    return t.id
+
+
+def test_epg_als_system_tabellen_789(session_factory, client):
+    seed = session_factory()
+    tid = _seed_aci(seed)
+
+    rows = client.get(f"/appdoc/systems?tenant_id={tid}").json()
+    assert any(r["name"] == "EG_a" and r["kind"] == "epg" for r in rows)
+
+    doc = client.get(f"/appdoc/systems/EG_a?tenant_id={tid}").json()
+
+    def rows_of(i):
+        return next(t["rows"] for t in doc["tables"] if t["index"] == i)
+
+    assert [r["Target Systems"] for r in rows_of(7)] == ["EG_b"]
+    assert [r["Target Systems"] for r in rows_of(8)] == ["EG_c"]
+    assert [r["Target Systems"] for r in rows_of(9)] == ["EG_ext"]

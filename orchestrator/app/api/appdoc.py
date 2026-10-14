@@ -23,6 +23,7 @@ class SystemRefOut(BaseModel):
     name: str
     ip: str | None
     rule_count: int
+    kind: str
 
 
 class DocTableOut(BaseModel):
@@ -60,7 +61,7 @@ def list_systems(
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "appdoc")
     return [
-        SystemRefOut(name=s.name, ip=s.ip, rule_count=s.rule_count)
+        SystemRefOut(name=s.name, ip=s.ip, rule_count=s.rule_count, kind=s.kind)
         for s in store.list_systems(session, tenant_id)
     ]
 

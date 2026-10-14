@@ -150,15 +150,19 @@ und `rule_endpoint.epg_id`. DTO erweitert (`NormalizedEpg`, `NormalizedRule.aci_
 `CollectorResult.epgs`). MO-Parser `parse_epgs` (name/ap aus dn/bd/subnets) + `aci_scope` an der
 Regel; Ingest `_apply_epgs` persistiert EPGs/Subnetze **vor** den Regeln und verlinkt
 `epg:`-Endpunkte auf `epg_id` (matched, kein Finding). Tests collectors (`parse_epgs`/scope) +
-orchestrator (`test_ingest`). Offen (B): EPG als System in der Applikations-Doku (Tabellen 7/8/9
-via scope/AP).
+orchestrator (`test_ingest`). **ACI-epg-Phase (B) umgesetzt**: `appdoc.build_doc` unterscheidet
+Host-System (Firewall-Tabellen 1–6/10) und **EPG-System** (`_epg_doc`, ACI-Tabellen 7/8/9);
+`categorize_aci(scope, same_ap, same_tenant)` — `application-profile`/gleiches AP→7, anderes AP→8,
+`global`/anderer Tenant→9. `list_systems` liefert EPGs als Systeme (`kind=host|epg`). UI-Tab zeigt
+EPG-Systeme (Label „· EPG", keine Standort-Verortung an der EPG). Tests `test_appdoc.py`
+(`categorize_aci` + EPG-System 7/8/9). Damit füllen die ACI-internen Doku-Tabellen bei Model 1.
 **Standort-Verortung umgesetzt** (Alembic `0010`): `network_object.site_id` (nullable FK → site)
 verortet ein System an einem Standort. `PATCH /appdoc/systems/{name}/site` (operator,
 mandantsgescoped, auditiert `system.site_assigned`; fremde Site → 422); `build_doc` liefert jetzt
 `tenant_code` (GG-Kürzel) + `site` (code/name). UI-Tab „Applikations-Doku" zeigt GG/Standort und
 erlaubt Zuordnung (Site-Dropdown aus den Mandanten-Standorten); Markdown-Export-Header enthält
 GG + Standort. Tests `test_appdoc.py`. Offen: EPG als System (ACI) in der Doku.
-Tests: collectors 13, orchestrator 83, sot-gateway 6.
+Tests: collectors 14, orchestrator 86, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit

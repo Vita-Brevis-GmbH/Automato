@@ -152,6 +152,7 @@ export interface AppDocSystem {
   name: string;
   ip: string | null;
   rule_count: number;
+  kind: string; // host | epg
 }
 
 export interface DocTable {

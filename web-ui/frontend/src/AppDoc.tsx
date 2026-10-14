@@ -48,6 +48,7 @@ export default function AppDoc({ tenantId }: { tenantId: number | null }) {
   }, [selected, tenantId]);
 
   const markdown = useMemo(() => (doc ? toMarkdown(doc) : ""), [doc]);
+  const selKind = systems?.find((s) => s.name === selected)?.kind ?? "host";
 
   if (err) return <p className="err">{err}</p>;
   if (systems === null) return <p className="notice">Lade Systeme…</p>;
@@ -79,7 +80,7 @@ export default function AppDoc({ tenantId }: { tenantId: number | null }) {
         <select value={selected ?? ""} onChange={(e) => setSelected(e.target.value)}>
           {systems.map((s) => (
             <option key={s.name} value={s.name}>
-              {s.name} ({s.rule_count})
+              {s.name} ({s.rule_count}){s.kind === "epg" ? " · EPG" : ""}
             </option>
           ))}
         </select>
@@ -94,8 +95,10 @@ export default function AppDoc({ tenantId }: { tenantId: number | null }) {
             {doc.system_ip ? `IP ${doc.system_ip}` : ""}
             {doc.tenant_code ? ` · GG ${doc.tenant_code}` : ""}
           </span>
-          <span className="muted">Standort</span>
-          {tenantId == null ? (
+          {selKind === "epg" ? null : <span className="muted">Standort</span>}
+          {selKind === "epg" ? (
+            <span className="muted">EPG (ACI) · Verortung am Host-System</span>
+          ) : tenantId == null ? (
             <span className="muted">
               {doc.site ? `${doc.site.code} ${doc.site.name}` : "–"} (Mandant wählen zum Ändern)
             </span>
