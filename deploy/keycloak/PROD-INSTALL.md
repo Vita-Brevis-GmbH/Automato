@@ -149,14 +149,34 @@ sudo chmod 640 /opt/automato-keycloak/pki/auth.vitabrevis.ch.crt
 sudo chmod 600 /opt/automato-keycloak/pki/auth.vitabrevis.ch.key   # Key streng 0600
 ```
 
-> - Die `.crt` muss die **vollständige Kette** enthalten: **Leaf zuerst, dann Intermediates**.
->   Liegen sie getrennt vor:
->   `cat leaf.crt intermediate.crt > auth.vitabrevis.ch.crt`.
+> - Die `.crt` muss die **vollständige Kette** enthalten: **Leaf zuerst, dann Intermediate(s)**.
+>   Enthält sie nur das Leaf, verbinden Clients zwar, verwerfen das Zertifikat aber mit
+>   „unable to get local issuer certificate" (und ein unsauberes `cat` ohne Zeilenumbruch
+>   kann Caddy sogar zum Crashen bringen).
+> - **Prüfen, wie viele Zertifikate drin sind** (≥ 2 = Kette vorhanden; 1 = nur Leaf):
+>   `grep -c "BEGIN CERTIFICATE" auth.vitabrevis.ch.crt`.
+> - **Nur Leaf?** Intermediate besorgen und **sauber** anhängen. Bei öffentlichen CAs
+>   (z. B. Sectigo) steht die Intermediate-URL im Leaf (AIA) und lässt sich automatisch
+>   ziehen:
+>   ```bash
+>   cp auth.vitabrevis.ch.crt leaf.crt
+>   AIA=$(openssl x509 -in leaf.crt -noout -text | awk -F'URI:' '/CA Issuers/{print $2}' | tr -d ' \r')
+>   curl -fsS "$AIA" -o interm.in
+>   openssl x509 -in interm.in -noout 2>/dev/null && cp interm.in interm.pem \
+>     || openssl x509 -inform DER -in interm.in -out interm.pem
+>   # Fullchain sauber neu schreiben (openssl re-serialisiert mit korrekten Zeilenumbrüchen):
+>   { openssl x509 -in leaf.crt; openssl x509 -in interm.pem; } > auth.vitabrevis.ch.crt
+>   grep -c "BEGIN CERTIFICATE" auth.vitabrevis.ch.crt    # jetzt 2
+>   openssl verify -untrusted interm.pem leaf.crt         # erwartet: leaf.crt: OK
+>   ```
+>   (Alternativ das `.ca-bundle` der CA nehmen: `{ openssl x509 -in leaf.crt; cat ca-bundle; } > auth.vitabrevis.ch.crt`.)
 > - Der Key muss **ohne Passphrase** sein (Caddy entschlüsselt nicht interaktiv). Falls
 >   verschlüsselt: `openssl rsa -in verschluesselt.key -out auth.vitabrevis.ch.key`.
-> - Kette/Key prüfen (Modulus muss übereinstimmen):
->   `openssl x509 -noout -modulus -in auth.vitabrevis.ch.crt | openssl md5` vs.
->   `openssl rsa -noout -modulus -in auth.vitabrevis.ch.key | openssl md5`.
+> - Kette/Key gehören zusammen? Beide Public-Keys im **gleichen** Format vergleichen:
+>   `openssl x509 -in auth.vitabrevis.ch.crt -noout -pubkey | openssl md5` vs.
+>   `openssl pkey -in auth.vitabrevis.ch.key -pubout | openssl md5` — MD5 müssen gleich sein.
+> - Nach jeder Änderung Config prüfen:
+>   `docker run --rm -v $PWD/Caddyfile:/etc/caddy/Caddyfile:ro -v $PWD/pki:/etc/caddy/pki:ro caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile`.
 
 ---
 
@@ -380,8 +400,9 @@ erlaubten Mandanten-IDs setzen, Rolle `viewer`/`operator` zuweisen, Passwort set
 - **Updates:** Image-Tag in `docker-compose.yml` anheben, `docker compose pull && docker
   compose up -d`. DB-Volume bleibt. Vorher Backup. Keycloak-Release-Notes auf Breaking
   Changes prüfen.
-- **TLS:** Kein ACME → **Erneuerung ist manuell/extern**. Beim Austausch des Wildcard-
-  Zertifikats die zwei Dateien in `./pki` ersetzen (gleiche Namen) und Caddy neu laden:
+- **TLS:** Kein ACME → **Erneuerung ist manuell/extern**. Beim Austausch das neue
+  Zertifikat wieder als **Fullchain** (Leaf + Intermediate, siehe Schritt 4) nach `./pki`
+  legen (gleiche Dateinamen) und Caddy neu laden:
   `sudo docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`
   (oder `sudo docker compose restart caddy`). **Ablaufdatum überwachen** (z. B. Monitoring
   auf `notAfter`): `openssl x509 -enddate -noout -in /opt/automato-keycloak/pki/auth.vitabrevis.ch.crt`.
