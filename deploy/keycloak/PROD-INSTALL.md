@@ -343,6 +343,14 @@ curl -Iv https://auth.vitabrevis.ch/realms/automato 2>&1 | grep -Ei 'TLS|HTTP/'
 
 Admin-Konsole im Browser: **https://auth.vitabrevis.ch/admin/** (grünes Schloss).
 
+> **Troubleshooting — „This transfer is blocked" / UTM-Firewall.** Blockt eine FortiGate
+> (o. ä.) mit `Event Type: signature` den Zugriff, während der lokale curl (Schritt 7)
+> funktioniert, liegt es an **SSL-Deep-Inspection + IPS/AV** der Firewall im Client-Pfad,
+> nicht am Server. Lösung auf der Firewall: `auth.vitabrevis.ch` von der SSL-Inspection
+> ausnehmen (Security Profiles → SSL/SSH Inspection → *Exempt from SSL Inspection*), die
+> Policy auf `certificate-inspection` stellen, oder die konkrete Signatur (aus dem UTM-Log)
+> als Ausnahme freigeben. Ein interner IdP wird i. d. R. von der Deep-Inspection ausgenommen.
+
 ---
 
 ## 8. Nach dem ersten Start (Admin + OTP, Boot-Admin entfernen)
