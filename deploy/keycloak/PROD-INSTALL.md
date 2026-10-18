@@ -344,12 +344,18 @@ curl -Iv https://auth.vitabrevis.ch/realms/automato 2>&1 | grep -Ei 'TLS|HTTP/'
 Admin-Konsole im Browser: **https://auth.vitabrevis.ch/admin/** (grünes Schloss).
 
 > **Troubleshooting — „This transfer is blocked" / UTM-Firewall.** Blockt eine FortiGate
-> (o. ä.) mit `Event Type: signature` den Zugriff, während der lokale curl (Schritt 7)
-> funktioniert, liegt es an **SSL-Deep-Inspection + IPS/AV** der Firewall im Client-Pfad,
-> nicht am Server. Lösung auf der Firewall: `auth.vitabrevis.ch` von der SSL-Inspection
-> ausnehmen (Security Profiles → SSL/SSH Inspection → *Exempt from SSL Inspection*), die
-> Policy auf `certificate-inspection` stellen, oder die konkrete Signatur (aus dem UTM-Log)
-> als Ausnahme freigeben. Ein interner IdP wird i. d. R. von der Deep-Inspection ausgenommen.
+> (o. ä.) den Zugriff, während der lokale curl (Schritt 7) funktioniert, liegt es an der
+> Firewall im Client-Pfad, nicht am Server. Zwei häufige Fälle:
+> - **`Event Type: waf-signature` (WAF).** Eine Web Application Firewall (z. B. Klasse
+>   „Generic Attacks") hält die zufälligen OIDC-Querys (`code_challenge`/`state`/`nonce`,
+>   Base64url) für encodierte Angriffe — ein klassischer False Positive vor einem IdP. Für
+>   einen internen IdP am robustesten: den Keycloak-Host **von der WAF ausnehmen** (eigene
+>   Firewall-Policy ohne WAF-Profil für die IdP-VM, oder URL-Ausnahmen für `/realms/*`,
+>   `/admin/*`, `/resources/*`). Nur die auslösende Signaturklasse auf Monitor zu setzen
+>   entschärft meist nur den ersten von mehreren False Positives.
+> - **`Event Type: signature` (IPS/AV) bei SSL-Deep-Inspection.** Host von der SSL-Inspection
+>   ausnehmen (Security Profiles → SSL/SSH Inspection → *Exempt from SSL Inspection*), die
+>   Policy auf `certificate-inspection` stellen, oder die Signatur als Ausnahme freigeben.
 
 ---
 
