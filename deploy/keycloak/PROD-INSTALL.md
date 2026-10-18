@@ -439,7 +439,163 @@ erlaubten Mandanten-IDs setzen, Rolle `viewer`/`operator` zuweisen, Passwort set
 - [ ] Passwort-Policy + Brute-Force + OTP-Pflicht aktiv (aus dem Realm — in der
       Admin-Konsole unter Realm settings → Security defenses / Authentication gegenprüfen).
 - [ ] DB-Backup eingerichtet und einmal **Restore getestet**.
-- [ ] (Optional) Admin-Konsole per Caddy auf Management-Netz eingeschränkt (Schritt 5c).
+- [ ] Internet-exponiert? Admin-Konsole **nicht** öffentlich, nur über den internen Namen
+      aus dem Admin-Netz (Schritt 12); WAF-Ausnahme eng gescoped + Negativ-Test bestanden.
+
+---
+
+## 12. Internet-Betrieb: Admin intern trennen + WAF-Ausnahme (gemeinsamer Virtual Server)
+
+Ausgangslage: `auth.vitabrevis.ch` ist aus dem Internet erreichbar (Kunden-Logins) und läuft
+mit anderen Tools über **einen** FortiGate-Virtual-Server (eine IP, Host-Routing per FQDN) →
+**eine** Policy, **ein** WAF-Profil. Die WAF-Klasse „Generic Attacks" hält OIDC-Querys
+(v. a. `redirect_uri=https://…`) für Angriffe — das trifft **jeden** Login, auch Kunden.
+Ziel: Admin-Oberfläche gar nicht öffentlich, WAF nur für den IdP minimal lockern, die
+anderen Tools unverändert lassen.
+
+### 12a. Admin auf internen Hostnamen (`auth.int.vitabrevis.ch`)
+
+- **DNS (AD-Zone `int.vitabrevis.ch`):** A-Record `auth` → `172.25.4.13`. Der Admin-Zugriff
+  läuft damit direkt auf die VM, **nicht** über den Virtual Server/die WAF.
+- **Keycloak** (`docker-compose.yml`, Service `keycloak`):
+  `KC_HOSTNAME_ADMIN: "https://auth.int.vitabrevis.ch"` ergänzen.
+- **Zertifikat** — das Wildcard `*.vitabrevis.ch` deckt `auth.int.vitabrevis.ch` **nicht** ab.
+  Empfohlen: von der **DC-CA (AD CS)** ausstellen lassen (wie LDAPS; Domänen-Clients
+  vertrauen der Wurzel bereits):
+  ```bash
+  cd /opt/automato-keycloak/pki
+  openssl req -new -newkey rsa:3072 -nodes \
+    -keyout auth.int.vitabrevis.ch.key -out auth.int.vitabrevis.ch.csr \
+    -subj "/CN=auth.int.vitabrevis.ch" \
+    -addext "subjectAltName=DNS:auth.int.vitabrevis.ch" \
+    -addext "extendedKeyUsage=serverAuth"
+  chmod 600 auth.int.vitabrevis.ch.key
+  ```
+  Auf einem Domänen-Windows-Rechner (CSR dorthin kopieren; CA-Name zeigt `certutil`):
+  ```powershell
+  certreq -submit -attrib "CertificateTemplate:WebServer" auth.int.vitabrevis.ch.csr auth.int.vitabrevis.ch.cer
+  certutil -config "<DC>\<CA-Name>" -ca.cert issuing-ca.cer
+  ```
+  Beide `.cer` nach `/tmp` auf die VM, dann Fullchain bauen (PEM oder DER, beides geht):
+  ```bash
+  cd /opt/automato-keycloak/pki
+  for f in /tmp/auth.int.vitabrevis.ch.cer /tmp/issuing-ca.cer; do
+    openssl x509 -in "$f" 2>/dev/null || openssl x509 -inform DER -in "$f"
+  done > auth.int.vitabrevis.ch.crt
+  chmod 640 auth.int.vitabrevis.ch.crt
+  grep -c "BEGIN CERTIFICATE" auth.int.vitabrevis.ch.crt          # 2
+  openssl x509 -in auth.int.vitabrevis.ch.crt -noout -pubkey | openssl md5
+  openssl pkey -in auth.int.vitabrevis.ch.key -pubout | openssl md5  # muss gleich sein
+  ```
+  Alternative ohne CA: im Caddyfile `tls internal` (Caddy erzeugt selbst ein Zertifikat);
+  Browser warnen dann, bis Caddys Root (`/data/caddy/pki/authorities/local/root.crt` im
+  Caddy-Container) per GPO verteilt ist — mit AD CS entfällt das.
+
+- **Caddyfile** — öffentlicher Host sperrt Admin, interner Host nur aus dem Admin-Netz:
+  ```caddy
+  {
+      servers {
+          protocols h1 h2
+      }
+  }
+
+  auth.vitabrevis.ch {
+      encode zstd gzip
+      tls /etc/caddy/pki/auth.vitabrevis.ch.crt /etc/caddy/pki/auth.vitabrevis.ch.key {
+          protocols tls1.3 tls1.3
+      }
+      header {
+          Strict-Transport-Security "max-age=31536000; includeSubDomains"
+          X-Content-Type-Options "nosniff"
+          Referrer-Policy "no-referrer"
+          X-Frame-Options "SAMEORIGIN"
+          -Server
+      }
+      @admin path /admin /admin/* /realms/master /realms/master/*
+      respond @admin 404
+      reverse_proxy keycloak:8080
+  }
+
+  auth.int.vitabrevis.ch {
+      encode zstd gzip
+      tls /etc/caddy/pki/auth.int.vitabrevis.ch.crt /etc/caddy/pki/auth.int.vitabrevis.ch.key {
+          protocols tls1.3 tls1.3
+      }
+      header {
+          Strict-Transport-Security "max-age=31536000; includeSubDomains"
+          X-Content-Type-Options "nosniff"
+          Referrer-Policy "no-referrer"
+          X-Frame-Options "SAMEORIGIN"
+          -Server
+      }
+      @notadmin not remote_ip <ADMIN-SUBNETZ-1> <ADMIN-SUBNETZ-2>
+      respond @notadmin 403
+      reverse_proxy keycloak:8080
+  }
+  ```
+- **FortiGate (intern):** eigene Policy *Client → DMZ*, Source = Admin-Adressgruppe,
+  Destination = `172.25.4.13`, Service HTTPS, **NAT aus** (sonst sieht Caddy nur die
+  FortiGate-IP und `remote_ip` greift nicht), kein WAF nötig (intern, IP-beschränkt, MFA).
+
+### 12b. WAF-Ausnahme nur für `auth.vitabrevis.ch` im gemeinsamen Profil
+
+Policy und Profil bleiben für alle Tools gleich; im Profil eine **URL-Access-Regel**, die
+auf Host **und** Pfad gescoped ist. Minimal anfangen (nur der Endpoint, der auslöst) und
+nur bei weiteren Log-Treffern gezielt erweitern:
+```
+config firewall address
+    edit "FQDN_auth.vitabrevis.ch"
+        set type fqdn
+        set fqdn "auth.vitabrevis.ch"
+    next
+end
+config waf profile
+    edit "WAF_vs-https-vb"
+        config url-access
+            edit 10
+                set address "FQDN_auth.vitabrevis.ch"
+                set action block
+                set log enable
+                config access-pattern
+                    edit 1
+                        set pattern "^/(admin|realms/master)(/|$)"
+                        set regex enable
+                    next
+                end
+            next
+            edit 20
+                set address "FQDN_auth.vitabrevis.ch"
+                set action bypass
+                set log enable
+                config access-pattern
+                    edit 1
+                        set pattern "^/realms/[^/]+/protocol/openid-connect/(auth|logout)"
+                        set regex enable
+                    next
+                end
+            next
+        end
+    next
+end
+```
+Regel 10 sperrt Admin zusätzlich schon an der Edge, Regel 20 lässt nur den
+OIDC-Authorization-/Logout-Endpoint des IdP an der WAF vorbei.
+
+**Pflicht: Negativ-Test** — auf einer geteilten VIP haben alle Namen dieselbe IP; je nach
+FortiOS-Version/Modus kann ein FQDN-Adressobjekt per IP statt per Host-Header matchen.
+Dann würde die Ausnahme für **alle** Tools gelten. Prüfen (von extern):
+```bash
+# 1) Muss weiter BLOCKIERT werden (anderes Tool, gleicher Pfad, Angriffsmuster):
+curl -s -o /dev/null -w "%{http_code}\n" \
+  "https://<anderes-tool>.vitabrevis.ch/realms/x/protocol/openid-connect/auth?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
+# 2) Muss weiter BLOCKIERT werden (IdP, aber Pfad nicht freigegeben):
+curl -s -o /dev/null -w "%{http_code}\n" \
+  "https://auth.vitabrevis.ch/realms/x/account?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
+# 3) Kunden-Login im Browser funktioniert, kein WAF-Log-Eintrag für auth.vitabrevis.ch.
+```
+Kommt bei (1) **keine** Blockseite, greift das Host-Scoping nicht → Regel 20 sofort
+entfernen. Fallback: eigene öffentliche IP + eigene VIP/Policy/WAF-Profil für den IdP
+(saubere Trennung) oder — als letzte Option — nur die eine auslösende Signatur-ID abschalten.
 
 ---
 
