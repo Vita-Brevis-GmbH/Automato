@@ -1,7 +1,7 @@
 # TLS-Proxy für die Automato-Web-UI (Profil `proxy`)
 
-Macht die Web-UI unter einer echten HTTPS-Adresse erreichbar (z. B.
-`https://automato.int.vitabrevis.ch`), statt `http://<VM>:5173`. Das braucht der
+Macht die Web-UI unter einer HTTPS-Adresse erreichbar (z. B. `https://172.25.12.12` oder
+`https://automato.int.example.ch`), statt `http://<VM>:5173`. Das braucht der
 Keycloak-Login: PKCE funktioniert im Browser nur über HTTPS oder `localhost`.
 
 ```
@@ -10,71 +10,60 @@ Browser ──HTTPS 443──▶ Caddy (proxy) ──▶ web-ui:5173 (Vite) ─�
 
 Optional: ohne das Profil `proxy` bleibt der Stack wie bisher.
 
-## 1. DNS
-Interner DNS-Eintrag (z. B. AD-Zone `int.vitabrevis.ch`): `automato` → IP der Automato-VM.
+## Variante A — Dev/Lab: per IP, selbst erzeugtes Zertifikat (Default)
+Kein DNS, keine CA nötig. Caddy erzeugt das Zertifikat selbst (eigene lokale CA).
 
-## 2. Zertifikat (eigene CA, kein ACME)
-Interne Namen bekommen ihr Zertifikat von der eigenen CA (z. B. AD CS auf dem DC) —
-Domänen-Clients vertrauen ihr bereits. Auf der Automato-VM, im Repo:
-
-```bash
-H=automato.int.vitabrevis.ch
-mkdir -p deploy/proxy/pki && cd deploy/proxy/pki
-openssl req -new -newkey rsa:3072 -nodes -keyout $H.key -out $H.csr \
-  -subj "/CN=$H" -addext "subjectAltName=DNS:$H" -addext "extendedKeyUsage=serverAuth"
-chmod 600 $H.key
-```
-
-CSR auf einen Domänen-Windows-Rechner kopieren (PowerShell; `-config` aus `certutil`):
-
-```powershell
-certreq -submit -config "<DC>\<CA-Name>" -attrib "CertificateTemplate:WebServer" automato.int.vitabrevis.ch.csr automato.int.vitabrevis.ch.cer
-(Get-Item automato.int.vitabrevis.ch.cer).Length      # > 0
-```
-
-Die `.cer` zurück nach `deploy/proxy/pki/`, dann Fullchain bauen (PEM oder DER, CA-Datei
-optional — z. B. `issuing-ca.cer` per `Export-Certificate`):
-
-```bash
-H=automato.int.vitabrevis.ch; cd deploy/proxy/pki
-{ openssl x509 -in $H.cer 2>/dev/null || openssl x509 -inform DER -in $H.cer
-  [ -f issuing-ca.cer ] && { openssl x509 -in issuing-ca.cer 2>/dev/null || openssl x509 -inform DER -in issuing-ca.cer; }
-} > $H.crt
-chmod 644 $H.crt
-openssl x509 -in $H.crt -noout -subject -ext subjectAltName
-openssl x509 -in $H.crt -noout -pubkey | openssl md5
-openssl pkey -in $H.key -pubout | openssl md5          # muss gleich sein
-```
-
-Caddy liest Key und Zertifikat im Container; `pki/` ist per `.gitignore` vom Repo
-ausgeschlossen.
-
-## 3. Konfiguration + Start
 In der `.env` (Repo-Wurzel):
 
 ```env
-AUTOMATO_UI_HOST=automato.int.vitabrevis.ch
+AUTOMATO_UI_HOST=172.25.12.12
+# AUTOMATO_UI_TLS=internal   (Default, muss nicht gesetzt werden)
 ```
 
 ```bash
-docker compose --profile proxy run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile
+docker compose --profile core --profile proxy run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile
 docker compose --profile core --profile proxy up -d
-docker compose ps proxy                                   # Up, nicht Restarting
-curl -sk -o /dev/null -w "%{http_code}\n" --resolve automato.int.vitabrevis.ch:443:127.0.0.1 \
-  https://automato.int.vitabrevis.ch/                     # 200
+docker compose --profile core --profile proxy ps proxy                                    # Up, nicht Restarting
+curl -sk -o /dev/null -w "%{http_code}\n" https://172.25.12.12/   # 200
 ```
 
-Firewall: Port **443** von den Client-Netzen zur Automato-VM erlauben (FortiGate-Policy;
-auf der VM ggf. `ufw allow 443/tcp`).
+Der Browser warnt beim ersten Aufruf („Verbindung nicht privat“), weil er Caddys CA nicht
+kennt: *Erweitert → Weiter zu 172.25.12.12*. Ohne Warnung: Caddys Root-Zertifikat einmal
+exportieren und auf dem Client vertrauen:
 
-## 4. Keycloak-Client ergänzen
-Realm `automato` → *Clients → `automato-web` → Settings*:
+```bash
+docker compose --profile core --profile proxy cp proxy:/data/caddy/pki/authorities/local/root.crt ./caddy-dev-root.crt
+```
 
-- **Valid redirect URIs:** `https://automato.int.vitabrevis.ch/*` hinzufügen
+Auf Windows: Datei doppelklicken → *Zertifikat installieren* → *Aktueller Benutzer* →
+*Alle Zertifikate in folgendem Speicher speichern* → **Vertrauenswürdige
+Stammzertifizierungsstellen**. Die Root bleibt gleich, solange das Volume `proxy-data`
+besteht. Nur für Dev — produktiv Variante B.
+
+## Variante B — eigener Name + Zertifikat der eigenen CA (z. B. AD CS)
+1. DNS: `automato` → IP der VM (z. B. AD-Zone).
+2. Zertifikat per CSR von der CA ausstellen lassen (Ablauf wie in
+   `deploy/keycloak/PROD-INSTALL.md`, Abschnitt 12a), als Fullchain `<host>.crt` + Key
+   `<host>.key` nach `deploy/proxy/pki/` (per `.gitignore` vom Repo ausgeschlossen).
+3. `.env`:
+   ```env
+   AUTOMATO_UI_HOST=automato.int.example.ch
+   AUTOMATO_UI_TLS="/etc/caddy/pki/automato.int.example.ch.crt /etc/caddy/pki/automato.int.example.ch.key"
+   ```
+4. Start/Prüfung wie in Variante A.
+
+## Firewall
+Port **443** von den Client-Netzen zur VM erlauben (z. B. FortiGate-Policy; auf der VM ggf.
+`ufw allow 443/tcp`).
+
+## Keycloak-Client ergänzen
+Realm `automato` → *Clients → `automato-web` → Settings* (Adresse aus `AUTOMATO_UI_HOST`):
+
+- **Valid redirect URIs:** `https://<AUTOMATO_UI_HOST>/*` hinzufügen
 - **Valid post logout redirect URIs:** `+`
-- **Web origins:** `https://automato.int.vitabrevis.ch` hinzufügen
+- **Web origins:** `https://<AUTOMATO_UI_HOST>` hinzufügen
 
-→ *Save*. Danach `https://automato.int.vitabrevis.ch` öffnen → Weiterleitung zu Keycloak →
+→ *Save*. Danach `https://<AUTOMATO_UI_HOST>` öffnen → Weiterleitung zu Keycloak →
 Login (+ OTP) → zurück in Automato.
 
 ## Hinweise

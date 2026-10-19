@@ -1,8 +1,13 @@
 # TLS-Reverse-Proxy vor der Automato-Web-UI (Profil "proxy" in docker-compose.yml).
-# Hostname aus AUTOMATO_UI_HOST (.env); Zertifikat als Fullchain + Key unter
-# deploy/proxy/pki/<host>.crt und <host>.key. Kein ACME: interne Namen bekommen ihr
-# Zertifikat von der eigenen CA (z. B. AD CS) - siehe deploy/proxy/README.md.
+# AUTOMATO_UI_HOST (.env): IP oder Hostname, unter dem die UI erreichbar ist.
+# AUTOMATO_UI_TLS  (.env): "internal" (Default) = Caddy erzeugt selbst ein Zertifikat
+#   (eigene lokale CA; Dev/Lab, funktioniert auch fuer IP-Adressen) - oder
+#   "<crt> <key>" = Dateien aus /etc/caddy/pki (Fullchain + Key von der eigenen CA).
+# Details: deploy/proxy/README.md.
 {
+	# Browser senden beim Aufruf per IP keinen Servernamen (SNI); im Container sieht Caddy
+	# zudem eine andere lokale IP. Ohne Default-SNI schlaegt der TLS-Handshake dann fehl.
+	default_sni {$AUTOMATO_UI_HOST}
 	servers {
 		protocols h1 h2
 	}
@@ -11,7 +16,7 @@
 {$AUTOMATO_UI_HOST} {
 	encode zstd gzip
 
-	tls /etc/caddy/pki/{$AUTOMATO_UI_HOST}.crt /etc/caddy/pki/{$AUTOMATO_UI_HOST}.key {
+	tls {$AUTOMATO_UI_TLS:internal} {
 		protocols tls1.3 tls1.3
 	}
 

@@ -101,15 +101,17 @@ services:
     depends_on:
       - orchestrator
 
-  # TLS-Reverse-Proxy vor der Web-UI (Profil "proxy", optional): https://<AUTOMATO_UI_HOST>.
-  # Zertifikat als Fullchain + Key in deploy/proxy/pki/<host>.crt|.key (siehe
-  # deploy/proxy/README.md). Start: docker compose --profile core --profile proxy up -d
+  # TLS-Reverse-Proxy vor der Web-UI (Profil "proxy", optional): https://<AUTOMATO_UI_HOST>
+  # (IP oder Name). Zertifikat: AUTOMATO_UI_TLS=internal (Default, selbst erzeugt) oder
+  # "<crt> <key>" aus deploy/proxy/pki/ (siehe deploy/proxy/README.md).
+  # Start: docker compose --profile core --profile proxy up -d
   proxy:
     image: caddy:2-alpine
     profiles: ["proxy"]
     restart: unless-stopped
     environment:
-      AUTOMATO_UI_HOST: ${AUTOMATO_UI_HOST:-automato.localhost}
+      AUTOMATO_UI_HOST: ${AUTOMATO_UI_HOST:-localhost}
+      AUTOMATO_UI_TLS: ${AUTOMATO_UI_TLS:-internal}
     ports:
       - "443:443"
     volumes:
