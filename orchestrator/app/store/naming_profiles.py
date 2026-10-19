@@ -2,93 +2,15 @@
 
 Lesen/Schreiben der anwendungsverwalteten, erweiterbaren Wörterbücher. `kind` ist ein
 offener String; `upsert_entry` aktualisiert einen bestehenden (profile, kind, key)
-statt zu duplizieren. `seed_sop_profile` legt das SOP-Profil + bekannte Werte idempotent
-an (menschenlesbare Referenz: `docs/naming-conventions.md`).
+statt zu duplizieren. Das Standardprofil „default" (Werte: `app.naming_defaults`,
+menschenlesbar: `docs/naming-conventions.md`) gilt für Mandanten ohne eigenes Profil.
 """
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import DictionaryEntry, NamingProfile
-
-# Bekannte SOP-Werte als optionale Vorlage (erweiterbar in der UI). Keine Vollständigkeit -
-# Kap. 3.1/3.2 (GG-/Projektlisten) pflegt der Kunde bei der Inbetriebnahme in der App.
-_SOP_SEED: dict[str, list[tuple[str, str]]] = {
-    "object_prefix": [
-        ("H_", "host"),
-        ("H-EXT_", "host_external"),
-        ("N_", "network"),
-        ("N-EXT_", "network_external"),
-        ("T_", "transfer"),
-        ("V-EXT_", "vip_dnat"),
-        ("IPP_", "snat_pool"),
-    ],
-    "utm_prefix": [
-        ("AV_", "antivirus"),
-        ("WF_", "webfilter"),
-        ("DF_", "dnsfilter"),
-        ("AC_", "application_control"),
-        ("IPS_", "ips"),
-        ("WAF_", "waf"),
-        ("SSL_", "ssl_inspection"),
-    ],
-    "color_code": [
-        ("13", "sop_host"),
-        ("16", "sop_network"),
-        ("18", "swisscom_host"),
-        ("2", "swisscom_network"),
-        ("6", "mpls_host"),
-        ("4", "mpls_network"),
-        ("23", "vpn_host"),
-        ("21", "vpn_network"),
-        ("9", "extern_host"),
-        ("8", "extern_network"),
-    ],
-    "l3out": [
-        ("L3O_inet", "internet"),
-        ("L3O_res", "ressourcen"),
-        ("L3O_vpn", "vpn"),
-        ("L3O_bit", "unternehmensnetz"),
-        ("L3O_sra", "remote_access"),
-    ],
-    "gg_code": [
-        ("res01", "0"),
-        ("res02", "1"),
-        ("ssgch", "2"),
-        ("casch", "3"),
-        ("test1", "4"),
-        ("test2", "5"),
-        ("test3", "6"),
-    ],
-    "function_code": [
-        ("app", "Applikationsserver"),
-        ("web", "Webserver"),
-        ("dbs", "Datenbankserver"),
-        ("fwl", "Firewall"),
-        ("fwc", "Firewall-Cluster"),
-        ("lba", "Loadbalancer"),
-        ("orc", "Orchestrator"),
-        ("ddi", "IPAM/DNS/DHCP"),
-        ("vho", "VMware-Host"),
-    ],
-    "site_code": [
-        ("000", "RZ01 / Hauptstandort"),
-    ],
-    "service": [
-        ("FT_https", "tcp/443"),
-        ("FT_http", "tcp/80"),
-        ("FT_ssh", "tcp/22"),
-        ("FT_dns", "tcp+udp/53"),
-        ("FT_rdp", "tcp/3389"),
-        ("FT_mssql", "tcp+udp/1433:1434"),
-        ("FT_ldap", "tcp+udp/389"),
-        ("FT_ldapssl", "tcp/636"),
-        ("FT_smtp", "tcp/25"),
-        ("FT_ntp", "tcp+udp/123"),
-        ("FT_snmp", "udp/161"),
-        ("FT_syslog", "udp/514"),
-    ],
-}
+from app.naming_defaults import DEFAULT_DICTIONARY, DEFAULT_PROFILE
 
 
 def list_profiles(session: Session) -> list[NamingProfile]:
@@ -152,15 +74,31 @@ def delete_entry(session: Session, entry_id: int) -> bool:
     return True
 
 
-def apply_sop_defaults(session: Session, profile_id: int) -> None:
-    """Bekannte SOP-Wörterbuchwerte in ein Profil übernehmen (idempotent, optional)."""
-    for kind, pairs in _SOP_SEED.items():
-        for key, value in pairs:
-            upsert_entry(session, profile_id, kind, key, value)
+def get_default_profile(session: Session) -> NamingProfile | None:
+    """Das Standardprofil „default" (gilt für Mandanten ohne eigenes Profil)."""
+    stmt = select(NamingProfile).where(
+        NamingProfile.customer == DEFAULT_PROFILE, NamingProfile.name == DEFAULT_PROFILE
+    )
+    return session.scalars(stmt).first()
 
 
-def seed_sop_profile(session: Session) -> NamingProfile:
-    """Legt das SOP-Profil + bekannte Wörterbuchwerte idempotent an."""
-    profile = get_or_create_profile(session, customer="SOP", name="Standard")
-    apply_sop_defaults(session, profile.id)
+def apply_defaults(session: Session, profile_id: int) -> None:
+    """Standardwerte in ein Profil übernehmen (idempotent, optional).
+
+    Quelle ist das gepflegte Profil „default" (falls vorhanden), sonst die eingebaute
+    Vorgabe - so übernehmen neue Profile auch Anpassungen am Standard.
+    """
+    default = get_default_profile(session)
+    if default is not None and default.id != profile_id:
+        pairs = [(e.kind, e.key, e.value) for e in list_entries(session, default.id)]
+    else:
+        pairs = [(k, key, value) for k, items in DEFAULT_DICTIONARY.items() for key, value in items]
+    for kind, key, value in pairs:
+        upsert_entry(session, profile_id, kind, key, value)
+
+
+def seed_default_profile(session: Session) -> NamingProfile:
+    """Legt das Standardprofil „default" mit den Vorgabewerten idempotent an."""
+    profile = get_or_create_profile(session, customer=DEFAULT_PROFILE, name=DEFAULT_PROFILE)
+    apply_defaults(session, profile.id)
     return profile

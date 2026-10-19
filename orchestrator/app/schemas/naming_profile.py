@@ -12,8 +12,8 @@ class NamingProfileOut(BaseModel):
 class NamingProfileIn(BaseModel):
     customer: str
     name: str
-    # Optional mit den bekannten SOP-Werten vorbefüllen (keine Funktionsabhängigkeit).
-    with_sop_defaults: bool = False
+    # Optional mit den Werten des Standardprofils „default" vorbefüllen.
+    with_defaults: bool = False
 
 
 class DictionaryEntryOut(BaseModel):

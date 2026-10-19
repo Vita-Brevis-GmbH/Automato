@@ -2,7 +2,7 @@
 
 > Zielformat der Applikations-Dokumentation (entspricht den Kunden-Tabellen, bisher in
 > Confluence). Bezug: `docs/usecases/uc1-firewall-regel-dokumentation.md` (DoD),
-> `docs/naming-conventions.md` (Profil SOP), ADR 0004 (Datenmodell + Ergänzung),
+> `docs/naming-conventions.md` (Standardprofil „default"), ADR 0004 (Datenmodell + Ergänzung),
 > ADR 0006 (Objekttyp/Farbe-Signal), ADR 0007 (Mandant/Kunde, RBAC).
 
 ## Einheit & Gliederung

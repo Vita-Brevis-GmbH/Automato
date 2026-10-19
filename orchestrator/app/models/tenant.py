@@ -37,8 +37,9 @@ class Tenant(Base):
     aci_tenant_names: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # Per-Mandant-Parserregeln fuer die Namenskonvention (siehe app/naming.py)
     naming_convention: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # Namensprofil (in-App pflegbare Woerterbuecher) fuer diesen Mandanten; None = SOP-
-    # Default-Konvention (keine Funktionsabhaengigkeit von Daten).
+    # Namensprofil (in-App pflegbare Woerterbuecher) fuer diesen Mandanten; None =
+    # Standardprofil „default" bzw. eingebaute Standard-Konvention (keine
+    # Funktionsabhaengigkeit von Daten).
     naming_profile_id: Mapped[int | None] = mapped_column(
         ForeignKey("naming_profile.id"), nullable=True
     )

@@ -266,7 +266,7 @@ dependency-getrieben; die **Web-UI (W1)** ist **vorgezogen**, das Auth-Fundament
 Cockpit (Update-Channels + Rollback-Snapshot, E2) und — für den Schreibpfad — über
 das Plan→Approve→Apply→Rollback-Jobmodell (E4) abgedeckt.
 
-**UC1-Fachdaten erhalten & festgehalten:** SOP-Namenskonvention
+**UC1-Fachdaten erhalten & festgehalten:** Standard-Namenskonvention (Profil „default")
 (`docs/naming-conventions.md`), Tenant-Modell Kunde/GG und die Applikations-Doku-Zieltabellen
 (`docs/usecases/uc1-applikations-doku-spec.md`) → **ADR-0004-Ergänzung** (Mandant = GG,
 Kunde/Umgebung darüber mit SoT + Namensprofil, Applikation = System mit AP/Projekt-Klammer,

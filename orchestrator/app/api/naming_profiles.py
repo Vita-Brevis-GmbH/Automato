@@ -53,8 +53,8 @@ def create_profile(
     session: Session = Depends(get_session),
 ):
     p = store.get_or_create_profile(session, customer=body.customer, name=body.name)
-    if body.with_sop_defaults:
-        store.apply_sop_defaults(session, p.id)
+    if body.with_defaults:
+        store.apply_defaults(session, p.id)
     audit.record(
         session,
         actor=f"user:{principal.subject}",

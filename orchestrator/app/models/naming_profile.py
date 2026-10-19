@@ -19,7 +19,7 @@ class NamingProfile(Base):
     __table_args__ = (UniqueConstraint("customer", "name", name="uq_naming_profile_customer_name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    customer: Mapped[str] = mapped_column(String(100), index=True)  # Kunde/Umgebung (z. B. SOP)
+    customer: Mapped[str] = mapped_column(String(100), index=True)  # Kunde/Umgebung (z. B. Kunde A)
     name: Mapped[str] = mapped_column(String(100))
 
 

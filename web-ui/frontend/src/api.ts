@@ -185,6 +185,13 @@ export interface NamingProfile {
   name: string;
 }
 
+// Standardprofil „default": gilt für Mandanten ohne eigenes Namensprofil.
+export const DEFAULT_PROFILE = "default";
+export const isDefaultProfile = (p: NamingProfile) =>
+  p.customer === DEFAULT_PROFILE && p.name === DEFAULT_PROFILE;
+export const profileLabel = (p: NamingProfile) =>
+  p.customer === p.name ? p.name : `${p.customer} · ${p.name}`;
+
 export interface DictionaryEntry {
   id: number;
   profile_id: number;
@@ -326,7 +333,7 @@ export const fetchNamingProfiles = () => getJSON<NamingProfile[]>("/api/naming-p
 export const createNamingProfile = (body: {
   customer: string;
   name: string;
-  with_sop_defaults: boolean;
+  with_defaults: boolean;
 }) => sendJSON<NamingProfile>("/api/naming-profiles", "POST", body);
 export const fetchDictionary = (profileId: number) =>
   getJSON<DictionaryEntry[]>(`/api/naming-profiles/${profileId}/dictionary`);

@@ -5,7 +5,9 @@ import {
   DictionaryEntry,
   fetchDictionary,
   fetchNamingProfiles,
+  isDefaultProfile,
   NamingProfile,
+  profileLabel,
   Tenant,
   upsertEntry,
 } from "./api";
@@ -14,7 +16,8 @@ import { Empty, ErrorBox, Loading, Modal, Note, PageHead } from "./ui";
 
 // Namensprofile & Wörterbücher: pro Kunde pflegbar und erweiterbar ohne Deployment.
 // `kind` ist offen - neue Namenskonventionsvorgaben = neue Wörterbuch-Art. Die Daten
-// sind Laufzeitdaten ohne Funktionszwang (leeres Profil -> eingebaute SOP-Konvention).
+// sind Laufzeitdaten ohne Funktionszwang (Profil „default" gilt für Mandanten ohne eigenes
+// Profil; leer -> eingebaute Standard-Konvention).
 
 interface KindMeta {
   title: string;
@@ -41,7 +44,7 @@ const KINDS: Record<string, KindMeta> = {
     title: "Objekt-Prefixe → Typ",
     cols: ["Prefix", "Objekttyp"],
     add: "Prefix",
-    note: "Wird beim Einlesen ausgewertet (längstes Prefix gewinnt). Leer = eingebaute SOP-Konvention.",
+    note: "Wird beim Einlesen ausgewertet (längstes Prefix gewinnt). Leer = eingebaute Standard-Konvention.",
     values: OBJECT_CLASSES,
   },
   utm_prefix: { title: "UTM-Schutzprofil-Prefixe", cols: ["Prefix", "Mechanismus"], add: "Prefix" },
@@ -78,7 +81,8 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
     try {
       const list = await fetchNamingProfiles();
       setProfiles(list);
-      setProfileId((cur) => select ?? (list.some((p) => p.id === cur) ? cur : (list[0]?.id ?? null)));
+      const fallback = (list.find(isDefaultProfile) ?? list[0])?.id ?? null;
+      setProfileId((cur) => select ?? (list.some((p) => p.id === cur) ? cur : fallback));
     } catch (e) {
       setErr(e);
       setProfiles([]);
@@ -115,14 +119,18 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
   }, [entries, extraKinds]);
 
   const profile = profiles?.find((p) => p.id === profileId) ?? null;
-  const usedBy = tenants.filter((t) => t.naming_profile_id === profileId);
+  const isDefault = profile ? isDefaultProfile(profile) : false;
+  const usedBy = tenants.filter(
+    (t) => t.naming_profile_id === profileId || (isDefault && t.naming_profile_id == null),
+  );
 
   return (
     <>
       <PageHead title="Namensprofile & Wörterbücher">
         Pro Kunde pflegbar und <b>erweiterbar ohne Deployment</b>. Treibt Parser/Matching (Prefix → Typ,
         Farbcode, Codes). <b>Offen für neue Namenskonventionsvorgaben</b> – zusätzliche Wörterbuch-Arten lassen
-        sich jederzeit anlegen. Ohne Profil gilt die eingebaute SOP-Konvention.
+        sich jederzeit anlegen. Das Profil <b>„default“</b> ist der Standard und gilt für alle Mandanten
+        ohne eigenes Profil.
       </PageHead>
 
       <div className="filterbar">
@@ -135,7 +143,8 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
           {!profiles?.length && <option value="">Noch kein Profil</option>}
           {profiles?.map((p) => (
             <option key={p.id} value={p.id}>
-              Profil: {p.customer} · {p.name}
+              Profil: {profileLabel(p)}
+              {isDefaultProfile(p) ? " (Standard)" : ""}
             </option>
           ))}
         </select>
@@ -153,8 +162,10 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
         {profile && (
           <span className="faint" style={{ fontSize: 12.5 }}>
             {usedBy.length
-              ? `Verwendet von: ${usedBy.map((t) => t.name).join(", ")}`
-              : "Noch keinem Mandanten zugeordnet (unter „Mandanten & Standorte“)"}
+              ? `Gilt für: ${usedBy.map((t) => t.name).join(", ")}`
+              : isDefault
+                ? "Standard für alle Mandanten ohne eigenes Profil"
+                : "Noch keinem Mandanten zugeordnet (unter „Mandanten & Standorte“)"}
           </span>
         )}
       </div>
@@ -175,7 +186,8 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
               )
             }
           >
-            Ein Profil bündelt die Wörterbücher eines Kunden. Optional mit den SOP-Werten vorbefüllen.
+            Ein Profil bündelt die Wörterbücher eines Kunden. Optional mit den Werten des Standardprofils
+            „default“ vorbefüllen.
           </Empty>
         </div>
       ) : entries === null ? (
@@ -428,7 +440,7 @@ function NewProfileDialog({
 }) {
   const [customer, setCustomer] = useState("");
   const [name, setName] = useState("");
-  const [sop, setSop] = useState(true);
+  const [withDefaults, setWithDefaults] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
 
@@ -437,7 +449,11 @@ function NewProfileDialog({
     setErr(null);
     try {
       onCreated(
-        await createNamingProfile({ customer: customer.trim(), name: name.trim(), with_sop_defaults: sop }),
+        await createNamingProfile({
+          customer: customer.trim(),
+          name: name.trim(),
+          with_defaults: withDefaults,
+        }),
       );
     } catch (e) {
       setErr(e);
@@ -469,7 +485,7 @@ function NewProfileDialog({
           className="input"
           value={customer}
           autoFocus
-          placeholder="z. B. SOP"
+          placeholder="z. B. Kunde A"
           onChange={(e) => setCustomer(e.target.value)}
         />
       </div>
@@ -485,8 +501,12 @@ function NewProfileDialog({
       </div>
       <div className="field">
         <label className="check">
-          <input type="checkbox" checked={sop} onChange={(e) => setSop(e.target.checked)} />
-          Mit den bekannten SOP-Werten vorbefüllen (danach frei änderbar)
+          <input
+            type="checkbox"
+            checked={withDefaults}
+            onChange={(e) => setWithDefaults(e.target.checked)}
+          />
+          Mit den Werten des Standardprofils „default“ vorbefüllen (danach frei änderbar)
         </label>
       </div>
     </Modal>

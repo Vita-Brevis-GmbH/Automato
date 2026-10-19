@@ -1,7 +1,7 @@
 """Standort (Site) eines Mandanten (GG) - ADR 0004-Ergaenzung.
 
 Ein Mandant (= Gruppengesellschaft) hat einen oder mehrere Standorte. Jeder Standort
-traegt einen **dreistelligen Code** (SOP-Konvention, z. B. "000"), der Objekte (VMs etc.)
+traegt einen **dreistelligen Code** (Namenskonvention, z. B. "000"), der Objekte (VMs etc.)
 einem Ort zuordnet. Reine Stammdaten/Beschriftung - keine Funktionsrelevanz fuer den
 Plattform-Kern; Code pro Mandant eindeutig.
 """

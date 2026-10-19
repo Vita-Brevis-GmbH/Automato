@@ -1,10 +1,12 @@
-# Namenskonventionen — Profil „SOP"
+# Namenskonventionen — Standardprofil „default"
 
-> **Austauschbares Namensprofil pro Kunde.** Dieses Dokument hält die Konvention der
-> SOP-Umgebung fest (eine grosse Umgebung mit eigener NetBox). Andere Kunden mit eigener
+> **Austauschbares Namensprofil pro Kunde.** Dieses Dokument hält die Standard-Konvention
+> fest, abgeleitet aus einer grossen Referenzumgebung mit eigener NetBox (Beispielkunde;
+> Namen und Domains hier anonymisiert, z. B. `example.ch`). Andere Kunden mit eigener
 > NetBox können abweichen — **im Schnitt sind die Konventionen aber ähnlich**. Automato
-> behandelt die Konvention als **Profil** (Adapter-Prinzip wie beim SoT-Gateway); SOP ist
-> das erste Profil. **Ausnahmen sind erstklassig**: Matching läuft als Kaskade
+> behandelt die Konvention als **Profil** (Adapter-Prinzip wie beim SoT-Gateway); in der
+> App ist sie als Standardprofil **„default"** hinterlegt (Werte:
+> `orchestrator/app/naming_defaults.py`) und gilt für alle Mandanten ohne eigenes Profil. **Ausnahmen sind erstklassig**: Matching läuft als Kaskade
 > Konvention → Typ/Farbcode → manuell/Designer → sonst Finding.
 >
 > Bezug: ADR 0004 (Datenmodell, Namenskonvention als First-Class-Signal), ADR 0006
@@ -41,7 +43,7 @@ Automato das erstklassige Typ-Signal; der strukturierte Rest liefert die Attribu
 ### Tenant / VRF — `TE_` / `VRF_`
 Pro Gruppengesellschaft ein Tenant `TE_<gg>` + VRF `VRF_<gg>` (z. B. `TE_test1` /
 `VRF_test1`). Gruppengesellschaft-**übergreifende** Infrastruktur/Dienste:
-`TE_soprz01`, `TE_res01`, … (im Namen bereits auf verteilte Rechenzentren ausgelegt).
+`TE_infrz01`, `TE_res01`, … (im Namen bereits auf verteilte Rechenzentren ausgelegt).
 
 ### Bridge Domains — `BD_`
 Virtuelle Netzwerkzonen, trennen Systeme verschiedener Sicherheitsstufen. Pro
@@ -50,7 +52,7 @@ GG-Tenant standardmässig dieselben, Anhang = GG-Kürzel. Beispiel (Testname Gmb
 - `BD_vip01` — Zone für Load Balancer
 - `BD_internal01` — interne Zone (hohe Sicherheit)
 
-Infrastruktur-/Ressourcen-Tenants: `BD_<zweck>_sopch` (Infrastruktur) bzw. `_res01`
+Infrastruktur-/Ressourcen-Tenants: `BD_<zweck>_infch` (Infrastruktur) bzw. `_res01`
 (Ressourcen); dazwischen ein sprechender Zweck-Text ≤ 6 Zeichen.
 
 ### Endpoint Groups — `EG_`
@@ -76,7 +78,7 @@ sein. Beispiele:
 ### Application Profile — `AP_`
 Liste der Verbindungen, die eine Anwendung braucht (je Eintrag: Consumer-EPG →
 Provider-EPG + Contract; optional LB/IDS/… ). Name = `AP_<projektnummer>`
-(`AP_001`, `AP_002`). In Ressourcen- und `soprz01`-Tenant keine AP (ACI Network-Mode,
+(`AP_001`, `AP_002`). In Ressourcen- und `infrz01`-Tenant keine AP (ACI Network-Mode,
 keine Microsegmentierung); Projektnummern dort nur zur Benennung von AD-Gruppen.
 
 ### Layer-3-Outputs / Transfernetze — `L3O_`
@@ -127,14 +129,14 @@ Standardisierte Ports mit sprechendem Namen; sonst `FT_<proto><port>`:
 ### Netzwerk `N_`
 `N_<tenant>-<projektnr>-<zweck/zone>[_<ip-oder-extra>]` (`000` = Standort/extern
 unbekannt). Beispiele:
-- `N_test1-000-dmz01` — BD in SOP
-- `N_sopzr01-000-res-soprz01` — Transfernetz; `N_test1-000-l3o-vpn-edge` — Transfernetz
+- `N_test1-000-dmz01` — Bridge Domain (DMZ)
+- `N_infzr01-000-res-infrz01` — Transfernetz; `N_test1-000-l3o-vpn-edge` — Transfernetz
   (Sicht vom DC nach aussen: erst `l3o-vpn`, dann `edge`)
 - `N_tasch-001-10.100.0.0-16` — Container-Subnetz (Büko Testname AG)
 - `N_servicenow-000-wan01_185.161.103.0-24` — externes WAN-Subnetz (Standort unbekannt)
 
 ### Host `H_` / extern `H-EXT_`
-`H_<funktion+nr>-<projektnr>-<firma>.<domain>`. Beispiel: `H_app01-002-test1.sop.swiss`
+`H_<funktion+nr>-<projektnr>-<firma>.<domain>`. Beispiel: `H_app01-002-test1.example.ch`
 (App-Server 01, Projekt 002, Testname AG). Extern/ohne DNS bzw. Interface in Firewall/ACI:
 `H-EXT_<name>-000-wan01_<ip>`, z. B. `H-EXT_servicenow-000-wan01_185.161.103.34`.
 
@@ -145,18 +147,18 @@ Der Collector liest das `color`-Feld als Klassifizierung mit:
 
 | Klasse | Farbe | Code | | Klasse | Farbe | Code |
 |---|---|---|---|---|---|---|
-| SOP Host | hellgrün | 13 | | VPN Host | pink | 23 |
-| SOP Network | dunkelgrün | 16 | | VPN Network | lila | 21 |
+| Intern Host | hellgrün | 13 | | VPN Host | pink | 23 |
+| Intern Network | dunkelgrün | 16 | | VPN Network | lila | 21 |
 | Swisscom Host | hellblau | 18 | | Extern Host | orange | 9 |
 | Swisscom Network | dunkelblau | 2 | | Extern Network | dunkelorange | 8 |
 | MPLS Host | rot | 6 | | MPLS Network | dunkelrot | 4 |
 
 ### Destination-NAT / Virtual IP — `V-EXT_`
 Externe + interne IP fürs DNAT. Name = externe URL des Dienstes (bei mehreren Namen die
-Haupt-URL). `V-EXT_<fqdn>`, z. B. `V-EXT_www.sop.swiss`.
+Haupt-URL). `V-EXT_<fqdn>`, z. B. `V-EXT_www.example.ch`.
 
 ### Source-NAT IP-Pools — `IPP_`
-- Pro Server: `IPP_<fqdn>` (z. B. `IPP_dcs01-001-res01.sop.swiss`).
+- Pro Server: `IPP_<fqdn>` (z. B. `IPP_dcs01-001-res01.example.ch`).
 - Pro Tenant (gemeinsam): `IPP_<tenant>-<standort>-<zweck>` (z. B. `IPP_casch-000-inet01`).
 
 ### Schutzmechanismen (UTM-Profile an der Regel)
@@ -164,45 +166,45 @@ Haupt-URL). `V-EXT_<fqdn>`, z. B. `V-EXT_www.sop.swiss`.
 - Application Control `APP_<systemtyp>-<zweck>` — `APP_server-default`
 - Intrusion Prevention `IPS_<systemtyp>-<zweck>` — `IPS_Server-Apache`, `IPS_Server-IIS`,
   `IPS_Server-HighSecurity`
-- Web Application Firewall `WAF_<fqdn>[:service]` — `WAF_www.sop.swiss`
+- Web Application Firewall `WAF_<fqdn>[:service]` — `WAF_www.example.ch`
 - SSL/SSH Inspection `SSL_<typ>` — `SSL_certificate-inspection`, `SSL_deep-inspection`
 
 ### Routing & Virtualisierung
 - Prefix List `PL_<FROM|TO>-<protokoll>-<nachbar ROU|ACI>-<V4|V6>` — `PL_FROM-BGP-ROU-V6`
 - Route Map `RM_<FROM|TO>-<protokoll>-<nachbar>-<version>` — `RM_FROM-BGP-ROU-V6`
-- VDOM `<sra|vpn|fwl><nr><security-tenant>` — Cluster `fwc05-000-soprz` → `sra05-soprz`,
-  `vpn05-soprz`
+- VDOM `<sra|vpn|fwl><nr><security-tenant>` — Cluster `fwc05-000-infrz` → `sra05-infrz`,
+  `vpn05-infrz`
 
 ### PBR / L4-L7 (Service-Graph)
 Mit Minuszeichen getrennt, soweit nicht anders vermerkt:
 - Device General `FWLD_<sec-tenant>-<dc-code>-pbr` — `FWLD_res01-000-pbr`
-- Device Firewall = Firewall-Name (`fwl01-001-soprz`)
-- Device Interface `<vmware-host>_<nic>` — `evh01-chher1-soprz_vmnic4`
+- Device Firewall = Firewall-Name (`fwl01-001-infrz`)
+- Device Interface `<vmware-host>_<nic>` — `evh01-chher1-infrz_vmnic4`
 - Device Cluster `<sec-tenant>-<dc>-pbr` — `res01-000-pbr`
 - IP SLA `SLA_<sec-tenant>-<dc>-pbr` — `SLA_res01-000-pbr`
-- Redirect Health Group `RHG_<sec-tenant>-<dc>-<firewall>` — `RHG_res01-000-fwl01-001-soprz`
+- Redirect Health Group `RHG_<sec-tenant>-<dc>-<firewall>` — `RHG_res01-000-fwl01-001-infrz`
 - Policy-Based Redirect `PBR_<sec-tenant>-<dc>-pbr` — `PBR_res01-000-pbr`
-- PBR Destination `<firewall>_<sec-tenant>` — `fwl01-001-soprz_res01`
+- PBR Destination `<firewall>_<sec-tenant>` — `fwl01-001-infrz_res01`
 - Service Graph Template `SGT_<sec-tenant>-<dc>-pbr` — `SGT_res01-000-pbr`
 
 ## Hostnamen
 
 **Intern:** Block1 = 3-stelliger Funktionscode + 2-stellige Laufnummer · Block2 =
 3-stellige Projektnummer · Block3 = 5-stelliger Firma-mit-Land-Code · Domäne.
-Beispiel: `app01-123-tonch.sop.swiss`. Gemeinsame Geräte (Ressourcen-/Infrastruktur)
+Beispiel: `app01-123-tonch.example.ch`. Gemeinsame Geräte (Ressourcen-/Infrastruktur)
 ohne Projektnummer.
 
 **Extern (Clients, Router, …):** Block1 = 3-stelliger Gerätecode + 3-stellige Laufnummer ·
 Block2 = 1–8-stellige Kundennummer (alphanumerisch) · Block3 = Projektnummer · Block4 =
-Firma-mit-Land · Domäne. Beispiel: `rou-a323-cd3f.sop.swiss`.
+Firma-mit-Land · Domäne. Beispiel: `rou-a323-cd3f.example.ch`.
 
 ## Benutzer
 
-- **Plattform-User** (Domäne `sop.swiss`): 4 Buchstaben Nachname + 3 Buchstaben Vorname +
+- **Plattform-User** (Domäne `example.ch`): 4 Buchstaben Nachname + 3 Buchstaben Vorname +
   1-stellige Laufnummer.
 - **Service-User**: enthält immer System/Gerät, wo das Passwort gesetzt ist:
   `<hostname><env>.<service>` bzw. `<product><env>.<service>` — `ctdprod.smtp`,
-  `fwc01-chher1-soprz.ldap`, `app01-001-res01.ldap`. Mehrfach genutzte User gesondert
+  `fwc01-chher1-infrz.ldap`, `app01-001-res01.ldap`. Mehrfach genutzte User gesondert
   dokumentieren.
 - **gMSA/SMSA** (NetBIOS, max. 15 Zeichen): SMSA `sa-<hostohnebindestriche>-<tenantnr>`
   (`sa-app03021-1`); GMSA `sa-<appbeschreibung>-<tenantnr>`; Domain-Local-Group
@@ -212,35 +214,35 @@ Firma-mit-Land · Domäne. Beispiel: `rou-a323-cd3f.sop.swiss`.
 `TE_test1`=4, `TE_test2`=5, `TE_test3`=6 (unbenutzte ausgelassen).
 
 ## E-Mail
-Personen- und Geräteadressen in `sop.swiss`; Geräte: `<gerätename>@sop.swiss`
-(`app01-123-tonch@sop.swiss`).
+Personen- und Geräteadressen in `example.ch`; Geräte: `<gerätename>@example.ch`
+(`app01-123-tonch@example.ch`).
 
 ## PRTG-Monitoring
-- **Boards**: SOP-Betrieb `SOP - <Tenant> - <Nutzung>`; SLA `SLA - <Tenant>`; Kunde
+- **Boards**: Plattform-Betrieb `OPS - <Tenant> - <Nutzung>`; SLA `SLA - <Tenant>`; Kunde
   `<Tenant> - <Kundenname>`; pro Applikation `<Appname> - <Tenant>`.
 - **Filter**: analog zu Boards (klein halten, Tenant-Name enthalten).
-- **Tags**: SOP-Betrieb mit Prefix `SOP_` (z. B. `SOP_networksecurity`, `SOP_compute`,
-  `SOP_windows`, `SOP_linux`, `SOP_productive`, `SOP_testdev`, `SOP_iaas`, `SOP_saas`,
-  `SOP_k8s`, `SOP_vip_external`, `SOP_sla`, `SOP_ad_sop`, `SOP_ddi`, `SOP_backup`, …);
+- **Tags**: Plattform-Betrieb mit Prefix `OPS_` (z. B. `OPS_networksecurity`, `OPS_compute`,
+  `OPS_windows`, `OPS_linux`, `OPS_productive`, `OPS_testdev`, `OPS_iaas`, `OPS_saas`,
+  `OPS_k8s`, `OPS_vip_external`, `OPS_sla`, `OPS_ad_inf`, `OPS_ddi`, `OPS_backup`, …);
   Kunden-Tags mit Tenant-Kürzel-Prefix (`TONCH_`, `SSGCH_`). **Keine `-`/`+` in Tags**
   (IT-Ops-Board-Operatoren).
 
 ## Loadbalancer-Objekte
 Prefix — Muster — Beispiel:
-- `VS_<fqdn>` Virtual Service — `VS_www.sop.swiss`
-- `PVS_<fqdn>` Parent (Enhanced Virtual Hosting) — `PVS_sop.swiss`
-- `CVS_<fqdn>` Child — `CVS_login.sop.swiss`; K8s: `CVS_TEST_<fqdn>`, `CVS_PROD_<fqdn>`
-- `VIP_<fqdn>[:service]` VS-VIP — `VIP_www.sop.swiss`
-- `POOL_<fqdn>[:port]` Pool — `POOL_www.sop.swiss`, `POOL_www.sop.swiss:9443`
+- `VS_<fqdn>` Virtual Service — `VS_www.example.ch`
+- `PVS_<fqdn>` Parent (Enhanced Virtual Hosting) — `PVS_example.ch`
+- `CVS_<fqdn>` Child — `CVS_login.example.ch`; K8s: `CVS_TEST_<fqdn>`, `CVS_PROD_<fqdn>`
+- `VIP_<fqdn>[:service]` VS-VIP — `VIP_www.example.ch`
+- `POOL_<fqdn>[:port]` Pool — `POOL_www.example.ch`, `POOL_www.example.ch:9443`
 - `TUP_<fqdn>` TCP/UDP-Profil · `APPP_<fqdn>` Application-Profil · `WAFP_<fqdn>` WAF-Policy
 - `EPP_<fqdn>` Error-Page · `SSLP_<fqdn>` SSL-Profil · `ANLP_<fqdn>` Analytics
-- `CRT_<fqdn>_<startjahr>-<endjahr>` Zertifikat — `CRT_www.sop.swiss_2023-2024`
+- `CRT_<fqdn>_<startjahr>-<endjahr>` Zertifikat — `CRT_www.example.ch_2023-2024`
 - `PATH_<fqdn>_<nr>` / `RD_<fqdn>_<nr>` HTTP-Request-Rules · `HM_<fqdn>` Health-Monitor ·
   `DS_<fqdn>_<nr>` Data-Script
 
 ## Rancher / Kubernetes
 - Cluster-Name `<tenant>-<zweck>-<nr>` (`scaas-k8s-prod01`); VIP `VIP_<cluster>.<domain>:<proto>`;
-  App-DNS `*.<cluster>.sop.swiss`; API `api.<cluster>.sop.swiss`.
+  App-DNS `*.<cluster>.example.ch`; API `api.<cluster>.example.ch`.
 - Cluster-Label (Shared) `<cluster>-<tenant>-<standort>`.
 - Egress-IP, Namespace, Persistent Volume (`VOL_<tenant>_<zweck>_<namespace>_pvc_<guid>`)
   — teils gekürzt wegen Längenlimits.
@@ -249,15 +251,15 @@ Prefix — Muster — Beispiel:
 - `IPSP_<hersteller>_<model>` IPsec-Policy · `IPSG_<hostname>` Gateway ·
   `IPSC_<gwA>_<gwB>` Connection · `IPSK_<nr>` PreSharedKey
 - `RCT_<serviceprofile><hersteller><type>` Router-Config-Template
-- `SP_<firmencode>_<ap-nummer>` Service-Profile — `SP_SOP_ssgch_001`
+- `SP_<firmencode>_<ap-nummer>` Service-Profile — `SP_OPS_ssgch_001`
 
 ## Katalog
 
 ### Firmen-/Tenant-Codes (Auszug; vollständig = Kapitel 3.1, ausstehend)
-`share` (gemeinsame Projekte), `sopau` (Automatisierung), `sopte` (Testumgebung),
-`sopdo` (Dokumentation), `soprz01` (SOP-Infrastruktur RZ01), `res01` (Ressourcen RZ01),
-`Common` (gemeinsame Komponenten RZ01), `sopedge` (Edge-Netze). Länderkennung 2-stellig
-an das 3-stellige Firmenkürzel angehängt; `sopch`/`resch`/`comch` für gruppenübergreifende
+`share` (gemeinsame Projekte), `infau` (Automatisierung), `infte` (Testumgebung),
+`infdo` (Dokumentation), `infrz01` (Infrastruktur RZ01), `res01` (Ressourcen RZ01),
+`Common` (gemeinsame Komponenten RZ01), `infedge` (Edge-Netze). Länderkennung 2-stellig
+an das 3-stellige Firmenkürzel angehängt; `infch`/`resch`/`comch` für gruppenübergreifende
 Rechner je Einsatzzweck. Beispiele aus dem Dokument: `test1`, `ssgch`, `casch`, `tonch`,
 `tasch`.
 
@@ -276,11 +278,11 @@ VPN-Concentrator · `vho` VMware-Host · `web` Webserver · `wap` Wireless Acces
 
 ## Ergänzungen aus realen Samples (2026-10-13)
 
-Aus echten SOP-Ausschnitten (FortiGate-Config, ACI-Tenant `TE_share`) beobachtet; fliesst
+Aus echten Ausschnitten der Referenzumgebung (FortiGate-Config, ACI-Tenant `TE_share`) beobachtet; fliesst
 in die (in-App pflegbaren) Prefix-Wörterbücher und die Ausnahmen-Kaskade ein:
 
 - **Zusätzliche Objekt-Prefixe:** `N-EXT_` (externes Netz), `T_` (Transfernetz,
-  z. B. `T_sopdo-000-l3o-inet_edge`). Bare-name **Geography**-Objekte (`type geography`,
+  z. B. `T_infdo-000-l3o-inet_edge`). Bare-name **Geography**-Objekte (`type geography`,
   `country`, z. B. `SE`) → `not_applicable`. **Freitext-Adressgruppen** (Vendor-Ranges,
   z. B. „Atlassian Cloud …") → Mitglieder `expected_external`.
 - **Reale UTM-Profil-Prefixe** (weichen vom Abschnitt „Schutzmechanismen" ab, können je

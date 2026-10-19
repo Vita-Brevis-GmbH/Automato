@@ -343,8 +343,15 @@ def test_resolve_prefixes_nutzt_mandanten_profil(session_factory):
     s.add(tenant)
     s.flush()
 
-    # ohne Profil -> None (SOP-Default)
+    # ohne Profil und ohne Standardprofil -> None (eingebaute Standard-Konvention)
     assert ingest._resolve_prefixes(s, tenant.id) is None
+
+    # ohne eigenes Profil gilt das Standardprofil „default" (inkl. Anpassungen)
+    default = pstore.seed_default_profile(s)
+    pstore.upsert_entry(s, default.id, "object_prefix", "VM_", "host")
+    s.flush()
+    fallback = ingest._resolve_prefixes(s, tenant.id)
+    assert naming.parse_object_name("VM_app01.kunde.ch", fallback).object_class is ObjectClass.HOST
 
     # mit Profil + eigenem Praefix
     p = pstore.get_or_create_profile(s, customer="ACME", name="Std")

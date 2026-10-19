@@ -78,7 +78,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
 - **Mandanten & Standorte (Admin schreibt):** **+ Mandant**, Kürzel, Namensprofil,
   Lese-Audit, Standorte (**+ Standort**, 3-stelliger Code) und **Quellsysteme**
   (**+ Quellsystem**, FortiGate/Cisco ACI; keine Zugangsdaten).
-- **Namensprofile:** **+ Neues Profil** (optional mit SOP-Vorlage), **+ Neue
+- **Namensprofile:** Standardprofil **„default"** (per Migration angelegt, gilt für alle
+  Mandanten ohne eigenes Profil, frei pflegbar), **+ Neues Profil** (optional mit den Werten
+  von „default" vorbefüllt), **+ Neue
   Namenskonvention** (neue Wörterbuch-Art), Einträge anlegen/bearbeiten/löschen.
 - **Collector-Agenten (nur Admin):** **+ Agent** erzeugt das Token einmalig; Status
   online/keine Meldung aus dem Heartbeat; Aktivieren/Deaktivieren.

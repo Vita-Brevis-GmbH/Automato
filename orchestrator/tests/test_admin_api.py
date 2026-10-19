@@ -192,6 +192,6 @@ def test_mandant_namensprofil_zuordnen_und_loesen(client):
         == pid
     )
 
-    # null = zurueck zur SOP-Default-Konvention
+    # null = zurueck zum Standardprofil „default"
     r = client.patch(f"/tenants/{tid}", json={"naming_profile_id": None}, headers=ADMIN)
     assert r.json()["naming_profile_id"] is None

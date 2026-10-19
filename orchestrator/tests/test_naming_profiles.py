@@ -5,12 +5,12 @@ from app.store import naming_profiles as store
 
 def test_seed_idempotent(session_factory):
     session = session_factory()
-    p1 = store.seed_sop_profile(session)
+    p1 = store.seed_default_profile(session)
     session.commit()
     n1 = len(store.list_entries(session, p1.id))
 
     # zweiter Lauf: gleiches Profil, keine Duplikate
-    p2 = store.seed_sop_profile(session)
+    p2 = store.seed_default_profile(session)
     session.commit()
     assert p2.id == p1.id
     assert len(store.list_entries(session, p2.id)) == n1
@@ -45,12 +45,12 @@ def test_upsert_offener_kind_und_delete(session_factory):
 def test_api_read_open_write_protected(session_factory, client):
     # Seed in dieselbe In-Memory-DB (StaticPool -> von client geteilt)
     seed = session_factory()
-    profile = store.seed_sop_profile(seed)
+    profile = store.seed_default_profile(seed)
     seed.commit()
 
     r = client.get("/naming-profiles")
     assert r.status_code == 200
-    assert any(p["customer"] == "SOP" for p in r.json())
+    assert any(p["name"] == "default" for p in r.json())
 
     r = client.get(f"/naming-profiles/{profile.id}/dictionary?kind=utm_prefix")
     assert r.status_code == 200
@@ -76,14 +76,14 @@ def test_api_read_open_write_protected(session_factory, client):
     assert r.status_code == 404
 
 
-def test_api_profil_anlegen_leer_oder_mit_sop_vorlage(client):
+def test_api_profil_anlegen_leer_oder_mit_standardvorlage(client):
     leer = client.post("/naming-profiles", json={"customer": "Kunde B", "name": "Standard"})
     assert leer.status_code == 201
     assert client.get(f"/naming-profiles/{leer.json()['id']}/dictionary").json() == []
 
     vorlage = client.post(
         "/naming-profiles",
-        json={"customer": "Kunde C", "name": "Standard", "with_sop_defaults": True},
+        json={"customer": "Kunde C", "name": "Standard", "with_defaults": True},
     )
     assert vorlage.status_code == 201
     eintraege = client.get(f"/naming-profiles/{vorlage.json()['id']}/dictionary").json()
@@ -97,3 +97,18 @@ def test_api_profil_anlegen_leer_oder_mit_sop_vorlage(client):
         headers={"X-Dev-Roles": "operator"},
     )
     assert r.status_code == 403
+
+
+def test_vorlage_uebernimmt_den_gepflegten_standard(session_factory):
+    session = session_factory()
+    default = store.seed_default_profile(session)
+    assert (default.customer, default.name) == ("default", "default")
+    # Anpassung am Standard (z. B. eigenes Praefix) gilt auch fuer neue Profile
+    store.upsert_entry(session, default.id, "object_prefix", "SRV_", "host")
+    neu = store.get_or_create_profile(session, customer="Kunde B", name="Standard")
+    store.apply_defaults(session, neu.id)
+    session.commit()
+    keys = {e.key for e in store.list_entries(session, neu.id, kind="object_prefix")}
+    assert {"SRV_", "H_", "IPP_"} <= keys
+    # keine kundenspezifischen Laufzeitdaten im Standard
+    assert store.list_entries(session, default.id, kind="gg_code") == []

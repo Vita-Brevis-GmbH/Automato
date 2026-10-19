@@ -9,6 +9,7 @@ import {
   fetchSystems,
   NamingProfile,
   patchTenant,
+  profileLabel,
   Site,
   System,
   Tenant,
@@ -43,8 +44,11 @@ export default function Tenants({
   }, []);
 
   const selected = tenants?.find((t) => t.id === tenantId) ?? null;
-  const profileName = (id: number | null) =>
-    id == null ? "SOP-Standard" : (profiles.find((p) => p.id === id)?.name ?? `#${id}`);
+  const profileName = (id: number | null) => {
+    if (id == null) return "default (Standard)";
+    const p = profiles.find((x) => x.id === id);
+    return p ? profileLabel(p) : `#${id}`;
+  };
 
   return (
     <>
@@ -289,14 +293,14 @@ function TenantSettings({
             disabled={ro}
             onChange={(e) => setProfileId(e.target.value ? Number(e.target.value) : null)}
           >
-            <option value="">SOP-Standard (eingebaut)</option>
+            <option value="">Standard (Profil „default“)</option>
             {profiles.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.customer} · {p.name}
+                {profileLabel(p)}
               </option>
             ))}
           </select>
-          <div className="hint">Steuert die Präfix-Erkennung beim Einlesen. Leer = eingebaute SOP-Konvention.</div>
+          <div className="hint">Steuert die Präfix-Erkennung beim Einlesen. Ohne Auswahl gilt das Standardprofil „default“.</div>
         </div>
         <div className="field">
           <label className="check">

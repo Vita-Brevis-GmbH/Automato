@@ -221,15 +221,15 @@ in `ROADMAP.md` (Abschnitt „Ausbaustufe B"). Entschieden: **AuthN/RBAC via Key
 geseedter globaler Admin; Mandanten-Scoping zentral erzwingen; Rollen `viewer/operator/
 admin`; Secrets-/Vault-Provider) — **ADR 0007**. Reihenfolge: **Web-UI (W1) vorgezogen**,
 dann **E1 Härtung/RBAC** als Schwerpunkt. UI-Mockup liegt als Artifact vor (nicht im Repo).
-**UC1-Fachdaten erhalten & festgehalten:** SOP-Namenskonvention
+**UC1-Fachdaten erhalten & festgehalten:** Standard-Namenskonvention (Profil „default")
 (`docs/naming-conventions.md`, austauschbares Profil pro Kunde), Tenant-Modell Kunde/GG
 und Applikations-Doku-Spec (9+ Tabellen, `docs/usecases/uc1-applikations-doku-spec.md`)
-→ **ADR-0004-Ergänzung**. Kernpunkte: Mandant = Gruppengesellschaft; Kunde/Umgebung (SOP)
+→ **ADR-0004-Ergänzung**. Kernpunkte: Mandant = Gruppengesellschaft; Kunde/Umgebung (z. B. Kunde A)
 darüber trägt NetBox + Namensprofil; Global-Admin-Gesamtsicht; Applikation = System
 (Container/VM/Server) mit AP/Projekt-Klammer (~90 % automatisch, Rest via Designer);
 Ausnahmen-Kaskade (Konvention→Typ/Farbcode→Override→Finding); neue Collector-Felder
 (UTM-Schutzprofile, SNAT-IP-Pools `IPP_`, externer DNS aus `V-EXT_`, FortiGate-Farbcode).
-**Samples erhalten** (ACI-Tenant-Export `TE_share` + FortiGate-Config, SOP) →
+**Samples erhalten** (ACI-Tenant-Export `TE_share` + FortiGate-Config einer Referenzumgebung) →
 **Collector-Lesevertrag** `docs/collectors-read-contract.md` (FortiGate+ACI; Samples
 bleiben ausserhalb Repo, Secrets gestrippt; `color` = numerischer Code, optional; reale
 UTM-Prefixe `AV_/WF_/DF_/AC_/IPS_/WAF_/SSL_`; Zusatz-Prefixe `N-EXT_`/`T_`/Geography;
@@ -242,7 +242,7 @@ Inbetriebnahme direkt in der App (keine Funktionsabhängigkeit, Seed optional).
 (ruff nicht als Dep deklariert) → behoben (ruff==0.5.5 als Dev-Dependency, identisch zu
 pre-commit; CI grün). **(1) Namensprofil-Wörterbücher als Code umgesetzt**: Modelle
 `naming_profile`/`dictionary_entry` (offenes `kind` = erweiterbar), Alembic `0005`
-(up/down geprüft), Store + idempotenter SOP-Seed, API `/naming-profiles` (Lesen offen,
+(up/down geprüft), Store + idempotenter Standard-Seed, API `/naming-profiles` (Lesen offen,
 Schreiben per internem Token bis RBAC), Tests. Mockup-Screen „Namensprofile" + Regeln
 mit getrennten Quelle/Ziel-Spalten (mehrere Objekte) + 3-stelliger Standort-Code.
 **(2) W1 Web-UI umgesetzt**: Übersicht/Dashboard (KPIs Regeln/NAT/Findings/unmatched,
@@ -259,7 +259,7 @@ FortiGate-**Farbcode** als Objekt-Katalog (`network_object.color`, via Name/Wert
 profil-gesteuert — `parse_object_name(name, prefixes)` nimmt eine aus dem `object_prefix`-
 Wörterbuch gebaute Präfix-Liste (`prefixes_from_entries`), bleibt reine Funktion; `tenant.
 naming_profile_id` (nullable FK) verknüpft Mandant→Profil, Ingest löst die Liste je Lauf auf
-(`_resolve_prefixes`); ohne Profil gilt die **erweiterte SOP-Default-Konvention** (jetzt inkl.
+(`_resolve_prefixes`); ohne Profil gilt die **erweiterte Standard-Konvention** (jetzt inkl.
 `N-EXT_`/`T_`/`V-EXT_`/`IPP_`). Keine Funktionsabhängigkeit von Daten (leeres Profil → Default).
 Tests `test_naming.py`/`test_ingest.py`. **Applikations-Doku-API (systemzentriert, 10 Kategorien)
 umgesetzt**: `app/store/appdoc.py` + `GET /appdoc/systems` (Host-Systeme) und
@@ -380,8 +380,8 @@ Zähler), Topbar (Mandanten-Schalter, HTTPS, Hell/Dunkel, Benutzermenü), Design
 Ansichten/Buttons**: Übersicht mit Abdeckung + „Letzte Läufe" (`GET /jobs`) + **Jetzt
 einlesen** (`CollectDialog.tsx`, extern/zentral), Mandanten & Standorte mit **+ Mandant**
 (`POST /tenants`), Namensprofil-Zuordnung, Lese-Audit, **+ Standort**, **+ Quellsystem**
-(`POST /systems`); Namensprofile (`NamingProfiles.tsx`: **+ Neues Profil** mit SOP-Vorlage
-`with_sop_defaults`, **+ Neue Namenskonvention**, Einträge ✎/✕; kein CSV-Import); Benutzer
+(`POST /systems`); Namensprofile (`NamingProfiles.tsx`: **+ Neues Profil** mit Standard-Vorlage
+`with_defaults`, **+ Neue Namenskonvention**, Einträge ✎/✕; kein CSV-Import); Benutzer
 & Rollen (`Users.tsx`, Links in die Keycloak-Konsole via `admin_console_url` aus
 `/auth/config`, konfigurierbar `AUTOMATO_OIDC_ADMIN_CONSOLE_URL`); Netzwerkdesign als
 Platzhalter (geplant); Applikationen = Applikations-Doku + „Publizierte Dienste";
@@ -411,3 +411,14 @@ zeitlich auseinander (Token-`iat` aus Sicht des Orchestrators in der Zukunft). `
 jetzt mit Toleranz `oidc_clock_skew_seconds` (Default 60, `AUTOMATO_OIDC_CLOCK_SKEW_SECONDS`) und
 meldet die Abweichung in Sekunden („token not yet valid … NTP prüfen“; abgelaufen „seit N s“).
 Eigentlicher Fix: NTP auf beiden VMs. Tests: orchestrator 112.
+**Kundenname entfernt + Standardprofil „default" (Vorgabe):** Der Name des Referenzkunden ist
+ein Beispiel und wird **nirgends hinterlegt** — aus Code, UI, Tests und Doku entfernt (Doku
+anonymisiert, Beispiel-Domain `example.ch`; Farbcode-Klassen `intern_host`/`intern_network`;
+API-Feld `with_defaults`). **Standardprofil „default"**: Werte in `app/naming_defaults.py`
+(eine Quelle für Parser-Rückfall, Migration und Vorlage; nur Konventionsregeln — Objekt-/
+UTM-Prefixe, Farbcodes, L3Outs, Funktionscodes, Standort-Code, Standard-Services — **keine**
+kundenspezifischen GG-/Projektlisten), angelegt per Datenmigration **Alembic `0014`**
+(idempotent, up/down geprüft). Mandanten **ohne eigenes Profil nutzen „default"**
+(`ingest._resolve_prefixes`), fehlt es → eingebaute Standard-Konvention. „+ Neues Profil" mit
+Vorlage kopiert das gepflegte „default". UI: Profil „default" vorausgewählt, „gilt für alle
+Mandanten ohne eigenes Profil". Tests: orchestrator 113.

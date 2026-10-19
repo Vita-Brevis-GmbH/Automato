@@ -6,7 +6,7 @@ Create Date: 2026-10-14
 
 Verknuepft einen Mandanten mit seinem Namensprofil, dessen `object_prefix`-Woerterbuch
 den Namenskonvention-Parser steuert (app/naming.py). Nullable -> ohne Profil gilt die
-SOP-Default-Konvention (keine Funktionsabhaengigkeit).
+Standard-Konvention (keine Funktionsabhaengigkeit).
 """
 
 import sqlalchemy as sa

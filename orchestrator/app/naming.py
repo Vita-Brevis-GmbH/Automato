@@ -10,14 +10,16 @@ Objektnamen tragen ein Praefix, das die Objektklasse signalisiert:
 Die Praefix-Liste ist **profil-gesteuert**: der Parser nimmt eine Liste
 `(prefix, ObjectClass)` entgegen, die aus dem in-App pflegbaren Woerterbuch
 `object_prefix` eines Namensprofils gebaut wird (`prefixes_from_entries`). Ohne Profil
-gilt die SOP-Default-Konvention (`_DEFAULT_PREFIXES`) - die Plattform funktioniert also
-auch ohne befuellte Woerterbuecher (keine Funktionsabhaengigkeit). Reine Funktion, ohne DB/IO.
+gilt die eingebaute Standard-Konvention (`_DEFAULT_PREFIXES`, = Profil „default") - die
+Plattform funktioniert also auch ohne befuellte Woerterbuecher (keine
+Funktionsabhaengigkeit). Reine Funktion, ohne DB/IO.
 """
 
 from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.models.network_object import ObjectClass
+from app.naming_defaults import DEFAULT_DICTIONARY
 
 # Woerterbuch-Wert (kind="object_prefix") -> Objektklasse. Offen erweiterbar; unbekannte
 # Werte werden beim Bauen der Praefix-Liste ignoriert (kein Absturz).
@@ -33,19 +35,10 @@ _VALUE_TO_CLASS: dict[str, ObjectClass] = {
     "range": ObjectClass.RANGE,
 }
 
-# SOP-Default-Konvention als (prefix, value), falls kein Profil vorliegt. Werte wie im
-# Woerterbuch; die Reihenfolge ist egal (longest-first wird beim Bauen erzwungen).
-_DEFAULT_ENTRIES: list[tuple[str, str]] = [
-    ("H_", "host"),
-    ("H-EXT_", "host_external"),
-    ("N_", "network"),
-    ("N-EXT_", "network_external"),
-    ("T_", "transfer"),
-    ("V-EXT_", "vip_dnat"),
-    ("VIP_", "vip"),
-    ("IPP_", "snat_pool"),
-    ("R_", "range"),
-]
+# Eingebaute Standard-Konvention als (prefix, value), falls kein Profil vorliegt - dieselben
+# Werte wie das Standardprofil „default" (app.naming_defaults). Reihenfolge egal
+# (longest-first wird beim Bauen erzwungen).
+_DEFAULT_ENTRIES: list[tuple[str, str]] = DEFAULT_DICTIONARY["object_prefix"]
 
 PrefixList = list[tuple[str, ObjectClass]]
 
@@ -62,7 +55,7 @@ _DEFAULT_PREFIXES: PrefixList = _to_prefix_list(_DEFAULT_ENTRIES)
 def prefixes_from_entries(entries: Iterable[tuple[str, str]]) -> PrefixList:
     """Baut die Praefix-Liste aus `object_prefix`-Woerterbucheintraegen (key, value).
 
-    Leeres/unbekanntes Profil -> SOP-Default (keine Funktionsabhaengigkeit von Daten).
+    Leeres/unbekanntes Profil -> Standard-Konvention (keine Funktionsabhaengigkeit von Daten).
     """
     built = _to_prefix_list(entries)
     return built or _DEFAULT_PREFIXES
@@ -79,7 +72,7 @@ class ParsedName:
 def parse_object_name(name: str, prefixes: PrefixList | None = None) -> ParsedName:
     """Zerlegt einen Objektnamen in Klasse (aus Praefix), FQDN und Domain.
 
-    `prefixes` stammt aus dem Namensprofil (`prefixes_from_entries`); None = SOP-Default.
+    `prefixes` stammt aus dem Namensprofil (`prefixes_from_entries`); None = Standard.
     """
     for prefix, obj_class in prefixes or _DEFAULT_PREFIXES:
         if name.startswith(prefix):

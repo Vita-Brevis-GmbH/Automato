@@ -1,7 +1,7 @@
 # Collector-Lesevertrag — FortiGate & Cisco ACI (read-only)
 
 > Was die Collectors **rein lesend** erfassen (Felder/Relationen) und wie es auf das
-> Datenmodell (ADR 0004 + Ergänzung) abgebildet wird. Abgeleitet aus realen SOP-Samples
+> Datenmodell (ADR 0004 + Ergänzung) abgebildet wird. Abgeleitet aus realen Samples einer Referenzumgebung
 > (ACI-Tenant-Export `TE_share`, FortiGate-Config-Ausschnitte). **Die Sample-Dateien
 > bleiben ausserhalb des Repos; Secrets werden nie gelesen/gespeichert/geloggt.**
 > Bezug: `docs/naming-conventions.md`, `docs/usecases/uc1-applikations-doku-spec.md`,

@@ -20,7 +20,7 @@ from app.models.tenant import DnsType, IpamType
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
-_SITE_CODE = r"^[0-9A-Za-z]{3}$"  # dreistelliger Standort-Code (SOP: numerisch, z. B. "000")
+_SITE_CODE = r"^[0-9A-Za-z]{3}$"  # dreistelliger Standort-Code (numerisch, z. B. "000")
 
 
 class TenantOut(BaseModel):
@@ -30,7 +30,7 @@ class TenantOut(BaseModel):
     audit_reads: bool
     ipam_type: str
     dns_type: str
-    naming_profile_id: int | None = None  # None = SOP-Default-Konvention
+    naming_profile_id: int | None = None  # None = Standardprofil „default"
 
 
 class TenantIn(BaseModel):
@@ -43,7 +43,7 @@ class TenantIn(BaseModel):
 class TenantPatch(BaseModel):
     code: str | None = Field(default=None, max_length=20)
     audit_reads: bool | None = None
-    # Namensprofil zuordnen (null = zurueck zur SOP-Default-Konvention)
+    # Namensprofil zuordnen (null = zurueck zum Standardprofil „default")
     naming_profile_id: int | None = None
 
 

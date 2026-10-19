@@ -42,8 +42,8 @@ def test_multi_domain_disambiguierung():
     assert parse_object_name("H_dc01.ad2.local").domain == "ad2.local"
 
 
-def test_erweiterte_sop_praefixe():
-    # Volle SOP-Konvention wird erkannt (frueher UNKNOWN):
+def test_erweiterte_standard_praefixe():
+    # Volle Standard-Konvention wird erkannt (frueher UNKNOWN):
     assert parse_object_name("N-EXT_partnernetz").object_class is ObjectClass.EXTERNAL
     assert parse_object_name("T_transfer01").object_class is ObjectClass.NETWORK
     assert parse_object_name("V-EXT_my.testserver.de").object_class is ObjectClass.VIP
@@ -57,11 +57,11 @@ def test_prefixes_from_entries_steuert_parser():
     prefixes = prefixes_from_entries([("SRV_", "host"), ("NET_", "network")])
     assert parse_object_name("SRV_app01.kunde.ch", prefixes).object_class is ObjectClass.HOST
     assert parse_object_name("NET_dmz", prefixes).object_class is ObjectClass.NETWORK
-    # SOP-Praefix H_ ist in diesem Profil NICHT definiert -> unknown
+    # Standard-Praefix H_ ist in diesem Profil NICHT definiert -> unknown
     assert parse_object_name("H_server", prefixes).object_class is ObjectClass.UNKNOWN
 
 
 def test_leeres_profil_faellt_auf_default_zurueck():
-    # Leeres/unbekanntes Woerterbuch -> SOP-Default (keine Funktionsabhaengigkeit)
+    # Leeres/unbekanntes Woerterbuch -> Standard-Konvention (keine Funktionsabhaengigkeit)
     prefixes = prefixes_from_entries([("XY_", "voellig_unbekannt")])
     assert parse_object_name("H_server.kunde.ch", prefixes).object_class is ObjectClass.HOST

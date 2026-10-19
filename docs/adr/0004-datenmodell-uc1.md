@@ -155,32 +155,32 @@ kein fest kodiertes Schema).
   (offener Punkt aus ADR 0002) ist für die reine Ist-Dokumentation nicht nötig und wird
   erst mit den Rule-**Intents** (Schreibpfad) entschieden.
 
-## Ergänzung 2026-10-13 — reale SOP-Namenskonvention & Mandanten-Modell
+## Ergänzung 2026-10-13 — reale Namenskonvention & Mandanten-Modell
 
-Nach Erhalt der produktiven Namenskonvention (`docs/naming-conventions.md`, Profil „SOP")
+Nach Erhalt der produktiven Namenskonvention (`docs/naming-conventions.md`, Standardprofil „default")
 und der Ziel-Ausgabe (`docs/usecases/uc1-applikations-doku-spec.md`) werden folgende
 Punkte präzisiert; Bezug ADR 0006 (Objekttyp/Farbe-Signal), ADR 0007 (AuthN/RBAC).
 
 **E1 — Zwei Ebenen: Kunde/Umgebung über Mandant.** Prinzip 1 wird verfeinert:
 - **Mandant = Gruppengesellschaft (GG)** = ein ACI-Tenant `TE_<gg>` + `VRF_<gg>`; die
   Scoping-Einheit für `viewer`/`operator`.
-- **Neue Ebene `customer`/`environment`** (z. B. SOP) **über** dem Mandanten: trägt die
+- **Neue Ebene `customer`/`environment`** (z. B. Kunde A) **über** dem Mandanten: trägt die
   **SoT-Bindung** (NetBox/Infoblox) **und das Namensprofil**. Andere Kunden = eigene
   Umgebung, eigene NetBox, eigenes (ähnliches) Profil. `ipam_type`/`dns_type`/
   `naming_convention` wandern damit von `tenant` auf `customer`.
-- **Übergreifende Tenants** (`TE_res01`, `TE_soprz01`, `share`) = Mandanten mit Flag
+- **Übergreifende Tenants** (`TE_res01`, `TE_infrz01`, `share`) = Mandanten mit Flag
   „übergreifend/shared".
 - **Global-Admin-Gesamtsicht**: ein Scope (RBAC, ADR 0007), keine Datenänderung — die UI
   bietet eine „Alle Mandanten"-Sicht im selben Kontext/derselben NetBox.
 
 **E2 — Namensprofil als austauschbare Komponente.** Der Parser ist nicht hartkodiert,
-sondern ein **Profil pro Kunde** (Adapter-Prinzip wie SoT-Gateway); SOP ist das erste
-Profil. Gemeinsame Basis-Grammatik (Prefix→Typ) + kundenspezifische Overrides.
+sondern ein **Profil pro Kunde** (Adapter-Prinzip wie SoT-Gateway); das Standardprofil „default" ist
+das erste Profil und gilt für Mandanten ohne eigenes Profil. Gemeinsame Basis-Grammatik (Prefix→Typ) + kundenspezifische Overrides.
 
 **E3 — Ausnahmen-Kaskade (erstklassig).** Einordnung läuft: (1) Konvention → (2) Objekttyp
 / FortiGate-**Farbcode** → (3) manuell/Designer-Override → (4) sonst `finding`. „Es gibt
 immer Ausnahmen" ist damit Teil des Modells, nicht ein Sonderfall. Das `color`-Signal
-(SOP/Swisscom/MPLS/VPN/Extern × Host/Network) wird am `network_object` als **numerischer
+(Intern/Swisscom/MPLS/VPN/Extern × Host/Network) wird am `network_object` als **numerischer
 Code** und **optional** mitgeführt (nicht jedes Objekt hat eine Farbe → Fallback
 Prefix/Typ). Feld-Mapping der Collectors: `docs/collectors-read-contract.md`.
 
@@ -218,7 +218,7 @@ Umgesetzt (Alembic `0007`):
 - **`tenant.code`** — optionales GG-Kürzel (nullable, indiziert, keine harte Eindeutigkeit
   → Datenqualität, kein funktionaler Zwang). Pflegbar via `PATCH /tenants/{id}` (admin) und
   CLI `ensure-tenant --code`; in `/tenants` sichtbar.
-- **`site`** (Standort) — `tenant_id`, **dreistelliger `code`** (SOP: numerisch, z. B. „000";
+- **`site`** (Standort) — `tenant_id`, **dreistelliger `code`** (numerisch, z. B. „000";
   Schema erzwingt 3 Zeichen), `name`, `description`; Code je Mandant eindeutig. API
   `GET/POST /tenants/{id}/sites`, `DELETE …/sites/{sid}` (Lesen `viewer`, Schreiben `admin`,
   mandantsgescoped, auditiert). Schreiben ist admin-only, und **admin = Global-Admin**

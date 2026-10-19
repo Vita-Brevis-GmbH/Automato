@@ -142,11 +142,18 @@ def _host_by_ips(session: Session, tenant_id: int, ips) -> NetworkObject | None:
 
 
 def _resolve_prefixes(session: Session, tenant_id: int) -> PrefixList | None:
-    """Praefix-Liste aus dem Namensprofil des Mandanten; None = SOP-Default-Konvention."""
+    """Praefix-Liste aus dem Namensprofil des Mandanten.
+
+    Ohne eigenes Profil gilt das Standardprofil „default"; fehlt auch das (oder ist es
+    leer), None = eingebaute Standard-Konvention (keine Funktionsabhaengigkeit von Daten).
+    """
     tenant = session.get(Tenant, tenant_id)
     profile_id = getattr(tenant, "naming_profile_id", None)
     if not profile_id:
-        return None
+        default = profile_store.get_default_profile(session)
+        if default is None:
+            return None
+        profile_id = default.id
     entries = profile_store.list_entries(session, profile_id, kind="object_prefix")
     return naming.prefixes_from_entries((e.key, e.value) for e in entries)
 
