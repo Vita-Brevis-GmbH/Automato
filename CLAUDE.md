@@ -322,6 +322,16 @@ Proxy-Header, HTTP nur intern) → Postgres (persistent); Secrets via Ansible Va
 Wait auf OIDC-Discovery. **Realm-Härtung** im gemeinsamen `realm-automato.json` (gilt dev+prod):
 Brute-Force-Schutz, Passwort-Policy (12+, Mix, History, Ablauf), **OTP/TOTP-Pflicht**,
 Browser-Security-Header, `registrationAllowed=false`. Doku `deploy/keycloak/ansible/README.md`.
+**Keycloak Prod live** (manuelles Runbook `deploy/keycloak/PROD-INSTALL.md`, Ubuntu 26.04,
+eigenes Sectigo-Wildcard als Fullchain, kein ACME): öffentlich `auth.vitabrevis.ch` (Kunden,
+hinter FortiGate-Virtual-Server + WAF; `/admin` + `/realms/master` gesperrt), Admin-Konsole nur
+intern `auth.int.vitabrevis.ch` (`KC_HOSTNAME_ADMIN`, Zertifikat von der DC-CA, Caddy
+`remote_ip` + interne FortiGate-Policy ohne NAT). WAF-Ausnahme per URL-Access-Regel auf Host +
+OIDC-Pfad gescoped (Negativ-Test Pflicht, Abschnitt 12). Integrations-Fixes: `docker-compose.yml`
+reicht `AUTOMATO_AUTH_MODE`/`AUTOMATO_OIDC_*` an den Orchestrator durch; Realm-Export mit
+**Audience-Mapper** (`aud=automato-api`, sonst 401); `tenant_ids` als verwaltetes
+User-Profile-Attribut (nur Admin editierbar), OTP-Pflicht per Browser-Flow; Dev-Login per
+SSH-Tunnel (PKCE braucht sicheren Kontext).
 **Mandanten-Klärung (GG):** Ein **Mandant = Gruppengesellschaft (GG)** mit **einem oder
 mehreren Standorten** und einem **Kürzel/Code** zur Identifikation bei VMs/Objekten. Die
 **Wörterbücher (GG-Kürzel etc.) sind kundenspezifische Laufzeitdaten** (kein Seed-Zwang) und

@@ -387,35 +387,90 @@ Es gibt **zwei verschiedene Admins** — nicht verwechseln:
    (z. B. `https://auth.vitabrevis.ch/realms/automato/account/`) erzwingt Keycloak
    **Passwort-Wechsel + OTP**.
 5. **Erst jetzt den Boot-Admin entfernen:** Realm `master` → *Users* → `bootstrap-admin`
-   löschen. Danach `KC_BOOTSTRAP_ADMIN_*` aus der `.env` entfernen und
-   `docker compose up -d --force-recreate keycloak` — die Boot-Credentials werden nur beim
-   allerersten Start gebraucht.
+   löschen (angemeldet als der neue Admin). Danach die Boot-Variablen aus `.env` **und**
+   `docker-compose.yml` entfernen und Keycloak neu erstellen:
+   ```bash
+   cd /opt/automato-keycloak
+   sed -i '/^KC_BOOTSTRAP_ADMIN_/d' .env
+   sed -i '/KC_BOOTSTRAP_ADMIN_/d' docker-compose.yml
+   grep -n BOOTSTRAP .env docker-compose.yml     # keine Treffer mehr
+   docker compose up -d --force-recreate keycloak
+   ```
+   Die Boot-Credentials werden nur beim allerersten Start gebraucht.
 
 ---
 
-## 9. Dev gegen diese Keycloak testen
+## 9. Automato anbinden (Realm `automato`, lokale User, OIDC)
 
-Der Realm-Client **`automato-web`** erlaubt bereits den Redirect `http://localhost:5173/*`
-— die Dev-Web-UI (Vite) kann sich also direkt gegen die Produktions-Keycloak anmelden.
-Orchestrator (Dev) auf OIDC umstellen:
+### 9a. Einmalig im Realm `automato` (Admin-Konsole)
+
+Der Realm-Import läuft nur beim ersten Start (`IGNORE_EXISTING`) — spätere Ergänzungen im
+`realm-automato.json` landen **nicht** automatisch in einem bestehenden Keycloak. Darum auf
+einer bestehenden Installation von Hand:
+
+1. **Audience-Mapper** (sonst lehnt der Orchestrator jedes Token mit 401 ab — er prüft
+   `aud = automato-api`): *Clients → `automato-web` → Client scopes →
+   `automato-web-dedicated` → Configure a new mapper → **Audience*** — Name
+   `audience-automato-api`, *Included Client Audience* `automato-api`, *Add to access token*
+   **On**, *Add to ID token* Off → Save.
+2. **`tenant_ids` als verwaltetes Attribut** (steuert das Mandanten-Scoping): *Realm
+   settings → User profile → Create attribute* — Name `tenant_ids`, Display name
+   „Mandanten-IDs", **Multivalued On**, Required Off, *Who can edit*: **nur Admin**,
+   *Who can view*: Admin (User optional). Optional Validator `integer`.
+   Wichtig: User dürfen das Attribut **nicht** selbst bearbeiten (sonst könnten sie sich
+   über die Account-Konsole fremde Mandanten geben).
+3. **OTP für alle lokalen User erzwingen:** *Authentication → Flow `browser` → „Browser –
+   Conditional OTP"* auf **Required** (ist der Flow nicht editierbar: *Duplicate*, dort
+   umstellen, *Bind flow* → Browser flow). Gilt für Passwort-Logins; über SAML-Broker
+   angemeldete User authentisieren am Kunden-IdP.
+4. **Redirect-URIs/Web-Origins** des Clients `automato-web` passend zur UI-URL
+   (*Clients → `automato-web` → Settings*): Dev `http://localhost:5173/*` (ist drin),
+   produktiv `https://<web-ui-host>/*` + Web-Origin `https://<web-ui-host>`.
+
+### 9b. Lokale User anlegen
+
+*Realm `automato` → Users → Create new user* (Username, E-Mail, *Email verified* On) →
+*Credentials → Set password* (Temporary On) → *Role mapping → Assign role* → Realm-Rolle
+`viewer` / `operator` / `admin` → im Tab *Details* das Feld **Mandanten-IDs** mit den IDs
+der erlaubten Mandanten füllen (IDs aus dem Automato-UI-Tab „Mandant / Standorte" bzw.
+`GET /tenants`). `admin` sieht immer alle Mandanten; `viewer`/`operator` ohne
+Mandanten-IDs sehen nichts (fail-closed).
+
+### 9c. Orchestrator auf OIDC umstellen
+
+In der `.env` des Automato-Stacks (Repo-Wurzel; `docker-compose.yml` reicht die Werte an
+den Orchestrator durch):
 
 ```env
 AUTOMATO_AUTH_MODE=oidc
 AUTOMATO_OIDC_ISSUER=https://auth.vitabrevis.ch/realms/automato
 AUTOMATO_OIDC_AUDIENCE=automato-api
 AUTOMATO_OIDC_JWKS_URL=https://auth.vitabrevis.ch/realms/automato/protocol/openid-connect/certs
-# Defaults passen: ROLES_CLAIM=realm_access.roles, TENANTS_CLAIM=tenant_ids
+# Defaults passen: ROLES_CLAIM=realm_access.roles, TENANTS_CLAIM=tenant_ids, WEB_CLIENT_ID=automato-web
 ```
 
-Die Dev-VM muss `auth.vitabrevis.ch` erreichen (ausgehend HTTPS). Rollen kommen aus
-`realm_access.roles`, Mandanten aus dem `tenant_ids`-Claim; `admin` = alle Mandanten.
+```bash
+docker compose --profile core up -d --force-recreate orchestrator
+curl -s http://localhost:8000/auth/config      # auth_mode "oidc", issuer, client_id
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/rules   # 401 ohne Token = korrekt
+```
 
-> **Wenn ihr die Web-UI später produktiv hostet** (eigene URL), im Realm unter
-> Clients → `automato-web` die **Redirect-URI** und **Web-Origin** dieser URL ergänzen
-> (`https://<web-ui-host>/*`). `localhost:5173` nur für Dev.
+Die Automato-VM muss `auth.vitabrevis.ch` erreichen (ausgehend HTTPS, für die JWKS).
 
-Test-User anlegen: Realm `automato` → Users → Add user, Attribut **`tenant_ids`** mit den
-erlaubten Mandanten-IDs setzen, Rolle `viewer`/`operator` zuweisen, Passwort setzen.
+### 9d. Web-UI-Login testen (Dev)
+
+Der Browser braucht für PKCE einen **sicheren Kontext** (HTTPS oder `localhost`) — über
+`http://<VM-IP>:5173` schlägt der Login fehl (*crypto.subtle* fehlt). Für Dev deshalb per
+SSH-Tunnel, dann passt auch die bereits erlaubte Redirect-URI `http://localhost:5173/*`:
+
+```bash
+ssh -L 5173:localhost:5173 -L 8000:localhost:8000 <user>@<automato-vm>
+# Browser: http://localhost:5173 -> Umleitung zu Keycloak -> Login (+ OTP) -> zurück
+```
+
+Bei Internet-Betrieb hinter WAF (Schritt 12): Holt der Browser das Token, geht ein POST an
+`…/protocol/openid-connect/token` (Body mit `redirect_uri`). Blockt die WAF diesen Request
+(WAF-Log), die URL-Access-Regel 20 auf `(auth|token|logout)` erweitern.
 
 ---
 
@@ -555,12 +610,12 @@ anderen Tools unverändert lassen.
   FortiGate-IP und `remote_ip` greift nicht), kein WAF nötig (intern, IP-beschränkt, MFA).
   Achtung: der interne Name geht **direkt** auf die Server-IP, nicht über die VIP — ohne
   diese Policy gibt es einen Timeout.
-- **Master-Realm auf den internen Namen legen** (sonst: *„Timeout when waiting for 3rd party
-  check iframe message"*). `KC_HOSTNAME_ADMIN` verlegt nur die Konsole; Login und
-  3p-Cookie-Check der Konsole laufen über die Endpunkte des **Master-Realms**, und die zeigen
-  per Default auf `KC_HOSTNAME` (`auth.vitabrevis.ch`) — wo `/realms/master` bewusst gesperrt
-  ist. Lösung: Frontend-URL des Master-Realms = interner Name. Da die Konsole dann noch
-  nicht geht, per `kcadm` im Container:
+- **Falls die Konsole mit *„Timeout when waiting for 3rd party check iframe message"*
+  hängen bleibt:** Direkt nach `--force-recreate` (Keycloak startet noch) tritt das
+  vorübergehend auf — erst neu laden (Inkognito). Bleibt der Fehler, zeigen Login/
+  3p-Cookie-Check der Konsole auf den öffentlichen Namen, wo `/realms/master` gesperrt ist
+  (prüfen: F12 → Netzwerk → `3p-cookies`). Dann die Frontend-URL des Master-Realms auf den
+  internen Namen setzen, per `kcadm` im Container:
   ```bash
   cd /opt/automato-keycloak
   docker compose exec keycloak /opt/keycloak/bin/kcadm.sh config credentials \

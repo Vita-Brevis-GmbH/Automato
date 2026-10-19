@@ -53,6 +53,13 @@ services:
       AUTOMATO_NETBOX_URL: ${AUTOMATO_NETBOX_URL:-}
       AUTOMATO_NETBOX_TOKEN: ${AUTOMATO_NETBOX_TOKEN:-}
       AUTOMATO_NETBOX_VERIFY_TLS: ${AUTOMATO_NETBOX_VERIFY_TLS:-true}
+      # AuthN (E1, ADR 0007): dev = ohne Login (Standard-Admin), oidc = Keycloak-JWT.
+      # Ohne Angaben bleibt es bei dev; fuer oidc in .env setzen (deploy/keycloak/PROD-INSTALL.md).
+      AUTOMATO_AUTH_MODE: ${AUTOMATO_AUTH_MODE:-dev}
+      AUTOMATO_OIDC_ISSUER: ${AUTOMATO_OIDC_ISSUER:-}
+      AUTOMATO_OIDC_AUDIENCE: ${AUTOMATO_OIDC_AUDIENCE:-}
+      AUTOMATO_OIDC_JWKS_URL: ${AUTOMATO_OIDC_JWKS_URL:-}
+      AUTOMATO_OIDC_WEB_CLIENT_ID: ${AUTOMATO_OIDC_WEB_CLIENT_ID:-automato-web}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
