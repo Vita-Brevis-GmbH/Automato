@@ -359,20 +359,37 @@ Admin-Konsole im Browser: **https://auth.vitabrevis.ch/admin/** (grünes Schloss
 
 ---
 
-## 8. Nach dem ersten Start (Admin + OTP, Boot-Admin entfernen)
+## 8. Nach dem ersten Start (Admin + OTP, Boot-Admin ablösen)
 
-1. **Als Boot-Admin anmelden:** `https://auth.vitabrevis.ch/admin/`, User
-   `bootstrap-admin`, Passwort `$BOOT_PW` (aus Schritt 4). Master-Realm.
-2. Realm **`automato`** wählen → **Users → `automato-admin` → Credentials →
-   Set password**: ein Initialpasswort, **„Temporary" = On**.
-3. **Abmelden**, dann unter `https://auth.vitabrevis.ch/realms/automato/account/` (oder
-   beim nächsten Admin-Login im Realm) als `automato-admin` anmelden → Keycloak erzwingt
-   **Passwort-Wechsel + OTP/TOTP-Einrichtung** (Authenticator-App scannen).
-4. `automato-admin` hat die Realm-Rolle `admin` → Global-Admin (mandantsübergreifend).
-5. **Boot-Admin entfernen/rotieren:** Master-Realm → Users → `bootstrap-admin` löschen
-   (oder Passwort rotieren). Er ist nur fürs Setup. Danach `KC_BOOTSTRAP_ADMIN_*` aus der
-   `.env` entfernen und `docker compose up -d --force-recreate` — Boot-Credentials werden
-   nur beim ersten Bootstrap gebraucht.
+Es gibt **zwei verschiedene Admins** — nicht verwechseln:
+- **Keycloak-Administrator** (Realm `master`): verwaltet Keycloak selbst (Realms, Clients,
+  User). Anfangs nur der temporäre `bootstrap-admin`.
+- **`automato-admin`** (Realm `automato`, Rolle `admin`): Global-Admin **der
+  Automato-Plattform** (mandantsübergreifend). Kann sich **nicht** an der
+  Keycloak-Admin-Konsole anmelden.
+
+> ⚠️ Den `bootstrap-admin` **erst löschen, wenn ein dauerhafter Master-Admin existiert und
+> getestet ist** — sonst ist die Keycloak-Verwaltung ausgesperrt.
+
+1. **Als Boot-Admin anmelden:** Admin-Konsole (bei Internet-Betrieb über den internen Namen,
+   Schritt 12: `https://auth.int.vitabrevis.ch/admin/`), User `bootstrap-admin`,
+   Passwort `$BOOT_PW` (aus Schritt 4).
+2. **Dauerhaften Master-Admin anlegen** (Realm `master`): *Users → Add user* (persönliches
+   Konto) → *Credentials → Set password* (Temporary = On) → *Role mapping → Assign role* →
+   Realm-Rolle **`admin`** → *Required user actions*: **Configure OTP**.
+   OTP für alle Master-User erzwingen: *Authentication → Flow `browser` → „Browser –
+   Conditional OTP"* auf **Required** setzen (oder Duplikat des Flows mit OTP *Required*
+   als Browser-Flow binden).
+3. **Abmelden, mit dem neuen Master-Admin anmelden** → Passwort-Wechsel + OTP einrichten.
+   Prüfen, dass alles funktioniert (z. B. Realm `automato` öffnen).
+4. **`automato-admin` (Plattform-Admin) aktivieren:** Realm **`automato`** → *Users →
+   `automato-admin` → Credentials → Set password* (Temporary = On). Beim ersten Login
+   (z. B. `https://auth.vitabrevis.ch/realms/automato/account/`) erzwingt Keycloak
+   **Passwort-Wechsel + OTP**.
+5. **Erst jetzt den Boot-Admin entfernen:** Realm `master` → *Users* → `bootstrap-admin`
+   löschen. Danach `KC_BOOTSTRAP_ADMIN_*` aus der `.env` entfernen und
+   `docker compose up -d --force-recreate keycloak` — die Boot-Credentials werden nur beim
+   allerersten Start gebraucht.
 
 ---
 
@@ -536,6 +553,24 @@ anderen Tools unverändert lassen.
 - **FortiGate (intern):** eigene Policy *Client → DMZ*, Source = Admin-Adressgruppe,
   Destination = `172.25.4.13`, Service HTTPS, **NAT aus** (sonst sieht Caddy nur die
   FortiGate-IP und `remote_ip` greift nicht), kein WAF nötig (intern, IP-beschränkt, MFA).
+  Achtung: der interne Name geht **direkt** auf die Server-IP, nicht über die VIP — ohne
+  diese Policy gibt es einen Timeout.
+- **Master-Realm auf den internen Namen legen** (sonst: *„Timeout when waiting for 3rd party
+  check iframe message"*). `KC_HOSTNAME_ADMIN` verlegt nur die Konsole; Login und
+  3p-Cookie-Check der Konsole laufen über die Endpunkte des **Master-Realms**, und die zeigen
+  per Default auf `KC_HOSTNAME` (`auth.vitabrevis.ch`) — wo `/realms/master` bewusst gesperrt
+  ist. Lösung: Frontend-URL des Master-Realms = interner Name. Da die Konsole dann noch
+  nicht geht, per `kcadm` im Container:
+  ```bash
+  cd /opt/automato-keycloak
+  docker compose exec keycloak /opt/keycloak/bin/kcadm.sh config credentials \
+    --server http://localhost:8080 --realm master --user bootstrap-admin   # Passwort-Abfrage
+  docker compose exec keycloak /opt/keycloak/bin/kcadm.sh update realms/master \
+    -s 'attributes.frontendUrl=https://auth.int.vitabrevis.ch'
+  docker compose exec keycloak /opt/keycloak/bin/kcadm.sh get realms/master --fields attributes
+  ```
+  (Später auch in der Konsole: Realm `master` → *Realm settings → General → Frontend URL*.)
+  Die Kunden-Realms behalten `auth.vitabrevis.ch`.
 
 ### 12b. WAF-Ausnahme nur für `auth.vitabrevis.ch` im gemeinsamen Profil
 
