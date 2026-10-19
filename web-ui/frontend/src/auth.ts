@@ -9,6 +9,28 @@ import type { AuthConfig } from "./api";
 const redirect = window.location.origin + window.location.pathname;
 let manager: UserManager | null = null;
 let renewing: Promise<User | null> | null = null;
+let renewError = "";
+
+// Schleifenschutz: wurde gerade erst angemeldet und das Token trotzdem abgelehnt, hilft
+// ein weiterer Login nicht (Keycloak-SSO schickt sofort zurück) -> Grund anzeigen.
+const LOGIN_AT = "automato_login_at";
+const LOOP_WINDOW_MS = 60_000;
+let problemHandler: ((reason: string) => void) | null = null;
+
+export function onProblem(handler: (reason: string) => void): void {
+  problemHandler = handler;
+}
+
+function session(key: string, value?: string | null): string | null {
+  try {
+    if (value === undefined) return sessionStorage.getItem(key);
+    if (value === null) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, value);
+  } catch {
+    /* sessionStorage nicht verfügbar */
+  }
+  return null;
+}
 
 export function init(cfg: AuthConfig): UserManager {
   // Altlast der ersten Version (Token direkt in localStorage) entfernen.
@@ -32,11 +54,13 @@ export function init(cfg: AuthConfig): UserManager {
 
 export const isOidc = () => manager !== null;
 
-// Verarbeitet den Rückkommer von Keycloak (?code=…). true = Callback behandelt.
+// Verarbeitet den Rückkommer von Keycloak (?code=…) und stellt die vorherige Ansicht
+// (#hash) wieder her. true = Callback behandelt.
 export async function handleRedirectCallback(): Promise<boolean> {
   if (!manager || !window.location.search.includes("code=")) return false;
-  await manager.signinRedirectCallback();
-  window.history.replaceState({}, document.title, window.location.pathname);
+  const user = await manager.signinRedirectCallback();
+  const hash = (user.state as { hash?: string } | undefined)?.hash ?? "";
+  window.history.replaceState({}, document.title, window.location.pathname + hash);
   return true;
 }
 
@@ -45,7 +69,10 @@ async function renew(): Promise<User | null> {
   if (!renewing) {
     renewing = manager
       .signinSilent()
-      .catch(() => null)
+      .catch((e) => {
+        renewError = e instanceof Error ? e.message : String(e);
+        return null;
+      })
       .finally(() => {
         renewing = null;
       });
@@ -62,7 +89,9 @@ export async function ensureSession(): Promise<User | null> {
     const renewed = await renew();
     if (renewed && !renewed.expired) return renewed;
   }
-  await login();
+  await relogin(
+    user ? `Token-Erneuerung bei Keycloak fehlgeschlagen${renewError ? `: ${renewError}` : ""}` : "",
+  );
   return null;
 }
 
@@ -71,10 +100,23 @@ export async function accessToken(): Promise<string | null> {
   return user?.access_token ?? null;
 }
 
+// Neu anmelden (Redirect zu Keycloak) - ausser es wurde gerade erst angemeldet: dann
+// wird der Grund gemeldet statt endlos zwischen UI und Keycloak hin und her zu leiten.
+export async function relogin(reason: string): Promise<void> {
+  const last = Number(session(LOGIN_AT) ?? 0);
+  if (last && Date.now() - last < LOOP_WINDOW_MS) {
+    problemHandler?.(reason || "Anmeldung wird vom Orchestrator nicht akzeptiert.");
+    return;
+  }
+  await login();
+}
+
+// Ausdrücklicher Login (Button oder erster Aufruf ohne Sitzung).
 export async function login(): Promise<void> {
   if (!manager) return;
+  session(LOGIN_AT, String(Date.now()));
   await manager.removeUser();
-  await manager.signinRedirect();
+  await manager.signinRedirect({ state: { hash: window.location.hash } });
 }
 
 export async function logout(): Promise<void> {

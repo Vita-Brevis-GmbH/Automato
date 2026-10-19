@@ -104,7 +104,10 @@ function initials(name: string): string {
 
 export default function App() {
   const [boot, setBoot] = useState<Boot>({ state: "loading" });
+  const [problem, setProblem] = useState<string | null>(null);
   const started = useRef(false);
+
+  useEffect(() => auth.onProblem(setProblem), []);
 
   // AuthN-Bootstrap: dev -> Standard-Admin; oidc -> Callback verarbeiten, gültige
   // Sitzung sicherstellen (still erneuern) oder zu Keycloak umleiten.
@@ -139,6 +142,27 @@ export default function App() {
     })();
   }, []);
 
+  if (problem) {
+    return (
+      <Splash>
+        <ErrorBox error={problem} prefix="Anmeldung nicht möglich" />
+        <Note>
+          Häufige Ursachen: im Keycloak-Realm fehlt der Audience-Mapper <code>automato-api</code>,{" "}
+          <code>AUTOMATO_OIDC_ISSUER</code>/<code>AUTOMATO_OIDC_JWKS_URL</code> passen nicht zum Realm,
+          oder der Orchestrator erreicht Keycloak nicht. Details:{" "}
+          <code>docker compose logs orchestrator | grep OIDC</code>
+        </Note>
+        <div style={{ display: "flex", gap: 9 }}>
+          <button className="btn btn-primary" onClick={() => auth.login()}>
+            Erneut anmelden
+          </button>
+          <button className="btn btn-ghost" onClick={() => auth.logout()}>
+            Abmelden
+          </button>
+        </div>
+      </Splash>
+    );
+  }
   if (boot.state === "loading" || boot.state === "redirect") {
     return (
       <Splash>

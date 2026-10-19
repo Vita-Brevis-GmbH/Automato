@@ -389,3 +389,14 @@ Collector-Agenten (Online-Status aus Heartbeat). Nat/Findings/Applications manda
 Verifiziert: `tsc`+`vite build`, Klick-Durchlauf per Playwright gegen lokalen Orchestrator
 (dev-Modus); OIDC-Token-Erneuerung nur build-verifiziert (End-to-End im Dev-Keycloak).
 API-Übersicht in `docs/BETRIEB.md` Abschnitt 3/4 aktualisiert.
+**Anmelde-Schleife behoben (Dev-Feedback „alle Seiten springen auf Übersicht zurück"):**
+Ursache: der Orchestrator lehnte jedes Token pauschal mit `401 invalid token` ab (ohne
+Grund/Log), das neue UI meldete daraufhin neu an, Keycloak-SSO leitete sofort zurück →
+Übersicht. Jetzt: `app/auth/oidc.py` nennt den Grund (expired/audience/issuer/Schlüssel
+nicht in JWKS) und loggt ihn (`OIDC-Token abgelehnt: …`); JWKS nicht erreichbar = **503**
+(kein Login-Problem); `PyJWKClient` wird wiederverwendet (JWKS-Cache statt Abruf pro
+Request). UI: Schleifenschutz (`auth.relogin`: innerhalb 60 s nach einem Login kein
+erneuter Redirect, stattdessen Fehlerseite mit Grund + „Erneut anmelden"), die Ansicht
+(`#hash`) bleibt über den Login erhalten. Verifiziert mit einem Mock-OIDC-Provider
+(Code+PKCE, Refresh-Erneuerung, falsche Audience → Fehlerseite, kein Loop). Tests
+`test_auth_oidc.py` (Grund je Fehlerart, 503). Tests: orchestrator 111.

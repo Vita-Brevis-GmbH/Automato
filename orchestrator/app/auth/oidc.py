@@ -4,13 +4,24 @@ Validiert ein Bearer-JWT gegen Keycloak (JWKS/Issuer/Audience) und bildet die Cl
 auf einen `Principal` ab: Rollen aus `oidc_roles_claim` (Default Keycloak-Realm-Rollen
 `realm_access.roles`), Mandanten aus `oidc_tenants_claim`. Admin ⇒ alle Mandanten
 (Global-Admin-Gesamtsicht); sonst nur die zugewiesenen (fehlt die Zuweisung ⇒ keine).
+
+Abgelehnte Tokens liefern einen konkreten Grund (abgelaufen, Issuer/Audience passt nicht,
+Schlüssel unbekannt) und werden geloggt - ohne Token-Inhalt. Ist die JWKS von hier aus
+nicht erreichbar, ist das ein Server-Problem (503), kein Anmeldefehler: ein erneuter
+Login würde nichts ändern.
 """
+
+import logging
+from functools import lru_cache
 
 import jwt
 from fastapi import HTTPException
 from jwt import PyJWKClient
+from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 
 from app.auth.principal import Principal
+
+log = logging.getLogger(__name__)
 
 
 def _dig(claims: dict, dotted: str):
@@ -48,9 +59,15 @@ def claims_to_principal(claims: dict, settings) -> Principal:
     return Principal(subject=str(subject), roles=roles, tenant_ids=tenant_ids)
 
 
+@lru_cache(maxsize=8)
+def _jwks_client(url: str) -> PyJWKClient:
+    # Wiederverwenden: PyJWKClient cached das Key-Set (sonst ein JWKS-Abruf pro Request).
+    return PyJWKClient(url, timeout=10)
+
+
 def verify_token(token: str, settings) -> dict:
     """JWT gegen die Keycloak-JWKS validieren; wirft bei ungueltigem Token."""
-    signing_key = PyJWKClient(settings.oidc_jwks_url).get_signing_key_from_jwt(token)
+    signing_key = _jwks_client(settings.oidc_jwks_url).get_signing_key_from_jwt(token)
     return jwt.decode(
         token,
         signing_key.key,
@@ -61,8 +78,33 @@ def verify_token(token: str, settings) -> dict:
     )
 
 
+def _reject(status: int, detail: str, exc: Exception) -> HTTPException:
+    log.warning("OIDC-Token abgelehnt: %s (%s: %s)", detail, type(exc).__name__, exc)
+    return HTTPException(status_code=status, detail=detail)
+
+
 def principal_from_bearer(authorization: str | None, settings) -> Principal:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
-    return claims_to_principal(verify_token(token, settings), settings)
+    try:
+        claims = verify_token(token, settings)
+    except PyJWKClientConnectionError as exc:
+        raise _reject(
+            503, f"JWKS vom Orchestrator nicht erreichbar: {settings.oidc_jwks_url}", exc
+        ) from exc
+    except PyJWKClientError as exc:
+        raise _reject(
+            401, "Signaturschlüssel nicht in der JWKS (Realm/JWKS-URL passt nicht)", exc
+        ) from exc
+    except jwt.ExpiredSignatureError as exc:
+        raise _reject(401, "token expired", exc) from exc
+    except jwt.InvalidAudienceError as exc:
+        raise _reject(
+            401, f"token audience invalid (erwartet: {settings.oidc_audience})", exc
+        ) from exc
+    except jwt.InvalidIssuerError as exc:
+        raise _reject(401, f"token issuer invalid (erwartet: {settings.oidc_issuer})", exc) from exc
+    except jwt.InvalidTokenError as exc:
+        raise _reject(401, f"invalid token ({type(exc).__name__})", exc) from exc
+    return claims_to_principal(claims, settings)

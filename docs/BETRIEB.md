@@ -110,6 +110,17 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 
 ## 6. Fehlerbehebung
 
+- **„Anmeldung nicht möglich: Der Orchestrator lehnt das Anmelde-Token ab …“** (UI) —
+  der Orchestrator nennt den Grund und loggt ihn (`docker compose logs orchestrator |
+  grep OIDC`): `token audience invalid` → im Realm fehlt der Audience-Mapper
+  `automato-api` (Client `automato-web` → Client scopes → dedicated → Mapper);
+  `token issuer invalid` → `AUTOMATO_OIDC_ISSUER` passt nicht zum Realm (exakt wie
+  `iss`, z. B. `https://auth.vitabrevis.ch/realms/automato-dev`); `Signaturschlüssel
+  nicht in der JWKS` → `AUTOMATO_OIDC_JWKS_URL` zeigt auf einen anderen Realm. HTTP 503
+  `JWKS vom Orchestrator nicht erreichbar` → der Orchestrator-Container erreicht Keycloak
+  nicht (DNS/Firewall/WAF). Nach Änderungen an `.env`: `docker compose … up -d` (neu
+  erstellt den Container).
+
 - NetBox startet nicht / Token-Fehler: `source-of-truth/netbox/README.md` (Abschnitt Fehlerbehebung).
 - Stack-/Lab-Probleme: `lab/README.md`.
 - Logs: `docker compose logs -f orchestrator collector`.

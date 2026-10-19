@@ -269,6 +269,7 @@ td.actions { text-align: right; white-space: nowrap; }
 .note { background: var(--accent-weak); border: 1px solid transparent; border-radius: 8px; padding: 11px 14px; font-size: 12.5px;
   color: var(--fg); margin-bottom: 16px; display: flex; gap: 9px; align-items: flex-start; }
 .note .ico { color: var(--accent); flex: none; display: flex; margin-top: 1px; }
+.note code, .error code { overflow-wrap: anywhere; }
 .note.warn { background: var(--warn-weak); }
 .note.warn .ico { color: var(--warn); }
 .error { background: var(--crit-weak); color: var(--fg); border-radius: 8px; padding: 11px 14px; font-size: 13px; margin-bottom: 16px;

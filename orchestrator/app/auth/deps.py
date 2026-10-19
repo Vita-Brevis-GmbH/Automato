@@ -1,11 +1,15 @@
 """FastAPI-Abhaengigkeiten fuer AuthN/RBAC + Mandanten-Scoping (E1, ADR 0007)."""
 
+import logging
+
 from fastapi import Depends, Header, HTTPException
 
 from app.auth import oidc
 from app.auth import roles as R
 from app.auth.principal import Principal
 from app.config import get_settings
+
+log = logging.getLogger(__name__)
 
 
 def _parse_tenants(raw: str | None) -> tuple[int, ...] | None:
@@ -25,7 +29,8 @@ def get_principal(
             return oidc.principal_from_bearer(authorization, settings)
         except HTTPException:
             raise
-        except Exception as exc:  # noqa: BLE001 - jede Validierungs-/JWKS-Panne -> 401
+        except Exception as exc:  # noqa: BLE001 - jede weitere Validierungs-Panne -> 401
+            log.warning("OIDC-Token abgelehnt: %s: %s", type(exc).__name__, exc)
             raise HTTPException(status_code=401, detail="invalid token") from exc
     # dev-Modus: Standard = Admin (alle Mandanten) -> unveraendertes Verhalten.
     # Override via X-Dev-Roles/X-Dev-Tenants zum Testen/Vorfuehren von RBAC + Scoping.

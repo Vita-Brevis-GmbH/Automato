@@ -90,6 +90,56 @@ def test_verify_token_rsa_roundtrip(monkeypatch):
     assert claims["realm_access"]["roles"] == ["operator"]
 
 
+def _signed(claims: dict, monkeypatch) -> str:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    priv = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+
+    public = key.public_key()
+
+    class _SigningKey:
+        key = public
+
+    monkeypatch.setattr(oidc.PyJWKClient, "get_signing_key_from_jwt", lambda self, t: _SigningKey())
+    return jwt.encode(claims, priv, algorithm="RS256")
+
+
+def test_abgelehntes_token_nennt_den_grund(client, monkeypatch):
+    iss = "https://kc/realms/automato-dev"
+    settings = _settings(oidc_issuer=iss, oidc_audience="automato-api")
+    monkeypatch.setattr("app.auth.deps.get_settings", lambda: settings)
+
+    def call(claims):
+        token = _signed(claims, monkeypatch)
+        return client.get("/tenants", headers={"Authorization": f"Bearer {token}"})
+
+    base = {"sub": "u", "iss": iss, "aud": "automato-api", "realm_access": {"roles": ["admin"]}}
+    assert call(base).status_code == 200
+
+    r = call({**base, "aud": "account"})  # Audience-Mapper fehlt im Realm
+    assert r.status_code == 401 and "audience" in r.json()["detail"]
+    r = call({**base, "iss": "https://kc/realms/automato"})  # falscher Realm
+    assert r.status_code == 401 and "issuer" in r.json()["detail"]
+    r = call({**base, "exp": 1})
+    assert r.status_code == 401 and r.json()["detail"] == "token expired"
+
+
+def test_jwks_nicht_erreichbar_ist_503_nicht_401(client, monkeypatch):
+    from jwt.exceptions import PyJWKClientConnectionError
+
+    monkeypatch.setattr("app.auth.deps.get_settings", _settings)
+
+    def boom(self, t):
+        raise PyJWKClientConnectionError("Fail to fetch data from the url")
+
+    monkeypatch.setattr(oidc.PyJWKClient, "get_signing_key_from_jwt", boom)
+    r = client.get("/tenants", headers={"Authorization": "Bearer x.y.z"})
+    assert r.status_code == 503 and "JWKS" in r.json()["detail"]
+
+
 def test_oidc_mode_bearer_scoping(session_factory, client, monkeypatch):
     seed = session_factory()
     a = _tenant_with_rule(seed, "kunde-a")

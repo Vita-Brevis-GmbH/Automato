@@ -246,10 +246,12 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, { ...init, headers });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
+    const detail = detailText(body);
     if (response.status === 401 && auth.isOidc()) {
-      void auth.login(); // Token abgelehnt -> neu anmelden (Redirect zu Keycloak)
+      // Token abgelehnt -> neu anmelden (mit Schleifenschutz, siehe auth.relogin)
+      void auth.relogin(`Der Orchestrator lehnt das Anmelde-Token ab: ${detail || "HTTP 401"}`);
     }
-    throw new ApiError(response.status, detailText(body));
+    throw new ApiError(response.status, detail);
   }
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
