@@ -377,9 +377,13 @@ Es gibt **zwei verschiedene Admins** — nicht verwechseln:
 2. **Dauerhaften Master-Admin anlegen** (Realm `master`): *Users → Add user* (persönliches
    Konto) → *Credentials → Set password* (Temporary = On) → *Role mapping → Assign role* →
    Realm-Rolle **`admin`** → *Required user actions*: **Configure OTP**.
-   OTP für alle Master-User erzwingen: *Authentication → Flow `browser` → „Browser –
-   Conditional OTP"* auf **Required** setzen (oder Duplikat des Flows mit OTP *Required*
-   als Browser-Flow binden).
+   OTP für alle neuen User erzwingen: *Authentication → Required actions → Configure OTP →
+   Set as default action* **On**. Hat ein User OTP eingerichtet, verlangt der Standard-Flow
+   es bei jedem Login.
+   > ⚠️ **Nicht** den Unterflow „Browser – Conditional 2FA" auf *Required* stellen. In
+   > Keycloak 26 steht das OTP-Formular darin als *Alternative*: User ohne OTP kommen dann
+   > nicht mehr durch (Fehlerseite „We are sorry… Invalid username or password" für
+   > **alle** — sperrt die Admin-Konsole). Reparatur siehe Abschnitt 10.
 3. **Abmelden, mit dem neuen Master-Admin anmelden** → Passwort-Wechsel + OTP einrichten.
    Prüfen, dass alles funktioniert (z. B. Realm `automato` öffnen).
 4. **`automato-admin` (Plattform-Admin) aktivieren:** Realm **`automato`** → *Users →
@@ -419,9 +423,10 @@ einer bestehenden Installation von Hand:
    *Who can view*: Admin (User optional). Optional Validator `integer`.
    Wichtig: User dürfen das Attribut **nicht** selbst bearbeiten (sonst könnten sie sich
    über die Account-Konsole fremde Mandanten geben).
-3. **OTP für alle lokalen User erzwingen:** *Authentication → Flow `browser` → „Browser –
-   Conditional OTP"* auf **Required** (ist der Flow nicht editierbar: *Duplicate*, dort
-   umstellen, *Bind flow* → Browser flow). Gilt für Passwort-Logins; über SAML-Broker
+3. **OTP für alle lokalen User erzwingen:** *Authentication → Required actions → Configure
+   OTP → Set as default action* **On** (neue User müssen OTP beim ersten Login einrichten);
+   bei bereits bestehenden Usern die Required action *Configure OTP* setzen. Den Browser-Flow
+   **nicht** ändern (siehe Warnung in Schritt 8). Gilt für Passwort-Logins; über SAML-Broker
    angemeldete User authentisieren am Kunden-IdP.
 4. **Redirect-URIs/Web-Origins** des Clients `automato-web` passend zur UI-URL
    (*Clients → `automato-web` → Settings*): Dev `http://localhost:5173/*` (ist drin),
@@ -496,6 +501,17 @@ Bei Internet-Betrieb hinter WAF (Schritt 12): Holt der Browser das Token, geht e
   `LOGIN_ERROR` mit Grund drin: `docker compose logs --since 1h keycloak | grep LOGIN_ERROR`
   — `invalid_user_credentials` = falsches Passwort, `user_not_found` = User existiert in
   diesem Realm nicht, `user_temporarily_disabled` = Brute-Force-Sperre.
+- **Alle Browser-Logins enden auf der Fehlerseite „We are sorry… Invalid username or
+  password"** (statt Login-Formular mit Hinweis), `userId="null"` im Log, `kcadm` geht aber:
+  Der 2FA-Unterflow steht auf *Required* (siehe Warnung Schritt 8). Zurückstellen:
+  ```bash
+  docker compose exec keycloak /opt/keycloak/bin/kcadm.sh get \
+    authentication/flows/browser/executions -r master --fields id,displayName,requirement
+  # ID von "Browser - Conditional 2FA" einsetzen:
+  docker compose exec keycloak /opt/keycloak/bin/kcadm.sh update \
+    authentication/flows/browser/executions -r master \
+    -b '{"id":"<ID>","requirement":"CONDITIONAL"}'
+  ```
 - **Admin-Zugang wiederherstellen (ausgesperrt):** Keycloak 26 kann per CLI einen neuen
   temporären Admin im Master-Realm anlegen (Passwort wird abgefragt):
   ```bash
