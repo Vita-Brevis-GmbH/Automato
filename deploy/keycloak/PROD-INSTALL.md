@@ -492,7 +492,21 @@ Bei Internet-Betrieb hinter WAF (Schritt 12): Holt der Browser das Token, geht e
   `sudo docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`
   (oder `sudo docker compose restart caddy`). **Ablaufdatum überwachen** (z. B. Monitoring
   auf `notAfter`): `openssl x509 -enddate -noout -in /opt/automato-keycloak/pki/auth.vitabrevis.ch.crt`.
-- **Logs:** `docker compose logs --since 1h keycloak`.
+- **Logs:** `docker compose logs --since 1h keycloak`. Fehlgeschlagene Logins stehen als
+  `LOGIN_ERROR` mit Grund drin: `docker compose logs --since 1h keycloak | grep LOGIN_ERROR`
+  — `invalid_user_credentials` = falsches Passwort, `user_not_found` = User existiert in
+  diesem Realm nicht, `user_temporarily_disabled` = Brute-Force-Sperre.
+- **Admin-Zugang wiederherstellen (ausgesperrt):** Keycloak 26 kann per CLI einen neuen
+  temporären Admin im Master-Realm anlegen (Passwort wird abgefragt):
+  ```bash
+  cd /opt/automato-keycloak
+  docker compose stop keycloak
+  docker compose run --rm --no-deps keycloak bootstrap-admin user --username recovery-admin
+  docker compose start keycloak
+  ```
+  Damit anmelden, gesperrte User entsperren bzw. Passwörter neu setzen, danach
+  `recovery-admin` wieder löschen. Brute-Force im Master-Realm deshalb auf *Lockout
+  temporarily* (nicht permanent) und eine nicht zu kleine Fehlversuchsgrenze stellen.
 - **Monitoring:** Health/Readiness intern auf `http://keycloak:9000/health/ready` (nicht
   veröffentlicht) — von einem internen Monitoring-Container im `kc`-Netz abfragen.
 
