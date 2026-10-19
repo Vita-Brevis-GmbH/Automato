@@ -76,16 +76,39 @@ ohne echte FortiGate liest der Collector Beispieldaten.
 AUTOMATO_FORTIGATE_URL=https://<fw> AUTOMATO_FORTIGATE_TOKEN=<ro> \
   uv run --package collectors automato-collector --check --platform fortigate
 
-# (b) Externen Lauf anlegen (dev-Modus = Admin, kein Login nötig). tenant_id/source_system_id
-#     aus dem UI bzw. der DB. execution=external -> kein zentraler Worker, der Agent holt ihn.
-curl -s -X POST http://localhost:8000/jobs/collect -H "Content-Type: application/json" \
-  -d '{"platform":"fortigate","tenant_id":1,"source_system_id":1,"execution":"external"}'
-# -> {"run_id":"<RUN_ID>","status":"queued"}
+# (b) Externen Lauf anlegen - per CLI im Container (funktioniert auch mit Login/OIDC,
+#     kein Token noetig). execution external -> kein zentraler Worker, der Agent holt ihn.
+docker compose exec orchestrator automato collect --platform fortigate \
+  --tenant lab --source fw-01 --execution external
+# -> run_id=<RUN_ID> status=queued ... Externer Lauf: wartet auf einen Agenten
 
-# (c) Agent holt den Lauf per Pull und führt ihn aus
+# (c) Agent holt den Lauf per Pull und führt ihn aus. Der Ergebnis-Upload braucht das
+#     interne Token aus der .env des Orchestrators.
 AUTOMATO_ORCHESTRATOR_URL=http://localhost:8000 AUTOMATO_AGENT_TOKEN=<token aus Schritt 4> \
+  AUTOMATO_INTERNAL_API_TOKEN=$(sed -n 's/^AUTOMATO_INTERNAL_API_TOKEN=//p' .env) \
   uv run --package collectors automato-collector --poll
 # -> "fortigate run <RUN_ID>: completed"
+
+# (d) Status prüfen
+docker compose exec orchestrator automato status --run-id <RUN_ID>
+```
+
+Mit Login (`AUTOMATO_AUTH_MODE=oidc`) geht `curl` gegen `/jobs/collect` nur mit Bearer-Token;
+die CLI im Container braucht keins.
+
+### Windows-Agent im Dev
+
+Paket aus `deploy/collector-agent/` installieren (`install.ps1`), dann
+`C:\Automato\collector\agent.env` füllen (Vorlage `agent.env.example`):
+`AUTOMATO_ORCHESTRATOR_URL=http://<dev-vm>:8000` (direkt, **nicht** über den Web-UI-Proxy —
+der liefert `/internal` nicht aus), `AUTOMATO_AGENT_TOKEN`, `AUTOMATO_INTERNAL_API_TOKEN` und
+die FortiGate-Werte. TLS-/Zertifikatszeilen nur einkommentieren, wenn die Dateien existieren.
+Die Station braucht Zugriff auf Port 8000 der Dev-VM und auf die FortiGate.
+
+```powershell
+cd C:\Automato\collector
+.\run-agent.ps1 -Check        # Zielsystem erreichbar? (Exit 0 = OK)
+.\run-agent.ps1               # externen Lauf holen und ausführen (sonst: geplante Aufgabe)
 ```
 
 Danach im UI: **„Agenten"** zeigt „Zuletzt gesehen", und die Regeln/Findings/Applikations-Doku

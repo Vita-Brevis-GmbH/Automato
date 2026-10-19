@@ -55,12 +55,18 @@ def queue_collect(
     platform: str,
     tenant: Tenant | None,
     source: SourceSystem | None,
+    execution: str = "inprocess",
 ) -> CollectorRun:
-    """Wie der /jobs/collect-Endpunkt: Run anlegen, auditieren, dann dispatchen."""
+    """Wie der /jobs/collect-Endpunkt: Run anlegen, auditieren, dann dispatchen.
+
+    execution="external" (ADR 0008): kein Celery-Dispatch - ein externer Agent holt den
+    Lauf per Pull (`automato-collector --poll`).
+    """
     run = CollectorRun(
         platform=platform,
         tenant_id=tenant.id if tenant else None,
         source_system_id=source.id if source else None,
+        execution=execution,
     )
     session.add(run)
     session.flush()
@@ -73,10 +79,12 @@ def queue_collect(
             "platform": platform,
             "tenant_id": run.tenant_id,
             "source_system_id": run.source_system_id,
+            "execution": execution,
         },
     )
     session.commit()  # Run muss sichtbar sein, bevor der Worker das Ergebnis zurueckmeldet
-    celery_app.dispatch_collect(platform, run.id)
+    if execution == "inprocess":
+        celery_app.dispatch_collect(platform, run.id)
     return run
 
 
@@ -119,8 +127,10 @@ def _cmd_collect(session: Session, args: argparse.Namespace) -> int:
     if (args.source or args.source_system_id) and source is None:
         print("FEHLER: Quellsystem nicht gefunden (erst 'ensure-source')", file=sys.stderr)
         return 2
-    run = queue_collect(session, args.platform, tenant, source)
+    run = queue_collect(session, args.platform, tenant, source, args.execution)
     print(f"run_id={run.id} status={run.status} -> 'automato status --run-id {run.id}'")
+    if args.execution == "external":
+        print("Externer Lauf: wartet auf einen Agenten ('automato-collector --poll').")
     return 0
 
 
@@ -172,6 +182,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tenant-id", type=int)
     p.add_argument("--source", help="Quellsystemname (alternativ --source-system-id)")
     p.add_argument("--source-system-id", type=int)
+    p.add_argument(
+        "--execution",
+        choices=["inprocess", "external"],
+        default="inprocess",
+        help="inprocess = zentraler Worker (Default), external = Agent holt den Lauf (ADR 0008)",
+    )
     p.set_defaults(func=_cmd_collect)
 
     p = sub.add_parser("status", help="Status eines Laufs anzeigen")

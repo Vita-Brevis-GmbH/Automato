@@ -210,7 +210,7 @@ mandantsgescoped, auditiert `system.site_assigned`; fremde Site → 422); `build
 `tenant_code` (GG-Kürzel) + `site` (code/name). UI-Tab „Applikations-Doku" zeigt GG/Standort und
 erlaubt Zuordnung (Site-Dropdown aus den Mandanten-Standorten); Markdown-Export-Header enthält
 GG + Standort. Tests `test_appdoc.py`. Offen: EPG als System (ACI) in der Doku.
-Tests: collectors 29, orchestrator 96, sot-gateway 6.
+Tests: collectors 29, orchestrator 98, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -341,6 +341,12 @@ Browser bei IPs kein SNI senden) oder Fullchain+Key der eigenen CA aus `deploy/p
 **Ein Realm pro Automato-Umgebung** (`automato` = Prod, `automato-dev` = Dev; Mandanten-IDs
 gehören zur DB der Umgebung): Generator `deploy/keycloak/make_realm.py` erzeugt aus
 `realm-automato.json` einen Realm mit eigenem Namen + UI-Adressen (Runbook Abschnitt 13).
+**Externer Lauf per CLI**: `automato collect … --execution external` legt den Lauf ohne
+Celery-Dispatch an (Agent holt ihn per `--poll`) — funktioniert auch im OIDC-Modus ohne Token.
+Agent-Paket: `agent.env.example` mit `AUTOMATO_INTERNAL_API_TOKEN` (Ergebnis-Upload läuft über
+`X-Internal-Token`), TLS-Zeilen auskommentiert (fehlende Zertifikatsdateien verhindern den
+Start), `run-agent.ps1 -Check`; Agent spricht `/internal` direkt am Orchestrator (Port 8000),
+nicht über den UI-Proxy. Tests: orchestrator 98.
 **Mandanten-Klärung (GG):** Ein **Mandant = Gruppengesellschaft (GG)** mit **einem oder
 mehreren Standorten** und einem **Kürzel/Code** zur Identifikation bei VMs/Objekten. Die
 **Wörterbücher (GG-Kürzel etc.) sind kundenspezifische Laufzeitdaten** (kein Seed-Zwang) und
