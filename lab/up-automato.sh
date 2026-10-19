@@ -46,7 +46,10 @@ fi
 # mit falschem Passwort verbinden lassen (unhealthy). Nur neu, wenn noch keiner da.
 [ -n "${PG_PASSWORD}" ] || PG_PASSWORD="$(openssl rand -hex 16)"
 
-[ -f .env ] && cp .env .env.bak && echo "Vorhandene .env nach .env.bak gesichert."
+HAD_ENV=0
+if [ -f .env ]; then
+  cp .env .env.bak && HAD_ENV=1 && echo "Vorhandene .env nach .env.bak gesichert."
+fi
 
 cat > .env <<EOF
 # Von lab/up-automato.sh erzeugt - NICHT committen. Lab/Test.
@@ -66,6 +69,24 @@ AUTOMATO_FORTIGATE_VERIFY_TLS=false
 EOF
 echo ".env geschrieben."
 
+# Eigene Eintraege aus der alten .env behalten (z. B. AUTOMATO_AUTH_MODE/AUTOMATO_OIDC_*,
+# AUTOMATO_UI_HOST): alles, was dieses Skript nicht selbst setzt, wird uebernommen.
+if [ "$HAD_ENV" = "1" ]; then
+  awk -F= 'NR == FNR { if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*=/) seen[$1] = 1; next }
+           $0 ~ /^[A-Za-z_][A-Za-z0-9_]*=/ && !($1 in seen) { print }' .env .env.bak > .env.extra
+  if [ -s .env.extra ]; then
+    { echo; echo "# Aus der vorherigen .env uebernommen"; cat .env.extra; } >> .env
+    echo "Uebernommen: $(cut -d= -f1 .env.extra | tr '\n' ' ')"
+  fi
+  rm -f .env.extra
+fi
+
+# TLS-Proxy fuer die Web-UI mitstarten, wenn eine UI-Adresse konfiguriert ist.
+PROFILES=(--profile core --profile collectors)
+if grep -q '^AUTOMATO_UI_HOST=.' .env; then
+  PROFILES+=(--profile proxy)
+fi
+
 # Optional: Automato-Volumes vorher loeschen (z. B. nach einem Postgres-Passwort-
 # Mismatch). Harmlos im Lab - die Regeln werden beim Collect-Lauf neu befuellt.
 if [ "${AUTOMATO_RESET:-0}" = "1" ]; then
@@ -74,7 +95,7 @@ if [ "${AUTOMATO_RESET:-0}" = "1" ]; then
 fi
 
 echo "== Stack bauen und starten =="
-docker compose --profile core --profile collectors up -d --build
+docker compose "${PROFILES[@]}" up -d --build
 
 echo "Warte auf Orchestrator-Health unter http://localhost:8000/health ..."
 ok=""
@@ -89,6 +110,7 @@ cat <<EOF
 == Automato-Stack laeuft ==
 Orchestrator:  http://localhost:8000  (Health: /health, Regeln: /rules)
 Web-UI (Dev):  http://localhost:5173
+Web-UI (TLS):  https://$(sed -n 's/^AUTOMATO_UI_HOST=//p' .env | head -n1)  (nur mit AUTOMATO_UI_HOST)
 
 Durchstich ausloesen (Model 2, FortiGate -> NetBox-Matching):
   docker compose exec orchestrator automato lab --base-url ${FORTIGATE_URL}
