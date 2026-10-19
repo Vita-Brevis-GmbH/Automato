@@ -53,32 +53,69 @@ def test_mandant_anlegen_nur_admin_und_eindeutig(client):
 # --- Quellsystem anlegen -----------------------------------------------------------
 
 
-def test_quellsystem_anlegen_und_liste(session_factory, client):
-    r = client.post(
-        "/systems",
-        json={"name": "fw-test", "platform": "fortigate", "base_url": "https://fw.example"},
-        headers=ADMIN,
-    )
+def test_quellsystem_gehoert_zum_mandanten(session_factory, client):
+    s = session_factory()
+    a, b = _tenant(s, "kunde-a"), _tenant(s, "kunde-b")
+    s.commit()
+    body = {"tenant_id": a, "name": "fw-test", "platform": "fortigate", "base_url": "https://fw"}
+    r = client.post("/systems", json=body, headers=ADMIN)
     assert r.status_code == 201
-    assert r.json()["base_url"] == "https://fw.example"
-    rows = client.get("/systems").json()
-    assert [(s["name"], s["platform"], s["base_url"]) for s in rows] == [
-        ("fw-test", "fortigate", "https://fw.example")
-    ]
+    assert (r.json()["tenant_id"], r.json()["base_url"]) == (a, "https://fw")
+    # gleicher Name beim anderen Mandanten erlaubt, beim selben nicht
+    assert client.post("/systems", json={**body, "tenant_id": b}, headers=ADMIN).status_code == 201
+    assert client.post("/systems", json=body, headers=ADMIN).status_code == 409
+
+    assert [x["tenant_id"] for x in client.get(f"/systems?tenant_id={a}").json()] == [a]
+    assert len(client.get("/systems").json()) == 2  # Admin ohne Filter: alle
+    viewer_b = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(b)}
+    assert [x["tenant_id"] for x in client.get("/systems", headers=viewer_b).json()] == [b]
+    assert client.get(f"/systems?tenant_id={a}", headers=viewer_b).status_code == 403
 
     s = session_factory()
-    assert s.query(AuditLog).filter_by(action="source.created").count() == 1
+    entry = s.query(AuditLog).filter_by(action="source.created").first()
+    assert entry.detail["tenant_id"] == a
     s.close()
 
 
-def test_quellsystem_nur_admin_eindeutig_und_plattform_geprueft(client):
+def test_quellsystem_nur_admin_mandant_und_plattform_geprueft(session_factory, client):
+    s = session_factory()
+    a = _tenant(s, "kunde-a")
+    s.commit()
     op = {"X-Dev-Roles": "operator"}
-    body = {"name": "fw-1", "platform": "fortigate"}
+    body = {"tenant_id": a, "name": "fw-1", "platform": "fortigate"}
     assert client.post("/systems", json=body, headers=op).status_code == 403
-    assert client.post("/systems", json=body, headers=ADMIN).status_code == 201
-    assert client.post("/systems", json=body, headers=ADMIN).status_code == 409
-    bad = {"name": "fw-2", "platform": "pfsense"}
-    assert client.post("/systems", json=bad, headers=ADMIN).status_code == 422
+    assert (
+        client.post("/systems", json={**body, "tenant_id": 999}, headers=ADMIN).status_code == 422
+    )
+    assert client.post("/systems", json={**body, "platform": "x"}, headers=ADMIN).status_code == 422
+    no_tenant = {"name": "fw-2", "platform": "fortigate"}
+    assert client.post("/systems", json=no_tenant, headers=ADMIN).status_code == 422
+
+
+def test_quellsystem_zuordnen_und_collect_prueft_zugehoerigkeit(session_factory, client):
+    s = session_factory()
+    a, b = _tenant(s, "kunde-a"), _tenant(s, "kunde-b")
+    legacy = SourceSystem(name="fw-alt", platform="fortigate", base_url="", enabled=True)
+    s.add(legacy)
+    s.commit()
+    sid = legacy.id
+    s.close()
+
+    collect = {"platform": "fortigate", "tenant_id": a, "source_system_id": sid}
+    # nicht zugeordnetes Altsystem -> kein Lauf
+    assert client.post("/jobs/collect", json=collect, headers=ADMIN).status_code == 422
+
+    r = client.patch(f"/systems/{sid}", json={"tenant_id": a}, headers=ADMIN)
+    assert r.status_code == 200 and r.json()["tenant_id"] == a
+    assert client.post("/jobs/collect", json=collect, headers=ADMIN).status_code == 202
+    # fremder Mandant bzw. falsche Plattform -> 422
+    other = {**collect, "tenant_id": b}
+    assert client.post("/jobs/collect", json=other, headers=ADMIN).status_code == 422
+    aci = {**collect, "platform": "cisco_aci"}
+    assert client.post("/jobs/collect", json=aci, headers=ADMIN).status_code == 422
+    # deaktivieren / umbenennen
+    r = client.patch(f"/systems/{sid}", json={"enabled": False, "name": "fw-01"}, headers=ADMIN)
+    assert (r.json()["enabled"], r.json()["name"]) == (False, "fw-01")
 
 
 # --- Letzte Laeufe -----------------------------------------------------------------
@@ -88,7 +125,7 @@ def _seed_runs(session_factory) -> tuple[int, int]:
     s = session_factory()
     a = _tenant(s, "kunde-a")
     b = _tenant(s, "kunde-b")
-    fw = SourceSystem(name="fw", platform="fortigate", base_url="", enabled=True)
+    fw = SourceSystem(tenant_id=a, name="fw", platform="fortigate", base_url="", enabled=True)
     s.add(fw)
     s.flush()
     now = datetime.now(UTC)

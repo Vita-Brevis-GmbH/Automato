@@ -3,11 +3,15 @@ import {
   createSite,
   createSystem,
   createTenant,
+  DeleteCounts,
   deleteSite,
+  deleteSystem,
+  deleteTenant,
   fetchNamingProfiles,
   fetchSites,
   fetchSystems,
   NamingProfile,
+  patchSystem,
   patchTenant,
   profileLabel,
   Site,
@@ -19,8 +23,8 @@ import { Empty, ErrorBox, Icon, Loading, Modal, Note, PageHead } from "./ui";
 
 const PLATFORM_LABEL: Record<string, string> = { fortigate: "FortiGate", cisco_aci: "Cisco ACI" };
 
-// Mandanten (= Gruppengesellschaft) mit Kürzel, Namensprofil und Standorten; dazu die
-// Quellsysteme. Lesen = viewer, Schreiben = admin (serverseitig erzwungen).
+// Mandanten (= Gruppengesellschaft) mit Kürzel, Namensprofil, Standorten und Quellsystemen.
+// Lesen = viewer, Schreiben/Löschen = admin (serverseitig erzwungen).
 export default function Tenants({
   me,
   tenants,
@@ -36,6 +40,7 @@ export default function Tenants({
 }) {
   const [profiles, setProfiles] = useState<NamingProfile[]>([]);
   const [newOpen, setNewOpen] = useState(false);
+  const [systemsVersion, setSystemsVersion] = useState(0); // neu laden nach Zuordnung
 
   useEffect(() => {
     fetchNamingProfiles()
@@ -127,19 +132,27 @@ export default function Tenants({
             tenant={selected}
             profiles={profiles}
             onSaved={onTenantsChanged}
+            onDeleted={async () => {
+              onSelectTenant(null);
+              await onTenantsChanged();
+            }}
           />
           <Sites me={me} tenant={selected} />
         </div>
       )}
-      {!selected && tenants && tenants.length > 0 && (
+      {selected && (
         <div style={{ marginTop: 16 }}>
-          <Note>Einen Mandanten anklicken, um Kürzel, Namensprofil und Standorte zu pflegen.</Note>
+          <SourceSystems key={`${selected.id}-${systemsVersion}`} me={me} tenant={selected} />
         </div>
       )}
-
-      <div style={{ marginTop: 16 }}>
-        <SourceSystems me={me} />
-      </div>
+      {!selected && tenants && tenants.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <Note>Einen Mandanten anklicken, um Kürzel, Namensprofil, Standorte und Quellsysteme zu pflegen.</Note>
+        </div>
+      )}
+      {me.isAdmin && tenants && tenants.length > 0 && (
+        <UnassignedSystems tenants={tenants} onAssigned={() => setSystemsVersion((v) => v + 1)} />
+      )}
 
       {newOpen && (
         <NewTenantDialog
@@ -226,12 +239,15 @@ function TenantSettings({
   tenant,
   profiles,
   onSaved,
+  onDeleted,
 }: {
   me: Me;
   tenant: Tenant;
   profiles: NamingProfile[];
   onSaved: () => Promise<Tenant[]>;
+  onDeleted: () => Promise<void>;
 }) {
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [code, setCode] = useState(tenant.code ?? "");
   const [profileId, setProfileId] = useState<number | null>(tenant.naming_profile_id);
   const [auditReads, setAuditReads] = useState(tenant.audit_reads);
@@ -325,10 +341,131 @@ function TenantSettings({
               {busy ? "Speichere…" : "Speichern"}
             </button>
             {saved && !dirty && <span className="chip ok">gespeichert</span>}
+            <div style={{ flex: 1 }} />
+            <button className="btn btn-danger btn-sm" onClick={() => setDeleteOpen(true)}>
+              Mandant löschen
+            </button>
           </div>
         )}
       </div>
+      {deleteOpen && (
+        <DeleteTenantDialog
+          tenant={tenant}
+          onClose={() => setDeleteOpen(false)}
+          onDeleted={async () => {
+            setDeleteOpen(false);
+            await onDeleted();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+const COUNT_LABEL: Record<string, string> = {
+  rules: "Regeln",
+  nat_rules: "NAT-Einträge",
+  findings: "Findings",
+  epgs: "EPGs",
+  objects: "Adressobjekte",
+  zones: "Zonen",
+  sites: "Standorte",
+  source_systems: "Quellsysteme",
+  runs: "Läufe",
+  agents: "Collector-Agenten",
+};
+
+function countsText(counts: DeleteCounts): string {
+  const parts = Object.entries(counts)
+    .filter(([k, n]) => k !== "id" && n > 0)
+    .map(([k, n]) => `${n} ${COUNT_LABEL[k] ?? k}`);
+  return parts.length ? parts.join(", ") : "keine weiteren Daten";
+}
+
+function DeleteTenantDialog({
+  tenant,
+  onClose,
+  onDeleted,
+}: {
+  tenant: Tenant;
+  onClose: () => void;
+  onDeleted: () => Promise<void>;
+}) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  const [done, setDone] = useState<DeleteCounts | null>(null);
+
+  const submit = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      setDone(await deleteTenant(tenant.id, typed.trim()));
+    } catch (e) {
+      setErr(e);
+      setBusy(false);
+    }
+  };
+
+  if (done) {
+    return (
+      <Modal
+        title="Mandant gelöscht"
+        onClose={onDeleted}
+        footer={
+          <button className="btn btn-primary" onClick={onDeleted}>
+            Schliessen
+          </button>
+        }
+      >
+        <p>
+          „{tenant.name}“ wurde gelöscht, mit: {countsText(done)}.
+        </p>
+        <Note>
+          In Keycloak bei betroffenen Benutzern die Mandanten-ID <code>{tenant.id}</code> aus dem Attribut{" "}
+          <code>tenant_ids</code> entfernen.
+        </Note>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal
+      title="Mandant löschen"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>
+            Abbrechen
+          </button>
+          <button
+            className="btn btn-danger"
+            onClick={submit}
+            disabled={busy || typed.trim() !== tenant.name}
+          >
+            {busy ? "Lösche…" : "Endgültig löschen"}
+          </button>
+        </>
+      }
+    >
+      <ErrorBox error={err} />
+      <Note warn>
+        Löscht <b>„{tenant.name}“</b> mit <b>allen</b> Daten: Quellsysteme mit ihren Regeln und NAT-Einträgen,
+        Adressobjekte, Zonen, EPGs, Findings, Standorte, Läufe und die Collector-Agenten dieses Mandanten. Das
+        lässt sich nicht rückgängig machen; das Audit-Log bleibt erhalten.
+      </Note>
+      <div className="field">
+        <label htmlFor="dt-confirm">Zur Bestätigung den Namen des Mandanten eingeben</label>
+        <input
+          id="dt-confirm"
+          className="input"
+          value={typed}
+          autoFocus
+          placeholder={tenant.name}
+          onChange={(e) => setTyped(e.target.value)}
+        />
+      </div>
+    </Modal>
   );
 }
 
@@ -479,16 +616,17 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
   );
 }
 
-function SourceSystems({ me }: { me: Me }) {
+function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
   const [systems, setSystems] = useState<System[] | null>(null);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [platform, setPlatform] = useState("fortigate");
   const [baseUrl, setBaseUrl] = useState("");
   const [err, setErr] = useState<unknown>(null);
+  const [toDelete, setToDelete] = useState<System | null>(null);
 
   const load = () =>
-    fetchSystems()
+    fetchSystems(tenant.id)
       .then(setSystems)
       .catch((e) => {
         setErr(e);
@@ -503,7 +641,7 @@ function SourceSystems({ me }: { me: Me }) {
     e.preventDefault();
     setErr(null);
     try {
-      await createSystem({ name: name.trim(), platform, base_url: baseUrl.trim() });
+      await createSystem({ tenant_id: tenant.id, name: name.trim(), platform, base_url: baseUrl.trim() });
       setName("");
       setBaseUrl("");
       setAdding(false);
@@ -513,10 +651,20 @@ function SourceSystems({ me }: { me: Me }) {
     }
   };
 
+  const toggle = async (s: System) => {
+    setErr(null);
+    try {
+      await patchSystem(s.id, { enabled: !s.enabled });
+      await load();
+    } catch (ex) {
+      setErr(ex);
+    }
+  };
+
   return (
     <div className="card">
       <div className="card-head">
-        <h2>Quellsysteme</h2>
+        <h2>Quellsysteme von „{tenant.name}“</h2>
         <span className="faint" style={{ fontSize: 12 }}>
           Firewalls/Controller, aus denen gelesen wird
         </span>
@@ -584,38 +732,220 @@ function SourceSystems({ me }: { me: Me }) {
             Ein Quellsystem anlegen, dann unter „Übersicht → Jetzt einlesen“ einen Lauf starten.
           </Empty>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Name</th>
-                <th>Plattform</th>
-                <th>Adresse</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {systems.map((s) => (
-                <tr key={s.id}>
-                  <td className="mono">{s.id}</td>
-                  <td>
-                    <b>{s.name}</b>
-                  </td>
-                  <td>
-                    <span className="chip">{PLATFORM_LABEL[s.platform] ?? s.platform}</span>
-                  </td>
-                  <td className="mono">{s.base_url || <span className="faint">–</span>}</td>
-                  <td>{s.enabled ? <span className="chip ok">aktiv</span> : <span className="chip na">inaktiv</span>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <SystemTable
+            systems={systems}
+            actions={
+              me.isAdmin
+                ? (s) => (
+                    <>
+                      <button className="btn btn-ghost btn-sm" onClick={() => toggle(s)}>
+                        {s.enabled ? "Deaktivieren" : "Aktivieren"}
+                      </button>
+                      <button className="linkbtn danger" title="Löschen" onClick={() => setToDelete(s)}>
+                        ✕
+                      </button>
+                    </>
+                  )
+                : undefined
+            }
+          />
         )}
       </div>
       <div className="card-foot">
-        Zugangsdaten werden hier nie gespeichert – sie liegen beim Collector bzw. Agenten (ADR 0007/0008). Die
-        Zuordnung zum Mandanten erfolgt beim Lauf.
+        Zugangsdaten werden hier nie gespeichert – sie liegen beim Collector bzw. Agenten (ADR 0007/0008).
       </div>
+      {toDelete && (
+        <DeleteSystemDialog
+          system={toDelete}
+          onClose={() => setToDelete(null)}
+          onDeleted={async () => {
+            setToDelete(null);
+            await load();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function SystemTable({
+  systems,
+  actions,
+}: {
+  systems: System[];
+  actions?: (s: System) => React.ReactNode;
+}) {
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Plattform</th>
+          <th>Adresse</th>
+          <th className="num">Regeln</th>
+          <th className="num">NAT</th>
+          <th>Status</th>
+          {actions && <th></th>}
+        </tr>
+      </thead>
+      <tbody>
+        {systems.map((s) => (
+          <tr key={s.id}>
+            <td>
+              <b>{s.name}</b>
+            </td>
+            <td>
+              <span className="chip">{PLATFORM_LABEL[s.platform] ?? s.platform}</span>
+            </td>
+            <td className="mono">{s.base_url || <span className="faint">–</span>}</td>
+            <td className="num">{s.rule_count}</td>
+            <td className="num">{s.nat_count}</td>
+            <td>{s.enabled ? <span className="chip ok">aktiv</span> : <span className="chip na">inaktiv</span>}</td>
+            {actions && <td className="actions">{actions(s)}</td>}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function DeleteSystemDialog({
+  system,
+  onClose,
+  onDeleted,
+}: {
+  system: System;
+  onClose: () => void;
+  onDeleted: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+
+  const submit = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await deleteSystem(system.id);
+      await onDeleted();
+    } catch (e) {
+      setErr(e);
+      setBusy(false);
+    }
+  };
+
+  const data = system.rule_count + system.nat_count;
+  return (
+    <Modal
+      title="Quellsystem löschen"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>
+            Abbrechen
+          </button>
+          <button className="btn btn-danger" onClick={submit} disabled={busy}>
+            {busy ? "Lösche…" : "Löschen"}
+          </button>
+        </>
+      }
+    >
+      <ErrorBox error={err} />
+      <p>
+        Quellsystem <b>„{system.name}“</b> löschen?
+      </p>
+      {data > 0 ? (
+        <Note warn>
+          Mit gelöscht werden die daraus gelesenen <b>{system.rule_count} Regeln</b> und{" "}
+          <b>{system.nat_count} NAT-Einträge</b> samt ihrer Findings. Bisherige Läufe bleiben als Historie
+          erhalten.
+        </Note>
+      ) : (
+        <Note>Aus diesem System wurden noch keine Daten gelesen.</Note>
+      )}
+    </Modal>
+  );
+}
+
+// Altbestand vor der Mandanten-Zuordnung: Quellsysteme ohne Mandant zuordnen oder löschen.
+function UnassignedSystems({ tenants, onAssigned }: { tenants: Tenant[]; onAssigned: () => void }) {
+  const [systems, setSystems] = useState<System[]>([]);
+  const [target, setTarget] = useState<Record<number, number>>({});
+  const [err, setErr] = useState<unknown>(null);
+  const [toDelete, setToDelete] = useState<System | null>(null);
+
+  const load = () =>
+    fetchSystems()
+      .then((all) => setSystems(all.filter((s) => s.tenant_id == null)))
+      .catch(setErr);
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  if (systems.length === 0 && !err) return null;
+
+  const assign = async (s: System) => {
+    const tid = target[s.id] ?? tenants[0]?.id;
+    if (tid == null) return;
+    setErr(null);
+    try {
+      await patchSystem(s.id, { tenant_id: tid });
+      await load();
+      onAssigned();
+    } catch (e) {
+      setErr(e);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="card-head">
+        <h2>Nicht zugeordnete Quellsysteme</h2>
+        <span className="chip warn">{systems.length}</span>
+      </div>
+      <div className="card-body">
+        <div style={{ padding: "10px 16px 0" }}>
+          <ErrorBox error={err} onClose={() => setErr(null)} />
+          <Note warn>
+            Diese Quellsysteme stammen aus der Zeit vor der Mandanten-Zuordnung. Bitte einem Mandanten zuordnen
+            (oder löschen) – erst dann lassen sie sich wieder einlesen.
+          </Note>
+        </div>
+        <SystemTable
+          systems={systems}
+          actions={(s) => (
+            <>
+              <select
+                className="sel"
+                value={target[s.id] ?? tenants[0]?.id ?? ""}
+                onChange={(e) => setTarget({ ...target, [s.id]: Number(e.target.value) })}
+              >
+                {tenants.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>{" "}
+              <button className="btn btn-ghost btn-sm" onClick={() => assign(s)}>
+                Zuordnen
+              </button>
+              <button className="linkbtn danger" title="Löschen" onClick={() => setToDelete(s)}>
+                ✕
+              </button>
+            </>
+          )}
+        />
+      </div>
+      {toDelete && (
+        <DeleteSystemDialog
+          system={toDelete}
+          onClose={() => setToDelete(null)}
+          onDeleted={async () => {
+            setToDelete(null);
+            await load();
+          }}
+        />
+      )}
     </div>
   );
 }

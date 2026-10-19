@@ -9,7 +9,7 @@ from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.jobs import celery_app
-from app.models import CollectorRun
+from app.models import CollectorRun, SourceSystem
 from app.schemas.jobs import CollectJobRequest, CollectJobResponse, CollectorRunOut
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -22,6 +22,14 @@ def start_collect(
     session: Session = Depends(get_session),
 ):
     tenant_id = tenant_scope(principal, payload.tenant_id)  # Mandanten-Zugriff erzwingen
+    if payload.source_system_id is not None:
+        src = session.get(SourceSystem, payload.source_system_id)
+        if src is None:
+            raise HTTPException(status_code=422, detail="source system not found")
+        if src.tenant_id is None or src.tenant_id != tenant_id:
+            raise HTTPException(status_code=422, detail="source system belongs to another tenant")
+        if src.platform.value != payload.platform:
+            raise HTTPException(status_code=422, detail="platform does not match source system")
     run = CollectorRun(
         platform=payload.platform,
         tenant_id=tenant_id,

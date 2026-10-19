@@ -18,10 +18,16 @@ from app.models.tenant import DnsType
 
 def _tenant_with_rule(session, name: str) -> int:
     t = Tenant(name=name, ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+    session.add(t)
+    session.flush()
     fw = SourceSystem(
-        name=f"fw-{name}", platform=Platform.FORTIGATE, base_url="https://fw", enabled=True
+        tenant_id=t.id,
+        name=f"fw-{name}",
+        platform=Platform.FORTIGATE,
+        base_url="https://fw",
+        enabled=True,
     )
-    session.add_all([t, fw])
+    session.add(fw)
     session.flush()
     session.add(
         Rule(
@@ -92,8 +98,12 @@ def test_auth_config_oeffentlich(client):
 def test_collect_erfordert_operator(session_factory, client):
     seed = session_factory()
     t = Tenant(name="kunde-a", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
-    fw = SourceSystem(name="fw", platform=Platform.FORTIGATE, base_url="https://fw", enabled=True)
-    seed.add_all([t, fw])
+    seed.add(t)
+    seed.flush()
+    fw = SourceSystem(
+        tenant_id=t.id, name="fw", platform=Platform.FORTIGATE, base_url="https://fw", enabled=True
+    )
+    seed.add(fw)
     seed.flush()
     body = {"platform": "fortigate", "tenant_id": t.id, "source_system_id": fw.id}
     seed.commit()

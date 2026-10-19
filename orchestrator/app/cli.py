@@ -6,7 +6,7 @@ Lab-Durchstich und als Betriebs-/Cron-Auslöser, solange das Web-UI noch fehlt.
 
 Im Orchestrator-Container (Beispiele):
   automato ensure-tenant --name kunde-a --ipam netbox --dns active_directory
-  automato ensure-source --name fw-01 --platform fortigate --base-url https://fw-01
+  automato ensure-source --tenant kunde-a --name fw-01 --platform fortigate --base-url https://fw-01
   automato collect --platform fortigate --tenant kunde-a --source fw-01
   automato status --run-id <id>
   automato lab            # Model-2-Happy-Path (NetBox + FortiGate) in einem Schritt
@@ -39,10 +39,15 @@ def ensure_tenant(
     return tenant
 
 
-def ensure_source(session: Session, name: str, platform: str, base_url: str) -> SourceSystem:
-    src = session.scalar(select(SourceSystem).where(SourceSystem.name == name))
+def ensure_source(
+    session: Session, tenant: Tenant, name: str, platform: str, base_url: str
+) -> SourceSystem:
+    """Quellsystem des Mandanten idempotent anlegen (Name je Mandant eindeutig)."""
+    src = _find_source(session, name, tenant)
     if src is None:
-        src = SourceSystem(name=name, platform=Platform(platform), base_url=base_url)
+        src = SourceSystem(
+            tenant_id=tenant.id, name=name, platform=Platform(platform), base_url=base_url
+        )
         session.add(src)
         session.flush()
     elif base_url:
@@ -92,8 +97,13 @@ def _find_tenant(session: Session, name: str | None) -> Tenant | None:
     return session.scalar(select(Tenant).where(Tenant.name == name)) if name else None
 
 
-def _find_source(session: Session, name: str | None) -> SourceSystem | None:
-    return session.scalar(select(SourceSystem).where(SourceSystem.name == name)) if name else None
+def _find_source(session: Session, name: str | None, tenant: Tenant | None) -> SourceSystem | None:
+    if not name:
+        return None
+    stmt = select(SourceSystem).where(SourceSystem.name == name)
+    if tenant is not None:
+        stmt = stmt.where(SourceSystem.tenant_id == tenant.id)
+    return session.scalars(stmt).first()
 
 
 def _cmd_ensure_tenant(session: Session, args: argparse.Namespace) -> int:
@@ -104,9 +114,13 @@ def _cmd_ensure_tenant(session: Session, args: argparse.Namespace) -> int:
 
 
 def _cmd_ensure_source(session: Session, args: argparse.Namespace) -> int:
-    src = ensure_source(session, args.name, args.platform, args.base_url)
+    tenant = _find_tenant(session, args.tenant)
+    if tenant is None:
+        print("FEHLER: Mandant nicht gefunden (erst 'ensure-tenant')", file=sys.stderr)
+        return 2
+    src = ensure_source(session, tenant, args.name, args.platform, args.base_url)
     session.commit()
-    print(f"source id={src.id} name={src.name} platform={src.platform}")
+    print(f"source id={src.id} tenant={tenant.id} name={src.name} platform={src.platform}")
     return 0
 
 
@@ -119,13 +133,16 @@ def _cmd_collect(session: Session, args: argparse.Namespace) -> int:
     source = (
         session.get(SourceSystem, args.source_system_id)
         if args.source_system_id
-        else (_find_source(session, args.source))
+        else (_find_source(session, args.source, tenant))
     )
     if (args.tenant or args.tenant_id) and tenant is None:
         print("FEHLER: Mandant nicht gefunden (erst 'ensure-tenant')", file=sys.stderr)
         return 2
     if (args.source or args.source_system_id) and source is None:
         print("FEHLER: Quellsystem nicht gefunden (erst 'ensure-source')", file=sys.stderr)
+        return 2
+    if source is not None and tenant is not None and source.tenant_id != tenant.id:
+        print("FEHLER: Quellsystem gehoert zu einem anderen Mandanten", file=sys.stderr)
         return 2
     run = queue_collect(session, args.platform, tenant, source, args.execution)
     print(f"run_id={run.id} status={run.status} -> 'automato status --run-id {run.id}'")
@@ -149,7 +166,7 @@ def _cmd_status(session: Session, args: argparse.Namespace) -> int:
 def _cmd_lab(session: Session, args: argparse.Namespace) -> int:
     """Model-2-Happy-Path: NetBox-Mandant + FortiGate-Quelle + ein Collect-Lauf."""
     tenant = ensure_tenant(session, args.tenant, "netbox", "active_directory")
-    source = ensure_source(session, args.source, "fortigate", args.base_url)
+    source = ensure_source(session, tenant, args.source, "fortigate", args.base_url)
     session.flush()
     run = queue_collect(session, "fortigate", tenant, source)
     print(
@@ -170,7 +187,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dns", choices=[e.value for e in DnsType], default="active_directory")
     p.set_defaults(func=_cmd_ensure_tenant)
 
-    p = sub.add_parser("ensure-source", help="Quellsystem idempotent anlegen")
+    p = sub.add_parser("ensure-source", help="Quellsystem eines Mandanten idempotent anlegen")
+    p.add_argument("--tenant", required=True, help="Mandantenname")
     p.add_argument("--name", required=True)
     p.add_argument("--platform", choices=[e.value for e in Platform], default="fortigate")
     p.add_argument("--base-url", default="")

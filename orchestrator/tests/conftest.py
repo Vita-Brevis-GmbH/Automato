@@ -5,7 +5,7 @@ from app.db import get_session
 from app.main import create_app
 from app.models import Base
 from fastapi.testclient import TestClient
-from sqlalchemy import StaticPool, create_engine
+from sqlalchemy import StaticPool, create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 
@@ -14,6 +14,8 @@ def session_factory():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
+    # Fremdschluessel wie in Postgres pruefen (SQLite tut das sonst nicht)
+    event.listen(engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 

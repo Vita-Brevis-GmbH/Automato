@@ -25,8 +25,9 @@ export default function CollectDialog({
   onStarted: () => void;
   onGo: (v: View) => void;
 }) {
-  const active = systems.filter((s) => s.enabled);
   const [tenant, setTenant] = useState<number | "">(tenantId ?? tenants[0]?.id ?? "");
+  // Nur aktive Quellsysteme des gewählten Mandanten
+  const active = systems.filter((s) => s.enabled && s.tenant_id === tenant);
   const [systemId, setSystemId] = useState<number | "">(active[0]?.id ?? "");
   const [execution, setExecution] = useState<"inprocess" | "external">("external");
   const [busy, setBusy] = useState(false);
@@ -110,7 +111,7 @@ export default function CollectDialog({
       {tenants.length === 0 || active.length === 0 ? (
         <Note warn>
           {tenants.length === 0 ? "Es gibt noch keinen Mandanten. " : ""}
-          {active.length === 0 ? "Es ist noch kein Quellsystem erfasst. " : ""}
+          {active.length === 0 ? "Für diesen Mandanten ist noch kein aktives Quellsystem erfasst. " : ""}
           {isAdmin ? (
             <>
               Unter{" "}
@@ -138,7 +139,11 @@ export default function CollectDialog({
           id="cd-tenant"
           className="sel input"
           value={tenant}
-          onChange={(e) => setTenant(e.target.value ? Number(e.target.value) : "")}
+          onChange={(e) => {
+            const next = e.target.value ? Number(e.target.value) : "";
+            setTenant(next);
+            setSystemId(systems.find((s) => s.enabled && s.tenant_id === next)?.id ?? "");
+          }}
         >
           {tenants.map((t) => (
             <option key={t.id} value={t.id}>

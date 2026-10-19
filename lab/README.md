@@ -132,7 +132,7 @@ NetBox. Nicht auflösbare/abweichende Objekte erscheinen als **Findings**.
 
 ```
 automato ensure-tenant --name <n> --ipam netbox --dns active_directory
-automato ensure-source --name <n> --platform fortigate --base-url <url>
+automato ensure-source --tenant <mandant> --name <n> --platform fortigate --base-url <url>
 automato collect --platform fortigate --tenant <name> --source <name>
 automato status  --run-id <id>
 automato lab     # Kurzform: ensure-tenant + ensure-source + collect (Model 2)

@@ -1,4 +1,4 @@
-"""Mandanten-Endpunkte: Liste (UI-Switcher), Kuerzel pflegen, Standorte verwalten.
+"""Mandanten-Endpunkte: Liste (UI-Switcher), Anlegen/Loeschen, Kuerzel pflegen, Standorte.
 
 Ein Mandant (= Gruppengesellschaft) traegt ein optionales Kuerzel (`code`) und hat
 einen oder mehrere **Standorte** mit dreistelligem Code (ADR 0004-Ergaenzung). Lesen
@@ -6,7 +6,7 @@ einen oder mehrere **Standorte** mit dreistelligem Code (ADR 0004-Ergaenzung). L
 Global-Admin sieht/verwaltet alle Mandanten.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,6 +17,7 @@ from app.auth.principal import Principal
 from app.db import get_session
 from app.models import NamingProfile, Site, Tenant
 from app.models.tenant import DnsType, IpamType
+from app.store import deletion
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
@@ -163,6 +164,29 @@ def update_tenant(
         },
     )
     return _tenant_out(tenant)
+
+
+@router.delete("/{tenant_id}")
+def delete_tenant(
+    tenant_id: int,
+    confirm: str = Query(description="Name des Mandanten zur Bestätigung (Schutz vor Versehen)"),
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, int]:
+    """Mandant mit allen Daten löschen - Admin, nur mit `confirm=<Name>` (unumkehrbar)."""
+    tenant = _get_scoped_tenant(session, principal, tenant_id)
+    if confirm.strip() != tenant.name:
+        raise HTTPException(status_code=422, detail="confirm must equal the tenant name")
+    name = tenant.name
+    counts = deletion.delete_tenant(session, tenant)
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="tenant.deleted",
+        subject=str(tenant_id),
+        detail={"tenant_id": tenant_id, "name": name, **counts},
+    )
+    return {"id": tenant_id, **counts}
 
 
 @router.get("/{tenant_id}/sites", response_model=list[SiteOut])

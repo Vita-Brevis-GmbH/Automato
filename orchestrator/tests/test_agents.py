@@ -6,8 +6,12 @@ from app.models.tenant import DnsType
 
 def _seed(session) -> tuple[int, int]:
     t = Tenant(name="kunde-a", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
-    fw = SourceSystem(name="fw", platform=Platform.FORTIGATE, base_url="https://fw", enabled=True)
-    session.add_all([t, fw])
+    session.add(t)
+    session.flush()
+    fw = SourceSystem(
+        tenant_id=t.id, name="fw", platform=Platform.FORTIGATE, base_url="https://fw", enabled=True
+    )
+    session.add(fw)
     session.flush()
     return t.id, fw.id
 

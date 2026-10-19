@@ -61,11 +61,17 @@ export interface Finding {
 
 export interface System {
   id: number;
+  tenant_id: number | null; // null = Altbestand, noch keinem Mandanten zugeordnet
   name: string;
   platform: string; // fortigate | cisco_aci
   enabled: boolean;
   base_url: string;
+  rule_count: number;
+  nat_count: number;
 }
+
+// Anzahl gelöschter Einträge je Art (Rückgabe der Lösch-Endpunkte)
+export type DeleteCounts = Record<string, number>;
 
 export interface Tenant {
   id: number;
@@ -305,11 +311,24 @@ export const createSite = (
 ) => sendJSON<Site>(`/api/tenants/${tenantId}/sites`, "POST", body);
 export const deleteSite = (tenantId: number, siteId: number) =>
   sendJSON<void>(`/api/tenants/${tenantId}/sites/${siteId}`, "DELETE");
+// Löscht den Mandanten mit allen Daten; `confirmName` muss dem Namen entsprechen.
+export const deleteTenant = (tenantId: number, confirmName: string) =>
+  sendJSON<DeleteCounts>(`/api/tenants/${tenantId}${qs({ confirm: confirmName })}`, "DELETE");
 
 // Quellsysteme
-export const fetchSystems = () => getJSON<System[]>("/api/systems");
-export const createSystem = (body: { name: string; platform: string; base_url?: string }) =>
-  sendJSON<System>("/api/systems", "POST", body);
+export const fetchSystems = (tenantId?: number | null) =>
+  getJSON<System[]>(`/api/systems${qs({ tenant_id: tenantId })}`);
+export const createSystem = (body: {
+  tenant_id: number;
+  name: string;
+  platform: string;
+  base_url?: string;
+}) => sendJSON<System>("/api/systems", "POST", body);
+export const patchSystem = (
+  id: number,
+  body: { tenant_id?: number; name?: string; base_url?: string; enabled?: boolean },
+) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
+export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");
 
 // Läufe
 export const fetchRuns = (tenantId?: number | null, limit = 10) =>

@@ -37,10 +37,16 @@ def test_durchstich_collector_result_landet_in_rules(client, session_factory, mo
     # Mandant + Quellsystem anlegen
     session = session_factory()
     tenant = Tenant(name="kunde-a", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+    session.add(tenant)
+    session.flush()
     fw = SourceSystem(
-        name="fw-01", platform=Platform.FORTIGATE, base_url="https://fw", enabled=True
+        tenant_id=tenant.id,
+        name="fw-01",
+        platform=Platform.FORTIGATE,
+        base_url="https://fw",
+        enabled=True,
     )
-    session.add_all([tenant, fw])
+    session.add(fw)
     session.commit()
     tenant_id, ss_id = tenant.id, fw.id
     session.close()
@@ -120,10 +126,16 @@ def test_rule_detail_404_fuer_unbekannte_regel(client):
 def test_applications_aus_vips(client, session_factory):
     session = session_factory()
     tenant = Tenant(name="k", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+    session.add(tenant)
+    session.flush()
     fw = SourceSystem(
-        name="fw-01", platform=Platform.FORTIGATE, base_url="https://fw", enabled=True
+        tenant_id=tenant.id,
+        name="fw-01",
+        platform=Platform.FORTIGATE,
+        base_url="https://fw",
+        enabled=True,
     )
-    session.add_all([tenant, fw])
+    session.add(fw)
     session.commit()
     tid, sid = tenant.id, fw.id
     session.close()

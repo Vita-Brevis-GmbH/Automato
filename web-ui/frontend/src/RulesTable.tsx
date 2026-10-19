@@ -42,10 +42,11 @@ export default function RulesTable({
   const [selected, setSelected] = useState<number | null>(null);
 
   useEffect(() => {
-    fetchSystems()
+    setSystem("");
+    fetchSystems(tenantId)
       .then(setSystems)
       .catch(() => setSystems([]));
-  }, []);
+  }, [tenantId]);
 
   // Freitext-/IP-Suche geht an den Orchestrator (durchsucht auch Endpunkt-Werte).
   useEffect(() => {

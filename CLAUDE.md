@@ -422,3 +422,17 @@ kundenspezifischen GG-/Projektlisten), angelegt per Datenmigration **Alembic `00
 (`ingest._resolve_prefixes`), fehlt es → eingebaute Standard-Konvention. „+ Neues Profil" mit
 Vorlage kopiert das gepflegte „default". UI: Profil „default" vorausgewählt, „gilt für alle
 Mandanten ohne eigenes Profil". Tests: orchestrator 113.
+**Quellsysteme je Mandant + Löschen (Alembic `0015`):** `source_system.tenant_id` (FK, Name je
+Mandant eindeutig `uq_source_system_tenant_name` statt global); Migration ordnet Altbestände dem
+Mandanten zu, dessen Regeln/NAT/Läufe sie eindeutig tragen, sonst „nicht zugeordnet“ (UI-Karte
+zum Zuordnen). `/systems` mandantsgescoped (`?tenant_id=`), `POST` verlangt `tenant_id`, `PATCH`
+(Name/Adresse/aktiv/Mandant; Mandantenwechsel nur ohne fremde Daten → sonst 409), `DELETE`
+(Regeln + NAT + dadurch verwaiste Findings, Läufe bleiben als Historie). `POST /jobs/collect`
+prüft: Quellsystem gehört zum Mandanten und Plattform passt (422). **`DELETE /tenants/{id}?confirm=
+<Name>`** löscht alle Mandantendaten in FK-Reihenfolge (`app/store/deletion.py`; Agenten des
+Mandanten werden gelöscht statt entkoppelt — sonst sähe ein Agent ohne Mandant alle Läufe),
+auditiert `tenant.deleted`/`source.deleted` mit Anzahlen. CLI `ensure-source --tenant`. Tests
+`test_deletion.py`; **SQLite-Tests prüfen jetzt Fremdschlüssel** (`PRAGMA foreign_keys=ON` in
+`conftest.py`), Migrationen 0014/0015 + Löschkaskade zusätzlich gegen echtes Postgres geprüft.
+UI: Quellsysteme in der Mandanten-Ansicht, Löschen mit Rückfrage (Mandant: Namen eintippen),
+„Jetzt einlesen“/Regel-Filter zeigen nur Systeme des Mandanten. Tests: orchestrator 116.

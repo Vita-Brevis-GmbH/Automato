@@ -76,8 +76,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Keycloak-Benutzerverwaltung (`AUTOMATO_OIDC_ADMIN_CONSOLE_URL`, sonst aus dem Issuer
   abgeleitet). Benutzer selbst werden in Keycloak gepflegt (`tenant_ids` = Mandanten-ID).
 - **Mandanten & Standorte (Admin schreibt):** **+ Mandant**, Kürzel, Namensprofil,
-  Lese-Audit, Standorte (**+ Standort**, 3-stelliger Code) und **Quellsysteme**
-  (**+ Quellsystem**, FortiGate/Cisco ACI; keine Zugangsdaten).
+  Lese-Audit, Standorte (**+ Standort**, 3-stelliger Code) und die **Quellsysteme des
+  Mandanten** (**+ Quellsystem**, FortiGate/Cisco ACI; keine Zugangsdaten; Name je Mandant
+  eindeutig; Aktivieren/Deaktivieren). **Löschen:** Quellsystem (✕, Rückfrage nennt die mit
+  gelöschten Regeln/NAT-Einträge) und **Mandant löschen** (nur nach Eintippen des Namens;
+  löscht alle Daten des Mandanten inkl. seiner Collector-Agenten; Audit-Log bleibt).
+  Altbestände ohne Mandant erscheinen unter „Nicht zugeordnete Quellsysteme“ zum Zuordnen.
 - **Namensprofile:** Standardprofil **„default"** (per Migration angelegt, gilt für alle
   Mandanten ohne eigenes Profil, frei pflegbar), **+ Neues Profil** (optional mit den Werten
   von „default" vorbefüllt), **+ Neue
@@ -95,8 +99,9 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /rules` (`?q=`,`?tenant_id=`), `GET /rules/{id}` | Regelliste / -detail |
 | `GET /findings`, `PATCH /findings/{id}` | Datenqualität, Triage |
 | `GET /nat`, `GET /applications[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku |
-| `GET/POST /tenants`, `PATCH /tenants/{id}`, `GET/POST/DELETE /tenants/{id}/sites` | Mandanten, Standorte |
-| `GET/POST /systems` | Quellsysteme |
+| `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
+| `GET/POST /tenants/{id}/sites`, `DELETE /tenants/{id}/sites/{sid}` | Standorte |
+| `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant) |
 | `GET /jobs`, `GET /jobs/{id}`, `POST /jobs/collect` | Läufe |
 | `GET/POST /agents`, `PATCH /agents/{id}` | Collector-Agenten |
 | `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}` | Namensprofile |

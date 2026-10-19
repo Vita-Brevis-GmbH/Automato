@@ -24,7 +24,27 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "finding.triaged": frozenset({"finding_id", "status"}),
     "tenant.created": frozenset({"tenant_id", "name", "code"}),
     "tenant.updated": frozenset({"tenant_id", "code", "audit_reads", "naming_profile_id"}),
-    "source.created": frozenset({"source_id", "name", "platform"}),
+    "tenant.deleted": frozenset(
+        {
+            "tenant_id",
+            "name",
+            "rules",
+            "nat_rules",
+            "findings",
+            "epgs",
+            "objects",
+            "zones",
+            "sites",
+            "source_systems",
+            "runs",
+            "agents",
+        }
+    ),
+    "source.created": frozenset({"source_id", "tenant_id", "name", "platform"}),
+    "source.updated": frozenset({"source_id", "tenant_id", "name", "enabled"}),
+    "source.deleted": frozenset(
+        {"source_id", "tenant_id", "name", "rules", "nat_rules", "findings"}
+    ),
     "site.created": frozenset({"tenant_id", "code"}),
     "site.deleted": frozenset({"tenant_id", "site_id"}),
     "system.site_assigned": frozenset({"tenant_id", "site_id"}),

@@ -53,7 +53,7 @@ Im UI-Tab **„Mandant / Standorte"** (oder per CLI):
 
 ```bash
 docker compose exec orchestrator automato ensure-tenant --name lab --code lab01
-docker compose exec orchestrator automato ensure-source --name fw-01 --platform fortigate
+docker compose exec orchestrator automato ensure-source --tenant <mandant> --name fw-01 --platform fortigate
 ```
 
 ## 4. Agent im UI registrieren

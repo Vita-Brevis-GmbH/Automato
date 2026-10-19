@@ -21,10 +21,16 @@ def test_ensure_ist_idempotent(session_factory):
     assert t1.id == t2.id
     assert session.query(Tenant).count() == 1
 
-    s1 = cli.ensure_source(session, "fw-01", "fortigate", "https://fw-01")
-    s2 = cli.ensure_source(session, "fw-01", "fortigate", "https://fw-01.neu")
+    s1 = cli.ensure_source(session, t1, "fw-01", "fortigate", "https://fw-01")
+    s2 = cli.ensure_source(session, t1, "fw-01", "fortigate", "https://fw-01.neu")
     assert s1.id == s2.id
     assert s2.base_url == "https://fw-01.neu"  # base_url wird aktualisiert
+    assert s2.tenant_id == t1.id
+
+    # gleicher Name bei einem anderen Mandanten = eigenes Quellsystem
+    other = cli.ensure_tenant(session, "kunde-b", "netbox", "active_directory")
+    s3 = cli.ensure_source(session, other, "fw-01", "fortigate", "")
+    assert s3.id != s1.id and s3.tenant_id == other.id
     session.close()
 
 
@@ -32,7 +38,7 @@ def test_queue_collect_legt_run_an_und_dispatcht(session_factory, monkeypatch):
     calls = _dispatch_recorder(monkeypatch)
     session = session_factory()
     tenant = cli.ensure_tenant(session, "kunde-a", "netbox", "active_directory")
-    source = cli.ensure_source(session, "fw-01", "fortigate", "https://fw-01")
+    source = cli.ensure_source(session, tenant, "fw-01", "fortigate", "https://fw-01")
     session.flush()
 
     run = cli.queue_collect(session, "fortigate", tenant, source)
@@ -52,7 +58,7 @@ def test_queue_collect_external_ohne_dispatch(session_factory, monkeypatch):
     calls = _dispatch_recorder(monkeypatch)
     session = session_factory()
     tenant = cli.ensure_tenant(session, "kunde-a", "netbox", "active_directory")
-    source = cli.ensure_source(session, "fw-01", "fortigate", "https://fw-01")
+    source = cli.ensure_source(session, tenant, "fw-01", "fortigate", "https://fw-01")
     session.flush()
 
     run = cli.queue_collect(session, "fortigate", tenant, source, "external")
@@ -66,8 +72,8 @@ def test_queue_collect_external_ohne_dispatch(session_factory, monkeypatch):
 def test_cli_collect_external_end_to_end(session_factory, monkeypatch, capsys):
     calls = _dispatch_recorder(monkeypatch)
     session = session_factory()
-    cli.ensure_tenant(session, "kunde-a", "netbox", "active_directory")
-    cli.ensure_source(session, "fw-01", "fortigate", "https://fw-01")
+    tenant = cli.ensure_tenant(session, "kunde-a", "netbox", "active_directory")
+    cli.ensure_source(session, tenant, "fw-01", "fortigate", "https://fw-01")
     session.commit()
     args = cli.build_parser().parse_args(
         ["collect", "--tenant", "kunde-a", "--source", "fw-01", "--execution", "external"]
