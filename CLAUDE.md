@@ -338,6 +338,9 @@ vor `web-ui:5173`, Host aus `AUTOMATO_UI_HOST` (IP oder Name; Dev: `172.25.12.12
 Browser bei IPs kein SNI senden) oder Fullchain+Key der eigenen CA aus `deploy/proxy/pki/`
 (gitignored); `/api/internal` nicht ausgeliefert; Profil `proxy` nur zusammen mit `core`
 (hängt an `web-ui`). Keycloak-Client `automato-web` braucht Redirect-URI/Web-Origin der Adresse.
+**Ein Realm pro Automato-Umgebung** (`automato` = Prod, `automato-dev` = Dev; Mandanten-IDs
+gehören zur DB der Umgebung): Generator `deploy/keycloak/make_realm.py` erzeugt aus
+`realm-automato.json` einen Realm mit eigenem Namen + UI-Adressen (Runbook Abschnitt 13).
 **Mandanten-Klärung (GG):** Ein **Mandant = Gruppengesellschaft (GG)** mit **einem oder
 mehreren Standorten** und einem **Kürzel/Code** zur Identifikation bei VMs/Objekten. Die
 **Wörterbücher (GG-Kürzel etc.) sind kundenspezifische Laufzeitdaten** (kein Seed-Zwang) und

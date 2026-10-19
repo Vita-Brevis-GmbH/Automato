@@ -719,6 +719,34 @@ entfernen. Fallback: eigene öffentliche IP + eigene VIP/Policy/WAF-Profil für 
 
 ---
 
+## 13. Weitere Umgebung (z. B. Dev) als eigener Realm
+
+Jede Automato-Umgebung bekommt einen **eigenen Realm** (`automato` = Prod, `automato-dev` =
+Dev, …): Die Mandanten-IDs gehören zur Datenbank der jeweiligen Umgebung, Benutzer, OTP und
+erlaubte UI-Adressen bleiben getrennt. Ein bestehender Realm wird dabei nicht angefasst.
+
+1. Realm-Datei aus der Vorlage erzeugen (Repo, Python 3, keine Abhängigkeiten):
+   ```bash
+   python3 deploy/keycloak/make_realm.py --realm automato-dev \
+     --ui-url https://172.25.12.12 --display-name "Automato Dev" --with-localhost \
+     > realm-automato-dev.json
+   ```
+   Übernimmt Rollen, Clients, `tenant_ids`- und Audience-Mapper, Härtung und den geseedeten
+   `automato-admin`; setzt Redirect-URIs/Web-Origins von `automato-web` auf die UI-Adresse(n).
+2. Admin-Konsole → Realm-Auswahl → **Create realm** → *Resource file* = die erzeugte Datei
+   → Realm name `automato-dev` → *Create*.
+3. Im neuen Realm wie in Schritt 9a: `tenant_ids` im *User profile* anlegen (nur Admin
+   editierbar), *Required actions → Configure OTP → Set as default action* On,
+   `automato-admin` ein Passwort setzen (Temporary On). Der Audience-Mapper ist schon drin.
+4. Orchestrator der Umgebung auf den Realm zeigen lassen (`.env`):
+   ```env
+   AUTOMATO_OIDC_ISSUER=https://auth.vitabrevis.ch/realms/automato-dev
+   AUTOMATO_OIDC_JWKS_URL=https://auth.vitabrevis.ch/realms/automato-dev/protocol/openid-connect/certs
+   ```
+   WAF-Ausnahme (Abschnitt 12b) und Caddy decken alle Realms ab — nichts weiter nötig.
+
+---
+
 ## Alternative: dasselbe per Ansible (ein Befehl)
 
 Wer einen Control-Host hat, bekommt denselben Stack ohne Handarbeit:
