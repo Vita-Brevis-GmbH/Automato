@@ -330,8 +330,12 @@ intern `auth.int.vitabrevis.ch` (`KC_HOSTNAME_ADMIN`, Zertifikat von der DC-CA, 
 OIDC-Pfad gescoped (Negativ-Test Pflicht, Abschnitt 12). Integrations-Fixes: `docker-compose.yml`
 reicht `AUTOMATO_AUTH_MODE`/`AUTOMATO_OIDC_*` an den Orchestrator durch; Realm-Export mit
 **Audience-Mapper** (`aud=automato-api`, sonst 401); `tenant_ids` als verwaltetes
-User-Profile-Attribut (nur Admin editierbar), OTP-Pflicht per Browser-Flow; Dev-Login per
-SSH-Tunnel (PKCE braucht sicheren Kontext).
+User-Profile-Attribut (nur Admin editierbar), OTP-Pflicht per Required-Action-Default (nicht
+per Flow-Änderung — sperrt in KC 26 aus); Dev-Login per SSH-Tunnel (PKCE braucht sicheren
+Kontext). **TLS-Proxy für die Web-UI** (Compose-Profil `proxy`, `deploy/proxy/`): Caddy auf 443
+vor `web-ui:5173`, Host aus `AUTOMATO_UI_HOST` (z. B. `automato.int.vitabrevis.ch`), Zertifikat
+von der eigenen CA (AD CS) in `deploy/proxy/pki/` (gitignored), `/api/internal` nicht ausgeliefert;
+Keycloak-Client `automato-web` braucht die Redirect-URI/Web-Origin dieser Adresse.
 **Mandanten-Klärung (GG):** Ein **Mandant = Gruppengesellschaft (GG)** mit **einem oder
 mehreren Standorten** und einem **Kürzel/Code** zur Identifikation bei VMs/Objekten. Die
 **Wörterbücher (GG-Kürzel etc.) sind kundenspezifische Laufzeitdaten** (kein Seed-Zwang) und

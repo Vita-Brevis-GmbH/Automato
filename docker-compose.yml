@@ -101,6 +101,25 @@ services:
     depends_on:
       - orchestrator
 
+  # TLS-Reverse-Proxy vor der Web-UI (Profil "proxy", optional): https://<AUTOMATO_UI_HOST>.
+  # Zertifikat als Fullchain + Key in deploy/proxy/pki/<host>.crt|.key (siehe
+  # deploy/proxy/README.md). Start: docker compose --profile core --profile proxy up -d
+  proxy:
+    image: caddy:2-alpine
+    profiles: ["proxy"]
+    restart: unless-stopped
+    environment:
+      AUTOMATO_UI_HOST: ${AUTOMATO_UI_HOST:-automato.localhost}
+    ports:
+      - "443:443"
+    volumes:
+      - ./deploy/proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/proxy/pki:/etc/caddy/pki:ro
+      - proxy-data:/data
+      - proxy-config:/config
+    depends_on:
+      - web-ui
+
   # AuthN/RBAC-IdP (E1, ADR 0007). Eigenes Profil "auth" -> beeinflusst core/collectors
   # nicht. Importiert den Realm "automato" (Rollen viewer/operator/admin, Clients
   # automato-web [PKCE]/automato-api, tenant_ids-Mapper, geseedter Admin mit OTP-Pflicht).
@@ -129,3 +148,5 @@ services:
 volumes:
   postgres-data:
   keycloak-data:
+  proxy-data:
+  proxy-config:

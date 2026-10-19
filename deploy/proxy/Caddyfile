@@ -1,0 +1,33 @@
+# TLS-Reverse-Proxy vor der Automato-Web-UI (Profil "proxy" in docker-compose.yml).
+# Hostname aus AUTOMATO_UI_HOST (.env); Zertifikat als Fullchain + Key unter
+# deploy/proxy/pki/<host>.crt und <host>.key. Kein ACME: interne Namen bekommen ihr
+# Zertifikat von der eigenen CA (z. B. AD CS) - siehe deploy/proxy/README.md.
+{
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$AUTOMATO_UI_HOST} {
+	encode zstd gzip
+
+	tls /etc/caddy/pki/{$AUTOMATO_UI_HOST}.crt /etc/caddy/pki/{$AUTOMATO_UI_HOST}.key {
+		protocols tls1.3 tls1.3
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "SAMEORIGIN"
+		-Server
+	}
+
+	# Agent-/Ingest-API (/internal) nicht ueber die UI-Adresse ausliefern
+	# (ADR 0008: eigener Zugang, optional mTLS - collectors/EXTERNAL.md).
+	@internal path /api/internal /api/internal/*
+	respond @internal 404
+
+	# Web-UI (Vite); sie leitet /api/* selbst an den Orchestrator weiter.
+	reverse_proxy web-ui:5173
+}
