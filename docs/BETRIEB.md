@@ -83,11 +83,15 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   löscht alle Daten des Mandanten inkl. seiner Collector-Agenten; Audit-Log bleibt).
   Altbestände ohne Mandant erscheinen unter „Nicht zugeordnete Quellsysteme“ zum Zuordnen.
 - **Namensprofile:** Standardprofil **„default"** (per Migration angelegt, gilt für alle
-  Mandanten ohne eigenes Profil, frei pflegbar), **+ Neues Profil** (optional mit den Werten
-  von „default" vorbefüllt), **+ Neue
-  Namenskonvention** (neue Wörterbuch-Art), Einträge anlegen/bearbeiten/löschen.
+  Mandanten ohne eigenes Profil, frei pflegbar), **+ Neues Profil** (Vorlage: Kopie eines
+  bestehenden Profils, z. B. „default", oder leer), **+ Neue Namenskonvention** (optional die
+  Einträge einer bestehenden Konvention – auch aus einem anderen Profil – kopieren),
+  Einträge anlegen/bearbeiten/löschen.
 - **Collector-Agenten (nur Admin):** **+ Agent** erzeugt das Token einmalig; Status
-  online/keine Meldung aus dem Heartbeat; Aktivieren/Deaktivieren.
+  online/keine Meldung aus dem Heartbeat; Aktivieren/Deaktivieren. **Einrichtung Schritt für
+  Schritt** direkt in der Ansicht: `agent.env`-Generator (bleibt im Browser), Download des
+  Agent-Pakets (`GET /agents/package`, ZIP ohne Zugangsdaten), PowerShell-Befehle zum
+  Kopieren, Test und erster Lauf, Fehlerbehebung.
 
 ## 4. API
 

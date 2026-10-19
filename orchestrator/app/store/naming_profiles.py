@@ -21,11 +21,15 @@ def get_profile(session: Session, profile_id: int) -> NamingProfile | None:
     return session.get(NamingProfile, profile_id)
 
 
-def get_or_create_profile(session: Session, customer: str, name: str) -> NamingProfile:
+def find_profile(session: Session, customer: str, name: str) -> NamingProfile | None:
     stmt = select(NamingProfile).where(
         NamingProfile.customer == customer, NamingProfile.name == name
     )
-    profile = session.scalars(stmt).first()
+    return session.scalars(stmt).first()
+
+
+def get_or_create_profile(session: Session, customer: str, name: str) -> NamingProfile:
+    profile = find_profile(session, customer, name)
     if profile is None:
         profile = NamingProfile(customer=customer, name=name)
         session.add(profile)
@@ -72,6 +76,25 @@ def delete_entry(session: Session, entry_id: int) -> bool:
         return False
     session.delete(entry)
     return True
+
+
+def copy_entries(
+    session: Session,
+    source_profile_id: int,
+    target_profile_id: int,
+    source_kind: str | None = None,
+    target_kind: str | None = None,
+) -> int:
+    """Einträge eines Profils (optional nur eine Art) in ein Profil kopieren (upsert).
+
+    Mit `target_kind` landet die Quell-Art unter neuem Namen - so entsteht eine neue
+    Namenskonvention aus einer bestehenden. Rückgabe: Anzahl kopierter Einträge.
+    """
+    entries = list_entries(session, source_profile_id, kind=source_kind)
+    for e in entries:
+        kind = target_kind if target_kind else e.kind
+        upsert_entry(session, target_profile_id, kind, e.key, e.value, e.extra)
+    return len(entries)
 
 
 def get_default_profile(session: Session) -> NamingProfile | None:

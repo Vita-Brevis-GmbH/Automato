@@ -436,3 +436,16 @@ auditiert `tenant.deleted`/`source.deleted` mit Anzahlen. CLI `ensure-source --t
 `conftest.py`), Migrationen 0014/0015 + Löschkaskade zusätzlich gegen echtes Postgres geprüft.
 UI: Quellsysteme in der Mandanten-Ansicht, Löschen mit Rückfrage (Mandant: Namen eintippen),
 „Jetzt einlesen“/Regel-Filter zeigen nur Systeme des Mandanten. Tests: orchestrator 116.
+**Agent-Einrichtung im UI + Kopieren von Namenskonventionen:** Orchestrator-Image baut das
+**Agent-Paket** mit (Dockerfile-Stage `agent-package`: collectors-Wheel + `deploy/collector-agent/`
+→ `/workspace/agent-package`, Setting `agent_package_dir`); `GET /agents/package` (admin) liefert es
+als ZIP **ohne Zugangsdaten**. UI „Collector-Agenten“ → `AgentGuide.tsx`: 8 Schritte (Voraussetzungen,
+Agent anlegen, **agent.env-Generator** clientseitig per Blob – Token des neuen Agenten wird übernommen,
+Vorschau maskiert, nichts gespeichert/übertragen –, Paket-Download, PowerShell-Befehle zum Kopieren,
+Check, erster Lauf, Fehlerbehebung). `install.ps1`: Wheel neben dem Skript automatisch, daneben
+liegende `agent.env` wird übernommen, Agent-Code wird bei Neuinstallation aktualisiert. Verifiziert:
+Paket aus dem UI-Download in venv installiert, mit UI-`agent.env` `--poll` → Lauf completed.
+**Namensprofile:** `POST /naming-profiles` mit `copy_from_profile_id` (Kopie eines Profils; Duplikat →
+409), `POST /naming-profiles/{id}/dictionary/copy` (Art aus beliebigem Profil als neue Art, auditiert
+`dictionary.copied`); UI: Vorlage-Auswahl beim neuen Profil (Default: Kopie von „default“) und
+„Einträge kopieren aus“ bei neuer Namenskonvention. Tests: orchestrator 119.

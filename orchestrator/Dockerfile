@@ -1,4 +1,17 @@
 # Build-Kontext: Repo-Root (uv-Workspace) -> docker compose setzt context: .
+
+# --- Agent-Paket (ADR 0008): collectors-Wheel + Windows-Skripte, im UI herunterladbar ---
+FROM python:3.12-slim AS agent-package
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+WORKDIR /src
+COPY pyproject.toml uv.lock ./
+COPY orchestrator/pyproject.toml orchestrator/pyproject.toml
+COPY sot-gateway/pyproject.toml sot-gateway/pyproject.toml
+COPY collectors/ collectors/
+RUN uv build --package collectors --wheel --out-dir /agent-package
+COPY deploy/collector-agent/ /agent-package/
+
+# --- Orchestrator ---
 FROM python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -13,6 +26,7 @@ COPY collectors/src/collectors/__init__.py collectors/src/collectors/__init__.py
 COPY orchestrator/ orchestrator/
 
 RUN uv sync --frozen --package orchestrator --no-dev
+COPY --from=agent-package /agent-package /workspace/agent-package
 
 WORKDIR /workspace/orchestrator
 ENV PATH="/workspace/.venv/bin:$PATH"

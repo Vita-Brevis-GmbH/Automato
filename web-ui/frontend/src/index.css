@@ -345,3 +345,23 @@ pre.block { background: var(--surface-2); border: 1px solid var(--border); borde
   .mandant select { max-width: 150px; }
   .kpis { grid-template-columns: 1fr 1fr; }
 }
+
+/* Schritt-für-Schritt-Anleitung (Collector-Agent) */
+.steps { list-style: none; margin: 0; padding: 6px 16px 10px; counter-reset: step; }
+.steps > li { position: relative; padding: 14px 0 14px 42px; border-bottom: 1px solid var(--border); counter-increment: step; }
+.steps > li:last-child { border-bottom: none; }
+.steps > li::before { content: counter(step); position: absolute; left: 0; top: 13px; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent-weak); color: var(--accent); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps > li.done::before { content: "✓"; background: var(--good-weak); color: var(--good); }
+.steps h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.steps p { margin: 4px 0; color: var(--muted); font-size: 13px; }
+.steps ul { margin: 6px 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+.steps li li { margin-bottom: 3px; }
+.cmd { position: relative; margin: 8px 0; }
+.cmd pre { margin: 0; background: var(--nav-bg); color: #d7dee9; border-radius: 8px; padding: 11px 14px; font-family: var(--font-mono);
+  font-size: 12.5px; overflow-x: auto; white-space: pre; }
+.cmd .copy { position: absolute; top: 6px; right: 6px; }
+.envgen { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; margin-top: 8px; }
+.envgen .field { margin-bottom: 10px; }
+.trouble td:first-child { font-family: var(--font-mono); font-size: 12px; white-space: nowrap; }
+@media (max-width: 900px) { .envgen { grid-template-columns: 1fr; } }

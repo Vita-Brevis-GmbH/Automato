@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  copyDictionary,
   createNamingProfile,
   deleteEntry,
   DictionaryEntry,
@@ -211,6 +212,7 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
 
       {newProfile && (
         <NewProfileDialog
+          profiles={profiles ?? []}
           onClose={() => setNewProfile(false)}
           onCreated={async (p) => {
             setNewProfile(false);
@@ -221,10 +223,13 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
       {newKind && profileId != null && (
         <NewKindDialog
           existing={kinds}
+          profiles={profiles ?? []}
+          profileId={profileId}
           onClose={() => setNewKind(false)}
-          onCreated={(k) => {
-            setExtraKinds((prev) => [...prev, k]);
+          onCreated={(k, copied) => {
             setNewKind(false);
+            if (copied) loadEntries();
+            else setExtraKinds((prev) => [...prev, k]);
           }}
         />
       )}
@@ -432,15 +437,19 @@ function ValueInput({
 }
 
 function NewProfileDialog({
+  profiles,
   onClose,
   onCreated,
 }: {
+  profiles: NamingProfile[];
   onClose: () => void;
   onCreated: (p: NamingProfile) => void;
 }) {
+  const fallback = profiles.find(isDefaultProfile) ?? profiles[0];
   const [customer, setCustomer] = useState("");
   const [name, setName] = useState("");
-  const [withDefaults, setWithDefaults] = useState(true);
+  // Vorlage: "copy:<id>" = bestehendes Profil kopieren, "defaults" = eingebaute Standardwerte
+  const [template, setTemplate] = useState(fallback ? `copy:${fallback.id}` : "defaults");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
 
@@ -448,11 +457,13 @@ function NewProfileDialog({
     setBusy(true);
     setErr(null);
     try {
+      const copyFrom = template.startsWith("copy:") ? Number(template.slice(5)) : null;
       onCreated(
         await createNamingProfile({
           customer: customer.trim(),
           name: name.trim(),
-          with_defaults: withDefaults,
+          copy_from_profile_id: copyFrom,
+          with_defaults: template === "defaults",
         }),
       );
     } catch (e) {
@@ -479,6 +490,26 @@ function NewProfileDialog({
     >
       <ErrorBox error={err} />
       <div className="field">
+        <label htmlFor="np-template">Vorlage</label>
+        <select
+          id="np-template"
+          className="sel input"
+          value={template}
+          onChange={(e) => setTemplate(e.target.value)}
+        >
+          {profiles.map((p) => (
+            <option key={p.id} value={`copy:${p.id}`}>
+              Kopie von „{profileLabel(p)}“{isDefaultProfile(p) ? " (Standard)" : ""}
+            </option>
+          ))}
+          {!profiles.some(isDefaultProfile) && <option value="defaults">Eingebaute Standardwerte</option>}
+          <option value="empty">Leer beginnen</option>
+        </select>
+        <div className="hint">
+          Alle Wörterbücher der Vorlage werden übernommen und sind danach unabhängig änderbar.
+        </div>
+      </div>
+      <div className="field">
         <label htmlFor="np-customer">Kunde / Umgebung</label>
         <input
           id="np-customer"
@@ -499,32 +530,60 @@ function NewProfileDialog({
           onChange={(e) => setName(e.target.value)}
         />
       </div>
-      <div className="field">
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={withDefaults}
-            onChange={(e) => setWithDefaults(e.target.checked)}
-          />
-          Mit den Werten des Standardprofils „default“ vorbefüllen (danach frei änderbar)
-        </label>
-      </div>
     </Modal>
   );
 }
 
 function NewKindDialog({
   existing,
+  profiles,
+  profileId,
   onClose,
   onCreated,
 }: {
   existing: string[];
+  profiles: NamingProfile[];
+  profileId: number;
   onClose: () => void;
-  onCreated: (kind: string) => void;
+  onCreated: (kind: string, copied: boolean) => void;
 }) {
   const [kind, setKind] = useState("");
+  const [srcProfile, setSrcProfile] = useState(profileId);
+  const [srcKinds, setSrcKinds] = useState<[string, number][]>([]);
+  const [srcKind, setSrcKind] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
   const clean = kind.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_");
   const dup = existing.includes(clean);
+
+  // Wörterbuch-Arten des Quellprofils (mit Anzahl Einträge) als Kopiervorlage
+  useEffect(() => {
+    setSrcKind("");
+    fetchDictionary(srcProfile)
+      .then((entries) => {
+        const counts = new Map<string, number>();
+        entries.forEach((e) => counts.set(e.kind, (counts.get(e.kind) ?? 0) + 1));
+        setSrcKinds([...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])));
+      })
+      .catch(() => setSrcKinds([]));
+  }, [srcProfile]);
+
+  const submit = async () => {
+    if (!srcKind) {
+      onCreated(clean, false);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await copyDictionary(profileId, { source_profile_id: srcProfile, source_kind: srcKind, kind: clean });
+      onCreated(clean, true);
+    } catch (e) {
+      setErr(e);
+      setBusy(false);
+    }
+  };
+
   return (
     <Modal
       title="Neue Namenskonvention"
@@ -534,12 +593,13 @@ function NewKindDialog({
           <button className="btn btn-ghost" onClick={onClose}>
             Abbrechen
           </button>
-          <button className="btn btn-primary" onClick={() => onCreated(clean)} disabled={!clean || dup}>
-            Anlegen
+          <button className="btn btn-primary" onClick={submit} disabled={!clean || dup || busy}>
+            {busy ? "Kopiere…" : srcKind ? "Anlegen & Einträge kopieren" : "Anlegen"}
           </button>
         </>
       }
     >
+      <ErrorBox error={err} />
       <div className="field">
         <label htmlFor="nk-kind">Art (technischer Schlüssel)</label>
         <input
@@ -554,7 +614,44 @@ function NewKindDialog({
           {dup ? "Diese Art gibt es bereits." : clean ? `Wird angelegt als „${clean}“.` : "Kleinbuchstaben, Ziffern, _"}
         </div>
       </div>
-      <Note>Die neue Art erscheint als eigene Karte; sie wird gespeichert, sobald der erste Eintrag hinzugefügt ist.</Note>
+      <div className="form-grid">
+        <div className="field">
+          <label htmlFor="nk-src-profile">Einträge kopieren aus Profil</label>
+          <select
+            id="nk-src-profile"
+            className="sel input"
+            value={srcProfile}
+            onChange={(e) => setSrcProfile(Number(e.target.value))}
+          >
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {profileLabel(p)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="nk-src-kind">Namenskonvention</label>
+          <select
+            id="nk-src-kind"
+            className="sel input"
+            value={srcKind}
+            onChange={(e) => setSrcKind(e.target.value)}
+          >
+            <option value="">– leer beginnen –</option>
+            {srcKinds.map(([k, n]) => (
+              <option key={k} value={k}>
+                {metaFor(k).title} ({n})
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <Note>
+        {srcKind
+          ? "Die Einträge werden als Ausgangspunkt kopiert und sind danach unabhängig änderbar."
+          : "Die neue Art erscheint als eigene Karte; sie wird gespeichert, sobald der erste Eintrag hinzugefügt ist."}
+      </Note>
     </Modal>
   );
 }

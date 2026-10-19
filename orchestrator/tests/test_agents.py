@@ -145,3 +145,32 @@ def test_patch_unbekannter_agent_404(client):
         ).status_code
         == 404
     )
+
+
+def test_agent_paket_download_nur_admin(client, tmp_path):
+    import io
+    import zipfile
+
+    from app.config import Settings, get_settings
+
+    (tmp_path / "collectors-0.1.0-py3-none-any.whl").write_bytes(b"wheel")
+    (tmp_path / "install.ps1").write_text("# install")
+    (tmp_path / "run-agent.ps1").write_text("# run")
+    (tmp_path / "agent.env").write_text("AUTOMATO_AGENT_TOKEN=geheim")  # darf nie mit
+    client.app.dependency_overrides[get_settings] = lambda: Settings(
+        agent_package_dir=str(tmp_path)
+    )
+
+    assert client.get("/agents/package", headers={"X-Dev-Roles": "operator"}).status_code == 403
+    r = client.get("/agents/package", headers={"X-Dev-Roles": "admin"})
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert "automato-collector-agent/collectors-0.1.0-py3-none-any.whl" in names
+    assert "automato-collector-agent/install.ps1" in names
+    assert not any(n.endswith("agent.env") for n in names)  # keine Secrets im Paket
+
+    client.app.dependency_overrides[get_settings] = lambda: Settings(
+        agent_package_dir=str(tmp_path / "fehlt")
+    )
+    assert client.get("/agents/package", headers={"X-Dev-Roles": "admin"}).status_code == 404
+    del client.app.dependency_overrides[get_settings]

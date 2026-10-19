@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # Issuer abgeleitet (<origin>/admin/master/console/#/<realm>).
     oidc_admin_console_url: str = ""
 
+    # Agent-Paket fuer den Download im UI (Wheel + Windows-Skripte, ADR 0008); im Image von
+    # der Dockerfile-Stage "agent-package" befuellt.
+    agent_package_dir: str = "/workspace/agent-package"
+
     # Audit-Log (E1.4): optionale At-Rest-Verschluesselung des (bereits per Allowlist
     # gefilterten) detail-Payloads. Leer = Klartext (dev/Tests). In Produktion ueber
     # den Secrets-/Vault-Provider (E1.5) setzen, nie im Repo.

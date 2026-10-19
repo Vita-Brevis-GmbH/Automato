@@ -12,7 +12,23 @@ Build-Host (Python)        Windows-Station (Kundennetz)
   collectors (*.whl)                        └▶ run-agent.ps1 ⇒ automato-collector --poll
 ```
 
-## 1. Wheel bauen (einmal, auf dem Build-Host)
+## Schnellweg: Paket aus dem Web-UI (empfohlen)
+
+Im Web-UI unter **Collector-Agenten** steht die Einrichtung Schritt für Schritt:
+`agent.env` direkt im Browser erzeugen (Token des neuen Agenten wird übernommen) und das
+**Agent-Paket** (ZIP: collectors-Wheel + Skripte, ohne Zugangsdaten) herunterladen. Das
+Orchestrator-Image baut das Paket mit (Dockerfile-Stage `agent-package`). Auf der Station:
+
+```powershell
+cd $HOME\Downloads\automato-collector-agent     # ZIP entpackt, agent.env daneben gelegt
+Get-ChildItem | Unblock-File
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -IntervalMinutes 15
+powershell -ExecutionPolicy Bypass -File C:\Automato\collector\run-agent.ps1 -Check
+```
+
+`install.ps1` findet das Wheel neben sich und übernimmt eine daneben liegende `agent.env`.
+
+## 1. Wheel bauen (manuell, auf einem Build-Host)
 
 ```bash
 uv build --package collectors --out-dir dist
@@ -30,7 +46,7 @@ Wheel + diesen Ordner (`deploy/collector-agent/`) auf die Station kopieren, dann
 **administrativen** PowerShell:
 
 ```powershell
-.\install.ps1 -Wheel .\collectors-0.1.0-py3-none-any.whl -IntervalMinutes 15
+.\install.ps1 -Wheel .\collectors-0.1.0-py3-none-any.whl -IntervalMinutes 15   # -Wheel optional
 # danach C:\Automato\collector\agent.env mit echten Werten fuellen (Token, Ziel-Creds, TLS)
 ```
 

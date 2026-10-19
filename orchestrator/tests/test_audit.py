@@ -95,4 +95,4 @@ def test_naming_profile_schreiben_wird_auditiert(session_factory, client):
     ]
     assert all(r.actor == "user:dev" for r in rows)  # X-Dev-Roles -> subject "dev"
     created = audit.decode_detail(rows[0])
-    assert created == {"profile_id": pid, "customer": "ACME", "name": "Std"}
+    assert created == {"profile_id": pid, "customer": "ACME", "name": "Std", "copied_from": None}

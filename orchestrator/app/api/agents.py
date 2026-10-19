@@ -7,9 +7,12 @@
   `/internal/collector-runs/{run_id}/result`.
 """
 
+import io
+import zipfile
 from datetime import datetime
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,6 +20,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.auth.deps import require_admin
 from app.auth.principal import Principal
+from app.config import Settings, get_settings
 from app.db import get_session
 from app.models import Agent, Tenant
 from app.store import agents as store
@@ -60,6 +64,41 @@ class NextRunOut(BaseModel):
 def _out(a: Agent) -> AgentOut:
     return AgentOut(
         id=a.id, name=a.name, tenant_id=a.tenant_id, enabled=a.enabled, last_seen=a.last_seen
+    )
+
+
+# Dateien des Agent-Pakets (keine Secrets: agent.env erzeugt das UI lokal im Browser)
+_PACKAGE_FILES = (
+    "install.ps1",
+    "run-agent.ps1",
+    "agent.env.example",
+    "agent_entry.py",
+    "README.md",
+)
+
+
+@router.get("/package")
+def download_package(
+    _: Principal = Depends(require_admin),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Agent-Paket als ZIP (collectors-Wheel + install.ps1/run-agent.ps1) - Admin."""
+    base = Path(settings.agent_package_dir)
+    wheels = sorted(base.glob("collectors-*.whl")) if base.is_dir() else []
+    if not wheels:
+        raise HTTPException(
+            status_code=404,
+            detail="agent package not available (orchestrator image without agent-package stage)",
+        )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in [wheels[-1], *(base / n for n in _PACKAGE_FILES)]:
+            if path.is_file():
+                zf.write(path, f"automato-collector-agent/{path.name}")
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="automato-collector-agent.zip"'},
     )
 
 

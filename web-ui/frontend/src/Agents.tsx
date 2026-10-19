@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Agent, AgentCreated, createAgent, fetchAgents, setAgentEnabled, Tenant } from "./api";
+import AgentGuide from "./AgentGuide";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead } from "./ui";
 
 // Agent-Verwaltung (ADR 0008): externe Collector-Agenten anlegen/deaktivieren, Heartbeat
@@ -75,8 +76,8 @@ export default function Agents({ tenants, tenantId }: { tenants: Tenant[]; tenan
 
       {created && (
         <div className="secret">
-          <b>Agent-Token für „{created.name}“ – wird nur jetzt angezeigt.</b> In <code>agent.env</code> als{" "}
-          <code>AUTOMATO_AGENT_TOKEN</code> eintragen.
+          <b>Agent-Token für „{created.name}“ – wird nur jetzt angezeigt.</b> Ist unten in der Einrichtung
+          bereits in die <code>agent.env</code> übernommen (Schritt 3) – oder hier kopieren.
           <code className="token">{created.token}</code>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-ghost btn-sm" onClick={copy}>
@@ -115,8 +116,7 @@ export default function Agents({ tenants, tenantId }: { tenants: Tenant[]; tenan
                 </button>
               }
             >
-              Agent anlegen, Token in <code>agent.env</code> eintragen und den Agenten mit <code>--poll</code>{" "}
-              starten.
+              Die Einrichtung ist unten Schritt für Schritt beschrieben.
             </Empty>
           ) : (
             <table>
@@ -159,13 +159,7 @@ export default function Agents({ tenants, tenantId }: { tenants: Tenant[]; tenan
         </div>
       </div>
 
-      <div style={{ marginTop: 16 }}>
-        <Note>
-          Ablauf: Agent hier anlegen → Token in <code>agent.env</code> → <code>run-agent.ps1 -Check</code> prüft
-          die Verbindung zum Zielsystem → in der Übersicht „Jetzt einlesen“ mit Ausführung <b>Extern (Agent)</b>{" "}
-          → der Agent holt den Lauf beim nächsten Poll ab. Details: <code>deploy/collector-agent/README.md</code>.
-        </Note>
-      </div>
+      <AgentGuide agents={agents ?? []} created={created} onNewAgent={() => setNewOpen(true)} />
 
       {newOpen && (
         <NewAgentDialog

@@ -254,7 +254,8 @@ async function authHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
+// Fetch mit Token und einheitlicher Fehlerbehandlung; liefert die rohe Antwort.
+async function fetchChecked(url: string, init: RequestInit = {}): Promise<Response> {
   const headers = { ...(await authHeaders()), ...(init.headers as Record<string, string>) };
   const response = await fetch(url, { ...init, headers });
   if (!response.ok) {
@@ -266,6 +267,11 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
     }
     throw new ApiError(response.status, detail);
   }
+  return response;
+}
+
+async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetchChecked(url, init);
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
@@ -346,14 +352,28 @@ export const createAgent = (name: string, tenantId: number | null) =>
   sendJSON<AgentCreated>("/api/agents", "POST", { name, tenant_id: tenantId });
 export const setAgentEnabled = (id: number, enabled: boolean) =>
   sendJSON<Agent>(`/api/agents/${id}`, "PATCH", { enabled });
+// Agent-Paket (ZIP: collectors-Wheel + install.ps1/run-agent.ps1, ohne Zugangsdaten)
+export const downloadAgentPackage = async (): Promise<Blob> =>
+  (await fetchChecked("/api/agents/package")).blob();
 
 // Namensprofile & Wörterbücher
 export const fetchNamingProfiles = () => getJSON<NamingProfile[]>("/api/naming-profiles");
 export const createNamingProfile = (body: {
   customer: string;
   name: string;
-  with_defaults: boolean;
+  copy_from_profile_id?: number | null; // Vorlage: bestehendes Profil kopieren
+  with_defaults?: boolean; // ohne Vorlage: eingebaute Standardwerte
 }) => sendJSON<NamingProfile>("/api/naming-profiles", "POST", body);
+// Bestehende Wörterbuch-Art (auch aus einem anderen Profil) als neue Art übernehmen
+export const copyDictionary = (
+  profileId: number,
+  body: { source_profile_id: number; source_kind: string; kind: string },
+) =>
+  sendJSON<{ profile_id: number; kind: string; copied: number }>(
+    `/api/naming-profiles/${profileId}/dictionary/copy`,
+    "POST",
+    body,
+  );
 export const fetchDictionary = (profileId: number) =>
   getJSON<DictionaryEntry[]>(`/api/naming-profiles/${profileId}/dictionary`);
 export const upsertEntry = (

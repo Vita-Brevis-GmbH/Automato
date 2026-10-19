@@ -322,8 +322,8 @@ export function fmtTime(iso: string | null): string {
   return `${d.toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit", year: "2-digit" })} ${time}`;
 }
 
-export function download(filename: string, text: string, type = "text/markdown") {
-  const blob = new Blob([text], { type });
+export function download(filename: string, content: string | Blob, type = "text/markdown") {
+  const blob = typeof content === "string" ? new Blob([content], { type }) : content;
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

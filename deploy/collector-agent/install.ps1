@@ -1,12 +1,23 @@
 # Automato Collector-Agent - Installation als geplante Aufgabe (Windows, ADR 0008).
 # Installiert das collectors-Wheel in ein venv und registriert einen Task, der den Agenten
 # im Pull-Modus laufen laesst. Ausfuehren in einer administrativen PowerShell.
+# Paket aus dem Web-UI (Collector-Agenten -> Agent-Paket): ZIP entpacken, die im UI erzeugte
+# agent.env daneben legen, dann:  powershell -ExecutionPolicy Bypass -File .\install.ps1
 param(
-    [Parameter(Mandatory = $true)][string]$Wheel,          # Pfad zum collectors-*.whl
+    [string]$Wheel = "",                                   # Pfad zum collectors-*.whl (Default: neben dem Skript)
     [string]$InstallDir = "C:\Automato\collector",
     [int]$IntervalMinutes = 15
 )
 $ErrorActionPreference = "Stop"
+
+if (-not $Wheel) {
+    $found = Get-ChildItem -Path $PSScriptRoot -Filter "collectors-*.whl" | Sort-Object Name | Select-Object -Last 1
+    if (-not $found) {
+        Write-Error "Kein collectors-*.whl neben install.ps1 gefunden (Parameter -Wheel angeben)."
+        exit 1
+    }
+    $Wheel = $found.FullName
+}
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
@@ -42,11 +53,18 @@ $venvDir = Join-Path $InstallDir "venv"
 $py = Join-Path $venvDir "Scripts\python.exe"
 & $py -m pip install --upgrade pip | Out-Null
 & $py -m pip install $Wheel
+# Bei erneuter Installation (gleiche Version) den Agent-Code trotzdem aktualisieren
+& $py -m pip install --force-reinstall --no-deps $Wheel | Out-Null
 
 # Wrapper + Config bereitstellen
 Copy-Item "$PSScriptRoot\run-agent.ps1" $InstallDir -Force
 $envFile = Join-Path $InstallDir "agent.env"
-if (-not (Test-Path $envFile)) {
+$envNext = Join-Path $PSScriptRoot "agent.env"
+if (Test-Path $envNext) {
+    Copy-Item $envNext $envFile -Force                     # im Web-UI erzeugte Konfiguration
+    Write-Host "agent.env uebernommen nach $envFile."
+}
+elseif (-not (Test-Path $envFile)) {
     Copy-Item "$PSScriptRoot\agent.env.example" $envFile
     Write-Host "Bitte $envFile mit echten Werten fuellen (Agent-Token, Ziel-Creds, TLS)."
 }
@@ -61,4 +79,4 @@ Register-ScheduledTask -TaskName "Automato Collector Agent" `
     -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
 
 Write-Host "Installiert nach $InstallDir. Task 'Automato Collector Agent' laeuft alle $IntervalMinutes min."
-Write-Host "Verbindung testen: & '$InstallDir\venv\Scripts\automato-collector.exe' --check --platform fortigate"
+Write-Host "Verbindung testen: powershell -ExecutionPolicy Bypass -File '$InstallDir\run-agent.ps1' -Check"

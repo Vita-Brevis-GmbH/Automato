@@ -4,6 +4,11 @@ Schritt-für-Schritt, um auf der Dev-VM **sauber** (frische Daten) neu aufzusetz
 Agenten im UI zu registrieren und einen externen Lauf durchzuspielen. Bezug: ADR 0008
 (externer Collector), `collectors/EXTERNAL.md`, `lab/README.md`.
 
+> **Windows-Agent:** Die Einrichtung steht direkt im Web-UI unter **Collector-Agenten →
+> „Einrichtung eines Agenten (Windows)“** – inkl. `agent.env`-Generator und Download des
+> Agent-Pakets (ZIP mit collectors-Wheel, `install.ps1`, `run-agent.ps1`). Ein eigener
+> Build-Rechner mit `uv` ist dafür nicht nötig.
+
 > Warum frisch? Datenmodell/Namensprofil haben sich geändert (Alembic bis `0013`). Ein
 > sauberer Reset von NetBox **und** der Automato-DB vermeidet Altlasten.
 
