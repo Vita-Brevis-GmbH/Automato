@@ -460,7 +460,38 @@ curl -s http://localhost:8000/auth/config      # auth_mode "oidc", issuer, clien
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/rules   # 401 ohne Token = korrekt
 ```
 
-Die Automato-VM muss `auth.vitabrevis.ch` erreichen (ausgehend HTTPS, für die JWKS).
+Der Orchestrator muss die JWKS von `auth.vitabrevis.ch` laden können (ausgehend HTTPS).
+Meldet das UI **„JWKS vom Orchestrator nicht erreichbar“ (HTTP 503)**, kommt der Container
+nicht über den öffentlichen Weg (Hairpin/WAF/DNS). Der Grund steht im Log:
+
+```bash
+docker compose logs orchestrator --since 30m | grep "OIDC-Token abgelehnt" | tail -1
+#  HTTP Error 403 -> WAF blockt den Server-Abruf | timed out -> kein Weg (Hairpin/Policy)
+#  Name or service not known -> DNS | CERTIFICATE_VERIFY_FAILED -> Zertifikatskette
+```
+
+**Empfohlen: Backchannel direkt zur Keycloak-VM** (Server-zu-Server, ohne Internet-Weg
+und WAF; Browser und Kunden laufen unverändert über die WAF). Erst prüfen, dann setzen —
+`<KEYCLOAK-VM-IP>` = interne IP der Keycloak-VM:
+
+```bash
+# 200 = direkter Weg funktioniert (gleiches Zertifikat, gleicher Hostname)
+curl -s -o /dev/null -w "%{http_code}\n" --resolve auth.vitabrevis.ch:443:<KEYCLOAK-VM-IP> \
+  https://auth.vitabrevis.ch/realms/automato/protocol/openid-connect/certs
+
+# nur im Orchestrator-Container auth.vitabrevis.ch auf die interne IP zeigen lassen
+cat > docker-compose.override.yml <<'YAML'
+services:
+  orchestrator:
+    extra_hosts:
+      - "auth.vitabrevis.ch:<KEYCLOAK-VM-IP>"
+YAML
+docker compose --profile core --profile collectors --profile proxy up -d
+```
+
+`docker-compose.override.yml` liest Compose automatisch mit; die Datei ist gitignored
+(VM-spezifisch). Läuft der `curl` in einen Timeout, fehlt die interne Firewall-Regel
+Automato-VM → Keycloak-VM TCP/443 (ohne NAT, ohne WAF).
 
 ### 9d. Web-UI-Login testen (Dev)
 

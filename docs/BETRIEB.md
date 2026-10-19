@@ -118,7 +118,8 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
   `iss`, z. B. `https://auth.vitabrevis.ch/realms/automato-dev`); `Signaturschlüssel
   nicht in der JWKS` → `AUTOMATO_OIDC_JWKS_URL` zeigt auf einen anderen Realm. HTTP 503
   `JWKS vom Orchestrator nicht erreichbar` → der Orchestrator-Container erreicht Keycloak
-  nicht (DNS/Firewall/WAF). Nach Änderungen an `.env`: `docker compose … up -d` (neu
+  nicht (DNS/Firewall/WAF); Lösung „Backchannel direkt zur Keycloak-VM“ per
+  `docker-compose.override.yml` in `deploy/keycloak/PROD-INSTALL.md` Abschnitt 9c. Nach Änderungen an `.env`: `docker compose … up -d` (neu
   erstellt den Container).
 
 - NetBox startet nicht / Token-Fehler: `source-of-truth/netbox/README.md` (Abschnitt Fehlerbehebung).

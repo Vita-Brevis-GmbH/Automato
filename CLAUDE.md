@@ -400,3 +400,9 @@ erneuter Redirect, stattdessen Fehlerseite mit Grund + „Erneut anmelden"), die
 (`#hash`) bleibt über den Login erhalten. Verifiziert mit einem Mock-OIDC-Provider
 (Code+PKCE, Refresh-Erneuerung, falsche Audience → Fehlerseite, kein Loop). Tests
 `test_auth_oidc.py` (Grund je Fehlerart, 503). Tests: orchestrator 111.
+**OIDC-Backchannel (Dev-Befund):** Im Dev meldete der Orchestrator `503 JWKS nicht
+erreichbar` — der Container erreicht `auth.vitabrevis.ch` nicht über den öffentlichen Weg
+(Hairpin/WAF/DNS), der Browser schon. Lösung (dokumentiert in `PROD-INSTALL.md` 9c):
+Backchannel Server-zu-Server direkt zur Keycloak-VM per `docker-compose.override.yml`
+(`extra_hosts: auth.vitabrevis.ch:<KEYCLOAK-VM-IP>`, VM-spezifisch, gitignored); Issuer
+bleibt die öffentliche URL, Browser/Kunden laufen unverändert über die WAF.
