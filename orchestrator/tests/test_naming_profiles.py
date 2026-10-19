@@ -74,3 +74,26 @@ def test_api_read_open_write_protected(session_factory, client):
     # unbekanntes Profil -> 404
     r = client.get("/naming-profiles/9999/dictionary")
     assert r.status_code == 404
+
+
+def test_api_profil_anlegen_leer_oder_mit_sop_vorlage(client):
+    leer = client.post("/naming-profiles", json={"customer": "Kunde B", "name": "Standard"})
+    assert leer.status_code == 201
+    assert client.get(f"/naming-profiles/{leer.json()['id']}/dictionary").json() == []
+
+    vorlage = client.post(
+        "/naming-profiles",
+        json={"customer": "Kunde C", "name": "Standard", "with_sop_defaults": True},
+    )
+    assert vorlage.status_code == 201
+    eintraege = client.get(f"/naming-profiles/{vorlage.json()['id']}/dictionary").json()
+    kinds = {e["kind"] for e in eintraege}
+    assert {"object_prefix", "utm_prefix", "site_code"} <= kinds
+
+    # nur Admin darf Profile anlegen
+    r = client.post(
+        "/naming-profiles",
+        json={"customer": "X", "name": "Y"},
+        headers={"X-Dev-Roles": "operator"},
+    )
+    assert r.status_code == 403

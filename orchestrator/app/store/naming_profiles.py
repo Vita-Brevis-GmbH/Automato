@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.models import DictionaryEntry, NamingProfile
 
-# Bekannte SOP-Werte als Seed (erweiterbar in der UI). Keine Vollständigkeit -
-# Kap. 3.1/3.2 (GG-/Projektlisten) werden per CSV nachgeseedet.
+# Bekannte SOP-Werte als optionale Vorlage (erweiterbar in der UI). Keine Vollständigkeit -
+# Kap. 3.1/3.2 (GG-/Projektlisten) pflegt der Kunde bei der Inbetriebnahme in der App.
 _SOP_SEED: dict[str, list[tuple[str, str]]] = {
     "object_prefix": [
         ("H_", "host"),
@@ -152,10 +152,15 @@ def delete_entry(session: Session, entry_id: int) -> bool:
     return True
 
 
+def apply_sop_defaults(session: Session, profile_id: int) -> None:
+    """Bekannte SOP-Wörterbuchwerte in ein Profil übernehmen (idempotent, optional)."""
+    for kind, pairs in _SOP_SEED.items():
+        for key, value in pairs:
+            upsert_entry(session, profile_id, kind, key, value)
+
+
 def seed_sop_profile(session: Session) -> NamingProfile:
     """Legt das SOP-Profil + bekannte Wörterbuchwerte idempotent an."""
     profile = get_or_create_profile(session, customer="SOP", name="Standard")
-    for kind, pairs in _SOP_SEED.items():
-        for key, value in pairs:
-            upsert_entry(session, profile.id, kind, key, value)
+    apply_sop_defaults(session, profile.id)
     return profile

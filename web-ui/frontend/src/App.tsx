@@ -1,156 +1,465 @@
-import type { UserManager } from "oidc-client-ts";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AuthConfig,
   fetchAuthConfig,
+  fetchFindings,
   fetchHealth,
+  fetchNat,
+  fetchRules,
   fetchTenants,
-  getAuthToken,
+  Finding,
   HealthStatus,
+  Nat,
+  Rule,
   Tenant,
 } from "./api";
 import Agents from "./Agents";
 import AppDoc from "./AppDoc";
-import Applications from "./Applications";
 import * as auth from "./auth";
+import Design from "./Design";
 import Findings from "./Findings";
+import NamingProfiles from "./NamingProfiles";
 import NatTable from "./Nat";
 import Overview from "./Overview";
 import RulesTable from "./RulesTable";
 import Tenants from "./Tenants";
+import { ErrorBox, Icon, Note } from "./ui";
+import Users from "./Users";
 
-type Tab = "overview" | "rules" | "apps" | "appdoc" | "nat" | "findings" | "tenants" | "agents";
+export type View =
+  | "uebersicht"
+  | "regeln"
+  | "nat"
+  | "apps"
+  | "findings"
+  | "design"
+  | "users"
+  | "tenants"
+  | "dict"
+  | "agents";
+
+interface NavEntry {
+  key: View;
+  label: string;
+  icon: string;
+  section: "doc" | "admin";
+  adminOnly?: boolean;
+}
+
+const NAV: NavEntry[] = [
+  { key: "uebersicht", label: "Übersicht", icon: "overview", section: "doc" },
+  { key: "regeln", label: "Firewall-Regeln", icon: "rules", section: "doc" },
+  { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc" },
+  { key: "apps", label: "Applikationen", icon: "apps", section: "doc" },
+  { key: "findings", label: "Findings", icon: "findings", section: "doc" },
+  { key: "design", label: "Netzwerkdesign", icon: "design", section: "doc" },
+  { key: "users", label: "Benutzer & Rollen", icon: "users", section: "admin" },
+  { key: "tenants", label: "Mandanten & Standorte", icon: "tenants", section: "admin" },
+  { key: "dict", label: "Namensprofile", icon: "dict", section: "admin" },
+  { key: "agents", label: "Collector-Agenten", icon: "agents", section: "admin", adminOnly: true },
+];
+
+// Daten der Übersicht + Zähler in der Navigation (je Mandant geladen).
+export interface Stats {
+  rules: Rule[] | null;
+  nat: Nat[] | null;
+  findings: Finding[] | null;
+  error: unknown;
+}
+
+type Boot =
+  | { state: "loading" }
+  | { state: "redirect" }
+  | { state: "error"; error: unknown; oidc: boolean }
+  | { state: "ready"; cfg: AuthConfig; me: auth.Me };
+
+const VIEW_KEYS = NAV.map((n) => n.key) as string[];
+
+function viewFromHash(): View {
+  const h = window.location.hash.replace(/^#\/?/, "");
+  return (VIEW_KEYS.includes(h) ? h : "uebersicht") as View;
+}
+
+function stored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function store(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    /* localStorage nicht verfügbar */
+  }
+}
+
+function initials(name: string): string {
+  const parts = name.split(/[\s._@-]+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "")).toUpperCase();
+}
 
 export default function App() {
-  const [ready, setReady] = useState(false);
-  const [oidc, setOidc] = useState(false);
-  const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [tab, setTab] = useState<Tab>("overview");
-  const [tenants, setTenants] = useState<Tenant[]>([]);
-  const [tenantId, setTenantId] = useState<number | null>(null);
-  const mgrRef = useRef<UserManager | null>(null);
-  const startedRef = useRef(false);
+  const [boot, setBoot] = useState<Boot>({ state: "loading" });
+  const started = useRef(false);
 
-  // AuthN-Bootstrap: dev -> direkt bereit; oidc -> Callback verarbeiten bzw. zu
-  // Keycloak umleiten, wenn kein Token vorliegt.
+  // AuthN-Bootstrap: dev -> Standard-Admin; oidc -> Callback verarbeiten, gültige
+  // Sitzung sicherstellen (still erneuern) oder zu Keycloak umleiten.
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
+    if (started.current) return;
+    started.current = true;
     (async () => {
-      let cfg;
+      let cfg: AuthConfig;
       try {
         cfg = await fetchAuthConfig();
-      } catch {
-        setReady(true);
+      } catch (e) {
+        setBoot({ state: "error", error: e, oidc: false });
         return;
       }
       if (cfg.auth_mode !== "oidc") {
-        setReady(true);
+        setBoot({ state: "ready", cfg, me: auth.DEV_ME });
         return;
       }
-      setOidc(true);
-      const mgr = auth.createManager(cfg);
-      mgrRef.current = mgr;
+      auth.init(cfg);
       try {
-        if (await auth.handleRedirectCallback(mgr)) {
-          setReady(true);
+        await auth.handleRedirectCallback();
+        const user = await auth.ensureSession();
+        if (!user) {
+          setBoot({ state: "redirect" });
           return;
         }
-        if (getAuthToken()) {
-          setReady(true);
-          return;
-        }
-        await auth.login(mgr); // leitet zu Keycloak um
-      } catch {
-        setReady(true); // Fehler sichtbar machen (API liefert dann ggf. 401)
+        setBoot({ state: "ready", cfg, me: auth.meFromUser(user) });
+      } catch (e) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setBoot({ state: "error", error: e, oidc: true });
       }
     })();
   }, []);
 
-  const loadTenants = () =>
-    fetchTenants()
-      .then(setTenants)
-      .catch(() => setTenants([]));
+  if (boot.state === "loading" || boot.state === "redirect") {
+    return (
+      <Splash>
+        {boot.state === "loading" ? "Verbindung wird aufgebaut…" : "Weiterleitung zur Anmeldung…"}
+      </Splash>
+    );
+  }
+  if (boot.state === "error") {
+    return (
+      <Splash>
+        <ErrorBox error={boot.error} prefix="Anmeldung fehlgeschlagen" />
+        <button
+          className="btn btn-primary btn-block"
+          onClick={() => (boot.oidc ? auth.login() : window.location.reload())}
+        >
+          {boot.oidc ? "Erneut anmelden" : "Neu laden"}
+        </button>
+      </Splash>
+    );
+  }
+  return <Shell cfg={boot.cfg} me={boot.me} />;
+}
+
+function Splash({ children }: { children: React.ReactNode }) {
+  return (
+    <section className="splash">
+      <div className="splash-card">
+        <div className="brand">
+          <div className="brand-mark">A</div>
+          <div className="brand-name">Automato</div>
+        </div>
+        <p className="splash-sub">Automatisierungs- und Dokumentationsplattform.</p>
+        {children}
+        <div className="splash-foot">
+          <Icon name="lock" size={13} />
+          {window.location.protocol === "https:" ? "Verbindung über HTTPS" : "Verbindung ohne HTTPS"}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
+  const [view, setView] = useState<View>(viewFromHash);
+  const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [tenants, setTenants] = useState<Tenant[] | null>(null);
+  const [tenantsErr, setTenantsErr] = useState<unknown>(null);
+  const [tenantId, setTenantIdRaw] = useState<number | null>(() => {
+    const v = stored("automato_tenant");
+    return v ? Number(v) : null;
+  });
+  const [stats, setStats] = useState<Stats>({ rules: null, nat: null, findings: null, error: null });
+  const [theme, setTheme] = useState<string | null>(() => stored("automato_theme"));
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const setTenantId = useCallback((id: number | null) => {
+    setTenantIdRaw(id);
+    store("automato_tenant", id === null ? null : String(id));
+  }, []);
+
+  const go = useCallback((v: View) => {
+    setView(v);
+    window.history.replaceState(null, "", `#${v}`);
+  }, []);
 
   useEffect(() => {
-    if (!ready) return;
+    const onHash = () => setView(viewFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  useEffect(() => {
+    if (theme) document.documentElement.setAttribute("data-theme", theme);
+    else document.documentElement.removeAttribute("data-theme");
+  }, [theme]);
+
+  const toggleTheme = () => {
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const isDark = theme ? theme === "dark" : prefersDark;
+    const next = isDark ? "light" : "dark";
+    setTheme(next);
+    store("automato_theme", next);
+  };
+
+  const loadTenants = useCallback(async (): Promise<Tenant[]> => {
+    try {
+      const list = await fetchTenants();
+      setTenants(list);
+      setTenantsErr(null);
+      return list;
+    } catch (e) {
+      setTenants([]);
+      setTenantsErr(e);
+      return [];
+    }
+  }, []);
+
+  useEffect(() => {
     fetchHealth()
       .then(setHealth)
       .catch(() => setHealth(null));
     loadTenants();
-  }, [ready]);
+  }, [loadTenants]);
 
-  if (!ready) {
-    return (
-      <div className="app">
-        <p className="notice">Anmeldung…</p>
-      </div>
-    );
-  }
+  // Gewählten Mandanten gegen die erlaubte Liste prüfen. Nicht-Admins brauchen immer
+  // einen konkreten Mandanten (die API verlangt ihn bei mehreren Zuordnungen).
+  useEffect(() => {
+    if (tenants === null) return;
+    const known = tenants.some((t) => t.id === tenantId);
+    if (tenantId !== null && !known) setTenantId(me.isAdmin ? null : (tenants[0]?.id ?? null));
+    else if (tenantId === null && !me.isAdmin && tenants.length) setTenantId(tenants[0].id);
+  }, [tenants, tenantId, me.isAdmin, setTenantId]);
 
-  const tabs: [Tab, string][] = [
-    ["overview", "Übersicht"],
-    ["rules", "Regeln"],
-    ["apps", "Applikationen"],
-    ["appdoc", "Applikations-Doku"],
-    ["nat", "NAT / VIPs"],
-    ["findings", "Findings"],
-    ["tenants", "Mandant / Standorte"],
-    ["agents", "Agenten"],
-  ];
+  const noTenant = !me.isAdmin && tenants !== null && tenants.length === 0;
+  const tenantReady = tenants !== null && (me.isAdmin || tenantId !== null);
+
+  const loadStats = useCallback(() => {
+    if (!tenantReady) return;
+    setStats({ rules: null, nat: null, findings: null, error: null });
+    Promise.all([fetchRules(undefined, tenantId), fetchNat(tenantId), fetchFindings(tenantId)])
+      .then(([rules, nat, findings]) => setStats({ rules, nat, findings, error: null }))
+      .catch((e) => setStats({ rules: [], nat: [], findings: [], error: e }));
+  }, [tenantId, tenantReady]);
+
+  useEffect(() => {
+    loadStats();
+  }, [loadStats]);
+
+  const tenant = tenants?.find((t) => t.id === tenantId) ?? null;
+  const tenantLabel = tenant ? tenant.name : "Alle Mandanten";
+  const openFindings = stats.findings?.filter((f) => f.status === "open").length;
+  const badges: Partial<Record<View, { n: number | undefined; warn?: boolean }>> = {
+    regeln: { n: stats.rules?.length },
+    nat: { n: stats.nat?.length },
+    findings: { n: openFindings, warn: (openFindings ?? 0) > 0 },
+  };
+
+  const entry = NAV.find((n) => n.key === view);
+  const current: View = entry && (!entry.adminOnly || me.isAdmin) ? view : "uebersicht";
+  const docView = NAV.find((n) => n.key === current)?.section === "doc";
+  const https = window.location.protocol === "https:";
+
+  const renderNav = (section: "doc" | "admin") =>
+    NAV.filter((n) => n.section === section && (!n.adminOnly || me.isAdmin)).map((n) => {
+      const b = badges[n.key];
+      return (
+        <button
+          key={n.key}
+          className={`nav-item ${current === n.key ? "active" : ""}`}
+          onClick={() => go(n.key)}
+        >
+          <Icon name={n.icon} className="ico" size={17} />
+          {n.label}
+          {b && b.n !== undefined && (
+            <span className={`badge-n ${b.warn ? "warn" : ""}`}>{b.n}</span>
+          )}
+        </button>
+      );
+    });
 
   return (
     <div className="app">
-      <div className="header">
-        <h1>Automato</h1>
-        <span className="sub">Firewall-Regel-Dokumentation</span>
-        <div className="header-right">
-          <label className="mandant">
-            <span>Mandant</span>
-            <select
-              value={tenantId ?? ""}
-              onChange={(e) => setTenantId(e.target.value ? Number(e.target.value) : null)}
-            >
-              <option value="">Alle Mandanten</option>
-              {tenants.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="count">
-            {health ? `API ${health.status} · DB ${health.db}` : "API nicht erreichbar"}
-          </span>
-          {oidc && mgrRef.current && (
-            <button className="tab" onClick={() => auth.logout(mgrRef.current!)}>
-              Abmelden
-            </button>
+      <div className="topbrand">
+        <div className="brand-mark">A</div>
+        <div className="brand-name">Automato</div>
+      </div>
+
+      <header className="topbar">
+        <label className="mandant">
+          <span className="label">Mandant</span>
+          <select
+            value={tenantId ?? ""}
+            onChange={(e) => setTenantId(e.target.value ? Number(e.target.value) : null)}
+            disabled={tenants === null || (!me.isAdmin && (tenants?.length ?? 0) <= 1)}
+          >
+            {me.isAdmin && <option value="">Alle Mandanten</option>}
+            {tenants?.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.code ? `${t.name} · ${t.code}` : t.name}
+              </option>
+            ))}
+            {noTenant && <option value="">kein Mandant zugeordnet</option>}
+          </select>
+        </label>
+        <div className="spacer" />
+        <span
+          className={`https ${https ? "ok" : "bad"}`}
+          title={https ? "Verbindung verschlüsselt" : "Unverschlüsselte Verbindung"}
+        >
+          <Icon name="lock" size={14} />
+          <span>{https ? "HTTPS" : "HTTP"}</span>
+        </span>
+        <button className="iconbtn" onClick={toggleTheme} title="Hell/Dunkel wechseln">
+          <Icon name="sun" />
+        </button>
+        <div className="usermenu">
+          <button className="usermenu-btn" onClick={() => setMenuOpen((o) => !o)}>
+            <span className="avatar">{initials(me.name)}</span>
+            <span className="u-text">
+              <div className="u-name">{me.name}</div>
+              <div className="u-role">{auth.roleLabel(me)}</div>
+            </span>
+          </button>
+          {menuOpen && (
+            <UserMenu cfg={cfg} me={me} tenants={tenants ?? []} onClose={() => setMenuOpen(false)} onGo={go} />
           )}
         </div>
-      </div>
+      </header>
 
-      <div className="tabs">
-        {tabs.map(([key, label]) => (
-          <button
-            key={key}
-            className={`tab ${tab === key ? "active" : ""}`}
-            onClick={() => setTab(key)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <nav className="nav">
+        <div className="nav-sec">Dokumentation</div>
+        {renderNav("doc")}
+        <div className="nav-sec">Administration</div>
+        {renderNav("admin")}
+        <div className="nav-foot">
+          <span className={`dot ${health?.status === "ok" ? "g" : "r"}`} />
+          {health ? `API ${health.status} · DB ${health.db}` : "API nicht erreichbar"}
+        </div>
+      </nav>
 
-      {tab === "overview" && <Overview tenantId={tenantId} onOpenRules={() => setTab("rules")} />}
-      {tab === "rules" && <RulesTable tenantId={tenantId} />}
-      {tab === "apps" && <Applications />}
-      {tab === "appdoc" && <AppDoc tenantId={tenantId} />}
-      {tab === "nat" && <NatTable />}
-      {tab === "findings" && <Findings />}
-      {tab === "tenants" && (
-        <Tenants tenantId={tenantId} tenants={tenants} onTenantsChanged={loadTenants} />
+      <main className="main">
+        {tenantsErr ? <ErrorBox error={tenantsErr} prefix="Mandanten laden" /> : null}
+        {noTenant && docView ? (
+          <Note warn>
+            Ihrem Konto ist noch kein Mandant zugeordnet. Bitte den Administrator, in Keycloak das
+            Attribut <code>tenant_ids</code> zu setzen, und danach neu anmelden.
+          </Note>
+        ) : (
+          <>
+            {current === "uebersicht" && (
+              <Overview
+                me={me}
+                tenantId={tenantId}
+                tenantLabel={tenantLabel}
+                tenants={tenants ?? []}
+                stats={stats}
+                onGo={go}
+                onReload={loadStats}
+              />
+            )}
+            {current === "regeln" && tenantReady && (
+              <RulesTable tenantId={tenantId} tenantLabel={tenantLabel} />
+            )}
+            {current === "nat" && tenantReady && <NatTable tenantId={tenantId} tenantLabel={tenantLabel} />}
+            {current === "apps" && tenantReady && <AppDoc me={me} tenantId={tenantId} />}
+            {current === "findings" && tenantReady && (
+              <Findings me={me} tenantId={tenantId} tenantLabel={tenantLabel} onChanged={loadStats} />
+            )}
+            {current === "design" && <Design />}
+            {current === "users" && <Users cfg={cfg} me={me} tenants={tenants ?? []} />}
+            {current === "tenants" && (
+              <Tenants
+                me={me}
+                tenants={tenants}
+                tenantId={tenantId}
+                onSelectTenant={setTenantId}
+                onTenantsChanged={loadTenants}
+              />
+            )}
+            {current === "dict" && <NamingProfiles me={me} tenants={tenants ?? []} />}
+            {current === "agents" && <Agents tenants={tenants ?? []} tenantId={tenantId} />}
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function UserMenu({
+  cfg,
+  me,
+  tenants,
+  onClose,
+  onGo,
+}: {
+  cfg: AuthConfig;
+  me: auth.Me;
+  tenants: Tenant[];
+  onClose: () => void;
+  onGo: (v: View) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const t = setTimeout(() => document.addEventListener("mousedown", onDown));
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [onClose]);
+
+  const scope = me.tenantIds === null ? "alle Mandanten" : tenants.map((t) => t.name).join(", ") || "keine";
+  return (
+    <div className="menu" ref={ref}>
+      <div className="menu-head">
+        <b>{me.name}</b>
+        {me.username} · {auth.roleLabel(me)}
+        <div>Mandanten: {scope}</div>
+      </div>
+      <button
+        onClick={() => {
+          onGo("users");
+          onClose();
+        }}
+      >
+        Benutzer &amp; Rollen
+      </button>
+      {cfg.auth_mode === "oidc" ? (
+        <>
+          <a href={`${cfg.issuer}/account`} target="_blank" rel="noreferrer">
+            Mein Konto (Passwort, OTP)
+          </a>
+          <button onClick={() => auth.logout()}>Abmelden</button>
+        </>
+      ) : (
+        <div className="menu-head" style={{ border: "none", margin: 0 }}>
+          Entwicklungsmodus (auth_mode=dev) – keine Anmeldung aktiv.
+        </div>
       )}
-      {tab === "agents" && <Agents tenants={tenants} />}
     </div>
   );
 }

@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     oidc_roles_claim: str = "realm_access.roles"  # Keycloak-Realm-Rollen
     oidc_tenants_claim: str = "tenant_ids"
     oidc_web_client_id: str = "automato-web"  # public Client fuer das SPA (PKCE)
+    # Keycloak-Admin-Konsole fuer die Benutzerverwaltung (Link im UI), z. B.
+    # https://auth.int.example.ch/admin/master/console/#/automato-dev . Leer = aus dem
+    # Issuer abgeleitet (<origin>/admin/master/console/#/<realm>).
+    oidc_admin_console_url: str = ""
 
     # Audit-Log (E1.4): optionale At-Rest-Verschluesselung des (bereits per Allowlist
     # gefilterten) detail-Payloads. Leer = Klartext (dev/Tests). In Produktion ueber

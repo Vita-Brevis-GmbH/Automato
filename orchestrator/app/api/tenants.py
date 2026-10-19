@@ -15,7 +15,8 @@ from app import audit
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import Site, Tenant
+from app.models import NamingProfile, Site, Tenant
+from app.models.tenant import DnsType, IpamType
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
@@ -29,11 +30,21 @@ class TenantOut(BaseModel):
     audit_reads: bool
     ipam_type: str
     dns_type: str
+    naming_profile_id: int | None = None  # None = SOP-Default-Konvention
+
+
+class TenantIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    code: str | None = Field(default=None, max_length=20)
+    ipam_type: IpamType = IpamType.NETBOX
+    dns_type: DnsType = DnsType.ACTIVE_DIRECTORY
 
 
 class TenantPatch(BaseModel):
     code: str | None = Field(default=None, max_length=20)
     audit_reads: bool | None = None
+    # Namensprofil zuordnen (null = zurueck zur SOP-Default-Konvention)
+    naming_profile_id: int | None = None
 
 
 class SiteIn(BaseModel):
@@ -58,6 +69,7 @@ def _tenant_out(t: Tenant) -> TenantOut:
         audit_reads=t.audit_reads,
         ipam_type=t.ipam_type.value,
         dns_type=t.dns_type.value,
+        naming_profile_id=t.naming_profile_id,
     )
 
 
@@ -90,6 +102,36 @@ def list_tenants(
     return out
 
 
+@router.post("", response_model=TenantOut, status_code=201)
+def create_tenant(
+    body: TenantIn,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Mandant (GG) anlegen - Global-Admin. Name eindeutig (409), Kuerzel optional."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="name must not be empty")
+    if session.scalar(select(Tenant).where(Tenant.name == name)) is not None:
+        raise HTTPException(status_code=409, detail="tenant already exists")
+    tenant = Tenant(
+        name=name,
+        code=(body.code or "").strip() or None,
+        ipam_type=body.ipam_type,
+        dns_type=body.dns_type,
+    )
+    session.add(tenant)
+    session.flush()
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="tenant.created",
+        subject=str(tenant.id),
+        detail={"tenant_id": tenant.id, "name": tenant.name, "code": tenant.code},
+    )
+    return _tenant_out(tenant)
+
+
 @router.patch("/{tenant_id}", response_model=TenantOut)
 def update_tenant(
     tenant_id: int,
@@ -103,12 +145,22 @@ def update_tenant(
         tenant.code = data["code"]
     if "audit_reads" in data and data["audit_reads"] is not None:
         tenant.audit_reads = data["audit_reads"]
+    if "naming_profile_id" in data:
+        pid = data["naming_profile_id"]
+        if pid is not None and session.get(NamingProfile, pid) is None:
+            raise HTTPException(status_code=422, detail="naming profile not found")
+        tenant.naming_profile_id = pid
     audit.record(
         session,
         actor=f"user:{principal.subject}",
         action="tenant.updated",
         subject=str(tenant.id),
-        detail={"tenant_id": tenant.id, "code": tenant.code, "audit_reads": tenant.audit_reads},
+        detail={
+            "tenant_id": tenant.id,
+            "code": tenant.code,
+            "audit_reads": tenant.audit_reads,
+            "naming_profile_id": tenant.naming_profile_id,
+        },
     )
     return _tenant_out(tenant)
 

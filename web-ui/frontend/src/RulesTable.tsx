@@ -1,31 +1,42 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchRules, fetchSystems, Rule, System } from "./api";
 import RuleDetailDrawer from "./RuleDetail";
-import { ActionBadge } from "./ui";
+import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
 function ObjCell({ items }: { items: string[] }) {
-  if (!items.length) return <span className="muted">–</span>;
+  if (!items.length) return <Dash />;
   const shown = items.slice(0, 4);
   return (
     <div className="objs">
       {shown.map((s, i) => (
-        <code key={i}>{s}</code>
+        <span className="mono" key={i}>
+          {s}
+        </span>
       ))}
-      {items.length > shown.length && (
-        <span className="muted">+{items.length - shown.length}</span>
-      )}
+      {items.length > shown.length && <span className="faint">+{items.length - shown.length} weitere</span>}
     </div>
   );
 }
 
-export default function RulesTable({ tenantId }: { tenantId: number | null }) {
+function ZoneChip({ zone }: { zone: string | null }) {
+  return zone ? <span className="chip">{zone}</span> : <Dash />;
+}
+
+export default function RulesTable({
+  tenantId,
+  tenantLabel,
+}: {
+  tenantId: number | null;
+  tenantLabel: string;
+}) {
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [systems, setSystems] = useState<System[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   const [q, setQ] = useState("");
   const [system, setSystem] = useState("");
-  const [zone, setZone] = useState("");
+  const [srcZone, setSrcZone] = useState("");
+  const [dstZone, setDstZone] = useState("");
   const [action, setAction] = useState("");
   const [onlyFindings, setOnlyFindings] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
@@ -43,129 +54,167 @@ export default function RulesTable({ tenantId }: { tenantId: number | null }) {
       setError(null);
       fetchRules(q, tenantId)
         .then(setRules)
-        .catch((e) => setError(String(e)));
+        .catch((e) => {
+          setError(e);
+          setRules([]);
+        });
     }, 300);
     return () => clearTimeout(timer);
   }, [q, tenantId]);
 
   const systemName = (id: number) => systems.find((s) => s.id === id)?.name ?? `#${id}`;
 
-  const zones = useMemo(() => {
-    const set = new Set<string>();
+  const { srcZones, dstZones, actions } = useMemo(() => {
+    const s = new Set<string>();
+    const d = new Set<string>();
+    const a = new Set<string>();
     (rules ?? []).forEach((r) => {
-      if (r.src_zone) set.add(r.src_zone);
-      if (r.dst_zone) set.add(r.dst_zone);
+      if (r.src_zone) s.add(r.src_zone);
+      if (r.dst_zone) d.add(r.dst_zone);
+      a.add(r.action);
     });
-    return [...set].sort();
+    return { srcZones: [...s].sort(), dstZones: [...d].sort(), actions: [...a].sort() };
   }, [rules]);
 
   const filtered = (rules ?? []).filter(
     (r) =>
       (!system || String(r.source_system_id) === system) &&
       (!action || r.action === action) &&
-      (!zone || r.src_zone === zone || r.dst_zone === zone) &&
+      (!srcZone || r.src_zone === srcZone) &&
+      (!dstZone || r.dst_zone === dstZone) &&
       (!onlyFindings || r.num_unmatched > 0),
   );
 
-  if (error) return <p className="notice">Regeln konnten nicht geladen werden: {error}</p>;
-
   return (
     <>
-      <div className="filters">
-        <input
-          placeholder="Suche: Name, IP, Objekt…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <select value={system} onChange={(e) => setSystem(e.target.value)}>
-          <option value="">Alle Systeme</option>
+      <PageHead title="Firewall-Regeln">
+        {rules === null
+          ? "Lade…"
+          : `${rules.length} Regeln für „${tenantLabel}“, read-only eingelesen und gegen die Source of Truth aufgelöst.`}
+      </PageHead>
+
+      <div className="filterbar">
+        <div className="search">
+          <span className="ico">
+            <Icon name="search" />
+          </span>
+          <input
+            placeholder="Suche: Name, IP oder Objekt (z. B. 10.20.4.10)…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+        <select className="sel" value={system} onChange={(e) => setSystem(e.target.value)}>
+          <option value="">System: alle</option>
           {systems.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>
           ))}
         </select>
-        <select value={zone} onChange={(e) => setZone(e.target.value)}>
-          <option value="">Alle Zonen</option>
-          {zones.map((z) => (
+        <select className="sel" value={srcZone} onChange={(e) => setSrcZone(e.target.value)}>
+          <option value="">Quell-Zone: alle</option>
+          {srcZones.map((z) => (
             <option key={z} value={z}>
               {z}
             </option>
           ))}
         </select>
-        <select value={action} onChange={(e) => setAction(e.target.value)}>
-          <option value="">Alle Aktionen</option>
-          <option value="allow">allow</option>
-          <option value="deny">deny</option>
+        <select className="sel" value={dstZone} onChange={(e) => setDstZone(e.target.value)}>
+          <option value="">Ziel-Zone: alle</option>
+          {dstZones.map((z) => (
+            <option key={z} value={z}>
+              {z}
+            </option>
+          ))}
         </select>
-        <label>
-          <input
-            type="checkbox"
-            checked={onlyFindings}
-            onChange={(e) => setOnlyFindings(e.target.checked)}
-          />{" "}
+        <select className="sel" value={action} onChange={(e) => setAction(e.target.value)}>
+          <option value="">Aktion: alle</option>
+          {actions.map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+        </select>
+        <button className={`toggle ${onlyFindings ? "on" : ""}`} onClick={() => setOnlyFindings((v) => !v)}>
+          <span className="dot y" />
           nur mit Findings
-        </label>
-        <span className="count">{filtered.length} Regeln</span>
+        </button>
+        <span className="count">{filtered.length} Treffer</span>
       </div>
 
-      {rules === null ? (
-        <p className="notice">Lade Regeln…</p>
-      ) : (
-        <div className="panel">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Aktion</th>
-                <th>System</th>
-                <th>Quell-Zone</th>
-                <th>Ziel-Zone</th>
-                <th>Quelle</th>
-                <th>Ziel</th>
-                <th className="num">Dienste</th>
-                <th className="num" title="nicht aufgelöste Objekte">
-                  ⚠
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((r) => (
-                <tr key={r.id} onClick={() => setSelected(r.id)}>
-                  <td>{r.name}</td>
-                  <td>
-                    <ActionBadge action={r.action} />
-                  </td>
-                  <td>{systemName(r.source_system_id)}</td>
-                  <td>{r.src_zone ?? <span className="muted">–</span>}</td>
-                  <td>{r.dst_zone ?? <span className="muted">–</span>}</td>
-                  <td>
-                    <ObjCell items={r.sources} />
-                  </td>
-                  <td>
-                    <ObjCell items={r.destinations} />
-                  </td>
-                  <td className="num">{r.num_services}</td>
-                  <td className="num">
-                    {r.num_unmatched > 0 ? (
-                      <span className="badge b-red">{r.num_unmatched}</span>
-                    ) : (
-                      <span className="muted">0</span>
-                    )}
-                  </td>
+      <ErrorBox error={error} prefix="Regeln laden" />
+
+      <div className="card">
+        <div className="card-body scroll">
+          {rules === null ? (
+            <Loading>Lade Regeln…</Loading>
+          ) : filtered.length === 0 ? (
+            <Empty title={rules.length ? "Keine Treffer" : "Noch keine Regeln"}>
+              {rules.length
+                ? "Filter oder Suche anpassen."
+                : "Sobald ein Quellsystem eingelesen wurde, erscheinen hier die Regeln."}
+            </Empty>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Name</th>
+                  <th>Aktion</th>
+                  <th>System</th>
+                  <th>Quell-Zone</th>
+                  <th>Ziel-Zone</th>
+                  <th>Quelle</th>
+                  <th>Ziel</th>
+                  <th className="num">Dienste</th>
+                  <th title="nicht aufgelöste Objekte"></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.map((r) => (
+                  <tr key={r.id} className="clickable" onClick={() => setSelected(r.id)}>
+                    <td className="mono">{r.id}</td>
+                    <td>
+                      <b>{r.name}</b>
+                      {r.section_label && <div className="faint">{r.section_label}</div>}
+                    </td>
+                    <td>
+                      <ActionBadge action={r.action} />
+                    </td>
+                    <td>{systemName(r.source_system_id)}</td>
+                    <td>
+                      <ZoneChip zone={r.src_zone} />
+                    </td>
+                    <td>
+                      <ZoneChip zone={r.dst_zone} />
+                    </td>
+                    <td>
+                      <ObjCell items={r.sources} />
+                    </td>
+                    <td>
+                      <ObjCell items={r.destinations} />
+                    </td>
+                    <td className="num">{r.num_services}</td>
+                    <td>
+                      {r.num_unmatched > 0 ? (
+                        <span className="chip warn" title="nicht aufgelöste Objekte">
+                          {r.num_unmatched}
+                        </span>
+                      ) : (
+                        <span className="chip ok">✓</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
-      )}
+      </div>
 
       {selected !== null && (
-        <RuleDetailDrawer
-          ruleId={selected}
-          systemName={systemName}
-          onClose={() => setSelected(null)}
-        />
+        <RuleDetailDrawer ruleId={selected} systemName={systemName} onClose={() => setSelected(null)} />
       )}
     </>
   );

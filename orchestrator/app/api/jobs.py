@@ -1,6 +1,7 @@
 """Job-Endpunkte: Collector-Laeufe anstossen und ihren Status abfragen."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -49,6 +50,38 @@ def start_collect(
     return CollectJobResponse(run_id=run.id, status=run.status)
 
 
+def _run_out(run: CollectorRun) -> CollectorRunOut:
+    return CollectorRunOut(
+        id=run.id,
+        platform=run.platform,
+        status=run.status,
+        tenant_id=run.tenant_id,
+        source_system_id=run.source_system_id,
+        rule_count=run.rule_count,
+        message=run.message,
+        execution=run.execution,
+        queued_at=run.queued_at,
+        finished_at=run.finished_at,
+    )
+
+
+@router.get("", response_model=list[CollectorRunOut])
+def list_runs(
+    tenant_id: int | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session),
+):
+    """Letzte Laeufe (neueste zuerst). Nicht-Admin sieht nur Laeufe seiner Mandanten."""
+    query = select(CollectorRun).order_by(CollectorRun.queued_at.desc()).limit(limit)
+    if tenant_id is not None:
+        tenant_scope(principal, tenant_id)  # fremder Mandant -> 403
+        query = query.where(CollectorRun.tenant_id == tenant_id)
+    elif not principal.is_admin and principal.tenant_ids is not None:
+        query = query.where(CollectorRun.tenant_id.in_(principal.tenant_ids))
+    return [_run_out(r) for r in session.scalars(query)]
+
+
 @router.get("/{run_id}", response_model=CollectorRunOut)
 def get_run(
     run_id: str,
@@ -59,12 +92,4 @@ def get_run(
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     tenant_scope(principal, run.tenant_id)  # Mandanten-Zugriff pruefen
-    return CollectorRunOut(
-        id=run.id,
-        platform=run.platform,
-        status=run.status,
-        tenant_id=run.tenant_id,
-        source_system_id=run.source_system_id,
-        rule_count=run.rule_count,
-        message=run.message,
-    )
+    return _run_out(run)

@@ -50,39 +50,63 @@ docker compose --profile core --profile collectors down          # stoppen
 docker compose --profile core --profile collectors down -v       # inkl. Daten
 ```
 
-## 3. Bedienung (Web-UI, `http://<host>:5173`)
+## 3. Bedienung (Web-UI, `http://<host>:5173` bzw. über den TLS-Proxy `https://<host>`)
 
-- **Regeln:** Tabelle mit Aktion, System, Quell-/Ziel-Zone und Zählern. Filter oben:
-  Freitext/IP-Suche (sucht auch in Objektwerten → „Netzwerke"), System, Zone, Aktion,
-  „nur mit Findings". Klick auf eine Regel → Detail mit aufgelösten Quellen/Zielen
-  (Wert, Match-Status, Zone) und Diensten; bei VIP-Zielen zusätzlich „→ internes Ziel".
-- **Applikationen:** je publiziertem Dienst (VIP) extern→intern + die exponierenden
-  Regeln; Button **Export (Markdown)** erzeugt ein Applikations-Dokument.
-- **NAT / VIPs:** alle VIPs mit externer IP → internem Ziel und Port-Forward.
-- **Findings:** Datenqualität (nicht aufgelöste Objekte). Leere Liste = alles aufgelöst.
+Aufbau nach dem UI-Mockup: Sidebar links (Dokumentation / Administration, Zähler für
+Regeln, NAT und offene Findings), Topbar mit **Mandanten-Schalter**, HTTPS-Anzeige,
+Hell/Dunkel und Benutzermenü (Rolle, Mandanten, Mein Konto, Abmelden). Im OIDC-Modus
+wird das Token still erneuert; läuft die Keycloak-Sitzung ab, folgt die Anmeldung erneut.
+Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigung“).
 
-## 4. API (read-only)
+**Dokumentation**
+- **Übersicht:** KPIs (Regeln, NAT/VIPs, offene Findings, Abdeckung gegen die SoT),
+  **Letzte Läufe** und **Jetzt einlesen** (Operator): Mandant + Quellsystem wählen,
+  Ausführung *Extern (Agent)* oder *Zentral (Worker)*. Laufende Läufe aktualisieren sich.
+- **Firewall-Regeln:** Suche (auch IPs/Objektwerte), Filter System, Quell-/Ziel-Zone,
+  Aktion, „nur mit Findings“. Klick → Detail mit aufgelösten Quellen/Zielen, Diensten,
+  Schutzprofilen, VIP-Ziel.
+- **NAT / VIPs:** VIPs (extern → intern, Port-Forward) und SNAT-Pools.
+- **Applikationen:** *Applikations-Doku* je System (10 Kategorien, Standort verorten,
+  **Export (Markdown)**) und *Publizierte Dienste* (VIPs mit Regeln).
+- **Findings:** nach Status gefiltert; Status setzen (Triage) als Operator.
+- **Netzwerkdesign:** geplant (Platzhalter).
+
+**Administration**
+- **Benutzer & Rollen:** Rollen viewer/operator/admin, eigenes Konto, Links in die
+  Keycloak-Benutzerverwaltung (`AUTOMATO_OIDC_ADMIN_CONSOLE_URL`, sonst aus dem Issuer
+  abgeleitet). Benutzer selbst werden in Keycloak gepflegt (`tenant_ids` = Mandanten-ID).
+- **Mandanten & Standorte (Admin schreibt):** **+ Mandant**, Kürzel, Namensprofil,
+  Lese-Audit, Standorte (**+ Standort**, 3-stelliger Code) und **Quellsysteme**
+  (**+ Quellsystem**, FortiGate/Cisco ACI; keine Zugangsdaten).
+- **Namensprofile:** **+ Neues Profil** (optional mit SOP-Vorlage), **+ Neue
+  Namenskonvention** (neue Wörterbuch-Art), Einträge anlegen/bearbeiten/löschen.
+- **Collector-Agenten (nur Admin):** **+ Agent** erzeugt das Token einmalig; Status
+  online/keine Meldung aus dem Heartbeat; Aktivieren/Deaktivieren.
+
+## 4. API
+
+Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgescoped).
 
 | Endpunkt | Zweck |
 |---|---|
-| `GET /health` | Status (API/DB) |
-| `GET /rules` (`?q=`,`?tenant_id=`) | Regelliste |
-| `GET /rules/{id}` | Regel-Detail (Endpunkte, Services, NAT) |
-| `GET /findings` | Datenqualitäts-Befunde |
-| `GET /nat` | VIP/DNAT-Zuordnungen |
-| `GET /applications`, `/applications/{name}` | Applikationen (publizierte Dienste) |
-| `GET /systems` | Quellsysteme |
-| `POST /jobs/collect` | Lauf auslösen (intern über die CLI) |
+| `GET /health`, `GET /auth/config` | Status (API/DB), öffentliche Login-Konfiguration |
+| `GET /rules` (`?q=`,`?tenant_id=`), `GET /rules/{id}` | Regelliste / -detail |
+| `GET /findings`, `PATCH /findings/{id}` | Datenqualität, Triage |
+| `GET /nat`, `GET /applications[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku |
+| `GET/POST /tenants`, `PATCH /tenants/{id}`, `GET/POST/DELETE /tenants/{id}/sites` | Mandanten, Standorte |
+| `GET/POST /systems` | Quellsysteme |
+| `GET /jobs`, `GET /jobs/{id}`, `POST /jobs/collect` | Läufe |
+| `GET/POST /agents`, `PATCH /agents/{id}` | Collector-Agenten |
+| `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}` | Namensprofile |
 
-## 5. Sicherheit (Stand UC1 Model 2)
+## 5. Sicherheit
 
 - Alle Zielsystem-Zugänge **read-only** (Least Privilege). `.env` wird nie committet.
-- Die **öffentliche Read-API ist noch nicht authentifiziert** (AuthN/RBAC = Folge-ADR).
-  Ausserhalb `AUTOMATO_ENVIRONMENT=dev` verweigert der Orchestrator den Start, solange
-  `AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API` nicht bewusst gesetzt ist — bis RBAC steht,
-  die API nur in einem vertrauenswürdigen Netz / hinter einem authentifizierenden
-  Reverse-Proxy betreiben. Details: `docs/usecases/uc1-firewall-regel-dokumentation.md`
-  („M9 – Abschluss") und ADR 0005.
+- **AuthN/RBAC** über Keycloak (OIDC, `AUTOMATO_AUTH_MODE=oidc`, ADR 0007); im
+  `dev`-Modus laufen alle Anfragen als Standard-Admin — nur im Lab verwenden.
+- Ausserhalb `AUTOMATO_ENVIRONMENT=dev` verweigert der Orchestrator ohne RBAC den Start,
+  solange `AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API` nicht bewusst gesetzt ist (ADR 0005).
+- Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt.
 
 ## 6. Fehlerbehebung
 

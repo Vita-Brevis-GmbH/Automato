@@ -1,111 +1,251 @@
-import { useEffect, useState } from "react";
-import { fetchFindings, fetchNat, fetchRules, fetchSystems, Finding, Rule } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchRuns, fetchSystems, Run, System, Tenant } from "./api";
+import type { Stats, View } from "./App";
+import type { Me } from "./auth";
+import CollectDialog from "./CollectDialog";
+import { ErrorBox, fmtTime, Icon, Loading, PageHead, RunStatusChip } from "./ui";
 
-// Übersicht/Dashboard: KPIs aus den bestehenden Read-Endpunkten abgeleitet
-// (W1 - zunächst ohne eigenen Stats-Endpunkt). Respektiert den Mandanten-Switcher.
+// Übersicht/Dashboard: KPIs, letzte Läufe (inkl. "Jetzt einlesen") und Regeln je Ziel-Zone.
+// Respektiert den Mandanten-Switcher.
 export default function Overview({
+  me,
   tenantId,
-  onOpenRules,
+  tenantLabel,
+  tenants,
+  stats,
+  onGo,
+  onReload,
 }: {
+  me: Me;
   tenantId: number | null;
-  onOpenRules: () => void;
+  tenantLabel: string;
+  tenants: Tenant[];
+  stats: Stats;
+  onGo: (v: View) => void;
+  onReload: () => void;
 }) {
-  const [rules, setRules] = useState<Rule[] | null>(null);
-  const [findings, setFindings] = useState<Finding[]>([]);
-  const [systemsCount, setSystemsCount] = useState(0);
-  const [natCount, setNatCount] = useState(0);
+  const [runs, setRuns] = useState<Run[] | null>(null);
+  const [runsErr, setRunsErr] = useState<unknown>(null);
+  const [systems, setSystems] = useState<System[]>([]);
+  const [collectOpen, setCollectOpen] = useState(false);
 
-  useEffect(() => {
-    fetchRules(undefined, tenantId)
-      .then(setRules)
-      .catch(() => setRules([]));
-    fetchFindings()
-      .then(setFindings)
-      .catch(() => setFindings([]));
-    fetchSystems()
-      .then((s) => setSystemsCount(s.length))
-      .catch(() => setSystemsCount(0));
-    fetchNat()
-      .then((n) => setNatCount(n.length))
-      .catch(() => setNatCount(0));
+  const loadRuns = useCallback(() => {
+    fetchRuns(tenantId, 8)
+      .then((r) => {
+        setRuns(r);
+        setRunsErr(null);
+      })
+      .catch((e) => {
+        setRuns([]);
+        setRunsErr(e);
+      });
   }, [tenantId]);
 
+  useEffect(() => {
+    setRuns(null);
+    loadRuns();
+    fetchSystems()
+      .then(setSystems)
+      .catch(() => setSystems([]));
+  }, [loadRuns]);
+
+  // Laufende/wartende Läufe automatisch nachladen, bis sie fertig sind.
+  const pending = (runs ?? []).some((r) => r.status === "queued" || r.status === "running");
+  useEffect(() => {
+    if (!pending) return;
+    const t = setInterval(() => {
+      loadRuns();
+    }, 5000);
+    return () => clearInterval(t);
+  }, [pending, loadRuns]);
+
+  const wasPending = useRef(false);
+  useEffect(() => {
+    if (wasPending.current && !pending) onReload(); // Lauf fertig -> KPIs/Zähler aktualisieren
+    wasPending.current = pending;
+  }, [pending, onReload]);
+
+  const rules = stats.rules;
   const rulesCount = rules?.length ?? 0;
+  const endpoints = (rules ?? []).reduce((a, r) => a + r.num_src + r.num_dst, 0);
   const unmatched = (rules ?? []).reduce((a, r) => a + r.num_unmatched, 0);
-  const openFindings = findings.filter((f) => f.status === "open");
+  const coverage = endpoints ? Math.floor(((endpoints - unmatched) / endpoints) * 100) : null;
+  const openFindings = (stats.findings ?? []).filter((f) => f.status === "open");
+  const usedSystems = new Set((rules ?? []).map((r) => r.source_system_id));
+  const systemName = (id: number | null) =>
+    id == null ? "–" : (systems.find((s) => s.id === id)?.name ?? `#${id}`);
 
   const byZone = new Map<string, number>();
   (rules ?? []).forEach((r) => {
-    const z = r.dst_zone ?? "—";
+    const z = r.dst_zone ?? "–";
     byZone.set(z, (byZone.get(z) ?? 0) + 1);
   });
-  const zoneRows = [...byZone.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const zoneRows = [...byZone.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
   const zoneMax = zoneRows.reduce((m, [, n]) => Math.max(m, n), 1);
+  const val = (n: number) => (rules === null ? "…" : n);
 
   return (
     <>
+      <PageHead
+        title="Übersicht"
+        actions={
+          me.isOperator && (
+            <button className="btn btn-primary btn-sm" onClick={() => setCollectOpen(true)}>
+              <Icon name="play" size={13} /> Jetzt einlesen
+            </button>
+          )
+        }
+      >
+        Mandant „{tenantLabel}“ – Stand der letzten Importe.
+      </PageHead>
+
+      <ErrorBox error={stats.error} prefix="Daten laden" />
+
       <div className="kpis">
-        <button className="kpi" onClick={onOpenRules}>
+        <button className="kpi" onClick={() => onGo("regeln")}>
           <div className="k-label">Firewall-Regeln</div>
-          <div className="k-val">{rules === null ? "…" : rulesCount}</div>
-          <div className="k-sub">{systemsCount} Quellsystem(e)</div>
+          <div className="k-val">{val(rulesCount)}</div>
+          <div className="k-sub">
+            {usedSystems.size} Quellsystem{usedSystems.size === 1 ? "" : "e"}
+            {usedSystems.size > 0 && ` · ${[...usedSystems].map(systemName).join(", ")}`}
+          </div>
         </button>
-        <div className="kpi">
+        <button className="kpi" onClick={() => onGo("nat")}>
           <div className="k-label">NAT / VIPs</div>
-          <div className="k-val">{natCount}</div>
-          <div className="k-sub">publizierte Dienste</div>
-        </div>
-        <div className="kpi">
+          <div className="k-val">{stats.nat === null ? "…" : stats.nat.length}</div>
+          <div className="k-sub">publizierte Dienste &amp; SNAT-Pools</div>
+        </button>
+        <button className="kpi" onClick={() => onGo("findings")}>
           <div className="k-label">Offene Findings</div>
           <div className={`k-val ${openFindings.length === 0 ? "ok" : "warn"}`}>
-            {openFindings.length}
+            {stats.findings === null ? "…" : openFindings.length}
           </div>
-          <div className="k-sub">Datenqualität</div>
-        </div>
+          <div className="k-sub">
+            {openFindings.length === 0 ? "alle Objekte aufgelöst" : "Datenqualität prüfen"}
+          </div>
+        </button>
         <div className="kpi">
-          <div className="k-label">Nicht aufgelöst</div>
-          <div className={`k-val ${unmatched === 0 ? "ok" : "warn"}`}>{unmatched}</div>
-          <div className="k-sub">Endpunkte ohne SoT-Treffer</div>
+          <div className="k-label">Abdeckung</div>
+          <div className={`k-val ${coverage === 100 ? "ok" : coverage === null ? "" : "warn"}`}>
+            {rules === null ? "…" : coverage === null ? "–" : `${coverage}%`}
+          </div>
+          <div className="k-sub">
+            {unmatched > 0 ? `${unmatched} Endpunkte ohne SoT-Treffer` : "Endpunkte gegen die SoT"}
+          </div>
         </div>
       </div>
 
-      <div className="ov-grid">
-        <div className="panel ov-card">
-          <div className="section-title">Regeln je Ziel-Zone</div>
-          {zoneRows.length === 0 ? (
-            <p className="notice">Keine Regeln.</p>
-          ) : (
-            <div className="bars">
-              {zoneRows.map(([z, n]) => (
-                <div className="bar-row" key={z}>
-                  <span className="bar-label" title={z}>
-                    {z}
-                  </span>
-                  <span className="bar-track">
-                    <span className="bar-fill" style={{ width: `${(n / zoneMax) * 100}%` }} />
-                  </span>
-                  <span className="bar-num">{n}</span>
-                </div>
-              ))}
+      <div className="two-col">
+        <div className="card">
+          <div className="card-head">
+            <h2>Letzte Läufe</h2>
+            <div className="spacer" />
+            <button className="btn btn-ghost btn-sm" onClick={loadRuns}>
+              Aktualisieren
+            </button>
+            {me.isOperator && (
+              <button className="btn btn-ghost btn-sm" onClick={() => setCollectOpen(true)}>
+                Jetzt einlesen
+              </button>
+            )}
+          </div>
+          <div className="card-body scroll">
+            <ErrorBox error={runsErr} prefix="Läufe laden" />
+            {runs === null ? (
+              <Loading />
+            ) : runs.length === 0 ? (
+              <div className="empty">
+                <div className="big">Noch keine Läufe</div>
+                {me.isOperator
+                  ? "Mit „Jetzt einlesen“ ein Quellsystem zentral oder über einen Agenten erfassen."
+                  : "Ein Operator kann Quellsysteme einlesen."}
+              </div>
+            ) : (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Lauf</th>
+                    <th>System</th>
+                    <th>Ausführung</th>
+                    <th className="num">Regeln</th>
+                    <th>Status</th>
+                    <th>Zeit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((r) => (
+                    <tr key={r.id} title={r.message ?? undefined}>
+                      <td className="mono">#{r.id.slice(0, 8)}</td>
+                      <td>{systemName(r.source_system_id)}</td>
+                      <td>
+                        <span className={`chip ${r.execution === "external" ? "local" : ""}`}>
+                          {r.execution === "external" ? "Agent" : "zentral"}
+                        </span>
+                      </td>
+                      <td className="num">{r.rule_count ?? "–"}</td>
+                      <td>
+                        <RunStatusChip status={r.status} />
+                      </td>
+                      <td className="mono">{fmtTime(r.finished_at ?? r.queued_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          {runs?.some((r) => r.status === "queued" && r.execution === "external") && (
+            <div className="card-foot">
+              Externe Läufe warten, bis ein Agent sie per <code>--poll</code> abholt.
             </div>
           )}
         </div>
-        <div className="panel ov-card">
-          <div className="section-title">Neueste Findings</div>
-          {openFindings.length === 0 ? (
-            <p className="notice">Keine offenen Findings 🎉</p>
+
+        <div className="card">
+          <div className="card-head">
+            <h2>Regeln je Zone (Ziel)</h2>
+          </div>
+          {rules === null ? (
+            <Loading />
+          ) : zoneRows.length === 0 ? (
+            <div className="empty">
+              <div className="big">Keine Regeln</div>
+              Nach dem ersten Lauf erscheinen hier die Ziel-Zonen.
+            </div>
           ) : (
-            <ul className="ov-findings">
-              {openFindings.slice(0, 6).map((f) => (
-                <li key={f.id}>
-                  <code>{f.subject_id}</code>
-                  <span className="muted"> · {f.type}</span>
-                </li>
-              ))}
-            </ul>
+            <>
+              <div className="bars">
+                {zoneRows.map(([z, n]) => (
+                  <div className="bar" key={z} title={`${z}: ${n}`}>
+                    <span style={{ height: `${(n / zoneMax) * 100}%` }} />
+                    <b style={{ bottom: `calc(${(n / zoneMax) * 100}% + 3px)` }}>{n}</b>
+                  </div>
+                ))}
+              </div>
+              <div className="bars-x">
+                {zoneRows.map(([z]) => (
+                  <span key={z} title={z}>
+                    {z}
+                  </span>
+                ))}
+              </div>
+            </>
           )}
         </div>
       </div>
+
+      {collectOpen && (
+        <CollectDialog
+          tenants={tenants}
+          tenantId={tenantId}
+          systems={systems}
+          isAdmin={me.isAdmin}
+          onClose={() => setCollectOpen(false)}
+          onStarted={() => {
+            loadRuns();
+          }}
+          onGo={onGo}
+        />
+      )}
     </>
   );
 }

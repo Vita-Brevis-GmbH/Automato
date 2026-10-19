@@ -34,6 +34,21 @@ def test_create_agent_nur_admin(session_factory, client):
     assert r.json()["name"] == "agent-win-01" and len(r.json()["token"]) > 20
 
 
+def test_create_agent_doppelt_leer_oder_fremder_mandant(session_factory, client):
+    seed = session_factory()
+    tid, _ = _seed(seed)
+    seed.commit()
+    admin = {"X-Dev-Roles": "admin"}
+    body = {"name": "agent-win-01", "tenant_id": tid}
+    assert client.post("/agents", json=body, headers=admin).status_code == 201
+    # gleicher Name -> 409 (vorher 500 durch den Unique-Constraint)
+    r = client.post("/agents", json={"name": " agent-win-01 ", "tenant_id": tid}, headers=admin)
+    assert r.status_code == 409
+    assert client.post("/agents", json={"name": "  "}, headers=admin).status_code == 422
+    r = client.post("/agents", json={"name": "a-x", "tenant_id": 9999}, headers=admin)
+    assert r.status_code == 422
+
+
 def test_next_run_claimt_externen_lauf(session_factory, client):
     seed = session_factory()
     tid, sid = _seed(seed)

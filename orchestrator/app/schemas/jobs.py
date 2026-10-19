@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -30,3 +31,6 @@ class CollectorRunOut(BaseModel):
     source_system_id: int | None = None
     rule_count: int | None = None
     message: str | None = None
+    execution: str = "inprocess"
+    queued_at: datetime | None = None
+    finished_at: datetime | None = None

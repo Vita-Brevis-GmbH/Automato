@@ -210,7 +210,7 @@ mandantsgescoped, auditiert `system.site_assigned`; fremde Site → 422); `build
 `tenant_code` (GG-Kürzel) + `site` (code/name). UI-Tab „Applikations-Doku" zeigt GG/Standort und
 erlaubt Zuordnung (Site-Dropdown aus den Mandanten-Standorten); Markdown-Export-Header enthält
 GG + Standort. Tests `test_appdoc.py`. Offen: EPG als System (ACI) in der Doku.
-Tests: collectors 29, orchestrator 98, sot-gateway 6.
+Tests: collectors 29, orchestrator 109, sot-gateway 6.
 
 **Ausbaustufe B (Planung läuft):** Ausbau zur allgemeinen Workflow-Plattform (über
 Firewalls/ACI hinaus: VMs, App-Install, Auto-Doku; Open Source, Vereinfachung) mit
@@ -346,7 +346,7 @@ Celery-Dispatch an (Agent holt ihn per `--poll`) — funktioniert auch im OIDC-M
 Agent-Paket: `agent.env.example` mit `AUTOMATO_INTERNAL_API_TOKEN` (Ergebnis-Upload läuft über
 `X-Internal-Token`), TLS-Zeilen auskommentiert (fehlende Zertifikatsdateien verhindern den
 Start), `run-agent.ps1 -Check`; Agent spricht `/internal` direkt am Orchestrator (Port 8000),
-nicht über den UI-Proxy. Tests: orchestrator 98.
+nicht über den UI-Proxy.
 **Mandanten-Klärung (GG):** Ein **Mandant = Gruppengesellschaft (GG)** mit **einem oder
 mehreren Standorten** und einem **Kürzel/Code** zur Identifikation bei VMs/Objekten. Die
 **Wörterbücher (GG-Kürzel etc.) sind kundenspezifische Laufzeitdaten** (kein Seed-Zwang) und
@@ -366,3 +366,26 @@ Standort verorten; Kürzel in die Applikations-Doku. **Als Nächstes in E1:** op
 Lesezugriffs-Audit; Keycloak-Client-/Session-Secrets über denselben Provider (sobald
 Confidential-Client-Flow); SAML-Broker je Kunde. Offen (Eingang abwarten): echter Keycloak-
 End-to-End-Login-Test (E1.3b nur build-verifiziert).
+**Web-UI nach Mockup fertiggestellt (W1-Abschluss, Dev-Feedback):** Ursache für „neuer
+Mandant nicht sichtbar / Agent anlegen geht nicht" war das Token-Handling: das einmal in
+`localStorage` abgelegte Access-Token lief nach 5 min ab, ein Reload galt trotzdem als
+angemeldet → alle API-Aufrufe 401, Fehler wurden verschluckt. Jetzt ist der
+`UserManager` (oidc-client-ts) die einzige Token-Quelle (`src/auth.ts`: stilles Erneuern
+per Refresh-Token, sonst Re-Login), `src/api.ts` holt das Token je Request, wirft
+`ApiError` mit FastAPI-`detail` und leitet bei 401 zum Login; UI zeigt verständliche
+Fehler (403/409/422). Zusätzlich: doppelter Agent-Name lieferte 500 → jetzt 409, leerer
+Name/unbekannter Mandant 422. **Shell nach Mockup**: Sidebar (Dokumentation/Administration,
+Zähler), Topbar (Mandanten-Schalter, HTTPS, Hell/Dunkel, Benutzermenü), Design-Tokens
++ IBM Plex lokal gebündelt (`@fontsource`, keine Google-Fonts-Abhängigkeit). **Neue
+Ansichten/Buttons**: Übersicht mit Abdeckung + „Letzte Läufe" (`GET /jobs`) + **Jetzt
+einlesen** (`CollectDialog.tsx`, extern/zentral), Mandanten & Standorte mit **+ Mandant**
+(`POST /tenants`), Namensprofil-Zuordnung, Lese-Audit, **+ Standort**, **+ Quellsystem**
+(`POST /systems`); Namensprofile (`NamingProfiles.tsx`: **+ Neues Profil** mit SOP-Vorlage
+`with_sop_defaults`, **+ Neue Namenskonvention**, Einträge ✎/✕; kein CSV-Import); Benutzer
+& Rollen (`Users.tsx`, Links in die Keycloak-Konsole via `admin_console_url` aus
+`/auth/config`, konfigurierbar `AUTOMATO_OIDC_ADMIN_CONSOLE_URL`); Netzwerkdesign als
+Platzhalter (geplant); Applikationen = Applikations-Doku + „Publizierte Dienste";
+Collector-Agenten (Online-Status aus Heartbeat). Nat/Findings/Applications mandantsgescoped.
+Verifiziert: `tsc`+`vite build`, Klick-Durchlauf per Playwright gegen lokalen Orchestrator
+(dev-Modus); OIDC-Token-Erneuerung nur build-verifiziert (End-to-End im Dev-Keycloak).
+API-Übersicht in `docs/BETRIEB.md` Abschnitt 3/4 aktualisiert.

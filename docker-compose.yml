@@ -60,6 +60,7 @@ services:
       AUTOMATO_OIDC_AUDIENCE: ${AUTOMATO_OIDC_AUDIENCE:-}
       AUTOMATO_OIDC_JWKS_URL: ${AUTOMATO_OIDC_JWKS_URL:-}
       AUTOMATO_OIDC_WEB_CLIENT_ID: ${AUTOMATO_OIDC_WEB_CLIENT_ID:-automato-web}
+      AUTOMATO_OIDC_ADMIN_CONSOLE_URL: ${AUTOMATO_OIDC_ADMIN_CONSOLE_URL:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

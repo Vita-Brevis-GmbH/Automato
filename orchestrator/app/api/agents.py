@@ -10,14 +10,15 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.auth.deps import require_admin
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import Agent
+from app.models import Agent, Tenant
 from app.store import agents as store
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -25,7 +26,7 @@ agent_router = APIRouter(prefix="/internal/agent", tags=["agent"])
 
 
 class AgentIn(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     tenant_id: int | None = None
 
 
@@ -73,7 +74,15 @@ def create_agent(
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    agent, token = store.create_agent(session, body.name, body.tenant_id)
+    """Agent anlegen - Admin. Name eindeutig (409), Mandant muss existieren (422)."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="name must not be empty")
+    if session.scalar(select(Agent).where(Agent.name == name)) is not None:
+        raise HTTPException(status_code=409, detail="agent name already exists")
+    if body.tenant_id is not None and session.get(Tenant, body.tenant_id) is None:
+        raise HTTPException(status_code=422, detail="tenant not found")
+    agent, token = store.create_agent(session, name, body.tenant_id)
     audit.record(
         session,
         actor=f"user:{principal.subject}",
