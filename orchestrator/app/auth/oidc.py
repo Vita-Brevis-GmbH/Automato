@@ -12,6 +12,7 @@ Login würde nichts ändern.
 """
 
 import logging
+import time
 from functools import lru_cache
 
 import jwt
@@ -74,8 +75,22 @@ def verify_token(token: str, settings) -> dict:
         algorithms=["RS256"],
         audience=settings.oidc_audience or None,
         issuer=settings.oidc_issuer or None,
+        leeway=settings.oidc_clock_skew_seconds,
         options={"verify_aud": bool(settings.oidc_audience)},
     )
+
+
+def _seconds_from_now(token: str, claim: str) -> int | None:
+    """Abstand eines Zeit-Claims zur eigenen Uhr - nur fuer die Fehlermeldung.
+
+    Wird erst aufgerufen, nachdem die Signatur geprueft wurde (PyJWT prueft Zeit-Claims
+    nach der Signatur), der Wert dient ausschliesslich der Diagnose.
+    """
+    try:
+        value = jwt.decode(token, options={"verify_signature": False}).get(claim)
+    except jwt.InvalidTokenError:
+        return None
+    return int(value - time.time()) if isinstance(value, int | float) else None
 
 
 def _reject(status: int, detail: str, exc: Exception) -> HTTPException:
@@ -98,7 +113,18 @@ def principal_from_bearer(authorization: str | None, settings) -> Principal:
             401, "Signaturschlüssel nicht in der JWKS (Realm/JWKS-URL passt nicht)", exc
         ) from exc
     except jwt.ExpiredSignatureError as exc:
-        raise _reject(401, "token expired", exc) from exc
+        ago = _seconds_from_now(token, "exp")
+        since = f" (seit {-ago} s)" if ago is not None else ""
+        raise _reject(401, f"token expired{since}", exc) from exc
+    except jwt.ImmatureSignatureError as exc:
+        ahead = _seconds_from_now(token, "iat")
+        skew = f"ca. {ahead} s " if ahead is not None else ""
+        raise _reject(
+            401,
+            f"token not yet valid: die Uhr des Orchestrators geht {skew}nach gegenüber "
+            "Keycloak - Zeitsynchronisation (NTP) beider VMs prüfen",
+            exc,
+        ) from exc
     except jwt.InvalidAudienceError as exc:
         raise _reject(
             401, f"token audience invalid (erwartet: {settings.oidc_audience})", exc

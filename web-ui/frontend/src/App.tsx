@@ -149,7 +149,8 @@ export default function App() {
         <Note>
           Häufige Ursachen: im Keycloak-Realm fehlt der Audience-Mapper <code>automato-api</code>,{" "}
           <code>AUTOMATO_OIDC_ISSUER</code>/<code>AUTOMATO_OIDC_JWKS_URL</code> passen nicht zum Realm,
-          oder der Orchestrator erreicht Keycloak nicht. Details:{" "}
+          der Orchestrator erreicht Keycloak nicht, oder die Uhrzeit der VMs weicht ab (NTP).
+          Details:{" "}
           <code>docker compose logs orchestrator | grep OIDC</code>
         </Note>
         <div style={{ display: "flex", gap: 9 }}>

@@ -124,7 +124,25 @@ def test_abgelehntes_token_nennt_den_grund(client, monkeypatch):
     r = call({**base, "iss": "https://kc/realms/automato"})  # falscher Realm
     assert r.status_code == 401 and "issuer" in r.json()["detail"]
     r = call({**base, "exp": 1})
-    assert r.status_code == 401 and r.json()["detail"] == "token expired"
+    assert r.status_code == 401 and r.json()["detail"].startswith("token expired")
+
+
+def test_uhrenabweichung_toleranz_und_klare_meldung(client, monkeypatch):
+    import time
+
+    settings = _settings()
+    monkeypatch.setattr("app.auth.deps.get_settings", lambda: settings)
+
+    def call(iat_offset):
+        claims = {"sub": "u", "iat": int(time.time()) + iat_offset}
+        claims["realm_access"] = {"roles": ["admin"]}
+        token = _signed(claims, monkeypatch)
+        return client.get("/tenants", headers={"Authorization": f"Bearer {token}"})
+
+    assert call(30).status_code == 200  # kleine Abweichung: innerhalb der Toleranz
+    r = call(600)  # Keycloak-Uhr 10 min voraus
+    assert r.status_code == 401
+    assert "not yet valid" in r.json()["detail"] and "NTP" in r.json()["detail"]
 
 
 def test_jwks_nicht_erreichbar_ist_503_nicht_401(client, monkeypatch):

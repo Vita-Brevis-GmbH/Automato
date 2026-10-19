@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     oidc_roles_claim: str = "realm_access.roles"  # Keycloak-Realm-Rollen
     oidc_tenants_claim: str = "tenant_ids"
     oidc_web_client_id: str = "automato-web"  # public Client fuer das SPA (PKCE)
+    # Toleranz fuer Uhrenabweichung Keycloak <-> Orchestrator bei iat/nbf/exp (Sekunden).
+    # Ersetzt keine Zeitsynchronisation (NTP), faengt nur kleine Abweichungen ab.
+    oidc_clock_skew_seconds: int = 60
     # Keycloak-Admin-Konsole fuer die Benutzerverwaltung (Link im UI), z. B.
     # https://auth.int.example.ch/admin/master/console/#/automato-dev . Leer = aus dem
     # Issuer abgeleitet (<origin>/admin/master/console/#/<realm>).

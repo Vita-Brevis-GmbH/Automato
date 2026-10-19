@@ -406,3 +406,8 @@ erreichbar` — der Container erreicht `auth.vitabrevis.ch` nicht über den öff
 Backchannel Server-zu-Server direkt zur Keycloak-VM per `docker-compose.override.yml`
 (`extra_hosts: auth.vitabrevis.ch:<KEYCLOAK-VM-IP>`, VM-spezifisch, gitignored); Issuer
 bleibt die öffentliche URL, Browser/Kunden laufen unverändert über die WAF.
+**Uhrenabweichung (Dev-Befund `ImmatureSignatureError`):** Keycloak-VM und Automato-VM liefen
+zeitlich auseinander (Token-`iat` aus Sicht des Orchestrators in der Zukunft). `oidc.py` prüft
+jetzt mit Toleranz `oidc_clock_skew_seconds` (Default 60, `AUTOMATO_OIDC_CLOCK_SKEW_SECONDS`) und
+meldet die Abweichung in Sekunden („token not yet valid … NTP prüfen“; abgelaufen „seit N s“).
+Eigentlicher Fix: NTP auf beiden VMs. Tests: orchestrator 112.
