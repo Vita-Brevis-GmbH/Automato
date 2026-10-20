@@ -76,7 +76,7 @@ def test_durchstich_collector_result_landet_in_rules(client, session_factory, mo
             ],
         },
     )
-    assert resp.status_code == 204
+    assert resp.status_code == 200
 
     rules = client.get("/rules").json()
     assert len(rules) == 1
@@ -175,7 +175,7 @@ def test_applications_aus_vips(client, session_factory):
             ],
         },
     )
-    assert resp.status_code == 204
+    assert resp.status_code == 200
 
     apps = client.get("/applications").json()
     assert any(a["name"] == "VIP_web" and a["rule_count"] == 1 for a in apps)

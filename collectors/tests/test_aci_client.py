@@ -127,3 +127,156 @@ def test_check_mit_zugangsdaten(monkeypatch):
     monkeypatch.setattr(t, "get_settings", lambda: Settings(aci_url=""))
     ok, msg = t.check()
     assert ok is False and "Creds" in msg
+
+
+# Echte APIC-Antwort (rsp-subtree=full): dn nur am Tenant, Kinder nur mit rn
+APIC_TREE = {
+    "imdata": [
+        {
+            "fvTenant": {
+                "attributes": {"name": "TE_x", "dn": "uni/tn-TE_x"},
+                "children": [
+                    {
+                        "fvAp": {
+                            "attributes": {"name": "AP_007", "rn": "ap-AP_007"},
+                            "children": [
+                                {
+                                    "fvAEPg": {
+                                        "attributes": {"name": "EG_app", "rn": "epg-EG_app"},
+                                        "children": [
+                                            {
+                                                "fvRsCons": {
+                                                    "attributes": {"tnVzBrCPName": "CT_web"}
+                                                }
+                                            },
+                                            {
+                                                "fvCEp": {
+                                                    "attributes": {"mac": "AA", "ip": "10.7.0.5"},
+                                                    "children": [
+                                                        {
+                                                            "fvIp": {
+                                                                "attributes": {"addr": "10.7.0.5"}
+                                                            }
+                                                        }
+                                                    ],
+                                                }
+                                            },
+                                            {
+                                                "fvCEp": {
+                                                    "attributes": {"mac": "BB", "ip": "10.7.0.5"}
+                                                }
+                                            },
+                                        ],
+                                    }
+                                },
+                                {
+                                    "fvAEPg": {
+                                        "attributes": {
+                                            "name": "EG_web"
+                                        },  # Export: weder dn noch rn
+                                        "children": [
+                                            {"fvRsProv": {"attributes": {"tnVzBrCPName": "CT_web"}}}
+                                        ],
+                                    }
+                                },
+                            ],
+                        }
+                    },
+                    {
+                        "vzBrCP": {
+                            "attributes": {"name": "CT_web", "rn": "brc-CT_web", "scope": "tenant"},
+                            "children": [
+                                {
+                                    "vzSubj": {
+                                        "attributes": {"name": "SJ_web", "rn": "subj-SJ_web"},
+                                        "children": [
+                                            {
+                                                "vzRsSubjFiltAtt": {
+                                                    "attributes": {"tnVzFilterName": "FT_web"}
+                                                }
+                                            }
+                                        ],
+                                    }
+                                }
+                            ],
+                        }
+                    },
+                    {
+                        "vzFilter": {
+                            "attributes": {"name": "FT_web", "rn": "flt-FT_web"},
+                            "children": [
+                                {
+                                    "vzEntry": {
+                                        "attributes": {
+                                            "name": "a",
+                                            "prot": "tcp",
+                                            "dFromPort": "https",
+                                            "dToPort": "https",
+                                        }
+                                    }
+                                },
+                                {
+                                    "vzEntry": {
+                                        "attributes": {
+                                            "name": "b",
+                                            "prot": "udp",
+                                            "dFromPort": "dns",
+                                            "dToPort": "dns",
+                                        }
+                                    }
+                                },
+                                {
+                                    "vzEntry": {
+                                        "attributes": {
+                                            "name": "c",
+                                            "prot": "tcp",
+                                            "dFromPort": "8000",
+                                            "dToPort": "8080",
+                                        }
+                                    }
+                                },
+                                {
+                                    "vzEntry": {
+                                        "attributes": {
+                                            "name": "d",
+                                            "etherT": "ip",
+                                            "prot": "unspecified",
+                                        }
+                                    }
+                                },
+                                {
+                                    "vzEntry": {
+                                        "attributes": {
+                                            "name": "e",
+                                            "etherT": "arp",
+                                            "prot": "unspecified",
+                                        }
+                                    }
+                                },
+                            ],
+                        }
+                    },
+                ],
+            }
+        }
+    ]
+}
+
+
+def test_parser_echte_apic_antwort_ohne_dn_an_kindern():
+    from collectors.cisco_aci.mo import parse_epgs, parse_mo_export
+
+    epgs = {e["name"]: e for e in parse_epgs(APIC_TREE)}
+    assert epgs["EG_app"]["ap"] == "AP_007" and epgs["EG_web"]["ap"] == "AP_007"
+    assert epgs["EG_app"]["endpoints"] == [{"ip": "10.7.0.5", "mac": "AA"}]  # je IP einmal
+
+    (contract,) = parse_mo_export(APIC_TREE)
+    assert contract["dn"] == "uni/tn-TE_x/brc-CT_web"
+    assert contract["consumer_epgs"] == ["EG_app"] and contract["provider_epgs"] == ["EG_web"]
+    assert contract["subjects"][0]["services"] == [
+        "tcp/443",
+        "udp/53",
+        "tcp/8000-8080",
+        "ip/any",
+        "arp/any",
+    ]

@@ -130,7 +130,7 @@ def test_ergebnis_nur_vom_abholenden_agenten(session_factory, client):
     assert client.post(url, json=RESULT, headers={"X-Agent-Token": token_b}).status_code == 403
     assert client.post(url, json=RESULT, headers={"X-Agent-Token": "falsch"}).status_code == 401
     assert client.post(url, json=RESULT).status_code == 401
-    assert client.post(url, json=RESULT, headers={"X-Agent-Token": token_a}).status_code == 204
+    assert client.post(url, json=RESULT, headers={"X-Agent-Token": token_a}).status_code == 200
 
     s = session_factory()
     run = s.get(CollectorRun, run_id)

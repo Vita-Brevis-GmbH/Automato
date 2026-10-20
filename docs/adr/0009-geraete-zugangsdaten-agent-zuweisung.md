@@ -44,7 +44,9 @@ zeigte sich:
    - Ein Gerät mit Agent wird immer `external` eingelesen (`POST /jobs/collect` erzwingt es).
 4. **Ergebnis-Upload mit dem Agent-Token.** `POST /internal/collector-runs/{id}/result`
    akzeptiert `X-Agent-Token`, wenn genau dieser Agent den Lauf abgeholt hat (sonst 403),
-   oder wie bisher `X-Internal-Token` (zentraler Worker). Agenten brauchen das interne
+   oder wie bisher `X-Internal-Token` (zentraler Worker); die Antwort ist eine Quittung mit dem
+   endgültigen Lauf-Status (`failed`, wenn das Einspielen scheitert – der Ingest läuft in einem
+   Savepoint und wird dann ganz verworfen). Agenten brauchen das interne
    Token damit **nicht mehr**; die `agent.env` enthält nur Orchestrator-Adresse +
    Agent-Token (+ optional mTLS).
 5. **Schlüssel.** `AUTOMATO_CREDENTIALS_KEY` (Passphrase → SHA-256 → Fernet-Key; auch als

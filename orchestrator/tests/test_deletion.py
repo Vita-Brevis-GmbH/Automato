@@ -80,7 +80,7 @@ def _tenant_with_data(client, session_factory, name: str) -> tuple[int, int]:
         json={"platform": "fortigate", "tenant_id": tid, "source_system_id": sid},
     ).json()["run_id"]
     r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=RESULT)
-    assert r.status_code == 204
+    assert r.status_code == 200
     return tid, sid
 
 

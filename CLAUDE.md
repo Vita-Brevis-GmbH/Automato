@@ -483,3 +483,15 @@ ACI mit APIC-Benutzer/-Passwort (write-only) und ACI-Tenants, Tabelle zeigt „T
 „Hinterlegte Zugangsdaten entfernen“ für beide Plattformen, „Jetzt einlesen“ warnt plattformunabhängig.
 Migration 0017 up/down gegen Postgres geprüft; Playwright-Durchlauf (APIC anlegen, nur Passwort
 ändern, Zugangsdaten entfernen). Tests: orchestrator 128, collectors 40, sot-gateway 6.
+**Fix 500 beim ACI-Ergebnis-Upload (Dev-Befund):** Ursache: `_apply_epgs` löschte alte EPG-Endpunkte
+und fügte neue im selben Flush ein — der Unit of Work macht INSERT vor DELETE → `uq_epg_endpoint_epg_ip`
+beim Wiederholungslauf (ebenso bei doppelter IP je EPG, real häufig); danach war die Session kaputt und
+der Audit-Eintrag warf den 500. Jetzt: Flush nach den Deletes, Dubletten je EPG entfernt (erste MAC);
+Ingest im **Savepoint** (`begin_nested`) — Fehler → Lauf `failed` mit „Einspielen fehlgeschlagen: …“
+(ohne SQL) + `log.exception`, kein 500. Ergebnis-Endpunkt antwortet jetzt **200 mit Quittung**
+(`run_id/status/message`); der Agent übernimmt `failed` (`upload.confirmed`) und meldet HTTP-Fehler
+ohne Traceback. ACI-Parser für echte APIC-Antworten: DN aus Eltern-DN + `rn` (bzw. Klassen-Präfix +
+Name) — sonst fehlten AP und Contract-DN —, benannte Ports (`https`→443, `dns`→53, …), `prot=unspecified`
+→ `ip/any` bzw. `arp/any`, `fvCEp.ip` als Rückfall. Mit Postgres verifiziert (3 Läufe hintereinander).
+Tests: orchestrator 132, collectors 44, sot-gateway 6.
+

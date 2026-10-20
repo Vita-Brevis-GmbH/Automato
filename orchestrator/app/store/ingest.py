@@ -101,7 +101,10 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
 
 def _apply_epgs(session: Session, tenant_id: int, epgs) -> None:
     """EPGs (ACI) idempotent anlegen/aktualisieren; Subnetze + gelernte Endpunkte je EPG
-    ersetzen; EPG an den zugehoerigen Server (Host-Objekt) knuepfen, wenn aufloesbar."""
+    ersetzen; EPG an den zugehoerigen Server (Host-Objekt) knuepfen, wenn aufloesbar.
+
+    Ein APIC meldet dieselbe IP teils mehrfach je EPG (mehrere fvCEp, z. B. nach einem
+    Umzug) - je EPG zaehlt eine IP einmal (erste MAC gewinnt)."""
     for e in epgs:
         epg = session.scalars(
             select(Epg).where(Epg.tenant_id == tenant_id, Epg.name == e.name)
@@ -114,14 +117,20 @@ def _apply_epgs(session: Session, tenant_id: int, epgs) -> None:
         session.flush()
         for old in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id == epg.id)):
             session.delete(old)
-        for ip in e.subnets:
-            session.add(EpgSubnet(epg_id=epg.id, ip=ip, family="v6" if ":" in ip else "v4"))
         for old in session.scalars(select(EpgEndpoint).where(EpgEndpoint.epg_id == epg.id)):
             session.delete(old)
+        # DELETE vor INSERT erzwingen: der Unit of Work fuegt sonst zuerst ein, und ein
+        # erneut gelernter Endpunkt kollidiert mit seinem alten Eintrag (epg_id, ip)
+        session.flush()
+        for ip in dict.fromkeys(e.subnets):
+            session.add(EpgSubnet(epg_id=epg.id, ip=ip, family="v6" if ":" in ip else "v4"))
+        macs: dict[str, str | None] = {}
         for ep in e.endpoints:
-            session.add(EpgEndpoint(epg_id=epg.id, ip=ep.ip, mac=ep.mac))
+            macs.setdefault(ep.ip, ep.mac)
+        for ip, mac in macs.items():
+            session.add(EpgEndpoint(epg_id=epg.id, ip=ip, mac=mac))
         # EPG <-> Host: ersten gelernten Endpunkt, der auf ein Host-Objekt zeigt, verknuepfen
-        host = _host_by_ips(session, tenant_id, [ep.ip for ep in e.endpoints])
+        host = _host_by_ips(session, tenant_id, list(macs))
         if host is not None:
             epg.network_object_id = host.id
     session.flush()

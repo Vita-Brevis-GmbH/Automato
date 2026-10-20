@@ -166,12 +166,61 @@ def test_fortigate_check_ohne_creds(monkeypatch):
 
 
 def test_upload_header_je_rueckkanal(monkeypatch):
+    import httpx
+
     import collectors.common.upload as up
     from collectors.common.dto import CollectorResult
 
     calls = []
     monkeypatch.setattr(up, "get_settings", lambda: AGENT)
-    monkeypatch.setattr(up.http, "post_json", lambda url, json, headers: calls.append(headers))
+
+    def post(url, json, headers):
+        calls.append(headers)
+        return httpx.Response(204)
+
+    monkeypatch.setattr(up.http, "post_json", post)
     up.submit_result("r1", CollectorResult(status="completed"), via_agent=True)
     up.submit_result("r1", CollectorResult(status="completed"))
     assert calls == [{"X-Agent-Token": "agent-tok"}, {"X-Internal-Token": "dev-only-token"}]
+
+
+def test_quittung_failed_vom_orchestrator_wird_uebernommen(monkeypatch, capsys):
+    import collectors.fortigate.tasks as t
+
+    ack = {"run_id": "abc", "status": "failed", "message": "Einspielen fehlgeschlagen: X"}
+    monkeypatch.setattr(t, "submit_result", lambda run_id, result, via_agent=False: ack)
+    assert main(["--platform", "fortigate", "--run-id", "abc"]) == 1
+    captured = capsys.readouterr()
+    assert "fortigate run abc: failed" in captured.out
+    assert "Einspielen fehlgeschlagen" in captured.err
+
+
+def test_http_fehler_beim_upload_ohne_traceback(monkeypatch, capsys):
+    import httpx
+
+    import collectors.fortigate.tasks as t
+
+    def upload(run_id, result, via_agent=False):
+        request = httpx.Request("POST", f"http://orch:8000/internal/collector-runs/{run_id}/result")
+        response = httpx.Response(500, request=request, text="Internal Server Error")
+        raise httpx.HTTPStatusError("500", request=request, response=response)
+
+    monkeypatch.setattr(t, "submit_result", upload)
+    assert main(["--platform", "fortigate", "--run-id", "abc"]) == 1
+    err = capsys.readouterr().err
+    assert "Orchestrator-Aufruf fehlgeschlagen: HTTP 500" in err and "Traceback" not in err
+    assert "docker compose logs orchestrator" in err
+
+
+def test_upload_liefert_quittung(monkeypatch):
+    import httpx
+
+    import collectors.common.upload as up
+    from collectors.common.dto import CollectorResult
+
+    monkeypatch.setattr(up, "get_settings", lambda: AGENT)
+    ok = httpx.Response(200, json={"run_id": "r1", "status": "completed", "message": None})
+    monkeypatch.setattr(up.http, "post_json", lambda url, json, headers: ok)
+    assert up.submit_result("r1", CollectorResult(status="completed"))["status"] == "completed"
+    monkeypatch.setattr(up.http, "post_json", lambda url, json, headers: httpx.Response(204))
+    assert up.submit_result("r1", CollectorResult(status="completed")) is None  # alter Server

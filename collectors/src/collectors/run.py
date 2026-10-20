@@ -23,6 +23,8 @@ import argparse
 import sys
 from collections.abc import Callable, Sequence
 
+import httpx
+
 from collectors.cisco_aci.tasks import check as _aci_check
 from collectors.cisco_aci.tasks import collect_once as _aci_collect
 from collectors.common import agent as agent_api
@@ -61,7 +63,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Erreichbarkeit/Auth der zugewiesenen Geraete pruefen (read-only, kein Ingest)",
     )
     args = parser.parse_args(argv)
+    try:
+        return _run(parser, args)
+    except httpx.HTTPError as exc:
+        # Verbindungs-/HTTP-Fehler zum Orchestrator: klare Meldung statt Traceback
+        print(f"Orchestrator-Aufruf fehlgeschlagen: {_describe(exc)}", file=sys.stderr)
+        return 1
 
+
+def _describe(exc: httpx.HTTPError) -> str:
+    try:
+        url = f" {exc.request.url}"
+    except RuntimeError:  # httpx: Fehler ohne zugehoerigen Request
+        url = ""
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            detail = exc.response.json().get("detail")
+        except ValueError:
+            detail = None
+        text = f" - {detail}" if detail else ""
+        hint = (
+            " (Details: docker compose logs orchestrator)"
+            if exc.response.status_code >= 500
+            else ""
+        )
+        return f"HTTP {exc.response.status_code}{url}{text}{hint}"
+    return f"{type(exc).__name__}: {exc}{url}"
+
+
+def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.check:
         return _check(args.platform)
 

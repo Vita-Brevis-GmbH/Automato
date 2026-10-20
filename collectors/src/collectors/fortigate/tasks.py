@@ -14,7 +14,7 @@ from importlib import resources
 from collectors.celery_app import app
 from collectors.common import agent as agent_api
 from collectors.common.dto import CollectorResult, Target
-from collectors.common.upload import submit_result
+from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
 from collectors.fortigate import normalize as norm
 from collectors.fortigate.client import FortiGateClient
@@ -96,8 +96,7 @@ def collect_once(
         )
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
         result = CollectorResult(status="failed", message=str(exc))
-    submit_result(run_id, result, via_agent=via_agent)
-    return result
+    return confirmed(result, submit_result(run_id, result, via_agent=via_agent))
 
 
 @app.task(name="collectors.fortigate.collect")

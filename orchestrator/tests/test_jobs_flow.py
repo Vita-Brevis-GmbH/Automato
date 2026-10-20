@@ -36,7 +36,8 @@ def test_collector_ergebnis_schliesst_run_ab(client):
         json=RESULT_PAYLOAD,
         headers={"X-Internal-Token": "dev-only-token"},
     )
-    assert response.status_code == 204
+    assert response.status_code == 200
+    assert response.json() == {"run_id": run_id, "status": "completed", "message": None}
 
     status = client.get(f"/jobs/{run_id}").json()
     assert status["status"] == "completed"

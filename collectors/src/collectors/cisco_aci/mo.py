@@ -9,6 +9,11 @@ konsumiert. Umsetzung des Lesevertrags `docs/collectors-read-contract.md` (Absch
   fvBD   (BD_)  fvRsBDToOut.tnL3extOutName       -> Zone (L3O) je EPG-Seite
   l3extOut (L3O_) l3extInstP (EN_)               -> externe EPGs + externe Zone
 
+Ein echter APIC (`rsp-subtree=full`) liefert die `dn` nur am Wurzelobjekt, Kinder tragen
+nur ihren `rn`; Konfig-Exporte teils keines von beidem. Die DN wird deshalb beim Abstieg aus
+Eltern-DN + `rn` (bzw. Klassen-Praefix + Name) gebildet. Der APIC meldet bekannte Ports mit
+Namen (`https`, `dns`, ...) - sie werden auf Portnummern abgebildet.
+
 Keine echten Secrets im Export; Samples bleiben ausserhalb des Repos. Reine Funktion.
 """
 
@@ -42,19 +47,64 @@ class _Bag:
         self.filters: dict[str, list[str]] = {}  # Filter-Name -> [Service-Strings]
 
 
+# rn-Praefixe je Klasse (fuer Exporte ohne dn/rn an den Kindern)
+_RN_PREFIX = {
+    "fvTenant": "tn-",
+    "fvAp": "ap-",
+    "fvAEPg": "epg-",
+    "fvBD": "BD-",
+    "fvCtx": "ctx-",
+    "vzBrCP": "brc-",
+    "vzSubj": "subj-",
+    "vzFilter": "flt-",
+    "vzEntry": "e-",
+    "l3extOut": "out-",
+    "l3extInstP": "instP-",
+}
+
+# Platzhalter-Adressen eines fvCEp ohne gelernte IP
+_NO_IP = frozenset({"0.0.0.0", "::"})  # noqa: S104 - kein Bind, nur Vergleichswert
+
+# Port-Namen, die der APIC statt Nummern meldet (vzEntry dFromPort/dToPort)
+_NAMED_PORTS = {
+    "ftpdata": "20",
+    "ssh": "22",
+    "smtp": "25",
+    "dns": "53",
+    "http": "80",
+    "pop3": "110",
+    "https": "443",
+    "rtsp": "554",
+}
+
+
+def _dn(cls: str, attrs: dict, parent_dn: str) -> str:
+    if attrs.get("dn"):
+        return attrs["dn"]
+    rn = attrs.get("rn")
+    if not rn and cls in _RN_PREFIX and attrs.get("name"):
+        rn = f"{_RN_PREFIX[cls]}{attrs['name']}"
+    if not rn:
+        return ""
+    if cls == "fvTenant" and not parent_dn:
+        return f"uni/{rn}"
+    return f"{parent_dn}/{rn}" if parent_dn else ""
+
+
 def _cep_endpoints(kids: list[dict]) -> list[dict]:
-    """Gelernte Endpunkte aus fvCEp (mac) + fvIp (addr) unter einer EPG."""
-    out: list[dict] = []
+    """Gelernte Endpunkte aus fvCEp (mac, ip) + fvIp (addr) unter einer EPG - je IP einmal."""
+    out: dict[str, str | None] = {}
     for c in kids:
         if "fvCEp" not in c:
             continue
-        mac = _attrs(c["fvCEp"]).get("mac")
-        for ic in _children(c["fvCEp"]):
-            if "fvIp" in ic:
-                ip = _attrs(ic["fvIp"]).get("addr")
-                if ip:
-                    out.append({"ip": ip, "mac": mac})
-    return out
+        attrs = _attrs(c["fvCEp"])
+        mac = attrs.get("mac")
+        ips = [_attrs(ic["fvIp"]).get("addr") for ic in _children(c["fvCEp"]) if "fvIp" in ic]
+        ips.append(attrs.get("ip"))  # aeltere APIC-Versionen: nur fvCEp.ip
+        for ip in ips:
+            if ip and ip not in _NO_IP:
+                out.setdefault(ip, mac)
+    return [{"ip": ip, "mac": mac} for ip, mac in out.items()]
 
 
 def _ap_from_dn(dn: str) -> str | None:
@@ -65,25 +115,37 @@ def _ap_from_dn(dn: str) -> str | None:
     return None
 
 
+def _port(value: str | None) -> str | None:
+    if value in ("unspecified", "", None):
+        return None
+    return _NAMED_PORTS.get(value.lower(), value)
+
+
 def _entry_service(attrs: dict) -> str:
-    prot = (attrs.get("prot") or "ip").lower()
+    prot = (attrs.get("prot") or "unspecified").lower()
+    if prot == "unspecified":
+        ether = (attrs.get("etherT") or "unspecified").lower()
+        if ether not in ("unspecified", "ip", "ipv4", "ipv6"):
+            return f"{ether}/any"  # z. B. arp
+        prot = "ip"
     if prot in ("icmp", "icmpv4"):
         return "icmp/any"
     if prot == "icmpv6":
         return "icmpv6/any"
-    lo, hi = attrs.get("dFromPort", "unspecified"), attrs.get("dToPort", "unspecified")
-    if lo in ("unspecified", "", None):
+    lo, hi = _port(attrs.get("dFromPort")), _port(attrs.get("dToPort"))
+    if prot not in ("tcp", "udp") or lo is None:
         return f"{prot}/any"
     if hi and hi != lo:
         return f"{prot}/{lo}-{hi}"
     return f"{prot}/{lo}"
 
 
-def _walk(mo: dict, bag: _Bag, parent_l3out: str | None = None) -> None:
+def _walk(mo: dict, bag: _Bag, parent_l3out: str | None = None, parent_dn: str = "") -> None:
     for cls, body in mo.items():
         attrs = _attrs(body)
         name = attrs.get("name", "")
         kids = _children(body)
+        dn = _dn(cls, attrs, parent_dn)
         if cls == "fvBD":
             l3outs = [
                 _attrs(c["fvRsBDToOut"]).get("tnL3extOutName") for c in kids if "fvRsBDToOut" in c
@@ -96,7 +158,7 @@ def _walk(mo: dict, bag: _Bag, parent_l3out: str | None = None) -> None:
             subnets = [_attrs(c["fvSubnet"]).get("ip") for c in kids if "fvSubnet" in c]
             bag.epgs[name] = {
                 "bd": bd,
-                "ap": _ap_from_dn(attrs.get("dn", "")),
+                "ap": _ap_from_dn(dn),
                 "subnets": [x for x in subnets if x],
                 "endpoints": _cep_endpoints(kids),
                 "provides": [x for x in provides if x],
@@ -121,7 +183,7 @@ def _walk(mo: dict, bag: _Bag, parent_l3out: str | None = None) -> None:
                     {"name": sattrs.get("name", ""), "filters": [f for f in filters if f]}
                 )
             bag.contracts[name] = {
-                "dn": attrs.get("dn", name),
+                "dn": dn or name,
                 "scope": attrs.get("scope", "context"),
                 "subjects": subjects,
             }
@@ -129,12 +191,12 @@ def _walk(mo: dict, bag: _Bag, parent_l3out: str | None = None) -> None:
             bag.filters[name] = [
                 _entry_service(_attrs(c["vzEntry"])) for c in kids if "vzEntry" in c
             ]
-        _walk_children(kids, bag, parent_l3out)
+        _walk_children(kids, bag, parent_l3out, dn)
 
 
-def _walk_children(kids: list[dict], bag: _Bag, parent_l3out: str | None) -> None:
+def _walk_children(kids: list[dict], bag: _Bag, parent_l3out: str | None, dn: str) -> None:
     for child in kids:
-        _walk(child, bag, parent_l3out)
+        _walk(child, bag, parent_l3out, dn)
 
 
 def parse_mo_export(data: Any) -> list[dict]:

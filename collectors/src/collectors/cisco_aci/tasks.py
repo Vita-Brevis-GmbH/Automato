@@ -19,7 +19,7 @@ from collectors.cisco_aci.mo import parse_epgs, parse_mo_export
 from collectors.cisco_aci.normalize import normalize_contract
 from collectors.common import agent as agent_api
 from collectors.common.dto import CollectorResult, NormalizedEpg, Target
-from collectors.common.upload import submit_result
+from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
 
 
@@ -100,8 +100,7 @@ def collect_once(
         result = CollectorResult(status="completed", rules=rules, epgs=epgs)
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(status="failed", message=str(exc))
-    submit_result(run_id, result, via_agent=via_agent)
-    return result
+    return confirmed(result, submit_result(run_id, result, via_agent=via_agent))
 
 
 @app.task(name="collectors.cisco_aci.collect")
