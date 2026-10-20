@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     # der Dockerfile-Stage "agent-package" befuellt.
     agent_package_dir: str = "/workspace/agent-package"
 
+    # Schluessel fuer die Geraete-Zugangsdaten (ADR 0009). Gesetzt (auch als Secret-Referenz
+    # env:/file:/openbao:) hat Vorrang; sonst Schluesseldatei (beim ersten Start erzeugt, liegt
+    # in einem eigenen Volume - getrennt von der Datenbank).
+    credentials_key: str = ""
+    credentials_key_file: str = "/var/lib/automato/credentials.key"
+
     # Audit-Log (E1.4): optionale At-Rest-Verschluesselung des (bereits per Allowlist
     # gefilterten) detail-Payloads. Leer = Klartext (dev/Tests). In Produktion ueber
     # den Secrets-/Vault-Provider (E1.5) setzen, nie im Repo.

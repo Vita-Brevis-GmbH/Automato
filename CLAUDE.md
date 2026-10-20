@@ -343,8 +343,8 @@ gehören zur DB der Umgebung): Generator `deploy/keycloak/make_realm.py` erzeugt
 `realm-automato.json` einen Realm mit eigenem Namen + UI-Adressen (Runbook Abschnitt 13).
 **Externer Lauf per CLI**: `automato collect … --execution external` legt den Lauf ohne
 Celery-Dispatch an (Agent holt ihn per `--poll`) — funktioniert auch im OIDC-Modus ohne Token.
-Agent-Paket: `agent.env.example` mit `AUTOMATO_INTERNAL_API_TOKEN` (Ergebnis-Upload läuft über
-`X-Internal-Token`), TLS-Zeilen auskommentiert (fehlende Zertifikatsdateien verhindern den
+Agent-Paket: `agent.env.example` nur mit Orchestrator-Adresse + `AUTOMATO_AGENT_TOKEN` (seit
+ADR 0009 kein internes Token und keine Geräte-Creds mehr), TLS-Zeilen auskommentiert (fehlende Zertifikatsdateien verhindern den
 Start), `run-agent.ps1 -Check`; Agent spricht `/internal` direkt am Orchestrator (Port 8000),
 nicht über den UI-Proxy.
 **Mandanten-Klärung (GG):** Ein **Mandant = Gruppengesellschaft (GG)** mit **einem oder
@@ -449,3 +449,23 @@ Paket aus dem UI-Download in venv installiert, mit UI-`agent.env` `--poll` → L
 409), `POST /naming-profiles/{id}/dictionary/copy` (Art aus beliebigem Profil als neue Art, auditiert
 `dictionary.copied`); UI: Vorlage-Auswahl beim neuen Profil (Default: Kopie von „default“) und
 „Einträge kopieren aus“ bei neuer Namenskonvention. Tests: orchestrator 119.
+**Geräte zentral beim Mandanten, Zuweisung an Agenten (ADR 0009, Alembic `0016`):** Quellsystem
+trägt `agent_id` (verwaltender Agent; Agent muss zum Mandanten passen oder mandantsübergreifend
+sein, sonst 422), `verify_tls` und verschlüsselte `credentials` (Fernet, `app/credentials.py`;
+Schlüssel `AUTOMATO_CREDENTIALS_KEY` – auch Secret-Referenz – oder erzeugte Datei
+`/var/lib/automato/credentials.key`, 0600, Compose-Volume `orchestrator-data`; fail-closed → 503 /
+Lauf `failed`). Token **nur schreibbar** (`POST/PATCH /systems` `token`, `""` = entfernen), API gibt
+nur `has_credentials` aus, Audit nur `credentials_set`. `collector_run.agent_id` = abholender Agent.
+`next-run` liefert nur Läufe zugewiesener (oder unzugewiesener Alt-)Geräte, `target` mit Token nur
+für den zugewiesenen Agenten; `GET /internal/agent/targets` (für `--check`);
+`GET /internal/collector-runs/{id}/target` (internes Token, nur `inprocess`) für den zentralen
+Worker. Ergebnis-Upload mit `X-Agent-Token` (nur der abholende Agent, sonst 403) oder
+`X-Internal-Token`; Gerät mit Agent → `POST /jobs/collect` erzwingt `external`. Collector:
+`Target`-DTO, `collect_once(run_id, target, via_agent)`, Agent liest **nie** Beispieldaten (ohne
+Creds klarer Abbruch), `--check` prüft alle zugewiesenen Geräte, `run-agent.ps1 -Check` ohne
+`--platform`-Zwang. UI: Quellsysteme-Dialog (Adresse, **Verwaltet von**, API-Token write-only, TLS,
+aktiv), Spalten „Verwaltet von"/„Zugangsdaten"; Agentenliste mit Spalte **Geräte**; Anleitung mit
+Schritt „Geräte zuweisen", `agent.env`-Generator nur noch Orchestrator + Agent-Token;
+„Jetzt einlesen" leitet die Ausführung aus der Zuweisung ab (kein Umschalter). Migration 0016 up/down
+gegen Postgres geprüft; Klick-Durchlauf per Playwright (Agent → Gerät → Lauf → Agent holt Target mit
+Token, `/systems` ohne Token). Tests: orchestrator 126, collectors 33, sot-gateway 6.

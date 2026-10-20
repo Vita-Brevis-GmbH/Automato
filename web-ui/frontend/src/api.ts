@@ -66,6 +66,9 @@ export interface System {
   platform: string; // fortigate | cisco_aci
   enabled: boolean;
   base_url: string;
+  agent_id: number | null; // verwaltender Collector-Agent (null = zentraler Worker)
+  verify_tls: boolean;
+  has_credentials: boolean; // Token selbst wird nie ausgegeben (nur schreibbar)
   rule_count: number;
   nat_count: number;
 }
@@ -99,12 +102,20 @@ export interface AuthConfig {
   admin_console_url: string; // Keycloak-Benutzerverwaltung (leer = unbekannt)
 }
 
+export interface AgentSystem {
+  id: number;
+  name: string;
+  tenant_id: number | null;
+  has_credentials: boolean;
+}
+
 export interface Agent {
   id: number;
   name: string;
   tenant_id: number | null;
   enabled: boolean;
   last_seen: string | null;
+  systems: AgentSystem[]; // zugewiesene Geräte (Quellsysteme)
 }
 
 export interface AgentCreated extends Agent {
@@ -324,15 +335,28 @@ export const deleteTenant = (tenantId: number, confirmName: string) =>
 // Quellsysteme
 export const fetchSystems = (tenantId?: number | null) =>
   getJSON<System[]>(`/api/systems${qs({ tenant_id: tenantId })}`);
+// `token` ist nur schreibbar: wird verschlüsselt gespeichert und nur dem zugewiesenen
+// Agenten pro Lauf übergeben (ADR 0009). Bei PATCH: weglassen = unverändert, "" = entfernen.
 export const createSystem = (body: {
   tenant_id: number;
   name: string;
   platform: string;
   base_url?: string;
+  agent_id?: number | null;
+  verify_tls?: boolean;
+  token?: string;
 }) => sendJSON<System>("/api/systems", "POST", body);
 export const patchSystem = (
   id: number,
-  body: { tenant_id?: number; name?: string; base_url?: string; enabled?: boolean },
+  body: {
+    tenant_id?: number;
+    name?: string;
+    base_url?: string;
+    enabled?: boolean;
+    agent_id?: number | null;
+    verify_tls?: boolean;
+    token?: string;
+  },
 ) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");
 
@@ -344,7 +368,8 @@ export const startCollect = (body: {
   tenant_id: number;
   source_system_id: number;
   execution: "inprocess" | "external";
-}) => sendJSON<{ run_id: string; status: string }>("/api/jobs/collect", "POST", body);
+}) =>
+  sendJSON<{ run_id: string; status: string; execution: string }>("/api/jobs/collect", "POST", body);
 
 // Agenten
 export const fetchAgents = () => getJSON<Agent[]>("/api/agents");

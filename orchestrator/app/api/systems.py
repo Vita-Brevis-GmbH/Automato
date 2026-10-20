@@ -2,8 +2,11 @@
 
 Ein Quellsystem ist ein Zielsystem, aus dem gelesen wird (z. B. eine FortiGate), und gehört
 zu genau einem Mandanten (Name je Mandant eindeutig). Lesen = `viewer` (mandantsgescoped),
-Schreiben = `admin`. Die Zugangsdaten liegen nie hier, sondern beim Collector/Agenten
-(ADR 0007/0008); `base_url` dient der Doku/Zuordnung.
+Schreiben = `admin`.
+
+Geräte-Zugangsdaten (ADR 0009): `base_url` + API-Token werden hier erfasst und dem
+zugewiesenen Collector-Agenten (`agent_id`) beim Abholen eines Laufs übergeben. Das Token ist
+**nur schreibbar**: gespeichert wird es verschlüsselt, ausgegeben wird nur `has_credentials`.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,11 +14,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, credentials
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import NatRule, Rule, SourceSystem, Tenant
+from app.models import Agent, NatRule, Rule, SourceSystem, Tenant
 from app.models.source_system import Platform
 from app.store import deletion
 
@@ -29,6 +32,9 @@ class SystemOut(BaseModel):
     platform: str
     enabled: bool
     base_url: str = ""
+    agent_id: int | None = None  # verwaltender Collector-Agent (None = zentraler Worker)
+    verify_tls: bool = True
+    has_credentials: bool = False  # Token selbst wird nie ausgegeben
     rule_count: int = 0
     nat_count: int = 0
 
@@ -38,6 +44,9 @@ class SystemIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     platform: Platform
     base_url: str = Field(default="", max_length=500)
+    agent_id: int | None = None
+    verify_tls: bool = True
+    token: str | None = Field(default=None, max_length=4096)  # nur schreibbar
 
 
 class SystemPatch(BaseModel):
@@ -45,6 +54,9 @@ class SystemPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     base_url: str | None = Field(default=None, max_length=500)
     enabled: bool | None = None
+    agent_id: int | None = None  # null = Zuweisung aufheben
+    verify_tls: bool | None = None
+    token: str | None = Field(default=None, max_length=4096)  # "" = Zugangsdaten entfernen
 
 
 class SystemDeleted(BaseModel):
@@ -69,6 +81,9 @@ def _out(s: SourceSystem, rules: dict[int, int], nat: dict[int, int]) -> SystemO
         platform=s.platform.value,
         enabled=s.enabled,
         base_url=s.base_url,
+        agent_id=s.agent_id,
+        verify_tls=s.verify_tls,
+        has_credentials=bool(s.credentials),
         rule_count=rules.get(s.id, 0),
         nat_count=nat.get(s.id, 0),
     )
@@ -88,6 +103,29 @@ def _get_scoped(session: Session, principal: Principal, system_id: int) -> Sourc
     elif not principal.is_admin:
         raise HTTPException(status_code=404, detail="source system not found")
     return src
+
+
+def _check_agent(session: Session, agent_id: int | None, tenant_id: int | None) -> None:
+    """Agent muss existieren und zum Mandanten des Geräts passen (oder mandantsübergreifend)."""
+    if agent_id is None:
+        return
+    agent = session.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=422, detail="agent not found")
+    if agent.tenant_id is not None and agent.tenant_id != tenant_id:
+        raise HTTPException(status_code=422, detail="agent belongs to another tenant")
+
+
+def _set_token(src: SourceSystem, token: str) -> None:
+    """Token verschlüsselt ablegen ("" entfernt die Zugangsdaten)."""
+    token = token.strip()
+    if not token:
+        src.credentials = None
+        return
+    try:
+        src.credentials = credentials.encrypt({"token": token})
+    except credentials.CredentialsUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _name_taken(session: Session, tenant_id: int | None, name: str, exclude: int | None) -> bool:
@@ -131,9 +169,17 @@ def create_system(
         raise HTTPException(status_code=422, detail="name must not be empty")
     if _name_taken(session, body.tenant_id, name, None):
         raise HTTPException(status_code=409, detail="source system already exists for tenant")
+    _check_agent(session, body.agent_id, body.tenant_id)
     src = SourceSystem(
-        tenant_id=body.tenant_id, name=name, platform=body.platform, base_url=body.base_url.strip()
+        tenant_id=body.tenant_id,
+        name=name,
+        platform=body.platform,
+        base_url=body.base_url.strip(),
+        agent_id=body.agent_id,
+        verify_tls=body.verify_tls,
     )
+    if body.token:
+        _set_token(src, body.token)
     session.add(src)
     session.flush()
     audit.record(
@@ -146,6 +192,8 @@ def create_system(
             "tenant_id": src.tenant_id,
             "name": src.name,
             "platform": src.platform.value,
+            "agent_id": src.agent_id,
+            "credentials_set": bool(src.credentials),
         },
     )
     return _out(src, {}, {})
@@ -186,12 +234,20 @@ def update_system(
         session, tenant_id, name, src.id
     ):
         raise HTTPException(status_code=409, detail="source system already exists for tenant")
+    agent_id = data["agent_id"] if "agent_id" in data else src.agent_id
+    _check_agent(session, agent_id, tenant_id)
     src.tenant_id = tenant_id
     src.name = name
+    src.agent_id = agent_id
     if data.get("base_url") is not None:
         src.base_url = data["base_url"].strip()
     if data.get("enabled") is not None:
         src.enabled = data["enabled"]
+    if data.get("verify_tls") is not None:
+        src.verify_tls = data["verify_tls"]
+    credentials_changed = data.get("token") is not None
+    if credentials_changed:
+        _set_token(src, data["token"])
     session.flush()
     audit.record(
         session,
@@ -203,6 +259,8 @@ def update_system(
             "tenant_id": src.tenant_id,
             "name": src.name,
             "enabled": src.enabled,
+            "agent_id": src.agent_id,
+            "credentials_set": bool(src.credentials) if credentials_changed else None,
         },
     )
     return _single_out(session, src)

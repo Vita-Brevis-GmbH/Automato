@@ -2,12 +2,16 @@
 
 Ein Quellsystem gehoert zu genau einem Mandanten (Name je Mandant eindeutig). `tenant_id`
 ist nur fuer Altbestaende vor Migration 0015 leer ("nicht zugeordnet").
+
+Geraete-Zugangsdaten (ADR 0009): `agent_id` = Collector-Agent, der das Geraet verwaltet;
+`credentials` = verschluesselte Zugangsdaten (app.credentials, nie im Klartext gespeichert
+oder ausgegeben) - der Agent bekommt sie beim Abholen eines Laufs.
 """
 
 import enum
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -30,6 +34,9 @@ class SourceSystem(Base):
     platform: Mapped[Platform] = mapped_column(Enum(Platform, native_enum=False, length=32))
     base_url: Mapped[str] = mapped_column(String(500))
     enabled: Mapped[bool] = mapped_column(default=True)
+    agent_id: Mapped[int | None] = mapped_column(ForeignKey("agent.id"), nullable=True, index=True)
+    credentials: Mapped[str | None] = mapped_column(Text, nullable=True)  # Fernet-Token
+    verify_tls: Mapped[bool] = mapped_column(default=True, server_default=true())
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

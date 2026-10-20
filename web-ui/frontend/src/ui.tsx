@@ -1,5 +1,5 @@
 // Gemeinsame Darstellungs-Bausteine: Icons, Chips/Badges, Seitenkopf, Fehler, Modal.
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { describeError } from "./api";
 
 const ICONS: Record<string, ReactNode> = {
@@ -168,6 +168,40 @@ export function ErrorBox({
           ✕
         </button>
       )}
+    </div>
+  );
+}
+
+// Passwortfeld mit "Zeigen/Verbergen" für Tokens (Wert nie vorbefüllt vom Server).
+export function SecretInput({
+  id,
+  value,
+  onChange,
+  placeholder,
+  disabled,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div style={{ display: "flex", gap: 6 }}>
+      <input
+        id={id}
+        className="input mono"
+        type={show ? "text" : "password"}
+        value={value}
+        autoComplete="off"
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <button className="btn btn-ghost btn-sm" type="button" onClick={() => setShow((s) => !s)}>
+        {show ? "Verbergen" : "Zeigen"}
+      </button>
     </div>
   );
 }

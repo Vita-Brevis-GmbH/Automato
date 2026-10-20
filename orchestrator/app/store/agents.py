@@ -3,16 +3,20 @@
 Agent-Token werden nur als SHA-256-Hash gehalten; das Klartext-Token wird einmalig bei
 der Registrierung zurueckgegeben. `claim_next_run` holt den aeltesten offenen externen
 Lauf im Scope des Agenten und schaltet ihn auf RUNNING (einmalige Zuteilung).
+
+Geraete-Zuweisung (ADR 0009): Laeufe eines Geraets mit zugewiesenem Agenten kann nur dieser
+abholen; `target_for` liefert das Ziel - die Zugangsdaten nur an den zugewiesenen Agenten.
 """
 
 import hashlib
 import secrets
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.models import Agent, CollectorRun, RunStatus
+from app import credentials
+from app.models import Agent, CollectorRun, RunStatus, SourceSystem
 
 
 def hash_token(token: str) -> str:
@@ -56,7 +60,10 @@ def claim_next_run(
     """Aeltesten offenen externen Lauf im Scope des Agenten holen und auf RUNNING setzen."""
     stmt = (
         select(CollectorRun)
+        .outerjoin(SourceSystem, SourceSystem.id == CollectorRun.source_system_id)
         .where(CollectorRun.status == RunStatus.QUEUED, CollectorRun.execution == "external")
+        # Geraet mit zugewiesenem Agenten: nur dieser; ohne Zuweisung: jeder Agent im Scope
+        .where(or_(SourceSystem.agent_id.is_(None), SourceSystem.agent_id == agent.id))
         .order_by(CollectorRun.queued_at, CollectorRun.id)
     )
     if agent.tenant_id is not None:
@@ -67,5 +74,27 @@ def claim_next_run(
     if run is None:
         return None
     run.status = RunStatus.RUNNING
+    run.agent_id = agent.id
     session.flush()
     return run
+
+
+def target_for(src: SourceSystem, agent_id: int | None) -> dict:
+    """Ziel eines Laufs; das Token nur fuer den zugewiesenen Agenten (bzw. den zentralen
+    Worker, `agent_id=None` bei einem Geraet ohne Agent). Wirft CredentialsUnavailable."""
+    token = None
+    if src.credentials and src.agent_id == agent_id:
+        token = credentials.decrypt(src.credentials).get("token")
+    return {
+        "source_system_id": src.id,
+        "name": src.name,
+        "platform": src.platform.value,
+        "base_url": src.base_url,
+        "verify_tls": src.verify_tls,
+        "token": token,
+    }
+
+
+def assigned_systems(session: Session, agent: Agent) -> list[SourceSystem]:
+    stmt = select(SourceSystem).where(SourceSystem.agent_id == agent.id).order_by(SourceSystem.name)
+    return list(session.scalars(stmt))

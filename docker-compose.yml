@@ -62,6 +62,12 @@ services:
       AUTOMATO_OIDC_WEB_CLIENT_ID: ${AUTOMATO_OIDC_WEB_CLIENT_ID:-automato-web}
       AUTOMATO_OIDC_ADMIN_CONSOLE_URL: ${AUTOMATO_OIDC_ADMIN_CONSOLE_URL:-}
       AUTOMATO_OIDC_CLOCK_SKEW_SECONDS: ${AUTOMATO_OIDC_CLOCK_SKEW_SECONDS:-60}
+      # Schluessel der Geraete-Zugangsdaten (ADR 0009). Leer = Schluesseldatei im Volume
+      # orchestrator-data (beim ersten Start erzeugt, mitsichern!); produktiv besser als
+      # Secret-Referenz, z. B. openbao:automato/credentials#key (deploy/secrets/README.md).
+      AUTOMATO_CREDENTIALS_KEY: ${AUTOMATO_CREDENTIALS_KEY:-}
+    volumes:
+      - orchestrator-data:/var/lib/automato
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -84,7 +90,8 @@ services:
       AUTOMATO_REDIS_URL: redis://redis:6379/0
       AUTOMATO_ORCHESTRATOR_URL: http://orchestrator:8000
       AUTOMATO_INTERNAL_API_TOKEN: ${AUTOMATO_INTERNAL_API_TOKEN:-dev-only-token}
-      # FortiGate-Zugang (read-only!). Leer -> Collector liest Beispieldaten.
+      # Zentraler Worker: Zugangsdaten kommen vom Quellsystem (Web-UI, ADR 0009). Die
+      # FORTIGATE-Variablen sind nur Rueckfall; leer + ohne Quellsystem-Token -> Beispieldaten.
       # Die FortiGate-VM ist per LAN-IP direkt erreichbar (kein host.docker.internal noetig).
       AUTOMATO_FORTIGATE_URL: ${AUTOMATO_FORTIGATE_URL:-}
       AUTOMATO_FORTIGATE_TOKEN: ${AUTOMATO_FORTIGATE_TOKEN:-}
@@ -151,6 +158,7 @@ services:
 
 volumes:
   postgres-data:
+  orchestrator-data:
   keycloak-data:
   proxy-data:
   proxy-config:

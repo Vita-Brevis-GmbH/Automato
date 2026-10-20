@@ -77,8 +77,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   abgeleitet). Benutzer selbst werden in Keycloak gepflegt (`tenant_ids` = Mandanten-ID).
 - **Mandanten & Standorte (Admin schreibt):** **+ Mandant**, Kürzel, Namensprofil,
   Lese-Audit, Standorte (**+ Standort**, 3-stelliger Code) und die **Quellsysteme des
-  Mandanten** (**+ Quellsystem**, FortiGate/Cisco ACI; keine Zugangsdaten; Name je Mandant
-  eindeutig; Aktivieren/Deaktivieren). **Löschen:** Quellsystem (✕, Rückfrage nennt die mit
+  Mandanten** (**+ Quellsystem** / **Bearbeiten**: FortiGate/Cisco ACI, Adresse, **Verwaltet
+  von** = Collector-Agent oder zentraler Worker, read-only **API-Token** (nur schreibbar,
+  verschlüsselt gespeichert, Anzeige nur „hinterlegt"), TLS-Prüfung, aktiv; Name je Mandant
+  eindeutig; ADR 0009). **Löschen:** Quellsystem (✕, Rückfrage nennt die mit
   gelöschten Regeln/NAT-Einträge) und **Mandant löschen** (nur nach Eintippen des Namens;
   löscht alle Daten des Mandanten inkl. seiner Collector-Agenten; Audit-Log bleibt).
   Altbestände ohne Mandant erscheinen unter „Nicht zugeordnete Quellsysteme“ zum Zuordnen.
@@ -87,9 +89,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   bestehenden Profils, z. B. „default", oder leer), **+ Neue Namenskonvention** (optional die
   Einträge einer bestehenden Konvention – auch aus einem anderen Profil – kopieren),
   Einträge anlegen/bearbeiten/löschen.
-- **Collector-Agenten (nur Admin):** **+ Agent** erzeugt das Token einmalig; Status
-  online/keine Meldung aus dem Heartbeat; Aktivieren/Deaktivieren. **Einrichtung Schritt für
-  Schritt** direkt in der Ansicht: `agent.env`-Generator (bleibt im Browser), Download des
+- **Collector-Agenten (nur Admin):** **+ Agent** erzeugt das Token einmalig; Spalte
+  **Geräte** (zugewiesene Quellsysteme); Status online/keine Meldung aus dem Heartbeat;
+  Aktivieren/Deaktivieren. **Einrichtung Schritt für Schritt** direkt in der Ansicht: Geräte
+  zuweisen, `agent.env`-Generator (nur Orchestrator-Adresse + Agent-Token, bleibt im Browser), Download des
   Agent-Pakets (`GET /agents/package`, ZIP ohne Zugangsdaten), PowerShell-Befehle zum
   Kopieren, Test und erster Lauf, Fehlerbehebung.
 
@@ -105,9 +108,11 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /nat`, `GET /applications[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /tenants/{id}/sites`, `DELETE /tenants/{id}/sites/{sid}` | Standorte |
-| `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant) |
-| `GET /jobs`, `GET /jobs/{id}`, `POST /jobs/collect` | Läufe |
-| `GET/POST /agents`, `PATCH /agents/{id}` | Collector-Agenten |
+| `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `token` nur schreibbar → `has_credentials`) |
+| `GET /jobs`, `GET /jobs/{id}`, `POST /jobs/collect` | Läufe (Gerät mit Agent → immer `external`) |
+| `GET/POST /agents`, `PATCH /agents/{id}`, `GET /agents/package` | Collector-Agenten (inkl. zugewiesener Geräte), Agent-Paket |
+| `GET /internal/agent/next-run`, `…/targets`, `POST …/heartbeat` | Agent-Kanal (`X-Agent-Token`): Lauf + Zugangsdaten nur für zugewiesene Geräte |
+| `POST /internal/collector-runs/{id}/result`, `GET …/{id}/target` | Ergebnis (Agent-Token des abholenden Agenten oder internes Token); Ziel für den zentralen Worker |
 | `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}` | Namensprofile |
 
 ## 5. Sicherheit
@@ -118,6 +123,12 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 - Ausserhalb `AUTOMATO_ENVIRONMENT=dev` verweigert der Orchestrator ohne RBAC den Start,
   solange `AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API` nicht bewusst gesetzt ist (ADR 0005).
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt.
+- **Geräte-Zugangsdaten** (ADR 0009) liegen verschlüsselt in der DB; der Schlüssel kommt aus
+  `AUTOMATO_CREDENTIALS_KEY` (Passphrase oder Secret-Referenz `openbao:`/`file:`) oder aus der
+  beim ersten Start erzeugten Datei `/var/lib/automato/credentials.key` (Volume
+  `orchestrator-data`). **Schlüssel bzw. Volume mitsichern** – geht er verloren, sind die
+  Tokens unlesbar (Läufe brechen mit „Zugangsdaten nicht lesbar“ ab) und müssen im UI neu
+  hinterlegt werden. Ein Agent bekommt nur die Tokens der ihm zugewiesenen Geräte.
 
 ## 6. Fehlerbehebung
 

@@ -31,8 +31,10 @@ COPY --from=agent-package /agent-package /workspace/agent-package
 WORKDIR /workspace/orchestrator
 ENV PATH="/workspace/.venv/bin:$PATH"
 
-# Nicht als root laufen (SECURITY.md)
-RUN useradd --system --uid 1001 automato
+# Nicht als root laufen (SECURITY.md). /var/lib/automato haelt die Schluesseldatei der
+# Geraete-Zugangsdaten (ADR 0009) - eigenes Volume, gehoert dem Dienstbenutzer.
+RUN useradd --system --uid 1001 automato \
+    && mkdir -p /var/lib/automato && chown automato /var/lib/automato && chmod 700 /var/lib/automato
 USER automato
 
 EXPOSE 8000

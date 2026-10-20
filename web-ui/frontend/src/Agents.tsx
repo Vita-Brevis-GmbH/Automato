@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { Agent, AgentCreated, createAgent, fetchAgents, setAgentEnabled, Tenant } from "./api";
 import AgentGuide from "./AgentGuide";
+import type { View } from "./App";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead } from "./ui";
 
-// Agent-Verwaltung (ADR 0008): externe Collector-Agenten anlegen/deaktivieren, Heartbeat
-// (last_seen) sehen. Nur Admin (serverseitig erzwungen).
+// Agent-Verwaltung (ADR 0008/0009): externe Collector-Agenten anlegen/deaktivieren, Heartbeat
+// (last_seen) und zugewiesene Geräte sehen. Geräte + Zugangsdaten werden beim Mandanten
+// (Quellsysteme) erfasst und dort einem Agenten zugewiesen. Nur Admin (serverseitig erzwungen).
 const ONLINE_MS = 15 * 60 * 1000;
 
 function onlineState(a: Agent): [string, string, string] {
@@ -15,7 +17,15 @@ function onlineState(a: Agent): [string, string, string] {
     : ["warn", "y", "keine Meldung"];
 }
 
-export default function Agents({ tenants, tenantId }: { tenants: Tenant[]; tenantId: number | null }) {
+export default function Agents({
+  tenants,
+  tenantId,
+  onGo,
+}: {
+  tenants: Tenant[];
+  tenantId: number | null;
+  onGo: (v: View) => void;
+}) {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [created, setCreated] = useState<AgentCreated | null>(null);
@@ -68,8 +78,9 @@ export default function Agents({ tenants, tenantId }: { tenants: Tenant[]; tenan
           </button>
         }
       >
-        Agenten laufen nahe am Zielsystem im Kundennetz (z. B. Windows) und sprechen nur ausgehend HTTPS mit
-        dem Orchestrator. Zugangsdaten der Zielsysteme bleiben beim Agenten.
+        Agenten laufen nahe an den Geräten im Kundennetz (z. B. Windows) und sprechen nur ausgehend HTTPS mit
+        dem Orchestrator. Welche Geräte ein Agent liest, legst du beim Mandanten unter Quellsysteme fest
+        („Verwaltet von“) – die Zugangsdaten bekommt er von dort pro Lauf.
       </PageHead>
 
       <ErrorBox error={err} onClose={() => setErr(null)} />
@@ -124,6 +135,7 @@ export default function Agents({ tenants, tenantId }: { tenants: Tenant[]; tenan
                 <tr>
                   <th>Name</th>
                   <th>Mandant</th>
+                  <th>Geräte</th>
                   <th>Status</th>
                   <th>Zuletzt gesehen</th>
                   <th></th>
@@ -138,6 +150,22 @@ export default function Agents({ tenants, tenantId }: { tenants: Tenant[]; tenan
                         <b>{a.name}</b>
                       </td>
                       <td>{tenantName(a.tenant_id)}</td>
+                      <td>
+                        {a.systems.length === 0 ? (
+                          <span className="faint">keine zugewiesen</span>
+                        ) : (
+                          a.systems.map((d) => (
+                            <span
+                              key={d.id}
+                              className={`chip ${d.has_credentials ? "" : "warn"}`}
+                              title={d.has_credentials ? "Zugangsdaten hinterlegt" : "keine Zugangsdaten hinterlegt"}
+                            >
+                              {d.name}
+                              {d.has_credentials ? "" : " · ohne Token"}
+                            </span>
+                          ))
+                        )}
+                      </td>
                       <td>
                         <span className={`chip ${cls}`}>
                           <span className={`dot ${dot}`} />
@@ -159,7 +187,12 @@ export default function Agents({ tenants, tenantId }: { tenants: Tenant[]; tenan
         </div>
       </div>
 
-      <AgentGuide agents={agents ?? []} created={created} onNewAgent={() => setNewOpen(true)} />
+      <AgentGuide
+        agents={agents ?? []}
+        created={created}
+        onNewAgent={() => setNewOpen(true)}
+        onGoTenants={() => onGo("tenants")}
+      />
 
       {newOpen && (
         <NewAgentDialog
@@ -249,7 +282,9 @@ function NewAgentDialog({
           ))}
           <option value="">alle Mandanten</option>
         </select>
-        <div className="hint">Der Agent holt nur externe Läufe dieses Mandanten ab.</div>
+        <div className="hint">
+          Der Agent kann Geräte dieses Mandanten verwalten. Zuweisung danach beim Mandanten unter Quellsysteme.
+        </div>
       </div>
       <Note>
         <span>

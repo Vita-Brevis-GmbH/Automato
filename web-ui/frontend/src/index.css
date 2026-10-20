@@ -203,6 +203,7 @@ td .mono, th .mono, td.mono { font-size: 12.5px; }
 .num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
 th.num, td.num { text-align: right; }
 td.actions { text-align: right; white-space: nowrap; }
+td.nowrap { white-space: nowrap; }
 .objs { display: flex; flex-direction: column; gap: 1px; }
 .objs .mono { font-size: 12px; white-space: nowrap; }
 

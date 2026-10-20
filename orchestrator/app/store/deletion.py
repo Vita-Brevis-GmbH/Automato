@@ -114,6 +114,13 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
         session, delete(SourceSystem).where(SourceSystem.tenant_id == tid)
     )
     counts["runs"] = _count(session, delete(CollectorRun).where(CollectorRun.tenant_id == tid))
+    agent_ids = select(Agent.id).where(Agent.tenant_id == tid)
+    session.execute(
+        update(SourceSystem).where(SourceSystem.agent_id.in_(agent_ids)).values(agent_id=None)
+    )
+    session.execute(
+        update(CollectorRun).where(CollectorRun.agent_id.in_(agent_ids)).values(agent_id=None)
+    )
     counts["agents"] = _count(session, delete(Agent).where(Agent.tenant_id == tid))
     session.delete(tenant)
     session.flush()

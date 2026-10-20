@@ -3,13 +3,15 @@
 - Admin (`/agents`): Agenten anlegen/auflisten. Das Klartext-Token wird **einmalig** bei
   der Anlage zurueckgegeben (danach nur noch der Hash gespeichert).
 - Agent (`/internal/agent`, Token-Auth via `X-Agent-Token`): naechsten externen Lauf holen
-  (`next-run`) und Heartbeat. Der Agent liefert das Ergebnis wie gehabt an
-  `/internal/collector-runs/{run_id}/result`.
+  (`next-run`, inkl. Ziel und - fuer zugewiesene Geraete - Zugangsdaten, ADR 0009),
+  zugewiesene Geraete (`targets`, fuer `--check`) und Heartbeat. Das Ergebnis liefert der
+  Agent mit demselben Token an `/internal/collector-runs/{run_id}/result`.
 """
 
 import io
+import logging
 import zipfile
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
@@ -17,13 +19,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, credentials
 from app.auth.deps import require_admin
 from app.auth.principal import Principal
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.models import Agent, Tenant
+from app.models import Agent, RunStatus, SourceSystem, Tenant
 from app.store import agents as store
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 agent_router = APIRouter(prefix="/internal/agent", tags=["agent"])
@@ -34,12 +38,20 @@ class AgentIn(BaseModel):
     tenant_id: int | None = None
 
 
+class AgentSystem(BaseModel):
+    id: int
+    name: str
+    tenant_id: int | None
+    has_credentials: bool
+
+
 class AgentOut(BaseModel):
     id: int
     name: str
     tenant_id: int | None
     enabled: bool
     last_seen: datetime | None
+    systems: list[AgentSystem] = []  # zugewiesene Geraete
 
 
 class AgentCreated(AgentOut):
@@ -50,20 +62,42 @@ class AgentPatch(BaseModel):
     enabled: bool
 
 
+class Target(BaseModel):
+    """Zu lesendes Geraet; `token` nur an den zugewiesenen Agenten (ADR 0009)."""
+
+    source_system_id: int
+    name: str
+    platform: str
+    base_url: str
+    verify_tls: bool
+    token: str | None = None
+
+
 class NextRun(BaseModel):
     run_id: str
     platform: str
     tenant_id: int | None
     source_system_id: int | None
+    target: Target | None = None
 
 
 class NextRunOut(BaseModel):
     run: NextRun | None
 
 
-def _out(a: Agent) -> AgentOut:
+def _out(a: Agent, systems: list | None = None) -> AgentOut:
     return AgentOut(
-        id=a.id, name=a.name, tenant_id=a.tenant_id, enabled=a.enabled, last_seen=a.last_seen
+        id=a.id,
+        name=a.name,
+        tenant_id=a.tenant_id,
+        enabled=a.enabled,
+        last_seen=a.last_seen,
+        systems=[
+            AgentSystem(
+                id=s.id, name=s.name, tenant_id=s.tenant_id, has_credentials=bool(s.credentials)
+            )
+            for s in systems or []
+        ],
     )
 
 
@@ -104,7 +138,7 @@ def download_package(
 
 @router.get("", response_model=list[AgentOut])
 def list_agents(_: Principal = Depends(require_admin), session: Session = Depends(get_session)):
-    return [_out(a) for a in store.list_agents(session)]
+    return [_out(a, store.assigned_systems(session, a)) for a in store.list_agents(session)]
 
 
 @router.post("", response_model=AgentCreated, status_code=201)
@@ -156,7 +190,7 @@ def update_agent(
         subject=str(agent.id),
         detail={"agent_id": agent.id, "enabled": agent.enabled},
     )
-    return _out(agent)
+    return _out(agent, store.assigned_systems(session, agent))
 
 
 def require_agent(x_agent_token: str = Header(), session: Session = Depends(get_session)) -> Agent:
@@ -175,6 +209,18 @@ def next_run(
     run = store.claim_next_run(session, agent, platform)
     if run is None:
         return NextRunOut(run=None)
+    target = None
+    src = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
+    if src is not None:
+        try:
+            target = Target(**store.target_for(src, agent.id))
+        except credentials.CredentialsUnavailable as exc:
+            # Lauf nicht mit falschen/ohne Zugangsdaten starten - sichtbar abbrechen
+            run.status = RunStatus.FAILED
+            run.finished_at = datetime.now(UTC)
+            run.message = f"Zugangsdaten nicht lesbar: {exc}"
+            log.warning("Lauf %s abgebrochen: %s", run.id, exc)
+            return NextRunOut(run=None)
     audit.record(
         session,
         actor=f"agent:{agent.name}",
@@ -188,8 +234,23 @@ def next_run(
             platform=run.platform,
             tenant_id=run.tenant_id,
             source_system_id=run.source_system_id,
+            target=target,
         )
     )
+
+
+@agent_router.get("/targets", response_model=list[Target])
+def targets(agent: Agent = Depends(require_agent), session: Session = Depends(get_session)):
+    """Dem Agenten zugewiesene, aktive Geraete inkl. Zugangsdaten (fuer `--check`)."""
+    out = []
+    for src in store.assigned_systems(session, agent):
+        if not src.enabled:
+            continue
+        try:
+            out.append(Target(**store.target_for(src, agent.id)))
+        except credentials.CredentialsUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return out
 
 
 @agent_router.post("/heartbeat", status_code=204)

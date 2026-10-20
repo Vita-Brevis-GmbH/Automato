@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Agent,
   createSite,
   createSystem,
   createTenant,
@@ -7,6 +8,7 @@ import {
   deleteSite,
   deleteSystem,
   deleteTenant,
+  fetchAgents,
   fetchNamingProfiles,
   fetchSites,
   fetchSystems,
@@ -19,7 +21,7 @@ import {
   Tenant,
 } from "./api";
 import type { Me } from "./auth";
-import { Empty, ErrorBox, Icon, Loading, Modal, Note, PageHead } from "./ui";
+import { Empty, ErrorBox, Icon, Loading, Modal, Note, PageHead, SecretInput } from "./ui";
 
 const PLATFORM_LABEL: Record<string, string> = { fortigate: "FortiGate", cisco_aci: "Cisco ACI" };
 
@@ -618,10 +620,8 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
 
 function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
   const [systems, setSystems] = useState<System[] | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [name, setName] = useState("");
-  const [platform, setPlatform] = useState("fortigate");
-  const [baseUrl, setBaseUrl] = useState("");
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [editing, setEditing] = useState<System | "new" | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [toDelete, setToDelete] = useState<System | null>(null);
 
@@ -635,111 +635,51 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
 
   useEffect(() => {
     load();
+    // Agenten-Liste ist Admin-Sache; Viewer sehen nur "Agent #id"
+    if (me.isAdmin) fetchAgents().then(setAgents).catch(() => setAgents([]));
   }, []);
 
-  const add = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErr(null);
-    try {
-      await createSystem({ tenant_id: tenant.id, name: name.trim(), platform, base_url: baseUrl.trim() });
-      setName("");
-      setBaseUrl("");
-      setAdding(false);
-      await load();
-    } catch (ex) {
-      setErr(ex);
-    }
-  };
-
-  const toggle = async (s: System) => {
-    setErr(null);
-    try {
-      await patchSystem(s.id, { enabled: !s.enabled });
-      await load();
-    } catch (ex) {
-      setErr(ex);
-    }
-  };
+  // Geräte dieses Mandanten dürfen eigene oder mandantsübergreifende Agenten verwalten
+  const usable = agents.filter((a) => a.tenant_id == null || a.tenant_id === tenant.id);
+  const agentName = (id: number) => agents.find((a) => a.id === id)?.name ?? `Agent #${id}`;
 
   return (
     <div className="card">
       <div className="card-head">
         <h2>Quellsysteme von „{tenant.name}“</h2>
         <span className="faint" style={{ fontSize: 12 }}>
-          Firewalls/Controller, aus denen gelesen wird
+          Geräte (Firewalls/Controller), aus denen gelesen wird
         </span>
         <div className="spacer" />
-        {me.isAdmin && !adding && (
-          <button className="btn btn-ghost btn-sm" onClick={() => setAdding(true)}>
+        {me.isAdmin && (
+          <button className="btn btn-ghost btn-sm" onClick={() => setEditing("new")}>
             + Quellsystem
           </button>
         )}
       </div>
-      <div className="card-body">
+      <div className="card-body scroll">
         {err ? (
           <div style={{ padding: "10px 16px 0" }}>
             <ErrorBox error={err} onClose={() => setErr(null)} />
           </div>
         ) : null}
-        {adding && (
-          <form className="inline-form" onSubmit={add}>
-            <div className="field">
-              <label htmlFor="ss-name">Name</label>
-              <input
-                id="ss-name"
-                className="input"
-                value={name}
-                required
-                autoFocus
-                placeholder="z. B. fw-01"
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-            <div className="field narrow" style={{ flexBasis: 150 }}>
-              <label htmlFor="ss-platform">Plattform</label>
-              <select
-                id="ss-platform"
-                className="sel input"
-                value={platform}
-                onChange={(e) => setPlatform(e.target.value)}
-              >
-                <option value="fortigate">FortiGate</option>
-                <option value="cisco_aci">Cisco ACI</option>
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="ss-url">Adresse (nur Doku)</label>
-              <input
-                id="ss-url"
-                className="input mono"
-                value={baseUrl}
-                placeholder="https://fw-01.kunde.lan"
-                onChange={(e) => setBaseUrl(e.target.value)}
-              />
-            </div>
-            <button className="btn btn-primary btn-sm" type="submit">
-              Hinzufügen
-            </button>
-            <button className="btn btn-ghost btn-sm" type="button" onClick={() => setAdding(false)}>
-              Abbrechen
-            </button>
-          </form>
-        )}
         {systems === null ? (
           <Loading />
         ) : systems.length === 0 ? (
           <Empty title="Noch keine Quellsysteme">
-            Ein Quellsystem anlegen, dann unter „Übersicht → Jetzt einlesen“ einen Lauf starten.
+            Gerät mit Adresse und read-only API-Token anlegen und einem Collector-Agenten zuweisen, dann unter
+            „Übersicht → Jetzt einlesen“ einen Lauf starten.
           </Empty>
         ) : (
           <SystemTable
             systems={systems}
+            agentName={agentName}
             actions={
               me.isAdmin
                 ? (s) => (
                     <>
-                      <button className="btn btn-ghost btn-sm" onClick={() => toggle(s)}>
-                        {s.enabled ? "Deaktivieren" : "Aktivieren"}
+                      <button className="btn btn-ghost btn-sm" onClick={() => setEditing(s)}>
+                        Bearbeiten
                       </button>
                       <button className="linkbtn danger" title="Löschen" onClick={() => setToDelete(s)}>
                         ✕
@@ -752,8 +692,22 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
         )}
       </div>
       <div className="card-foot">
-        Zugangsdaten werden hier nie gespeichert – sie liegen beim Collector bzw. Agenten (ADR 0007/0008).
+        <Icon name="lock" size={12} /> API-Tokens werden verschlüsselt im Orchestrator gespeichert, nie wieder
+        angezeigt und nur dem zugewiesenen Agenten für dessen Läufe übergeben (ADR 0009).
       </div>
+      {editing && (
+        <SystemDialog
+          tenant={tenant}
+          system={editing === "new" ? null : editing}
+          agents={usable}
+          onClose={() => setEditing(null)}
+          onSaved={async () => {
+            setEditing(null);
+            await load();
+            if (me.isAdmin) fetchAgents().then(setAgents).catch(() => undefined);
+          }}
+        />
+      )}
       {toDelete && (
         <DeleteSystemDialog
           system={toDelete}
@@ -768,12 +722,200 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
   );
 }
 
+// Gerät anlegen/bearbeiten: Adresse, verwaltender Agent, read-only API-Token (nur schreibbar).
+function SystemDialog({
+  tenant,
+  system,
+  agents,
+  onClose,
+  onSaved,
+}: {
+  tenant: Tenant;
+  system: System | null; // null = neu
+  agents: Agent[]; // für diesen Mandanten zulässige Agenten
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const own = agents.find((a) => a.tenant_id === tenant.id);
+  const [name, setName] = useState(system?.name ?? "");
+  const [platform, setPlatform] = useState(system?.platform ?? "fortigate");
+  const [baseUrl, setBaseUrl] = useState(system?.base_url ?? "");
+  const [agentId, setAgentId] = useState<number | null>(system ? system.agent_id : (own?.id ?? null));
+  const [verifyTls, setVerifyTls] = useState(system?.verify_tls ?? true);
+  const [enabled, setEnabled] = useState(system?.enabled ?? true);
+  const [token, setToken] = useState("");
+  const [clearToken, setClearToken] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+
+  const hasToken = system?.has_credentials ?? false;
+  const usesToken = platform === "fortigate";
+  // Zuweisung bleibt sichtbar, auch wenn der Agent nicht (mehr) in der Liste steht
+  const options =
+    agentId != null && !agents.some((a) => a.id === agentId)
+      ? [...agents, { id: agentId, name: `Agent #${agentId}`, tenant_id: null, enabled: true } as Agent]
+      : agents;
+  const selected = options.find((a) => a.id === agentId);
+
+  const submit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!name.trim()) return;
+    setBusy(true);
+    setErr(null);
+    const common = { name: name.trim(), base_url: baseUrl.trim(), agent_id: agentId, verify_tls: verifyTls };
+    try {
+      if (system === null) {
+        await createSystem({
+          tenant_id: tenant.id,
+          platform,
+          ...common,
+          ...(usesToken && token.trim() ? { token: token.trim() } : {}),
+        });
+      } else {
+        const tokenChange = clearToken ? { token: "" } : token.trim() ? { token: token.trim() } : {};
+        await patchSystem(system.id, { ...common, enabled, ...tokenChange });
+      }
+      await onSaved();
+    } catch (ex) {
+      setErr(ex);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={system ? `Quellsystem „${system.name}“` : "Neues Quellsystem"}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>
+            Abbrechen
+          </button>
+          <button className="btn btn-primary" onClick={() => submit()} disabled={busy || !name.trim()}>
+            {busy ? "Speichere…" : system ? "Speichern" : "Anlegen"}
+          </button>
+        </>
+      }
+    >
+      <form onSubmit={submit}>
+        <ErrorBox error={err} />
+        <div className="field">
+          <label htmlFor="ss-name">Name</label>
+          <input
+            id="ss-name"
+            className="input"
+            value={name}
+            autoFocus
+            maxLength={200}
+            placeholder="z. B. fw-01"
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="ss-platform">Plattform</label>
+          <select
+            id="ss-platform"
+            className="sel input"
+            value={platform}
+            disabled={system !== null}
+            onChange={(e) => setPlatform(e.target.value)}
+          >
+            <option value="fortigate">FortiGate</option>
+            <option value="cisco_aci">Cisco ACI</option>
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="ss-url">Adresse</label>
+          <input
+            id="ss-url"
+            className="input mono"
+            value={baseUrl}
+            maxLength={500}
+            placeholder="https://fw-01.kunde.lan"
+            onChange={(e) => setBaseUrl(e.target.value)}
+          />
+          <div className="hint">So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).</div>
+        </div>
+        <div className="field">
+          <label htmlFor="ss-agent">Verwaltet von</label>
+          <select
+            id="ss-agent"
+            className="sel input"
+            value={agentId ?? ""}
+            onChange={(e) => setAgentId(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">kein Agent – zentraler Worker</option>
+            {options.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+                {a.tenant_id == null ? " (alle Mandanten)" : ""}
+                {a.enabled ? "" : " – deaktiviert"}
+              </option>
+            ))}
+          </select>
+          <div className="hint">
+            {agents.length === 0
+              ? "Noch kein Agent für diesen Mandanten – unter „Collector-Agenten“ anlegen."
+              : "Der Agent holt die Läufe dieses Geräts ab und bekommt dafür die Zugangsdaten. Jederzeit einem anderen Agenten zuweisbar."}
+          </div>
+          {selected && !selected.enabled && (
+            <Note warn>Dieser Agent ist deaktiviert – Läufe des Geräts werden nicht abgeholt.</Note>
+          )}
+        </div>
+        {usesToken ? (
+          <div className="field">
+            <label htmlFor="ss-token">API-Token (read-only)</label>
+            <SecretInput
+              id="ss-token"
+              value={token}
+              disabled={clearToken}
+              onChange={setToken}
+              placeholder={hasToken ? "hinterlegt – leer lassen = unverändert" : "REST-API-Token der FortiGate"}
+            />
+            <div className="hint">
+              FortiGate: System → Administratoren → REST API Admin mit Nur-Lese-Profil; Trusted Hosts = Agent-Rechner.
+              Wird verschlüsselt gespeichert und nie wieder angezeigt.
+            </div>
+            {hasToken && (
+              <label className="check" style={{ marginTop: 6 }}>
+                <input type="checkbox" checked={clearToken} onChange={(e) => setClearToken(e.target.checked)} />
+                Hinterlegtes Token entfernen
+              </label>
+            )}
+          </div>
+        ) : (
+          <Note>
+            APIC-Zugangsdaten folgen mit dem APIC-REST-Client; bis dahin liest der Collector den MO-Export.
+          </Note>
+        )}
+        <div className="field">
+          <label className="check">
+            <input type="checkbox" checked={verifyTls} onChange={(e) => setVerifyTls(e.target.checked)} />
+            TLS-Zertifikat des Geräts prüfen (nur im Lab mit selbstsigniertem Zertifikat ausschalten)
+          </label>
+        </div>
+        {system && (
+          <div className="field">
+            <label className="check">
+              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+              Aktiv – inaktive Geräte werden nicht eingelesen und nicht geprüft
+            </label>
+          </div>
+        )}
+        <button type="submit" hidden />
+      </form>
+    </Modal>
+  );
+}
+
 function SystemTable({
   systems,
   actions,
+  agentName = (id) => `Agent #${id}`,
 }: {
   systems: System[];
   actions?: (s: System) => React.ReactNode;
+  agentName?: (id: number) => string;
 }) {
   return (
     <table>
@@ -782,6 +924,8 @@ function SystemTable({
           <th>Name</th>
           <th>Plattform</th>
           <th>Adresse</th>
+          <th>Verwaltet von</th>
+          <th>Zugangsdaten</th>
           <th className="num">Regeln</th>
           <th className="num">NAT</th>
           <th>Status</th>
@@ -791,13 +935,36 @@ function SystemTable({
       <tbody>
         {systems.map((s) => (
           <tr key={s.id}>
-            <td>
+            <td className="nowrap">
               <b>{s.name}</b>
             </td>
             <td>
               <span className="chip">{PLATFORM_LABEL[s.platform] ?? s.platform}</span>
             </td>
-            <td className="mono">{s.base_url || <span className="faint">–</span>}</td>
+            <td className="mono nowrap">{s.base_url || <span className="faint">–</span>}</td>
+            <td className="nowrap">
+              {s.agent_id != null ? (
+                <span className="chip info">
+                  <Icon name="agents" size={12} /> {agentName(s.agent_id)}
+                </span>
+              ) : (
+                <span className="faint">zentraler Worker</span>
+              )}
+            </td>
+            <td className="nowrap">
+              {s.has_credentials ? (
+                <span className="chip ok">
+                  <Icon name="lock" size={12} /> hinterlegt
+                </span>
+              ) : (
+                <span className={`chip ${s.agent_id != null ? "warn" : "na"}`}>fehlen</span>
+              )}
+              {!s.verify_tls && (
+                <span className="chip warn" title="TLS-Zertifikat des Geräts wird nicht geprüft">
+                  TLS aus
+                </span>
+              )}
+            </td>
             <td className="num">{s.rule_count}</td>
             <td className="num">{s.nat_count}</td>
             <td>{s.enabled ? <span className="chip ok">aktiv</span> : <span className="chip na">inaktiv</span>}</td>

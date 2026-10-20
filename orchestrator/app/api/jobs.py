@@ -30,6 +30,8 @@ def start_collect(
             raise HTTPException(status_code=422, detail="source system belongs to another tenant")
         if src.platform.value != payload.platform:
             raise HTTPException(status_code=422, detail="platform does not match source system")
+        if src.agent_id is not None:
+            payload.execution = "external"  # Geraet wird von seinem Agenten gelesen (ADR 0009)
     run = CollectorRun(
         platform=payload.platform,
         tenant_id=tenant_id,
@@ -55,7 +57,7 @@ def start_collect(
     # und liefert via /internal ab (ADR 0008) - hier wird NICHT dispatcht.
     if payload.execution == "inprocess":
         celery_app.dispatch_collect(payload.platform, run.id)
-    return CollectJobResponse(run_id=run.id, status=run.status)
+    return CollectJobResponse(run_id=run.id, status=run.status, execution=run.execution)
 
 
 def _run_out(run: CollectorRun) -> CollectorRunOut:

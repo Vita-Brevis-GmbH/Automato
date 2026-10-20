@@ -1,10 +1,24 @@
-# Externer Collector-Agent (ADR 0008)
+# Externer Collector-Agent (ADR 0008/0009)
 
 Betrieb des Collectors **nahe am Zielsystem** (Kundennetz, oft Windows), wenn die zentrale
 Plattform FortiGate/APIC nicht erreicht. Der Agent spricht nur **ausgehend HTTPS** zum
 Orchestrator; read-only gegenüber dem Zielsystem.
 
-## Ablauf
+## Geräte & Zugangsdaten (ADR 0009)
+
+Geräte werden **nicht am Agenten** konfiguriert, sondern im Web-UI beim Mandanten unter
+**Quellsysteme**: Adresse, read-only API-Token, TLS-Prüfung und **Verwaltet von** (Agent).
+Der Orchestrator speichert das Token verschlüsselt und gibt es **nur dem zugewiesenen
+Agenten** – pro Lauf (`next-run` → `target`) bzw. für `--check` (`/internal/agent/targets`).
+Ein Agent kann beliebig viele Geräte lesen; Umverteilen = im UI einen anderen Agenten wählen.
+Den Ergebnis-Upload signiert der Agent mit seinem **Agent-Token** – das interne Service-Token
+des Orchestrators braucht er nicht. Ohne Zugangsdaten bricht ein Agent den Lauf ab (keine
+Beispieldaten im Kundennetz).
+
+## Ablauf (Alt: RUN_ID out-of-band)
+
+> Normalfall ist das **Pull-Modell** (unten, `--poll`). Der folgende Weg mit `--run-id`
+> bleibt für den zentralen Worker/Tests und nutzt das interne Token.
 
 1. **Lauf anlegen** (zentral, einmal pro Erfassung) — ohne Celery-Dispatch:
 
@@ -27,14 +41,18 @@ Der Agent erfasst (gather → normalize) und liefert das Ergebnis an
 
 ## Erreichbarkeit vorab prüfen
 
-Vor dem ersten echten Lauf im Kundennetz die Verbindung/Authentisierung zum Zielsystem
-testen (read-only, kein Ingest):
+Vor dem ersten echten Lauf im Kundennetz die Verbindung/Authentisierung zu **allen
+zugewiesenen Geräten** testen (read-only, kein Ingest):
 
 ```bash
-automato-collector --check --platform fortigate
-# fortigate check: OK - erreichbar: https://fw.kunde.intern   (Exit 0)
-# fortigate check: FEHLER - ConnectError: ...                 (Exit 2)
+automato-collector --check                 # optional: --platform fortigate
+# fw-01 (fortigate) check: OK - erreichbar: https://fw-01.kunde.intern
+# fw-02 (fortigate) check: FEHLER - HTTPStatusError: 401 ...
+# Exit 0 = alle OK, 2 = mindestens ein Gerät fehlerhaft
 ```
+
+Ohne Agent-Token bzw. ohne zugewiesene Geräte prüft `--check` die lokale Konfiguration
+(`AUTOMATO_FORTIGATE_URL/_TOKEN`).
 
 ## Installation (Windows)
 
@@ -48,10 +66,9 @@ automato-collector --check --platform fortigate
 | Variable | Zweck |
 |---|---|
 | `AUTOMATO_ORCHESTRATOR_URL` | Basis-URL des Orchestrators (intern erreichbar) |
-| `AUTOMATO_INTERNAL_API_TOKEN` | Shared Secret für `/internal` (je Agent/Kunde rotierbar) |
-| `AUTOMATO_AGENT_TOKEN` | Agent-Token fürs Pull-Modell (einmalig bei `POST /agents`) |
-| `AUTOMATO_FORTIGATE_URL` / `_TOKEN` / `_VERIFY_TLS` | FortiGate (read-only) |
-| APIC-Creds (Phase 2) | Cisco APIC (read-only) |
+| `AUTOMATO_AGENT_TOKEN` | Agent-Token fürs Pull-Modell (einmalig bei `POST /agents`): Läufe abholen + Ergebnis abliefern |
+| `AUTOMATO_INTERNAL_API_TOKEN` | nur zentraler Worker / `--run-id`-Modus – **nicht** am Agenten |
+| `AUTOMATO_FORTIGATE_URL` / `_TOKEN` / `_VERIFY_TLS` | nur Rückfall; Normalfall: am Quellsystem im Web-UI (ADR 0009) |
 | `AUTOMATO_ORCHESTRATOR_CA_BUNDLE` | CA-Pin für den Orchestrator (TLS-Server) |
 | `AUTOMATO_CLIENT_CERT` / `AUTOMATO_CLIENT_KEY` | mTLS-Client-Zertifikat des Agenten |
 
@@ -72,8 +89,11 @@ curl -X POST https://orchestrator.intern/agents -H "Authorization: Bearer <admin
 AUTOMATO_AGENT_TOKEN=<AGENT_TOKEN> automato-collector --poll
 ```
 
-`--poll` holt den ältesten offenen Lauf mit `execution=external` im Tenant-Scope des
-Agenten (`GET /internal/agent/next-run`) und führt ihn aus; ohne offenen Lauf endet er mit 0.
+`--poll` holt den ältesten offenen Lauf mit `execution=external` eines **diesem Agenten
+zugewiesenen** Geräts im Tenant-Scope (`GET /internal/agent/next-run`, inkl. `target` mit
+Adresse/Token) und führt ihn aus; ohne offenen Lauf endet er mit 0. Läufe von Geräten ohne
+Agent-Zuweisung (Altbestand) kann jeder Agent des Mandanten abholen, bekommt dafür aber
+keine Zugangsdaten.
 
 ## Netz & Sicherheit
 

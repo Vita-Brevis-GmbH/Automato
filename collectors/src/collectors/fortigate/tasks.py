@@ -1,8 +1,10 @@
 """FortiGate-Collector-Task.
 
-Liest die Regeln per FortiOS-REST-API (read-only), sobald `AUTOMATO_FORTIGATE_URL`
-und `AUTOMATO_FORTIGATE_TOKEN` gesetzt sind - sonst Beispieldaten (Lab noch nicht da).
-In beiden Faellen laeuft dieselbe Normalisierung inkl. Adress-/Service-Aufloesung.
+Liest die Regeln per FortiOS-REST-API (read-only). Zugangsdaten in dieser Reihenfolge:
+1. vom Orchestrator fuer das Geraet des Laufs (`Target`, ADR 0009),
+2. lokal `AUTOMATO_FORTIGATE_URL`/`_TOKEN` (Rueckfall, z. B. alte agent.env),
+3. nur zentral/Lab: Beispieldaten. Ein Agent im Kundennetz liest **nie** Beispieldaten -
+   ohne Zugangsdaten schlaegt der Lauf mit klarer Meldung fehl.
 Ergebnis geht per HTTP an die interne Orchestrator-API (kein DB-Zugriff).
 """
 
@@ -10,7 +12,8 @@ import json
 from importlib import resources
 
 from collectors.celery_app import app
-from collectors.common.dto import CollectorResult
+from collectors.common import agent as agent_api
+from collectors.common.dto import CollectorResult, Target
 from collectors.common.upload import submit_result
 from collectors.config import get_settings
 from collectors.fortigate import normalize as norm
@@ -21,16 +24,30 @@ def _sample(name: str) -> list[dict]:
     return json.loads(resources.files("collectors.fortigate").joinpath(name).read_text())
 
 
-def gather() -> dict[str, list]:
-    """FortiGate-Rohdaten (IPv4+IPv6, NAT) - Lab oder Beispieldaten."""
+def _credentials(target: Target | None) -> tuple[str, str, bool] | None:
+    """(URL, Token, verify_tls) - vom Geraet (Orchestrator) vor lokaler Konfiguration."""
+    if target is not None and target.base_url and target.token:
+        return target.base_url, target.token, target.verify_tls
     settings = get_settings()
     if settings.fortigate_url and settings.fortigate_token:
-        client = FortiGateClient(
-            settings.fortigate_url,
-            settings.fortigate_token,
-            verify_tls=settings.fortigate_verify_tls,
-        )
-        return client.gather()
+        return settings.fortigate_url, settings.fortigate_token, settings.fortigate_verify_tls
+    return None
+
+
+def _no_credentials(target: Target | None) -> str:
+    name = f"„{target.name}“" if target is not None and target.name else "das Geraet"
+    return f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen"
+
+
+def gather(target: Target | None = None) -> dict[str, list]:
+    """FortiGate-Rohdaten (IPv4+IPv6, NAT) - echtes Geraet oder (nur zentral) Beispieldaten."""
+    creds = _credentials(target)
+    if creds is not None:
+        url, token, verify = creds
+        return FortiGateClient(url, token, verify_tls=verify).gather()
+    if get_settings().agent_token:
+        # Agent im Kundennetz: nie Beispieldaten in einen echten Mandanten schreiben
+        raise RuntimeError(_no_credentials(target))
     return {
         "policies": _sample("sample_policies.json"),
         "addresses": _sample("sample_addresses.json"),
@@ -43,28 +60,26 @@ def gather() -> dict[str, list]:
     }
 
 
-def check() -> tuple[bool, str]:
+def check(target: Target | None = None) -> tuple[bool, str]:
     """Erreichbarkeit/Auth des Zielsystems pruefen (read-only, kein Ingest)."""
-    settings = get_settings()
-    if not (settings.fortigate_url and settings.fortigate_token):
-        return False, "keine FortiGate-Creds (AUTOMATO_FORTIGATE_URL/_TOKEN)"
+    creds = _credentials(target)
+    if creds is None:
+        return False, _no_credentials(target) if target else "keine FortiGate-Creds"
+    url, token, verify = creds
     try:
-        client = FortiGateClient(
-            settings.fortigate_url,
-            settings.fortigate_token,
-            verify_tls=settings.fortigate_verify_tls,
-        )
-        client.ping()
+        FortiGateClient(url, token, verify_tls=verify).ping()
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, f"{type(exc).__name__}: {exc}"
-    return True, f"erreichbar: {settings.fortigate_url}"
+    return True, f"erreichbar: {url}"
 
 
-def collect_once(run_id: str) -> CollectorResult:
+def collect_once(
+    run_id: str, target: Target | None = None, via_agent: bool = False
+) -> CollectorResult:
     """Eine Erfassung ohne Celery: gather -> normalize -> submit (HTTPS). Fuer den
     Celery-Worker *und* den externen Standalone-Collector (collectors.run)."""
     try:
-        d = gather()
+        d = gather(target)
         rules = norm.normalize(
             d["policies"],
             d["addresses"],
@@ -81,10 +96,11 @@ def collect_once(run_id: str) -> CollectorResult:
         )
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
         result = CollectorResult(status="failed", message=str(exc))
-    submit_result(run_id, result)
+    submit_result(run_id, result, via_agent=via_agent)
     return result
 
 
 @app.task(name="collectors.fortigate.collect")
 def collect(run_id: str) -> None:
-    collect_once(run_id)
+    # Zentraler Worker: Zugangsdaten des Geraets vom Orchestrator (internes Token)
+    collect_once(run_id, agent_api.run_target(run_id))

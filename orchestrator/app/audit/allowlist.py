@@ -43,8 +43,12 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "agents",
         }
     ),
-    "source.created": frozenset({"source_id", "tenant_id", "name", "platform"}),
-    "source.updated": frozenset({"source_id", "tenant_id", "name", "enabled"}),
+    "source.created": frozenset(
+        {"source_id", "tenant_id", "name", "platform", "agent_id", "credentials_set"}
+    ),
+    "source.updated": frozenset(
+        {"source_id", "tenant_id", "name", "enabled", "agent_id", "credentials_set"}
+    ),
     "source.deleted": frozenset(
         {"source_id", "tenant_id", "name", "rules", "nat_rules", "findings"}
     ),

@@ -1,7 +1,9 @@
 # Automato Collector-Agent - Wrapper fuer die Aufgabenplanung (ADR 0008).
 # Laedt agent.env in die Prozess-Umgebung und startet den Collector im Pull-Modus.
 #   .\run-agent.ps1                 -> naechsten offenen externen Lauf holen und ausfuehren
-#   .\run-agent.ps1 -Check          -> nur Erreichbarkeit/Login am Zielsystem pruefen (read-only)
+#   .\run-agent.ps1 -Check          -> alle zugewiesenen Geraete read-only pruefen (Login/Erreichbarkeit)
+# Die Geraete und ihre Zugangsdaten werden im Web-UI beim Quellsystem erfasst und diesem
+# Agenten zugewiesen (ADR 0009); agent.env enthaelt nur noch Orchestrator-Adresse + Agent-Token.
 param(
     [string]$EnvFile = "$PSScriptRoot\agent.env",
     [string]$Platform = "",
@@ -17,14 +19,8 @@ if (Test-Path $EnvFile) {
 }
 
 $exe = Join-Path $PSScriptRoot "venv\Scripts\automato-collector.exe"
-if ($Check) {
-    if (-not $Platform) { $Platform = "fortigate" }
-    $arguments = @("--check", "--platform", $Platform)
-}
-else {
-    $arguments = @("--poll")
-    if ($Platform) { $arguments += @("--platform", $Platform) }
-}
+if ($Check) { $arguments = @("--check") } else { $arguments = @("--poll") }
+if ($Platform) { $arguments += @("--platform", $Platform) }
 
 & $exe @arguments
 exit $LASTEXITCODE

@@ -21,6 +21,7 @@ class CollectJobRequest(BaseModel):
 class CollectJobResponse(BaseModel):
     run_id: str
     status: str
+    execution: str = "inprocess"
 
 
 class CollectorRunOut(BaseModel):

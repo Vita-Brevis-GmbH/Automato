@@ -9,6 +9,22 @@ from sqlalchemy import StaticPool, create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 
+@pytest.fixture(autouse=True)
+def _credentials_key():
+    """Schluessel fuer Geraete-Zugangsdaten (ADR 0009) - sonst wuerde eine Schluesseldatei
+    unter /var/lib/automato angelegt."""
+    from app import credentials
+    from app.config import get_settings
+
+    settings = get_settings()
+    previous = settings.credentials_key
+    settings.credentials_key = "test-only-credentials-key"
+    credentials._fernet.cache_clear()
+    yield
+    settings.credentials_key = previous
+    credentials._fernet.cache_clear()
+
+
 @pytest.fixture
 def session_factory():
     engine = create_engine(

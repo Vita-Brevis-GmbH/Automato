@@ -424,7 +424,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
               />
             )}
             {current === "dict" && <NamingProfiles me={me} tenants={tenants ?? []} />}
-            {current === "agents" && <Agents tenants={tenants ?? []} tenantId={tenantId} />}
+            {current === "agents" && <Agents tenants={tenants ?? []} tenantId={tenantId} onGo={go} />}
           </>
         )}
       </main>

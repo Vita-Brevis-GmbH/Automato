@@ -1,13 +1,13 @@
-import { useState } from "react";
-import { startCollect, System, Tenant } from "./api";
+import { useEffect, useState } from "react";
+import { Agent, fetchAgents, startCollect, System, Tenant } from "./api";
 import type { View } from "./App";
 import { ErrorBox, Modal, Note } from "./ui";
 
 const PLATFORM_LABEL: Record<string, string> = { fortigate: "FortiGate", cisco_aci: "Cisco ACI" };
 
 // "Jetzt einlesen": Collector-Lauf für Mandant + Quellsystem anlegen (operator).
-// zentral = Celery-Worker der Plattform; extern = ein Agent im Kundennetz holt den Lauf
-// per --poll ab (ADR 0008).
+// Die Ausführung ergibt sich aus dem Gerät (ADR 0009): mit zugewiesenem Agenten holt dieser
+// den Lauf per --poll ab (extern), sonst liest der zentrale Celery-Worker (ADR 0008).
 export default function CollectDialog({
   tenants,
   tenantId,
@@ -29,12 +29,19 @@ export default function CollectDialog({
   // Nur aktive Quellsysteme des gewählten Mandanten
   const active = systems.filter((s) => s.enabled && s.tenant_id === tenant);
   const [systemId, setSystemId] = useState<number | "">(active[0]?.id ?? "");
-  const [execution, setExecution] = useState<"inprocess" | "external">("external");
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
-  const [done, setDone] = useState<string | null>(null);
+  const [done, setDone] = useState<{ runId: string; execution: string } | null>(null);
+
+  useEffect(() => {
+    if (isAdmin) fetchAgents().then(setAgents).catch(() => setAgents([]));
+  }, [isAdmin]);
 
   const system = active.find((s) => s.id === systemId);
+  const execution: "inprocess" | "external" = system?.agent_id != null ? "external" : "inprocess";
+  const agent = agents.find((a) => a.id === system?.agent_id);
+  const agentLabel = agent ? `„${agent.name}“` : system?.agent_id != null ? `#${system.agent_id}` : "";
 
   const submit = async () => {
     if (tenant === "" || !system) return;
@@ -47,7 +54,7 @@ export default function CollectDialog({
         source_system_id: system.id,
         execution,
       });
-      setDone(res.run_id);
+      setDone({ runId: res.run_id, execution: res.execution ?? execution });
       onStarted();
     } catch (e) {
       setErr(e);
@@ -68,20 +75,19 @@ export default function CollectDialog({
         }
       >
         <p>
-          Lauf <code>#{done.slice(0, 8)}</code> für <b>{system?.name}</b> wurde angelegt.
+          Lauf <code>#{done.runId.slice(0, 8)}</code> für <b>{system?.name}</b> wurde angelegt.
         </p>
-        {execution === "external" ? (
+        {done.execution === "external" ? (
           <Note>
-            Der Lauf wartet, bis ein Collector-Agent ihn abholt (<code>automato-collector --poll</code>{" "}
-            bzw. die geplante Aufgabe auf dem Windows-Agent). Der Status erscheint unter „Letzte
-            Läufe“.
+            Der Lauf wartet, bis der Agent {agentLabel} ihn abholt (geplante Aufgabe auf dem Agent-Rechner bzw.{" "}
+            <code>run-agent.ps1</code>). Der Status erscheint unter „Letzte Läufe“.
           </Note>
         ) : (
           <Note>Der zentrale Worker erfasst das System jetzt. Der Status aktualisiert sich automatisch.</Note>
         )}
         <details>
           <summary className="muted">Vollständige Lauf-ID</summary>
-          <code>{done}</code>
+          <code>{done.runId}</code>
         </details>
         <p />
       </Modal>
@@ -171,22 +177,35 @@ export default function CollectDialog({
         </select>
       </div>
 
-      <div className="field">
-        <span className="label">Ausführung</span>
-        <div className="seg">
-          <button className={execution === "external" ? "on" : ""} onClick={() => setExecution("external")}>
-            Extern (Agent)
-          </button>
-          <button className={execution === "inprocess" ? "on" : ""} onClick={() => setExecution("inprocess")}>
-            Zentral (Worker)
-          </button>
+      {system && (
+        <div className="field">
+          <span className="label">Ausführung</span>
+          <div>
+            {execution === "external" ? (
+              <span className="chip info">Agent {agentLabel}</span>
+            ) : (
+              <span className="chip na">Zentraler Worker</span>
+            )}
+          </div>
+          <div className="hint">
+            {execution === "external"
+              ? "Der zugewiesene Agent holt den Lauf ab, bekommt die Zugangsdaten des Geräts und liefert das Ergebnis zurück."
+              : "Kein Agent zugewiesen: der zentrale Worker liest direkt (braucht Netzzugang zum Gerät)."}{" "}
+            Ändern: Mandanten &amp; Standorte → Quellsystem → „Verwaltet von“.
+          </div>
+          {system.platform === "fortigate" && !system.has_credentials && (
+            <Note warn>
+              Für „{system.name}“ ist kein API-Token hinterlegt –{" "}
+              {execution === "external"
+                ? "der Agent bricht den Lauf ab."
+                : "der zentrale Worker nutzt dann seine lokale Konfiguration bzw. Beispieldaten."}
+            </Note>
+          )}
+          {agent && !agent.enabled && (
+            <Note warn>Der Agent {agentLabel} ist deaktiviert – der Lauf würde nicht abgeholt.</Note>
+          )}
         </div>
-        <div className="hint">
-          {execution === "external"
-            ? "Für Zielsysteme im Kundennetz: der registrierte Agent holt den Lauf ab und liefert das Ergebnis zurück."
-            : "Der zentrale Worker liest direkt (braucht Netzzugang und Zugangsdaten auf der Plattform; ohne Zugangsdaten Beispieldaten)."}
-        </div>
-      </div>
+      )}
     </Modal>
   );
 }

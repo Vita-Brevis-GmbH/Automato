@@ -31,6 +31,8 @@ class CollectorRun(Base):
     status: Mapped[RunStatus] = mapped_column(
         Enum(RunStatus, native_enum=False, length=16), default=RunStatus.QUEUED
     )
+    # Agent, der den externen Lauf abgeholt hat (nur dieser darf das Ergebnis abliefern)
+    agent_id: Mapped[int | None] = mapped_column(ForeignKey("agent.id"), nullable=True)
     # inprocess (zentraler Worker) | external (externer Agent holt per Pull, ADR 0008)
     execution: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="inprocess", default="inprocess"

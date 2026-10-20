@@ -11,7 +11,7 @@ from importlib import resources
 from collectors.celery_app import app
 from collectors.cisco_aci.mo import parse_epgs, parse_mo_export
 from collectors.cisco_aci.normalize import normalize_contract
-from collectors.common.dto import CollectorResult, NormalizedEpg
+from collectors.common.dto import CollectorResult, NormalizedEpg, Target
 from collectors.common.upload import submit_result
 
 
@@ -27,7 +27,7 @@ def fetch_mo_export() -> dict:
     return json.loads(sample.read_text())
 
 
-def check() -> tuple[bool, str]:
+def check(target: Target | None = None) -> tuple[bool, str]:
     """ACI-Erreichbarkeit: echter APIC-REST-Client folgt; aktuell MO-Export-Beispiel."""
     try:
         fetch_mo_export()
@@ -36,7 +36,9 @@ def check() -> tuple[bool, str]:
     return True, "MO-Export-Beispiel lesbar (echter APIC-Client folgt)"
 
 
-def collect_once(run_id: str) -> CollectorResult:
+def collect_once(
+    run_id: str, target: Target | None = None, via_agent: bool = False
+) -> CollectorResult:
     """Eine Erfassung ohne Celery (Worker *und* externer Standalone-Collector)."""
     try:
         export = fetch_mo_export()
@@ -45,7 +47,7 @@ def collect_once(run_id: str) -> CollectorResult:
         result = CollectorResult(status="completed", rules=rules, epgs=epgs)
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(status="failed", message=str(exc))
-    submit_result(run_id, result)
+    submit_result(run_id, result, via_agent=via_agent)
     return result
 
 

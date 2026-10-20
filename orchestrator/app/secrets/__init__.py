@@ -26,6 +26,7 @@ SECRET_FIELDS: tuple[str, ...] = (
     "infoblox_username",
     "infoblox_password",
     "audit_encryption_key",
+    "credentials_key",
 )
 
 _SCHEMES = frozenset({"env", "file", "openbao", "literal"})

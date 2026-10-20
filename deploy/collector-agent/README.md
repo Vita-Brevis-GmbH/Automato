@@ -1,8 +1,15 @@
-# Collector-Agent für Windows (ADR 0008)
+# Collector-Agent für Windows (ADR 0008/0009)
 
 Rollout des externen Collectors als geplante Aufgabe auf einer Windows-Station im
 Kundennetz. Der Agent holt Läufe per Pull und spricht nur **ausgehend HTTPS** zum
 Orchestrator (Details/Netz/Sicherheit: `collectors/EXTERNAL.md`).
+
+**Geräte werden nicht am Agenten erfasst** (ADR 0009): FortiGate & Co. legt man im Web-UI
+unter **Mandanten & Standorte → Quellsysteme** an (Adresse, read-only API-Token, TLS-Prüfung)
+und weist sie dort einem Agenten zu. Der Orchestrator speichert die Zugangsdaten
+verschlüsselt und gibt sie pro Lauf **nur dem zugewiesenen Agenten**. Die `agent.env`
+enthält deshalb nur Orchestrator-Adresse + Agent-Token (+ optional TLS). Ein Gerät lässt
+sich jederzeit einem anderen Agenten zuweisen, ohne an der Station etwas zu ändern.
 
 ## Überblick
 
@@ -15,7 +22,8 @@ Build-Host (Python)        Windows-Station (Kundennetz)
 ## Schnellweg: Paket aus dem Web-UI (empfohlen)
 
 Im Web-UI unter **Collector-Agenten** steht die Einrichtung Schritt für Schritt:
-`agent.env` direkt im Browser erzeugen (Token des neuen Agenten wird übernommen) und das
+Geräte zuweisen, `agent.env` direkt im Browser erzeugen (Token des neuen Agenten wird
+übernommen) und das
 **Agent-Paket** (ZIP: collectors-Wheel + Skripte, ohne Zugangsdaten) herunterladen. Das
 Orchestrator-Image baut das Paket mit (Dockerfile-Stage `agent-package`). Auf der Station:
 
@@ -47,7 +55,7 @@ Wheel + diesen Ordner (`deploy/collector-agent/`) auf die Station kopieren, dann
 
 ```powershell
 .\install.ps1 -Wheel .\collectors-0.1.0-py3-none-any.whl -IntervalMinutes 15   # -Wheel optional
-# danach C:\Automato\collector\agent.env mit echten Werten fuellen (Token, Ziel-Creds, TLS)
+# danach C:\Automato\collector\agent.env mit echten Werten fuellen (Orchestrator, Agent-Token, TLS)
 ```
 
 `install.ps1` legt ein venv an, installiert das Wheel (bringt `automato-collector` mit),
@@ -57,8 +65,13 @@ Agent** (SYSTEM, alle N Minuten → `automato-collector --poll`).
 ## 3. Verbindung prüfen
 
 ```powershell
-& 'C:\Automato\collector\venv\Scripts\automato-collector.exe' --check --platform fortigate
+powershell -ExecutionPolicy Bypass -File C:\Automato\collector\run-agent.ps1 -Check
 ```
+
+Prüft read-only **alle diesem Agenten zugewiesenen Geräte** (eine Zeile je Gerät, Exit 0 =
+alle OK, 2 = mindestens eines fehlerhaft). Ohne zugewiesene Geräte erscheint ein Hinweis.
+Alte `agent.env` mit `AUTOMATO_FORTIGATE_URL/_TOKEN` funktionieren als Rückfall weiter,
+die Angaben am Quellsystem haben aber Vorrang.
 
 ## Ohne Python auf der Station (optional)
 
@@ -77,8 +90,9 @@ Die `dist\automato-collector.exe` ersetzt dann den venv-Aufruf in `run-agent.ps1
 |---|---|
 | `install.ps1` | venv + Wheel installieren, Scheduled Task registrieren |
 | `run-agent.ps1` | `agent.env` laden, `automato-collector --poll` starten |
-| `agent.env.example` | Vorlage für die Umgebung (Token, Ziel-Creds, TLS) |
+| `agent.env.example` | Vorlage für die Umgebung (Orchestrator, Agent-Token, TLS) |
 | `agent_entry.py` | PyInstaller-Entry für eine Python-freie `.exe` |
 
-**Secrets** gehören in `agent.env` (nicht committen) bzw. über den Secrets-Provider
-(ADR 0007, `env:`/`file:`/`openbao:`). Agent-Token/Client-Zertifikate je Agent rotierbar.
+**Secrets:** Auf der Station liegt nur noch das Agent-Token (+ optional Client-Zertifikat)
+in `agent.env` (nicht committen); rotierbar je Agent. Die Geräte-Tokens liegen verschlüsselt
+im Orchestrator (ADR 0009) und kommen nur pro Lauf über die TLS-Verbindung zum Agenten.

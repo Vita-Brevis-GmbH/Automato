@@ -74,3 +74,18 @@ class CollectorResult(BaseModel):
     objects: list[NormalizedObject] = Field(default_factory=list)
     epgs: list[NormalizedEpg] = Field(default_factory=list)
     message: str | None = None
+
+
+class Target(BaseModel):
+    """Zu lesendes Geraet inkl. Zugangsdaten vom Orchestrator (ADR 0009).
+
+    Der zugewiesene Agent bekommt es beim Abholen eines Laufs; `token` fehlt, wenn am
+    Geraet keine Zugangsdaten hinterlegt sind (dann gilt die lokale Konfiguration).
+    """
+
+    source_system_id: int | None = None
+    name: str = ""
+    platform: str = "fortigate"
+    base_url: str = ""
+    verify_tls: bool = True
+    token: str | None = None
