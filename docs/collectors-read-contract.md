@@ -59,7 +59,7 @@ APIC-Benutzer aus dem Quellsystem, ADR 0009) → `GET /api/class/fvTenant.json` 
 |---|---|---|
 | `fvTenant` | `name` (`TE_…`), `descr` | Mandant (Gruppengesellschaft) |
 | `fvCtx` | `name` (`VRF_…`) | VRF |
-| `fvBD` | `name` (`BD_…`); children `fvRsCtx.tnFvCtxName`→VRF, `fvSubnet.ip` (**dual-stack**), `fvRsBDToOut.tnL3extOutName`→**L3O** | `zone` |
+| `fvBD` | `name` (`BD_…`); children `fvRsCtx.tnFvCtxName`→VRF, `fvSubnet.ip` (**dual-stack**), `fvRsBDToOut.tnL3extOutName` (Subnetze werden über diesen L3Out nach aussen bekannt gegeben – **keine** Zone) | `epg_subnet` (origin `bd`) |
 | `fvAp` | `name` (`AP_###`) | `application` (Projekt-Klammer) |
 | `fvAEPg` | `name` (`EG_…`), `prefGrMemb`; children `fvRsBd.tnFvBDName`→BD, `fvRsProv.tnVzBrCPName`/`fvRsCons.tnVzBrCPName`→Contracts, `fvRsDomAtt.tDn`→Domäne, `fvRsPathAtt`→Static Paths, `fvSubnet` | `epg` (+ `epg_subnet`); ein Server = genau eine EPG |
 | `vzBrCP` | `name` (`CT_…`), **`scope`** (`global`\|`tenant`\|`context`\|`application-profile`); children `vzSubj` (`SJ_…`) → `vzRsSubjFiltAtt.tnVzFilterName`→Filter | `rule` (ACI-Contract); **`scope` steuert Applikations-Doku-Kategorie** (application-profile→innerhalb AP; context/tenant→innerhalb Tenant; global→andere Tenants) |
@@ -76,8 +76,10 @@ Ports zu Policy-Gruppen/PC/vPC), `l1PhysIf` (Port-Status/Beschreibung) und `lldp
 
 **ACI-Regel-Rekonstruktion:** eine EPG↔EPG-Verbindung ergibt sich aus Provider
 (`fvRsProv`) + Consumer (`fvRsCons`) desselben `vzBrCP`; die Ports kommen aus den
-`vzFilter`/`vzEntry` der `vzSubj`. BD→L3Out (`fvRsBDToOut`) ordnet den Verkehr den
-L3Outs zu (Firewall-Richtungs-Kategorien).
+`vzFilter`/`vzEntry` der `vzSubj`. Eine **Zone (L3Out)** hat eine Contract-Seite nur, wenn
+sie eine externe EPG (`l3extInstP`) ist. BD→L3Out (`fvRsBDToOut`) bedeutet lediglich, dass
+die Subnetze der BD nach aussen bekannt gegeben werden; Verkehr zwischen EPGs läuft nicht
+über den L3Out (bis 0.4.0 fälschlich als Zone geführt).
 
 **Identität und Auflösung (seit 0.4.0):** Contracts, EPGs, BDs und Filter werden über die
 **DN** geführt – dieselben Namen gibt es in vielen ACI-Tenants. Namensverweise
@@ -108,4 +110,4 @@ das Ergebnis mit passender Anzahl macht ihn zum aktuellen Stand der Quelle.
 - FortiGate-Collector: `address6`/`addrgrp6` lesen, UTM-Refs + `ippool` + `color`
   (numerisch, optional) + externer VIP-DNS aufnehmen (Phase 1.5).
 - ACI-Collector (Phase 2/Model 1): obiger MO-Subtree, Contract-`scope`→Kategorie,
-  `fvRsBDToOut`→L3O, `epg_subnet`/`epg_endpoint` (akkumulierend).
+  externe EPG→L3O (Zone), `epg_subnet`/`epg_endpoint` (akkumulierend).

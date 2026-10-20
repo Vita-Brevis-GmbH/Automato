@@ -117,3 +117,22 @@ def test_app_doku_gleichnamige_epgs_mehrerer_aci_tenants(client):
     rows = {t["index"]: t["rows"] for t in doc["tables"]}
     # Gegenstelle in einem anderen ACI-Tenant -> Tabelle 9, mit Tenant gekennzeichnet
     assert [r["Target Systems"] for r in rows[9]] == ["TE_b/EG_app"]
+
+
+def test_app_doku_externe_gegenstelle_nach_l3out(client):
+    """EPG mit Consumer hinter L3O_inet -> „Zugriff aus dem Internet“ (2), nicht 7/8/9."""
+    tid = _tenant(client)
+    apic = _system(client, tid, name="apic", platform="cisco_aci", base_url="https://apic")
+    result = {
+        "status": "completed",
+        "epgs": [e for e in ACI_RESULT["epgs"] if e["name"] != "EG_app"],
+        "rules": [{**ACI_RESULT["rules"][0], "sources": [f"epg:{EXT}"]}],
+    }
+    body = {"platform": "cisco_aci", "tenant_id": tid, "source_system_id": apic["id"]}
+    run_id = client.post("/jobs/collect", json=body).json()["run_id"]
+    client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
+
+    doc = client.get("/appdoc/systems/EG_web", params={"tenant_id": tid}).json()
+    rows = {t["index"]: t["rows"] for t in doc["tables"]}
+    assert [r["Target Systems"] for r in rows[2]] == ["L3O_inet/EN_inet"]
+    assert not any(rows[i] for i in (7, 8, 9))

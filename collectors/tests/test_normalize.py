@@ -187,8 +187,8 @@ def test_aci_mo_export_wird_geparst_und_normalisiert():
     assert c["name"] == "CT_web"
     assert c["consumer_epgs"] == ["EG_web"]
     assert c["provider_epgs"] == ["EG_db"]
-    assert c["src_zone"] == "L3O_inet"  # EG_web -> BD_app -> L3O_inet
-    assert c["dst_zone"] == "BD_db"  # EG_db -> BD_db (ohne L3Out) -> BD-Name
+    # EPG-zu-EPG: keine L3Out-Zone, auch wenn BD_app an L3O_inet gebunden ist (Dev-Befund)
+    assert c["src_zone"] is None and c["dst_zone"] is None
 
     rules = [r for c in contracts for r in normalize_contract(c)]
     assert len(rules) == 1
@@ -206,7 +206,7 @@ def test_aci_mo_export_wird_geparst_und_normalisiert():
         }
     ]
     assert rule.services == ["tcp/3306"]
-    assert rule.src_zone == "L3O_inet" and rule.dst_zone == "BD_db"
+    assert rule.src_zone is None and rule.dst_zone is None
     assert rule.external_id == "uni/tn-TE_share/brc-CT_web/SJ_mysql"
 
 
@@ -409,6 +409,8 @@ def test_aci_mehrere_tenants_gleiche_namen_common_extern_vzany_interface():
     assert dns(dns_common["consumers"]) == ["uni/tn-TE_a/ap-AP_100/epg-EG_app"]
     assert dns(dns_common["providers"]) == ["uni/tn-common/ap-AP_infra/epg-EG_dns"]
     assert dns_common["subjects"][0]["services"] == ["tcp/53"]
+    # EPG zu EPG: keine Zone (nur externe EPGs liegen hinter einem L3Out)
+    assert dns_common["src_zone"] is None and dns_common["dst_zone"] is None
 
     glob = by_dn["uni/tn-TE_b/brc-CT_glob"]  # ueber das Contract-Interface aus TE_a
     assert dns(glob["consumers"]) == ["uni/tn-TE_a/ap-AP_100/epg-EG_app"]

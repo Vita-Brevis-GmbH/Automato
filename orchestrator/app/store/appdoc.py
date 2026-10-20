@@ -254,7 +254,17 @@ def _epg_doc(session: Session, epg: Epg) -> dict:
             for c in cp_epgs
         )
         same_tenant = all(c.aci_tenant == epg.aci_tenant for c in cp_epgs)
-        idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
+        external = [c for c in cp_epgs if c.kind == "external"]
+        if external and len(external) == len(cp_epgs):
+            # Gegenstelle hinter einem L3Out: Tabelle nach L3Out wie bei Firewall-Regeln
+            idx = categorize(
+                direction="in" if on_dst else "out",
+                counterpart_zone=external[0].l3out,
+                counterpart_external=False,
+                is_dnat_target=False,
+            )
+        else:
+            idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
         rows_by_table[idx].append(
             {
                 "Server Name": epg.name,

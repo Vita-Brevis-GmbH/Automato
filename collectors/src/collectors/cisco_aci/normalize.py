@@ -5,7 +5,8 @@ ACI kennt keine klassischen Firewall-Regeln: Contracts (CT_) + Subjects (SJ_) + 
   Contract-Subject  -> eine Regel (action=allow; deny via Taboo spaeter)
   Consumer-/Provider  -> sources/destinations als `epg:<DN>` (typisiert; EPG, externe EPG
                          oder vzAny - die DN ist ueber alle ACI-Tenants eindeutig)
-  BD->L3Out / externe EPG -> src_zone/dst_zone (steuert Applikations-Doku-Kategorie)
+  externe EPG       -> ihr L3Out als src_zone/dst_zone; EPG-zu-EPG ohne Zone (die BD-
+                       Bindung an einen L3Out gibt nur Subnetze nach aussen bekannt)
 
 Nimmt die von `mo.parse_mo_export` erzeugten Contract-Dicts (Subjekte mit vorab
 aufgeloesten `services`, plus `src_zone`/`dst_zone`). Faellt auf das aeltere Schema
@@ -34,10 +35,9 @@ def _epg_refs(contract: dict[str, Any], side: str, legacy: str) -> list[str]:
 
 
 def normalize_contract(contract: dict[str, Any]) -> list[NormalizedRule]:
-    consumers = contract.get("consumer_epgs", [])
-    providers = contract.get("provider_epgs", [])
-    src_zone = contract.get("src_zone") or (consumers[0] if consumers else None)
-    dst_zone = contract.get("dst_zone") or (providers[0] if providers else None)
+    # Kein Rueckfall auf EPG-Namen als Zone: eine Zone ist nur der L3Out einer externen EPG
+    src_zone = contract.get("src_zone")
+    dst_zone = contract.get("dst_zone")
     sources = _epg_refs(contract, "consumers", "consumer_epgs")
     destinations = _epg_refs(contract, "providers", "provider_epgs")
 

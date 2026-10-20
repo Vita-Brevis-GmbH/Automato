@@ -92,11 +92,16 @@ export default function RuleDetailDrawer({
             <dd>
               <ActionBadge action={detail.action} />
             </dd>
-            <dt>Zonen</dt>
-            <dd>
-              {detail.src_zone ? <span className="chip">{detail.src_zone}</span> : <Dash />} →{" "}
-              {detail.dst_zone ? <span className="chip">{detail.dst_zone}</span> : <Dash />}
-            </dd>
+            {/* ACI: eine Zone gibt es nur bei externen EPGs (L3Out) */}
+            {!(aci && !detail.src_zone && !detail.dst_zone) && (
+              <>
+                <dt>{aci ? "L3Out" : "Zonen"}</dt>
+                <dd>
+                  {detail.src_zone ? <span className="chip">{detail.src_zone}</span> : <Dash />} →{" "}
+                  {detail.dst_zone ? <span className="chip">{detail.dst_zone}</span> : <Dash />}
+                </dd>
+              </>
+            )}
             <dt>Dienste</dt>
             <dd className="chips">
               {detail.services.length ? (

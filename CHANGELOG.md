@@ -7,6 +7,20 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.4.1 – 2026-10-20
+
+- **ACI-Zonen korrigiert (Dev-Befund):** Contracts zwischen EPGs zeigten einen L3Out als Quell-/
+  Ziel-Zone. Ursache: die Bindung einer Bridge Domain an einen L3Out (`fvRsBDToOut`) wurde als
+  Zone gewertet – sie bedeutet aber nur, dass die Subnetze der BD nach aussen bekannt gegeben
+  werden. Ohne L3Out fiel die Zone zudem auf den BD- bzw. EPG-Namen zurück. Jetzt hat nur eine
+  **externe EPG** eine Zone (ihren L3Out); EPG zu EPG hat keine. Im Detail steht die Zeile nur
+  noch, wenn eine Seite extern ist („L3Out“).
+- **Applikations-Doku:** Contracts mit externer Gegenstelle landen nach dem L3Out in den
+  Tabellen 1–6/9 (z. B. `L3O_inet` → „Zugriff aus dem Internet“) statt in 7/8/9.
+
+Nach dem Update den APIC einmal neu einlesen – die Zonen der bestehenden Contracts werden
+dabei ersetzt.
+
 ## 0.4.0 – 2026-10-20
 
 Wo liegen Consumer und Provider eines ACI-Contracts? (Alembic `0023`)

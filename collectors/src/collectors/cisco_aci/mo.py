@@ -10,7 +10,9 @@ konsumiert. Umsetzung des Lesevertrags `docs/collectors-read-contract.md` (Absch
   l3extInstP (EN_) unter l3extOut (L3O_)         -> externe EPG (Subnetze: l3extSubnet)
   vzAny unter fvCtx (vzRsAnyToProv/Cons)         -> alle EPGs der VRF
   vzCPIf + vzRsIf                                -> exportierter Contract (anderer Tenant)
-  fvBD (BD_)  fvRsBDToOut / fvRsCtx / fvSubnet   -> Zone (L3O), VRF, Subnetze je EPG-Seite
+  fvBD (BD_)  fvRsCtx / fvSubnet                 -> VRF, Subnetze je EPG-Seite
+  Zone (L3O) nur fuer externe EPGs: fvRsBDToOut einer BD gibt nur ihre Subnetze nach
+  aussen bekannt - EPG-zu-EPG-Verkehr laeuft nicht ueber den L3Out
 
 Identitaet ist die DN: dieselben Namen (Contract, EPG, BD, Filter) gibt es in vielen
 Tenants. Verweise per Name loest der APIC im eigenen Tenant auf, sonst in `common` - genauso
@@ -47,7 +49,7 @@ def _roots(data: Any) -> list[dict]:
 
 class _Bag:
     def __init__(self) -> None:
-        self.bds: dict[tuple[str, str], dict] = {}  # (Tenant, BD) -> {l3outs, vrf, subnets}
+        self.bds: dict[tuple[str, str], dict] = {}  # (Tenant, BD) -> {vrf, subnets}
         # DN -> Contract-Endpunkt: EPG, externe EPG (L3Out) oder vzAny (VRF)
         self.endpoints: dict[str, dict] = {}
         self.contracts: dict[tuple[str, str], dict] = {}  # (Tenant, CT) -> {dn, scope, ...}
@@ -205,7 +207,6 @@ def _walk(
             t = name or (dn.split("/tn-", 1)[1].split("/", 1)[0] if "/tn-" in dn else "")
         elif cls == "fvBD":
             bag.bds[(t, name)] = {
-                "l3outs": _rel(kids, "fvRsBDToOut", "tnL3extOutName"),
                 "vrf": next(iter(_rel(kids, "fvRsCtx", "tnFvCtxName")), None),
                 "subnets": _values(kids, "fvSubnet"),
             }
@@ -287,13 +288,11 @@ def _ref(ep: dict) -> dict:
     return {k: ep.get(k) for k in keys if ep.get(k) is not None}
 
 
-def _zone(bag: _Bag, ep: dict) -> str | None:
-    if ep["kind"] == "external":
-        return ep.get("l3out")
-    if ep["kind"] == "vzany":
-        return ep.get("vrf")
-    bd = _lookup(bag.bds, ep["tenant"], ep.get("bd") or "") or {}
-    return (bd.get("l3outs") or [None])[0] or ep.get("bd")
+def _zone(ep: dict) -> str | None:
+    """Zone einer Contract-Seite: nur eine externe EPG liegt hinter einem L3Out. Dass die BD
+    einer EPG an einen L3Out gebunden ist (fvRsBDToOut), heisst nur, dass ihre Subnetze nach
+    aussen bekannt gegeben werden - Verkehr zwischen EPGs laeuft nicht ueber den L3Out."""
+    return ep.get("l3out") if ep["kind"] == "external" else None
 
 
 def parse_mo_export(data: Any) -> list[dict]:
@@ -341,8 +340,8 @@ def parse_mo_export(data: Any) -> list[dict]:
                 "consumer_epgs": [e["name"] for e in consumers],
                 "provider_epgs": [e["name"] for e in providers],
                 "subjects": subjects,
-                "src_zone": _zone(bag, consumers[0]) if consumers else None,
-                "dst_zone": _zone(bag, providers[0]) if providers else None,
+                "src_zone": _zone(consumers[0]) if consumers else None,
+                "dst_zone": _zone(providers[0]) if providers else None,
             }
         )
     return contracts

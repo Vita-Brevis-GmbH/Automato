@@ -580,4 +580,7 @@ Quellsystem löschen nimmt EPGs mit. `app/store/epgs.py` (`label`, `details`: La
 gelernter IP + Server); `/rules` Labels `AP/EPG`, `/rules/{id}` `EndpointOut.epg`. UI `EpgCard.tsx` im
 Drawer. App-Doku: Systemname „EG · Tenant · AP“ bei Dubletten, `same_tenant` echt, ohne 500er-Kappung.
 Verifiziert: Tests, Postgres (0023 up/down mit Altbestand), Playwright. Noch nicht gelesen: ESGs, Taboo.
-Tests: orchestrator 162, collectors 69, sot-gateway 14.
+**0.4.1 (Fix ACI-Zonen, Dev-Befund):** Zone einer Contract-Seite nur noch bei externer EPG (ihr L3Out);
+`fvRsBDToOut` (BD-Subnetze nach aussen bekannt gegeben) ist **keine** Zone, kein Rückfall auf BD-/EPG-Namen
+(`mo._zone`, `normalize_contract`). App-Doku: externe Gegenstelle → Tabelle nach L3Out (`categorize`).
+Tests: orchestrator 163, collectors 69, sot-gateway 14.
