@@ -1164,8 +1164,14 @@ function SystemTable({
                 <span className="chip ok">
                   <Icon name="lock" size={12} /> hinterlegt
                 </span>
+              ) : s.has_write_token ? (
+                <span className="chip warn" title="Zum Einlesen wird das Lese-Token gebraucht">
+                  Lese-Token fehlt
+                </span>
               ) : (
-                <span className={`chip ${s.agent_id != null ? "warn" : "na"}`}>fehlen</span>
+                <span className={`chip ${s.agent_id != null || REFERENCE_PLATFORMS.includes(s.platform) ? "warn" : "na"}`}>
+                  fehlen
+                </span>
               )}
               {s.has_write_token && (
                 <span className="chip local" title="Schreib-Token für den NetBox-Sync (bleibt im Orchestrator)">

@@ -97,7 +97,10 @@ def _out(a: Agent, systems: list | None = None) -> AgentOut:
         last_seen=a.last_seen,
         systems=[
             AgentSystem(
-                id=s.id, name=s.name, tenant_id=s.tenant_id, has_credentials=bool(s.credentials)
+                id=s.id,
+                name=s.name,
+                tenant_id=s.tenant_id,
+                has_credentials=credentials.complete(s.platform.value, s.credentials),
             )
             for s in systems or []
         ],

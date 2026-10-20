@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Agent, fetchAgents, startCollect, System, Tenant } from "./api";
 import type { View } from "./App";
-import { PLATFORM_LABEL } from "./refs";
+import { PLATFORM_LABEL, REFERENCE_PLATFORMS } from "./refs";
 import { ErrorBox, Modal, Note } from "./ui";
 
 // "Jetzt einlesen": Collector-Lauf für Mandant + Quellsystem anlegen (operator).
@@ -192,14 +192,21 @@ export default function CollectDialog({
               : "Kein Agent zugewiesen: der zentrale Worker liest direkt (braucht Netzzugang zum Gerät)."}{" "}
             Ändern: Mandanten &amp; Standorte → Quellsystem → „Verwaltet von“.
           </div>
-          {!system.has_credentials && (
-            <Note warn>
-              Für „{system.name}“ sind keine Zugangsdaten hinterlegt –{" "}
-              {execution === "external"
-                ? "der Agent bricht den Lauf ab."
-                : "der zentrale Worker nutzt dann seine lokale Konfiguration bzw. Beispieldaten."}
-            </Note>
-          )}
+          {!system.has_credentials &&
+            (REFERENCE_PLATFORMS.includes(system.platform) ? (
+              <Note warn>
+                Für „{system.name}“ fehlt der Lese-Zugang (
+                {system.platform === "netbox" ? "API-Token (lesen)" : "Benutzer/Passwort"}) – ohne ihn kann die
+                Referenzquelle nicht eingelesen werden. Das NetBox-Schreib-Token wird nie zum Lesen verwendet.
+              </Note>
+            ) : (
+              <Note warn>
+                Für „{system.name}“ sind keine Zugangsdaten hinterlegt –{" "}
+                {execution === "external"
+                  ? "der Agent bricht den Lauf ab."
+                  : "der zentrale Worker nutzt dann seine lokale Konfiguration bzw. Beispieldaten."}
+              </Note>
+            ))}
           {agent && !agent.enabled && (
             <Note warn>Der Agent {agentLabel} ist deaktiviert – der Lauf würde nicht abgeholt.</Note>
           )}

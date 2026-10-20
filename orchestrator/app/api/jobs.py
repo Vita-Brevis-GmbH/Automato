@@ -4,12 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, credentials
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.jobs import celery_app
-from app.models import CollectorRun, SourceSystem
+from app.models import REFERENCE_PLATFORMS, CollectorRun, SourceSystem
 from app.schemas.jobs import CollectJobRequest, CollectJobResponse, CollectorRunOut
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -30,6 +30,16 @@ def start_collect(
             raise HTTPException(status_code=422, detail="source system belongs to another tenant")
         if src.platform.value != payload.platform:
             raise HTTPException(status_code=422, detail="platform does not match source system")
+        if src.platform in REFERENCE_PLATFORMS and not credentials.complete(
+            src.platform.value, src.credentials
+        ):
+            # Referenzquellen haben keine Beispieldaten - ohne Lese-Zugang scheitert der Lauf
+            # sicher; das NetBox-Schreib-Token wird bewusst nie zum Lesen verwendet
+            missing = "read token" if src.platform.value == "netbox" else "username/password"
+            raise HTTPException(
+                status_code=422,
+                detail=f"{src.platform.value} source '{src.name}' has no {missing}",
+            )
         if src.agent_id is not None:
             payload.execution = "external"  # Geraet wird von seinem Agenten gelesen (ADR 0009)
     run = CollectorRun(

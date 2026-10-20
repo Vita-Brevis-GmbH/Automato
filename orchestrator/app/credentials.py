@@ -42,6 +42,19 @@ FIELDS: dict[str, tuple[str, ...]] = {
 OPTIONAL_FIELDS: dict[str, tuple[str, ...]] = {"netbox": ("write_token",)}
 
 
+def complete(platform: str, token: str | None) -> bool:
+    """Sind die Pflichtfelder der Plattform hinterlegt (z. B. NetBox: Lese-Token)? Ein
+    NetBox-Quellsystem nur mit Schreib-Token ist damit *nicht* vollstaendig. Ohne lesbaren
+    Schluessel zaehlt, ob ueberhaupt etwas gespeichert ist."""
+    if not token:
+        return False
+    try:
+        data = decrypt(token)
+    except CredentialsUnavailable:
+        return True
+    return all(data.get(f) for f in FIELDS.get(platform, ()))
+
+
 def _key_from_file(path: Path) -> bytes:
     try:
         if path.is_file():

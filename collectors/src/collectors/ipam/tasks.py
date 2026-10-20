@@ -35,7 +35,10 @@ def _adapter(platform: str, target: Target | None):
             target.base_url, target.username, target.password, verify_tls=target.verify_tls
         )
     if not target.token:
-        raise RuntimeError(_no_credentials(target))
+        raise RuntimeError(
+            f"kein Lese-Token fuer {_label(target)} - im Web-UI beim Quellsystem unter"
+            " 'API-Token (lesen)' hinterlegen (das Schreib-Token wird nie zum Lesen verwendet)"
+        )
     return NetBoxAdapter(target.base_url, target.token, verify_tls=target.verify_tls)
 
 

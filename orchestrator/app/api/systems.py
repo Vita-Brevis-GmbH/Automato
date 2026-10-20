@@ -155,7 +155,7 @@ def _out(
         agent_id=s.agent_id,
         verify_tls=s.verify_tls,
         read_scope=s.read_scope,
-        has_credentials=bool(s.credentials),
+        has_credentials=credentials.complete(s.platform.value, s.credentials),
         ref_role=s.ref_role,
         has_write_token=_has_write_token(s),
         reference_count=ref_count,

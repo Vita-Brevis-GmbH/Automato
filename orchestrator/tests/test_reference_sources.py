@@ -216,3 +216,18 @@ def test_abgleich_mit_referenzdaten_unabhaengig_von_der_reihenfolge(client):
         for f in client.get(f"/findings?tenant_id={tid}").json()
         if f["type"] == "unmatched_object"
     ]
+
+
+def test_netbox_nur_mit_schreib_token_kann_nicht_eingelesen_werden(client):
+    tid = _tenant(client)
+    nb = _system(client, tid, name="netbox", platform="netbox", write_token="nb-schreiben")
+    assert nb["has_credentials"] is False and nb["has_write_token"] is True
+    body = {"platform": "netbox", "tenant_id": tid, "source_system_id": nb["id"]}
+    r = client.post("/jobs/collect", json=body)
+    assert r.status_code == 422 and "read token" in r.json()["detail"]
+    # mit Lese-Token geht es
+    client.patch(f"/systems/{nb['id']}", json={"token": "nb-lesen"}, headers=ADMIN)
+    assert client.post("/jobs/collect", json=body).status_code == 202
+    ddi = _system(client, tid, name="ddi", platform="infoblox")
+    body = {"platform": "infoblox", "tenant_id": tid, "source_system_id": ddi["id"]}
+    assert client.post("/jobs/collect", json=body).status_code == 422
