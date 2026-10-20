@@ -80,18 +80,22 @@ def claim_next_run(
 
 
 def target_for(src: SourceSystem, agent_id: int | None) -> dict:
-    """Ziel eines Laufs; das Token nur fuer den zugewiesenen Agenten (bzw. den zentralen
-    Worker, `agent_id=None` bei einem Geraet ohne Agent). Wirft CredentialsUnavailable."""
-    token = None
+    """Ziel eines Laufs; die Zugangsdaten (FortiGate: token, ACI: username/password) nur fuer
+    den zugewiesenen Agenten (bzw. den zentralen Worker, `agent_id=None` bei einem Geraet
+    ohne Agent). Wirft CredentialsUnavailable."""
+    secret: dict = {}
     if src.credentials and src.agent_id == agent_id:
-        token = credentials.decrypt(src.credentials).get("token")
+        secret = credentials.decrypt(src.credentials)
     return {
         "source_system_id": src.id,
         "name": src.name,
         "platform": src.platform.value,
         "base_url": src.base_url,
         "verify_tls": src.verify_tls,
-        "token": token,
+        "read_scope": src.read_scope,
+        "token": secret.get("token"),
+        "username": secret.get("username"),
+        "password": secret.get("password"),
     }
 
 

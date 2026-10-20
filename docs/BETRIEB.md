@@ -78,9 +78,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
 - **Mandanten & Standorte (Admin schreibt):** **+ Mandant**, Kürzel, Namensprofil,
   Lese-Audit, Standorte (**+ Standort**, 3-stelliger Code) und die **Quellsysteme des
   Mandanten** (**+ Quellsystem** / **Bearbeiten**: FortiGate/Cisco ACI, Adresse, **Verwaltet
-  von** = Collector-Agent oder zentraler Worker, read-only **API-Token** (nur schreibbar,
-  verschlüsselt gespeichert, Anzeige nur „hinterlegt"), TLS-Prüfung, aktiv; Name je Mandant
-  eindeutig; ADR 0009). **Löschen:** Quellsystem (✕, Rückfrage nennt die mit
+  von** = Collector-Agent oder zentraler Worker, read-only Zugangsdaten – FortiGate:
+  **API-Token**, Cisco ACI: **APIC-Benutzer/Passwort** + **ACI-Tenants** (leer = alle ausser
+  infra/mgmt) – nur schreibbar, verschlüsselt gespeichert, Anzeige nur „hinterlegt";
+  TLS-Prüfung, aktiv; Name je Mandant eindeutig; ADR 0009). **Löschen:** Quellsystem (✕, Rückfrage nennt die mit
   gelöschten Regeln/NAT-Einträge) und **Mandant löschen** (nur nach Eintippen des Namens;
   löscht alle Daten des Mandanten inkl. seiner Collector-Agenten; Audit-Log bleibt).
   Altbestände ohne Mandant erscheinen unter „Nicht zugeordnete Quellsysteme“ zum Zuordnen.
@@ -108,7 +109,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /nat`, `GET /applications[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /tenants/{id}/sites`, `DELETE /tenants/{id}/sites/{sid}` | Standorte |
-| `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `token` nur schreibbar → `has_credentials`) |
+| `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `read_scope`; `token` bzw. `username`/`password` nur schreibbar → `has_credentials`) |
 | `GET /jobs`, `GET /jobs/{id}`, `POST /jobs/collect` | Läufe (Gerät mit Agent → immer `external`) |
 | `GET/POST /agents`, `PATCH /agents/{id}`, `GET /agents/package` | Collector-Agenten (inkl. zugewiesener Geräte), Agent-Paket |
 | `GET /internal/agent/next-run`, `…/targets`, `POST …/heartbeat` | Agent-Kanal (`X-Agent-Token`): Lauf + Zugangsdaten nur für zugewiesene Geräte |

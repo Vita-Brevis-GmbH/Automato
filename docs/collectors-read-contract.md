@@ -42,8 +42,12 @@ lesen, nicht die Profil-Innereien).
 
 ## 2. Cisco ACI (APIC REST, MO-Subtree je Tenant; read-only)
 
-Abruf z. B. `GET /api/mo/uni/tn-<TE>.json?query-target=subtree`. Struktur je MO:
-`{ "<class>": { "attributes": {…}, "children": […] } }`.
+Abruf (umgesetzt, `collectors/cisco_aci/client.py`): `POST /api/aaaLogin.json` (read-only
+APIC-Benutzer aus dem Quellsystem, ADR 0009) → `GET /api/class/fvTenant.json` → je Tenant
+`GET /api/mo/uni/tn-<TE>.json?rsp-subtree=full` (verschachtelt wie der Tenant-Export; nicht
+`query-target=subtree`, das liefert eine flache Liste ohne Eltern-Kind-Bezug) →
+`POST /api/aaaLogout.json`. Tenants laut Quellsystem-Feld „ACI-Tenants“, leer = alle ausser
+`infra`/`mgmt`. Struktur je MO: `{ "<class>": { "attributes": {…}, "children": […] } }`.
 
 | MO-Klasse | Schlüssel/Relationen | → Modell |
 |---|---|---|

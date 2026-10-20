@@ -10,7 +10,7 @@ durchzuspielen. Bezug: ADR 0008 (externer Collector), ADR 0009 (Geräte-Zugangsd
 > Agent-Pakets (ZIP mit collectors-Wheel, `install.ps1`, `run-agent.ps1`). Ein eigener
 > Build-Rechner mit `uv` ist dafür nicht nötig.
 
-> Warum frisch? Datenmodell/Namensprofil haben sich geändert (Alembic bis `0016`). Ein
+> Warum frisch? Datenmodell/Namensprofil haben sich geändert (Alembic bis `0017`). Ein
 > sauberer Reset von NetBox **und** der Automato-DB vermeidet Altlasten.
 
 ## 1. NetBox neu installieren (Daten löschen, **leer lassen**)
@@ -44,7 +44,7 @@ NETBOX_RESET=1 NETBOX_PORT=8080 \
 
 ## 2. Automato-Stack frisch hochfahren (leere Orchestrator-DB)
 
-`AUTOMATO_RESET=1` löscht die Automato-Volumes; die Alembic-Migrationen (bis `0016`)
+`AUTOMATO_RESET=1` löscht die Automato-Volumes; die Alembic-Migrationen (bis `0017`)
 laufen beim Start automatisch, die DB ist danach leer und aktuell:
 
 ```bash
@@ -76,7 +76,9 @@ Deaktivieren/Aktivieren über die Statusspalte (ein deaktivierter Agent authenti
 UI → **„Mandanten & Standorte"** → Mandant anklicken → **Quellsysteme → + Quellsystem**
 (bzw. **Bearbeiten**): Name `fw-01`, Plattform FortiGate, Adresse `https://<fw>`,
 **Verwaltet von** = `agent-dev-01`, **API-Token** (read-only REST-API-Admin der FortiGate),
-TLS-Prüfung im Lab mit selbstsigniertem Zertifikat aus. Das Token wird verschlüsselt im
+TLS-Prüfung im Lab mit selbstsigniertem Zertifikat aus. Ein **APIC** genauso: Plattform
+Cisco ACI, Adresse `https://<apic>`, **APIC-Benutzer/-Passwort** (Nur-Lese-Rolle) und
+optional **ACI-Tenants** (leer = alle ausser infra/mgmt). Das Token wird verschlüsselt im
 Orchestrator gespeichert (Schlüsseldatei im Volume `orchestrator-data`) und nie wieder
 angezeigt; die Tabelle zeigt nur „hinterlegt". Die Agentenliste zeigt danach `fw-01` beim
 Agenten.

@@ -108,11 +108,12 @@ export default function AgentGuide({
           <h3>Voraussetzungen prüfen</h3>
           <ul>
             <li>
-              Windows-Rechner im Kundennetz, der die Geräte (z. B. FortiGate) per HTTPS erreicht.
+              Windows-Rechner im Kundennetz, der die Geräte (FortiGate, Cisco APIC) per HTTPS erreicht.
             </li>
             <li>
-              Pro Gerät ein <b>read-only REST-API-Token</b> (FortiGate: System → Administratoren → REST API Admin,
-              Profil nur Lesen, Trusted Hosts = Agent-Rechner).
+              Pro Gerät <b>read-only Zugangsdaten</b>: FortiGate – REST-API-Token (System → Administratoren → REST API
+              Admin, Profil nur Lesen, Trusted Hosts = Agent-Rechner); APIC – Benutzer mit Nur-Lese-Rolle (z. B.
+              read-all).
             </li>
             <li>
               Der Rechner erreicht den Orchestrator ausgehend (Standard Port 8000) – Test in PowerShell:{" "}
@@ -144,9 +145,9 @@ export default function AgentGuide({
           <h3>Geräte erfassen und dem Agenten zuweisen</h3>
           <p>
             Unter <b>Mandanten &amp; Standorte → Quellsysteme</b> das Gerät anlegen bzw. bearbeiten: Adresse,
-            read-only API-Token, TLS-Prüfung und <b>Verwaltet von</b> = dieser Agent. Das Token wird verschlüsselt
-            im Orchestrator gespeichert und nur diesem Agenten für seine Läufe übergeben – auf dem Agent-Rechner
-            liegen keine Geräte-Zugangsdaten. Geräte lassen sich später jederzeit einem anderen Agenten zuweisen.
+            read-only Zugangsdaten (FortiGate: API-Token, APIC: Benutzer/Passwort und ACI-Tenants), TLS-Prüfung und{" "}
+            <b>Verwaltet von</b> = dieser Agent. Die Zugangsdaten werden verschlüsselt im Orchestrator gespeichert und
+            nur diesem Agenten für seine Läufe übergeben – auf dem Agent-Rechner liegen keine Geräte-Zugangsdaten. Geräte lassen sich später jederzeit einem anderen Agenten zuweisen.
           </p>
           {devices.length > 0 && (
             <p>
@@ -233,8 +234,9 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
           <Cmd>{`powershell -ExecutionPolicy Bypass -File ${INSTALL_DIR}\\run-agent.ps1 -Check`}</Cmd>
           <p>
             Prüft alle zugewiesenen Geräte, eine Zeile je Gerät – erwartet z. B.{" "}
-            <code>fw-01 (fortigate) check: OK - erreichbar: https://…</code>. Rein lesend, es wird nichts
-            übertragen.
+            <code>fw-01 (fortigate) check: OK - erreichbar: https://…</code> bzw.{" "}
+            <code>apic-01 (cisco_aci) check: OK - erreichbar: https://… (5 Tenants sichtbar)</code>. Rein lesend, es
+            wird nichts übertragen.
           </p>
         </li>
 
@@ -266,7 +268,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
               </tr>
               <tr>
                 <td>keine Zugangsdaten fuer „fw-01“</td>
-                <td>Beim Quellsystem das API-Token hinterlegen (Bearbeiten → API-Token).</td>
+                <td>Beim Quellsystem die Zugangsdaten hinterlegen (Bearbeiten → API-Token bzw. APIC-Benutzer/Passwort).</td>
               </tr>
               <tr>
                 <td>401 invalid agent token</td>
@@ -289,7 +291,14 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
               </tr>
               <tr>
                 <td>check: FEHLER … 401/403</td>
-                <td>API-Token beim Quellsystem falsch oder Trusted Hosts des REST-API-Admins schliessen den Agent-Rechner aus.</td>
+                <td>
+                  Zugangsdaten beim Quellsystem falsch – FortiGate: Token oder Trusted Hosts des REST-API-Admins; APIC:
+                  Benutzer/Passwort oder Login-Domäne (<code>apic#Domäne\Benutzer</code>).
+                </td>
+              </tr>
+              <tr>
+                <td>ACI-Tenant nicht gefunden</td>
+                <td>Name unter „ACI-Tenants“ beim Quellsystem prüfen (Gross-/Kleinschreibung) oder das Feld leeren.</td>
               </tr>
             </tbody>
           </table>

@@ -63,14 +63,17 @@ class AgentPatch(BaseModel):
 
 
 class Target(BaseModel):
-    """Zu lesendes Geraet; `token` nur an den zugewiesenen Agenten (ADR 0009)."""
+    """Zu lesendes Geraet; Zugangsdaten nur an den zugewiesenen Agenten (ADR 0009)."""
 
     source_system_id: int
     name: str
     platform: str
     base_url: str
     verify_tls: bool
-    token: str | None = None
+    read_scope: str = ""  # ACI: zu lesende Tenants (kommagetrennt)
+    token: str | None = None  # FortiGate
+    username: str | None = None  # Cisco ACI (APIC-Login)
+    password: str | None = None
 
 
 class NextRun(BaseModel):

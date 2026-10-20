@@ -68,7 +68,8 @@ export interface System {
   base_url: string;
   agent_id: number | null; // verwaltender Collector-Agent (null = zentraler Worker)
   verify_tls: boolean;
-  has_credentials: boolean; // Token selbst wird nie ausgegeben (nur schreibbar)
+  read_scope: string; // Cisco ACI: gelesene ACI-Tenants (kommagetrennt, leer = alle)
+  has_credentials: boolean; // Zugangsdaten selbst werden nie ausgegeben (nur schreibbar)
   rule_count: number;
   nat_count: number;
 }
@@ -335,17 +336,21 @@ export const deleteTenant = (tenantId: number, confirmName: string) =>
 // Quellsysteme
 export const fetchSystems = (tenantId?: number | null) =>
   getJSON<System[]>(`/api/systems${qs({ tenant_id: tenantId })}`);
-// `token` ist nur schreibbar: wird verschlüsselt gespeichert und nur dem zugewiesenen
-// Agenten pro Lauf übergeben (ADR 0009). Bei PATCH: weglassen = unverändert, "" = entfernen.
-export const createSystem = (body: {
-  tenant_id: number;
-  name: string;
-  platform: string;
-  base_url?: string;
-  agent_id?: number | null;
-  verify_tls?: boolean;
-  token?: string;
-}) => sendJSON<System>("/api/systems", "POST", body);
+// Zugangsdaten sind nur schreibbar (FortiGate `token`, Cisco ACI `username` + `password`):
+// verschlüsselt gespeichert und nur dem zugewiesenen Agenten pro Lauf übergeben (ADR 0009).
+// Bei PATCH: weglassen = unverändert, "" = Feld entfernen.
+type SystemCredentials = { token?: string; username?: string; password?: string };
+export const createSystem = (
+  body: {
+    tenant_id: number;
+    name: string;
+    platform: string;
+    base_url?: string;
+    agent_id?: number | null;
+    verify_tls?: boolean;
+    read_scope?: string;
+  } & SystemCredentials,
+) => sendJSON<System>("/api/systems", "POST", body);
 export const patchSystem = (
   id: number,
   body: {
@@ -355,8 +360,8 @@ export const patchSystem = (
     enabled?: boolean;
     agent_id?: number | null;
     verify_tls?: boolean;
-    token?: string;
-  },
+    read_scope?: string;
+  } & SystemCredentials,
 ) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");
 

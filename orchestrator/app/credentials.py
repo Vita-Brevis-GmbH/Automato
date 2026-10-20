@@ -29,6 +29,14 @@ class CredentialsUnavailable(RuntimeError):
     """Kein (passender) Schlüssel - Zugangsdaten können nicht ver-/entschlüsselt werden."""
 
 
+# Zugangsdaten-Felder je Plattform (alle nur schreibbar). Ein Geraet hat entweder alle
+# Felder seiner Plattform oder keine.
+FIELDS: dict[str, tuple[str, ...]] = {
+    "fortigate": ("token",),  # REST-API-Token (read-only Admin-Profil)
+    "cisco_aci": ("username", "password"),  # APIC-Login (read-only Rolle)
+}
+
+
 def _key_from_file(path: Path) -> bytes:
     try:
         if path.is_file():

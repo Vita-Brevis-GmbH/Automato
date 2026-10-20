@@ -2,7 +2,7 @@
 
 ## Status
 
-Angenommen (2026-10-20). Umgesetzt (Alembic `0016`); ergänzt ADR 0007 (Secrets) und
+Angenommen (2026-10-20). Umgesetzt (Alembic `0016`, `0017`); ergänzt ADR 0007 (Secrets) und
 ADR 0008 (externer Collector).
 
 ## Kontext
@@ -20,12 +20,17 @@ zeigte sich:
 
 ## Entscheidung
 
-1. **Gerät = Quellsystem beim Mandanten.** Adresse, read-only API-Token, TLS-Prüfung und
-   **verwaltender Agent** (`source_system.agent_id`, nullable) werden im Web-UI beim
-   Mandanten erfasst. Der Agent muss zum Mandanten des Geräts gehören oder
+1. **Gerät = Quellsystem beim Mandanten** – FortiGate und Cisco ACI (APIC) gleich behandelt.
+   Adresse, read-only Zugangsdaten, TLS-Prüfung und **verwaltender Agent**
+   (`source_system.agent_id`, nullable) werden im Web-UI beim Mandanten erfasst; bei ACI
+   zusätzlich die zu lesenden **ACI-Tenants** (`source_system.read_scope`, kommagetrennt,
+   leer = alle ausser `infra`/`mgmt`). Der Agent muss zum Mandanten des Geräts gehören oder
    mandantsübergreifend sein (sonst 422). Ohne Agent liest der zentrale Worker.
-2. **Token nur schreibbar, verschlüsselt gespeichert.** `source_system.credentials` hält
-   ein Fernet-Token (AES-128-CBC + HMAC-SHA256) des JSON `{"token": …}`. Die API gibt nur
+2. **Zugangsdaten nur schreibbar, verschlüsselt gespeichert.** `source_system.credentials`
+   hält ein Fernet-Token (AES-128-CBC + HMAC-SHA256) des JSON je Plattform: FortiGate
+   `{"token"}`, Cisco ACI `{"username", "password"}` (APIC-Login, read-only Rolle). Ein Gerät
+   hat alle Felder seiner Plattform oder keine (sonst 422); fremde Felder → 422. PATCH ändert
+   nur angegebene Felder (z. B. nur das Passwort), `""` entfernt ein Feld. Die API gibt nur
    `has_credentials` aus; Audit protokolliert nur `credentials_set` (E1.4-Allowlist).
 3. **Auslieferung nur an den Berechtigten.**
    - `GET /internal/agent/next-run`: Ein Agent holt nur Läufe von Geräten, die **ihm**
@@ -77,5 +82,8 @@ zeigte sich:
   deaktivierter Agent authentisiert sofort nicht mehr (ADR 0008).
 - Geräte lassen sich per UI jederzeit einem anderen Agenten zuweisen; an der Station ändert
   sich nichts. Ein Agent kann beliebig viele Geräte lesen.
-- APIC-Zugangsdaten (Benutzer/Passwort) folgen mit dem echten APIC-REST-Client im selben
-  Feld (`credentials` ist ein JSON-Objekt, erweiterbar).
+- **APIC-REST-Client** (`collectors/cisco_aci/client.py`): `aaaLogin` mit den Geräte-
+  Zugangsdaten → Session-Cookie, Tenant-Liste (`/api/class/fvTenant.json`), je Tenant der
+  verschachtelte MO-Baum (`/api/mo/uni/tn-<TE>.json?rsp-subtree=full`, gleiches Format wie
+  der Tenant-Export, inkl. `fvCEp`/`fvIp`), `aaaLogout`. `--check` = Login + Tenant-Liste.
+  Weitere Plattformen ergänzen nur ihre Felder in `credentials.FIELDS`.

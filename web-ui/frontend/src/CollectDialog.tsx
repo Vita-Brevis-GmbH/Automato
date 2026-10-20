@@ -193,9 +193,9 @@ export default function CollectDialog({
               : "Kein Agent zugewiesen: der zentrale Worker liest direkt (braucht Netzzugang zum Gerät)."}{" "}
             Ändern: Mandanten &amp; Standorte → Quellsystem → „Verwaltet von“.
           </div>
-          {system.platform === "fortigate" && !system.has_credentials && (
+          {!system.has_credentials && (
             <Note warn>
-              Für „{system.name}“ ist kein API-Token hinterlegt –{" "}
+              Für „{system.name}“ sind keine Zugangsdaten hinterlegt –{" "}
               {execution === "external"
                 ? "der Agent bricht den Lauf ab."
                 : "der zentrale Worker nutzt dann seine lokale Konfiguration bzw. Beispieldaten."}

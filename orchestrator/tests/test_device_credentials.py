@@ -104,7 +104,10 @@ def test_nur_zugewiesener_agent_holt_ab_und_bekommt_zugangsdaten(session_factory
         "platform": "fortigate",
         "base_url": "https://fw-01.kunde.lan",
         "verify_tls": False,
+        "read_scope": "",
         "token": "fgt-geheim",
+        "username": None,
+        "password": None,
     }
 
     targets = client.get("/internal/agent/targets", headers={"X-Agent-Token": token_a}).json()
@@ -157,6 +160,73 @@ def test_zentraler_worker_bekommt_ziel_nur_fuer_eigene_laeufe(session_factory, c
     client.patch(f"/systems/{central['id']}", json={"agent_id": agent_id}, headers=ADMIN)
     ext = _collect(client, tid, central["id"])["run_id"]
     assert client.get(f"/internal/collector-runs/{ext}/target", headers=internal).status_code == 403
+
+
+APIC_PW = "apic geheim "  # noqa: S105 - Testwert (Leerzeichen bleiben erhalten)
+
+
+def _apic(client, tenant_id: int, agent_id: int | None, **extra):
+    body = {
+        "tenant_id": tenant_id,
+        "name": "apic-01",
+        "platform": "cisco_aci",
+        "base_url": "https://apic-01.kunde.lan",
+        "agent_id": agent_id,
+        "username": "ro-automato",
+        "password": APIC_PW,
+        "read_scope": "TE_share, TE_app ,TE_share",
+        **extra,
+    }
+    return client.post("/systems", json=body, headers=ADMIN)
+
+
+def test_aci_zugangsdaten_wie_firewall(session_factory, client):
+    t = _tenant(client, "kunde-a")
+    agent_id, token = _agent(client, "agent-a", t)
+    r = _apic(client, t, agent_id)
+    assert r.status_code == 201, r.text
+    dev = r.json()
+    assert dev["has_credentials"] is True and dev["read_scope"] == "TE_share,TE_app"
+    assert "apic geheim" not in str(client.get("/systems").json())
+    s = session_factory()
+    assert "apic geheim" not in s.get(SourceSystem, dev["id"]).credentials
+    s.close()
+
+    body = {"platform": "cisco_aci", "tenant_id": t, "source_system_id": dev["id"]}
+    run_id = client.post("/jobs/collect", json=body, headers=ADMIN).json()["run_id"]
+    got = client.get("/internal/agent/next-run", headers={"X-Agent-Token": token}).json()["run"]
+    assert got["run_id"] == run_id
+    target = got["target"]
+    assert (target["username"], target["password"], target["token"]) == (
+        "ro-automato",
+        APIC_PW,
+        None,
+    )
+    assert target["read_scope"] == "TE_share,TE_app"
+
+    # Nur das Passwort ändern - Benutzer bleibt erhalten
+    client.patch(f"/systems/{dev['id']}", json={"password": "neu"}, headers=ADMIN)
+    targets = client.get("/internal/agent/targets", headers={"X-Agent-Token": token}).json()
+    assert (targets[0]["username"], targets[0]["password"]) == ("ro-automato", "neu")
+
+    # Alle Felder leeren = keine Zugangsdaten
+    r = client.patch(f"/systems/{dev['id']}", json={"username": "", "password": ""}, headers=ADMIN)
+    assert r.json()["has_credentials"] is False
+
+
+def test_zugangsdaten_felder_passen_zur_plattform(client):
+    t = _tenant(client, "kunde-a")
+    assert _apic(client, t, None, password=None).status_code == 422  # Passwort fehlt
+    assert _apic(client, t, None, token="x").status_code == 422  # token gibt es bei ACI nicht
+    assert _apic(client, t, None, read_scope="TE bad").status_code == 422
+    fw = _device(client, t, None)
+    r = client.patch(f"/systems/{fw['id']}", json={"username": "admin"}, headers=ADMIN)
+    assert r.status_code == 422
+    r = client.patch(f"/systems/{fw['id']}", json={"read_scope": "TE_x"}, headers=ADMIN)
+    assert r.status_code == 422
+    dev = _apic(client, t, None).json()
+    r = client.patch(f"/systems/{dev['id']}", json={"username": ""}, headers=ADMIN)
+    assert r.status_code == 422  # nur Passwort ohne Benutzer ist unvollständig
 
 
 def test_mandant_loeschen_entkoppelt_agent_zuweisungen(client):

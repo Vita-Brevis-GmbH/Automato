@@ -5,7 +5,10 @@ ist nur fuer Altbestaende vor Migration 0015 leer ("nicht zugeordnet").
 
 Geraete-Zugangsdaten (ADR 0009): `agent_id` = Collector-Agent, der das Geraet verwaltet;
 `credentials` = verschluesselte Zugangsdaten (app.credentials, nie im Klartext gespeichert
-oder ausgegeben) - der Agent bekommt sie beim Abholen eines Laufs.
+oder ausgegeben) - der Agent bekommt sie beim Abholen eines Laufs. Inhalt je Plattform:
+FortiGate `{"token"}`, Cisco ACI `{"username", "password"}` (APIC-Login).
+`read_scope` = Lesebereich: bei Cisco ACI die zu lesenden ACI-Tenants (kommagetrennt, leer =
+alle ausser infra/mgmt).
 """
 
 import enum
@@ -37,6 +40,7 @@ class SourceSystem(Base):
     agent_id: Mapped[int | None] = mapped_column(ForeignKey("agent.id"), nullable=True, index=True)
     credentials: Mapped[str | None] = mapped_column(Text, nullable=True)  # Fernet-Token
     verify_tls: Mapped[bool] = mapped_column(default=True, server_default=true())
+    read_scope: Mapped[str] = mapped_column(String(500), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

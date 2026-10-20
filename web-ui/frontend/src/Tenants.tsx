@@ -667,7 +667,8 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
           <Loading />
         ) : systems.length === 0 ? (
           <Empty title="Noch keine Quellsysteme">
-            Gerät mit Adresse und read-only API-Token anlegen und einem Collector-Agenten zuweisen, dann unter
+            Gerät (FortiGate oder APIC) mit Adresse und read-only Zugangsdaten anlegen und einem Collector-Agenten
+            zuweisen, dann unter
             „Übersicht → Jetzt einlesen“ einen Lauf starten.
           </Empty>
         ) : (
@@ -692,8 +693,9 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
         )}
       </div>
       <div className="card-foot">
-        <Icon name="lock" size={12} /> API-Tokens werden verschlüsselt im Orchestrator gespeichert, nie wieder
-        angezeigt und nur dem zugewiesenen Agenten für dessen Läufe übergeben (ADR 0009).
+        <Icon name="lock" size={12} /> Zugangsdaten (FortiGate-Token, APIC-Benutzer/Passwort) werden verschlüsselt
+        im Orchestrator gespeichert, nie wieder angezeigt und nur dem zugewiesenen Agenten für dessen Läufe übergeben
+        (ADR 0009).
       </div>
       {editing && (
         <SystemDialog
@@ -743,13 +745,18 @@ function SystemDialog({
   const [agentId, setAgentId] = useState<number | null>(system ? system.agent_id : (own?.id ?? null));
   const [verifyTls, setVerifyTls] = useState(system?.verify_tls ?? true);
   const [enabled, setEnabled] = useState(system?.enabled ?? true);
+  // Zugangsdaten (nur schreibbar): FortiGate = API-Token, Cisco ACI = APIC-Benutzer + Passwort
   const [token, setToken] = useState("");
-  const [clearToken, setClearToken] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [clearCreds, setClearCreds] = useState(false);
+  const [readScope, setReadScope] = useState(system?.read_scope ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
 
-  const hasToken = system?.has_credentials ?? false;
-  const usesToken = platform === "fortigate";
+  const hasCreds = system?.has_credentials ?? false;
+  const isAci = platform === "cisco_aci";
+  const kept = "hinterlegt – leer lassen = unverändert";
   // Zuweisung bleibt sichtbar, auch wenn der Agent nicht (mehr) in der Liste steht
   const options =
     agentId != null && !agents.some((a) => a.id === agentId)
@@ -762,18 +769,29 @@ function SystemDialog({
     if (!name.trim()) return;
     setBusy(true);
     setErr(null);
-    const common = { name: name.trim(), base_url: baseUrl.trim(), agent_id: agentId, verify_tls: verifyTls };
+    const common = {
+      name: name.trim(),
+      base_url: baseUrl.trim(),
+      agent_id: agentId,
+      verify_tls: verifyTls,
+      ...(isAci ? { read_scope: readScope.trim() } : {}),
+    };
+    // Nur geänderte Felder senden; leer gelassen = unverändert, "" = entfernen
+    const creds: { token?: string; username?: string; password?: string } = {};
+    if (clearCreds) {
+      if (isAci) Object.assign(creds, { username: "", password: "" });
+      else creds.token = "";
+    } else if (isAci) {
+      if (username.trim()) creds.username = username.trim();
+      if (password) creds.password = password;
+    } else if (token.trim()) {
+      creds.token = token.trim();
+    }
     try {
       if (system === null) {
-        await createSystem({
-          tenant_id: tenant.id,
-          platform,
-          ...common,
-          ...(usesToken && token.trim() ? { token: token.trim() } : {}),
-        });
+        await createSystem({ tenant_id: tenant.id, platform, ...common, ...creds });
       } else {
-        const tokenChange = clearToken ? { token: "" } : token.trim() ? { token: token.trim() } : {};
-        await patchSystem(system.id, { ...common, enabled, ...tokenChange });
+        await patchSystem(system.id, { ...common, enabled, ...creds });
       }
       await onSaved();
     } catch (ex) {
@@ -831,7 +849,7 @@ function SystemDialog({
             className="input mono"
             value={baseUrl}
             maxLength={500}
-            placeholder="https://fw-01.kunde.lan"
+            placeholder={isAci ? "https://apic-01.kunde.lan" : "https://fw-01.kunde.lan"}
             onChange={(e) => setBaseUrl(e.target.value)}
           />
           <div className="hint">So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).</div>
@@ -862,31 +880,71 @@ function SystemDialog({
             <Note warn>Dieser Agent ist deaktiviert – Läufe des Geräts werden nicht abgeholt.</Note>
           )}
         </div>
-        {usesToken ? (
+        {isAci ? (
+          <>
+            <div className="field">
+              <label htmlFor="ss-user">APIC-Benutzer (read-only)</label>
+              <input
+                id="ss-user"
+                className="input mono"
+                value={username}
+                autoComplete="off"
+                maxLength={200}
+                disabled={clearCreds}
+                placeholder={hasCreds ? kept : "z. B. ro-automato"}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="ss-password">APIC-Passwort</label>
+              <SecretInput
+                id="ss-password"
+                value={password}
+                disabled={clearCreds}
+                onChange={setPassword}
+                placeholder={hasCreds ? kept : "Passwort des APIC-Benutzers"}
+              />
+              <div className="hint">
+                Lokaler APIC-Benutzer mit Nur-Lese-Rolle (z. B. read-all, Security-Domain all); Remote-Benutzer als{" "}
+                <code>apic#Domäne\Benutzer</code>. Wird verschlüsselt gespeichert und nie wieder angezeigt.
+              </div>
+            </div>
+            <div className="field">
+              <label htmlFor="ss-scope">ACI-Tenants</label>
+              <input
+                id="ss-scope"
+                className="input mono"
+                value={readScope}
+                maxLength={500}
+                placeholder="z. B. TE_share, TE_app"
+                onChange={(e) => setReadScope(e.target.value)}
+              />
+              <div className="hint">Kommagetrennt. Leer = alle Tenants ausser infra und mgmt.</div>
+            </div>
+          </>
+        ) : (
           <div className="field">
             <label htmlFor="ss-token">API-Token (read-only)</label>
             <SecretInput
               id="ss-token"
               value={token}
-              disabled={clearToken}
+              disabled={clearCreds}
               onChange={setToken}
-              placeholder={hasToken ? "hinterlegt – leer lassen = unverändert" : "REST-API-Token der FortiGate"}
+              placeholder={hasCreds ? kept : "REST-API-Token der FortiGate"}
             />
             <div className="hint">
               FortiGate: System → Administratoren → REST API Admin mit Nur-Lese-Profil; Trusted Hosts = Agent-Rechner.
               Wird verschlüsselt gespeichert und nie wieder angezeigt.
             </div>
-            {hasToken && (
-              <label className="check" style={{ marginTop: 6 }}>
-                <input type="checkbox" checked={clearToken} onChange={(e) => setClearToken(e.target.checked)} />
-                Hinterlegtes Token entfernen
-              </label>
-            )}
           </div>
-        ) : (
-          <Note>
-            APIC-Zugangsdaten folgen mit dem APIC-REST-Client; bis dahin liest der Collector den MO-Export.
-          </Note>
+        )}
+        {hasCreds && (
+          <div className="field">
+            <label className="check">
+              <input type="checkbox" checked={clearCreds} onChange={(e) => setClearCreds(e.target.checked)} />
+              Hinterlegte Zugangsdaten entfernen
+            </label>
+          </div>
         )}
         <div className="field">
           <label className="check">
@@ -941,7 +999,14 @@ function SystemTable({
             <td>
               <span className="chip">{PLATFORM_LABEL[s.platform] ?? s.platform}</span>
             </td>
-            <td className="mono nowrap">{s.base_url || <span className="faint">–</span>}</td>
+            <td className="mono nowrap">
+              {s.base_url || <span className="faint">–</span>}
+              {s.read_scope && (
+                <div className="faint" style={{ fontSize: 11 }} title="gelesene ACI-Tenants">
+                  Tenants: {s.read_scope}
+                </div>
+              )}
+            </td>
             <td className="nowrap">
               {s.agent_id != null ? (
                 <span className="chip info">

@@ -79,8 +79,9 @@ class CollectorResult(BaseModel):
 class Target(BaseModel):
     """Zu lesendes Geraet inkl. Zugangsdaten vom Orchestrator (ADR 0009).
 
-    Der zugewiesene Agent bekommt es beim Abholen eines Laufs; `token` fehlt, wenn am
-    Geraet keine Zugangsdaten hinterlegt sind (dann gilt die lokale Konfiguration).
+    Der zugewiesene Agent bekommt es beim Abholen eines Laufs. Zugangsdaten je Plattform:
+    FortiGate `token`, Cisco ACI `username`/`password`; sie fehlen, wenn am Geraet keine
+    hinterlegt sind (dann gilt die lokale Konfiguration).
     """
 
     source_system_id: int | None = None
@@ -88,4 +89,7 @@ class Target(BaseModel):
     platform: str = "fortigate"
     base_url: str = ""
     verify_tls: bool = True
+    read_scope: str = ""  # ACI: zu lesende Tenants (kommagetrennt, leer = alle)
     token: str | None = None
+    username: str | None = None
+    password: str | None = None

@@ -203,7 +203,7 @@ collectors-Wheel + Scheduled Task „Automato Collector Agent" → `--poll` alle
 `run-agent.ps1` (lädt `agent.env`, startet den Agenten), `agent.env.example` (Token/Ziel-
 Creds/TLS), `agent_entry.py` (PyInstaller-Entry für eine Python-freie `.exe`), README. Wheel
 baut via `uv build --package collectors`. Damit ist der externe Collector auf Windows
-rollbar. **Offen (Model-1-Rest):** echter APIC-REST-Client im Agenten (Login + MO-Subtree).
+rollbar. Echter APIC-REST-Client im Agenten: umgesetzt (siehe ACI-Geräte unten).
 **Standort-Verortung umgesetzt** (Alembic `0010`): `network_object.site_id` (nullable FK → site)
 verortet ein System an einem Standort. `PATCH /appdoc/systems/{name}/site` (operator,
 mandantsgescoped, auditiert `system.site_assigned`; fremde Site → 422); `build_doc` liefert jetzt
@@ -469,3 +469,17 @@ Schritt „Geräte zuweisen", `agent.env`-Generator nur noch Orchestrator + Agen
 „Jetzt einlesen" leitet die Ausführung aus der Zuweisung ab (kein Umschalter). Migration 0016 up/down
 gegen Postgres geprüft; Klick-Durchlauf per Playwright (Agent → Gerät → Lauf → Agent holt Target mit
 Token, `/systems` ohne Token). Tests: orchestrator 126, collectors 33, sot-gateway 6.
+**ACI-Geräte wie Firewalls (ADR 0009, Alembic `0017`):** Cisco-ACI-Quellsysteme (APIC) werden genau
+wie FortiGates beim Mandanten erfasst, einem Agenten zugewiesen und bekommen ihre Zugangsdaten pro
+Lauf. `credentials.FIELDS` je Plattform: FortiGate `token`, Cisco ACI `username`+`password` (alle
+Felder oder keine → sonst 422, fremde Felder 422; PATCH ändert nur angegebene Felder, `""` entfernt).
+`source_system.read_scope` = ACI-Tenants (kommagetrennt, validiert, leer = alle ausser infra/mgmt;
+bei FortiGate 422). `Target` + `username`/`password`/`read_scope`. **APIC-REST-Client**
+`collectors/cisco_aci/client.py` (`aaaLogin` → `APIC-cookie`, `/api/class/fvTenant.json`, je Tenant
+`/api/mo/uni/tn-<TE>.json?rsp-subtree=full`, `aaaLogout`); ACI-Task wie FortiGate: Target vor
+`AUTOMATO_ACI_*`-Rückfall, Agent ohne Creds bricht ab, sonst (zentral/Lab) Beispiel-Export; `check()`
+= Login + Tenant-Liste; Celery-Task holt das Ziel per `run_target`. UI: Quellsystem-Dialog bei Cisco
+ACI mit APIC-Benutzer/-Passwort (write-only) und ACI-Tenants, Tabelle zeigt „Tenants: …“,
+„Hinterlegte Zugangsdaten entfernen“ für beide Plattformen, „Jetzt einlesen“ warnt plattformunabhängig.
+Migration 0017 up/down gegen Postgres geprüft; Playwright-Durchlauf (APIC anlegen, nur Passwort
+ändern, Zugangsdaten entfernen). Tests: orchestrator 128, collectors 40, sot-gateway 6.

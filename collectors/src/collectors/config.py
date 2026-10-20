@@ -19,12 +19,17 @@ class Settings(BaseSettings):
     client_cert: str = ""  # mTLS Client-Zertifikat (PEM)
     client_key: str = ""  # mTLS Client-Key (PEM)
 
-    # Zielsystem-Zugang FortiGate (read-only!). Ohne URL/Token liest der Collector
-    # Beispieldaten (Lab noch nicht da). verify_tls im Lab i. d. R. false (selbstsigniert).
+    # Zielsystem-Zugang lokal - nur Rueckfall: normalerweise kommen Adresse und Zugangsdaten
+    # vom Quellsystem im Web-UI (ADR 0009). Zentral/Lab ohne beides: Beispieldaten.
+    # verify_tls im Lab i. d. R. false (selbstsigniert). Alles read-only!
     fortigate_url: str = ""
     fortigate_token: str = ""
     fortigate_verify_tls: bool = True
-    # Cisco ACI folgt in Phase 2: aci_url / aci_username / aci_password
+    aci_url: str = ""
+    aci_username: str = ""
+    aci_password: str = ""
+    aci_verify_tls: bool = True
+    aci_tenants: str = ""  # kommagetrennt, leer = alle ausser infra/mgmt
 
 
 @lru_cache

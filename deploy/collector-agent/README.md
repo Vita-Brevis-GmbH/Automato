@@ -4,8 +4,9 @@ Rollout des externen Collectors als geplante Aufgabe auf einer Windows-Station i
 Kundennetz. Der Agent holt Läufe per Pull und spricht nur **ausgehend HTTPS** zum
 Orchestrator (Details/Netz/Sicherheit: `collectors/EXTERNAL.md`).
 
-**Geräte werden nicht am Agenten erfasst** (ADR 0009): FortiGate & Co. legt man im Web-UI
-unter **Mandanten & Standorte → Quellsysteme** an (Adresse, read-only API-Token, TLS-Prüfung)
+**Geräte werden nicht am Agenten erfasst** (ADR 0009): FortiGate und Cisco APIC legt man im
+Web-UI unter **Mandanten & Standorte → Quellsysteme** an (Adresse, read-only Zugangsdaten –
+FortiGate: API-Token, APIC: Benutzer/Passwort + ACI-Tenants –, TLS-Prüfung)
 und weist sie dort einem Agenten zu. Der Orchestrator speichert die Zugangsdaten
 verschlüsselt und gibt sie pro Lauf **nur dem zugewiesenen Agenten**. Die `agent.env`
 enthält deshalb nur Orchestrator-Adresse + Agent-Token (+ optional TLS). Ein Gerät lässt
@@ -70,7 +71,7 @@ powershell -ExecutionPolicy Bypass -File C:\Automato\collector\run-agent.ps1 -Ch
 
 Prüft read-only **alle diesem Agenten zugewiesenen Geräte** (eine Zeile je Gerät, Exit 0 =
 alle OK, 2 = mindestens eines fehlerhaft). Ohne zugewiesene Geräte erscheint ein Hinweis.
-Alte `agent.env` mit `AUTOMATO_FORTIGATE_URL/_TOKEN` funktionieren als Rückfall weiter,
+Alte `agent.env` mit `AUTOMATO_FORTIGATE_URL/_TOKEN` (bzw. `AUTOMATO_ACI_*`) funktionieren als Rückfall weiter,
 die Angaben am Quellsystem haben aber Vorrang.
 
 ## Ohne Python auf der Station (optional)
@@ -95,4 +96,5 @@ Die `dist\automato-collector.exe` ersetzt dann den venv-Aufruf in `run-agent.ps1
 
 **Secrets:** Auf der Station liegt nur noch das Agent-Token (+ optional Client-Zertifikat)
 in `agent.env` (nicht committen); rotierbar je Agent. Die Geräte-Tokens liegen verschlüsselt
-im Orchestrator (ADR 0009) und kommen nur pro Lauf über die TLS-Verbindung zum Agenten.
+im Orchestrator (ADR 0009) und kommen nur pro Lauf über die TLS-Verbindung zum Agenten
+(FortiGate-Token ebenso wie APIC-Benutzer/Passwort).

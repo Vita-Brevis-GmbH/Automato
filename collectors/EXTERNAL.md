@@ -7,8 +7,9 @@ Orchestrator; read-only gegenüber dem Zielsystem.
 ## Geräte & Zugangsdaten (ADR 0009)
 
 Geräte werden **nicht am Agenten** konfiguriert, sondern im Web-UI beim Mandanten unter
-**Quellsysteme**: Adresse, read-only API-Token, TLS-Prüfung und **Verwaltet von** (Agent).
-Der Orchestrator speichert das Token verschlüsselt und gibt es **nur dem zugewiesenen
+**Quellsysteme**: Adresse, read-only Zugangsdaten (FortiGate: API-Token; Cisco APIC: Benutzer
++ Passwort und optional die ACI-Tenants), TLS-Prüfung und **Verwaltet von** (Agent).
+Der Orchestrator speichert die Zugangsdaten verschlüsselt und gibt es **nur dem zugewiesenen
 Agenten** – pro Lauf (`next-run` → `target`) bzw. für `--check` (`/internal/agent/targets`).
 Ein Agent kann beliebig viele Geräte lesen; Umverteilen = im UI einen anderen Agenten wählen.
 Den Ergebnis-Upload signiert der Agent mit seinem **Agent-Token** – das interne Service-Token
@@ -47,12 +48,13 @@ zugewiesenen Geräten** testen (read-only, kein Ingest):
 ```bash
 automato-collector --check                 # optional: --platform fortigate
 # fw-01 (fortigate) check: OK - erreichbar: https://fw-01.kunde.intern
+# apic-01 (cisco_aci) check: OK - erreichbar: https://apic-01.kunde.intern (5 Tenants sichtbar)
 # fw-02 (fortigate) check: FEHLER - HTTPStatusError: 401 ...
 # Exit 0 = alle OK, 2 = mindestens ein Gerät fehlerhaft
 ```
 
 Ohne Agent-Token bzw. ohne zugewiesene Geräte prüft `--check` die lokale Konfiguration
-(`AUTOMATO_FORTIGATE_URL/_TOKEN`).
+(`AUTOMATO_FORTIGATE_URL/_TOKEN` bzw. `AUTOMATO_ACI_URL/_USERNAME/_PASSWORD`).
 
 ## Installation (Windows)
 
@@ -69,6 +71,7 @@ Ohne Agent-Token bzw. ohne zugewiesene Geräte prüft `--check` die lokale Konfi
 | `AUTOMATO_AGENT_TOKEN` | Agent-Token fürs Pull-Modell (einmalig bei `POST /agents`): Läufe abholen + Ergebnis abliefern |
 | `AUTOMATO_INTERNAL_API_TOKEN` | nur zentraler Worker / `--run-id`-Modus – **nicht** am Agenten |
 | `AUTOMATO_FORTIGATE_URL` / `_TOKEN` / `_VERIFY_TLS` | nur Rückfall; Normalfall: am Quellsystem im Web-UI (ADR 0009) |
+| `AUTOMATO_ACI_URL` / `_USERNAME` / `_PASSWORD` / `_VERIFY_TLS` / `_TENANTS` | Cisco APIC, nur Rückfall (wie oben) |
 | `AUTOMATO_ORCHESTRATOR_CA_BUNDLE` | CA-Pin für den Orchestrator (TLS-Server) |
 | `AUTOMATO_CLIENT_CERT` / `AUTOMATO_CLIENT_KEY` | mTLS-Client-Zertifikat des Agenten |
 
