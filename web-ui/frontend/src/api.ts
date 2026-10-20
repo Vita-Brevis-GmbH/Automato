@@ -741,10 +741,47 @@ export async function fetchRules(opts: {
 export const fetchRuleSummary = (tenantId?: number | null) =>
   getJSON<RuleSummary>(`/api/rules/summary${qs({ tenant_id: tenantId })}`);
 export const fetchRuleDetail = (id: number) => getJSON<RuleDetail>(`/api/rules/${id}`);
-export const fetchNat = (tenantId?: number | null) =>
-  getJSON<Nat[]>(`/api/nat${qs({ tenant_id: tenantId })}`);
-export const fetchFindings = (tenantId?: number | null, type?: string | null) =>
-  getJSON<Finding[]>(`/api/findings${qs({ tenant_id: tenantId, type })}`);
+// Seitenweise Listen: Gesamtzahl (nach Filtern) im Header X-Total-Count
+export interface Page<T> {
+  rows: T[];
+  total: number;
+}
+async function getPage<T>(url: string): Promise<Page<T>> {
+  const response = await fetchChecked(url);
+  const rows = (await response.json()) as T[];
+  const total = Number(response.headers.get("X-Total-Count") ?? rows.length);
+  return { rows, total: Number.isFinite(total) ? total : rows.length };
+}
+export const fetchNat = (opts: { tenantId?: number | null; natType?: string; limit?: number; offset?: number }) =>
+  getPage<Nat>(
+    `/api/nat${qs({ tenant_id: opts.tenantId, nat_type: opts.natType, limit: opts.limit, offset: opts.offset })}`,
+  );
+export const fetchFindings = (opts: {
+  tenantId?: number | null;
+  status?: string;
+  type?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}) =>
+  getPage<Finding>(
+    `/api/findings${qs({
+      tenant_id: opts.tenantId,
+      status: opts.status,
+      type: opts.type,
+      q: opts.q?.trim(),
+      limit: opts.limit,
+      offset: opts.offset,
+    })}`,
+  );
+export interface FindingSummary {
+  total: number;
+  open: number;
+  by_status: Record<string, number>; // unter Typ-/Suchfilter
+  by_type: Record<string, { open: number; total: number }>;
+}
+export const fetchFindingSummary = (tenantId?: number | null, type?: string, q?: string) =>
+  getJSON<FindingSummary>(`/api/findings/summary${qs({ tenant_id: tenantId, type, q: q?.trim() })}`);
 export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
   sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);
 export const fetchApplications = (tenantId?: number | null) =>

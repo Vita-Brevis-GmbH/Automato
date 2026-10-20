@@ -2,14 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AuthConfig,
   fetchAuthConfig,
-  fetchFindings,
+  fetchFindingSummary,
   fetchHealth,
   fetchNat,
   fetchRuleSummary,
   fetchTenants,
-  Finding,
+  FindingSummary,
   HealthStatus,
-  Nat,
   RuleSummary,
   Tenant,
 } from "./api";
@@ -71,10 +70,12 @@ const NAV: NavEntry[] = [
 // Daten der Übersicht + Zähler in der Navigation (je Mandant geladen).
 export interface Stats {
   rules: RuleSummary | null; // Kennzahlen aller Regeln (Firewall + ACI)
-  nat: Nat[] | null;
-  findings: Finding[] | null;
+  nat: number | null; // Anzahl VIPs/SNAT-Pools
+  findings: FindingSummary | null; // Zähler (offen/gesamt/je Typ)
   error: unknown;
 }
+
+const EMPTY_FINDINGS: FindingSummary = { total: 0, open: 0, by_status: {}, by_type: {} };
 
 const EMPTY_RULES: RuleSummary = {
   total: 0,
@@ -303,9 +304,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   const loadStats = useCallback(() => {
     if (!tenantReady) return;
     setStats({ rules: null, nat: null, findings: null, error: null });
-    Promise.all([fetchRuleSummary(tenantId), fetchNat(tenantId), fetchFindings(tenantId)])
-      .then(([rules, nat, findings]) => setStats({ rules, nat, findings, error: null }))
-      .catch((e) => setStats({ rules: EMPTY_RULES, nat: [], findings: [], error: e }));
+    Promise.all([fetchRuleSummary(tenantId), fetchNat({ tenantId, limit: 1 }), fetchFindingSummary(tenantId)])
+      .then(([rules, nat, findings]) => setStats({ rules, nat: nat.total, findings, error: null }))
+      .catch((e) => setStats({ rules: EMPTY_RULES, nat: 0, findings: EMPTY_FINDINGS, error: e }));
   }, [tenantId, tenantReady]);
 
   useEffect(() => {
@@ -314,10 +315,10 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
 
   const tenant = tenants?.find((t) => t.id === tenantId) ?? null;
   const tenantLabel = tenant ? tenant.name : "Alle Mandanten";
-  const openFindings = stats.findings?.filter((f) => f.status === "open").length;
+  const openFindings = stats.findings?.open;
   const badges: Partial<Record<View, { n: number | undefined; warn?: boolean }>> = {
     regeln: { n: stats.rules?.total },
-    nat: { n: stats.nat?.length },
+    nat: { n: stats.nat ?? undefined },
     findings: { n: openFindings, warn: (openFindings ?? 0) > 0 },
   };
 

@@ -6,7 +6,7 @@ beides mandantsgescoped, Triage auditiert. Die schreibende Bereinigung am Zielsy
 (DDI/Regel) folgt mit dem Schreibpfad (ADR 0002).
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -44,20 +44,44 @@ def _finding_out(f) -> FindingOut:
     )
 
 
-@router.get("", response_model=list[FindingOut])
-def list_findings(
+class FindingSummaryOut(BaseModel):
+    total: int
+    open: int
+    by_status: dict[str, int]  # unter Typ-/Suchfilter
+    by_type: dict[str, dict[str, int]]  # je Typ {open, total} (ohne Filter)
+
+
+@router.get("/summary", response_model=FindingSummaryOut)
+def findings_summary(
     tenant_id: int | None = None,
-    status: str | None = None,
     type: str | None = None,
-    limit: int = 5000,
+    q: str | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session),
 ):
+    """Zaehler fuer Filterleiste, Uebersicht und Navigation (alle Findings, nicht eine Seite)."""
+    tenant_id = tenant_scope(principal, tenant_id)
+    return findings_store.summary(session, tenant_id, ftype=type, q=q)
+
+
+@router.get("", response_model=list[FindingOut])
+def list_findings(
+    response: Response,
+    tenant_id: int | None = None,
+    status: str | None = None,
+    type: str | None = None,
+    q: str | None = None,
+    limit: int = Query(500, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session),
+):
+    """Findings seitenweise; Gesamtzahl (nach Filtern) im Header `X-Total-Count`."""
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "findings")
-    rows = findings_store.list_findings(
-        session, tenant_id=tenant_id, status=status, ftype=type, limit=min(limit, 20000)
-    )
+    flt = {"tenant_id": tenant_id, "status": status, "ftype": type, "q": q}
+    response.headers["X-Total-Count"] = str(findings_store.count_findings(session, **flt))
+    rows = findings_store.list_findings(session, limit=limit, offset=offset, **flt)
     return [_finding_out(f) for f in rows]
 
 

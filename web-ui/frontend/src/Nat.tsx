@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { fetchNat, Nat } from "./api";
 import { Dash, Empty, ErrorBox, Loading, PageHead } from "./ui";
 
+const PAGE = 500; // Einträge je Seite
+
 const NAT_TYPE: Record<string, [string, string]> = {
   dnat_vip: ["local", "VIP / DNAT"],
   snat_pool: ["info", "SNAT-Pool"],
@@ -9,21 +11,41 @@ const NAT_TYPE: Record<string, [string, string]> = {
 
 export default function NatTable({ tenantId, tenantLabel }: { tenantId: number | null; tenantLabel: string }) {
   const [nat, setNat] = useState<Nat[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [more, setMore] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [type, setType] = useState("");
 
+  // Typ filtert der Orchestrator; Gesamtzahl aus X-Total-Count, Rest per "weitere laden"
   useEffect(() => {
     setNat(null);
     setError(null);
-    fetchNat(tenantId)
-      .then(setNat)
+    fetchNat({ tenantId, natType: type, limit: PAGE })
+      .then((page) => {
+        setNat(page.rows);
+        setTotal(page.total);
+      })
       .catch((e) => {
         setError(e);
         setNat([]);
+        setTotal(0);
       });
-  }, [tenantId]);
+  }, [tenantId, type]);
 
-  const shown = (nat ?? []).filter((n) => !type || n.nat_type === type);
+  const loadMore = () => {
+    if (!nat) return;
+    setMore(true);
+    fetchNat({ tenantId, natType: type, limit: PAGE, offset: nat.length })
+      .then((page) => {
+        setNat([...nat, ...page.rows]);
+        setTotal(page.total);
+      })
+      .catch(setError)
+      .finally(() => setMore(false));
+  };
+
+  const shown = nat ?? [];
+  const loaded = shown.length;
 
   return (
     <>
@@ -38,7 +60,9 @@ export default function NatTable({ tenantId, tenantLabel }: { tenantId: number |
           <option value="snat_pool">SNAT-Pool</option>
         </select>
         <div className="grow" />
-        <span className="count">{shown.length} Einträge</span>
+        <span className="count">
+          {total} Einträge{total > loaded ? ` · ${loaded} geladen` : ""}
+        </span>
       </div>
       <ErrorBox error={error} prefix="NAT laden" />
       <div className="card">
@@ -85,6 +109,14 @@ export default function NatTable({ tenantId, tenantLabel }: { tenantId: number |
             </table>
           )}
         </div>
+        {nat !== null && total > loaded && (
+          <div className="card-foot">
+            {loaded} von {total} geladen –{" "}
+            <button className="btn btn-ghost btn-sm" onClick={loadMore} disabled={more}>
+              {more ? "Lade…" : `weitere ${Math.min(PAGE, total - loaded)} laden`}
+            </button>
+          </div>
+        )}
       </div>
     </>
   );

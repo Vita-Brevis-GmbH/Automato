@@ -73,7 +73,7 @@ export default function Overview({
   const endpoints = rules?.endpoints ?? 0;
   const unmatched = rules?.unmatched ?? 0;
   const coverage = endpoints ? Math.floor(((endpoints - unmatched) / endpoints) * 100) : null;
-  const openFindings = (stats.findings ?? []).filter((f) => f.status === "open");
+  const openFindings = stats.findings?.open ?? 0;
   const usedSystems = rules?.source_system_ids ?? [];
   const systemName = (id: number | null) =>
     id == null ? "–" : (systems.find((s) => s.id === id)?.name ?? `#${id}`);
@@ -111,16 +111,16 @@ export default function Overview({
         </button>
         <button className="kpi" onClick={() => onGo("nat")}>
           <div className="k-label">NAT / VIPs</div>
-          <div className="k-val">{stats.nat === null ? "…" : stats.nat.length}</div>
+          <div className="k-val">{stats.nat === null ? "…" : stats.nat}</div>
           <div className="k-sub">publizierte Dienste &amp; SNAT-Pools</div>
         </button>
         <button className="kpi" onClick={() => onGo("findings")}>
           <div className="k-label">Offene Findings</div>
-          <div className={`k-val ${openFindings.length === 0 ? "ok" : "warn"}`}>
-            {stats.findings === null ? "…" : openFindings.length}
+          <div className={`k-val ${openFindings === 0 ? "ok" : "warn"}`}>
+            {stats.findings === null ? "…" : openFindings}
           </div>
           <div className="k-sub">
-            {openFindings.length === 0 ? "alle Objekte aufgelöst" : "Datenqualität prüfen"}
+            {openFindings === 0 ? "alle Objekte aufgelöst" : "Datenqualität prüfen"}
           </div>
         </button>
         <div className="kpi">

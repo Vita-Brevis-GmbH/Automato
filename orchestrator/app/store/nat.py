@@ -1,16 +1,33 @@
 """NAT-/VIP-Store: Lesezugriff auf nat_rule."""
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import NatRule
 
 
-def list_nat(session: Session, tenant_id: int | None = None, limit: int = 500) -> list[NatRule]:
-    stmt = select(NatRule).order_by(NatRule.source_system_id, NatRule.name)
+def _filtered(stmt, tenant_id, nat_type):
     if tenant_id is not None:
         stmt = stmt.where(NatRule.tenant_id == tenant_id)
-    return list(session.scalars(stmt.limit(limit)))
+    if nat_type:
+        stmt = stmt.where(NatRule.nat_type == nat_type)
+    return stmt
+
+
+def list_nat(
+    session: Session,
+    tenant_id: int | None = None,
+    limit: int | None = 500,
+    offset: int = 0,
+    nat_type: str | None = None,
+) -> list[NatRule]:
+    stmt = select(NatRule).order_by(NatRule.source_system_id, NatRule.name)
+    stmt = _filtered(stmt, tenant_id, nat_type).offset(offset)
+    return list(session.scalars(stmt if limit is None else stmt.limit(limit)))
+
+
+def count_nat(session: Session, tenant_id: int | None = None, nat_type: str | None = None) -> int:
+    return session.scalar(_filtered(select(func.count(NatRule.id)), tenant_id, nat_type)) or 0
 
 
 def nat_by_name(session: Session, tenant_id: int) -> dict[str, NatRule]:

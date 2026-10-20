@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
-import { fetchFindings, fetchSystems, Finding, patchFinding, System } from "./api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { fetchFindings, fetchFindingSummary, fetchSystems, Finding, FindingSummary, patchFinding, System } from "./api";
 import type { Me } from "./auth";
 import { FINDING_LABEL, findingLabel } from "./refs";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
+
+const PAGE = 500; // Findings je Seite
 
 const STATUS_LABEL: Record<string, string> = {
   open: "offen",
@@ -60,6 +62,9 @@ export default function Findings({
   onChanged: () => void;
 }) {
   const [findings, setFindings] = useState<Finding[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<FindingSummary | null>(null);
+  const [more, setMore] = useState(false);
   const [systems, setSystems] = useState<System[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [status, setStatus] = useState("open");
@@ -69,18 +74,44 @@ export default function Findings({
   useEffect(() => setType(initialType), [initialType]);
 
   useEffect(() => {
-    setFindings(null);
-    setError(null);
-    fetchFindings(tenantId)
-      .then(setFindings)
-      .catch((e) => {
-        setError(e);
-        setFindings([]);
-      });
     fetchSystems(tenantId)
       .then(setSystems)
       .catch(() => setSystems([]));
   }, [tenantId]);
+
+  // Status, Typ und Suche filtert der Orchestrator über alle Findings; Zähler aus der Summary
+  const query = useMemo(() => ({ tenantId, status, type, q, limit: PAGE }), [tenantId, status, type, q]);
+  const reload = useCallback(() => {
+    setError(null);
+    return Promise.all([fetchFindings(query), fetchFindingSummary(tenantId, type, q)])
+      .then(([page, s]) => {
+        setFindings(page.rows);
+        setTotal(page.total);
+        setSummary(s);
+      })
+      .catch((e) => {
+        setError(e);
+        setFindings([]);
+        setTotal(0);
+      });
+  }, [query, tenantId, type, q]);
+  useEffect(() => {
+    setFindings(null);
+    const timer = setTimeout(reload, 250);
+    return () => clearTimeout(timer);
+  }, [reload]);
+
+  const loadMore = () => {
+    if (!findings) return;
+    setMore(true);
+    fetchFindings({ ...query, offset: findings.length })
+      .then((page) => {
+        setFindings([...findings, ...page.rows]);
+        setTotal(page.total);
+      })
+      .catch(setError)
+      .finally(() => setMore(false));
+  };
 
   const systemName = (id: number | null) =>
     id == null ? null : (systems.find((s) => s.id === id)?.name ?? `#${id}`);
@@ -90,26 +121,22 @@ export default function Findings({
     try {
       const updated = await patchFinding(id, { status: next });
       setFindings((prev) => prev?.map((f) => (f.id === id ? updated : f)) ?? prev);
+      fetchFindingSummary(tenantId, type, q)
+        .then(setSummary)
+        .catch(() => undefined);
       onChanged();
     } catch (e) {
       setError(e);
     }
   };
 
-  const ql = q.trim().toLowerCase();
-  const ofType = (findings ?? []).filter(
-    (f) =>
-      (!type || f.type === type) &&
-      (!ql || f.subject_id.toLowerCase().includes(ql) || detailText(f.detail).toLowerCase().includes(ql)),
-  );
-  const shown = ofType.filter((f) => !status || f.status === status);
-  const counts = ofType.reduce<Record<string, number>>((acc, f) => {
-    acc[f.status] = (acc[f.status] ?? 0) + 1;
-    return acc;
-  }, {});
-  const types = [...new Set([...(findings ?? []).map((f) => f.type), ...(type ? [type] : [])])].sort((a, b) =>
+  // Nach einer Triage kann ein Eintrag den Statusfilter verlassen - bis zum Neuladen ausblenden
+  const shown = (findings ?? []).filter((f) => !status || f.status === status);
+  const counts = summary?.by_status ?? {};
+  const types = [...new Set([...Object.keys(summary?.by_type ?? {}), ...(type ? [type] : [])])].sort((a, b) =>
     findingLabel(a).localeCompare(findingLabel(b)),
   );
+  const loaded = findings?.length ?? 0;
 
   return (
     <>
@@ -122,7 +149,7 @@ export default function Findings({
         <div className="seg">
           {["open", "acknowledged", "resolved", "ignored", ""].map((s) => (
             <button key={s || "all"} className={status === s ? "on" : ""} onClick={() => setStatus(s)}>
-              {s ? STATUS_LABEL[s] : "alle"} ({s ? (counts[s] ?? 0) : ofType.length})
+              {s ? STATUS_LABEL[s] : "alle"} ({s ? (counts[s] ?? 0) : (summary?.total ?? 0)})
             </button>
           ))}
         </div>
@@ -140,7 +167,9 @@ export default function Findings({
           </span>
           <input placeholder="Objekt oder Detail…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        <span className="count">{shown.length} Treffer</span>
+        <span className="count">
+          {total} Treffer{total > loaded ? ` · ${loaded} geladen` : ""}
+        </span>
       </div>
       <ErrorBox error={error} prefix="Findings" onClose={() => setError(null)} />
       <div className="card">
@@ -200,6 +229,14 @@ export default function Findings({
             </table>
           )}
         </div>
+        {findings !== null && total > loaded && (
+          <div className="card-foot">
+            {loaded} von {total} geladen – Typ oder Suche eingrenzen oder{" "}
+            <button className="btn btn-ghost btn-sm" onClick={loadMore} disabled={more}>
+              {more ? "Lade…" : `weitere ${Math.min(PAGE, total - loaded)} laden`}
+            </button>
+          </div>
+        )}
       </div>
     </>
   );
