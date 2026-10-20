@@ -32,6 +32,7 @@ def test_verify_abschaltbar():
 
 def test_describe_error_nennt_ziel_und_ursache():
     import httpx
+
     from collectors.common.http import describe_error
 
     def refuse(request):
