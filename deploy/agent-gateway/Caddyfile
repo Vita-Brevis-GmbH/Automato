@@ -1,0 +1,43 @@
+# mTLS-Agent-Gateway (Profil "agent-gateway" in docker-compose.yml, Produktions-Gate).
+# Agenten erreichen den Orchestrator nur hier: TLS 1.2+/1.3, Client-Zertifikat der Agent-CA
+# Pflicht. Weitergereicht werden nur die Agent-Pfade; das Gateway setzt X-Gateway-Secret und
+# X-Client-Cert-Subject selbst (vom Client gesendete Werte werden ueberschrieben).
+# Orchestrator: AUTOMATO_INTERNAL_MTLS_MODE=require|bind + gleiches AUTOMATO_AGENT_GATEWAY_SECRET.
+# Zertifikate: ./make-certs.sh (Ablage pki/, gitignored). Details: README.md.
+{
+	# Agenten per IP: ohne SNI braucht Caddy den Default-Namen fuer die Zertifikatswahl
+	default_sni {$AUTOMATO_AGENT_GATEWAY_HOST}
+	auto_https off
+	servers {
+		protocols h1 h2
+		# Aufrufe per IP senden kein SNI; Caddy lehnt sie bei Client-Zertifikaten sonst mit
+		# 421 ab. Unbedenklich, weil das Gateway nur diese eine Site (mit mTLS-Pflicht) hat.
+		strict_sni_host insecure_off
+	}
+}
+
+{$AUTOMATO_AGENT_GATEWAY_HOST}:8443 {
+	tls /etc/caddy/pki/gateway.crt /etc/caddy/pki/gateway.key {
+		protocols tls1.2 tls1.3
+		client_auth {
+			mode require_and_verify
+			trusted_ca_cert_file /etc/caddy/pki/agents-ca.crt
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# Nur der Agent-Kanal: Lauf abholen, Heartbeat, Ziele, Update, Ergebnis + Referenz-Teile.
+	# /internal/collector-runs/*/target (zentraler Worker, internes Token) bleibt intern.
+	@agent path /internal/agent/* /internal/collector-runs/*/result /internal/collector-runs/*/references
+	handle @agent {
+		reverse_proxy orchestrator:8000 {
+			header_up X-Gateway-Secret {$AUTOMATO_AGENT_GATEWAY_SECRET}
+			header_up X-Client-Cert-Subject {http.request.tls.client.subject}
+		}
+	}
+	respond 404
+}

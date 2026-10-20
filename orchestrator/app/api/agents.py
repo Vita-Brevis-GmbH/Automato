@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit, credentials
+from app.auth import mtls
 from app.auth.deps import require_admin
 from app.auth.principal import Principal
 from app.config import Settings, get_settings
@@ -251,11 +252,13 @@ def update_agent(
 def require_agent(
     x_agent_token: str = Header(),
     x_agent_version: str | None = Header(default=None),
+    channel: mtls.Channel = Depends(mtls.agent_channel),
     session: Session = Depends(get_session),
 ) -> Agent:
     agent = store.agent_by_token(session, x_agent_token)
     if agent is None:
         raise HTTPException(status_code=401, detail="invalid agent token")
+    mtls.enforce(channel, agent.name)  # Produktion: nur ueber das mTLS-Agent-Gateway
     if x_agent_version:
         agent.version = x_agent_version.strip()[:64]
     return agent

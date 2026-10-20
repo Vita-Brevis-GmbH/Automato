@@ -70,6 +70,11 @@ services:
       # Orchestrator-Prozessen nur einmal ausgeloest.
       AUTOMATO_SCHEDULER_ENABLED: ${AUTOMATO_SCHEDULER_ENABLED:-true}
       AUTOMATO_SCHEDULER_TIMEZONE: ${AUTOMATO_SCHEDULER_TIMEZONE:-Europe/Zurich}
+      # Agent-Kanal nur ueber das mTLS-Agent-Gateway (Profil agent-gateway): off | require | bind
+      AUTOMATO_INTERNAL_MTLS_MODE: ${AUTOMATO_INTERNAL_MTLS_MODE:-off}
+      AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}
+      # Signierte Agent-Updates (deploy/agent-signing): oeffentlicher Schluessel zum Pruefen
+      AUTOMATO_AGENT_SIGNING_PUBKEY: ${AUTOMATO_AGENT_SIGNING_PUBKEY:-}
     volumes:
       - orchestrator-data:/var/lib/automato
     extra_hosts:
@@ -139,6 +144,25 @@ services:
       - proxy-config:/config
     depends_on:
       - web-ui
+
+  # mTLS-Agent-Gateway (Produktions-Gate): Agenten sprechen nur hier mit dem Orchestrator
+  # (Client-Zertifikat der Agent-CA Pflicht). Zertifikate: deploy/agent-gateway/make-certs.sh.
+  # Orchestrator dazu: AUTOMATO_INTERNAL_MTLS_MODE=require|bind + gleiches Gateway-Secret;
+  # Port 8000 des Orchestrators dann nicht in die Agent-Netze freigeben.
+  agent-gateway:
+    image: caddy:2-alpine
+    profiles: ["agent-gateway"]
+    restart: unless-stopped
+    environment:
+      AUTOMATO_AGENT_GATEWAY_HOST: ${AUTOMATO_AGENT_GATEWAY_HOST:-localhost}
+      AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./deploy/agent-gateway/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/agent-gateway/pki:/etc/caddy/pki:ro
+    depends_on:
+      - orchestrator
 
   # AuthN/RBAC-IdP (E1, ADR 0007). Eigenes Profil "auth" -> beeinflusst core/collectors
   # nicht. Importiert den Realm "automato" (Rollen viewer/operator/admin, Clients

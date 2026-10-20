@@ -16,6 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import audit, credentials
+from app.auth import mtls
 from app.config import get_settings
 from app.db import get_session
 from app.models import REFERENCE_PLATFORMS, CollectorRun, RunStatus, SourceSystem, Tenant
@@ -76,7 +77,13 @@ class ResultAck(BaseModel):
     message: str | None = None
 
 
-def _authorized_run(session: Session, run_id: str, internal: str | None, agent_token: str | None):
+def _authorized_run(
+    session: Session,
+    run_id: str,
+    internal: str | None,
+    agent_token: str | None,
+    channel: mtls.Channel,
+):
     """Lauf + Akteur: internes Token (zentraler Worker) oder der abholende Agent."""
     run = session.get(CollectorRun, run_id)
     if _internal_ok(internal):
@@ -85,6 +92,7 @@ def _authorized_run(session: Session, run_id: str, internal: str | None, agent_t
         agent = agent_store.agent_by_token(session, agent_token)
         if agent is None:
             raise HTTPException(status_code=401, detail="invalid agent token")
+        mtls.enforce(channel, agent.name)
         if run is not None and run.agent_id != agent.id:
             raise HTTPException(status_code=403, detail="run was not claimed by this agent")
         actor = f"agent:{agent.name}"
@@ -101,10 +109,11 @@ def submit_references(
     batch: ReferenceBatch,
     x_internal_token: str | None = Header(default=None),
     x_agent_token: str | None = Header(default=None),
+    channel: mtls.Channel = Depends(mtls.agent_channel),
     session: Session = Depends(get_session),
 ) -> None:
     """Teil-Upload einer Referenzquelle (Infoblox/NetBox komplett gelesen, ADR 0010)."""
-    run, _ = _authorized_run(session, run_id, x_internal_token, x_agent_token)
+    run, _ = _authorized_run(session, run_id, x_internal_token, x_agent_token, channel)
     if run.platform not in REFERENCE_PLATFORMS:
         raise HTTPException(status_code=422, detail="run is not a reference source run")
     if run.status in (RunStatus.COMPLETED, RunStatus.FAILED):
@@ -158,11 +167,12 @@ def submit_result(
     result: CollectorResult,
     x_internal_token: str | None = Header(default=None),
     x_agent_token: str | None = Header(default=None),
+    channel: mtls.Channel = Depends(mtls.agent_channel),
     session: Session = Depends(get_session),
 ) -> ResultAck:
     """Ergebnis abliefern: zentraler Worker mit internem Token, Agent mit seinem eigenen
     Token - dann nur fuer einen Lauf, den genau dieser Agent abgeholt hat (ADR 0009)."""
-    run, actor = _authorized_run(session, run_id, x_internal_token, x_agent_token)
+    run, actor = _authorized_run(session, run_id, x_internal_token, x_agent_token, channel)
     if run.platform in REFERENCE_PLATFORMS:
         return _finish_reference_run(session, run, result, actor)
 

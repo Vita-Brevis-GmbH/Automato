@@ -1,6 +1,7 @@
 """Konfiguration - vollstaendig ueber Umgebungsvariablen (Praefix AUTOMATO_)."""
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -43,6 +44,18 @@ class Settings(BaseSettings):
     # https://auth.int.example.ch/admin/master/console/#/automato-dev . Leer = aus dem
     # Issuer abgeleitet (<origin>/admin/master/console/#/<realm>).
     oidc_admin_console_url: str = ""
+
+    # Agent-Kanal nur ueber das mTLS-Agent-Gateway (deploy/agent-gateway): off = Agent-Token
+    # genuegt; require = Agent-Aufrufe muessen vom Gateway kommen (Gateway-Secret + Client-
+    # Zertifikat); bind = zusaetzlich CN des Zertifikats = Agent-Name. Der zentrale Worker
+    # (internes Token) spricht weiter direkt mit dem Orchestrator.
+    internal_mtls_mode: Literal["off", "require", "bind"] = "off"
+    agent_gateway_secret: str = ""  # Gateway setzt X-Gateway-Secret (auch Secret-Referenz)
+
+    # Signierte Agent-Updates (Ed25519): oeffentlicher Schluessel (Base64, 32 Byte) zum Pruefen
+    # der eingespielten Signatur; die Signatur liegt im Daten-Volume (siehe deploy/agent-signing).
+    agent_signing_pubkey: str = ""
+    agent_signature_file: str = "/var/lib/automato/agent-package.sig"
 
     # Zeitgesteuerte Laeufe je Quellsystem (Cron am Quellsystem). Aus = keine Hintergrund-
     # Schleife (Tests, Werkzeuge); docker-compose schaltet ihn fuer den Orchestrator ein.
@@ -91,6 +104,11 @@ class Settings(BaseSettings):
 
 def check_security_config(settings: "Settings") -> None:
     """Fail-closed: verhindert unsichere Defaults ausserhalb der Entwicklung (ADR 0005)."""
+    if settings.internal_mtls_mode != "off" and len(settings.agent_gateway_secret) < 16:
+        raise RuntimeError(
+            "AUTOMATO_INTERNAL_MTLS_MODE ist aktiv, aber AUTOMATO_AGENT_GATEWAY_SECRET fehlt bzw. "
+            "ist kuerzer als 16 Zeichen (dasselbe Secret wie im Agent-Gateway setzen)."
+        )
     if settings.environment != "dev" and settings.internal_api_token == DEFAULT_INTERNAL_TOKEN:
         raise RuntimeError(
             "AUTOMATO_INTERNAL_API_TOKEN nutzt den Entwicklungs-Default in einer "

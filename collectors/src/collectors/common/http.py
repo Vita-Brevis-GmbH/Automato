@@ -6,6 +6,7 @@ mTLS-Client-Zertifikate und CA-Pinning an **einer** Stelle konfiguriert sind:
 - `AUTOMATO_CLIENT_CERT` + `AUTOMATO_CLIENT_KEY` aktivieren das Client-Zertifikat (mTLS).
 """
 
+import ssl
 from typing import Any
 
 import httpx
@@ -36,14 +37,23 @@ def describe_error(exc: Exception) -> str:
 
 
 def client_kwargs(settings: Settings) -> dict[str, Any]:
-    """httpx.Client-Argumente aus der Konfiguration (verify/cert) - pure, testbar."""
-    verify: str | bool = settings.orchestrator_ca_bundle or settings.orchestrator_verify_tls
-    cert: tuple[str, str] | str | None = None
-    if settings.client_cert and settings.client_key:
-        cert = (settings.client_cert, settings.client_key)
-    elif settings.client_cert:
-        cert = settings.client_cert  # kombiniertes PEM (Cert+Key)
-    return {"verify": verify, "cert": cert, "timeout": 30.0}
+    """httpx.Client-Argumente aus der Konfiguration - ein SSL-Kontext, sobald eine CA gepinnt
+    oder ein Client-Zertifikat gesetzt ist.
+
+    Bewusst kein `verify=<pfad>` + `cert=`: httpx (ab 0.28) legt das Client-Zertifikat in
+    dieser Kombination nicht vor - das Gateway lehnt dann mit "certificate required" ab."""
+    if not (settings.orchestrator_ca_bundle or settings.client_cert):
+        return {"verify": settings.orchestrator_verify_tls, "timeout": 30.0}
+    if settings.orchestrator_ca_bundle:
+        ctx = ssl.create_default_context(cafile=settings.orchestrator_ca_bundle)
+    else:
+        ctx = ssl.create_default_context()
+        if not settings.orchestrator_verify_tls:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+    if settings.client_cert:  # Cert + Key oder kombiniertes PEM
+        ctx.load_cert_chain(settings.client_cert, settings.client_key or None)
+    return {"verify": ctx, "timeout": 30.0}
 
 
 def _client() -> httpx.Client:

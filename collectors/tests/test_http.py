@@ -5,29 +5,90 @@ from collectors.config import Settings
 
 
 def test_default_system_trust():
-    k = client_kwargs(Settings())
-    assert k["verify"] is True and k["cert"] is None
-
-
-def test_ca_bundle_pinnt_server():
-    k = client_kwargs(Settings(orchestrator_ca_bundle="/etc/automato/ca.pem"))
-    assert k["verify"] == "/etc/automato/ca.pem"
-
-
-def test_client_cert_key_aktiviert_mtls():
-    k = client_kwargs(
-        Settings(client_cert="/etc/automato/agent.crt", client_key="/etc/automato/agent.key")
-    )
-    assert k["cert"] == ("/etc/automato/agent.crt", "/etc/automato/agent.key")
-
-
-def test_kombiniertes_pem():
-    k = client_kwargs(Settings(client_cert="/etc/automato/agent-combined.pem"))
-    assert k["cert"] == "/etc/automato/agent-combined.pem"
+    assert client_kwargs(Settings())["verify"] is True
 
 
 def test_verify_abschaltbar():
     assert client_kwargs(Settings(orchestrator_verify_tls=False))["verify"] is False
+
+
+def _pki(tmp_path):
+    """Agent-CA + Client-Zertifikat wie deploy/agent-gateway/make-certs.sh."""
+    import datetime as dt
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    def name(cn):
+        return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+
+    now = dt.datetime.now(dt.UTC)
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    ca = (
+        x509.CertificateBuilder()
+        .subject_name(name("ca"))
+        .issuer_name(name("ca"))
+        .public_key(ca_key.public_key())
+        .serial_number(1)
+        .not_valid_before(now)
+        .not_valid_after(now + dt.timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    key = ec.generate_private_key(ec.SECP256R1())
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name("agent-a"))
+        .issuer_name(ca.subject)
+        .public_key(key.public_key())
+        .serial_number(2)
+        .not_valid_before(now)
+        .not_valid_after(now + dt.timedelta(days=1))
+        .sign(ca_key, hashes.SHA256())
+    )
+    pem = serialization.Encoding.PEM
+    files = {
+        "ca.pem": ca.public_bytes(pem),
+        "agent.crt": cert.public_bytes(pem),
+        "agent.key": key.private_bytes(
+            pem, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+        ),
+    }
+    for fname, data in files.items():
+        (tmp_path / fname).write_bytes(data)
+    files["agent.pem"] = files["agent.crt"] + files["agent.key"]
+    (tmp_path / "agent.pem").write_bytes(files["agent.pem"])
+    return tmp_path
+
+
+def test_ca_bundle_und_client_cert_im_ssl_kontext(tmp_path):
+    """Regression: verify=<pfad> + cert= legte unter httpx 0.28 kein Zertifikat vor."""
+    import ssl
+
+    d = _pki(tmp_path)
+    k = client_kwargs(
+        Settings(
+            orchestrator_ca_bundle=str(d / "ca.pem"),
+            client_cert=str(d / "agent.crt"),
+            client_key=str(d / "agent.key"),
+        )
+    )
+    ctx = k["verify"]
+    assert isinstance(ctx, ssl.SSLContext) and "cert" not in k
+    assert ctx.verify_mode is ssl.CERT_REQUIRED and ctx.check_hostname
+    assert len(ctx.get_ca_certs()) == 1  # nur die gepinnte CA
+
+
+def test_kombiniertes_pem_und_ohne_pruefung(tmp_path):
+    import ssl
+
+    d = _pki(tmp_path)
+    ctx = client_kwargs(Settings(client_cert=str(d / "agent.pem"), orchestrator_verify_tls=False))[
+        "verify"
+    ]
+    assert isinstance(ctx, ssl.SSLContext) and ctx.verify_mode is ssl.CERT_NONE
 
 
 def test_describe_error_nennt_ziel_und_ursache():
