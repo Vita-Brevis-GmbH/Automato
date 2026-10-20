@@ -546,3 +546,8 @@ Plattform-Modulen; unvollständige Installation (z. B. fehlendes `sot_gateway`) 
 Update-Kanal. `install.ps1`: `Unblock-File`, Task anhalten, sichtbare pip-Schritte mit Exit-Code-Prüfung,
 Startprüfung. Verifiziert: kaputte Installation repariert sich, Upgrade von alter Kennung, `--version`.
 Tests: orchestrator 156, collectors 65, sot-gateway 14.
+**0.2.1 (Fix Agent-Paket):** Die Docker-Stage `agent-package` kopierte von sot-gateway nur
+`pyproject.toml` → leeres Wheel (nur dist-info), Agent: `No module named 'sot_gateway'`. Jetzt kompletter
+Quellcode + Bauabbruch bei leerem Wheel (`scripts/check_agent_package.py`), CI baut die Stage mit
+(`docker build --target agent-package`). Selbst-Update legt `run-agent.ps1` als neue Datei ab (alte
+Sperrmarkierung entfällt); `install.ps1` zeigt den Python-Starter korrekt an.
