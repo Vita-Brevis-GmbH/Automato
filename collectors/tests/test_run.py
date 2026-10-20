@@ -244,3 +244,62 @@ def test_poll_unbekannte_plattform_meldet_failed_statt_absturz(monkeypatch):
     assert run.main(["--poll"]) == 1
     assert sent["run_id"] == "r9" and sent["status"] == "failed"
     assert "Agent-Paket" in sent["message"]
+
+
+def _fortigate(monkeypatch, accepts_any_token: bool):
+    """FortiGateClient mit MockTransport: echtes Token ok, ungueltiges je nach Geraet."""
+    import httpx
+
+    import collectors.fortigate.tasks as t
+
+    seen = []
+
+    def handler(request):
+        token = request.headers.get("Authorization", "")
+        seen.append(token)
+        if "automato-r16-invalid-token" in token and not accepts_any_token:
+            return httpx.Response(401, json={"status": "error"})
+        return httpx.Response(200, json={"results": {"hostname": "fw"}})
+
+    from collectors.fortigate.client import FortiGateClient as real
+
+    def client(url, token, verify_tls=True):
+        return real(
+            url,
+            token,
+            verify_tls=verify_tls,
+            client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+
+    monkeypatch.setattr(t, "FortiGateClient", client)
+    return seen
+
+
+def test_strict_check_lehnt_ungueltiges_token_ab(monkeypatch, capsys):
+    import collectors.run as run
+
+    target = Target(source_system_id=1, name="fw-01", base_url="https://fw", token="echt")  # noqa: S106
+    monkeypatch.setattr(run, "get_settings", lambda: AGENT)
+    monkeypatch.setattr(run.agent_api, "targets", lambda: [target])
+
+    seen = _fortigate(monkeypatch, accepts_any_token=False)
+    assert run.main(["--check", "--strict", "--no-update"]) == 0
+    assert (
+        "fw-01 (fortigate) strict: OK - ungueltiges Token wird abgelehnt" in capsys.readouterr().out
+    )
+    assert len(seen) == 2  # genau ein Versuch mit ungueltigem Token
+
+    _fortigate(monkeypatch, accepts_any_token=True)  # Trusted-Host-only (R16)
+    assert run.main(["--check", "--strict", "--no-update"]) == 2
+    assert "UNGUELTIGEM Token" in capsys.readouterr().out
+
+    # ohne --strict kein Negativtest
+    seen = _fortigate(monkeypatch, accepts_any_token=True)
+    assert run.main(["--check", "--no-update"]) == 0 and len(seen) == 1
+
+
+def test_strict_nur_mit_check():
+    import pytest
+
+    with pytest.raises(SystemExit):
+        main(["--poll", "--strict", "--no-update"])

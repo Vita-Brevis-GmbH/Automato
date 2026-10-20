@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     agent_token: str = ""
     # Selbst-Update des installierten Agenten (ADR 0011); false = nur manuell aktualisieren
     agent_auto_update: bool = True
+    # Oeffentlicher Ed25519-Schluessel (Base64): gesetzt = nur signierte Updates installieren
+    agent_signing_pubkey: str = ""
     # TLS zum Orchestrator (ADR 0008): optionale mTLS-Client-Zertifikate + CA-Pin.
     orchestrator_verify_tls: bool = True
     orchestrator_ca_bundle: str = ""  # CA-Pfad zur Server-Verifikation (Pinning)

@@ -40,3 +40,6 @@ Thumbs.db
 .idea/
 # VM-spezifische Compose-Ergänzungen (z. B. extra_hosts für den OIDC-Backchannel)
 docker-compose.override.yml
+
+# Stand des letzten Updates (deploy/update.sh)
+.automato-update

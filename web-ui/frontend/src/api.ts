@@ -923,6 +923,17 @@ export const acceptAppSuggestion = (tenantId: number, code: string, name?: strin
   );
 export const fetchAppDoc = (id: number) => getJSON<ApplicationDoc>(`/api/applications/${id}/doc`);
 
+// System (Admin)
+export interface SystemStatus {
+  version: string;
+  database: { revision: string | null; head: string | null; up_to_date: boolean };
+  agent_package: { version: string | null; signature: string; pubkey_set: boolean; agents: number; agents_current: number };
+  scheduler: { enabled: boolean; interval_seconds: number; timezone: string; scheduled_sources: number; next_run_at: string | null };
+  security: { environment: string; auth_mode: string; internal_mtls_mode: string; audit_encryption: boolean; credentials_key: string };
+  backup: { at: string | null; file: string | null; encrypted: boolean | null; size: number | null } | null;
+}
+export const fetchSystemStatus = () => getJSON<SystemStatus>("/api/system/status");
+
 // Objekte & Inventar (rein lesend, Mandant nötig)
 export const fetchObjects = (
   tenantId: number,

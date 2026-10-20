@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     agent_signing_pubkey: str = ""
     agent_signature_file: str = "/var/lib/automato/agent-package.sig"
 
+    # Letzte Sicherung (schreibt deploy/backup/backup.sh ins Daten-Volume; System-Seite)
+    backup_status_file: str = "/var/lib/automato/last-backup.json"
+
     # Zeitgesteuerte Laeufe je Quellsystem (Cron am Quellsystem). Aus = keine Hintergrund-
     # Schleife (Tests, Werkzeuge); docker-compose schaltet ihn fuer den Orchestrator ein.
     scheduler_enabled: bool = False

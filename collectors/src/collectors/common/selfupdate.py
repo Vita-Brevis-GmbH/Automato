@@ -7,6 +7,10 @@ er die Dateien, prueft jede gegen ihre SHA-256 aus dem Manifest, installiert die
 venv, ersetzt `run-agent.ps1` und fuehrt den aktuellen Aufruf mit der neuen Version aus.
 Scheitert etwas, laeuft der Agent mit der bisherigen Version weiter.
 
+Mit `AUTOMATO_AGENT_SIGNING_PUBKEY` installiert der Agent nur Updates, deren Ed25519-Signatur
+(offline erstellt, `scripts/agent_signing.py`) zu Version und Pruefsummen passt - ein
+kompromittierter Orchestrator kann dann keine fremden Pakete verteilen.
+
 Aktiv nur fuer einen installierten Agenten (venv mit `run-agent.ps1` daneben, wie von
 `install.ps1` angelegt) - nicht im Repo/Dev - und abschaltbar auf der Station mit
 `AUTOMATO_AGENT_AUTO_UPDATE=false`.
@@ -92,6 +96,13 @@ def maybe_update(argv: Sequence[str], force: bool = False) -> int | None:
     version = info.get("version")
     if not info.get("enabled") or not version or (version == installed_version() and not force):
         return None
+    if settings.agent_signing_pubkey and not signature_ok(settings.agent_signing_pubkey, info):
+        print(
+            f"Update {describe(version)} nicht installiert: Signatur fehlt oder passt nicht "
+            "zum hinterlegten Schluessel - laufe mit der bisherigen Version weiter",
+            file=sys.stderr,
+        )
+        return None
     if version == installed_version():
         print(f"Agent-Installation unvollstaendig - installiere {describe(version)} neu")
     else:
@@ -108,6 +119,34 @@ def maybe_update(argv: Sequence[str], force: bool = False) -> int | None:
     print(f"Agent ist jetzt {describe(version)} - fuehre den Aufruf mit der neuen Version aus")
     cmd = [sys.executable, "-m", "collectors.run", *argv, "--no-update"]
     return subprocess.run(cmd, check=False).returncode  # noqa: S603 - eigener Interpreter
+
+
+SIGNING_CONTEXT = "automato-agent-update/v1"  # wie app.store.agent_package im Orchestrator
+
+
+def signed_message(info: dict) -> bytes:
+    files = sorted((str(f["name"]), str(f["sha256"])) for f in info.get("files", []))
+    lines = [SIGNING_CONTEXT, str(info["version"]), *(f"{n}:{h}" for n, h in files)]
+    return ("\n".join(lines) + "\n").encode()
+
+
+def signature_ok(pubkey_b64: str, info: dict) -> bool:
+    """Ed25519-Signatur des Manifests pruefen (Version + Dateien mit SHA-256)."""
+    import base64
+    import binascii
+
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    signature = info.get("signature")
+    if not signature:
+        return False
+    try:
+        key = Ed25519PublicKey.from_public_bytes(base64.b64decode(pubkey_b64, validate=True))
+        key.verify(base64.b64decode(signature, validate=True), signed_message(info))
+    except (InvalidSignature, ValueError, binascii.Error):
+        return False
+    return True
 
 
 def install(info: dict, base: Path) -> None:

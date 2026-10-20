@@ -11,6 +11,8 @@ Ergebnis geht per HTTP an die interne Orchestrator-API (kein DB-Zugriff).
 import json
 from importlib import resources
 
+import httpx
+
 from collectors.celery_app import app
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
@@ -76,6 +78,34 @@ def check(target: Target | None = None) -> tuple[bool, str]:
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, diagnose.device_error(exc, "fortigate", target, local=True)
     return True, f"erreichbar: {url}"
+
+
+# Bewusst ungueltig: darf von keiner FortiGate akzeptiert werden (R16)
+_INVALID_TOKEN = "automato-r16-invalid-token"  # noqa: S105 - Testwert, kein Secret
+
+
+def strict_check(target: Target | None = None) -> tuple[bool, str]:
+    """R16 (opt-in, `--check --strict`): lehnt die FortiGate ein ungueltiges Token ab?
+
+    Liefert sie auch damit Daten, prueft sie nur die Quell-IP (Trusted Hosts) - dann reicht
+    eine kompromittierte Agent-Station fuer Lese-Zugriff. Achtung: der Versuch zaehlt als
+    fehlgeschlagene Anmeldung (Sperre nach admin-lockout-threshold, FortiOS-Standard 3)."""
+    creds = _credentials(target)
+    if creds is None:
+        return False, _no_credentials(target) if target else "keine FortiGate-Creds"
+    url, _token, verify = creds
+    try:
+        FortiGateClient(url, _INVALID_TOKEN, verify_tls=verify).ping()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            return True, "ungueltiges Token wird abgelehnt"
+        return False, f"nicht pruefbar: HTTP {exc.response.status_code}"
+    except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
+        return False, f"nicht pruefbar: {type(exc).__name__}: {exc}"
+    return False, (
+        "FortiGate liefert Daten auch mit UNGUELTIGEM Token (nur Trusted Hosts) - REST-API-"
+        "Admin mit echtem Token-Zwang einrichten (Risiko R16)"
+    )
 
 
 def collect_once(

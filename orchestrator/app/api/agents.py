@@ -84,6 +84,9 @@ class UpdateOut(BaseModel):
     build: str | None = None  # Fingerabdruck der Dateien
     enabled: bool  # Selbst-Update fuer diesen Agenten erlaubt
     files: list[UpdateFile] = []
+    # Ed25519-Signatur (Base64) ueber Version + Dateien, offline erstellt; der Agent prueft sie,
+    # wenn bei ihm ein oeffentlicher Schluessel hinterlegt ist
+    signature: str | None = None
 
 
 class Target(BaseModel):
@@ -328,7 +331,8 @@ def update_manifest(
     meta = {k: info[k] for k in ("version", "release", "build")}
     if not agent.auto_update:
         return UpdateOut(**meta, enabled=False)
-    return UpdateOut(**meta, enabled=True, files=info["files"])
+    signature = agent_package.load_signature(settings.agent_signature_file, info)
+    return UpdateOut(**meta, enabled=True, files=info["files"], signature=signature)
 
 
 @agent_router.get("/update/files/{name}")

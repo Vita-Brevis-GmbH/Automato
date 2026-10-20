@@ -15,15 +15,19 @@ Im Orchestrator-Container (Beispiele):
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.config import get_settings
 from app.db import get_sessionmaker
 from app.jobs import celery_app
 from app.models import CollectorRun, DnsType, IpamType, Platform, SourceSystem, Tenant
+from app.store import agent_package
 
 
 def ensure_tenant(
@@ -176,6 +180,53 @@ def _cmd_lab(session: Session, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_pkg_manifest(_session: Session, args: argparse.Namespace) -> int:
+    """Nachricht zum Signieren des aktuellen Agent-Pakets (offline: scripts/agent_signing.py)."""
+    info = agent_package.manifest(get_settings().agent_package_dir)
+    if info is None:
+        print("FEHLER: kein Agent-Paket im Orchestrator (agent_package_dir)", file=sys.stderr)
+        return 2
+    data = agent_package.signed_message(info)
+    if args.out:
+        Path(args.out).write_bytes(data)
+        print(f"Nachricht fuer {info['version']} -> {args.out}")
+    else:
+        sys.stdout.write(data.decode())
+    return 0
+
+
+def _cmd_pkg_install_signature(_session: Session, args: argparse.Namespace) -> int:
+    """Offline erstellte Signatur einspielen (prueft Version und - wenn hinterlegt - Schluessel)."""
+    settings = get_settings()
+    info = agent_package.manifest(settings.agent_package_dir)
+    if info is None:
+        print("FEHLER: kein Agent-Paket im Orchestrator (agent_package_dir)", file=sys.stderr)
+        return 2
+    try:
+        sig = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"FEHLER: Signaturdatei nicht lesbar: {exc}", file=sys.stderr)
+        return 2
+    if sig.get("version") != info["version"]:
+        print(
+            f"FEHLER: Signatur gilt fuer {sig.get('version')}, Paket ist {info['version']}",
+            file=sys.stderr,
+        )
+        return 2
+    if settings.agent_signing_pubkey:
+        if not agent_package.verify(settings.agent_signing_pubkey, info, sig.get("signature", "")):
+            print("FEHLER: Signatur passt nicht zum hinterlegten Schluessel", file=sys.stderr)
+            return 2
+        print("Signatur geprueft (AUTOMATO_AGENT_SIGNING_PUBKEY)")
+    else:
+        print("Hinweis: AUTOMATO_AGENT_SIGNING_PUBKEY fehlt - Signatur nicht geprueft")
+    target = Path(settings.agent_signature_file)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"version": info["version"], "signature": sig["signature"]}))
+    print(f"Signatur fuer {info['version']} eingespielt -> {target}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="automato", description="Automato-Auslöser (CLI)")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -211,6 +262,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("status", help="Status eines Laufs anzeigen")
     p.add_argument("--run-id", required=True)
     p.set_defaults(func=_cmd_status)
+
+    p = sub.add_parser("agent-package", help="Agent-Paket signieren (Ed25519, offline)")
+    pkg = p.add_subparsers(dest="pkg_command", required=True)
+    q = pkg.add_parser("manifest", help="Nachricht zum Signieren ausgeben")
+    q.add_argument("--out", help="in Datei schreiben statt auf stdout")
+    q.set_defaults(func=_cmd_pkg_manifest)
+    q = pkg.add_parser("install-signature", help="offline erstellte Signatur einspielen")
+    q.add_argument("file", help="Signaturdatei (JSON von scripts/agent_signing.py sign)")
+    q.set_defaults(func=_cmd_pkg_install_signature)
 
     p = sub.add_parser("lab", help="Model-2-Happy-Path (NetBox+FortiGate) in einem Schritt")
     p.add_argument("--tenant", default="lab")

@@ -14,6 +14,8 @@ Konfiguration ueber `AUTOMATO_*`-Env (collectors.config):
 Aufruf:
   automato-collector --poll        naechsten Lauf eines zugewiesenen Geraets holen + ausfuehren
   automato-collector --check       alle zugewiesenen Geraete read-only pruefen
+  automato-collector --check --strict  zusaetzlich: lehnt die FortiGate ein ungueltiges Token
+                                ab? (Risiko R16; zaehlt dort als ein Fehlversuch)
   automato-collector --platform fortigate --run-id <RUN_ID>   (zentral/alt, internes Token)
 
 Exit 0 = Ergebnis completed bzw. alle Checks OK, 1 = failed, 2 = Check-Fehler.
@@ -40,6 +42,7 @@ try:
     from collectors.common.upload import confirmed, submit_result
     from collectors.fortigate.tasks import check as _fgt_check
     from collectors.fortigate.tasks import collect_once as _fgt_collect
+    from collectors.fortigate.tasks import strict_check as _fgt_strict
     from collectors.ipam import tasks as _ipam
 
     RUNNERS: dict[str, Callable[..., CollectorResult]] = {
@@ -54,9 +57,11 @@ try:
         "infoblox": _ipam.check_infoblox,
         "netbox": _ipam.check_netbox,
     }
+    # --check --strict: Negativtest je Plattform (nur wo sinnvoll und vertretbar)
+    STRICT_CHECKERS: dict[str, Callable[..., tuple[bool, str]]] = {"fortigate": _fgt_strict}
     _BROKEN: ImportError | None = None
 except ImportError as _exc:  # unvollstaendige Installation
-    RUNNERS, CHECKERS = {}, {}
+    RUNNERS, CHECKERS, STRICT_CHECKERS = {}, {}, {}
     _BROKEN = _exc
 
 
@@ -78,6 +83,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--check",
         action="store_true",
         help="Erreichbarkeit/Auth der zugewiesenen Geraete pruefen (read-only, kein Ingest)",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "mit --check: pruefen, ob die FortiGate ein ungueltiges Token ablehnt (R16); "
+            "zaehlt dort als fehlgeschlagene Anmeldung"
+        ),
     )
     parser.add_argument(
         "--no-update",
@@ -122,7 +135,9 @@ MAX_RUNS_PER_POLL = 25  # Schutz gegen Endlosschleifen; der naechste Aufruf holt
 
 def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.check:
-        return _check(args.platform)
+        return _check(args.platform, strict=args.strict)
+    if args.strict:
+        parser.error("--strict nur zusammen mit --check")
 
     if not args.poll:
         if not (args.platform and args.run_id):
@@ -164,7 +179,17 @@ def _execute(platform: str, run_id: str, target: Target | None, via_agent: bool)
     return result.status == "completed"
 
 
-def _check(platform: str | None) -> int:
+def _strict(platform: str, target: Target | None, label: str) -> bool:
+    """Negativtest nach erfolgreichem Check (nur `--strict`); True = bestanden/entfaellt."""
+    checker = STRICT_CHECKERS.get(platform)
+    if checker is None:
+        return True
+    ok, msg = checker(target)
+    print(f"{label} strict: {'OK' if ok else 'FEHLER'} - {msg}")
+    return ok
+
+
+def _check(platform: str | None, strict: bool = False) -> int:
     """Agent: alle zugewiesenen Geraete pruefen; ohne Agent-Token: lokale Konfiguration."""
     print(f"Agent-Version: {selfupdate.current_label()}")
     if get_settings().agent_token:
@@ -174,14 +199,19 @@ def _check(platform: str | None) -> int:
             for t in devices:
                 checker = CHECKERS.get(t.platform)
                 ok, msg = checker(t) if checker else (False, _unsupported(t.platform))
+                label = f"{t.name} ({t.platform})"
+                print(f"{label} check: {'OK' if ok else 'FEHLER'} - {msg}")
+                if ok and strict:
+                    ok = _strict(t.platform, t, label)
                 failed += 0 if ok else 1
-                print(f"{t.name} ({t.platform}) check: {'OK' if ok else 'FEHLER'} - {msg}")
             return 0 if failed == 0 else 2
         print("diesem Agenten sind keine Geraete zugewiesen (Web-UI: Mandanten & Standorte ->")
         print("Quellsystem -> Agent); pruefe lokale Konfiguration")
     plat = platform or "fortigate"
     ok, msg = CHECKERS[plat](None)
     print(f"{plat} check: {'OK' if ok else 'FEHLER'} - {msg}")
+    if ok and strict:
+        ok = _strict(plat, None, plat)
     return 0 if ok else 2
 
 

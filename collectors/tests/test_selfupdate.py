@@ -110,3 +110,44 @@ def test_versionsanzeige():
     assert su.describe("0.2.0+ab12cd34") == "0.2.0 (Build ab12cd34)"
     assert su.describe("a98269c39daa0037") == "a98269c39daa0037"
     assert su.describe("") == "unbekannt"
+
+
+def _signed(manifest: dict, key=None) -> tuple[str, dict]:
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = key or Ed25519PrivateKey.generate()
+    pub = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    sig = base64.b64encode(key.sign(su.signed_message(manifest))).decode()
+    return base64.b64encode(pub).decode(), {**manifest, "signature": sig}
+
+
+def test_signierte_nachricht_wie_im_orchestrator():
+    info = {"version": "0.5.0+ab", "files": [_file("run-agent.ps1", b"x"), _file("a.whl", b"y")]}
+    lines = su.signed_message(info).decode().splitlines()
+    assert lines[:2] == ["automato-agent-update/v1", "0.5.0+ab"]
+    assert [x.split(":")[0] for x in lines[2:]] == ["a.whl", "run-agent.ps1"]  # sortiert
+
+
+def test_mit_schluessel_nur_signierte_updates(agent, monkeypatch, capsys):
+    pub, signed = _signed(_manifest())
+    settings = Settings(agent_token="tok", agent_signing_pubkey=pub)  # noqa: S106
+    monkeypatch.setattr(su, "get_settings", lambda: settings)
+
+    agent["manifest"] = _manifest()  # ohne Signatur
+    assert su.maybe_update(["--poll"]) is None and agent["pip"] == []
+    assert "Signatur fehlt oder passt nicht" in capsys.readouterr().err
+
+    _, foreign = _signed(_manifest())  # anderer Schluessel
+    agent["manifest"] = foreign
+    assert su.maybe_update(["--poll"]) is None and agent["pip"] == []
+
+    tampered = {**signed, "files": _manifest(wheel=b"boese")["files"]}  # Datei getauscht
+    agent["manifest"] = tampered
+    assert su.maybe_update(["--poll"]) is None and agent["pip"] == []
+
+    agent["manifest"] = signed
+    assert su.maybe_update(["--poll"]) == 0
+    assert (agent["dir"] / "agent-version.txt").read_text() == "v2"
