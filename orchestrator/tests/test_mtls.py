@@ -5,7 +5,7 @@ from app.auth.mtls import common_name
 from app.config import Settings, check_security_config, get_settings
 from test_reference_sources import ADMIN, _agent, _tenant
 
-SECRET = "gw-secret-0123456789abcdef"
+SECRET = "test-" * 4  # Testwert (>= 16 Zeichen), kein echtes Secret
 
 
 def _gw(cn: str | None = None, secret: str = SECRET) -> dict:
