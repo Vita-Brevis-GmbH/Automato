@@ -32,14 +32,19 @@ from collectors.common.dto import CollectorResult, Target
 from collectors.config import get_settings
 from collectors.fortigate.tasks import check as _fgt_check
 from collectors.fortigate.tasks import collect_once as _fgt_collect
+from collectors.ipam import tasks as _ipam
 
 RUNNERS: dict[str, Callable[..., CollectorResult]] = {
     "fortigate": _fgt_collect,
     "cisco_aci": _aci_collect,
+    "infoblox": _ipam.collect_infoblox,
+    "netbox": _ipam.collect_netbox,
 }
 CHECKERS: dict[str, Callable[..., tuple[bool, str]]] = {
     "fortigate": _fgt_check,
     "cisco_aci": _aci_check,
+    "infoblox": _ipam.check_infoblox,
+    "netbox": _ipam.check_netbox,
 }
 
 
@@ -91,31 +96,39 @@ def _describe(exc: httpx.HTTPError) -> str:
     return f"{type(exc).__name__}: {exc}{url}"
 
 
+MAX_RUNS_PER_POLL = 25  # Schutz gegen Endlosschleifen; der naechste Aufruf holt den Rest
+
+
 def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.check:
         return _check(args.platform)
 
-    target: Target | None = None
-    via_agent = False
-    if args.poll:
-        run = agent_api.next_run(args.platform)  # --platform optional als Filter
-        if not run:
-            print("keine offenen Laeufe")
-            return 0
-        platform, run_id = run["platform"], run["run_id"]
-        target = Target(**run["target"]) if run.get("target") else None
-        via_agent = True
-    else:
+    if not args.poll:
         if not (args.platform and args.run_id):
             parser.error("--platform und --run-id erforderlich (oder --poll)")
-        platform, run_id = args.platform, args.run_id
+        return 0 if _execute(args.platform, args.run_id, None, via_agent=False) else 1
 
+    # Pull-Modell: alle offenen Laeufe der zugewiesenen Geraete nacheinander abarbeiten
+    ok, done = True, 0
+    while done < MAX_RUNS_PER_POLL:
+        run = agent_api.next_run(args.platform)  # --platform optional als Filter
+        if not run:
+            break
+        target = Target(**run["target"]) if run.get("target") else None
+        ok = _execute(run["platform"], run["run_id"], target, via_agent=True) and ok
+        done += 1
+    if done == 0:
+        print("keine offenen Laeufe")
+    return 0 if ok else 1
+
+
+def _execute(platform: str, run_id: str, target: Target | None, via_agent: bool) -> bool:
     result = RUNNERS[platform](run_id, target, via_agent=via_agent)
     label = f" ({target.name})" if target and target.name else ""
     print(f"{platform} run {run_id}{label}: {result.status}")
     if result.message:
         print(result.message, file=sys.stderr)
-    return 0 if result.status == "completed" else 1
+    return result.status == "completed"
 
 
 def _check(platform: str | None) -> int:

@@ -119,9 +119,11 @@ def download_package(
     _: Principal = Depends(require_admin),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    """Agent-Paket als ZIP (collectors-Wheel + install.ps1/run-agent.ps1) - Admin."""
+    """Agent-Paket als ZIP (collectors- + sot-gateway-Wheel, install.ps1/run-agent.ps1) - Admin."""
     base = Path(settings.agent_package_dir)
     wheels = sorted(base.glob("collectors-*.whl")) if base.is_dir() else []
+    # Infoblox-/NetBox-Leser (ADR 0010) - Abhaengigkeit des collectors-Wheels
+    sot_wheels = sorted(base.glob("sot_gateway-*.whl")) if base.is_dir() else []
     if not wheels:
         raise HTTPException(
             status_code=404,
@@ -129,7 +131,7 @@ def download_package(
         )
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in [wheels[-1], *(base / n for n in _PACKAGE_FILES)]:
+        for path in [wheels[-1], *sot_wheels[-1:], *(base / n for n in _PACKAGE_FILES)]:
             if path.is_file():
                 zf.write(path, f"automato-collector-agent/{path.name}")
     return Response(

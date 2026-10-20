@@ -8,7 +8,8 @@ COPY pyproject.toml uv.lock ./
 COPY orchestrator/pyproject.toml orchestrator/pyproject.toml
 COPY sot-gateway/pyproject.toml sot-gateway/pyproject.toml
 COPY collectors/ collectors/
-RUN uv build --package collectors --wheel --out-dir /agent-package
+RUN uv build --package collectors --wheel --out-dir /agent-package \
+    && uv build --package sot-gateway --wheel --out-dir /agent-package
 COPY deploy/collector-agent/ /agent-package/
 
 # --- Orchestrator ---

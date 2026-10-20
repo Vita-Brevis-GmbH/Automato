@@ -12,6 +12,8 @@ angegebene Felder erhalten (z. B. nur das Passwort ändern), `""` entfernt ein F
 """
 
 import re
+from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -22,7 +24,17 @@ from app import audit, credentials
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import Agent, NatRule, Rule, SourceSystem, Tenant
+from app.models import (
+    REFERENCE_PLATFORMS,
+    Agent,
+    CollectorRun,
+    NatRule,
+    ReferenceRecordRow,
+    ReferenceRole,
+    Rule,
+    SourceSystem,
+    Tenant,
+)
 from app.models.source_system import Platform
 from app.store import deletion
 
@@ -40,6 +52,10 @@ class SystemOut(BaseModel):
     verify_tls: bool = True
     read_scope: str = ""  # ACI: zu lesende Tenants (kommagetrennt, leer = alle)
     has_credentials: bool = False  # Zugangsdaten selbst werden nie ausgegeben
+    ref_role: str | None = None  # Referenzquellen: primary | enrichment (ADR 0010)
+    has_write_token: bool = False  # NetBox: Schreib-Token fuer den NetBox-Sync hinterlegt
+    reference_count: int = 0  # Referenzquellen: Eintraege im aktuellen Stand
+    reference_at: datetime | None = None  # Zeitpunkt des aktuellen Stands
     rule_count: int = 0
     nat_count: int = 0
 
@@ -52,10 +68,13 @@ class SystemIn(BaseModel):
     agent_id: int | None = None
     verify_tls: bool = True
     read_scope: str = Field(default="", max_length=500)
-    # Zugangsdaten, nur schreibbar: FortiGate token, Cisco ACI username + password
+    ref_role: Literal["primary", "enrichment"] | None = None
+    # Zugangsdaten, nur schreibbar: FortiGate/NetBox token, ACI/Infoblox username + password,
+    # NetBox optional write_token (nur NetBox-Sync, nie an Agenten)
     token: str | None = Field(default=None, max_length=4096)
     username: str | None = Field(default=None, max_length=200)
     password: str | None = Field(default=None, max_length=4096)
+    write_token: str | None = Field(default=None, max_length=4096)
 
 
 class SystemPatch(BaseModel):
@@ -66,10 +85,12 @@ class SystemPatch(BaseModel):
     agent_id: int | None = None  # null = Zuweisung aufheben
     verify_tls: bool | None = None
     read_scope: str | None = Field(default=None, max_length=500)
+    ref_role: Literal["primary", "enrichment"] | None = None
     # weglassen = unverändert, "" = Feld entfernen (alle leer = keine Zugangsdaten)
     token: str | None = Field(default=None, max_length=4096)
     username: str | None = Field(default=None, max_length=200)
     password: str | None = Field(default=None, max_length=4096)
+    write_token: str | None = Field(default=None, max_length=4096)
 
 
 class SystemDeleted(BaseModel):
@@ -77,6 +98,7 @@ class SystemDeleted(BaseModel):
     rules: int
     nat_rules: int
     findings: int
+    references: int = 0
 
 
 def _counts(session: Session, model) -> dict[int, int]:
@@ -86,7 +108,39 @@ def _counts(session: Session, model) -> dict[int, int]:
     return {sid: n for sid, n in rows}
 
 
-def _out(s: SourceSystem, rules: dict[int, int], nat: dict[int, int]) -> SystemOut:
+def _reference_stats(session: Session, sources) -> dict[int, tuple[int, datetime | None]]:
+    """Anzahl Eintraege + Zeitpunkt des aktuellen Stands je Referenzquelle."""
+    runs = {s.reference_run_id: s.id for s in sources if s.reference_run_id}
+    if not runs:
+        return {}
+    counts = dict(
+        session.execute(
+            select(ReferenceRecordRow.collector_run_id, func.count())
+            .where(ReferenceRecordRow.collector_run_id.in_(runs))
+            .group_by(ReferenceRecordRow.collector_run_id)
+        ).all()
+    )
+    finished = dict(
+        session.execute(
+            select(CollectorRun.id, CollectorRun.finished_at).where(CollectorRun.id.in_(runs))
+        ).all()
+    )
+    return {sid: (counts.get(rid, 0), finished.get(rid)) for rid, sid in runs.items()}
+
+
+def _has_write_token(s: SourceSystem) -> bool:
+    if s.platform is not Platform.NETBOX or not s.credentials:
+        return False
+    try:
+        return bool(credentials.decrypt(s.credentials).get("write_token"))
+    except credentials.CredentialsUnavailable:
+        return False
+
+
+def _out(
+    s: SourceSystem, rules: dict[int, int], nat: dict[int, int], refs: dict | None = None
+) -> SystemOut:
+    ref_count, ref_at = (refs or {}).get(s.id, (0, None))
     return SystemOut(
         id=s.id,
         tenant_id=s.tenant_id,
@@ -98,6 +152,10 @@ def _out(s: SourceSystem, rules: dict[int, int], nat: dict[int, int]) -> SystemO
         verify_tls=s.verify_tls,
         read_scope=s.read_scope,
         has_credentials=bool(s.credentials),
+        ref_role=s.ref_role,
+        has_write_token=_has_write_token(s),
+        reference_count=ref_count,
+        reference_at=ref_at,
         rule_count=rules.get(s.id, 0),
         nat_count=nat.get(s.id, 0),
     )
@@ -105,7 +163,9 @@ def _out(s: SourceSystem, rules: dict[int, int], nat: dict[int, int]) -> SystemO
 
 def _single_out(session: Session, s: SourceSystem) -> SystemOut:
     usage = deletion.source_usage(session, s.id)
-    return _out(s, {s.id: usage["rules"]}, {s.id: usage["nat_rules"]})
+    return _out(
+        s, {s.id: usage["rules"]}, {s.id: usage["nat_rules"]}, _reference_stats(session, [s])
+    )
 
 
 def _get_scoped(session: Session, principal: Principal, system_id: int) -> SourceSystem:
@@ -133,7 +193,7 @@ def _check_agent(session: Session, agent_id: int | None, tenant_id: int | None) 
 def _credential_changes(body: SystemIn | SystemPatch) -> dict[str, str]:
     return {
         key: value
-        for key in ("token", "username", "password")
+        for key in ("token", "username", "password", "write_token")
         if (value := getattr(body, key)) is not None
     }
 
@@ -146,7 +206,8 @@ def _apply_credentials(src: SourceSystem, changes: dict[str, str]) -> bool:
     if not changes:
         return False
     platform = src.platform.value
-    allowed = credentials.FIELDS[platform]
+    required = credentials.FIELDS[platform]
+    allowed = required + credentials.OPTIONAL_FIELDS.get(platform, ())
     unknown = sorted(set(changes) - set(allowed))
     if unknown:
         raise HTTPException(
@@ -163,9 +224,10 @@ def _apply_credentials(src: SourceSystem, changes: dict[str, str]) -> bool:
         else:
             current.pop(key, None)
     current = {k: v for k, v in current.items() if k in allowed}
-    if current and set(current) != set(allowed):
+    present = {k for k in current if k in required}
+    if present and present != set(required):
         raise HTTPException(
-            status_code=422, detail=f"{' and '.join(allowed)} required for {platform}"
+            status_code=422, detail=f"{' and '.join(required)} required for {platform}"
         )
     try:
         src.credentials = credentials.encrypt(current) if current else None
@@ -188,6 +250,36 @@ def _read_scope(platform: Platform, value: str) -> str:
     if bad:
         raise HTTPException(status_code=422, detail=f"invalid ACI tenant name: {bad[0]}")
     return ",".join(dict.fromkeys(names))
+
+
+def _apply_ref_role(session: Session, src: SourceSystem, role: str | None) -> None:
+    """Rolle einer Referenzquelle setzen; nur ein fuehrendes IPAM je Mandant (andere werden zur
+    Anreicherung). Default: Infoblox fuehrend, NetBox fuehrend nur ohne andere fuehrende Quelle."""
+    if src.platform not in REFERENCE_PLATFORMS:
+        if role is not None:
+            raise HTTPException(status_code=422, detail="ref_role only for infoblox/netbox")
+        src.ref_role = None
+        return
+    others = [
+        s
+        for s in session.scalars(
+            select(SourceSystem).where(
+                SourceSystem.tenant_id == src.tenant_id,
+                SourceSystem.ref_role == ReferenceRole.PRIMARY.value,
+            )
+        )
+        if s is not src
+    ]
+    if role is None:
+        role = (
+            ReferenceRole.PRIMARY.value
+            if src.platform is Platform.INFOBLOX or not others
+            else ReferenceRole.ENRICHMENT.value
+        )
+    if role == ReferenceRole.PRIMARY.value:
+        for other in others:
+            other.ref_role = ReferenceRole.ENRICHMENT.value
+    src.ref_role = role
 
 
 def _name_taken(session: Session, tenant_id: int | None, name: str, exclude: int | None) -> bool:
@@ -213,7 +305,9 @@ def list_systems(
     elif not principal.is_admin and principal.tenant_ids is not None:
         query = query.where(SourceSystem.tenant_id.in_(principal.tenant_ids))
     rules, nat = _counts(session, Rule), _counts(session, NatRule)
-    return [_out(s, rules, nat) for s in session.scalars(query)]
+    sources = list(session.scalars(query))
+    refs = _reference_stats(session, sources)
+    return [_out(s, rules, nat, refs) for s in sources]
 
 
 @router.post("", response_model=SystemOut, status_code=201)
@@ -244,6 +338,8 @@ def create_system(
     _apply_credentials(src, _credential_changes(body))
     session.add(src)
     session.flush()
+    _apply_ref_role(session, src, body.ref_role)
+    session.flush()
     audit.record(
         session,
         actor=f"user:{principal.subject}",
@@ -256,9 +352,10 @@ def create_system(
             "platform": src.platform.value,
             "agent_id": src.agent_id,
             "credentials_set": bool(src.credentials),
+            "ref_role": src.ref_role,
         },
     )
-    return _out(src, {}, {})
+    return _out(src, {}, {}, {})
 
 
 @router.patch("/{system_id}", response_model=SystemOut)
@@ -309,6 +406,8 @@ def update_system(
         src.verify_tls = data["verify_tls"]
     if data.get("read_scope") is not None:
         src.read_scope = _read_scope(src.platform, data["read_scope"])
+    if data.get("ref_role") is not None:
+        _apply_ref_role(session, src, data["ref_role"])
     credentials_changed = _apply_credentials(src, _credential_changes(body))
     session.flush()
     audit.record(
@@ -323,6 +422,7 @@ def update_system(
             "enabled": src.enabled,
             "agent_id": src.agent_id,
             "credentials_set": bool(src.credentials) if credentials_changed else None,
+            "ref_role": src.ref_role,
         },
     )
     return _single_out(session, src)

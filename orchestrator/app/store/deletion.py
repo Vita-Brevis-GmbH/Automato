@@ -20,6 +20,7 @@ from app.models import (
     Finding,
     NatRule,
     NetworkObject,
+    ReferenceRecordRow,
     Rule,
     Site,
     SourceSystem,
@@ -71,6 +72,11 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
     session.execute(delete(DeviceObject).where(DeviceObject.source_system_id == source.id))
     for model in INVENTORY_MODELS:
         session.execute(delete(model).where(model.source_system_id == source.id))
+    source.reference_run_id = None
+    session.flush()
+    counts["references"] = _count(
+        session, delete(ReferenceRecordRow).where(ReferenceRecordRow.source_system_id == source.id)
+    )
     counts["findings"] = (
         _delete_stale_findings(session, source.tenant_id) if source.tenant_id is not None else 0
     )
@@ -95,6 +101,12 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     session.execute(delete(DeviceObject).where(DeviceObject.tenant_id == tid))
     for model in INVENTORY_MODELS:
         session.execute(delete(model).where(model.tenant_id == tid))
+    session.execute(
+        update(SourceSystem).where(SourceSystem.tenant_id == tid).values(reference_run_id=None)
+    )
+    counts["references"] = _count(
+        session, delete(ReferenceRecordRow).where(ReferenceRecordRow.tenant_id == tid)
+    )
 
     epg_ids = select(Epg.id).where(Epg.tenant_id == tid)
     session.execute(delete(EpgSubnet).where(EpgSubnet.epg_id.in_(epg_ids)))

@@ -6,8 +6,25 @@ abgeholt hat (ADR 0009). Agenten brauchen das interne Token damit nicht mehr.
 """
 
 from collectors.common import http
-from collectors.common.dto import CollectorResult
+from collectors.common.dto import CollectorResult, ReferenceBatch
 from collectors.config import get_settings
+
+
+def _headers(via_agent: bool) -> dict[str, str]:
+    settings = get_settings()
+    if via_agent:
+        return {"X-Agent-Token": settings.agent_token}
+    return {"X-Internal-Token": settings.internal_api_token}
+
+
+def submit_references(run_id: str, batch: ReferenceBatch, via_agent: bool = False) -> None:
+    """Teil-Upload der Referenzeintraege eines Laufs (Infoblox/NetBox, ADR 0010)."""
+    settings = get_settings()
+    http.post_json(
+        f"{settings.orchestrator_url}/internal/collector-runs/{run_id}/references",
+        json=batch.model_dump(),
+        headers=_headers(via_agent),
+    )
 
 
 def submit_result(run_id: str, result: CollectorResult, via_agent: bool = False) -> dict | None:

@@ -8,6 +8,7 @@ injizierten httpx.Client (MockTransport) - kein Lab nötig.
 from typing import Any
 
 import httpx
+from sot_gateway.readonly import enforce_read_only
 
 
 class FortiGateClient:
@@ -22,7 +23,8 @@ class FortiGateClient:
         self._root = f"{base_url.rstrip('/')}/api/v2"
         self._base = f"{self._root}/cmdb"
         self._headers = {"Authorization": f"Bearer {token}"}
-        self._client = client or httpx.Client(verify=verify_tls, timeout=20.0)
+        # Nur lesend (ADR 0010): jede schreibende Methode bricht vor dem Senden ab
+        self._client = enforce_read_only(client or httpx.Client(verify=verify_tls, timeout=20.0))
 
     def _get(self, path: str) -> list[dict[str, Any]]:
         response = self._client.get(f"{self._base}/{path}", headers=self._headers)

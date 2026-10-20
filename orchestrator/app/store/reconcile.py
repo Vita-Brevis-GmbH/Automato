@@ -60,13 +60,15 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     if tenant_id is None:
         return {}
     session.flush()
+    from app.store import references  # Referenz-Ebene (IPAM), spaet importiert
+
+    ctx = references.context(session, tenant_id)
+    references.rematch(session, tenant_id, ctx)  # zuerst: Werte gegen den aktuellen Stand
     prefixes = profile_store.prefixes_for_tenant(session, tenant_id)
     issues: list[Issue] = []
     issues += _rule_endpoint_issues(session, tenant_id)
     issues += _device_object_issues(session, tenant_id, prefixes)
-    from app.store import references  # Referenz-Pruefungen (IPAM), spaet importiert
-
-    issues += references.checks(session, tenant_id, prefixes)
+    issues += references.checks(session, tenant_id, prefixes, ctx)
     _sync_findings(session, tenant_id, issues)
     counts: dict[str, int] = defaultdict(int)
     for issue in {i.key: i for i in issues}.values():

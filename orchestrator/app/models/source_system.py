@@ -9,6 +9,11 @@ oder ausgegeben) - der Agent bekommt sie beim Abholen eines Laufs. Inhalt je Pla
 FortiGate `{"token"}`, Cisco ACI `{"username", "password"}` (APIC-Login).
 `read_scope` = Lesebereich: bei Cisco ACI die zu lesenden ACI-Tenants (kommagetrennt, leer =
 alle ausser infra/mgmt).
+
+Referenzquellen (Infoblox, NetBox; ADR 0010): `ref_role` = primary | enrichment,
+`reference_run_id` = Lauf, dessen Eintraege (`reference_record`) der aktuelle Stand sind.
+NetBox kann zusaetzlich ein Schreib-Token tragen (`write_token` in `credentials`) - nur fuer
+den NetBox-Sync des Orchestrators, nie an einen Agenten.
 """
 
 import enum
@@ -23,6 +28,19 @@ from app.models.base import Base
 class Platform(enum.StrEnum):
     FORTIGATE = "fortigate"
     CISCO_ACI = "cisco_aci"
+    INFOBLOX = "infoblox"  # Referenzquelle (DDI), ADR 0010
+    NETBOX = "netbox"  # Referenzquelle / Anreicherung, ADR 0010
+
+
+# Referenzquellen (IPAM) - liefern keinen Regeln, sondern den Referenz-Stand
+REFERENCE_PLATFORMS = frozenset({Platform.INFOBLOX, Platform.NETBOX})
+
+
+class RefRole(enum.StrEnum):
+    """Rolle einer Referenzquelle je Mandant (Feld-Hoheit, ADR 0010)."""
+
+    PRIMARY = "primary"  # IPAM fuehrend (IP, Prefix, Range, DNS)
+    ENRICHMENT = "enrichment"  # Anreicherung (z. B. NetBox neben der DDI)
 
 
 class SourceSystem(Base):
@@ -41,6 +59,16 @@ class SourceSystem(Base):
     credentials: Mapped[str | None] = mapped_column(Text, nullable=True)  # Fernet-Token
     verify_tls: Mapped[bool] = mapped_column(default=True, server_default=true())
     read_scope: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    ref_role: Mapped[str | None] = mapped_column(String(16), nullable=True)  # RefRole
+    reference_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "collector_run.id",
+            ondelete="SET NULL",
+            use_alter=True,  # Zyklus source_system <-> collector_run
+            name="fk_source_system_reference_run",
+        ),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

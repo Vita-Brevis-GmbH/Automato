@@ -10,6 +10,7 @@ httpx.Client (MockTransport) - kein Lab nötig.
 from typing import Any
 
 import httpx
+from sot_gateway.readonly import enforce_read_only
 
 # Fabric-interne Tenants: ohne ausdrückliche Auswahl nicht lesen (keine Kunden-Contracts)
 SYSTEM_TENANTS = frozenset({"infra", "mgmt"})
@@ -46,7 +47,11 @@ class ApicClient:
         self._base = base_url.rstrip("/")
         self._username = username
         self._password = password
-        self._client = client or httpx.Client(verify=verify_tls, timeout=60.0)
+        # Nur lesend (ADR 0010): POST nur fuer Login/Logout/Refresh der Sitzung
+        self._client = enforce_read_only(
+            client or httpx.Client(verify=verify_tls, timeout=60.0),
+            allow_post=("/api/aaaLogin.json", "/api/aaaLogout.json", "/api/aaaRefresh.json"),
+        )
         self._logged_in = False
 
     # --- Sitzung ---

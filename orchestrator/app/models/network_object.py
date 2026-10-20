@@ -83,4 +83,15 @@ class NetworkObject(Base):
     match_status: Mapped[MatchStatus] = mapped_column(
         Enum(MatchStatus, native_enum=False, length=20), default=MatchStatus.UNMATCHED
     )
+    # Abgleich (ADR 0010): bester Treffer im fuehrenden IPAM (genauer Eintrag, sonst Netz),
+    # das umschliessende Netz und der Treffer in der Anreicherung (z. B. NetBox neben DDI)
+    reference_id: Mapped[int | None] = mapped_column(
+        ForeignKey("reference_record.id", ondelete="SET NULL"), nullable=True
+    )
+    reference_prefix_id: Mapped[int | None] = mapped_column(
+        ForeignKey("reference_record.id", ondelete="SET NULL"), nullable=True
+    )
+    enrichment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("reference_record.id", ondelete="SET NULL"), nullable=True
+    )
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

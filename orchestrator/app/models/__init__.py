@@ -35,6 +35,7 @@ from app.models.network_object import (
     ObjectType,
     SourceOfRecord,
 )
+from app.models.reference_record import ReferenceRecordRow
 from app.models.rule import (
     EndpointKind,
     EndpointRole,
@@ -48,13 +49,15 @@ from app.models.rule import (
 )
 from app.models.service_object import Proto, ServiceObject
 from app.models.site import Site
-from app.models.source_system import Platform, SourceSystem
+from app.models.source_system import REFERENCE_PLATFORMS, Platform, SourceSystem
+from app.models.source_system import RefRole as ReferenceRole
 from app.models.tenant import DnsType, IpamType, Tenant
 from app.models.zone import Zone
 
 __all__ = [
     "ADDRESS_CATEGORIES",
     "INVENTORY_MODELS",
+    "REFERENCE_PLATFORMS",
     "SERVICE_CATEGORIES",
     "Agent",
     "AuditLog",
@@ -88,6 +91,8 @@ __all__ = [
     "Platform",
     "Proto",
     "RefRole",
+    "ReferenceRecordRow",
+    "ReferenceRole",
     "Rule",
     "RuleAction",
     "RuleDomain",

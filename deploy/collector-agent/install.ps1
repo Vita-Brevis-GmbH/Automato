@@ -47,14 +47,17 @@ $pyExe = $pycmd[0]
 $pyArgs = @(); if ($pycmd.Count -gt 1) { $pyArgs = $pycmd[1..($pycmd.Count - 1)] }
 Write-Host ("Nutze Python: " + ($pycmd -join " "))
 
-# venv + Wheel installieren (bringt das Konsolen-Script automato-collector mit)
+# venv + Wheel installieren (bringt das Konsolen-Script automato-collector mit). Das
+# sot-gateway-Wheel (Infoblox-/NetBox-Leser) liegt daneben und wird lokal aufgeloest.
 $venvDir = Join-Path $InstallDir "venv"
 & $pyExe @pyArgs -m venv $venvDir
 $py = Join-Path $venvDir "Scripts\python.exe"
+$wheelDir = Split-Path -Parent $Wheel
 & $py -m pip install --upgrade pip | Out-Null
-& $py -m pip install $Wheel
+& $py -m pip install --find-links $wheelDir $Wheel
 # Bei erneuter Installation (gleiche Version) den Agent-Code trotzdem aktualisieren
-& $py -m pip install --force-reinstall --no-deps $Wheel | Out-Null
+$local = @(Get-ChildItem -Path $wheelDir -Filter "sot_gateway-*.whl" | ForEach-Object { $_.FullName }) + @($Wheel)
+& $py -m pip install --force-reinstall --no-deps @local | Out-Null
 
 # Wrapper + Config bereitstellen
 Copy-Item "$PSScriptRoot\run-agent.ps1" $InstallDir -Force

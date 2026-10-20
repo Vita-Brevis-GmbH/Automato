@@ -9,6 +9,7 @@ genau dieser Form an POST /internal/collector-runs/{run_id}/result.
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from sot_gateway.models import ReferenceRecord
 
 
 class NormalizedRule(BaseModel):
@@ -147,6 +148,12 @@ class NetworkInventory(BaseModel):
     vrfs: list[str] = Field(default_factory=list)
 
 
+class ReferenceBatch(BaseModel):
+    """Teil-Upload einer Referenzquelle (Infoblox DDI / NetBox komplett gelesen)."""
+
+    records: list[ReferenceRecord] = Field(default_factory=list)
+
+
 class CollectorResult(BaseModel):
     status: Literal["completed", "failed"]
     rules: list[NormalizedRule] = Field(default_factory=list)
@@ -154,4 +161,7 @@ class CollectorResult(BaseModel):
     objects: list[NormalizedObject] = Field(default_factory=list)
     epgs: list[NormalizedEpg] = Field(default_factory=list)
     inventory: NetworkInventory | None = None  # Netzinventar (ADR 0010)
+    # Referenzquellen (Infoblox/NetBox): Eintraege kommen in Teilen ueber .../references,
+    # hier nur die Gesamtzahl zur Kontrolle (ADR 0010)
+    reference_count: int | None = None
     message: str | None = None

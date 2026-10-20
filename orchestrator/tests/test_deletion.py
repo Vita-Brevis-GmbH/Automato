@@ -103,7 +103,7 @@ def test_quellsystem_loeschen_nimmt_regeln_und_nat_mit(session_factory, client, 
     assert client.delete(f"/systems/{sid_a}", headers=op).status_code == 403
     r = client.delete(f"/systems/{sid_a}", headers=ADMIN)
     assert r.status_code == 200
-    assert r.json() == {"id": sid_a, "rules": 1, "nat_rules": 1, "findings": 1}
+    assert r.json() == {"id": sid_a, "rules": 1, "nat_rules": 1, "findings": 1, "references": 0}
 
     assert _count(session_factory, SourceSystem, id=sid_a) == 0
     assert _count(session_factory, Rule, tenant_id=a) == 0

@@ -8,6 +8,8 @@ dependencies = [
     "httpx>=0.27",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
+    # Infoblox-/NetBox-Leser fuer Referenzquellen (ADR 0010), lokal als Wheel im Agent-Paket
+    "sot-gateway",
 ]
 
 # Externer Standalone-Collector (ADR 0008): laeuft ohne Celery/Redis, nur ausgehend HTTPS.
