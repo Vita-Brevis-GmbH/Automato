@@ -6,8 +6,9 @@
 # "Bearer nbt_<key>.<token>") und koennen nicht mehr mit festem Wert angelegt
 # werden - der Automato-NetBox-Adapter nutzt die klassischen Tokens
 # ("Authorization: Token <key>"). 4.6.x hat diese noch.
-# Legt Admin-User (UI-Login) + Schreib-Token (Seeding) und einen read-only
-# Collector-Token an (Least Privilege, ADR 0005). Idempotent.
+# Legt Admin-User (UI-Login) + Schreib-Token (Seeding), einen read-only
+# Collector-Token (Least Privilege, ADR 0005) und den Schreib-Benutzer fuer den
+# Automato-NetBox-Sync an (nur Sync-Objekttypen, ADR 0010; sync-user.sh). Idempotent.
 #
 # Voraussetzungen: docker + docker compose v2, git, curl, openssl.
 # Verwendung:
@@ -16,6 +17,7 @@
 #   NETBOX_RESET=1 ./setup.sh        # DB/Volumes zuvor loeschen (z. B. Versionswechsel)
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NETBOX_DIR="${NETBOX_DIR:-netbox-docker}"
 NETBOX_PORT="${NETBOX_PORT:-8000}"
 # Gepinnte NetBox-Version (klassische Tokens). Ueberschreibbar via NETBOX_VERSION.
@@ -25,6 +27,7 @@ ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_PASS="${ADMIN_PASS:-admin1234!}"
 COLLECTOR_TOKEN="${COLLECTOR_TOKEN:-$(openssl rand -hex 20)}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-$(openssl rand -hex 20)}"
+SYNC_TOKEN="${SYNC_TOKEN:-$(openssl rand -hex 20)}"
 # v1-Tokens brauchen genau 40 Zeichen; ungueltige Werte verwerfen und neu erzeugen.
 [ "${#COLLECTOR_TOKEN}" -eq 40 ] || { echo "WARN: COLLECTOR_TOKEN ungueltig -> neu erzeugt"; COLLECTOR_TOKEN="$(openssl rand -hex 20)"; }
 [ "${#ADMIN_TOKEN}" -eq 40 ] || { echo "WARN: ADMIN_TOKEN ungueltig -> neu erzeugt"; ADMIN_TOKEN="$(openssl rand -hex 20)"; }
@@ -146,6 +149,9 @@ set_v1_token(collector, os.environ["COLLECTOR_TOKEN"], write_enabled=False)
 print("SETUP_OK")
 PY
 
+# 5b. Schreib-Benutzer fuer den Automato-NetBox-Sync (nur Sync-Objekttypen)
+NETBOX_DIR="$(pwd)" SYNC_TOKEN="$SYNC_TOKEN" bash "$SCRIPT_DIR/sync-user.sh" >/dev/null
+
 # 6. Restliche Dienste (worker/housekeeping) best-effort nachziehen. Fuer UC1
 # (lesend) nicht noetig; ein Fehler hier darf das Setup nicht scheitern lassen.
 # Ausgabe unterdruecken, damit der (erwartbare) "unhealthy"-Hinweis nicht alarmiert.
@@ -161,7 +167,13 @@ cat <<EOF
 URL:                         http://localhost:${NETBOX_PORT}/
 Admin-Login (UI):            ${ADMIN_USER} / ${ADMIN_PASS}
 Collector-Token (read-only): ${COLLECTOR_TOKEN}
+Sync-Token (NetBox-Sync):    ${SYNC_TOKEN}
 Admin-Token (Schreiben/Seed):${ADMIN_TOKEN}
+
+In Automato als Quellsystem "NetBox" (Mandanten & Standorte -> Quellsysteme):
+  Adresse:       http://host.docker.internal:${NETBOX_PORT}   (so erreicht der Orchestrator-Container den Host)
+  Lese-Token:    Collector-Token
+  Schreib-Token: Sync-Token   (nur fuer den NetBox-Sync, nicht den Admin-Token verwenden)
 
 Fuer Automato in die .env (Model-2-Mandant):
   AUTOMATO_NETBOX_URL=http://localhost:${NETBOX_PORT}

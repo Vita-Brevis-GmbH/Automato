@@ -25,7 +25,11 @@ Das Skript:
    - **Admin-User** (UI-Login, Default `admin` / `admin1234!`) + Schreib-Token (Seeding),
    - **`automato-collector`** (kein Superuser, Gruppe mit `view_*`-Rechten) + einen
      **read-only Token** (`write_enabled=false`) — das ist der Least-Privilege-Zugang
-     für den Collector (ADR 0005).
+     für den Collector (ADR 0005),
+   - **`automato-sync`** (kein Superuser) + **Sync-Token** für den NetBox-Sync (ADR 0010):
+     liest alles, schreibt aber nur die Objekttypen des Syncs (Tags, Tenants, Sites,
+     Hersteller, Geräterollen/-typen, Geräte, Interfaces, VRFs, VLAN-Gruppen, VLANs,
+     Prefixe, IP-Ranges, IP-Adressen) – siehe `sync-user.sh`.
 
 > **Zu den Tokens:** Seit **NetBox 4.6** werden *neue* API-Tokens (v2) gehasht
 > gespeichert (Header `Bearer nbt_<key>.<token>`); ein fester Token-Wert lässt sich
@@ -39,12 +43,31 @@ Am Ende werden URL, Logins und beide Tokens ausgegeben.
 
 ### Automato anbinden
 
-Den **read-only** Collector-Token in die Automato-`.env` des Model-2-Mandanten:
+Im Web-UI unter **Mandanten & Standorte → Quellsysteme → + Quellsystem**:
 
+| Feld | Wert |
+|---|---|
+| Plattform | NetBox (Referenzquelle) |
+| Adresse | `http://host.docker.internal:<NETBOX_PORT>` (so erreichen Orchestrator und zentraler Worker den Host) |
+| Rolle | *Anreicherung* (wenn die DDI führend ist), sonst *IPAM führend* |
+| API-Token (lesen) | Collector-Token aus der `setup.sh`-Ausgabe |
+| Schreib-Token | Sync-Token (nur für den NetBox-Sync; **nicht** den Admin-Token verwenden) |
+| Verwaltet von | kein Agent (zentraler Worker) |
+| TLS-Zertifikat prüfen | aus (Lab über HTTP) |
+
+Nur Sync-Benutzer neu anlegen (bestehende NetBox, andere Tokens bleiben):
+
+```bash
+cd source-of-truth/netbox
+./sync-user.sh          # gibt den neuen Sync-Token aus
 ```
-AUTOMATO_NETBOX_URL=http://localhost:8000
-AUTOMATO_NETBOX_TOKEN=<collector-token aus der setup.sh-Ausgabe>
-```
+
+> `setup.sh` erneut auszuführen erzeugt **neue** Admin-/Collector-/Sync-Tokens (ausser sie
+> werden per `ADMIN_TOKEN`/`COLLECTOR_TOKEN`/`SYNC_TOKEN` mitgegeben) – danach die Tokens
+> im Automato-Quellsystem nachtragen.
+
+Älterer Weg (Fallback ohne Quellsystem, `.env`): `AUTOMATO_NETBOX_URL` +
+`AUTOMATO_NETBOX_TOKEN=<collector-token>`.
 
 ### Lab-Daten seeden (optional, empfohlen für den Durchstich)
 
@@ -86,7 +109,8 @@ IMPORT_FORTIGATE=1 FORTIGATE_URL=https://<fortigate-ip> FORTIGATE_TOKEN=<key> \
 ## Anpassen / Zurücksetzen
 
 - Werte überschreiben: `NETBOX_PORT`, `ADMIN_USER`, `ADMIN_PASS`, `COLLECTOR_TOKEN`,
-  `ADMIN_TOKEN` als Umgebungsvariablen vor `./setup.sh`.
+  `ADMIN_TOKEN`, `SYNC_TOKEN` als Umgebungsvariablen vor `./setup.sh`. **Admin-Passwort
+  ändern** (`ADMIN_PASS=…`), sobald die NetBox echte Daten enthält.
 - Stoppen: `cd netbox-docker && docker compose down`
 - Komplett zurücksetzen (inkl. Daten): `cd netbox-docker && docker compose down -v`
 

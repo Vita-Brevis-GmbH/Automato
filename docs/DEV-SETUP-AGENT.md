@@ -143,10 +143,12 @@ gelesenen Daten in der Dev-VM wie Produktionsdaten behandeln.
 1. **DDI erfassen:** Quellsysteme → **+ Quellsystem** → Plattform *Infoblox DDI*, Adresse des
    Grid-Masters (`https://<ddi>`), **Verwaltet von** = Windows-Agent, WAPI-Benutzer/Passwort
    (Admin-Gruppe mit API-Zugriff und nur Lese-Rechten), Rolle **IPAM führend**.
-2. **Dev-NetBox erfassen:** Plattform *NetBox*, Adresse wie vom Orchestrator-Container aus
-   erreichbar (z. B. `http://<dev-vm>:8080`), **Lese-Token** (Collector-Token aus
-   `setup.sh`) und – für den Sync – ein **Schreib-Token**, Rolle **Anreicherung**; kein Agent
-   (zentraler Worker liest NetBox).
+2. **Dev-NetBox erfassen:** NetBox installieren bzw. Sync-Benutzer ergänzen
+   (`source-of-truth/netbox/setup.sh` bzw. `./sync-user.sh`, siehe dortiges README), dann
+   Plattform *NetBox*, Adresse `http://host.docker.internal:8080` (so erreicht der
+   Orchestrator-Container die NetBox auf derselben VM), **Lese-Token** = Collector-Token,
+   **Schreib-Token** = Sync-Token (nicht der Admin-Token), Rolle **Anreicherung**, kein Agent
+   (zentraler Worker liest NetBox), TLS-Prüfung aus.
 3. **Prüfen und einlesen:** `.\run-agent.ps1 -Check` zeigt
    `ddi (infoblox) check: OK - erreichbar: https://<ddi> (WAPI …)`; dann
    „Jetzt einlesen" für die DDI (Agent holt den Lauf, liest die **ganze DDI** seitenweise
