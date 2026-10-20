@@ -8,6 +8,11 @@ sie dann ueber die Namenskonvention (z. B. `H-EXT_` = expected_external).
 
 Service-Namen werden auf kanonische Tokens (`tcp/443`, `udp/53`, `icmp`) abgebildet;
 FortiOS-Built-ins (HTTPS, ALL, ...) sind als Fallback hinterlegt.
+
+Zusaetzlich (ADR 0010, Inventar-Ebene): Regeln tragen die **Objektnamen** der Firewall
+(`source_refs`/`destination_refs`/`service_refs`), und `build_device_objects` liefert alle
+Objekte so, wie sie auf dem Geraet stehen - Adressen, Gruppen mit Mitgliedern, VIPs,
+IP-Pools, Services und Service-Gruppen, jeweils mit aufgeloesten Werten, Kommentar, Farbe.
 """
 
 import ipaddress
@@ -121,27 +126,55 @@ def _subnet_to_value(subnet: str) -> str:
 # -- Services -----------------------------------------------------------------
 
 
-def build_service_map(services: list[dict]) -> dict[str, list[str]]:
-    return {s["name"]: _service_tokens(s) for s in services}
+def build_service_map(
+    services: list[dict], service_groups: list[dict] | None = None
+) -> dict[str, list[str]]:
+    smap = {s["name"]: _service_tokens(s) for s in services}
+    groups = {g["name"]: g for g in service_groups or []}
+    for name in groups:
+        smap[name] = _group_tokens(name, groups, smap)
+    return smap
+
+
+def _group_tokens(name: str, groups: dict, smap: dict, _depth: int = 0) -> list[str]:
+    out: list[str] = []
+    for member in groups[name].get("member", []):
+        mname = member["name"]
+        if mname in groups and _depth < 3:
+            out.extend(_group_tokens(mname, groups, smap, _depth + 1))
+        else:
+            out.extend(resolve_service(mname, smap))
+    return _dedup(out) or [name.lower()]
 
 
 def _service_tokens(service: dict) -> list[str]:
     tokens: list[str] = []
-    for field, proto in (("tcp-portrange", "tcp"), ("udp-portrange", "udp")):
-        rng = service.get(field)
-        if rng:
-            tokens.append(f"{proto}/{_first_port(rng)}")
+    for field, proto in (
+        ("tcp-portrange", "tcp"),
+        ("udp-portrange", "udp"),
+        ("sctp-portrange", "sctp"),
+    ):
+        for rng in _dest_ranges(service.get(field) or ""):
+            tokens.append(f"{proto}/{rng}")
     if not tokens:
-        if "ICMP" in (service.get("protocol") or "").upper():
+        protocol = (service.get("protocol") or "").upper()
+        if "ICMP6" in protocol:
+            tokens.append("icmpv6")
+        elif "ICMP" in protocol:
             tokens.append("icmp")
         else:
             tokens.append(service["name"].lower())
     return tokens
 
 
-def _first_port(rng: str) -> str:
-    # "443" | "443-445" | "443:1024-2048" (dest:src) | "443 8443" -> erster Dest-Bereich
-    return rng.split(":")[0].split()[0]
+def _dest_ranges(rng: str) -> list[str]:
+    # "443" | "443-445" | "443:1024-2048" (dest:src) | "443 8443" -> alle Dest-Bereiche
+    out = []
+    for part in rng.split():
+        dest = part.split(":")[0]
+        lo, _, hi = dest.partition("-")
+        out.append(lo if not hi or hi == lo else f"{lo}-{hi}")
+    return out
 
 
 def resolve_service(name: str, smap: dict[str, list[str]]) -> list[str]:
@@ -163,9 +196,10 @@ def normalize(
     vips: list[dict] | None = None,
     addresses6: list[dict] | None = None,
     groups6: list[dict] | None = None,
+    service_groups: list[dict] | None = None,
 ) -> list[NormalizedRule]:
     amap = build_address_map(addresses, groups, addresses6, groups6)
-    smap = build_service_map(services)
+    smap = build_service_map(services, service_groups)
     vipmap = build_vip_map(vips)
     return [_normalize_policy(p, amap, smap, vipmap) for p in policies]
 
@@ -187,17 +221,12 @@ def _policy_protections(policy: dict) -> list[str]:
 
 
 def _normalize_policy(policy: dict, amap: dict, smap: dict, vipmap: dict) -> NormalizedRule:
-    sources: list[str] = []
-    for key in ("srcaddr", "srcaddr6"):  # Dual-Stack: IPv4- und IPv6-Adressfelder
-        for entry in policy.get(key, []):
-            sources.extend(resolve_address(entry["name"], amap, vipmap))
-    destinations: list[str] = []
-    for key in ("dstaddr", "dstaddr6"):
-        for entry in policy.get(key, []):
-            destinations.extend(resolve_address(entry["name"], amap, vipmap))
-    svc: list[str] = []
-    for entry in policy.get("service", []):
-        svc.extend(resolve_service(entry["name"], smap))
+    src_refs = _names(policy, "srcaddr", "srcaddr6")  # Dual-Stack: IPv4- und IPv6-Felder
+    dst_refs = _names(policy, "dstaddr", "dstaddr6")
+    svc_refs = _names(policy, "service")
+    sources = [v for n in src_refs for v in resolve_address(n, amap, vipmap)]
+    destinations = [v for n in dst_refs for v in resolve_address(n, amap, vipmap)]
+    svc = [t for n in svc_refs for t in resolve_service(n, smap)]
 
     return NormalizedRule(
         source_platform="fortigate",
@@ -207,11 +236,19 @@ def _normalize_policy(policy: dict, amap: dict, smap: dict, vipmap: dict) -> Nor
         sources=_dedup(sources),
         destinations=_dedup(destinations),
         services=_dedup(svc),
+        source_refs=src_refs,
+        destination_refs=dst_refs,
+        service_refs=svc_refs,
         src_zone=_first_name(policy.get("srcintf")),
         dst_zone=_first_name(policy.get("dstintf")),
         protections=_policy_protections(policy),
         raw=policy,
     )
+
+
+def _names(policy: dict, *keys: str) -> list[str]:
+    """Objektnamen einer Policy (Reihenfolge wie auf der Firewall, ohne Dubletten)."""
+    return _dedup([e["name"] for key in keys for e in policy.get(key, []) if e.get("name")])
 
 
 def _first_name(entries: list[dict[str, Any]] | None) -> str | None:
@@ -291,21 +328,109 @@ def normalize_snat(ippools: list[dict] | None) -> list[NormalizedNat]:
 def build_object_catalog(
     addresses: list[dict], addresses6: list[dict] | None = None
 ) -> list[NormalizedObject]:
-    """Adressobjekt-Metadaten: Typ + Farbcode (optional) + aufgeloester Wert je Objekt."""
+    """Nur Adressobjekte (Typ + Farbcode + Wert) - Rueckwaertskompatibilitaet."""
+    return [
+        o for o in build_device_objects(addresses, addresses6=addresses6) if o.category == "address"
+    ]
+
+
+def build_device_objects(
+    addresses: list[dict],
+    groups: list[dict] | None = None,
+    addresses6: list[dict] | None = None,
+    groups6: list[dict] | None = None,
+    vips: list[dict] | None = None,
+    ippools: list[dict] | None = None,
+    services: list[dict] | None = None,
+    service_groups: list[dict] | None = None,
+) -> list[NormalizedObject]:
+    """Alle Firewall-Objekte so, wie sie auf dem Geraet stehen (Inventar, ADR 0010)."""
+    amap = build_address_map(addresses, groups or [], addresses6, groups6)
+    vipmap = build_vip_map(vips)
     out: list[NormalizedObject] = []
-    for a in list(addresses) + list(addresses6 or []):
-        if "member" in a:  # Gruppen gehoeren nicht in den Objekt-Katalog
-            continue
+    for family, items in (("v4", addresses), ("v6", addresses6 or [])):
+        for a in items:
+            out.append(
+                NormalizedObject(
+                    name=a["name"],
+                    category="address",
+                    obj_type=a.get("type"),
+                    color=_as_color(a.get("color")),
+                    value=_catalog_value(a),
+                    values=_object_values(a["name"], amap, vipmap),
+                    fqdn=a.get("fqdn"),
+                    comment=a.get("comment") or None,
+                    family=family,
+                    interface=a.get("associated-interface") or None,
+                )
+            )
+    for family, items in (("v4", groups or []), ("v6", groups6 or [])):
+        for g in items:
+            out.append(
+                NormalizedObject(
+                    name=g["name"],
+                    category="address_group",
+                    color=_as_color(g.get("color")),
+                    members=[m["name"] for m in g.get("member", []) if m.get("name")],
+                    values=_object_values(g["name"], amap, vipmap),
+                    comment=g.get("comment") or None,
+                    family=family,
+                )
+            )
+    for v in vips or []:
         out.append(
             NormalizedObject(
-                name=a["name"],
-                obj_type=a.get("type"),
-                color=_as_color(a.get("color")),
-                value=_catalog_value(a),
-                fqdn=a.get("fqdn"),
+                name=v["name"],
+                category="vip",
+                obj_type=v.get("type") or "static-nat",
+                color=_as_color(v.get("color")),
+                value=vipmap.get(v["name"]) or None,
+                values=[x for x in (vipmap.get(v["name"]), _first_mapped_ip(v)) if x],
+                comment=v.get("comment") or None,
+                interface=v.get("extintf") or None,
+            )
+        )
+    for p in ippools or []:
+        start, end = str(p.get("startip") or ""), str(p.get("endip") or "")
+        rng = f"{start}-{end}" if end and end != start else start
+        out.append(
+            NormalizedObject(
+                name=p["name"],
+                category="ippool",
+                obj_type=p.get("type"),
+                values=[rng] if rng else [],
+                comment=p.get("comments") or p.get("comment") or None,
+            )
+        )
+    smap = build_service_map(services or [], service_groups)
+    for svc in services or []:
+        out.append(
+            NormalizedObject(
+                name=svc["name"],
+                category="service",
+                obj_type=svc.get("protocol"),
+                color=_as_color(svc.get("color")),
+                values=smap.get(svc["name"], []),
+                comment=svc.get("comment") or None,
+            )
+        )
+    for g in service_groups or []:
+        out.append(
+            NormalizedObject(
+                name=g["name"],
+                category="service_group",
+                color=_as_color(g.get("color")),
+                members=[m["name"] for m in g.get("member", []) if m.get("name")],
+                values=smap.get(g["name"], []),
+                comment=g.get("comment") or None,
             )
         )
     return out
+
+
+def _object_values(name: str, amap: dict, vipmap: dict) -> list[str]:
+    """Aufgeloeste Werte (Gruppen: aller Mitglieder); der eigene Name faellt weg."""
+    return _dedup([v for v in resolve_address(name, amap, vipmap) if v != name])
 
 
 def _as_color(raw: Any) -> int | None:

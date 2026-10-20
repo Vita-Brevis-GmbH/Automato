@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     Agent,
     CollectorRun,
+    DeviceObject,
     Epg,
     EpgEndpoint,
     EpgSubnet,
@@ -19,10 +20,8 @@ from app.models import (
     NatRule,
     NetworkObject,
     Rule,
-    RuleEndpoint,
     Site,
     SourceSystem,
-    SubjectKind,
     Tenant,
     Zone,
 )
@@ -49,21 +48,16 @@ def source_usage(session: Session, source_id: int) -> dict[str, int]:
 
 
 def _delete_stale_findings(session: Session, tenant_id: int) -> int:
-    """Findings zu Objekten, die keine Regel des Mandanten mehr verwendet (abgeleiteter
-    Zustand - sonst blieben Befunde gelöschter Regeln stehen)."""
-    still_used = (
-        select(NetworkObject.name)
-        .join(RuleEndpoint, RuleEndpoint.network_object_id == NetworkObject.id)
-        .where(NetworkObject.tenant_id == tenant_id)
-    )
-    return _count(
-        session,
-        delete(Finding).where(
-            Finding.tenant_id == tenant_id,
-            Finding.subject_kind == SubjectKind.NETWORK_OBJECT,
-            Finding.subject_id.not_in(still_used),
-        ),
-    )
+    """Findings neu berechnen (abgeleiteter Zustand) - Befunde gelöschter Daten fallen weg."""
+    from app.store import reconcile  # spät importiert (reconcile importiert Modelle/Stores)
+
+    before = _count_findings(session, tenant_id)
+    reconcile.reconcile_tenant(session, tenant_id)
+    return max(before - _count_findings(session, tenant_id), 0)
+
+
+def _count_findings(session: Session, tenant_id: int) -> int:
+    return len(session.scalars(select(Finding.id).where(Finding.tenant_id == tenant_id)).all())
 
 
 def delete_source_system(session: Session, source: SourceSystem) -> dict[str, int]:
@@ -73,6 +67,7 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
     counts["nat_rules"] = _count(
         session, delete(NatRule).where(NatRule.source_system_id == source.id)
     )
+    session.execute(delete(DeviceObject).where(DeviceObject.source_system_id == source.id))
     counts["findings"] = (
         _delete_stale_findings(session, source.tenant_id) if source.tenant_id is not None else 0
     )
@@ -94,6 +89,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     counts = {"rules": _delete_rules(session, Rule.tenant_id == tid)}
     counts["nat_rules"] = _count(session, delete(NatRule).where(NatRule.tenant_id == tid))
     counts["findings"] = _count(session, delete(Finding).where(Finding.tenant_id == tid))
+    session.execute(delete(DeviceObject).where(DeviceObject.tenant_id == tid))
 
     epg_ids = select(Epg.id).where(Epg.tenant_id == tid)
     session.execute(delete(EpgSubnet).where(EpgSubnet.epg_id.in_(epg_ids)))

@@ -4,7 +4,9 @@ Liest Regeln aus dem Rule & Service Store:
 - `GET /rules`         Liste mit Zonen + Zaehlern (Quell-/Ziel-/Service-Anzahl, nicht
                        aufgeloeste Objekte) und Anzeigenamen-Fallback.
 - `GET /rules/{id}`    Detail inkl. aufgeloester Endpunkte (IP/CIDR/Name, Zone,
-                       Match-Status) und kanonischer Services.
+                       Match-Status) und kanonischer Services, dazu die Objekt-Verweise
+                       wie auf der Firewall (`refs`: Name, Gruppen mit Mitgliedern, Werte
+                       mit Abgleich gegen das IPAM, ADR 0010).
 Filter nach System/Netzwerk/Zone folgen mit dem UI-Ausbau (M9).
 """
 
@@ -15,9 +17,10 @@ from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import EndpointRole, MatchStatus, ObjectClass
+from app.models import EndpointRole, MatchStatus, ObjectClass, RefRole
 from app.schemas.rules import EndpointOut, RuleDetailOut, RuleOut
 from app.store import nat as nat_store
+from app.store import objects as objects_store
 from app.store import rules as rules_store
 
 router = APIRouter(prefix="/rules", tags=["rules"])
@@ -43,8 +46,22 @@ def _endpoint_label(e, objs) -> str:
     return e.inline_value or e.kind.value
 
 
+def _ref_names(rule, role: RefRole) -> list[str]:
+    return [ref.name for ref in rule.refs if ref.role is role]
+
+
+def _labels(rule, role: RefRole, endpoint_role: EndpointRole, objs) -> list[str]:
+    """Objektnamen wie auf der Firewall; ohne Verweise (ACI, Altbestand) die Endpunkte."""
+    names = _ref_names(rule, role)
+    if names:
+        return names
+    return [_endpoint_label(e, objs) for e in rule.endpoints if e.role is endpoint_role]
+
+
 def _rule_matches_q(rule, objs, ql: str) -> bool:
     if ql in rule.name.lower() or ql in (rule.external_id or "").lower():
+        return True
+    if any(ql in ref.name.lower() for ref in rule.refs):
         return True
     for e in rule.endpoints:
         obj = objs.get(e.network_object_id) if e.network_object_id else None
@@ -90,12 +107,10 @@ def list_rules(
                 num_dst=sum(1 for e in r.endpoints if e.role is EndpointRole.DST),
                 num_services=len(r.services),
                 num_unmatched=_count_unmatched(r.endpoints, objs),
-                sources=[
-                    _endpoint_label(e, objs) for e in r.endpoints if e.role is EndpointRole.SRC
-                ],
-                destinations=[
-                    _endpoint_label(e, objs) for e in r.endpoints if e.role is EndpointRole.DST
-                ],
+                sources=_labels(r, RefRole.SRC, EndpointRole.SRC, objs),
+                destinations=_labels(r, RefRole.DST, EndpointRole.DST, objs),
+                service_names=_ref_names(r, RefRole.SERVICE)
+                or [s.canonical_name for s in r.services],
             )
         )
     return out
@@ -151,8 +166,12 @@ def get_rule(
         num_dst=sum(1 for e in r.endpoints if e.role is EndpointRole.DST),
         num_services=len(r.services),
         num_unmatched=_count_unmatched(r.endpoints, objs),
+        sources=_labels(r, RefRole.SRC, EndpointRole.SRC, objs),
+        destinations=_labels(r, RefRole.DST, EndpointRole.DST, objs),
+        service_names=_ref_names(r, RefRole.SERVICE) or [s.canonical_name for s in r.services],
         external_id=r.external_id,
         sequence=r.sequence,
+        refs=objects_store.rule_refs(session, r),
         endpoints=endpoints,
         services=[s.canonical_name for s in r.services],
         protections=r.protections or [],

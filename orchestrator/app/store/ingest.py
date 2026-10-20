@@ -8,6 +8,10 @@ Lauf ersetzt; Adress-/Service-Objekte und Findings akkumulieren (mit last_seen).
 Endpunkt-Rohwerte (DTO `sources`/`destinations`) sind entweder IP/CIDR
 (→ wertebasiertes Matching, search_by_ip) oder Objektnamen (→ Namenskonvention +
 get_by_name). `all`/`any` → Endpunkt-Kind ANY.
+
+Inventar-Ebene (ADR 0010): die Firewall-Objekte des Quellsystems (`device_object`) werden je
+Lauf ersetzt, Regeln verweisen zusaetzlich per Objektname darauf (`rule_object_ref`).
+Findings entstehen nicht mehr hier, sondern im Abgleich (`reconcile`) am Ende des Ingests.
 """
 
 import ipaddress
@@ -18,32 +22,34 @@ from sqlalchemy.orm import Session
 
 from app import naming
 from app.models import (
+    SERVICE_CATEGORIES,
+    DeviceObject,
     EndpointKind,
     EndpointRole,
     Epg,
     EpgEndpoint,
     EpgSubnet,
     Family,
-    Finding,
-    FindingType,
     MatchStatus,
     NatRule,
     NetworkObject,
+    ObjectCategory,
     ObjectClass,
     Proto,
+    RefRole,
     Rule,
     RuleAction,
     RuleDomain,
     RuleEndpoint,
+    RuleObjectRef,
     ServiceObject,
     SourceOfRecord,
-    SubjectKind,
-    Tenant,
     Zone,
 )
 from app.naming import PrefixList
-from app.schemas.collector import CollectorResult, NormalizedNat, NormalizedRule
+from app.schemas.collector import CollectorResult, NormalizedNat, NormalizedObject, NormalizedRule
 from app.store import naming_profiles as profile_store
+from app.store import reconcile
 
 _ANY_VALUES = {"all", "any", "*"}
 # Typ-praefixe, die der Collector fuer nicht-IP-aufloesbare Objekte setzt.
@@ -77,12 +83,6 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     # Regeln des Quellsystems ersetzen (aktueller Stand); ORM-Delete kaskadiert Endpunkte
     for old in session.scalars(select(Rule).where(Rule.source_system_id == run.source_system_id)):
         session.delete(old)
-    # Findings sind abgeleiteter Zustand -> pro Lauf neu aufbauen, sonst bleiben
-    # veraltete Befunde (z. B. frueher als unmatched eingestufte fqdn/geo-Objekte)
-    # stehen. TODO Multi-Source: auf das Quellsystem scopen bzw. "stale" aufloesen,
-    # sobald mehrere Quellen je Mandant und ein Quittierungs-Workflow existieren.
-    for old_f in session.scalars(select(Finding).where(Finding.tenant_id == run.tenant_id)):
-        session.delete(old_f)
     # NAT-/VIP-Regeln des Quellsystems ebenfalls ersetzen (aktueller Stand)
     for old_nat in session.scalars(
         select(NatRule).where(NatRule.source_system_id == run.source_system_id)
@@ -92,11 +92,14 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
 
     _apply_epgs(session, run.tenant_id, result.epgs)  # EPGs vor den Regeln (Endpunkt-Link)
     prefixes = _resolve_prefixes(session, run.tenant_id)  # Namensprofil des Mandanten
+    device_objects = _replace_device_objects(session, run, result.objects, sot)
     for normalized in result.rules:
-        _persist_rule(session, run, normalized, sot, prefixes)
+        _persist_rule(session, run, normalized, sot, prefixes, device_objects)
     _apply_object_catalog(session, run.tenant_id, result.objects)
     for nat in result.nat_rules:
         _persist_nat(session, run, nat)
+    # Findings = abgeleiteter Zustand des ganzen Mandanten (alle Quellsysteme)
+    reconcile.reconcile_tenant(session, run.tenant_id)
 
 
 def _apply_epgs(session: Session, tenant_id: int, epgs) -> None:
@@ -151,26 +154,68 @@ def _host_by_ips(session: Session, tenant_id: int, ips) -> NetworkObject | None:
 
 
 def _resolve_prefixes(session: Session, tenant_id: int) -> PrefixList | None:
-    """Praefix-Liste aus dem Namensprofil des Mandanten.
+    """Praefix-Liste aus dem Namensprofil des Mandanten (siehe profile_store)."""
+    return profile_store.prefixes_for_tenant(session, tenant_id)
 
-    Ohne eigenes Profil gilt das Standardprofil „default"; fehlt auch das (oder ist es
-    leer), None = eingebaute Standard-Konvention (keine Funktionsabhaengigkeit von Daten).
-    """
-    tenant = session.get(Tenant, tenant_id)
-    profile_id = getattr(tenant, "naming_profile_id", None)
-    if not profile_id:
-        default = profile_store.get_default_profile(session)
-        if default is None:
-            return None
-        profile_id = default.id
-    entries = profile_store.list_entries(session, profile_id, kind="object_prefix")
-    return naming.prefixes_from_entries((e.key, e.value) for e in entries)
+
+_DEVICE_OBJECTS = dict[tuple[str, str], DeviceObject]  # (art, name) -> Objekt; art = addr|svc
+
+
+def _replace_device_objects(
+    session: Session, run, objects: list[NormalizedObject], sot
+) -> _DEVICE_OBJECTS:
+    """Firewall-Objekte des Quellsystems ersetzen (Inventar, ADR 0010)."""
+    if run.source_system_id is None or run.tenant_id is None:
+        return {}
+    for old in session.scalars(
+        select(DeviceObject).where(DeviceObject.source_system_id == run.source_system_id)
+    ):
+        session.delete(old)
+    session.flush()  # DELETE vor INSERT (Unique je Quellsystem/Kategorie/Name)
+    now = datetime.now(UTC)
+    out: _DEVICE_OBJECTS = {}
+    for o in objects:
+        category = ObjectCategory(o.category)
+        art = "svc" if category in SERVICE_CATEGORIES else "addr"
+        if (art, o.name) in out:
+            continue  # gleicher Name in IPv4 und IPv6: erstes Objekt gilt
+        values = list(dict.fromkeys(o.values or ([o.value] if o.value else [])))
+        obj = DeviceObject(
+            tenant_id=run.tenant_id,
+            source_system_id=run.source_system_id,
+            category=category,
+            name=o.name,
+            obj_type=o.obj_type,
+            family=o.family,
+            values=values or None,
+            members=o.members or None,
+            fqdn=o.fqdn,
+            comment=o.comment,
+            color=o.color,
+            interface=o.interface,
+            collector_run_id=run.id,
+            last_seen=now,
+        )
+        if category is ObjectCategory.ADDRESS and len(values) == 1:
+            obj.network_object_id = _canonical_object_id(session, run.tenant_id, values[0], sot)
+        session.add(obj)
+        out[(art, o.name)] = obj
+    session.flush()
+    return out
+
+
+def _canonical_object_id(session: Session, tenant_id: int, value: str, sot) -> int | None:
+    """Werte-Objekt (IP/CIDR) zu einem Firewall-Adressobjekt - fuer Matching/Referenzdaten."""
+    net = _as_ip_or_net(value)
+    if net is None:
+        return None
+    return _object_by_value(session, tenant_id, value, net, sot).id
 
 
 def _apply_object_catalog(session: Session, tenant_id: int, objects) -> None:
     """Farbcode (Signal) auf bereits angelegte Adressobjekte uebertragen (Name oder Wert)."""
     for o in objects:
-        if o.color is None:
+        if o.color is None or getattr(o, "category", "address") != "address":
             continue
         conds = [NetworkObject.name == o.name]
         if o.value:
@@ -205,7 +250,12 @@ def _persist_nat(session: Session, run, nat: NormalizedNat) -> None:
 
 
 def _persist_rule(
-    session: Session, run, nr: NormalizedRule, sot, prefixes: PrefixList | None = None
+    session: Session,
+    run,
+    nr: NormalizedRule,
+    sot,
+    prefixes: PrefixList | None = None,
+    device_objects: _DEVICE_OBJECTS | None = None,
 ) -> None:
     rule = Rule(
         tenant_id=run.tenant_id,
@@ -232,6 +282,22 @@ def _persist_rule(
         )
     for svc in nr.services:
         rule.services.append(_service(session, svc))
+    objs = device_objects or {}
+    for role, art, names in (
+        (RefRole.SRC, "addr", nr.source_refs),
+        (RefRole.DST, "addr", nr.destination_refs),
+        (RefRole.SERVICE, "svc", nr.service_refs),
+    ):
+        for position, name in enumerate(names):
+            dobj = objs.get((art, name))
+            rule.refs.append(
+                RuleObjectRef(
+                    role=role,
+                    position=position,
+                    name=name,
+                    device_object_id=dobj.id if dobj is not None else None,
+                )
+            )
     session.add(rule)
     session.flush()
 
@@ -363,15 +429,6 @@ def _object_by_name(
         session.flush()
         return obj
 
-    if parsed.object_class is ObjectClass.UNKNOWN:
-        _finding(
-            session,
-            tenant_id,
-            FindingType.INVALID_NAME,
-            obj.name,
-            {"hint": "Name passt zu keinem Konventions-Praefix"},
-        )
-
     found = _safe_get_by_name(sot, value)
     _apply_match(session, tenant_id, obj, [found] if found else [])
     return obj
@@ -388,14 +445,7 @@ def _apply_match(session: Session, tenant_id: int, obj: NetworkObject, found: li
         if zone_id is not None:
             obj.zone_id = zone_id
     elif obj.match_status is not MatchStatus.EXPECTED_EXTERNAL:
-        obj.match_status = MatchStatus.UNMATCHED
-        _finding(
-            session,
-            tenant_id,
-            FindingType.UNMATCHED_OBJECT,
-            obj.name,
-            {"value": obj.value, "object_class": obj.object_class.value},
-        )
+        obj.match_status = MatchStatus.UNMATCHED  # Finding entsteht im Abgleich
     obj.last_seen = datetime.now(UTC)
     session.flush()
 
@@ -471,38 +521,6 @@ def _parse_service(raw: str) -> tuple[Proto, int | None, int | None, str]:
             return proto, None, None, f"{proto_s}/{port_s or 'any'}"
     # Fallback: Vendor-Name (z. B. "HTTPS", "ALL") unkanonisiert ablegen
     return Proto.IP, None, None, s
-
-
-def _finding(
-    session: Session,
-    tenant_id: int,
-    ftype: FindingType,
-    subject_id: str,
-    detail: dict,
-) -> None:
-    existing = session.scalars(
-        select(Finding).where(
-            Finding.tenant_id == tenant_id,
-            Finding.type == ftype,
-            Finding.subject_id == subject_id,
-        )
-    ).first()
-    now = datetime.now(UTC)
-    if existing is None:
-        session.add(
-            Finding(
-                tenant_id=tenant_id,
-                type=ftype,
-                subject_kind=SubjectKind.NETWORK_OBJECT,
-                subject_id=subject_id,
-                detail=detail,
-                first_seen=now,
-                last_seen=now,
-            )
-        )
-    else:
-        existing.last_seen = now
-    session.flush()
 
 
 # -- Helpers ------------------------------------------------------------------

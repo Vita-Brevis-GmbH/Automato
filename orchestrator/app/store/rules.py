@@ -14,7 +14,9 @@ from app.models import NetworkObject, Rule, Zone
 def list_rules(session: Session, tenant_id: int | None = None, limit: int = 500) -> list[Rule]:
     stmt = (
         select(Rule)
-        .options(selectinload(Rule.endpoints), selectinload(Rule.services))
+        .options(
+            selectinload(Rule.endpoints), selectinload(Rule.services), selectinload(Rule.refs)
+        )
         .order_by(Rule.source_system_id, Rule.sequence, Rule.id)
     )
     if tenant_id is not None:
@@ -25,7 +27,9 @@ def list_rules(session: Session, tenant_id: int | None = None, limit: int = 500)
 def get_rule(session: Session, rule_id: int) -> Rule | None:
     stmt = (
         select(Rule)
-        .options(selectinload(Rule.endpoints), selectinload(Rule.services))
+        .options(
+            selectinload(Rule.endpoints), selectinload(Rule.services), selectinload(Rule.refs)
+        )
         .where(Rule.id == rule_id)
     )
     return session.scalars(stmt).first()

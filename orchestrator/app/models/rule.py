@@ -4,6 +4,9 @@ Eine Tabelle fuer beide Domaenen (FortiGate-Policy | ACI-Contract), unterschiede
 per `domain`. Endpunkte sind polymorph (rule_endpoint): fuer Firewalls
 Host/Netz/Zone-Objekte, fuer ACI EPGs. Die epg-Referenz am Endpunkt kommt mit
 Phase 2 (ACI) hinzu - in Phase 1 werden EPG-Endpunkte ggf. als inline_value gefuehrt.
+
+`rule_object_ref` haelt die Verweise der Regel so, wie sie auf der Firewall stehen
+(Objektnamen in Reihenfolge, ADR 0010); die Endpunkte bleiben die aufgeloesten Werte.
 """
 
 import enum
@@ -22,6 +25,12 @@ rule_service = Table(
     Column("rule_id", ForeignKey("rule.id", ondelete="CASCADE"), primary_key=True),
     Column("service_object_id", ForeignKey("service_object.id"), primary_key=True),
 )
+
+
+class RefRole(enum.StrEnum):
+    SRC = "src"
+    DST = "dst"
+    SERVICE = "service"
 
 
 class RuleDomain(enum.StrEnum):
@@ -80,6 +89,9 @@ class Rule(Base):
         back_populates="rule", cascade="all, delete-orphan"
     )
     services: Mapped[list[ServiceObject]] = relationship(secondary=rule_service)
+    refs: Mapped[list["RuleObjectRef"]] = relationship(
+        back_populates="rule", cascade="all, delete-orphan", order_by="RuleObjectRef.position"
+    )
 
 
 class RuleEndpoint(Base):
@@ -98,3 +110,20 @@ class RuleEndpoint(Base):
     matched: Mapped[bool] = mapped_column(Boolean, default=False)
 
     rule: Mapped[Rule] = relationship(back_populates="endpoints")
+
+
+class RuleObjectRef(Base):
+    """Verweis einer Regel auf ein Firewall-Objekt (per Name, wie auf dem Geraet)."""
+
+    __tablename__ = "rule_object_ref"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rule_id: Mapped[int] = mapped_column(ForeignKey("rule.id", ondelete="CASCADE"), index=True)
+    role: Mapped[RefRole] = mapped_column(Enum(RefRole, native_enum=False, length=8))
+    position: Mapped[int] = mapped_column(default=0)
+    name: Mapped[str] = mapped_column(String(300))
+    device_object_id: Mapped[int | None] = mapped_column(
+        ForeignKey("device_object.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    rule: Mapped[Rule] = relationship(back_populates="refs")

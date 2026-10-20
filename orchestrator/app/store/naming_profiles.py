@@ -9,7 +9,8 @@ menschenlesbar: `docs/naming-conventions.md`) gilt für Mandanten ohne eigenes P
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DictionaryEntry, NamingProfile
+from app import naming
+from app.models import DictionaryEntry, NamingProfile, Tenant
 from app.naming_defaults import DEFAULT_DICTIONARY, DEFAULT_PROFILE
 
 
@@ -125,3 +126,20 @@ def seed_default_profile(session: Session) -> NamingProfile:
     profile = get_or_create_profile(session, customer=DEFAULT_PROFILE, name=DEFAULT_PROFILE)
     apply_defaults(session, profile.id)
     return profile
+
+
+def prefixes_for_tenant(session: Session, tenant_id: int | None) -> naming.PrefixList | None:
+    """Praefix-Liste aus dem Namensprofil des Mandanten.
+
+    Ohne eigenes Profil gilt das Standardprofil „default"; fehlt auch das (oder ist es
+    leer), None = eingebaute Standard-Konvention (keine Funktionsabhaengigkeit von Daten).
+    """
+    tenant = session.get(Tenant, tenant_id) if tenant_id is not None else None
+    profile_id = getattr(tenant, "naming_profile_id", None)
+    if not profile_id:
+        default = get_default_profile(session)
+        if default is None:
+            return None
+        profile_id = default.id
+    entries = list_entries(session, profile_id, kind="object_prefix")
+    return naming.prefixes_from_entries((e.key, e.value) for e in entries)

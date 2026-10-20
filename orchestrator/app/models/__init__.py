@@ -9,6 +9,12 @@ from app.models.agent import Agent
 from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.collector_run import CollectorRun, RunStatus
+from app.models.device_object import (
+    ADDRESS_CATEGORIES,
+    SERVICE_CATEGORIES,
+    DeviceObject,
+    ObjectCategory,
+)
 from app.models.epg import Epg, EpgEndpoint, EpgSubnet
 from app.models.finding import Finding, FindingStatus, FindingType, Severity, SubjectKind
 from app.models.naming_profile import DictionaryEntry, NamingProfile
@@ -24,10 +30,12 @@ from app.models.network_object import (
 from app.models.rule import (
     EndpointKind,
     EndpointRole,
+    RefRole,
     Rule,
     RuleAction,
     RuleDomain,
     RuleEndpoint,
+    RuleObjectRef,
     rule_service,
 )
 from app.models.service_object import Proto, ServiceObject
@@ -37,10 +45,13 @@ from app.models.tenant import DnsType, IpamType, Tenant
 from app.models.zone import Zone
 
 __all__ = [
+    "ADDRESS_CATEGORIES",
+    "SERVICE_CATEGORIES",
     "Agent",
     "AuditLog",
     "Base",
     "CollectorRun",
+    "DeviceObject",
     "DictionaryEntry",
     "DnsType",
     "EndpointKind",
@@ -57,14 +68,17 @@ __all__ = [
     "NamingProfile",
     "NatRule",
     "NetworkObject",
+    "ObjectCategory",
     "ObjectClass",
     "ObjectType",
     "Platform",
     "Proto",
+    "RefRole",
     "Rule",
     "RuleAction",
     "RuleDomain",
     "RuleEndpoint",
+    "RuleObjectRef",
     "RunStatus",
     "ServiceObject",
     "Severity",

@@ -1,1 +1,15 @@
-[]
+[
+  {
+    "name": "G_web-servers",
+    "member": [
+      {
+        "name": "H_web01"
+      },
+      {
+        "name": "N_server-net"
+      }
+    ],
+    "comment": "Webserver DMZ",
+    "color": 3
+  }
+]

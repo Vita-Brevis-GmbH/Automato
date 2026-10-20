@@ -15,8 +15,9 @@ class RuleOut(BaseModel):
     num_dst: int = 0
     num_services: int = 0
     num_unmatched: int = 0  # Endpunkte mit Objekt, das nicht im SoT aufgeloest wurde
-    sources: list[str] = []  # Quell-Objektnamen (mehrere moeglich)
-    destinations: list[str] = []  # Ziel-Objektnamen (mehrere moeglich)
+    sources: list[str] = []  # Quell-Objektnamen wie auf der Firewall (sonst Werte)
+    destinations: list[str] = []  # Ziel-Objektnamen wie auf der Firewall (sonst Werte)
+    service_names: list[str] = []  # Service-Namen wie auf der Firewall (sonst kanonisch)
 
 
 class EndpointOut(BaseModel):
@@ -31,9 +32,43 @@ class EndpointOut(BaseModel):
     nat_target: str | None = None  # bei VIPs: internes Ziel (mapped_ip[:port][/proto])
 
 
+class RefValueOut(BaseModel):
+    """Aufgeloester Wert eines Firewall-Objekts mit Abgleich gegen das IPAM."""
+
+    value: str
+    match_status: str | None = None
+    zone: str | None = None
+    source_of_record: str | None = None  # netbox | infoblox
+    reference: dict | None = None  # Referenzdaten (DNS-Name, Prefix, VLAN, Site, Link)
+    enrichment: dict | None = None  # Anreicherung (z. B. NetBox neben der DDI)
+
+
+class RefMemberOut(BaseModel):
+    name: str
+    category: str | None = None
+    obj_type: str | None = None
+    comment: str | None = None
+    values: list[RefValueOut] = []
+
+
+class RefOut(BaseModel):
+    """Verweis der Regel auf ein Firewall-Objekt - so, wie es auf dem Geraet steht."""
+
+    role: str  # src | dst | service
+    name: str
+    category: str | None = None  # None = nicht als Objekt gelesen (Built-in, "all")
+    obj_type: str | None = None
+    comment: str | None = None
+    color: int | None = None
+    values: list[RefValueOut] = []
+    members: list[RefMemberOut] = []
+    match_status: str | None = None  # zusammengefasst ueber alle Werte
+
+
 class RuleDetailOut(RuleOut):
     external_id: str
     sequence: int | None = None
+    refs: list[RefOut] = []
     endpoints: list[EndpointOut] = []
     services: list[str] = []  # kanonische Service-Namen (tcp/443, ...)
     protections: list[str] = []  # UTM-Profile ("Schutzmechanismen")

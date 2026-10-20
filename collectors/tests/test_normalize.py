@@ -23,7 +23,7 @@ def _fortigate_rules():
 
 def test_fortigate_adressen_werden_zu_werten_aufgeloest():
     rules = {r.external_id: r for r in _fortigate_rules()}
-    assert len(rules) == 3
+    assert len(rules) == 4
 
     r1 = rules["1"]
     assert r1.action == "allow"
@@ -226,3 +226,55 @@ def test_aci_parse_epgs_gelernte_endpunkte():
     eps = epgs["EG_web"]["endpoints"]
     assert eps == [{"ip": "10.20.1.50", "mac": "00:50:56:AA:BB:CC"}]
     assert epgs["EG_db"]["endpoints"] == []
+
+
+def test_fortigate_regeln_tragen_objektnamen_und_gruppen():
+    rules = {r.external_id: r for r in _fortigate_rules_mit_gruppen()}
+    r4 = rules["4"]
+    assert r4.source_refs == ["N_dmz-net"] and r4.destination_refs == ["G_web-servers"]
+    assert r4.service_refs == ["SG_web"]
+    assert r4.destinations == ["10.10.10.5", "10.10.10.0/24"]  # Gruppe aufgeloest
+    assert r4.services == ["tcp/443", "tcp/8443"]
+
+
+def _fortigate_rules_mit_gruppen():
+    return norm.normalize(
+        _sample("sample_policies.json"),
+        _sample("sample_addresses.json"),
+        _sample("sample_addrgrps.json"),
+        _sample("sample_services.json"),
+        service_groups=_sample("sample_service_groups.json"),
+    )
+
+
+def test_device_objects_wie_auf_der_firewall():
+    objs = {
+        (o.category, o.name): o
+        for o in norm.build_device_objects(
+            _sample("sample_addresses.json"),
+            _sample("sample_addrgrps.json"),
+            _sample("sample_addresses6.json"),
+            [],
+            _sample("sample_vips.json"),
+            _sample("sample_ippools.json"),
+            _sample("sample_services.json"),
+            _sample("sample_service_groups.json"),
+        )
+    }
+    web = objs[("address", "H_web01")]
+    assert web.value == "10.10.10.5" and web.values == ["10.10.10.5"] and web.family == "v4"
+    grp = objs[("address_group", "G_web-servers")]
+    assert grp.members == ["H_web01", "N_server-net"] and grp.comment == "Webserver DMZ"
+    assert grp.values == ["10.10.10.5", "10.10.10.0/24"]
+    assert objs[("address", "H-EXT_partner-api")].values == ["fqdn:api.partner.example"]
+    assert objs[("vip", "VIP_web01")].values == ["203.0.113.10", "10.10.10.5"]
+    assert objs[("ippool", "IPP_share-000-inet01")].values == ["1.1.100.168"]
+    assert objs[("service_group", "SG_web")].values == ["tcp/443", "tcp/8443"]
+    assert objs[("address", "N_share-000-v6")].family == "v6"
+
+
+def test_service_mit_mehreren_portbereichen():
+    smap = norm.build_service_map(
+        [{"name": "MULTI", "tcp-portrange": "443 8443-8445:1024-65535", "udp-portrange": "53"}]
+    )
+    assert smap["MULTI"] == ["tcp/443", "tcp/8443-8445", "udp/53"]

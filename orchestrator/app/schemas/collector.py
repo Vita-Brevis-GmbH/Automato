@@ -23,6 +23,10 @@ class NormalizedRule(BaseModel):
     dst_zone: str | None = None
     protections: list[str] = Field(default_factory=list)  # UTM-Profile ("Schutzmechanismen")
     aci_scope: str | None = None  # Contract-Scope (ACI) -> Applikations-Doku-Kategorie
+    # Objektnamen wie auf der Firewall (ADR 0010); sources/destinations/services = Werte
+    source_refs: list[str] = Field(default_factory=list)
+    destination_refs: list[str] = Field(default_factory=list)
+    service_refs: list[str] = Field(default_factory=list)
     raw: dict[str, Any] | None = None  # Original-Payload fuer Nachvollziehbarkeit
 
 
@@ -57,14 +61,25 @@ class NormalizedNat(BaseModel):
     raw: dict[str, Any] | None = None
 
 
+ObjectCategoryName = Literal[
+    "address", "address_group", "vip", "ippool", "service", "service_group"
+]
+
+
 class NormalizedObject(BaseModel):
-    """Adressobjekt-Metadaten (Katalog): Typ + Farbcode als Signal (ADR 0006)."""
+    """Firewall-Objekt wie auf dem Geraet (Inventar, ADR 0010); Typ + Farbcode als Signal."""
 
     name: str
+    category: ObjectCategoryName = "address"
     obj_type: str | None = None
     color: int | None = None
-    value: str | None = None
+    value: str | None = None  # einzelnes Adressobjekt: aufgeloester Wert
+    values: list[str] = Field(default_factory=list)  # alle Werte / Service-Tokens
+    members: list[str] = Field(default_factory=list)  # Gruppen: Mitgliedsnamen
     fqdn: str | None = None
+    comment: str | None = None
+    family: Literal["v4", "v6"] | None = None
+    interface: str | None = None
 
 
 class CollectorResult(BaseModel):

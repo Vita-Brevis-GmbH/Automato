@@ -25,6 +25,7 @@ def _client_with_mock() -> FortiGateClient:
         "/api/v2/cmdb/firewall/addrgrp": "sample_addrgrps.json",
         "/api/v2/cmdb/firewall/addrgrp6": "sample_addrgrps6.json",
         "/api/v2/cmdb/firewall.service/custom": "sample_services.json",
+        "/api/v2/cmdb/firewall.service/group": "sample_service_groups.json",
         "/api/v2/cmdb/firewall/vip": "sample_vips.json",
         "/api/v2/cmdb/firewall/ippool": "sample_ippools.json",
     }

@@ -43,6 +43,9 @@ class FortiGateClient:
         # "firewall/service/custom" (das liefert 400 Bad Request).
         return self._get("firewall.service/custom")
 
+    def service_groups(self) -> list[dict[str, Any]]:
+        return self._get("firewall.service/group")
+
     def addresses6(self) -> list[dict[str, Any]]:
         return self._get("firewall/address6")
 
@@ -70,6 +73,7 @@ class FortiGateClient:
             "groups": self.address_groups(),
             "groups6": self.address_groups6(),
             "services": self.services(),
+            "service_groups": self.service_groups(),
             "vips": self.vips(),
             "ippools": self.ippools(),
         }

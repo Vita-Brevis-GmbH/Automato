@@ -55,6 +55,7 @@ def gather(target: Target | None = None) -> dict[str, list]:
         "groups": _sample("sample_addrgrps.json"),
         "groups6": _sample("sample_addrgrps6.json"),
         "services": _sample("sample_services.json"),
+        "service_groups": _sample("sample_service_groups.json"),
         "vips": _sample("sample_vips.json"),
         "ippools": _sample("sample_ippools.json"),
     }
@@ -88,9 +89,19 @@ def collect_once(
             d["vips"],
             d["addresses6"],
             d["groups6"],
+            d.get("service_groups", []),
         )
         nat_rules = norm.normalize_nat(d["vips"]) + norm.normalize_snat(d["ippools"])
-        objects = norm.build_object_catalog(d["addresses"], d["addresses6"])
+        objects = norm.build_device_objects(
+            d["addresses"],
+            d["groups"],
+            d["addresses6"],
+            d["groups6"],
+            d["vips"],
+            d["ippools"],
+            d["services"],
+            d.get("service_groups", []),
+        )
         result = CollectorResult(
             status="completed", rules=rules, nat_rules=nat_rules, objects=objects
         )
