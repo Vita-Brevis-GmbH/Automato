@@ -160,6 +160,22 @@ gelesenen Daten in der Dev-VM wie Produktionsdaten behandeln.
    → prüfen → Übernehmen. Danach liest Automato NetBox neu ein; der Vergleich DDI ↔ NetBox
    sollte nur noch Konflikte mit von Hand gepflegten Objekten zeigen.
 
+### 6b. Abnahme Phase A gegen die echten Systeme
+
+Nach dem ersten echten Durchlauf (DDI über den Agenten, Dev-NetBox zentral) festhalten:
+
+- [ ] DDI-Lauf `completed`, Anzahl Einträge plausibel (Netze, Ranges, Records), Stand im
+      Quellsystem sichtbar.
+- [ ] Regeln zeigen bei Objekten DNS-Namen/Netz/VLAN aus der DDI; *Abgleich* zeigt die Befunde
+      je Typ (stichprobenartig 3–5 prüfen, falsche Treffer melden).
+- [ ] *NetBox-Sync*: Vorschau → Konflikte prüfen → Übernehmen; danach NetBox neu einlesen,
+      zweite Vorschau ohne neue Aktionen.
+- [ ] **Nur NetBox wurde geschrieben:** Audit-Log zeigt `netbox_sync.applied`; FortiGate-,
+      APIC- und DDI-Konten haben nur Lese-Rechte (Nur-Lese-Schutz im Code verweigert alles
+      ausser GET, `sot_gateway.readonly`).
+- [ ] Zeitplan für DDI und NetBox setzen (z. B. täglich 02:00), am Folgetag Lauf mit
+      „Zeitplan“ in *Letzte Läufe*.
+
 ## Produktion/Windows
 
 In Produktion läuft der Agent **nicht** aus dem Repo, sondern als Dienst nahe am Zielsystem:
