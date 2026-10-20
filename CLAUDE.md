@@ -495,3 +495,31 @@ Name) — sonst fehlten AP und Contract-DN —, benannte Ports (`https`→443, `
 → `ip/any` bzw. `arp/any`, `fvCEp.ip` als Rückfall. Mit Postgres verifiziert (3 Läufe hintereinander).
 Tests: orchestrator 132, collectors 44, sot-gateway 6.
 
+**Phase A umgesetzt (ADR 0010, A1–A6; Alembic `0018`–`0021`): Inventar, Referenz, Abgleich, NetBox-Sync.**
+Vorgabe des Kunden: **nur nach NetBox schreiben, sonst strikt nur lesen**; Testsysteme (FortiGate, APIC,
+DDI) sind produktiv. **A1 Collector:** FortiGate liefert Objekte mit Namen (`device_object`: Adressen,
+Gruppen mit Mitgliedern, VIPs, IP-Pools, Services, Service-Gruppen) und Regel-Verweise per Name
+(`rule_object_ref`, Quelle/Ziel/Service), dazu Netzinventar (Interfaces/VLAN-Interfaces/Zonen, System);
+APIC zusätzlich VRFs, BD-/EPG-Subnetze, EPG-VLANs, statische Pfade/Ports, Access Policies, LLDP/CDP,
+Fabric-Knoten (`cisco_aci/inventory.py`). **A2 Store:** `inv_device/interface/vlan/subnet/vrf` je
+Quellsystem; Findings sind abgeleiteter Zustand je Mandant (`store/reconcile.py`, nach jedem Lauf neu
+berechnet, Triage bleibt). **A3 Referenzquellen:** Infoblox DDI und NetBox als Quellsysteme
+(Plattformen `infoblox`/`netbox`, Rolle `primary`/`enrichment`, genau ein führendes IPAM je Mandant);
+komplett gelesen (DDI über den Windows-Agent, seitenweise, Teil-Upload `…/references`), Stand je Lauf in
+`reference_record`; Matching gegen den gespeicherten Stand (`store/references.py`). **Nur-Lese-Schutz im
+Code** (`sot_gateway.readonly.enforce_read_only`) an allen Lese-Clients. **A4 Abgleich:** Firewall-Objekt
+↔ IPAM (nicht im IPAM, Name ≠ DNS-Name, Typ/Präfix, doppelte Werte, unbenutzt), ACI-/FortiGate-Subnetz/
+-VLAN ↔ IPAM, Vergleich DDI ↔ NetBox (`/reconcile/summary|ipam`, `POST /reconcile`), `/objects`,
+`/inventory/{art}`. **A5 UI:** Regeln mit Objektnamen und Referenzdaten (DNS, Netz, VLAN, Standort, Link),
+Ansichten „Objekte & Inventar“ und „Abgleich“, Findings mit Typ-Filter, Quellsystem-Dialog für
+Infoblox/NetBox (Rolle, NetBox-Schreib-Token). **A6 NetBox-Sync** (einziger Schreibweg,
+`sot_gateway/adapters/netbox_writer.py` nur NetBox-API des Quellsystems + Sync-Objekttypen;
+`store/netbox_sync.py`, API `/netbox-sync/*`, admin): Netzinventar + DDI-Spiegel → Vorschau
+(anlegen/ändern/Konflikt/löschen/veraltet) → Übernehmen per Klick (Neuberechnung + Fingerabdruck, Bulk,
+auditiert, danach NetBox neu einlesen); geändert/gelöscht nur Tag `automato`, manuelle Objekte nur
+referenziert; Löschen nur mit Freigabe. `source_system.site_id` = Gerätestandort. UI-Ansicht „NetBox-Sync“.
+Verifiziert: Fixture-/Fake-NetBox-Tests, Playwright-Klickdurchlauf, Migrationen 0018–0021 up/down und
+Gesamtablauf (Seed → Abgleich → Sync → Mandant löschen) gegen Postgres. **Offen:** Lauf gegen die echte
+DDI (Agent) und Dev-NetBox (`docs/DEV-SETUP-AGENT.md` Abschnitt 6); danach VM-Collector (vCenter/Proxmox →
+NetBox), Phase B/C nur mit eigener ADR.
+Tests: orchestrator 152, collectors 55, sot-gateway 14.

@@ -16,6 +16,15 @@ Den Ergebnis-Upload signiert der Agent mit seinem **Agent-Token** – das intern
 des Orchestrators braucht er nicht. Ohne Zugangsdaten bricht ein Agent den Lauf ab (keine
 Beispieldaten im Kundennetz).
 
+**Referenzquellen (ADR 0010):** Auch eine **Infoblox DDI** (WAPI-Benutzer + Passwort) oder eine
+NetBox (Lese-Token) kann einem Agenten zugewiesen werden. Der Agent liest die Quelle komplett
+(seitenweise) und lädt sie in Teilen hoch (`POST /internal/collector-runs/{id}/references`,
+je bis 2000 Einträge); das Ergebnis meldet die Anzahl – passt sie nicht, verwirft der
+Orchestrator den Teilstand. Alle Lese-Clients (FortiGate, APIC, Infoblox, NetBox) lassen im
+Code nur GET zu (APIC zusätzlich Login/Logout); ein NetBox-**Schreib**-Token bekommt ein Agent
+nie – geschrieben wird nur vom Orchestrator (NetBox-Sync). Das Agent-Paket enthält dafür das
+`sot-gateway`-Wheel.
+
 ## Ablauf (Alt: RUN_ID out-of-band)
 
 > Normalfall ist das **Pull-Modell** (unten, `--poll`). Der folgende Weg mit `--run-id`
@@ -49,6 +58,7 @@ zugewiesenen Geräten** testen (read-only, kein Ingest):
 automato-collector --check                 # optional: --platform fortigate
 # fw-01 (fortigate) check: OK - erreichbar: https://fw-01.kunde.intern
 # apic-01 (cisco_aci) check: OK - erreichbar: https://apic-01.kunde.intern (5 Tenants sichtbar)
+# ddi (infoblox) check: OK - erreichbar: https://ddi.kunde.intern (WAPI v2.12)
 # fw-02 (fortigate) check: FEHLER - HTTPStatusError: 401 ...
 # Exit 0 = alle OK, 2 = mindestens ein Gerät fehlerhaft
 ```

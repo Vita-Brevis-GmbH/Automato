@@ -134,6 +134,30 @@ cd C:\Automato\collector
 Danach im UI: **„Agenten"** zeigt „Zuletzt gesehen", und die Regeln/Findings/Applikations-Doku
 sind befüllt.
 
+## 6. Infoblox DDI über den Agenten, NetBox-Sync (ADR 0010)
+
+Die echten Referenzdaten liegen in der **Infoblox DDI** im Kundennetz – die erreicht nur der
+Windows-Agent. **Achtung: Testsysteme sind produktiv** – nur Read-only-Konten verwenden; die
+gelesenen Daten in der Dev-VM wie Produktionsdaten behandeln.
+
+1. **DDI erfassen:** Quellsysteme → **+ Quellsystem** → Plattform *Infoblox DDI*, Adresse des
+   Grid-Masters (`https://<ddi>`), **Verwaltet von** = Windows-Agent, WAPI-Benutzer/Passwort
+   (Admin-Gruppe mit API-Zugriff und nur Lese-Rechten), Rolle **IPAM führend**.
+2. **Dev-NetBox erfassen:** Plattform *NetBox*, Adresse wie vom Orchestrator-Container aus
+   erreichbar (z. B. `http://<dev-vm>:8080`), **Lese-Token** (Collector-Token aus
+   `setup.sh`) und – für den Sync – ein **Schreib-Token**, Rolle **Anreicherung**; kein Agent
+   (zentraler Worker liest NetBox).
+3. **Prüfen und einlesen:** `.\run-agent.ps1 -Check` zeigt
+   `ddi (infoblox) check: OK - erreichbar: https://<ddi> (WAPI …)`; dann
+   „Jetzt einlesen" für die DDI (Agent holt den Lauf, liest die **ganze DDI** seitenweise
+   – Netze, Ranges, Host-/A-/AAAA-/PTR-Records, feste Adressen – und lädt sie in Teilen hoch)
+   und für NetBox, FortiGate und APIC.
+4. **Anzeigen:** *Firewall-Regeln* zeigen Objektnamen mit DNS-Namen/Netz/VLAN aus der DDI,
+   *Objekte & Inventar* und *Abgleich* (inkl. Vergleich DDI ↔ NetBox) sind gefüllt.
+5. **NetBox-Sync:** Standort an FortiGate/APIC setzen, dann *NetBox-Sync* → Vorschau erstellen
+   → prüfen → Übernehmen. Danach liest Automato NetBox neu ein; der Vergleich DDI ↔ NetBox
+   sollte nur noch Konflikte mit von Hand gepflegten Objekten zeigen.
+
 ## Produktion/Windows
 
 In Produktion läuft der Agent **nicht** aus dem Repo, sondern als Dienst nahe am Zielsystem:

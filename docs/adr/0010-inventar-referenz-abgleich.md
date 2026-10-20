@@ -2,7 +2,7 @@
 
 ## Status
 
-Angenommen (2026-10-20). Umsetzung in Phase A (A1–A6), siehe ROADMAP „Phase A".
+Angenommen (2026-10-20). Umgesetzt in Phase A (A1–A6), siehe ROADMAP „Phase A".
 
 ## Kontext
 
@@ -70,6 +70,28 @@ ohne Anreicherung.
   `automato`; vorhandene, von Hand gepflegte Objekte werden höchstens referenziert, nie
   geändert (Konflikt wird angezeigt). Jede Änderung entsteht als **Vorschau** (Plan), wird
   per Klick übernommen (admin), auditiert, und danach liest Automato NetBox neu.
+
+### 5. Umsetzung NetBox-Sync (A6)
+
+- **Umfang** wählbar: *Netzinventar* (Geräte mit Ports – Modus, untagged/tagged VLANs, LAG,
+  Parent, Interface-IPs –, VLANs je Quellsystem in einer eigenen VLAN-Gruppe, reale
+  Subnetze inkl. ACI BD/EPG/VRF, VRFs) und *DDI-Spiegel* (Netze, Ranges, IPs mit DNS-Namen
+  aus dem führenden IPAM; entfällt, wenn die Ziel-NetBox selbst führend ist).
+- **Abbildung ohne Custom Fields:** Herkunft und ACI-Bezug stehen in Beschreibung/Kommentar
+  (z. B. „BD BD_app · TE/AP/EG_web“, „Spiegel ddi“), Besitz über das Tag `automato`. So
+  braucht das Schreib-Token keine Rechte auf `extras.custom-fields`.
+- **Natürliche Schlüssel:** Tag/Tenant/Site/Hersteller/Rolle/VLAN-Gruppe per Slug, Gerätetyp
+  per Modell, VRF/Gerät per Name, VLAN per Gruppe+VID, Netz per Prefix, Range per Start–Ende,
+  IP per Adresse, Port per Gerät+Name. Standort eines Geräts = Standort des Quellsystems
+  (bei genau einem Standort des Mandanten dieser); ohne Standort keine Geräte (Hinweis).
+- **Vorschau:** anlegen / ändern (nur getaggte Objekte) / unverändert / Konflikt (manuelles
+  Objekt weicht ab – bleibt) / löschen (nur mit „Löschen zulassen“, nur getaggte Objekte des
+  Mandanten) / veraltet. Gespeichert als `sync_plan` mit Fingerabdruck der Schreib-Aktionen.
+- **Übernahme:** im Hintergrund; Plan wird neu berechnet und nur bei gleichem Fingerabdruck
+  geschrieben (sonst nichts schreiben, neue Vorschau); Bulk in Abhängigkeitsreihenfolge,
+  Löschen rückwärts; LAG/Parent werden nach dem Anlegen nachgezogen. Fehler von NetBox stehen
+  am Plan; Audit `netbox_sync.planned`/`netbox_sync.applied` (nur Anzahlen); danach wird
+  NetBox neu eingelesen. Vorschauen gelten 60 Minuten.
 
 ## Konsequenzen
 

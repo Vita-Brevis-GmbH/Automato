@@ -262,9 +262,11 @@ dependency-getrieben; die **Web-UI (W1)** ist **vorgezogen**, das Auth-Fundament
 | **E6 — Mikroprogramme / modulare Funktionen** | Kleine, wiederverwendbare Funktionsmodule (vgl. Magister ADR 0008 „modulare Funktionen"). | später |
 | **E7 — Design-/Topologie-Modul** | Verbindungen über **redundante Pfade** und **Firewalls in Serie** zusammenführen; optional **draw.io-Integration** für Netzwerkpläne (pro Mandant versioniert, Knoten mit Zonen/VIPs verknüpfbar). | später / optional |
 
-### Phase A – Daten sauber anzeigen und abgleichen (ADR 0010)
+### Phase A – Daten sauber anzeigen und abgleichen (ADR 0010) – umgesetzt
 
 Nur lesen – einziger Schreibweg ist der NetBox-Sync (Vorschau → Klick → Neu-Lesen).
+Alle Schritte A1–A6 sind als Code umgesetzt und mit Fixtures/Fake-NetBox getestet; offen ist
+der Lauf gegen die echte DDI (Agent) und die Dev-NetBox.
 
 | Schritt | Inhalt |
 |---|---|

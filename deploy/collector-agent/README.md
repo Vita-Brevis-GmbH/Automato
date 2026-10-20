@@ -4,9 +4,10 @@ Rollout des externen Collectors als geplante Aufgabe auf einer Windows-Station i
 Kundennetz. Der Agent holt Läufe per Pull und spricht nur **ausgehend HTTPS** zum
 Orchestrator (Details/Netz/Sicherheit: `collectors/EXTERNAL.md`).
 
-**Geräte werden nicht am Agenten erfasst** (ADR 0009): FortiGate und Cisco APIC legt man im
-Web-UI unter **Mandanten & Standorte → Quellsysteme** an (Adresse, read-only Zugangsdaten –
-FortiGate: API-Token, APIC: Benutzer/Passwort + ACI-Tenants –, TLS-Prüfung)
+**Geräte werden nicht am Agenten erfasst** (ADR 0009): FortiGate, Cisco APIC und
+Referenzquellen wie die **Infoblox DDI** (ADR 0010) legt man im Web-UI unter **Mandanten &
+Standorte → Quellsysteme** an (Adresse, read-only Zugangsdaten – FortiGate: API-Token, APIC:
+Benutzer/Passwort + ACI-Tenants, Infoblox: WAPI-Benutzer/Passwort –, TLS-Prüfung)
 und weist sie dort einem Agenten zu. Der Orchestrator speichert die Zugangsdaten
 verschlüsselt und gibt sie pro Lauf **nur dem zugewiesenen Agenten**. Die `agent.env`
 enthält deshalb nur Orchestrator-Adresse + Agent-Token (+ optional TLS). Ein Gerät lässt
@@ -25,7 +26,8 @@ Build-Host (Python)        Windows-Station (Kundennetz)
 Im Web-UI unter **Collector-Agenten** steht die Einrichtung Schritt für Schritt:
 Geräte zuweisen, `agent.env` direkt im Browser erzeugen (Token des neuen Agenten wird
 übernommen) und das
-**Agent-Paket** (ZIP: collectors-Wheel + Skripte, ohne Zugangsdaten) herunterladen. Das
+**Agent-Paket** (ZIP: collectors- und sot-gateway-Wheel + Skripte, ohne Zugangsdaten)
+herunterladen. Das
 Orchestrator-Image baut das Paket mit (Dockerfile-Stage `agent-package`). Auf der Station:
 
 ```powershell
@@ -41,7 +43,8 @@ powershell -ExecutionPolicy Bypass -File C:\Automato\collector\run-agent.ps1 -Ch
 
 ```bash
 uv build --package collectors --out-dir dist
-# -> dist/collectors-0.1.0-py3-none-any.whl
+uv build --package sot-gateway --out-dir dist   # Infoblox-/NetBox-Leser (ADR 0010)
+# -> dist/collectors-0.1.0-py3-none-any.whl, dist/sot_gateway-0.1.0-py3-none-any.whl
 ```
 
 ## 2. Auf der Windows-Station installieren
@@ -51,7 +54,8 @@ beim Setup **„Add python.exe to PATH"** anhaken). `install.ps1` findet `py`, `
 `python3` automatisch; ohne Python bricht es mit einem Hinweis ab. Ganz ohne Python auf der
 Station: die PyInstaller-`.exe` bauen (siehe unten).
 
-Wheel + diesen Ordner (`deploy/collector-agent/`) auf die Station kopieren, dann in einer
+Beide Wheels + diesen Ordner (`deploy/collector-agent/`) in denselben Ordner auf die Station
+kopieren (`install.ps1` installiert das sot-gateway-Wheel aus dem Ordner mit), dann in einer
 **administrativen** PowerShell:
 
 ```powershell
