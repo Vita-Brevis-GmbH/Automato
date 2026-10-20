@@ -31,14 +31,29 @@ function ZoneChip({ zone }: { zone: string | null }) {
 // ACI-Contract: Contract + Subject, darunter ACI-Tenant und Scope
 function NameCell({ r }: { r: Rule }) {
   if (r.aci) {
+    const pref = r.aci.kind === "preferred_group";
     return (
       <>
         <span className="chip local" title="Cisco-ACI-Contract">
           ACI
         </span>{" "}
-        <b>{r.aci.contract ?? r.name}</b>
+        {r.aci.kind === "taboo" && (
+          <>
+            <span className="chip crit" title="Taboo-Contract: verbietet den Verkehr zu den geschützten EPGs">
+              Taboo
+            </span>{" "}
+          </>
+        )}
+        {r.aci.kind === "preferred_group" && (
+          <>
+            <span className="chip info" title="Preferred Group: Mitglieder der VRF sprechen frei miteinander">
+              Preferred Group
+            </span>{" "}
+          </>
+        )}
+        <b>{pref ? `VRF ${(r.aci.contract ?? r.name).replace(/^Preferred Group /, "")}` : (r.aci.contract ?? r.name)}</b>
         <div className="faint">
-          {[r.aci.subject && `Subject ${r.aci.subject}`, r.aci.tenant && `Tenant ${r.aci.tenant}`, r.aci.scope]
+          {[!pref && r.aci.subject && `Subject ${r.aci.subject}`, r.aci.tenant && `Tenant ${r.aci.tenant}`, r.aci.scope]
             .filter(Boolean)
             .join(" · ")}
         </div>

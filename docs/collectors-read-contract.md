@@ -64,7 +64,9 @@ APIC-Benutzer aus dem Quellsystem, ADR 0009) → `GET /api/class/fvTenant.json` 
 | `fvAEPg` | `name` (`EG_…`), `prefGrMemb`; children `fvRsBd.tnFvBDName`→BD, `fvRsProv.tnVzBrCPName`/`fvRsCons.tnVzBrCPName`→Contracts, `fvRsDomAtt.tDn`→Domäne, `fvRsPathAtt`→Static Paths, `fvSubnet` | `epg` (+ `epg_subnet`); ein Server = genau eine EPG |
 | `vzBrCP` | `name` (`CT_…`), **`scope`** (`global`\|`tenant`\|`context`\|`application-profile`); children `vzSubj` (`SJ_…`) → `vzRsSubjFiltAtt.tnVzFilterName`→Filter | `rule` (ACI-Contract); **`scope` steuert Applikations-Doku-Kategorie** (application-profile→innerhalb AP; context/tenant→innerhalb Tenant; global→andere Tenants) |
 | `vzFilter` / `vzEntry` | Filter `FT_…`; Entry `etherT`, `prot`, `dFromPort`/`dToPort`, `icmpv4T`/`icmpv6T` | `service_object` |
-| `vzAny` | `vzRsAnyToProv`/`…Cons` | VRF-weiter „any"-Contract |
+| `vzAny` | `vzRsAnyToProv`/`…Cons`, `prefGrMemb` (`enabled` = Preferred Group der VRF an) | VRF-weiter „any"-Contract; Preferred Group → eine Regel je VRF |
+| `fvESg` | `name` (ESG), `prefGrMemb`; children `fvRsScope.tnFvCtxName`→VRF, `fvRsProv`/`fvRsCons`, Selektoren `fvEPgSelector.matchEpgDn`, `fvTagSelector.matchKey/matchValue`, `fvEPSelector.matchExpression` (`ip=='…'` → Subnetz) | `epg` mit `kind=esg`, `selectors`; Subnetze origin `esg` |
+| `vzTaboo` | `name`; children `vzTSubj` → `vzRsDenyRule.tnVzFilterName`; geschützte EPGs per `fvRsProtBy.tnVzTabooName` | `rule` mit `action=deny`, Quelle any, Ziel = geschützte EPGs |
 | `l3extOut` | `name` (`L3O_inet/vpn/bit/res/sra`); children `l3extInstP` (externe EPG, `EN_…`) → `l3extSubnet.ip` (z. B. `0.0.0.0/0`, `::/0`) | `zone` (externer Scope) / Transfernetz |
 
 **Netzinventar (ADR 0010):** zusätzlich zum Tenant-Subtree liest der Collector die Fabric-Klassen
@@ -89,8 +91,15 @@ die Subnetze der BD nach aussen bekannt gegeben werden; Verkehr zwischen EPGs l�
 VRF aus `l3extRsEctx`) und **vzAny** einer VRF (`vzRsAnyToProv`/`vzRsAnyToCons`).
 Exportierte Contracts eines anderen Tenants kommen über Contract-Interfaces (`vzCPIf` +
 `vzRsIf.tDn`, verbraucht per `fvRsConsIf`/`vzRsAnyToConsIf`). Nicht-reflexive Subjects
-liefern ihre Filter aus `vzInTerm`/`vzOutTerm` (`vzRsFiltAtt`). Noch nicht gelesen:
-Endpoint Security Groups (`fvESg`), Taboo-Contracts, Preferred Groups (`prefGrMemb`).
+liefern ihre Filter aus `vzInTerm`/`vzOutTerm` (`vzRsFiltAtt`).
+
+**Seit 0.5.0:** **ESGs** (`fvESg`) sind Consumer/Provider wie EPGs; ihre Selektoren stehen als
+Text an der ESG (`EPG <DN>`, `Tag k=v`, `IP <Ausdruck>`), IP-Selektoren zusätzlich als
+Subnetz. **Taboo-Contracts** werden zu Deny-Regeln: jede Quelle, Ziel = die per `fvRsProtBy`
+geschützten EPGs, Ports aus `vzRsDenyRule`. **Preferred Group:** ist sie am vzAny einer VRF
+eingeschaltet (`prefGrMemb=enabled`), sprechen alle Mitglieder (`prefGrMemb=include` an EPG,
+ESG oder externer EPG der VRF) frei miteinander – als eine Regel je VRF mit `ip/any`. Die
+Regeln tragen `kind` (`contract` | `taboo` | `preferred_group`) im Rohdatensatz.
 
 **Beobachtete Abweichungen** (Ausnahmen-Kaskade): neben den 7 Standard-EPGs auch
 `EG_nfs01`, `EG_privat01`; Dual-Stack-Subnetze real.

@@ -116,10 +116,24 @@ export default function RuleDetailDrawer({
             </dd>
             {aci ? (
               <>
-                <dt>Contract</dt>
+                {aci.kind !== "contract" && (
+                  <>
+                    <dt>Art</dt>
+                    <dd>
+                      {aci.kind === "taboo"
+                        ? "Taboo-Contract – verbietet diesen Verkehr zu den geschützten EPGs (jede Quelle)"
+                        : "Preferred Group – alle Mitglieder der VRF sprechen frei miteinander"}
+                    </dd>
+                  </>
+                )}
+                <dt>{aci.kind === "taboo" ? "Taboo" : aci.kind === "preferred_group" ? "Gruppe" : "Contract"}</dt>
                 <dd className="mono">{aci.contract ?? <Dash />}</dd>
-                <dt>Subject</dt>
-                <dd className="mono">{aci.subject ?? <Dash />}</dd>
+                {aci.kind !== "preferred_group" && (
+                  <>
+                    <dt>Subject</dt>
+                    <dd className="mono">{aci.subject ?? <Dash />}</dd>
+                  </>
+                )}
                 <dt>ACI-Tenant</dt>
                 <dd className="mono">{aci.tenant ?? <Dash />}</dd>
                 <dt>Scope</dt>
@@ -149,12 +163,13 @@ export default function RuleDetailDrawer({
 
           {/* ACI: Consumer-EPGs greifen auf die Provider-EPGs zu */}
           <div className="sub-h">
-            {aci ? "Consumer-EPGs" : "Quellen"} ({refs("src").length || detail.num_src})
+            {aci ? (aci.kind === "taboo" ? "Quelle" : aci.kind === "preferred_group" ? "Mitglieder" : "Consumer-EPGs") : "Quellen"} ({refs("src").length || detail.num_src})
           </div>
           <Side refs={refs("src")} endpoints={src} />
 
           <div className="sub-h">
-            {aci ? "Provider-EPGs" : "Ziele"} ({refs("dst").length || detail.num_dst})
+            {aci ? (aci.kind === "taboo" ? "Geschützte EPGs" : aci.kind === "preferred_group" ? "Mitglieder" : "Provider-EPGs") : "Ziele"} (
+            {refs("dst").length || detail.num_dst})
           </div>
           <Side refs={refs("dst")} endpoints={dst} />
 

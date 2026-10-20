@@ -176,6 +176,7 @@ def test_aci_contracts_trotz_seitengrenze_sichtbar(session_factory, client):
         "subject": "SJ_https",
         "scope": "tenant",
         "dn": "uni/tn-TE_share/brc-CT_web",
+        "kind": "contract",
     }
     fw = client.get("/rules", params={"tenant_id": tenant_id, "source_system_id": fw_id})
     assert fw.headers["X-Total-Count"] == "5" and all(r["aci"] is None for r in fw.json())

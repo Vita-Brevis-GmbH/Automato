@@ -40,7 +40,7 @@ class NormalizedEpg(BaseModel):
     """ACI-EPG (Model 1): Server-Gruppierung mit AP-Klammer (Projekt) + Subnetzen."""
 
     name: str
-    kind: str = "epg"  # epg | external (L3Out-EPG) | vzany (alle EPGs der VRF)
+    kind: str = "epg"  # epg | esg | external (L3Out-EPG) | vzany (alle EPGs der VRF)
     tenant: str | None = None  # ACI-Tenant
     dn: str | None = None  # eindeutig ueber alle ACI-Tenants (aeltere Collectors: ohne)
     vrf: str | None = None
@@ -50,6 +50,8 @@ class NormalizedEpg(BaseModel):
     bd: str | None = None  # BD_...
     subnets: list[str] = Field(default_factory=list)  # fvSubnet (dual-stack)
     endpoints: list[NormalizedEpgEndpoint] = Field(default_factory=list)  # fvCEp/fvIp (gelernt)
+    selectors: list[str] = Field(default_factory=list)  # ESG: Selektoren (EPG, Tag, IP)
+    pref_group: bool = False  # Mitglied der Preferred Group seiner VRF
 
 
 class NormalizedNat(BaseModel):

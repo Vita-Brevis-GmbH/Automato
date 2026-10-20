@@ -9,6 +9,7 @@ class AciContractOut(BaseModel):
     subject: str | None = None
     scope: str | None = None  # application-profile | context | tenant | global
     dn: str | None = None
+    kind: str = "contract"  # contract | taboo (deny) | preferred_group (VRF, alle Ports)
 
 
 class RuleSummaryOut(BaseModel):
@@ -69,7 +70,7 @@ class EpgPortOut(BaseModel):
 class EpgOut(BaseModel):
     """Lage eines Contract-Consumers/-Providers: wo liegt die EPG?"""
 
-    kind: str  # epg | external (L3Out) | vzany (alle EPGs der VRF)
+    kind: str  # epg | esg | external (L3Out) | vzany (alle EPGs der VRF)
     name: str
     label: str  # AP/EPG, L3Out/EPG bzw. vzAny VRF
     dn: str | None = None
@@ -82,6 +83,8 @@ class EpgOut(BaseModel):
     endpoint_count: int = 0
     endpoints: list[EpgEndpointOut] = []  # gelernte Endpunkte (begrenzt, siehe endpoint_count)
     server: dict | None = None  # verknuepfter Server (Host-Objekt: name, ip, site)
+    selectors: list[str] = []  # ESG: Selektoren (EPG, Tag, IP)
+    pref_group: bool = False  # Mitglied der Preferred Group seiner VRF
     vlans: list[int] = []  # Encap-VLANs der EPG (Netzinventar des APICs)
     port_count: int = 0
     ports: list[EpgPortOut] = []  # statische Pfade (begrenzt, siehe port_count)

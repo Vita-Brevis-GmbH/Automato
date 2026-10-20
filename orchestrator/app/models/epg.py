@@ -9,7 +9,7 @@ BD- bzw. externe Subnetze, dual-stack), `epg_endpoint` die gelernten Endpunkte
 (`fvCEp`/`fvIp`). `epg.network_object_id` verknuepft die EPG mit dem Server (Host-Objekt).
 """
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, ForeignKey, String, UniqueConstraint, false, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -37,6 +37,12 @@ class Epg(Base):
         String(100), nullable=True, index=True
     )  # AP_### (Projekt)
     bd: Mapped[str | None] = mapped_column(String(100), nullable=True)  # BD_...
+    # ESG: Selektoren als Text ("EPG <dn>", "Tag k=v", "IP <ausdruck>")
+    selectors: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Mitglied der Preferred Group seiner VRF (prefGrMemb=include)
+    pref_group: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     # Zugehoeriger Server (Host-Objekt), sofern aufloesbar ("ein Server = eine EPG")
     network_object_id: Mapped[int | None] = mapped_column(
         ForeignKey("network_object.id"), nullable=True, index=True

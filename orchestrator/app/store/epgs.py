@@ -153,6 +153,8 @@ def details(session: Session, tenant_id: int, epgs: list[Epg]) -> dict[int, dict
                 if host
                 else None
             ),
+            "selectors": epg.selectors or [],
+            "pref_group": epg.pref_group,
             "vlans": sorted(phys["vlans"]) if phys else [],
             "port_count": len(phys["ports"]) if phys else 0,
             "ports": phys["ports"][:MAX_PORTS] if phys else [],

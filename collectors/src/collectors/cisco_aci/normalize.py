@@ -2,7 +2,9 @@
 
 ACI kennt keine klassischen Firewall-Regeln: Contracts (CT_) + Subjects (SJ_) + Filter
 (FT_) zwischen EPGs. Abbildung:
-  Contract-Subject  -> eine Regel (action=allow; deny via Taboo spaeter)
+  Contract-Subject  -> eine Regel (action=allow)
+  Taboo-Subject     -> eine Regel (action=deny, Quelle any, Ziel = geschuetzte EPGs)
+  Preferred Group   -> eine Regel je VRF (Mitglieder untereinander, ip/any)
   Consumer-/Provider  -> sources/destinations als `epg:<DN>` (typisiert; EPG, externe EPG
                          oder vzAny - die DN ist ueber alle ACI-Tenants eindeutig)
   externe EPG       -> ihr L3Out als src_zone/dst_zone; EPG-zu-EPG ohne Zone (die BD-
@@ -38,17 +40,23 @@ def normalize_contract(contract: dict[str, Any]) -> list[NormalizedRule]:
     # Kein Rueckfall auf EPG-Namen als Zone: eine Zone ist nur der L3Out einer externen EPG
     src_zone = contract.get("src_zone")
     dst_zone = contract.get("dst_zone")
+    kind = contract.get("kind", "contract")
     sources = _epg_refs(contract, "consumers", "consumer_epgs")
+    if kind == "taboo":
+        sources = ["any"]  # Taboo gilt fuer jede Quelle
     destinations = _epg_refs(contract, "providers", "provider_epgs")
 
     rules: list[NormalizedRule] = []
     for subject in contract.get("subjects", []):
+        name = contract["name"]
+        if kind != "preferred_group":
+            name = f"{name}:{subject['name']}"
         rules.append(
             NormalizedRule(
                 source_platform="cisco_aci",
                 external_id=f"{contract['dn']}/{subject['name']}",
-                name=f"{contract['name']}:{subject['name']}",
-                action="allow",
+                name=name,
+                action="deny" if kind == "taboo" else "allow",
                 sources=sources,
                 destinations=destinations,
                 services=_subject_services(subject),

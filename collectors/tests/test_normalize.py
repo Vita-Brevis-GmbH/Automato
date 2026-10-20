@@ -466,3 +466,104 @@ def test_aci_zone_nur_wenn_die_ganze_seite_extern_ist():
     (c,) = parse_mo_export(export)
     assert {e["name"] for e in c["consumers"]} == {"EG_app", "EN_vpn"}
     assert c["src_zone"] is None and c["dst_zone"] is None
+
+
+ESG_TABOO_PREF = [
+    _mo(
+        "fvTenant",
+        "TE_a",
+        [
+            _mo("fvCtx", "VRF_a", [_mo("vzAny", prefGrMemb="enabled")]),
+            _mo("fvBD", "BD_app", [_mo("fvRsCtx", tnFvCtxName="VRF_a")]),
+            _mo(
+                "vzTaboo",
+                "TB_noadmin",
+                [_mo("vzTSubj", "TS_rdp", [_mo("vzRsDenyRule", tnVzFilterName="FT_rdp")])],
+            ),
+            _filter("FT_rdp", "3389"),
+            _mo(
+                "fvAp",
+                "AP_1",
+                [
+                    _mo(
+                        "fvAEPg",
+                        "EG_web",
+                        [
+                            _mo("fvRsBd", tnFvBDName="BD_app"),
+                            _mo("fvRsProtBy", tnVzTabooName="TB_noadmin"),
+                        ],
+                        prefGrMemb="include",
+                    ),
+                    _mo(
+                        "fvAEPg",
+                        "EG_db",
+                        [_mo("fvRsBd", tnFvBDName="BD_app")],
+                        prefGrMemb="exclude",
+                    ),
+                    _mo(
+                        "fvESg",
+                        "ES_pci",
+                        [
+                            _mo("fvRsScope", tnFvCtxName="VRF_a"),
+                            _mo("fvTagSelector", matchKey="zone", matchValue="pci"),
+                            _mo("fvEPSelector", matchExpression="ip=='10.9.0.0/24'"),
+                            _mo("fvEPgSelector", matchEpgDn="uni/tn-TE_a/ap-AP_1/epg-EG_db"),
+                        ],
+                        prefGrMemb="include",
+                    ),
+                ],
+            ),
+        ],
+    )
+]
+
+
+def test_aci_esg_taboo_und_preferred_group():
+    from collectors.cisco_aci.mo import parse_epgs, parse_mo_export
+
+    by_kind = {}
+    for c in parse_mo_export(ESG_TABOO_PREF):
+        by_kind.setdefault(c["kind"], []).append(c)
+
+    (taboo,) = by_kind["taboo"]
+    assert taboo["dn"] == "uni/tn-TE_a/taboo-TB_noadmin"
+    assert taboo["consumers"] == [] and taboo["provider_epgs"] == ["EG_web"]
+    assert taboo["subjects"] == [{"name": "TS_rdp", "services": ["tcp/3389"]}]
+    (deny,) = normalize_contract(taboo)
+    assert deny.action == "deny" and deny.sources == ["any"]
+    assert deny.destinations == ["epg:uni/tn-TE_a/ap-AP_1/epg-EG_web"]
+
+    (pref,) = by_kind["preferred_group"]
+    assert pref["name"] == "Preferred Group VRF_a" and pref["dn"] == "uni/tn-TE_a/ctx-VRF_a/any"
+    assert sorted(pref["consumer_epgs"]) == ["EG_web", "ES_pci"]  # EG_db: exclude
+    (rule,) = normalize_contract(pref)
+    assert rule.name == "Preferred Group VRF_a" and rule.services == ["ip/any"]
+    assert sorted(rule.sources) == sorted(rule.destinations)
+
+    epgs = {e["name"]: e for e in parse_epgs(ESG_TABOO_PREF)}
+    esg = epgs["ES_pci"]
+    assert (esg["kind"], esg["ap"], esg["vrf"]) == ("esg", "AP_1", "VRF_a")
+    assert esg["selectors"] == [
+        "Tag zone=pci",
+        "IP ip=='10.9.0.0/24'",
+        "EPG uni/tn-TE_a/ap-AP_1/epg-EG_db",
+    ]
+    assert esg["subnets"] == ["10.9.0.0/24"] and esg["pref_group"]
+    assert epgs["EG_web"]["pref_group"] and not epgs["EG_db"]["pref_group"]
+    assert not epgs["vzAny"]["pref_group"]  # Schalter der VRF, kein Mitglied
+
+
+def test_aci_preferred_group_aus_ohne_regel():
+    from collectors.cisco_aci.mo import parse_mo_export
+
+    export = [
+        _mo(
+            "fvTenant",
+            "TE_a",
+            [
+                _mo("fvCtx", "VRF_a", [_mo("vzAny", prefGrMemb="disabled")]),
+                _mo("fvAp", "AP_1", [_mo("fvAEPg", "EG_web", prefGrMemb="include")]),
+            ],
+        )
+    ]
+    assert parse_mo_export(export) == []

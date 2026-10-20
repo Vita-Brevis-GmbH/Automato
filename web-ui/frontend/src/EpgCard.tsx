@@ -5,8 +5,8 @@ import { useState } from "react";
 import { EpgLocation } from "./api";
 import { Dash } from "./ui";
 
-const KIND: Record<string, string> = { epg: "EPG", external: "Externe EPG", vzany: "vzAny" };
-const ORIGIN: Record<string, string> = { epg: "EPG", bd: "BD", ext: "extern" };
+const KIND: Record<string, string> = { epg: "EPG", esg: "ESG", external: "Externe EPG", vzany: "vzAny" };
+const ORIGIN: Record<string, string> = { epg: "EPG", bd: "BD", ext: "extern", esg: "IP-Selektor" };
 const SHOWN = 8;
 
 export function EpgCard({ epg }: { epg: EpgLocation }) {
@@ -17,6 +17,11 @@ export function EpgCard({ epg }: { epg: EpgLocation }) {
       <div className="refcard-head">
         <b className="mono">{epg.name}</b>
         <span className={`chip ${epg.kind === "epg" ? "local" : "info"}`}>{KIND[epg.kind] ?? epg.kind}</span>
+        {epg.pref_group && (
+          <span className="chip info" title="Mitglied der Preferred Group seiner VRF">
+            Preferred Group
+          </span>
+        )}
         {epg.server && (
           <span className="chip ok" title="verknüpfter Server (Host-Objekt)">
             Server {epg.server.name}
@@ -27,6 +32,24 @@ export function EpgCard({ epg }: { epg: EpgLocation }) {
       <dl className="kv tight">
         <dt>ACI-Tenant</dt>
         <dd className="mono">{epg.aci_tenant ?? <Dash />}</dd>
+        {epg.kind === "esg" && (
+          <>
+            <dt>Applikations&shy;profil</dt>
+            <dd className="mono">{epg.ap ?? <Dash />}</dd>
+            <dt>Selektoren</dt>
+            <dd>
+              {epg.selectors.length ? (
+                epg.selectors.map((x) => (
+                  <div key={x} className="mono">
+                    {x}
+                  </div>
+                ))
+              ) : (
+                <Dash />
+              )}
+            </dd>
+          </>
+        )}
         {epg.kind === "epg" && (
           <>
             <dt>Applikations&shy;profil</dt>
@@ -88,7 +111,13 @@ export function EpgCard({ epg }: { epg: EpgLocation }) {
                   )}
                 </>
               ) : (
-                <span className="faint">{epg.kind === "external" ? "über die Subnetze bestimmt" : "keine gelernt"}</span>
+                <span className="faint">
+                  {epg.kind === "external"
+                    ? "über die Subnetze bestimmt"
+                    : epg.kind === "esg"
+                      ? "über die Selektoren bestimmt"
+                      : "keine gelernt"}
+                </span>
               )}
             </dd>
           </>

@@ -34,6 +34,7 @@ export interface AciContract {
   subject: string | null;
   scope: string | null; // application-profile | context | tenant | global
   dn: string | null;
+  kind: "contract" | "taboo" | "preferred_group" | string; // taboo = deny, preferred_group = VRF
 }
 
 export type RuleDomain = "firewall" | "aci_contract";
@@ -67,7 +68,7 @@ export interface Endpoint {
 
 // Lage einer EPG (Contract-Consumer/-Provider): Tenant, AP, BD, VRF, Subnetze, Endpunkte
 export interface EpgLocation {
-  kind: "epg" | "external" | "vzany" | string;
+  kind: "epg" | "esg" | "external" | "vzany" | string;
   name: string;
   label: string;
   dn: string | null;
@@ -84,6 +85,8 @@ export interface EpgLocation {
   endpoint_count: number;
   endpoints: { ip: string; mac: string | null; dns_name: string | null }[];
   server: { name: string; ip: string | null; site: string | null } | null;
+  selectors: string[]; // ESG: Selektoren (EPG, Tag, IP)
+  pref_group: boolean; // Mitglied der Preferred Group seiner VRF
   vlans: number[]; // Encap-VLANs (Netzinventar des APICs)
   port_count: number;
   ports: EpgPort[]; // statische Pfade (Leaf-Ports, begrenzt; Gesamtzahl port_count)

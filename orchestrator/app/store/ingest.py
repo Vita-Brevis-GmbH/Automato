@@ -136,6 +136,8 @@ def _apply_epgs(session: Session, run, epgs) -> None:
         epg.kind = e.kind or "epg"
         epg.aci_tenant, epg.ap, epg.bd = e.tenant, e.ap, e.bd
         epg.vrf, epg.l3out = e.vrf, e.l3out
+        epg.selectors = e.selectors or None
+        epg.pref_group = e.pref_group
         epg.source_system_id = run.source_system_id
         session.flush()
         seen.add(epg.id)
@@ -143,7 +145,7 @@ def _apply_epgs(session: Session, run, epgs) -> None:
         # DELETE vor INSERT erzwingen: der Unit of Work fuegt sonst zuerst ein, und ein
         # erneut gelernter Endpunkt kollidiert mit seinem alten Eintrag (epg_id, ip)
         session.flush()
-        own = "ext" if epg.kind == "external" else "epg"
+        own = {"external": "ext", "esg": "esg"}.get(epg.kind, "epg")  # ESG: IP-Selektoren
         subnets = {(ip, own): None for ip in e.subnets}
         subnets.update({(ip, "bd"): None for ip in e.bd_subnets if (ip, own) not in subnets})
         for ip, origin in subnets:

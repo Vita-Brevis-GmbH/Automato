@@ -11,6 +11,11 @@ konsumiert. Umsetzung des Lesevertrags `docs/collectors-read-contract.md` (Absch
   vzAny unter fvCtx (vzRsAnyToProv/Cons)         -> alle EPGs der VRF
   vzCPIf + vzRsIf                                -> exportierter Contract (anderer Tenant)
   fvBD (BD_)  fvRsCtx / fvSubnet                 -> VRF, Subnetze je EPG-Seite
+  fvESg unter fvAp (fvRsScope, Selektoren)       -> Endpoint Security Group (wie eine EPG)
+  vzTaboo + vzTSubj/vzRsDenyRule, fvRsProtBy     -> Deny-Regel: beliebige Quelle -> die
+                                                    geschuetzten EPGs
+  Preferred Group: vzAny.prefGrMemb=enabled und  -> eine Regel je VRF: alle Mitglieder
+  prefGrMemb=include an EPG/ESG/externer EPG        untereinander, alle Ports
   Zone (L3O) nur fuer externe EPGs: fvRsBDToOut einer BD gibt nur ihre Subnetze nach
   aussen bekannt - EPG-zu-EPG-Verkehr laeuft nicht ueber den L3Out
 
@@ -24,6 +29,7 @@ bekannte Ports mit Namen (`https`, `dns`, ...) - sie werden auf Portnummern abge
 Keine echten Secrets im Export; Samples bleiben ausserhalb des Repos. Reine Funktion.
 """
 
+import re
 from typing import Any
 
 COMMON = "common"  # Tenant, in dem der APIC Namensverweise ersatzweise aufloest
@@ -55,6 +61,8 @@ class _Bag:
         self.contracts: dict[tuple[str, str], dict] = {}  # (Tenant, CT) -> {dn, scope, ...}
         self.filters: dict[tuple[str, str], list[str]] = {}  # (Tenant, FT) -> Services
         self.cifs: dict[tuple[str, str], str] = {}  # (Tenant, Contract-Interface) -> CT-DN
+        self.taboos: dict[tuple[str, str], dict] = {}  # (Tenant, Taboo) -> {dn, subjects}
+        self.vrfs: set[tuple[str, str]] = set()  # (Tenant, VRF)
 
 
 # rn-Praefixe je Klasse (fuer Exporte ohne dn/rn an den Kindern)
@@ -62,6 +70,7 @@ _RN_PREFIX = {
     "fvTenant": "tn-",
     "fvAp": "ap-",
     "fvAEPg": "epg-",
+    "fvESg": "esg-",
     "fvBD": "BD-",
     "fvCtx": "ctx-",
     "vzBrCP": "brc-",
@@ -69,6 +78,8 @@ _RN_PREFIX = {
     "vzFilter": "flt-",
     "vzEntry": "e-",
     "vzCPIf": "cif-",
+    "vzTaboo": "taboo-",
+    "vzTSubj": "tsubj-",
     "l3extOut": "out-",
     "l3extInstP": "instP-",
 }
@@ -163,12 +174,17 @@ def _values(kids: list[dict], cls: str, attr: str = "ip") -> list[str]:
     return [v for c in kids if cls in c for v in [_attrs(c[cls]).get(attr)] if v]
 
 
-def _contract_endpoint(kind: str, dn: str, tenant: str, kids: list[dict], **info) -> dict:
+def _contract_endpoint(
+    kind: str, dn: str, tenant: str, kids: list[dict], attrs: dict, **info
+) -> dict:
     if kind == "vzany":
         prov, cons = ("vzRsAnyToProv", "vzRsAnyToCons")
         cons_if = "vzRsAnyToConsIf"
     else:
         prov, cons, cons_if = ("fvRsProv", "fvRsCons", "fvRsConsIf")
+    # Preferred Group: an vzAny schaltet "enabled" die Gruppe der VRF ein, an EPG/ESG/
+    # externer EPG macht "include" sie zum Mitglied
+    pref = (attrs.get("prefGrMemb") or "").lower() in ("include", "enabled")
     return {
         "kind": kind,
         "tenant": tenant,
@@ -176,8 +192,31 @@ def _contract_endpoint(kind: str, dn: str, tenant: str, kids: list[dict], **info
         "provides": _rel(kids, prov, "tnVzBrCPName"),
         "consumes": _rel(kids, cons, "tnVzBrCPName"),
         "consumes_if": _rel(kids, cons_if, "tnVzCPIfName"),
+        "protected_by": _rel(kids, "fvRsProtBy", "tnVzTabooName"),
+        "pref_group": pref,
         **info,
     }
+
+
+_EP_IP = re.compile(r"""ip\s*==\s*['"]([^'"]+)['"]""")
+
+
+def _esg_selectors(kids: list[dict]) -> tuple[list[str], list[str]]:
+    """Selektoren einer ESG als lesbarer Text und die Subnetze aus IP-Selektoren."""
+    selectors: list[str] = []
+    subnets: list[str] = []
+    for c in kids:
+        if "fvEPgSelector" in c:
+            selectors.append(f"EPG {_attrs(c['fvEPgSelector']).get('matchEpgDn', '')}")
+        elif "fvTagSelector" in c:
+            a = _attrs(c["fvTagSelector"])
+            op = {"contains": "~", "regex": "~="}.get((a.get("valueOperator") or "").lower(), "=")
+            selectors.append(f"Tag {a.get('matchKey', '')}{op}{a.get('matchValue', '')}")
+        elif "fvEPSelector" in c:
+            expr = _attrs(c["fvEPSelector"]).get("matchExpression", "")
+            selectors.append(f"IP {expr}")
+            subnets += _EP_IP.findall(expr)
+    return selectors, subnets
 
 
 def _subject_filters(subj_kids: list[dict]) -> list[str]:
@@ -205,6 +244,8 @@ def _walk(
         t, out, out_vrf = tenant, l3out, l3out_vrf
         if cls == "fvTenant":
             t = name or (dn.split("/tn-", 1)[1].split("/", 1)[0] if "/tn-" in dn else "")
+        elif cls == "fvCtx":
+            bag.vrfs.add((t, name))
         elif cls == "fvBD":
             bag.bds[(t, name)] = {
                 "vrf": next(iter(_rel(kids, "fvRsCtx", "tnFvCtxName")), None),
@@ -217,11 +258,27 @@ def _walk(
                 key,
                 t,
                 kids,
+                attrs,
                 name=name,
                 ap=_ap_from_dn(dn),
                 bd=next(iter(_rel(kids, "fvRsBd", "tnFvBDName")), None),
                 subnets=_values(kids, "fvSubnet"),
                 endpoints=_cep_endpoints(kids),
+            )
+        elif cls == "fvESg":
+            key = dn or f"uni/tn-{t}/esg-{name}"
+            selectors, subnets = _esg_selectors(kids)
+            bag.endpoints[key] = _contract_endpoint(
+                "esg",
+                key,
+                t,
+                kids,
+                attrs,
+                name=name,
+                ap=_ap_from_dn(dn),
+                vrf=next(iter(_rel(kids, "fvRsScope", "tnFvCtxName")), None),
+                selectors=selectors,
+                subnets=subnets,
             )
         elif cls == "l3extOut":
             out = name  # Kontext fuer verschachtelte l3extInstP
@@ -233,6 +290,7 @@ def _walk(
                 key,
                 t,
                 kids,
+                attrs,
                 name=name,
                 l3out=out,
                 vrf=out_vrf,
@@ -241,7 +299,9 @@ def _walk(
         elif cls == "vzAny":
             vrf = parent_dn.rsplit("/ctx-", 1)[-1] if "/ctx-" in parent_dn else None
             key = dn or f"uni/tn-{t}/ctx-{vrf}/any"
-            bag.endpoints[key] = _contract_endpoint("vzany", key, t, kids, name="vzAny", vrf=vrf)
+            bag.endpoints[key] = _contract_endpoint(
+                "vzany", key, t, kids, attrs, name="vzAny", vrf=vrf
+            )
         elif cls == "vzBrCP":
             subjects = [
                 {
@@ -257,6 +317,20 @@ def _walk(
                 "name": name,
                 "scope": attrs.get("scope", "context"),
                 "subjects": subjects,
+            }
+        elif cls == "vzTaboo":
+            bag.taboos[(t, name)] = {
+                "dn": dn or name,
+                "tenant": t,
+                "name": name,
+                "subjects": [
+                    {
+                        "name": _attrs(c["vzTSubj"]).get("name", ""),
+                        "filters": _rel(_children(c["vzTSubj"]), "vzRsDenyRule", "tnVzFilterName"),
+                    }
+                    for c in kids
+                    if "vzTSubj" in c
+                ],
             }
         elif cls == "vzFilter":
             bag.filters[(t, name)] = [
@@ -320,19 +394,9 @@ def parse_mo_export(data: Any) -> list[dict]:
     contracts: list[dict] = []
     for key, c in bag.contracts.items():
         consumers, providers = sides[key]["consumers"], sides[key]["providers"]
-        subjects = [
-            {
-                "name": s["name"],
-                "services": [
-                    svc
-                    for fn in s["filters"]
-                    for svc in (_lookup(bag.filters, c["tenant"], fn) or [])
-                ],
-            }
-            for s in c["subjects"]
-        ]
         contracts.append(
             {
+                "kind": "contract",
                 "dn": c["dn"],
                 "tenant": c["tenant"],
                 "name": c["name"],
@@ -342,12 +406,108 @@ def parse_mo_export(data: Any) -> list[dict]:
                 # Namen wie bisher (Anzeige, aeltere Auswertungen)
                 "consumer_epgs": [e["name"] for e in consumers],
                 "provider_epgs": [e["name"] for e in providers],
-                "subjects": subjects,
+                "subjects": _subjects(bag, c),
                 "src_zone": _zone(consumers),
                 "dst_zone": _zone(providers),
             }
         )
-    return contracts
+    return contracts + _taboos(bag) + _preferred_groups(bag)
+
+
+def _subjects(bag: _Bag, c: dict) -> list[dict]:
+    return [
+        {
+            "name": s["name"],
+            "services": [
+                svc for fn in s["filters"] for svc in (_lookup(bag.filters, c["tenant"], fn) or [])
+            ],
+        }
+        for s in c["subjects"]
+    ]
+
+
+def _taboos(bag: _Bag) -> list[dict]:
+    """Taboo-Contracts: verbieten den Verkehr ihrer Filter zu den geschuetzten EPGs
+    (fvRsProtBy) - von jeder Quelle."""
+    protected: dict[tuple[str, str], list[dict]] = {key: [] for key in bag.taboos}
+    for ep in bag.endpoints.values():
+        for name in ep["protected_by"]:
+            tb = _lookup(bag.taboos, ep["tenant"], name)
+            if tb is not None:
+                protected[(tb["tenant"], tb["name"])].append(ep)
+    out = []
+    for key, tb in bag.taboos.items():
+        eps = protected[key]
+        out.append(
+            {
+                "kind": "taboo",
+                "dn": tb["dn"],
+                "tenant": tb["tenant"],
+                "name": tb["name"],
+                "scope": None,
+                "consumers": [],  # beliebige Quelle
+                "providers": [_ref(e) for e in eps],
+                "consumer_epgs": [],
+                "provider_epgs": [e["name"] for e in eps],
+                "subjects": _subjects(bag, tb),
+                "src_zone": None,
+                "dst_zone": _zone(eps),
+            }
+        )
+    return out
+
+
+def _vrf_key(bag: _Bag, tenant: str, vrf: str | None) -> tuple[str, str] | None:
+    """VRF-Namensverweis wie der APIC: eigener Tenant, sonst common."""
+    if not vrf:
+        return None
+    if (tenant, vrf) in bag.vrfs or (COMMON, vrf) not in bag.vrfs:
+        return (tenant, vrf)
+    return (COMMON, vrf)
+
+
+def _preferred_groups(bag: _Bag) -> list[dict]:
+    """Preferred Group je VRF: ist sie am vzAny eingeschaltet, sprechen alle Mitglieder
+    (prefGrMemb=include) frei miteinander - als eine Regel mit allen Ports."""
+    enabled = {}
+    for ep in bag.endpoints.values():
+        if ep["kind"] == "vzany" and ep["pref_group"]:
+            key = _vrf_key(bag, ep["tenant"], ep.get("vrf"))
+            if key:
+                enabled[key] = ep
+    if not enabled:
+        return []
+    members: dict[tuple[str, str], list[dict]] = {key: [] for key in enabled}
+    for ep in bag.endpoints.values():
+        if ep["kind"] == "vzany" or not ep["pref_group"]:
+            continue
+        vrf = ep.get("vrf")
+        if vrf is None and ep.get("bd"):
+            vrf = (_lookup(bag.bds, ep["tenant"], ep["bd"]) or {}).get("vrf")
+        key = _vrf_key(bag, ep["tenant"], vrf)
+        if key in members:
+            members[key].append(ep)
+    out = []
+    for key, any_ep in enabled.items():
+        eps = members[key]
+        refs = [_ref(e) for e in eps]
+        out.append(
+            {
+                "kind": "preferred_group",
+                "dn": any_ep["dn"],
+                "tenant": key[0],
+                "name": f"Preferred Group {key[1]}",
+                "scope": "context",
+                "consumers": refs,
+                "providers": refs,
+                "consumer_epgs": [e["name"] for e in eps],
+                "provider_epgs": [e["name"] for e in eps],
+                "subjects": [{"name": "prefgr", "services": ["ip/any"]}],
+                "src_zone": None,
+                "dst_zone": None,
+            }
+        )
+    return out
 
 
 def parse_epgs(data: Any) -> list[dict]:
@@ -370,6 +530,8 @@ def parse_epgs(data: Any) -> list[dict]:
                 "subnets": ep.get("subnets", []),
                 "bd_subnets": bd.get("subnets", []),
                 "endpoints": ep.get("endpoints", []),
+                "selectors": ep.get("selectors", []),
+                "pref_group": ep["pref_group"] and ep["kind"] != "vzany",
             }
         )
     return out

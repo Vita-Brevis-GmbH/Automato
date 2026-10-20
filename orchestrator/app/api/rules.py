@@ -90,6 +90,7 @@ def _aci(rule) -> AciContractOut | None:
         subject=subject,
         scope=rule.aci_scope or raw.get("scope"),
         dn=dn or None,
+        kind=raw.get("kind") or "contract",
     )
 
 
