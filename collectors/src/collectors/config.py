@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     internal_api_token: str = "dev-only-token"  # noqa: S105 - nur lokaler Default
     # Agent-Token fuer das Pull-Modell (ADR 0008); nur fuer den externen Standalone-Agent.
     agent_token: str = ""
+    # Selbst-Update des installierten Agenten (ADR 0011); false = nur manuell aktualisieren
+    agent_auto_update: bool = True
     # TLS zum Orchestrator (ADR 0008): optionale mTLS-Client-Zertifikate + CA-Pin.
     orchestrator_verify_tls: bool = True
     orchestrator_ca_bundle: str = ""  # CA-Pfad zur Server-Verifikation (Pinning)

@@ -115,7 +115,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Aktivieren/Deaktivieren. **Einrichtung Schritt für Schritt** direkt in der Ansicht: Geräte
   zuweisen, `agent.env`-Generator (nur Orchestrator-Adresse + Agent-Token, bleibt im Browser), Download des
   Agent-Pakets (`GET /agents/package`, ZIP ohne Zugangsdaten), PowerShell-Befehle zum
-  Kopieren, Test und erster Lauf, Fehlerbehebung.
+  Kopieren, Test und erster Lauf, Fehlerbehebung. Spalte **Version** mit Schalter
+  **Auto-Update** (ADR 0011): Agenten aktualisieren sich vor jedem Lauf selbst, sobald das
+  Orchestrator-Image ein neues Agent-Paket enthält („Update beim nächsten Lauf“ → „aktuell“);
+  ist Auto-Update aus, zeigt die Liste „veraltet“ und das Paket wird manuell installiert.
 - **NetBox-Sync (nur Admin, ADR 0010):** einziger Schreibweg von Automato. Ziel-NetBox
   wählen (Quellsystem mit Schreib-Token), Umfang *Netzinventar* (Geräte mit Ports, VLANs je
   Quellsystem, reale Subnetze inkl. ACI BD/EPG, VRFs) und/oder *DDI-Spiegel* (Netze, Ranges,

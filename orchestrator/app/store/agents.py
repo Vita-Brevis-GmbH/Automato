@@ -36,15 +36,6 @@ def list_agents(session: Session) -> list[Agent]:
     return list(session.scalars(select(Agent).order_by(Agent.name)))
 
 
-def set_enabled(session: Session, agent_id: int, enabled: bool) -> Agent | None:
-    agent = session.get(Agent, agent_id)
-    if agent is None:
-        return None
-    agent.enabled = enabled
-    session.flush()
-    return agent
-
-
 def agent_by_token(session: Session, token: str) -> Agent | None:
     agent = session.scalars(
         select(Agent).where(Agent.token_hash == hash_token(token), Agent.enabled)

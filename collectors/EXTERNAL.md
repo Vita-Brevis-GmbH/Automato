@@ -49,6 +49,18 @@ nie – geschrieben wird nur vom Orchestrator (NetBox-Sync). Das Agent-Paket ent
 Der Agent erfasst (gather → normalize) und liefert das Ergebnis an
 `POST /internal/collector-runs/<RUN_ID>/result` ab. Exit 0 = `completed`, 1 = `failed`.
 
+## Selbst-Update (ADR 0011)
+
+Der installierte Agent hält sich selbst aktuell: Vor jedem `--poll`/`--check` fragt er den
+Orchestrator nach der Paket-Version (`GET /internal/agent/update`). Ist sie neu und das Update
+für diesen Agenten erlaubt (Web-UI → Collector-Agenten → „Auto-Update“, Standard an), lädt er
+collectors-/sot-gateway-Wheel und `run-agent.ps1`, prüft jede Datei gegen ihre SHA-256 aus dem
+Manifest, installiert sie in sein venv und führt den Aufruf gleich mit der neuen Version aus.
+Scheitert etwas, läuft die bisherige Version weiter. Auf der Station abschaltbar mit
+`AUTOMATO_AGENT_AUTO_UPDATE=false` in der `agent.env`. Die Agentenliste zeigt die gemeldete
+Version („aktuell“ / „Update beim nächsten Lauf“). Einmalig manuell nötig ist nur die erste
+Installation eines Pakets, das das Selbst-Update schon enthält.
+
 ## Erreichbarkeit vorab prüfen
 
 Vor dem ersten echten Lauf im Kundennetz die Verbindung/Authentisierung zu **allen

@@ -523,3 +523,17 @@ Gesamtablauf (Seed → Abgleich → Sync → Mandant löschen) gegen Postgres. *
 DDI (Agent) und Dev-NetBox (`docs/DEV-SETUP-AGENT.md` Abschnitt 6); danach VM-Collector (vCenter/Proxmox →
 NetBox), Phase B/C nur mit eigener ADR.
 Tests: orchestrator 152, collectors 55, sot-gateway 14.
+**Agent-Selbstupdate (ADR 0011, Alembic `0022`):** Der installierte Windows-Agent aktualisiert sich vor
+jedem `--poll`/`--check` selbst über den Agent-Kanal: `GET /internal/agent/update` (Version = Fingerabdruck
+über Namen+SHA-256 von collectors-/sot-gateway-Wheel und `run-agent.ps1`, `app/store/agent_package.py`),
+`…/update/files/{name}` (nur Manifest-Dateien, auditiert `agent.update_downloaded`); Agent prüft SHA-256,
+`pip --no-deps --force-reinstall` + Abhängigkeiten, ersetzt `run-agent.ps1`, schreibt `agent-version.txt`
+und führt den Aufruf mit der neuen Version aus (`collectors/common/selfupdate.py`); Fehler → alte Version
+läuft weiter. `run-agent.ps1` startet über `python -m collectors.run` (keine gesperrte `.exe`). `agent.version`
+(Header `X-Agent-Version`) + `agent.auto_update` (UI-Schalter, Standard an); auf der Station
+`AUTOMATO_AGENT_AUTO_UPDATE=false`. Agenten älter als dieses Paket einmalig manuell installieren.
+Robustheit: unbekannte Plattform → Lauf `failed` mit Hinweis statt Absturz; NetBox ohne Lese-Token → 422 beim
+Einlesen; Lauf-Fehler im Collector-Log und in „Letzte Läufe“ sichtbar. NetBox-Sync-Benutzer per
+`source-of-truth/netbox/sync-user.sh`. Verifiziert: echter Durchlauf (Wheels gebaut, Agent-venv mit
+`run-agent.ps1`, Update + Neustart, zweiter Poll ohne Update). Tests: orchestrator 156, collectors 63,
+sot-gateway 14.

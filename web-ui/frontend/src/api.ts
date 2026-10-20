@@ -175,6 +175,9 @@ export interface Agent {
   enabled: boolean;
   last_seen: string | null;
   systems: AgentSystem[]; // zugewiesene Geräte (Quellsysteme)
+  version: string | null; // vom Agenten gemeldete Paket-Version
+  auto_update: boolean; // Selbst-Update erlaubt (ADR 0011)
+  update_available: boolean | null; // null = Version unbekannt
 }
 
 export interface AgentCreated extends Agent {
@@ -632,6 +635,8 @@ export const createAgent = (name: string, tenantId: number | null) =>
   sendJSON<AgentCreated>("/api/agents", "POST", { name, tenant_id: tenantId });
 export const setAgentEnabled = (id: number, enabled: boolean) =>
   sendJSON<Agent>(`/api/agents/${id}`, "PATCH", { enabled });
+export const setAgentAutoUpdate = (id: number, autoUpdate: boolean) =>
+  sendJSON<Agent>(`/api/agents/${id}`, "PATCH", { auto_update: autoUpdate });
 // Agent-Paket (ZIP: collectors-Wheel + install.ps1/run-agent.ps1, ohne Zugangsdaten)
 export const downloadAgentPackage = async (): Promise<Blob> =>
   (await fetchChecked("/api/agents/package")).blob();

@@ -8,13 +8,14 @@ import logging
 
 from collectors.common import http
 from collectors.common.dto import Target
+from collectors.common.selfupdate import agent_headers
 from collectors.config import get_settings
 
 log = logging.getLogger(__name__)
 
 
 def _headers() -> dict[str, str]:
-    return {"X-Agent-Token": get_settings().agent_token}
+    return agent_headers()  # Agent-Token + Version (ADR 0011)
 
 
 def next_run(platform: str | None = None) -> dict | None:

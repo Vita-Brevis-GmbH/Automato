@@ -168,11 +168,13 @@ def test_fortigate_check_ohne_creds(monkeypatch):
 def test_upload_header_je_rueckkanal(monkeypatch):
     import httpx
 
+    import collectors.common.selfupdate as su
     import collectors.common.upload as up
     from collectors.common.dto import CollectorResult
 
     calls = []
     monkeypatch.setattr(up, "get_settings", lambda: AGENT)
+    monkeypatch.setattr(su, "get_settings", lambda: AGENT)
 
     def post(url, json, headers):
         calls.append(headers)

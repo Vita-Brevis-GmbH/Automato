@@ -6,6 +6,9 @@
   (`next-run`, inkl. Ziel und - fuer zugewiesene Geraete - Zugangsdaten, ADR 0009),
   zugewiesene Geraete (`targets`, fuer `--check`) und Heartbeat. Das Ergebnis liefert der
   Agent mit demselben Token an `/internal/collector-runs/{run_id}/result`.
+- Selbst-Update (ADR 0011): `update` liefert Version + Dateien mit SHA-256, `update/files/
+  {name}` die Datei; nur bei `auto_update` des Agenten. Der Agent meldet seine Version per
+  Header `X-Agent-Version` bei jedem Aufruf.
 """
 
 import io
@@ -15,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,6 +29,7 @@ from app.auth.principal import Principal
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.models import Agent, RunStatus, SourceSystem, Tenant
+from app.store import agent_package
 from app.store import agents as store
 
 log = logging.getLogger(__name__)
@@ -52,6 +57,9 @@ class AgentOut(BaseModel):
     enabled: bool
     last_seen: datetime | None
     systems: list[AgentSystem] = []  # zugewiesene Geraete
+    version: str | None = None  # vom Agenten gemeldete Paket-Version
+    auto_update: bool = True  # Selbst-Update erlaubt (ADR 0011)
+    update_available: bool | None = None  # None = Version unbekannt / kein Paket
 
 
 class AgentCreated(AgentOut):
@@ -59,7 +67,20 @@ class AgentCreated(AgentOut):
 
 
 class AgentPatch(BaseModel):
-    enabled: bool
+    enabled: bool | None = None
+    auto_update: bool | None = None
+
+
+class UpdateFile(BaseModel):
+    name: str
+    sha256: str
+    size: int
+
+
+class UpdateOut(BaseModel):
+    version: str | None  # None = kein Agent-Paket im Orchestrator
+    enabled: bool  # Selbst-Update fuer diesen Agenten erlaubt
+    files: list[UpdateFile] = []
 
 
 class Target(BaseModel):
@@ -88,13 +109,16 @@ class NextRunOut(BaseModel):
     run: NextRun | None
 
 
-def _out(a: Agent, systems: list | None = None) -> AgentOut:
+def _out(a: Agent, systems: list | None = None, current: str | None = None) -> AgentOut:
     return AgentOut(
         id=a.id,
         name=a.name,
         tenant_id=a.tenant_id,
         enabled=a.enabled,
         last_seen=a.last_seen,
+        version=a.version,
+        auto_update=a.auto_update,
+        update_available=(a.version != current) if a.version and current else None,
         systems=[
             AgentSystem(
                 id=s.id,
@@ -137,6 +161,9 @@ def download_package(
         for path in [wheels[-1], *sot_wheels[-1:], *(base / n for n in _PACKAGE_FILES)]:
             if path.is_file():
                 zf.write(path, f"automato-collector-agent/{path.name}")
+        info = agent_package.manifest(settings.agent_package_dir)
+        if info:  # install.ps1 legt sie ab -> kein unnoetiges Update direkt nach der Installation
+            zf.writestr("automato-collector-agent/agent-version.txt", info["version"])
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",
@@ -144,9 +171,21 @@ def download_package(
     )
 
 
+def _current_version(settings: Settings) -> str | None:
+    info = agent_package.manifest(settings.agent_package_dir)
+    return info["version"] if info else None
+
+
 @router.get("", response_model=list[AgentOut])
-def list_agents(_: Principal = Depends(require_admin), session: Session = Depends(get_session)):
-    return [_out(a, store.assigned_systems(session, a)) for a in store.list_agents(session)]
+def list_agents(
+    _: Principal = Depends(require_admin),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+):
+    current = _current_version(settings)
+    return [
+        _out(a, store.assigned_systems(session, a), current) for a in store.list_agents(session)
+    ]
 
 
 @router.post("", response_model=AgentCreated, status_code=201)
@@ -187,24 +226,36 @@ def update_agent(
     body: AgentPatch,
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ):
-    agent = store.set_enabled(session, agent_id, body.enabled)
+    agent = session.get(Agent, agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="agent not found")
+    if body.enabled is not None:
+        agent.enabled = body.enabled
+    if body.auto_update is not None:
+        agent.auto_update = body.auto_update
+    session.flush()
     audit.record(
         session,
         actor=f"user:{principal.subject}",
         action="agent.updated",
         subject=str(agent.id),
-        detail={"agent_id": agent.id, "enabled": agent.enabled},
+        detail={"agent_id": agent.id, "enabled": agent.enabled, "auto_update": agent.auto_update},
     )
-    return _out(agent, store.assigned_systems(session, agent))
+    return _out(agent, store.assigned_systems(session, agent), _current_version(settings))
 
 
-def require_agent(x_agent_token: str = Header(), session: Session = Depends(get_session)) -> Agent:
+def require_agent(
+    x_agent_token: str = Header(),
+    x_agent_version: str | None = Header(default=None),
+    session: Session = Depends(get_session),
+) -> Agent:
     agent = store.agent_by_token(session, x_agent_token)
     if agent is None:
         raise HTTPException(status_code=401, detail="invalid agent token")
+    if x_agent_version:
+        agent.version = x_agent_version.strip()[:64]
     return agent
 
 
@@ -259,6 +310,43 @@ def targets(agent: Agent = Depends(require_agent), session: Session = Depends(ge
         except credentials.CredentialsUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
     return out
+
+
+@agent_router.get("/update", response_model=UpdateOut)
+def update_manifest(
+    agent: Agent = Depends(require_agent), settings: Settings = Depends(get_settings)
+):
+    """Aktuelle Paket-Version und Dateien (SHA-256) fuer das Selbst-Update (ADR 0011)."""
+    info = agent_package.manifest(settings.agent_package_dir)
+    if info is None:
+        return UpdateOut(version=None, enabled=False)
+    if not agent.auto_update:
+        return UpdateOut(version=info["version"], enabled=False)
+    return UpdateOut(version=info["version"], enabled=True, files=info["files"])
+
+
+@agent_router.get("/update/files/{name}")
+def update_file(
+    name: str,
+    agent: Agent = Depends(require_agent),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+):
+    if not agent.auto_update:
+        raise HTTPException(status_code=403, detail="auto update disabled for this agent")
+    path = agent_package.file_path(settings.agent_package_dir, name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="file not in agent package")
+    info = agent_package.manifest(settings.agent_package_dir) or {}
+    if name.startswith("collectors-"):
+        audit.record(
+            session,
+            actor=f"agent:{agent.name}",
+            action="agent.update_downloaded",
+            subject=str(agent.id),
+            detail={"agent_id": agent.id, "from_version": agent.version, "to": info.get("version")},
+        )
+    return FileResponse(path, media_type="application/octet-stream", filename=name)
 
 
 @agent_router.post("/heartbeat", status_code=204)

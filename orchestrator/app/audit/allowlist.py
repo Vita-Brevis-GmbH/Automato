@@ -17,7 +17,8 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "collector_run.failed": frozenset({"rule_count", "persisted"}),
     "collector_run.claimed": frozenset({"run_id", "platform"}),
     "agent.created": frozenset({"agent_id", "name", "tenant_id"}),
-    "agent.updated": frozenset({"agent_id", "enabled"}),
+    "agent.updated": frozenset({"agent_id", "enabled", "auto_update"}),
+    "agent.update_downloaded": frozenset({"agent_id", "from_version", "to"}),
     "naming_profile.created": frozenset({"profile_id", "customer", "name", "copied_from"}),
     "dictionary.copied": frozenset(
         {"profile_id", "kind", "source_profile_id", "source_kind", "count"}

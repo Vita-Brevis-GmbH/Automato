@@ -13,6 +13,12 @@ verschlüsselt und gibt sie pro Lauf **nur dem zugewiesenen Agenten**. Die `agen
 enthält deshalb nur Orchestrator-Adresse + Agent-Token (+ optional TLS). Ein Gerät lässt
 sich jederzeit einem anderen Agenten zuweisen, ohne an der Station etwas zu ändern.
 
+**Updates kommen automatisch** (ADR 0011): Der Agent aktualisiert sich vor jedem Lauf selbst
+über seinen Agent-Kanal, wenn der Orchestrator ein neues Paket hat und „Auto-Update“ für ihn
+aktiv ist (Web-UI → Collector-Agenten). Abschalten auf der Station:
+`AUTOMATO_AGENT_AUTO_UPDATE=false` in `agent.env`. Manuell (`install.ps1`) ist nur die erste
+Installation nötig – bzw. einmalig für Agenten, die älter sind als das Selbst-Update.
+
 ## Überblick
 
 ```
@@ -88,6 +94,8 @@ pyinstaller --onefile -n automato-collector deploy\collector-agent\agent_entry.p
 ```
 
 Die `dist\automato-collector.exe` ersetzt dann den venv-Aufruf in `run-agent.ps1`.
+Diese Variante hat kein venv und **aktualisiert sich nicht selbst** (ADR 0011) – neue
+Versionen manuell bauen und verteilen.
 
 ## Dateien
 

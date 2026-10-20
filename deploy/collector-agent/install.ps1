@@ -61,6 +61,10 @@ $local = @(Get-ChildItem -Path $wheelDir -Filter "sot_gateway-*.whl" | ForEach-O
 
 # Wrapper + Config bereitstellen
 Copy-Item "$PSScriptRoot\run-agent.ps1" $InstallDir -Force
+# Paket-Version (aus dem Web-UI-Download) -> kein unnoetiges Selbst-Update direkt danach
+if (Test-Path "$PSScriptRoot\agent-version.txt") {
+    Copy-Item "$PSScriptRoot\agent-version.txt" $InstallDir -Force
+}
 $envFile = Join-Path $InstallDir "agent.env"
 $envNext = Join-Path $PSScriptRoot "agent.env"
 if (Test-Path $envNext) {

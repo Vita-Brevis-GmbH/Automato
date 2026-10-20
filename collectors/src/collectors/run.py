@@ -28,7 +28,7 @@ import httpx
 from collectors.cisco_aci.tasks import check as _aci_check
 from collectors.cisco_aci.tasks import collect_once as _aci_collect
 from collectors.common import agent as agent_api
-from collectors.common import http
+from collectors.common import http, selfupdate
 from collectors.common.dto import CollectorResult, Target
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
@@ -69,7 +69,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Erreichbarkeit/Auth der zugewiesenen Geraete pruefen (read-only, kein Ingest)",
     )
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--no-update",
+        action="store_true",
+        help="Selbst-Update (ADR 0011) fuer diesen Aufruf auslassen",
+    )
+    raw = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(raw)
+    if (args.poll or args.check) and not args.no_update:
+        updated = selfupdate.maybe_update(raw)  # neue Version fuehrt den Aufruf selbst aus
+        if updated is not None:
+            return updated
     try:
         return _run(parser, args)
     except httpx.HTTPError as exc:

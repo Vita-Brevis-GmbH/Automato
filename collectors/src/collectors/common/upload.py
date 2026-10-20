@@ -9,6 +9,7 @@ import logging
 
 from collectors.common import http
 from collectors.common.dto import CollectorResult, ReferenceBatch
+from collectors.common.selfupdate import agent_headers
 from collectors.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ log = logging.getLogger(__name__)
 def _headers(via_agent: bool) -> dict[str, str]:
     settings = get_settings()
     if via_agent:
-        return {"X-Agent-Token": settings.agent_token}
+        return agent_headers()
     return {"X-Internal-Token": settings.internal_api_token}
 
 
@@ -34,10 +35,7 @@ def submit_references(run_id: str, batch: ReferenceBatch, via_agent: bool = Fals
 def submit_result(run_id: str, result: CollectorResult, via_agent: bool = False) -> dict | None:
     """Ergebnis abliefern; gibt die Quittung des Orchestrators zurueck (`status`, `message`)."""
     settings = get_settings()
-    if via_agent:
-        headers = {"X-Agent-Token": settings.agent_token}
-    else:
-        headers = {"X-Internal-Token": settings.internal_api_token}
+    headers = _headers(via_agent)
     response = http.post_json(
         f"{settings.orchestrator_url}/internal/collector-runs/{run_id}/result",
         json=result.model_dump(),

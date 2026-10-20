@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Agent, AgentCreated, createAgent, fetchAgents, setAgentEnabled, Tenant } from "./api";
+import { Agent, AgentCreated, createAgent, fetchAgents, setAgentAutoUpdate, setAgentEnabled, Tenant } from "./api";
 import AgentGuide from "./AgentGuide";
 import type { View } from "./App";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead } from "./ui";
@@ -52,6 +52,16 @@ export default function Agents({
     setErr(null);
     try {
       await setAgentEnabled(a.id, !a.enabled);
+      await load();
+    } catch (e) {
+      setErr(e);
+    }
+  };
+
+  const toggleUpdate = async (a: Agent) => {
+    setErr(null);
+    try {
+      await setAgentAutoUpdate(a.id, !a.auto_update);
       await load();
     } catch (e) {
       setErr(e);
@@ -138,6 +148,7 @@ export default function Agents({
                   <th>Geräte</th>
                   <th>Status</th>
                   <th>Zuletzt gesehen</th>
+                  <th title="Paket-Version des Agenten; mit Auto-Update aktualisiert er sich selbst">Version</th>
                   <th></th>
                 </tr>
               </thead>
@@ -173,6 +184,26 @@ export default function Agents({
                         </span>
                       </td>
                       <td className="mono">{fmtTime(a.last_seen)}</td>
+                      <td className="nowrap">
+                        {a.version ? <span className="mono">{a.version.slice(0, 8)}</span> : <span className="faint">–</span>}{" "}
+                        {a.update_available === true && (
+                          <span
+                            className={`chip ${a.auto_update ? "info" : "warn"}`}
+                            title={
+                              a.auto_update
+                                ? "Neue Version verfügbar – der Agent aktualisiert sich beim nächsten Aufruf selbst"
+                                : "Neue Version verfügbar – Auto-Update aus: Paket manuell installieren"
+                            }
+                          >
+                            {a.auto_update ? "Update beim nächsten Lauf" : "veraltet"}
+                          </span>
+                        )}
+                        {a.update_available === false && <span className="chip ok">aktuell</span>}
+                        <label className="check" style={{ marginTop: 4, fontSize: 12 }}>
+                          <input type="checkbox" checked={a.auto_update} onChange={() => toggleUpdate(a)} />
+                          Auto-Update
+                        </label>
+                      </td>
                       <td className="actions">
                         <button className={`btn btn-sm ${a.enabled ? "btn-danger" : "btn-ghost"}`} onClick={() => toggle(a)}>
                           {a.enabled ? "Deaktivieren" : "Aktivieren"}

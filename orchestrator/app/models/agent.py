@@ -4,6 +4,8 @@ Ein registrierter Agent (z. B. Windows-Station im Kundennetz) holt externe Laeuf
 Pull am Orchestrator ab und liefert Ergebnisse ueber `/internal` zurueck. Authentisiert
 sich mit einem Agent-Token (nur dessen SHA-256-Hash wird gespeichert). `tenant_id`
 schraenkt ein, welche Laeufe der Agent sieht; None = keine Einschraenkung (nur bewusst).
+`version` meldet der Agent bei jedem Aufruf (Paket-Version), `auto_update` erlaubt ihm,
+sich ueber `/internal/agent/update` selbst zu aktualisieren (ADR 0011).
 """
 
 from datetime import UTC, datetime
@@ -27,6 +29,11 @@ class Agent(Base):
         Boolean, nullable=False, server_default=true(), default=True
     )
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Selbst-Update (ADR 0011): gemeldete Paket-Version des Agenten, Update erlaubt?
+    version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    auto_update: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=true(), default=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
