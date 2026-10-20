@@ -14,3 +14,4 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0007 | AuthN/RBAC via Keycloak (dedizierter IdP, Produktions-Gate) |
 | 0008 | Externer/dezentraler Collector (Agent) |
 | 0009 | Geräte-Zugangsdaten zentral, Zuweisung Gerät → Agent |
+| 0010 | Inventar, Referenz, Abgleich; Schreiben nur nach NetBox |

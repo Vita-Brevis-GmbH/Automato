@@ -1,0 +1,83 @@
+# ADR 0010 — Inventar, Referenz, Abgleich; Schreiben nur nach NetBox
+
+## Status
+
+Angenommen (2026-10-20). Umsetzung in Phase A (A1–A6), siehe ROADMAP „Phase A".
+
+## Kontext
+
+Die Regeldoku zeigte nur IP-Adressen: Der FortiGate-Collector löste Objektnamen zu Werten
+auf (Gruppen flach), und vom IPAM wurde nur „gefunden ja/nein" gespeichert. Ein Datensatz
+(`network_object`) vermischte drei Dinge: was auf der Firewall steht, was im IPAM steht und
+wie beides zusammenpasst. Dazu kommen neue Anforderungen:
+
+- Die Testsysteme (FortiGate, APIC) sind produktiv; die echten Referenzdaten liegen in der
+  **Infoblox DDI**, die nur der Windows-Agent im Kundennetz erreicht.
+- **NetBox** soll zusätzliche Daten aufnehmen: VLANs (auch der EPGs), reale Subnetze,
+  Portkonfigurationen, später VMs und Systeme.
+- Bis auf Weiteres gilt: **nur nach NetBox schreiben, alles andere strikt nur lesen.**
+
+## Entscheidung
+
+### 1. Drei Ebenen im Orchestrator
+
+1. **Inventar (Ist)** – je Quellsystem, wie gelesen: Firewall-Objekte mit Namen
+   (`device_object`: Adressen, Gruppen mit Mitgliedern, VIPs, IP-Pools, Services,
+   Service-Gruppen), Regel-Verweise per Objektname (`rule_object_ref`), Netzinventar
+   (`inv_device`, `inv_interface`, `inv_vlan`, `inv_subnet`). Wird je Lauf ersetzt.
+2. **Referenz** – Stand der IPAM-Quellen (`reference_record`: IP-Adressen, Host-/A-/PTR-
+   Records, Prefixe, Ranges, VLANs), komplett gelesen, je Quelle versioniert über den Lauf.
+3. **Abgleich** – verknüpft Objekte und Referenzen (genaue IP → Name → umschliessendes
+   Prefix), bewertet Abweichungen als Findings und vergleicht DDI ↔ NetBox. Wird nach jedem
+   Lauf eines Quellsystems des Mandanten neu berechnet (Triage-Status bleibt erhalten).
+
+Die kanonische Werte-Ebene (`network_object`, Regel-Endpunkte) bleibt für Matching,
+Applikations-Doku und Suche bestehen.
+
+### 2. Referenzquellen sind Quellsysteme
+
+Infoblox DDI und NetBox werden wie FortiGate/APIC beim Mandanten erfasst (Plattformen
+`infoblox`, `netbox`), mit verschlüsselten Zugangsdaten (ADR 0009) und optional einem Agenten.
+Die DDI liest der Windows-Agent komplett (seitenweise, Teil-Upload), die zentrale NetBox der
+zentrale Worker. Jede Referenzquelle hat eine **Rolle**: `primary` (IPAM führend) oder
+`enrichment` (Anreicherung). Gematcht wird gegen den gespeicherten Stand, nicht mehr live –
+der Live-Adapter bleibt nur als Rückfall für Mandanten ohne Referenzquelle.
+
+### 3. Feld-Hoheit
+
+| Daten | führend | NetBox |
+|---|---|---|
+| IP, Prefix, Range, DNS-Name, PTR | DDI (primary) | Spiegel, gekennzeichnet, nur abgleichen |
+| VLANs, Ports, Geräte, VRFs, ACI-Attribute (EPG/BD/AP/Tenant), später VMs | Automato-Inventar | wird dort abgelegt |
+| System/Applikation, Owner, Kommentare | NetBox | nur dort gepflegt |
+
+Kunden ohne DDI: NetBox ist `primary` (kein Spiegel nötig). Kunden nur mit DDI: Referenz
+ohne Anreicherung.
+
+### 4. Schreibregel: nur NetBox, nur nach Vorschau
+
+- **Konten:** FortiGate, APIC, DDI nur mit Read-only-Benutzern.
+- **Code:** Die Lese-Clients (FortiGate, APIC, Infoblox, NetBox-Leser) laufen über einen
+  Nur-Lese-Zugang (`sot_gateway.readonly`): ausser GET/HEAD/OPTIONS nur ausdrücklich erlaubte
+  Login-/Logout-Pfade (APIC). Jede andere Methode bricht ab (`ReadOnlyViolation`), Tests
+  halten das fest. Für FortiGate, APIC und DDI gibt es keinen Schreibcode.
+- **Agent:** bleibt rein lesend und bekommt nie Schreib-Zugangsdaten. Das NetBox-
+  Schreib-Token (`write_token`) liegt verschlüsselt im Orchestrator und wird nie an einen
+  Agenten ausgeliefert.
+- **NetBox:** einziger Schreibweg ist der NetBox-Sync des Orchestrators
+  (`sot_gateway.adapters.netbox_writer`) mit eigenem Schreib-Token (NetBox-Berechtigungen auf
+  die synchronisierten Objekttypen begrenzen). Automato ändert/löscht nur Objekte mit Tag
+  `automato`; vorhandene, von Hand gepflegte Objekte werden höchstens referenziert, nie
+  geändert (Konflikt wird angezeigt). Jede Änderung entsteht als **Vorschau** (Plan), wird
+  per Klick übernommen (admin), auditiert, und danach liest Automato NetBox neu.
+
+## Konsequenzen
+
+- Regeln zeigen die echten Objektnamen der Firewall (Gruppen aufklappbar) mit Wert und
+  Referenzdaten (DNS-Name, Prefix, VLAN, Standort, Link ins IPAM).
+- Neue Abweichungstypen: nicht im IPAM, Name ≠ DNS-Name, Typ passt nicht, doppelte Werte,
+  unbenutzte Objekte, ACI-Subnetz nicht im IPAM, VLAN abweichend; DDI ↔ NetBox als eigene
+  Vergleichssicht (nicht als Einzel-Findings, wegen der Menge).
+- Das Agent-Paket enthält zusätzlich das `sot-gateway`-Wheel (Infoblox-/NetBox-Leser).
+- Phase B (Bereinigen auf Firewall/DDI) und Phase C (Regeln schreiben) brauchen eigene
+  ADRs und eine ausdrückliche Freigabe; bis dahin bleibt der Schreibweg auf NetBox begrenzt.

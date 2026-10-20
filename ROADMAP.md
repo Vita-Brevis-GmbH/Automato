@@ -262,6 +262,22 @@ dependency-getrieben; die **Web-UI (W1)** ist **vorgezogen**, das Auth-Fundament
 | **E6 — Mikroprogramme / modulare Funktionen** | Kleine, wiederverwendbare Funktionsmodule (vgl. Magister ADR 0008 „modulare Funktionen"). | später |
 | **E7 — Design-/Topologie-Modul** | Verbindungen über **redundante Pfade** und **Firewalls in Serie** zusammenführen; optional **draw.io-Integration** für Netzwerkpläne (pro Mandant versioniert, Knoten mit Zonen/VIPs verknüpfbar). | später / optional |
 
+### Phase A – Daten sauber anzeigen und abgleichen (ADR 0010)
+
+Nur lesen – einziger Schreibweg ist der NetBox-Sync (Vorschau → Klick → Neu-Lesen).
+
+| Schritt | Inhalt |
+|---|---|
+| **A1** Collector | FortiGate: Objekte/Gruppen/Services mit Namen, Regeln per Name, Interfaces/VLAN-Interfaces/Zonen. APIC: VRF, BD-/EPG-Subnetze, EPG-VLANs, statische Pfade/Ports, Access Policies, LLDP/CDP-Nachbarn, Fabric-Knoten |
+| **A2** Store | Inventar-Ebene (`device_object`, `rule_object_ref`, `inv_*`), Findings als abgeleiteter Zustand je Mandant |
+| **A3** Referenz | Infoblox DDI (komplett, über den Agent) und NetBox als Quellsysteme mit Rolle führend/Anreicherung, gespeicherter Stand, Nur-Lese-Schutz im Code |
+| **A4** Abgleich | Firewall-Objekt ↔ IPAM, DDI ↔ NetBox, ACI-Subnetz/-VLAN ↔ IPAM |
+| **A5** UI | Regeln mit Namen und Referenz, Ansichten „Objekte" und „Abgleich", IPAM-Quellsysteme |
+| **A6** NetBox-Sync | DDI-Spiegel + Netzinventar nach NetBox, nur eigene (getaggte) Objekte, Vorschau + Übernehmen |
+
+Danach: VM-Collector (vCenter/Proxmox → NetBox); Phase B (Bereinigen auf Firewall/DDI) und
+Phase C (Regeln schreiben, FortiGate/FortiManager/ACI) nur mit eigener ADR und Freigabe.
+
 **Änderungen sichtbar + Rollback** (eigenes Querschnitts-Thema) wird über das
 Cockpit (Update-Channels + Rollback-Snapshot, E2) und — für den Schreibpfad — über
 das Plan→Approve→Apply→Rollback-Jobmodell (E4) abgedeckt.
