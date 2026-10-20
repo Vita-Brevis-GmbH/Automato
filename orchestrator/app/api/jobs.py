@@ -4,13 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, credentials
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.jobs import celery_app
-from app.models import REFERENCE_PLATFORMS, CollectorRun, SourceSystem
+from app.models import CollectorRun
 from app.schemas.jobs import CollectJobRequest, CollectJobResponse, CollectorRunOut
+from app.store import runs
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -22,50 +22,20 @@ def start_collect(
     session: Session = Depends(get_session),
 ):
     tenant_id = tenant_scope(principal, payload.tenant_id)  # Mandanten-Zugriff erzwingen
-    if payload.source_system_id is not None:
-        src = session.get(SourceSystem, payload.source_system_id)
-        if src is None:
-            raise HTTPException(status_code=422, detail="source system not found")
-        if src.tenant_id is None or src.tenant_id != tenant_id:
-            raise HTTPException(status_code=422, detail="source system belongs to another tenant")
-        if src.platform.value != payload.platform:
-            raise HTTPException(status_code=422, detail="platform does not match source system")
-        if src.platform in REFERENCE_PLATFORMS and not credentials.complete(
-            src.platform.value, src.credentials
-        ):
-            # Referenzquellen haben keine Beispieldaten - ohne Lese-Zugang scheitert der Lauf
-            # sicher; das NetBox-Schreib-Token wird bewusst nie zum Lesen verwendet
-            missing = "read token" if src.platform.value == "netbox" else "username/password"
-            raise HTTPException(
-                status_code=422,
-                detail=f"{src.platform.value} source '{src.name}' has no {missing}",
-            )
-        if src.agent_id is not None:
-            payload.execution = "external"  # Geraet wird von seinem Agenten gelesen (ADR 0009)
-    run = CollectorRun(
-        platform=payload.platform,
-        tenant_id=tenant_id,
-        source_system_id=payload.source_system_id,
-        execution=payload.execution,
-    )
-    session.add(run)
-    session.flush()  # run.id verfuegbar machen
-
-    audit.record(
-        session,
-        actor=f"user:{principal.subject}",
-        action="collector_run.queued",
-        subject=run.id,
-        detail={
-            "platform": payload.platform,
-            "tenant_id": tenant_id,
-            "source_system_id": payload.source_system_id,
-            "execution": payload.execution,
-        },
-    )
+    try:
+        run = runs.queue_collect(
+            session,
+            platform=payload.platform,
+            tenant_id=tenant_id,
+            source_system_id=payload.source_system_id,
+            execution=payload.execution,
+            actor=f"user:{principal.subject}",
+        )
+    except runs.RunRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     # inprocess: zentraler Worker. external: externer Collector holt den Lauf per RUN_ID ab
     # und liefert via /internal ab (ADR 0008) - hier wird NICHT dispatcht.
-    if payload.execution == "inprocess":
+    if run.execution == "inprocess":
         celery_app.dispatch_collect(payload.platform, run.id)
     return CollectJobResponse(run_id=run.id, status=run.status, execution=run.execution)
 
@@ -80,6 +50,7 @@ def _run_out(run: CollectorRun) -> CollectorRunOut:
         rule_count=run.rule_count,
         message=run.message,
         execution=run.execution,
+        trigger=run.trigger,
         queued_at=run.queued_at,
         finished_at=run.finished_at,
     )

@@ -12,7 +12,7 @@ angegebene Felder erhalten (z. B. nur das Passwort ändern), `""` entfernt ein F
 """
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,9 +20,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app import audit, credentials
+from app import audit, credentials, schedule, scheduler
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
+from app.config import get_settings
 from app.db import get_session
 from app.models import (
     REFERENCE_PLATFORMS,
@@ -58,6 +59,8 @@ class SystemOut(BaseModel):
     reference_count: int = 0  # Referenzquellen: Eintraege im aktuellen Stand
     reference_at: datetime | None = None  # Zeitpunkt des aktuellen Stands
     site_id: int | None = None  # Standort des Geraets (NetBox-Sync)
+    schedule: str | None = None  # Zeitplan (Cron, 5 Felder, Zeitzone scheduler_timezone)
+    next_run_at: datetime | None = None  # naechster Termin laut Zeitplan
     rule_count: int = 0
     nat_count: int = 0
 
@@ -72,6 +75,7 @@ class SystemIn(BaseModel):
     read_scope: str = Field(default="", max_length=500)
     ref_role: Literal["primary", "enrichment"] | None = None
     site_id: int | None = None
+    schedule: str | None = Field(default=None, max_length=100)  # leer/None = kein Zeitplan
     # Zugangsdaten, nur schreibbar: FortiGate/NetBox token, ACI/Infoblox username + password,
     # NetBox optional write_token (nur NetBox-Sync, nie an Agenten)
     token: str | None = Field(default=None, max_length=4096)
@@ -90,6 +94,7 @@ class SystemPatch(BaseModel):
     read_scope: str | None = Field(default=None, max_length=500)
     ref_role: Literal["primary", "enrichment"] | None = None
     site_id: int | None = None  # null = Standort entfernen
+    schedule: str | None = Field(default=None, max_length=100)  # "" oder null = kein Zeitplan
     # weglassen = unverändert, "" = Feld entfernen (alle leer = keine Zugangsdaten)
     token: str | None = Field(default=None, max_length=4096)
     username: str | None = Field(default=None, max_length=200)
@@ -161,6 +166,10 @@ def _out(
         reference_count=ref_count,
         reference_at=ref_at,
         site_id=s.site_id,
+        schedule=s.schedule,
+        next_run_at=scheduler.next_run(s.schedule, get_settings().scheduler_timezone)
+        if s.enabled
+        else None,
         rule_count=rules.get(s.id, 0),
         nat_count=nat.get(s.id, 0),
     )
@@ -242,6 +251,23 @@ def _apply_credentials(src: SourceSystem, changes: dict[str, str]) -> bool:
 
 
 _ACI_NAME = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+
+
+def _schedule(value: str | None) -> str | None:
+    """Zeitplan normalisieren und pruefen (422 mit Grund); leer = kein Zeitplan."""
+    if not value or not value.strip():
+        return None
+    try:
+        return schedule.parse(value).expr
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"schedule: {exc}") from exc
+
+
+def _set_schedule(src: SourceSystem, value: str | None) -> None:
+    if value != src.schedule:
+        src.schedule = value
+        # ab jetzt zaehlen - ein neuer Zeitplan holt keinen vergangenen Termin nach
+        src.schedule_last_at = datetime.now(UTC) if value else None
 
 
 def _check_site(session: Session, site_id: int | None, tenant_id: int | None) -> None:
@@ -350,6 +376,7 @@ def create_system(
         read_scope=_read_scope(body.platform, body.read_scope),
         site_id=body.site_id,
     )
+    _set_schedule(src, _schedule(body.schedule))
     _apply_credentials(src, _credential_changes(body))
     session.add(src)
     session.flush()
@@ -369,6 +396,7 @@ def create_system(
             "credentials_set": bool(src.credentials),
             "ref_role": src.ref_role,
             "site_id": src.site_id,
+            "schedule": src.schedule,
         },
     )
     return _out(src, {}, {}, {})
@@ -430,6 +458,8 @@ def update_system(
         src.read_scope = _read_scope(src.platform, data["read_scope"])
     if data.get("ref_role") is not None:
         _apply_ref_role(session, src, data["ref_role"])
+    if "schedule" in data:
+        _set_schedule(src, _schedule(data["schedule"]))
     credentials_changed = _apply_credentials(src, _credential_changes(body))
     session.flush()
     audit.record(
@@ -446,6 +476,7 @@ def update_system(
             "credentials_set": bool(src.credentials) if credentials_changed else None,
             "ref_role": src.ref_role,
             "site_id": src.site_id,
+            "schedule": src.schedule,
         },
     )
     return _single_out(session, src)

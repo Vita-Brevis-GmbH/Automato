@@ -180,6 +180,11 @@ export default function Overview({
                         <span className={`chip ${r.execution === "external" ? "local" : ""}`}>
                           {r.execution === "external" ? "Agent" : "zentral"}
                         </span>
+                        {r.trigger === "schedule" && (
+                          <span className="chip info" title="vom Zeitplan des Quellsystems angelegt">
+                            Zeitplan
+                          </span>
+                        )}
                       </td>
                       <td className="num">{r.rule_count ?? "–"}</td>
                       <td>

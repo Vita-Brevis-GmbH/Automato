@@ -189,6 +189,8 @@ export interface System {
   reference_count: number; // Referenzquellen: Einträge im aktuellen Stand
   reference_at: string | null;
   site_id: number | null; // Standort des Geräts (NetBox-Sync)
+  schedule: string | null; // Zeitplan (cron, 5 Felder)
+  next_run_at: string | null; // nächster Termin laut Zeitplan
   rule_count: number;
   nat_count: number;
 }
@@ -254,6 +256,7 @@ export interface Run {
   rule_count: number | null;
   message: string | null;
   execution: string; // inprocess | external
+  trigger: string; // manual | schedule
   queued_at: string | null;
   finished_at: string | null;
 }
@@ -730,6 +733,7 @@ export const createSystem = (
     read_scope?: string;
     ref_role?: string | null;
     site_id?: number | null;
+    schedule?: string | null;
   } & SystemCredentials,
 ) => sendJSON<System>("/api/systems", "POST", body);
 export const patchSystem = (
@@ -744,6 +748,7 @@ export const patchSystem = (
     read_scope?: string;
     ref_role?: string | null;
     site_id?: number | null;
+    schedule?: string | null;
   } & SystemCredentials,
 ) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");

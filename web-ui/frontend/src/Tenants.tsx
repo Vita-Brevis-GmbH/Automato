@@ -23,6 +23,7 @@ import {
 } from "./api";
 import type { Me } from "./auth";
 import { PLATFORM_LABEL, REF_ROLE_LABEL, REFERENCE_PLATFORMS } from "./refs";
+import { ScheduleField, scheduleLabel } from "./Schedule";
 import { CredentialInput, Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead, SecretInput } from "./ui";
 
 // Mandanten (= Gruppengesellschaft) mit Kürzel, Namensprofil, Standorten und Quellsystemen.
@@ -758,6 +759,7 @@ function SystemDialog({
   const [readScope, setReadScope] = useState(system?.read_scope ?? "");
   const [refRole, setRefRole] = useState(system?.ref_role ?? "");
   const [siteId, setSiteId] = useState<number | null>(system?.site_id ?? null);
+  const [schedule, setSchedule] = useState(system?.schedule ?? "");
   const [sites, setSites] = useState<Site[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
@@ -796,6 +798,7 @@ function SystemDialog({
       ...(isAci ? { read_scope: readScope.trim() } : {}),
       ...(isRef && refRole ? { ref_role: refRole } : {}),
       ...(isRef ? {} : { site_id: siteId }),
+      schedule: schedule.trim(),
     };
     // Nur geänderte Felder senden; leer gelassen = unverändert, "" = entfernen
     const creds: SystemCredentials = {};
@@ -927,6 +930,7 @@ function SystemDialog({
             <div className="hint">Dort legt der NetBox-Sync das Gerät mit seinen Ports an.</div>
           </div>
         )}
+        <ScheduleField value={schedule} onChange={setSchedule} />
         <div className="field">
           <label htmlFor="ss-agent">Verwaltet von</label>
           <select
@@ -1198,7 +1202,15 @@ function SystemTable({
                 </>
               )}
             </td>
-            <td>{s.enabled ? <span className="chip ok">aktiv</span> : <span className="chip na">inaktiv</span>}</td>
+            <td className="nowrap">
+              {s.enabled ? <span className="chip ok">aktiv</span> : <span className="chip na">inaktiv</span>}
+              {s.schedule && (
+                <div className="faint" style={{ fontSize: 11, marginTop: 3 }} title={`Zeitplan: ${s.schedule}`}>
+                  {scheduleLabel(s.schedule)}
+                  {s.next_run_at && ` · nächster ${fmtTime(s.next_run_at)}`}
+                </div>
+              )}
+            </td>
             {actions && <td className="actions">{actions(s)}</td>}
           </tr>
         ))}

@@ -1,7 +1,9 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import __version__
+from app import __version__, scheduler
 from app.api import (
     agents,
     appdoc,
@@ -21,8 +23,26 @@ from app.api import (
     systems,
     tenants,
 )
-from app.config import check_security_config, get_settings
+from app.config import Settings, check_security_config, get_settings
+from app.db import get_sessionmaker
 from app.secrets import resolve_settings
+
+
+def _lifespan(settings: Settings):
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        stop = None
+        if settings.scheduler_enabled:  # zeitgesteuerte Laeufe je Quellsystem
+            stop = scheduler.start(
+                get_sessionmaker(),
+                settings.scheduler_timezone,
+                settings.scheduler_interval_seconds,
+            )
+        yield
+        if stop is not None:
+            stop.set()
+
+    return lifespan
 
 
 def create_app() -> FastAPI:
@@ -32,7 +52,7 @@ def create_app() -> FastAPI:
     resolve_settings(settings)
     check_security_config(settings)  # Fail-closed bei unsicheren Defaults (ADR 0005)
 
-    app = FastAPI(title="Automato Orchestrator", version=__version__)
+    app = FastAPI(title="Automato Orchestrator", version=__version__, lifespan=_lifespan(settings))
 
     # CORS aus Konfiguration; Default nur localhost (Dev), Produktion explizit setzen
     app.add_middleware(

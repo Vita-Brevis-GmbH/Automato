@@ -37,6 +37,10 @@ class CollectorRun(Base):
     execution: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="inprocess", default="inprocess"
     )
+    # manual (UI/CLI) | schedule (Zeitplan des Quellsystems)
+    trigger: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="manual", default="manual"
+    )
     queued_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

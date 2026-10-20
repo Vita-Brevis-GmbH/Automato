@@ -12,7 +12,9 @@ bewusst: lieber ein lückenhaftes als ein undichtes Log.
 
 # action -> erlaubte detail-Keys. Nur unkritische, benannte Felder.
 ALLOWLIST: dict[str, frozenset[str]] = {
-    "collector_run.queued": frozenset({"platform", "tenant_id", "source_system_id", "execution"}),
+    "collector_run.queued": frozenset(
+        {"platform", "tenant_id", "source_system_id", "execution", "trigger"}
+    ),
     "collector_run.completed": frozenset({"rule_count", "persisted"}),
     "collector_run.failed": frozenset({"rule_count", "persisted"}),
     "collector_run.claimed": frozenset({"run_id", "platform"}),
@@ -56,6 +58,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "credentials_set",
             "ref_role",
             "site_id",
+            "schedule",
         }
     ),
     "source.updated": frozenset(
@@ -68,6 +71,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "credentials_set",
             "ref_role",
             "site_id",
+            "schedule",
         }
     ),
     "reconcile.run": frozenset({"tenant_id", "findings"}),

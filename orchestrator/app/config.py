@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # Issuer abgeleitet (<origin>/admin/master/console/#/<realm>).
     oidc_admin_console_url: str = ""
 
+    # Zeitgesteuerte Laeufe je Quellsystem (Cron am Quellsystem). Aus = keine Hintergrund-
+    # Schleife (Tests, Werkzeuge); docker-compose schaltet ihn fuer den Orchestrator ein.
+    scheduler_enabled: bool = False
+    scheduler_interval_seconds: int = 30
+    scheduler_timezone: str = "Europe/Zurich"
+
     # Agent-Paket fuer den Download im UI (Wheel + Windows-Skripte, ADR 0008); im Image von
     # der Dockerfile-Stage "agent-package" befuellt.
     agent_package_dir: str = "/workspace/agent-package"

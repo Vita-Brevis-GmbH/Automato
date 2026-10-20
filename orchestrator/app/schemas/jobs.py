@@ -33,5 +33,6 @@ class CollectorRunOut(BaseModel):
     rule_count: int | None = None
     message: str | None = None
     execution: str = "inprocess"
+    trigger: str = "manual"  # manual | schedule
     queued_at: datetime | None = None
     finished_at: datetime | None = None

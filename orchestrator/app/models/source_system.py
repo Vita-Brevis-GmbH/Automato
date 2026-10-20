@@ -74,6 +74,11 @@ class SourceSystem(Base):
     site_id: Mapped[int | None] = mapped_column(
         ForeignKey("site.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Zeitplan (Cron, 5 Felder, Zeitzone scheduler_timezone) und zuletzt ausgeloester Termin
+    schedule: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    schedule_last_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

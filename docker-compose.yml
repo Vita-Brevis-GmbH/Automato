@@ -66,6 +66,10 @@ services:
       # orchestrator-data (beim ersten Start erzeugt, mitsichern!); produktiv besser als
       # Secret-Referenz, z. B. openbao:automato/credentials#key (deploy/secrets/README.md).
       AUTOMATO_CREDENTIALS_KEY: ${AUTOMATO_CREDENTIALS_KEY:-}
+      # Zeitgesteuerte Laeufe (Zeitplan am Quellsystem); ein Termin wird auch bei mehreren
+      # Orchestrator-Prozessen nur einmal ausgeloest.
+      AUTOMATO_SCHEDULER_ENABLED: ${AUTOMATO_SCHEDULER_ENABLED:-true}
+      AUTOMATO_SCHEDULER_TIMEZONE: ${AUTOMATO_SCHEDULER_TIMEZONE:-Europe/Zurich}
     volumes:
       - orchestrator-data:/var/lib/automato
     extra_hosts:
