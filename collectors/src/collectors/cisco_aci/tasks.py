@@ -19,6 +19,7 @@ from collectors.cisco_aci.inventory import parse_inventory
 from collectors.cisco_aci.mo import parse_epgs, parse_mo_export
 from collectors.cisco_aci.normalize import normalize_contract
 from collectors.common import agent as agent_api
+from collectors.common import http
 from collectors.common.dto import CollectorResult, NormalizedEpg, Target
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
@@ -108,7 +109,7 @@ def collect_once(
         inventory = parse_inventory(export, data.get("fabric"))
         result = CollectorResult(status="completed", rules=rules, epgs=epgs, inventory=inventory)
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
-        result = CollectorResult(status="failed", message=str(exc))
+        result = CollectorResult(status="failed", message=http.describe_error(exc))
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))
 
 

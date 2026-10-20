@@ -185,6 +185,14 @@ export default function Overview({
                       <td className="num">{r.rule_count ?? "–"}</td>
                       <td>
                         <RunStatusChip status={r.status} />
+                        {r.message && (r.status === "failed" || r.platform === "infoblox" || r.platform === "netbox") && (
+                          <div
+                            className={r.status === "failed" ? "run-msg err" : "run-msg"}
+                            title={r.message}
+                          >
+                            {r.message}
+                          </div>
+                        )}
                       </td>
                       <td className="mono">{fmtTime(r.finished_at ?? r.queued_at)}</td>
                     </tr>

@@ -13,6 +13,28 @@ import httpx
 from collectors.config import Settings, get_settings
 
 
+def describe_error(exc: Exception) -> str:
+    """Verstaendliche Fehlermeldung fuer Lauf/Log: bei HTTP-Fehlern mit Ziel-URL (ohne
+    Header/Tokens) und Status bzw. Verbindungsursache, sonst Typ + Text."""
+    if not isinstance(exc, httpx.HTTPError):
+        return str(exc) or type(exc).__name__
+    try:
+        url = f" {exc.request.url.copy_with(query=None)}"
+    except RuntimeError:  # httpx: Fehler ohne zugehoerigen Request
+        url = ""
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            body = exc.response.json()
+            detail = body.get("detail") if isinstance(body, dict) else None
+        except ValueError:
+            detail = None
+        text = f" - {detail}" if detail else ""
+        return f"HTTP {exc.response.status_code}{url}{text}"
+    if isinstance(exc, httpx.ConnectError | httpx.TimeoutException):
+        return f"nicht erreichbar{url}: {type(exc).__name__} {exc}".rstrip()
+    return f"{type(exc).__name__}: {exc}{url}"
+
+
 def client_kwargs(settings: Settings) -> dict[str, Any]:
     """httpx.Client-Argumente aus der Konfiguration (verify/cert) - pure, testbar."""
     verify: str | bool = settings.orchestrator_ca_bundle or settings.orchestrator_verify_tls

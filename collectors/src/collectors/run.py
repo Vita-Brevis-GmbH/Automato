@@ -28,6 +28,7 @@ import httpx
 from collectors.cisco_aci.tasks import check as _aci_check
 from collectors.cisco_aci.tasks import collect_once as _aci_collect
 from collectors.common import agent as agent_api
+from collectors.common import http
 from collectors.common.dto import CollectorResult, Target
 from collectors.config import get_settings
 from collectors.fortigate.tasks import check as _fgt_check
@@ -77,23 +78,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _describe(exc: httpx.HTTPError) -> str:
-    try:
-        url = f" {exc.request.url}"
-    except RuntimeError:  # httpx: Fehler ohne zugehoerigen Request
-        url = ""
-    if isinstance(exc, httpx.HTTPStatusError):
-        try:
-            detail = exc.response.json().get("detail")
-        except ValueError:
-            detail = None
-        text = f" - {detail}" if detail else ""
-        hint = (
-            " (Details: docker compose logs orchestrator)"
-            if exc.response.status_code >= 500
-            else ""
-        )
-        return f"HTTP {exc.response.status_code}{url}{text}{hint}"
-    return f"{type(exc).__name__}: {exc}{url}"
+    text = http.describe_error(exc)
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500:
+        text += " (Details: docker compose logs orchestrator)"
+    return text
 
 
 MAX_RUNS_PER_POLL = 25  # Schutz gegen Endlosschleifen; der naechste Aufruf holt den Rest

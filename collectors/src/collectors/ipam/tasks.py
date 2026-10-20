@@ -11,6 +11,7 @@ from sot_gateway.adapters import InfobloxAdapter, NetBoxAdapter
 
 from collectors.celery_app import app
 from collectors.common import agent as agent_api
+from collectors.common import http
 from collectors.common.dto import CollectorResult, ReferenceBatch, Target
 from collectors.common.upload import confirmed, submit_references, submit_result
 
@@ -66,7 +67,9 @@ def collect_references(
             status="completed", reference_count=total, message=f"{total} Referenzeintraege gelesen"
         )
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
-        result = CollectorResult(status="failed", reference_count=total, message=str(exc))
+        result = CollectorResult(
+            status="failed", reference_count=total, message=http.describe_error(exc)
+        )
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))
 
 

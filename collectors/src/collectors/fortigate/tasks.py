@@ -13,6 +13,7 @@ from importlib import resources
 
 from collectors.celery_app import app
 from collectors.common import agent as agent_api
+from collectors.common import http
 from collectors.common.dto import CollectorResult, Target
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
@@ -119,7 +120,7 @@ def collect_once(
             inventory=inventory,
         )
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
-        result = CollectorResult(status="failed", message=str(exc))
+        result = CollectorResult(status="failed", message=http.describe_error(exc))
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))
 
 

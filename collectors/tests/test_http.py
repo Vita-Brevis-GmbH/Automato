@@ -28,3 +28,20 @@ def test_kombiniertes_pem():
 
 def test_verify_abschaltbar():
     assert client_kwargs(Settings(orchestrator_verify_tls=False))["verify"] is False
+
+
+def test_describe_error_nennt_ziel_und_ursache():
+    import httpx
+    from collectors.common.http import describe_error
+
+    def refuse(request):
+        raise httpx.ConnectError("[Errno 111] Connection refused", request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(refuse))
+    try:
+        client.get("http://host.docker.internal:8080/api/ipam/prefixes/?limit=1000&offset=0")
+    except httpx.HTTPError as exc:
+        text = describe_error(exc)
+    assert text.startswith("nicht erreichbar http://host.docker.internal:8080/api/ipam/prefixes/")
+    assert "Connection refused" in text and "limit" not in text
+    assert describe_error(RuntimeError("kein Lese-Token")) == "kein Lese-Token"

@@ -389,3 +389,5 @@ pre.block { background: var(--surface-2); border: 1px solid var(--border); borde
 .tabbar button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 .kpis.wrap { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
 .kpi .k-val.sm { font-size: 22px; }
+.run-msg { font-size: 11.5px; color: var(--muted); margin-top: 3px; max-width: 360px; white-space: normal; word-break: break-word; }
+.run-msg.err { color: var(--crit); }
