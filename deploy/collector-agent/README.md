@@ -19,6 +19,12 @@ aktiv ist (Web-UI → Collector-Agenten). Abschalten auf der Station:
 `AUTOMATO_AGENT_AUTO_UPDATE=false` in `agent.env`. Manuell (`install.ps1`) ist nur die erste
 Installation nötig – bzw. einmalig für Agenten, die älter sind als das Selbst-Update.
 
+**Version anzeigen:** `C:\Automato\collector\venv\Scripts\python.exe -m collectors.run --version`
+(z. B. `automato-collector 0.2.0 (Build bb8829b8)`); dieselbe Version steht im Web-UI in der
+Agentenliste. `install.ps1` meldet „Installiere …“, „Aktualisiere alt -> neu“ bzw. „bereits
+installiert – installiere neu“ und prüft am Ende, dass der Agent startet. Heruntergeladene
+Dateien entsperrt es selbst (sonst fragt Windows bei jedem Start „Sicherheitswarnung“).
+
 ## Überblick
 
 ```

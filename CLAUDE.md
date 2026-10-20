@@ -537,3 +537,12 @@ Einlesen; Lauf-Fehler im Collector-Log und in „Letzte Läufe“ sichtbar. NetB
 `source-of-truth/netbox/sync-user.sh`. Verifiziert: echter Durchlauf (Wheels gebaut, Agent-venv mit
 `run-agent.ps1`, Update + Neustart, zweiter Poll ohne Update). Tests: orchestrator 156, collectors 63,
 sot-gateway 14.
+**Versionierung (0.2.0, CHANGELOG.md):** Eine Plattform-Version in `VERSION` (SemVer) für alle Pakete;
+`scripts/version.py set|check` hält `pyproject.toml`, `uv.lock` und `web-ui/frontend/package*.json` gleich
+(CI-Schritt). `__version__` in `app`, `collectors`, `sot_gateway`; `/health` liefert `version`, UI-Fusszeile
+zeigt sie. Agent-Version = `<Release>+<Build>` (Build = Datei-Fingerabdruck), Anzeige „0.2.0 (Build …)“ in
+Agentenliste, Update-Meldungen und `automato-collector --version`. Agent lädt das Selbst-Update vor den
+Plattform-Modulen; unvollständige Installation (z. B. fehlendes `sot_gateway`) → Neuinstallation über den
+Update-Kanal. `install.ps1`: `Unblock-File`, Task anhalten, sichtbare pip-Schritte mit Exit-Code-Prüfung,
+Startprüfung. Verifiziert: kaputte Installation repariert sich, Upgrade von alter Kennung, `--version`.
+Tests: orchestrator 156, collectors 65, sot-gateway 14.

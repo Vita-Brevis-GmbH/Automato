@@ -19,35 +19,45 @@ Aufruf:
 Exit 0 = Ergebnis completed bzw. alle Checks OK, 1 = failed, 2 = Check-Fehler.
 """
 
+from __future__ import annotations
+
 import argparse
 import sys
 from collections.abc import Callable, Sequence
 
 import httpx
 
-from collectors.cisco_aci.tasks import check as _aci_check
-from collectors.cisco_aci.tasks import collect_once as _aci_collect
-from collectors.common import agent as agent_api
+# Selbst-Update zuerst und ohne weitere Abhaengigkeiten laden: so kann sich auch eine
+# unvollstaendige Installation (z. B. fehlendes sot_gateway) selbst reparieren (ADR 0011).
 from collectors.common import http, selfupdate
-from collectors.common.dto import CollectorResult, Target
-from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
-from collectors.fortigate.tasks import check as _fgt_check
-from collectors.fortigate.tasks import collect_once as _fgt_collect
-from collectors.ipam import tasks as _ipam
 
-RUNNERS: dict[str, Callable[..., CollectorResult]] = {
-    "fortigate": _fgt_collect,
-    "cisco_aci": _aci_collect,
-    "infoblox": _ipam.collect_infoblox,
-    "netbox": _ipam.collect_netbox,
-}
-CHECKERS: dict[str, Callable[..., tuple[bool, str]]] = {
-    "fortigate": _fgt_check,
-    "cisco_aci": _aci_check,
-    "infoblox": _ipam.check_infoblox,
-    "netbox": _ipam.check_netbox,
-}
+try:
+    from collectors.cisco_aci.tasks import check as _aci_check
+    from collectors.cisco_aci.tasks import collect_once as _aci_collect
+    from collectors.common import agent as agent_api
+    from collectors.common.dto import CollectorResult, Target
+    from collectors.common.upload import confirmed, submit_result
+    from collectors.fortigate.tasks import check as _fgt_check
+    from collectors.fortigate.tasks import collect_once as _fgt_collect
+    from collectors.ipam import tasks as _ipam
+
+    RUNNERS: dict[str, Callable[..., CollectorResult]] = {
+        "fortigate": _fgt_collect,
+        "cisco_aci": _aci_collect,
+        "infoblox": _ipam.collect_infoblox,
+        "netbox": _ipam.collect_netbox,
+    }
+    CHECKERS: dict[str, Callable[..., tuple[bool, str]]] = {
+        "fortigate": _fgt_check,
+        "cisco_aci": _aci_check,
+        "infoblox": _ipam.check_infoblox,
+        "netbox": _ipam.check_netbox,
+    }
+    _BROKEN: ImportError | None = None
+except ImportError as _exc:  # unvollstaendige Installation
+    RUNNERS, CHECKERS = {}, {}
+    _BROKEN = _exc
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -74,12 +84,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Selbst-Update (ADR 0011) fuer diesen Aufruf auslassen",
     )
+    parser.add_argument("--version", action="store_true", help="Agent-Version anzeigen")
     raw = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(raw)
+    if args.version:
+        print(f"automato-collector {selfupdate.current_label()}")
+        return 0
     if (args.poll or args.check) and not args.no_update:
-        updated = selfupdate.maybe_update(raw)  # neue Version fuehrt den Aufruf selbst aus
+        # neue Version fuehrt den Aufruf selbst aus; bei kaputter Installation neu installieren
+        updated = selfupdate.maybe_update(raw, force=_BROKEN is not None)
         if updated is not None:
             return updated
+    if _BROKEN is not None:
+        print(
+            f"Agent-Installation unvollstaendig ({_BROKEN}) - Agent-Paket im Web-UI laden und"
+            " install.ps1 erneut ausfuehren",
+            file=sys.stderr,
+        )
+        return 1
     try:
         return _run(parser, args)
     except httpx.HTTPError as exc:
@@ -144,6 +166,7 @@ def _execute(platform: str, run_id: str, target: Target | None, via_agent: bool)
 
 def _check(platform: str | None) -> int:
     """Agent: alle zugewiesenen Geraete pruefen; ohne Agent-Token: lokale Konfiguration."""
+    print(f"Agent-Version: {selfupdate.current_label()}")
     if get_settings().agent_token:
         devices = [t for t in agent_api.targets() if not platform or t.platform == platform]
         if devices:

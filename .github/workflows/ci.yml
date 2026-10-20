@@ -28,6 +28,9 @@ jobs:
               - 'sot-gateway/**'
               - 'pyproject.toml'
               - 'uv.lock'
+              - 'VERSION'
+              - 'scripts/**'
+              - 'web-ui/frontend/package*.json'
             frontend:
               - 'web-ui/frontend/**'
 
@@ -51,6 +54,8 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - name: Sync workspace
         run: uv sync --all-packages
+      - name: Version (VERSION = alle Pakete)
+        run: python3 scripts/version.py check
       - name: Lint (ruff)
         run: |
           uv run ruff check .

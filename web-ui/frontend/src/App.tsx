@@ -391,7 +391,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
         {renderNav("admin")}
         <div className="nav-foot">
           <span className={`dot ${health?.status === "ok" ? "g" : "r"}`} />
-          {health ? `API ${health.status} · DB ${health.db}` : "API nicht erreichbar"}
+          {health
+            ? `API ${health.status} · DB ${health.db}${health.version ? ` · v${health.version}` : ""}`
+            : "API nicht erreichbar"}
         </div>
       </nav>
 

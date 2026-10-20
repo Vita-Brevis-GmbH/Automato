@@ -154,6 +154,17 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /netbox-sync/targets`, `GET/POST /netbox-sync/plans`, `GET …/plans/{id}[/items]`, `POST …/plans/{id}/apply` | NetBox-Sync (admin): Vorschau, Aktionen, Übernahme |
 | `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}` | Namensprofile |
 
+## 4b. Versionen und Updates
+
+- **Eine Version für alles** (Datei `VERSION`, SemVer): Orchestrator (`/health` → `version`,
+  Fusszeile der Web-UI), Collector-Agent, SoT-Gateway, Web-UI. Neue Version:
+  `python3 scripts/version.py set X.Y.Z`, Änderungen in `CHANGELOG.md`.
+- **Orchestrator aktualisieren:** `git pull` und `docker compose … up -d --build`; Migrationen
+  laufen beim Start (`alembic upgrade head`).
+- **Agenten** ziehen beim nächsten Lauf selbst nach (ADR 0011). Die Agentenliste zeigt je Agent
+  „0.2.0 · Build …“ und „aktuell“ bzw. „Update beim nächsten Lauf“. Manuell (`install.ps1`) nur
+  für die Erstinstallation oder wenn Auto-Update aus ist.
+
 ## 5. Sicherheit
 
 - Alle Zielsystem-Zugänge **read-only** (Least Privilege). `.env` wird nie committet.

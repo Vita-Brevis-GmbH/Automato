@@ -185,7 +185,15 @@ export default function Agents({
                       </td>
                       <td className="mono">{fmtTime(a.last_seen)}</td>
                       <td className="nowrap">
-                        {a.version ? <span className="mono">{a.version.slice(0, 8)}</span> : <span className="faint">–</span>}{" "}
+                        {a.version ? (
+                          <span className="mono" title={a.version}>
+                            {a.version.includes("+")
+                              ? `${a.version.split("+")[0]} · Build ${a.version.split("+")[1]}`
+                              : a.version.slice(0, 8)}
+                          </span>
+                        ) : (
+                          <span className="faint">–</span>
+                        )}{" "}
                         {a.update_available === true && (
                           <span
                             className={`chip ${a.auto_update ? "info" : "warn"}`}

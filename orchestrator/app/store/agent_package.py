@@ -2,12 +2,15 @@
 
 Das Orchestrator-Image enthaelt das Agent-Paket (`agent_package_dir`, Dockerfile-Stage
 `agent-package`). Fuer das Update zaehlen die Dateien, die der Agent installiert: das
-collectors- und das sot-gateway-Wheel sowie `run-agent.ps1`. Die **Version** ist ein
-Fingerabdruck ueber Namen und SHA-256 dieser Dateien - so erkennt der Agent jede Aenderung,
-auch wenn die Paketnummer (0.1.0) gleich bleibt.
+collectors- und das sot-gateway-Wheel sowie `run-agent.ps1`.
+
+Version = `<Release>+<Build>`: Release ist die Plattform-Version (Datei `VERSION`, steht im
+Wheel-Namen, z. B. `0.2.0`), Build ein Fingerabdruck ueber Namen und SHA-256 der Dateien
+(8 Hex-Zeichen). So erkennt der Agent auch eine Aenderung ohne neue Release-Nummer.
 """
 
 import hashlib
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -40,10 +43,14 @@ def _manifest(key: tuple) -> dict:
     for path, _mtime, size in key:
         digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
         entries.append({"name": Path(path).name, "sha256": digest, "size": size})
-    fingerprint = hashlib.sha256(
+    build = hashlib.sha256(
         "\n".join(f"{e['name']}:{e['sha256']}" for e in entries).encode()
-    ).hexdigest()
-    return {"version": fingerprint[:16], "files": entries}
+    ).hexdigest()[:8]
+    release = next((m.group(1) for e in entries if (m := _WHEEL_VERSION.match(e["name"]))), "0.0.0")
+    return {"version": f"{release}+{build}", "release": release, "build": build, "files": entries}
+
+
+_WHEEL_VERSION = re.compile(r"^collectors-([^-]+)-")
 
 
 def file_path(base_dir: str, name: str) -> Path | None:

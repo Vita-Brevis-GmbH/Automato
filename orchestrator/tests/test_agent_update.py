@@ -31,7 +31,8 @@ def test_manifest_dateien_und_version(client, tmp_path, session_factory):
     try:
         agent_id, headers = _agent(client)
         info = client.get("/internal/agent/update", headers=headers).json()
-        assert info["enabled"] and len(info["version"]) == 16
+        assert info["enabled"] and info["release"] == "0.1.0" and len(info["build"]) == 8
+        assert info["version"] == f"0.1.0+{info['build']}"
         names = {f["name"]: f for f in info["files"]}
         assert set(names) == {
             "collectors-0.1.0-py3-none-any.whl",
@@ -113,6 +114,6 @@ def test_ohne_agent_paket_kein_update(client, tmp_path):
     try:
         _, headers = _agent(client)
         info = client.get("/internal/agent/update", headers=headers).json()
-        assert info == {"version": None, "enabled": False, "files": []}
+        assert info["version"] is None and info["enabled"] is False and info["files"] == []
     finally:
         del client.app.dependency_overrides[get_settings]

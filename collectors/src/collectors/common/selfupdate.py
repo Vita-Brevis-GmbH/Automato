@@ -41,6 +41,7 @@ def install_dir() -> Path | None:
 
 
 def installed_version() -> str:
+    """Installierte Agent-Version `<Release>+<Build>` (leer = unbekannt)."""
     base = install_dir()
     if base is None:
         return ""
@@ -48,6 +49,19 @@ def installed_version() -> str:
         return (base / VERSION_FILE).read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+
+
+def describe(version: str) -> str:
+    """`0.2.0+ab12cd34` -> `0.2.0 (Build ab12cd34)`; aeltere Kennungen unveraendert."""
+    release, sep, build = version.partition("+")
+    return f"{release} (Build {build})" if sep else (version or "unbekannt")
+
+
+def current_label() -> str:
+    """Anzeige fuer --version/--check: installierte Version, sonst Paketversion."""
+    from collectors import __version__
+
+    return describe(installed_version()) if installed_version() else __version__
 
 
 def agent_headers() -> dict[str, str]:
@@ -59,8 +73,10 @@ def agent_headers() -> dict[str, str]:
     return headers
 
 
-def maybe_update(argv: Sequence[str]) -> int | None:
-    """Aktualisieren und den Aufruf mit der neuen Version ausfuehren (Exit-Code), sonst None."""
+def maybe_update(argv: Sequence[str], force: bool = False) -> int | None:
+    """Aktualisieren und den Aufruf mit der neuen Version ausfuehren (Exit-Code), sonst None.
+
+    `force`: auch bei gleicher Version neu installieren (unvollstaendige Installation)."""
     settings = get_settings()
     base = install_dir()
     if not settings.agent_token or not settings.agent_auto_update or base is None:
@@ -73,9 +89,12 @@ def maybe_update(argv: Sequence[str]) -> int | None:
         log.warning("Update-Pruefung nicht moeglich: %s", http.describe_error(exc))
         return None
     version = info.get("version")
-    if not info.get("enabled") or not version or version == installed_version():
+    if not info.get("enabled") or not version or (version == installed_version() and not force):
         return None
-    print(f"Neue Agent-Version {version} verfuegbar (installiert: {installed_version() or '?'})")
+    if version == installed_version():
+        print(f"Agent-Installation unvollstaendig - installiere {describe(version)} neu")
+    else:
+        print(f"Aktualisiere Agent: {describe(installed_version())} -> {describe(version)}")
     try:
         install(info, base)
     except Exception as exc:  # noqa: BLE001
@@ -85,7 +104,7 @@ def maybe_update(argv: Sequence[str]) -> int | None:
             file=sys.stderr,
         )
         return None
-    print(f"Agent auf {version} aktualisiert - fuehre den Aufruf mit der neuen Version aus")
+    print(f"Agent ist jetzt {describe(version)} - fuehre den Aufruf mit der neuen Version aus")
     cmd = [sys.executable, "-m", "collectors.run", *argv, "--no-update"]
     return subprocess.run(cmd, check=False).returncode  # noqa: S603 - eigener Interpreter
 
@@ -114,6 +133,9 @@ def install(info: dict, base: Path) -> None:
         pip = [sys.executable, "-m", "pip", "--disable-pip-version-check", "install"]
         _pip([*pip, "--no-deps", "--force-reinstall", *wheels])
         _pip([*pip, "--find-links", str(staging), main_wheel])  # neue Abhaengigkeiten
+        # Startpruefung: neue Version muss importierbar sein (sonst Version nicht uebernehmen,
+        # der naechste Lauf versucht es erneut)
+        _pip([sys.executable, "-c", "import collectors.run, sot_gateway"], "Startpruefung")
         wrapper = staging / WRAPPER
         if wrapper.is_file():
             shutil.copyfile(wrapper, base / WRAPPER)
@@ -122,10 +144,10 @@ def install(info: dict, base: Path) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def _pip(cmd: list[str]) -> None:
+def _pip(cmd: list[str], what: str = "pip") -> None:
     done = subprocess.run(  # noqa: S603 - fester Befehl, eigener Interpreter
         cmd, capture_output=True, text=True, timeout=PIP_TIMEOUT, check=False
     )
     if done.returncode != 0:
         tail = (done.stderr or done.stdout or "").strip().splitlines()[-3:]
-        raise RuntimeError(f"pip fehlgeschlagen: {' | '.join(tail)}")
+        raise RuntimeError(f"{what} fehlgeschlagen: {' | '.join(tail)}")

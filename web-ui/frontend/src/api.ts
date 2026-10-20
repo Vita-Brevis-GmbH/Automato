@@ -5,6 +5,7 @@ import * as auth from "./auth";
 export interface HealthStatus {
   status: string;
   db: string;
+  version?: string; // Plattform-Version (Datei VERSION)
 }
 
 export interface Rule {

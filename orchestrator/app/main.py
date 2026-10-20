@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app import __version__
 from app.api import (
     agents,
     appdoc,
@@ -30,7 +31,7 @@ def create_app() -> FastAPI:
     resolve_settings(settings)
     check_security_config(settings)  # Fail-closed bei unsicheren Defaults (ADR 0005)
 
-    app = FastAPI(title="Automato Orchestrator", version="0.1.0")
+    app = FastAPI(title="Automato Orchestrator", version=__version__)
 
     # CORS aus Konfiguration; Default nur localhost (Dev), Produktion explizit setzen
     app.add_middleware(

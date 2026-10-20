@@ -78,7 +78,9 @@ class UpdateFile(BaseModel):
 
 
 class UpdateOut(BaseModel):
-    version: str | None  # None = kein Agent-Paket im Orchestrator
+    version: str | None  # <Release>+<Build>; None = kein Agent-Paket im Orchestrator
+    release: str | None = None  # Plattform-Version, z. B. 0.2.0
+    build: str | None = None  # Fingerabdruck der Dateien
     enabled: bool  # Selbst-Update fuer diesen Agenten erlaubt
     files: list[UpdateFile] = []
 
@@ -320,9 +322,10 @@ def update_manifest(
     info = agent_package.manifest(settings.agent_package_dir)
     if info is None:
         return UpdateOut(version=None, enabled=False)
+    meta = {k: info[k] for k in ("version", "release", "build")}
     if not agent.auto_update:
-        return UpdateOut(version=info["version"], enabled=False)
-    return UpdateOut(version=info["version"], enabled=True, files=info["files"])
+        return UpdateOut(**meta, enabled=False)
+    return UpdateOut(**meta, enabled=True, files=info["files"])
 
 
 @agent_router.get("/update/files/{name}")

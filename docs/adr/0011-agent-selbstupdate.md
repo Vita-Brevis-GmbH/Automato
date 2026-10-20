@@ -36,6 +36,19 @@ Station `install.ps1` von Hand auszuführen. Ein veralteter Agent brach zuletzt 
 - Aktiv nur für einen installierten Agenten (venv mit `run-agent.ps1` daneben), nicht im
   Repo/Dev und nicht im zentralen Worker (der kommt mit dem Container-Image).
 
+### Versionierung (Ergänzung 0.2.0)
+
+- Eine Plattform-Version für alle Pakete in der Datei `VERSION` (SemVer), gepflegt mit
+  `scripts/version.py` (setzt `pyproject.toml`, `uv.lock`, `package.json`; CI prüft
+  Gleichstand). Änderungen stehen in `CHANGELOG.md`.
+- Agent-Version = `<Release>+<Build>` (z. B. `0.2.0+bb8829b8`): Release aus dem Wheel-Namen,
+  Build = Fingerabdruck der Dateien. Angezeigt als „0.2.0 (Build bb8829b8)“ – im UI, in den
+  Update-Meldungen und mit `automato-collector --version`.
+- Der Agent lädt das Selbst-Update vor den Plattform-Modulen. Fehlt ein Teil der Installation
+  (z. B. `sot_gateway`), installiert er die aktuelle Version auch bei gleicher Kennung neu und
+  führt den Aufruf danach aus; erst nach erfolgreicher Startprüfung gilt die Version als
+  installiert.
+
 ## Konsequenzen
 
 - Nach einem Orchestrator-Update ziehen alle Agenten mit Auto-Update beim nächsten Lauf nach;
