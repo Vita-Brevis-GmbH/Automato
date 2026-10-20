@@ -30,6 +30,7 @@ from collectors.cisco_aci.tasks import collect_once as _aci_collect
 from collectors.common import agent as agent_api
 from collectors.common import http
 from collectors.common.dto import CollectorResult, Target
+from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
 from collectors.fortigate.tasks import check as _fgt_check
 from collectors.fortigate.tasks import collect_once as _fgt_collect
@@ -110,8 +111,20 @@ def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def _unsupported(platform: str) -> str:
+    return (
+        f"Plattform '{platform}' wird von diesem Agenten nicht unterstuetzt - Agent-Paket im"
+        " Web-UI (Collector-Agenten) neu herunterladen und install.ps1 erneut ausfuehren"
+    )
+
+
 def _execute(platform: str, run_id: str, target: Target | None, via_agent: bool) -> bool:
-    result = RUNNERS[platform](run_id, target, via_agent=via_agent)
+    runner = RUNNERS.get(platform)
+    if runner is None:  # aelterer Agent als der Orchestrator: Lauf sauber als failed melden
+        result = CollectorResult(status="failed", message=_unsupported(platform))
+        result = confirmed(result, submit_result(run_id, result, via_agent=via_agent))
+    else:
+        result = runner(run_id, target, via_agent=via_agent)
     label = f" ({target.name})" if target and target.name else ""
     print(f"{platform} run {run_id}{label}: {result.status}")
     if result.message:
@@ -126,7 +139,8 @@ def _check(platform: str | None) -> int:
         if devices:
             failed = 0
             for t in devices:
-                ok, msg = CHECKERS[t.platform](t)
+                checker = CHECKERS.get(t.platform)
+                ok, msg = checker(t) if checker else (False, _unsupported(t.platform))
                 failed += 0 if ok else 1
                 print(f"{t.name} ({t.platform}) check: {'OK' if ok else 'FEHLER'} - {msg}")
             return 0 if failed == 0 else 2

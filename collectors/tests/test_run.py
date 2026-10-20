@@ -224,3 +224,21 @@ def test_upload_liefert_quittung(monkeypatch):
     assert up.submit_result("r1", CollectorResult(status="completed"))["status"] == "completed"
     monkeypatch.setattr(up.http, "post_json", lambda url, json, headers: httpx.Response(204))
     assert up.submit_result("r1", CollectorResult(status="completed")) is None  # alter Server
+
+
+def test_poll_unbekannte_plattform_meldet_failed_statt_absturz(monkeypatch):
+    """Orchestrator neuer als der Agent (z. B. neue Plattform): Lauf sauber abschliessen."""
+    import collectors.run as run
+
+    runs = iter([{"platform": "vmware", "run_id": "r9", "target": None}, None])
+    monkeypatch.setattr(run.agent_api, "next_run", lambda platform=None: next(runs))
+    sent = {}
+
+    def submit(run_id, result, via_agent=False):
+        sent.update(run_id=run_id, status=result.status, message=result.message)
+        return {"run_id": run_id, "status": "failed"}
+
+    monkeypatch.setattr(run, "submit_result", submit)
+    assert run.main(["--poll"]) == 1
+    assert sent["run_id"] == "r9" and sent["status"] == "failed"
+    assert "Agent-Paket" in sent["message"]
