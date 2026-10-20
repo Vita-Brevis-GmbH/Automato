@@ -10,15 +10,17 @@ Liest Regeln aus dem Rule & Service Store:
 Filter nach System/Netzwerk/Zone folgen mit dem UI-Ausbau (M9).
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import EndpointRole, MatchStatus, ObjectClass, RefRole
-from app.schemas.rules import EndpointOut, RuleDetailOut, RuleOut
+from app.models import EndpointRole, MatchStatus, ObjectClass, RefRole, RuleDomain
+from app.schemas.rules import AciContractOut, EndpointOut, RuleDetailOut, RuleOut, RuleSummaryOut
 from app.store import nat as nat_store
 from app.store import objects as objects_store
 from app.store import rules as rules_store
@@ -58,6 +60,28 @@ def _labels(rule, role: RefRole, endpoint_role: EndpointRole, objs) -> list[str]
     return [_endpoint_label(e, objs) for e in rule.endpoints if e.role is endpoint_role]
 
 
+_ACI_TENANT = re.compile(r"(?:^|/)tn-([^/]+)")
+
+
+def _aci(rule) -> AciContractOut | None:
+    """Contract/Subject/Tenant/Scope eines ACI-Contracts (Spalten, sonst aus dem Rohdatensatz)."""
+    if rule.domain is not RuleDomain.ACI_CONTRACT:
+        return None
+    raw = rule.raw if isinstance(rule.raw, dict) else {}
+    dn = rule.contract_dn or raw.get("dn") or ""
+    subject = rule.subject
+    if subject is None and dn and rule.external_id.startswith(f"{dn}/"):
+        subject = rule.external_id[len(dn) + 1 :]
+    tenant = _ACI_TENANT.search(dn)
+    return AciContractOut(
+        tenant=tenant.group(1) if tenant else None,
+        contract=raw.get("name") or rule.name.partition(":")[0] or None,
+        subject=subject,
+        scope=rule.aci_scope or raw.get("scope"),
+        dn=dn or None,
+    )
+
+
 def _rule_matches_q(rule, objs, ql: str) -> bool:
     if ql in rule.name.lower() or ql in (rule.external_id or "").lower():
         return True
@@ -71,21 +95,48 @@ def _rule_matches_q(rule, objs, ql: str) -> bool:
     return False
 
 
-@router.get("", response_model=list[RuleOut])
-def list_rules(
+@router.get("/summary", response_model=RuleSummaryOut)
+def rules_summary(
     tenant_id: int | None = None,
-    q: str | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session),
 ):
+    """Kennzahlen aller Regeln des Mandanten (Firewall + ACI) fuer die Uebersicht."""
+    tenant_id = tenant_scope(principal, tenant_id)
+    return RuleSummaryOut(**rules_store.summary(session, tenant_id=tenant_id))
+
+
+@router.get("", response_model=list[RuleOut])
+def list_rules(
+    response: Response,
+    tenant_id: int | None = None,
+    q: str | None = None,
+    source_system_id: int | None = None,
+    domain: RuleDomain | None = None,
+    limit: int = Query(500, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session),
+):
+    """Regeln seitenweise; Gesamtzahl (nach Filtern und Suche) im Header `X-Total-Count`."""
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "rules")
-    rules = rules_store.list_rules(session, tenant_id=tenant_id)
-    obj_ids = {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id}
-    objs = rules_store.objects_by_ids(session, obj_ids)
+    flt = {"tenant_id": tenant_id, "source_system_id": source_system_id, "domain": domain}
     if q:
+        # Suche ueber alle Regeln, erst danach die Seite schneiden (sonst fehlen Treffer)
+        rules = rules_store.list_rules(session, limit=None, **flt)
+        obj_ids = {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id}
+        objs = rules_store.objects_by_ids(session, obj_ids)
         ql = q.strip().lower()
         rules = [r for r in rules if _rule_matches_q(r, objs, ql)]
+        total = len(rules)
+        rules = rules[offset : offset + limit]
+    else:
+        total = rules_store.count_rules(session, **flt)
+        rules = rules_store.list_rules(session, limit=limit, offset=offset, **flt)
+        obj_ids = {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id}
+        objs = rules_store.objects_by_ids(session, obj_ids)
+    response.headers["X-Total-Count"] = str(total)
     zone_ids = {r.src_zone_id for r in rules} | {r.dst_zone_id for r in rules}
     zone_ids |= {o.zone_id for o in objs.values() if o.zone_id}
     zones = rules_store.zone_names(session, zone_ids)
@@ -111,6 +162,7 @@ def list_rules(
                 destinations=_labels(r, RefRole.DST, EndpointRole.DST, objs),
                 service_names=_ref_names(r, RefRole.SERVICE)
                 or [s.canonical_name for s in r.services],
+                aci=_aci(r),
             )
         )
     return out
@@ -169,6 +221,7 @@ def get_rule(
         sources=_labels(r, RefRole.SRC, EndpointRole.SRC, objs),
         destinations=_labels(r, RefRole.DST, EndpointRole.DST, objs),
         service_names=_ref_names(r, RefRole.SERVICE) or [s.canonical_name for s in r.services],
+        aci=_aci(r),
         external_id=r.external_id,
         sequence=r.sequence,
         refs=objects_store.rule_refs(session, r),

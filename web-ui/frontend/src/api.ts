@@ -25,6 +25,31 @@ export interface Rule {
   sources: string[]; // Objektnamen wie auf der Firewall (sonst Werte)
   destinations: string[];
   service_names: string[]; // Service-Namen wie auf der Firewall (sonst kanonisch)
+  aci?: AciContract | null; // nur ACI-Contracts: Quelle = Consumer-, Ziel = Provider-EPGs
+}
+
+export interface AciContract {
+  tenant: string | null;
+  contract: string | null;
+  subject: string | null;
+  scope: string | null; // application-profile | context | tenant | global
+  dn: string | null;
+}
+
+export type RuleDomain = "firewall" | "aci_contract";
+
+export interface RulePage {
+  rules: Rule[];
+  total: number; // Treffer insgesamt (nach Filtern/Suche), Header X-Total-Count
+}
+
+export interface RuleSummary {
+  total: number;
+  by_domain: Partial<Record<RuleDomain, number>>;
+  source_system_ids: number[];
+  endpoints: number;
+  unmatched: number;
+  by_dst_zone: [string, number][];
 }
 
 export interface Endpoint {
@@ -670,9 +695,29 @@ export const deleteEntry = (entryId: number) =>
   sendJSON<void>(`/api/naming-profiles/dictionary/${entryId}`, "DELETE");
 
 // Dokumentation
-export function fetchRules(q?: string, tenantId?: number | null): Promise<Rule[]> {
-  return getJSON<Rule[]>(`/api/rules${qs({ q: q?.trim(), tenant_id: tenantId })}`);
+export async function fetchRules(opts: {
+  q?: string;
+  tenantId?: number | null;
+  domain?: RuleDomain | "";
+  systemId?: number | null;
+  limit?: number;
+  offset?: number;
+}): Promise<RulePage> {
+  const params = {
+    q: opts.q?.trim(),
+    tenant_id: opts.tenantId,
+    domain: opts.domain,
+    source_system_id: opts.systemId,
+    limit: opts.limit,
+    offset: opts.offset,
+  };
+  const response = await fetchChecked(`/api/rules${qs(params)}`);
+  const rules = (await response.json()) as Rule[];
+  const total = Number(response.headers.get("X-Total-Count") ?? rules.length);
+  return { rules, total: Number.isFinite(total) ? total : rules.length };
 }
+export const fetchRuleSummary = (tenantId?: number | null) =>
+  getJSON<RuleSummary>(`/api/rules/summary${qs({ tenant_id: tenantId })}`);
 export const fetchRuleDetail = (id: number) => getJSON<RuleDetail>(`/api/rules/${id}`);
 export const fetchNat = (tenantId?: number | null) =>
   getJSON<Nat[]>(`/api/nat${qs({ tenant_id: tenantId })}`);

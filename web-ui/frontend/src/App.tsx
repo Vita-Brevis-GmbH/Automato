@@ -5,12 +5,12 @@ import {
   fetchFindings,
   fetchHealth,
   fetchNat,
-  fetchRules,
+  fetchRuleSummary,
   fetchTenants,
   Finding,
   HealthStatus,
   Nat,
-  Rule,
+  RuleSummary,
   Tenant,
 } from "./api";
 import Agents from "./Agents";
@@ -54,7 +54,7 @@ interface NavEntry {
 
 const NAV: NavEntry[] = [
   { key: "uebersicht", label: "Übersicht", icon: "overview", section: "doc" },
-  { key: "regeln", label: "Firewall-Regeln", icon: "rules", section: "doc" },
+  { key: "regeln", label: "Regeln & Contracts", icon: "rules", section: "doc" },
   { key: "objekte", label: "Objekte & Inventar", icon: "objects", section: "doc" },
   { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc" },
   { key: "apps", label: "Applikationen", icon: "apps", section: "doc" },
@@ -70,11 +70,20 @@ const NAV: NavEntry[] = [
 
 // Daten der Übersicht + Zähler in der Navigation (je Mandant geladen).
 export interface Stats {
-  rules: Rule[] | null;
+  rules: RuleSummary | null; // Kennzahlen aller Regeln (Firewall + ACI)
   nat: Nat[] | null;
   findings: Finding[] | null;
   error: unknown;
 }
+
+const EMPTY_RULES: RuleSummary = {
+  total: 0,
+  by_domain: {},
+  source_system_ids: [],
+  endpoints: 0,
+  unmatched: 0,
+  by_dst_zone: [],
+};
 
 type Boot =
   | { state: "loading" }
@@ -294,9 +303,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   const loadStats = useCallback(() => {
     if (!tenantReady) return;
     setStats({ rules: null, nat: null, findings: null, error: null });
-    Promise.all([fetchRules(undefined, tenantId), fetchNat(tenantId), fetchFindings(tenantId)])
+    Promise.all([fetchRuleSummary(tenantId), fetchNat(tenantId), fetchFindings(tenantId)])
       .then(([rules, nat, findings]) => setStats({ rules, nat, findings, error: null }))
-      .catch((e) => setStats({ rules: [], nat: [], findings: [], error: e }));
+      .catch((e) => setStats({ rules: EMPTY_RULES, nat: [], findings: [], error: e }));
   }, [tenantId, tenantReady]);
 
   useEffect(() => {
@@ -307,7 +316,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   const tenantLabel = tenant ? tenant.name : "Alle Mandanten";
   const openFindings = stats.findings?.filter((f) => f.status === "open").length;
   const badges: Partial<Record<View, { n: number | undefined; warn?: boolean }>> = {
-    regeln: { n: stats.rules?.length },
+    regeln: { n: stats.rules?.total },
     nat: { n: stats.nat?.length },
     findings: { n: openFindings, warn: (openFindings ?? 0) > 0 },
   };

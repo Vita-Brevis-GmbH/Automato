@@ -60,11 +60,16 @@ export default function RuleDetailDrawer({
   const dst = detail?.endpoints.filter((e) => e.role === "dst") ?? [];
   const refs = (role: string) => detail?.refs?.filter((r) => r.role === role) ?? [];
   const svcRefs = refs("service");
+  const aci = detail?.aci ?? null;
 
   return (
     <Drawer
       title={detail?.name ?? `Regel #${ruleId}`}
-      sub={detail ? `Regel #${detail.id} · ${systemName(detail.source_system_id)}` : undefined}
+      sub={
+        detail
+          ? `${aci ? "ACI-Contract" : "Regel"} #${detail.id} · ${systemName(detail.source_system_id)}`
+          : undefined
+      }
       onClose={onClose}
     >
       <ErrorBox error={error} />
@@ -93,28 +98,48 @@ export default function RuleDetailDrawer({
                 <Dash />
               )}
             </dd>
-            <dt>Schutz</dt>
-            <dd className="chips">
-              {detail.protections?.length ? (
-                detail.protections.map((p) => (
-                  <span className="chip local" key={p}>
-                    {p}
-                  </span>
-                ))
-              ) : (
-                <Dash />
-              )}
-            </dd>
-            <dt>Policy-ID</dt>
-            <dd className="mono">{detail.external_id}</dd>
-            <dt>Domäne</dt>
-            <dd>{detail.domain}</dd>
+            {aci ? (
+              <>
+                <dt>Contract</dt>
+                <dd className="mono">{aci.contract ?? <Dash />}</dd>
+                <dt>Subject</dt>
+                <dd className="mono">{aci.subject ?? <Dash />}</dd>
+                <dt>ACI-Tenant</dt>
+                <dd className="mono">{aci.tenant ?? <Dash />}</dd>
+                <dt>Scope</dt>
+                <dd>{aci.scope ?? <Dash />}</dd>
+                <dt>DN</dt>
+                <dd className="mono">{aci.dn ?? detail.external_id}</dd>
+              </>
+            ) : (
+              <>
+                <dt>Schutz</dt>
+                <dd className="chips">
+                  {detail.protections?.length ? (
+                    detail.protections.map((p) => (
+                      <span className="chip local" key={p}>
+                        {p}
+                      </span>
+                    ))
+                  ) : (
+                    <Dash />
+                  )}
+                </dd>
+                <dt>Policy-ID</dt>
+                <dd className="mono">{detail.external_id}</dd>
+              </>
+            )}
           </dl>
 
-          <div className="sub-h">Quellen ({refs("src").length || detail.num_src})</div>
+          {/* ACI: Consumer-EPGs greifen auf die Provider-EPGs zu */}
+          <div className="sub-h">
+            {aci ? "Consumer-EPGs" : "Quellen"} ({refs("src").length || detail.num_src})
+          </div>
           <Side refs={refs("src")} endpoints={src} />
 
-          <div className="sub-h">Ziele ({refs("dst").length || detail.num_dst})</div>
+          <div className="sub-h">
+            {aci ? "Provider-EPGs" : "Ziele"} ({refs("dst").length || detail.num_dst})
+          </div>
           <Side refs={refs("dst")} endpoints={dst} />
 
           {svcRefs.length > 0 && (

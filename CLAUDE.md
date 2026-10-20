@@ -561,3 +561,13 @@ Fokus). Tests `test_diagnose.py`.
 `rule_service_pkey`). Test `test_gleicher_service_mehrfach_je_regel_einmal`. Bekannte Grenze: EPG-Identität
 ist (Mandant, Name) – gleichnamige EPGs in verschiedenen ACI-Tenants/APs werden zusammengeführt.
 Tests: orchestrator 157, collectors 68, sot-gateway 14.
+**0.3.0 (ACI-Contracts sichtbar, Dev-Befund):** `/rules` war hart auf 500 gekappt (sortiert nach
+Quellsystem → ACI-Contracts hinter vielen FortiGate-Policies unsichtbar, Suche nur in der Seite). Jetzt
+serverseitig `domain`/`source_system_id`/`q` über alle Regeln, `limit`/`offset` + Header `X-Total-Count`
+(CORS `expose_headers`), `aci` (Tenant aus DN, Contract, Subject, Scope) an Liste/Detail;
+`GET /rules/summary` (SQL-Kennzahlen je Art, Endpunkte, unmatched, Ziel-Zonen) für Übersicht + Nav-Zähler.
+UI „Regeln & Contracts“: Filter Art, Consumer/Provider-Spalten, ACI-Kennzeichen, „weitere laden“, Drawer mit
+Contract/Subject/Tenant/Scope/DN. Verifiziert: Tests `test_rules_api.py`, Postgres, Playwright (520 FW + 2 ACI).
+Offen: Collector-Parser `mo.py` führt Contracts/EPGs über alle ACI-Tenants nur per Name (Kollision bei
+gleichen Namen in mehreren Tenants) – tenant-bewusste Identität als eigene Phase (Migration).
+Tests: orchestrator 159, collectors 68, sot-gateway 14.

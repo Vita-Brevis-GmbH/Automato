@@ -1,6 +1,27 @@
 from pydantic import BaseModel
 
 
+class AciContractOut(BaseModel):
+    """ACI-Contract-Subject (domain=aci_contract): Quelle = Consumer-, Ziel = Provider-EPGs."""
+
+    tenant: str | None = None  # ACI-Tenant aus dem Contract-DN (uni/tn-<TE>/brc-<CT>)
+    contract: str | None = None
+    subject: str | None = None
+    scope: str | None = None  # application-profile | context | tenant | global
+    dn: str | None = None
+
+
+class RuleSummaryOut(BaseModel):
+    """Kennzahlen fuer die Uebersicht (alle Regeln des Mandanten, nicht nur eine Seite)."""
+
+    total: int
+    by_domain: dict[str, int]  # firewall | aci_contract
+    source_system_ids: list[int]
+    endpoints: int
+    unmatched: int
+    by_dst_zone: list[tuple[str, int]]
+
+
 class RuleOut(BaseModel):
     id: int
     tenant_id: int
@@ -18,6 +39,7 @@ class RuleOut(BaseModel):
     sources: list[str] = []  # Quell-Objektnamen wie auf der Firewall (sonst Werte)
     destinations: list[str] = []  # Ziel-Objektnamen wie auf der Firewall (sonst Werte)
     service_names: list[str] = []  # Service-Namen wie auf der Firewall (sonst kanonisch)
+    aci: AciContractOut | None = None  # nur ACI-Contracts
 
 
 class EndpointOut(BaseModel):

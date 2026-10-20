@@ -137,7 +137,8 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | Endpunkt | Zweck |
 |---|---|
 | `GET /health`, `GET /auth/config` | Status (API/DB), öffentliche Login-Konfiguration |
-| `GET /rules` (`?q=`,`?tenant_id=`), `GET /rules/{id}` | Regelliste / -detail (Objektnamen, `refs` mit Referenzdaten) |
+| `GET /rules` (`?q=`,`?tenant_id=`,`?domain=firewall\|aci_contract`,`?source_system_id=`,`?limit=`,`?offset=`), `GET /rules/{id}` | Regeln und ACI-Contracts seitenweise (Standard 500, Gesamtzahl im Header `X-Total-Count`; Suche über alle Regeln) / Detail (Objektnamen, `refs` mit Referenzdaten, `aci`: Tenant/Contract/Subject/Scope) |
+| `GET /rules/summary` (`?tenant_id=`) | Kennzahlen aller Regeln für die Übersicht (je Art, Endpunkte, nicht aufgelöst, Ziel-Zonen) |
 | `GET /objects?tenant_id=` (`category`, `source_system_id`, `q`, `issues_only`) | Firewall-Objekte mit IPAM-Abgleich |
 | `GET /inventory/{devices\|interfaces\|vlans\|subnets\|vrfs}?tenant_id=` | Netzinventar (Subnetze mit IPAM-Abgleich) |
 | `GET /reconcile/summary`, `GET /reconcile/ipam`, `POST /reconcile` | Abgleich: Befunde je Typ, DDI ↔ NetBox, neu berechnen (operator) |

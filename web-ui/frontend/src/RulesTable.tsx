@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchRules, fetchSystems, Rule, System } from "./api";
+import { fetchRules, fetchSystems, Rule, RuleDomain, System } from "./api";
 import RuleDetailDrawer from "./RuleDetail";
 import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
+
+// Seitengrösse: Server filtert nach Art/System/Suche, der Rest wird mit "Weitere laden" geholt.
+const PAGE = 500;
+
+// Plattformen mit Regeln je Art (Filter "System" zeigt nur passende Quellsysteme)
+const RULE_PLATFORMS: Record<RuleDomain, string> = { firewall: "fortigate", aci_contract: "cisco_aci" };
 
 function ObjCell({ items }: { items: string[] }) {
   if (!items.length) return <Dash />;
@@ -22,6 +28,31 @@ function ZoneChip({ zone }: { zone: string | null }) {
   return zone ? <span className="chip">{zone}</span> : <Dash />;
 }
 
+// ACI-Contract: Contract + Subject, darunter ACI-Tenant und Scope
+function NameCell({ r }: { r: Rule }) {
+  if (r.aci) {
+    return (
+      <>
+        <span className="chip local" title="Cisco-ACI-Contract">
+          ACI
+        </span>{" "}
+        <b>{r.aci.contract ?? r.name}</b>
+        <div className="faint">
+          {[r.aci.subject && `Subject ${r.aci.subject}`, r.aci.tenant && `Tenant ${r.aci.tenant}`, r.aci.scope]
+            .filter(Boolean)
+            .join(" · ")}
+        </div>
+      </>
+    );
+  }
+  return (
+    <>
+      <b>{r.name}</b>
+      {r.section_label && <div className="faint">{r.section_label}</div>}
+    </>
+  );
+}
+
 export default function RulesTable({
   tenantId,
   tenantLabel,
@@ -30,10 +61,13 @@ export default function RulesTable({
   tenantLabel: string;
 }) {
   const [rules, setRules] = useState<Rule[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [more, setMore] = useState(false);
   const [systems, setSystems] = useState<System[]>([]);
   const [error, setError] = useState<unknown>(null);
 
   const [q, setQ] = useState("");
+  const [domain, setDomain] = useState<RuleDomain | "">("");
   const [system, setSystem] = useState("");
   const [srcZone, setSrcZone] = useState("");
   const [dstZone, setDstZone] = useState("");
@@ -48,22 +82,46 @@ export default function RulesTable({
       .catch(() => setSystems([]));
   }, [tenantId]);
 
-  // Freitext-/IP-Suche geht an den Orchestrator (durchsucht auch Endpunkt-Werte).
+  const query = useMemo(
+    () => ({ q, tenantId, domain, systemId: system ? Number(system) : null, limit: PAGE }),
+    [q, tenantId, domain, system],
+  );
+
+  // Suche, Art und System filtert der Orchestrator (über alle Regeln, nicht nur die erste Seite).
   useEffect(() => {
     const timer = setTimeout(() => {
       setRules(null);
       setError(null);
-      fetchRules(q, tenantId)
-        .then(setRules)
+      fetchRules(query)
+        .then((page) => {
+          setRules(page.rules);
+          setTotal(page.total);
+        })
         .catch((e) => {
           setError(e);
           setRules([]);
+          setTotal(0);
         });
     }, 300);
     return () => clearTimeout(timer);
-  }, [q, tenantId]);
+  }, [query]);
+
+  const loadMore = () => {
+    if (!rules) return;
+    setMore(true);
+    fetchRules({ ...query, offset: rules.length })
+      .then((page) => {
+        setRules([...rules, ...page.rules]);
+        setTotal(page.total);
+      })
+      .catch(setError)
+      .finally(() => setMore(false));
+  };
 
   const systemName = (id: number) => systems.find((s) => s.id === id)?.name ?? `#${id}`;
+  const ruleSystems = systems.filter((s) =>
+    domain ? s.platform === RULE_PLATFORMS[domain] : Object.values(RULE_PLATFORMS).includes(s.platform),
+  );
 
   const { srcZones, dstZones, actions } = useMemo(() => {
     const s = new Set<string>();
@@ -79,19 +137,22 @@ export default function RulesTable({
 
   const filtered = (rules ?? []).filter(
     (r) =>
-      (!system || String(r.source_system_id) === system) &&
       (!action || r.action === action) &&
       (!srcZone || r.src_zone === srcZone) &&
       (!dstZone || r.dst_zone === dstZone) &&
       (!onlyFindings || r.num_unmatched > 0),
   );
+  const loaded = rules?.length ?? 0;
+  // ACI: Quelle = Consumer-EPGs, Ziel = Provider-EPGs
+  const srcHead = domain === "aci_contract" ? "Consumer" : domain === "firewall" ? "Quelle" : "Quelle / Consumer";
+  const dstHead = domain === "aci_contract" ? "Provider" : domain === "firewall" ? "Ziel" : "Ziel / Provider";
 
   return (
     <>
-      <PageHead title="Firewall-Regeln">
+      <PageHead title="Regeln & Contracts">
         {rules === null
           ? "Lade…"
-          : `${rules.length} Regeln für „${tenantLabel}“, read-only eingelesen und gegen die Source of Truth aufgelöst.`}
+          : `${total} Einträge für „${tenantLabel}“ – Firewall-Policies und ACI-Contracts, read-only eingelesen und gegen die Source of Truth aufgelöst.`}
       </PageHead>
 
       <div className="filterbar">
@@ -100,14 +161,26 @@ export default function RulesTable({
             <Icon name="search" />
           </span>
           <input
-            placeholder="Suche: Regel, Objektname oder IP (z. B. 10.20.4.10)…"
+            placeholder="Suche: Regel, Contract, Objekt/EPG oder IP (z. B. 10.20.4.10)…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
+        <select
+          className="sel"
+          value={domain}
+          onChange={(e) => {
+            setDomain(e.target.value as RuleDomain | "");
+            setSystem("");
+          }}
+        >
+          <option value="">Art: alle</option>
+          <option value="firewall">Firewall-Regeln</option>
+          <option value="aci_contract">ACI-Contracts</option>
+        </select>
         <select className="sel" value={system} onChange={(e) => setSystem(e.target.value)}>
           <option value="">System: alle</option>
-          {systems.map((s) => (
+          {ruleSystems.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>
@@ -141,7 +214,9 @@ export default function RulesTable({
           <span className="dot y" />
           nur mit Findings
         </button>
-        <span className="count">{filtered.length} Treffer</span>
+        <span className="count">
+          {filtered.length} Treffer{total > loaded ? ` · ${loaded} von ${total} geladen` : ""}
+        </span>
       </div>
 
       <ErrorBox error={error} prefix="Regeln laden" />
@@ -154,7 +229,7 @@ export default function RulesTable({
             <Empty title={rules.length ? "Keine Treffer" : "Noch keine Regeln"}>
               {rules.length
                 ? "Filter oder Suche anpassen."
-                : "Sobald ein Quellsystem eingelesen wurde, erscheinen hier die Regeln."}
+                : "Sobald ein Quellsystem eingelesen wurde, erscheinen hier die Regeln und Contracts."}
             </Empty>
           ) : (
             <table>
@@ -166,8 +241,8 @@ export default function RulesTable({
                   <th>System</th>
                   <th>Quell-Zone</th>
                   <th>Ziel-Zone</th>
-                  <th>Quelle</th>
-                  <th>Ziel</th>
+                  <th>{srcHead}</th>
+                  <th>{dstHead}</th>
                   <th>Dienste</th>
                   <th title="nicht aufgelöste Objekte"></th>
                 </tr>
@@ -177,8 +252,7 @@ export default function RulesTable({
                   <tr key={r.id} className="clickable" onClick={() => setSelected(r.id)}>
                     <td className="mono">{r.id}</td>
                     <td>
-                      <b>{r.name}</b>
-                      {r.section_label && <div className="faint">{r.section_label}</div>}
+                      <NameCell r={r} />
                     </td>
                     <td>
                       <ActionBadge action={r.action} />
@@ -214,6 +288,14 @@ export default function RulesTable({
             </table>
           )}
         </div>
+        {rules !== null && total > loaded && (
+          <div className="card-foot">
+            {loaded} von {total} geladen – Suche, Art oder System eingrenzen oder{" "}
+            <button className="btn btn-ghost btn-sm" onClick={loadMore} disabled={more}>
+              {more ? "Lade…" : `weitere ${Math.min(PAGE, total - loaded)} laden`}
+            </button>
+          </div>
+        )}
       </div>
 
       {selected !== null && (

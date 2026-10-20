@@ -65,22 +65,20 @@ export default function Overview({
     wasPending.current = pending;
   }, [pending, onReload]);
 
+  // Kennzahlen aller Regeln (Firewall-Policies + ACI-Contracts) aus /rules/summary
   const rules = stats.rules;
-  const rulesCount = rules?.length ?? 0;
-  const endpoints = (rules ?? []).reduce((a, r) => a + r.num_src + r.num_dst, 0);
-  const unmatched = (rules ?? []).reduce((a, r) => a + r.num_unmatched, 0);
+  const rulesCount = rules?.total ?? 0;
+  const fwCount = rules?.by_domain.firewall ?? 0;
+  const aciCount = rules?.by_domain.aci_contract ?? 0;
+  const endpoints = rules?.endpoints ?? 0;
+  const unmatched = rules?.unmatched ?? 0;
   const coverage = endpoints ? Math.floor(((endpoints - unmatched) / endpoints) * 100) : null;
   const openFindings = (stats.findings ?? []).filter((f) => f.status === "open");
-  const usedSystems = new Set((rules ?? []).map((r) => r.source_system_id));
+  const usedSystems = rules?.source_system_ids ?? [];
   const systemName = (id: number | null) =>
     id == null ? "–" : (systems.find((s) => s.id === id)?.name ?? `#${id}`);
 
-  const byZone = new Map<string, number>();
-  (rules ?? []).forEach((r) => {
-    const z = r.dst_zone ?? "–";
-    byZone.set(z, (byZone.get(z) ?? 0) + 1);
-  });
-  const zoneRows = [...byZone.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const zoneRows = (rules?.by_dst_zone ?? []).slice(0, 8);
   const zoneMax = zoneRows.reduce((m, [, n]) => Math.max(m, n), 1);
   const val = (n: number) => (rules === null ? "…" : n);
 
@@ -103,11 +101,12 @@ export default function Overview({
 
       <div className="kpis">
         <button className="kpi" onClick={() => onGo("regeln")}>
-          <div className="k-label">Firewall-Regeln</div>
+          <div className="k-label">Regeln &amp; Contracts</div>
           <div className="k-val">{val(rulesCount)}</div>
           <div className="k-sub">
-            {usedSystems.size} Quellsystem{usedSystems.size === 1 ? "" : "e"}
-            {usedSystems.size > 0 && ` · ${[...usedSystems].map(systemName).join(", ")}`}
+            {aciCount > 0 ? `${fwCount} Firewall · ${aciCount} ACI · ` : ""}
+            {usedSystems.length} Quellsystem{usedSystems.length === 1 ? "" : "e"}
+            {usedSystems.length > 0 && ` · ${usedSystems.map(systemName).join(", ")}`}
           </div>
         </button>
         <button className="kpi" onClick={() => onGo("nat")}>
