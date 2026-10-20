@@ -205,13 +205,15 @@ Filtern (System/Zone/Aktion/Freitext), Regel-Detail und Findings-Ansicht steht.
 - [x] Security-/Hardening-Check durchgeführt (DoD-Abgleich + 8-Prinzipien-Tabelle im
   UC1-Dokument). Sofort-Härtung: Read-API fail-closed ausserhalb `dev`.
 - [x] Dokumentation erstellt: Betrieb + Anwender (`docs/BETRIEB.md`).
-- [ ] **Produktions-Gate (offen):** AuthN/RBAC vor der öffentlichen Read-API; optional
-  Finding-Triage-Schreibpfad; Transport-/at-rest-Verschlüsselung, Netzsegmentierung
-  (Folge-ADRs, ADR 0005).
+- [x] **Produktions-Gate:** AuthN/RBAC vor der Read-API (Keycloak, ADR 0007),
+  Finding-Triage-Schreibpfad, mTLS-Agent-Gateway, signierte Agent-Updates, Sicherung mit
+  Verschlüsselung at rest, Update mit Rückfall, R16-Prüfung (ADR 0013, 0.5.0).
+  Netzsegmentierung bleibt Betriebsaufgabe je Kundenumgebung.
 
 **Exit-Kriterium:** UC1 Model 2 ist **funktional vollständig und Lab-/Review-reif**
 (DoD erfüllt, Security-Check für den Scope bestanden). Die **produktive Freigabe**
-ist an das AuthN/RBAC-Gate gebunden (fail-closed erzwungen).
+ist an das AuthN/RBAC-Gate gebunden (fail-closed erzwungen) – seit 0.5.0 erfüllt; für den
+Produktivbetrieb gelten die Vorgaben aus ADR 0013.
 
 ## Ausblick nach M9
 
@@ -253,9 +255,9 @@ dependency-getrieben; die **Web-UI (W1)** ist **vorgezogen**, das Auth-Fundament
 
 | Epic | Inhalt | Status |
 |---|---|---|
-| **W1 — Web-UI-Ausbau** | Übersicht/Dashboard, bessere Filter, Regel-Detail, Mandanten-Switcher; zunächst gegen die bestehende (fail-closed) API. Mockup liegt vor. | geplant (vorgezogen) |
-| **E1 — Härtung / RBAC** | AuthN/RBAC via **Keycloak** (lokal + SAML + OTP, geseedter globaler Admin), Mandanten-Scoping erzwingen, Rollen `viewer/operator/admin`, Audit-Erweiterung, Secrets-/Vault-Provider. Details: **ADR 0007**. | geplant (Schwerpunkt) |
-| **E2 — Gemeinsame Basis (Magister-Synergie)** | Keycloak-Container, **Cockpit** (Multi-Instanz: Health, Version, Update-Trigger, `stable`/`latest` + Rollback-Snapshot), Deploy-/Caddy-Security-Skelett, Audit-/Scope-Muster. Magister-Migration als eigener Magister-Meilenstein. | geplant |
+| **W1 — Web-UI-Ausbau** | Übersicht/Dashboard, bessere Filter, Regel-Detail, Mandanten-Switcher; zunächst gegen die bestehende (fail-closed) API. Mockup liegt vor. | **umgesetzt** (alle Ansichten nach Mockup) |
+| **E1 — Härtung / RBAC** | AuthN/RBAC via **Keycloak** (lokal + SAML + OTP, geseedter globaler Admin), Mandanten-Scoping erzwingen, Rollen `viewer/operator/admin`, Audit-Erweiterung, Secrets-/Vault-Provider. Details: **ADR 0007**. Produktions-Gate ergänzt durch **ADR 0013**. | **umgesetzt** (Keycloak Prod live) |
+| **E2 — Gemeinsame Basis (Magister-Synergie)** | Keycloak-Container, **Cockpit** (Multi-Instanz: Health, Version, Update-Trigger, `stable`/`latest` + Rollback-Snapshot), Deploy-/Caddy-Security-Skelett, Audit-/Scope-Muster. Magister-Migration als eigener Magister-Meilenstein. | teilweise: System-Seite, `deploy/update.sh` mit Rückfall, Sicherung; Cockpit als **ADR 0014 (Entwurf)** |
 | **E3 — Import-Wizard** | Firewall-Import geführt per Wizard (statt CLI-Bootstrap). | geplant |
 | **E4 — Schreibpfad-Fundament** | Worker + **Runner-Abstraktion** (Ansible primär, Terraform/OpenTofu je Use Case) für read/write/delete; State-Backend-Entscheid als ADR **vor** dem ersten schreibenden Use Case (ADR 0002). Plan → Approve → Apply → Rollback. | später |
 | **E5 — Workflows** | Kleine, **verkettbare** Workflows (Bausteine zu Abläufen kombinieren) — Kern der allgemeinen Orchestrierung. | später |
@@ -266,7 +268,8 @@ dependency-getrieben; die **Web-UI (W1)** ist **vorgezogen**, das Auth-Fundament
 
 Nur lesen – einziger Schreibweg ist der NetBox-Sync (Vorschau → Klick → Neu-Lesen).
 Alle Schritte A1–A6 sind als Code umgesetzt und mit Fixtures/Fake-NetBox getestet; offen ist
-der Lauf gegen die echte DDI (Agent) und die Dev-NetBox.
+die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
+`docs/DEV-SETUP-AGENT.md` Abschnitt 6b).
 
 | Schritt | Inhalt |
 |---|---|
@@ -276,6 +279,15 @@ der Lauf gegen die echte DDI (Agent) und die Dev-NetBox.
 | **A4** Abgleich | Firewall-Objekt ↔ IPAM, DDI ↔ NetBox, ACI-Subnetz/-VLAN ↔ IPAM |
 | **A5** UI | Regeln mit Namen und Referenz, Ansichten „Objekte" und „Abgleich", IPAM-Quellsysteme |
 | **A6** NetBox-Sync | DDI-Spiegel + Netzinventar nach NetBox, nur eigene (getaggte) Objekte, Vorschau + Übernehmen |
+
+### Plan 0.5.0 – Aufräumen, Applikationen, Betrieb, Produktions-Gate – umgesetzt
+
+| Punkt | Inhalt | Stand |
+|---|---|---|
+| **1 Aufräumen** | NAT/Findings seitenweise mit Gesamtzahl und Zählern; CI-Job gegen Postgres (Migrationen hoch/runter, alle Orchestrator-Tests); ROADMAP/CLAUDE.md aktualisiert | umgesetzt |
+| **2 Applikationen** | eigenes Objekt (AP/EPG/Server), Vorschläge per Projektnummer, Doku je Applikation mit Export/Druck; EPG-Lage mit Leaf-Port/VLAN; VIPs als „publizierte Dienste“ | umgesetzt (ADR 0012) |
+| **3 Betrieb** | Zeitplan je Quellsystem (Cron, mehrprozess-sicher); ACI: ESGs, Taboo-Contracts, Preferred Groups; Abnahme-Checkliste Phase A | umgesetzt; Abnahme gegen echte Systeme steht aus |
+| **4 Produktions-Gate** | mTLS-Agent-Gateway (`require`/`bind`), signierte Agent-Updates, Sicherung/Wiederherstellung mit age, `deploy/update.sh` mit Rückfall, R16-Prüfung, System-Seite; Cockpit mit Magister als Entwurf | umgesetzt (ADR 0013, 0014 Entwurf) |
 
 Danach: VM-Collector (vCenter/Proxmox → NetBox); Phase B (Bereinigen auf Firewall/DDI) und
 Phase C (Regeln schreiben, FortiGate/FortiManager/ACI) nur mit eigener ADR und Freigabe.
@@ -289,5 +301,5 @@ das Plan→Approve→Apply→Rollback-Jobmodell (E4) abgedeckt.
 (`docs/usecases/uc1-applikations-doku-spec.md`) → **ADR-0004-Ergänzung** (Mandant = GG,
 Kunde/Umgebung darüber mit SoT + Namensprofil, Applikation = System mit AP/Projekt-Klammer,
 Ausnahmen-Kaskade, neue Collector-Felder). **Samples erhalten** (ACI + FortiGate) →
-Lesevertrag `docs/collectors-read-contract.md`. **Noch offen:** Wörterbücher (Kap. 3.1/3.2)
-als in-App pflegbare Daten (Namensprofil).
+Lesevertrag `docs/collectors-read-contract.md`. Wörterbücher (Kap. 3.1/3.2) sind als in-App
+pflegbare Daten umgesetzt (Namensprofile, ohne Funktionsrelevanz).

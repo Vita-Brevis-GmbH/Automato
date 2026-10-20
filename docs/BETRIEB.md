@@ -132,6 +132,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   **Auto-Update** (ADR 0011): Agenten aktualisieren sich vor jedem Lauf selbst, sobald das
   Orchestrator-Image ein neues Agent-Paket enthält („Update beim nächsten Lauf“ → „aktuell“);
   ist Auto-Update aus, zeigt die Liste „veraltet“ und das Paket wird manuell installiert.
+- **System (nur Admin, ADR 0013):** Version, Migrationsstand DB/Code, Agent-Paket mit
+  Signaturzustand und Anzahl aktueller Agenten, Anmeldung, Agent-Kanal (mTLS-Modus),
+  Verschlüsselung von Audit-Log und Zugangsdaten, Zeitplan mit nächstem Termin, letzte
+  Sicherung. Rein lesend, zeigt nie Schlüssel.
 - **NetBox-Sync (nur Admin, ADR 0010):** einziger Schreibweg von Automato. Ziel-NetBox
   wählen (Quellsystem mit Schreib-Token), Umfang *Netzinventar* (Geräte mit Ports, VLANs je
   Quellsystem, reale Subnetze inkl. ACI BD/EPG, VRFs) und/oder *DDI-Spiegel* (Netze, Ranges,
@@ -169,17 +173,29 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `POST /internal/collector-runs/{id}/references` | Teil-Upload einer Referenzquelle (Infoblox/NetBox, je bis 2000 Einträge; das Ergebnis meldet `reference_count`, sonst wird der Lauf verworfen) |
 | `GET /netbox-sync/targets`, `GET/POST /netbox-sync/plans`, `GET …/plans/{id}[/items]`, `POST …/plans/{id}/apply` | NetBox-Sync (admin): Vorschau, Aktionen, Übernahme |
 | `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}` | Namensprofile |
+| `GET /system/status` | Betriebsstand (admin, siehe System-Seite) |
+
+Agent-Aufrufe (`/internal/agent/*`, Ergebnis-/Referenz-Upload mit `X-Agent-Token`) nimmt der
+Orchestrator mit `AUTOMATO_INTERNAL_MTLS_MODE=require|bind` nur über das mTLS-Agent-Gateway
+an (`deploy/agent-gateway`, Port 8443).
 
 ## 4b. Versionen und Updates
 
 - **Eine Version für alles** (Datei `VERSION`, SemVer): Orchestrator (`/health` → `version`,
   Fusszeile der Web-UI), Collector-Agent, SoT-Gateway, Web-UI. Neue Version:
   `python3 scripts/version.py set X.Y.Z`, Änderungen in `CHANGELOG.md`.
-- **Orchestrator aktualisieren:** `git pull` und `docker compose … up -d --build`; Migrationen
-  laufen beim Start (`alembic upgrade head`).
+- **Orchestrator aktualisieren:** `deploy/update.sh` (bzw. `deploy/update.sh <tag>`):
+  verschlüsselte Sicherung → Code holen → Images bauen → starten → `/health`. Migrationen
+  laufen beim Start (`alembic upgrade head`). Schlägt etwas fehl: `deploy/update.sh --rollback`
+  setzt Code **und** Datenbank auf den Stand vor dem Update zurück (ADR 0013).
+- **Sicherung:** täglich `deploy/backup/backup.sh` (age-verschlüsselt: Datenbank, Schlüssel der
+  Zugangsdaten, Agent-Signatur), Wiederherstellung `deploy/backup/restore.sh` – Details und
+  Verschlüsselung at rest in `deploy/backup/README.md`.
 - **Agenten** ziehen beim nächsten Lauf selbst nach (ADR 0011). Die Agentenliste zeigt je Agent
   „0.2.0 · Build …“ und „aktuell“ bzw. „Update beim nächsten Lauf“. Manuell (`install.ps1`) nur
-  für die Erstinstallation oder wenn Auto-Update aus ist.
+  für die Erstinstallation oder wenn Auto-Update aus ist. Produktiv das Paket nach jedem Update
+  **signieren** (`deploy/agent-signing/README.md`); Agenten mit
+  `AUTOMATO_AGENT_SIGNING_PUBKEY` installieren nur signierte Updates.
 
 ## 5. Sicherheit
 
@@ -188,7 +204,12 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
   `dev`-Modus laufen alle Anfragen als Standard-Admin — nur im Lab verwenden.
 - Ausserhalb `AUTOMATO_ENVIRONMENT=dev` verweigert der Orchestrator ohne RBAC den Start,
   solange `AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API` nicht bewusst gesetzt ist (ADR 0005).
-- Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt.
+- Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
+  Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
+  Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.
+- **FortiGate-Token prüfen (R16):** `automato-collector --check --strict` testet, ob die
+  FortiGate ein ungültiges Token ablehnt. Opt-in, weil der Versuch als fehlgeschlagene
+  Anmeldung zählt (admin-lockout-threshold).
 - **Geräte-Zugangsdaten** (ADR 0009) liegen verschlüsselt in der DB; der Schlüssel kommt aus
   `AUTOMATO_CREDENTIALS_KEY` (Passphrase oder Secret-Referenz `openbao:`/`file:`) oder aus der
   beim ersten Start erzeugten Datei `/var/lib/automato/credentials.key` (Volume

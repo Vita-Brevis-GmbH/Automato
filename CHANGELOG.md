@@ -7,6 +7,44 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.5.0 – 2026-10-20
+
+Applikationen, zeitgesteuerte Läufe, ACI-Lücken und Produktions-Gate (Alembic `0024`–`0026`).
+
+- **Applikationen (ADR 0012):** eigenes Objekt mit Kürzel, Verantwortlichen, Kritikalität,
+  Standort und Mitgliedern: Application Profiles (`Tenant/AP`), einzelne EPGs, Server.
+  - **Vorschläge** nach der Projektnummer aus `AP_<nr>` bzw. `H_<funktion>-<nr>-…`, mit einem
+    Klick übernehmen bzw. ergänzen.
+  - **Doku je Applikation** über alle Systeme mit Markdown-Export und Druckansicht (PDF über
+    den Browser).
+  - Die VIP-Sicht heisst jetzt **Publizierte Dienste** (`/published-services`).
+- **EPG-Lage:** Leaf-Ports (statische Pfade, LLDP/CDP-Nachbar) und VLANs der EPG.
+- **ACI:** **ESGs** (Selektoren EPG/Tag/IP) als Consumer/Provider, **Taboo-Contracts** als
+  Deny-Regeln auf die geschützten EPGs, **Preferred Groups** als eine Regel je VRF. Nach dem
+  Update den APIC neu einlesen.
+- **Zeitgesteuerte Läufe:** Zeitplan je Quellsystem (Vorlagen oder Cron, Zeitzone
+  Europe/Zurich); „Letzte Läufe“ kennzeichnet sie mit „Zeitplan“.
+  - Ein Termin wird auch bei mehreren Orchestrator-Prozessen nur einmal ausgelöst.
+  - Läuft oder wartet schon ein Lauf, fällt der Termin aus.
+- **NAT und Findings seitenweise** mit Gesamtzahl; Zähler in Übersicht und Navigation aus
+  Summary-Endpunkten statt aus gekappten Listen.
+- **Produktions-Gate (ADR 0013):**
+  - **mTLS-Agent-Gateway** (`deploy/agent-gateway`, `AUTOMATO_INTERNAL_MTLS_MODE=require|bind`),
+  - **signierte Agent-Updates** (Ed25519, offline signiert),
+  - **Sicherung/Wiederherstellung** mit age (`deploy/backup`),
+  - **`deploy/update.sh`** mit Rückfall auf Code und Datenbank,
+  - **R16-Prüfung** `automato-collector --check --strict`,
+  - neue Admin-Ansicht **System**.
+- **Fix Agent-mTLS:** Mit gepinnter CA legte der Agent sein Client-Zertifikat nicht vor (httpx
+  0.28 ignoriert `cert=` neben `verify=<pfad>`); jetzt ein gemeinsamer SSL-Kontext.
+- **CI:** Migrationen hoch/runter und alle Orchestrator-Tests zusätzlich gegen Postgres 16.
+- **Doku:** CLAUDE.md gestrafft (Verlauf bis 0.4.2 in `docs/ENTWICKLUNGSVERLAUF.md`),
+  ROADMAP-Status, ADR 0012–0014 (0014 = Entwurf gemeinsames Cockpit mit Magister).
+
+**Hinweis Agenten:** Das Update auf 0.5.0 bringt die neue Abhängigkeit `cryptography`. Die
+Station braucht dafür einmalig PyPI-Zugang oder ein Wheelhouse. Ohne Zugang bleibt der Agent
+auf seiner Version und meldet den pip-Fehler.
+
 ## 0.4.2 – 2026-10-20
 
 - **ACI-Zone je Contract-Seite (Dev-Befund):** Die Zone kam vom *ersten* Consumer bzw.
@@ -125,4 +163,5 @@ Erste versionierte Ausgabe.
 ## 0.1.0
 
 Stand bis einschliesslich UC1 Model 2, ACI (Model 1), Keycloak/RBAC, externe Agenten mit
-zentralen Geräte-Zugangsdaten (ADR 0001–0009). Keine einzelnen Release-Nummern.
+zentralen Geräte-Zugangsdaten (ADR 0001–0009). Keine einzelnen Release-Nummern; der
+ausführliche Verlauf steht in `docs/ENTWICKLUNGSVERLAUF.md`.
