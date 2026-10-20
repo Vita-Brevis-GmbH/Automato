@@ -95,7 +95,9 @@ def test_db_fehler_im_ingest_wird_zurueckgerollt(client, session_factory, monkey
     run_id, _ = _deliver(client, tid, sid, [])
     s = session_factory()
     run = s.get(CollectorRun, run_id)
-    assert run.status == "failed" and "IntegrityError" in run.message
+    # SQLite meldet IntegrityError, Postgres UniqueViolation - beides ohne SQL in der Meldung
+    assert run.status == "failed" and "Einspielen fehlgeschlagen" in run.message
+    assert "uq_epg_endpoint_epg_ip" in run.message or "UNIQUE" in run.message
     assert "INSERT" not in run.message  # kein SQL in der Meldung
     assert s.query(Epg).count() == 0  # Teil-Ingest verworfen
     s.close()

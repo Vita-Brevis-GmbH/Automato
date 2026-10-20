@@ -1,4 +1,11 @@
-"""Test-Setup: SQLite in-memory statt Postgres, Celery-Dispatch gemockt."""
+"""Test-Setup: SQLite in-memory, Celery-Dispatch gemockt.
+
+Mit `AUTOMATO_TEST_DATABASE_URL` (z. B. `postgresql+psycopg://…`) laufen dieselben Tests gegen
+eine echte Datenbank (CI-Job `postgres`); das Schema wird je Test neu angelegt.
+"""
+
+import os
+from functools import lru_cache
 
 import pytest
 from app.db import get_session, get_session_factory
@@ -6,7 +13,7 @@ from app.main import create_app
 from app.models import Base
 from fastapi.testclient import TestClient
 from sqlalchemy import StaticPool, create_engine, event
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import close_all_sessions, sessionmaker
 
 
 @pytest.fixture(autouse=True)
@@ -25,15 +32,28 @@ def _credentials_key():
     credentials._fernet.cache_clear()
 
 
+@lru_cache(maxsize=1)
+def _external_engine(url: str):
+    return create_engine(url, pool_pre_ping=True)
+
+
 @pytest.fixture
 def session_factory():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    # Fremdschluessel wie in Postgres pruefen (SQLite tut das sonst nicht)
-    event.listen(engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))
+    url = os.environ.get("AUTOMATO_TEST_DATABASE_URL")
+    if url:
+        engine = _external_engine(url)
+        Base.metadata.drop_all(engine)
+    else:
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        # Fremdschluessel wie in Postgres pruefen (SQLite tut das sonst nicht)
+        event.listen(engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))
     Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, expire_on_commit=False)
+    yield sessionmaker(bind=engine, expire_on_commit=False)
+    # Offene Test-Sessions schliessen - eine "idle in transaction"-Verbindung blockiert sonst
+    # das DROP TABLE des naechsten Tests (Postgres)
+    close_all_sessions()
 
 
 @pytest.fixture

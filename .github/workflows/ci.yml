@@ -70,6 +70,46 @@ jobs:
       - name: Agent-Paket (Docker-Stage, Wheels vollstaendig)
         run: docker build --target agent-package -f orchestrator/Dockerfile .
 
+  # Migrationen und Orchestrator-Tests gegen echtes Postgres (wie Dev/Prod); die Python-Jobs
+  # oben laufen schnell gegen SQLite.
+  postgres:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: automato
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: automato
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U automato"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      AUTOMATO_DATABASE_URL: postgresql+psycopg://automato:ci-only@localhost:5432/automato
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Sync workspace
+        run: uv sync --all-packages
+      - name: Migrationen hoch, ganz runter, wieder hoch
+        working-directory: orchestrator
+        run: |
+          uv run --package orchestrator alembic upgrade head
+          uv run --package orchestrator alembic downgrade base
+          uv run --package orchestrator alembic upgrade head
+      - name: Testdatenbank anlegen
+        run: >-
+          uv run --package orchestrator python -c "import sqlalchemy as sa;
+          e = sa.create_engine('$AUTOMATO_DATABASE_URL', isolation_level='AUTOCOMMIT');
+          e.connect().execute(sa.text('CREATE DATABASE automato_test'))"
+      - name: Tests orchestrator gegen Postgres
+        env:
+          AUTOMATO_TEST_DATABASE_URL: postgresql+psycopg://automato:ci-only@localhost:5432/automato_test
+        run: uv run --package orchestrator pytest orchestrator/tests -q
+
   frontend:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
