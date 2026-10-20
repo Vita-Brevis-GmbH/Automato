@@ -21,8 +21,9 @@ export interface Rule {
   num_dst: number;
   num_services: number;
   num_unmatched: number;
-  sources: string[];
+  sources: string[]; // Objektnamen wie auf der Firewall (sonst Werte)
   destinations: string[];
+  service_names: string[]; // Service-Namen wie auf der Firewall (sonst kanonisch)
 }
 
 export interface Endpoint {
@@ -37,9 +38,60 @@ export interface Endpoint {
   nat_target: string | null;
 }
 
+// Referenzdaten eines Werts aus dem IPAM (führend, z. B. DDI) oder der Anreicherung (NetBox)
+export interface RefInfo {
+  source: string | null; // Name des Quellsystems
+  kind: string; // prefix | range | ip_address | host | a_record | ptr_record | fixed_address
+  value: string;
+  dns_name: string | null;
+  name: string | null;
+  description: string | null;
+  prefix: string | null; // umgebendes Netz
+  vlan: number | null;
+  vlan_name: string | null;
+  vrf: string | null;
+  site: string | null;
+  tenant: string | null;
+  status: string | null;
+  attrs: Record<string, unknown> | null;
+  url: string | null; // Link in die Quelle (NetBox)
+}
+
+// Aufgelöster Wert eines Firewall-Objekts mit Abgleich gegen das IPAM
+export interface RefValue {
+  value: string;
+  match_status: string | null;
+  zone: string | null;
+  source_of_record: string | null; // infoblox | netbox
+  reference: RefInfo | null;
+  enrichment: RefInfo | null;
+}
+
+export interface RefMember {
+  name: string;
+  category: string | null;
+  obj_type: string | null;
+  comment: string | null;
+  values: RefValue[];
+}
+
+// Verweis einer Regel auf ein Firewall-Objekt – so, wie es auf dem Gerät steht
+export interface RuleRef {
+  role: string; // src | dst | service
+  name: string;
+  category: string | null; // null = Built-in/nicht als Objekt gelesen ("all")
+  obj_type: string | null;
+  comment: string | null;
+  color: number | null;
+  values: RefValue[];
+  members: RefMember[];
+  match_status: string | null;
+}
+
 export interface RuleDetail extends Rule {
   external_id: string;
   sequence: number | null;
+  refs: RuleRef[];
   endpoints: Endpoint[];
   services: string[];
   protections?: string[] | null;
@@ -53,6 +105,7 @@ export interface Finding {
   status: string;
   subject_kind: string;
   subject_id: string;
+  source_system_id: number | null;
   detail: Record<string, unknown> | null;
   note: string | null;
   first_seen: string | null;
@@ -63,13 +116,17 @@ export interface System {
   id: number;
   tenant_id: number | null; // null = Altbestand, noch keinem Mandanten zugeordnet
   name: string;
-  platform: string; // fortigate | cisco_aci
+  platform: string; // fortigate | cisco_aci | infoblox | netbox
   enabled: boolean;
   base_url: string;
   agent_id: number | null; // verwaltender Collector-Agent (null = zentraler Worker)
   verify_tls: boolean;
   read_scope: string; // Cisco ACI: gelesene ACI-Tenants (kommagetrennt, leer = alle)
   has_credentials: boolean; // Zugangsdaten selbst werden nie ausgegeben (nur schreibbar)
+  ref_role: string | null; // Referenzquellen: primary (IPAM führend) | enrichment (ADR 0010)
+  has_write_token: boolean; // NetBox: Schreib-Token für den NetBox-Sync hinterlegt
+  reference_count: number; // Referenzquellen: Einträge im aktuellen Stand
+  reference_at: string | null;
   rule_count: number;
   nat_count: number;
 }
@@ -195,6 +252,145 @@ export interface SystemDoc {
   tenant_code: string | null;
   site: { id: number; code: string; name: string } | null;
   tables: DocTable[];
+}
+
+// Firewall-Objekt wie auf dem Gerät (Objekt-Ansicht)
+export interface DeviceObject {
+  id: number;
+  source_system_id: number;
+  source: string | null;
+  category: string; // address | address_group | vip | ippool | service | service_group
+  name: string;
+  obj_type: string | null;
+  family: string | null;
+  values: RefValue[]; // Services: nur `value`
+  members: string[];
+  member_of: string[];
+  used_in_rules: number;
+  comment: string | null;
+  color: number | null;
+  interface: string | null;
+  issues: string[]; // Finding-Typen
+}
+
+export interface Paged<T> {
+  total: number;
+  rows: T[];
+}
+
+// Netzinventar (FortiGate/APIC)
+interface InvBase {
+  id: number;
+  source_system_id: number;
+  source: string | null;
+}
+export interface InvDevice extends InvBase {
+  name: string;
+  role: string;
+  model: string | null;
+  serial: string | null;
+  node_id: string | null;
+  mgmt_ip: string | null;
+  version: string | null;
+}
+export interface InvInterface extends InvBase {
+  device: string;
+  name: string;
+  kind: string;
+  enabled: boolean | null;
+  mode: string | null;
+  untagged_vlan: number | null;
+  tagged_vlans: number[] | null;
+  lag: string | null;
+  parent: string | null;
+  ips: string[] | null;
+  description: string | null;
+  zone: string | null;
+  neighbor: string | null;
+  neighbor_port: string | null;
+  policy_group: string | null;
+  epgs: string[] | null;
+}
+export interface InvVlan extends InvBase {
+  vid: number;
+  name: string;
+  group: string | null;
+  description: string | null;
+  epgs: string[] | null;
+}
+export interface PrefixInfo {
+  source: string;
+  found: boolean;
+  vlan: number | null;
+  description: string | null;
+  site: string | null;
+  url: string | null;
+}
+export interface InvSubnet extends InvBase {
+  prefix: string;
+  gateway: string | null;
+  vrf: string | null;
+  vlan: number | null;
+  context: string;
+  context_name: string;
+  aci_tenant: string | null;
+  ap: string | null;
+  epg: string | null;
+  bd: string | null;
+  description: string | null;
+  ipam: PrefixInfo | null;
+  enrichment: PrefixInfo | null;
+}
+export interface InvVrf extends InvBase {
+  name: string;
+}
+export interface Inventory {
+  devices: InvDevice;
+  interfaces: InvInterface;
+  vlans: InvVlan;
+  subnets: InvSubnet;
+  vrfs: InvVrf;
+}
+
+// Abgleich (ADR 0010)
+export interface SourceRef {
+  id: number;
+  name: string;
+  platform: string;
+}
+export interface ReconcileSummary {
+  tenant_id: number;
+  findings: Record<string, { open: number; total: number }>;
+  reference_sources: (SourceRef & { ref_role: string; has_reference: boolean })[];
+  ipam: {
+    available: boolean;
+    primary?: SourceRef;
+    enrichment?: SourceRef;
+    summary?: Record<string, number>; // missing | different | only_enrichment | equal
+  };
+}
+export interface RefBrief {
+  kind: string;
+  value: string;
+  dns_name: string;
+  description: string | null;
+  vlan: number | null;
+  site: string | null;
+  url: string | null;
+}
+export interface IpamRow {
+  status: string; // missing | different | only_enrichment
+  kind: string; // prefix | range | ip
+  value: string;
+  primary: RefBrief | null;
+  enrichment: RefBrief | null;
+  diffs: string[];
+}
+export interface IpamCompare extends Paged<IpamRow> {
+  available: boolean;
+  primary?: SourceRef;
+  enrichment?: SourceRef;
+  summary?: Record<string, number>;
 }
 
 export interface NamingProfile {
@@ -336,10 +532,16 @@ export const deleteTenant = (tenantId: number, confirmName: string) =>
 // Quellsysteme
 export const fetchSystems = (tenantId?: number | null) =>
   getJSON<System[]>(`/api/systems${qs({ tenant_id: tenantId })}`);
-// Zugangsdaten sind nur schreibbar (FortiGate `token`, Cisco ACI `username` + `password`):
-// verschlüsselt gespeichert und nur dem zugewiesenen Agenten pro Lauf übergeben (ADR 0009).
+// Zugangsdaten sind nur schreibbar (FortiGate/NetBox `token`, Cisco ACI/Infoblox `username` +
+// `password`, NetBox optional `write_token` nur für den NetBox-Sync): verschlüsselt gespeichert
+// und nur dem zugewiesenen Agenten pro Lauf übergeben – das Schreib-Token nie (ADR 0009/0010).
 // Bei PATCH: weglassen = unverändert, "" = Feld entfernen.
-type SystemCredentials = { token?: string; username?: string; password?: string };
+export type SystemCredentials = {
+  token?: string;
+  username?: string;
+  password?: string;
+  write_token?: string;
+};
 export const createSystem = (
   body: {
     tenant_id: number;
@@ -349,6 +551,7 @@ export const createSystem = (
     agent_id?: number | null;
     verify_tls?: boolean;
     read_scope?: string;
+    ref_role?: string | null;
   } & SystemCredentials,
 ) => sendJSON<System>("/api/systems", "POST", body);
 export const patchSystem = (
@@ -361,6 +564,7 @@ export const patchSystem = (
     agent_id?: number | null;
     verify_tls?: boolean;
     read_scope?: string;
+    ref_role?: string | null;
   } & SystemCredentials,
 ) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");
@@ -420,8 +624,8 @@ export function fetchRules(q?: string, tenantId?: number | null): Promise<Rule[]
 export const fetchRuleDetail = (id: number) => getJSON<RuleDetail>(`/api/rules/${id}`);
 export const fetchNat = (tenantId?: number | null) =>
   getJSON<Nat[]>(`/api/nat${qs({ tenant_id: tenantId })}`);
-export const fetchFindings = (tenantId?: number | null) =>
-  getJSON<Finding[]>(`/api/findings${qs({ tenant_id: tenantId })}`);
+export const fetchFindings = (tenantId?: number | null, type?: string | null) =>
+  getJSON<Finding[]>(`/api/findings${qs({ tenant_id: tenantId, type })}`);
 export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
   sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);
 export const fetchApplications = (tenantId?: number | null) =>
@@ -439,4 +643,44 @@ export const assignSystemSite = (name: string, tenantId: number, siteId: number 
     `/api/appdoc/systems/${encodeURIComponent(name)}/site${qs({ tenant_id: tenantId })}`,
     "PATCH",
     { site_id: siteId },
+  );
+
+// Objekte & Inventar (rein lesend, Mandant nötig)
+export const fetchObjects = (
+  tenantId: number,
+  params: {
+    category?: string; // kommagetrennt
+    source_system_id?: number | null;
+    q?: string;
+    issues_only?: boolean;
+    limit?: number;
+    offset?: number;
+  } = {},
+) =>
+  getJSON<Paged<DeviceObject>>(
+    `/api/objects${qs({
+      tenant_id: tenantId,
+      ...params,
+      q: params.q?.trim(),
+      issues_only: params.issues_only ? "true" : undefined,
+    })}`,
+  );
+export const fetchInventory = <K extends keyof Inventory>(
+  kind: K,
+  tenantId: number,
+  params: { source_system_id?: number | null; q?: string } = {},
+) =>
+  getJSON<Inventory[K][]>(`/api/inventory/${kind}${qs({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
+
+// Abgleich
+export const fetchReconcileSummary = (tenantId: number) =>
+  getJSON<ReconcileSummary>(`/api/reconcile/summary${qs({ tenant_id: tenantId })}`);
+export const fetchIpamCompare = (
+  tenantId: number,
+  params: { status?: string; q?: string; limit?: number; offset?: number } = {},
+) => getJSON<IpamCompare>(`/api/reconcile/ipam${qs({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
+export const runReconcile = (tenantId: number) =>
+  sendJSON<{ tenant_id: number; findings: Record<string, number> }>(
+    `/api/reconcile${qs({ tenant_id: tenantId })}`,
+    "POST",
   );

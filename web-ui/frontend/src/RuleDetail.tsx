@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Endpoint, fetchRuleDetail, RuleDetail } from "./api";
+import { Endpoint, fetchRuleDetail, RuleDetail, RuleRef } from "./api";
+import { RefCard } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, Loading, MatchBadge, Note } from "./ui";
 
 function EndpointList({ items }: { items: Endpoint[] }) {
@@ -28,6 +29,13 @@ function EndpointList({ items }: { items: Endpoint[] }) {
   );
 }
 
+// Verweise wie auf der Firewall (Objektnamen, Gruppen) mit IPAM-Referenzdaten; ältere
+// Läufe ohne Verweise zeigen die aufgelösten Endpunkte.
+function Side({ refs, endpoints }: { refs: RuleRef[]; endpoints: Endpoint[] }) {
+  if (refs.length) return <>{refs.map((r, i) => <RefCard key={`${r.name}-${i}`} r={r} />)}</>;
+  return <EndpointList items={endpoints} />;
+}
+
 export default function RuleDetailDrawer({
   ruleId,
   systemName,
@@ -50,6 +58,8 @@ export default function RuleDetailDrawer({
 
   const src = detail?.endpoints.filter((e) => e.role === "src") ?? [];
   const dst = detail?.endpoints.filter((e) => e.role === "dst") ?? [];
+  const refs = (role: string) => detail?.refs?.filter((r) => r.role === role) ?? [];
+  const svcRefs = refs("service");
 
   return (
     <Drawer
@@ -101,11 +111,20 @@ export default function RuleDetailDrawer({
             <dd>{detail.domain}</dd>
           </dl>
 
-          <div className="sub-h">Quellen ({detail.num_src})</div>
-          <EndpointList items={src} />
+          <div className="sub-h">Quellen ({refs("src").length || detail.num_src})</div>
+          <Side refs={refs("src")} endpoints={src} />
 
-          <div className="sub-h">Ziele ({detail.num_dst})</div>
-          <EndpointList items={dst} />
+          <div className="sub-h">Ziele ({refs("dst").length || detail.num_dst})</div>
+          <Side refs={refs("dst")} endpoints={dst} />
+
+          {svcRefs.length > 0 && (
+            <>
+              <div className="sub-h">Dienste wie auf der Firewall ({svcRefs.length})</div>
+              {svcRefs.map((r, i) => (
+                <RefCard key={`${r.name}-${i}`} r={r} />
+              ))}
+            </>
+          )}
 
           {dst.some((e) => e.nat_target) && (
             <div style={{ marginTop: 18 }}>

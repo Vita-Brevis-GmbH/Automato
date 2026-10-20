@@ -19,6 +19,7 @@ from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.models import (
+    GROUP_CATEGORIES,
     SERVICE_CATEGORIES,
     DeviceObject,
     Finding,
@@ -70,8 +71,8 @@ def list_objects(
     stmt = select(DeviceObject).where(DeviceObject.tenant_id == tid)
     if source_system_id is not None:
         stmt = stmt.where(DeviceObject.source_system_id == source_system_id)
-    if category:
-        stmt = stmt.where(DeviceObject.category == category)
+    if category:  # eine oder mehrere Kategorien, kommagetrennt
+        stmt = stmt.where(DeviceObject.category.in_([c.strip() for c in category.split(",")]))
     objects = list(session.scalars(stmt.order_by(DeviceObject.name, DeviceObject.id)))
     if q:
         ql = q.strip().lower()
@@ -94,10 +95,15 @@ def list_objects(
         if objects
         else {}
     )
+    # Gruppen-Zugehoerigkeit ueber alle Gruppen des Mandanten (nicht nur die gefilterten Objekte)
     member_of: dict[tuple[int, str], list[str]] = defaultdict(list)
-    for o in objects:
-        for m in o.members or []:
-            member_of[(o.source_system_id, m)].append(o.name)
+    for sid, gname, members in session.execute(
+        select(DeviceObject.source_system_id, DeviceObject.name, DeviceObject.members).where(
+            DeviceObject.tenant_id == tid, DeviceObject.category.in_(GROUP_CATEGORIES)
+        )
+    ):
+        for m in members or []:
+            member_of[(sid, m)].append(gname)
     issues: dict[tuple[int | None, str], list[str]] = defaultdict(list)
     for f in session.scalars(
         select(Finding).where(

@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { Agent, fetchAgents, startCollect, System, Tenant } from "./api";
 import type { View } from "./App";
+import { PLATFORM_LABEL } from "./refs";
 import { ErrorBox, Modal, Note } from "./ui";
-
-const PLATFORM_LABEL: Record<string, string> = { fortigate: "FortiGate", cisco_aci: "Cisco ACI" };
 
 // "Jetzt einlesen": Collector-Lauf für Mandant + Quellsystem anlegen (operator).
 // Die Ausführung ergibt sich aus dem Gerät (ADR 0009): mit zugewiesenem Agenten holt dieser

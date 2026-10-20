@@ -75,6 +75,7 @@ FW = {
             "obj_type": "ipmask",
             "values": ["10.20.0.6"],
         },
+        {"name": "G_web", "category": "address_group", "members": ["H_web01"]},
     ],
 }
 ACI = {
@@ -188,9 +189,14 @@ def test_objekt_und_inventar_ansicht(client):
         120,
     )
     assert web["values"][0]["enrichment"]["source"] == "netbox"
+    # Gruppen-Zugehoerigkeit auch, wenn nur Adressen abgefragt werden
+    addr = client.get(f"/objects?tenant_id={tid}&category=address").json()["rows"]
+    assert next(o for o in addr if o["name"] == "H_web01")["member_of"] == ["G_web"]
     only = client.get(f"/objects?tenant_id={tid}&issues_only=true").json()
-    assert {o["name"] for o in only["rows"]} == {"H_web01"}
+    assert {o["name"] for o in only["rows"]} == {"H_web01", "G_web"}  # G_web: unbenutzt
     assert client.get(f"/objects?tenant_id={tid}&q=web02").json()["total"] == 1
+    assert client.get(f"/objects?tenant_id={tid}&category=address,vip").json()["total"] == 2
+    assert client.get(f"/objects?tenant_id={tid}&category=service").json()["total"] == 0
 
     subnets = {s["prefix"]: s for s in client.get(f"/inventory/subnets?tenant_id={tid}").json()}
     assert subnets["10.20.0.0/24"]["ipam"] == {

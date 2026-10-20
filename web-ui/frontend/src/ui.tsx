@@ -90,6 +90,13 @@ const ICONS: Record<string, ReactNode> = {
   chevron: <path d="m6 9 6 6 6-6" />,
   external: <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />,
   plus: <path d="M12 5v14M5 12h14" />,
+  objects: (
+    <>
+      <path d="M12 3 3 7.5l9 4.5 9-4.5z" />
+      <path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
+    </>
+  ),
+  reconcile: <path d="M4 9h13l-3-3m3 3-3 3M20 15H7l3-3m-3 3 3 3" />,
 };
 
 export function Icon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {

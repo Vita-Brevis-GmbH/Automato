@@ -27,6 +27,7 @@ class ObjectCategory(enum.StrEnum):
 # Kategorien, die als Adress-Endpunkt in Regeln vorkommen bzw. als Service
 ADDRESS_CATEGORIES = (ObjectCategory.ADDRESS, ObjectCategory.ADDRESS_GROUP, ObjectCategory.VIP)
 SERVICE_CATEGORIES = (ObjectCategory.SERVICE, ObjectCategory.SERVICE_GROUP)
+GROUP_CATEGORIES = (ObjectCategory.ADDRESS_GROUP, ObjectCategory.SERVICE_GROUP)
 
 
 class DeviceObject(Base):

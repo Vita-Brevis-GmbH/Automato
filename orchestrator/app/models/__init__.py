@@ -11,6 +11,7 @@ from app.models.base import Base
 from app.models.collector_run import CollectorRun, RunStatus
 from app.models.device_object import (
     ADDRESS_CATEGORIES,
+    GROUP_CATEGORIES,
     SERVICE_CATEGORIES,
     DeviceObject,
     ObjectCategory,
@@ -56,6 +57,7 @@ from app.models.zone import Zone
 
 __all__ = [
     "ADDRESS_CATEGORIES",
+    "GROUP_CATEGORIES",
     "INVENTORY_MODELS",
     "REFERENCE_PLATFORMS",
     "SERVICE_CATEGORIES",

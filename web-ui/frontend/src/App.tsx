@@ -20,7 +20,9 @@ import Design from "./Design";
 import Findings from "./Findings";
 import NamingProfiles from "./NamingProfiles";
 import NatTable from "./Nat";
+import Objects from "./Objects";
 import Overview from "./Overview";
+import Reconcile from "./Reconcile";
 import RulesTable from "./RulesTable";
 import Tenants from "./Tenants";
 import { ErrorBox, Icon, Note } from "./ui";
@@ -29,9 +31,11 @@ import Users from "./Users";
 export type View =
   | "uebersicht"
   | "regeln"
+  | "objekte"
   | "nat"
   | "apps"
   | "findings"
+  | "abgleich"
   | "design"
   | "users"
   | "tenants"
@@ -49,9 +53,11 @@ interface NavEntry {
 const NAV: NavEntry[] = [
   { key: "uebersicht", label: "Übersicht", icon: "overview", section: "doc" },
   { key: "regeln", label: "Firewall-Regeln", icon: "rules", section: "doc" },
+  { key: "objekte", label: "Objekte & Inventar", icon: "objects", section: "doc" },
   { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc" },
   { key: "apps", label: "Applikationen", icon: "apps", section: "doc" },
   { key: "findings", label: "Findings", icon: "findings", section: "doc" },
+  { key: "abgleich", label: "Abgleich", icon: "reconcile", section: "doc" },
   { key: "design", label: "Netzwerkdesign", icon: "design", section: "doc" },
   { key: "users", label: "Benutzer & Rollen", icon: "users", section: "admin" },
   { key: "tenants", label: "Mandanten & Standorte", icon: "tenants", section: "admin" },
@@ -218,6 +224,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   const [stats, setStats] = useState<Stats>({ rules: null, nat: null, findings: null, error: null });
   const [theme, setTheme] = useState<string | null>(() => stored("automato_theme"));
   const [menuOpen, setMenuOpen] = useState(false);
+  const [findingType, setFindingType] = useState(""); // Vorfilter aus der Abgleich-Ansicht
 
   const setTenantId = useCallback((id: number | null) => {
     setTenantIdRaw(id);
@@ -226,6 +233,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
 
   const go = useCallback((v: View) => {
     setView(v);
+    setFindingType("");
     window.history.replaceState(null, "", `#${v}`);
   }, []);
 
@@ -407,10 +415,29 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             {current === "regeln" && tenantReady && (
               <RulesTable tenantId={tenantId} tenantLabel={tenantLabel} />
             )}
+            {current === "objekte" && tenantReady && <Objects tenantId={tenantId} tenantLabel={tenantLabel} />}
             {current === "nat" && tenantReady && <NatTable tenantId={tenantId} tenantLabel={tenantLabel} />}
             {current === "apps" && tenantReady && <AppDoc me={me} tenantId={tenantId} />}
             {current === "findings" && tenantReady && (
-              <Findings me={me} tenantId={tenantId} tenantLabel={tenantLabel} onChanged={loadStats} />
+              <Findings
+                me={me}
+                tenantId={tenantId}
+                tenantLabel={tenantLabel}
+                initialType={findingType}
+                onChanged={loadStats}
+              />
+            )}
+            {current === "abgleich" && tenantReady && (
+              <Reconcile
+                me={me}
+                tenantId={tenantId}
+                tenantLabel={tenantLabel}
+                onChanged={loadStats}
+                onOpenFindings={(t) => {
+                  go("findings");
+                  setFindingType(t);
+                }}
+              />
             )}
             {current === "design" && <Design />}
             {current === "users" && <Users cfg={cfg} me={me} tenants={tenants ?? []} />}

@@ -100,7 +100,7 @@ export default function RulesTable({
             <Icon name="search" />
           </span>
           <input
-            placeholder="Suche: Name, IP oder Objekt (z. B. 10.20.4.10)…"
+            placeholder="Suche: Regel, Objektname oder IP (z. B. 10.20.4.10)…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -168,7 +168,7 @@ export default function RulesTable({
                   <th>Ziel-Zone</th>
                   <th>Quelle</th>
                   <th>Ziel</th>
-                  <th className="num">Dienste</th>
+                  <th>Dienste</th>
                   <th title="nicht aufgelöste Objekte"></th>
                 </tr>
               </thead>
@@ -196,7 +196,9 @@ export default function RulesTable({
                     <td>
                       <ObjCell items={r.destinations} />
                     </td>
-                    <td className="num">{r.num_services}</td>
+                    <td>
+                      <ObjCell items={r.service_names?.length ? r.service_names : []} />
+                    </td>
                     <td>
                       {r.num_unmatched > 0 ? (
                         <span className="chip warn" title="nicht aufgelöste Objekte">

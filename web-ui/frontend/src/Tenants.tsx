@@ -18,12 +18,12 @@ import {
   profileLabel,
   Site,
   System,
+  SystemCredentials,
   Tenant,
 } from "./api";
 import type { Me } from "./auth";
-import { Empty, ErrorBox, Icon, Loading, Modal, Note, PageHead, SecretInput } from "./ui";
-
-const PLATFORM_LABEL: Record<string, string> = { fortigate: "FortiGate", cisco_aci: "Cisco ACI" };
+import { PLATFORM_LABEL, REF_ROLE_LABEL, REFERENCE_PLATFORMS } from "./refs";
+import { Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead, SecretInput } from "./ui";
 
 // Mandanten (= Gruppengesellschaft) mit Kürzel, Namensprofil, Standorten und Quellsystemen.
 // Lesen = viewer, Schreiben/Löschen = admin (serverseitig erzwungen).
@@ -368,6 +368,7 @@ const COUNT_LABEL: Record<string, string> = {
   rules: "Regeln",
   nat_rules: "NAT-Einträge",
   findings: "Findings",
+  references: "Referenzeinträge (IPAM)",
   epgs: "EPGs",
   objects: "Adressobjekte",
   zones: "Zonen",
@@ -648,7 +649,7 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
       <div className="card-head">
         <h2>Quellsysteme von „{tenant.name}“</h2>
         <span className="faint" style={{ fontSize: 12 }}>
-          Geräte (Firewalls/Controller), aus denen gelesen wird
+          Firewalls, Controller und Referenzquellen (IPAM), aus denen gelesen wird
         </span>
         <div className="spacer" />
         {me.isAdmin && (
@@ -667,9 +668,9 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
           <Loading />
         ) : systems.length === 0 ? (
           <Empty title="Noch keine Quellsysteme">
-            Gerät (FortiGate oder APIC) mit Adresse und read-only Zugangsdaten anlegen und einem Collector-Agenten
-            zuweisen, dann unter
-            „Übersicht → Jetzt einlesen“ einen Lauf starten.
+            Gerät (FortiGate, APIC) oder Referenzquelle (Infoblox DDI, NetBox) mit Adresse und read-only
+            Zugangsdaten anlegen und einem Collector-Agenten zuweisen, dann unter „Übersicht → Jetzt einlesen“ einen
+            Lauf starten.
           </Empty>
         ) : (
           <SystemTable
@@ -693,9 +694,10 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
         )}
       </div>
       <div className="card-foot">
-        <Icon name="lock" size={12} /> Zugangsdaten (FortiGate-Token, APIC-Benutzer/Passwort) werden verschlüsselt
-        im Orchestrator gespeichert, nie wieder angezeigt und nur dem zugewiesenen Agenten für dessen Läufe übergeben
-        (ADR 0009).
+        <Icon name="lock" size={12} /> Zugangsdaten (Tokens, Benutzer/Passwort) werden verschlüsselt im Orchestrator
+        gespeichert, nie wieder angezeigt und nur dem zugewiesenen Agenten für dessen Läufe übergeben (ADR 0009). Alle
+        Quellsysteme werden nur gelesen; einzige Ausnahme ist das optionale NetBox-Schreib-Token für den NetBox-Sync – es
+        bleibt im Orchestrator und geht nie an einen Agenten (ADR 0010).
       </div>
       {editing && (
         <SystemDialog
@@ -745,17 +747,26 @@ function SystemDialog({
   const [agentId, setAgentId] = useState<number | null>(system ? system.agent_id : (own?.id ?? null));
   const [verifyTls, setVerifyTls] = useState(system?.verify_tls ?? true);
   const [enabled, setEnabled] = useState(system?.enabled ?? true);
-  // Zugangsdaten (nur schreibbar): FortiGate = API-Token, Cisco ACI = APIC-Benutzer + Passwort
+  // Zugangsdaten (nur schreibbar): FortiGate/NetBox = API-Token, Cisco ACI/Infoblox = Benutzer + Passwort,
+  // NetBox optional Schreib-Token (nur NetBox-Sync, bleibt im Orchestrator)
   const [token, setToken] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [writeToken, setWriteToken] = useState("");
   const [clearCreds, setClearCreds] = useState(false);
+  const [clearWrite, setClearWrite] = useState(false);
   const [readScope, setReadScope] = useState(system?.read_scope ?? "");
+  const [refRole, setRefRole] = useState(system?.ref_role ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
 
   const hasCreds = system?.has_credentials ?? false;
+  const hasWrite = system?.has_write_token ?? false;
   const isAci = platform === "cisco_aci";
+  const isInfoblox = platform === "infoblox";
+  const isNetbox = platform === "netbox";
+  const isRef = REFERENCE_PLATFORMS.includes(platform);
+  const userPass = isAci || isInfoblox;
   const kept = "hinterlegt – leer lassen = unverändert";
   // Zuweisung bleibt sichtbar, auch wenn der Agent nicht (mehr) in der Liste steht
   const options =
@@ -775,17 +786,22 @@ function SystemDialog({
       agent_id: agentId,
       verify_tls: verifyTls,
       ...(isAci ? { read_scope: readScope.trim() } : {}),
+      ...(isRef && refRole ? { ref_role: refRole } : {}),
     };
     // Nur geänderte Felder senden; leer gelassen = unverändert, "" = entfernen
-    const creds: { token?: string; username?: string; password?: string } = {};
+    const creds: SystemCredentials = {};
     if (clearCreds) {
-      if (isAci) Object.assign(creds, { username: "", password: "" });
+      if (userPass) Object.assign(creds, { username: "", password: "" });
       else creds.token = "";
-    } else if (isAci) {
+    } else if (userPass) {
       if (username.trim()) creds.username = username.trim();
       if (password) creds.password = password;
     } else if (token.trim()) {
       creds.token = token.trim();
+    }
+    if (isNetbox) {
+      if (clearCreds || clearWrite) creds.write_token = "";
+      else if (writeToken.trim()) creds.write_token = writeToken.trim();
     }
     try {
       if (system === null) {
@@ -840,8 +856,27 @@ function SystemDialog({
           >
             <option value="fortigate">FortiGate</option>
             <option value="cisco_aci">Cisco ACI</option>
+            <option value="infoblox">Infoblox DDI (Referenzquelle)</option>
+            <option value="netbox">NetBox (Referenzquelle)</option>
           </select>
+          {isRef && (
+            <div className="hint">
+              Referenzquelle für den Abgleich: wird komplett gelesen (Netze, Ranges, IPs, DNS-Einträge, VLANs) und
+              mit den Firewall-/ACI-Daten verglichen.
+            </div>
+          )}
         </div>
+        {isRef && (
+          <div className="field">
+            <label htmlFor="ss-role">Rolle</label>
+            <select id="ss-role" className="sel input" value={refRole} onChange={(e) => setRefRole(e.target.value)}>
+              {system === null && <option value="">automatisch (DDI führend, sonst NetBox)</option>}
+              <option value="primary">{REF_ROLE_LABEL.primary} – Quelle der Wahrheit für Netze, IPs, DNS</option>
+              <option value="enrichment">{REF_ROLE_LABEL.enrichment} – zusätzliche Daten (Standort, Tenant, Links)</option>
+            </select>
+            <div className="hint">Je Mandant gibt es genau ein führendes IPAM; ein neues führendes stuft das bisherige zur Anreicherung herab.</div>
+          </div>
+        )}
         <div className="field">
           <label htmlFor="ss-url">Adresse</label>
           <input
@@ -849,7 +884,15 @@ function SystemDialog({
             className="input mono"
             value={baseUrl}
             maxLength={500}
-            placeholder={isAci ? "https://apic-01.kunde.lan" : "https://fw-01.kunde.lan"}
+            placeholder={
+              isAci
+                ? "https://apic-01.kunde.lan"
+                : isInfoblox
+                  ? "https://ddi.kunde.lan"
+                  : isNetbox
+                    ? "https://netbox.kunde.lan"
+                    : "https://fw-01.kunde.lan"
+            }
             onChange={(e) => setBaseUrl(e.target.value)}
           />
           <div className="hint">So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).</div>
@@ -880,7 +923,71 @@ function SystemDialog({
             <Note warn>Dieser Agent ist deaktiviert – Läufe des Geräts werden nicht abgeholt.</Note>
           )}
         </div>
-        {isAci ? (
+        {isInfoblox ? (
+          <>
+            <div className="field">
+              <label htmlFor="ss-user">Infoblox-Benutzer (read-only)</label>
+              <input
+                id="ss-user"
+                className="input mono"
+                value={username}
+                autoComplete="off"
+                maxLength={200}
+                disabled={clearCreds}
+                placeholder={hasCreds ? kept : "z. B. ro-automato"}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="ss-password">Passwort</label>
+              <SecretInput
+                id="ss-password"
+                value={password}
+                disabled={clearCreds}
+                onChange={setPassword}
+                placeholder={hasCreds ? kept : "Passwort des Infoblox-Benutzers"}
+              />
+              <div className="hint">
+                WAPI-Benutzer einer Admin-Gruppe mit API-Zugriff und nur Lese-Rechten (DNS, IPAM, DHCP). Automato liest
+                ausschliesslich (nur GET) – Schreibzugriffe sind im Code gesperrt.
+              </div>
+            </div>
+          </>
+        ) : isNetbox ? (
+          <>
+            <div className="field">
+              <label htmlFor="ss-token">API-Token (lesen)</label>
+              <SecretInput
+                id="ss-token"
+                value={token}
+                disabled={clearCreds}
+                onChange={setToken}
+                placeholder={hasCreds ? kept : "NetBox-Token ohne Schreibrecht"}
+              />
+              <div className="hint">Für das Einlesen (Agent/Worker). NetBox: Token mit „Write enabled“ aus.</div>
+            </div>
+            <div className="field">
+              <label htmlFor="ss-wtoken">Schreib-Token (optional, nur NetBox-Sync)</label>
+              <SecretInput
+                id="ss-wtoken"
+                value={writeToken}
+                disabled={clearCreds || clearWrite}
+                onChange={setWriteToken}
+                placeholder={hasWrite ? kept : "leer = NetBox wird nur gelesen"}
+              />
+              <div className="hint">
+                Nur für den NetBox-Sync (Vorschau → Übernehmen durch einen Admin). Bleibt im Orchestrator und wird nie
+                an einen Agenten übergeben.
+              </div>
+              {hasWrite && (
+                <label className="check">
+                  <input type="checkbox" checked={clearWrite} onChange={(e) => setClearWrite(e.target.checked)} />
+                  Schreib-Token entfernen
+                </label>
+              )}
+            </div>
+          </>
+        ) : isAci ? (
           <>
             <div className="field">
               <label htmlFor="ss-user">APIC-Benutzer (read-only)</label>
@@ -938,11 +1045,11 @@ function SystemDialog({
             </div>
           </div>
         )}
-        {hasCreds && (
+        {(hasCreds || hasWrite) && (
           <div className="field">
             <label className="check">
               <input type="checkbox" checked={clearCreds} onChange={(e) => setClearCreds(e.target.checked)} />
-              Hinterlegte Zugangsdaten entfernen
+              {isNetbox ? "Alle hinterlegten Tokens entfernen" : "Hinterlegte Zugangsdaten entfernen"}
             </label>
           </div>
         )}
@@ -984,8 +1091,7 @@ function SystemTable({
           <th>Adresse</th>
           <th>Verwaltet von</th>
           <th>Zugangsdaten</th>
-          <th className="num">Regeln</th>
-          <th className="num">NAT</th>
+          <th>Daten</th>
           <th>Status</th>
           {actions && <th></th>}
         </tr>
@@ -998,6 +1104,13 @@ function SystemTable({
             </td>
             <td>
               <span className="chip">{PLATFORM_LABEL[s.platform] ?? s.platform}</span>
+              {s.ref_role && (
+                <div style={{ marginTop: 3 }}>
+                  <span className={`chip ${s.ref_role === "primary" ? "local" : "info"}`}>
+                    {REF_ROLE_LABEL[s.ref_role] ?? s.ref_role}
+                  </span>
+                </div>
+              )}
             </td>
             <td className="mono nowrap">
               {s.base_url || <span className="faint">–</span>}
@@ -1024,14 +1137,35 @@ function SystemTable({
               ) : (
                 <span className={`chip ${s.agent_id != null ? "warn" : "na"}`}>fehlen</span>
               )}
+              {s.has_write_token && (
+                <span className="chip local" title="Schreib-Token für den NetBox-Sync (bleibt im Orchestrator)">
+                  Schreib-Token
+                </span>
+              )}
               {!s.verify_tls && (
                 <span className="chip warn" title="TLS-Zertifikat des Geräts wird nicht geprüft">
                   TLS aus
                 </span>
               )}
             </td>
-            <td className="num">{s.rule_count}</td>
-            <td className="num">{s.nat_count}</td>
+            <td className="nowrap">
+              {REFERENCE_PLATFORMS.includes(s.platform) ? (
+                s.reference_at ? (
+                  <>
+                    <span className="mono">{s.reference_count}</span> Einträge
+                    <div className="faint" style={{ fontSize: 11 }}>
+                      Stand {fmtTime(s.reference_at)}
+                    </div>
+                  </>
+                ) : (
+                  <span className="faint">noch nicht eingelesen</span>
+                )
+              ) : (
+                <>
+                  <span className="mono">{s.rule_count}</span> Regeln · <span className="mono">{s.nat_count}</span> NAT
+                </>
+              )}
+            </td>
             <td>{s.enabled ? <span className="chip ok">aktiv</span> : <span className="chip na">inaktiv</span>}</td>
             {actions && <td className="actions">{actions(s)}</td>}
           </tr>
@@ -1066,6 +1200,7 @@ function DeleteSystemDialog({
   };
 
   const data = system.rule_count + system.nat_count;
+  const isRef = REFERENCE_PLATFORMS.includes(system.platform);
   return (
     <Modal
       title="Quellsystem löschen"
@@ -1085,7 +1220,16 @@ function DeleteSystemDialog({
       <p>
         Quellsystem <b>„{system.name}“</b> löschen?
       </p>
-      {data > 0 ? (
+      {isRef ? (
+        system.reference_count > 0 ? (
+          <Note warn>
+            Mit gelöscht wird der eingelesene Stand (<b>{system.reference_count} Einträge</b>); der Abgleich wird ohne
+            diese Quelle neu berechnet. In der Quelle selbst wird nichts geändert.
+          </Note>
+        ) : (
+          <Note>Aus dieser Quelle wurden noch keine Daten gelesen.</Note>
+        )
+      ) : data > 0 ? (
         <Note warn>
           Mit gelöscht werden die daraus gelesenen <b>{system.rule_count} Regeln</b> und{" "}
           <b>{system.nat_count} NAT-Einträge</b> samt ihrer Findings. Bisherige Läufe bleiben als Historie
