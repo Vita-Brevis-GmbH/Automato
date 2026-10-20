@@ -568,6 +568,16 @@ serverseitig `domain`/`source_system_id`/`q` über alle Regeln, `limit`/`offset`
 `GET /rules/summary` (SQL-Kennzahlen je Art, Endpunkte, unmatched, Ziel-Zonen) für Übersicht + Nav-Zähler.
 UI „Regeln & Contracts“: Filter Art, Consumer/Provider-Spalten, ACI-Kennzeichen, „weitere laden“, Drawer mit
 Contract/Subject/Tenant/Scope/DN. Verifiziert: Tests `test_rules_api.py`, Postgres, Playwright (520 FW + 2 ACI).
-Offen: Collector-Parser `mo.py` führt Contracts/EPGs über alle ACI-Tenants nur per Name (Kollision bei
-gleichen Namen in mehreren Tenants) – tenant-bewusste Identität als eigene Phase (Migration).
 Tests: orchestrator 159, collectors 68, sot-gateway 14.
+**0.4.0 (Lage von Consumer/Provider, Alembic `0023`):** `mo.py` tenant-bewusst — Identität per DN,
+Namensverweise eigener Tenant → `common`; Consumer/Provider auch externe EPGs (`l3extInstP`, `l3extSubnet`,
+`l3extRsEctx`), vzAny (`vzRsAnyToProv/Cons`) und Contract-Interfaces (`vzCPIf`/`vzRsIf`, `fvRsConsIf`);
+Filter aus `vzInTerm`/`vzOutTerm`. Contract-Dict: `consumers`/`providers` (kind/tenant/name/dn/ap/bd/
+l3out/vrf), `normalize_contract` → `epg:<DN>`. `epg` + `kind`/`aci_tenant`/`dn`/`vrf`/`l3out`/
+`source_system_id`, `uq_epg_tenant_dn` statt `uq_epg_tenant_name`, `epg_subnet.origin` (epg|bd|ext);
+Ingest `_apply_epgs(session, run, …)` per DN (Altbestand per Name), räumt veraltete EPGs je APIC auf;
+Quellsystem löschen nimmt EPGs mit. `app/store/epgs.py` (`label`, `details`: Lage + IPAM-Netz + DNS je
+gelernter IP + Server); `/rules` Labels `AP/EPG`, `/rules/{id}` `EndpointOut.epg`. UI `EpgCard.tsx` im
+Drawer. App-Doku: Systemname „EG · Tenant · AP“ bei Dubletten, `same_tenant` echt, ohne 500er-Kappung.
+Verifiziert: Tests, Postgres (0023 up/down mit Altbestand), Playwright. Noch nicht gelesen: ESGs, Taboo.
+Tests: orchestrator 162, collectors 69, sot-gateway 14.

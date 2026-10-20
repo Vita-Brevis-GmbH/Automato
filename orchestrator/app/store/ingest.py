@@ -17,7 +17,7 @@ Findings entstehen nicht mehr hier, sondern im Abgleich (`reconcile`) am Ende de
 import ipaddress
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, true
 from sqlalchemy.orm import Session
 
 from app import naming
@@ -102,7 +102,7 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         session.delete(old_nat)
     session.flush()
 
-    _apply_epgs(session, run.tenant_id, result.epgs)  # EPGs vor den Regeln (Endpunkt-Link)
+    _apply_epgs(session, run, result.epgs)  # EPGs vor den Regeln (Endpunkt-Link)
     prefixes = _resolve_prefixes(session, run.tenant_id)  # Namensprofil des Mandanten
     device_objects = _replace_device_objects(session, run, result.objects, sot)
     for normalized in result.rules:
@@ -116,31 +116,39 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     reconcile.reconcile_tenant(session, run.tenant_id)
 
 
-def _apply_epgs(session: Session, tenant_id: int, epgs) -> None:
+def _apply_epgs(session: Session, run, epgs) -> None:
     """EPGs (ACI) idempotent anlegen/aktualisieren; Subnetze + gelernte Endpunkte je EPG
     ersetzen; EPG an den zugehoerigen Server (Host-Objekt) knuepfen, wenn aufloesbar.
 
-    Ein APIC meldet dieselbe IP teils mehrfach je EPG (mehrere fvCEp, z. B. nach einem
-    Umzug) - je EPG zaehlt eine IP einmal (erste MAC gewinnt)."""
+    Identitaet ist die DN (gleiche EPG-Namen in vielen ACI-Tenants); aeltere Collectors
+    liefern nur den Namen. Ein APIC meldet dieselbe IP teils mehrfach je EPG (mehrere fvCEp,
+    z. B. nach einem Umzug) - je EPG zaehlt eine IP einmal (erste MAC gewinnt). EPGs dieses
+    APICs, die nicht mehr gemeldet werden und an keiner Regel mehr haengen, fallen weg."""
+    tenant_id = run.tenant_id
+    seen: set[int] = set()
     for e in epgs:
-        epg = session.scalars(
-            select(Epg).where(Epg.tenant_id == tenant_id, Epg.name == e.name)
-        ).first()
+        cond = Epg.dn == e.dn if e.dn else (Epg.name == e.name) & Epg.dn.is_(None)
+        epg = session.scalars(select(Epg).where(Epg.tenant_id == tenant_id, cond)).first()
         if epg is None:
-            epg = Epg(tenant_id=tenant_id, name=e.name)
+            epg = Epg(tenant_id=tenant_id, name=e.name, dn=e.dn)
             session.add(epg)
-        epg.ap = e.ap
-        epg.bd = e.bd
+        epg.name = e.name
+        epg.kind = e.kind or "epg"
+        epg.aci_tenant, epg.ap, epg.bd = e.tenant, e.ap, e.bd
+        epg.vrf, epg.l3out = e.vrf, e.l3out
+        epg.source_system_id = run.source_system_id
         session.flush()
-        for old in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id == epg.id)):
-            session.delete(old)
-        for old in session.scalars(select(EpgEndpoint).where(EpgEndpoint.epg_id == epg.id)):
-            session.delete(old)
+        seen.add(epg.id)
+        _clear_epg_children(session, [epg.id])
         # DELETE vor INSERT erzwingen: der Unit of Work fuegt sonst zuerst ein, und ein
         # erneut gelernter Endpunkt kollidiert mit seinem alten Eintrag (epg_id, ip)
         session.flush()
-        for ip in dict.fromkeys(e.subnets):
-            session.add(EpgSubnet(epg_id=epg.id, ip=ip, family="v6" if ":" in ip else "v4"))
+        own = "ext" if epg.kind == "external" else "epg"
+        subnets = {(ip, own): None for ip in e.subnets}
+        subnets.update({(ip, "bd"): None for ip in e.bd_subnets if (ip, own) not in subnets})
+        for ip, origin in subnets:
+            fam = "v6" if ":" in ip else "v4"
+            session.add(EpgSubnet(epg_id=epg.id, ip=ip, family=fam, origin=origin))
         macs: dict[str, str | None] = {}
         for ep in e.endpoints:
             macs.setdefault(ep.ip, ep.mac)
@@ -151,6 +159,33 @@ def _apply_epgs(session: Session, tenant_id: int, epgs) -> None:
         if host is not None:
             epg.network_object_id = host.id
     session.flush()
+    if any(e.dn for e in epgs):  # nur mit vollstaendigem Stand (DN) aufraeumen
+        _drop_stale_epgs(session, run, seen)
+
+
+def _clear_epg_children(session: Session, epg_ids: list[int]) -> None:
+    session.execute(delete(EpgSubnet).where(EpgSubnet.epg_id.in_(epg_ids)))
+    session.execute(delete(EpgEndpoint).where(EpgEndpoint.epg_id.in_(epg_ids)))
+
+
+def _drop_stale_epgs(session: Session, run, seen: set[int]) -> None:
+    """EPGs dieses APICs (bzw. Altbestand ohne DN/Quelle), die der Lauf nicht mehr meldet und
+    auf die keine Regel mehr verweist (Regeln des Quellsystems sind bereits ersetzt)."""
+    referenced = select(RuleEndpoint.epg_id).where(RuleEndpoint.epg_id.is_not(None))
+    stale = list(
+        session.scalars(
+            select(Epg.id).where(
+                Epg.tenant_id == run.tenant_id,
+                (Epg.source_system_id == run.source_system_id) | Epg.source_system_id.is_(None),
+                Epg.id.not_in(seen) if seen else true(),
+                Epg.id.not_in(referenced),
+            )
+        )
+    )
+    if stale:
+        _clear_epg_children(session, stale)
+        session.execute(delete(Epg).where(Epg.id.in_(stale)))
+        session.flush()
 
 
 def _host_by_ips(session: Session, tenant_id: int, ips) -> NetworkObject | None:
@@ -357,15 +392,14 @@ def _endpoint(
     # ACI-EPG (Model 1): typisierter Endpunkt ohne IPAM-Aufloesung/Finding; ist die EPG
     # bekannt (epg-Tabelle), wird sie referenziert, sonst nur inline gefuehrt.
     if value.startswith("epg:"):
-        epg_name = value[4:]
-        epg = session.scalars(
-            select(Epg).where(Epg.tenant_id == tenant_id, Epg.name == epg_name)
-        ).first()
+        ref = value[4:]  # DN (uni/tn-...) bzw. bei aelteren Collectors der EPG-Name
+        cond = Epg.dn == ref if ref.startswith("uni/") else Epg.name == ref
+        epg = session.scalars(select(Epg).where(Epg.tenant_id == tenant_id, cond)).first()
         return RuleEndpoint(
             role=role,
             kind=EndpointKind.EPG,
             epg_id=epg.id if epg else None,
-            inline_value=epg_name,
+            inline_value=ref[:300],
             matched=epg is not None,
         )
 

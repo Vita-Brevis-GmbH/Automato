@@ -21,6 +21,7 @@ from app.auth.principal import Principal
 from app.db import get_session
 from app.models import EndpointRole, MatchStatus, ObjectClass, RefRole, RuleDomain
 from app.schemas.rules import AciContractOut, EndpointOut, RuleDetailOut, RuleOut, RuleSummaryOut
+from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import objects as objects_store
 from app.store import rules as rules_store
@@ -40,11 +41,15 @@ def _count_unmatched(endpoints, objs) -> int:
     return sum(1 for e in endpoints if _is_unmatched(objs.get(e.network_object_id)))
 
 
-def _endpoint_label(e, objs) -> str:
-    """Anzeigename eines Endpunkts: Objektname (Konvention) bevorzugt, sonst Wert/inline."""
+def _endpoint_label(e, objs, epgs=None, home_tenant: str | None = None) -> str:
+    """Anzeigename eines Endpunkts: Objektname (Konvention) bevorzugt, ACI-EPG als AP/EPG,
+    sonst Wert/inline."""
     obj = objs.get(e.network_object_id) if e.network_object_id else None
     if obj:
         return obj.name or obj.value or "?"
+    epg = (epgs or {}).get(e.epg_id) if e.epg_id else None
+    if epg is not None:
+        return epg_store.label(epg, home_tenant)
     return e.inline_value or e.kind.value
 
 
@@ -52,12 +57,18 @@ def _ref_names(rule, role: RefRole) -> list[str]:
     return [ref.name for ref in rule.refs if ref.role is role]
 
 
-def _labels(rule, role: RefRole, endpoint_role: EndpointRole, objs) -> list[str]:
+def _labels(rule, role: RefRole, endpoint_role: EndpointRole, objs, epgs=None) -> list[str]:
     """Objektnamen wie auf der Firewall; ohne Verweise (ACI, Altbestand) die Endpunkte."""
     names = _ref_names(rule, role)
     if names:
         return names
-    return [_endpoint_label(e, objs) for e in rule.endpoints if e.role is endpoint_role]
+    home = _ACI_TENANT.search(rule.contract_dn or (rule.raw or {}).get("dn") or "")
+    home_tenant = home.group(1) if home else None
+    return [
+        _endpoint_label(e, objs, epgs, home_tenant)
+        for e in rule.endpoints
+        if e.role is endpoint_role
+    ]
 
 
 _ACI_TENANT = re.compile(r"(?:^|/)tn-([^/]+)")
@@ -137,6 +148,7 @@ def list_rules(
         obj_ids = {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id}
         objs = rules_store.objects_by_ids(session, obj_ids)
     response.headers["X-Total-Count"] = str(total)
+    epgs = epg_store.by_ids(session, {e.epg_id for r in rules for e in r.endpoints if e.epg_id})
     zone_ids = {r.src_zone_id for r in rules} | {r.dst_zone_id for r in rules}
     zone_ids |= {o.zone_id for o in objs.values() if o.zone_id}
     zones = rules_store.zone_names(session, zone_ids)
@@ -158,8 +170,8 @@ def list_rules(
                 num_dst=sum(1 for e in r.endpoints if e.role is EndpointRole.DST),
                 num_services=len(r.services),
                 num_unmatched=_count_unmatched(r.endpoints, objs),
-                sources=_labels(r, RefRole.SRC, EndpointRole.SRC, objs),
-                destinations=_labels(r, RefRole.DST, EndpointRole.DST, objs),
+                sources=_labels(r, RefRole.SRC, EndpointRole.SRC, objs, epgs),
+                destinations=_labels(r, RefRole.DST, EndpointRole.DST, objs, epgs),
                 service_names=_ref_names(r, RefRole.SERVICE)
                 or [s.canonical_name for s in r.services],
                 aci=_aci(r),
@@ -185,11 +197,14 @@ def get_rule(
     zone_ids = {r.src_zone_id, r.dst_zone_id} | {o.zone_id for o in objs.values() if o.zone_id}
     zones = rules_store.zone_names(session, zone_ids)
     nat_map = nat_store.nat_by_name(session, r.tenant_id)
+    epgs = epg_store.by_ids(session, {e.epg_id for e in r.endpoints if e.epg_id})
+    epg_info = epg_store.details(session, r.tenant_id, list(epgs.values()))
 
     endpoints: list[EndpointOut] = []
     for e in r.endpoints:
         obj = objs.get(e.network_object_id) if e.network_object_id else None
         nat = nat_map.get(obj.name) if obj and obj.object_class is ObjectClass.VIP else None
+        epg = epg_info.get(e.epg_id) if e.epg_id else None
         endpoints.append(
             EndpointOut(
                 role=e.role.value,
@@ -201,6 +216,7 @@ def get_rule(
                 object_class=obj.object_class.value if obj else None,
                 fqdn=obj.fqdn if obj else None,
                 nat_target=nat_store.nat_target(nat) if nat else None,
+                epg=epg,
             )
         )
 
@@ -218,8 +234,8 @@ def get_rule(
         num_dst=sum(1 for e in r.endpoints if e.role is EndpointRole.DST),
         num_services=len(r.services),
         num_unmatched=_count_unmatched(r.endpoints, objs),
-        sources=_labels(r, RefRole.SRC, EndpointRole.SRC, objs),
-        destinations=_labels(r, RefRole.DST, EndpointRole.DST, objs),
+        sources=_labels(r, RefRole.SRC, EndpointRole.SRC, objs, epgs),
+        destinations=_labels(r, RefRole.DST, EndpointRole.DST, objs, epgs),
         service_names=_ref_names(r, RefRole.SERVICE) or [s.canonical_name for s in r.services],
         aci=_aci(r),
         external_id=r.external_id,

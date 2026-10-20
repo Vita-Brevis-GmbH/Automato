@@ -5,19 +5,26 @@ auch verschachtelt) und leitet daraus die Contract-Struktur ab, die `normalize_c
 konsumiert. Umsetzung des Lesevertrags `docs/collectors-read-contract.md` (Abschnitt 2):
 
   vzBrCP (CT_)  + vzSubj (SJ_) + vzRsSubjFiltAtt -> Regel + Services (vzFilter/vzEntry FT_)
-  fvAEPg (EG_)  fvRsProv/fvRsCons                -> Provider-/Consumer-EPGs
-  fvBD   (BD_)  fvRsBDToOut.tnL3extOutName       -> Zone (L3O) je EPG-Seite
-  l3extOut (L3O_) l3extInstP (EN_)               -> externe EPGs + externe Zone
+                  (auch vzInTerm/vzOutTerm vzRsFiltAtt bei nicht-reflexiven Subjects)
+  fvAEPg (EG_)  fvRsProv/fvRsCons/fvRsConsIf     -> Provider-/Consumer-EPGs
+  l3extInstP (EN_) unter l3extOut (L3O_)         -> externe EPG (Subnetze: l3extSubnet)
+  vzAny unter fvCtx (vzRsAnyToProv/Cons)         -> alle EPGs der VRF
+  vzCPIf + vzRsIf                                -> exportierter Contract (anderer Tenant)
+  fvBD (BD_)  fvRsBDToOut / fvRsCtx / fvSubnet   -> Zone (L3O), VRF, Subnetze je EPG-Seite
 
-Ein echter APIC (`rsp-subtree=full`) liefert die `dn` nur am Wurzelobjekt, Kinder tragen
-nur ihren `rn`; Konfig-Exporte teils keines von beidem. Die DN wird deshalb beim Abstieg aus
-Eltern-DN + `rn` (bzw. Klassen-Praefix + Name) gebildet. Der APIC meldet bekannte Ports mit
-Namen (`https`, `dns`, ...) - sie werden auf Portnummern abgebildet.
+Identitaet ist die DN: dieselben Namen (Contract, EPG, BD, Filter) gibt es in vielen
+Tenants. Verweise per Name loest der APIC im eigenen Tenant auf, sonst in `common` - genauso
+hier. Ein echter APIC (`rsp-subtree=full`) liefert die `dn` nur am Wurzelobjekt, Kinder
+tragen nur ihren `rn`; Konfig-Exporte teils keines von beidem. Die DN wird deshalb beim
+Abstieg aus Eltern-DN + `rn` (bzw. Klassen-Praefix + Name) gebildet. Der APIC meldet
+bekannte Ports mit Namen (`https`, `dns`, ...) - sie werden auf Portnummern abgebildet.
 
 Keine echten Secrets im Export; Samples bleiben ausserhalb des Repos. Reine Funktion.
 """
 
 from typing import Any
+
+COMMON = "common"  # Tenant, in dem der APIC Namensverweise ersatzweise aufloest
 
 
 def _attrs(mo_body: dict) -> dict:
@@ -40,11 +47,12 @@ def _roots(data: Any) -> list[dict]:
 
 class _Bag:
     def __init__(self) -> None:
-        self.bds: dict[str, list[str]] = {}  # BD-Name -> [L3O-Namen]
-        self.epgs: dict[str, dict] = {}  # EPG-Name -> {bd, provides[], consumes[]}
-        self.ext_epgs: dict[str, str] = {}  # externe EPG (l3extInstP) -> L3O-Name
-        self.contracts: dict[str, dict] = {}  # Contract-Name -> {dn, scope, subjects[]}
-        self.filters: dict[str, list[str]] = {}  # Filter-Name -> [Service-Strings]
+        self.bds: dict[tuple[str, str], dict] = {}  # (Tenant, BD) -> {l3outs, vrf, subnets}
+        # DN -> Contract-Endpunkt: EPG, externe EPG (L3Out) oder vzAny (VRF)
+        self.endpoints: dict[str, dict] = {}
+        self.contracts: dict[tuple[str, str], dict] = {}  # (Tenant, CT) -> {dn, scope, ...}
+        self.filters: dict[tuple[str, str], list[str]] = {}  # (Tenant, FT) -> Services
+        self.cifs: dict[tuple[str, str], str] = {}  # (Tenant, Contract-Interface) -> CT-DN
 
 
 # rn-Praefixe je Klasse (fuer Exporte ohne dn/rn an den Kindern)
@@ -58,6 +66,7 @@ _RN_PREFIX = {
     "vzSubj": "subj-",
     "vzFilter": "flt-",
     "vzEntry": "e-",
+    "vzCPIf": "cif-",
     "l3extOut": "out-",
     "l3extInstP": "instP-",
 }
@@ -82,6 +91,8 @@ def _dn(cls: str, attrs: dict, parent_dn: str) -> str:
     if attrs.get("dn"):
         return attrs["dn"]
     rn = attrs.get("rn")
+    if not rn and cls == "vzAny":
+        rn = "any"
     if not rn and cls in _RN_PREFIX and attrs.get("name"):
         rn = f"{_RN_PREFIX[cls]}{attrs['name']}"
     if not rn:
@@ -140,116 +151,223 @@ def _entry_service(attrs: dict) -> str:
     return f"{prot}/{lo}"
 
 
-def _walk(mo: dict, bag: _Bag, parent_l3out: str | None = None, parent_dn: str = "") -> None:
+def _rel(kids: list[dict], cls: str, attr: str) -> list[str]:
+    """Namensverweise der Kinder einer Klasse (z. B. fvRsCons.tnVzBrCPName)."""
+    return [v for c in kids if cls in c for v in [_attrs(c[cls]).get(attr)] if v]
+
+
+def _values(kids: list[dict], cls: str, attr: str = "ip") -> list[str]:
+    """Attribut aller Kinder einer Klasse (z. B. fvSubnet.ip)."""
+    return [v for c in kids if cls in c for v in [_attrs(c[cls]).get(attr)] if v]
+
+
+def _contract_endpoint(kind: str, dn: str, tenant: str, kids: list[dict], **info) -> dict:
+    if kind == "vzany":
+        prov, cons = ("vzRsAnyToProv", "vzRsAnyToCons")
+        cons_if = "vzRsAnyToConsIf"
+    else:
+        prov, cons, cons_if = ("fvRsProv", "fvRsCons", "fvRsConsIf")
+    return {
+        "kind": kind,
+        "tenant": tenant,
+        "dn": dn,
+        "provides": _rel(kids, prov, "tnVzBrCPName"),
+        "consumes": _rel(kids, cons, "tnVzBrCPName"),
+        "consumes_if": _rel(kids, cons_if, "tnVzCPIfName"),
+        **info,
+    }
+
+
+def _subject_filters(subj_kids: list[dict]) -> list[str]:
+    names = _rel(subj_kids, "vzRsSubjFiltAtt", "tnVzFilterName")
+    for c in subj_kids:  # nicht-reflexive Subjects: Filter je Richtung
+        for term in ("vzInTerm", "vzOutTerm"):
+            if term in c:
+                names += _rel(_children(c[term]), "vzRsFiltAtt", "tnVzFilterName")
+    return list(dict.fromkeys(names))
+
+
+def _walk(
+    mo: dict,
+    bag: _Bag,
+    tenant: str = "",
+    l3out: str | None = None,
+    l3out_vrf: str | None = None,
+    parent_dn: str = "",
+) -> None:
     for cls, body in mo.items():
         attrs = _attrs(body)
         name = attrs.get("name", "")
         kids = _children(body)
         dn = _dn(cls, attrs, parent_dn)
-        if cls == "fvBD":
-            l3outs = [
-                _attrs(c["fvRsBDToOut"]).get("tnL3extOutName") for c in kids if "fvRsBDToOut" in c
-            ]
-            bag.bds[name] = [x for x in l3outs if x]
-        elif cls == "fvAEPg":
-            bd = next((_attrs(c["fvRsBd"]).get("tnFvBDName") for c in kids if "fvRsBd" in c), None)
-            provides = [_attrs(c["fvRsProv"]).get("tnVzBrCPName") for c in kids if "fvRsProv" in c]
-            consumes = [_attrs(c["fvRsCons"]).get("tnVzBrCPName") for c in kids if "fvRsCons" in c]
-            subnets = [_attrs(c["fvSubnet"]).get("ip") for c in kids if "fvSubnet" in c]
-            bag.epgs[name] = {
-                "bd": bd,
-                "ap": _ap_from_dn(dn),
-                "subnets": [x for x in subnets if x],
-                "endpoints": _cep_endpoints(kids),
-                "provides": [x for x in provides if x],
-                "consumes": [x for x in consumes if x],
+        t, out, out_vrf = tenant, l3out, l3out_vrf
+        if cls == "fvTenant":
+            t = name or (dn.split("/tn-", 1)[1].split("/", 1)[0] if "/tn-" in dn else "")
+        elif cls == "fvBD":
+            bag.bds[(t, name)] = {
+                "l3outs": _rel(kids, "fvRsBDToOut", "tnL3extOutName"),
+                "vrf": next(iter(_rel(kids, "fvRsCtx", "tnFvCtxName")), None),
+                "subnets": _values(kids, "fvSubnet"),
             }
+        elif cls == "fvAEPg":
+            key = dn or f"uni/tn-{t}/epg-{name}"
+            bag.endpoints[key] = _contract_endpoint(
+                "epg",
+                key,
+                t,
+                kids,
+                name=name,
+                ap=_ap_from_dn(dn),
+                bd=next(iter(_rel(kids, "fvRsBd", "tnFvBDName")), None),
+                subnets=_values(kids, "fvSubnet"),
+                endpoints=_cep_endpoints(kids),
+            )
         elif cls == "l3extOut":
-            parent_l3out = name  # Kontext fuer verschachtelte l3extInstP
+            out = name  # Kontext fuer verschachtelte l3extInstP
+            out_vrf = next(iter(_rel(kids, "l3extRsEctx", "tnFvCtxName")), None)
         elif cls == "l3extInstP":
-            bag.ext_epgs[name] = parent_l3out or name
+            key = dn or f"uni/tn-{t}/out-{out}/instP-{name}"
+            bag.endpoints[key] = _contract_endpoint(
+                "external",
+                key,
+                t,
+                kids,
+                name=name,
+                l3out=out,
+                vrf=out_vrf,
+                subnets=_values(kids, "l3extSubnet"),
+            )
+        elif cls == "vzAny":
+            vrf = parent_dn.rsplit("/ctx-", 1)[-1] if "/ctx-" in parent_dn else None
+            key = dn or f"uni/tn-{t}/ctx-{vrf}/any"
+            bag.endpoints[key] = _contract_endpoint("vzany", key, t, kids, name="vzAny", vrf=vrf)
         elif cls == "vzBrCP":
-            subjects = []
-            for c in kids:
-                if "vzSubj" not in c:
-                    continue
-                sattrs = _attrs(c["vzSubj"])
-                filters = [
-                    _attrs(fc["vzRsSubjFiltAtt"]).get("tnVzFilterName")
-                    for fc in _children(c["vzSubj"])
-                    if "vzRsSubjFiltAtt" in fc
-                ]
-                subjects.append(
-                    {"name": sattrs.get("name", ""), "filters": [f for f in filters if f]}
-                )
-            bag.contracts[name] = {
+            subjects = [
+                {
+                    "name": _attrs(c["vzSubj"]).get("name", ""),
+                    "filters": _subject_filters(_children(c["vzSubj"])),
+                }
+                for c in kids
+                if "vzSubj" in c
+            ]
+            bag.contracts[(t, name)] = {
                 "dn": dn or name,
+                "tenant": t,
+                "name": name,
                 "scope": attrs.get("scope", "context"),
                 "subjects": subjects,
             }
         elif cls == "vzFilter":
-            bag.filters[name] = [
+            bag.filters[(t, name)] = [
                 _entry_service(_attrs(c["vzEntry"])) for c in kids if "vzEntry" in c
             ]
-        _walk_children(kids, bag, parent_l3out, dn)
+        elif cls == "vzCPIf":
+            target = next((_attrs(c["vzRsIf"]).get("tDn") for c in kids if "vzRsIf" in c), None)
+            if target:
+                bag.cifs[(t, name)] = target
+        for child in kids:
+            _walk(child, bag, t, out, out_vrf, dn)
 
 
-def _walk_children(kids: list[dict], bag: _Bag, parent_l3out: str | None, dn: str) -> None:
-    for child in kids:
-        _walk(child, bag, parent_l3out, dn)
+def _collect(data: Any) -> _Bag:
+    bag = _Bag()
+    for root in _roots(data):
+        _walk(root, bag)
+    return bag
+
+
+def _lookup(table: dict, tenant: str, name: str):
+    """Namensverweis wie der APIC: eigener Tenant, sonst `common`."""
+    return table.get((tenant, name)) or table.get((COMMON, name))
+
+
+def _ref(ep: dict) -> dict:
+    """Kompakte Endpunkt-Angabe am Contract: wo liegt die EPG (Tenant, AP/L3Out/VRF)."""
+    keys = ("kind", "tenant", "name", "dn", "ap", "bd", "l3out", "vrf")
+    return {k: ep.get(k) for k in keys if ep.get(k) is not None}
+
+
+def _zone(bag: _Bag, ep: dict) -> str | None:
+    if ep["kind"] == "external":
+        return ep.get("l3out")
+    if ep["kind"] == "vzany":
+        return ep.get("vrf")
+    bd = _lookup(bag.bds, ep["tenant"], ep.get("bd") or "") or {}
+    return (bd.get("l3outs") or [None])[0] or ep.get("bd")
 
 
 def parse_mo_export(data: Any) -> list[dict]:
     """APIC-MO-Export -> Liste von Contract-Dicts fuer `normalize_contract`."""
-    bag = _Bag()
-    for root in _roots(data):
-        _walk(root, bag)
-
-    def epg_zone(epg: str) -> str | None:
-        if epg in bag.ext_epgs:
-            return bag.ext_epgs[epg]  # externe EPG -> L3O
-        bd = (bag.epgs.get(epg) or {}).get("bd")
-        l3outs = bag.bds.get(bd or "", [])
-        return l3outs[0] if l3outs else bd
+    bag = _collect(data)
+    by_dn = {c["dn"]: key for key, c in bag.contracts.items()}
+    sides: dict[tuple[str, str], dict[str, list[dict]]] = {
+        key: {"consumers": [], "providers": []} for key in bag.contracts
+    }
+    for ep in bag.endpoints.values():
+        t = ep["tenant"]
+        for role, names in (("providers", ep["provides"]), ("consumers", ep["consumes"])):
+            for cname in names:
+                c = _lookup(bag.contracts, t, cname)
+                if c is not None:
+                    sides[(c["tenant"], c["name"])][role].append(ep)
+        for ifname in ep["consumes_if"]:  # exportierter Contract eines anderen Tenants
+            key = by_dn.get(_lookup(bag.cifs, t, ifname) or "")
+            if key is not None:
+                sides[key]["consumers"].append(ep)
 
     contracts: list[dict] = []
-    for cname, cinfo in bag.contracts.items():
-        providers = [e for e, i in bag.epgs.items() if cname in i["provides"]]
-        consumers = [e for e, i in bag.epgs.items() if cname in i["consumes"]]
+    for key, c in bag.contracts.items():
+        consumers, providers = sides[key]["consumers"], sides[key]["providers"]
         subjects = [
             {
                 "name": s["name"],
-                "services": [svc for fn in s["filters"] for svc in bag.filters.get(fn, [])],
+                "services": [
+                    svc
+                    for fn in s["filters"]
+                    for svc in (_lookup(bag.filters, c["tenant"], fn) or [])
+                ],
             }
-            for s in cinfo["subjects"]
+            for s in c["subjects"]
         ]
         contracts.append(
             {
-                "dn": cinfo["dn"],
-                "name": cname,
-                "scope": cinfo["scope"],
-                "consumer_epgs": consumers,
-                "provider_epgs": providers,
+                "dn": c["dn"],
+                "tenant": c["tenant"],
+                "name": c["name"],
+                "scope": c["scope"],
+                "consumers": [_ref(e) for e in consumers],
+                "providers": [_ref(e) for e in providers],
+                # Namen wie bisher (Anzeige, aeltere Auswertungen)
+                "consumer_epgs": [e["name"] for e in consumers],
+                "provider_epgs": [e["name"] for e in providers],
                 "subjects": subjects,
-                "src_zone": epg_zone(consumers[0]) if consumers else None,
-                "dst_zone": epg_zone(providers[0]) if providers else None,
+                "src_zone": _zone(bag, consumers[0]) if consumers else None,
+                "dst_zone": _zone(bag, providers[0]) if providers else None,
             }
         )
     return contracts
 
 
 def parse_epgs(data: Any) -> list[dict]:
-    """APIC-MO-Export -> Liste von EPG-Dicts (name, ap, bd, subnets) fuer den Store."""
-    bag = _Bag()
-    for root in _roots(data):
-        _walk(root, bag)
-    return [
-        {
-            "name": name,
-            "ap": info.get("ap"),
-            "bd": info.get("bd"),
-            "subnets": info.get("subnets", []),
-            "endpoints": info.get("endpoints", []),
-        }
-        for name, info in sorted(bag.epgs.items())
-    ]
+    """APIC-MO-Export -> Contract-Endpunkte fuer den Store: EPGs (Tenant, AP, BD, VRF,
+    EPG- und BD-Subnetze, gelernte Endpunkte), externe EPGs (L3Out, Subnetze) und vzAny."""
+    bag = _collect(data)
+    out = []
+    for dn, ep in sorted(bag.endpoints.items()):
+        bd = _lookup(bag.bds, ep["tenant"], ep.get("bd") or "") or {}
+        out.append(
+            {
+                "name": ep["name"],
+                "kind": ep["kind"],
+                "tenant": ep["tenant"] or None,
+                "dn": dn,
+                "ap": ep.get("ap"),
+                "bd": ep.get("bd"),
+                "vrf": ep.get("vrf") or bd.get("vrf"),
+                "l3out": ep.get("l3out"),
+                "subnets": ep.get("subnets", []),
+                "bd_subnets": bd.get("subnets", []),
+                "endpoints": ep.get("endpoints", []),
+            }
+        )
+    return out

@@ -2,12 +2,14 @@
 
 Eine EPG ist die ACI-Gruppierung eines Servers („ein Server = genau eine EPG");
 die AP-Klammer (`AP_###`) ist das Projekt. EPGs sind Endpunkte von ACI-Contracts
-(`rule_endpoint.epg_id`). `epg_subnet` haelt die hinterlegten Subnetze (`fvSubnet`,
-dual-stack), `epg_endpoint` die gelernten Endpunkte (`fvCEp`/`fvIp`, akkumulierend).
-`epg.network_object_id` verknuepft die EPG mit dem zugehoerigen Server (Host-Objekt).
+(`rule_endpoint.epg_id`) - ebenso externe EPGs eines L3Out (`kind=external`) und vzAny
+einer VRF (`kind=vzany`). Identitaet ist die DN (`uni/tn-<TE>/ap-<AP>/epg-<EG>`):
+dieselben Namen gibt es in vielen ACI-Tenants. `epg_subnet` haelt die Subnetze (EPG-,
+BD- bzw. externe Subnetze, dual-stack), `epg_endpoint` die gelernten Endpunkte
+(`fvCEp`/`fvIp`). `epg.network_object_id` verknuepft die EPG mit dem Server (Host-Objekt).
 """
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import ForeignKey, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -15,11 +17,22 @@ from app.models.base import Base
 
 class Epg(Base):
     __tablename__ = "epg"
-    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_epg_tenant_name"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "dn", name="uq_epg_tenant_dn"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))  # EG_...
+    # epg | external (L3Out-EPG) | vzany (alle EPGs einer VRF)
+    kind: Mapped[str] = mapped_column(String(16), default="epg", server_default=text("'epg'"))
+    aci_tenant: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # DN aus dem APIC; aeltere Laeufe ohne (dann nur ueber den Namen gefunden)
+    dn: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    vrf: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    l3out: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # APIC, der die EPG zuletzt gemeldet hat (veraltete EPGs je APIC aufraeumen)
+    source_system_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_system.id"), nullable=True, index=True
+    )
     ap: Mapped[str | None] = mapped_column(
         String(100), nullable=True, index=True
     )  # AP_### (Projekt)
@@ -37,6 +50,8 @@ class EpgSubnet(Base):
     epg_id: Mapped[int] = mapped_column(ForeignKey("epg.id"), index=True)
     ip: Mapped[str] = mapped_column(String(64))  # CIDR, dual-stack
     family: Mapped[str | None] = mapped_column(String(4), nullable=True)  # "v4" | "v6"
+    # epg (fvSubnet der EPG) | bd (Subnetz der Bridge Domain) | ext (l3extSubnet)
+    origin: Mapped[str] = mapped_column(String(8), default="epg", server_default=text("'epg'"))
 
 
 class EpgEndpoint(Base):

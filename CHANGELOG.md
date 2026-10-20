@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.4.0 – 2026-10-20
+
+Wo liegen Consumer und Provider eines ACI-Contracts? (Alembic `0023`)
+
+- **Lage je Consumer/Provider:** Das Detail eines ACI-Contracts zeigt pro Seite eine Karte mit
+  ACI-Tenant, Applikationsprofil, Bridge Domain, VRF bzw. L3Out, den Subnetzen (EPG, BD,
+  extern) samt passendem IPAM-Netz der DDI/NetBox (Beschreibung, VLAN, Standort), den gelernten
+  Endpunkten mit DNS-Namen aus der Referenzquelle und dem verknüpften Server. In der Liste
+  stehen Consumer/Provider als `AP/EPG` bzw. `L3Out/EPG`, mit ACI-Tenant davor, wenn er vom
+  Contract abweicht.
+- **ACI-Parser tenant-bewusst:** Identität per DN statt Name – gleichnamige Contracts, EPGs,
+  BDs und Filter in mehreren ACI-Tenants werden nicht mehr zusammengelegt. Namensverweise wie
+  im APIC: eigener Tenant, sonst `common`. Neu als Consumer/Provider: **externe EPGs**
+  (L3Out, Subnetze), **vzAny** und exportierte Contracts über **Contract-Interfaces**;
+  Filter nicht-reflexiver Subjects (`vzInTerm`/`vzOutTerm`).
+- **Store:** EPG mit Art, ACI-Tenant, DN, VRF, L3Out und Quellsystem, Subnetze mit Herkunft.
+  Bestehende EPGs (nur Name) ersetzt der nächste ACI-Lauf; veraltete EPGs eines APICs ohne
+  Regelbezug fallen weg, ebenso beim Löschen des Quellsystems.
+- **Applikations-Doku:** gleichnamige EPGs heissen „EG_x · Tenant · AP“; Gegenstelle in einem
+  anderen ACI-Tenant → Tabelle 9. Behoben: die Doku berücksichtigte nur die ersten 500 Regeln.
+
 ## 0.3.0 – 2026-10-20
 
 ACI-Contracts in der Regel-Ansicht.

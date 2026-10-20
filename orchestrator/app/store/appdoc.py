@@ -16,8 +16,20 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Epg, NatRule, NetworkObject, ObjectClass, RuleEndpoint, Site, Tenant
+from app.models import (
+    Epg,
+    NatRule,
+    NetworkObject,
+    ObjectClass,
+    RuleDomain,
+    RuleEndpoint,
+    Site,
+    Tenant,
+)
+from app.store import epgs as epg_store
 from app.store import rules as rules_store
+
+SEP = " · "  # gleichnamige EPGs mehrerer ACI-Tenants: "EG_x · TE_a · AP_1"
 
 # Tabellen-Metadaten (Index -> Titel, Enforcement). Spaltenlisten siehe TABLE_COLUMNS.
 TABLES: list[tuple[int, str, str]] = [
@@ -138,18 +150,38 @@ def list_systems(session: Session, tenant_id: int | None) -> list[SystemRef]:
         SystemRef(name=n, ip=v, rule_count=len(rids), kind="host") for n, (v, rids) in agg.items()
     ]
 
-    # EPGs (ACI) als Systeme
-    estmt = select(Epg)
+    # EPGs (ACI) als Systeme - externe EPGs und vzAny sind keine Systeme
+    estmt = select(Epg).where(Epg.kind == "epg")
     if tenant_id is not None:
         estmt = estmt.where(Epg.tenant_id == tenant_id)
-    for epg in session.scalars(estmt):
+    epgs = list(session.scalars(estmt))
+    names = [(e.tenant_id, e.name) for e in epgs]
+    for epg in epgs:
         rids = {
             e.rule_id
             for e in session.scalars(select(RuleEndpoint).where(RuleEndpoint.epg_id == epg.id))
         }
-        systems.append(SystemRef(name=epg.name, ip=None, rule_count=len(rids), kind="epg"))
+        name = epg_system_name(epg) if names.count((epg.tenant_id, epg.name)) > 1 else epg.name
+        systems.append(SystemRef(name=name, ip=None, rule_count=len(rids), kind="epg"))
 
     return sorted(systems, key=lambda s: (s.kind, s.name))
+
+
+def _target(other: Epg | None, inline: str | None, own: Epg) -> str:
+    """Gegenstelle in der Doku: EPG-Name (ein Server = eine EPG), ACI-Tenant davor, wenn
+    fremd; externe EPG / vzAny mit L3Out bzw. VRF."""
+    if other is None:
+        return inline or ""
+    if other.kind != "epg":
+        return epg_store.label(other, own.aci_tenant)
+    if other.aci_tenant and own.aci_tenant and other.aci_tenant != own.aci_tenant:
+        return f"{other.aci_tenant}/{other.name}"
+    return other.name
+
+
+def epg_system_name(epg: Epg) -> str:
+    """Eindeutiger Systemname einer EPG, deren Name es in mehreren ACI-Tenants/APs gibt."""
+    return SEP.join(x for x in (epg.name, epg.aci_tenant, epg.ap) if x)
 
 
 def _label(obj: NetworkObject | None, inline: str | None) -> str:
@@ -197,33 +229,37 @@ def _envelope(
 
 
 def _epg_doc(session: Session, epg: Epg) -> dict:
-    """ACI-EPG als System: Contracts nach scope/AP in die Tabellen 7/8/9 (+10) einordnen."""
-    ap_by_name = {
-        e.name: e.ap for e in session.scalars(select(Epg).where(Epg.tenant_id == epg.tenant_id))
-    }
+    """ACI-EPG als System: Contracts nach scope/AP in die Tabellen 7/8/9 (+10) einordnen.
+
+    Gegenstelle gleiches AP (im selben ACI-Tenant) -> 7, anderer ACI-Tenant -> 9."""
+    by_id = {e.id: e for e in session.scalars(select(Epg).where(Epg.tenant_id == epg.tenant_id))}
+
+    def is_self(e) -> bool:  # aeltere Laeufe ohne EPG-Verknuepfung: ueber den Namen
+        return e.epg_id == epg.id or (e.epg_id is None and e.inline_value == epg.name)
+
     rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
-    for r in rules_store.list_rules(session, epg.tenant_id):
+    acl = rules_store.list_rules(session, epg.tenant_id, limit=None, domain=RuleDomain.ACI_CONTRACT)
+    for r in acl:
         eps = [e for e in r.endpoints if e.kind.value == "epg"]
-        on_src = any(
-            (e.epg_id == epg.id or e.inline_value == epg.name) and e.role.value == "src"
-            for e in eps
-        )
-        on_dst = any(
-            (e.epg_id == epg.id or e.inline_value == epg.name) and e.role.value == "dst"
-            for e in eps
-        )
+        on_src = any(is_self(e) and e.role.value == "src" for e in eps)
+        on_dst = any(is_self(e) and e.role.value == "dst" for e in eps)
         if not (on_src or on_dst):
             continue
         cp_role = "src" if on_dst else "dst"
         cp = [e for e in eps if e.role.value == cp_role]
-        cp_names = [e.inline_value for e in cp if e.inline_value]
-        same_ap = any(ap_by_name.get(n) == epg.ap and epg.ap is not None for n in cp_names)
-        idx = categorize_aci(r.aci_scope, same_ap, same_tenant=True)
+        cp_epgs = [by_id[e.epg_id] for e in cp if e.epg_id in by_id]
+        cp_names = [_target(by_id.get(e.epg_id), e.inline_value, epg) for e in cp]
+        same_ap = any(
+            c.ap == epg.ap and c.aci_tenant == epg.aci_tenant and epg.ap is not None
+            for c in cp_epgs
+        )
+        same_tenant = all(c.aci_tenant == epg.aci_tenant for c in cp_epgs)
+        idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
         rows_by_table[idx].append(
             {
                 "Server Name": epg.name,
                 "TCP/UDP": ", ".join(s.canonical_name for s in r.services),
-                "Target Systems": ", ".join(cp_names),
+                "Target Systems": ", ".join(n for n in cp_names if n),
                 "Schutzmechanismen": ", ".join(r.protections) if r.protections else "",
                 "Description": r.name or f"#{r.external_id}",
             }
@@ -250,9 +286,13 @@ def build_doc(session: Session, system_name: str, tenant_id: int | None) -> dict
     ).first()
     if sys_obj is not None:
         return _host_doc(session, sys_obj)
+    name, *where = system_name.split(SEP)  # "EG_x · TE_a · AP_1" bei gleichen Namen
     epg = session.scalars(
         select(Epg).where(
-            Epg.name == system_name,
+            Epg.name == name,
+            Epg.kind == "epg",
+            *([Epg.aci_tenant == where[0]] if where else []),
+            *([Epg.ap == where[1]] if len(where) > 1 else []),
             *([Epg.tenant_id == tenant_id] if tenant_id is not None else []),
         )
     ).first()
@@ -277,7 +317,7 @@ def _host_doc(session: Session, sys_obj: NetworkObject) -> dict:
     ]
     snat_ips = sorted({n.ext_ip for n in nats if n.nat_type == "snat_pool" and n.ext_ip})
 
-    rules = rules_store.list_rules(session, tenant_id)
+    rules = rules_store.list_rules(session, tenant_id, limit=None, domain=RuleDomain.FIREWALL)
     obj_ids = {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id}
     objs = rules_store.objects_by_ids(session, obj_ids)
     zone_ids = {z for r in rules for z in (r.src_zone_id, r.dst_zone_id) if z}

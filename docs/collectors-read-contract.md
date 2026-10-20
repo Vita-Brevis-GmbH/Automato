@@ -79,6 +79,17 @@ Ports zu Policy-Gruppen/PC/vPC), `l1PhysIf` (Port-Status/Beschreibung) und `lldp
 `vzFilter`/`vzEntry` der `vzSubj`. BD→L3Out (`fvRsBDToOut`) ordnet den Verkehr den
 L3Outs zu (Firewall-Richtungs-Kategorien).
 
+**Identität und Auflösung (seit 0.4.0):** Contracts, EPGs, BDs und Filter werden über die
+**DN** geführt – dieselben Namen gibt es in vielen ACI-Tenants. Namensverweise
+(`tnVzBrCPName`, `tnFvBDName`, `tnVzFilterName`) löst der Collector wie der APIC auf:
+**eigener Tenant, sonst `common`**. Consumer/Provider sind neben Anwendungs-EPGs auch
+**externe EPGs** (`l3extInstP` mit `fvRsProv`/`fvRsCons`, Subnetze aus `l3extSubnet`,
+VRF aus `l3extRsEctx`) und **vzAny** einer VRF (`vzRsAnyToProv`/`vzRsAnyToCons`).
+Exportierte Contracts eines anderen Tenants kommen über Contract-Interfaces (`vzCPIf` +
+`vzRsIf.tDn`, verbraucht per `fvRsConsIf`/`vzRsAnyToConsIf`). Nicht-reflexive Subjects
+liefern ihre Filter aus `vzInTerm`/`vzOutTerm` (`vzRsFiltAtt`). Noch nicht gelesen:
+Endpoint Security Groups (`fvESg`), Taboo-Contracts, Preferred Groups (`prefGrMemb`).
+
 **Beobachtete Abweichungen** (Ausnahmen-Kaskade): neben den 7 Standard-EPGs auch
 `EG_nfs01`, `EG_privat01`; Dual-Stack-Subnetze real.
 

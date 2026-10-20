@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Endpoint, fetchRuleDetail, RuleDetail, RuleRef } from "./api";
+import { EpgCard } from "./EpgCard";
 import { RefCard } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, Loading, MatchBadge, Note } from "./ui";
 
@@ -33,7 +34,17 @@ function EndpointList({ items }: { items: Endpoint[] }) {
 // Läufe ohne Verweise zeigen die aufgelösten Endpunkte.
 function Side({ refs, endpoints }: { refs: RuleRef[]; endpoints: Endpoint[] }) {
   if (refs.length) return <>{refs.map((r, i) => <RefCard key={`${r.name}-${i}`} r={r} />)}</>;
-  return <EndpointList items={endpoints} />;
+  // ACI: je Consumer/Provider die Lage der EPG (Tenant, AP, BD, VRF, Subnetze, Endpunkte)
+  const located = endpoints.filter((e) => e.epg);
+  const rest = endpoints.filter((e) => !e.epg);
+  return (
+    <>
+      {located.map((e, i) => (
+        <EpgCard key={`${e.epg!.dn ?? e.epg!.name}-${i}`} epg={e.epg!} />
+      ))}
+      {(rest.length > 0 || located.length === 0) && <EndpointList items={rest} />}
+    </>
+  );
 }
 
 export default function RuleDetailDrawer({

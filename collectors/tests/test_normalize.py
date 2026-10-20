@@ -193,8 +193,18 @@ def test_aci_mo_export_wird_geparst_und_normalisiert():
     rules = [r for c in contracts for r in normalize_contract(c)]
     assert len(rules) == 1
     rule = rules[0]
-    assert rule.sources == ["epg:EG_web"]
-    assert rule.destinations == ["epg:EG_db"]
+    assert rule.sources == ["epg:uni/tn-TE_share/ap-AP_001/epg-EG_web"]  # DN = eindeutig
+    assert rule.destinations == ["epg:uni/tn-TE_share/ap-AP_001/epg-EG_db"]
+    assert c["consumers"] == [
+        {
+            "kind": "epg",
+            "tenant": "TE_share",
+            "name": "EG_web",
+            "dn": "uni/tn-TE_share/ap-AP_001/epg-EG_web",
+            "ap": "AP_001",
+            "bd": "BD_app",
+        }
+    ]
     assert rule.services == ["tcp/3306"]
     assert rule.src_zone == "L3O_inet" and rule.dst_zone == "BD_db"
     assert rule.external_id == "uni/tn-TE_share/brc-CT_web/SJ_mysql"
@@ -206,10 +216,14 @@ def test_aci_parse_epgs_und_scope():
 
     export = fetch_mo_export()
     epgs = {e["name"]: e for e in parse_epgs(export)}
-    assert set(epgs) == {"EG_web", "EG_db"}
-    assert epgs["EG_web"]["ap"] == "AP_001"
-    assert epgs["EG_web"]["bd"] == "BD_app"
+    assert set(epgs) == {"EG_web", "EG_db", "EN_inet"}
+    assert epgs["EG_web"]["ap"] == "AP_001" and epgs["EG_web"]["tenant"] == "TE_share"
+    assert epgs["EG_web"]["bd"] == "BD_app" and epgs["EG_web"]["vrf"] == "VRF_share"
     assert epgs["EG_web"]["subnets"] == ["10.20.1.1/24"]
+    assert epgs["EG_web"]["bd_subnets"] == ["10.20.0.1/24"]  # Gateway der Bridge Domain
+    ext = epgs["EN_inet"]
+    assert ext["kind"] == "external" and ext["l3out"] == "L3O_inet"
+    assert ext["subnets"] == ["0.0.0.0/0"]
 
     # Contract-Scope landet an der normalisierten Regel
     from collectors.cisco_aci.normalize import normalize_contract
@@ -278,3 +292,136 @@ def test_service_mit_mehreren_portbereichen():
         [{"name": "MULTI", "tcp-portrange": "443 8443-8445:1024-65535", "udp-portrange": "53"}]
     )
     assert smap["MULTI"] == ["tcp/443", "tcp/8443-8445", "udp/53"]
+
+
+def _mo(cls: str, name: str = "", children=(), **attrs) -> dict:
+    a = {"name": name, **attrs} if name else dict(attrs)
+    return {cls: {"attributes": a, "children": list(children)}}
+
+
+def _epg(name, bd=None, cons=(), prov=(), cons_if=(), endpoints=()):
+    kids = [_mo("fvRsBd", tnFvBDName=bd)] if bd else []
+    kids += [_mo("fvRsCons", tnVzBrCPName=c) for c in cons]
+    kids += [_mo("fvRsProv", tnVzBrCPName=c) for c in prov]
+    kids += [_mo("fvRsConsIf", tnVzCPIfName=c) for c in cons_if]
+    kids += [_mo("fvCEp", mac=m, ip=ip) for ip, m in endpoints]
+    return _mo("fvAEPg", name, kids)
+
+
+def _contract(name, flt, scope="context"):
+    subj = _mo("vzSubj", "SJ_1", [_mo("vzRsSubjFiltAtt", tnVzFilterName=flt)])
+    return _mo("vzBrCP", name, [subj], scope=scope)
+
+
+def _filter(name, port):
+    return _mo("vzFilter", name, [_mo("vzEntry", "e", prot="tcp", dFromPort=port, dToPort=port)])
+
+
+MULTI_TENANT = [
+    _mo(
+        "fvTenant",
+        "common",
+        [
+            _contract("CT_dns", "FT_dns"),
+            _filter("FT_dns", "53"),
+            _mo("fvAp", "AP_infra", [_epg("EG_dns", prov=["CT_dns"])]),
+        ],
+    ),
+    _mo(
+        "fvTenant",
+        "TE_a",
+        [
+            _mo("fvCtx", "VRF_a"),
+            _mo(
+                "fvBD",
+                "BD_web",
+                [_mo("fvRsCtx", tnFvCtxName="VRF_a"), _mo("fvSubnet", ip="10.1.0.1/24")],
+            ),
+            _contract("CT_web", "FT_web"),
+            _filter("FT_web", "443"),
+            _mo("vzCPIf", "IF_glob", [_mo("vzRsIf", tDn="uni/tn-TE_b/brc-CT_glob")]),
+            _mo(
+                "fvAp",
+                "AP_100",
+                [
+                    _epg("EG_app", "BD_web", cons=["CT_dns"], cons_if=["IF_glob"]),
+                    _epg("EG_web", "BD_web", prov=["CT_web"], endpoints=[("10.1.0.10", "AA")]),
+                ],
+            ),
+            _mo(
+                "l3extOut",
+                "L3O_inet",
+                [
+                    _mo("l3extRsEctx", tnFvCtxName="VRF_a"),
+                    _mo(
+                        "l3extInstP",
+                        "EN_inet",
+                        [
+                            _mo("fvRsCons", tnVzBrCPName="CT_web"),
+                            _mo("l3extSubnet", ip="0.0.0.0/0"),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    ),
+    _mo(
+        "fvTenant",
+        "TE_b",
+        [
+            _contract("CT_web", "FT_web"),  # gleicher Name wie in TE_a, anderer Contract
+            _filter("FT_web", "8443"),
+            _contract("CT_glob", "FT_web", scope="global"),
+            _mo(
+                "fvCtx",
+                "VRF_b",
+                [_mo("vzAny", children=[_mo("vzRsAnyToCons", tnVzBrCPName="CT_web")])],
+            ),
+            _mo(
+                "fvAp",
+                "AP_200",
+                [_epg("EG_app", prov=["CT_web", "CT_glob"])],  # gleicher EPG-Name wie in TE_a
+            ),
+        ],
+    ),
+]
+
+
+def test_aci_mehrere_tenants_gleiche_namen_common_extern_vzany_interface():
+    """Dev-Befund (25 ACI-Tenants): Identitaet per DN, Aufloesung eigener Tenant -> common."""
+    from collectors.cisco_aci.mo import parse_epgs, parse_mo_export
+
+    by_dn = {c["dn"]: c for c in parse_mo_export(MULTI_TENANT)}
+    dns = lambda side: [e["dn"] for e in side]  # noqa: E731
+
+    web_a = by_dn["uni/tn-TE_a/brc-CT_web"]
+    assert dns(web_a["providers"]) == ["uni/tn-TE_a/ap-AP_100/epg-EG_web"]
+    assert dns(web_a["consumers"]) == ["uni/tn-TE_a/out-L3O_inet/instP-EN_inet"]  # extern
+    assert web_a["consumers"][0]["kind"] == "external" and web_a["src_zone"] == "L3O_inet"
+    assert web_a["subjects"][0]["services"] == ["tcp/443"]  # Filter aus TE_a, nicht TE_b
+
+    web_b = by_dn["uni/tn-TE_b/brc-CT_web"]
+    assert dns(web_b["providers"]) == ["uni/tn-TE_b/ap-AP_200/epg-EG_app"]
+    assert dns(web_b["consumers"]) == ["uni/tn-TE_b/ctx-VRF_b/any"]  # vzAny der VRF
+    assert web_b["subjects"][0]["services"] == ["tcp/8443"]
+
+    dns_common = by_dn["uni/tn-common/brc-CT_dns"]  # TE_a verweist per Name auf common
+    assert dns(dns_common["consumers"]) == ["uni/tn-TE_a/ap-AP_100/epg-EG_app"]
+    assert dns(dns_common["providers"]) == ["uni/tn-common/ap-AP_infra/epg-EG_dns"]
+    assert dns_common["subjects"][0]["services"] == ["tcp/53"]
+
+    glob = by_dn["uni/tn-TE_b/brc-CT_glob"]  # ueber das Contract-Interface aus TE_a
+    assert dns(glob["consumers"]) == ["uni/tn-TE_a/ap-AP_100/epg-EG_app"]
+
+    rules = {r.external_id: r for c in by_dn.values() for r in normalize_contract(c)}
+    assert rules["uni/tn-TE_a/brc-CT_web/SJ_1"].destinations == [
+        "epg:uni/tn-TE_a/ap-AP_100/epg-EG_web"
+    ]
+
+    eps = {e["dn"]: e for e in parse_epgs(MULTI_TENANT)}
+    assert len([e for e in eps.values() if e["name"] == "EG_app"]) == 2  # nicht zusammengelegt
+    web = eps["uni/tn-TE_a/ap-AP_100/epg-EG_web"]
+    assert web["vrf"] == "VRF_a" and web["bd_subnets"] == ["10.1.0.1/24"]
+    assert web["endpoints"] == [{"ip": "10.1.0.10", "mac": "AA"}]
+    vzany = eps["uni/tn-TE_b/ctx-VRF_b/any"]
+    assert vzany["kind"] == "vzany" and vzany["vrf"] == "VRF_b" and vzany["tenant"] == "TE_b"

@@ -22,6 +22,7 @@ from app.models import (
     NetworkObject,
     ReferenceRecordRow,
     Rule,
+    RuleEndpoint,
     Site,
     SourceSystem,
     SyncPlan,
@@ -63,6 +64,24 @@ def _count_findings(session: Session, tenant_id: int) -> int:
     return len(session.scalars(select(Finding.id).where(Finding.tenant_id == tenant_id)).all())
 
 
+def _delete_source_epgs(session: Session, source_id: int) -> int:
+    """EPGs eines APICs, auf die keine Regel mehr verweist; die übrigen bleiben ohne Quelle."""
+    referenced = select(RuleEndpoint.epg_id).where(RuleEndpoint.epg_id.is_not(None))
+    drop = list(
+        session.scalars(
+            select(Epg.id).where(Epg.source_system_id == source_id, Epg.id.not_in(referenced))
+        )
+    )
+    if drop:
+        session.execute(delete(EpgSubnet).where(EpgSubnet.epg_id.in_(drop)))
+        session.execute(delete(EpgEndpoint).where(EpgEndpoint.epg_id.in_(drop)))
+        session.execute(delete(Epg).where(Epg.id.in_(drop)))
+    session.execute(
+        update(Epg).where(Epg.source_system_id == source_id).values(source_system_id=None)
+    )
+    return len(drop)
+
+
 def delete_source_system(session: Session, source: SourceSystem) -> dict[str, int]:
     """Quellsystem mit seinen Regeln, NAT-Einträgen und den dadurch verwaisten Findings
     löschen; Läufe bleiben als Historie."""
@@ -74,6 +93,7 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
     session.execute(delete(DeviceObject).where(DeviceObject.source_system_id == source.id))
     for model in INVENTORY_MODELS:
         session.execute(delete(model).where(model.source_system_id == source.id))
+    counts["epgs"] = _delete_source_epgs(session, source.id)
     source.reference_run_id = None
     session.flush()
     counts["references"] = _count(

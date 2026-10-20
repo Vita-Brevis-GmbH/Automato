@@ -40,7 +40,13 @@ class NormalizedEpg(BaseModel):
     """ACI-EPG (Model 1): Server-Gruppierung mit AP-Klammer (Projekt) + Subnetzen."""
 
     name: str
+    kind: str = "epg"  # epg | external (L3Out-EPG) | vzany (alle EPGs der VRF)
+    tenant: str | None = None  # ACI-Tenant
+    dn: str | None = None  # eindeutig ueber alle ACI-Tenants (aeltere Collectors: ohne)
+    vrf: str | None = None
+    l3out: str | None = None  # externe EPG: L3Out
     ap: str | None = None
+    bd_subnets: list[str] = Field(default_factory=list)  # Subnetze der Bridge Domain
     bd: str | None = None
     subnets: list[str] = Field(default_factory=list)
     endpoints: list[NormalizedEpgEndpoint] = Field(default_factory=list)  # fvCEp/fvIp

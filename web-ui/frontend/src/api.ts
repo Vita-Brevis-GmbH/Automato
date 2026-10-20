@@ -62,6 +62,28 @@ export interface Endpoint {
   object_class: string | null;
   fqdn: string | null;
   nat_target: string | null;
+  epg?: EpgLocation | null; // ACI: wo liegt der Consumer/Provider
+}
+
+// Lage einer EPG (Contract-Consumer/-Provider): Tenant, AP, BD, VRF, Subnetze, Endpunkte
+export interface EpgLocation {
+  kind: "epg" | "external" | "vzany" | string;
+  name: string;
+  label: string;
+  dn: string | null;
+  aci_tenant: string | null;
+  ap: string | null;
+  bd: string | null;
+  vrf: string | null;
+  l3out: string | null;
+  subnets: {
+    ip: string;
+    origin: "epg" | "bd" | "ext" | string;
+    ipam: { prefix: string; description: string | null; vlan: number | null; site: string | null; source: string } | null;
+  }[];
+  endpoint_count: number;
+  endpoints: { ip: string; mac: string | null; dns_name: string | null }[];
+  server: { name: string; ip: string | null; site: string | null } | null;
 }
 
 // Referenzdaten eines Werts aus dem IPAM (führend, z. B. DDI) oder der Anreicherung (NetBox)

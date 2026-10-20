@@ -84,8 +84,8 @@ def test_db_fehler_im_ingest_wird_zurueckgerollt(client, session_factory, monkey
 
     tid, sid = _setup(session_factory, monkeypatch)
 
-    def duplicate(session, tenant_id, epgs):
-        epg = Epg(tenant_id=tenant_id, name="EG_x")
+    def duplicate(session, run, epgs):
+        epg = Epg(tenant_id=run.tenant_id, name="EG_x")
         session.add(epg)
         session.flush()
         session.add_all([EpgEndpoint(epg_id=epg.id, ip="1.1.1.1") for _ in range(2)])
@@ -98,4 +98,106 @@ def test_db_fehler_im_ingest_wird_zurueckgerollt(client, session_factory, monkey
     assert run.status == "failed" and "IntegrityError" in run.message
     assert "INSERT" not in run.message  # kein SQL in der Meldung
     assert s.query(Epg).count() == 0  # Teil-Ingest verworfen
+    s.close()
+
+
+def _post(client, tid: int, sid: int, result: dict) -> str:
+    body = {"platform": "cisco_aci", "tenant_id": tid, "source_system_id": sid}
+    run_id = client.post("/jobs/collect", json=body).json()["run_id"]
+    r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
+    assert r.status_code == 200 and r.json()["status"] == "completed", r.text
+    return run_id
+
+
+A_WEB = "uni/tn-TE_a/ap-AP_1/epg-EG_web"
+B_WEB = "uni/tn-TE_b/ap-AP_2/epg-EG_web"
+A_EXT = "uni/tn-TE_a/out-L3O_inet/instP-EN_inet"
+
+
+def _multi(with_b: bool = True) -> dict:
+    epgs = [
+        {
+            "name": "EG_web",
+            "dn": A_WEB,
+            "tenant": "TE_a",
+            "ap": "AP_1",
+            "bd": "BD_web",
+            "vrf": "VRF_a",
+            "subnets": [],
+            "bd_subnets": ["10.1.0.1/24"],
+            "endpoints": [{"ip": "10.1.0.10", "mac": "aa"}],
+        },
+        {
+            "name": "EN_inet",
+            "kind": "external",
+            "dn": A_EXT,
+            "tenant": "TE_a",
+            "l3out": "L3O_inet",
+            "vrf": "VRF_a",
+            "subnets": ["0.0.0.0/0"],
+        },
+    ]
+    rules = [
+        {
+            "source_platform": "cisco_aci",
+            "external_id": "uni/tn-TE_a/brc-CT_web/SJ_1",
+            "name": "CT_web:SJ_1",
+            "action": "allow",
+            "sources": [f"epg:{A_EXT}"],
+            "destinations": [f"epg:{A_WEB}"],
+            "services": ["tcp/443"],
+        }
+    ]
+    if with_b:
+        epgs.append({"name": "EG_web", "dn": B_WEB, "tenant": "TE_b", "ap": "AP_2"})
+        rules.append(
+            {
+                "source_platform": "cisco_aci",
+                "external_id": "uni/tn-TE_b/brc-CT_web/SJ_1",
+                "name": "CT_web:SJ_1",
+                "action": "allow",
+                "sources": [],
+                "destinations": [f"epg:{B_WEB}"],
+                "services": ["tcp/8443"],
+            }
+        )
+    return {"status": "completed", "epgs": epgs, "rules": rules}
+
+
+def test_gleichnamige_epgs_mehrerer_aci_tenants_bleiben_getrennt(
+    client, session_factory, monkeypatch
+):
+    from app.models import Epg, EpgSubnet, Rule
+
+    tid, sid = _setup(session_factory, monkeypatch)
+    s = session_factory()
+    s.add(Epg(tenant_id=tid, name="EG_web", ap="AP_1"))  # Altbestand vor 0.3.1 (ohne DN)
+    s.commit()
+    s.close()
+
+    _post(client, tid, sid, _multi())
+    s = session_factory()
+    epgs = {e.dn: e for e in s.query(Epg).all()}
+    assert set(epgs) == {A_WEB, B_WEB, A_EXT}  # Altbestand ersetzt, nichts zusammengelegt
+    assert epgs[A_WEB].aci_tenant == "TE_a" and epgs[B_WEB].aci_tenant == "TE_b"
+    assert epgs[A_EXT].kind == "external" and epgs[A_EXT].l3out == "L3O_inet"
+    assert all(e.source_system_id == sid for e in epgs.values())
+    origins = {(x.epg_id, x.ip): x.origin for x in s.query(EpgSubnet).all()}
+    assert origins == {(epgs[A_WEB].id, "10.1.0.1/24"): "bd", (epgs[A_EXT].id, "0.0.0.0/0"): "ext"}
+    links = {r.external_id: {(e.role.value, e.epg_id) for e in r.endpoints} for r in s.query(Rule)}
+    assert links["uni/tn-TE_a/brc-CT_web/SJ_1"] == {
+        ("src", epgs[A_EXT].id),
+        ("dst", epgs[A_WEB].id),
+    }
+    assert links["uni/tn-TE_b/brc-CT_web/SJ_1"] == {("dst", epgs[B_WEB].id)}
+    s.close()
+
+    _post(client, tid, sid, _multi(with_b=False))  # EPG in TE_b nicht mehr gemeldet
+    s = session_factory()
+    assert {e.dn for e in s.query(Epg).all()} == {A_WEB, A_EXT}
+    s.close()
+
+    assert client.delete(f"/systems/{sid}", headers={"X-Dev-Roles": "admin"}).status_code == 200
+    s = session_factory()
+    assert s.query(Epg).count() == 0 and s.query(EpgSubnet).count() == 0
     s.close()

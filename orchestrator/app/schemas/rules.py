@@ -42,6 +42,38 @@ class RuleOut(BaseModel):
     aci: AciContractOut | None = None  # nur ACI-Contracts
 
 
+class EpgSubnetOut(BaseModel):
+    ip: str  # Gateway/Prefix wie im APIC (z. B. 10.1.0.1/24)
+    origin: str  # epg | bd | ext
+    ipam: dict | None = (
+        None  # passendes Netz der fuehrenden Referenzquelle (Beschreibung, VLAN, Site)
+    )
+
+
+class EpgEndpointOut(BaseModel):
+    ip: str
+    mac: str | None = None
+    dns_name: str | None = None  # aus DDI/NetBox (Referenzquelle)
+
+
+class EpgOut(BaseModel):
+    """Lage eines Contract-Consumers/-Providers: wo liegt die EPG?"""
+
+    kind: str  # epg | external (L3Out) | vzany (alle EPGs der VRF)
+    name: str
+    label: str  # AP/EPG, L3Out/EPG bzw. vzAny VRF
+    dn: str | None = None
+    aci_tenant: str | None = None
+    ap: str | None = None  # Application Profile (Projekt-/Applikationsklammer)
+    bd: str | None = None
+    vrf: str | None = None
+    l3out: str | None = None
+    subnets: list[EpgSubnetOut] = []
+    endpoint_count: int = 0
+    endpoints: list[EpgEndpointOut] = []  # gelernte Endpunkte (begrenzt, siehe endpoint_count)
+    server: dict | None = None  # verknuepfter Server (Host-Objekt: name, ip, site)
+
+
 class EndpointOut(BaseModel):
     role: str  # src | dst
     kind: str  # host | network | zone | any | ...
@@ -52,6 +84,7 @@ class EndpointOut(BaseModel):
     object_class: str | None = None  # aus der Namenskonvention (H_/N_/VIP_/...)
     fqdn: str | None = None
     nat_target: str | None = None  # bei VIPs: internes Ziel (mapped_ip[:port][/proto])
+    epg: EpgOut | None = None  # ACI: Lage der EPG (Tenant, AP, BD, VRF, Subnetze, Endpunkte)
 
 
 class RefValueOut(BaseModel):
