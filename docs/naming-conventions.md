@@ -95,6 +95,15 @@ Ausserhalb der GG-Tenants weitere `L3O_` mit sprechendem Namen möglich.
 Standardisierte Ports mit sprechendem Namen; sonst `FT_<proto><port>`:
 `FT_tcp4444`, `FT_udp3207`, `FT_tcp1024-65535`, `FT_tcpudp6001`. ICMP als Spezialfall.
 
+**Prüfung in Automato** (FortiGate-Services und ACI-Filter, Findings):
+- Ohne Präfix `FT_` → „Name verletzt Konvention“. Das Präfix lässt sich über das Wörterbuch
+  `service_prefix` des Namensprofils erweitern.
+- Mit Präfix wird der Port geprüft: Steht der Name im Wörterbuch `service` (z. B.
+  `FT_https` = `tcp/443`), gilt dieser Wert; sonst das Schema `FT_<proto><port>`. Weicht der
+  Service ab, entsteht der Befund „Service ≠ Name“.
+- FortiOS-Standardservices (`HTTPS`, `ALL`, …) sind ausgenommen; sie gelten auch nicht als
+  unbenutzt.
+
 | Name | Port | | Name | Port |
 |---|---|---|---|---|
 | `FT_cifs` | TCP/UDP 445 | | `FT_ldap` | TCP/UDP 389 |

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.rules import rule_outs
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
@@ -28,13 +29,14 @@ from app.models import (
     InvSubnet,
     InvVlan,
     InvVrf,
+    Rule,
     RuleObjectRef,
     SourceSystem,
     SubjectKind,
 )
 from app.store import naming_profiles as profile_store
 from app.store import objects as objects_store
-from app.store import references, sites
+from app.store import references, rule_search, sites
 
 router = APIRouter(tags=["objects"])
 
@@ -83,6 +85,7 @@ def list_objects(
 
         def _hit(o: DeviceObject) -> bool:
             texts = [o.name, o.comment, o.fqdn, o.interface, *(o.values or []), *(o.members or [])]
+            texts.append(str(o.attrs or ""))  # Service-Attribute (Ports, Kategorie, ...)
             if any(ql in (t or "").lower() for t in texts):
                 return True
             names = [n for v in o.values or [] for n in references.dns_names(ctx, v)]
@@ -90,6 +93,14 @@ def list_objects(
 
         objects = [o for o in objects if _hit(o)]
 
+    rows = _object_rows(session, tid, objects)
+    if issues_only:
+        rows = [r for r in rows if r["issues"]]
+    return {"total": len(rows), "rows": rows[offset : offset + min(limit, 2000)]}
+
+
+def _object_rows(session: Session, tid: int, objects: list[DeviceObject]) -> list[dict]:
+    """Zeilen der Objekt-Ansicht: Werte mit IPAM-Abgleich, Verwendung, Gruppen, Befunde."""
     used = (
         dict(
             session.execute(
@@ -154,15 +165,53 @@ def list_objects(
                 "comment": o.comment,
                 "color": o.color,
                 "interface": o.interface,
+                "fqdn": o.fqdn,
+                "attrs": o.attrs or {},
                 "issues": sorted(set(row_issues)),
                 # Netz-Objekte (N_/T_/IPP_): Standort-Block aus dem Namen (ADR 0015)
                 "site": site_index.from_name(o.name, prefixes, network_only=True),
             }
         )
-    if issues_only:
-        rows = [r for r in rows if r["issues"]]
-    return {"total": len(rows), "rows": rows[offset : offset + min(limit, 2000)]}
+    return rows
 
+
+@router.get("/objects/{object_id}")
+def get_object(
+    object_id: int,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Detail eines Objekts wie in der NAT-Sicht: Attribute, Werte, Gruppen-Mitglieder und die
+    Firewall-Regeln, die es verwenden (direkt oder ueber Gruppen)."""
+    o = session.get(DeviceObject, object_id)
+    if o is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    tenant_scope(principal, o.tenant_id)
+    (row,) = _object_rows(session, o.tenant_id, [o])
+    rules = list(session.scalars(select(Rule).where(Rule.source_system_id == o.source_system_id)))
+    search = rule_search.RuleSearch(session, rules)
+    using = [r for r in rules if search.uses_object(r, o.name)]
+    members = []
+    for name in o.members or []:
+        found = search.device.get((o.source_system_id, name.lower()), [])
+        m = found[0] if found else None
+        members.append(
+            {
+                "name": name,
+                "category": m.category.value if m else None,
+                "values": m.values or [] if m else [],
+                "comment": m.comment if m else None,
+            }
+        )
+    return {
+        **row,
+        "members_detail": members,
+        "rule_count": len(using),
+        "rules": [x.model_dump() for x in rule_outs(session, using[:_MAX_RULES], search)],
+    }
+
+
+_MAX_RULES = 500  # Regeln im Objekt-Detail (Gesamtzahl in rule_count)
 
 _KINDS = {
     "devices": InvDevice,

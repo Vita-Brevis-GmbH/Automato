@@ -7,6 +7,38 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.8.0 – 2026-10-20
+
+Dev-Befunde: NetBox-Sync, Regeln ohne Quelle/Ziel, Dienste (Alembic `0028`).
+
+- **Fix NetBox-Sync** („duplicate key … ipam_vlan_unique_group_name“): Mehrere VLANs einer
+  ACI-EPG trugen denselben Namen. NetBox verlangt eindeutige Namen je VLAN-Gruppe (Sites
+  global). Doppelte Namen bekommen jetzt die VID bzw. den Code angehängt, z. B.
+  „EG_web (110)“. Fällt die Dublette weg, gilt beim nächsten Sync wieder der schlichte Name.
+- **Regeln ohne Quelle/Ziel:**
+  - FortiGate: Internet Services (ISDB) als Ziel bzw. Quelle, Benutzer/Gruppen/FSSO und
+    ZTNA-Tags als Quelle werden gelesen. Negierte Felder sind als „nicht (negiert)“
+    gekennzeichnet.
+  - ACI: Contract Master (geerbte Contracts) und Intra-EPG-Contracts füllen Consumer und
+    Provider.
+  - Was danach noch ohne Quelle/Ziel bleibt, ist gekennzeichnet („kein Consumer · nicht
+    wirksam“) und ein Befund **„Regel nicht wirksam“** (ACI: Info).
+- **Dienste wie Adressobjekte:**
+  - FortiGate-Services mit Protokoll, Ports inkl. Quellports, ICMP-Typ/-Code, IP-Protokoll,
+    Kategorie, Timern und Ziel-Beschränkung.
+  - **ACI-Filter** als Service-Objekte `<Tenant>/FT_…` mit ihren Einträgen; Contracts
+    verweisen darauf (Dienste-Spalte, Suche, Nutzung).
+  - **Prüfung nach Namensschema:** Präfix `FT_` (erweiterbar über das Wörterbuch
+    `service_prefix`) und Port passend zum Namen – laut Wörterbuch `service` bzw. Schema
+    `FT_<proto><port>` (neuer Befund **„Service ≠ Name“**). FortiOS-Standardservices sind
+    ausgenommen und zählen nicht als unbenutzt.
+- **Objekt-Detail wie bei NAT** (`GET /objects/{id}`): Attribute, Werte, Mitglieder, Befunde und
+  die Regeln, die das Objekt nutzen (auch über Gruppen), mit „In Regeln anzeigen“; Klick auf
+  eine Regel öffnet sie (`#regeln?rule=<id>`). Gilt für Services wie für Adressobjekte.
+
+**Hinweis:** Die neuen Felder liest erst der aktualisierte Collector bzw. Agent (Selbst-Update).
+Danach FortiGate und APIC neu einlesen.
+
 ## 0.7.0 – 2026-10-20
 
 Virtuelle und physische Standorte (ADR 0015, Alembic `0027`).

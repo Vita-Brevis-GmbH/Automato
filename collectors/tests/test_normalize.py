@@ -528,7 +528,9 @@ def test_aci_esg_taboo_und_preferred_group():
     (taboo,) = by_kind["taboo"]
     assert taboo["dn"] == "uni/tn-TE_a/taboo-TB_noadmin"
     assert taboo["consumers"] == [] and taboo["provider_epgs"] == ["EG_web"]
-    assert taboo["subjects"] == [{"name": "TS_rdp", "services": ["tcp/3389"]}]
+    assert taboo["subjects"] == [
+        {"name": "TS_rdp", "services": ["tcp/3389"], "filter_refs": ["TE_a/FT_rdp"]}
+    ]
     (deny,) = normalize_contract(taboo)
     assert deny.action == "deny" and deny.sources == ["any"]
     assert deny.destinations == ["epg:uni/tn-TE_a/ap-AP_1/epg-EG_web"]
@@ -567,3 +569,80 @@ def test_aci_preferred_group_aus_ohne_regel():
         )
     ]
     assert parse_mo_export(export) == []
+
+
+def test_aci_contract_master_und_intra_epg():
+    """Dev-Befund (Regeln ohne Quelle/Ziel): geerbte Contracts (Contract Master) und
+    Intra-EPG-Contracts fuellen Consumer/Provider."""
+    from collectors.cisco_aci.mo import parse_mo_export
+
+    master_dn = "uni/tn-TE/ap-AP_1/epg-EG_master"
+    export = [
+        _mo(
+            "fvTenant",
+            "TE",
+            [
+                _contract("CT_app", "FT_web"),
+                _contract("CT_intra", "FT_web"),
+                _contract("CT_db", "FT_web"),
+                _filter("FT_web", "443"),
+                _mo(
+                    "fvAp",
+                    "AP_1",
+                    [
+                        _epg("EG_master", cons=["CT_app"]),
+                        # erbt CT_app vom Master, sonst kein Contract
+                        _mo("fvAEPg", "EG_child", [_mo("fvRsSecInherited", tDn=master_dn)]),
+                        _epg("EG_web", prov=["CT_app"]),
+                        _mo("fvAEPg", "EG_cluster", [_mo("fvRsIntraEpg", tnVzBrCPName="CT_intra")]),
+                        _epg("EG_db", prov=["CT_db"]),  # niemand konsumiert CT_db
+                    ],
+                ),
+            ],
+        )
+    ]
+    by_name = {c["name"]: c for c in parse_mo_export(export)}
+    names = lambda side: sorted(e["name"] for e in side)  # noqa: E731
+    assert names(by_name["CT_app"]["consumers"]) == ["EG_child", "EG_master"]
+    assert names(by_name["CT_intra"]["consumers"]) == ["EG_cluster"]
+    assert names(by_name["CT_intra"]["providers"]) == ["EG_cluster"]
+    assert by_name["CT_db"]["consumers"] == []  # bleibt leer -> im Orchestrator "nicht wirksam"
+
+
+def test_fortigate_internet_service_identitaet_und_ztna():
+    """Dev-Befund: Policies mit Internet Service (ISDB) bzw. Benutzergruppen hatten keine
+    Quelle/kein Ziel."""
+    from collectors.fortigate.normalize import normalize
+
+    policies = [
+        {
+            "policyid": 7,
+            "name": "o365",
+            "action": "accept",
+            "srcaddr": [{"name": "N_clients"}],
+            "dstaddr": [],
+            "service": [],
+            "internet-service": "enable",
+            "internet-service-name": [{"name": "Microsoft-Office365"}],
+            "groups": [{"name": "VPN_Users"}],
+            "ztna-ems-tag": [{"name": "EMS_compliant"}],
+        },
+        {
+            "policyid": 8,
+            "name": "from-isdb",
+            "action": "accept",
+            "srcaddr": [],
+            "internet-service-src": "enable",
+            "internet-service-src-name": [{"name": "Google-DNS"}],
+            "dstaddr": [{"name": "all"}],
+            "service": [{"name": "DNS"}],
+        },
+    ]
+    addresses = [{"name": "N_clients", "type": "ipmask", "subnet": "10.5.0.0 255.255.0.0"}]
+    o365, from_isdb = normalize(policies, addresses, [], [])
+    assert o365.destination_refs == ["Microsoft-Office365"]
+    assert o365.destinations == ["isdb:Microsoft-Office365"]
+    assert o365.services == ["internet-service"]
+    assert o365.source_refs == ["N_clients", "VPN_Users", "EMS_compliant"]
+    assert o365.sources == ["10.5.0.0/16", "usergroup:VPN_Users", "dynamic:EMS_compliant"]
+    assert from_isdb.sources == ["isdb:Google-DNS"] and from_isdb.services == ["udp/53", "tcp/53"]

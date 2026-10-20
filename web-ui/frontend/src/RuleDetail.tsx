@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Endpoint, fetchRuleDetail, NatBrief, RuleDetail, RuleRef } from "./api";
 import type { View, ViewParams } from "./App";
 import { EpgCard } from "./EpgCard";
-import { RefCard } from "./refs";
+import { RefCard, SideMarks } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, Loading, MatchBadge, Note } from "./ui";
 
 function EndpointList({ items }: { items: Endpoint[] }) {
@@ -246,12 +246,14 @@ export default function RuleDetailDrawer({
           <div className="sub-h">
             {aci ? (aci.kind === "taboo" ? "Quelle" : aci.kind === "preferred_group" ? "Mitglieder" : "Consumer-EPGs") : "Quellen"} ({refs("src").length || detail.num_src})
           </div>
+          <SideMarks r={detail} side="src" />
           <Side refs={refs("src")} endpoints={src} onObject={onObject} />
 
           <div className="sub-h">
             {aci ? (aci.kind === "taboo" ? "Geschützte EPGs" : aci.kind === "preferred_group" ? "Mitglieder" : "Provider-EPGs") : "Ziele"} (
             {refs("dst").length || detail.num_dst})
           </div>
+          <SideMarks r={detail} side="dst" />
           <Side refs={refs("dst")} endpoints={dst} onObject={onObject} />
 
           {(detail.nat_entries?.length ?? 0) > 0 && (

@@ -65,7 +65,7 @@ from app.store import reconcile
 
 _ANY_VALUES = {"all", "any", "*"}
 # Typ-praefixe, die der Collector fuer nicht-IP-aufloesbare Objekte setzt.
-_TYPED_KINDS = {"fqdn", "geo", "mac", "dynamic", "range", "vip"}
+_TYPED_KINDS = {"fqdn", "geo", "mac", "dynamic", "range", "vip", "isdb", "user", "usergroup"}
 _DOMAIN_BY_PLATFORM = {
     "fortigate": RuleDomain.FIREWALL,
     "cisco_aci": RuleDomain.ACI_CONTRACT,
@@ -244,6 +244,7 @@ def _replace_device_objects(
             comment=o.comment,
             color=o.color,
             interface=o.interface,
+            attrs=o.attrs or None,
             collector_run_id=run.id,
             last_seen=now,
         )
@@ -425,6 +426,16 @@ def _endpoint(
 
 def _typed_object(session: Session, tenant_id: int, kind_tag: str, rest: str, sot) -> NetworkObject:
     """Nicht-IP-Typen vom Collector (fqdn/geo/mac/dynamic/range) einordnen."""
+    if kind_tag == "isdb":
+        # FortiGate Internet Service (z. B. Microsoft-Office365): bewusst extern
+        obj = _get_or_create_object(
+            session, tenant_id, name=rest, object_class=ObjectClass.EXTERNAL
+        )
+        obj.match_status = MatchStatus.EXPECTED_EXTERNAL
+        obj.last_seen = datetime.now(UTC)
+        session.flush()
+        return obj
+
     if kind_tag == "fqdn":
         obj = _get_or_create_object(
             session, tenant_id, name=rest, object_class=ObjectClass.EXTERNAL, fqdn=rest
@@ -458,7 +469,7 @@ def _typed_object(session: Session, tenant_id: int, kind_tag: str, rest: str, so
             session.flush()
         return obj
 
-    # geo / mac / dynamic -> kein IPAM-Objekt -> not_applicable, kein Finding
+    # geo / mac / dynamic / user / usergroup -> kein IPAM-Objekt -> not_applicable, kein Finding
     obj = _get_or_create_object(session, tenant_id, name=rest, object_class=ObjectClass.UNKNOWN)
     obj.match_status = MatchStatus.NOT_APPLICABLE
     obj.last_seen = datetime.now(UTC)

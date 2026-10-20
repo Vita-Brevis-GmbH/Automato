@@ -42,6 +42,29 @@ def snat_pools(rule: Rule) -> list[str] | None:
     return [p["name"] for p in pools if isinstance(p, dict) and p.get("name")]
 
 
+# FortiGate: negierte Felder (Policy gilt fuer alles *ausser* den genannten Objekten)
+_NEGATE = (
+    ("srcaddr-negate", "src"),
+    ("internet-service-src-negate", "src"),
+    ("dstaddr-negate", "dst"),
+    ("internet-service-negate", "dst"),
+    ("service-negate", "service"),
+)
+
+
+def negated(rule: Rule) -> list[str]:
+    """Negierte Seiten einer FortiGate-Policy: src | dst | service."""
+    raw = rule.raw if isinstance(rule.raw, dict) else {}
+    return list(dict.fromkeys(side for key, side in _NEGATE if raw.get(key) == "enable"))
+
+
+def missing(rule: Rule) -> list[str]:
+    """Seiten ohne Endpunkt: src | dst. ACI: Contract ohne Consumer bzw. Provider - nicht
+    wirksam (Dev-Befund: Regeln ohne Quelle/Ziel)."""
+    roles = {e.role.value for e in rule.endpoints}
+    return [side for side in ("src", "dst") if side not in roles]
+
+
 def _ip(token: str):
     try:
         return ipaddress.ip_address(token)

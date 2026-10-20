@@ -74,6 +74,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   aktualisieren sich; ein Agent holt den Lauf im Wach-Modus innert rund 20 s ab.
 - **Firewall-Regeln:** Quelle/Ziel/Dienste mit den **Objektnamen wie auf der Firewall**;
   NAT-Kennzeichen je Regel (**SNAT** mit Pool bzw. Interface-IP, **VIP**; Klick → NAT-Detail).
+  Quelle/Ziel umfassen auch Internet Services (ISDB), Benutzergruppen und ZTNA-Tags;
+  **„nicht (negiert)“** markiert negierte Felder, **„kein Consumer · nicht wirksam“** einen
+  ACI-Contract ohne Consumer bzw. Provider (auch als Befund „Regel nicht wirksam“).
   Die **Suche findet alles**, was zur Regel gehört: Regelname/-ID, Kommentar, Zonen, Aktion,
   Schutzprofile, Objekte **inkl. verschachtelter Gruppenmitglieder**, Services, Werte und IPs
   (eine IP trifft auch, wenn sie in einem Netz/Bereich der Regel liegt – „any“ ausgenommen),
@@ -86,8 +89,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Wert die **Referenzdaten** aus dem IPAM (DNS-Name, Netz, VLAN, Standort; aufklappbar mit
   allen Feldern und Link in NetBox), dazu Dienste, Schutzprofile, Kommentar und **NAT**
   (VIPs/SNAT-Pools mit IPs, Ports und DNS-Namen).
-- **Objekte & Inventar:** Adressobjekte (inkl. VIPs/IP-Pools), Gruppen, Services – mit
-  Verwendung in Regeln/Gruppen und Befunden – sowie das Netzinventar aus FortiGate/APIC:
+- **Objekte & Inventar:** Adressobjekte (inkl. VIPs/IP-Pools), Gruppen, **Services**
+  (FortiGate-Services und ACI-Filter `<Tenant>/FT_…` mit Protokoll/Ports, Quellports, ICMP,
+  Kategorie, Timer, Ziel-Beschränkung bzw. Filter-Einträgen; Prüfung nach FT_-Schema) – mit
+  Verwendung in Regeln/Gruppen und Befunden. **Klick auf ein Objekt** öffnet das Detail wie
+  bei NAT: Attribute, Werte, Mitglieder, Befunde und die Firewall-Regeln, die es nutzen (auch
+  über Gruppen), mit „In Regeln anzeigen“. Dazu das Netzinventar aus FortiGate/APIC:
   **Subnetze** (mit Abgleich gegen führendes IPAM und Anreicherung, VLAN-Abweichung
   markiert), **VLANs** (inkl. EPGs), **Ports** (Modus, untagged/tagged VLANs, LAG/Parent,
   IPs, Zone/Policy-Gruppe, LLDP/CDP-Nachbar, EPGs), **Geräte**, **VRFs**. Filter Quelle,
@@ -191,7 +198,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /health`, `GET /auth/config` | Status (API/DB), öffentliche Login-Konfiguration |
 | `GET /rules` (`?q=`,`?object=`,`?nat=`,`?tenant_id=`,`?domain=firewall\|aci_contract`,`?source_system_id=`,`?src_zone=`,`?dst_zone=`,`?action=`,`?limit=`,`?offset=`), `GET /rules/{id}` | Regeln und ACI-Contracts seitenweise (Standard 500, Gesamtzahl im Header `X-Total-Count`; Suche über alles, was zur Regel gehört; `object` = Regeln mit diesem Objekt auch über Gruppen, `nat` = mit diesem VIP/SNAT-Pool; je Regel `nat`) / Detail (Objektnamen, `refs` mit Referenzdaten, `aci`, `comment`, `nat_entries`) |
 | `GET /rules/summary` (`?tenant_id=`) | Kennzahlen aller Regeln für die Übersicht (je Art, Endpunkte, nicht aufgelöst, Quell-/Ziel-Zonen, Aktionen) |
-| `GET /objects?tenant_id=` (`category`, `source_system_id`, `q`, `issues_only`) | Firewall-Objekte mit IPAM-Abgleich |
+| `GET /objects?tenant_id=` (`category`, `source_system_id`, `q`, `issues_only`), `GET /objects/{id}` | Firewall-Objekte mit IPAM-Abgleich und `attrs` / Detail mit Mitgliedern und Regeln (`rules`, `rule_count`) |
 | `GET /inventory/{devices\|interfaces\|vlans\|subnets\|vrfs}?tenant_id=` | Netzinventar (Subnetze mit IPAM-Abgleich) |
 | `GET /reconcile/summary`, `GET /reconcile/ipam`, `POST /reconcile` | Abgleich: Befunde je Typ, DDI ↔ NetBox, neu berechnen (operator) |
 | `GET /findings` (`?status=`,`?type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /findings/summary`, `PATCH /findings/{id}` | Datenqualität seitenweise (je Befund `message` = was nicht stimmt, `hint` = was tun), Zähler je Status/Typ, Triage |

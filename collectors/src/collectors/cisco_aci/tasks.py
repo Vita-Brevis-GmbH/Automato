@@ -16,8 +16,8 @@ from importlib import resources
 from collectors.celery_app import app
 from collectors.cisco_aci.client import ApicClient
 from collectors.cisco_aci.inventory import parse_inventory
-from collectors.cisco_aci.mo import parse_epgs, parse_mo_export
-from collectors.cisco_aci.normalize import normalize_contract
+from collectors.cisco_aci.mo import parse_epgs, parse_filters, parse_mo_export
+from collectors.cisco_aci.normalize import filter_objects, normalize_contract
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, NormalizedEpg, Target
@@ -107,7 +107,10 @@ def collect_once(
         rules = [rule for c in parse_mo_export(export) for rule in normalize_contract(c)]
         epgs = [NormalizedEpg(**e) for e in parse_epgs(export)]
         inventory = parse_inventory(export, data.get("fabric"))
-        result = CollectorResult(status="completed", rules=rules, epgs=epgs, inventory=inventory)
+        objects = filter_objects(parse_filters(export))
+        result = CollectorResult(
+            status="completed", rules=rules, epgs=epgs, inventory=inventory, objects=objects
+        )
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(status="failed", message=diagnose.device_error(exc, "cisco_aci"))
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))

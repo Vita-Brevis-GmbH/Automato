@@ -49,9 +49,17 @@ const DETAIL_LABEL: Record<string, string | null> = {
   no_reference: null,
   prefixes: "bekannte Präfixe",
   compared: "verglichen",
+  missing: "fehlt",
+  domain: null,
+  rule_id: null,
+  external_id: "ID",
+  tenant: "ACI-Tenant",
+  rule: "Prüfung",
 };
 
+const SIDE: Record<string, string> = { src: "Quelle / Consumer", dst: "Ziel / Provider" };
 const fmtValue = (k: string, v: unknown): string => {
+  if (k === "missing" && Array.isArray(v)) return v.map((x) => SIDE[x] ?? x).join(", ");
   if (Array.isArray(v)) return v.join(k === "compared" ? " ≠ " : ", ");
   if (k === "ipam_elsewhere" && v && typeof v === "object") {
     const o = v as Record<string, string>;
@@ -70,6 +78,8 @@ function ruleLinks(f: Finding): { label: string; params: ViewParams }[] {
     return [{ label: f.subject_id, params: { q: String(d.value ?? f.subject_id) } }];
   }
   if (f.type === "duplicate_value") return names("names").map((n) => ({ label: n, params: { object: n } }));
+  if (f.type === "rule_incomplete" && d.rule_id != null)
+    return [{ label: String(d.name ?? f.subject_id), params: { rule: String(d.rule_id) } }];
   if (f.subject_kind === "device_object" && f.type !== "unused_object")
     return [{ label: f.subject_id, params: { object: f.subject_id } }];
   return [];

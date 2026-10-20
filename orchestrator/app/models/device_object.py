@@ -53,6 +53,8 @@ class DeviceObject(Base):
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     color: Mapped[int | None] = mapped_column(Integer, nullable=True)
     interface: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # weitere Attribute wie auf dem Geraet (Services: Protokoll, Ports, ICMP, Timer; ACI-Filter)
+    attrs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     network_object_id: Mapped[int | None] = mapped_column(
         ForeignKey("network_object.id", ondelete="SET NULL"), nullable=True, index=True
     )

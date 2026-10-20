@@ -7,6 +7,8 @@ konsumiert. Umsetzung des Lesevertrags `docs/collectors-read-contract.md` (Absch
   vzBrCP (CT_)  + vzSubj (SJ_) + vzRsSubjFiltAtt -> Regel + Services (vzFilter/vzEntry FT_)
                   (auch vzInTerm/vzOutTerm vzRsFiltAtt bei nicht-reflexiven Subjects)
   fvAEPg (EG_)  fvRsProv/fvRsCons/fvRsConsIf     -> Provider-/Consumer-EPGs
+                fvRsIntraEpg                     -> Intra-EPG-Contract (EPG ist beides)
+                fvRsSecInherited (Contract Master) -> erbt Provider-/Consumer-Contracts
   l3extInstP (EN_) unter l3extOut (L3O_)         -> externe EPG (Subnetze: l3extSubnet)
   vzAny unter fvCtx (vzRsAnyToProv/Cons)         -> alle EPGs der VRF
   vzCPIf + vzRsIf                                -> exportierter Contract (anderer Tenant)
@@ -60,6 +62,8 @@ class _Bag:
         self.endpoints: dict[str, dict] = {}
         self.contracts: dict[tuple[str, str], dict] = {}  # (Tenant, CT) -> {dn, scope, ...}
         self.filters: dict[tuple[str, str], list[str]] = {}  # (Tenant, FT) -> Services
+        # (Tenant, FT) -> {dn, descr, entries} - Filter als Service-Objekte (Objekte-Ansicht)
+        self.filter_info: dict[tuple[str, str], dict] = {}
         self.cifs: dict[tuple[str, str], str] = {}  # (Tenant, Contract-Interface) -> CT-DN
         self.taboos: dict[tuple[str, str], dict] = {}  # (Tenant, Taboo) -> {dn, subjects}
         self.vrfs: set[tuple[str, str]] = set()  # (Tenant, VRF)
@@ -193,6 +197,8 @@ def _contract_endpoint(
         "consumes": _rel(kids, cons, "tnVzBrCPName"),
         "consumes_if": _rel(kids, cons_if, "tnVzCPIfName"),
         "protected_by": _rel(kids, "fvRsProtBy", "tnVzTabooName"),
+        "intra": _rel(kids, "fvRsIntraEpg", "tnVzBrCPName"),
+        "inherits": _rel(kids, "fvRsSecInherited", "tDn"),  # Contract Master (DN)
         "pref_group": pref,
         **info,
     }
@@ -333,9 +339,13 @@ def _walk(
                 ],
             }
         elif cls == "vzFilter":
-            bag.filters[(t, name)] = [
-                _entry_service(_attrs(c["vzEntry"])) for c in kids if "vzEntry" in c
-            ]
+            entries = [_attrs(c["vzEntry"]) for c in kids if "vzEntry" in c]
+            bag.filters[(t, name)] = [_entry_service(e) for e in entries]
+            bag.filter_info[(t, name)] = {
+                "dn": dn or f"uni/tn-{t}/flt-{name}",
+                "descr": attrs.get("descr") or None,
+                "entries": [_entry_attrs(e) for e in entries],
+            }
         elif cls == "vzCPIf":
             target = next((_attrs(c["vzRsIf"]).get("tDn") for c in kids if "vzRsIf" in c), None)
             if target:
@@ -375,13 +385,18 @@ def _zone(side: list[dict]) -> str | None:
 def parse_mo_export(data: Any) -> list[dict]:
     """APIC-MO-Export -> Liste von Contract-Dicts fuer `normalize_contract`."""
     bag = _collect(data)
+    _inherit_contracts(bag)
     by_dn = {c["dn"]: key for key, c in bag.contracts.items()}
     sides: dict[tuple[str, str], dict[str, list[dict]]] = {
         key: {"consumers": [], "providers": []} for key in bag.contracts
     }
     for ep in bag.endpoints.values():
         t = ep["tenant"]
-        for role, names in (("providers", ep["provides"]), ("consumers", ep["consumes"])):
+        intra = ep.get("intra", [])
+        for role, names in (
+            ("providers", ep["provides"] + intra),
+            ("consumers", ep["consumes"] + intra),
+        ):
             for cname in names:
                 c = _lookup(bag.contracts, t, cname)
                 if c is not None:
@@ -393,7 +408,8 @@ def parse_mo_export(data: Any) -> list[dict]:
 
     contracts: list[dict] = []
     for key, c in bag.contracts.items():
-        consumers, providers = sides[key]["consumers"], sides[key]["providers"]
+        consumers = _unique_eps(sides[key]["consumers"])
+        providers = _unique_eps(sides[key]["providers"])
         contracts.append(
             {
                 "kind": "contract",
@@ -414,6 +430,26 @@ def parse_mo_export(data: Any) -> list[dict]:
     return contracts + _taboos(bag) + _preferred_groups(bag)
 
 
+def _inherit_contracts(bag: _Bag) -> None:
+    """Contract Master (fvRsSecInherited): die EPG/ESG erbt Provider-, Consumer- und
+    Interface-Contracts der Master-EPGs (eine Stufe, wie im APIC)."""
+    own = {
+        dn: (list(ep["provides"]), list(ep["consumes"]), list(ep["consumes_if"]))
+        for dn, ep in bag.endpoints.items()
+    }
+    for ep in bag.endpoints.values():
+        for master in ep.get("inherits", []):
+            if master in own and master != ep["dn"]:
+                prov, cons, cons_if = own[master]
+                ep["provides"] = list(dict.fromkeys(ep["provides"] + prov))
+                ep["consumes"] = list(dict.fromkeys(ep["consumes"] + cons))
+                ep["consumes_if"] = list(dict.fromkeys(ep["consumes_if"] + cons_if))
+
+
+def _unique_eps(eps: list[dict]) -> list[dict]:
+    return list({ep["dn"]: ep for ep in eps}.values())
+
+
 def _subjects(bag: _Bag, c: dict) -> list[dict]:
     return [
         {
@@ -421,8 +457,53 @@ def _subjects(bag: _Bag, c: dict) -> list[dict]:
             "services": [
                 svc for fn in s["filters"] for svc in (_lookup(bag.filters, c["tenant"], fn) or [])
             ],
+            # Filter wie im APIC (Tenant/Name) - Verweis auf die Service-Objekte
+            "filter_refs": [
+                ref for fn in s["filters"] if (ref := _filter_ref(bag, c["tenant"], fn))
+            ],
         }
         for s in c["subjects"]
+    ]
+
+
+def _filter_ref(bag: _Bag, tenant: str, name: str) -> str | None:
+    for t in (tenant, COMMON):
+        if (t, name) in bag.filters:
+            return f"{t}/{name}"
+    return None
+
+
+_ENTRY_KEYS = (
+    "name",
+    "etherT",
+    "prot",
+    "dFromPort",
+    "dToPort",
+    "sFromPort",
+    "sToPort",
+    "stateful",
+    "applyToFrag",
+    "icmpv4T",
+    "icmpv6T",
+    "tcpRules",
+    "arpOpc",
+)
+_ENTRY_DEFAULTS = {"", "unspecified", "no", "0"}
+
+
+def _entry_attrs(entry: dict) -> dict:
+    """vzEntry-Attribute ohne Standardwerte (unspecified/no)."""
+    return {
+        k: entry[k] for k in _ENTRY_KEYS if str(entry.get(k) or "").strip() not in _ENTRY_DEFAULTS
+    }
+
+
+def parse_filters(data: Any) -> list[dict]:
+    """ACI-Filter (vzFilter FT_) als Service-Objekte: Tenant, Name, DN, Services, Eintraege."""
+    bag = _collect(data)
+    return [
+        {"tenant": t, "name": name, "services": bag.filters[(t, name)], **info}
+        for (t, name), info in sorted(bag.filter_info.items())
     ]
 
 

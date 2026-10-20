@@ -29,6 +29,8 @@ class FindingType(enum.StrEnum):
     UNUSED_OBJECT = "unused_object"  # Firewall-Objekt in keiner Regel/Gruppe verwendet
     SUBNET_NOT_IN_IPAM = "subnet_not_in_ipam"  # ACI-/FortiGate-Subnetz fehlt im IPAM
     VLAN_MISMATCH = "vlan_mismatch"  # VLAN des Subnetzes weicht vom IPAM ab
+    SERVICE_MISMATCH = "service_mismatch"  # Service-Name passt nicht zu Protokoll/Port
+    RULE_INCOMPLETE = "rule_incomplete"  # Regel ohne Quelle bzw. Ziel (ACI: nicht wirksam)
 
 
 class Severity(enum.StrEnum):

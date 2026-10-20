@@ -1,6 +1,6 @@
 // Darstellung von Firewall-Objekten mit Referenzdaten aus dem IPAM (DDI/NetBox), ADR 0010.
 import type { ReactNode } from "react";
-import { RefInfo, RefValue, RuleRef } from "./api";
+import { RefInfo, RefValue, Rule, RuleRef } from "./api";
 import { Dash, Icon, MatchBadge } from "./ui";
 
 export const PLATFORM_LABEL: Record<string, string> = {
@@ -27,6 +27,8 @@ export const FINDING_LABEL: Record<string, string> = {
   unused_object: "Unbenutztes Objekt",
   subnet_not_in_ipam: "Subnetz fehlt im IPAM",
   vlan_mismatch: "VLAN weicht ab",
+  service_mismatch: "Service ≠ Name",
+  rule_incomplete: "Regel nicht wirksam",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -42,6 +44,8 @@ export const FINDING_HINT: Record<string, string> = {
   ambiguous_ip: "IP in mehreren Objekten",
   unused_object: "in keiner Regel oder Gruppe verwendet",
   epg_no_endpoints: "EPG ohne gelernte Endpunkte",
+  service_mismatch: "Protokoll/Port passt nicht zum Service-Namen",
+  rule_incomplete: "Regel/Contract ohne Quelle bzw. Ziel",
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -55,8 +59,14 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
   {
     key: "naming",
     label: "Namenskonvention",
-    help: "Präfixe laut Namensprofil",
-    types: ["invalid_name", "name_type_mismatch"],
+    help: "Präfixe laut Namensprofil, Services nach FT_-Schema",
+    types: ["invalid_name", "name_type_mismatch", "service_mismatch"],
+  },
+  {
+    key: "rules",
+    label: "Regeln",
+    help: "ohne Quelle/Ziel bzw. ohne Consumer/Provider",
+    types: ["rule_incomplete"],
   },
   {
     key: "cleanup",
@@ -282,3 +292,31 @@ export function RefCard({ r, onObject }: { r: RuleRef; onObject?: (name: string)
     </div>
   );
 }
+
+// Seite ohne Endpunkt (ACI: Contract ohne Consumer/Provider = nicht wirksam) bzw. negiert
+export function SideMarks({ r, side }: { r: Rule; side: "src" | "dst" | "service" }) {
+  const aci = r.domain === "aci_contract";
+  const missing = side !== "service" && r.missing?.includes(side);
+  const negated = r.negate?.includes(side);
+  if (!missing && !negated) return null;
+  const label = aci ? (side === "src" ? "kein Consumer" : "kein Provider") : side === "src" ? "keine Quelle" : "kein Ziel";
+  return (
+    <span className="chips" style={{ marginBottom: 2 }}>
+      {missing && (
+        <span
+          className="chip warn"
+          title={aci ? "Contract wird nicht konsumiert bzw. bereitgestellt – nicht wirksam" : "keine lesbare Angabe – Policy prüfen"}
+        >
+          {label}
+          {aci ? " · nicht wirksam" : ""}
+        </span>
+      )}
+      {negated && (
+        <span className="chip crit" title="negiert: die Regel gilt für alles AUSSER den genannten Objekten">
+          nicht (negiert)
+        </span>
+      )}
+    </span>
+  );
+}
+

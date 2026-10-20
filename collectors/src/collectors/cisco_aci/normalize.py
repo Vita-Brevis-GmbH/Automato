@@ -17,7 +17,7 @@ aufgeloesten `services`, plus `src_zone`/`dst_zone`). Faellt auf das aeltere Sch
 
 from typing import Any
 
-from collectors.common.dto import NormalizedRule
+from collectors.common.dto import NormalizedObject, NormalizedRule
 
 
 def _subject_services(subject: dict[str, Any]) -> list[str]:
@@ -60,6 +60,7 @@ def normalize_contract(contract: dict[str, Any]) -> list[NormalizedRule]:
                 sources=sources,
                 destinations=destinations,
                 services=_subject_services(subject),
+                service_refs=list(subject.get("filter_refs", [])),
                 src_zone=src_zone,
                 dst_zone=dst_zone,
                 aci_scope=contract.get("scope"),
@@ -67,3 +68,18 @@ def normalize_contract(contract: dict[str, Any]) -> list[NormalizedRule]:
             )
         )
     return rules
+
+
+def filter_objects(filters: list[dict]) -> list[NormalizedObject]:
+    """ACI-Filter als Service-Objekte (`<Tenant>/<FT_name>` - Namen gibt es in vielen Tenants)."""
+    return [
+        NormalizedObject(
+            name=f"{f['tenant']}/{f['name']}",
+            category="service",
+            obj_type="vzFilter",
+            values=list(dict.fromkeys(f["services"])),
+            comment=f.get("descr"),
+            attrs={"tenant": f["tenant"], "dn": f["dn"], "entries": f["entries"]},
+        )
+        for f in filters
+    ]

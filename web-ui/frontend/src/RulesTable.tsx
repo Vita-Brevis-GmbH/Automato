@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchRules, fetchRuleSummary, fetchSystems, Rule, RuleDomain, RuleSummary, System } from "./api";
 import type { View, ViewParams } from "./App";
 import RuleDetailDrawer from "./RuleDetail";
+import { SideMarks } from "./refs";
 import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
 // Seitengrösse: Server filtert nach Art/System/Suche, der Rest wird mit "Weitere laden" geholt.
@@ -127,7 +128,8 @@ export default function RulesTable({
   const [dstZone, setDstZone] = useState("");
   const [action, setAction] = useState("");
   const [onlyFindings, setOnlyFindings] = useState(false);
-  const [selected, setSelected] = useState<number | null>(null);
+  // Link aus Findings/Objekten auf genau eine Regel (#regeln?rule=<id>): Detail direkt öffnen
+  const [selected, setSelected] = useState<number | null>(params.rule ? Number(params.rule) : null);
 
   useEffect(() => {
     setSystem("");
@@ -331,12 +333,15 @@ export default function RulesTable({
                       <ZoneChip zone={r.dst_zone} />
                     </td>
                     <td>
+                      <SideMarks r={r} side="src" />
                       <ObjCell items={r.sources} />
                     </td>
                     <td>
+                      <SideMarks r={r} side="dst" />
                       <ObjCell items={r.destinations} />
                     </td>
                     <td>
+                      <SideMarks r={r} side="service" />
                       <ObjCell items={r.service_names?.length ? r.service_names : []} />
                     </td>
                     <td>

@@ -89,6 +89,9 @@ class NormalizedObject(BaseModel):
     comment: str | None = None
     family: Literal["v4", "v6"] | None = None
     interface: str | None = None  # associated-interface / extintf
+    # zusaetzliche Attribute wie auf dem Geraet (Services: Protokoll, Ports inkl. Quellports,
+    # ICMP-Typ, Kategorie, Timer; ACI-Filter: Eintraege)
+    attrs: dict[str, Any] = Field(default_factory=dict)
 
 
 class NormalizedDevice(BaseModel):

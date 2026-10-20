@@ -85,14 +85,14 @@ umgekehrt) = neuer/anderer Adapter, keine Änderung am Rest der Plattform.
   `docs/BETRIEB.md`. Der frühere ausführliche Statusverlauf (bis 0.4.2) steht in
   `docs/ENTWICKLUNGSVERLAUF.md`.
 
-## Aktueller Stand (0.7.0)
+## Aktueller Stand (0.8.0)
 
 UC1 „Firewall-Regel-Dokumentation (read-only)“ ist für Model 2 (FortiGate + NetBox) und
 Model 1 (FortiGate + ACI + Infoblox) umgesetzt und läuft im Dev gegen die echten Systeme.
 
 | Bereich | Stand | Verweise |
 |---|---|---|
-| Collector | FortiGate (Policies, Objekte, VIPs/IP-Pools, Interfaces, Dual-Stack, UTM), APIC (Contracts tenant-bewusst per DN, externe EPGs, vzAny, Contract-Interfaces, **ESGs, Taboo, Preferred Groups**, Inventar), Infoblox DDI + NetBox als Referenz | Lesevertrag `docs/collectors-read-contract.md`, ADR 0010 |
+| Collector | FortiGate (Policies inkl. ISDB/Identität/ZTNA/Negation, Objekte, Services mit Attributen, VIPs/IP-Pools, Interfaces, Dual-Stack, UTM), APIC (Contracts tenant-bewusst per DN, externe EPGs, vzAny, Contract-Interfaces, **ESGs, Taboo, Preferred Groups**, Contract Master, Intra-EPG, Filter als Services, Inventar), Infoblox DDI + NetBox als Referenz | Lesevertrag `docs/collectors-read-contract.md`, ADR 0010 |
 | Agent | externer Windows-Agent (Pull, `--poll --watch 20`/`--check`), Geräte + Zugangsdaten zentral, Selbst-Update, **signierte Updates**, mTLS über das **Agent-Gateway** | ADR 0008, 0009, 0011, 0013 |
 | Store/Abgleich | Regeln, Objekte, Inventar, Referenzstand, Findings als abgeleiteter Zustand (je Befund Satz + Hinweis, `store/finding_text.py`), IPAM-Namen ohne Präfix (`naming.server_name`), NetBox-Sync | ADR 0004, 0010 |
 | Suche/NAT | Regelsuche über alles inkl. Gruppenmitglieder, IP-im-Netz, IPAM-DNS-Namen, NAT (`store/rule_search.py`); Filter `object`/`nat`; NAT mit DNS, Server, Regeln; Links `#regeln?object=…` | – |
@@ -102,7 +102,7 @@ Model 1 (FortiGate + ACI + Infoblox) umgesetzt und läuft im Dev gegen die echte
 | Sicherheit | Keycloak (OIDC/PKCE, OTP, SAML-Vorlage), Rollen viewer/operator/admin, Mandanten-Scoping, Audit mit Allowlist (+ optional verschlüsselt), Secrets-Provider, Zugangsdaten Fernet, fail-closed Defaults | ADR 0005, 0007, 0013 |
 | Web-UI | alle Ansichten nach Mockup, seitenweise Listen mit Gesamtzahl | `web-ui/frontend/` |
 
-Tests: orchestrator 195, collectors 77, sot-gateway 14 (dazu die CI gegen Postgres).
+Tests: orchestrator 197, collectors 79, sot-gateway 14 (dazu die CI gegen Postgres).
 
 ## Offen / nächste Schritte
 

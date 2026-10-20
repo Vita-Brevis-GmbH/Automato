@@ -76,6 +76,21 @@ class FakeNetBox:
         obj.setdefault("tags", [])
         return obj
 
+    def _duplicate(self, endpoint: str, raw: dict) -> bool:
+        """Eindeutigkeit wie NetBox: VLAN-Name je Gruppe, Site-Name global."""
+        name = str(raw.get("name") or "").lower()
+        for o in self.objects(endpoint):
+            same = str(o.get("name") or "").lower() == name
+            if (
+                endpoint == "ipam/vlans"
+                and same
+                and (o.get("group") or {}).get("id") == raw.get("group")
+            ):
+                return True
+            if endpoint == "dcim/sites" and same:
+                return True
+        return False
+
     def add(self, endpoint: str, raw: dict) -> dict:
         obj = self._store(endpoint, raw)
         obj["id"] = self.next_id
@@ -103,6 +118,11 @@ class FakeNetBox:
         body = json.loads(request.content)
         self.writes.append((request.method, path, len(body)))
         if request.method == "POST":
+            for o in body:
+                if self._duplicate(path, o):
+                    return httpx.Response(
+                        500, json={"error": "duplicate key value violates unique constraint"}
+                    )
             return httpx.Response(201, json=[self.add(path, o) for o in body])
         if request.method == "PATCH":
             table = self.db[path]
@@ -222,7 +242,8 @@ ACI_INVENTORY = {
         {"device": "leaf-101", "name": "eth1/1", "kind": "physical", "mode": "tagged",
          "tagged_vlans": [110], "epgs": ["TE/AP/EG_web"], "neighbor": "esx01"},
     ],
-    "vlans": [{"vid": 110, "name": "EG_web", "epgs": ["TE/AP/EG_web"]}],
+    "vlans": [{"vid": 110, "name": "EG_web", "epgs": ["TE/AP/EG_web"]},
+              {"vid": 111, "name": "EG_web", "epgs": ["TE/AP/EG_web"]}],
     "subnets": [
         {"prefix": "10.20.0.0/24", "gateway": "10.20.0.1/24", "vrf": "TE:VRF", "vlan": 110,
          "context": "bd", "context_name": "BD_app", "aci_tenant": "TE", "ap": "AP",
@@ -279,6 +300,9 @@ def test_vorschau_uebernahme_und_konflikt(client, netbox):
 
     vlan = netbox.find("ipam/vlans", vid=10)
     assert vlan["group"]["slug"] == "kunde-a-fw-01" and _tagged(vlan)
+    # zwei VLANs derselben EPG: NetBox verlangt eindeutige Namen je Gruppe (Dev-Befund)
+    assert netbox.find("ipam/vlans", vid=110)["name"] == "EG_web (110)"
+    assert netbox.find("ipam/vlans", vid=111)["name"] == "EG_web (111)"
     assert vlan["tenant"]["slug"] == "kunde-a"
     svi = netbox.find("dcim/interfaces", name="srv-vl10")
     assert svi["mode"]["value"] == "access" and svi["untagged_vlan"]["vid"] == 10

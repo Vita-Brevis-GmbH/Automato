@@ -744,6 +744,43 @@ def _tenant_id(obj: dict) -> int | None:
     return t.get("id") if isinstance(t, dict) else t
 
 
+# -- Eindeutige Namen ---------------------------------------------------------------
+
+
+def unique_names(wants: Wants, state: State) -> None:
+    """NetBox verlangt eindeutige Namen - VLANs je VLAN-Gruppe, Sites global (Dev-Befund:
+    HTTP 500 "ipam_vlan_unique_group_name", weil mehrere VLANs einer ACI-EPG denselben Namen
+    tragen). Doppelte Namen und Namen, die in NetBox ein anderes Objekt traegt, bekommen den
+    Schluessel angehaengt: "EG_web (110)", "Zürich (zrh)". Konvergiert: faellt die Dublette
+    weg, bekommt das Objekt beim naechsten Sync wieder den schlichten Namen."""
+    by_group: dict[str, list[Want]] = defaultdict(list)
+    for want in wants.items.values():
+        group = want.refs.get("group") if want.kind == "vlan" else None
+        if isinstance(group, tuple):
+            by_group[group[1]].append(want)
+    for gslug, vlans in by_group.items():
+        taken: dict[str, set] = defaultdict(set)  # Name (klein) -> VIDs, die ihn in NetBox tragen
+        for key, have in state["vlan"].items():
+            if key.startswith(f"{gslug}/"):
+                taken[str(have.obj.get("name") or "").lower()].add(have.obj.get("vid"))
+        _suffix_duplicates(vlans, "vid", taken, 64)
+    sites = [w for w in wants.items.values() if w.kind == "site"]
+    taken_sites: dict[str, set] = defaultdict(set)
+    for key, have in state["site"].items():
+        taken_sites[str(have.obj.get("name") or "").lower()].add(key)
+    _suffix_duplicates(sites, "slug", taken_sites, 100)
+
+
+def _suffix_duplicates(wants: list[Want], ident: str, taken: dict[str, set], limit: int) -> None:
+    counts: dict[str, int] = defaultdict(int)
+    for w in wants:
+        counts[str(w.fields["name"]).lower()] += 1
+    for w in sorted(wants, key=lambda x: str(x.fields[ident])):
+        name, own = str(w.fields["name"]), w.fields[ident]
+        if counts[name.lower()] > 1 or taken.get(name.lower(), set()) - {own}:
+            w.fields["name"] = _cut(f"{name} ({own})", limit)
+
+
 # -- Vorschau (Diff) ---------------------------------------------------------------
 
 _PENDING = object()
@@ -929,6 +966,7 @@ def compute(
     tslug = tenant_slug(tenant)
     gprefix = f"{tslug}-"
     state = read_state(writer, wants, tslug, gprefix)
+    unique_names(wants, state)
     items = diff(wants, state, tslug, gprefix, allow_delete)
     return Plan(wants, state, items, fingerprint(items))
 

@@ -27,6 +27,8 @@ export interface Rule {
   service_names: string[]; // Service-Namen wie auf der Firewall (sonst kanonisch)
   aci?: AciContract | null; // nur ACI-Contracts: Quelle = Consumer-, Ziel = Provider-EPGs
   nat?: RuleNat | null; // Firewall-Policy mit SNAT bzw. VIP
+  missing?: ("src" | "dst")[]; // Seite ohne Endpunkt (ACI: kein Consumer/Provider – nicht wirksam)
+  negate?: ("src" | "dst" | "service")[]; // FortiGate: negierte Seiten
 }
 
 // NAT einer Firewall-Policy: SNAT (Pools; leer = Interface-IP) und VIPs im Ziel (DNAT)
@@ -484,8 +486,17 @@ export interface DeviceObject {
   comment: string | null;
   color: number | null;
   interface: string | null;
+  fqdn?: string | null;
+  attrs?: Record<string, unknown>; // Services: Protokoll, Ports, ICMP, Kategorie, Timer; ACI-Filter: Einträge
   issues: string[]; // Finding-Typen
   site: SiteHint | null; // Netz-Objekte: Standort aus dem Namen
+}
+
+// Objekt-Detail (wie NAT): Attribute, Mitglieder und die Regeln, die es nutzen
+export interface ObjectDetail extends DeviceObject {
+  members_detail: { name: string; category: string | null; values: string[]; comment: string | null }[];
+  rule_count: number;
+  rules: Rule[];
 }
 
 export interface Paged<T> {
@@ -1072,6 +1083,7 @@ export const fetchObjects = (
       issues_only: params.issues_only ? "true" : undefined,
     })}`,
   );
+export const fetchObjectDetail = (id: number) => getJSON<ObjectDetail>(`/api/objects/${id}`);
 export const fetchInventory = <K extends keyof Inventory>(
   kind: K,
   tenantId: number,

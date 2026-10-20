@@ -1,9 +1,10 @@
 // Objekte & Inventar (ADR 0010): Firewall-Objekte wie auf dem Gerät mit Abgleich gegen das IPAM,
 // dazu das Netzinventar aus FortiGate/APIC (Subnetze, VLANs, Ports, Geräte, VRFs). Rein lesend.
-import { ReactNode, useEffect, useState } from "react";
+import { Fragment, ReactNode, useEffect, useState } from "react";
 import {
   DeviceObject,
   fetchInventory,
+  fetchObjectDetail,
   fetchObjects,
   fetchSystems,
   InvDevice,
@@ -11,13 +12,14 @@ import {
   InvSubnet,
   InvVlan,
   InvVrf,
+  ObjectDetail,
   PrefixInfo,
   System,
 } from "./api";
 import { CATEGORY_LABEL, IssueChips, REFERENCE_PLATFORMS, ValueList } from "./refs";
 import { SiteChip } from "./sites";
 import type { View, ViewParams } from "./App";
-import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
+import { ActionBadge, Dash, Drawer, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -183,6 +185,7 @@ function ObjectTable({
   const [data, setData] = useState<{ total: number; rows: DeviceObject[] } | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [offset, setOffset] = useState(0);
+  const [selected, setSelected] = useState<number | null>(null);
   const query = useDebounced(q);
 
   useEffect(() => setOffset(0), [query, sourceId, issuesOnly]);
@@ -223,7 +226,8 @@ function ObjectTable({
                 <tr>
                   <th>Name</th>
                   <th>Art</th>
-                  <th>{group ? "Mitglieder" : "Werte / Referenz"}</th>
+                  <th>{group ? "Mitglieder" : service ? "Protokoll / Ports" : "Werte / Referenz"}</th>
+                  {service && <th>Attribute</th>}
                   {!group && <th>In Gruppe</th>}
                   <th className="num">Regeln</th>
                   <th>Quelle</th>
@@ -232,7 +236,7 @@ function ObjectTable({
               </thead>
               <tbody>
                 {data.rows.map((o) => (
-                  <tr key={o.id}>
+                  <tr key={o.id} className="clickable" onClick={() => setSelected(o.id)}>
                     <td>
                       <b className="mono">{o.name}</b>
                       {o.comment && <div className="faint">{o.comment}</div>}
@@ -243,7 +247,13 @@ function ObjectTable({
                         </div>
                       )}
                       {(o.category === "vip" || o.category === "ippool") && onGo && (
-                        <button className="linkbtn" onClick={() => onGo("nat", { q: o.name })}>
+                        <button
+                          className="linkbtn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onGo("nat", { q: o.name });
+                          }}
+                        >
                           in NAT / VIPs öffnen
                         </button>
                       )}
@@ -255,6 +265,11 @@ function ObjectTable({
                     <td style={{ minWidth: 280 }}>
                       {group ? <Members names={o.members} /> : <ValueList values={o.values} service={service} />}
                     </td>
+                    {service && (
+                      <td>
+                        <AttrSummary attrs={o.attrs} />
+                      </td>
+                    )}
                     {!group && <td>{o.member_of.length ? <Members names={o.member_of} /> : <Dash />}</td>}
                     <td className="num">
                       {/* Zahl = direkte Verweise; der Link zeigt alle Regeln, auch über Gruppen */}
@@ -262,7 +277,10 @@ function ObjectTable({
                         <button
                           className="chip local linkchip"
                           title="Regeln mit diesem Objekt anzeigen (auch über Gruppen)"
-                          onClick={() => onGo("regeln", { object: o.name })}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onGo("regeln", { object: o.name });
+                          }}
                         >
                           {o.used_in_rules || "via Gruppe"}
                         </button>
@@ -282,7 +300,250 @@ function ObjectTable({
         </div>
         {data && data.total > 0 && <Pager total={data.total} offset={offset} onOffset={setOffset} />}
       </div>
+      {selected !== null && <ObjectDrawer id={selected} onClose={() => setSelected(null)} onGo={onGo} />}
     </>
+  );
+}
+
+// Service-Attribute (FortiGate) bzw. ACI-Filter mit Klartext-Bezeichnung
+const ATTR_LABEL: Record<string, string> = {
+  protocol: "Protokoll",
+  "protocol-number": "IP-Protokoll",
+  icmptype: "ICMP-Typ",
+  icmpcode: "ICMP-Code",
+  "tcp-portrange": "TCP-Ports",
+  "udp-portrange": "UDP-Ports",
+  "sctp-portrange": "SCTP-Ports",
+  category: "Kategorie",
+  iprange: "nur Ziel-IP",
+  fqdn: "nur Ziel-FQDN",
+  "session-ttl": "Session-TTL (s)",
+  "tcp-halfclose-timer": "TCP-Halfclose (s)",
+  "tcp-halfopen-timer": "TCP-Halfopen (s)",
+  "tcp-timewait-timer": "TCP-Timewait (s)",
+  "tcp-rst-timer": "TCP-RST (s)",
+  "udp-idle-timer": "UDP-Idle (s)",
+  "check-reset-range": "Reset-Prüfung",
+  helper: "Protokoll-Helper",
+  proxy: "Proxy",
+  "app-service-type": "App-Service",
+  tenant: "ACI-Tenant",
+  dn: "DN",
+};
+
+// FortiGate-Portbereich "443 8443:1024-65535" -> "443, 8443 (Quellport 1024-65535)"
+function fmtPorts(v: unknown): string {
+  return String(v)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((p) => {
+      const [dst, src] = p.split(":");
+      return src ? `${dst} (Quellport ${src})` : dst;
+    })
+    .join(", ");
+}
+
+function attrText(k: string, v: unknown): string {
+  if (k.endsWith("portrange")) return fmtPorts(v);
+  return typeof v === "object" ? JSON.stringify(v) : String(v);
+}
+
+function AttrSummary({ attrs }: { attrs?: Record<string, unknown> }) {
+  const a = attrs ?? {};
+  const bits: string[] = [];
+  if (a.category) bits.push(String(a.category));
+  for (const k of ["tcp-portrange", "udp-portrange", "sctp-portrange"])
+    if (a[k] && String(a[k]).includes(":")) bits.push(`${ATTR_LABEL[k]} ${fmtPorts(a[k])}`);
+  if (a.icmptype !== undefined) bits.push(`ICMP ${a.icmptype}${a.icmpcode !== undefined ? `/${a.icmpcode}` : ""}`);
+  if (a["protocol-number"]) bits.push(`IP-Protokoll ${a["protocol-number"]}`);
+  if (a.iprange) bits.push(`nur Ziel ${a.iprange}`);
+  if (a.fqdn) bits.push(`nur Ziel ${a.fqdn}`);
+  if (Array.isArray(a.entries)) bits.push(`${a.entries.length} Einträge`);
+  if (a.proxy) bits.push("Proxy");
+  return bits.length ? <span className="faint">{bits.join(" · ")}</span> : <Dash />;
+}
+
+// ACI-Filtereinträge (vzEntry)
+function EntryTable({ entries }: { entries: Record<string, string>[] }) {
+  const range = (lo?: string, hi?: string) => (lo ? (hi && hi !== lo ? `${lo}-${hi}` : lo) : "–");
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>Eintrag</th>
+          <th>Ether</th>
+          <th>Protokoll</th>
+          <th>Zielport</th>
+          <th>Quellport</th>
+          <th>weitere</th>
+        </tr>
+      </thead>
+      <tbody>
+        {entries.map((e, i) => (
+          <tr key={i}>
+            <td className="mono">{e.name ?? "–"}</td>
+            <td>{e.etherT ?? "–"}</td>
+            <td>{e.prot ?? "–"}</td>
+            <td className="mono">{range(e.dFromPort, e.dToPort)}</td>
+            <td className="mono">{range(e.sFromPort, e.sToPort)}</td>
+            <td className="faint">
+              {[
+                e.stateful === "yes" ? "stateful" : null,
+                e.tcpRules ? `TCP ${e.tcpRules}` : null,
+                e.icmpv4T ? `ICMP ${e.icmpv4T}` : null,
+                e.icmpv6T ? `ICMPv6 ${e.icmpv6T}` : null,
+                e.applyToFrag === "yes" ? "Fragmente" : null,
+              ]
+                .filter(Boolean)
+                .join(" · ") || "–"}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// Objekt-Detail wie in der NAT-Sicht: Attribute, Werte, Mitglieder, Befunde und die Regeln
+function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; onGo?: Go }) {
+  const [d, setD] = useState<ObjectDetail | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  useEffect(() => {
+    setD(null);
+    fetchObjectDetail(id).then(setD).catch(setErr);
+  }, [id]);
+  const service = d ? d.category === "service" || d.category === "service_group" : false;
+  const attrs = Object.entries(d?.attrs ?? {}).filter(([k]) => k !== "entries");
+  const entries = Array.isArray(d?.attrs?.entries) ? (d!.attrs!.entries as Record<string, string>[]) : [];
+  return (
+    <Drawer
+      title={d?.name ?? "Objekt"}
+      sub={d ? `${CATEGORY_LABEL[d.category] ?? d.category}${d.obj_type ? ` · ${d.obj_type}` : ""} · ${d.source ?? ""}` : undefined}
+      onClose={onClose}
+    >
+      <ErrorBox error={err} />
+      {!d && !err && <Loading />}
+      {d && (
+        <>
+          <dl className="kv">
+            {d.comment && (
+              <>
+                <dt>Kommentar</dt>
+                <dd>{d.comment}</dd>
+              </>
+            )}
+            {!d.members.length && (
+              <>
+                <dt>{service ? "Protokoll / Ports" : "Werte"}</dt>
+                <dd>
+                  <ValueList values={d.values} service={service} />
+                </dd>
+              </>
+            )}
+            {attrs.map(([k, v]) => (
+              <Fragment key={k}>
+                <dt>{ATTR_LABEL[k] ?? k}</dt>
+                <dd className="mono">{attrText(k, v)}</dd>
+              </Fragment>
+            ))}
+            {d.fqdn && !service && (
+              <>
+                <dt>FQDN</dt>
+                <dd className="mono">{d.fqdn}</dd>
+              </>
+            )}
+            {d.interface && (
+              <>
+                <dt>Interface</dt>
+                <dd className="mono">{d.interface}</dd>
+              </>
+            )}
+            {d.site && (
+              <>
+                <dt>Standort</dt>
+                <dd>
+                  <SiteChip site={d.site} from="name" />
+                </dd>
+              </>
+            )}
+            <dt>In Gruppe</dt>
+            <dd>{d.member_of.length ? <Members names={d.member_of} /> : <Dash />}</dd>
+            <dt>Befunde</dt>
+            <dd>
+              <IssueChips issues={d.issues} />
+            </dd>
+          </dl>
+
+          {entries.length > 0 && (
+            <>
+              <div className="sub-h">Filter-Einträge ({entries.length})</div>
+              <EntryTable entries={entries} />
+            </>
+          )}
+
+          {d.members_detail.length > 0 && (
+            <>
+              <div className="sub-h">Mitglieder ({d.members_detail.length})</div>
+              <table>
+                <tbody>
+                  {d.members_detail.map((m) => (
+                    <tr key={m.name}>
+                      <td className="mono">
+                        <b>{m.name}</b>
+                        {m.comment && <div className="faint">{m.comment}</div>}
+                      </td>
+                      <td className="faint">{m.category ? (CATEGORY_LABEL[m.category] ?? m.category) : "nicht gelesen"}</td>
+                      <td className="mono">{m.values.join(", ") || "–"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          <div className="sub-h" style={{ display: "flex", alignItems: "center" }}>
+            Firewall-Regeln ({d.rule_count})
+            <div style={{ flex: 1 }} />
+            {d.rule_count > 0 && onGo && (
+              <button className="btn btn-ghost btn-sm" onClick={() => onGo("regeln", { object: d.name })}>
+                In Regeln anzeigen
+              </button>
+            )}
+          </div>
+          {d.rules.length === 0 ? (
+            <div className="faint">Keine Regel verwendet dieses Objekt (auch nicht über eine Gruppe).</div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Regel</th>
+                  <th>Aktion</th>
+                  <th>Quelle</th>
+                  <th>Ziel</th>
+                  <th>Dienste</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.rules.map((r) => (
+                  <tr key={r.id} className={onGo ? "clickable" : undefined} onClick={() => onGo?.("regeln", { rule: String(r.id) })}>
+                    <td>
+                      <b>{r.name}</b>
+                      <div className="faint mono">#{r.id}</div>
+                    </td>
+                    <td>
+                      <ActionBadge action={r.action} />
+                    </td>
+                    <td className="mono">{r.sources.join(", ") || "–"}</td>
+                    <td className="mono">{r.destinations.join(", ") || "–"}</td>
+                    <td className="mono">{r.service_names.join(", ") || "–"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </Drawer>
   );
 }
 

@@ -91,10 +91,54 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
     if ftype == "invalid_name":
         known = f" (bekannt: {_list(d['prefixes'], 8)})" if d.get("prefixes") else ""
         what = _CATEGORY.get(d.get("category"), "Objekt")
+        hint = (
+            "Objekt nach Konvention benennen (z. B. H_ für Hosts, N_ für Netze) oder den Präfix "
+            "im Namensprofil ergänzen."
+        )
+        if d.get("category") == "service":
+            hint = (
+                "Service nach Konvention benennen: FT_<sprechender Name> (z. B. FT_https) bzw. "
+                "FT_<proto><port> (z. B. FT_tcp8443) – oder den Präfix im Namensprofil ergänzen "
+                "(Wörterbuch service_prefix)."
+            )
         return (
             f"{what} {_q(subject)}{on} beginnt mit keinem Präfix der Namenskonvention{known}.",
-            "Objekt nach Konvention benennen (z. B. H_ für Hosts, N_ für Netze) oder den Präfix "
-            "im Namensprofil ergänzen.",
+            hint,
+        )
+    if ftype == "service_mismatch":
+        rule = d.get("rule") or "Namensschema"
+        return (
+            f"Service {_q(subject)}{on} definiert {_list(d.get('values'), 6) or 'nichts'}, laut "
+            f"{rule} erwartet: {_list(d.get('expected'), 6)}.",
+            "Port/Protokoll am Service oder den Namen korrigieren – der Name soll sagen, was "
+            "der Service erlaubt.",
+        )
+    if ftype == "rule_incomplete":
+        missing = d.get("missing") or []
+        name = d.get("name") or subject
+        if d.get("domain") == "aci_contract":
+            side = (
+                "wird von keiner EPG konsumiert und von keiner bereitgestellt"
+                if len(missing) == 2
+                else (
+                    "wird von keiner EPG konsumiert (kein Consumer)"
+                    if "src" in missing
+                    else "wird von keiner EPG bereitgestellt (kein Provider)"
+                )
+            )
+            tenant = f" (Tenant {d['tenant']})" if d.get("tenant") else ""
+            return (
+                f"Contract {_q(name)}{tenant}{on} {side} – er ist nicht wirksam.",
+                "Consumer bzw. Provider ergänzen oder den Contract entfernen (am APIC – "
+                "Automato liest nur).",
+            )
+        sides = " und ".join(
+            {"src": "keine Quelle", "dst": "kein Ziel"}[m] for m in missing if m in ("src", "dst")
+        )
+        return (
+            f"Policy {_q(name)}{on} hat {sides}, die Automato lesen kann.",
+            "Policy auf der Firewall prüfen. Ist sie gültig, nutzt sie ein Feld, das Automato "
+            "noch nicht liest – bitte melden.",
         )
     if ftype == "name_type_mismatch":
         expected = _CLASS.get(d.get("expected"), d.get("expected"))

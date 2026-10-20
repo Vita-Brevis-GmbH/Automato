@@ -52,6 +52,8 @@ class RuleOut(BaseModel):
     service_names: list[str] = []  # Service-Namen wie auf der Firewall (sonst kanonisch)
     aci: AciContractOut | None = None  # nur ACI-Contracts
     nat: RuleNatOut | None = None  # nur Firewall-Policies mit SNAT oder VIP
+    missing: list[str] = []  # src | dst ohne Endpunkt (ACI: kein Consumer/Provider)
+    negate: list[str] = []  # FortiGate: negierte Seiten src | dst | service
 
 
 class EpgSubnetOut(BaseModel):

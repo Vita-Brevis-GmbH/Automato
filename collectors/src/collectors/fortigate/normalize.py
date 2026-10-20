@@ -229,6 +229,41 @@ def _policy_protections(policy: dict) -> list[str]:
     return [str(policy[f]) for f in _UTM_FIELDS if policy.get(f)]
 
 
+# Internet Services (ISDB) statt Adressen: Ziel bzw. Quelle der Policy (Dev-Befund: Regeln
+# ohne Quelle/Ziel). Bei aktivem Internet Service sind dstaddr/service leer.
+_ISDB_DST = tuple(
+    f"internet-service{v}-{k}"
+    for v in ("", "6")
+    for k in ("name", "group", "custom", "custom-group", "fortiguard")
+)
+_ISDB_SRC = tuple(
+    f"internet-service{v}-src-{k}"
+    for v in ("", "6")
+    for k in ("name", "group", "custom", "custom-group", "fortiguard")
+)
+# Identitaet als zusaetzliche Quell-Bedingung (Benutzer, Gruppen, FSSO) und ZTNA-Tags
+_IDENTITY = (("users", "user"), ("groups", "usergroup"), ("fsso-groups", "usergroup"))
+_ZTNA = ("ztna-ems-tag", "ztna-geo-tag")
+
+
+def _extra_endpoints(policy: dict, side: str) -> tuple[list[str], list[str]]:
+    """(Namen, typisierte Werte) fuer ISDB, Identitaet und ZTNA einer Policy-Seite."""
+    names: list[str] = []
+    values: list[str] = []
+    for n in _names(policy, *(_ISDB_SRC if side == "src" else _ISDB_DST)):
+        names.append(n)
+        values.append(f"isdb:{n}")
+    if side == "src":
+        for key, tag in _IDENTITY:
+            for n in _names(policy, key):
+                names.append(n)
+                values.append(f"{tag}:{n}")
+        for n in _names(policy, *_ZTNA):
+            names.append(n)
+            values.append(f"dynamic:{n}")
+    return names, values
+
+
 def _normalize_policy(policy: dict, amap: dict, smap: dict, vipmap: dict) -> NormalizedRule:
     src_refs = _names(policy, "srcaddr", "srcaddr6")  # Dual-Stack: IPv4- und IPv6-Felder
     dst_refs = _names(policy, "dstaddr", "dstaddr6")
@@ -236,6 +271,12 @@ def _normalize_policy(policy: dict, amap: dict, smap: dict, vipmap: dict) -> Nor
     sources = [v for n in src_refs for v in resolve_address(n, amap, vipmap)]
     destinations = [v for n in dst_refs for v in resolve_address(n, amap, vipmap)]
     svc = [t for n in svc_refs for t in resolve_service(n, smap)]
+    extra_src, extra_src_values = _extra_endpoints(policy, "src")
+    extra_dst, extra_dst_values = _extra_endpoints(policy, "dst")
+    src_refs, sources = src_refs + extra_src, sources + extra_src_values
+    dst_refs, destinations = dst_refs + extra_dst, destinations + extra_dst_values
+    if not svc and extra_dst:
+        svc = ["internet-service"]  # Ports kommen aus dem Internet Service
 
     return NormalizedRule(
         source_platform="fortigate",
@@ -421,6 +462,8 @@ def build_device_objects(
                 color=_as_color(svc.get("color")),
                 values=smap.get(svc["name"], []),
                 comment=svc.get("comment") or None,
+                fqdn=svc.get("fqdn") or None,
+                attrs=service_attrs(svc),
             )
         )
     for g in service_groups or []:
@@ -432,8 +475,51 @@ def build_device_objects(
                 members=[m["name"] for m in g.get("member", []) if m.get("name")],
                 values=smap.get(g["name"], []),
                 comment=g.get("comment") or None,
+                attrs={"proxy": "enable"} if g.get("proxy") == "enable" else {},
             )
         )
+    return out
+
+
+# Service-Attribute wie auf der FortiGate; Standardwerte (0, leer, "auto") entfallen
+_SERVICE_ATTRS = (
+    "protocol",
+    "protocol-number",
+    "icmptype",
+    "icmpcode",
+    "tcp-portrange",
+    "udp-portrange",
+    "sctp-portrange",
+    "category",
+    "iprange",
+    "fqdn",
+    "session-ttl",
+    "tcp-halfclose-timer",
+    "tcp-halfopen-timer",
+    "tcp-timewait-timer",
+    "tcp-rst-timer",
+    "udp-idle-timer",
+    "check-reset-range",
+    "helper",
+    "proxy",
+    "app-service-type",
+)
+_SERVICE_DEFAULTS = {"", "0", "0.0.0.0", "auto", "disable", "default", "None"}  # noqa: S104
+
+
+def service_attrs(svc: dict) -> dict[str, Any]:
+    """Attribute eines FortiGate-Services (Quellports stehen in den Portbereichen nach ':')."""
+    out: dict[str, Any] = {}
+    for key in _SERVICE_ATTRS:
+        value = svc.get(key)
+        icmp = key in ("icmptype", "icmpcode")
+        if value is None or str(value).strip() in ({""} if icmp else _SERVICE_DEFAULTS):
+            continue
+        if key == "protocol-number" and str(svc.get("protocol", "")).upper() != "IP":
+            continue
+        if key in ("icmptype", "icmpcode") and "ICMP" not in str(svc.get("protocol", "")).upper():
+            continue
+        out[key] = value
     return out
 
 

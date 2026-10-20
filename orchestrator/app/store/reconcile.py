@@ -67,6 +67,7 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     references.rematch(session, tenant_id, ctx, prefixes)  # zuerst: Werte gegen den Stand
     issues: list[Issue] = []
     issues += _rule_endpoint_issues(session, tenant_id, ctx, prefixes)
+    issues += _rule_incomplete_issues(session, tenant_id)
     issues += _device_object_issues(session, tenant_id, prefixes)
     issues += references.checks(session, tenant_id, prefixes, ctx)
     _sync_findings(session, tenant_id, issues)
@@ -161,6 +162,48 @@ def _rule_endpoint_issues(session: Session, tenant_id: int, ctx=None, prefixes=N
     return out
 
 
+def _rule_incomplete_issues(session: Session, tenant_id: int) -> list[Issue]:
+    """Regel ohne Quelle bzw. Ziel - ACI: Contract ohne Consumer/Provider, nicht wirksam."""
+    roles: dict[int, set[str]] = defaultdict(set)
+    for rule_id, role in session.execute(
+        select(RuleEndpoint.rule_id, RuleEndpoint.role)
+        .join(Rule, Rule.id == RuleEndpoint.rule_id)
+        .where(Rule.tenant_id == tenant_id)
+        .distinct()
+    ):
+        roles[rule_id].add(role.value)
+    names = _source_names(session, tenant_id)
+    out: list[Issue] = []
+    for r in session.scalars(select(Rule).where(Rule.tenant_id == tenant_id)):
+        missing = [side for side in ("src", "dst") if side not in roles.get(r.id, set())]
+        if not missing:
+            continue
+        aci = r.domain.value == "aci_contract"
+        raw = r.raw if isinstance(r.raw, dict) else {}
+        label = r.name or f"#{r.external_id}"
+        subject = f"{raw.get('tenant')}/{label}" if aci and raw.get("tenant") else label
+        out.append(
+            Issue(
+                FindingType.RULE_INCOMPLETE,
+                SubjectKind.RULE,
+                subject,
+                r.source_system_id,
+                Severity.INFO if aci else Severity.WARNING,
+                detail={
+                    "rule_id": r.id,
+                    "external_id": r.external_id,
+                    "domain": r.domain.value,
+                    "missing": missing,
+                    "source_system_id": r.source_system_id,
+                    "source": names.get(r.source_system_id),
+                    "name": label,
+                    "tenant": raw.get("tenant") if aci else None,
+                },
+            )
+        )
+    return out
+
+
 def _ipam_elsewhere(primary, obj: NetworkObject, fw_names: list[str], prefixes) -> dict | None:
     """Kennt das IPAM den Server (Name ohne Praefix, H_web01 -> web01) unter einer anderen IP?"""
     if primary is None or obj.object_class is not ObjectClass.HOST:
@@ -202,6 +245,7 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
         return []
     source_names = _source_names(session, tenant_id)
     used = _used_object_ids(session, tenant_id, objects)
+    services = _ServiceConvention(session, tenant_id)
     out: list[Issue] = []
     by_value: dict[tuple[int, str], list[str]] = defaultdict(list)
 
@@ -227,9 +271,12 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
                             {**detail, "expected": parsed.object_class.value, "value": _first(o)},
                         )
                     )
+        predefined = _predefined_service(o)
+        if o.category is ObjectCategory.SERVICE and not predefined:
+            out += _service_issues(o, detail, services)
         if o.category is ObjectCategory.ADDRESS and _first(o):
             by_value[(o.source_system_id, _first(o))].append(o.name)
-        if o.id not in used and o.category is not ObjectCategory.IPPOOL:
+        if o.id not in used and o.category is not ObjectCategory.IPPOOL and not predefined:
             out.append(_issue(FindingType.UNUSED_OBJECT, o, detail, Severity.INFO))
 
     for (source_id, value), names in by_value.items():
@@ -249,6 +296,65 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
                 )
             )
     return out
+
+
+class _ServiceConvention:
+    """Praefixe (Woerterbuch `service_prefix`, sonst FT_) und Soll-Ports (Woerterbuch
+    `service`, z. B. FT_https -> tcp/443) - ohne Woerterbuch greift das Schema FT_<proto><port>."""
+
+    def __init__(self, session: Session, tenant_id: int):
+        own = profile_store.entries_for_tenant(session, tenant_id, "service_prefix")
+        self.prefixes = tuple(own) or naming.SERVICE_PREFIXES
+        self.catalog = {
+            k.lower(): v
+            for k, v in profile_store.entries_for_tenant(session, tenant_id, "service").items()
+        }
+
+    def expected(self, name: str) -> tuple[list[str], str] | None:
+        if name.lower() in self.catalog:
+            return naming.service_tokens(self.catalog[name.lower()]), "Wörterbuch"
+        tokens = naming.expected_service(name)
+        return (tokens, "Namensschema") if tokens else None
+
+
+def _bare_name(o: DeviceObject) -> str:
+    """ACI-Filter heissen `<Tenant>/<FT_name>` - geprueft wird der Filtername."""
+    return o.name.split("/", 1)[1] if o.obj_type == "vzFilter" and "/" in o.name else o.name
+
+
+def _predefined_service(o: DeviceObject) -> bool:
+    return (
+        o.category in (ObjectCategory.SERVICE, ObjectCategory.SERVICE_GROUP)
+        and o.obj_type != "vzFilter"
+        and o.name.lower() in naming.FORTIOS_PREDEFINED_SERVICES
+    )
+
+
+def _service_issues(o: DeviceObject, detail: dict, conv: _ServiceConvention) -> list[Issue]:
+    """Service/Filter nach Namensschema: Praefix FT_ und Ports passend zum Namen."""
+    name = _bare_name(o)
+    base = {**detail, "category": "service"}
+    if not name.startswith(conv.prefixes):
+        return [_issue(FindingType.INVALID_NAME, o, {**base, "prefixes": list(conv.prefixes)})]
+    expected = conv.expected(name)
+    if expected is None:
+        return []
+    tokens, rule = expected
+    actual = naming.normalize_tokens(o.values or [])
+    if naming.normalize_tokens(tokens) == actual:
+        return []
+    return [
+        _issue(
+            FindingType.SERVICE_MISMATCH,
+            o,
+            {
+                **base,
+                "expected": sorted(naming.normalize_tokens(tokens)),
+                "values": sorted(actual),
+                "rule": rule,
+            },
+        )
+    ]
 
 
 _CONVENTION_CATEGORIES = (ObjectCategory.ADDRESS, ObjectCategory.VIP)

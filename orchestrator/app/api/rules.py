@@ -207,6 +207,8 @@ def rule_outs(session: Session, rules: list, search: rule_search.RuleSearch) -> 
                 or [s.canonical_name for s in r.services],
                 aci=_aci(r),
                 nat=_nat(r, search),
+                missing=rule_search.missing(r),
+                negate=rule_search.negated(r),
             )
         )
     return out
@@ -273,6 +275,8 @@ def get_rule(
         destinations=_labels(r, RefRole.DST, EndpointRole.DST, objs, epgs),
         service_names=_ref_names(r, RefRole.SERVICE) or [s.canonical_name for s in r.services],
         aci=_aci(r),
+        missing=rule_search.missing(r),
+        negate=rule_search.negated(r),
         external_id=r.external_id,
         sequence=r.sequence,
         refs=objects_store.rule_refs(session, r),

@@ -15,6 +15,7 @@ Plattform funktioniert also auch ohne befuellte Woerterbuecher (keine
 Funktionsabhaengigkeit). Reine Funktion, ohne DB/IO.
 """
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -102,3 +103,50 @@ def short_name(name: str | None) -> str:
 def expects_ipam_match(object_class: ObjectClass) -> bool:
     """H-EXT_/N-EXT_ sind bewusst extern -> kein IPAM-Match erwartet (kein Fehler)."""
     return object_class not in (ObjectClass.EXTERNAL, ObjectClass.UNKNOWN)
+
+
+# -- Services (FortiGate-Services, ACI-Filter): Namenskonvention FT_ ----------------------
+
+# Ohne Woerterbuch `service_prefix`: eingebautes Praefix der Konvention (FT_ = Filter/Service)
+SERVICE_PREFIXES: tuple[str, ...] = ("FT_",)
+
+# FortiOS-Standardobjekte (vordefiniert, nicht umbenennbar) - keine Konventions-/Nutzungspruefung
+FORTIOS_PREDEFINED_SERVICES = frozenset(
+    s.lower()
+    for s in (
+        "ALL ALL_TCP ALL_UDP ALL_ICMP ALL_ICMP6 GRE AH ESP AOL BGP DHCP DHCP6 DNS FINGER FTP "
+        "FTP_GET FTP_PUT GOPHER H323 HTTP HTTPS IKE IMAP IMAPS Internet-Locator-Service IRC "
+        "L2TP LDAP LDAP_UDP NetMeeting NFS NNTP NTP OSPF PC-Anywhere PING PING6 TIMESTAMP "
+        "INFO_REQUEST INFO_ADDRESS ONC-RPC DCE-RPC POP3 POP3S PPTP QUAKE RAUDIO REXEC RIP "
+        "RLOGIN RSH SCCP SIP SIP-MSNmessenger SAMBA SMTP SMTPS SNMP SSH SYSLOG TALK TELNET TFTP "
+        "MGCP UUCP VDOLIVE WAIS WINFRAME X-WINDOWS MS-SQL MYSQL RDP VNC SQUID SOCKS WINS "
+        "RADIUS RADIUS-OLD CVSPSERVER AFS3 TRACEROUTE RTSP MMS KERBEROS SMB NONE webproxy"
+    ).split()
+) | frozenset({"email access", "web access", "windows ad", "exchange server"})
+
+_SERVICE_PATTERN = re.compile(r"^FT_(tcpudp|tcp|udp|sctp)(\d+)(?:-(\d+))?$", re.IGNORECASE)
+
+
+def service_tokens(spec: str) -> list[str]:
+    """Woerterbuch-Wert eines Services -> Tokens: 'tcp+udp/1433:1434' -> tcp/1433-1434, udp/..."""
+    spec = (spec or "").strip().lower().replace(" ", "")
+    if "/" not in spec:
+        return [spec] if spec else []
+    protos, _, ports = spec.partition("/")
+    ports = ports.replace(":", "-")
+    return [f"{p}/{ports}" for p in protos.split("+") if p]
+
+
+def expected_service(name: str) -> list[str] | None:
+    """Protokoll/Port, den der Name nach Schema verspricht: FT_tcp8443 -> [tcp/8443]."""
+    hit = _SERVICE_PATTERN.match(name or "")
+    if hit is None:
+        return None
+    proto, lo, hi = hit[1].lower(), hit[2], hit[3]
+    ports = f"{lo}-{hi}" if hi and hi != lo else lo
+    protos = ("tcp", "udp") if proto == "tcpudp" else (proto,)
+    return [f"{p}/{ports}" for p in protos]
+
+
+def normalize_tokens(tokens: list[str]) -> set[str]:
+    return {t.strip().lower().replace(":", "-") for t in tokens or [] if t}
