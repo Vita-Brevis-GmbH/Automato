@@ -757,6 +757,8 @@ function SystemDialog({
   const [clearWrite, setClearWrite] = useState(false);
   const [readScope, setReadScope] = useState(system?.read_scope ?? "");
   const [refRole, setRefRole] = useState(system?.ref_role ?? "");
+  const [siteId, setSiteId] = useState<number | null>(system?.site_id ?? null);
+  const [sites, setSites] = useState<Site[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
 
@@ -767,6 +769,12 @@ function SystemDialog({
   const isNetbox = platform === "netbox";
   const isRef = REFERENCE_PLATFORMS.includes(platform);
   const userPass = isAci || isInfoblox;
+
+  useEffect(() => {
+    fetchSites(tenant.id)
+      .then(setSites)
+      .catch(() => setSites([]));
+  }, [tenant.id]);
   const kept = "hinterlegt – leer lassen = unverändert";
   // Zuweisung bleibt sichtbar, auch wenn der Agent nicht (mehr) in der Liste steht
   const options =
@@ -787,6 +795,7 @@ function SystemDialog({
       verify_tls: verifyTls,
       ...(isAci ? { read_scope: readScope.trim() } : {}),
       ...(isRef && refRole ? { ref_role: refRole } : {}),
+      ...(isRef ? {} : { site_id: siteId }),
     };
     // Nur geänderte Felder senden; leer gelassen = unverändert, "" = entfernen
     const creds: SystemCredentials = {};
@@ -897,6 +906,27 @@ function SystemDialog({
           />
           <div className="hint">So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).</div>
         </div>
+        {!isRef && (
+          <div className="field">
+            <label htmlFor="ss-site">Standort</label>
+            <select
+              id="ss-site"
+              className="sel input"
+              value={siteId ?? ""}
+              onChange={(e) => setSiteId(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">
+                {sites.length === 1 ? `nicht gesetzt (einziger Standort ${sites[0].code} wird genutzt)` : "nicht gesetzt"}
+              </option>
+              {sites.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.code} – {s.name}
+                </option>
+              ))}
+            </select>
+            <div className="hint">Dort legt der NetBox-Sync das Gerät mit seinen Ports an.</div>
+          </div>
+        )}
         <div className="field">
           <label htmlFor="ss-agent">Verwaltet von</label>
           <select

@@ -101,8 +101,8 @@ export default function Reconcile({
           )
         }
       >
-        Firewall- und ACI-Daten von „{tenantLabel}“ gegen das IPAM (Infoblox DDI / NetBox) und die
-        Namenskonvention. Läuft automatisch nach jedem Einlesen; die Quellsysteme werden dabei nur gelesen.
+        Firewall- und ACI-Daten von „{tenantLabel}“ gegen das IPAM (Infoblox DDI / NetBox) und die Namenskonvention.
+        Läuft automatisch nach jedem Einlesen; die Quellsysteme werden dabei nur gelesen.
       </PageHead>
       <ErrorBox error={error} prefix="Abgleich" onClose={() => setError(null)} />
 
@@ -258,7 +258,8 @@ function IpamTable({ tenantId, summary }: { tenantId: number; summary: Reconcile
             <div className="seg">
               {["", "missing", "different", "only_enrichment"].map((k) => (
                 <button key={k || "all"} className={status === k ? "on" : ""} onClick={() => setStatus(k)}>
-                  {k ? label[k] : "alle Abweichungen"} ({k ? (s[k] ?? 0) : (s.missing ?? 0) + (s.different ?? 0) + (s.only_enrichment ?? 0)})
+                  {k ? label[k] : "alle Abweichungen"} (
+                  {k ? (s[k] ?? 0) : (s.missing ?? 0) + (s.different ?? 0) + (s.only_enrichment ?? 0)})
                 </button>
               ))}
             </div>

@@ -30,3 +30,8 @@ def get_session() -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+def get_session_factory() -> sessionmaker[Session]:
+    """FastAPI-Dependency fuer Hintergrund-Aufgaben, die eine eigene Session brauchen."""
+    return get_sessionmaker()

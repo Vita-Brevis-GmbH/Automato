@@ -97,6 +97,7 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   reconcile: <path d="M4 9h13l-3-3m3 3-3 3M20 15H7l3-3m-3 3 3 3" />,
+  upload: <path d="M12 16V4m0 0-4 4m4-4 4 4M5 20h14" />,
 };
 
 export function Icon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {

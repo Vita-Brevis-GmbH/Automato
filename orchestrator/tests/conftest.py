@@ -1,7 +1,7 @@
 """Test-Setup: SQLite in-memory statt Postgres, Celery-Dispatch gemockt."""
 
 import pytest
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.main import create_app
 from app.models import Base
 from fastapi.testclient import TestClient
@@ -55,6 +55,7 @@ def client(session_factory, monkeypatch):
 
     app = create_app()
     app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_session_factory] = lambda: session_factory
     test_client = TestClient(app)
     test_client.dispatched = dispatched  # fuer Assertions in Tests
     return test_client

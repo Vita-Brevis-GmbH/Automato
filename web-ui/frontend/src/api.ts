@@ -127,6 +127,7 @@ export interface System {
   has_write_token: boolean; // NetBox: Schreib-Token für den NetBox-Sync hinterlegt
   reference_count: number; // Referenzquellen: Einträge im aktuellen Stand
   reference_at: string | null;
+  site_id: number | null; // Standort des Geräts (NetBox-Sync)
   rule_count: number;
   nat_count: number;
 }
@@ -393,6 +394,49 @@ export interface IpamCompare extends Paged<IpamRow> {
   summary?: Record<string, number>;
 }
 
+// NetBox-Sync (ADR 0010): Vorschau -> Übernahme per Klick (admin)
+export interface SyncTarget {
+  id: number;
+  name: string;
+  base_url: string;
+  ref_role: string | null;
+  has_write_token: boolean;
+}
+export interface SyncChange {
+  field: string;
+  old: unknown;
+  new: unknown;
+}
+export interface SyncItem {
+  kind: string;
+  key: string;
+  label: string;
+  action: string; // create | update | conflict | delete | obsolete
+  id?: number;
+  manual?: boolean;
+  changes?: SyncChange[];
+  fields?: Record<string, unknown>;
+}
+export interface SyncPlan {
+  id: number;
+  tenant_id: number;
+  source_system_id: number;
+  target: string;
+  target_url: string;
+  status: string; // planning | ready | applying | applied | failed | superseded
+  options: { sections?: string[]; allow_delete?: boolean };
+  summary: Record<string, Record<string, number>> | null;
+  totals: Record<string, number>;
+  warnings: string[];
+  message: string | null;
+  result: Record<string, Record<string, number>> | null;
+  created_by: string;
+  created_at: string;
+  applied_by: string | null;
+  applied_at: string | null;
+  can_apply: boolean;
+}
+
 export interface NamingProfile {
   id: number;
   customer: string;
@@ -552,6 +596,7 @@ export const createSystem = (
     verify_tls?: boolean;
     read_scope?: string;
     ref_role?: string | null;
+    site_id?: number | null;
   } & SystemCredentials,
 ) => sendJSON<System>("/api/systems", "POST", body);
 export const patchSystem = (
@@ -565,6 +610,7 @@ export const patchSystem = (
     verify_tls?: boolean;
     read_scope?: string;
     ref_role?: string | null;
+    site_id?: number | null;
   } & SystemCredentials,
 ) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");
@@ -684,3 +730,21 @@ export const runReconcile = (tenantId: number) =>
     `/api/reconcile${qs({ tenant_id: tenantId })}`,
     "POST",
   );
+
+// NetBox-Sync
+export const fetchSyncTargets = (tenantId: number) =>
+  getJSON<SyncTarget[]>(`/api/netbox-sync/targets${qs({ tenant_id: tenantId })}`);
+export const fetchSyncPlans = (tenantId: number) =>
+  getJSON<SyncPlan[]>(`/api/netbox-sync/plans${qs({ tenant_id: tenantId })}`);
+export const fetchSyncPlan = (id: number) => getJSON<SyncPlan>(`/api/netbox-sync/plans/${id}`);
+export const createSyncPlan = (body: {
+  tenant_id: number;
+  source_system_id: number;
+  sections: string[];
+  allow_delete: boolean;
+}) => sendJSON<SyncPlan>("/api/netbox-sync/plans", "POST", body);
+export const fetchSyncItems = (
+  id: number,
+  params: { action?: string; kind?: string; q?: string; limit?: number; offset?: number } = {},
+) => getJSON<Paged<SyncItem>>(`/api/netbox-sync/plans/${id}/items${qs({ ...params, q: params.q?.trim() })}`);
+export const applySyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/apply`, "POST");

@@ -20,6 +20,14 @@ from sot_gateway.readonly import enforce_read_only
 PAGE_SIZE = 1000
 
 
+def auth_header(token: str) -> dict[str, str]:
+    """NetBox-Token-Header: v2-Tokens (`nbt_…`, ab NetBox 4.6) als Bearer, sonst klassisch."""
+    token = token.strip()
+    if token.startswith("nbt_"):
+        return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": f"Token {token}"}
+
+
 class NetBoxAdapter:
     """Lesender Zugriff auf NetBox über die REST-API."""
 
@@ -37,7 +45,7 @@ class NetBoxAdapter:
         self._client = enforce_read_only(
             client
             or httpx.Client(
-                headers={"Authorization": f"Token {token}", "Accept": "application/json"},
+                headers={**auth_header(token), "Accept": "application/json"},
                 verify=verify_tls,
                 timeout=30.0,
             )

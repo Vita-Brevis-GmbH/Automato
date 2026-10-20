@@ -20,6 +20,7 @@ import Design from "./Design";
 import Findings from "./Findings";
 import NamingProfiles from "./NamingProfiles";
 import NatTable from "./Nat";
+import NetBoxSync from "./NetBoxSync";
 import Objects from "./Objects";
 import Overview from "./Overview";
 import Reconcile from "./Reconcile";
@@ -40,7 +41,8 @@ export type View =
   | "users"
   | "tenants"
   | "dict"
-  | "agents";
+  | "agents"
+  | "netbox";
 
 interface NavEntry {
   key: View;
@@ -63,6 +65,7 @@ const NAV: NavEntry[] = [
   { key: "tenants", label: "Mandanten & Standorte", icon: "tenants", section: "admin" },
   { key: "dict", label: "Namensprofile", icon: "dict", section: "admin" },
   { key: "agents", label: "Collector-Agenten", icon: "agents", section: "admin", adminOnly: true },
+  { key: "netbox", label: "NetBox-Sync", icon: "upload", section: "admin", adminOnly: true },
 ];
 
 // Daten der Übersicht + Zähler in der Navigation (je Mandant geladen).
@@ -452,6 +455,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             )}
             {current === "dict" && <NamingProfiles me={me} tenants={tenants ?? []} />}
             {current === "agents" && <Agents tenants={tenants ?? []} tenantId={tenantId} onGo={go} />}
+            {current === "netbox" && <NetBoxSync tenantId={tenantId} tenantLabel={tenantLabel} onGo={go} />}
           </>
         )}
       </main>

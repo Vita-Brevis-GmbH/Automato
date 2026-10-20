@@ -32,6 +32,7 @@ from app.models import (
     ReferenceRecordRow,
     ReferenceRole,
     Rule,
+    Site,
     SourceSystem,
     Tenant,
 )
@@ -56,6 +57,7 @@ class SystemOut(BaseModel):
     has_write_token: bool = False  # NetBox: Schreib-Token fuer den NetBox-Sync hinterlegt
     reference_count: int = 0  # Referenzquellen: Eintraege im aktuellen Stand
     reference_at: datetime | None = None  # Zeitpunkt des aktuellen Stands
+    site_id: int | None = None  # Standort des Geraets (NetBox-Sync)
     rule_count: int = 0
     nat_count: int = 0
 
@@ -69,6 +71,7 @@ class SystemIn(BaseModel):
     verify_tls: bool = True
     read_scope: str = Field(default="", max_length=500)
     ref_role: Literal["primary", "enrichment"] | None = None
+    site_id: int | None = None
     # Zugangsdaten, nur schreibbar: FortiGate/NetBox token, ACI/Infoblox username + password,
     # NetBox optional write_token (nur NetBox-Sync, nie an Agenten)
     token: str | None = Field(default=None, max_length=4096)
@@ -86,6 +89,7 @@ class SystemPatch(BaseModel):
     verify_tls: bool | None = None
     read_scope: str | None = Field(default=None, max_length=500)
     ref_role: Literal["primary", "enrichment"] | None = None
+    site_id: int | None = None  # null = Standort entfernen
     # weglassen = unverändert, "" = Feld entfernen (alle leer = keine Zugangsdaten)
     token: str | None = Field(default=None, max_length=4096)
     username: str | None = Field(default=None, max_length=200)
@@ -156,6 +160,7 @@ def _out(
         has_write_token=_has_write_token(s),
         reference_count=ref_count,
         reference_at=ref_at,
+        site_id=s.site_id,
         rule_count=rules.get(s.id, 0),
         nat_count=nat.get(s.id, 0),
     )
@@ -237,6 +242,14 @@ def _apply_credentials(src: SourceSystem, changes: dict[str, str]) -> bool:
 
 
 _ACI_NAME = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+
+
+def _check_site(session: Session, site_id: int | None, tenant_id: int | None) -> None:
+    if site_id is None:
+        return
+    site = session.get(Site, site_id)
+    if site is None or site.tenant_id != tenant_id:
+        raise HTTPException(status_code=422, detail="site belongs to another tenant")
 
 
 def _read_scope(platform: Platform, value: str) -> str:
@@ -326,6 +339,7 @@ def create_system(
     if _name_taken(session, body.tenant_id, name, None):
         raise HTTPException(status_code=409, detail="source system already exists for tenant")
     _check_agent(session, body.agent_id, body.tenant_id)
+    _check_site(session, body.site_id, body.tenant_id)
     src = SourceSystem(
         tenant_id=body.tenant_id,
         name=name,
@@ -334,6 +348,7 @@ def create_system(
         agent_id=body.agent_id,
         verify_tls=body.verify_tls,
         read_scope=_read_scope(body.platform, body.read_scope),
+        site_id=body.site_id,
     )
     _apply_credentials(src, _credential_changes(body))
     session.add(src)
@@ -353,6 +368,7 @@ def create_system(
             "agent_id": src.agent_id,
             "credentials_set": bool(src.credentials),
             "ref_role": src.ref_role,
+            "site_id": src.site_id,
         },
     )
     return _out(src, {}, {}, {})
@@ -395,9 +411,15 @@ def update_system(
         raise HTTPException(status_code=409, detail="source system already exists for tenant")
     agent_id = data["agent_id"] if "agent_id" in data else src.agent_id
     _check_agent(session, agent_id, tenant_id)
+    site_id = data["site_id"] if "site_id" in data else src.site_id
+    if "site_id" in data:
+        _check_site(session, site_id, tenant_id)
+    elif site_id is not None and tenant_id != src.tenant_id:
+        site_id = None  # Standort gehoert zum bisherigen Mandanten
     src.tenant_id = tenant_id
     src.name = name
     src.agent_id = agent_id
+    src.site_id = site_id
     if data.get("base_url") is not None:
         src.base_url = data["base_url"].strip()
     if data.get("enabled") is not None:
@@ -423,6 +445,7 @@ def update_system(
             "agent_id": src.agent_id,
             "credentials_set": bool(src.credentials) if credentials_changed else None,
             "ref_role": src.ref_role,
+            "site_id": src.site_id,
         },
     )
     return _single_out(session, src)

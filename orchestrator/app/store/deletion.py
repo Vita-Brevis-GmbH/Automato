@@ -24,6 +24,7 @@ from app.models import (
     Rule,
     Site,
     SourceSystem,
+    SyncPlan,
     Tenant,
     Zone,
 )
@@ -65,6 +66,7 @@ def _count_findings(session: Session, tenant_id: int) -> int:
 def delete_source_system(session: Session, source: SourceSystem) -> dict[str, int]:
     """Quellsystem mit seinen Regeln, NAT-Einträgen und den dadurch verwaisten Findings
     löschen; Läufe bleiben als Historie."""
+    session.execute(delete(SyncPlan).where(SyncPlan.source_system_id == source.id))
     counts = {"rules": _delete_rules(session, Rule.source_system_id == source.id)}
     counts["nat_rules"] = _count(
         session, delete(NatRule).where(NatRule.source_system_id == source.id)
@@ -95,6 +97,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     Standorte, Quellsysteme, Läufe, Agenten). Agenten werden gelöscht statt entkoppelt -
     ein Agent ohne Mandant dürfte sonst Läufe aller Mandanten abholen."""
     tid = tenant.id
+    session.execute(delete(SyncPlan).where(SyncPlan.tenant_id == tid))
     counts = {"rules": _delete_rules(session, Rule.tenant_id == tid)}
     counts["nat_rules"] = _count(session, delete(NatRule).where(NatRule.tenant_id == tid))
     counts["findings"] = _count(session, delete(Finding).where(Finding.tenant_id == tid))
@@ -115,6 +118,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
 
     counts["objects"] = _count(session, delete(NetworkObject).where(NetworkObject.tenant_id == tid))
     counts["zones"] = _count(session, delete(Zone).where(Zone.tenant_id == tid))
+    session.execute(update(SourceSystem).where(SourceSystem.tenant_id == tid).values(site_id=None))
     counts["sites"] = _count(session, delete(Site).where(Site.tenant_id == tid))
 
     source_ids = select(SourceSystem.id).where(SourceSystem.tenant_id == tid)

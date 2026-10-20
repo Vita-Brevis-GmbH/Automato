@@ -8,14 +8,14 @@ Global-Admin sieht/verwaltet alle Mandanten.
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import NamingProfile, Site, Tenant
+from app.models import NamingProfile, NetworkObject, Site, SourceSystem, Tenant
 from app.models.tenant import DnsType, IpamType
 from app.store import deletion
 
@@ -237,6 +237,13 @@ def delete_site(
     site = session.get(Site, site_id)
     if site is None or site.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="site not found")
+    # Verortungen loesen (Systeme der Applikations-Doku, Geraete-Standort der Quellsysteme)
+    session.execute(
+        update(NetworkObject).where(NetworkObject.site_id == site_id).values(site_id=None)
+    )
+    session.execute(
+        update(SourceSystem).where(SourceSystem.site_id == site_id).values(site_id=None)
+    )
     session.delete(site)
     audit.record(
         session,

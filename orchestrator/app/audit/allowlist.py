@@ -45,12 +45,37 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         }
     ),
     "source.created": frozenset(
-        {"source_id", "tenant_id", "name", "platform", "agent_id", "credentials_set", "ref_role"}
+        {
+            "source_id",
+            "tenant_id",
+            "name",
+            "platform",
+            "agent_id",
+            "credentials_set",
+            "ref_role",
+            "site_id",
+        }
     ),
     "source.updated": frozenset(
-        {"source_id", "tenant_id", "name", "enabled", "agent_id", "credentials_set", "ref_role"}
+        {
+            "source_id",
+            "tenant_id",
+            "name",
+            "enabled",
+            "agent_id",
+            "credentials_set",
+            "ref_role",
+            "site_id",
+        }
     ),
     "reconcile.run": frozenset({"tenant_id", "findings"}),
+    # NetBox-Sync (ADR 0010): nur Anzahlen, keine Inhalte
+    "netbox_sync.planned": frozenset(
+        {"plan_id", "tenant_id", "source_system_id", "create", "update", "delete", "conflict"}
+    ),
+    "netbox_sync.applied": frozenset(
+        {"plan_id", "tenant_id", "source_system_id", "status", "create", "update", "delete"}
+    ),
     "source.deleted": frozenset(
         {"source_id", "tenant_id", "name", "rules", "nat_rules", "findings", "references"}
     ),

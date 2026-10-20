@@ -13,7 +13,8 @@ alle ausser infra/mgmt).
 Referenzquellen (Infoblox, NetBox; ADR 0010): `ref_role` = primary | enrichment,
 `reference_run_id` = Lauf, dessen Eintraege (`reference_record`) der aktuelle Stand sind.
 NetBox kann zusaetzlich ein Schreib-Token tragen (`write_token` in `credentials`) - nur fuer
-den NetBox-Sync des Orchestrators, nie an einen Agenten.
+den NetBox-Sync des Orchestrators, nie an einen Agenten. `site_id` = Standort des Geraets
+(dort legt der NetBox-Sync Geraete und Ports an).
 """
 
 import enum
@@ -68,6 +69,10 @@ class SourceSystem(Base):
             name="fk_source_system_reference_run",
         ),
         nullable=True,
+    )
+    # Standort des Geraets (NetBox-Sync legt Geraete dort an; ADR 0010)
+    site_id: Mapped[int | None] = mapped_column(
+        ForeignKey("site.id", ondelete="SET NULL"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

@@ -228,11 +228,7 @@ function ObjectTable({
                       {o.obj_type && <div className="faint">{o.obj_type}</div>}
                     </td>
                     <td style={{ minWidth: 280 }}>
-                      {group ? (
-                        <Members names={o.members} />
-                      ) : (
-                        <ValueList values={o.values} service={service} />
-                      )}
+                      {group ? <Members names={o.members} /> : <ValueList values={o.values} service={service} />}
                     </td>
                     {!group && <td>{o.member_of.length ? <Members names={o.member_of} /> : <Dash />}</td>}
                     <td className="num">{o.used_in_rules || <span className="faint">0</span>}</td>

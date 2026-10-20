@@ -52,6 +52,7 @@ from app.models.service_object import Proto, ServiceObject
 from app.models.site import Site
 from app.models.source_system import REFERENCE_PLATFORMS, Platform, SourceSystem
 from app.models.source_system import RefRole as ReferenceRole
+from app.models.sync_plan import SyncPlan, SyncStatus
 from app.models.tenant import DnsType, IpamType, Tenant
 from app.models.zone import Zone
 
@@ -94,6 +95,8 @@ __all__ = [
     "Proto",
     "RefRole",
     "ReferenceRecordRow",
+    "SyncPlan",
+    "SyncStatus",
     "ReferenceRole",
     "Rule",
     "RuleAction",
