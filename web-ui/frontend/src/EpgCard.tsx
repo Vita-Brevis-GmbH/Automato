@@ -1,5 +1,6 @@
 // Lage eines ACI-Contract-Consumers/-Providers: wo liegt die EPG (Tenant, AP, BD, VRF),
-// welche Netze und Endpunkte gehören dazu - Grundlage für die Zuordnung zu Applikationen.
+// welche Netze und Endpunkte gehören dazu, an welchen Leaf-Ports/VLANs hängt sie -
+// Grundlage für die Zuordnung zu Applikationen.
 import { useState } from "react";
 import { EpgLocation } from "./api";
 import { Dash } from "./ui";
@@ -88,6 +89,34 @@ export function EpgCard({ epg }: { epg: EpgLocation }) {
                 </>
               ) : (
                 <span className="faint">{epg.kind === "external" ? "über die Subnetze bestimmt" : "keine gelernt"}</span>
+              )}
+            </dd>
+          </>
+        )}
+        {epg.kind === "epg" && (epg.vlans.length > 0 || epg.port_count > 0) && (
+          <>
+            <dt>VLAN</dt>
+            <dd className="mono">{epg.vlans.length ? epg.vlans.join(", ") : <Dash />}</dd>
+            <dt>Leaf-Ports ({epg.port_count})</dt>
+            <dd>
+              {epg.ports.map((p) => (
+                <div key={`${p.device}-${p.name}`}>
+                  <span className="mono">
+                    {p.device} {p.name}
+                  </span>
+                  {p.lag && <span className="faint"> · {p.lag}</span>}
+                  {p.mode && <span className="faint"> · {p.mode === "tagged" ? "trunk" : "access"}</span>}
+                  {p.neighbor && (
+                    <span className="muted">
+                      {" "}
+                      → {p.neighbor}
+                      {p.neighbor_port ? ` ${p.neighbor_port}` : ""}
+                    </span>
+                  )}
+                </div>
+              ))}
+              {epg.port_count > epg.ports.length && (
+                <div className="faint">{epg.port_count - epg.ports.length} weitere nicht angezeigt</div>
               )}
             </dd>
           </>

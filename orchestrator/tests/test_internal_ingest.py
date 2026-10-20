@@ -123,7 +123,7 @@ def test_rule_detail_404_fuer_unbekannte_regel(client):
     assert client.get("/rules/999999").status_code == 404
 
 
-def test_applications_aus_vips(client, session_factory):
+def test_publizierte_dienste_aus_vips(client, session_factory):
     session = session_factory()
     tenant = Tenant(name="k", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
     session.add(tenant)
@@ -177,12 +177,12 @@ def test_applications_aus_vips(client, session_factory):
     )
     assert resp.status_code == 200
 
-    apps = client.get("/applications").json()
+    apps = client.get("/published-services").json()
     assert any(a["name"] == "VIP_web" and a["rule_count"] == 1 for a in apps)
 
-    detail = client.get("/applications/VIP_web").json()
+    detail = client.get("/published-services/VIP_web").json()
     assert detail["mapped_ip"] == "10.10.10.5"
     assert detail["rules"][0]["services"] == ["tcp/443"]
     assert detail["rules"][0]["sources"] == ["10.10.20.0/24"]
 
-    assert client.get("/applications/nicht-da").status_code == 404
+    assert client.get("/published-services/nicht-da").status_code == 404

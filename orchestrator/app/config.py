@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     internal_api_token: str = DEFAULT_INTERNAL_TOKEN
     # Erlaubte CORS-Origins fuers Web-UI; in Produktion explizit setzen.
     cors_origins: list[str] = ["http://localhost:5173"]
-    # Die oeffentliche Read-API (/rules, /findings, /nat, /applications) ist noch
+    # Die oeffentliche Read-API (/rules, /findings, /nat, /applications, …) ist noch
     # NICHT authentifiziert (AuthN/RBAC = Folge-ADR, ADR 0005). Ausserhalb "dev" muss
     # ein bewusstes Opt-in gesetzt werden, sonst faellt der Start fail-closed aus -
     # verhindert versehentliche Exposition echter Kundendaten ohne RBAC.

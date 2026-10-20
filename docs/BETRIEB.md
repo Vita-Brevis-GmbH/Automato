@@ -74,8 +74,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   IPs, Zone/Policy-Gruppe, LLDP/CDP-Nachbar, EPGs), **Geräte**, **VRFs**. Filter Quelle,
   Suche, „nur Abweichungen“.
 - **NAT / VIPs:** VIPs (extern → intern, Port-Forward) und SNAT-Pools.
-- **Applikationen:** *Applikations-Doku* je System (10 Kategorien, Standort verorten,
-  **Export (Markdown)**) und *Publizierte Dienste* (VIPs mit Regeln).
+- **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, Verantwortlichen, Kritikalität,
+  Standort und Mitgliedern (Application Profiles, EPGs, Server); **Vorschläge** nach der
+  Projektnummer aus `AP_<nr>`/`H_…-<nr>-…` mit einem Klick übernehmen (Operator); **Doku**
+  je Applikation über alle Systeme mit **Export (Markdown)** und **Drucken / PDF**. Dazu
+  *Doku je System* (10 Kategorien, Standort verorten) und *Publizierte Dienste* (VIPs mit
+  Regeln).
 - **Findings:** nach Status und Typ gefiltert, Suche, Quellsystem; Status setzen (Triage)
   als Operator – bleibt über spätere Läufe erhalten (Findings werden nach jedem Lauf neu
   berechnet).
@@ -142,8 +146,10 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /objects?tenant_id=` (`category`, `source_system_id`, `q`, `issues_only`) | Firewall-Objekte mit IPAM-Abgleich |
 | `GET /inventory/{devices\|interfaces\|vlans\|subnets\|vrfs}?tenant_id=` | Netzinventar (Subnetze mit IPAM-Abgleich) |
 | `GET /reconcile/summary`, `GET /reconcile/ipam`, `POST /reconcile` | Abgleich: Befunde je Typ, DDI ↔ NetBox, neu berechnen (operator) |
-| `GET /findings` (`?type=`), `PATCH /findings/{id}` | Datenqualität, Triage |
-| `GET /nat`, `GET /applications[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku |
+| `GET /findings` (`?status=`,`?type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /findings/summary`, `PATCH /findings/{id}` | Datenqualität seitenweise, Zähler je Status/Typ, Triage |
+| `GET /nat` (`?nat_type=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /published-services[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku: NAT, publizierte Dienste (VIPs), Doku je System |
+| `GET/POST /applications`, `GET/PATCH/DELETE /applications/{id}`, `POST …/{id}/members`, `DELETE …/{id}/members/{mid}`, `GET …/{id}/doc` | Applikationen (ADR 0012; Schreiben = operator): Stammdaten, Mitglieder AP/EPG/Server, Doku über alle Systeme |
+| `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /tenants/{id}/sites`, `DELETE /tenants/{id}/sites/{sid}` | Standorte |
 | `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `site_id`, `read_scope`, `ref_role`; `token` bzw. `username`/`password`, NetBox `write_token` nur schreibbar → `has_credentials`/`has_write_token`; Referenzquellen mit `reference_count`/`reference_at`) |

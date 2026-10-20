@@ -15,6 +15,7 @@ from app.api import (
     nat,
     netbox_sync,
     objects,
+    published_services,
     reconcile,
     rules,
     systems,
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(systems.router)
     app.include_router(tenants.router)
     app.include_router(nat.router)
+    app.include_router(published_services.router)
     app.include_router(applications.router)
     app.include_router(appdoc.router)
     app.include_router(naming_profiles.router)

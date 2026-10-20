@@ -16,3 +16,4 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0009 | Geräte-Zugangsdaten zentral, Zuweisung Gerät → Agent |
 | 0010 | Inventar, Referenz, Abgleich; Schreiben nur nach NetBox |
 | 0011 | Selbst-Update der Collector-Agenten |
+| 0012 | Applikation als eigenes Objekt (AP/EPG/Server, Vorschläge per Projektnummer) |

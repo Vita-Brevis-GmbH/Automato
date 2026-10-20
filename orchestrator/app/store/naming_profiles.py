@@ -134,12 +134,26 @@ def prefixes_for_tenant(session: Session, tenant_id: int | None) -> naming.Prefi
     Ohne eigenes Profil gilt das Standardprofil „default"; fehlt auch das (oder ist es
     leer), None = eingebaute Standard-Konvention (keine Funktionsabhaengigkeit von Daten).
     """
-    tenant = session.get(Tenant, tenant_id) if tenant_id is not None else None
-    profile_id = getattr(tenant, "naming_profile_id", None)
-    if not profile_id:
-        default = get_default_profile(session)
-        if default is None:
-            return None
-        profile_id = default.id
+    profile_id = profile_id_for_tenant(session, tenant_id)
+    if profile_id is None:
+        return None
     entries = list_entries(session, profile_id, kind="object_prefix")
     return naming.prefixes_from_entries((e.key, e.value) for e in entries)
+
+
+def profile_id_for_tenant(session: Session, tenant_id: int | None) -> int | None:
+    """Eigenes Namensprofil des Mandanten, sonst „default"; None = keines vorhanden."""
+    tenant = session.get(Tenant, tenant_id) if tenant_id is not None else None
+    profile_id = getattr(tenant, "naming_profile_id", None)
+    if profile_id:
+        return profile_id
+    default = get_default_profile(session)
+    return default.id if default else None
+
+
+def entries_for_tenant(session: Session, tenant_id: int | None, kind: str) -> dict[str, str]:
+    """Woerterbuch-Art des Mandanten-Profils als key -> value (leer, wenn nicht gepflegt)."""
+    profile_id = profile_id_for_tenant(session, tenant_id)
+    if profile_id is None:
+        return {}
+    return {e.key: e.value or "" for e in list_entries(session, profile_id, kind=kind)}

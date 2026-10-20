@@ -10,7 +10,7 @@ class AppRule(BaseModel):
     services: list[str] = []
 
 
-class ApplicationOut(BaseModel):
+class PublishedServiceOut(BaseModel):
     name: str  # VIP-/Dienstname
     ext_ip: str | None = None
     ext_port: str | None = None
@@ -21,5 +21,5 @@ class ApplicationOut(BaseModel):
     rule_count: int = 0
 
 
-class ApplicationDetailOut(ApplicationOut):
+class PublishedServiceDetailOut(PublishedServiceOut):
     rules: list[AppRule] = []

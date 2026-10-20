@@ -13,7 +13,7 @@ from app.auth.principal import Principal
 from app.models import Tenant
 
 # Auditierbare Lese-Ressourcen (muessen in audit/allowlist.py als read.<name> stehen).
-RESOURCES = frozenset({"rules", "nat", "findings", "applications", "appdoc"})
+RESOURCES = frozenset({"rules", "nat", "findings", "applications", "published_services", "appdoc"})
 
 
 def maybe_audit_read(

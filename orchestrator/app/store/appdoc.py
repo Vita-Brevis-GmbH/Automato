@@ -12,6 +12,7 @@ werden zugeordnet, der Rest landet in Tabelle 10 (unspezifisch). Rein lesend/pur
 """
 
 from dataclasses import dataclass
+from functools import cached_property
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -228,18 +229,59 @@ def _envelope(
     }
 
 
-def _epg_doc(session: Session, epg: Epg) -> dict:
+class TenantData:
+    """Regeln, Objekte, Zonen, NAT und EPGs eines Mandanten - einmal geladen, auch wenn die
+    Doku mehrerer Systeme (Applikation) gebaut wird."""
+
+    def __init__(self, session: Session, tenant_id: int):
+        self.session = session
+        self.tenant_id = tenant_id
+
+    @cached_property
+    def fw_rules(self) -> list:
+        return rules_store.list_rules(
+            self.session, self.tenant_id, limit=None, domain=RuleDomain.FIREWALL
+        )
+
+    @cached_property
+    def aci_rules(self) -> list:
+        return rules_store.list_rules(
+            self.session, self.tenant_id, limit=None, domain=RuleDomain.ACI_CONTRACT
+        )
+
+    @cached_property
+    def objs(self) -> dict:
+        ids = {e.network_object_id for r in self.fw_rules for e in r.endpoints}
+        return rules_store.objects_by_ids(self.session, {i for i in ids if i})
+
+    @cached_property
+    def zones(self) -> dict:
+        ids = {z for r in self.fw_rules for z in (r.src_zone_id, r.dst_zone_id) if z}
+        return rules_store.zone_names(self.session, ids)
+
+    @cached_property
+    def nats(self) -> list[NatRule]:
+        stmt = select(NatRule).where(NatRule.tenant_id == self.tenant_id)
+        return list(self.session.scalars(stmt))
+
+    @cached_property
+    def epgs_by_id(self) -> dict[int, Epg]:
+        stmt = select(Epg).where(Epg.tenant_id == self.tenant_id)
+        return {e.id: e for e in self.session.scalars(stmt)}
+
+
+def epg_doc(session: Session, epg: Epg, data: TenantData | None = None) -> dict:
     """ACI-EPG als System: Contracts nach scope/AP in die Tabellen 7/8/9 (+10) einordnen.
 
     Gegenstelle gleiches AP (im selben ACI-Tenant) -> 7, anderer ACI-Tenant -> 9."""
-    by_id = {e.id: e for e in session.scalars(select(Epg).where(Epg.tenant_id == epg.tenant_id))}
+    data = data or TenantData(session, epg.tenant_id)
+    by_id = data.epgs_by_id
 
     def is_self(e) -> bool:  # aeltere Laeufe ohne EPG-Verknuepfung: ueber den Namen
         return e.epg_id == epg.id or (e.epg_id is None and e.inline_value == epg.name)
 
     rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
-    acl = rules_store.list_rules(session, epg.tenant_id, limit=None, domain=RuleDomain.ACI_CONTRACT)
-    for r in acl:
+    for r in data.aci_rules:
         eps = [e for e in r.endpoints if e.kind.value == "epg"]
         on_src = any(is_self(e) and e.role.value == "src" for e in eps)
         on_dst = any(is_self(e) and e.role.value == "dst" for e in eps)
@@ -295,7 +337,7 @@ def build_doc(session: Session, system_name: str, tenant_id: int | None) -> dict
         )
     ).first()
     if sys_obj is not None:
-        return _host_doc(session, sys_obj)
+        return host_doc(session, sys_obj)
     name, *where = system_name.split(SEP)  # "EG_x · TE_a · AP_1" bei gleichen Namen
     epg = session.scalars(
         select(Epg).where(
@@ -307,31 +349,25 @@ def build_doc(session: Session, system_name: str, tenant_id: int | None) -> dict
         )
     ).first()
     if epg is not None:
-        return _epg_doc(session, epg)
+        return epg_doc(session, epg)
     return None
 
 
-def _host_doc(session: Session, sys_obj: NetworkObject) -> dict:
+def host_doc(session: Session, sys_obj: NetworkObject, data: TenantData | None = None) -> dict:
     """Firewall-zentrierte Doku eines Host-Systems (Tabellen 1–6, 10)."""
     system_name = sys_obj.name
     tenant_id = sys_obj.tenant_id
     sys_ip = sys_obj.value
+    data = data or TenantData(session, tenant_id)
 
     # NAT-Kontext: DNAT-Ziel (mapped_ip == System-IP) und SNAT-Pools des Mandanten.
-    nat_stmt = select(NatRule)
-    if tenant_id is not None:
-        nat_stmt = nat_stmt.where(NatRule.tenant_id == tenant_id)
-    nats = list(session.scalars(nat_stmt))
+    nats = data.nats
     dnat_for_sys = [
         n for n in nats if n.nat_type == "dnat_vip" and sys_ip and n.mapped_ip == sys_ip
     ]
     snat_ips = sorted({n.ext_ip for n in nats if n.nat_type == "snat_pool" and n.ext_ip})
 
-    rules = rules_store.list_rules(session, tenant_id, limit=None, domain=RuleDomain.FIREWALL)
-    obj_ids = {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id}
-    objs = rules_store.objects_by_ids(session, obj_ids)
-    zone_ids = {z for r in rules for z in (r.src_zone_id, r.dst_zone_id) if z}
-    zones = rules_store.zone_names(session, zone_ids)
+    rules, objs, zones = data.fw_rules, data.objs, data.zones
 
     rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
     for r in rules:

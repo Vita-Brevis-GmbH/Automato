@@ -4,6 +4,7 @@ Beschriftung fuer Listen (`AP/EPG`, `L3Out/externe EPG`, `vzAny VRF`) und die La
 Regel-Detail: ACI-Tenant, Application Profile, Bridge Domain, VRF, L3Out, Subnetze (mit dem
 passenden IPAM-Netz der fuehrenden Referenzquelle) und die gelernten Endpunkte mit DNS-Namen
 aus DDI/NetBox und dem verknuepften Server. Grundlage, um Contracts Applikationen zuzuordnen.
+Physisch: Leaf-Ports (statische Pfade) und VLANs der EPG aus dem Netzinventar des APICs.
 """
 
 import ipaddress
@@ -11,10 +12,11 @@ import ipaddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Epg, EpgEndpoint, EpgSubnet, NetworkObject, Site
+from app.models import Epg, EpgEndpoint, EpgSubnet, InvInterface, InvVlan, NetworkObject, Site
 from app.store import references
 
 MAX_ENDPOINTS = 50  # je EPG im Detail; die Gesamtzahl steht daneben
+MAX_PORTS = 50
 
 
 def by_ids(session: Session, ids: set[int]) -> dict[int, Epg]:
@@ -70,6 +72,42 @@ def _ipam_net(ctx: references.Context, prefix: str | None) -> dict | None:
     }
 
 
+def inventory_label(epg: Epg) -> str:
+    """Bezeichnung der EPG im Netzinventar (`Tenant/AP/EPG`, wie der Collector sie setzt)."""
+    return "/".join(x for x in (epg.aci_tenant, epg.ap, epg.name) if x)
+
+
+def _physical(session: Session, tenant_id: int, epgs: list[Epg]) -> dict[str, dict]:
+    """Leaf-Ports und VLANs je Inventar-Bezeichnung, nur aus den APICs der EPGs."""
+    sources = {e.source_system_id for e in epgs if e.kind == "epg" and e.source_system_id}
+    if not sources:
+        return {}
+    wanted = {inventory_label(e) for e in epgs if e.kind == "epg"}
+    out: dict[str, dict] = {lbl: {"ports": [], "vlans": set()} for lbl in wanted}
+    scope = (InvInterface.tenant_id == tenant_id, InvInterface.source_system_id.in_(sources))
+    for i in session.scalars(
+        select(InvInterface).where(*scope).order_by(InvInterface.device, InvInterface.name)
+    ):
+        for lbl in set(i.epgs or []) & wanted:
+            out[lbl]["ports"].append(
+                {
+                    "device": i.device,
+                    "name": i.name,
+                    "kind": i.kind,
+                    "lag": i.lag,
+                    "mode": i.mode,
+                    "neighbor": i.neighbor,
+                    "neighbor_port": i.neighbor_port,
+                }
+            )
+    for v in session.scalars(
+        select(InvVlan).where(InvVlan.tenant_id == tenant_id, InvVlan.source_system_id.in_(sources))
+    ):
+        for lbl in set(v.epgs or []) & wanted:
+            out[lbl]["vlans"].add(v.vid)
+    return out
+
+
 def details(session: Session, tenant_id: int, epgs: list[Epg]) -> dict[int, dict]:
     """Lage je EPG-ID (fuer `EndpointOut.epg`)."""
     ids = [e.id for e in epgs]
@@ -84,8 +122,10 @@ def details(session: Session, tenant_id: int, epgs: list[Epg]) -> dict[int, dict
     ):
         endpoints[ep.epg_id].append(ep)
     ctx = references.context(session, tenant_id)
+    physical = _physical(session, tenant_id, epgs)
     out: dict[int, dict] = {}
     for epg in epgs:
+        phys = physical.get(inventory_label(epg)) if epg.kind == "epg" else None
         host = session.get(NetworkObject, epg.network_object_id) if epg.network_object_id else None
         site = session.get(Site, host.site_id) if host and host.site_id else None
         eps = endpoints[epg.id]
@@ -113,5 +153,8 @@ def details(session: Session, tenant_id: int, epgs: list[Epg]) -> dict[int, dict
                 if host
                 else None
             ),
+            "vlans": sorted(phys["vlans"]) if phys else [],
+            "port_count": len(phys["ports"]) if phys else 0,
+            "ports": phys["ports"][:MAX_PORTS] if phys else [],
         }
     return out

@@ -1,23 +1,23 @@
 import { useEffect, useState } from "react";
-import { Application, ApplicationDetail, fetchApplication, fetchApplications } from "./api";
+import { fetchPublishedService, fetchPublishedServices, PublishedService, PublishedServiceDetail } from "./api";
 import { ActionBadge, Dash, download, Drawer, Empty, ErrorBox, Icon, Loading } from "./ui";
 
-function ext(a: Application): string {
+function ext(a: PublishedService): string {
   let e = a.ext_ip ?? "?";
   if (a.ext_port) e += `:${a.ext_port}`;
   return e;
 }
 
-function target(a: Application): string {
+function target(a: PublishedService): string {
   let t = a.mapped_ip ?? "?";
   if (a.mapped_port) t += `:${a.mapped_port}`;
   if (a.protocol) t += `/${a.protocol}`;
   return t;
 }
 
-function toMarkdown(d: ApplicationDetail): string {
+function toMarkdown(d: PublishedServiceDetail): string {
   const lines = [
-    `# Applikation: ${d.name}`,
+    `# Publizierter Dienst: ${d.name}`,
     "",
     `- **Extern:** ${ext(d)}`,
     `- **Internes Ziel:** ${target(d)}`,
@@ -46,11 +46,11 @@ function AppDrawer({
   tenantId: number | null;
   onClose: () => void;
 }) {
-  const [d, setD] = useState<ApplicationDetail | null>(null);
+  const [d, setD] = useState<PublishedServiceDetail | null>(null);
   const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     setD(null);
-    fetchApplication(name, tenantId)
+    fetchPublishedService(name, tenantId)
       .then(setD)
       .catch(setError);
   }, [name, tenantId]);
@@ -119,15 +119,15 @@ function AppDrawer({
   );
 }
 
-export default function Applications({ tenantId }: { tenantId: number | null }) {
-  const [apps, setApps] = useState<Application[] | null>(null);
+export default function PublishedServices({ tenantId }: { tenantId: number | null }) {
+  const [apps, setApps] = useState<PublishedService[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
     setApps(null);
     setError(null);
-    fetchApplications(tenantId)
+    fetchPublishedServices(tenantId)
       .then(setApps)
       .catch((e) => {
         setError(e);

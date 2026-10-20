@@ -56,6 +56,16 @@ class EpgEndpointOut(BaseModel):
     dns_name: str | None = None  # aus DDI/NetBox (Referenzquelle)
 
 
+class EpgPortOut(BaseModel):
+    device: str  # Leaf (bzw. Leaf-Paar bei vPC je Leaf eine Zeile)
+    name: str  # eth1/10, vPC-Policy-Group, fex101/eth1/1
+    kind: str
+    lag: str | None = None
+    mode: str | None = None  # access | tagged
+    neighbor: str | None = None  # LLDP/CDP
+    neighbor_port: str | None = None
+
+
 class EpgOut(BaseModel):
     """Lage eines Contract-Consumers/-Providers: wo liegt die EPG?"""
 
@@ -72,6 +82,9 @@ class EpgOut(BaseModel):
     endpoint_count: int = 0
     endpoints: list[EpgEndpointOut] = []  # gelernte Endpunkte (begrenzt, siehe endpoint_count)
     server: dict | None = None  # verknuepfter Server (Host-Objekt: name, ip, site)
+    vlans: list[int] = []  # Encap-VLANs der EPG (Netzinventar des APICs)
+    port_count: int = 0
+    ports: list[EpgPortOut] = []  # statische Pfade (begrenzt, siehe port_count)
 
 
 class EndpointOut(BaseModel):

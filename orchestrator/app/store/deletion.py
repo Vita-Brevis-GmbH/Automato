@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from app.models import (
     INVENTORY_MODELS,
     Agent,
+    Application,
+    ApplicationMember,
     CollectorRun,
     DeviceObject,
     Epg,
@@ -114,8 +116,8 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
 
 def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     """Mandant mit allen seinen Daten löschen (Regeln, NAT, Objekte, Zonen, EPGs, Findings,
-    Standorte, Quellsysteme, Läufe, Agenten). Agenten werden gelöscht statt entkoppelt -
-    ein Agent ohne Mandant dürfte sonst Läufe aller Mandanten abholen."""
+    Applikationen, Standorte, Quellsysteme, Läufe, Agenten). Agenten werden gelöscht statt
+    entkoppelt - ein Agent ohne Mandant dürfte sonst Läufe aller Mandanten abholen."""
     tid = tenant.id
     session.execute(delete(SyncPlan).where(SyncPlan.tenant_id == tid))
     counts = {"rules": _delete_rules(session, Rule.tenant_id == tid)}
@@ -138,6 +140,11 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
 
     counts["objects"] = _count(session, delete(NetworkObject).where(NetworkObject.tenant_id == tid))
     counts["zones"] = _count(session, delete(Zone).where(Zone.tenant_id == tid))
+    app_ids = select(Application.id).where(Application.tenant_id == tid)
+    session.execute(delete(ApplicationMember).where(ApplicationMember.application_id.in_(app_ids)))
+    counts["applications"] = _count(
+        session, delete(Application).where(Application.tenant_id == tid)
+    )
     session.execute(update(SourceSystem).where(SourceSystem.tenant_id == tid).values(site_id=None))
     counts["sites"] = _count(session, delete(Site).where(Site.tenant_id == tid))
 

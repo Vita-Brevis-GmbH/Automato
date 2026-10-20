@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import {
   AppDocSystem,
   assignSystemSite,
@@ -9,39 +9,55 @@ import {
   Site,
   SystemDoc,
 } from "./api";
-import Applications from "./Applications";
+import Apps from "./Apps";
 import type { Me } from "./auth";
+import PublishedServices from "./PublishedServices";
 import { download, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
-// Applikationen: (a) Applikations-Doku pro System (10 Kategorien-Tabellen nach
-// uc1-applikations-doku-spec.md) inkl. Markdown-Export, (b) publizierte Dienste (VIPs).
+type Mode = "apps" | "doc" | "vips";
+
+// Applikationen: (a) Applikationen als fachliche Klammer (ADR 0012) mit Doku je Applikation,
+// (b) Applikations-Doku pro System (10 Kategorien-Tabellen nach uc1-applikations-doku-spec.md)
+// inkl. Markdown-Export, (c) publizierte Dienste (VIPs).
 export default function AppDoc({ me, tenantId }: { me: Me; tenantId: number | null }) {
-  const [mode, setMode] = useState<"doc" | "vips">("doc");
+  const [mode, setMode] = useState<Mode>("apps");
+  const intro: Record<Mode, ReactNode> = {
+    apps: (
+      <>
+        Eine <b>Applikation</b> fasst Application Profiles, EPGs und Server zusammen; ihre Doku zeigt die
+        Zugriffe aller Systeme.
+      </>
+    ),
+    doc: (
+      <>
+        Mittelpunkt ist das <b>System</b> (Container/VM/Server); seine Zugriffe sind nach Art gruppiert. „ACI“ =
+        erscheint erst mit Cisco ACI (Model 1).
+      </>
+    ),
+    vips: "Über VIPs publizierte Dienste mit den zugehörigen Firewall-Regeln.",
+  };
+  const tab = (m: Mode, label: string) => (
+    <button className={mode === m ? "on" : ""} onClick={() => setMode(m)}>
+      {label}
+    </button>
+  );
   return (
     <>
       <PageHead
         title="Applikationen"
         actions={
-          <div className="seg">
-            <button className={mode === "doc" ? "on" : ""} onClick={() => setMode("doc")}>
-              Applikations-Doku
-            </button>
-            <button className={mode === "vips" ? "on" : ""} onClick={() => setMode("vips")}>
-              Publizierte Dienste
-            </button>
+          <div className="seg no-print">
+            {tab("apps", "Applikationen")}
+            {tab("doc", "Doku je System")}
+            {tab("vips", "Publizierte Dienste")}
           </div>
         }
       >
-        {mode === "doc" ? (
-          <>
-            Mittelpunkt ist das <b>System</b> (Container/VM/Server); seine Zugriffe sind nach Art
-            gruppiert. „ACI“ = erscheint erst mit Cisco ACI (Model 1).
-          </>
-        ) : (
-          "Über VIPs publizierte Dienste mit den zugehörigen Firewall-Regeln."
-        )}
+        <span className="no-print">{intro[mode]}</span>
       </PageHead>
-      {mode === "doc" ? <SystemDocView me={me} tenantId={tenantId} /> : <Applications tenantId={tenantId} />}
+      {mode === "apps" && <Apps me={me} tenantId={tenantId} />}
+      {mode === "doc" && <SystemDocView me={me} tenantId={tenantId} />}
+      {mode === "vips" && <PublishedServices tenantId={tenantId} />}
     </>
   );
 }
@@ -197,7 +213,7 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
   );
 }
 
-function DocTableView({ table }: { table: DocTable }) {
+export function DocTableView({ table }: { table: DocTable }) {
   const aci = table.enforcement === "aci";
   return (
     <div className="card">
@@ -249,16 +265,24 @@ function toMarkdown(doc: SystemDoc): string {
   if (doc.tenant_code) meta.push(`GG: ${doc.tenant_code}`);
   if (doc.site) meta.push(`Standort: ${doc.site.code} ${doc.site.name}`);
   if (meta.length) lines.push(meta.join(" · "), "");
-  for (const t of doc.tables) {
+  return lines.concat(tablesMarkdown(doc.tables)).join("\n");
+}
+
+const mdCell = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
+
+// Tabellen 1–10 als Markdown (leere Kategorien entfallen) samt Fusszeile.
+export function tablesMarkdown(tables: DocTable[]): string[] {
+  const lines: string[] = [];
+  for (const t of tables) {
     if (t.rows.length === 0) continue;
     lines.push(`## ${t.index}. ${t.title}`, "");
     lines.push(`| ${t.columns.join(" | ")} |`);
     lines.push(`| ${t.columns.map(() => "---").join(" | ")} |`);
     for (const row of t.rows) {
-      lines.push(`| ${t.columns.map((c) => (row[c] ?? "").replace(/\|/g, "\\|")).join(" | ")} |`);
+      lines.push(`| ${t.columns.map((c) => mdCell(row[c] ?? "")).join(" | ")} |`);
     }
     lines.push("");
   }
   lines.push(`_Erzeugt von Automato – ${new Date().toISOString().slice(0, 10)}_`, "");
-  return lines.join("\n");
+  return lines;
 }

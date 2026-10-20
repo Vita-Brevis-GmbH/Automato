@@ -15,7 +15,7 @@ from app import audit
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import NamingProfile, NetworkObject, Site, SourceSystem, Tenant
+from app.models import Application, NamingProfile, NetworkObject, Site, SourceSystem, Tenant
 from app.models.tenant import DnsType, IpamType
 from app.store import deletion
 
@@ -244,6 +244,7 @@ def delete_site(
     session.execute(
         update(SourceSystem).where(SourceSystem.site_id == site_id).values(site_id=None)
     )
+    session.execute(update(Application).where(Application.site_id == site_id).values(site_id=None))
     session.delete(site)
     audit.record(
         session,

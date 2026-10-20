@@ -38,6 +38,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "epgs",
             "objects",
             "zones",
+            "applications",
             "sites",
             "source_systems",
             "runs",
@@ -83,11 +84,24 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "site.created": frozenset({"tenant_id", "code"}),
     "site.deleted": frozenset({"tenant_id", "site_id"}),
     "system.site_assigned": frozenset({"tenant_id", "site_id"}),
+    # Applikationen (ADR 0012): Stammdaten-Felder, Mitglieder nur als Art/Verweis
+    "application.created": frozenset(
+        {"application_id", "tenant_id", "name", "code", "members", "suggestion"}
+    ),
+    "application.updated": frozenset(
+        {"application_id", "tenant_id", "name", "code", "criticality", "site_id", "fields"}
+    ),
+    "application.deleted": frozenset({"application_id", "tenant_id", "name", "members"}),
+    "application.member_added": frozenset(
+        {"application_id", "tenant_id", "kind", "ref", "count", "suggestion"}
+    ),
+    "application.member_removed": frozenset({"application_id", "tenant_id", "kind", "ref"}),
     # Lesezugriffs-Audit (per Mandant zuschaltbar, ADR 0007 D5)
     "read.rules": frozenset({"tenant_id", "resource"}),
     "read.nat": frozenset({"tenant_id", "resource"}),
     "read.findings": frozenset({"tenant_id", "resource"}),
     "read.applications": frozenset({"tenant_id", "resource"}),
+    "read.published_services": frozenset({"tenant_id", "resource"}),
     "read.appdoc": frozenset({"tenant_id", "resource"}),
 }
 

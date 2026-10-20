@@ -84,6 +84,19 @@ export interface EpgLocation {
   endpoint_count: number;
   endpoints: { ip: string; mac: string | null; dns_name: string | null }[];
   server: { name: string; ip: string | null; site: string | null } | null;
+  vlans: number[]; // Encap-VLANs (Netzinventar des APICs)
+  port_count: number;
+  ports: EpgPort[]; // statische Pfade (Leaf-Ports, begrenzt; Gesamtzahl port_count)
+}
+
+export interface EpgPort {
+  device: string;
+  name: string;
+  kind: string;
+  lag: string | null;
+  mode: string | null;
+  neighbor: string | null;
+  neighbor_port: string | null;
 }
 
 // Referenzdaten eines Werts aus dem IPAM (führend, z. B. DDI) oder der Anreicherung (NetBox)
@@ -258,7 +271,8 @@ export interface Nat {
   portforward: boolean;
 }
 
-export interface Application {
+// Publizierte Dienste (VIPs)
+export interface PublishedService {
   name: string;
   ext_ip: string | null;
   ext_port: string | null;
@@ -278,7 +292,7 @@ export interface AppRule {
   services: string[];
 }
 
-export interface ApplicationDetail extends Application {
+export interface PublishedServiceDetail extends PublishedService {
   rules: AppRule[];
 }
 
@@ -303,6 +317,74 @@ export interface SystemDoc {
   system_ip: string | null;
   tenant_code: string | null;
   site: { id: number; code: string; name: string } | null;
+  tables: DocTable[];
+}
+
+// Applikationen (ADR 0012): Mitglieder AP (`Tenant/AP`), EPG (DN) und Server (Objektname)
+export type MemberKind = "ap" | "epg" | "host";
+export type Criticality = "low" | "medium" | "high" | "critical";
+export interface SiteRef {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface Application {
+  id: number;
+  tenant_id: number;
+  name: string;
+  code: string | null;
+  owner: string | null;
+  criticality: Criticality | null;
+  site: SiteRef | null;
+  description: string | null;
+  member_count: number;
+  system_count: number;
+}
+
+export interface AppMember {
+  id: number;
+  kind: MemberKind;
+  ref: string;
+  label: string;
+  origin: "manual" | "suggestion" | string;
+  exists: boolean;
+  systems: string[];
+}
+
+export interface ApplicationDetail extends Application {
+  members: AppMember[];
+}
+
+export interface AppCandidate {
+  kind: MemberKind;
+  ref: string;
+  label: string;
+  detail: string | null;
+  project: string | null;
+  applications: number[];
+}
+
+export interface AppSuggestion {
+  code: string;
+  name: string;
+  application_id: number | null;
+  members: AppCandidate[];
+}
+
+export interface ApplicationInput {
+  name?: string;
+  code?: string | null;
+  owner?: string | null;
+  criticality?: Criticality | null;
+  site_id?: number | null;
+  description?: string | null;
+}
+
+export interface ApplicationDoc {
+  application: Application;
+  tenant_code: string | null;
+  systems: { name: string; kind: string; ip: string | null; site: SiteRef | null }[];
   tables: DocTable[];
 }
 
@@ -784,11 +866,11 @@ export const fetchFindingSummary = (tenantId?: number | null, type?: string, q?:
   getJSON<FindingSummary>(`/api/findings/summary${qs({ tenant_id: tenantId, type, q: q?.trim() })}`);
 export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
   sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);
-export const fetchApplications = (tenantId?: number | null) =>
-  getJSON<Application[]>(`/api/applications${qs({ tenant_id: tenantId })}`);
-export const fetchApplication = (name: string, tenantId?: number | null) =>
-  getJSON<ApplicationDetail>(
-    `/api/applications/${encodeURIComponent(name)}${qs({ tenant_id: tenantId })}`,
+export const fetchPublishedServices = (tenantId?: number | null) =>
+  getJSON<PublishedService[]>(`/api/published-services${qs({ tenant_id: tenantId })}`);
+export const fetchPublishedService = (name: string, tenantId?: number | null) =>
+  getJSON<PublishedServiceDetail>(
+    `/api/published-services/${encodeURIComponent(name)}${qs({ tenant_id: tenantId })}`,
   );
 export const fetchAppDocSystems = (tenantId?: number | null) =>
   getJSON<AppDocSystem[]>(`/api/appdoc/systems${qs({ tenant_id: tenantId })}`);
@@ -800,6 +882,38 @@ export const assignSystemSite = (name: string, tenantId: number, siteId: number 
     "PATCH",
     { site_id: siteId },
   );
+
+// Applikationen
+export const fetchApps = (tenantId: number) =>
+  getJSON<Application[]>(`/api/applications${qs({ tenant_id: tenantId })}`);
+export const fetchApp = (id: number) => getJSON<ApplicationDetail>(`/api/applications/${id}`);
+export const createApp = (
+  tenantId: number,
+  body: ApplicationInput & { name: string; members?: { kind: MemberKind; ref: string }[] },
+) => sendJSON<ApplicationDetail>(`/api/applications${qs({ tenant_id: tenantId })}`, "POST", body);
+export const patchApp = (id: number, body: ApplicationInput) =>
+  sendJSON<ApplicationDetail>(`/api/applications/${id}`, "PATCH", body);
+export const deleteApp = (id: number) => sendJSON<void>(`/api/applications/${id}`, "DELETE");
+export const addAppMembers = (id: number, members: { kind: MemberKind; ref: string }[]) =>
+  sendJSON<ApplicationDetail>(`/api/applications/${id}/members`, "POST", { members });
+export const removeAppMember = (id: number, memberId: number) =>
+  sendJSON<ApplicationDetail>(`/api/applications/${id}/members/${memberId}`, "DELETE");
+export const fetchAppCandidates = (
+  tenantId: number,
+  opts: { kind?: MemberKind | ""; q?: string; limit?: number } = {},
+) =>
+  getPage<AppCandidate>(
+    `/api/applications/candidates${qs({ tenant_id: tenantId, kind: opts.kind, q: opts.q, limit: opts.limit })}`,
+  );
+export const fetchAppSuggestions = (tenantId: number) =>
+  getJSON<AppSuggestion[]>(`/api/applications/suggestions${qs({ tenant_id: tenantId })}`);
+export const acceptAppSuggestion = (tenantId: number, code: string, name?: string) =>
+  sendJSON<ApplicationDetail>(
+    `/api/applications/suggestions/${encodeURIComponent(code)}/accept${qs({ tenant_id: tenantId })}`,
+    "POST",
+    name ? { name } : undefined,
+  );
+export const fetchAppDoc = (id: number) => getJSON<ApplicationDoc>(`/api/applications/${id}/doc`);
 
 // Objekte & Inventar (rein lesend, Mandant nötig)
 export const fetchObjects = (

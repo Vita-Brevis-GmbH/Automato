@@ -6,6 +6,12 @@ Die ACI-Tabellen (epg*) und nat_rule folgen mit ihrer Phase.
 """
 
 from app.models.agent import Agent
+from app.models.application import (
+    CRITICALITIES,
+    MEMBER_KINDS,
+    Application,
+    ApplicationMember,
+)
 from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.collector_run import CollectorRun, RunStatus
@@ -58,11 +64,15 @@ from app.models.zone import Zone
 
 __all__ = [
     "ADDRESS_CATEGORIES",
+    "CRITICALITIES",
     "GROUP_CATEGORIES",
     "INVENTORY_MODELS",
+    "MEMBER_KINDS",
     "REFERENCE_PLATFORMS",
     "SERVICE_CATEGORIES",
     "Agent",
+    "Application",
+    "ApplicationMember",
     "AuditLog",
     "Base",
     "CollectorRun",
