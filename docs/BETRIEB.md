@@ -127,7 +127,13 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Keycloak-Benutzerverwaltung (`AUTOMATO_OIDC_ADMIN_CONSOLE_URL`, sonst aus dem Issuer
   abgeleitet). Benutzer selbst werden in Keycloak gepflegt (`tenant_ids` = Mandanten-ID).
 - **Mandanten & Standorte (Admin schreibt):** **+ Mandant**, Kürzel, Namensprofil,
-  Lese-Audit, Standorte (**+ Standort**, 3-stelliger Code) und die **Quellsysteme des
+  Lese-Audit, **Standorte** (ADR 0015): *virtuell* (dreistellige Nummer, z. B. `000` =
+  Stretched DC) und *physisch* (Ort-Code, z. B. `chzrh1`); **+ Standort** mit Art, Code, Name
+  und – bei virtuellen – den physischen Standorten, an denen er läuft (**Zuordnen** ändert das
+  später). Die Standort-Auswahl in Quellsystem, Doku je System und Applikation ist nach Art
+  gruppiert. Den Standort aus dem Namen (Netz `N_<tenant>-000-…`, Cluster
+  `fwc11-000-<tenant>`, Host `evh01-chzrh1-<tenant>`) zeigen Objekte, Inventar (Geräte,
+  Subnetze) und der Quellsystem-Dialog als Vorschlag („?“ = Code nicht erfasst). Weiter: die **Quellsysteme des
   Mandanten** (**+ Quellsystem** / **Bearbeiten**: FortiGate/Cisco ACI/Infoblox DDI/NetBox,
   Adresse, **Standort** des Geräts (für den NetBox-Sync), **Verwaltet von** = Collector-Agent
   oder zentraler Worker, read-only Zugangsdaten – FortiGate: **API-Token**, Cisco ACI:
@@ -162,7 +168,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Signaturzustand und Anzahl aktueller Agenten, Anmeldung, Agent-Kanal (mTLS-Modus),
   Verschlüsselung von Audit-Log und Zugangsdaten, Zeitplan mit nächstem Termin, letzte
   Sicherung. Rein lesend, zeigt nie Schlüssel.
-- **NetBox-Sync (nur Admin, ADR 0010):** einziger Schreibweg von Automato. Ziel-NetBox
+- **NetBox-Sync (nur Admin, ADR 0010):** einziger Schreibweg von Automato. Standorte werden
+  NetBox-Sites in den Standort-Gruppen *Virtuelle Standorte* bzw. *Physische Standorte*, der
+  Kommentar nennt die Zuordnung (ADR 0015; das Schreib-Token braucht dafür auch
+  *DCIM › Site Group*). Ziel-NetBox
   wählen (Quellsystem mit Schreib-Token), Umfang *Netzinventar* (Geräte mit Ports, VLANs je
   Quellsystem, reale Subnetze inkl. ACI BD/EPG, VRFs) und/oder *DDI-Spiegel* (Netze, Ranges,
   IPs mit DNS-Namen aus dem führenden IPAM), optional *Löschen zulassen*. **Vorschau
@@ -190,7 +199,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET/POST /applications`, `GET/PATCH/DELETE /applications/{id}`, `POST …/{id}/members`, `DELETE …/{id}/members/{mid}`, `GET …/{id}/doc` | Applikationen (ADR 0012; Schreiben = operator): Stammdaten, Mitglieder AP/EPG/Server, Doku über alle Systeme |
 | `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
-| `GET/POST /tenants/{id}/sites`, `DELETE /tenants/{id}/sites/{sid}` | Standorte |
+| `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `site_id`, `read_scope`, `ref_role`, `schedule` → `next_run_at`; `token` bzw. `username`/`password`, NetBox `write_token` nur schreibbar → `has_credentials`/`has_write_token`; Referenzquellen mit `reference_count`/`reference_at`) |
 | `GET /jobs`, `GET /jobs/{id}`, `POST /jobs/collect`, `POST /jobs/collect-all` | Läufe (Gerät mit Agent → immer `external`); `collect-all` = alle aktiven Quellsysteme des Mandanten (operator, Antwort je System `run_id` bzw. `skipped`) |
 | `GET/POST /agents`, `PATCH /agents/{id}`, `GET /agents/package` | Collector-Agenten (inkl. zugewiesener Geräte), Agent-Paket |
@@ -246,7 +255,7 @@ an (`deploy/agent-gateway`, Port 8443).
   NetBox lassen technisch nur GET zu (APIC zusätzlich Login/Logout) – ein Schreibversuch
   bricht vor dem Senden ab. Einziger Schreibweg ist der NetBox-Sync im Orchestrator mit dem
   Schreib-Token des NetBox-Quellsystems; er schreibt nur die synchronisierten Objekttypen
-  (Tags, Tenants, Sites, Hersteller, Geräterollen/-typen, Geräte, Interfaces, VRFs,
+  (Tags, Tenants, Standort-Gruppen, Sites, Hersteller, Geräterollen/-typen, Geräte, Interfaces, VRFs,
   VLAN-Gruppen, VLANs, Prefixe, Ranges, IP-Adressen) und nur an diese NetBox. Das
   Schreib-Token in NetBox auf genau diese Objekttypen begrenzen.
 

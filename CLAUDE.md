@@ -85,7 +85,7 @@ umgekehrt) = neuer/anderer Adapter, keine Änderung am Rest der Plattform.
   `docs/BETRIEB.md`. Der frühere ausführliche Statusverlauf (bis 0.4.2) steht in
   `docs/ENTWICKLUNGSVERLAUF.md`.
 
-## Aktueller Stand (0.6.0)
+## Aktueller Stand (0.7.0)
 
 UC1 „Firewall-Regel-Dokumentation (read-only)“ ist für Model 2 (FortiGate + NetBox) und
 Model 1 (FortiGate + ACI + Infoblox) umgesetzt und läuft im Dev gegen die echten Systeme.
@@ -97,11 +97,12 @@ Model 1 (FortiGate + ACI + Infoblox) umgesetzt und läuft im Dev gegen die echte
 | Store/Abgleich | Regeln, Objekte, Inventar, Referenzstand, Findings als abgeleiteter Zustand (je Befund Satz + Hinweis, `store/finding_text.py`), IPAM-Namen ohne Präfix (`naming.server_name`), NetBox-Sync | ADR 0004, 0010 |
 | Suche/NAT | Regelsuche über alles inkl. Gruppenmitglieder, IP-im-Netz, IPAM-DNS-Namen, NAT (`store/rule_search.py`); Filter `object`/`nat`; NAT mit DNS, Server, Regeln; Links `#regeln?object=…` | – |
 | Applikationen | eigenes Objekt mit AP/EPG/Server, **Vorschläge per Projektnummer**, Doku je Applikation (Markdown, Druck/PDF); Doku je System; publizierte Dienste (VIPs) | ADR 0012 |
+| Standorte | **virtuell** (000, 001; in Netz-/Cluster-Namen) und **physisch** (Ort-Code, z. B. chzrh1), n:m-Zuordnung; Vorschlag aus Namen (`store/sites.py`), NetBox-Site-Gruppen; VMs ohne Standort im Namen | ADR 0015 |
 | Betrieb | **Zeitplan je Quellsystem** (Cron, Europe/Zurich), **Alle einlesen** (`POST /jobs/collect-all`), **System-Seite**, Sicherung/Wiederherstellung (age), `deploy/update.sh` mit Rückfall | ADR 0013, `deploy/backup/`, `docs/BETRIEB.md` |
 | Sicherheit | Keycloak (OIDC/PKCE, OTP, SAML-Vorlage), Rollen viewer/operator/admin, Mandanten-Scoping, Audit mit Allowlist (+ optional verschlüsselt), Secrets-Provider, Zugangsdaten Fernet, fail-closed Defaults | ADR 0005, 0007, 0013 |
 | Web-UI | alle Ansichten nach Mockup, seitenweise Listen mit Gesamtzahl | `web-ui/frontend/` |
 
-Tests: orchestrator 192, collectors 77, sot-gateway 14 (dazu die CI gegen Postgres).
+Tests: orchestrator 195, collectors 77, sot-gateway 14 (dazu die CI gegen Postgres).
 
 ## Offen / nächste Schritte
 

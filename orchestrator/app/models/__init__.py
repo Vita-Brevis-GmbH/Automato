@@ -55,7 +55,7 @@ from app.models.rule import (
     rule_service,
 )
 from app.models.service_object import Proto, ServiceObject
-from app.models.site import Site
+from app.models.site import SITE_KINDS, Site, SiteLink
 from app.models.source_system import REFERENCE_PLATFORMS, Platform, SourceSystem
 from app.models.source_system import RefRole as ReferenceRole
 from app.models.sync_plan import SyncPlan, SyncStatus
@@ -116,7 +116,9 @@ __all__ = [
     "RunStatus",
     "ServiceObject",
     "Severity",
+    "SITE_KINDS",
     "Site",
+    "SiteLink",
     "SourceOfRecord",
     "SourceSystem",
     "SubjectKind",

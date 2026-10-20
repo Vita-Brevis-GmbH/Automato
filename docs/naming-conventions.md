@@ -127,8 +127,8 @@ Standardisierte Ports mit sprechendem Namen; sonst `FT_<proto><port>`:
 ## Netzwerk- & Host-Objekte
 
 ### Netzwerk `N_`
-`N_<tenant>-<projektnr>-<zweck/zone>[_<ip-oder-extra>]` (`000` = Standort/extern
-unbekannt). Beispiele:
+`N_<tenant>-<virtueller-standort>-<zweck/zone>[_<ip-oder-extra>]` (`000` = z. B. Stretched DC
+bzw. Standort/extern unbekannt, siehe *Standorte*). Beispiele:
 - `N_test1-000-dmz01` — Bridge Domain (DMZ)
 - `N_infzr01-000-res-infrz01` — Transfernetz; `N_test1-000-l3o-vpn-edge` — Transfernetz
   (Sicht vom DC nach aussen: erst `l3o-vpn`, dann `edge`)
@@ -137,7 +137,8 @@ unbekannt). Beispiele:
 
 ### Host `H_` / extern `H-EXT_`
 `H_<funktion+nr>-<projektnr>-<firma>.<domain>`. Beispiel: `H_app01-002-test1.example.ch`
-(App-Server 01, Projekt 002, Testname AG). Extern/ohne DNS bzw. Interface in Firewall/ACI:
+(App-Server 01, Projekt bzw. ACI-Applikationsprofil 002, Testname AG). VMs tragen **keinen
+Standort** im Namen. Extern/ohne DNS bzw. Interface in Firewall/ACI:
 `H-EXT_<name>-000-wan01_<ip>`, z. B. `H-EXT_servicenow-000-wan01_185.161.103.34`.
 
 ## FortiGate-spezifisch
@@ -186,6 +187,19 @@ Mit Minuszeichen getrennt, soweit nicht anders vermerkt:
 - Policy-Based Redirect `PBR_<sec-tenant>-<dc>-pbr` — `PBR_res01-000-pbr`
 - PBR Destination `<firewall>_<sec-tenant>` — `fwl01-001-infrz_res01`
 - Service Graph Template `SGT_<sec-tenant>-<dc>-pbr` — `SGT_res01-000-pbr`
+
+## Standorte (ADR 0015)
+
+- **Virtuell:** dreistellige Nummer (`000`, `001`, …). Steht in Netz-Namen (`N_`, `T_`, `IPP_`)
+  und in Namen physischer Cluster: `fwc11-000-infrz` = Firewall-Cluster 11, virtueller
+  Standort `000` (Stretched DC), Tenant `infrz`. Ein virtueller Standort kann über mehrere
+  physische laufen.
+- **Physisch:** Ort-Code des Rechenzentrums (z. B. `chzrh1` = Land, Ort, Nummer). Steht in
+  Namen physischer Geräte: `evh01-chzrh1-infrz`.
+- **VMs:** kein Standort im Namen; der Block nach der Funktion ist das ACI-Applikationsprofil.
+
+Automato erfasst beide Arten unter *Mandanten & Standorte* (Zuordnung virtuell → physisch)
+und schlägt den Standort aus Netz-, BD-, Geräte- und Quellsystem-Namen vor (nur Anzeige).
 
 ## Hostnamen
 

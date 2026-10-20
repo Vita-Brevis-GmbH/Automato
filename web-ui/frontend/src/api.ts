@@ -220,6 +220,7 @@ export interface System {
   reference_count: number; // Referenzquellen: Einträge im aktuellen Stand
   reference_at: string | null;
   site_id: number | null; // Standort des Geräts (NetBox-Sync)
+  site_hint: SiteHint | null; // Standort aus dem Gerätenamen (Vorschlag)
   schedule: string | null; // Zeitplan (cron, 5 Felder)
   next_run_at: string | null; // nächster Termin laut Zeitplan
   rule_count: number;
@@ -239,12 +240,28 @@ export interface Tenant {
   naming_profile_id: number | null;
 }
 
+// Standorte (ADR 0015): virtuell = Nummer der Namenskonvention (000, 001), physisch = Ort-Code
+// (chzrh1); ein virtueller Standort kann an mehreren physischen laufen.
+export type SiteKind = "virtual" | "physical";
 export interface Site {
   id: number;
   tenant_id: number;
   code: string;
   name: string;
   description: string | null;
+  kind: SiteKind;
+  physical_site_ids: number[];
+  virtual_site_ids: number[];
+}
+// Standort aus einem Netz-/Geräte-/Cluster-Namen (Vorschlag); known=false: Code nicht erfasst
+export interface SiteHint {
+  code: string;
+  kind: SiteKind;
+  known: boolean;
+  id?: number;
+  name?: string;
+  physical?: string[];
+  virtual?: string[];
 }
 
 export interface AuthConfig {
@@ -376,7 +393,7 @@ export interface SystemDoc {
   system: string;
   system_ip: string | null;
   tenant_code: string | null;
-  site: { id: number; code: string; name: string } | null;
+  site: SiteRef | null;
   tables: DocTable[];
 }
 
@@ -387,6 +404,9 @@ export interface SiteRef {
   id: number;
   code: string;
   name: string;
+  kind?: SiteKind;
+  physical?: string[]; // virtuell: Codes der physischen Standorte
+  virtual?: string[]; // physisch: Codes der virtuellen Standorte
 }
 
 export interface Application {
@@ -465,6 +485,7 @@ export interface DeviceObject {
   color: number | null;
   interface: string | null;
   issues: string[]; // Finding-Typen
+  site: SiteHint | null; // Netz-Objekte: Standort aus dem Namen
 }
 
 export interface Paged<T> {
@@ -486,6 +507,8 @@ export interface InvDevice extends InvBase {
   node_id: string | null;
   mgmt_ip: string | null;
   version: string | null;
+  site: SiteHint | null; // aus dem Gerätenamen, sonst Standort des Quellsystems
+  site_from: "name" | "system" | null;
 }
 export interface InvInterface extends InvBase {
   device: string;
@@ -534,6 +557,7 @@ export interface InvSubnet extends InvBase {
   description: string | null;
   ipam: PrefixInfo | null;
   enrichment: PrefixInfo | null;
+  site: SiteHint | null; // aus dem BD-/Netz-Namen
 }
 export interface InvVrf extends InvBase {
   name: string;
@@ -758,8 +782,19 @@ export const patchTenant = (
 export const fetchSites = (tenantId: number) => getJSON<Site[]>(`/api/tenants/${tenantId}/sites`);
 export const createSite = (
   tenantId: number,
-  body: { code: string; name: string; description?: string | null },
+  body: {
+    code: string;
+    name: string;
+    description?: string | null;
+    kind: SiteKind;
+    physical_site_ids?: number[];
+  },
 ) => sendJSON<Site>(`/api/tenants/${tenantId}/sites`, "POST", body);
+export const updateSite = (
+  tenantId: number,
+  siteId: number,
+  body: { name?: string; description?: string | null; physical_site_ids?: number[] },
+) => sendJSON<Site>(`/api/tenants/${tenantId}/sites/${siteId}`, "PATCH", body);
 export const deleteSite = (tenantId: number, siteId: number) =>
   sendJSON<void>(`/api/tenants/${tenantId}/sites/${siteId}`, "DELETE");
 // Löscht den Mandanten mit allen Daten; `confirmName` muss dem Namen entsprechen.

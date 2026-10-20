@@ -1,27 +1,38 @@
 """Mandanten-Endpunkte: Liste (UI-Switcher), Anlegen/Loeschen, Kuerzel pflegen, Standorte.
 
 Ein Mandant (= Gruppengesellschaft) traegt ein optionales Kuerzel (`code`) und hat
-einen oder mehrere **Standorte** mit dreistelligem Code (ADR 0004-Ergaenzung). Lesen
+**Standorte**: virtuell (dreistellige Nummer, `000`) und physisch (Ort-Code, `chzrh1`); ein
+virtueller Standort kann an mehreren physischen laufen (ADR 0004-Ergaenzung, ADR 0015). Lesen
 = `viewer`, Schreiben (Kuerzel/Standorte) = `admin`; alles mandantsgescoped. Der
 Global-Admin sieht/verwaltet alle Mandanten.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import Application, NamingProfile, NetworkObject, Site, SourceSystem, Tenant
+from app.models import (
+    SITE_KINDS,
+    Application,
+    NamingProfile,
+    NetworkObject,
+    Site,
+    SiteLink,
+    SourceSystem,
+    Tenant,
+)
 from app.models.tenant import DnsType, IpamType
 from app.store import deletion
+from app.store import sites as site_store
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
-_SITE_CODE = r"^[0-9A-Za-z]{3}$"  # dreistelliger Standort-Code (numerisch, z. B. "000")
+_SITE_CODE = r"^[0-9A-Za-z][0-9A-Za-z-]{2,15}$"  # virtuell "000", physisch "chzrh1"
 
 
 class TenantOut(BaseModel):
@@ -52,6 +63,14 @@ class SiteIn(BaseModel):
     code: str = Field(pattern=_SITE_CODE)
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None
+    kind: str | None = None  # virtual | physical; ohne Angabe aus dem Code (000 = virtuell)
+    physical_site_ids: list[int] = []  # nur virtuell: an welchen physischen Standorten
+
+
+class SitePatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+    physical_site_ids: list[int] | None = None
 
 
 class SiteOut(BaseModel):
@@ -60,6 +79,9 @@ class SiteOut(BaseModel):
     code: str
     name: str
     description: str | None
+    kind: str = "virtual"
+    physical_site_ids: list[int] = []  # virtuell: laeuft an diesen physischen Standorten
+    virtual_site_ids: list[int] = []  # physisch: diese virtuellen Standorte laufen hier
 
 
 def _tenant_out(t: Tenant) -> TenantOut:
@@ -74,10 +96,28 @@ def _tenant_out(t: Tenant) -> TenantOut:
     )
 
 
-def _site_out(s: Site) -> SiteOut:
+def _site_out(s: Site, index: site_store.SiteIndex) -> SiteOut:
     return SiteOut(
-        id=s.id, tenant_id=s.tenant_id, code=s.code, name=s.name, description=s.description
+        id=s.id,
+        tenant_id=s.tenant_id,
+        code=s.code,
+        name=s.name,
+        description=s.description,
+        kind=s.kind,
+        physical_site_ids=sorted(index.physical_of.get(s.id, [])),
+        virtual_site_ids=sorted(index.virtual_of.get(s.id, [])),
     )
+
+
+def _physical_sites(session: Session, tenant_id: int, ids: list[int]) -> list[Site]:
+    """Physische Standorte desselben Mandanten (sonst 422)."""
+    out = []
+    for sid in dict.fromkeys(ids):
+        site = session.get(Site, sid)
+        if site is None or site.tenant_id != tenant_id or site.kind != "physical":
+            raise HTTPException(status_code=422, detail=f"physical site {sid} not found")
+        out.append(site)
+    return out
 
 
 def _get_scoped_tenant(session: Session, principal: Principal, tenant_id: int) -> Tenant:
@@ -196,8 +236,10 @@ def list_sites(
     session: Session = Depends(get_session),
 ):
     _get_scoped_tenant(session, principal, tenant_id)
-    rows = session.scalars(select(Site).where(Site.tenant_id == tenant_id).order_by(Site.code))
-    return [_site_out(s) for s in rows]
+    index = site_store.SiteIndex(session, tenant_id)
+    order = {k: i for i, k in enumerate(SITE_KINDS)}
+    rows = sorted(index.sites, key=lambda s: (order.get(s.kind, 9), s.code))
+    return [_site_out(s, index) for s in rows]
 
 
 @router.post("/{tenant_id}/sites", response_model=SiteOut, status_code=201)
@@ -208,22 +250,69 @@ def create_site(
     session: Session = Depends(get_session),
 ):
     _get_scoped_tenant(session, principal, tenant_id)
+    code = body.code.strip()
+    kind = body.kind or site_store.infer_kind(code)
+    if kind not in SITE_KINDS:
+        raise HTTPException(status_code=422, detail="kind must be virtual or physical")
+    if (error := site_store.code_error(kind, code)) is not None:
+        raise HTTPException(status_code=422, detail=error)
     exists = session.scalars(
-        select(Site).where(Site.tenant_id == tenant_id, Site.code == body.code)
+        select(Site).where(Site.tenant_id == tenant_id, Site.code == code)
     ).first()
     if exists is not None:
         raise HTTPException(status_code=409, detail="site code already exists for tenant")
-    site = Site(tenant_id=tenant_id, code=body.code, name=body.name, description=body.description)
+    if body.physical_site_ids and kind != "virtual":
+        raise HTTPException(status_code=422, detail="only virtual sites run on physical sites")
+    physical = _physical_sites(session, tenant_id, body.physical_site_ids)
+    site = Site(
+        tenant_id=tenant_id, code=code, kind=kind, name=body.name, description=body.description
+    )
     session.add(site)
     session.flush()
+    site_store.set_physical(session, site, physical)
     audit.record(
         session,
         actor=f"user:{principal.subject}",
         action="site.created",
         subject=str(site.id),
-        detail={"tenant_id": tenant_id, "code": body.code},
+        detail={"tenant_id": tenant_id, "code": code, "kind": kind},
     )
-    return _site_out(site)
+    return _site_out(site, site_store.SiteIndex(session, tenant_id))
+
+
+@router.patch("/{tenant_id}/sites/{site_id}", response_model=SiteOut)
+def update_site(
+    tenant_id: int,
+    site_id: int,
+    body: SitePatch,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Name/Beschreibung aendern; bei virtuellen Standorten die physischen zuordnen."""
+    _get_scoped_tenant(session, principal, tenant_id)
+    site = session.get(Site, site_id)
+    if site is None or site.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="site not found")
+    data = body.model_dump(exclude_unset=True)
+    if data.get("name") is not None:
+        site.name = data["name"]
+    if "description" in data:
+        site.description = data["description"]
+    if data.get("physical_site_ids") is not None:
+        if site.kind != "virtual":
+            raise HTTPException(status_code=422, detail="only virtual sites run on physical sites")
+        site_store.set_physical(
+            session, site, _physical_sites(session, tenant_id, data["physical_site_ids"])
+        )
+    session.flush()
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="site.updated",
+        subject=str(site.id),
+        detail={"tenant_id": tenant_id, "site_id": site.id, "fields": sorted(data)},
+    )
+    return _site_out(site, site_store.SiteIndex(session, tenant_id))
 
 
 @router.delete("/{tenant_id}/sites/{site_id}", status_code=204)
@@ -245,6 +334,9 @@ def delete_site(
         update(SourceSystem).where(SourceSystem.site_id == site_id).values(site_id=None)
     )
     session.execute(update(Application).where(Application.site_id == site_id).values(site_id=None))
+    session.execute(
+        delete(SiteLink).where((SiteLink.virtual_id == site_id) | (SiteLink.physical_id == site_id))
+    )
     session.delete(site)
     audit.record(
         session,

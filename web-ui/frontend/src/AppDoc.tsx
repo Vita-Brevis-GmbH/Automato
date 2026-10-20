@@ -9,6 +9,7 @@ import {
   Site,
   SystemDoc,
 } from "./api";
+import { siteLabel, SiteOptions } from "./sites";
 import Apps from "./Apps";
 import type { Me } from "./auth";
 import PublishedServices from "./PublishedServices";
@@ -156,11 +157,11 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
                 onChange={(e) => assign(e.target.value ? Number(e.target.value) : null)}
               >
                 <option value="">Standort: – keiner –</option>
-                {(tenantId == null && doc.site ? [doc.site] : sites).map((s) => (
-                  <option key={s.id} value={s.id}>
-                    Standort: {s.code} {s.name}
-                  </option>
-                ))}
+                {tenantId == null && doc.site ? (
+                  <option value={doc.site.id}>Standort: {siteLabel(doc.site)}</option>
+                ) : (
+                  <SiteOptions sites={sites} />
+                )}
               </select>
             )}
             <button className={`toggle ${showEmpty ? "on" : ""}`} onClick={() => setShowEmpty((v) => !v)}>
@@ -183,8 +184,8 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
               {selKind === "epg" ? (
                 <span className="chip warn">EPG (ACI)</span>
               ) : doc.site ? (
-                <span className="chip">
-                  Standort {doc.site.code} · {doc.site.name}
+                <span className="chip" title={doc.site.kind === "physical" ? "physischer Standort" : "virtueller Standort"}>
+                  Standort {siteLabel(doc.site)}
                 </span>
               ) : (
                 <span className="chip na">ohne Standort</span>
@@ -263,7 +264,7 @@ function toMarkdown(doc: SystemDoc): string {
   const meta: string[] = [];
   if (doc.system_ip) meta.push(`IP: ${doc.system_ip}`);
   if (doc.tenant_code) meta.push(`GG: ${doc.tenant_code}`);
-  if (doc.site) meta.push(`Standort: ${doc.site.code} ${doc.site.name}`);
+  if (doc.site) meta.push(`Standort: ${siteLabel(doc.site)}`);
   if (meta.length) lines.push(meta.join(" · "), "");
   return lines.concat(tablesMarkdown(doc.tables)).join("\n");
 }

@@ -15,6 +15,7 @@ import {
   System,
 } from "./api";
 import { CATEGORY_LABEL, IssueChips, REFERENCE_PLATFORMS, ValueList } from "./refs";
+import { SiteChip } from "./sites";
 import type { View, ViewParams } from "./App";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 
@@ -236,6 +237,11 @@ function ObjectTable({
                       <b className="mono">{o.name}</b>
                       {o.comment && <div className="faint">{o.comment}</div>}
                       {o.interface && <div className="faint">Interface {o.interface}</div>}
+                      {o.site && (
+                        <div>
+                          <SiteChip site={o.site} from="name" />
+                        </div>
+                      )}
                       {(o.category === "vip" || o.category === "ippool") && onGo && (
                         <button className="linkbtn" onClick={() => onGo("nat", { q: o.name })}>
                           in NAT / VIPs öffnen
@@ -387,6 +393,12 @@ function InventoryTable({
                   <td>
                     <span className="faint">{s.context === "bd" ? "BD" : s.context === "epg" ? "EPG" : s.context}</span>{" "}
                     <span className="mono">{s.context_name}</span>
+                    {s.site && (
+                      <>
+                        {" "}
+                        <SiteChip site={s.site} from="name" />
+                      </>
+                    )}
                     {(s.epg || s.ap || s.aci_tenant) && (
                       <div className="faint">{[s.aci_tenant, s.ap, s.epg].filter(Boolean).join(" / ")}</div>
                     )}
@@ -492,6 +504,7 @@ function InventoryTable({
                 <th>Node</th>
                 <th>Mgmt-IP</th>
                 <th>Version</th>
+                <th>Standort</th>
                 <th>Quelle</th>
               </tr>
             </thead>
@@ -507,6 +520,7 @@ function InventoryTable({
                   <td className="mono">{cell(d.node_id)}</td>
                   <td className="mono">{cell(d.mgmt_ip)}</td>
                   <td className="mono">{cell(d.version)}</td>
+                  <td>{d.site ? <SiteChip site={d.site} from={d.site_from} /> : <Dash />}</td>
                   <td className="nowrap">{cell(d.source)}</td>
                 </tr>
               ))}

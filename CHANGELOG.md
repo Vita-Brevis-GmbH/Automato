@@ -7,6 +7,30 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.7.0 – 2026-10-20
+
+Virtuelle und physische Standorte (ADR 0015, Alembic `0027`).
+
+- **Zwei Arten Standort:** *virtuell* = dreistellige Nummer der Namenskonvention (`000` z. B.
+  Stretched DC, `001` …), *physisch* = Ort-Code des Rechenzentrums (z. B. `chzrh1`). Ein
+  virtueller Standort kann an mehreren physischen laufen (Zuordnung n:m, „Zuordnen“).
+  - Bestand bleibt: Ziffern-Codes werden virtuell, andere (z. B. `ZRH`) physisch; alle
+    Verortungen bleiben erhalten.
+  - Standort-Auswahl (Quellsystem, Doku je System, Applikation) nach Art gruppiert, Anzeige
+    mit Zuordnung („000 · Stretched DC (chzrh1, chbsl1)“).
+- **Standort aus dem Namen (Vorschlag):** Netz-Objekte (`N_<tenant>-000-…`, `T_`, `IPP_`),
+  BD-/Subnetz-Namen, Inventar-Geräte und Quellsysteme (`fwc11-000-<tenant>`,
+  `evh01-chzrh1-<tenant>`) zeigen den erkannten Standort; „?“ = Code nicht erfasst. VMs tragen
+  keinen Standort im Namen und werden nicht ausgewertet.
+- **NetBox-Sync:** Standorte als NetBox-Sites in den Standort-Gruppen *Virtuelle Standorte* und
+  *Physische Standorte*, Kommentar mit der Zuordnung. Gruppe/Kommentar nur an eigenen Sites
+  (Tag `automato`); von Hand gepflegte Sites werden referenziert, ohne Konflikt. Gerät ohne
+  Standort am Quellsystem: der einzige physische Standort.
+
+**Hinweis NetBox:** Das Schreib-Token braucht zusätzlich das Recht auf *DCIM › Site Group*
+(Permission `automato-sync-write` ergänzen oder `source-of-truth/netbox/sync-user.sh` erneut
+ausführen – erzeugt einen neuen Token, ausser `SYNC_TOKEN` ist gesetzt).
+
 ## 0.6.0 – 2026-10-20
 
 Dev-Befunde aus dem Test gegen die echten Systeme: Suche, NAT, Findings, Namensabgleich,

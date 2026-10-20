@@ -38,6 +38,9 @@ class SiteRef(BaseModel):
     id: int
     code: str
     name: str
+    kind: str = "virtual"  # virtual | physical (ADR 0015)
+    physical: list[str] = []  # virtuell: Codes der physischen Standorte
+    virtual: list[str] = []  # physisch: Codes der virtuellen Standorte
 
 
 class SystemDocOut(BaseModel):

@@ -38,7 +38,8 @@ from app.models import (
     Tenant,
 )
 from app.models.source_system import Platform
-from app.store import deletion
+from app.store import deletion, sites
+from app.store import naming_profiles as profile_store
 
 router = APIRouter(prefix="/systems", tags=["systems"])
 
@@ -59,6 +60,7 @@ class SystemOut(BaseModel):
     reference_count: int = 0  # Referenzquellen: Eintraege im aktuellen Stand
     reference_at: datetime | None = None  # Zeitpunkt des aktuellen Stands
     site_id: int | None = None  # Standort des Geraets (NetBox-Sync)
+    site_hint: dict | None = None  # Standort aus dem Namen (Vorschlag, ADR 0015)
     schedule: str | None = None  # Zeitplan (Cron, 5 Felder, Zeitzone scheduler_timezone)
     next_run_at: datetime | None = None  # naechster Termin laut Zeitplan
     rule_count: int = 0
@@ -146,8 +148,31 @@ def _has_write_token(s: SourceSystem) -> bool:
         return False
 
 
+def _site_hints(session: Session, sources: list[SourceSystem]) -> dict[int, dict]:
+    """Standort aus dem Geraete-/Cluster-Namen (fwc11-000-<tenant>, ADR 0015) - Vorschlag."""
+    out: dict[int, dict] = {}
+    indexes: dict[int, tuple] = {}
+    for src in sources:
+        if src.tenant_id is None or src.platform in REFERENCE_PLATFORMS:
+            continue
+        if src.tenant_id not in indexes:
+            indexes[src.tenant_id] = (
+                sites.SiteIndex(session, src.tenant_id),
+                profile_store.prefixes_for_tenant(session, src.tenant_id),
+            )
+        index, prefixes = indexes[src.tenant_id]
+        hint = index.from_name(src.name, prefixes)
+        if hint is not None:
+            out[src.id] = hint
+    return out
+
+
 def _out(
-    s: SourceSystem, rules: dict[int, int], nat: dict[int, int], refs: dict | None = None
+    s: SourceSystem,
+    rules: dict[int, int],
+    nat: dict[int, int],
+    refs: dict | None = None,
+    site_hint: dict | None = None,
 ) -> SystemOut:
     ref_count, ref_at = (refs or {}).get(s.id, (0, None))
     return SystemOut(
@@ -166,6 +191,7 @@ def _out(
         reference_count=ref_count,
         reference_at=ref_at,
         site_id=s.site_id,
+        site_hint=site_hint,
         schedule=s.schedule,
         next_run_at=scheduler.next_run(s.schedule, get_settings().scheduler_timezone)
         if s.enabled
@@ -346,7 +372,8 @@ def list_systems(
     rules, nat = _counts(session, Rule), _counts(session, NatRule)
     sources = list(session.scalars(query))
     refs = _reference_stats(session, sources)
-    return [_out(s, rules, nat, refs) for s in sources]
+    hints = _site_hints(session, sources)
+    return [_out(s, rules, nat, refs, hints.get(s.id)) for s in sources]
 
 
 @router.post("", response_model=SystemOut, status_code=201)

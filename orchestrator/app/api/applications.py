@@ -18,6 +18,7 @@ from app.auth.principal import Principal
 from app.db import get_session
 from app.models import Application, Site
 from app.store import applications as store
+from app.store import sites
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -116,7 +117,8 @@ class ApplicationDocOut(BaseModel):
 
 def _site(session: Session, site_id: int | None) -> SiteRef | None:
     site = session.get(Site, site_id) if site_id else None
-    return SiteRef(id=site.id, code=site.code, name=site.name) if site else None
+    ref = sites.SiteIndex(session, site.tenant_id).ref(site) if site else None
+    return SiteRef(**ref) if ref else None
 
 
 def _out(session: Session, app: Application, resolver: store.Resolver) -> ApplicationOut:

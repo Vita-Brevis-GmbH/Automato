@@ -64,10 +64,11 @@ class FakeNetBox:
             if k == "tags":
                 obj["tags"] = [{"slug": t["slug"], "name": t["slug"]} for t in v]
             elif k in _FK:
+                target = "dcim/site-groups" if (endpoint, k) == ("dcim/sites", "group") else _FK[k]
                 if isinstance(v, list):
-                    obj[k] = [self._nested(_FK[k], i) for i in v]
+                    obj[k] = [self._nested(target, i) for i in v]
                 else:
-                    obj[k] = self._nested(_FK[k], v)
+                    obj[k] = self._nested(target, v)
             elif k in _CHOICE:
                 obj[k] = {"value": v, "label": v} if v else None
             else:

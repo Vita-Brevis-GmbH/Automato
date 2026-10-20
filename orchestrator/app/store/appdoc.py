@@ -29,6 +29,7 @@ from app.models import (
 )
 from app.store import epgs as epg_store
 from app.store import rules as rules_store
+from app.store import sites
 
 SEP = " · "  # gleichnamige EPGs mehrerer ACI-Tenants: "EG_x · TE_a · AP_1"
 
@@ -224,7 +225,7 @@ def _envelope(
         "system": system_name,
         "system_ip": system_ip,
         "tenant_code": tenant.code if tenant else None,
-        "site": {"id": site.id, "code": site.code, "name": site.name} if site else None,
+        "site": sites.SiteIndex(session, site.tenant_id).ref(site) if site else None,
         "tables": tables,
     }
 

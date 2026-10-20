@@ -85,7 +85,8 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "source.deleted": frozenset(
         {"source_id", "tenant_id", "name", "rules", "nat_rules", "findings", "references"}
     ),
-    "site.created": frozenset({"tenant_id", "code"}),
+    "site.created": frozenset({"tenant_id", "code", "kind"}),
+    "site.updated": frozenset({"tenant_id", "site_id", "fields"}),
     "site.deleted": frozenset({"tenant_id", "site_id"}),
     "system.site_assigned": frozenset({"tenant_id", "site_id"}),
     # Applikationen (ADR 0012): Stammdaten-Felder, Mitglieder nur als Art/Verweis

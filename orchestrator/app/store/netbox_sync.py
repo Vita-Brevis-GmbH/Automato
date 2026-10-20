@@ -40,6 +40,7 @@ from app.models import (
     Tenant,
 )
 from app.store import references
+from app.store import sites as site_store
 
 TAG = "automato"
 SECTIONS = ("inventory", "mirror")
@@ -55,13 +56,16 @@ class Kind:
     label: str
     managed: tuple[str, ...]  # Felder, die der Sync aktuell haelt (Aenderung/Konflikt)
     scope: str = ""  # "" = nie loeschen | tenant | group | device
+    # nur an eigenen Objekten (Tag automato) gehalten; an von Hand gepflegten kein Konflikt
+    owned: tuple[str, ...] = ()
 
 
 # Reihenfolge = Abhaengigkeiten (Anlegen vorwaerts, Loeschen rueckwaerts)
 KINDS = (
     Kind("tag", "extras/tags", "Tag", ()),
     Kind("tenant", "tenancy/tenants", "Tenant", ("name",)),
-    Kind("site", "dcim/sites", "Standort", ("name",)),
+    Kind("site_group", "dcim/site-groups", "Standort-Gruppe", ("name", "description")),
+    Kind("site", "dcim/sites", "Standort", ("name",), owned=("group", "comments")),
     Kind("manufacturer", "dcim/manufacturers", "Hersteller", ()),
     Kind("device_role", "dcim/device-roles", "Geräterolle", ()),
     Kind("device_type", "dcim/device-types", "Gerätetyp", ()),
@@ -252,26 +256,68 @@ def build_wants(
             },
         )
     )
-    sites = {s.id: s for s in session.scalars(select(Site).where(Site.tenant_id == tenant.id))}
+    index = site_store.SiteIndex(session, tenant.id)
+    sites = index.by_id
     for s in sites.values():
-        w.add(
-            Want(
-                "site",
-                slugify(s.code),
-                f"Standort {s.code} {s.name}",
-                {
-                    "name": _cut(s.name or s.code, 100),
-                    "slug": slugify(s.code),
-                    "status": "active",
-                    "description": _cut(s.description, 200),
-                },
-            )
-        )
+        _site_want(w, tenant, s, index)
     if "inventory" in sections:
         _inventory_wants(session, w, tenant, sites, tenant_ref)
     if "mirror" in sections:
         _mirror_wants(session, w, tenant, target, tenant_ref)
     return w
+
+
+# Virtuelle und physische Standorte (ADR 0015): beide als NetBox-Site, unterschieden durch die
+# Standort-Gruppe; welcher virtuelle an welchen physischen laeuft, steht im Kommentar.
+SITE_GROUPS = {
+    "virtual": ("standorte-virtuell", "Virtuelle Standorte", "Automato: virtuelle Standorte"),
+    "physical": ("standorte-physisch", "Physische Standorte", "Automato: physische Standorte"),
+}
+
+
+def _site_comments(tenant: Tenant, s: Site, index: site_store.SiteIndex) -> str:
+    def names(codes: list[str]) -> str:
+        return ", ".join(
+            f"{c} ({index.by_code[c.lower()].name})" if c.lower() in index.by_code else c
+            for c in codes
+        )
+
+    ref = index.ref(s) or {}
+    if s.kind == "virtual":
+        head = f"Virtueller Standort {s.code} von {tenant.name}."
+        tail = (
+            f"Läuft an den physischen Standorten: {names(ref.get('physical', []))}."
+            if ref.get("physical")
+            else "Keinem physischen Standort zugeordnet."
+        )
+    else:
+        head = f"Physischer Standort {s.code} von {tenant.name}."
+        tail = (
+            f"Virtuelle Standorte hier: {names(ref.get('virtual', []))}."
+            if ref.get("virtual")
+            else "Kein virtueller Standort zugeordnet."
+        )
+    return f"{head} {tail} (Automato)"
+
+
+def _site_want(w: Wants, tenant: Tenant, s: Site, index: site_store.SiteIndex) -> None:
+    gslug, gname, gdesc = SITE_GROUPS.get(s.kind, SITE_GROUPS["virtual"])
+    w.add(Want("site_group", gslug, gname, {"name": gname, "slug": gslug, "description": gdesc}))
+    w.add(
+        Want(
+            "site",
+            slugify(s.code),
+            f"Standort {s.code} {s.name} ({site_store.KIND_LABEL.get(s.kind, s.kind)})",
+            {
+                "name": _cut(s.name or s.code, 100),
+                "slug": slugify(s.code),
+                "status": "active",
+                "description": _cut(s.description, 200),
+                "comments": _site_comments(tenant, s, index),
+            },
+            {"group": ("site_group", gslug)},
+        )
+    )
 
 
 def _inventory_wants(
@@ -287,7 +333,13 @@ def _inventory_wants(
             .order_by(SourceSystem.id)
         )
     )
-    only_site = next(iter(sites.values())) if len(sites) == 1 else None
+    # Ohne Standort am Quellsystem: der einzige physische Standort, sonst der einzige ueberhaupt
+    physical = [s for s in sites.values() if s.kind == "physical"]
+    only_site = (
+        physical[0]
+        if len(physical) == 1
+        else (next(iter(sites.values())) if len(sites) == 1 else None)
+    )
 
     def rows(model, source):
         return list(
@@ -613,7 +665,15 @@ def _plen(index, ip: str) -> int:
 
 
 def _key_of(kind: str, obj: dict) -> str | None:
-    if kind in ("tag", "tenant", "site", "manufacturer", "device_role", "vlan_group"):
+    if kind in (
+        "tag",
+        "tenant",
+        "site_group",
+        "site",
+        "manufacturer",
+        "device_role",
+        "vlan_group",
+    ):
         return obj.get("slug")
     if kind == "device_type":
         return (obj.get("model") or "").lower() or None
@@ -730,7 +790,8 @@ def _resolve(ref: Ref | None, state: State, wants: Wants) -> Any:
 
 def _changes(want: Want, have: Have, state: State, wants: Wants) -> list[dict]:
     out: list[dict] = []
-    for f in KIND[want.kind].managed:
+    kind = KIND[want.kind]
+    for f in kind.managed + (kind.owned if have.tagged else ()):
         old_raw = have.obj.get(f)
         if f in want.refs:
             target = want.refs[f]

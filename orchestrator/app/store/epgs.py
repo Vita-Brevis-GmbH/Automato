@@ -12,8 +12,8 @@ import ipaddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Epg, EpgEndpoint, EpgSubnet, InvInterface, InvVlan, NetworkObject, Site
-from app.store import references
+from app.models import Epg, EpgEndpoint, EpgSubnet, InvInterface, InvVlan, NetworkObject
+from app.store import references, sites
 
 MAX_ENDPOINTS = 50  # je EPG im Detail; die Gesamtzahl steht daneben
 MAX_PORTS = 50
@@ -123,11 +123,12 @@ def details(session: Session, tenant_id: int, epgs: list[Epg]) -> dict[int, dict
         endpoints[ep.epg_id].append(ep)
     ctx = references.context(session, tenant_id)
     physical = _physical(session, tenant_id, epgs)
+    site_index = sites.SiteIndex(session, tenant_id)
     out: dict[int, dict] = {}
     for epg in epgs:
         phys = physical.get(inventory_label(epg)) if epg.kind == "epg" else None
         host = session.get(NetworkObject, epg.network_object_id) if epg.network_object_id else None
-        site = session.get(Site, host.site_id) if host and host.site_id else None
+        site = site_index.ref(host.site_id) if host and host.site_id else None
         eps = endpoints[epg.id]
         out[epg.id] = {
             "kind": epg.kind,
@@ -149,9 +150,7 @@ def details(session: Session, tenant_id: int, epgs: list[Epg]) -> dict[int, dict
                 for ep in eps[:MAX_ENDPOINTS]
             ],
             "server": (
-                {"name": host.name, "ip": host.value, "site": site.code if site else None}
-                if host
-                else None
+                {"name": host.name, "ip": host.value, "site": _site_label(site)} if host else None
             ),
             "selectors": epg.selectors or [],
             "pref_group": epg.pref_group,
@@ -160,3 +159,10 @@ def details(session: Session, tenant_id: int, epgs: list[Epg]) -> dict[int, dict
             "ports": phys["ports"][:MAX_PORTS] if phys else [],
         }
     return out
+
+
+def _site_label(site: dict | None) -> str | None:
+    """Standort eines Servers: Code, beim virtuellen mit den physischen (000 (chzrh1, chbsl1))."""
+    if not site:
+        return None
+    return f"{site['code']} ({', '.join(site['physical'])})" if site["physical"] else site["code"]

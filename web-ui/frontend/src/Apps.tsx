@@ -25,6 +25,7 @@ import {
   removeAppMember,
   Site,
 } from "./api";
+import { siteLabel, SiteOptions } from "./sites";
 import { DocTableView, tablesMarkdown } from "./AppDoc";
 import type { Me } from "./auth";
 import { Dash, download, Drawer, Empty, ErrorBox, Icon, Loading, Modal, Note } from "./ui";
@@ -136,7 +137,7 @@ export default function Apps({ me, tenantId }: { me: Me; tenantId: number | null
                       <CritChip value={a.criticality} />
                     </td>
                     <td>{a.owner ?? <Dash />}</td>
-                    <td>{a.site ? `${a.site.code} ${a.site.name}` : <Dash />}</td>
+                    <td>{a.site ? siteLabel(a.site) : <Dash />}</td>
                     <td className="num">{a.member_count}</td>
                     <td className="num">{a.system_count}</td>
                   </tr>
@@ -366,7 +367,7 @@ function AppDrawer({
             <dt>Verantwortlich</dt>
             <dd>{d.owner ?? <Dash />}</dd>
             <dt>Standort</dt>
-            <dd>{d.site ? `${d.site.code} · ${d.site.name}` : <Dash />}</dd>
+            <dd>{d.site ? siteLabel(d.site) : <Dash />}</dd>
             <dt>Beschreibung</dt>
             <dd style={{ whiteSpace: "pre-wrap" }}>{d.description || <Dash />}</dd>
             <dt>Systeme</dt>
@@ -697,11 +698,7 @@ function AppForm({
               onChange={(e) => setSiteId(e.target.value ? Number(e.target.value) : "")}
             >
               <option value="">– keiner –</option>
-              {sites.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.code} {s.name}
-                </option>
-              ))}
+              <SiteOptions sites={sites} />
             </select>
           </div>
         </div>
@@ -732,7 +729,7 @@ function docMarkdown(doc: ApplicationDoc): string {
     doc.tenant_code && `GG: ${doc.tenant_code}`,
     a.criticality && `Kritikalität: ${CRIT[a.criticality][1]}`,
     a.owner && `Verantwortlich: ${a.owner}`,
-    a.site && `Standort: ${a.site.code} ${a.site.name}`,
+    a.site && `Standort: ${siteLabel(a.site)}`,
   ].filter(Boolean);
   if (meta.length) lines.push(meta.join(" · "), "");
   if (a.description) lines.push(a.description, "");
@@ -786,7 +783,7 @@ function AppDocView({ id, onBack }: { id: number; onBack: () => void }) {
         {a.owner && <span className="chip">Verantwortlich: {a.owner}</span>}
         {a.site ? (
           <span className="chip">
-            Standort {a.site.code} · {a.site.name}
+            Standort {siteLabel(a.site)}
           </span>
         ) : (
           <span className="chip na">ohne Standort</span>
@@ -822,7 +819,7 @@ function AppDocView({ id, onBack }: { id: number; onBack: () => void }) {
                     </td>
                     <td className="mono">{s.name}</td>
                     <td className="mono">{s.ip ?? <Dash />}</td>
-                    <td>{s.site ? `${s.site.code} ${s.site.name}` : <Dash />}</td>
+                    <td>{s.site ? siteLabel(s.site) : <Dash />}</td>
                   </tr>
                 ))}
               </tbody>

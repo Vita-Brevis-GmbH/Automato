@@ -19,3 +19,4 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0012 | Applikation als eigenes Objekt (AP/EPG/Server, Vorschläge per Projektnummer) |
 | 0013 | Produktions-Gate: mTLS-Agent-Gateway, signierte Updates, Sicherung, Update/Rückfall, R16-Prüfung |
 | 0014 | Gemeinsames Betriebs-Cockpit mit Magister (Entwurf) |
+| 0015 | Standorte virtuell (000, 001) und physisch (Ort-Code), n:m; NetBox-Site-Gruppen |

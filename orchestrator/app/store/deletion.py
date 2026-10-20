@@ -26,6 +26,7 @@ from app.models import (
     Rule,
     RuleEndpoint,
     Site,
+    SiteLink,
     SourceSystem,
     SyncPlan,
     Tenant,
@@ -146,6 +147,12 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
         session, delete(Application).where(Application.tenant_id == tid)
     )
     session.execute(update(SourceSystem).where(SourceSystem.tenant_id == tid).values(site_id=None))
+    site_ids = select(Site.id).where(Site.tenant_id == tid)
+    session.execute(
+        delete(SiteLink).where(
+            SiteLink.virtual_id.in_(site_ids) | SiteLink.physical_id.in_(site_ids)
+        )
+    )
     counts["sites"] = _count(session, delete(Site).where(Site.tenant_id == tid))
 
     source_ids = select(SourceSystem.id).where(SourceSystem.tenant_id == tid)

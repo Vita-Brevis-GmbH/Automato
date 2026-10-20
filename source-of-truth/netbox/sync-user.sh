@@ -4,7 +4,7 @@
 # Legt den Benutzer "automato-sync" an (kein Superuser) mit
 #   - Lesen auf alle Objekttypen (fuer die Vorschau und Referenzen) und
 #   - Anlegen/Aendern/Loeschen NUR auf den Objekttypen, die der Sync schreibt
-#     (Tags, Tenants, Sites, Hersteller, Geraeterollen/-typen, Geraete, Interfaces,
+#     (Tags, Tenants, Standort-Gruppen, Sites, Hersteller, Geraeterollen/-typen, Geraete, Interfaces,
 #      VRFs, VLAN-Gruppen, VLANs, Prefixe, IP-Ranges, IP-Adressen)
 # und einen Legacy-v1-Token mit Schreibrecht. Der Token gehoert in Automato ins
 # NetBox-Quellsystem unter "Schreib-Token (optional, nur NetBox-Sync)".
@@ -38,6 +38,7 @@ except ImportError:  # falls sich das App-Layout in kuenftigen Versionen aendert
 WRITABLE = [
     ("extras", "tag"),
     ("tenancy", "tenant"),
+    ("dcim", "sitegroup"),
     ("dcim", "site"),
     ("dcim", "manufacturer"),
     ("dcim", "devicerole"),

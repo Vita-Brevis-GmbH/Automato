@@ -24,6 +24,7 @@ WRITABLE = frozenset(
     {
         "extras/tags",
         "tenancy/tenants",
+        "dcim/site-groups",
         "dcim/sites",
         "dcim/manufacturers",
         "dcim/device-roles",

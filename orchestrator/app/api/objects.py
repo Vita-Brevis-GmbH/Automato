@@ -32,8 +32,9 @@ from app.models import (
     SourceSystem,
     SubjectKind,
 )
+from app.store import naming_profiles as profile_store
 from app.store import objects as objects_store
-from app.store import references
+from app.store import references, sites
 
 router = APIRouter(tags=["objects"])
 
@@ -123,6 +124,8 @@ def list_objects(
         [v for o in objects if o.category not in SERVICE_CATEGORIES for v in o.values or []],
     )
     names = _source_names(session, tid)
+    site_index = sites.SiteIndex(session, tid)
+    prefixes = profile_store.prefixes_for_tenant(session, tid)
     rows = []
     for o in objects:
         service = o.category in SERVICE_CATEGORIES
@@ -152,6 +155,8 @@ def list_objects(
                 "color": o.color,
                 "interface": o.interface,
                 "issues": sorted(set(row_issues)),
+                # Netz-Objekte (N_/T_/IPP_): Standort-Block aus dem Namen (ADR 0015)
+                "site": site_index.from_name(o.name, prefixes, network_only=True),
             }
         )
     if issues_only:
@@ -192,10 +197,26 @@ def list_inventory(
     stmt = stmt.order_by(*(getattr(model, c) for c in _ORDER[kind]), model.id)
     names = _source_names(session, tid)
     ctx = references.context(session, tid) if kind == "subnets" else None
+    site_index = sites.SiteIndex(session, tid)
+    prefixes = profile_store.prefixes_for_tenant(session, tid)
+    system_sites = dict(
+        session.execute(
+            select(SourceSystem.id, SourceSystem.site_id).where(SourceSystem.tenant_id == tid)
+        ).all()
+    )
     rows = []
     for r in session.scalars(stmt):
         row = {c.name: getattr(r, c.name) for c in model.__table__.columns}
         row["source"] = names.get(r.source_system_id)
+        if kind == "devices":
+            # Standort aus dem Geraete-/Cluster-Namen, sonst der des Quellsystems (ADR 0015)
+            row["site"] = site_index.from_name(r.name, prefixes)
+            row["site_from"] = "name" if row["site"] else None
+            if row["site"] is None and system_sites.get(r.source_system_id):
+                row["site"] = site_index.ref(system_sites[r.source_system_id])
+                row["site_from"] = "system" if row["site"] else None
+        elif kind == "subnets":
+            row["site"] = site_index.from_name(r.context_name, prefixes)
         if ctx is not None:
             row["ipam"] = _prefix_info(ctx.primary, r.prefix)
             row["enrichment"] = _prefix_info(

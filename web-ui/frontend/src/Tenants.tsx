@@ -11,12 +11,14 @@ import {
   fetchAgents,
   fetchNamingProfiles,
   fetchSites,
+  updateSite,
   fetchSystems,
   NamingProfile,
   patchSystem,
   patchTenant,
   profileLabel,
   Site,
+  SiteKind,
   System,
   SystemCredentials,
   Tenant,
@@ -24,6 +26,7 @@ import {
 import type { Me } from "./auth";
 import { PLATFORM_LABEL, REF_ROLE_LABEL, REFERENCE_PLATFORMS } from "./refs";
 import { ScheduleField, scheduleLabel } from "./Schedule";
+import { SITE_KIND_GROUP, SITE_KIND_LABEL, SiteChip, SiteOptions } from "./sites";
 import { CredentialInput, Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead, SecretInput } from "./ui";
 
 // Mandanten (= Gruppengesellschaft) mit Kürzel, Namensprofil, Standorten und Quellsystemen.
@@ -474,11 +477,16 @@ function DeleteTenantDialog({
 }
 
 function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
+  // Virtuelle (000, 001 …) und physische Standorte (chzrh1 …); ein virtueller kann an
+  // mehreren physischen laufen (ADR 0015)
   const [sites, setSites] = useState<Site[] | null>(null);
   const [adding, setAdding] = useState(false);
+  const [kind, setKind] = useState<SiteKind>("virtual");
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [physical, setPhysical] = useState<number[]>([]);
+  const [linking, setLinking] = useState<number | null>(null); // virtueller Standort in Bearbeitung
   const [err, setErr] = useState<unknown>(null);
 
   const load = () =>
@@ -493,8 +501,13 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
     setSites(null);
     setErr(null);
     setAdding(false);
+    setLinking(null);
     load();
   }, [tenant.id]);
+
+  const all = sites ?? [];
+  const physicalSites = all.filter((s) => s.kind === "physical");
+  const codeOf = (id: number) => all.find((s) => s.id === id)?.code ?? `#${id}`;
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -504,11 +517,25 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
         code: code.trim(),
         name: name.trim(),
         description: description.trim() || null,
+        kind,
+        physical_site_ids: kind === "virtual" ? physical : [],
       });
       setCode("");
       setName("");
       setDescription("");
+      setPhysical([]);
       setAdding(false);
+      await load();
+    } catch (ex) {
+      setErr(ex);
+    }
+  };
+
+  const saveLinks = async (s: Site, ids: number[]) => {
+    setErr(null);
+    try {
+      await updateSite(tenant.id, s.id, { physical_site_ids: ids });
+      setLinking(null);
       await load();
     } catch (ex) {
       setErr(ex);
@@ -524,6 +551,70 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
     } catch (ex) {
       setErr(ex);
     }
+  };
+
+  const section = (k: SiteKind) => {
+    const list = all.filter((s) => s.kind === k);
+    return (
+      <>
+        <div className="sub-h" style={{ padding: "10px 16px 0" }}>
+          {SITE_KIND_GROUP[k]} ({list.length})
+        </div>
+        {list.length === 0 ? (
+          <div className="faint" style={{ padding: "4px 16px 8px" }}>
+            {k === "virtual"
+              ? "Keine – virtuelle Standorte sind dreistellige Nummern (z. B. 000 = Stretched DC)."
+              : "Keine – physische Standorte sind Ort-Codes (z. B. chzrh1)."}
+          </div>
+        ) : (
+          list.map((s) => (
+            <div className="site-card" key={s.id}>
+              <span className="site-ico">
+                <Icon name="pin" size={20} />
+              </span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span className="s-name">
+                  {s.name}{" "}
+                  <span className={`chip ${k === "physical" ? "info" : "local"}`}>
+                    {SITE_KIND_LABEL[k]} {s.code}
+                  </span>
+                </span>
+                {s.description && <span className="s-meta" style={{ display: "block" }}>{s.description}</span>}
+                <span className="s-meta" style={{ display: "block" }}>
+                  {k === "virtual"
+                    ? s.physical_site_ids.length
+                      ? `läuft an: ${s.physical_site_ids.map(codeOf).join(", ")}`
+                      : "keinem physischen Standort zugeordnet"
+                    : s.virtual_site_ids.length
+                      ? `virtuelle Standorte hier: ${s.virtual_site_ids.map(codeOf).join(", ")}`
+                      : "kein virtueller Standort zugeordnet"}
+                </span>
+                {linking === s.id && (
+                  <LinkPicker
+                    options={physicalSites}
+                    value={s.physical_site_ids}
+                    onCancel={() => setLinking(null)}
+                    onSave={(ids) => saveLinks(s, ids)}
+                  />
+                )}
+              </span>
+              {me.isAdmin && (
+                <span className="s-right">
+                  {k === "virtual" && physicalSites.length > 0 && linking !== s.id && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => setLinking(s.id)}>
+                      Zuordnen
+                    </button>
+                  )}
+                  <button className="linkbtn danger" title="Löschen" onClick={() => remove(s)}>
+                    ✕
+                  </button>
+                </span>
+              )}
+            </div>
+          ))
+        )}
+      </>
+    );
   };
 
   return (
@@ -546,6 +637,21 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
         {adding && (
           <form className="inline-form" onSubmit={add}>
             <div className="field narrow">
+              <label htmlFor="st-kind">Art</label>
+              <select
+                id="st-kind"
+                className="sel input"
+                value={kind}
+                onChange={(e) => {
+                  setKind(e.target.value as SiteKind);
+                  setCode("");
+                }}
+              >
+                <option value="virtual">virtuell</option>
+                <option value="physical">physisch</option>
+              </select>
+            </div>
+            <div className="field narrow">
               <label htmlFor="st-code">Code</label>
               <input
                 id="st-code"
@@ -553,10 +659,14 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
                 value={code}
                 required
                 autoFocus
-                pattern="[0-9A-Za-z]{3}"
-                maxLength={3}
-                title="dreistelliger Standort-Code, z. B. 000"
-                placeholder="000"
+                pattern={kind === "virtual" ? "[0-9]{3}" : "[A-Za-z][A-Za-z0-9-]{2,15}"}
+                maxLength={kind === "virtual" ? 3 : 16}
+                title={
+                  kind === "virtual"
+                    ? "dreistellige Nummer, z. B. 000 (Stretched DC)"
+                    : "Ort-Code, beginnt mit einem Buchstaben, z. B. chzrh1"
+                }
+                placeholder={kind === "virtual" ? "000" : "chzrh1"}
                 onChange={(e) => setCode(e.target.value)}
               />
             </div>
@@ -567,7 +677,7 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
                 className="input"
                 value={name}
                 required
-                placeholder="z. B. RZ01 Hauptstandort"
+                placeholder={kind === "virtual" ? "z. B. Stretched DC" : "z. B. Zürich RZ1"}
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
@@ -581,6 +691,25 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
                 onChange={(e) => setDescription(e.target.value)}
               />
             </div>
+            {kind === "virtual" && physicalSites.length > 0 && (
+              <div className="field">
+                <span className="label">läuft an</span>
+                <span className="chips">
+                  {physicalSites.map((p) => (
+                    <label key={p.id} className="chip" style={{ cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={physical.includes(p.id)}
+                        onChange={(e) =>
+                          setPhysical(e.target.checked ? [...physical, p.id] : physical.filter((x) => x !== p.id))
+                        }
+                      />{" "}
+                      {p.code}
+                    </label>
+                  ))}
+                </span>
+              </div>
+            )}
             <button className="btn btn-primary btn-sm" type="submit">
               Hinzufügen
             </button>
@@ -591,32 +720,54 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
         )}
         {sites === null ? (
           <Loading />
-        ) : sites.length === 0 ? (
-          <Empty title="Noch keine Standorte">Jeder Standort hat einen dreistelligen Code (z. B. 000).</Empty>
+        ) : sites.length === 0 && !adding ? (
+          <Empty title="Noch keine Standorte">
+            Virtuelle Standorte sind dreistellige Nummern (000, 001 …), physische Standorte Ort-Codes (z. B.
+            chzrh1). Ein virtueller Standort kann an mehreren physischen laufen.
+          </Empty>
         ) : (
-          sites.map((s) => (
-            <div className="site-card" key={s.id}>
-              <span className="site-ico">
-                <Icon name="pin" size={20} />
-              </span>
-              <span>
-                <span className="s-name">
-                  {s.name} <span className="chip local">Standort {s.code}</span>
-                </span>
-                {s.description && <span className="s-meta" style={{ display: "block" }}>{s.description}</span>}
-              </span>
-              {me.isAdmin && (
-                <span className="s-right">
-                  <button className="linkbtn danger" title="Löschen" onClick={() => remove(s)}>
-                    ✕
-                  </button>
-                </span>
-              )}
-            </div>
-          ))
+          <>
+            {section("virtual")}
+            {section("physical")}
+          </>
         )}
       </div>
     </div>
+  );
+}
+
+// Physische Standorte eines virtuellen auswählen
+function LinkPicker({
+  options,
+  value,
+  onSave,
+  onCancel,
+}: {
+  options: Site[];
+  value: number[];
+  onSave: (ids: number[]) => void;
+  onCancel: () => void;
+}) {
+  const [ids, setIds] = useState<number[]>(value);
+  return (
+    <span className="chips" style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+      {options.map((p) => (
+        <label key={p.id} className="chip" style={{ cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={ids.includes(p.id)}
+            onChange={(e) => setIds(e.target.checked ? [...ids, p.id] : ids.filter((x) => x !== p.id))}
+          />{" "}
+          {p.code} · {p.name}
+        </label>
+      ))}
+      <button className="btn btn-primary btn-sm" type="button" onClick={() => onSave(ids)}>
+        Speichern
+      </button>
+      <button className="btn btn-ghost btn-sm" type="button" onClick={onCancel}>
+        Abbrechen
+      </button>
+    </span>
   );
 }
 
@@ -761,6 +912,9 @@ function SystemDialog({
   const [siteId, setSiteId] = useState<number | null>(system?.site_id ?? null);
   const [schedule, setSchedule] = useState(system?.schedule ?? "");
   const [sites, setSites] = useState<Site[]>([]);
+  // ohne Standort nutzt der NetBox-Sync den einzigen physischen bzw. den einzigen Standort
+  const physicalOnly = sites.filter((s) => s.kind === "physical");
+  const fallbackSite = physicalOnly.length === 1 ? physicalOnly[0] : sites.length === 1 ? sites[0] : null;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
 
@@ -919,15 +1073,30 @@ function SystemDialog({
               onChange={(e) => setSiteId(e.target.value ? Number(e.target.value) : null)}
             >
               <option value="">
-                {sites.length === 1 ? `nicht gesetzt (einziger Standort ${sites[0].code} wird genutzt)` : "nicht gesetzt"}
+                {fallbackSite ? `nicht gesetzt (einziger Standort ${fallbackSite.code} wird genutzt)` : "nicht gesetzt"}
               </option>
-              {sites.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.code} – {s.name}
-                </option>
-              ))}
+              <SiteOptions sites={sites} />
             </select>
-            <div className="hint">Dort legt der NetBox-Sync das Gerät mit seinen Ports an.</div>
+            <div className="hint">
+              Dort legt der NetBox-Sync das Gerät mit seinen Ports an – meist der physische Standort, bei einem
+              Stretched-Cluster der virtuelle (z. B. 000).
+              {system?.site_hint && siteId == null && (
+                <>
+                  {" "}
+                  Aus dem Namen: <SiteChip site={system.site_hint} from="name" />
+                  {system.site_hint.known && system.site_hint.id != null && (
+                    <button
+                      type="button"
+                      className="linkbtn"
+                      onClick={() => setSiteId(system.site_hint!.id ?? null)}
+                      style={{ marginLeft: 6 }}
+                    >
+                      übernehmen
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
         <ScheduleField value={schedule} onChange={setSchedule} />
