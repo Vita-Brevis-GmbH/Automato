@@ -7,6 +7,13 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.2.3 – 2026-10-20
+
+- **ACI-Einspielen:** Lauf scheiterte mit `duplicate key … rule_service_pkey`, wenn mehrere
+  Filter-Einträge eines Contracts denselben Service ergeben (z. B. `https` und `443`, Einträge
+  nur mit anderem Quell-Port). Jeder Service zählt jetzt einmal je Regel – gilt für alle
+  Plattformen.
+
 ## 0.2.2 – 2026-10-20
 
 Diagnose bei abgelehnter Anmeldung am Gerät.

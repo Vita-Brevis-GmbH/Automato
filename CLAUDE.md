@@ -556,3 +556,8 @@ Fehlertext des Geräts (APIC `imdata.error`, WAPI, Klartext) + Plattform-Hinweis
 nur lokal bei `--check` (nie in die Lauf-Meldung, nie das Passwort); Orchestrator-Fehler unverändert.
 UI: `CredentialInput`/`SecretInput` ohne Browser-/Passwort-Manager-Autofill (`new-password`, readOnly bis
 Fokus). Tests `test_diagnose.py`.
+**0.2.3 (Fix ACI-Ingest, Dev-Befund):** `_persist_rule` dedupliziert Services je Regel nach
+`service_object.id` (mehrere ACI-Filter-Einträge → derselbe kanonische Service verletzte
+`rule_service_pkey`). Test `test_gleicher_service_mehrfach_je_regel_einmal`. Bekannte Grenze: EPG-Identität
+ist (Mandant, Name) – gleichnamige EPGs in verschiedenen ACI-Tenants/APs werden zusammengeführt.
+Tests: orchestrator 157, collectors 68, sot-gateway 14.

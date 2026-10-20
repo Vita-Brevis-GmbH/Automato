@@ -314,8 +314,11 @@ def _persist_rule(
         rule.endpoints.append(
             _endpoint(session, run.tenant_id, EndpointRole.DST, raw, sot, prefixes)
         )
-    for svc in nr.services:
-        rule.services.append(_service(session, svc))
+    # Je Regel jeden Service einmal: verschiedene Eintraege landen oft beim selben kanonischen
+    # Service (ACI-Filter `https` und `443`, Eintraege nur mit anderem Quell-Port, FortiGate-
+    # Gruppe + Einzelservice) - doppelt verletzt das sonst den Schluessel von rule_service
+    for svc in {s.id: s for s in (_service(session, raw) for raw in nr.services)}.values():
+        rule.services.append(svc)
     objs = device_objects or {}
     for role, art, names in (
         (RefRole.SRC, "addr", nr.source_refs),

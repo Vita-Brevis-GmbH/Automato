@@ -155,6 +155,32 @@ def test_ingest_ist_idempotent(session_factory):
     assert session.query(Rule).filter_by(source_system_id=run.source_system_id).count() == 3
 
 
+def test_gleicher_service_mehrfach_je_regel_einmal(session_factory):
+    """ACI: mehrere Filter-Eintraege ergeben denselben Service (Dev-Befund rule_service_pkey)."""
+    session = session_factory()
+    run = _seed_run(session)
+    result = CollectorResult.model_validate(
+        {
+            "status": "completed",
+            "rules": [
+                {
+                    "source_platform": "cisco_aci",
+                    "external_id": "uni/tn-TE_a/brc-web/subj-s1",
+                    "name": "web",
+                    "action": "allow",
+                    "sources": ["epg:EPG_app"],
+                    "destinations": ["epg:EPG_web"],
+                    "services": ["tcp/443", "TCP/443", "tcp/0443", "udp/53", "tcp/443"],
+                }
+            ],
+        }
+    )
+    ingest.persist_result(session, run, result, _fake_sot())
+    session.commit()
+    (rule,) = session.query(Rule).all()
+    assert sorted(s.canonical_name for s in rule.services) == ["tcp/443", "udp/53"]
+
+
 def test_typisierte_endpunkte_werden_klassifiziert(session_factory):
     from app.models import NetworkObject as NObj
 
