@@ -7,6 +7,21 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.2.1 – 2026-10-20
+
+Korrekturen am Agent-Paket.
+
+- **Agent-Paket:** Das sot-gateway-Wheel aus dem Orchestrator-Image war leer (der Docker-Bau
+  kopierte nur `pyproject.toml`) – pip meldete „Successfully installed sot-gateway“, der Agent
+  startete danach mit `No module named 'sot_gateway'`. Der Bau kopiert jetzt den Quellcode und
+  bricht ab, wenn ein Wheel sein Modul nicht enthält (`scripts/check_agent_package.py`); die CI
+  baut die Docker-Stage `agent-package` mit.
+- **Selbst-Update:** `run-agent.ps1` wird als neue Datei abgelegt statt überschrieben – die
+  Sperrmarkierung der alten Datei (Sicherheitswarnung beim Start) fällt dabei weg.
+- **install.ps1:** zeigt den gefundenen Python-Starter korrekt an (statt `System.Object[]`).
+
+Bereits installierte 0.2.0-Agenten reparieren sich beim nächsten Lauf selbst.
+
 ## 0.2.0 – 2026-10-20
 
 Erste versionierte Ausgabe.

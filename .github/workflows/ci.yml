@@ -30,6 +30,7 @@ jobs:
               - 'uv.lock'
               - 'VERSION'
               - 'scripts/**'
+              - 'deploy/collector-agent/**'
               - 'web-ui/frontend/package*.json'
             frontend:
               - 'web-ui/frontend/**'
@@ -66,6 +67,8 @@ jobs:
         run: uv run --package collectors pytest collectors/tests -q
       - name: Tests sot-gateway
         run: uv run --package sot-gateway pytest sot-gateway/tests -q
+      - name: Agent-Paket (Docker-Stage, Wheels vollstaendig)
+        run: docker build --target agent-package -f orchestrator/Dockerfile .
 
   frontend:
     needs: changes

@@ -35,12 +35,14 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 # Python-Starter robust ermitteln: py -3 (python.org-Launcher), sonst python / python3.
 # Nicht jede Windows-Station hat den "py"-Launcher (nur der python.org-Installer bringt ihn).
 function Resolve-PythonCmd {
-    foreach ($c in @(, @("py", "-3"), , @("python"), , @("python3"))) {
-        if (Get-Command $c[0] -ErrorAction SilentlyContinue) {
-            $rest = @(); if ($c.Count -gt 1) { $rest = $c[1..($c.Count - 1)] }
+    foreach ($label in @("py -3", "python", "python3")) {
+        $parts = $label -split " "
+        $exe = $parts[0]
+        $rest = @($parts | Select-Object -Skip 1)
+        if (Get-Command $exe -ErrorAction SilentlyContinue) {
             try {
-                & $c[0] @rest --version *> $null
-                if ($LASTEXITCODE -eq 0) { return , $c }
+                & $exe @rest --version *> $null
+                if ($LASTEXITCODE -eq 0) { return @{ Exe = $exe; Args = $rest; Label = $label } }
             }
             catch { }
         }
@@ -54,9 +56,9 @@ if (-not $pycmd) {
         "aktivieren), eine NEUE PowerShell oeffnen und dieses Skript erneut ausfuehren.")
     exit 1
 }
-$pyExe = $pycmd[0]
-$pyArgs = @(); if ($pycmd.Count -gt 1) { $pyArgs = $pycmd[1..($pycmd.Count - 1)] }
-Write-Host ("Nutze Python: " + ($pycmd -join " "))
+$pyExe = $pycmd.Exe
+$pyArgs = $pycmd.Args
+Write-Host ("Nutze Python: " + $pycmd.Label + " (" + (& $pyExe @pyArgs --version 2>&1) + ")")
 
 # Versionen (Paket aus dem Web-UI: agent-version.txt = Version+Build)
 $newVersion = ""

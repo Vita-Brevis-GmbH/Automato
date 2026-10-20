@@ -53,6 +53,7 @@ def test_neue_version_wird_installiert_und_aufruf_neu_ausgefuehrt(agent):
     assert su.maybe_update(["--poll"]) == 0
     assert (agent["dir"] / "agent-version.txt").read_text() == "v2"
     assert (agent["dir"] / "run-agent.ps1").read_bytes() == WRAPPER
+    assert not (agent["dir"] / "run-agent.ps1.new").exists()
     first, second, check = agent["pip"]
     assert "--force-reinstall" in first and "--no-deps" in first
     assert "--find-links" in second

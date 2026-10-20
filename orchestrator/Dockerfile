@@ -6,10 +6,14 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /src
 COPY pyproject.toml uv.lock ./
 COPY orchestrator/pyproject.toml orchestrator/pyproject.toml
-COPY sot-gateway/pyproject.toml sot-gateway/pyproject.toml
+# sot-gateway komplett (nicht nur pyproject.toml) - sonst entsteht ein leeres Wheel ohne Modul
+COPY sot-gateway/ sot-gateway/
 COPY collectors/ collectors/
 RUN uv build --package collectors --wheel --out-dir /agent-package \
     && uv build --package sot-gateway --wheel --out-dir /agent-package
+# Bau abbrechen, wenn ein Wheel sein Modul nicht enthaelt (Agent startet sonst nicht)
+COPY scripts/check_agent_package.py /tmp/check_agent_package.py
+RUN python /tmp/check_agent_package.py /agent-package
 COPY deploy/collector-agent/ /agent-package/
 
 # --- Orchestrator ---

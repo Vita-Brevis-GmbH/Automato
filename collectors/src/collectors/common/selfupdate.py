@@ -14,6 +14,7 @@ Aktiv nur fuer einen installierten Agenten (venv mit `run-agent.ps1` daneben, wi
 
 import hashlib
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -138,7 +139,11 @@ def install(info: dict, base: Path) -> None:
         _pip([sys.executable, "-c", "import collectors.run, sot_gateway"], "Startpruefung")
         wrapper = staging / WRAPPER
         if wrapper.is_file():
-            shutil.copyfile(wrapper, base / WRAPPER)
+            # Neue Datei statt Ueberschreiben: so faellt auch eine Sperrmarkierung der alten
+            # (Mark-of-the-Web, "Sicherheitswarnung" beim Start) weg
+            fresh = base / f"{WRAPPER}.new"
+            shutil.copyfile(wrapper, fresh)
+            os.replace(fresh, base / WRAPPER)
         (base / VERSION_FILE).write_text(str(info["version"]), encoding="utf-8")
     finally:
         shutil.rmtree(staging, ignore_errors=True)
