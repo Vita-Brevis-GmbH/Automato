@@ -1,0 +1,216 @@
+{
+  "fabricNode": [
+    {
+      "fabricNode": {
+        "attributes": {
+          "id": "1",
+          "name": "apic1",
+          "role": "controller",
+          "model": "APIC-SERVER-M3",
+          "serial": "FCH0001",
+          "dn": "topology/pod-1/node-1"
+        }
+      }
+    },
+    {
+      "fabricNode": {
+        "attributes": {
+          "id": "101",
+          "name": "leaf-101",
+          "role": "leaf",
+          "model": "N9K-C93180YC-FX",
+          "serial": "FDO101",
+          "dn": "topology/pod-1/node-101"
+        }
+      }
+    },
+    {
+      "fabricNode": {
+        "attributes": {
+          "id": "102",
+          "name": "leaf-102",
+          "role": "leaf",
+          "model": "N9K-C93180YC-FX",
+          "serial": "FDO102",
+          "dn": "topology/pod-1/node-102"
+        }
+      }
+    },
+    {
+      "fabricNode": {
+        "attributes": {
+          "id": "201",
+          "name": "spine-201",
+          "role": "spine",
+          "model": "N9K-C9364C",
+          "serial": "FDO201",
+          "dn": "topology/pod-1/node-201"
+        }
+      }
+    }
+  ],
+  "lldpAdjEp": [
+    {
+      "lldpAdjEp": {
+        "attributes": {
+          "sysName": "srv-web01",
+          "portIdV": "ens192",
+          "dn": "topology/pod-1/node-101/sys/lldp/inst/if-[eth1/10]/adj-1"
+        }
+      }
+    },
+    {
+      "lldpAdjEp": {
+        "attributes": {
+          "sysName": "srv-web01",
+          "portIdV": "ens224",
+          "dn": "topology/pod-1/node-102/sys/lldp/inst/if-[eth1/10]/adj-1"
+        }
+      }
+    }
+  ],
+  "cdpAdjEp": [
+    {
+      "cdpAdjEp": {
+        "attributes": {
+          "devId": "srv-db01",
+          "portId": "vmnic0",
+          "dn": "topology/pod-1/node-101/sys/cdp/inst/if-[eth1/20]/adj-1"
+        }
+      }
+    }
+  ],
+  "l1PhysIf": [
+    {
+      "l1PhysIf": {
+        "attributes": {
+          "id": "eth1/10",
+          "adminSt": "up",
+          "descr": "srv-web01 ens192",
+          "dn": "topology/pod-1/node-101/sys/phys-[eth1/10]"
+        }
+      }
+    },
+    {
+      "l1PhysIf": {
+        "attributes": {
+          "id": "eth1/10",
+          "adminSt": "up",
+          "descr": "srv-web01 ens224",
+          "dn": "topology/pod-1/node-102/sys/phys-[eth1/10]"
+        }
+      }
+    },
+    {
+      "l1PhysIf": {
+        "attributes": {
+          "id": "eth1/20",
+          "adminSt": "up",
+          "descr": "srv-db01",
+          "dn": "topology/pod-1/node-101/sys/phys-[eth1/20]"
+        }
+      }
+    },
+    {
+      "l1PhysIf": {
+        "attributes": {
+          "id": "eth1/48",
+          "adminSt": "down",
+          "descr": "",
+          "dn": "topology/pod-1/node-101/sys/phys-[eth1/48]"
+        }
+      }
+    }
+  ],
+  "infraNodeBlk": [
+    {
+      "infraNodeBlk": {
+        "attributes": {
+          "from_": "101",
+          "to_": "102",
+          "dn": "uni/infra/nprof-LEAF101-102/leaves-LEAF101-102-typ-range/nodeblk-blk1"
+        }
+      }
+    },
+    {
+      "infraNodeBlk": {
+        "attributes": {
+          "from_": "101",
+          "to_": "101",
+          "dn": "uni/infra/nprof-LEAF101/leaves-LEAF101-typ-range/nodeblk-blk1"
+        }
+      }
+    }
+  ],
+  "infraRsAccPortP": [
+    {
+      "infraRsAccPortP": {
+        "attributes": {
+          "tDn": "uni/infra/accportprof-IP_LEAF101-102",
+          "dn": "uni/infra/nprof-LEAF101-102/rsaccPortP-[uni/infra/accportprof-IP_LEAF101-102]"
+        }
+      }
+    },
+    {
+      "infraRsAccPortP": {
+        "attributes": {
+          "tDn": "uni/infra/accportprof-IP_LEAF101",
+          "dn": "uni/infra/nprof-LEAF101/rsaccPortP-[uni/infra/accportprof-IP_LEAF101]"
+        }
+      }
+    }
+  ],
+  "infraPortBlk": [
+    {
+      "infraPortBlk": {
+        "attributes": {
+          "fromCard": "1",
+          "fromPort": "10",
+          "toCard": "1",
+          "toPort": "10",
+          "dn": "uni/infra/accportprof-IP_LEAF101-102/hports-srv-web01-typ-range/portblk-block1"
+        }
+      }
+    },
+    {
+      "infraPortBlk": {
+        "attributes": {
+          "fromCard": "1",
+          "fromPort": "20",
+          "toCard": "1",
+          "toPort": "20",
+          "dn": "uni/infra/accportprof-IP_LEAF101/hports-srv-db01-typ-range/portblk-block1"
+        }
+      }
+    }
+  ],
+  "infraRsAccBaseGrp": [
+    {
+      "infraRsAccBaseGrp": {
+        "attributes": {
+          "tDn": "uni/infra/funcprof/accbundle-VPC_srv01",
+          "dn": "uni/infra/accportprof-IP_LEAF101-102/hports-srv-web01-typ-range/rsaccBaseGrp"
+        }
+      }
+    },
+    {
+      "infraRsAccBaseGrp": {
+        "attributes": {
+          "tDn": "uni/infra/funcprof/accportgrp-APG_srv-access",
+          "dn": "uni/infra/accportprof-IP_LEAF101/hports-srv-db01-typ-range/rsaccBaseGrp"
+        }
+      }
+    }
+  ],
+  "infraAccBndlGrp": [
+    {
+      "infraAccBndlGrp": {
+        "attributes": {
+          "name": "VPC_srv01",
+          "lagT": "node",
+          "dn": "uni/infra/funcprof/accbundle-VPC_srv01"
+        }
+      }
+    }
+  ]
+}

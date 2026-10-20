@@ -3,33 +3,71 @@
   "imdata": [
     {
       "fvTenant": {
-        "attributes": { "name": "TE_share", "dn": "uni/tn-TE_share" },
+        "attributes": {
+          "name": "TE_share",
+          "dn": "uni/tn-TE_share"
+        },
         "children": [
           {
+            "fvCtx": {
+              "attributes": {
+                "name": "VRF_share",
+                "dn": "uni/tn-TE_share/ctx-VRF_share"
+              }
+            }
+          },
+          {
             "fvBD": {
-              "attributes": { "name": "BD_app", "dn": "uni/tn-TE_share/BD-BD_app" },
+              "attributes": {
+                "name": "BD_app",
+                "dn": "uni/tn-TE_share/BD-BD_app"
+              },
               "children": [
-                { "fvRsBDToOut": { "attributes": { "tnL3extOutName": "L3O_inet" } } }
+                {
+                  "fvRsBDToOut": {
+                    "attributes": {
+                      "tnL3extOutName": "L3O_inet"
+                    }
+                  }
+                },
+                {
+                  "fvRsCtx": {
+                    "attributes": {
+                      "tnFvCtxName": "VRF_share"
+                    }
+                  }
+                },
+                {
+                  "fvSubnet": {
+                    "attributes": {
+                      "ip": "10.20.0.1/24",
+                      "scope": "private"
+                    }
+                  }
+                }
               ]
             }
           },
           {
             "fvBD": {
-              "attributes": { "name": "BD_db", "dn": "uni/tn-TE_share/BD-BD_db" },
-              "children": []
-            }
-          },
-          {
-            "fvAEPg": {
-              "attributes": { "name": "EG_web", "dn": "uni/tn-TE_share/ap-AP_001/epg-EG_web" },
+              "attributes": {
+                "name": "BD_db",
+                "dn": "uni/tn-TE_share/BD-BD_db"
+              },
               "children": [
-                { "fvRsBd": { "attributes": { "tnFvBDName": "BD_app" } } },
-                { "fvRsCons": { "attributes": { "tnVzBrCPName": "CT_web" } } },
-                { "fvSubnet": { "attributes": { "ip": "10.20.1.1/24" } } },
                 {
-                  "fvCEp": {
-                    "attributes": { "mac": "00:50:56:AA:BB:CC" },
-                    "children": [{ "fvIp": { "attributes": { "addr": "10.20.1.50" } } }]
+                  "fvRsCtx": {
+                    "attributes": {
+                      "tnFvCtxName": "VRF_share"
+                    }
+                  }
+                },
+                {
+                  "fvSubnet": {
+                    "attributes": {
+                      "ip": "10.30.0.1/24",
+                      "scope": "private"
+                    }
                   }
                 }
               ]
@@ -37,22 +75,115 @@
           },
           {
             "fvAEPg": {
-              "attributes": { "name": "EG_db", "dn": "uni/tn-TE_share/ap-AP_001/epg-EG_db" },
+              "attributes": {
+                "name": "EG_web",
+                "dn": "uni/tn-TE_share/ap-AP_001/epg-EG_web"
+              },
               "children": [
-                { "fvRsBd": { "attributes": { "tnFvBDName": "BD_db" } } },
-                { "fvRsProv": { "attributes": { "tnVzBrCPName": "CT_web" } } }
+                {
+                  "fvRsBd": {
+                    "attributes": {
+                      "tnFvBDName": "BD_app"
+                    }
+                  }
+                },
+                {
+                  "fvRsCons": {
+                    "attributes": {
+                      "tnVzBrCPName": "CT_web"
+                    }
+                  }
+                },
+                {
+                  "fvSubnet": {
+                    "attributes": {
+                      "ip": "10.20.1.1/24"
+                    }
+                  }
+                },
+                {
+                  "fvCEp": {
+                    "attributes": {
+                      "mac": "00:50:56:AA:BB:CC",
+                      "encap": "vlan-110"
+                    },
+                    "children": [
+                      {
+                        "fvIp": {
+                          "attributes": {
+                            "addr": "10.20.1.50"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "fvRsPathAtt": {
+                    "attributes": {
+                      "tDn": "topology/pod-1/protpaths-101-102/pathep-[VPC_srv01]",
+                      "encap": "vlan-110",
+                      "mode": "regular"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "fvAEPg": {
+              "attributes": {
+                "name": "EG_db",
+                "dn": "uni/tn-TE_share/ap-AP_001/epg-EG_db"
+              },
+              "children": [
+                {
+                  "fvRsBd": {
+                    "attributes": {
+                      "tnFvBDName": "BD_db"
+                    }
+                  }
+                },
+                {
+                  "fvRsProv": {
+                    "attributes": {
+                      "tnVzBrCPName": "CT_web"
+                    }
+                  }
+                },
+                {
+                  "fvRsPathAtt": {
+                    "attributes": {
+                      "tDn": "topology/pod-1/paths-101/pathep-[eth1/20]",
+                      "encap": "vlan-120",
+                      "mode": "untagged"
+                    }
+                  }
+                }
               ]
             }
           },
           {
             "vzBrCP": {
-              "attributes": { "name": "CT_web", "dn": "uni/tn-TE_share/brc-CT_web", "scope": "context" },
+              "attributes": {
+                "name": "CT_web",
+                "dn": "uni/tn-TE_share/brc-CT_web",
+                "scope": "context"
+              },
               "children": [
                 {
                   "vzSubj": {
-                    "attributes": { "name": "SJ_mysql" },
+                    "attributes": {
+                      "name": "SJ_mysql"
+                    },
                     "children": [
-                      { "vzRsSubjFiltAtt": { "attributes": { "tnVzFilterName": "FT_mysql" } } }
+                      {
+                        "vzRsSubjFiltAtt": {
+                          "attributes": {
+                            "tnVzFilterName": "FT_mysql"
+                          }
+                        }
+                      }
                     ]
                   }
                 }
@@ -61,21 +192,44 @@
           },
           {
             "vzFilter": {
-              "attributes": { "name": "FT_mysql", "dn": "uni/tn-TE_share/flt-FT_mysql" },
+              "attributes": {
+                "name": "FT_mysql",
+                "dn": "uni/tn-TE_share/flt-FT_mysql"
+              },
               "children": [
-                { "vzEntry": { "attributes": { "name": "mysql", "prot": "tcp", "dFromPort": "3306", "dToPort": "3306" } } }
+                {
+                  "vzEntry": {
+                    "attributes": {
+                      "name": "mysql",
+                      "prot": "tcp",
+                      "dFromPort": "3306",
+                      "dToPort": "3306"
+                    }
+                  }
+                }
               ]
             }
           },
           {
             "l3extOut": {
-              "attributes": { "name": "L3O_inet", "dn": "uni/tn-TE_share/out-L3O_inet" },
+              "attributes": {
+                "name": "L3O_inet",
+                "dn": "uni/tn-TE_share/out-L3O_inet"
+              },
               "children": [
                 {
                   "l3extInstP": {
-                    "attributes": { "name": "EN_inet" },
+                    "attributes": {
+                      "name": "EN_inet"
+                    },
                     "children": [
-                      { "l3extSubnet": { "attributes": { "ip": "0.0.0.0/0" } } }
+                      {
+                        "l3extSubnet": {
+                          "attributes": {
+                            "ip": "0.0.0.0/0"
+                          }
+                        }
+                      }
                     ]
                   }
                 }

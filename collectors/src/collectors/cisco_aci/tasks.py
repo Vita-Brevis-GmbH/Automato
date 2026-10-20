@@ -15,6 +15,7 @@ from importlib import resources
 
 from collectors.celery_app import app
 from collectors.cisco_aci.client import ApicClient
+from collectors.cisco_aci.inventory import parse_inventory
 from collectors.cisco_aci.mo import parse_epgs, parse_mo_export
 from collectors.cisco_aci.normalize import normalize_contract
 from collectors.common import agent as agent_api
@@ -32,6 +33,12 @@ def fetch_contracts() -> list[dict]:
 def fetch_mo_export() -> dict:
     """Beispiel-MO-Export (Tenant `TE_share`) fuer Lab/Tests ohne APIC."""
     sample = resources.files("collectors.cisco_aci").joinpath("sample_apic_export.json")
+    return json.loads(sample.read_text())
+
+
+def fetch_fabric_sample() -> dict:
+    """Beispiel-Fabric (Knoten, Access Policies, Ports, LLDP/CDP) fuer Lab/Tests."""
+    sample = resources.files("collectors.cisco_aci").joinpath("sample_apic_fabric.json")
     return json.loads(sample.read_text())
 
 
@@ -65,15 +72,15 @@ def _no_credentials(target: Target | None) -> str:
 
 
 def gather(target: Target | None = None) -> dict:
-    """MO-Export - echter APIC oder (nur zentral) Beispiel-Export."""
+    """Tenant-Baum + Fabric-Klassen - echter APIC oder (nur zentral) Beispieldaten."""
     apic = _credentials(target)
     if apic is not None:
         with apic.client() as client:
-            return client.export(apic.tenants)
+            return {"tenants": client.export(apic.tenants), "fabric": client.fabric()}
     if get_settings().agent_token:
         # Agent im Kundennetz: nie Beispieldaten in einen echten Mandanten schreiben
         raise RuntimeError(_no_credentials(target))
-    return fetch_mo_export()
+    return {"tenants": fetch_mo_export(), "fabric": fetch_fabric_sample()}
 
 
 def check(target: Target | None = None) -> tuple[bool, str]:
@@ -94,10 +101,12 @@ def collect_once(
 ) -> CollectorResult:
     """Eine Erfassung ohne Celery (Worker *und* externer Standalone-Collector)."""
     try:
-        export = gather(target)
+        data = gather(target)
+        export = data["tenants"]
         rules = [rule for c in parse_mo_export(export) for rule in normalize_contract(c)]
         epgs = [NormalizedEpg(**e) for e in parse_epgs(export)]
-        result = CollectorResult(status="completed", rules=rules, epgs=epgs)
+        inventory = parse_inventory(export, data.get("fabric"))
+        result = CollectorResult(status="completed", rules=rules, epgs=epgs, inventory=inventory)
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(status="failed", message=str(exc))
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))

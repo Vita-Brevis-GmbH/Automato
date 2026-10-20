@@ -82,10 +82,76 @@ class NormalizedObject(BaseModel):
     interface: str | None = None
 
 
+class NormalizedDevice(BaseModel):
+    """Geraet des Netzinventars: Firewall, ACI-Leaf/-Spine/-Controller (ADR 0010)."""
+
+    name: str
+    role: str  # firewall | leaf | spine | controller
+    model: str | None = None
+    serial: str | None = None
+    node_id: str | None = None
+    mgmt_ip: str | None = None
+    version: str | None = None
+
+
+class NormalizedInterface(BaseModel):
+    """Port/Interface mit VLAN-Konfiguration (FortiGate-Interface, ACI-Leaf-Port, PC/vPC)."""
+
+    device: str
+    name: str
+    kind: str = "physical"  # physical | vlan | lag | loopback | tunnel | virtual
+    enabled: bool | None = None
+    mode: Literal["access", "tagged"] | None = None
+    untagged_vlan: int | None = None
+    tagged_vlans: list[int] = Field(default_factory=list)
+    lag: str | None = None  # Bundle (aggregate / PC / vPC), zu dem der Port gehoert
+    parent: str | None = None  # VLAN-Interface: physischer Port
+    ips: list[str] = Field(default_factory=list)  # Interface-Adressen mit Laenge
+    description: str | None = None
+    zone: str | None = None
+    neighbor: str | None = None  # LLDP/CDP: Systemname der Gegenstelle
+    neighbor_port: str | None = None
+    policy_group: str | None = None  # ACI Access Policy Group
+    epgs: list[str] = Field(default_factory=list)  # ACI: EPGs mit statischem Pfad
+
+
+class NormalizedVlan(BaseModel):
+    vid: int
+    name: str
+    group: str | None = None  # VLAN-Gruppe (None = Quellsystem)
+    description: str | None = None
+    epgs: list[str] = Field(default_factory=list)  # ACI: Tenant/AP/EPG mit diesem VLAN
+
+
+class NormalizedSubnet(BaseModel):
+    """Reales Subnetz: FortiGate-Interface-Netz, ACI-BD- oder EPG-Subnetz."""
+
+    prefix: str  # Netzadresse, z. B. 10.1.1.0/24
+    gateway: str | None = None  # Interface-/BD-Adresse mit Laenge, z. B. 10.1.1.1/24
+    vrf: str | None = None
+    vlan: int | None = None
+    context: Literal["interface", "bd", "epg"] = "interface"
+    context_name: str = ""
+    aci_tenant: str | None = None
+    ap: str | None = None
+    epg: str | None = None
+    bd: str | None = None
+    description: str | None = None
+
+
+class NetworkInventory(BaseModel):
+    devices: list[NormalizedDevice] = Field(default_factory=list)
+    interfaces: list[NormalizedInterface] = Field(default_factory=list)
+    vlans: list[NormalizedVlan] = Field(default_factory=list)
+    subnets: list[NormalizedSubnet] = Field(default_factory=list)
+    vrfs: list[str] = Field(default_factory=list)
+
+
 class CollectorResult(BaseModel):
     status: Literal["completed", "failed"]
     rules: list[NormalizedRule] = Field(default_factory=list)
     nat_rules: list[NormalizedNat] = Field(default_factory=list)
     objects: list[NormalizedObject] = Field(default_factory=list)
     epgs: list[NormalizedEpg] = Field(default_factory=list)
+    inventory: NetworkInventory | None = None  # Netzinventar (ADR 0010)
     message: str | None = None

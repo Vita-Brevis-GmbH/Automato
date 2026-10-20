@@ -28,9 +28,16 @@ def _client_with_mock() -> FortiGateClient:
         "/api/v2/cmdb/firewall.service/group": "sample_service_groups.json",
         "/api/v2/cmdb/firewall/vip": "sample_vips.json",
         "/api/v2/cmdb/firewall/ippool": "sample_ippools.json",
+        "/api/v2/cmdb/system/interface": "sample_interfaces.json",
+        "/api/v2/cmdb/system/zone": "sample_zones.json",
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"  # nur lesend
+        if request.url.path == "/api/v2/cmdb/system/global":
+            return httpx.Response(200, json={"results": {"hostname": "fw-01"}})
+        if request.url.path == "/api/v2/monitor/system/status":
+            return httpx.Response(403, json={})  # Monitor im Profil gesperrt: kein Abbruch
         fixture = routes.get(request.url.path)
         if fixture is None:
             return httpx.Response(404, json={"results": []})
@@ -80,6 +87,8 @@ def test_gather_liefert_v6_und_ippools():
         "N_share-000-v6",
     }
     assert d["ippools"][0]["name"] == "IPP_share-000-inet01"
+    assert d["system"] == {"hostname": "fw-01"}
+    assert {i["name"] for i in d["interfaces"]} >= {"port2", "srv-vl10"}
 
 
 def test_ping_ok_und_fehler():

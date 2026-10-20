@@ -18,7 +18,16 @@ IP-Pools, Services und Service-Gruppen, jeweils mit aufgeloesten Werten, Komment
 import ipaddress
 from typing import Any
 
-from collectors.common.dto import NormalizedNat, NormalizedObject, NormalizedRule
+from collectors.common.dto import (
+    NetworkInventory,
+    NormalizedDevice,
+    NormalizedInterface,
+    NormalizedNat,
+    NormalizedObject,
+    NormalizedRule,
+    NormalizedSubnet,
+    NormalizedVlan,
+)
 
 _ANY = "all"
 
@@ -450,3 +459,119 @@ def _catalog_value(obj: dict) -> str | None:
         if first.startswith(tag):
             return None
     return first
+
+
+# -- Netzinventar (Interfaces, VLANs, Subnetze; ADR 0010) ---------------------
+
+_IFACE_KIND = {
+    "physical": "physical",
+    "vlan": "vlan",
+    "aggregate": "lag",
+    "redundant": "lag",
+    "loopback": "loopback",
+    "tunnel": "tunnel",
+}
+
+
+_UNSET_IP = "0.0.0.0"  # noqa: S104 - FortiOS-Platzhalter "keine Adresse", kein Bind
+
+
+def _iface_cidr(raw: str | None) -> str | None:
+    """'10.1.1.1 255.255.255.0' -> '10.1.1.1/24'; 0.0.0.0/leer -> None."""
+    parts = (raw or "").split()
+    if len(parts) != 2 or parts[0] == _UNSET_IP:
+        return None
+    try:
+        iface = ipaddress.ip_interface(f"{parts[0]}/{parts[1]}")
+    except ValueError:
+        return None
+    return f"{iface.ip}/{iface.network.prefixlen}"
+
+
+def _iface_ips(iface: dict) -> list[str]:
+    ips = [x for x in (_iface_cidr(iface.get("ip")),) if x]
+    ip6 = (iface.get("ipv6") or {}).get("ip6-address")
+    if ip6 and not ip6.startswith("::/"):
+        ips.append(ip6)
+    return ips
+
+
+def normalize_inventory(
+    interfaces: list[dict] | None,
+    zones: list[dict] | None,
+    system: dict | None,
+    device_name: str,
+) -> NetworkInventory:
+    """FortiGate-Interfaces/VLAN-Interfaces/Zonen -> Netzinventar (read-only gelesen)."""
+    system = system or {}
+    device = system.get("hostname") or device_name
+    zone_of = {
+        m.get("interface-name"): z["name"]
+        for z in zones or []
+        for m in z.get("interface", [])
+        if m.get("interface-name")
+    }
+    items = interfaces or []
+    lag_of = {
+        m.get("interface-name"): i["name"]
+        for i in items
+        for m in i.get("member", [])
+        if m.get("interface-name")
+    }
+    children: dict[str, list[int]] = {}
+    for i in items:
+        if i.get("type") == "vlan" and i.get("interface") and i.get("vlanid"):
+            children.setdefault(i["interface"], []).append(int(i["vlanid"]))
+
+    out_ifaces: list[NormalizedInterface] = []
+    vlans: dict[int, NormalizedVlan] = {}
+    subnets: list[NormalizedSubnet] = []
+    for i in items:
+        name = i["name"]
+        vid = int(i["vlanid"]) if i.get("type") == "vlan" and i.get("vlanid") else None
+        tagged = sorted(set(children.get(name, [])))
+        ips = _iface_ips(i)
+        out_ifaces.append(
+            NormalizedInterface(
+                device=device,
+                name=name,
+                kind=_IFACE_KIND.get(i.get("type") or "", "virtual"),
+                enabled=(i.get("status") or "up") != "down",
+                mode="access" if vid else ("tagged" if tagged else None),
+                untagged_vlan=vid,
+                tagged_vlans=tagged,
+                lag=lag_of.get(name),
+                parent=i.get("interface") if vid else None,
+                ips=ips,
+                description=i.get("description") or i.get("alias") or None,
+                zone=zone_of.get(name),
+            )
+        )
+        if vid is not None and vid not in vlans:
+            vlans[vid] = NormalizedVlan(
+                vid=vid, name=i.get("alias") or name, description=i.get("description") or None
+            )
+        for ip in ips:
+            iface = ipaddress.ip_interface(ip)
+            if iface.network.num_addresses == 1:
+                continue
+            subnets.append(
+                NormalizedSubnet(
+                    prefix=str(iface.network),
+                    gateway=ip,
+                    vlan=vid,
+                    context="interface",
+                    context_name=name,
+                    description=i.get("alias") or i.get("description") or None,
+                )
+            )
+    dev = NormalizedDevice(
+        name=device,
+        role="firewall",
+        model=system.get("model"),
+        serial=system.get("serial"),
+        version=system.get("version"),
+    )
+    return NetworkInventory(
+        devices=[dev], interfaces=out_ifaces, vlans=list(vlans.values()), subnets=subnets
+    )

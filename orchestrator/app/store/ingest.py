@@ -17,11 +17,12 @@ Findings entstehen nicht mehr hier, sondern im Abgleich (`reconcile`) am Ende de
 import ipaddress
 from datetime import UTC, datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app import naming
 from app.models import (
+    INVENTORY_MODELS,
     SERVICE_CATEGORIES,
     DeviceObject,
     EndpointKind,
@@ -30,6 +31,11 @@ from app.models import (
     EpgEndpoint,
     EpgSubnet,
     Family,
+    InvDevice,
+    InvInterface,
+    InvSubnet,
+    InvVlan,
+    InvVrf,
     MatchStatus,
     NatRule,
     NetworkObject,
@@ -47,7 +53,13 @@ from app.models import (
     Zone,
 )
 from app.naming import PrefixList
-from app.schemas.collector import CollectorResult, NormalizedNat, NormalizedObject, NormalizedRule
+from app.schemas.collector import (
+    CollectorResult,
+    NetworkInventory,
+    NormalizedNat,
+    NormalizedObject,
+    NormalizedRule,
+)
 from app.store import naming_profiles as profile_store
 from app.store import reconcile
 
@@ -98,6 +110,8 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     _apply_object_catalog(session, run.tenant_id, result.objects)
     for nat in result.nat_rules:
         _persist_nat(session, run, nat)
+    if result.inventory is not None:  # aeltere Collectors liefern kein Inventar
+        _replace_inventory(session, run, result.inventory)
     # Findings = abgeleiteter Zustand des ganzen Mandanten (alle Quellsysteme)
     reconcile.reconcile_tenant(session, run.tenant_id)
 
@@ -202,6 +216,26 @@ def _replace_device_objects(
         out[(art, o.name)] = obj
     session.flush()
     return out
+
+
+def _replace_inventory(session: Session, run, inv: NetworkInventory) -> None:
+    """Netzinventar des Quellsystems ersetzen (Geraete, Ports, VLANs, Subnetze, VRFs)."""
+    if run.source_system_id is None or run.tenant_id is None:
+        return
+    for model in INVENTORY_MODELS:
+        session.execute(delete(model).where(model.source_system_id == run.source_system_id))
+    base = {"tenant_id": run.tenant_id, "source_system_id": run.source_system_id}
+    rows: list = [InvDevice(**base, **d.model_dump()) for d in inv.devices]
+    for i in inv.interfaces:
+        data = i.model_dump()
+        for key in ("tagged_vlans", "ips", "epgs"):
+            data[key] = data[key] or None
+        rows.append(InvInterface(**base, **data))
+    rows += [InvVlan(**base, **{**v.model_dump(), "epgs": v.epgs or None}) for v in inv.vlans]
+    rows += [InvSubnet(**base, **s.model_dump()) for s in inv.subnets]
+    rows += [InvVrf(**base, name=name) for name in dict.fromkeys(inv.vrfs)]
+    session.add_all(rows)
+    session.flush()
 
 
 def _canonical_object_id(session: Session, tenant_id: int, value: str, sot) -> int | None:

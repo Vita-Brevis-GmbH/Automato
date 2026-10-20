@@ -14,6 +14,19 @@ import httpx
 # Fabric-interne Tenants: ohne ausdrückliche Auswahl nicht lesen (keine Kunden-Contracts)
 SYSTEM_TENANTS = frozenset({"infra", "mgmt"})
 
+# Fabric-Klassen fuers Netzinventar (Knoten, Access Policies, Ports, Nachbarn) - read-only
+FABRIC_CLASSES = (
+    "fabricNode",
+    "infraNodeBlk",
+    "infraRsAccPortP",
+    "infraPortBlk",
+    "infraRsAccBaseGrp",
+    "infraAccBndlGrp",
+    "l1PhysIf",
+    "lldpAdjEp",
+    "cdpAdjEp",
+)
+
 
 def parse_scope(read_scope: str) -> list[str]:
     """`"TE_a, TE_b"` -> `["TE_a", "TE_b"]` (leer = alle Tenants)."""
@@ -94,6 +107,16 @@ class ApicClient:
             names = [t for t in available if t not in SYSTEM_TENANTS]
         imdata = [mo for name in names for mo in self.tenant_tree(name)]
         return {"totalCount": str(len(imdata)), "imdata": imdata}
+
+    def fabric(self) -> dict[str, list[dict[str, Any]]]:
+        """Fabric-Klassen je Name; fehlende Leserechte auf einzelne Klassen -> leer."""
+        out: dict[str, list[dict[str, Any]]] = {}
+        for cls in FABRIC_CLASSES:
+            try:
+                out[cls] = self._get(f"/api/class/{cls}.json")
+            except httpx.HTTPStatusError:
+                out[cls] = []
+        return out
 
     def ping(self) -> int:
         """Leichter Lese-Zugriff (Login + Tenant-Liste); gibt die Anzahl Tenants zurueck."""

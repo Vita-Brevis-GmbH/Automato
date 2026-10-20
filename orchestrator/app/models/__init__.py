@@ -17,6 +17,14 @@ from app.models.device_object import (
 )
 from app.models.epg import Epg, EpgEndpoint, EpgSubnet
 from app.models.finding import Finding, FindingStatus, FindingType, Severity, SubjectKind
+from app.models.inventory import (
+    INVENTORY_MODELS,
+    InvDevice,
+    InvInterface,
+    InvSubnet,
+    InvVlan,
+    InvVrf,
+)
 from app.models.naming_profile import DictionaryEntry, NamingProfile
 from app.models.nat_rule import NatRule
 from app.models.network_object import (
@@ -46,6 +54,7 @@ from app.models.zone import Zone
 
 __all__ = [
     "ADDRESS_CATEGORIES",
+    "INVENTORY_MODELS",
     "SERVICE_CATEGORIES",
     "Agent",
     "AuditLog",
@@ -63,6 +72,11 @@ __all__ = [
     "Finding",
     "FindingStatus",
     "FindingType",
+    "InvDevice",
+    "InvInterface",
+    "InvSubnet",
+    "InvVlan",
+    "InvVrf",
     "IpamType",
     "MatchStatus",
     "NamingProfile",

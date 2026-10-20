@@ -20,7 +20,7 @@ from collectors.fortigate import normalize as norm
 from collectors.fortigate.client import FortiGateClient
 
 
-def _sample(name: str) -> list[dict]:
+def _sample(name: str) -> list | dict:
     return json.loads(resources.files("collectors.fortigate").joinpath(name).read_text())
 
 
@@ -58,6 +58,9 @@ def gather(target: Target | None = None) -> dict[str, list]:
         "service_groups": _sample("sample_service_groups.json"),
         "vips": _sample("sample_vips.json"),
         "ippools": _sample("sample_ippools.json"),
+        "interfaces": _sample("sample_interfaces.json"),
+        "zones": _sample("sample_zones.json"),
+        "system": _sample("sample_system.json"),
     }
 
 
@@ -102,8 +105,18 @@ def collect_once(
             d["services"],
             d.get("service_groups", []),
         )
+        inventory = norm.normalize_inventory(
+            d.get("interfaces"),
+            d.get("zones"),
+            d.get("system"),
+            target.name if target is not None and target.name else "fortigate",
+        )
         result = CollectorResult(
-            status="completed", rules=rules, nat_rules=nat_rules, objects=objects
+            status="completed",
+            rules=rules,
+            nat_rules=nat_rules,
+            objects=objects,
+            inventory=inventory,
         )
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
         result = CollectorResult(status="failed", message=str(exc))
