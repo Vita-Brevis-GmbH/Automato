@@ -180,7 +180,48 @@ export function ErrorBox({
   );
 }
 
-// Passwortfeld mit "Zeigen/Verbergen" für Tokens (Wert nie vorbefüllt vom Server).
+// Geräte-Zugangsdaten dürfen nie vom Browser/Passwort-Manager befüllt werden – sonst landen beim
+// Bearbeiten eines Quellsystems gespeicherte (fremde) Logins als neue Zugangsdaten im Orchestrator.
+// autoComplete="off" ignorieren Chrome/Edge bei Passwortfeldern; "new-password" + schreibgeschützt
+// bis zum Fokus verhindern das Befüllen, die data-Attribute halten gängige Passwort-Manager fern.
+const NO_FILL = { "data-1p-ignore": "true", "data-lpignore": "true", "data-bwignore": "true", "data-form-type": "other" };
+
+// Textfeld für Geräte-Benutzernamen (APIC/Infoblox) ohne Autofill.
+export function CredentialInput({
+  id,
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  maxLength,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  maxLength?: number;
+}) {
+  const [armed, setArmed] = useState(false);
+  return (
+    <input
+      id={id}
+      name={`${id}-automato`}
+      className="input mono"
+      value={value}
+      autoComplete="off"
+      readOnly={!armed}
+      onFocus={() => setArmed(true)}
+      maxLength={maxLength}
+      placeholder={placeholder}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      {...NO_FILL}
+    />
+  );
+}
+
+// Passwortfeld mit "Zeigen/Verbergen" für Tokens (Wert nie vorbefüllt vom Server, nie Autofill).
 export function SecretInput({
   id,
   value,
@@ -195,17 +236,22 @@ export function SecretInput({
   disabled?: boolean;
 }) {
   const [show, setShow] = useState(false);
+  const [armed, setArmed] = useState(false);
   return (
     <div style={{ display: "flex", gap: 6 }}>
       <input
         id={id}
+        name={`${id}-automato`}
         className="input mono"
         type={show ? "text" : "password"}
         value={value}
-        autoComplete="off"
+        autoComplete="new-password"
+        readOnly={!armed}
+        onFocus={() => setArmed(true)}
         placeholder={placeholder}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
+        {...NO_FILL}
       />
       <button className="btn btn-ghost btn-sm" type="button" onClick={() => setShow((s) => !s)}>
         {show ? "Verbergen" : "Zeigen"}

@@ -19,7 +19,7 @@ from collectors.cisco_aci.inventory import parse_inventory
 from collectors.cisco_aci.mo import parse_epgs, parse_mo_export
 from collectors.cisco_aci.normalize import normalize_contract
 from collectors.common import agent as agent_api
-from collectors.common import http
+from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, NormalizedEpg, Target
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
@@ -93,7 +93,7 @@ def check(target: Target | None = None) -> tuple[bool, str]:
         with apic.client() as client:
             count = client.ping()
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
-        return False, f"{type(exc).__name__}: {exc}"
+        return False, diagnose.device_error(exc, "cisco_aci", target, local=True)
     return True, f"erreichbar: {apic.url} ({count} Tenants sichtbar)"
 
 
@@ -109,7 +109,7 @@ def collect_once(
         inventory = parse_inventory(export, data.get("fabric"))
         result = CollectorResult(status="completed", rules=rules, epgs=epgs, inventory=inventory)
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
-        result = CollectorResult(status="failed", message=http.describe_error(exc))
+        result = CollectorResult(status="failed", message=diagnose.device_error(exc, "cisco_aci"))
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))
 
 

@@ -23,7 +23,7 @@ import {
 } from "./api";
 import type { Me } from "./auth";
 import { PLATFORM_LABEL, REF_ROLE_LABEL, REFERENCE_PLATFORMS } from "./refs";
-import { Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead, SecretInput } from "./ui";
+import { CredentialInput, Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead, SecretInput } from "./ui";
 
 // Mandanten (= Gruppengesellschaft) mit Kürzel, Namensprofil, Standorten und Quellsystemen.
 // Lesen = viewer, Schreiben/Löschen = admin (serverseitig erzwungen).
@@ -957,15 +957,13 @@ function SystemDialog({
           <>
             <div className="field">
               <label htmlFor="ss-user">Infoblox-Benutzer (read-only)</label>
-              <input
+              <CredentialInput
                 id="ss-user"
-                className="input mono"
                 value={username}
-                autoComplete="off"
                 maxLength={200}
                 disabled={clearCreds}
                 placeholder={hasCreds ? kept : "z. B. ro-automato"}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={setUsername}
               />
             </div>
             <div className="field">
@@ -1021,15 +1019,13 @@ function SystemDialog({
           <>
             <div className="field">
               <label htmlFor="ss-user">APIC-Benutzer (read-only)</label>
-              <input
+              <CredentialInput
                 id="ss-user"
-                className="input mono"
                 value={username}
-                autoComplete="off"
                 maxLength={200}
                 disabled={clearCreds}
                 placeholder={hasCreds ? kept : "z. B. ro-automato"}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={setUsername}
               />
             </div>
             <div className="field">

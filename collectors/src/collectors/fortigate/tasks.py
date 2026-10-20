@@ -13,7 +13,7 @@ from importlib import resources
 
 from collectors.celery_app import app
 from collectors.common import agent as agent_api
-from collectors.common import http
+from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, Target
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
@@ -74,7 +74,7 @@ def check(target: Target | None = None) -> tuple[bool, str]:
     try:
         FortiGateClient(url, token, verify_tls=verify).ping()
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
-        return False, f"{type(exc).__name__}: {exc}"
+        return False, diagnose.device_error(exc, "fortigate", target, local=True)
     return True, f"erreichbar: {url}"
 
 
@@ -120,7 +120,7 @@ def collect_once(
             inventory=inventory,
         )
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
-        result = CollectorResult(status="failed", message=http.describe_error(exc))
+        result = CollectorResult(status="failed", message=diagnose.device_error(exc, "fortigate"))
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))
 
 

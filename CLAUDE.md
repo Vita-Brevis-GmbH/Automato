@@ -551,3 +551,8 @@ Tests: orchestrator 156, collectors 65, sot-gateway 14.
 Quellcode + Bauabbruch bei leerem Wheel (`scripts/check_agent_package.py`), CI baut die Stage mit
 (`docker build --target agent-package`). Selbst-Update legt `run-agent.ps1` als neue Datei ab (alte
 Sperrmarkierung entfällt); `install.ps1` zeigt den Python-Starter korrekt an.
+**0.2.2 (Login-Diagnose):** `collectors/common/diagnose.py` (`device_error`): bei 401/403 eines Geräts
+Fehlertext des Geräts (APIC `imdata.error`, WAPI, Klartext) + Plattform-Hinweis; Benutzer/Passwort-Hinweise
+nur lokal bei `--check` (nie in die Lauf-Meldung, nie das Passwort); Orchestrator-Fehler unverändert.
+UI: `CredentialInput`/`SecretInput` ohne Browser-/Passwort-Manager-Autofill (`new-password`, readOnly bis
+Fokus). Tests `test_diagnose.py`.

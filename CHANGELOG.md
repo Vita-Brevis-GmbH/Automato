@@ -7,6 +7,20 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.2.2 – 2026-10-20
+
+Diagnose bei abgelehnter Anmeldung am Gerät.
+
+- **Collector:** Lehnt ein Gerät die Anmeldung ab (HTTP 401/403), nennen `--check` und die
+  Lauf-Meldung jetzt den Fehlertext des Geräts (APIC z. B. „FAILED local authentication“) und
+  einen Hinweis je Plattform (APIC: Remote-Benutzer als `apic#<Login-Domäne>\<Benutzer>`;
+  Infoblox: API-Recht der Admin-Gruppe; FortiGate: Trusted Hosts). Nur lokal bei `--check`
+  zusätzlich der verwendete Benutzer und Hinweise zum Passwort (Leerzeichen am Rand,
+  Nicht-ASCII-Zeichen) – das Passwort selbst wird nie ausgegeben.
+- **Web-UI:** Zugangsdaten-Felder der Quellsysteme werden nicht mehr vom Browser oder
+  Passwort-Manager automatisch befüllt (sonst konnte ein gespeichertes fremdes Login beim
+  Bearbeiten unbemerkt als neue Gerätezugangsdaten gespeichert werden).
+
 ## 0.2.1 – 2026-10-20
 
 Korrekturen am Agent-Paket.

@@ -11,7 +11,7 @@ from sot_gateway.adapters import InfobloxAdapter, NetBoxAdapter
 
 from collectors.celery_app import app
 from collectors.common import agent as agent_api
-from collectors.common import http
+from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, ReferenceBatch, Target
 from collectors.common.upload import confirmed, submit_references, submit_result
 
@@ -68,7 +68,7 @@ def collect_references(
         )
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(
-            status="failed", reference_count=total, message=http.describe_error(exc)
+            status="failed", reference_count=total, message=diagnose.device_error(exc, platform)
         )
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))
 
@@ -78,7 +78,7 @@ def check(platform: str, target: Target | None = None) -> tuple[bool, str]:
         adapter = _adapter(platform, target)
         version = adapter.ping()
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
-        return False, f"{type(exc).__name__}: {exc}"
+        return False, diagnose.device_error(exc, platform, target, local=True)
     product = "NetBox" if platform == "netbox" else "WAPI"
     return True, f"erreichbar: {target.base_url} ({product} {version})"
 
