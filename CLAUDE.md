@@ -583,4 +583,6 @@ Verifiziert: Tests, Postgres (0023 up/down mit Altbestand), Playwright. Noch nic
 **0.4.1 (Fix ACI-Zonen, Dev-Befund):** Zone einer Contract-Seite nur noch bei externer EPG (ihr L3Out);
 `fvRsBDToOut` (BD-Subnetze nach aussen bekannt gegeben) ist **keine** Zone, kein Rückfall auf BD-/EPG-Namen
 (`mo._zone`, `normalize_contract`). App-Doku: externe Gegenstelle → Tabelle nach L3Out (`categorize`).
-Tests: orchestrator 163, collectors 69, sot-gateway 14.
+**0.4.2:** `mo._zone(side)` über die ganze Seite — L3Out nur, wenn alle Consumer bzw. Provider externe EPGs
+desselben L3Outs sind (VPN-EPG, die viele Contracts mitkonsumiert, färbte sonst jeden Contract „L3O_vpn“).
+Tests: orchestrator 163, collectors 70, sot-gateway 14.

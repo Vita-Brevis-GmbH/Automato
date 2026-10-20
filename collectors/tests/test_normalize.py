@@ -427,3 +427,42 @@ def test_aci_mehrere_tenants_gleiche_namen_common_extern_vzany_interface():
     assert web["endpoints"] == [{"ip": "10.1.0.10", "mac": "AA"}]
     vzany = eps["uni/tn-TE_b/ctx-VRF_b/any"]
     assert vzany["kind"] == "vzany" and vzany["vrf"] == "VRF_b" and vzany["tenant"] == "TE_b"
+
+
+def test_aci_zone_nur_wenn_die_ganze_seite_extern_ist():
+    """Dev-Befund: eine VPN-EPG konsumiert viele Contracts mit - L3O_vpn nur, wenn alle
+    Consumer dahinter liegen."""
+    from collectors.cisco_aci.mo import _zone
+
+    vpn = {"kind": "external", "l3out": "L3O_vpn"}
+    inet = {"kind": "external", "l3out": "L3O_inet"}
+    epg = {"kind": "epg"}
+    assert _zone([vpn, epg]) is None and _zone([epg, vpn]) is None  # gemischt
+    assert _zone([vpn, dict(vpn)]) == "L3O_vpn"  # nur externe EPGs desselben L3Out
+    assert _zone([vpn, inet]) is None and _zone([]) is None and _zone([epg]) is None
+
+    export = [
+        _mo(
+            "fvTenant",
+            "TE_a",
+            [
+                _contract("CT_web", "FT_web"),
+                _filter("FT_web", "443"),
+                _mo(
+                    "fvAp",
+                    "AP_1",
+                    [_epg("EG_app", cons=["CT_web"]), _epg("EG_web", prov=["CT_web"])],
+                ),
+                _mo(
+                    "l3extOut",
+                    "L3O_vpn",
+                    [_mo("l3extInstP", "EN_vpn", [_mo("fvRsCons", tnVzBrCPName="CT_web")])],
+                ),
+            ],
+        )
+    ]
+    from collectors.cisco_aci.mo import parse_mo_export
+
+    (c,) = parse_mo_export(export)
+    assert {e["name"] for e in c["consumers"]} == {"EG_app", "EN_vpn"}
+    assert c["src_zone"] is None and c["dst_zone"] is None

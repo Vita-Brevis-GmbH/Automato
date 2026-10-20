@@ -288,11 +288,14 @@ def _ref(ep: dict) -> dict:
     return {k: ep.get(k) for k in keys if ep.get(k) is not None}
 
 
-def _zone(ep: dict) -> str | None:
-    """Zone einer Contract-Seite: nur eine externe EPG liegt hinter einem L3Out. Dass die BD
-    einer EPG an einen L3Out gebunden ist (fvRsBDToOut), heisst nur, dass ihre Subnetze nach
-    aussen bekannt gegeben werden - Verkehr zwischen EPGs laeuft nicht ueber den L3Out."""
-    return ep.get("l3out") if ep["kind"] == "external" else None
+def _zone(side: list[dict]) -> str | None:
+    """Zone einer Contract-Seite (Consumer bzw. Provider): der L3Out, wenn *alle* Endpunkte
+    externe EPGs desselben L3Outs sind. Konsumiert z. B. eine VPN-EPG viele Contracts
+    zusammen mit Anwendungs-EPGs, hat die Seite keine Zone - die externe EPG steht mit ihrem
+    L3Out in der Consumer-/Provider-Liste. Dass die BD einer EPG an einen L3Out gebunden ist
+    (fvRsBDToOut), heisst nur, dass ihre Subnetze nach aussen bekannt gegeben werden."""
+    l3outs = {ep.get("l3out") if ep["kind"] == "external" else None for ep in side}
+    return l3outs.pop() if len(l3outs) == 1 else None
 
 
 def parse_mo_export(data: Any) -> list[dict]:
@@ -340,8 +343,8 @@ def parse_mo_export(data: Any) -> list[dict]:
                 "consumer_epgs": [e["name"] for e in consumers],
                 "provider_epgs": [e["name"] for e in providers],
                 "subjects": subjects,
-                "src_zone": _zone(consumers[0]) if consumers else None,
-                "dst_zone": _zone(providers[0]) if providers else None,
+                "src_zone": _zone(consumers),
+                "dst_zone": _zone(providers),
             }
         )
     return contracts
