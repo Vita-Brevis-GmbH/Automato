@@ -36,6 +36,7 @@ def _finding_out(f) -> FindingOut:
         status=f.status.value,
         subject_kind=f.subject_kind.value,
         subject_id=f.subject_id,
+        source_system_id=f.source_system_id,
         detail=f.detail,
         note=f.note,
         first_seen=f.first_seen,
@@ -47,15 +48,17 @@ def _finding_out(f) -> FindingOut:
 def list_findings(
     tenant_id: int | None = None,
     status: str | None = None,
+    type: str | None = None,
+    limit: int = 5000,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "findings")
-    return [
-        _finding_out(f)
-        for f in findings_store.list_findings(session, tenant_id=tenant_id, status=status)
-    ]
+    rows = findings_store.list_findings(
+        session, tenant_id=tenant_id, status=status, ftype=type, limit=min(limit, 20000)
+    )
+    return [_finding_out(f) for f in rows]
 
 
 @router.patch("/{finding_id}", response_model=FindingOut)

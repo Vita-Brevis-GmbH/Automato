@@ -12,6 +12,8 @@ from app.api import (
     jobs,
     naming_profiles,
     nat,
+    objects,
+    reconcile,
     rules,
     systems,
     tenants,
@@ -51,6 +53,8 @@ def create_app() -> FastAPI:
     app.include_router(applications.router)
     app.include_router(appdoc.router)
     app.include_router(naming_profiles.router)
+    app.include_router(reconcile.router)
+    app.include_router(objects.router)
     return app
 
 

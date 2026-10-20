@@ -50,6 +50,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "source.updated": frozenset(
         {"source_id", "tenant_id", "name", "enabled", "agent_id", "credentials_set", "ref_role"}
     ),
+    "reconcile.run": frozenset({"tenant_id", "findings"}),
     "source.deleted": frozenset(
         {"source_id", "tenant_id", "name", "rules", "nat_rules", "findings", "references"}
     ),

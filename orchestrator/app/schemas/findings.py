@@ -11,6 +11,7 @@ class FindingOut(BaseModel):
     status: str
     subject_kind: str
     subject_id: str  # i. d. R. der Objektname (bei unmatched_object/invalid_name)
+    source_system_id: int | None = None  # Quellsystem, auf dessen Daten der Befund beruht
     detail: dict | None = None
     note: str | None = None
     first_seen: datetime | None = None

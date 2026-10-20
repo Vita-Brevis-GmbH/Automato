@@ -473,9 +473,241 @@ def discard_run(session: Session, run) -> None:
     session.execute(delete(ReferenceRecordRow).where(ReferenceRecordRow.collector_run_id == run.id))
 
 
-# -- Pruefungen (Abgleich, A4) ------------------------------------------------
+# -- Pruefungen (Abgleich) ---------------------------------------------------
 
 
 def checks(session: Session, tenant_id: int, prefixes, ctx: Context | None = None) -> list:
-    """Referenz-Pruefungen fuer den Abgleich (siehe A4)."""
-    return []
+    """Referenz-Pruefungen: Name ↔ DNS-Name, Subnetz nicht im IPAM, VLAN abweichend."""
+    from app.store.reconcile import Issue  # spaet: reconcile importiert dieses Modul
+
+    ctx = ctx or context(session, tenant_id)
+    if ctx.primary is None:
+        return []
+    names = dict(
+        session.execute(
+            select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == tenant_id)
+        ).all()
+    )
+    out: list = []
+    out += _name_mismatches(session, tenant_id, prefixes, ctx, names, Issue)
+    out += _subnet_checks(session, tenant_id, ctx, names, Issue)
+    return out
+
+
+def _short(name: str | None) -> str:
+    return (name or "").strip().rstrip(".").lower().split(".", 1)[0]
+
+
+def _name_mismatches(session, tenant_id, prefixes, ctx: Context, names, Issue) -> list:
+    """Host-Objekt (Konvention H_) mit IPAM-Eintrag, dessen DNS-Name nicht zum Namen passt."""
+    from app import naming
+    from app.models import DeviceObject, FindingType, ObjectCategory, ObjectClass, SubjectKind
+
+    out = []
+    rows = session.execute(
+        select(DeviceObject, ReferenceRecordRow)
+        .join(NetworkObjectRow, NetworkObjectRow.id == DeviceObject.network_object_id)
+        .join(ReferenceRecordRow, ReferenceRecordRow.id == NetworkObjectRow.reference_id)
+        .where(
+            DeviceObject.tenant_id == tenant_id,
+            DeviceObject.category == ObjectCategory.ADDRESS,
+            ReferenceRecordRow.dns_name.is_not(None),
+        )
+    ).all()
+    for obj, ref in rows:
+        parsed = naming.parse_object_name(obj.name, prefixes)
+        if parsed.object_class is not ObjectClass.HOST or not parsed.remainder:
+            continue
+        if _short(parsed.remainder) != _short(ref.dns_name):
+            out.append(
+                Issue(
+                    FindingType.NAME_MISMATCH,
+                    SubjectKind.DEVICE_OBJECT,
+                    obj.name,
+                    obj.source_system_id,
+                    detail={
+                        "source_system_id": obj.source_system_id,
+                        "source": names.get(obj.source_system_id),
+                        "name": obj.name,
+                        "value": (obj.values or [None])[0],
+                        "dns_name": ref.dns_name,
+                        "reference": ctx.primary.source.name,
+                    },
+                )
+            )
+    return out
+
+
+def _subnet_checks(session, tenant_id, ctx: Context, names, Issue) -> list:
+    """Reale Subnetze (FortiGate-Interfaces, ACI-BD/-EPG) gegen das IPAM pruefen."""
+    from app.models import FindingType, InvSubnet, SubjectKind
+
+    out = []
+    for sub in session.scalars(select(InvSubnet).where(InvSubnet.tenant_id == tenant_id)):
+        net = _norm_net(sub.prefix)
+        if net is None or net.is_link_local or net.is_loopback:
+            continue
+        detail = {
+            "source_system_id": sub.source_system_id,
+            "source": names.get(sub.source_system_id),
+            "prefix": sub.prefix,
+            "gateway": sub.gateway,
+            "context": sub.context,
+            "context_name": sub.context_name,
+            "epg": sub.epg,
+            "vrf": sub.vrf,
+            "vlan": sub.vlan,
+            "reference": ctx.primary.source.name,
+        }
+        ref = ctx.primary.prefix(sub.prefix)
+        if ref is None:
+            out.append(
+                Issue(
+                    FindingType.SUBNET_NOT_IN_IPAM,
+                    SubjectKind.SUBNET,
+                    sub.prefix,
+                    sub.source_system_id,
+                    detail=detail,
+                )
+            )
+            continue
+        if sub.vlan is not None and ref.vlan_vid is not None and sub.vlan != ref.vlan_vid:
+            out.append(
+                Issue(
+                    FindingType.VLAN_MISMATCH,
+                    SubjectKind.SUBNET,
+                    sub.prefix,
+                    sub.source_system_id,
+                    detail={**detail, "ipam_vlan": ref.vlan_vid},
+                )
+            )
+    return out
+
+
+# -- Vergleich fuehrendes IPAM ↔ Anreicherung (DDI ↔ NetBox) ------------------
+
+COMPARE_STATUSES = ("missing", "different", "only_enrichment")
+
+
+def _ip_view(index: ReferenceIndex) -> dict[str, Ref]:
+    """Je IP der aussagekraeftigste Eintrag (Host/IP-Adresse vor A/PTR/DHCP)."""
+    return {ip: recs[0] for ip, recs in index.by_ip.items() if recs}
+
+
+def compare_sources(
+    session: Session,
+    tenant_id: int,
+    status: str | None = None,
+    q: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict:
+    """Fuehrendes IPAM gegen die Anreicherung vergleichen (nur Felder mit DDI-Hoheit:
+    Existenz von Netzen/Ranges/IPs und der DNS-Name je IP)."""
+    ctx = context(session, tenant_id)
+    if ctx.primary is None or not ctx.enrichments:
+        return {"available": False}
+    primary, enrichment = ctx.primary, ctx.enrichments[0]
+    rows: list[dict] = []
+
+    def add(state: str, kind: str, value: str, p: Ref | None, e: Ref | None, diffs=()):
+        rows.append(
+            {
+                "status": state,
+                "kind": kind,
+                "value": value,
+                "primary": _brief(p),
+                "enrichment": _brief(e),
+                "diffs": list(diffs),
+            }
+        )
+
+    for kind, pmap, emap in (
+        ("prefix", primary.prefix_by_value, enrichment.prefix_by_value),
+        (
+            "range",
+            {r.value: r for *_, r in primary.ranges},
+            {r.value: r for *_, r in enrichment.ranges},
+        ),
+    ):
+        for value, p in pmap.items():
+            if value not in emap:
+                add("missing", kind, value, p, None)
+        for value, e in emap.items():
+            if value not in pmap:
+                add("only_enrichment", kind, value, None, e)
+    pips, eips = _ip_view(primary), _ip_view(enrichment)
+    for ip, p in pips.items():
+        e = eips.get(ip)
+        if e is None:
+            add("missing", "ip", ip, p, None)
+        elif (p.dns_name or "").rstrip(".").lower() != (e.dns_name or "").rstrip(".").lower():
+            add("different", "ip", ip, p, e, ["dns_name"])
+    for ip, e in eips.items():
+        if ip not in pips:
+            add("only_enrichment", "ip", ip, None, e)
+
+    summary = {s: 0 for s in COMPARE_STATUSES}
+    for r in rows:
+        summary[r["status"]] += 1
+    equal = (
+        len(pips)
+        + len(primary.prefix_by_value)
+        + len(primary.ranges)
+        - summary["missing"]
+        - summary["different"]
+    )
+    if q:
+        ql = q.lower()
+        rows = [
+            r
+            for r in rows
+            if ql in r["value"].lower()
+            or any(
+                ql in (x or {}).get("dns_name", "").lower() for x in (r["primary"], r["enrichment"])
+            )
+        ]
+    if status:
+        rows = [r for r in rows if r["status"] == status]
+    order = {s: i for i, s in enumerate(COMPARE_STATUSES)}
+    kinds = {"prefix": 0, "range": 1, "ip": 2}  # Netze vor einzelnen IPs
+    rows.sort(key=lambda r: (order[r["status"]], kinds[r["kind"]], _sort_key(r["value"])))
+    return {
+        "available": True,
+        "primary": {
+            "id": primary.source.id,
+            "name": primary.source.name,
+            "platform": primary.platform,
+        },
+        "enrichment": {
+            "id": enrichment.source.id,
+            "name": enrichment.source.name,
+            "platform": enrichment.platform,
+        },
+        "summary": {**summary, "equal": max(equal, 0)},
+        "total": len(rows),
+        "rows": rows[offset : offset + limit],
+    }
+
+
+def _brief(r: Ref | None) -> dict | None:
+    if r is None:
+        return None
+    return {
+        "kind": r.kind,
+        "value": r.value,
+        "dns_name": r.dns_name or "",
+        "description": r.description,
+        "vlan": r.vlan_vid,
+        "site": r.site,
+        "url": r.url,
+    }
+
+
+def _sort_key(value: str):
+    first = value.split("-")[0].split("/")[0]
+    try:
+        addr = ipaddress.ip_address(first)
+        return (addr.version, int(addr), value)
+    except ValueError:
+        return (9, 0, value)
