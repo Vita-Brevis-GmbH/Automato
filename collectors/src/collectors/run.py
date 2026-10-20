@@ -13,6 +13,9 @@ Konfiguration ueber `AUTOMATO_*`-Env (collectors.config):
 
 Aufruf:
   automato-collector --poll        naechsten Lauf eines zugewiesenen Geraets holen + ausfuehren
+  automato-collector --poll --watch 20 --for 14
+                                wach bleiben: alle 20 s nach neuen Laeufen fragen, nach 14 min
+                                beenden (die Aufgabenplanung startet neu, inkl. Selbst-Update)
   automato-collector --check       alle zugewiesenen Geraete read-only pruefen
   automato-collector --check --strict  zusaetzlich: lehnt die FortiGate ein ungueltiges Token
                                 ab? (Risiko R16; zaehlt dort als ein Fehlversuch)
@@ -25,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from collections.abc import Callable, Sequence
 
 import httpx
@@ -78,6 +82,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--poll",
         action="store_true",
         help="naechsten externen Lauf aus der Agent-Queue holen (Agent-Token noetig)",
+    )
+    parser.add_argument(
+        "--watch",
+        type=int,
+        default=0,
+        metavar="SEKUNDEN",
+        help="mit --poll: wach bleiben und alle N Sekunden nach neuen Laeufen fragen",
+    )
+    parser.add_argument(
+        "--for",
+        dest="duration",
+        type=float,
+        default=14,
+        metavar="MINUTEN",
+        help="mit --watch: nach so vielen Minuten beenden (Standard 14)",
     )
     parser.add_argument(
         "--check",
@@ -138,24 +157,69 @@ def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return _check(args.platform, strict=args.strict)
     if args.strict:
         parser.error("--strict nur zusammen mit --check")
+    if args.watch and not args.poll:
+        parser.error("--watch nur zusammen mit --poll")
 
     if not args.poll:
         if not (args.platform and args.run_id):
             parser.error("--platform und --run-id erforderlich (oder --poll)")
         return 0 if _execute(args.platform, args.run_id, None, via_agent=False) else 1
 
-    # Pull-Modell: alle offenen Laeufe der zugewiesenen Geraete nacheinander abarbeiten
+    if args.watch:
+        return _watch(args.platform, args.watch, args.duration)
+    ok, done = _poll_once(args.platform)
+    if done == 0:
+        print("keine offenen Laeufe")
+    return 0 if ok else 1
+
+
+MIN_WATCH_SECONDS = 5
+
+
+def _poll_once(platform: str | None) -> tuple[bool, int]:
+    """Pull-Modell: alle offenen Laeufe der zugewiesenen Geraete nacheinander abarbeiten."""
     ok, done = True, 0
     while done < MAX_RUNS_PER_POLL:
-        run = agent_api.next_run(args.platform)  # --platform optional als Filter
+        run = agent_api.next_run(platform)  # --platform optional als Filter
         if not run:
             break
         target = Target(**run["target"]) if run.get("target") else None
         ok = _execute(run["platform"], run["run_id"], target, via_agent=True) and ok
         done += 1
-    if done == 0:
-        print("keine offenen Laeufe")
-    return 0 if ok else 1
+    return ok, done
+
+
+def _watch(
+    platform: str | None,
+    every: int,
+    minutes: float,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
+    """Wach bleiben: alle `every` Sekunden nach Laeufen fragen, nach `minutes` beenden.
+
+    Ein "Jetzt einlesen" im Web-UI wird so nach Sekunden statt erst beim naechsten Start der
+    geplanten Aufgabe abgeholt. Kurz nicht erreichbarer Orchestrator beendet die Schleife
+    nicht; die Aufgabenplanung startet den Agenten danach neu (inkl. Selbst-Update)."""
+    every = max(MIN_WATCH_SECONDS, every)
+    deadline = clock() + minutes * 60
+    ok, total, errors = True, 0, 0
+    print(f"Agent wartet auf Laeufe (alle {every} s, {minutes:g} min)")
+    while True:
+        try:
+            run_ok, done = _poll_once(platform)
+            ok = run_ok and ok
+            total += done
+            errors = 0
+        except httpx.HTTPError as exc:
+            errors += 1
+            if errors == 1:  # nicht alle paar Sekunden dieselbe Meldung
+                print(f"Orchestrator-Aufruf fehlgeschlagen: {_describe(exc)}", file=sys.stderr)
+        if clock() + every > deadline:
+            break
+        sleep(every)
+    print(f"{total} Lauf/Laeufe ausgefuehrt" if total else "keine offenen Laeufe")
+    return 0 if ok and errors == 0 else 1
 
 
 def _unsupported(platform: str) -> str:

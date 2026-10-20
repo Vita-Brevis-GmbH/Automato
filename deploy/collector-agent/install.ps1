@@ -6,7 +6,8 @@
 param(
     [string]$Wheel = "",                                   # Pfad zum collectors-*.whl (Default: neben dem Skript)
     [string]$InstallDir = "C:\Automato\collector",
-    [int]$IntervalMinutes = 15
+    [int]$IntervalMinutes = 15,                            # Neustart der Aufgabe (inkl. Selbst-Update-Pruefung)
+    [int]$WatchSeconds = 20                                # Abfrage-Intervall dazwischen (0 = nur beim Start)
 )
 $ErrorActionPreference = "Stop"
 $TaskName = "Automato Collector Agent"
@@ -108,15 +109,21 @@ elseif (-not (Test-Path $envFile)) {
     Write-Host "Bitte $envFile mit echten Werten fuellen (Agent-Token, Ziel-Creds, TLS)."
 }
 
-# Geplante Aufgabe (SYSTEM, alle N Minuten)
+# Geplante Aufgabe (SYSTEM, Start alle N Minuten). Der Agent bleibt dazwischen wach und fragt
+# alle $WatchSeconds s nach Laeufen; er endet 1 min vor dem naechsten Start. Laeuft er noch
+# (langer Lauf), wird der naechste Start ausgelassen (IgnoreNew) - nie zwei Agenten parallel.
+$forMinutes = [Math]::Max(1, $IntervalMinutes - 1)
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\run-agent.ps1`""
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\run-agent.ps1`" -WatchSeconds $WatchSeconds -ForMinutes $forMinutes"
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes)
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 4)
 Register-ScheduledTask -TaskName $TaskName `
-    -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
+    -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 
-Write-Host "Automato-Agent $newVersion installiert nach $InstallDir. Task '$TaskName' laeuft alle $IntervalMinutes min."
+Write-Host ("Automato-Agent $newVersion installiert nach $InstallDir. Task '$TaskName' startet alle " +
+    "$IntervalMinutes min und fragt dazwischen alle $WatchSeconds s nach Laeufen.")
 Write-Host "Kuenftige Versionen installiert der Agent selbst (Auto-Update, ADR 0011)."
 Write-Host "Verbindung testen: powershell -ExecutionPolicy Bypass -File '$InstallDir\run-agent.ps1' -Check"

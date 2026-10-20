@@ -11,13 +11,26 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import MatchStatus, NetworkObject, Rule, RuleDomain, RuleEndpoint, Zone
 
 
-def _filtered(stmt, tenant_id, source_system_id, domain):
+def _filtered(
+    stmt,
+    tenant_id,
+    source_system_id,
+    domain,
+    src_zone: str | None = None,
+    dst_zone: str | None = None,
+    action=None,
+):
     if tenant_id is not None:
         stmt = stmt.where(Rule.tenant_id == tenant_id)
     if source_system_id is not None:
         stmt = stmt.where(Rule.source_system_id == source_system_id)
     if domain is not None:
         stmt = stmt.where(Rule.domain == domain)
+    for column, name in ((Rule.src_zone_id, src_zone), (Rule.dst_zone_id, dst_zone)):
+        if name:
+            stmt = stmt.where(column.in_(select(Zone.id).where(Zone.name == name)))
+    if action is not None:
+        stmt = stmt.where(Rule.action == action)
     return stmt
 
 
@@ -28,6 +41,9 @@ def list_rules(
     offset: int = 0,
     source_system_id: int | None = None,
     domain: RuleDomain | None = None,
+    src_zone: str | None = None,
+    dst_zone: str | None = None,
+    action=None,
 ) -> list[Rule]:
     """Regeln (Firewall-Policies und ACI-Contracts) gefiltert, seitenweise; `limit=None` = alle."""
     stmt = (
@@ -35,7 +51,9 @@ def list_rules(
         .options(selectinload(Rule.endpoints), selectinload(Rule.services), selectinload(Rule.refs))
         .order_by(Rule.source_system_id, Rule.sequence, Rule.id)
     )
-    stmt = _filtered(stmt, tenant_id, source_system_id, domain).offset(offset)
+    stmt = _filtered(stmt, tenant_id, source_system_id, domain, src_zone, dst_zone, action).offset(
+        offset
+    )
     return list(session.scalars(stmt if limit is None else stmt.limit(limit)))
 
 
@@ -44,8 +62,13 @@ def count_rules(
     tenant_id: int | None = None,
     source_system_id: int | None = None,
     domain: RuleDomain | None = None,
+    src_zone: str | None = None,
+    dst_zone: str | None = None,
+    action=None,
 ) -> int:
-    stmt = _filtered(select(func.count(Rule.id)), tenant_id, source_system_id, domain)
+    stmt = _filtered(
+        select(func.count(Rule.id)), tenant_id, source_system_id, domain, src_zone, dst_zone, action
+    )
     return session.scalar(stmt) or 0
 
 
@@ -84,8 +107,25 @@ def summary(session: Session, tenant_id: int | None = None) -> dict:
             .order_by(func.count(Rule.id).desc())
         )
     )
-    names = zone_names(session, {z for z, _ in zone_counts})
+    src_counts = list(
+        session.execute(
+            _filtered(select(Rule.src_zone_id, func.count(Rule.id)), tenant_id, None, None)
+            .group_by(Rule.src_zone_id)
+            .order_by(func.count(Rule.id).desc())
+        )
+    )
+    names = zone_names(session, {z for z, _ in zone_counts} | {z for z, _ in src_counts})
+    actions = {
+        a.value: n
+        for a, n in session.execute(
+            _filtered(select(Rule.action, func.count(Rule.id)), tenant_id, None, None).group_by(
+                Rule.action
+            )
+        )
+    }
     return {
+        "by_src_zone": [(names.get(z, "–") if z else "–", n) for z, n in src_counts],
+        "by_action": actions,
         "total": sum(by_domain.values()),
         "by_domain": by_domain,
         "source_system_ids": systems,

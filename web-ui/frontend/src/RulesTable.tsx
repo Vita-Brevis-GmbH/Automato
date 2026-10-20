@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchRules, fetchSystems, Rule, RuleDomain, System } from "./api";
+import { fetchRules, fetchRuleSummary, fetchSystems, Rule, RuleDomain, RuleSummary, System } from "./api";
+import type { View, ViewParams } from "./App";
 import RuleDetailDrawer from "./RuleDetail";
 import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
@@ -28,8 +29,38 @@ function ZoneChip({ zone }: { zone: string | null }) {
   return zone ? <span className="chip">{zone}</span> : <Dash />;
 }
 
+// NAT einer Policy: SNAT (Pool bzw. Interface-IP) und VIPs (DNAT) - Klick öffnet die NAT-Sicht
+export function NatChips({ r, onGo }: { r: Rule; onGo?: (v: View, p?: ViewParams) => void }) {
+  if (!r.nat) return null;
+  const open = (name: string) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onGo?.("nat", { q: name });
+  };
+  return (
+    <div className="chips" style={{ marginTop: 3 }}>
+      {r.nat.vips.map((v) => (
+        <button key={v} className="chip local linkchip" title="DNAT (VIP) – in NAT / VIPs öffnen" onClick={open(v)}>
+          VIP {v}
+        </button>
+      ))}
+      {r.nat.snat &&
+        (r.nat.pools.length ? (
+          r.nat.pools.map((pool) => (
+            <button key={pool} className="chip info linkchip" title="Source-NAT-Pool – in NAT / VIPs öffnen" onClick={open(pool)}>
+              SNAT {pool}
+            </button>
+          ))
+        ) : (
+          <span className="chip info" title="Source-NAT auf die IP des ausgehenden Interfaces">
+            SNAT Interface-IP
+          </span>
+        ))}
+    </div>
+  );
+}
+
 // ACI-Contract: Contract + Subject, darunter ACI-Tenant und Scope
-function NameCell({ r }: { r: Rule }) {
+function NameCell({ r, onGo }: { r: Rule; onGo?: (v: View, p?: ViewParams) => void }) {
   if (r.aci) {
     const pref = r.aci.kind === "preferred_group";
     return (
@@ -64,6 +95,7 @@ function NameCell({ r }: { r: Rule }) {
     <>
       <b>{r.name}</b>
       {r.section_label && <div className="faint">{r.section_label}</div>}
+      <NatChips r={r} onGo={onGo} />
     </>
   );
 }
@@ -71,17 +103,24 @@ function NameCell({ r }: { r: Rule }) {
 export default function RulesTable({
   tenantId,
   tenantLabel,
+  params = {},
+  onGo,
 }: {
   tenantId: number | null;
   tenantLabel: string;
+  params?: ViewParams; // object= / nat= / q= aus einem Link (Objekt, NAT, Finding)
+  onGo?: (v: View, p?: ViewParams) => void;
 }) {
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [total, setTotal] = useState(0);
   const [more, setMore] = useState(false);
   const [systems, setSystems] = useState<System[]>([]);
+  const [summary, setSummary] = useState<RuleSummary | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const object = params.object ?? "";
+  const nat = params.nat ?? "";
 
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(params.q ?? "");
   const [domain, setDomain] = useState<RuleDomain | "">("");
   const [system, setSystem] = useState("");
   const [srcZone, setSrcZone] = useState("");
@@ -95,14 +134,29 @@ export default function RulesTable({
     fetchSystems(tenantId)
       .then(setSystems)
       .catch(() => setSystems([]));
+    fetchRuleSummary(tenantId)
+      .then(setSummary)
+      .catch(() => setSummary(null));
   }, [tenantId]);
 
   const query = useMemo(
-    () => ({ q, tenantId, domain, systemId: system ? Number(system) : null, limit: PAGE }),
-    [q, tenantId, domain, system],
+    () => ({
+      q,
+      tenantId,
+      domain,
+      systemId: system ? Number(system) : null,
+      object,
+      nat,
+      srcZone,
+      dstZone,
+      action,
+      limit: PAGE,
+    }),
+    [q, tenantId, domain, system, object, nat, srcZone, dstZone, action],
   );
 
-  // Suche, Art und System filtert der Orchestrator (über alle Regeln, nicht nur die erste Seite).
+  // Suche und alle Filter wertet der Orchestrator aus (über alle Regeln, nicht nur die erste Seite).
+  // Die Suche findet auch Gruppenmitglieder, Werte/IP im Netz, Services, Zonen, EPGs und NAT.
   useEffect(() => {
     const timer = setTimeout(() => {
       setRules(null);
@@ -138,25 +192,13 @@ export default function RulesTable({
     domain ? s.platform === RULE_PLATFORMS[domain] : Object.values(RULE_PLATFORMS).includes(s.platform),
   );
 
-  const { srcZones, dstZones, actions } = useMemo(() => {
-    const s = new Set<string>();
-    const d = new Set<string>();
-    const a = new Set<string>();
-    (rules ?? []).forEach((r) => {
-      if (r.src_zone) s.add(r.src_zone);
-      if (r.dst_zone) d.add(r.dst_zone);
-      a.add(r.action);
-    });
-    return { srcZones: [...s].sort(), dstZones: [...d].sort(), actions: [...a].sort() };
-  }, [rules]);
+  // Auswahl der Zonen/Aktionen aus den Kennzahlen aller Regeln (nicht nur der geladenen Seite)
+  const zoneNames = (rows?: [string, number][]) => (rows ?? []).map(([z]) => z).filter((z) => z && z !== "–").sort();
+  const srcZones = zoneNames(summary?.by_src_zone);
+  const dstZones = zoneNames(summary?.by_dst_zone);
+  const actions = Object.keys(summary?.by_action ?? {}).sort();
 
-  const filtered = (rules ?? []).filter(
-    (r) =>
-      (!action || r.action === action) &&
-      (!srcZone || r.src_zone === srcZone) &&
-      (!dstZone || r.dst_zone === dstZone) &&
-      (!onlyFindings || r.num_unmatched > 0),
-  );
+  const filtered = (rules ?? []).filter((r) => !onlyFindings || r.num_unmatched > 0);
   const loaded = rules?.length ?? 0;
   // ACI: Quelle = Consumer-EPGs, Ziel = Provider-EPGs
   const srcHead = domain === "aci_contract" ? "Consumer" : domain === "firewall" ? "Quelle" : "Quelle / Consumer";
@@ -176,11 +218,20 @@ export default function RulesTable({
             <Icon name="search" />
           </span>
           <input
-            placeholder="Suche: Regel, Contract, Objekt/EPG oder IP (z. B. 10.20.4.10)…"
+            placeholder="Suche: Objekt, IP, DNS-Name, NAT, Zone…"
+            title="Sucht in allem: Regel, Objekte und Gruppenmitglieder, IP (auch im Netz), DNS-Name aus dem IPAM, Service, Zone, EPG, NAT, Kommentar. Mehrere Wörter = alle müssen vorkommen."
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
+        {(object || nat) && (
+          <span className="chip local" title="aus einem Link – Regeln, die dieses Objekt bzw. diesen NAT-Eintrag verwenden">
+            {object ? `Objekt ${object}` : `NAT ${nat}`}
+            <button className="linkbtn" title="Filter entfernen" onClick={() => onGo?.("regeln")}>
+              ✕
+            </button>
+          </span>
+        )}
         <select
           className="sel"
           value={domain}
@@ -267,7 +318,7 @@ export default function RulesTable({
                   <tr key={r.id} className="clickable" onClick={() => setSelected(r.id)}>
                     <td className="mono">{r.id}</td>
                     <td>
-                      <NameCell r={r} />
+                      <NameCell r={r} onGo={onGo} />
                     </td>
                     <td>
                       <ActionBadge action={r.action} />
@@ -314,7 +365,7 @@ export default function RulesTable({
       </div>
 
       {selected !== null && (
-        <RuleDetailDrawer ruleId={selected} systemName={systemName} onClose={() => setSelected(null)} />
+        <RuleDetailDrawer ruleId={selected} systemName={systemName} onClose={() => setSelected(null)} onGo={onGo} />
       )}
     </>
   );

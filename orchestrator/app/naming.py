@@ -87,6 +87,18 @@ def parse_object_name(name: str, prefixes: PrefixList | None = None) -> ParsedNa
     return ParsedName(object_class=ObjectClass.UNKNOWN, remainder=name, fqdn=None, domain=None)
 
 
+def server_name(name: str, prefixes: PrefixList | None = None) -> str:
+    """Name ohne Konventions-Praefix - so steht der Server im IPAM (DDI/NetBox), waehrend
+    Firewall, ACI und Doku ihn mit Praefix fuehren: H_web01.example.ch -> web01.example.ch.
+    Ohne bekanntes Praefix bleibt der Name, wie er ist."""
+    return parse_object_name(name, prefixes).remainder or name
+
+
+def short_name(name: str | None) -> str:
+    """Erstes Label eines (DNS-)Namens, klein und ohne Schlusspunkt: web01.example.ch -> web01."""
+    return (name or "").strip().rstrip(".").lower().split(".", 1)[0]
+
+
 def expects_ipam_match(object_class: ObjectClass) -> bool:
     """H-EXT_/N-EXT_ sind bewusst extern -> kein IPAM-Match erwartet (kein Fehler)."""
     return object_class not in (ObjectClass.EXTERNAL, ObjectClass.UNKNOWN)

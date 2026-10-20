@@ -8,8 +8,15 @@ from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.jobs import celery_app
-from app.models import CollectorRun
-from app.schemas.jobs import CollectJobRequest, CollectJobResponse, CollectorRunOut
+from app.models import REFERENCE_PLATFORMS, CollectorRun, SourceSystem
+from app.schemas.jobs import (
+    CollectAllItem,
+    CollectAllRequest,
+    CollectAllResponse,
+    CollectJobRequest,
+    CollectJobResponse,
+    CollectorRunOut,
+)
 from app.store import runs
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -38,6 +45,49 @@ def start_collect(
     if run.execution == "inprocess":
         celery_app.dispatch_collect(payload.platform, run.id)
     return CollectJobResponse(run_id=run.id, status=run.status, execution=run.execution)
+
+
+@router.post("/collect-all", response_model=CollectAllResponse, status_code=202)
+def start_collect_all(
+    payload: CollectAllRequest,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session),
+):
+    """Alle aktiven Quellsysteme des Mandanten einlesen (Referenzquellen zuerst). Systeme,
+    die schon laufen/warten oder nicht lesbar sind (z. B. ohne Lese-Zugang), werden mit
+    Grund uebersprungen. Rein lesend gegenueber den Geraeten - wie "Jetzt einlesen"."""
+    tenant_id = tenant_scope(principal, payload.tenant_id)
+    sources = sorted(
+        session.scalars(
+            select(SourceSystem).where(
+                SourceSystem.tenant_id == tenant_id, SourceSystem.enabled.is_(True)
+            )
+        ),
+        key=lambda s: (s.platform not in REFERENCE_PLATFORMS, s.name.lower()),
+    )
+    items: list[CollectAllItem] = []
+    for src in sources:
+        item = CollectAllItem(source_system_id=src.id, name=src.name, platform=src.platform.value)
+        items.append(item)
+        if runs.busy(session, src.id):
+            item.skipped = "Lauf läuft bzw. wartet bereits"
+            continue
+        try:
+            run = runs.queue_collect(
+                session,
+                platform=src.platform.value,
+                tenant_id=tenant_id,
+                source_system_id=src.id,
+                execution="inprocess",  # mit Agent wird daraus "external" (ADR 0009)
+                actor=f"user:{principal.subject}",
+            )
+        except runs.RunRejected as exc:
+            item.skipped = str(exc)
+            continue
+        item.run_id, item.execution = run.id, run.execution
+        if run.execution == "inprocess":
+            celery_app.dispatch_collect(run.platform, run.id)
+    return CollectAllResponse(queued=sum(1 for i in items if i.run_id), items=items)
 
 
 def _run_out(run: CollectorRun) -> CollectorRunOut:

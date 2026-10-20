@@ -63,10 +63,10 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     from app.store import references  # Referenz-Ebene (IPAM), spaet importiert
 
     ctx = references.context(session, tenant_id)
-    references.rematch(session, tenant_id, ctx)  # zuerst: Werte gegen den aktuellen Stand
     prefixes = profile_store.prefixes_for_tenant(session, tenant_id)
+    references.rematch(session, tenant_id, ctx, prefixes)  # zuerst: Werte gegen den Stand
     issues: list[Issue] = []
-    issues += _rule_endpoint_issues(session, tenant_id)
+    issues += _rule_endpoint_issues(session, tenant_id, ctx, prefixes)
     issues += _device_object_issues(session, tenant_id, prefixes)
     issues += references.checks(session, tenant_id, prefixes, ctx)
     _sync_findings(session, tenant_id, issues)
@@ -79,27 +79,67 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
 # -- Regel-Endpunkte (kanonische Werte-Ebene) ---------------------------------
 
 
-def _rule_endpoint_issues(session: Session, tenant_id: int) -> list[Issue]:
-    """unmatched_object / invalid_name fuer Objekte, die eine Regel des Mandanten nutzt."""
+def _rule_endpoint_issues(session: Session, tenant_id: int, ctx=None, prefixes=None) -> list[Issue]:
+    """unmatched_object / invalid_name fuer Objekte, die eine Regel des Mandanten nutzt.
+
+    Das Detail sagt genau, was fehlt: Wert, Referenzquelle, welche Firewall-Objekte und Regeln
+    den Wert nutzen und - falls das IPAM den Server unter seinem Namen (ohne Praefix) mit
+    einer anderen IP kennt - diese IP."""
     rows = session.execute(
-        select(NetworkObject, Rule.source_system_id)
+        select(NetworkObject, Rule.id, Rule.name, Rule.external_id, Rule.source_system_id)
         .join(RuleEndpoint, RuleEndpoint.network_object_id == NetworkObject.id)
         .join(Rule, Rule.id == RuleEndpoint.rule_id)
         .where(Rule.tenant_id == tenant_id)
     ).all()
+    objs: dict[int, NetworkObject] = {}
+    rules_of: dict[int, dict[int, str]] = defaultdict(dict)
+    sources_of: dict[int, set[int]] = defaultdict(set)
+    for obj, rule_id, rule_name, ext_id, source_id in rows:
+        objs[obj.id] = obj
+        rules_of[obj.id][rule_id] = rule_name or f"#{ext_id}"
+        if source_id is not None:
+            sources_of[obj.id].add(source_id)
+    unmatched = [o for o in objs.values() if o.match_status is MatchStatus.UNMATCHED]
+    fw_names: dict[int, list[str]] = defaultdict(list)
+    if unmatched:
+        for oid, name in session.execute(
+            select(DeviceObject.network_object_id, DeviceObject.name)
+            .where(
+                DeviceObject.tenant_id == tenant_id,
+                DeviceObject.network_object_id.in_([o.id for o in unmatched]),
+            )
+            .order_by(DeviceObject.name)
+        ):
+            if name not in fw_names[oid]:
+                fw_names[oid].append(name)
+    source_names = _source_names(session, tenant_id)
+    primary = ctx.primary if ctx is not None else None
     out: list[Issue] = []
-    seen: set[int] = set()
-    for obj, _source_id in rows:
-        if obj.id in seen:
-            continue
-        seen.add(obj.id)
+    for obj in objs.values():
         if obj.match_status is MatchStatus.UNMATCHED:
+            rules = sorted(rules_of[obj.id].values())
+            detail = {
+                "value": obj.value,
+                "object_class": obj.object_class.value,
+                "reference": primary.source.name if primary else None,
+                "no_reference": primary is None or None,
+                "sources": sorted(source_names.get(s, f"#{s}") for s in sources_of[obj.id]),
+                "firewall_objects": fw_names.get(obj.id, [])[:10],
+                "rules": len(rules),
+                "rule_names": rules[:5],
+            }
+            if not obj.value:
+                detail["server_name"] = naming.server_name(obj.name, prefixes)
+                detail["ipam_candidates"] = _name_candidates(primary, detail["server_name"])
+            elsewhere = _ipam_elsewhere(primary, obj, fw_names.get(obj.id, []), prefixes)
+            if elsewhere:
+                detail["ipam_elsewhere"] = elsewhere
             out.append(
                 Issue(
                     FindingType.UNMATCHED_OBJECT,
                     SubjectKind.NETWORK_OBJECT,
                     obj.name,
-                    detail={"value": obj.value, "object_class": obj.object_class.value},
+                    detail={k: v for k, v in detail.items() if v not in (None, [], "")},
                 )
             )
         if (
@@ -112,10 +152,45 @@ def _rule_endpoint_issues(session: Session, tenant_id: int) -> list[Issue]:
                     FindingType.INVALID_NAME,
                     SubjectKind.NETWORK_OBJECT,
                     obj.name,
-                    detail={"hint": "Name passt zu keinem Konventions-Praefix"},
+                    detail={
+                        "hint": "Name passt zu keinem Konventions-Praefix",
+                        "prefixes": _prefix_names(prefixes),
+                    },
                 )
             )
     return out
+
+
+def _ipam_elsewhere(primary, obj: NetworkObject, fw_names: list[str], prefixes) -> dict | None:
+    """Kennt das IPAM den Server (Name ohne Praefix, H_web01 -> web01) unter einer anderen IP?"""
+    if primary is None or obj.object_class is not ObjectClass.HOST:
+        return None
+    for name in fw_names:
+        ref = primary.lookup_name(name, prefixes)
+        if ref is not None and ref.value and ref.value != (obj.value or "").split("/")[0]:
+            return {"name": ref.dns_name or ref.name, "value": ref.value, "object": name}
+    return None
+
+
+def _name_candidates(primary, name: str) -> list[str]:
+    """Eintraege mit demselben Kurznamen (dup -> dup.example.ch, dup.other.ch): warum der
+    Name nicht eindeutig zugeordnet werden konnte."""
+    if primary is None:
+        return []
+    recs = primary.by_short.get(naming.short_name(name), [])
+    out = [f"{r.dns_name or r.name} → {r.value}" for r in recs]
+    return list(dict.fromkeys(out))[:5]
+
+
+def _prefix_names(prefixes) -> list[str]:
+    return [p for p, _ in (prefixes or naming.prefixes_from_entries([]))]
+
+
+def _source_names(session: Session, tenant_id: int) -> dict[int, str]:
+    return {
+        s.id: s.name
+        for s in session.scalars(select(SourceSystem).where(SourceSystem.tenant_id == tenant_id))
+    }
 
 
 # -- Firewall-Objekte (Inventar-Ebene) ----------------------------------------
@@ -125,10 +200,7 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
     objects = list(session.scalars(select(DeviceObject).where(DeviceObject.tenant_id == tenant_id)))
     if not objects:
         return []
-    source_names = {
-        s.id: s.name
-        for s in session.scalars(select(SourceSystem).where(SourceSystem.tenant_id == tenant_id))
-    }
+    source_names = _source_names(session, tenant_id)
     used = _used_object_ids(session, tenant_id, objects)
     out: list[Issue] = []
     by_value: dict[tuple[int, str], list[str]] = defaultdict(list)
@@ -143,7 +215,8 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
         if o.category in _CONVENTION_CATEGORIES:
             parsed = naming.parse_object_name(o.name, prefixes)
             if parsed.object_class is ObjectClass.UNKNOWN and o.obj_type not in _NO_CONVENTION:
-                out.append(_issue(FindingType.INVALID_NAME, o, detail))
+                known = {"prefixes": _prefix_names(prefixes)}
+                out.append(_issue(FindingType.INVALID_NAME, o, {**detail, **known}))
             elif o.category is ObjectCategory.ADDRESS:
                 shape = _value_shape(o)
                 if (parsed.object_class, shape) in _SHAPE_MISMATCH:

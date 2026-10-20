@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Agent, fetchAgents, startCollect, System, Tenant } from "./api";
+import { Agent, CollectAllItem, fetchAgents, startCollect, startCollectAll, System, Tenant } from "./api";
 import type { View } from "./App";
 import { PLATFORM_LABEL, REFERENCE_PLATFORMS } from "./refs";
 import { ErrorBox, Modal, Note } from "./ui";
@@ -212,6 +212,109 @@ export default function CollectDialog({
           )}
         </div>
       )}
+    </Modal>
+  );
+}
+
+// "Alle einlesen": für jedes aktive Quellsystem des Mandanten einen Lauf anlegen (operator).
+// Läuft/wartet schon einer oder fehlt der Lese-Zugang, überspringt der Orchestrator das System.
+export function CollectAllDialog({
+  tenantId,
+  tenantLabel,
+  systems,
+  onClose,
+  onStarted,
+}: {
+  tenantId: number;
+  tenantLabel: string;
+  systems: System[];
+  onClose: () => void;
+  onStarted: () => void;
+}) {
+  const active = systems
+    .filter((s) => s.enabled && s.tenant_id === tenantId)
+    .sort(
+      (a, b) =>
+        Number(!REFERENCE_PLATFORMS.includes(a.platform)) - Number(!REFERENCE_PLATFORMS.includes(b.platform)) ||
+        a.name.localeCompare(b.name),
+    );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  const [items, setItems] = useState<CollectAllItem[] | null>(null);
+
+  const submit = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await startCollectAll(tenantId);
+      setItems(res.items);
+      onStarted();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const queued = items?.filter((i) => i.run_id).length ?? 0;
+  return (
+    <Modal
+      title={items ? `${queued} Läufe angelegt` : "Alle Quellsysteme einlesen"}
+      onClose={onClose}
+      footer={
+        items ? (
+          <button className="btn btn-primary" onClick={onClose}>
+            Schliessen
+          </button>
+        ) : (
+          <>
+            <button className="btn btn-ghost" onClick={onClose}>
+              Abbrechen
+            </button>
+            <button className="btn btn-primary" onClick={submit} disabled={busy || active.length === 0}>
+              {busy ? "Lege an…" : `${active.length} Läufe starten`}
+            </button>
+          </>
+        )
+      }
+    >
+      <ErrorBox error={err} prefix="Läufe anlegen" />
+      {!items && (
+        <p>
+          Für jedes aktive Quellsystem von „{tenantLabel}“ wird ein Lauf angelegt – IPAM-Quellen zuerst. Rein lesend;
+          Geräte mit Agent holt der Agent ab, die übrigen liest der zentrale Worker.
+        </p>
+      )}
+      {active.length === 0 && <Note warn>Für diesen Mandanten ist kein aktives Quellsystem erfasst.</Note>}
+      <table>
+        <tbody>
+          {(items ?? active.map((s) => ({ source_system_id: s.id, name: s.name, platform: s.platform }) as CollectAllItem)).map(
+            (i) => (
+              <tr key={i.source_system_id}>
+                <td>
+                  <b>{i.name}</b>
+                </td>
+                <td className="faint">{PLATFORM_LABEL[i.platform] ?? i.platform}</td>
+                <td>
+                  {!items ? (
+                    systems.find((s) => s.id === i.source_system_id)?.agent_id != null ? (
+                      <span className="chip info">Agent</span>
+                    ) : (
+                      <span className="chip na">Zentraler Worker</span>
+                    )
+                  ) : i.run_id ? (
+                    <span className="chip ok">{i.execution === "external" ? "wartet auf Agent" : "läuft"}</span>
+                  ) : (
+                    <span className="chip warn" title={i.skipped ?? ""}>
+                      übersprungen: {i.skipped}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ),
+          )}
+        </tbody>
+      </table>
     </Modal>
   );
 }

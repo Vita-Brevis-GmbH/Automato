@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+// Findings (ADR 0004/0010): Übersicht nach Kategorien, je Befund ein Satz "was genau nicht
+// stimmt" + Hinweis, aufklappbar mit allen Angaben und Links auf die betroffenen Regeln.
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { fetchFindings, fetchFindingSummary, fetchSystems, Finding, FindingSummary, patchFinding, System } from "./api";
+import type { View, ViewParams } from "./App";
 import type { Me } from "./auth";
-import { FINDING_LABEL, findingLabel } from "./refs";
+import { FINDING_GROUPS, FINDING_HINT, FINDING_LABEL, findingLabel } from "./refs";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
 
 const PAGE = 500; // Findings je Seite
@@ -36,14 +39,48 @@ const DETAIL_LABEL: Record<string, string | null> = {
   prefix: null, // = Objekt-Spalte
   gateway: "Gateway",
   vrf: "VRF",
+  sources: "Firewall",
+  firewall_objects: "Firewall-Objekte",
+  rules: "Regeln",
+  rule_names: "z. B.",
+  server_name: "Name im IPAM gesucht",
+  ipam_elsewhere: "IPAM kennt den Server unter",
+  ipam_candidates: "Kandidaten im IPAM",
+  no_reference: null,
+  prefixes: "bekannte Präfixe",
+  compared: "verglichen",
 };
+
+const fmtValue = (k: string, v: unknown): string => {
+  if (Array.isArray(v)) return v.join(k === "compared" ? " ≠ " : ", ");
+  if (k === "ipam_elsewhere" && v && typeof v === "object") {
+    const o = v as Record<string, string>;
+    return `${o.name} → ${o.value}`;
+  }
+  return typeof v === "object" ? JSON.stringify(v) : String(v);
+};
+
+// Objekt-Namen eines Befunds, für die ein Link "Regeln mit diesem Objekt" sinnvoll ist
+function ruleLinks(f: Finding): { label: string; params: ViewParams }[] {
+  const d = (f.detail ?? {}) as Record<string, unknown>;
+  const names = (k: string) => (Array.isArray(d[k]) ? (d[k] as string[]) : []);
+  if (f.type === "unmatched_object" || (f.type === "invalid_name" && f.subject_kind === "network_object")) {
+    const objs = names("firewall_objects");
+    if (objs.length) return objs.slice(0, 5).map((n) => ({ label: n, params: { object: n } }));
+    return [{ label: f.subject_id, params: { q: String(d.value ?? f.subject_id) } }];
+  }
+  if (f.type === "duplicate_value") return names("names").map((n) => ({ label: n, params: { object: n } }));
+  if (f.subject_kind === "device_object" && f.type !== "unused_object")
+    return [{ label: f.subject_id, params: { object: f.subject_id } }];
+  return [];
+}
 
 function detailText(d: Record<string, unknown> | null): string {
   if (!d) return "–";
   return (
     Object.entries(d)
       .filter(([k, v]) => DETAIL_LABEL[k] !== null && v !== null && v !== "")
-      .map(([k, v]) => `${DETAIL_LABEL[k] ?? k}: ${Array.isArray(v) ? v.join(", ") : typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+      .map(([k, v]) => `${DETAIL_LABEL[k] ?? k}: ${fmtValue(k, v)}`)
       .join(" · ") || "–"
   );
 }
@@ -54,12 +91,14 @@ export default function Findings({
   tenantLabel,
   initialType = "",
   onChanged,
+  onGo,
 }: {
   me: Me;
   tenantId: number | null;
   tenantLabel: string;
   initialType?: string; // Vorfilter, z. B. aus der Abgleich-Ansicht
   onChanged: () => void;
+  onGo?: (v: View, p?: ViewParams) => void; // Links auf die betroffenen Regeln
 }) {
   const [findings, setFindings] = useState<Finding[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -70,6 +109,7 @@ export default function Findings({
   const [status, setStatus] = useState("open");
   const [type, setType] = useState(initialType);
   const [q, setQ] = useState("");
+  const [open, setOpen] = useState<number | null>(null); // aufgeklappter Befund
 
   useEffect(() => setType(initialType), [initialType]);
 
@@ -145,6 +185,43 @@ export default function Findings({
         Namenskonvention. Wird nach jedem Lauf neu berechnet; Triage (Status setzen) erfordert die Rolle Operator
         und bleibt erhalten.
       </PageHead>
+      {summary && Object.keys(summary.by_type).length > 0 && (
+        <div className="fgroups">
+          {FINDING_GROUPS.map((g) => {
+            const types = g.types.filter((t) => summary.by_type[t]);
+            if (!types.length) return null;
+            const openN = types.reduce((n, t) => n + summary.by_type[t].open, 0);
+            return (
+              <div key={g.key} className="card fgroup">
+                <div className="fgroup-head">
+                  <b>{g.label}</b>
+                  <span className={`chip ${openN ? "warn" : "ok"}`}>{openN} offen</span>
+                </div>
+                <div className="faint" style={{ fontSize: 12, marginBottom: 4 }}>
+                  {g.help}
+                </div>
+                {types.map((t) => {
+                  const c = summary.by_type[t];
+                  return (
+                    <button
+                      key={t}
+                      className={`fline ${type === t ? "on" : ""}`}
+                      title={`${FINDING_HINT[t] ?? t} – Klick filtert`}
+                      onClick={() => setType(type === t ? "" : t)}
+                    >
+                      <span>{findingLabel(t)}</span>
+                      <span className="mono">
+                        <b className={c.open ? "warnfg" : "okfg"}>{c.open}</b>
+                        {c.total > c.open && <span className="faint"> / {c.total}</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div className="filterbar">
         <div className="seg">
           {["open", "acknowledged", "resolved", "ignored", ""].map((s) => (
@@ -189,42 +266,83 @@ export default function Findings({
                   <th>Schwere</th>
                   <th>Typ</th>
                   <th>Objekt</th>
+                  <th>Befund</th>
                   <th>Quelle</th>
-                  <th>Detail</th>
                   <th>Zuletzt gesehen</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {shown.map((f) => (
-                  <tr key={f.id}>
-                    <td>
-                      <SeverityBadge severity={f.severity} />
-                    </td>
-                    <td className="nowrap" title={f.type}>
-                      {findingLabel(f.type)}
-                    </td>
-                    <td className="mono">{f.subject_id}</td>
-                    <td className="nowrap">{systemName(f.source_system_id) ?? <span className="faint">–</span>}</td>
-                    <td className="muted" style={{ maxWidth: 360 }}>
-                      {detailText(f.detail)}
-                    </td>
-                    <td className="mono">{fmtTime(f.last_seen)}</td>
-                    <td>
-                      {me.isOperator ? (
-                        <select className="sel" value={f.status} onChange={(e) => triage(f.id, e.target.value)}>
-                          {Object.entries(STATUS_LABEL).map(([k, v]) => (
-                            <option key={k} value={k}>
-                              {v}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className="chip">{STATUS_LABEL[f.status] ?? f.status}</span>
+                {shown.map((f) => {
+                  const links = onGo ? ruleLinks(f) : [];
+                  const sources = Array.isArray(f.detail?.sources) ? (f.detail!.sources as string[]).join(", ") : null;
+                  return (
+                    <Fragment key={f.id}>
+                      <tr className="clickable" onClick={() => setOpen(open === f.id ? null : f.id)}>
+                        <td>
+                          <SeverityBadge severity={f.severity} />
+                        </td>
+                        <td className="nowrap" title={FINDING_HINT[f.type] ?? f.type}>
+                          {findingLabel(f.type)}
+                        </td>
+                        <td className="mono">{f.subject_id}</td>
+                        <td style={{ maxWidth: 520 }}>
+                          <div>{f.message ?? detailText(f.detail)}</div>
+                          {f.hint && <div className="faint">→ {f.hint}</div>}
+                        </td>
+                        <td className="nowrap">
+                          {systemName(f.source_system_id) ?? sources ?? <span className="faint">–</span>}
+                        </td>
+                        <td className="mono">{fmtTime(f.last_seen)}</td>
+                        <td onClick={(e) => e.stopPropagation()}>
+                          {me.isOperator ? (
+                            <select className="sel" value={f.status} onChange={(e) => triage(f.id, e.target.value)}>
+                              {Object.entries(STATUS_LABEL).map(([k, v]) => (
+                                <option key={k} value={k}>
+                                  {v}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="chip">{STATUS_LABEL[f.status] ?? f.status}</span>
+                          )}
+                        </td>
+                      </tr>
+                      {open === f.id && (
+                        <tr className="subrow">
+                          <td colSpan={7}>
+                            <dl className="kv tight">
+                              {Object.entries(f.detail ?? {})
+                                .filter(([k, v]) => DETAIL_LABEL[k] !== null && v !== null && v !== "")
+                                .map(([k, v]) => (
+                                  <Fragment key={k}>
+                                    <dt>{DETAIL_LABEL[k] ?? k}</dt>
+                                    <dd className="mono">{fmtValue(k, v)}</dd>
+                                  </Fragment>
+                                ))}
+                              <dt>erstmals gesehen</dt>
+                              <dd className="mono">{fmtTime(f.first_seen)}</dd>
+                            </dl>
+                            {links.length > 0 && (
+                              <div style={{ marginTop: 6 }}>
+                                <span className="faint">Regeln anzeigen: </span>
+                                {links.map((l) => (
+                                  <button
+                                    key={l.label}
+                                    className="chip local linkchip"
+                                    onClick={() => onGo?.("regeln", l.params)}
+                                  >
+                                    {l.label}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
                       )}
-                    </td>
-                  </tr>
-                ))}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           )}

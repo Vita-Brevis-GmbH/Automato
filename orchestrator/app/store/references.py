@@ -114,6 +114,7 @@ class ReferenceIndex:
         self.prefix_by_value: dict[str, Ref] = {}
         self.ranges: list[tuple[int, int, int, Ref]] = []
         self.by_name: dict[str, list[Ref]] = defaultdict(list)
+        self.by_short: dict[str, list[Ref]] = defaultdict(list)  # erstes Label (web01)
         self.vlans: dict[int, list[Ref]] = defaultdict(list)
         for r in rows:
             if r.kind in _IP_KIND_VALUES:
@@ -135,6 +136,8 @@ class ReferenceIndex:
             for name in (r.dns_name, r.name):
                 if name:
                     self.by_name[name.lower()].append(r)
+                    if r.kind in _IP_KIND_VALUES:
+                        self.by_short[_short(name)].append(r)
         for recs in self.by_ip.values():
             recs.sort(key=lambda x: _IP_KIND_RANK.get(x.kind, 9))
         self._plens = {
@@ -206,11 +209,24 @@ class ReferenceIndex:
             prefixes[0] if prefixes else None
         )
 
-    def lookup_name(self, name: str | None) -> Ref | None:
-        if not name:
+    def lookup_name(self, name: str | None, prefixes=None) -> Ref | None:
+        """Eintrag zu einem Namen. Im IPAM steht der Server ohne Konventions-Praefix und oft
+        als FQDN, auf Firewall/ACI mit Praefix (H_web01): exakt, dann ohne Praefix, dann ueber
+        das erste Label - dieses nur, wenn es eindeutig auf eine IP zeigt."""
+        if not name or _norm_net(name) is not None:  # IP/Netz: kein Namens-Lookup
             return None
-        recs = self.by_name.get(name.lower()) or self.by_name.get(name.lower().rstrip("."))
-        return recs[0] if recs else None
+        from app import naming  # spaet: naming ist frei von DB-Abhaengigkeiten
+
+        candidates = [name, naming.server_name(name, prefixes)]
+        for n in dict.fromkeys(c.strip().lower().rstrip(".") for c in candidates if c):
+            recs = self.by_name.get(n) or self.by_name.get(f"{n}.")
+            if recs:
+                return recs[0]
+        short = _short(candidates[1])
+        recs = self.by_short.get(short, []) if short else []
+        if recs and len({r.value for r in recs}) == 1:
+            return recs[0]
+        return None
 
 
 # -- Quellen + Index laden ----------------------------------------------------
@@ -266,6 +282,72 @@ def context(session: Session, tenant_id: int | None) -> Context:
     return ctx
 
 
+# -- Anzeige einer einzelnen IP (NAT, VIP) ------------------------------------
+
+
+def ip_info(ctx: Context, value: str | None) -> list[dict]:
+    """IPAM-Sicht auf eine IP bzw. einen Bereich `a-b` (Startadresse): DNS-Namen aller
+    Eintraege und das umschliessende Netz (Beschreibung, VLAN, Site) - je Referenzquelle,
+    fuehrend zuerst. Leer, wenn keine Quelle etwas weiss."""
+    if not value:
+        return []
+    ip = value.split("-", 1)[0].strip()
+    out: list[dict] = []
+    for role, idx in [("primary", ctx.primary), *(("enrichment", e) for e in ctx.enrichments)]:
+        if idx is None:
+            continue
+        records = idx.ip_records(ip)
+        best, prefix = idx.lookup_value(value)
+        names = sorted({r.dns_name or r.name for r in records if r.dns_name or r.name})
+        if not names and prefix is None:
+            continue
+        out.append(
+            {
+                "source": idx.source.name,
+                "role": role,
+                "dns_names": names,
+                "records": [
+                    {"kind": r.kind, "dns_name": r.dns_name, "name": r.name} for r in records[:10]
+                ],
+                "prefix": (
+                    {
+                        "value": prefix.value,
+                        "description": prefix.description or prefix.name,
+                        "vlan": prefix.vlan_vid,
+                        "site": prefix.site,
+                        "vrf": prefix.vrf,
+                    }
+                    if prefix is not None
+                    else None
+                ),
+                "url": best.url if best is not None else None,
+            }
+        )
+    return out
+
+
+def dns_names(ctx: Context, value: str | None) -> list[str]:
+    """Alle DNS-Namen einer IP (auch a.b.c.d/32 bzw. Start eines Bereichs a-b) ueber die
+    Referenzquellen - fuer Listen und Suche."""
+    if not value:
+        return []
+    ip = value.split("-", 1)[0].strip()
+    if "/" in ip:
+        net = _norm_net(ip)
+        if net is None or net.num_addresses != 1:
+            return []
+        ip = str(net.network_address)
+    names: list[str] = []
+    for idx in [ctx.primary, *ctx.enrichments]:
+        if idx is None:
+            continue
+        for r in idx.ip_records(ip):
+            for n in (r.dns_name, r.name):
+                if n and n not in names:
+                    names.append(n)
+    return names
+
+
 # -- SoT-Adapter ueber dem gespeicherten Stand (Ingest) -----------------------
 
 
@@ -304,10 +386,12 @@ def snapshot_sot(session: Session, tenant_id: int | None) -> SnapshotSoT | None:
 # -- Rematch: Werte-Objekte mit dem aktuellen Stand verknuepfen ---------------
 
 
-def rematch(session: Session, tenant_id: int, ctx: Context) -> None:
+def rematch(session: Session, tenant_id: int, ctx: Context, prefixes=None) -> None:
     """Werte-Objekte des Mandanten gegen das fuehrende IPAM (+ Anreicherung) neu abgleichen.
 
-    Ohne Referenzquelle bleibt der Stand des Ingests (Live-Adapter, Rueckfall) unveraendert."""
+    Ohne Referenzquelle bleibt der Stand des Ingests (Live-Adapter, Rueckfall) unveraendert.
+    Objekte ohne Wert werden ueber den Namen gesucht - ohne Konventions-Praefix (`prefixes`
+    aus dem Namensprofil), so wie der Server im IPAM steht."""
     if ctx.primary is None and not ctx.enrichments:
         return
     from app.store import ingest  # spaet: ingest importiert reconcile
@@ -317,9 +401,9 @@ def rematch(session: Session, tenant_id: int, ctx: Context) -> None:
     ):
         if obj.match_status is MatchStatus.NOT_APPLICABLE:
             continue
-        best, prefix = _lookup(ctx.primary, obj)
+        best, prefix = _lookup(ctx.primary, obj, prefixes)
         enrichment = next(
-            (b for b in (_lookup(idx, obj)[0] for idx in ctx.enrichments) if b is not None), None
+            (b for b in (_lookup(idx, obj, prefixes)[0] for idx in ctx.enrichments) if b), None
         )
         obj.reference_id = best.id if best else None
         obj.reference_prefix_id = prefix.id if prefix else None
@@ -338,14 +422,16 @@ def rematch(session: Session, tenant_id: int, ctx: Context) -> None:
     session.flush()
 
 
-def _lookup(index: ReferenceIndex | None, obj: NetworkObjectRow) -> tuple[Ref | None, Ref | None]:
+def _lookup(
+    index: ReferenceIndex | None, obj: NetworkObjectRow, prefixes=None
+) -> tuple[Ref | None, Ref | None]:
     if index is None:
         return None, None
     if obj.value:
         best, prefix = index.lookup_value(obj.value)
         if best is not None:
             return best, prefix
-    by_name = index.lookup_name(obj.fqdn) or index.lookup_name(obj.name)
+    by_name = index.lookup_name(obj.fqdn, prefixes) or index.lookup_name(obj.name, prefixes)
     return by_name, None
 
 
@@ -532,6 +618,7 @@ def _name_mismatches(session, tenant_id, prefixes, ctx: Context, names, Issue) -
                         "value": (obj.values or [None])[0],
                         "dns_name": ref.dns_name,
                         "reference": ctx.primary.source.name,
+                        "compared": [_short(parsed.remainder), _short(ref.dns_name)],
                     },
                 )
             )

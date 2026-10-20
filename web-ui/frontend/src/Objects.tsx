@@ -15,7 +15,10 @@ import {
   System,
 } from "./api";
 import { CATEGORY_LABEL, IssueChips, REFERENCE_PLATFORMS, ValueList } from "./refs";
+import type { View, ViewParams } from "./App";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
+
+type Go = (v: View, p?: ViewParams) => void;
 
 type Tab = "addr" | "groups" | "services" | "subnets" | "vlans" | "ports" | "devices" | "vrfs";
 
@@ -32,7 +35,15 @@ const TABS: { key: Tab; label: string; category?: string }[] = [
 
 const PAGE = 200;
 
-export default function Objects({ tenantId, tenantLabel }: { tenantId: number | null; tenantLabel: string }) {
+export default function Objects({
+  tenantId,
+  tenantLabel,
+  onGo,
+}: {
+  tenantId: number | null;
+  tenantLabel: string;
+  onGo?: Go; // Klick auf "Regeln" → Regel-Liste mit diesem Objekt (auch über Gruppen)
+}) {
   const [tab, setTab] = useState<Tab>("addr");
   const [systems, setSystems] = useState<System[]>([]);
   const [source, setSource] = useState("");
@@ -112,6 +123,7 @@ export default function Objects({ tenantId, tenantLabel }: { tenantId: number | 
           sourceId={sourceId}
           q={q}
           issuesOnly={issuesOnly}
+          onGo={onGo}
         />
       ) : (
         <InventoryTable key={tab} tab={tab} tenantId={tenantId} sourceId={sourceId} q={q} issuesOnly={issuesOnly} />
@@ -156,6 +168,7 @@ function ObjectTable({
   sourceId,
   q,
   issuesOnly,
+  onGo,
 }: {
   tenantId: number;
   category: string;
@@ -164,6 +177,7 @@ function ObjectTable({
   sourceId: number | null;
   q: string;
   issuesOnly: boolean;
+  onGo?: Go;
 }) {
   const [data, setData] = useState<{ total: number; rows: DeviceObject[] } | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -222,6 +236,11 @@ function ObjectTable({
                       <b className="mono">{o.name}</b>
                       {o.comment && <div className="faint">{o.comment}</div>}
                       {o.interface && <div className="faint">Interface {o.interface}</div>}
+                      {(o.category === "vip" || o.category === "ippool") && onGo && (
+                        <button className="linkbtn" onClick={() => onGo("nat", { q: o.name })}>
+                          in NAT / VIPs öffnen
+                        </button>
+                      )}
                     </td>
                     <td className="nowrap">
                       {CATEGORY_LABEL[o.category] ?? o.category}
@@ -231,7 +250,20 @@ function ObjectTable({
                       {group ? <Members names={o.members} /> : <ValueList values={o.values} service={service} />}
                     </td>
                     {!group && <td>{o.member_of.length ? <Members names={o.member_of} /> : <Dash />}</td>}
-                    <td className="num">{o.used_in_rules || <span className="faint">0</span>}</td>
+                    <td className="num">
+                      {/* Zahl = direkte Verweise; der Link zeigt alle Regeln, auch über Gruppen */}
+                      {onGo && (o.used_in_rules > 0 || o.member_of.length > 0) ? (
+                        <button
+                          className="chip local linkchip"
+                          title="Regeln mit diesem Objekt anzeigen (auch über Gruppen)"
+                          onClick={() => onGo("regeln", { object: o.name })}
+                        >
+                          {o.used_in_rules || "via Gruppe"}
+                        </button>
+                      ) : (
+                        o.used_in_rules || <span className="faint">0</span>
+                      )}
+                    </td>
                     <td className="nowrap">{o.source ?? <Dash />}</td>
                     <td>
                       <IssueChips issues={o.issues} />

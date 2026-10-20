@@ -98,8 +98,15 @@ type Boot =
 const VIEW_KEYS = NAV.map((n) => n.key) as string[];
 
 function viewFromHash(): View {
-  const h = window.location.hash.replace(/^#\/?/, "");
+  const h = window.location.hash.replace(/^#\/?/, "").split("?")[0];
   return (VIEW_KEYS.includes(h) ? h : "uebersicht") as View;
+}
+
+// Parameter hinter der Ansicht (#regeln?object=H_web01) - Verlinkung zwischen den Ansichten
+export type ViewParams = Record<string, string>;
+function paramsFromHash(): ViewParams {
+  const query = window.location.hash.split("?")[1] ?? "";
+  return Object.fromEntries(new URLSearchParams(query).entries());
 }
 
 function stored(key: string): string | null {
@@ -230,6 +237,7 @@ function Splash({ children }: { children: React.ReactNode }) {
 
 function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   const [view, setView] = useState<View>(viewFromHash);
+  const [params, setParams] = useState<ViewParams>(paramsFromHash);
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [tenantsErr, setTenantsErr] = useState<unknown>(null);
@@ -247,14 +255,19 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
     store("automato_tenant", id === null ? null : String(id));
   }, []);
 
-  const go = useCallback((v: View) => {
+  const go = useCallback((v: View, p: ViewParams = {}) => {
     setView(v);
+    setParams(p);
     setFindingType("");
-    window.history.replaceState(null, "", `#${v}`);
+    const query = new URLSearchParams(p).toString();
+    window.history.replaceState(null, "", `#${v}${query ? `?${query}` : ""}`);
   }, []);
 
   useEffect(() => {
-    const onHash = () => setView(viewFromHash());
+    const onHash = () => {
+      setView(viewFromHash());
+      setParams(paramsFromHash());
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -431,10 +444,26 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
               />
             )}
             {current === "regeln" && tenantReady && (
-              <RulesTable tenantId={tenantId} tenantLabel={tenantLabel} />
+              <RulesTable
+                key={JSON.stringify(params)}
+                tenantId={tenantId}
+                tenantLabel={tenantLabel}
+                params={params}
+                onGo={go}
+              />
             )}
-            {current === "objekte" && tenantReady && <Objects tenantId={tenantId} tenantLabel={tenantLabel} />}
-            {current === "nat" && tenantReady && <NatTable tenantId={tenantId} tenantLabel={tenantLabel} />}
+            {current === "objekte" && tenantReady && (
+              <Objects tenantId={tenantId} tenantLabel={tenantLabel} onGo={go} />
+            )}
+            {current === "nat" && tenantReady && (
+              <NatTable
+                key={JSON.stringify(params)}
+                tenantId={tenantId}
+                tenantLabel={tenantLabel}
+                params={params}
+                onGo={go}
+              />
+            )}
             {current === "apps" && tenantReady && <AppDoc me={me} tenantId={tenantId} />}
             {current === "findings" && tenantReady && (
               <Findings
@@ -443,6 +472,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                 tenantLabel={tenantLabel}
                 initialType={findingType}
                 onChanged={loadStats}
+                onGo={go}
               />
             )}
             {current === "abgleich" && tenantReady && (

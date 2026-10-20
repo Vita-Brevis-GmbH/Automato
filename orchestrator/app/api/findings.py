@@ -17,6 +17,7 @@ from app.auth.principal import Principal
 from app.db import get_session
 from app.models import FindingStatus
 from app.schemas.findings import FindingOut
+from app.store import finding_text
 from app.store import findings as findings_store
 
 router = APIRouter(prefix="/findings", tags=["findings"])
@@ -28,6 +29,7 @@ class FindingPatch(BaseModel):
 
 
 def _finding_out(f) -> FindingOut:
+    message, hint = finding_text.explain(f.type.value, f.subject_id, f.detail)
     return FindingOut(
         id=f.id,
         tenant_id=f.tenant_id,
@@ -38,6 +40,8 @@ def _finding_out(f) -> FindingOut:
         subject_id=f.subject_id,
         source_system_id=f.source_system_id,
         detail=f.detail,
+        message=message,
+        hint=hint or None,
         note=f.note,
         first_seen=f.first_seen,
         last_seen=f.last_seen,

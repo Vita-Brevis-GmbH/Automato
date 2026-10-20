@@ -225,7 +225,9 @@ Get-ChildItem | Unblock-File
 powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</Cmd>
           <p>
             Installiert nach <code>{INSTALL_DIR}</code> und legt die geplante Aufgabe <b>„Automato Collector
-            Agent“</b> an (alle 15 Minuten). Ändern der Konfiguration später: <code>{INSTALL_DIR}\agent.env</code>.
+            Agent“</b> an: Start alle 15 Minuten (inkl. Prüfung auf ein Selbst-Update), dazwischen fragt der Agent
+            alle 20 Sekunden nach neuen Läufen (<code>-WatchSeconds</code>). Ändern der Konfiguration später:{" "}
+            <code>{INSTALL_DIR}\agent.env</code>.
           </p>
         </li>
 
@@ -244,10 +246,10 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
           <h3>Ersten Lauf starten</h3>
           <p>
             Übersicht → <b>Jetzt einlesen</b> → Mandant und Quellsystem wählen → Lauf starten (die Ausführung über
-            den Agenten ergibt sich aus der Zuweisung). Danach auf dem Agent-Rechner sofort abholen (sonst übernimmt
-            das die geplante Aufgabe beim nächsten Intervall):
+            den Agenten ergibt sich aus der Zuweisung). Der laufende Agent holt den Lauf innert rund 20 Sekunden ab.
+            Von Hand (z. B. direkt nach der Installation) einmal abholen und beenden:
           </p>
-          <Cmd>{`powershell -ExecutionPolicy Bypass -File ${INSTALL_DIR}\\run-agent.ps1`}</Cmd>
+          <Cmd>{`powershell -ExecutionPolicy Bypass -File ${INSTALL_DIR}\\run-agent.ps1 -Once`}</Cmd>
           <p>
             Erwartet: <code>fortigate run … (fw-01): completed</code>. In „Letzte Läufe“ steht dann <b>OK</b>, hier ist der
             Agent <b>online</b>, und die Regeln erscheinen unter Firewall-Regeln.

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchRuns, fetchSystems, Run, System, Tenant } from "./api";
 import type { Stats, View } from "./App";
 import type { Me } from "./auth";
-import CollectDialog from "./CollectDialog";
+import CollectDialog, { CollectAllDialog } from "./CollectDialog";
 import { ErrorBox, fmtTime, Icon, Loading, PageHead, RunStatusChip } from "./ui";
 
 // Übersicht/Dashboard: KPIs, letzte Läufe (inkl. "Jetzt einlesen") und Regeln je Ziel-Zone.
@@ -28,6 +28,7 @@ export default function Overview({
   const [runsErr, setRunsErr] = useState<unknown>(null);
   const [systems, setSystems] = useState<System[]>([]);
   const [collectOpen, setCollectOpen] = useState(false);
+  const [collectAllOpen, setCollectAllOpen] = useState(false);
 
   const loadRuns = useCallback(() => {
     fetchRuns(tenantId, 8)
@@ -88,9 +89,16 @@ export default function Overview({
         title="Übersicht"
         actions={
           me.isOperator && (
-            <button className="btn btn-primary btn-sm" onClick={() => setCollectOpen(true)}>
-              <Icon name="play" size={13} /> Jetzt einlesen
-            </button>
+            <>
+              {tenantId !== null && (
+                <button className="btn btn-ghost btn-sm" onClick={() => setCollectAllOpen(true)}>
+                  Alle einlesen
+                </button>
+              )}
+              <button className="btn btn-primary btn-sm" onClick={() => setCollectOpen(true)}>
+                <Icon name="play" size={13} /> Jetzt einlesen
+              </button>
+            </>
           )
         }
       >
@@ -245,6 +253,15 @@ export default function Overview({
         </div>
       </div>
 
+      {collectAllOpen && tenantId !== null && (
+        <CollectAllDialog
+          tenantId={tenantId}
+          tenantLabel={tenantLabel}
+          systems={systems}
+          onClose={() => setCollectAllOpen(false)}
+          onStarted={loadRuns}
+        />
+      )}
       {collectOpen && (
         <CollectDialog
           tenants={tenants}

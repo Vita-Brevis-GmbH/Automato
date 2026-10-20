@@ -303,3 +303,56 @@ def test_strict_nur_mit_check():
 
     with pytest.raises(SystemExit):
         main(["--poll", "--strict", "--no-update"])
+
+
+def test_watch_holt_neue_laeufe_ohne_neustart(monkeypatch, capsys):
+    """--watch: alle N Sekunden fragen, ein spaeter angelegter Lauf wird sofort abgeholt;
+    ein kurz nicht erreichbarer Orchestrator beendet die Schleife nicht."""
+    import httpx
+
+    import collectors.run as run
+
+    now = [0.0]
+    calls: list[float] = []
+    queue = {20.0: [{"platform": "fortigate", "run_id": "r-spaet", "target": None}]}
+
+    def next_run(platform=None):
+        calls.append(now[0])
+        if now[0] == 40.0:
+            raise httpx.ConnectError("weg")
+        pending = queue.get(now[0], [])
+        return pending.pop(0) if pending else None
+
+    executed = []
+    monkeypatch.setattr(run.agent_api, "next_run", next_run)
+    monkeypatch.setattr(run, "_execute", lambda p, rid, t, via_agent: executed.append(rid) or True)
+
+    def sleep(s):
+        now[0] += s
+
+    rc = run._watch(None, 20, 1, clock=lambda: now[0], sleep=sleep)
+    # Abfragen bei 0, 20 (Lauf + Nachfrage), 40 (Fehler), 60 (wieder erreichbar), dann Ende
+    assert executed == ["r-spaet"]
+    assert calls == [0.0, 20.0, 20.0, 40.0, 60.0]
+    out = capsys.readouterr()
+    assert "alle 20 s" in out.out and "Orchestrator-Aufruf fehlgeschlagen" in out.err
+    assert rc == 0  # Fehler behoben -> kein Fehlerstatus fuer die Aufgabenplanung
+
+
+def test_watch_nur_mit_poll_und_mindestintervall(monkeypatch):
+    import pytest
+
+    import collectors.run as run
+
+    with pytest.raises(SystemExit):
+        main(["--watch", "20", "--no-update"])
+    now = [0.0]
+    waits: list[float] = []
+    monkeypatch.setattr(run.agent_api, "next_run", lambda platform=None: None)
+
+    def sleep(s):
+        waits.append(s)
+        now[0] += s
+
+    assert run._watch(None, 1, 0.5, clock=lambda: now[0], sleep=sleep) == 0
+    assert set(waits) == {run.MIN_WATCH_SECONDS}

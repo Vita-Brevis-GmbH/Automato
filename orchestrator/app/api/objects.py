@@ -75,14 +75,19 @@ def list_objects(
         stmt = stmt.where(DeviceObject.category.in_([c.strip() for c in category.split(",")]))
     objects = list(session.scalars(stmt.order_by(DeviceObject.name, DeviceObject.id)))
     if q:
+        # Name, Kommentar, Werte, FQDN, Interface, Mitglieder und die DNS-Namen der Werte aus
+        # dem IPAM (dort steht der Server ohne Praefix: web01.example.ch fuer H_web01)
         ql = q.strip().lower()
-        objects = [
-            o
-            for o in objects
-            if ql in o.name.lower()
-            or ql in (o.comment or "").lower()
-            or any(ql in v.lower() for v in o.values or [])
-        ]
+        ctx = references.context(session, tid)
+
+        def _hit(o: DeviceObject) -> bool:
+            texts = [o.name, o.comment, o.fqdn, o.interface, *(o.values or []), *(o.members or [])]
+            if any(ql in (t or "").lower() for t in texts):
+                return True
+            names = [n for v in o.values or [] for n in references.dns_names(ctx, v)]
+            return any(ql in n.lower() for n in names)
+
+        objects = [o for o in objects if _hit(o)]
 
     used = (
         dict(

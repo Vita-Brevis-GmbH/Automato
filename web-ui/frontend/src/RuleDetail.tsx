@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Endpoint, fetchRuleDetail, RuleDetail, RuleRef } from "./api";
+import { Endpoint, fetchRuleDetail, NatBrief, RuleDetail, RuleRef } from "./api";
+import type { View, ViewParams } from "./App";
 import { EpgCard } from "./EpgCard";
 import { RefCard } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, Loading, MatchBadge, Note } from "./ui";
@@ -32,8 +33,16 @@ function EndpointList({ items }: { items: Endpoint[] }) {
 
 // Verweise wie auf der Firewall (Objektnamen, Gruppen) mit IPAM-Referenzdaten; ältere
 // Läufe ohne Verweise zeigen die aufgelösten Endpunkte.
-function Side({ refs, endpoints }: { refs: RuleRef[]; endpoints: Endpoint[] }) {
-  if (refs.length) return <>{refs.map((r, i) => <RefCard key={`${r.name}-${i}`} r={r} />)}</>;
+function Side({
+  refs,
+  endpoints,
+  onObject,
+}: {
+  refs: RuleRef[];
+  endpoints: Endpoint[];
+  onObject?: (name: string) => void;
+}) {
+  if (refs.length) return <>{refs.map((r, i) => <RefCard key={`${r.name}-${i}`} r={r} onObject={onObject} />)}</>;
   // ACI: je Consumer/Provider die Lage der EPG (Tenant, AP, BD, VRF, Subnetze, Endpunkte)
   const located = endpoints.filter((e) => e.epg);
   const rest = endpoints.filter((e) => !e.epg);
@@ -47,14 +56,67 @@ function Side({ refs, endpoints }: { refs: RuleRef[]; endpoints: Endpoint[] }) {
   );
 }
 
+// VIP (DNAT) bzw. SNAT-Pool der Regel: externe → interne IP mit Ports und DNS-Namen aus dem IPAM
+function NatList({ items, onOpen }: { items: NatBrief[]; onOpen?: (name: string) => void }) {
+  return (
+    <table>
+      <tbody>
+        {items.map((n) => (
+          <tr key={n.id}>
+            <td>
+              {onOpen ? (
+                <button className="linkbtn mono objlink" title="In NAT / VIPs öffnen" onClick={() => onOpen(n.name)}>
+                  {n.name}
+                </button>
+              ) : (
+                <span className="mono">{n.name}</span>
+              )}
+              <div>
+                <span className={`chip ${n.nat_type === "snat_pool" ? "info" : "local"}`}>
+                  {n.nat_type === "snat_pool" ? "SNAT-Pool" : "VIP / DNAT"}
+                </span>
+              </div>
+            </td>
+            <td>
+              <span className="mono">
+                {n.ext_ip ?? "–"}
+                {n.ext_port ? `:${n.ext_port}` : ""}
+              </span>
+              {(n.external_name || n.ext_dns.length > 0) && (
+                <div className="faint">{[n.external_name, ...n.ext_dns].filter((x, i, a) => x && a.indexOf(x) === i).join(", ")}</div>
+              )}
+            </td>
+            <td>
+              {n.mapped_ip ? (
+                <>
+                  <span className="mono">
+                    → {n.mapped_ip}
+                    {n.mapped_port ? `:${n.mapped_port}` : ""}
+                    {n.protocol ? `/${n.protocol}` : ""}
+                  </span>
+                  {n.mapped_dns.length > 0 && <div className="faint">{n.mapped_dns.join(", ")}</div>}
+                </>
+              ) : (
+                <span className="faint">{n.nat_type === "snat_pool" ? "ausgehende Quell-IP" : "–"}</span>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 export default function RuleDetailDrawer({
   ruleId,
   systemName,
   onClose,
+  onGo,
 }: {
   ruleId: number;
   systemName: (id: number) => string;
   onClose: () => void;
+  onGo?: (v: View, p?: ViewParams) => void;
 }) {
   const [detail, setDetail] = useState<RuleDetail | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -72,6 +134,8 @@ export default function RuleDetailDrawer({
   const refs = (role: string) => detail?.refs?.filter((r) => r.role === role) ?? [];
   const svcRefs = refs("service");
   const aci = detail?.aci ?? null;
+  const onObject = onGo ? (name: string) => onGo("regeln", { object: name }) : undefined;
+  const onNat = onGo ? (name: string) => onGo("nat", { q: name }) : undefined;
 
   return (
     <Drawer
@@ -157,6 +221,23 @@ export default function RuleDetailDrawer({
                 </dd>
                 <dt>Policy-ID</dt>
                 <dd className="mono">{detail.external_id}</dd>
+                <dt>NAT</dt>
+                <dd>
+                  {detail.nat?.snat ? (
+                    <span className="chip info">
+                      SNAT {detail.nat.pools.length ? detail.nat.pools.join(", ") : "Interface-IP"}
+                    </span>
+                  ) : (
+                    <span className="faint">kein Source-NAT</span>
+                  )}
+                  {detail.nat?.vips.length ? <span className="chip local">VIP {detail.nat.vips.join(", ")}</span> : null}
+                </dd>
+                {detail.comment && (
+                  <>
+                    <dt>Kommentar</dt>
+                    <dd>{detail.comment}</dd>
+                  </>
+                )}
               </>
             )}
           </dl>
@@ -165,13 +246,20 @@ export default function RuleDetailDrawer({
           <div className="sub-h">
             {aci ? (aci.kind === "taboo" ? "Quelle" : aci.kind === "preferred_group" ? "Mitglieder" : "Consumer-EPGs") : "Quellen"} ({refs("src").length || detail.num_src})
           </div>
-          <Side refs={refs("src")} endpoints={src} />
+          <Side refs={refs("src")} endpoints={src} onObject={onObject} />
 
           <div className="sub-h">
             {aci ? (aci.kind === "taboo" ? "Geschützte EPGs" : aci.kind === "preferred_group" ? "Mitglieder" : "Provider-EPGs") : "Ziele"} (
             {refs("dst").length || detail.num_dst})
           </div>
-          <Side refs={refs("dst")} endpoints={dst} />
+          <Side refs={refs("dst")} endpoints={dst} onObject={onObject} />
+
+          {(detail.nat_entries?.length ?? 0) > 0 && (
+            <>
+              <div className="sub-h">NAT ({detail.nat_entries!.length})</div>
+              <NatList items={detail.nat_entries!} onOpen={onNat} />
+            </>
+          )}
 
           {svcRefs.length > 0 && (
             <>

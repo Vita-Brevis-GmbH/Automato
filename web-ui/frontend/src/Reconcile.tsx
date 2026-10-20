@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchIpamCompare, fetchReconcileSummary, IpamCompare, RefBrief, ReconcileSummary, runReconcile } from "./api";
 import type { Me } from "./auth";
-import { FINDING_LABEL, PLATFORM_LABEL, REF_ROLE_LABEL } from "./refs";
+import { FINDING_HINT, FINDING_LABEL, PLATFORM_LABEL, REF_ROLE_LABEL } from "./refs";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 
 const PAGE = 200;
@@ -22,18 +22,6 @@ const TYPES = [
   "epg_no_endpoints",
 ];
 
-const HINT: Record<string, string> = {
-  unmatched_object: "Firewall-Objekt ohne Eintrag im IPAM",
-  name_mismatch: "Objektname passt nicht zum DNS-Namen im IPAM",
-  subnet_not_in_ipam: "Subnetz der Firewall/ACI fehlt im IPAM",
-  vlan_mismatch: "VLAN im Netz weicht vom IPAM ab",
-  invalid_name: "Name verletzt die Namenskonvention",
-  name_type_mismatch: "Präfix passt nicht zum Objekttyp",
-  duplicate_value: "gleicher Wert in mehreren Objekten",
-  ambiguous_ip: "IP in mehreren Objekten",
-  unused_object: "in keiner Regel oder Gruppe verwendet",
-  epg_no_endpoints: "EPG ohne gelernte Endpunkte",
-};
 
 export default function Reconcile({
   me,
@@ -169,7 +157,7 @@ export default function Reconcile({
                   <div className={`k-val sm ${!f || f.open === 0 ? "ok" : "warn"}`}>{f ? f.open : 0}</div>
                   <div className="k-sub">
                     {f && f.total > f.open ? `${f.total - f.open} triagiert · ` : ""}
-                    {HINT[t]}
+                    {FINDING_HINT[t]}
                   </div>
                 </button>
               );

@@ -502,7 +502,10 @@ def _object_by_name(
         session.flush()
         return obj
 
+    # Im IPAM steht der Server ohne Praefix (H_web01 -> web01[.domain])
     found = _safe_get_by_name(sot, value)
+    if found is None and parsed.remainder and parsed.remainder != value:
+        found = _safe_get_by_name(sot, parsed.remainder)
     _apply_match(session, tenant_id, obj, [found] if found else [])
     return obj
 

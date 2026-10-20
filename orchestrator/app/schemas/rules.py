@@ -12,6 +12,14 @@ class AciContractOut(BaseModel):
     kind: str = "contract"  # contract | taboo (deny) | preferred_group (VRF, alle Ports)
 
 
+class RuleNatOut(BaseModel):
+    """NAT einer Firewall-Policy: SNAT (Pool bzw. Interface-IP) und DNAT (VIPs im Ziel)."""
+
+    snat: bool = False  # Source-NAT an der Policy aktiv
+    pools: list[str] = []  # SNAT-IP-Pools; leer bei snat = NAT auf die Interface-IP
+    vips: list[str] = []  # VIP-Objekte im Ziel (auch ueber Gruppen)
+
+
 class RuleSummaryOut(BaseModel):
     """Kennzahlen fuer die Uebersicht (alle Regeln des Mandanten, nicht nur eine Seite)."""
 
@@ -21,6 +29,8 @@ class RuleSummaryOut(BaseModel):
     endpoints: int
     unmatched: int
     by_dst_zone: list[tuple[str, int]]
+    by_src_zone: list[tuple[str, int]] = []
+    by_action: dict[str, int] = {}
 
 
 class RuleOut(BaseModel):
@@ -41,6 +51,7 @@ class RuleOut(BaseModel):
     destinations: list[str] = []  # Ziel-Objektnamen wie auf der Firewall (sonst Werte)
     service_names: list[str] = []  # Service-Namen wie auf der Firewall (sonst kanonisch)
     aci: AciContractOut | None = None  # nur ACI-Contracts
+    nat: RuleNatOut | None = None  # nur Firewall-Policies mit SNAT oder VIP
 
 
 class EpgSubnetOut(BaseModel):
@@ -143,3 +154,6 @@ class RuleDetailOut(RuleOut):
     endpoints: list[EndpointOut] = []
     services: list[str] = []  # kanonische Service-Namen (tcp/443, ...)
     protections: list[str] = []  # UTM-Profile ("Schutzmechanismen")
+    comment: str | None = None  # Kommentar der Policy
+    # VIPs (DNAT) und SNAT-Pools der Regel mit IPs, Ports und DNS-Namen (Link in die NAT-Sicht)
+    nat_entries: list[dict] = []

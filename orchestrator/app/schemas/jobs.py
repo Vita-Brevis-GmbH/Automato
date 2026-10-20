@@ -36,3 +36,21 @@ class CollectorRunOut(BaseModel):
     trigger: str = "manual"  # manual | schedule
     queued_at: datetime | None = None
     finished_at: datetime | None = None
+
+
+class CollectAllRequest(BaseModel):
+    tenant_id: int
+
+
+class CollectAllItem(BaseModel):
+    source_system_id: int
+    name: str
+    platform: str
+    run_id: str | None = None
+    execution: str | None = None
+    skipped: str | None = None  # Grund, wenn kein Lauf angelegt wurde
+
+
+class CollectAllResponse(BaseModel):
+    queued: int
+    items: list[CollectAllItem]

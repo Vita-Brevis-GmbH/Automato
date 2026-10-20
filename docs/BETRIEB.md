@@ -48,8 +48,8 @@ lösen einen Termin nur einmal aus. „Letzte Läufe“ kennzeichnet solche Läu
 in NetBox kuratieren; Zonen hängen als Tag `zone-<name>` am Prefix. Nicht gematchte
 Objekte erscheinen als Findings → in NetBox ergänzen oder als extern bestätigen.
 
-**Zyklisch:** Für regelmässige Läufe den Collect per Scheduler/Cron gegen die CLI bzw.
-`POST /jobs/collect` auslösen (Celery-Beat ist im Stack vorhanden).
+**Alle auf einmal:** Übersicht → **Alle einlesen** bzw. `POST /jobs/collect-all` legt für jedes
+aktive Quellsystem des Mandanten einen Lauf an (Referenzquellen zuerst).
 
 **Stoppen / Zurücksetzen:**
 ```bash
@@ -68,28 +68,52 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
 **Dokumentation**
 - **Übersicht:** KPIs (Regeln, NAT/VIPs, offene Findings, Abdeckung gegen die SoT),
   **Letzte Läufe** und **Jetzt einlesen** (Operator): Mandant + Quellsystem wählen,
-  Ausführung *Extern (Agent)* oder *Zentral (Worker)*. Laufende Läufe aktualisieren sich.
+  Ausführung *Extern (Agent)* oder *Zentral (Worker)*. **Alle einlesen** legt für jedes aktive
+  Quellsystem des Mandanten einen Lauf an (IPAM-Quellen zuerst; läuft/wartet schon einer oder
+  fehlt der Lese-Zugang, wird das System mit Grund übersprungen). Laufende Läufe
+  aktualisieren sich; ein Agent holt den Lauf im Wach-Modus innert rund 20 s ab.
 - **Firewall-Regeln:** Quelle/Ziel/Dienste mit den **Objektnamen wie auf der Firewall**;
-  Suche (Regel, Objektname, IP), Filter System, Quell-/Ziel-Zone, Aktion, „nur mit Findings“.
-  Klick → Detail: je Objekt Typ, Kommentar, Gruppenmitglieder und je Wert die
-  **Referenzdaten** aus dem IPAM (DNS-Name, Netz, VLAN, Standort; aufklappbar mit allen
-  Feldern und Link in NetBox), dazu Dienste, Schutzprofile, VIP-Ziel.
+  NAT-Kennzeichen je Regel (**SNAT** mit Pool bzw. Interface-IP, **VIP**; Klick → NAT-Detail).
+  Die **Suche findet alles**, was zur Regel gehört: Regelname/-ID, Kommentar, Zonen, Aktion,
+  Schutzprofile, Objekte **inkl. verschachtelter Gruppenmitglieder**, Services, Werte und IPs
+  (eine IP trifft auch, wenn sie in einem Netz/Bereich der Regel liegt – „any“ ausgenommen),
+  **DNS-Namen aus dem IPAM** (dort ohne Präfix, z. B. `web01.example.ch` für `H_web01`),
+  EPG/AP/Tenant/BD/VRF und NAT (VIP-/Pool-Name, externe/interne IP, Port). Mehrere Wörter =
+  alle müssen vorkommen. Filter System, Quell-/Ziel-Zone, Aktion, „nur mit Findings“ (über
+  alle Regeln, nicht nur die geladene Seite); Links `#regeln?object=<Name>` bzw.
+  `#regeln?nat=<Name>` zeigen alle Regeln mit diesem Objekt (auch über Gruppen) bzw. NAT.
+  Klick → Detail: je Objekt Typ, Kommentar, Gruppenmitglieder (Objektnamen verlinkt) und je
+  Wert die **Referenzdaten** aus dem IPAM (DNS-Name, Netz, VLAN, Standort; aufklappbar mit
+  allen Feldern und Link in NetBox), dazu Dienste, Schutzprofile, Kommentar und **NAT**
+  (VIPs/SNAT-Pools mit IPs, Ports und DNS-Namen).
 - **Objekte & Inventar:** Adressobjekte (inkl. VIPs/IP-Pools), Gruppen, Services – mit
   Verwendung in Regeln/Gruppen und Befunden – sowie das Netzinventar aus FortiGate/APIC:
   **Subnetze** (mit Abgleich gegen führendes IPAM und Anreicherung, VLAN-Abweichung
   markiert), **VLANs** (inkl. EPGs), **Ports** (Modus, untagged/tagged VLANs, LAG/Parent,
   IPs, Zone/Policy-Gruppe, LLDP/CDP-Nachbar, EPGs), **Geräte**, **VRFs**. Filter Quelle,
-  Suche, „nur Abweichungen“.
-- **NAT / VIPs:** VIPs (extern → intern, Port-Forward) und SNAT-Pools.
+  Suche (auch Mitglieder und DNS-Namen der Werte aus dem IPAM), „nur Abweichungen“. Die
+  Regel-Zahl je Objekt führt zu allen Regeln mit dem Objekt (auch über Gruppen).
+- **NAT / VIPs:** VIPs (extern → intern, Port-Forward) und SNAT-Pools – mit **DNS-Namen**
+  beider IPs aus DDI/NetBox, **Server** (Firewall-Objekt der internen IP), Interface,
+  Kommentar und **Anzahl Regeln** (Klick → Regel-Liste). Suche über Name, IP (auch im
+  Pool-Bereich), Port, DNS-Name, Server, Interface, Kommentar. Klick → Detail mit
+  Einstellungen, IPAM-Sicht (Netz, VLAN, Standort) und den Firewall-Regeln, die den Eintrag
+  nutzen.
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, Verantwortlichen, Kritikalität,
   Standort und Mitgliedern (Application Profiles, EPGs, Server); **Vorschläge** nach der
   Projektnummer aus `AP_<nr>`/`H_…-<nr>-…` mit einem Klick übernehmen (Operator); **Doku**
   je Applikation über alle Systeme mit **Export (Markdown)** und **Drucken / PDF**. Dazu
   *Doku je System* (10 Kategorien, Standort verorten) und *Publizierte Dienste* (VIPs mit
   Regeln).
-- **Findings:** nach Status und Typ gefiltert, Suche, Quellsystem; Status setzen (Triage)
-  als Operator – bleibt über spätere Läufe erhalten (Findings werden nach jedem Lauf neu
-  berechnet).
+- **Findings:** oben eine **Übersicht nach Kategorien** (IPAM-Abgleich, Namenskonvention,
+  Bereinigung, ACI) mit offenen/gesamten Befunden je Typ (Klick filtert). Je Befund ein Satz,
+  **was genau nicht stimmt**, und ein Hinweis, was zu tun wäre – z. B. „172.16.5.9 ist im IPAM
+  weder als IP noch in einem bekannten Netz erfasst. Den Server db01.example.ch kennt das
+  IPAM unter 10.30.0.9. Firewall-Objekt H_db01 …, verwendet in 1 Regel“. Aufklappen zeigt alle
+  Angaben und Links auf die betroffenen Regeln. Filter Status/Typ, Suche; Status setzen
+  (Triage) als Operator – bleibt über spätere Läufe erhalten (Findings werden nach jedem Lauf
+  neu berechnet). Der Abgleich berücksichtigt, dass das IPAM den Server **ohne Präfix**
+  führt: `H_web01` passt zu `web01` bzw. `web01.example.ch` (Kurzname nur, wenn eindeutig).
 - **Abgleich:** Referenzquellen des Mandanten (führend/Anreicherung, eingelesen?), Kacheln je
   Befund-Typ (Klick → Findings vorgefiltert): nicht im IPAM, Name ≠ DNS-Name, Subnetz fehlt
   im IPAM, VLAN weicht ab, Namenskonvention, Präfix/Typ, doppelte Werte, unbenutzte
@@ -128,7 +152,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Aktivieren/Deaktivieren. **Einrichtung Schritt für Schritt** direkt in der Ansicht: Geräte
   zuweisen, `agent.env`-Generator (nur Orchestrator-Adresse + Agent-Token, bleibt im Browser), Download des
   Agent-Pakets (`GET /agents/package`, ZIP ohne Zugangsdaten), PowerShell-Befehle zum
-  Kopieren, Test und erster Lauf, Fehlerbehebung. Spalte **Version** mit Schalter
+  Kopieren, Test und erster Lauf, Fehlerbehebung. Die geplante Aufgabe startet den Agenten
+  alle 15 min (inkl. Selbst-Update-Prüfung); dazwischen bleibt er wach und fragt alle 20 s
+  nach Läufen (`run-agent.ps1 -WatchSeconds`, von Hand einmal: `-Once`). Spalte **Version** mit Schalter
   **Auto-Update** (ADR 0011): Agenten aktualisieren sich vor jedem Lauf selbst, sobald das
   Orchestrator-Image ein neues Agent-Paket enthält („Update beim nächsten Lauf“ → „aktuell“);
   ist Auto-Update aus, zeigt die Liste „veraltet“ und das Paket wird manuell installiert.
@@ -154,19 +180,19 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | Endpunkt | Zweck |
 |---|---|
 | `GET /health`, `GET /auth/config` | Status (API/DB), öffentliche Login-Konfiguration |
-| `GET /rules` (`?q=`,`?tenant_id=`,`?domain=firewall\|aci_contract`,`?source_system_id=`,`?limit=`,`?offset=`), `GET /rules/{id}` | Regeln und ACI-Contracts seitenweise (Standard 500, Gesamtzahl im Header `X-Total-Count`; Suche über alle Regeln) / Detail (Objektnamen, `refs` mit Referenzdaten, `aci`: Tenant/Contract/Subject/Scope) |
-| `GET /rules/summary` (`?tenant_id=`) | Kennzahlen aller Regeln für die Übersicht (je Art, Endpunkte, nicht aufgelöst, Ziel-Zonen) |
+| `GET /rules` (`?q=`,`?object=`,`?nat=`,`?tenant_id=`,`?domain=firewall\|aci_contract`,`?source_system_id=`,`?src_zone=`,`?dst_zone=`,`?action=`,`?limit=`,`?offset=`), `GET /rules/{id}` | Regeln und ACI-Contracts seitenweise (Standard 500, Gesamtzahl im Header `X-Total-Count`; Suche über alles, was zur Regel gehört; `object` = Regeln mit diesem Objekt auch über Gruppen, `nat` = mit diesem VIP/SNAT-Pool; je Regel `nat`) / Detail (Objektnamen, `refs` mit Referenzdaten, `aci`, `comment`, `nat_entries`) |
+| `GET /rules/summary` (`?tenant_id=`) | Kennzahlen aller Regeln für die Übersicht (je Art, Endpunkte, nicht aufgelöst, Quell-/Ziel-Zonen, Aktionen) |
 | `GET /objects?tenant_id=` (`category`, `source_system_id`, `q`, `issues_only`) | Firewall-Objekte mit IPAM-Abgleich |
 | `GET /inventory/{devices\|interfaces\|vlans\|subnets\|vrfs}?tenant_id=` | Netzinventar (Subnetze mit IPAM-Abgleich) |
 | `GET /reconcile/summary`, `GET /reconcile/ipam`, `POST /reconcile` | Abgleich: Befunde je Typ, DDI ↔ NetBox, neu berechnen (operator) |
-| `GET /findings` (`?status=`,`?type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /findings/summary`, `PATCH /findings/{id}` | Datenqualität seitenweise, Zähler je Status/Typ, Triage |
-| `GET /nat` (`?nat_type=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /published-services[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku: NAT, publizierte Dienste (VIPs), Doku je System |
+| `GET /findings` (`?status=`,`?type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /findings/summary`, `PATCH /findings/{id}` | Datenqualität seitenweise (je Befund `message` = was nicht stimmt, `hint` = was tun), Zähler je Status/Typ, Triage |
+| `GET /nat` (`?nat_type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /nat/{id}`, `GET /published-services[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku: NAT mit DNS-Namen, Server und Regelzahl / Detail mit IPAM-Sicht und Regeln, publizierte Dienste (VIPs), Doku je System |
 | `GET/POST /applications`, `GET/PATCH/DELETE /applications/{id}`, `POST …/{id}/members`, `DELETE …/{id}/members/{mid}`, `GET …/{id}/doc` | Applikationen (ADR 0012; Schreiben = operator): Stammdaten, Mitglieder AP/EPG/Server, Doku über alle Systeme |
 | `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /tenants/{id}/sites`, `DELETE /tenants/{id}/sites/{sid}` | Standorte |
 | `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `site_id`, `read_scope`, `ref_role`, `schedule` → `next_run_at`; `token` bzw. `username`/`password`, NetBox `write_token` nur schreibbar → `has_credentials`/`has_write_token`; Referenzquellen mit `reference_count`/`reference_at`) |
-| `GET /jobs`, `GET /jobs/{id}`, `POST /jobs/collect` | Läufe (Gerät mit Agent → immer `external`) |
+| `GET /jobs`, `GET /jobs/{id}`, `POST /jobs/collect`, `POST /jobs/collect-all` | Läufe (Gerät mit Agent → immer `external`); `collect-all` = alle aktiven Quellsysteme des Mandanten (operator, Antwort je System `run_id` bzw. `skipped`) |
 | `GET/POST /agents`, `PATCH /agents/{id}`, `GET /agents/package` | Collector-Agenten (inkl. zugewiesener Geräte), Agent-Paket |
 | `GET /internal/agent/next-run`, `…/targets`, `POST …/heartbeat` | Agent-Kanal (`X-Agent-Token`): Lauf + Zugangsdaten nur für zugewiesene Geräte |
 | `POST /internal/collector-runs/{id}/result`, `GET …/{id}/target` | Ergebnis (Agent-Token des abholenden Agenten oder internes Token; Antwort = Quittung `status`/`message`); Ziel für den zentralen Worker |

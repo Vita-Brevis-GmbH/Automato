@@ -19,11 +19,19 @@ from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import EndpointRole, MatchStatus, ObjectClass, RefRole, RuleDomain
-from app.schemas.rules import AciContractOut, EndpointOut, RuleDetailOut, RuleOut, RuleSummaryOut
+from app.models import EndpointRole, MatchStatus, ObjectClass, RefRole, RuleAction, RuleDomain
+from app.schemas.rules import (
+    AciContractOut,
+    EndpointOut,
+    RuleDetailOut,
+    RuleNatOut,
+    RuleOut,
+    RuleSummaryOut,
+)
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import objects as objects_store
+from app.store import rule_search
 from app.store import rules as rules_store
 
 router = APIRouter(prefix="/rules", tags=["rules"])
@@ -94,17 +102,14 @@ def _aci(rule) -> AciContractOut | None:
     )
 
 
-def _rule_matches_q(rule, objs, ql: str) -> bool:
-    if ql in rule.name.lower() or ql in (rule.external_id or "").lower():
-        return True
-    if any(ql in ref.name.lower() for ref in rule.refs):
-        return True
-    for e in rule.endpoints:
-        obj = objs.get(e.network_object_id) if e.network_object_id else None
-        for s in ((obj.name if obj else None), (obj.value if obj else None), e.inline_value):
-            if s and ql in s.lower():
-                return True
-    return False
+def _nat(rule, search: rule_search.RuleSearch) -> RuleNatOut | None:
+    if rule.domain is not RuleDomain.FIREWALL:
+        return None
+    pools = rule_search.snat_pools(rule)
+    vips = search.vips(rule)
+    if pools is None and not vips:
+        return None
+    return RuleNatOut(snat=pools is not None, pools=pools or [], vips=vips)
 
 
 @router.get("/summary", response_model=RuleSummaryOut)
@@ -123,32 +128,57 @@ def list_rules(
     response: Response,
     tenant_id: int | None = None,
     q: str | None = None,
+    object: str | None = Query(None, description="Regeln, die dieses Objekt verwenden"),  # noqa: A002
+    nat: str | None = Query(None, description="Regeln mit diesem VIP bzw. SNAT-Pool"),
     source_system_id: int | None = None,
     domain: RuleDomain | None = None,
+    src_zone: str | None = None,
+    dst_zone: str | None = None,
+    action: RuleAction | None = None,
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session),
 ):
-    """Regeln seitenweise; Gesamtzahl (nach Filtern und Suche) im Header `X-Total-Count`."""
+    """Regeln seitenweise; Gesamtzahl (nach Filtern und Suche) im Header `X-Total-Count`.
+
+    `q` sucht in allem, was zur Regel gehoert (Gruppenmitglieder, Werte, Services, Zonen,
+    EPG-Lage, NAT, IP im Netz - `store.rule_search`); `object`/`nat` filtern exakt."""
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "rules")
-    flt = {"tenant_id": tenant_id, "source_system_id": source_system_id, "domain": domain}
-    if q:
+    flt = {
+        "tenant_id": tenant_id,
+        "source_system_id": source_system_id,
+        "domain": domain,
+        "src_zone": src_zone,
+        "dst_zone": dst_zone,
+        "action": action,
+    }
+    q, object, nat = (v.strip() if v else None for v in (q, object, nat))
+    if q or object or nat:
         # Suche ueber alle Regeln, erst danach die Seite schneiden (sonst fehlen Treffer)
         rules = rules_store.list_rules(session, limit=None, **flt)
-        obj_ids = {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id}
-        objs = rules_store.objects_by_ids(session, obj_ids)
-        ql = q.strip().lower()
-        rules = [r for r in rules if _rule_matches_q(r, objs, ql)]
+        search = rule_search.RuleSearch(session, rules)
+        rules = [
+            r
+            for r in rules
+            if (not q or search.matches(r, q))
+            and (not object or search.uses_object(r, object))
+            and (not nat or search.uses_nat(r, nat))
+        ]
         total = len(rules)
         rules = rules[offset : offset + limit]
     else:
         total = rules_store.count_rules(session, **flt)
         rules = rules_store.list_rules(session, limit=limit, offset=offset, **flt)
-        obj_ids = {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id}
-        objs = rules_store.objects_by_ids(session, obj_ids)
+        search = rule_search.RuleSearch(session, rules)
     response.headers["X-Total-Count"] = str(total)
+    return rule_outs(session, rules, search)
+
+
+def rule_outs(session: Session, rules: list, search: rule_search.RuleSearch) -> list[RuleOut]:
+    """Listenzeilen (Namen wie auf der Firewall, Zonen, NAT, ACI) - auch fuer NAT-Detail."""
+    objs = search.objs
     epgs = epg_store.by_ids(session, {e.epg_id for r in rules for e in r.endpoints if e.epg_id})
     zone_ids = {r.src_zone_id for r in rules} | {r.dst_zone_id for r in rules}
     zone_ids |= {o.zone_id for o in objs.values() if o.zone_id}
@@ -176,6 +206,7 @@ def list_rules(
                 service_names=_ref_names(r, RefRole.SERVICE)
                 or [s.canonical_name for s in r.services],
                 aci=_aci(r),
+                nat=_nat(r, search),
             )
         )
     return out
@@ -200,6 +231,9 @@ def get_rule(
     nat_map = nat_store.nat_by_name(session, r.tenant_id)
     epgs = epg_store.by_ids(session, {e.epg_id for e in r.endpoints if e.epg_id})
     epg_info = epg_store.details(session, r.tenant_id, list(epgs.values()))
+    search = rule_search.RuleSearch(session, [r])
+    rule_nat = _nat(r, search)
+    raw = r.raw if isinstance(r.raw, dict) else {}
 
     endpoints: list[EndpointOut] = []
     for e in r.endpoints:
@@ -245,4 +279,12 @@ def get_rule(
         endpoints=endpoints,
         services=[s.canonical_name for s in r.services],
         protections=r.protections or [],
+        nat=rule_nat,
+        comment=str(raw.get("comments") or raw.get("comment") or "") or None,
+        nat_entries=nat_store.briefs(
+            session,
+            r.tenant_id,
+            r.source_system_id,
+            [*rule_nat.pools, *rule_nat.vips] if rule_nat else [],
+        ),
     )

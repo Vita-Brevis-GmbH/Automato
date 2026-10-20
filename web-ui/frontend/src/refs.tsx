@@ -30,6 +30,43 @@ export const FINDING_LABEL: Record<string, string> = {
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
+// Was der Befund-Typ prüft (Kurzbeschreibung für Kacheln und Tooltips)
+export const FINDING_HINT: Record<string, string> = {
+  unmatched_object: "Firewall-Objekt ohne Eintrag im IPAM",
+  name_mismatch: "Objektname passt nicht zum DNS-Namen im IPAM",
+  subnet_not_in_ipam: "Subnetz der Firewall/ACI fehlt im IPAM",
+  vlan_mismatch: "VLAN im Netz weicht vom IPAM ab",
+  invalid_name: "Name verletzt die Namenskonvention",
+  name_type_mismatch: "Präfix passt nicht zum Objekttyp",
+  duplicate_value: "gleicher Wert in mehreren Objekten",
+  ambiguous_ip: "IP in mehreren Objekten",
+  unused_object: "in keiner Regel oder Gruppe verwendet",
+  epg_no_endpoints: "EPG ohne gelernte Endpunkte",
+};
+
+// Kategorien der Übersicht (Findings-Seite)
+export const FINDING_GROUPS: { key: string; label: string; help: string; types: string[] }[] = [
+  {
+    key: "ipam",
+    label: "IPAM-Abgleich",
+    help: "Firewall/ACI gegen DDI bzw. NetBox",
+    types: ["unmatched_object", "name_mismatch", "subnet_not_in_ipam", "vlan_mismatch", "ambiguous_ip"],
+  },
+  {
+    key: "naming",
+    label: "Namenskonvention",
+    help: "Präfixe laut Namensprofil",
+    types: ["invalid_name", "name_type_mismatch"],
+  },
+  {
+    key: "cleanup",
+    label: "Bereinigung",
+    help: "Doppelte und unbenutzte Objekte",
+    types: ["duplicate_value", "unused_object"],
+  },
+  { key: "aci", label: "ACI", help: "EPGs ohne Endpunkte", types: ["epg_no_endpoints"] },
+];
+
 export const CATEGORY_LABEL: Record<string, string> = {
   address: "Adresse",
   address_group: "Adressgruppe",
@@ -200,12 +237,25 @@ export function ValueList({ values, service }: { values: RefValue[]; service?: b
 }
 
 // Regel-Verweis: Objekt wie auf der Firewall, bei Gruppen mit Mitgliedern
-export function RefCard({ r }: { r: RuleRef }) {
+// Name eines Objekts als Link "alle Regeln mit diesem Objekt" (wenn onObject gesetzt)
+function ObjLink({ name, onObject }: { name: string; onObject?: (name: string) => void }) {
+  if (!onObject) return <span className="mono">{name}</span>;
+  return (
+    <button className="linkbtn mono objlink" title="Alle Regeln mit diesem Objekt" onClick={() => onObject(name)}>
+      {name}
+    </button>
+  );
+}
+
+export function RefCard({ r, onObject }: { r: RuleRef; onObject?: (name: string) => void }) {
   const service = r.role === "service";
+  const linkable = !service && r.category ? onObject : undefined;
   return (
     <div className="refcard">
       <div className="refcard-head">
-        <b className="mono">{r.name}</b>
+        <b>
+          <ObjLink name={r.name} onObject={linkable} />
+        </b>
         {r.category ? (
           <span className="faint">
             {CATEGORY_LABEL[r.category] ?? r.category}
@@ -222,7 +272,7 @@ export function RefCard({ r }: { r: RuleRef }) {
         <div className="members">
           {r.members.map((m) => (
             <div key={m.name} className="member">
-              <span className="mono">{m.name}</span>
+              <ObjLink name={m.name} onObject={!service && m.category ? onObject : undefined} />
               {m.category ? null : <span className="faint"> (nicht gelesen)</span>}
               <ValueList values={m.values} service={service} />
             </div>

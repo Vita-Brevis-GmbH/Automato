@@ -403,3 +403,22 @@ pre.block { background: var(--surface-2); border: 1px solid var(--border); borde
   .print-title { display: block; font-size: 20px; margin: 0 0 8px; }
   body { background: #fff; }
 }
+
+/* Verlinkung zwischen den Ansichten (Objekt -> Regeln, NAT <-> Regeln) */
+button.linkchip { cursor: pointer; font-family: inherit; }
+button.linkchip:hover { text-decoration: underline; }
+.linkbtn.objlink { color: var(--accent); padding: 0; font-size: inherit; text-align: left; }
+.linkbtn.objlink:hover { text-decoration: underline; background: none; }
+
+/* Findings: Übersicht nach Kategorien */
+.fgroups { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.card.fgroup { padding: 12px 14px; margin: 0; }
+.fgroup-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+.fline { display: flex; justify-content: space-between; width: 100%; background: none; border: 0; padding: 4px 6px;
+  border-radius: 6px; cursor: pointer; color: var(--fg); font: inherit; text-align: left; }
+.fline:hover { background: var(--surface-2); }
+.fline.on { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+.warnfg { color: var(--warn); }
+.okfg { color: var(--good); }
+tbody tr.subrow { background: var(--surface-2); }
+tbody tr.subrow td { padding-top: 8px; padding-bottom: 10px; }

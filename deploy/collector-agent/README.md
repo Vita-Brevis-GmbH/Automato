@@ -77,7 +77,12 @@ kopieren (`install.ps1` installiert das sot-gateway-Wheel aus dem Ordner mit), d
 
 `install.ps1` legt ein venv an, installiert das Wheel (bringt `automato-collector` mit),
 kopiert `run-agent.ps1` + `agent.env` und registriert die Aufgabe **Automato Collector
-Agent** (SYSTEM, alle N Minuten → `automato-collector --poll`).
+Agent** (SYSTEM, Start alle N Minuten → `automato-collector --poll --watch 20 --for N-1`).
+Der Agent bleibt dazwischen wach und fragt alle 20 s (`-WatchSeconds`) nach Läufen – ein
+„Jetzt einlesen“ wird so nach Sekunden abgeholt. Jeder Neustart prüft auf ein Selbst-Update;
+läuft der Agent noch (langer Lauf), lässt die Aufgabe den nächsten Start aus (`IgnoreNew`).
+Bereits installierte Agenten übernehmen den Wach-Modus mit dem nächsten Selbst-Update
+(neues `run-agent.ps1`). Von Hand einmal abholen: `run-agent.ps1 -Once`.
 
 ## 3. Verbindung prüfen
 

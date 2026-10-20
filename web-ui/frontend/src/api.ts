@@ -26,6 +26,28 @@ export interface Rule {
   destinations: string[];
   service_names: string[]; // Service-Namen wie auf der Firewall (sonst kanonisch)
   aci?: AciContract | null; // nur ACI-Contracts: Quelle = Consumer-, Ziel = Provider-EPGs
+  nat?: RuleNat | null; // Firewall-Policy mit SNAT bzw. VIP
+}
+
+// NAT einer Firewall-Policy: SNAT (Pools; leer = Interface-IP) und VIPs im Ziel (DNAT)
+export interface RuleNat {
+  snat: boolean;
+  pools: string[];
+  vips: string[];
+}
+
+export interface NatBrief {
+  id: number;
+  name: string;
+  nat_type: string;
+  ext_ip: string | null;
+  ext_port: string | null;
+  mapped_ip: string | null;
+  mapped_port: string | null;
+  protocol: string | null;
+  external_name: string | null;
+  ext_dns: string[];
+  mapped_dns: string[];
 }
 
 export interface AciContract {
@@ -51,6 +73,8 @@ export interface RuleSummary {
   endpoints: number;
   unmatched: number;
   by_dst_zone: [string, number][];
+  by_src_zone?: [string, number][];
+  by_action?: Record<string, number>;
 }
 
 export interface Endpoint {
@@ -159,6 +183,8 @@ export interface RuleDetail extends Rule {
   endpoints: Endpoint[];
   services: string[];
   protections?: string[] | null;
+  comment?: string | null;
+  nat_entries?: NatBrief[];
 }
 
 export interface Finding {
@@ -171,6 +197,8 @@ export interface Finding {
   subject_id: string;
   source_system_id: number | null;
   detail: Record<string, unknown> | null;
+  message: string | null; // Befund in einem Satz (was genau nicht stimmt)
+  hint: string | null; // was zu tun wäre
   note: string | null;
   first_seen: string | null;
   last_seen: string | null;
@@ -275,6 +303,32 @@ export interface Nat {
   mapped_port: string | null;
   protocol: string | null;
   portforward: boolean;
+  source_system_id: number;
+  comment: string | null;
+  interface: string | null;
+  external_name: string | null;
+  ext_dns: string[];
+  mapped_dns: string[];
+  server: string | null;
+  rule_count: number;
+}
+
+// IPAM-Sicht auf eine IP je Referenzquelle (führend zuerst)
+export interface IpInfo {
+  source: string;
+  role: string;
+  dns_names: string[];
+  records: { kind: string; dns_name: string | null; name: string | null }[];
+  prefix: { value: string; description: string | null; vlan: number | null; site: string | null; vrf: string | null } | null;
+  url: string | null;
+}
+
+export interface NatDetail extends Nat {
+  ext_info: IpInfo[];
+  mapped_info: IpInfo[];
+  color: number | null;
+  settings: Record<string, string>;
+  rules: Rule[];
 }
 
 // Publizierte Dienste (VIPs)
@@ -767,6 +821,18 @@ export const startCollect = (body: {
 }) =>
   sendJSON<{ run_id: string; status: string; execution: string }>("/api/jobs/collect", "POST", body);
 
+// Alle aktiven Quellsysteme des Mandanten einlesen (Referenzquellen zuerst)
+export interface CollectAllItem {
+  source_system_id: number;
+  name: string;
+  platform: string;
+  run_id: string | null;
+  execution: string | null;
+  skipped: string | null;
+}
+export const startCollectAll = (tenantId: number) =>
+  sendJSON<{ queued: number; items: CollectAllItem[] }>("/api/jobs/collect-all", "POST", { tenant_id: tenantId });
+
 // Agenten
 export const fetchAgents = () => getJSON<Agent[]>("/api/agents");
 export const createAgent = (name: string, tenantId: number | null) =>
@@ -812,6 +878,11 @@ export async function fetchRules(opts: {
   tenantId?: number | null;
   domain?: RuleDomain | "";
   systemId?: number | null;
+  object?: string; // Regeln, die dieses Objekt verwenden (auch über Gruppen)
+  nat?: string; // Regeln mit diesem VIP bzw. SNAT-Pool
+  srcZone?: string;
+  dstZone?: string;
+  action?: string;
   limit?: number;
   offset?: number;
 }): Promise<RulePage> {
@@ -820,6 +891,11 @@ export async function fetchRules(opts: {
     tenant_id: opts.tenantId,
     domain: opts.domain,
     source_system_id: opts.systemId,
+    object: opts.object,
+    nat: opts.nat,
+    src_zone: opts.srcZone,
+    dst_zone: opts.dstZone,
+    action: opts.action,
     limit: opts.limit,
     offset: opts.offset,
   };
@@ -842,10 +918,17 @@ async function getPage<T>(url: string): Promise<Page<T>> {
   const total = Number(response.headers.get("X-Total-Count") ?? rows.length);
   return { rows, total: Number.isFinite(total) ? total : rows.length };
 }
-export const fetchNat = (opts: { tenantId?: number | null; natType?: string; limit?: number; offset?: number }) =>
+export const fetchNat = (opts: {
+  tenantId?: number | null;
+  natType?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}) =>
   getPage<Nat>(
-    `/api/nat${qs({ tenant_id: opts.tenantId, nat_type: opts.natType, limit: opts.limit, offset: opts.offset })}`,
+    `/api/nat${qs({ tenant_id: opts.tenantId, nat_type: opts.natType, q: opts.q?.trim(), limit: opts.limit, offset: opts.offset })}`,
   );
+export const fetchNatDetail = (id: number) => getJSON<NatDetail>(`/api/nat/${id}`);
 export const fetchFindings = (opts: {
   tenantId?: number | null;
   status?: string;
