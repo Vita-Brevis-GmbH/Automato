@@ -106,12 +106,15 @@ def external_name(nat: NatRule) -> str | None:
     return None
 
 
-def servers_by_ip(session: Session, tenant_id: int, ips: set[str]) -> dict[str, str]:
-    """Interne IP -> Name des Firewall-Adressobjekts mit genau dieser IP (z. B. H_web01)."""
+def servers_by_ip(
+    session: Session, tenant_id: int, ips: set[str]
+) -> dict[str, list[tuple[int, str]]]:
+    """Interne IP -> (Quellsystem, Name) aller Firewall-Adressobjekte mit genau dieser IP
+    (z. B. H_web01) - mehrere, wenn die IP doppelt definiert ist (Befund "Doppelter Wert")."""
     ips = {i for i in ips if i}
     if not ips:
         return {}
-    out: dict[str, str] = {}
+    out: dict[str, list[tuple[int, str]]] = {}
     rows = session.scalars(
         select(DeviceObject)
         .where(
@@ -123,8 +126,14 @@ def servers_by_ip(session: Session, tenant_id: int, ips: set[str]) -> dict[str, 
     for o in rows:
         values = [str(v).removesuffix("/32") for v in o.values or []]
         if len(values) == 1 and values[0] in ips:
-            out.setdefault(values[0], o.name)
+            out.setdefault(values[0], []).append((o.source_system_id, o.name))
     return out
+
+
+def server_names(candidates: list[tuple[int, str]], source_system_id: int) -> list[str]:
+    """Server einer NAT-Regel: bevorzugt die Objekte derselben Firewall."""
+    same = [name for sid, name in candidates if sid == source_system_id]
+    return same or list(dict.fromkeys(name for _, name in candidates))
 
 
 def device_object(session: Session, nat: NatRule) -> DeviceObject | None:

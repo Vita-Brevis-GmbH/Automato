@@ -73,8 +73,9 @@ umgekehrt) = neuer/anderer Adapter, keine Änderung am Rest der Plattform.
 
 - Tests: `uv run --package <orchestrator|collectors|sot-gateway> pytest <paket>/tests`;
   Lint `uv run ruff check .` + `uv run ruff format --check .`; Frontend in
-  `web-ui/frontend`: `npm run lint` (tsc) + `npm run build`. Frontend **nicht** mit prettier
-  umformatieren (formatiert ganze Dateien um).
+  `web-ui/frontend`: `npm run lint` (tsc) + `npm run build`, UI-Tests `npm run e2e`
+  (Playwright, Beispieldaten aus den Orchestrator-Tests). Übersicht und CI-Jobs:
+  `docs/TESTS.md`. Frontend **nicht** mit prettier umformatieren (formatiert ganze Dateien um).
 - Gegen Postgres: `AUTOMATO_TEST_DATABASE_URL=postgresql+psycopg://…` (Schema je Test neu);
   die CI fährt Migrationen hoch/runter und alle Orchestrator-Tests gegen Postgres 16.
 - Jede Schemaänderung = Alembic-Migration (up/down gegen Postgres prüfen).
@@ -85,7 +86,7 @@ umgekehrt) = neuer/anderer Adapter, keine Änderung am Rest der Plattform.
   `docs/BETRIEB.md`. Der frühere ausführliche Statusverlauf (bis 0.4.2) steht in
   `docs/ENTWICKLUNGSVERLAUF.md`.
 
-## Aktueller Stand (0.8.0)
+## Aktueller Stand (0.8.1)
 
 UC1 „Firewall-Regel-Dokumentation (read-only)“ ist für Model 2 (FortiGate + NetBox) und
 Model 1 (FortiGate + ACI + Infoblox) umgesetzt und läuft im Dev gegen die echten Systeme.
@@ -102,7 +103,8 @@ Model 1 (FortiGate + ACI + Infoblox) umgesetzt und läuft im Dev gegen die echte
 | Sicherheit | Keycloak (OIDC/PKCE, OTP, SAML-Vorlage), Rollen viewer/operator/admin, Mandanten-Scoping, Audit mit Allowlist (+ optional verschlüsselt), Secrets-Provider, Zugangsdaten Fernet, fail-closed Defaults | ADR 0005, 0007, 0013 |
 | Web-UI | alle Ansichten nach Mockup, seitenweise Listen mit Gesamtzahl | `web-ui/frontend/` |
 
-Tests: orchestrator 197, collectors 79, sot-gateway 14 (dazu die CI gegen Postgres).
+Tests: orchestrator 197, collectors 79, sot-gateway 14, UI (Playwright) 24; dazu die CI gegen
+Postgres inkl. `alembic check`, Image-Builds und nächtlicher Lauf (`docs/TESTS.md`).
 
 ## Offen / nächste Schritte
 

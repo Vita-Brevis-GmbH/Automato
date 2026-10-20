@@ -1,6 +1,6 @@
 [project]
 name = "automato"
-version = "0.8.0"
+version = "0.8.1"
 description = "Automatisierungsplattform - Monorepo-Workspace (siehe README.md)"
 requires-python = ">=3.11"
 
@@ -36,6 +36,7 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["S101", "S105", "S106"]  # assert + Fake-Secrets in Tests sind erwuenscht
+"web-ui/frontend/e2e/**" = ["S101", "S105", "S106"]  # UI-Testdaten (Beispieldaten, kein Secret)
 
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI-Idiom: Depends()/Header() als Default-Argument ist gewollt

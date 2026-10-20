@@ -1,6 +1,6 @@
 [project]
 name = "collectors"
-version = "0.8.0"
+version = "0.8.1"
 description = "Automato Collectors - read-only Erfassung von Firewall-Regeln (UC1)"
 requires-python = ">=3.11"
 dependencies = [
@@ -21,6 +21,7 @@ automato-collector = "collectors.run:main"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=5.0",
 ]
 
 [build-system]

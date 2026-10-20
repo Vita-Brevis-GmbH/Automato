@@ -49,6 +49,8 @@ class _Context:
 
     def out(self, n: NatRule) -> NatOut:
         ctx = self.refs[n.tenant_id]
+        candidates = self.servers[n.tenant_id].get(n.mapped_ip or "", [])
+        servers = nat_store.server_names(candidates, n.source_system_id)
         return NatOut(
             id=n.id,
             tenant_id=n.tenant_id,
@@ -67,7 +69,8 @@ class _Context:
             external_name=nat_store.external_name(n),
             ext_dns=references.dns_names(ctx, n.ext_ip),
             mapped_dns=references.dns_names(ctx, n.mapped_ip),
-            server=self.servers[n.tenant_id].get(n.mapped_ip or ""),
+            server=next(iter(servers), None),
+            servers=servers,
             rule_count=len(self.usage.get((n.source_system_id, n.name.lower()), ())),
         )
 
@@ -87,7 +90,7 @@ def _search_fields(o: NatOut) -> tuple[list[str | None], list[str | None]]:
         o.comment,
         o.interface,
         o.external_name,
-        o.server,
+        *o.servers,
         *o.ext_dns,
         *o.mapped_dns,
     ]

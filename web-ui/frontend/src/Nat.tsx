@@ -84,13 +84,15 @@ function NatDrawer({
                 <dd>{d.portforward ? <span className="chip ok">an</span> : "aus"}</dd>
                 <dt>Server</dt>
                 <dd>
-                  {d.server ? (
-                    <button className="linkbtn mono objlink" title="Regeln mit diesem Objekt" onClick={() => onGo?.("regeln", { object: d.server! })}>
-                      {d.server}
-                    </button>
-                  ) : (
-                    <Dash />
-                  )}
+                  {(d.servers?.length ? d.servers : d.server ? [d.server] : []).map((name) => (
+                    <div key={name}>
+                      <button className="linkbtn mono objlink" title="Regeln mit diesem Objekt" onClick={() => onGo?.("regeln", { object: name })}>
+                        {name}
+                      </button>
+                    </div>
+                  ))}
+                  {!d.server && <Dash />}
+                  {(d.servers?.length ?? 0) > 1 && <div className="faint">IP in mehreren Objekten definiert</div>}
                 </dd>
               </>
             )}
@@ -298,7 +300,7 @@ export default function NatTable({
                           <span className="faint">{n.nat_type === "snat_pool" ? "ausgehende Quell-IP" : "–"}</span>
                         )}
                       </td>
-                      <td className="mono">{n.server ?? <Dash />}</td>
+                      <td className="mono">{n.servers?.length ? n.servers.join(", ") : (n.server ?? <Dash />)}</td>
                       <td className="mono">{n.interface ?? <Dash />}</td>
                       <td className="num">
                         {n.rule_count > 0 ? (

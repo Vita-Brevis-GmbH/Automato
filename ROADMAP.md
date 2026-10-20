@@ -289,8 +289,27 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **3 Betrieb** | Zeitplan je Quellsystem (Cron, mehrprozess-sicher); ACI: ESGs, Taboo-Contracts, Preferred Groups; Abnahme-Checkliste Phase A | umgesetzt; Abnahme gegen echte Systeme steht aus |
 | **4 Produktions-Gate** | mTLS-Agent-Gateway (`require`/`bind`), signierte Agent-Updates, Sicherung/Wiederherstellung mit age, `deploy/update.sh` mit Rückfall, R16-Prüfung, System-Seite; Cockpit mit Magister als Entwurf | umgesetzt (ADR 0013, 0014 Entwurf) |
 
-Danach: VM-Collector (vCenter/Proxmox → NetBox); Phase B (Bereinigen auf Firewall/DDI) und
-Phase C (Regeln schreiben, FortiGate/FortiManager/ACI) nur mit eigener ADR und Freigabe.
+### 0.6.0–0.8.x – Dev-Befunde aus dem Betrieb gegen die echten Systeme – umgesetzt
+
+| Version | Inhalt |
+|---|---|
+| **0.6.0** | Regelsuche über alles (Gruppenmitglieder, IP im Netz, IPAM-DNS-Namen, NAT); NAT/VIPs detailliert mit DNS, Server, Regeln; Verlinkung Objekte/NAT ↔ Regeln; Findings mit Übersicht und Satz je Befund; IPAM-Namen ohne Präfix; „Alle einlesen“; Agent im Wach-Modus (20 s) |
+| **0.7.0** | Standorte virtuell (000, 001) und physisch (Ort-Code) mit n:m-Zuordnung, Vorschlag aus Namen, NetBox-Site-Gruppen (ADR 0015) |
+| **0.8.0** | Fix NetBox-Sync (eindeutige VLAN-/Site-Namen); Regeln ohne Quelle/Ziel (ISDB, Identität, ZTNA, Contract Master, Intra-EPG, „nicht wirksam“); Dienste mit Attributen, ACI-Filter als Dienste, Prüfung nach FT_-Schema; Objekt-Detail mit Regeln |
+| **0.8.1** | Tests/CI ausgebaut (`docs/TESTS.md`): UI-Tests mit Playwright, `alembic check`, Mindestabdeckung, PowerShell-Syntax, Image-Builds, nächtlicher Lauf; Fix `agent.created_at` (Migration 0029) und mehrere Server je NAT-IP |
+
+### Nächste Arbeiten (Stand 0.8.1)
+
+1. **Abnahme Phase A gegen die echten Systeme** (Checkliste `docs/DEV-SETUP-AGENT.md` 6b):
+   Agenten auf 0.8.x, FortiGate/APIC/DDI neu einlesen, NetBox-Sync (Sync-Benutzer mit
+   *Site Group*-Recht) – offene Befunde aus „Regel nicht wirksam“ und „Service ≠ Name“ sichten.
+2. **Produktiv schalten** (ADR 0013): Agent-Gateway `bind`, Pakete signieren, tägliche
+   Sicherung, Updates nur über `deploy/update.sh`.
+3. **VM-Collector** (vCenter/Proxmox → NetBox, physischer Standort der VM).
+4. **Applikationen ausbauen:** Regeln direkt zuordnen, Abhängigkeiten zwischen Applikationen.
+5. **Import-Wizard (E3)** und **Cockpit mit Magister** (ADR 0014, Entwurf).
+6. Phase B (Bereinigen auf Firewall/DDI) und Phase C (Regeln schreiben,
+   FortiGate/FortiManager/ACI) nur mit eigener ADR und Freigabe.
 
 **Änderungen sichtbar + Rollback** (eigenes Querschnitts-Thema) wird über das
 Cockpit (Update-Channels + Rollback-Snapshot, E2) und — für den Schreibpfad — über

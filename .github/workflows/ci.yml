@@ -1,11 +1,15 @@
 # CI - selektiv pro Komponente (Vorgabe aus ADR 0001).
-# Secret-Scan laeuft immer; Python-/Frontend-Jobs nur bei Aenderungen im Pfad.
+# Secret-Scan laeuft immer; Python-/Frontend-/Docker-/E2E-Jobs nur bei Aenderungen im Pfad.
+# Naechtlich (schedule) und von Hand (workflow_dispatch) laufen alle Jobs.
 name: ci
 
 on:
   push:
     branches: ["main", "claude/**"]
   pull_request:
+  schedule:
+    - cron: "17 2 * * *" # taeglich 02:17 UTC, alle Jobs
+  workflow_dispatch:
 
 jobs:
   changes:
@@ -14,10 +18,14 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      python: ${{ steps.filter.outputs.python }}
-      frontend: ${{ steps.filter.outputs.frontend }}
+      # Bei schedule/workflow_dispatch alles pruefen, sonst nur geaenderte Komponenten
+      python: ${{ steps.filter.outputs.python == 'true' || steps.full.outputs.all == 'true' }}
+      frontend: ${{ steps.filter.outputs.frontend == 'true' || steps.full.outputs.all == 'true' }}
+      docker: ${{ steps.filter.outputs.docker == 'true' || steps.full.outputs.all == 'true' }}
     steps:
       - uses: actions/checkout@v4
+      - id: full
+        run: echo "all=${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}" >> "$GITHUB_OUTPUT"
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -34,6 +42,11 @@ jobs:
               - 'web-ui/frontend/package*.json'
             frontend:
               - 'web-ui/frontend/**'
+            docker:
+              - '**/Dockerfile'
+              - 'docker-compose.yml'
+              - '.env.example'
+              - 'deploy/**'
 
   gitleaks:
     runs-on: ubuntu-latest
@@ -61,14 +74,22 @@ jobs:
         run: |
           uv run ruff check .
           uv run ruff format --check .
-      - name: Tests orchestrator
-        run: uv run --package orchestrator pytest orchestrator/tests -q
-      - name: Tests collectors
-        run: uv run --package collectors pytest collectors/tests -q
-      - name: Tests sot-gateway
-        run: uv run --package sot-gateway pytest sot-gateway/tests -q
-      - name: Agent-Paket (Docker-Stage, Wheels vollstaendig)
-        run: docker build --target agent-package -f orchestrator/Dockerfile .
+      # Abdeckung: Untergrenze 90 % je Paket (Stand 0.8.0: 94/95/94 %) - faellt sie, fehlt ein Test
+      - name: Tests orchestrator (mit Abdeckung)
+        run: >-
+          uv run --package orchestrator pytest orchestrator/tests -q
+          --cov=app --cov-report=term:skip-covered --cov-fail-under=90
+      - name: Tests collectors (mit Abdeckung)
+        run: >-
+          uv run --package collectors pytest collectors/tests -q
+          --cov=collectors --cov-report=term:skip-covered --cov-fail-under=90
+      - name: Tests sot-gateway (mit Abdeckung)
+        run: >-
+          uv run --package sot-gateway pytest sot-gateway/tests -q
+          --cov=sot_gateway --cov-report=term:skip-covered --cov-fail-under=90
+      - name: Agent-Skripte (PowerShell-Syntax)
+        shell: pwsh
+        run: ./scripts/check_powershell.ps1
 
   # Migrationen und Orchestrator-Tests gegen echtes Postgres (wie Dev/Prod); die Python-Jobs
   # oben laufen schnell gegen SQLite.
@@ -100,6 +121,10 @@ jobs:
           uv run --package orchestrator alembic upgrade head
           uv run --package orchestrator alembic downgrade base
           uv run --package orchestrator alembic upgrade head
+      # Modell und Migrationen deckungsgleich? (vergessene Migration, falsches NOT NULL ...)
+      - name: Migrationen passen zum Modell (alembic check)
+        working-directory: orchestrator
+        run: uv run --package orchestrator alembic check
       - name: Testdatenbank anlegen
         run: >-
           uv run --package orchestrator python -c "import sqlalchemy as sa;
@@ -125,3 +150,59 @@ jobs:
       - run: npm install
       - run: npm run lint
       - run: npm run build
+
+  # Images bauen wie im Betrieb (Orchestrator inkl. Agent-Paket, Collector, Web-UI) und die
+  # Compose-Konfiguration aller Profile pruefen
+  docker:
+    needs: changes
+    if: >-
+      needs.changes.outputs.python == 'true' || needs.changes.outputs.frontend == 'true' ||
+      needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose-Konfiguration (alle Profile)
+        run: >-
+          docker compose --env-file .env.example --profile core --profile collectors
+          --profile proxy --profile agent-gateway --profile auth config --quiet
+      - name: Agent-Paket (Docker-Stage, Wheels vollstaendig)
+        run: docker build --target agent-package -f orchestrator/Dockerfile .
+      - name: Image Orchestrator
+        run: docker build -f orchestrator/Dockerfile -t automato-orchestrator:ci .
+      - name: Image Collector
+        run: docker build -f collectors/Dockerfile -t automato-collector:ci .
+      - name: Image Web-UI
+        run: docker build -t automato-web-ui:ci web-ui/frontend
+
+  # UI-Tests im Browser (Playwright): Orchestrator mit Beispieldaten + Vite, alle Ansichten und
+  # die Kernablaeufe (Suche, NAT-Links, Findings, Dienste, Standorte, Alle einlesen)
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-ui/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Sync workspace
+        working-directory: .
+        run: uv sync --all-packages
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Browser (Chromium)
+        run: npx playwright install --with-deps chromium
+      - name: UI-Tests
+        run: npm run e2e
+      - name: Bericht bei Fehler
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web-ui/frontend/playwright-report
+            web-ui/frontend/test-results
+          retention-days: 7

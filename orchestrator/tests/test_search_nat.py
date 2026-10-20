@@ -187,7 +187,7 @@ def test_nat_angereichert_durchsuchbar_mit_regeln(client):
     vip = rows[VIP]
     assert vip["external_name"] == "www.example.ch" and vip["interface"] == "wan1"
     assert vip["ext_dns"] == ["www.example.ch"] and vip["mapped_dns"] == ["web01.example.ch"]
-    assert vip["server"] == "H_web01" and vip["rule_count"] == 1
+    assert vip["server"] == "H_web01" and vip["servers"] == ["H_web01"] and vip["rule_count"] == 1
     assert vip["comment"] == "Webshop extern"
     assert rows[POOL]["rule_count"] == 1
 

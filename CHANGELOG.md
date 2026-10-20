@@ -7,6 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.8.1 – 2026-10-20
+
+Tests und CI ausgebaut (`docs/TESTS.md`), zwei Korrekturen (Alembic `0029`).
+
+- **UI-Tests im Browser (Playwright, CI-Job `e2e`):**
+  - Jede Ansicht lädt ohne Seiten- und API-Fehler.
+  - Kernabläufe: Suche über Gruppenmitglieder und IPAM-Namen, SNAT/VIP ↔ NAT ↔ Regeln,
+    Findings mit Link, „Regel nicht wirksam“, Dienste mit Detail, Standorte, „Alle einlesen“.
+  - Beispieldaten aus den Orchestrator-Tests (`web-ui/frontend/e2e/`); lokal `npm run e2e`.
+- **`alembic check`** im Postgres-Job: Modell und Migrationen müssen übereinstimmen.
+- **Mindestabdeckung 90 %** je Python-Paket (Stand 94/95/94 %).
+- **PowerShell-Syntaxprüfung** der Agent-Skripte (`scripts/check_powershell.ps1`).
+- **Images bauen** (Orchestrator, Collector, Web-UI) und Compose-Konfiguration aller Profile
+  prüfen (Job `docker`).
+- **Nächtlicher Lauf** aller Jobs und Start von Hand (*Run workflow*).
+- **Fix:** `agent.created_at` war in der Datenbank nullable, im Modell nicht (gefunden von
+  `alembic check`).
+- **Fix NAT:** Ist die interne IP in mehreren Firewall-Objekten definiert, zeigt die NAT-Sicht
+  alle als Server (bevorzugt die derselben Firewall), nicht nur das alphabetisch erste.
+
 ## 0.8.0 – 2026-10-20
 
 Dev-Befunde: NetBox-Sync, Regeln ohne Quelle/Ziel, Dienste (Alembic `0028`).

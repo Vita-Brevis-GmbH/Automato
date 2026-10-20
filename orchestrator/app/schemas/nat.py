@@ -22,6 +22,7 @@ class NatOut(BaseModel):
     ext_dns: list[str] = []  # DNS-Namen der externen IP (DDI/NetBox)
     mapped_dns: list[str] = []  # DNS-Namen der internen IP (DDI/NetBox)
     server: str | None = None  # Host-Objekt mit der internen IP (Firewall-Objekt)
+    servers: list[str] = []  # alle Objekte mit dieser IP (mehrere = doppelt definiert)
     rule_count: int = 0  # Firewall-Regeln mit diesem VIP bzw. SNAT-Pool
 
 

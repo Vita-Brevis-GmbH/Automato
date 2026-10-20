@@ -329,6 +329,7 @@ export interface Nat {
   ext_dns: string[];
   mapped_dns: string[];
   server: string | null;
+  servers?: string[]; // alle Objekte mit der internen IP (mehrere = doppelt definiert)
   rule_count: number;
 }
 
