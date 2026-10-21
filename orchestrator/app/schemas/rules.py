@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -26,7 +28,9 @@ class RulePairOut(BaseModel):
     rule_id: int
     name: str
     family: str | None = None
-    match: str  # same (gleiche Objektnamen, Services, Interfaces) | similar (Abweichungen)
+    # same (gleiche Objektnamen, Services, Interfaces) | similar (Abweichungen) | confirmed
+    # (von Hand bestaetigt, Abweichungen in diff)
+    match: str
     diff: list[str] = []  # src | dst | service | name | zone
 
 
@@ -165,6 +169,18 @@ class RefOut(BaseModel):
     match_status: str | None = None  # zusammengefasst ueber alle Werte
 
 
+class PairDecisionOut(BaseModel):
+    """Von Hand entschiedenes IPv4/IPv6-Paar (bleibt ueber neue Laeufe erhalten)."""
+
+    id: int
+    decision: str  # confirmed | rejected
+    partner_id: int | None = None  # Gegenstueck im aktuellen Stand (None = nicht mehr da)
+    partner_name: str | None = None
+    partner_external_id: str
+    decided_by: str
+    decided_at: datetime
+
+
 class RuleDetailOut(RuleOut):
     external_id: str
     sequence: int | None = None
@@ -175,3 +191,4 @@ class RuleDetailOut(RuleOut):
     comment: str | None = None  # Kommentar der Policy
     # VIPs (DNAT) und SNAT-Pools der Regel mit IPs, Ports und DNS-Namen (Link in die NAT-Sicht)
     nat_entries: list[dict] = []
+    pair_decisions: list[PairDecisionOut] = []  # von Hand bestaetigt/abgelehnt

@@ -101,6 +101,7 @@ export const CATEGORY_LABEL: Record<string, string> = {
   ippool: "IP-Pool",
   service: "Service",
   service_group: "Servicegruppe",
+  vip_target: "VIP-Ziel",
 };
 
 const KIND_LABEL: Record<string, string> = {
@@ -370,6 +371,7 @@ const DIFF_LABEL: Record<string, string> = {
   service: "Dienste",
   name: "Name",
   zone: "Interfaces/Zonen",
+  action: "Aktion",
 };
 
 // Adressfamilie und IPv4/IPv6-Gegenstück (FortiGate führt beide als eigene Policies)
@@ -377,11 +379,14 @@ export function FamilyMarks({ r, onPair }: { r: Rule; onPair?: (id: number) => v
   if (!r.family && !r.pair) return null;
   const p = r.pair;
   const other = p ? FAMILY_LABEL[p.family ?? ""] ?? "Gegenstück" : "";
+  const diff = p?.diff.length ? `abweichend: ${p.diff.map((d) => DIFF_LABEL[d] ?? d).join(", ")}` : "";
   const title = p
     ? `${other}-Gegenstück „${p.name}“ (#${p.rule_id}) – ` +
       (p.match === "same"
         ? "deckt dasselbe ab (gleiche Objektnamen, Dienste und Interfaces)"
-        : `ähnlich, abweichend: ${p.diff.map((d) => DIFF_LABEL[d] ?? d).join(", ")}`) +
+        : p.match === "confirmed"
+          ? `von Hand als Paar bestätigt${diff ? `, ${diff}` : ""}`
+          : `ähnlich, ${diff}`) +
       ". Eigene Regel wie auf der FortiGate – nur zur Orientierung verbunden."
     : "";
   return (
@@ -393,7 +398,7 @@ export function FamilyMarks({ r, onPair }: { r: Rule; onPair?: (id: number) => v
       )}
       {p && (
         <button
-          className={`chip linkchip ${p.match === "same" ? "ok" : "warn"}`}
+          className={`chip linkchip ${p.match === "similar" ? "warn" : "ok"}`}
           title={title}
           onClick={(e) => {
             e.stopPropagation();
@@ -401,7 +406,7 @@ export function FamilyMarks({ r, onPair }: { r: Rule; onPair?: (id: number) => v
           }}
         >
           ↔ {other} #{p.rule_id}
-          {p.match === "same" ? "" : " ähnlich"}
+          {p.match === "similar" ? " ähnlich" : p.match === "confirmed" ? " ✓ bestätigt" : ""}
         </button>
       )}
     </div>

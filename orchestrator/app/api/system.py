@@ -16,12 +16,12 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app import __version__, scheduler
-from app.auth.deps import require_admin
+from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.models import Agent, SourceSystem
-from app.store import agent_package
+from app.store import agent_package, health
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -162,3 +162,19 @@ def status(
         ),
         backup=_backup(settings),
     )
+
+
+@router.get("/health")
+def health_status(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Betriebszustand als Ampel (0.12.0): je Pruefung ok | warn | error mit Satz und Ziel-
+    Ansicht; Quellsysteme, Agenten und NetBox-Syncs des Mandanten. Zeigt nie Secrets."""
+    tid = tenant_scope(principal, tenant_id)
+    db = _database(session)
+    # ohne alembic_version (Tests/Dev mit create_all) gilt die Datenbank als aktuell
+    items = health.checks(session, settings, tid, database_ok=db.up_to_date or db.revision is None)
+    return health.summary(items)

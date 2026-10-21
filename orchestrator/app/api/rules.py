@@ -8,18 +8,31 @@ Liest Regeln aus dem Rule & Service Store:
                        Match-Status) und kanonischer Services, dazu die Objekt-Verweise
                        wie auf der Firewall (`refs`: Name, Gruppen mit Mitgliedern, Werte
                        mit Abgleich gegen das IPAM, ADR 0010).
+- `POST /rules/{id}/pair`, `DELETE /rules/pair-decisions/{id}`  IPv4/IPv6-Paar bestaetigen
+                       bzw. ablehnen und die Entscheidung zuruecknehmen (operator, 0.12.0).
 """
 
+from datetime import UTC, datetime
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, select
+from pydantic import BaseModel
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.audit import reads
-from app.auth.deps import require_viewer, tenant_scope
+from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import ObjectClass, Rule, RuleAction, RuleDomain
-from app.schemas.rules import EndpointOut, RuleDetailOut, RuleOut, RuleSummaryOut
+from app.models import ObjectClass, Rule, RuleAction, RuleDomain, RuleIndex, RulePairDecision
+from app.schemas.rules import (
+    EndpointOut,
+    PairDecisionOut,
+    RuleDetailOut,
+    RuleOut,
+    RuleSummaryOut,
+)
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import objects as objects_store
@@ -60,6 +73,11 @@ def list_rules(
     dst_zone: str | None = None,
     action: RuleAction | None = None,
     family: str | None = Query(None, pattern="^(v4|v6|dual)$"),
+    pair: str | None = Query(
+        None,
+        pattern="^(same|similar|confirmed|any|none)$",
+        description="IPv4/IPv6-Paar: gleich, aehnlich (offen), bestaetigt, irgendeins, keins",
+    ),
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
@@ -77,6 +95,13 @@ def list_rules(
     conds = rule_index.conditions(q, object, object_id, nat, net, net_any)
     if family:
         conds.append(Rule.ip_family == family)
+    if pair:
+        paired = select(RuleIndex.rule_id).where(
+            RuleIndex.rule_id == Rule.id, RuleIndex.pair_rule_id.is_not(None)
+        )
+        if pair in ("same", "similar", "confirmed"):
+            paired = paired.where(RuleIndex.pair_match == pair)
+        conds.append(~exists(paired) if pair == "none" else exists(paired))
 
     def scoped(stmt):
         stmt = rules_store.filtered(
@@ -155,4 +180,135 @@ def get_rule(
             r.source_system_id,
             [*rule_nat.pools, *rule_nat.vips] if rule_nat else [],
         ),
+        pair_decisions=_decisions_of(session, r),
     )
+
+
+# -- IPv4/IPv6-Paare von Hand entscheiden (0.12.0) ---------------------------------
+
+
+def _decisions_of(session: Session, r: Rule) -> list[PairDecisionOut]:
+    if r.ip_family not in ("v4", "v6") or r.source_system_id is None:
+        return []
+    own = (
+        RulePairDecision.v4_external_id if r.ip_family == "v4" else RulePairDecision.v6_external_id
+    )
+    out = []
+    for d in session.scalars(
+        select(RulePairDecision).where(
+            RulePairDecision.source_system_id == r.source_system_id, own == r.external_id
+        )
+    ):
+        other = d.v6_external_id if r.ip_family == "v4" else d.v4_external_id
+        partner = session.scalars(
+            select(Rule).where(
+                Rule.source_system_id == r.source_system_id,
+                Rule.external_id == other,
+                Rule.ip_family != r.ip_family,
+            )
+        ).first()
+        out.append(
+            PairDecisionOut(
+                id=d.id,
+                decision=d.decision,
+                partner_id=partner.id if partner else None,
+                partner_name=(partner.name or f"#{partner.external_id}") if partner else None,
+                partner_external_id=other,
+                decided_by=d.decided_by,
+                decided_at=d.decided_at,
+            )
+        )
+    return out
+
+
+class PairDecisionIn(BaseModel):
+    partner_id: int
+    decision: Literal["confirmed", "rejected"]
+
+
+@router.post("/{rule_id}/pair", status_code=204)
+def decide_pair(
+    rule_id: int,
+    body: PairDecisionIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> None:
+    """IPv4/IPv6-Paar bestaetigen bzw. ablehnen; gilt sofort und fuer alle neuen Laeufe."""
+    a, b = session.get(Rule, rule_id), session.get(Rule, body.partner_id)
+    if a is None or b is None:
+        raise HTTPException(status_code=404, detail="rule not found")
+    tenant_scope(principal, a.tenant_id)
+    if (
+        a.domain is not RuleDomain.FIREWALL
+        or b.tenant_id != a.tenant_id
+        or b.source_system_id != a.source_system_id
+        or a.source_system_id is None
+        or {a.ip_family, b.ip_family} != {"v4", "v6"}
+    ):
+        raise HTTPException(
+            status_code=422, detail="pair = one IPv4 and one IPv6 rule of the same firewall"
+        )
+    v4, v6 = (a, b) if a.ip_family == "v4" else (b, a)
+    decision = session.scalars(
+        select(RulePairDecision).where(
+            RulePairDecision.source_system_id == a.source_system_id,
+            RulePairDecision.v4_external_id == v4.external_id,
+            RulePairDecision.v6_external_id == v6.external_id,
+        )
+    ).first()
+    if decision is None:
+        decision = RulePairDecision(
+            tenant_id=a.tenant_id,
+            source_system_id=a.source_system_id,
+            v4_external_id=v4.external_id,
+            v6_external_id=v6.external_id,
+        )
+        session.add(decision)
+    decision.decision = body.decision
+    decision.decided_by = principal.subject
+    decision.decided_at = datetime.now(UTC)
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="rule_pair.decided",
+        subject=f"{v4.id}/{v6.id}",
+        detail={"source_system_id": a.source_system_id, "decision": body.decision},
+    )
+    rows = {
+        i.rule_id: i
+        for i in session.scalars(select(RuleIndex).where(RuleIndex.rule_id.in_([a.id, b.id])))
+    }
+    together = all(rows.get(x.id) and rows[x.id].pair_rule_id == y.id for x, y in ((a, b), (b, a)))
+    if together:  # schon als Paar markiert: nur die Markierung aendern (schnell)
+        for row in rows.values():
+            if body.decision == "confirmed":
+                row.pair_match = "confirmed"
+            else:
+                row.pair_rule_id = row.pair_match = row.pair_diff = None
+        session.flush()
+    else:  # anderes Paar betroffen: Paare des Quellsystems neu bilden
+        rule_index.rebuild(session, a.tenant_id, a.source_system_id)
+
+
+@router.delete("/pair-decisions/{decision_id}", status_code=204)
+def reset_pair(
+    decision_id: int,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> None:
+    """Entscheidung zuruecknehmen: das Paar wird wieder automatisch gebildet."""
+    d = session.get(RulePairDecision, decision_id)
+    if d is None:
+        raise HTTPException(status_code=404, detail="decision not found")
+    tenant_scope(principal, d.tenant_id)
+    sid, tid = d.source_system_id, d.tenant_id
+    session.delete(d)
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="rule_pair.reset",
+        subject=str(decision_id),
+        detail={"source_system_id": sid},
+    )
+    session.flush()
+    rule_index.rebuild(session, tid, sid)

@@ -88,7 +88,15 @@ def run(app) -> None:
 
     # FortiGate 3: IPv4/IPv6 getrennt - gleichnamige Objekte, Regelpaare (gleich/aehnlich)
     fw3 = system(name="fw-03", platform="fortigate", base_url="https://fw-03.example.ch")
-    run_result(fw3, "fortigate", rules=ipf.RULES, objects=ipf.OBJECTS)
+    ports = [  # Ports je Geraet: VLAN-Subinterface getaggt ueber den Parent (0.11.4/0.12.0)
+        {"device": "fw-03", "name": "internal", "kind": "physical", "mode": "tagged",
+         "tagged_vlans": [10]},
+        {"device": "fw-03", "name": "srv-vl10", "kind": "vlan", "mode": "tagged",
+         "tagged_vlans": [10], "parent": "internal"},
+        {"device": "fw-03", "name": "wan1", "kind": "physical"},
+    ]  # fmt: skip
+    inventory = {"devices": [{"name": "fw-03", "role": "firewall"}], "interfaces": ports}
+    run_result(fw3, "fortigate", rules=ipf.RULES, objects=ipf.OBJECTS, inventory=inventory)
 
     # FortiGate 4: Virtual Server mit Real Servern; Regel ins BD-Subnetz der APIC (Regeln je
     # Subnetz)

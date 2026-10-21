@@ -26,6 +26,7 @@ from app.models import (
     ReferenceRecordRow,
     Rule,
     RuleEndpoint,
+    RulePairDecision,
     Site,
     SiteLink,
     SourceSystem,
@@ -107,6 +108,7 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
         session.execute(delete(model).where(model.source_system_id == source.id))
     counts["vms"] = _delete_vms(session, Vm.source_system_id == source.id)
     session.execute(delete(Portgroup).where(Portgroup.source_system_id == source.id))
+    session.execute(delete(RulePairDecision).where(RulePairDecision.source_system_id == source.id))
     counts["epgs"] = _delete_source_epgs(session, source.id)
     source.reference_run_id = None
     session.flush()
@@ -140,6 +142,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
         session.execute(delete(model).where(model.tenant_id == tid))
     counts["vms"] = _delete_vms(session, Vm.tenant_id == tid)
     session.execute(delete(Portgroup).where(Portgroup.tenant_id == tid))
+    session.execute(delete(RulePairDecision).where(RulePairDecision.tenant_id == tid))
     session.execute(
         update(SourceSystem).where(SourceSystem.tenant_id == tid).values(reference_run_id=None)
     )

@@ -174,3 +174,63 @@ def test_paare_reine_funktion():
     other = info(5, "v6", "x", 1)
     other = rule_pairs.PairInfo(**{**other.__dict__, "src_zone": 9})
     assert rule_pairs.pair([info(4, "v4", "y", 0), other]) == {}
+
+
+def _reingest(client, tid, sid):
+    run = {"platform": "fortigate", "tenant_id": tid, "source_system_id": sid}
+    run_id = client.post("/jobs/collect", json=run).json()["run_id"]
+    result = {"status": "completed", "rules": RULES, "objects": OBJECTS}
+    r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
+    assert r.json()["status"] == "completed"
+
+
+def test_paare_bestaetigen_ablehnen_und_zuruecknehmen(client):
+    """Dev-Befund 0.12.0: ein "ähnliches" Paar soll sich bestätigen bzw. ablehnen lassen - die
+    Entscheidung gilt sofort und bleibt über neue Läufe erhalten."""
+    tid, sid = _seed(client)
+    operator = {"X-Dev-Roles": "operator", "X-Dev-Tenants": str(tid)}
+    viewer = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid)}
+    rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
+    api4, api6 = rules[("api-in", "v4")]["id"], rules[("api-in", "v6")]["id"]
+    assert [r["name"] for r in _rules(client, tid, pair="similar")] == ["api-in", "api-in"]
+
+    body = {"partner_id": api6, "decision": "confirmed"}
+    assert client.post(f"/rules/{api4}/pair", json=body, headers=viewer).status_code == 403
+    assert client.post(f"/rules/{api4}/pair", json=body, headers=operator).status_code == 204
+    rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
+    pair = rules[("api-in", "v4")]["pair"]
+    assert (pair["rule_id"], pair["match"], pair["diff"]) == (api6, "confirmed", ["service"])
+    assert _rules(client, tid, pair="similar") == []
+    assert {r["name"] for r in _rules(client, tid, pair="confirmed")} == {"api-in"}
+
+    # neuer Lauf (Index neu gebaut): die Entscheidung haelt, gespeichert an der Policy-ID
+    _reingest(client, tid, sid)
+    rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
+    new4, new6 = rules[("api-in", "v4")], rules[("api-in", "v6")]
+    assert new4["pair"]["match"] == "confirmed"
+    (decision,) = client.get(f"/rules/{new4['id']}").json()["pair_decisions"]
+    assert (decision["decision"], decision["partner_id"]) == ("confirmed", new6["id"])
+    assert decision["decided_by"]
+
+    # ablehnen: kein Paar mehr, auch nach dem naechsten Lauf
+    body = {"partner_id": new4["id"], "decision": "rejected"}
+    assert client.post(f"/rules/{new6['id']}/pair", json=body, headers=operator).status_code == 204
+    assert {r["name"] for r in _rules(client, tid, pair="none")} == {"api-in", "dual"}
+    _reingest(client, tid, sid)
+    rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
+    assert rules[("api-in", "v4")]["pair"] is None
+    assert rules[("web-in", "v4")]["pair"]["match"] == "same"  # andere Paare unberuehrt
+
+    # zuruecknehmen: wieder automatisch (aehnlich)
+    detail = client.get(f"/rules/{rules[('api-in', 'v4')]['id']}").json()
+    (decision,) = detail["pair_decisions"]
+    assert decision["decision"] == "rejected"
+    r = client.delete(f"/rules/pair-decisions/{decision['id']}", headers=operator)
+    assert r.status_code == 204
+    rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
+    assert rules[("api-in", "v4")]["pair"]["match"] == "similar"
+
+    # nur IPv4 + IPv6 derselben Firewall
+    bad = {"partner_id": rules[("dual", "dual")]["id"], "decision": "confirmed"}
+    r = client.post(f"/rules/{rules[('api-in', 'v4')]['id']}/pair", json=bad, headers=operator)
+    assert r.status_code == 422

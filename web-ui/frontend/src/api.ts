@@ -38,8 +38,19 @@ export interface RulePair {
   rule_id: number;
   name: string;
   family: string | null;
-  match: "same" | "similar";
+  match: "same" | "similar" | "confirmed"; // confirmed = von Hand bestätigt
   diff: string[]; // src | dst | service | name | zone
+}
+
+// Von Hand entschiedenes IPv4/IPv6-Paar (bleibt über neue Läufe erhalten)
+export interface PairDecision {
+  id: number;
+  decision: "confirmed" | "rejected";
+  partner_id: number | null;
+  partner_name: string | null;
+  partner_external_id: string;
+  decided_by: string;
+  decided_at: string;
 }
 
 // NAT einer Firewall-Policy: SNAT (Pools; leer = Interface-IP) und VIPs im Ziel (DNAT)
@@ -263,6 +274,7 @@ export interface RuleDetail extends Rule {
   protections?: string[] | null;
   comment?: string | null;
   nat_entries?: NatBrief[];
+  pair_decisions?: PairDecision[];
 }
 
 export interface Finding {
@@ -1048,6 +1060,7 @@ export async function fetchRules(opts: {
   net?: string; // Regeln eines Subnetzes (Quelle/Ziel überschneidet sich)
   netAny?: boolean; // bei net auch Regeln mit any (Standard: ja)
   family?: string; // v4 | v6 | dual
+  pair?: string; // same | similar | confirmed | any | none
   srcZone?: string;
   dstZone?: string;
   action?: string;
@@ -1065,6 +1078,7 @@ export async function fetchRules(opts: {
     net: opts.net,
     net_any: opts.net && opts.netAny === false ? "false" : undefined,
     family: opts.family,
+    pair: opts.pair,
     src_zone: opts.srcZone,
     dst_zone: opts.dstZone,
     action: opts.action,
@@ -1076,6 +1090,10 @@ export async function fetchRules(opts: {
   const total = Number(response.headers.get("X-Total-Count") ?? rules.length);
   return { rules, total: Number.isFinite(total) ? total : rules.length };
 }
+// IPv4/IPv6-Paar bestätigen bzw. ablehnen (operator) und die Entscheidung zurücknehmen
+export const decidePair = (ruleId: number, partnerId: number, decision: "confirmed" | "rejected") =>
+  sendJSON<void>(`/api/rules/${ruleId}/pair`, "POST", { partner_id: partnerId, decision });
+export const resetPairDecision = (id: number) => sendJSON<void>(`/api/rules/pair-decisions/${id}`, "DELETE");
 export const fetchRuleSummary = (tenantId?: number | null) =>
   getJSON<RuleSummary>(`/api/rules/summary${qs({ tenant_id: tenantId })}`);
 export const fetchRuleDetail = (id: number) => getJSON<RuleDetail>(`/api/rules/${id}`);
@@ -1188,6 +1206,24 @@ export interface SystemStatus {
   backup: { at: string | null; file: string | null; encrypted: boolean | null; size: number | null } | null;
 }
 export const fetchSystemStatus = () => getJSON<SystemStatus>("/api/system/status");
+
+// Betriebszustand (0.12.0): Ampel je Prüfung
+export interface HealthCheck {
+  key: string;
+  area: string; // Plattform | Agenten | Quellsysteme | NetBox-Sync | Sicherung
+  status: "ok" | "warn" | "error";
+  title: string;
+  detail: string | null;
+  view: string | null; // Ansicht im UI
+  since: string | null;
+}
+export interface OpsHealth {
+  status: "ok" | "warn" | "error";
+  problems: number;
+  checks: HealthCheck[];
+}
+export const fetchOpsHealth = (tenantId?: number | null) =>
+  getJSON<OpsHealth>(`/api/system/health${qs({ tenant_id: tenantId })}`);
 
 // Objekte & Inventar (rein lesend, Mandant nötig)
 export const fetchObjects = (

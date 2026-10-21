@@ -22,6 +22,11 @@ from app.store import runs
 
 log = logging.getLogger(__name__)
 ACTOR = "system:scheduler"
+_last_tick: datetime | None = None  # letzter Durchgang dieses Prozesses (Betriebszustand)
+
+
+def last_tick() -> datetime | None:
+    return _last_tick
 
 
 def _utc(dt: datetime | None) -> datetime | None:
@@ -119,9 +124,12 @@ def start(factory: sessionmaker, tz: str, interval: int) -> threading.Event:
     stop = threading.Event()
 
     def loop() -> None:
+        global _last_tick
+        _last_tick = datetime.now(UTC)  # Start zaehlt als Lebenszeichen
         while not stop.wait(interval):
             try:
                 tick(factory, tz)
+                _last_tick = datetime.now(UTC)
             except Exception:  # Schleife darf nicht sterben (DB kurz weg o. ae.)
                 log.exception("Zeitplan-Durchgang fehlgeschlagen")
 

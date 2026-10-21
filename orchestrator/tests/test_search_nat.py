@@ -154,8 +154,10 @@ def test_suche_findet_alles(client):
 def test_filter_objekt_nat_zone(client):
     tid = _seed(client)
     assert _names(client, tid, object="N_server-net") == ["dmz-to-web"]  # ueber zwei Gruppen
+    # H_web01 ist auch das interne Ziel des VIP (gleiche IP) - dessen Regel zaehlt mit (0.12.0)
     assert _names(client, tid, object="H_web01") == [
         "dmz-to-web",
+        "internet-to-www",
         "server-out-iface",
         "web-to-internet",
     ]

@@ -140,6 +140,8 @@ export default function RulesTable({
   const [dstZone, setDstZone] = useState("");
   const [action, setAction] = useState("");
   const [family, setFamily] = useState("");
+  const [pair, setPair] = useState(""); // IPv4/IPv6-Paar: similar = offen zum Bestätigen
+  const [reload, setReload] = useState(0); // nach einer Paar-Entscheidung neu laden
   const [onlyFindings, setOnlyFindings] = useState(false);
   // Maus über einer Regel hebt ihr IPv4/IPv6-Gegenstück hervor
   const [pairHover, setPairHover] = useState<number | null>(null);
@@ -171,9 +173,11 @@ export default function RulesTable({
       dstZone,
       action,
       family,
+      pair,
       limit: PAGE,
+      reload,
     }),
-    [q, tenantId, domain, system, object, objectId, nat, net, netAny, srcZone, dstZone, action, family],
+    [q, tenantId, domain, system, object, objectId, nat, net, netAny, srcZone, dstZone, action, family, pair, reload],
   );
 
   // Suche und alle Filter wertet der Orchestrator aus (über alle Regeln, nicht nur die erste Seite).
@@ -321,6 +325,19 @@ export default function RulesTable({
           <option value="v6">IPv6</option>
           <option value="dual">IPv4+IPv6</option>
         </select>
+        <select
+          className="sel"
+          value={pair}
+          onChange={(e) => setPair(e.target.value)}
+          title="IPv4/IPv6-Paare: „ähnlich“ = vorgeschlagen, noch nicht bestätigt"
+        >
+          <option value="">Paar: alle</option>
+          <option value="similar">ähnlich (offen)</option>
+          <option value="confirmed">bestätigt</option>
+          <option value="same">gleich</option>
+          <option value="any">mit Paar</option>
+          <option value="none">ohne Paar</option>
+        </select>
         <button className={`toggle ${onlyFindings ? "on" : ""}`} onClick={() => setOnlyFindings((v) => !v)}>
           <span className="dot y" />
           nur mit Findings
@@ -425,6 +442,7 @@ export default function RulesTable({
           onClose={() => setSelected(null)}
           onGo={onGo}
           onRule={setSelected}
+          onChanged={() => setReload((n) => n + 1)}
         />
       )}
     </>

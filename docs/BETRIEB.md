@@ -105,6 +105,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   - Gelb „ähnlich“: Abweichungen im Tooltip.
   - Klick öffnet das Gegenstück; beim Überfahren wird es hervorgehoben. Beide bleiben eigene
     Regeln.
+  - **Bestätigen bzw. ablehnen** (Operator, 0.12.0): im Detail „Als Paar bestätigen“ (für
+    „ähnlich“) bzw. „Kein Paar“, mit „zurücknehmen“. Die Entscheidung gilt sofort und bleibt über
+    neue Läufe erhalten (Policy-ID). Filter „Paar“: ähnlich (offen) zum Abarbeiten, bestätigt,
+    gleich, mit/ohne Paar.
   Klick → Detail: je Objekt Typ, Kommentar, Gruppenmitglieder (Objektnamen verlinkt) und je
   Wert die **Referenzdaten** aus dem IPAM (DNS-Name, Netz, VLAN, Standort; aufklappbar mit
   allen Feldern und Link in NetBox), die **VM** dahinter (vCenter: Name, Status, Portgruppe,
@@ -124,6 +128,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Klick → genau diese Regeln.
   - **IPv4/IPv6:** Gleichnamige Objekte stehen zweimal da, mit Chip „IPv4“ bzw. „IPv6“,
     eigenen Werten, Gruppen und Befunden, wie auf der FortiGate.
+  - **VIP-Ziele** (0.12.0): Die interne Ziel-IP einer VIP ohne eigenes Adressobjekt steht als
+    „VIP-Ziel“ in den Adressobjekten (z. B. „VIP_web → 10.10.40.5“). Ein Adressobjekt hinter
+    einer VIP (FQDN-VIP, Real Server, gleiche IP) trägt „Ziel von VIP …“. Beide zählen die
+    Regeln der VIP mit.
+  - **Ports je Gerät** (0.12.0): Gerät als Kopfzeile (Klick klappt auf/zu), Subinterfaces unter
+    ihrem Parent („VLAN 10 getaggt über internal“), LAG-Mitglieder unter dem LAG.
   - **VMs** (vCenter, ADR 0017): Status, Netzwerk je NIC (Portgruppe mit VLAN → **EPG**, IPs
     mit DNS-Namen, „nicht im IPAM“), Cluster/Host/Datacenter, vCPU/RAM/Disk, Gast-OS und
     „Regeln der VM“. **Portgruppen** mit Switch, VLAN bzw. Trunk, Anzahl VMs und der
@@ -218,6 +228,11 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   **Auto-Update** (ADR 0011): Agenten aktualisieren sich vor jedem Lauf selbst, sobald das
   Orchestrator-Image ein neues Agent-Paket enthält („Update beim nächsten Lauf“ → „aktuell“);
   ist Auto-Update aus, zeigt die Liste „veraltet“ und das Paket wird manuell installiert.
+- **Betriebszustand** (0.12.0): Ampel je Prüfung – Datenbank/Migrationen, Zeitplan, zentraler
+  Worker (warten zentrale Läufe länger als 10 min?), Agenten (meldet sich seit 30 min nicht bzw.
+  aktualisiert nicht), Quellsysteme (nie eingelesen, letzter Lauf fehlgeschlagen, älter als 7
+  Tage), NetBox-Sync (fehlgeschlagen) und Sicherung (fehlt bzw. älter als 26 h). Vollständig auf
+  der System-Seite, als Hinweis in der Übersicht, sobald etwas nicht stimmt.
 - **System (nur Admin, ADR 0013):** Version, Migrationsstand DB/Code, Agent-Paket mit
   Signaturzustand und Anzahl aktueller Agenten, Anmeldung, Agent-Kanal (mTLS-Modus),
   Verschlüsselung von Audit-Log und Zugangsdaten, Zeitplan mit nächstem Termin, letzte
@@ -271,6 +286,8 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /netbox-sync/targets`, `GET/POST /netbox-sync/plans`, `GET …/plans/{id}[/items]`, `POST …/plans/{id}/apply` | NetBox-Sync (admin): Vorschau, Aktionen, Übernahme |
 | `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}` | Namensprofile |
 | `GET /system/status` | Betriebsstand (admin, siehe System-Seite) |
+| `GET /system/health` (`?tenant_id=`) | Betriebszustand als Ampel (viewer, mandantsgescoped): `status`, `problems`, `checks` je Prüfung mit `area`, `status` (ok/warn/error), `title`, `detail`, `view` |
+| `POST /rules/{id}/pair` (`partner_id`, `decision` confirmed/rejected), `DELETE /rules/pair-decisions/{id}` | IPv4/IPv6-Paar bestätigen/ablehnen bzw. zurücknehmen (operator); Liste `GET /rules?pair=similar\|confirmed\|same\|any\|none` |
 
 Agent-Aufrufe (`/internal/agent/*`, Ergebnis-/Referenz-Upload mit `X-Agent-Token`) nimmt der
 Orchestrator mit `AUTOMATO_INTERNAL_MTLS_MODE=require|bind` nur über das mTLS-Agent-Gateway

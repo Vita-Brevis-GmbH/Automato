@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { Endpoint, fetchRuleDetail, NatBrief, RuleDetail, RuleRef } from "./api";
+import { decidePair, Endpoint, fetchRuleDetail, NatBrief, resetPairDecision, RuleDetail, RuleRef } from "./api";
 import type { View, ViewParams } from "./App";
 import { EpgCard } from "./EpgCard";
 import { FamilyMarks, RefCard, SideMarks, VmChip } from "./refs";
-import { ActionBadge, Dash, Drawer, ErrorBox, Loading, MatchBadge, Note } from "./ui";
+import { ActionBadge, Dash, Drawer, ErrorBox, fmtTime, Loading, MatchBadge, Note } from "./ui";
 
 function EndpointList({ items }: { items: Endpoint[] }) {
   if (!items.length) return <Dash />;
@@ -108,29 +108,96 @@ function NatList({ items, onOpen }: { items: NatBrief[]; onOpen?: (name: string)
   );
 }
 
+// Paar bestätigen ("ähnlich" → bestätigt), ablehnen ("Kein Paar") oder zurücknehmen
+function PairActions({
+  detail,
+  onConfirm,
+  onReject,
+  onReset,
+}: {
+  detail: RuleDetail;
+  onConfirm: (partnerId: number) => void;
+  onReject: (partnerId: number) => void;
+  onReset: (decisionId: number) => void;
+}) {
+  const p = detail.pair;
+  const decisions = detail.pair_decisions ?? [];
+  const confirmed = decisions.find((d) => d.decision === "confirmed" && d.partner_id === p?.rule_id);
+  const rejected = decisions.filter((d) => d.decision === "rejected");
+  if (!p && !rejected.length) return null;
+  return (
+    <div style={{ marginTop: 4 }}>
+      {p && p.match === "similar" && (
+        <>
+          <button
+            className="linkbtn"
+            title="Die beiden Policies decken (trotz Abweichungen) dasselbe ab – gilt auch nach neuen Läufen"
+            onClick={() => onConfirm(p.rule_id)}
+          >
+            Als Paar bestätigen
+          </button>{" "}
+          ·{" "}
+        </>
+      )}
+      {p && !confirmed && (
+        <button className="linkbtn" title="Kein Gegenstück – nicht mehr als Paar vorschlagen" onClick={() => onReject(p.rule_id)}>
+          Kein Paar
+        </button>
+      )}
+      {confirmed && (
+        <div className="faint">
+          bestätigt von {confirmed.decided_by} am {fmtTime(confirmed.decided_at)} ·{" "}
+          <button className="linkbtn" onClick={() => onReset(confirmed.id)}>
+            zurücknehmen
+          </button>
+        </div>
+      )}
+      {rejected.map((d) => (
+        <div className="faint" key={d.id}>
+          kein Paar mit {d.partner_name ? `„${d.partner_name}“` : `Policy ${d.partner_external_id}`}
+          {d.partner_id ? ` (#${d.partner_id})` : ""} – von {d.decided_by} am {fmtTime(d.decided_at)} ·{" "}
+          <button className="linkbtn" onClick={() => onReset(d.id)}>
+            zurücknehmen
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function RuleDetailDrawer({
   ruleId,
   systemName,
   onClose,
   onGo,
   onRule,
+  onChanged,
 }: {
   ruleId: number;
   systemName: (id: number) => string;
   onClose: () => void;
   onGo?: (v: View, p?: ViewParams) => void;
   onRule?: (id: number) => void; // andere Regel öffnen (IPv4/IPv6-Gegenstück)
+  onChanged?: () => void; // Paar entschieden: Liste neu laden
 }) {
   const [detail, setDetail] = useState<RuleDetail | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
-    setDetail(null);
+    if (!reload) setDetail(null);
     setError(null);
     fetchRuleDetail(ruleId)
       .then(setDetail)
       .catch(setError);
-  }, [ruleId]);
+  }, [ruleId, reload]);
+
+  // IPv4/IPv6-Paar von Hand entscheiden (operator); gilt sofort und für neue Läufe
+  const decide = (action: Promise<void>) =>
+    action.then(() => {
+      setReload((n) => n + 1);
+      onChanged?.();
+    }, setError);
 
   const src = detail?.endpoints.filter((e) => e.role === "src") ?? [];
   const dst = detail?.endpoints.filter((e) => e.role === "dst") ?? [];
@@ -174,6 +241,12 @@ export default function RuleDetailDrawer({
                 <dt>Familie</dt>
                 <dd>
                   <FamilyMarks r={detail} onPair={onRule} />
+                  <PairActions
+                    detail={detail}
+                    onConfirm={(id) => decide(decidePair(detail.id, id, "confirmed"))}
+                    onReject={(id) => decide(decidePair(detail.id, id, "rejected"))}
+                    onReset={(id) => decide(resetPairDecision(id))}
+                  />
                 </dd>
               </>
             )}

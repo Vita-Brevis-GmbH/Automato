@@ -7,7 +7,20 @@ Wird je Quellsystem nach dessen Lauf neu aufgebaut (`app.store.rule_index`) und 
 Referenzlauf fuer den ganzen Mandanten (DNS-Namen aus dem IPAM im Suchtext).
 """
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Index, Integer, SmallInteger, String, Text
+from datetime import UTC, datetime
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,9 +47,9 @@ class RuleIndex(Base):
     nat: Mapped[str] = mapped_column(Text, default="")
     # Listenzeile wie /rules sie liefert (ohne die live gezaehlten nicht aufgeloesten Objekte)
     row: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # IPv4/IPv6-Gegenstueck derselben Firewall (nur Markierung): same | similar
+    # IPv4/IPv6-Gegenstueck derselben Firewall (nur Markierung): same | similar | confirmed
     pair_rule_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    pair_match: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    pair_match: Mapped[str | None] = mapped_column(String(12), nullable=True)
     pair_diff: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
@@ -71,3 +84,24 @@ class RuleIpRange(Base):
     hi: Mapped[str] = mapped_column(IpHex)
     is_any: Mapped[bool] = mapped_column(Boolean, default=False)  # 0.0.0.0/0 bzw. ::/0
     via: Mapped[str | None] = mapped_column(String(300), nullable=True)  # Objekt/Wert
+
+
+class RulePairDecision(Base):
+    """IPv4/IPv6-Paar von Hand bestaetigt bzw. abgelehnt (0.12.0). Gespeichert ueber die
+    Policy-IDs der FortiGate (`Rule.external_id`), damit es jedes neue Einlesen uebersteht."""
+
+    __tablename__ = "rule_pair_decision"
+    __table_args__ = (UniqueConstraint("source_system_id", "v4_external_id", "v6_external_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, index=True)
+    source_system_id: Mapped[int] = mapped_column(
+        ForeignKey("source_system.id", ondelete="CASCADE"), index=True
+    )
+    v4_external_id: Mapped[str] = mapped_column(String(200))
+    v6_external_id: Mapped[str] = mapped_column(String(200))
+    decision: Mapped[str] = mapped_column(String(12))  # confirmed | rejected
+    decided_by: Mapped[str] = mapped_column(String(200))
+    decided_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

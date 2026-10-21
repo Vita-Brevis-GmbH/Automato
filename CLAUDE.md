@@ -86,7 +86,7 @@ umgekehrt) = neuer/anderer Adapter, keine Änderung am Rest der Plattform.
   `docs/BETRIEB.md`. Der frühere ausführliche Statusverlauf (bis 0.4.2) steht in
   `docs/ENTWICKLUNGSVERLAUF.md`.
 
-## Aktueller Stand (0.11.4)
+## Aktueller Stand (0.12.0)
 
 UC1 „Firewall-Regel-Dokumentation (read-only)“ ist für Model 2 (FortiGate + NetBox) und
 Model 1 (FortiGate + ACI + Infoblox) umgesetzt; Phase A ist gegen die echten Systeme abgenommen.
@@ -97,14 +97,14 @@ Produktiv erst später – jetzt wird erweitert und verbessert.
 | Collector | FortiGate (Policies inkl. ISDB/Identität/ZTNA/Negation, `policy6`, Objekte **IPv4/IPv6 getrennt** (gleiche Namen = verschiedene Objekte), Services mit Attributen, VIPs/IP-Pools, **Virtual Server** (Real Server, Methode, Health-Checks, `vip6`), Interfaces, UTM), APIC (Contracts tenant-bewusst per DN, externe EPGs, vzAny, Contract-Interfaces, **ESGs, Taboo, Preferred Groups**, Contract Master, Intra-EPG, Filter als Services, Inventar), **VMware vCenter** (pyVmomi, nur lesende vSphere-Methoden: VMs mit NICs/IPs, Hosts, Cluster, Portgruppen), Infoblox DDI + NetBox als Referenz | Lesevertrag `docs/collectors-read-contract.md`, ADR 0010, 0017 |
 | Agent | externer Windows-Agent (Pull, `--poll --watch 20`/`--check`), Geräte + Zugangsdaten zentral, Selbst-Update, **signierte Updates**, mTLS über das **Agent-Gateway** | ADR 0008, 0009, 0011, 0013 |
 | Store/Abgleich | Regeln, Objekte (eindeutig je Familie), Inventar, Referenzstand, Findings als abgeleiteter Zustand (je Befund Satz + Hinweis, `store/finding_text.py`), IPAM-Namen ohne Präfix (`naming.server_name`), **VMs/Portgruppen** mit Zuordnung Portgruppe → EPG (`store/virtual.py`: Name `Tenant\|AP\|EPG`, ohne Präfixe, VLAN), NetBox-Sync mit Abschnitten Netzinventar, DDI-Spiegel, **Virtualisierung**; Einlesen mit Zwischenspeicher je Lauf | ADR 0004, 0010, 0016, 0017 |
-| Regelindex/Suche/NAT | **abgeleiteter Regelindex** (`store/rule_index.py`: Suchtext, Listenzeile, Objekt-Nutzung direkt/über Gruppen, IP-Bereiche) – Suche über alles per SQL, Regel-Zahl bei Objekten, Filter `object`/`object_id`/`nat`/`family`; **IPv4/IPv6-Paare** (`store/rule_pairs.py`, nur Markierung); NAT mit DNS, Server, Regeln; Messskript `scripts/bench_large_ruleset.py` | ADR 0016 |
+| Regelindex/Suche/NAT | **abgeleiteter Regelindex** (`store/rule_index.py`: Suchtext, Listenzeile, Objekt-Nutzung direkt/über Gruppen, IP-Bereiche) – Suche über alles per SQL, Regel-Zahl bei Objekten, Filter `object`/`object_id`/`nat`/`family`; **IPv4/IPv6-Paare** (`store/rule_pairs.py`, nur Markierung, von Hand bestätigen/ablehnen: `RulePairDecision` an der Policy-ID); **VIP-Ziele** als Objekte (`vip_target`, `vip_of`; zählen die Regeln der VIP); NAT mit DNS, Server, Regeln; Messskript `scripts/bench_large_ruleset.py` | ADR 0016 |
 | Applikationen | eigenes Objekt mit AP/EPG/Server, **Vorschläge per Projektnummer**, Doku je Applikation (Markdown, Druck/PDF); Doku je System mit **allen Regeln** (Netze, Gruppen, any, vzAny, ESG, EPG des Servers bzw. seiner Portgruppe; Spalte „Bezug“) und VMs; Regeln je Subnetz; publizierte Dienste (VIPs) | ADR 0012 (Ergänzung 0.10.0), 0017 |
 | Standorte | **virtuell** (000, 001; in Netz-/Cluster-Namen) und **physisch** (Ort-Code, z. B. chzrh1), n:m-Zuordnung; Vorschlag aus Namen (`store/sites.py`), NetBox-Site-Gruppen; VMs ohne Standort im Namen | ADR 0015 |
-| Betrieb | **Zeitplan je Quellsystem** (Cron, Europe/Zurich), **Alle einlesen** (`POST /jobs/collect-all`), **System-Seite**, Sicherung/Wiederherstellung (age), `deploy/update.sh` mit Rückfall | ADR 0013, `deploy/backup/`, `docs/BETRIEB.md` |
+| Betrieb | **Zeitplan je Quellsystem** (Cron, Europe/Zurich), **Alle einlesen** (`POST /jobs/collect-all`), hängende Läufe/Syncs beendet bzw. abbrechbar, **Betriebszustand** (`store/health.py`, `GET /system/health`), Agent-Log + Update-Status, **System-Seite**, Sicherung/Wiederherstellung (age), `deploy/update.sh` mit Rückfall | ADR 0013, `deploy/backup/`, `docs/BETRIEB.md` |
 | Sicherheit | Keycloak (OIDC/PKCE, OTP, SAML-Vorlage), Rollen viewer/operator/admin, Mandanten-Scoping, Audit mit Allowlist (+ optional verschlüsselt), Secrets-Provider, Zugangsdaten Fernet, fail-closed Defaults | ADR 0005, 0007, 0013 |
 | Web-UI | alle Ansichten nach Mockup, seitenweise Listen mit Gesamtzahl | `web-ui/frontend/` |
 
-Tests: orchestrator 215, collectors 94, sot-gateway 14, UI (Playwright) 30; dazu die CI gegen
+Tests: orchestrator 218, collectors 94, sot-gateway 14, UI (Playwright) 34; dazu die CI gegen
 Postgres inkl. `alembic check`, Image-Builds und nächtlicher Lauf (`docs/TESTS.md`).
 
 ## Offen / nächste Schritte

@@ -22,6 +22,9 @@ class ObjectCategory(enum.StrEnum):
     IPPOOL = "ippool"
     SERVICE = "service"
     SERVICE_GROUP = "service_group"
+    # internes Ziel einer VIP (Mapped-IP bzw. Real Server) ohne eigenes Adressobjekt auf der
+    # FortiGate - von Automato abgeleitet (0.12.0), damit Suche und Objektliste es finden
+    VIP_TARGET = "vip_target"
 
 
 # Kategorien, die als Adress-Endpunkt in Regeln vorkommen bzw. als Service

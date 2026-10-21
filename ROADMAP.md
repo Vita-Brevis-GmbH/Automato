@@ -297,11 +297,13 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.7.0** | Standorte virtuell (000, 001) und physisch (Ort-Code) mit n:m-Zuordnung, Vorschlag aus Namen, NetBox-Site-Gruppen (ADR 0015) |
 | **0.8.0** | Fix NetBox-Sync (eindeutige VLAN-/Site-Namen); Regeln ohne Quelle/Ziel (ISDB, Identität, ZTNA, Contract Master, Intra-EPG, „nicht wirksam“); Dienste mit Attributen, ACI-Filter als Dienste, Prüfung nach FT_-Schema; Objekt-Detail mit Regeln |
 | **0.8.1** | Tests/CI ausgebaut (`docs/TESTS.md`): UI-Tests mit Playwright, `alembic check`, Mindestabdeckung, PowerShell-Syntax, Image-Builds, nächtlicher Lauf; Fix `agent.created_at` (Migration 0029) und mehrere Server je NAT-IP |
+| **0.11.1–0.11.4** | Korrekturen aus dem Betrieb: vCenter-Berechtigung verständlich, Commit vor der Antwort (Teil-Upload), FortiGate ohne JSON, hängende Läufe und NetBox-Syncs beenden/abbrechen, Agent-Update im Wach-Modus mit Log und Update-Status, VLAN-Subinterfaces getaggt |
+| **0.12.0** | IPv4/IPv6-Paare bestätigen/ablehnen; VIP-Ziele als Objekte; Ports je Gerät; Betriebszustand als Ampel (System-Seite, Übersicht) |
 | **0.11.0** | VMware vCenter lesen (nur lesende vSphere-Methoden): VMs mit NICs, IPs, Cluster, Host; Portgruppe → ACI-EPG über den Namen `Tenant\|AP\|EPG` (auch ohne Präfixe) bzw. das VLAN; VMs in Regeln, Suche, Objekten, EPGs und Doku; Befunde VM-IP fehlt im IPAM, Portgruppe ohne EPG; NetBox-Sync-Abschnitt Virtualisierung (ADR 0017) |
 | **0.10.0** | FortiGate Virtual Server (Real Server, Lastverteilung, Health-Checks, IPv6-VIPs); Doku je System/Applikation mit allen Regeln (Netze, Gruppen, any, vzAny, ESG, EPG des Servers, Spalte „Bezug“); Regeln je Subnetz |
 | **0.9.0** | IPv4/IPv6 gleichnamig getrennt (auch `policy6`), Familie je Regel, IPv4/IPv6-Paare markiert; Regel-Zahl bei Objekten über Gruppen; abgeleiteter Regelindex – Listen/Suche/Detail/Doku < 0,3 s, Einlesen 216 → 25 s bei 3000 Regeln (ADR 0016) |
 
-### Nächste Arbeiten (Stand 0.11.0)
+### Nächste Arbeiten (Stand 0.12.0)
 
 Phase A ist gegen die echten Systeme abgenommen. Produktiv geht es erst später – vorher wird
 erweitert und verbessert:

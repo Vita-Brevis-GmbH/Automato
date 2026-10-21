@@ -38,6 +38,7 @@ from app.models import (
     RuleIndex,
     RuleIpRange,
     RuleObjectUsage,
+    RulePairDecision,
     SourceSystem,
 )
 from app.schemas.rules import AciContractOut, RuleNatOut, RuleOut, RulePairOut
@@ -119,6 +120,15 @@ class _Builder:
     def __init__(self, session: Session, rules: list[Rule], tenant_id: int):
         sources = {r.source_system_id for r in rules}
         self.directory = objects_store.Directory(session, sources)
+        # Ziele je VIP (0.12.0): abgeleitete VIP-Ziele und Adressobjekte hinter der VIP zaehlen
+        # die Regeln der VIP mit
+        self.vip_targets: dict[tuple[int, str], list] = defaultdict(list)
+        for o in self.directory.by_id.values():
+            attrs = o.attrs or {}
+            if o.category is ObjectCategory.VIP_TARGET and attrs.get("vip"):
+                self.vip_targets[(o.source_system_id, str(attrs["vip"]).lower())].append(o)
+            for vip in attrs.get("vip_of") or []:
+                self.vip_targets[(o.source_system_id, str(vip).lower())].append(o)
         self.objs = rules_store.objects_by_ids(
             session,
             {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id},
@@ -194,6 +204,9 @@ class _Builder:
                 if o.category is ObjectCategory.VIP:
                     vips.append(o.name)
                     nat_names.add(o.name.lower())
+                    for t in self.vip_targets.get((source, o.name.lower()), []):
+                        usage.setdefault((t.id, ref.role.value), False)  # ueber die VIP
+                        names.add(t.name.lower())
                     nat = self.nat.get((source, o.name.lower()))
                     if nat is not None:
                         parts += [nat.ext_ip, nat.ext_port, nat.mapped_ip, nat.mapped_port]
@@ -303,6 +316,7 @@ def _pair_info(rule: Rule, position: int) -> rule_pairs.PairInfo | None:
         src=refs(RefRole.SRC),
         dst=refs(RefRole.DST),
         service=refs(RefRole.SERVICE) or frozenset(s.canonical_name for s in rule.services),
+        external_id=rule.external_id,
     )
 
 
@@ -343,7 +357,7 @@ def rebuild(
         range_rows += ranges
         if info is not None:
             infos.append(info)
-    pairs = rule_pairs.pair(infos)
+    pairs = rule_pairs.pair(infos, pair_decisions(session, tenant_id, source_system_id))
     for row in index_rows:
         p = pairs.get(row["rule_id"])
         row["pair_rule_id"] = p.partner_id if p else None
@@ -356,6 +370,19 @@ def rebuild(
         session.execute(insert(RuleIpRange), range_rows)
     session.flush()
     return len(rules)
+
+
+def pair_decisions(
+    session: Session, tenant_id: int, source_system_id: int | None = None
+) -> rule_pairs.Decisions:
+    """Von Hand bestaetigte/abgelehnte IPv4/IPv6-Paare des Mandanten (bzw. Quellsystems)."""
+    stmt = select(RulePairDecision).where(RulePairDecision.tenant_id == tenant_id)
+    if source_system_id is not None:
+        stmt = stmt.where(RulePairDecision.source_system_id == source_system_id)
+    return {
+        (d.source_system_id, d.v4_external_id, d.v6_external_id): d.decision
+        for d in session.scalars(stmt)
+    }
 
 
 def ensure(session: Session, tenant_id: int | None) -> None:

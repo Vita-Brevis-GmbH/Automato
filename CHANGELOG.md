@@ -7,6 +7,33 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.12.0 – 2026-10-22
+
+Paare bestätigen, VIP-Ziele, Ports je Gerät, Betriebszustand (Alembic `0035`).
+
+- **IPv4/IPv6-Paare bestätigen bzw. ablehnen** (Operator):
+  - Im Regel-Detail „Als Paar bestätigen“ (für „ähnlich“) bzw. „Kein Paar“; „zurücknehmen“
+    macht es rückgängig. Angezeigt wird, wer wann entschieden hat.
+  - Gilt sofort und über neue Läufe hinweg. Gespeichert wird an den Policy-IDs der FortiGate.
+  - Bestätigte Paare tragen „✓ bestätigt“ (Abweichungen im Tooltip); abgelehnte werden nicht
+    mehr vorgeschlagen.
+  - Neuer Filter „Paar“ in den Regeln: ähnlich (offen), bestätigt, gleich, mit/ohne Paar.
+- **VIP-Ziele als Objekte:**
+  - Die interne Ziel-IP einer VIP ohne eigenes Adressobjekt wird ein Objekt „VIP-Ziel“
+    (Mapped-IP bzw. Real Server, z. B. „VIP_web → 10.10.40.5“). Die Suche findet es.
+  - Adressobjekte hinter einer VIP – per Name (FQDN-VIP `mapped-addr`, Real Server mit
+    Adressobjekt) oder mit genau der Ziel-IP – tragen „Ziel von VIP …“ (Link in NAT / VIPs).
+  - Beide zählen die Regeln der VIP mit und gelten nicht als unbenutzt.
+- **Ports je Gerät:** Das Gerät steht als Kopfzeile (auf-/zuklappbar). Darunter die Ports,
+  Subinterfaces unter ihrem Parent, LAG-Mitglieder unter dem LAG. Subinterfaces zeigen „VLAN 10
+  getaggt über internal“.
+- **Betriebszustand** (Ampel, `GET /system/health`): Datenbank/Migrationen, Zeitplan, zentraler
+  Worker (holt er zentrale Läufe ab?), Agenten (meldet sich nicht, aktualisiert nicht),
+  Quellsysteme (nie eingelesen, letzter Lauf fehlgeschlagen, Stand älter als 7 Tage),
+  NetBox-Sync (fehlgeschlagen) und Sicherung (fehlt bzw. älter als 26 h).
+  - Auf der System-Seite vollständig, in der Übersicht als Hinweis, sobald etwas nicht stimmt
+    (mit Link in die betroffene Ansicht).
+
 ## 0.11.4 – 2026-10-22
 
 Korrekturen aus dem Betrieb (Alembic `0034`).

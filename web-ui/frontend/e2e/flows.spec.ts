@@ -181,3 +181,43 @@ test("Alle einlesen: offenen Lauf abbrechen und neu starten", async ({ page }) =
   await expect(row).toContainText("läuft");
   await expect(row).not.toContainText("übersprungen");
 });
+
+test("Ports je Gerät: Subinterface getaggt unter dem Parent", async ({ page }) => {
+  await page.goto("/#objekte");
+  await page.click(".tabbar button:has-text('Ports')");
+  await expect(page.locator("tr.group-row", { hasText: "fw-03" })).toContainText("3 Ports");
+  const sub = rows(page).filter({ hasText: "srv-vl10" });
+  await expect(sub).toContainText("└");
+  await expect(sub).toContainText("getaggt über internal");
+  await expect(sub).not.toContainText("untagged");
+});
+
+test("IPv4/IPv6: ähnliches Paar bestätigen und zurücknehmen", async ({ page }) => {
+  await page.goto("/#regeln");
+  await search(page).fill("api-in");
+  // IPv4-Policy: Familien-Chip genau "IPv4" (die IPv6-Zeile hat nur den Paar-Chip "↔ IPv4 …")
+  const v4 = () => rows(page).filter({ has: page.locator("span.chip", { hasText: /^IPv4$/ }) });
+  await expect(v4()).toContainText("ähnlich");
+  await v4().click();
+  const drawer = page.locator(".drawer");
+  await drawer.locator("button:has-text('Als Paar bestätigen')").click();
+  await expect(drawer).toContainText("bestätigt von");
+  await expect(v4()).toContainText("✓ bestätigt");
+  await drawer.locator("button:has-text('zurücknehmen')").click();
+  await expect(drawer).not.toContainText("bestätigt von");
+  await expect(v4()).toContainText("ähnlich");
+});
+
+test("VIP-Ziel: Server hinter der VIP trägt „Ziel von VIP“", async ({ page }) => {
+  await page.goto("/#objekte");
+  await search(page).fill("H_web01");
+  const row = rows(page).filter({ hasText: "fwc11-000-infrz" }).first();
+  await expect(row).toContainText("Ziel von VIP V-EXT_www.example.ch");
+});
+
+test("Betriebszustand auf der System-Seite", async ({ page }) => {
+  await page.goto("/#system");
+  const card = page.locator(".card", { hasText: "Betriebszustand" });
+  await expect(card).toContainText("Plattform");
+  await expect(card).toContainText("Quellsysteme");
+});

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { cancelRun, fetchRuns, fetchSystems, Run, System, Tenant } from "./api";
+import { cancelRun, fetchOpsHealth, fetchRuns, fetchSystems, OpsHealth, Run, System, Tenant } from "./api";
+import { HealthChip, HealthTable } from "./Health";
 import type { Stats, View } from "./App";
 import type { Me } from "./auth";
 import CollectDialog, { CollectAllDialog } from "./CollectDialog";
@@ -29,6 +30,12 @@ export default function Overview({
   const [systems, setSystems] = useState<System[]>([]);
   const [collectOpen, setCollectOpen] = useState(false);
   const [collectAllOpen, setCollectAllOpen] = useState(false);
+  const [health, setHealth] = useState<OpsHealth | null>(null);
+  useEffect(() => {
+    fetchOpsHealth(tenantId)
+      .then(setHealth)
+      .catch(() => setHealth(null));
+  }, [tenantId, runs]);
 
   const loadRuns = useCallback(() => {
     fetchRuns(tenantId, 8)
@@ -106,6 +113,17 @@ export default function Overview({
       </PageHead>
 
       <ErrorBox error={stats.error} prefix="Daten laden" />
+      {health && health.problems > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-head">
+            <h2>Betriebszustand</h2>
+            <HealthChip health={health} />
+          </div>
+          <div className="card-body scroll">
+            <HealthTable health={health} onlyProblems onGo={onGo} />
+          </div>
+        </div>
+      )}
 
       <div className="kpis">
         <button className="kpi" onClick={() => onGo("regeln")}>

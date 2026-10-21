@@ -283,7 +283,13 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
             out += _service_issues(o, detail, services)
         if o.category is ObjectCategory.ADDRESS and _first(o):
             by_value[(o.source_system_id, _first(o))].append(o.name)
-        if o.id not in used and o.category is not ObjectCategory.IPPOOL and not predefined:
+        derived = o.category is ObjectCategory.VIP_TARGET or bool((o.attrs or {}).get("vip_of"))
+        if (
+            o.id not in used
+            and o.category is not ObjectCategory.IPPOOL
+            and not predefined
+            and not derived  # VIP-Ziel bzw. Objekt hinter einer VIP: von der VIP verwendet
+        ):
             out.append(_issue(FindingType.UNUSED_OBJECT, o, detail, Severity.INFO))
 
     for (source_id, value), names in by_value.items():

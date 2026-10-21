@@ -2,7 +2,8 @@
 // mit Signatur, Zeitplan, Sicherheits-Schalter, letzte Sicherung. Rein lesend; Updates und
 // Sicherungen laufen auf der VM (deploy/update.sh, deploy/backup) - siehe docs/BETRIEB.md.
 import { useEffect, useState } from "react";
-import { fetchSystemStatus, SystemStatus } from "./api";
+import { fetchOpsHealth, fetchSystemStatus, OpsHealth, SystemStatus } from "./api";
+import { HealthChip, HealthTable } from "./Health";
 import { Dash, ErrorBox, fmtTime, Loading, Note, PageHead } from "./ui";
 
 const SIG: Record<string, [string, string]> = {
@@ -30,9 +31,11 @@ function Chip({ map, value }: { map: Record<string, [string, string]>; value: st
 
 export default function System() {
   const [s, setS] = useState<SystemStatus | null>(null);
+  const [health, setHealth] = useState<OpsHealth | null>(null);
   const [err, setErr] = useState<unknown>(null);
   useEffect(() => {
     fetchSystemStatus().then(setS).catch(setErr);
+    fetchOpsHealth().then(setHealth).catch(setErr);
   }, []);
 
   return (
@@ -42,6 +45,17 @@ export default function System() {
         (<code>deploy/update.sh</code>, <code>deploy/backup/</code>).
       </PageHead>
       <ErrorBox error={err} prefix="Status laden" />
+      {health && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-head">
+            <h2>Betriebszustand</h2>
+            <HealthChip health={health} />
+          </div>
+          <div className="card-body scroll">
+            <HealthTable health={health} />
+          </div>
+        </div>
+      )}
       {!s && !err && <Loading />}
       {s && (
         <div className="two-col">

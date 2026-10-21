@@ -1,6 +1,6 @@
 // Objekte & Inventar (ADR 0010): Firewall-Objekte wie auf dem Gerät mit Abgleich gegen das IPAM,
 // dazu das Netzinventar aus FortiGate/APIC (Subnetze, VLANs, Ports, Geräte, VRFs). Rein lesend.
-import { Fragment, ReactNode, useEffect, useState } from "react";
+import { Fragment, ReactNode, useEffect, useMemo, useState } from "react";
 import {
   DeviceObject,
   fetchInventory,
@@ -41,7 +41,7 @@ type Tab =
   | "portgroups";
 
 const TABS: { key: Tab; label: string; category?: string }[] = [
-  { key: "addr", label: "Adressobjekte", category: "address,vip,ippool" },
+  { key: "addr", label: "Adressobjekte", category: "address,vip,vip_target,ippool" },
   { key: "groups", label: "Gruppen", category: "address_group,service_group" },
   { key: "services", label: "Services", category: "service" },
   { key: "subnets", label: "Subnetze" },
@@ -171,18 +171,28 @@ function objectLink(o: { id: number; name: string; family: string | null }): Vie
   return p;
 }
 
-function Pager({ total, offset, onOffset }: { total: number; offset: number; onOffset: (o: number) => void }) {
-  if (total <= PAGE) return <div className="pager">{total} Einträge</div>;
+function Pager({
+  total,
+  offset,
+  onOffset,
+  pageSize = PAGE,
+}: {
+  total: number;
+  offset: number;
+  onOffset: (o: number) => void;
+  pageSize?: number;
+}) {
+  if (total <= pageSize) return <div className="pager">{total} Einträge</div>;
   return (
     <div className="pager">
-      {offset + 1}–{Math.min(offset + PAGE, total)} von {total}
-      <button className="btn btn-ghost btn-sm" disabled={offset === 0} onClick={() => onOffset(offset - PAGE)}>
+      {offset + 1}–{Math.min(offset + pageSize, total)} von {total}
+      <button className="btn btn-ghost btn-sm" disabled={offset === 0} onClick={() => onOffset(offset - pageSize)}>
         Zurück
       </button>
       <button
         className="btn btn-ghost btn-sm"
-        disabled={offset + PAGE >= total}
-        onClick={() => onOffset(offset + PAGE)}
+        disabled={offset + pageSize >= total}
+        onClick={() => onOffset(offset + pageSize)}
       >
         Weiter
       </button>
@@ -298,6 +308,22 @@ function ObjectTable({
                           in NAT / VIPs öffnen
                         </button>
                       )}
+                      {/* VIP-Ziele (0.12.0): internes Ziel einer VIP bzw. Adressobjekt hinter einer VIP */}
+                      {[...(o.category === "vip_target" && o.attrs?.vip ? [String(o.attrs.vip)] : []),
+                        ...((o.attrs?.vip_of as string[] | undefined) ?? [])].map((vip) => (
+                        <div key={vip}>
+                          <button
+                            className="chip linkchip local"
+                            title="Ziel dieser VIP – die Regeln der VIP zählen mit; Klick öffnet NAT / VIPs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onGo?.("nat", { q: vip });
+                            }}
+                          >
+                            Ziel von VIP {vip}
+                          </button>
+                        </div>
+                      ))}
                     </td>
                     <td className="nowrap">
                       {CATEGORY_LABEL[o.category] ?? o.category}
@@ -765,51 +791,7 @@ function InventoryTable({
           </table>
         );
       case "interfaces":
-        return (
-          <table>
-            <thead>
-              <tr>
-                <th>Gerät</th>
-                <th>Port</th>
-                <th>Typ / Modus</th>
-                <th>VLANs</th>
-                <th>LAG / Parent</th>
-                <th>IPs</th>
-                <th>Zone / Policy</th>
-                <th>Nachbar</th>
-                <th>EPGs</th>
-                <th>Quelle</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(page as InvInterface[]).map((i) => (
-                <tr key={i.id}>
-                  <td className="mono nowrap">{i.device}</td>
-                  <td className="mono nowrap">
-                    <b>{i.name}</b>
-                    {i.enabled === false && <span className="chip na">aus</span>}
-                    {i.description && <div className="faint">{i.description}</div>}
-                  </td>
-                  <td className="nowrap">
-                    {i.kind}
-                    {i.mode && <div className="faint">{i.mode}</div>}
-                  </td>
-                  <td className="mono">
-                    {i.untagged_vlan != null && <div>untagged {i.untagged_vlan}</div>}
-                    {i.tagged_vlans?.length ? <div>tagged {i.tagged_vlans.join(", ")}</div> : null}
-                    {i.untagged_vlan == null && !i.tagged_vlans?.length && <Dash />}
-                  </td>
-                  <td className="mono">{cell([i.lag, i.parent].filter(Boolean).join(" / "))}</td>
-                  <td className="mono">{cell(list(i.ips))}</td>
-                  <td>{cell([i.zone, i.policy_group].filter(Boolean).join(" · "))}</td>
-                  <td className="mono">{cell([i.neighbor, i.neighbor_port].filter(Boolean).join(" : "))}</td>
-                  <td className="mono">{cell(list(i.epgs))}</td>
-                  <td className="nowrap">{cell(i.source)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        );
+        return <PortsByDevice ports={all as InvInterface[]} expanded={!!query} />;
       case "devices":
         return (
           <table>
@@ -886,7 +868,7 @@ function InventoryTable({
             table
           )}
         </div>
-        {all.length > 0 && <Pager total={all.length} offset={offset} onOffset={setOffset} />}
+        {all.length > 0 && kind !== "interfaces" && <Pager total={all.length} offset={offset} onOffset={setOffset} />}
       </div>
     </>
   );
@@ -1075,6 +1057,133 @@ function PortgroupTable({ tenantId, q }: { tenantId: number; q: string }) {
           )}
         </div>
       </div>
+    </>
+  );
+}
+
+// Ports je Gerät (Dev-Befund 0.12.0): Gerät als Kopfzeile (auf-/zuklappbar), darunter die Ports;
+// Subinterfaces unter ihrem Parent, LAG-Mitglieder unter dem LAG.
+const byName = (a: InvInterface, b: InvInterface) => a.name.localeCompare(b.name, undefined, { numeric: true });
+
+function portTree(ports: InvInterface[]): { port: InvInterface; depth: number }[] {
+  const names = new Set(ports.map((p) => p.name));
+  const children = new Map<string, InvInterface[]>();
+  const roots: InvInterface[] = [];
+  for (const p of ports) {
+    const up = p.parent && names.has(p.parent) && p.parent !== p.name ? p.parent : p.lag && names.has(p.lag) && p.lag !== p.name ? p.lag : null;
+    if (up) children.set(up, [...(children.get(up) ?? []), p]);
+    else roots.push(p);
+  }
+  const out: { port: InvInterface; depth: number }[] = [];
+  const seen = new Set<string>();
+  const walk = (p: InvInterface, depth: number) => {
+    if (seen.has(p.name)) return;
+    seen.add(p.name);
+    out.push({ port: p, depth });
+    for (const c of (children.get(p.name) ?? []).sort(byName)) walk(c, depth + 1);
+  };
+  roots.sort(byName).forEach((p) => walk(p, 0));
+  ports.filter((p) => !seen.has(p.name)).forEach((p) => walk(p, 0)); // Zyklen: flach anhängen
+  return out;
+}
+
+function VlanCell({ i }: { i: InvInterface }) {
+  if (i.kind === "vlan" && i.parent && i.tagged_vlans?.length === 1 && i.untagged_vlan == null) {
+    return (
+      <span title={`Subinterface – sendet getaggt über ${i.parent}`}>
+        VLAN {i.tagged_vlans[0]} <span className="faint">getaggt über {i.parent}</span>
+      </span>
+    );
+  }
+  return (
+    <>
+      {i.untagged_vlan != null && <div>untagged {i.untagged_vlan}</div>}
+      {i.tagged_vlans?.length ? <div>tagged {i.tagged_vlans.join(", ")}</div> : null}
+      {i.untagged_vlan == null && !i.tagged_vlans?.length && <Dash />}
+    </>
+  );
+}
+
+const DEVICES_PER_PAGE = 50;
+
+function PortsByDevice({ ports, expanded }: { ports: InvInterface[]; expanded: boolean }) {
+  const devices = useMemo(() => {
+    const m = new Map<string, InvInterface[]>();
+    for (const p of ports) {
+      const key = `${p.source ?? ""}\u0000${p.device}`;
+      m.set(key, [...(m.get(key) ?? []), p]);
+    }
+    return [...m.entries()]
+      .map(([key, list]) => ({ key, device: list[0].device, source: list[0].source, ports: list }))
+      .sort((a, b) => a.device.localeCompare(b.device, undefined, { numeric: true }));
+  }, [ports]);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [offset, setOffset] = useState(0);
+  useEffect(() => setOffset(0), [ports]);
+  const isOpen = (key: string) => expanded || devices.length <= 3 || open.has(key);
+  const toggle = (key: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  const page = devices.slice(offset, offset + DEVICES_PER_PAGE);
+  return (
+    <>
+      <table>
+        <thead>
+          <tr>
+            <th>Port</th>
+            <th>Typ / Modus</th>
+            <th>VLANs</th>
+            <th>IPs</th>
+            <th>Zone / Policy</th>
+            <th>Nachbar</th>
+            <th>EPGs</th>
+          </tr>
+        </thead>
+        <tbody>
+          {page.map((d) => (
+            <Fragment key={d.key}>
+              <tr className="clickable group-row" onClick={() => toggle(d.key)}>
+                <td colSpan={7}>
+                  <span className="mono">{isOpen(d.key) ? "▾" : "▸"}</span> <b className="mono">{d.device}</b>{" "}
+                  <span className="faint">
+                    · {d.ports.length} Ports{d.source ? ` · ${d.source}` : ""}
+                  </span>
+                </td>
+              </tr>
+              {isOpen(d.key) &&
+                portTree(d.ports).map(({ port: i, depth }) => (
+                  <tr key={i.id}>
+                    <td className="mono nowrap" style={{ paddingLeft: 12 + depth * 18 }}>
+                      {depth > 0 && <span className="faint">└ </span>}
+                      <b>{i.name}</b>
+                      {i.enabled === false && <span className="chip na">aus</span>}
+                      {i.lag && depth > 0 && i.lag !== i.parent && <span className="chip">LAG {i.lag}</span>}
+                      {i.description && <div className="faint">{i.description}</div>}
+                    </td>
+                    <td className="nowrap">
+                      {i.kind}
+                      {i.mode && <div className="faint">{i.mode}</div>}
+                    </td>
+                    <td className="mono">
+                      <VlanCell i={i} />
+                    </td>
+                    <td className="mono">{cell(list(i.ips))}</td>
+                    <td>{cell([i.zone, i.policy_group].filter(Boolean).join(" · "))}</td>
+                    <td className="mono">{cell([i.neighbor, i.neighbor_port].filter(Boolean).join(" : "))}</td>
+                    <td className="mono">{cell(list(i.epgs))}</td>
+                  </tr>
+                ))}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+      {devices.length > DEVICES_PER_PAGE && (
+        <Pager total={devices.length} offset={offset} onOffset={setOffset} pageSize={DEVICES_PER_PAGE} />
+      )}
     </>
   );
 }

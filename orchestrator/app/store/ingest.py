@@ -130,6 +130,9 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     _apply_object_catalog(cache, result.objects)
     for nat in result.nat_rules:
         _persist_nat(session, run, nat)
+    if result.nat_rules:
+        session.flush()
+        _vip_targets(session, run, device_objects, cache)
     if result.inventory is not None:  # aeltere Collectors liefern kein Inventar
         _replace_inventory(session, run, result.inventory)
     if result.virtual is not None:  # vCenter: VMs und Portgruppen (ADR 0017)
@@ -469,6 +472,89 @@ def _apply_object_catalog(cache: "_Cache", objects) -> None:
         targets += cache.by_value(o.value) if o.value else []
         for obj in targets:
             obj.color = o.color
+
+
+def vip_target_list(nat: NatRule) -> list[dict]:
+    """Interne Ziele einer VIP: Real Server (IP bzw. Adressobjekt), FQDN-VIP (`mapped-addr`)
+    oder die Mapped-IP. Je Ziel `ip` oder `address`, dazu Port und Status."""
+    raw = nat.raw if isinstance(nat.raw, dict) else {}
+    if nat.targets:
+        return [t for t in nat.targets if t.get("ip") or t.get("address")]
+    mapped_addr = raw.get("mapped-addr")
+    if isinstance(mapped_addr, list):  # manche FortiOS-Versionen: [{"name": ...}]
+        mapped_addr = next((m.get("name") for m in mapped_addr if isinstance(m, dict)), None)
+    if mapped_addr:
+        return [{"address": str(mapped_addr)}]
+    if nat.mapped_ip:
+        return [{"ip": nat.mapped_ip, "port": nat.mapped_port}]
+    return []
+
+
+def _vip_targets(session: Session, run, device_objects: _DEVICE_OBJECTS, cache: "_Cache") -> None:
+    """VIP-Ziele (Dev-Befund 0.12.0): ein Adressobjekt hinter einer VIP (per Name oder mit
+    genau der Ziel-IP) bekommt `vip_of`, ein Ziel ohne Objekt wird ein eigenes Objekt der
+    Kategorie `vip_target`. Beides zaehlt die Regeln der VIP mit (Regelindex)."""
+    now = datetime.now(UTC)
+    seen: set[tuple] = set()
+    created: list[tuple[DeviceObject, object]] = []
+    by_value: dict[tuple[str | None, str], list[DeviceObject]] = defaultdict(list)
+    for objs in device_objects.values():
+        for o in objs:
+            if o.category is ObjectCategory.ADDRESS and len(o.values or []) == 1:
+                value = str(o.values[0]).removesuffix("/32").removesuffix("/128")
+                by_value[(o.family, value)].append(o)
+
+    def mark(obj: DeviceObject, vip: str) -> None:
+        attrs = dict(obj.attrs or {})
+        attrs["vip_of"] = sorted({*attrs.get("vip_of", []), vip})
+        obj.attrs = attrs
+
+    nats = session.scalars(
+        select(NatRule).where(
+            NatRule.source_system_id == run.source_system_id, NatRule.nat_type == "dnat_vip"
+        )
+    )
+    for nat in nats:
+        for t in vip_target_list(nat):
+            if t.get("address"):
+                obj = _device_object(device_objects, "addr", str(t["address"]), nat.family)
+                if obj is not None:
+                    mark(obj, nat.name)
+                continue
+            ip = str(t["ip"])
+            existing = by_value.get((nat.family, ip), [])
+            if existing:  # Adressobjekt mit genau dieser IP: das ist das Ziel
+                for obj in existing:
+                    mark(obj, nat.name)
+                continue
+            port = str(t["port"]) if t.get("port") else None
+            name = f"{nat.name} → {ip}{f':{port}' if port else ''}"[:300]
+            if (nat.family, name) in seen:
+                continue
+            seen.add((nat.family, name))
+            target = DeviceObject(
+                tenant_id=run.tenant_id,
+                source_system_id=run.source_system_id,
+                category=ObjectCategory.VIP_TARGET,
+                name=name,
+                obj_type="realserver" if nat.targets else "mapped",
+                family=nat.family,
+                values=[ip],
+                comment=f"Internes Ziel von VIP {nat.name}",
+                attrs={
+                    k: v
+                    for k, v in {"vip": nat.name, "port": port, "status": t.get("status")}.items()
+                    if v
+                },
+                collector_run_id=run.id,
+                last_seen=now,
+            )
+            session.add(target)
+            created.append((target, cache.value_object(ip.split("-")[0])))
+    if created:
+        session.flush()  # neue Werte-Objekte (Ziel-IPs) haben jetzt eine ID
+        for target, canonical in created:
+            target.network_object_id = canonical.id if canonical is not None else None
 
 
 def _persist_nat(session: Session, run, nat: NormalizedNat) -> None:
