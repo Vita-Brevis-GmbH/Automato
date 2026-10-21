@@ -7,6 +7,34 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.9.0 – 2026-10-21
+
+IPv4/IPv6 getrennt, Regel-Zahl über Gruppen, grosse Regelwerke schnell (ADR 0016, Alembic `0030`).
+
+- **IPv4- und IPv6-Objekte gleichen Namens** sind zwei Objekte, wie auf der FortiGate
+  (`address`/`addrgrp` bzw. `address6`/`addrgrp6`):
+  - Werte, Gruppen, Regel-Zahl und Befunde je Familie; Befunde zu IPv6-Objekten heissen
+    „Name (IPv6)“.
+  - Policies lösen `srcaddr`/`dstaddr` gegen IPv4, `srcaddr6`/`dstaddr6` gegen IPv6 auf.
+  - `firewall/policy6` (FortiOS 6.x) wird mitgelesen, wo es die Tabelle gibt.
+- **Familie je Regel** (IPv4, IPv6, IPv4+IPv6) und Filter „Familie“.
+- **IPv4/IPv6-Paare** werden nur markiert, beide bleiben eigene Regeln:
+  - „↔ IPv6 #…“ (grün = deckt dasselbe ab, gelb = ähnlich, mit Abweichungen im Tooltip).
+  - Klick öffnet das Gegenstück; beim Überfahren wird es hervorgehoben.
+- **Regel-Zahl bei Objekten** zählt die Nutzung direkt und über (verschachtelte) Gruppen.
+  - Sie stimmt mit dem Objekt-Detail überein.
+  - Der Link öffnet genau dieses Objekt (`#regeln?object_id=…`).
+- **Grosse Regelwerke** (gemessen: 3000 Regeln, 9500 Objekte, 39 000 Endpunkte):
+  - Regelliste 0,9 → 0,07 s, Suche 3,5 → 0,04 s, IP-Suche 4,1 → 0,1 s.
+  - Objekt-Detail 8,7 → 0,05 s, Doku je System 2,2 → 0,04 s.
+  - Einlesen 216 → 25 s.
+  - Möglich macht das ein abgeleiteter Regelindex (Suchtext, Objekt-Nutzung, IP-Bereiche),
+    beim Einlesen berechnet. Dazu ein Zwischenspeicher je Lauf und seitenweise Abfragen in
+    der Datenbank.
+- **Nach dem Update:** Den Index baut die erste Anfrage einmalig auf. Die getrennten
+  IPv6-Objekte und Familien kommen mit dem nächsten Lauf eines Agenten ab 0.9.0
+  („Alle einlesen“).
+
 ## 0.8.1 – 2026-10-20
 
 Tests und CI ausgebaut (`docs/TESTS.md`), zwei Korrekturen (Alembic `0029`).

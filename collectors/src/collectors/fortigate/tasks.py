@@ -124,6 +124,7 @@ def collect_once(
             d["addresses6"],
             d["groups6"],
             d.get("service_groups", []),
+            d.get("policies6", []),
         )
         nat_rules = norm.normalize_nat(d["vips"]) + norm.normalize_snat(d["ippools"])
         objects = norm.build_device_objects(

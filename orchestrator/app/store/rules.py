@@ -5,13 +5,40 @@ sowie Batch-Lookups fuer Netzwerkobjekte und Zonen, damit die Anreicherung der
 Liste ohne N+1-Queries auskommt.
 """
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import MatchStatus, NetworkObject, Rule, RuleDomain, RuleEndpoint, Zone
+from app.models import (
+    MatchStatus,
+    NetworkObject,
+    Rule,
+    RuleDomain,
+    RuleEndpoint,
+    RuleIndex,
+    RuleIpRange,
+    RuleObjectRef,
+    RuleObjectUsage,
+    Zone,
+    rule_service,
+)
 
 
-def _filtered(
+def delete_rules(session: Session, condition) -> int:
+    """Regeln samt Endpunkten, Verweisen, Services und Index per SQL loeschen (schnell auch bei
+    grossen Regelwerken; das ORM laedt sonst jede Regel mit allen Kindern einzeln)."""
+    ids = select(Rule.id).where(condition)
+    fetch = {"synchronize_session": "fetch"}
+    for model in (RuleIndex, RuleObjectUsage, RuleIpRange):
+        session.execute(delete(model).where(model.rule_id.in_(ids)).execution_options(**fetch))
+    for model in (RuleEndpoint, RuleObjectRef):
+        session.execute(delete(model).where(model.rule_id.in_(ids)).execution_options(**fetch))
+    session.execute(delete(rule_service).where(rule_service.c.rule_id.in_(ids)))
+    result = session.execute(delete(Rule).where(condition).execution_options(**fetch))
+    session.flush()
+    return result.rowcount or 0
+
+
+def filtered(
     stmt,
     tenant_id,
     source_system_id,
@@ -34,6 +61,9 @@ def _filtered(
     return stmt
 
 
+ORDER = (Rule.source_system_id, Rule.sequence, Rule.id)  # Reihenfolge wie auf dem Geraet
+
+
 def list_rules(
     session: Session,
     tenant_id: int | None = None,
@@ -44,16 +74,19 @@ def list_rules(
     src_zone: str | None = None,
     dst_zone: str | None = None,
     action=None,
+    rule_ids: list[int] | None = None,
 ) -> list[Rule]:
     """Regeln (Firewall-Policies und ACI-Contracts) gefiltert, seitenweise; `limit=None` = alle."""
     stmt = (
         select(Rule)
         .options(selectinload(Rule.endpoints), selectinload(Rule.services), selectinload(Rule.refs))
-        .order_by(Rule.source_system_id, Rule.sequence, Rule.id)
+        .order_by(*ORDER)
     )
-    stmt = _filtered(stmt, tenant_id, source_system_id, domain, src_zone, dst_zone, action).offset(
+    stmt = filtered(stmt, tenant_id, source_system_id, domain, src_zone, dst_zone, action).offset(
         offset
     )
+    if rule_ids is not None:
+        stmt = stmt.where(Rule.id.in_(rule_ids))
     return list(session.scalars(stmt if limit is None else stmt.limit(limit)))
 
 
@@ -66,7 +99,7 @@ def count_rules(
     dst_zone: str | None = None,
     action=None,
 ) -> int:
-    stmt = _filtered(
+    stmt = filtered(
         select(func.count(Rule.id)), tenant_id, source_system_id, domain, src_zone, dst_zone, action
     )
     return session.scalar(stmt) or 0
@@ -74,11 +107,11 @@ def count_rules(
 
 def summary(session: Session, tenant_id: int | None = None) -> dict:
     """Kennzahlen fuer die Uebersicht per SQL - unabhaengig von der Seitengroesse der Liste."""
-    scoped = _filtered(select(Rule.id), tenant_id, None, None).subquery()
+    scoped = filtered(select(Rule.id), tenant_id, None, None).subquery()
     by_domain = {
         d.value: n
         for d, n in session.execute(
-            _filtered(select(Rule.domain, func.count(Rule.id)), tenant_id, None, None).group_by(
+            filtered(select(Rule.domain, func.count(Rule.id)), tenant_id, None, None).group_by(
                 Rule.domain
             )
         )
@@ -86,7 +119,7 @@ def summary(session: Session, tenant_id: int | None = None) -> dict:
     systems = sorted(
         s
         for (s,) in session.execute(
-            _filtered(select(Rule.source_system_id).distinct(), tenant_id, None, None)
+            filtered(select(Rule.source_system_id).distinct(), tenant_id, None, None)
         )
     )
     endpoints = session.scalar(
@@ -102,14 +135,14 @@ def summary(session: Session, tenant_id: int | None = None) -> dict:
     )
     zone_counts = list(
         session.execute(
-            _filtered(select(Rule.dst_zone_id, func.count(Rule.id)), tenant_id, None, None)
+            filtered(select(Rule.dst_zone_id, func.count(Rule.id)), tenant_id, None, None)
             .group_by(Rule.dst_zone_id)
             .order_by(func.count(Rule.id).desc())
         )
     )
     src_counts = list(
         session.execute(
-            _filtered(select(Rule.src_zone_id, func.count(Rule.id)), tenant_id, None, None)
+            filtered(select(Rule.src_zone_id, func.count(Rule.id)), tenant_id, None, None)
             .group_by(Rule.src_zone_id)
             .order_by(func.count(Rule.id).desc())
         )
@@ -118,7 +151,7 @@ def summary(session: Session, tenant_id: int | None = None) -> dict:
     actions = {
         a.value: n
         for a, n in session.execute(
-            _filtered(select(Rule.action, func.count(Rule.id)), tenant_id, None, None).group_by(
+            filtered(select(Rule.action, func.count(Rule.id)), tenant_id, None, None).group_by(
                 Rule.action
             )
         )

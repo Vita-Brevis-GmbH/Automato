@@ -12,12 +12,17 @@ get_by_name). `all`/`any` → Endpunkt-Kind ANY.
 Inventar-Ebene (ADR 0010): die Firewall-Objekte des Quellsystems (`device_object`) werden je
 Lauf ersetzt, Regeln verweisen zusaetzlich per Objektname darauf (`rule_object_ref`).
 Findings entstehen nicht mehr hier, sondern im Abgleich (`reconcile`) am Ende des Ingests.
+
+Leistung (Dev-Befund grosse Regelwerke): Werte-Objekte, Zonen, Services und IPAM-Treffer
+werden je Lauf einmal geladen bzw. nachgeschlagen (`_Cache`), neue Objekte gesammelt
+angelegt; danach baut `rule_index` den Such-/Listenindex des Quellsystems.
 """
 
 import ipaddress
+from collections import defaultdict
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, or_, select, true
+from sqlalchemy import delete, select, true
 from sqlalchemy.orm import Session
 
 from app import naming
@@ -61,7 +66,8 @@ from app.schemas.collector import (
     NormalizedRule,
 )
 from app.store import naming_profiles as profile_store
-from app.store import reconcile
+from app.store import reconcile, rule_index
+from app.store import rules as rules_store
 
 _ANY_VALUES = {"all", "any", "*"}
 # Typ-praefixe, die der Collector fuer nicht-IP-aufloesbare Objekte setzt.
@@ -92,28 +98,181 @@ _PROTO_BY_NAME = {
 
 def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     """Schreibt `result` in den Store. `run` muss tenant_id + source_system_id tragen."""
-    # Regeln des Quellsystems ersetzen (aktueller Stand); ORM-Delete kaskadiert Endpunkte
-    for old in session.scalars(select(Rule).where(Rule.source_system_id == run.source_system_id)):
-        session.delete(old)
-    # NAT-/VIP-Regeln des Quellsystems ebenfalls ersetzen (aktueller Stand)
-    for old_nat in session.scalars(
-        select(NatRule).where(NatRule.source_system_id == run.source_system_id)
-    ):
-        session.delete(old_nat)
+    # Regeln und NAT des Quellsystems ersetzen (aktueller Stand) - per SQL, ohne jede Regel
+    # mit ihren Kindern einzeln zu laden
+    rules_store.delete_rules(session, Rule.source_system_id == run.source_system_id)
+    session.execute(
+        delete(NatRule)
+        .where(NatRule.source_system_id == run.source_system_id)
+        .execution_options(synchronize_session="fetch")
+    )
     session.flush()
 
     _apply_epgs(session, run, result.epgs)  # EPGs vor den Regeln (Endpunkt-Link)
     prefixes = _resolve_prefixes(session, run.tenant_id)  # Namensprofil des Mandanten
-    device_objects = _replace_device_objects(session, run, result.objects, sot)
-    for normalized in result.rules:
-        _persist_rule(session, run, normalized, sot, prefixes, device_objects)
-    _apply_object_catalog(session, run.tenant_id, result.objects)
+    cache = _Cache(session, run.tenant_id, sot, prefixes)
+    # Werte-Objekte aller Endpunkte und Firewall-Objekte zuerst, gesammelt angelegt
+    for o in result.objects:
+        values = o.values or ([o.value] if o.value else [])
+        if ObjectCategory(o.category) is ObjectCategory.ADDRESS and len(values) == 1:
+            cache.value_object(values[0])
+    for nr in result.rules:
+        for raw in [*nr.sources, *nr.destinations]:
+            cache.endpoint(raw)
+    session.flush()
+    device_objects = _replace_device_objects(session, run, result.objects, cache)
+    rules = []
+    for i, normalized in enumerate(result.rules, 1):
+        rules.append(_persist_rule(session, run, normalized, cache, device_objects))
+        if i % 500 == 0:
+            session.flush()
+    session.flush()
+    _apply_object_catalog(cache, result.objects)
     for nat in result.nat_rules:
         _persist_nat(session, run, nat)
     if result.inventory is not None:  # aeltere Collectors liefern kein Inventar
         _replace_inventory(session, run, result.inventory)
-    # Findings = abgeleiteter Zustand des ganzen Mandanten (alle Quellsysteme)
+    session.flush()
+    # Findings = abgeleiteter Zustand des ganzen Mandanten (alle Quellsysteme); danach der
+    # Regelindex des Quellsystems (Abgleich kann Werte aus dem IPAM ergaenzen)
     reconcile.reconcile_tenant(session, run.tenant_id)
+    rule_index.rebuild(session, run.tenant_id, source_system_id=run.source_system_id, rules=rules)
+
+
+class _Cache:
+    """Was ein Lauf immer wieder nachschlaegt - einmal geladen: Werte-Objekte des Mandanten nach
+    Name, Zonen, kanonische Services, EPGs, IPAM-Treffer je IP/Name und das Ergebnis je
+    Endpunkt-Rohwert. Neue Objekte werden ohne Einzel-Flush angelegt."""
+
+    def __init__(self, session: Session, tenant_id: int, sot, prefixes: PrefixList | None):
+        self.session = session
+        self.tenant_id = tenant_id
+        self.sot = sot
+        self.prefixes = prefixes
+        self.objects: dict[str, NetworkObject] = {
+            o.name: o
+            for o in session.scalars(
+                select(NetworkObject)
+                .where(NetworkObject.tenant_id == tenant_id)
+                .order_by(NetworkObject.id.desc())  # bei Dubletten gilt das aelteste
+            )
+        }
+        self.zones: dict[str, Zone] = {
+            z.name: z for z in session.scalars(select(Zone).where(Zone.tenant_id == tenant_id))
+        }
+        self.services: dict[str, ServiceObject] = {
+            svc.canonical_name: svc for svc in session.scalars(select(ServiceObject))
+        }
+        self.epgs: dict[str, Epg | None] = {}
+        self._by_ip: dict[str, list] = {}
+        self._by_name: dict[str, object] = {}
+        self._endpoints: dict[str, tuple] = {}
+        self._by_value: dict[str, list[NetworkObject]] | None = None
+
+    # -- Werte-Objekte ------------------------------------------------------------------
+
+    def get_or_create(self, name: str, **fields) -> NetworkObject:
+        obj = self.objects.get(name)
+        if obj is None:
+            obj = NetworkObject(tenant_id=self.tenant_id, name=name, **fields)
+            self.session.add(obj)
+            self.objects[name] = obj
+            self._by_value = None
+        else:
+            for key, val in fields.items():
+                if val is not None:
+                    setattr(obj, key, val)
+        return obj
+
+    def by_value(self, value: str) -> list[NetworkObject]:
+        if self._by_value is None:
+            self._by_value = defaultdict(list)
+            for o in self.objects.values():
+                if o.value:
+                    self._by_value[o.value].append(o)
+        return self._by_value.get(value, [])
+
+    def search_by_ip(self, ip: str) -> list:
+        if ip not in self._by_ip:
+            self._by_ip[ip] = _safe_search_by_ip(self.sot, ip)
+        return self._by_ip[ip]
+
+    def get_by_name(self, name: str):
+        if name not in self._by_name:
+            self._by_name[name] = _safe_get_by_name(self.sot, name)
+        return self._by_name[name]
+
+    def value_object(self, value: str) -> NetworkObject | None:
+        """Werte-Objekt (IP/CIDR) zu einem Firewall-Adressobjekt - fuer Matching/Referenz."""
+        net = _as_ip_or_net(value)
+        if net is None:
+            return None
+        return self.endpoint(value)[1]
+
+    # -- Endpunkte ----------------------------------------------------------------------
+
+    def endpoint(self, raw: str) -> tuple:
+        """(Art, Werte-Objekt | None, EPG | None, inline) je Rohwert - einmal je Lauf."""
+        value = raw.strip()
+        if value not in self._endpoints:
+            self._endpoints[value] = self._resolve(value)
+        return self._endpoints[value]
+
+    def _resolve(self, value: str) -> tuple:
+        if value.lower() in _ANY_VALUES:
+            return EndpointKind.ANY, None, None, value
+        # ACI-EPG (Model 1): typisierter Endpunkt ohne IPAM-Aufloesung/Finding; ist die EPG
+        # bekannt (epg-Tabelle), wird sie referenziert, sonst nur inline gefuehrt.
+        if value.startswith("epg:"):
+            ref = value[4:]  # DN (uni/tn-...) bzw. bei aelteren Collectors der EPG-Name
+            return EndpointKind.EPG, None, self.epg(ref), ref[:300]
+        kind_tag, sep, rest = value.partition(":")
+        if sep and kind_tag in _TYPED_KINDS:
+            obj = _typed_object(self, kind_tag, rest or value)
+        else:
+            net = _as_ip_or_net(value)
+            if net is not None:
+                obj = _object_by_value(self, value, net)
+            else:
+                obj = _object_by_name(self, value)
+        return _KIND_BY_CLASS.get(obj.object_class, EndpointKind.HOST), obj, None, None
+
+    def epg(self, ref: str) -> Epg | None:
+        if ref not in self.epgs:
+            cond = Epg.dn == ref if ref.startswith("uni/") else Epg.name == ref
+            self.epgs[ref] = self.session.scalars(
+                select(Epg).where(Epg.tenant_id == self.tenant_id, cond)
+            ).first()
+        return self.epgs[ref]
+
+    # -- Zonen / Services ---------------------------------------------------------------
+
+    def zone_id(self, name: str | None) -> int | None:
+        if not name:
+            return None
+        zone = self.zones.get(name)
+        if zone is None:
+            zone = Zone(tenant_id=self.tenant_id, name=name)
+            self.session.add(zone)
+            self.session.flush()
+            self.zones[name] = zone
+        return zone.id
+
+    def service(self, raw: str) -> ServiceObject:
+        proto, port_start, port_end, canonical = _parse_service(raw)
+        svc = self.services.get(canonical)
+        if svc is None:
+            svc = self.session.scalars(
+                select(ServiceObject).where(ServiceObject.canonical_name == canonical)
+            ).first()
+            if svc is None:
+                svc = ServiceObject(
+                    proto=proto, port_start=port_start, port_end=port_end, canonical_name=canonical
+                )
+                self.session.add(svc)
+                self.session.flush()
+            self.services[canonical] = svc
+        return svc
 
 
 def _apply_epgs(session: Session, run, epgs) -> None:
@@ -209,27 +368,31 @@ def _resolve_prefixes(session: Session, tenant_id: int) -> PrefixList | None:
     return profile_store.prefixes_for_tenant(session, tenant_id)
 
 
-_DEVICE_OBJECTS = dict[tuple[str, str], DeviceObject]  # (art, name) -> Objekt; art = addr|svc
+# (art, name) -> Objekte (IPv4 und IPv6 duerfen gleich heissen); art = addr | svc
+_DEVICE_OBJECTS = dict[tuple[str, str], list[DeviceObject]]
 
 
 def _replace_device_objects(
-    session: Session, run, objects: list[NormalizedObject], sot
+    session: Session, run, objects: list[NormalizedObject], cache: "_Cache"
 ) -> _DEVICE_OBJECTS:
     """Firewall-Objekte des Quellsystems ersetzen (Inventar, ADR 0010)."""
     if run.source_system_id is None or run.tenant_id is None:
         return {}
-    for old in session.scalars(
-        select(DeviceObject).where(DeviceObject.source_system_id == run.source_system_id)
-    ):
-        session.delete(old)
-    session.flush()  # DELETE vor INSERT (Unique je Quellsystem/Kategorie/Name)
+    session.execute(
+        delete(DeviceObject)
+        .where(DeviceObject.source_system_id == run.source_system_id)
+        .execution_options(synchronize_session="fetch")
+    )
+    session.flush()  # DELETE vor INSERT (Unique je Quellsystem/Kategorie/Familie/Name)
     now = datetime.now(UTC)
-    out: _DEVICE_OBJECTS = {}
+    out: _DEVICE_OBJECTS = defaultdict(list)
+    seen: set[tuple] = set()
     for o in objects:
         category = ObjectCategory(o.category)
+        if (category, o.family, o.name) in seen:
+            continue  # doppelt geliefert: erstes Objekt gilt
+        seen.add((category, o.family, o.name))
         art = "svc" if category in SERVICE_CATEGORIES else "addr"
-        if (art, o.name) in out:
-            continue  # gleicher Name in IPv4 und IPv6: erstes Objekt gilt
         values = list(dict.fromkeys(o.values or ([o.value] if o.value else [])))
         obj = DeviceObject(
             tenant_id=run.tenant_id,
@@ -249,11 +412,24 @@ def _replace_device_objects(
             last_seen=now,
         )
         if category is ObjectCategory.ADDRESS and len(values) == 1:
-            obj.network_object_id = _canonical_object_id(session, run.tenant_id, values[0], sot)
+            canonical = cache.value_object(values[0])
+            obj.network_object_id = canonical.id if canonical is not None else None
         session.add(obj)
-        out[(art, o.name)] = obj
+        out[(art, o.name)].append(obj)
     session.flush()
     return out
+
+
+def _device_object(
+    objs: _DEVICE_OBJECTS, art: str, name: str, family: str | None
+) -> DeviceObject | None:
+    """Verweis -> Objekt: IPv6-Felder auf IPv6-Objekte, sonst IPv4 vor familienlosen (VIPs,
+    Services) - aeltere Collectors ohne getrennte IPv6-Felder fallen auf irgendeines zurueck."""
+    found = objs.get((art, name))
+    if not found:
+        return None
+    order = {family: 0} if family else {"v4": 0, None: 1}
+    return min(found, key=lambda o: order.get(o.family, 2))
 
 
 def _replace_inventory(session: Session, run, inv: NetworkInventory) -> None:
@@ -276,27 +452,15 @@ def _replace_inventory(session: Session, run, inv: NetworkInventory) -> None:
     session.flush()
 
 
-def _canonical_object_id(session: Session, tenant_id: int, value: str, sot) -> int | None:
-    """Werte-Objekt (IP/CIDR) zu einem Firewall-Adressobjekt - fuer Matching/Referenzdaten."""
-    net = _as_ip_or_net(value)
-    if net is None:
-        return None
-    return _object_by_value(session, tenant_id, value, net, sot).id
-
-
-def _apply_object_catalog(session: Session, tenant_id: int, objects) -> None:
+def _apply_object_catalog(cache: "_Cache", objects) -> None:
     """Farbcode (Signal) auf bereits angelegte Adressobjekte uebertragen (Name oder Wert)."""
     for o in objects:
         if o.color is None or getattr(o, "category", "address") != "address":
             continue
-        conds = [NetworkObject.name == o.name]
-        if o.value:
-            conds.append(NetworkObject.value == o.value)
-        for obj in session.scalars(
-            select(NetworkObject).where(NetworkObject.tenant_id == tenant_id, or_(*conds))
-        ):
+        targets = [cache.objects[o.name]] if o.name in cache.objects else []
+        targets += cache.by_value(o.value) if o.value else []
+        for obj in targets:
             obj.color = o.color
-    session.flush()
 
 
 def _persist_nat(session: Session, run, nat: NormalizedNat) -> None:
@@ -318,17 +482,15 @@ def _persist_nat(session: Session, run, nat: NormalizedNat) -> None:
             raw=nat.raw,
         )
     )
-    session.flush()
 
 
 def _persist_rule(
     session: Session,
     run,
     nr: NormalizedRule,
-    sot,
-    prefixes: PrefixList | None = None,
+    cache: "_Cache",
     device_objects: _DEVICE_OBJECTS | None = None,
-) -> None:
+) -> Rule:
     rule = Rule(
         tenant_id=run.tenant_id,
         source_system_id=run.source_system_id,
@@ -336,171 +498,136 @@ def _persist_rule(
         external_id=nr.external_id,
         name=nr.name,
         action=RuleAction.ALLOW if nr.action == "allow" else RuleAction.DENY,
-        src_zone_id=_zone_id(session, run.tenant_id, nr.src_zone),
-        dst_zone_id=_zone_id(session, run.tenant_id, nr.dst_zone),
+        src_zone_id=cache.zone_id(nr.src_zone),
+        dst_zone_id=cache.zone_id(nr.dst_zone),
         last_seen=datetime.now(UTC),
         collector_run_id=run.id,
         protections=nr.protections or None,
         aci_scope=nr.aci_scope,
+        ip_family=nr.family or _values_family([*nr.sources, *nr.destinations]),
         raw=nr.raw,
     )
-    for raw in nr.sources:
-        rule.endpoints.append(
-            _endpoint(session, run.tenant_id, EndpointRole.SRC, raw, sot, prefixes)
-        )
-    for raw in nr.destinations:
-        rule.endpoints.append(
-            _endpoint(session, run.tenant_id, EndpointRole.DST, raw, sot, prefixes)
-        )
+    for role, values in ((EndpointRole.SRC, nr.sources), (EndpointRole.DST, nr.destinations)):
+        for raw in values:
+            kind, obj, epg, inline = cache.endpoint(raw)
+            rule.endpoints.append(
+                RuleEndpoint(
+                    role=role,
+                    kind=kind,
+                    network_object_id=obj.id if obj is not None else None,
+                    epg_id=epg.id if epg is not None else None,
+                    inline_value=inline,
+                    matched=(obj.match_status is MatchStatus.MATCHED)
+                    if obj is not None
+                    else epg is not None,
+                )
+            )
     # Je Regel jeden Service einmal: verschiedene Eintraege landen oft beim selben kanonischen
     # Service (ACI-Filter `https` und `443`, Eintraege nur mit anderem Quell-Port, FortiGate-
     # Gruppe + Einzelservice) - doppelt verletzt das sonst den Schluessel von rule_service
-    for svc in {s.id: s for s in (_service(session, raw) for raw in nr.services)}.values():
+    for svc in {s.id: s for s in (cache.service(raw) for raw in nr.services)}.values():
         rule.services.append(svc)
     objs = device_objects or {}
-    for role, art, names in (
-        (RefRole.SRC, "addr", nr.source_refs),
-        (RefRole.DST, "addr", nr.destination_refs),
-        (RefRole.SERVICE, "svc", nr.service_refs),
+    split = bool(nr.source_refs6 or nr.destination_refs6 or nr.family)  # IPv6 getrennt
+    for role, art, groups in (
+        (RefRole.SRC, "addr", ((nr.source_refs, None), (nr.source_refs6, "v6"))),
+        (RefRole.DST, "addr", ((nr.destination_refs, None), (nr.destination_refs6, "v6"))),
+        (RefRole.SERVICE, "svc", ((nr.service_refs, None),)),
     ):
-        for position, name in enumerate(names):
-            dobj = objs.get((art, name))
-            rule.refs.append(
-                RuleObjectRef(
-                    role=role,
-                    position=position,
-                    name=name,
-                    device_object_id=dobj.id if dobj is not None else None,
+        position = 0
+        for names, family in groups:
+            for name in names:
+                dobj = _device_object(objs, art, name, family or ("v4" if split else None))
+                rule.refs.append(
+                    RuleObjectRef(
+                        role=role,
+                        position=position,
+                        name=name,
+                        family=family or (dobj.family if dobj is not None else None),
+                        device_object_id=dobj.id if dobj is not None else None,
+                    )
                 )
-            )
+                position += 1
     session.add(rule)
-    session.flush()
+    return rule
+
+
+def _values_family(values: list[str]) -> str | None:
+    """v4 | v6 | dual aus den Endpunkt-Werten (aeltere Collectors, ACI)."""
+    versions = set()
+    for v in values:
+        tag, sep, rest = v.partition(":")
+        net = _as_ip_or_net(v) if not sep or tag not in _TYPED_KINDS else None
+        if tag == "range" and sep:
+            net = _as_ip_or_net(rest.split("-")[0].strip())
+        if net is not None:
+            versions.add(net.version)
+    if versions == {4, 6}:
+        return "dual"
+    return {frozenset({4}): "v4", frozenset({6}): "v6"}.get(frozenset(versions))
 
 
 # -- Endpunkte + Matching -----------------------------------------------------
 
 
-def _endpoint(
-    session: Session,
-    tenant_id: int,
-    role: EndpointRole,
-    raw: str,
-    sot,
-    prefixes: PrefixList | None = None,
-) -> RuleEndpoint:
-    value = raw.strip()
-    if value.lower() in _ANY_VALUES:
-        return RuleEndpoint(role=role, kind=EndpointKind.ANY, inline_value=value, matched=False)
-
-    # ACI-EPG (Model 1): typisierter Endpunkt ohne IPAM-Aufloesung/Finding; ist die EPG
-    # bekannt (epg-Tabelle), wird sie referenziert, sonst nur inline gefuehrt.
-    if value.startswith("epg:"):
-        ref = value[4:]  # DN (uni/tn-...) bzw. bei aelteren Collectors der EPG-Name
-        cond = Epg.dn == ref if ref.startswith("uni/") else Epg.name == ref
-        epg = session.scalars(select(Epg).where(Epg.tenant_id == tenant_id, cond)).first()
-        return RuleEndpoint(
-            role=role,
-            kind=EndpointKind.EPG,
-            epg_id=epg.id if epg else None,
-            inline_value=ref[:300],
-            matched=epg is not None,
-        )
-
-    kind_tag, sep, rest = value.partition(":")
-    if sep and kind_tag in _TYPED_KINDS:
-        obj = _typed_object(session, tenant_id, kind_tag, rest or value, sot)
-    else:
-        net = _as_ip_or_net(value)
-        if net is not None:
-            obj = _object_by_value(session, tenant_id, value, net, sot)
-        else:
-            obj = _object_by_name(session, tenant_id, value, sot, prefixes)
-
-    return RuleEndpoint(
-        role=role,
-        kind=_KIND_BY_CLASS.get(obj.object_class, EndpointKind.HOST),
-        network_object_id=obj.id,
-        matched=obj.match_status is MatchStatus.MATCHED,
-    )
-
-
-def _typed_object(session: Session, tenant_id: int, kind_tag: str, rest: str, sot) -> NetworkObject:
+def _typed_object(cache: "_Cache", kind_tag: str, rest: str) -> NetworkObject:
     """Nicht-IP-Typen vom Collector (fqdn/geo/mac/dynamic/range) einordnen."""
+    now = datetime.now(UTC)
     if kind_tag == "isdb":
         # FortiGate Internet Service (z. B. Microsoft-Office365): bewusst extern
-        obj = _get_or_create_object(
-            session, tenant_id, name=rest, object_class=ObjectClass.EXTERNAL
-        )
+        obj = cache.get_or_create(rest, object_class=ObjectClass.EXTERNAL)
         obj.match_status = MatchStatus.EXPECTED_EXTERNAL
-        obj.last_seen = datetime.now(UTC)
-        session.flush()
+        obj.last_seen = now
         return obj
 
     if kind_tag == "fqdn":
-        obj = _get_or_create_object(
-            session, tenant_id, name=rest, object_class=ObjectClass.EXTERNAL, fqdn=rest
-        )
+        obj = cache.get_or_create(rest, object_class=ObjectClass.EXTERNAL, fqdn=rest)
         obj.match_status = MatchStatus.EXPECTED_EXTERNAL  # extern erwartet, kein Finding
-        obj.last_seen = datetime.now(UTC)
-        session.flush()
+        obj.last_seen = now
         return obj
 
     if kind_tag == "range":
-        obj = _get_or_create_object(
-            session, tenant_id, name=rest, object_class=ObjectClass.RANGE, value=rest
-        )
+        obj = cache.get_or_create(rest, object_class=ObjectClass.RANGE, value=rest)
         start_ip = rest.split("-")[0].strip()
-        found = _safe_search_by_ip(sot, start_ip)  # Treffer ueber umschliessendes Prefix/Range
-        _apply_match(session, tenant_id, obj, found)
+        found = cache.search_by_ip(start_ip)  # Treffer ueber umschliessendes Prefix/Range
+        _apply_match(cache, obj, found)
         return obj
 
     if kind_tag == "vip":
         # Virtual IP (DNAT): "vip:<name>=<extip>". Ueber die externe IP matchen,
         # den VIP-Namen als Objektname behalten (publizierter Dienst).
         vip_name, _, extip = rest.partition("=")
-        obj = _get_or_create_object(
-            session, tenant_id, name=vip_name, object_class=ObjectClass.VIP, value=extip or None
-        )
+        obj = cache.get_or_create(vip_name, object_class=ObjectClass.VIP, value=extip or None)
         if extip:
-            _apply_match(session, tenant_id, obj, _safe_search_by_ip(sot, extip))
+            _apply_match(cache, obj, cache.search_by_ip(extip))
         else:
             obj.match_status = MatchStatus.NOT_APPLICABLE
-            obj.last_seen = datetime.now(UTC)
-            session.flush()
+            obj.last_seen = now
         return obj
 
     # geo / mac / dynamic / user / usergroup -> kein IPAM-Objekt -> not_applicable, kein Finding
-    obj = _get_or_create_object(session, tenant_id, name=rest, object_class=ObjectClass.UNKNOWN)
+    obj = cache.get_or_create(rest, object_class=ObjectClass.UNKNOWN)
     obj.match_status = MatchStatus.NOT_APPLICABLE
-    obj.last_seen = datetime.now(UTC)
-    session.flush()
+    obj.last_seen = now
     return obj
 
 
-def _object_by_value(session: Session, tenant_id: int, value: str, net, sot) -> NetworkObject:
+def _object_by_value(cache: "_Cache", value: str, net) -> NetworkObject:
     is_host = getattr(net, "num_addresses", 1) == 1
-    obj = _get_or_create_object(
-        session,
-        tenant_id,
-        name=value,
+    obj = cache.get_or_create(
+        value,
         object_class=ObjectClass.HOST if is_host else ObjectClass.NETWORK,
         value=value,
         family=Family.V6 if net.version == 6 else Family.V4,
     )
-    host_ip = value.split("/")[0]
-    found = _safe_search_by_ip(sot, host_ip)
-    _apply_match(session, tenant_id, obj, found)
+    _apply_match(cache, obj, cache.search_by_ip(value.split("/")[0]))
     return obj
 
 
-def _object_by_name(
-    session: Session, tenant_id: int, value: str, sot, prefixes: PrefixList | None = None
-) -> NetworkObject:
-    parsed = naming.parse_object_name(value, prefixes)
-    obj = _get_or_create_object(
-        session,
-        tenant_id,
-        name=value,
+def _object_by_name(cache: "_Cache", value: str) -> NetworkObject:
+    parsed = naming.parse_object_name(value, cache.prefixes)
+    obj = cache.get_or_create(
+        value,
         object_class=parsed.object_class,
         fqdn=parsed.fqdn,
         domain=parsed.domain,
@@ -510,85 +637,55 @@ def _object_by_name(
         # H-EXT_: bewusst extern, kein IPAM-Match erwartet -> kein Finding
         obj.match_status = MatchStatus.EXPECTED_EXTERNAL
         obj.last_seen = datetime.now(UTC)
-        session.flush()
         return obj
 
     # Im IPAM steht der Server ohne Praefix (H_web01 -> web01[.domain])
-    found = _safe_get_by_name(sot, value)
+    found = cache.get_by_name(value)
     if found is None and parsed.remainder and parsed.remainder != value:
-        found = _safe_get_by_name(sot, parsed.remainder)
-    _apply_match(session, tenant_id, obj, [found] if found else [])
+        found = cache.get_by_name(parsed.remainder)
+    _apply_match(cache, obj, [found] if found else [])
     return obj
 
 
-def _apply_match(session: Session, tenant_id: int, obj: NetworkObject, found: list) -> None:
+def _apply_match(cache: "_Cache", obj: NetworkObject, found: list) -> None:
     if found:
         first = found[0]
         obj.match_status = MatchStatus.MATCHED
         obj.source_of_record = _SOURCE_BY_ADAPTER.get(getattr(first, "source", ""))
         if not obj.value and getattr(first, "value", None):
             obj.value = first.value
-        zone_id = _zone_from_tags(session, tenant_id, getattr(first, "tags", []))
+        zone_id = _zone_from_tags(cache, getattr(first, "tags", []))
         if zone_id is not None:
             obj.zone_id = zone_id
     elif obj.match_status is not MatchStatus.EXPECTED_EXTERNAL:
         obj.match_status = MatchStatus.UNMATCHED  # Finding entsteht im Abgleich
     obj.last_seen = datetime.now(UTC)
-    session.flush()
 
 
-# -- Objekte / Zonen / Services / Findings (get-or-create) --------------------
+# -- Zonen / Services ---------------------------------------------------------
 
 
-def _get_or_create_object(session: Session, tenant_id: int, name: str, **fields) -> NetworkObject:
-    obj = session.scalars(
-        select(NetworkObject).where(
-            NetworkObject.tenant_id == tenant_id, NetworkObject.name == name
-        )
-    ).first()
-    if obj is None:
-        obj = NetworkObject(tenant_id=tenant_id, name=name, **fields)
-        session.add(obj)
-        session.flush()
-    else:
-        for key, val in fields.items():
-            if val is not None:
-                setattr(obj, key, val)
-    return obj
-
-
-def _zone_id(session: Session, tenant_id: int, name: str | None) -> int | None:
-    if not name:
-        return None
-    zone = session.scalars(
-        select(Zone).where(Zone.tenant_id == tenant_id, Zone.name == name)
-    ).first()
-    if zone is None:
-        zone = Zone(tenant_id=tenant_id, name=name)
-        session.add(zone)
-        session.flush()
-    return zone.id
-
-
-def _zone_from_tags(session: Session, tenant_id: int, tags: list[str]) -> int | None:
+def _zone_from_tags(cache: "_Cache", tags: list[str]) -> int | None:
     for tag in tags:
         if tag.startswith("zone-"):
-            return _zone_id(session, tenant_id, tag.removeprefix("zone-"))
+            return cache.zone_id(tag.removeprefix("zone-"))
     return None
 
 
-def _service(session: Session, raw: str) -> ServiceObject:
-    proto, port_start, port_end, canonical = _parse_service(raw)
-    svc = session.scalars(
-        select(ServiceObject).where(ServiceObject.canonical_name == canonical)
-    ).first()
-    if svc is None:
-        svc = ServiceObject(
-            proto=proto, port_start=port_start, port_end=port_end, canonical_name=canonical
-        )
-        session.add(svc)
-        session.flush()
-    return svc
+def zone_from_tags(session: Session, tenant_id: int, tags: list[str]) -> int | None:
+    """Zone aus IPAM-Tags `zone-<name>` ausserhalb eines Laufs (Abgleich gegen den Stand)."""
+    for tag in tags:
+        if tag.startswith("zone-"):
+            name = tag.removeprefix("zone-")
+            zone = session.scalars(
+                select(Zone).where(Zone.tenant_id == tenant_id, Zone.name == name)
+            ).first()
+            if zone is None:
+                zone = Zone(tenant_id=tenant_id, name=name)
+                session.add(zone)
+                session.flush()
+            return zone.id
+    return None
 
 
 def _parse_service(raw: str) -> tuple[Proto, int | None, int | None, str]:

@@ -112,3 +112,24 @@ def test_ping_ok_und_fehler():
     )
     with pytest.raises(httpx.HTTPStatusError):
         c2.ping()
+
+
+def test_policy6_fehlt_ab_fortios7_und_wird_gelesen_wo_vorhanden():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        if request.url.path.endswith("/firewall/policy6"):
+            return httpx.Response(404, json={})
+        return httpx.Response(200, json={"results": []})
+
+    client = FortiGateClient(
+        "https://fw", "t", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    assert client.policies6() == []
+
+    def handler6(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": [{"policyid": 1}]})
+
+    client6 = FortiGateClient(
+        "https://fw", "t", client=httpx.Client(transport=httpx.MockTransport(handler6))
+    )
+    assert client6.policies6() == [{"policyid": 1}]

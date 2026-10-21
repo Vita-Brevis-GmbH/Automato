@@ -363,8 +363,21 @@ _NO_CONVENTION = {"geography", "mac", "dynamic", "wildcard-fqdn"}
 _SHAPE_MISMATCH = {(ObjectClass.HOST, "network"), (ObjectClass.NETWORK, "host")}
 
 
+def subject(o: DeviceObject) -> str:
+    """Befund-Bezeichnung eines Firewall-Objekts. IPv6-Adressobjekte tragen die Familie im
+    Namen - auf der FortiGate darf ein IPv4- und ein IPv6-Objekt gleich heissen."""
+    if o.family == "v6" and o.category in _FAMILY_CATEGORIES:
+        return f"{o.name} (IPv6)"
+    return o.name
+
+
+_FAMILY_CATEGORIES = (ObjectCategory.ADDRESS, ObjectCategory.ADDRESS_GROUP, ObjectCategory.VIP)
+
+
 def _issue(ftype: FindingType, o: DeviceObject, detail: dict, sev=Severity.WARNING) -> Issue:
-    return Issue(ftype, SubjectKind.DEVICE_OBJECT, o.name, o.source_system_id, sev, detail)
+    if o.family and o.category in _FAMILY_CATEGORIES:
+        detail = {**detail, "family": o.family}
+    return Issue(ftype, SubjectKind.DEVICE_OBJECT, subject(o), o.source_system_id, sev, detail)
 
 
 def _first(o: DeviceObject) -> str | None:
@@ -385,7 +398,10 @@ def _value_shape(o: DeviceObject) -> str | None:
 
 
 def _used_object_ids(session: Session, tenant_id: int, objects: list[DeviceObject]) -> set[int]:
-    """In einer Regel referenziert oder Mitglied einer (genutzten oder nicht) Gruppe."""
+    """In einer Regel referenziert oder Mitglied einer (genutzten oder nicht) Gruppe - Mitglieder
+    in der Familie der Gruppe (IPv4-Gruppe -> IPv4-Objekt, auch bei gleichem Namen in IPv6)."""
+    from app.store.objects import Directory  # spaet: objects importiert Modelle/Schemas
+
     used = set(
         session.scalars(
             select(RuleObjectRef.device_object_id)
@@ -393,12 +409,11 @@ def _used_object_ids(session: Session, tenant_id: int, objects: list[DeviceObjec
             .where(Rule.tenant_id == tenant_id, RuleObjectRef.device_object_id.is_not(None))
         )
     )
-    by_source_name: dict[tuple[int, str], list[DeviceObject]] = defaultdict(list)
-    for o in objects:
-        by_source_name[(o.source_system_id, o.name)].append(o)
+    directory = Directory(session, {o.source_system_id for o in objects})
     for o in objects:
         for member in o.members or []:
-            for m in by_source_name.get((o.source_system_id, member), []):
+            m = directory.member(o, member)
+            if m is not None:
                 used.add(m.id)
     return used
 

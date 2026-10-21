@@ -9,7 +9,8 @@ gegen Testdaten (anonymisiert, `example.ch`, „Kunde A“), nie gegen echte Sys
 | Unit/API | Orchestrator (FastAPI-TestClient, SQLite), Collectors (Normalisierung, Clients mit Fakes), SoT-Gateway (Nur-Lese-Schutz, NetBox-Schreiber) | `uv run --package <paket> pytest <paket>/tests` | `python` (Abdeckung ≥ 90 % je Paket) |
 | Postgres | Migrationen hoch/ganz runter/hoch, **`alembic check`** (Modell = Migrationen), alle Orchestrator-Tests gegen Postgres 16 | `AUTOMATO_TEST_DATABASE_URL=postgresql+psycopg://…` | `postgres` |
 | NetBox-Sync | Fake-NetBox mit Eindeutigkeit wie NetBox (VLAN-Name je Gruppe, Site-Name) | in `orchestrator/tests/test_netbox_sync.py` | `python`, `postgres` |
-| UI (E2E) | Playwright: jede Ansicht ohne Seiten-/API-Fehler, Kernabläufe (Suche, NAT-Links, Findings, Dienste, Standorte, Alle einlesen) gegen Orchestrator + Vite mit Beispieldaten (`web-ui/frontend/e2e/`) | `cd web-ui/frontend && npm run e2e` | `e2e` (Bericht als Artefakt bei Fehler) |
+| UI (E2E) | Playwright: jede Ansicht ohne Seiten-/API-Fehler, Kernabläufe (Suche, NAT-Links, Findings, Dienste, Standorte, IPv4/IPv6-Paare und gleichnamige Objekte, Alle einlesen) gegen Orchestrator + Vite mit Beispieldaten (`web-ui/frontend/e2e/`) | `cd web-ui/frontend && npm run e2e` | `e2e` (Bericht als Artefakt bei Fehler) |
+| Leistung | Grosses erzeugtes Regelwerk (Standard 3000 Regeln, 8000 Hosts): Einlesen und Abfragen messen – nur lokal, leere Datenbank | `AUTOMATO_DATABASE_URL=… uv run --package orchestrator python scripts/bench_large_ruleset.py` | – |
 | Images | Compose-Konfiguration aller Profile, Agent-Paket, Images Orchestrator/Collector/Web-UI | `docker compose --env-file .env.example … config --quiet` | `docker` |
 | Secrets | gitleaks über die ganze Historie | – | `gitleaks` |
 

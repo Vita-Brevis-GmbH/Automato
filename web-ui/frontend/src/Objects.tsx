@@ -16,7 +16,7 @@ import {
   PrefixInfo,
   System,
 } from "./api";
-import { CATEGORY_LABEL, IssueChips, REFERENCE_PLATFORMS, ValueList } from "./refs";
+import { CATEGORY_LABEL, FAMILY_LABEL, IssueChips, REFERENCE_PLATFORMS, ValueList } from "./refs";
 import { SiteChip } from "./sites";
 import type { View, ViewParams } from "./App";
 import { ActionBadge, Dash, Drawer, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
@@ -135,6 +135,13 @@ export default function Objects({
   );
 }
 
+// Link in die Regeln: genau dieses Objekt (IPv4 und IPv6 heissen teils gleich)
+function objectLink(o: { id: number; name: string; family: string | null }): ViewParams {
+  const p: ViewParams = { object: o.name, object_id: String(o.id) };
+  if (o.family) p.family = o.family;
+  return p;
+}
+
 function Pager({ total, offset, onOffset }: { total: number; offset: number; onOffset: (o: number) => void }) {
   if (total <= PAGE) return <div className="pager">{total} Einträge</div>;
   return (
@@ -239,6 +246,11 @@ function ObjectTable({
                   <tr key={o.id} className="clickable" onClick={() => setSelected(o.id)}>
                     <td>
                       <b className="mono">{o.name}</b>
+                      {o.family && !service && (
+                        <span className="chip" style={{ marginLeft: 6 }} title="Adressfamilie (FortiGate führt IPv4 und IPv6 getrennt)">
+                          {FAMILY_LABEL[o.family] ?? o.family}
+                        </span>
+                      )}
                       {o.comment && <div className="faint">{o.comment}</div>}
                       {o.interface && <div className="faint">Interface {o.interface}</div>}
                       {o.site && (
@@ -272,20 +284,20 @@ function ObjectTable({
                     )}
                     {!group && <td>{o.member_of.length ? <Members names={o.member_of} /> : <Dash />}</td>}
                     <td className="num">
-                      {/* Zahl = direkte Verweise; der Link zeigt alle Regeln, auch über Gruppen */}
-                      {onGo && (o.used_in_rules > 0 || o.member_of.length > 0) ? (
+                      {/* Regeln, die das Objekt verwenden - direkt oder über (verschachtelte) Gruppen */}
+                      {onGo && o.used_in_rules > 0 ? (
                         <button
                           className="chip local linkchip"
-                          title="Regeln mit diesem Objekt anzeigen (auch über Gruppen)"
+                          title="Regeln mit diesem Objekt anzeigen (direkt und über Gruppen)"
                           onClick={(e) => {
                             e.stopPropagation();
-                            onGo("regeln", { object: o.name });
+                            onGo("regeln", objectLink(o));
                           }}
                         >
-                          {o.used_in_rules || "via Gruppe"}
+                          {o.used_in_rules}
                         </button>
                       ) : (
-                        o.used_in_rules || <span className="faint">0</span>
+                        <span className="faint">0</span>
                       )}
                     </td>
                     <td className="nowrap">{o.source ?? <Dash />}</td>
@@ -492,7 +504,10 @@ function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; 
                         <b>{m.name}</b>
                         {m.comment && <div className="faint">{m.comment}</div>}
                       </td>
-                      <td className="faint">{m.category ? (CATEGORY_LABEL[m.category] ?? m.category) : "nicht gelesen"}</td>
+                      <td className="faint">
+                        {m.category ? (CATEGORY_LABEL[m.category] ?? m.category) : "nicht gelesen"}
+                        {m.family ? ` · ${FAMILY_LABEL[m.family] ?? m.family}` : ""}
+                      </td>
                       <td className="mono">{m.values.join(", ") || "–"}</td>
                     </tr>
                   ))}
@@ -505,7 +520,7 @@ function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; 
             Firewall-Regeln ({d.rule_count})
             <div style={{ flex: 1 }} />
             {d.rule_count > 0 && onGo && (
-              <button className="btn btn-ghost btn-sm" onClick={() => onGo("regeln", { object: d.name })}>
+              <button className="btn btn-ghost btn-sm" onClick={() => onGo("regeln", objectLink(d))}>
                 In Regeln anzeigen
               </button>
             )}

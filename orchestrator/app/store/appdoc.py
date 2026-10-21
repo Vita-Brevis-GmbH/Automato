@@ -22,6 +22,7 @@ from app.models import (
     NatRule,
     NetworkObject,
     ObjectClass,
+    Rule,
     RuleDomain,
     RuleEndpoint,
     Site,
@@ -158,13 +159,19 @@ def list_systems(session: Session, tenant_id: int | None) -> list[SystemRef]:
         estmt = estmt.where(Epg.tenant_id == tenant_id)
     epgs = list(session.scalars(estmt))
     names = [(e.tenant_id, e.name) for e in epgs]
+    rules_of: dict[int, set[int]] = {}
+    if epgs:
+        for epg_id, rule_id in session.execute(
+            select(RuleEndpoint.epg_id, RuleEndpoint.rule_id).where(
+                RuleEndpoint.epg_id.in_([e.id for e in epgs])
+            )
+        ):
+            rules_of.setdefault(epg_id, set()).add(rule_id)
     for epg in epgs:
-        rids = {
-            e.rule_id
-            for e in session.scalars(select(RuleEndpoint).where(RuleEndpoint.epg_id == epg.id))
-        }
         name = epg_system_name(epg) if names.count((epg.tenant_id, epg.name)) > 1 else epg.name
-        systems.append(SystemRef(name=name, ip=None, rule_count=len(rids), kind="epg"))
+        systems.append(
+            SystemRef(name=name, ip=None, rule_count=len(rules_of.get(epg.id, ())), kind="epg")
+        )
 
     return sorted(systems, key=lambda s: (s.kind, s.name))
 
@@ -231,34 +238,53 @@ def _envelope(
 
 
 class TenantData:
-    """Regeln, Objekte, Zonen, NAT und EPGs eines Mandanten - einmal geladen, auch wenn die
-    Doku mehrerer Systeme (Applikation) gebaut wird."""
+    """Regeln, Objekte, Zonen, NAT und EPGs eines Mandanten - je Doku nur die Regeln der Systeme
+    (per SQL ausgewaehlt), einmal geladen, auch wenn die Doku mehrerer Systeme (Applikation)
+    gebaut wird (Dev-Befund: grosse Regelwerke)."""
 
     def __init__(self, session: Session, tenant_id: int):
         self.session = session
         self.tenant_id = tenant_id
+        self._rules: dict[int, Rule] = {}
+        self._objs: dict[int, NetworkObject] = {}
+        self._zones: dict[int, str] = {}
 
-    @cached_property
-    def fw_rules(self) -> list:
-        return rules_store.list_rules(
-            self.session, self.tenant_id, limit=None, domain=RuleDomain.FIREWALL
+    def rules(self, ids: set[int]) -> list[Rule]:
+        """Regeln mit Endpunkten/Services in Firewall-Reihenfolge (fehlende nachgeladen)."""
+        todo = [i for i in ids if i not in self._rules]
+        if todo:
+            for r in rules_store.list_rules(
+                self.session, self.tenant_id, limit=None, rule_ids=todo
+            ):
+                self._rules[r.id] = r
+            obj_ids = {e.network_object_id for i in todo for e in self._rules[i].endpoints}
+            obj_ids -= set(self._objs)
+            self._objs.update(rules_store.objects_by_ids(self.session, {i for i in obj_ids if i}))
+            zone_ids = {
+                z for i in todo for z in (self._rules[i].src_zone_id, self._rules[i].dst_zone_id)
+            }
+            self._zones.update(rules_store.zone_names(self.session, zone_ids - set(self._zones)))
+        found = [self._rules[i] for i in ids if i in self._rules]
+        return sorted(found, key=lambda r: (r.source_system_id, r.sequence or 0, r.id))
+
+    def rule_ids(self, domain: RuleDomain, **endpoint) -> set[int]:
+        """IDs der Regeln einer Domaene mit einem Endpunkt (network_object_id=… | epg_id=…)."""
+        cond = [getattr(RuleEndpoint, k) == v for k, v in endpoint.items()]
+        return set(
+            self.session.scalars(
+                select(RuleEndpoint.rule_id)
+                .join(Rule, Rule.id == RuleEndpoint.rule_id)
+                .where(Rule.tenant_id == self.tenant_id, Rule.domain == domain, *cond)
+            )
         )
 
-    @cached_property
-    def aci_rules(self) -> list:
-        return rules_store.list_rules(
-            self.session, self.tenant_id, limit=None, domain=RuleDomain.ACI_CONTRACT
-        )
-
-    @cached_property
+    @property
     def objs(self) -> dict:
-        ids = {e.network_object_id for r in self.fw_rules for e in r.endpoints}
-        return rules_store.objects_by_ids(self.session, {i for i in ids if i})
+        return self._objs
 
-    @cached_property
+    @property
     def zones(self) -> dict:
-        ids = {z for r in self.fw_rules for z in (r.src_zone_id, r.dst_zone_id) if z}
-        return rules_store.zone_names(self.session, ids)
+        return self._zones
 
     @cached_property
     def nats(self) -> list[NatRule]:
@@ -281,8 +307,10 @@ def epg_doc(session: Session, epg: Epg, data: TenantData | None = None) -> dict:
     def is_self(e) -> bool:  # aeltere Laeufe ohne EPG-Verknuepfung: ueber den Namen
         return e.epg_id == epg.id or (e.epg_id is None and e.inline_value == epg.name)
 
+    ids = data.rule_ids(RuleDomain.ACI_CONTRACT, epg_id=epg.id)
+    ids |= data.rule_ids(RuleDomain.ACI_CONTRACT, epg_id=None, inline_value=epg.name)
     rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
-    for r in data.aci_rules:
+    for r in data.rules(ids):
         eps = [e for e in r.endpoints if e.kind.value == "epg"]
         on_src = any(is_self(e) and e.role.value == "src" for e in eps)
         on_dst = any(is_self(e) and e.role.value == "dst" for e in eps)
@@ -368,7 +396,8 @@ def host_doc(session: Session, sys_obj: NetworkObject, data: TenantData | None =
     ]
     snat_ips = sorted({n.ext_ip for n in nats if n.nat_type == "snat_pool" and n.ext_ip})
 
-    rules, objs, zones = data.fw_rules, data.objs, data.zones
+    rules = data.rules(data.rule_ids(RuleDomain.FIREWALL, network_object_id=sys_obj.id))
+    objs, zones = data.objs, data.zones
 
     rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
     for r in rules:

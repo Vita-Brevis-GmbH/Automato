@@ -29,6 +29,17 @@ export interface Rule {
   nat?: RuleNat | null; // Firewall-Policy mit SNAT bzw. VIP
   missing?: ("src" | "dst")[]; // Seite ohne Endpunkt (ACI: kein Consumer/Provider – nicht wirksam)
   negate?: ("src" | "dst" | "service")[]; // FortiGate: negierte Seiten
+  family?: "v4" | "v6" | "dual" | null; // Adressfamilie der Policy
+  pair?: RulePair | null; // IPv4/IPv6-Gegenstück (nur Markierung, eigene Regel)
+}
+
+// IPv4/IPv6-Gegenstück derselben Firewall: same = gleiche Objekte/Services/Interfaces
+export interface RulePair {
+  rule_id: number;
+  name: string;
+  family: string | null;
+  match: "same" | "similar";
+  diff: string[]; // src | dst | service | name | zone
 }
 
 // NAT einer Firewall-Policy: SNAT (Pools; leer = Interface-IP) und VIPs im Ziel (DNAT)
@@ -169,6 +180,7 @@ export interface RefMember {
 export interface RuleRef {
   role: string; // src | dst | service
   name: string;
+  family?: string | null; // v4 | v6 (gleichnamige Objekte je Familie)
   category: string | null; // null = Built-in/nicht als Objekt gelesen ("all")
   obj_type: string | null;
   comment: string | null;
@@ -495,7 +507,13 @@ export interface DeviceObject {
 
 // Objekt-Detail (wie NAT): Attribute, Mitglieder und die Regeln, die es nutzen
 export interface ObjectDetail extends DeviceObject {
-  members_detail: { name: string; category: string | null; values: string[]; comment: string | null }[];
+  members_detail: {
+    name: string;
+    category: string | null;
+    family?: string | null;
+    values: string[];
+    comment: string | null;
+  }[];
   rule_count: number;
   rules: Rule[];
 }
@@ -926,7 +944,9 @@ export async function fetchRules(opts: {
   domain?: RuleDomain | "";
   systemId?: number | null;
   object?: string; // Regeln, die dieses Objekt verwenden (auch über Gruppen)
+  objectId?: number | null; // genau dieses Objekt (IPv4/IPv6 gleichnamig getrennt)
   nat?: string; // Regeln mit diesem VIP bzw. SNAT-Pool
+  family?: string; // v4 | v6 | dual
   srcZone?: string;
   dstZone?: string;
   action?: string;
@@ -938,8 +958,10 @@ export async function fetchRules(opts: {
     tenant_id: opts.tenantId,
     domain: opts.domain,
     source_system_id: opts.systemId,
-    object: opts.object,
+    object: opts.objectId ? undefined : opts.object,
+    object_id: opts.objectId,
     nat: opts.nat,
+    family: opts.family,
     src_zone: opts.srcZone,
     dst_zone: opts.dstZone,
     action: opts.action,

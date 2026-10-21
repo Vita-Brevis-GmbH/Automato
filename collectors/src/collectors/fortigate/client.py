@@ -62,6 +62,16 @@ class FortiGateClient:
     def policies(self) -> list[dict[str, Any]]:
         return self._get("firewall/policy")
 
+    def policies6(self) -> list[dict[str, Any]]:
+        """IPv6-Policies in eigener Tabelle (FortiOS 6.x). Ab FortiOS 7.0 stehen sie in
+        firewall/policy (srcaddr6/dstaddr6) - die Tabelle fehlt dann (404/405/400)."""
+        try:
+            return self._get("firewall/policy6")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (400, 404, 405):
+                return []
+            raise
+
     def addresses(self) -> list[dict[str, Any]]:
         return self._get("firewall/address")
 
@@ -99,6 +109,7 @@ class FortiGateClient:
         """Alles einlesen, was die Normalisierung braucht (IPv4+IPv6, NAT)."""
         return {
             "policies": self.policies(),
+            "policies6": self.policies6(),
             "addresses": self.addresses(),
             "addresses6": self.addresses6(),
             "groups": self.address_groups(),

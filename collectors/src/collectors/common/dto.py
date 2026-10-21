@@ -28,6 +28,11 @@ class NormalizedRule(BaseModel):
     source_refs: list[str] = Field(default_factory=list)
     destination_refs: list[str] = Field(default_factory=list)
     service_refs: list[str] = Field(default_factory=list)
+    # FortiGate: IPv6-Objekte (srcaddr6/dstaddr6, policy6) getrennt - gleiche Namen wie IPv4
+    # sind andere Objekte; family = v4 | v6 | dual nach den Adressfeldern der Policy
+    source_refs6: list[str] = Field(default_factory=list)
+    destination_refs6: list[str] = Field(default_factory=list)
+    family: str | None = None
     raw: dict[str, Any] | None = None
 
 

@@ -266,6 +266,11 @@ export function RefCard({ r, onObject }: { r: RuleRef; onObject?: (name: string)
         <b>
           <ObjLink name={r.name} onObject={linkable} />
         </b>
+        {r.family === "v6" && (
+          <span className="chip" title="IPv6-Objekt (address6/addrgrp6) – eigenes Objekt neben einem gleichnamigen IPv4-Objekt">
+            IPv6
+          </span>
+        )}
         {r.category ? (
           <span className="faint">
             {CATEGORY_LABEL[r.category] ?? r.category}
@@ -320,3 +325,47 @@ export function SideMarks({ r, side }: { r: Rule; side: "src" | "dst" | "service
   );
 }
 
+export const FAMILY_LABEL: Record<string, string> = { v4: "IPv4", v6: "IPv6", dual: "IPv4+IPv6" };
+const DIFF_LABEL: Record<string, string> = {
+  src: "Quelle",
+  dst: "Ziel",
+  service: "Dienste",
+  name: "Name",
+  zone: "Interfaces/Zonen",
+};
+
+// Adressfamilie und IPv4/IPv6-Gegenstück (FortiGate führt beide als eigene Policies)
+export function FamilyMarks({ r, onPair }: { r: Rule; onPair?: (id: number) => void }) {
+  if (!r.family && !r.pair) return null;
+  const p = r.pair;
+  const other = p ? FAMILY_LABEL[p.family ?? ""] ?? "Gegenstück" : "";
+  const title = p
+    ? `${other}-Gegenstück „${p.name}“ (#${p.rule_id}) – ` +
+      (p.match === "same"
+        ? "deckt dasselbe ab (gleiche Objektnamen, Dienste und Interfaces)"
+        : `ähnlich, abweichend: ${p.diff.map((d) => DIFF_LABEL[d] ?? d).join(", ")}`) +
+      ". Eigene Regel wie auf der FortiGate – nur zur Orientierung verbunden."
+    : "";
+  return (
+    <div className="chips" style={{ marginTop: 3 }}>
+      {r.family && (
+        <span className="chip" title="Adressfamilie der Policy">
+          {FAMILY_LABEL[r.family] ?? r.family}
+        </span>
+      )}
+      {p && (
+        <button
+          className={`chip linkchip ${p.match === "same" ? "ok" : "warn"}`}
+          title={title}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPair?.(p.rule_id);
+          }}
+        >
+          ↔ {other} #{p.rule_id}
+          {p.match === "same" ? "" : " ähnlich"}
+        </button>
+      )}
+    </div>
+  );
+}

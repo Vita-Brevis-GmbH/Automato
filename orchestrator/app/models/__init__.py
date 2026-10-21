@@ -54,6 +54,7 @@ from app.models.rule import (
     RuleObjectRef,
     rule_service,
 )
+from app.models.rule_index import RuleIndex, RuleIpRange, RuleObjectUsage
 from app.models.service_object import Proto, ServiceObject
 from app.models.site import SITE_KINDS, Site, SiteLink
 from app.models.source_system import REFERENCE_PLATFORMS, Platform, SourceSystem
@@ -112,7 +113,10 @@ __all__ = [
     "RuleAction",
     "RuleDomain",
     "RuleEndpoint",
+    "RuleIndex",
+    "RuleIpRange",
     "RuleObjectRef",
+    "RuleObjectUsage",
     "RunStatus",
     "ServiceObject",
     "Severity",

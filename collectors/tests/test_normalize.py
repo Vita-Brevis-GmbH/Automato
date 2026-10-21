@@ -646,3 +646,49 @@ def test_fortigate_internet_service_identitaet_und_ztna():
     assert o365.source_refs == ["N_clients", "VPN_Users", "EMS_compliant"]
     assert o365.sources == ["10.5.0.0/16", "usergroup:VPN_Users", "dynamic:EMS_compliant"]
     assert from_isdb.sources == ["isdb:Google-DNS"] and from_isdb.services == ["udp/53", "tcp/53"]
+
+
+# IPv4- und IPv6-Objekte gleichen Namens (Dev-Befund): je Familie eigenes Objekt
+ADDR4 = [{"name": "H_web01", "type": "ipmask", "subnet": "10.10.10.5 255.255.255.255"}]
+ADDR6 = [{"name": "H_web01", "type": "ipmask", "ip6": "2001:db8:10::5/128"}]
+GRP4 = [{"name": "G_web", "member": [{"name": "H_web01"}]}]
+GRP6 = [{"name": "G_web", "member": [{"name": "H_web01"}]}]
+
+
+def test_fortigate_gleichnamige_ipv4_ipv6_objekte_je_familie():
+    from collectors.fortigate.normalize import build_device_objects, normalize
+
+    policies = [
+        {"policyid": 1, "name": "web-in", "action": "accept", "srcaddr": [{"name": "all"}],
+         "dstaddr": [{"name": "G_web"}], "service": [{"name": "HTTPS"}]},
+        {"policyid": 2, "name": "web-in-v6", "action": "accept", "srcaddr6": [{"name": "all"}],
+         "dstaddr6": [{"name": "G_web"}], "service": [{"name": "HTTPS"}]},
+        {"policyid": 3, "name": "web-dual", "action": "accept", "srcaddr": [{"name": "all"}],
+         "dstaddr": [{"name": "H_web01"}], "srcaddr6": [{"name": "all"}],
+         "dstaddr6": [{"name": "H_web01"}], "service": [{"name": "HTTPS"}]},
+    ]  # fmt: skip
+    v4, v6, dual = normalize(policies, ADDR4, GRP4, [], None, ADDR6, GRP6)
+    assert (v4.family, v4.destinations, v4.destination_refs6) == ("v4", ["10.10.10.5"], [])
+    assert v6.family == "v6" and v6.destinations == ["2001:db8:10::5"]
+    assert v6.destination_refs == [] and v6.destination_refs6 == ["G_web"]
+    assert dual.family == "dual"
+    assert dual.destinations == ["10.10.10.5", "2001:db8:10::5"]
+    assert dual.destination_refs == ["H_web01"] and dual.destination_refs6 == ["H_web01"]
+
+    objs = build_device_objects(ADDR4, GRP4, ADDR6, GRP6)
+    by_key = {(o.category, o.family, o.name): o for o in objs}
+    assert by_key[("address", "v4", "H_web01")].values == ["10.10.10.5"]
+    assert by_key[("address", "v6", "H_web01")].values == ["2001:db8:10::5"]
+    assert by_key[("address_group", "v6", "G_web")].values == ["2001:db8:10::5"]
+    assert by_key[("address_group", "v4", "G_web")].values == ["10.10.10.5"]
+
+
+def test_fortigate_policy6_tabelle():
+    """FortiOS 6.x: IPv6-Policies in firewall/policy6 - eigene IDs, alles IPv6."""
+    from collectors.fortigate.normalize import normalize
+
+    p6 = [{"policyid": 1, "name": "web-in", "action": "accept", "srcaddr": [{"name": "all"}],
+           "dstaddr": [{"name": "H_web01"}], "service": [{"name": "HTTPS"}]}]  # fmt: skip
+    (rule,) = normalize([], ADDR4, [], [], None, ADDR6, [], None, p6)
+    assert rule.external_id == "v6-1" and rule.family == "v6"
+    assert rule.destinations == ["2001:db8:10::5"] and rule.destination_refs6 == ["H_web01"]

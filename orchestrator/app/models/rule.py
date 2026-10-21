@@ -83,6 +83,8 @@ class Rule(Base):
     )
     # Schutzmechanismen (FortiGate-UTM-Profile an der Policy) fuer die Applikations-Doku
     protections: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Adressfamilie der Policy: v4 | v6 | dual (FortiGate trennt IPv4- und IPv6-Objekte)
+    ip_family: Mapped[str | None] = mapped_column(String(4), nullable=True)
     raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     endpoints: Mapped[list["RuleEndpoint"]] = relationship(
@@ -122,6 +124,8 @@ class RuleObjectRef(Base):
     role: Mapped[RefRole] = mapped_column(Enum(RefRole, native_enum=False, length=8))
     position: Mapped[int] = mapped_column(default=0)
     name: Mapped[str] = mapped_column(String(300))
+    # v4 | v6: Feld der Policy (srcaddr bzw. srcaddr6) - gleicher Name, anderes Objekt
+    family: Mapped[str | None] = mapped_column(String(4), nullable=True)
     device_object_id: Mapped[int | None] = mapped_column(
         ForeignKey("device_object.id", ondelete="SET NULL"), nullable=True, index=True
     )

@@ -32,15 +32,12 @@ from app.models import (
     Tenant,
     Zone,
 )
+from app.store import rules as rules_store
 
 
 def _delete_rules(session: Session, condition) -> int:
-    # ORM-Delete kaskadiert Endpunkte und Service-Zuordnungen (wie beim Ingest)
-    rules = list(session.scalars(select(Rule).where(condition)))
-    for rule in rules:
-        session.delete(rule)
-    session.flush()
-    return len(rules)
+    # Endpunkte, Verweise, Service-Zuordnungen und Regelindex mit (wie beim Ingest)
+    return rules_store.delete_rules(session, condition)
 
 
 def _count(session: Session, stmt) -> int:

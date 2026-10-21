@@ -97,28 +97,64 @@ def aggregate_status(values: Iterable[RefValueOut]) -> str | None:
     return statuses[0]
 
 
-def _objects_by_source(session: Session, source_ids: set[int]) -> dict[tuple, DeviceObject]:
-    if not source_ids:
-        return {}
-    rows = session.scalars(
-        select(DeviceObject).where(DeviceObject.source_system_id.in_(source_ids))
-    )
-    out: dict[tuple, DeviceObject] = {}
-    for o in rows:
-        art = "svc" if o.category in SERVICE_CATEGORIES else "addr"
-        out[(o.source_system_id, art, o.name)] = o
-    return out
+def art(o: DeviceObject) -> str:
+    """svc fuer Services/Service-Gruppen, sonst addr (Adressen, Gruppen, VIPs, Pools)."""
+    return "svc" if o.category in SERVICE_CATEGORIES else "addr"
+
+
+class Directory:
+    """Firewall-Objekte von Quellsystemen nach Name. FortiGate fuehrt IPv4 (address/addrgrp)
+    und IPv6 (address6/addrgrp6) getrennt - gleiche Namen sind verschiedene Objekte; Gruppen
+    loesen ihre Mitglieder in der eigenen Familie auf."""
+
+    def __init__(
+        self, session: Session, source_ids: Iterable[int], names: Iterable[str] | None = None
+    ):
+        ids = set(source_ids)
+        stmt = select(DeviceObject).where(DeviceObject.source_system_id.in_(ids))
+        if names is not None:  # nur diese Namen (z. B. Mitglieder einer Gruppe)
+            stmt = stmt.where(DeviceObject.name.in_(set(names)))
+        rows = session.scalars(stmt) if ids else []
+        self.by_id: dict[int, DeviceObject] = {}
+        self._by_name: dict[tuple[int, str, str], list[DeviceObject]] = {}
+        for o in rows:
+            self.by_id[o.id] = o
+            self._by_name.setdefault((o.source_system_id, art(o), o.name), []).append(o)
+
+    def find(
+        self, source_id: int, name: str, kind: str = "addr", family: str | None = None
+    ) -> DeviceObject | None:
+        """Objekt nach Name; bei gleichnamigen IPv4/IPv6-Objekten das der Familie (ohne Angabe
+        IPv4 vor familienlosen vor IPv6)."""
+        found = self._by_name.get((source_id, kind, name))
+        if not found:
+            return None
+        order = {family: 0} if family else {"v4": 0, None: 1}
+        return min(found, key=lambda o: order.get(o.family, 2))
+
+    def member(self, group: DeviceObject, name: str) -> DeviceObject | None:
+        return self.find(group.source_system_id, name, art(group), group.family)
+
+    def expand(self, obj: DeviceObject, seen: set[int] | None = None) -> list[DeviceObject]:
+        """Objekt mit allen (verschachtelten) Gruppenmitgliedern derselben Familie."""
+        seen = seen if seen is not None else set()
+        if obj.id in seen:
+            return []
+        seen.add(obj.id)
+        out = [obj]
+        for name in obj.members or []:
+            member = self.member(obj, name)
+            if member is not None:
+                out += self.expand(member, seen)
+        return out
 
 
 def rule_refs(session: Session, rule: Rule) -> list[RefOut]:
     """Verweise einer Regel mit Objekt-Details, Gruppenmitgliedern und Abgleich."""
     if not rule.refs:
         return []
-    objs = _objects_by_source(session, {rule.source_system_id})
-    by_id = {o.id: o for o in objs.values()}
-
-    def find(art: str, name: str) -> DeviceObject | None:
-        return objs.get((rule.source_system_id, art, name))
+    directory = Directory(session, {rule.source_system_id})
+    by_id = directory.by_id
 
     # alle Werte (inkl. Mitglieder) in einem Rutsch abgleichen
     address_values: list[str] = []
@@ -128,7 +164,7 @@ def rule_refs(session: Session, rule: Rule) -> list[RefOut]:
             continue
         address_values += o.values or []
         for m in o.members or []:
-            member = find("addr", m)
+            member = directory.member(o, m)
             address_values += member.values or [] if member else []
     infos = value_infos(session, rule.tenant_id, address_values)
 
@@ -142,11 +178,11 @@ def rule_refs(session: Session, rule: Rule) -> list[RefOut]:
         service = ref.role is RefRole.SERVICE
         o = by_id.get(ref.device_object_id) if ref.device_object_id else None
         if o is None:
-            out.append(RefOut(role=ref.role.value, name=ref.name))
+            out.append(RefOut(role=ref.role.value, name=ref.name, family=ref.family))
             continue
         members = []
         for m in o.members or []:
-            member = find("svc" if service else "addr", m)
+            member = directory.member(o, m)
             members.append(
                 RefMemberOut(
                     name=m,
@@ -161,6 +197,7 @@ def rule_refs(session: Session, rule: Rule) -> list[RefOut]:
             RefOut(
                 role=ref.role.value,
                 name=ref.name,
+                family=o.family or ref.family,
                 category=o.category.value,
                 obj_type=o.obj_type,
                 comment=o.comment,

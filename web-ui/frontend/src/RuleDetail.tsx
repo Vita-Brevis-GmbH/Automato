@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Endpoint, fetchRuleDetail, NatBrief, RuleDetail, RuleRef } from "./api";
 import type { View, ViewParams } from "./App";
 import { EpgCard } from "./EpgCard";
-import { RefCard, SideMarks } from "./refs";
+import { FamilyMarks, RefCard, SideMarks } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, Loading, MatchBadge, Note } from "./ui";
 
 function EndpointList({ items }: { items: Endpoint[] }) {
@@ -112,11 +112,13 @@ export default function RuleDetailDrawer({
   systemName,
   onClose,
   onGo,
+  onRule,
 }: {
   ruleId: number;
   systemName: (id: number) => string;
   onClose: () => void;
   onGo?: (v: View, p?: ViewParams) => void;
+  onRule?: (id: number) => void; // andere Regel öffnen (IPv4/IPv6-Gegenstück)
 }) {
   const [detail, setDetail] = useState<RuleDetail | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -163,6 +165,14 @@ export default function RuleDetailDrawer({
                 <dd>
                   {detail.src_zone ? <span className="chip">{detail.src_zone}</span> : <Dash />} →{" "}
                   {detail.dst_zone ? <span className="chip">{detail.dst_zone}</span> : <Dash />}
+                </dd>
+              </>
+            )}
+            {(detail.family || detail.pair) && (
+              <>
+                <dt>Familie</dt>
+                <dd>
+                  <FamilyMarks r={detail} onPair={onRule} />
                 </dd>
               </>
             )}

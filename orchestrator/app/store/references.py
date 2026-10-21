@@ -413,7 +413,7 @@ def rematch(session: Session, tenant_id: int, ctx: Context, prefixes=None) -> No
         if best is not None:
             obj.match_status = MatchStatus.MATCHED
             obj.source_of_record = _SOURCE_OF_RECORD.get(ctx.primary.platform)
-            zone_id = ingest._zone_from_tags(session, tenant_id, list((prefix or best).tags or []))
+            zone_id = ingest.zone_from_tags(session, tenant_id, list((prefix or best).tags or []))
             if zone_id is not None:
                 obj.zone_id = zone_id
         else:

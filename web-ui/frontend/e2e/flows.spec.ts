@@ -97,3 +97,28 @@ test("Alle einlesen legt je Quellsystem einen Lauf an", async ({ page }) => {
   await modal.locator("button.btn-primary").click();
   await expect(modal).toContainText("Läufe angelegt");
 });
+
+test("IPv4/IPv6: Regelpaar markiert, Gegenstück öffnet sich", async ({ page }) => {
+  await page.goto("/#regeln");
+  await search(page).fill("web-in");
+  const v4 = rows(page).filter({ has: page.locator("b", { hasText: /^web-in$/ }) });
+  await expect(v4).toContainText("IPv4");
+  await v4.locator("button.linkchip:has-text('↔ IPv6')").click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer.locator(".drawer-head, h2").first()).toContainText("web-in-v6");
+  await expect(drawer).toContainText("↔ IPv4");
+  await search(page).fill("api-in");
+  await expect(rows(page).first()).toContainText("ähnlich");
+});
+
+test("IPv4/IPv6: gleichnamige Objekte getrennt mit eigener Regel-Zahl", async ({ page }) => {
+  await page.goto("/#objekte");
+  await search(page).fill("H_web01");
+  const v6 = rows(page).filter({ hasText: "fw-03" }).filter({ hasText: "IPv6" });
+  await expect(v6).toHaveCount(1);
+  await expect(v6).toContainText("2001:db8:10::5");
+  await v6.locator("button.linkchip").last().click();
+  await expect(page).toHaveURL(/#regeln\?.*object_id=/);
+  await expect(rows(page)).toHaveCount(3);
+  await expect(page.locator(".filterbar")).toContainText("Objekt H_web01 (IPv6)");
+});

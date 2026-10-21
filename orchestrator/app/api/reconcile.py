@@ -17,7 +17,7 @@ from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.models import Finding, FindingStatus, SourceSystem
-from app.store import reconcile, references
+from app.store import reconcile, references, rule_index
 
 router = APIRouter(prefix="/reconcile", tags=["reconcile"])
 
@@ -95,6 +95,7 @@ def run_reconcile(
 ) -> dict:
     tid = _tenant(principal, tenant_id)
     counts = reconcile.reconcile_tenant(session, tid)
+    rule_index.rebuild(session, tid)  # Werte/DNS-Namen aus dem IPAM im Suchtext
     audit.record(
         session,
         actor=f"user:{principal.subject}",

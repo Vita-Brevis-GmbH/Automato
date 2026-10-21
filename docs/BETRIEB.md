@@ -82,9 +82,16 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   (eine IP trifft auch, wenn sie in einem Netz/Bereich der Regel liegt – „any“ ausgenommen),
   **DNS-Namen aus dem IPAM** (dort ohne Präfix, z. B. `web01.example.ch` für `H_web01`),
   EPG/AP/Tenant/BD/VRF und NAT (VIP-/Pool-Name, externe/interne IP, Port). Mehrere Wörter =
-  alle müssen vorkommen. Filter System, Quell-/Ziel-Zone, Aktion, „nur mit Findings“ (über
-  alle Regeln, nicht nur die geladene Seite); Links `#regeln?object=<Name>` bzw.
-  `#regeln?nat=<Name>` zeigen alle Regeln mit diesem Objekt (auch über Gruppen) bzw. NAT.
+  alle müssen vorkommen. Filter System, Quell-/Ziel-Zone, Aktion, **Familie** (IPv4, IPv6,
+  IPv4+IPv6), „nur mit Findings“ (über alle Regeln, nicht nur die geladene Seite); Links
+  `#regeln?object=<Name>` bzw. `#regeln?nat=<Name>` zeigen alle Regeln mit diesem Objekt (auch
+  über Gruppen, beide Familien) bzw. NAT, `#regeln?object_id=<ID>` genau ein Objekt.
+  **IPv4/IPv6-Paare** (ADR 0016): Je Regel die Familie, und „↔ IPv6 #…“ bzw. „↔ IPv4 #…“
+  markiert das Gegenstück auf derselben FortiGate.
+  - Grün: gleiche Objektnamen, Dienste und Interfaces.
+  - Gelb „ähnlich“: Abweichungen im Tooltip.
+  - Klick öffnet das Gegenstück; beim Überfahren wird es hervorgehoben. Beide bleiben eigene
+    Regeln.
   Klick → Detail: je Objekt Typ, Kommentar, Gruppenmitglieder (Objektnamen verlinkt) und je
   Wert die **Referenzdaten** aus dem IPAM (DNS-Name, Netz, VLAN, Standort; aufklappbar mit
   allen Feldern und Link in NetBox), dazu Dienste, Schutzprofile, Kommentar und **NAT**
@@ -98,8 +105,11 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   **Subnetze** (mit Abgleich gegen führendes IPAM und Anreicherung, VLAN-Abweichung
   markiert), **VLANs** (inkl. EPGs), **Ports** (Modus, untagged/tagged VLANs, LAG/Parent,
   IPs, Zone/Policy-Gruppe, LLDP/CDP-Nachbar, EPGs), **Geräte**, **VRFs**. Filter Quelle,
-  Suche (auch Mitglieder und DNS-Namen der Werte aus dem IPAM), „nur Abweichungen“. Die
-  Regel-Zahl je Objekt führt zu allen Regeln mit dem Objekt (auch über Gruppen).
+  Suche (auch Mitglieder und DNS-Namen der Werte aus dem IPAM), „nur Abweichungen“.
+  - Die **Regel-Zahl** je Objekt zählt die Regeln direkt und über (verschachtelte) Gruppen.
+    Klick → genau diese Regeln.
+  - **IPv4/IPv6:** Gleichnamige Objekte stehen zweimal da, mit Chip „IPv4“ bzw. „IPv6“,
+    eigenen Werten, Gruppen und Befunden, wie auf der FortiGate.
 - **NAT / VIPs:** VIPs (extern → intern, Port-Forward) und SNAT-Pools – mit **DNS-Namen**
   beider IPs aus DDI/NetBox, **Server** (Firewall-Objekt der internen IP), Interface,
   Kommentar und **Anzahl Regeln** (Klick → Regel-Liste). Suche über Name, IP (auch im
@@ -233,6 +243,10 @@ an (`deploy/agent-gateway`, Port 8443).
 - **Sicherung:** täglich `deploy/backup/backup.sh` (age-verschlüsselt: Datenbank, Schlüssel der
   Zugangsdaten, Agent-Signatur), Wiederherstellung `deploy/backup/restore.sh` – Details und
   Verschlüsselung at rest in `deploy/backup/README.md`.
+- **Regelindex** (ADR 0016): Er wird beim Einlesen je Quellsystem berechnet, nach einem
+  IPAM-Lauf und nach „neu abgleichen“ für den ganzen Mandanten. Fehlt er nach einem Update,
+  baut ihn die erste Anfrage einmalig auf; bei grossen Mandanten dauert diese Anfrage einige
+  Sekunden.
 - **Agenten** ziehen beim nächsten Lauf selbst nach (ADR 0011). Die Agentenliste zeigt je Agent
   „0.2.0 · Build …“ und „aktuell“ bzw. „Update beim nächsten Lauf“. Manuell (`install.ps1`) nur
   für die Erstinstallation oder wenn Auto-Update aus ist. Produktiv das Paket nach jedem Update

@@ -52,12 +52,27 @@ def build_address_map(
     addresses6: list[dict] | None = None,
     groups6: list[dict] | None = None,
 ) -> dict[str, dict]:
+    """Ein Namensverzeichnis ueber beide Familien (nur fuer Einzel-Aufloesungen); Policies und
+    Objekte loesen je Familie auf (`address_maps`)."""
     amap = {a["name"]: a for a in addresses}
     for a in addresses6 or []:
         amap[a["name"]] = a
     for g in list(groups) + list(groups6 or []):
         amap[g["name"]] = g
     return amap
+
+
+def address_maps(
+    addresses: list[dict],
+    groups: list[dict] | None = None,
+    addresses6: list[dict] | None = None,
+    groups6: list[dict] | None = None,
+) -> tuple[dict[str, dict], dict[str, dict]]:
+    """(IPv4, IPv6): FortiOS fuehrt address/addrgrp und address6/addrgrp6 getrennt - derselbe
+    Name ist in jeder Familie ein eigenes Objekt mit eigenem Wert (Dev-Befund)."""
+    v4 = {o["name"]: o for o in [*addresses, *(groups or [])]}
+    v6 = {o["name"]: o for o in [*(addresses6 or []), *(groups6 or [])]}
+    return v4, v6
 
 
 def build_vip_map(vips: list[dict] | None) -> dict[str, str]:
@@ -206,11 +221,15 @@ def normalize(
     addresses6: list[dict] | None = None,
     groups6: list[dict] | None = None,
     service_groups: list[dict] | None = None,
+    policies6: list[dict] | None = None,
 ) -> list[NormalizedRule]:
-    amap = build_address_map(addresses, groups, addresses6, groups6)
+    """Policies (IPv4/Dual-Stack in firewall/policy) und - FortiOS 6.x - firewall/policy6."""
+    maps = address_maps(addresses, groups, addresses6, groups6)
     smap = build_service_map(services, service_groups)
     vipmap = build_vip_map(vips)
-    return [_normalize_policy(p, amap, smap, vipmap) for p in policies]
+    rules = [_normalize_policy(p, maps, smap, vipmap) for p in policies]
+    rules += [_normalize_policy(p, maps, smap, vipmap, v6_table=True) for p in policies6 or []]
+    return rules
 
 
 # FortiGate-UTM-Profilfelder an der Policy (Referenznamen = "Schutzmechanismen").
@@ -264,36 +283,61 @@ def _extra_endpoints(policy: dict, side: str) -> tuple[list[str], list[str]]:
     return names, values
 
 
-def _normalize_policy(policy: dict, amap: dict, smap: dict, vipmap: dict) -> NormalizedRule:
-    src_refs = _names(policy, "srcaddr", "srcaddr6")  # Dual-Stack: IPv4- und IPv6-Felder
-    dst_refs = _names(policy, "dstaddr", "dstaddr6")
+def _normalize_policy(
+    policy: dict, maps: tuple[dict, dict], smap: dict, vipmap: dict, v6_table: bool = False
+) -> NormalizedRule:
+    """Eine Policy; IPv4- (srcaddr/dstaddr) und IPv6-Felder (srcaddr6/dstaddr6) loesen je
+    gegen ihre eigene Objekt-Tabelle auf. In policy6 (FortiOS 6.x) ist alles IPv6."""
+    amap4, amap6 = maps
+    if v6_table:
+        src4, dst4 = [], []
+        src6, dst6 = _names(policy, "srcaddr", "srcaddr6"), _names(policy, "dstaddr", "dstaddr6")
+    else:
+        src4, dst4 = _names(policy, "srcaddr"), _names(policy, "dstaddr")
+        src6, dst6 = _names(policy, "srcaddr6"), _names(policy, "dstaddr6")
     svc_refs = _names(policy, "service")
-    sources = [v for n in src_refs for v in resolve_address(n, amap, vipmap)]
-    destinations = [v for n in dst_refs for v in resolve_address(n, amap, vipmap)]
+    sources = [v for n in src4 for v in resolve_address(n, amap4, vipmap)]
+    sources += [v for n in src6 for v in resolve_address(n, amap6)]
+    destinations = [v for n in dst4 for v in resolve_address(n, amap4, vipmap)]
+    destinations += [v for n in dst6 for v in resolve_address(n, amap6)]
     svc = [t for n in svc_refs for t in resolve_service(n, smap)]
     extra_src, extra_src_values = _extra_endpoints(policy, "src")
     extra_dst, extra_dst_values = _extra_endpoints(policy, "dst")
-    src_refs, sources = src_refs + extra_src, sources + extra_src_values
-    dst_refs, destinations = dst_refs + extra_dst, destinations + extra_dst_values
+    sources += extra_src_values
+    destinations += extra_dst_values
     if not svc and extra_dst:
         svc = ["internet-service"]  # Ports kommen aus dem Internet Service
 
+    pid = policy["policyid"]
     return NormalizedRule(
         source_platform="fortigate",
-        external_id=str(policy["policyid"]),
+        external_id=f"v6-{pid}" if v6_table else str(pid),
         name=policy.get("name", ""),
         action="allow" if policy.get("action") == "accept" else "deny",
         sources=_dedup(sources),
         destinations=_dedup(destinations),
         services=_dedup(svc),
-        source_refs=src_refs,
-        destination_refs=dst_refs,
+        source_refs=src4 + extra_src,
+        destination_refs=dst4 + extra_dst,
+        source_refs6=src6,
+        destination_refs6=dst6,
+        family=_family(policy, bool(src4 or dst4), bool(src6 or dst6) or v6_table),
         service_refs=svc_refs,
         src_zone=_first_name(policy.get("srcintf")),
         dst_zone=_first_name(policy.get("dstintf")),
         protections=_policy_protections(policy),
         raw=policy,
     )
+
+
+def _family(policy: dict, has4: bool, has6: bool) -> str | None:
+    """v4 | v6 | dual nach den Adressfeldern; ohne Adressen nach den Internet-Service-Feldern."""
+    if not (has4 or has6):
+        has4 = any(policy.get(k) for k in (*_ISDB_SRC, *_ISDB_DST) if "service6" not in k)
+        has6 = any(policy.get(k) for k in (*_ISDB_SRC, *_ISDB_DST) if "service6" in k)
+    if has4 and has6:
+        return "dual"
+    return "v6" if has6 else "v4" if has4 else None
 
 
 def _names(policy: dict, *keys: str) -> list[str]:
@@ -394,9 +438,12 @@ def build_device_objects(
     services: list[dict] | None = None,
     service_groups: list[dict] | None = None,
 ) -> list[NormalizedObject]:
-    """Alle Firewall-Objekte so, wie sie auf dem Geraet stehen (Inventar, ADR 0010)."""
-    amap = build_address_map(addresses, groups or [], addresses6, groups6)
+    """Alle Firewall-Objekte so, wie sie auf dem Geraet stehen (Inventar, ADR 0010). IPv4- und
+    IPv6-Objekte loesen je in ihrer Familie auf (gleiche Namen = verschiedene Objekte)."""
+    amap4, amap6 = address_maps(addresses, groups, addresses6, groups6)
+    maps = {"v4": amap4, "v6": amap6}
     vipmap = build_vip_map(vips)
+    vipmaps = {"v4": vipmap, "v6": {}}
     out: list[NormalizedObject] = []
     for family, items in (("v4", addresses), ("v6", addresses6 or [])):
         for a in items:
@@ -407,7 +454,7 @@ def build_device_objects(
                     obj_type=a.get("type"),
                     color=_as_color(a.get("color")),
                     value=_catalog_value(a),
-                    values=_object_values(a["name"], amap, vipmap),
+                    values=_object_values(a["name"], maps[family], vipmaps[family]),
                     fqdn=a.get("fqdn"),
                     comment=a.get("comment") or None,
                     family=family,
@@ -422,7 +469,7 @@ def build_device_objects(
                     category="address_group",
                     color=_as_color(g.get("color")),
                     members=[m["name"] for m in g.get("member", []) if m.get("name")],
-                    values=_object_values(g["name"], amap, vipmap),
+                    values=_object_values(g["name"], maps[family], vipmaps[family]),
                     comment=g.get("comment") or None,
                     family=family,
                 )
@@ -438,6 +485,7 @@ def build_device_objects(
                 values=[x for x in (vipmap.get(v["name"]), _first_mapped_ip(v)) if x],
                 comment=v.get("comment") or None,
                 interface=v.get("extintf") or None,
+                family="v4",
             )
         )
     for p in ippools or []:
@@ -450,6 +498,7 @@ def build_device_objects(
                 obj_type=p.get("type"),
                 values=[rng] if rng else [],
                 comment=p.get("comments") or p.get("comment") or None,
+                family="v4",
             )
         )
     smap = build_service_map(services or [], service_groups)

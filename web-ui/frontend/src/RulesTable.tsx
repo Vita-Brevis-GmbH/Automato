@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchRules, fetchRuleSummary, fetchSystems, Rule, RuleDomain, RuleSummary, System } from "./api";
 import type { View, ViewParams } from "./App";
 import RuleDetailDrawer from "./RuleDetail";
-import { SideMarks } from "./refs";
+import { FAMILY_LABEL, FamilyMarks, SideMarks } from "./refs";
 import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
 // Seitengrösse: Server filtert nach Art/System/Suche, der Rest wird mit "Weitere laden" geholt.
@@ -61,7 +61,15 @@ export function NatChips({ r, onGo }: { r: Rule; onGo?: (v: View, p?: ViewParams
 }
 
 // ACI-Contract: Contract + Subject, darunter ACI-Tenant und Scope
-function NameCell({ r, onGo }: { r: Rule; onGo?: (v: View, p?: ViewParams) => void }) {
+function NameCell({
+  r,
+  onGo,
+  onPair,
+}: {
+  r: Rule;
+  onGo?: (v: View, p?: ViewParams) => void;
+  onPair?: (id: number) => void;
+}) {
   if (r.aci) {
     const pref = r.aci.kind === "preferred_group";
     return (
@@ -97,6 +105,7 @@ function NameCell({ r, onGo }: { r: Rule; onGo?: (v: View, p?: ViewParams) => vo
       <b>{r.name}</b>
       {r.section_label && <div className="faint">{r.section_label}</div>}
       <NatChips r={r} onGo={onGo} />
+      <FamilyMarks r={r} onPair={onPair} />
     </>
   );
 }
@@ -119,6 +128,7 @@ export default function RulesTable({
   const [summary, setSummary] = useState<RuleSummary | null>(null);
   const [error, setError] = useState<unknown>(null);
   const object = params.object ?? "";
+  const objectId = params.object_id ? Number(params.object_id) : null;
   const nat = params.nat ?? "";
 
   const [q, setQ] = useState(params.q ?? "");
@@ -127,7 +137,10 @@ export default function RulesTable({
   const [srcZone, setSrcZone] = useState("");
   const [dstZone, setDstZone] = useState("");
   const [action, setAction] = useState("");
+  const [family, setFamily] = useState("");
   const [onlyFindings, setOnlyFindings] = useState(false);
+  // Maus über einer Regel hebt ihr IPv4/IPv6-Gegenstück hervor
+  const [pairHover, setPairHover] = useState<number | null>(null);
   // Link aus Findings/Objekten auf genau eine Regel (#regeln?rule=<id>): Detail direkt öffnen
   const [selected, setSelected] = useState<number | null>(params.rule ? Number(params.rule) : null);
 
@@ -148,13 +161,15 @@ export default function RulesTable({
       domain,
       systemId: system ? Number(system) : null,
       object,
+      objectId,
       nat,
       srcZone,
       dstZone,
       action,
+      family,
       limit: PAGE,
     }),
-    [q, tenantId, domain, system, object, nat, srcZone, dstZone, action],
+    [q, tenantId, domain, system, object, objectId, nat, srcZone, dstZone, action, family],
   );
 
   // Suche und alle Filter wertet der Orchestrator aus (über alle Regeln, nicht nur die erste Seite).
@@ -228,7 +243,7 @@ export default function RulesTable({
         </div>
         {(object || nat) && (
           <span className="chip local" title="aus einem Link – Regeln, die dieses Objekt bzw. diesen NAT-Eintrag verwenden">
-            {object ? `Objekt ${object}` : `NAT ${nat}`}
+            {object ? `Objekt ${object}${params.family ? ` (${FAMILY_LABEL[params.family] ?? params.family})` : ""}` : `NAT ${nat}`}
             <button className="linkbtn" title="Filter entfernen" onClick={() => onGo?.("regeln")}>
               ✕
             </button>
@@ -278,6 +293,12 @@ export default function RulesTable({
             </option>
           ))}
         </select>
+        <select className="sel" value={family} onChange={(e) => setFamily(e.target.value)} title="Adressfamilie der Policy">
+          <option value="">Familie: alle</option>
+          <option value="v4">IPv4</option>
+          <option value="v6">IPv6</option>
+          <option value="dual">IPv4+IPv6</option>
+        </select>
         <button className={`toggle ${onlyFindings ? "on" : ""}`} onClick={() => setOnlyFindings((v) => !v)}>
           <span className="dot y" />
           nur mit Findings
@@ -317,10 +338,16 @@ export default function RulesTable({
               </thead>
               <tbody>
                 {filtered.map((r) => (
-                  <tr key={r.id} className="clickable" onClick={() => setSelected(r.id)}>
+                  <tr
+                    key={r.id}
+                    className={`clickable${pairHover === r.id ? " pair-hl" : ""}`}
+                    onClick={() => setSelected(r.id)}
+                    onMouseEnter={() => setPairHover(r.pair?.rule_id ?? null)}
+                    onMouseLeave={() => setPairHover(null)}
+                  >
                     <td className="mono">{r.id}</td>
                     <td>
-                      <NameCell r={r} onGo={onGo} />
+                      <NameCell r={r} onGo={onGo} onPair={setSelected} />
                     </td>
                     <td>
                       <ActionBadge action={r.action} />
@@ -370,7 +397,13 @@ export default function RulesTable({
       </div>
 
       {selected !== null && (
-        <RuleDetailDrawer ruleId={selected} systemName={systemName} onClose={() => setSelected(null)} onGo={onGo} />
+        <RuleDetailDrawer
+          ruleId={selected}
+          systemName={systemName}
+          onClose={() => setSelected(null)}
+          onGo={onGo}
+          onRule={setSelected}
+        />
       )}
     </>
   );

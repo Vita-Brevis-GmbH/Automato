@@ -6,18 +6,20 @@ VIP bzw. SNAT-Pool. Suche (`q`) ueber Name, IPs, Ports, Kommentar, Interface und
 eine IP trifft auch innerhalb eines Pool-Bereichs.
 """
 
+from collections import defaultdict
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.rules import rule_outs
 from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import NatRule, RuleDomain
+from app.models import NatRule, Rule, RuleIndex
 from app.schemas.nat import NatDetailOut, NatOut
 from app.store import nat as nat_store
-from app.store import references, rule_search
+from app.store import references, rule_index
 from app.store import rules as rules_store
 
 router = APIRouter(prefix="/nat", tags=["nat"])
@@ -36,16 +38,18 @@ class _Context:
             )
             for t in tenants
         }
-        rules = (
-            rules_store.list_rules(
-                session, tenant_id=tenant_id, limit=None, domain=RuleDomain.FIREWALL
-            )
-            if nats
-            else []
-        )
-        self.rules = rules
-        self.search = rule_search.RuleSearch(session, rules)
-        self.usage = self.search.nat_usage(rules)
+        # Regeln je VIP/SNAT-Pool aus dem Regelindex (VIPs auch ueber Gruppen)
+        self.usage: dict[tuple[int, str], set[int]] = defaultdict(set)
+        for t in tenants:
+            rule_index.ensure(session, t)
+        if tenants:
+            for rule_id, sid, names in session.execute(
+                select(RuleIndex.rule_id, RuleIndex.source_system_id, RuleIndex.nat).where(
+                    RuleIndex.tenant_id.in_(tenants), RuleIndex.nat != ""
+                )
+            ):
+                for name in names.strip("\n").split("\n"):
+                    self.usage[(sid, name)].add(rule_id)
 
     def out(self, n: NatRule) -> NatOut:
         ctx = self.refs[n.tenant_id]
@@ -141,7 +145,8 @@ def get_nat(
     ctx = _Context(session, n.tenant_id, [n])
     refs = ctx.refs[n.tenant_id]
     ids = ctx.rule_ids(n)
-    rules = [r for r in ctx.rules if r.id in ids]
+    order = select(Rule.id).where(Rule.id.in_(ids)).order_by(*rules_store.ORDER)
+    rules = rule_index.load_rules(session, list(session.scalars(order)) if ids else [])
     obj = nat_store.device_object(session, n)
     return NatDetailOut(
         **ctx.out(n).model_dump(),
@@ -149,5 +154,5 @@ def get_nat(
         mapped_info=references.ip_info(refs, n.mapped_ip),
         color=obj.color if obj else None,
         settings=nat_store.settings(n),
-        rules=rule_outs(session, rules, ctx.search),
+        rules=rule_index.outs(session, rules),
     )

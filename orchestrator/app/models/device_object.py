@@ -32,9 +32,15 @@ GROUP_CATEGORIES = (ObjectCategory.ADDRESS_GROUP, ObjectCategory.SERVICE_GROUP)
 
 class DeviceObject(Base):
     __tablename__ = "device_object"
+    # IPv4- und IPv6-Objekte (FortiGate address/address6) duerfen gleich heissen - es sind
+    # verschiedene Objekte; eindeutig je Quellsystem/Kategorie/Familie/Name
     __table_args__ = (
         UniqueConstraint(
-            "source_system_id", "category", "name", name="uq_device_object_source_cat_name"
+            "source_system_id",
+            "category",
+            "family",
+            "name",
+            name="uq_device_object_source_cat_fam_name",
         ),
     )
 

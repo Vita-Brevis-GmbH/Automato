@@ -1,8 +1,9 @@
 """Beispieldaten fuer die UI-Tests - aus denselben Testdaten wie die Orchestrator-Tests.
 
-Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), zwei FortiGates, einem APIC, virtuellen und
-physischen Standorten, NAT/VIPs, Gruppen, Diensten mit Namensschema-Befunden und einem
-ACI-Contract ohne Consumer. Alles ueber die oeffentliche bzw. interne API wie im Betrieb.
+Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), drei FortiGates (eine mit gleichnamigen
+IPv4/IPv6-Objekten und Regelpaaren), einem APIC, virtuellen und physischen Standorten, NAT/VIPs,
+Gruppen, Diensten mit Namensschema-Befunden und einem ACI-Contract ohne Consumer. Alles ueber
+die oeffentliche bzw. interne API wie im Betrieb.
 """
 
 import sys
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "orchestrator" / "tests"))
 import test_findings_explain as fe  # noqa: E402
+import test_ip_family as ipf  # noqa: E402
 import test_search_nat as sn  # noqa: E402
 import test_services as sv  # noqa: E402
 import test_sites as st  # noqa: E402
@@ -81,6 +83,10 @@ def run(app) -> None:
     # FortiGate 2: Dienste mit Attributen, Internet Service, negiertes Ziel
     fw2 = system(name="fw-02", platform="fortigate", base_url="https://fw-02.example.ch")
     run_result(fw2, "fortigate", rules=sv.RULES, objects=sv.OBJECTS)
+
+    # FortiGate 3: IPv4/IPv6 getrennt - gleichnamige Objekte, Regelpaare (gleich/aehnlich)
+    fw3 = system(name="fw-03", platform="fortigate", base_url="https://fw-03.example.ch")
+    run_result(fw3, "fortigate", rules=ipf.RULES, objects=ipf.OBJECTS)
 
     # APIC: Inventar, Filter als Dienste, Contract ohne Consumer
     apic = system(name="apic-01", platform="cisco_aci", base_url="https://apic.example.ch")

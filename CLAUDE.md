@@ -86,32 +86,39 @@ umgekehrt) = neuer/anderer Adapter, keine Änderung am Rest der Plattform.
   `docs/BETRIEB.md`. Der frühere ausführliche Statusverlauf (bis 0.4.2) steht in
   `docs/ENTWICKLUNGSVERLAUF.md`.
 
-## Aktueller Stand (0.8.1)
+## Aktueller Stand (0.9.0)
 
 UC1 „Firewall-Regel-Dokumentation (read-only)“ ist für Model 2 (FortiGate + NetBox) und
-Model 1 (FortiGate + ACI + Infoblox) umgesetzt und läuft im Dev gegen die echten Systeme.
+Model 1 (FortiGate + ACI + Infoblox) umgesetzt; Phase A ist gegen die echten Systeme abgenommen.
+Produktiv erst später – jetzt wird erweitert und verbessert.
 
 | Bereich | Stand | Verweise |
 |---|---|---|
-| Collector | FortiGate (Policies inkl. ISDB/Identität/ZTNA/Negation, Objekte, Services mit Attributen, VIPs/IP-Pools, Interfaces, Dual-Stack, UTM), APIC (Contracts tenant-bewusst per DN, externe EPGs, vzAny, Contract-Interfaces, **ESGs, Taboo, Preferred Groups**, Contract Master, Intra-EPG, Filter als Services, Inventar), Infoblox DDI + NetBox als Referenz | Lesevertrag `docs/collectors-read-contract.md`, ADR 0010 |
+| Collector | FortiGate (Policies inkl. ISDB/Identität/ZTNA/Negation, `policy6`, Objekte **IPv4/IPv6 getrennt** (gleiche Namen = verschiedene Objekte), Services mit Attributen, VIPs/IP-Pools, Interfaces, UTM), APIC (Contracts tenant-bewusst per DN, externe EPGs, vzAny, Contract-Interfaces, **ESGs, Taboo, Preferred Groups**, Contract Master, Intra-EPG, Filter als Services, Inventar), Infoblox DDI + NetBox als Referenz | Lesevertrag `docs/collectors-read-contract.md`, ADR 0010 |
 | Agent | externer Windows-Agent (Pull, `--poll --watch 20`/`--check`), Geräte + Zugangsdaten zentral, Selbst-Update, **signierte Updates**, mTLS über das **Agent-Gateway** | ADR 0008, 0009, 0011, 0013 |
-| Store/Abgleich | Regeln, Objekte, Inventar, Referenzstand, Findings als abgeleiteter Zustand (je Befund Satz + Hinweis, `store/finding_text.py`), IPAM-Namen ohne Präfix (`naming.server_name`), NetBox-Sync | ADR 0004, 0010 |
-| Suche/NAT | Regelsuche über alles inkl. Gruppenmitglieder, IP-im-Netz, IPAM-DNS-Namen, NAT (`store/rule_search.py`); Filter `object`/`nat`; NAT mit DNS, Server, Regeln; Links `#regeln?object=…` | – |
+| Store/Abgleich | Regeln, Objekte (eindeutig je Familie), Inventar, Referenzstand, Findings als abgeleiteter Zustand (je Befund Satz + Hinweis, `store/finding_text.py`), IPAM-Namen ohne Präfix (`naming.server_name`), NetBox-Sync; Einlesen mit Zwischenspeicher je Lauf | ADR 0004, 0010, 0016 |
+| Regelindex/Suche/NAT | **abgeleiteter Regelindex** (`store/rule_index.py`: Suchtext, Listenzeile, Objekt-Nutzung direkt/über Gruppen, IP-Bereiche) – Suche über alles per SQL, Regel-Zahl bei Objekten, Filter `object`/`object_id`/`nat`/`family`; **IPv4/IPv6-Paare** (`store/rule_pairs.py`, nur Markierung); NAT mit DNS, Server, Regeln; Messskript `scripts/bench_large_ruleset.py` | ADR 0016 |
 | Applikationen | eigenes Objekt mit AP/EPG/Server, **Vorschläge per Projektnummer**, Doku je Applikation (Markdown, Druck/PDF); Doku je System; publizierte Dienste (VIPs) | ADR 0012 |
 | Standorte | **virtuell** (000, 001; in Netz-/Cluster-Namen) und **physisch** (Ort-Code, z. B. chzrh1), n:m-Zuordnung; Vorschlag aus Namen (`store/sites.py`), NetBox-Site-Gruppen; VMs ohne Standort im Namen | ADR 0015 |
 | Betrieb | **Zeitplan je Quellsystem** (Cron, Europe/Zurich), **Alle einlesen** (`POST /jobs/collect-all`), **System-Seite**, Sicherung/Wiederherstellung (age), `deploy/update.sh` mit Rückfall | ADR 0013, `deploy/backup/`, `docs/BETRIEB.md` |
 | Sicherheit | Keycloak (OIDC/PKCE, OTP, SAML-Vorlage), Rollen viewer/operator/admin, Mandanten-Scoping, Audit mit Allowlist (+ optional verschlüsselt), Secrets-Provider, Zugangsdaten Fernet, fail-closed Defaults | ADR 0005, 0007, 0013 |
 | Web-UI | alle Ansichten nach Mockup, seitenweise Listen mit Gesamtzahl | `web-ui/frontend/` |
 
-Tests: orchestrator 197, collectors 79, sot-gateway 14, UI (Playwright) 24; dazu die CI gegen
+Tests: orchestrator 201, collectors 82, sot-gateway 14, UI (Playwright) 26; dazu die CI gegen
 Postgres inkl. `alembic check`, Image-Builds und nächtlicher Lauf (`docs/TESTS.md`).
 
 ## Offen / nächste Schritte
 
-- **Phase A gegen die echten Systeme abnehmen** (DDI über den Agenten, Dev-NetBox, NetBox-Sync):
-  Checkliste `docs/DEV-SETUP-AGENT.md` Abschnitt 6b.
-- Produktiv schalten: Agent-Gateway `bind`, Pakete signieren, tägliche Sicherung, Updates nur
-  über `deploy/update.sh` (ADR 0013).
-- VM-Collector (vCenter/Proxmox → NetBox), Import-Wizard (E3), gemeinsames Cockpit mit
-  Magister (ADR 0014, Entwurf), Schreibpfad (E4) nur mit eigener ADR.
+Reihenfolge laut Anwender (ROADMAP „Nächste Arbeiten“):
+
+- **0.10.0** FortiGate Virtual Server (SLB-VIPs, IPv6-VIPs) einbinden. Applikationen
+  vollständig:
+  - alle Regeln über Netze, Bereiche und any (gleichwertig angezeigt),
+  - vzAny der VRF, Preferred Groups, ESGs,
+  - Regeln je Subnetz.
+- **0.11.0** VMware (vCenter, nur lesen): VM, IPs, Portgruppe → EPG (Name `TE_x|AP_y|EG_z` oder
+  VLAN). Zusätzlich über den NetBox-Sync nach NetBox Virtualization – vom Anwender gewünscht,
+  vorher eigene ADR.
 - Applikationen: Regeln direkt zuordnen, Abhängigkeiten zwischen Applikationen (ADR 0012).
+- Später: produktiv schalten (ADR 0013), Import-Wizard (E3), Cockpit mit Magister (ADR 0014),
+  Schreibpfad (E4) nur mit eigener ADR.

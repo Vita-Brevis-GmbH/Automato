@@ -20,6 +20,16 @@ class RuleNatOut(BaseModel):
     vips: list[str] = []  # VIP-Objekte im Ziel (auch ueber Gruppen)
 
 
+class RulePairOut(BaseModel):
+    """IPv4/IPv6-Gegenstueck derselben Firewall - eigene Regel, nur zur Orientierung verbunden."""
+
+    rule_id: int
+    name: str
+    family: str | None = None
+    match: str  # same (gleiche Objektnamen, Services, Interfaces) | similar (Abweichungen)
+    diff: list[str] = []  # src | dst | service | name | zone
+
+
 class RuleSummaryOut(BaseModel):
     """Kennzahlen fuer die Uebersicht (alle Regeln des Mandanten, nicht nur eine Seite)."""
 
@@ -54,6 +64,8 @@ class RuleOut(BaseModel):
     nat: RuleNatOut | None = None  # nur Firewall-Policies mit SNAT oder VIP
     missing: list[str] = []  # src | dst ohne Endpunkt (ACI: kein Consumer/Provider)
     negate: list[str] = []  # FortiGate: negierte Seiten src | dst | service
+    family: str | None = None  # v4 | v6 | dual (Adressfamilie der Policy)
+    pair: RulePairOut | None = None  # IPv4/IPv6-Gegenstueck (nur Markierung)
 
 
 class EpgSubnetOut(BaseModel):
@@ -140,6 +152,7 @@ class RefOut(BaseModel):
 
     role: str  # src | dst | service
     name: str
+    family: str | None = None  # v4 | v6 (FortiGate: gleichnamige Objekte je Familie)
     category: str | None = None  # None = nicht als Objekt gelesen (Built-in, "all")
     obj_type: str | None = None
     comment: str | None = None

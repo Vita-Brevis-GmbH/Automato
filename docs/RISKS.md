@@ -3,8 +3,9 @@
 Lebendes Dokument: wird an **jedem Meilenstein-Abschluss** (siehe `ROADMAP.md`) überprüft und
 aktualisiert – neue Risiken aufnehmen, erledigte schliessen, Bewertungen nachziehen.
 
-Letzter Review: 0.8.1 (2026-10-20) – R18–R20 aus dem Betrieb gegen die echten Systeme
-ergänzt (Datenmenge, NetBox-Teilstand, Collector-Lücken). Davor M2/M3 (2026-07-22):
+Letzter Review: 0.9.0 (2026-10-21) – R18 gemildert (Regelindex, ADR 0016). Davor 0.8.1:
+R18–R20 aus dem Betrieb gegen die echten Systeme ergänzt (Datenmenge, NetBox-Teilstand,
+Collector-Lücken). Davor M2/M3 (2026-07-22):
 R13/R14 aus der Mandantenfähigkeit, R4 auf das Finding-Konstrukt (ADR 0004) und R7 auf den
 Fail-closed-Token-Check (ADR 0005).
 
@@ -32,7 +33,7 @@ Bewertung: Auswirkung und Eintrittswahrscheinlichkeit jeweils **hoch / mittel / 
 | R15 | SoT-API-/Versionsdrift: NetBox änderte das Token-Modell (gehashte v2-Tokens ab 4.6, eigenes Group-Modell) und bricht Setup/Adapter; gilt analog für künftige NetBox-/Infoblox-Versionen | mittel | hoch | NetBox-Version im Lab **gepinnt** (`NETBOX_VERSION`); v1-Legacy-Tokens + ObjectPermission (ADR 0006); Adapter nur über das stabile SoTAdapter-Protokoll; Versions-Upgrades bewusst testen | M7, M8, ADR 0006 |
 | R16 | Zielsystem-Auth zu schwach: beobachtet, dass die FortiGate-REST-API Requests dieser VM auch mit beliebigem Token liefert (Trusted-Host-only) → kompromittierte VM = Lese-Zugriff auf die Firewall-Config | mittel | mittel | Für Produktion echten, geprüften API-Token + enge Trusted-Hosts fordern; Collector-Host härten/segmentieren; read-only-API-Profil (Least Privilege). **Prüfbar seit 0.5.0:** `automato-collector --check --strict` (Negativtest mit ungültigem Token, opt-in wegen Lockout-Zähler) | M9, SECURITY.md, ADR 0006, ADR 0013 |
 | R17 | Bootstrap-Import schreibt in den SoT: `import_from_fortigate.py` nutzt einen Admin-Schreib-Token; Fehlbedienung/falscher Scope könnte NetBox-Daten verändern | mittel | niedrig | Bewusst **separates, opt-in Admin-Werkzeug** ausserhalb des read-only Collector-Pfads; Objekte mit Tag `automato-import` markiert; NetBox danach als gepflegte SoT; Schreibpfad-Governance mit dem künftigen Write-Path-ADR | M8, ADR 0006 |
-| R18 | Datenmenge/Leistung: Regelsuche, NAT- und Objekt-Detail laden alle Regeln eines Mandanten bzw. Quellsystems in den Speicher; bei sehr grossen Regelwerken werden Suche und Listen langsam | mittel | mittel | Messen im Dev mit echten Regelwerken; bei Bedarf Suchindex (Postgres Volltext/Trigram) statt In-Memory-Suche; seitenweise Listen bleiben | 0.6.0 |
+| R18 | Datenmenge/Leistung: sehr grosse Regelwerke machen Suche, Listen, Objekt-Detail, Doku und Einlesen langsam | mittel | tief | **0.9.0:** abgeleiteter Regelindex (Suchtext, Objekt-Nutzung, IP-Bereiche) per SQL, Zwischenspeicher je Lauf beim Einlesen; gemessen 3000 Regeln/39 000 Endpunkte: Abfragen < 0,3 s, Einlesen 25 s (vorher bis 9 s bzw. 216 s); Messskript bei Bedarf wiederholen, bei sehr grossen Mandanten Trigram-Index (`pg_trgm`) als eigene Migration | 0.9.0, ADR 0016 |
 | R19 | NetBox-Sync bricht mitten in der Übernahme ab (NetBox-Fehler, z. B. Eindeutigkeit) und hinterlässt einen Teilstand | mittel | mittel | Bulk je Objekttyp, Plan neu berechnen setzt beim Teilstand an; eindeutige Namen vor dem Schreiben (0.8.0); Fake-NetBox prüft Eindeutigkeit wie NetBox; Sync-Benutzer nur mit den nötigen Objekttypen | 0.8.0, ADR 0010 |
 | R20 | Collector-Lücken: Herstellerfelder, die Automato nicht liest (z. B. FortiGate Internet Services, ACI Contract Master – erst durch Dev-Befund gefunden), führen zu unvollständigen Regeln | mittel | hoch | Befund „Regel nicht wirksam“ macht fehlende Quelle/Ziel sichtbar; Lesevertrag `docs/collectors-read-contract.md` je Feld; anonymisierte Echt-Samples als Fixture-Tests aufnehmen | 0.8.0 |
 

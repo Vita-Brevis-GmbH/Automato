@@ -23,7 +23,7 @@ from app.models import REFERENCE_PLATFORMS, CollectorRun, RunStatus, SourceSyste
 from app.schemas.collector import CollectorResult, ReferenceBatch
 from app.sot import build_adapter
 from app.store import agents as agent_store
-from app.store import ingest, reconcile, references
+from app.store import ingest, reconcile, references, rule_index
 
 log = logging.getLogger(__name__)
 
@@ -142,6 +142,8 @@ def _finish_reference_run(session: Session, run, result: CollectorResult, actor)
             with session.begin_nested():
                 run.rule_count = references.finalize_run(session, run, source)
                 reconcile.reconcile_tenant(session, run.tenant_id)
+                # Suchtext der Regeln enthaelt DNS-Namen aus dem IPAM -> Index neu
+                rule_index.rebuild(session, run.tenant_id)
             run.status = RunStatus.COMPLETED
         except Exception as exc:  # noqa: BLE001 - wie beim Ingest: Lauf failed statt 500
             log.exception("Referenzstand von Lauf %s nicht uebernommen", run.id)
