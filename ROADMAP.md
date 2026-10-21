@@ -303,7 +303,7 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.11.1–0.11.4** | Korrekturen aus dem Betrieb: vCenter-Berechtigung verständlich, Commit vor der Antwort (Teil-Upload), FortiGate ohne JSON, hängende Läufe und NetBox-Syncs beenden/abbrechen, Agent-Update im Wach-Modus mit Log und Update-Status, VLAN-Subinterfaces getaggt |
 | **0.12.0** | IPv4/IPv6-Paare bestätigen/ablehnen; VIP-Ziele als Objekte; Ports je Gerät; Betriebszustand als Ampel (System-Seite, Übersicht) |
 | **0.13.0** | Ansicht „Läufe“ (alle, seitenweise, Filter); Übersicht zeigt alle offenen Läufe; Ports kompakt mit Detail; Portgruppen im Detail (EPG, Subnetze, VMs) |
-| **0.14.0** | Applikationen: Doku im Mittelpunkt (Übersicht, alle VMs, EPGs mit ganzem ACI-Pfad, Regeln mit Richtung/Bezug spezifisch–unspezifisch, Filter, Erklärung, Links), externer/interner Name, Zweck Dev/Test/Prod; NAT/VIPs mit Prüfung; VM-Angaben in den Detailansichten; Läufe unter Administration |
+| **0.14.0–0.14.1** | Applikationen: Doku im Mittelpunkt (Übersicht, alle VMs, EPGs mit ganzem ACI-Pfad, Regeln mit Richtung/Bezug spezifisch–unspezifisch, Filter, Erklärung, Links), externer/interner Name, Zweck Dev/Test/Prod; NAT/VIPs mit Prüfung; VM-Angaben in den Detailansichten; Läufe unter Administration; Regeln mit Objekt (Host/Netz/any) und VMs darin, Firewall-Objekte je Name, Listen mit Scrollbalken im Bild |
 
 ### Nächste Arbeiten (Stand 0.14.0)
 

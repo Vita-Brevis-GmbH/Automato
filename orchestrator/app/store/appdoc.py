@@ -58,6 +58,9 @@ VIA = "Bezug"
 # (in = System ist Ziel, out = Quelle) und Art des Bezugs (specific = der Host bzw. die EPG
 # selbst, subnet = groesseres Netz, any, vzany = vzAny der VRF, pref_group = Preferred Group)
 RULE, DIRECTION, SCOPE = "_rule", "_dir", "_scope"
+# Seite der Regel (src | dst) und das Objekt der Regel, ueber das das System erfasst wird -
+# wie es in der Regel steht (H_web01, N_srv16 mit 10.20.0.0/16, any, EPG Tenant/AP/EPG), 0.14.1
+SIDE, OBJECT, OBJECT_VALUE = "_side", "_obj", "_val"
 UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
 _COMMON = ["Server Name", "TCP/UDP", "Target Systems", "Schutzmechanismen", "Description", VIA]
 TABLE_COLUMNS: dict[int, list[str]] = {
@@ -382,6 +385,7 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                 idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
             how = sides[side]
             text = how if via is None else (via if how == "direkt" else f"{how} · {via}")
+            obj = f"EPG {epg_store.inventory_label(epg)}" if how == "direkt" else how
             out.append(
                 (
                     idx,
@@ -395,6 +399,9 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                         RULE: r.id,
                         DIRECTION: "in" if side == "dst" else "out",
                         SCOPE: _aci_scope(r, how),
+                        SIDE: side,
+                        OBJECT: obj,
+                        OBJECT_VALUE: "",
                     },
                 )
             )
@@ -404,13 +411,14 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
 def _fw_rows(
     data: TenantData,
     rule: Rule,
-    sides: dict[str, tuple[str, str]],
+    sides: dict[str, tuple[str, str, str, str]],
     system_name: str,
     dnat_for_sys: list[NatRule],
     snat_ips: list[str],
 ) -> list:
     """Firewall-Regel als (Tabelle, Zeile) je Seite, auf der das System steht (Ziel =
-    eingehend, Quelle = ausgehend); `sides` = Seite -> (Bezug, Art des Bezugs)."""
+    eingehend, Quelle = ausgehend); `sides` = Seite -> (Bezug, Art des Bezugs, Objekt der
+    Regel, sein Bereich)."""
     objs, zones = data.objs, data.zones
     out = []
     for side in sorted(sides, key=lambda x: x != "dst"):
@@ -466,8 +474,9 @@ def _fw_rows(
                 "Schutzmechanismen": protections,
                 "Description": description,
             }
-        via, scope = sides[side]
-        out.append((idx, {**row, VIA: via, RULE: rule.id, DIRECTION: direction, SCOPE: scope}))
+        via, scope, obj, value = sides[side]
+        meta = {RULE: rule.id, DIRECTION: direction, SCOPE: scope, SIDE: side}
+        out.append((idx, {**row, VIA: via, **meta, OBJECT: obj, OBJECT_VALUE: value}))
     return out
 
 
@@ -498,15 +507,20 @@ def _covered_rows(
     dnat, snat = _nat_context(data, {v.split("/")[0] for v in values})
     out = []
     for r in data.rules((direct_ids or set()) | set(cover)):
-        sides: dict[str, tuple[str, str]] = {}
+        sides: dict[str, tuple[str, str, str, str]] = {}
+        c = cover.get(r.id)
         if is_direct is not None:
             for e in r.endpoints:
-                if is_direct(e):
-                    sides[e.role.value] = ("direkt", "specific")
-        c = cover.get(r.id)
+                role = e.role.value
+                if is_direct(e) and role not in sides:
+                    o = data.objs.get(e.network_object_id) if e.network_object_id else None
+                    if c is not None and role in c.sides:  # Objektname wie auf der Firewall
+                        sides[role] = ("direkt", "specific", c.via(role), c.value(role))
+                    else:
+                        sides[role] = ("direkt", "specific", o.name if o else "", _label(o, None))
         for role in c.sides if c else ():
-            sides.setdefault(role, (c.via(role), c.scope(role)))
-        if any(scope != "any" for _, scope in sides.values()):
+            sides.setdefault(role, (c.via(role), c.scope(role), c.via(role), c.value(role)))
+        if any(side[1] != "any" for side in sides.values()):
             # Server -> any: das System steht gezielt auf einer Seite; dass any auf der Gegenseite
             # es auch umfasst, ist kein eigener Zugriff (Dev-Befund 0.14.0)
             sides = {k: v for k, v in sides.items() if v[1] != "any"}

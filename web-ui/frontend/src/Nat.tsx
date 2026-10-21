@@ -117,6 +117,19 @@ function addr(ip: string | null, port: string | null, proto?: string | null) {
   return `${ip}${port ? `:${port}` : ""}${proto ? `/${proto}` : ""}`;
 }
 
+// je Eintrag eine Zeile (lange Objektnamen machen die Tabelle sonst zu breit)
+function Lines({ items }: { items: string[] }) {
+  if (!items.length) return <Dash />;
+  return (
+    <>
+      {items.slice(0, 4).map((x) => (
+        <div key={x}>{x}</div>
+      ))}
+      {items.length > 4 && <div className="faint">+{items.length - 4} weitere</div>}
+    </>
+  );
+}
+
 function Names({ items }: { items: (string | null)[] }) {
   const names = items.filter((x, i, a): x is string => !!x && a.indexOf(x) === i);
   return names.length ? <div className="faint">{names.join(", ")}</div> : null;
@@ -406,7 +419,7 @@ export default function NatTable({
       </div>
       <ErrorBox error={error} prefix="NAT laden" />
       <div className="card">
-        <div className="card-body scroll">
+        <div className="card-body scroll viewport">
           {nat === null ? (
             <Loading>Lade VIPs…</Loading>
           ) : shown.length === 0 ? (
@@ -471,11 +484,9 @@ export default function NatTable({
                         )}
                       </td>
                       <td className="mono">
-                        {targets.length
-                          ? [...new Set(targets.flatMap((t) => t.servers))].join(", ") || <Dash />
-                          : n.servers?.length
-                            ? n.servers.join(", ")
-                            : (n.server ?? <Dash />)}
+                        <Lines
+                          items={targets.length ? [...new Set(targets.flatMap((t) => t.servers))] : n.servers?.length ? n.servers : n.server ? [n.server] : []}
+                        />
                       </td>
                       <td className="mono">{n.interface ?? <Dash />}</td>
                       <td className="num">

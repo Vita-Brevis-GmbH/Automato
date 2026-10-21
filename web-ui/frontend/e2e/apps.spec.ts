@@ -23,6 +23,16 @@ test("Applikation: Doku mit Übersicht, VMs und EPGs mit ganzem ACI-Pfad", async
   await expect(vm).toContainText("Portgruppe TE|AP|EG_db → EPG TE/AP/EG_db (AP TE/AP)");
   const epg = page.locator(".card", { hasText: "EPGs im ACI" }).locator("tbody tr");
   await expect(epg).toContainText("TE/AP/EG_db");
+  // Firewall-Objekte je Name zusammengefasst, mit den Firewalls und der Namensprüfung
+  const web01 = vm.locator(".objgroup", { hasText: "H_web01" });
+  await expect(web01).toHaveCount(1);
+  await expect(web01).toContainText("fwc11-000-infrz");
+  await expect(web01).toContainText("fw-03");
+  await expect(web01).not.toContainText("Name ≠ DNS");
+  await expect(vm.locator(".objgroup", { hasText: "H_web03" })).toContainText("Name ≠ DNS");
+  await web01.locator("button:has-text('fw-03')").click();
+  await expect(page).toHaveURL(/#objekte\?object_id=\d+/);
+  await expect(page.locator(".drawer h2")).toHaveText("H_web01");
 });
 
 test("Applikation: Regeln filtern (System, Richtung, Bezug) und Erklärung im Detail", async ({ page }) => {
@@ -47,6 +57,11 @@ test("Applikation: Regeln filtern (System, Richtung, Bezug) und Erklärung im De
   await expect(ruleRows.first()).toContainText("any");
   expect(await ruleRows.count()).toBeLessThan(total);
   await card.locator("button:has-text('Filter zurücksetzen')").click();
+  // Objekt der Regel (any bzw. Netz) mit den VMs darin statt einer Zeile je VM
+  const viaAny = ruleRows.filter({ hasText: "web-via-group" });
+  await expect(viaAny).toHaveCount(1);
+  await expect(viaAny.locator(".appside")).toContainText("any");
+  await expect(viaAny.locator(".appside")).toContainText("↳ web01-007-ka");
   // Detail: warum die Regel gilt, Link in die Regel-Ansicht
   await contract.click();
   const drawer = page.locator(".drawer");

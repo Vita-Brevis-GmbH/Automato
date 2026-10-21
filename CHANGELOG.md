@@ -7,6 +7,24 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.14.1 – 2026-10-22
+
+Korrekturen aus dem Betrieb (keine Migration).
+
+- **NAT / VIPs zu breit, kein Scrollbalken:** lange Listen (NAT / VIPs, Regeln & Contracts,
+  Regeln der Applikation) scrollen in ihrer Karte mit fester Kopfzeile – der waagrechte
+  Scrollbalken ist immer im Bild. Server im NAT je Zeile statt mit Komma.
+- **Applikation → Systeme → Firewall-Objekt** je Name zusammengefasst: darunter die
+  Firewalls, auf denen das Objekt steht (Klick öffnet es), und ob der Name zum DNS-Namen im
+  IPAM passt (✓ bzw. „Name ≠ DNS“).
+- **Regeln der Applikation zeigen das Objekt der Regel:** Quelle und Ziel wie in der Regel, darunter je
+  Objekt, über das die Regel Systeme der Applikation erfasst (`H_web01 10.10.10.5`,
+  `N_srv16 10.20.0.0/16`, `any`, `EPG Tenant/AP/EPG`), die Systeme darin. So ist sichtbar, ob
+  die Regel für die VM steht oder für ein Subnetz bzw. any.
+- **Keine Mehrfach-Zeilen mehr über any bzw. ein Netz:** In den 10 Kategorien steht eine Regel je
+  Seite und Objekt einmal (`any: web01, db01, …` statt einer Zeile je System). Auch das
+  Regel-Detail fasst so zusammen.
+
 ## 0.14.0 – 2026-10-22
 
 Applikationen mit der Doku im Mittelpunkt, Prüfung in NAT / VIPs, VM-Angaben in den

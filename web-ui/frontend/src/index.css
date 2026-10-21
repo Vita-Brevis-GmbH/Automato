@@ -387,6 +387,13 @@ pre.block { background: var(--surface-2); border: 1px solid var(--border); borde
 .refblock.why { margin: 0 0 14px; border-left-color: var(--accent); background: var(--surface-2); }
 .why-list { margin: 4px 0 0; padding-left: 18px; }
 .why-list li { margin: 5px 0; }
+.why-systems { margin: 2px 0 0; padding-left: 16px; font-size: 12.5px; }
+.why-systems li { margin: 1px 0; }
+.appside { margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--border); font-size: 12.5px; }
+.objgroup + .objgroup { margin-top: 6px; }
+/* lange Listen (NAT, Regeln): Kopfzeile fest, Scrollbalken unten immer im Bild (0.14.1) */
+.card-body.viewport { max-height: calc(100vh - 250px); overflow: auto; }
+.card-body.viewport thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
 .kv.tight { grid-template-columns: 100px 1fr; gap: 3px 10px; font-size: 12px; margin: 4px 0 0; }
 .refcard { border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; margin-bottom: 8px; background: var(--surface); }
 .refcard-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 4px; }
@@ -409,7 +416,7 @@ pre.block { background: var(--surface-2); border: 1px solid var(--border); borde
   .app { display: block; height: auto; }
   .main { overflow: visible; padding: 0; }
   .card { break-inside: avoid; box-shadow: none; }
-  .card-body.scroll { overflow: visible; max-height: none; }
+  .card-body.scroll, .card-body.viewport { overflow: visible; max-height: none; }
   .print-title { display: block; font-size: 20px; margin: 0 0 8px; }
   body { background: #fff; }
 }

@@ -372,7 +372,7 @@ export default function ApplicationDocView({
             </div>
           ) : null}
         </div>
-        <div className="card-body scroll">
+        <div className="card-body scroll viewport">
           {rules.length === 0 ? (
             <Empty title={doc.rules.length ? "Keine Treffer" : "Keine Regeln"}>
               {doc.rules.length ? "Filter anpassen." : "Für die Systeme dieser Applikation gibt es keine Regeln."}
@@ -386,11 +386,11 @@ export default function ApplicationDocView({
                   <th>Aktion</th>
                   <th>Herkunft</th>
                   <th>Richtung</th>
-                  <th>System der Applikation</th>
-                  <th>Gegenstelle</th>
+                  <th title="wie in der Regel; darunter die Systeme der Applikation, die das Objekt erfasst">Quelle / Consumer</th>
+                  <th title="wie in der Regel; darunter die Systeme der Applikation, die das Objekt erfasst">Ziel / Provider</th>
                   <th>Dienste</th>
                   <th>Bezug</th>
-                  <th title="Kategorie der Applikations-Doku (UC1)">Kategorie</th>
+                  <th title="Kategorie der Applikations-Doku (UC1) – Titel im Tooltip">Kat.</th>
                   <th title="nicht aufgelöste Objekte bzw. Befunde der Regel"></th>
                 </tr>
               </thead>
@@ -471,6 +471,48 @@ export default function ApplicationDocView({
   );
 }
 
+// Objekte einer Seite, über die die Regel Systeme der Applikation erfasst – je Objekt (wie in der
+// Regel: H_web01, N_srv16 mit Netz, any, EPG) die Systeme darin
+interface SideGroup {
+  object: string;
+  value: string;
+  scope: DocScope;
+  systems: string[];
+  hits: AppDocHit[];
+}
+function sideGroups(hits: AppDocHit[], side: string, names: Map<string, string>): SideGroup[] {
+  const out = new Map<string, SideGroup>();
+  for (const h of hits.filter((x) => x.side === side)) {
+    const key = `${h.object}\u0000${h.value}`;
+    const g = out.get(key) ?? { object: h.object || h.via, value: h.value, scope: h.scope, systems: [], hits: [] };
+    const name = names.get(h.system) ?? h.system;
+    if (!g.systems.includes(name)) g.systems.push(name);
+    if (RANK[h.scope] < RANK[g.scope]) g.scope = h.scope;
+    g.hits.push(h);
+    out.set(key, g);
+  }
+  return [...out.values()];
+}
+
+function SideCell({ items, groups }: { items: string[]; groups: SideGroup[] }) {
+  return (
+    <>
+      <div className="mono">
+        <List items={items} />
+      </div>
+      {groups.map((g) => (
+        <div key={`${g.object}-${g.value}`} className="appside" title="Objekt der Regel, das Systeme der Applikation erfasst">
+          <span className="mono">{g.object}</span>
+          {g.value && g.value !== g.object && <span className="faint mono"> {g.value}</span>} <ScopeChip scope={g.scope} />
+          <div className="faint mono">
+            ↳ <List items={g.systems} max={4} inline />
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 function RuleRow({
   r,
   hits,
@@ -490,10 +532,7 @@ function RuleRow({
   onOpen: () => void;
   onGo?: Go;
 }) {
-  const systems = [...new Set(hits.map((h) => names.get(h.system) ?? h.system))];
   const directions = [...new Set(hits.map((h) => h.direction))];
-  const vias = [...new Set(hits.map((h) => h.via).filter(Boolean))];
-  const counterparts = [...new Set(hits.flatMap((h) => h.counterpart.split(", ")).filter(Boolean))];
   const tables = [...new Set(hits.map((h) => h.table))].sort((x, y) => x - y);
   const aci = r.domain === "aci_contract";
   return (
@@ -516,26 +555,23 @@ function RuleRow({
           </div>
         ))}
       </td>
-      <td className="mono">
-        <List items={systems} />
+      <td>
+        <SideCell items={r.sources} groups={sideGroups(hits, "src", names)} />
       </td>
-      <td className="mono">
-        <List items={counterparts} />
+      <td>
+        <SideCell items={r.destinations} groups={sideGroups(hits, "dst", names)} />
       </td>
       <td className="mono">
         <List items={r.service_names.length ? r.service_names : [...new Set(hits.map((h) => h.services).filter(Boolean))]} />
       </td>
       <td>
         <ScopeChip scope={best(hits)} />
-        <div className="faint mono" style={{ fontSize: 11.5 }}>
-          <List items={vias} max={2} />
-        </div>
       </td>
-      <td className="faint" style={{ fontSize: 12 }}>
+      <td className="nowrap">
         {tables.map((t) => (
-          <div key={t} title={titles.get(t)}>
-            {t}. {titles.get(t)}
-          </div>
+          <span key={t} className="chip na" title={`${t}. ${titles.get(t)}`}>
+            {t}
+          </span>
         ))}
       </td>
       <td>
@@ -551,18 +587,26 @@ function RuleRow({
   );
 }
 
-function List({ items, max = 3 }: { items: string[]; max?: number }) {
+function List({ items, max = 3, inline }: { items: string[]; max?: number; inline?: boolean }) {
   if (!items.length) return <Dash />;
+  const rest = items.length > max && (
+    <span className="faint" title={items.slice(max).join("\n")}>
+      {inline ? " " : ""}+{items.length - max} weitere
+    </span>
+  );
+  if (inline)
+    return (
+      <span>
+        {items.slice(0, max).join(", ")}
+        {rest}
+      </span>
+    );
   return (
     <div className="objs">
       {items.slice(0, max).map((x) => (
         <span key={x}>{x}</span>
       ))}
-      {items.length > max && (
-        <span className="faint" title={items.slice(max).join("\n")}>
-          +{items.length - max} weitere
-        </span>
-      )}
+      {rest}
     </div>
   );
 }
@@ -609,34 +653,42 @@ function WhyBlock({
         <ActionBadge action={r.action} />
       </div>
       <ul className="why-list">
-        {hits.map((h, i) => {
-          const sys = byKey.get(h.system);
-          const kind = !sys ? "" : "label" in sys ? "EPG" : sys.kind === "vm" ? "VM" : "Server";
-          const name = !sys ? h.system : "label" in sys ? sys.label : sys.name;
-          const role = h.direction === "in" ? (aci ? "Provider" : "Ziel") : aci ? "Consumer" : "Quelle";
-          return (
-            <li key={i}>
-              <b>
-                {kind} <span className="mono">{name}</span>
-              </b>{" "}
-              ist {role} ({DIRECTION[h.direction]?.[0] ?? h.direction}) · Bezug <span className="mono">{h.via || "–"}</span>{" "}
-              <ScopeChip scope={h.scope} />
-              {h.counterpart && (
-                <>
-                  {" "}
-                  · Gegenstelle <span className="mono">{h.counterpart}</span>
-                </>
-              )}
-              <div className="faint">
-                Kategorie {h.table}. {titles.get(h.table)}
-                {sys ? ` · gehört zur Applikation über ${sys.member}` : ""}
-                {sys && "epgs" in sys && sys.epgs.some((e) => !sys.member.includes(e))
-                  ? ` · EPG ${sys.epgs.join(", ")}`
-                  : ""}
-                {sys && "label" in sys && sys.ap ? ` · AP ${sys.tenant ? `${sys.tenant}/` : ""}${sys.ap}` : ""}
-              </div>
-            </li>
-          );
+        {(["dst", "src"] as const).flatMap((side) => {
+          const role = side === "dst" ? (aci ? "Provider" : "Ziel") : aci ? "Consumer" : "Quelle";
+          return sideGroups(hits, side, new Map()).map((g) => {
+            const tables = [...new Set(g.hits.map((h) => h.table))];
+            const counterparts = [...new Set(g.hits.flatMap((h) => h.counterpart.split(", ")).filter(Boolean))];
+            return (
+              <li key={`${side}-${g.object}-${g.value}`}>
+                <b>
+                  {role}: <span className="mono">{g.object}</span>
+                </b>
+                {g.value && g.value !== g.object && <span className="mono"> {g.value}</span>} <ScopeChip scope={g.scope} />{" "}
+                <span className="faint">{DIRECTION[side === "dst" ? "in" : "out"][0]}</span>
+                {counterparts.length > 0 && (
+                  <span className="faint">
+                    {" "}
+                    · Gegenstelle <span className="mono">{counterparts.slice(0, 3).join(", ")}</span>
+                    {counterparts.length > 3 ? ` +${counterparts.length - 3}` : ""}
+                  </span>
+                )}
+                <div className="faint">Kategorie {tables.map((t) => `${t}. ${titles.get(t)}`).join(", ")}</div>
+                <ul className="why-systems">
+                  {[...new Set(g.hits.map((h) => h.system))].map((key) => {
+                    const sys = byKey.get(key);
+                    const kind = !sys ? "" : "label" in sys ? "EPG" : sys.kind === "vm" ? "VM" : "Server";
+                    const name = !sys ? key : "label" in sys ? sys.label : sys.name;
+                    return (
+                      <li key={key}>
+                        {kind} <span className="mono">{name}</span>
+                        {sys && <span className="faint"> – gehört zur Applikation über {sys.member}</span>}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </li>
+            );
+          });
         })}
       </ul>
       {findings.length > 0 && (
@@ -699,7 +751,7 @@ function SystemsCard({
                 <th>EPG</th>
                 <th>Portgruppe</th>
                 <th>Cluster / Host</th>
-                <th>Firewall-Objekt</th>
+                <th title="Firewall-Objekte mit dieser IP je Name – darunter die Firewalls, auf denen er steht">Firewall-Objekt</th>
                 <th>Standort</th>
                 <th>Regeln</th>
               </tr>
@@ -731,18 +783,32 @@ function SystemsCard({
                     <td className="mono">
                       {x.objects.length ? (
                         x.objects.map((o) => (
-                          <div key={o.id}>
-                            <button
-                              className="linkbtn mono"
-                              title="Objekt-Detail in Objekte & Inventar"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onGo?.("objekte", { object_id: String(o.id) });
-                              }}
-                            >
-                              {o.name}
-                            </button>
-                            <span className="faint"> · {sourceName(o.source_system_id)}</span>
+                          <div key={o.name} className="objgroup">
+                            <span className="mono">{o.name}</span>{" "}
+                            {o.name_ok === true && (
+                              <span className="chip ok" title="Name passt zum DNS-Namen im IPAM">
+                                ✓
+                              </span>
+                            )}
+                            {o.name_ok === false && (
+                              <span className="chip warn" title={`Name passt nicht zum DNS-Namen im IPAM (${x.dns.join(", ")})`}>
+                                Name ≠ DNS
+                              </span>
+                            )}
+                            <div className="chips" title="auf diesen Firewalls erfasst – Klick öffnet das Objekt">
+                              {o.where.map((w) => (
+                                <button
+                                  key={w.id}
+                                  className="chip linkchip"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onGo?.("objekte", { object_id: String(w.id) });
+                                  }}
+                                >
+                                  {sourceName(w.source_system_id)}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         ))
                       ) : (

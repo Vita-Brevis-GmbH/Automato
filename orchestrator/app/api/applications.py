@@ -126,7 +126,9 @@ class DocSystemOut(BaseModel):
     ips: list[str] = []
     dns: list[str] = []  # DNS-Namen der IPs aus dem IPAM
     servers: list[str] = []  # Host-Objekte mit diesen IPs (Regel-Endpunkte, Befunde)
-    objects: list[dict] = []  # Firewall-Adressobjekte mit genau dieser IP: id, name, Quelle
+    # Firewall-Adressobjekte mit genau dieser IP je Name: name, name_ok (passt zum DNS-Namen),
+    # where = [{id, source_system_id}] (auf welchen Firewalls)
+    objects: list[dict] = []
     epgs: list[str] = []  # EPGs mit ganzem ACI-Pfad Tenant/AP/EPG
     portgroups: list[str] = []
     vm_id: int | None = None
@@ -164,6 +166,9 @@ class DocHitOut(BaseModel):
     system: str  # Schluessel aus systems/epgs
     table: int  # Kategorie 1-10
     direction: str  # in (System ist Ziel) | out (System ist Quelle)
+    side: str = ""  # src | dst - Seite der Regel
+    object: str = ""  # Objekt der Regel, das das System erfasst (H_web01, N_srv16, any, EPG …)
+    value: str = ""  # sein Bereich (10.20.0.0/16; leer bei any/EPG)
     via: str  # Bezug: direkt, Objekt/Gruppe, Netz, any, vzAny <VRF>, ESG <Name>, EPG <Pfad>
     scope: str  # specific | subnet | any | vzany | pref_group
     counterpart: str = ""

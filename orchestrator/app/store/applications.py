@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app import naming
 from app.models import (
     Application,
     ApplicationMember,
@@ -424,6 +425,25 @@ def _address_objects(session: Session, tenant_id: int, ips: set[str]) -> dict[st
     return out
 
 
+def _object_groups(objs: list[DeviceObject], dns: list[str], prefixes) -> list[dict]:
+    """Firewall-Objekte je Name: wo der Name steht (Objekt-ID, Firewall) und ob er zum DNS-Namen
+    passt (`H_web01` ~ `web01.example.ch`; None = kein DNS-Name im IPAM)."""
+    shorts = {naming.short_name(n) for n in dns}
+    by_name: dict[str, list[DeviceObject]] = defaultdict(list)
+    for o in objs:
+        by_name[o.name].append(o)
+    out = []
+    for name, group in by_name.items():
+        rest = naming.parse_object_name(name, prefixes).remainder or name
+        ok = naming.short_name(rest) in shorts if shorts else None
+        where = [
+            {"id": o.id, "source_system_id": o.source_system_id}
+            for o in sorted(group, key=lambda o: (o.source_system_id, o.id))
+        ]
+        out.append({"name": name, "name_ok": ok, "where": where})
+    return sorted(out, key=lambda g: (g["name_ok"] is not True, g["name"]))
+
+
 def _hosts_with_ips(session: Session, tenant_id: int, ips: list[str]) -> list[NetworkObject]:
     if not ips:
         return []
@@ -542,14 +562,13 @@ def build_doc(session: Session, app: Application) -> dict:
         )
         rows += [(key, t["index"], r) for t in doc["tables"] for r in t["rows"]]
 
-    # Firewall-Adressobjekte mit genau diesen IPs (H_web01) - Link in die Objekt-Ansicht
+    # Firewall-Adressobjekte mit genau diesen IPs, je Name zusammengefasst mit den Firewalls,
+    # auf denen er steht, und ob er zum DNS-Namen im IPAM passt (Dev-Befund 0.14.1)
     by_ip = _address_objects(session, tid, {ip for x in systems for ip in x["ips"]})
+    prefixes = profile_store.prefixes_for_tenant(session, tid)
     for x in systems:
         found = {o.id: o for ip in x["ips"] for o in by_ip.get(ip, [])}
-        x["objects"] = [
-            {"id": o.id, "name": o.name, "source_system_id": o.source_system_id}
-            for o in sorted(found.values(), key=lambda o: (o.name, o.id))
-        ]
+        x["objects"] = _object_groups(list(found.values()), x["dns"], prefixes)
 
     vm_count: dict[int, int] = defaultdict(int)
     for e in vms.values():
@@ -636,19 +655,32 @@ def build_doc(session: Session, app: Application) -> dict:
     }
 
 
+def _object_label(row: dict) -> str:
+    obj, value = row.get(appdoc.OBJECT) or "", row.get(appdoc.OBJECT_VALUE) or ""
+    if not obj:
+        return value
+    return f"{obj} ({value})" if value and value != obj else obj
+
+
 def _hits_and_tables(rows: list[tuple[str, int, dict]]) -> tuple[list[dict], list[dict]]:
-    """Treffer je (Regel, System, Seite) und die 10 Kategorien-Tabellen (Zeilen einmal)."""
+    """Treffer je (Regel, System, Seite) und die 10 Kategorien-Tabellen.
+
+    In den Tabellen steht eine Regel je Seite und Objekt der Regel nur einmal: erfasst ein Netz
+    bzw. any mehrere Systeme, nennt der Server Name das Objekt wie in der Regel und die Systeme
+    darin (`N_srv16 (10.20.0.0/16): web01, db01`) statt einer Zeile je System (0.14.1)."""
     tables = {t[0]: {**_table_meta(t), "rows": []} for t in appdoc.TABLES}
-    seen_rows: set[tuple] = set()
+    groups: dict[tuple, dict] = {}
     seen_hits: set[tuple] = set()
     hits: list[dict] = []
     for key, idx, row in rows:
-        columns = appdoc.TABLE_COLUMNS[idx]
-        visible = (idx, tuple(row.get(c) for c in columns))
-        if visible not in seen_rows:
-            seen_rows.add(visible)
-            tables[idx]["rows"].append(row)
         rid = row.get(appdoc.RULE)
+        gkey = (idx, rid, row.get(appdoc.SIDE), row.get(appdoc.OBJECT))
+        if rid is None:
+            gkey = (idx, None, len(groups))
+        group = groups.setdefault(gkey, {"row": row, "systems": []})
+        name = row.get("Server Name")
+        if name and name not in group["systems"]:
+            group["systems"].append(name)
         if rid is None:
             continue
         hit = (rid, key, row.get(appdoc.DIRECTION), row.get(appdoc.VIA))
@@ -661,12 +693,28 @@ def _hits_and_tables(rows: list[tuple[str, int, dict]]) -> tuple[list[dict], lis
                 "system": key,
                 "table": idx,
                 "direction": row.get(appdoc.DIRECTION),
+                "side": row.get(appdoc.SIDE)
+                or ("dst" if row.get(appdoc.DIRECTION) == "in" else "src"),
+                "object": row.get(appdoc.OBJECT) or "",
+                "value": row.get(appdoc.OBJECT_VALUE) or "",
                 "via": row.get(appdoc.VIA) or "",
                 "scope": row.get(appdoc.SCOPE) or "specific",
                 "counterpart": row.get("Target Systems") or row.get("Source") or "",
                 "services": row.get("TCP/UDP") or "",
             }
         )
+    seen_rows: set[tuple] = set()
+    for (idx, *_), group in groups.items():
+        row = dict(group["row"])
+        systems = group["systems"]
+        if len(systems) > 1 or row.get(appdoc.SCOPE) not in (None, "specific"):
+            label = _object_label(row)
+            inside = [x for x in systems if x not in label]
+            row["Server Name"] = f"{label}: {', '.join(inside)}" if inside else label
+        visible = (idx, tuple(row.get(c) for c in appdoc.TABLE_COLUMNS[idx]))
+        if visible not in seen_rows:
+            seen_rows.add(visible)
+            tables[idx]["rows"].append(row)
     return hits, [tables[i] for i, _, _ in appdoc.TABLES]
 
 

@@ -643,7 +643,8 @@ export interface AppDocSystem2 {
   ips: string[];
   dns: string[];
   servers: string[];
-  objects: { id: number; name: string; source_system_id: number }[];
+  // Firewall-Objekte je Name: auf welchen Firewalls, passt der Name zum DNS-Namen (null = kein DNS)
+  objects: { name: string; name_ok: boolean | null; where: { id: number; source_system_id: number }[] }[];
   epgs: string[]; // Tenant/AP/EPG
   portgroups: string[];
   vm_id: number | null;
@@ -677,6 +678,9 @@ export interface AppDocHit {
   system: string; // Schlüssel aus systems/epgs
   table: number; // Kategorie 1–10
   direction: "in" | "out";
+  side: "src" | "dst"; // Seite der Regel
+  object: string; // Objekt der Regel, das das System erfasst (H_web01, N_srv16, any, EPG …)
+  value: string; // sein Bereich (10.20.0.0/16; leer bei any/EPG)
   via: string; // Bezug
   scope: DocScope;
   counterpart: string;

@@ -182,12 +182,15 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     (Subnetz, any, vzAny, Preferred Group; Klick filtert) und offene Findings.
   - **Systeme:** alle VMs der Applikation (Portgruppen ihrer EPGs, VMs hinter ihren Servern)
     und Server ohne VM – mit IPs/DNS, EPG (ganzer Pfad `Tenant/AP/EPG`), Portgruppe,
-    Cluster/Host, Firewall-Objekt (Link ins Objekt-Detail), Standort, Regel-Zahlen und dem
-    Grund, warum das System dazugehört. **EPGs im ACI** mit BD, VRF, Subnetzen, VMs,
+    Cluster/Host, Firewall-Objekt (je Name zusammengefasst mit den Firewalls, auf denen es
+    steht, und „Name ≠ DNS“, wenn der Name nicht zum IPAM passt), Standort, Regel-Zahlen und
+    dem Grund, warum das System dazugehört. **EPGs im ACI** mit BD, VRF, Subnetzen, VMs,
     Endpunkten. Klick auf ein System bzw. eine EPG filtert die Regeln.
   - **Regeln & Contracts** wie in der Regel-Ansicht (Aktion, Herkunft Firewall/ACI mit
-    Quellsystem, Dienste, NAT) mit Richtung, System der Applikation, Gegenstelle, Bezug und
-    Kategorie. Filter System/VM, EPG, **Richtung aus Sicht des Systems** (eingehend = Ziel
+    Quellsystem, Quelle, Ziel, Dienste, NAT) mit Richtung, Bezug und Kategorie. Unter
+    Quelle bzw. Ziel steht je Objekt der Regel, über das sie Systeme der Applikation erfasst
+    (Host, Netz, any, EPG), welche Systeme darin liegen – eine Regel über ein Subnetz oder any
+    erscheint einmal, nicht je VM (0.14.1). Filter System/VM, EPG, **Richtung aus Sicht des Systems** (eingehend = Ziel
     bzw. Provider, ausgehend = Quelle bzw. Consumer), Art, Bezug, Suche. Klick → Detail mit
     **„Warum diese Regel für die Applikation gilt“** (je System Rolle, Richtung, Bezug,
     Kategorie, Mitglied/AP), Links in Regeln & Contracts und Findings.

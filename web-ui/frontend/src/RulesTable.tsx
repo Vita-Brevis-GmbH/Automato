@@ -350,7 +350,7 @@ export default function RulesTable({
       <ErrorBox error={error} prefix="Regeln laden" />
 
       <div className="card">
-        <div className="card-body scroll">
+        <div className="card-body scroll viewport">
           {rules === null ? (
             <Loading>Lade Regeln…</Loading>
           ) : filtered.length === 0 ? (

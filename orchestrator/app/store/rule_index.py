@@ -476,21 +476,33 @@ class Cover:
     er innerhalb des Werts liegt (Host im EPG-Subnetz)."""
 
     def __init__(self) -> None:
-        self.sides: dict[str, tuple[int, str | None, bool, bool]] = {}
+        self.sides: dict[str, tuple[int, str | None, bool, bool, str]] = {}
 
-    def add(self, role: str, width: int, via: str | None, is_any: bool, inside: bool = False):
+    def add(
+        self,
+        role: str,
+        width: int,
+        via: str | None,
+        is_any: bool,
+        inside: bool = False,
+        value: str = "",
+    ):
         if role not in self.sides or width < self.sides[role][0]:
-            self.sides[role] = (width, via, is_any, inside)
+            self.sides[role] = (width, via, is_any, inside, value)
 
     def via(self, role: str) -> str:
         """`any` bzw. das Objekt/der Wert, ueber den die Regel greift."""
-        _, via, is_any, _ = self.sides[role]
+        _, via, is_any, _, _ = self.sides[role]
         return "any" if is_any else (via or "Netz")
+
+    def value(self, role: str) -> str:
+        """Der Bereich des Objekts (Host, Netz, a-b; leer bei any)."""
+        return self.sides[role][4]
 
     def scope(self, role: str) -> str:
         """`specific` (genau der Host bzw. innerhalb des Netzes), `subnet` (ein groesseres Netz
         bzw. ein Bereich, der den Wert enthaelt) oder `any` (Applikations-Doku, 0.14.0)."""
-        width, _, is_any, inside = self.sides[role]
+        width, _, is_any, inside, _ = self.sides[role]
         if is_any:
             return "any"
         return "specific" if width == 0 or inside else "subnet"
@@ -533,8 +545,20 @@ def covers(
         for rule_id, role, rlo, rhi, via, is_any in session.execute(stmt):
             a, b = int(rlo, 16), int(rhi, 16)
             inside = not is_any and vlo <= a and b <= vhi
-            out.setdefault(rule_id, Cover()).add(role, b - a, via, is_any, inside)
+            text = "" if is_any else range_text(fam, a, b)
+            out.setdefault(rule_id, Cover()).add(role, b - a, via, is_any, inside, text)
     return out
+
+
+def range_text(family: int, lo: int, hi: int) -> str:
+    """Bereich als Text: Host, Netz (CIDR) bzw. `a-b`."""
+    cls = ipaddress.IPv4Address if family == 4 else ipaddress.IPv6Address
+    first, last = cls(lo), cls(hi)
+    nets = list(ipaddress.summarize_address_range(first, last))
+    if len(nets) == 1:
+        net = nets[0]
+        return str(net.network_address) if net.num_addresses == 1 else str(net)
+    return f"{first}-{last}"
 
 
 def usage_counts(session: Session, object_ids: list[int]) -> dict[int, int]:

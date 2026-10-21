@@ -86,7 +86,7 @@ umgekehrt) = neuer/anderer Adapter, keine Änderung am Rest der Plattform.
   `docs/BETRIEB.md`. Der frühere ausführliche Statusverlauf (bis 0.4.2) steht in
   `docs/ENTWICKLUNGSVERLAUF.md`.
 
-## Aktueller Stand (0.14.0)
+## Aktueller Stand (0.14.1)
 
 UC1 „Firewall-Regel-Dokumentation (read-only)“ ist für Model 2 (FortiGate + NetBox) und
 Model 1 (FortiGate + ACI + Infoblox) umgesetzt; Phase A ist gegen die echten Systeme abgenommen.

@@ -131,9 +131,30 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
         f["type"] == "vm_not_in_ipam" and f["subject_id"] == "db01-007-ka" for f in doc["findings"]
     )
     assert s["findings"] == len(doc["findings"])
-    # Export: 10 Kategorien, ganzer ACI-Pfad als Server Name
-    rows = [r for t in doc["tables"] for r in t["rows"]]
-    assert {r["Server Name"] for r in rows} >= {"web01-007-ka", "TE_ka/AP_007/EG_web01"}
+    # Seite und Objekt der Regel, ueber das das System erfasst wird (0.14.1)
+    obj = {
+        (rules[h["rule_id"]]["name"], names[h["system"]]): (h["side"], h["object"], h["value"])
+        for h in doc["hits"]
+    }
+    assert obj[("net-in", "db01-007-ka")] == ("dst", "N_srv16", "10.20.0.0/16")
+    assert obj[("web-in", "web01-007-ka")] == ("dst", "H_web01", "10.20.0.5")
+    assert obj[("any-out", "web01-007-ka")] == ("src", "any", "")
+    assert obj[("CT_app:SJ", "web01-007-ka")] == ("src", "EPG TE_ka/AP_007/EG_web01", "")
+    # Firewall-Objekte je Name mit den Firewalls und Namenspruefung gegen das IPAM
+    assert web["objects"] == [
+        {"name": "H_web01", "name_ok": True, "where": [web["objects"][0]["where"][0]]}
+    ]
+    # Export: 10 Kategorien - je Regel, Seite und Objekt eine Zeile; Netz bzw. any mit den
+    # Systemen darin statt einer Zeile je System
+    rows = {r["Description"]: [] for t in doc["tables"] for r in t["rows"]}
+    for t in doc["tables"]:
+        for r in t["rows"]:
+            rows[r["Description"]].append(r["Server Name"])
+    assert rows["net-in"] == [
+        "N_srv16 (10.20.0.0/16): db01-007-ka, web01-007-ka, TE_ka/AP_007/EG_web01"
+    ]
+    assert rows["any-out"] == ["any: db01-007-ka, web01-007-ka, TE_ka/AP_007/EG_web01"]
+    assert "EPG TE_ka/AP_007/EG_web01: web01-007-ka" in rows["CT_app:SJ"]  # ganzer ACI-Pfad
 
 
 def test_doku_server_ohne_vm(client):
