@@ -109,10 +109,17 @@ Postgres inkl. `alembic check`, Image-Builds und nächtlicher Lauf (`docs/TESTS.
 
 ## Offen / nächste Schritte
 
-Reihenfolge laut Anwender (ROADMAP „Nächste Arbeiten“):
+Reihenfolge laut Anwender (ROADMAP „Nächste Arbeiten“); 0.11–0.14 sind gegen die echten
+Systeme abgenommen:
 
-- 0.11.0 (VMware + NetBox Virtualization, ADR 0017) gegen das echte vCenter und die
-  Dev-NetBox prüfen; Sync-Benutzer mit `sync-user.sh` um `virtualization.*` erweitern.
-- Applikationen: Regeln direkt zuordnen, Abhängigkeiten zwischen Applikationen (ADR 0012).
-- Später: produktiv schalten (ADR 0013), Import-Wizard (E3), Cockpit mit Magister (ADR 0014),
-  Schreibpfad (E4) nur mit eigener ADR.
+- **ADR 0018** (Umgebung und Kunden, Entwurf): eine Instanz je Umgebung; Quellsysteme der
+  Umgebung, vollständig gelesen; Kunden als Ausschnitt über **Selektoren** (ACI-Tenant/VRF/
+  AP/EPG, VDOM/Zone/Interface, Präfixe, ein- und ausschliessend), Zugehörigkeit abgeleitet;
+  später Kunden-Benutzer (`customer_ids`) mit serverseitiger Einschränkung.
+- **ADR 0019** (Topologie und Pfade, Entwurf): zuerst **VDOM-Kontext** (heute liest der
+  FortiGate-Collector nur den Standard-VDOM), dann Routing (wirksame RIB, BGP-Tabelle,
+  ECMP), HA/Session-Sync, ACI-L3Out mit Border-Leafs lesen; Pfade und Regel-Relevanz;
+  Designer.
+- Danach: Applikationen (Regeln direkt zuordnen, Abhängigkeiten), produktiv schalten mit den
+  R14-Massnahmen (ADR 0013, RISKS), Cockpit (ADR 0014), Import-Wizard (E3); Schreibpfad (E4)
+  nur mit eigener ADR.
