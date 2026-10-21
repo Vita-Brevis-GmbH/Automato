@@ -1253,10 +1253,11 @@ def compute(
 # -- Uebernehmen --------------------------------------------------------------------
 
 
-def apply(writer, plan: Plan) -> dict[str, dict[str, int]]:
+def apply(writer, plan: Plan, progress=None) -> dict[str, dict[str, int]]:
     """Schreib-Aktionen des (frisch berechneten) Plans ausfuehren; Rueckgabe: Anzahlen.
 
     Bricht beim ersten Fehler ab (Teilstand bleibt - der naechste Plan setzt dort an).
+    `progress(kind)` vor jeder Objektart: Lebenszeichen; darf abbrechen (Exception).
     """
     ids: dict[tuple[str, str], int] = {
         (kind, key): h.id for kind, haves in plan.state.items() for key, h in haves.items()
@@ -1274,6 +1275,8 @@ def apply(writer, plan: Plan) -> dict[str, dict[str, int]]:
 
     for kind in KINDS:
         actions = by_kind.get(kind.name, {})
+        if progress is not None and actions:
+            progress(kind.name)
         creates = [plan.wants.get(kind.name, i["key"]) for i in actions.get("create", [])]
         creates = [c for c in creates if c is not None]
         if creates:
@@ -1323,6 +1326,8 @@ def apply(writer, plan: Plan) -> dict[str, dict[str, int]]:
             done[kind.name]["update"] += len(updates)
     for kind in reversed(KINDS):
         dels = [i["id"] for i in by_kind.get(kind.name, {}).get("delete", [])]
+        if dels and progress is not None:
+            progress(kind.name)
         if dels:
             writer.delete(kind.endpoint, dels)
             done[kind.name]["delete"] += len(dels)

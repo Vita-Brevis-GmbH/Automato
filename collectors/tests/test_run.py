@@ -388,3 +388,62 @@ def test_ergebnis_upload_scheitert_lauf_wird_trotzdem_beendet(monkeypatch):
     assert run.main(["--poll"]) == 1
     assert sent["run_id"] == "r9" and sent["status"] == "failed"
     assert sent["message"].startswith("Ergebnis-Upload fehlgeschlagen: HTTP 413")
+
+
+def test_watch_prueft_periodisch_auf_updates(monkeypatch):
+    """Dev-Befund 0.11.4: im Wach-Modus (14 min) pruefte der Agent nur beim Start auf eine neue
+    Version. Jetzt alle 5 min; die neue Version uebernimmt die restliche Wachzeit."""
+    import collectors.run as run
+
+    now = [0.0]
+    monkeypatch.setattr(run.agent_api, "next_run", lambda platform=None: None)
+    asked: list[float] = []
+
+    def update(minutes_left):
+        asked.append(round(minutes_left, 1))
+        return 0 if len(asked) == 2 else None  # beim zweiten Mal gibt es eine neue Version
+
+    def sleep(s):
+        now[0] += s
+
+    assert run._watch(None, 60, 14, clock=lambda: now[0], sleep=sleep, update=update) == 0
+    assert asked == [9.0, 4.0]  # nach 5 und 10 min, danach uebernimmt die neue Version
+    assert now[0] == 600.0
+
+    rest = run._updater(argparse_ns(watch=20, platform="fortigate"))
+    called = {}
+    monkeypatch.setattr(run.selfupdate, "maybe_update", lambda argv: called.update(argv=argv))
+    rest(3.25)
+    assert called["argv"] == ["--poll", "--watch", "20", "--for", "3.2", "--platform", "fortigate"]
+
+
+def argparse_ns(**kw):
+    import argparse
+
+    return argparse.Namespace(**kw)
+
+
+def test_agent_log_datei(tmp_path, monkeypatch):
+    import io
+    import os
+    import sys
+
+    from collectors.common import agentlog
+
+    old = tmp_path / "logs" / "agent-2020-01-01.log"
+    old.parent.mkdir()
+    old.write_text("alt")
+    os.utime(old, (0, 0))
+    out, err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+    path = agentlog.setup(tmp_path)
+    print("fortigate run r1 (fw-01): failed")
+    print("FortiGate antwortet auf firewall/policy nicht mit JSON", file=sys.stderr)
+    sys.stdout.flush()
+    text = path.read_text(encoding="utf-8")
+    assert "INFO  fortigate run r1 (fw-01): failed" in text
+    assert "FEHLER FortiGate antwortet" in text
+    assert out.getvalue().startswith("fortigate run r1")  # Konsole bekommt es weiterhin
+    assert not old.exists()  # aelter als 14 Tage
+    assert agentlog.setup(None) is None

@@ -73,6 +73,8 @@ services:
       # haengende Laeufe beenden: laufend ohne Ergebnis (min) bzw. nicht abgeholt (h)
       AUTOMATO_RUN_TIMEOUT_MINUTES: ${AUTOMATO_RUN_TIMEOUT_MINUTES:-120}
       AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS: ${AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS:-24}
+      # NetBox-Sync ohne Lebenszeichen beenden (min)
+      AUTOMATO_NETBOX_SYNC_TIMEOUT_MINUTES: ${AUTOMATO_NETBOX_SYNC_TIMEOUT_MINUTES:-30}
       # Agent-Kanal nur ueber das mTLS-Agent-Gateway (Profil agent-gateway): off | require | bind
       AUTOMATO_INTERNAL_MTLS_MODE: ${AUTOMATO_INTERNAL_MTLS_MODE:-off}
       AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}

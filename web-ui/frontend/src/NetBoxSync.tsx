@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   applySyncPlan,
+  cancelSyncPlan,
   createSyncPlan,
   fetchSyncItems,
   fetchSyncPlan,
@@ -282,7 +283,13 @@ export default function NetBoxSync({
         </div>
       </div>
 
-      {plan && <PlanView plan={plan} onApply={() => setConfirm(true)} />}
+      {plan && (
+        <PlanView
+          plan={plan}
+          onApply={() => setConfirm(true)}
+          onCancel={() => cancelSyncPlan(plan.id).then((p) => (setPlan(p), loadPlans()), setError)}
+        />
+      )}
 
       {plans.length > 0 && (
         <div className="card">
@@ -368,7 +375,7 @@ export default function NetBoxSync({
   );
 }
 
-function PlanView({ plan, onApply }: { plan: SyncPlan; onApply: () => void }) {
+function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => void; onCancel: () => void }) {
   const running = ["planning", "applying"].includes(plan.status);
   const kinds = Object.keys(KIND_LABEL).filter((k) => plan.summary?.[k]);
   const notes =
@@ -393,6 +400,15 @@ function PlanView({ plan, onApply }: { plan: SyncPlan; onApply: () => void }) {
         {plan.status === "ready" && (
           <button className="btn btn-primary" disabled={!plan.can_apply} onClick={onApply}>
             <Icon name="play" size={14} /> Übernehmen
+          </button>
+        )}
+        {running && (
+          <button
+            className="btn btn-ghost btn-sm"
+            title="Beenden – z. B. hängt der Plan nach einem Neustart des Orchestrators. Die Übernahme hört vor der nächsten Objektart auf; bereits Geschriebenes bleibt."
+            onClick={onCancel}
+          >
+            Abbrechen
           </button>
         )}
       </div>

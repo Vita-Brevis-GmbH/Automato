@@ -5,6 +5,7 @@ Bearer-Token eines read-only API-Users (siehe LAB.md). Testbar über einen
 injizierten httpx.Client (MockTransport) - kein Lab nötig.
 """
 
+import re
 from typing import Any
 
 import httpx
@@ -19,10 +20,22 @@ class NotJson(ValueError):
         kind = response.headers.get("content-type", "").split(";")[0].strip() or "ohne Typ"
         size = len(response.content)
         body = "leer" if not size else f"{kind}, {size} Bytes"
+        title = _title(response)  # z. B. Login- oder Sperrseite eines Proxys dazwischen
         super().__init__(
-            f"FortiGate antwortet auf {path} nicht mit JSON (HTTP {response.status_code}, {body})"
+            f"FortiGate antwortet auf {path} nicht mit JSON (HTTP {response.status_code}, {body}"
+            + (f", Seite „{title}“" if title else "")
+            + ")"
         )
         self.path = path
+
+
+_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+
+
+def _title(response: httpx.Response) -> str:
+    """Titel einer HTML-Antwort (nie der Inhalt selbst), gekuerzt."""
+    match = _TITLE.search(response.text[:4000]) if response.content else None
+    return " ".join(match.group(1).split())[:80] if match else ""
 
 
 def _json(path: str, response: httpx.Response) -> Any:

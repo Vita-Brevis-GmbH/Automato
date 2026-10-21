@@ -151,7 +151,7 @@ def test_antwort_ohne_json_nennt_den_pfad_optionale_tabellen_fehlen_still():
         if request.url.path in empty:
             return httpx.Response(200, content=b"")
         if request.url.path == broken["path"]:
-            return httpx.Response(200, html="<html>Login</html>")
+            return httpx.Response(200, html="<html><title> Web Filter\n Block </title>x</html>")
         if request.url.path == "/api/v2/cmdb/system/global":
             return httpx.Response(200, json={"results": {"hostname": "fw-01"}})
         return httpx.Response(200, json={"results": []})
@@ -167,5 +167,6 @@ def test_antwort_ohne_json_nennt_den_pfad_optionale_tabellen_fehlen_still():
     with pytest.raises(NotJson) as err:
         client.gather()
     assert str(err.value) == (
-        "FortiGate antwortet auf firewall/policy nicht mit JSON (HTTP 200, text/html, 18 Bytes)"
+        "FortiGate antwortet auf firewall/policy nicht mit JSON (HTTP 200, text/html, 48 Bytes,"
+        " Seite „Web Filter Block“)"
     )

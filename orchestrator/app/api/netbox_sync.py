@@ -7,6 +7,14 @@
 - `GET  /netbox-sync/plans/{id}/items`  Aktionen (Filter Art/Aktion/Suche, blaetterbar)
 - `POST /netbox-sync/plans/{id}/apply`  Uebernehmen, im Hintergrund; danach liest Automato
                                         NetBox neu ein
+- `POST /netbox-sync/plans/{id}/cancel` laufende Vorschau/Uebernahme beenden
+
+Vorschau und Uebernahme laufen als Hintergrundaufgabe im Orchestrator-Prozess. Startet er neu
+(z. B. `deploy/update.sh`), stirbt die Aufgabe - bis 0.11.3 blieb der Plan dann fuer immer
+"wird uebernommen" und sperrte jeden weiteren Sync (Dev-Befund). Jetzt: beim Start werden
+solche Plaene beendet (`abort_interrupted`), ohne Lebenszeichen nach
+`netbox_sync_timeout_minutes` ebenfalls (`recover`), und von Hand mit `cancel` - die
+Uebernahme prueft vor jeder Objektart, ob sie abgebrochen wurde.
 
 Die Uebernahme berechnet den Plan neu und schreibt nur, wenn der Fingerabdruck zur Vorschau
 passt - sonst hat sich NetBox oder Automato geaendert (409 bzw. Lauf `failed`, neue Vorschau).
@@ -27,6 +35,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app import audit, credentials
 from app.auth.deps import require_admin, tenant_scope
 from app.auth.principal import Principal
+from app.config import get_settings
 from app.db import get_session, get_session_factory
 from app.jobs import celery_app
 from app.models import CollectorRun, Platform, SourceSystem, SyncPlan, SyncStatus, Tenant
@@ -145,7 +154,49 @@ def _plan(session: Session, principal: Principal, plan_id: int) -> tuple[SyncPla
     return plan, session.get(SourceSystem, plan.source_system_id)
 
 
+RUNNING = (SyncStatus.PLANNING.value, SyncStatus.APPLYING.value)
+PARTIAL = " - NetBox kann einen Teilstand haben; neue Vorschau erstellen, sie setzt dort an"
+
+
+def _stop(plan: SyncPlan, message: str) -> None:
+    applying = plan.status == SyncStatus.APPLYING.value
+    plan.status = SyncStatus.FAILED.value
+    plan.message = message + (PARTIAL if applying else "")
+
+
+def recover(session: Session, now: datetime | None = None) -> int:
+    """Vorschau/Uebernahme ohne Lebenszeichen nach der Frist beenden (Aufgabe verloren)."""
+    minutes = get_settings().netbox_sync_timeout_minutes
+    limit = (now or datetime.now(UTC)) - timedelta(minutes=minutes)
+    stale = 0
+    for plan in session.scalars(select(SyncPlan).where(SyncPlan.status.in_(RUNNING))):
+        alive = plan.heartbeat_at or plan.started_at or plan.created_at
+        if alive is not None and _aware(alive) < limit:
+            what = "Übernahme" if plan.status == SyncStatus.APPLYING.value else "Vorschau"
+            _stop(plan, f"{what} abgebrochen: kein Lebenszeichen seit {minutes} min")
+            stale += 1
+    if stale:
+        session.flush()
+    return stale
+
+
+def abort_interrupted(factory: sessionmaker) -> int:
+    """Beim Start des Orchestrators: Plaene, deren Hintergrundaufgabe mit dem alten Prozess
+    gestorben ist, beenden (ein Orchestrator-Prozess je Datenbank, siehe Dockerfile)."""
+    session = factory()
+    try:
+        plans = list(session.scalars(select(SyncPlan).where(SyncPlan.status.in_(RUNNING))))
+        for plan in plans:
+            what = "Übernahme" if plan.status == SyncStatus.APPLYING.value else "Vorschau"
+            _stop(plan, f"{what} abgebrochen: Orchestrator wurde neu gestartet")
+        session.commit()
+        return len(plans)
+    finally:
+        session.close()
+
+
 def _busy(session: Session, target_id: int) -> bool:
+    recover(session)
     return (
         session.scalar(
             select(SyncPlan.id).where(
@@ -232,6 +283,7 @@ def list_plans(
     session: Session = Depends(get_session, scope="function"),
 ):
     tenant_scope(principal, tenant_id)
+    recover(session)
     plans = session.scalars(
         select(SyncPlan)
         .where(SyncPlan.tenant_id == tenant_id)
@@ -248,7 +300,30 @@ def get_plan(
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
 ):
+    recover(session)
     plan, target = _plan(session, principal, plan_id)
+    return _out(plan, target)
+
+
+@router.post("/plans/{plan_id}/cancel", response_model=PlanOut)
+def cancel_plan(
+    plan_id: int,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Laufende Vorschau/Uebernahme beenden; die Uebernahme hoert vor der naechsten Objektart
+    auf (bereits Geschriebenes bleibt)."""
+    plan, target = _plan(session, principal, plan_id)
+    if plan.status not in RUNNING:
+        raise HTTPException(status_code=409, detail=f"plan is {plan.status}")
+    _stop(plan, f"abgebrochen von {principal.subject}")
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="netbox_sync.cancelled",
+        subject=str(plan.id),
+        detail={"plan_id": plan.id, "tenant_id": plan.tenant_id},
+    )
     return _out(plan, target)
 
 
@@ -294,6 +369,7 @@ def apply_plan(
         raise HTTPException(status_code=409, detail="nothing to apply")
     plan.status = SyncStatus.APPLYING.value
     plan.applied_by = principal.subject
+    plan.started_at = plan.heartbeat_at = datetime.now(UTC)
     session.commit()
     background.add_task(apply_job, factory, plan.id)
     return _out(plan, target)
@@ -343,6 +419,9 @@ def compute_job(factory: sessionmaker, plan_id: int) -> None:
             )
         finally:
             writer.close()
+        session.refresh(plan)
+        if plan.status != SyncStatus.PLANNING.value:
+            return  # waehrenddessen abgebrochen bzw. als haengend beendet
         plan.items = [i for i in result.items if i["action"] != "unchanged"]
         plan.summary = netbox_sync.summarize(result.items)
         plan.warnings = result.wants.warnings
@@ -399,9 +478,12 @@ def apply_job(factory: sessionmaker, plan_id: int) -> None:
             )
             if fresh.fingerprint != plan.fingerprint:
                 raise _Changed()
-            done = netbox_sync.apply(writer, fresh)
+            done = netbox_sync.apply(writer, fresh, progress=_progress(factory, plan_id))
         finally:
             writer.close()
+        session.refresh(plan)
+        if plan.status != SyncStatus.APPLYING.value:
+            return  # inzwischen abgebrochen bzw. beendet - Meldung steht am Plan
         plan.status = SyncStatus.APPLIED.value
         plan.result = done
         plan.applied_at = datetime.now(UTC)
@@ -409,6 +491,9 @@ def apply_job(factory: sessionmaker, plan_id: int) -> None:
         _audit_applied(session, plan, done, "applied")
         _queue_reread(session, target)
         session.commit()
+    except _Cancelled:
+        session.rollback()
+        log.info("NetBox-Sync-Uebernahme %s abgebrochen", plan_id)
     except _Changed:
         session.rollback()
         _fail(
@@ -427,6 +512,28 @@ def apply_job(factory: sessionmaker, plan_id: int) -> None:
 
 class _Changed(Exception):
     pass
+
+
+class _Cancelled(Exception):
+    pass
+
+
+def _progress(factory: sessionmaker, plan_id: int):
+    """Lebenszeichen je Objektart; bricht ab, wenn der Plan nicht mehr uebernommen wird."""
+
+    def tick(kind: str) -> None:
+        s = factory()
+        try:
+            plan = s.get(SyncPlan, plan_id)
+            if plan is None or plan.status != SyncStatus.APPLYING.value:
+                raise _Cancelled()
+            plan.heartbeat_at = datetime.now(UTC)
+            plan.message = f"schreibt: {netbox_sync.KIND[kind].label}"
+            s.commit()
+        finally:
+            s.close()
+
+    return tick
 
 
 def _fail(factory: sessionmaker, plan_id: int, message: str, applying: bool = False) -> None:

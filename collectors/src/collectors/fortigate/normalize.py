@@ -783,9 +783,11 @@ def normalize_inventory(
                 name=name,
                 kind=_IFACE_KIND.get(i.get("type") or "", "virtual"),
                 enabled=(i.get("status") or "up") != "down",
-                mode="access" if vid else ("tagged" if tagged else None),
-                untagged_vlan=vid,
-                tagged_vlans=tagged,
+                # VLAN-Subinterface: sendet getaggt ueber den Parent - nicht untagged (Dev-Befund
+                # 0.11.4: "internal"-Subinterfaces standen als untagged da)
+                mode="tagged" if vid or tagged else None,
+                untagged_vlan=None,
+                tagged_vlans=[vid] if vid else tagged,
                 lag=lag_of.get(name),
                 parent=i.get("interface") if vid else None,
                 ips=ips,

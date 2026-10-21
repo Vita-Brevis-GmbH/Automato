@@ -34,6 +34,8 @@ class Agent(Base):
     auto_update: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=true(), default=True
     )
+    # Ergebnis der letzten Update-Pruefung des Agenten (Header X-Agent-Update), None = ok
+    update_note: Mapped[str | None] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

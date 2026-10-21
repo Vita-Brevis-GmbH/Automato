@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -29,11 +30,17 @@ from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
 from app.secrets import resolve_settings
 
+log = logging.getLogger(__name__)
+
 
 def _lifespan(settings: Settings):
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         stop = None
+        try:  # mit dem alten Prozess gestorbene NetBox-Syncs beenden (Dev-Befund 0.11.4)
+            netbox_sync.abort_interrupted(get_sessionmaker())
+        except Exception:  # noqa: BLE001 - z. B. Datenbank noch nicht migriert: Start geht vor
+            log.exception("Haengende NetBox-Syncs nicht bereinigt")
         if settings.scheduler_enabled:  # zeitgesteuerte Laeufe je Quellsystem
             stop = scheduler.start(
                 get_sessionmaker(),

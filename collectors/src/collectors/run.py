@@ -35,7 +35,7 @@ import httpx
 
 # Selbst-Update zuerst und ohne weitere Abhaengigkeiten laden: so kann sich auch eine
 # unvollstaendige Installation (z. B. fehlendes sot_gateway) selbst reparieren (ADR 0011).
-from collectors.common import http, selfupdate
+from collectors.common import agentlog, http, selfupdate
 from collectors.config import get_settings
 
 try:
@@ -125,6 +125,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.version:
         print(f"automato-collector {selfupdate.current_label()}")
         return 0
+    if argv is None:  # echter Aufruf (nicht aus Tests): Ausgaben auch in die Log-Datei
+        agentlog.setup(selfupdate.install_dir())
     if (args.poll or args.check) and not args.no_update:
         # neue Version fuehrt den Aufruf selbst aus; bei kaputter Installation neu installieren
         updated = selfupdate.maybe_update(raw, force=_BROKEN is not None)
@@ -155,6 +157,17 @@ def _describe(exc: httpx.HTTPError) -> str:
 MAX_RUNS_PER_POLL = 25  # Schutz gegen Endlosschleifen; der naechste Aufruf holt den Rest
 
 
+def _updater(args: argparse.Namespace) -> Callable[[float], int | None]:
+    """Selbst-Update im Wach-Modus: die neue Version fuehrt die restliche Wachzeit aus."""
+
+    def update(minutes_left: float) -> int | None:
+        rest = ["--poll", "--watch", str(args.watch), "--for", f"{minutes_left:.1f}"]
+        rest += ["--platform", args.platform] if args.platform else []
+        return selfupdate.maybe_update(rest)
+
+    return update
+
+
 def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.check:
         return _check(args.platform, strict=args.strict)
@@ -169,7 +182,8 @@ def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return 0 if _execute(args.platform, args.run_id, None, via_agent=False) else 1
 
     if args.watch:
-        return _watch(args.platform, args.watch, args.duration)
+        update = None if args.no_update else _updater(args)
+        return _watch(args.platform, args.watch, args.duration, update=update)
     ok, done = _poll_once(args.platform)
     if done == 0:
         print("keine offenen Laeufe")
@@ -177,6 +191,7 @@ def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
 
 
 MIN_WATCH_SECONDS = 5
+UPDATE_EVERY_SECONDS = 300  # im Wach-Modus so oft auf eine neue Agent-Version pruefen
 
 
 def _poll_once(platform: str | None) -> tuple[bool, int]:
@@ -198,6 +213,7 @@ def _watch(
     minutes: float,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    update: Callable[[float], int | None] | None = None,
 ) -> int:
     """Wach bleiben: alle `every` Sekunden nach Laeufen fragen, nach `minutes` beenden.
 
@@ -207,8 +223,18 @@ def _watch(
     every = max(MIN_WATCH_SECONDS, every)
     deadline = clock() + minutes * 60
     ok, total, errors = True, 0, 0
+    checked = clock()
     print(f"Agent wartet auf Laeufe (alle {every} s, {minutes:g} min)")
     while True:
+        if update is not None and clock() - checked >= UPDATE_EVERY_SECONDS:
+            # neue Version uebernimmt die restliche Wachzeit (Dev-Befund 0.11.4: bisher
+            # pruefte der Agent nur beim Start und lief im Wach-Modus mit der alten Version)
+            checked = clock()
+            left = (deadline - checked) / 60
+            if left > every / 60:
+                updated = update(left)
+                if updated is not None:
+                    return updated
         try:
             run_ok, done = _poll_once(platform)
             ok = run_ok and ok

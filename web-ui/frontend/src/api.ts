@@ -367,6 +367,7 @@ export interface Agent {
   version: string | null; // vom Agenten gemeldete Paket-Version
   auto_update: boolean; // Selbst-Update erlaubt (ADR 0011)
   update_available: boolean | null; // null = Version unbekannt
+  update_note?: string | null; // warum der Agent nicht aktualisiert (z. B. Signatur fehlt)
 }
 
 export interface AgentCreated extends Agent {
@@ -1246,3 +1247,5 @@ export const fetchSyncItems = (
   params: { action?: string; kind?: string; q?: string; limit?: number; offset?: number } = {},
 ) => getJSON<Paged<SyncItem>>(`/api/netbox-sync/plans/${id}/items${qs({ ...params, q: params.q?.trim() })}`);
 export const applySyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/apply`, "POST");
+// Laufende Vorschau/Übernahme beenden (hängt z. B. nach einem Neustart des Orchestrators)
+export const cancelSyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/cancel`, "POST");

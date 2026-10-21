@@ -35,6 +35,19 @@ VERSION_FILE = "agent-version.txt"
 WRAPPER = "run-agent.ps1"
 PIP_TIMEOUT = 900  # Sekunden je pip-Aufruf
 
+# Ergebnis der letzten Update-Pruefung - geht als Header `X-Agent-Update` an den Orchestrator,
+# die Agentenliste zeigt so, warum ein Agent nicht aktualisiert (Dev-Befund 0.11.4)
+_note = ""
+
+
+def note() -> str:
+    return _note
+
+
+def _set_note(text: str) -> None:
+    global _note
+    _note = text
+
 
 def install_dir() -> Path | None:
     """Installationsordner (`<dir>\\venv` + `<dir>\\run-agent.ps1`), sonst None."""
@@ -75,6 +88,9 @@ def agent_headers() -> dict[str, str]:
     version = installed_version()
     if version:
         headers["X-Agent-Version"] = version
+    if install_dir() is not None:  # nur der installierte Agent aktualisiert sich selbst
+        text = _note or "ok"
+        headers["X-Agent-Update"] = text.encode("ascii", "replace").decode()[:300]
     return headers
 
 
@@ -84,24 +100,29 @@ def maybe_update(argv: Sequence[str], force: bool = False) -> int | None:
     `force`: auch bei gleicher Version neu installieren (unvollstaendige Installation)."""
     settings = get_settings()
     base = install_dir()
-    if not settings.agent_token or not settings.agent_auto_update or base is None:
+    if not settings.agent_token or base is None:
+        return None
+    if not settings.agent_auto_update:
+        _set_note("Selbst-Update auf der Station abgeschaltet (AUTOMATO_AGENT_AUTO_UPDATE=false)")
         return None
     try:
         info = http.get_json(
             f"{settings.orchestrator_url}/internal/agent/update", None, agent_headers()
         ).json()
     except Exception as exc:  # noqa: BLE001 - Update ist optional, der Lauf geht vor
-        log.warning("Update-Pruefung nicht moeglich: %s", http.describe_error(exc))
+        _set_note(f"Update-Pruefung nicht moeglich: {http.describe_error(exc)}")
+        print(_note, file=sys.stderr)
         return None
     version = info.get("version")
     if not info.get("enabled") or not version or (version == installed_version() and not force):
+        _set_note("")
         return None
     if settings.agent_signing_pubkey and not signature_ok(settings.agent_signing_pubkey, info):
-        print(
+        _set_note(
             f"Update {describe(version)} nicht installiert: Signatur fehlt oder passt nicht "
-            "zum hinterlegten Schluessel - laufe mit der bisherigen Version weiter",
-            file=sys.stderr,
+            "zum hinterlegten Schluessel (Paket signieren, deploy/agent-signing)"
         )
+        print(f"{_note} - laufe mit der bisherigen Version weiter", file=sys.stderr)
         return None
     if version == installed_version():
         print(f"Agent-Installation unvollstaendig - installiere {describe(version)} neu")
@@ -110,12 +131,10 @@ def maybe_update(argv: Sequence[str], force: bool = False) -> int | None:
     try:
         install(info, base)
     except Exception as exc:  # noqa: BLE001
-        print(
-            f"Selbst-Update fehlgeschlagen ({http.describe_error(exc)}) - "
-            "laufe mit der bisherigen Version weiter",
-            file=sys.stderr,
-        )
+        _set_note(f"Selbst-Update fehlgeschlagen: {http.describe_error(exc)}")
+        print(f"{_note} - laufe mit der bisherigen Version weiter", file=sys.stderr)
         return None
+    _set_note("")
     print(f"Agent ist jetzt {describe(version)} - fuehre den Aufruf mit der neuen Version aus")
     cmd = [sys.executable, "-m", "collectors.run", *argv, "--no-update"]
     return subprocess.run(cmd, check=False).returncode  # noqa: S603 - eigener Interpreter

@@ -292,7 +292,14 @@ an (`deploy/agent-gateway`, Port 8443).
   IPAM-Lauf und nach „neu abgleichen“ für den ganzen Mandanten. Fehlt er nach einem Update,
   baut ihn die erste Anfrage einmalig auf; bei grossen Mandanten dauert diese Anfrage einige
   Sekunden.
-- **Agenten** ziehen beim nächsten Lauf selbst nach (ADR 0011). Die Agentenliste zeigt je Agent
+- **Agent-Log:** Jede Ausgabe des Agenten steht seit 0.11.4 zusätzlich in
+  `<Installationsordner>\logs\agent-JJJJ-MM-TT.log` (14 Tage). Die geplante Aufgabe selbst
+  zeigt keine Ausgaben. Dort stehen auch Meldungen wie „Update nicht installiert“ oder ein
+  Fehler beim Lesen eines Geräts.
+- **Agenten** ziehen beim nächsten Lauf selbst nach (ADR 0011). Im Wach-Modus prüfen sie seit
+  0.11.4 alle 5 Minuten auf eine neue Version, vorher nur beim Start. Klappt ein Update nicht,
+  steht der Grund in der Agentenliste unter der Version (z. B. „Signatur fehlt“, „Selbst-Update
+  auf der Station abgeschaltet“, „Update-Prüfung nicht möglich“). Die Agentenliste zeigt je Agent
   „0.2.0 · Build …“ und „aktuell“ bzw. „Update beim nächsten Lauf“. Manuell (`install.ps1`) nur
   für die Erstinstallation oder wenn Auto-Update aus ist. Produktiv das Paket nach jedem Update
   **signieren** (`deploy/agent-signing/README.md`); Agenten mit
@@ -347,7 +354,10 @@ an (`deploy/agent-gateway`, Port 8443).
 
 - **FortiGate „antwortet auf <Pfad> nicht mit JSON (HTTP 200, …)“** (bis 0.11.1: „Expecting
   value: line 1 column 1 (char 0)“) — die FortiGate liefert für diese Tabelle eine leere bzw.
-  HTML-Antwort. Optionale Tabellen (`policy6`, `vip6`, `ldb-monitor`, Systemstatus) überspringt
+  HTML-Antwort. Seit 0.11.4 nennt die Meldung bei HTML auch den Seitentitel (z. B. die
+  Sperrseite eines Proxys). Wer gelesen hat, zeigt die Spalte „Ausführung“ der Läufe: „Agent“
+  bzw. „zentral“; ein Gerät ohne zugewiesenen Agenten liest der zentrale Worker vom
+  Automato-Server aus, dessen Weg (Proxy, Firewall) kann ein anderer sein. Optionale Tabellen (`policy6`, `vip6`, `ldb-monitor`, Systemstatus) überspringt
   der Collector seit 0.11.2. Bei einer Pflicht-Tabelle: im Browser bzw. mit `curl` und dem
   Read-only-Token `https://<fortigate>/api/v2/cmdb/<Pfad>` abfragen. Häufige Ursachen sind
   ein Admin-Profil ohne Leserecht für diesen Bereich, ein VDOM-Zugriff oder ein Proxy
@@ -380,6 +390,13 @@ an (`deploy/agent-gateway`, Port 8443).
   Frist selbst. Scheitert nur der Ergebnis-Upload, meldet der Agent den Lauf jetzt mit
   „Ergebnis-Upload fehlgeschlagen: …“ (z. B. HTTP 413, wenn ein Proxy das Ergebnis zu gross
   findet).
+
+- **NetBox-Sync steht seit Langem auf „wird übernommen“** (bis 0.11.3) — die Übernahme läuft
+  im Orchestrator-Prozess; ein Neustart (z. B. `deploy/update.sh`) beendete sie, der Plan blieb
+  stehen und sperrte jeden weiteren Sync. Seit 0.11.4 werden solche Pläne beim Start beendet,
+  ohne Lebenszeichen nach 30 min ebenfalls (`AUTOMATO_NETBOX_SYNC_TIMEOUT_MINUTES`), und
+  **Abbrechen** beendet einen laufenden Plan von Hand. Die Übernahme hört dann vor der
+  nächsten Objektart auf; bereits Geschriebenes bleibt. Eine neue Vorschau setzt dort an.
 
 - **Infoblox/NetBox „Teil-Upload unvollstaendig (N von M)“** — bis 0.11.1 konnte der letzte
   Teil-Upload noch nicht gespeichert sein, wenn das Ergebnis eintraf. Behoben in 0.11.2

@@ -60,7 +60,11 @@ def test_neue_version_wird_installiert_und_aufruf_neu_ausgefuehrt(agent):
     assert check[-1] == "import collectors.run, sot_gateway"  # Startpruefung
     assert agent["rerun"][-3:] == ["collectors.run", "--poll", "--no-update"]
     # Agent meldet seine Version mit
-    assert agent["requests"][0][1] == {"X-Agent-Token": "tok", "X-Agent-Version": "v1"}
+    assert agent["requests"][0][1] == {
+        "X-Agent-Token": "tok",
+        "X-Agent-Version": "v1",
+        "X-Agent-Update": "ok",  # Ergebnis der letzten Pruefung (Agentenliste, 0.11.4)
+    }
 
 
 def test_gleiche_version_oder_gesperrt_kein_update(agent):
@@ -139,6 +143,8 @@ def test_mit_schluessel_nur_signierte_updates(agent, monkeypatch, capsys):
     agent["manifest"] = _manifest()  # ohne Signatur
     assert su.maybe_update(["--poll"]) is None and agent["pip"] == []
     assert "Signatur fehlt oder passt nicht" in capsys.readouterr().err
+    # der Grund geht mit jedem Aufruf an den Orchestrator (Agentenliste, Dev-Befund 0.11.4)
+    assert su.agent_headers()["X-Agent-Update"].startswith("Update v2 nicht installiert: Signatur")
 
     _, foreign = _signed(_manifest())  # anderer Schluessel
     agent["manifest"] = foreign
@@ -151,3 +157,23 @@ def test_mit_schluessel_nur_signierte_updates(agent, monkeypatch, capsys):
     agent["manifest"] = signed
     assert su.maybe_update(["--poll"]) == 0
     assert (agent["dir"] / "agent-version.txt").read_text() == "v2"
+
+
+def test_update_status_im_header(agent, monkeypatch):
+    agent["manifest"] = _manifest(version="v1")  # gleiche Version: nichts zu tun
+    assert su.maybe_update(["--poll"]) is None
+    assert su.agent_headers()["X-Agent-Update"] == "ok"
+
+    def offline(url, params, headers):
+        raise httpx.ConnectError("weg")
+
+    monkeypatch.setattr(su.http, "get_json", offline)
+    assert su.maybe_update(["--poll"]) is None
+    assert su.agent_headers()["X-Agent-Update"].startswith("Update-Pruefung nicht moeglich")
+    monkeypatch.setattr(
+        su,
+        "get_settings",
+        lambda: Settings(agent_token="tok", agent_auto_update=False),  # noqa: S106
+    )
+    assert su.maybe_update(["--poll"]) is None
+    assert "abgeschaltet" in su.agent_headers()["X-Agent-Update"]

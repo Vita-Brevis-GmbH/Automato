@@ -207,6 +207,11 @@ export default function Agents({
                           </span>
                         )}
                         {a.update_available === false && <span className="chip ok">aktuell</span>}
+                        {a.update_note && (
+                          <div className="run-msg err" title={a.update_note}>
+                            {a.update_note}
+                          </div>
+                        )}
                         <label className="check" style={{ marginTop: 4, fontSize: 12 }}>
                           <input type="checkbox" checked={a.auto_update} onChange={() => toggleUpdate(a)} />
                           Auto-Update

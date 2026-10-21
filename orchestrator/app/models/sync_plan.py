@@ -47,3 +47,6 @@ class SyncPlan(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Uebernahme begonnen / letztes Lebenszeichen (je Objektart) - haengende Plaene erkennen
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

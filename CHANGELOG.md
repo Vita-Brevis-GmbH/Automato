@@ -7,6 +7,32 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.11.4 – 2026-10-22
+
+Korrekturen aus dem Betrieb (Alembic `0034`).
+
+- **Agent aktualisiert sich auch im Wach-Modus:** Er prüft alle 5 Minuten auf eine neue
+  Version, vorher nur beim Start. Die neue Version übernimmt die restliche Wachzeit.
+- **Warum ein Agent nicht aktualisiert, steht in der Agentenliste**, z. B. „Signatur fehlt“,
+  „Selbst-Update auf der Station abgeschaltet“ oder „Update-Prüfung nicht möglich: …“. Der
+  Agent meldet das Ergebnis der letzten Prüfung mit jedem Aufruf (`X-Agent-Update`).
+- **Agent-Log:** Jede Ausgabe steht zusätzlich in
+  `<Installationsordner>\logs\agent-JJJJ-MM-TT.log` (14 Tage). Die geplante Aufgabe zeigte
+  bisher keine Ausgaben, Fehler waren deshalb unsichtbar.
+- **FortiGate ohne JSON:** Die Meldung nennt bei HTML zusätzlich den Seitentitel (z. B. die
+  Sperrseite eines Proxys dazwischen).
+- **NetBox-Sync robust:**
+  - Vorschau und Übernahme, die mit einem Neustart des Orchestrators gestorben sind, werden
+    beim Start beendet. Bisher blieben sie für immer auf „wird übernommen“ und sperrten jeden
+    weiteren Sync.
+  - Ohne Lebenszeichen nach 30 min ebenfalls (`AUTOMATO_NETBOX_SYNC_TIMEOUT_MINUTES`); die
+    Übernahme meldet sich je Objektart („schreibt: VLAN“).
+  - **Abbrechen** für laufende Pläne (`POST /netbox-sync/plans/{id}/cancel`, auditiert). Die
+    Übernahme hört vor der nächsten Objektart auf.
+- **FortiGate-VLAN-Subinterfaces** werden als getaggt über den Parent eingelesen, nicht mehr
+  als untagged (z. B. Subinterfaces auf „internal“). Gilt ab dem nächsten Lauf der FortiGate;
+  der NetBox-Sync passt die Ports dann an.
+
 ## 0.11.3 – 2026-10-21
 
 Korrektur: „Alle einlesen“ übersprang ACI und DDI, obwohl nichts lief (Alembic `0033`).

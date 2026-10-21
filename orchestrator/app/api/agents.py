@@ -61,6 +61,7 @@ class AgentOut(BaseModel):
     version: str | None = None  # vom Agenten gemeldete Paket-Version
     auto_update: bool = True  # Selbst-Update erlaubt (ADR 0011)
     update_available: bool | None = None  # None = Version unbekannt / kein Paket
+    update_note: str | None = None  # warum der Agent nicht aktualisiert (z. B. Signatur fehlt)
 
 
 class AgentCreated(AgentOut):
@@ -125,6 +126,7 @@ def _out(a: Agent, systems: list | None = None, current: str | None = None) -> A
         version=a.version,
         auto_update=a.auto_update,
         update_available=(a.version != current) if a.version and current else None,
+        update_note=a.update_note,
         systems=[
             AgentSystem(
                 id=s.id,
@@ -255,6 +257,7 @@ def update_agent(
 def require_agent(
     x_agent_token: str = Header(),
     x_agent_version: str | None = Header(default=None),
+    x_agent_update: str | None = Header(default=None),
     channel: mtls.Channel = Depends(mtls.agent_channel),
     session: Session = Depends(get_session, scope="function"),
 ) -> Agent:
@@ -264,6 +267,9 @@ def require_agent(
     mtls.enforce(channel, agent.name)  # Produktion: nur ueber das mTLS-Agent-Gateway
     if x_agent_version:
         agent.version = x_agent_version.strip()[:64]
+    if x_agent_update is not None:  # Ergebnis der Update-Pruefung (ab Agent 0.11.4)
+        note = x_agent_update.strip()[:300]
+        agent.update_note = None if note in ("", "ok") else note
     return agent
 
 

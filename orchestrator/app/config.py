@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     # spaeter eintreffendes Ergebnis wird trotzdem eingespielt.
     run_timeout_minutes: int = 120
     run_queue_timeout_hours: int = 24
+    # NetBox-Sync: Vorschau bzw. Uebernahme ohne Lebenszeichen nach so vielen Minuten beenden
+    netbox_sync_timeout_minutes: int = 30
 
     # Agent-Paket fuer den Download im UI (Wheel + Windows-Skripte, ADR 0008); im Image von
     # der Dockerfile-Stage "agent-package" befuellt.

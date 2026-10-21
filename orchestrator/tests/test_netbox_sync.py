@@ -425,3 +425,68 @@ def test_ohne_standort_keine_geraete(client, netbox):
     assert any("apic-01" in w and "Standort" in w for w in plan["warnings"])
     devices = {i["key"] for i in _items(client, plan["id"], kind="device")}
     assert devices == {"fw-01"}
+
+
+def test_haengender_sync_wird_beendet_und_ist_abbrechbar(client, netbox, session_factory):
+    """Dev-Befund 0.11.4: nach einem Neustart des Orchestrators stand ein Plan seit gestern auf
+    "wird übernommen" und sperrte jeden weiteren Sync."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.api import netbox_sync as nb_api
+    from app.models import SyncPlan
+
+    ids = _setup(client)
+    plan = _plan(client, ids)
+
+    def set_plan(**values):
+        s = session_factory()
+        p = s.get(SyncPlan, plan["id"])
+        for k, v in values.items():
+            setattr(p, k, v)
+        s.commit()
+        s.close()
+
+    # Hintergrundaufgabe mit dem alten Prozess gestorben: beim Start beendet
+    set_plan(status="applying", heartbeat_at=datetime.now(UTC))
+    assert nb_api.abort_interrupted(session_factory) == 1
+    out = client.get(f"/netbox-sync/plans/{plan['id']}", headers=ADMIN).json()
+    assert out["status"] == "failed" and "neu gestartet" in out["message"]
+    assert "Teilstand" in out["message"]
+
+    # ohne Lebenszeichen nach 30 min: beim naechsten Blick beendet, neuer Sync moeglich
+    set_plan(status="applying", heartbeat_at=datetime.now(UTC) - timedelta(minutes=31))
+    out = client.get(f"/netbox-sync/plans/{plan['id']}", headers=ADMIN).json()
+    assert out["status"] == "failed" and "kein Lebenszeichen seit 30 min" in out["message"]
+    fresh = _plan(client, ids)
+
+    # von Hand: nur laufende Plaene
+    r = client.post(f"/netbox-sync/plans/{fresh['id']}/cancel", headers=ADMIN)
+    assert r.status_code == 409
+    set_plan(status="planning")
+    r = client.post(f"/netbox-sync/plans/{plan['id']}/cancel", headers=ADMIN)
+    assert r.status_code == 200 and r.json()["message"].startswith("abgebrochen von ")
+
+
+def test_abbruch_waehrend_der_uebernahme_stoppt_vor_der_naechsten_art(
+    client, netbox, session_factory
+):
+    from app.models import SyncPlan
+
+    ids = _setup(client)
+    plan = _plan(client, ids)
+    handler = netbox.handler
+
+    def cancel_after_tags(request):
+        response = handler(request)
+        if request.method == "POST" and "extras/tags" in request.url.path:
+            s = session_factory()
+            s.get(SyncPlan, plan["id"]).status = "failed"  # wie POST .../cancel
+            s.commit()
+            s.close()
+        return response
+
+    netbox.handler = cancel_after_tags
+    done = _apply(client, plan["id"])
+    assert done["status"] == "failed"
+    written = {path for _, path, _ in netbox.writes}
+    assert written == {"extras/tags"}  # danach nichts mehr geschrieben

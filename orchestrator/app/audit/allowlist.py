@@ -83,6 +83,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "netbox_sync.applied": frozenset(
         {"plan_id", "tenant_id", "source_system_id", "status", "create", "update", "delete"}
     ),
+    "netbox_sync.cancelled": frozenset({"plan_id", "tenant_id"}),
     "source.deleted": frozenset(
         {"source_id", "tenant_id", "name", "rules", "nat_rules", "findings", "references"}
     ),

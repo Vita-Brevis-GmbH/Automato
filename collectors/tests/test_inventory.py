@@ -26,10 +26,12 @@ def test_fortigate_interfaces_vlans_subnetze():
     ifaces = {i.name: i for i in inv.interfaces}
     assert ifaces["port3"].mode == "tagged" and ifaces["port3"].tagged_vlans == [10, 99]
     vl = ifaces["srv-vl10"]
-    assert (vl.kind, vl.mode, vl.untagged_vlan, vl.parent, vl.zone) == (
+    # VLAN-Subinterface: getaggt ueber den Parent, nicht untagged (Dev-Befund 0.11.4)
+    assert (vl.kind, vl.mode, vl.untagged_vlan, vl.tagged_vlans, vl.parent, vl.zone) == (
         "vlan",
-        "access",
-        10,
+        "tagged",
+        None,
+        [10],
         "port3",
         "Z_server",
     )
