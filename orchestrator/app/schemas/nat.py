@@ -3,6 +3,23 @@ from pydantic import BaseModel
 from app.schemas.rules import RuleOut
 
 
+class NatTargetOut(BaseModel):
+    """Real Server eines Virtual Servers (FortiGate server-load-balance)."""
+
+    ip: str | None = None
+    address: str | None = None  # statt IP ein Adressobjekt (z. B. FQDN)
+    port: int | str | None = None
+    status: str | None = None  # active | standby | disable
+    weight: int | str | None = None
+    healthcheck: str | None = None  # enable | disable | vip (Health-Check des VIPs)
+    monitor: list[str] = []
+    holddown: int | str | None = None
+    max_connections: int | str | None = None
+    http_host: str | None = None
+    servers: list[str] = []  # Firewall-Objekte mit dieser IP
+    dns: list[str] = []  # DNS-Namen aus DDI/NetBox
+
+
 class NatOut(BaseModel):
     id: int
     tenant_id: int
@@ -24,6 +41,10 @@ class NatOut(BaseModel):
     server: str | None = None  # Host-Objekt mit der internen IP (Firewall-Objekt)
     servers: list[str] = []  # alle Objekte mit dieser IP (mehrere = doppelt definiert)
     rule_count: int = 0  # Firewall-Regeln mit diesem VIP bzw. SNAT-Pool
+    vip_type: str | None = None  # static-nat | server-load-balance (Virtual Server) | ...
+    family: str | None = None  # v4 | v6
+    targets: list[NatTargetOut] = []  # Virtual Server: Real Server
+    attrs: dict = {}  # Virtual Server: Server-Typ, Methode, Persistenz, Health-Checks
 
 
 class NatDetailOut(NatOut):

@@ -343,6 +343,26 @@ export interface Nat {
   server: string | null;
   servers?: string[]; // alle Objekte mit der internen IP (mehrere = doppelt definiert)
   rule_count: number;
+  vip_type?: string | null; // static-nat | server-load-balance (Virtual Server) | …
+  family?: string | null; // v4 | v6
+  targets?: NatTarget[]; // Virtual Server: Real Server
+  attrs?: Record<string, unknown>; // Virtual Server: Server-Typ, Methode, Persistenz, Health-Checks
+}
+
+// Real Server eines Virtual Servers (FortiGate server-load-balance)
+export interface NatTarget {
+  ip: string | null;
+  address: string | null; // Adressobjekt statt IP (z. B. FQDN)
+  port: number | string | null;
+  status: string | null; // active | standby | disable
+  weight: number | string | null;
+  healthcheck: string | null;
+  monitor: string[];
+  holddown: number | string | null;
+  max_connections: number | string | null;
+  http_host: string | null;
+  servers: string[]; // Firewall-Objekte mit dieser IP
+  dns: string[];
 }
 
 // IPAM-Sicht auf eine IP je Referenzquelle (führend zuerst)
@@ -946,6 +966,8 @@ export async function fetchRules(opts: {
   object?: string; // Regeln, die dieses Objekt verwenden (auch über Gruppen)
   objectId?: number | null; // genau dieses Objekt (IPv4/IPv6 gleichnamig getrennt)
   nat?: string; // Regeln mit diesem VIP bzw. SNAT-Pool
+  net?: string; // Regeln eines Subnetzes (Quelle/Ziel überschneidet sich)
+  netAny?: boolean; // bei net auch Regeln mit any (Standard: ja)
   family?: string; // v4 | v6 | dual
   srcZone?: string;
   dstZone?: string;
@@ -961,6 +983,8 @@ export async function fetchRules(opts: {
     object: opts.objectId ? undefined : opts.object,
     object_id: opts.objectId,
     nat: opts.nat,
+    net: opts.net,
+    net_any: opts.net && opts.netAny === false ? "false" : undefined,
     family: opts.family,
     src_zone: opts.srcZone,
     dst_zone: opts.dstZone,

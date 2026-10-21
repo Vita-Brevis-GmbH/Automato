@@ -692,3 +692,68 @@ def test_fortigate_policy6_tabelle():
     (rule,) = normalize([], ADDR4, [], [], None, ADDR6, [], None, p6)
     assert rule.external_id == "v6-1" and rule.family == "v6"
     assert rule.destinations == ["2001:db8:10::5"] and rule.destination_refs6 == ["H_web01"]
+
+
+SLB_VIP = {
+    "name": "V-EXT_shop.example.ch",
+    "type": "server-load-balance",
+    "extip": "203.0.113.20",
+    "extintf": "wan1",
+    "extport": "443",
+    "server-type": "https",
+    "ldb-method": "round-robin",
+    "persistence": "http-cookie",
+    "monitor": [{"name": "HC_https"}],
+    "ssl-certificate": [{"name": "CERT_shop"}],
+    "realservers": [
+        {"id": 1, "ip": "10.10.30.11", "port": 8443, "status": "active", "weight": 1,
+         "healthcheck": "vip", "max-connections": 0},
+        {"id": 2, "ip": "10.10.30.12", "port": 8443, "status": "standby", "weight": 2,
+         "monitor": [{"name": "HC_tcp"}]},
+        {"id": 3, "type": "address", "address": "H-EXT_backup", "ip": "0.0.0.0", "port": 8443},  # noqa: S104 - FortiOS-Platzhalter
+    ],
+}  # fmt: skip
+
+
+def test_fortigate_virtual_server_mit_real_servern_und_health_checks():
+    from collectors.fortigate.normalize import build_device_objects, normalize, normalize_nat
+
+    monitors = [{"name": "HC_https", "type": "https", "port": 8443, "interval": 10,
+                 "http-get": "/health", "q_origin_key": "x"}]  # fmt: skip
+    vip6 = [
+        {"name": "VIP6_web", "extip": "2001:db8:ff::10", "mappedip": [{"range": "2001:db8:10::5"}]}
+    ]
+    slb, static6 = normalize_nat([SLB_VIP], vip6, monitors)
+    assert (slb.vip_type, slb.family, slb.ext_ip, slb.ext_port) == (
+        "server-load-balance",
+        "v4",
+        "203.0.113.20",
+        "443",
+    )
+    assert (slb.mapped_ip, slb.mapped_port, slb.protocol) == ("10.10.30.11", "8443", "https")
+    assert [t.get("ip") or t.get("address") for t in slb.targets] == [
+        "10.10.30.11",
+        "10.10.30.12",
+        "H-EXT_backup",
+    ]
+    assert slb.targets[1]["status"] == "standby" and slb.targets[1]["monitor"] == ["HC_tcp"]
+    assert "max_connections" not in slb.targets[0]  # 0 = unbegrenzt, kein Attribut
+    assert slb.attrs["ldb-method"] == "round-robin" and slb.attrs["persistence"] == "http-cookie"
+    assert slb.attrs["ssl-certificate"] == ["CERT_shop"]
+    assert slb.attrs["monitor"] == [
+        {"name": "HC_https", "type": "https", "port": 8443, "interval": 10, "http-get": "/health"}
+    ]
+    assert (static6.family, static6.mapped_ip, static6.vip_type) == (
+        "v6",
+        "2001:db8:10::5",
+        "static-nat",
+    )
+
+    objs = {o.name: o for o in build_device_objects([], vips=[SLB_VIP], vips6=vip6)}
+    assert objs["V-EXT_shop.example.ch"].values == ["203.0.113.20", "10.10.30.11", "10.10.30.12"]
+    assert objs["VIP6_web"].family == "v6" and objs["VIP6_web"].values[0] == "2001:db8:ff::10"
+
+    policy = {"policyid": 1, "name": "shop6", "action": "accept", "srcaddr6": [{"name": "all"}],
+              "dstaddr6": [{"name": "VIP6_web"}], "service": [{"name": "HTTPS"}]}  # fmt: skip
+    (rule,) = normalize([policy], [], [], [], [SLB_VIP], [], [], None, None, vip6)
+    assert rule.destinations == ["vip:VIP6_web=2001:db8:ff::10"]

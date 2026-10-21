@@ -125,8 +125,11 @@ def collect_once(
             d["groups6"],
             d.get("service_groups", []),
             d.get("policies6", []),
+            d.get("vips6", []),
         )
-        nat_rules = norm.normalize_nat(d["vips"]) + norm.normalize_snat(d["ippools"])
+        nat_rules = norm.normalize_nat(
+            d["vips"], d.get("vips6", []), d.get("ldb_monitors", [])
+        ) + norm.normalize_snat(d["ippools"])
         objects = norm.build_device_objects(
             d["addresses"],
             d["groups"],
@@ -136,6 +139,7 @@ def collect_once(
             d["ippools"],
             d["services"],
             d.get("service_groups", []),
+            d.get("vips6", []),
         )
         inventory = norm.normalize_inventory(
             d.get("interfaces"),

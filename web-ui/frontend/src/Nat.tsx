@@ -2,7 +2,7 @@
 // Firewall-Regeln: DNS-Namen beider IPs aus DDI/NetBox, Server hinter der internen IP und
 // die Regeln, die den VIP bzw. Pool nutzen (Klick → Regel-Liste gefiltert).
 import { useEffect, useState } from "react";
-import { fetchNat, fetchNatDetail, IpInfo, Nat, NatDetail } from "./api";
+import { fetchNat, fetchNatDetail, IpInfo, Nat, NatDetail, NatTarget } from "./api";
 import type { View, ViewParams } from "./App";
 import { ActionBadge, Dash, Drawer, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
@@ -12,6 +12,104 @@ const NAT_TYPE: Record<string, [string, string]> = {
   dnat_vip: ["local", "VIP / DNAT"],
   snat_pool: ["info", "SNAT-Pool"],
 };
+const SLB = "server-load-balance"; // FortiGate Virtual Server (Lastverteilung)
+const typeLabel = (n: Nat): [string, string] =>
+  n.vip_type === SLB ? ["local", "Virtual Server"] : (NAT_TYPE[n.nat_type] ?? ["na", n.nat_type]);
+
+// Einstellungen eines Virtual Servers wie auf der FortiGate
+const SLB_LABEL: Record<string, string> = {
+  "server-type": "Server-Typ",
+  "ldb-method": "Lastverteilung",
+  persistence: "Persistenz",
+  "http-ip-header": "Client-IP im Header",
+  "http-multiplex": "HTTP-Multiplexing",
+  "http-host": "HTTP-Host",
+  "max-embryonic-connections": "Max. halboffene Verbindungen",
+  "ssl-mode": "SSL-Modus",
+  "ssl-min-version": "SSL min.",
+  "ssl-max-version": "SSL max.",
+  "ssl-certificate": "Zertifikat",
+};
+const STATUS: Record<string, [string, string]> = {
+  active: ["ok", "aktiv"],
+  standby: ["info", "Standby"],
+  disable: ["na", "aus"],
+};
+
+function attrText(v: unknown): string {
+  return Array.isArray(v) ? v.join(", ") : String(v);
+}
+
+// Health-Checks: Name und was geprüft wird (Typ, Port, Intervall)
+function Monitors({ items }: { items: unknown }) {
+  const list = Array.isArray(items) ? (items as Record<string, unknown>[]) : [];
+  if (!list.length) return <span className="faint">keiner</span>;
+  return (
+    <>
+      {list.map((m) => (
+        <div key={String(m.name)}>
+          <span className="mono">{String(m.name)}</span>
+          <span className="faint">
+            {[m.type, m.port ? `Port ${m.port}` : null, m.interval ? `alle ${m.interval} s` : null, m["http-get"]]
+              .filter(Boolean)
+              .map((x) => ` · ${x}`)
+              .join("")}
+          </span>
+        </div>
+      ))}
+    </>
+  );
+}
+
+// Real Server mit Status, Gewicht, Firewall-Objekt und DNS-Namen
+function Targets({ items, onGo }: { items: NatTarget[]; onGo?: (v: View, p?: ViewParams) => void }) {
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>Real Server</th>
+          <th>Status</th>
+          <th className="num">Gewicht</th>
+          <th>Objekt / DNS</th>
+          <th>Health-Check</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((t, i) => {
+          const [cls, label] = STATUS[t.status ?? "active"] ?? ["na", t.status ?? "–"];
+          return (
+            <tr key={`${t.ip ?? t.address}-${i}`}>
+              <td className="mono">
+                {t.ip ?? t.address ?? "–"}
+                {t.port ? `:${t.port}` : ""}
+                {t.http_host && <div className="faint">Host {t.http_host}</div>}
+              </td>
+              <td>
+                <span className={`chip ${cls}`}>{label}</span>
+              </td>
+              <td className="num">{t.weight ?? <Dash />}</td>
+              <td>
+                {t.servers.map((name) => (
+                  <div key={name}>
+                    <button className="linkbtn mono objlink" onClick={() => onGo?.("regeln", { object: name })}>
+                      {name}
+                    </button>
+                  </div>
+                ))}
+                <Names items={t.dns} />
+                {!t.servers.length && !t.dns.length && <Dash />}
+              </td>
+              <td className="faint">
+                {t.monitor.length ? t.monitor.join(", ") : t.healthcheck === "vip" ? "wie Virtual Server" : t.healthcheck ?? "–"}
+                {t.max_connections ? ` · max. ${t.max_connections}` : ""}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
 
 function addr(ip: string | null, port: string | null, proto?: string | null) {
   if (!ip) return null;
@@ -67,8 +165,14 @@ function NatDrawer({
     fetchNatDetail(id).then(setD).catch(setErr);
   }, [id]);
   const pool = d?.nat_type === "snat_pool";
+  const slb = d?.vip_type === SLB;
+  const attrs = Object.entries(d?.attrs ?? {}).filter(([k]) => k !== "monitor");
   return (
-    <Drawer title={d?.name ?? "NAT"} sub={d ? (NAT_TYPE[d.nat_type]?.[1] ?? d.nat_type) : undefined} onClose={onClose}>
+    <Drawer
+      title={d?.name ?? "NAT"}
+      sub={d ? `${typeLabel(d)[1]}${d.family === "v6" ? " · IPv6" : ""}` : undefined}
+      onClose={onClose}
+    >
       <ErrorBox error={err} />
       {!d && !err && <Loading />}
       {d && (
@@ -76,7 +180,21 @@ function NatDrawer({
           <dl className="kv">
             <dt>{pool ? "Quell-IP(s)" : "Extern"}</dt>
             <dd className="mono">{addr(d.ext_ip, d.ext_port) ?? <Dash />}</dd>
-            {!pool && (
+            {slb && (
+              <>
+                {attrs.map(([k, v]) => (
+                  <span key={k} style={{ display: "contents" }}>
+                    <dt>{SLB_LABEL[k] ?? k}</dt>
+                    <dd className="mono">{attrText(v)}</dd>
+                  </span>
+                ))}
+                <dt>Health-Check</dt>
+                <dd>
+                  <Monitors items={d.attrs?.monitor} />
+                </dd>
+              </>
+            )}
+            {!pool && !slb && (
               <>
                 <dt>Intern</dt>
                 <dd className="mono">{addr(d.mapped_ip, d.mapped_port, d.protocol) ?? <Dash />}</dd>
@@ -121,8 +239,15 @@ function NatDrawer({
               </span>
             ))}
             <IpamBlock title={pool ? "IPAM (Quell-IP)" : "IPAM extern"} infos={d.ext_info} />
-            {!pool && <IpamBlock title="IPAM intern" infos={d.mapped_info} />}
+            {!pool && !slb && <IpamBlock title="IPAM intern" infos={d.mapped_info} />}
           </dl>
+
+          {slb && (
+            <>
+              <div className="sub-h">Real Server ({d.targets?.length ?? 0})</div>
+              <Targets items={d.targets ?? []} onGo={onGo} />
+            </>
+          )}
 
           <div className="sub-h" style={{ display: "flex", alignItems: "center" }}>
             Firewall-Regeln ({d.rules.length})
@@ -228,7 +353,8 @@ export default function NatTable({
   return (
     <>
       <PageHead title="NAT / VIPs">
-        Virtuelle IPs (externe Adresse → internes Ziel, inkl. Port-Forward) und SNAT-IP-Pools für „{tenantLabel}“ –
+        Virtuelle IPs (externe Adresse → internes Ziel, inkl. Port-Forward), Virtual Server (Lastverteilung auf Real
+        Server) und SNAT-IP-Pools für „{tenantLabel}“ –
         mit DNS-Namen aus dem IPAM und den Firewall-Regeln, die sie nutzen.
       </PageHead>
       <div className="filterbar">
@@ -244,7 +370,7 @@ export default function NatTable({
         </div>
         <select className="sel" value={type} onChange={(e) => setType(e.target.value)}>
           <option value="">Typ: alle</option>
-          <option value="dnat_vip">VIP / DNAT</option>
+          <option value="dnat_vip">VIP / DNAT (inkl. Virtual Server)</option>
           <option value="snat_pool">SNAT-Pool</option>
         </select>
         <span className="count">
@@ -275,7 +401,8 @@ export default function NatTable({
               </thead>
               <tbody>
                 {shown.map((n) => {
-                  const [cls, label] = NAT_TYPE[n.nat_type] ?? ["na", n.nat_type];
+                  const [cls, label] = typeLabel(n);
+                  const targets = n.targets ?? [];
                   return (
                     <tr key={n.id} className="clickable" onClick={() => setSelected(n.id)}>
                       <td>
@@ -284,6 +411,7 @@ export default function NatTable({
                       </td>
                       <td>
                         <span className={`chip ${cls}`}>{label}</span>
+                        {n.family === "v6" && <span className="chip">IPv6</span>}
                         {n.portforward && <span className="chip ok">Port-Forward</span>}
                       </td>
                       <td>
@@ -291,7 +419,21 @@ export default function NatTable({
                         <Names items={[n.external_name, ...n.ext_dns]} />
                       </td>
                       <td>
-                        {n.mapped_ip ? (
+                        {targets.length ? (
+                          <>
+                            {targets.slice(0, 4).map((t, i) => (
+                              <div key={i} className="mono">
+                                {t.ip ?? t.address}
+                                {t.port ? `:${t.port}` : ""}
+                                {t.status && t.status !== "active" ? <span className="faint"> ({STATUS[t.status]?.[1] ?? t.status})</span> : null}
+                              </div>
+                            ))}
+                            {targets.length > 4 && <span className="faint">+{targets.length - 4} weitere</span>}
+                            <div className="faint">
+                              {[n.protocol, n.attrs?.["ldb-method"]].filter(Boolean).join(" · ")}
+                            </div>
+                          </>
+                        ) : n.mapped_ip ? (
                           <>
                             <span className="mono">{addr(n.mapped_ip, n.mapped_port, n.protocol)}</span>
                             <Names items={n.mapped_dns} />
@@ -300,7 +442,13 @@ export default function NatTable({
                           <span className="faint">{n.nat_type === "snat_pool" ? "ausgehende Quell-IP" : "–"}</span>
                         )}
                       </td>
-                      <td className="mono">{n.servers?.length ? n.servers.join(", ") : (n.server ?? <Dash />)}</td>
+                      <td className="mono">
+                        {targets.length
+                          ? [...new Set(targets.flatMap((t) => t.servers))].join(", ") || <Dash />
+                          : n.servers?.length
+                            ? n.servers.join(", ")
+                            : (n.server ?? <Dash />)}
+                      </td>
                       <td className="mono">{n.interface ?? <Dash />}</td>
                       <td className="num">
                         {n.rule_count > 0 ? (

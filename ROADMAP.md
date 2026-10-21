@@ -289,7 +289,7 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **3 Betrieb** | Zeitplan je Quellsystem (Cron, mehrprozess-sicher); ACI: ESGs, Taboo-Contracts, Preferred Groups; Abnahme-Checkliste Phase A | umgesetzt; Phase A gegen die echten Systeme abgenommen (2026-10-21) |
 | **4 Produktions-Gate** | mTLS-Agent-Gateway (`require`/`bind`), signierte Agent-Updates, Sicherung/Wiederherstellung mit age, `deploy/update.sh` mit Rückfall, R16-Prüfung, System-Seite; Cockpit mit Magister als Entwurf | umgesetzt (ADR 0013, 0014 Entwurf) |
 
-### 0.6.0–0.9.x – Dev-Befunde aus dem Betrieb gegen die echten Systeme – umgesetzt
+### 0.6.0–0.10.x – Dev-Befunde aus dem Betrieb gegen die echten Systeme – umgesetzt
 
 | Version | Inhalt |
 |---|---|
@@ -297,29 +297,23 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.7.0** | Standorte virtuell (000, 001) und physisch (Ort-Code) mit n:m-Zuordnung, Vorschlag aus Namen, NetBox-Site-Gruppen (ADR 0015) |
 | **0.8.0** | Fix NetBox-Sync (eindeutige VLAN-/Site-Namen); Regeln ohne Quelle/Ziel (ISDB, Identität, ZTNA, Contract Master, Intra-EPG, „nicht wirksam“); Dienste mit Attributen, ACI-Filter als Dienste, Prüfung nach FT_-Schema; Objekt-Detail mit Regeln |
 | **0.8.1** | Tests/CI ausgebaut (`docs/TESTS.md`): UI-Tests mit Playwright, `alembic check`, Mindestabdeckung, PowerShell-Syntax, Image-Builds, nächtlicher Lauf; Fix `agent.created_at` (Migration 0029) und mehrere Server je NAT-IP |
+| **0.10.0** | FortiGate Virtual Server (Real Server, Lastverteilung, Health-Checks, IPv6-VIPs); Doku je System/Applikation mit allen Regeln (Netze, Gruppen, any, vzAny, ESG, EPG des Servers, Spalte „Bezug“); Regeln je Subnetz |
 | **0.9.0** | IPv4/IPv6 gleichnamig getrennt (auch `policy6`), Familie je Regel, IPv4/IPv6-Paare markiert; Regel-Zahl bei Objekten über Gruppen; abgeleiteter Regelindex – Listen/Suche/Detail/Doku < 0,3 s, Einlesen 216 → 25 s bei 3000 Regeln (ADR 0016) |
 
-### Nächste Arbeiten (Stand 0.9.0)
+### Nächste Arbeiten (Stand 0.10.0)
 
 Phase A ist gegen die echten Systeme abgenommen. Produktiv geht es erst später – vorher wird
 erweitert und verbessert:
 
-1. **0.10.0 FortiGate Virtual Server:** Server-Load-Balance-VIPs mit Real Servern, Methode,
-   Health-Check, Persistenz (auch IPv6-VIPs); in NAT-Sicht, Regeln, Suche und Doku.
-2. **0.10.0 Applikationen vollständig:**
-   - Alle Firewall-Regeln, die den Server bzw. die EPG enthalten, auch über Netze, Bereiche
-     und any (Subnetz-Analyse über den Regelindex).
-   - Dazu vzAny-Contracts der VRF, Preferred Groups und ESGs.
-   - Regeln je Subnetz auflisten.
-3. **0.11.0 VMware (vCenter, nur lesen):**
+1. **0.11.0 VMware (vCenter, nur lesen):**
    - VM-Name, IPs und Portgruppe → ACI-EPG über den Namen (`TE_x|AP_y|EG_z`) bzw. das VLAN.
    - Damit werden Regeln, Objekte, Applikationen und der IPAM-Abgleich vervollständigt.
    - Zusätzlich VMs über den NetBox-Sync nach NetBox Virtualization (eigene ADR).
-4. **Applikationen ausbauen:** Regeln direkt zuordnen, Abhängigkeiten zwischen Applikationen.
-5. **Produktiv schalten** (ADR 0013), wenn es so weit ist: Agent-Gateway `bind`, Pakete
+2. **Applikationen ausbauen:** Regeln direkt zuordnen, Abhängigkeiten zwischen Applikationen.
+3. **Produktiv schalten** (ADR 0013), wenn es so weit ist: Agent-Gateway `bind`, Pakete
    signieren, tägliche Sicherung, Updates nur über `deploy/update.sh`.
-6. **Import-Wizard (E3)** und **Cockpit mit Magister** (ADR 0014, Entwurf).
-7. Phase B (Bereinigen auf Firewall/DDI) und Phase C (Regeln schreiben,
+4. **Import-Wizard (E3)** und **Cockpit mit Magister** (ADR 0014, Entwurf).
+5. Phase B (Bereinigen auf Firewall/DDI) und Phase C (Regeln schreiben,
    FortiGate/FortiManager/ACI) nur mit eigener ADR und Freigabe.
 
 **Änderungen sichtbar + Rollback** (eigenes Querschnitts-Thema) wird über das

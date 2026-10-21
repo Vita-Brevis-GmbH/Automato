@@ -86,6 +86,11 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   IPv4+IPv6), „nur mit Findings“ (über alle Regeln, nicht nur die geladene Seite); Links
   `#regeln?object=<Name>` bzw. `#regeln?nat=<Name>` zeigen alle Regeln mit diesem Objekt (auch
   über Gruppen, beide Familien) bzw. NAT, `#regeln?object_id=<ID>` genau ein Objekt.
+  **Regeln je Subnetz:**
+  - Objekte → Subnetze → „Regeln im Subnetz“ (`#regeln?net=<CIDR>`) zeigt Regeln, deren
+    Quelle oder Ziel sich mit dem Subnetz überschneidet, mit Schalter „inkl. any“.
+  - Ein Netz im Suchfeld (z. B. `10.20.0.0/25`) trifft genauso (ohne any).
+
   **IPv4/IPv6-Paare** (ADR 0016): Je Regel die Familie, und „↔ IPv6 #…“ bzw. „↔ IPv4 #…“
   markiert das Gegenstück auf derselben FortiGate.
   - Grün: gleiche Objektnamen, Dienste und Interfaces.
@@ -110,7 +115,11 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Klick → genau diese Regeln.
   - **IPv4/IPv6:** Gleichnamige Objekte stehen zweimal da, mit Chip „IPv4“ bzw. „IPv6“,
     eigenen Werten, Gruppen und Befunden, wie auf der FortiGate.
-- **NAT / VIPs:** VIPs (extern → intern, Port-Forward) und SNAT-Pools – mit **DNS-Namen**
+- **NAT / VIPs:** VIPs (extern → intern, Port-Forward), **Virtual Server** und SNAT-Pools.
+  - Virtual Server (Lastverteilung) zeigen alle Real Server mit Status (aktiv/Standby/aus),
+    Gewicht, Firewall-Objekt, DNS-Name und Health-Check. Im Detail stehen zusätzlich
+    Server-Typ, Lastverteilung, Persistenz und die Health-Checks.
+  - Alle Einträge mit **DNS-Namen**
   beider IPs aus DDI/NetBox, **Server** (Firewall-Objekt der internen IP), Interface,
   Kommentar und **Anzahl Regeln** (Klick → Regel-Liste). Suche über Name, IP (auch im
   Pool-Bereich), Port, DNS-Name, Server, Interface, Kommentar. Klick → Detail mit
@@ -121,7 +130,14 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Projektnummer aus `AP_<nr>`/`H_…-<nr>-…` mit einem Klick übernehmen (Operator); **Doku**
   je Applikation über alle Systeme mit **Export (Markdown)** und **Drucken / PDF**. Dazu
   *Doku je System* (10 Kategorien, Standort verorten) und *Publizierte Dienste* (VIPs mit
-  Regeln).
+  Regeln). Die Doku erfasst **alle** Regeln eines Systems. Die Spalte **„Bezug“** sagt, wie
+  die Regel greift:
+  - direkt,
+  - über ein Netz, einen Bereich oder eine Gruppe (Objektname),
+  - any,
+  - vzAny der VRF, ESG, oder die EPG des Servers.
+
+  Für EPGs zählen ihre Subnetze und Endpunkte.
 - **Findings:** oben eine **Übersicht nach Kategorien** (IPAM-Abgleich, Namenskonvention,
   Bereinigung, ACI) mit offenen/gesamten Befunden je Typ (Klick filtert). Je Befund ein Satz,
   **was genau nicht stimmt**, und ein Hinweis, was zu tun wäre – z. B. „172.16.5.9 ist im IPAM

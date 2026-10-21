@@ -122,3 +122,30 @@ test("IPv4/IPv6: gleichnamige Objekte getrennt mit eigener Regel-Zahl", async ({
   await expect(rows(page)).toHaveCount(3);
   await expect(page.locator(".filterbar")).toContainText("Objekt H_web01 (IPv6)");
 });
+
+test("Virtual Server: Real Server mit Status und Health-Check", async ({ page }) => {
+  await page.goto("/#nat");
+  await search(page).fill("10.10.30.12"); // zweiter Real Server
+  const row = rows(page).filter({ hasText: "V-EXT_shop.example.ch" });
+  await expect(row).toContainText("Virtual Server");
+  await expect(row).toContainText("10.10.30.12:8443");
+  await row.click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer).toContainText("Real Server (2)");
+  await expect(drawer).toContainText("round-robin");
+  await expect(drawer).toContainText("HC_https");
+  await expect(drawer.locator("tr", { hasText: "10.10.30.12" })).toContainText("Standby");
+});
+
+test("Regeln je Subnetz: Link aus den Subnetzen, any ein-/ausblenden", async ({ page }) => {
+  await page.goto("/#objekte");
+  await page.click(".tabbar button:has-text('Subnetze')");
+  await rows(page).filter({ hasText: "10.20.0.0/24" }).locator("button:has-text('Regeln im Subnetz')").click();
+  await expect(page).toHaveURL(/#regeln\?net=10\.20\.0\.0%2F24/);
+  await expect(page.locator(".filterbar")).toContainText("Subnetz 10.20.0.0/24");
+  await expect(rows(page).filter({ hasText: "to-web-net" })).toHaveCount(1);
+  const withAny = await rows(page).count();
+  await page.click("button.toggle:has-text('inkl. any')");
+  await expect(rows(page)).not.toHaveCount(withAny);
+  await expect(rows(page).filter({ hasText: "to-web-net" })).toHaveCount(1);
+});

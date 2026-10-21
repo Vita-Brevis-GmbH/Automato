@@ -7,6 +7,33 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.10.0 – 2026-10-21
+
+FortiGate Virtual Server, vollständige Doku je System bzw. Applikation, Regeln je Subnetz
+(Alembic `0031`).
+
+- **Virtual Server** (FortiGate-VIP vom Typ *server-load-balance*):
+  - Erfasst werden externe IP und Port sowie alle **Real Server** mit IP bzw. Adressobjekt,
+    Port, Status (aktiv/Standby/aus), Gewicht, Health-Check und maximalen Verbindungen.
+  - Dazu Server-Typ, Lastverteilung, Persistenz, Health-Checks (`firewall/ldb-monitor`:
+    Typ, Port, Intervall, URL) und das Zertifikat. Vom Zertifikat wird nur der Name gelesen.
+  - NAT-Sicht: Typ „Virtual Server“, Real Server mit Firewall-Objekt und DNS-Namen.
+  - Suche über Real-Server-IP, Server, Methode und Health-Check.
+  - Regeln mit dem Virtual Server treffen auch über jeden Real Server (IP-Suche, Doku je
+    System).
+- **IPv6-VIPs** (`firewall/vip6`) werden gelesen, auch als Virtual Server. `dstaddr6`-Verweise
+  lösen gegen sie auf.
+- **Doku je System und je Applikation erfasst alle Regeln.** Sie erscheinen gleichwertig;
+  die neue Spalte **„Bezug“** sagt, wie die Regel greift.
+  - Firewall-Regeln direkt sowie über Netze, Bereiche, Gruppen und any, für Server (Host-IP)
+    und für EPGs (Subnetze und Endpunkte der EPG).
+  - ACI-Contracts direkt, über **vzAny** der VRF und über **ESGs**, die die EPG einschliessen.
+  - Ein Server bringt die Contracts seiner EPG mit (gelernter Endpunkt).
+- **Regeln je Subnetz:**
+  - Objekte → Subnetze → „Regeln im Subnetz“ zeigt alle Regeln, deren Quelle oder Ziel sich
+    mit dem Subnetz überschneidet. any lässt sich ein- und ausblenden.
+  - Ein Netz (CIDR) im Suchfeld der Regeln trifft genauso.
+
 ## 0.9.0 – 2026-10-21
 
 IPv4/IPv6 getrennt, Regel-Zahl über Gruppen, grosse Regelwerke schnell (ADR 0016, Alembic `0030`).

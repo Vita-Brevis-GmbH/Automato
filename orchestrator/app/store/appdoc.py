@@ -19,6 +19,8 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Epg,
+    EpgEndpoint,
+    EpgSubnet,
     NatRule,
     NetworkObject,
     ObjectClass,
@@ -29,8 +31,9 @@ from app.models import (
     Tenant,
 )
 from app.store import epgs as epg_store
+from app.store import nat as nat_store
+from app.store import rule_index, sites
 from app.store import rules as rules_store
-from app.store import sites
 
 SEP = " · "  # gleichnamige EPGs mehrerer ACI-Tenants: "EG_x · TE_a · AP_1"
 
@@ -48,7 +51,10 @@ TABLES: list[tuple[int, str, str]] = [
     (10, "Unspezifische Zugriffe auf die Applikation", "firewall"),
 ]
 
-_COMMON = ["Server Name", "TCP/UDP", "Target Systems", "Schutzmechanismen", "Description"]
+# "Bezug": wie die Regel das System erfasst - direkt, ueber ein Netz/einen Bereich bzw. eine
+# Gruppe (Objektname), any, vzAny der VRF, ESG oder die EPG des Servers (Dev-Befund 0.10.0)
+VIA = "Bezug"
+_COMMON = ["Server Name", "TCP/UDP", "Target Systems", "Schutzmechanismen", "Description", VIA]
 TABLE_COLUMNS: dict[int, list[str]] = {
     1: [
         "Server Name",
@@ -57,6 +63,7 @@ TABLE_COLUMNS: dict[int, list[str]] = {
         "Schutzmechanismen",
         "NAT Externe IPv4",
         "Description",
+        VIA,
     ],
     2: [
         "Source",
@@ -67,6 +74,7 @@ TABLE_COLUMNS: dict[int, list[str]] = {
         "Externe IP Adressen",
         "Schutzmechanismen",
         "Description",
+        VIA,
     ],
 }
 for _i in (3, 4, 5, 6, 7, 8, 9, 10):
@@ -297,54 +305,206 @@ class TenantData:
         return {e.id: e for e in self.session.scalars(stmt)}
 
 
-def epg_doc(session: Session, epg: Epg, data: TenantData | None = None) -> dict:
-    """ACI-EPG als System: Contracts nach scope/AP in die Tabellen 7/8/9 (+10) einordnen.
+def _proxies(data: TenantData, epg: Epg) -> dict[int, str]:
+    """EPG-IDs, deren Contracts fuer die EPG gelten, mit Bezug: die EPG selbst, vzAny ihrer
+    VRF (alle EPGs der VRF) und ESGs, die sie per EPG-Selektor einschliessen."""
+    out = {epg.id: "direkt"}
+    for other in data.epgs_by_id.values():
+        if (
+            other.kind == "vzany"
+            and epg.vrf
+            and other.vrf == epg.vrf
+            and other.aci_tenant in (epg.aci_tenant, "common")
+        ):
+            out[other.id] = f"vzAny {other.vrf}"
+        elif other.kind == "esg" and epg.dn and f"EPG {epg.dn}" in (other.selectors or []):
+            out[other.id] = f"ESG {other.name}"
+    return out
 
-    Gegenstelle gleiches AP (im selben ACI-Tenant) -> 7, anderer ACI-Tenant -> 9."""
-    data = data or TenantData(session, epg.tenant_id)
+
+def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = None) -> list:
+    """ACI-Contracts einer EPG (direkt, ueber vzAny der VRF, ueber ESGs) als (Tabelle, Zeile).
+
+    Gegenstelle gleiches AP (im selben ACI-Tenant) -> 7, anderer ACI-Tenant -> 9, hinter
+    einem L3Out nach dessen Zone wie bei Firewall-Regeln."""
     by_id = data.epgs_by_id
-
-    def is_self(e) -> bool:  # aeltere Laeufe ohne EPG-Verknuepfung: ueber den Namen
-        return e.epg_id == epg.id or (e.epg_id is None and e.inline_value == epg.name)
-
-    ids = data.rule_ids(RuleDomain.ACI_CONTRACT, epg_id=epg.id)
+    proxies = _proxies(data, epg)
+    ids: set[int] = set()
+    for pid in proxies:
+        ids |= data.rule_ids(RuleDomain.ACI_CONTRACT, epg_id=pid)
     ids |= data.rule_ids(RuleDomain.ACI_CONTRACT, epg_id=None, inline_value=epg.name)
-    rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
+
+    def self_via(e) -> str | None:  # aeltere Laeufe ohne EPG-Verknuepfung: ueber den Namen
+        if e.epg_id in proxies:
+            return proxies[e.epg_id]
+        return "direkt" if e.epg_id is None and e.inline_value == epg.name else None
+
+    out = []
     for r in data.rules(ids):
         eps = [e for e in r.endpoints if e.kind.value == "epg"]
-        on_src = any(is_self(e) and e.role.value == "src" for e in eps)
-        on_dst = any(is_self(e) and e.role.value == "dst" for e in eps)
-        if not (on_src or on_dst):
-            continue
-        cp_role = "src" if on_dst else "dst"
-        cp = [e for e in eps if e.role.value == cp_role]
-        cp_epgs = [by_id[e.epg_id] for e in cp if e.epg_id in by_id]
-        cp_names = [_target(by_id.get(e.epg_id), e.inline_value, epg) for e in cp]
-        same_ap = any(
-            c.ap == epg.ap and c.aci_tenant == epg.aci_tenant and epg.ap is not None
-            for c in cp_epgs
-        )
-        same_tenant = all(c.aci_tenant == epg.aci_tenant for c in cp_epgs)
-        external = [c for c in cp_epgs if c.kind == "external"]
-        if external and len(external) == len(cp_epgs):
-            # Gegenstelle hinter einem L3Out: Tabelle nach L3Out wie bei Firewall-Regeln
-            idx = categorize(
-                direction="in" if on_dst else "out",
-                counterpart_zone=external[0].l3out,
-                counterpart_external=False,
-                is_dnat_target=False,
+        sides: dict[str, str] = {}
+        for e in eps:
+            v = self_via(e)
+            if v and (e.role.value not in sides or v == "direkt"):
+                sides[e.role.value] = v
+        for side in sorted(sides, key=lambda x: x != "dst"):  # zuerst eingehend
+            cp_role = "src" if side == "dst" else "dst"
+            cp = [e for e in eps if e.role.value == cp_role]
+            cp_epgs = [by_id[e.epg_id] for e in cp if e.epg_id in by_id]
+            cp_names = [_target(by_id.get(e.epg_id), e.inline_value, epg) for e in cp]
+            same_ap = any(
+                c.ap == epg.ap and c.aci_tenant == epg.aci_tenant and epg.ap is not None
+                for c in cp_epgs
             )
-        else:
-            idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
-        rows_by_table[idx].append(
-            {
-                "Server Name": epg.name,
-                "TCP/UDP": ", ".join(s.canonical_name for s in r.services),
-                "Target Systems": ", ".join(n for n in cp_names if n),
-                "Schutzmechanismen": ", ".join(r.protections) if r.protections else "",
-                "Description": r.name or f"#{r.external_id}",
-            }
+            same_tenant = all(c.aci_tenant == epg.aci_tenant for c in cp_epgs)
+            external = [c for c in cp_epgs if c.kind == "external"]
+            if external and len(external) == len(cp_epgs):
+                idx = categorize(
+                    direction="in" if side == "dst" else "out",
+                    counterpart_zone=external[0].l3out,
+                    counterpart_external=False,
+                    is_dnat_target=False,
+                )
+            else:
+                idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
+            out.append(
+                (
+                    idx,
+                    {
+                        "Server Name": system_name,
+                        "TCP/UDP": ", ".join(s.canonical_name for s in r.services),
+                        "Target Systems": ", ".join(n for n in cp_names if n),
+                        "Schutzmechanismen": ", ".join(r.protections) if r.protections else "",
+                        "Description": r.name or f"#{r.external_id}",
+                        VIA: via or sides[side],
+                    },
+                )
+            )
+    return out
+
+
+def _fw_rows(
+    data: TenantData,
+    rule: Rule,
+    sides: dict[str, str],
+    system_name: str,
+    dnat_for_sys: list[NatRule],
+    snat_ips: list[str],
+) -> list:
+    """Firewall-Regel als (Tabelle, Zeile) je Seite, auf der das System steht (Ziel =
+    eingehend, Quelle = ausgehend); `sides` = Seite -> Bezug."""
+    objs, zones = data.objs, data.zones
+    out = []
+    for side in sorted(sides, key=lambda x: x != "dst"):
+        direction = "in" if side == "dst" else "out"
+        counterpart_eps = [e for e in rule.endpoints if e.role.value != side]
+        cp_objs = [
+            objs.get(e.network_object_id) if e.network_object_id else None for e in counterpart_eps
+        ]
+        cp_labels = [
+            _label(o, e.inline_value) for o, e in zip(cp_objs, counterpart_eps, strict=True)
+        ]
+        cp_external = any(o is not None and o.object_class == ObjectClass.EXTERNAL for o in cp_objs)
+        cp_zone = zones.get(rule.src_zone_id) if direction == "in" else zones.get(rule.dst_zone_id)
+        idx = categorize(
+            direction=direction,
+            counterpart_zone=cp_zone,
+            counterpart_external=cp_external,
+            is_dnat_target=direction == "in" and bool(dnat_for_sys),
         )
+        services = ", ".join(s.canonical_name for s in rule.services)
+        protections = ", ".join(rule.protections) if rule.protections else ""
+        description = rule.name or f"#{rule.external_id}"
+        targets = ", ".join(cp_labels)
+        if idx == 1:
+            row = {
+                "Server Name": system_name,
+                "TCP/UDP": services,
+                "Target Systems": targets,
+                "Schutzmechanismen": protections,
+                "NAT Externe IPv4": ", ".join(snat_ips),
+                "Description": description,
+            }
+        elif idx == 2:
+            vip = dnat_for_sys[0] if dnat_for_sys else None
+            dns = ""
+            if vip and vip.name:
+                dns = vip.name.split("_", 1)[1] if "_" in vip.name else vip.name
+            row = {
+                "Source": targets,
+                "TCP/UDP": services,
+                "Server Name": system_name,
+                "VIP IP Adresse": (vip.ext_ip if vip else "") or "",
+                "Externer DNS Name": dns,
+                "Externe IP Adressen": (vip.ext_ip if vip else "") or "",
+                "Schutzmechanismen": protections,
+                "Description": description,
+            }
+        else:
+            row = {
+                "Server Name": system_name,
+                "TCP/UDP": services,
+                "Target Systems": targets,
+                "Schutzmechanismen": protections,
+                "Description": description,
+            }
+        out.append((idx, {**row, VIA: sides[side]}))
+    return out
+
+
+def _nat_context(data: TenantData, ips: set[str]) -> tuple[list[NatRule], list[str]]:
+    """VIPs mit einem der IPs als internem Ziel (auch Real Server) und alle SNAT-Pool-IPs."""
+    dnat = [
+        n for n in data.nats if n.nat_type == "dnat_vip" and ips & set(nat_store.internal_ips(n))
+    ]
+    snat = sorted({n.ext_ip for n in data.nats if n.nat_type == "snat_pool" and n.ext_ip})
+    return dnat, snat
+
+
+def _covered_rows(
+    session: Session,
+    data: TenantData,
+    values: list[str],
+    system_name: str,
+    overlap: bool,
+    direct_ids: set[int] | None = None,
+    is_direct=None,
+) -> list:
+    """Firewall-Regeln eines Systems: direkt (Endpunkt) und alle, deren Quelle/Ziel den Wert
+    enthaelt (Host-IP) bzw. sich mit ihm ueberschneidet (EPG-Subnetz) - ueber Netze, Bereiche,
+    Gruppen und any, gleichwertig (Dev-Befund 0.10.0)."""
+    cover = rule_index.covers(
+        session, data.tenant_id, values, overlap=overlap, domain=RuleDomain.FIREWALL
+    )
+    dnat, snat = _nat_context(data, {v.split("/")[0] for v in values})
+    out = []
+    for r in data.rules((direct_ids or set()) | set(cover)):
+        sides: dict[str, str] = {}
+        if is_direct is not None:
+            for e in r.endpoints:
+                if is_direct(e):
+                    sides[e.role.value] = "direkt"
+        c = cover.get(r.id)
+        for role in c.sides if c else ():
+            sides.setdefault(role, c.via(role))
+        out += _fw_rows(data, r, sides, system_name, dnat, snat)
+    return out
+
+
+def epg_doc(session: Session, epg: Epg, data: TenantData | None = None) -> dict:
+    """ACI-EPG als System: Contracts (direkt, vzAny der VRF, ESGs) nach scope/AP in die
+    Tabellen 7/8/9 (+ L3Out-Tabellen) und die Firewall-Regeln, die ihre Subnetze bzw.
+    Endpunkte erfassen (auch ueber groessere Netze und any)."""
+    data = data or TenantData(session, epg.tenant_id)
+    rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
+    for idx, row in _aci_rows(data, epg, epg.name):
+        rows_by_table[idx].append(row)
+    values = [s.ip for s in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id == epg.id))]
+    values += [
+        ep.ip for ep in session.scalars(select(EpgEndpoint).where(EpgEndpoint.epg_id == epg.id))
+    ]
+    for idx, row in _covered_rows(session, data, values, epg.name, overlap=True):
+        rows_by_table[idx].append(row)
     host = session.get(NetworkObject, epg.network_object_id) if epg.network_object_id else None
     return _envelope(
         session,
@@ -383,88 +543,43 @@ def build_doc(session: Session, system_name: str, tenant_id: int | None) -> dict
 
 
 def host_doc(session: Session, sys_obj: NetworkObject, data: TenantData | None = None) -> dict:
-    """Firewall-zentrierte Doku eines Host-Systems (Tabellen 1–6, 10)."""
+    """Doku eines Host-Systems: alle Firewall-Regeln, die den Server erfassen - direkt und ueber
+    Netze, Bereiche, Gruppen und any -, dazu die ACI-Contracts der EPG(s) des Servers."""
     system_name = sys_obj.name
     tenant_id = sys_obj.tenant_id
     sys_ip = sys_obj.value
     data = data or TenantData(session, tenant_id)
 
-    # NAT-Kontext: DNAT-Ziel (mapped_ip == System-IP) und SNAT-Pools des Mandanten.
-    nats = data.nats
-    dnat_for_sys = [
-        n for n in nats if n.nat_type == "dnat_vip" and sys_ip and n.mapped_ip == sys_ip
-    ]
-    snat_ips = sorted({n.ext_ip for n in nats if n.nat_type == "snat_pool" and n.ext_ip})
-
-    rules = data.rules(data.rule_ids(RuleDomain.FIREWALL, network_object_id=sys_obj.id))
-    objs, zones = data.objs, data.zones
-
     rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
-    for r in rules:
-        src_eps = [e for e in r.endpoints if e.role.value == "src"]
-        dst_eps = [e for e in r.endpoints if e.role.value == "dst"]
-        on_src = any(e.network_object_id == sys_obj.id for e in src_eps)
-        on_dst = any(e.network_object_id == sys_obj.id for e in dst_eps)
-        if not (on_src or on_dst):
-            continue
-        direction = "in" if on_dst else "out"
-        counterpart_eps = src_eps if direction == "in" else dst_eps
-        cp_objs = [
-            objs.get(e.network_object_id) if e.network_object_id else None for e in counterpart_eps
-        ]
-        cp_labels = [
-            _label(o, e.inline_value) for o, e in zip(cp_objs, counterpart_eps, strict=True)
-        ]
-        cp_external = any(o is not None and o.object_class == ObjectClass.EXTERNAL for o in cp_objs)
-        cp_zone = zones.get(r.src_zone_id) if direction == "in" else zones.get(r.dst_zone_id)
-        is_dnat = direction == "in" and bool(dnat_for_sys)
-
-        idx = categorize(
-            direction=direction,
-            counterpart_zone=cp_zone,
-            counterpart_external=cp_external,
-            is_dnat_target=is_dnat,
-        )
-        services = ", ".join(s.canonical_name for s in r.services)
-        protections = ", ".join(r.protections) if r.protections else ""
-        description = r.name or f"#{r.external_id}"
-        targets = ", ".join(cp_labels)
-
-        if idx == 1:
-            row = {
-                "Server Name": system_name,
-                "TCP/UDP": services,
-                "Target Systems": targets,
-                "Schutzmechanismen": protections,
-                "NAT Externe IPv4": ", ".join(snat_ips),
-                "Description": description,
-            }
-        elif idx == 2:
-            vip = dnat_for_sys[0] if dnat_for_sys else None
-            dns = ""
-            if vip and vip.name:
-                dns = vip.name.split("_", 1)[1] if "_" in vip.name else vip.name
-            row = {
-                "Source": targets,
-                "TCP/UDP": services,
-                "Server Name": system_name,
-                "VIP IP Adresse": (vip.ext_ip if vip else "") or "",
-                "Externer DNS Name": dns,
-                "Externe IP Adressen": (vip.ext_ip if vip else "") or "",
-                "Schutzmechanismen": protections,
-                "Description": description,
-            }
-        else:
-            row = {
-                "Server Name": system_name,
-                "TCP/UDP": services,
-                "Target Systems": targets,
-                "Schutzmechanismen": protections,
-                "Description": description,
-            }
+    direct = data.rule_ids(RuleDomain.FIREWALL, network_object_id=sys_obj.id)
+    for idx, row in _covered_rows(
+        session,
+        data,
+        [sys_ip] if sys_ip else [],
+        system_name,
+        overlap=False,
+        direct_ids=direct,
+        is_direct=lambda e: e.network_object_id == sys_obj.id,
+    ):
         rows_by_table[idx].append(row)
+    # ACI: die EPG(s), in denen der Server steht (verknuepft oder als gelernter Endpunkt)
+    for epg in _host_epgs(session, data, sys_obj):
+        for idx, row in _aci_rows(data, epg, system_name, via=f"EPG {epg_store.label(epg)}"):
+            rows_by_table[idx].append(row)
 
     return _envelope(session, system_name, tenant_id, sys_ip, sys_obj.site_id, rows_by_table)
+
+
+def _host_epgs(session: Session, data: TenantData, sys_obj: NetworkObject) -> list[Epg]:
+    ids = {e.id for e in data.epgs_by_id.values() if e.network_object_id == sys_obj.id}
+    if sys_obj.value:
+        ip = sys_obj.value.split("/")[0]
+        ids |= set(session.scalars(select(EpgEndpoint.epg_id).where(EpgEndpoint.ip == ip)))
+    return [
+        data.epgs_by_id[i]
+        for i in sorted(ids)
+        if i in data.epgs_by_id and data.epgs_by_id[i].kind == "epg"
+    ]
 
 
 def assign_site(

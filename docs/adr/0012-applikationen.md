@@ -4,6 +4,17 @@
 
 Angenommen (2026-10-20).
 
+**Ergänzung 0.10.0 (Dev-Befund „in den Applikationen werden teils zu wenige Regeln angezeigt“):**
+Die Doku je System – und damit je Applikation – erfasst alle Regeln, gleichwertig angezeigt.
+- **Server:** Firewall-Regeln direkt und alle, deren Quelle oder Ziel die IP enthält – über
+  Netze, Bereiche, Gruppen und any (Regelindex, ADR 0016). Dazu die ACI-Contracts der EPG,
+  in der der Server als Endpunkt gelernt ist.
+- **EPG:** Contracts direkt, über vzAny der VRF (auch im Tenant `common`) und über ESGs mit
+  EPG-Selektor. Dazu alle Firewall-Regeln, die sich mit den Subnetzen bzw. Endpunkten der
+  EPG überschneiden.
+- Die Spalte „Bezug“ nennt, wie die Regel greift (direkt, Objekt/Netz, any, vzAny, ESG, EPG).
+  Ist ein System Quelle und Ziel (z. B. any → any), erscheint die Regel ein- und ausgehend.
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:

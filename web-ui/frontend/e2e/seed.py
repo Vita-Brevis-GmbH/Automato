@@ -1,9 +1,9 @@
 """Beispieldaten fuer die UI-Tests - aus denselben Testdaten wie die Orchestrator-Tests.
 
-Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), drei FortiGates (eine mit gleichnamigen
-IPv4/IPv6-Objekten und Regelpaaren), einem APIC, virtuellen und physischen Standorten, NAT/VIPs,
-Gruppen, Diensten mit Namensschema-Befunden und einem ACI-Contract ohne Consumer. Alles ueber
-die oeffentliche bzw. interne API wie im Betrieb.
+Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), vier FortiGates (eine mit gleichnamigen
+IPv4/IPv6-Objekten und Regelpaaren, eine mit Virtual Server), einem APIC, virtuellen und
+physischen Standorten, NAT/VIPs, Gruppen, Diensten mit Namensschema-Befunden und einem
+ACI-Contract ohne Consumer. Alles ueber die oeffentliche bzw. interne API wie im Betrieb.
 """
 
 import sys
@@ -17,6 +17,7 @@ import test_ip_family as ipf  # noqa: E402
 import test_search_nat as sn  # noqa: E402
 import test_services as sv  # noqa: E402
 import test_sites as st  # noqa: E402
+import test_virtual_server as vs  # noqa: E402
 
 TOKEN = {"X-Internal-Token": "dev-only-token"}
 
@@ -87,6 +88,14 @@ def run(app) -> None:
     # FortiGate 3: IPv4/IPv6 getrennt - gleichnamige Objekte, Regelpaare (gleich/aehnlich)
     fw3 = system(name="fw-03", platform="fortigate", base_url="https://fw-03.example.ch")
     run_result(fw3, "fortigate", rules=ipf.RULES, objects=ipf.OBJECTS)
+
+    # FortiGate 4: Virtual Server mit Real Servern; Regel ins BD-Subnetz der APIC (Regeln je
+    # Subnetz)
+    fw4 = system(name="fw-04", platform="fortigate", base_url="https://fw-04.example.ch")
+    net_rule = {**vs.RULES[0], "external_id": "2", "name": "to-web-net",
+                "sources": ["10.9.0.0/16"], "destinations": ["10.20.0.0/24"],
+                "source_refs": [], "destination_refs": []}  # fmt: skip
+    run_result(fw4, "fortigate", rules=[*vs.RULES, net_rule], objects=vs.OBJECTS, nat_rules=vs.NAT)
 
     # APIC: Inventar, Filter als Dienste, Contract ohne Consumer
     apic = system(name="apic-01", platform="cisco_aci", base_url="https://apic.example.ch")

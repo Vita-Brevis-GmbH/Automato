@@ -50,6 +50,10 @@ def list_rules(
         None, description="Regeln mit diesem Objekt (auch ueber Gruppen)"
     ),
     nat: str | None = Query(None, description="Regeln mit diesem VIP bzw. SNAT-Pool"),
+    net: str | None = Query(
+        None, description="Regeln eines Subnetzes (Quelle/Ziel ueberschneidet)"
+    ),
+    net_any: bool = Query(True, description="bei `net` auch Regeln mit any"),
     source_system_id: int | None = None,
     domain: RuleDomain | None = None,
     src_zone: str | None = None,
@@ -64,13 +68,13 @@ def list_rules(
     """Regeln seitenweise; Gesamtzahl (nach Filtern und Suche) im Header `X-Total-Count`.
 
     `q` sucht in allem, was zur Regel gehoert (Gruppenmitglieder, Werte, Services, Zonen,
-    EPG-Lage, NAT, IP im Netz); `object`/`object_id`/`nat` filtern exakt - alles ueber den
-    Regelindex per SQL, auch bei grossen Regelwerken."""
+    EPG-Lage, NAT, IP im Netz, Netz/CIDR); `object`/`object_id`/`nat` filtern exakt, `net`
+    listet die Regeln eines Subnetzes - alles ueber den Regelindex per SQL."""
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "rules")
     rule_index.ensure(session, tenant_id)
     q, object, nat = (v.strip() if v else None for v in (q, object, nat))
-    conds = rule_index.conditions(q, object, object_id, nat)
+    conds = rule_index.conditions(q, object, object_id, nat, net, net_any)
     if family:
         conds.append(Rule.ip_family == family)
 

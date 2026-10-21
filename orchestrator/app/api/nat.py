@@ -17,7 +17,7 @@ from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.models import NatRule, Rule, RuleIndex
-from app.schemas.nat import NatDetailOut, NatOut
+from app.schemas.nat import NatDetailOut, NatOut, NatTargetOut
 from app.store import nat as nat_store
 from app.store import references, rule_index
 from app.store import rules as rules_store
@@ -34,7 +34,9 @@ class _Context:
         self.refs = {t: references.context(session, t) for t in tenants}
         self.servers = {
             t: nat_store.servers_by_ip(
-                session, t, {n.mapped_ip for n in nats if n.tenant_id == t and n.mapped_ip}
+                session,
+                t,
+                {ip for n in nats if n.tenant_id == t for ip in nat_store.internal_ips(n)},
             )
             for t in tenants
         }
@@ -76,6 +78,20 @@ class _Context:
             server=next(iter(servers), None),
             servers=servers,
             rule_count=len(self.usage.get((n.source_system_id, n.name.lower()), ())),
+            vip_type=n.vip_type,
+            family=n.family,
+            targets=[self._target(n, t, ctx) for t in n.targets or []],
+            attrs=n.attrs or {},
+        )
+
+    def _target(self, n: NatRule, t: dict, ctx) -> NatTargetOut:
+        """Real Server eines Virtual Servers mit Firewall-Objekt und DNS-Namen der IP."""
+        ip = t.get("ip")
+        candidates = self.servers[n.tenant_id].get(ip or "", [])
+        return NatTargetOut(
+            **{k: v for k, v in t.items() if k in NatTargetOut.model_fields},
+            servers=nat_store.server_names(candidates, n.source_system_id),
+            dns=references.dns_names(ctx, ip),
         )
 
     def rule_ids(self, n: NatRule) -> set[int]:
@@ -97,8 +113,14 @@ def _search_fields(o: NatOut) -> tuple[list[str | None], list[str | None]]:
         *o.servers,
         *o.ext_dns,
         *o.mapped_dns,
+        o.vip_type,
+        "virtual server" if o.vip_type == nat_store.SLB else None,
+        *(str(v) for k, v in o.attrs.items() if k != "monitor"),
+        *(m.get("name") for m in o.attrs.get("monitor", []) if isinstance(m, dict)),
     ]
-    return fields, [o.ext_ip, o.mapped_ip]
+    for t in o.targets:
+        fields += [t.ip, t.address, *t.servers, *t.dns]
+    return fields, [o.ext_ip, o.mapped_ip, *(t.ip for t in o.targets)]
 
 
 @router.get("", response_model=list[NatOut])

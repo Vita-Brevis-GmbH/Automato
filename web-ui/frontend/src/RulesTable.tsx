@@ -130,6 +130,8 @@ export default function RulesTable({
   const object = params.object ?? "";
   const objectId = params.object_id ? Number(params.object_id) : null;
   const nat = params.nat ?? "";
+  const net = params.net ?? ""; // Regeln eines Subnetzes (Link aus Objekte → Subnetze)
+  const [netAny, setNetAny] = useState(true);
 
   const [q, setQ] = useState(params.q ?? "");
   const [domain, setDomain] = useState<RuleDomain | "">("");
@@ -163,13 +165,15 @@ export default function RulesTable({
       object,
       objectId,
       nat,
+      net,
+      netAny,
       srcZone,
       dstZone,
       action,
       family,
       limit: PAGE,
     }),
-    [q, tenantId, domain, system, object, objectId, nat, srcZone, dstZone, action, family],
+    [q, tenantId, domain, system, object, objectId, nat, net, netAny, srcZone, dstZone, action, family],
   );
 
   // Suche und alle Filter wertet der Orchestrator aus (über alle Regeln, nicht nur die erste Seite).
@@ -236,11 +240,29 @@ export default function RulesTable({
           </span>
           <input
             placeholder="Suche: Objekt, IP, DNS-Name, NAT, Zone…"
-            title="Sucht in allem: Regel, Objekte und Gruppenmitglieder, IP (auch im Netz), DNS-Name aus dem IPAM, Service, Zone, EPG, NAT, Kommentar. Mehrere Wörter = alle müssen vorkommen."
+            title="Sucht in allem: Regel, Objekte und Gruppenmitglieder, IP (auch im Netz), Netz/CIDR (Regeln, die sich mit dem Netz überschneiden), DNS-Name aus dem IPAM, Service, Zone, EPG, NAT, Kommentar. Mehrere Wörter = alle müssen vorkommen."
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
+        {net && (
+          <span className="chip local" title="Regeln, deren Quelle oder Ziel sich mit dem Subnetz überschneidet (auch über Gruppen)">
+            Subnetz {net}
+            <button className="linkbtn" title="Filter entfernen" onClick={() => onGo?.("regeln")}>
+              ✕
+            </button>
+          </span>
+        )}
+        {net && (
+          <button
+            className={`toggle ${netAny ? "on" : ""}`}
+            title="Regeln mit any als Quelle bzw. Ziel einbeziehen"
+            onClick={() => setNetAny((v) => !v)}
+          >
+            <span className="dot" />
+            inkl. any
+          </button>
+        )}
         {(object || nat) && (
           <span className="chip local" title="aus einem Link – Regeln, die dieses Objekt bzw. diesen NAT-Eintrag verwenden">
             {object ? `Objekt ${object}${params.family ? ` (${FAMILY_LABEL[params.family] ?? params.family})` : ""}` : `NAT ${nat}`}

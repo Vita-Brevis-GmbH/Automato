@@ -72,6 +72,13 @@ class NormalizedNat(BaseModel):
     mapped_port: str | None = None
     protocol: str | None = None
     portforward: bool = False
+    # VIP-Typ (static-nat | server-load-balance = Virtual Server | fqdn | ...) und Familie
+    vip_type: str | None = None
+    family: str | None = None
+    # Virtual Server: Real Server (ip/address, port, status, weight, Health-Check ...)
+    targets: list[dict[str, Any]] = Field(default_factory=list)
+    # Virtual Server: Server-Typ, Methode, Persistenz, Health-Checks, Zertifikat (nur Name)
+    attrs: dict[str, Any] = Field(default_factory=dict)
     raw: dict[str, Any] | None = None
 
 

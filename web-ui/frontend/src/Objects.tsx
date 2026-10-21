@@ -129,7 +129,15 @@ export default function Objects({
           onGo={onGo}
         />
       ) : (
-        <InventoryTable key={tab} tab={tab} tenantId={tenantId} sourceId={sourceId} q={q} issuesOnly={issuesOnly} />
+        <InventoryTable
+          key={tab}
+          tab={tab}
+          tenantId={tenantId}
+          sourceId={sourceId}
+          q={q}
+          issuesOnly={issuesOnly}
+          onGo={onGo}
+        />
       )}
     </>
   );
@@ -606,12 +614,14 @@ function InventoryTable({
   sourceId,
   q,
   issuesOnly,
+  onGo,
 }: {
   tab: Tab;
   tenantId: number;
   sourceId: number | null;
   q: string;
   issuesOnly: boolean;
+  onGo?: (v: View, p?: ViewParams) => void;
 }) {
   const kind = ({ subnets: "subnets", vlans: "vlans", ports: "interfaces", devices: "devices", vrfs: "vrfs" } as const)[
     tab as "subnets" | "vlans" | "ports" | "devices" | "vrfs"
@@ -664,6 +674,17 @@ function InventoryTable({
                   <td className="mono nowrap">
                     <b>{s.prefix}</b>
                     {s.description && <div className="faint">{s.description}</div>}
+                    {onGo && (
+                      <div>
+                        <button
+                          className="linkbtn"
+                          title="Firewall-Regeln und Contracts, deren Quelle oder Ziel sich mit dem Subnetz überschneidet"
+                          onClick={() => onGo("regeln", { net: s.prefix })}
+                        >
+                          Regeln im Subnetz
+                        </button>
+                      </div>
+                    )}
                   </td>
                   <td className="mono">{cell(s.gateway)}</td>
                   <td>

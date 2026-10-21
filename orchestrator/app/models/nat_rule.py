@@ -1,8 +1,8 @@
 """NAT-/VIP-Regeln (ADR 0004, Phase 1.5).
 
-Fuer UC1 vorerst eingehende DNAT/Virtual IPs der FortiGate: externe IP (+ Port)
--> internes Ziel (+ Port). Rein lesend/dokumentierend; wird je Quellsystem bei
-jedem Collector-Lauf ersetzt (wie `rule`).
+Eingehende DNAT/Virtual IPs der FortiGate: externe IP (+ Port) -> internes Ziel (+ Port);
+Virtual Server (Lastverteilung) mit mehreren Real Servern; SNAT-Pools. Rein
+lesend/dokumentierend; wird je Quellsystem bei jedem Collector-Lauf ersetzt (wie `rule`).
 """
 
 from datetime import datetime
@@ -29,6 +29,14 @@ class NatRule(Base):
     mapped_port: Mapped[str | None] = mapped_column(String(64), nullable=True)
     protocol: Mapped[str | None] = mapped_column(String(16), nullable=True)
     portforward: Mapped[bool] = mapped_column(Boolean, default=False)
+    # VIP-Typ wie auf der FortiGate: static-nat | server-load-balance (Virtual Server) | ...
+    vip_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    family: Mapped[str | None] = mapped_column(String(4), nullable=True)  # v4 | v6
+    # Virtual Server: Real Server (ip/address, port, status, weight, Health-Check ...);
+    # mapped_ip/mapped_port = erster Real Server (fuer Sichten mit einem Ziel)
+    targets: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Virtual Server: Server-Typ, Methode, Persistenz, Health-Checks, Zertifikat (Name)
+    attrs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     collector_run_id: Mapped[str | None] = mapped_column(
         ForeignKey("collector_run.id"), nullable=True
     )

@@ -222,13 +222,14 @@ def normalize(
     groups6: list[dict] | None = None,
     service_groups: list[dict] | None = None,
     policies6: list[dict] | None = None,
+    vips6: list[dict] | None = None,
 ) -> list[NormalizedRule]:
     """Policies (IPv4/Dual-Stack in firewall/policy) und - FortiOS 6.x - firewall/policy6."""
     maps = address_maps(addresses, groups, addresses6, groups6)
     smap = build_service_map(services, service_groups)
-    vipmap = build_vip_map(vips)
-    rules = [_normalize_policy(p, maps, smap, vipmap) for p in policies]
-    rules += [_normalize_policy(p, maps, smap, vipmap, v6_table=True) for p in policies6 or []]
+    vipmaps = (build_vip_map(vips), build_vip_map(vips6))
+    rules = [_normalize_policy(p, maps, smap, vipmaps) for p in policies]
+    rules += [_normalize_policy(p, maps, smap, vipmaps, v6_table=True) for p in policies6 or []]
     return rules
 
 
@@ -284,11 +285,16 @@ def _extra_endpoints(policy: dict, side: str) -> tuple[list[str], list[str]]:
 
 
 def _normalize_policy(
-    policy: dict, maps: tuple[dict, dict], smap: dict, vipmap: dict, v6_table: bool = False
+    policy: dict,
+    maps: tuple[dict, dict],
+    smap: dict,
+    vipmaps: tuple[dict, dict] | dict,
+    v6_table: bool = False,
 ) -> NormalizedRule:
     """Eine Policy; IPv4- (srcaddr/dstaddr) und IPv6-Felder (srcaddr6/dstaddr6) loesen je
-    gegen ihre eigene Objekt-Tabelle auf. In policy6 (FortiOS 6.x) ist alles IPv6."""
+    gegen ihre eigene Objekt-Tabelle auf (VIPs: vip bzw. vip6). In policy6 ist alles IPv6."""
     amap4, amap6 = maps
+    vipmap, vipmap6 = vipmaps if isinstance(vipmaps, tuple) else (vipmaps, {})
     if v6_table:
         src4, dst4 = [], []
         src6, dst6 = _names(policy, "srcaddr", "srcaddr6"), _names(policy, "dstaddr", "dstaddr6")
@@ -297,9 +303,9 @@ def _normalize_policy(
         src6, dst6 = _names(policy, "srcaddr6"), _names(policy, "dstaddr6")
     svc_refs = _names(policy, "service")
     sources = [v for n in src4 for v in resolve_address(n, amap4, vipmap)]
-    sources += [v for n in src6 for v in resolve_address(n, amap6)]
+    sources += [v for n in src6 for v in resolve_address(n, amap6, vipmap6)]
     destinations = [v for n in dst4 for v in resolve_address(n, amap4, vipmap)]
-    destinations += [v for n in dst6 for v in resolve_address(n, amap6)]
+    destinations += [v for n in dst6 for v in resolve_address(n, amap6, vipmap6)]
     svc = [t for n in svc_refs for t in resolve_service(n, smap)]
     extra_src, extra_src_values = _extra_endpoints(policy, "src")
     extra_dst, extra_dst_values = _extra_endpoints(policy, "dst")
@@ -369,30 +375,127 @@ def _first_mapped_ip(vip: dict) -> str | None:
     return None
 
 
-def normalize_nat(vips: list[dict] | None) -> list[NormalizedNat]:
-    """FortiGate-VIPs -> NAT-/DNAT-Dokumentation (extip -> mappedip:port)."""
+def _extip(vip: dict) -> str:
+    extip = vip.get("extip") or ""
+    if isinstance(extip, list):
+        extip = (extip[0].get("range", "") if extip and isinstance(extip[0], dict) else "") or ""
+    return str(extip).strip()
+
+
+def _names_of(value) -> list[str]:
+    """FortiOS-Liste [{name: …}] bzw. Einzelwert -> Namen."""
+    if isinstance(value, list):
+        return [str(v.get("name")) for v in value if isinstance(v, dict) and v.get("name")]
+    return [str(value)] if value else []
+
+
+SLB = "server-load-balance"
+# Virtual Server: Einstellungen wie auf der FortiGate (Zertifikat nur mit Namen, nie Schluessel)
+_SLB_ATTRS = (
+    "server-type",
+    "ldb-method",
+    "persistence",
+    "http-ip-header",
+    "http-multiplex",
+    "http-host",
+    "max-embryonic-connections",
+    "ssl-mode",
+    "ssl-min-version",
+    "ssl-max-version",
+)
+_SLB_DEFAULTS = {"", "0", "none", "disable", "None"}
+
+
+def _real_servers(vip: dict) -> list[dict[str, Any]]:
+    """Real Server eines Virtual Servers: IP bzw. Adressobjekt, Port, Status, Gewicht,
+    Health-Check (je Server oder vom VIP), Holddown, max. Verbindungen."""
+    out: list[dict[str, Any]] = []
+    for rs in vip.get("realservers") or []:
+        if not isinstance(rs, dict):
+            continue
+        ip = str(rs.get("ip") or "").strip()
+        entry = {
+            "id": rs.get("id"),
+            "ip": None if ip in ("", "0.0.0.0", "::") else ip,  # noqa: S104 - leer = Objekt
+            "address": rs.get("address") or None,  # type=address: FQDN-/Adressobjekt
+            "port": rs.get("port") or None,
+            "status": rs.get("status") or "active",
+            "weight": rs.get("weight"),
+            "healthcheck": rs.get("healthcheck"),
+            "monitor": _names_of(rs.get("monitor")),
+            "holddown": rs.get("holddown-interval"),
+            "max_connections": rs.get("max-connections") or None,
+            "http_host": rs.get("http-host") or None,
+        }
+        out.append({k: v for k, v in entry.items() if v not in (None, [], "")})
+    return out
+
+
+def _slb_attrs(vip: dict, monitors: dict[str, dict]) -> dict[str, Any]:
+    attrs = {k: vip[k] for k in _SLB_ATTRS if str(vip.get(k, "")).strip() not in _SLB_DEFAULTS}
+    names = _names_of(vip.get("monitor"))
+    if names:
+        attrs["monitor"] = [{"name": n, **monitors.get(n, {})} for n in names]
+    cert = _names_of(vip.get("ssl-certificate"))
+    if cert:
+        attrs["ssl-certificate"] = cert
+    return attrs
+
+
+# Health-Check (firewall/ldb-monitor): was er prueft - ohne Standardwerte
+_MONITOR_ATTRS = ("type", "port", "interval", "timeout", "retry", "http-get", "http-match")
+
+
+def monitor_map(monitors: list[dict] | None) -> dict[str, dict]:
+    return {
+        m["name"]: {k: m[k] for k in _MONITOR_ATTRS if m.get(k) not in (None, "", 0)}
+        for m in monitors or []
+        if m.get("name")
+    }
+
+
+def normalize_nat(
+    vips: list[dict] | None,
+    vips6: list[dict] | None = None,
+    monitors: list[dict] | None = None,
+) -> list[NormalizedNat]:
+    """FortiGate-VIPs -> NAT-/DNAT-Dokumentation (extip -> mappedip:port). Virtual Server
+    (Typ server-load-balance) mit allen Real Servern, Methode, Persistenz und Health-Checks."""
+    mons = monitor_map(monitors)
     out: list[NormalizedNat] = []
-    for vip in vips or []:
-        extip = vip.get("extip") or ""
-        if isinstance(extip, list):
-            extip = (
-                extip[0].get("range", "") if extip and isinstance(extip[0], dict) else ""
-            ) or ""
-        portforward = str(vip.get("portforward", "")).lower() == "enable"
-        out.append(
-            NormalizedNat(
-                source_platform="fortigate",
-                external_id=vip.get("name", ""),
-                name=vip.get("name", ""),
-                ext_ip=str(extip).strip() or None,
-                ext_port=(vip.get("extport") or None) if portforward else None,
-                mapped_ip=_first_mapped_ip(vip),
-                mapped_port=(vip.get("mappedport") or None) if portforward else None,
-                protocol=(vip.get("protocol") or None) if portforward else None,
-                portforward=portforward,
-                raw=vip,
+    for family, items in (("v4", vips or []), ("v6", vips6 or [])):
+        for vip in items:
+            vtype = vip.get("type") or "static-nat"
+            slb = vtype == SLB
+            targets = _real_servers(vip) if slb else []
+            portforward = str(vip.get("portforward", "")).lower() == "enable"
+            if slb:  # erster Real Server mit IP steht fuer Altsichten als internes Ziel
+                first = next((t for t in targets if t.get("ip")), {})
+                mapped_ip = first.get("ip")
+                mapped_port = str(first["port"]) if first.get("port") else None
+                protocol = vip.get("server-type") or None
+            else:
+                mapped_ip = _first_mapped_ip(vip)
+                mapped_port = (vip.get("mappedport") or None) if portforward else None
+                protocol = (vip.get("protocol") or None) if portforward else None
+            out.append(
+                NormalizedNat(
+                    source_platform="fortigate",
+                    external_id=vip.get("name", ""),
+                    name=vip.get("name", ""),
+                    ext_ip=_extip(vip) or None,
+                    ext_port=(vip.get("extport") or None) if (portforward or slb) else None,
+                    mapped_ip=mapped_ip,
+                    mapped_port=mapped_port,
+                    protocol=protocol,
+                    portforward=portforward,
+                    vip_type=vtype,
+                    family=family,
+                    targets=targets,
+                    attrs=_slb_attrs(vip, mons) if slb else {},
+                    raw=vip,
+                )
             )
-        )
     return out
 
 
@@ -437,13 +540,14 @@ def build_device_objects(
     ippools: list[dict] | None = None,
     services: list[dict] | None = None,
     service_groups: list[dict] | None = None,
+    vips6: list[dict] | None = None,
 ) -> list[NormalizedObject]:
     """Alle Firewall-Objekte so, wie sie auf dem Geraet stehen (Inventar, ADR 0010). IPv4- und
     IPv6-Objekte loesen je in ihrer Familie auf (gleiche Namen = verschiedene Objekte)."""
     amap4, amap6 = address_maps(addresses, groups, addresses6, groups6)
     maps = {"v4": amap4, "v6": amap6}
     vipmap = build_vip_map(vips)
-    vipmaps = {"v4": vipmap, "v6": {}}
+    vipmaps = {"v4": vipmap, "v6": build_vip_map(vips6)}
     out: list[NormalizedObject] = []
     for family, items in (("v4", addresses), ("v6", addresses6 or [])):
         for a in items:
@@ -474,20 +578,27 @@ def build_device_objects(
                     family=family,
                 )
             )
-    for v in vips or []:
-        out.append(
-            NormalizedObject(
-                name=v["name"],
-                category="vip",
-                obj_type=v.get("type") or "static-nat",
-                color=_as_color(v.get("color")),
-                value=vipmap.get(v["name"]) or None,
-                values=[x for x in (vipmap.get(v["name"]), _first_mapped_ip(v)) if x],
-                comment=v.get("comment") or None,
-                interface=v.get("extintf") or None,
-                family="v4",
+    for family, items in (("v4", vips or []), ("v6", vips6 or [])):
+        for v in items:
+            ext = vipmaps[family].get(v["name"])
+            if v.get("type") == SLB:  # Virtual Server: externe IP + alle Real Server
+                targets = [t["ip"] for t in _real_servers(v) if t.get("ip")]
+            else:
+                targets = [x for x in (_first_mapped_ip(v),) if x]
+            out.append(
+                NormalizedObject(
+                    name=v["name"],
+                    category="vip",
+                    obj_type=v.get("type") or "static-nat",
+                    color=_as_color(v.get("color")),
+                    value=ext or None,
+                    values=_dedup([x for x in (ext, *targets) if x]),
+                    comment=v.get("comment") or None,
+                    interface=v.get("extintf") or None,
+                    family=family,
+                    attrs={"server-type": v["server-type"]} if v.get("server-type") else {},
+                )
             )
-        )
     for p in ippools or []:
         start, end = str(p.get("startip") or ""), str(p.get("endip") or "")
         rng = f"{start}-{end}" if end and end != start else start

@@ -106,6 +106,16 @@ def external_name(nat: NatRule) -> str | None:
     return None
 
 
+SLB = "server-load-balance"  # FortiGate Virtual Server (Lastverteilung)
+
+
+def internal_ips(nat: NatRule) -> list[str]:
+    """Interne Ziele: zugeordnete IP bzw. alle Real Server eines Virtual Servers."""
+    ips = [nat.mapped_ip] if nat.mapped_ip else []
+    ips += [t["ip"] for t in nat.targets or [] if isinstance(t, dict) and t.get("ip")]
+    return list(dict.fromkeys(ips))
+
+
 def servers_by_ip(
     session: Session, tenant_id: int, ips: set[str]
 ) -> dict[str, list[tuple[int, str]]]:

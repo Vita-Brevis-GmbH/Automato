@@ -42,6 +42,7 @@ from app.models import (
 )
 from app.schemas.rules import AciContractOut, RuleNatOut, RuleOut, RulePairOut
 from app.store import epgs as epg_store
+from app.store import nat as nat_store
 from app.store import objects as objects_store
 from app.store import references, rule_pairs, rule_view
 from app.store import rules as rules_store
@@ -195,8 +196,14 @@ class _Builder:
                     nat = self.nat.get((source, o.name.lower()))
                     if nat is not None:
                         parts += [nat.ext_ip, nat.ext_port, nat.mapped_ip, nat.mapped_port]
-                        values += [v for v in (nat.ext_ip, nat.mapped_ip) if v]
-                        add_range("dst", nat.mapped_ip, o.name)  # DNAT-Ziel: der Server
+                        internal = nat_store.internal_ips(nat)  # Virtual Server: alle
+                        parts += [
+                            *internal,
+                            *(str(t.get("address") or "") for t in nat.targets or []),
+                        ]
+                        values += [v for v in (nat.ext_ip, *internal) if v]
+                        for ip in internal:  # DNAT-Ziel: der Server bzw. die Real Server
+                            add_range("dst", ip, o.name)
         for pool in rule_view.snat_pools(rule) or []:
             names.add(pool.lower())
             nat_names.add(pool.lower())
@@ -367,13 +374,33 @@ def ensure(session: Session, tenant_id: int | None) -> None:
 # -- Abfragen -----------------------------------------------------------------
 
 
+def _overlaps(parsed: tuple[int, str, str, bool], include_any: bool, roles=("src", "dst")):
+    """Regel hat einen IP-Bereich (Quelle/Ziel), der sich mit `parsed` ueberschneidet."""
+    fam, lo, hi, _ = parsed
+    cond = [
+        RuleIpRange.rule_id == Rule.id,
+        RuleIpRange.family == fam,
+        RuleIpRange.lo <= hi,
+        RuleIpRange.hi >= lo,
+        RuleIpRange.role.in_(roles),
+    ]
+    if not include_any:
+        cond.append(RuleIpRange.is_any.is_(False))
+    return exists(select(RuleIpRange.id).where(*cond))
+
+
 def conditions(
     q: str | None = None,
     object_name: str | None = None,
     object_id: int | None = None,
     nat: str | None = None,
+    net: str | None = None,
+    net_any: bool = True,
 ) -> list:
-    """WHERE-Bedingungen ueber `Rule.id` fuer Suche und exakte Filter."""
+    """WHERE-Bedingungen ueber `Rule.id` fuer Suche und exakte Filter. Ein Suchwort, das eine
+    IP ist, trifft Regeln mit dieser IP im Bereich; ein Netz (CIDR) trifft Regeln, deren
+    Bereiche sich mit ihm ueberschneiden (beides ohne any). `net` = Regeln eines Subnetzes
+    (Quelle/Ziel ueberschneidet sich, auf Wunsch inkl. any)."""
     conds = []
     has_index = select(RuleIndex.rule_id).where(RuleIndex.rule_id == Rule.id)
     for token in (q or "").lower().split():
@@ -391,7 +418,12 @@ def conditions(
                 )
             )
             text = or_(text, inside)
+        elif "/" in token and (parsed := _parse_range(token)) is not None and not parsed[3]:
+            text = or_(text, _overlaps(parsed, include_any=False))
         conds.append(text)
+    if net:
+        parsed = value_range(net.strip())
+        conds.append(_overlaps(parsed, net_any) if parsed else Rule.id.is_(None))
     if object_name:
         key = f"\n{object_name.strip().lower()}\n"
         conds.append(exists(has_index.where(RuleIndex.names.contains(key, autoescape=True))))
@@ -410,34 +442,57 @@ def conditions(
     return conds
 
 
-def covering(
+class Cover:
+    """Wie eine Regel einen Wert abdeckt: je Seite der engste Bereich (Objekt/Wert, any)."""
+
+    def __init__(self) -> None:
+        self.sides: dict[str, tuple[int, str | None, bool]] = {}
+
+    def add(self, role: str, width: int, via: str | None, is_any: bool) -> None:
+        if role not in self.sides or width < self.sides[role][0]:
+            self.sides[role] = (width, via, is_any)
+
+    def via(self, role: str) -> str:
+        """`any` bzw. das Objekt/der Wert, ueber den die Regel greift."""
+        _, via, is_any = self.sides[role]
+        return "any" if is_any else (via or "Netz")
+
+
+def covers(
     session: Session,
     tenant_id: int,
-    value: str,
-    role: str | None = None,
-    include_any: bool = True,
+    values: list[str],
     overlap: bool = False,
-) -> dict[int, set[str]]:
-    """Regel-ID -> Rollen (src/dst), deren IP-Bereiche den Wert enthalten (bzw. mit `overlap`
-    sich mit ihm ueberschneiden, z. B. ein EPG-Subnetz und die Hosts darin)."""
-    parsed = value_range(value)
-    if parsed is None:
-        return {}
-    fam, lo, hi, _ = parsed
-    stmt = select(RuleIpRange.rule_id, RuleIpRange.role).where(
-        RuleIpRange.tenant_id == tenant_id, RuleIpRange.family == fam
-    )
-    if overlap:
-        stmt = stmt.where(RuleIpRange.lo <= hi, RuleIpRange.hi >= lo)
-    else:
-        stmt = stmt.where(RuleIpRange.lo <= lo, RuleIpRange.hi >= hi)
-    if role is not None:
-        stmt = stmt.where(RuleIpRange.role == role)
-    if not include_any:
-        stmt = stmt.where(RuleIpRange.is_any.is_(False))
-    out: dict[int, set[str]] = defaultdict(set)
-    for rule_id, r in session.execute(stmt):
-        out[rule_id].add(r)
+    domain: RuleDomain | None = None,
+) -> dict[int, Cover]:
+    """Regel-ID -> Abdeckung (Quelle/Ziel) fuer IPs bzw. Netze: Bereiche, die den Wert
+    enthalten (bzw. mit `overlap` sich mit ihm ueberschneiden - EPG-Subnetze), inkl. any."""
+    out: dict[int, Cover] = {}
+    for value in dict.fromkeys(values):
+        parsed = value_range(value)
+        if parsed is None:
+            continue
+        fam, lo, hi, _ = parsed
+        stmt = select(
+            RuleIpRange.rule_id,
+            RuleIpRange.role,
+            RuleIpRange.lo,
+            RuleIpRange.hi,
+            RuleIpRange.via,
+            RuleIpRange.is_any,
+        ).where(
+            RuleIpRange.tenant_id == tenant_id,
+            RuleIpRange.family == fam,
+            RuleIpRange.role.in_(("src", "dst")),
+        )
+        if overlap:
+            stmt = stmt.where(RuleIpRange.lo <= hi, RuleIpRange.hi >= lo)
+        else:
+            stmt = stmt.where(RuleIpRange.lo <= lo, RuleIpRange.hi >= hi)
+        if domain is not None:
+            stmt = stmt.join(Rule, Rule.id == RuleIpRange.rule_id).where(Rule.domain == domain)
+        for rule_id, role, rlo, rhi, via, is_any in session.execute(stmt):
+            out.setdefault(rule_id, Cover()).add(role, int(rhi, 16) - int(rlo, 16), via, is_any)
     return out
 
 

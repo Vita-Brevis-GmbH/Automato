@@ -65,12 +65,7 @@ class FortiGateClient:
     def policies6(self) -> list[dict[str, Any]]:
         """IPv6-Policies in eigener Tabelle (FortiOS 6.x). Ab FortiOS 7.0 stehen sie in
         firewall/policy (srcaddr6/dstaddr6) - die Tabelle fehlt dann (404/405/400)."""
-        try:
-            return self._get("firewall/policy6")
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code in (400, 404, 405):
-                return []
-            raise
+        return self._optional("firewall/policy6")
 
     def addresses(self) -> list[dict[str, Any]]:
         return self._get("firewall/address")
@@ -97,6 +92,23 @@ class FortiGateClient:
         # Virtual IPs (DNAT/Port-Forward): externe IP -> internes Ziel.
         return self._get("firewall/vip")
 
+    def vips6(self) -> list[dict[str, Any]]:
+        """IPv6-VIPs inkl. Virtual Server (server-load-balance)."""
+        return self._optional("firewall/vip6")
+
+    def ldb_monitors(self) -> list[dict[str, Any]]:
+        """Health-Checks der Virtual Server (Typ, Port, Intervall) - ohne Lese-Recht leer."""
+        return self._optional("firewall/ldb-monitor")
+
+    def _optional(self, path: str) -> list[dict[str, Any]]:
+        """Tabelle, die je nach FortiOS-Version bzw. Profil fehlen darf (404/405/400/403)."""
+        try:
+            return self._get(path)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (400, 403, 404, 405):
+                return []
+            raise
+
     def ippools(self) -> list[dict[str, Any]]:
         # IP-Pools fuer Source-NAT (IPP_).
         return self._get("firewall/ippool")
@@ -117,6 +129,8 @@ class FortiGateClient:
             "services": self.services(),
             "service_groups": self.service_groups(),
             "vips": self.vips(),
+            "vips6": self.vips6(),
+            "ldb_monitors": self.ldb_monitors(),
             "ippools": self.ippools(),
             "interfaces": self.interfaces(),
             "zones": self.zones(),
