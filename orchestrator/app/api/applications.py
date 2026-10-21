@@ -17,6 +17,7 @@ from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.models import Application, Site
+from app.schemas.rules import RuleOut
 from app.store import applications as store
 from app.store import sites
 
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/applications", tags=["applications"])
 
 MemberKind = Literal["ap", "epg", "host"]
 Criticality = Literal["low", "medium", "high", "critical"]
+Purpose = Literal["dev", "test", "prod"]
 
 
 class MemberIn(BaseModel):
@@ -33,6 +35,9 @@ class MemberIn(BaseModel):
 
 class ApplicationIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+    external_name: str | None = Field(default=None, max_length=200)
+    internal_name: str | None = Field(default=None, max_length=200)
+    purpose: Purpose | None = None
     code: str | None = Field(default=None, max_length=50)
     owner: str | None = Field(default=None, max_length=200)
     criticality: Criticality | None = None
@@ -43,6 +48,9 @@ class ApplicationIn(BaseModel):
 
 class ApplicationPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    external_name: str | None = Field(default=None, max_length=200)
+    internal_name: str | None = Field(default=None, max_length=200)
+    purpose: Purpose | None = None
     code: str | None = Field(default=None, max_length=50)
     owner: str | None = Field(default=None, max_length=200)
     criticality: Criticality | None = None
@@ -68,6 +76,9 @@ class ApplicationOut(BaseModel):
     id: int
     tenant_id: int
     name: str
+    external_name: str | None = None
+    internal_name: str | None = None
+    purpose: str | None = None  # dev | test | prod
     code: str | None
     owner: str | None
     criticality: str | None
@@ -101,17 +112,98 @@ class AcceptIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
 
 
+class RuleCounts(BaseModel):
+    specific: int = 0  # Regeln, die das System selbst bzw. die EPG nennen
+    unspecific: int = 0  # nur ueber ein Subnetz, any, vzAny bzw. die Preferred Group
+
+
 class DocSystemOut(BaseModel):
+    """System der Applikation: eine VM (vCenter) bzw. ein Server ohne VM (0.14.0)."""
+
+    key: str  # vm:<id> | host:<id> (Filter der Regeln)
+    kind: str  # vm | host
     name: str
-    kind: str  # host | epg
-    ip: str | None
-    site: SiteRef | None
+    ips: list[str] = []
+    dns: list[str] = []  # DNS-Namen der IPs aus dem IPAM
+    servers: list[str] = []  # Host-Objekte mit diesen IPs (Regel-Endpunkte, Befunde)
+    objects: list[dict] = []  # Firewall-Adressobjekte mit genau dieser IP: id, name, Quelle
+    epgs: list[str] = []  # EPGs mit ganzem ACI-Pfad Tenant/AP/EPG
+    portgroups: list[str] = []
+    vm_id: int | None = None
+    power_state: str | None = None
+    guest_os: str | None = None
+    cluster: str | None = None
+    host: str | None = None  # ESXi-Host
+    site: SiteRef | None = None
+    member: str  # warum das System dazugehoert (Mitglied, Portgruppe -> EPG, IP = Server)
+    rules: RuleCounts = RuleCounts()
+
+
+class DocEpgOut(BaseModel):
+    key: str  # epg:<id>
+    id: int
+    label: str  # Tenant/AP/EPG
+    dn: str | None = None
+    tenant: str | None = None
+    ap: str | None = None
+    name: str
+    bd: str | None = None
+    vrf: str | None = None
+    pref_group: bool = False
+    subnets: list[str] = []
+    vm_count: int = 0
+    endpoint_count: int = 0
+    member: str
+    rules: RuleCounts = RuleCounts()
+
+
+class DocHitOut(BaseModel):
+    """Warum eine Regel fuer ein System der Applikation gilt (je Regel, System und Seite)."""
+
+    rule_id: int
+    system: str  # Schluessel aus systems/epgs
+    table: int  # Kategorie 1-10
+    direction: str  # in (System ist Ziel) | out (System ist Quelle)
+    via: str  # Bezug: direkt, Objekt/Gruppe, Netz, any, vzAny <VRF>, ESG <Name>, EPG <Pfad>
+    scope: str  # specific | subnet | any | vzany | pref_group
+    counterpart: str = ""
+    services: str = ""
+
+
+class DocSummaryOut(BaseModel):
+    vms: int = 0
+    servers: int = 0  # Server ohne VM
+    epgs: int = 0
+    rules: int = 0
+    firewall: int = 0
+    aci: int = 0
+    specific: int = 0
+    unspecific: int = 0
+    by_scope: dict[str, int] = {}  # subnet | any | vzany | pref_group
+    findings: int = 0
+
+
+class DocFindingOut(BaseModel):
+    id: int
+    type: str
+    severity: str
+    status: str
+    subject_kind: str
+    subject_id: str
+    message: str
+    hint: str | None = None
+    rule_id: int | None = None
 
 
 class ApplicationDocOut(BaseModel):
     application: ApplicationOut
     tenant_code: str | None
+    summary: DocSummaryOut
     systems: list[DocSystemOut]
+    epgs: list[DocEpgOut]
+    hits: list[DocHitOut]
+    rules: list[RuleOut]
+    findings: list[DocFindingOut]
     tables: list[DocTableOut]
 
 
@@ -126,6 +218,9 @@ def _out(session: Session, app: Application, resolver: store.Resolver) -> Applic
         id=app.id,
         tenant_id=app.tenant_id,
         name=app.name,
+        external_name=app.external_name,
+        internal_name=app.internal_name,
+        purpose=app.purpose,
         code=app.code,
         owner=app.owner,
         criticality=app.criticality,
@@ -172,6 +267,10 @@ def _actor(principal: Principal) -> str:
     return f"user:{principal.subject}"
 
 
+def _text(value: str | None) -> str | None:
+    return (value or "").strip() or None
+
+
 @router.get("", response_model=list[ApplicationOut])
 def list_applications(
     tenant_id: int | None = None,
@@ -208,6 +307,9 @@ def create_application(
     app = Application(
         tenant_id=tid,
         name=name,
+        external_name=_text(body.external_name),
+        internal_name=_text(body.internal_name),
+        purpose=body.purpose,
         code=(body.code or "").strip() or None,
         owner=body.owner,
         criticality=body.criticality,
@@ -345,7 +447,10 @@ def update_application(
         app.site_id = body.site_id
     if "code" in fields:
         app.code = (body.code or "").strip() or None
-    for attr in ("owner", "criticality", "description"):
+    for attr in ("external_name", "internal_name"):
+        if attr in fields:
+            setattr(app, attr, _text(getattr(body, attr)))
+    for attr in ("owner", "criticality", "purpose", "description"):
         if attr in fields:
             setattr(app, attr, getattr(body, attr))
     store.touch(app)
@@ -361,6 +466,7 @@ def update_application(
             "name": app.name,
             "code": app.code,
             "criticality": app.criticality,
+            "purpose": app.purpose,
             "site_id": app.site_id,
             "fields": sorted(fields),
         },

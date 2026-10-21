@@ -3,8 +3,8 @@
 Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), vier FortiGates (eine mit gleichnamigen
 IPv4/IPv6-Objekten und Regelpaaren, eine mit Virtual Server), einem APIC, virtuellen und
 physischen Standorten, NAT/VIPs, Gruppen, Diensten mit Namensschema-Befunden, einem
-ACI-Contract ohne Consumer und einem vCenter mit einer VM hinter H_web01. Alles ueber die
-oeffentliche bzw. interne API wie im Betrieb.
+ACI-Contract ohne Consumer, einem vCenter mit einer VM hinter H_web01 und einer Applikation
+(AP mit EPG und VM). Alles ueber die oeffentliche bzw. interne API wie im Betrieb.
 """
 
 import sys
@@ -167,3 +167,14 @@ def run(app) -> None:
     }
     groups = [{"name": "TE|AP|EG_db", "vlan": 1107, "vm_count": 1}]  # fmt: skip
     run_result(vc, "vmware", virtual={"vms": [vm], "portgroups": groups})
+
+    # Applikation (0.14.0): AP TE/AP mit der EPG EG_db und der VM dahinter
+    app = {
+        "name": "Webshop",
+        "external_name": "Shop Kunde A",
+        "internal_name": "webshop-ka",
+        "purpose": "prod",
+        "code": "007",
+        "members": [{"kind": "ap", "ref": "TE/AP"}],
+    }
+    ok(c.post(f"/applications?tenant_id={tid}", json=app), 201)

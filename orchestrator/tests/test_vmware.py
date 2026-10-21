@@ -180,6 +180,16 @@ def test_vm_in_regeln_suche_epg_und_doku(client):
     rule = client.get(f"/rules/{page[0]['id']}").json()
     (dst,) = (e for e in rule["endpoints"] if e["role"] == "dst")
     assert dst["vm"]["name"] == "web01-007-ka" and dst["vm"]["epg"] == "TE_ka/AP_007/EG_web01"
+    # Detailansicht (0.14.0): alles, was das vCenter ueber die VM weiss
+    vm = dst["vm"]
+    assert (vm["guest_os"], vm["host"], vm["vcpus"], vm["memory_mb"]) == (
+        "Ubuntu Linux (64-bit)",
+        "esx01-chzrh1.example.ch",
+        2,
+        4096,
+    )
+    assert vm["ips"] == ["10.20.0.5"] and vm["mac"] == "00:50:56:aa:00:01"
+    assert vm["epg_match"] == "name" and vm["nic"] == "Network adapter 1"
     (ref,) = (r for r in rule["refs"] if r["name"] == "H_web01")
     assert ref["values"][0]["vm"]["name"] == "web01-007-ka"  # auch am Firewall-Objekt
 

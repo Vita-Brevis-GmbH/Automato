@@ -380,6 +380,13 @@ pre.block { background: var(--surface-2); border: 1px solid var(--border); borde
 .refdetails > summary::before { content: "▸"; color: var(--faint); font-size: 10px; margin-right: 5px; float: left; line-height: 20px; }
 .refdetails[open] > summary::before { content: "▾"; }
 .refblock { margin: 6px 0 8px 14px; padding: 8px 10px; border-left: 2px solid var(--border-strong); }
+/* Applikations-Doku (0.14.0): Kopf, Kennzahlen, Erklärung im Regel-Detail */
+.app-head { margin-bottom: 14px; }
+.app-title { font-size: 20px; font-weight: 600; margin: 0; }
+.app-names { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 4px; }
+.refblock.why { margin: 0 0 14px; border-left-color: var(--accent); background: var(--surface-2); }
+.why-list { margin: 4px 0 0; padding-left: 18px; }
+.why-list li { margin: 5px 0; }
 .kv.tight { grid-template-columns: 100px 1fr; gap: 3px 10px; font-size: 12px; margin: 4px 0 0; }
 .refcard { border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; margin-bottom: 8px; background: var(--surface); }
 .refcard-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 4px; }

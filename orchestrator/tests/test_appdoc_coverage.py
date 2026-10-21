@@ -107,6 +107,7 @@ def test_server_doku_mit_netzen_any_und_epg(client):
     rows = _rows(doc)
     assert rows["direct-in"][0]["Bezug"] == "direkt"
     assert rows["net-in"][0]["Bezug"] == "G_srv"  # ueber die Gruppe mit dem Netz
+    assert rows["net-in"][0]["_scope"] == "subnet"  # fuer den Server: ein ganzes Netz
     assert rows["any-out"][0]["Bezug"] == "any"
     assert rows["any-out"][0]["Target Systems"] == "203.0.113.0/24"
     assert "other" not in rows
@@ -122,10 +123,16 @@ def test_epg_doku_mit_vzany_esg_und_firewall(client):
     assert rows["CT_direct:SJ"][0]["Bezug"] == "direkt"
     assert rows["CT_vz:SJ"][0]["Bezug"] == "vzAny VRF1"
     assert rows["CT_esg:SJ"][0]["Bezug"] == "ESG ES_web"
-    assert rows["CT_esg:SJ"][0]["Target Systems"] == "EG_db"
+    assert rows["CT_esg:SJ"][0]["Target Systems"] == "TE/AP_001/EG_db"
     # Firewall-Regeln, die das EPG-Subnetz bzw. den Server darin erfassen
     assert {"direct-in", "net-in", "any-out"} <= set(rows) and "other" not in rows
-    assert rows["net-in"][0]["Server Name"] == "EG_app"
+    assert rows["net-in"][0]["Server Name"] == "TE/AP_001/EG_app"  # ganzer ACI-Pfad (0.14.0)
+    # Art des Bezugs (0.14.0): EPG selbst bzw. Host im Subnetz = spezifisch, sonst Netz/any/vzAny
+    assert rows["CT_direct:SJ"][0]["_scope"] == rows["CT_esg:SJ"][0]["_scope"] == "specific"
+    assert rows["CT_vz:SJ"][0]["_scope"] == "vzany"
+    assert rows["direct-in"][0]["_scope"] == "specific" and rows["direct-in"][0]["_dir"] == "in"
+    assert rows["net-in"][0]["_scope"] == "specific"  # genau das Subnetz der EPG
+    assert rows["any-out"][0]["_scope"] == "any" and rows["any-out"][0]["_dir"] == "out"
 
 
 def test_regeln_je_subnetz(client):

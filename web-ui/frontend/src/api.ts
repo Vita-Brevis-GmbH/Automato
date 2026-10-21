@@ -192,6 +192,22 @@ export interface VmInfo {
   vlan: number | null;
   epg: string | null; // Tenant/AP/EPG der Portgruppe
   others?: string[]; // weitere VMs mit derselben IP
+  // Detailansichten (0.14.0)
+  template?: boolean;
+  guest_os?: string | null;
+  hostname?: string | null;
+  datacenter?: string | null;
+  host?: string | null;
+  vcpus?: number | null;
+  memory_mb?: number | null;
+  disk_gb?: number | null;
+  notes?: string | null;
+  nic?: string | null;
+  mac?: string | null;
+  connected?: boolean | null;
+  ips?: string[];
+  epg_match?: string | null; // name | vlan
+  for_ip?: string; // NAT: welche interne IP
 }
 
 // VM aus dem vCenter (Objekte → VMs)
@@ -443,6 +459,7 @@ export interface Nat {
   family?: string | null; // v4 | v6
   targets?: NatTarget[]; // Virtual Server: Real Server
   attrs?: Record<string, unknown>; // Virtual Server: Server-Typ, Methode, Persistenz, Health-Checks
+  issues?: string[]; // Korrektheitsprüfung (0.14.0): Befunde des VIP-/Pool-Objekts, Ziel ohne IPAM
 }
 
 // Real Server eines Virtual Servers (FortiGate server-load-balance)
@@ -475,8 +492,10 @@ export interface NatDetail extends Nat {
   ext_info: IpInfo[];
   mapped_info: IpInfo[];
   color: number | null;
+  object_id: number | null; // VIP- bzw. Pool-Objekt
   settings: Record<string, string>;
   rules: Rule[];
+  vms: VmInfo[]; // VMs hinter dem internen Ziel
 }
 
 // Publizierte Dienste (VIPs)
@@ -517,7 +536,8 @@ export interface DocTable {
   title: string;
   enforcement: string;
   columns: string[];
-  rows: Record<string, string>[];
+  // Spalten als Text; dazu _rule (Regel-ID), _dir (in | out), _scope (Art des Bezugs)
+  rows: Record<string, string | number | null>[];
 }
 
 // VM hinter dem System (vCenter): beim Server die VM der IP, bei der EPG die VMs ihrer Portgruppen
@@ -541,6 +561,7 @@ export interface SystemDoc {
 // Applikationen (ADR 0012): Mitglieder AP (`Tenant/AP`), EPG (DN) und Server (Objektname)
 export type MemberKind = "ap" | "epg" | "host";
 export type Criticality = "low" | "medium" | "high" | "critical";
+export type Purpose = "dev" | "test" | "prod";
 export interface SiteRef {
   id: number;
   code: string;
@@ -554,6 +575,9 @@ export interface Application {
   id: number;
   tenant_id: number;
   name: string;
+  external_name: string | null; // Name gegen aussen (Fachbereich/Kunde)
+  internal_name: string | null; // Name im Betrieb
+  purpose: Purpose | null; // Verwendungszweck
   code: string | null;
   owner: string | null;
   criticality: Criticality | null;
@@ -595,6 +619,9 @@ export interface AppSuggestion {
 
 export interface ApplicationInput {
   name?: string;
+  external_name?: string | null;
+  internal_name?: string | null;
+  purpose?: Purpose | null;
   code?: string | null;
   owner?: string | null;
   criticality?: Criticality | null;
@@ -602,10 +629,90 @@ export interface ApplicationInput {
   description?: string | null;
 }
 
+// Applikations-Doku (0.14.0): Systeme (VMs bzw. Server ohne VM), EPGs, Treffer je Regel und
+// System (Richtung, Bezug), Regeln wie in der Regel-Ansicht, Kennzahlen, Befunde
+export type DocScope = "specific" | "subnet" | "any" | "vzany" | "pref_group";
+export interface DocRuleCounts {
+  specific: number;
+  unspecific: number;
+}
+export interface AppDocSystem2 {
+  key: string; // vm:<id> | host:<id>
+  kind: "vm" | "host";
+  name: string;
+  ips: string[];
+  dns: string[];
+  servers: string[];
+  objects: { id: number; name: string; source_system_id: number }[];
+  epgs: string[]; // Tenant/AP/EPG
+  portgroups: string[];
+  vm_id: number | null;
+  power_state: string | null;
+  guest_os: string | null;
+  cluster: string | null;
+  host: string | null;
+  site: SiteRef | null;
+  member: string; // warum das System dazugehört
+  rules: DocRuleCounts;
+}
+export interface AppDocEpg {
+  key: string; // epg:<id>
+  id: number;
+  label: string; // Tenant/AP/EPG
+  dn: string | null;
+  tenant: string | null;
+  ap: string | null;
+  name: string;
+  bd: string | null;
+  vrf: string | null;
+  pref_group: boolean;
+  subnets: string[];
+  vm_count: number;
+  endpoint_count: number;
+  member: string;
+  rules: DocRuleCounts;
+}
+export interface AppDocHit {
+  rule_id: number;
+  system: string; // Schlüssel aus systems/epgs
+  table: number; // Kategorie 1–10
+  direction: "in" | "out";
+  via: string; // Bezug
+  scope: DocScope;
+  counterpart: string;
+  services: string;
+}
+export interface AppDocFinding {
+  id: number;
+  type: string;
+  severity: string;
+  status: string;
+  subject_kind: string;
+  subject_id: string;
+  message: string;
+  hint: string | null;
+  rule_id: number | null;
+}
 export interface ApplicationDoc {
   application: Application;
   tenant_code: string | null;
-  systems: { name: string; kind: string; ip: string | null; site: SiteRef | null }[];
+  summary: {
+    vms: number;
+    servers: number;
+    epgs: number;
+    rules: number;
+    firewall: number;
+    aci: number;
+    specific: number;
+    unspecific: number;
+    by_scope: Record<string, number>;
+    findings: number;
+  };
+  systems: AppDocSystem2[];
+  epgs: AppDocEpg[];
+  hits: AppDocHit[];
+  rules: Rule[];
+  findings: AppDocFinding[];
   tables: DocTable[];
 }
 
@@ -1153,11 +1260,12 @@ export const fetchNat = (opts: {
   tenantId?: number | null;
   natType?: string;
   q?: string;
+  issuesOnly?: boolean;
   limit?: number;
   offset?: number;
 }) =>
   getPage<Nat>(
-    `/api/nat${qs({ tenant_id: opts.tenantId, nat_type: opts.natType, q: opts.q?.trim(), limit: opts.limit, offset: opts.offset })}`,
+    `/api/nat${qs({ tenant_id: opts.tenantId, nat_type: opts.natType, q: opts.q?.trim(), issues_only: opts.issuesOnly ? "true" : undefined, limit: opts.limit, offset: opts.offset })}`,
   );
 export const fetchNatDetail = (id: number) => getJSON<NatDetail>(`/api/nat/${id}`);
 export const fetchFindings = (opts: {

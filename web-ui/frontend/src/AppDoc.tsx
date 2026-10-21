@@ -10,6 +10,7 @@ import {
   SystemDoc,
 } from "./api";
 import { siteLabel, SiteOptions } from "./sites";
+import type { View, ViewParams } from "./App";
 import Apps from "./Apps";
 import type { Me } from "./auth";
 import PublishedServices from "./PublishedServices";
@@ -17,16 +18,27 @@ import { download, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
 type Mode = "apps" | "doc" | "vips";
 
-// Applikationen: (a) Applikationen als fachliche Klammer (ADR 0012) mit Doku je Applikation,
-// (b) Applikations-Doku pro System (10 Kategorien-Tabellen nach uc1-applikations-doku-spec.md)
-// inkl. Markdown-Export, (c) publizierte Dienste (VIPs).
-export default function AppDoc({ me, tenantId }: { me: Me; tenantId: number | null }) {
+// Applikationen: (a) Applikationen als fachliche Klammer (ADR 0012) – Klick öffnet ihre Doku
+// (#apps?app=<id>), (b) Applikations-Doku pro System (10 Kategorien-Tabellen nach
+// uc1-applikations-doku-spec.md) inkl. Markdown-Export, (c) publizierte Dienste (VIPs).
+export default function AppDoc({
+  me,
+  tenantId,
+  params = {},
+  onGo,
+}: {
+  me: Me;
+  tenantId: number | null;
+  params?: ViewParams;
+  onGo?: (v: View, p?: ViewParams) => void;
+}) {
   const [mode, setMode] = useState<Mode>("apps");
+  const appId = params.app ? Number(params.app) : null;
   const intro: Record<Mode, ReactNode> = {
     apps: (
       <>
-        Eine <b>Applikation</b> fasst Application Profiles, EPGs und Server zusammen; ihre Doku zeigt die
-        Zugriffe aller Systeme.
+        Eine <b>Applikation</b> fasst Application Profiles, EPGs und Server zusammen. Ein Klick öffnet ihre Doku:
+        VMs, EPGs und alle Regeln mit Richtung und Bezug.
       </>
     ),
     doc: (
@@ -38,7 +50,13 @@ export default function AppDoc({ me, tenantId }: { me: Me; tenantId: number | nu
     vips: "Über VIPs publizierte Dienste mit den zugehörigen Firewall-Regeln.",
   };
   const tab = (m: Mode, label: string) => (
-    <button className={mode === m ? "on" : ""} onClick={() => setMode(m)}>
+    <button
+      className={mode === m ? "on" : ""}
+      onClick={() => {
+        setMode(m);
+        if (appId != null) onGo?.("apps"); // Doku schliessen
+      }}
+    >
       {label}
     </button>
   );
@@ -56,7 +74,16 @@ export default function AppDoc({ me, tenantId }: { me: Me; tenantId: number | nu
       >
         <span className="no-print">{intro[mode]}</span>
       </PageHead>
-      {mode === "apps" && <Apps me={me} tenantId={tenantId} />}
+      {mode === "apps" && (
+        <Apps
+          me={me}
+          tenantId={tenantId}
+          appId={appId}
+          onOpen={(id) => onGo?.("apps", { app: String(id) })}
+          onBack={() => onGo?.("apps")}
+          onGo={onGo}
+        />
+      )}
       {mode === "doc" && <SystemDocView me={me} tenantId={tenantId} />}
       {mode === "vips" && <PublishedServices tenantId={tenantId} />}
     </>
@@ -295,7 +322,7 @@ export function tablesMarkdown(tables: DocTable[]): string[] {
     lines.push(`| ${t.columns.join(" | ")} |`);
     lines.push(`| ${t.columns.map(() => "---").join(" | ")} |`);
     for (const row of t.rows) {
-      lines.push(`| ${t.columns.map((c) => mdCell(row[c] ?? "")).join(" | ")} |`);
+      lines.push(`| ${t.columns.map((c) => mdCell(String(row[c] ?? ""))).join(" | ")} |`);
     }
     lines.push("");
   }

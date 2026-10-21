@@ -31,7 +31,8 @@ class DocTableOut(BaseModel):
     title: str
     enforcement: str
     columns: list[str]
-    rows: list[dict[str, str]]
+    # Spalten als Text; dazu `_rule` (Regel-ID), `_dir` (in | out) und `_scope` (Art des Bezugs)
+    rows: list[dict[str, str | int | None]]
 
 
 class SiteRef(BaseModel):

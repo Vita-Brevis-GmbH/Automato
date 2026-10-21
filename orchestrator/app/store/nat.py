@@ -146,17 +146,6 @@ def server_names(candidates: list[tuple[int, str]], source_system_id: int) -> li
     return same or list(dict.fromkeys(name for _, name in candidates))
 
 
-def device_object(session: Session, nat: NatRule) -> DeviceObject | None:
-    category = ObjectCategory.IPPOOL if nat.nat_type == "snat_pool" else ObjectCategory.VIP
-    return session.scalars(
-        select(DeviceObject).where(
-            DeviceObject.source_system_id == nat.source_system_id,
-            DeviceObject.category == category,
-            DeviceObject.name == nat.name,
-        )
-    ).first()
-
-
 def _in_range(value: str | None, ip) -> bool:
     if not value:
         return False

@@ -116,7 +116,7 @@ def test_app_doku_gleichnamige_epgs_mehrerer_aci_tenants(client):
     doc = client.get("/appdoc/systems/EG_app · TE_a · AP_100", params={"tenant_id": tid}).json()
     rows = {t["index"]: t["rows"] for t in doc["tables"]}
     # Gegenstelle in einem anderen ACI-Tenant -> Tabelle 9, mit Tenant gekennzeichnet
-    assert [r["Target Systems"] for r in rows[9]] == ["TE_b/EG_app"]
+    assert [r["Target Systems"] for r in rows[9]] == ["TE_b/AP_200/EG_app"]
 
 
 def test_app_doku_externe_gegenstelle_nach_l3out(client):

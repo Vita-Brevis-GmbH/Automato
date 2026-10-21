@@ -23,20 +23,16 @@ from app.models import (
     GROUP_CATEGORIES,
     SERVICE_CATEGORIES,
     DeviceObject,
-    Finding,
     InvDevice,
     InvInterface,
     InvSubnet,
     InvVlan,
     InvVrf,
-    MatchStatus,
-    NetworkObject,
     SourceSystem,
-    SubjectKind,
 )
 from app.store import naming_profiles as profile_store
 from app.store import objects as objects_store
-from app.store import reconcile, references, rule_index, sites
+from app.store import references, rule_index, sites
 
 router = APIRouter(tags=["objects"])
 
@@ -100,38 +96,10 @@ def list_objects(
 
         objects = [o for o in objects if _hit(o)]
     if issues_only:
-        issues = _issues(session, tid, objects)
+        issues = objects_store.object_issues(session, tid, objects)
         objects = [o for o in objects if issues.get(o.id)]
     page = objects[offset : offset + min(limit, 2000)]
     return {"total": len(objects), "rows": _object_rows(session, tid, page)}
-
-
-def _issues(session: Session, tid: int, objects: list[DeviceObject]) -> dict[int, list[str]]:
-    """Befunde je Objekt (aus dem Abgleich) und Werte ohne Treffer im IPAM - ohne die teure
-    Aufbereitung der Referenzdaten (fuer den Filter "nur Abweichungen" ueber alle Objekte)."""
-    by_subject: dict[tuple[int | None, str], list[str]] = defaultdict(list)
-    for sid, subject, ftype in session.execute(
-        select(Finding.source_system_id, Finding.subject_id, Finding.type).where(
-            Finding.tenant_id == tid, Finding.subject_kind == SubjectKind.DEVICE_OBJECT
-        )
-    ):
-        by_subject[(sid, subject)].append(ftype.value)
-    bad = set(
-        session.scalars(
-            select(NetworkObject.name).where(
-                NetworkObject.tenant_id == tid,
-                NetworkObject.match_status.in_([MatchStatus.UNMATCHED, MatchStatus.AMBIGUOUS]),
-            )
-        )
-    )
-    out: dict[int, list[str]] = {}
-    for o in objects:
-        found = list(by_subject.get((o.source_system_id, reconcile.subject(o)), []))
-        service = o.category in SERVICE_CATEGORIES
-        if not service and any(objects_store.object_key(v) in bad for v in o.values or []):
-            found.append("unmatched_object")
-        out[o.id] = sorted(set(found))
-    return out
 
 
 def _object_rows(session: Session, tid: int, objects: list[DeviceObject]) -> list[dict]:
@@ -151,7 +119,7 @@ def _object_rows(session: Session, tid: int, objects: list[DeviceObject]) -> lis
     ):
         for m in members or []:
             member_of[(sid, m)].append((gname, gfamily))
-    issues = _issues(session, tid, objects)
+    issues = objects_store.object_issues(session, tid, objects)
 
     infos = objects_store.value_infos(
         session,

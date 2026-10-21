@@ -23,7 +23,7 @@ import {
   System,
   VmRow,
 } from "./api";
-import { CATEGORY_LABEL, FAMILY_LABEL, IssueChips, REFERENCE_PLATFORMS, ValueList } from "./refs";
+import { CATEGORY_LABEL, FAMILY_LABEL, IssueChips, REFERENCE_PLATFORMS, ValueList, VmSection } from "./refs";
 import { SiteChip } from "./sites";
 import type { View, ViewParams } from "./App";
 import { ActionBadge, Dash, Drawer, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
@@ -60,17 +60,20 @@ const PAGE = 200;
 export default function Objects({
   tenantId,
   tenantLabel,
+  params = {},
   onGo,
 }: {
   tenantId: number | null;
   tenantLabel: string;
+  params?: ViewParams; // Link: object_id= öffnet das Objekt-Detail, q= / tab= aus der Applikations-Doku
   onGo?: Go; // Klick auf "Regeln" → Regel-Liste mit diesem Objekt (auch über Gruppen)
 }) {
-  const [tab, setTab] = useState<Tab>("addr");
+  const [tab, setTab] = useState<Tab>(TABS.some((t) => t.key === params.tab) ? (params.tab as Tab) : "addr");
   const [systems, setSystems] = useState<System[]>([]);
   const [source, setSource] = useState("");
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(params.q ?? "");
   const [issuesOnly, setIssuesOnly] = useState(false);
+  const [linked, setLinked] = useState<number | null>(params.object_id ? Number(params.object_id) : null);
 
   useEffect(() => {
     setSource("");
@@ -162,6 +165,7 @@ export default function Objects({
           onGo={onGo}
         />
       )}
+      {linked !== null && <ObjectDrawer id={linked} onClose={() => setLinked(null)} onGo={onGo} />}
     </>
   );
 }
@@ -542,6 +546,8 @@ function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; 
               <IssueChips issues={d.issues} />
             </dd>
           </dl>
+
+          <VmSection items={d.values.filter((v) => v.vm).map((v) => ({ vm: v.vm!, role: v.value }))} />
 
           {entries.length > 0 && (
             <>

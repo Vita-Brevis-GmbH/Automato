@@ -4,6 +4,10 @@ Liste und Detail sind angereichert wie die Firewall-Regeln: DNS-Namen der extern
 internen IP aus DDI/NetBox, der Server hinter der internen IP, die Firewall-Regeln mit diesem
 VIP bzw. SNAT-Pool. Suche (`q`) ueber Name, IPs, Ports, Kommentar, Interface und DNS-Namen;
 eine IP trifft auch innerhalb eines Pool-Bereichs.
+
+Korrektheitspruefung (0.14.0, `issues`, Filter `issues_only`): die Befunde des VIP- bzw.
+Pool-Objekts wie in der Objekt-Ansicht (Namenskonvention, unbenutzt, Wert ohne IPAM-Treffer)
+und ein internes Ziel (Mapped-IP, Real Server), das im fuehrenden IPAM fehlt.
 """
 
 from collections import defaultdict
@@ -16,11 +20,14 @@ from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import NatRule, Rule, RuleIndex
+from app.models import DeviceObject, NatRule, ObjectCategory, Rule, RuleIndex
 from app.schemas.nat import NatDetailOut, NatOut, NatTargetOut
 from app.store import nat as nat_store
-from app.store import references, rule_index
+from app.store import objects as objects_store
+from app.store import references, rule_index, virtual
 from app.store import rules as rules_store
+
+MAPPED_NOT_IN_IPAM = "mapped_not_in_ipam"  # internes Ziel fehlt im fuehrenden IPAM
 
 router = APIRouter(prefix="/nat", tags=["nat"])
 
@@ -52,6 +59,36 @@ class _Context:
             ):
                 for name in names.strip("\n").split("\n"):
                     self.usage[(sid, name)].add(rule_id)
+        # VIP- bzw. Pool-Objekte der Eintraege und ihre Befunde (wie in der Objekt-Ansicht)
+        self.objects: dict[tuple[int, str, str], DeviceObject] = {}
+        self.issues: dict[int, list[str]] = {}
+        for t in tenants:
+            objs = list(
+                session.scalars(
+                    select(DeviceObject).where(
+                        DeviceObject.tenant_id == t,
+                        DeviceObject.category.in_((ObjectCategory.VIP, ObjectCategory.IPPOOL)),
+                        DeviceObject.name.in_({n.name for n in nats if n.tenant_id == t}),
+                    )
+                )
+            )
+            for o in objs:
+                self.objects[(o.source_system_id, o.category.value, o.name)] = o
+            self.issues.update(objects_store.object_issues(session, t, objs))
+
+    def device_object(self, n: NatRule) -> DeviceObject | None:
+        category = ObjectCategory.IPPOOL if n.nat_type == "snat_pool" else ObjectCategory.VIP
+        return self.objects.get((n.source_system_id, category.value, n.name))
+
+    def check(self, n: NatRule) -> list[str]:
+        """Befunde des Eintrags: die des VIP-/Pool-Objekts und ein internes Ziel ohne IPAM."""
+        obj = self.device_object(n)
+        found = list(self.issues.get(obj.id, [])) if obj is not None else []
+        primary = self.refs[n.tenant_id].primary
+        if n.nat_type == "dnat_vip" and primary is not None:
+            if any(not primary.ip_records(ip) for ip in nat_store.internal_ips(n)):
+                found.append(MAPPED_NOT_IN_IPAM)
+        return sorted(set(found))
 
     def out(self, n: NatRule) -> NatOut:
         ctx = self.refs[n.tenant_id]
@@ -82,6 +119,7 @@ class _Context:
             family=n.family,
             targets=[self._target(n, t, ctx) for t in n.targets or []],
             attrs=n.attrs or {},
+            issues=self.check(n),
         )
 
     def _target(self, n: NatRule, t: dict, ctx) -> NatTargetOut:
@@ -129,6 +167,7 @@ def list_nat(
     tenant_id: int | None = None,
     nat_type: str | None = None,
     q: str | None = None,
+    issues_only: bool = Query(False, description="nur Eintraege mit Befund"),
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
@@ -138,10 +177,14 @@ def list_nat(
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "nat")
     q = (q or "").strip()
-    if q:
+    if q or issues_only:
         rows = nat_store.list_nat(session, tenant_id=tenant_id, limit=None, nat_type=nat_type)
         ctx = _Context(session, tenant_id, rows)
-        outs = [o for o in map(ctx.out, rows) if nat_store.matches(*_search_fields(o), q)]
+        outs = [
+            o
+            for o in map(ctx.out, rows)
+            if (not q or nat_store.matches(*_search_fields(o), q)) and (not issues_only or o.issues)
+        ]
         response.headers["X-Total-Count"] = str(len(outs))
         return outs[offset : offset + limit]
     response.headers["X-Total-Count"] = str(nat_store.count_nat(session, tenant_id, nat_type))
@@ -169,12 +212,16 @@ def get_nat(
     ids = ctx.rule_ids(n)
     order = select(Rule.id).where(Rule.id.in_(ids)).order_by(*rules_store.ORDER)
     rules = rule_index.load_rules(session, list(session.scalars(order)) if ids else [])
-    obj = nat_store.device_object(session, n)
+    obj = ctx.device_object(n)
+    internal = nat_store.internal_ips(n) if n.nat_type == "dnat_vip" else []
+    vms = virtual.Lookup(session, n.tenant_id, set(internal))
     return NatDetailOut(
         **ctx.out(n).model_dump(),
         ext_info=references.ip_info(refs, n.ext_ip),
         mapped_info=references.ip_info(refs, n.mapped_ip),
         color=obj.color if obj else None,
+        object_id=obj.id if obj else None,
         settings=nat_store.settings(n),
         rules=rule_index.outs(session, rules),
+        vms=[{**info, "for_ip": ip} for ip in internal if (info := vms.info(ip))],
     )

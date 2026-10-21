@@ -54,6 +54,11 @@ TABLES: list[tuple[int, str, str]] = [
 # "Bezug": wie die Regel das System erfasst - direkt, ueber ein Netz/einen Bereich bzw. eine
 # Gruppe (Objektname), any, vzAny der VRF, ESG oder die EPG des Servers (Dev-Befund 0.10.0)
 VIA = "Bezug"
+# Zusatzfelder je Zeile (nicht als Spalte, 0.14.0): Regel-ID, Richtung aus Sicht des Systems
+# (in = System ist Ziel, out = Quelle) und Art des Bezugs (specific = der Host bzw. die EPG
+# selbst, subnet = groesseres Netz, any, vzany = vzAny der VRF, pref_group = Preferred Group)
+RULE, DIRECTION, SCOPE = "_rule", "_dir", "_scope"
+UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
 _COMMON = ["Server Name", "TCP/UDP", "Target Systems", "Schutzmechanismen", "Description", VIA]
 TABLE_COLUMNS: dict[int, list[str]] = {
     1: [
@@ -185,15 +190,13 @@ def list_systems(session: Session, tenant_id: int | None) -> list[SystemRef]:
 
 
 def _target(other: Epg | None, inline: str | None, own: Epg) -> str:
-    """Gegenstelle in der Doku: EPG-Name (ein Server = eine EPG), ACI-Tenant davor, wenn
-    fremd; externe EPG / vzAny mit L3Out bzw. VRF."""
+    """Gegenstelle in der Doku: EPG mit dem ganzen ACI-Pfad `Tenant/AP/EPG` (Dev-Befund 0.14.0:
+    `EG_dmz01` allein ist nicht eindeutig); externe EPG / vzAny mit L3Out bzw. VRF."""
     if other is None:
         return inline or ""
     if other.kind != "epg":
         return epg_store.label(other, own.aci_tenant)
-    if other.aci_tenant and own.aci_tenant and other.aci_tenant != own.aci_tenant:
-        return f"{other.aci_tenant}/{other.name}"
-    return other.name
+    return epg_store.inventory_label(other)
 
 
 def epg_system_name(epg: Epg) -> str:
@@ -324,11 +327,19 @@ def _proxies(data: TenantData, epg: Epg) -> dict[int, str]:
     return out
 
 
+def _aci_scope(rule: Rule, via: str) -> str:
+    raw = rule.raw if isinstance(rule.raw, dict) else {}
+    if raw.get("kind") == "preferred_group":
+        return "pref_group"
+    return "vzany" if via.startswith("vzAny") else "specific"
+
+
 def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = None) -> list:
     """ACI-Contracts einer EPG (direkt, ueber vzAny der VRF, ueber ESGs) als (Tabelle, Zeile).
 
     Gegenstelle gleiches AP (im selben ACI-Tenant) -> 7, anderer ACI-Tenant -> 9, hinter
-    einem L3Out nach dessen Zone wie bei Firewall-Regeln."""
+    einem L3Out nach dessen Zone wie bei Firewall-Regeln. `via` (Server in der EPG) steht im
+    Bezug vor dem Weg der EPG (vzAny, ESG)."""
     by_id = data.epgs_by_id
     proxies = _proxies(data, epg)
     ids: set[int] = set()
@@ -369,6 +380,8 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                 )
             else:
                 idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
+            how = sides[side]
+            text = how if via is None else (via if how == "direkt" else f"{how} · {via}")
             out.append(
                 (
                     idx,
@@ -378,7 +391,10 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                         "Target Systems": ", ".join(n for n in cp_names if n),
                         "Schutzmechanismen": ", ".join(r.protections) if r.protections else "",
                         "Description": r.name or f"#{r.external_id}",
-                        VIA: via or sides[side],
+                        VIA: text,
+                        RULE: r.id,
+                        DIRECTION: "in" if side == "dst" else "out",
+                        SCOPE: _aci_scope(r, how),
                     },
                 )
             )
@@ -388,13 +404,13 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
 def _fw_rows(
     data: TenantData,
     rule: Rule,
-    sides: dict[str, str],
+    sides: dict[str, tuple[str, str]],
     system_name: str,
     dnat_for_sys: list[NatRule],
     snat_ips: list[str],
 ) -> list:
     """Firewall-Regel als (Tabelle, Zeile) je Seite, auf der das System steht (Ziel =
-    eingehend, Quelle = ausgehend); `sides` = Seite -> Bezug."""
+    eingehend, Quelle = ausgehend); `sides` = Seite -> (Bezug, Art des Bezugs)."""
     objs, zones = data.objs, data.zones
     out = []
     for side in sorted(sides, key=lambda x: x != "dst"):
@@ -450,7 +466,8 @@ def _fw_rows(
                 "Schutzmechanismen": protections,
                 "Description": description,
             }
-        out.append((idx, {**row, VIA: sides[side]}))
+        via, scope = sides[side]
+        out.append((idx, {**row, VIA: via, RULE: rule.id, DIRECTION: direction, SCOPE: scope}))
     return out
 
 
@@ -481,14 +498,18 @@ def _covered_rows(
     dnat, snat = _nat_context(data, {v.split("/")[0] for v in values})
     out = []
     for r in data.rules((direct_ids or set()) | set(cover)):
-        sides: dict[str, str] = {}
+        sides: dict[str, tuple[str, str]] = {}
         if is_direct is not None:
             for e in r.endpoints:
                 if is_direct(e):
-                    sides[e.role.value] = "direkt"
+                    sides[e.role.value] = ("direkt", "specific")
         c = cover.get(r.id)
         for role in c.sides if c else ():
-            sides.setdefault(role, c.via(role))
+            sides.setdefault(role, (c.via(role), c.scope(role)))
+        if any(scope != "any" for _, scope in sides.values()):
+            # Server -> any: das System steht gezielt auf einer Seite; dass any auf der Gegenseite
+            # es auch umfasst, ist kein eigener Zugriff (Dev-Befund 0.14.0)
+            sides = {k: v for k, v in sides.items() if v[1] != "any"}
         out += _fw_rows(data, r, sides, system_name, dnat, snat)
     return out
 
@@ -496,21 +517,22 @@ def _covered_rows(
 def epg_doc(session: Session, epg: Epg, data: TenantData | None = None) -> dict:
     """ACI-EPG als System: Contracts (direkt, vzAny der VRF, ESGs) nach scope/AP in die
     Tabellen 7/8/9 (+ L3Out-Tabellen) und die Firewall-Regeln, die ihre Subnetze bzw.
-    Endpunkte erfassen (auch ueber groessere Netze und any)."""
+    Endpunkte erfassen (auch ueber groessere Netze und any). Als Name der ganze ACI-Pfad."""
     data = data or TenantData(session, epg.tenant_id)
+    name = epg_store.inventory_label(epg)
     rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
-    for idx, row in _aci_rows(data, epg, epg.name):
+    for idx, row in _aci_rows(data, epg, name):
         rows_by_table[idx].append(row)
     values = [s.ip for s in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id == epg.id))]
     values += [
         ep.ip for ep in session.scalars(select(EpgEndpoint).where(EpgEndpoint.epg_id == epg.id))
     ]
-    for idx, row in _covered_rows(session, data, values, epg.name, overlap=True):
+    for idx, row in _covered_rows(session, data, values, name, overlap=True):
         rows_by_table[idx].append(row)
     host = session.get(NetworkObject, epg.network_object_id) if epg.network_object_id else None
     return _envelope(
         session,
-        epg.name,
+        name,
         epg.tenant_id,
         host.value if host else None,
         host.site_id if host else None,
@@ -569,7 +591,7 @@ def host_doc(session: Session, sys_obj: NetworkObject, data: TenantData | None =
     vms = virtual.Lookup(session, tenant_id, {ip} if ip else set())
     # ACI: die EPG(s), in denen der Server steht (verknuepft, gelernter Endpunkt, Portgruppe
     # der VM)
-    for epg in _host_epgs(session, data, sys_obj, vms.epg_ids(ip)):
+    for epg in host_epgs(session, data, sys_obj, vms.epg_ids(ip)):
         for idx, row in _aci_rows(data, epg, system_name, via=f"EPG {epg_store.label(epg)}"):
             rows_by_table[idx].append(row)
     info = vms.info(ip)
@@ -584,7 +606,43 @@ def host_doc(session: Session, sys_obj: NetworkObject, data: TenantData | None =
     )
 
 
-def _host_epgs(
+def vm_rows(
+    session: Session,
+    data: TenantData,
+    name: str,
+    ips: list[str],
+    hosts: list[NetworkObject],
+    epg_ids: set[int],
+) -> list:
+    """Zeilen einer VM (Applikations-Doku, 0.14.0): Firewall-Regeln ueber ihre IPs - direkt
+    ueber das Host-Objekt einer IP, sonst ueber Netze, Bereiche, Gruppen und any - und die
+    Contracts ihrer EPGs (Portgruppe, gelernter Endpunkt, verknuepfter Server)."""
+    host_ids = {h.id for h in hosts}
+    direct: set[int] = set()
+    for hid in host_ids:
+        direct |= data.rule_ids(RuleDomain.FIREWALL, network_object_id=hid)
+    out = _covered_rows(
+        session,
+        data,
+        ips,
+        name,
+        overlap=False,
+        direct_ids=direct,
+        is_direct=lambda e: e.network_object_id in host_ids,
+    )
+    ids = set(epg_ids)
+    for h in hosts:
+        ids |= {e.id for e in host_epgs(session, data, h)}
+    if ips:
+        ids |= set(session.scalars(select(EpgEndpoint.epg_id).where(EpgEndpoint.ip.in_(ips))))
+    for i in sorted(ids):
+        epg = data.epgs_by_id.get(i)
+        if epg is not None and epg.kind == "epg":
+            out += _aci_rows(data, epg, name, via=f"EPG {epg_store.inventory_label(epg)}")
+    return out
+
+
+def host_epgs(
     session: Session, data: TenantData, sys_obj: NetworkObject, vm_epgs: set[int] = frozenset()
 ) -> list[Epg]:
     ids = {e.id for e in data.epgs_by_id.values() if e.network_object_id == sys_obj.id}

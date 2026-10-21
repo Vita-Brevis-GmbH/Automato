@@ -9,6 +9,7 @@ from app.models.agent import Agent
 from app.models.application import (
     CRITICALITIES,
     MEMBER_KINDS,
+    PURPOSES,
     Application,
     ApplicationMember,
 )
@@ -67,6 +68,7 @@ from app.models.zone import Zone
 __all__ = [
     "ADDRESS_CATEGORIES",
     "CRITICALITIES",
+    "PURPOSES",
     "GROUP_CATEGORIES",
     "INVENTORY_MODELS",
     "MEMBER_KINDS",

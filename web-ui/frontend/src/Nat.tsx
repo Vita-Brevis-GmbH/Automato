@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { fetchNat, fetchNatDetail, IpInfo, Nat, NatDetail, NatTarget } from "./api";
 import type { View, ViewParams } from "./App";
+import { IssueChips, VmSection } from "./refs";
 import { ActionBadge, Dash, Drawer, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
 const PAGE = 500; // Einträge je Seite
@@ -178,6 +179,20 @@ function NatDrawer({
       {d && (
         <>
           <dl className="kv">
+            <dt>Prüfung</dt>
+            <dd>
+              <IssueChips issues={d.issues ?? []} />
+              {d.object_id != null && onGo && (
+                <button
+                  className="linkbtn"
+                  style={{ marginLeft: 6 }}
+                  title="VIP- bzw. Pool-Objekt in Objekte & Inventar öffnen"
+                  onClick={() => onGo("objekte", { object_id: String(d.object_id) })}
+                >
+                  Objekt öffnen
+                </button>
+              )}
+            </dd>
             <dt>{pool ? "Quell-IP(s)" : "Extern"}</dt>
             <dd className="mono">{addr(d.ext_ip, d.ext_port) ?? <Dash />}</dd>
             {slb && (
@@ -249,6 +264,8 @@ function NatDrawer({
             </>
           )}
 
+          <VmSection items={(d.vms ?? []).map((vm) => ({ vm, role: `Ziel ${vm.for_ip ?? ""}` }))} />
+
           <div className="sub-h" style={{ display: "flex", alignItems: "center" }}>
             Firewall-Regeln ({d.rules.length})
             <div style={{ flex: 1 }} />
@@ -312,6 +329,7 @@ export default function NatTable({
   const [error, setError] = useState<unknown>(null);
   const [type, setType] = useState("");
   const [q, setQ] = useState(params.q ?? "");
+  const [issuesOnly, setIssuesOnly] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
 
   // Typ und Suche (Name, IPs, Ports, DNS-Namen, Server, Kommentar) filtert der Orchestrator
@@ -319,7 +337,7 @@ export default function NatTable({
     const timer = setTimeout(() => {
       setNat(null);
       setError(null);
-      fetchNat({ tenantId, natType: type, q, limit: PAGE })
+      fetchNat({ tenantId, natType: type, q, issuesOnly, limit: PAGE })
         .then((page) => {
           setNat(page.rows);
           setTotal(page.total);
@@ -333,12 +351,12 @@ export default function NatTable({
         });
     }, 250);
     return () => clearTimeout(timer);
-  }, [tenantId, type, q, params.q]);
+  }, [tenantId, type, q, issuesOnly, params.q]);
 
   const loadMore = () => {
     if (!nat) return;
     setMore(true);
-    fetchNat({ tenantId, natType: type, q, limit: PAGE, offset: nat.length })
+    fetchNat({ tenantId, natType: type, q, issuesOnly, limit: PAGE, offset: nat.length })
       .then((page) => {
         setNat([...nat, ...page.rows]);
         setTotal(page.total);
@@ -355,7 +373,8 @@ export default function NatTable({
       <PageHead title="NAT / VIPs">
         Virtuelle IPs (externe Adresse → internes Ziel, inkl. Port-Forward), Virtual Server (Lastverteilung auf Real
         Server) und SNAT-IP-Pools für „{tenantLabel}“ –
-        mit DNS-Namen aus dem IPAM und den Firewall-Regeln, die sie nutzen.
+        mit DNS-Namen aus dem IPAM, den Firewall-Regeln, die sie nutzen, und der Prüfung (Namenskonvention, unbenutzt,
+        internes Ziel im IPAM).
       </PageHead>
       <div className="filterbar">
         <div className="search">
@@ -373,6 +392,14 @@ export default function NatTable({
           <option value="dnat_vip">VIP / DNAT (inkl. Virtual Server)</option>
           <option value="snat_pool">SNAT-Pool</option>
         </select>
+        <button
+          className={`toggle ${issuesOnly ? "on" : ""}`}
+          title="Nur Einträge mit Befund: Namenskonvention, unbenutzt, Wert bzw. internes Ziel nicht im IPAM"
+          onClick={() => setIssuesOnly((v) => !v)}
+        >
+          <span className="dot y" />
+          nur Abweichungen
+        </button>
         <span className="count">
           {total} Einträge{total > loaded ? ` · ${loaded} geladen` : ""}
         </span>
@@ -383,8 +410,8 @@ export default function NatTable({
           {nat === null ? (
             <Loading>Lade VIPs…</Loading>
           ) : shown.length === 0 ? (
-            <Empty title={q ? "Keine Treffer" : "Keine NAT-Einträge"}>
-              {q ? "Suche anpassen." : "Es wurden (noch) keine VIPs oder SNAT-Pools erfasst."}
+            <Empty title={q || issuesOnly ? "Keine Treffer" : "Keine NAT-Einträge"}>
+              {q || issuesOnly ? "Suche bzw. Filter anpassen." : "Es wurden (noch) keine VIPs oder SNAT-Pools erfasst."}
             </Empty>
           ) : (
             <table>
@@ -397,6 +424,7 @@ export default function NatTable({
                   <th>Server</th>
                   <th>Interface</th>
                   <th className="num">Regeln</th>
+                  <th>Prüfung</th>
                 </tr>
               </thead>
               <tbody>
@@ -467,6 +495,9 @@ export default function NatTable({
                             0
                           </span>
                         )}
+                      </td>
+                      <td>
+                        <IssueChips issues={n.issues ?? []} />
                       </td>
                     </tr>
                   );

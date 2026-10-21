@@ -9,7 +9,8 @@ EPGs und Objekte werden je Lauf ersetzt, die Zuordnung soll das ueberleben:
 - `host` -> Name des Host-Objekts (`H_app01-002-…`)
 
 Ein Mitglied darf in mehreren Applikationen stehen (gemeinsam genutzter Server).
-Kuerzel/Verantwortliche/Kritikalitaet sind Stammdaten ohne Funktionsrelevanz.
+Kuerzel/Verantwortliche/Kritikalitaet, externer/interner Name und Verwendungszweck
+(Dev/Test/Prod, 0.14.0) sind Stammdaten ohne Funktionsrelevanz.
 """
 
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ from app.models.base import Base
 
 MEMBER_KINDS = ("ap", "epg", "host")
 CRITICALITIES = ("low", "medium", "high", "critical")
+PURPOSES = ("dev", "test", "prod")
 
 
 class Application(Base):
@@ -30,6 +32,10 @@ class Application(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
+    # Name der Applikation gegen aussen (Fachbereich/Kunde) bzw. intern (Betrieb), 0.14.0
+    external_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    internal_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    purpose: Mapped[str | None] = mapped_column(String(8), nullable=True)  # dev | test | prod
     # Kuerzel, ueblicherweise die 3-stellige Projektnummer (AP_<nr>, H_…-<nr>-…)
     code: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     owner: Mapped[str | None] = mapped_column(String(200), nullable=True)  # Verantwortliche

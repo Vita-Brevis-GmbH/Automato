@@ -100,6 +100,7 @@ export default function Findings({
   tenantId,
   tenantLabel,
   initialType = "",
+  initialQuery = "",
   onChanged,
   onGo,
 }: {
@@ -107,6 +108,7 @@ export default function Findings({
   tenantId: number | null;
   tenantLabel: string;
   initialType?: string; // Vorfilter, z. B. aus der Abgleich-Ansicht
+  initialQuery?: string; // Suche aus einem Link (#findings?q=…, z. B. aus der Applikations-Doku)
   onChanged: () => void;
   onGo?: (v: View, p?: ViewParams) => void; // Links auf die betroffenen Regeln
 }) {
@@ -118,7 +120,7 @@ export default function Findings({
   const [error, setError] = useState<unknown>(null);
   const [status, setStatus] = useState("open");
   const [type, setType] = useState(initialType);
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQuery);
   const [open, setOpen] = useState<number | null>(null); // aufgeklappter Befund
 
   useEffect(() => setType(initialType), [initialType]);

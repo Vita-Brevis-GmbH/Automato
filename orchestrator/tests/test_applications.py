@@ -219,13 +219,18 @@ def test_applikation_manuell_pflegen_und_doku(client, session_factory):
 
     doc = client.get(f"/applications/{app['id']}/doc").json()
     assert doc["application"]["name"] == "Webshop"
-    assert {(x["name"], x["kind"]) for x in doc["systems"]} == {
-        ("H_app01-002-test1.example.ch", "host"),
-        ("TE_a/AP_002/EG_dmz01", "epg"),
-    }
+    # Server ohne VM als System, die EPG im eigenen Abschnitt (0.14.0)
+    assert [(x["name"], x["kind"]) for x in doc["systems"]] == [
+        ("H_app01-002-test1.example.ch", "host")
+    ]
+    assert [(e["label"], e["member"]) for e in doc["epgs"]] == [
+        ("TE_a/AP_002/EG_dmz01", "EPG TE_a/AP_002/EG_dmz01")
+    ]
     rows = {t["index"]: t["rows"] for t in doc["tables"]}
     assert [r["Description"] for r in rows[7]] == ["CT_db:SJ_sql"]  # innerhalb des AP
     assert [r["Target Systems"] for r in rows[10]] == ["10.0.3.5"]  # Firewall-Regel
+    assert rows[7][0]["Target Systems"] == "TE_a/AP_002/EG_internal01"  # ganzer ACI-Pfad
+    assert doc["summary"]["specific"] == 2 and doc["summary"]["unspecific"] == 0
 
     aid = app["id"]
     r = client.patch(f"/applications/{aid}", json={"owner": None, "criticality": "low"}, headers=OP)

@@ -277,3 +277,30 @@ test("Betriebszustand auf der System-Seite", async ({ page }) => {
   await expect(card).toContainText("Plattform");
   await expect(card).toContainText("Quellsysteme");
 });
+
+test("NAT: Korrektheitsprüfung, nur Abweichungen, Objekt öffnen", async ({ page }) => {
+  await page.goto("/#nat");
+  const shop = rows(page).filter({ hasText: "V-EXT_shop.example.ch" });
+  await expect(shop).toContainText("Ziel nicht im IPAM");
+  const all = await rows(page).count();
+  await page.click("button.toggle:has-text('nur Abweichungen')");
+  await expect(rows(page).filter({ hasText: "V-EXT_www.example.ch" })).toHaveCount(0);
+  expect(await rows(page).count()).toBeLessThan(all);
+  await shop.click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer).toContainText("Ziel nicht im IPAM");
+  await drawer.locator("button:has-text('Objekt öffnen')").click();
+  await expect(page).toHaveURL(/#objekte\?object_id=\d+/);
+  await expect(page.locator(".drawer h2")).toHaveText("V-EXT_shop.example.ch");
+});
+
+test("Regel-Detail zeigt die VM mit allen Angaben aus dem vCenter", async ({ page }) => {
+  await page.goto("/#regeln");
+  await search(page).fill("web01-007-ka");
+  await rows(page).filter({ hasText: "dmz-to-web" }).click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer).toContainText("VMs (1)");
+  await expect(drawer).toContainText("Ubuntu Linux (64-bit)");
+  await expect(drawer).toContainText("esx01-chzrh1.example.ch");
+  await expect(drawer).toContainText("4 GB RAM");
+});

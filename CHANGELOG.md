@@ -7,6 +7,44 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.14.0 – 2026-10-22
+
+Applikationen mit der Doku im Mittelpunkt, Prüfung in NAT / VIPs, VM-Angaben in den
+Detailansichten (Alembic `0036`).
+
+- **Applikationen** (ADR 0012, Ergänzung 0.14.0):
+  - **Klick auf eine Applikation öffnet ihre Doku** (`#apps?app=<id>`). Mitglieder und
+    Stammdaten werden von dort gepflegt.
+  - Neue Felder: **externer Name**, **interner Name**, **Verwendungszweck** (Dev, Test, Prod).
+  - **Übersicht** oben: VMs, EPGs, Regeln **spezifisch** bzw. **unspezifisch** (Subnetz, any,
+    vzAny, Preferred Group) und offene Findings; Klick filtert die Regeln.
+  - **Systeme = alle VMs der Applikation** (Portgruppen ihrer EPGs, VMs hinter ihren Servern)
+    und Server ohne VM, mit IPs/DNS, EPG, Portgruppe, Cluster/Host, Firewall-Objekt (Link),
+    Standort und dem Grund, warum sie dazugehören. Darunter die **EPGs im ACI** (BD, VRF,
+    Subnetze, VMs, Endpunkte).
+  - **Regeln & Contracts** wie in der Regel-Ansicht: Aktion (allow/deny, auch bei ACI und
+    L3Outs), **Herkunft** (Firewall bzw. ACI mit Quellsystem), Richtung, System der
+    Applikation, Gegenstelle, Dienste, Bezug, Kategorie. Filter **System/VM**, **EPG**,
+    **Richtung aus Sicht des Systems** (eingehend/ausgehend), Art, Bezug, Suche.
+  - **Regel-Detail mit Erklärung**: je System Rolle (Ziel/Quelle bzw. Provider/Consumer),
+    Bezug, Kategorie und über welches Mitglied bzw. AP es zur Applikation gehört; Name des
+    Contracts bzw. der Firewall-Regel mit Link, „Findings dazu“.
+  - **Ganzer ACI-Pfad** `Tenant/AP/EPG` statt nur `EG_…` – als System, Gegenstelle und in den
+    10 Kategorien (auch in der Doku je System).
+  - Findings der Applikation (Regeln, Server, VMs, Portgruppen, Subnetze der EPGs) mit Links.
+  - Nennt eine Regel das System auf einer Seite gezielt, gilt any auf der Gegenseite nicht
+    mehr als eigener Zugriff (Server → any erscheint nur noch ausgehend).
+- **NAT / VIPs: Korrektheitsprüfung** (Spalte „Prüfung“, Schalter „nur Abweichungen“,
+  `GET /nat?issues_only=`): Befunde des VIP- bzw. Pool-Objekts wie in den Objekten
+  (Namenskonvention, unbenutzt, nicht im IPAM) und „Ziel nicht im IPAM“ (Mapped-IP bzw. Real
+  Server). Im Detail „Objekt öffnen“ und die VM hinter dem internen Ziel.
+- **VM-Angaben in den Detailansichten:** Regel-, Objekt- und NAT-Detail zeigen je VM Status,
+  Gast-OS, Hostname, alle IPs, Netzwerkkarte/MAC, Portgruppe → EPG, Cluster/Host,
+  Datacenter, vCPU/RAM/Disk und Notiz.
+- **Läufe** stehen jetzt unter Administration.
+- Direktlinks: `#objekte?object_id=<id>` öffnet das Objekt-Detail, `#findings?q=<Text>` sucht
+  in den Findings.
+
 ## 0.13.0 – 2026-10-22
 
 Läufe-Ansicht, kompakte Ports, Portgruppen im Detail (keine Migration).

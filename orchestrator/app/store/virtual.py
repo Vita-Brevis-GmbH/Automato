@@ -111,6 +111,8 @@ class Lookup:
         self.nic_of: dict[tuple[int, str], VmNic] = {}
         self.portgroups: dict[tuple[int, str], Portgroup] = {}
         self.epgs: dict[int, Epg] = {}
+        self.session = session
+        self._ips_of: dict[int, list[str]] | None = None
         if tenant_id is None:
             return
         stmt = select(VmIp, Vm).join(Vm, Vm.id == VmIp.vm_id).where(VmIp.tenant_id == tenant_id)
@@ -138,6 +140,19 @@ class Lookup:
         if epg_ids:
             self.epgs = {e.id: e for e in session.scalars(select(Epg).where(Epg.id.in_(epg_ids)))}
 
+    def vm_ips(self, vm_id: int) -> list[str]:
+        """Alle IPs einer VM - beim ersten Aufruf fuer alle gefundenen VMs geladen."""
+        if self._ips_of is None:
+            self._ips_of = defaultdict(list)
+            ids = {vm.id for vms in self.by_ip.values() for vm in vms}
+            if ids:
+                for vid, addr in self.session.execute(
+                    select(VmIp.vm_id, VmIp.ip).where(VmIp.vm_id.in_(ids)).order_by(VmIp.id)
+                ):
+                    if addr not in self._ips_of[vid]:
+                        self._ips_of[vid].append(addr)
+        return self._ips_of.get(vm_id, [])
+
     def info(self, value: str | None) -> dict | None:
         """Kurzinfo der VM hinter einer IP (auch a.b.c.d/32) fuer Regeln und Objekte."""
         ip = (value or "").split("/")[0]
@@ -161,6 +176,21 @@ class Lookup:
             "vlan": nic.vlan if nic else None,
             "epg": inventory_label(epg) if epg is not None else None,
             "others": [v.name for v in vms[1:]],  # gleiche IP an mehreren VMs
+            # Detailansichten (0.14.0): was das vCenter sonst ueber die VM weiss
+            "template": vm.template,
+            "guest_os": vm.guest_os,
+            "hostname": vm.hostname,
+            "datacenter": vm.datacenter,
+            "host": vm.host,
+            "vcpus": vm.vcpus,
+            "memory_mb": vm.memory_mb,
+            "disk_gb": vm.disk_gb,
+            "notes": vm.annotation,
+            "nic": nic.name if nic else None,
+            "mac": nic.mac if nic else None,
+            "connected": nic.connected if nic else None,
+            "ips": self.vm_ips(vm.id) or [ip],
+            "epg_match": pg.epg_match if pg else None,
         }
 
     def epg_ids(self, value: str | None) -> set[int]:

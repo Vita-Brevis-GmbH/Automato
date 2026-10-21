@@ -57,7 +57,6 @@ interface NavEntry {
 
 const NAV: NavEntry[] = [
   { key: "uebersicht", label: "Übersicht", icon: "overview", section: "doc" },
-  { key: "laeufe", label: "Läufe", icon: "play", section: "doc" },
   { key: "regeln", label: "Regeln & Contracts", icon: "rules", section: "doc" },
   { key: "objekte", label: "Objekte & Inventar", icon: "objects", section: "doc" },
   { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc" },
@@ -69,6 +68,7 @@ const NAV: NavEntry[] = [
   { key: "tenants", label: "Mandanten & Standorte", icon: "tenants", section: "admin" },
   { key: "dict", label: "Namensprofile", icon: "dict", section: "admin" },
   { key: "agents", label: "Collector-Agenten", icon: "agents", section: "admin", adminOnly: true },
+  { key: "laeufe", label: "Läufe", icon: "play", section: "admin" },
   { key: "netbox", label: "NetBox-Sync", icon: "upload", section: "admin", adminOnly: true },
   { key: "system", label: "System", icon: "server", section: "admin", adminOnly: true },
 ];
@@ -457,7 +457,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
               />
             )}
             {current === "objekte" && tenantReady && (
-              <Objects tenantId={tenantId} tenantLabel={tenantLabel} onGo={go} />
+              <Objects key={JSON.stringify(params)} tenantId={tenantId} tenantLabel={tenantLabel} params={params} onGo={go} />
             )}
             {current === "nat" && tenantReady && (
               <NatTable
@@ -468,13 +468,17 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                 onGo={go}
               />
             )}
-            {current === "apps" && tenantReady && <AppDoc me={me} tenantId={tenantId} />}
+            {current === "apps" && tenantReady && (
+              <AppDoc me={me} tenantId={tenantId} params={params} onGo={go} />
+            )}
             {current === "findings" && tenantReady && (
               <Findings
+                key={JSON.stringify(params)}
                 me={me}
                 tenantId={tenantId}
                 tenantLabel={tenantLabel}
-                initialType={findingType}
+                initialType={findingType || params.type || ""}
+                initialQuery={params.q ?? ""}
                 onChanged={loadStats}
                 onGo={go}
               />

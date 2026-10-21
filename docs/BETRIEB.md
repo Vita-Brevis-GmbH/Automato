@@ -81,7 +81,8 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Ergebnis eingespielt.
   - „Letzte Läufe“ zeigt immer **alle offenen Läufe** (auch ältere), dazu die letzten acht und
     den Link **Alle Läufe (N)** (0.13.0).
-- **Läufe** (0.13.0): alle Collector-Läufe des Mandanten, seitenweise mit Gesamtzahl, neueste
+- **Läufe** (0.13.0, seit 0.14.0 unter Administration): alle Collector-Läufe des Mandanten,
+  seitenweise mit Gesamtzahl, neueste
   zuerst. Filter Status (**offen** = wartet oder läuft, wartet, läuft, fehlgeschlagen,
   erfolgreich), Quellsystem, Plattform, Auslöser (von Hand, Zeitplan). Je Lauf Ausführung
   (Agent/zentral, Zeitplan), Regeln, Status mit Meldung, angelegt/begonnen, beendet mit Dauer;
@@ -120,7 +121,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Wert die **Referenzdaten** aus dem IPAM (DNS-Name, Netz, VLAN, Standort; aufklappbar mit
   allen Feldern und Link in NetBox), die **VM** dahinter (vCenter: Name, Status, Portgruppe,
   EPG), dazu Dienste, Schutzprofile, Kommentar und **NAT** (VIPs/SNAT-Pools mit IPs, Ports und
-  DNS-Namen).
+  DNS-Namen). Seit 0.14.0 zeigen Regel-, Objekt- und NAT-Detail je VM alle Angaben aus dem
+  vCenter (Abschnitt **VMs**: Status, Gast-OS, Hostname, IPs, Netzwerkkarte/MAC, Portgruppe →
+  EPG, Cluster/Host, Datacenter, vCPU/RAM/Disk, Notiz).
 - **Objekte & Inventar:** Adressobjekte (inkl. VIPs/IP-Pools), Gruppen, **Services**
   (FortiGate-Services und ACI-Filter `<Tenant>/FT_…` mit Protokoll/Ports, Quellports, ICMP,
   Kategorie, Timer, Ziel-Beschränkung bzw. Filter-Einträgen; Prüfung nach FT_-Schema) – mit
@@ -157,6 +160,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     (z. B. `TE_x|AP_007|EG_dmz02`), auch ohne Präfixe (`EG_db01` = `EPG_db01`); sonst das
     VLAN, wenn es genau einer EPG gehört. Der Chip sagt, ob über Name oder VLAN.
 - **NAT / VIPs:** VIPs (extern → intern, Port-Forward), **Virtual Server** und SNAT-Pools.
+  Spalte **Prüfung** (0.14.0) mit den Befunden des VIP- bzw. Pool-Objekts wie in den Objekten
+  (Namenskonvention, unbenutzt, nicht im IPAM) und „Ziel nicht im IPAM“ (Mapped-IP bzw. Real
+  Server fehlt im führenden IPAM); Schalter **nur Abweichungen**. Im Detail dazu die VM
+  hinter dem internen Ziel und „Objekt öffnen“.
   - Virtual Server (Lastverteilung) zeigen alle Real Server mit Status (aktiv/Standby/aus),
     Gewicht, Firewall-Objekt, DNS-Name und Health-Check. Im Detail stehen zusätzlich
     Server-Typ, Lastverteilung, Persistenz und die Health-Checks.
@@ -166,10 +173,27 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Pool-Bereich), Port, DNS-Name, Server, Interface, Kommentar. Klick → Detail mit
   Einstellungen, IPAM-Sicht (Netz, VLAN, Standort) und den Firewall-Regeln, die den Eintrag
   nutzen.
-- **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, Verantwortlichen, Kritikalität,
-  Standort und Mitgliedern (Application Profiles, EPGs, Server); **Vorschläge** nach der
-  Projektnummer aus `AP_<nr>`/`H_…-<nr>-…` mit einem Klick übernehmen (Operator); **Doku**
-  je Applikation über alle Systeme mit **Export (Markdown)** und **Drucken / PDF**. Dazu
+- **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
+  Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
+  (Application Profiles, EPGs, Server); **Vorschläge** nach der Projektnummer aus
+  `AP_<nr>`/`H_…-<nr>-…` mit einem Klick übernehmen (Operator).
+  - **Klick auf eine Applikation öffnet ihre Doku** (0.14.0, Link `#apps?app=<id>`). Oben
+    Stammdaten und Übersicht: VMs, EPGs, Regeln **spezifisch** bzw. **unspezifisch**
+    (Subnetz, any, vzAny, Preferred Group; Klick filtert) und offene Findings.
+  - **Systeme:** alle VMs der Applikation (Portgruppen ihrer EPGs, VMs hinter ihren Servern)
+    und Server ohne VM – mit IPs/DNS, EPG (ganzer Pfad `Tenant/AP/EPG`), Portgruppe,
+    Cluster/Host, Firewall-Objekt (Link ins Objekt-Detail), Standort, Regel-Zahlen und dem
+    Grund, warum das System dazugehört. **EPGs im ACI** mit BD, VRF, Subnetzen, VMs,
+    Endpunkten. Klick auf ein System bzw. eine EPG filtert die Regeln.
+  - **Regeln & Contracts** wie in der Regel-Ansicht (Aktion, Herkunft Firewall/ACI mit
+    Quellsystem, Dienste, NAT) mit Richtung, System der Applikation, Gegenstelle, Bezug und
+    Kategorie. Filter System/VM, EPG, **Richtung aus Sicht des Systems** (eingehend = Ziel
+    bzw. Provider, ausgehend = Quelle bzw. Consumer), Art, Bezug, Suche. Klick → Detail mit
+    **„Warum diese Regel für die Applikation gilt“** (je System Rolle, Richtung, Bezug,
+    Kategorie, Mitglied/AP), Links in Regeln & Contracts und Findings.
+  - **Findings** der Applikation und die **Doku nach Kategorien** (10 Tabellen) mit
+    **Export (Markdown)** und **Drucken / PDF**; **Mitglieder** und **Bearbeiten** oben.
+  Dazu
   *Doku je System* (10 Kategorien, Standort verorten) und *Publizierte Dienste* (VIPs mit
   Regeln). Die Doku erfasst **alle** Regeln eines Systems. Die Spalte **„Bezug“** sagt, wie
   die Regel greift:
@@ -287,8 +311,8 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /vms?tenant_id=` (`q`, `source_system_id`, `epg`, `limit`, `offset`), `GET /portgroups?tenant_id=` (`q`), `GET /portgroups/{id}` | VMware-Inventar (ADR 0017): VMs mit NICs, IPs (DNS, im IPAM?) und EPG der Portgruppe, Seite mit `total`; Portgruppen mit EPG und Art der Zuordnung; Detail mit EPG (BD/VRF), Subnetzen je Quelle und VMs |
 | `GET /reconcile/summary`, `GET /reconcile/ipam`, `POST /reconcile` | Abgleich: Befunde je Typ, DDI ↔ NetBox, neu berechnen (operator) |
 | `GET /findings` (`?status=`,`?type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /findings/summary`, `PATCH /findings/{id}` | Datenqualität seitenweise (je Befund `message` = was nicht stimmt, `hint` = was tun), Zähler je Status/Typ, Triage |
-| `GET /nat` (`?nat_type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /nat/{id}`, `GET /published-services[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku: NAT mit DNS-Namen, Server und Regelzahl / Detail mit IPAM-Sicht und Regeln, publizierte Dienste (VIPs), Doku je System |
-| `GET/POST /applications`, `GET/PATCH/DELETE /applications/{id}`, `POST …/{id}/members`, `DELETE …/{id}/members/{mid}`, `GET …/{id}/doc` | Applikationen (ADR 0012; Schreiben = operator): Stammdaten, Mitglieder AP/EPG/Server, Doku über alle Systeme |
+| `GET /nat` (`?nat_type=`,`?q=`,`?issues_only=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /nat/{id}`, `GET /published-services[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku: NAT mit DNS-Namen, Server, Regelzahl und Prüfung (`issues`) / Detail mit IPAM-Sicht, Regeln, VMs und `object_id`, publizierte Dienste (VIPs), Doku je System |
+| `GET/POST /applications`, `GET/PATCH/DELETE /applications/{id}`, `POST …/{id}/members`, `DELETE …/{id}/members/{mid}`, `GET …/{id}/doc` | Applikationen (ADR 0012; Schreiben = operator): Stammdaten (inkl. `external_name`, `internal_name`, `purpose` dev/test/prod), Mitglieder AP/EPG/Server, Doku mit `summary`, `systems` (VMs), `epgs`, `hits` (Regel × System: Richtung, Bezug, `scope`), `rules`, `findings`, `tables` |
 | `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |

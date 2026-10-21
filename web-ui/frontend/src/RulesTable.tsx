@@ -60,8 +60,8 @@ export function NatChips({ r, onGo }: { r: Rule; onGo?: (v: View, p?: ViewParams
   );
 }
 
-// ACI-Contract: Contract + Subject, darunter ACI-Tenant und Scope
-function NameCell({
+// ACI-Contract: Contract + Subject, darunter ACI-Tenant und Scope (auch in der Applikations-Doku)
+export function NameCell({
   r,
   onGo,
   onPair,

@@ -1,6 +1,7 @@
 // Applikationen (ADR 0012): fachliche Klammer über Application Profiles, EPGs und Server.
 // Vorschläge kommen aus der Projektnummer der Namenskonvention (AP_<nr>, H_…-<nr>-…);
-// die Doku je Applikation fasst die Tabellen aller ihrer Systeme zusammen.
+// Klick auf eine Applikation öffnet ihre Doku (0.14.0, ApplicationDoc.tsx), Mitglieder und
+// Stammdaten werden von dort gepflegt.
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   acceptAppSuggestion,
@@ -8,7 +9,6 @@ import {
   AppCandidate,
   Application,
   ApplicationDetail,
-  ApplicationDoc,
   ApplicationInput,
   AppSuggestion,
   createApp,
@@ -16,19 +16,20 @@ import {
   deleteApp,
   fetchApp,
   fetchAppCandidates,
-  fetchAppDoc,
   fetchApps,
   fetchAppSuggestions,
   fetchSites,
   MemberKind,
   patchApp,
+  Purpose,
   removeAppMember,
   Site,
 } from "./api";
+import type { View, ViewParams } from "./App";
+import ApplicationDocView, { PURPOSE, PurposeChip } from "./ApplicationDoc";
 import { siteLabel, SiteOptions } from "./sites";
-import { DocTableView, tablesMarkdown } from "./AppDoc";
 import type { Me } from "./auth";
-import { Dash, download, Drawer, Empty, ErrorBox, Icon, Loading, Modal, Note } from "./ui";
+import { Dash, Drawer, Empty, ErrorBox, Icon, Loading, Modal, Note } from "./ui";
 
 const CRIT: Record<Criticality, [string, string]> = {
   low: ["", "niedrig"],
@@ -45,14 +46,28 @@ function CritChip({ value }: { value: Criticality | null }) {
   return <span className={`chip ${cls}`}>{label}</span>;
 }
 
-export default function Apps({ me, tenantId }: { me: Me; tenantId: number | null }) {
+export default function Apps({
+  me,
+  tenantId,
+  appId,
+  onOpen,
+  onBack,
+  onGo,
+}: {
+  me: Me;
+  tenantId: number | null;
+  appId: number | null; // geöffnete Doku (#apps?app=<id>)
+  onOpen: (id: number) => void;
+  onBack: () => void;
+  onGo?: (v: View, p?: ViewParams) => void;
+}) {
   const [apps, setApps] = useState<Application[] | null>(null);
   const [suggestions, setSuggestions] = useState<AppSuggestion[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [err, setErr] = useState<unknown>(null);
-  const [selected, setSelected] = useState<number | null>(null);
-  const [docId, setDocId] = useState<number | null>(null);
+  const [selected, setSelected] = useState<number | null>(null); // Mitglieder (Drawer)
   const [editing, setEditing] = useState<ApplicationDetail | "new" | null>(null);
+  const [docReload, setDocReload] = useState(0);
 
   const load = useCallback(() => {
     if (tenantId == null) return;
@@ -70,7 +85,6 @@ export default function Apps({ me, tenantId }: { me: Me; tenantId: number | null
   useEffect(() => {
     setApps(null);
     setSelected(null);
-    setDocId(null);
     load();
     if (tenantId != null)
       fetchSites(tenantId)
@@ -84,7 +98,60 @@ export default function Apps({ me, tenantId }: { me: Me; tenantId: number | null
         <Empty title="Mandant wählen">Applikationen gehören zu einem Mandanten – oben einen wählen.</Empty>
       </div>
     );
-  if (docId != null) return <AppDocView id={docId} onBack={() => setDocId(null)} />;
+  const changed = () => {
+    load();
+    setDocReload((n) => n + 1);
+  };
+  const overlays = (
+    <>
+      {selected != null && (
+        <AppDrawer
+          me={me}
+          id={selected}
+          tenantId={tenantId}
+          onClose={() => setSelected(null)}
+          onChanged={changed}
+          onEdit={(d) => setEditing(d)}
+          onDoc={appId == null ? () => onOpen(selected) : undefined}
+          onDeleted={() => {
+            setSelected(null);
+            load();
+            onBack();
+          }}
+        />
+      )}
+      {editing && (
+        <AppForm
+          tenantId={tenantId}
+          sites={sites}
+          app={editing === "new" ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={(d) => {
+            setEditing(null);
+            changed();
+            if (editing === "new") onOpen(d.id);
+          }}
+        />
+      )}
+    </>
+  );
+
+  if (appId != null)
+    return (
+      <>
+        <ApplicationDocView
+          me={me}
+          id={appId}
+          reload={docReload}
+          onBack={onBack}
+          onGo={onGo}
+          onManage={() => setSelected(appId)}
+          onEdit={() => fetchApp(appId).then(setEditing, setErr)}
+        />
+        <ErrorBox error={err} onClose={() => setErr(null)} />
+        {overlays}
+      </>
+    );
   if (apps === null) return <Loading>Lade Applikationen…</Loading>;
 
   return (
@@ -118,6 +185,7 @@ export default function Apps({ me, tenantId }: { me: Me; tenantId: number | null
               <thead>
                 <tr>
                   <th>Name</th>
+                  <th>Zweck</th>
                   <th>Kürzel</th>
                   <th>Kritikalität</th>
                   <th>Verantwortlich</th>
@@ -128,9 +196,15 @@ export default function Apps({ me, tenantId }: { me: Me; tenantId: number | null
               </thead>
               <tbody>
                 {apps.map((a) => (
-                  <tr key={a.id} className="clickable" onClick={() => setSelected(a.id)}>
+                  <tr key={a.id} className="clickable" title="Doku öffnen" onClick={() => onOpen(a.id)}>
                     <td>
                       <b>{a.name}</b>
+                      {(a.external_name || a.internal_name) && (
+                        <div className="faint">{[a.external_name, a.internal_name].filter(Boolean).join(" · ")}</div>
+                      )}
+                    </td>
+                    <td>
+                      <PurposeChip value={a.purpose} />
                     </td>
                     <td className="mono">{a.code ?? <Dash />}</td>
                     <td>
@@ -148,37 +222,7 @@ export default function Apps({ me, tenantId }: { me: Me; tenantId: number | null
         </div>
       </div>
 
-      {selected != null && (
-        <AppDrawer
-          me={me}
-          id={selected}
-          tenantId={tenantId}
-          onClose={() => setSelected(null)}
-          onChanged={load}
-          onEdit={(d) => setEditing(d)}
-          onDoc={() => {
-            setDocId(selected);
-            setSelected(null);
-          }}
-          onDeleted={() => {
-            setSelected(null);
-            load();
-          }}
-        />
-      )}
-      {editing && (
-        <AppForm
-          tenantId={tenantId}
-          sites={sites}
-          app={editing === "new" ? null : editing}
-          onClose={() => setEditing(null)}
-          onSaved={(d) => {
-            setEditing(null);
-            load();
-            setSelected(d.id);
-          }}
-        />
-      )}
+      {overlays}
     </>
   );
 }
@@ -302,7 +346,7 @@ function AppDrawer({
   onClose: () => void;
   onChanged: () => void;
   onEdit: (d: ApplicationDetail) => void;
-  onDoc: () => void;
+  onDoc?: () => void; // fehlt, wenn die Doku schon offen ist
   onDeleted: () => void;
 }) {
   const [d, setD] = useState<ApplicationDetail | null>(null);
@@ -345,9 +389,11 @@ function AppDrawer({
       ) : (
         <>
           <div className="chips" style={{ marginBottom: 12 }}>
-            <button className="btn btn-primary btn-sm" onClick={onDoc}>
-              <Icon name="apps" size={13} /> Doku
-            </button>
+            {onDoc && (
+              <button className="btn btn-primary btn-sm" onClick={onDoc}>
+                <Icon name="apps" size={13} /> Doku
+              </button>
+            )}
             {me.isOperator && (
               <>
                 <button className="btn btn-ghost btn-sm" onClick={() => onEdit(d)}>
@@ -360,6 +406,14 @@ function AppDrawer({
             )}
           </div>
           <dl className="kv">
+            <dt>Externer Name</dt>
+            <dd>{d.external_name ?? <Dash />}</dd>
+            <dt>Interner Name</dt>
+            <dd className="mono">{d.internal_name ?? <Dash />}</dd>
+            <dt>Zweck</dt>
+            <dd>
+              <PurposeChip value={d.purpose} />
+            </dd>
             <dt>Kritikalität</dt>
             <dd>
               <CritChip value={d.criticality} />
@@ -593,6 +647,9 @@ function AppForm({
   onSaved: (d: ApplicationDetail) => void;
 }) {
   const [name, setName] = useState(app?.name ?? "");
+  const [externalName, setExternalName] = useState(app?.external_name ?? "");
+  const [internalName, setInternalName] = useState(app?.internal_name ?? "");
+  const [purpose, setPurpose] = useState<Purpose | "">(app?.purpose ?? "");
   const [code, setCode] = useState(app?.code ?? "");
   const [owner, setOwner] = useState(app?.owner ?? "");
   const [crit, setCrit] = useState<Criticality | "">(app?.criticality ?? "");
@@ -608,6 +665,9 @@ function AppForm({
     setErr(null);
     const body: ApplicationInput = {
       name: name.trim(),
+      external_name: externalName.trim() || null,
+      internal_name: internalName.trim() || null,
+      purpose: purpose || null,
       code: code.trim() || null,
       owner: owner.trim() || null,
       criticality: crit || null,
@@ -649,6 +709,44 @@ function AppForm({
               autoFocus
               maxLength={200}
               onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="ap-purpose">Verwendungszweck</label>
+            <select
+              id="ap-purpose"
+              className="sel input"
+              value={purpose}
+              onChange={(e) => setPurpose(e.target.value as Purpose | "")}
+            >
+              <option value="">– keiner –</option>
+              {(Object.keys(PURPOSE) as Purpose[]).map((k) => (
+                <option key={k} value={k}>
+                  {PURPOSE[k][1]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="ap-ext">Externer Name</label>
+            <input
+              id="ap-ext"
+              className="input"
+              value={externalName}
+              maxLength={200}
+              placeholder="Name gegen aussen (Fachbereich, Kunde)"
+              onChange={(e) => setExternalName(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="ap-int">Interner Name</label>
+            <input
+              id="ap-int"
+              className="input mono"
+              value={internalName}
+              maxLength={200}
+              placeholder="Name im Betrieb"
+              onChange={(e) => setInternalName(e.target.value)}
             />
           </div>
           <div className="field">
@@ -718,125 +816,5 @@ function AppForm({
         <button type="submit" hidden />
       </form>
     </Modal>
-  );
-}
-
-function docMarkdown(doc: ApplicationDoc): string {
-  const a = doc.application;
-  const lines = [`# Applikation ${a.name}`, ""];
-  const meta = [
-    a.code && `Kürzel: ${a.code}`,
-    doc.tenant_code && `GG: ${doc.tenant_code}`,
-    a.criticality && `Kritikalität: ${CRIT[a.criticality][1]}`,
-    a.owner && `Verantwortlich: ${a.owner}`,
-    a.site && `Standort: ${siteLabel(a.site)}`,
-  ].filter(Boolean);
-  if (meta.length) lines.push(meta.join(" · "), "");
-  if (a.description) lines.push(a.description, "");
-  lines.push("## Systeme", "");
-  for (const s of doc.systems) {
-    lines.push(`- ${s.kind === "epg" ? "EPG" : "Server"} ${s.name}${s.ip ? ` (${s.ip})` : ""}`);
-  }
-  lines.push("");
-  return lines.concat(tablesMarkdown(doc.tables)).join("\n");
-}
-
-function AppDocView({ id, onBack }: { id: number; onBack: () => void }) {
-  const [doc, setDoc] = useState<ApplicationDoc | null>(null);
-  const [err, setErr] = useState<unknown>(null);
-  const [showEmpty, setShowEmpty] = useState(false);
-
-  useEffect(() => {
-    fetchAppDoc(id)
-      .then(setDoc)
-      .catch(setErr);
-  }, [id]);
-
-  if (err) return <ErrorBox error={err} prefix="Doku laden" />;
-  if (!doc) return <Loading>Erzeuge Doku…</Loading>;
-  const a = doc.application;
-  const tables = doc.tables.filter((t) => showEmpty || t.rows.length > 0);
-
-  return (
-    <div className="printable">
-      <div className="filterbar no-print">
-        <button className="btn btn-ghost btn-sm" onClick={onBack}>
-          ← Applikationen
-        </button>
-        <button className={`toggle ${showEmpty ? "on" : ""}`} onClick={() => setShowEmpty((v) => !v)}>
-          leere Kategorien zeigen
-        </button>
-        <div className="grow" />
-        <button className="btn btn-ghost btn-sm" onClick={() => download(`${a.name}.md`, docMarkdown(doc))}>
-          <Icon name="download" size={14} /> Export (Markdown)
-        </button>
-        <button className="btn btn-ghost btn-sm" onClick={() => window.print()} title="Drucken oder als PDF sichern">
-          Drucken / PDF
-        </button>
-      </div>
-
-      <h1 className="print-title">Applikation {a.name}</h1>
-      <div className="chips" style={{ marginBottom: 10 }}>
-        {a.code && <span className="chip local">Kürzel {a.code}</span>}
-        {doc.tenant_code && <span className="chip">GG {doc.tenant_code}</span>}
-        {a.criticality && <CritChip value={a.criticality} />}
-        {a.owner && <span className="chip">Verantwortlich: {a.owner}</span>}
-        {a.site ? (
-          <span className="chip">
-            Standort {siteLabel(a.site)}
-          </span>
-        ) : (
-          <span className="chip na">ohne Standort</span>
-        )}
-      </div>
-      {a.description && <p style={{ whiteSpace: "pre-wrap" }}>{a.description}</p>}
-
-      <div className="card">
-        <div className="card-head">
-          <h2>Systeme</h2>
-          <span className="mono faint" style={{ fontSize: 12 }}>
-            {doc.systems.length}
-          </span>
-        </div>
-        <div className="card-body">
-          {doc.systems.length === 0 ? (
-            <div className="loading">Keine Systeme – Mitglieder hinzufügen.</div>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Art</th>
-                  <th>System</th>
-                  <th>IP</th>
-                  <th>Standort</th>
-                </tr>
-              </thead>
-              <tbody>
-                {doc.systems.map((s) => (
-                  <tr key={`${s.kind}-${s.name}`}>
-                    <td>
-                      <span className="chip">{s.kind === "epg" ? "EPG" : "Server"}</span>
-                    </td>
-                    <td className="mono">{s.name}</td>
-                    <td className="mono">{s.ip ?? <Dash />}</td>
-                    <td>{s.site ? siteLabel(s.site) : <Dash />}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      <div className="stack" style={{ marginTop: 14 }}>
-        {tables.length === 0 ? (
-          <div className="card">
-            <Empty title="Noch keine Zugriffe kategorisiert">Die Systeme dieser Applikation haben keine Regeln.</Empty>
-          </div>
-        ) : (
-          tables.map((t) => <DocTableView key={t.index} table={t} />)
-        )}
-      </div>
-    </div>
   );
 }

@@ -98,7 +98,16 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         {"application_id", "tenant_id", "name", "code", "members", "suggestion"}
     ),
     "application.updated": frozenset(
-        {"application_id", "tenant_id", "name", "code", "criticality", "site_id", "fields"}
+        {
+            "application_id",
+            "tenant_id",
+            "name",
+            "code",
+            "criticality",
+            "purpose",
+            "site_id",
+            "fields",
+        }
     ),
     "application.deleted": frozenset({"application_id", "tenant_id", "name", "members"}),
     "application.member_added": frozenset(

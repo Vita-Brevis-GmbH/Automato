@@ -32,6 +32,7 @@ export const FINDING_LABEL: Record<string, string> = {
   rule_incomplete: "Regel nicht wirksam",
   vm_not_in_ipam: "VM-IP nicht im IPAM",
   portgroup_no_epg: "Portgruppe ohne EPG",
+  mapped_not_in_ipam: "Ziel nicht im IPAM",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -209,6 +210,79 @@ export function VmChip({ vm }: { vm: VmInfo }) {
       VM {vm.name}
       {vm.epg ? ` · ${vm.epg.split("/").pop()}` : ""}
     </span>
+  );
+}
+
+const POWER_STATE: Record<string, [string, string]> = {
+  poweredOn: ["ok", "an"],
+  poweredOff: ["na", "aus"],
+  suspended: ["warn", "pausiert"],
+};
+
+// VM im Detail (vCenter, 0.14.0): Status, Gast-OS, Netzwerk (NIC, Portgruppe → EPG), Lage und
+// Ressourcen – im Regel-, Objekt- und NAT-Detail
+export function VmCard({ vm, role }: { vm: VmInfo; role?: string }) {
+  const [tone, state] = POWER_STATE[vm.power_state ?? ""] ?? ["na", vm.power_state ?? "–"];
+  const res = [
+    vm.vcpus != null ? `${vm.vcpus} vCPU` : null,
+    vm.memory_mb != null ? `${Math.round((vm.memory_mb / 1024) * 10) / 10} GB RAM` : null,
+    vm.disk_gb != null ? `${Math.round(vm.disk_gb)} GB Disk` : null,
+  ].filter(Boolean);
+  const rows: [string, ReactNode][] = [
+    ["Gast-OS", vm.guest_os],
+    ["Hostname", vm.hostname],
+    ["IPs", vm.ips?.length ? vm.ips.join(", ") : null],
+    [
+      "Netzwerkkarte",
+      vm.nic ? `${vm.nic}${vm.mac ? ` · ${vm.mac}` : ""}${vm.connected === false ? " · getrennt" : ""}` : null,
+    ],
+    ["Portgruppe", vm.portgroup ? `${vm.portgroup}${vm.vlan != null ? ` (VLAN ${vm.vlan})` : ""}` : null],
+    [
+      "EPG",
+      vm.epg ? (
+        <>
+          <span className="mono">{vm.epg}</span>
+          {vm.epg_match && <span className="faint"> · über {vm.epg_match === "vlan" ? "das VLAN" : "den Namen"}</span>}
+        </>
+      ) : null,
+    ],
+    ["Cluster / Host", [vm.cluster, vm.host].filter(Boolean).join(" · ") || null],
+    ["Datacenter", vm.datacenter],
+    ["Ressourcen", res.length ? res.join(" · ") : null],
+    ["Notiz", vm.notes],
+    ["Gleiche IP", vm.others?.length ? `auch an ${vm.others.join(", ")}` : null],
+  ];
+  return (
+    <div className="refblock">
+      <div className="refline">
+        <span className="chip info">VM</span> <b className="mono">{vm.name}</b>
+        <span className={`chip ${tone}`}>{state}</span>
+        {vm.template && <span className="chip">Vorlage</span>}
+        {role && <span className="faint">{role}</span>}
+      </div>
+      <dl className="kv tight">
+        {rows
+          .filter(([, v]) => v !== null && v !== undefined && v !== "")
+          .map(([k, v]) => (
+            <Pair key={k} k={k} v={v} />
+          ))}
+      </dl>
+    </div>
+  );
+}
+
+// VMs eines Detail-Fensters (jede VM einmal, mit Rolle wie „Quelle“ oder „Ziel 10.0.0.5“)
+export function VmSection({ items }: { items: { vm: VmInfo; role?: string }[] }) {
+  const seen = new Set<number>();
+  const list = items.filter(({ vm }) => !seen.has(vm.id) && seen.add(vm.id));
+  if (!list.length) return null;
+  return (
+    <>
+      <div className="sub-h">VMs ({list.length})</div>
+      {list.map(({ vm, role }) => (
+        <VmCard key={vm.id} vm={vm} role={role} />
+      ))}
+    </>
   );
 }
 

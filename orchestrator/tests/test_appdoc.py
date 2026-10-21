@@ -317,6 +317,6 @@ def test_epg_als_system_tabellen_789(session_factory, client):
     def rows_of(i):
         return next(t["rows"] for t in doc["tables"] if t["index"] == i)
 
-    assert [r["Target Systems"] for r in rows_of(7)] == ["EG_b"]
-    assert [r["Target Systems"] for r in rows_of(8)] == ["EG_c"]
+    assert [r["Target Systems"] for r in rows_of(7)] == ["AP_001/EG_b"]  # ganzer ACI-Pfad (0.14.0)
+    assert [r["Target Systems"] for r in rows_of(8)] == ["AP_002/EG_c"]
     assert [r["Target Systems"] for r in rows_of(9)] == ["EG_ext"]

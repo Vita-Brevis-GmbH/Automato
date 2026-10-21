@@ -45,11 +45,15 @@ class NatOut(BaseModel):
     family: str | None = None  # v4 | v6
     targets: list[NatTargetOut] = []  # Virtual Server: Real Server
     attrs: dict = {}  # Virtual Server: Server-Typ, Methode, Persistenz, Health-Checks
+    # Korrektheitspruefung (0.14.0): Befunde des VIP-/Pool-Objekts, internes Ziel ohne IPAM
+    issues: list[str] = []
 
 
 class NatDetailOut(NatOut):
     ext_info: list[dict] = []  # IPAM je Referenzquelle: DNS-Namen, Netz, VLAN, Site
     mapped_info: list[dict] = []
     color: int | None = None
+    object_id: int | None = None  # VIP- bzw. Pool-Objekt (Link in die Objekt-Ansicht)
     settings: dict[str, str] = {}  # weitere Einstellungen wie auf dem Geraet (Typ, ARP, ...)
     rules: list[RuleOut] = []  # Firewall-Regeln mit diesem VIP bzw. SNAT-Pool
+    vms: list[dict] = []  # VMs hinter dem internen Ziel (vCenter), `for_ip` = welche IP

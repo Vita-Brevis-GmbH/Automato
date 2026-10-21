@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { decidePair, Endpoint, fetchRuleDetail, NatBrief, resetPairDecision, RuleDetail, RuleRef } from "./api";
 import type { View, ViewParams } from "./App";
 import { EpgCard } from "./EpgCard";
-import { FamilyMarks, RefCard, SideMarks, VmChip } from "./refs";
+import { FamilyMarks, RefCard, SideMarks, VmChip, VmSection } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, fmtTime, Loading, MatchBadge, Note } from "./ui";
 
 function EndpointList({ items }: { items: Endpoint[] }) {
@@ -172,6 +172,7 @@ export default function RuleDetailDrawer({
   onGo,
   onRule,
   onChanged,
+  intro,
 }: {
   ruleId: number;
   systemName: (id: number) => string;
@@ -179,6 +180,7 @@ export default function RuleDetailDrawer({
   onGo?: (v: View, p?: ViewParams) => void;
   onRule?: (id: number) => void; // andere Regel öffnen (IPv4/IPv6-Gegenstück)
   onChanged?: () => void; // Paar entschieden: Liste neu laden
+  intro?: ReactNode; // z. B. Applikations-Doku: warum die Regel für die Applikation gilt
 }) {
   const [detail, setDetail] = useState<RuleDetail | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -206,6 +208,15 @@ export default function RuleDetailDrawer({
   const aci = detail?.aci ?? null;
   const onObject = onGo ? (name: string) => onGo("regeln", { object: name }) : undefined;
   const onNat = onGo ? (name: string) => onGo("nat", { q: name }) : undefined;
+  // VMs hinter den Werten bzw. Endpunkten beider Seiten (vCenter) mit allen Angaben
+  const vmItems = (["src", "dst"] as const).flatMap((role) => {
+    const label = role === "src" ? (aci ? "Consumer" : "Quelle") : aci ? "Provider" : "Ziel";
+    const values = refs(role).flatMap((r) => [...r.values, ...r.members.flatMap((m) => m.values)]);
+    return [
+      ...values.filter((v) => v.vm).map((v) => ({ vm: v.vm!, role: `${label} · ${v.value}` })),
+      ...(role === "src" ? src : dst).filter((e) => e.vm).map((e) => ({ vm: e.vm!, role: `${label} · ${e.value ?? ""}` })),
+    ];
+  });
 
   return (
     <Drawer
@@ -221,6 +232,7 @@ export default function RuleDetailDrawer({
       {!detail && !error && <Loading />}
       {detail && (
         <>
+          {intro}
           <dl className="kv">
             <dt>Aktion</dt>
             <dd>
@@ -339,6 +351,8 @@ export default function RuleDetailDrawer({
           </div>
           <SideMarks r={detail} side="dst" />
           <Side refs={refs("dst")} endpoints={dst} onObject={onObject} />
+
+          <VmSection items={vmItems} />
 
           {(detail.nat_entries?.length ?? 0) > 0 && (
             <>

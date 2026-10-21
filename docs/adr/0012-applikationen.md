@@ -15,6 +15,29 @@ Die Doku je System – und damit je Applikation – erfasst alle Regeln, gleichw
 - Die Spalte „Bezug“ nennt, wie die Regel greift (direkt, Objekt/Netz, any, vzAny, ESG, EPG).
   Ist ein System Quelle und Ziel (z. B. any → any), erscheint die Regel ein- und ausgehend.
 
+**Ergänzung 0.14.0 (Dev-Befund „die Doku ist im Mittelpunkt“):**
+- **Klick auf eine Applikation öffnet ihre Doku** (`#apps?app=<id>`); Mitglieder und
+  Stammdaten werden von dort gepflegt. Neue Stammdaten ohne Funktionsrelevanz: externer und
+  interner Name, Verwendungszweck (Dev, Test, Prod; Alembic `0036`).
+- **Systeme = alle VMs der Applikation:** VMs an den Portgruppen ihrer EPGs und VMs hinter
+  ihren Servern (gleiche IP), dazu Server ohne VM. Je System steht, **warum** es dazugehört
+  (Mitglied, Portgruppe → EPG, IP = Server). Darunter die **EPGs im ACI** mit ganzem Pfad
+  `Tenant/AP/EPG` (auch als Server Name bzw. Gegenstelle in den Tabellen, statt nur `EG_…`).
+- **Treffer je Regel, System und Seite** mit Richtung aus Sicht des Systems (eingehend = Ziel
+  bzw. Provider, ausgehend = Quelle bzw. Consumer), Bezug und **Art des Bezugs**:
+  - *spezifisch*: das System bzw. die EPG selbst – direkt, über eine Gruppe, die EPG, ein ESG
+    oder ein Netz innerhalb des EPG-Subnetzes;
+  - *unspezifisch*: über ein grösseres Netz bzw. einen Bereich (Subnetz), any, vzAny der VRF
+    oder die Preferred Group.
+  Eine Regel zählt in der Übersicht mit ihrem engsten Bezug. Nennt eine Regel das System auf
+  einer Seite gezielt, gilt any auf der Gegenseite nicht als eigener Zugriff.
+- Die Regeln erscheinen wie in „Regeln & Contracts“ (Aktion, Herkunft Firewall/ACI mit
+  Quellsystem, Quelle, Ziel, Dienste, NAT), filterbar nach System/VM, EPG, Richtung, Art und
+  Bezug. Das Regel-Detail erklärt je Treffer, warum die Regel für die Applikation gilt, und
+  verlinkt Regel, Objekte und Findings. Die 10 Kategorien bleiben für Export und Druck.
+- Dazu die offenen Befunde der Applikation (Regeln, Server, VMs, Portgruppen, Subnetze der
+  EPGs). Alles rein lesend.
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:

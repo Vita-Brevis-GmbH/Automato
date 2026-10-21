@@ -472,19 +472,28 @@ def conditions(
 
 
 class Cover:
-    """Wie eine Regel einen Wert abdeckt: je Seite der engste Bereich (Objekt/Wert, any)."""
+    """Wie eine Regel einen Wert abdeckt: je Seite der engste Bereich (Objekt/Wert, any) und ob
+    er innerhalb des Werts liegt (Host im EPG-Subnetz)."""
 
     def __init__(self) -> None:
-        self.sides: dict[str, tuple[int, str | None, bool]] = {}
+        self.sides: dict[str, tuple[int, str | None, bool, bool]] = {}
 
-    def add(self, role: str, width: int, via: str | None, is_any: bool) -> None:
+    def add(self, role: str, width: int, via: str | None, is_any: bool, inside: bool = False):
         if role not in self.sides or width < self.sides[role][0]:
-            self.sides[role] = (width, via, is_any)
+            self.sides[role] = (width, via, is_any, inside)
 
     def via(self, role: str) -> str:
         """`any` bzw. das Objekt/der Wert, ueber den die Regel greift."""
-        _, via, is_any = self.sides[role]
+        _, via, is_any, _ = self.sides[role]
         return "any" if is_any else (via or "Netz")
+
+    def scope(self, role: str) -> str:
+        """`specific` (genau der Host bzw. innerhalb des Netzes), `subnet` (ein groesseres Netz
+        bzw. ein Bereich, der den Wert enthaelt) oder `any` (Applikations-Doku, 0.14.0)."""
+        width, _, is_any, inside = self.sides[role]
+        if is_any:
+            return "any"
+        return "specific" if width == 0 or inside else "subnet"
 
 
 def covers(
@@ -520,8 +529,11 @@ def covers(
             stmt = stmt.where(RuleIpRange.lo <= lo, RuleIpRange.hi >= hi)
         if domain is not None:
             stmt = stmt.join(Rule, Rule.id == RuleIpRange.rule_id).where(Rule.domain == domain)
+        vlo, vhi = int(lo, 16), int(hi, 16)
         for rule_id, role, rlo, rhi, via, is_any in session.execute(stmt):
-            out.setdefault(rule_id, Cover()).add(role, int(rhi, 16) - int(rlo, 16), via, is_any)
+            a, b = int(rlo, 16), int(rhi, 16)
+            inside = not is_any and vlo <= a and b <= vhi
+            out.setdefault(rule_id, Cover()).add(role, b - a, via, is_any, inside)
     return out
 
 

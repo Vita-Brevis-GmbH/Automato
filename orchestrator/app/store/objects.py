@@ -5,6 +5,7 @@ Mitgliedern, aufgeloeste Werte - und je Wert den Abgleich gegen das IPAM (Match-
 Zone, Referenz- und Anreicherungsdaten). Genutzt von Regel-Detail und Objekt-Ansicht.
 """
 
+from collections import defaultdict
 from collections.abc import Iterable
 
 from sqlalchemy import select
@@ -13,10 +14,12 @@ from sqlalchemy.orm import Session
 from app.models import (
     SERVICE_CATEGORIES,
     DeviceObject,
+    Finding,
     MatchStatus,
     NetworkObject,
     RefRole,
     Rule,
+    SubjectKind,
     Zone,
 )
 from app.schemas.rules import RefMemberOut, RefOut, RefValueOut
@@ -209,4 +212,34 @@ def rule_refs(session: Session, rule: Rule) -> list[RefOut]:
                 match_status=None if service else aggregate_status(values),
             )
         )
+    return out
+
+
+def object_issues(session: Session, tid: int, objects: list[DeviceObject]) -> dict[int, list[str]]:
+    """Befunde je Objekt (aus dem Abgleich) und Werte ohne Treffer im IPAM - ohne die teure
+    Aufbereitung der Referenzdaten (fuer den Filter "nur Abweichungen" ueber alle Objekte)."""
+    from app.store import reconcile  # spaet: reconcile nutzt dieses Modul
+
+    by_subject: dict[tuple[int | None, str], list[str]] = defaultdict(list)
+    for sid, subject, ftype in session.execute(
+        select(Finding.source_system_id, Finding.subject_id, Finding.type).where(
+            Finding.tenant_id == tid, Finding.subject_kind == SubjectKind.DEVICE_OBJECT
+        )
+    ):
+        by_subject[(sid, subject)].append(ftype.value)
+    bad = set(
+        session.scalars(
+            select(NetworkObject.name).where(
+                NetworkObject.tenant_id == tid,
+                NetworkObject.match_status.in_([MatchStatus.UNMATCHED, MatchStatus.AMBIGUOUS]),
+            )
+        )
+    )
+    out: dict[int, list[str]] = {}
+    for o in objects:
+        found = list(by_subject.get((o.source_system_id, reconcile.subject(o)), []))
+        service = o.category in SERVICE_CATEGORIES
+        if not service and any(object_key(v) in bad for v in o.values or []):
+            found.append("unmatched_object")
+        out[o.id] = sorted(set(found))
     return out
