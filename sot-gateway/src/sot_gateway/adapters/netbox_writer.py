@@ -37,6 +37,11 @@ WRITABLE = frozenset(
         "ipam/prefixes",
         "ipam/ip-ranges",
         "ipam/ip-addresses",
+        "virtualization/cluster-types",
+        "virtualization/cluster-groups",
+        "virtualization/clusters",
+        "virtualization/virtual-machines",
+        "virtualization/interfaces",
     }
 )
 

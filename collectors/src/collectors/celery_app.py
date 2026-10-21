@@ -15,6 +15,7 @@ app = Celery(
         "collectors.fortigate.tasks",
         "collectors.cisco_aci.tasks",
         "collectors.ipam.tasks",
+        "collectors.vmware.tasks",
     ],
 )
 app.conf.task_default_queue = "collectors"

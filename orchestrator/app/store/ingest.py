@@ -66,7 +66,7 @@ from app.schemas.collector import (
     NormalizedRule,
 )
 from app.store import naming_profiles as profile_store
-from app.store import reconcile, rule_index
+from app.store import reconcile, rule_index, virtual
 from app.store import rules as rules_store
 
 _ANY_VALUES = {"all", "any", "*"}
@@ -132,11 +132,19 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         _persist_nat(session, run, nat)
     if result.inventory is not None:  # aeltere Collectors liefern kein Inventar
         _replace_inventory(session, run, result.inventory)
+    if result.virtual is not None:  # vCenter: VMs und Portgruppen (ADR 0017)
+        virtual.replace(session, run, result.virtual)
     session.flush()
     # Findings = abgeleiteter Zustand des ganzen Mandanten (alle Quellsysteme); danach der
-    # Regelindex des Quellsystems (Abgleich kann Werte aus dem IPAM ergaenzen)
+    # Regelindex des Quellsystems (Abgleich kann Werte aus dem IPAM ergaenzen) - nach einem
+    # vCenter-Lauf der des ganzen Mandanten (VM-Namen im Suchtext)
     reconcile.reconcile_tenant(session, run.tenant_id)
-    rule_index.rebuild(session, run.tenant_id, source_system_id=run.source_system_id, rules=rules)
+    if result.virtual is not None:
+        rule_index.rebuild(session, run.tenant_id)
+    else:
+        rule_index.rebuild(
+            session, run.tenant_id, source_system_id=run.source_system_id, rules=rules
+        )
 
 
 class _Cache:

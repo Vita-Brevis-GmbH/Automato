@@ -206,4 +206,21 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
             f"EPG {_q(subject)}{on} hat keine gelernten Endpunkte.",
             "Prüfen, ob die EPG noch gebraucht wird.",
         )
+    if ftype == "vm_not_in_ipam":
+        ips = d.get("ips") or []
+        what = "Die IP" if len(ips) == 1 else "Die IPs"
+        return (
+            f"VM {_q(subject)}{on}: {what} {_list(ips, 6)} {'ist' if len(ips) == 1 else 'sind'} "
+            f"{_ipam(d)} nicht erfasst.",
+            "IP im IPAM anlegen (Name wie die VM bzw. ihr Hostname) oder die VM-Konfiguration "
+            "prüfen.",
+        )
+    if ftype == "portgroup_no_epg":
+        path = "/".join(x for x in (d.get("tenant"), d.get("ap"), d.get("epg")) if x)
+        vms = d.get("vms") or 0
+        return (
+            f"Portgruppe {_q(subject)}{on} heisst nach ACI-Schema {path}, diese EPG ist aber "
+            f"nicht eingelesen ({vms} VM{'s' if vms != 1 else ''} daran).",
+            "Tenant im APIC-Quellsystem mitlesen bzw. prüfen, ob die EPG noch existiert.",
+        )
     return subject, ""

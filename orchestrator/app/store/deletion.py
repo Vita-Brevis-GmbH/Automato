@@ -22,6 +22,7 @@ from app.models import (
     Finding,
     NatRule,
     NetworkObject,
+    Portgroup,
     ReferenceRecordRow,
     Rule,
     RuleEndpoint,
@@ -30,6 +31,9 @@ from app.models import (
     SourceSystem,
     SyncPlan,
     Tenant,
+    Vm,
+    VmIp,
+    VmNic,
     Zone,
 )
 from app.store import rules as rules_store
@@ -38,6 +42,14 @@ from app.store import rules as rules_store
 def _delete_rules(session: Session, condition) -> int:
     # Endpunkte, Verweise, Service-Zuordnungen und Regelindex mit (wie beim Ingest)
     return rules_store.delete_rules(session, condition)
+
+
+def _delete_vms(session: Session, condition) -> int:
+    """VMs (vCenter) mit NICs und IPs."""
+    ids = select(Vm.id).where(condition)
+    session.execute(delete(VmIp).where(VmIp.vm_id.in_(ids)))
+    session.execute(delete(VmNic).where(VmNic.vm_id.in_(ids)))
+    return _count(session, delete(Vm).where(condition))
 
 
 def _count(session: Session, stmt) -> int:
@@ -93,6 +105,8 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
     session.execute(delete(DeviceObject).where(DeviceObject.source_system_id == source.id))
     for model in INVENTORY_MODELS:
         session.execute(delete(model).where(model.source_system_id == source.id))
+    counts["vms"] = _delete_vms(session, Vm.source_system_id == source.id)
+    session.execute(delete(Portgroup).where(Portgroup.source_system_id == source.id))
     counts["epgs"] = _delete_source_epgs(session, source.id)
     source.reference_run_id = None
     session.flush()
@@ -124,6 +138,8 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     session.execute(delete(DeviceObject).where(DeviceObject.tenant_id == tid))
     for model in INVENTORY_MODELS:
         session.execute(delete(model).where(model.tenant_id == tid))
+    counts["vms"] = _delete_vms(session, Vm.tenant_id == tid)
+    session.execute(delete(Portgroup).where(Portgroup.tenant_id == tid))
     session.execute(
         update(SourceSystem).where(SourceSystem.tenant_id == tid).values(reference_run_id=None)
     )

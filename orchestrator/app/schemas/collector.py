@@ -175,6 +175,56 @@ class ReferenceBatch(BaseModel):
     records: list[ReferenceRecord] = Field(default_factory=list)
 
 
+class NormalizedVmNic(BaseModel):
+    """Netzwerkkarte einer VM: Portgruppe (VMware) mit VLAN, MAC und IPs aus den VMware Tools."""
+
+    name: str  # "Network adapter 1"
+    mac: str | None = None
+    portgroup: str | None = None
+    switch: str | None = None  # verteilter bzw. Standard-Switch
+    vlan: int | None = None
+    connected: bool | None = None
+    ips: list[str] = Field(default_factory=list)
+
+
+class NormalizedVm(BaseModel):
+    """VM aus dem vCenter (ADR 0017) - nur Inventar, keine Gast-Inhalte."""
+
+    name: str
+    uuid: str | None = None  # instanceUuid
+    power_state: str | None = None  # poweredOn | poweredOff | suspended
+    template: bool = False
+    guest_os: str | None = None
+    hostname: str | None = None  # Gast-Hostname (VMware Tools)
+    datacenter: str | None = None
+    cluster: str | None = None
+    host: str | None = None
+    vcpus: int | None = None
+    memory_mb: int | None = None
+    disk_gb: float | None = None
+    annotation: str | None = None
+    nics: list[NormalizedVmNic] = Field(default_factory=list)
+
+
+class NormalizedPortgroup(BaseModel):
+    """Portgruppe: verteilt (dvs) bzw. Standard je Host; VLAN, Trunk-Bereiche oder PVLAN."""
+
+    name: str
+    kind: str = "dvs"  # dvs | standard
+    switch: str | None = None
+    key: str | None = None  # dvPortgroup-Key
+    vlan: int | None = None
+    vlan_ranges: str | None = None  # Trunk, z. B. "100-199,300"
+    vm_count: int = 0
+
+
+class VirtualInventory(BaseModel):
+    """vCenter-Inventar eines Laufs: VMs und Portgruppen (ADR 0017)."""
+
+    vms: list[NormalizedVm] = Field(default_factory=list)
+    portgroups: list[NormalizedPortgroup] = Field(default_factory=list)
+
+
 class CollectorResult(BaseModel):
     status: Literal["completed", "failed"]
     rules: list[NormalizedRule] = Field(default_factory=list)
@@ -182,6 +232,7 @@ class CollectorResult(BaseModel):
     objects: list[NormalizedObject] = Field(default_factory=list)
     epgs: list[NormalizedEpg] = Field(default_factory=list)
     inventory: NetworkInventory | None = None  # Netzinventar (ADR 0010)
+    virtual: VirtualInventory | None = None  # vCenter: VMs und Portgruppen (ADR 0017)
     # Referenzquellen (Infoblox/NetBox): Eintraege kommen in Teilen ueber .../references,
     # hier nur die Gesamtzahl zur Kontrolle (ADR 0010)
     reference_count: int | None = None

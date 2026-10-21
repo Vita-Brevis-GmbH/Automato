@@ -7,7 +7,9 @@ Einziger Schreibweg der Plattform. Ablauf:
      Interface-IPs), VLANs je Quellsystem (VLAN-Gruppe), reale Subnetze (inkl. ACI
      BD/EPG/VRF), VRFs - Automato ist hier fuehrend;
    - DDI-Spiegel (Abschnitt `mirror`): Netze, Ranges und IPs mit DNS-Name aus dem
-     fuehrenden IPAM (z. B. Infoblox), wenn die Ziel-NetBox nicht selbst fuehrend ist.
+     fuehrenden IPAM (z. B. Infoblox), wenn die Ziel-NetBox nicht selbst fuehrend ist;
+   - Virtualisierung (Abschnitt `virtualization`, ADR 0017): VMs aus dem vCenter mit Cluster,
+     Cluster-Gruppe (Datacenter), VM-Interfaces und ihren IPs.
 2. **Ist** (`read_state`): NetBox lesen (nur GET).
 3. **Vorschau** (`diff`): je Objekt anlegen | aendern | unveraendert | Konflikt | loeschen.
    Geaendert/geloescht wird nur, was das Tag `automato` traegt; von Hand gepflegte Objekte
@@ -26,24 +28,28 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
+    Epg,
     InvDevice,
     InvInterface,
     InvSubnet,
     InvVlan,
     InvVrf,
     Platform,
+    Portgroup,
     Site,
     SourceSystem,
     Tenant,
+    Vm,
 )
 from app.store import references
 from app.store import sites as site_store
+from app.store.epgs import inventory_label
 
 TAG = "automato"
-SECTIONS = ("inventory", "mirror")
+SECTIONS = ("inventory", "mirror", "virtualization")
 INVENTORY_PLATFORMS = (Platform.FORTIGATE, Platform.CISCO_ACI)
 WRITE_ACTIONS = ("create", "update", "delete")
 ACTIONS = ("create", "update", "unchanged", "conflict", "delete", "obsolete")
@@ -55,7 +61,7 @@ class Kind:
     endpoint: str
     label: str
     managed: tuple[str, ...]  # Felder, die der Sync aktuell haelt (Aenderung/Konflikt)
-    scope: str = ""  # "" = nie loeschen | tenant | group | device
+    scope: str = ""  # "" = nie loeschen | tenant | group | device | vm
     # nur an eigenen Objekten (Tag automato) gehalten; an von Hand gepflegten kein Konflikt
     owned: tuple[str, ...] = ()
 
@@ -69,6 +75,22 @@ KINDS = (
     Kind("manufacturer", "dcim/manufacturers", "Hersteller", ()),
     Kind("device_role", "dcim/device-roles", "Geräterolle", ()),
     Kind("device_type", "dcim/device-types", "Gerätetyp", ()),
+    Kind("cluster_type", "virtualization/cluster-types", "Cluster-Typ", ()),
+    Kind(
+        "cluster_group",
+        "virtualization/cluster-groups",
+        "Cluster-Gruppe",
+        ("name", "description"),
+        "group",
+    ),
+    Kind(
+        "cluster",
+        "virtualization/clusters",
+        "Cluster",
+        ("tenant",),
+        "tenant",
+        owned=("type", "group", "status", "description"),
+    ),
     Kind("vrf", "ipam/vrfs", "VRF", ("tenant",), "tenant"),
     Kind("vlan_group", "ipam/vlan-groups", "VLAN-Gruppe", ("name", "description"), "group"),
     Kind("vlan", "ipam/vlans", "VLAN", ("name", "tenant", "description", "status"), "tenant"),
@@ -104,6 +126,22 @@ KINDS = (
         "device",
     ),
     Kind(
+        "virtual_machine",
+        "virtualization/virtual-machines",
+        "VM",
+        ("cluster", "tenant", "status", "vcpus", "memory", "disk"),
+        "tenant",
+        owned=("comments",),
+    ),
+    Kind(
+        "vm_interface",
+        "virtualization/interfaces",
+        "VM-Interface",
+        ("enabled",),
+        "vm",
+        owned=("description",),
+    ),
+    Kind(
         "ip_address",
         "ipam/ip-addresses",
         "IP-Adresse",
@@ -112,6 +150,10 @@ KINDS = (
     ),
 )
 KIND = {k.name: k for k in KINDS}
+# nur gelesen/geloescht, wenn der Abschnitt gewaehlt ist (sonst waeren alle VMs "veraltet")
+VIRTUAL_KINDS = frozenset(
+    {"cluster_type", "cluster_group", "cluster", "virtual_machine", "vm_interface"}
+)
 
 Ref = tuple[str, str]  # (Art, Schluessel)
 
@@ -123,6 +165,8 @@ class Want:
     label: str
     fields: dict[str, Any]
     refs: dict[str, Ref | list[Ref] | None] = field(default_factory=dict)
+    # nur an eigenen Objekten gehalten; ein von Hand gepflegtes wird nur referenziert
+    soft: tuple[str, ...] = ()
 
 
 @dataclass
@@ -264,6 +308,8 @@ def build_wants(
         _inventory_wants(session, w, tenant, sites, tenant_ref)
     if "mirror" in sections:
         _mirror_wants(session, w, tenant, target, tenant_ref)
+    if "virtualization" in sections:
+        _virtualization_wants(session, w, tenant, tenant_ref)
     return w
 
 
@@ -652,6 +698,197 @@ def _mirror_wants(
         )
 
 
+CLUSTER_TYPE = ("vmware-vsphere", "VMware vSphere")
+_VM_STATUS = {"poweredOn": "active"}  # sonst offline (ausgeschaltet, angehalten)
+VM_INTERFACE = "virtualization.vminterface"
+
+
+def _virtualization_wants(session: Session, w: Wants, tenant: Tenant, tenant_ref: Ref) -> None:
+    """VMs des Mandanten (ohne Vorlagen) mit Cluster, Interfaces und IPs (ADR 0017)."""
+    rows = session.execute(
+        select(Vm, SourceSystem.name)
+        .join(SourceSystem, SourceSystem.id == Vm.source_system_id)
+        .where(Vm.tenant_id == tenant.id, Vm.template.is_(False))
+        .options(selectinload(Vm.nics))
+        .order_by(Vm.source_system_id, Vm.name, Vm.id)
+    ).all()
+    if not rows:
+        return
+    epg_of = {
+        (sid, name): inventory_label(epg)
+        for sid, name, epg in session.execute(
+            select(Portgroup.source_system_id, Portgroup.name, Epg)
+            .join(Epg, Epg.id == Portgroup.epg_id)
+            .where(Portgroup.tenant_id == tenant.id)
+        )
+    }
+    plens = _PrefixLens(w, references.context(session, tenant.id).primary)
+    tslug = tenant_slug(tenant)
+    w.add(
+        Want(
+            "cluster_type",
+            CLUSTER_TYPE[0],
+            f"Cluster-Typ {CLUSTER_TYPE[1]}",
+            {"name": CLUSTER_TYPE[1], "slug": CLUSTER_TYPE[0], "description": "Automato: vCenter"},
+        )
+    )
+    for vm, src in rows:
+        cname = vm.cluster or vm.host
+        if not cname:
+            w.warnings.append(f"VM {vm.name} ({src}): ohne Cluster und Host – nicht übernommen.")
+            continue
+        if w.has("virtual_machine", vm.name):
+            w.warnings.append(f"VM {vm.name} kommt mehrfach vor – {src} übersprungen.")
+            continue
+        group: Ref | None = None
+        if vm.datacenter:
+            gslug = slugify(f"{tslug}-{vm.datacenter}")
+            group = ("cluster_group", gslug)
+            w.add(
+                Want(
+                    "cluster_group",
+                    gslug,
+                    f"Cluster-Gruppe {vm.datacenter}",
+                    {
+                        "name": _cut(f"{vm.datacenter} ({tenant.name})", 100),
+                        "slug": gslug,
+                        "description": _cut(f"Automato: Datacenter {vm.datacenter} ({src})", 200),
+                    },
+                )
+            )
+        ckey = f"{group[1]}/{cname}" if group else cname
+        w.add(
+            Want(
+                "cluster",
+                ckey,
+                f"Cluster {cname}",
+                {
+                    "name": _cut(cname, 100),
+                    "status": "active",
+                    "description": _cut(
+                        f"Automato: {'Cluster' if vm.cluster else 'Host'} aus {src}", 200
+                    ),
+                },
+                {"type": ("cluster_type", CLUSTER_TYPE[0]), "group": group, "tenant": tenant_ref},
+            )
+        )
+        epgs = sorted(
+            {
+                epg_of[(vm.source_system_id, n.portgroup)]
+                for n in vm.nics
+                if (vm.source_system_id, n.portgroup) in epg_of
+            }
+        )
+        comments = "\n".join(
+            x
+            for x in (
+                f"Automato: gelesen aus {src}",
+                f"Gast-OS {vm.guest_os}" if vm.guest_os else None,
+                f"Hostname {vm.hostname}" if vm.hostname else None,
+                f"Host {vm.host}" if vm.host else None,
+                f"EPG {', '.join(epgs)}" if epgs else None,
+            )
+            if x
+        )
+        fields = {
+            "name": _cut(vm.name, 64),
+            "status": _VM_STATUS.get(vm.power_state or "", "offline"),
+            "vcpus": vm.vcpus,
+            "memory": vm.memory_mb,  # NetBox: MB
+            "disk": round(vm.disk_gb * 1024) if vm.disk_gb else None,  # NetBox 4.x: MB
+            "comments": comments,
+        }
+        w.add(
+            Want(
+                "virtual_machine",
+                vm.name,
+                f"VM {vm.name}",
+                {k: v for k, v in fields.items() if v is not None},  # unbekannt: nicht anfassen
+                {"cluster": ("cluster", ckey), "tenant": tenant_ref},
+            )
+        )
+        for nic in vm.nics:
+            key = f"{vm.name}/{nic.name}"
+            epg = epg_of.get((vm.source_system_id, nic.portgroup))
+            w.add(
+                Want(
+                    "vm_interface",
+                    key,
+                    f"VM-Interface {key}",
+                    {
+                        "name": _cut(nic.name, 64),
+                        "enabled": nic.connected is not False,
+                        "description": _cut(
+                            _join(
+                                f"MAC {nic.mac}" if nic.mac else None,
+                                f"Portgruppe {nic.portgroup}" if nic.portgroup else None,
+                                f"VLAN {nic.vlan}" if nic.vlan is not None else None,
+                                f"EPG {epg}" if epg else None,
+                            ),
+                            200,
+                        ),
+                    },
+                    {"virtual_machine": ("virtual_machine", vm.name)},
+                )
+            )
+            for value in nic.ips or []:
+                _vm_ip_want(w, value, key, f"VM {vm.name} {nic.name}", plens, tenant_ref)
+
+
+def _vm_ip_want(w: Wants, value: str, key: str, label: str, plens, tenant_ref: Ref) -> None:
+    ip = _ip(value)
+    if ip is None:
+        return
+    existing = w.get("ip_address", ip)
+    if existing is not None:
+        # IP aus dem DDI-Spiegel: an das VM-Interface haengen; Geraete-Interface-IP bleibt
+        if not existing.fields.get("assigned_object_type"):
+            existing.fields["assigned_object_type"] = VM_INTERFACE
+            existing.refs["assigned_object_id"] = ("vm_interface", key)
+            existing.fields["description"] = _cut(_join(existing.fields["description"], label), 200)
+        return
+    w.add(
+        Want(
+            "ip_address",
+            ip,
+            f"IP {ip} ({key})",
+            {
+                "address": f"{ip}/{plens.of(ip)}",
+                "status": "active",
+                "description": _cut(label, 200),
+                "assigned_object_type": VM_INTERFACE,
+            },
+            {"assigned_object_id": ("vm_interface", key), "tenant": tenant_ref},
+            # von Hand gepflegte IP (NetBox als IPAM): nur die Zuordnung zur VM zaehlt
+            soft=("address", "tenant", "status", "description"),
+        )
+    )
+
+
+class _PrefixLens:
+    """Praefixlaenge einer IP: laengstes Netz aus dem Soll bzw. dem fuehrenden IPAM."""
+
+    def __init__(self, w: Wants, primary=None) -> None:
+        self.nets: dict[int, set[tuple[int, int]]] = defaultdict(set)
+        values = set(w.keys_of("prefix")) | set(primary.prefix_by_value if primary else ())
+        for value in values:
+            try:
+                n = ipaddress.ip_network(value, strict=False)
+            except ValueError:
+                continue
+            self.nets[n.version].add((n.prefixlen, int(n.network_address)))
+        self.lens = {v: sorted({p for p, _ in nets}, reverse=True) for v, nets in self.nets.items()}
+
+    def of(self, ip: str) -> int:
+        addr = ipaddress.ip_address(ip)
+        bits = addr.max_prefixlen
+        for plen in self.lens.get(addr.version, ()):
+            net = (int(addr) >> (bits - plen)) << (bits - plen)
+            if (plen, net) in self.nets[addr.version]:
+                return plen
+        return bits
+
+
 def _plen(index, ip: str) -> int:
     prefixes = index.containing_prefixes(ip)
     if prefixes:
@@ -673,12 +910,17 @@ def _key_of(kind: str, obj: dict) -> str | None:
         "manufacturer",
         "device_role",
         "vlan_group",
+        "cluster_type",
+        "cluster_group",
     ):
         return obj.get("slug")
     if kind == "device_type":
         return (obj.get("model") or "").lower() or None
-    if kind in ("vrf", "device"):
+    if kind in ("vrf", "device", "virtual_machine"):
         return obj.get("name")
+    if kind == "cluster":
+        group = obj.get("group") or {}
+        return f"{group['slug']}/{obj.get('name')}" if group.get("slug") else obj.get("name")
     if kind == "vlan":
         group = obj.get("group") or {}
         return f"{group['slug']}/{obj.get('vid')}" if group.get("slug") else None
@@ -689,6 +931,9 @@ def _key_of(kind: str, obj: dict) -> str | None:
     if kind == "interface":
         device = obj.get("device") or {}
         return f"{device.get('name')}/{obj.get('name')}" if device.get("name") else None
+    if kind == "vm_interface":
+        vm = obj.get("virtual_machine") or {}
+        return f"{vm.get('name')}/{obj.get('name')}" if vm.get("name") else None
     if kind == "ip_address":
         return _ip(obj.get("address"))
     return None
@@ -698,9 +943,12 @@ def _tagged(obj: dict) -> bool:
     return any((t or {}).get("slug") == TAG for t in obj.get("tags") or [])
 
 
-def read_state(writer, wants: Wants, tslug: str, gprefix: str) -> State:
+def read_state(
+    writer, wants: Wants, tslug: str, gprefix: str, sections: list[str] | None = None
+) -> State:
     """NetBox-Ist fuer die Arten des Syncs (nur GET)."""
     state: State = {k.name: {} for k in KINDS}
+    virtual = sections is None or "virtualization" in sections
 
     def put(kind: str, objs: list[dict]) -> None:
         for obj in objs:
@@ -709,7 +957,9 @@ def read_state(writer, wants: Wants, tslug: str, gprefix: str) -> State:
                 state[kind][key] = Have(obj["id"], key, obj, _tagged(obj))
 
     for k in KINDS:
-        if k.name in ("vlan", "interface"):
+        if k.name in ("vlan", "interface", "vm_interface"):
+            continue
+        if k.name in VIRTUAL_KINDS and not virtual:
             continue
         put(k.name, writer.read(k.endpoint, {"slug": TAG} if k.name == "tag" else {}))
 
@@ -728,6 +978,13 @@ def read_state(writer, wants: Wants, tslug: str, gprefix: str) -> State:
     ]
     for chunk in _chunks(devices, 50):
         put("interface", writer.read("dcim/interfaces", {"device_id": chunk}))
+    vms = [
+        h.id
+        for key, h in state["virtual_machine"].items()
+        if wants.has("virtual_machine", key) or (h.tagged and _tenant_id(h.obj) == _id(our_tenant))
+    ]
+    for chunk in _chunks(vms, 50):
+        put("vm_interface", writer.read("virtualization/interfaces", {"virtual_machine_id": chunk}))
     return state
 
 
@@ -813,6 +1070,11 @@ def _same(old: Any, new: Any) -> bool:
         return True
     if isinstance(old, str) and isinstance(new, str):
         return old.strip() == new.strip()
+    if isinstance(old, str) and isinstance(new, int | float) and not isinstance(new, bool):
+        try:  # Dezimalfeld als Text (z. B. vCPUs "2.00")
+            return float(old) == float(new)
+        except ValueError:
+            return False
     return old == new
 
 
@@ -829,6 +1091,8 @@ def _changes(want: Want, have: Have, state: State, wants: Wants) -> list[dict]:
     out: list[dict] = []
     kind = KIND[want.kind]
     for f in kind.managed + (kind.owned if have.tagged else ()):
+        if f in want.soft and not have.tagged:
+            continue
         old_raw = have.obj.get(f)
         if f in want.refs:
             target = want.refs[f]
@@ -843,7 +1107,11 @@ def _changes(want: Want, have: Have, state: State, wants: Wants) -> list[dict]:
                 if target is None:
                     continue  # keine Vorgabe (z. B. Netz ohne bekanntes VLAN) - nicht anfassen
                 new_id = _resolve(target, state, wants)
-                if new_id is not _PENDING and _same(_norm(old_raw), new_id):
+                if (
+                    new_id is not _PENDING
+                    and _same(_norm(old_raw), new_id)
+                    and _same_type(f, want, have)
+                ):
                     continue
                 out.append({"field": f, "old": _display(old_raw), "new": target[1]})
         elif f in want.fields:
@@ -854,6 +1122,16 @@ def _changes(want: Want, have: Have, state: State, wants: Wants) -> list[dict]:
     return out
 
 
+def _same_type(f: str, want: Want, have: Have) -> bool:
+    """Gleiche Objekt-ID reicht nicht: Port und VM-Interface koennen dieselbe ID tragen."""
+    if f != "assigned_object_id" or not want.fields.get("assigned_object_type"):
+        return True
+    return have.obj.get("assigned_object_type") == want.fields["assigned_object_type"]
+
+
+_PARENT = {"device": "device", "vm": "virtual_machine"}  # Scope -> Art des Elternobjekts
+
+
 def _in_scope(kind: Kind, have: Have, state: State, tslug: str, gprefix: str) -> bool:
     if not have.tagged or not kind.scope:
         return False
@@ -862,10 +1140,11 @@ def _in_scope(kind: Kind, have: Have, state: State, tslug: str, gprefix: str) ->
         return our is not None and _tenant_id(have.obj) == our
     if kind.scope == "group":
         return have.key.startswith(gprefix)
-    if kind.scope == "device":
-        dev = (have.obj.get("device") or {}).get("name")
-        dev_have = state["device"].get(dev) if dev else None
-        return dev_have is not None and dev_have.tagged and _tenant_id(dev_have.obj) == our
+    if kind.scope in _PARENT:
+        parent = _PARENT[kind.scope]
+        name = (have.obj.get(parent) or {}).get("name")
+        owner = state[parent].get(name) if name else None
+        return owner is not None and owner.tagged and _tenant_id(owner.obj) == our
     return False
 
 
@@ -965,7 +1244,7 @@ def compute(
     wants = build_wants(session, tenant, target, sections)
     tslug = tenant_slug(tenant)
     gprefix = f"{tslug}-"
-    state = read_state(writer, wants, tslug, gprefix)
+    state = read_state(writer, wants, tslug, gprefix, sections)
     unique_names(wants, state)
     items = diff(wants, state, tslug, gprefix, allow_delete)
     return Plan(wants, state, items, fingerprint(items))

@@ -7,6 +7,41 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.11.0 – 2026-10-21
+
+VMware vCenter lesen, VMs in Regeln, Objekten und Doku, VMs nach NetBox Virtualization
+(ADR 0017, Alembic `0032`).
+
+- **Neue Plattform VMware** (Quellsystem mit Benutzer/Passwort, über den Agenten):
+  - Gelesen werden VMs (Status, Gast-OS, Hostname, vCPU, RAM, Disk, Notiz, Vorlage), ihre
+    NICs mit MAC, Portgruppe und IPs (VMware Tools), Hosts, Cluster, Datacenter und
+    Portgruppen (verteilt mit VLAN/Trunk/PVLAN, Standard je Host).
+  - **Nur lesen, auch im Code:** Der Collector lässt nur lesende vSphere-Methoden zu
+    (Anmelden, Service-Content, Container-View, Eigenschaften abrufen). Jeder andere Aufruf
+    bricht vor dem Senden ab. Das vCenter-Konto braucht die Rolle **Read-only**.
+- **Portgruppe → ACI-EPG:**
+  - Name nach ACI-VMM-Schema `Tenant|AP|EPG` (z. B. `TE_x|AP_007|EG_dmz02`), auch ohne
+    Präfixe (`EG_db01` = `EPG_db01`).
+  - Sonst das VLAN der Portgruppe, wenn es genau einer EPG gehört.
+  - Die Zuordnung wird bei jedem Abgleich neu berechnet.
+- **VMs in Automato:**
+  - Objekte → **VMs** (Netzwerk mit Portgruppe → EPG, IPs mit DNS-Namen und „nicht im
+    IPAM“, Cluster/Host, Ressourcen, „Regeln der VM“) und **Portgruppen**.
+  - IPs in Regeln und Objekten zeigen die VM dahinter; die Regelsuche findet VM-Namen.
+  - EPGs nennen ihre VMs.
+  - Doku je System: der Server nennt seine VM und bringt die Contracts der EPG ihrer
+    Portgruppe mit, auch ohne gelernten Endpunkt. Die Doku je EPG nennt die VMs.
+  - Neue Befunde: **VM-IP fehlt im IPAM**, **Portgruppe nach ACI-Schema ohne EPG**.
+- **NetBox-Sync, neuer Abschnitt „Virtualisierung“:**
+  - Cluster-Typ „VMware vSphere“, Cluster-Gruppe je Datacenter, Cluster, VMs (Status, vCPU,
+    RAM, Disk, Kommentar mit Gast-OS, Host und EPG), VM-Interfaces (MAC, Portgruppe, VLAN,
+    EPG) und die IPs am VM-Interface. Vorlagen werden nicht übernommen.
+  - Von Hand gepflegte IPs (NetBox als IPAM) bleiben unverändert; fehlt nur die Zuordnung
+    zur VM, ist das ein Konflikt.
+  - Ohne den Abschnitt bleiben VMs in NetBox unangetastet.
+  - Der Sync-Benutzer braucht die Rechte für `virtualization.*`: `sync-user.sh` erneut
+    ausführen.
+
 ## 0.10.0 – 2026-10-21
 
 FortiGate Virtual Server, vollständige Doku je System bzw. Applikation, Regeln je Subnetz

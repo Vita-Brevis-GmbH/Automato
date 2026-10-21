@@ -31,6 +31,8 @@ class FindingType(enum.StrEnum):
     VLAN_MISMATCH = "vlan_mismatch"  # VLAN des Subnetzes weicht vom IPAM ab
     SERVICE_MISMATCH = "service_mismatch"  # Service-Name passt nicht zu Protokoll/Port
     RULE_INCOMPLETE = "rule_incomplete"  # Regel ohne Quelle bzw. Ziel (ACI: nicht wirksam)
+    VM_NOT_IN_IPAM = "vm_not_in_ipam"  # IP einer VM (vCenter) fehlt im fuehrenden IPAM
+    PORTGROUP_NO_EPG = "portgroup_no_epg"  # Portgruppe nach ACI-Schema ohne passende EPG
 
 
 class Severity(enum.StrEnum):
@@ -52,6 +54,8 @@ class SubjectKind(enum.StrEnum):
     EPG = "epg"
     DEVICE_OBJECT = "device_object"
     SUBNET = "subnet"
+    VM = "vm"
+    PORTGROUP = "portgroup"
 
 
 class Finding(Base):

@@ -61,6 +61,7 @@ from app.models.source_system import REFERENCE_PLATFORMS, Platform, SourceSystem
 from app.models.source_system import RefRole as ReferenceRole
 from app.models.sync_plan import SyncPlan, SyncStatus
 from app.models.tenant import DnsType, IpamType, Tenant
+from app.models.virtual import Portgroup, Vm, VmIp, VmNic
 from app.models.zone import Zone
 
 __all__ = [
@@ -103,6 +104,7 @@ __all__ = [
     "ObjectClass",
     "ObjectType",
     "Platform",
+    "Portgroup",
     "Proto",
     "RefRole",
     "ReferenceRecordRow",
@@ -127,6 +129,9 @@ __all__ = [
     "SourceSystem",
     "SubjectKind",
     "Tenant",
+    "Vm",
+    "VmIp",
+    "VmNic",
     "Zone",
     "rule_service",
 ]

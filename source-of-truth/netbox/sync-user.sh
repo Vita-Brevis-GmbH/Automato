@@ -5,7 +5,8 @@
 #   - Lesen auf alle Objekttypen (fuer die Vorschau und Referenzen) und
 #   - Anlegen/Aendern/Loeschen NUR auf den Objekttypen, die der Sync schreibt
 #     (Tags, Tenants, Standort-Gruppen, Sites, Hersteller, Geraeterollen/-typen, Geraete, Interfaces,
-#      VRFs, VLAN-Gruppen, VLANs, Prefixe, IP-Ranges, IP-Adressen)
+#      VRFs, VLAN-Gruppen, VLANs, Prefixe, IP-Ranges, IP-Adressen; Cluster-Typen/-Gruppen,
+#      Cluster, VMs, VM-Interfaces - ADR 0017)
 # und einen Legacy-v1-Token mit Schreibrecht. Der Token gehoert in Automato ins
 # NetBox-Quellsystem unter "Schreib-Token (optional, nur NetBox-Sync)".
 # Andere Benutzer/Tokens (admin, automato-collector) bleiben unveraendert.
@@ -51,6 +52,11 @@ WRITABLE = [
     ("ipam", "prefix"),
     ("ipam", "iprange"),
     ("ipam", "ipaddress"),
+    ("virtualization", "clustertype"),
+    ("virtualization", "clustergroup"),
+    ("virtualization", "cluster"),
+    ("virtualization", "virtualmachine"),
+    ("virtualization", "vminterface"),
 ]
 
 User = get_user_model()

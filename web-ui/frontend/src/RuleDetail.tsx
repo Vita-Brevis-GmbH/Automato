@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Endpoint, fetchRuleDetail, NatBrief, RuleDetail, RuleRef } from "./api";
 import type { View, ViewParams } from "./App";
 import { EpgCard } from "./EpgCard";
-import { FamilyMarks, RefCard, SideMarks } from "./refs";
+import { FamilyMarks, RefCard, SideMarks, VmChip } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, Loading, MatchBadge, Note } from "./ui";
 
 function EndpointList({ items }: { items: Endpoint[] }) {
@@ -15,6 +15,7 @@ function EndpointList({ items }: { items: Endpoint[] }) {
             <td>
               <span className="mono">{e.value ?? e.name ?? "–"}</span>
               {e.nat_target ? <span className="muted"> → {e.nat_target}</span> : null}
+              {e.vm ? <> <VmChip vm={e.vm} /></> : null}
               {e.name && e.value && e.name !== e.value ? <div className="faint mono">{e.name}</div> : null}
             </td>
             <td>

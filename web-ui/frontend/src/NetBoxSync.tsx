@@ -21,10 +21,14 @@ import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead } 
 const KIND_LABEL: Record<string, string> = {
   tag: "Tag",
   tenant: "Tenant",
+  site_group: "Standort-Gruppe",
   site: "Standort",
   manufacturer: "Hersteller",
   device_role: "Geräterolle",
   device_type: "Gerätetyp",
+  cluster_type: "Cluster-Typ",
+  cluster_group: "Cluster-Gruppe",
+  cluster: "Cluster",
   vrf: "VRF",
   vlan_group: "VLAN-Gruppe",
   vlan: "VLAN",
@@ -32,6 +36,8 @@ const KIND_LABEL: Record<string, string> = {
   ip_range: "Range",
   device: "Gerät",
   interface: "Port",
+  virtual_machine: "VM",
+  vm_interface: "VM-Interface",
   ip_address: "IP-Adresse",
 };
 const ACTION: Record<string, [string, string]> = {
@@ -62,6 +68,11 @@ const SECTIONS: { key: string; label: string; hint: string }[] = [
     label: "DDI-Spiegel",
     hint: "Netze, Ranges und IPs mit DNS-Namen aus dem führenden IPAM (wenn diese NetBox nicht führend ist)",
   },
+  {
+    key: "virtualization",
+    label: "Virtualisierung",
+    hint: "VMs aus dem vCenter mit Cluster (Datacenter als Gruppe), VM-Interfaces (MAC, Portgruppe, VLAN, EPG) und IPs – ohne Vorlagen",
+  },
 ];
 const PAGE = 200;
 
@@ -88,7 +99,7 @@ export default function NetBoxSync({
 }) {
   const [targets, setTargets] = useState<SyncTarget[] | null>(null);
   const [targetId, setTargetId] = useState<number | null>(null);
-  const [sections, setSections] = useState<string[]>(["inventory", "mirror"]);
+  const [sections, setSections] = useState<string[]>(["inventory", "mirror", "virtualization"]);
   const [allowDelete, setAllowDelete] = useState(false);
   const [plans, setPlans] = useState<SyncPlan[]>([]);
   const [plan, setPlan] = useState<SyncPlan | null>(null);

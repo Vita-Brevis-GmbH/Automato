@@ -6,7 +6,7 @@ ist nur fuer Altbestaende vor Migration 0015 leer ("nicht zugeordnet").
 Geraete-Zugangsdaten (ADR 0009): `agent_id` = Collector-Agent, der das Geraet verwaltet;
 `credentials` = verschluesselte Zugangsdaten (app.credentials, nie im Klartext gespeichert
 oder ausgegeben) - der Agent bekommt sie beim Abholen eines Laufs. Inhalt je Plattform:
-FortiGate `{"token"}`, Cisco ACI `{"username", "password"}` (APIC-Login).
+FortiGate `{"token"}`, Cisco ACI und VMware vCenter `{"username", "password"}`.
 `read_scope` = Lesebereich: bei Cisco ACI die zu lesenden ACI-Tenants (kommagetrennt, leer =
 alle ausser infra/mgmt).
 
@@ -31,6 +31,7 @@ class Platform(enum.StrEnum):
     CISCO_ACI = "cisco_aci"
     INFOBLOX = "infoblox"  # Referenzquelle (DDI), ADR 0010
     NETBOX = "netbox"  # Referenzquelle / Anreicherung, ADR 0010
+    VMWARE = "vmware"  # vCenter: VMs, Portgruppen (ADR 0017)
 
 
 # Referenzquellen (IPAM) - liefern keinen Regeln, sondern den Referenz-Stand

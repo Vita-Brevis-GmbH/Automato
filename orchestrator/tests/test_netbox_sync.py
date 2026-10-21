@@ -30,6 +30,13 @@ _FK = {
     "manufacturer": "dcim/manufacturers",
     "lag": "dcim/interfaces",
     "parent": "dcim/interfaces",
+    "cluster": "virtualization/clusters",
+    "virtual_machine": "virtualization/virtual-machines",
+}
+_FK_AT = {  # gleiches Feld, anderes Ziel je Endpunkt
+    ("dcim/sites", "group"): "dcim/site-groups",
+    ("virtualization/clusters", "group"): "virtualization/cluster-groups",
+    ("virtualization/clusters", "type"): "virtualization/cluster-types",
 }
 _CHOICE = ("status", "mode", "type")
 
@@ -63,8 +70,8 @@ class FakeNetBox:
         for k, v in raw.items():
             if k == "tags":
                 obj["tags"] = [{"slug": t["slug"], "name": t["slug"]} for t in v]
-            elif k in _FK:
-                target = "dcim/site-groups" if (endpoint, k) == ("dcim/sites", "group") else _FK[k]
+            elif k in _FK or (endpoint, k) in _FK_AT:
+                target = _FK_AT.get((endpoint, k)) or _FK[k]
                 if isinstance(v, list):
                     obj[k] = [self._nested(target, i) for i in v]
                 else:
@@ -109,7 +116,7 @@ class FakeNetBox:
             rows = self.objects(path)
             if "slug" in params:
                 rows = [o for o in rows if o.get("slug") == params["slug"]]
-            for fk in ("group", "device"):
+            for fk in ("group", "device", "virtual_machine"):
                 ids = params.get_list(f"{fk}_id")
                 if ids:
                     rows = [o for o in rows if str((o.get(fk) or {}).get("id")) in ids]
@@ -138,6 +145,11 @@ class FakeNetBox:
 
 @pytest.fixture
 def netbox(monkeypatch):
+    return fake_netbox(monkeypatch)
+
+
+def fake_netbox(monkeypatch) -> FakeNetBox:
+    """Fake-NetBox statt des echten Schreibers (auch fuer andere Testmodule)."""
     fake = FakeNetBox()
     seen_tokens = []
 

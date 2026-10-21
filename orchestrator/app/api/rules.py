@@ -23,7 +23,7 @@ from app.schemas.rules import EndpointOut, RuleDetailOut, RuleOut, RuleSummaryOu
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import objects as objects_store
-from app.store import rule_index
+from app.store import rule_index, virtual
 from app.store import rules as rules_store
 
 router = APIRouter(prefix="/rules", tags=["rules"])
@@ -114,6 +114,9 @@ def get_rule(
     epg_info = epg_store.details(session, r.tenant_id, list(epgs.values()))
     (base,) = rule_index.outs(session, [r])
     raw = r.raw if isinstance(r.raw, dict) else {}
+    vms = virtual.Lookup(
+        session, r.tenant_id, {o.value.split("/")[0] for o in objs.values() if o.value}
+    )
 
     endpoints: list[EndpointOut] = []
     for e in r.endpoints:
@@ -132,6 +135,7 @@ def get_rule(
                 fqdn=obj.fqdn if obj else None,
                 nat_target=nat_store.nat_target(nat) if nat else None,
                 epg=epg,
+                vm=vms.info(obj.value) if obj and obj.value else None,
             )
         )
 

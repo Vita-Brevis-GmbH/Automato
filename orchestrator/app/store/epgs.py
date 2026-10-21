@@ -124,6 +124,7 @@ def details(session: Session, tenant_id: int, epgs: list[Epg]) -> dict[int, dict
     ctx = references.context(session, tenant_id)
     physical = _physical(session, tenant_id, epgs)
     site_index = sites.SiteIndex(session, tenant_id)
+    vms = vms_of(session, ids)
     out: dict[int, dict] = {}
     for epg in epgs:
         phys = physical.get(inventory_label(epg)) if epg.kind == "epg" else None
@@ -157,7 +158,35 @@ def details(session: Session, tenant_id: int, epgs: list[Epg]) -> dict[int, dict
             "vlans": sorted(phys["vlans"]) if phys else [],
             "port_count": len(phys["ports"]) if phys else 0,
             "ports": phys["ports"][:MAX_PORTS] if phys else [],
+            "vms": vms.get(epg.id, []),
         }
+    return out
+
+
+def vms_of(session: Session, epg_ids: list[int]) -> dict[int, list[dict]]:
+    """VMs an den Portgruppen der EPGs (vCenter, ADR 0017): Name, IPs, Status, Portgruppe."""
+    from app.models import Portgroup, Vm, VmNic  # spaet: Modelle des VMware-Inventars
+
+    if not epg_ids:
+        return {}
+    out: dict[int, list[dict]] = {}
+    rows = session.execute(
+        select(Portgroup.epg_id, Portgroup.epg_match, Vm, VmNic)
+        .join(Vm, Vm.source_system_id == Portgroup.source_system_id)
+        .join(VmNic, (VmNic.vm_id == Vm.id) & (VmNic.portgroup == Portgroup.name))
+        .where(Portgroup.epg_id.in_(epg_ids), Vm.template.is_(False))
+        .order_by(Vm.name)
+    )
+    for epg_id, match, vm, nic in rows:
+        out.setdefault(epg_id, []).append(
+            {
+                "name": vm.name,
+                "ips": nic.ips or [],
+                "power_state": vm.power_state,
+                "portgroup": nic.portgroup,
+                "match": match,
+            }
+        )
     return out
 
 

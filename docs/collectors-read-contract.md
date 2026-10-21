@@ -1,4 +1,4 @@
-# Collector-Lesevertrag — FortiGate & Cisco ACI (read-only)
+# Collector-Lesevertrag — FortiGate, Cisco ACI & VMware (read-only)
 
 > Was die Collectors **rein lesend** erfassen (Felder/Relationen) und wie es auf das
 > Datenmodell (ADR 0004 + Ergänzung) abgebildet wird. Abgeleitet aus realen Samples einer Referenzumgebung
@@ -115,6 +115,24 @@ Regeln tragen `kind` (`contract` | `taboo` | `preferred_group`) im Rohdatensatz.
 
 Der Agent lädt den Stand in Teilen hoch (`POST /internal/collector-runs/{id}/references`); erst
 das Ergebnis mit passender Anzahl macht ihn zum aktuellen Stand der Quelle.
+
+## 4. VMware vCenter (pyVmomi, PropertyCollector; read-only, ADR 0017)
+
+Konto mit der vSphere-Rolle **Read-only** (global, vererbt). Der Collector lässt nur die
+lesenden Methoden `Login`, `Logout`, `RetrieveServiceContent`, `CurrentTime`,
+`CreateContainerView`, `DestroyView` und `RetrieveProperties(Ex)`/`ContinueRetrievePropertiesEx`
+zu – geprüft wird der WSDL-Name, jeder andere Aufruf bricht vor dem Senden ab
+(`ReadOnlyViolation`). Container-Views sind sitzungsgebunden und werden nach dem Lesen entfernt.
+
+| Objekt | gelesen | → Automato |
+|---|---|---|
+| `VirtualMachine` | Name, `instanceUuid`, Power-State, Vorlage, Gast-OS, Gast-Hostname, vCPU, RAM, Disk (Summe der virtuellen Disks), Notiz, Host; NICs mit MAC, Label, verbunden, Backing (Portgruppe); `guest.net` (IPs je NIC, ohne Link-Local) | `vm`, `vm_nic`, `vm_ip` |
+| `HostSystem` | Name, Eltern, `config.network.portgroup` (Standard-Portgruppen mit VLAN und vSwitch) | Host an der VM, `portgroup` (`standard`) |
+| `ComputeResource` (Cluster), `Folder`, `Datacenter` | Name, Eltern | Cluster und Datacenter an der VM |
+| `DistributedVirtualPortgroup`, `DistributedVirtualSwitch` | Name, Key, Switch, VLAN (einzeln, Trunk-Bereiche, PVLAN) | `portgroup` (`dvs`) |
+
+Nicht gelesen: Zugangsdaten, Gast-Inhalte, Leistungsdaten, Snapshots, Ereignisse.
+Portgruppe → EPG ordnet der Orchestrator zu (Name `Tenant|AP|EPG`, sonst eindeutiges VLAN).
 
 ## Daraus folgende Modell-/Collector-Arbeiten (später, je Phase)
 

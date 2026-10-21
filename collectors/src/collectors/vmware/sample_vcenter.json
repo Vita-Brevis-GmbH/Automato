@@ -1,0 +1,49 @@
+{
+  "Datacenter": [{"moid": "datacenter-1", "name": "DC-A", "parent": "group-d1"}],
+  "Folder": [
+    {"moid": "group-d1", "name": "Datacenters", "parent": null},
+    {"moid": "group-h4", "name": "host", "parent": "datacenter-1"}
+  ],
+  "ComputeResource": [{"moid": "domain-c10", "name": "clu01-chzrh1", "parent": "group-h4"}],
+  "HostSystem": [
+    {"moid": "host-11", "name": "esx01-chzrh1.example.ch", "parent": "domain-c10",
+     "portgroups": [{"name": "VM Network", "vlan": 0, "vswitch": "vSwitch0"},
+                    {"name": "PG_backup", "vlan": 950, "vswitch": "vSwitch1"}]}
+  ],
+  "DistributedVirtualSwitch": [{"moid": "dvs-21", "name": "DVS-ACI-A", "parent": null}],
+  "DistributedVirtualPortgroup": [
+    {"moid": "dvportgroup-31", "name": "TE_ka|AP_007|EG_web01", "key": "dvportgroup-31",
+     "vlan": 1107, "vlan_ranges": null, "switch": "dvs-21"},
+    {"moid": "dvportgroup-32", "name": "TE_ka|AP_007|EG_db01", "key": "dvportgroup-32",
+     "vlan": 1108, "vlan_ranges": null, "switch": "dvs-21"},
+    {"moid": "dvportgroup-33", "name": "DVS-ACI-A-Uplinks", "key": "dvportgroup-33",
+     "vlan": null, "vlan_ranges": "0-4094", "switch": "dvs-21"}
+  ],
+  "VirtualMachine": [
+    {"moid": "vm-101", "name": "web01-007-ka", "uuid": "5001aa00-0000-4000-8000-000000000101",
+     "template": false, "guest_os": "Ubuntu Linux (64-bit)", "annotation": "Webserver Projekt 007",
+     "vcpus": 2, "memory_mb": 4096, "disk_gb": 40.0, "power_state": "poweredOn",
+     "host": "host-11", "hostname": "web01.example.ch",
+     "nics": [{"key": 4000, "label": "Network adapter 1", "mac": "00:50:56:aa:00:01",
+               "connected": true, "portgroup_key": "dvportgroup-31", "network_name": null}],
+     "guest_net": [{"device_key": 4000, "network": "TE_ka|AP_007|EG_web01",
+                    "mac": "00:50:56:aa:00:01", "connected": true,
+                    "ips": ["10.20.0.5", "fe80::250:56ff:feaa:1"]}]},
+    {"moid": "vm-102", "name": "db01-007-ka", "uuid": "5001aa00-0000-4000-8000-000000000102",
+     "template": false, "guest_os": "Red Hat Enterprise Linux 9 (64-bit)", "annotation": null,
+     "vcpus": 4, "memory_mb": 16384, "disk_gb": 200.0, "power_state": "poweredOn",
+     "host": "host-11", "hostname": "db01.example.ch",
+     "nics": [{"key": 4000, "label": "Network adapter 1", "mac": "00:50:56:aa:00:02",
+               "connected": true, "portgroup_key": "dvportgroup-32", "network_name": null},
+              {"key": 4001, "label": "Network adapter 2", "mac": "00:50:56:aa:00:03",
+               "connected": true, "portgroup_key": null, "network_name": "PG_backup"}],
+     "guest_net": [{"device_key": 4000, "network": "TE_ka|AP_007|EG_db01",
+                    "mac": "00:50:56:aa:00:02", "connected": true, "ips": ["10.21.0.9"]},
+                   {"device_key": 4001, "network": "PG_backup", "mac": "00:50:56:aa:00:03",
+                    "connected": true, "ips": ["10.95.0.9"]}]},
+    {"moid": "vm-103", "name": "tpl-ubuntu", "uuid": "5001aa00-0000-4000-8000-000000000103",
+     "template": true, "guest_os": "Ubuntu Linux (64-bit)", "annotation": null,
+     "vcpus": 1, "memory_mb": 1024, "disk_gb": 16.0, "power_state": "poweredOff",
+     "host": "host-11", "hostname": null, "nics": [], "guest_net": []}
+  ]
+}

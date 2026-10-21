@@ -109,6 +109,7 @@ def test_regel_zeigt_firewall_namen_und_gruppen(client, session_factory, monkeyp
         "source_of_record": "netbox",
         "reference": None,
         "enrichment": None,
+        "vm": None,
     }
     assert grp["match_status"] == "unmatched"  # N_server-net ist nicht im IPAM
     assert refs["SG_web"]["members"][0]["values"] == [
@@ -119,6 +120,7 @@ def test_regel_zeigt_firewall_namen_und_gruppen(client, session_factory, monkeyp
             "source_of_record": None,
             "reference": None,
             "enrichment": None,
+            "vm": None,
         }
     ]
     # Suche findet die Regel ueber den Gruppennamen

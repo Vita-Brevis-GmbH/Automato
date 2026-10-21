@@ -2,8 +2,9 @@
 
 Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), vier FortiGates (eine mit gleichnamigen
 IPv4/IPv6-Objekten und Regelpaaren, eine mit Virtual Server), einem APIC, virtuellen und
-physischen Standorten, NAT/VIPs, Gruppen, Diensten mit Namensschema-Befunden und einem
-ACI-Contract ohne Consumer. Alles ueber die oeffentliche bzw. interne API wie im Betrieb.
+physischen Standorten, NAT/VIPs, Gruppen, Diensten mit Namensschema-Befunden, einem
+ACI-Contract ohne Consumer und einem vCenter mit einer VM hinter H_web01. Alles ueber die
+oeffentliche bzw. interne API wie im Betrieb.
 """
 
 import sys
@@ -120,4 +121,37 @@ def run(app) -> None:
             "raw": {"tenant": "TE", "kind": "contract"},
         }
     ]
-    run_result(apic, "cisco_aci", rules=contracts, objects=filters, inventory=st.INVENTORY)
+    epgs = [{"name": "EG_db", "dn": "uni/tn-TE/ap-AP/epg-EG_db", "tenant": "TE", "ap": "AP",
+             "vrf": "VRF1"}]  # fmt: skip
+    run_result(
+        apic, "cisco_aci", rules=contracts, objects=filters, inventory=st.INVENTORY, epgs=epgs
+    )
+
+    # vCenter: VM hinter H_web01 (10.10.10.5) an der Portgruppe der EPG EG_db (ACI-VMM-Name)
+    vc = system(
+        name="vc-01", platform="vmware", base_url="https://vc.example.ch", username="ro",
+        password="e2e",
+    )  # fmt: skip
+    nic = {
+        "name": "Network adapter 1",
+        "mac": "00:50:56:aa:00:01",
+        "portgroup": "TE|AP|EG_db",
+        "switch": "DVS-ACI-A",
+        "vlan": 1107,
+        "connected": True,
+        "ips": ["10.10.10.5"],
+    }
+    vm = {
+        "name": "web01-007-ka",
+        "power_state": "poweredOn",
+        "guest_os": "Ubuntu Linux (64-bit)",
+        "datacenter": "DC-A",
+        "cluster": "clu01-chzrh1",
+        "host": "esx01-chzrh1.example.ch",
+        "vcpus": 2,
+        "memory_mb": 4096,
+        "disk_gb": 40.0,
+        "nics": [nic],
+    }
+    groups = [{"name": "TE|AP|EG_db", "vlan": 1107, "vm_count": 1}]  # fmt: skip
+    run_result(vc, "vmware", virtual={"vms": [vm], "portgroups": groups})

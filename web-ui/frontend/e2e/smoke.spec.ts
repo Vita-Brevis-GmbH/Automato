@@ -29,7 +29,7 @@ for (const [key, title] of VIEWS) {
 
 test("Objekte: alle Reiter laden", async ({ page, problems }) => {
   await page.goto("/#objekte");
-  for (const tab of ["Adressobjekte", "Gruppen", "Services", "Subnetze", "VLANs", "Ports", "Geräte", "VRFs"]) {
+  for (const tab of ["Adressobjekte", "Gruppen", "Services", "Subnetze", "VLANs", "Ports", "Geräte", "VRFs", "VMs", "Portgruppen"]) {
     await page.click(`.tabbar button:has-text('${tab}')`);
     await page.waitForLoadState("networkidle");
   }

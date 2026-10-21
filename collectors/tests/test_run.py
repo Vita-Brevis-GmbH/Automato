@@ -232,7 +232,7 @@ def test_poll_unbekannte_plattform_meldet_failed_statt_absturz(monkeypatch):
     """Orchestrator neuer als der Agent (z. B. neue Plattform): Lauf sauber abschliessen."""
     import collectors.run as run
 
-    runs = iter([{"platform": "vmware", "run_id": "r9", "target": None}, None])
+    runs = iter([{"platform": "proxmox", "run_id": "r9", "target": None}, None])
     monkeypatch.setattr(run.agent_api, "next_run", lambda platform=None: next(runs))
     sent = {}
 

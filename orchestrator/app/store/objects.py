@@ -47,7 +47,7 @@ def display_value(value: str) -> str:
 
 def value_infos(session: Session, tenant_id: int, values: Iterable[str]) -> dict[str, RefValueOut]:
     """Je Wert: Anzeige + Abgleich (Match-Status, Zone, Referenzdaten)."""
-    from app.store import references  # spaet: references nutzt Modelle dieses Moduls
+    from app.store import references, virtual  # spaet: references nutzt Modelle dieses Moduls
 
     values = list(dict.fromkeys(values))
     keys = {object_key(v) for v in values}
@@ -70,6 +70,7 @@ def value_infos(session: Session, tenant_id: int, values: Iterable[str]) -> dict
         else {}
     )
     refs = references.describe(session, list(objs.values()))
+    vms = virtual.Lookup(session, tenant_id, {display_value(v).split("/")[0] for v in values})
     out: dict[str, RefValueOut] = {}
     for v in values:
         obj = objs.get(object_key(v))
@@ -81,6 +82,7 @@ def value_infos(session: Session, tenant_id: int, values: Iterable[str]) -> dict
             source_of_record=obj.source_of_record.value if obj and obj.source_of_record else None,
             reference=reference,
             enrichment=enrichment,
+            vm=vms.info(display_value(v)),
         )
     return out
 

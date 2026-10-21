@@ -6,15 +6,20 @@ import {
   fetchInventory,
   fetchObjectDetail,
   fetchObjects,
+  fetchPortgroups,
   fetchSystems,
+  fetchVms,
   InvDevice,
   InvInterface,
   InvSubnet,
   InvVlan,
   InvVrf,
   ObjectDetail,
+  Paged,
+  PortgroupRow,
   PrefixInfo,
   System,
+  VmRow,
 } from "./api";
 import { CATEGORY_LABEL, FAMILY_LABEL, IssueChips, REFERENCE_PLATFORMS, ValueList } from "./refs";
 import { SiteChip } from "./sites";
@@ -23,7 +28,17 @@ import { ActionBadge, Dash, Drawer, Empty, ErrorBox, Icon, Loading, Note, PageHe
 
 type Go = (v: View, p?: ViewParams) => void;
 
-type Tab = "addr" | "groups" | "services" | "subnets" | "vlans" | "ports" | "devices" | "vrfs";
+type Tab =
+  | "addr"
+  | "groups"
+  | "services"
+  | "subnets"
+  | "vlans"
+  | "ports"
+  | "devices"
+  | "vrfs"
+  | "vms"
+  | "portgroups";
 
 const TABS: { key: Tab; label: string; category?: string }[] = [
   { key: "addr", label: "Adressobjekte", category: "address,vip,ippool" },
@@ -34,6 +49,8 @@ const TABS: { key: Tab; label: string; category?: string }[] = [
   { key: "ports", label: "Ports" },
   { key: "devices", label: "Geräte" },
   { key: "vrfs", label: "VRFs" },
+  { key: "vms", label: "VMs" },
+  { key: "portgroups", label: "Portgruppen" },
 ];
 
 const PAGE = 200;
@@ -116,7 +133,11 @@ export default function Objects({
         )}
       </div>
 
-      {current.category ? (
+      {tab === "vms" ? (
+        <VmTable tenantId={tenantId} sourceId={sourceId} q={q} onGo={onGo} />
+      ) : tab === "portgroups" ? (
+        <PortgroupTable tenantId={tenantId} q={q} />
+      ) : current.category ? (
         <ObjectTable
           key={tab}
           tenantId={tenantId}
@@ -866,6 +887,193 @@ function InventoryTable({
           )}
         </div>
         {all.length > 0 && <Pager total={all.length} offset={offset} onOffset={setOffset} />}
+      </div>
+    </>
+  );
+}
+
+const POWER: Record<string, [string, string]> = {
+  poweredOn: ["ok", "an"],
+  poweredOff: ["na", "aus"],
+  suspended: ["warn", "pausiert"],
+};
+
+// VMs aus dem vCenter (ADR 0017): NICs mit Portgruppe → EPG, IPs mit IPAM-Abgleich
+function VmTable({ tenantId, sourceId, q, onGo }: { tenantId: number; sourceId: number | null; q: string; onGo?: Go }) {
+  const [data, setData] = useState<Paged<VmRow> | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [offset, setOffset] = useState(0);
+  const query = useDebounced(q);
+  useEffect(() => setOffset(0), [query, sourceId]);
+  useEffect(() => {
+    setData(null);
+    setError(null);
+    fetchVms(tenantId, { q: query, source_system_id: sourceId, limit: PAGE, offset })
+      .then(setData)
+      .catch((e) => {
+        setError(e);
+        setData({ total: 0, rows: [] });
+      });
+  }, [tenantId, sourceId, query, offset]);
+  return (
+    <>
+      <ErrorBox error={error} prefix="VMs laden" />
+      <div className="card">
+        <div className="card-body scroll">
+          {data === null ? (
+            <Loading>Lade VMs…</Loading>
+          ) : data.rows.length === 0 ? (
+            <Empty title={query ? "Keine Treffer" : "Noch keine VMs"}>
+              {query ? "Suche anpassen." : "VMs erscheinen nach dem ersten Lauf eines vCenter-Quellsystems (VMware)."}
+            </Empty>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>VM</th>
+                  <th>Status</th>
+                  <th>Netzwerk (Portgruppe → EPG, IPs)</th>
+                  <th>Cluster / Host</th>
+                  <th>Ressourcen</th>
+                  <th>Quelle</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((v) => {
+                  const [cls, label] = POWER[v.power_state ?? ""] ?? ["na", v.power_state ?? "–"];
+                  return (
+                    <tr key={v.id}>
+                      <td>
+                        <b className="mono">{v.name}</b>
+                        {v.template && <span className="chip" style={{ marginLeft: 6 }}>Vorlage</span>}
+                        {v.hostname && <div className="faint mono">{v.hostname}</div>}
+                        {v.guest_os && <div className="faint">{v.guest_os}</div>}
+                        {v.annotation && <div className="faint">{v.annotation}</div>}
+                        {onGo && (
+                          <button className="linkbtn" title="Regeln, deren Quelle oder Ziel eine IP der VM enthält" onClick={() => onGo("regeln", { q: v.name })}>
+                            Regeln der VM
+                          </button>
+                        )}
+                      </td>
+                      <td>
+                        <span className={`chip ${cls}`}>{label}</span>
+                      </td>
+                      <td style={{ minWidth: 300 }}>
+                        {v.nics.length === 0 && <Dash />}
+                        {v.nics.map((n) => (
+                          <div key={n.name} style={{ marginBottom: 4 }}>
+                            <span className="mono">{n.portgroup ?? n.name}</span>
+                            {n.vlan != null && <span className="faint"> · VLAN {n.vlan}</span>}
+                            {n.epg && (
+                              <span className="chip local" style={{ marginLeft: 6 }} title={n.epg_match === "vlan" ? "über das VLAN zugeordnet" : "über den Portgruppen-Namen zugeordnet"}>
+                                EPG {n.epg}
+                              </span>
+                            )}
+                            {n.connected === false && <span className="chip na">getrennt</span>}
+                            <div>
+                              {n.ips.map((ip) => (
+                                <span key={ip.ip} className="refline">
+                                  <span className="mono">{ip.ip}</span>
+                                  {ip.dns.length > 0 && <span className="faint"> {ip.dns.join(", ")}</span>}
+                                  {ip.in_ipam === false && <span className="chip warn">nicht im IPAM</span>}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </td>
+                      <td>
+                        <div className="mono">{v.cluster ?? <Dash />}</div>
+                        {v.host && <div className="faint mono">{v.host}</div>}
+                        {v.datacenter && <div className="faint">{v.datacenter}</div>}
+                      </td>
+                      <td className="nowrap faint">
+                        {[
+                          v.vcpus != null ? `${v.vcpus} vCPU` : null,
+                          v.memory_mb != null ? `${Math.round(v.memory_mb / 1024)} GB RAM` : null,
+                          v.disk_gb != null ? `${v.disk_gb} GB Disk` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") || "–"}
+                      </td>
+                      <td className="nowrap">{v.source ?? <Dash />}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+        {data && data.total > 0 && <Pager total={data.total} offset={offset} onOffset={setOffset} />}
+      </div>
+    </>
+  );
+}
+
+// Portgruppen mit VLAN und zugeordneter EPG (Name Tenant|AP|EPG bzw. eindeutiges VLAN)
+function PortgroupTable({ tenantId, q }: { tenantId: number; q: string }) {
+  const [rows, setRows] = useState<PortgroupRow[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const query = useDebounced(q);
+  useEffect(() => {
+    setRows(null);
+    fetchPortgroups(tenantId, query)
+      .then(setRows)
+      .catch((e) => {
+        setError(e);
+        setRows([]);
+      });
+  }, [tenantId, query]);
+  return (
+    <>
+      <ErrorBox error={error} prefix="Portgruppen laden" />
+      <div className="card">
+        <div className="card-body scroll">
+          {rows === null ? (
+            <Loading>Lade Portgruppen…</Loading>
+          ) : rows.length === 0 ? (
+            <Empty title={query ? "Keine Treffer" : "Noch keine Portgruppen"}>
+              {query ? "Suche anpassen." : "Portgruppen erscheinen nach dem ersten Lauf eines vCenter-Quellsystems."}
+            </Empty>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Portgruppe</th>
+                  <th>Switch</th>
+                  <th>VLAN</th>
+                  <th className="num">VMs</th>
+                  <th>EPG</th>
+                  <th>Quelle</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <b className="mono">{p.name}</b>
+                      <div className="faint">{p.kind === "dvs" ? "verteilt" : "Standard (Host)"}</div>
+                    </td>
+                    <td className="mono">{p.switch ?? <Dash />}</td>
+                    <td className="mono">{p.vlan ?? p.vlan_ranges ?? <Dash />}</td>
+                    <td className="num">{p.vm_count}</td>
+                    <td>
+                      {p.epg ? (
+                        <>
+                          <span className="chip local">{p.epg}</span>
+                          <div className="faint">{p.epg_match === "vlan" ? "über das VLAN" : "über den Namen"}</div>
+                        </>
+                      ) : (
+                        <Dash />
+                      )}
+                    </td>
+                    <td className="nowrap">{p.source ?? <Dash />}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
     </>
   );

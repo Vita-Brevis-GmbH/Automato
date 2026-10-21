@@ -48,18 +48,21 @@ try:
     from collectors.fortigate.tasks import collect_once as _fgt_collect
     from collectors.fortigate.tasks import strict_check as _fgt_strict
     from collectors.ipam import tasks as _ipam
+    from collectors.vmware import tasks as _vmware
 
     RUNNERS: dict[str, Callable[..., CollectorResult]] = {
         "fortigate": _fgt_collect,
         "cisco_aci": _aci_collect,
         "infoblox": _ipam.collect_infoblox,
         "netbox": _ipam.collect_netbox,
+        "vmware": _vmware.collect_once,
     }
     CHECKERS: dict[str, Callable[..., tuple[bool, str]]] = {
         "fortigate": _fgt_check,
         "cisco_aci": _aci_check,
         "infoblox": _ipam.check_infoblox,
         "netbox": _ipam.check_netbox,
+        "vmware": _vmware.check,
     }
     # --check --strict: Negativtest je Plattform (nur wo sinnvoll und vertretbar)
     STRICT_CHECKERS: dict[str, Callable[..., tuple[bool, str]]] = {"fortigate": _fgt_strict}

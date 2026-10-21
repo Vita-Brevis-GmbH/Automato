@@ -149,3 +149,18 @@ test("Regeln je Subnetz: Link aus den Subnetzen, any ein-/ausblenden", async ({ 
   await expect(rows(page)).not.toHaveCount(withAny);
   await expect(rows(page).filter({ hasText: "to-web-net" })).toHaveCount(1);
 });
+
+test("VMware: VM mit Portgruppe → EPG, Regeln der VM", async ({ page }) => {
+  await page.goto("/#objekte");
+  await page.click(".tabbar button:has-text('VMs')");
+  const vm = rows(page).filter({ hasText: "web01-007-ka" });
+  await expect(vm).toContainText("EPG TE/AP/EG_db");
+  await expect(vm).toContainText("10.10.10.5");
+  await expect(vm).toContainText("web01.example.ch"); // DNS-Name aus der DDI
+  await page.click(".tabbar button:has-text('Portgruppen')");
+  await expect(rows(page).filter({ hasText: "TE|AP|EG_db" })).toContainText("TE/AP/EG_db");
+  await page.click(".tabbar button:has-text('VMs')");
+  await vm.locator("button:has-text('Regeln der VM')").click();
+  await expect(page).toHaveURL(/#regeln\?q=web01-007-ka/);
+  await expect(rows(page).filter({ hasText: "dmz-to-web" })).toHaveCount(1);
+});

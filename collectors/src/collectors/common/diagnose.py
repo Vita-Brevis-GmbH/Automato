@@ -18,6 +18,10 @@ from collectors.common.dto import Target
 from collectors.config import get_settings
 
 _HINTS = {
+    "vmware": (
+        "vCenter-Benutzer/-Passwort im Web-UI neu setzen (SSO-Konto als benutzer@vsphere.local "
+        "bzw. DOMAENE\\benutzer); das Konto braucht nur die Rolle Read-only (global, vererbt)"
+    ),
     "cisco_aci": (
         "APIC-Benutzer/-Passwort im Web-UI neu setzen; Remote-Benutzer (LDAP/RADIUS/TACACS) "
         "als apic#<Login-Domaene>\\<Benutzer>; Konto am APIC aktiv und Passwort nicht abgelaufen?"
@@ -42,6 +46,9 @@ def device_error(
 ) -> str:
     """Fehlermeldung eines Geraete-Zugriffs; bei 401/403 mit Ursache und Hinweis."""
     base = http.describe_error(exc)
+    if type(exc).__name__ == "InvalidLogin":  # vSphere (pyVmomi): Anmeldung abgelehnt
+        hint = _HINTS["vmware"]
+        return f"Anmeldung abgelehnt (vCenter: Benutzer oder Passwort falsch). Hinweis: {hint}"
     if not (
         isinstance(exc, httpx.HTTPStatusError)
         and exc.response.status_code in (401, 403)

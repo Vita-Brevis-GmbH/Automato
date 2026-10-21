@@ -44,7 +44,7 @@ from app.schemas.rules import AciContractOut, RuleNatOut, RuleOut, RulePairOut
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import objects as objects_store
-from app.store import references, rule_pairs, rule_view
+from app.store import references, rule_pairs, rule_view, virtual
 from app.store import rules as rules_store
 
 # -- IP-Bereiche --------------------------------------------------------------
@@ -139,6 +139,7 @@ class _Builder:
             for ep in session.scalars(select(EpgEndpoint).where(EpgEndpoint.epg_id.in_(epg_ids))):
                 self.epg_values[ep.epg_id].append(ep.ip)
         self.ctx = references.context(session, tenant_id)
+        self.vms = virtual.Lookup(session, tenant_id)  # VM-Namen der IPs (vCenter, ADR 0017)
         self._dns: dict[str, list[str]] = {}
 
     def dns(self, value: str) -> list[str]:
@@ -240,6 +241,7 @@ class _Builder:
                     add_range(role, ip, label)
         for v in dict.fromkeys(values):
             parts += self.dns(v)
+            parts += self.vms.names(v)
 
         vips = sorted(set(vips))
         index = {

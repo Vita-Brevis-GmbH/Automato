@@ -21,3 +21,4 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0014 | Gemeinsames Betriebs-Cockpit mit Magister (Entwurf) |
 | 0015 | Standorte virtuell (000, 001) und physisch (Ort-Code), n:m; NetBox-Site-Gruppen |
 | 0016 | IPv4/IPv6 gleichnamig getrennt, IPv4/IPv6-Regelpaare, abgeleiteter Regelindex (Leistung) |
+| 0017 | VMware vCenter lesen (nur lesende vSphere-Methoden), Portgruppe → EPG, VMs nach NetBox Virtualization |

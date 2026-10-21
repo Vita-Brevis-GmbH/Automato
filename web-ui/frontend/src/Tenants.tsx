@@ -923,8 +923,9 @@ function SystemDialog({
   const isAci = platform === "cisco_aci";
   const isInfoblox = platform === "infoblox";
   const isNetbox = platform === "netbox";
+  const isVmware = platform === "vmware";
   const isRef = REFERENCE_PLATFORMS.includes(platform);
-  const userPass = isAci || isInfoblox;
+  const userPass = isAci || isInfoblox || isVmware;
 
   useEffect(() => {
     fetchSites(tenant.id)
@@ -1022,6 +1023,7 @@ function SystemDialog({
           >
             <option value="fortigate">FortiGate</option>
             <option value="cisco_aci">Cisco ACI</option>
+            <option value="vmware">VMware vCenter</option>
             <option value="infoblox">Infoblox DDI (Referenzquelle)</option>
             <option value="netbox">NetBox (Referenzquelle)</option>
           </select>
@@ -1053,7 +1055,9 @@ function SystemDialog({
             placeholder={
               isAci
                 ? "https://apic-01.kunde.lan"
-                : isInfoblox
+                : isVmware
+                  ? "https://vcenter.kunde.lan"
+                  : isInfoblox
                   ? "https://ddi.kunde.lan"
                   : isNetbox
                     ? "https://netbox.kunde.lan"
@@ -1186,6 +1190,34 @@ function SystemDialog({
                   Schreib-Token entfernen
                 </label>
               )}
+            </div>
+          </>
+        ) : isVmware ? (
+          <>
+            <div className="field">
+              <label htmlFor="ss-user">vCenter-Benutzer (Read-only)</label>
+              <CredentialInput
+                id="ss-user"
+                value={username}
+                maxLength={200}
+                disabled={clearCreds}
+                placeholder={hasCreds ? kept : "z. B. ro-automato@vsphere.local"}
+                onChange={setUsername}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="ss-password">vCenter-Passwort</label>
+              <SecretInput
+                id="ss-password"
+                value={password}
+                disabled={clearCreds}
+                onChange={setPassword}
+                placeholder={hasCreds ? kept : "Passwort des vCenter-Benutzers"}
+              />
+              <div className="hint">
+                Konto mit der Rolle <b>Read-only</b> (global, an Unterobjekte vererbt). Automato liest VMs, Hosts, Cluster
+                und Portgruppen; schreibende vSphere-Aufrufe sind im Code gesperrt. Wird verschlüsselt gespeichert.
+              </div>
             </div>
           </>
         ) : isAci ? (

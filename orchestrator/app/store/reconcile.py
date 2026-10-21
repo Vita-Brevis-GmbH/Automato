@@ -25,20 +25,25 @@ from sqlalchemy.orm import Session
 from app import naming
 from app.models import (
     DeviceObject,
+    Epg,
     Finding,
     FindingType,
     MatchStatus,
     NetworkObject,
     ObjectCategory,
     ObjectClass,
+    Portgroup,
     Rule,
     RuleEndpoint,
     RuleObjectRef,
     Severity,
     SourceSystem,
     SubjectKind,
+    Vm,
+    VmIp,
 )
 from app.store import naming_profiles as profile_store
+from app.store import virtual
 
 
 @dataclass(frozen=True)
@@ -65,11 +70,13 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     ctx = references.context(session, tenant_id)
     prefixes = profile_store.prefixes_for_tenant(session, tenant_id)
     references.rematch(session, tenant_id, ctx, prefixes)  # zuerst: Werte gegen den Stand
+    virtual.map_epgs(session, tenant_id)  # Portgruppen -> EPGs (EPGs aendern sich je APIC-Lauf)
     issues: list[Issue] = []
     issues += _rule_endpoint_issues(session, tenant_id, ctx, prefixes)
     issues += _rule_incomplete_issues(session, tenant_id)
     issues += _device_object_issues(session, tenant_id, prefixes)
     issues += references.checks(session, tenant_id, prefixes, ctx)
+    issues += _virtual_issues(session, tenant_id, ctx)
     _sync_findings(session, tenant_id, issues)
     counts: dict[str, int] = defaultdict(int)
     for issue in {i.key: i for i in issues}.values():
@@ -416,6 +423,71 @@ def _used_object_ids(session: Session, tenant_id: int, objects: list[DeviceObjec
             if m is not None:
                 used.add(m.id)
     return used
+
+
+# -- VMware (ADR 0017) -------------------------------------------------------
+
+
+def _virtual_issues(session: Session, tenant_id: int, ctx) -> list[Issue]:
+    """VM-IPs ohne Eintrag im fuehrenden IPAM; Portgruppen nach ACI-Schema ohne EPG."""
+    out: list[Issue] = []
+    names = _source_names(session, tenant_id)
+    primary = ctx.primary if ctx is not None else None
+    if primary is not None:
+        missing: dict[int, list[str]] = defaultdict(list)
+        vms: dict[int, Vm] = {}
+        for ip, vm in session.execute(
+            select(VmIp.ip, Vm)
+            .join(Vm, Vm.id == VmIp.vm_id)
+            .where(VmIp.tenant_id == tenant_id, Vm.template.is_(False))
+            .order_by(Vm.name, VmIp.ip)
+        ):
+            if not primary.ip_records(ip):
+                missing[vm.id].append(ip)
+                vms[vm.id] = vm
+        for vm_id, ips in missing.items():
+            vm = vms[vm_id]
+            out.append(
+                Issue(
+                    FindingType.VM_NOT_IN_IPAM,
+                    SubjectKind.VM,
+                    vm.name,
+                    vm.source_system_id,
+                    detail={
+                        "source": names.get(vm.source_system_id),
+                        "ips": ips,
+                        "reference": primary.source.name,
+                        "cluster": vm.cluster,
+                        "hostname": vm.hostname,
+                    },
+                )
+            )
+    has_aci = session.scalar(select(Epg.id).where(Epg.tenant_id == tenant_id).limit(1))
+    if has_aci:
+        for pg in session.scalars(
+            select(Portgroup).where(Portgroup.tenant_id == tenant_id, Portgroup.epg_id.is_(None))
+        ):
+            parts = virtual.epg_from_name(pg.name)
+            if parts is None:
+                continue
+            out.append(
+                Issue(
+                    FindingType.PORTGROUP_NO_EPG,
+                    SubjectKind.PORTGROUP,
+                    pg.name,
+                    pg.source_system_id,
+                    Severity.INFO,
+                    detail={
+                        "source": names.get(pg.source_system_id),
+                        "tenant": parts[0],
+                        "ap": parts[1],
+                        "epg": parts[2],
+                        "vlan": pg.vlan,
+                        "vms": pg.vm_count,
+                    },
+                )
+            )
+    return out
 
 
 # -- Findings synchronisieren (Triage bleibt erhalten) ------------------------

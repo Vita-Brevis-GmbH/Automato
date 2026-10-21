@@ -43,11 +43,23 @@ class SiteRef(BaseModel):
     virtual: list[str] = []  # physisch: Codes der virtuellen Standorte
 
 
+class DocVmOut(BaseModel):
+    """VM hinter dem System (vCenter, ADR 0017): beim Server die VM der IP, bei der EPG die VMs
+    an ihren Portgruppen."""
+
+    name: str
+    power_state: str | None = None
+    portgroup: str | None = None
+    ips: list[str] = []
+    epg: str | None = None
+
+
 class SystemDocOut(BaseModel):
     system: str
     system_ip: str | None
     tenant_code: str | None
     site: SiteRef | None
+    vms: list[DocVmOut] = []
     tables: list[DocTableOut]
 
 

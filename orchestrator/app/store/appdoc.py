@@ -32,7 +32,7 @@ from app.models import (
 )
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
-from app.store import rule_index, sites
+from app.store import rule_index, sites, virtual
 from app.store import rules as rules_store
 
 SEP = " · "  # gleichnamige EPGs mehrerer ACI-Tenants: "EG_x · TE_a · AP_1"
@@ -223,6 +223,7 @@ def _envelope(
     system_ip: str | None,
     site_id: int | None,
     rows_by_table: dict[int, list[dict]],
+    vms: list[dict] | None = None,
 ) -> dict:
     tables = [
         {
@@ -241,6 +242,7 @@ def _envelope(
         "system_ip": system_ip,
         "tenant_code": tenant.code if tenant else None,
         "site": sites.SiteIndex(session, site.tenant_id).ref(site) if site else None,
+        "vms": vms or [],  # VMs dahinter (vCenter, ADR 0017)
         "tables": tables,
     }
 
@@ -513,6 +515,7 @@ def epg_doc(session: Session, epg: Epg, data: TenantData | None = None) -> dict:
         host.value if host else None,
         host.site_id if host else None,
         rows_by_table,
+        epg_store.vms_of(session, [epg.id]).get(epg.id, []),
     )
 
 
@@ -562,16 +565,30 @@ def host_doc(session: Session, sys_obj: NetworkObject, data: TenantData | None =
         is_direct=lambda e: e.network_object_id == sys_obj.id,
     ):
         rows_by_table[idx].append(row)
-    # ACI: die EPG(s), in denen der Server steht (verknuepft oder als gelernter Endpunkt)
-    for epg in _host_epgs(session, data, sys_obj):
+    ip = sys_ip.split("/")[0] if sys_ip else None
+    vms = virtual.Lookup(session, tenant_id, {ip} if ip else set())
+    # ACI: die EPG(s), in denen der Server steht (verknuepft, gelernter Endpunkt, Portgruppe
+    # der VM)
+    for epg in _host_epgs(session, data, sys_obj, vms.epg_ids(ip)):
         for idx, row in _aci_rows(data, epg, system_name, via=f"EPG {epg_store.label(epg)}"):
             rows_by_table[idx].append(row)
+    info = vms.info(ip)
+    return _envelope(
+        session,
+        system_name,
+        tenant_id,
+        sys_ip,
+        sys_obj.site_id,
+        rows_by_table,
+        [info] if info else [],
+    )
 
-    return _envelope(session, system_name, tenant_id, sys_ip, sys_obj.site_id, rows_by_table)
 
-
-def _host_epgs(session: Session, data: TenantData, sys_obj: NetworkObject) -> list[Epg]:
+def _host_epgs(
+    session: Session, data: TenantData, sys_obj: NetworkObject, vm_epgs: set[int] = frozenset()
+) -> list[Epg]:
     ids = {e.id for e in data.epgs_by_id.values() if e.network_object_id == sys_obj.id}
+    ids |= vm_epgs
     if sys_obj.value:
         ip = sys_obj.value.split("/")[0]
         ids |= set(session.scalars(select(EpgEndpoint.epg_id).where(EpgEndpoint.ip == ip)))

@@ -111,6 +111,7 @@ class EpgOut(BaseModel):
     selectors: list[str] = []  # ESG: Selektoren (EPG, Tag, IP)
     pref_group: bool = False  # Mitglied der Preferred Group seiner VRF
     vlans: list[int] = []  # Encap-VLANs der EPG (Netzinventar des APICs)
+    vms: list[dict] = []  # VMs an Portgruppen dieser EPG (vCenter, ADR 0017)
     port_count: int = 0
     ports: list[EpgPortOut] = []  # statische Pfade (begrenzt, siehe port_count)
 
@@ -125,6 +126,7 @@ class EndpointOut(BaseModel):
     object_class: str | None = None  # aus der Namenskonvention (H_/N_/VIP_/...)
     fqdn: str | None = None
     nat_target: str | None = None  # bei VIPs: internes Ziel (mapped_ip[:port][/proto])
+    vm: dict | None = None  # VM hinter der IP (vCenter, ADR 0017)
     epg: EpgOut | None = None  # ACI: Lage der EPG (Tenant, AP, BD, VRF, Subnetze, Endpunkte)
 
 
@@ -137,6 +139,7 @@ class RefValueOut(BaseModel):
     source_of_record: str | None = None  # netbox | infoblox
     reference: dict | None = None  # Referenzdaten (DNS-Name, Prefix, VLAN, Site, Link)
     enrichment: dict | None = None  # Anreicherung (z. B. NetBox neben der DDI)
+    vm: dict | None = None  # VM hinter der IP (vCenter): Name, Status, Portgruppe, EPG
 
 
 class RefMemberOut(BaseModel):

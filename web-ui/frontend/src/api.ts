@@ -101,6 +101,7 @@ export interface Endpoint {
   fqdn: string | null;
   nat_target: string | null;
   epg?: EpgLocation | null; // ACI: wo liegt der Consumer/Provider
+  vm?: VmInfo | null; // VM hinter der IP (vCenter)
 }
 
 // Lage einer EPG (Contract-Consumer/-Provider): Tenant, AP, BD, VRF, Subnetze, Endpunkte
@@ -127,6 +128,7 @@ export interface EpgLocation {
   vlans: number[]; // Encap-VLANs (Netzinventar des APICs)
   port_count: number;
   ports: EpgPort[]; // statische Pfade (Leaf-Ports, begrenzt; Gesamtzahl port_count)
+  vms?: { name: string; ips: string[]; power_state: string | null; portgroup: string | null; match: string | null }[]; // VMs (vCenter)
 }
 
 export interface EpgPort {
@@ -166,7 +168,69 @@ export interface RefValue {
   source_of_record: string | null; // infoblox | netbox
   reference: RefInfo | null;
   enrichment: RefInfo | null;
+  vm?: VmInfo | null; // VM hinter der IP (vCenter)
 }
+
+// VM hinter einer IP (vCenter, ADR 0017)
+export interface VmInfo {
+  id: number;
+  name: string;
+  power_state: string | null;
+  cluster: string | null;
+  portgroup: string | null;
+  vlan: number | null;
+  epg: string | null; // Tenant/AP/EPG der Portgruppe
+  others?: string[]; // weitere VMs mit derselben IP
+}
+
+// VM aus dem vCenter (Objekte → VMs)
+export interface VmRow {
+  id: number;
+  source_system_id: number;
+  source: string | null;
+  name: string;
+  power_state: string | null;
+  template: boolean;
+  guest_os: string | null;
+  hostname: string | null;
+  datacenter: string | null;
+  cluster: string | null;
+  host: string | null;
+  vcpus: number | null;
+  memory_mb: number | null;
+  disk_gb: number | null;
+  annotation: string | null;
+  nics: {
+    name: string;
+    mac: string | null;
+    portgroup: string | null;
+    switch: string | null;
+    vlan: number | null;
+    connected: boolean | null;
+    ips: { ip: string; dns: string[]; in_ipam: boolean | null }[];
+    epg: string | null;
+    epg_match: string | null; // name | vlan
+  }[];
+}
+
+export interface PortgroupRow {
+  id: number;
+  source_system_id: number;
+  source: string | null;
+  name: string;
+  kind: string; // dvs | standard
+  switch: string | null;
+  vlan: number | null;
+  vlan_ranges: string | null;
+  vm_count: number;
+  epg: string | null;
+  epg_match: string | null;
+}
+
+export const fetchVms = (tenantId: number, params: Record<string, string | number | null | undefined> = {}) =>
+  getJSON<Paged<VmRow>>(`/api/vms${qs({ tenant_id: tenantId, ...params })}`);
+export const fetchPortgroups = (tenantId: number, q?: string) =>
+  getJSON<PortgroupRow[]>(`/api/portgroups${qs({ tenant_id: tenantId, q })}`);
 
 export interface RefMember {
   name: string;
@@ -424,11 +488,21 @@ export interface DocTable {
   rows: Record<string, string>[];
 }
 
+// VM hinter dem System (vCenter): beim Server die VM der IP, bei der EPG die VMs ihrer Portgruppen
+export interface DocVm {
+  name: string;
+  power_state: string | null;
+  portgroup: string | null;
+  ips: string[];
+  epg: string | null;
+}
+
 export interface SystemDoc {
   system: string;
   system_ip: string | null;
   tenant_code: string | null;
   site: SiteRef | null;
+  vms?: DocVm[];
   tables: DocTable[];
 }
 

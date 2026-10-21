@@ -81,7 +81,8 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Schutzprofile, Objekte **inkl. verschachtelter Gruppenmitglieder**, Services, Werte und IPs
   (eine IP trifft auch, wenn sie in einem Netz/Bereich der Regel liegt – „any“ ausgenommen),
   **DNS-Namen aus dem IPAM** (dort ohne Präfix, z. B. `web01.example.ch` für `H_web01`),
-  EPG/AP/Tenant/BD/VRF und NAT (VIP-/Pool-Name, externe/interne IP, Port). Mehrere Wörter =
+  EPG/AP/Tenant/BD/VRF, **VM-Namen** aus dem vCenter und NAT (VIP-/Pool-Name, externe/interne
+  IP, Port). Mehrere Wörter =
   alle müssen vorkommen. Filter System, Quell-/Ziel-Zone, Aktion, **Familie** (IPv4, IPv6,
   IPv4+IPv6), „nur mit Findings“ (über alle Regeln, nicht nur die geladene Seite); Links
   `#regeln?object=<Name>` bzw. `#regeln?nat=<Name>` zeigen alle Regeln mit diesem Objekt (auch
@@ -99,8 +100,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Regeln.
   Klick → Detail: je Objekt Typ, Kommentar, Gruppenmitglieder (Objektnamen verlinkt) und je
   Wert die **Referenzdaten** aus dem IPAM (DNS-Name, Netz, VLAN, Standort; aufklappbar mit
-  allen Feldern und Link in NetBox), dazu Dienste, Schutzprofile, Kommentar und **NAT**
-  (VIPs/SNAT-Pools mit IPs, Ports und DNS-Namen).
+  allen Feldern und Link in NetBox), die **VM** dahinter (vCenter: Name, Status, Portgruppe,
+  EPG), dazu Dienste, Schutzprofile, Kommentar und **NAT** (VIPs/SNAT-Pools mit IPs, Ports und
+  DNS-Namen).
 - **Objekte & Inventar:** Adressobjekte (inkl. VIPs/IP-Pools), Gruppen, **Services**
   (FortiGate-Services und ACI-Filter `<Tenant>/FT_…` mit Protokoll/Ports, Quellports, ICMP,
   Kategorie, Timer, Ziel-Beschränkung bzw. Filter-Einträgen; Prüfung nach FT_-Schema) – mit
@@ -115,6 +117,13 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Klick → genau diese Regeln.
   - **IPv4/IPv6:** Gleichnamige Objekte stehen zweimal da, mit Chip „IPv4“ bzw. „IPv6“,
     eigenen Werten, Gruppen und Befunden, wie auf der FortiGate.
+  - **VMs** (vCenter, ADR 0017): Status, Netzwerk je NIC (Portgruppe mit VLAN → **EPG**, IPs
+    mit DNS-Namen, „nicht im IPAM“), Cluster/Host/Datacenter, vCPU/RAM/Disk, Gast-OS und
+    „Regeln der VM“. **Portgruppen** mit Switch, VLAN bzw. Trunk, Anzahl VMs und der
+    zugeordneten EPG.
+  - Zuordnung Portgruppe → EPG: Name nach ACI-VMM-Schema `Tenant|AP|EPG`
+    (z. B. `TE_x|AP_007|EG_dmz02`), auch ohne Präfixe (`EG_db01` = `EPG_db01`); sonst das
+    VLAN, wenn es genau einer EPG gehört. Der Chip sagt, ob über Name oder VLAN.
 - **NAT / VIPs:** VIPs (extern → intern, Port-Forward), **Virtual Server** und SNAT-Pools.
   - Virtual Server (Lastverteilung) zeigen alle Real Server mit Status (aktiv/Standby/aus),
     Gewicht, Firewall-Objekt, DNS-Name und Health-Check. Im Detail stehen zusätzlich
@@ -137,9 +146,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   - any,
   - vzAny der VRF, ESG, oder die EPG des Servers.
 
-  Für EPGs zählen ihre Subnetze und Endpunkte.
+  Für EPGs zählen ihre Subnetze und Endpunkte. Der Kopf nennt die **VM** des Servers bzw.
+  die VMs an den Portgruppen der EPG; ein Server bringt auch die Contracts der EPG seiner
+  Portgruppe mit (ohne gelernten Endpunkt).
 - **Findings:** oben eine **Übersicht nach Kategorien** (IPAM-Abgleich, Namenskonvention,
-  Bereinigung, ACI) mit offenen/gesamten Befunden je Typ (Klick filtert). Je Befund ein Satz,
+  Bereinigung, ACI / VMware) mit offenen/gesamten Befunden je Typ (Klick filtert). Neu mit
+  dem vCenter: *VM-IP fehlt im IPAM* und *Portgruppe nach ACI-Schema ohne EPG*. Je Befund ein Satz,
   **was genau nicht stimmt**, und ein Hinweis, was zu tun wäre – z. B. „172.16.5.9 ist im IPAM
   weder als IP noch in einem bekannten Netz erfasst. Den Server db01.example.ch kennt das
   IPAM unter 10.30.0.9. Firewall-Objekt H_db01 …, verwendet in 1 Regel“. Aufklappen zeigt alle
@@ -167,11 +179,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   gruppiert. Den Standort aus dem Namen (Netz `N_<tenant>-000-…`, Cluster
   `fwc11-000-<tenant>`, Host `evh01-chzrh1-<tenant>`) zeigen Objekte, Inventar (Geräte,
   Subnetze) und der Quellsystem-Dialog als Vorschlag („?“ = Code nicht erfasst). Weiter: die **Quellsysteme des
-  Mandanten** (**+ Quellsystem** / **Bearbeiten**: FortiGate/Cisco ACI/Infoblox DDI/NetBox,
+  Mandanten** (**+ Quellsystem** / **Bearbeiten**: FortiGate/Cisco ACI/Infoblox DDI/NetBox/VMware,
   Adresse, **Standort** des Geräts (für den NetBox-Sync), **Verwaltet von** = Collector-Agent
   oder zentraler Worker, read-only Zugangsdaten – FortiGate: **API-Token**, Cisco ACI:
   **APIC-Benutzer/Passwort** + **ACI-Tenants** (leer = alle ausser infra/mgmt), Infoblox:
-  **WAPI-Benutzer/Passwort**, NetBox: **Lese-Token** + optional **Schreib-Token** (nur
+  **WAPI-Benutzer/Passwort**, VMware: **vCenter-Benutzer/Passwort** (Konto mit der Rolle
+  *Read-only*, global vererbt), NetBox: **Lese-Token** + optional **Schreib-Token** (nur
   NetBox-Sync, geht nie an einen Agenten) – nur schreibbar, verschlüsselt gespeichert, Anzeige
   nur „hinterlegt"; bei Infoblox/NetBox die **Rolle** *IPAM führend* oder *Anreicherung*
   (genau ein führendes IPAM je Mandant); TLS-Prüfung, aktiv; **Zeitplan** (stündlich,
@@ -206,8 +219,15 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Kommentar nennt die Zuordnung (ADR 0015; das Schreib-Token braucht dafür auch
   *DCIM › Site Group*). Ziel-NetBox
   wählen (Quellsystem mit Schreib-Token), Umfang *Netzinventar* (Geräte mit Ports, VLANs je
-  Quellsystem, reale Subnetze inkl. ACI BD/EPG, VRFs) und/oder *DDI-Spiegel* (Netze, Ranges,
-  IPs mit DNS-Namen aus dem führenden IPAM), optional *Löschen zulassen*. **Vorschau
+  Quellsystem, reale Subnetze inkl. ACI BD/EPG, VRFs), *DDI-Spiegel* (Netze, Ranges,
+  IPs mit DNS-Namen aus dem führenden IPAM) und/oder *Virtualisierung* (ADR 0017: Cluster-Typ
+  „VMware vSphere“, Cluster-Gruppe je Datacenter, Cluster, VMs mit Status, vCPU, RAM, Disk und
+  Kommentar, VM-Interfaces mit MAC, Portgruppe, VLAN und EPG, IPs am VM-Interface; ohne
+  Vorlagen), optional *Löschen zulassen*. Von Hand gepflegte IPs (NetBox als IPAM) bleiben
+  unverändert; fehlt nur die Zuordnung zur VM, steht das als Konflikt da. Ohne den Abschnitt
+  *Virtualisierung* bleiben VMs in NetBox unangetastet. Für diesen Abschnitt braucht der
+  Sync-Benutzer die Rechte auf `virtualization.*` – `source-of-truth/netbox/sync-user.sh`
+  nach dem Update erneut ausführen (idempotent). **Vorschau
   erstellen** liest NetBox nur und zeigt je Art: anlegen / ändern / unverändert / Konflikt
   (von Hand gepflegtes Objekt weicht ab – bleibt unverändert) / löschen / veraltet, mit
   Aktionsliste. **Übernehmen** (Bestätigung) berechnet neu, schreibt nur bei unveränderter
@@ -226,6 +246,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /rules/summary` (`?tenant_id=`) | Kennzahlen aller Regeln für die Übersicht (je Art, Endpunkte, nicht aufgelöst, Quell-/Ziel-Zonen, Aktionen) |
 | `GET /objects?tenant_id=` (`category`, `source_system_id`, `q`, `issues_only`), `GET /objects/{id}` | Firewall-Objekte mit IPAM-Abgleich und `attrs` / Detail mit Mitgliedern und Regeln (`rules`, `rule_count`) |
 | `GET /inventory/{devices\|interfaces\|vlans\|subnets\|vrfs}?tenant_id=` | Netzinventar (Subnetze mit IPAM-Abgleich) |
+| `GET /vms?tenant_id=` (`q`, `source_system_id`, `epg`, `limit`, `offset`), `GET /portgroups?tenant_id=` (`q`) | VMware-Inventar (ADR 0017): VMs mit NICs, IPs (DNS, im IPAM?) und EPG der Portgruppe, Seite mit `total`; Portgruppen mit EPG und Art der Zuordnung |
 | `GET /reconcile/summary`, `GET /reconcile/ipam`, `POST /reconcile` | Abgleich: Befunde je Typ, DDI ↔ NetBox, neu berechnen (operator) |
 | `GET /findings` (`?status=`,`?type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /findings/summary`, `PATCH /findings/{id}` | Datenqualität seitenweise (je Befund `message` = was nicht stimmt, `hint` = was tun), Zähler je Status/Typ, Triage |
 | `GET /nat` (`?nat_type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /nat/{id}`, `GET /published-services[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku: NAT mit DNS-Namen, Server und Regelzahl / Detail mit IPAM-Sicht und Regeln, publizierte Dienste (VIPs), Doku je System |
@@ -290,11 +311,13 @@ an (`deploy/agent-gateway`, Port 8443).
   hinterlegt werden. Ein Agent bekommt nur die Tokens der ihm zugewiesenen Geräte.
 - **Nur lesen, ausser NetBox (ADR 0010):** Die Lese-Clients für FortiGate, APIC, Infoblox und
   NetBox lassen technisch nur GET zu (APIC zusätzlich Login/Logout) – ein Schreibversuch
-  bricht vor dem Senden ab. Einziger Schreibweg ist der NetBox-Sync im Orchestrator mit dem
-  Schreib-Token des NetBox-Quellsystems; er schreibt nur die synchronisierten Objekttypen
-  (Tags, Tenants, Standort-Gruppen, Sites, Hersteller, Geräterollen/-typen, Geräte, Interfaces, VRFs,
-  VLAN-Gruppen, VLANs, Prefixe, Ranges, IP-Adressen) und nur an diese NetBox. Das
-  Schreib-Token in NetBox auf genau diese Objekttypen begrenzen.
+  bricht vor dem Senden ab. Der vCenter-Client (SOAP) lässt nur lesende vSphere-Methoden zu
+  (Anmelden, Container-View, Eigenschaften abrufen; ADR 0017). Einziger Schreibweg ist der
+  NetBox-Sync im Orchestrator mit dem Schreib-Token des NetBox-Quellsystems; er schreibt nur
+  die synchronisierten Objekttypen (Tags, Tenants, Standort-Gruppen, Sites, Hersteller,
+  Geräterollen/-typen, Geräte, Interfaces, VRFs, VLAN-Gruppen, VLANs, Prefixe, Ranges,
+  IP-Adressen, Cluster-Typen/-Gruppen, Cluster, VMs, VM-Interfaces) und nur an diese NetBox.
+  Das Schreib-Token in NetBox auf genau diese Objekttypen begrenzen (`sync-user.sh`).
 
 ## 6. Fehlerbehebung
 

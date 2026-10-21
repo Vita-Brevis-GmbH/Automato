@@ -23,6 +23,7 @@ from app.api import (
     system,
     systems,
     tenants,
+    virtual,
 )
 from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
     app.include_router(naming_profiles.router)
     app.include_router(reconcile.router)
     app.include_router(objects.router)
+    app.include_router(virtual.router)
     app.include_router(netbox_sync.router)
     app.include_router(system.router)
     return app

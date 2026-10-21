@@ -150,6 +150,24 @@ export function EpgCard({ epg }: { epg: EpgLocation }) {
             </dd>
           </>
         )}
+        {(epg.vms?.length ?? 0) > 0 && (
+          <>
+            <dt>VMs ({epg.vms!.length})</dt>
+            <dd>
+              {epg.vms!.map((v, i) => (
+                <div key={`${v.name}-${i}`}>
+                  <span className="mono">{v.name}</span>
+                  {v.ips.length > 0 && <span className="faint"> · {v.ips.join(", ")}</span>}
+                  {v.power_state === "poweredOff" && <span className="chip na">aus</span>}
+                  <span className="faint" title={`Portgruppe ${v.portgroup ?? ""}`}>
+                    {" "}
+                    · {v.match === "vlan" ? "über VLAN" : "Portgruppe"}
+                  </span>
+                </div>
+              ))}
+            </dd>
+          </>
+        )}
         {epg.kind === "vzany" && (
           <>
             <dt>Umfang</dt>

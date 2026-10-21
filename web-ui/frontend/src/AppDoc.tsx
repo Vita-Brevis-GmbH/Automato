@@ -190,6 +190,18 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
               ) : (
                 <span className="chip na">ohne Standort</span>
               )}
+              {(doc.vms ?? []).slice(0, MAX_VMS).map((v) => (
+                <span
+                  key={`${v.name}-${v.portgroup}`}
+                  className={`chip ${v.power_state === "poweredOn" ? "ok" : "na"}`}
+                  title={[v.portgroup && `Portgruppe ${v.portgroup}`, v.epg && `EPG ${v.epg}`, ...(v.ips ?? [])]
+                    .filter(Boolean)
+                    .join(" · ")}
+                >
+                  VM {v.name}
+                </span>
+              ))}
+              {(doc.vms?.length ?? 0) > MAX_VMS && <span className="chip na">+{doc.vms!.length - MAX_VMS} VMs</span>}
             </div>
           )}
 
@@ -259,12 +271,15 @@ export function DocTableView({ table }: { table: DocTable }) {
   );
 }
 
+const MAX_VMS = 8; // Kopf der Doku: weitere VMs nur als Anzahl
+
 function toMarkdown(doc: SystemDoc): string {
   const lines: string[] = [`# Applikations-Doku – ${doc.system}`, ""];
   const meta: string[] = [];
   if (doc.system_ip) meta.push(`IP: ${doc.system_ip}`);
   if (doc.tenant_code) meta.push(`GG: ${doc.tenant_code}`);
   if (doc.site) meta.push(`Standort: ${siteLabel(doc.site)}`);
+  if (doc.vms?.length) meta.push(`VM: ${[...new Set(doc.vms.map((v) => v.name))].join(", ")}`);
   if (meta.length) lines.push(meta.join(" · "), "");
   return lines.concat(tablesMarkdown(doc.tables)).join("\n");
 }

@@ -1,11 +1,12 @@
 // Darstellung von Firewall-Objekten mit Referenzdaten aus dem IPAM (DDI/NetBox), ADR 0010.
 import type { ReactNode } from "react";
-import { RefInfo, RefValue, Rule, RuleRef } from "./api";
+import { RefInfo, RefValue, Rule, RuleRef, VmInfo } from "./api";
 import { Dash, Icon, MatchBadge } from "./ui";
 
 export const PLATFORM_LABEL: Record<string, string> = {
   fortigate: "FortiGate",
   cisco_aci: "Cisco ACI",
+  vmware: "VMware vCenter",
   infoblox: "Infoblox DDI",
   netbox: "NetBox",
 };
@@ -29,6 +30,8 @@ export const FINDING_LABEL: Record<string, string> = {
   vlan_mismatch: "VLAN weicht ab",
   service_mismatch: "Service ≠ Name",
   rule_incomplete: "Regel nicht wirksam",
+  vm_not_in_ipam: "VM-IP nicht im IPAM",
+  portgroup_no_epg: "Portgruppe ohne EPG",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -46,6 +49,8 @@ export const FINDING_HINT: Record<string, string> = {
   epg_no_endpoints: "EPG ohne gelernte Endpunkte",
   service_mismatch: "Protokoll/Port passt nicht zum Service-Namen",
   rule_incomplete: "Regel/Contract ohne Quelle bzw. Ziel",
+  vm_not_in_ipam: "IP einer VM (vCenter) fehlt im IPAM",
+  portgroup_no_epg: "Portgruppe nach ACI-Schema ohne eingelesene EPG",
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -54,7 +59,14 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     key: "ipam",
     label: "IPAM-Abgleich",
     help: "Firewall/ACI gegen DDI bzw. NetBox",
-    types: ["unmatched_object", "name_mismatch", "subnet_not_in_ipam", "vlan_mismatch", "ambiguous_ip"],
+    types: [
+      "unmatched_object",
+      "name_mismatch",
+      "subnet_not_in_ipam",
+      "vlan_mismatch",
+      "ambiguous_ip",
+      "vm_not_in_ipam",
+    ],
   },
   {
     key: "naming",
@@ -74,7 +86,12 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     help: "Doppelte und unbenutzte Objekte",
     types: ["duplicate_value", "unused_object"],
   },
-  { key: "aci", label: "ACI", help: "EPGs ohne Endpunkte", types: ["epg_no_endpoints"] },
+  {
+    key: "aci",
+    label: "ACI / VMware",
+    help: "EPGs ohne Endpunkte, Portgruppen ohne EPG",
+    types: ["epg_no_endpoints", "portgroup_no_epg"],
+  },
 ];
 
 export const CATEGORY_LABEL: Record<string, string> = {
@@ -169,7 +186,28 @@ export function ValueLine({ v, compact }: { v: RefValue; compact?: boolean }) {
           <SourceLink r={enr} />
         </span>
       )}
+      {v.vm && <VmChip vm={v.vm} />}
     </div>
+  );
+}
+
+// VM hinter einer IP (vCenter, ADR 0017): Name, Portgruppe → EPG im Tooltip
+export function VmChip({ vm }: { vm: VmInfo }) {
+  const title = [
+    `VM ${vm.name}`,
+    vm.power_state === "poweredOff" ? "ausgeschaltet" : null,
+    vm.cluster ? `Cluster ${vm.cluster}` : null,
+    vm.portgroup ? `Portgruppe ${vm.portgroup}${vm.vlan != null ? ` (VLAN ${vm.vlan})` : ""}` : null,
+    vm.epg ? `EPG ${vm.epg}` : null,
+    vm.others?.length ? `gleiche IP auch an: ${vm.others.join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <span className={`chip ${vm.power_state === "poweredOff" ? "na" : "info"}`} title={title}>
+      VM {vm.name}
+      {vm.epg ? ` · ${vm.epg.split("/").pop()}` : ""}
+    </span>
   );
 }
 

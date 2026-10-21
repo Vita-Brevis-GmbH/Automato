@@ -36,6 +36,7 @@ FIELDS: dict[str, tuple[str, ...]] = {
     "cisco_aci": ("username", "password"),  # APIC-Login (read-only Rolle)
     "infoblox": ("username", "password"),  # WAPI-Benutzer (read-only, ADR 0010)
     "netbox": ("token",),  # Lese-Token
+    "vmware": ("username", "password"),  # vCenter-Konto mit Rolle Read-only (ADR 0017)
 }
 # Optionale Felder: NetBox-Schreib-Token nur fuer den NetBox-Sync des Orchestrators - wird nie
 # an einen Agenten ausgeliefert (siehe store.agents.target_for), ADR 0010.

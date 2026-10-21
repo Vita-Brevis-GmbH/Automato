@@ -78,7 +78,7 @@ wheels = [
 
 [[package]]
 name = "automato"
-version = "0.10.0"
+version = "0.11.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -283,7 +283,7 @@ wheels = [
 
 [[package]]
 name = "collectors"
-version = "0.10.0"
+version = "0.11.0"
 source = { editable = "collectors" }
 dependencies = [
     { name = "celery", extra = ["redis"] },
@@ -291,6 +291,7 @@ dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pyvmomi" },
     { name = "sot-gateway" },
 ]
 
@@ -307,6 +308,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
+    { name = "pyvmomi", specifier = ">=8.0" },
     { name = "sot-gateway", editable = "sot-gateway" },
 ]
 
@@ -798,7 +800,7 @@ wheels = [
 
 [[package]]
 name = "orchestrator"
-version = "0.10.0"
+version = "0.11.0"
 source = { editable = "orchestrator" }
 dependencies = [
     { name = "alembic" },
@@ -1157,6 +1159,14 @@ wheels = [
 ]
 
 [[package]]
+name = "pyvmomi"
+version = "9.1.1.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/18/044c8a0c8f6ac16642e65f4fac19653291c7f6c5ab61a3734c9f6066a87b/pyvmomi-9.1.1.0-py3-none-any.whl", hash = "sha256:76af3cba85573769daf4e6760aace32e7af34e1bbf343895b8c4798b6bc0e2d2", size = 557324, upload-time = "2026-09-03T11:42:04.524Z" },
+]
+
+[[package]]
 name = "pyyaml"
 version = "6.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1259,7 +1269,7 @@ wheels = [
 
 [[package]]
 name = "sot-gateway"
-version = "0.10.0"
+version = "0.11.0"
 source = { editable = "sot-gateway" }
 dependencies = [
     { name = "httpx" },
