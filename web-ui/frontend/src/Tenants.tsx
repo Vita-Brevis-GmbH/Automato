@@ -1215,7 +1215,8 @@ function SystemDialog({
                 placeholder={hasCreds ? kept : "Passwort des vCenter-Benutzers"}
               />
               <div className="hint">
-                Konto mit der Rolle <b>Read-only</b> (global, an Unterobjekte vererbt). Automato liest VMs, Hosts, Cluster
+                Konto mit der Rolle <b>Read-only</b> auf dem vCenter-Objekt (oberste Ebene) mit „An untergeordnete Objekte
+                weitergeben“ – oder als globale Berechtigung, ebenfalls mit Weitergabe. Automato liest VMs, Hosts, Cluster
                 und Portgruppen; schreibende vSphere-Aufrufe sind im Code gesperrt. Wird verschlüsselt gespeichert.
               </div>
             </div>

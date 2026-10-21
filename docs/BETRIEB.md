@@ -184,7 +184,8 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   oder zentraler Worker, read-only Zugangsdaten – FortiGate: **API-Token**, Cisco ACI:
   **APIC-Benutzer/Passwort** + **ACI-Tenants** (leer = alle ausser infra/mgmt), Infoblox:
   **WAPI-Benutzer/Passwort**, VMware: **vCenter-Benutzer/Passwort** (Konto mit der Rolle
-  *Read-only*, global vererbt), NetBox: **Lese-Token** + optional **Schreib-Token** (nur
+  *Read-only* auf dem vCenter-Objekt bzw. als globale Berechtigung, jeweils mit „An
+  untergeordnete Objekte weitergeben“), NetBox: **Lese-Token** + optional **Schreib-Token** (nur
   NetBox-Sync, geht nie an einen Agenten) – nur schreibbar, verschlüsselt gespeichert, Anzeige
   nur „hinterlegt"; bei Infoblox/NetBox die **Rolle** *IPAM führend* oder *Anreicherung*
   (genau ein führendes IPAM je Mandant); TLS-Prüfung, aktiv; **Zeitplan** (stündlich,
@@ -341,6 +342,21 @@ an (`deploy/agent-gateway`, Port 8443).
   Ergebnis liess sich nicht in den Store schreiben. Der Ingest wird dann vollständig verworfen
   (vorheriger Stand bleibt), der Agent meldet `failed` mit derselben Meldung; Details inkl.
   Traceback: `docker compose logs orchestrator | grep -A30 "Einspielen von Lauf"`.
+
+- **vCenter „Keine Berechtigung im vCenter: dem Konto fehlt System.View auf
+  vim.Folder:group-d1 (oberste Ebene des Inventars)“** (bis 0.11.0 als mehrzeiliges
+  `vim.fault.NoPermission`) — die Anmeldung klappt, aber das Konto darf das Inventar nicht
+  lesen. Die Rolle *Read-only* enthält `System.View`; sie ist nur am falschen Ort oder ohne
+  Weitergabe zugewiesen. Lösung im vSphere Client:
+  - oberstes Objekt (der vCenter Server selbst) → *Berechtigungen* → *Hinzufügen*: Konto,
+    Rolle *Read-only*, **„An untergeordnete Objekte weitergeben“** anhaken; oder
+  - *Verwaltung → Zugriffssteuerung → Globale Berechtigungen*: ebenfalls mit Weitergabe.
+    Eine globale Berechtigung ohne Weitergabe gilt nicht für das Inventar.
+  - Ist das Konto über eine SSO- bzw. AD-Gruppe berechtigt: Mitgliedschaft prüfen.
+
+  Danach `automato-collector --check` auf dem Agenten: er meldet „… N VMs sichtbar“. Steht
+  dort „keine VM sichtbar“, reicht die Berechtigung nicht bis zu den VMs (Weitergabe fehlt
+  oder liegt nur auf einem Teil des Inventars).
 
 - **NetBox-Sync „Vorschau/Übernahme fehlgeschlagen“** — die Meldung von NetBox steht am
   Plan (z. B. fehlendes Schreibrecht → HTTP 403, Validierungsfehler → HTTP 400 mit Feld).

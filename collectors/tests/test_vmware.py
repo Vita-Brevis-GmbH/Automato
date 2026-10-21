@@ -128,6 +128,36 @@ def test_abruf_mit_propertycollector_ueber_nachgebaute_verbindung():
     assert vm["host"] == "host-11" and vm["guest_net"][0]["ips"] == ["10.20.0.5"]
     assert data["DistributedVirtualPortgroup"][0]["vlan_ranges"] == "100-199,300"
     assert stub.calls == ["DestroyView"]  # View wieder entfernt, sonst nichts aufgerufen
+    assert client.probe() == 1  # Pruefung liest wie der Lauf, nur die VM-Namen
+    assert stub.calls == ["DestroyView", "DestroyView"]
+
+
+def _no_permission():
+    from pyVmomi import vim
+
+    root = vim.Folder("group-d1")
+    missing = vim.fault.NoPermission.EntityPrivileges(entity=root, privilegeIds=["System.View"])
+    return vim.fault.NoPermission(
+        object=root,
+        privilegeId="System.View",
+        msg="Permission to perform this operation was denied.",
+        missingPrivileges=[missing],
+    )
+
+
+def test_vsphere_fehler_als_satz_mit_hinweis():
+    from pyVmomi import vim
+
+    from collectors.common import diagnose
+
+    msg = diagnose.device_error(_no_permission(), "vmware")
+    assert msg.startswith(
+        "Keine Berechtigung im vCenter: dem Konto fehlt System.View auf vim.Folder:group-d1"
+        " (oberste Ebene des Inventars)."
+    )
+    assert "Read-only" in msg and "weitergeben" in msg and "\n" not in msg
+    login = diagnose.device_error(vim.fault.InvalidLogin(msg="Cannot complete login"), "vmware")
+    assert login.startswith("Anmeldung abgelehnt (vCenter: Benutzer oder Passwort falsch)")
 
 
 def test_ohne_zugangsdaten_beispiel_nur_zentral(monkeypatch):
@@ -144,9 +174,12 @@ def test_ohne_zugangsdaten_beispiel_nur_zentral(monkeypatch):
 
 
 class _FakeVCenter:
-    """Ersatz fuer VCenterClient: Beispieldaten statt vCenter, Anmeldung wahlweise abgelehnt."""
+    """Ersatz fuer VCenterClient: Beispieldaten statt vCenter, Anmeldung wahlweise abgelehnt,
+    Lesen wahlweise ohne Berechtigung (`fault`) bzw. ohne sichtbare VMs (`vms`)."""
 
     fail = False
+    fault = None
+    vms = 3
     last = None
 
     def __init__(self, url, username, password, verify_tls=True):
@@ -163,7 +196,14 @@ class _FakeVCenter:
         return False
 
     def gather(self):
+        if _FakeVCenter.fault is not None:
+            raise _FakeVCenter.fault
         return tasks._sample()
+
+    def probe(self):
+        if _FakeVCenter.fault is not None:
+            raise _FakeVCenter.fault
+        return _FakeVCenter.vms
 
     def ping(self):
         return "2026-10-21T08:00:00Z"
@@ -193,7 +233,20 @@ def test_lauf_und_pruefung_mit_zugangsdaten(monkeypatch):
     }
     assert sent == {"via": True}
     ok, msg = tasks.check(_target())
-    assert ok and "vc.example.ch" in msg
+    assert ok and "vc.example.ch" in msg and "3 VMs sichtbar" in msg
+
+    _FakeVCenter.vms = 0  # angemeldet, aber Rolle reicht nicht bis zu den VMs
+    ok, msg = tasks.check(_target())
+    assert not ok and "keine VM sichtbar" in msg
+    _FakeVCenter.vms = 3
+
+    _FakeVCenter.fault = _no_permission()  # Anmeldung geht, Lesen nicht (Dev-Befund 0.11.0)
+    ok, msg = tasks.check(_target())
+    assert not ok and msg.startswith("Keine Berechtigung im vCenter")
+    result = tasks.collect_once("r3", _target(), via_agent=True)
+    assert result.status == "failed" and "System.View" in result.message
+    assert "dynamicType" not in result.message  # kein mehrzeiliges Fault-Abbild
+    _FakeVCenter.fault = None
 
     _FakeVCenter.fail = True
     ok, msg = tasks.check(_target())

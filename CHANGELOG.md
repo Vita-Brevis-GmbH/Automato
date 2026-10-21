@@ -7,6 +7,21 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.11.1 – 2026-10-21
+
+Korrektur aus dem ersten Lauf gegen ein echtes vCenter.
+
+- **Fehlende vCenter-Berechtigung verständlich gemeldet:** Statt des mehrzeiligen
+  `vim.fault.NoPermission` steht im Lauf z. B. „Keine Berechtigung im vCenter: dem Konto fehlt
+  System.View auf vim.Folder:group-d1 (oberste Ebene des Inventars)“. Der Hinweis nennt die
+  Lösung: Rolle *Read-only* auf dem vCenter-Objekt oder als globale Berechtigung, jeweils mit
+  „An untergeordnete Objekte weitergeben“.
+- **`--check` prüft auch das Leserecht:** Er liest wie der Lauf ab dem Wurzelordner und meldet
+  die Zahl der sichtbaren VMs. Bisher prüfte er nur die Anmeldung und war deshalb grün, obwohl
+  der Lauf scheiterte.
+- Fix: „Anmeldung abgelehnt“ beim vCenter wurde nicht erkannt (Klassenname in pyVmomi
+  `vim.fault.InvalidLogin`).
+
 ## 0.11.0 – 2026-10-21
 
 VMware vCenter lesen, VMs in Regeln, Objekten und Doku, VMs nach NetBox Virtualization

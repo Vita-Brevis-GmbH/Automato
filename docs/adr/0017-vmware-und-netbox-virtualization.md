@@ -22,7 +22,9 @@ vervollständigen.
 ## Entscheidung
 
 1. **Neue Plattform `vmware`** (Quellsystem mit Benutzer/Passwort, ADR 0009). Gelesen wird
-   über den Agenten mit einem vCenter-Konto der Rolle **Read-only** (global, vererbt).
+   über den Agenten mit einem vCenter-Konto der Rolle **Read-only** – auf dem vCenter-Objekt
+   (oberste Ebene) oder als globale Berechtigung, jeweils **an untergeordnete Objekte
+   weitergegeben**. Der Lauf liest ab dem Wurzelordner und braucht dort `System.View`.
 2. **Nur lesen, auch im Code:**
    - Bibliothek pyVmomi (Apache-2.0); gelesen wird mit dem PropertyCollector.
    - SOAP kennt nur POST, deshalb schützt keine Methoden-Prüfung wie bei den REST-Clients.

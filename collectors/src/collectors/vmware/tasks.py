@@ -49,16 +49,22 @@ def gather(target: Target | None = None) -> dict:
 
 
 def check(target: Target | None = None) -> tuple[bool, str]:
-    """Anmeldung am vCenter pruefen (read-only, kein Ingest)."""
+    """Anmeldung und Leserecht im Inventar pruefen (read-only, kein Ingest)."""
     client = _client(target)
     if client is None:
         return False, _no_credentials(target) if target else "keine vCenter-Creds"
     try:
         with client:
             now = client.ping()
+            vms = client.probe()  # wie der Lauf: ohne Leserecht hier NoPermission
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, diagnose.device_error(exc, "vmware", target, local=True)
-    return True, f"erreichbar: {client.host} (Zeit {now})"
+    if not vms:
+        return False, (
+            f"angemeldet an {client.host}, aber keine VM sichtbar - die Rolle Read-only des "
+            "Kontos reicht nicht bis zu den VMs (an untergeordnete Objekte weitergeben?)"
+        )
+    return True, f"erreichbar: {client.host} (Zeit {now}), {vms} VMs sichtbar"
 
 
 def collect_once(

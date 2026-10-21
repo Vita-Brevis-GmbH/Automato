@@ -118,7 +118,9 @@ das Ergebnis mit passender Anzahl macht ihn zum aktuellen Stand der Quelle.
 
 ## 4. VMware vCenter (pyVmomi, PropertyCollector; read-only, ADR 0017)
 
-Konto mit der vSphere-Rolle **Read-only** (global, vererbt). Der Collector lässt nur die
+Konto mit der vSphere-Rolle **Read-only** auf dem vCenter-Objekt oder als globale Berechtigung,
+jeweils an untergeordnete Objekte weitergegeben (der Lauf braucht `System.View` ab dem
+Wurzelordner `group-d1`). Der Collector lässt nur die
 lesenden Methoden `Login`, `Logout`, `RetrieveServiceContent`, `CurrentTime`,
 `CreateContainerView`, `DestroyView` und `RetrieveProperties(Ex)`/`ContinueRetrievePropertiesEx`
 zu – geprüft wird der WSDL-Name, jeder andere Aufruf bricht vor dem Senden ab

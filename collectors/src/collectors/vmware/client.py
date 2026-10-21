@@ -230,10 +230,18 @@ class VCenterClient:
 
     def gather(self) -> dict[str, list[dict]]:
         """Alle Objekte der Arten in PROPS als einfache Dicts, je Art eine Liste."""
+        return self._retrieve(PROPS)
+
+    def probe(self) -> int:
+        """Leserecht im Inventar pruefen wie beim Lauf (Container-View ab dem Wurzelordner,
+        braucht System.View): Anzahl sichtbarer VMs."""
+        return len(self._retrieve({"VirtualMachine": ["name"]})["VirtualMachine"])
+
+    def _retrieve(self, wanted: dict[str, list[str]]) -> dict[str, list[dict]]:
         from pyVmomi import vim, vmodl
 
         content = self._si.RetrieveContent()
-        types = {name: getattr(vim, name) for name in PROPS}
+        types = {name: getattr(vim, name) for name in wanted}
         view = content.viewManager.CreateContainerView(
             content.rootFolder, list(types.values()), True
         )
@@ -244,15 +252,17 @@ class VCenterClient:
             )
             spec = pc.FilterSpec(
                 objectSet=[pc.ObjectSpec(obj=view, skip=True, selectSet=[traverse])],
-                propSet=[pc.PropertySpec(type=t, pathSet=PROPS[n]) for n, t in types.items()],
+                propSet=[pc.PropertySpec(type=t, pathSet=wanted[n]) for n, t in types.items()],
             )
-            out: dict[str, list[dict]] = {name: [] for name in PROPS}
+            out: dict[str, list[dict]] = {name: [] for name in wanted}
             result = content.propertyCollector.RetrievePropertiesEx(
                 specSet=[spec], options=pc.RetrieveOptions(maxObjects=500)
             )
             while result is not None:
                 for obj in result.objects:
-                    kind = next((n for n, t in types.items() if isinstance(obj.obj, t)), "Folder")
+                    kind = next((n for n, t in types.items() if isinstance(obj.obj, t)), None)
+                    if kind is None:  # nicht angefragte Art
+                        continue
                     props = {p.name: p.val for p in obj.propSet or []}
                     out[kind].append(to_plain(kind, obj.obj._moId, props))
                 token = result.token

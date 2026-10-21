@@ -20,7 +20,8 @@ from collectors.config import get_settings
 _HINTS = {
     "vmware": (
         "vCenter-Benutzer/-Passwort im Web-UI neu setzen (SSO-Konto als benutzer@vsphere.local "
-        "bzw. DOMAENE\\benutzer); das Konto braucht nur die Rolle Read-only (global, vererbt)"
+        "bzw. DOMAENE\\benutzer); das Konto braucht nur die Rolle Read-only (oberste Ebene, "
+        "an untergeordnete Objekte weitergegeben)"
     ),
     "cisco_aci": (
         "APIC-Benutzer/-Passwort im Web-UI neu setzen; Remote-Benutzer (LDAP/RADIUS/TACACS) "
@@ -37,6 +38,15 @@ _HINTS = {
     ),
     "netbox": "Lese-Token im Web-UI neu setzen (NetBox v2-Token: nbt_<Schluessel>.<Token>)",
 }
+# vCenter: Rolle Read-only reicht (System.View/System.Read) - fehlt sie, ist sie meist am
+# falschen Ort oder ohne Weitergabe zugewiesen
+_VSPHERE_PERMISSION = (
+    "im vCenter dem Konto die Rolle Read-only auf dem vCenter-Objekt (oberste Ebene des "
+    "Inventars) zuweisen, mit 'An untergeordnete Objekte weitergeben' (Propagate to children) - "
+    "oder unter Verwaltung > Zugriffssteuerung > Globale Berechtigungen, ebenfalls mit "
+    "Weitergabe; ohne Weitergabe gilt eine globale Berechtigung nicht fuer das Inventar. "
+    "Ist das Konto ueber eine SSO-/AD-Gruppe berechtigt: Mitgliedschaft pruefen"
+)
 _TAGS = re.compile(r"<[^>]+>")
 _SPACE = re.compile(r"\s+")
 
@@ -45,10 +55,10 @@ def device_error(
     exc: Exception, platform: str, target: Target | None = None, local: bool = False
 ) -> str:
     """Fehlermeldung eines Geraete-Zugriffs; bei 401/403 mit Ursache und Hinweis."""
+    vsphere = _vsphere_fault(exc)
+    if vsphere:
+        return vsphere
     base = http.describe_error(exc)
-    if type(exc).__name__ == "InvalidLogin":  # vSphere (pyVmomi): Anmeldung abgelehnt
-        hint = _HINTS["vmware"]
-        return f"Anmeldung abgelehnt (vCenter: Benutzer oder Passwort falsch). Hinweis: {hint}"
     if not (
         isinstance(exc, httpx.HTTPStatusError)
         and exc.response.status_code in (401, 403)
@@ -65,6 +75,34 @@ def device_error(
     if hint:
         parts.append(f"Hinweis: {hint}")
     return ". ".join(parts)
+
+
+def _vsphere_fault(exc: Exception) -> str | None:
+    """vSphere-Fehler (pyVmomi, Klassenname wie `vim.fault.NoPermission`) als ein Satz statt
+    des mehrzeiligen Fault-Abbilds."""
+    name = type(exc).__name__.rsplit(".", 1)[-1]
+    if name == "InvalidLogin":
+        hint = _HINTS["vmware"]
+        return f"Anmeldung abgelehnt (vCenter: Benutzer oder Passwort falsch). Hinweis: {hint}"
+    if name != "NoPermission":
+        return None
+    obj = getattr(exc, "object", None)
+    moid = getattr(obj, "_moId", None)
+    where = f"{type(obj).__name__}:{moid}" if moid else "einem Inventar-Objekt"
+    if moid == "group-d1":  # Wurzelordner jedes vCenters
+        where += " (oberste Ebene des Inventars)"
+    privileges = sorted(
+        {
+            p
+            for entry in getattr(exc, "missingPrivileges", None) or []
+            for p in getattr(entry, "privilegeIds", None) or []
+        }
+        or {getattr(exc, "privilegeId", None) or "Leserecht"}
+    )
+    return (
+        f"Keine Berechtigung im vCenter: dem Konto fehlt {', '.join(privileges)} auf {where}. "
+        f"Hinweis: {_VSPHERE_PERMISSION}"
+    )
 
 
 def _from_orchestrator(exc: httpx.HTTPStatusError) -> bool:

@@ -86,7 +86,7 @@ umgekehrt) = neuer/anderer Adapter, keine Änderung am Rest der Plattform.
   `docs/BETRIEB.md`. Der frühere ausführliche Statusverlauf (bis 0.4.2) steht in
   `docs/ENTWICKLUNGSVERLAUF.md`.
 
-## Aktueller Stand (0.11.0)
+## Aktueller Stand (0.11.1)
 
 UC1 „Firewall-Regel-Dokumentation (read-only)“ ist für Model 2 (FortiGate + NetBox) und
 Model 1 (FortiGate + ACI + Infoblox) umgesetzt; Phase A ist gegen die echten Systeme abgenommen.
@@ -104,7 +104,7 @@ Produktiv erst später – jetzt wird erweitert und verbessert.
 | Sicherheit | Keycloak (OIDC/PKCE, OTP, SAML-Vorlage), Rollen viewer/operator/admin, Mandanten-Scoping, Audit mit Allowlist (+ optional verschlüsselt), Secrets-Provider, Zugangsdaten Fernet, fail-closed Defaults | ADR 0005, 0007, 0013 |
 | Web-UI | alle Ansichten nach Mockup, seitenweise Listen mit Gesamtzahl | `web-ui/frontend/` |
 
-Tests: orchestrator 210, collectors 88, sot-gateway 14, UI (Playwright) 29; dazu die CI gegen
+Tests: orchestrator 210, collectors 89, sot-gateway 14, UI (Playwright) 29; dazu die CI gegen
 Postgres inkl. `alembic check`, Image-Builds und nächtlicher Lauf (`docs/TESTS.md`).
 
 ## Offen / nächste Schritte
