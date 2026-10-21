@@ -7,6 +7,34 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.13.0 – 2026-10-22
+
+Läufe-Ansicht, kompakte Ports, Portgruppen im Detail (keine Migration).
+
+- **Läufe** (neue Ansicht unter Dokumentation, `#laeufe`): alle Collector-Läufe des Mandanten,
+  seitenweise mit Gesamtzahl.
+  - Filter Status (offen = wartet oder läuft, wartet, läuft, fehlgeschlagen, erfolgreich),
+    Quellsystem, Plattform und Auslöser (von Hand, Zeitplan).
+  - Je Lauf Ausführung, Regeln, Meldung, angelegt/begonnen/beendet mit Dauer; offene Läufe
+    abbrechen (Operator).
+  - `GET /jobs` nimmt dafür `status` (auch `open`), `trigger` und `offset` und liefert die
+    Gesamtzahl im Header `X-Total-Count`.
+- **Übersicht:** „Letzte Läufe“ zeigt immer **alle offenen Läufe** (auch ältere und bei mehr
+  als zehn Geräten), dazu die letzten acht, mit Zähler „N offen“ und Link „Alle Läufe (N)“.
+- **Ports kompakt:**
+  - Eine Zeile je Port. Lange VLAN-Listen als Bereiche (`100-120, 300`), ab vier Bereichen nur
+    die Anzahl („tagged 24 VLANs“). EPGs als Anzahl („3 EPGs“), IPs gekürzt.
+  - **Klick → Detail** mit allen Angaben: Status, Beschreibung, Parent/LAG und
+    Subinterfaces/Mitglieder (anklickbar), alle VLANs, IPs, Zone, Policy-Gruppe, Nachbar,
+    alle EPGs.
+  - In den VLANs ist die EPG-Liste gekürzt (alle im Tooltip).
+- **Portgruppen im Detail** (Klick, `GET /portgroups/{id}`):
+  - EPG mit Tenant, AP, BD, VRF und DN, dazu die Art der Zuordnung (Name bzw. VLAN).
+  - **Subnetze** mit Quelle: ACI (EPG, BD bzw. L3Out), das Netzinventar mit gleichem VLAN (als
+    Hinweis, „VLAN 1107 in …“) und das IPAM-Netz der VM-IPs. Dazu „Regeln im Subnetz“.
+  - **VMs** mit Status, NIC (MAC, getrennt), IPs mit DNS-Namen und „nicht im IPAM“ sowie
+    Cluster/Host.
+
 ## 0.12.0 – 2026-10-22
 
 Paare bestätigen, VIP-Ziele, Ports je Gerät, Betriebszustand (Alembic `0035`).

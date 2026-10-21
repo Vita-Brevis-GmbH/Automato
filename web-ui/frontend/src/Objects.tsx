@@ -6,6 +6,7 @@ import {
   fetchInventory,
   fetchObjectDetail,
   fetchObjects,
+  fetchPortgroup,
   fetchPortgroups,
   fetchSystems,
   fetchVms,
@@ -16,6 +17,7 @@ import {
   InvVrf,
   ObjectDetail,
   Paged,
+  PortgroupDetail,
   PortgroupRow,
   PrefixInfo,
   System,
@@ -136,7 +138,7 @@ export default function Objects({
       {tab === "vms" ? (
         <VmTable tenantId={tenantId} sourceId={sourceId} q={q} onGo={onGo} />
       ) : tab === "portgroups" ? (
-        <PortgroupTable tenantId={tenantId} q={q} />
+        <PortgroupTable tenantId={tenantId} q={q} onGo={onGo} />
       ) : current.category ? (
         <ObjectTable
           key={tab}
@@ -632,7 +634,6 @@ function Members({ names }: { names: string[] }) {
   );
 }
 
-const list = (v: unknown[] | null | undefined) => (v && v.length ? v.join(", ") : null);
 const cell = (v: ReactNode) => (v === null || v === undefined || v === "" ? <Dash /> : v);
 
 function IpamCell({ info, vlan }: { info: PrefixInfo | null; vlan?: number | null }) {
@@ -782,7 +783,9 @@ function InventoryTable({
                   </td>
                   <td className="mono">{v.name}</td>
                   <td>{cell(v.group)}</td>
-                  <td className="mono">{cell(list(v.epgs))}</td>
+                  <td className="mono">
+                    <Short items={v.epgs} />
+                  </td>
                   <td className="muted">{cell(v.description)}</td>
                   <td className="nowrap">{cell(v.source)}</td>
                 </tr>
@@ -992,10 +995,12 @@ function VmTable({ tenantId, sourceId, q, onGo }: { tenantId: number; sourceId: 
   );
 }
 
-// Portgruppen mit VLAN und zugeordneter EPG (Name Tenant|AP|EPG bzw. eindeutiges VLAN)
-function PortgroupTable({ tenantId, q }: { tenantId: number; q: string }) {
+// Portgruppen mit VLAN und zugeordneter EPG (Name Tenant|AP|EPG bzw. eindeutiges VLAN); Klick
+// öffnet das Detail mit Subnetzen und VMs (0.13.0)
+function PortgroupTable({ tenantId, q, onGo }: { tenantId: number; q: string; onGo?: Go }) {
   const [rows, setRows] = useState<PortgroupRow[] | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [selected, setSelected] = useState<number | null>(null);
   const query = useDebounced(q);
   useEffect(() => {
     setRows(null);
@@ -1031,20 +1036,18 @@ function PortgroupTable({ tenantId, q }: { tenantId: number; q: string }) {
               </thead>
               <tbody>
                 {rows.map((p) => (
-                  <tr key={p.id}>
-                    <td>
-                      <b className="mono">{p.name}</b>
-                      <div className="faint">{p.kind === "dvs" ? "verteilt" : "Standard (Host)"}</div>
+                  <tr key={p.id} className="clickable" title="Details: EPG, Subnetze, VMs" onClick={() => setSelected(p.id)}>
+                    <td className="nowrap">
+                      <b className="mono">{p.name}</b> <span className="faint">{p.kind === "dvs" ? "verteilt" : "Standard"}</span>
                     </td>
                     <td className="mono">{p.switch ?? <Dash />}</td>
                     <td className="mono">{p.vlan ?? p.vlan_ranges ?? <Dash />}</td>
                     <td className="num">{p.vm_count}</td>
-                    <td>
+                    <td className="nowrap">
                       {p.epg ? (
-                        <>
-                          <span className="chip local">{p.epg}</span>
-                          <div className="faint">{p.epg_match === "vlan" ? "über das VLAN" : "über den Namen"}</div>
-                        </>
+                        <span className="chip local" title={p.epg_match === "vlan" ? "über das VLAN" : "über den Namen"}>
+                          {p.epg}
+                        </span>
                       ) : (
                         <Dash />
                       )}
@@ -1056,8 +1059,172 @@ function PortgroupTable({ tenantId, q }: { tenantId: number; q: string }) {
             </table>
           )}
         </div>
+        {rows && rows.length > 0 && <div className="pager">{rows.length} Portgruppen</div>}
       </div>
+      {selected !== null && <PortgroupDrawer id={selected} onClose={() => setSelected(null)} onGo={onGo} />}
     </>
+  );
+}
+
+const SUBNET_SOURCE_HINT: Record<string, string> = {
+  "ACI-EPG": "Subnetz an der EPG",
+  "ACI-BD": "Subnetz der Bridge Domain der EPG",
+  "ACI-L3Out": "Subnetz der externen EPG",
+};
+
+function PortgroupDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; onGo?: Go }) {
+  const [d, setD] = useState<PortgroupDetail | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  useEffect(() => {
+    setD(null);
+    setErr(null);
+    fetchPortgroup(id).then(setD).catch(setErr);
+  }, [id]);
+  return (
+    <Drawer
+      title={d?.name ?? "Portgruppe"}
+      sub={d ? [d.kind === "dvs" ? "verteilte Portgruppe" : "Standard-Portgruppe (Host)", d.switch, d.source].filter(Boolean).join(" · ") : undefined}
+      onClose={onClose}
+    >
+      <ErrorBox error={err} />
+      {!d && !err && <Loading />}
+      {d && (
+        <>
+          <dl className="kv">
+            <dt>VLAN</dt>
+            <dd className="mono">{d.vlan ?? (d.vlan_ranges ? `Trunk ${d.vlan_ranges}` : <Dash />)}</dd>
+            <dt>EPG</dt>
+            <dd>
+              {d.epg ? (
+                <>
+                  <span className="chip local">{d.epg.label}</span>{" "}
+                  <span className="faint">{d.epg_match === "vlan" ? "über das VLAN zugeordnet" : "über den Namen zugeordnet"}</span>
+                  <div className="faint mono">
+                    {[d.epg.tenant && `Tenant ${d.epg.tenant}`, d.epg.ap && `AP ${d.epg.ap}`, d.epg.bd && `BD ${d.epg.bd}`, d.epg.vrf && `VRF ${d.epg.vrf}`]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </div>
+                  {d.epg.dn && <div className="faint mono">{d.epg.dn}</div>}
+                </>
+              ) : (
+                <span className="faint">keine EPG zugeordnet (Name nicht Tenant|AP|EPG, VLAN nicht eindeutig)</span>
+              )}
+            </dd>
+            <dt>VMs</dt>
+            <dd>{d.vms.length}</dd>
+          </dl>
+
+          <div className="sub-h">Subnetze ({d.subnets.length})</div>
+          {d.subnets.length === 0 ? (
+            <div className="faint">
+              Kein Subnetz bekannt – weder an der EPG/BD noch im Netzinventar (gleiches VLAN) noch im IPAM für die IPs der VMs.
+            </div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Subnetz</th>
+                  <th>Gateway / VRF</th>
+                  <th>Quelle</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.subnets.map((s) => (
+                  <tr key={s.prefix}>
+                    <td className="mono nowrap">
+                      <b>{s.prefix}</b>
+                      {s.description && <div className="faint">{s.description}</div>}
+                      {onGo && (
+                        <div>
+                          <button
+                            className="linkbtn"
+                            title="Firewall-Regeln und Contracts, deren Quelle oder Ziel sich mit dem Subnetz überschneidet"
+                            onClick={() => onGo("regeln", { net: s.prefix })}
+                          >
+                            Regeln im Subnetz
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                    <td className="mono">
+                      {cell(s.gateway)}
+                      {s.vrf && <div className="faint">{s.vrf}</div>}
+                    </td>
+                    <td>
+                      <div className="objs">
+                        {s.sources.map((src) => (
+                          <span key={src} className="chip" title={SUBNET_SOURCE_HINT[src] ?? (src.startsWith("VLAN ") ? "gleiches VLAN im Netzinventar – VLAN-Nummern gelten je Gerät/Domäne" : "Netz im IPAM, das die IP einer VM enthält")}>
+                            {src}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          <div className="sub-h">VMs ({d.vms.length})</div>
+          {d.vms.length === 0 ? (
+            <div className="faint">Keine VM mit einer Netzwerkkarte an dieser Portgruppe.</div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>VM</th>
+                  <th>NIC</th>
+                  <th>IPs</th>
+                  <th>Cluster / Host</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.vms.map((v) => {
+                  const [tone, label] = POWER[v.power_state ?? ""] ?? ["na", v.power_state ?? "–"];
+                  return (
+                    <tr key={`${v.id}-${v.nic}`}>
+                      <td className="nowrap">
+                        <b className="mono">{v.name}</b>
+                        <div>
+                          <span className={`chip ${tone}`}>{label}</span>
+                          {v.template && <span className="chip">Vorlage</span>}
+                        </div>
+                      </td>
+                      <td className="mono">
+                        {v.nic}
+                        {v.connected === false && <span className="chip na">getrennt</span>}
+                        {v.mac && <div className="faint">{v.mac}</div>}
+                      </td>
+                      <td className="mono">
+                        {v.ips.length === 0 ? (
+                          <Dash />
+                        ) : (
+                          v.ips.map((ip) => (
+                            <div key={ip.ip}>
+                              {ip.ip}
+                              {ip.in_ipam === false && (
+                                <span className="chip warn" title="IP nicht im führenden IPAM erfasst">
+                                  nicht im IPAM
+                                </span>
+                              )}
+                              {ip.dns.length > 0 && <div className="faint">{ip.dns.join(", ")}</div>}
+                            </div>
+                          ))
+                        )}
+                      </td>
+                      <td className="mono">
+                        {cell(v.cluster)}
+                        {v.host && <div className="faint">{v.host}</div>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </Drawer>
   );
 }
 
@@ -1087,25 +1254,149 @@ function portTree(ports: InvInterface[]): { port: InvInterface; depth: number }[
   return out;
 }
 
+// VLAN-Liste als Bereiche (100-199, 300) – wie die Trunks der Portgruppen
+function vlanRanges(vids: number[]): string[] {
+  const v = [...new Set(vids)].sort((a, b) => a - b);
+  const out: string[] = [];
+  for (let i = 0; i < v.length; ) {
+    let j = i;
+    while (j + 1 < v.length && v[j + 1] === v[j] + 1) j++;
+    out.push(j > i ? `${v[i]}-${v[j]}` : `${v[i]}`);
+    i = j + 1;
+  }
+  return out;
+}
+
+// Lange Listen kurz: die ersten Einträge, der Rest als „+N“ (alle im Tooltip bzw. im Detail)
+function Short({ items, max = 2 }: { items: string[] | null | undefined; max?: number }) {
+  if (!items?.length) return <Dash />;
+  const rest = items.length - max;
+  return (
+    <span title={items.length > max ? items.join("\n") : undefined}>
+      {items.slice(0, max).join(", ")}
+      {rest > 0 && <span className="faint"> +{rest}</span>}
+    </span>
+  );
+}
+
+const isSubinterface = (i: InvInterface) =>
+  i.kind === "vlan" && !!i.parent && i.tagged_vlans?.length === 1 && i.untagged_vlan == null;
+
+// VLANs eines Ports in einer Zeile: wenige Bereiche ausgeschrieben, sonst nur die Anzahl (Detail beim Klick)
 function VlanCell({ i }: { i: InvInterface }) {
-  if (i.kind === "vlan" && i.parent && i.tagged_vlans?.length === 1 && i.untagged_vlan == null) {
+  if (isSubinterface(i)) {
     return (
       <span title={`Subinterface – sendet getaggt über ${i.parent}`}>
-        VLAN {i.tagged_vlans[0]} <span className="faint">getaggt über {i.parent}</span>
+        VLAN {i.tagged_vlans![0]} <span className="faint">getaggt über {i.parent}</span>
       </span>
     );
   }
+  const tagged = i.tagged_vlans ?? [];
+  const ranges = vlanRanges(tagged);
+  if (i.untagged_vlan == null && !tagged.length) return <Dash />;
   return (
-    <>
-      {i.untagged_vlan != null && <div>untagged {i.untagged_vlan}</div>}
-      {i.tagged_vlans?.length ? <div>tagged {i.tagged_vlans.join(", ")}</div> : null}
-      {i.untagged_vlan == null && !i.tagged_vlans?.length && <Dash />}
-    </>
+    <span className="nowrap">
+      {i.untagged_vlan != null && `untagged ${i.untagged_vlan}`}
+      {i.untagged_vlan != null && tagged.length > 0 && " · "}
+      {tagged.length > 0 &&
+        (ranges.length <= 3 ? `tagged ${ranges.join(", ")}` : <span title={ranges.join(", ")}>tagged {tagged.length} VLANs</span>)}
+    </span>
+  );
+}
+
+function PortDrawer({
+  port: i,
+  ports,
+  onPick,
+  onClose,
+}: {
+  port: InvInterface;
+  ports: InvInterface[]; // Ports desselben Geräts (Parent, Subinterfaces, LAG-Mitglieder)
+  onPick: (p: InvInterface) => void;
+  onClose: () => void;
+}) {
+  const children = ports.filter((p) => p.name !== i.name && (p.parent === i.name || p.lag === i.name)).sort(byName);
+  const up = ports.find((p) => p.name !== i.name && (p.name === i.parent || p.name === i.lag));
+  const tagged = i.tagged_vlans ?? [];
+  const link = (p: InvInterface) => (
+    <button key={p.id} className="linkbtn mono" onClick={() => onPick(p)}>
+      {p.name}
+    </button>
+  );
+  return (
+    <Drawer title={`${i.device} · ${i.name}`} sub={[i.kind, i.mode, i.source].filter(Boolean).join(" · ")} onClose={onClose}>
+      <dl className="kv">
+        <dt>Status</dt>
+        <dd>{i.enabled === false ? <span className="chip na">deaktiviert</span> : i.enabled ? "aktiv" : <Dash />}</dd>
+        {i.description && (
+          <>
+            <dt>Beschreibung</dt>
+            <dd>{i.description}</dd>
+          </>
+        )}
+        {(i.parent || i.lag) && (
+          <>
+            <dt>{i.parent ? "Parent" : "LAG"}</dt>
+            <dd className="mono">
+              {up ? link(up) : (i.parent ?? i.lag)}
+              {i.parent && i.lag && i.lag !== i.parent && <span className="faint"> · LAG {i.lag}</span>}
+            </dd>
+          </>
+        )}
+        {children.length > 0 && (
+          <>
+            <dt>{children.some((c) => c.parent === i.name) ? "Subinterfaces" : "Mitglieder"}</dt>
+            <dd>
+              <div className="objs">{children.map(link)}</div>
+            </dd>
+          </>
+        )}
+        <dt>VLAN untagged</dt>
+        <dd className="mono">{cell(isSubinterface(i) ? null : i.untagged_vlan)}</dd>
+        <dt>VLANs tagged{tagged.length > 1 ? ` (${tagged.length})` : ""}</dt>
+        <dd className="mono">
+          {tagged.length ? vlanRanges(tagged).join(", ") : <Dash />}
+          {isSubinterface(i) && <div className="faint">Subinterface – sendet getaggt über {i.parent}</div>}
+        </dd>
+        <dt>IPs</dt>
+        <dd className="mono">{i.ips?.length ? i.ips.map((ip) => <div key={ip}>{ip}</div>) : <Dash />}</dd>
+        {i.zone && (
+          <>
+            <dt>Zone</dt>
+            <dd className="mono">{i.zone}</dd>
+          </>
+        )}
+        {i.policy_group && (
+          <>
+            <dt>Policy-Gruppe</dt>
+            <dd className="mono">{i.policy_group}</dd>
+          </>
+        )}
+        <dt>Nachbar</dt>
+        <dd className="mono">{cell([i.neighbor, i.neighbor_port].filter(Boolean).join(" : "))}</dd>
+        <dt>Quelle</dt>
+        <dd>{cell(i.source)}</dd>
+      </dl>
+      <div className="sub-h">EPGs ({i.epgs?.length ?? 0})</div>
+      {i.epgs?.length ? (
+        <div className="objs">
+          {[...i.epgs].sort().map((e) => (
+            <span key={e} className="mono">
+              {e}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="faint">Keine EPG an diesem Port.</div>
+      )}
+    </Drawer>
   );
 }
 
 const DEVICES_PER_PAGE = 50;
 
+// Kompakt (Dev-Befund 0.13.0): eine Zeile je Port, lange VLAN-/EPG-Listen gekürzt; Klick öffnet
+// das Detail mit allen Angaben.
 function PortsByDevice({ ports, expanded }: { ports: InvInterface[]; expanded: boolean }) {
   const devices = useMemo(() => {
     const m = new Map<string, InvInterface[]>();
@@ -1119,6 +1410,7 @@ function PortsByDevice({ ports, expanded }: { ports: InvInterface[]; expanded: b
   }, [ports]);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [offset, setOffset] = useState(0);
+  const [selected, setSelected] = useState<{ port: InvInterface; key: string } | null>(null);
   useEffect(() => setOffset(0), [ports]);
   const isOpen = (key: string) => expanded || devices.length <= 3 || open.has(key);
   const toggle = (key: string) =>
@@ -1131,14 +1423,13 @@ function PortsByDevice({ ports, expanded }: { ports: InvInterface[]; expanded: b
   const page = devices.slice(offset, offset + DEVICES_PER_PAGE);
   return (
     <>
-      <table>
+      <table className="compact">
         <thead>
           <tr>
             <th>Port</th>
             <th>Typ / Modus</th>
             <th>VLANs</th>
             <th>IPs</th>
-            <th>Zone / Policy</th>
             <th>Nachbar</th>
             <th>EPGs</th>
           </tr>
@@ -1147,34 +1438,47 @@ function PortsByDevice({ ports, expanded }: { ports: InvInterface[]; expanded: b
           {page.map((d) => (
             <Fragment key={d.key}>
               <tr className="clickable group-row" onClick={() => toggle(d.key)}>
-                <td colSpan={7}>
+                <td colSpan={6}>
                   <span className="mono">{isOpen(d.key) ? "▾" : "▸"}</span> <b className="mono">{d.device}</b>{" "}
                   <span className="faint">
-                    · {d.ports.length} Ports{d.source ? ` · ${d.source}` : ""}
+                    · {d.ports.length} Port{d.ports.length === 1 ? "" : "s"}{d.source ? ` · ${d.source}` : ""}
                   </span>
                 </td>
               </tr>
               {isOpen(d.key) &&
                 portTree(d.ports).map(({ port: i, depth }) => (
-                  <tr key={i.id}>
+                  <tr
+                    key={i.id}
+                    className={`clickable ${selected?.port.id === i.id ? "selected" : ""}`}
+                    title={i.description ?? "Details"}
+                    onClick={() => setSelected({ port: i, key: d.key })}
+                  >
                     <td className="mono nowrap" style={{ paddingLeft: 12 + depth * 18 }}>
                       {depth > 0 && <span className="faint">└ </span>}
                       <b>{i.name}</b>
                       {i.enabled === false && <span className="chip na">aus</span>}
                       {i.lag && depth > 0 && i.lag !== i.parent && <span className="chip">LAG {i.lag}</span>}
-                      {i.description && <div className="faint">{i.description}</div>}
                     </td>
                     <td className="nowrap">
                       {i.kind}
-                      {i.mode && <div className="faint">{i.mode}</div>}
+                      {i.mode && <span className="faint"> · {i.mode}</span>}
                     </td>
                     <td className="mono">
                       <VlanCell i={i} />
                     </td>
-                    <td className="mono">{cell(list(i.ips))}</td>
-                    <td>{cell([i.zone, i.policy_group].filter(Boolean).join(" · "))}</td>
-                    <td className="mono">{cell([i.neighbor, i.neighbor_port].filter(Boolean).join(" : "))}</td>
-                    <td className="mono">{cell(list(i.epgs))}</td>
+                    <td className="mono nowrap">
+                      <Short items={i.ips} max={1} />
+                    </td>
+                    <td className="mono nowrap">{cell([i.neighbor, i.neighbor_port].filter(Boolean).join(" : "))}</td>
+                    <td className="mono nowrap">
+                      {i.epgs && i.epgs.length > 1 ? (
+                        <span className="chip" title={i.epgs.join("\n")}>
+                          {i.epgs.length} EPGs
+                        </span>
+                      ) : (
+                        <Short items={i.epgs} max={1} />
+                      )}
+                    </td>
                   </tr>
                 ))}
             </Fragment>
@@ -1183,6 +1487,14 @@ function PortsByDevice({ ports, expanded }: { ports: InvInterface[]; expanded: b
       </table>
       {devices.length > DEVICES_PER_PAGE && (
         <Pager total={devices.length} offset={offset} onOffset={setOffset} pageSize={DEVICES_PER_PAGE} />
+      )}
+      {selected && (
+        <PortDrawer
+          port={selected.port}
+          ports={devices.find((d) => d.key === selected.key)?.ports ?? []}
+          onPick={(port) => setSelected({ port, key: selected.key })}
+          onClose={() => setSelected(null)}
+        />
       )}
     </>
   );

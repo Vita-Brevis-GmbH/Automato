@@ -185,6 +185,7 @@ button.kpi:hover { border-color: var(--accent); }
 .card-body { padding: 4px 0; }
 .card-body.pad { padding: 14px 16px; }
 .card-body.scroll { overflow-x: auto; }
+.card-body.tall { max-height: 460px; overflow-y: auto; } /* viele offene Läufe */
 .card-foot { padding: 9px 16px; color: var(--faint); font-size: 12px; border-top: 1px solid var(--border); }
 .two-col { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; align-items: start; }
 .two-col > .card + .card { margin-top: 0; }
@@ -199,6 +200,7 @@ tbody tr:last-child td { border-bottom: none; }
 tbody tr.clickable { cursor: pointer; }
 tbody tr.clickable:hover { background: var(--surface-2); }
 tbody tr.selected { background: var(--accent-weak); }
+table.compact td { padding-top: 5px; padding-bottom: 5px; } /* Ports: eine Zeile je Port */
 tbody tr.pair-hl { background: var(--accent-weak); box-shadow: inset 3px 0 0 var(--accent); }
 td .mono, th .mono, td.mono { font-size: 12.5px; }
 .num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }

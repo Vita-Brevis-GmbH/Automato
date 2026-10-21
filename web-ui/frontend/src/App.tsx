@@ -24,6 +24,7 @@ import Objects from "./Objects";
 import Overview from "./Overview";
 import Reconcile from "./Reconcile";
 import RulesTable from "./RulesTable";
+import Runs from "./Runs";
 import System from "./System";
 import Tenants from "./Tenants";
 import { ErrorBox, Icon, Note } from "./ui";
@@ -31,6 +32,7 @@ import Users from "./Users";
 
 export type View =
   | "uebersicht"
+  | "laeufe"
   | "regeln"
   | "objekte"
   | "nat"
@@ -55,6 +57,7 @@ interface NavEntry {
 
 const NAV: NavEntry[] = [
   { key: "uebersicht", label: "Übersicht", icon: "overview", section: "doc" },
+  { key: "laeufe", label: "Läufe", icon: "play", section: "doc" },
   { key: "regeln", label: "Regeln & Contracts", icon: "rules", section: "doc" },
   { key: "objekte", label: "Objekte & Inventar", icon: "objects", section: "doc" },
   { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc" },
@@ -443,6 +446,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                 onReload={loadStats}
               />
             )}
+            {current === "laeufe" && <Runs me={me} tenantId={tenantId} tenantLabel={tenantLabel} />}
             {current === "regeln" && tenantReady && (
               <RulesTable
                 key={JSON.stringify(params)}

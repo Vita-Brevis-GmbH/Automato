@@ -1,14 +1,14 @@
 """Job-Endpunkte: Collector-Laeufe anstossen und ihren Status abfragen."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.jobs import celery_app
-from app.models import REFERENCE_PLATFORMS, CollectorRun, SourceSystem
+from app.models import REFERENCE_PLATFORMS, CollectorRun, RunStatus, SourceSystem
 from app.schemas.jobs import (
     CollectAllItem,
     CollectAllRequest,
@@ -112,20 +112,54 @@ def _run_out(run: CollectorRun) -> CollectorRunOut:
 
 @router.get("", response_model=list[CollectorRunOut])
 def list_runs(
+    response: Response,
     tenant_id: int | None = None,
-    limit: int = Query(default=20, ge=1, le=100),
+    status: str | None = Query(
+        None, description="kommagetrennt: queued, running, completed, failed; open = wartet+laeuft"
+    ),
+    source_system_id: int | None = None,
+    platform: str | None = None,
+    trigger: str | None = Query(None, pattern="^(manual|schedule)$"),
+    limit: int = Query(default=20, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ):
-    """Letzte Laeufe (neueste zuerst). Nicht-Admin sieht nur Laeufe seiner Mandanten."""
+    """Laeufe seitenweise (neueste zuerst), Gesamtzahl im Header `X-Total-Count`. Nicht-Admin
+    sieht nur Laeufe seiner Mandanten. Filter Status (auch `open`), Quellsystem, Plattform,
+    Ausloeser (0.13.0: alle Laeufe, nicht nur die letzten)."""
     runs.expire_stale(session)  # haengende Laeufe nicht als "laeuft" anzeigen
-    query = select(CollectorRun).order_by(CollectorRun.queued_at.desc()).limit(limit)
+    conds = []
     if tenant_id is not None:
         tenant_scope(principal, tenant_id)  # fremder Mandant -> 403
-        query = query.where(CollectorRun.tenant_id == tenant_id)
+        conds.append(CollectorRun.tenant_id == tenant_id)
     elif not principal.is_admin and principal.tenant_ids is not None:
-        query = query.where(CollectorRun.tenant_id.in_(principal.tenant_ids))
+        conds.append(CollectorRun.tenant_id.in_(principal.tenant_ids))
+    if status:
+        wanted = set()
+        for s in status.split(","):
+            s = s.strip()
+            wanted |= {"queued", "running"} if s == "open" else {s}
+        conds.append(CollectorRun.status.in_([RunStatus(s) for s in wanted if s in _STATES]))
+    if source_system_id is not None:
+        conds.append(CollectorRun.source_system_id == source_system_id)
+    if platform:
+        conds.append(CollectorRun.platform == platform)
+    if trigger:
+        conds.append(CollectorRun.trigger == trigger)
+    total = session.scalar(select(func.count(CollectorRun.id)).where(*conds)) or 0
+    response.headers["X-Total-Count"] = str(total)
+    query = (
+        select(CollectorRun)
+        .where(*conds)
+        .order_by(CollectorRun.queued_at.desc(), CollectorRun.id)
+        .offset(offset)
+        .limit(limit)
+    )
     return [_run_out(r) for r in session.scalars(query)]
+
+
+_STATES = {s.value for s in RunStatus}
 
 
 @router.get("/{run_id}", response_model=CollectorRunOut)

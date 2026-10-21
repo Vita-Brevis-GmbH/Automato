@@ -3,6 +3,7 @@ import { expect, test } from "./fixtures";
 
 const VIEWS: [string, string][] = [
   ["uebersicht", "Übersicht"],
+  ["laeufe", "Läufe"],
   ["regeln", "Regeln & Contracts"],
   ["objekte", "Objekte & Inventar"],
   ["nat", "NAT / VIPs"],

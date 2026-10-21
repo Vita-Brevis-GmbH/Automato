@@ -240,6 +240,24 @@ export interface PortgroupRow {
 
 export const fetchVms = (tenantId: number, params: Record<string, string | number | null | undefined> = {}) =>
   getJSON<Paged<VmRow>>(`/api/vms${qs({ tenant_id: tenantId, ...params })}`);
+// Portgruppe im Detail (0.13.0): EPG, Subnetze (ACI, Inventar, IPAM) und VMs
+export interface PortgroupDetail extends Omit<PortgroupRow, "epg" | "source_system_id"> {
+  epg: { label: string; dn: string | null; tenant: string | null; ap: string | null; name: string; bd: string | null; vrf: string | null } | null;
+  subnets: { prefix: string; sources: string[]; gateway?: string | null; vrf?: string | null; description?: string | null }[];
+  vms: {
+    id: number;
+    name: string;
+    power_state: string | null;
+    template: boolean;
+    nic: string;
+    mac: string | null;
+    connected: boolean | null;
+    ips: { ip: string; dns: string[]; in_ipam: boolean | null }[];
+    cluster: string | null;
+    host: string | null;
+  }[];
+}
+export const fetchPortgroup = (id: number) => getJSON<PortgroupDetail>(`/api/portgroups/${id}`);
 export const fetchPortgroups = (tenantId: number, q?: string) =>
   getJSON<PortgroupRow[]>(`/api/portgroups${qs({ tenant_id: tenantId, q })}`);
 
@@ -984,8 +1002,31 @@ export const patchSystem = (
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");
 
 // Läufe
-export const fetchRuns = (tenantId?: number | null, limit = 10) =>
-  getJSON<Run[]>(`/api/jobs${qs({ tenant_id: tenantId, limit })}`);
+// Alle Läufe seitenweise mit Gesamtzahl (0.13.0); status: open | queued | running | completed | failed
+export async function fetchRunsPage(params: {
+  tenantId?: number | null;
+  status?: string;
+  sourceSystemId?: number | null;
+  platform?: string;
+  trigger?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ runs: Run[]; total: number }> {
+  const response = await fetchChecked(
+    `/api/jobs${qs({
+      tenant_id: params.tenantId,
+      status: params.status || undefined,
+      source_system_id: params.sourceSystemId,
+      platform: params.platform || undefined,
+      trigger: params.trigger || undefined,
+      limit: params.limit,
+      offset: params.offset,
+    })}`,
+  );
+  const runs = (await response.json()) as Run[];
+  const total = Number(response.headers.get("X-Total-Count") ?? runs.length);
+  return { runs, total: Number.isFinite(total) ? total : runs.length };
+}
 export const startCollect = (body: {
   platform: string;
   tenant_id: number;

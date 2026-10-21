@@ -309,3 +309,30 @@ def test_netbox_sync_vm_entfernt_nur_mit_freigabe(client, netbox):
     assert netbox.find("virtualization/virtual-machines", name="web01-007-ka")["vcpus"] == 4
     names = {i["name"] for i in netbox.objects("virtualization/interfaces")}
     assert names == {"Network adapter 1"}
+
+
+def test_portgruppe_im_detail_mit_subnetzen_und_vms(client):
+    """Dev-Befund 0.13.0: Portgruppe mit Subnetz (ACI, Inventar, IPAM) und VMs im Detail."""
+    ids = _seed(client)
+    groups = {
+        g["name"]: g for g in client.get("/portgroups", params={"tenant_id": ids["tid"]}).json()
+    }
+    web = client.get(f"/portgroups/{groups['TE_ka|AP_007|EG_web01']['id']}").json()
+    assert web["epg"]["label"] == "TE_ka/AP_007/EG_web01" and web["epg"]["vrf"] == "VRF1"
+    (subnet,) = web["subnets"]
+    assert subnet["prefix"] == "10.20.0.0/24"
+    assert set(subnet["sources"]) == {"ACI-EPG", "IPAM ddi"}  # EPG-Subnetz = IPAM-Netz der VM
+    assert subnet["gateway"] == "10.20.0.1/24" and subnet["description"] == "Web"
+    (vm,) = web["vms"]
+    assert (vm["name"], vm["nic"], vm["power_state"]) == (
+        "web01-007-ka",
+        "Network adapter 1",
+        "poweredOn",
+    )
+    assert vm["ips"] == [{"ip": "10.20.0.5", "dns": ["web01.example.ch"], "in_ipam": True}]
+    gone = client.get(f"/portgroups/{groups['TE_ka|AP_007|EG_gone']['id']}").json()
+    assert gone["epg"] is None and gone["subnets"] == [] and gone["vms"] == []
+    assert client.get("/portgroups/999999").status_code == 404
+    other = client.post("/tenants", json={"name": "Kunde B"}, headers=ADMIN).json()["id"]
+    viewer = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(other)}
+    assert client.get(f"/portgroups/{web['id']}", headers=viewer).status_code == 403

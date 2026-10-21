@@ -192,6 +192,62 @@ test("Ports je Gerät: Subinterface getaggt unter dem Parent", async ({ page }) 
   await expect(sub).not.toContainText("untagged");
 });
 
+test("Ports kompakt: lange VLAN-/EPG-Listen gekürzt, alles im Detail", async ({ page }) => {
+  await page.goto("/#objekte");
+  await page.click(".tabbar button:has-text('Ports')");
+  const trunk = rows(page).filter({ hasText: "eth1/1" });
+  await expect(trunk).toContainText("tagged 24 VLANs");
+  await expect(trunk).toContainText("3 EPGs");
+  await expect(trunk).not.toContainText("EG_web");
+  await trunk.click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer).toContainText("leaf-101 · eth1/1");
+  await expect(drawer).toContainText("100-120, 300, 305, 310");
+  await expect(drawer).toContainText("TE/AP/EG_web");
+  await expect(drawer).toContainText("esx01-chzrh1 : vmnic0");
+  await drawer.locator("button.close").click();
+  // Parent → Subinterface im Detail
+  await rows(page).filter({ hasText: "internal" }).first().click();
+  await expect(drawer).toContainText("Subinterfaces");
+  await drawer.locator("button:has-text('srv-vl10')").click();
+  await expect(drawer).toContainText("fw-03 · srv-vl10");
+  await expect(drawer).toContainText("Subinterface – sendet getaggt über internal");
+});
+
+test("Portgruppe im Detail: EPG, Subnetz aus dem IPAM, VM mit IP und DNS", async ({ page }) => {
+  await page.goto("/#objekte");
+  await page.click(".tabbar button:has-text('Portgruppen')");
+  await rows(page).filter({ hasText: "TE|AP|EG_db" }).click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer).toContainText("TE/AP/EG_db");
+  await expect(drawer).toContainText("10.10.10.0/24");
+  await expect(drawer).toContainText("IPAM ddi-01");
+  const vm = drawer.locator("tr", { hasText: "web01-007-ka" });
+  await expect(vm).toContainText("10.10.10.5");
+  await expect(vm).toContainText("web01.example.ch");
+  await drawer.locator("button:has-text('Regeln im Subnetz')").click();
+  await expect(page).toHaveURL(/#regeln\?net=10\.10\.10\.0%2F24/);
+});
+
+test("Läufe: alle Läufe mit Gesamtzahl, Filter Quellsystem und Status", async ({ page }) => {
+  const count = page.locator(".filterbar .count");
+  await page.goto("/#laeufe");
+  await expect(count).toHaveText(/^\d+ Läufe$/);
+  expect(Number((await count.innerText()).split(" ")[0])).toBeGreaterThanOrEqual(7); // je Quellsystem ein Lauf
+  await page.locator(".filterbar select").nth(1).selectOption({ label: "vc-01" });
+  await expect(rows(page).first()).toContainText("vc-01");
+  await expect(rows(page).filter({ hasNotText: "vc-01" })).toHaveCount(0);
+  await page.locator(".filterbar select").nth(1).selectOption({ label: "Quellsystem: alle" });
+  await page.locator(".filterbar select").first().selectOption("completed");
+  await expect(rows(page).first()).toContainText("OK");
+  await expect(rows(page).filter({ hasNotText: "OK" })).toHaveCount(0);
+  // Übersicht verlinkt auf alle Läufe
+  await page.goto("/#uebersicht");
+  await page.click("button:has-text('Alle Läufe')");
+  await expect(page).toHaveURL(/#laeufe/);
+  await expect(page.locator("h1")).toHaveText("Läufe");
+});
+
 test("IPv4/IPv6: ähnliches Paar bestätigen und zurücknehmen", async ({ page }) => {
   await page.goto("/#regeln");
   await search(page).fill("api-in");

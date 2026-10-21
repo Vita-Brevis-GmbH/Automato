@@ -3,8 +3,12 @@
 - `GET /vms`         seitenweise mit Gesamtzahl; Suche ueber Name, Hostname, IP, Portgruppe,
                      EPG, Cluster, Host, Gast-OS, Notiz; Filter Quellsystem, EPG.
 - `GET /portgroups`  Portgruppen mit VLAN, Anzahl VMs und zugeordneter EPG (Name | VLAN).
+- `GET /portgroups/{id}` Detail (0.13.0): EPG mit BD/VRF, Subnetze (ACI-EPG/BD, Inventar mit
+                     gleichem VLAN, IPAM-Netze der VM-IPs) und die VMs an der Portgruppe.
 Lesen = `viewer`, mandantsgescoped. Rein lesend.
 """
+
+import ipaddress
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -13,7 +17,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import Epg, Portgroup, SourceSystem, Vm
+from app.models import Epg, EpgSubnet, InvSubnet, Portgroup, SourceSystem, Vm, VmNic
 from app.store import references
 from app.store.epgs import inventory_label
 
@@ -163,3 +167,114 @@ def list_portgroups(
             if any(ql in str(r[k] or "").lower() for k in ("name", "switch", "vlan", "epg"))
         ]
     return rows
+
+
+def _network(value: str) -> str | None:
+    try:
+        return str(ipaddress.ip_interface(value.strip()).network)
+    except ValueError:
+        return None
+
+
+@router.get("/portgroups/{pg_id}")
+def portgroup_detail(
+    pg_id: int,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Portgruppe im Detail (Dev-Befund 0.13.0): EPG, Subnetze aus ACI (EPG/BD), dem
+    Netzinventar (gleiches VLAN) und dem IPAM (Netze der VM-IPs) sowie die VMs."""
+    pg = session.get(Portgroup, pg_id)
+    if pg is None:
+        raise HTTPException(status_code=404, detail="portgroup not found")
+    tenant_scope(principal, pg.tenant_id)
+    names = dict(
+        session.execute(
+            select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == pg.tenant_id)
+        ).all()
+    )
+    ctx = references.context(session, pg.tenant_id)
+    primary = ctx.primary
+    epg = session.get(Epg, pg.epg_id) if pg.epg_id else None
+    subnets: dict[str, dict] = {}
+
+    def add(prefix: str | None, source: str, **extra) -> None:
+        if not prefix:
+            return
+        entry = subnets.setdefault(prefix, {"prefix": prefix, "sources": []})
+        if source not in entry["sources"]:
+            entry["sources"].append(source)
+        for k, v in extra.items():  # erste bekannte Angabe gilt (Gateway, VRF, Beschreibung)
+            if entry.get(k) in (None, "") and v not in (None, ""):
+                entry[k] = v
+
+    if epg is not None:
+        for sub in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id == epg.id)):
+            origin = {"bd": "ACI-BD", "ext": "ACI-L3Out"}.get(sub.origin, "ACI-EPG")
+            add(_network(sub.ip), origin, gateway=sub.ip)
+    if pg.vlan is not None:
+        for sub in session.scalars(
+            select(InvSubnet).where(InvSubnet.tenant_id == pg.tenant_id, InvSubnet.vlan == pg.vlan)
+        ):
+            # nur Hinweis: VLAN-Nummern gelten je Geraet/Domaene, die Quelle steht dabei
+            where = f"{sub.context_name} ({names.get(sub.source_system_id, '?')})"
+            add(sub.prefix, f"VLAN {pg.vlan} in {where}", gateway=sub.gateway, vrf=sub.vrf)
+    vms = []
+    rows = session.execute(
+        select(Vm, VmNic)
+        .join(VmNic, VmNic.vm_id == Vm.id)
+        .where(Vm.source_system_id == pg.source_system_id, VmNic.portgroup == pg.name)
+        .order_by(Vm.name, VmNic.name)
+    ).all()
+    for vm, nic in rows:
+        ips = []
+        for ip in nic.ips or []:
+            found = primary.containing_prefixes(ip)[:1] if primary else []
+            if found:
+                add(_network(found[0].value) or found[0].value, f"IPAM {primary.source.name}",
+                    description=found[0].description)  # fmt: skip
+            ips.append(
+                {
+                    "ip": ip,
+                    "dns": references.dns_names(ctx, ip),
+                    "in_ipam": bool(primary.ip_records(ip)) if primary else None,
+                }
+            )
+        vms.append(
+            {
+                "id": vm.id,
+                "name": vm.name,
+                "power_state": vm.power_state,
+                "template": vm.template,
+                "nic": nic.name,
+                "mac": nic.mac,
+                "connected": nic.connected,
+                "ips": ips,
+                "cluster": vm.cluster,
+                "host": vm.host,
+            }
+        )
+    return {
+        "id": pg.id,
+        "name": pg.name,
+        "kind": pg.kind,
+        "switch": pg.switch,
+        "vlan": pg.vlan,
+        "vlan_ranges": pg.vlan_ranges,
+        "vm_count": pg.vm_count,
+        "source": names.get(pg.source_system_id),
+        "epg_match": pg.epg_match,
+        "epg": {
+            "label": inventory_label(epg),
+            "dn": epg.dn,
+            "tenant": epg.aci_tenant,
+            "ap": epg.ap,
+            "name": epg.name,
+            "bd": epg.bd,
+            "vrf": epg.vrf,
+        }
+        if epg is not None
+        else None,
+        "subnets": sorted(subnets.values(), key=lambda x: x["prefix"]),
+        "vms": vms,
+    }

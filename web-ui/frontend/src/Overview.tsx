@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { cancelRun, fetchOpsHealth, fetchRuns, fetchSystems, OpsHealth, Run, System, Tenant } from "./api";
+import { cancelRun, fetchOpsHealth, fetchRunsPage, fetchSystems, OpsHealth, Run, System, Tenant } from "./api";
 import { HealthChip, HealthTable } from "./Health";
 import type { Stats, View } from "./App";
 import type { Me } from "./auth";
 import CollectDialog, { CollectAllDialog } from "./CollectDialog";
-import { ErrorBox, fmtTime, Icon, Loading, PageHead, RunStatusChip } from "./ui";
+import { RunsTable } from "./Runs";
+import { ErrorBox, Icon, Loading, PageHead } from "./ui";
+
+const RECENT = 8; // letzte Läufe; offene kommen immer dazu (auch ältere, siehe Läufe-Ansicht)
 
 // Übersicht/Dashboard: KPIs, letzte Läufe (inkl. "Jetzt einlesen") und Regeln je Ziel-Zone.
 // Respektiert den Mandanten-Switcher.
@@ -26,6 +29,8 @@ export default function Overview({
   onReload: () => void;
 }) {
   const [runs, setRuns] = useState<Run[] | null>(null);
+  const [runsTotal, setRunsTotal] = useState(0);
+  const [openTotal, setOpenTotal] = useState(0);
   const [runsErr, setRunsErr] = useState<unknown>(null);
   const [systems, setSystems] = useState<System[]>([]);
   const [collectOpen, setCollectOpen] = useState(false);
@@ -37,10 +42,19 @@ export default function Overview({
       .catch(() => setHealth(null));
   }, [tenantId, runs]);
 
+  // offene Läufe (wartet/läuft) vollständig, dazu die letzten – neueste zuerst
   const loadRuns = useCallback(() => {
-    fetchRuns(tenantId, 8)
-      .then((r) => {
-        setRuns(r);
+    Promise.all([
+      fetchRunsPage({ tenantId, status: "open", limit: 100 }),
+      fetchRunsPage({ tenantId, limit: RECENT }),
+    ])
+      .then(([open, recent]) => {
+        const seen = new Set(open.runs.map((r) => r.id));
+        const merged = [...open.runs, ...recent.runs.filter((r) => !seen.has(r.id))];
+        merged.sort((a, b) => (b.queued_at ?? "").localeCompare(a.queued_at ?? ""));
+        setRuns(merged);
+        setRunsTotal(recent.total);
+        setOpenTotal(open.total);
         setRunsErr(null);
       })
       .catch((e) => {
@@ -164,6 +178,11 @@ export default function Overview({
         <div className="card">
           <div className="card-head">
             <h2>Letzte Läufe</h2>
+            {openTotal > 0 && (
+              <span className="chip info" title="wartet oder läuft">
+                {openTotal} offen
+              </span>
+            )}
             <div className="spacer" />
             <button className="btn btn-ghost btn-sm" onClick={loadRuns}>
               Aktualisieren
@@ -174,7 +193,7 @@ export default function Overview({
               </button>
             )}
           </div>
-          <div className="card-body scroll">
+          <div className="card-body scroll tall">
             <ErrorBox error={runsErr} prefix="Läufe laden" />
             {runs === null ? (
               <Loading />
@@ -186,63 +205,22 @@ export default function Overview({
                   : "Ein Operator kann Quellsysteme einlesen."}
               </div>
             ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Lauf</th>
-                    <th>System</th>
-                    <th>Ausführung</th>
-                    <th className="num">Regeln</th>
-                    <th>Status</th>
-                    <th>Zeit</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.map((r) => (
-                    <tr key={r.id} title={r.message ?? undefined}>
-                      <td className="mono">#{r.id.slice(0, 8)}</td>
-                      <td>{systemName(r.source_system_id)}</td>
-                      <td>
-                        <span className={`chip ${r.execution === "external" ? "local" : ""}`}>
-                          {r.execution === "external" ? "Agent" : "zentral"}
-                        </span>
-                        {r.trigger === "schedule" && (
-                          <span className="chip info" title="vom Zeitplan des Quellsystems angelegt">
-                            Zeitplan
-                          </span>
-                        )}
-                      </td>
-                      <td className="num">{r.rule_count ?? "–"}</td>
-                      <td>
-                        <RunStatusChip status={r.status} />
-                        {r.message && (r.status === "failed" || r.platform === "infoblox" || r.platform === "netbox") && (
-                          <div
-                            className={r.status === "failed" ? "run-msg err" : "run-msg"}
-                            title={r.message}
-                          >
-                            {r.message}
-                          </div>
-                        )}
-                      </td>
-                      <td className="mono">
-                        {fmtTime(r.finished_at ?? r.started_at ?? r.queued_at)}
-                        {me.isOperator && (r.status === "queued" || r.status === "running") && (
-                          <button
-                            className="linkbtn"
-                            style={{ marginLeft: 6 }}
-                            title="Lauf beenden (z. B. hängt er nach einem Neustart des Agenten). Liefert der Agent doch noch ab, wird das Ergebnis eingespielt."
-                            onClick={() => cancelRun(r.id).then(loadRuns, setRunsErr)}
-                          >
-                            Abbrechen
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <RunsTable
+                runs={runs}
+                systemName={systemName}
+                canCancel={me.isOperator}
+                onCancel={(id) => cancelRun(id).then(loadRuns, setRunsErr)}
+              />
             )}
           </div>
+          {runsTotal > 0 && (
+            <div className="card-foot">
+              <button className="linkbtn" onClick={() => onGo("laeufe")}>
+                Alle Läufe ({runsTotal}) →
+              </button>
+              {openTotal > 100 && ` · nur die neuesten 100 offenen hier, alle in der Ansicht „Läufe“`}
+            </div>
+          )}
           {runs?.some((r) => r.status === "queued" && r.execution === "external") && (
             <div className="card-foot">
               Externe Läufe warten, bis ein Agent sie per <code>--poll</code> abholt.

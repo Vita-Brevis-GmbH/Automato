@@ -124,3 +124,34 @@ def test_lauf_abbrechen_und_spaetes_ergebnis(client):
     ).json()
     assert ack["status"] == "completed"
     assert [x["name"] for x in client.get("/rules", params={"tenant_id": tid}).json()] == ["late"]
+
+
+def test_alle_laeufe_seitenweise_mit_filter(client):
+    """Dev-Befund 0.13.0: die Übersicht zeigte nur die letzten Läufe - offene Läufe dahinter
+    waren unsichtbar. Jetzt seitenweise mit Gesamtzahl und Filter."""
+    tid = _tenant(client)
+    fws = [
+        _system(client, tid, name=f"fw-{i:02d}", platform="fortigate", base_url="https://fw")
+        for i in range(12)
+    ]
+    ids = []
+    for fw in fws:
+        body = {"platform": "fortigate", "tenant_id": tid, "source_system_id": fw["id"]}
+        ids.append(client.post("/jobs/collect", json=body).json()["run_id"])
+    done = {"status": "completed"}
+    for run_id in ids[:3]:
+        client.post(
+            f"/internal/collector-runs/{run_id}/result",
+            headers={"X-Internal-Token": "dev-only-token"},
+            json=done,
+        )
+    r = client.get("/jobs", params={"tenant_id": tid, "limit": 5})
+    assert r.headers["X-Total-Count"] == "12" and len(r.json()) == 5
+    page2 = client.get("/jobs", params={"tenant_id": tid, "limit": 5, "offset": 10}).json()
+    assert len(page2) == 2
+    open_runs = client.get("/jobs", params={"tenant_id": tid, "status": "open", "limit": 100})
+    assert open_runs.headers["X-Total-Count"] == "9"
+    assert {r["status"] for r in open_runs.json()} == {"queued"}
+    one = client.get("/jobs", params={"tenant_id": tid, "source_system_id": fws[0]["id"]}).json()
+    assert [r["id"] for r in one] == [ids[0]] and one[0]["status"] == "completed"
+    assert client.get("/jobs", params={"tenant_id": tid, "trigger": "schedule"}).json() == []

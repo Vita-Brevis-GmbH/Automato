@@ -79,6 +79,13 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   - Sofort geht es mit **Abbrechen** (Letzte Läufe) bzw. **Abbrechen & neu starten** im
     Dialog „Alle einlesen“ (Operator). Liefert der Agent danach doch noch ab, wird das
     Ergebnis eingespielt.
+  - „Letzte Läufe“ zeigt immer **alle offenen Läufe** (auch ältere), dazu die letzten acht und
+    den Link **Alle Läufe (N)** (0.13.0).
+- **Läufe** (0.13.0): alle Collector-Läufe des Mandanten, seitenweise mit Gesamtzahl, neueste
+  zuerst. Filter Status (**offen** = wartet oder läuft, wartet, läuft, fehlgeschlagen,
+  erfolgreich), Quellsystem, Plattform, Auslöser (von Hand, Zeitplan). Je Lauf Ausführung
+  (Agent/zentral, Zeitplan), Regeln, Status mit Meldung, angelegt/begonnen, beendet mit Dauer;
+  offene Läufe **Abbrechen** (Operator). Offene Läufe auf der Seite aktualisieren sich alle 10 s.
 - **Firewall-Regeln:** Quelle/Ziel/Dienste mit den **Objektnamen wie auf der Firewall**;
   NAT-Kennzeichen je Regel (**SNAT** mit Pool bzw. Interface-IP, **VIP**; Klick → NAT-Detail).
   Quelle/Ziel umfassen auch Internet Services (ISDB), Benutzergruppen und ZTNA-Tags;
@@ -134,10 +141,18 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Regeln der VIP mit.
   - **Ports je Gerät** (0.12.0): Gerät als Kopfzeile (Klick klappt auf/zu), Subinterfaces unter
     ihrem Parent („VLAN 10 getaggt über internal“), LAG-Mitglieder unter dem LAG.
+    Seit 0.13.0 **kompakt**: eine Zeile je Port, lange VLAN-Listen als Bereiche bzw. Anzahl
+    („tagged 24 VLANs“), EPGs als Anzahl. **Klick auf den Port** öffnet das Detail mit allen
+    VLANs, EPGs, IPs, Zone, Policy-Gruppe, Nachbar, Beschreibung und Parent/LAG bzw.
+    Subinterfaces/Mitgliedern (anklickbar).
   - **VMs** (vCenter, ADR 0017): Status, Netzwerk je NIC (Portgruppe mit VLAN → **EPG**, IPs
     mit DNS-Namen, „nicht im IPAM“), Cluster/Host/Datacenter, vCPU/RAM/Disk, Gast-OS und
     „Regeln der VM“. **Portgruppen** mit Switch, VLAN bzw. Trunk, Anzahl VMs und der
     zugeordneten EPG.
+  - **Portgruppe im Detail** (Klick, 0.13.0): EPG mit Tenant/AP/BD/VRF/DN, **Subnetze** mit
+    Quelle (ACI-EPG/BD/L3Out; Netzinventar mit gleichem VLAN nur als Hinweis, da VLAN-Nummern
+    je Gerät/Domäne gelten; IPAM-Netz der VM-IPs) und „Regeln im Subnetz“, dazu die **VMs** mit
+    Status, NIC/MAC, IPs mit DNS-Namen („nicht im IPAM“) und Cluster/Host.
   - Zuordnung Portgruppe → EPG: Name nach ACI-VMM-Schema `Tenant|AP|EPG`
     (z. B. `TE_x|AP_007|EG_dmz02`), auch ohne Präfixe (`EG_db01` = `EPG_db01`); sonst das
     VLAN, wenn es genau einer EPG gehört. Der Chip sagt, ob über Name oder VLAN.
@@ -269,7 +284,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /rules/summary` (`?tenant_id=`) | Kennzahlen aller Regeln für die Übersicht (je Art, Endpunkte, nicht aufgelöst, Quell-/Ziel-Zonen, Aktionen) |
 | `GET /objects?tenant_id=` (`category`, `source_system_id`, `q`, `issues_only`), `GET /objects/{id}` | Firewall-Objekte mit IPAM-Abgleich und `attrs` / Detail mit Mitgliedern und Regeln (`rules`, `rule_count`) |
 | `GET /inventory/{devices\|interfaces\|vlans\|subnets\|vrfs}?tenant_id=` | Netzinventar (Subnetze mit IPAM-Abgleich) |
-| `GET /vms?tenant_id=` (`q`, `source_system_id`, `epg`, `limit`, `offset`), `GET /portgroups?tenant_id=` (`q`) | VMware-Inventar (ADR 0017): VMs mit NICs, IPs (DNS, im IPAM?) und EPG der Portgruppe, Seite mit `total`; Portgruppen mit EPG und Art der Zuordnung |
+| `GET /vms?tenant_id=` (`q`, `source_system_id`, `epg`, `limit`, `offset`), `GET /portgroups?tenant_id=` (`q`), `GET /portgroups/{id}` | VMware-Inventar (ADR 0017): VMs mit NICs, IPs (DNS, im IPAM?) und EPG der Portgruppe, Seite mit `total`; Portgruppen mit EPG und Art der Zuordnung; Detail mit EPG (BD/VRF), Subnetzen je Quelle und VMs |
 | `GET /reconcile/summary`, `GET /reconcile/ipam`, `POST /reconcile` | Abgleich: Befunde je Typ, DDI ↔ NetBox, neu berechnen (operator) |
 | `GET /findings` (`?status=`,`?type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /findings/summary`, `PATCH /findings/{id}` | Datenqualität seitenweise (je Befund `message` = was nicht stimmt, `hint` = was tun), Zähler je Status/Typ, Triage |
 | `GET /nat` (`?nat_type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /nat/{id}`, `GET /published-services[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku: NAT mit DNS-Namen, Server und Regelzahl / Detail mit IPAM-Sicht und Regeln, publizierte Dienste (VIPs), Doku je System |
@@ -278,7 +293,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `site_id`, `read_scope`, `ref_role`, `schedule` → `next_run_at`; `token` bzw. `username`/`password`, NetBox `write_token` nur schreibbar → `has_credentials`/`has_write_token`; Referenzquellen mit `reference_count`/`reference_at`) |
-| `GET /jobs`, `GET /jobs/{id}`, `POST /jobs/collect`, `POST /jobs/collect-all`, `POST /jobs/{id}/cancel` | Läufe (Gerät mit Agent → immer `external`, `started_at` = abgeholt); `collect-all` = alle aktiven Quellsysteme des Mandanten (operator, Antwort je System `run_id` bzw. `skipped` mit `blocking_run_id`); `cancel` beendet einen offenen Lauf (operator) |
+| `GET /jobs` (`tenant_id`, `status` inkl. `open`, `source_system_id`, `platform`, `trigger`, `limit`, `offset`; Gesamtzahl im Header `X-Total-Count`), `GET /jobs/{id}`, `POST /jobs/collect`, `POST /jobs/collect-all`, `POST /jobs/{id}/cancel` | Läufe (Gerät mit Agent → immer `external`, `started_at` = abgeholt); `collect-all` = alle aktiven Quellsysteme des Mandanten (operator, Antwort je System `run_id` bzw. `skipped` mit `blocking_run_id`); `cancel` beendet einen offenen Lauf (operator) |
 | `GET/POST /agents`, `PATCH /agents/{id}`, `GET /agents/package` | Collector-Agenten (inkl. zugewiesener Geräte), Agent-Paket |
 | `GET /internal/agent/next-run`, `…/targets`, `POST …/heartbeat` | Agent-Kanal (`X-Agent-Token`): Lauf + Zugangsdaten nur für zugewiesene Geräte |
 | `POST /internal/collector-runs/{id}/result`, `GET …/{id}/target` | Ergebnis (Agent-Token des abholenden Agenten oder internes Token; Antwort = Quittung `status`/`message`); Ziel für den zentralen Worker |
@@ -402,7 +417,8 @@ an (`deploy/agent-gateway`, Port 8443).
 
 - **„Alle einlesen“ überspringt ein System, obwohl nichts läuft** (bis 0.11.2) — ein früherer
   Lauf wurde abgeholt, aber nie abgeschlossen (Agent beendet, Upload verloren), und steht
-  ausserhalb der letzten acht Läufe noch auf „läuft“. Seit 0.11.3 nennt der Dialog den Lauf
+  ausserhalb der letzten acht Läufe noch auf „läuft“ (seit 0.13.0 zeigt die Übersicht alle
+  offenen Läufe, die Ansicht „Läufe“ alle). Seit 0.11.3 nennt der Dialog den Lauf
   mit Zeit und Agent, bietet „Abbrechen & neu starten“ und beendet hängende Läufe nach der
   Frist selbst. Scheitert nur der Ergebnis-Upload, meldet der Agent den Lauf jetzt mit
   „Ergebnis-Upload fehlgeschlagen: …“ (z. B. HTTP 413, wenn ein Proxy das Ergebnis zu gross

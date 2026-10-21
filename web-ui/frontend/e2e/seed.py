@@ -131,9 +131,13 @@ def run(app) -> None:
     ]
     epgs = [{"name": "EG_db", "dn": "uni/tn-TE/ap-AP/epg-EG_db", "tenant": "TE", "ap": "AP",
              "vrf": "VRF1"}]  # fmt: skip
-    run_result(
-        apic, "cisco_aci", rules=contracts, objects=filters, inventory=st.INVENTORY, epgs=epgs
-    )
+    # Leaf-Port mit vielen VLANs und EPGs: in der Liste gekuerzt, alles im Detail (0.13.0)
+    trunk = {"device": "leaf-101", "name": "eth1/1", "kind": "physical", "mode": "tagged",
+             "tagged_vlans": [*range(100, 121), 300, 305, 310],
+             "epgs": ["TE/AP/EG_db", "TE/AP/EG_web", "TE/AP/EG_app"],
+             "neighbor": "esx01-chzrh1", "neighbor_port": "vmnic0"}  # fmt: skip
+    inventory = {**st.INVENTORY, "interfaces": [trunk]}
+    run_result(apic, "cisco_aci", rules=contracts, objects=filters, inventory=inventory, epgs=epgs)
 
     # vCenter: VM hinter H_web01 (10.10.10.5) an der Portgruppe der EPG EG_db (ACI-VMM-Name)
     vc = system(
