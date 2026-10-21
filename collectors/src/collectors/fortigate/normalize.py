@@ -742,6 +742,12 @@ def _iface_ips(iface: dict) -> list[str]:
     return ips
 
 
+def _vdom_name(iface: dict) -> str | None:
+    """VDOM eines Interfaces (cmdb system/interface `vdom`) - ADR 0019."""
+    vdom = iface.get("vdom")
+    return vdom if isinstance(vdom, str) and vdom else None
+
+
 def normalize_inventory(
     interfaces: list[dict] | None,
     zones: list[dict] | None,
@@ -793,6 +799,7 @@ def normalize_inventory(
                 ips=ips,
                 description=i.get("description") or i.get("alias") or None,
                 zone=zone_of.get(name),
+                vdom=_vdom_name(i),
             )
         )
         if vid is not None and vid not in vlans:
@@ -811,6 +818,7 @@ def normalize_inventory(
                     context="interface",
                     context_name=name,
                     description=i.get("alias") or i.get("description") or None,
+                    vdom=_vdom_name(i),
                 )
             )
     dev = NormalizedDevice(

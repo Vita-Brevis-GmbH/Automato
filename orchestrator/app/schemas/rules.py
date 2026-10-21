@@ -45,6 +45,7 @@ class RuleSummaryOut(BaseModel):
     by_dst_zone: list[tuple[str, int]]
     by_src_zone: list[tuple[str, int]] = []
     by_action: dict[str, int] = {}
+    by_vdom: list[tuple[str, int]] = []  # FortiGate-VDOMs mit Anzahl Regeln (ADR 0019)
 
 
 class RuleOut(BaseModel):
@@ -69,6 +70,7 @@ class RuleOut(BaseModel):
     missing: list[str] = []  # src | dst ohne Endpunkt (ACI: kein Consumer/Provider)
     negate: list[str] = []  # FortiGate: negierte Seiten src | dst | service
     family: str | None = None  # v4 | v6 | dual (Adressfamilie der Policy)
+    vdom: str | None = None  # FortiGate-VDOM der Policy (ADR 0019)
     pair: RulePairOut | None = None  # IPv4/IPv6-Gegenstueck (nur Markierung)
 
 

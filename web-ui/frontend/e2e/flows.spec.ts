@@ -304,3 +304,21 @@ test("Regel-Detail zeigt die VM mit allen Angaben aus dem vCenter", async ({ pag
   await expect(drawer).toContainText("esx01-chzrh1.example.ch");
   await expect(drawer).toContainText("4 GB RAM");
 });
+
+test("VDOMs: Filter, Kennzeichnung und Detail je VDOM", async ({ page }) => {
+  await page.goto("/#regeln");
+  await page.locator(".filterbar select").filter({ hasText: "VDOM: alle" }).selectOption("kunde-a");
+  await expect(rows(page)).toHaveCount(2);
+  await expect(rows(page).first()).toContainText("VDOM kunde-a");
+  await rows(page).filter({ hasNotText: "web-v6" }).click(); // die IPv4-Regel "web"
+  const drawer = page.locator(".drawer");
+  await expect(drawer).toContainText("VDOM kunde-a");
+  await expect(drawer).toContainText("203.0.113.50"); // VIP_web dieses VDOMs, nicht der aus root
+  await expect(drawer).not.toContainText("203.0.113.1/");
+  await page.goto("/#objekte");
+  await search(page).fill("N_clients");
+  const nets = rows(page).filter({ hasText: "fw-05" }).filter({ hasText: "IPv4" });
+  await expect(nets).toHaveCount(2); // gleicher Name in zwei VDOMs = zwei Objekte
+  await expect(nets.filter({ hasText: "VDOM root" })).toContainText("10.1.0.0/24");
+  await expect(nets.filter({ hasText: "VDOM kunde-a" })).toContainText("10.50.0.0/24");
+});

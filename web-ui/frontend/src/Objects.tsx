@@ -23,7 +23,7 @@ import {
   System,
   VmRow,
 } from "./api";
-import { CATEGORY_LABEL, FAMILY_LABEL, IssueChips, REFERENCE_PLATFORMS, ValueList, VmSection } from "./refs";
+import { CATEGORY_LABEL, FAMILY_LABEL, IssueChips, REFERENCE_PLATFORMS, ValueList, VdomChip, VmSection } from "./refs";
 import { SiteChip } from "./sites";
 import type { View, ViewParams } from "./App";
 import { ActionBadge, Dash, Drawer, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
@@ -258,6 +258,8 @@ function ObjectTable({
         setData({ total: 0, rows: [] });
       });
   }, [tenantId, category, sourceId, query, issuesOnly, offset]);
+  // VDOM „root“ nur zeigen, wenn die Seite Objekte aus mehreren VDOMs hat (ADR 0019)
+  const multiVdom = new Set((data?.rows ?? []).map((o) => o.vdom).filter(Boolean)).size > 1;
 
   return (
     <>
@@ -361,7 +363,14 @@ function ObjectTable({
                         <span className="faint">0</span>
                       )}
                     </td>
-                    <td className="nowrap">{o.source ?? <Dash />}</td>
+                    <td className="nowrap">
+                      {o.source ?? <Dash />}
+                      {o.vdom && (o.vdom !== "root" || multiVdom) && (
+                        <div>
+                          <VdomChip vdom={o.vdom} always={multiVdom} />
+                        </div>
+                      )}
+                    </td>
                     <td>
                       <IssueChips issues={o.issues} />
                     </td>
@@ -491,7 +500,12 @@ function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; 
   return (
     <Drawer
       title={d?.name ?? "Objekt"}
-      sub={d ? `${CATEGORY_LABEL[d.category] ?? d.category}${d.obj_type ? ` · ${d.obj_type}` : ""} · ${d.source ?? ""}` : undefined}
+      sub={
+        d
+          ? `${CATEGORY_LABEL[d.category] ?? d.category}${d.obj_type ? ` · ${d.obj_type}` : ""} · ${d.source ?? ""}` +
+            (d.vdom ? ` · VDOM ${d.vdom}` : "")
+          : undefined
+      }
       onClose={onClose}
     >
       <ErrorBox error={err} />
@@ -1366,6 +1380,14 @@ function PortDrawer({
         </dd>
         <dt>IPs</dt>
         <dd className="mono">{i.ips?.length ? i.ips.map((ip) => <div key={ip}>{ip}</div>) : <Dash />}</dd>
+        {i.vdom && (
+          <>
+            <dt>VDOM</dt>
+            <dd>
+              <VdomChip vdom={i.vdom} always />
+            </dd>
+          </>
+        )}
         {i.zone && (
           <>
             <dt>Zone</dt>

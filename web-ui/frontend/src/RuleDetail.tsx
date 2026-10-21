@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { decidePair, Endpoint, fetchRuleDetail, NatBrief, resetPairDecision, RuleDetail, RuleRef } from "./api";
 import type { View, ViewParams } from "./App";
 import { EpgCard } from "./EpgCard";
-import { FamilyMarks, RefCard, SideMarks, VmChip, VmSection } from "./refs";
+import { FamilyMarks, RefCard, SideMarks, VdomChip, VmChip, VmSection } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, fmtTime, Loading, MatchBadge, Note } from "./ui";
 
 function EndpointList({ items }: { items: Endpoint[] }) {
@@ -223,7 +223,8 @@ export default function RuleDetailDrawer({
       title={detail?.name ?? `Regel #${ruleId}`}
       sub={
         detail
-          ? `${aci ? "ACI-Contract" : "Regel"} #${detail.id} · ${systemName(detail.source_system_id)}`
+          ? `${aci ? "ACI-Contract" : "Regel"} #${detail.id} · ${systemName(detail.source_system_id)}` +
+            (detail.vdom ? ` · VDOM ${detail.vdom}` : "")
           : undefined
       }
       onClose={onClose}
@@ -238,6 +239,14 @@ export default function RuleDetailDrawer({
             <dd>
               <ActionBadge action={detail.action} />
             </dd>
+            {detail.vdom && (
+              <>
+                <dt>VDOM</dt>
+                <dd>
+                  <VdomChip vdom={detail.vdom} always /> <span className="faint">Policy-ID {detail.external_id}</span>
+                </dd>
+              </>
+            )}
             {/* ACI: eine Zone gibt es nur bei externen EPGs (L3Out) */}
             {!(aci && !detail.src_zone && !detail.dst_zone) && (
               <>

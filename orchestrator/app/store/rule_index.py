@@ -122,13 +122,15 @@ class _Builder:
         self.directory = objects_store.Directory(session, sources)
         # Ziele je VIP (0.12.0): abgeleitete VIP-Ziele und Adressobjekte hinter der VIP zaehlen
         # die Regeln der VIP mit
-        self.vip_targets: dict[tuple[int, str], list] = defaultdict(list)
+        # (Quellsystem, VDOM, Name): VIPs, Objekte und NAT gelten je VDOM (ADR 0019)
+        self.vip_targets: dict[tuple[int, str | None, str], list] = defaultdict(list)
         for o in self.directory.by_id.values():
             attrs = o.attrs or {}
             if o.category is ObjectCategory.VIP_TARGET and attrs.get("vip"):
-                self.vip_targets[(o.source_system_id, str(attrs["vip"]).lower())].append(o)
+                key = (o.source_system_id, o.vdom, str(attrs["vip"]).lower())
+                self.vip_targets[key].append(o)
             for vip in attrs.get("vip_of") or []:
-                self.vip_targets[(o.source_system_id, str(vip).lower())].append(o)
+                self.vip_targets[(o.source_system_id, o.vdom, str(vip).lower())].append(o)
         self.objs = rules_store.objects_by_ids(
             session,
             {e.network_object_id for r in rules for e in r.endpoints if e.network_object_id},
@@ -136,10 +138,10 @@ class _Builder:
         self.zones = rules_store.zone_names(
             session, {z for r in rules for z in (r.src_zone_id, r.dst_zone_id) if z}
         )
-        self.nat: dict[tuple[int, str], NatRule] = {}
+        self.nat: dict[tuple[int, str | None, str], NatRule] = {}
         if sources:
             for n in session.scalars(select(NatRule).where(NatRule.source_system_id.in_(sources))):
-                self.nat[(n.source_system_id, n.name.lower())] = n
+                self.nat[(n.source_system_id, n.vdom, n.name.lower())] = n
         epg_ids = {e.epg_id for r in rules for e in r.endpoints if e.epg_id}
         self.epgs = epg_store.by_ids(session, epg_ids)
         self.epg_values: dict[int, list[str]] = defaultdict(list)
@@ -159,11 +161,12 @@ class _Builder:
 
     def build(self, rule: Rule, position: int) -> tuple[dict, list[dict], list[dict], object]:
         raw = rule.raw if isinstance(rule.raw, dict) else {}
-        source = rule.source_system_id
+        source, vdom = rule.source_system_id, rule.vdom
         parts: list[str | None] = [
             rule.name,
             str(rule.id),
             rule.external_id,
+            vdom,
             rule.section_label,
             rule.action.value,
             str(raw.get("comments") or raw.get("comment") or ""),
@@ -189,7 +192,7 @@ class _Builder:
         for ref in rule.refs:
             kind = "svc" if ref.role is RefRole.SERVICE else "addr"
             obj = self.directory.by_id.get(ref.device_object_id) if ref.device_object_id else None
-            obj = obj or self.directory.find(source, ref.name, kind, ref.family)
+            obj = obj or self.directory.find(source, ref.name, kind, ref.family, vdom)
             if obj is None:
                 continue
             for i, o in enumerate(self.directory.expand(obj)):
@@ -204,10 +207,10 @@ class _Builder:
                 if o.category is ObjectCategory.VIP:
                     vips.append(o.name)
                     nat_names.add(o.name.lower())
-                    for t in self.vip_targets.get((source, o.name.lower()), []):
+                    for t in self.vip_targets.get((source, vdom, o.name.lower()), []):
                         usage.setdefault((t.id, ref.role.value), False)  # ueber die VIP
                         names.add(t.name.lower())
-                    nat = self.nat.get((source, o.name.lower()))
+                    nat = self.nat.get((source, vdom, o.name.lower()))
                     if nat is not None:
                         parts += [nat.ext_ip, nat.ext_port, nat.mapped_ip, nat.mapped_port]
                         internal = nat_store.internal_ips(nat)  # Virtual Server: alle
@@ -222,10 +225,10 @@ class _Builder:
             names.add(pool.lower())
             nat_names.add(pool.lower())
             parts.append(pool)
-            pobj = self.directory.find(source, pool)
+            pobj = self.directory.find(source, pool, vdom=vdom)
             if pobj is not None and pobj.category is ObjectCategory.IPPOOL:
                 usage[(pobj.id, "snat")] = True
-            nat = self.nat.get((source, pool.lower()))
+            nat = self.nat.get((source, vdom, pool.lower()))
             if nat is not None:
                 parts += [nat.ext_ip, nat.mapped_ip]
                 values += [v for v in (nat.ext_ip, nat.mapped_ip) if v]
@@ -307,6 +310,7 @@ def _pair_info(rule: Rule, position: int) -> rule_pairs.PairInfo | None:
     return rule_pairs.PairInfo(
         rule_id=rule.id,
         source_id=rule.source_system_id,
+        vdom=rule.vdom,
         family=rule.ip_family,
         action=rule.action.value,
         name=rule.name or "",
@@ -375,12 +379,13 @@ def rebuild(
 def pair_decisions(
     session: Session, tenant_id: int, source_system_id: int | None = None
 ) -> rule_pairs.Decisions:
-    """Von Hand bestaetigte/abgelehnte IPv4/IPv6-Paare des Mandanten (bzw. Quellsystems)."""
+    """Von Hand bestaetigte/abgelehnte IPv4/IPv6-Paare des Mandanten (bzw. Quellsystems), je
+    VDOM (ohne VDOM: vor 0.15.0 entschieden, gilt fuer jeden VDOM)."""
     stmt = select(RulePairDecision).where(RulePairDecision.tenant_id == tenant_id)
     if source_system_id is not None:
         stmt = stmt.where(RulePairDecision.source_system_id == source_system_id)
     return {
-        (d.source_system_id, d.v4_external_id, d.v6_external_id): d.decision
+        (d.source_system_id, d.vdom, d.v4_external_id, d.v6_external_id): d.decision
         for d in session.scalars(stmt)
     }
 
@@ -649,6 +654,7 @@ def outs(session: Session, rules: list[Rule]) -> list[RuleOut]:
                 tenant_id=r.tenant_id,
                 source_system_id=r.source_system_id,
                 domain=r.domain.value,
+                vdom=r.vdom,
                 num_unmatched=unmatched.get(r.id, 0),
                 aci=AciContractOut(**aci) if aci else None,
                 nat=RuleNatOut(**nat) if nat else None,

@@ -156,9 +156,16 @@ def summary(session: Session, tenant_id: int | None = None) -> dict:
             )
         )
     }
+    vdoms = session.execute(
+        filtered(select(Rule.vdom, func.count(Rule.id)), tenant_id, None, None)
+        .where(Rule.vdom.is_not(None))
+        .group_by(Rule.vdom)
+        .order_by(Rule.vdom)
+    )
     return {
         "by_src_zone": [(names.get(z, "–") if z else "–", n) for z, n in src_counts],
         "by_action": actions,
+        "by_vdom": [(v, n) for v, n in vdoms],
         "total": sum(by_domain.values()),
         "by_domain": by_domain,
         "source_system_ids": systems,

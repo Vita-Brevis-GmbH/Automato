@@ -17,7 +17,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -73,6 +73,7 @@ def list_rules(
     dst_zone: str | None = None,
     action: RuleAction | None = None,
     family: str | None = Query(None, pattern="^(v4|v6|dual)$"),
+    vdom: str | None = Query(None, description="FortiGate-VDOM der Policy"),
     pair: str | None = Query(
         None,
         pattern="^(same|similar|confirmed|any|none)$",
@@ -95,6 +96,8 @@ def list_rules(
     conds = rule_index.conditions(q, object, object_id, nat, net, net_any)
     if family:
         conds.append(Rule.ip_family == family)
+    if vdom:
+        conds.append(Rule.vdom == vdom.strip())
     if pair:
         paired = select(RuleIndex.rule_id).where(
             RuleIndex.rule_id == Rule.id, RuleIndex.pair_rule_id.is_not(None)
@@ -134,7 +137,7 @@ def get_rule(
     obj_ids = {e.network_object_id for e in r.endpoints if e.network_object_id}
     objs = rules_store.objects_by_ids(session, obj_ids)
     zones = rules_store.zone_names(session, {o.zone_id for o in objs.values() if o.zone_id})
-    nat_map = nat_store.nat_by_name(session, r.tenant_id)
+    nat_map = nat_store.nat_by_name(session, r.tenant_id, r.source_system_id, r.vdom)
     epgs = epg_store.by_ids(session, {e.epg_id for e in r.endpoints if e.epg_id})
     epg_info = epg_store.details(session, r.tenant_id, list(epgs.values()))
     (base,) = rule_index.outs(session, [r])
@@ -179,12 +182,18 @@ def get_rule(
             r.tenant_id,
             r.source_system_id,
             [*rule_nat.pools, *rule_nat.vips] if rule_nat else [],
+            r.vdom,
         ),
         pair_decisions=_decisions_of(session, r),
     )
 
 
 # -- IPv4/IPv6-Paare von Hand entscheiden (0.12.0) ---------------------------------
+
+
+def _in_vdom(column, vdom: str | None):
+    """Entscheidung im VDOM der Regel - oder ohne VDOM (vor 0.15.0, gilt fuer jeden VDOM)."""
+    return column.is_(None) if vdom is None else or_(column == vdom, column.is_(None))
 
 
 def _decisions_of(session: Session, r: Rule) -> list[PairDecisionOut]:
@@ -196,13 +205,16 @@ def _decisions_of(session: Session, r: Rule) -> list[PairDecisionOut]:
     out = []
     for d in session.scalars(
         select(RulePairDecision).where(
-            RulePairDecision.source_system_id == r.source_system_id, own == r.external_id
+            RulePairDecision.source_system_id == r.source_system_id,
+            own == r.external_id,
+            _in_vdom(RulePairDecision.vdom, r.vdom),
         )
     ):
         other = d.v6_external_id if r.ip_family == "v4" else d.v4_external_id
         partner = session.scalars(
             select(Rule).where(
                 Rule.source_system_id == r.source_system_id,
+                Rule.vdom.is_(None) if r.vdom is None else Rule.vdom == r.vdom,
                 Rule.external_id == other,
                 Rule.ip_family != r.ip_family,
             )
@@ -242,19 +254,25 @@ def decide_pair(
         a.domain is not RuleDomain.FIREWALL
         or b.tenant_id != a.tenant_id
         or b.source_system_id != a.source_system_id
+        or b.vdom != a.vdom
         or a.source_system_id is None
         or {a.ip_family, b.ip_family} != {"v4", "v6"}
     ):
         raise HTTPException(
-            status_code=422, detail="pair = one IPv4 and one IPv6 rule of the same firewall"
+            status_code=422,
+            detail="pair = one IPv4 and one IPv6 rule of the same firewall and VDOM",
         )
     v4, v6 = (a, b) if a.ip_family == "v4" else (b, a)
+    # eine Entscheidung ohne VDOM (vor 0.15.0) wird zu einer im VDOM des Paares
     decision = session.scalars(
-        select(RulePairDecision).where(
+        select(RulePairDecision)
+        .where(
             RulePairDecision.source_system_id == a.source_system_id,
+            _in_vdom(RulePairDecision.vdom, a.vdom),
             RulePairDecision.v4_external_id == v4.external_id,
             RulePairDecision.v6_external_id == v6.external_id,
         )
+        .order_by(RulePairDecision.vdom.is_(None))
     ).first()
     if decision is None:
         decision = RulePairDecision(
@@ -264,6 +282,7 @@ def decide_pair(
             v6_external_id=v6.external_id,
         )
         session.add(decision)
+    decision.vdom = a.vdom
     decision.decision = body.decision
     decision.decided_by = principal.subject
     decision.decided_at = datetime.now(UTC)
@@ -272,7 +291,11 @@ def decide_pair(
         actor=f"user:{principal.subject}",
         action="rule_pair.decided",
         subject=f"{v4.id}/{v6.id}",
-        detail={"source_system_id": a.source_system_id, "decision": body.decision},
+        detail={
+            "source_system_id": a.source_system_id,
+            "vdom": a.vdom,
+            "decision": body.decision,
+        },
     )
     rows = {
         i.rule_id: i

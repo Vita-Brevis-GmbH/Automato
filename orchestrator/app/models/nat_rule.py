@@ -32,6 +32,7 @@ class NatRule(Base):
     # VIP-Typ wie auf der FortiGate: static-nat | server-load-balance (Virtual Server) | ...
     vip_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     family: Mapped[str | None] = mapped_column(String(4), nullable=True)  # v4 | v6
+    vdom: Mapped[str | None] = mapped_column(String(64), nullable=True)  # FortiGate-VDOM
     # Virtual Server: Real Server (ip/address, port, status, weight, Health-Check ...);
     # mapped_ip/mapped_port = erster Real Server (fuer Sichten mit einem Ziel)
     targets: Mapped[list | None] = mapped_column(JSON, nullable=True)

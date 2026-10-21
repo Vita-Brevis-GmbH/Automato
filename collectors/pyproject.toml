@@ -1,6 +1,6 @@
 [project]
 name = "collectors"
-version = "0.14.1"
+version = "0.15.0"
 description = "Automato Collectors - read-only Erfassung von Firewall-Regeln (UC1)"
 requires-python = ">=3.11"
 dependencies = [

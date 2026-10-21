@@ -45,6 +45,7 @@ class InvInterface(_InventoryRow, Base):
     ips: Mapped[list | None] = mapped_column(JSON, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     zone: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    vdom: Mapped[str | None] = mapped_column(String(64), nullable=True)  # FortiGate-VDOM
     neighbor: Mapped[str | None] = mapped_column(String(200), nullable=True)
     neighbor_port: Mapped[str | None] = mapped_column(String(100), nullable=True)
     policy_group: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -75,6 +76,7 @@ class InvSubnet(_InventoryRow, Base):
     epg: Mapped[str | None] = mapped_column(String(200), nullable=True)
     bd: Mapped[str | None] = mapped_column(String(100), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vdom: Mapped[str | None] = mapped_column(String(64), nullable=True)  # FortiGate-VDOM
 
 
 class InvVrf(_InventoryRow, Base):

@@ -7,6 +7,40 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.15.0 – 2026-10-22
+
+VDOM-Kontext der FortiGate (ADR 0019 Stufe 1, Alembic `0037`). Der Test gegen die echten
+VDOMs steht noch aus.
+
+- **Collector liest alle VDOMs:** zuerst die Liste (`system/vdom`), dann jede Tabelle je VDOM
+  (`vdom=`). Bisher las er nur den Standard-VDOM des Kontos.
+  - Ohne Recht auf die Liste (VDOM-Admin) bleibt es beim Standard-VDOM; sein Name kommt aus
+    der Antwort.
+  - Ein VDOM ohne Leserecht fehlt und steht in der Lauf-Meldung („VDOM nicht lesbar: …“).
+  - Interne VDOMs (`vsys_*`) werden nicht gelesen.
+- **Regeln, Objekte, VIPs/IP-Pools, Interfaces und Subnetze tragen ihren VDOM.** Policy-ID,
+  Objekt- und VIP-Name gelten je VDOM; gleiche Namen in zwei VDOMs sind zwei Objekte mit
+  eigener Regel-Zahl. Verweise, Gruppen, VIP-Ziele, NAT-Nutzung und Server hinter einer VIP
+  bleiben im VDOM der Regel.
+- **IPv4/IPv6-Paare** nur innerhalb eines VDOMs. Entscheidungen von vor 0.15.0 (ohne VDOM)
+  gelten weiter für jeden VDOM der Firewall; eine neue Entscheidung gilt für den VDOM des
+  Paares.
+- **Findings:** doppelte Werte je VDOM; Objekte ausserhalb von `root` tragen den VDOM im Namen
+  des Befunds („H_x (VDOM kunde-a)“) und im Satz („auf fw-01 (VDOM kunde-a)“).
+- **Gleicher VIP-Name, andere externe IP** (zwei VDOMs bzw. Firewalls): eigenes Werte-Objekt je
+  IP. Bisher zeigte eine der Regeln die externe IP der anderen.
+- **Oberfläche:**
+  - Regeln: VDOM unter dem System und Filter „VDOM“ (sobald es mehrere gibt); Suche nach dem
+    VDOM-Namen.
+  - Regel-Detail: VDOM mit Policy-ID.
+  - Objekte, NAT / VIPs und Port-Detail: VDOM.
+  - Applikations-Doku: Firewall-Objekte mit VDOM.
+  - Der Standard-VDOM `root` erscheint nur, wenn es mehrere VDOMs gibt.
+- **API:** `vdom` in Regeln, Objekten, NAT und Interfaces; `GET /rules?vdom=`; Kennzahl
+  `by_vdom` in `/rules/summary`.
+- Nach dem Update **jede FortiGate einmal neu einlesen**; erst dann haben Regeln und Objekte
+  ihren VDOM.
+
 ## 0.14.1 – 2026-10-22
 
 Korrekturen aus dem Betrieb (keine Migration).

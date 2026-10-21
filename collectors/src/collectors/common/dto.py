@@ -33,6 +33,8 @@ class NormalizedRule(BaseModel):
     source_refs6: list[str] = Field(default_factory=list)
     destination_refs6: list[str] = Field(default_factory=list)
     family: str | None = None
+    # FortiGate: VDOM der Policy (ADR 0019) - Policy-ID und Objektnamen gelten je VDOM
+    vdom: str | None = None
     raw: dict[str, Any] | None = None
 
 
@@ -79,6 +81,7 @@ class NormalizedNat(BaseModel):
     targets: list[dict[str, Any]] = Field(default_factory=list)
     # Virtual Server: Server-Typ, Methode, Persistenz, Health-Checks, Zertifikat (nur Name)
     attrs: dict[str, Any] = Field(default_factory=dict)
+    vdom: str | None = None  # FortiGate: VDOM des VIP bzw. Pools
     raw: dict[str, Any] | None = None
 
 
@@ -104,6 +107,7 @@ class NormalizedObject(BaseModel):
     # zusaetzliche Attribute wie auf dem Geraet (Services: Protokoll, Ports inkl. Quellports,
     # ICMP-Typ, Kategorie, Timer; ACI-Filter: Eintraege)
     attrs: dict[str, Any] = Field(default_factory=dict)
+    vdom: str | None = None  # FortiGate: gleiche Namen in zwei VDOMs = zwei Objekte
 
 
 class NormalizedDevice(BaseModel):
@@ -133,6 +137,7 @@ class NormalizedInterface(BaseModel):
     ips: list[str] = Field(default_factory=list)  # Interface-Adressen mit Laenge
     description: str | None = None
     zone: str | None = None
+    vdom: str | None = None  # FortiGate: VDOM des Interfaces (Zone gilt in diesem VDOM)
     neighbor: str | None = None  # LLDP/CDP: Systemname der Gegenstelle
     neighbor_port: str | None = None
     policy_group: str | None = None  # ACI Access Policy Group
@@ -161,6 +166,7 @@ class NormalizedSubnet(BaseModel):
     epg: str | None = None
     bd: str | None = None
     description: str | None = None
+    vdom: str | None = None  # FortiGate: VDOM des Interfaces
 
 
 class NetworkInventory(BaseModel):

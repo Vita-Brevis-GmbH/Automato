@@ -62,7 +62,7 @@ def test_client_gather_und_auth_header():
 
 
 def test_abruf_und_normalisierung_ueber_client():
-    d = _client_with_mock().gather()
+    (d,) = _client_with_mock().gather()["vdoms"]  # ohne VDOM-Liste: Standard-VDOM
     rules = {
         r.external_id: r
         for r in norm.normalize(
@@ -82,11 +82,12 @@ def test_abruf_und_normalisierung_ueber_client():
 
 def test_gather_liefert_v6_und_ippools():
     d = _client_with_mock().gather()
-    assert {a["name"] for a in d["addresses6"]} == {
+    (v,) = d["vdoms"]
+    assert {a["name"] for a in v["addresses6"]} == {
         "H_adf04-001-ssgch.secn.ch",
         "N_share-000-v6",
     }
-    assert d["ippools"][0]["name"] == "IPP_share-000-inet01"
+    assert v["ippools"][0]["name"] == "IPP_share-000-inet01"
     assert d["system"] == {"hostname": "fw-01"}
     assert {i["name"] for i in d["interfaces"]} >= {"port2", "srv-vl10"}
 
@@ -160,7 +161,7 @@ def test_antwort_ohne_json_nennt_den_pfad_optionale_tabellen_fehlen_still():
         "https://fw-01.lab", "t", client=httpx.Client(transport=httpx.MockTransport(handler))
     )
     data = client.gather()
-    assert data["vips6"] == [] and data["ldb_monitors"] == []
+    assert data["vdoms"][0]["vips6"] == [] and data["vdoms"][0]["ldb_monitors"] == []
     assert data["system"] == {"hostname": "fw-01"}  # ohne Modell/Seriennummer
 
     broken["path"] = "/api/v2/cmdb/firewall/policy"
@@ -170,3 +171,116 @@ def test_antwort_ohne_json_nennt_den_pfad_optionale_tabellen_fehlen_still():
         "FortiGate antwortet auf firewall/policy nicht mit JSON (HTTP 200, text/html, 48 Bytes,"
         " Seite „Web Filter Block“)"
     )
+
+
+def _vdom_mock(seen: list, denied: set[str] = frozenset()) -> FortiGateClient:
+    """FortiGate mit zwei VDOMs (+ internem vsys_ha): je VDOM eigene Policies/Objekte mit
+    gleichen IDs und Namen; Interfaces global mit VDOM-Feld."""
+    tables = {
+        "root": {
+            "firewall/policy": [{"policyid": 1, "name": "mgmt", "action": "accept",
+                                 "srcaddr": [{"name": "N_a"}], "dstaddr": [{"name": "all"}],
+                                 "service": [{"name": "ALL"}]}],
+            "firewall/address": [{"name": "N_a", "type": "ipmask",
+                                  "subnet": "10.0.0.0 255.255.255.0"}],
+            "system/zone": [{"name": "lan", "interface": [{"interface-name": "port1"}]}],
+        },
+        "kunde-a": {
+            "firewall/policy": [{"policyid": 1, "name": "web", "action": "accept",
+                                 "srcaddr": [{"name": "N_a"}], "dstaddr": [{"name": "all"}],
+                                 "service": [{"name": "ALL"}]}],
+            "firewall/address": [{"name": "N_a", "type": "ipmask",
+                                  "subnet": "10.50.0.0 255.255.255.0"}],
+            "firewall/vip": [{"name": "VIP_web", "extip": "203.0.113.10",
+                              "mappedip": [{"range": "10.50.0.10"}]}],
+            "system/zone": [{"name": "lan", "interface": [{"interface-name": "port2"}]}],
+        },
+    }  # fmt: skip
+    interfaces = [
+        {"name": "port1", "type": "physical", "vdom": "root", "ip": "10.0.0.1 255.255.255.0"},
+        {"name": "port2", "type": "physical", "vdom": "kunde-a", "ip": "10.50.0.1 255.255.255.0"},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"  # nur lesend
+        path = request.url.path.removeprefix("/api/v2/cmdb/")
+        vdom = request.url.params.get("vdom")
+        seen.append((path, vdom))
+        if path == "system/vdom":
+            names = ["root", "kunde-a", "vsys_ha"]
+            return httpx.Response(200, json={"results": [{"name": n} for n in names]})
+        if path == "system/global":
+            return httpx.Response(200, json={"results": {"hostname": "fw-01"}})
+        if vdom in denied:
+            return httpx.Response(403, json={})
+        if path == "system/interface":
+            return httpx.Response(200, json={"results": interfaces})
+        rows = tables.get(vdom or "root", {}).get(path, [])
+        return httpx.Response(200, json={"vdom": vdom or "root", "results": rows})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    return FortiGateClient("https://fw-01.lab", "token", client=client)
+
+
+def test_alle_vdoms_einzeln_gelesen_gleiche_namen_getrennt(monkeypatch):
+    """ADR 0019 Stufe 1: VDOM-Liste, dann jeder VDOM mit `vdom=`; interne vsys_-VDOMs nicht.
+    Gleiche Policy-ID und gleicher Objektname in zwei VDOMs bleiben zwei Eintraege."""
+    import collectors.fortigate.tasks as t
+    from collectors.common.dto import Target
+
+    seen: list = []
+    client = _vdom_mock(seen)
+    d = client.gather()
+    assert [v["vdom"] for v in d["vdoms"]] == ["root", "kunde-a"]
+    assert not any(v == "vsys_ha" for _, v in seen)
+    assert ("firewall/policy", "kunde-a") in seen and ("firewall/policy", None) not in seen
+    assert {(i["name"], i["vdom"]) for i in d["interfaces"]} == {
+        ("port1", "root"),
+        ("port2", "kunde-a"),
+    }
+
+    sent = {}
+    monkeypatch.setattr(t, "gather", lambda target=None: d)
+    monkeypatch.setattr(
+        t, "submit_result", lambda run_id, result, via_agent=False: sent.update(result=result)
+    )
+    t.collect_once("r1", Target(name="fw-01"))
+    result = sent["result"]
+    assert result.status == "completed", result.message
+    assert sorted((r.vdom, r.external_id, r.name) for r in result.rules) == [
+        ("kunde-a", "1", "web"),
+        ("root", "1", "mgmt"),
+    ]
+    by_vdom = {(o.vdom, o.name): o for o in result.objects if o.category == "address"}
+    assert by_vdom[("root", "N_a")].values == ["10.0.0.0/24"]
+    assert by_vdom[("kunde-a", "N_a")].values == ["10.50.0.0/24"]
+    assert [(n.vdom, n.name) for n in result.nat_rules] == [("kunde-a", "VIP_web")]
+    ports = {i.name: (i.vdom, i.zone) for i in result.inventory.interfaces}
+    assert ports == {"port1": ("root", "lan"), "port2": ("kunde-a", "lan")}
+    assert {s.vdom for s in result.inventory.subnets} == {"root", "kunde-a"}
+    assert result.message == "VDOMs: root, kunde-a"
+
+
+def test_vdom_ohne_leserecht_fehlt_mit_meldung(monkeypatch):
+    """Ein VDOM mit HTTP 403 fehlt (Lauf bleibt vollstaendig fuer die anderen) und steht in der
+    Lauf-Meldung; ohne VDOM-Liste (VDOM-Admin) gilt der Standard-VDOM aus der Antwort."""
+    import collectors.fortigate.tasks as t
+
+    d = _vdom_mock([], denied={"kunde-a"}).gather()
+    assert [v["vdom"] for v in d["vdoms"]] == ["root"]
+    assert d["skipped"] == [{"vdom": "kunde-a", "error": "HTTP 403"}]
+    assert t._vdom_message(d) == (
+        "VDOM nicht lesbar: kunde-a (HTTP 403) - das Profil braucht Lesezugriff auf alle VDOMs;"
+        " gelesen: root"
+    )
+
+    def admin(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/system/vdom"):
+            return httpx.Response(403, json={})
+        assert "vdom" not in request.url.params  # Standard-VDOM des Kontos
+        return httpx.Response(200, json={"vdom": "kunde-a", "results": []})
+
+    client = FortiGateClient(
+        "https://fw", "t", client=httpx.Client(transport=httpx.MockTransport(admin))
+    )
+    assert [v["vdom"] for v in client.gather()["vdoms"]] == ["kunde-a"]

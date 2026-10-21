@@ -86,7 +86,8 @@ def list_objects(
         ctx = references.context(session, tid)
 
         def _hit(o: DeviceObject) -> bool:
-            texts = [o.name, o.comment, o.fqdn, o.interface, *(o.values or []), *(o.members or [])]
+            texts = [o.name, o.comment, o.fqdn, o.interface, o.vdom]
+            texts += [*(o.values or []), *(o.members or [])]
             texts.append(str(o.attrs or ""))  # Service-Attribute (Ports, Kategorie, ...)
             texts.append({"v4": "ipv4", "v6": "ipv6"}.get(o.family or "", ""))
             if any(ql in (t or "").lower() for t in texts):
@@ -107,18 +108,19 @@ def _object_rows(session: Session, tid: int, objects: list[DeviceObject]) -> lis
     Gruppen aus dem Regelindex), Gruppen derselben Adressfamilie, Befunde."""
     used = rule_index.usage_counts(session, [o.id for o in objects])
     # Gruppen-Zugehoerigkeit ueber alle Gruppen des Mandanten (nicht nur die gefilterten Objekte);
-    # IPv4-Gruppen enthalten IPv4-Objekte, IPv6-Gruppen IPv6-Objekte
-    member_of: dict[tuple[int, str], list[tuple[str, str | None]]] = defaultdict(list)
-    for sid, gname, gfamily, members in session.execute(
+    # IPv4-Gruppen enthalten IPv4-Objekte, IPv6-Gruppen IPv6-Objekte - je VDOM (ADR 0019)
+    member_of: dict[tuple[int, str | None, str], list[tuple[str, str | None]]] = defaultdict(list)
+    for sid, vdom, gname, gfamily, members in session.execute(
         select(
             DeviceObject.source_system_id,
+            DeviceObject.vdom,
             DeviceObject.name,
             DeviceObject.family,
             DeviceObject.members,
         ).where(DeviceObject.tenant_id == tid, DeviceObject.category.in_(GROUP_CATEGORIES))
     ):
         for m in members or []:
-            member_of[(sid, m)].append((gname, gfamily))
+            member_of[(sid, vdom, m)].append((gname, gfamily))
     issues = objects_store.object_issues(session, tid, objects)
 
     infos = objects_store.value_infos(
@@ -140,7 +142,7 @@ def _object_rows(session: Session, tid: int, objects: list[DeviceObject]) -> lis
         ]
         groups = [
             g
-            for g, gfam in member_of.get((o.source_system_id, o.name), [])
+            for g, gfam in member_of.get((o.source_system_id, o.vdom, o.name), [])
             if o.family is None or gfam is None or gfam == o.family
         ]
         rows.append(
@@ -152,6 +154,7 @@ def _object_rows(session: Session, tid: int, objects: list[DeviceObject]) -> lis
                 "name": o.name,
                 "obj_type": o.obj_type,
                 "family": o.family,
+                "vdom": o.vdom,
                 "values": values,
                 "members": o.members or [],
                 "member_of": list(dict.fromkeys(groups)),

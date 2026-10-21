@@ -47,6 +47,10 @@ Grundsatzentscheide des Anwenders (2026-10-22):
    - FortiGate: VDOM, Zone, Interface (je Quellsystem).
    - Netze: Präfixe, von Hand oder als Merkmal aus dem IPAM (z. B. NetBox-Tenant,
      DDI-Netzansicht bzw. -Attribut). Der IPAM-Adapter liefert nur das Merkmal (ADR 0002).
+   - **Kürzel aus der Namenskonvention:** Jeder Kunde hat ein eigenes Kürzel, das in den
+     Namen steht (`TE_<kürzel>`, `VRF_<kürzel>`, Objekt- und Servernamen). Ein Selektor
+     „Kürzel“ ordnet alles mit diesem Kürzel zu (Anwender, 2026-10-22). Das Kürzel kommt aus
+     dem Kunden selbst (`code`); ein Wörterbuch ist dafür nicht nötig.
    - Einschliessen und Ausschliessen, z. B. „Tenant `TE_x` ohne `AP_900`“.
    - Die Subnetze zugeordneter EPGs bzw. Bridge Domains zählen automatisch als Netze des
      Kunden.
@@ -78,9 +82,12 @@ Grundsatzentscheide des Anwenders (2026-10-22):
      Listen, Suche, Detail, Doku, Export, Findings und Zähler. Ohne Zuordnung sehen sie
      nichts (fail-closed).
    - Kunden-Benutzer sehen keine Quellsystem-Konfiguration, keine Agenten, keinen
-     NetBox-Sync und keine Daten anderer Kunden. Gegenstellen einer Regel erscheinen so, wie
-     sie in der Regel stehen (Objektname, Netz), aber ohne Detail eines fremden Kunden (keine
-     fremden VMs, EPG-Lagen oder IPAM-Daten).
+     NetBox-Sync und keine Daten anderer Kunden.
+   - **Direkte Verbindungen** (Anwender, 2026-10-22): Hat eine Regel des Kunden eine
+     Gegenstelle eines anderen Kunden, sieht er deren Namen und das vollständige Objekt
+     (Werte, Gruppe, VM, EPG-Lage). Er sieht aber **nur die Regeln, die ihn betreffen** –
+     nicht, welche weiteren Regeln es zu diesem Punkt sonst noch gibt (keine Regel-Zahl,
+     keine Liste „Regeln mit diesem Objekt“ über den eigenen Ausschnitt hinaus).
    - Lesezugriffe von Kunden-Benutzern werden immer auditiert.
 9. **Übergang ohne Datenumzug:** Der bestehende Mandant wird zur Umgebung, die gelesenen
    Daten bleiben, wo sie sind. Neu kommen `customer`, `customer_selector`,
@@ -94,9 +101,8 @@ Grundsatzentscheide des Anwenders (2026-10-22):
   Lauf, ohne Pflege.
 - Jede Lese-API braucht die Einschränkung auf den Kunden. Das ist der grösste Aufwand und
   wird je Endpunkt mit Tests abgesichert, wie heute das Mandanten-Scoping (R13).
-- Offen zur Klärung: ein Selektor über Namensmuster (z. B. GG-Kürzel im Objektnamen) – ja
-  oder nein; ob Kunden-Benutzer fremde Gegenstellen nur als „anderer Kunde“ sehen sollen
-  statt mit Objektname und Netz.
+- Geklärt (2026-10-22): Selektor über das Kürzel ja; fremde Gegenstellen mit Namen und
+  vollständigem Objekt, aber nur die eigenen Regeln.
 
 ## Umsetzung (Schritte)
 

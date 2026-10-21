@@ -127,7 +127,7 @@ class DocSystemOut(BaseModel):
     dns: list[str] = []  # DNS-Namen der IPs aus dem IPAM
     servers: list[str] = []  # Host-Objekte mit diesen IPs (Regel-Endpunkte, Befunde)
     # Firewall-Adressobjekte mit genau dieser IP je Name: name, name_ok (passt zum DNS-Namen),
-    # where = [{id, source_system_id}] (auf welchen Firewalls)
+    # where = [{id, source_system_id, vdom}] (auf welchen Firewalls bzw. VDOMs)
     objects: list[dict] = []
     epgs: list[str] = []  # EPGs mit ganzem ACI-Pfad Tenant/AP/EPG
     portgroups: list[str] = []

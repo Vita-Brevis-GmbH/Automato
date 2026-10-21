@@ -187,7 +187,7 @@ def _rule_incomplete_issues(session: Session, tenant_id: int) -> list[Issue]:
             continue
         aci = r.domain.value == "aci_contract"
         raw = r.raw if isinstance(r.raw, dict) else {}
-        label = r.name or f"#{r.external_id}"
+        label = (r.name or f"#{r.external_id}") + vdom_suffix(r.vdom)
         subject = f"{raw.get('tenant')}/{label}" if aci and raw.get("tenant") else label
         out.append(
             Issue(
@@ -203,6 +203,7 @@ def _rule_incomplete_issues(session: Session, tenant_id: int) -> list[Issue]:
                     "missing": missing,
                     "source_system_id": r.source_system_id,
                     "source": names.get(r.source_system_id),
+                    **({"vdom": r.vdom} if r.vdom else {}),
                     "name": label,
                     "tenant": raw.get("tenant") if aci else None,
                 },
@@ -254,12 +255,13 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
     used = _used_object_ids(session, tenant_id, objects)
     services = _ServiceConvention(session, tenant_id)
     out: list[Issue] = []
-    by_value: dict[tuple[int, str], list[str]] = defaultdict(list)
+    by_value: dict[tuple[int, str | None, str], list[str]] = defaultdict(list)
 
     for o in objects:
         base = {
             "source_system_id": o.source_system_id,
             "source": source_names.get(o.source_system_id),
+            **({"vdom": o.vdom} if o.vdom else {}),
         }
         detail = {**base, "category": o.category.value, "name": o.name}
         # Konvention gilt fuer Adressen und VIPs (fuer Gruppen kennt sie kein Praefix)
@@ -282,7 +284,7 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
         if o.category is ObjectCategory.SERVICE and not predefined:
             out += _service_issues(o, detail, services)
         if o.category is ObjectCategory.ADDRESS and _first(o):
-            by_value[(o.source_system_id, _first(o))].append(o.name)
+            by_value[(o.source_system_id, o.vdom, _first(o))].append(o.name)
         derived = o.category is ObjectCategory.VIP_TARGET or bool((o.attrs or {}).get("vip_of"))
         if (
             o.id not in used
@@ -292,17 +294,18 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
         ):
             out.append(_issue(FindingType.UNUSED_OBJECT, o, detail, Severity.INFO))
 
-    for (source_id, value), names in by_value.items():
-        if len(names) > 1:
+    for (source_id, vdom, value), names in by_value.items():
+        if len(names) > 1:  # je VDOM: gleiche IP in zwei VDOMs ist kein Doppel
             out.append(
                 Issue(
                     FindingType.DUPLICATE_VALUE,
                     SubjectKind.DEVICE_OBJECT,
-                    value,
+                    value + vdom_suffix(vdom),
                     source_id,
                     detail={
                         "source_system_id": source_id,
                         "source": source_names.get(source_id),
+                        **({"vdom": vdom} if vdom else {}),
                         "value": value,
                         "names": sorted(names),
                     },
@@ -376,12 +379,22 @@ _NO_CONVENTION = {"geography", "mac", "dynamic", "wildcard-fqdn"}
 _SHAPE_MISMATCH = {(ObjectClass.HOST, "network"), (ObjectClass.NETWORK, "host")}
 
 
+DEFAULT_VDOM = "root"  # FortiGate-Standard-VDOM (auch ohne VDOM-Modus)
+
+
+def vdom_suffix(vdom: str | None) -> str:
+    """Zusatz „ (VDOM x)“ fuer Objekte ausserhalb des Standard-VDOMs (ADR 0019)."""
+    return f" (VDOM {vdom})" if vdom and vdom != DEFAULT_VDOM else ""
+
+
 def subject(o: DeviceObject) -> str:
     """Befund-Bezeichnung eines Firewall-Objekts. IPv6-Adressobjekte tragen die Familie im
-    Namen - auf der FortiGate darf ein IPv4- und ein IPv6-Objekt gleich heissen."""
+    Namen - auf der FortiGate darf ein IPv4- und ein IPv6-Objekt gleich heissen; ebenso zwei
+    Objekte in verschiedenen VDOMs (VDOM im Namen, ausser im Standard-VDOM)."""
+    name = o.name
     if o.family == "v6" and o.category in _FAMILY_CATEGORIES:
-        return f"{o.name} (IPv6)"
-    return o.name
+        name = f"{o.name} (IPv6)"
+    return name + vdom_suffix(o.vdom)
 
 
 _FAMILY_CATEGORIES = (ObjectCategory.ADDRESS, ObjectCategory.ADDRESS_GROUP, ObjectCategory.VIP)

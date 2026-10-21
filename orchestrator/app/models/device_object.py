@@ -36,14 +36,16 @@ GROUP_CATEGORIES = (ObjectCategory.ADDRESS_GROUP, ObjectCategory.SERVICE_GROUP)
 class DeviceObject(Base):
     __tablename__ = "device_object"
     # IPv4- und IPv6-Objekte (FortiGate address/address6) duerfen gleich heissen - es sind
-    # verschiedene Objekte; eindeutig je Quellsystem/Kategorie/Familie/Name
+    # verschiedene Objekte; ebenso gleiche Namen in zwei VDOMs (ADR 0019). Eindeutig je
+    # Quellsystem/VDOM/Kategorie/Familie/Name
     __table_args__ = (
         UniqueConstraint(
             "source_system_id",
+            "vdom",
             "category",
             "family",
             "name",
-            name="uq_device_object_source_cat_fam_name",
+            name="uq_device_object_source_vdom_cat_fam_name",
         ),
     )
 
@@ -56,6 +58,7 @@ class DeviceObject(Base):
     name: Mapped[str] = mapped_column(String(300))
     obj_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     family: Mapped[str | None] = mapped_column(String(4), nullable=True)  # v4 | v6
+    vdom: Mapped[str | None] = mapped_column(String(64), nullable=True)  # FortiGate-VDOM
     values: Mapped[list | None] = mapped_column(JSON, nullable=True)  # Werte / Service-Tokens
     members: Mapped[list | None] = mapped_column(JSON, nullable=True)  # Gruppen: Mitglieder
     fqdn: Mapped[str | None] = mapped_column(String(300), nullable=True)

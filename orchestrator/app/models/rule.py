@@ -85,6 +85,8 @@ class Rule(Base):
     protections: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # Adressfamilie der Policy: v4 | v6 | dual (FortiGate trennt IPv4- und IPv6-Objekte)
     ip_family: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    # FortiGate-VDOM der Policy (ADR 0019): Policy-ID, Objektnamen und Zonen gelten je VDOM
+    vdom: Mapped[str | None] = mapped_column(String(64), nullable=True)
     raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     endpoints: Mapped[list["RuleEndpoint"]] = relationship(

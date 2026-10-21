@@ -34,6 +34,21 @@
 | `system/zone` | `name`, `interface[]` | `zone`; Zone je Interface im Netzinventar |
 | `system/interface` | `name`, `type`, `ip`, `ip6`, `alias`, `role`, `vlanid`, `interface` (Parent), `member[]` (Aggregate), `status`, `vdom` | Netzinventar (ADR 0010): `inv_interface` (Modus, VLAN, LAG/Parent, IPs), `inv_vlan`, `inv_subnet`; Zonen-/Subnetz-Ableitung |
 | `system/global` (+ optional `monitor/system/status`) | `hostname`; Modell, Seriennummer, Version | `inv_device` (Firewall) |
+| `system/vdom` (global, 0.15.0) | `name` (interne `vsys_*` ausgenommen) | Liste der VDOMs; danach alle Tabellen oben **je VDOM** |
+
+**VDOMs (ADR 0019, 0.15.0):** Der Collector liest zuerst `system/vdom` und danach jede Tabelle
+je VDOM mit dem Parameter `vdom=<name>`. Regeln, Objekte, VIPs/IP-Pools und Zonen tragen ihren
+VDOM; Policy-ID und Objektname gelten je VDOM (gleiche Namen in zwei VDOMs = zwei Objekte).
+`system/interface` ist global – jedes Interface nennt seinen `vdom`; die Zone gilt in diesem
+VDOM. Zum Konto:
+
+- Das REST-API-Konto braucht ein **Read-only-Profil mit Zugriff auf alle VDOMs** (globaler
+  Bereich), sonst fehlen VDOMs.
+- Ohne Recht auf `system/vdom` (VDOM-Admin) liest der Collector nur den Standard-VDOM des
+  Kontos; dessen Name kommt aus der Antwort.
+- Ein VDOM ohne Leserecht (HTTP 403) fehlt; die Lauf-Meldung nennt ihn („VDOM nicht lesbar:
+  …“). Ist keiner lesbar, schlägt der Lauf fehl.
+- Mit mehreren VDOMs nennt die Lauf-Meldung die gelesenen („VDOMs: root, …“).
 
 Objekte (Adressen, Gruppen, VIPs, IP-Pools, Services, Service-Gruppen) werden zusätzlich **mit
 Namen** als `device_object` gespeichert, Regeln verweisen per Name darauf (`rule_object_ref`,

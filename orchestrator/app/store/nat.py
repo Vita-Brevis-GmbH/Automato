@@ -48,10 +48,18 @@ def count_nat(session: Session, tenant_id: int | None = None, nat_type: str | No
     return session.scalar(_filtered(select(func.count(NatRule.id)), tenant_id, nat_type)) or 0
 
 
-def nat_by_name(session: Session, tenant_id: int) -> dict[str, NatRule]:
-    """VIP-/NAT-Name -> NatRule (fuer die Anreicherung der Regel-Detailansicht)."""
-    rows = session.scalars(select(NatRule).where(NatRule.tenant_id == tenant_id))
-    return {n.name: n for n in rows}
+def nat_by_name(
+    session: Session, tenant_id: int, source_id: int | None = None, vdom: str | None = None
+) -> dict[str, NatRule]:
+    """VIP-/NAT-Name -> NatRule (fuer die Anreicherung der Regel-Detailansicht); mit Quellsystem
+    nur dessen Eintraege im VDOM der Regel (gleiche Namen in zwei VDOMs, ADR 0019)."""
+    stmt = select(NatRule).where(NatRule.tenant_id == tenant_id)
+    if source_id is not None:
+        stmt = stmt.where(
+            NatRule.source_system_id == source_id,
+            NatRule.vdom.is_(None) if vdom is None else NatRule.vdom == vdom,
+        )
+    return {n.name: n for n in session.scalars(stmt)}
 
 
 def nat_target(nat: NatRule) -> str:
@@ -116,15 +124,17 @@ def internal_ips(nat: NatRule) -> list[str]:
     return list(dict.fromkeys(ips))
 
 
-def servers_by_ip(
-    session: Session, tenant_id: int, ips: set[str]
-) -> dict[str, list[tuple[int, str]]]:
-    """Interne IP -> (Quellsystem, Name) aller Firewall-Adressobjekte mit genau dieser IP
+# (Quellsystem, VDOM, Objektname) eines Firewall-Adressobjekts
+Server = tuple[int, str | None, str]
+
+
+def servers_by_ip(session: Session, tenant_id: int, ips: set[str]) -> dict[str, list[Server]]:
+    """Interne IP -> (Quellsystem, VDOM, Name) aller Firewall-Adressobjekte mit genau dieser IP
     (z. B. H_web01) - mehrere, wenn die IP doppelt definiert ist (Befund "Doppelter Wert")."""
     ips = {i for i in ips if i}
     if not ips:
         return {}
-    out: dict[str, list[tuple[int, str]]] = {}
+    out: dict[str, list[Server]] = {}
     rows = session.scalars(
         select(DeviceObject)
         .where(
@@ -136,14 +146,22 @@ def servers_by_ip(
     for o in rows:
         values = [str(v).removesuffix("/32") for v in o.values or []]
         if len(values) == 1 and values[0] in ips:
-            out.setdefault(values[0], []).append((o.source_system_id, o.name))
+            out.setdefault(values[0], []).append((o.source_system_id, o.vdom, o.name))
     return out
 
 
-def server_names(candidates: list[tuple[int, str]], source_system_id: int) -> list[str]:
-    """Server einer NAT-Regel: bevorzugt die Objekte derselben Firewall."""
-    same = [name for sid, name in candidates if sid == source_system_id]
-    return same or list(dict.fromkeys(name for _, name in candidates))
+def server_names(
+    candidates: list[Server], source_system_id: int, vdom: str | None = None
+) -> list[str]:
+    """Server einer NAT-Regel: bevorzugt die Objekte desselben VDOMs, dann derselben Firewall."""
+    for wanted in (
+        [name for sid, v, name in candidates if sid == source_system_id and v == vdom],
+        [name for sid, _, name in candidates if sid == source_system_id],
+        [name for _, _, name in candidates],
+    ):
+        if wanted:
+            return list(dict.fromkeys(wanted))
+    return []
 
 
 def _in_range(value: str | None, ip) -> bool:
@@ -173,8 +191,11 @@ def matches(fields: list[str | None], ranges: list[str | None], query: str) -> b
     return True
 
 
-def briefs(session: Session, tenant_id: int, source_id: int, names: list[str]) -> list[dict]:
-    """VIPs/SNAT-Pools einer Regel kompakt (IPs, Ports, DNS-Namen) fuer das Regel-Detail."""
+def briefs(
+    session: Session, tenant_id: int, source_id: int, names: list[str], vdom: str | None = None
+) -> list[dict]:
+    """VIPs/SNAT-Pools einer Regel (im VDOM der Regel) kompakt (IPs, Ports, DNS-Namen) fuer das
+    Regel-Detail."""
     from app.store import references  # spaet: references importiert Modelle/Stores
 
     if not names:
@@ -183,7 +204,7 @@ def briefs(session: Session, tenant_id: int, source_id: int, names: list[str]) -
     rows = [
         n
         for n in session.scalars(select(NatRule).where(NatRule.source_system_id == source_id))
-        if n.name.lower() in wanted
+        if n.name.lower() in wanted and n.vdom == vdom
     ]
     ctx = references.context(session, tenant_id)
     return [

@@ -85,7 +85,8 @@ def _unmatched(subject: str, d: dict) -> tuple[str, str]:
 def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
     """(Befund, Hinweis) fuer die Anzeige."""
     d = detail or {}
-    on = f" auf {d['source']}" if d.get("source") else ""
+    vdom = d.get("vdom") if d.get("vdom") not in (None, "root") else None
+    on = f" auf {d['source']}{f' (VDOM {vdom})' if vdom else ''}" if d.get("source") else ""
     if ftype == "unmatched_object":
         return _unmatched(subject, d)
     if ftype == "invalid_name":

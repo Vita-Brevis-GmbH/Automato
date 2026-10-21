@@ -30,6 +30,7 @@ export interface Rule {
   missing?: ("src" | "dst")[]; // Seite ohne Endpunkt (ACI: kein Consumer/Provider – nicht wirksam)
   negate?: ("src" | "dst" | "service")[]; // FortiGate: negierte Seiten
   family?: "v4" | "v6" | "dual" | null; // Adressfamilie der Policy
+  vdom?: string | null; // FortiGate-VDOM der Policy (ADR 0019)
   pair?: RulePair | null; // IPv4/IPv6-Gegenstück (nur Markierung, eigene Regel)
 }
 
@@ -99,6 +100,7 @@ export interface RuleSummary {
   by_dst_zone: [string, number][];
   by_src_zone?: [string, number][];
   by_action?: Record<string, number>;
+  by_vdom?: [string, number][]; // FortiGate-VDOMs mit Anzahl Regeln
 }
 
 export interface Endpoint {
@@ -457,6 +459,7 @@ export interface Nat {
   rule_count: number;
   vip_type?: string | null; // static-nat | server-load-balance (Virtual Server) | …
   family?: string | null; // v4 | v6
+  vdom?: string | null; // FortiGate-VDOM
   targets?: NatTarget[]; // Virtual Server: Real Server
   attrs?: Record<string, unknown>; // Virtual Server: Server-Typ, Methode, Persistenz, Health-Checks
   issues?: string[]; // Korrektheitsprüfung (0.14.0): Befunde des VIP-/Pool-Objekts, Ziel ohne IPAM
@@ -644,7 +647,11 @@ export interface AppDocSystem2 {
   dns: string[];
   servers: string[];
   // Firewall-Objekte je Name: auf welchen Firewalls, passt der Name zum DNS-Namen (null = kein DNS)
-  objects: { name: string; name_ok: boolean | null; where: { id: number; source_system_id: number }[] }[];
+  objects: {
+    name: string;
+    name_ok: boolean | null;
+    where: { id: number; source_system_id: number; vdom?: string | null }[];
+  }[];
   epgs: string[]; // Tenant/AP/EPG
   portgroups: string[];
   vm_id: number | null;
@@ -729,6 +736,7 @@ export interface DeviceObject {
   name: string;
   obj_type: string | null;
   family: string | null;
+  vdom?: string | null; // FortiGate-VDOM (gleiche Namen in zwei VDOMs = zwei Objekte)
   values: RefValue[]; // Services: nur `value`
   members: string[];
   member_of: string[];
@@ -790,6 +798,7 @@ export interface InvInterface extends InvBase {
   ips: string[] | null;
   description: string | null;
   zone: string | null;
+  vdom?: string | null; // FortiGate-VDOM des Interfaces
   neighbor: string | null;
   neighbor_port: string | null;
   policy_group: string | null;
@@ -1212,6 +1221,7 @@ export async function fetchRules(opts: {
   net?: string; // Regeln eines Subnetzes (Quelle/Ziel überschneidet sich)
   netAny?: boolean; // bei net auch Regeln mit any (Standard: ja)
   family?: string; // v4 | v6 | dual
+  vdom?: string; // FortiGate-VDOM
   pair?: string; // same | similar | confirmed | any | none
   srcZone?: string;
   dstZone?: string;
@@ -1230,6 +1240,7 @@ export async function fetchRules(opts: {
     net: opts.net,
     net_any: opts.net && opts.netAny === false ? "false" : undefined,
     family: opts.family,
+    vdom: opts.vdom,
     pair: opts.pair,
     src_zone: opts.srcZone,
     dst_zone: opts.dstZone,

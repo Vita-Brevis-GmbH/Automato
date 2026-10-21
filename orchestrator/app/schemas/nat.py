@@ -43,6 +43,7 @@ class NatOut(BaseModel):
     rule_count: int = 0  # Firewall-Regeln mit diesem VIP bzw. SNAT-Pool
     vip_type: str | None = None  # static-nat | server-load-balance (Virtual Server) | ...
     family: str | None = None  # v4 | v6
+    vdom: str | None = None  # FortiGate-VDOM (ADR 0019)
     targets: list[NatTargetOut] = []  # Virtual Server: Real Server
     attrs: dict = {}  # Virtual Server: Server-Typ, Methode, Persistenz, Health-Checks
     # Korrektheitspruefung (0.14.0): Befunde des VIP-/Pool-Objekts, internes Ziel ohne IPAM

@@ -37,6 +37,13 @@ docker compose exec orchestrator automato status --run-id <id>
 ```
 Der Lauf **ersetzt** die Regeln/NAT des Quellsystems und baut die Findings neu auf.
 
+**FortiGate mit VDOMs** (0.15.0, ADR 0019): Der Collector liest alle VDOMs der FortiGate
+einzeln. Das REST-API-Konto braucht dafür ein Read-only-Profil mit Zugriff auf **alle VDOMs**.
+Die Lauf-Meldung nennt die gelesenen VDOMs („VDOMs: root, …“) bzw. die fehlenden („VDOM nicht
+lesbar: … (HTTP 403)“). Fehlt ein VDOM, Profil bzw. VDOM-Liste des Kontos auf der FortiGate
+prüfen und neu einlesen. Ohne Recht auf die VDOM-Liste liest er nur den Standard-VDOM des
+Kontos.
+
 **Zeitgesteuert:** Mit einem Zeitplan am Quellsystem legt der Orchestrator zum Termin selbst
 einen Lauf an (`AUTOMATO_SCHEDULER_ENABLED=true`, in docker-compose Standard). Wie „Jetzt
 einlesen“: Gerät mit Agent → der Agent holt den Lauf ab. Wartet oder läuft für das
@@ -99,7 +106,8 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   EPG/AP/Tenant/BD/VRF, **VM-Namen** aus dem vCenter und NAT (VIP-/Pool-Name, externe/interne
   IP, Port). Mehrere Wörter =
   alle müssen vorkommen. Filter System, Quell-/Ziel-Zone, Aktion, **Familie** (IPv4, IPv6,
-  IPv4+IPv6), „nur mit Findings“ (über alle Regeln, nicht nur die geladene Seite); Links
+  IPv4+IPv6), **VDOM** (sobald es mehrere gibt; der VDOM steht unter dem System), „nur mit
+  Findings“ (über alle Regeln, nicht nur die geladene Seite); Links
   `#regeln?object=<Name>` bzw. `#regeln?nat=<Name>` zeigen alle Regeln mit diesem Objekt (auch
   über Gruppen, beide Familien) bzw. NAT, `#regeln?object_id=<ID>` genau ein Objekt.
   **Regeln je Subnetz:**
@@ -138,6 +146,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Klick → genau diese Regeln.
   - **IPv4/IPv6:** Gleichnamige Objekte stehen zweimal da, mit Chip „IPv4“ bzw. „IPv6“,
     eigenen Werten, Gruppen und Befunden, wie auf der FortiGate.
+  - **VDOMs** (0.15.0): Gleichnamige Objekte zweier VDOMs sind ebenfalls zwei Objekte (VDOM in
+    der Spalte Quelle). Gruppen, Regel-Zahl und Befunde gelten je VDOM; der Standard-VDOM
+    `root` erscheint nur, wenn es mehrere VDOMs gibt.
   - **VIP-Ziele** (0.12.0): Die interne Ziel-IP einer VIP ohne eigenes Adressobjekt steht als
     „VIP-Ziel“ in den Adressobjekten (z. B. „VIP_web → 10.10.40.5“). Ein Adressobjekt hinter
     einer VIP (FQDN-VIP, Real Server, gleiche IP) trägt „Ziel von VIP …“. Beide zählen die
@@ -421,6 +432,11 @@ an (`deploy/agent-gateway`, Port 8443).
   Read-only-Token `https://<fortigate>/api/v2/cmdb/<Pfad>` abfragen. Häufige Ursachen sind
   ein Admin-Profil ohne Leserecht für diesen Bereich, ein VDOM-Zugriff oder ein Proxy
   dazwischen.
+
+- **Lauf mit „VDOM nicht lesbar: <name> (HTTP 403)“** (ab 0.15.0) — das Konto darf diesen
+  VDOM nicht lesen. Die übrigen VDOMs sind eingelesen, die Daten des fehlenden fehlen bis zum
+  nächsten vollständigen Lauf. Auf der FortiGate dem REST-API-Konto den VDOM (bzw. alle VDOMs)
+  mit einem Read-only-Profil geben.
 
 - **Lauf „Fehler“ mit „Einspielen fehlgeschlagen: …“** — das Gerät wurde gelesen, aber das
   Ergebnis liess sich nicht in den Store schreiben. Der Ingest wird dann vollständig verworfen

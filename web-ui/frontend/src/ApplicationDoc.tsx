@@ -806,6 +806,7 @@ function SystemsCard({
                                   }}
                                 >
                                   {sourceName(w.source_system_id)}
+                                  {w.vdom && w.vdom !== "root" ? ` · VDOM ${w.vdom}` : ""}
                                 </button>
                               ))}
                             </div>

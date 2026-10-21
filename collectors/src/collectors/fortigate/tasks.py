@@ -42,8 +42,9 @@ def _no_credentials(target: Target | None) -> str:
     return f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen"
 
 
-def gather(target: Target | None = None) -> dict[str, list]:
-    """FortiGate-Rohdaten (IPv4+IPv6, NAT) - echtes Geraet oder (nur zentral) Beispieldaten."""
+def gather(target: Target | None = None) -> dict:
+    """FortiGate-Rohdaten (IPv4+IPv6, NAT) - echtes Geraet je VDOM (`vdoms`) oder (nur zentral)
+    Beispieldaten als ein VDOM ohne Namen (flach, wie aeltere Clients)."""
     creds = _credentials(target)
     if creds is not None:
         url, token, verify = creds
@@ -108,6 +109,51 @@ def strict_check(target: Target | None = None) -> tuple[bool, str]:
     )
 
 
+def _normalize_vdom(d: dict) -> tuple[list, list, list]:
+    """Regeln, NAT und Objekte eines VDOMs, je Eintrag mit dem VDOM (ADR 0019)."""
+    rules = norm.normalize(
+        d["policies"],
+        d["addresses"],
+        d["groups"],
+        d["services"],
+        d["vips"],
+        d["addresses6"],
+        d["groups6"],
+        d.get("service_groups", []),
+        d.get("policies6", []),
+        d.get("vips6", []),
+    )
+    nat_rules = norm.normalize_nat(
+        d["vips"], d.get("vips6", []), d.get("ldb_monitors", [])
+    ) + norm.normalize_snat(d["ippools"])
+    objects = norm.build_device_objects(
+        d["addresses"],
+        d["groups"],
+        d["addresses6"],
+        d["groups6"],
+        d["vips"],
+        d["ippools"],
+        d["services"],
+        d.get("service_groups", []),
+        d.get("vips6", []),
+    )
+    for item in (*rules, *nat_rules, *objects):
+        item.vdom = d.get("vdom")
+    return rules, nat_rules, objects
+
+
+def _vdom_message(d: dict) -> str | None:
+    """VDOMs des Laufs fuer die Lauf-Meldung; nicht lesbare zuerst (Profil pruefen)."""
+    read = [str(v.get("vdom") or "Standard") for v in d.get("vdoms") or []]
+    skipped = [f"{s['vdom']} ({s['error']})" for s in d.get("skipped") or []]
+    if skipped:
+        return (
+            f"VDOM nicht lesbar: {', '.join(skipped)} - das Profil braucht Lesezugriff auf alle "
+            f"VDOMs; gelesen: {', '.join(read) or '-'}"
+        )
+    return f"VDOMs: {', '.join(read)}" if len(read) > 1 else None
+
+
 def collect_once(
     run_id: str, target: Target | None = None, via_agent: bool = False
 ) -> CollectorResult:
@@ -115,35 +161,16 @@ def collect_once(
     Celery-Worker *und* den externen Standalone-Collector (collectors.run)."""
     try:
         d = gather(target)
-        rules = norm.normalize(
-            d["policies"],
-            d["addresses"],
-            d["groups"],
-            d["services"],
-            d["vips"],
-            d["addresses6"],
-            d["groups6"],
-            d.get("service_groups", []),
-            d.get("policies6", []),
-            d.get("vips6", []),
-        )
-        nat_rules = norm.normalize_nat(
-            d["vips"], d.get("vips6", []), d.get("ldb_monitors", [])
-        ) + norm.normalize_snat(d["ippools"])
-        objects = norm.build_device_objects(
-            d["addresses"],
-            d["groups"],
-            d["addresses6"],
-            d["groups6"],
-            d["vips"],
-            d["ippools"],
-            d["services"],
-            d.get("service_groups", []),
-            d.get("vips6", []),
-        )
+        rules, nat_rules, objects, zones = [], [], [], []
+        for vdom in d.get("vdoms") or [d]:  # Beispieldaten bzw. aeltere Clients: flach
+            r, n, o = _normalize_vdom(vdom)
+            rules += r
+            nat_rules += n
+            objects += o
+            zones += vdom.get("zones") or []
         inventory = norm.normalize_inventory(
             d.get("interfaces"),
-            d.get("zones"),
+            zones,
             d.get("system"),
             target.name if target is not None and target.name else "fortigate",
         )
@@ -153,6 +180,7 @@ def collect_once(
             nat_rules=nat_rules,
             objects=objects,
             inventory=inventory,
+            message=_vdom_message(d),
         )
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
         result = CollectorResult(status="failed", message=diagnose.device_error(exc, "fortigate"))

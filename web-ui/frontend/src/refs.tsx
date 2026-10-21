@@ -439,6 +439,17 @@ export function SideMarks({ r, side }: { r: Rule; side: "src" | "dst" | "service
 }
 
 export const FAMILY_LABEL: Record<string, string> = { v4: "IPv4", v6: "IPv6", dual: "IPv4+IPv6" };
+
+// FortiGate-VDOM (ADR 0019): Policy-IDs und Objektnamen gelten je VDOM. Den Standard-VDOM
+// „root“ nur zeigen, wenn es weitere VDOMs gibt (`always`).
+export function VdomChip({ vdom, always }: { vdom?: string | null; always?: boolean }) {
+  if (!vdom || (vdom === "root" && !always)) return null;
+  return (
+    <span className="chip" title="FortiGate-VDOM – Policy-IDs und Objektnamen gelten je VDOM">
+      VDOM {vdom}
+    </span>
+  );
+}
 const DIFF_LABEL: Record<string, string> = {
   src: "Quelle",
   dst: "Ziel",

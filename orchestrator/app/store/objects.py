@@ -108,9 +108,9 @@ def art(o: DeviceObject) -> str:
 
 
 class Directory:
-    """Firewall-Objekte von Quellsystemen nach Name. FortiGate fuehrt IPv4 (address/addrgrp)
-    und IPv6 (address6/addrgrp6) getrennt - gleiche Namen sind verschiedene Objekte; Gruppen
-    loesen ihre Mitglieder in der eigenen Familie auf."""
+    """Firewall-Objekte von Quellsystemen nach Name je VDOM (ADR 0019). FortiGate fuehrt IPv4
+    (address/addrgrp) und IPv6 (address6/addrgrp6) getrennt - gleiche Namen sind verschiedene
+    Objekte; Gruppen loesen ihre Mitglieder in der eigenen Familie und im eigenen VDOM auf."""
 
     def __init__(
         self, session: Session, source_ids: Iterable[int], names: Iterable[str] | None = None
@@ -121,24 +121,29 @@ class Directory:
             stmt = stmt.where(DeviceObject.name.in_(set(names)))
         rows = session.scalars(stmt) if ids else []
         self.by_id: dict[int, DeviceObject] = {}
-        self._by_name: dict[tuple[int, str, str], list[DeviceObject]] = {}
+        self._by_name: dict[tuple[int, str | None, str, str], list[DeviceObject]] = {}
         for o in rows:
             self.by_id[o.id] = o
-            self._by_name.setdefault((o.source_system_id, art(o), o.name), []).append(o)
+            self._by_name.setdefault((o.source_system_id, o.vdom, art(o), o.name), []).append(o)
 
     def find(
-        self, source_id: int, name: str, kind: str = "addr", family: str | None = None
+        self,
+        source_id: int,
+        name: str,
+        kind: str = "addr",
+        family: str | None = None,
+        vdom: str | None = None,
     ) -> DeviceObject | None:
-        """Objekt nach Name; bei gleichnamigen IPv4/IPv6-Objekten das der Familie (ohne Angabe
-        IPv4 vor familienlosen vor IPv6)."""
-        found = self._by_name.get((source_id, kind, name))
+        """Objekt nach Name im VDOM; bei gleichnamigen IPv4/IPv6-Objekten das der Familie (ohne
+        Angabe IPv4 vor familienlosen vor IPv6)."""
+        found = self._by_name.get((source_id, vdom, kind, name))
         if not found:
             return None
         order = {family: 0} if family else {"v4": 0, None: 1}
         return min(found, key=lambda o: order.get(o.family, 2))
 
     def member(self, group: DeviceObject, name: str) -> DeviceObject | None:
-        return self.find(group.source_system_id, name, art(group), group.family)
+        return self.find(group.source_system_id, name, art(group), group.family, group.vdom)
 
     def expand(self, obj: DeviceObject, seen: set[int] | None = None) -> list[DeviceObject]:
         """Objekt mit allen (verschachtelten) Gruppenmitgliedern derselben Familie."""

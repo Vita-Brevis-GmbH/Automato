@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchRules, fetchRuleSummary, fetchSystems, Rule, RuleDomain, RuleSummary, System } from "./api";
 import type { View, ViewParams } from "./App";
 import RuleDetailDrawer from "./RuleDetail";
-import { FAMILY_LABEL, FamilyMarks, SideMarks } from "./refs";
+import { FAMILY_LABEL, FamilyMarks, SideMarks, VdomChip } from "./refs";
 import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
 // Seitengrösse: Server filtert nach Art/System/Suche, der Rest wird mit "Weitere laden" geholt.
@@ -140,6 +140,7 @@ export default function RulesTable({
   const [dstZone, setDstZone] = useState("");
   const [action, setAction] = useState("");
   const [family, setFamily] = useState("");
+  const [vdom, setVdom] = useState(""); // FortiGate-VDOM (nur mit mehreren VDOMs)
   const [pair, setPair] = useState(""); // IPv4/IPv6-Paar: similar = offen zum Bestätigen
   const [reload, setReload] = useState(0); // nach einer Paar-Entscheidung neu laden
   const [onlyFindings, setOnlyFindings] = useState(false);
@@ -150,6 +151,7 @@ export default function RulesTable({
 
   useEffect(() => {
     setSystem("");
+    setVdom("");
     fetchSystems(tenantId)
       .then(setSystems)
       .catch(() => setSystems([]));
@@ -173,11 +175,12 @@ export default function RulesTable({
       dstZone,
       action,
       family,
+      vdom,
       pair,
       limit: PAGE,
       reload,
     }),
-    [q, tenantId, domain, system, object, objectId, nat, net, netAny, srcZone, dstZone, action, family, pair, reload],
+    [q, tenantId, domain, system, object, objectId, nat, net, netAny, srcZone, dstZone, action, family, vdom, pair, reload],
   );
 
   // Suche und alle Filter wertet der Orchestrator aus (über alle Regeln, nicht nur die erste Seite).
@@ -222,6 +225,9 @@ export default function RulesTable({
   const srcZones = zoneNames(summary?.by_src_zone);
   const dstZones = zoneNames(summary?.by_dst_zone);
   const actions = Object.keys(summary?.by_action ?? {}).sort();
+  // VDOMs (ADR 0019): Filter und „root“ nur, wenn es mehrere gibt
+  const vdoms = summary?.by_vdom ?? [];
+  const multiVdom = vdoms.length > 1;
 
   const filtered = (rules ?? []).filter((r) => !onlyFindings || r.num_unmatched > 0);
   const loaded = rules?.length ?? 0;
@@ -325,6 +331,16 @@ export default function RulesTable({
           <option value="v6">IPv6</option>
           <option value="dual">IPv4+IPv6</option>
         </select>
+        {multiVdom && (
+          <select className="sel" value={vdom} onChange={(e) => setVdom(e.target.value)} title="FortiGate-VDOM der Policy">
+            <option value="">VDOM: alle</option>
+            {vdoms.map(([v, n]) => (
+              <option key={v} value={v}>
+                {v} ({n})
+              </option>
+            ))}
+          </select>
+        )}
         <select
           className="sel"
           value={pair}
@@ -391,7 +407,14 @@ export default function RulesTable({
                     <td>
                       <ActionBadge action={r.action} />
                     </td>
-                    <td>{systemName(r.source_system_id)}</td>
+                    <td>
+                      {systemName(r.source_system_id)}
+                      {r.vdom && (r.vdom !== "root" || multiVdom) && (
+                        <div>
+                          <VdomChip vdom={r.vdom} always={multiVdom} />
+                        </div>
+                      )}
+                    </td>
                     <td>
                       <ZoneChip zone={r.src_zone} />
                     </td>

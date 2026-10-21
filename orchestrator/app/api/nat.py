@@ -47,20 +47,20 @@ class _Context:
             )
             for t in tenants
         }
-        # Regeln je VIP/SNAT-Pool aus dem Regelindex (VIPs auch ueber Gruppen)
-        self.usage: dict[tuple[int, str], set[int]] = defaultdict(set)
+        # Regeln je VIP/SNAT-Pool aus dem Regelindex (VIPs auch ueber Gruppen), je VDOM
+        self.usage: dict[tuple[int, str | None, str], set[int]] = defaultdict(set)
         for t in tenants:
             rule_index.ensure(session, t)
         if tenants:
-            for rule_id, sid, names in session.execute(
-                select(RuleIndex.rule_id, RuleIndex.source_system_id, RuleIndex.nat).where(
-                    RuleIndex.tenant_id.in_(tenants), RuleIndex.nat != ""
-                )
+            for rule_id, sid, vdom, names in session.execute(
+                select(RuleIndex.rule_id, RuleIndex.source_system_id, Rule.vdom, RuleIndex.nat)
+                .join(Rule, Rule.id == RuleIndex.rule_id)
+                .where(RuleIndex.tenant_id.in_(tenants), RuleIndex.nat != "")
             ):
                 for name in names.strip("\n").split("\n"):
-                    self.usage[(sid, name)].add(rule_id)
+                    self.usage[(sid, vdom, name)].add(rule_id)
         # VIP- bzw. Pool-Objekte der Eintraege und ihre Befunde (wie in der Objekt-Ansicht)
-        self.objects: dict[tuple[int, str, str], DeviceObject] = {}
+        self.objects: dict[tuple[int, str | None, str, str], DeviceObject] = {}
         self.issues: dict[int, list[str]] = {}
         for t in tenants:
             objs = list(
@@ -73,12 +73,12 @@ class _Context:
                 )
             )
             for o in objs:
-                self.objects[(o.source_system_id, o.category.value, o.name)] = o
+                self.objects[(o.source_system_id, o.vdom, o.category.value, o.name)] = o
             self.issues.update(objects_store.object_issues(session, t, objs))
 
     def device_object(self, n: NatRule) -> DeviceObject | None:
         category = ObjectCategory.IPPOOL if n.nat_type == "snat_pool" else ObjectCategory.VIP
-        return self.objects.get((n.source_system_id, category.value, n.name))
+        return self.objects.get((n.source_system_id, n.vdom, category.value, n.name))
 
     def check(self, n: NatRule) -> list[str]:
         """Befunde des Eintrags: die des VIP-/Pool-Objekts und ein internes Ziel ohne IPAM."""
@@ -93,7 +93,7 @@ class _Context:
     def out(self, n: NatRule) -> NatOut:
         ctx = self.refs[n.tenant_id]
         candidates = self.servers[n.tenant_id].get(n.mapped_ip or "", [])
-        servers = nat_store.server_names(candidates, n.source_system_id)
+        servers = nat_store.server_names(candidates, n.source_system_id, n.vdom)
         return NatOut(
             id=n.id,
             tenant_id=n.tenant_id,
@@ -114,9 +114,10 @@ class _Context:
             mapped_dns=references.dns_names(ctx, n.mapped_ip),
             server=next(iter(servers), None),
             servers=servers,
-            rule_count=len(self.usage.get((n.source_system_id, n.name.lower()), ())),
+            rule_count=len(self.rule_ids(n)),
             vip_type=n.vip_type,
             family=n.family,
+            vdom=n.vdom,
             targets=[self._target(n, t, ctx) for t in n.targets or []],
             attrs=n.attrs or {},
             issues=self.check(n),
@@ -128,12 +129,12 @@ class _Context:
         candidates = self.servers[n.tenant_id].get(ip or "", [])
         return NatTargetOut(
             **{k: v for k, v in t.items() if k in NatTargetOut.model_fields},
-            servers=nat_store.server_names(candidates, n.source_system_id),
+            servers=nat_store.server_names(candidates, n.source_system_id, n.vdom),
             dns=references.dns_names(ctx, ip),
         )
 
     def rule_ids(self, n: NatRule) -> set[int]:
-        return self.usage.get((n.source_system_id, n.name.lower()), set())
+        return self.usage.get((n.source_system_id, n.vdom, n.name.lower()), set())
 
 
 def _search_fields(o: NatOut) -> tuple[list[str | None], list[str | None]]:

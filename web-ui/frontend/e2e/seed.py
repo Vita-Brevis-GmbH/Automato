@@ -1,10 +1,10 @@
 """Beispieldaten fuer die UI-Tests - aus denselben Testdaten wie die Orchestrator-Tests.
 
-Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), vier FortiGates (eine mit gleichnamigen
-IPv4/IPv6-Objekten und Regelpaaren, eine mit Virtual Server), einem APIC, virtuellen und
-physischen Standorten, NAT/VIPs, Gruppen, Diensten mit Namensschema-Befunden, einem
-ACI-Contract ohne Consumer, einem vCenter mit einer VM hinter H_web01 und einer Applikation
-(AP mit EPG und VM). Alles ueber die oeffentliche bzw. interne API wie im Betrieb.
+Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), fuenf FortiGates (eine mit gleichnamigen
+IPv4/IPv6-Objekten und Regelpaaren, eine mit Virtual Server, eine mit zwei VDOMs), einem APIC,
+virtuellen und physischen Standorten, NAT/VIPs, Gruppen, Diensten mit Namensschema-Befunden,
+einem ACI-Contract ohne Consumer, einem vCenter mit einer VM hinter H_web01 und einer
+Applikation (AP mit EPG und VM). Alles ueber die oeffentliche bzw. interne API wie im Betrieb.
 """
 
 import sys
@@ -18,6 +18,7 @@ import test_ip_family as ipf  # noqa: E402
 import test_search_nat as sn  # noqa: E402
 import test_services as sv  # noqa: E402
 import test_sites as st  # noqa: E402
+import test_vdom as vd  # noqa: E402
 import test_virtual_server as vs  # noqa: E402
 
 TOKEN = {"X-Internal-Token": "dev-only-token"}
@@ -105,6 +106,15 @@ def run(app) -> None:
                 "sources": ["10.9.0.0/16"], "destinations": ["10.20.0.0/24"],
                 "source_refs": [], "destination_refs": []}  # fmt: skip
     run_result(fw4, "fortigate", rules=[*vs.RULES, net_rule], objects=vs.OBJECTS, nat_rules=vs.NAT)
+
+    # FortiGate 5: zwei VDOMs (root, kunde-a) mit gleichen Policy-IDs, Objekt- und VIP-Namen
+    fw5 = system(name="fw-05", platform="fortigate", base_url="https://fw-05.example.ch")
+    ports = [{**i, "device": "fw-05"} for i in vd.RESULT["inventory"]["interfaces"]]
+    inventory = {"devices": [{"name": "fw-05", "role": "firewall"}], "interfaces": ports}
+    run_result(
+        fw5, "fortigate", rules=vd.RESULT["rules"], objects=vd.RESULT["objects"],
+        nat_rules=vd.RESULT["nat_rules"], inventory=inventory,
+    )  # fmt: skip
 
     # APIC: Inventar, Filter als Dienste, Contract ohne Consumer
     apic = system(name="apic-01", platform="cisco_aci", base_url="https://apic.example.ch")

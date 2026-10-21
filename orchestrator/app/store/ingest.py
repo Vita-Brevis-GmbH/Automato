@@ -10,7 +10,8 @@ Endpunkt-Rohwerte (DTO `sources`/`destinations`) sind entweder IP/CIDR
 get_by_name). `all`/`any` → Endpunkt-Kind ANY.
 
 Inventar-Ebene (ADR 0010): die Firewall-Objekte des Quellsystems (`device_object`) werden je
-Lauf ersetzt, Regeln verweisen zusaetzlich per Objektname darauf (`rule_object_ref`).
+Lauf ersetzt, Regeln verweisen zusaetzlich per Objektname darauf (`rule_object_ref`) - im
+VDOM der Regel (ADR 0019: gleiche Namen in zwei VDOMs sind zwei Objekte).
 Findings entstehen nicht mehr hier, sondern im Abgleich (`reconcile`) am Ende des Ingests.
 
 Leistung (Dev-Befund grosse Regelwerke): Werte-Objekte, Zonen, Services und IPAM-Treffer
@@ -168,6 +169,11 @@ class _Cache:
                 .order_by(NetworkObject.id.desc())  # bei Dubletten gilt das aelteste
             )
         }
+        # VIPs je Name und externer IP: gleiche VIP-Namen in zwei VDOMs (bzw. Firewalls) mit
+        # anderer IP sind verschiedene Werte-Objekte (ADR 0019)
+        self.vips: dict[tuple[str, str | None], NetworkObject] = {
+            (o.name, o.value): o for o in self.objects.values() if o.object_class is ObjectClass.VIP
+        }
         self.zones: dict[str, Zone] = {
             z.name: z for z in session.scalars(select(Zone).where(Zone.tenant_id == tenant_id))
         }
@@ -193,6 +199,26 @@ class _Cache:
             for key, val in fields.items():
                 if val is not None:
                     setattr(obj, key, val)
+        return obj
+
+    def vip(self, name: str, extip: str | None) -> NetworkObject:
+        """Werte-Objekt eines VIPs mit seiner externen IP; gleicher Name mit anderer IP (anderer
+        VDOM) = eigenes Objekt."""
+        obj = self.vips.get((name, extip))
+        if obj is None:
+            same = self.objects.get(name)
+            if same is not None and same.object_class is ObjectClass.VIP and not same.value:
+                obj = same  # VIP ohne IP (aelterer Lauf): IP ergaenzen
+                obj.value = extip
+            elif same is None or same.object_class is not ObjectClass.VIP:
+                obj = self.get_or_create(name, object_class=ObjectClass.VIP, value=extip)
+            else:
+                obj = NetworkObject(
+                    tenant_id=self.tenant_id, name=name, object_class=ObjectClass.VIP, value=extip
+                )
+                self.session.add(obj)
+                self._by_value = None
+            self.vips[(name, extip)] = obj
         return obj
 
     def by_value(self, value: str) -> list[NetworkObject]:
@@ -379,8 +405,8 @@ def _resolve_prefixes(session: Session, tenant_id: int) -> PrefixList | None:
     return profile_store.prefixes_for_tenant(session, tenant_id)
 
 
-# (art, name) -> Objekte (IPv4 und IPv6 duerfen gleich heissen); art = addr | svc
-_DEVICE_OBJECTS = dict[tuple[str, str], list[DeviceObject]]
+# (VDOM, art, name) -> Objekte (IPv4 und IPv6 duerfen gleich heissen); art = addr | svc
+_DEVICE_OBJECTS = dict[tuple[str | None, str, str], list[DeviceObject]]
 
 
 def _replace_device_objects(
@@ -400,9 +426,9 @@ def _replace_device_objects(
     seen: set[tuple] = set()
     for o in objects:
         category = ObjectCategory(o.category)
-        if (category, o.family, o.name) in seen:
+        if (o.vdom, category, o.family, o.name) in seen:
             continue  # doppelt geliefert: erstes Objekt gilt
-        seen.add((category, o.family, o.name))
+        seen.add((o.vdom, category, o.family, o.name))
         art = "svc" if category in SERVICE_CATEGORIES else "addr"
         values = list(dict.fromkeys(o.values or ([o.value] if o.value else [])))
         obj = DeviceObject(
@@ -412,6 +438,7 @@ def _replace_device_objects(
             name=o.name,
             obj_type=o.obj_type,
             family=o.family,
+            vdom=o.vdom,
             values=values or None,
             members=o.members or None,
             fqdn=o.fqdn,
@@ -426,17 +453,18 @@ def _replace_device_objects(
             canonical = cache.value_object(values[0])
             obj.network_object_id = canonical.id if canonical is not None else None
         session.add(obj)
-        out[(art, o.name)].append(obj)
+        out[(o.vdom, art, o.name)].append(obj)
     session.flush()
     return out
 
 
 def _device_object(
-    objs: _DEVICE_OBJECTS, art: str, name: str, family: str | None
+    objs: _DEVICE_OBJECTS, art: str, name: str, family: str | None, vdom: str | None = None
 ) -> DeviceObject | None:
-    """Verweis -> Objekt: IPv6-Felder auf IPv6-Objekte, sonst IPv4 vor familienlosen (VIPs,
-    Services) - aeltere Collectors ohne getrennte IPv6-Felder fallen auf irgendeines zurueck."""
-    found = objs.get((art, name))
+    """Verweis -> Objekt im VDOM des Verweises: IPv6-Felder auf IPv6-Objekte, sonst IPv4 vor
+    familienlosen (VIPs, Services) - aeltere Collectors ohne getrennte IPv6-Felder fallen auf
+    irgendeines zurueck."""
+    found = objs.get((vdom, art, name))
     if not found:
         return None
     order = {family: 0} if family else {"v4": 0, None: 1}
@@ -497,12 +525,12 @@ def _vip_targets(session: Session, run, device_objects: _DEVICE_OBJECTS, cache: 
     now = datetime.now(UTC)
     seen: set[tuple] = set()
     created: list[tuple[DeviceObject, object]] = []
-    by_value: dict[tuple[str | None, str], list[DeviceObject]] = defaultdict(list)
+    by_value: dict[tuple[str | None, str | None, str], list[DeviceObject]] = defaultdict(list)
     for objs in device_objects.values():
         for o in objs:
             if o.category is ObjectCategory.ADDRESS and len(o.values or []) == 1:
                 value = str(o.values[0]).removesuffix("/32").removesuffix("/128")
-                by_value[(o.family, value)].append(o)
+                by_value[(o.vdom, o.family, value)].append(o)
 
     def mark(obj: DeviceObject, vip: str) -> None:
         attrs = dict(obj.attrs or {})
@@ -517,21 +545,23 @@ def _vip_targets(session: Session, run, device_objects: _DEVICE_OBJECTS, cache: 
     for nat in nats:
         for t in vip_target_list(nat):
             if t.get("address"):
-                obj = _device_object(device_objects, "addr", str(t["address"]), nat.family)
+                obj = _device_object(
+                    device_objects, "addr", str(t["address"]), nat.family, nat.vdom
+                )
                 if obj is not None:
                     mark(obj, nat.name)
                 continue
             ip = str(t["ip"])
-            existing = by_value.get((nat.family, ip), [])
+            existing = by_value.get((nat.vdom, nat.family, ip), [])
             if existing:  # Adressobjekt mit genau dieser IP: das ist das Ziel
                 for obj in existing:
                     mark(obj, nat.name)
                 continue
             port = str(t["port"]) if t.get("port") else None
             name = f"{nat.name} → {ip}{f':{port}' if port else ''}"[:300]
-            if (nat.family, name) in seen:
+            if (nat.vdom, nat.family, name) in seen:
                 continue
-            seen.add((nat.family, name))
+            seen.add((nat.vdom, nat.family, name))
             target = DeviceObject(
                 tenant_id=run.tenant_id,
                 source_system_id=run.source_system_id,
@@ -539,6 +569,7 @@ def _vip_targets(session: Session, run, device_objects: _DEVICE_OBJECTS, cache: 
                 name=name,
                 obj_type="realserver" if nat.targets else "mapped",
                 family=nat.family,
+                vdom=nat.vdom,
                 values=[ip],
                 comment=f"Internes Ziel von VIP {nat.name}",
                 attrs={
@@ -573,6 +604,7 @@ def _persist_nat(session: Session, run, nat: NormalizedNat) -> None:
             portforward=nat.portforward,
             vip_type=nat.vip_type,
             family=nat.family,
+            vdom=nat.vdom,
             targets=nat.targets or None,
             attrs=nat.attrs or None,
             collector_run_id=run.id,
@@ -603,6 +635,7 @@ def _persist_rule(
         protections=nr.protections or None,
         aci_scope=nr.aci_scope,
         ip_family=nr.family or _values_family([*nr.sources, *nr.destinations]),
+        vdom=nr.vdom,
         raw=nr.raw,
     )
     for role, values in ((EndpointRole.SRC, nr.sources), (EndpointRole.DST, nr.destinations)):
@@ -635,7 +668,8 @@ def _persist_rule(
         position = 0
         for names, family in groups:
             for name in names:
-                dobj = _device_object(objs, art, name, family or ("v4" if split else None))
+                fam = family or ("v4" if split else None)
+                dobj = _device_object(objs, art, name, fam, nr.vdom)
                 rule.refs.append(
                     RuleObjectRef(
                         role=role,
@@ -695,7 +729,7 @@ def _typed_object(cache: "_Cache", kind_tag: str, rest: str) -> NetworkObject:
         # Virtual IP (DNAT): "vip:<name>=<extip>". Ueber die externe IP matchen,
         # den VIP-Namen als Objektname behalten (publizierter Dienst).
         vip_name, _, extip = rest.partition("=")
-        obj = cache.get_or_create(vip_name, object_class=ObjectClass.VIP, value=extip or None)
+        obj = cache.vip(vip_name, extip or None)
         if extip:
             _apply_match(cache, obj, cache.search_by_ip(extip))
         else:

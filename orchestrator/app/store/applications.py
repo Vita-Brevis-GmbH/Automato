@@ -437,8 +437,8 @@ def _object_groups(objs: list[DeviceObject], dns: list[str], prefixes) -> list[d
         rest = naming.parse_object_name(name, prefixes).remainder or name
         ok = naming.short_name(rest) in shorts if shorts else None
         where = [
-            {"id": o.id, "source_system_id": o.source_system_id}
-            for o in sorted(group, key=lambda o: (o.source_system_id, o.id))
+            {"id": o.id, "source_system_id": o.source_system_id, "vdom": o.vdom}
+            for o in sorted(group, key=lambda o: (o.source_system_id, o.vdom or "", o.id))
         ]
         out.append({"name": name, "name_ok": ok, "where": where})
     return sorted(out, key=lambda g: (g["name_ok"] is not True, g["name"]))

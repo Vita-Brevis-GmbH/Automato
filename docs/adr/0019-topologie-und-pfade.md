@@ -5,6 +5,8 @@
 **Entwurf** (2026-10-22) – zur Durchsicht durch den Anwender. Setzt den Topology Service
 aus ADR 0002 und das Epic E7 (ROADMAP) um; baut auf ADR 0018 (Umgebung und Kunden) auf.
 
+**Stufe 1 (VDOM-Kontext) umgesetzt in 0.15.0;** der Test gegen die echten VDOMs steht aus.
+
 Rahmen laut Anwender (2026-10-22):
 
 - Routing lesen ist freigegeben (nur lesend).
@@ -95,6 +97,15 @@ Rahmen laut Anwender (2026-10-22):
      (Kabel, Verbindungen) wäre ein neuer Schreibweg und braucht eine eigene ADR und
      Freigabe.
 8. **Zeichnung** (z. B. draw.io, optional) kommt erst danach.
+9. **Vorgesehen für später** (Anwender, 2026-10-22): normale Switches und weitere Geräte
+   erfassen und ihre **Verkabelung** dokumentieren.
+   - Das Modell trennt darum die L3-Sicht (Routing-Instanzen, Transfernetze) von einer
+     L1/L2-Sicht: Geräte, Ports, Kabel bzw. Verbindungen zwischen Ports, LAGs.
+   - Quellen: gelesen (LLDP/CDP-Nachbarn, die wir bei ACI und FortiGate teilweise schon
+     haben; weitere Plattformen als Collector nach demselben Lesevertrag) und von Hand im
+     Designer.
+   - Ob die Verkabelung auch nach NetBox (Kabel) geht, ist ein neuer Schreibumfang und wird
+     dann eigens freigegeben.
 
 ## Konsequenzen
 
@@ -114,7 +125,16 @@ Rahmen laut Anwender (2026-10-22):
 ## Umsetzung (Stufen)
 
 1. **VDOM-Kontext:** Collector, Datenmodell und Migration; Test gegen die echten VDOMs.
+   Umgesetzt in 0.15.0 (Alembic `0037`):
+   - Der Collector liest `system/vdom` und danach jede Tabelle je VDOM; ein VDOM ohne
+     Leserecht steht in der Lauf-Meldung.
+   - `vdom` an Regel, Objekt, NAT, Interface und Subnetz; Objekte eindeutig je
+     Quellsystem/VDOM/Kategorie/Familie/Name; Paare und Entscheidungen je VDOM.
+   - Zonen bleiben Namen; eine Zone gilt im VDOM ihrer Regel bzw. ihres Interfaces.
+   - Inter-VDOM-Links (`vdom-link`-Interfaces) sind mit ihrem VDOM gelesen; als Kanten folgen
+     sie mit Stufe 2.
 2. **Routing, HA und L3Out lesen** (FortiGate je VDOM, ACI-Border-Leafs).
 3. **Pfade und Relevanz** in Regeln und Applikations-Doku, „Internet“ zusammengefasst.
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde.
 5. **Zeichnung** (optional).
+6. **Später:** Switches und weitere Geräte, Verkabelung (L1/L2-Sicht, siehe Punkt 9).

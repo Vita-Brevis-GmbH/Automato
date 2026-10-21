@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { fetchNat, fetchNatDetail, IpInfo, Nat, NatDetail, NatTarget } from "./api";
 import type { View, ViewParams } from "./App";
-import { IssueChips, VmSection } from "./refs";
+import { IssueChips, VdomChip, VmSection } from "./refs";
 import { ActionBadge, Dash, Drawer, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
 const PAGE = 500; // Einträge je Seite
@@ -184,7 +184,7 @@ function NatDrawer({
   return (
     <Drawer
       title={d?.name ?? "NAT"}
-      sub={d ? `${typeLabel(d)[1]}${d.family === "v6" ? " · IPv6" : ""}` : undefined}
+      sub={d ? `${typeLabel(d)[1]}${d.family === "v6" ? " · IPv6" : ""}${d.vdom ? ` · VDOM ${d.vdom}` : ""}` : undefined}
       onClose={onClose}
     >
       <ErrorBox error={err} />
@@ -379,6 +379,7 @@ export default function NatTable({
   };
 
   const shown = nat ?? [];
+  const multiVdom = new Set(shown.map((n) => n.vdom).filter(Boolean)).size > 1; // „root“ nur dann zeigen
   const loaded = shown.length;
 
   return (
@@ -454,6 +455,7 @@ export default function NatTable({
                         <span className={`chip ${cls}`}>{label}</span>
                         {n.family === "v6" && <span className="chip">IPv6</span>}
                         {n.portforward && <span className="chip ok">Port-Forward</span>}
+                        <VdomChip vdom={n.vdom} always={multiVdom} />
                       </td>
                       <td>
                         <span className="mono">{addr(n.ext_ip, n.ext_port) ?? "–"}</span>

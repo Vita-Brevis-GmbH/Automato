@@ -88,16 +88,26 @@ class RuleIpRange(Base):
 
 class RulePairDecision(Base):
     """IPv4/IPv6-Paar von Hand bestaetigt bzw. abgelehnt (0.12.0). Gespeichert ueber die
-    Policy-IDs der FortiGate (`Rule.external_id`), damit es jedes neue Einlesen uebersteht."""
+    Policy-IDs der FortiGate (`Rule.external_id`) je VDOM, damit es jedes neue Einlesen
+    uebersteht; ohne VDOM (vor 0.15.0 entschieden) gilt es fuer jeden VDOM der Firewall."""
 
     __tablename__ = "rule_pair_decision"
-    __table_args__ = (UniqueConstraint("source_system_id", "v4_external_id", "v6_external_id"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "source_system_id",
+            "vdom",
+            "v4_external_id",
+            "v6_external_id",
+            name="uq_rule_pair_decision_source_vdom_ids",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tenant_id: Mapped[int] = mapped_column(Integer, index=True)
     source_system_id: Mapped[int] = mapped_column(
         ForeignKey("source_system.id", ondelete="CASCADE"), index=True
     )
+    vdom: Mapped[str | None] = mapped_column(String(64), nullable=True)
     v4_external_id: Mapped[str] = mapped_column(String(200))
     v6_external_id: Mapped[str] = mapped_column(String(200))
     decision: Mapped[str] = mapped_column(String(12))  # confirmed | rejected

@@ -86,7 +86,7 @@ umgekehrt) = neuer/anderer Adapter, keine Änderung am Rest der Plattform.
   `docs/BETRIEB.md`. Der frühere ausführliche Statusverlauf (bis 0.4.2) steht in
   `docs/ENTWICKLUNGSVERLAUF.md`.
 
-## Aktueller Stand (0.14.1)
+## Aktueller Stand (0.15.0)
 
 UC1 „Firewall-Regel-Dokumentation (read-only)“ ist für Model 2 (FortiGate + NetBox) und
 Model 1 (FortiGate + ACI + Infoblox) umgesetzt; Phase A ist gegen die echten Systeme abgenommen.
@@ -94,9 +94,9 @@ Produktiv erst später – jetzt wird erweitert und verbessert.
 
 | Bereich | Stand | Verweise |
 |---|---|---|
-| Collector | FortiGate (Policies inkl. ISDB/Identität/ZTNA/Negation, `policy6`, Objekte **IPv4/IPv6 getrennt** (gleiche Namen = verschiedene Objekte), Services mit Attributen, VIPs/IP-Pools, **Virtual Server** (Real Server, Methode, Health-Checks, `vip6`), Interfaces, UTM), APIC (Contracts tenant-bewusst per DN, externe EPGs, vzAny, Contract-Interfaces, **ESGs, Taboo, Preferred Groups**, Contract Master, Intra-EPG, Filter als Services, Inventar), **VMware vCenter** (pyVmomi, nur lesende vSphere-Methoden: VMs mit NICs/IPs, Hosts, Cluster, Portgruppen), Infoblox DDI + NetBox als Referenz | Lesevertrag `docs/collectors-read-contract.md`, ADR 0010, 0017 |
+| Collector | FortiGate (**alle VDOMs** einzeln (`system/vdom`, `vdom=`; VDOM an Regel/Objekt/NAT/Interface), Policies inkl. ISDB/Identität/ZTNA/Negation, `policy6`, Objekte **IPv4/IPv6 getrennt** (gleiche Namen = verschiedene Objekte), Services mit Attributen, VIPs/IP-Pools, **Virtual Server** (Real Server, Methode, Health-Checks, `vip6`), Interfaces, UTM), APIC (Contracts tenant-bewusst per DN, externe EPGs, vzAny, Contract-Interfaces, **ESGs, Taboo, Preferred Groups**, Contract Master, Intra-EPG, Filter als Services, Inventar), **VMware vCenter** (pyVmomi, nur lesende vSphere-Methoden: VMs mit NICs/IPs, Hosts, Cluster, Portgruppen), Infoblox DDI + NetBox als Referenz | Lesevertrag `docs/collectors-read-contract.md`, ADR 0010, 0017, 0019 |
 | Agent | externer Windows-Agent (Pull, `--poll --watch 20`/`--check`), Geräte + Zugangsdaten zentral, Selbst-Update, **signierte Updates**, mTLS über das **Agent-Gateway** | ADR 0008, 0009, 0011, 0013 |
-| Store/Abgleich | Regeln, Objekte (eindeutig je Familie), Inventar, Referenzstand, Findings als abgeleiteter Zustand (je Befund Satz + Hinweis, `store/finding_text.py`), IPAM-Namen ohne Präfix (`naming.server_name`), **VMs/Portgruppen** mit Zuordnung Portgruppe → EPG (`store/virtual.py`: Name `Tenant\|AP\|EPG`, ohne Präfixe, VLAN), NetBox-Sync mit Abschnitten Netzinventar, DDI-Spiegel, **Virtualisierung**; Einlesen mit Zwischenspeicher je Lauf | ADR 0004, 0010, 0016, 0017 |
+| Store/Abgleich | Regeln, Objekte (eindeutig je VDOM und Familie), Inventar, Referenzstand, Findings als abgeleiteter Zustand (je Befund Satz + Hinweis, `store/finding_text.py`), IPAM-Namen ohne Präfix (`naming.server_name`), **VMs/Portgruppen** mit Zuordnung Portgruppe → EPG (`store/virtual.py`: Name `Tenant\|AP\|EPG`, ohne Präfixe, VLAN), NetBox-Sync mit Abschnitten Netzinventar, DDI-Spiegel, **Virtualisierung**; Einlesen mit Zwischenspeicher je Lauf | ADR 0004, 0010, 0016, 0017 |
 | Regelindex/Suche/NAT | **abgeleiteter Regelindex** (`store/rule_index.py`: Suchtext, Listenzeile, Objekt-Nutzung direkt/über Gruppen, IP-Bereiche) – Suche über alles per SQL, Regel-Zahl bei Objekten, Filter `object`/`object_id`/`nat`/`family`; **IPv4/IPv6-Paare** (`store/rule_pairs.py`, nur Markierung, von Hand bestätigen/ablehnen: `RulePairDecision` an der Policy-ID); **VIP-Ziele** als Objekte (`vip_target`, `vip_of`; zählen die Regeln der VIP); NAT mit DNS, Server, Regeln; Messskript `scripts/bench_large_ruleset.py` | ADR 0016 |
 | Applikationen | eigenes Objekt mit AP/EPG/Server, externem/internem Namen, Zweck Dev/Test/Prod, **Vorschläge per Projektnummer**; **Klick öffnet die Doku** (`store/applications.build_doc`): Übersicht, alle VMs, EPGs (ganzer ACI-Pfad), Regeln wie in der Regel-Ansicht mit Treffern je System (Richtung, Bezug, spezifisch/unspezifisch: Subnetz, any, vzAny, Preferred Group), Filter, Erklärung im Detail, Findings, 10 Kategorien für Markdown/Druck; Doku je System; Regeln je Subnetz; publizierte Dienste (VIPs) | ADR 0012 (Ergänzungen 0.10.0, 0.14.0), 0017 |
 | Standorte | **virtuell** (000, 001; in Netz-/Cluster-Namen) und **physisch** (Ort-Code, z. B. chzrh1), n:m-Zuordnung; Vorschlag aus Namen (`store/sites.py`), NetBox-Site-Gruppen; VMs ohne Standort im Namen | ADR 0015 |
@@ -104,22 +104,22 @@ Produktiv erst später – jetzt wird erweitert und verbessert.
 | Sicherheit | Keycloak (OIDC/PKCE, OTP, SAML-Vorlage), Rollen viewer/operator/admin, Mandanten-Scoping, Audit mit Allowlist (+ optional verschlüsselt), Secrets-Provider, Zugangsdaten Fernet, fail-closed Defaults | ADR 0005, 0007, 0013 |
 | Web-UI | alle Ansichten nach Mockup, seitenweise Listen mit Gesamtzahl; Ports kompakt mit Detail, Portgruppen-Detail (EPG, Subnetze, VMs) | `web-ui/frontend/` |
 
-Tests: orchestrator 224, collectors 94, sot-gateway 14, UI (Playwright) 43; dazu die CI gegen
+Tests: orchestrator 228, collectors 96, sot-gateway 14, UI (Playwright) 44; dazu die CI gegen
 Postgres inkl. `alembic check`, Image-Builds und nächtlicher Lauf (`docs/TESTS.md`).
 
 ## Offen / nächste Schritte
 
 Reihenfolge laut Anwender (ROADMAP „Nächste Arbeiten“); 0.11–0.14 sind gegen die echten
-Systeme abgenommen:
+Systeme abgenommen, 0.15.0 (VDOMs) steht zur Abnahme an:
 
 - **ADR 0018** (Umgebung und Kunden, Entwurf): eine Instanz je Umgebung; Quellsysteme der
   Umgebung, vollständig gelesen; Kunden als Ausschnitt über **Selektoren** (ACI-Tenant/VRF/
   AP/EPG, VDOM/Zone/Interface, Präfixe, ein- und ausschliessend), Zugehörigkeit abgeleitet;
   später Kunden-Benutzer (`customer_ids`) mit serverseitiger Einschränkung.
-- **ADR 0019** (Topologie und Pfade, Entwurf): zuerst **VDOM-Kontext** (heute liest der
-  FortiGate-Collector nur den Standard-VDOM), dann Routing (wirksame RIB, BGP-Tabelle,
-  ECMP), HA/Session-Sync, ACI-L3Out mit Border-Leafs lesen; Pfade und Regel-Relevanz;
-  Designer.
+- **ADR 0019** (Topologie und Pfade, Entwurf): **VDOM-Kontext umgesetzt (0.15.0,** Test
+  gegen die echten VDOMs offen), dann Routing (wirksame RIB, BGP-Tabelle, ECMP),
+  HA/Session-Sync, ACI-L3Out mit Border-Leafs lesen; Pfade und Regel-Relevanz; Designer;
+  später Switches/Verkabelung (L1/L2-Sicht).
 - Danach: Applikationen (Regeln direkt zuordnen, Abhängigkeiten), produktiv schalten mit den
   R14-Massnahmen (ADR 0013, RISKS), Cockpit (ADR 0014), Import-Wizard (E3); Schreibpfad (E4)
   nur mit eigener ADR.

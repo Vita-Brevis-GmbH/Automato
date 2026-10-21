@@ -305,9 +305,10 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.13.0** | Ansicht „Läufe“ (alle, seitenweise, Filter); Übersicht zeigt alle offenen Läufe; Ports kompakt mit Detail; Portgruppen im Detail (EPG, Subnetze, VMs) |
 | **0.14.0–0.14.1** | Applikationen: Doku im Mittelpunkt (Übersicht, alle VMs, EPGs mit ganzem ACI-Pfad, Regeln mit Richtung/Bezug spezifisch–unspezifisch, Filter, Erklärung, Links), externer/interner Name, Zweck Dev/Test/Prod; NAT/VIPs mit Prüfung; VM-Angaben in den Detailansichten; Läufe unter Administration; Regeln mit Objekt (Host/Netz/any) und VMs darin, Firewall-Objekte je Name, Listen mit Scrollbalken im Bild |
 
-### Nächste Arbeiten (Stand 0.14.1)
+### Nächste Arbeiten (Stand 0.15.0)
 
-Phase A und die Stände 0.11–0.14 sind gegen die echten Systeme abgenommen. Konzeptbefund
+Phase A und die Stände 0.11–0.14 sind gegen die echten Systeme abgenommen; 0.15.0 (VDOMs)
+steht zur Abnahme an. Konzeptbefund
 des Anwenders: Ohne Routing, Verbindungswege und Redundanzen zeigt die Doku Zugriffe, die
 routingtechnisch nicht möglich sind, und `any` aus dem Internet wie eine Liste aller
 Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
@@ -315,15 +316,16 @@ Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
 1. **ADR 0018 und 0019 durchsehen** (Entwurf): Umgebung und Kunden (eine Instanz je
    Umgebung, Kunden als Ausschnitt über Selektoren, Kunden-Benutzer über Keycloak) und
    Topologie/Pfade.
-2. **VDOM-Kontext** (ADR 0019, Stufe 1): alle VDOMs lesen, VDOM an Policies, Objekten,
-   Interfaces, Zonen; Test gegen die echten VDOMs. Heute liest der Collector nur den
-   Standard-VDOM.
+2. **VDOM-Kontext** (ADR 0019, Stufe 1) – **umgesetzt in 0.15.0:** alle VDOMs lesen, VDOM an
+   Policies, Objekten, NAT, Interfaces und Subnetzen. Offen: Test gegen die echten VDOMs
+   (Read-only-Profil mit Zugriff auf alle VDOMs).
 3. **Umgebung und Kunden** (ADR 0018): Selektoren, abgeleitete Zugehörigkeit, Kunden-Filter,
    danach Kunden-Benutzer mit serverseitiger Einschränkung.
 4. **Routing, HA und L3Out lesen, Pfade und Relevanz** (ADR 0019, Stufen 2–3): Regeln nur,
    wo der Verkehr durchkommt; „Internet“ zusammengefasst; Befund bei abweichenden Regeln
    zweier Session-Sync-Cluster.
-5. **Designer** (ADR 0019, Stufe 4), Zeichnung später.
+5. **Designer** (ADR 0019, Stufe 4), Zeichnung später. Vorgesehen: normale Switches und
+   weitere Geräte erfassen, Verkabelung dokumentieren (L1/L2-Sicht neben dem Routing).
 6. **Applikationen ausbauen:** Regeln direkt zuordnen, Abhängigkeiten zwischen
    Applikationen.
 7. **Produktiv schalten** (ADR 0013) mit den R14-Massnahmen; **Cockpit** für mehrere
