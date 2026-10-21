@@ -66,11 +66,14 @@ def start_collect_all(
         key=lambda s: (s.platform not in REFERENCE_PLATFORMS, s.name.lower()),
     )
     items: list[CollectAllItem] = []
+    runs.expire_stale(session)  # haengende Laeufe blockieren nicht mehr (Dev-Befund 0.11.3)
     for src in sources:
         item = CollectAllItem(source_system_id=src.id, name=src.name, platform=src.platform.value)
         items.append(item)
-        if runs.busy(session, src.id):
-            item.skipped = "Lauf läuft bzw. wartet bereits"
+        open_run = runs.blocking(session, src.id)
+        if open_run is not None:
+            item.skipped = runs.describe(session, open_run)
+            item.blocking_run_id = open_run.id
             continue
         try:
             run = runs.queue_collect(
@@ -102,6 +105,7 @@ def _run_out(run: CollectorRun) -> CollectorRunOut:
         execution=run.execution,
         trigger=run.trigger,
         queued_at=run.queued_at,
+        started_at=run.started_at,
         finished_at=run.finished_at,
     )
 
@@ -114,6 +118,7 @@ def list_runs(
     session: Session = Depends(get_session, scope="function"),
 ):
     """Letzte Laeufe (neueste zuerst). Nicht-Admin sieht nur Laeufe seiner Mandanten."""
+    runs.expire_stale(session)  # haengende Laeufe nicht als "laeuft" anzeigen
     query = select(CollectorRun).order_by(CollectorRun.queued_at.desc()).limit(limit)
     if tenant_id is not None:
         tenant_scope(principal, tenant_id)  # fremder Mandant -> 403
@@ -133,4 +138,22 @@ def get_run(
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     tenant_scope(principal, run.tenant_id)  # Mandanten-Zugriff pruefen
+    return _run_out(run)
+
+
+@router.post("/{run_id}/cancel", response_model=CollectorRunOut)
+def cancel_run(
+    run_id: str,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Offenen Lauf beenden (haengt z. B. nach einem Neustart des Agenten). Liefert der Agent
+    danach doch noch ab, wird das Ergebnis trotzdem eingespielt."""
+    run = session.get(CollectorRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    tenant_scope(principal, run.tenant_id)
+    if run.status not in runs.OPEN:
+        raise HTTPException(status_code=409, detail="run already finished")
+    runs.cancel(session, run, actor=f"user:{principal.subject}")
     return _run_out(run)

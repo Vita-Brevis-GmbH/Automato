@@ -60,6 +60,9 @@ def run_target(run_id: str, session: Session = Depends(get_session, scope="funct
         raise HTTPException(status_code=404, detail="run not found")
     if run.execution != "inprocess":
         raise HTTPException(status_code=403, detail="run is executed by an agent")
+    if run.status is RunStatus.QUEUED:  # zentraler Worker beginnt: wie das Abholen beim Agenten
+        run.status = RunStatus.RUNNING
+        run.started_at = datetime.now(UTC)
     src = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
     if src is None:
         return {"target": None}

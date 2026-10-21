@@ -164,3 +164,20 @@ test("VMware: VM mit Portgruppe → EPG, Regeln der VM", async ({ page }) => {
   await expect(page).toHaveURL(/#regeln\?q=web01-007-ka/);
   await expect(rows(page).filter({ hasText: "dmz-to-web" })).toHaveCount(1);
 });
+
+test("Alle einlesen: offenen Lauf abbrechen und neu starten", async ({ page }) => {
+  await page.goto("/#uebersicht");
+  const modal = page.locator(".modal");
+  for (const round of [1, 2]) {
+    await page.click("button:has-text('Alle einlesen')");
+    await modal.locator("button.btn-primary").click();
+    await expect(modal).toContainText("Läufe angelegt");
+    if (round === 1) await modal.locator("button:has-text('Schliessen')").click();
+  }
+  const row = modal.locator("tr", { hasText: "fw-02" }); // zentraler Worker, Lauf bleibt offen
+  await expect(row).toContainText("übersprungen: Lauf wartet seit");
+  await expect(row).toContainText("auf den zentralen Worker");
+  await row.locator("button:has-text('Abbrechen & neu starten')").click();
+  await expect(row).toContainText("läuft");
+  await expect(row).not.toContainText("übersprungen");
+});

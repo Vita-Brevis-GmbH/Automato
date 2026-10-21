@@ -66,6 +66,7 @@ def claim_next_run(
         return None
     run.status = RunStatus.RUNNING
     run.agent_id = agent.id
+    run.started_at = datetime.now(UTC)
     session.flush()
     return run
 

@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     scheduler_interval_seconds: int = 30
     scheduler_timezone: str = "Europe/Zurich"
 
+    # Haengende Laeufe beenden (Agent beendet, Ergebnis-Upload verloren): laufend ohne
+    # Ergebnis nach so vielen Minuten, wartend (nicht abgeholt) nach so vielen Stunden. Ein
+    # spaeter eintreffendes Ergebnis wird trotzdem eingespielt.
+    run_timeout_minutes: int = 120
+    run_queue_timeout_hours: int = 24
+
     # Agent-Paket fuer den Download im UI (Wheel + Windows-Skripte, ADR 0008); im Image von
     # der Dockerfile-Stage "agent-package" befuellt.
     agent_package_dir: str = "/workspace/agent-package"

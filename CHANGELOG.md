@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.11.3 – 2026-10-21
+
+Korrektur: „Alle einlesen“ übersprang ACI und DDI, obwohl nichts lief (Alembic `0033`).
+
+- **Ursache:** Ein Lauf, den ein Agent abgeholt, aber nie abgeschlossen hatte (Agent beendet
+  bzw. neu gestartet, Ergebnis-Upload verloren), stand für immer auf „läuft“. Er blockierte
+  „Alle einlesen“ und den Zeitplan. In der Übersicht war er nicht zu sehen (nur die letzten
+  acht Läufe); „Jetzt einlesen“ prüft nicht auf offene Läufe und ging deshalb.
+- **Hängende Läufe werden beendet:**
+  - laufend ohne Ergebnis nach 120 min (`AUTOMATO_RUN_TIMEOUT_MINUTES`, ab dem Abholen);
+  - nicht abgeholt nach 24 h (`AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS`).
+  - Ein später eintreffendes Ergebnis wird trotzdem eingespielt.
+- **Abbrechen von Hand** (Operator): „Abbrechen“ bei offenen Läufen in der Übersicht,
+  „Abbrechen & neu starten“ im Dialog „Alle einlesen“ (`POST /jobs/{id}/cancel`, auditiert).
+- **Genauer Grund beim Überspringen**, z. B. „Lauf läuft seit 21.10. 09:12 (Agent
+  „agent-01“)“ oder „Lauf wartet seit … auf den zentralen Worker“.
+- **Agent:** Scheitert der Ergebnis-Upload (z. B. HTTP 413, Zeitüberschreitung), meldet er den
+  Lauf kurz als fehlgeschlagen („Ergebnis-Upload fehlgeschlagen: …“), statt ihn offen zu
+  lassen.
+- Läufe tragen den Beginn (`started_at`: abgeholt bzw. vom zentralen Worker gestartet).
+
 ## 0.11.2 – 2026-10-21
 
 Korrekturen aus dem Betrieb gegen die echten Systeme.

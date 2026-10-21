@@ -35,6 +35,7 @@ class CollectorRunOut(BaseModel):
     execution: str = "inprocess"
     trigger: str = "manual"  # manual | schedule
     queued_at: datetime | None = None
+    started_at: datetime | None = None  # abgeholt bzw. vom zentralen Worker gestartet
     finished_at: datetime | None = None
 
 
@@ -49,6 +50,7 @@ class CollectAllItem(BaseModel):
     run_id: str | None = None
     execution: str | None = None
     skipped: str | None = None  # Grund, wenn kein Lauf angelegt wurde
+    blocking_run_id: str | None = None  # offener Lauf, der das Quellsystem belegt (abbrechbar)
 
 
 class CollectAllResponse(BaseModel):

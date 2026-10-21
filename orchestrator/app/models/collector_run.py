@@ -44,6 +44,9 @@ class CollectorRun(Base):
     queued_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    # abgeholt (Agent) bzw. vom zentralen Worker gestartet - Grundlage fuer das Ablaufen
+    # haengender Laeufe (`store.runs.expire_stale`)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rule_count: Mapped[int | None] = mapped_column(nullable=True)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)

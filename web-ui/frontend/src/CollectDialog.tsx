@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Agent, CollectAllItem, fetchAgents, startCollect, startCollectAll, System, Tenant } from "./api";
+import { Agent, cancelRun, CollectAllItem, fetchAgents, startCollect, startCollectAll, System, Tenant } from "./api";
 import type { View } from "./App";
 import { PLATFORM_LABEL, REFERENCE_PLATFORMS } from "./refs";
 import { ErrorBox, Modal, Note } from "./ui";
@@ -256,6 +256,32 @@ export function CollectAllDialog({
     }
   };
 
+  // Hängender Lauf (z. B. Agent neu gestartet): abbrechen und für dieses System neu anlegen
+  const restart = async (item: CollectAllItem) => {
+    if (!item.blocking_run_id) return;
+    setErr(null);
+    try {
+      await cancelRun(item.blocking_run_id);
+      const src = systems.find((s) => s.id === item.source_system_id);
+      const res = await startCollect({
+        platform: item.platform,
+        tenant_id: tenantId,
+        source_system_id: item.source_system_id,
+        execution: src?.agent_id != null ? "external" : "inprocess",
+      });
+      setItems((prev) =>
+        (prev ?? []).map((i) =>
+          i.source_system_id === item.source_system_id
+            ? { ...i, run_id: res.run_id, execution: res.execution, skipped: null, blocking_run_id: null }
+            : i,
+        ),
+      );
+      onStarted();
+    } catch (e) {
+      setErr(e);
+    }
+  };
+
   const queued = items?.filter((i) => i.run_id).length ?? 0;
   return (
     <Modal
@@ -305,9 +331,21 @@ export function CollectAllDialog({
                   ) : i.run_id ? (
                     <span className="chip ok">{i.execution === "external" ? "wartet auf Agent" : "läuft"}</span>
                   ) : (
-                    <span className="chip warn" title={i.skipped ?? ""}>
-                      übersprungen: {i.skipped}
-                    </span>
+                    <>
+                      <span className="chip warn" title={i.skipped ?? ""}>
+                        übersprungen: {i.skipped}
+                      </span>
+                      {i.blocking_run_id && (
+                        <button
+                          className="linkbtn"
+                          style={{ marginLeft: 6 }}
+                          title="Den offenen Lauf beenden (z. B. hängt er nach einem Neustart des Agenten) und neu einlesen. Liefert der Agent doch noch ab, wird das Ergebnis eingespielt."
+                          onClick={() => restart(i)}
+                        >
+                          Abbrechen &amp; neu starten
+                        </button>
+                      )}
+                    </>
                   )}
                 </td>
               </tr>

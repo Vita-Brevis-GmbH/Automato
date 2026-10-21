@@ -70,6 +70,9 @@ services:
       # Orchestrator-Prozessen nur einmal ausgeloest.
       AUTOMATO_SCHEDULER_ENABLED: ${AUTOMATO_SCHEDULER_ENABLED:-true}
       AUTOMATO_SCHEDULER_TIMEZONE: ${AUTOMATO_SCHEDULER_TIMEZONE:-Europe/Zurich}
+      # haengende Laeufe beenden: laufend ohne Ergebnis (min) bzw. nicht abgeholt (h)
+      AUTOMATO_RUN_TIMEOUT_MINUTES: ${AUTOMATO_RUN_TIMEOUT_MINUTES:-120}
+      AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS: ${AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS:-24}
       # Agent-Kanal nur ueber das mTLS-Agent-Gateway (Profil agent-gateway): off | require | bind
       AUTOMATO_INTERNAL_MTLS_MODE: ${AUTOMATO_INTERNAL_MTLS_MODE:-off}
       AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}

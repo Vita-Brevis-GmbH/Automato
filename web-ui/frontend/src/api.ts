@@ -384,6 +384,7 @@ export interface Run {
   execution: string; // inprocess | external
   trigger: string; // manual | schedule
   queued_at: string | null;
+  started_at?: string | null; // abgeholt bzw. vom zentralen Worker gestartet
   finished_at: string | null;
 }
 
@@ -988,7 +989,10 @@ export interface CollectAllItem {
   run_id: string | null;
   execution: string | null;
   skipped: string | null;
+  blocking_run_id?: string | null; // offener Lauf, der das Quellsystem belegt (abbrechbar)
 }
+// Offenen Lauf beenden (operator) – z. B. hängt er nach einem Neustart des Agenten
+export const cancelRun = (runId: string) => sendJSON<Run>(`/api/jobs/${runId}/cancel`, "POST", {});
 export const startCollectAll = (tenantId: number) =>
   sendJSON<{ queued: number; items: CollectAllItem[] }>("/api/jobs/collect-all", "POST", { tenant_id: tenantId });
 

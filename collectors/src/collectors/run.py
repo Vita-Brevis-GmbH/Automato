@@ -238,7 +238,19 @@ def _execute(platform: str, run_id: str, target: Target | None, via_agent: bool)
         result = CollectorResult(status="failed", message=_unsupported(platform))
         result = confirmed(result, submit_result(run_id, result, via_agent=via_agent))
     else:
-        result = runner(run_id, target, via_agent=via_agent)
+        try:
+            result = runner(run_id, target, via_agent=via_agent)
+        except httpx.HTTPError as exc:
+            # Ergebnis nicht abgeliefert (z. B. zu gross, Zeitueberschreitung): den Lauf mit
+            # kurzer Meldung beenden statt ihn offen zu lassen - ein offener Lauf blockierte
+            # "Alle einlesen" und den Zeitplan (Dev-Befund 0.11.3)
+            result = CollectorResult(
+                status="failed", message=f"Ergebnis-Upload fehlgeschlagen: {_describe(exc)}"
+            )
+            try:
+                result = confirmed(result, submit_result(run_id, result, via_agent=via_agent))
+            except httpx.HTTPError:
+                raise exc from None  # Orchestrator ganz weg: der erste Fehler sagt mehr
     label = f" ({target.name})" if target and target.name else ""
     print(f"{platform} run {run_id}{label}: {result.status}")
     if result.message:

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchRuns, fetchSystems, Run, System, Tenant } from "./api";
+import { cancelRun, fetchRuns, fetchSystems, Run, System, Tenant } from "./api";
 import type { Stats, View } from "./App";
 import type { Me } from "./auth";
 import CollectDialog, { CollectAllDialog } from "./CollectDialog";
@@ -206,7 +206,19 @@ export default function Overview({
                           </div>
                         )}
                       </td>
-                      <td className="mono">{fmtTime(r.finished_at ?? r.queued_at)}</td>
+                      <td className="mono">
+                        {fmtTime(r.finished_at ?? r.started_at ?? r.queued_at)}
+                        {me.isOperator && (r.status === "queued" || r.status === "running") && (
+                          <button
+                            className="linkbtn"
+                            style={{ marginLeft: 6 }}
+                            title="Lauf beenden (z. B. hängt er nach einem Neustart des Agenten). Liefert der Agent doch noch ab, wird das Ergebnis eingespielt."
+                            onClick={() => cancelRun(r.id).then(loadRuns, setRunsErr)}
+                          >
+                            Abbrechen
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

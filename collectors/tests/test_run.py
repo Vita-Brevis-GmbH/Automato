@@ -208,6 +208,9 @@ def test_http_fehler_beim_upload_ohne_traceback(monkeypatch, capsys):
         raise httpx.HTTPStatusError("500", request=request, response=response)
 
     monkeypatch.setattr(t, "submit_result", upload)
+    import collectors.run as run
+
+    monkeypatch.setattr(run, "submit_result", upload)  # auch die kurze Fehlermeldung scheitert
     assert main(["--platform", "fortigate", "--run-id", "abc"]) == 1
     err = capsys.readouterr().err
     assert "Orchestrator-Aufruf fehlgeschlagen: HTTP 500" in err and "Traceback" not in err
@@ -356,3 +359,32 @@ def test_watch_nur_mit_poll_und_mindestintervall(monkeypatch):
 
     assert run._watch(None, 1, 0.5, clock=lambda: now[0], sleep=sleep) == 0
     assert set(waits) == {run.MIN_WATCH_SECONDS}
+
+
+def test_ergebnis_upload_scheitert_lauf_wird_trotzdem_beendet(monkeypatch):
+    """Dev-Befund 0.11.3: scheiterte der Ergebnis-Upload (z. B. HTTP 413, Zeitueberschreitung),
+    blieb der Lauf offen und blockierte "Alle einlesen". Jetzt meldet der Agent kurz failed."""
+    import httpx
+
+    import collectors.run as run
+
+    runs = iter([{"platform": "cisco_aci", "run_id": "r9", "target": None}])
+    monkeypatch.setattr(run.agent_api, "next_run", lambda platform=None: next(runs, None))
+    request = httpx.Request("POST", "https://automato.example.ch/internal/collector-runs/r9/result")
+
+    def too_big(run_id, target, via_agent=False):
+        raise httpx.HTTPStatusError(
+            "too large", request=request, response=httpx.Response(413, request=request)
+        )
+
+    monkeypatch.setitem(run.RUNNERS, "cisco_aci", too_big)
+    sent = {}
+
+    def submit(run_id, result, via_agent=False):
+        sent.update(run_id=run_id, status=result.status, message=result.message)
+        return {"run_id": run_id, "status": "failed", "message": result.message}
+
+    monkeypatch.setattr(run, "submit_result", submit)
+    assert run.main(["--poll"]) == 1
+    assert sent["run_id"] == "r9" and sent["status"] == "failed"
+    assert sent["message"].startswith("Ergebnis-Upload fehlgeschlagen: HTTP 413")

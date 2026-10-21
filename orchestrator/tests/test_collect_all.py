@@ -38,9 +38,89 @@ def test_alle_einlesen(client):
     )
     assert items["ddi-01"]["source_system_id"] == ddi["id"]
 
-    # zweiter Klick: wartende Laeufe nicht doppelt anlegen
+    # zweiter Klick: wartende Laeufe nicht doppelt anlegen; der Grund sagt, worauf sie warten
     again = client.post("/jobs/collect-all", json={"tenant_id": tid}, headers=operator).json()
     assert again["queued"] == 0
-    assert {i["skipped"] for i in again["items"] if i["name"] != "nb"} == {
-        "Lauf läuft bzw. wartet bereits"
+    skipped = {i["name"]: i for i in again["items"]}
+    assert skipped["ddi-01"]["skipped"].startswith("Lauf wartet seit ")
+    assert skipped["ddi-01"]["skipped"].endswith("auf Agent „agent-a“")
+    assert skipped["fw-01"]["skipped"].endswith("auf den zentralen Worker")
+    assert skipped["ddi-01"]["blocking_run_id"] == items["ddi-01"]["run_id"]
+
+
+def _set(session_factory, run_id, **values):
+    from app.models import CollectorRun
+
+    s = session_factory()
+    run = s.get(CollectorRun, run_id)
+    for k, v in values.items():
+        setattr(run, k, v)
+    s.commit()
+    s.close()
+
+
+def test_haengender_lauf_blockiert_nicht_mehr(client, session_factory):
+    """Dev-Befund 0.11.3: ACI und DDI wurden bei "Alle einlesen" uebersprungen, obwohl nichts
+    lief - ein abgeholter Lauf ohne Ergebnis (Agent beendet) blieb fuer immer "laeuft"."""
+    from datetime import UTC, datetime, timedelta
+
+    tid = _tenant(client)
+    agent_id, token = _agent(client, tid)
+    ddi = _ddi(client, tid, agent_id=agent_id)
+    operator = {"X-Dev-Roles": "operator", "X-Dev-Tenants": str(tid)}
+    first = client.post("/jobs/collect-all", json={"tenant_id": tid}, headers=operator).json()
+    run_id = first["items"][0]["run_id"]
+    claimed = client.get("/internal/agent/next-run", headers={"X-Agent-Token": token}).json()
+    assert claimed["run"]["run_id"] == run_id
+    run = client.get(f"/jobs/{run_id}").json()
+    assert run["status"] == "running" and run["started_at"]
+    item = client.post("/jobs/collect-all", json={"tenant_id": tid}, headers=operator).json()
+    assert item["items"][0]["skipped"].startswith("Lauf läuft seit ")
+    assert item["items"][0]["skipped"].endswith("(Agent „agent-a“)")
+
+    # Agent beendet, kein Ergebnis: nach der Frist (Standard 120 min) zaehlt der Lauf nicht mehr
+    _set(session_factory, run_id, started_at=datetime.now(UTC) - timedelta(minutes=121))
+    again = client.post("/jobs/collect-all", json={"tenant_id": tid}, headers=operator).json()
+    assert again["queued"] == 1 and again["items"][0]["source_system_id"] == ddi["id"]
+    old = client.get(f"/jobs/{run_id}").json()
+    assert old["status"] == "failed" and "kein Ergebnis nach 120 min" in old["message"]
+
+    # nie abgeholt (Agent offline): nach 24 h ebenfalls beendet
+    waiting = again["items"][0]["run_id"]
+    _set(session_factory, waiting, queued_at=datetime.now(UTC) - timedelta(hours=25))
+    listed = {r["id"]: r for r in client.get("/jobs", params={"tenant_id": tid}).json()}
+    assert listed[waiting]["status"] == "failed" and "nicht abgeholt" in listed[waiting]["message"]
+
+
+def test_lauf_abbrechen_und_spaetes_ergebnis(client):
+    tid = _tenant(client)
+    fw = _system(client, tid, name="fw-01", platform="fortigate", base_url="https://fw")
+    body = {"platform": "fortigate", "tenant_id": tid, "source_system_id": fw["id"]}
+    run_id = client.post("/jobs/collect", json=body).json()["run_id"]
+
+    viewer = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid)}
+    assert client.post(f"/jobs/{run_id}/cancel", headers=viewer).status_code == 403
+    operator = {"X-Dev-Roles": "operator", "X-Dev-Tenants": str(tid)}
+    r = client.post(f"/jobs/{run_id}/cancel", headers=operator)
+    assert r.status_code == 200 and r.json()["status"] == "failed"
+    assert r.json()["message"].startswith("abgebrochen von ")
+    assert client.post(f"/jobs/{run_id}/cancel", headers=operator).status_code == 409
+    assert client.post("/jobs/missing/cancel", headers=operator).status_code == 404
+
+    # liefert der Collector doch noch ab, wird das Ergebnis eingespielt
+    rule = {
+        "source_platform": "fortigate",
+        "external_id": "1",
+        "name": "late",
+        "action": "allow",
+        "sources": ["10.0.0.1"],
+        "destinations": ["10.0.0.2"],
+        "services": ["tcp/22"],
     }
+    ack = client.post(
+        f"/internal/collector-runs/{run_id}/result",
+        headers={"X-Internal-Token": "dev-only-token"},
+        json={"status": "completed", "rules": [rule]},
+    ).json()
+    assert ack["status"] == "completed"
+    assert [x["name"] for x in client.get("/rules", params={"tenant_id": tid}).json()] == ["late"]
