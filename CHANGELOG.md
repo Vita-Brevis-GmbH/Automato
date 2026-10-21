@@ -7,6 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.11.2 – 2026-10-21
+
+Korrekturen aus dem Betrieb gegen die echten Systeme.
+
+- **NetBox/Infoblox „Teil-Upload unvollständig (6000 von 6624)“:** Der Orchestrator hat erst
+  gespeichert, nachdem die Antwort beim Agenten war. FastAPI führt den Commit einer
+  Dependency sonst erst nach dem Senden aus. Der Agent schickte so das Ergebnis, bevor der
+  letzte Teil-Upload in der Datenbank stand.
+  - Jetzt wird bei allen Anfragen vor der Antwort gespeichert (`Depends(get_session,
+    scope="function")`).
+  - Ein fehlgeschlagenes Speichern kommt damit auch als Fehler beim Aufrufer an statt als
+    Erfolg.
+  - Ein Test prüft das für jede Route.
+- **FortiGate „Expecting value: line 1 column 1 (char 0)“:** Eine FortiGate antwortete auf
+  eine Abfrage mit HTTP 200, aber ohne JSON.
+  - Optionale Tabellen (`firewall/policy6`, `firewall/vip6`, `firewall/ldb-monitor`,
+    Systemstatus) gelten dann als nicht vorhanden; der Lauf geht weiter.
+  - Bei Pflicht-Tabellen nennt die Meldung jetzt Pfad, Status und Inhalt, z. B. „FortiGate
+    antwortet auf firewall/policy nicht mit JSON (HTTP 200, text/html, 18 Bytes)“.
+
 ## 0.11.1 – 2026-10-21
 
 Korrektur aus dem ersten Lauf gegen ein echtes vCenter.

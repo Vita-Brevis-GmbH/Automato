@@ -132,7 +132,7 @@ def _get_scoped_tenant(session: Session, principal: Principal, tenant_id: int) -
 @router.get("", response_model=list[TenantOut])
 def list_tenants(
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     rows = session.scalars(select(Tenant).order_by(Tenant.name))
     out = [_tenant_out(t) for t in rows]
@@ -147,7 +147,7 @@ def list_tenants(
 def create_tenant(
     body: TenantIn,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Mandant (GG) anlegen - Global-Admin. Name eindeutig (409), Kuerzel optional."""
     name = body.name.strip()
@@ -178,7 +178,7 @@ def update_tenant(
     tenant_id: int,
     body: TenantPatch,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     tenant = _get_scoped_tenant(session, principal, tenant_id)
     data = body.model_dump(exclude_unset=True)  # nur gesetzte Felder aendern
@@ -211,7 +211,7 @@ def delete_tenant(
     tenant_id: int,
     confirm: str = Query(description="Name des Mandanten zur Bestätigung (Schutz vor Versehen)"),
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> dict[str, int]:
     """Mandant mit allen Daten löschen - Admin, nur mit `confirm=<Name>` (unumkehrbar)."""
     tenant = _get_scoped_tenant(session, principal, tenant_id)
@@ -233,7 +233,7 @@ def delete_tenant(
 def list_sites(
     tenant_id: int,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     _get_scoped_tenant(session, principal, tenant_id)
     index = site_store.SiteIndex(session, tenant_id)
@@ -247,7 +247,7 @@ def create_site(
     tenant_id: int,
     body: SiteIn,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     _get_scoped_tenant(session, principal, tenant_id)
     code = body.code.strip()
@@ -286,7 +286,7 @@ def update_site(
     site_id: int,
     body: SitePatch,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Name/Beschreibung aendern; bei virtuellen Standorten die physischen zuordnen."""
     _get_scoped_tenant(session, principal, tenant_id)
@@ -320,7 +320,7 @@ def delete_site(
     tenant_id: int,
     site_id: int,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     _get_scoped_tenant(session, principal, tenant_id)
     site = session.get(Site, site_id)

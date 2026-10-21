@@ -11,6 +11,27 @@ import httpx
 from sot_gateway.readonly import enforce_read_only
 
 
+class NotJson(ValueError):
+    """FortiGate antwortet mit HTTP 2xx, aber ohne JSON (leer, HTML) - mit Pfad statt des
+    nackten "Expecting value: line 1 column 1 (char 0)" (Dev-Befund 0.11.1)."""
+
+    def __init__(self, path: str, response: httpx.Response) -> None:
+        kind = response.headers.get("content-type", "").split(";")[0].strip() or "ohne Typ"
+        size = len(response.content)
+        body = "leer" if not size else f"{kind}, {size} Bytes"
+        super().__init__(
+            f"FortiGate antwortet auf {path} nicht mit JSON (HTTP {response.status_code}, {body})"
+        )
+        self.path = path
+
+
+def _json(path: str, response: httpx.Response) -> Any:
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise NotJson(path, response) from exc
+
+
 class FortiGateClient:
     def __init__(
         self,
@@ -29,7 +50,8 @@ class FortiGateClient:
     def _get(self, path: str) -> list[dict[str, Any]]:
         response = self._client.get(f"{self._base}/{path}", headers=self._headers)
         response.raise_for_status()
-        return response.json().get("results", [])
+        body = _json(path, response)
+        return body.get("results", []) if isinstance(body, dict) else []
 
     def interfaces(self) -> list[dict[str, Any]]:
         return self._get("system/interface")
@@ -48,15 +70,15 @@ class FortiGateClient:
                 f"{self._root}/monitor/system/status", headers=self._headers
             )
             response.raise_for_status()
-            body = response.json()
+            body = _json("monitor/system/status", response)
             results = body.get("results") or {}
             info.update(
                 model=results.get("model_name") or results.get("model"),
                 serial=body.get("serial"),
                 version=body.get("version"),
             )
-        except httpx.HTTPError:
-            pass  # Monitor-API im Profil nicht freigegeben: ohne Modell/Seriennummer
+        except (httpx.HTTPError, NotJson, AttributeError):
+            pass  # Monitor-API im Profil nicht freigegeben/anders: ohne Modell/Seriennummer
         return info
 
     def policies(self) -> list[dict[str, Any]]:
@@ -101,9 +123,12 @@ class FortiGateClient:
         return self._optional("firewall/ldb-monitor")
 
     def _optional(self, path: str) -> list[dict[str, Any]]:
-        """Tabelle, die je nach FortiOS-Version bzw. Profil fehlen darf (404/405/400/403)."""
+        """Tabelle, die je nach FortiOS-Version, Modell bzw. Profil fehlen darf (400/403/404/405
+        oder eine Antwort ohne JSON)."""
         try:
             return self._get(path)
+        except NotJson:
+            return []
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code in (400, 403, 404, 405):
                 return []

@@ -124,7 +124,7 @@ def _scheduler(session: Session, settings: Settings) -> SchedulerOut:
 @router.get("/status", response_model=SystemStatusOut)
 def status(
     _: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
     settings: Settings = Depends(get_settings),
 ):
     sig = agent_package.signature_status(

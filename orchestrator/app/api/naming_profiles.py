@@ -40,7 +40,7 @@ def _entry_out(e: DictionaryEntry) -> DictionaryEntryOut:
 @router.get("", response_model=list[NamingProfileOut])
 def list_profiles(
     _: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     return [
         NamingProfileOut(id=p.id, customer=p.customer, name=p.name)
@@ -52,7 +52,7 @@ def list_profiles(
 def create_profile(
     body: NamingProfileIn,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     customer, name = body.customer.strip(), body.name.strip()
     if not customer or not name:
@@ -89,7 +89,7 @@ def list_entries(
     profile_id: int,
     kind: str | None = None,
     _: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     if store.get_profile(session, profile_id) is None:
         raise HTTPException(status_code=404, detail="profile not found")
@@ -101,7 +101,7 @@ def upsert_entry(
     profile_id: int,
     body: DictionaryEntryIn,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     if store.get_profile(session, profile_id) is None:
         raise HTTPException(status_code=404, detail="profile not found")
@@ -121,7 +121,7 @@ def copy_dictionary(
     profile_id: int,
     body: DictionaryCopyIn,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Eine bestehende Wörterbuch-Art (auch aus einem anderen Profil) als Ausgangspunkt für
     eine Art in diesem Profil übernehmen - Admin. Bestehende Schlüssel werden aktualisiert."""
@@ -155,7 +155,7 @@ def copy_dictionary(
 def delete_entry(
     entry_id: int,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     if not store.delete_entry(session, entry_id):
         raise HTTPException(status_code=404, detail="entry not found")

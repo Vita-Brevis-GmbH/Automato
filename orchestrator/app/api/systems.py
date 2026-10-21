@@ -360,7 +360,7 @@ def _name_taken(session: Session, tenant_id: int | None, name: str, exclude: int
 def list_systems(
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Quellsysteme (alphabetisch). Admin ohne Filter sieht alle inkl. nicht zugeordneter."""
     query = select(SourceSystem).order_by(SourceSystem.name, SourceSystem.id)
@@ -380,7 +380,7 @@ def list_systems(
 def create_system(
     body: SystemIn,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Quellsystem für einen Mandanten anlegen - Admin. Name je Mandant eindeutig (409)."""
     tenant_scope(principal, body.tenant_id)
@@ -434,7 +434,7 @@ def update_system(
     system_id: int,
     body: SystemPatch,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Quellsystem ändern - Admin. Mandantenwechsel nur, wenn keine Daten eines anderen
     Mandanten daran hängen (sonst stimmten Regeln und Quellsystem nicht mehr überein)."""
@@ -513,7 +513,7 @@ def update_system(
 def delete_system(
     system_id: int,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Quellsystem löschen - Admin. Seine Regeln und NAT-Einträge werden mit gelöscht."""
     src = _get_scoped(session, principal, system_id)

@@ -50,7 +50,7 @@ def require_internal_token(x_internal_token: str = Header()) -> None:
     "/collector-runs/{run_id}/target",
     dependencies=[Depends(require_internal_token)],
 )
-def run_target(run_id: str, session: Session = Depends(get_session)) -> dict:
+def run_target(run_id: str, session: Session = Depends(get_session, scope="function")) -> dict:
     """Ziel eines zentralen Laufs inkl. Zugangsdaten (nur fuer den zentralen Worker).
 
     Laeufe ueber einen Agenten bekommen ihr Ziel ausschliesslich beim Abholen (next-run).
@@ -110,7 +110,7 @@ def submit_references(
     x_internal_token: str | None = Header(default=None),
     x_agent_token: str | None = Header(default=None),
     channel: mtls.Channel = Depends(mtls.agent_channel),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> None:
     """Teil-Upload einer Referenzquelle (Infoblox/NetBox komplett gelesen, ADR 0010)."""
     run, _ = _authorized_run(session, run_id, x_internal_token, x_agent_token, channel)
@@ -170,7 +170,7 @@ def submit_result(
     x_internal_token: str | None = Header(default=None),
     x_agent_token: str | None = Header(default=None),
     channel: mtls.Channel = Depends(mtls.agent_channel),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> ResultAck:
     """Ergebnis abliefern: zentraler Worker mit internem Token, Agent mit seinem eigenen
     Token - dann nur fuer einen Lauf, den genau dieser Agent abgeholt hat (ADR 0009)."""

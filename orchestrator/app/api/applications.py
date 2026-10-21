@@ -176,7 +176,7 @@ def _actor(principal: Principal) -> str:
 def list_applications(
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "applications")
@@ -193,7 +193,7 @@ def create_application(
     body: ApplicationIn,
     tenant_id: int | None = None,
     principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     tid = _require_tenant(principal, tenant_id)
     name = body.name.strip()
@@ -241,7 +241,7 @@ def list_candidates(
     q: str | None = None,
     limit: int = Query(100, ge=1, le=1000),
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Moegliche Mitglieder (APs, EPGs, Server) mit Projektnummer und bestehender Zuordnung."""
     tid = _require_tenant(principal, tenant_id)
@@ -265,7 +265,7 @@ def list_candidates(
 def list_suggestions(
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     tid = _require_tenant(principal, tenant_id)
     return [
@@ -285,7 +285,7 @@ def accept_suggestion(
     body: AcceptIn | None = None,
     tenant_id: int | None = None,
     principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Vorschlag uebernehmen (neue Applikation bzw. Mitglieder der bestehenden ergaenzen)."""
     tid = _require_tenant(principal, tenant_id)
@@ -315,7 +315,7 @@ def accept_suggestion(
 def get_application(
     application_id: int,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
@@ -327,7 +327,7 @@ def update_application(
     application_id: int,
     body: ApplicationPatch,
     principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     app = _load(session, principal, application_id)
     fields = body.model_fields_set
@@ -372,7 +372,7 @@ def update_application(
 def delete_application(
     application_id: int,
     principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     app = _load(session, principal, application_id)
     detail = {
@@ -398,7 +398,7 @@ def add_members(
     application_id: int,
     body: MembersIn,
     principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     app = _load(session, principal, application_id)
     try:
@@ -428,7 +428,7 @@ def remove_member(
     application_id: int,
     member_id: int,
     principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     app = _load(session, principal, application_id)
     member = next((m for m in app.members if m.id == member_id), None)
@@ -456,7 +456,7 @@ def remove_member(
 def application_doc(
     application_id: int,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Applikations-Doku ueber alle Systeme der Applikation (Tabellen 1–10)."""
     app = _load(session, principal, application_id)

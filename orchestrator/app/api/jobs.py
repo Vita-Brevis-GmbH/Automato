@@ -26,7 +26,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 def start_collect(
     payload: CollectJobRequest,
     principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     tenant_id = tenant_scope(principal, payload.tenant_id)  # Mandanten-Zugriff erzwingen
     try:
@@ -51,7 +51,7 @@ def start_collect(
 def start_collect_all(
     payload: CollectAllRequest,
     principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Alle aktiven Quellsysteme des Mandanten einlesen (Referenzquellen zuerst). Systeme,
     die schon laufen/warten oder nicht lesbar sind (z. B. ohne Lese-Zugang), werden mit
@@ -111,7 +111,7 @@ def list_runs(
     tenant_id: int | None = None,
     limit: int = Query(default=20, ge=1, le=100),
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Letzte Laeufe (neueste zuerst). Nicht-Admin sieht nur Laeufe seiner Mandanten."""
     query = select(CollectorRun).order_by(CollectorRun.queued_at.desc()).limit(limit)
@@ -127,7 +127,7 @@ def list_runs(
 def get_run(
     run_id: str,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     run = session.get(CollectorRun, run_id)
     if run is None:

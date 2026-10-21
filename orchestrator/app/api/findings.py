@@ -61,7 +61,7 @@ def findings_summary(
     type: str | None = None,
     q: str | None = None,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Zaehler fuer Filterleiste, Uebersicht und Navigation (alle Findings, nicht eine Seite)."""
     tenant_id = tenant_scope(principal, tenant_id)
@@ -78,7 +78,7 @@ def list_findings(
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Findings seitenweise; Gesamtzahl (nach Filtern) im Header `X-Total-Count`."""
     tenant_id = tenant_scope(principal, tenant_id)
@@ -94,7 +94,7 @@ def triage_finding(
     finding_id: int,
     body: FindingPatch,
     principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     f = findings_store.get_finding(session, finding_id)
     if f is None:

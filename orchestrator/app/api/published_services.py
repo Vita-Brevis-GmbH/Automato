@@ -36,7 +36,7 @@ def _base(nat: NatRule, rule_count: int) -> dict:
 def list_published_services(
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "published_services")
@@ -52,7 +52,7 @@ def get_published_service(
     name: str,
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "published_services")

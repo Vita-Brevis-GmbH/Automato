@@ -185,7 +185,7 @@ def _current_version(settings: Settings) -> str | None:
 @router.get("", response_model=list[AgentOut])
 def list_agents(
     _: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
     settings: Settings = Depends(get_settings),
 ):
     current = _current_version(settings)
@@ -198,7 +198,7 @@ def list_agents(
 def create_agent(
     body: AgentIn,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Agent anlegen - Admin. Name eindeutig (409), Mandant muss existieren (422)."""
     name = body.name.strip()
@@ -231,7 +231,7 @@ def update_agent(
     agent_id: int,
     body: AgentPatch,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
     settings: Settings = Depends(get_settings),
 ):
     agent = session.get(Agent, agent_id)
@@ -256,7 +256,7 @@ def require_agent(
     x_agent_token: str = Header(),
     x_agent_version: str | None = Header(default=None),
     channel: mtls.Channel = Depends(mtls.agent_channel),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> Agent:
     agent = store.agent_by_token(session, x_agent_token)
     if agent is None:
@@ -271,7 +271,7 @@ def require_agent(
 def next_run(
     platform: str | None = None,
     agent: Agent = Depends(require_agent),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     run = store.claim_next_run(session, agent, platform)
     if run is None:
@@ -307,7 +307,9 @@ def next_run(
 
 
 @agent_router.get("/targets", response_model=list[Target])
-def targets(agent: Agent = Depends(require_agent), session: Session = Depends(get_session)):
+def targets(
+    agent: Agent = Depends(require_agent), session: Session = Depends(get_session, scope="function")
+):
     """Dem Agenten zugewiesene, aktive Geraete inkl. Zugangsdaten (fuer `--check`)."""
     out = []
     for src in store.assigned_systems(session, agent):
@@ -339,7 +341,7 @@ def update_manifest(
 def update_file(
     name: str,
     agent: Agent = Depends(require_agent),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
     settings: Settings = Depends(get_settings),
 ):
     if not agent.auto_update:

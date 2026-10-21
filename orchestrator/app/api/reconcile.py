@@ -33,7 +33,7 @@ def _tenant(principal: Principal, tenant_id: int | None) -> int:
 def summary(
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     tid = _tenant(principal, tenant_id)
     by_type: dict[str, dict[str, int]] = {}
@@ -79,7 +79,7 @@ def ipam_compare(
     limit: int = 200,
     offset: int = 0,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     tid = _tenant(principal, tenant_id)
     if status is not None and status not in references.COMPARE_STATUSES:
@@ -91,7 +91,7 @@ def ipam_compare(
 def run_reconcile(
     tenant_id: int | None = None,
     principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     tid = _tenant(principal, tenant_id)
     counts = reconcile.reconcile_tenant(session, tid)

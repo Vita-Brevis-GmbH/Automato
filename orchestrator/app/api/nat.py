@@ -132,7 +132,7 @@ def list_nat(
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """VIPs/SNAT-Pools seitenweise; Gesamtzahl (nach Filter/Suche) im Header `X-Total-Count`."""
     tenant_id = tenant_scope(principal, tenant_id)
@@ -156,7 +156,7 @@ def list_nat(
 def get_nat(
     nat_id: int,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Ein VIP bzw. SNAT-Pool mit IPAM-Daten beider IPs und den Firewall-Regeln dazu."""
     n = session.get(NatRule, nat_id)

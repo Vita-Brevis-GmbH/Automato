@@ -68,7 +68,7 @@ def list_objects(
     limit: int = 200,
     offset: int = 0,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     tid = _tenant(principal, tenant_id)
     rule_index.ensure(session, tid)
@@ -205,7 +205,7 @@ def _object_rows(session: Session, tid: int, objects: list[DeviceObject]) -> lis
 def get_object(
     object_id: int,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Detail eines Objekts wie in der NAT-Sicht: Attribute, Werte, Gruppen-Mitglieder und die
     Firewall-Regeln, die es verwenden (direkt oder ueber Gruppen, aus dem Regelindex)."""
@@ -263,7 +263,7 @@ def list_inventory(
     source_system_id: int | None = None,
     q: str | None = None,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     tid = _tenant(principal, tenant_id)
     model = _KINDS[kind]

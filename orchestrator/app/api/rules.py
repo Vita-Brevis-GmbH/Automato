@@ -33,7 +33,7 @@ router = APIRouter(prefix="/rules", tags=["rules"])
 def rules_summary(
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Kennzahlen aller Regeln des Mandanten (Firewall + ACI) fuer die Uebersicht."""
     tenant_id = tenant_scope(principal, tenant_id)
@@ -63,7 +63,7 @@ def list_rules(
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Regeln seitenweise; Gesamtzahl (nach Filtern und Suche) im Header `X-Total-Count`.
 
@@ -98,7 +98,7 @@ def list_rules(
 def get_rule(
     rule_id: int,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     r = rules_store.get_rule(session, rule_id)
     if r is None:

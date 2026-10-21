@@ -71,7 +71,7 @@ class SiteAssign(BaseModel):
 def list_systems(
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "appdoc")
@@ -86,7 +86,7 @@ def system_doc(
     system: str,
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "appdoc")
@@ -102,7 +102,7 @@ def assign_system_site(
     body: SiteAssign,
     tenant_id: int | None = None,
     principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
     try:

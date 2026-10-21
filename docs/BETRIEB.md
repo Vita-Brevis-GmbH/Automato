@@ -338,6 +338,14 @@ an (`deploy/agent-gateway`, Port 8443).
   den DC als NTP-Server eintragen). Toleranz: `AUTOMATO_OIDC_CLOCK_SKEW_SECONDS` (Default 60). Nach Änderungen an `.env`: `docker compose … up -d` (neu
   erstellt den Container).
 
+- **FortiGate „antwortet auf <Pfad> nicht mit JSON (HTTP 200, …)“** (bis 0.11.1: „Expecting
+  value: line 1 column 1 (char 0)“) — die FortiGate liefert für diese Tabelle eine leere bzw.
+  HTML-Antwort. Optionale Tabellen (`policy6`, `vip6`, `ldb-monitor`, Systemstatus) überspringt
+  der Collector seit 0.11.2. Bei einer Pflicht-Tabelle: im Browser bzw. mit `curl` und dem
+  Read-only-Token `https://<fortigate>/api/v2/cmdb/<Pfad>` abfragen. Häufige Ursachen sind
+  ein Admin-Profil ohne Leserecht für diesen Bereich, ein VDOM-Zugriff oder ein Proxy
+  dazwischen.
+
 - **Lauf „Fehler“ mit „Einspielen fehlgeschlagen: …“** — das Gerät wurde gelesen, aber das
   Ergebnis liess sich nicht in den Store schreiben. Der Ingest wird dann vollständig verworfen
   (vorheriger Stand bleibt), der Agent meldet `failed` mit derselben Meldung; Details inkl.
@@ -357,6 +365,11 @@ an (`deploy/agent-gateway`, Port 8443).
   Danach `automato-collector --check` auf dem Agenten: er meldet „… N VMs sichtbar“. Steht
   dort „keine VM sichtbar“, reicht die Berechtigung nicht bis zu den VMs (Weitergabe fehlt
   oder liegt nur auf einem Teil des Inventars).
+
+- **Infoblox/NetBox „Teil-Upload unvollstaendig (N von M)“** — bis 0.11.1 konnte der letzte
+  Teil-Upload noch nicht gespeichert sein, wenn das Ergebnis eintraf. Behoben in 0.11.2
+  (Orchestrator aktualisieren; der Agent muss nichts tun). Tritt die Meldung danach noch auf,
+  ist ein Teil-Upload tatsächlich abgewiesen worden: Agent-Log prüfen.
 
 - **NetBox-Sync „Vorschau/Übernahme fehlgeschlagen“** — die Meldung von NetBox steht am
   Plan (z. B. fehlendes Schreibrecht → HTTP 403, Validierungsfehler → HTTP 400 mit Feld).

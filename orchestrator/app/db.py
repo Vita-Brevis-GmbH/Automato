@@ -20,7 +20,14 @@ def get_sessionmaker() -> sessionmaker[Session]:
 
 
 def get_session() -> Iterator[Session]:
-    """FastAPI-Dependency: eine Session pro Request, Commit/Rollback zentral."""
+    """FastAPI-Dependency: eine Session pro Request, Commit/Rollback zentral.
+
+    Immer als `Depends(get_session, scope="function")` einbinden: FastAPI fuehrt den Teil nach
+    `yield` sonst erst *nach* dem Senden der Antwort aus. Dann sieht der Aufrufer 2xx, bevor
+    gespeichert ist - ein Agent schickte so sein Ergebnis, bevor der letzte Teil-Upload
+    committet war (Dev-Befund 0.11.1), und ein fehlgeschlagener Commit kaeme nie beim
+    Aufrufer an.
+    """
     session = get_sessionmaker()()
     try:
         yield session

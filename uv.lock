@@ -78,7 +78,7 @@ wheels = [
 
 [[package]]
 name = "automato"
-version = "0.11.1"
+version = "0.11.2"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -283,7 +283,7 @@ wheels = [
 
 [[package]]
 name = "collectors"
-version = "0.11.1"
+version = "0.11.2"
 source = { editable = "collectors" }
 dependencies = [
     { name = "celery", extra = ["redis"] },
@@ -800,7 +800,7 @@ wheels = [
 
 [[package]]
 name = "orchestrator"
-version = "0.11.1"
+version = "0.11.2"
 source = { editable = "orchestrator" }
 dependencies = [
     { name = "alembic" },
@@ -828,7 +828,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13" },
     { name = "celery", extras = ["redis"], specifier = ">=5.4" },
     { name = "cryptography", specifier = ">=42" },
-    { name = "fastapi", specifier = ">=0.111" },
+    { name = "fastapi", specifier = ">=0.121" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
@@ -1269,7 +1269,7 @@ wheels = [
 
 [[package]]
 name = "sot-gateway"
-version = "0.11.1"
+version = "0.11.2"
 source = { editable = "sot-gateway" }
 dependencies = [
     { name = "httpx" },

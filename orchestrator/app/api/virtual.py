@@ -55,7 +55,7 @@ def list_vms(
     limit: int = Query(200, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     tid = _tenant(principal, tenant_id)
     stmt = select(Vm).options(selectinload(Vm.nics)).where(Vm.tenant_id == tid)
@@ -133,7 +133,7 @@ def list_portgroups(
     tenant_id: int | None = None,
     q: str | None = None,
     principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     tid = _tenant(principal, tenant_id)
     names, groups, epgs = _context(session, tid)

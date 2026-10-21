@@ -172,7 +172,7 @@ def _has_write_token(target: SourceSystem) -> bool:
 def list_targets(
     tenant_id: int,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     tenant_scope(principal, tenant_id)
     rows = session.scalars(
@@ -197,7 +197,7 @@ def create_plan(
     body: PlanIn,
     background: BackgroundTasks,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
     factory: sessionmaker = Depends(get_session_factory),
 ):
     target = _target(session, principal, body.tenant_id, body.source_system_id)
@@ -229,7 +229,7 @@ def create_plan(
 def list_plans(
     tenant_id: int,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     tenant_scope(principal, tenant_id)
     plans = session.scalars(
@@ -246,7 +246,7 @@ def list_plans(
 def get_plan(
     plan_id: int,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     plan, target = _plan(session, principal, plan_id)
     return _out(plan, target)
@@ -261,7 +261,7 @@ def plan_items(
     limit: int = 200,
     offset: int = 0,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     plan, _ = _plan(session, principal, plan_id)
     rows = plan.items or []
@@ -280,7 +280,7 @@ def apply_plan(
     plan_id: int,
     background: BackgroundTasks,
     principal: Principal = Depends(require_admin),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
     factory: sessionmaker = Depends(get_session_factory),
 ):
     plan, target = _plan(session, principal, plan_id)

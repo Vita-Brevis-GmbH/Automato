@@ -133,3 +133,39 @@ def test_policy6_fehlt_ab_fortios7_und_wird_gelesen_wo_vorhanden():
         "https://fw", "t", client=httpx.Client(transport=httpx.MockTransport(handler6))
     )
     assert client6.policies6() == [{"policyid": 1}]
+
+
+def test_antwort_ohne_json_nennt_den_pfad_optionale_tabellen_fehlen_still():
+    """Dev-Befund 0.11.1: eine FortiGate brach mit "Expecting value: line 1 column 1" ab -
+    HTTP 200 ohne JSON. Optionale Tabellen gelten dann als nicht vorhanden; fehlt eine
+    Pflicht-Tabelle, nennt die Meldung Pfad, Status und Inhalt."""
+    import pytest
+
+    from collectors.fortigate.client import NotJson
+
+    empty = {"/api/v2/cmdb/firewall/ldb-monitor", "/api/v2/cmdb/firewall/vip6",
+             "/api/v2/monitor/system/status"}  # fmt: skip
+    broken = {"path": None}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path in empty:
+            return httpx.Response(200, content=b"")
+        if request.url.path == broken["path"]:
+            return httpx.Response(200, html="<html>Login</html>")
+        if request.url.path == "/api/v2/cmdb/system/global":
+            return httpx.Response(200, json={"results": {"hostname": "fw-01"}})
+        return httpx.Response(200, json={"results": []})
+
+    client = FortiGateClient(
+        "https://fw-01.lab", "t", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    data = client.gather()
+    assert data["vips6"] == [] and data["ldb_monitors"] == []
+    assert data["system"] == {"hostname": "fw-01"}  # ohne Modell/Seriennummer
+
+    broken["path"] = "/api/v2/cmdb/firewall/policy"
+    with pytest.raises(NotJson) as err:
+        client.gather()
+    assert str(err.value) == (
+        "FortiGate antwortet auf firewall/policy nicht mit JSON (HTTP 200, text/html, 18 Bytes)"
+    )
