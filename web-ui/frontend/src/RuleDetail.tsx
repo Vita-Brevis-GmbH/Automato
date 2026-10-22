@@ -1,5 +1,14 @@
 import { ReactNode, useEffect, useState } from "react";
-import { decidePair, Endpoint, fetchRuleDetail, NatBrief, resetPairDecision, RuleDetail, RuleRef } from "./api";
+import {
+  decidePair,
+  Endpoint,
+  fetchRuleDetail,
+  NatBrief,
+  rejectParallel,
+  resetPairDecision,
+  RuleDetail,
+  RuleRef,
+} from "./api";
 import type { View, ViewParams } from "./App";
 import { EpgCard } from "./EpgCard";
 import { FamilyMarks, RefCard, SideMarks, useVdomShown, VdomChip, VmChip, VmSection } from "./refs";
@@ -173,6 +182,7 @@ export default function RuleDetailDrawer({
   onRule,
   onChanged,
   intro,
+  isAdmin = false,
 }: {
   ruleId: number;
   systemName: (id: number) => string;
@@ -181,6 +191,7 @@ export default function RuleDetailDrawer({
   onRule?: (id: number) => void; // andere Regel öffnen (IPv4/IPv6-Gegenstück)
   onChanged?: () => void; // Paar entschieden: Liste neu laden
   intro?: ReactNode; // z. B. Applikations-Doku: warum die Regel für die Applikation gilt
+  isAdmin?: boolean; // Verbund auflösen
 }) {
   const vdomShown = useVdomShown();
   const [detail, setDetail] = useState<RuleDetail | null>(null);
@@ -269,6 +280,20 @@ export default function RuleDetailDrawer({
                   )}
                   {(detail.parallel.missing ?? []).length > 0 && (
                     <div className="faint">fehlt auf {(detail.parallel.missing ?? []).join(", ")}</div>
+                  )}
+                  {isAdmin && (
+                    <div style={{ marginTop: 4 }}>
+                      <button
+                        className="btn btn-sm"
+                        title="Die Firewalls sind nicht parallel: Regeln wieder einzeln, kein neuer Vorschlag"
+                        onClick={() => {
+                          if (!window.confirm(`Verbund „${detail.parallel!.group}“ auflösen und nicht mehr vorschlagen?`)) return;
+                          decide(rejectParallel(detail.tenant_id, { group: detail.parallel!.group }).then(() => undefined));
+                        }}
+                      >
+                        Verbund auflösen
+                      </button>
+                    </div>
                   )}
                   {detail.parallel.lead && (
                     <div>

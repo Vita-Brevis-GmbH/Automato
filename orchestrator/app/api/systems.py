@@ -521,6 +521,16 @@ def update_system(
     credentials_changed = _apply_credentials(src, _credential_changes(body))
     session.flush()
     if regroup:
+        if src.parallel_group and src.tenant_id is not None:  # von Hand gesetzt: Ablehnung weg
+            from app.store import parallel
+
+            mates = session.scalars(
+                select(SourceSystem.id).where(
+                    SourceSystem.tenant_id == src.tenant_id,
+                    SourceSystem.parallel_group == src.parallel_group,
+                )
+            )
+            parallel.unreject(session, src.tenant_id, list(mates))
         _regroup(session, src.tenant_id)
     audit.record(
         session,
@@ -562,15 +572,91 @@ class ParallelIn(BaseModel):
 @router.get("/parallel-suggestions")
 def parallel_suggestions(
     tenant_id: int,
+    include_rejected: bool = False,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     """Firewalls, die parallel aussehen (Session-Sync bzw. mindestens halb gleiche Policies)
-    und noch nicht im selben Verbund sind."""
+    und noch nicht im selben Verbund sind; abgelehnte nur mit `include_rejected`."""
     from app.store import parallel
 
     tenant_scope(principal, tenant_id)
-    return parallel.suggestions(session, tenant_id)
+    return parallel.suggestions(session, tenant_id, include_rejected)
+
+
+class ParallelRejectIn(BaseModel):
+    tenant_id: int
+    system_ids: list[int] = []  # diese Firewalls sind nicht parallel
+    group: str | None = Field(default=None, max_length=100)  # bzw. alle eines Verbunds
+
+
+def _reject_ids(session: Session, body: ParallelRejectIn) -> list[int]:
+    ids = set(body.system_ids)
+    if body.group:
+        ids |= set(
+            session.scalars(
+                select(SourceSystem.id).where(
+                    SourceSystem.tenant_id == body.tenant_id,
+                    SourceSystem.parallel_group == body.group.strip(),
+                )
+            )
+        )
+    known = set(
+        session.scalars(
+            select(SourceSystem.id).where(
+                SourceSystem.tenant_id == body.tenant_id, SourceSystem.id.in_(ids)
+            )
+        )
+    )
+    if known != ids or len(ids) < 2:
+        raise HTTPException(status_code=422, detail="mindestens zwei Firewalls des Mandanten")
+    return sorted(ids)
+
+
+@router.post("/parallel-reject")
+def reject_parallel(
+    body: ParallelRejectIn,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Vorschlag ablehnen bzw. Verbund aufloesen - Admin (0.19.0): diese Firewalls sind nicht
+    parallel und werden nicht mehr vorgeschlagen."""
+    from app.store import parallel
+
+    tenant_scope(principal, body.tenant_id)
+    ids = _reject_ids(session, body)
+    new = parallel.reject(session, body.tenant_id, ids)
+    _regroup(session, body.tenant_id)
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="source.parallel_rejected",
+        subject=",".join(map(str, ids)),
+        detail={"tenant_id": body.tenant_id, "source_ids": ids, "pairs": len(new)},
+    )
+    return {"source_ids": ids, "rejected_pairs": len(new)}
+
+
+@router.post("/parallel-reject/undo")
+def unreject_parallel(
+    body: ParallelRejectIn,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Ablehnung aufheben - Admin: die Firewalls werden wieder vorgeschlagen."""
+    from app.store import parallel
+
+    tenant_scope(principal, body.tenant_id)
+    ids = _reject_ids(session, body)
+    gone = parallel.unreject(session, body.tenant_id, ids)
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="source.parallel_unrejected",
+        subject=",".join(map(str, ids)),
+        detail={"tenant_id": body.tenant_id, "source_ids": ids, "pairs": gone},
+    )
+    return {"source_ids": ids, "removed_pairs": gone}
 
 
 @router.post("/parallel-group", response_model=list[SystemOut])
@@ -596,6 +682,9 @@ def set_parallel_group(
     for s in members:
         s.parallel_group = group if s.id in body.system_ids else None
     session.flush()
+    from app.store import parallel
+
+    parallel.unreject(session, body.tenant_id, body.system_ids)  # bewusst gesetzt
     _regroup(session, body.tenant_id)
     audit.record(
         session,

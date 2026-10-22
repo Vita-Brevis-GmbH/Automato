@@ -240,16 +240,120 @@ const END: Record<TracePath["end"]["kind"], [string, string]> = {
   max_hops: ["warn", "abgebrochen"],
 };
 
+// Titel eines Wegs: aktive Wege „Weg 1 von 2“, Backup-Wege „Backup-Weg 1“
+function pathTitle(paths: TracePath[], p: TracePath): string {
+  const same = paths.filter((x) => (x.kind ?? "active") === (p.kind ?? "active"));
+  const n = same.indexOf(p) + 1;
+  if (p.kind === "backup") return `Backup-Weg ${n}`;
+  return `Weg ${n}${same.length > 1 ? ` von ${same.length}` : ""}`;
+}
+
+// Art eines Wegs in der Übersicht: aktiv, ECMP, redundant über einen Verbund, Backup
+function PathKind({ path, activeCount }: { path: TracePath; activeCount: number }) {
+  if (path.kind === "backup")
+    return (
+      <span className="chip warn" title={`weicht bei ${path.deviation?.label} ab: ${path.deviation?.reason}`}>
+        Backup ab {path.deviation?.label}
+      </span>
+    );
+  if (path.parallel?.length)
+    return (
+      <span className="chip info" title="gleicher Weg über eine andere Firewall desselben Verbunds">
+        redundant · Verbund {path.parallel.join(", ")}
+      </span>
+    );
+  return activeCount > 1 ? (
+    <span className="chip info" title="Equal-Cost-Multipath: der Verkehr verteilt sich auf alle Wege">
+      aktiv · ECMP
+    </span>
+  ) : (
+    <span className="chip ok">aktiv</span>
+  );
+}
+
+// Übersicht aller Wege: Art, Knoten nacheinander, Länge (Hops), Ende
+function PathOverview({ trace }: { trace: TraceResult }) {
+  const active = trace.paths.filter((p) => p.kind !== "backup");
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>Wege im Überblick</h2>
+        <span className="faint">
+          {active.length} aktiv{active.length > 1 ? " (redundant)" : ""}
+          {trace.paths.length > active.length
+            ? ` · ${trace.paths.length - active.length} Backup-Weg${trace.paths.length - active.length > 1 ? "e" : ""}`
+            : ""}{" "}
+          – Backup-Wege mit gleicher Länge
+          {trace.slack ? ` bzw. bis ${trace.slack} Hop${trace.slack > 1 ? "s" : ""} mehr` : ""}
+        </span>
+      </div>
+      <div className="card-body scroll">
+        <table className="compact">
+          <thead>
+            <tr>
+              <th>Weg</th>
+              <th>Art</th>
+              <th>Knoten</th>
+              <th>Next-Hops</th>
+              <th className="num">Hops</th>
+              <th>Ende</th>
+            </tr>
+          </thead>
+          <tbody>
+            {trace.paths.map((p, i) => {
+              const [cls, label] = END[p.end.kind] ?? ["", p.end.kind];
+              return (
+                <tr key={i}>
+                  <td className="nowrap">
+                    <button
+                      className="linkbtn"
+                      onClick={() => document.getElementById(`trace-${i}`)?.scrollIntoView({ behavior: "smooth" })}
+                    >
+                      {pathTitle(trace.paths, p)}
+                    </button>
+                  </td>
+                  <td>
+                    <PathKind path={p} activeCount={active.length} />
+                    {p.kind === "backup" && <div className="faint">{p.deviation?.reason}</div>}
+                  </td>
+                  <td>
+                    {p.hops.map((h, j) => (
+                      <span key={j}>
+                        {j > 0 && <span className="faint"> → </span>}
+                        <span className={p.deviation && p.deviation.hop === j ? "chip warn" : undefined}>{h.label}</span>
+                      </span>
+                    ))}
+                  </td>
+                  <td className="mono">
+                    {p.hops
+                      .map((h) => h.egress?.next_hop)
+                      .filter(Boolean)
+                      .join(" → ") || <Dash />}
+                  </td>
+                  <td className="num">{p.hops.length}</td>
+                  <td>
+                    <span className={`chip ${cls}`}>{label}</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // Ein Weg Hop für Hop: Knoten, Eingang, Entscheidung (Policy-Route bzw. Route), Ausgang
 function TraceCard({
   path,
   index,
-  total,
+  title,
   onCapture,
 }: {
   path: TracePath;
   index: number;
-  total: number;
+  title: string;
   onCapture?: (draft: ExitDraft) => void;
 }) {
   const [cls, label] = END[path.end.kind] ?? ["", path.end.kind];
@@ -258,13 +362,18 @@ function TraceCard({
   // Weg endet an einem Next-Hop ohne gelesenes Gerät: als Anbindung erfassen (Internet, MPLS, …)
   const capturable = onCapture && out?.next_hop && (path.end.kind === "unknown" || path.end.kind === "external");
   return (
-    <div className="card">
+    <div className="card" id={`trace-${index}`}>
       <div className="card-head">
-        <h2>
-          Weg {index + 1}
-          {total > 1 ? ` von ${total}` : ""}
-        </h2>
+        <h2>{title}</h2>
         <span className={`chip ${cls}`}>{label}</span>
+        {path.kind === "backup" && path.deviation && (
+          <span className="chip warn" title="Weg, wenn der aktive Next-Hop ausfällt">
+            Backup ab {path.deviation.label}: {path.deviation.reason}
+          </span>
+        )}
+        {path.parallel?.length ? (
+          <span className="chip info">redundant · Verbund {path.parallel.join(", ")}</span>
+        ) : null}
         <span className="faint">{path.end.text}</span>
         {capturable && (
           <button
@@ -312,7 +421,15 @@ function TraceCard({
                   </td>
                   <td>{h.ingress?.interface ? <Port p={h.ingress} /> : <Dash />}</td>
                   <td>
-                    {h.policy ? (
+                    {h.backup ? (
+                      <>
+                        <span className="chip warn" title="Backup-Weg: anderer Next-Hop für dasselbe Präfix">
+                          Backup
+                        </span>{" "}
+                        <b className="mono">{h.backup.prefix}</b>
+                        <div className="faint">{h.backup.reason}</div>
+                      </>
+                    ) : h.policy ? (
                       <>
                         <span className="chip info" title="passt sicher und geht der Routing-Tabelle vor">
                           {policyText(h.policy)}
@@ -430,6 +547,7 @@ function LookupTab({
   const [start, setStart] = useState("");
   const [dst, setDst] = useState("");
   const [trace, setTrace] = useState<TraceResult | null>(null);
+  const [slack, setSlack] = useState("1"); // Backup-Wege: Hops mehr als der kürzeste aktive; "" = keine
   const [rows, setRows] = useState<RouteLookup[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -441,7 +559,7 @@ function LookupTab({
     setRows(null);
     const job =
       src.trim() || start
-        ? traceRoute(tenantId, { dst, src, start }).then(setTrace)
+        ? traceRoute(tenantId, { dst, src, start, slack: slack === "" ? 0 : Number(slack) }).then(setTrace)
         : lookupRoute(tenantId, dst).then(setRows);
     job.catch(setError).finally(() => setBusy(false));
   };
@@ -485,6 +603,17 @@ function LookupTab({
             onKeyDown={enter}
           />
         </div>
+        <select
+          className="sel"
+          value={slack}
+          onChange={(e) => setSlack(e.target.value)}
+          title="Redundante Wege: Backup-Wege (BGP-Pfade, schwebende statische Routen) mit gleicher bzw. fast gleicher Länge"
+        >
+          <option value="0">Backup: gleich lang</option>
+          <option value="1">Backup: bis +1 Hop</option>
+          <option value="2">Backup: bis +2 Hops</option>
+          <option value="">Backup: ausblenden</option>
+        </select>
         <button className="btn btn-primary btn-sm" onClick={run} disabled={busy || !dst.trim()}>
           {busy ? "Suche…" : "Weg suchen"}
         </button>
@@ -509,9 +638,17 @@ function LookupTab({
           {trace.paths.length === 0 && trace.notes.length === 0 && (
             <Empty title="Kein Weg">Kein Hop gefunden – Startpunkt wählen bzw. Quellsysteme neu einlesen.</Empty>
           )}
-          {trace.paths.map((p, i) => (
-            <TraceCard key={i} path={p} index={i} total={trace.paths.length} onCapture={onCapture} />
-          ))}
+          {(() => {
+            const shown = slack === "" ? trace.paths.filter((p) => p.kind !== "backup") : trace.paths;
+            return (
+              <>
+                {shown.length > 1 && <PathOverview trace={{ ...trace, paths: shown }} />}
+                {shown.map((p, i) => (
+                  <TraceCard key={i} path={p} index={i} title={pathTitle(shown, p)} onCapture={onCapture} />
+                ))}
+              </>
+            );
+          })()}
         </>
       )}
       {rows && <LookupTable rows={rows} />}

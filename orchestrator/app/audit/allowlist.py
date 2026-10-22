@@ -78,6 +78,8 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     ),
     # Parallele Firewalls (0.18.0): Verbund gesetzt bzw. aufgeloest
     "source.parallel_group": frozenset({"tenant_id", "group", "source_ids"}),
+    "source.parallel_rejected": frozenset({"tenant_id", "source_ids", "pairs"}),
+    "source.parallel_unrejected": frozenset({"tenant_id", "source_ids", "pairs"}),
     # Anbindungen nach aussen (0.18.0): von Hand gepflegte Topologie
     "routing.exit.created": frozenset({"tenant_id", "exit_id", "name", "kind"}),
     "routing.exit.updated": frozenset({"tenant_id", "exit_id", "name", "kind"}),

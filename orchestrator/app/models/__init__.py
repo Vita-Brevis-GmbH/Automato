@@ -43,6 +43,7 @@ from app.models.network_object import (
     ObjectType,
     SourceOfRecord,
 )
+from app.models.parallel import ParallelRejection
 from app.models.reference_record import ReferenceRecordRow
 from app.models.rule import (
     EndpointKind,
@@ -141,6 +142,7 @@ __all__ = [
     "SiteLink",
     "SourceOfRecord",
     "SourceSystem",
+    "ParallelRejection",
     "SubjectKind",
     "Tenant",
     "TopoContext",

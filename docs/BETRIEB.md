@@ -200,6 +200,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     anderen Werten.
   - Setzen: über den Vorschlag oben in „Regeln & Contracts“ (bei Session-Sync bzw. vielen
     gleichen Policies, Admin) oder im Quellsystem-Dialog (Feld „Verbund“; leer = keiner).
+  - Nicht parallel (0.19.0, Admin):
+    - **Ablehnen** beim Vorschlag bzw. **Verbund auflösen** im Regel-Detail – die Firewalls
+      werden nicht mehr vorgeschlagen.
+    - „N abgelehnte Vorschläge“ → **wieder vorschlagen** hebt das auf.
   - Filter „Verbund: abweichend / fehlt“; mit Filter „System“ erscheinen die Regeln dieser
     Firewall vollständig.
 - **Routing & Wege** (0.16.0, ADR 0019): oben die gelesenen Kontexte mit Anzahl Routen und dem,
@@ -223,6 +227,13 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       ohne gelesenes Gerät), keine Route.
     - Ohne Quelle und Start: je Kontext die wirksame Route wie bisher. Geräte, deren Routing
       nicht gelesen ist (Switches, Router der Provider), beenden den Weg.
+    - **Redundante Wege (0.19.0):**
+      - „Wege im Überblick“ zeigt alle Wege mit Art: aktiv · ECMP, redundant über einen
+        Verbund paralleler Firewalls, oder Backup ab einem Knoten mit Grund (BGP-Backup mit
+        AS-Pfad bzw. statische Backup-Route mit Distanz).
+      - Je Weg stehen die Knoten nacheinander, die Next-Hops, die Anzahl Hops und das Ende.
+      - Die Auswahl „Backup“ steuert, wie viel länger ein Backup-Weg sein darf: gleich lang,
+        bis +1 Hop (Standard), bis +2 Hops, ausblenden.
   - **Routen:** wirksam (RIB), BGP-Pfade (bester bzw. Backup) und statische Routen (aktiv bzw.
     inaktiv); Suche, „enthält IP“ (längstes Präfix zuerst), Filter Tabelle und Kontext.
   - **BGP-Nachbarn** (mit Name aus dem IPAM und, falls gelesen, dem Knoten dahinter), **HA &

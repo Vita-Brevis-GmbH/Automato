@@ -308,12 +308,13 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.16.0–0.16.1** | Routing je VDOM (RIB mit ECMP, BGP-Pfade inkl. Backup, Nachbarn, statische/Policy-Routen, SD-WAN), HA/FGSP, ACI-L3Outs und Border-Leaf-Routen (Stufe 2); Agent aktualisiert sich vor dem Lauf, robustes Selbst-Update |
 | **0.17.0–0.17.1** | Weg Hop für Hop mit Quelle bzw. Startpunkt (Stufe 3, erste Fassung); FortiGate nur mit root = Firewall (auch in Regeln, Objekten, NAT); Nachbarn und Next-Hops mit Namen aus dem IPAM; robuste Läufe (Wiederholung, Upload-Quittung), VRF/Management getrennt, kein Raten über Transfernetze |
 | **0.18.0** | Parallele Firewalls (Verbund, ADR 0020): gleiche Policies einmal, Abweichungen als Findings; Anbindungen nach aussen (Internet/MPLS/WAN) von Hand mit manuellen Routen (ADR 0019 Stufe 4, erster Teil) |
+| **0.19.0** | Verbund ablehnen bzw. auflösen (nicht mehr vorschlagen); redundante Wege: ECMP, Verbund, Backup-Wege (BGP, schwebende statische Routen) gleicher bzw. fast gleicher Länge mit Übersicht |
 
-### Nächste Arbeiten (Stand 0.18.0)
+### Nächste Arbeiten (Stand 0.19.0)
 
-Phase A und die Stände 0.11–0.17.0 sind gegen die echten Systeme abgenommen; 0.17.1
-(robuste Läufe, VRF, keine Schleifen) und 0.18.0 (parallele Firewalls, Anbindungen) stehen
-zur Abnahme an. Konzeptbefund
+Phase A und die Stände 0.11–0.18.0 sind gegen die echten Systeme abgenommen (0.18.0: Regeln
+paralleler Firewalls einmal, keine Schleifen); 0.19.0 (Verbund ablehnen, redundante Wege)
+steht zur Abnahme an. Konzeptbefund
 des Anwenders: Ohne Routing, Verbindungswege und Redundanzen zeigt die Doku Zugriffe, die
 routingtechnisch nicht möglich sind, und `any` aus dem Internet wie eine Liste aller
 Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:

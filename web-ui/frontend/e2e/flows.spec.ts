@@ -351,10 +351,15 @@ test("Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", async ({ page }) =
   await page.getByPlaceholder("Quelle (IP)").fill("10.20.0.5");
   await dst.fill("203.0.113.10");
   await page.click("button:has-text('Weg suchen')");
-  const first = page.locator(".card", { hasText: "Weg 1 von 2" });
+  const first = page.locator(".card[id^='trace-']", { hasText: "Weg 1 von 2" });
   await expect(first).toContainText("extern");
   await expect(first).toContainText("isp-a-gw.example.ch");
   await expect(first).toContainText("fw-05 · VDOM root");
+  // redundante Wege: ECMP aktiv, dazu der BGP-Backup-Pfad gleicher Länge
+  const overview = page.locator(".card", { hasText: "Wege im Überblick" });
+  await expect(overview).toContainText("aktiv · ECMP");
+  await expect(overview).toContainText("Backup ab fw-05 · VDOM root");
+  await expect(page.locator(".card[id^='trace-']", { hasText: "Backup-Weg 1" })).toContainText("198.51.100.9");
   // Startpunkt gewählt: Firewall nur mit root
   await page.getByPlaceholder("Quelle (IP)").fill("");
   await page.locator(".filterbar select").filter({ hasText: "Start: aus der Quelle" }).selectOption({ label: "fw-04" });
@@ -412,4 +417,21 @@ test("Routing: Anbindung aus einem Weg erfassen", async ({ page }) => {
   await page.click(".tabbar button:has-text('Weg für IP')");
   await page.click("button:has-text('Weg suchen')");
   await expect(page.locator(".card", { hasText: "Weg 1" })).toContainText("weiter über MPLS Kunde A");
+});
+
+test("Parallele Firewalls: Verbund auflösen, Vorschlag abgelehnt und wieder vorschlagen", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await page.goto("/#regeln");
+  await search(page).fill("par-");
+  await expect(rows(page)).toHaveCount(6); // aus dem Test davor zusammengefasst
+  await rows(page).filter({ hasText: "par-web" }).click();
+  await page.locator(".drawer button", { hasText: "Verbund auflösen" }).click();
+  await page.locator(".drawer button.close").click();
+  await page.reload();
+  await search(page).fill("par-");
+  await expect(rows(page)).toHaveCount(9); // wieder einzeln
+  await expect(page.locator(".note", { hasText: "fw-06 und fw-07" })).toHaveCount(0); // abgelehnt
+  await page.click("button:has-text('1 abgelehnter Vorschlag')");
+  await page.click("button:has-text('wieder vorschlagen')");
+  await expect(page.locator(".note", { hasText: "fw-06 und fw-07" })).toContainText("Ablehnen");
 });

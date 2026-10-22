@@ -229,6 +229,7 @@ def trace(
     dst: str,
     src: str | None = None,
     start: str | None = Query(None, description="Startpunkt: <Quellsystem>|<Kontext>"),
+    slack: int = Query(1, ge=0, le=3, description="Backup-Wege mit hoechstens so vielen Hops mehr"),
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
@@ -240,7 +241,7 @@ def trace(
         _ip(src, "src")
     if not src and not start:
         raise HTTPException(status_code=422, detail="src oder start angeben")
-    return paths.trace(session, tid, dst, src, start)
+    return paths.trace(session, tid, dst, src, start, slack)
 
 
 def _list(session: Session, tid: int, model, source_system_id: int | None, order) -> list:

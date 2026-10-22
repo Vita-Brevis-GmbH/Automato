@@ -174,3 +174,39 @@ def test_verbund_ueber_das_quellsystem(client):
     assert len(_rules(client, tenant_id=tid)) == 6
     client.patch(f"/systems/{fwb}", json={"parallel_group": ""}, headers=ADMIN)
     assert len(_rules(client, tenant_id=tid)) == 9
+
+
+def test_vorschlag_ablehnen_und_verbund_aufloesen(client):
+    """0.19.0: ein abgelehnter Vorschlag kommt nicht wieder; Verbund aufloesen = ablehnen;
+    rueckgaengig machen bzw. den Verbund von Hand setzen hebt die Ablehnung auf."""
+    tid, fwa, fwb = _seed(client)
+    p = {"tenant_id": tid}
+    body = {"tenant_id": tid, "system_ids": [fwa, fwb]}
+    viewer = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid)}
+    assert client.post("/systems/parallel-reject", json=body, headers=viewer).status_code == 403
+    r = client.post("/systems/parallel-reject", json=body, headers=ADMIN)
+    assert r.status_code == 200 and r.json()["rejected_pairs"] == 1
+    assert client.get("/systems/parallel-suggestions", params=p).json() == []
+    (s,) = client.get("/systems/parallel-suggestions",
+                      params={**p, "include_rejected": True}).json()  # fmt: skip
+    assert s["rejected"] is True and s["names"] == ["fw-a", "fw-b"]
+    assert client.post("/systems/parallel-reject/undo", json=body, headers=ADMIN).json() == {
+        "source_ids": [fwa, fwb],
+        "removed_pairs": 1,
+    }
+    assert len(client.get("/systems/parallel-suggestions", params=p).json()) == 1
+
+    # Verbund setzen hebt eine Ablehnung auf; Verbund aufloesen (ueber den Namen) lehnt ab
+    client.post("/systems/parallel-reject", json=body, headers=ADMIN)
+    group = {"tenant_id": tid, "group": "Nord", "system_ids": [fwa, fwb]}
+    client.post("/systems/parallel-group", json=group, headers=ADMIN)
+    assert len(_rules(client, tenant_id=tid)) == 6
+    r = client.post("/systems/parallel-reject", json={"tenant_id": tid, "group": "Nord"},
+                    headers=ADMIN)  # fmt: skip
+    assert r.json()["source_ids"] == [fwa, fwb]
+    assert len(_rules(client, tenant_id=tid)) == 9  # wieder einzeln
+    systems = client.get("/systems", params=p).json()
+    assert {x["parallel_group"] for x in systems if x["id"] in (fwa, fwb)} == {None}
+    assert client.get("/systems/parallel-suggestions", params=p).json() == []
+    bad = {"tenant_id": tid, "system_ids": [fwa]}
+    assert client.post("/systems/parallel-reject", json=bad, headers=ADMIN).status_code == 422

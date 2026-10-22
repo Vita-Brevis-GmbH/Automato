@@ -174,6 +174,15 @@ Rahmen laut Anwender (2026-10-22):
      Nachbarn), unbekannter Next-Hop, keine Route, Schleife, mehr als 12 Hops; höchstens 16
      Wege.
    - IPs mit Namen aus dem IPAM (sonst das IPAM-Netz mit Beschreibung).
+   - **Redundante Wege (0.19.0):**
+     - Aktive Wege sind ECMP bzw. „redundant über Verbund“, wenn sie sich nur in Firewalls
+       desselben Verbunds unterscheiden (ADR 0020).
+     - Backup-Wege: je Weg eine Abweichung an einem Hop über einen BGP-Pfad bzw. eine
+       eingeschaltete statische Route für dasselbe Präfix mit anderem Next-Hop.
+     - Gezeigt werden Backup-Wege, die ein Ziel erreichen und höchstens `slack` Hops (Standard
+       1) länger sind als der kürzeste aktive („gleiche oder fast gleiche Länge“).
+     - Mehrere gleichzeitige Ausfälle und das Abwägen nach BGP-Attributen sind nicht
+       abgebildet.
    - Offen: Session-Sync-Paar als ein Hop, Inter-VDOM-Links als Kanten, „Internet“
      zusammengefasst, Regel-Relevanz je Hop (Zonen-Paar → Regeln), NAT auf dem Weg.
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde. Erster Teil in

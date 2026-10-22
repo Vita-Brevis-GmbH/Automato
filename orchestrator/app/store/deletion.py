@@ -23,6 +23,7 @@ from app.models import (
     Finding,
     NatRule,
     NetworkObject,
+    ParallelRejection,
     Portgroup,
     ReferenceRecordRow,
     Rule,
@@ -108,6 +109,12 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
     session.execute(delete(DeviceObject).where(DeviceObject.source_system_id == source.id))
     for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS, TopoExit):
         session.execute(delete(model).where(model.source_system_id == source.id))
+    session.execute(
+        delete(ParallelRejection).where(
+            (ParallelRejection.system_a_id == source.id)
+            | (ParallelRejection.system_b_id == source.id)
+        )
+    )
     counts["vms"] = _delete_vms(session, Vm.source_system_id == source.id)
     session.execute(delete(Portgroup).where(Portgroup.source_system_id == source.id))
     session.execute(delete(RulePairDecision).where(RulePairDecision.source_system_id == source.id))
@@ -140,7 +147,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     counts["nat_rules"] = _count(session, delete(NatRule).where(NatRule.tenant_id == tid))
     counts["findings"] = _count(session, delete(Finding).where(Finding.tenant_id == tid))
     session.execute(delete(DeviceObject).where(DeviceObject.tenant_id == tid))
-    for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS, TopoExit):
+    for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS, TopoExit, ParallelRejection):
         session.execute(delete(model).where(model.tenant_id == tid))
     counts["vms"] = _delete_vms(session, Vm.tenant_id == tid)
     session.execute(delete(Portgroup).where(Portgroup.tenant_id == tid))

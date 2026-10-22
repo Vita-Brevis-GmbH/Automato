@@ -20,6 +20,11 @@ ein Knoten und nicht vier Wege.
 - **Ende:** Ziel angeschlossen, Anbindung, Default-Route ohne gelesenen Nachbarn
   („extern“), Next-Hop ohne gelesenes Geraet, keine Route, Schleife oder Hop-Grenze -
   Next-Hops mit dem Namen aus dem IPAM.
+- **Redundante Wege** (0.19.0): neben den aktiven Wegen (ECMP verzweigt, parallele Firewalls
+  eines Verbunds) die Backup-Wege - je Weg eine Abweichung an einem Hop ueber einen
+  BGP-Pfad bzw. eine statische Route fuer dasselbe Praefix mit anderem Next-Hop (schwebende
+  Route, Backup-Provider). Gezeigt werden Backup-Wege, die ein Ziel erreichen und hoechstens
+  `slack` Hops laenger sind als der kuerzeste aktive Weg („gleiche oder fast gleiche Laenge“).
 """
 
 import ipaddress
@@ -44,7 +49,9 @@ from app.store import references
 from app.store.topology import MGMT, Table, ip_hex, matches, table_of
 
 MAX_HOPS = 12
-MAX_PATHS = 16
+MAX_PATHS = 16  # aktive Wege
+MAX_BACKUP = 16  # Backup-Wege (vor dem Filter nach Laenge)
+REACHED = ("connected", "fabric", "exit", "external")  # Ende = Ziel erreicht bzw. nach aussen
 _CONNECTED = ("connected", "local")
 Key = tuple[int, str]  # (Quellsystem, Kontext: VDOM bzw. Tenant:VRF)
 __all__ = ["MGMT", "Graph", "trace"]
@@ -67,6 +74,7 @@ class Node:
     source: str
     members: list[str] = field(default_factory=list)  # Hostname bzw. Border-Leafs
     missing: list[str] = field(default_factory=list)
+    group: str | None = None  # Verbund paralleler Firewalls (ADR 0020)
 
     @property
     def key(self) -> str:
@@ -82,6 +90,7 @@ class Node:
             "label": self.label,
             "members": self.members,
             "missing": self.missing,
+            "group": self.group,
         }
 
 
@@ -99,13 +108,13 @@ class Graph:
     def __init__(self, session: Session, tenant_id: int):
         self.session = session
         self.tenant_id = tenant_id
-        names = dict(
-            session.execute(
-                select(SourceSystem.id, SourceSystem.name).where(
-                    SourceSystem.tenant_id == tenant_id
-                )
-            ).all()
-        )
+        names, groups = {}, {}
+        for sid, name, group in session.execute(
+            select(SourceSystem.id, SourceSystem.name, SourceSystem.parallel_group).where(
+                SourceSystem.tenant_id == tenant_id
+            )
+        ):
+            names[sid], groups[sid] = name, group
         contexts = list(
             session.scalars(
                 select(TopoContext)
@@ -129,6 +138,7 @@ class Graph:
                 if c.kind == "vrf":
                     label = f"{source} · VRF {c.context}"
                 node = self.nodes[key] = Node(c.source_system_id, c.context, kind, label, source)
+                node.group = groups.get(c.source_system_id)
             node.members.append(c.node)
             node.missing += [m for m in c.missing or [] if m not in node.missing]
         self.refs = references.context(session, tenant_id)
@@ -275,6 +285,61 @@ class Graph:
             out.append((key, ifaces[0] if ifaces else None, table_of(r)))
         return out
 
+    def backups(self, key: Key, ip, table: Table, route: dict) -> list[dict]:
+        """Backup-Next-Hops fuer das Praefix der aktiven Route: BGP-Pfade und eingeschaltete
+        statische Routen derselben VRF mit einem anderen Next-Hop (z. B. schwebende Route mit
+        hoeherer Distanz, zweiter Provider)."""
+        hx = ip_hex(ip)
+        active = {h.get("ip") for h in route.get("next_hops") or []}
+        out: list[dict] = []
+        for r in self.session.scalars(
+            select(TopoRoute)
+            .where(
+                TopoRoute.source_system_id == key[0],
+                TopoRoute.context == key[1],
+                TopoRoute.family == ip.version,
+                TopoRoute.table.in_(("bgp", "static")),
+                TopoRoute.prefix == route["prefix"],
+                TopoRoute.lo <= hx,
+                TopoRoute.hi >= hx,
+            )
+            .order_by(TopoRoute.table, TopoRoute.distance, TopoRoute.id)
+        ):
+            if table_of(r) != table or (r.table == "static" and not r.best):
+                continue  # andere VRF bzw. abgeschaltete statische Route
+            for h in r.next_hops or []:
+                nh = h.get("ip")
+                if not nh or nh in active or any(o["next_hop"]["ip"] == nh for o in out):
+                    continue
+                attrs = r.attrs or {}
+                if r.table == "bgp":
+                    path = f" (AS-Pfad {attrs['as_path']})" if attrs.get("as_path") else ""
+                    reason = f"BGP-Backup{path}"
+                else:
+                    reason = "statische Backup-Route" + (
+                        f" (Distanz {r.distance})" if r.distance is not None else ""
+                    )
+                hop = dict(h)
+                if not hop.get("interface"):  # BGP-Pfade ohne Interface: das Netz des Next-Hops
+                    hop["interface"] = self.interface_to(key, nh, table)
+                out.append({"next_hop": hop, "prefix": r.prefix, "protocol": r.protocol,
+                            "distance": r.distance, "reason": reason})  # fmt: skip
+        return out
+
+    def interface_to(self, key: Key, ip_text: str, table: Table) -> str | None:
+        """Interface, ueber das der Knoten eine IP direkt erreicht (angeschlossenes Netz)."""
+        try:
+            ip = ipaddress.ip_address(ip_text)
+        except ValueError:
+            return None
+        rows = [r for r in self._routes(ip, key, connected=True) if table_of(r) == table]
+        rows.sort(key=lambda r: -r.prefix_len)
+        for r in rows:
+            for h in r.next_hops or []:
+                if h.get("interface"):
+                    return h["interface"]
+        return None
+
     def table(self, key: Key, interface: str | None) -> Table:
         """VRF eines Interfaces - aus seinen angeschlossenen Netzen (fehlt = 0)."""
         if key not in self._tables:
@@ -385,9 +450,11 @@ def trace(
     dst_text: str,
     src_text: str | None = None,
     start: str | None = None,
+    slack: int = 1,
 ) -> dict:
     """Weg von der Quelle (bzw. dem Startpunkt) zum Ziel: je Pfad die Hops mit Ein- und
-    Ausgang (Interface, Zone), Route bzw. Policy-Route und Next-Hop, dazu das Ende."""
+    Ausgang (Interface, Zone), Route bzw. Policy-Route und Next-Hop, dazu das Ende - die
+    aktiven Wege und die Backup-Wege mit hoechstens `slack` Hops mehr."""
     dst = ipaddress.ip_address(dst_text.strip())
     src = ipaddress.ip_address(src_text.strip()) if src_text and src_text.strip() else None
     g = Graph(session, tenant_id)
@@ -411,18 +478,27 @@ def trace(
                 "Gerät mit diesem Netz einlesen."
             )
     paths: list[dict] = []
-    queue = [([], key, iface, via, g.table(key, iface)) for key, iface, via in starts]
-    while queue and len(paths) < MAX_PATHS:
-        hops, key, ingress, via, table = queue.pop(0)
+    backups_found: list[dict] = []
+    # (Hops, Knoten, Eingang, wie erreicht, VRF, Abweichung) - aktive Wege zuerst
+    active = [([], key, iface, via, g.table(key, iface), None) for key, iface, via in starts]
+    backup: list[tuple] = []
+    cut = False
+    while active or backup:
+        if active and len(paths) >= MAX_PATHS or not active and len(backups_found) >= MAX_BACKUP:
+            cut = True
+            break
+        hops, key, ingress, via, table, dev = (active or backup).pop(0)
+        out = paths if dev is None else backups_found
+
         node = g.nodes[key]
         hop = {**node.out(), "via": via, "ingress": _port(g, key, ingress)}
         if table != 0:
             hop["vrf"] = table
         if any((h["key"], h.get("vrf", 0)) == (node.key, table) for h in hops):
-            paths.append(_end(hops, hop, "loop", f"Schleife: {node.label} ist schon auf dem Weg"))
+            _record(out, hops, hop, "loop", f"Schleife: {node.label} ist schon auf dem Weg", dev)
             continue
         if len(hops) >= MAX_HOPS:
-            paths.append(_end(hops, hop, "max_hops", f"mehr als {MAX_HOPS} Hops – abgebrochen"))
+            _record(out, hops, hop, "max_hops", f"mehr als {MAX_HOPS} Hops – abgebrochen", dev)
             continue
         policies = g.policies(key, src, dst, ingress)
         hop["policy_routes"] = policies
@@ -437,40 +513,50 @@ def trace(
             devices = follow["output_device"] or [None]
             next_hops = [{"ip": follow["gateway"], "interface": devices[0]}]
         elif inside:
-            paths.append(_end(hops, hop, "fabric", f"Ziel im Fabric: {inside[0][1]}"))
+            _record(out, hops, hop, "fabric", f"Ziel im Fabric: {inside[0][1]}", dev)
             continue
         elif route is None:
             text = "keine Route zum Ziel" + (f" (VRF {table})" if table != 0 else "")
             if node.missing:
                 text = "keine Route bekannt – Routing-Tabelle nicht (ganz) lesbar"
-            paths.append(_end(hops, hop, "no_route", text))
+            _record(out, hops, hop, "no_route", text, dev)
             continue
         elif route["protocol"] in _CONNECTED or not any(h.get("ip") for h in route["next_hops"]):
             iface = next((h.get("interface") for h in route["next_hops"]), None)
             hop["egress"] = _port(g, key, iface)
             where = f" ({iface})" if iface else ""
-            paths.append(_end(hops, hop, "connected", f"Ziel angeschlossen an {node.label}{where}"))
+            _record(out, hops, hop, "connected", f"Ziel angeschlossen an {node.label}{where}", dev)
             continue
         else:
             next_hops = route["next_hops"]
-        for nh in next_hops:
+        branches = [(nh, hop, dev) for nh in next_hops]
+        # eine Abweichung je Weg: Backup-Next-Hops dieses Knotens (nicht bei Policy-Routen)
+        if dev is None and follow is None and route is not None:
+            for b in g.backups(key, dst, table, route):
+                info = {k: b[k] for k in ("prefix", "protocol", "distance", "reason")}
+                deviation = {"hop": len(hops), "label": node.label, "reason": b["reason"]}
+                branches.append((b["next_hop"], {**hop, "backup": info}, deviation))
+        for nh, base, deviation in branches:
+            queue = active if deviation is None else backup
+            target = paths if deviation is None else backups_found
             ip = nh.get("ip")
             egress = {**_port(g, key, nh.get("interface")), "next_hop": ip, **g.resolve(ip)}
-            branch = {**hop, "egress": egress}
+            branch = {**base, "egress": egress}
+
             nxt = _neighbors(g, key, ip)
             for nkey, niface, how in nxt:
-                queue.append(([*hops, branch], nkey, niface, how, g.table(nkey, niface)))
+                queue.append(([*hops, branch], nkey, niface, how, g.table(nkey, niface), deviation))
             if nxt:
                 continue
             ex = g.exit_for(key, nh.get("interface"), egress.get("zone"), ip)
             if ex is not None:
                 egress["exit"] = {"id": ex.id, "name": ex.name, "kind": ex.kind}
-                target = _exit_target(ex, dst)
-                if target is not None and target in g.nodes:
+                target_key = _exit_target(ex, dst)
+                if target_key is not None and target_key in g.nodes:
                     via_exit = f"über {_exit_label(ex)} (manuelle Route)"
-                    queue.append(([*hops, branch], target, None, via_exit, 0))
+                    queue.append(([*hops, branch], target_key, None, via_exit, 0, deviation))
                     continue
-                paths.append(_end(hops, branch, "exit", _exit_text(ex, dst, g.names(ip))))
+                _record(target, hops, branch, "exit", _exit_text(ex, dst, g.names(ip)), deviation)
                 continue
             known = g.names(ip) or ([egress["network"]] if egress.get("network") else [])
             name = f" ({', '.join(known)})" if known else ""
@@ -480,14 +566,66 @@ def trace(
                 kind, text = "external", f"weiter nach extern über {ip}{name} – Default-Route"
             else:
                 kind, text = "unknown", f"Next-Hop {ip}{name} gehört keinem gelesenen Gerät"
-            paths.append(_end(hops, branch, kind, text))
-    if queue:
+            _record(target, hops, branch, kind, text, deviation)
+    if cut:
         notes.append(f"mehr als {MAX_PATHS} Wege – gekürzt")
+    primary = _unique(paths)
+    for p in primary:
+        p["kind"] = "active"
+    _mark_parallel(primary)
+    shown, hidden = _backups(primary, _unique(backups_found), slack)
+    if hidden:
+        notes.append(
+            f"{hidden} weitere Backup-Wege ausgeblendet (mehr als {slack} Hop länger bzw. "
+            "ohne Ziel)"
+        )
     return {
         "start": [g.nodes[k].out() | {"via": via} for k, _, via in starts],
-        "paths": _unique(paths),
+        "paths": primary + shown,
         "notes": notes,
+        "slack": slack,
     }
+
+
+def _signature(p: dict) -> tuple:
+    return tuple(
+        (h["key"], *((h.get("egress") or {}).get(k) for k in ("next_hop", "interface")))
+        for h in p["hops"]
+    ) + (p["end"]["kind"],)
+
+
+def _mark_parallel(primary: list[dict]) -> None:
+    """Aktive Wege, die sich nur in Firewalls desselben Verbunds unterscheiden, sind redundant
+    ueber den Verbund (z. B. ECMP auf zwei Cluster mit Session-Sync)."""
+    seen: dict[tuple, list[dict]] = defaultdict(list)
+    for p in primary:
+        sig = tuple(h.get("group") or h["key"] for h in p["hops"]) + (p["end"]["kind"],)
+        seen[sig].append(p)
+    for same in seen.values():
+        keys = {tuple(h["key"] for h in p["hops"]) for p in same}
+        if len(keys) > 1:
+            groups = sorted({h["group"] for p in same for h in p["hops"] if h.get("group")})
+            for p in same:
+                p["parallel"] = groups
+
+
+def _backups(primary: list[dict], found: list[dict], slack: int) -> tuple[list[dict], int]:
+    """Backup-Wege, die ein Ziel erreichen und hoechstens `slack` Hops laenger sind als der
+    kuerzeste aktive Weg; ohne doppelte zu aktiven Wegen. Rueckgabe: (gezeigt, ausgeblendet)."""
+    reached = [len(p["hops"]) for p in primary if p["end"]["kind"] in REACHED]
+    shortest = min(reached or [len(p["hops"]) for p in primary] or [0])
+    known = {_signature(p) for p in primary}
+    shown, hidden = [], 0
+    for p in found:
+        if _signature(p) in known:
+            continue
+        if p["end"]["kind"] not in REACHED or (primary and len(p["hops"]) > shortest + slack):
+            hidden += 1
+            continue
+        p["kind"] = "backup"
+        shown.append(p)
+    shown.sort(key=lambda p: len(p["hops"]))
+    return shown, hidden
 
 
 def _exit_target(ex: TopoExit, dst) -> Key | None:
@@ -547,14 +685,16 @@ def _end(hops: list, hop: dict, kind: str, text: str) -> dict:
     return {"hops": [*hops, hop], "end": {"kind": kind, "text": text}}
 
 
+def _record(out: list, hops: list, hop: dict, kind: str, text: str, deviation) -> None:
+    """Weg mit seinem Ende ablegen; Backup-Wege mit der Abweichung (Hop, Grund)."""
+    out.append({**_end(hops, hop, kind, text), **({"deviation": deviation} if deviation else {})})
+
+
 def _unique(paths: list[dict]) -> list[dict]:
     """Gleiche Wege (z. B. ueber zwei Next-Hops zum selben Nachbarn) nur einmal."""
     seen, out = set(), []
     for p in paths:
-        sig = tuple(
-            (h["key"], *((h.get("egress") or {}).get(k) for k in ("next_hop", "interface")))
-            for h in p["hops"]
-        ) + (p["end"]["kind"],)
+        sig = _signature(p)
         if sig not in seen:
             seen.add(sig)
             out.append(p)

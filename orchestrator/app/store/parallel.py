@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     DeviceObject,
     FindingType,
+    ParallelRejection,
     Platform,
     Rule,
     RuleDomain,
@@ -342,9 +343,63 @@ def twin_ids(session: Session, rule_ids) -> set[int]:
 # -- Vorschlaege ----------------------------------------------------------------------
 
 
-def suggestions(session: Session, tenant_id: int) -> list[dict]:
+def _pairs(ids) -> list[tuple[int, int]]:
+    ids = sorted(set(ids))
+    return [(a, b) for i, a in enumerate(ids) for b in ids[i + 1 :]]
+
+
+def rejected(session: Session, tenant_id: int) -> set[tuple[int, int]]:
+    """Abgelehnte Paare (0.19.0): werden nicht mehr vorgeschlagen."""
+    return {
+        (r.system_a_id, r.system_b_id)
+        for r in session.scalars(
+            select(ParallelRejection).where(ParallelRejection.tenant_id == tenant_id)
+        )
+    }
+
+
+def reject(session: Session, tenant_id: int, system_ids) -> list[tuple[int, int]]:
+    """Firewalls sind nicht parallel: Paare merken; ein gemeinsamer Verbund wird aufgeloest.
+    Rueckgabe: neu abgelehnte Paare."""
+    known = rejected(session, tenant_id)
+    new = [p for p in _pairs(system_ids) if p not in known]
+    for a, b in new:
+        session.add(ParallelRejection(tenant_id=tenant_id, system_a_id=a, system_b_id=b))
+    members = list(
+        session.scalars(
+            select(SourceSystem).where(
+                SourceSystem.tenant_id == tenant_id, SourceSystem.id.in_(set(system_ids))
+            )
+        )
+    )
+    shared = {s.parallel_group for s in members if s.parallel_group}
+    for group in shared:
+        inside = [s for s in members if s.parallel_group == group]
+        if len(inside) > 1:  # gemeinsamer Verbund dieser Firewalls: aufloesen
+            for s in inside:
+                s.parallel_group = None
+    session.flush()
+    return new
+
+
+def unreject(session: Session, tenant_id: int, system_ids) -> int:
+    """Ablehnung aufheben (Paare wieder vorschlagen bzw. von Hand gesetzter Verbund)."""
+    pairs = set(_pairs(system_ids))
+    gone = 0
+    for r in session.scalars(
+        select(ParallelRejection).where(ParallelRejection.tenant_id == tenant_id)
+    ):
+        if (r.system_a_id, r.system_b_id) in pairs:
+            session.delete(r)
+            gone += 1
+    session.flush()
+    return gone
+
+
+def suggestions(session: Session, tenant_id: int, include_rejected: bool = False) -> list[dict]:
     """Firewalls, die parallel aussehen und noch nicht im selben Verbund sind: Session-Sync
-    (FGSP) zwischen ihnen bzw. mindestens die Haelfte gleicher Policies."""
+    (FGSP) zwischen ihnen bzw. mindestens die Haelfte gleicher Policies. Abgelehnte Paare
+    nur auf Wunsch (`rejected: true`)."""
     from app.store import paths  # Adressen der Knoten (Interfaces) - spaet importiert
 
     systems = {
@@ -379,12 +434,19 @@ def suggestions(session: Session, tenant_id: int) -> list[dict]:
             smaller = min(len(sigs[a]), len(sigs[b]))
             if smaller and same >= 3 and same * 2 >= smaller:
                 reasons[(a, b)].append(f"{same} von {smaller} Policies gleich")
+    no = rejected(session, tenant_id)
+    if include_rejected:
+        for pair in no:
+            if pair[0] in systems and pair[1] in systems:
+                reasons.setdefault(pair, [])
     out = []
     for (a, b), why in sorted(reasons.items()):
         sa, sb = systems[a], systems[b]
         if sa.parallel_group and sa.parallel_group == sb.parallel_group:
             continue
+        if (a, b) in no and not include_rejected:
+            continue
         group = sa.parallel_group or sb.parallel_group or f"{sa.name} + {sb.name}"
         out.append({"system_ids": [a, b], "names": [sa.name, sb.name], "group": group,
-                    "reasons": why})  # fmt: skip
+                    "reasons": why, "rejected": (a, b) in no})  # fmt: skip
     return out

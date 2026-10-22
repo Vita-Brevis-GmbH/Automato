@@ -374,9 +374,20 @@ export interface ParallelSuggestion {
   names: string[];
   group: string; // vorgeschlagener Name des Verbunds
   reasons: string[]; // z. B. „Session-Sync (FGSP)“, „312 von 320 Policies gleich“
+  rejected?: boolean; // abgelehnt: wird nicht mehr vorgeschlagen
 }
-export const fetchParallelSuggestions = (tenantId: number) =>
-  getJSON<ParallelSuggestion[]>(`/api/systems/parallel-suggestions${qs({ tenant_id: tenantId })}`);
+export const fetchParallelSuggestions = (tenantId: number, includeRejected = false) =>
+  getJSON<ParallelSuggestion[]>(
+    `/api/systems/parallel-suggestions${qs({ tenant_id: tenantId, include_rejected: includeRejected ? "true" : undefined })}`,
+  );
+// Nicht parallel: Vorschlag ablehnen bzw. Verbund auflösen (beides: nicht mehr vorschlagen)
+export const rejectParallel = (tenantId: number, sel: { system_ids?: number[]; group?: string }) =>
+  sendJSON<{ source_ids: number[] }>("/api/systems/parallel-reject", "POST", { tenant_id: tenantId, ...sel });
+export const unrejectParallel = (tenantId: number, systemIds: number[]) =>
+  sendJSON<{ source_ids: number[] }>("/api/systems/parallel-reject/undo", "POST", {
+    tenant_id: tenantId,
+    system_ids: systemIds,
+  });
 // Verbund setzen (alle Firewalls); leere Liste = Verbund auflösen
 export const setParallelGroup = (tenantId: number, group: string, systemIds: number[]) =>
   sendJSON<System[]>("/api/systems/parallel-group", "POST", {
@@ -1523,6 +1534,7 @@ export interface RoutingNode {
   label: string;
   members: string[];
   missing: string[];
+  group?: string | null; // Verbund paralleler Firewalls
 }
 export interface RoutingSummary {
   contexts: RoutingContext[];
@@ -1587,8 +1599,12 @@ export interface TraceHop extends RoutingNode {
   } | null;
   policy?: PolicyHit; // Policy-Route bzw. SD-WAN-Regel, der der Weg folgt
   policy_routes?: PolicyHit[];
+  backup?: { prefix: string; protocol: string | null; distance: number | null; reason: string }; // Backup-Weg weicht hier ab
 }
 export interface TracePath {
+  kind?: "active" | "backup"; // aktiv (inkl. ECMP) bzw. Backup-Weg (eine Abweichung)
+  deviation?: { hop: number; label: string; reason: string }; // Backup: wo und warum
+  parallel?: string[]; // redundant über diese Verbünde paralleler Firewalls
   hops: TraceHop[];
   end: {
     kind: "connected" | "fabric" | "exit" | "external" | "unknown" | "no_route" | "loop" | "max_hops";
@@ -1599,6 +1615,7 @@ export interface TraceResult {
   start: (RoutingNode & { via: string })[];
   paths: TracePath[];
   notes: string[];
+  slack?: number; // Backup-Wege mit höchstens so vielen Hops mehr als der kürzeste aktive
 }
 export interface TopoPeer extends Labeled {
   id: number;
@@ -1681,9 +1698,9 @@ export const fetchRoutes = (opts: {
 export const lookupRoute = (tenantId: number, ip: string) =>
   getJSON<RouteLookup[]>(`/api/routing/lookup${qs({ tenant_id: tenantId, ip: ip.trim() })}`);
 // Weg Hop für Hop: ab der Quelle (dort angeschlossen) bzw. dem Startpunkt (RoutingNode.key)
-export const traceRoute = (tenantId: number, opts: { dst: string; src?: string; start?: string }) =>
+export const traceRoute = (tenantId: number, opts: { dst: string; src?: string; start?: string; slack?: number }) =>
   getJSON<TraceResult>(
-    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim(), src: opts.src?.trim() || undefined, start: opts.start || undefined })}`,
+    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim(), src: opts.src?.trim() || undefined, start: opts.start || undefined, slack: opts.slack })}`,
   );
 export const fetchPeers = (tenantId: number) => getJSON<TopoPeer[]>(`/api/routing/peers${qs({ tenant_id: tenantId })}`);
 export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha${qs({ tenant_id: tenantId })}`);

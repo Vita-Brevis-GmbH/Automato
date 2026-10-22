@@ -24,6 +24,12 @@ konfiguriert sind.
 - Automato fasst nicht von sich aus zusammen. Es schlägt vor (`GET /systems/parallel-suggestions`),
   wenn zwischen zwei FortiGates Session-Sync besteht (FGSP-Peer = Interface-IP der anderen)
   oder mindestens die Hälfte der Policies gleich ist (mindestens drei).
+- **Ablehnen (0.19.0, Alembic `0040`):**
+  - Ein abgelehnter Vorschlag bzw. ein aufgelöster Verbund wird als Paar in `parallel_rejection`
+    gemerkt und nicht mehr vorgeschlagen (`POST /systems/parallel-reject`, Firewalls oder
+    `group`).
+  - `…/undo` hebt die Ablehnung auf, ebenso ein von Hand gesetzter Verbund.
+  - Audit: `source.parallel_rejected` / `_unrejected`.
 
 ### Vergleich (abgeleiteter Zustand, `store/parallel.py`)
 

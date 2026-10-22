@@ -7,9 +7,11 @@ import {
   ParallelSuggestion,
   Rule,
   RuleDomain,
+  rejectParallel,
   RuleSummary,
   setParallelGroup,
   System,
+  unrejectParallel,
 } from "./api";
 import type { View, ViewParams } from "./App";
 import RuleDetailDrawer from "./RuleDetail";
@@ -154,40 +156,79 @@ export function ParallelChips({ r }: { r: Rule }) {
 // Vorschlag: Firewalls, die parallel aussehen (Session-Sync, gleiche Policies) – Admin fasst zusammen
 function ParallelHint({ tenantId, isAdmin, onDone }: { tenantId: number; isAdmin: boolean; onDone: () => void }) {
   const [items, setItems] = useState<ParallelSuggestion[]>([]);
+  const [showRejected, setShowRejected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [reload, setReload] = useState(0);
   useEffect(() => {
-    fetchParallelSuggestions(tenantId)
+    fetchParallelSuggestions(tenantId, isAdmin)
       .then(setItems)
       .catch(() => setItems([]));
-  }, [tenantId]);
-  if (!items.length) return null;
-  const join = (s: ParallelSuggestion) => {
+  }, [tenantId, isAdmin, reload]);
+  const open = items.filter((s) => !s.rejected);
+  const rejected = items.filter((s) => s.rejected);
+  if (!open.length && !rejected.length) return null;
+  const act = (action: Promise<unknown>, changed: boolean) => {
     setBusy(true);
-    setParallelGroup(tenantId, s.group, s.system_ids)
+    setError(null);
+    action
       .then(() => {
-        setItems(items.filter((x) => x !== s));
-        onDone();
+        setReload((n) => n + 1);
+        if (changed) onDone();
       })
       .catch(setError)
       .finally(() => setBusy(false));
   };
   return (
     <>
-      <ErrorBox error={error} prefix="Verbund setzen" />
-      {items.map((s) => (
+      <ErrorBox error={error} prefix="Verbund" />
+      {open.map((s) => (
         <Note key={s.system_ids.join("-")}>
           <b>{s.names.join(" und ")}</b> sehen parallel aus ({s.reasons.join(", ")}) – ihre Regeln stehen doppelt
           in der Liste.{" "}
           {isAdmin ? (
-            <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => join(s)}>
-              Als Verbund „{s.group}“ zusammenfassen
-            </button>
+            <>
+              <button
+                className="btn btn-sm btn-primary"
+                disabled={busy}
+                onClick={() => act(setParallelGroup(tenantId, s.group, s.system_ids), true)}
+              >
+                Als Verbund „{s.group}“ zusammenfassen
+              </button>{" "}
+              <button
+                className="btn btn-sm"
+                disabled={busy}
+                title="nicht parallel – wird nicht mehr vorgeschlagen"
+                onClick={() => act(rejectParallel(tenantId, { system_ids: s.system_ids }), false)}
+              >
+                Ablehnen
+              </button>
+            </>
           ) : (
-            <span className="faint">Ein Admin kann sie als Verbund zusammenfassen.</span>
+            <span className="faint">Ein Admin kann sie als Verbund zusammenfassen oder ablehnen.</span>
           )}
         </Note>
       ))}
+      {isAdmin && rejected.length > 0 && (
+        <div className="faint" style={{ margin: "0 0 10px" }}>
+          <button className="linkbtn" onClick={() => setShowRejected((v) => !v)}>
+            {rejected.length} abgelehnte{rejected.length === 1 ? "r" : ""} Vorschlag{rejected.length === 1 ? "" : "e"}
+          </button>
+          {showRejected &&
+            rejected.map((s) => (
+              <div key={s.system_ids.join("-")} style={{ marginTop: 4 }}>
+                {s.names.join(" und ")} – nicht parallel{" "}
+                <button
+                  className="linkbtn"
+                  disabled={busy}
+                  onClick={() => act(unrejectParallel(tenantId, s.system_ids), false)}
+                >
+                  wieder vorschlagen
+                </button>
+              </div>
+            ))}
+        </div>
+      )}
     </>
   );
 }
@@ -597,6 +638,7 @@ export default function RulesTable({
           onGo={onGo}
           onRule={setSelected}
           onChanged={() => setReload((n) => n + 1)}
+          isAdmin={isAdmin}
         />
       )}
     </>

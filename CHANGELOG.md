@@ -7,6 +7,33 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.19.0 – 2026-10-22
+
+Verbund ablehnen und redundante Wege (Alembic `0040`). Dev-Befunde 0.18.0; abgenommen:
+Regeln paralleler Firewalls korrekt und nur einmal, keine Schleifen mehr.
+
+- **Verbund ablehnen:** Neben „zusammenfassen“ gibt es **Ablehnen**: Die Firewalls sind nicht
+  parallel und werden nicht mehr vorgeschlagen.
+  - Im Regel-Detail löst **Verbund auflösen** einen Verbund wieder auf (Regeln wieder einzeln),
+    ebenfalls ohne neuen Vorschlag.
+  - „N abgelehnte Vorschläge“ zeigt die Ablehnungen; **wieder vorschlagen** hebt eine auf.
+  - Ein von Hand gesetzter Verbund hebt die Ablehnung seiner Firewalls ebenfalls auf.
+  - Alles nur Admin, im Audit.
+- **Redundante Wege** (Weg für IP): neben den aktiven Wegen (ECMP, parallele Firewalls eines
+  Verbunds) die **Backup-Wege** mit gleicher oder fast gleicher Länge.
+  - Backup-Weg: eine Abweichung an einem Hop über einen BGP-Pfad bzw. eine eingeschaltete
+    statische Route für dasselbe Präfix mit anderem Next-Hop, z. B. zweiter Provider oder
+    schwebende Route mit höherer Distanz.
+  - Länge: Auswahl „Backup: gleich lang / bis +1 Hop (Standard) / bis +2 Hops / ausblenden“.
+    Längere Backup-Wege und solche ohne Ziel nennt ein Hinweis.
+  - Neue **Übersicht** „Wege im Überblick“: Art (aktiv · ECMP, redundant · Verbund, Backup ab
+    Knoten mit Grund), Knoten nacheinander, Next-Hops, Anzahl Hops, Ende. Dazu je Weg eine
+    Karte, am abweichenden Hop „Backup“ mit Präfix und Grund.
+- **API:**
+  - `POST /systems/parallel-reject` (Firewalls bzw. `group`) und `/systems/parallel-reject/undo`;
+  - `GET /systems/parallel-suggestions?include_rejected=`;
+  - `GET /routing/trace?slack=` mit `kind` (active/backup), `deviation`, `parallel` je Weg.
+
 ## 0.18.0 – 2026-10-22
 
 Parallele Firewalls und Anbindungen nach aussen (Alembic `0039`, ADR 0020, ADR 0019 Stufe 4

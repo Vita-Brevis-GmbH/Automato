@@ -427,3 +427,86 @@ def test_anbindungen_nach_aussen(client):
     assert [x["name"] for x in client.get("/routing/exits", params={"tenant_id": tid}).json()] == [
         "Internet"
     ]
+
+
+FWR = _fw(
+    "fw-r",
+    [
+        _r("fw-r", "root", "10.10.0.0/24", [{"interface": "lan"}], "connected"),
+        _r("fw-r", "root", "198.51.100.0/30", [{"interface": "wan1"}], "connected"),
+        _r("fw-r", "root", "203.0.113.8/29", [{"interface": "wan2"}], "connected"),
+        _r("fw-r", "root", "10.77.0.0/30", [{"interface": "to-fws"}], "connected"),
+        _r("fw-r", "root", "10.66.0.0/29", [{"interface": "to-par"}], "connected"),
+        _r("fw-r", "root", "0.0.0.0/0", [{"ip": "198.51.100.1", "interface": "wan1"}], "bgp",
+           distance=20),
+        _r("fw-r", "root", "0.0.0.0/0", [{"ip": "198.51.100.1"}], "bgp", table="bgp",
+           attrs={"as_path": "64500"}),
+        _r("fw-r", "root", "0.0.0.0/0", [{"ip": "203.0.113.9"}], "bgp", table="bgp", best=False,
+           attrs={"as_path": "64501 64502"}),
+        _r("fw-r", "root", "0.0.0.0/0", [{"ip": "10.77.0.2", "interface": "to-fws"}],
+           table="static", distance=250),  # schwebende Route ueber fw-s
+        _r("fw-r", "root", "0.0.0.0/0", [{"ip": "10.77.0.9", "interface": "to-fws"}],
+           table="static", distance=10, best=False),  # abgeschaltet: kein Backup
+        _r("fw-r", "root", "10.88.0.0/16", [{"ip": "10.66.0.2", "interface": "to-par"},
+                                            {"ip": "10.66.0.3", "interface": "to-par"}]),
+    ],
+    [_if("fw-r", "lan", "10.10.0.1/24"), _if("fw-r", "wan1", "198.51.100.2/30", "internet"),
+     _if("fw-r", "wan2", "203.0.113.10/29", "internet"), _if("fw-r", "to-fws", "10.77.0.1/30")],
+)  # fmt: skip
+FWS = _fw(
+    "fw-s",
+    [
+        _r("fw-s", "root", "10.77.0.0/30", [{"interface": "to-fwr"}], "connected"),
+        _r("fw-s", "root", "0.0.0.0/0", [{"ip": "192.0.2.1", "interface": "wan"}]),
+    ],
+    [_if("fw-s", "to-fwr", "10.77.0.2/30")],
+)
+
+
+def _par(name: str, ip: str) -> dict:
+    return _fw(
+        name,
+        [_r(name, "root", "10.88.0.0/24", [{"interface": "lan"}], "connected")],
+        [_if(name, "to-fwr", ip)],
+    )
+
+
+def test_redundante_wege_mit_backup_und_verbund(client):
+    """0.19.0: neben dem aktiven Weg die Backup-Wege (BGP-Pfad, schwebende statische Route)
+    mit gleicher bzw. fast gleicher Laenge; ECMP ueber zwei Firewalls eines Verbunds."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    ids = {}
+    for name, result in (("fw-r", FWR), ("fw-s", FWS), ("fw-p1", _par("fw-p1", "10.66.0.2/29")),
+                         ("fw-p2", _par("fw-p2", "10.66.0.3/29"))):  # fmt: skip
+        ids[name] = _system(client, tid, name, "fortigate")
+        _deliver(client, tid, ids[name], "fortigate", result)
+
+    out = _trace(client, tid, src="10.10.0.5", dst="198.18.0.10")
+    kinds = [(p["kind"], _labels(p), p["end"]["kind"]) for p in out["paths"]]
+    assert kinds == [
+        ("active", ["fw-r"], "external"),
+        ("backup", ["fw-r"], "external"),  # gleiche Laenge: zweiter Provider (BGP)
+        ("backup", ["fw-r", "fw-s"], "external"),  # ein Hop mehr: schwebende Route
+    ]
+    bgp, floating = out["paths"][1], out["paths"][2]
+    assert bgp["deviation"] == {
+        "hop": 0,
+        "label": "fw-r",
+        "reason": "BGP-Backup (AS-Pfad 64501 64502)",
+    }
+    assert bgp["hops"][0]["egress"]["interface"] == "wan2"  # Interface aus dem Netz des Next-Hops
+    assert floating["hops"][0]["backup"]["reason"] == "statische Backup-Route (Distanz 250)"
+    assert all("10.77.0.9" not in str(p) for p in out["paths"])  # abgeschaltete Route
+    strict = _trace(client, tid, src="10.10.0.5", dst="198.18.0.10", slack=0)
+    assert [p["kind"] for p in strict["paths"]] == ["active", "backup"]
+    assert "1 weitere Backup-Wege ausgeblendet" in strict["notes"][0]
+
+    # ECMP auf zwei parallele Firewalls: redundant ueber den Verbund
+    body = {"tenant_id": tid, "group": "Nord", "system_ids": [ids["fw-p1"], ids["fw-p2"]]}
+    client.post("/systems/parallel-group", json=body, headers=ADMIN)
+    out = _trace(client, tid, src="10.10.0.5", dst="10.88.0.7")
+    assert [(_labels(p), p.get("parallel")) for p in out["paths"]] == [
+        (["fw-r", "fw-p1"], ["Nord"]),
+        (["fw-r", "fw-p2"], ["Nord"]),
+    ]
+    assert out["paths"][1]["hops"][1]["group"] == "Nord"
