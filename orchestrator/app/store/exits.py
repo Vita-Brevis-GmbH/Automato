@@ -15,6 +15,9 @@ Redundanz.
   BGP an beiden Firewalls eines Verbunds sind ein Vorschlag mit vier Routern und zwei Firewalls.
 - **Zustand einer Anbindung:** die erkannten Router, die sie abdeckt (ueber Next-Hop bzw.
   Interface/Zone, wie im Weg) - auch die, die sie noch nicht nennt.
+- **Ausblenden (0.21.0):** Router, die keine Anbindung sind (`topo_exit_dismissal`), schlaegt
+  Automato nicht mehr vor; ein Vorschlag verschwindet, wenn alle offenen Router ausgeblendet
+  sind. Das betrifft nur Vorschlaege, nicht die Wege.
 
 Nur lesend: alles stammt aus den gelesenen Routing-Daten, nichts geht an ein Geraet.
 """
@@ -26,7 +29,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import TopoExit, TopoHa, TopoPeer, TopoRoute
+from app.models import TopoExit, TopoExitDismissal, TopoHa, TopoPeer, TopoRoute
 from app.store.paths import _CONNECTED, Graph, Key
 from app.store.topology import MGMT, Table, table_of
 
@@ -286,16 +289,59 @@ def _name(routers: list[dict], ports: list[str]) -> str:
     return f"AS {asn}" if asn else routers[0]["ip"]
 
 
-def suggestions(session: Session, tenant_id: int, include_covered: bool = False) -> list[dict]:
+def dismissed(session: Session, tenant_id: int) -> set[str]:
+    return set(
+        session.scalars(
+            select(TopoExitDismissal.ip).where(TopoExitDismissal.tenant_id == tenant_id)
+        )
+    )
+
+
+def dismiss(session: Session, tenant_id: int, ips) -> list[str]:
+    """Router nicht mehr vorschlagen; Rueckgabe: neu ausgeblendete IPs."""
+    have = dismissed(session, tenant_id)
+    new = sorted({ip for ip in ips if ip not in have}, key=_ip_sort)
+    session.add_all(TopoExitDismissal(tenant_id=tenant_id, ip=ip) for ip in new)
+    session.flush()
+    return new
+
+
+def undismiss(session: Session, tenant_id: int, ips) -> list[str]:
+    """Router wieder vorschlagen; Rueckgabe: wieder angezeigte IPs."""
+    rows = list(
+        session.scalars(
+            select(TopoExitDismissal).where(
+                TopoExitDismissal.tenant_id == tenant_id, TopoExitDismissal.ip.in_(list(ips))
+            )
+        )
+    )
+    for row in rows:
+        session.delete(row)
+    session.flush()
+    return sorted((r.ip for r in rows), key=_ip_sort)
+
+
+def suggestions(
+    session: Session,
+    tenant_id: int,
+    include_covered: bool = False,
+    include_dismissed: bool = False,
+) -> list[dict]:
     """Erkannte Anbindungen mit allen Routern und Firewalls; ohne die schon ganz abgedeckten
-    (`include_covered` = alle). `exits` = Anbindungen, die einen Teil schon abdecken."""
+    (`include_covered` = alle) und ohne die ausgeblendeten (`include_dismissed` = mit, dann
+    `dismissed: true`). `exits` = Anbindungen, die einen Teil schon abdecken."""
     g = Graph(session, tenant_id)
     found = detect(g)
+    hidden = dismissed(session, tenant_id)
     out = []
     for ips in _groups(g, found):
-        routers = [_router(g, ip, found[ip]) for ip in ips]
+        routers = [_router(g, ip, found[ip]) | {"dismissed": ip in hidden} for ip in ips]
         covered = all(r["covered"] for r in routers)
         if covered and not include_covered:
+            continue
+        open_ = [r for r in routers if not r["covered"]]
+        off = bool(open_) and all(r["dismissed"] for r in open_)
+        if off and not include_dismissed:
             continue
         uses = [x for ip in ips for x in found[ip].values()]
         ports = sorted({p for x in uses if (p := x.zone or x.interface)})
@@ -313,6 +359,7 @@ def suggestions(session: Session, tenant_id: int, include_covered: bool = False)
                 "next_hops": routers,
                 "exits": [_ref(e) for e in exits.values()],
                 "covered": covered,
+                "dismissed": off,
                 "redundancy": _redundancy({ip: found[ip] for ip in ips}),
             }
         )

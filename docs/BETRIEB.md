@@ -262,7 +262,11 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       - Zusammengefasst je Firewall bzw. Verbund/Session-Sync-Partner über gemeinsame Router,
         ECMP, Zone bzw. Interface und BGP-AS.
       - „übernehmen“ legt die Anbindung an. „ergänzen“ erweitert eine, die schon einen Teil
-        abdeckt.
+        abdeckt. Beide springen hoch zum Formular.
+      - „ausblenden“ (0.21.0): kein Vorschlag mehr für diese Router, für alle Benutzer – bis
+        ein neuer Router dazukommt. „N ausgeblendete Vorschläge“ zeigt sie mit „wieder
+        anzeigen“.
+      - Die Vorschläge stehen zu unterst, unter den erfassten Anbindungen.
     - Im Formular stehen die erkannten Router zum Ankreuzen.
     - In der Liste zeigt „Erkannte Router · Redundanz“, was die Anbindung abdeckt. „nicht
       eingetragen“ markiert erkannte Router, die noch fehlen; ein Knopf übernimmt sie.

@@ -613,6 +613,19 @@ def test_erkannte_anbindungen_mit_redundanz(client):
     assert wan["next_hops"][2]["uses"][0]["interface"] == "wan2"  # BGP-Pfad: Netz des Routers
     assert rows[0]["next_hops"][0]["default"] is True
 
+    # ausblenden (0.21.0): fw-x ist keine Anbindung - nicht mehr vorgeschlagen, wieder anzeigen
+    viewer = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid)}
+    hide = {"tenant_id": tid, "ips": ["198.18.30.1"]}
+    assert client.post("/routing/exits/dismiss", json=hide, headers=viewer).status_code == 403
+    r = client.post("/routing/exits/dismiss", json=hide, headers=operator)
+    assert r.status_code == 200 and r.json() == {"ips": ["198.18.30.1"]}
+    assert [s["sources"] for s in suggested()] == [["fw-w1", "fw-w2"], ["fw-w1", "fw-w2"]]
+    hidden = client.get("/routing/exits/suggestions", params={"tenant_id": tid, "dismissed": True})
+    assert [(s["sources"], s["dismissed"]) for s in hidden.json()][-1] == (["fw-x"], True)
+    assert client.post("/routing/exits/dismiss", json=hide, headers=operator).json() == {"ips": []}
+    undo = client.post("/routing/exits/dismiss/undo", json=hide, headers=operator)
+    assert undo.json() == {"ips": ["198.18.30.1"]} and len(suggested()) == 3
+
     # wie bisher nur der erste Router: der Vorschlag bleibt mit den uebrigen, mit der Anbindung
     exit_ = {"tenant_id": tid, "name": "WAN Nord", "kind": "wan",
              "source_system_ids": [ids["fw-w1"]], "next_hops": ["198.18.10.1"]}  # fmt: skip

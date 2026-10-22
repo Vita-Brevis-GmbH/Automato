@@ -7,6 +7,24 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.21.0 – 2026-10-22
+
+Erkannte Anbindungen ausblenden (Alembic `0042`). Dev-Befunde 0.20.0.
+
+- **Ausblenden:** Jeder Vorschlag unter „Erkannte Anbindungen“ hat neben „übernehmen“ den
+  Knopf **ausblenden** (Operator, im Audit), wenn es keine Anbindung ist.
+  - Ausgeblendet werden die offenen Router des Vorschlags, für alle Benutzer.
+  - Kommt später ein neuer Router dazu, erscheint der Vorschlag wieder.
+  - „N ausgeblendete Vorschläge“ zeigt sie; **wieder anzeigen** hebt das Ausblenden auf.
+  - Die Wege ändern sich dadurch nicht.
+- **Reihenfolge:** „Erkannte Anbindungen“ steht jetzt zu unterst, unter den erfassten
+  Anbindungen.
+- **Sprung zum Formular:** „übernehmen“, „ergänzen“, „ändern“, „erkannte Router übernehmen“
+  und „Als Anbindung erfassen“ springen hoch zum Formular, der Name ist bereit zur Eingabe.
+- **API:**
+  - `POST /routing/exits/dismiss` und `/routing/exits/dismiss/undo` mit `ips`;
+  - `GET /routing/exits/suggestions?dismissed=` mit `dismissed` je Vorschlag und Router.
+
 ## 0.20.0 – 2026-10-22
 
 Erkannte Anbindungen nach aussen mit Redundanz, Anbindung für mehrere Firewalls, Länge der

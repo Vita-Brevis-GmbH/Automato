@@ -84,6 +84,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "routing.exit.created": frozenset({"tenant_id", "exit_id", "name", "kind"}),
     "routing.exit.updated": frozenset({"tenant_id", "exit_id", "name", "kind"}),
     "routing.exit.deleted": frozenset({"tenant_id", "exit_id", "name", "kind"}),
+    # erkannte Anbindungen ausblenden bzw. wieder anzeigen (0.21.0): nur die Router-IPs
+    "routing.exit.dismissed": frozenset({"tenant_id", "ips"}),
+    "routing.exit.undismissed": frozenset({"tenant_id", "ips"}),
     "reconcile.run": frozenset({"tenant_id", "findings"}),
     # NetBox-Sync (ADR 0010): nur Anzahlen, keine Inhalte
     "netbox_sync.planned": frozenset(

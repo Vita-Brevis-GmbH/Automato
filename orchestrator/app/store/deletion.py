@@ -35,6 +35,7 @@ from app.models import (
     SyncPlan,
     Tenant,
     TopoExit,
+    TopoExitDismissal,
     Vm,
     VmIp,
     VmNic,
@@ -164,7 +165,8 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     counts["nat_rules"] = _count(session, delete(NatRule).where(NatRule.tenant_id == tid))
     counts["findings"] = _count(session, delete(Finding).where(Finding.tenant_id == tid))
     session.execute(delete(DeviceObject).where(DeviceObject.tenant_id == tid))
-    for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS, TopoExit, ParallelRejection):
+    for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS, TopoExit, TopoExitDismissal,
+                  ParallelRejection):  # fmt: skip
         session.execute(delete(model).where(model.tenant_id == tid))
     counts["vms"] = _delete_vms(session, Vm.tenant_id == tid)
     session.execute(delete(Portgroup).where(Portgroup.tenant_id == tid))

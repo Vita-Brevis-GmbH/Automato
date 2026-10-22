@@ -444,7 +444,20 @@ test("Routing: erkannte Anbindung mit allen Routern übernehmen, Wege gleich lan
   await expect(found).toContainText("198.51.100.1");
   await expect(found).toContainText("3 Router · 3 aktiv (ECMP ×2)");
   await expect(found).toContainText("AS 64500");
+  // keine Anbindung: ausblenden, auf Wunsch wieder anzeigen
+  const cards = page.locator(".card");
+  await expect(cards.last()).toHaveAttribute("id", "exit-suggestions"); // zu unterst
+  const server = page.locator("#exit-suggestions tbody tr", { hasText: "10.20.0.254" });
+  await server.locator("button", { hasText: "ausblenden" }).click();
+  await expect(server).toHaveCount(0);
+  await page.click("button:has-text('1 ausgeblendeter Vorschlag')");
+  await expect(server).toContainText("ausgeblendet");
+  await server.locator("button", { hasText: "wieder anzeigen" }).click();
+  await expect(server.locator("button", { hasText: "ausblenden" })).toBeVisible();
+  // übernehmen springt hoch zum Formular
   await found.locator("button", { hasText: "übernehmen" }).click();
+  await expect(page.locator("#exit-form")).toBeInViewport();
+  await expect(page.locator("#ex-name")).toBeFocused();
   const hops = page.locator("#ex-hops");
   await expect(hops).toHaveValue("198.51.100.1, 198.51.100.5, 2001:db8::1");
   await expect(page.locator("#ex-fws input:checked")).toHaveCount(1);

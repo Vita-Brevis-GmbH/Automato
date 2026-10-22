@@ -211,6 +211,9 @@ Rahmen laut Anwender (2026-10-22):
        alle). Ihr Zustand zeigt die erkannten Router, die sie abdeckt – auch nicht
        eingetragene.
      - Wege tragen `extra`: Hops mehr als der kürzeste Weg mit Ziel.
+     - Ausblenden (0.21.0, Alembic `0042`, `topo_exit_dismissal`): Router, die keine Anbindung
+       sind, werden nicht mehr vorgeschlagen. Ein Vorschlag fehlt, solange alle seine offenen
+       Router ausgeblendet sind. Auf die Wege wirkt das nicht.
    - Später: Aussenrouter selbst lesen (nur lesend).
 5. **Zeichnung** (optional).
 6. **Später:** Switches und weitere Geräte, Verkabelung (L1/L2-Sicht, siehe Punkt 9).

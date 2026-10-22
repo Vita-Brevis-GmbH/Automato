@@ -1728,6 +1728,7 @@ export interface ExitRouter extends Resolved {
   prefix_count: number;
   exit: ExitRef | null; // Anbindung, die ihn (an einer Firewall) abdeckt
   covered: boolean; // an allen Firewalls abgedeckt
+  dismissed?: boolean; // im Vorschlag: ausgeblendet (0.21.0)
   listed?: boolean; // im Zustand einer Anbindung: dort eingetragen
   uses: {
     key: string;
@@ -1763,6 +1764,7 @@ export interface ExitSuggestion {
   next_hops: ExitRouter[];
   exits: ExitRef[]; // Anbindungen, die einen Teil schon abdecken
   covered: boolean;
+  dismissed: boolean; // ausgeblendet: alle offenen Router nicht mehr vorgeschlagen (0.21.0)
   redundancy: Redundancy;
 }
 export interface TopoExit {
@@ -1789,9 +1791,14 @@ export interface TopoExit {
 }
 export type TopoExitIn = Omit<TopoExit, "id" | "sources" | "updated_at" | "status">;
 export const fetchExits = (tenantId: number) => getJSON<TopoExit[]>(`/api/routing/exits${qs({ tenant_id: tenantId })}`);
-// erkannte Anbindungen; `covered` = auch die schon ganz erfassten
-export const fetchExitSuggestions = (tenantId: number, covered = false) =>
-  getJSON<ExitSuggestion[]>(`/api/routing/exits/suggestions${qs({ tenant_id: tenantId, covered: covered ? "true" : undefined })}`);
+// erkannte Anbindungen; `covered` = auch die schon ganz erfassten, `dismissed` = auch ausgeblendete
+export const fetchExitSuggestions = (tenantId: number, opts: { covered?: boolean; dismissed?: boolean } = {}) =>
+  getJSON<ExitSuggestion[]>(
+    `/api/routing/exits/suggestions${qs({ tenant_id: tenantId, covered: opts.covered ? "true" : undefined, dismissed: opts.dismissed ? "true" : undefined })}`,
+  );
+// erkannte Router nicht mehr vorschlagen bzw. wieder vorschlagen (Operator, 0.21.0)
+export const dismissExits = (tenantId: number, ips: string[], undo = false) =>
+  sendJSON<{ ips: string[] }>(`/api/routing/exits/dismiss${undo ? "/undo" : ""}`, "POST", { tenant_id: tenantId, ips });
 export const createExit = (body: TopoExitIn) => sendJSON<TopoExit>("/api/routing/exits", "POST", body);
 export const updateExit = (id: number, body: TopoExitIn) => sendJSON<TopoExit>(`/api/routing/exits/${id}`, "PUT", body);
 export const deleteExit = (id: number) => sendJSON<void>(`/api/routing/exits/${id}`, "DELETE");

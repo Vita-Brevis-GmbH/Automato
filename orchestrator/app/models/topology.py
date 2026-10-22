@@ -13,7 +13,8 @@ Bedarf). Ein Routing-Kontext ist ein FortiGate-VDOM bzw. eine ACI-VRF auf einem 
   Border-Leafs, Interfaces/SVIs, Peers und statischen Routen.
 
 Von Hand gepflegt (0.18.0, nicht je Lauf ersetzt): `topo_exit` - Anbindungen nach aussen
-(Internet, MPLS, WAN, Partner), an denen ein Weg endet bzw. weitergeht.
+(Internet, MPLS, WAN, Partner), an denen ein Weg endet bzw. weitergeht; `topo_exit_dismissal`
+(0.21.0) - erkannte Router, die nicht mehr als Anbindung vorgeschlagen werden.
 """
 
 from datetime import UTC, datetime
@@ -29,6 +30,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
@@ -153,5 +155,21 @@ class TopoExit(Base):
     routes: Mapped[list | None] = mapped_column(JSON, nullable=True)  # [{prefix, target}]
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class TopoExitDismissal(Base):
+    """Erkannter Router (IP), der nicht mehr als Anbindung vorgeschlagen wird (0.21.0,
+    „ausblenden“). Ein Vorschlag verschwindet, wenn alle seine offenen Router ausgeblendet
+    sind; ein neu erkannter Router der Anbindung zeigt ihn wieder."""
+
+    __tablename__ = "topo_exit_dismissal"
+    __table_args__ = (UniqueConstraint("tenant_id", "ip", name="uq_topo_exit_dismissal"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
+    ip: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

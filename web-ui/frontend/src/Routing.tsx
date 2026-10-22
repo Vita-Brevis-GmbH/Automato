@@ -2,11 +2,12 @@
 // ACI-VRF auf den Border-Leafs, BGP-Pfade (auch Backup), Nachbarn, HA/Session-Sync,
 // Policy-Routen/SD-WAN und L3Outs. „Weg für IP“ verfolgt den Weg Hop für Hop ab der Quelle
 // bzw. einem gewählten Startpunkt (Stufe 3, erste Fassung); IPs mit Namen aus dem IPAM.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ContextKind,
   createExit,
   deleteExit,
+  dismissExits,
   ExitRouter,
   ExitSuggestion,
   Redundancy,
@@ -1193,11 +1194,18 @@ function ExitForm({
   const [detected, setDetected] = useState<ExitSuggestion[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const card = useRef<HTMLDivElement>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    fetchExitSuggestions(tenantId, true)
+    fetchExitSuggestions(tenantId, { covered: true, dismissed: true })
       .then(setDetected)
       .catch(() => setDetected([]));
   }, [tenantId]);
+  // geöffnet (neu, übernommen, ändern): zum Formular springen, Name bereit zur Eingabe
+  useEffect(() => {
+    card.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    nameInput.current?.focus({ preventScroll: true });
+  }, []);
   const firewalls = [...new Map(nodes.map((n) => [n.source_system_id, n.source])).entries()];
   const hopList = csv(hops);
   const portList = csv(ifaces);
@@ -1237,7 +1245,7 @@ function ExitForm({
       .finally(() => setBusy(false));
   };
   return (
-    <div className="card">
+    <div className="card" id="exit-form" ref={card} style={{ scrollMarginTop: 72 }}>
       <div className="card-head">
         <h2>{draft.id ? `Anbindung „${draft.name}“` : "Neue Anbindung"}</h2>
         <span className="faint">
@@ -1250,7 +1258,14 @@ function ExitForm({
         <div className="form-grid">
           <div className="field">
             <label htmlFor="ex-name">Name</label>
-            <input id="ex-name" className="input" placeholder="z. B. Internet Provider A" value={name} onChange={(e) => setName(e.target.value)} />
+            <input
+              id="ex-name"
+              ref={nameInput}
+              className="input"
+              placeholder="z. B. Internet Provider A"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
           </div>
           <div className="field">
             <label htmlFor="ex-kind">Art</label>
@@ -1367,16 +1382,22 @@ function ExitForm({
 }
 
 // Erkannte Anbindungen: Router ohne gelesenes Gerät (Next-Hops, BGP-Nachbarn), je Firewall bzw.
-// Verbund/Session-Sync-Partner zusammengefasst, die noch nicht (ganz) erfasst sind
+// Verbund/Session-Sync-Partner zusammengefasst, die noch nicht (ganz) erfasst sind; „ausblenden“,
+// wenn es keine Anbindung ist (ausgeblendete auf Wunsch mit „wieder anzeigen“)
 function SuggestedExits({
   rows,
   canEdit,
   onTake,
+  onDismiss,
 }: {
   rows: ExitSuggestion[];
   canEdit: boolean;
   onTake: (s: ExitSuggestion) => void;
+  onDismiss: (s: ExitSuggestion, undo: boolean) => void;
 }) {
+  const [showHidden, setShowHidden] = useState(false);
+  const hidden = rows.filter((s) => s.dismissed);
+  const shown = showHidden ? rows : rows.filter((s) => !s.dismissed);
   if (!rows.length) return null;
   return (
     <div className="card" id="exit-suggestions">
@@ -1386,50 +1407,85 @@ function SuggestedExits({
           Router ohne gelesenes Gerät aus Routing-Tabelle, BGP-Pfaden, statischen Routen und BGP-Nachbarn – zusammengefasst
           über gemeinsame Router, Interface bzw. Zone und BGP-AS, je Firewall bzw. Verbund und Session-Sync-Partner.
         </span>
+        {hidden.length > 0 && (
+          <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setShowHidden(!showHidden)}>
+            {showHidden
+              ? "Ausgeblendete verbergen"
+              : `${hidden.length} ausgeblendete${hidden.length > 1 ? "" : "r"} Vorschlag${hidden.length > 1 ? "e" : ""}`}
+          </button>
+        )}
       </div>
       <div className="card-body scroll">
-        <table className="compact">
-          <thead>
-            <tr>
-              <th>Vorschlag</th>
-              <th>Firewalls</th>
-              <th>Interfaces / Zonen</th>
-              <th>Router</th>
-              <th>Redundanz</th>
-              {canEdit && <th />}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((s) => (
-              <tr key={s.key}>
-                <td>
-                  <span className="chip info">{EXIT_KIND[s.kind] ?? s.kind}</span> <b>{s.name}</b>
-                  {s.exits.length > 0 && <div className="faint">teilweise in {s.exits.map((e) => e.name).join(", ")}</div>}
-                </td>
-                <td>{s.sources.join(", ")}</td>
-                <td className="mono">{s.interfaces.join(", ") || "–"}</td>
-                <td>
-                  <div className="objs">
-                    {s.next_hops.map((h) => (
-                      <span key={h.ip} className="nowrap">
-                        <RouterCell r={h} />
-                        {h.covered && <span className="faint"> · erfasst</span>}
-                      </span>
-                    ))}
-                  </div>
-                </td>
-                <td>{redundancy(s.redundancy)}</td>
-                {canEdit && (
-                  <td className="actions">
-                    <button className="linkbtn" onClick={() => onTake(s)}>
-                      {s.exits.length ? "ergänzen" : "übernehmen"}
-                    </button>
-                  </td>
-                )}
+        {shown.length === 0 ? (
+          <Empty title="Keine offenen Vorschläge">Alle erkannten Router sind erfasst oder ausgeblendet.</Empty>
+        ) : (
+          <table className="compact">
+            <thead>
+              <tr>
+                <th>Vorschlag</th>
+                <th>Firewalls</th>
+                <th>Interfaces / Zonen</th>
+                <th>Router</th>
+                <th>Redundanz</th>
+                {canEdit && <th />}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {shown.map((s) => (
+                <tr key={s.key} className={s.dismissed ? "muted" : undefined}>
+                  <td>
+                    <span className="chip info">{EXIT_KIND[s.kind] ?? s.kind}</span> <b>{s.name}</b>
+                    {s.dismissed && (
+                      <span className="chip" style={{ marginLeft: 4 }}>
+                        ausgeblendet
+                      </span>
+                    )}
+                    {s.exits.length > 0 && <div className="faint">teilweise in {s.exits.map((e) => e.name).join(", ")}</div>}
+                  </td>
+                  <td>{s.sources.join(", ")}</td>
+                  <td className="mono">{s.interfaces.join(", ") || "–"}</td>
+                  <td>
+                    <div className="objs">
+                      {s.next_hops.map((h) => (
+                        <span key={h.ip} className="nowrap">
+                          <RouterCell r={h} />
+                          {h.covered && <span className="faint"> · erfasst</span>}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td>{redundancy(s.redundancy)}</td>
+                  {canEdit && (
+                    <td className="actions nowrap">
+                      {s.dismissed ? (
+                        <button
+                          className="linkbtn"
+                          title="wieder als Anbindung vorschlagen"
+                          onClick={() => onDismiss(s, true)}
+                        >
+                          wieder anzeigen
+                        </button>
+                      ) : (
+                        <>
+                          <button className="linkbtn" onClick={() => onTake(s)}>
+                            {s.exits.length ? "ergänzen" : "übernehmen"}
+                          </button>{" "}
+                          <button
+                            className="linkbtn"
+                            title="keine Anbindung – nicht mehr vorschlagen (bis ein neuer Router dazukommt)"
+                            onClick={() => onDismiss(s, false)}
+                          >
+                            ausblenden
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
@@ -1452,12 +1508,24 @@ function ExitsTab({
   const { rows, error } = useList<TopoExit>(() => fetchExits(tenantId), [tenantId, reload]);
   const [suggested, setSuggested] = useState<ExitSuggestion[]>([]);
   const [editing, setEditing] = useState<ExitDraft | null>(draft);
+  const [opened, setOpened] = useState(0); // jedes Öffnen neu: Formular frisch, Sprung dorthin
+  const edit = (d: ExitDraft) => {
+    setEditing(d);
+    setOpened((n) => n + 1);
+  };
   const [err, setErr] = useState<unknown>(null);
   useEffect(() => {
-    fetchExitSuggestions(tenantId)
+    fetchExitSuggestions(tenantId, { dismissed: true })
       .then(setSuggested)
       .catch(() => setSuggested([]));
   }, [tenantId, reload]);
+  // ausblenden: die offenen Router des Vorschlags; wieder anzeigen: die ausgeblendeten
+  const dismiss = (s: ExitSuggestion, undo: boolean) => {
+    const ips = s.next_hops.filter((h) => (undo ? h.dismissed : !h.covered)).map((h) => h.ip);
+    dismissExits(tenantId, ips, undo)
+      .then(() => setReload((n) => n + 1))
+      .catch(setErr);
+  };
   const label = (key: string) => nodes.find((n) => n.key === key)?.label ?? key;
   const done = () => {
     setEditing(null);
@@ -1478,15 +1546,15 @@ function ExitsTab({
           ersten Next-Hop, der keinem gelesenen Gerät gehört.
         </span>
         {canEdit && editing === null && (
-          <button className="btn btn-primary btn-sm" style={{ marginLeft: "auto" }} onClick={() => setEditing({})}>
+          <button className="btn btn-primary btn-sm" style={{ marginLeft: "auto" }} onClick={() => edit({})}>
             Neue Anbindung
           </button>
         )}
       </div>
-      <ErrorBox error={err} prefix="Anbindung löschen" />
+      <ErrorBox error={err} prefix="Anbindung ändern" />
       {editing !== null && (
         <ExitForm
-          key={JSON.stringify(editing)}
+          key={opened}
           tenantId={tenantId}
           nodes={nodes}
           draft={editing}
@@ -1494,7 +1562,6 @@ function ExitsTab({
           onCancel={done}
         />
       )}
-      <SuggestedExits rows={suggested} canEdit={canEdit} onTake={(s) => setEditing(draftFrom(s, rows ?? []))} />
       <List error={error} rows={rows} empty="Noch keine Anbindungen erfasst.">
         <thead>
           <tr>
@@ -1544,7 +1611,7 @@ function ExitsTab({
                   {canEdit && st?.missing.length ? (
                     <button
                       className="linkbtn"
-                      onClick={() => setEditing({ ...exitDraft(e), next_hops: union(e.next_hops, st.missing) })}
+                      onClick={() => edit({ ...exitDraft(e), next_hops: union(e.next_hops, st.missing) })}
                     >
                       {st.missing.length} erkannte Router übernehmen
                     </button>
@@ -1566,7 +1633,7 @@ function ExitsTab({
                 </td>
                 {canEdit && (
                   <td className="actions">
-                    <button className="linkbtn" onClick={() => setEditing(exitDraft(e))}>
+                    <button className="linkbtn" onClick={() => edit(exitDraft(e))}>
                       ändern
                     </button>{" "}
                     <button className="linkbtn" onClick={() => remove(e)}>
@@ -1579,6 +1646,13 @@ function ExitsTab({
           })}
         </tbody>
       </List>
+      {/* Vorschläge zu unterst; „übernehmen“ springt hoch zum Formular */}
+      <SuggestedExits
+        rows={suggested}
+        canEdit={canEdit}
+        onTake={(s) => edit(draftFrom(s, rows ?? []))}
+        onDismiss={dismiss}
+      />
     </>
   );
 }
@@ -1626,7 +1700,7 @@ export default function Routing({
       interfaces: c.interface ? [c.interface] : [],
       next_hops: [c.next_hop],
     };
-    Promise.all([fetchExitSuggestions(tenantId, true), fetchExits(tenantId)])
+    Promise.all([fetchExitSuggestions(tenantId, { covered: true, dismissed: true }), fetchExits(tenantId)])
       .then(([found, exits]) => {
         const s = found.find((x) => x.next_hops.some((h) => h.ip === c.next_hop));
         return s ? draftFrom(s, exits) : plain;

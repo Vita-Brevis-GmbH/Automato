@@ -310,12 +310,14 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.18.0** | Parallele Firewalls (Verbund, ADR 0020): gleiche Policies einmal, Abweichungen als Findings; Anbindungen nach aussen (Internet/MPLS/WAN) von Hand mit manuellen Routen (ADR 0019 Stufe 4, erster Teil) |
 | **0.19.0** | Verbund ablehnen bzw. auflösen (nicht mehr vorschlagen); redundante Wege: ECMP, Verbund, Backup-Wege (BGP, schwebende statische Routen) gleicher bzw. fast gleicher Länge mit Übersicht |
 | **0.20.0** | Erkannte Anbindungen (Router aus Routen, BGP-Pfaden und BGP-Nachbarn, aktiv/Backup, zusammengefasst je Firewall bzw. Verbund/Session-Sync-Partner) mit allen Routern übernehmen; Anbindung für mehrere Firewalls; Länge der Wege „gleich lang“ / „+n Hops“ |
+| **0.21.0** | Erkannte Anbindungen ausblenden bzw. wieder anzeigen; Vorschläge zu unterst, Sprung zum Formular |
 
-### Nächste Arbeiten (Stand 0.20.0)
+### Nächste Arbeiten (Stand 0.21.0)
 
 Phase A und die Stände 0.11–0.18.0 sind gegen die echten Systeme abgenommen (0.18.0: Regeln
 paralleler Firewalls einmal, keine Schleifen); 0.19.0 (Verbund ablehnen, redundante Wege) und
-0.20.0 (erkannte Anbindungen, mehrere Firewalls, Länge der Wege) stehen zur Abnahme an. Konzeptbefund
+0.20.0/0.21.0 (erkannte Anbindungen mit Ausblenden, mehrere Firewalls, Länge der Wege) stehen
+zur Abnahme an. Konzeptbefund
 des Anwenders: Ohne Routing, Verbindungswege und Redundanzen zeigt die Doku Zugriffe, die
 routingtechnisch nicht möglich sind, und `any` aus dem Internet wie eine Liste aller
 Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:

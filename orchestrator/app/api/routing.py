@@ -14,6 +14,8 @@
                                  mehrere Firewalls, mit den erkannten Routern (0.20.0)
 - `GET /routing/exits/suggestions` erkannte Anbindungen: Next-Hops und BGP-Nachbarn ohne
                                  gelesenes Geraet, zusammengefasst mit Redundanz (0.20.0)
+- `POST /routing/exits/dismiss[/undo]` erkannte Router ausblenden bzw. wieder vorschlagen
+                                 (operator, 0.21.0)
 
 Bezeichnung eines Kontexts: eine FortiGate nur mit `root` heisst wie die Firewall, sonst
 „fw · VDOM x“; ACI „leaf · VRF Tenant:VRF“ (`label`, `display`).
@@ -36,6 +38,7 @@ from app.auth.principal import Principal
 from app.db import get_session
 from app.models import (
     SourceSystem,
+    Tenant,
     TopoContext,
     TopoExit,
     TopoHa,
@@ -477,13 +480,58 @@ def list_exits(
 def exit_suggestions(
     tenant_id: int | None = None,
     covered: bool = Query(False, description="auch schon ganz abgedeckte"),
+    dismissed: bool = Query(False, description="auch ausgeblendete"),
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     """Erkannte Anbindungen: Router (Next-Hops, BGP-Nachbarn) ohne gelesenes Geraet, je
     Firewall bzw. Verbund zusammengefasst, mit aktiv/Backup/BGP-Zustand - nur gelesene Daten."""
     tid = _tenant(session, principal, tenant_id)
-    return exits.suggestions(session, tid, include_covered=covered)
+    return exits.suggestions(session, tid, include_covered=covered, include_dismissed=dismissed)
+
+
+class DismissIn(BaseModel):
+    tenant_id: int
+    ips: list[str] = Field(min_length=1, max_length=500)  # Router des Vorschlags
+
+
+def _dismiss(session: Session, principal: Principal, body: DismissIn, undo: bool) -> dict:
+    tenant_scope(principal, body.tenant_id)
+    if session.get(Tenant, body.tenant_id) is None:
+        raise HTTPException(status_code=404, detail="tenant not found")
+    ips = sorted({str(_ip(ip, "ips")) for ip in body.ips})
+    fn = exits.undismiss if undo else exits.dismiss
+    changed = fn(session, body.tenant_id, ips)
+    if changed:
+        audit.record(
+            session,
+            actor=f"user:{principal.subject}",
+            action=f"routing.exit.{'undismissed' if undo else 'dismissed'}",
+            subject=str(body.tenant_id),
+            detail={"tenant_id": body.tenant_id, "ips": changed},
+        )
+    return {"ips": changed}
+
+
+@router.post("/exits/dismiss")
+def dismiss_exit(
+    body: DismissIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Erkannte Router nicht mehr als Anbindung vorschlagen (Operator) - nur Daten der
+    Plattform, die Wege bleiben gleich."""
+    return _dismiss(session, principal, body, undo=False)
+
+
+@router.post("/exits/dismiss/undo")
+def undismiss_exit(
+    body: DismissIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Ausgeblendete Router wieder vorschlagen (Operator)."""
+    return _dismiss(session, principal, body, undo=True)
 
 
 @router.post("/exits", status_code=201)
