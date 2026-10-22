@@ -446,7 +446,19 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   - **Keinem Kunden zugeordnet** zeigt EPGs, Regeln und VMs ohne Kunden.
   - **Kunden-Filter (0.32.0):** Oben neben dem Mandanten wählt „Kunde“ einen Kunden (je
     Umgebung gemerkt). Übersicht, Regeln, Objekte, NAT, Findings, VMs/Portgruppen, Doku je
-    System und Applikationen zeigen dann nur seinen Ausschnitt samt geteiltem Teil.
+    System und Applikationen zeigen dann nur seinen Ausschnitt; vom geteilten Teil zählen
+    EPGs, Netze und Objekte, Regeln, NAT, Findings und VMs nur aus dem Kunden selbst (0.33.0).
+  - **Kunden-Benutzer (0.33.0):** eigene Logins für Kunden. In Keycloak die Realm-Rolle
+    `customer`, das Attribut **Mandanten-IDs** (die Umgebung) und **Kunden-IDs** (IDs aus der
+    Ansicht „Kunden“) setzen, Anleitung `deploy/keycloak/PROD-INSTALL.md` 9a/9b. Sie sehen
+    Übersicht (ohne Betriebszustand/Läufe), Regeln, Objekte (ohne Netzinventar), NAT,
+    Applikationen und Findings – nur ihren Ausschnitt; Regel-Zahlen nennen nur ihre Regeln.
+    Kein Routing, keine Verwaltung, keine Quellsysteme; `admin` gilt für sie nicht, ohne
+    Kunden-IDs sehen sie nichts. Ihre Lesezugriffe stehen immer im Audit (`read.*` mit den
+    Kunden-IDs). Bei SAML-Brokern Kunden-IDs und Rolle **fest je IdP** hinterlegen
+    (`saml-mappers.example.json`). Vorführen im dev-Modus: im Browser
+    `localStorage.setItem("automato_dev_customer", "<Mandant>:<Kunden>")`, entfernen zum
+    Zurückschalten.
 - **Namensprofile:** Standardprofil **„default"** (per Migration angelegt, gilt für alle
   Mandanten ohne eigenes Profil, frei pflegbar), **+ Neues Profil** (Vorlage: Kopie eines
   bestehenden Profils, z. B. „default", oder leer), **+ Neue Namenskonvention** (optional die
@@ -513,6 +525,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern; Vorschläge je ACI-Tenant; nicht Zugeordnetes |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
+| `GET /systems/labels?tenant_id=` | Bezeichnungen der Quellsysteme (`id`, `name`, `platform`, `vdoms`, `parallel_group`) ohne Konfiguration; Kunden-Benutzer nur die Systeme ihrer Regeln, NAT bzw. Objekte (0.33.0) |
 | `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `site_id`, `read_scope`, `ref_role`, `schedule` → `next_run_at`; `token` bzw. `username`/`password`, NetBox `write_token` nur schreibbar → `has_credentials`/`has_write_token`; Referenzquellen mit `reference_count`/`reference_at`) |
 | `GET /jobs` (`tenant_id`, `status` inkl. `open`, `source_system_id`, `platform`, `trigger`, `limit`, `offset`; Gesamtzahl im Header `X-Total-Count`), `GET /jobs/{id}`, `POST /jobs/collect`, `POST /jobs/collect-all`, `POST /jobs/{id}/cancel` | Läufe (Gerät mit Agent → immer `external`, `started_at` = abgeholt); `collect-all` = alle aktiven Quellsysteme des Mandanten (operator, Antwort je System `run_id` bzw. `skipped` mit `blocking_run_id`); `cancel` beendet einen offenen Lauf (operator) |
 | `GET/POST /agents`, `PATCH /agents/{id}`, `GET /agents/package` | Collector-Agenten (inkl. zugewiesener Geräte), Agent-Paket |

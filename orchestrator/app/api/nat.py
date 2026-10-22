@@ -16,7 +16,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.customer_filter import customer_view
+from app.api.customer_filter import customer_view, own_view, visible
+from app.api.customer_filter import ids as view_ids
 from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -36,8 +37,9 @@ router = APIRouter(prefix="/nat", tags=["nat"])
 class _Context:
     """Was Liste und Detail fuer die Anreicherung brauchen - je Mandant einmal geladen."""
 
-    def __init__(self, session: Session, tenant_id: int | None, nats: list[NatRule]):
+    def __init__(self, session: Session, tenant_id: int | None, nats: list[NatRule], only=None):
         self.session = session
+        self.only: set[int] | None = only  # Kunden-Benutzer: nur ihre Regeln (ADR 0018)
         tenants = {n.tenant_id for n in nats}
         self.refs = {t: references.context(session, t) for t in tenants}
         self.servers = {
@@ -135,7 +137,8 @@ class _Context:
         )
 
     def rule_ids(self, n: NatRule) -> set[int]:
-        return self.usage.get((n.source_system_id, n.vdom, n.name.lower()), set())
+        found = self.usage.get((n.source_system_id, n.vdom, n.name.lower()), set())
+        return found if self.only is None else found & self.only
 
 
 def _search_fields(o: NatOut) -> tuple[list[str | None], list[str | None]]:
@@ -181,12 +184,13 @@ def list_nat(
     reads.maybe_audit_read(session, principal, tenant_id, "nat")
     view = customer_view(session, principal, tenant_id, customer_id)
     only = view.ids("nat") if view else None
+    own_rules = view_ids(session, view, "rule") if principal.is_customer else None
     q = (q or "").strip()
     if q or issues_only:
         rows = nat_store.list_nat(
             session, tenant_id=tenant_id, limit=None, nat_type=nat_type, only=only
         )
-        ctx = _Context(session, tenant_id, rows)
+        ctx = _Context(session, tenant_id, rows, own_rules)
         outs = [
             o
             for o in map(ctx.out, rows)
@@ -198,7 +202,7 @@ def list_nat(
     rows = nat_store.list_nat(
         session, tenant_id=tenant_id, limit=limit, offset=offset, nat_type=nat_type, only=only
     )
-    ctx = _Context(session, tenant_id, rows)
+    ctx = _Context(session, tenant_id, rows, own_rules)
     return [ctx.out(n) for n in rows]
 
 
@@ -213,8 +217,10 @@ def get_nat(
     if n is None:
         raise HTTPException(status_code=404, detail="nat rule not found")
     tenant_scope(principal, n.tenant_id)
+    view = own_view(session, principal, n.tenant_id)
+    visible(session, view, "nat", n.id)  # ADR 0018
     reads.maybe_audit_read(session, principal, n.tenant_id, "nat")
-    ctx = _Context(session, n.tenant_id, [n])
+    ctx = _Context(session, n.tenant_id, [n], view_ids(session, view, "rule"))
     refs = ctx.refs[n.tenant_id]
     ids = ctx.rule_ids(n)
     order = select(Rule.id).where(Rule.id.in_(ids)).order_by(*rules_store.ORDER)

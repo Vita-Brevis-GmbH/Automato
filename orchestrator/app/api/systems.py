@@ -21,6 +21,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit, credentials, schedule, scheduler
+from app.api.customer_filter import own_view
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.config import get_settings
@@ -402,6 +403,61 @@ def list_systems(
     hints = _site_hints(session, sources)
     vdoms = _vdoms(session, [s.id for s in sources if s.platform == Platform.FORTIGATE])
     return [_out(s, rules, nat, refs, hints.get(s.id), vdoms.get(s.id)) for s in sources]
+
+
+class SystemLabelOut(BaseModel):
+    """Nur die Bezeichnung eines Quellsystems - ohne Konfiguration (ADR 0018)."""
+
+    id: int
+    tenant_id: int | None
+    name: str
+    platform: str
+    vdoms: list[str] = []
+    parallel_group: str | None = None
+
+
+@router.get("/labels", response_model=list[SystemLabelOut])
+def system_labels(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Bezeichnungen der Quellsysteme fuer die Doku-Ansichten. Kunden-Benutzer sehen nur die
+    Systeme ihrer Regeln, NAT und Objekte, die VDOMs nur aus ihren Regeln - keine URL, keinen
+    Agenten, keinen Zeitplan."""
+    tid = tenant_scope(principal, tenant_id)
+    query = select(SourceSystem).order_by(SourceSystem.name, SourceSystem.id)
+    if tid is not None:
+        query = query.where(SourceSystem.tenant_id == tid)
+    view = own_view(session, principal, tid) if tid is not None else None
+    if principal.is_customer and view is None:
+        raise HTTPException(status_code=403, detail="tenant required")
+    if view is None:
+        sources = list(session.scalars(query))
+        vdoms = _vdoms(session, [s.id for s in sources if s.platform == Platform.FORTIGATE])
+    else:
+        rules = select(Rule.source_system_id, Rule.vdom).where(Rule.id.in_(view.ids("rule")))
+        nat = select(NatRule.source_system_id).where(NatRule.id.in_(view.ids("nat")))
+        objs = select(DeviceObject.source_system_id).where(
+            DeviceObject.id.in_(view.device_objects())
+        )
+        vdoms_of: dict[int, set[str]] = {}
+        for sid, vdom in session.execute(rules.distinct()):
+            vdoms_of.setdefault(sid, set()).update([vdom] if vdom else [])
+        ids = set(vdoms_of) | set(session.scalars(nat)) | set(session.scalars(objs))
+        sources = list(session.scalars(query.where(SourceSystem.id.in_(ids)))) if ids else []
+        vdoms = {sid: sorted(v) for sid, v in vdoms_of.items()}
+    return [
+        SystemLabelOut(
+            id=s.id,
+            tenant_id=s.tenant_id,
+            name=s.name,
+            platform=s.platform.value,
+            vdoms=vdoms.get(s.id, []),
+            parallel_group=s.parallel_group,
+        )
+        for s in sources
+    ]
 
 
 @router.post("", response_model=SystemOut, status_code=201)

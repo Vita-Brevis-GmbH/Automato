@@ -159,13 +159,10 @@ def list_customers(
     """Kunden der Umgebung mit Selektoren und Anzahl je Art (EPGs, Netze, Objekte, Regeln,
     VMs); geteilte zuerst."""
     tid = _tenant(session, principal, tenant_id)
-    rows = list(
-        session.scalars(
-            select(Customer)
-            .where(Customer.tenant_id == tid)
-            .order_by(Customer.shared.desc(), Customer.name)
-        )
-    )
+    stmt = select(Customer).where(Customer.tenant_id == tid)
+    if principal.is_customer:  # Kunden-Benutzer: nur die eigenen Kunden (ADR 0018)
+        stmt = stmt.where(Customer.id.in_(list(principal.customer_ids or ())))
+    rows = list(session.scalars(stmt.order_by(Customer.shared.desc(), Customer.name)))
     counts = store.counts(session, [c.id for c in rows])
     return [_out(c, counts[c.id]) for c in rows]
 
@@ -263,6 +260,8 @@ def members(
 ) -> list[dict]:
     """Zugehoerigkeit einer Art mit Namen und Grund (Selektor)."""
     c = _get(session, principal, customer_id)
+    if principal.is_customer and c.id not in (principal.customer_ids or ()):
+        raise HTTPException(status_code=404, detail="customer not found")
     reads.maybe_audit_read(session, principal, c.tenant_id, "customers")
     if kind not in MEMBER_KINDS:
         raise HTTPException(status_code=422, detail=f"unknown kind {kind!r}")

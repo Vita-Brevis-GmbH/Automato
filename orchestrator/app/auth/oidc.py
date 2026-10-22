@@ -22,6 +22,8 @@ from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 
 from app.auth.principal import Principal
 
+CUSTOMER_ROLE = "customer"  # Realm-Rolle der Kunden-Benutzer (ADR 0018)
+
 log = logging.getLogger(__name__)
 
 
@@ -35,16 +37,19 @@ def _dig(claims: dict, dotted: str):
 
 
 def _parse_tenant_ids(raw) -> tuple[int, ...]:
+    """IDs aus einem Claim: Zahl, Liste bzw. Text - auch kommagetrennt ("3,4", z. B. aus einem
+    fest hinterlegten Attribut eines SAML-Brokers)."""
     if raw is None:
         return ()  # keine Zuweisung -> fail-closed (sieht nichts)
     if isinstance(raw, int | str):
         raw = [raw]
     out: list[int] = []
     for x in raw:
-        try:
-            out.append(int(x))
-        except (TypeError, ValueError):
-            continue
+        for part in str(x).split(",") if isinstance(x, str) else [x]:
+            try:
+                out.append(int(part))
+            except (TypeError, ValueError):
+                continue
     return tuple(out)
 
 
@@ -54,6 +59,21 @@ def claims_to_principal(claims: dict, settings) -> Principal:
     roles = (
         frozenset(str(r) for r in raw_roles) if isinstance(raw_roles, list | tuple) else frozenset()
     )
+    # Kunden-Benutzer (ADR 0018): Rolle `customer` bzw. Kunden im Attribut - nie Admin, immer
+    # auf Mandanten und Kunden eingeschraenkt (ohne Zuordnung: nichts). Die Rolle `customer`
+    # liest (viewer); operator erlaubt zusaetzlich die Triage eigener Findings.
+    # Ein leerer Claim allein (Mapper ohne Attribut) macht niemanden zum Kunden-Benutzer.
+    raw_customers = _dig(claims, settings.oidc_customers_claim)
+    if CUSTOMER_ROLE in roles or raw_customers not in (None, "", [], ()):
+        if CUSTOMER_ROLE in roles:
+            roles = roles | {"viewer"}
+        roles = roles - {"admin", CUSTOMER_ROLE}
+        return Principal(
+            subject=str(subject),
+            roles=roles,
+            tenant_ids=_parse_tenant_ids(_dig(claims, settings.oidc_tenants_claim)),
+            customer_ids=_parse_tenant_ids(raw_customers),
+        )
     tenant_ids = (
         None if "admin" in roles else _parse_tenant_ids(_dig(claims, settings.oidc_tenants_claim))
     )

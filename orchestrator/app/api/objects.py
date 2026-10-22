@@ -16,7 +16,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.customer_filter import customer_view
+from app.api.customer_filter import customer_view, own_view
+from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
@@ -69,11 +70,13 @@ def list_objects(
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     tid = _tenant(principal, tenant_id)
+    reads.maybe_audit_read(session, principal, tid, "objects")
     rule_index.ensure(session, tid)
     stmt = select(DeviceObject).where(DeviceObject.tenant_id == tid)
     view = customer_view(session, principal, tid, customer_id)
     if view is not None:  # Objekte des Kunden: Werte bzw. von seinen Regeln verwendet
         stmt = stmt.where(DeviceObject.id.in_(view.device_objects()))
+    own = view.ids("rule") if principal.is_customer and view else None  # nur seine Regeln
     if source_system_id is not None:
         stmt = stmt.where(DeviceObject.source_system_id == source_system_id)
     if category:  # eine oder mehrere Kategorien, kommagetrennt
@@ -82,7 +85,7 @@ def list_objects(
     if not q and not issues_only:  # seitenweise per SQL (grosse Objekt-Bestaende)
         total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         page = list(session.scalars(stmt.offset(offset).limit(min(limit, 2000))))
-        return {"total": total, "rows": _object_rows(session, tid, page)}
+        return {"total": total, "rows": _object_rows(session, tid, page, own)}
     objects = list(session.scalars(stmt))
     if q:
         # Name, Kommentar, Werte, FQDN, Interface, Mitglieder und die DNS-Namen der Werte aus
@@ -105,13 +108,13 @@ def list_objects(
         issues = objects_store.object_issues(session, tid, objects)
         objects = [o for o in objects if issues.get(o.id)]
     page = objects[offset : offset + min(limit, 2000)]
-    return {"total": len(objects), "rows": _object_rows(session, tid, page)}
+    return {"total": len(objects), "rows": _object_rows(session, tid, page, own)}
 
 
-def _object_rows(session: Session, tid: int, objects: list[DeviceObject]) -> list[dict]:
+def _object_rows(session: Session, tid: int, objects: list[DeviceObject], only=None) -> list[dict]:
     """Zeilen der Objekt-Ansicht: Werte mit IPAM-Abgleich, Verwendung (Regeln direkt und ueber
     Gruppen aus dem Regelindex), Gruppen derselben Adressfamilie, Befunde."""
-    used = rule_index.usage_counts(session, [o.id for o in objects])
+    used = rule_index.usage_counts(session, [o.id for o in objects], only)
     # Gruppen-Zugehoerigkeit ueber alle Gruppen des Mandanten (nicht nur die gefilterten Objekte);
     # IPv4-Gruppen enthalten IPv4-Objekte, IPv6-Gruppen IPv6-Objekte - je VDOM (ADR 0019)
     member_of: dict[tuple[int, str | None, str], list[tuple[str, str | None]]] = defaultdict(list)
@@ -189,9 +192,17 @@ def get_object(
     if o is None:
         raise HTTPException(status_code=404, detail="object not found")
     tenant_scope(principal, o.tenant_id)
+    view = own_view(session, principal, o.tenant_id)
+    reads.maybe_audit_read(session, principal, o.tenant_id, "objects")
+    if view is not None and o.id not in set(session.scalars(view.device_objects())):
+        raise HTTPException(status_code=404, detail="object not found")  # ADR 0018
     rule_index.ensure(session, o.tenant_id)
-    (row,) = _object_rows(session, o.tenant_id, [o])
+    own = view.ids("rule") if view else None
+    (row,) = _object_rows(session, o.tenant_id, [o], own)
     rule_ids = rule_index.rule_ids_using(session, o.id)
+    if view is not None:  # nur die eigenen Regeln, keine Gesamtzahl darueber hinaus
+        mine = set(session.scalars(own))
+        rule_ids = [r for r in rule_ids if r in mine]
     directory = objects_store.Directory(session, {o.source_system_id}, names=o.members or [])
     members = []
     for name in o.members or []:

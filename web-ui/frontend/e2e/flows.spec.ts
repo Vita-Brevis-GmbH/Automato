@@ -535,6 +535,34 @@ test("Kunden-Filter: Umschalter zeigt nur den Ausschnitt des Kunden", async ({ p
   await expect(rows(page)).not.toHaveCount(2);
 });
 
+test("Kunden-Benutzer: nur die Doku des eigenen Ausschnitts, ohne Betrieb und Verwaltung", async ({ page }) => {
+  // dev-Modus: Kunden-Benutzer von TE vorführen (X-Dev-Customers, serverseitig eingeschränkt)
+  const list = (await (await page.request.get("/api/customers?tenant_id=1")).json()) as { id: number; name: string }[];
+  const te = list.find((c) => c.name === "TE")!;
+  await page.addInitScript((id) => localStorage.setItem("automato_dev_customer", `1:${id}`), te.id);
+  await page.goto("/#uebersicht");
+  await expect(page.locator(".u-role")).toHaveText("Kunde");
+  const nav = page.locator("nav.nav");
+  await expect(nav).toContainText("Regeln & Contracts");
+  for (const hidden of ["Routing & Wege", "Abgleich", "Administration", "Kunden", "Läufe", "Netzwerkdesign"])
+    await expect(nav.getByText(hidden, { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Letzte Läufe")).toHaveCount(0);
+  await expect(page.getByLabel("Kunde", { exact: true })).toHaveCount(0); // nur ein Kunde
+  await page.goto("/#regeln");
+  await expect(rows(page)).toHaveCount(2); // die Contracts der EPGs von TE
+  await rows(page).filter({ hasText: "CT_rt" }).click();
+  await expect(page.locator(".drawer")).toContainText("CT_rt");
+  await page.goto("/#objekte");
+  await expect(page.locator(".tabbar")).toContainText("Adressobjekte");
+  await expect(page.locator(".tabbar")).not.toContainText("Subnetze");
+  for (const view of ["nat", "findings", "apps"]) {
+    await page.goto(`/#${view}`);
+    await expect(page.locator("main.main h1")).toBeVisible();
+  }
+  await page.goto("/#routing"); // nicht freigegeben -> Übersicht
+  await expect(page.locator("main.main h1")).toHaveText("Übersicht");
+});
+
 test("Routing: Verbund als ein Hop mit beiden Firewalls", async ({ page }) => {
   await page.goto("/#routing");
   await page.getByPlaceholder("Quelle (IP)").fill("10.88.0.5");

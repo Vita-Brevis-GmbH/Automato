@@ -2,7 +2,7 @@
 
 ## Status
 
-**Entwurf** (2026-10-22) – zur Durchsicht durch den Anwender; Schritt 1 umgesetzt in 0.30.0
+**Entwurf** (2026-10-22) – zur Durchsicht durch den Anwender; Schritte 1–3 umgesetzt in 0.30.0–0.33.0
 (siehe „Umsetzung“). Präzisiert ADR 0004
 (Ergänzung E1, Ebene über dem Mandanten) und ADR 0007 (Rechte); betrifft R13 und R14.
 
@@ -135,5 +135,27 @@ Grundsatzentscheide des Anwenders (2026-10-22):
    Objekte, VMs, Portgruppen, Systeme, Applikationen) zeigt den Ausschnitt samt geteiltem
    Teil (`store/customer_scope.View`, per SQL). Applikationen über ihre Mitglieder,
    Firewall-Objekte über Werte bzw. Regeln des Kunden.
+   **Präzisiert in 0.33.0:** Der geteilte Teil gibt Zusammenhang – seine EPGs, Netze und
+   Objekte zählen für alle Kunden. Regeln, NAT, Findings und VMs zählen nur aus den eigenen
+   Kunden (eine Regel von Kunde B zum geteilten DNS betrifft Kunde A nicht, Nr. 8).
 3. Kunden-Benutzer: `customer_ids` in Keycloak, serverseitige Einschränkung aller Lese-APIs,
-   Tests je Endpunkt.
+   Tests je Endpunkt. **Umgesetzt in 0.33.0:**
+   - Erkennung: Realm-Rolle `customer` bzw. Kunden im Claim `customer_ids` (leerer Claim
+     allein zählt nicht, bestehende Benutzer bleiben Betreuer). `Principal.customer_ids`;
+     Kunden-Benutzer sind nie Admin, die Rolle `customer` liest (viewer), `operator`
+     triagiert zusätzlich eigene Findings. Ohne Mandant bzw. Kunden: 403 (fail-closed).
+   - **Freigabeliste** `auth/customer_routes.py`: `require_role` lässt Kunden-Benutzer nur an
+     die gelisteten Lese-Endpunkte der Doku (Regeln, Findings, NAT, Objekte, VMs,
+     Portgruppen, Doku je System, Applikationen, eigene Kunden, Mandanten, Standorte,
+     `GET /systems/labels`); alles andere, auch künftige Endpunkte, ergibt 403. Ein Test
+     prüft jeden Endpunkt der App gegen die Liste.
+   - Je Endpunkt: Listen und Zähler auf den Ausschnitt, Details ausserhalb 404, Regel-Zahlen
+     und -Listen (Objekt, NAT, Doku je System, Applikation) nur mit eigenen Regeln, Findings
+     ohne Namen fremder Regeln. Lese-Audit immer an (`read.*` mit den Kunden-IDs).
+   - Keycloak: Rolle und Mapper in der Realm-Vorlage; bei SAML-Brokern Kunden-IDs und Rolle
+     fest je IdP, nie aus der Assertion (sonst könnte ein Kunden-IdP sich fremde Kunden
+     geben).
+   - Export (Markdown) und Druck entstehen im Browser aus der bereits eingeschränkten Doku;
+     protokolliert ist der Lesezugriff.
+   - Noch nicht: Relevanz nach Pfad (ADR 0019) für die Zugehörigkeit von Regeln, eigene
+     Kunden-Benutzer-Verwaltung in der Oberfläche (heute in Keycloak).

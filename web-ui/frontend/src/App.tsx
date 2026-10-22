@@ -13,6 +13,7 @@ import {
   HealthStatus,
   RuleSummary,
   setCustomerFilter,
+  setCustomerUser,
   Tenant,
 } from "./api";
 import Agents from "./Agents";
@@ -60,16 +61,17 @@ interface NavEntry {
   icon: string;
   section: "doc" | "admin";
   adminOnly?: boolean;
+  customer?: boolean; // auch für Kunden-Benutzer (ADR 0018; serverseitig eingeschränkt)
 }
 
 const NAV: NavEntry[] = [
-  { key: "uebersicht", label: "Übersicht", icon: "overview", section: "doc" },
-  { key: "regeln", label: "Regeln & Contracts", icon: "rules", section: "doc" },
-  { key: "objekte", label: "Objekte & Inventar", icon: "objects", section: "doc" },
-  { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc" },
+  { key: "uebersicht", label: "Übersicht", icon: "overview", section: "doc", customer: true },
+  { key: "regeln", label: "Regeln & Contracts", icon: "rules", section: "doc", customer: true },
+  { key: "objekte", label: "Objekte & Inventar", icon: "objects", section: "doc", customer: true },
+  { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc", customer: true },
   { key: "routing", label: "Routing & Wege", icon: "route", section: "doc" },
-  { key: "apps", label: "Applikationen", icon: "apps", section: "doc" },
-  { key: "findings", label: "Findings", icon: "findings", section: "doc" },
+  { key: "apps", label: "Applikationen", icon: "apps", section: "doc", customer: true },
+  { key: "findings", label: "Findings", icon: "findings", section: "doc", customer: true },
   { key: "abgleich", label: "Abgleich", icon: "reconcile", section: "doc" },
   { key: "design", label: "Netzwerkdesign", icon: "design", section: "doc" },
   { key: "users", label: "Benutzer & Rollen", icon: "users", section: "admin" },
@@ -164,7 +166,9 @@ export default function App() {
         return;
       }
       if (cfg.auth_mode !== "oidc") {
-        setBoot({ state: "ready", cfg, me: auth.DEV_ME });
+        const me = auth.devMe();
+        setCustomerUser(me.isCustomer);
+        setBoot({ state: "ready", cfg, me });
         return;
       }
       auth.init(cfg);
@@ -175,7 +179,9 @@ export default function App() {
           setBoot({ state: "redirect" });
           return;
         }
-        setBoot({ state: "ready", cfg, me: auth.meFromUser(user) });
+        const me = auth.meFromUser(user);
+        setCustomerUser(me.isCustomer);
+        setBoot({ state: "ready", cfg, me });
       } catch (e) {
         window.history.replaceState({}, document.title, window.location.pathname);
         setBoot({ state: "error", error: e, oidc: true });
@@ -382,13 +388,17 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
     findings: { n: openFindings, warn: (openFindings ?? 0) > 0 },
   };
 
+  // Kunden-Benutzer sehen nur die freigegebenen Doku-Ansichten
+  const shown = (n: NavEntry) => (!n.adminOnly || me.isAdmin) && (!me.isCustomer || !!n.customer);
   const entry = NAV.find((n) => n.key === view);
-  const current: View = entry && (!entry.adminOnly || me.isAdmin) ? view : "uebersicht";
+  const current: View = entry && shown(entry) ? view : "uebersicht";
+  // Applikationen: Kunden-Benutzer pflegen nichts (Triage eigener Findings bleibt)
+  const docMe = me.isCustomer ? { ...me, isOperator: false } : me;
   const docView = NAV.find((n) => n.key === current)?.section === "doc";
   const https = window.location.protocol === "https:";
 
   const renderNav = (section: "doc" | "admin") =>
-    NAV.filter((n) => n.section === section && (!n.adminOnly || me.isAdmin)).map((n) => {
+    NAV.filter((n) => n.section === section && shown(n)).map((n) => {
       const b = badges[n.key];
       return (
         <button
@@ -429,7 +439,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             {noTenant && <option value="">kein Mandant zugeordnet</option>}
           </select>
         </label>
-        {customers.length > 0 && (
+        {customers.length > (me.isCustomer ? 1 : 0) && (
           <label className="mandant" title="Ausschnitt eines Kunden samt geteiltem Teil (ADR 0018)">
             <span className="label">Kunde</span>
             <select
@@ -474,7 +484,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
       <nav className="nav">
         <div className="nav-sec">Dokumentation</div>
         {renderNav("doc")}
-        <div className="nav-sec">Administration</div>
+        {!me.isCustomer && <div className="nav-sec">Administration</div>}
         {renderNav("admin")}
         <div className="nav-foot">
           <span className={`dot ${health?.status === "ok" ? "g" : "r"}`} />
@@ -490,6 +500,11 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
           <Note warn>
             Ihrem Konto ist noch kein Mandant zugeordnet. Bitte den Administrator, in Keycloak das
             Attribut <code>tenant_ids</code> zu setzen, und danach neu anmelden.
+          </Note>
+        ) : me.isCustomer && !me.customerIds?.length ? (
+          <Note warn>
+            Ihrem Konto ist noch kein Kunde zugeordnet. Bitte den Betreuer, in Keycloak das Attribut{" "}
+            <code>customer_ids</code> zu setzen, und danach neu anmelden.
           </Note>
         ) : (
           <>
@@ -513,10 +528,18 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                 params={params}
                 onGo={go}
                 isAdmin={me.isAdmin}
+                customer={me.isCustomer}
               />
             )}
             {current === "objekte" && tenantReady && (
-              <Objects key={JSON.stringify(params)} tenantId={tenantId} tenantLabel={tenantLabel} params={params} onGo={go} />
+              <Objects
+                key={JSON.stringify(params)}
+                tenantId={tenantId}
+                tenantLabel={tenantLabel}
+                params={params}
+                onGo={go}
+                customer={me.isCustomer}
+              />
             )}
             {current === "nat" && tenantReady && (
               <NatTable
@@ -528,7 +551,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
               />
             )}
             {current === "apps" && tenantReady && (
-              <AppDoc me={me} tenantId={tenantId} params={params} onGo={go} />
+              <AppDoc me={docMe} tenantId={tenantId} params={params} onGo={go} />
             )}
             {current === "findings" && tenantReady && (
               <Findings
@@ -619,14 +642,16 @@ function UserMenu({
         {me.username} · {auth.roleLabel(me)}
         <div>Mandanten: {scope}</div>
       </div>
-      <button
-        onClick={() => {
-          onGo("users");
-          onClose();
-        }}
-      >
-        Benutzer &amp; Rollen
-      </button>
+      {!me.isCustomer && (
+        <button
+          onClick={() => {
+            onGo("users");
+            onClose();
+          }}
+        >
+          Benutzer &amp; Rollen
+        </button>
+      )}
       {cfg.auth_mode === "oidc" ? (
         <>
           <a href={`${cfg.issuer}/account`} target="_blank" rel="noreferrer">

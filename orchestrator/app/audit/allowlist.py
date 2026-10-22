@@ -131,13 +131,17 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "customer.updated": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.deleted": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     # Lesezugriffs-Audit (per Mandant zuschaltbar, ADR 0007 D5)
-    "read.rules": frozenset({"tenant_id", "resource"}),
-    "read.nat": frozenset({"tenant_id", "resource"}),
-    "read.findings": frozenset({"tenant_id", "resource"}),
-    "read.applications": frozenset({"tenant_id", "resource"}),
+    # Kunden-Benutzer (ADR 0018): immer, mit ihren Kunden-IDs
+    "read.rules": frozenset({"tenant_id", "resource", "customers"}),
+    "read.nat": frozenset({"tenant_id", "resource", "customers"}),
+    "read.findings": frozenset({"tenant_id", "resource", "customers"}),
+    "read.applications": frozenset({"tenant_id", "resource", "customers"}),
     "read.published_services": frozenset({"tenant_id", "resource"}),
-    "read.appdoc": frozenset({"tenant_id", "resource"}),
+    "read.appdoc": frozenset({"tenant_id", "resource", "customers"}),
     "read.routing": frozenset({"tenant_id", "resource"}),
+    "read.objects": frozenset({"tenant_id", "resource", "customers"}),
+    "read.virtual": frozenset({"tenant_id", "resource", "customers"}),
+    "read.customers": frozenset({"tenant_id", "resource", "customers"}),
 }
 
 _DROPPED_KEY = "_dropped"

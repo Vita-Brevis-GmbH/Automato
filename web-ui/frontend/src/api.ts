@@ -1047,7 +1047,7 @@ function detailText(body: unknown): string {
 // Bearer-Token frisch aus der OIDC-Sitzung (erneuert abgelaufene Tokens still).
 // Im dev-Modus kein Token -> der Orchestrator nimmt den Standard-Admin an.
 async function authHeaders(): Promise<Record<string, string>> {
-  if (!auth.isOidc()) return {};
+  if (!auth.isOidc()) return auth.devHeaders(); // dev-Modus: ggf. vorgeführter Kunden-Benutzer
   const token = await auth.accessToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -1142,8 +1142,36 @@ export const deleteTenant = (tenantId: number, confirmName: string) =>
   sendJSON<DeleteCounts>(`/api/tenants/${tenantId}${qs({ confirm: confirmName })}`, "DELETE");
 
 // Quellsysteme
+// Kunden-Benutzer (ADR 0018) sehen von den Quellsystemen nur die Bezeichnungen
+let customerUser = false;
+export const setCustomerUser = (on: boolean) => {
+  customerUser = on;
+};
+export const isCustomerUser = () => customerUser;
+type SystemLabel = Pick<System, "id" | "tenant_id" | "name" | "platform" | "vdoms" | "parallel_group">;
+const fromLabel = (l: SystemLabel): System => ({
+  ...l,
+  enabled: true,
+  base_url: "",
+  agent_id: null,
+  verify_tls: true,
+  read_scope: "",
+  has_credentials: false,
+  ref_role: null,
+  has_write_token: false,
+  reference_count: 0,
+  reference_at: null,
+  site_id: null,
+  site_hint: null,
+  schedule: null,
+  next_run_at: null,
+  rule_count: 0,
+  nat_count: 0,
+});
 export const fetchSystems = (tenantId?: number | null) =>
-  getJSON<System[]>(`/api/systems${qs({ tenant_id: tenantId })}`);
+  customerUser
+    ? getJSON<SystemLabel[]>(`/api/systems/labels${qs({ tenant_id: tenantId })}`).then((l) => l.map(fromLabel))
+    : getJSON<System[]>(`/api/systems${qs({ tenant_id: tenantId })}`);
 // Zugangsdaten sind nur schreibbar (FortiGate/NetBox `token`, Cisco ACI/Infoblox `username` +
 // `password`, NetBox optional `write_token` nur für den NetBox-Sync): verschlüsselt gespeichert
 // und nur dem zugewiesenen Agenten pro Lauf übergeben – das Schreib-Token nie (ADR 0009/0010).

@@ -1,8 +1,11 @@
 """Sicht eines Kunden auf die Umgebung (ADR 0018, Schritte 2 und 3).
 
-Ein Kunde sieht seinen Ausschnitt (`customer_member`) und den geteilten Teil der Umgebung
-(Kunden mit `shared`). `View.ids(kind)` liefert je Art die IDs als SQL-Unterabfrage - die
-Listen und Zaehler filtern damit per SQL (`Rule.id.in_(view.ids("rule"))`).
+Ein Kunde sieht seinen Ausschnitt (`customer_member`). Der geteilte Teil der Umgebung (Kunden
+mit `shared`, z. B. Tenant `common`) gibt Zusammenhang: seine EPGs, Netze und Objekte zaehlen
+fuer alle Kunden. Regeln, NAT, Findings und VMs zaehlen dagegen nur aus den eigenen Kunden - eine
+Regel von Kunde B zum geteilten DNS betrifft Kunde A nicht („nur die Regeln, die ihn betreffen“).
+`View.ids(kind)` liefert je Art die IDs als SQL-Unterabfrage - die Listen und Zaehler filtern
+damit per SQL (`Rule.id.in_(view.ids("rule"))`).
 
 Schritt 2 (0.32.0): Betreuer waehlen einen Kunden als Filter (`customer_id`). Schritt 3
 (0.33.0): Kunden-Benutzer sind immer auf ihre Kunden eingeschraenkt.
@@ -24,21 +27,41 @@ from app.models import (
     RuleObjectUsage,
 )
 
+# Arten nur aus den eigenen Kunden (ohne geteilten Teil)
+OWN_KINDS = frozenset({"rule", "nat", "finding", "vm"})
+
 
 @dataclass(frozen=True)
 class View:
-    """Kunden (inkl. geteilter) einer Sicht."""
+    """Kunden einer Sicht: `own` die gewaehlten bzw. eigenen, `customer_ids` samt geteilter."""
 
     tenant_id: int
     customer_ids: tuple[int, ...]
+    own: tuple[int, ...]
+
+    def _of(self, kind: str) -> tuple[int, ...]:
+        return self.own if kind in OWN_KINDS else self.customer_ids
 
     def ids(self, kind: str) -> Select:
         """IDs einer Art (epg, object, rule, vm, nat, finding) als Unterabfrage."""
         return select(CustomerMember.ref_id).where(
-            CustomerMember.customer_id.in_(self.customer_ids),
+            CustomerMember.customer_id.in_(self._of(kind)),
             CustomerMember.kind == kind,
             CustomerMember.ref_id.is_not(None),
         )
+
+    def contains(self, session: Session, kind: str, ref_id: int) -> bool:
+        """Gehoert das Element (Art, ID) zum Ausschnitt?"""
+        hit = session.scalar(
+            select(CustomerMember.id)
+            .where(
+                CustomerMember.customer_id.in_(self._of(kind)),
+                CustomerMember.kind == kind,
+                CustomerMember.ref_id == ref_id,
+            )
+            .limit(1)
+        )
+        return hit is not None
 
     def nets(self, session: Session) -> list[str]:
         """Netze des Kunden (CIDR)."""
@@ -85,8 +108,8 @@ class View:
 
 
 def view(session: Session, tenant_id: int, customer_ids: list[int] | tuple[int, ...]) -> View:
-    """Sicht auf die Kunden des Mandanten samt geteiltem Teil. Kunden anderer Mandanten
-    zaehlen nicht (LookupError, wenn keiner passt)."""
+    """Sicht auf die Kunden des Mandanten samt geteiltem Teil (fuer EPGs, Netze, Objekte).
+    Kunden anderer Mandanten zaehlen nicht (LookupError, wenn keiner passt)."""
     own = set(
         session.scalars(
             select(Customer.id).where(
@@ -101,4 +124,4 @@ def view(session: Session, tenant_id: int, customer_ids: list[int] | tuple[int, 
             select(Customer.id).where(Customer.tenant_id == tenant_id, Customer.shared.is_(True))
         )
     )
-    return View(tenant_id, tuple(sorted(own | shared)))
+    return View(tenant_id, tuple(sorted(own | shared)), tuple(sorted(own)))

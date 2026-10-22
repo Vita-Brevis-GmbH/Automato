@@ -335,9 +335,9 @@ def test_kunden_filter_in_den_listen(client):
         return r
 
     rules = get("/rules", a)
-    assert {x["name"] for x in rules.json()} == {"CT_web", "CT_app", "web-to-backend", "CT_dns"}
-    assert rules.headers["X-Total-Count"] == "4"  # CT_dns ueber den geteilten Teil (common)
-    assert get("/rules/summary", a).json()["total"] == 4
+    assert {x["name"] for x in rules.json()} == {"CT_web", "CT_app", "web-to-backend"}
+    assert rules.headers["X-Total-Count"] == "3"  # CT_dns (B -> common) betrifft A nicht
+    assert get("/rules/summary", a).json()["total"] == 3
     assert {x["name"] for x in get("/rules", b).json()} == {"CT_app", "CT_dns"}
     assert get("/rules", None).headers["X-Total-Count"] == "6"  # ohne Kunde: alles
     assert [f["subject_id"] for f in get("/findings", a).json()] == ["10.50.1.10"]

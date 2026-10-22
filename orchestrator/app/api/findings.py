@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.api.customer_filter import customer_view
+from app.api.customer_filter import customer_view, finding_detail, own_view, visible
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -29,8 +29,10 @@ class FindingPatch(BaseModel):
     note: str | None = None
 
 
-def _finding_out(f) -> FindingOut:
-    message, hint = finding_text.explain(f.type.value, f.subject_id, f.detail)
+def _finding_out(f, principal: Principal | None = None) -> FindingOut:
+    # Kunden-Benutzer: ohne Angaben zu Regeln ausserhalb ihres Ausschnitts (ADR 0018)
+    detail = finding_detail(principal, f.detail) if principal is not None else f.detail
+    message, hint = finding_text.explain(f.type.value, f.subject_id, detail)
     return FindingOut(
         id=f.id,
         tenant_id=f.tenant_id,
@@ -40,7 +42,7 @@ def _finding_out(f) -> FindingOut:
         subject_kind=f.subject_kind.value,
         subject_id=f.subject_id,
         source_system_id=f.source_system_id,
-        detail=f.detail,
+        detail=detail,
         message=message,
         hint=hint or None,
         note=f.note,
@@ -93,7 +95,7 @@ def list_findings(
            "only": view.ids("finding") if view else None}  # fmt: skip
     response.headers["X-Total-Count"] = str(findings_store.count_findings(session, **flt))
     rows = findings_store.list_findings(session, limit=limit, offset=offset, **flt)
-    return [_finding_out(f) for f in rows]
+    return [_finding_out(f, principal) for f in rows]
 
 
 @router.patch("/{finding_id}", response_model=FindingOut)
@@ -107,6 +109,7 @@ def triage_finding(
     if f is None:
         raise HTTPException(status_code=404, detail="finding not found")
     tenant_scope(principal, f.tenant_id)  # Mandanten-Zugriff erzwingen (403 bei fremd)
+    visible(session, own_view(session, principal, f.tenant_id), "finding", f.id)  # ADR 0018
 
     data = body.model_dump(exclude_unset=True)
     if "status" in data and data["status"] is not None:
@@ -123,4 +126,4 @@ def triage_finding(
         subject=str(f.id),
         detail={"finding_id": f.id, "status": f.status.value},
     )
-    return _finding_out(f)
+    return _finding_out(f, principal)

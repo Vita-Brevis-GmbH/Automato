@@ -64,6 +64,8 @@ const TABS: { key: Tab; label: string; category?: string }[] = [
   { key: "portgroups", label: "Portgruppen" },
 ];
 
+const INVENTORY_TABS: Tab[] = ["subnets", "vlans", "ports", "devices", "vrfs"];
+
 const PAGE = 200;
 
 export default function Objects({
@@ -71,13 +73,16 @@ export default function Objects({
   tenantLabel,
   params = {},
   onGo,
+  customer = false,
 }: {
   tenantId: number | null;
   tenantLabel: string;
   params?: ViewParams; // Link: object_id= öffnet das Objekt-Detail, q= / tab= aus der Applikations-Doku
   onGo?: Go; // Klick auf "Regeln" → Regel-Liste mit diesem Objekt (auch über Gruppen)
+  customer?: boolean; // Kunden-Benutzer: ohne Netzinventar der Umgebung (ADR 0018)
 }) {
-  const [tab, setTab] = useState<Tab>(TABS.some((t) => t.key === params.tab) ? (params.tab as Tab) : "addr");
+  const tabs = customer ? TABS.filter((t) => !INVENTORY_TABS.includes(t.key)) : TABS;
+  const [tab, setTab] = useState<Tab>(tabs.some((t) => t.key === params.tab) ? (params.tab as Tab) : "addr");
   const [systems, setSystems] = useState<System[]>([]);
   const [source, setSource] = useState("");
   const [q, setQ] = useState(params.q ?? "");
@@ -101,7 +106,7 @@ export default function Objects({
     );
   }
 
-  const current = TABS.find((t) => t.key === tab)!;
+  const current = tabs.find((t) => t.key === tab)!;
   const sourceId = source ? Number(source) : null;
   const canFilterIssues = !!current.category || tab === "subnets";
 
@@ -113,7 +118,7 @@ export default function Objects({
       </PageHead>
 
       <div className="tabbar">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button key={t.key} className={tab === t.key ? "on" : ""} onClick={() => setTab(t.key)}>
             {t.label}
           </button>

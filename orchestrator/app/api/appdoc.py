@@ -10,7 +10,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.api.customer_filter import customer_view
+from app.api.customer_filter import customer_view, own_view
+from app.api.customer_filter import ids as view_ids
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -89,9 +90,10 @@ def list_systems(
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "appdoc")
     view = customer_view(session, principal, tenant_id, customer_id)
+    own = view_ids(session, view, "rule") if principal.is_customer else None
     return [
         SystemRefOut(name=s.name, ip=s.ip, rule_count=s.rule_count, kind=s.kind)
-        for s in store.list_systems(session, tenant_id, view)
+        for s in store.list_systems(session, tenant_id, view, own)
     ]
 
 
@@ -104,9 +106,21 @@ def system_doc(
 ):
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "appdoc")
+    view = own_view(session, principal, tenant_id) if tenant_id is not None else None
+    if principal.is_customer and view is None:
+        raise HTTPException(status_code=403, detail="tenant required")
+    if view is not None and system not in {
+        s.name for s in store.list_systems(session, tenant_id, view)
+    }:
+        raise HTTPException(status_code=404, detail="system not found")  # ADR 0018
     doc = store.build_doc(session, system, tenant_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="system not found")
+    if view is not None:  # nur die Regeln des Kunden
+        own = view_ids(session, view, "rule") or set()
+        for t in doc["tables"]:
+            t["rows"] = [r for r in t["rows"] if r.get(store.RULE) in own]
+        doc["impossible"] = [x for x in doc["impossible"] if x["rule_id"] in own]
     return doc
 
 

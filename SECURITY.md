@@ -18,6 +18,12 @@
    Schreibender Zugriff läuft ausschließlich über Orchestrator → Worker → Ansible.
 8. **Signierte/validierte Jobs**: Jobs vom Orchestrator an Worker sollten authentifiziert/signiert sein,
    um Job-Spoofing zu verhindern.
+9. **Kunden-Benutzer fail-closed** (ADR 0018, 0.33.0): Kunden-Benutzer (Keycloak-Rolle `customer`
+   bzw. `customer_ids`) erreichen nur die Endpunkte einer Freigabeliste (`auth/customer_routes.py`,
+   neue Endpunkte sind automatisch gesperrt, ein Test prüft jeden Endpunkt). Jede freigegebene
+   Lese-API schränkt serverseitig auf den Ausschnitt ihrer Kunden ein, Details ausserhalb sind
+   nicht auffindbar (404), Kunden-Benutzer sind nie Admin und werden immer auditiert. Kunden-IDs
+   kommen bei SAML-Brokern fest aus der IdP-Konfiguration, nie aus der Assertion des Kunden.
 
 ## Offene Punkte für spätere ADRs
 - Wahl des Secrets-Backends (Ansible Vault vs. HashiCorp Vault) und Migrationszeitpunkt

@@ -14,7 +14,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.customer_filter import customer_view
+from app.api.customer_filter import customer_view, own_view
+from app.api.customer_filter import ids as view_ids
+from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
@@ -64,6 +66,7 @@ def list_vms(
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     tid = _tenant(principal, tenant_id)
+    reads.maybe_audit_read(session, principal, tid, "virtual")
     stmt = select(Vm).options(selectinload(Vm.nics)).where(Vm.tenant_id == tid)
     view = customer_view(session, principal, tid, customer_id)
     if view is not None:
@@ -146,6 +149,7 @@ def list_portgroups(
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     tid = _tenant(principal, tenant_id)
+    reads.maybe_audit_read(session, principal, tid, "virtual")
     names, groups, epgs = _context(session, tid)
     view = customer_view(session, principal, tid, customer_id)
     mine = set(session.scalars(view.ids("epg"))) if view else None  # Portgruppen seiner EPGs
@@ -198,6 +202,11 @@ def portgroup_detail(
     if pg is None:
         raise HTTPException(status_code=404, detail="portgroup not found")
     tenant_scope(principal, pg.tenant_id)
+    view = own_view(session, principal, pg.tenant_id)
+    reads.maybe_audit_read(session, principal, pg.tenant_id, "virtual")
+    if view is not None and (pg.epg_id is None or not view.contains(session, "epg", pg.epg_id)):
+        raise HTTPException(status_code=404, detail="portgroup not found")  # ADR 0018
+    own_vms = view_ids(session, view, "vm")
     names = dict(
         session.execute(
             select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == pg.tenant_id)
@@ -286,5 +295,5 @@ def portgroup_detail(
         if epg is not None
         else None,
         "subnets": sorted(subnets.values(), key=lambda x: x["prefix"]),
-        "vms": vms,
+        "vms": vms if own_vms is None else [v for v in vms if v["id"] in own_vms],
     }

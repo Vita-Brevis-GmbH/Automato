@@ -7,6 +7,42 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.33.0 – 2026-10-22
+
+Kunden-Benutzer mit serverseitiger Einschränkung (ADR 0018, Schritt 3). Ohne Migration.
+
+- **Kunden-Benutzer** tragen in Keycloak die Rolle `customer` bzw. Kunden-IDs im Attribut
+  `customer_ids` (Claim `AUTOMATO_OIDC_CUSTOMERS_CLAIM`). Sie sind nie Admin (auch nicht mit
+  der Rolle `admin`), immer auf ihre Mandanten und Kunden eingeschränkt; ohne Kunden sehen sie
+  nichts (fail-closed). Bestehende Benutzer ohne Attribut bleiben Betreuer.
+- **Freigabeliste (fail-closed):** Kunden-Benutzer erreichen nur die Lese-Endpunkte der Doku
+  (`auth/customer_routes.py`): Regeln, Findings (Triage eigener mit `operator`), NAT,
+  Objekte, VMs, Portgruppen, Doku je System, Applikationen, ihre Kunden, Mandanten,
+  Standorte und die Bezeichnungen der Quellsysteme. Alles andere – auch neue Endpunkte –
+  ergibt 403: Quellsysteme, Agenten, Läufe, NetBox-Sync, Abgleich, Routing & Wege, Inventar,
+  System, Verwaltung.
+- **Einschränkung je Endpunkt:** Listen und Zähler auf den Ausschnitt; Details ausserhalb
+  ergeben 404 (Regel, NAT, Objekt, Portgruppe, System, Applikation, Finding). Regel-Zahlen
+  und Regel-Listen bei Objekten, NAT und in der Doku nennen nur die eigenen Regeln, Findings
+  ohne Namen fremder Regeln (ADR 0018: Gegenstellen sichtbar, aber nur die eigenen Regeln).
+- **Geteilter Teil präzisiert** (gilt auch für den Kunden-Filter der Betreuer): EPGs, Netze und
+  Objekte des geteilten Teils zählen für alle Kunden; Regeln, NAT, Findings und VMs nur aus
+  den eigenen Kunden – eine Regel von Kunde B zum geteilten DNS betrifft Kunde A nicht.
+- **`GET /systems/labels`:** nur Name, Plattform, VDOMs und Verbund der Quellsysteme; für
+  Kunden-Benutzer nur die Systeme ihrer Regeln, NAT bzw. Objekte und nur ihre VDOMs.
+- **Lese-Audit** für Kunden-Benutzer immer an (`read.*` mit den Kunden-IDs), auch ohne
+  `audit_reads` des Mandanten; neu auch für Objekte, VMs/Portgruppen und Kunden.
+- **Web-UI:** Kunden-Benutzer sehen Übersicht (ohne Betriebszustand und Läufe), Regeln,
+  Objekte (ohne Netzinventar), NAT, Applikationen (ohne Pflege) und Findings; keine
+  Administration, kein Routing. Rolle „Kunde“ im Benutzermenü. Im dev-Modus lässt sich ein
+  Kunden-Benutzer vorführen (`localStorage automato_dev_customer = "<Mandant>:<Kunden>"`).
+- **Keycloak:** Rolle `customer` und Mapper `customer_ids` in `realm-automato.json`; für
+  SAML-Broker Kunden-IDs und Rolle fest je IdP (`saml-mappers.example.json`), nie aus der
+  Assertion. Anleitung in `deploy/keycloak/PROD-INSTALL.md` (9a/9b).
+- Tests: Ausschnitt je Endpunkt (Listen, Details, Zähler, Triage), ohne Kunden/fremder
+  Kunde/Admin-Rolle, **jeder Endpunkt der App** gegen die Freigabeliste, Audit, OIDC-Claims,
+  UI als Kunden-Benutzer.
+
 ## 0.32.0 – 2026-10-22
 
 Kunden-Filter in den Ansichten (ADR 0018, Schritt 2). Ohne Migration.

@@ -22,7 +22,7 @@ from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.api.customer_filter import customer_view
+from app.api.customer_filter import customer_view, own_view, visible
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -202,6 +202,7 @@ def get_rule(
     if r is None:
         raise HTTPException(status_code=404, detail="rule not found")
     tenant_scope(principal, r.tenant_id)  # Mandanten-Zugriff pruefen (403 bei fremd)
+    visible(session, own_view(session, principal, r.tenant_id), "rule", r.id)  # ADR 0018
     reads.maybe_audit_read(session, principal, r.tenant_id, "rules")
 
     obj_ids = {e.network_object_id for e in r.endpoints if e.network_object_id}

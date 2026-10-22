@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     oidc_jwks_url: str = ""
     oidc_roles_claim: str = "realm_access.roles"  # Keycloak-Realm-Rollen
     oidc_tenants_claim: str = "tenant_ids"
+    # Kunden-Benutzer (ADR 0018 Schritt 3): Attribut mit den Kunden-IDs; die Realm-Rolle
+    # `customer` markiert den Benutzer auch ohne Attribut (dann sieht er nichts)
+    oidc_customers_claim: str = "customer_ids"
     oidc_web_client_id: str = "automato-web"  # public Client fuer das SPA (PKCE)
     # Toleranz fuer Uhrenabweichung Keycloak <-> Orchestrator bei iat/nbf/exp (Sekunden).
     # Ersetzt keine Zeitsynchronisation (NTP), faengt nur kleine Abweichungen ab.

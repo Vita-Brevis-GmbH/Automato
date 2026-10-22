@@ -30,7 +30,8 @@
     "realm": [
       { "name": "viewer", "description": "UC1-Doku lesen (mandantsbeschraenkt)" },
       { "name": "operator", "description": "zusaetzlich Collect ausloesen / Findings triagieren" },
-      { "name": "admin", "description": "Verwaltung; mandantsuebergreifend (Global-Admin)" }
+      { "name": "admin", "description": "Verwaltung; mandantsuebergreifend (Global-Admin)" },
+      { "name": "customer", "description": "Kunden-Benutzer: nur die Doku der Kunden aus customer_ids (ADR 0018), nie Admin" }
     ]
   },
   "clients": [
@@ -52,6 +53,20 @@
             "user.attribute": "tenant_ids",
             "claim.name": "tenant_ids",
             "jsonType.label": "int",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "customer_ids",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "customer_ids",
+            "claim.name": "customer_ids",
+            "jsonType.label": "String",
             "multivalued": "true",
             "id.token.claim": "true",
             "access.token.claim": "true",

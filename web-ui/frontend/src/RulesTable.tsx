@@ -239,12 +239,14 @@ export default function RulesTable({
   params = {},
   onGo,
   isAdmin = false,
+  customer = false,
 }: {
   tenantId: number | null;
   tenantLabel: string;
   params?: ViewParams; // object= / nat= / q= aus einem Link (Objekt, NAT, Finding)
   onGo?: (v: View, p?: ViewParams) => void;
   isAdmin?: boolean;
+  customer?: boolean; // Kunden-Benutzer: keine Verbund-Vorschläge (ADR 0018)
 }) {
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -394,7 +396,7 @@ export default function RulesTable({
           ? "Lade…"
           : `${total} Einträge für „${tenantLabel}“ – Firewall-Policies und ACI-Contracts, read-only eingelesen und gegen die Source of Truth aufgelöst.`}
       </PageHead>
-      {tenantId !== null && (
+      {tenantId !== null && !customer && (
         <ParallelHint
           tenantId={tenantId}
           isAdmin={isAdmin}

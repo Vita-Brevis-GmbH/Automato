@@ -423,6 +423,12 @@ einer bestehenden Installation von Hand:
    *Who can view*: Admin (User optional). Optional Validator `integer`.
    Wichtig: User dürfen das Attribut **nicht** selbst bearbeiten (sonst könnten sie sich
    über die Account-Konsole fremde Mandanten geben).
+   **Kunden-Benutzer (ADR 0018, ab 0.33.0):** genauso `customer_ids` anlegen (Display name
+   „Kunden-IDs", Multivalued On, *Who can edit*: **nur Admin**), dazu die Realm-Rolle
+   `customer` (*Realm roles → Create role*) und den Mapper *Clients → `automato-web` → Client
+   scopes → `automato-web-dedicated` → Add mapper → By configuration → **User Attribute*** —
+   Name/User Attribute/Token Claim Name `customer_ids`, Claim JSON Type String, Multivalued
+   On, Access/ID token On.
 3. **OTP für alle lokalen User erzwingen:** *Authentication → Required actions → Configure
    OTP → Set as default action* **On** (neue User müssen OTP beim ersten Login einrichten);
    bei bereits bestehenden Usern die Required action *Configure OTP* setzen. Den Browser-Flow
@@ -440,6 +446,12 @@ einer bestehenden Installation von Hand:
 der erlaubten Mandanten füllen (IDs aus dem Automato-UI-Tab „Mandant / Standorte" bzw.
 `GET /tenants`). `admin` sieht immer alle Mandanten; `viewer`/`operator` ohne
 Mandanten-IDs sehen nichts (fail-closed).
+
+**Kunden-Benutzer** (ADR 0018): Realm-Rolle `customer` (liest; `operator` zusätzlich für die
+Triage eigener Findings), **Mandanten-IDs** = die Umgebung und **Kunden-IDs** = die Kunden aus
+der Ansicht „Kunden“. Sie sehen nur die Doku dieser Kunden (Regeln, Objekte, NAT, VMs,
+Applikationen, Findings), keine Quellsysteme, Agenten, Läufe, kein Routing und keine
+Verwaltung; `admin` gilt für sie nicht. Ohne Kunden-IDs sehen sie nichts.
 
 ### 9c. Orchestrator auf OIDC umstellen
 

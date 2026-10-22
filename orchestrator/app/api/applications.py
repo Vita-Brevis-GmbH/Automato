@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.api.appdoc import DocTableOut, SiteRef
-from app.api.customer_filter import customer_view
+from app.api.customer_filter import customer_view, own_view
+from app.api.customer_filter import ids as view_ids
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -429,6 +430,14 @@ def accept_suggestion(
     return _detail(session, app)
 
 
+def _visible(session: Session, principal: Principal, app: Application):
+    """Kunden-Benutzer: nur Applikationen in ihrem Ausschnitt (sonst 404, ADR 0018)."""
+    view = own_view(session, principal, app.tenant_id)
+    if view is not None and not view.applications(session)(app):
+        raise HTTPException(status_code=404, detail="application not found")
+    return view
+
+
 @router.get("/{application_id}", response_model=ApplicationDetailOut)
 def get_application(
     application_id: int,
@@ -436,6 +445,7 @@ def get_application(
     session: Session = Depends(get_session, scope="function"),
 ):
     app = _load(session, principal, application_id)
+    _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
     return _detail(session, app)
 
@@ -582,8 +592,9 @@ def application_doc(
 ):
     """Applikations-Doku ueber alle Systeme der Applikation (Tabellen 1–10)."""
     app = _load(session, principal, application_id)
+    view = _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    doc = store.build_doc(session, app)
+    doc = store.build_doc(session, app, view_ids(session, view, "rule"))
     return ApplicationDocOut(
         application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
     )

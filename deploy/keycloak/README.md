@@ -26,11 +26,15 @@ Dev ist bewusst schlank, aber nicht nackt:
 HTTPS/Reverse-Proxy, eigene VM und externe DB sind der Produktion vorbehalten (Playbook).
 
 Beim Start importiert Keycloak den Realm **`automato`** aus `realm-automato.json`:
-- Realm-Rollen **`viewer` / `operator` / `admin`**.
+- Realm-Rollen **`viewer` / `operator` / `admin`** und **`customer`** (Kunden-Benutzer,
+  ADR 0018: nur die Doku der Kunden aus `customer_ids`, nie Admin).
 - Clients **`automato-web`** (public, Standard-Flow + **PKCE**) und **`automato-api`**
   (bearer-only, Resource-Server).
 - Protocol-Mapper **`tenant_ids`** (User-Attribut → Token-Claim, multivalued) — steuert
   das Mandanten-Scoping im Orchestrator.
+- Protocol-Mapper **`customer_ids`** (User-Attribut → Token-Claim, multivalued) — macht den
+  Benutzer zum Kunden-Benutzer, eingeschränkt auf diese Kunden (IDs aus der Ansicht
+  „Kunden“). Ohne Attribut bleibt ein Benutzer Betreuer.
 - Geseedter **`automato-admin`** mit Rolle `admin` und erzwungenem
   **`UPDATE_PASSWORD` + `CONFIGURE_TOTP`** (OTP) beim ersten Login.
 
@@ -54,7 +58,10 @@ AUTOMATO_OIDC_JWKS_URL=http://localhost:8081/realms/automato/protocol/openid-con
 ```
 
 Der Orchestrator validiert dann das Bearer-JWT (JWKS/Issuer/Audience), liest Rollen aus
-`realm_access.roles` und Mandanten aus `tenant_ids`; `admin` = alle Mandanten.
+`realm_access.roles` und Mandanten aus `tenant_ids`; `admin` = alle Mandanten. Mit der Rolle
+`customer` bzw. Kunden in `customer_ids` (`AUTOMATO_OIDC_CUSTOMERS_CLAIM`) ist der Benutzer ein
+Kunden-Benutzer: nur die freigegebenen Doku-Endpunkte, eingeschränkt auf seine Kunden; ohne
+Kunden sieht er nichts (fail-closed).
 
 ## SAML-Broker je Kunde
 
@@ -80,7 +87,10 @@ kcadm.sh create identity-provider/instances/kunde-saml/mappers -r automato -f ma
 
 Konvention: der SAML-IdP des Kunden liefert `tenant_ids` als Assertion-Attribut (die
 Mandanten-IDs dieses Kunden); `admin` wird **nie** per Broker-Default vergeben, sondern
-gezielt. OTP-Pflicht/Passwort-Policy gelten nur für lokale User; föderierte User
+gezielt. Für Kunden-Benutzer (ADR 0018) werden `customer_ids` und die Rolle `customer`
+**fest je IdP** hinterlegt (`hardcoded-attribute-idp-mapper`, `oidc-hardcoded-role-idp-mapper`
+in `saml-mappers.example.json`), nie aus der Assertion übernommen – sonst könnte ein
+Kunden-IdP sich fremde Kunden geben. OTP-Pflicht/Passwort-Policy gelten nur für lokale User; föderierte User
 authentifizieren am Kunden-IdP.
 
 ## Produktion

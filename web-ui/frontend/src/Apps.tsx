@@ -77,10 +77,11 @@ export default function Apps({
         setErr(e);
         setApps([]);
       });
-    fetchAppSuggestions(tenantId)
-      .then(setSuggestions)
-      .catch(() => setSuggestions([]));
-  }, [tenantId]);
+    if (me.isOperator)
+      fetchAppSuggestions(tenantId)
+        .then(setSuggestions)
+        .catch(() => setSuggestions([]));
+  }, [tenantId, me.isOperator]);
 
   useEffect(() => {
     setApps(null);

@@ -3,6 +3,7 @@ import {
   decidePair,
   Endpoint,
   fetchRuleDetail,
+  isCustomerUser,
   NatBrief,
   rejectParallel,
   resetPairDecision,
@@ -326,12 +327,14 @@ export default function RuleDetailDrawer({
                 <dt>Familie</dt>
                 <dd>
                   <FamilyMarks r={detail} onPair={onRule} />
-                  <PairActions
-                    detail={detail}
-                    onConfirm={(id) => decide(decidePair(detail.id, id, "confirmed"))}
-                    onReject={(id) => decide(decidePair(detail.id, id, "rejected"))}
-                    onReset={(id) => decide(resetPairDecision(id))}
-                  />
+                  {!isCustomerUser() && (
+                    <PairActions
+                      detail={detail}
+                      onConfirm={(id) => decide(decidePair(detail.id, id, "confirmed"))}
+                      onReject={(id) => decide(decidePair(detail.id, id, "rejected"))}
+                      onReset={(id) => decide(resetPairDecision(id))}
+                    />
+                  )}
                 </dd>
               </>
             )}

@@ -23,5 +23,26 @@
       "attribute.value": "",
       "role": "viewer"
     }
+  },
+  {
+    "_hinweis": "Kunden-Benutzer (ADR 0018): die Kunden-IDs FEST je IdP hinterlegen, nie aus der Assertion uebernehmen - sonst koennte ein Kunden-IdP sich fremde Kunden geben. Mehrere Kunden kommagetrennt ('3,4'). Platzhalter ersetzen.",
+    "name": "customer_ids-fest",
+    "identityProviderAlias": "kunde-saml",
+    "identityProviderMapper": "hardcoded-attribute-idp-mapper",
+    "config": {
+      "syncMode": "FORCE",
+      "attribute": "customer_ids",
+      "attribute.value": "<kunden-ids>"
+    }
+  },
+  {
+    "_hinweis": "Rolle customer fuer alle Benutzer dieses Kunden-IdP: nur die Doku ihres Ausschnitts, nie Admin (auch wenn admin vergeben waere).",
+    "name": "rolle-customer",
+    "identityProviderAlias": "kunde-saml",
+    "identityProviderMapper": "oidc-hardcoded-role-idp-mapper",
+    "config": {
+      "syncMode": "FORCE",
+      "role": "customer"
+    }
   }
 ]

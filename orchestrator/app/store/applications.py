@@ -459,7 +459,7 @@ def _hosts_with_ips(session: Session, tenant_id: int, ips: list[str]) -> list[Ne
     )
 
 
-def build_doc(session: Session, app: Application) -> dict:
+def build_doc(session: Session, app: Application, rule_ids: set[int] | None = None) -> dict:
     """Applikations-Doku (Dev-Befund 0.14.0): die Doku steht im Mittelpunkt.
 
     - `systems`: alle VMs der Applikation (Portgruppen ihrer EPGs, VMs hinter ihren Servern)
@@ -606,6 +606,8 @@ def build_doc(session: Session, app: Application) -> dict:
             }
         )
 
+    if rule_ids is not None:  # Kunden-Benutzer: nur ihre Regeln (ADR 0018)
+        rows = [r for r in rows if r[2].get(appdoc.RULE) in rule_ids]
     # parallele Firewalls (0.18.0): gleiche Policies nur einmal - die der fuehrenden Firewall
     twins = parallel.twin_ids(session, {row.get(appdoc.RULE) for _, _, row in rows})
     rows = [r for r in rows if r[2].get(appdoc.RULE) not in twins]

@@ -2,9 +2,9 @@
 
 import logging
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 
-from app.auth import oidc
+from app.auth import customer_routes, oidc
 from app.auth import roles as R
 from app.auth.principal import Principal
 from app.config import get_settings
@@ -22,6 +22,7 @@ def get_principal(
     authorization: str | None = Header(default=None),
     x_dev_roles: str | None = Header(default=None),
     x_dev_tenants: str | None = Header(default=None),
+    x_dev_customers: str | None = Header(default=None),
 ) -> Principal:
     settings = get_settings()
     if settings.auth_mode == "oidc":
@@ -34,6 +35,14 @@ def get_principal(
             raise HTTPException(status_code=401, detail="invalid token") from exc
     # dev-Modus: Standard = Admin (alle Mandanten) -> unveraendertes Verhalten.
     # Override via X-Dev-Roles/X-Dev-Tenants zum Testen/Vorfuehren von RBAC + Scoping.
+    if x_dev_customers is not None:  # Kunden-Benutzer (ADR 0018): nie Admin, fail-closed
+        rs = frozenset(r.strip() for r in (x_dev_roles or "viewer").split(",") if r.strip())
+        return Principal(
+            subject="dev-customer",
+            roles=rs - {R.ADMIN},
+            tenant_ids=_parse_tenants(x_dev_tenants) or (),
+            customer_ids=_parse_tenants(x_dev_customers) or (),
+        )
     if x_dev_roles is not None or x_dev_tenants is not None:
         rs = frozenset(r.strip() for r in (x_dev_roles or "").split(",") if r.strip())
         return Principal(subject="dev", roles=rs, tenant_ids=_parse_tenants(x_dev_tenants))
@@ -41,9 +50,14 @@ def get_principal(
 
 
 def require_role(required: str):
-    def dep(principal: Principal = Depends(get_principal)) -> Principal:
+    def dep(request: Request, principal: Principal = Depends(get_principal)) -> Principal:
         if not R.satisfies(principal.roles, required):
             raise HTTPException(status_code=403, detail="insufficient role")
+        if principal.is_customer:  # Kunden-Benutzer: nur freigegebene Endpunkte (fail-closed)
+            route = request.scope.get("route")
+            path = getattr(route, "path", None)
+            if path is None or not customer_routes.allowed(request.method, path):
+                raise HTTPException(status_code=403, detail="not available for customer users")
         return principal
 
     return dep
@@ -61,7 +75,7 @@ def tenant_scope(principal: Principal, requested: int | None) -> int | None:
     nur innerhalb der erlaubten Mandanten; ein `requested` ausserhalb -> 403; ohne
     `requested` wird auf den einzigen erlaubten Mandanten verengt (sonst 400/403).
     """
-    if principal.is_admin or principal.tenant_ids is None:
+    if principal.is_admin or (principal.tenant_ids is None and not principal.is_customer):
         return requested
     allowed = principal.tenant_ids
     if requested is not None:

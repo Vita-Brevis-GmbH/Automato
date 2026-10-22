@@ -36,14 +36,20 @@ export default function Overview({
   const [collectOpen, setCollectOpen] = useState(false);
   const [collectAllOpen, setCollectAllOpen] = useState(false);
   const [health, setHealth] = useState<OpsHealth | null>(null);
+  const customer = me.isCustomer; // Kunden-Benutzer: nur die Doku, kein Betrieb (ADR 0018)
   useEffect(() => {
+    if (customer) return;
     fetchOpsHealth(tenantId)
       .then(setHealth)
       .catch(() => setHealth(null));
-  }, [tenantId, runs]);
+  }, [tenantId, runs, customer]);
 
   // offene Läufe (wartet/läuft) vollständig, dazu die letzten – neueste zuerst
   const loadRuns = useCallback(() => {
+    if (customer) {
+      setRuns([]);
+      return;
+    }
     Promise.all([
       fetchRunsPage({ tenantId, status: "open", limit: 100 }),
       fetchRunsPage({ tenantId, limit: RECENT }),
@@ -61,7 +67,7 @@ export default function Overview({
         setRuns([]);
         setRunsErr(e);
       });
-  }, [tenantId]);
+  }, [tenantId, customer]);
 
   useEffect(() => {
     setRuns(null);
@@ -109,7 +115,8 @@ export default function Overview({
       <PageHead
         title="Übersicht"
         actions={
-          me.isOperator && (
+          me.isOperator &&
+          !customer && (
             <>
               {tenantId !== null && (
                 <button className="btn btn-ghost btn-sm" onClick={() => setCollectAllOpen(true)}>
@@ -175,58 +182,60 @@ export default function Overview({
       </div>
 
       <div className="two-col">
-        <div className="card">
-          <div className="card-head">
-            <h2>Letzte Läufe</h2>
-            {openTotal > 0 && (
-              <span className="chip info" title="wartet oder läuft">
-                {openTotal} offen
-              </span>
-            )}
-            <div className="spacer" />
-            <button className="btn btn-ghost btn-sm" onClick={loadRuns}>
-              Aktualisieren
-            </button>
-            {me.isOperator && (
-              <button className="btn btn-ghost btn-sm" onClick={() => setCollectOpen(true)}>
-                Jetzt einlesen
+        {!customer && (
+          <div className="card">
+            <div className="card-head">
+              <h2>Letzte Läufe</h2>
+              {openTotal > 0 && (
+                <span className="chip info" title="wartet oder läuft">
+                  {openTotal} offen
+                </span>
+              )}
+              <div className="spacer" />
+              <button className="btn btn-ghost btn-sm" onClick={loadRuns}>
+                Aktualisieren
               </button>
-            )}
-          </div>
-          <div className="card-body scroll tall">
-            <ErrorBox error={runsErr} prefix="Läufe laden" />
-            {runs === null ? (
-              <Loading />
-            ) : runs.length === 0 ? (
-              <div className="empty">
-                <div className="big">Noch keine Läufe</div>
-                {me.isOperator
-                  ? "Mit „Jetzt einlesen“ ein Quellsystem zentral oder über einen Agenten erfassen."
-                  : "Ein Operator kann Quellsysteme einlesen."}
+              {me.isOperator && (
+                <button className="btn btn-ghost btn-sm" onClick={() => setCollectOpen(true)}>
+                  Jetzt einlesen
+                </button>
+              )}
+            </div>
+            <div className="card-body scroll tall">
+              <ErrorBox error={runsErr} prefix="Läufe laden" />
+              {runs === null ? (
+                <Loading />
+              ) : runs.length === 0 ? (
+                <div className="empty">
+                  <div className="big">Noch keine Läufe</div>
+                  {me.isOperator
+                    ? "Mit „Jetzt einlesen“ ein Quellsystem zentral oder über einen Agenten erfassen."
+                    : "Ein Operator kann Quellsysteme einlesen."}
+                </div>
+              ) : (
+                <RunsTable
+                  runs={runs}
+                  systemName={systemName}
+                  canCancel={me.isOperator}
+                  onCancel={(id) => cancelRun(id).then(loadRuns, setRunsErr)}
+                />
+              )}
+            </div>
+            {runsTotal > 0 && (
+              <div className="card-foot">
+                <button className="linkbtn" onClick={() => onGo("laeufe")}>
+                  Alle Läufe ({runsTotal}) →
+                </button>
+                {openTotal > 100 && ` · nur die neuesten 100 offenen hier, alle in der Ansicht „Läufe“`}
               </div>
-            ) : (
-              <RunsTable
-                runs={runs}
-                systemName={systemName}
-                canCancel={me.isOperator}
-                onCancel={(id) => cancelRun(id).then(loadRuns, setRunsErr)}
-              />
+            )}
+            {runs?.some((r) => r.status === "queued" && r.execution === "external") && (
+              <div className="card-foot">
+                Externe Läufe warten, bis ein Agent sie per <code>--poll</code> abholt.
+              </div>
             )}
           </div>
-          {runsTotal > 0 && (
-            <div className="card-foot">
-              <button className="linkbtn" onClick={() => onGo("laeufe")}>
-                Alle Läufe ({runsTotal}) →
-              </button>
-              {openTotal > 100 && ` · nur die neuesten 100 offenen hier, alle in der Ansicht „Läufe“`}
-            </div>
-          )}
-          {runs?.some((r) => r.status === "queued" && r.execution === "external") && (
-            <div className="card-foot">
-              Externe Läufe warten, bis ein Agent sie per <code>--poll</code> abholt.
-            </div>
-          )}
-        </div>
+        )}
 
         <div className="card">
           <div className="card-head">

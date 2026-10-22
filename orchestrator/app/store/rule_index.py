@@ -568,15 +568,17 @@ def range_text(family: int, lo: int, hi: int) -> str:
     return f"{first}-{last}"
 
 
-def usage_counts(session: Session, object_ids: list[int]) -> dict[int, int]:
-    """Objekt-ID -> Anzahl Regeln, die es verwenden (direkt oder ueber Gruppen)."""
+def usage_counts(session: Session, object_ids: list[int], only=None) -> dict[int, int]:
+    """Objekt-ID -> Anzahl Regeln, die es verwenden (direkt oder ueber Gruppen); `only` = nur
+    diese Regeln (Unterabfrage, Kunden-Benutzer, ADR 0018)."""
     if not object_ids:
         return {}
-    rows = session.execute(
-        select(RuleObjectUsage.device_object_id, func.count(func.distinct(RuleObjectUsage.rule_id)))
-        .where(RuleObjectUsage.device_object_id.in_(object_ids))
-        .group_by(RuleObjectUsage.device_object_id)
-    )
+    stmt = select(
+        RuleObjectUsage.device_object_id, func.count(func.distinct(RuleObjectUsage.rule_id))
+    ).where(RuleObjectUsage.device_object_id.in_(object_ids))
+    if only is not None:
+        stmt = stmt.where(RuleObjectUsage.rule_id.in_(only))
+    rows = session.execute(stmt.group_by(RuleObjectUsage.device_object_id))
     return dict(rows.all())
 
 

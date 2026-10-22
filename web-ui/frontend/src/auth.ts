@@ -133,6 +133,9 @@ export interface Me {
   tenantIds: number[] | null; // null = alle (admin)
   isAdmin: boolean;
   isOperator: boolean; // operator oder admin
+  // Kunden-Benutzer (ADR 0018): nur die Doku ihres Ausschnitts, nie Admin; null = Betreuer
+  customerIds: number[] | null;
+  isCustomer: boolean;
   dev: boolean;
 }
 
@@ -143,8 +146,56 @@ export const DEV_ME: Me = {
   tenantIds: null,
   isAdmin: true,
   isOperator: true,
+  customerIds: null,
+  isCustomer: false,
   dev: true,
 };
+
+// dev-Modus: Kunden-Benutzer vorführen bzw. testen (`automato_dev_customer` = "<Mandant>:<Kunden>",
+// z. B. "1:2,3"). Schränkt nur ein – der Orchestrator prüft serverseitig (X-Dev-Customers).
+const DEV_CUSTOMER = "automato_dev_customer";
+
+function devCustomer(): { tenant: number; customers: number[] } | null {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(DEV_CUSTOMER);
+  } catch {
+    /* localStorage nicht verfügbar */
+  }
+  const m = raw?.match(/^(\d+):([\d,]*)$/);
+  if (!m) return null;
+  return { tenant: Number(m[1]), customers: m[2].split(",").filter(Boolean).map(Number) };
+}
+
+export function devMe(): Me {
+  const c = devCustomer();
+  if (!c) return DEV_ME;
+  return {
+    ...DEV_ME,
+    name: "Kunde (Vorführung)",
+    roles: ["viewer"],
+    tenantIds: [c.tenant],
+    isAdmin: false,
+    isOperator: false,
+    customerIds: c.customers,
+    isCustomer: true,
+  };
+}
+
+// Kopfzeilen des dev-Modus für einen vorgeführten Kunden-Benutzer
+export function devHeaders(): Record<string, string> {
+  const c = devCustomer();
+  if (!c) return {};
+  return { "X-Dev-Roles": "viewer", "X-Dev-Tenants": String(c.tenant), "X-Dev-Customers": c.customers.join(",") };
+}
+
+// IDs aus einem Claim: Zahl, Liste bzw. Text, auch kommagetrennt ("3,4") – wie auth/oidc.py
+function numbers(raw: unknown): number[] {
+  return (Array.isArray(raw) ? raw : raw != null ? [raw] : [])
+    .flatMap((t) => (typeof t === "string" ? t.split(",") : [t]))
+    .map((t) => Number(t))
+    .filter((t) => Number.isFinite(t));
+}
 
 function jwtPayload(token: string): Record<string, unknown> {
   try {
@@ -164,14 +215,17 @@ function jwtPayload(token: string): Record<string, unknown> {
 export function meFromUser(user: User): Me {
   const claims = jwtPayload(user.access_token);
   const realm = claims["realm_access"] as { roles?: string[] } | undefined;
-  const roles = (realm?.roles ?? []).filter((r) => ["viewer", "operator", "admin"].includes(r));
+  const raw = realm?.roles ?? [];
+  // Kunden-Benutzer wie im Orchestrator (auth/oidc.py): Rolle „customer“ bzw. Attribut
+  // customer_ids – nie Admin, die Rolle „customer“ liest
+  const isCustomer = raw.includes("customer") || numbers(claims["customer_ids"]).length > 0;
+  let roles = raw.filter((r) => ["viewer", "operator", "admin"].includes(r));
+  if (isCustomer) {
+    roles = roles.filter((r) => r !== "admin");
+    if (raw.includes("customer") && !roles.includes("viewer")) roles.push("viewer");
+  }
   const isAdmin = roles.includes("admin");
-  const rawTenants = claims["tenant_ids"];
-  const tenantIds = isAdmin
-    ? null
-    : (Array.isArray(rawTenants) ? rawTenants : rawTenants != null ? [rawTenants] : [])
-        .map((t) => Number(t))
-        .filter((t) => Number.isFinite(t));
+  const tenantIds = isAdmin ? null : numbers(claims["tenant_ids"]);
   const profile = user.profile;
   return {
     name: String(profile.name ?? profile.preferred_username ?? "Benutzer"),
@@ -180,11 +234,14 @@ export function meFromUser(user: User): Me {
     tenantIds,
     isAdmin,
     isOperator: isAdmin || roles.includes("operator"),
+    customerIds: isCustomer ? numbers(claims["customer_ids"]) : null,
+    isCustomer,
     dev: false,
   };
 }
 
 export function roleLabel(me: Me): string {
+  if (me.isCustomer) return me.roles.includes("operator") ? "Kunde · Operator" : "Kunde";
   if (me.isAdmin) return "Globaler Admin";
   if (me.roles.includes("operator")) return "Operator";
   if (me.roles.includes("viewer")) return "Viewer";

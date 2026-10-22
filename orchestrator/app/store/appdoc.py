@@ -157,9 +157,11 @@ class SystemRef:
     kind: str = "host"  # host | epg
 
 
-def list_systems(session: Session, tenant_id: int | None, view=None) -> list[SystemRef]:
+def list_systems(
+    session: Session, tenant_id: int | None, view=None, rule_ids: set[int] | None = None
+) -> list[SystemRef]:
     """Systeme mit Regelbezug: Host-Objekte (Firewall) und EPGs (ACI); mit `view` nur die
-    eines Kunden (ADR 0018)."""
+    eines Kunden (ADR 0018), mit `rule_ids` zaehlen nur diese Regeln (Kunden-Benutzer)."""
     stmt = (
         select(NetworkObject.name, NetworkObject.value, RuleEndpoint.rule_id)
         .join(RuleEndpoint, RuleEndpoint.network_object_id == NetworkObject.id)
@@ -172,7 +174,8 @@ def list_systems(session: Session, tenant_id: int | None, view=None) -> list[Sys
     agg: dict[str, tuple[str | None, set[int]]] = {}
     for name, value, rid in session.execute(stmt):
         ip, rids = agg.setdefault(name, (value, set()))
-        rids.add(rid)
+        if rule_ids is None or rid in rule_ids:
+            rids.add(rid)
     systems = [
         SystemRef(name=n, ip=v, rule_count=len(rids), kind="host") for n, (v, rids) in agg.items()
     ]
@@ -192,7 +195,8 @@ def list_systems(session: Session, tenant_id: int | None, view=None) -> list[Sys
                 RuleEndpoint.epg_id.in_([e.id for e in epgs])
             )
         ):
-            rules_of.setdefault(epg_id, set()).add(rule_id)
+            if rule_ids is None or rule_id in rule_ids:
+                rules_of.setdefault(epg_id, set()).add(rule_id)
     for epg in epgs:
         name = epg_system_name(epg) if names.count((epg.tenant_id, epg.name)) > 1 else epg.name
         systems.append(
