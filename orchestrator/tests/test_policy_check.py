@@ -162,3 +162,84 @@ def test_regeln_auf_dem_weg(client):
     ]
     p = {"tenant_id": tid, **web, "service": "http"}
     assert client.get("/routing/trace", params=p).status_code == 422
+
+
+def _fw(name, rules, interfaces, routes, objects=(), nat=()):
+    return {
+        "status": "completed",
+        "rules": rules,
+        "objects": list(objects),
+        "nat_rules": list(nat),
+        "inventory": {"devices": [{"name": name, "role": "firewall"}],
+                      "interfaces": [{**i, "device": name} for i in interfaces]},
+        "routing": {"contexts": [{"node": name, "context": "root"}],
+                    "routes": [{**r, "node": name} for r in routes]},
+    }  # fmt: skip
+
+
+EDGE = _fw(
+    "fw-e",
+    [_policy(10, "inet-to-app", "internet", "transit", ["all"], ["vip:VIP_app=198.51.100.80"],
+             ["tcp/8443"], nat="enable", ippool="enable", poolname=[{"name": "IPP_e"}])
+     | {"destination_refs": ["VIP_app"]}],
+    [_iface("wan", "203.0.113.1/24", "internet"), _iface("to-i", "10.70.0.1/24", "transit")],
+    [_route("203.0.113.0/24", [{"interface": "wan"}], "connected"),
+     _route("10.70.0.0/24", [{"interface": "to-i"}], "connected"),
+     _route("10.40.0.0/24", [{"ip": "10.70.0.2", "interface": "to-i"}])],
+    objects=[{"name": "VIP_app", "category": "vip", "values": ["198.51.100.80"], "vdom": "root"}],
+    nat=[{"source_platform": "fortigate", "external_id": "VIP_app", "name": "VIP_app",
+          "ext_ip": "198.51.100.80", "mapped_ip": "10.40.0.80", "ext_port": "443",
+          "mapped_port": "8443", "portforward": True, "vdom": "root",
+          "raw": {"extintf": "wan"}},
+         {"source_platform": "fortigate", "external_id": "IPP_e", "name": "IPP_e",
+          "nat_type": "snat_pool", "ext_ip": "10.70.0.100-10.70.0.101", "vdom": "root"}],
+)  # fmt: skip
+INNER = _fw(
+    "fw-i",
+    [_policy(20, "edge-to-app", "transit", "server", ["10.70.0.100"], ["10.40.0.80"],
+             ["tcp/8443"])],
+    [_iface("to-e", "10.70.0.2/24", "transit"), _iface("srv", "10.40.0.1/24", "server")],
+    [_route("10.70.0.0/24", [{"interface": "to-e"}], "connected"),
+     _route("10.40.0.0/24", [{"interface": "srv"}], "connected")],
+)  # fmt: skip
+
+
+def test_nat_auf_dem_weg(client):
+    """0.23.0: Die VIP der äusseren Firewall schickt den Weg zur internen IP (mit internem
+    Port); die SNAT-Adresse des IP-Pools ist die Quelle für die innere Firewall."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    for name, result in (("fw-e", EDGE), ("fw-i", INNER)):
+        body = {"tenant_id": tid, "name": name, "platform": "fortigate", "base_url": "https://x"}
+        sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+        run = {"platform": "fortigate", "tenant_id": tid, "source_system_id": sid}
+        run_id = client.post("/jobs/collect", json=run).json()["run_id"]
+        r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
+        assert r.status_code == 200 and r.json()["status"] == "completed", r.text
+
+    params = {"tenant_id": tid, "src": "203.0.113.50", "dst": "198.51.100.80", "service": "tcp/443"}
+    (path,) = client.get("/routing/trace", params=params).json()["paths"]
+    edge, inner = path["hops"]
+    assert [h["label"] for h in path["hops"]] == ["fw-e", "fw-i"]
+    assert edge["nat"] | {"id": 0} == {
+        "name": "VIP_app",
+        "id": 0,
+        "ext": "198.51.100.80",
+        "to": ["10.40.0.80"],
+        "type": None,
+        "ports": ["443", "8443"],
+    }
+    assert "dst" not in edge and inner["dst"] == "10.40.0.80"
+    assert path["end"]["kind"] == "connected"
+    # VIP-Policy mit internem Port, SNAT auf den Pool, innen nur die Pool-Adresse erlaubt
+    assert edge["rules"]["text"] == "erlaubt durch Policy 10 „inet-to-app“"
+    assert edge["snat"] == {"pool": "IPP_e", "to": "10.70.0.100"}
+    assert inner["rules"]["text"] == "erlaubt durch Policy 20 „edge-to-app“"
+    assert path["policy"] == {"verdict": "allow", "text": "erlaubt an allen 2 Firewalls"}
+
+    # anderer Eingang: die VIP gilt nur an wan - kein NAT
+    nodes = client.get("/routing/summary", params={"tenant_id": tid}).json()["nodes"]
+    start = next(n["key"] for n in nodes if n["label"] == "fw-e")
+    other = {**params, "src": "10.70.0.9", "start": start}
+    paths = client.get("/routing/trace", params=other).json()["paths"]
+    assert paths and all("nat" not in p["hops"][0] for p in paths)
+    assert paths[0]["hops"][0]["ingress"]["interface"] == "to-i"

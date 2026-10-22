@@ -502,6 +502,11 @@ test("Routing: Regeln auf dem Weg je Firewall", async ({ page }) => {
   const card = page.locator(".card[id^='trace-']").first();
   await expect(card).toContainText("abhängig");
   await expect(card).toContainText("möglich (Eingang, Ausgang, Quelle)");
+  // Ziel ist die VIP: DNAT an fw-05, der Weg geht zur internen IP weiter
+  await dst.fill("203.0.113.1");
+  await page.click("button:has-text('Weg suchen')");
+  await expect(card).toContainText("DNAT VIP_web");
+  await expect(card).toContainText("203.0.113.1 → 10.1.0.10");
   await card.locator("a", { hasText: "Policy 1" }).click();
   await expect(page).toHaveURL(/#regeln\?rule=\d+/);
   await expect(page.locator(".drawer")).toContainText("web");

@@ -1601,6 +1601,10 @@ export interface TraceHop extends RoutingNode {
   policy_routes?: PolicyHit[];
   backup?: { prefix: string; protocol: string | null; distance: number | null; reason: string }; // Backup-Weg weicht hier ab
   rules?: HopRules; // FortiGate-Hop: passende Policies und Urteil (0.22.0)
+  dst?: string; // Ziel an diesem Hop nach NAT auf einem Hop davor (0.23.0)
+  // VIP (DNAT) an diesem Hop: ab hier zur internen IP (Virtual Server: alle Real Server)
+  nat?: { name: string; id: number; ext: string | null; to: string[]; type: string | null; ports: (string | null)[] | null };
+  snat?: { pool?: string; interface?: string | null; to: string | null }; // SNAT der erlaubenden Policy
 }
 // Policy auf dem Weg: sicher (entscheidet) bzw. möglich (`unsure` = nicht prüfbare Bedingungen)
 export interface HopRule {

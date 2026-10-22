@@ -247,7 +247,14 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
         entscheidenden greifen, ist der Hop „abhängig“.
       - Je Weg steht das Gesamturteil („gesperrt an fw-x“). Ein Klick auf „Policy n“ öffnet
         die Regel.
-      - NAT auf dem Weg und ACI-Contracts sind dabei noch nicht berücksichtigt.
+      - ACI-Contracts sind dabei noch nicht berücksichtigt.
+    - **NAT auf dem Weg (0.23.0):**
+      - Ist das Ziel die externe IP einer VIP, steht am Hop „DNAT VIP_x: extern → intern“.
+        Der Weg geht zur internen IP weiter, der nächste Hop zeigt „Ziel …“.
+      - Bei Port-Weiterleitung gilt für die Policy der interne Port (Dienst mit dem externen
+        Port eingeben, z. B. `tcp/443`).
+      - SNAT der erlaubenden Policy steht als „SNAT → IP (Pool …)“. Diese Quelle gilt für die
+        Firewalls danach.
   - **Routen:** wirksam (RIB), BGP-Pfade (bester bzw. Backup) und statische Routen (aktiv bzw.
     inaktiv); Suche, „enthält IP“ (längstes Präfix zuerst), Filter Tabelle und Kontext.
   - **BGP-Nachbarn** (mit Name aus dem IPAM und, falls gelesen, dem Knoten dahinter), **HA &

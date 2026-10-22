@@ -196,11 +196,17 @@ Rahmen laut Anwender (2026-10-22):
        FQDN/ISDB/Geo, Benutzer/Gruppen, Zeitplan, Dienst offen. Mögliche Policies mit anderer
        Aktion davor machen den Hop „abhängig“.
      - Je Weg das Gesamturteil (gesperrt am ersten sperrenden Hop).
-     - Noch nicht: NAT auf dem Weg, ACI-Contracts je Hop, Relevanz in Regel-Liste und
-       Applikations-Doku.
+     - Noch nicht: ACI-Contracts je Hop, Relevanz in Regel-Liste und Applikations-Doku.
+   - **NAT auf dem Weg (0.23.0):**
+     - Eine VIP (externe IP bzw. Bereich, `extintf`) an einem FortiGate-Hop schickt den Weg
+       zur internen IP; beim Virtual Server zum ersten Real Server (alle stehen am Hop).
+     - Die Policy am NAT-Hop prüft das ursprüngliche Ziel (die VIP), bei Port-Weiterleitung
+       den internen Port.
+     - SNAT der erlaubenden Policy (erste IP des IP-Pools bzw. IP des Ausgangs-Interfaces)
+       ist die Quelle für die Firewalls danach.
    - Offen: Session-Sync-Paar als ein Hop, Inter-VDOM-Links als Kanten, „Internet“
      zusammengefasst, Regel-Relevanz in Regeln und Doku (Regeln nur, wo der Verkehr
-     durchkommt), NAT auf dem Weg.
+     durchkommt), Central-NAT und SNAT über eigene NAT-Regeln.
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde. Erster Teil in
    0.18.0: **Anbindungen nach aussen** (`topo_exit`, von Hand erfasst, Operator):
    - Art (Internet, MPLS, WAN, Partner), optional für eine Firewall, Next-Hop-IPs und/oder

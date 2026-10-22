@@ -29,19 +29,24 @@ ein Knoten und nicht vier Wege.
   `slack` Hops laenger sind als der kuerzeste aktive Weg („gleiche oder fast gleiche Laenge“).
 - **Regeln auf dem Weg** (0.22.0, `store/policy_check.py`): je FortiGate-Hop die Policies, die
   auf Ein-/Ausgang, Quelle, Ziel und Dienst passen, mit dem Urteil; je Weg das Gesamturteil.
+- **NAT auf dem Weg** (0.23.0): Ist das Ziel eine VIP der FortiGate (externe IP bzw. Bereich,
+  passendes `extintf`), geht der Weg ab diesem Hop zur internen IP weiter (Virtual Server: dem
+  ersten Real Server, alle stehen am Hop). SNAT der erlaubenden Policy (IP-Pool bzw.
+  Interface-IP) aendert die Quelle fuer die Firewalls danach (`policy_check`).
 """
 
 import ipaddress
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models import (
     InvDevice,
     InvInterface,
     InvSubnet,
+    NatRule,
     SourceSystem,
     TopoContext,
     TopoExit,
@@ -49,6 +54,7 @@ from app.models import (
     TopoPolicyRoute,
     TopoRoute,
 )
+from app.store import nat as nat_store
 from app.store import references
 from app.store.topology import MGMT, Table, ip_hex, matches, table_of
 
@@ -149,6 +155,7 @@ class Graph:
         self._owners: dict[str, list[tuple[Key, str | None, str | None]]] | None = None
         self._zones: dict[tuple[int, str], str] = {}
         self._tables: dict[Key, dict[str, Table]] = {}
+        self._vips: dict[Key, list[NatRule]] = {}
         self.exits = list(
             session.scalars(
                 select(TopoExit).where(TopoExit.tenant_id == tenant_id).order_by(TopoExit.id)
@@ -407,6 +414,40 @@ class Graph:
                 return e
         return None
 
+    def dnat(self, key: Key, ip, ingress: dict) -> dict | None:
+        """VIP der FortiGate (DNAT) fuer das Ziel an diesem Knoten: externe IP bzw. Bereich und
+        `extintf` (any bzw. Eingang) passen -> interne IP(s), beim Virtual Server alle Real
+        Server."""
+        if key not in self._vips:
+            self._vips[key] = list(
+                self.session.scalars(
+                    select(NatRule)
+                    .where(
+                        NatRule.source_system_id == key[0],
+                        NatRule.nat_type == "dnat_vip",
+                        or_(NatRule.vdom == key[1], NatRule.vdom.is_(None)),
+                    )
+                    .order_by(NatRule.name, NatRule.id)
+                )
+            )
+        ports = {v for v in (ingress.get("interface"), ingress.get("zone")) if v}
+        for n in self._vips[key]:
+            to = _vip_target(n, ip)
+            if not to:
+                continue
+            extintf = str((n.raw or {}).get("extintf") or "any")
+            if extintf != "any" and ports and extintf not in ports:
+                continue
+            return {
+                "name": n.name,
+                "id": n.id,
+                "ext": n.ext_ip,
+                "to": to,
+                "type": n.vip_type,
+                "ports": [n.ext_port, n.mapped_port] if n.portforward else None,
+            }
+        return None
+
     def policies(self, key: Key, src, dst, ingress: str | None) -> list[dict]:
         """Policy-Routen bzw. SD-WAN-Regeln des Knotens, die fuer den Verkehr gelten (koennen):
         `certain` = Quelle, Ziel und Eingangs-Interface passen sicher."""
@@ -488,15 +529,15 @@ def trace(
             )
     paths: list[dict] = []
     backups_found: list[dict] = []
-    # (Hops, Knoten, Eingang, wie erreicht, VRF, Abweichung) - aktive Wege zuerst
-    active = [([], key, iface, via, g.table(key, iface), None) for key, iface, via in starts]
+    # (Hops, Knoten, Eingang, wie erreicht, VRF, Abweichung, Ziel nach NAT) - aktive zuerst
+    active = [([], key, iface, via, g.table(key, iface), None, dst) for key, iface, via in starts]
     backup: list[tuple] = []
     cut = False
     while active or backup:
         if active and len(paths) >= MAX_PATHS or not active and len(backups_found) >= MAX_BACKUP:
             cut = True
             break
-        hops, key, ingress, via, table, dev = (active or backup).pop(0)
+        hops, key, ingress, via, table, dev, cur = (active or backup).pop(0)
         out = paths if dev is None else backups_found
 
         node = g.nodes[key]
@@ -509,14 +550,21 @@ def trace(
         if len(hops) >= MAX_HOPS:
             _record(out, hops, hop, "max_hops", f"mehr als {MAX_HOPS} Hops – abgebrochen", dev)
             continue
-        policies = g.policies(key, src, dst, ingress)
+        if cur != dst:
+            hop["dst"] = str(cur)  # Ziel nach NAT auf einem Hop davor
+        if node.kind in ("firewall", "vdom"):
+            nat = g.dnat(key, cur, hop["ingress"])
+            if nat is not None:  # VIP: ab hier zur internen IP
+                hop["nat"] = nat
+                cur = ipaddress.ip_address(nat["to"][0])
+        policies = g.policies(key, src, cur, ingress)
         hop["policy_routes"] = policies
         follow = next(
             (p for p in policies if p["certain"] and (p["gateway"] or p["output_device"])), None
         )
-        route = g.route(key, dst, table)
+        route = g.route(key, cur, table)
         hop["route"] = route
-        inside = g.fabric(dst, key) if node.kind == "vrf" else []
+        inside = g.fabric(cur, key) if node.kind == "vrf" else []
         if follow is not None:
             hop["policy"] = follow
             devices = follow["output_device"] or [None]
@@ -541,7 +589,7 @@ def trace(
         branches = [(nh, hop, dev) for nh in next_hops]
         # eine Abweichung je Weg: Backup-Next-Hops dieses Knotens (nicht bei Policy-Routen)
         if dev is None and follow is None and route is not None:
-            for b in g.backups(key, dst, table, route):
+            for b in g.backups(key, cur, table, route):
                 info = {k: b[k] for k in ("prefix", "protocol", "distance", "reason")}
                 deviation = {"hop": len(hops), "label": node.label, "reason": b["reason"]}
                 branches.append((b["next_hop"], {**hop, "backup": info}, deviation))
@@ -554,18 +602,20 @@ def trace(
 
             nxt = _neighbors(g, key, ip)
             for nkey, niface, how in nxt:
-                queue.append(([*hops, branch], nkey, niface, how, g.table(nkey, niface), deviation))
+                queue.append(
+                    ([*hops, branch], nkey, niface, how, g.table(nkey, niface), deviation, cur)
+                )
             if nxt:
                 continue
             ex = g.exit_for(key, nh.get("interface"), egress.get("zone"), ip)
             if ex is not None:
                 egress["exit"] = {"id": ex.id, "name": ex.name, "kind": ex.kind}
-                target_key = _exit_target(ex, dst)
+                target_key = _exit_target(ex, cur)
                 if target_key is not None and target_key in g.nodes:
                     via_exit = f"über {_exit_label(ex)} (manuelle Route)"
-                    queue.append(([*hops, branch], target_key, None, via_exit, 0, deviation))
+                    queue.append(([*hops, branch], target_key, None, via_exit, 0, deviation, cur))
                     continue
-                text = _exit_text(ex, dst, ip, g.names(ip))
+                text = _exit_text(ex, cur, ip, g.names(ip))
                 _record(target, hops, branch, "exit", text, deviation)
                 continue
             known = g.names(ip) or ([egress["network"]] if egress.get("network") else [])
@@ -655,6 +705,37 @@ def _backups(primary: list[dict], found: list[dict], slack: int) -> tuple[list[d
         shown.append(p)
     shown.sort(key=lambda p: len(p["hops"]))
     return shown, hidden
+
+
+def _bounds(text: str | None):
+    """(erste, letzte) IP eines Werts: IP, Bereich a-b oder Netz; sonst None."""
+    value = (text or "").strip()
+    try:
+        if "-" in value:
+            a, _, b = value.partition("-")
+            lo, hi = ipaddress.ip_address(a.strip()), ipaddress.ip_address(b.strip())
+        elif "/" in value:
+            net = ipaddress.ip_network(value, strict=False)
+            lo, hi = net.network_address, net.broadcast_address
+        else:
+            lo = hi = ipaddress.ip_address(value)
+    except ValueError:
+        return None
+    return (lo, hi) if lo.version == hi.version else None
+
+
+def _vip_target(n: NatRule, ip) -> list[str]:
+    """Interne IP(s) einer VIP fuer das Ziel: Bereich auf Bereich mit demselben Abstand, sonst
+    die zugeordnete IP bzw. alle Real Server; leer, wenn das Ziel nicht die externe IP ist."""
+    ext = _bounds(n.ext_ip)
+    if ext is None or ext[0].version != ip.version or not ext[0] <= ip <= ext[1]:
+        return []
+    mapped = _bounds(n.mapped_ip)
+    if mapped is not None and mapped[0] != mapped[1] and not n.targets:
+        moved = ipaddress.ip_address(int(mapped[0]) + int(ip) - int(ext[0]))
+        if moved <= mapped[1]:
+            return [str(moved)]
+    return [str(_bounds(t)[0]) if _bounds(t) else t for t in nat_store.internal_ips(n)]
 
 
 def _exit_target(ex: TopoExit, dst) -> Key | None:

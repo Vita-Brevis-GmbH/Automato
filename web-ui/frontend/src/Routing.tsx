@@ -470,6 +470,11 @@ function PathOverview({ trace }: { trace: TraceResult }) {
                       <span key={j}>
                         {j > 0 && <span className="faint"> → </span>}
                         <span className={p.deviation && p.deviation.hop === j ? "chip warn" : undefined}>{h.label}</span>
+                        {h.nat && (
+                          <span className="chip info" style={{ marginLeft: 4 }} title={`VIP → ${h.nat.to.join(", ")}`}>
+                            DNAT
+                          </span>
+                        )}
                       </span>
                     ))}
                   </td>
@@ -575,6 +580,11 @@ function TraceCard({
                   <td>
                     <b>{h.label}</b> {h.kind === "firewall" && <span className="chip">Firewall</span>}
                     <VrfChip vrf={h.vrf} />
+                    {h.dst && (
+                      <div className="faint" title="Ziel nach NAT auf einem Hop davor">
+                        Ziel <span className="mono">{h.dst}</span>
+                      </div>
+                    )}
                     <div className="faint">
                       {h.via}
                       {h.kind === "vrf" && h.members.length ? ` · ${h.members.join(", ")}` : ""}
@@ -583,6 +593,18 @@ function TraceCard({
                   </td>
                   <td>{h.ingress?.interface ? <Port p={h.ingress} /> : <Dash />}</td>
                   <td>
+                    {h.nat && (
+                      <div style={{ marginBottom: 4 }}>
+                        <span className="chip info" title="VIP (DNAT): der Weg geht ab hier zur internen IP">
+                          DNAT {h.nat.name}
+                        </span>{" "}
+                        <span className="mono">
+                          {h.nat.ext} → {h.nat.to.join(", ")}
+                        </span>
+                        {h.nat.ports && <span className="faint"> · Port {h.nat.ports.join(" → ")}</span>}
+                        {h.nat.to.length > 1 && <div className="faint">Weg über den ersten Real Server</div>}
+                      </div>
+                    )}
                     {h.backup ? (
                       <>
                         <span className="chip warn" title="Backup-Weg: anderer Next-Hop für dasselbe Präfix">
@@ -621,7 +643,15 @@ function TraceCard({
                     {h.kind === "vrf" ? (
                       <span className="faint">ACI-Contracts: nicht geprüft</span>
                     ) : (
-                      <HopRulesCell r={h.rules} />
+                      <>
+                        <HopRulesCell r={h.rules} />
+                        {h.snat && (
+                          <div className="faint" title="SNAT der erlaubenden Policy: Quelle für die Firewalls danach">
+                            SNAT → <span className="mono">{h.snat.to ?? "?"}</span>
+                            {h.snat.pool ? ` (Pool ${h.snat.pool})` : ` (IP von ${h.snat.interface ?? "?"})`}
+                          </div>
+                        )}
+                      </>
                     )}
                   </td>
                 </tr>

@@ -7,6 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.23.0 – 2026-10-22
+
+NAT auf dem Weg (ADR 0019 Stufe 3). Ohne Migration.
+
+- **DNAT (VIP):** Ist das Ziel die externe IP einer VIP einer FortiGate auf dem Weg, geht der
+  Weg ab diesem Hop zur **internen IP** weiter.
+  - Erkannt werden einzelne IPs und Bereiche (Bereich auf Bereich mit gleichem Abstand) sowie
+    das Interface der VIP (`extintf`, sonst jedes).
+  - Bei einem Virtual Server stehen alle Real Server am Hop; der Weg folgt dem ersten.
+  - Am Hop steht „DNAT VIP_x: extern → intern“, bei Port-Weiterleitung mit den Ports. Der
+    nächste Hop zeigt das Ziel nach NAT; die Übersicht markiert den Hop mit „DNAT“.
+- **Regeln am NAT-Hop:**
+  - Für die Policy gilt das ursprüngliche Ziel, also die VIP.
+  - Bei Port-Weiterleitung gilt der interne Port, wie auf der FortiGate. Ab dort ist auch der
+    Dienst für die weiteren Firewalls übersetzt.
+- **SNAT:** Erlaubt eine Policy mit NAT, ist die neue Quelle die erste Adresse des IP-Pools
+  bzw. die IP des Ausgangs-Interfaces. Sie gilt für die Firewalls danach („SNAT → …“ in der
+  Spalte „Regeln“). Ist die Adresse unbekannt, sind die Quellen danach nur „möglich“.
+- **API:** `GET /routing/trace` mit `nat`, `dst` und `snat` je Hop.
+
 ## 0.22.0 – 2026-10-22
 
 Regeln auf dem Weg (ADR 0019 Stufe 3, Regel-Relevanz je Hop, erster Teil). Ohne Migration.
