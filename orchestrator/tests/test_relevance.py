@@ -51,3 +51,30 @@ def test_regeln_nur_wo_der_verkehr_durchkommt(client):
     assert out["summary"]["rules"] == len({h["rule_id"] for h in out["hits"]}) - 1
     exported = {r.get("_rule") for t in out["tables"] for r in t["rows"]}
     assert gone["rule_id"] not in exported
+
+
+def test_gegenstelle_any_ist_was_hinter_dem_interface_liegt(client):
+    """0.25.0: Statt „any“ nennt die Doku, was hinter Interface bzw. Zone der Regel liegt -
+    die Netze dahinter, die Default-Route bzw. eine erfasste Anbindung (dann Kategorie 2
+    „Zugriff aus dem Internet“)."""
+    tid = pc._seed(client)
+
+    def rows() -> dict[str, tuple[int, dict]]:
+        doc = client.get("/appdoc/systems/10.30.0.10", params={"tenant_id": tid}).json()
+        return {(r["Description"], r["_side"]): (t["index"], r)
+                for t in doc["tables"] for r in t["rows"]}  # fmt: skip
+
+    found = rows()
+    _, deny = found[("lan-to-dmz-deny", "dst")]
+    assert deny["Target Systems"] == "all → Netze hinter lan: 10.10.0.0/24"
+    idx, inet = found[("inet-to-web", "dst")]
+    assert (idx, inet["Target Systems"]) == (10, "all → extern (Default-Route über internet)")
+
+    # Anbindung Internet an der Zone: die Gegenstelle ist das Internet (Kategorie 2)
+    nodes = client.get("/routing/summary", params={"tenant_id": tid}).json()["nodes"]
+    sid = nodes[0]["source_system_id"]
+    exit_ = {"tenant_id": tid, "name": "Internet Provider", "kind": "internet",
+             "source_system_ids": [sid], "interfaces": ["internet"]}  # fmt: skip
+    assert client.post("/routing/exits", json=exit_, headers=OP).status_code == 201
+    idx, inet = rows()[("inet-to-web", "dst")]
+    assert (idx, inet["Source"]) == (2, "all → Internet Provider (internet)")

@@ -340,6 +340,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - Fehlt das Routing, die Route oder ein Interface, bzw. kann eine Policy-Route oder
       SD-WAN anders leiten, bleibt die Regel sichtbar („unbekannt“). Regeln mit `any` als
       Interface sind immer möglich.
+  - **Gegenstelle any (0.25.0):** Statt „any“ steht, was hinter dem Interface bzw. der Zone
+    der Regel liegt.
+    - Zuerst eine erfasste Anbindung („all → Internet Provider (internet)“).
+    - Sonst die Default-Route („extern“) bzw. die Netze dahinter („Netze hinter lan: …“).
+    - Mit einer Internet-Anbindung landen solche Regeln in „Zugriff aus dem Internet“ bzw.
+      „Internet Zugriff“. Anbindungen erfassen unter Routing & Wege → Anbindungen.
 - **Findings:** oben eine **Übersicht nach Kategorien** (IPAM-Abgleich, Namenskonvention,
   Bereinigung, ACI / VMware) mit offenen/gesamten Befunden je Typ (Klick filtert). Neu mit
   dem vCenter: *VM-IP fehlt im IPAM* und *Portgruppe nach ACI-Schema ohne EPG*. Je Befund ein Satz,

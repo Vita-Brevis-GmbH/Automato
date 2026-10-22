@@ -30,6 +30,7 @@ from app.models import (
     Site,
     Tenant,
 )
+from app.models.rule import EndpointKind
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import relevance as relevance_store
@@ -123,7 +124,7 @@ def categorize(
     """Ordnet eine Regel einer der 10 Tabellen zu (pure; testbar)."""
     kind = zone_kind(counterpart_zone)
     if direction == "in":
-        if is_dnat_target or kind == "inet":
+        if is_dnat_target or kind == "inet" or counterpart_external:
             return 2
         if kind == "bit":
             return 3
@@ -465,6 +466,19 @@ def _fw_rows(
         ]
         cp_external = any(o is not None and o.object_class == ObjectClass.EXTERNAL for o in cp_objs)
         cp_zone = zones.get(rule.src_zone_id) if direction == "in" else zones.get(rule.dst_zone_id)
+        # Gegenstelle any (0.25.0): das, was hinter Interface bzw. Zone der Regel liegt
+        cp_any = [e.kind is EndpointKind.ANY for e in counterpart_eps]
+        behind = (
+            data.relevance.behind(rule, "src" if direction == "in" else "dst", cp_zone)
+            if any(cp_any)
+            else None
+        )
+        if behind is not None:
+            cp_labels = [
+                f"{label} → {behind['text']}" if is_any else label
+                for label, is_any in zip(cp_labels, cp_any, strict=True)
+            ]
+            cp_external = cp_external or behind["kind"] == "internet"
         idx = categorize(
             direction=direction,
             counterpart_zone=cp_zone,

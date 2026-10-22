@@ -103,9 +103,11 @@ Rahmen laut Anwender (2026-10-22):
        möglicher Policy-Route/SD-WAN.
      - Berechnet beim Aufruf der Doku (Zwischenspeicher je Firewall, Seite, Interfaces und
        IP).
-     - Noch nicht: Gegenstelle `any` als das, was hinter dem Ausgang liegt („Internet“);
-       Relevanz in der Regel-Liste; ACI-Contracts; der ganze Pfad (Firewall auf dem Weg
-       zwischen Quelle und Ziel).
+     - **Gegenstelle `any` (0.25.0):** In der Doku steht, was hinter Interface bzw. Zone der
+       Regel liegt – eine Anbindung (Internet, MPLS …), sonst die Default-Route (extern) bzw.
+       die Netze dahinter. Eine Internet-Anbindung ordnet die Regel den Kategorien 1/2 zu.
+     - Noch nicht: Relevanz in der Regel-Liste; ACI-Contracts; der ganze Pfad (Firewall auf
+       dem Weg zwischen Quelle und Ziel).
 7. **Designer** (Oberfläche):
    - Knoten und Kanten mit Herkunft zeigen, bestätigen oder korrigieren, externe Knoten
      benennen, fehlende Wege ergänzen, Verbindungen Kunden zuordnen (ADR 0018).

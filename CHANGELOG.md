@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.25.0 – 2026-10-22
+
+Gegenstelle `any` in der Doku (ADR 0019 Punkt 6). Konzeptbefund: `any` aus dem Internet wirkte
+wie eine Liste aller Gegenstellen. Ohne Migration.
+
+- **Statt „any“** nennen Doku je System und Applikations-Doku, was hinter Interface bzw. Zone
+  der Regel auf der Seite der Gegenstelle liegt – nach dem Routing ihrer Firewall:
+  - eine erfasste **Anbindung**, z. B. „all → Internet Provider (internet)“;
+  - sonst die **Default-Route** über dieses Interface: „all → extern (Default-Route über
+    wan)“;
+  - sonst die **Netze dahinter** (angeschlossen und geroutet), z. B. „all → Netze hinter lan:
+    10.10.0.0/24“ (die ersten drei, dann „+n“).
+- **Kategorie:** Liegt hinter der Gegenstelle eine Internet-Anbindung, steht eine eingehende
+  Regel unter „Zugriff aus dem Internet“ (2) und eine ausgehende unter „Internet Zugriff“ (1).
+  Eingehend gilt das jetzt auch für Gegenstellen, die im IPAM als extern bekannt sind.
+- Ohne gelesenes Routing bzw. bei `any` als Interface bleibt es bei „any“.
+
 ## 0.24.0 – 2026-10-22
 
 Regeln nur, wo der Verkehr durchkommt (ADR 0019 Punkt 6, Relevanz in der Doku). Konzeptbefund:

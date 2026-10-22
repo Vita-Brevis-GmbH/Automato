@@ -14,6 +14,11 @@ Ergebnis je Regel und Seite: `possible`, `impossible` (mit Begruendung) oder `un
 Routing nicht gelesen, keine Route, Interface unbekannt oder eine Policy-Route bzw. SD-WAN-
 Regel, die anders leiten kann. Die Doku blendet `impossible` standardmaessig aus; einblendbar mit
 Begruendung. Nur lesend - es zaehlen die gelesenen Routen.
+
+**Gegenstelle any (0.25.0):** `behind` sagt, was hinter dem Interface bzw. der Zone der Regel auf
+der Seite der Gegenstelle liegt - eine Anbindung (Internet, MPLS …, `topo_exit`), sonst die
+Default-Route ueber dieses Interface (extern) bzw. die Netze dahinter (angeschlossen und
+geroutet). Aus `any` wird so z. B. „any → Internet Provider (wan)“.
 """
 
 import ipaddress
@@ -21,9 +26,11 @@ import ipaddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import InvInterface, Rule
-from app.store.paths import Graph, Key
-from app.store.topology import Table
+from app.models import InvInterface, Rule, TopoRoute
+from app.store.paths import Graph, Key, _exit_label
+from app.store.topology import Table, table_of
+
+SHOWN_NETS = 3  # Netze hinter einem Interface in der Anzeige
 
 POSSIBLE, IMPOSSIBLE, UNKNOWN = "possible", "impossible", "unknown"
 
@@ -43,6 +50,14 @@ def _ip(value: str | None):
         return None
 
 
+def _net_key(prefix: str) -> tuple:
+    try:
+        n = ipaddress.ip_network(prefix, strict=False)
+    except ValueError:
+        return (9, 0, 0)
+    return (n.version, int(n.network_address), n.prefixlen)
+
+
 class Relevance:
     """Prueft Regeln gegen das Routing ihrer Firewall; Graph und Routen je Mandant einmal."""
 
@@ -52,6 +67,9 @@ class Relevance:
         self._graph: Graph | None = None
         self._known: dict[int, set[str]] = {}
         self._cache: dict[tuple, tuple[str, str]] = {}
+        self._zones: dict[int, dict[str, list[str]]] = {}
+        self._rib: dict[Key, list[tuple[str, int, set[str]]]] = {}
+        self._behind: dict[tuple, dict | None] = {}
 
     @property
     def graph(self) -> Graph:
@@ -78,6 +96,82 @@ class Relevance:
                 names |= {n for n in (name, zone) if n}
             self._known[sid] = names
         return self._known[sid]
+
+    def members(self, sid: int, name: str) -> list[str]:
+        """Interfaces eines Namens der Regel: das Interface selbst bzw. die einer Zone."""
+        if sid not in self._zones:
+            zones: dict[str, list[str]] = {}
+            for iface, zone in self.session.execute(
+                select(InvInterface.name, InvInterface.zone).where(
+                    InvInterface.source_system_id == sid
+                )
+            ):
+                zones.setdefault(iface, [iface])
+                if zone:
+                    zones.setdefault(zone, []).append(iface)
+            self._zones[sid] = zones
+        return self._zones[sid].get(name, [])
+
+    def _routes(self, key: Key) -> list[tuple[str, int, set[str]]]:
+        """Wirksame Routen der Standard-VRF: (Praefix, Laenge, Interfaces der Next-Hops)."""
+        if key not in self._rib:
+            rows = []
+            for r in self.session.scalars(
+                select(TopoRoute).where(
+                    TopoRoute.source_system_id == key[0],
+                    TopoRoute.context == key[1],
+                    TopoRoute.table == "rib",
+                    TopoRoute.best.is_(True),
+                )
+            ):
+                if table_of(r) != 0:
+                    continue
+                ifaces = {h.get("interface") for h in r.next_hops or [] if h.get("interface")}
+                rows.append((r.prefix, r.prefix_len, ifaces))
+            self._rib[key] = rows
+        return self._rib[key]
+
+    def behind(self, rule: Rule, side: str, zone: str | None = None) -> dict | None:
+        """Was hinter Interface bzw. Zone der Regel auf der Seite `side` liegt: {text, kind}
+        mit kind = Art der Anbindung (internet, mpls, …), `default` bzw. `nets`; None ohne
+        Interface (bzw. any) oder ohne gelesenes Routing."""
+        raw = rule.raw if isinstance(rule.raw, dict) else {}
+        names = _names(raw, "srcintf" if side == "src" else "dstintf") or ([zone] if zone else [])
+        if not names or any(n.lower() == "any" for n in names):
+            return None
+        key = self._node(rule)
+        if key is None:
+            return None
+        cache_key = (key, tuple(names))
+        if cache_key not in self._behind:
+            parts = [p for p in (self._behind_one(key, n) for n in names) if p]
+            self._behind[cache_key] = (
+                {"text": "; ".join(p["text"] for p in parts), "kind": parts[0]["kind"]}
+                if parts
+                else None
+            )
+        return self._behind[cache_key]
+
+    def _behind_one(self, key: Key, name: str) -> dict | None:
+        g = self.graph
+        ifaces = self.members(key[0], name) or [name]
+        for iface in ifaces:
+            ex = g.exit_for(key, iface, g.zone(key[0], iface) or name, None)
+            if ex is not None:
+                return {"text": f"{_exit_label(ex)} ({name})", "kind": ex.kind}
+        routes = self._routes(key)
+        if any(length == 0 and set(ifaces) & via for _p, length, via in routes):
+            return {"text": f"extern (Default-Route über {name})", "kind": "default"}
+        nets = sorted(
+            {p for p, length, via in routes if length > 0 and set(ifaces) & via}, key=_net_key
+        )
+        if not nets:
+            return None
+        more = f" +{len(nets) - SHOWN_NETS}" if len(nets) > SHOWN_NETS else ""
+        return {
+            "text": f"Netze hinter {name}: {', '.join(nets[:SHOWN_NETS])}{more}",
+            "kind": "nets",
+        }
 
     def check(self, rule: Rule, side: str, values: list[str], zone: str | None = None) -> dict:
         """Relevanz der Regel fuer die Werte des Systems auf ihrer Seite `src` bzw. `dst`:

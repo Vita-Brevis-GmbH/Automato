@@ -107,4 +107,7 @@ test("Doku je System: routingtechnisch unmögliche Regeln stehen nicht in den Ka
   await expect(gone).toContainText("fw-08 leitet 10.30.0.10 über dmz (Zone dmz) – die Regel gilt nur für den Ausgang internet");
   await expect(page.locator(".stack")).toContainText("lan-to-dmz-web");
   await expect(page.locator(".stack")).not.toContainText("lan-to-inet-users");
+  // Gegenstelle any: was hinter dem Interface der Regel liegt (0.25.0)
+  await expect(page.locator(".stack")).toContainText("all → Netze hinter lan: 10.10.0.0/24");
+  await expect(page.locator(".stack")).toContainText("all → extern (Default-Route über internet)");
 });

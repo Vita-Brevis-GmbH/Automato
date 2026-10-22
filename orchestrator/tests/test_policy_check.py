@@ -7,6 +7,7 @@ Eine Firewall mit LAN, DMZ und Internet, Policies in dieser Reihenfolge:
 1. lan -> dmz Web (tcp/443) erlauben   2. lan -> dmz alles sperren
 3. lan -> internet FQDN (tcp/443)      4. lan -> internet alles fuer eine Benutzergruppe
 5. any -> any sperren, abgeschaltet
+6. internet -> dmz Web (tcp/443) erlauben
 """
 
 ADMIN = {"X-Dev-Roles": "admin"}
@@ -65,6 +66,7 @@ FW = {
             groups=[{"name": "G_staff"}],
         ),
         _policy(5, "block-all", "any", "any", ["all"], ["all"], ["all"], "deny", status="disable"),
+        _policy(6, "inet-to-web", "internet", "dmz", ["all"], ["10.30.0.10"], ["tcp/443"]),
     ],  # fmt: skip
     "inventory": {
         "devices": [{"name": "fw-r", "role": "firewall"}],
@@ -159,6 +161,7 @@ def test_regeln_auf_dem_weg(client):
     assert [(r["external_id"], r["unsure"]) for r in rules["rules"]] == [
         ("1", ["Eingang", "Quelle"]),
         ("2", ["Eingang"]),
+        ("6", ["Eingang"]),
     ]
     p = {"tenant_id": tid, **web, "service": "http"}
     assert client.get("/routing/trace", params=p).status_code == 422
