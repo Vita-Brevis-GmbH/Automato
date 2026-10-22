@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.api.appdoc import DocTableOut, SiteRef
+from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -284,14 +285,19 @@ def _text(value: str | None) -> str | None:
 @router.get("", response_model=list[ApplicationOut])
 def list_applications(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "applications")
+    view = customer_view(session, principal, tenant_id, customer_id)
+    mine = view.applications(session) if view else None
     resolvers: dict[int, store.Resolver] = {}
     out = []
     for app in store.list_applications(session, tenant_id):
+        if mine is not None and not mine(app):
+            continue
         res = resolvers.setdefault(app.tenant_id, store.Resolver(session, app.tenant_id))
         out.append(_out(session, app, res))
     return out

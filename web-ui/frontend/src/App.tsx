@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AuthConfig,
+  Customer,
   fetchAuthConfig,
+  fetchCustomers,
   fetchFindingSummary,
   fetchHealth,
   fetchNat,
@@ -10,6 +12,7 @@ import {
   FindingSummary,
   HealthStatus,
   RuleSummary,
+  setCustomerFilter,
   Tenant,
 } from "./api";
 import Agents from "./Agents";
@@ -255,6 +258,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
     return v ? Number(v) : null;
   });
   const [stats, setStats] = useState<Stats>({ rules: null, nat: null, findings: null, error: null });
+  // Kunden-Filter (ADR 0018 Schritt 2): je Umgebung gemerkt, gilt für die Doku-Ansichten
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customerId, setCustomerIdRaw] = useState<number | null>(null);
   const [theme, setTheme] = useState<string | null>(() => stored("automato_theme"));
   const [menuOpen, setMenuOpen] = useState(false);
   const [findingType, setFindingType] = useState(""); // Vorfilter aus der Abgleich-Ansicht
@@ -263,6 +269,34 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
     setTenantIdRaw(id);
     store("automato_tenant", id === null ? null : String(id));
   }, []);
+
+  const setCustomerId = useCallback(
+    (id: number | null) => {
+      setCustomerFilter(id);
+      setCustomerIdRaw(id);
+      if (tenantId !== null) store(`automato_customer_${tenantId}`, id === null ? null : String(id));
+    },
+    [tenantId],
+  );
+
+  // Kunden der Umgebung laden; der gemerkte Kunde gilt nur, solange es ihn gibt
+  const [customersVersion, setCustomersVersion] = useState(0);
+  useEffect(() => {
+    setCustomerFilter(null);
+    setCustomerIdRaw(null);
+    setCustomers([]);
+    if (tenantId === null) return;
+    fetchCustomers(tenantId)
+      .then((list) => {
+        setCustomers(list.filter((c) => !c.shared));
+        const saved = Number(stored(`automato_customer_${tenantId}`));
+        if (saved && list.some((c) => c.id === saved && !c.shared)) {
+          setCustomerFilter(saved);
+          setCustomerIdRaw(saved);
+        }
+      })
+      .catch(() => setCustomers([]));
+  }, [tenantId, customersVersion]);
 
   const go = useCallback((v: View, p: ViewParams = {}) => {
     setView(v);
@@ -332,7 +366,8 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
     Promise.all([fetchRuleSummary(tenantId), fetchNat({ tenantId, limit: 1 }), fetchFindingSummary(tenantId)])
       .then(([rules, nat, findings]) => setStats({ rules, nat: nat.total, findings, error: null }))
       .catch((e) => setStats({ rules: EMPTY_RULES, nat: 0, findings: EMPTY_FINDINGS, error: e }));
-  }, [tenantId, tenantReady]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, tenantReady, customerId]);
 
   useEffect(() => {
     loadStats();
@@ -394,6 +429,23 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             {noTenant && <option value="">kein Mandant zugeordnet</option>}
           </select>
         </label>
+        {customers.length > 0 && (
+          <label className="mandant" title="Ausschnitt eines Kunden samt geteiltem Teil (ADR 0018)">
+            <span className="label">Kunde</span>
+            <select
+              aria-label="Kunde"
+              value={customerId ?? ""}
+              onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">alle</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code ? `${c.name} · ${c.code}` : c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="spacer" />
         <span
           className={`https ${https ? "ok" : "bad"}`}
@@ -432,7 +484,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
         </div>
       </nav>
 
-      <main className="main">
+      <main className="main" key={`${tenantId ?? "alle"}-${customerId ?? "alle"}`}>
         {tenantsErr ? <ErrorBox error={tenantsErr} prefix="Mandanten laden" /> : null}
         {noTenant && docView ? (
           <Note warn>
@@ -516,7 +568,13 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                 onTenantsChanged={loadTenants}
               />
             )}
-            {current === "kunden" && <Customers tenantId={tenantId} canEdit={me.isAdmin || me.isOperator} />}
+            {current === "kunden" && (
+              <Customers
+                tenantId={tenantId}
+                canEdit={me.isAdmin || me.isOperator}
+                onChanged={() => setCustomersVersion((v) => v + 1)}
+              />
+            )}
             {current === "dict" && <NamingProfiles me={me} tenants={tenants ?? []} />}
             {current === "agents" && <Agents tenants={tenants ?? []} tenantId={tenantId} onGo={go} />}
             {current === "netbox" && <NetBoxSync tenantId={tenantId} tenantLabel={tenantLabel} onGo={go} />}

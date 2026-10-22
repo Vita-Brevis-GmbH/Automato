@@ -522,6 +522,19 @@ test("Kunden: Vorschlag übernehmen, Selektoren mit Vorschau, löschen", async (
   await expect(page.locator("#customer-unassigned")).toContainText("Keinem Kunden zugeordnet");
 });
 
+test("Kunden-Filter: Umschalter zeigt nur den Ausschnitt des Kunden", async ({ page }) => {
+  await page.goto("/#regeln");
+  await expect(rows(page).first()).toBeVisible();
+  await page.getByLabel("Kunde", { exact: true }).selectOption({ label: "TE" }); // aus dem Test davor
+  await expect(rows(page)).toHaveCount(2); // die Contracts der EPGs von TE
+  await expect(rows(page).filter({ hasText: "CT_rt" })).toHaveCount(1);
+  await page.goto("/#findings"); // bleibt gewählt (je Umgebung gemerkt)
+  await expect(page.getByLabel("Kunde", { exact: true })).toHaveValue(/\d+/);
+  await page.getByLabel("Kunde", { exact: true }).selectOption("");
+  await page.goto("/#regeln");
+  await expect(rows(page)).not.toHaveCount(2);
+});
+
 test("Routing: Verbund als ein Hop mit beiden Firewalls", async ({ page }) => {
   await page.goto("/#routing");
   await page.getByPlaceholder("Quelle (IP)").fill("10.88.0.5");

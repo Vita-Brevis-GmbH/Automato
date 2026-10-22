@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -60,12 +61,15 @@ def findings_summary(
     tenant_id: int | None = None,
     type: str | None = None,
     q: str | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ):
     """Zaehler fuer Filterleiste, Uebersicht und Navigation (alle Findings, nicht eine Seite)."""
     tenant_id = tenant_scope(principal, tenant_id)
-    return findings_store.summary(session, tenant_id, ftype=type, q=q)
+    view = customer_view(session, principal, tenant_id, customer_id)
+    only = view.ids("finding") if view else None
+    return findings_store.summary(session, tenant_id, ftype=type, q=q, only=only)
 
 
 @router.get("", response_model=list[FindingOut])
@@ -75,6 +79,7 @@ def list_findings(
     status: str | None = None,
     type: str | None = None,
     q: str | None = None,
+    customer_id: int | None = None,
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
@@ -83,7 +88,9 @@ def list_findings(
     """Findings seitenweise; Gesamtzahl (nach Filtern) im Header `X-Total-Count`."""
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "findings")
-    flt = {"tenant_id": tenant_id, "status": status, "ftype": type, "q": q}
+    view = customer_view(session, principal, tenant_id, customer_id)
+    flt = {"tenant_id": tenant_id, "status": status, "ftype": type, "q": q,
+           "only": view.ids("finding") if view else None}  # fmt: skip
     response.headers["X-Total-Count"] = str(findings_store.count_findings(session, **flt))
     rows = findings_store.list_findings(session, limit=limit, offset=offset, **flt)
     return [_finding_out(f) for f in rows]

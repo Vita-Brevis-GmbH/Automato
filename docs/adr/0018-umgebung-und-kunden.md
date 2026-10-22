@@ -130,6 +130,10 @@ Grundsatzentscheide des Anwenders (2026-10-22):
      (Regel, Objekt, VM, Portgruppe, Subnetz).
    - Noch nicht: der Umschalter „Kunde: …“ mit Filter (Schritt 2), Relevanz nach Pfad
      (ADR 0019), „Umgebung“ als Name in der Oberfläche.
-2. Kunden-Filter in allen Ansichten (für Betreuer).
+2. Kunden-Filter in allen Ansichten (für Betreuer). **Umgesetzt in 0.32.0:** Umschalter
+   „Kunde“ in der Kopfzeile; `customer_id` an den Listen und Zählern (Regeln, Findings, NAT,
+   Objekte, VMs, Portgruppen, Systeme, Applikationen) zeigt den Ausschnitt samt geteiltem
+   Teil (`store/customer_scope.View`, per SQL). Applikationen über ihre Mitglieder,
+   Firewall-Objekte über Werte bzw. Regeln des Kunden.
 3. Kunden-Benutzer: `customer_ids` in Keycloak, serverseitige Einschränkung aller Lese-APIs,
    Tests je Endpunkt.

@@ -115,24 +115,23 @@ def count_rules(
     return session.scalar(stmt) or 0
 
 
-def summary(session: Session, tenant_id: int | None = None) -> dict:
+def summary(session: Session, tenant_id: int | None = None, only=None) -> dict:
     """Kennzahlen fuer die Uebersicht per SQL - unabhaengig von der Seitengroesse der Liste.
-    Zwillinge paralleler Firewalls zaehlen nicht doppelt (0.18.0)."""
-    scoped = filtered(select(Rule.id), tenant_id, None, None).where(not_twin()).subquery()
+    Zwillinge paralleler Firewalls zaehlen nicht doppelt (0.18.0). `only` = Regel-IDs eines
+    Kunden (Unterabfrage, ADR 0018)."""
+
+    def mine(stmt):
+        stmt = filtered(stmt, tenant_id, None, None)
+        return stmt if only is None else stmt.where(Rule.id.in_(only))
+
+    scoped = mine(select(Rule.id)).where(not_twin()).subquery()
     by_domain = {
         d.value: n
         for d, n in session.execute(
-            filtered(select(Rule.domain, func.count(Rule.id)), tenant_id, None, None)
-            .where(not_twin())
-            .group_by(Rule.domain)
+            mine(select(Rule.domain, func.count(Rule.id))).where(not_twin()).group_by(Rule.domain)
         )
     }
-    systems = sorted(
-        s
-        for (s,) in session.execute(
-            filtered(select(Rule.source_system_id).distinct(), tenant_id, None, None)
-        )
-    )
+    systems = sorted(s for (s,) in session.execute(mine(select(Rule.source_system_id).distinct())))
     endpoints = session.scalar(
         select(func.count(RuleEndpoint.id)).where(RuleEndpoint.rule_id.in_(select(scoped.c.id)))
     )
@@ -146,7 +145,7 @@ def summary(session: Session, tenant_id: int | None = None) -> dict:
     )
     zone_counts = list(
         session.execute(
-            filtered(select(Rule.dst_zone_id, func.count(Rule.id)), tenant_id, None, None)
+            mine(select(Rule.dst_zone_id, func.count(Rule.id)))
             .where(not_twin())
             .group_by(Rule.dst_zone_id)
             .order_by(func.count(Rule.id).desc())
@@ -154,7 +153,7 @@ def summary(session: Session, tenant_id: int | None = None) -> dict:
     )
     src_counts = list(
         session.execute(
-            filtered(select(Rule.src_zone_id, func.count(Rule.id)), tenant_id, None, None)
+            mine(select(Rule.src_zone_id, func.count(Rule.id)))
             .where(not_twin())
             .group_by(Rule.src_zone_id)
             .order_by(func.count(Rule.id).desc())
@@ -164,13 +163,11 @@ def summary(session: Session, tenant_id: int | None = None) -> dict:
     actions = {
         a.value: n
         for a, n in session.execute(
-            filtered(select(Rule.action, func.count(Rule.id)), tenant_id, None, None)
-            .where(not_twin())
-            .group_by(Rule.action)
+            mine(select(Rule.action, func.count(Rule.id))).where(not_twin()).group_by(Rule.action)
         )
     }
     vdoms = session.execute(
-        filtered(select(Rule.vdom, func.count(Rule.id)), tenant_id, None, None)
+        mine(select(Rule.vdom, func.count(Rule.id)))
         .where(not_twin())
         .where(Rule.vdom.is_not(None))
         .group_by(Rule.vdom)

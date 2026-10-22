@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.api.customer_filter import customer_view
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
@@ -56,6 +57,7 @@ def list_vms(
     source_system_id: int | None = None,
     q: str | None = None,
     epg: str | None = Query(None, description="nur VMs dieser EPG (Tenant/AP/EPG)"),
+    customer_id: int | None = Query(None, description="nur VMs dieses Kunden (ADR 0018)"),
     limit: int = Query(200, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
@@ -63,6 +65,9 @@ def list_vms(
 ) -> dict:
     tid = _tenant(principal, tenant_id)
     stmt = select(Vm).options(selectinload(Vm.nics)).where(Vm.tenant_id == tid)
+    view = customer_view(session, principal, tid, customer_id)
+    if view is not None:
+        stmt = stmt.where(Vm.id.in_(view.ids("vm")))
     if source_system_id is not None:
         stmt = stmt.where(Vm.source_system_id == source_system_id)
     vms = list(session.scalars(stmt.order_by(Vm.name, Vm.id)))
@@ -136,13 +141,18 @@ def list_vms(
 def list_portgroups(
     tenant_id: int | None = None,
     q: str | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     tid = _tenant(principal, tenant_id)
     names, groups, epgs = _context(session, tid)
+    view = customer_view(session, principal, tid, customer_id)
+    mine = set(session.scalars(view.ids("epg"))) if view else None  # Portgruppen seiner EPGs
     rows = []
     for pg in sorted(groups.values(), key=lambda p: (p.name, p.source_system_id)):
+        if mine is not None and pg.epg_id not in mine:
+            continue
         e = epgs.get(pg.epg_id) if pg.epg_id else None
         rows.append(
             {

@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -169,6 +170,7 @@ def list_nat(
     nat_type: str | None = None,
     q: str | None = None,
     issues_only: bool = Query(False, description="nur Eintraege mit Befund"),
+    customer_id: int | None = Query(None, description="nur NAT dieses Kunden (ADR 0018)"),
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
@@ -177,9 +179,13 @@ def list_nat(
     """VIPs/SNAT-Pools seitenweise; Gesamtzahl (nach Filter/Suche) im Header `X-Total-Count`."""
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "nat")
+    view = customer_view(session, principal, tenant_id, customer_id)
+    only = view.ids("nat") if view else None
     q = (q or "").strip()
     if q or issues_only:
-        rows = nat_store.list_nat(session, tenant_id=tenant_id, limit=None, nat_type=nat_type)
+        rows = nat_store.list_nat(
+            session, tenant_id=tenant_id, limit=None, nat_type=nat_type, only=only
+        )
         ctx = _Context(session, tenant_id, rows)
         outs = [
             o
@@ -188,9 +194,9 @@ def list_nat(
         ]
         response.headers["X-Total-Count"] = str(len(outs))
         return outs[offset : offset + limit]
-    response.headers["X-Total-Count"] = str(nat_store.count_nat(session, tenant_id, nat_type))
+    response.headers["X-Total-Count"] = str(nat_store.count_nat(session, tenant_id, nat_type, only))
     rows = nat_store.list_nat(
-        session, tenant_id=tenant_id, limit=limit, offset=offset, nat_type=nat_type
+        session, tenant_id=tenant_id, limit=limit, offset=offset, nat_type=nat_type, only=only
     )
     ctx = _Context(session, tenant_id, rows)
     return [ctx.out(n) for n in rows]

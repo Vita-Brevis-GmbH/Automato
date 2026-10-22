@@ -10,7 +10,9 @@ from sqlalchemy.orm import Session
 from app.models import Finding, FindingStatus
 
 
-def _filtered(stmt, tenant_id, status=None, ftype=None, q=None):
+def _filtered(stmt, tenant_id, status=None, ftype=None, q=None, only=None):
+    if only is not None:  # Findings eines Kunden (ADR 0018)
+        stmt = stmt.where(Finding.id.in_(only))
     if tenant_id is not None:
         stmt = stmt.where(Finding.tenant_id == tenant_id)
     if status:
@@ -36,32 +38,35 @@ def list_findings(
     limit: int | None = 5000,
     offset: int = 0,
     q: str | None = None,
+    only=None,
 ) -> list[Finding]:
-    stmt = _filtered(select(Finding).order_by(Finding.id), tenant_id, status, ftype, q)
+    stmt = _filtered(select(Finding).order_by(Finding.id), tenant_id, status, ftype, q, only)
     stmt = stmt.offset(offset)
     return list(session.scalars(stmt if limit is None else stmt.limit(limit)))
 
 
-def count_findings(session: Session, tenant_id=None, status=None, ftype=None, q=None) -> int:
-    stmt = _filtered(select(func.count(Finding.id)), tenant_id, status, ftype, q)
+def count_findings(
+    session: Session, tenant_id=None, status=None, ftype=None, q=None, only=None
+) -> int:
+    stmt = _filtered(select(func.count(Finding.id)), tenant_id, status, ftype, q, only)
     return session.scalar(stmt) or 0
 
 
-def summary(session: Session, tenant_id: int | None, ftype=None, q=None) -> dict:
+def summary(session: Session, tenant_id: int | None, ftype=None, q=None, only=None) -> dict:
     """Zaehler je Status (unter Typ/Suche) und je Typ (offen/gesamt) des Mandanten."""
     by_status = {
         s.value: n
         for s, n in session.execute(
             _filtered(
-                select(Finding.status, func.count(Finding.id)), tenant_id, None, ftype, q
+                select(Finding.status, func.count(Finding.id)), tenant_id, None, ftype, q, only
             ).group_by(Finding.status)
         )
     }
     by_type: dict[str, dict[str, int]] = {}
     for t, s, n in session.execute(
-        _filtered(select(Finding.type, Finding.status, func.count(Finding.id)), tenant_id).group_by(
-            Finding.type, Finding.status
-        )
+        _filtered(
+            select(Finding.type, Finding.status, func.count(Finding.id)), tenant_id, only=only
+        ).group_by(Finding.type, Finding.status)
     ):
         entry = by_type.setdefault(t.value, {"open": 0, "total": 0})
         entry["total"] += n

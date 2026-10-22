@@ -318,3 +318,47 @@ def test_ipam_merkmale_nat_und_findings(client):
         {"kind": "ipam_tag", "value": "kunde-c", "exclude": True}]}  # fmt: skip
     cut = client.post("/customers/preview", json=body).json()
     assert "10.81.0.0/24" not in cut["samples"]["net"] and out["counts"]["nat"] == 1
+
+
+def test_kunden_filter_in_den_listen(client):
+    """0.32.0 (ADR 0018 Schritt 2): `customer_id` zeigt in jeder Liste den Ausschnitt des Kunden
+    samt geteiltem Teil (Tenant common)."""
+    tid, ids = _seed(client)
+    a = _create(client, tid, "Kunde A", [{"kind": "aci_tenant", "value": "TE_ka"}])["id"]
+    b = _create(client, tid, "Kunde B", [{"kind": "aci_tenant", "value": "TE_kb"}])["id"]
+    _create(client, tid, "Geteilt", [{"kind": "aci_tenant", "value": "common"}], shared=True)
+
+    def get(path, cid, **params):
+        flt = {"customer_id": cid} if cid is not None else {}
+        r = client.get(path, params={"tenant_id": tid, **flt, **params})
+        assert r.status_code == 200, (path, r.text)
+        return r
+
+    rules = get("/rules", a)
+    assert {x["name"] for x in rules.json()} == {"CT_web", "CT_app", "web-to-backend", "CT_dns"}
+    assert rules.headers["X-Total-Count"] == "4"  # CT_dns ueber den geteilten Teil (common)
+    assert get("/rules/summary", a).json()["total"] == 4
+    assert {x["name"] for x in get("/rules", b).json()} == {"CT_app", "CT_dns"}
+    assert get("/rules", None).headers["X-Total-Count"] == "6"  # ohne Kunde: alles
+    assert [f["subject_id"] for f in get("/findings", a).json()] == ["10.50.1.10"]
+    assert get("/findings/summary", b).json()["total"] == 0
+    assert [v["name"] for v in get("/vms", a).json()["rows"]] == ["web01-007-ka"]
+    assert [p["name"] for p in get("/portgroups", b).json()] == ["TE_kb|AP_100|EPG_app"]
+    systems = {s["name"] for s in get("/appdoc/systems", a).json()}
+    assert systems == {"10.50.1.10", "EPG_web", "EPG_db", "EPG_dns"}
+    assert get("/objects", a).json()["total"] == 0 and get("/nat", a).json() == []
+
+    # Applikationen ueber ihre Mitglieder
+    for name, ref in (("Web", WEB), ("App", APP)):
+        body = {"name": name, "members": [{"kind": "epg", "ref": ref}]}
+        assert (
+            client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).status_code == 201
+        )
+    assert [x["name"] for x in get("/applications", a).json()] == ["Web"]
+    assert [x["name"] for x in get("/applications", b).json()] == ["App"]
+
+    # fremder Kunde bzw. ohne Mandant
+    other = client.post("/tenants", json={"name": "Umgebung 9"}, headers=ADMIN).json()["id"]
+    foreign = _create(client, other, "Fremd", [])["id"]
+    r = client.get("/rules", params={"tenant_id": tid, "customer_id": foreign})
+    assert r.status_code == 404

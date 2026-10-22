@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.customer_filter import customer_view
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
@@ -61,6 +62,7 @@ def list_objects(
     category: str | None = None,
     q: str | None = None,
     issues_only: bool = False,
+    customer_id: int | None = None,
     limit: int = 200,
     offset: int = 0,
     principal: Principal = Depends(require_viewer),
@@ -69,6 +71,9 @@ def list_objects(
     tid = _tenant(principal, tenant_id)
     rule_index.ensure(session, tid)
     stmt = select(DeviceObject).where(DeviceObject.tenant_id == tid)
+    view = customer_view(session, principal, tid, customer_id)
+    if view is not None:  # Objekte des Kunden: Werte bzw. von seinen Regeln verwendet
+        stmt = stmt.where(DeviceObject.id.in_(view.device_objects()))
     if source_system_id is not None:
         stmt = stmt.where(DeviceObject.source_system_id == source_system_id)
     if category:  # eine oder mehrere Kategorien, kommagetrennt

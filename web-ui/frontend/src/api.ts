@@ -274,7 +274,7 @@ export interface PortgroupRow {
 }
 
 export const fetchVms = (tenantId: number, params: Record<string, string | number | null | undefined> = {}) =>
-  getJSON<Paged<VmRow>>(`/api/vms${qs({ tenant_id: tenantId, ...params })}`);
+  getJSON<Paged<VmRow>>(`/api/vms${cq({ tenant_id: tenantId, ...params })}`);
 // Portgruppe im Detail (0.13.0): EPG, Subnetze (ACI, Inventar, IPAM) und VMs
 export interface PortgroupDetail extends Omit<PortgroupRow, "epg" | "source_system_id"> {
   epg: { label: string; dn: string | null; tenant: string | null; ap: string | null; name: string; bd: string | null; vrf: string | null } | null;
@@ -294,7 +294,7 @@ export interface PortgroupDetail extends Omit<PortgroupRow, "epg" | "source_syst
 }
 export const fetchPortgroup = (id: number) => getJSON<PortgroupDetail>(`/api/portgroups/${id}`);
 export const fetchPortgroups = (tenantId: number, q?: string) =>
-  getJSON<PortgroupRow[]>(`/api/portgroups${qs({ tenant_id: tenantId, q })}`);
+  getJSON<PortgroupRow[]>(`/api/portgroups${cq({ tenant_id: tenantId, q })}`);
 
 export interface RefMember {
   name: string;
@@ -1083,6 +1083,17 @@ const sendJSON = <T>(url: string, method: string, body?: unknown) =>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
+// Kunden-Filter (ADR 0018 Schritt 2): gilt für die Listen der Doku-Ansichten (Regeln, Objekte,
+// NAT, Findings, VMs, Portgruppen, Systeme, Applikationen) - gesetzt über den Umschalter oben
+let customerFilter: number | null = null;
+export const setCustomerFilter = (id: number | null) => {
+  customerFilter = id;
+};
+export const getCustomerFilter = () => customerFilter;
+function cq(params: Record<string, string | number | null | undefined>): string {
+  return qs({ ...params, customer_id: customerFilter });
+}
+
 function qs(params: Record<string, string | number | null | undefined>): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -1306,7 +1317,7 @@ export async function fetchRules(opts: {
     limit: opts.limit,
     offset: opts.offset,
   };
-  const response = await fetchChecked(`/api/rules${qs(params)}`);
+  const response = await fetchChecked(`/api/rules${cq(params)}`);
   const rules = (await response.json()) as Rule[];
   const total = Number(response.headers.get("X-Total-Count") ?? rules.length);
   const impossible = response.headers.get("X-Impossible-Count");
@@ -1321,7 +1332,7 @@ export const decidePair = (ruleId: number, partnerId: number, decision: "confirm
   sendJSON<void>(`/api/rules/${ruleId}/pair`, "POST", { partner_id: partnerId, decision });
 export const resetPairDecision = (id: number) => sendJSON<void>(`/api/rules/pair-decisions/${id}`, "DELETE");
 export const fetchRuleSummary = (tenantId?: number | null) =>
-  getJSON<RuleSummary>(`/api/rules/summary${qs({ tenant_id: tenantId })}`);
+  getJSON<RuleSummary>(`/api/rules/summary${cq({ tenant_id: tenantId })}`);
 export const fetchRuleDetail = (id: number) => getJSON<RuleDetail>(`/api/rules/${id}`);
 // Seitenweise Listen: Gesamtzahl (nach Filtern) im Header X-Total-Count
 export interface Page<T> {
@@ -1343,7 +1354,7 @@ export const fetchNat = (opts: {
   offset?: number;
 }) =>
   getPage<Nat>(
-    `/api/nat${qs({ tenant_id: opts.tenantId, nat_type: opts.natType, q: opts.q?.trim(), issues_only: opts.issuesOnly ? "true" : undefined, limit: opts.limit, offset: opts.offset })}`,
+    `/api/nat${cq({ tenant_id: opts.tenantId, nat_type: opts.natType, q: opts.q?.trim(), issues_only: opts.issuesOnly ? "true" : undefined, limit: opts.limit, offset: opts.offset })}`,
   );
 export const fetchNatDetail = (id: number) => getJSON<NatDetail>(`/api/nat/${id}`);
 export const fetchFindings = (opts: {
@@ -1355,7 +1366,7 @@ export const fetchFindings = (opts: {
   offset?: number;
 }) =>
   getPage<Finding>(
-    `/api/findings${qs({
+    `/api/findings${cq({
       tenant_id: opts.tenantId,
       status: opts.status,
       type: opts.type,
@@ -1371,7 +1382,7 @@ export interface FindingSummary {
   by_type: Record<string, { open: number; total: number }>;
 }
 export const fetchFindingSummary = (tenantId?: number | null, type?: string, q?: string) =>
-  getJSON<FindingSummary>(`/api/findings/summary${qs({ tenant_id: tenantId, type, q: q?.trim() })}`);
+  getJSON<FindingSummary>(`/api/findings/summary${cq({ tenant_id: tenantId, type, q: q?.trim() })}`);
 export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
   sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);
 export const fetchPublishedServices = (tenantId?: number | null) =>
@@ -1381,7 +1392,7 @@ export const fetchPublishedService = (name: string, tenantId?: number | null) =>
     `/api/published-services/${encodeURIComponent(name)}${qs({ tenant_id: tenantId })}`,
   );
 export const fetchAppDocSystems = (tenantId?: number | null) =>
-  getJSON<AppDocSystem[]>(`/api/appdoc/systems${qs({ tenant_id: tenantId })}`);
+  getJSON<AppDocSystem[]>(`/api/appdoc/systems${cq({ tenant_id: tenantId })}`);
 export const fetchSystemDoc = (name: string, tenantId?: number | null) =>
   getJSON<SystemDoc>(`/api/appdoc/systems/${encodeURIComponent(name)}${qs({ tenant_id: tenantId })}`);
 export const assignSystemSite = (name: string, tenantId: number, siteId: number | null) =>
@@ -1393,7 +1404,7 @@ export const assignSystemSite = (name: string, tenantId: number, siteId: number 
 
 // Applikationen
 export const fetchApps = (tenantId: number) =>
-  getJSON<Application[]>(`/api/applications${qs({ tenant_id: tenantId })}`);
+  getJSON<Application[]>(`/api/applications${cq({ tenant_id: tenantId })}`);
 export const fetchApp = (id: number) => getJSON<ApplicationDetail>(`/api/applications/${id}`);
 export const createApp = (
   tenantId: number,
@@ -1465,7 +1476,7 @@ export const fetchObjects = (
   } = {},
 ) =>
   getJSON<Paged<DeviceObject>>(
-    `/api/objects${qs({
+    `/api/objects${cq({
       tenant_id: tenantId,
       ...params,
       q: params.q?.trim(),

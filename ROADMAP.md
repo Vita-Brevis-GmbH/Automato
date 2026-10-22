@@ -321,6 +321,7 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.29.0** | Verbund bzw. Session-Sync-Paar als ein Hop im Weg (je Firewall Eingang, Ausgang, Regeln; verschiedene Urteile = abhängig) |
 | **0.30.0** | Kunden als Ausschnitt der Umgebung (ADR 0018 Schritt 1): Selektoren ein-/ausschliessend, abgeleitete Zugehörigkeit, Vorschau, Vorschläge je ACI-Tenant, nicht Zugeordnetes |
 | **0.31.0** | Kunden: Merkmale aus dem IPAM als Selektor, NAT und Findings als Mitglieder |
+| **0.32.0** | Kunden-Filter: Umschalter „Kunde“, alle Doku-Listen auf den Ausschnitt samt geteiltem Teil (ADR 0018 Schritt 2) |
 
 ### Nächste Arbeiten (Stand 0.30.0)
 
@@ -340,7 +341,7 @@ Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
 2. **VDOM-Kontext** (ADR 0019, Stufe 1) – **umgesetzt in 0.15.0** und gegen die echten VDOMs
    abgenommen: alle VDOMs lesen, VDOM an Policies, Objekten, NAT, Interfaces und Subnetzen.
 3. **Umgebung und Kunden** (ADR 0018): Selektoren und abgeleitete Zugehörigkeit **in 0.30.0**
-   (Schritt 1); weiter Kunden-Filter in allen Ansichten (Schritt 2), danach Kunden-Benutzer mit
+   (Schritt 1), Kunden-Filter in allen Ansichten **in 0.32.0** (Schritt 2); weiter Kunden-Benutzer mit
    serverseitiger Einschränkung (Schritt 3).
 4. **Routing, HA und L3Out lesen** (ADR 0019, Stufe 2) – **umgesetzt in 0.16.0** und
    abgenommen. **Pfade und Relevanz** (Stufe 3): Weg Hop für Hop mit Quelle bzw. Startpunkt –

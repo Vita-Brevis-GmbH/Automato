@@ -22,6 +22,7 @@ from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -54,12 +55,16 @@ router = APIRouter(prefix="/rules", tags=["rules"])
 @router.get("/summary", response_model=RuleSummaryOut)
 def rules_summary(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ):
-    """Kennzahlen aller Regeln des Mandanten (Firewall + ACI) fuer die Uebersicht."""
+    """Kennzahlen aller Regeln des Mandanten (Firewall + ACI) fuer die Uebersicht; mit
+    `customer_id` nur die des Kunden (ADR 0018)."""
     tenant_id = tenant_scope(principal, tenant_id)
-    return RuleSummaryOut(**rules_store.summary(session, tenant_id=tenant_id))
+    view = customer_view(session, principal, tenant_id, customer_id)
+    only = view.ids("rule") if view else None
+    return RuleSummaryOut(**rules_store.summary(session, tenant_id=tenant_id, only=only))
 
 
 @router.get("", response_model=list[RuleOut])
@@ -97,6 +102,7 @@ def list_rules(
     routable: bool = Query(
         False, description="Suche nach einer IP: routingtechnisch unmoegliche Regeln ausblenden"
     ),
+    customer_id: int | None = Query(None, description="nur Regeln dieses Kunden (ADR 0018)"),
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
@@ -116,6 +122,9 @@ def list_rules(
     rule_index.ensure(session, tenant_id)
     q, object, nat = (v.strip() if v else None for v in (q, object, nat))
     conds = rule_index.conditions(q, object, object_id, nat, net, net_any)
+    view = customer_view(session, principal, tenant_id, customer_id)
+    if view is not None:
+        conds.append(Rule.id.in_(view.ids("rule")))
     if family:
         conds.append(Rule.ip_family == family)
     if vdom:

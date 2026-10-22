@@ -24,7 +24,9 @@ _SETTINGS = {  # Interface (extintf) steht in eigener Zeile
 }
 
 
-def _filtered(stmt, tenant_id, nat_type):
+def _filtered(stmt, tenant_id, nat_type, only=None):
+    if only is not None:  # NAT eines Kunden (ADR 0018)
+        stmt = stmt.where(NatRule.id.in_(only))
     if tenant_id is not None:
         stmt = stmt.where(NatRule.tenant_id == tenant_id)
     if nat_type:
@@ -38,14 +40,18 @@ def list_nat(
     limit: int | None = 500,
     offset: int = 0,
     nat_type: str | None = None,
+    only=None,
 ) -> list[NatRule]:
     stmt = select(NatRule).order_by(NatRule.source_system_id, NatRule.name)
-    stmt = _filtered(stmt, tenant_id, nat_type).offset(offset)
+    stmt = _filtered(stmt, tenant_id, nat_type, only).offset(offset)
     return list(session.scalars(stmt if limit is None else stmt.limit(limit)))
 
 
-def count_nat(session: Session, tenant_id: int | None = None, nat_type: str | None = None) -> int:
-    return session.scalar(_filtered(select(func.count(NatRule.id)), tenant_id, nat_type)) or 0
+def count_nat(
+    session: Session, tenant_id: int | None = None, nat_type: str | None = None, only=None
+) -> int:
+    stmt = _filtered(select(func.count(NatRule.id)), tenant_id, nat_type, only)
+    return session.scalar(stmt) or 0
 
 
 def nat_by_name(

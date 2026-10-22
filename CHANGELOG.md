@@ -7,6 +7,21 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.32.0 – 2026-10-22
+
+Kunden-Filter in den Ansichten (ADR 0018, Schritt 2). Ohne Migration.
+
+- **Umschalter „Kunde“** in der Kopfzeile (sobald die Umgebung Kunden hat): „alle“ bzw. ein
+  Kunde, je Umgebung gemerkt. Gefiltert werden Übersicht und Navigation, Regeln & Contracts,
+  Objekte, NAT, Findings, VMs und Portgruppen, Doku je System und Applikationen.
+- Sichtbar ist der Ausschnitt des Kunden **samt geteiltem Teil** (z. B. Tenant common).
+- Applikationen gehören über ihre Mitglieder dazu (AP mit einer EPG des Kunden, EPG bzw.
+  Server des Kunden); Firewall-Objekte über ihre Werte bzw. die Regeln des Kunden.
+- **API:** `customer_id` an `GET /rules`, `/rules/summary`, `/findings`, `/findings/summary`,
+  `/nat`, `/objects`, `/vms`, `/portgroups`, `/appdoc/systems`, `/applications`; ein Kunde
+  eines anderen Mandanten ergibt 404. Gefiltert wird per SQL (`store/customer_scope.py`).
+- Tests (jede Liste mit Kunde und geteiltem Teil, Applikationen, fremder Kunde, UI).
+
 ## 0.31.0 – 2026-10-22
 
 Kunden: Merkmale aus dem IPAM, NAT und Findings (ADR 0018). Ohne Migration.

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -81,14 +82,16 @@ class SiteAssign(BaseModel):
 @router.get("/systems", response_model=list[SystemRefOut])
 def list_systems(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "appdoc")
+    view = customer_view(session, principal, tenant_id, customer_id)
     return [
         SystemRefOut(name=s.name, ip=s.ip, rule_count=s.rule_count, kind=s.kind)
-        for s in store.list_systems(session, tenant_id)
+        for s in store.list_systems(session, tenant_id, view)
     ]
 
 

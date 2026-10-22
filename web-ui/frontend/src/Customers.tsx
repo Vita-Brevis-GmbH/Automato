@@ -70,7 +70,15 @@ function selectorText(s: CustomerSelector, systems: System[]): string {
   return `${s.exclude ? "ohne " : ""}${SELECTOR_LABEL[s.kind] ?? s.kind} ${s.value}${where}`;
 }
 
-export default function Customers({ tenantId, canEdit }: { tenantId: number | null; canEdit: boolean }) {
+export default function Customers({
+  tenantId,
+  canEdit,
+  onChanged,
+}: {
+  tenantId: number | null;
+  canEdit: boolean;
+  onChanged?: () => void; // Kunden geändert: Umschalter oben neu laden
+}) {
   const [rows, setRows] = useState<Customer[] | null>(null);
   const [suggestions, setSuggestions] = useState<CustomerSuggestion[]>([]);
   const [unassigned, setUnassigned] = useState<Unassigned | null>(null);
@@ -90,6 +98,10 @@ export default function Customers({ tenantId, canEdit }: { tenantId: number | nu
       })
       .catch(setErr);
   }, [tenantId]);
+  const changed = () => {
+    load();
+    onChanged?.();
+  };
   useEffect(() => {
     setRows(null);
     load();
@@ -104,7 +116,7 @@ export default function Customers({ tenantId, canEdit }: { tenantId: number | nu
   const accept = async (s: CustomerSuggestion) => {
     try {
       await createCustomer({ tenant_id: tenantId, name: s.name, code: s.code, description: null, shared: s.shared, selectors: s.selectors });
-      load();
+      changed();
     } catch (e) {
       setErr(e);
     }
@@ -113,7 +125,7 @@ export default function Customers({ tenantId, canEdit }: { tenantId: number | nu
     if (!window.confirm(`Kunde „${c.name}“ löschen? Nur der Ausschnitt fällt weg, die gelesenen Daten bleiben.`)) return;
     try {
       await deleteCustomer(c.id);
-      load();
+      changed();
     } catch (e) {
       setErr(e);
     }
@@ -302,7 +314,7 @@ export default function Customers({ tenantId, canEdit }: { tenantId: number | nu
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
-            load();
+            changed();
           }}
         />
       )}

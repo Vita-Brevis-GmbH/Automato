@@ -157,8 +157,9 @@ class SystemRef:
     kind: str = "host"  # host | epg
 
 
-def list_systems(session: Session, tenant_id: int | None) -> list[SystemRef]:
-    """Systeme mit Regelbezug: Host-Objekte (Firewall) und EPGs (ACI)."""
+def list_systems(session: Session, tenant_id: int | None, view=None) -> list[SystemRef]:
+    """Systeme mit Regelbezug: Host-Objekte (Firewall) und EPGs (ACI); mit `view` nur die
+    eines Kunden (ADR 0018)."""
     stmt = (
         select(NetworkObject.name, NetworkObject.value, RuleEndpoint.rule_id)
         .join(RuleEndpoint, RuleEndpoint.network_object_id == NetworkObject.id)
@@ -166,6 +167,8 @@ def list_systems(session: Session, tenant_id: int | None) -> list[SystemRef]:
     )
     if tenant_id is not None:
         stmt = stmt.where(NetworkObject.tenant_id == tenant_id)
+    if view is not None:
+        stmt = stmt.where(NetworkObject.id.in_(view.ids("object")))
     agg: dict[str, tuple[str | None, set[int]]] = {}
     for name, value, rid in session.execute(stmt):
         ip, rids = agg.setdefault(name, (value, set()))
@@ -178,6 +181,8 @@ def list_systems(session: Session, tenant_id: int | None) -> list[SystemRef]:
     estmt = select(Epg).where(Epg.kind == "epg")
     if tenant_id is not None:
         estmt = estmt.where(Epg.tenant_id == tenant_id)
+    if view is not None:
+        estmt = estmt.where(Epg.id.in_(view.ids("epg")))
     epgs = list(session.scalars(estmt))
     names = [(e.tenant_id, e.name) for e in epgs]
     rules_of: dict[int, set[int]] = {}
