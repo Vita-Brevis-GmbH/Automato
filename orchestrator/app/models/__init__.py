@@ -62,6 +62,15 @@ from app.models.source_system import REFERENCE_PLATFORMS, Platform, SourceSystem
 from app.models.source_system import RefRole as ReferenceRole
 from app.models.sync_plan import SyncPlan, SyncStatus
 from app.models.tenant import DnsType, IpamType, Tenant
+from app.models.topology import (
+    TOPOLOGY_MODELS,
+    TopoContext,
+    TopoHa,
+    TopoL3Out,
+    TopoPeer,
+    TopoPolicyRoute,
+    TopoRoute,
+)
 from app.models.virtual import Portgroup, Vm, VmIp, VmNic
 from app.models.zone import Zone
 
@@ -74,6 +83,7 @@ __all__ = [
     "MEMBER_KINDS",
     "REFERENCE_PLATFORMS",
     "SERVICE_CATEGORIES",
+    "TOPOLOGY_MODELS",
     "Agent",
     "Application",
     "ApplicationMember",
@@ -132,6 +142,12 @@ __all__ = [
     "SourceSystem",
     "SubjectKind",
     "Tenant",
+    "TopoContext",
+    "TopoHa",
+    "TopoL3Out",
+    "TopoPeer",
+    "TopoPolicyRoute",
+    "TopoRoute",
     "Vm",
     "VmIp",
     "VmNic",

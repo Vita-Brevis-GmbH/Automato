@@ -233,6 +233,103 @@ class VirtualInventory(BaseModel):
     portgroups: list[NormalizedPortgroup] = Field(default_factory=list)
 
 
+class NormalizedNextHop(BaseModel):
+    ip: str | None = None  # None = direkt angeschlossen bzw. ohne Gateway
+    interface: str | None = None
+
+
+class NormalizedRoute(BaseModel):
+    """Route eines Routing-Kontexts (ADR 0019): FortiGate-VDOM bzw. ACI-VRF auf einem Leaf.
+
+    `table`: rib = wirksame Routing-Tabelle (ECMP = mehrere Next-Hops), bgp = alle BGP-Pfade
+    (auch nicht beste, Backup-Wege), static = konfigurierte statische Route (auch inaktive)."""
+
+    node: str  # Geraet bzw. Leaf (fw-01, leaf-101)
+    context: str  # VDOM (root) bzw. VRF (Tenant:VRF)
+    prefix: str  # CIDR
+    table: Literal["rib", "bgp", "static"] = "rib"
+    protocol: str | None = None  # connected | static | bgp | ospf | local | ...
+    best: bool = True  # wirksam bzw. bester BGP-Pfad bzw. aktive statische Route
+    distance: int | None = None
+    metric: int | None = None
+    next_hops: list[NormalizedNextHop] = Field(default_factory=list)
+    attrs: dict[str, Any] = Field(default_factory=dict)  # BGP: as_path, local_pref, origin ...
+
+
+class NormalizedPeer(BaseModel):
+    """BGP-Nachbar mit Zustand (FortiGate je VDOM, ACI je VRF und Border-Leaf)."""
+
+    node: str
+    context: str
+    peer_ip: str
+    local_ip: str | None = None
+    remote_as: int | None = None
+    state: str | None = None  # Established | Idle | ...
+    attrs: dict[str, Any] = Field(default_factory=dict)
+
+
+class NormalizedHa(BaseModel):
+    """HA-Cluster einer FortiGate (Mitglieder, Rolle) und Session-Sync zu anderen Clustern."""
+
+    node: str
+    mode: str | None = None  # standalone | a-p | a-a
+    group_name: str | None = None
+    group_id: int | None = None
+    members: list[dict[str, Any]] = Field(default_factory=list)  # hostname, serial, role, prio
+    session_pickup: bool | None = None
+    sync_peers: list[dict[str, Any]] = Field(default_factory=list)  # FGSP: peer_ip, vdoms ...
+    attrs: dict[str, Any] = Field(default_factory=dict)
+
+
+class NormalizedPolicyRoute(BaseModel):
+    """Policy-Route bzw. SD-WAN-Regel: geht fuer passenden Verkehr der Routing-Tabelle vor."""
+
+    node: str
+    context: str
+    kind: Literal["policy", "sdwan"] = "policy"
+    seq: int | None = None
+    name: str | None = None
+    enabled: bool = True
+    match: dict[str, Any] = Field(default_factory=dict)  # src, dst, input_device, protocol ...
+    action: str | None = None  # permit | deny | route
+    gateway: str | None = None
+    output_device: list[str] = Field(default_factory=list)  # SD-WAN: Mitglieder nach Vorrang
+    attrs: dict[str, Any] = Field(default_factory=dict)
+
+
+class NormalizedL3Out(BaseModel):
+    """ACI-L3Out: Border-Leafs, Interfaces bzw. SVIs, BGP-Peers und statische Routen."""
+
+    tenant: str
+    name: str
+    dn: str
+    vrf: str | None = None  # Tenant:VRF
+    nodes: list[dict[str, Any]] = Field(default_factory=list)  # node, pod, router_id, routes
+    paths: list[dict[str, Any]] = Field(default_factory=list)  # path, nodes, kind, encap, ips
+    peers: list[dict[str, Any]] = Field(default_factory=list)  # ip, asn, path
+    ext_epgs: list[str] = Field(default_factory=list)
+
+
+class NormalizedRoutingContext(BaseModel):
+    """Gelesener Kontext; `missing` = was nicht lesbar war (Aussage dann „unbekannt“)."""
+
+    node: str
+    context: str
+    kind: str = "vdom"  # vdom | vrf
+    missing: list[str] = Field(default_factory=list)
+
+
+class RoutingInventory(BaseModel):
+    """Routing, BGP, HA und L3Out eines Laufs (ADR 0019 Stufe 2) - je Quellsystem ersetzt."""
+
+    contexts: list[NormalizedRoutingContext] = Field(default_factory=list)
+    routes: list[NormalizedRoute] = Field(default_factory=list)
+    peers: list[NormalizedPeer] = Field(default_factory=list)
+    ha: list[NormalizedHa] = Field(default_factory=list)
+    policy_routes: list[NormalizedPolicyRoute] = Field(default_factory=list)
+    l3outs: list[NormalizedL3Out] = Field(default_factory=list)
+
+
 class CollectorResult(BaseModel):
     status: Literal["completed", "failed"]
     rules: list[NormalizedRule] = Field(default_factory=list)
@@ -241,6 +338,7 @@ class CollectorResult(BaseModel):
     epgs: list[NormalizedEpg] = Field(default_factory=list)
     inventory: NetworkInventory | None = None  # Netzinventar (ADR 0010)
     virtual: VirtualInventory | None = None  # vCenter: VMs und Portgruppen (ADR 0017)
+    routing: RoutingInventory | None = None  # Routing, BGP, HA, L3Out (ADR 0019 Stufe 2)
     # Referenzquellen (Infoblox/NetBox): Eintraege kommen in Teilen ueber .../references,
     # hier nur die Gesamtzahl zur Kontrolle (ADR 0010)
     reference_count: int | None = None

@@ -1449,3 +1449,140 @@ export const fetchSyncItems = (
 export const applySyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/apply`, "POST");
 // Laufende Vorschau/Übernahme beenden (hängt z. B. nach einem Neustart des Orchestrators)
 export const cancelSyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/cancel`, "POST");
+
+// Routing, BGP, HA und L3Out (ADR 0019 Stufe 2) - nur lesend
+export interface NextHop {
+  ip?: string | null;
+  interface?: string | null;
+  zone?: string | null; // FortiGate: Zone des Interfaces (Inventar)
+}
+export interface RoutingContext {
+  id: number;
+  source_system_id: number;
+  source: string | null;
+  node: string; // Firewall bzw. Border-Leaf
+  context: string; // VDOM bzw. Tenant:VRF
+  kind: "vdom" | "vrf";
+  missing: string[] | null; // nicht lesbar -> Aussage „unbekannt“
+  counts: Partial<Record<"rib" | "bgp" | "static" | "peers" | "policy_routes", number>>;
+}
+export interface RoutingSummary {
+  contexts: RoutingContext[];
+  ha: number;
+  l3outs: number;
+}
+export interface TopoRoute {
+  id: number;
+  source_system_id: number;
+  source: string | null;
+  node: string;
+  context: string;
+  family: number;
+  prefix: string;
+  prefix_len: number;
+  table: "rib" | "bgp" | "static";
+  protocol: string | null;
+  best: boolean;
+  distance: number | null;
+  metric: number | null;
+  next_hops: NextHop[];
+  attrs: Record<string, unknown> | null;
+}
+export interface PolicyHit {
+  kind: "policy" | "sdwan";
+  seq: number | null;
+  name: string | null;
+  match: Record<string, unknown>;
+  gateway: string | null;
+  output_device: string[];
+  certain: boolean; // Ziel passt sicher (sonst nur über Objekte bestimmt: möglich)
+}
+export interface RouteLookup {
+  source_system_id: number;
+  source: string | null;
+  node: string;
+  context: string;
+  kind: string;
+  missing: string[];
+  route: {
+    id: number;
+    prefix: string;
+    protocol: string | null;
+    distance: number | null;
+    metric: number | null;
+    next_hops: NextHop[];
+  } | null;
+  policy_routes: PolicyHit[];
+}
+export interface TopoPeer {
+  id: number;
+  source: string | null;
+  node: string;
+  context: string;
+  peer_ip: string;
+  local_ip: string | null;
+  remote_as: number | null;
+  state: string | null;
+}
+export interface TopoHa {
+  id: number;
+  source: string | null;
+  node: string;
+  mode: string | null;
+  group_name: string | null;
+  group_id: number | null;
+  members: { hostname?: string; serial?: string; role?: string; priority?: number }[] | null;
+  session_pickup: boolean | null;
+  sync_peers: Record<string, unknown>[] | null;
+}
+export interface TopoPolicyRoute {
+  id: number;
+  source: string | null;
+  node: string;
+  context: string;
+  kind: "policy" | "sdwan";
+  seq: number | null;
+  name: string | null;
+  enabled: boolean;
+  match: Record<string, unknown> | null;
+  action: string | null;
+  gateway: string | null;
+  output_device: string[] | null;
+}
+export interface TopoL3Out {
+  id: number;
+  source: string | null;
+  aci_tenant: string;
+  name: string;
+  dn: string;
+  vrf: string | null;
+  nodes: { pod: string; node: string; router_id?: string; static_routes?: { prefix: string; next_hops?: string[] }[] }[] | null;
+  paths:
+    | { path: string; nodes?: string[]; interface?: string; kind?: string; vlan?: number; ips?: { ip: string; side?: string }[] }[]
+    | null;
+  peers: { ip: string; asn?: number | null; path?: string }[] | null;
+  ext_epgs: string[] | null;
+}
+
+export const fetchRoutingSummary = (tenantId: number) =>
+  getJSON<RoutingSummary>(`/api/routing/summary${qs({ tenant_id: tenantId })}`);
+export const fetchRoutes = (opts: {
+  tenantId: number;
+  sourceId?: number | null;
+  context?: string;
+  table?: string;
+  ip?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}) =>
+  getPage<TopoRoute>(
+    `/api/routing/routes${qs({ tenant_id: opts.tenantId, source_system_id: opts.sourceId, context: opts.context || undefined, table: opts.table || undefined, ip: opts.ip?.trim() || undefined, q: opts.q?.trim() || undefined, limit: opts.limit, offset: opts.offset })}`,
+  );
+export const lookupRoute = (tenantId: number, ip: string) =>
+  getJSON<RouteLookup[]>(`/api/routing/lookup${qs({ tenant_id: tenantId, ip: ip.trim() })}`);
+export const fetchPeers = (tenantId: number) => getJSON<TopoPeer[]>(`/api/routing/peers${qs({ tenant_id: tenantId })}`);
+export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha${qs({ tenant_id: tenantId })}`);
+export const fetchPolicyRoutes = (tenantId: number) =>
+  getJSON<TopoPolicyRoute[]>(`/api/routing/policy-routes${qs({ tenant_id: tenantId })}`);
+export const fetchL3Outs = (tenantId: number) => getJSON<TopoL3Out[]>(`/api/routing/l3outs${qs({ tenant_id: tenantId })}`);

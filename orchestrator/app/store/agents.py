@@ -46,9 +46,13 @@ def agent_by_token(session: Session, token: str) -> Agent | None:
 
 
 def claim_next_run(
-    session: Session, agent: Agent, platform: str | None = None
+    session: Session,
+    agent: Agent,
+    platform: str | None = None,
+    queued_before: datetime | None = None,
 ) -> CollectorRun | None:
-    """Aeltesten offenen externen Lauf im Scope des Agenten holen und auf RUNNING setzen."""
+    """Aeltesten offenen externen Lauf im Scope des Agenten holen und auf RUNNING setzen;
+    `queued_before`: nur Laeufe, die schon so lange warten (Agent vor dem Update)."""
     stmt = (
         select(CollectorRun)
         .outerjoin(SourceSystem, SourceSystem.id == CollectorRun.source_system_id)
@@ -61,6 +65,8 @@ def claim_next_run(
         stmt = stmt.where(CollectorRun.tenant_id == agent.tenant_id)
     if platform is not None:
         stmt = stmt.where(CollectorRun.platform == platform)
+    if queued_before is not None:
+        stmt = stmt.where(CollectorRun.queued_at < queued_before)
     run = session.scalars(stmt).first()
     if run is None:
         return None

@@ -20,6 +20,7 @@ from app.api import (
     objects,
     published_services,
     reconcile,
+    routing,
     rules,
     system,
     systems,
@@ -92,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(virtual.router)
     app.include_router(netbox_sync.router)
     app.include_router(system.router)
+    app.include_router(routing.router)
     return app
 
 

@@ -7,6 +7,7 @@ const VIEWS: [string, string][] = [
   ["regeln", "Regeln & Contracts"],
   ["objekte", "Objekte & Inventar"],
   ["nat", "NAT / VIPs"],
+  ["routing", "Routing & Wege"],
   ["apps", "Applikationen"],
   ["findings", "Findings"],
   ["abgleich", "Abgleich"],
@@ -27,6 +28,15 @@ for (const [key, title] of VIEWS) {
     expect(problems).toEqual([]);
   });
 }
+
+test("Routing: alle Reiter laden", async ({ page, problems }) => {
+  await page.goto("/#routing");
+  for (const tab of ["Routen", "BGP-Nachbarn", "HA & Session-Sync", "Policy-Routen & SD-WAN", "L3Outs (ACI)", "Weg für IP"]) {
+    await page.click(`.tabbar button:has-text('${tab}')`);
+    await page.waitForLoadState("networkidle");
+  }
+  expect(problems).toEqual([]);
+});
 
 test("Objekte: alle Reiter laden", async ({ page, problems }) => {
   await page.goto("/#objekte");

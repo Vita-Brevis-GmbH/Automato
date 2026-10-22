@@ -322,3 +322,26 @@ test("VDOMs: Filter, Kennzeichnung und Detail je VDOM", async ({ page }) => {
   await expect(nets.filter({ hasText: "VDOM root" })).toContainText("10.1.0.0/24");
   await expect(nets.filter({ hasText: "VDOM kunde-a" })).toContainText("10.50.0.0/24");
 });
+
+test("Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", async ({ page }) => {
+  await page.goto("/#routing");
+  const ctx = page.locator(".card", { hasText: "Gelesene Kontexte" });
+  await expect(ctx).toContainText("leaf-101");
+  await expect(ctx).toContainText("BGP-Pfade IPv4 (HTTP 403)"); // nicht lesbar -> unbekannt
+  await search(page).fill("10.20.0.5");
+  await page.click("button:has-text('Weg suchen')");
+  const way = page.locator(".card", { hasText: "Geht vor" }).locator("tbody tr");
+  const root = way.filter({ hasText: "fw-05" }).filter({ hasText: "root" });
+  await expect(root).toContainText("10.20.0.0/24");
+  await expect(root).toContainText("Policy-Route #5");
+  await expect(way.filter({ hasText: "leaf-101" })).toContainText("ECMP ×2");
+  await page.click(".tabbar button:has-text('Routen')");
+  await page.locator(".filterbar select").filter({ hasText: "Tabelle: alle" }).selectOption("bgp");
+  const routes = page.locator(".card", { hasText: "Weitere Angaben" }).locator("tbody tr");
+  await expect(routes).toHaveCount(2);
+  await expect(routes.filter({ hasText: "Backup" })).toContainText("64500 64501");
+  await page.click(".tabbar button:has-text('HA & Session-Sync')");
+  await expect(page.locator(".card", { hasText: "Session-Sync (FGSP)" })).toContainText("cluster-a");
+  await page.click(".tabbar button:has-text('L3Outs (ACI)')");
+  await expect(page.locator(".card", { hasText: "Border-Leafs" })).toContainText("L3O_inet");
+});

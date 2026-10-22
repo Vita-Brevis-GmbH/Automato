@@ -67,7 +67,7 @@ from app.schemas.collector import (
     NormalizedRule,
 )
 from app.store import naming_profiles as profile_store
-from app.store import reconcile, rule_index, virtual
+from app.store import reconcile, rule_index, topology, virtual
 from app.store import rules as rules_store
 
 _ANY_VALUES = {"all", "any", "*"}
@@ -138,6 +138,8 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         _replace_inventory(session, run, result.inventory)
     if result.virtual is not None:  # vCenter: VMs und Portgruppen (ADR 0017)
         virtual.replace(session, run, result.virtual)
+    if result.routing is not None:  # Routing, BGP, HA, L3Out (ADR 0019 Stufe 2)
+        topology.replace(session, run, result.routing)
     session.flush()
     # Findings = abgeleiteter Zustand des ganzen Mandanten (alle Quellsysteme); danach der
     # Regelindex des Quellsystems (Abgleich kann Werte aus dem IPAM ergaenzen) - nach einem

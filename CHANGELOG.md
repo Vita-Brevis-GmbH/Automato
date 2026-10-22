@@ -7,6 +7,41 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.16.0 – 2026-10-22
+
+Routing, HA und L3Out lesen (ADR 0019 Stufe 2, Alembic `0038`); Agent aktualisiert sich vor
+dem Lauf. Der Test gegen die echten Systeme steht noch aus.
+
+- **Erster Lauf nach einem Update mit der neuen Version** (Dev-Befund 0.15.0: es brauchte zwei
+  Läufe): Ein Agent mit alter Version bekommt neue Läufe erst nach seinem Update. Ab dieser
+  Version aktualisiert er sich dann sofort statt nach bis zu 5 Minuten. Wartet ein Lauf
+  länger als 10 Minuten (Update scheitert, Selbst-Update aus), holt ihn auch die alte Version.
+- **FortiGate je VDOM** (nur lesend):
+  - wirksame Routing-Tabelle IPv4/IPv6, ECMP als mehrere Next-Hops;
+  - alle BGP-Pfade, auch nicht beste (Backup-Wege), und die BGP-Nachbarn mit Zustand;
+  - statische Routen, auch inaktive bzw. mit höherer Distanz;
+  - Policy-Routen und SD-WAN-Regeln;
+  - global: HA-Cluster (Modus, Gruppe, Mitglieder mit Rolle, Session-Pickup) und
+    Session-Sync zu anderen Clustern (FGSP).
+- **ACI:** L3Outs mit Border-Leafs (Router-ID, statische Routen), Interfaces bzw. SVIs (vPC-Seiten,
+  Encap/VLAN, Adressen), BGP-Peers und externen EPGs; je Border-Leaf und VRF die
+  Routing-Tabelle und die BGP-Nachbarn.
+- **Keine Secrets:** Felder werden per Positivliste übernommen – das HA-Passwort, der
+  FGSP-Schlüssel und das Passwort der ACI-BGP-Peers kommen nie mit. Die BGP-Konfiguration der
+  FortiGate wird nicht gelesen (nur der Monitor).
+- **Was nicht lesbar ist** (Profil ohne Recht), steht in der Lauf-Meldung („Routing nicht
+  lesbar: …“) und je Kontext in der neuen Ansicht.
+- **Neue Ansicht „Routing & Wege“:**
+  - gelesene Kontexte mit Anzahl Routen und dem, was fehlt;
+  - **Weg für IP:** je Kontext die wirksame Route (längstes Präfix) mit Next-Hops,
+    Interface und Zone, dazu Policy-Routen bzw. SD-WAN-Regeln, die vorgehen (sicher bzw.
+    möglich);
+  - Routen (wirksam, BGP-Pfade, statisch; Suche, „enthält IP“), BGP-Nachbarn, HA &
+    Session-Sync, Policy-Routen & SD-WAN, L3Outs.
+- **API:** `GET /routing/summary`, `/routing/routes`, `/routing/lookup?ip=`, `/routing/peers`,
+  `/routing/ha`, `/routing/policy-routes`, `/routing/l3outs`.
+- Nach dem Update FortiGates und APIC einmal neu einlesen.
+
 ## 0.15.0 – 2026-10-22
 
 VDOM-Kontext der FortiGate (ADR 0019 Stufe 1, Alembic `0037`). Der Test gegen die echten

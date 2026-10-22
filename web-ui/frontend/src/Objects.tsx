@@ -177,7 +177,7 @@ function objectLink(o: { id: number; name: string; family: string | null }): Vie
   return p;
 }
 
-function Pager({
+export function Pager({
   total,
   offset,
   onOffset,
@@ -206,7 +206,7 @@ function Pager({
   );
 }
 
-function useDebounced<T>(value: T, ms = 300): T {
+export function useDebounced<T>(value: T, ms = 300): T {
   const [v, setV] = useState(value);
   useEffect(() => {
     const t = setTimeout(() => setV(value), ms);

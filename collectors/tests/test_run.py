@@ -417,6 +417,47 @@ def test_watch_prueft_periodisch_auf_updates(monkeypatch):
     assert called["argv"] == ["--poll", "--watch", "20", "--for", "3.2", "--platform", "fortigate"]
 
 
+def test_watch_aktualisiert_sofort_wenn_der_orchestrator_laeufe_zurueckhaelt(monkeypatch):
+    """Dev-Befund 0.15.0: den ersten Lauf nach einem Update fuehrte noch der alte Agent aus.
+    Meldet next-run `update`, aktualisiert er sich beim naechsten Durchgang (nicht erst nach
+    5 min) und die neue Version holt den Lauf ab."""
+    import collectors.run as run
+
+    now = [0.0]
+    monkeypatch.setattr(run.agent_api, "next_run", lambda platform=None: None)
+    monkeypatch.setattr(run.agent_api, "update_requested", lambda: True)
+    asked: list[float] = []
+
+    def update(minutes_left):
+        asked.append(round(minutes_left, 2))
+        return 0
+
+    def sleep(s):
+        now[0] += s
+
+    assert run._watch(None, 20, 14, clock=lambda: now[0], sleep=sleep, update=update) == 0
+    assert asked == [14.0] and now[0] == 0.0
+
+
+def test_next_run_merkt_sich_die_update_anfrage(monkeypatch):
+    from collectors.common import agent as agent_api
+
+    class R:
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            return self.body
+
+    monkeypatch.setattr(agent_api, "_headers", lambda: {})
+    monkeypatch.setattr(
+        agent_api.http, "get_json", lambda url, params, headers: R({"run": None, "update": True})
+    )
+    assert agent_api.next_run() is None and agent_api.update_requested()
+    monkeypatch.setattr(agent_api.http, "get_json", lambda url, params, headers: R({"run": None}))
+    assert agent_api.next_run() is None and not agent_api.update_requested()
+
+
 def argparse_ns(**kw):
     import argparse
 

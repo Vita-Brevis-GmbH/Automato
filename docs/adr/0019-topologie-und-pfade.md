@@ -5,7 +5,9 @@
 **Entwurf** (2026-10-22) – zur Durchsicht durch den Anwender. Setzt den Topology Service
 aus ADR 0002 und das Epic E7 (ROADMAP) um; baut auf ADR 0018 (Umgebung und Kunden) auf.
 
-**Stufe 1 (VDOM-Kontext) umgesetzt in 0.15.0;** der Test gegen die echten VDOMs steht aus.
+**Stufe 1 (VDOM-Kontext) umgesetzt in 0.15.0** und gegen die echten VDOMs getestet
+(2026-10-22). **Stufe 2 (Routing, HA, L3Out lesen) umgesetzt in 0.16.0;** der Test gegen die
+echten Systeme steht aus.
 
 Rahmen laut Anwender (2026-10-22):
 
@@ -133,7 +135,22 @@ Rahmen laut Anwender (2026-10-22):
    - Zonen bleiben Namen; eine Zone gilt im VDOM ihrer Regel bzw. ihres Interfaces.
    - Inter-VDOM-Links (`vdom-link`-Interfaces) sind mit ihrem VDOM gelesen; als Kanten folgen
      sie mit Stufe 2.
-2. **Routing, HA und L3Out lesen** (FortiGate je VDOM, ACI-Border-Leafs).
+2. **Routing, HA und L3Out lesen** (FortiGate je VDOM, ACI-Border-Leafs). Umgesetzt in
+   0.16.0 (Alembic `0038`, Lesevertrag Abschnitt 1 und 2):
+   - FortiGate je VDOM: wirksame Tabelle (ECMP), alle BGP-Pfade (auch Backup), BGP-Nachbarn,
+     statische Routen (auch inaktive), Policy-Routen, SD-WAN-Regeln; global HA-Cluster mit
+     Mitgliedern und Rolle sowie Session-Sync (FGSP). Felder per Positivliste, keine Secrets.
+   - ACI: L3Outs aus dem Tenant-Baum (Border-Leafs, Router-ID, Interfaces/SVIs mit vPC-Seiten,
+     Encap, BGP-Peers, statische Routen) und je Border-Leaf und VRF die Routing-Tabelle und die
+     BGP-Nachbarn.
+   - Je Kontext (VDOM bzw. VRF auf dem Leaf) wird festgehalten, was nicht lesbar war; die
+     Aussage ist dort „unbekannt“.
+   - Speicher: `topo_context`, `topo_route` (mit Bereich für das längste Präfix), `topo_peer`,
+     `topo_ha`, `topo_policy_route`, `topo_l3out` – je Lauf ersetzt. Ein Verlauf der Routen
+     (Punkt 4) folgt bei Bedarf.
+   - Ansicht „Routing & Wege“ mit „Weg für IP“: je Kontext die wirksame Route und die
+     Policy-Routen bzw. SD-WAN-Regeln, die vorgehen. Das ist noch kein Pfad über mehrere Hops
+     (Stufe 3).
 3. **Pfade und Relevanz** in Regeln und Applikations-Doku, „Internet“ zusammengefasst.
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde.
 5. **Zeichnung** (optional).

@@ -121,6 +121,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "read.applications": frozenset({"tenant_id", "resource"}),
     "read.published_services": frozenset({"tenant_id", "resource"}),
     "read.appdoc": frozenset({"tenant_id", "resource"}),
+    "read.routing": frozenset({"tenant_id", "resource"}),
 }
 
 _DROPPED_KEY = "_dropped"

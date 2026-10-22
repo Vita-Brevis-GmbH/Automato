@@ -9,12 +9,16 @@
 - Selbst-Update (ADR 0011): `update` liefert Version + Dateien mit SHA-256, `update/files/
   {name}` die Datei; nur bei `auto_update` des Agenten. Der Agent meldet seine Version per
   Header `X-Agent-Version` bei jedem Aufruf.
+- Zuerst aktualisieren (0.16.0): Ein installierter Agent mit alter Version bekommt neue Laeufe
+  erst nach dem Update (`next-run` meldet `update: true`); laenger als `UPDATE_HOLD` wartende
+  Laeufe holt er trotzdem ab. Dev-Befund 0.15.0: der erste Lauf nach einem Update lief noch
+  mit dem alten Agenten.
 """
 
 import io
 import logging
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
@@ -114,6 +118,20 @@ class NextRun(BaseModel):
 
 class NextRunOut(BaseModel):
     run: NextRun | None
+    update: bool = False  # zuerst aktualisieren: neue Version liegt bereit (0.16.0)
+
+
+# so lange warten neue Laeufe auf das Update eines veralteten Agenten (der alte prueft im
+# Wach-Modus alle 5 min); danach holt er sie mit der bisherigen Version ab
+UPDATE_HOLD = timedelta(minutes=10)
+
+
+def _update_pending(agent: Agent, version: str | None, note: str | None, current: str | None):
+    """Installierter Agent (meldet seine Update-Pruefung) mit alter Version, Selbst-Update an und
+    ohne Fehler bei der letzten Pruefung."""
+    if note is None or note.strip() not in ("", "ok") or not agent.auto_update:
+        return False
+    return bool(current and version and version.strip() != current)
 
 
 def _out(a: Agent, systems: list | None = None, current: str | None = None) -> AgentOut:
@@ -276,12 +294,17 @@ def require_agent(
 @agent_router.get("/next-run", response_model=NextRunOut)
 def next_run(
     platform: str | None = None,
+    x_agent_version: str | None = Header(default=None),
+    x_agent_update: str | None = Header(default=None),
     agent: Agent = Depends(require_agent),
     session: Session = Depends(get_session, scope="function"),
+    settings: Settings = Depends(get_settings),
 ):
-    run = store.claim_next_run(session, agent, platform)
+    update = _update_pending(agent, x_agent_version, x_agent_update, _current_version(settings))
+    hold = datetime.now(UTC) - UPDATE_HOLD if update else None
+    run = store.claim_next_run(session, agent, platform, queued_before=hold)
     if run is None:
-        return NextRunOut(run=None)
+        return NextRunOut(run=None, update=update)
     target = None
     src = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
     if src is not None:
@@ -308,7 +331,8 @@ def next_run(
             tenant_id=run.tenant_id,
             source_system_id=run.source_system_id,
             target=target,
-        )
+        ),
+        update=update,
     )
 
 

@@ -9,6 +9,7 @@ VDOMs (ADR 0019): `gather` liest die Liste der VDOMs und danach jeden VDOM einze
 Kontos; sein Name kommt aus der Antwort (`"vdom": "root"`).
 """
 
+import json
 import re
 from typing import Any
 
@@ -51,6 +52,36 @@ def _json(path: str, response: httpx.Response) -> Any:
 
 # Interne VDOMs von FortiOS 7.x (HA, FortiManager-Verbindung) - ohne Policies
 _INTERNAL_VDOM = re.compile(r"^vsys_", re.IGNORECASE)
+
+# Monitor-Listen (Routen, BGP-Pfade): kuerzt die FortiGate auf eine Seite, wird mit start/count
+# weitergelesen; mehr als ROUTE_LIMIT Eintraege je Tabelle werden nicht uebernommen
+MONITOR_PAGE = 1000
+ROUTE_LIMIT = 50_000
+
+
+class TooLarge(ValueError):
+    """Tabelle groesser als ROUTE_LIMIT (z. B. volle Internet-Tabelle per BGP)."""
+
+
+def routing_label(key: str) -> str:
+    from collectors.fortigate.routing import TABLE_LABELS
+
+    return TABLE_LABELS.get(key, key)
+
+
+def _optional_read(read) -> tuple[Any, str | None]:
+    """(Ergebnis, Grund): ohne Recht bzw. zu gross -> Grund; fehlende Tabelle -> leer."""
+    try:
+        return read(), None
+    except TooLarge as exc:
+        return [], f"zu gross: {exc}"
+    except NotJson:
+        return [], None
+    except httpx.HTTPStatusError as exc:
+        code = exc.response.status_code
+        if code in (400, 404, 405, 424):  # Tabelle fehlt (Version) bzw. Funktion aus
+            return [], None
+        return [], f"HTTP {code}"
 
 
 class FortiGateClient:
@@ -175,6 +206,77 @@ class FortiGateClient:
                 return []
             raise
 
+    # --- Routing, BGP, HA (ADR 0019 Stufe 2, nur lesend) ---
+
+    def _monitor(self, path: str, vdom: str | None = None, params: dict | None = None) -> Any:
+        query = {**(params or {}), **({"vdom": vdom} if vdom else {})}
+        response = self._client.get(
+            f"{self._root}/monitor/{path}", headers=self._headers, params=query or None
+        )
+        response.raise_for_status()
+        body = _json(f"monitor/{path}", response)
+        return body.get("results", []) if isinstance(body, dict) else []
+
+    def _monitor_rows(self, path: str, vdom: str | None = None) -> list[dict[str, Any]]:
+        """Liste aus dem Monitor-API; kuerzt die FortiGate, weiter mit start/count (ohne
+        Doppelte - eine FortiGate, die start ignoriert, liefert nichts Neues)."""
+        rows = self._monitor(path, vdom)
+        if not isinstance(rows, list):
+            return []
+        seen = {json.dumps(r, sort_keys=True, default=str) for r in rows}
+        while len(rows) >= MONITOR_PAGE:
+            if len(rows) > ROUTE_LIMIT:
+                raise TooLarge(f"{path}: mehr als {ROUTE_LIMIT} Eintraege")
+            try:
+                page = self._monitor(path, vdom, {"start": len(rows), "count": MONITOR_PAGE})
+            except (httpx.HTTPStatusError, NotJson):
+                break
+            new = [r for r in page or [] if json.dumps(r, sort_keys=True, default=str) not in seen]
+            if not new:
+                break
+            rows += new
+            seen |= {json.dumps(r, sort_keys=True, default=str) for r in new}
+        return rows
+
+    def routing_tables(self, vdom: str | None) -> dict[str, Any]:
+        """Routing eines VDOMs: wirksame Tabelle, BGP-Pfade und -Nachbarn, statische und
+        Policy-Routen, SD-WAN. Ohne Leserecht (401/403) bzw. zu gross steht die Tabelle in
+        `missing`; fehlt sie (400/404/405, andere Version, nicht konfiguriert), bleibt sie leer."""
+        reads = {
+            "rib4": lambda: self._monitor_rows("router/ipv4", vdom),
+            "rib6": lambda: self._monitor_rows("router/ipv6", vdom),
+            "bgp_paths4": lambda: self._monitor_rows("router/bgp/paths", vdom),
+            "bgp_paths6": lambda: self._monitor_rows("router/bgp/paths6", vdom),
+            "bgp_neighbors4": lambda: self._monitor("router/bgp/neighbors", vdom),
+            "bgp_neighbors6": lambda: self._monitor("router/bgp/neighbors6", vdom),
+            "static4": lambda: self._get("router/static", vdom),
+            "static6": lambda: self._get("router/static6", vdom),
+            "policy4": lambda: self._get("router/policy", vdom),
+            "policy6": lambda: self._get("router/policy6", vdom),
+            "sdwan": lambda: self._get("system/sdwan", vdom),
+        }
+        out: dict[str, Any] = {"missing": []}
+        for key, read in reads.items():
+            out[key], reason = _optional_read(read)
+            if reason:
+                out["missing"].append(f"{routing_label(key)} ({reason})")
+        return out
+
+    def ha(self) -> dict[str, Any]:
+        """HA-Konfiguration und -Mitglieder, Session-Sync zu anderen Clustern (global)."""
+        out: dict[str, Any] = {"missing": []}
+        for key, read in (
+            ("ha", lambda: self._get("system/ha")),
+            ("peers", lambda: self._monitor("system/ha-peer")),
+            ("sync", lambda: self._get("system/standalone-cluster")),
+        ):
+            out[key], reason = _optional_read(read)
+            if reason:
+                out["missing"].append(f"HA {key} ({reason})")
+        if not out["sync"]:  # FortiOS bis 7.0: config system cluster-sync
+            out["sync"], _ = _optional_read(lambda: self._get("system/cluster-sync"))
+        return out
+
     def ippools(self, vdom: str | None = None) -> list[dict[str, Any]]:
         # IP-Pools fuer Source-NAT (IPP_).
         return self._get("firewall/ippool", vdom)
@@ -203,8 +305,8 @@ class FortiGateClient:
         }
 
     def gather(self) -> dict[str, Any]:
-        """Alles einlesen, je VDOM (ADR 0019): `vdoms` = [{vdom, policies, ...}], dazu die
-        Interfaces aller VDOMs (global, je Interface sein VDOM) und das System.
+        """Alles einlesen, je VDOM (ADR 0019): `vdoms` = [{vdom, policies, ..., routing}], dazu
+        die Interfaces aller VDOMs (global, je Interface sein VDOM), HA und das System.
 
         Ein VDOM ohne Leserecht (HTTP 403) fehlt und steht in `skipped`, statt den Lauf
         abzubrechen; ist keiner lesbar, bricht der Lauf mit dem ersten Fehler ab."""
@@ -227,12 +329,13 @@ class FortiGateClient:
             for iface in tables.pop("interfaces"):
                 if isinstance(iface, dict) and iface.get("name"):
                     interfaces.setdefault(iface["name"], {"vdom": vdom, **iface})
-            vdoms.append({"vdom": vdom, **tables})
+            vdoms.append({"vdom": vdom, **tables, "routing": self.routing_tables(name)})
         if not vdoms and denied is not None:
             raise denied
         return {
             "vdoms": vdoms,
             "skipped": skipped,
             "interfaces": list(interfaces.values()),
+            "ha": self.ha(),
             "system": self.system(),
         }

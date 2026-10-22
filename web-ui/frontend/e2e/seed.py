@@ -7,6 +7,7 @@ einem ACI-Contract ohne Consumer, einem vCenter mit einer VM hinter H_web01 und 
 Applikation (AP mit EPG und VM). Alles ueber die oeffentliche bzw. interne API wie im Betrieb.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "orchestrator" / "tests"))
 import test_findings_explain as fe  # noqa: E402
 import test_ip_family as ipf  # noqa: E402
+import test_routing as rt  # noqa: E402
 import test_search_nat as sn  # noqa: E402
 import test_services as sv  # noqa: E402
 import test_sites as st  # noqa: E402
@@ -109,11 +111,16 @@ def run(app) -> None:
 
     # FortiGate 5: zwei VDOMs (root, kunde-a) mit gleichen Policy-IDs, Objekt- und VIP-Namen
     fw5 = system(name="fw-05", platform="fortigate", base_url="https://fw-05.example.ch")
-    ports = [{**i, "device": "fw-05"} for i in vd.RESULT["inventory"]["interfaces"]]
+    # dazu Routing, BGP, HA und Policy-Routen (ADR 0019 Stufe 2)
+    ports = [
+        {**i, "device": "fw-05"}
+        for i in vd.RESULT["inventory"]["interfaces"] + rt.FW["inventory"]["interfaces"]
+    ]
     inventory = {"devices": [{"name": "fw-05", "role": "firewall"}], "interfaces": ports}
+    routing = json.loads(json.dumps(rt.FW["routing"]).replace('"fw-01"', '"fw-05"'))
     run_result(
         fw5, "fortigate", rules=vd.RESULT["rules"], objects=vd.RESULT["objects"],
-        nat_rules=vd.RESULT["nat_rules"], inventory=inventory,
+        nat_rules=vd.RESULT["nat_rules"], inventory=inventory, routing=routing,
     )  # fmt: skip
 
     # APIC: Inventar, Filter als Dienste, Contract ohne Consumer
@@ -147,7 +154,10 @@ def run(app) -> None:
              "epgs": ["TE/AP/EG_db", "TE/AP/EG_web", "TE/AP/EG_app"],
              "neighbor": "esx01-chzrh1", "neighbor_port": "vmnic0"}  # fmt: skip
     inventory = {**st.INVENTORY, "interfaces": [trunk]}
-    run_result(apic, "cisco_aci", rules=contracts, objects=filters, inventory=inventory, epgs=epgs)
+    run_result(
+        apic, "cisco_aci", rules=contracts, objects=filters, inventory=inventory, epgs=epgs,
+        routing=rt.APIC["routing"],
+    )  # fmt: skip
 
     # vCenter: VM hinter H_web01 (10.10.10.5) an der Portgruppe der EPG EG_db (ACI-VMM-Name)
     vc = system(

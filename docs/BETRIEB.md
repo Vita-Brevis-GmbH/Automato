@@ -44,6 +44,13 @@ lesbar: … (HTTP 403)“). Fehlt ein VDOM, Profil bzw. VDOM-Liste des Kontos au
 prüfen und neu einlesen. Ohne Recht auf die VDOM-Liste liest er nur den Standard-VDOM des
 Kontos.
 
+**Routing, BGP, HA** (0.16.0, ADR 0019 Stufe 2): Jeder Lauf einer FortiGate liest je VDOM die
+wirksame Routing-Tabelle, alle BGP-Pfade und -Nachbarn, statische Routen, Policy-Routen und
+SD-WAN-Regeln sowie global HA und Session-Sync; ein APIC-Lauf die L3Outs und je Border-Leaf
+und VRF dessen Routing-Tabelle und BGP-Nachbarn. Das Read-only-Profil der FortiGate braucht
+Lesezugriff auf Router und System (inkl. Monitor), der APIC-Benutzer auf die Fabric-Knoten.
+Passwörter und Schlüssel (HA, FGSP, BGP-Peers) werden nie gelesen.
+
 **Zeitgesteuert:** Mit einem Zeitplan am Quellsystem legt der Orchestrator zum Termin selbst
 einen Lauf an (`AUTOMATO_SCHEDULER_ENABLED=true`, in docker-compose Standard). Wie „Jetzt
 einlesen“: Gerät mit Agent → der Agent holt den Lauf ab. Wartet oder läuft für das
@@ -184,6 +191,19 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Pool-Bereich), Port, DNS-Name, Server, Interface, Kommentar. Klick → Detail mit
   Einstellungen, IPAM-Sicht (Netz, VLAN, Standort) und den Firewall-Regeln, die den Eintrag
   nutzen.
+- **Routing & Wege** (0.16.0, ADR 0019): oben die gelesenen Kontexte (FortiGate-VDOM bzw.
+  ACI-VRF auf dem Border-Leaf) mit Anzahl Routen und dem, was nicht lesbar war (dort ist die
+  Aussage „unbekannt“). Reiter:
+  - **Weg für IP:** je Kontext die wirksame Route (längstes Präfix) mit Next-Hops, Interface
+    und Zone (ECMP = mehrere); daneben Policy-Routen bzw. SD-WAN-Regeln, die vorgehen (blau =
+    Ziel passt sicher, grau = Ziel nur über Objekte bestimmt, also möglich). Das ist ein Hop,
+    noch kein Pfad über mehrere Firewalls (folgt mit Stufe 3).
+  - **Routen:** wirksam (RIB), BGP-Pfade (bester bzw. Backup) und statische Routen (aktiv bzw.
+    inaktiv); Suche, „enthält IP“ (längstes Präfix zuerst), Filter Tabelle und Kontext.
+  - **BGP-Nachbarn**, **HA & Session-Sync** (Modus, Gruppe, Mitglieder mit Rolle, FGSP-Peers),
+    **Policy-Routen & SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)**
+    (VRF, Border-Leafs mit Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und
+    Adressen, BGP-Peers).
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
   (Application Profiles, EPGs, Server); **Vorschläge** nach der Projektnummer aus
@@ -367,7 +387,10 @@ an (`deploy/agent-gateway`, Port 8443).
   zeigt keine Ausgaben. Dort stehen auch Meldungen wie „Update nicht installiert“ oder ein
   Fehler beim Lesen eines Geräts.
 - **Agenten** ziehen beim nächsten Lauf selbst nach (ADR 0011). Im Wach-Modus prüfen sie seit
-  0.11.4 alle 5 Minuten auf eine neue Version, vorher nur beim Start. Klappt ein Update nicht,
+  0.11.4 alle 5 Minuten auf eine neue Version, vorher nur beim Start. Seit 0.16.0 bekommt ein
+  Agent mit alter Version neue Läufe erst nach dem Update; ab 0.16.0 aktualisiert er sich dann
+  sofort. So liest schon der erste Lauf nach einem Update mit der neuen Version. Wartet ein
+  Lauf länger als 10 Minuten, holt ihn auch die alte Version ab. Klappt ein Update nicht,
   steht der Grund in der Agentenliste unter der Version (z. B. „Signatur fehlt“, „Selbst-Update
   auf der Station abgeschaltet“, „Update-Prüfung nicht möglich“). Die Agentenliste zeigt je Agent
   „0.2.0 · Build …“ und „aktuell“ bzw. „Update beim nächsten Lauf“. Manuell (`install.ps1`) nur
@@ -437,6 +460,12 @@ an (`deploy/agent-gateway`, Port 8443).
   VDOM nicht lesen. Die übrigen VDOMs sind eingelesen, die Daten des fehlenden fehlen bis zum
   nächsten vollständigen Lauf. Auf der FortiGate dem REST-API-Konto den VDOM (bzw. alle VDOMs)
   mit einem Read-only-Profil geben.
+
+- **Lauf mit „Routing nicht lesbar: … (HTTP 403)“** (ab 0.16.0) — Regeln und Objekte sind
+  eingelesen, aber dem Konto fehlt das Leserecht auf diese Routing-Tabelle (FortiGate: Profil
+  mit Router/System lesen; APIC: Fabric-Knoten lesen). Unter **Routing & Wege** steht der
+  Kontext dann als nicht lesbar. Recht ergänzen und neu einlesen. „zu gross“ heisst: mehr als
+  50 000 Einträge (z. B. volle Internet-Tabelle per BGP) – diese Tabelle wird nicht übernommen.
 
 - **Lauf „Fehler“ mit „Einspielen fehlgeschlagen: …“** — das Gerät wurde gelesen, aber das
   Ergebnis liess sich nicht in den Store schreiben. Der Ingest wird dann vollständig verworfen

@@ -23,6 +23,7 @@ import NetBoxSync from "./NetBoxSync";
 import Objects from "./Objects";
 import Overview from "./Overview";
 import Reconcile from "./Reconcile";
+import Routing from "./Routing";
 import RulesTable from "./RulesTable";
 import Runs from "./Runs";
 import System from "./System";
@@ -36,6 +37,7 @@ export type View =
   | "regeln"
   | "objekte"
   | "nat"
+  | "routing"
   | "apps"
   | "findings"
   | "abgleich"
@@ -60,6 +62,7 @@ const NAV: NavEntry[] = [
   { key: "regeln", label: "Regeln & Contracts", icon: "rules", section: "doc" },
   { key: "objekte", label: "Objekte & Inventar", icon: "objects", section: "doc" },
   { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc" },
+  { key: "routing", label: "Routing & Wege", icon: "route", section: "doc" },
   { key: "apps", label: "Applikationen", icon: "apps", section: "doc" },
   { key: "findings", label: "Findings", icon: "findings", section: "doc" },
   { key: "abgleich", label: "Abgleich", icon: "reconcile", section: "doc" },
@@ -495,6 +498,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                 }}
               />
             )}
+            {current === "routing" && <Routing tenantId={tenantId} tenantLabel={tenantLabel} />}
             {current === "design" && <Design />}
             {current === "users" && <Users cfg={cfg} me={me} tenants={tenants ?? []} />}
             {current === "tenants" && (

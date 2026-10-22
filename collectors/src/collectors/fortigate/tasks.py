@@ -20,6 +20,7 @@ from collectors.common.dto import CollectorResult, Target
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
 from collectors.fortigate import normalize as norm
+from collectors.fortigate import routing
 from collectors.fortigate.client import FortiGateClient
 
 
@@ -143,15 +144,27 @@ def _normalize_vdom(d: dict) -> tuple[list, list, list]:
 
 
 def _vdom_message(d: dict) -> str | None:
-    """VDOMs des Laufs fuer die Lauf-Meldung; nicht lesbare zuerst (Profil pruefen)."""
+    """VDOMs des Laufs fuer die Lauf-Meldung; nicht lesbare zuerst (Profil pruefen), dazu
+    Routing-Tabellen ohne Leserecht (ADR 0019 Stufe 2)."""
     read = [str(v.get("vdom") or "Standard") for v in d.get("vdoms") or []]
     skipped = [f"{s['vdom']} ({s['error']})" for s in d.get("skipped") or []]
+    parts = []
     if skipped:
-        return (
+        parts.append(
             f"VDOM nicht lesbar: {', '.join(skipped)} - das Profil braucht Lesezugriff auf alle "
             f"VDOMs; gelesen: {', '.join(read) or '-'}"
         )
-    return f"VDOMs: {', '.join(read)}" if len(read) > 1 else None
+    elif len(read) > 1:
+        parts.append(f"VDOMs: {', '.join(read)}")
+    missing = [
+        f"{v.get('vdom') or 'Standard'}: {m}" if len(read) > 1 else m
+        for v in d.get("vdoms") or []
+        for m in (v.get("routing") or {}).get("missing", [])
+    ]
+    missing += (d.get("ha") or {}).get("missing", [])
+    if missing:
+        parts.append(f"Routing nicht lesbar: {'; '.join(missing)}")
+    return " · ".join(parts) or None
 
 
 def collect_once(
@@ -168,18 +181,16 @@ def collect_once(
             nat_rules += n
             objects += o
             zones += vdom.get("zones") or []
-        inventory = norm.normalize_inventory(
-            d.get("interfaces"),
-            zones,
-            d.get("system"),
-            target.name if target is not None and target.name else "fortigate",
-        )
+        name = target.name if target is not None and target.name else "fortigate"
+        inventory = norm.normalize_inventory(d.get("interfaces"), zones, d.get("system"), name)
+        node = (d.get("system") or {}).get("hostname") or name  # wie das Geraet im Inventar
         result = CollectorResult(
             status="completed",
             rules=rules,
             nat_rules=nat_rules,
             objects=objects,
             inventory=inventory,
+            routing=routing.normalize(d.get("vdoms") or [], d.get("ha"), node),
             message=_vdom_message(d),
         )
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck

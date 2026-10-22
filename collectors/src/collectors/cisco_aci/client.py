@@ -123,6 +123,45 @@ class ApicClient:
                 out[cls] = []
         return out
 
+    def node_subtree(
+        self, pod: str, node: str, dn: str, classes: tuple[str, ...]
+    ) -> list[dict[str, Any]]:
+        """Objekte unter `topology/pod-<pod>/node-<node>/<dn>` (z. B. Routing-Tabelle einer VRF
+        auf einem Border-Leaf, ADR 0019) - nur lesend."""
+        path = f"/api/node/mo/topology/pod-{pod}/node-{node}/{dn}.json"
+        params = {"query-target": "subtree", "target-subtree-class": ",".join(classes)}
+        return self._get(path, params)
+
+    def border_routing(self, contexts: list[tuple[str, str, str]]) -> dict:
+        """Je (Pod, Knoten, Tenant:VRF): Routen IPv4/IPv6 und BGP-Nachbarn. Ohne Recht bzw. ohne
+        Daten (VRF nicht auf dem Leaf) bleibt die Tabelle leer; `missing` nennt fehlende Rechte."""
+        from collectors.cisco_aci.routing import BGP_CLASSES, RIB_CLASSES, ROUTE_LIMIT
+
+        out: dict[tuple[str, str, str], dict] = {}
+        for pod, node, vrf in contexts:
+            data: dict[str, Any] = {"missing": []}
+            reads = {
+                "rib4": (f"sys/uribv4/dom-{vrf}", RIB_CLASSES[4], "Routing-Tabelle IPv4"),
+                "rib6": (f"sys/uribv6/dom-{vrf}", RIB_CLASSES[6], "Routing-Tabelle IPv6"),
+                "bgp": (f"sys/bgp/inst/dom-{vrf}", BGP_CLASSES, "BGP-Nachbarn"),
+            }
+            for key, (dn, classes, label) in reads.items():
+                try:
+                    rows = self.node_subtree(pod, node, dn, classes)
+                except httpx.HTTPStatusError as exc:
+                    code = exc.response.status_code
+                    rows = []
+                    if code in (401, 403):
+                        data["missing"].append(f"{label} (HTTP {code})")
+                    elif code not in (400, 404):
+                        data["missing"].append(f"{label} (HTTP {code})")
+                if len(rows) > ROUTE_LIMIT:
+                    data["missing"].append(f"{label} (zu gross: {len(rows)} Eintraege)")
+                    rows = []
+                data[key] = rows
+            out[(pod, node, vrf)] = data
+        return out
+
     def ping(self) -> int:
         """Leichter Lese-Zugriff (Login + Tenant-Liste); gibt die Anzahl Tenants zurueck."""
         return len(self.tenants())

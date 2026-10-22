@@ -117,3 +117,51 @@ def test_ohne_agent_paket_kein_update(client, tmp_path):
         assert info["version"] is None and info["enabled"] is False and info["files"] == []
     finally:
         del client.app.dependency_overrides[get_settings]
+
+
+def test_veralteter_agent_bekommt_neue_laeufe_erst_nach_dem_update(
+    client, tmp_path, session_factory
+):
+    """Dev-Befund 0.15.0: der erste Lauf nach einem Update lief noch mit dem alten Agenten (er
+    prueft im Wach-Modus nur alle 5 min). Jetzt haelt next-run neue Laeufe zurueck und meldet
+    `update`; nach UPDATE_HOLD bekommt auch der alte Agent den Lauf, damit nichts haengt."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.api import agents as agents_api
+    from app.models import CollectorRun
+
+    _package(tmp_path)
+    client.app.dependency_overrides[get_settings] = lambda: Settings(
+        agent_package_dir=str(tmp_path)
+    )
+    try:
+        _, headers = _agent(client)
+        current = client.get("/internal/agent/update", headers=headers).json()["version"]
+        tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+        body = {"tenant_id": tid, "name": "fw-01", "platform": "fortigate", "base_url": "https://x"}
+        sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+        job = {"platform": "fortigate", "tenant_id": tid, "source_system_id": sid,
+               "execution": "external"}  # fmt: skip
+        run_id = client.post("/jobs/collect", json=job, headers=ADMIN).json()["run_id"]
+
+        old = {**headers, "X-Agent-Version": "0.0.1+alt", "X-Agent-Update": "ok"}
+        r = client.get("/internal/agent/next-run", headers=old).json()
+        assert r == {"run": None, "update": True}
+        # Update-Pruefung schlug fehl bzw. Agent ohne Selbst-Update: Lauf trotzdem abholen
+        failed = {**old, "X-Agent-Update": "Selbst-Update fehlgeschlagen: x"}
+        assert client.get("/internal/agent/next-run", headers=failed).json()["update"] is False
+
+        with session_factory() as s:  # wartet laenger als UPDATE_HOLD: der alte Agent holt ihn
+            run = s.get(CollectorRun, run_id)
+            run.status = run.status.QUEUED
+            run.queued_at = datetime.now(UTC) - agents_api.UPDATE_HOLD - timedelta(minutes=1)
+            s.commit()
+        r = client.get("/internal/agent/next-run", headers=old).json()
+        assert r["run"]["run_id"] == run_id and r["update"] is True
+
+        job2 = client.post("/jobs/collect", json=job, headers=ADMIN).json()["run_id"]
+        new = {**headers, "X-Agent-Version": current, "X-Agent-Update": "ok"}
+        r = client.get("/internal/agent/next-run", headers=new).json()
+        assert r["run"]["run_id"] == job2 and r["update"] is False
+    finally:
+        del client.app.dependency_overrides[get_settings]

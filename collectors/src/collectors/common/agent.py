@@ -13,6 +13,10 @@ from collectors.config import get_settings
 
 log = logging.getLogger(__name__)
 
+# Letzte Antwort von next-run: eine neue Agent-Version liegt bereit, Laeufe kommen erst nach
+# dem Update (0.16.0)
+_update_requested = False
+
 
 def _headers() -> dict[str, str]:
     return agent_headers()  # Agent-Token + Version (ADR 0011)
@@ -20,12 +24,20 @@ def _headers() -> dict[str, str]:
 
 def next_run(platform: str | None = None) -> dict | None:
     """Holt den naechsten offenen externen Lauf (oder None, wenn keiner ansteht)."""
+    global _update_requested
     settings = get_settings()
     params = {"platform": platform} if platform else None
     response = http.get_json(
         f"{settings.orchestrator_url}/internal/agent/next-run", params, _headers()
     )
-    return response.json().get("run")
+    body = response.json()
+    _update_requested = bool(body.get("update"))
+    return body.get("run")
+
+
+def update_requested() -> bool:
+    """Der Orchestrator haelt Laeufe zurueck, bis der Agent aktualisiert ist."""
+    return _update_requested
 
 
 def heartbeat() -> None:

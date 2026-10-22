@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from importlib import resources
 
 from collectors.celery_app import app
+from collectors.cisco_aci import routing as aci_routing
 from collectors.cisco_aci.client import ApicClient
 from collectors.cisco_aci.inventory import parse_inventory
 from collectors.cisco_aci.mo import parse_epgs, parse_filters, parse_mo_export
@@ -73,11 +74,18 @@ def _no_credentials(target: Target | None) -> str:
 
 
 def gather(target: Target | None = None) -> dict:
-    """Tenant-Baum + Fabric-Klassen - echter APIC oder (nur zentral) Beispieldaten."""
+    """Tenant-Baum + Fabric-Klassen + Routing der Border-Leafs (ADR 0019) - echter APIC oder
+    (nur zentral) Beispieldaten."""
     apic = _credentials(target)
     if apic is not None:
         with apic.client() as client:
-            return {"tenants": client.export(apic.tenants), "fabric": client.fabric()}
+            export = client.export(apic.tenants)
+            contexts = aci_routing.border_contexts(aci_routing.parse_l3outs(export))
+            return {
+                "tenants": export,
+                "fabric": client.fabric(),
+                "border": client.border_routing(contexts),
+            }
     if get_settings().agent_token:
         # Agent im Kundennetz: nie Beispieldaten in einen echten Mandanten schreiben
         raise RuntimeError(_no_credentials(target))
@@ -108,12 +116,29 @@ def collect_once(
         epgs = [NormalizedEpg(**e) for e in parse_epgs(export)]
         inventory = parse_inventory(export, data.get("fabric"))
         objects = filter_objects(parse_filters(export))
+        routing = aci_routing.normalize(export, data.get("fabric"), data.get("border"))
         result = CollectorResult(
-            status="completed", rules=rules, epgs=epgs, inventory=inventory, objects=objects
+            status="completed",
+            rules=rules,
+            epgs=epgs,
+            inventory=inventory,
+            objects=objects,
+            routing=routing,
+            message=_routing_message(routing),
         )
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(status="failed", message=diagnose.device_error(exc, "cisco_aci"))
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))
+
+
+def _routing_message(routing) -> str | None:
+    """Border-Leaf-Tabellen ohne Leserecht fuer die Lauf-Meldung (ADR 0019 Stufe 2)."""
+    missing = [
+        f"{c.node} {c.context}: {m}"
+        for c in (routing.contexts if routing else [])
+        for m in c.missing
+    ]
+    return f"Routing nicht lesbar: {'; '.join(missing)}" if missing else None
 
 
 @app.task(name="collectors.cisco_aci.collect")

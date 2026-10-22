@@ -226,9 +226,11 @@ def _watch(
     checked = clock()
     print(f"Agent wartet auf Laeufe (alle {every} s, {minutes:g} min)")
     while True:
-        if update is not None and clock() - checked >= UPDATE_EVERY_SECONDS:
-            # neue Version uebernimmt die restliche Wachzeit (Dev-Befund 0.11.4: bisher
-            # pruefte der Agent nur beim Start und lief im Wach-Modus mit der alten Version)
+        # neue Version uebernimmt die restliche Wachzeit (Dev-Befund 0.11.4: bisher pruefte
+        # der Agent nur beim Start und lief im Wach-Modus mit der alten Version); haelt der
+        # Orchestrator Laeufe fuer das Update zurueck, sofort (0.16.0)
+        due = clock() - checked >= UPDATE_EVERY_SECONDS or agent_api.update_requested()
+        if update is not None and due:
             checked = clock()
             left = (deadline - checked) / 60
             if left > every / 60:

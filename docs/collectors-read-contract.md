@@ -54,8 +54,28 @@ Objekte (Adressen, Gruppen, VIPs, IP-Pools, Services, Service-Gruppen) werden zu
 Namen** als `device_object` gespeichert, Regeln verweisen per Name darauf (`rule_object_ref`,
 ADR 0010) – die Doku zeigt die Namen wie auf der Firewall, aufgelöst bis zum Wert.
 
-**Nicht für UC1** (erst Topologie/später, und dort Secrets strippen): `vpn ipsec …`
-(`psksecret`!), `router bgp …`.
+**Routing, BGP, HA (ADR 0019 Stufe 2, 0.16.0)** – je VDOM, nur lesend, Felder per
+Positivliste (Passwörter, Pre-Shared-Keys und Schlüssel kommen nie mit):
+
+| Quelle | Felder | → Modell |
+|---|---|---|
+| Monitor `router/ipv4`, `router/ipv6` | `ip_mask`, `type`, `distance`, `metric`, `priority`, `gateway`, `interface` | `topo_route` `rib` (je Präfix/Protokoll/Distanz, mehrere Gateways = ECMP) |
+| Monitor `router/bgp/paths`, `paths6` | `nlri_prefix`/`_len`, `next_hop`, `learned_from`, `is_best`, `as_path`, `local_pref`, `med`, `origin`, `weight` | `topo_route` `bgp` (auch nicht beste Pfade = Backup-Wege) |
+| Monitor `router/bgp/neighbors`, `neighbors6` | `neighbor_ip`, `local_ip`, `remote_as`, `state`, `admin_status` | `topo_peer` |
+| `router/static`, `static6` | `seq-num`, `dst`, `gateway`, `device`, `distance`, `priority`, `status`, `blackhole`, `comment` | `topo_route` `static` (auch inaktive bzw. mit höherer Distanz) |
+| `router/policy`, `policy6` | `seq-num`, `input-device`, `src`/`srcaddr`, `dst`/`dstaddr`, `protocol`, `start-`/`end-port`, `gateway`, `output-device`, `status` | `topo_policy_route` `policy` |
+| `system/sdwan` | `service[]` (`id`, `name`, `mode`, `dst`, `src`, `priority-members`), `members[]` (`interface`, `gateway`, `zone`) | `topo_policy_route` `sdwan` (Mitglieder nach Vorrang) |
+| `system/ha` (global), Monitor `system/ha-peer` | `mode`, `group-name`, `group-id`, `session-pickup*`, `priority`, `override`; Mitglieder `hostname`, `serial_no`, `priority`, Rolle | `topo_ha` – **ohne** `password` |
+| `system/standalone-cluster` (ab 7.2) bzw. `system/cluster-sync` | `cluster-peer[]`: `sync-id`, `peervd`, `peerip`, `syncvd`; Gruppe/Mitglied | `topo_ha.sync_peers` (FGSP) – **ohne** `psksecret` |
+
+Monitor-Listen liest der Collector seitenweise (`start`/`count`), wenn die FortiGate kürzt;
+mehr als 50 000 Einträge je Tabelle werden nicht übernommen (Meldung „zu gross“). Fehlt das
+Leserecht (401/403), steht die Tabelle in der Lauf-Meldung („Routing nicht lesbar: …“) und im
+Kontext als nicht lesbar; fehlt die Tabelle (Version, Funktion aus), bleibt sie leer. Das
+Read-only-Profil braucht Lesezugriff auf **Router** und **System** (inkl. Monitor).
+
+**Nicht gelesen:** `vpn ipsec …` (`psksecret`!), die BGP-Konfiguration `router bgp` (Passwörter
+der Nachbarn) – BGP kommt nur aus dem Monitor-API.
 
 **Beobachtete Zusatz-Prefixe** (→ Wörterbuch/Kaskade): `N-EXT_` (externes Netz),
 `T_` (Transfernetz), bare-name `geography` (`type geography`, `country` → `not_applicable`),
@@ -120,6 +140,21 @@ Regeln tragen `kind` (`contract` | `taboo` | `preferred_group`) im Rohdatensatz.
 
 **Beobachtete Abweichungen** (Ausnahmen-Kaskade): neben den 7 Standard-EPGs auch
 `EG_nfs01`, `EG_privat01`; Dual-Stack-Subnetze real.
+
+**L3Out und Border-Leafs (ADR 0019 Stufe 2, 0.16.0):** aus dem gelesenen Tenant-Baum je
+`l3extOut`: VRF (`l3extRsEctx`, sonst `common`), Border-Leafs (`l3extRsNodeL3OutAtt`: `tDn`,
+`rtrId`; statische Routen `ipRouteP`/`ipNexthopP`), Interfaces bzw. SVIs
+(`l3extRsPathL3OutAtt`: `tDn`, `ifInstT`, `encap`, `addr`, `mtu`; vPC-Seiten `l3extMember`,
+weitere Adressen `l3extIp`), BGP-Peers (`bgpPeerP` `addr` mit `bgpAsP` `asn` – **ohne**
+`password`) und externe EPGs → `topo_l3out`. Dazu je Border-Leaf und VRF (nur lesend):
+
+- `GET /api/node/mo/topology/pod-<p>/node-<n>/sys/uribv4/dom-<Tenant>:<VRF>.json` mit
+  `query-target=subtree&target-subtree-class=uribv4Route,uribv4Nexthop` (IPv6: `uribv6…`) →
+  `topo_route` `rib` (Next-Hops je Route = ECMP; `owner` → Protokoll, `pref` → Distanz);
+- `…/sys/bgp/inst/dom-<Tenant>:<VRF>.json` mit `bgpPeer,bgpPeerEntry` → `topo_peer` (`operSt`).
+
+Der APIC-Benutzer braucht dafür Lesezugriff auf die Fabric-Knoten (`topology`); fehlt er,
+steht die Tabelle in der Lauf-Meldung.
 
 ## 3. Referenzquellen (ADR 0010; komplett lesen, read-only)
 

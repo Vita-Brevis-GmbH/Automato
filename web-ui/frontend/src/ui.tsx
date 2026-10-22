@@ -97,6 +97,13 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   reconcile: <path d="M4 9h13l-3-3m3 3-3 3M20 15H7l3-3m-3 3 3 3" />,
+  route: (
+    <>
+      <circle cx="6" cy="18" r="2" />
+      <circle cx="18" cy="6" r="2" />
+      <path d="M6 16V10a4 4 0 0 1 4-4h6M18 8v6a4 4 0 0 1-4 4H8" />
+    </>
+  ),
   upload: <path d="M12 16V4m0 0-4 4m4-4 4 4M5 20h14" />,
 };
 
