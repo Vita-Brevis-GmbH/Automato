@@ -511,3 +511,14 @@ test("Routing: Regeln auf dem Weg je Firewall", async ({ page }) => {
   await expect(page).toHaveURL(/#regeln\?rule=\d+/);
   await expect(page.locator(".drawer")).toContainText("web");
 });
+
+test("Regeln: Suche nach einer IP mit Relevanz nach dem Routing", async ({ page }) => {
+  await page.goto("/#regeln");
+  await search(page).fill("10.30.0.10");
+  const wrong = rows(page).filter({ hasText: "lan-to-dmz-falsch" });
+  await expect(wrong).toContainText("für 10.30.0.10 nicht möglich");
+  await expect(rows(page).filter({ hasText: "lan-to-dmz-web" })).not.toContainText("nicht möglich");
+  await page.click("button:has-text('routingtechnisch unmögliche ausblenden')");
+  await expect(wrong).toHaveCount(0);
+  await expect(rows(page).filter({ hasText: "lan-to-dmz-web" })).toHaveCount(1);
+});

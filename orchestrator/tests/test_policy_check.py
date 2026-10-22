@@ -8,6 +8,7 @@ Eine Firewall mit LAN, DMZ und Internet, Policies in dieser Reihenfolge:
 3. lan -> internet FQDN (tcp/443)      4. lan -> internet alles fuer eine Benutzergruppe
 5. any -> any sperren, abgeschaltet
 6. internet -> dmz Web (tcp/443) erlauben
+7. lan -> internet das DMZ-Netz (tcp/22) - falscher Ausgang, kann nie greifen
 """
 
 ADMIN = {"X-Dev-Roles": "admin"}
@@ -67,6 +68,15 @@ FW = {
         ),
         _policy(5, "block-all", "any", "any", ["all"], ["all"], ["all"], "deny", status="disable"),
         _policy(6, "inet-to-web", "internet", "dmz", ["all"], ["10.30.0.10"], ["tcp/443"]),
+        _policy(
+            7,
+            "lan-to-dmz-falsch",
+            "lan",
+            "internet",
+            ["10.10.0.0/24"],
+            ["10.30.0.0/24"],
+            ["tcp/22"],
+        ),
     ],  # fmt: skip
     "inventory": {
         "devices": [{"name": "fw-r", "role": "firewall"}],

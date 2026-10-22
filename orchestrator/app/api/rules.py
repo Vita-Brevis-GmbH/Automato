@@ -12,6 +12,7 @@ Liest Regeln aus dem Rule & Service Store:
                        bzw. ablehnen und die Entscheidung zuruecknehmen (operator, 0.12.0).
 """
 
+import ipaddress
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -44,7 +45,7 @@ from app.schemas.rules import (
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import objects as objects_store
-from app.store import rule_index, virtual
+from app.store import relevance, rule_index, virtual
 from app.store import rules as rules_store
 
 router = APIRouter(prefix="/rules", tags=["rules"])
@@ -93,6 +94,9 @@ def list_rules(
     parallel: str | None = Query(
         None, pattern="^(differs|missing)$", description="Verbund: abweichend bzw. fehlt"
     ),
+    routable: bool = Query(
+        False, description="Suche nach einer IP: routingtechnisch unmoegliche Regeln ausblenden"
+    ),
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
@@ -102,7 +106,11 @@ def list_rules(
 
     `q` sucht in allem, was zur Regel gehoert (Gruppenmitglieder, Werte, Services, Zonen,
     EPG-Lage, NAT, IP im Netz, Netz/CIDR); `object`/`object_id`/`nat` filtern exakt, `net`
-    listet die Regeln eines Subnetzes - alles ueber den Regelindex per SQL."""
+    listet die Regeln eines Subnetzes - alles ueber den Regelindex per SQL.
+
+    Ist `q` genau eine IP (0.26.0), traegt jede Firewall-Regel die Relevanz fuer sie (Routing
+    ihrer Firewall, `relevance`); `X-Impossible-Count` = Regeln, die routingtechnisch nicht
+    moeglich sind - mit `routable=true` ausgeblendet."""
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "rules")
     rule_index.ensure(session, tenant_id)
@@ -141,6 +149,16 @@ def list_rules(
         )
         return stmt.where(*conds)
 
+    ip = _single_ip(q)
+    rel: dict[int, dict] = {}
+    if ip is not None:
+        rel = relevance.for_ip(
+            session, tenant_id, list(session.scalars(scoped(select(Rule.id)))), ip
+        )
+        impossible = [rid for rid, x in rel.items() if x["state"] == relevance.IMPOSSIBLE]
+        response.headers["X-Impossible-Count"] = str(len(impossible))
+        if routable and impossible:
+            conds.append(Rule.id.not_in(impossible))
     total = session.scalar(scoped(select(func.count(Rule.id)))) or 0
     ids = list(
         session.scalars(
@@ -148,7 +166,21 @@ def list_rules(
         )
     )
     response.headers["X-Total-Count"] = str(total)
-    return rule_index.outs(session, rule_index.load_rules(session, ids))
+    out = rule_index.outs(session, rule_index.load_rules(session, ids))
+    for r in out:
+        r.relevance = rel.get(r.id)
+    return out
+
+
+def _single_ip(q: str | None) -> str | None:
+    """Die Suche ist genau eine IP (ohne Netz/Bereich)?"""
+    tokens = (q or "").split()
+    if len(tokens) != 1:
+        return None
+    try:
+        return str(ipaddress.ip_address(tokens[0]))
+    except ValueError:
+        return None
 
 
 @router.get("/{rule_id}", response_model=RuleDetailOut)

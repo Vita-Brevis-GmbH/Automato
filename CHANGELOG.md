@@ -7,6 +7,22 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.26.0 – 2026-10-22
+
+Relevanz in der Regel-Liste (ADR 0019 Punkt 6). Ohne Migration.
+
+- **Suche nach einer IP:** Ist die Suche in „Regeln & Contracts“ genau eine IP, prüft Automato
+  jede gefundene Firewall-Regel gegen das Routing ihrer Firewall, wie in der Doku (0.24.0).
+  - Ziel: Leitet die Firewall die IP über den Ausgang der Regel?
+  - Quelle: Kommt Verkehr von der IP über den Eingang der Regel an?
+  - Regeln, die die IP nicht sehen können, tragen „für <IP> nicht möglich“ mit Begründung,
+    z. B. eine Regel für das DMZ-Netz am Ausgang internet.
+  - „N routingtechnisch unmögliche ausblenden“ blendet sie aus (über alle Regeln, nicht nur
+    die geladene Seite).
+- **API:** `GET /rules?q=<IP>` mit `relevance` je Regel und `X-Impossible-Count`;
+  `routable=true` blendet aus.
+- Test-Firewall um eine Regel mit falschem Ausgang ergänzt.
+
 ## 0.25.0 – 2026-10-22
 
 Gegenstelle `any` in der Doku (ADR 0019 Punkt 6). Konzeptbefund: `any` aus dem Internet wirkte

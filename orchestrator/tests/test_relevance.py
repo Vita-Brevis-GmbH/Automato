@@ -24,6 +24,7 @@ def test_regeln_nur_wo_der_verkehr_durchkommt(client):
         ("lan-to-dmz-deny", "src"),  # vom Server aus: sein Verkehr kommt über dmz, nicht lan
         ("lan-to-inet-users", "dst"),
         ("lan-to-inet-users", "src"),
+        ("lan-to-dmz-falsch", "dst"),  # DMZ-Netz am Ausgang internet
     }
     inet = gone[("lan-to-inet-users", "dst")]
     assert inet["text"] == (
@@ -47,8 +48,8 @@ def test_regeln_nur_wo_der_verkehr_durchkommt(client):
     assert rel[(gone["rule_id"], "src")] == "impossible"  # Verkehr vom Server kommt über dmz
     texts = [h["relevance_text"] for h in out["hits"] if h["relevance"] == "impossible"]
     assert any("kommt bei fw-r über dmz (Zone dmz) an" in t for t in texts)
-    assert out["summary"]["impossible"] == 1
-    assert out["summary"]["rules"] == len({h["rule_id"] for h in out["hits"]}) - 1
+    assert out["summary"]["impossible"] == 2  # lan-to-inet-users, lan-to-dmz-falsch
+    assert out["summary"]["rules"] == len({h["rule_id"] for h in out["hits"]}) - 2
     exported = {r.get("_rule") for t in out["tables"] for r in t["rows"]}
     assert gone["rule_id"] not in exported
 
@@ -78,3 +79,28 @@ def test_gegenstelle_any_ist_was_hinter_dem_interface_liegt(client):
     assert client.post("/routing/exits", json=exit_, headers=OP).status_code == 201
     idx, inet = rows()[("inet-to-web", "dst")]
     assert (idx, inet["Source"]) == (2, "all → Internet Provider (internet)")
+
+
+def test_regel_liste_mit_relevanz_fuer_eine_ip(client):
+    """0.26.0: Suche nach einer IP - jede Firewall-Regel trägt die Relevanz für sie; mit
+    `routable=true` fehlen die routingtechnisch unmöglichen."""
+    tid = pc._seed(client)
+    params = {"tenant_id": tid, "q": "10.30.0.10"}
+    r = client.get("/rules", params=params)
+    rel = {x["name"]: x["relevance"] for x in r.json()}  # über Netze bzw. Hosts, ohne any
+    assert set(rel) == {"lan-to-dmz-web", "inet-to-web", "lan-to-dmz-falsch"}
+    assert r.headers["X-Impossible-Count"] == "1"
+    assert rel["lan-to-dmz-falsch"] == {
+        "state": "impossible",
+        "text": "fw-r leitet 10.30.0.10 über dmz (Zone dmz) – die Regel gilt nur für den Ausgang "
+        "internet",
+        "sides": {"dst": "impossible"},
+    }
+    assert rel["inet-to-web"]["state"] == rel["lan-to-dmz-web"]["state"] == "possible"
+    hidden = client.get("/rules", params={**params, "routable": True})
+    assert hidden.headers["X-Total-Count"] == "2"
+    assert "lan-to-dmz-falsch" not in {x["name"] for x in hidden.json()}
+    # andere Suche: keine Relevanz
+    other = client.get("/rules", params={"tenant_id": tid, "q": "lan"})
+    assert "X-Impossible-Count" not in other.headers
+    assert all(x["relevance"] is None for x in other.json())

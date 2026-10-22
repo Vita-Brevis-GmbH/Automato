@@ -75,6 +75,9 @@ class RuleOut(BaseModel):
     # Parallele Firewalls (Verbund, 0.18.0): fuehrende Regel {group, same, differs, missing}
     # bzw. abweichende Regel {group, lead, lead_rule_id, fields}
     parallel: dict | None = None
+    # Suche nach einer IP (0.26.0): kann die Regel Verkehr von/zu ihr nach dem Routing ihrer
+    # Firewall sehen - {state: possible|impossible|unknown, text, sides: {src|dst: state}}
+    relevance: dict | None = None
 
 
 class EpgSubnetOut(BaseModel):

@@ -33,6 +33,8 @@ export interface Rule {
   vdom?: string | null; // FortiGate-VDOM der Policy (ADR 0019)
   pair?: RulePair | null; // IPv4/IPv6-Gegenstück (nur Markierung, eigene Regel)
   parallel?: RuleParallel | null; // Verbund paralleler Firewalls (0.18.0)
+  // Suche nach einer IP (0.26.0): kann die Regel Verkehr von/zu ihr nach dem Routing sehen
+  relevance?: { state: "possible" | "impossible" | "unknown"; text: string; sides: Record<string, string> } | null;
 }
 
 // Parallele Firewalls (Verbund): führende Regel mit den Firewalls, auf denen sie gleich steht,
@@ -102,6 +104,7 @@ export type RuleDomain = "firewall" | "aci_contract";
 export interface RulePage {
   rules: Rule[];
   total: number; // Treffer insgesamt (nach Filtern/Suche), Header X-Total-Count
+  impossible?: number | null; // Suche nach einer IP: routingtechnisch unmögliche (X-Impossible-Count)
 }
 
 export interface RuleSummary {
@@ -1274,6 +1277,7 @@ export async function fetchRules(opts: {
   vdom?: string; // FortiGate-VDOM
   pair?: string; // same | similar | confirmed | any | none
   parallel?: string; // differs | missing (Verbund paralleler Firewalls)
+  routable?: boolean; // Suche nach einer IP: routingtechnisch unmögliche ausblenden
   srcZone?: string;
   dstZone?: string;
   action?: string;
@@ -1294,6 +1298,7 @@ export async function fetchRules(opts: {
     vdom: opts.vdom,
     pair: opts.pair,
     parallel: opts.parallel,
+    routable: opts.routable ? "true" : undefined,
     src_zone: opts.srcZone,
     dst_zone: opts.dstZone,
     action: opts.action,
@@ -1303,7 +1308,12 @@ export async function fetchRules(opts: {
   const response = await fetchChecked(`/api/rules${qs(params)}`);
   const rules = (await response.json()) as Rule[];
   const total = Number(response.headers.get("X-Total-Count") ?? rules.length);
-  return { rules, total: Number.isFinite(total) ? total : rules.length };
+  const impossible = response.headers.get("X-Impossible-Count");
+  return {
+    rules,
+    total: Number.isFinite(total) ? total : rules.length,
+    impossible: impossible === null ? null : Number(impossible),
+  };
 }
 // IPv4/IPv6-Paar bestätigen bzw. ablehnen (operator) und die Entscheidung zurücknehmen
 export const decidePair = (ruleId: number, partnerId: number, decision: "confirmed" | "rejected") =>

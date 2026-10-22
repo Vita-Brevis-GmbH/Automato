@@ -26,9 +26,9 @@ import ipaddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import InvInterface, Rule, TopoRoute
+from app.models import InvInterface, Rule, RuleDomain, RuleIpRange, TopoRoute, Zone
 from app.store.paths import Graph, Key, _exit_label
-from app.store.topology import Table, table_of
+from app.store.topology import Table, ip_hex, table_of
 
 SHOWN_NETS = 3  # Netze hinter einem Interface in der Anzeige
 
@@ -249,3 +249,52 @@ def summarize(states: list[str]) -> str:
         if state in states:
             return state
     return IMPOSSIBLE if states else UNKNOWN
+
+
+def for_ip(session: Session, tenant_id: int, rule_ids: list[int], ip_text: str) -> dict[int, dict]:
+    """Regel-Liste (0.26.0): je Firewall-Regel, deren Quelle bzw. Ziel die IP abdeckt, die
+    Relevanz fuer diese IP - {state, text, sides}; Regeln ohne Abdeckung bzw. ACI fehlen."""
+    try:
+        ip = ipaddress.ip_address(ip_text.strip())
+    except ValueError:
+        return {}
+    if not rule_ids:
+        return {}
+    hx = ip_hex(ip)
+    sides: dict[int, set[str]] = {}
+    for rid, role in session.execute(
+        select(RuleIpRange.rule_id, RuleIpRange.role).where(
+            RuleIpRange.tenant_id == tenant_id,
+            RuleIpRange.rule_id.in_(rule_ids),
+            RuleIpRange.family == ip.version,
+            RuleIpRange.role.in_(("src", "dst")),
+            RuleIpRange.lo <= hx,
+            RuleIpRange.hi >= hx,
+        )
+    ):
+        sides.setdefault(rid, set()).add(role)
+    if not sides:
+        return {}
+    rows = session.execute(
+        select(
+            Rule.id, Rule.source_system_id, Rule.vdom, Rule.raw, Rule.src_zone_id, Rule.dst_zone_id
+        ).where(Rule.id.in_(list(sides)), Rule.domain == RuleDomain.FIREWALL)
+    ).all()
+    zone_ids = {z for r in rows for z in (r.src_zone_id, r.dst_zone_id) if z}
+    zones = (
+        dict(session.execute(select(Zone.id, Zone.name).where(Zone.id.in_(zone_ids))).all())
+        if zone_ids
+        else {}
+    )
+    rel = Relevance(session, tenant_id)
+    out: dict[int, dict] = {}
+    for r in rows:
+        results = {}
+        for side in sorted(sides[r.id]):
+            zone = zones.get(r.src_zone_id if side == "src" else r.dst_zone_id)
+            results[side] = rel.check(r, side, [str(ip)], zone)
+        state = summarize([x["state"] for x in results.values()])
+        text = next((x["text"] for x in results.values() if x["state"] == state), "")
+        out[r.id] = {"state": state, "text": text,
+                     "sides": {k: x["state"] for k, x in results.items()}}  # fmt: skip
+    return out

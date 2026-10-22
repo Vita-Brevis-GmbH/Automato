@@ -117,6 +117,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Findings“ (über alle Regeln, nicht nur die geladene Seite); Links
   `#regeln?object=<Name>` bzw. `#regeln?nat=<Name>` zeigen alle Regeln mit diesem Objekt (auch
   über Gruppen, beide Familien) bzw. NAT, `#regeln?object_id=<ID>` genau ein Objekt.
+  **Suche nach einer IP mit Relevanz (0.26.0):** Ist die Suche genau eine IP, prüft Automato
+  jede Firewall-Regel gegen das Routing ihrer Firewall, wie in der Doku. Regeln, die die IP
+  nicht sehen können (z. B. DMZ-Netz am Ausgang internet), tragen „für <IP> nicht möglich“
+  mit Begründung im Tooltip. „N routingtechnisch unmögliche ausblenden“ blendet sie aus.
   **Regeln je Subnetz:**
   - Objekte → Subnetze → „Regeln im Subnetz“ (`#regeln?net=<CIDR>`) zeigt Regeln, deren
     Quelle oder Ziel sich mit dem Subnetz überschneidet, mit Schalter „inkl. any“.

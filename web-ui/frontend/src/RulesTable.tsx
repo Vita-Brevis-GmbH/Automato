@@ -270,6 +270,8 @@ export default function RulesTable({
   const [parallel, setParallel] = useState(""); // Verbund: differs | missing
   const [reload, setReload] = useState(0); // nach einer Paar-Entscheidung neu laden
   const [onlyFindings, setOnlyFindings] = useState(false);
+  const [routable, setRoutable] = useState(false); // Suche nach einer IP: unmögliche ausblenden
+  const [impossible, setImpossible] = useState<number | null>(null);
   // Maus über einer Regel hebt ihr IPv4/IPv6-Gegenstück hervor
   const [pairHover, setPairHover] = useState<number | null>(null);
   // Link aus Findings/Objekten auf genau eine Regel (#regeln?rule=<id>): Detail direkt öffnen
@@ -304,6 +306,7 @@ export default function RulesTable({
       vdom,
       pair,
       parallel,
+      routable,
       limit: PAGE,
       reload,
     }),
@@ -324,6 +327,7 @@ export default function RulesTable({
       vdom,
       pair,
       parallel,
+      routable,
       reload,
     ],
   );
@@ -338,6 +342,7 @@ export default function RulesTable({
         .then((page) => {
           setRules(page.rules);
           setTotal(page.total);
+          setImpossible(page.impossible ?? null);
         })
         .catch((e) => {
           setError(e);
@@ -529,6 +534,16 @@ export default function RulesTable({
           <span className="dot y" />
           nur mit Findings
         </button>
+        {impossible !== null && (impossible > 0 || routable) && (
+          <button
+            className={`toggle ${routable ? "on" : ""}`}
+            onClick={() => setRoutable((v) => !v)}
+            title="Regeln, die die gesuchte IP nach dem Routing ihrer Firewall nicht sehen können (Ein- bzw. Ausgang passt nicht)"
+          >
+            <span className="dot" />
+            {impossible} routingtechnisch unmögliche ausblenden
+          </button>
+        )}
         <span className="count">
           {filtered.length} Treffer{total > loaded ? ` · ${loaded} von ${total} geladen` : ""}
         </span>
@@ -586,6 +601,13 @@ export default function RulesTable({
                         </div>
                       )}
                       <ParallelChips r={r} />
+                      {r.relevance?.state === "impossible" && (
+                        <div>
+                          <span className="chip crit" title={r.relevance.text}>
+                            für {q.trim()} nicht möglich
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td>
                       <ZoneChip zone={r.src_zone} />

@@ -106,8 +106,10 @@ Rahmen laut Anwender (2026-10-22):
      - **Gegenstelle `any` (0.25.0):** In der Doku steht, was hinter Interface bzw. Zone der
        Regel liegt – eine Anbindung (Internet, MPLS …), sonst die Default-Route (extern) bzw.
        die Netze dahinter. Eine Internet-Anbindung ordnet die Regel den Kategorien 1/2 zu.
-     - Noch nicht: Relevanz in der Regel-Liste; ACI-Contracts; der ganze Pfad (Firewall auf
-       dem Weg zwischen Quelle und Ziel).
+     - **Regel-Liste (0.26.0):** Bei der Suche nach einer IP trägt jede Firewall-Regel die
+       Relevanz für sie; die unmöglichen lassen sich ausblenden (`routable=true`).
+     - Noch nicht: ACI-Contracts; der ganze Pfad (Firewall auf dem Weg zwischen Quelle und
+       Ziel).
 7. **Designer** (Oberfläche):
    - Knoten und Kanten mit Herkunft zeigen, bestätigen oder korrigieren, externe Knoten
      benennen, fehlende Wege ergänzen, Verbindungen Kunden zuordnen (ADR 0018).
@@ -219,8 +221,8 @@ Rahmen laut Anwender (2026-10-22):
      - SNAT der erlaubenden Policy (erste IP des IP-Pools bzw. IP des Ausgangs-Interfaces)
        ist die Quelle für die Firewalls danach.
    - Offen: Session-Sync-Paar als ein Hop, Inter-VDOM-Links als Kanten, „Internet“
-     zusammengefasst, Regel-Relevanz in der Regel-Liste (Doku: 0.24.0, Punkt 6), Central-NAT
-     und SNAT über eigene NAT-Regeln.
+     zusammengefasst, Relevanz für ACI-Contracts (Firewall: Doku 0.24.0, Regel-Liste 0.26.0),
+     Central-NAT und SNAT über eigene NAT-Regeln.
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde. Erster Teil in
    0.18.0: **Anbindungen nach aussen** (`topo_exit`, von Hand erfasst, Operator):
    - Art (Internet, MPLS, WAN, Partner), optional für eine Firewall, Next-Hop-IPs und/oder
