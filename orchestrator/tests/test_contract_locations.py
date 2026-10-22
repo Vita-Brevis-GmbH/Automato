@@ -80,7 +80,7 @@ def test_consumer_und_provider_mit_lage_ipam_und_dns(client):
 
     ext = by_role[("src", "EN_inet")]
     assert ext["kind"] == "external" and ext["l3out"] == "L3O_inet"
-    assert ext["subnets"] == [{"ip": "0.0.0.0/0", "origin": "ext", "ipam": None}]
+    assert ext["subnets"] == [{"ip": "0.0.0.0/0", "origin": "ext", "scope": None, "ipam": None}]
     assert by_role[("src", "EG_app")]["aci_tenant"] == "common"
 
 

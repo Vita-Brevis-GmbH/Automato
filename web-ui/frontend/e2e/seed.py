@@ -175,10 +175,24 @@ def run(app) -> None:
             "services": ["tcp/443"],
             "service_refs": ["TE/FT_https"],
             "raw": {"tenant": "TE", "kind": "contract"},
-        }
+        },
+        # externe EPG mit einem Subnetz nur fuer das Routing (0.28.0: ordnet nichts zu)
+        {
+            "source_platform": "cisco_aci",
+            "external_id": "uni/tn-TE/brc-CT_rt/SJ_1",
+            "name": "CT_rt:SJ_1",
+            "action": "allow",
+            "sources": ["epg:uni/tn-TE/out-L3O_fw/instP-EN_rt"],
+            "destinations": ["epg:uni/tn-TE/ap-AP/epg-EG_db"],
+            "services": ["tcp/22"],
+            "raw": {"tenant": "TE", "kind": "contract"},
+        },
     ]
     epgs = [{"name": "EG_db", "dn": "uni/tn-TE/ap-AP/epg-EG_db", "tenant": "TE", "ap": "AP",
-             "vrf": "VRF1"}]  # fmt: skip
+             "vrf": "VRF1"},
+            {"name": "EN_rt", "kind": "external", "dn": "uni/tn-TE/out-L3O_fw/instP-EN_rt",
+             "tenant": "TE", "l3out": "L3O_fw", "vrf": "VRF1", "subnets": ["10.20.0.0/16"],
+             "subnet_scopes": {"10.20.0.0/16": "export-rtctrl"}}]  # fmt: skip
     # Leaf-Port mit vielen VLANs und EPGs: in der Liste gekuerzt, alles im Detail (0.13.0)
     trunk = {"device": "leaf-101", "name": "eth1/1", "kind": "physical", "mode": "tagged",
              "tagged_vlans": [*range(100, 121), 300, 305, 310],

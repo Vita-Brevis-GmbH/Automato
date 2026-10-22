@@ -9,6 +9,10 @@ const KIND: Record<string, string> = { epg: "EPG", esg: "ESG", external: "Extern
 const ORIGIN: Record<string, string> = { epg: "EPG", bd: "BD", ext: "extern", esg: "IP-Selektor" };
 const SHOWN = 8;
 
+// Subnetz einer externen EPG ohne import-security ordnet keinen Verkehr zu (nur Routing)
+const routingOnly = (scope?: string | null) =>
+  scope != null && !scope.split(",").map((x) => x.trim()).includes("import-security");
+
 export function EpgCard({ epg }: { epg: EpgLocation }) {
   const [all, setAll] = useState(false);
   const eps = all ? epg.endpoints : epg.endpoints.slice(0, SHOWN);
@@ -72,6 +76,11 @@ export function EpgCard({ epg }: { epg: EpgLocation }) {
             epg.subnets.map((s) => (
               <div key={`${s.origin}-${s.ip}`}>
                 <span className="mono">{s.ip}</span> <span className="faint">({ORIGIN[s.origin] ?? s.origin})</span>
+                {s.origin === "ext" && routingOnly(s.scope) && (
+                  <span className="chip" title={`Scope ${s.scope} – ordnet keinen Verkehr der EPG zu`}>
+                    nur Routing
+                  </span>
+                )}
                 {s.ipam && (
                   <div className="faint">
                     IPAM {s.ipam.prefix}

@@ -83,6 +83,7 @@ class RuleOut(BaseModel):
 class EpgSubnetOut(BaseModel):
     ip: str  # Gateway/Prefix wie im APIC (z. B. 10.1.0.1/24)
     origin: str  # epg | bd | ext
+    scope: str | None = None  # externe EPG: l3extSubnet.scope (import-security = Zuordnung)
     ipam: dict | None = (
         None  # passendes Netz der fuehrenden Referenzquelle (Beschreibung, VLAN, Site)
     )

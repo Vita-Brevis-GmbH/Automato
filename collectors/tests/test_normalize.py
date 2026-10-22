@@ -757,3 +757,28 @@ def test_fortigate_virtual_server_mit_real_servern_und_health_checks():
               "dstaddr6": [{"name": "VIP6_web"}], "service": [{"name": "HTTPS"}]}  # fmt: skip
     (rule,) = normalize([policy], [], [], [], [SLB_VIP], [], [], None, None, vip6)
     assert rule.destinations == ["vip:VIP6_web=2001:db8:ff::10"]
+
+
+def test_aci_scope_der_subnetze_externer_epgs():
+    """0.28.0: `l3extSubnet.scope` - nur import-security ordnet Verkehr der externen EPG zu;
+    ohne Attribut gilt der APIC-Standard (kein Eintrag)."""
+    from collectors.cisco_aci.mo import parse_epgs
+
+    export = [
+        _mo("fvTenant", "TE_a", [
+            _mo("l3extOut", "L3O_fw", [
+                _mo("l3extRsEctx", tnFvCtxName="VRF_a"),
+                _mo("l3extInstP", "EN_srv", [
+                    _mo("l3extSubnet", ip="10.20.0.0/24", scope="import-security,shared-rtctrl"),
+                    _mo("l3extSubnet", ip="10.20.0.0/16", scope="export-rtctrl"),
+                    _mo("l3extSubnet", ip="10.30.0.0/16"),
+                ]),
+            ]),
+        ]),
+    ]  # fmt: skip
+    (ext,) = parse_epgs(export)
+    assert ext["subnets"] == ["10.20.0.0/24", "10.20.0.0/16", "10.30.0.0/16"]
+    assert ext["subnet_scopes"] == {
+        "10.20.0.0/24": "import-security,shared-rtctrl",
+        "10.20.0.0/16": "export-rtctrl",
+    }

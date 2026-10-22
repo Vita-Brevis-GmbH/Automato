@@ -147,6 +147,7 @@ export interface EpgLocation {
   subnets: {
     ip: string;
     origin: "epg" | "bd" | "ext" | string;
+    scope?: string | null; // externe EPG: l3extSubnet.scope (import-security = Zuordnung)
     ipam: { prefix: string; description: string | null; vlan: number | null; site: string | null; source: string } | null;
   }[];
   endpoint_count: number;

@@ -104,7 +104,7 @@ APIC-Benutzer aus dem Quellsystem, ADR 0009) → `GET /api/class/fvTenant.json` 
 | `vzAny` | `vzRsAnyToProv`/`…Cons`, `prefGrMemb` (`enabled` = Preferred Group der VRF an) | VRF-weiter „any"-Contract; Preferred Group → eine Regel je VRF |
 | `fvESg` | `name` (ESG), `prefGrMemb`; children `fvRsScope.tnFvCtxName`→VRF, `fvRsProv`/`fvRsCons`, Selektoren `fvEPgSelector.matchEpgDn`, `fvTagSelector.matchKey/matchValue`, `fvEPSelector.matchExpression` (`ip=='…'` → Subnetz) | `epg` mit `kind=esg`, `selectors`; Subnetze origin `esg` |
 | `vzTaboo` | `name`; children `vzTSubj` → `vzRsDenyRule.tnVzFilterName`; geschützte EPGs per `fvRsProtBy.tnVzTabooName` | `rule` mit `action=deny`, Quelle any, Ziel = geschützte EPGs |
-| `l3extOut` | `name` (`L3O_inet/vpn/bit/res/sra`); children `l3extInstP` (externe EPG, `EN_…`) → `l3extSubnet.ip` (z. B. `0.0.0.0/0`, `::/0`) | `zone` (externer Scope) / Transfernetz |
+| `l3extOut` | `name` (`L3O_inet/vpn/bit/res/sra`); children `l3extInstP` (externe EPG, `EN_…`) → `l3extSubnet.ip` (z. B. `0.0.0.0/0`, `::/0`) und **`scope`** (`import-security` = Zuordnung zur EPG, `export-rtctrl` … = nur Routing; fehlt = APIC-Standard, 0.28.0) | `zone` (externer Scope) / Transfernetz; `epg_subnet.scope` |
 
 **Netzinventar (ADR 0010):** zusätzlich zum Tenant-Subtree liest der Collector die Fabric-Klassen
 `fabricNode` (Leaf/Spine/Controller mit Modell/Seriennummer), Access Policies

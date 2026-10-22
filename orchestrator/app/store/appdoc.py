@@ -31,10 +31,10 @@ from app.models import (
     Tenant,
 )
 from app.models.rule import EndpointKind
+from app.store import aci_relevance, rule_index, sites, virtual
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import relevance as relevance_store
-from app.store import rule_index, sites, virtual
 from app.store import rules as rules_store
 
 SEP = " · "  # gleichnamige EPGs mehrerer ACI-Tenants: "EG_x · TE_a · AP_1"
@@ -345,6 +345,11 @@ class TenantData:
     def relevance(self) -> relevance_store.Relevance:
         return relevance_store.Relevance(self.session, self.tenant_id)
 
+    @cached_property
+    def aci(self) -> aci_relevance.Classifier:
+        """Zuordnung zu externen EPGs (0.28.0); teilt den Graph der Wege."""
+        return aci_relevance.Classifier(self.session, self.tenant_id, lambda: self.relevance.graph)
+
 
 def _proxies(data: TenantData, epg: Epg) -> dict[int, str]:
     """EPG-IDs, deren Contracts fuer die EPG gelten, mit Bezug: die EPG selbst, vzAny ihrer
@@ -438,6 +443,39 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                     },
                 )
             )
+    return out
+
+
+def _ext_rows(data: TenantData, ips: list[str], system_name: str) -> list:
+    """ACI-Contracts eines Systems ausserhalb des Fabrics (0.28.0): ueber die externen EPGs,
+    deren Subnetze seine IP erfassen - mit der Relevanz nach der Zuordnung im ACI (zuordnender
+    Scope, laengstes Subnetz der VRF, nicht im Fabric, bei Gleichstand das Routing)."""
+    best: dict[int, tuple[Epg, object, tuple[str, str]]] = {}
+    for value in dict.fromkeys(ips):
+        ip = relevance_store._ip(value)
+        if ip is None:
+            continue
+        for epg in data.aci.externals(ip):
+            if data.aci.inside(epg, ip):
+                continue  # im Fabric: die Contracts seiner EPG gelten, nicht die externen
+            rel = data.aci.check(epg, ip)
+            prev = best.get(epg.id)
+            if rel is not None and (
+                prev is None or aci_relevance.RANK[rel[0]] < aci_relevance.RANK[prev[2][0]]
+            ):
+                best[epg.id] = (epg, data.aci.subnet_for(epg, ip), rel)
+    out = []
+    for epg, net, (state, text) in best.values():
+        length = net.prefixlen
+        scope = "any" if length == 0 else "specific" if length == net.max_prefixlen else "subnet"
+        label = aci_relevance.ext_label(epg)
+        for idx, row in _aci_rows(data, epg, system_name, via=f"externe EPG {label} ({net})"):
+            if row[SCOPE] == "specific":
+                row[SCOPE] = scope
+            if row[OBJECT].startswith("EPG "):
+                row[OBJECT] = f"externe EPG {label}"
+            row |= {OBJECT_VALUE: str(net), REL: state, REL_TEXT: text}
+            out.append((idx, row))
     return out
 
 
@@ -663,6 +701,9 @@ def host_doc(
     for epg in host_epgs(session, data, sys_obj, vms.epg_ids(ip)):
         for idx, row in _aci_rows(data, epg, system_name, via=f"EPG {epg_store.label(epg)}"):
             rows_by_table[idx].append(row)
+    # ausserhalb des Fabrics: ueber die externe EPG, der das ACI die IP zuordnet (0.28.0)
+    for idx, row in _ext_rows(data, [ip] if ip else [], system_name):
+        rows_by_table[idx].append(row)
     info = vms.info(ip)
     return _envelope(
         session,
@@ -709,7 +750,7 @@ def vm_rows(
         epg = data.epgs_by_id.get(i)
         if epg is not None and epg.kind == "epg":
             out += _aci_rows(data, epg, name, via=f"EPG {epg_store.inventory_label(epg)}")
-    return out
+    return out + _ext_rows(data, ips, name)
 
 
 def host_epgs(

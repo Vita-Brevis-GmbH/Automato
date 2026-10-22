@@ -348,7 +348,8 @@ def _apply_epgs(session: Session, run, epgs) -> None:
         subnets.update({(ip, "bd"): None for ip in e.bd_subnets if (ip, own) not in subnets})
         for ip, origin in subnets:
             fam = "v6" if ":" in ip else "v4"
-            session.add(EpgSubnet(epg_id=epg.id, ip=ip, family=fam, origin=origin))
+            scope = e.subnet_scopes.get(ip) if origin == "ext" else None
+            session.add(EpgSubnet(epg_id=epg.id, ip=ip, family=fam, origin=origin, scope=scope))
         macs: dict[str, str | None] = {}
         for ep in e.endpoints:
             macs.setdefault(ep.ip, ep.mac)

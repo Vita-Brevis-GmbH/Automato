@@ -108,8 +108,26 @@ Rahmen laut Anwender (2026-10-22):
        die Netze dahinter. Eine Internet-Anbindung ordnet die Regel den Kategorien 1/2 zu.
      - **Regel-Liste (0.26.0):** Bei der Suche nach einer IP trägt jede Firewall-Regel die
        Relevanz für sie; die unmöglichen lassen sich ausblenden (`routable=true`).
-     - Noch nicht: ACI-Contracts; der ganze Pfad (Firewall auf dem Weg zwischen Quelle und
-       Ziel).
+     - **ACI-Contracts über externe EPGs (0.28.0, `store/aci_relevance.py`):** Ein System
+       ausserhalb des Fabrics erhält die Contracts der externen EPG, der das ACI seine IP
+       zuordnet.
+       - Es zählen Subnetze mit Scope `import-security` (Standard; gelesen aus
+         `l3extSubnet.scope`, Alembic `0043`). Andere Scopes steuern nur das Routing.
+       - Je VRF gewinnt das längste passende Subnetz; die Zuordnung gilt für die ganze VRF,
+         nicht je L3Out. Contracts externer EPGs mit kürzerem Subnetz sind „nicht möglich“.
+       - Liegt die IP im Fabric der VRF (BD-/EPG-Subnetz bzw. Endpunkt), gehört sie zu ihrer
+         EPG: Externe EPGs fehlen in ihrer Doku; in der Regel-Liste ist diese Seite „nicht
+         möglich“. Seiten mit internen EPGs bleiben ungeprüft („unbekannt“), der Contract ist
+         dann nie ganz ausgeschlossen.
+       - Gleich lange Subnetze in mehreren L3Outs (typisch 0.0.0.0/0): „möglich“ für den
+         L3Out, über den die VRF die IP leitet (Next-Hop in SVI-Netz, Peer bzw. statische
+         Route), sonst „unbekannt“ – nicht ausgeschlossen, weil das ACI 0.0.0.0/0 je nach
+         Version VRF-weit behandelt.
+       - Doku je System, Applikations-Doku und Regel-Liste (Suche nach einer IP) wie bei den
+         Firewall-Regeln.
+       - Noch nicht: Shared Services zwischen VRFs (`shared-security`), ESGs mit
+         IP-Selektoren, Endpunkte interner EPGs im selben BD.
+     - Noch nicht: der ganze Pfad (Firewall auf dem Weg zwischen Quelle und Ziel).
 7. **Designer** (Oberfläche):
    - Knoten und Kanten mit Herkunft zeigen, bestätigen oder korrigieren, externe Knoten
      benennen, fehlende Wege ergänzen, Verbindungen Kunden zuordnen (ADR 0018).
@@ -230,9 +248,9 @@ Rahmen laut Anwender (2026-10-22):
      - Hat der Link IPs, gilt wie bisher der Besitzer der Next-Hop-IP. Das Paar greift nur,
        wenn die IP keinem gelesenen Interface gehört.
      - Die Policies je VDOM prüfen den Link als Aus- bzw. Eingang.
-   - Offen: Session-Sync-Paar als ein Hop, „Internet“
-     zusammengefasst, Relevanz für ACI-Contracts (Firewall: Doku 0.24.0, Regel-Liste 0.26.0),
-     Central-NAT und SNAT über eigene NAT-Regeln.
+   - Offen: Session-Sync-Paar als ein Hop, „Internet“ zusammengefasst, Central-NAT und SNAT
+     über eigene NAT-Regeln. Relevanz: Firewall in der Doku (0.24.0) und Regel-Liste
+     (0.26.0), ACI-Contracts über externe EPGs (0.28.0).
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde. Erster Teil in
    0.18.0: **Anbindungen nach aussen** (`topo_exit`, von Hand erfasst, Operator):
    - Art (Internet, MPLS, WAN, Partner), optional für eine Firewall, Next-Hop-IPs und/oder

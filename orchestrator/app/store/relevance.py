@@ -15,6 +15,9 @@ Routing nicht gelesen, keine Route, Interface unbekannt oder eine Policy-Route b
 Regel, die anders leiten kann. Die Doku blendet `impossible` standardmaessig aus; einblendbar mit
 Begruendung. Nur lesend - es zaehlen die gelesenen Routen.
 
+**ACI-Contracts (0.28.0):** fuer externe EPGs entscheidet die Zuordnung im ACI
+(`store/aci_relevance.py`); `for_ip` liefert sie fuer Contracts mit.
+
 **Gegenstelle any (0.25.0):** `behind` sagt, was hinter dem Interface bzw. der Zone der Regel auf
 der Seite der Gegenstelle liegt - eine Anbindung (Internet, MPLS …, `topo_exit`), sonst die
 Default-Route ueber dieses Interface (extern) bzw. die Netze dahinter (angeschlossen und
@@ -22,11 +25,22 @@ geroutet). Aus `any` wird so z. B. „any → Internet Provider (wan)“.
 """
 
 import ipaddress
+from collections import defaultdict
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import InvInterface, Rule, RuleDomain, RuleIpRange, TopoRoute, Zone
+from app.models import (
+    Epg,
+    InvInterface,
+    Rule,
+    RuleDomain,
+    RuleEndpoint,
+    RuleIpRange,
+    TopoRoute,
+    Zone,
+)
+from app.store import aci_relevance
 from app.store.paths import Graph, Key, _exit_label
 from app.store.topology import Table, ip_hex, table_of
 
@@ -253,7 +267,8 @@ def summarize(states: list[str]) -> str:
 
 def for_ip(session: Session, tenant_id: int, rule_ids: list[int], ip_text: str) -> dict[int, dict]:
     """Regel-Liste (0.26.0): je Firewall-Regel, deren Quelle bzw. Ziel die IP abdeckt, die
-    Relevanz fuer diese IP - {state, text, sides}; Regeln ohne Abdeckung bzw. ACI fehlen."""
+    Relevanz fuer diese IP - {state, text, sides}; je ACI-Contract die Zuordnung zu seinen
+    externen EPGs (0.28.0). Regeln ohne Abdeckung fehlen."""
     try:
         ip = ipaddress.ip_address(ip_text.strip())
     except ValueError:
@@ -297,4 +312,55 @@ def for_ip(session: Session, tenant_id: int, rule_ids: list[int], ip_text: str) 
         text = next((x["text"] for x in results.values() if x["state"] == state), "")
         out[r.id] = {"state": state, "text": text,
                      "sides": {k: x["state"] for k, x in results.items()}}  # fmt: skip
+    return out | _aci_for_ip(session, tenant_id, sides, ip, rel)
+
+
+def _aci_for_ip(
+    session: Session, tenant_id: int, sides: dict[int, set[str]], ip, rel: Relevance
+) -> dict[int, dict]:
+    """ACI-Contracts, die die IP ueber Subnetze externer EPGs erfassen: je Seite die Zuordnung
+    (laengstes Subnetz der VRF, Scope, Fabric). Seiten mit internen EPGs bleiben ungeprueft
+    (`unknown`) - der Contract ist dann nie ganz ausgeschlossen."""
+    rows = session.execute(
+        select(RuleEndpoint.rule_id, RuleEndpoint.role, RuleEndpoint.epg_id)
+        .join(Rule, Rule.id == RuleEndpoint.rule_id)
+        .where(
+            RuleEndpoint.rule_id.in_(list(sides)),
+            Rule.domain == RuleDomain.ACI_CONTRACT,
+            RuleEndpoint.epg_id.is_not(None),
+        )
+    ).all()
+    if not rows:
+        return {}
+    epgs = {e.id: e for e in session.scalars(select(Epg).where(Epg.id.in_({r[2] for r in rows})))}
+    cls = aci_relevance.Classifier(session, tenant_id, lambda: rel.graph)
+    found: dict[int, dict[str, list[tuple[str, str]]]] = defaultdict(lambda: defaultdict(list))
+    internal: set[tuple[int, str]] = set()
+    for rid, role, eid in rows:
+        side, epg = getattr(role, "value", role), epgs.get(eid)
+        if side not in sides[rid] or epg is None:
+            continue
+        if epg.kind != "external":
+            internal.add((rid, side))
+            continue
+        result = cls.check(epg, ip)
+        if result is not None:
+            found[rid][side].append(result)
+    out: dict[int, dict] = {}
+    for rid, by_side in found.items():
+        results = {}
+        for side, items in by_side.items():
+            if (rid, side) in internal:
+                continue
+            state = summarize([s for s, _t in items])
+            results[side] = {"state": state, "text": next(t for s, t in items if s == state)}
+        if not results:
+            continue
+        for side in sorted(sides[rid] - set(results)):
+            if (rid, side) in internal:  # z. B. das BD-Subnetz der EPG: nicht geprueft
+                results[side] = {"state": UNKNOWN, "text": ""}
+        state = summarize([x["state"] for x in results.values()])
+        text = next((x["text"] for x in results.values() if x["state"] == state), "")
+        out[rid] = {"state": state, "text": text,
+                    "sides": {k: x["state"] for k, x in results.items()}}  # fmt: skip
     return out

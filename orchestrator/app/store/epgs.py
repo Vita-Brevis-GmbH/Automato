@@ -142,7 +142,12 @@ def details(session: Session, tenant_id: int, epgs: list[Epg]) -> dict[int, dict
             "vrf": epg.vrf,
             "l3out": epg.l3out,
             "subnets": [
-                {"ip": s.ip, "origin": s.origin, "ipam": _ipam_net(ctx, _network(s.ip))}
+                {
+                    "ip": s.ip,
+                    "origin": s.origin,
+                    "scope": s.scope,
+                    "ipam": _ipam_net(ctx, _network(s.ip)),
+                }
                 for s in sorted(subnets[epg.id], key=lambda x: (x.origin, x.ip))
             ],
             "endpoint_count": len(eps),

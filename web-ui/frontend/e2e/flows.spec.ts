@@ -57,6 +57,15 @@ test("Regel nicht wirksam: Befund öffnet den Contract", async ({ page }) => {
   await expect(page.locator(".drawer")).toContainText("kein Consumer · nicht wirksam");
 });
 
+test("Contract: Subnetz einer externen EPG nur für das Routing", async ({ page }) => {
+  await page.goto("/#regeln");
+  await search(page).fill("CT_rt");
+  await rows(page).filter({ hasText: "L3O_fw/EN_rt" }).click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer).toContainText("EN_rt");
+  await expect(drawer.locator(".chip", { hasText: "nur Routing" })).toBeVisible();
+});
+
 test("Dienste: Attribute, Prüfung und Detail mit Regeln", async ({ page }) => {
   await page.goto("/#objekte");
   await page.click(".tabbar button:has-text('Services')");

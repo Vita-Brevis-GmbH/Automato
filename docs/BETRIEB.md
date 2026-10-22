@@ -121,6 +121,8 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   jede Firewall-Regel gegen das Routing ihrer Firewall, wie in der Doku. Regeln, die die IP
   nicht sehen können (z. B. DMZ-Netz am Ausgang internet), tragen „für <IP> nicht möglich“
   mit Begründung im Tooltip. „N routingtechnisch unmögliche ausblenden“ blendet sie aus.
+  ACI-Contracts über externe EPGs (0.28.0) tragen die Zuordnung im ACI, z. B. „nur
+  Routing“ für ein Subnetz ohne `import-security`.
   **Regeln je Subnetz:**
   - Objekte → Subnetze → „Regeln im Subnetz“ (`#regeln?net=<CIDR>`) zeigt Regeln, deren
     Quelle oder Ziel sich mit dem Subnetz überschneidet, mit Schalter „inkl. any“.
@@ -354,6 +356,20 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - Sonst die Default-Route („extern“) bzw. die Netze dahinter („Netze hinter lan: …“).
     - Mit einer Internet-Anbindung landen solche Regeln in „Zugriff aus dem Internet“ bzw.
       „Internet Zugriff“. Anbindungen erfassen unter Routing & Wege → Anbindungen.
+  - **ACI-Contracts über externe EPGs (0.28.0):** Ein System ausserhalb des Fabrics (z. B.
+    hinter der Firewall) bekommt die Contracts der externen EPG, der das ACI seine IP
+    zuordnet. Bezug: „externe EPG L3O_fw|EN_srv (10.20.0.0/24)“.
+    - Es zählt das längste Subnetz mit Scope `import-security` in der VRF – über alle
+      L3Outs. Contracts weniger genauer externer EPGs (z. B. 0.0.0.0/0) stehen unter
+      „Routingtechnisch nicht möglich“ mit Begründung, ebenso Subnetze, die nur das Routing
+      steuern.
+    - Für eine IP im Fabric der VRF gelten die Contracts ihrer EPG; externe EPGs fehlen dann
+      in der Doku. In der Regel-Liste ist diese Seite „nicht möglich“, der Contract bleibt
+      sichtbar, wenn die IP auf der anderen Seite in einer EPG liegt.
+    - 0.0.0.0/0 in mehreren L3Outs: möglich ist die EPG des L3Outs, über den die VRF die IP
+      leitet; die übrigen bleiben sichtbar („unbekannt“).
+    - Das Regel-Detail zeigt bei Subnetzen externer EPGs „nur Routing“, wenn sie nicht
+      zuordnen.
 - **Findings:** oben eine **Übersicht nach Kategorien** (IPAM-Abgleich, Namenskonvention,
   Bereinigung, ACI / VMware) mit offenen/gesamten Befunden je Typ (Klick filtert). Neu mit
   dem vCenter: *VM-IP fehlt im IPAM* und *Portgruppe nach ACI-Schema ohne EPG*. Je Befund ein Satz,

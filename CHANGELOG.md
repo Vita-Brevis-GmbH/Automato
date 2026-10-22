@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.28.0 – 2026-10-22
+
+ACI-Contracts über externe EPGs nach der Zuordnung im ACI (ADR 0019 Punkt 6). Alembic `0043`.
+
+- **Systeme ausserhalb des Fabrics** (z. B. hinter der Firewall) bekommen in der Doku je
+  System und in der Applikations-Doku die Contracts der externen EPG, der das ACI ihre IP
+  zuordnet. Bezug: „externe EPG L3O_fw|EN_srv (10.20.0.0/24)“.
+- **Zuordnung wie im ACI:**
+  - Es zählen Subnetze externer EPGs mit Scope `import-security` (APIC-Standard).
+    Subnetze, die nur das Routing steuern (`export-rtctrl` …), ordnen nichts zu.
+  - Je VRF gewinnt das längste passende Subnetz – über alle L3Outs. Contracts weniger
+    genauer externer EPGs (z. B. 0.0.0.0/0) sind für diese IP „nicht möglich“, mit
+    Begründung.
+  - Eine IP im Fabric der VRF (BD-/EPG-Subnetz, Endpunkt) gehört zu ihrer EPG: Externe EPGs
+    fehlen in ihrer Doku; in der Regel-Liste ist diese Seite „nicht möglich“. Liegt die IP auf
+    der anderen Seite in einer EPG, bleibt der Contract sichtbar („unbekannt“).
+  - 0.0.0.0/0 in mehreren L3Outs: möglich ist die EPG des L3Outs, über den die VRF die IP
+    leitet. Die übrigen bleiben sichtbar („unbekannt“), nicht ausgeschlossen.
+- **Regel-Liste:** Bei der Suche nach einer IP tragen auch Contracts die Relevanz
+  („für <IP> nicht möglich“, ausblendbar wie in 0.26.0).
+- **Collector (APIC):** liest `l3extSubnet.scope` mit (nur lesend, dieselben Objekte).
+  Gespeichert in `epg_subnet.scope`; Regel-Detail zeigt „nur Routing“.
+- Tests (Zuordnung, Gleichstand nach Routing, Fabric, Regel-Liste, Collector, UI), Doku
+  (ADR 0019, BETRIEB, Lesevertrag).
+
 ## 0.27.0 – 2026-10-22
 
 Inter-VDOM-Links im Weg (ADR 0019 Stufe 3). Ohne Migration.

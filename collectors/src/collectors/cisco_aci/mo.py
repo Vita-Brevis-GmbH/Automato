@@ -178,6 +178,19 @@ def _values(kids: list[dict], cls: str, attr: str = "ip") -> list[str]:
     return [v for c in kids if cls in c for v in [_attrs(c[cls]).get(attr)] if v]
 
 
+def _subnet_scopes(kids: list[dict]) -> dict[str, str]:
+    """Scope je Subnetz einer externen EPG (`l3extSubnet.scope`, z. B. `import-security`):
+    nur Subnetze mit `import-security` ordnen Verkehr der EPG zu, die uebrigen steuern das
+    Routing. Fehlt das Attribut, gilt der APIC-Standard `import-security`."""
+    out = {}
+    for c in kids:
+        if "l3extSubnet" in c:
+            a = _attrs(c["l3extSubnet"])
+            if a.get("ip") and a.get("scope") is not None:
+                out[a["ip"]] = a["scope"]
+    return out
+
+
 def _contract_endpoint(
     kind: str, dn: str, tenant: str, kids: list[dict], attrs: dict, **info
 ) -> dict:
@@ -301,6 +314,7 @@ def _walk(
                 l3out=out,
                 vrf=out_vrf,
                 subnets=_values(kids, "l3extSubnet"),
+                subnet_scopes=_subnet_scopes(kids),
             )
         elif cls == "vzAny":
             vrf = parent_dn.rsplit("/ctx-", 1)[-1] if "/ctx-" in parent_dn else None
@@ -609,6 +623,7 @@ def parse_epgs(data: Any) -> list[dict]:
                 "vrf": ep.get("vrf") or bd.get("vrf"),
                 "l3out": ep.get("l3out"),
                 "subnets": ep.get("subnets", []),
+                "subnet_scopes": ep.get("subnet_scopes", {}),
                 "bd_subnets": bd.get("subnets", []),
                 "endpoints": ep.get("endpoints", []),
                 "selectors": ep.get("selectors", []),

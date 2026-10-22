@@ -56,6 +56,8 @@ class NormalizedEpg(BaseModel):
     bd_subnets: list[str] = Field(default_factory=list)  # Subnetze der Bridge Domain
     bd: str | None = None
     subnets: list[str] = Field(default_factory=list)
+    # externe EPG: Scope je Subnetz (`import-security` = Zuordnung; fehlt = APIC-Standard)
+    subnet_scopes: dict[str, str] = Field(default_factory=dict)
     endpoints: list[NormalizedEpgEndpoint] = Field(default_factory=list)  # fvCEp/fvIp
     selectors: list[str] = Field(default_factory=list)  # ESG: Selektoren (EPG, Tag, IP)
     pref_group: bool = False  # Mitglied der Preferred Group seiner VRF

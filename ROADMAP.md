@@ -317,14 +317,16 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.25.0** | Gegenstelle `any` in der Doku als das, was hinter dem Interface liegt (Anbindung, Default-Route, Netze); Internet-Anbindung = Kategorie 1/2 |
 | **0.26.0** | Regel-Liste: Suche nach einer IP mit Relevanz nach dem Routing, routingtechnisch unmögliche ausblendbar |
 | **0.27.0** | Inter-VDOM-Links als Kanten im Weg (vdom-link, VLANs auf NPU-vlinks) |
+| **0.28.0** | ACI-Contracts über externe EPGs nach der Zuordnung im ACI (Scope, längstes Subnetz je VRF, Fabric, 0.0.0.0/0 nach Routing) in Doku und Regel-Liste |
 
-### Nächste Arbeiten (Stand 0.27.0)
+### Nächste Arbeiten (Stand 0.28.0)
 
 Phase A und die Stände 0.11–0.18.0 sind gegen die echten Systeme abgenommen (0.18.0: Regeln
 paralleler Firewalls einmal, keine Schleifen); 0.19.0 (Verbund ablehnen, redundante Wege) und
 0.20.0/0.21.0 (erkannte Anbindungen mit Ausblenden, mehrere Firewalls, Länge der Wege) und
 0.22.0/0.23.0 (Regeln und NAT auf dem Weg), 0.24.0–0.26.0 (Relevanz in Doku und Regel-Liste,
-Gegenstelle any) und 0.27.0 (Inter-VDOM-Links) stehen zur Abnahme an. Konzeptbefund
+Gegenstelle any), 0.27.0 (Inter-VDOM-Links) und 0.28.0 (ACI-Contracts über externe EPGs)
+stehen zur Abnahme an. Konzeptbefund
 des Anwenders: Ohne Routing, Verbindungswege und Redundanzen zeigt die Doku Zugriffe, die
 routingtechnisch nicht möglich sind, und `any` aus dem Internet wie eine Liste aller
 Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
@@ -342,7 +344,7 @@ Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
    paralleler Firewalls **in 0.18.0**, redundante Wege **in 0.19.0**, erkannte Anbindungen mit
    Redundanz **in 0.20.0**, Regeln je Hop auf dem Weg **in 0.22.0**, NAT auf dem Weg **in 0.23.0**, Regeln nur, wo der Verkehr durchkommt (Doku) **in
    0.24.0**, Gegenstelle `any` als das, was hinter dem Interface liegt, **in 0.25.0**, Relevanz in der
-   Regel-Liste **in 0.26.0**, Inter-VDOM-Links als Kanten **in 0.27.0**. Offen: Relevanz für ACI-Contracts; Session-Sync-Paar als ein
+   Regel-Liste **in 0.26.0**, Inter-VDOM-Links als Kanten **in 0.27.0**, ACI-Contracts über externe EPGs **in 0.28.0**. Offen: Session-Sync-Paar als ein
    Hop; Aussenrouter selbst lesen.
 5. **Designer** (ADR 0019, Stufe 4), Zeichnung später. Vorgesehen: normale Switches und
    weitere Geräte erfassen, Verkabelung dokumentieren (L1/L2-Sicht neben dem Routing).

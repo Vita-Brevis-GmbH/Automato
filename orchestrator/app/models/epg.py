@@ -58,6 +58,8 @@ class EpgSubnet(Base):
     family: Mapped[str | None] = mapped_column(String(4), nullable=True)  # "v4" | "v6"
     # epg (fvSubnet der EPG) | bd (Subnetz der Bridge Domain) | ext (l3extSubnet)
     origin: Mapped[str] = mapped_column(String(8), default="epg", server_default=text("'epg'"))
+    # externe EPG: `l3extSubnet.scope` (import-security = Zuordnung); leer = APIC-Standard
+    scope: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 
 class EpgEndpoint(Base):
