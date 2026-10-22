@@ -16,11 +16,16 @@ Ein Kunde ist ein Ausschnitt der Umgebung (Mandant), beschrieben durch Selektore
   des Kunden beruehrt (ohne `any`).
 - **VMs:** an einer Portgruppe einer EPG des Kunden, mit einer IP in seinen Netzen bzw. mit
   dem Kuerzel im Namen.
+- **IPAM-Merkmale** (0.31.0): Netze und Adressen des Referenzstands mit NetBox-Tenant, VRF bzw.
+  DDI-Netzansicht oder einem Tag bzw. Attribut `key=value` zaehlen als Netze des Kunden.
+- **NAT** (0.31.0): interne bzw. externe IP in einem Netz des Kunden.
+- **Findings** (0.31.0): ueber ihr Subjekt - Regel, Objekt, VM, Portgruppe (Tenant im Namen)
+  bzw. Subnetz des Kunden.
 
 Ausschliessende Selektoren nehmen ihre Treffer wieder heraus. Ein Element darf mehreren
 Kunden gehoeren. Die Zugehoerigkeit ist abgeleiteter Zustand: nach jedem Lauf und bei
 geaenderten Selektoren neu berechnet (`derive`). Nur lesend gegenueber den Quellsystemen.
-Noch nicht: Merkmale aus dem IPAM (NetBox-Tenant), NAT und Findings, Relevanz nach Pfad.
+Noch nicht: Relevanz nach Pfad (ADR 0019).
 """
 
 import bisect
@@ -30,6 +35,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import cached_property
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -39,19 +45,24 @@ from app.models import (
     CustomerMember,
     Epg,
     EpgSubnet,
+    Finding,
     InvInterface,
+    NatRule,
     NetworkObject,
     Portgroup,
+    ReferenceRecordRow,
     Rule,
     RuleDomain,
     RuleEndpoint,
     RuleIpRange,
+    SourceSystem,
+    SubjectKind,
     Vm,
     VmIp,
     VmNic,
     Zone,
 )
-from app.store import aci_relevance
+from app.store import aci_relevance, virtual
 from app.store import epgs as epg_store
 from app.store.topology import ip_hex
 
@@ -107,9 +118,15 @@ class Scope:
     object: dict[int, str] = field(default_factory=dict)
     rule: dict[int, str] = field(default_factory=dict)
     vm: dict[int, str] = field(default_factory=dict)
+    nat: dict[int, str] = field(default_factory=dict)
+    finding: dict[int, str] = field(default_factory=dict)
 
     def counts(self) -> dict[str, int]:
-        return {k: len(getattr(self, k)) for k in ("epg", "net", "object", "rule", "vm")}
+        return {k: len(getattr(self, k)) for k in KINDS}
+
+
+KINDS = ("epg", "net", "object", "rule", "vm", "nat", "finding")
+IPAM_KINDS = ("ipam_tenant", "ipam_vrf", "ipam_tag")
 
 
 def _label(s: Selector) -> str:
@@ -124,6 +141,9 @@ def _label(s: Selector) -> str:
         "fw_interface": "Interface",
         "prefix": "Netz",
         "code": "Kürzel",
+        "ipam_tenant": "IPAM-Tenant",
+        "ipam_vrf": "IPAM-VRF/Netzansicht",
+        "ipam_tag": "IPAM-Merkmal",
     }
     return f"{names.get(s.kind, s.kind)} {s.value}"
 
@@ -162,6 +182,47 @@ class _Data:
         self.zones = dict(
             session.execute(select(Zone.id, Zone.name).where(Zone.tenant_id == tenant_id)).all()
         )
+
+    # -- IPAM (Referenzstand, 0.31.0) ---------------------------------------------------
+
+    @cached_property
+    def references(self) -> list:
+        """Aktueller Referenzstand der IPAM-Quellen: Netze, Bereiche und Adressen mit Tenant,
+        VRF bzw. Netzansicht, Tags und Attributen."""
+        return list(
+            self.session.execute(
+                select(
+                    ReferenceRecordRow.kind,
+                    ReferenceRecordRow.value,
+                    ReferenceRecordRow.vrf,
+                    ReferenceRecordRow.tenant_name,
+                    ReferenceRecordRow.tags,
+                    ReferenceRecordRow.attrs,
+                )
+                .join(SourceSystem, SourceSystem.id == ReferenceRecordRow.source_system_id)
+                .where(
+                    ReferenceRecordRow.tenant_id == self.tenant_id,
+                    ReferenceRecordRow.collector_run_id == SourceSystem.reference_run_id,
+                    ReferenceRecordRow.kind.in_(_IPAM_NET_KINDS),
+                )
+            )
+        )
+
+    def ipam_nets(self, s: Selector) -> set[Net]:
+        """Netze bzw. Adressen aus dem IPAM mit dem Merkmal des Selektors."""
+        v = s.value.strip().casefold()
+        out: set[Net] = set()
+        for kind, value, vrf, tenant, tags, attrs in self.references:
+            if s.kind == "ipam_tenant":
+                hit = (tenant or "").casefold() == v
+            elif s.kind == "ipam_vrf":
+                hit = (vrf or "").casefold() == v
+            else:
+                pairs = {f"{k}={x}".casefold() for k, x in (attrs or {}).items()}
+                hit = v in {str(t).casefold() for t in tags or []} | pairs
+            if hit:
+                out |= _record_nets(kind, value)
+        return out
 
     # -- EPGs --------------------------------------------------------------------------
 
@@ -244,6 +305,25 @@ class _Data:
         return out
 
 
+_IPAM_NET_KINDS = ("prefix", "range", "ip_address", "host", "fixed_address", "a_record")
+
+
+def _record_nets(kind: str, value: str | None) -> set[Net]:
+    """Netz eines IPAM-Eintrags: Praefix, Bereich (zusammengefasst) bzw. Adresse als /32."""
+    text = (value or "").strip()
+    try:
+        if kind == "prefix":
+            return {ipaddress.ip_network(text, strict=False)}
+        if kind == "range" and "-" in text:
+            a, _, b = text.partition("-")
+            lo, hi = ipaddress.ip_address(a.strip()), ipaddress.ip_address(b.strip())
+            return set(ipaddress.summarize_address_range(lo, hi))
+        ip = ipaddress.ip_interface(text).ip
+        return {ipaddress.ip_network(ip)}
+    except (ValueError, TypeError):
+        return set()
+
+
 def _cut(nets: dict[Net, str], removed: list[Net]) -> dict[Net, str]:
     """Ausgeschlossene Praefixe aus den Netzen herausschneiden."""
     out = dict(nets)
@@ -300,6 +380,9 @@ def evaluate(session: Session, tenant_id: int, selectors: list[Selector],
     for s in include:
         if s.kind == "prefix" and (net := _net(s.value)) is not None:
             nets.setdefault(net, _label(s))
+        elif s.kind in IPAM_KINDS:
+            for net in data.ipam_nets(s):
+                nets.setdefault(net, _label(s))
         elif s.kind in ("fw_vdom", "fw_zone", "fw_interface"):
             for net in data.interface_nets(s):
                 nets.setdefault(net, _label(s))
@@ -308,6 +391,9 @@ def evaluate(session: Session, tenant_id: int, selectors: list[Selector],
         for net in data.epg_nets.get(eid, []):
             nets.setdefault(net, f"EPG {epg_store.inventory_label(by_id[eid])}")
     removed = [n for s in exclude if s.kind == "prefix" if (n := _net(s.value)) is not None]
+    for s in exclude:
+        if s.kind in IPAM_KINDS:
+            removed += list(data.ipam_nets(s))
     for s in exclude:
         if s.kind in ("fw_vdom", "fw_zone", "fw_interface"):
             removed += list(data.interface_nets(s))
@@ -389,7 +475,63 @@ def evaluate(session: Session, tenant_id: int, selectors: list[Selector],
             scope.vm.pop(vid, None)
         elif names & codes_in:
             scope.vm.setdefault(vid, f"Kürzel {sorted(names & codes_in)[0]}")
+
+    # NAT (0.31.0): interne bzw. externe IP im Netz des Kunden
+    for nid, ext, mapped in session.execute(
+        select(NatRule.id, NatRule.ext_ip, NatRule.mapped_ip).where(NatRule.tenant_id == tenant_id)
+    ):
+        for value, why in ((mapped, "interne IP im Netz"), (ext, "externe IP im Netz")):
+            b = _bounds((value or "").split(",")[0])
+            if b is not None and ranges.covers(*b):
+                scope.nat.setdefault(nid, why)
+                break
+    _findings(session, tenant_id, scope, ranges, codes_in, data)
     return scope
+
+
+_SUFFIX = re.compile(r" \((IPv6|VDOM [^)]*)\)")
+
+
+def _findings(session: Session, tenant_id: int, scope: Scope, ranges: "_Ranges",
+              codes: set[str], data: _Data) -> None:  # fmt: skip
+    """Findings ueber ihr Subjekt (0.31.0): Regel, Werte- bzw. Firewall-Objekt, VM,
+    Portgruppe (Tenant der EPG im Namen) bzw. Subnetz des Kunden."""
+    objects = set(
+        session.scalars(select(NetworkObject.name).where(NetworkObject.id.in_(list(scope.object))))
+    ) if scope.object else set()  # fmt: skip
+    vms = (
+        set(session.scalars(select(Vm.name).where(Vm.id.in_(list(scope.vm)))))
+        if scope.vm
+        else set()
+    )
+    tenants = {(e.aci_tenant or "").casefold() for e in data.epgs if e.id in scope.epg}
+    for fid, kind, subject, detail in session.execute(
+        select(Finding.id, Finding.subject_kind, Finding.subject_id, Finding.detail).where(
+            Finding.tenant_id == tenant_id
+        )
+    ):
+        detail = detail if isinstance(detail, dict) else {}
+        why = None
+        if kind is SubjectKind.RULE:
+            rid = detail.get("rule_id") or (int(subject) if subject.isdigit() else None)
+            why = "Regel des Kunden" if rid in scope.rule else None
+        elif kind in (SubjectKind.NETWORK_OBJECT, SubjectKind.DEVICE_OBJECT):
+            name = _SUFFIX.sub("", subject)
+            if name in objects:
+                why = "Objekt des Kunden"
+            elif tokens(name) & codes:
+                why = "Kürzel im Namen"
+        elif kind is SubjectKind.VM:
+            why = "VM des Kunden" if subject in vms else None
+        elif kind is SubjectKind.PORTGROUP:
+            parts = virtual.epg_from_name(subject)
+            if parts is not None and parts[0].casefold() in tenants:
+                why = "Portgruppe im Tenant des Kunden"
+        elif kind is SubjectKind.SUBNET:
+            b = _bounds(subject)
+            why = "Subnetz des Kunden" if b is not None and ranges.covers(*b) else None
+        if why:
+            scope.finding[fid] = why
 
 
 def _net_key(n: Net) -> tuple:
@@ -418,7 +560,7 @@ def derive(session: Session, tenant_id: int, customer_id: int | None = None) -> 
         base = {"tenant_id": tenant_id, "customer_id": c.id}
         rows = [
             {**base, "kind": kind, "ref_id": ref, "value": None, "via": why[:200]}
-            for kind in ("epg", "object", "rule", "vm")
+            for kind in ("epg", "object", "rule", "vm", "nat", "finding")
             for ref, why in getattr(scope, kind).items()
         ] + [
             {**base, "kind": "net", "ref_id": None, "value": net, "via": why[:200]}
@@ -434,9 +576,7 @@ def derive(session: Session, tenant_id: int, customer_id: int | None = None) -> 
 
 def counts(session: Session, customer_ids: list[int]) -> dict[int, dict[str, int]]:
     """Gespeicherte Zugehoerigkeit je Kunde und Art."""
-    out: dict[int, dict[str, int]] = {
-        cid: dict.fromkeys(("epg", "net", "object", "rule", "vm"), 0) for cid in customer_ids
-    }
+    out: dict[int, dict[str, int]] = {cid: dict.fromkeys(KINDS, 0) for cid in customer_ids}
     if customer_ids:
         for cid, kind, n in session.execute(
             select(CustomerMember.customer_id, CustomerMember.kind, func.count())
@@ -450,7 +590,7 @@ def counts(session: Session, customer_ids: list[int]) -> dict[int, dict[str, int
 def samples(session: Session, tenant_id: int, scope: Scope, n: int = SAMPLES) -> dict[str, list]:
     """Erste Beispiele je Art mit Namen (Vorschau)."""
     out: dict[str, list] = {"net": list(scope.net)[:n]}
-    pick = {k: list(getattr(scope, k))[:n] for k in ("epg", "object", "rule", "vm")}
+    pick = {k: list(getattr(scope, k))[:n] for k in ("epg", "object", "rule", "vm")}  # Namen
     if pick["epg"]:
         out["epg"] = [
             epg_store.inventory_label(e)
@@ -477,7 +617,14 @@ def samples(session: Session, tenant_id: int, scope: Scope, n: int = SAMPLES) ->
         out["vm"] = list(
             session.scalars(select(Vm.name).where(Vm.id.in_(pick["vm"])).order_by(Vm.id))
         )
-    return {k: out.get(k, []) for k in ("epg", "net", "object", "rule", "vm")}
+    for kind, model, col in (("nat", NatRule, NatRule.name), ("finding", Finding,
+                                                              Finding.subject_id)):  # fmt: skip
+        ids = list(getattr(scope, kind))[:n]
+        if ids:
+            out[kind] = list(
+                session.scalars(select(col).where(model.id.in_(ids)).order_by(model.id))
+            )
+    return {k: out.get(k, []) for k in KINDS}
 
 
 def unassigned(session: Session, tenant_id: int, n: int = SAMPLES) -> dict[str, dict]:

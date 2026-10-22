@@ -124,9 +124,12 @@ Grundsatzentscheide des Anwenders (2026-10-22):
    - Abgeleitet nach jedem Lauf (auch IPAM), beim Speichern und nach dem Löschen eines
      Quellsystems; Vorschau, Vorschläge je ACI-Tenant (`common` geteilt), „keinem Kunden
      zugeordnet“; Audit `customer.*`.
-   - Noch nicht: der Umschalter „Kunde: …“ mit Filter (Schritt 2), Merkmale aus dem IPAM,
-     NAT und Findings als Mitglieder, Relevanz nach Pfad (ADR 0019), „Umgebung“ als Name in
-     der Oberfläche.
+   - **0.31.0:** Selektoren aus dem IPAM (`ipam_tenant`, `ipam_vrf` = NetBox-VRF bzw.
+     DDI-Netzansicht, `ipam_tag` = Tag bzw. Extensible Attribute `key=value`) über den
+     aktuellen Referenzstand; NAT über interne bzw. externe IP; Findings über ihr Subjekt
+     (Regel, Objekt, VM, Portgruppe, Subnetz).
+   - Noch nicht: der Umschalter „Kunde: …“ mit Filter (Schritt 2), Relevanz nach Pfad
+     (ADR 0019), „Umgebung“ als Name in der Oberfläche.
 2. Kunden-Filter in allen Ansichten (für Betreuer).
 3. Kunden-Benutzer: `customer_ids` in Keycloak, serverseitige Einschränkung aller Lese-APIs,
    Tests je Endpunkt.

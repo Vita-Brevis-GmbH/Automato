@@ -320,6 +320,7 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.28.0** | ACI-Contracts über externe EPGs nach der Zuordnung im ACI (Scope, längstes Subnetz je VRF, Fabric, 0.0.0.0/0 nach Routing) in Doku und Regel-Liste |
 | **0.29.0** | Verbund bzw. Session-Sync-Paar als ein Hop im Weg (je Firewall Eingang, Ausgang, Regeln; verschiedene Urteile = abhängig) |
 | **0.30.0** | Kunden als Ausschnitt der Umgebung (ADR 0018 Schritt 1): Selektoren ein-/ausschliessend, abgeleitete Zugehörigkeit, Vorschau, Vorschläge je ACI-Tenant, nicht Zugeordnetes |
+| **0.31.0** | Kunden: Merkmale aus dem IPAM als Selektor, NAT und Findings als Mitglieder |
 
 ### Nächste Arbeiten (Stand 0.30.0)
 

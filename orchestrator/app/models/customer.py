@@ -7,7 +7,7 @@ dazu, wenn …“) statt Listen:
 - ACI: `aci_tenant`, `aci_vrf` (`Tenant:VRF` bzw. VRF), `aci_ap` (`Tenant/AP`), `aci_epg`
   (DN bzw. `Tenant/AP/EPG`), `aci_bd` (`Tenant/BD`)
 - FortiGate: `fw_vdom`, `fw_zone`, `fw_interface` (optional je Quellsystem)
-- Netze: `prefix` (CIDR)
+- Netze: `prefix` (CIDR); aus dem IPAM `ipam_tenant`, `ipam_vrf`, `ipam_tag` (0.31.0)
 - `code`: Kuerzel aus der Namenskonvention (`TE_<kuerzel>`, Objekt- und Servernamen)
 
 Jeder Selektor schliesst ein oder aus (`exclude`). Ein Kunde mit `shared` ist der geteilte
@@ -15,7 +15,8 @@ Teil der Umgebung (z. B. Tenant `common`, Internet-Rand): er gilt fuer alle Kund
 
 Die **Zugehoerigkeit** (`customer_member`) ist abgeleiteter Zustand wie Regelindex und
 Findings: nach jedem Lauf und bei geaenderten Selektoren neu berechnet, nie von Hand gepflegt
-(`store/customers.py`). `ref_id` zeigt je Art auf EPG, Regel, Werte-Objekt bzw. VM - ohne
+(`store/customers.py`). `ref_id` zeigt je Art auf EPG, Regel, Werte-Objekt, VM, NAT bzw.
+Finding - ohne
 Fremdschluessel, weil diese je Lauf ersetzt werden; Netze stehen als `value` (CIDR).
 """
 
@@ -47,8 +48,13 @@ SELECTOR_KINDS = (
     "fw_interface",
     "prefix",
     "code",
+    # Merkmale aus dem IPAM (0.31.0): NetBox-Tenant, VRF bzw. DDI-Netzansicht, Tag bzw.
+    # Extensible Attribute `key=value` - der IPAM-Adapter liefert nur das Merkmal (ADR 0002)
+    "ipam_tenant",
+    "ipam_vrf",
+    "ipam_tag",
 )
-MEMBER_KINDS = ("epg", "net", "object", "rule", "vm")
+MEMBER_KINDS = ("epg", "net", "object", "rule", "vm", "nat", "finding")
 
 
 class Customer(Base):
@@ -110,7 +116,7 @@ class CustomerMember(Base):
     customer_id: Mapped[int] = mapped_column(
         ForeignKey("customer.id", ondelete="CASCADE"), index=True
     )
-    kind: Mapped[str] = mapped_column(String(8))  # epg | net | object | rule | vm
+    kind: Mapped[str] = mapped_column(String(8))  # siehe MEMBER_KINDS
     ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     value: Mapped[str | None] = mapped_column(String(64), nullable=True)  # Netz (CIDR)
     via: Mapped[str | None] = mapped_column(String(200), nullable=True)  # warum (Selektor)

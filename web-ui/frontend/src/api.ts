@@ -1865,7 +1865,10 @@ export type SelectorKind =
   | "fw_zone"
   | "fw_interface"
   | "prefix"
-  | "code";
+  | "code"
+  | "ipam_tenant" // NetBox-Tenant (0.31.0)
+  | "ipam_vrf" // NetBox-VRF bzw. DDI-Netzansicht
+  | "ipam_tag"; // Tag bzw. Extensible Attribute key=value
 export interface CustomerSelector {
   id?: number;
   kind: SelectorKind;
@@ -1873,7 +1876,7 @@ export interface CustomerSelector {
   source_system_id: number | null; // FortiGate-Selektoren: nur dieses Quellsystem
   exclude: boolean;
 }
-export type CustomerMemberKind = "epg" | "net" | "object" | "rule" | "vm";
+export type CustomerMemberKind = "epg" | "net" | "object" | "rule" | "vm" | "nat" | "finding";
 export type CustomerCounts = Record<CustomerMemberKind, number>;
 export interface Customer {
   id: number;

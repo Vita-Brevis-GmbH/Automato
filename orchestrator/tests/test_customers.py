@@ -146,7 +146,10 @@ def test_kunden_ueber_selektoren(client):
         {"kind": "aci_tenant", "value": "TE_ka"},
         {"kind": "aci_ap", "value": "TE_ka/AP_900", "exclude": True},
     ], code="ka")  # fmt: skip
-    assert a["counts"] == {"epg": 1, "net": 1, "object": 1, "rule": 3, "vm": 1}
+    assert a["counts"] == {"epg": 1, "net": 1, "object": 1, "rule": 3, "vm": 1, "nat": 0,
+                           "finding": 1}  # fmt: skip
+    # Finding ueber sein Subjekt: das Objekt 10.50.1.10 fehlt im IPAM (0.31.0)
+    assert _members(client, a["id"], "finding") == {"unmatched_object: 10.50.1.10"}
     assert _members(client, a["id"], "epg") == {"TE_ka/AP_007/EPG_web"}
     assert _members(client, a["id"], "net") == {"10.50.1.0/24"}
     assert _members(client, a["id"], "rule") == {"CT_web", "CT_app", "web-to-backend"}
@@ -249,3 +252,69 @@ def test_vorschau_kuerzel_netze_und_rechte(client):
     r = client.delete(f"/tenants/{tid}?confirm=Umgebung 1", headers=ADMIN)
     assert r.status_code in (200, 204), r.text
     assert client.get("/customers", params={"tenant_id": tid}).json() == []
+
+
+DDI = [
+    {"kind": "prefix", "value": "10.80.0.0/24", "tenant": "Kunde C", "vrf": "VRF_C"},
+    {"kind": "prefix", "value": "10.81.0.0/24", "tags": ["kunde-c"]},
+    {"kind": "host", "value": "10.82.0.7", "dns_name": "c01.example.ch",
+     "attrs": {"Kunde": "C"}},
+    {"kind": "prefix", "value": "10.83.0.0/24", "tenant": "Kunde D"},
+]  # fmt: skip
+FWC = {
+    "status": "completed",
+    "rules": [
+        _policy(10, "c-web", ["10.80.0.10"], ["all"], vdom="kunde-c"),
+        {**_policy(11, "c-leer", ["10.80.0.11"], [], vdom="kunde-c"), "destinations": []},
+    ],
+    "nat_rules": [
+        {"source_platform": "fortigate", "external_id": "VIP_c", "name": "VIP_c",
+         "nat_type": "dnat_vip", "ext_ip": "198.51.100.20", "mapped_ip": "10.80.0.10"},
+        {"source_platform": "fortigate", "external_id": "VIP_d", "name": "VIP_d",
+         "nat_type": "dnat_vip", "ext_ip": "198.51.100.21", "mapped_ip": "10.83.0.10"},
+    ],
+}  # fmt: skip
+
+
+def test_ipam_merkmale_nat_und_findings(client):
+    """0.31.0: Netze aus dem IPAM ueber Tenant, VRF bzw. Netzansicht und Tag bzw. Attribut;
+    NAT ueber die interne IP; Findings ueber ihr Subjekt."""
+    tid = client.post("/tenants", json={"name": "Umgebung 3"}, headers=ADMIN).json()["id"]
+    ddi = _system(client, tid, "ddi", "infoblox", username="ro", password="x")
+    body = {"platform": "infoblox", "tenant_id": tid, "source_system_id": ddi}
+    run_id = client.post("/jobs/collect", json=body).json()["run_id"]
+    client.post(f"/internal/collector-runs/{run_id}/references", headers=TOKEN,
+                json={"records": DDI})  # fmt: skip
+    done = {"status": "completed", "reference_count": len(DDI)}
+    client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=done)
+    _deliver(client, tid, _system(client, tid, "fw-c", "fortigate"), "fortigate", FWC)
+
+    def preview(*selectors):
+        body = {"tenant_id": tid, "selectors": [dict(zip(("kind", "value"), s, strict=True))
+                                                for s in selectors]}  # fmt: skip
+        r = client.post("/customers/preview", json=body)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    assert preview(("ipam_tenant", "Kunde C"))["samples"]["net"] == ["10.80.0.0/24"]
+    assert preview(("ipam_vrf", "vrf_c"))["samples"]["net"] == ["10.80.0.0/24"]  # ohne Gross/klein
+    assert preview(("ipam_tag", "kunde-c"))["samples"]["net"] == ["10.81.0.0/24"]
+    assert preview(("ipam_tag", "Kunde=C"))["samples"]["net"] == ["10.82.0.7/32"]
+
+    c = _create(client, tid, "Kunde C", [
+        {"kind": "ipam_tenant", "value": "Kunde C"},
+        {"kind": "fw_vdom", "value": "kunde-c"},
+    ])  # fmt: skip
+    assert _members(client, c["id"], "nat") == {"VIP_c"}  # interne IP im Netz, VIP_d nicht
+    rows = client.get(f"/customers/{c['id']}/members", params={"kind": "nat"}).json()
+    assert rows[0]["via"] == "interne IP im Netz"
+    findings = _members(client, c["id"], "finding")
+    assert "rule_incomplete: c-leer (VDOM kunde-c)" in findings  # Regel des Kunden
+    assert not any("10.83" in f for f in findings)
+    # ausschliessen ueber das IPAM-Merkmal
+    out = preview(("ipam_tenant", "Kunde C"))
+    body = {"tenant_id": tid, "selectors": [
+        {"kind": "prefix", "value": "10.80.0.0/16"},
+        {"kind": "ipam_tag", "value": "kunde-c", "exclude": True}]}  # fmt: skip
+    cut = client.post("/customers/preview", json=body).json()
+    assert "10.81.0.0/24" not in cut["samples"]["net"] and out["counts"]["nat"] == 1

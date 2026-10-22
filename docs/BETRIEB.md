@@ -429,14 +429,16 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     EPG (`TE_ka/AP_007/EPG_web` bzw. DN), Bridge Domain (`TE_ka/BD_web`);
   - VDOM, Zone, Interface (optional nur auf einer Firewall); Netz (CIDR); Kürzel aus der
     Namenskonvention (`TE_<kürzel>`, Server- und Objektnamen wie `web01-007-ka`).
+  - Aus dem IPAM (0.31.0): IPAM-Tenant (NetBox), IPAM-VRF bzw. DDI-Netzansicht, IPAM-Tag bzw.
+    Attribut (`Kunde=A`) – die Netze und Adressen mit diesem Merkmal.
   - Jeder Selektor schliesst ein oder – mit „ausschliessen“ – aus, z. B. „Tenant TE_ka
     ohne AP TE_ka/AP_900“ oder ein Netz ohne ein Teilnetz.
   - Was dazugehört, leitet Automato nach jedem Lauf und beim Speichern ab: EPGs, Netze (auch
     die Subnetze der EPGs und die Netze an zugeordneten Interfaces), Werte-Objekte in diesen
     Netzen, Regeln (Contracts mit einer EPG des Kunden; Firewall-Regeln im VDOM, an der Zone
     bzw. am Interface oder mit Quelle bzw. Ziel in einem Netz des Kunden, ohne `any`) und VMs
-    (Portgruppe einer EPG, IP im Netz, Kürzel im Namen). Ein Element kann mehreren Kunden
-    gehören.
+    (Portgruppe einer EPG, IP im Netz, Kürzel im Namen); NAT mit interner bzw. externer IP im
+    Netz; Findings über ihr Subjekt (0.31.0). Ein Element kann mehreren Kunden gehören.
   - Beim Bearbeiten zeigt die **Vorschau**, was die Selektoren erfassen. Klick auf einen
     Kunden zeigt die Zugehörigkeit je Art mit dem Grund.
   - **Vorschläge:** je ACI-Tenant ohne Kunden ein Kunde (Kürzel aus `TE_<kürzel>`), `common`

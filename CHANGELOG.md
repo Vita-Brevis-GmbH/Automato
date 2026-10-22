@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.31.0 – 2026-10-22
+
+Kunden: Merkmale aus dem IPAM, NAT und Findings (ADR 0018). Ohne Migration.
+
+- **Selektoren aus dem IPAM:** IPAM-Tenant (NetBox-Tenant), IPAM-VRF bzw. DDI-Netzansicht,
+  IPAM-Tag bzw. Extensible Attribute (`key=value`). Netze, Bereiche und Adressen des
+  Referenzstands mit diesem Merkmal zählen als Netze des Kunden – ein- und
+  ausschliessend. Gelesen wird nur, was die IPAM-Adapter schon liefern (ADR 0002).
+- **NAT:** VIPs bzw. SNAT-Pools, deren interne oder externe IP in einem Netz des Kunden
+  liegt, gehören zum Kunden.
+- **Findings** gehören dem Kunden über ihr Subjekt: Regel, Werte- bzw. Firewall-Objekt, VM,
+  Portgruppe (Tenant im Namen) bzw. Subnetz des Kunden. Nach „Abgleich neu berechnen“ wird
+  die Zugehörigkeit ebenfalls neu abgeleitet.
+- Ansicht Kunden: Spalten NAT und Findings, Zugehörigkeit je Art.
+- Tests (Tenant, VRF ohne Gross/klein, Tag, Attribut, Ausschluss, NAT über die interne IP,
+  Finding über die Regel bzw. das Objekt).
+
 ## 0.30.0 – 2026-10-22
 
 Kunden als Ausschnitt der Umgebung (ADR 0018, Schritt 1). Alembic `0044`.

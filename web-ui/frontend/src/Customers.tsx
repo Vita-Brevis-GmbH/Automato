@@ -35,6 +35,9 @@ export const SELECTOR_LABEL: Record<SelectorKind, string> = {
   fw_interface: "Interface",
   prefix: "Netz",
   code: "Kürzel",
+  ipam_tenant: "IPAM-Tenant",
+  ipam_vrf: "IPAM-VRF/Netzansicht",
+  ipam_tag: "IPAM-Tag/Attribut",
 };
 const PLACEHOLDER: Record<SelectorKind, string> = {
   aci_tenant: "TE_ka",
@@ -47,6 +50,9 @@ const PLACEHOLDER: Record<SelectorKind, string> = {
   fw_interface: "port5",
   prefix: "10.20.0.0/16",
   code: "ka",
+  ipam_tenant: "Kunde A (NetBox-Tenant)",
+  ipam_vrf: "VRF_ka bzw. Netzansicht",
+  ipam_tag: "kunde-a bzw. Kunde=A",
 };
 const FW_KINDS: SelectorKind[] = ["fw_vdom", "fw_zone", "fw_interface"];
 const KINDS: [CustomerMemberKind, string][] = [
@@ -55,6 +61,8 @@ const KINDS: [CustomerMemberKind, string][] = [
   ["object", "Objekte"],
   ["rule", "Regeln"],
   ["vm", "VMs"],
+  ["nat", "NAT"],
+  ["finding", "Findings"],
 ];
 
 function selectorText(s: CustomerSelector, systems: System[]): string {
@@ -124,7 +132,8 @@ export default function Customers({ tenantId, canEdit }: { tenantId: number | nu
         }
       >
         Ein Kunde ist ein Ausschnitt der Umgebung, beschrieben durch Selektoren: ACI-Tenant, VRF, AP, EPG, Bridge
-        Domain, VDOM, Zone, Interface, Netz oder Kürzel – ein- bzw. ausschliessend. Was dazugehört, leitet Automato
+        Domain, VDOM, Zone, Interface, Netz, Kürzel oder ein Merkmal aus dem IPAM (Tenant, VRF bzw. Netzansicht,
+        Tag bzw. Attribut) – ein- bzw. ausschliessend. Was dazugehört, leitet Automato
         nach jedem Lauf neu ab; neue EPGs oder Netze gehören ohne Pflege dazu.
       </PageHead>
       <ErrorBox error={err} onClose={() => setErr(null)} />

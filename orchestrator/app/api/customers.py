@@ -23,6 +23,8 @@ from app.models import (
     CustomerMember,
     CustomerSelector,
     Epg,
+    Finding,
+    NatRule,
     NetworkObject,
     Rule,
     SourceSystem,
@@ -294,6 +296,17 @@ def members(
         }
     elif kind == "vm" and ids:
         names = dict(session.execute(select(Vm.id, Vm.name).where(Vm.id.in_(ids))).all())
+    elif kind == "nat" and ids:
+        names = dict(
+            session.execute(select(NatRule.id, NatRule.name).where(NatRule.id.in_(ids))).all()
+        )
+    elif kind == "finding" and ids:
+        names = {
+            fid: f"{ftype.value}: {subject}"
+            for fid, ftype, subject in session.execute(
+                select(Finding.id, Finding.type, Finding.subject_id).where(Finding.id.in_(ids))
+            )
+        }
     return [
         {"id": r.ref_id, "name": r.value if kind == "net" else names.get(r.ref_id, "?"),
          "via": r.via}
