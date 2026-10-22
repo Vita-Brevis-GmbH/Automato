@@ -665,3 +665,76 @@ def test_erkannte_anbindungen_mit_redundanz(client):
     assert (
         client.get("/routing/exits", params={"tenant_id": tid}).json()[0]["status"]["missing"] == []
     )
+
+
+def _link(name, vdom, kind, parent=None, vid=None):
+    return {"device": "fw-v", "name": name, "ips": [], "vdom": vdom, "kind": kind,
+            "parent": parent, "tagged_vlans": [vid] if vid else []}  # fmt: skip
+
+
+FWV = {
+    "status": "completed",
+    "inventory": {
+        "devices": [{"name": "fw-v", "role": "firewall"}],
+        "interfaces": [
+            _if("fw-v", "lan", "10.10.0.1/24", "lan"),
+            _link("vl_root_dmz0", "root", "vdom-link"),
+            _link("vl_root_dmz1", "dmz", "vdom-link"),
+            _if("fw-v", "srv", "10.40.0.1/24", vdom="dmz"),
+            # NPU-vlink: beide Enden im VDOM root, die VLANs darauf in root bzw. kunde
+            _link("npu0_vlink0", "root", "physical"),
+            _link("npu0_vlink1", "root", "physical"),
+            _link("vl100-r", "root", "vlan", "npu0_vlink0", 100),
+            _link("vl100-k", "kunde", "vlan", "npu0_vlink1", 100),
+            _if("fw-v", "k-lan", "10.41.0.1/24", vdom="kunde"),
+            # physische Ports in verschiedenen VDOMs sind kein VDOM-Link
+            _link("port10", "root", "physical"),
+            _link("port11", "kunde", "physical"),
+        ],
+    },
+    "routing": {
+        "contexts": [{"node": "fw-v", "context": c} for c in ("root", "dmz", "kunde")],
+        "routes": [
+            _r("fw-v", "root", "10.10.0.0/24", [{"interface": "lan"}], "connected"),
+            _r("fw-v", "root", "10.40.0.0/24", [{"interface": "vl_root_dmz0"}]),
+            _r("fw-v", "root", "10.41.0.0/24", [{"interface": "vl100-r"}]),
+            _r("fw-v", "root", "10.42.0.0/24", [{"interface": "port10"}]),
+            _r("fw-v", "dmz", "10.40.0.0/24", [{"interface": "srv"}], "connected"),
+            _r("fw-v", "dmz", "10.10.0.0/24", [{"interface": "vl_root_dmz1"}]),
+            _r("fw-v", "kunde", "10.41.0.0/24", [{"interface": "k-lan"}], "connected"),
+            _r("fw-v", "kunde", "10.42.0.0/24", [{"interface": "port11"}], "connected"),
+        ],
+    },
+}  # fmt: skip
+
+
+def test_weg_ueber_inter_vdom_links(client):
+    """0.27.0: Routen ohne Next-Hop-IP ueber einen VDOM-Link fuehren zum VDOM am anderen Ende
+    (vdom-link `<name>0`/`<name>1`, VLANs auf NPU-vlinks) - nicht ueber physische Ports."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    _deliver(client, tid, _system(client, tid, "fw-v", "fortigate"), "fortigate", FWV)
+
+    (path,) = _trace(client, tid, src="10.10.0.5", dst="10.40.0.5")["paths"]
+    assert _labels(path) == ["fw-v · VDOM root", "fw-v · VDOM dmz"]
+    root, dmz = path["hops"]
+    assert root["egress"] == {"interface": "vl_root_dmz0", "next_hop": None}
+    assert (dmz["via"], dmz["ingress"]) == (
+        "VDOM-Link vl_root_dmz0 ↔ vl_root_dmz1",
+        {"interface": "vl_root_dmz1"},
+    )
+    assert path["end"] == {
+        "kind": "connected",
+        "text": "Ziel angeschlossen an fw-v · VDOM dmz (srv)",
+    }
+
+    (back,) = _trace(client, tid, src="10.40.0.5", dst="10.10.0.5")["paths"]
+    assert _labels(back) == ["fw-v · VDOM dmz", "fw-v · VDOM root"]
+    assert back["hops"][1]["ingress"] == {"interface": "vl_root_dmz0"}
+
+    (npu,) = _trace(client, tid, src="10.10.0.5", dst="10.41.0.5")["paths"]
+    assert _labels(npu) == ["fw-v · VDOM root", "fw-v · VDOM kunde"]
+    assert npu["hops"][1]["via"] == "VDOM-Link vl100-r ↔ vl100-k"
+
+    (phys,) = _trace(client, tid, src="10.10.0.5", dst="10.42.0.5")["paths"]
+    assert _labels(phys) == ["fw-v · VDOM root"]
+    assert phys["end"]["text"] == "Ziel angeschlossen an fw-v · VDOM root (port10)"

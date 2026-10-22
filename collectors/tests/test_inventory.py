@@ -101,3 +101,17 @@ def test_aci_ohne_fabric_daten():
     inv = parse_inventory(fetch_mo_export(), None)
     assert inv.devices == [] and {i.name for i in inv.interfaces} == {"VPC_srv01", "eth1/20"}
     assert {i.device for i in inv.interfaces} == {"node-101", "node-102"}
+
+
+def test_fortigate_vdom_link_als_eigene_art():
+    """0.27.0: Inter-VDOM-Links (`type: vdom-link`) behalten ihre Art - der Weg verbindet die
+    Enden `<name>0`/`<name>1` in den VDOMs (ADR 0019)."""
+    raw = [
+        {"name": "vl_root_dmz0", "type": "vdom-link", "vdom": "root", "ip": "0.0.0.0 0.0.0.0"},
+        {"name": "vl_root_dmz1", "type": "vdom-link", "vdom": "dmz", "ip": "0.0.0.0 0.0.0.0"},
+    ]
+    inv = norm.normalize_inventory(raw, [], {}, "fw")
+    assert [(i.name, i.kind, i.vdom, i.ips) for i in inv.interfaces] == [
+        ("vl_root_dmz0", "vdom-link", "root", []),
+        ("vl_root_dmz1", "vdom-link", "dmz", []),
+    ]

@@ -127,7 +127,7 @@ class NormalizedInterface(BaseModel):
 
     device: str
     name: str
-    kind: str = "physical"  # physical | vlan | lag | loopback | tunnel | virtual
+    kind: str = "physical"  # physical | vlan | lag | loopback | tunnel | vdom-link | virtual
     enabled: bool | None = None
     mode: Literal["access", "tagged"] | None = None
     untagged_vlan: int | None = None

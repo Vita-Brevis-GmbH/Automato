@@ -716,6 +716,7 @@ _IFACE_KIND = {
     "redundant": "lag",
     "loopback": "loopback",
     "tunnel": "tunnel",
+    "vdom-link": "vdom-link",  # Inter-VDOM-Link (Endpunkte <name>0/<name>1), ADR 0019
 }
 
 

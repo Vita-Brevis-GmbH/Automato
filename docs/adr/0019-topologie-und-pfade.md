@@ -151,8 +151,8 @@ Rahmen laut Anwender (2026-10-22):
    - `vdom` an Regel, Objekt, NAT, Interface und Subnetz; Objekte eindeutig je
      Quellsystem/VDOM/Kategorie/Familie/Name; Paare und Entscheidungen je VDOM.
    - Zonen bleiben Namen; eine Zone gilt im VDOM ihrer Regel bzw. ihres Interfaces.
-   - Inter-VDOM-Links (`vdom-link`-Interfaces) sind mit ihrem VDOM gelesen; als Kanten folgen
-     sie mit Stufe 2.
+   - Inter-VDOM-Links (`vdom-link`-Interfaces) sind mit ihrem VDOM gelesen; Kanten im Weg
+     seit 0.27.0 (Stufe 3).
 2. **Routing, HA und L3Out lesen** (FortiGate je VDOM, ACI-Border-Leafs). Umgesetzt in
    0.16.0 (Alembic `0038`, Lesevertrag Abschnitt 1 und 2):
    - FortiGate je VDOM: wirksame Tabelle (ECMP), alle BGP-Pfade (auch Backup), BGP-Nachbarn,
@@ -220,7 +220,17 @@ Rahmen laut Anwender (2026-10-22):
        den internen Port.
      - SNAT der erlaubenden Policy (erste IP des IP-Pools bzw. IP des Ausgangs-Interfaces)
        ist die Quelle für die Firewalls danach.
-   - Offen: Session-Sync-Paar als ein Hop, Inter-VDOM-Links als Kanten, „Internet“
+   - **Inter-VDOM-Links (0.27.0):**
+     - Geht eine Route ohne Next-Hop-IP über einen VDOM-Link, führt der Weg zum VDOM am
+       anderen Ende weiter. Bisher endete er dort als „angeschlossen“.
+     - Paare: `<name>0` ↔ `<name>1` derselben FortiGate, vdom-link bzw. NPU-vlink
+       (`npu0_vlink0/1`). Die Enden liegen in verschiedenen VDOMs; VLAN-Subinterfaces auf
+       den Enden paaren sich über Parent und VLAN-ID (NPU-vlinks: beide Enden oft in `root`).
+     - Physische Ports in verschiedenen VDOMs sind keine Kante.
+     - Hat der Link IPs, gilt wie bisher der Besitzer der Next-Hop-IP. Das Paar greift nur,
+       wenn die IP keinem gelesenen Interface gehört.
+     - Die Policies je VDOM prüfen den Link als Aus- bzw. Eingang.
+   - Offen: Session-Sync-Paar als ein Hop, „Internet“
      zusammengefasst, Relevanz für ACI-Contracts (Firewall: Doku 0.24.0, Regel-Liste 0.26.0),
      Central-NAT und SNAT über eigene NAT-Regeln.
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde. Erster Teil in

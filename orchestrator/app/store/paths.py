@@ -29,6 +29,10 @@ ein Knoten und nicht vier Wege.
   `slack` Hops laenger sind als der kuerzeste aktive Weg („gleiche oder fast gleiche Laenge“).
 - **Regeln auf dem Weg** (0.22.0, `store/policy_check.py`): je FortiGate-Hop die Policies, die
   auf Ein-/Ausgang, Quelle, Ziel und Dienst passen, mit dem Urteil; je Weg das Gesamturteil.
+- **Inter-VDOM-Links** (0.27.0): Geht eine Route ueber einen VDOM-Link ohne Next-Hop-IP (bzw.
+  mit einer IP, die keinem gelesenen Interface gehoert), fuehrt der Weg zum VDOM am anderen
+  Ende: `<name>0` <-> `<name>1` derselben FortiGate (vdom-link bzw. NPU-vlink), VLAN-
+  Subinterfaces ueber Parent und VLAN-ID.
 - **NAT auf dem Weg** (0.23.0): Ist das Ziel eine VIP der FortiGate (externe IP bzw. Bereich,
   passendes `extintf`), geht der Weg ab diesem Hop zur internen IP weiter (Virtual Server: dem
   ersten Real Server, alle stehen am Hop). SNAT der erlaubenden Policy (IP-Pool bzw.
@@ -156,6 +160,7 @@ class Graph:
         self._zones: dict[tuple[int, str], str] = {}
         self._tables: dict[Key, dict[str, Table]] = {}
         self._vips: dict[Key, list[NatRule]] = {}
+        self._vlinks: dict[int, dict[tuple[str, str], tuple[str, str]]] = {}
         self.exits = list(
             session.scalars(
                 select(TopoExit).where(TopoExit.tenant_id == tenant_id).order_by(TopoExit.id)
@@ -414,6 +419,18 @@ class Graph:
                 return e
         return None
 
+    def vdom_peer(self, key: Key, interface: str | None) -> tuple[Key, str] | None:
+        """Anderes Ende eines Inter-VDOM-Links: (Knoten, Interface) im anderen VDOM."""
+        if not interface:
+            return None
+        if key[0] not in self._vlinks:
+            self._vlinks[key[0]] = _vdom_links(self.session, key[0])
+        peer = self._vlinks[key[0]].get((key[1], interface))
+        if peer is None:
+            return None
+        peer_key = (key[0], peer[0])
+        return (peer_key, peer[1]) if peer_key in self.nodes else None
+
     def dnat(self, key: Key, ip, ingress: dict) -> dict | None:
         """VIP der FortiGate (DNAT) fuer das Ziel an diesem Knoten: externe IP bzw. Bereich und
         `extintf` (any bzw. Eingang) passen -> interne IP(s), beim Virtual Server alle Real
@@ -565,6 +582,14 @@ def trace(
         route = g.route(key, cur, table)
         hop["route"] = route
         inside = g.fabric(cur, key) if node.kind == "vrf" else []
+        # Route ohne Next-Hop-IP ueber einen Inter-VDOM-Link: weiter im VDOM am anderen Ende
+        on_link = (
+            route is not None
+            and route["protocol"] not in _CONNECTED
+            and any(
+                not h.get("ip") and g.vdom_peer(key, h.get("interface")) for h in route["next_hops"]
+            )
+        )
         if follow is not None:
             hop["policy"] = follow
             devices = follow["output_device"] or [None]
@@ -578,7 +603,9 @@ def trace(
                 text = "keine Route bekannt – Routing-Tabelle nicht (ganz) lesbar"
             _record(out, hops, hop, "no_route", text, dev)
             continue
-        elif route["protocol"] in _CONNECTED or not any(h.get("ip") for h in route["next_hops"]):
+        elif not on_link and (
+            route["protocol"] in _CONNECTED or not any(h.get("ip") for h in route["next_hops"])
+        ):
             iface = next((h.get("interface") for h in route["next_hops"]), None)
             hop["egress"] = _port(g, key, iface)
             where = f" ({iface})" if iface else ""
@@ -601,6 +628,9 @@ def trace(
             branch = {**base, "egress": egress}
 
             nxt = _neighbors(g, key, ip)
+            peer = None if nxt else g.vdom_peer(key, nh.get("interface"))
+            if peer is not None:  # Inter-VDOM-Link ohne (gelesene) Next-Hop-IP
+                nxt = [(peer[0], peer[1], f"VDOM-Link {nh.get('interface')} ↔ {peer[1]}")]
             for nkey, niface, how in nxt:
                 queue.append(
                     ([*hops, branch], nkey, niface, how, g.table(nkey, niface), deviation, cur)
@@ -826,3 +856,47 @@ def device_names(session: Session, source_ids: set[int]) -> dict[tuple[int, str]
             )
         )
     }
+
+
+def _vdom_links(session: Session, sid: int) -> dict[tuple[str, str], tuple[str, str]]:
+    """(VDOM, Interface) -> (VDOM, Interface) am anderen Ende der Inter-VDOM-Links einer
+    FortiGate: `<name>0` <-> `<name>1` (vdom-link bzw. NPU-vlink, nur virtuelle bzw.
+    vlink-Interfaces, Enden in verschiedenen VDOMs), VLAN-Subinterfaces ueber Parent und VLAN-ID
+    (NPU-vlinks: beide Enden oft in root, die VLANs darauf in den VDOMs)."""
+    rows = list(
+        session.execute(
+            select(
+                InvInterface.name,
+                InvInterface.vdom,
+                InvInterface.kind,
+                InvInterface.parent,
+                InvInterface.tagged_vlans,
+            ).where(InvInterface.source_system_id == sid, InvInterface.vdom.is_not(None))
+        )
+    )
+    by_name = {r.name: r for r in rows}
+
+    def link_end(r) -> bool:
+        return r.name[-1:] in ("0", "1") and (
+            r.kind in ("virtual", "vdom-link") or "vlink" in r.name.lower()
+        )
+
+    pairs: dict[str, str] = {}  # beide Enden; NPU-vlinks liegen oft beide im VDOM root
+    for r in rows:
+        other = by_name.get(r.name[:-1] + "1") if r.name.endswith("0") else None
+        if other is not None and link_end(r) and link_end(other):
+            pairs[r.name], pairs[other.name] = other.name, r.name
+    out: dict[tuple[str, str], tuple[str, str]] = {}
+    for a, b in pairs.items():
+        if by_name[a].vdom != by_name[b].vdom:
+            out[(by_name[a].vdom, a)] = (by_name[b].vdom, b)
+    subs: dict[tuple[str, int], list] = defaultdict(list)
+    for r in rows:
+        if r.kind == "vlan" and r.parent in pairs and r.tagged_vlans:
+            subs[(r.parent, int(r.tagged_vlans[0]))].append(r)
+    for (parent, vid), mine in subs.items():
+        for a in mine:
+            for b in subs.get((pairs[parent], vid), []):
+                if a.vdom != b.vdom:
+                    out[(a.vdom, a.name)] = (b.vdom, b.name)
+    return out

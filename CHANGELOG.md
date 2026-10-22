@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.27.0 – 2026-10-22
+
+Inter-VDOM-Links im Weg (ADR 0019 Stufe 3). Ohne Migration.
+
+- **Weg über VDOM-Links:** Geht eine Route ohne Next-Hop-IP über einen Inter-VDOM-Link,
+  führt der Weg im VDOM am anderen Ende weiter („über VDOM-Link vl_root_dmz0 ↔
+  vl_root_dmz1“). Bisher endete er dort als „angeschlossen“.
+  - Paare: `<name>0` ↔ `<name>1` derselben FortiGate (vdom-link bzw. NPU-vlink), Enden in
+    verschiedenen VDOMs. VLAN-Subinterfaces auf den Enden paaren sich über Parent und VLAN-ID.
+  - Physische Ports in verschiedenen VDOMs sind keine Kante.
+  - Hat der Link IPs, gilt wie bisher der Besitzer der Next-Hop-IP.
+  - Regeln auf dem Weg prüfen den Link als Aus- bzw. Eingang der VDOMs.
+- **Collector:** FortiGate-Interfaces vom Typ `vdom-link` tragen die Art `vdom-link` (bisher
+  `virtual`).
+- Doku: veralteter Hinweis „Transfernetz (vermutet)“ in BETRIEB korrigiert (gilt seit 0.17.1
+  nicht mehr).
+
 ## 0.26.0 – 2026-10-22
 
 Relevanz in der Regel-Liste (ADR 0019 Punkt 6). Ohne Migration.

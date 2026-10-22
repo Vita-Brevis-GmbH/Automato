@@ -225,8 +225,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       und Namen aus dem IPAM.
     - Blau heisst: die Policy-Route bzw. SD-WAN-Regel passt sicher. „möglich“ heisst: nur über
       Objekte bestimmt, der Weg folgt dann der Tabelle.
-    - ECMP ergibt mehrere Wege. Der nächste Knoten ist der Besitzer der Next-Hop-Adresse;
-      sonst ein Knoten mit diesem Transfernetz („Transfernetz (vermutet)“).
+    - ECMP ergibt mehrere Wege. Der nächste Knoten ist der Besitzer der Next-Hop-Adresse. Ein
+      gemeinsames Transfernetz allein reicht nicht (0.17.1), dort hängt meist ein Aussenrouter.
+    - **Inter-VDOM-Links (0.27.0):** Geht eine Route ohne Next-Hop-IP über einen VDOM-Link
+      (`<name>0`/`<name>1`, auch VLANs auf NPU-vlinks), führt der Weg im VDOM am anderen Ende
+      weiter: „über VDOM-Link vl_root_dmz0 ↔ vl_root_dmz1“. Die Policies beider VDOMs werden
+      mit dem Link als Aus- bzw. Eingang geprüft.
     - Das Ende steht oben in der Karte: Ziel erreicht, im Fabric, extern, Weg endet (Next-Hop
       ohne gelesenes Gerät), keine Route.
     - Ohne Quelle und Start: je Kontext die wirksame Route wie bisher. Geräte, deren Routing
