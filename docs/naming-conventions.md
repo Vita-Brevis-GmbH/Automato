@@ -189,7 +189,7 @@ Haupt-URL). `V-EXT_<fqdn>`, z. B. `V-EXT_www.example.ch`.
 Mit Minuszeichen getrennt, soweit nicht anders vermerkt:
 - Device General `FWLD_<sec-tenant>-<dc-code>-pbr` — `FWLD_res01-000-pbr`
 - Device Firewall = Firewall-Name (`fwl01-001-infrz`)
-- Device Interface `<vmware-host>_<nic>` — `evh01-chher1-infrz_vmnic4`
+- Device Interface `<vmware-host>_<nic>` — `evh01-chzrh1-infrz_vmnic4`
 - Device Cluster `<sec-tenant>-<dc>-pbr` — `res01-000-pbr`
 - IP SLA `SLA_<sec-tenant>-<dc>-pbr` — `SLA_res01-000-pbr`
 - Redirect Health Group `RHG_<sec-tenant>-<dc>-<firewall>` — `RHG_res01-000-fwl01-001-infrz`
@@ -227,7 +227,7 @@ Firma-mit-Land · Domäne. Beispiel: `rou-a323-cd3f.example.ch`.
   1-stellige Laufnummer.
 - **Service-User**: enthält immer System/Gerät, wo das Passwort gesetzt ist:
   `<hostname><env>.<service>` bzw. `<product><env>.<service>` — `ctdprod.smtp`,
-  `fwc01-chher1-infrz.ldap`, `app01-001-res01.ldap`. Mehrfach genutzte User gesondert
+  `fwc01-chzrh1-infrz.ldap`, `app01-001-res01.ldap`. Mehrfach genutzte User gesondert
   dokumentieren.
 - **gMSA/SMSA** (NetBIOS, max. 15 Zeichen): SMSA `sa-<hostohnebindestriche>-<tenantnr>`
   (`sa-app03021-1`); GMSA `sa-<appbeschreibung>-<tenantnr>`; Domain-Local-Group
