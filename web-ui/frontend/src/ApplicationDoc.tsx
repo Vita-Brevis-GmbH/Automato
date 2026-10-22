@@ -127,6 +127,7 @@ export default function ApplicationDocView({
   const [rule, setRule] = useState<number | null>(null);
   const [showTables, setShowTables] = useState(false);
   const [showEmpty, setShowEmpty] = useState(false);
+  const [showImpossible, setShowImpossible] = useState(false); // routingtechnisch unmögliche
 
   useEffect(() => {
     setErr(null);
@@ -163,6 +164,7 @@ export default function ApplicationDocView({
 
   // Treffer nach den Filtern; EPG = die EPG selbst oder Systeme in ihr
   const hits = doc.hits.filter((h) => {
+    if (!showImpossible && h.relevance === "impossible") return false;
     if (f.system && h.system !== f.system) return false;
     if (f.epg) {
       const sys = byKey.get(h.system);
@@ -251,7 +253,11 @@ export default function ApplicationDocView({
 
       <div className="kpis wrap">
         <Kpi label="VMs" value={s.vms} sub={s.servers ? `+ ${s.servers} Server ohne VM` : "aus dem vCenter"} />
-        <Kpi label="EPGs im ACI" value={s.epgs} sub={`${s.rules} Regeln · ${s.firewall} Firewall · ${s.aci} ACI`} />
+        <Kpi
+          label="EPGs im ACI"
+          value={s.epgs}
+          sub={`${s.rules} Regeln · ${s.firewall} Firewall · ${s.aci} ACI${s.impossible ? ` · ${s.impossible} nicht möglich` : ""}`}
+        />
         <Kpi
           label="Regeln spezifisch"
           value={s.specific}
@@ -311,6 +317,15 @@ export default function ApplicationDocView({
             {rules.length !== doc.rules.length ? ` von ${doc.rules.length}` : ""}
           </span>
           <div className="spacer" />
+          {s.impossible ? (
+            <button
+              className="btn btn-ghost btn-sm no-print"
+              onClick={() => setShowImpossible(!showImpossible)}
+              title="Regeln, die die Systeme nach dem Routing ihrer Firewall nicht sehen können (Ein-/Ausgang passt nicht)"
+            >
+              {showImpossible ? "routingtechnisch unmögliche ausblenden" : `${s.impossible} routingtechnisch unmögliche einblenden`}
+            </button>
+          ) : null}
           {filtered && (
             <button className="btn btn-ghost btn-sm no-print" onClick={() => setF(NO_FILTER)}>
               Filter zurücksetzen
@@ -535,6 +550,7 @@ function RuleRow({
   const directions = [...new Set(hits.map((h) => h.direction))];
   const tables = [...new Set(hits.map((h) => h.table))].sort((x, y) => x - y);
   const aci = r.domain === "aci_contract";
+  const impossible = hits.filter((h) => h.relevance === "impossible");
   return (
     <tr className="clickable" onClick={onOpen}>
       <td className="mono">{r.id}</td>
@@ -566,6 +582,13 @@ function RuleRow({
       </td>
       <td>
         <ScopeChip scope={best(hits)} />
+        {impossible.length > 0 && (
+          <div>
+            <span className="chip crit" title={[...new Set(impossible.map((h) => h.relevance_text))].join("\n")}>
+              {impossible.length === hits.length ? "nicht möglich" : "teils nicht möglich"}
+            </span>
+          </div>
+        )}
       </td>
       <td className="nowrap">
         {tables.map((t) => (
@@ -673,6 +696,11 @@ function WhyBlock({
                   </span>
                 )}
                 <div className="faint">Kategorie {tables.map((t) => `${t}. ${titles.get(t)}`).join(", ")}</div>
+                {[...new Set(g.hits.filter((h) => h.relevance === "impossible").map((h) => h.relevance_text))].map((t) => (
+                  <div key={t}>
+                    <span className="chip crit">routingtechnisch nicht möglich</span> <span className="faint">{t}</span>
+                  </div>
+                ))}
                 <ul className="why-systems">
                   {[...new Set(g.hits.map((h) => h.system))].map((key) => {
                     const sys = byKey.get(key);
@@ -990,7 +1018,9 @@ function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string): s
   const names = new Map<string, string>([...doc.systems.map((x) => [x.key, x.name] as [string, string]), ...doc.epgs.map((e) => [e.key, e.label] as [string, string])]);
   lines.push("## Regeln & Contracts", "", "| Regel | Aktion | Herkunft | Richtung | System | Bezug |", "| --- | --- | --- | --- | --- | --- |");
   for (const r of doc.rules) {
-    const hits = doc.hits.filter((h) => h.rule_id === r.id);
+    // routingtechnisch unmögliche Treffer gehören nicht in die Doku (0.24.0)
+    const hits = doc.hits.filter((h) => h.rule_id === r.id && h.relevance !== "impossible");
+    if (!hits.length) continue;
     const sys = [...new Set(hits.map((h) => names.get(h.system) ?? h.system))].join(", ");
     const dir = [...new Set(hits.map((h) => (h.direction === "in" ? "eingehend" : "ausgehend")))].join(", ");
     const via = [...new Set(hits.map((h) => h.via))].join(", ");

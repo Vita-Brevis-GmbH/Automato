@@ -55,6 +55,15 @@ class DocVmOut(BaseModel):
     epg: str | None = None
 
 
+class ImpossibleOut(BaseModel):
+    """Regel, die das System nach dem Routing ihrer Firewall nicht sehen kann (0.24.0)."""
+
+    rule_id: int | None
+    description: str = ""
+    side: str | None = None  # src | dst
+    text: str = ""
+
+
 class SystemDocOut(BaseModel):
     system: str
     system_ip: str | None
@@ -62,6 +71,7 @@ class SystemDocOut(BaseModel):
     site: SiteRef | None
     vms: list[DocVmOut] = []
     tables: list[DocTableOut]
+    impossible: list[ImpossibleOut] = []  # nicht in den Tabellen (Routing)
 
 
 class SiteAssign(BaseModel):

@@ -539,7 +539,7 @@ def build_doc(session: Session, app: Application) -> dict:
         if hid in covered_hosts:
             continue  # steht als VM da
         key = f"host:{hid}"
-        doc = appdoc.host_doc(session, h, data)
+        doc = appdoc.host_doc(session, h, data, full=True)
         ip = _ip(h.value)
         systems.append(
             {
@@ -577,7 +577,7 @@ def build_doc(session: Session, app: Application) -> dict:
     epg_out: list[dict] = []
     for eid, (epg, why) in sorted(epgs.items(), key=lambda kv: inventory_label(kv[1][0])):
         key = f"epg:{eid}"
-        doc = appdoc.epg_doc(session, epg, data)
+        doc = appdoc.epg_doc(session, epg, data, full=True)
         rows += [(key, t["index"], r) for t in doc["tables"] for r in t["rows"]]
         subnets = list(
             session.scalars(
@@ -621,15 +621,21 @@ def build_doc(session: Session, app: Application) -> dict:
         else []
     )
     rules = rule_index.outs(session, rule_index.load_rules(session, ordered))
+    # Kennzahlen nur aus Treffern, die das Routing zulaesst (bzw. unbekannt); Regeln, die nur
+    # routingtechnisch unmoegliche Treffer haben, zaehlen separat (0.24.0)
+    possible = [h for h in hits if h["relevance"] != "impossible"]
+    impossible = {h["rule_id"] for h in hits} - {h["rule_id"] for h in possible}
     best: dict[int, str] = {}
-    for h in hits:
+    for h in possible:
         cur = best.get(h["rule_id"])
         if cur is None or _SCOPE_RANK.get(h["scope"], 9) < _SCOPE_RANK.get(cur, 9):
             best[h["rule_id"]] = h["scope"]
     for item in systems + epg_out:
-        mine = {h["rule_id"] for h in hits if h["system"] == item["key"]}
+        mine = {h["rule_id"] for h in possible if h["system"] == item["key"]}
         spec = {
-            h["rule_id"] for h in hits if h["system"] == item["key"] and h["scope"] == "specific"
+            h["rule_id"]
+            for h in possible
+            if h["system"] == item["key"] and h["scope"] == "specific"
         }
         item["rules"] = {"specific": len(spec), "unspecific": len(mine - spec)}
     by_scope = {k: sum(1 for v in best.values() if v == k) for k in appdoc.UNSPECIFIC}
@@ -641,9 +647,12 @@ def build_doc(session: Session, app: Application) -> dict:
             "vms": sum(1 for x in systems if x["kind"] == "vm"),
             "servers": sum(1 for x in systems if x["kind"] == "host"),
             "epgs": len(epg_out),
-            "rules": len(ordered),
-            "firewall": sum(1 for r in rules if r.domain == RuleDomain.FIREWALL.value),
+            "rules": len(ordered) - len(impossible),
+            "firewall": sum(
+                1 for r in rules if r.domain == RuleDomain.FIREWALL.value and r.id not in impossible
+            ),
             "aci": sum(1 for r in rules if r.domain == RuleDomain.ACI_CONTRACT.value),
+            "impossible": len(impossible),
             "specific": sum(1 for v in best.values() if v == "specific"),
             "unspecific": sum(by_scope.values()),
             "by_scope": by_scope,
@@ -704,11 +713,16 @@ def _hits_and_tables(rows: list[tuple[str, int, dict]]) -> tuple[list[dict], lis
                 "scope": row.get(appdoc.SCOPE) or "specific",
                 "counterpart": row.get("Target Systems") or row.get("Source") or "",
                 "services": row.get("TCP/UDP") or "",
+                # Routing (0.24.0): possible | impossible | unknown, mit Begruendung
+                "relevance": row.get(appdoc.REL) or "unknown",
+                "relevance_text": row.get(appdoc.REL_TEXT) or "",
             }
         )
     seen_rows: set[tuple] = set()
     for (idx, *_), group in groups.items():
         row = dict(group["row"])
+        if row.get(appdoc.REL) == "impossible":
+            continue  # Export/Druck: nur, was das Routing zulaesst
         systems = group["systems"]
         if len(systems) > 1 or row.get(appdoc.SCOPE) not in (None, "specific"):
             label = _object_label(row)

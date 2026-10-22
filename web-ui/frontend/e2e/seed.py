@@ -1,8 +1,9 @@
 """Beispieldaten fuer die UI-Tests - aus denselben Testdaten wie die Orchestrator-Tests.
 
-Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), sieben FortiGates (eine mit gleichnamigen
+Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), acht FortiGates (eine mit gleichnamigen
 IPv4/IPv6-Objekten und Regelpaaren, eine mit Virtual Server und Routing nur in root, eine mit
-zwei VDOMs und Routing, zwei parallele mit Session-Sync), einem APIC,
+zwei VDOMs und Routing, zwei parallele mit Session-Sync, eine mit LAN/DMZ/Internet und
+Routing fuer die Relevanz in der Doku), einem APIC,
 virtuellen und physischen Standorten, NAT/VIPs, Gruppen, Diensten mit Namensschema-Befunden,
 einem ACI-Contract ohne Consumer, einem vCenter mit einer VM hinter H_web01 und einer
 Applikation (AP mit EPG und VM). Alles ueber die oeffentliche bzw. interne API wie im Betrieb.
@@ -19,6 +20,7 @@ import test_findings_explain as fe  # noqa: E402
 import test_ip_family as ipf  # noqa: E402
 import test_parallel as par  # noqa: E402
 import test_paths as tp  # noqa: E402
+import test_policy_check as pc  # noqa: E402
 import test_routing as rt  # noqa: E402
 import test_search_nat as sn  # noqa: E402
 import test_services as sv  # noqa: E402
@@ -144,6 +146,13 @@ def run(app) -> None:
     for name, result in zip(("fw-06", "fw-07"), json.loads(renamed), strict=True):
         sid = system(name=name, platform="fortigate", base_url=f"https://{name}.example.ch")
         run_result(sid, "fortigate", **{k: v for k, v in result.items() if k != "status"})
+
+    # FortiGate 8: LAN, DMZ und Internet mit Zonen und Routing - Regeln auf dem Weg, Relevanz in
+    # der Doku (0.24.0: „lan -> internet, alles“ erfasst den DMZ-Server nur ueber any); Internet
+    # ueber 192.0.2.1, nicht ueber die Provider von fw-05
+    raw8 = json.dumps(pc.FW).replace('"fw-r"', '"fw-08"').replace("198.51.100.", "192.0.2.")
+    fw8 = system(name="fw-08", platform="fortigate", base_url="https://fw-08.example.ch")
+    run_result(fw8, "fortigate", **{k: v for k, v in json.loads(raw8).items() if k != "status"})
 
     # APIC: Inventar, Filter als Dienste, Contract ohne Consumer
     apic = system(name="apic-01", platform="cisco_aci", base_url="https://apic.example.ch")

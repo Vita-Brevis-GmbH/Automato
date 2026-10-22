@@ -173,6 +173,10 @@ class DocHitOut(BaseModel):
     scope: str  # specific | subnet | any | vzany | pref_group
     counterpart: str = ""
     services: str = ""
+    # Routing (0.24.0, ADR 0019): possible | impossible | unknown - kann die Regel Verkehr zum
+    # bzw. vom System ueberhaupt sehen; impossible mit Begruendung
+    relevance: str = "unknown"
+    relevance_text: str = ""
 
 
 class DocSummaryOut(BaseModel):
@@ -186,6 +190,7 @@ class DocSummaryOut(BaseModel):
     unspecific: int = 0
     by_scope: dict[str, int] = {}  # subnet | any | vzany | pref_group
     findings: int = 0
+    impossible: int = 0  # Regeln nur mit routingtechnisch unmoeglichen Treffern
 
 
 class DocFindingOut(BaseModel):

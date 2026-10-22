@@ -232,6 +232,28 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
             </div>
           )}
 
+          {doc?.impossible?.length ? (
+            <details className="card" style={{ marginBottom: 14 }} id="doc-impossible">
+              <summary className="card-head" style={{ cursor: "pointer" }}>
+                <h2>Routingtechnisch nicht möglich</h2>
+                <span className="faint">
+                  {doc.impossible.length} Treffer (Regel als Quelle bzw. Ziel) erfassen das System, die Firewall leitet es
+                  aber über ein anderes Interface – nicht in den Kategorien
+                </span>
+              </summary>
+              <div className="card-body pad">
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {doc.impossible.map((x) => (
+                    <li key={`${x.rule_id}-${x.side}`}>
+                      <b>{x.description}</b> <span className="faint">als {x.side === "src" ? "Quelle" : "Ziel"}:</span>{" "}
+                      {x.text}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </details>
+          ) : null}
+
           {!doc ? (
             <Loading />
           ) : tables.length === 0 ? (

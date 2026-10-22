@@ -32,6 +32,7 @@ from app.models import (
 )
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
+from app.store import relevance as relevance_store
 from app.store import rule_index, sites, virtual
 from app.store import rules as rules_store
 
@@ -61,6 +62,9 @@ RULE, DIRECTION, SCOPE = "_rule", "_dir", "_scope"
 # Seite der Regel (src | dst) und das Objekt der Regel, ueber das das System erfasst wird -
 # wie es in der Regel steht (H_web01, N_srv16 mit 10.20.0.0/16, any, EPG Tenant/AP/EPG), 0.14.1
 SIDE, OBJECT, OBJECT_VALUE = "_side", "_obj", "_val"
+# Relevanz (0.24.0, ADR 0019): kann die Regel Verkehr zum bzw. vom System ueberhaupt sehen
+# (possible | impossible | unknown) und warum nicht - nach dem Routing ihrer Firewall
+REL, REL_TEXT = "_rel", "_rel_text"
 UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
 _COMMON = ["Server Name", "TCP/UDP", "Target Systems", "Schutzmechanismen", "Description", VIA]
 TABLE_COLUMNS: dict[int, list[str]] = {
@@ -230,7 +234,30 @@ def _envelope(
     site_id: int | None,
     rows_by_table: dict[int, list[dict]],
     vms: list[dict] | None = None,
+    full: bool = False,
 ) -> dict:
+    """Doku eines Systems. Regeln, die das System nach dem Routing nicht sehen koennen, stehen
+    nicht in den Tabellen, sondern unter `impossible` mit Begruendung (`full` = alle Zeilen,
+    fuer die Applikations-Doku, die selbst filtert)."""
+    impossible: list[dict] = []
+    if not full:
+        for i in rows_by_table:
+            keep = []
+            for row in rows_by_table[i]:
+                if row.get(REL) != relevance_store.IMPOSSIBLE:
+                    keep.append(row)
+                elif not any(
+                    (x["rule_id"], x["side"]) == (row.get(RULE), row.get(SIDE)) for x in impossible
+                ):
+                    impossible.append(
+                        {
+                            "rule_id": row.get(RULE),
+                            "description": row.get("Description") or "",
+                            "side": row.get(SIDE),
+                            "text": row.get(REL_TEXT) or "",
+                        }  # fmt: skip
+                    )
+            rows_by_table[i] = keep
     tables = [
         {
             "index": i,
@@ -250,6 +277,7 @@ def _envelope(
         "site": sites.SiteIndex(session, site.tenant_id).ref(site) if site else None,
         "vms": vms or [],  # VMs dahinter (vCenter, ADR 0017)
         "tables": tables,
+        "impossible": impossible,  # routingtechnisch nicht moeglich (ADR 0019)
     }
 
 
@@ -311,6 +339,10 @@ class TenantData:
     def epgs_by_id(self) -> dict[int, Epg]:
         stmt = select(Epg).where(Epg.tenant_id == self.tenant_id)
         return {e.id: e for e in self.session.scalars(stmt)}
+
+    @cached_property
+    def relevance(self) -> relevance_store.Relevance:
+        return relevance_store.Relevance(self.session, self.tenant_id)
 
 
 def _proxies(data: TenantData, epg: Epg) -> dict[int, str]:
@@ -415,10 +447,11 @@ def _fw_rows(
     system_name: str,
     dnat_for_sys: list[NatRule],
     snat_ips: list[str],
+    rels: dict[str, dict] | None = None,
 ) -> list:
     """Firewall-Regel als (Tabelle, Zeile) je Seite, auf der das System steht (Ziel =
     eingehend, Quelle = ausgehend); `sides` = Seite -> (Bezug, Art des Bezugs, Objekt der
-    Regel, sein Bereich)."""
+    Regel, sein Bereich); `rels` = Seite -> Relevanz (Routing)."""
     objs, zones = data.objs, data.zones
     out = []
     for side in sorted(sides, key=lambda x: x != "dst"):
@@ -476,6 +509,9 @@ def _fw_rows(
             }
         via, scope, obj, value = sides[side]
         meta = {RULE: rule.id, DIRECTION: direction, SCOPE: scope, SIDE: side}
+        rel = (rels or {}).get(side)
+        if rel is not None:
+            meta |= {REL: rel["state"], REL_TEXT: rel["text"]}
         out.append((idx, {**row, VIA: via, **meta, OBJECT: obj, OBJECT_VALUE: value}))
     return out
 
@@ -524,11 +560,13 @@ def _covered_rows(
             # Server -> any: das System steht gezielt auf einer Seite; dass any auf der Gegenseite
             # es auch umfasst, ist kein eigener Zugriff (Dev-Befund 0.14.0)
             sides = {k: v for k, v in sides.items() if v[1] != "any"}
-        out += _fw_rows(data, r, sides, system_name, dnat, snat)
+        zones = {"src": data.zones.get(r.src_zone_id), "dst": data.zones.get(r.dst_zone_id)}
+        rels = {s: data.relevance.check(r, s, values, zones[s]) for s in sides}
+        out += _fw_rows(data, r, sides, system_name, dnat, snat, rels)
     return out
 
 
-def epg_doc(session: Session, epg: Epg, data: TenantData | None = None) -> dict:
+def epg_doc(session: Session, epg: Epg, data: TenantData | None = None, full: bool = False) -> dict:
     """ACI-EPG als System: Contracts (direkt, vzAny der VRF, ESGs) nach scope/AP in die
     Tabellen 7/8/9 (+ L3Out-Tabellen) und die Firewall-Regeln, die ihre Subnetze bzw.
     Endpunkte erfassen (auch ueber groessere Netze und any). Als Name der ganze ACI-Pfad."""
@@ -552,6 +590,7 @@ def epg_doc(session: Session, epg: Epg, data: TenantData | None = None) -> dict:
         host.site_id if host else None,
         rows_by_table,
         epg_store.vms_of(session, [epg.id]).get(epg.id, []),
+        full,
     )
 
 
@@ -581,7 +620,9 @@ def build_doc(session: Session, system_name: str, tenant_id: int | None) -> dict
     return None
 
 
-def host_doc(session: Session, sys_obj: NetworkObject, data: TenantData | None = None) -> dict:
+def host_doc(
+    session: Session, sys_obj: NetworkObject, data: TenantData | None = None, full: bool = False
+) -> dict:
     """Doku eines Host-Systems: alle Firewall-Regeln, die den Server erfassen - direkt und ueber
     Netze, Bereiche, Gruppen und any -, dazu die ACI-Contracts der EPG(s) des Servers."""
     system_name = sys_obj.name
@@ -617,6 +658,7 @@ def host_doc(session: Session, sys_obj: NetworkObject, data: TenantData | None =
         sys_obj.site_id,
         rows_by_table,
         [info] if info else [],
+        full,
     )
 
 

@@ -7,6 +7,35 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.24.0 – 2026-10-22
+
+Regeln nur, wo der Verkehr durchkommt (ADR 0019 Punkt 6, Relevanz in der Doku). Konzeptbefund:
+Ohne Routing zeigte die Doku Zugriffe, die routingtechnisch nicht möglich sind. Ohne Migration.
+
+- **Relevanz je Regel und System:** Für jede Firewall-Regel, die ein System erfasst – direkt,
+  über ein Netz, eine Gruppe oder `any` –, prüft Automato das Routing ihrer Firewall bzw. ihres
+  VDOMs.
+  - *Ziel:* Leitet die Firewall den Server (bzw. das EPG-Subnetz) über den Ausgang der Regel
+    (`dstintf`, Interface oder Zone)?
+  - *Quelle:* Kommt Verkehr vom Server über den Eingang der Regel an (`srcintf`;
+    symmetrisches Routing)?
+  - Passt keines, ist der Treffer **routingtechnisch nicht möglich**, mit Begründung, z. B.
+    „fw leitet 10.30.0.10 über dmz (Zone dmz) – die Regel gilt nur für den Ausgang internet“.
+  - Im Zweifel bleibt er sichtbar (**unbekannt**): Routing nicht gelesen, keine Route,
+    Interface bzw. Zone unbekannt, Policy-Route bzw. SD-WAN, die anders leiten kann. Regeln
+    mit `any` als Interface sind immer möglich.
+- **Doku je System:** Unmögliche Treffer fehlen in den 10 Kategorien und im Export. Sie stehen
+  oben unter „Routingtechnisch nicht möglich“ (Regel, als Quelle bzw. Ziel, Begründung).
+- **Applikations-Doku:**
+  - Unmögliche Treffer sind ausgeblendet; „N routingtechnisch unmögliche einblenden“ zeigt
+    sie, mit „nicht möglich“ in der Spalte Bezug und dem Grund in der Erklärung.
+  - Kennzahlen, Kategorien und Export zählen nur Mögliche bzw. Unbekannte. Die Übersicht nennt
+    „N nicht möglich“.
+- **API:**
+  - `GET /appdoc/systems/{name}` mit `impossible`;
+  - Applikations-Doku mit `relevance`/`relevance_text` je Treffer und `summary.impossible`.
+- **Beispieldaten der UI-Tests:** zusätzlich fw-08 (LAN, DMZ, Internet mit Routing).
+
 ## 0.23.0 – 2026-10-22
 
 NAT auf dem Weg (ADR 0019 Stufe 3). Ohne Migration.

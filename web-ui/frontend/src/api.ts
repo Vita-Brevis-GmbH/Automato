@@ -602,6 +602,8 @@ export interface SystemDoc {
   site: SiteRef | null;
   vms?: DocVm[];
   tables: DocTable[];
+  // routingtechnisch nicht möglich (0.24.0) – nicht in den Tabellen, mit Begründung
+  impossible?: { rule_id: number | null; description: string; side: "src" | "dst" | null; text: string }[];
 }
 
 // Applikationen (ADR 0012): Mitglieder AP (`Tenant/AP`), EPG (DN) und Server (Objektname)
@@ -735,6 +737,9 @@ export interface AppDocHit {
   scope: DocScope;
   counterpart: string;
   services: string;
+  // Routing (0.24.0): kann die Regel Verkehr zum bzw. vom System sehen; impossible mit Grund
+  relevance?: "possible" | "impossible" | "unknown";
+  relevance_text?: string;
 }
 export interface AppDocFinding {
   id: number;
@@ -761,6 +766,7 @@ export interface ApplicationDoc {
     unspecific: number;
     by_scope: Record<string, number>;
     findings: number;
+    impossible?: number; // Regeln nur mit routingtechnisch unmöglichen Treffern
   };
   systems: AppDocSystem2[];
   epgs: AppDocEpg[];

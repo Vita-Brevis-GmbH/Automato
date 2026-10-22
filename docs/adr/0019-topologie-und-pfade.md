@@ -94,6 +94,18 @@ Rahmen laut Anwender (2026-10-22):
      die Netze hinter dem Interface.
    - Die Relevanz ist abgeleiteter Zustand wie der Regelindex: je Lauf neu berechnet, mit
      Zwischenspeicher je Paar aus Quellnetz und Zielnetz.
+   - **Umgesetzt in 0.24.0 (`store/relevance.py`), erster Teil – je Regel und System:**
+     - Ziel: Die Route der Firewall zum System verlässt sie über den Ausgang der Regel.
+     - Quelle: Die Route zum System führt über den Eingang der Regel (symmetrisches Routing).
+     - Sonst ist der Treffer „nicht möglich“ und fehlt in Doku je System, Applikations-Doku,
+       Kennzahlen und Export (einblendbar, mit Begründung).
+     - „Unbekannt“ bei fehlendem Routing, fehlender Route, unbekanntem Interface bzw.
+       möglicher Policy-Route/SD-WAN.
+     - Berechnet beim Aufruf der Doku (Zwischenspeicher je Firewall, Seite, Interfaces und
+       IP).
+     - Noch nicht: Gegenstelle `any` als das, was hinter dem Ausgang liegt („Internet“);
+       Relevanz in der Regel-Liste; ACI-Contracts; der ganze Pfad (Firewall auf dem Weg
+       zwischen Quelle und Ziel).
 7. **Designer** (Oberfläche):
    - Knoten und Kanten mit Herkunft zeigen, bestätigen oder korrigieren, externe Knoten
      benennen, fehlende Wege ergänzen, Verbindungen Kunden zuordnen (ADR 0018).
@@ -205,8 +217,8 @@ Rahmen laut Anwender (2026-10-22):
      - SNAT der erlaubenden Policy (erste IP des IP-Pools bzw. IP des Ausgangs-Interfaces)
        ist die Quelle für die Firewalls danach.
    - Offen: Session-Sync-Paar als ein Hop, Inter-VDOM-Links als Kanten, „Internet“
-     zusammengefasst, Regel-Relevanz in Regeln und Doku (Regeln nur, wo der Verkehr
-     durchkommt), Central-NAT und SNAT über eigene NAT-Regeln.
+     zusammengefasst, Regel-Relevanz in der Regel-Liste (Doku: 0.24.0, Punkt 6), Central-NAT
+     und SNAT über eigene NAT-Regeln.
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde. Erster Teil in
    0.18.0: **Anbindungen nach aussen** (`topo_exit`, von Hand erfasst, Operator):
    - Art (Internet, MPLS, WAN, Partner), optional für eine Firewall, Next-Hop-IPs und/oder

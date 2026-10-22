@@ -92,3 +92,19 @@ test("Applikation: Stammdaten bearbeiten (Zweck, Namen)", async ({ page }) => {
   await modal.locator("button.btn-primary").click();
   await expect(page.locator(".app-head")).toContainText("Prod");
 });
+
+test("Doku je System: routingtechnisch unmögliche Regeln stehen nicht in den Kategorien", async ({ page }) => {
+  await page.goto("/#apps");
+  await page.click("button:has-text('Doku je System')");
+  const pick = page.locator(".filterbar select").first();
+  await expect(page.locator(".stack")).toBeVisible(); // erstes System geladen
+  await expect(pick).toContainText("10.30.0.10");
+  await pick.selectOption("10.30.0.10");
+  const gone = page.locator("#doc-impossible");
+  await expect(gone).toContainText("Routingtechnisch nicht möglich");
+  await gone.locator("summary").click();
+  await expect(gone).toContainText("lan-to-inet-users");
+  await expect(gone).toContainText("fw-08 leitet 10.30.0.10 über dmz (Zone dmz) – die Regel gilt nur für den Ausgang internet");
+  await expect(page.locator(".stack")).toContainText("lan-to-dmz-web");
+  await expect(page.locator(".stack")).not.toContainText("lan-to-inet-users");
+});

@@ -326,6 +326,20 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Für EPGs zählen ihre Subnetze und Endpunkte. Der Kopf nennt die **VM** des Servers bzw.
   die VMs an den Portgruppen der EPG; ein Server bringt auch die Contracts der EPG seiner
   Portgruppe mit (ohne gelernten Endpunkt).
+  - **Nur, wo der Verkehr durchkommt (0.24.0):** Automato prüft jede Firewall-Regel gegen das
+    Routing ihrer Firewall.
+    - Ziel: Leitet die Firewall den Server über den Ausgang der Regel (Interface bzw. Zone)?
+    - Quelle: Kommt Verkehr vom Server über den Eingang der Regel an?
+    - Wenn nicht, ist die Regel für dieses System **routingtechnisch nicht möglich** – z. B.
+      „lan → internet, any“ für einen Server in der DMZ.
+    - Solche Treffer fehlen in den Kategorien, im Export und in den Kennzahlen.
+      - *Doku je System:* Sie stehen oben unter „Routingtechnisch nicht möglich“ mit
+        Begründung.
+      - *Applikations-Doku:* „N routingtechnisch unmögliche einblenden“ zeigt sie, mit
+        „nicht möglich“ in der Spalte Bezug und dem Grund in der Erklärung.
+    - Fehlt das Routing, die Route oder ein Interface, bzw. kann eine Policy-Route oder
+      SD-WAN anders leiten, bleibt die Regel sichtbar („unbekannt“). Regeln mit `any` als
+      Interface sind immer möglich.
 - **Findings:** oben eine **Übersicht nach Kategorien** (IPAM-Abgleich, Namenskonvention,
   Bereinigung, ACI / VMware) mit offenen/gesamten Befunden je Typ (Klick filtert). Neu mit
   dem vCenter: *VM-IP fehlt im IPAM* und *Portgruppe nach ACI-Schema ohne EPG*. Je Befund ein Satz,
