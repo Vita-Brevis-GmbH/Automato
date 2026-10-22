@@ -392,14 +392,16 @@ def test_anbindungen_nach_aussen(client):
     created = client.post("/routing/exits", json=inet, headers=operator)
     assert created.status_code == 201, created.text
     mpls = {"tenant_id": tid, "name": "Kunde A", "kind": "mpls",
-            "source_system_id": ids["fw-a"], "interfaces": ["mpls"],
+            "source_system_ids": [ids["fw-a"]], "interfaces": ["mpls"],
             "prefixes": ["10.60.0.0/16"],
             "routes": [{"prefix": "10.60.0.0/16", "target": f"{ids['fw-b']}|root"}]}  # fmt: skip
     assert client.post("/routing/exits", json={**mpls, "routes": [{"prefix": "10.60.0.0/16",
                        "target": "fw-b"}]}, headers=operator).status_code == 422  # fmt: skip
     mpls_id = client.post("/routing/exits", json=mpls, headers=operator).json()["id"]
     rows = client.get("/routing/exits", params={"tenant_id": tid}).json()
-    assert [(x["name"], x["source"]) for x in rows] == [("Internet", None), ("Kunde A", "fw-a")]
+    assert [(x["name"], x["sources"]) for x in rows] == [("Internet", []), ("Kunde A", ["fw-a"])]
+    assert client.post("/routing/exits", json={**mpls, "source_system_ids": [999]},
+                       headers=operator).status_code == 422  # fmt: skip
 
     start = f"{ids['fw-a']}|root"
     (path,) = _trace(client, tid, start=start, dst="192.0.2.77")["paths"]
@@ -423,9 +425,13 @@ def test_anbindungen_nach_aussen(client):
     assert path["end"]["kind"] == "unknown"
     # Quellsystem geloescht: seine Anbindungen mit
     client.post("/routing/exits", json=mpls, headers=operator)
+    both = {**mpls, "name": "Beide", "source_system_ids": [ids["fw-a"], ids["fw-b"]]}
+    client.post("/routing/exits", json=both, headers=operator)
     assert client.delete(f"/systems/{ids['fw-a']}", headers=ADMIN).status_code in (200, 204)
-    assert [x["name"] for x in client.get("/routing/exits", params={"tenant_id": tid}).json()] == [
-        "Internet"
+    rows = client.get("/routing/exits", params={"tenant_id": tid}).json()
+    assert [(x["name"], x["source_system_ids"]) for x in rows] == [
+        ("Beide", [ids["fw-b"]]),  # gilt noch fuer die andere Firewall
+        ("Internet", []),
     ]
 
 
@@ -497,6 +503,7 @@ def test_redundante_wege_mit_backup_und_verbund(client):
     assert bgp["hops"][0]["egress"]["interface"] == "wan2"  # Interface aus dem Netz des Next-Hops
     assert floating["hops"][0]["backup"]["reason"] == "statische Backup-Route (Distanz 250)"
     assert all("10.77.0.9" not in str(p) for p in out["paths"])  # abgeschaltete Route
+    assert [p["extra"] for p in out["paths"]] == [0, 0, 1]  # gleich lang bzw. ein Hop mehr
     strict = _trace(client, tid, src="10.10.0.5", dst="198.18.0.10", slack=0)
     assert [p["kind"] for p in strict["paths"]] == ["active", "backup"]
     assert "1 weitere Backup-Wege ausgeblendet" in strict["notes"][0]
@@ -510,3 +517,138 @@ def test_redundante_wege_mit_backup_und_verbund(client):
         (["fw-r", "fw-p2"], ["Nord"]),
     ]
     assert out["paths"][1]["hops"][1]["group"] == "Nord"
+
+
+def _wan(name: str, own: int, to_x: bool) -> dict:
+    """Firewall eines Verbunds an vier WAN-Routern mit BGP (zwei Interfaces in der Zone wan):
+    10.60.0.0/16 aktiv ueber zwei Router (ECMP), die anderen zwei als BGP-Backup."""
+    wan = [("198.18.10.1", "wan1"), ("198.18.10.2", "wan1"), ("198.18.20.1", "wan2"),
+           ("198.18.20.2", "wan2")]  # fmt: skip
+    routes = [
+        _r(name, "root", "198.18.10.0/29", [{"interface": "wan1"}], "connected"),
+        _r(name, "root", "198.18.20.0/29", [{"interface": "wan2"}], "connected"),
+        _r(name, "root", "203.0.113.0/29", [{"interface": "inet"}], "connected"),
+        _r(name, "root", "10.10.0.0/24", [{"interface": "lan"}], "connected"),
+        _r(name, "root", "10.99.0.0/24", [{"interface": "mgmt"}], "connected", attrs=MGMT_ATTRS),
+        _r(name, "root", "10.60.0.0/16", [{"ip": ip, "interface": i} for ip, i in wan[:2]], "bgp",
+           distance=20),
+        *(_r(name, "root", "10.60.0.0/16", [{"ip": ip}], "bgp", table="bgp", best=n < 2,
+             attrs={"as_path": "65100"}) for n, (ip, _i) in enumerate(wan)),
+        _r(name, "root", "0.0.0.0/0", [{"ip": "203.0.113.1", "interface": "inet"}]),
+        _r(name, "root", "0.0.0.0/0", [{"ip": "10.99.0.1", "interface": "mgmt"}],
+           attrs=MGMT_ATTRS),
+    ]  # fmt: skip
+    interfaces = [
+        _if(name, "wan1", f"198.18.10.{own}/29", "wan"),
+        _if(name, "wan2", f"198.18.20.{own}/29", "wan"),
+        _if(name, "inet", f"203.0.113.{own}/29", "internet"),
+        _if(name, "lan", "10.10.0.1/24"),
+        _if(name, "mgmt", f"10.99.0.{own}/24"),
+    ]
+    if to_x:  # Next-Hop einer gelesenen Firewall: keine Anbindung
+        routes.append(_r(name, "root", "10.90.0.0/16", [{"ip": "10.66.0.2", "interface": "to-x"}]))
+        interfaces.append(_if(name, "to-x", "10.66.0.1/30"))
+    result = _fw(name, routes, interfaces)
+    result["routing"]["peers"] = [
+        {"node": name, "context": "root", "peer_ip": ip, "remote_as": 65100, "state": "Established"}
+        for ip, _i in wan
+    ]
+    return result
+
+
+FWX = _fw(
+    "fw-x",
+    [
+        _r("fw-x", "root", "10.66.0.0/30", [{"interface": "to-w"}], "connected"),
+        _r("fw-x", "root", "198.18.30.0/30", [{"interface": "wan"}], "connected"),
+        _r("fw-x", "root", "10.61.0.0/16", [{"ip": "198.18.30.1", "interface": "wan"}]),
+    ],
+    [_if("fw-x", "to-w", "10.66.0.2/30"), _if("fw-x", "wan", "198.18.30.2/30", "wan")],
+)
+
+
+def test_erkannte_anbindungen_mit_redundanz(client):
+    """0.20.0: Router ohne gelesenes Geraet (Next-Hops, BGP-Nachbarn) werden erkannt und zu
+    Anbindungen zusammengefasst - vier WAN-Router an beiden Firewalls eines Verbunds sind eine
+    Anbindung mit zwei aktiven und zwei Backup-Routern; die Anbindung gilt fuer beide."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    ids = {}
+    for name, result in (("fw-w1", _wan("fw-w1", 5, True)), ("fw-w2", _wan("fw-w2", 6, False)),
+                         ("fw-x", FWX)):  # fmt: skip
+        ids[name] = _system(client, tid, name, "fortigate")
+        _deliver(client, tid, ids[name], "fortigate", result)
+    body = {"tenant_id": tid, "group": "Nord", "system_ids": [ids["fw-w1"], ids["fw-w2"]]}
+    client.post("/systems/parallel-group", json=body, headers=ADMIN)
+    operator = {"X-Dev-Roles": "operator", "X-Dev-Tenants": str(tid)}
+
+    def suggested() -> list[dict]:
+        r = client.get("/routing/exits/suggestions", params={"tenant_id": tid})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    rows = suggested()
+    # nicht dabei: Management-Default-Route, Next-Hop einer gelesenen Firewall (fw-x)
+    assert [(s["name"], s["kind"], s["sources"], [h["ip"] for h in s["next_hops"]])
+            for s in rows] == [
+        ("internet", "internet", ["fw-w1", "fw-w2"], ["203.0.113.1"]),
+        ("wan", "wan", ["fw-w1", "fw-w2"],
+         ["198.18.10.1", "198.18.10.2", "198.18.20.1", "198.18.20.2"]),
+        ("wan", "wan", ["fw-x"], ["198.18.30.1"]),  # andere Firewall, kein Verbund: eigene
+    ]  # fmt: skip
+    wan = rows[1]
+    assert wan["source_system_ids"] == sorted([ids["fw-w1"], ids["fw-w2"]])
+    assert [(h["status"], h["remote_as"], h["state"]) for h in wan["next_hops"]] == [
+        ("active", 65100, "Established"),
+        ("active", 65100, "Established"),
+        ("backup", 65100, "Established"),
+        ("backup", 65100, "Established"),
+    ]
+    assert wan["redundancy"] == {"routers": 4, "active": 2, "backup": 2, "neighbor": 0, "ecmp": 2,
+                                 "firewalls": 2}  # fmt: skip
+    first = wan["next_hops"][0]
+    assert [(u["source"], u["interface"], u["zone"]) for u in first["uses"]] == [
+        ("fw-w1", "wan1", "wan"),
+        ("fw-w2", "wan1", "wan"),
+    ]
+    assert wan["next_hops"][2]["uses"][0]["interface"] == "wan2"  # BGP-Pfad: Netz des Routers
+    assert rows[0]["next_hops"][0]["default"] is True
+
+    # wie bisher nur der erste Router: der Vorschlag bleibt mit den uebrigen, mit der Anbindung
+    exit_ = {"tenant_id": tid, "name": "WAN Nord", "kind": "wan",
+             "source_system_ids": [ids["fw-w1"]], "next_hops": ["198.18.10.1"]}  # fmt: skip
+    exit_id = client.post("/routing/exits", json=exit_, headers=operator).json()["id"]
+    wan = next(s for s in suggested() if s["key"] == "198.18.10.1")
+    assert wan["exits"] == [{"id": exit_id, "name": "WAN Nord", "kind": "wan"}]
+    assert [h["covered"] for h in wan["next_hops"]] == [False, False, False, False]  # fw-w2 fehlt
+
+    # ueber die Zone: deckt alle vier ab, nennt aber nur einen - die anderen sind „erkannt“
+    zone = {**exit_, "source_system_ids": [ids["fw-w1"], ids["fw-w2"]], "interfaces": ["wan"]}
+    client.put(f"/routing/exits/{exit_id}", json=zone, headers=operator)
+    (row,) = client.get("/routing/exits", params={"tenant_id": tid}).json()
+    st = row["status"]
+    assert [(r["ip"], r["status"], r["listed"]) for r in st["routers"]] == [
+        ("198.18.10.1", "active", True),
+        ("198.18.10.2", "active", False),
+        ("198.18.20.1", "backup", False),
+        ("198.18.20.2", "backup", False),
+    ]
+    assert st["missing"] == ["198.18.10.2", "198.18.20.1", "198.18.20.2"]
+    assert st["source_system_ids"] == sorted([ids["fw-w1"], ids["fw-w2"]])
+    assert all(s["key"] != "198.18.10.1" for s in suggested())  # ganz abgedeckt
+    covered = client.get("/routing/exits/suggestions", params={"tenant_id": tid, "covered": True})
+    assert any(s["covered"] and s["key"] == "198.18.10.1" for s in covered.json())
+
+    # alle Router eingetragen: Weg ueber jeden Router endet an der Anbindung, alle gleich lang
+    client.put(f"/routing/exits/{exit_id}", headers=operator,
+               json={**zone, "next_hops": st["missing"] + ["198.18.10.1"]})  # fmt: skip
+    out = _trace(client, tid, src="10.10.0.5", dst="10.60.1.1")
+    ends = [(p["kind"], p["hops"][0]["label"], p["end"]["kind"], p["extra"]) for p in out["paths"]]
+    assert sorted(ends) == sorted(
+        [(k, fw, "exit", 0) for fw in ("fw-w1", "fw-w2") for k in ("active", "active")]
+        + [("backup", fw, "exit", 0) for fw in ("fw-w1", "fw-w2") for _ in range(2)]
+    )
+    texts = {p["end"]["text"] for p in out["paths"]}
+    assert "weiter über WAN Nord – Router 4 von 4" in texts  # 198.18.10.1 zuletzt eingetragen
+    assert (
+        client.get("/routing/exits", params={"tenant_id": tid}).json()[0]["status"]["missing"] == []
+    )

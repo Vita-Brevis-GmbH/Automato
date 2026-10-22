@@ -435,3 +435,36 @@ test("Parallele Firewalls: Verbund auflösen, Vorschlag abgelehnt und wieder vor
   await page.click("button:has-text('wieder vorschlagen')");
   await expect(page.locator(".note", { hasText: "fw-06 und fw-07" })).toContainText("Ablehnen");
 });
+
+test("Routing: erkannte Anbindung mit allen Routern übernehmen, Wege gleich lang", async ({ page }) => {
+  await page.goto("/#routing");
+  await page.click(".tabbar button:has-text('Anbindungen')");
+  // fw-05: zwei Provider (ECMP) und IPv6 über dieselbe Zone – ein Vorschlag mit drei Routern
+  const found = page.locator("#exit-suggestions tbody tr", { hasText: "198.51.100.5" });
+  await expect(found).toContainText("198.51.100.1");
+  await expect(found).toContainText("3 Router · 3 aktiv (ECMP ×2)");
+  await expect(found).toContainText("AS 64500");
+  await found.locator("button", { hasText: "übernehmen" }).click();
+  const hops = page.locator("#ex-hops");
+  await expect(hops).toHaveValue("198.51.100.1, 198.51.100.5, 2001:db8::1");
+  await expect(page.locator("#ex-fws input:checked")).toHaveCount(1);
+  await page.locator("#ex-routers label", { hasText: "2001:db8::1" }).locator("input").uncheck();
+  await expect(hops).toHaveValue("198.51.100.1, 198.51.100.5");
+  await page.click("button:has-text('alle Router übernehmen')");
+  await expect(hops).toHaveValue("198.51.100.1, 198.51.100.5, 2001:db8::1");
+  await page.locator("#ex-name").fill("Internet Provider");
+  await page.click("button:has-text('Speichern')");
+  const row = page.locator(".card", { hasText: "Manuelle Routen" }).locator("tbody tr", { hasText: "Internet Provider" });
+  await expect(row).toContainText("3 Router · 3 aktiv (ECMP ×2)");
+  await expect(page.locator("#exit-suggestions tbody tr", { hasText: "198.51.100.5" })).toHaveCount(0);
+  // Weg: beide Provider enden an der Anbindung, dazu der BGP-Backup – alle gleich lang
+  await page.click(".tabbar button:has-text('Weg für IP')");
+  await page.getByPlaceholder("Quelle (IP)").fill("10.20.0.5");
+  await page.getByPlaceholder("Ziel (IP)").fill("203.0.113.10");
+  await page.click("button:has-text('Weg suchen')");
+  const first = page.locator(".card[id^='trace-']", { hasText: "Weg 1 von 2" });
+  await expect(first).toContainText("weiter über Internet Provider");
+  await expect(first).toContainText("Router 1 von 3");
+  const overview = page.locator(".card", { hasText: "Wege im Überblick" });
+  await expect(overview.locator("tbody tr", { hasText: "gleich lang" })).toHaveCount(3);
+});

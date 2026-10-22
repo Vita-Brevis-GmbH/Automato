@@ -17,6 +17,8 @@ ein Knoten und nicht vier Wege.
   keinem gelesenen Geraet, aber passt eine Anbindung (Next-Hop-IP, sonst Interface bzw. Zone
   der Firewall), endet der Weg dort („Internet“, „MPLS …“) - oder geht nach ihren manuellen
   Routen beim gelesenen Knoten weiter (z. B. ueber MPLS zur Firewall eines anderen Standorts).
+  0.20.0: fuer eine oder mehrere Firewalls (z. B. beide Session-Sync-Partner); erkannte
+  Anbindungen mit allen Routern in `store/exits.py`.
 - **Ende:** Ziel angeschlossen, Anbindung, Default-Route ohne gelesenen Nachbarn
   („extern“), Next-Hop ohne gelesenes Geraet, keine Route, Schleife oder Hop-Grenze -
   Next-Hops mit dem Namen aus dem IPAM.
@@ -389,17 +391,18 @@ class Graph:
         self, key: Key, interface: str | None, zone: str | None, ip: str | None
     ) -> TopoExit | None:
         """Anbindung fuer einen Ausgang: zuerst ueber die Next-Hop-IP, dann ueber Interface
-        bzw. Zone dieser Firewall, zuletzt ueber Interface/Zone einer Anbindung fuer alle."""
+        bzw. Zone - Anbindungen dieser Firewall (auch mehrerer, z. B. beider Session-Sync-
+        Partner) vor solchen fuer alle."""
         ports = {p for p in (interface, zone) if p}
+        own = [e for e in self.exits if key[0] in (e.source_system_ids or [])]
+        ranked = own + [e for e in self.exits if not e.source_system_ids]
         if ip:
-            for e in self.exits:
-                if ip in (e.next_hops or []) and e.source_system_id in (None, key[0]):
+            for e in ranked:
+                if ip in (e.next_hops or []):
                     return e
-        for own in (True, False):
-            for e in self.exits:
-                if (e.source_system_id == key[0]) is own and (own or e.source_system_id is None):
-                    if ports & set(e.interfaces or []):
-                        return e
+        for e in ranked:
+            if ports & set(e.interfaces or []):
+                return e
         return None
 
     def policies(self, key: Key, src, dst, ingress: str | None) -> list[dict]:
@@ -556,7 +559,8 @@ def trace(
                     via_exit = f"über {_exit_label(ex)} (manuelle Route)"
                     queue.append(([*hops, branch], target_key, None, via_exit, 0, deviation))
                     continue
-                _record(target, hops, branch, "exit", _exit_text(ex, dst, g.names(ip)), deviation)
+                text = _exit_text(ex, dst, ip, g.names(ip))
+                _record(target, hops, branch, "exit", text, deviation)
                 continue
             known = g.names(ip) or ([egress["network"]] if egress.get("network") else [])
             name = f" ({', '.join(known)})" if known else ""
@@ -579,6 +583,7 @@ def trace(
             f"{hidden} weitere Backup-Wege ausgeblendet (mehr als {slack} Hop länger bzw. "
             "ohne Ziel)"
         )
+    _mark_length(primary + shown)
     return {
         "start": [g.nodes[k].out() | {"via": via} for k, _, via in starts],
         "paths": primary + shown,
@@ -607,6 +612,16 @@ def _mark_parallel(primary: list[dict]) -> None:
             groups = sorted({h["group"] for p in same for h in p["hops"] if h.get("group")})
             for p in same:
                 p["parallel"] = groups
+
+
+def _mark_length(paths: list[dict]) -> None:
+    """Laenge im Vergleich (0.20.0): `extra` = Hops mehr als der kuerzeste Weg, der ein Ziel
+    erreicht (0 = gleich lang); bei Wegen ohne Ziel `None`."""
+    reached = [len(p["hops"]) for p in paths if p["end"]["kind"] in REACHED]
+    shortest = min(reached) if reached else None
+    for p in paths:
+        ok = shortest is not None and p["end"]["kind"] in REACHED
+        p["extra"] = len(p["hops"]) - shortest if ok else None
 
 
 def _backups(primary: list[dict], found: list[dict], slack: int) -> tuple[list[dict], int]:
@@ -648,10 +663,13 @@ def _exit_label(ex: TopoExit) -> str:
     return ex.name if ex.name.lower().startswith(label.lower()) else f"{label} {ex.name}"
 
 
-def _exit_text(ex: TopoExit, dst, names: list[str]) -> str:
+def _exit_text(ex: TopoExit, dst, ip: str | None, names: list[str]) -> str:
     text = f"weiter über {_exit_label(ex)}"
     if names:
         text += f" ({', '.join(names)})"
+    routers = ex.next_hops or []
+    if ip in routers and len(routers) > 1:
+        text += f" – Router {routers.index(ip) + 1} von {len(routers)}"
     nets = []
     for p in ex.prefixes or []:
         try:

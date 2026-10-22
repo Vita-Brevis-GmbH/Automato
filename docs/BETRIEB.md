@@ -234,6 +234,8 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       - Je Weg stehen die Knoten nacheinander, die Next-Hops, die Anzahl Hops und das Ende.
       - Die Auswahl „Backup“ steuert, wie viel länger ein Backup-Weg sein darf: gleich lang,
         bis +1 Hop (Standard), bis +2 Hops, ausblenden.
+      - Die Spalte „Länge“ (0.20.0) sagt je Weg „gleich lang“ bzw. „+1 Hop“ gegenüber dem
+        kürzesten Weg mit Ziel.
   - **Routen:** wirksam (RIB), BGP-Pfade (bester bzw. Backup) und statische Routen (aktiv bzw.
     inaktiv); Suche, „enthält IP“ (längstes Präfix zuerst), Filter Tabelle und Kontext.
   - **BGP-Nachbarn** (mit Name aus dem IPAM und, falls gelesen, dem Knoten dahinter), **HA &
@@ -247,11 +249,25 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   - **Anbindungen** (0.18.0, Operator): Anbindungen von Hand erfassen, über die Wege nach
     aussen gehen.
     - Felder: Art (Internet, MPLS, WAN, Partner), Next-Hop-IPs der Gegenstelle und/oder
-      Interfaces/Zonen (für eine Firewall oder alle), Netze dahinter, manuelle Routen
-      (Präfix → Firewall/VDOM bzw. VRF, bei der der Weg weitergeht).
+      Interfaces/Zonen, Netze dahinter, manuelle Routen (Präfix → Firewall/VDOM bzw. VRF, bei
+      der der Weg weitergeht).
+    - Firewalls (0.20.0): eine oder mehrere, z. B. beide Session-Sync-Partner; keine gewählt =
+      alle.
     - Ohne Anbindung endet ein Weg am ersten Next-Hop ohne gelesenes Gerät („Weg endet“).
-      Dort hilft der Knopf „Als Anbindung erfassen“ (vorausgefüllt).
-    - Danach unter „Weg für IP“ einfach neu suchen.
+      Dort hilft der Knopf „Als Anbindung erfassen“: Er füllt die ganze erkannte Anbindung
+      vor, mit allen Routern und Firewalls.
+    - **Erkannte Anbindungen** (0.20.0): Automato listet die Router ohne gelesenes Gerät, aus
+      Routen, BGP-Pfaden, statischen Routen und BGP-Nachbarn.
+      - Je Router: aktiv bzw. Backup, AS und BGP-Zustand, Default-Route, Firewalls.
+      - Zusammengefasst je Firewall bzw. Verbund/Session-Sync-Partner über gemeinsame Router,
+        ECMP, Zone bzw. Interface und BGP-AS.
+      - „übernehmen“ legt die Anbindung an. „ergänzen“ erweitert eine, die schon einen Teil
+        abdeckt.
+    - Im Formular stehen die erkannten Router zum Ankreuzen.
+    - In der Liste zeigt „Erkannte Router · Redundanz“, was die Anbindung abdeckt. „nicht
+      eingetragen“ markiert erkannte Router, die noch fehlen; ein Knopf übernimmt sie.
+    - Danach unter „Weg für IP“ einfach neu suchen. Das Ende nennt bei mehreren Routern
+      „Router n von N“.
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
   (Application Profiles, EPGs, Server); **Vorschläge** nach der Projektnummer aus

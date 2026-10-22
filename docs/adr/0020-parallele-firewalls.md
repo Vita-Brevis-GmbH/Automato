@@ -66,6 +66,8 @@ konfiguriert sind.
   zählt Zwillinge nicht doppelt.
 - Objekte stehen weiterhin je Firewall in der Objekt-Liste. Abweichende Objekte zeigen die
   Findings.
+- Anbindungen nach aussen (0.20.0): Verbund und Session-Sync-Partner fassen erkannte Router zu
+  einer Anbindung für beide Firewalls zusammen (ADR 0019).
 - Offen:
   - im Weg (ADR 0019) das Session-Sync-Paar als einen Hop zeigen;
   - Abweichungen an Policy-Routen, Routing und NAT zwischen den Firewalls.

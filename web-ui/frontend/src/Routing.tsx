@@ -7,7 +7,11 @@ import {
   ContextKind,
   createExit,
   deleteExit,
+  ExitRouter,
+  ExitSuggestion,
+  Redundancy,
   fetchExits,
+  fetchExitSuggestions,
   fetchHa,
   fetchL3Outs,
   fetchPeers,
@@ -226,8 +230,89 @@ function Port({ p }: { p: TracePort | undefined }) {
   );
 }
 
-// Entwurf einer Anbindung aus einem Weg, der an einem unbekannten Next-Hop endet
-type ExitDraft = Partial<TopoExitIn>;
+// Entwurf einer Anbindung (neu bzw. mit `id` eine bestehende ändern/ergänzen) – aus einem Weg,
+// der an einem unbekannten Next-Hop endet, bzw. aus einer erkannten Anbindung
+type ExitDraft = Partial<TopoExitIn> & { id?: number };
+// Weg endet an einem Router ohne gelesenes Gerät: daraus eine Anbindung erfassen
+type Capture = { next_hop: string; source_system_id: number; interface: string | null; kind: TopoExit["kind"] };
+
+const union = <T,>(a: T[], b: T[]) => [...a, ...b.filter((x) => !a.includes(x))];
+
+// Entwurf aus einer erkannten Anbindung: alle Router und Firewalls; deckt eine Anbindung schon
+// einen Teil ab, wird sie ergänzt (Router dazu, Firewalls dazu – gilt sie für alle, bleibt das)
+function draftFrom(s: ExitSuggestion, exits: TopoExit[]): ExitDraft {
+  const hops = s.next_hops.map((h) => h.ip);
+  const ex = exits.find((e) => s.exits.some((x) => x.id === e.id));
+  if (!ex)
+    return { name: s.name, kind: s.kind, source_system_ids: s.source_system_ids, interfaces: s.interfaces, next_hops: hops };
+  return {
+    ...exitDraft(ex),
+    source_system_ids: ex.source_system_ids.length ? union(ex.source_system_ids, s.source_system_ids) : [],
+    next_hops: union(ex.next_hops, hops),
+  };
+}
+
+function exitDraft(e: TopoExit): ExitDraft {
+  const { id, tenant_id, name, kind, source_system_ids, interfaces, next_hops, prefixes, routes, description } = e;
+  return { id, tenant_id, name, kind, source_system_ids, interfaces, next_hops, prefixes, routes, description };
+}
+
+const ROUTER_STATUS: Record<ExitRouter["status"], [string, string, string]> = {
+  active: ["ok", "aktiv", "Präfixe in der Routing-Tabelle über diesen Router"],
+  backup: ["warn", "Backup", "nur als BGP-Pfad bzw. statische Route (übernimmt bei Ausfall)"],
+  neighbor: ["", "BGP-Nachbar", "BGP-Sitzung ohne Routen über diesen Router"],
+};
+
+// Ein erkannter Router: IP mit Namen, Zustand, BGP (AS, Sitzung), Default-Route, Firewalls
+function RouterCell({ r }: { r: ExitRouter }) {
+  const [cls, label, title] = ROUTER_STATUS[r.status];
+  const down = r.state && !/^estab/i.test(r.state);
+  const fws = r.uses.map((u) => `${u.label}${u.interface ? ` (${u.zone ? `${u.zone} · ` : ""}${u.interface})` : ""}`);
+  return (
+    <span title={[...fws, ...r.prefixes].join("\n")}>
+      <span className="mono">{r.ip}</span>
+      <Names r={r} /> <span className={`chip ${cls}`} title={title}>{label}</span>
+      {r.remote_as != null && (
+        <span className={`chip ${down ? "crit" : ""}`} style={{ marginLeft: 4 }} title={`BGP-Sitzung: ${r.state ?? "?"}`}>
+          AS {r.remote_as}
+          {down ? ` · ${r.state}` : ""}
+        </span>
+      )}
+      {r.default && (
+        <span className="chip" style={{ marginLeft: 4 }}>
+          Default
+        </span>
+      )}
+      {r.uses.length > 1 && <span className="faint"> · {r.uses.length} Firewalls</span>}
+    </span>
+  );
+}
+
+// Redundanz in Worten: „4 Router · 2 aktiv (ECMP ×2) · 2 Backup · 2 Firewalls“
+function redundancy(r: Redundancy): string {
+  return [
+    `${r.routers} Router`,
+    r.active && `${r.active} aktiv${r.ecmp > 1 ? ` (ECMP ×${r.ecmp})` : ""}`,
+    r.backup && `${r.backup} Backup`,
+    r.neighbor && `${r.neighbor} nur BGP-Nachbar`,
+    r.firewalls > 1 && `${r.firewalls} Firewalls`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+// Redundanz mehrerer erkannter Anbindungen zusammen (im Formular)
+function combined(rows: ExitSuggestion[], routers: ExitRouter[]): Redundancy {
+  const n = (s: ExitRouter["status"]) => routers.filter((r) => r.status === s).length;
+  return {
+    routers: routers.length,
+    active: n("active"),
+    backup: n("backup"),
+    neighbor: n("neighbor"),
+    ecmp: Math.max(0, ...rows.map((s) => s.redundancy.ecmp)),
+    firewalls: new Set(routers.flatMap((r) => r.uses.map((u) => u.source_system_id))).size,
+  };
+}
 
 const END: Record<TracePath["end"]["kind"], [string, string]> = {
   connected: ["ok", "Ziel erreicht"],
@@ -271,7 +356,26 @@ function PathKind({ path, activeCount }: { path: TracePath; activeCount: number 
   );
 }
 
-// Übersicht aller Wege: Art, Knoten nacheinander, Länge (Hops), Ende
+// Länge im Vergleich zum kürzesten Weg mit Ziel: „gleich lang“ bzw. „+1 Hop“
+function Length({ extra }: { extra?: number | null }) {
+  if (extra == null)
+    return (
+      <span className="faint" title="Weg ohne Ziel">
+        –
+      </span>
+    );
+  return extra === 0 ? (
+    <span className="chip ok" title="so lang wie der kürzeste Weg">
+      gleich lang
+    </span>
+  ) : (
+    <span className="chip warn" title="Hops mehr als der kürzeste Weg">
+      +{extra} Hop{extra > 1 ? "s" : ""}
+    </span>
+  );
+}
+
+// Übersicht aller Wege: Art, Knoten nacheinander, Länge (Hops, im Vergleich), Ende
 function PathOverview({ trace }: { trace: TraceResult }) {
   const active = trace.paths.filter((p) => p.kind !== "backup");
   return (
@@ -296,6 +400,7 @@ function PathOverview({ trace }: { trace: TraceResult }) {
               <th>Knoten</th>
               <th>Next-Hops</th>
               <th className="num">Hops</th>
+              <th>Länge</th>
               <th>Ende</th>
             </tr>
           </thead>
@@ -332,6 +437,9 @@ function PathOverview({ trace }: { trace: TraceResult }) {
                   </td>
                   <td className="num">{p.hops.length}</td>
                   <td>
+                    <Length extra={p.extra} />
+                  </td>
+                  <td>
                     <span className={`chip ${cls}`}>{label}</span>
                   </td>
                 </tr>
@@ -349,12 +457,14 @@ function TraceCard({
   path,
   index,
   title,
+  compare,
   onCapture,
 }: {
   path: TracePath;
   index: number;
   title: string;
-  onCapture?: (draft: ExitDraft) => void;
+  compare?: boolean; // mehrere Wege: Länge im Vergleich zeigen
+  onCapture?: (c: Capture) => void;
 }) {
   const [cls, label] = END[path.end.kind] ?? ["", path.end.kind];
   const last = path.hops[path.hops.length - 1];
@@ -374,18 +484,19 @@ function TraceCard({
         {path.parallel?.length ? (
           <span className="chip info">redundant · Verbund {path.parallel.join(", ")}</span>
         ) : null}
+        {compare && path.extra != null && <Length extra={path.extra} />}
         <span className="faint">{path.end.text}</span>
         {capturable && (
           <button
             className="btn btn-sm"
             style={{ marginLeft: "auto" }}
-            title="Anbindung nach aussen erfassen – der Weg endet dann dort bzw. geht nach manuellen Routen weiter"
+            title="Anbindung nach aussen erfassen – mit allen erkannten Routern und Firewalls dieser Anbindung; der Weg endet dann dort bzw. geht nach manuellen Routen weiter"
             onClick={() =>
               onCapture({
                 kind: path.end.kind === "external" ? "internet" : "wan",
                 source_system_id: last.source_system_id,
-                interfaces: out?.interface ? [out.interface] : [],
-                next_hops: [out!.next_hop!],
+                interface: out?.interface ?? null,
+                next_hop: out!.next_hop!,
               })
             }
           >
@@ -541,7 +652,7 @@ function LookupTab({
 }: {
   tenantId: number;
   nodes: RoutingNode[];
-  onCapture?: (draft: ExitDraft) => void;
+  onCapture?: (c: Capture) => void;
 }) {
   const [src, setSrc] = useState("");
   const [start, setStart] = useState("");
@@ -644,7 +755,14 @@ function LookupTab({
               <>
                 {shown.length > 1 && <PathOverview trace={{ ...trace, paths: shown }} />}
                 {shown.map((p, i) => (
-                  <TraceCard key={i} path={p} index={i} title={pathTitle(shown, p)} onCapture={onCapture} />
+                  <TraceCard
+                    key={i}
+                    path={p}
+                    index={i}
+                    title={pathTitle(shown, p)}
+                    compare={shown.length > 1}
+                    onCapture={onCapture}
+                  />
                 ))}
               </>
             );
@@ -1049,49 +1167,71 @@ const csv = (v: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
-// Anbindung erfassen/ändern: Next-Hops und/oder Interfaces/Zonen, Netze dahinter, manuelle Routen
+// Anbindung erfassen/ändern: Firewalls (z. B. beide Session-Sync-Partner), Next-Hops – die erkannten
+// Router zum Ankreuzen – und/oder Interfaces/Zonen, Netze dahinter, manuelle Routen
 function ExitForm({
   tenantId,
   nodes,
-  exit,
   draft,
   onSaved,
   onCancel,
 }: {
   tenantId: number;
   nodes: RoutingNode[];
-  exit: TopoExit | null;
-  draft: ExitDraft | null;
+  draft: ExitDraft;
   onSaved: () => void;
   onCancel: () => void;
 }) {
-  const base = exit ?? draft ?? {};
-  const [name, setName] = useState(base.name ?? "");
-  const [kind, setKind] = useState<TopoExit["kind"]>(base.kind ?? "internet");
-  const [source, setSource] = useState(base.source_system_id ? String(base.source_system_id) : "");
-  const [ifaces, setIfaces] = useState((base.interfaces ?? []).join(", "));
-  const [hops, setHops] = useState((base.next_hops ?? []).join(", "));
-  const [prefixes, setPrefixes] = useState((base.prefixes ?? []).join(", "));
-  const [routes, setRoutes] = useState<{ prefix: string; target: string }[]>(base.routes ?? []);
-  const [description, setDescription] = useState(base.description ?? "");
+  const [name, setName] = useState(draft.name ?? "");
+  const [kind, setKind] = useState<TopoExit["kind"]>(draft.kind ?? "internet");
+  const [sids, setSids] = useState<number[]>(draft.source_system_ids ?? []);
+  const [ifaces, setIfaces] = useState((draft.interfaces ?? []).join(", "));
+  const [hops, setHops] = useState((draft.next_hops ?? []).join(", "));
+  const [prefixes, setPrefixes] = useState((draft.prefixes ?? []).join(", "));
+  const [routes, setRoutes] = useState<{ prefix: string; target: string }[]>(draft.routes ?? []);
+  const [description, setDescription] = useState(draft.description ?? "");
+  const [detected, setDetected] = useState<ExitSuggestion[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const firewalls = [...new Map(nodes.filter((n) => n.kind !== "vrf").map((n) => [n.source_system_id, n.source])).entries()];
+  useEffect(() => {
+    fetchExitSuggestions(tenantId, true)
+      .then(setDetected)
+      .catch(() => setDetected([]));
+  }, [tenantId]);
+  const firewalls = [...new Map(nodes.map((n) => [n.source_system_id, n.source])).entries()];
+  const hopList = csv(hops);
+  const portList = csv(ifaces);
+  // erkannte Router dieser Anbindung: Vorschläge mit einem eingetragenen (bzw. anfangs eingetragenen)
+  // Router oder mit dem Interface/der Zone an einer der Firewalls
+  const known = union(draft.next_hops ?? [], hopList);
+  const related = (detected ?? []).filter(
+    (s) =>
+      s.next_hops.some((h) => known.includes(h.ip)) ||
+      (s.interfaces.some((x) => portList.includes(x)) &&
+        (!sids.length || s.source_system_ids.some((i) => sids.includes(i)))),
+  );
+  const routers = [...new Map(related.flatMap((s) => s.next_hops).map((h) => [h.ip, h])).values()];
+  const toggle = (ip: string) =>
+    setHops((hopList.includes(ip) ? hopList.filter((x) => x !== ip) : [...hopList, ip]).join(", "));
+  const takeAll = () => {
+    setHops(union(hopList, routers.map((r) => r.ip)).join(", "));
+    if (sids.length) setSids(union(sids, related.flatMap((s) => s.source_system_ids)));
+  };
   const save = () => {
     const body: TopoExitIn = {
       tenant_id: tenantId,
       name: name.trim(),
       kind,
-      source_system_id: source ? Number(source) : null,
-      interfaces: csv(ifaces),
-      next_hops: csv(hops),
+      source_system_ids: sids,
+      interfaces: portList,
+      next_hops: hopList,
       prefixes: csv(prefixes),
       routes: routes.filter((r) => r.prefix.trim() && r.target),
       description: description.trim() || null,
     };
     setBusy(true);
     setError(null);
-    (exit ? updateExit(exit.id, body) : createExit(body))
+    (draft.id ? updateExit(draft.id, body) : createExit(body))
       .then(onSaved)
       .catch(setError)
       .finally(() => setBusy(false));
@@ -1099,7 +1239,7 @@ function ExitForm({
   return (
     <div className="card">
       <div className="card-head">
-        <h2>{exit ? `Anbindung „${exit.name}“` : "Neue Anbindung"}</h2>
+        <h2>{draft.id ? `Anbindung „${draft.name}“` : "Neue Anbindung"}</h2>
         <span className="faint">
           Ein Weg, der über diesen Next-Hop bzw. dieses Interface geht und dort kein gelesenes Gerät findet, endet hier
           – oder geht nach den manuellen Routen weiter.
@@ -1123,17 +1263,6 @@ function ExitForm({
             </select>
           </div>
           <div className="field">
-            <label htmlFor="ex-fw">Firewall</label>
-            <select id="ex-fw" className="sel input" value={source} onChange={(e) => setSource(e.target.value)}>
-              <option value="">alle (Next-Hop bzw. Interface/Zone gilt überall)</option>
-              {firewalls.map(([id, label]) => (
-                <option key={id} value={id}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
             <label htmlFor="ex-ifaces">Interfaces bzw. Zonen</label>
             <input id="ex-ifaces" className="input" placeholder="wan1, internet" value={ifaces} onChange={(e) => setIfaces(e.target.value)} />
           </div>
@@ -1152,6 +1281,41 @@ function ExitForm({
             />
           </div>
         </div>
+        <div className="field" id="ex-fws">
+          <label>Firewalls bzw. ACI {sids.length ? "" : <span className="faint">– keine gewählt = alle</span>}</label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px" }}>
+            {firewalls.map(([id, label]) => (
+              <label key={id} className="check">
+                <input
+                  type="checkbox"
+                  checked={sids.includes(id)}
+                  onChange={() => setSids(sids.includes(id) ? sids.filter((x) => x !== id) : [...sids, id])}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+        {routers.length > 0 && (
+          <div className="field" id="ex-routers">
+            <label>
+              Erkannte Router{" "}
+              <span className="faint">– {redundancy(combined(related, routers))}; ankreuzen = als Next-Hop eintragen</span>
+            </label>
+            {routers.map((r) => (
+              <label key={r.ip} className="check">
+                <input type="checkbox" checked={hopList.includes(r.ip)} onChange={() => toggle(r.ip)} />
+                <RouterCell r={r} />
+                {r.exit && !hopList.includes(r.ip) && <span className="faint">(über {r.exit.name})</span>}
+              </label>
+            ))}
+            {routers.some((r) => !hopList.includes(r.ip)) && (
+              <button className="btn btn-sm" style={{ marginTop: 6 }} onClick={takeAll}>
+                alle Router übernehmen
+              </button>
+            )}
+          </div>
+        )}
         <div className="field">
           <label>Manuelle Routen (z. B. MPLS zu einem anderen Standort)</label>
           {routes.map((r, i) => (
@@ -1202,6 +1366,75 @@ function ExitForm({
   );
 }
 
+// Erkannte Anbindungen: Router ohne gelesenes Gerät (Next-Hops, BGP-Nachbarn), je Firewall bzw.
+// Verbund/Session-Sync-Partner zusammengefasst, die noch nicht (ganz) erfasst sind
+function SuggestedExits({
+  rows,
+  canEdit,
+  onTake,
+}: {
+  rows: ExitSuggestion[];
+  canEdit: boolean;
+  onTake: (s: ExitSuggestion) => void;
+}) {
+  if (!rows.length) return null;
+  return (
+    <div className="card" id="exit-suggestions">
+      <div className="card-head">
+        <h2>Erkannte Anbindungen</h2>
+        <span className="faint">
+          Router ohne gelesenes Gerät aus Routing-Tabelle, BGP-Pfaden, statischen Routen und BGP-Nachbarn – zusammengefasst
+          über gemeinsame Router, Interface bzw. Zone und BGP-AS, je Firewall bzw. Verbund und Session-Sync-Partner.
+        </span>
+      </div>
+      <div className="card-body scroll">
+        <table className="compact">
+          <thead>
+            <tr>
+              <th>Vorschlag</th>
+              <th>Firewalls</th>
+              <th>Interfaces / Zonen</th>
+              <th>Router</th>
+              <th>Redundanz</th>
+              {canEdit && <th />}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((s) => (
+              <tr key={s.key}>
+                <td>
+                  <span className="chip info">{EXIT_KIND[s.kind] ?? s.kind}</span> <b>{s.name}</b>
+                  {s.exits.length > 0 && <div className="faint">teilweise in {s.exits.map((e) => e.name).join(", ")}</div>}
+                </td>
+                <td>{s.sources.join(", ")}</td>
+                <td className="mono">{s.interfaces.join(", ") || "–"}</td>
+                <td>
+                  <div className="objs">
+                    {s.next_hops.map((h) => (
+                      <span key={h.ip} className="nowrap">
+                        <RouterCell r={h} />
+                        {h.covered && <span className="faint"> · erfasst</span>}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+                <td>{redundancy(s.redundancy)}</td>
+                {canEdit && (
+                  <td className="actions">
+                    <button className="linkbtn" onClick={() => onTake(s)}>
+                      {s.exits.length ? "ergänzen" : "übernehmen"}
+                    </button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ExitsTab({
   tenantId,
   nodes,
@@ -1217,8 +1450,14 @@ function ExitsTab({
 }) {
   const [reload, setReload] = useState(0);
   const { rows, error } = useList<TopoExit>(() => fetchExits(tenantId), [tenantId, reload]);
-  const [editing, setEditing] = useState<TopoExit | "new" | null>(draft ? "new" : null);
+  const [suggested, setSuggested] = useState<ExitSuggestion[]>([]);
+  const [editing, setEditing] = useState<ExitDraft | null>(draft);
   const [err, setErr] = useState<unknown>(null);
+  useEffect(() => {
+    fetchExitSuggestions(tenantId)
+      .then(setSuggested)
+      .catch(() => setSuggested([]));
+  }, [tenantId, reload]);
   const label = (key: string) => nodes.find((n) => n.key === key)?.label ?? key;
   const done = () => {
     setEditing(null);
@@ -1239,7 +1478,7 @@ function ExitsTab({
           ersten Next-Hop, der keinem gelesenen Gerät gehört.
         </span>
         {canEdit && editing === null && (
-          <button className="btn btn-primary btn-sm" style={{ marginLeft: "auto" }} onClick={() => setEditing("new")}>
+          <button className="btn btn-primary btn-sm" style={{ marginLeft: "auto" }} onClick={() => setEditing({})}>
             Neue Anbindung
           </button>
         )}
@@ -1247,62 +1486,97 @@ function ExitsTab({
       <ErrorBox error={err} prefix="Anbindung löschen" />
       {editing !== null && (
         <ExitForm
+          key={JSON.stringify(editing)}
           tenantId={tenantId}
           nodes={nodes}
-          exit={editing === "new" ? null : editing}
-          draft={editing === "new" ? draft : null}
+          draft={editing}
           onSaved={done}
           onCancel={done}
         />
       )}
+      <SuggestedExits rows={suggested} canEdit={canEdit} onTake={(s) => setEditing(draftFrom(s, rows ?? []))} />
       <List error={error} rows={rows} empty="Noch keine Anbindungen erfasst.">
         <thead>
           <tr>
             <th>Anbindung</th>
-            <th>Firewall</th>
+            <th>Firewalls</th>
             <th>Interfaces / Zonen</th>
             <th>Next-Hops</th>
+            <th>Erkannte Router · Redundanz</th>
             <th>Netze dahinter</th>
             <th>Manuelle Routen</th>
             {canEdit && <th />}
           </tr>
         </thead>
         <tbody>
-          {(rows ?? []).map((e) => (
-            <tr key={e.id}>
-              <td>
-                <span className="chip info">{EXIT_KIND[e.kind] ?? e.kind}</span> <b>{e.name}</b>
-                {e.description && <div className="faint">{e.description}</div>}
-              </td>
-              <td>{e.source ?? <span className="faint">alle</span>}</td>
-              <td className="mono">{e.interfaces.join(", ") || "–"}</td>
-              <td className="mono">{e.next_hops.join(", ") || "–"}</td>
-              <td className="mono">{e.prefixes.join(", ") || <span className="faint">alles</span>}</td>
-              <td>
-                {e.routes.length ? (
-                  <div className="objs">
-                    {e.routes.map((r) => (
-                      <span key={r.prefix + r.target} className="mono">
-                        {r.prefix} <span className="faint">→</span> {label(r.target)}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <Dash />
-                )}
-              </td>
-              {canEdit && (
-                <td className="actions">
-                  <button className="linkbtn" onClick={() => setEditing(e)}>
-                    ändern
-                  </button>{" "}
-                  <button className="linkbtn" onClick={() => remove(e)}>
-                    löschen
-                  </button>
+          {(rows ?? []).map((e) => {
+            const st = e.status;
+            return (
+              <tr key={e.id}>
+                <td>
+                  <span className="chip info">{EXIT_KIND[e.kind] ?? e.kind}</span> <b>{e.name}</b>
+                  {e.description && <div className="faint">{e.description}</div>}
                 </td>
-              )}
-            </tr>
-          ))}
+                <td>{e.sources.length ? e.sources.join(", ") : <span className="faint">alle</span>}</td>
+                <td className="mono">{e.interfaces.join(", ") || "–"}</td>
+                <td className="mono">{e.next_hops.join(", ") || "–"}</td>
+                <td>
+                  {st?.routers.length ? (
+                    <>
+                      <div>{redundancy(st.redundancy)}</div>
+                      <div className="objs">
+                        {st.routers.map((r) => (
+                          <span key={r.ip} className="nowrap">
+                            <RouterCell r={r} />
+                            {!r.listed && <span className="chip warn" style={{ marginLeft: 4 }}>nicht eingetragen</span>}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <span className="faint">keiner erkannt</span>
+                  )}
+                  {st?.unseen.length ? (
+                    <div className="faint" title="eingetragen, aber in keiner Route und keinem BGP-Nachbarn">
+                      nicht erkannt: {st.unseen.join(", ")}
+                    </div>
+                  ) : null}
+                  {canEdit && st?.missing.length ? (
+                    <button
+                      className="linkbtn"
+                      onClick={() => setEditing({ ...exitDraft(e), next_hops: union(e.next_hops, st.missing) })}
+                    >
+                      {st.missing.length} erkannte Router übernehmen
+                    </button>
+                  ) : null}
+                </td>
+                <td className="mono">{e.prefixes.join(", ") || <span className="faint">alles</span>}</td>
+                <td>
+                  {e.routes.length ? (
+                    <div className="objs">
+                      {e.routes.map((r) => (
+                        <span key={r.prefix + r.target} className="mono">
+                          {r.prefix} <span className="faint">→</span> {label(r.target)}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <Dash />
+                  )}
+                </td>
+                {canEdit && (
+                  <td className="actions">
+                    <button className="linkbtn" onClick={() => setEditing(exitDraft(e))}>
+                      ändern
+                    </button>{" "}
+                    <button className="linkbtn" onClick={() => remove(e)}>
+                      löschen
+                    </button>
+                  </td>
+                )}
+              </tr>
+            );
+          })}
         </tbody>
       </List>
     </>
@@ -1343,6 +1617,26 @@ export default function Routing({
     );
   }
   const nodes = summary?.nodes ?? [];
+  // Weg endet an einem Router ohne gelesenes Gerät: die erkannte Anbindung mit allen Routern und
+  // Firewalls vorschlagen (bzw. die Anbindung ergänzen, die schon einen Teil abdeckt)
+  const capture = (c: Capture) => {
+    const plain: ExitDraft = {
+      kind: c.kind,
+      source_system_ids: [c.source_system_id],
+      interfaces: c.interface ? [c.interface] : [],
+      next_hops: [c.next_hop],
+    };
+    Promise.all([fetchExitSuggestions(tenantId, true), fetchExits(tenantId)])
+      .then(([found, exits]) => {
+        const s = found.find((x) => x.next_hops.some((h) => h.ip === c.next_hop));
+        return s ? draftFrom(s, exits) : plain;
+      })
+      .catch(() => plain)
+      .then((d) => {
+        setDraft(d);
+        setTab("exits");
+      });
+  };
 
   return (
     <>
@@ -1375,14 +1669,7 @@ export default function Routing({
         <LookupTab
           tenantId={tenantId}
           nodes={nodes}
-          onCapture={
-            canEdit
-              ? (d) => {
-                  setDraft(d);
-                  setTab("exits");
-                }
-              : undefined
-          }
+          onCapture={canEdit ? capture : undefined}
         />
       </div>
       {tab === "routes" && <RoutesTab tenantId={tenantId} nodes={nodes} />}

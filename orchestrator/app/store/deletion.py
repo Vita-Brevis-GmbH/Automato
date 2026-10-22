@@ -107,8 +107,9 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
         session, delete(NatRule).where(NatRule.source_system_id == source.id)
     )
     session.execute(delete(DeviceObject).where(DeviceObject.source_system_id == source.id))
-    for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS, TopoExit):
+    for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS):
         session.execute(delete(model).where(model.source_system_id == source.id))
+    _drop_from_exits(session, source)
     session.execute(
         delete(ParallelRejection).where(
             (ParallelRejection.system_a_id == source.id)
@@ -135,6 +136,22 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
     session.delete(source)
     session.flush()
     return counts
+
+
+def _drop_from_exits(session: Session, source: SourceSystem) -> None:
+    """Anbindungen ohne die geloeschte Firewall; galt eine nur fuer sie, entfaellt sie."""
+    if source.tenant_id is None:
+        return
+    for e in list(session.scalars(select(TopoExit).where(TopoExit.tenant_id == source.tenant_id))):
+        ids = list(e.source_system_ids or [])
+        if source.id not in ids:
+            continue
+        ids.remove(source.id)
+        if ids:
+            e.source_system_ids = ids
+        else:
+            session.delete(e)
+    session.flush()
 
 
 def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:

@@ -183,6 +183,8 @@ Rahmen laut Anwender (2026-10-22):
        1) länger sind als der kürzeste aktive („gleiche oder fast gleiche Länge“).
      - Mehrere gleichzeitige Ausfälle und das Abwägen nach BGP-Attributen sind nicht
        abgebildet.
+     - Länge im Vergleich (0.20.0): je Weg „gleich lang“ bzw. „+n Hops“ gegenüber dem
+       kürzesten Weg, der ein Ziel erreicht.
    - Offen: Session-Sync-Paar als ein Hop, Inter-VDOM-Links als Kanten, „Internet“
      zusammengefasst, Regel-Relevanz je Hop (Zonen-Paar → Regeln), NAT auf dem Weg.
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde. Erster Teil in
@@ -195,6 +197,20 @@ Rahmen laut Anwender (2026-10-22):
    - Liegt das Ziel nicht in den Netzen der Anbindung, sagt das der Text am Ende.
    - Aus einem Weg, der an einem unbekannten Next-Hop endet, lässt sich die Anbindung
      vorausgefüllt erfassen. Änderungen stehen im Audit (`routing.exit.*`).
-   - Später: Aussenrouter lesen (nur lesend) statt von Hand.
+   - **Erkannte Anbindungen (0.20.0, Alembic `0041`, `store/exits.py`):**
+     - Router ohne gelesenes Gerät werden aus den gelesenen Daten erkannt: Next-Hops aus RIB,
+       BGP-Pfaden und eingeschalteten statischen Routen sowie BGP-Nachbarn, ohne die
+       Management-Tabelle.
+     - Je Router: aktiv, Backup oder nur Nachbar, dazu AS/Zustand und Interface/Zone je
+       Firewall.
+     - Zusammengefasst über gemeinsame Router, ECMP derselben Route, Interface bzw. Zone und
+       BGP-AS – je Firewall bzw. Verbund und Session-Sync-Partner (ADR 0020).
+     - Vorschläge (`GET /routing/exits/suggestions`) übernimmt der Operator mit allen Routern
+       und Firewalls bzw. ergänzt damit eine Anbindung, die schon einen Teil abdeckt.
+     - Eine Anbindung gilt für eine oder mehrere Firewalls (`source_system_ids`, leer =
+       alle). Ihr Zustand zeigt die erkannten Router, die sie abdeckt – auch nicht
+       eingetragene.
+     - Wege tragen `extra`: Hops mehr als der kürzeste Weg mit Ziel.
+   - Später: Aussenrouter selbst lesen (nur lesend).
 5. **Zeichnung** (optional).
 6. **Später:** Switches und weitere Geräte, Verkabelung (L1/L2-Sicht, siehe Punkt 9).

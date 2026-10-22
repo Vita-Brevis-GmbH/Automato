@@ -7,6 +7,53 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.20.0 – 2026-10-22
+
+Erkannte Anbindungen nach aussen mit Redundanz, Anbindung für mehrere Firewalls, Länge der
+Wege im Vergleich (Alembic `0041`). Dev-Befunde 0.19.0: Bei vier WAN-Routern mit BGP zeigte die
+Anbindung nur den ersten Router; eine Anbindung kann auch den Session-Sync-Partner betreffen.
+
+- **Erkannte Anbindungen** (Routing & Wege → Anbindungen): Automato sucht die Gegenstellen
+  selbst, nur aus den gelesenen Daten.
+  - Gegenstellen sind Next-Hops aus der Routing-Tabelle, aus BGP-Pfaden und aus eingeschalteten
+    statischen Routen sowie BGP-Nachbarn, die keinem gelesenen Gerät gehören. Die
+    Management-Tabelle zählt nicht mit.
+  - Je Router: **aktiv** (Präfixe in der Routing-Tabelle), **Backup** (nur als BGP-Pfad bzw.
+    statische Route) oder nur BGP-Nachbar; dazu AS und Zustand der BGP-Sitzung, Default-Route,
+    Präfixe und je Firewall Interface und Zone. Namen kommen aus dem IPAM.
+  - **Zusammengefasst** wird zu einem Vorschlag:
+    - Router, die sich Firewalls teilen;
+    - Router derselben aktiven Route (ECMP);
+    - Router am selben Interface bzw. an derselben Zone;
+    - BGP-Nachbarn mit derselben AS – je Firewall bzw. je Verbund und Session-Sync-Partner
+      (FGSP).
+  - Beispiel: vier WAN-Router mit BGP an beiden Firewalls eines Verbunds ergeben einen
+    Vorschlag mit vier Routern, „2 aktiv (ECMP ×2) · 2 Backup · 2 Firewalls“.
+  - **übernehmen** füllt das Formular mit allen Routern, Firewalls und Zonen sowie Name und Art
+    (geraten aus Zone, Namen, Default-Route bzw. BGP). Deckt eine Anbindung schon einen Teil ab,
+    heisst der Knopf **ergänzen** und erweitert diese.
+  - **Als Anbindung erfassen** im Weg nimmt ebenfalls die ganze erkannte Anbindung, nicht mehr
+    nur den einen Router.
+- **Anbindung für mehrere Firewalls:** Statt einer Firewall sind mehrere wählbar, z. B. beide
+  Session-Sync-Partner; ohne Wahl gilt sie für alle. Wird eine Firewall gelöscht, fällt sie
+  aus ihren Anbindungen; galt eine Anbindung nur für sie, entfällt die Anbindung.
+- **Formular:** Unter „Erkannte Router“ stehen alle Router der Anbindung mit Zustand zum
+  Ankreuzen, dazu „alle Router übernehmen“.
+- **Liste der Anbindungen:** Die neue Spalte „Erkannte Router · Redundanz“ zeigt alle Router,
+  die die Anbindung abdeckt (über Next-Hop bzw. Interface/Zone, wie im Weg).
+  - Router, die erkannt, aber nicht eingetragen sind, tragen den Hinweis „nicht eingetragen“;
+    „N erkannte Router übernehmen“ trägt sie ein.
+  - Eingetragene Router, die in keiner Route stehen, erscheinen als „nicht erkannt“.
+- **Weg:** Endet ein Weg an einer Anbindung mit mehreren Routern, nennt das Ende den Router,
+  z. B. „weiter über WAN Nord – Router 2 von 4“.
+- **Länge der Wege:** Die Übersicht hat eine Spalte „Länge“ mit „gleich lang“ bzw. „+1 Hop“
+  gegenüber dem kürzesten Weg mit Ziel; jede Karte trägt denselben Hinweis.
+- **API:**
+  - `GET /routing/exits/suggestions?covered=`;
+  - `GET /routing/exits` mit `status` (Router, `missing`, `unseen`, `redundancy`);
+  - `source_system_ids` statt `source_system_id`;
+  - `GET /routing/trace` mit `extra` je Weg.
+
 ## 0.19.0 – 2026-10-22
 
 Verbund ablehnen und redundante Wege (Alembic `0040`). Dev-Befunde 0.18.0; abgenommen:

@@ -1605,6 +1605,7 @@ export interface TracePath {
   kind?: "active" | "backup"; // aktiv (inkl. ECMP) bzw. Backup-Weg (eine Abweichung)
   deviation?: { hop: number; label: string; reason: string }; // Backup: wo und warum
   parallel?: string[]; // redundant über diese Verbünde paralleler Firewalls
+  extra?: number | null; // Hops mehr als der kürzeste Weg mit Ziel (0 = gleich lang; null = ohne Ziel)
   hops: TraceHop[];
   end: {
     kind: "connected" | "fabric" | "exit" | "external" | "unknown" | "no_route" | "loop" | "max_hops";
@@ -1710,22 +1711,87 @@ export const fetchL3Outs = (tenantId: number) => getJSON<TopoL3Out[]>(`/api/rout
 
 // Anbindungen nach aussen (0.18.0, von Hand): Internet, MPLS, WAN, Partner – der Weg endet dort
 // bzw. geht nach den manuellen Routen bei einem gelesenen Knoten weiter
+export type ExitKind = "internet" | "mpls" | "wan" | "partner" | "other";
+export interface ExitRef {
+  id: number;
+  name: string;
+  kind: ExitKind;
+}
+// Erkannter Router (0.20.0): Next-Hop bzw. BGP-Nachbar ohne gelesenes Gerät
+export interface ExitRouter extends Resolved {
+  ip: string;
+  status: "active" | "backup" | "neighbor"; // aktiv in der RIB, nur BGP-Pfad/statische Route, nur Nachbar
+  remote_as: number | null;
+  state: string | null; // BGP-Zustand
+  default: boolean; // Default-Route über diesen Router
+  prefixes: string[]; // die ersten Präfixe
+  prefix_count: number;
+  exit: ExitRef | null; // Anbindung, die ihn (an einer Firewall) abdeckt
+  covered: boolean; // an allen Firewalls abgedeckt
+  listed?: boolean; // im Zustand einer Anbindung: dort eingetragen
+  uses: {
+    key: string;
+    source_system_id: number;
+    source: string;
+    label: string;
+    interface: string | null;
+    zone: string | null;
+    status: ExitRouter["status"];
+    active: number;
+    backup: number;
+    remote_as: number | null;
+    state: string | null;
+    exit: ExitRef | null;
+  }[];
+}
+// Redundanz: Router je Zustand, ECMP (meiste aktive Router für dasselbe Präfix), Firewalls
+export interface Redundancy {
+  routers: number;
+  active: number;
+  backup: number;
+  neighbor: number;
+  ecmp: number;
+  firewalls: number;
+}
+export interface ExitSuggestion {
+  key: string;
+  name: string;
+  kind: ExitKind;
+  source_system_ids: number[];
+  sources: string[];
+  interfaces: string[]; // Zonen bzw. Interfaces
+  next_hops: ExitRouter[];
+  exits: ExitRef[]; // Anbindungen, die einen Teil schon abdecken
+  covered: boolean;
+  redundancy: Redundancy;
+}
 export interface TopoExit {
   id: number;
   tenant_id: number;
   name: string;
-  kind: "internet" | "mpls" | "wan" | "partner" | "other";
-  source_system_id: number | null; // nur für diese Firewall (Interfaces/Zonen)
-  source: string | null;
+  kind: ExitKind;
+  source_system_ids: number[]; // nur für diese Firewalls (leer = jede), z. B. beide Session-Sync-Partner
+  sources: string[];
   interfaces: string[]; // Interfaces bzw. Zonen
   next_hops: string[]; // IPs der Gegenstelle
   prefixes: string[]; // Netze dahinter
   routes: { prefix: string; target: string }[]; // manuell: Präfix -> Knoten (RoutingNode.key)
   description: string | null;
   updated_at: string | null;
+  // erkannte Router, die die Anbindung abdeckt (0.20.0)
+  status?: {
+    routers: ExitRouter[];
+    missing: string[]; // erkannt, aber nicht eingetragen
+    unseen: string[]; // eingetragen, aber nicht erkannt
+    source_system_ids: number[];
+    redundancy: Redundancy;
+  };
 }
-export type TopoExitIn = Omit<TopoExit, "id" | "source" | "updated_at">;
+export type TopoExitIn = Omit<TopoExit, "id" | "sources" | "updated_at" | "status">;
 export const fetchExits = (tenantId: number) => getJSON<TopoExit[]>(`/api/routing/exits${qs({ tenant_id: tenantId })}`);
+// erkannte Anbindungen; `covered` = auch die schon ganz erfassten
+export const fetchExitSuggestions = (tenantId: number, covered = false) =>
+  getJSON<ExitSuggestion[]>(`/api/routing/exits/suggestions${qs({ tenant_id: tenantId, covered: covered ? "true" : undefined })}`);
 export const createExit = (body: TopoExitIn) => sendJSON<TopoExit>("/api/routing/exits", "POST", body);
 export const updateExit = (id: number, body: TopoExitIn) => sendJSON<TopoExit>(`/api/routing/exits/${id}`, "PUT", body);
 export const deleteExit = (id: number) => sendJSON<void>(`/api/routing/exits/${id}`, "DELETE");

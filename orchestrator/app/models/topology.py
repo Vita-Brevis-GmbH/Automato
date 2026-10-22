@@ -132,7 +132,7 @@ TOPOLOGY_MODELS = (TopoContext, TopoRoute, TopoPeer, TopoHa, TopoPolicyRoute, To
 
 class TopoExit(Base):
     """Anbindung nach aussen (0.18.0, von Hand erfasst): Ein Weg, der ueber einen dieser
-    Next-Hops bzw. ueber dieses Interface/diese Zone (einer Firewall oder aller) geht, endet
+    Next-Hops bzw. ueber dieses Interface/diese Zone (bestimmter Firewalls oder aller) geht, endet
     hier („Internet“, „MPLS Kunde A“) - oder geht nach den manuellen Routen (`routes`: Praefix
     -> Knoten `<Quellsystem>|<Kontext>`) bei einem gelesenen Knoten weiter (z. B. ueber MPLS
     zur Firewall eines anderen Standorts). Gilt nur, wenn der Next-Hop keinem gelesenen Geraet
@@ -144,10 +144,9 @@ class TopoExit(Base):
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     kind: Mapped[str] = mapped_column(String(16))  # internet | mpls | wan | partner | other
-    # nur fuer diese Firewall (Interfaces/Zonen); None = jede
-    source_system_id: Mapped[int | None] = mapped_column(
-        ForeignKey("source_system.id", ondelete="CASCADE"), nullable=True, index=True
-    )
+    # nur fuer diese Firewalls (Next-Hops, Interfaces/Zonen), z. B. beide Session-Sync-Partner;
+    # leer = jede (0.20.0; vorher eine Firewall)
+    source_system_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     interfaces: Mapped[list | None] = mapped_column(JSON, nullable=True)  # Interfaces bzw. Zonen
     next_hops: Mapped[list | None] = mapped_column(JSON, nullable=True)  # IPs der Gegenstelle
     prefixes: Mapped[list | None] = mapped_column(JSON, nullable=True)  # Netze dahinter

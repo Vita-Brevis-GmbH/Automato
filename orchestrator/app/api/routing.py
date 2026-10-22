@@ -10,7 +10,10 @@
 - `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs` - Nachbarn mit Namen aus dem IPAM
 - `GET/POST/PUT/DELETE /routing/exits` - Anbindungen nach aussen (Internet, MPLS, WAN),
                                  von Hand erfasst (operator), an denen ein Weg endet bzw.
-                                 nach manuellen Routen weitergeht (0.18.0)
+                                 nach manuellen Routen weitergeht (0.18.0); fuer eine oder
+                                 mehrere Firewalls, mit den erkannten Routern (0.20.0)
+- `GET /routing/exits/suggestions` erkannte Anbindungen: Next-Hops und BGP-Nachbarn ohne
+                                 gelesenes Geraet, zusammengefasst mit Redundanz (0.20.0)
 
 Bezeichnung eines Kontexts: eine FortiGate nur mit `root` heisst wie die Firewall, sonst
 „fw · VDOM x“; ACI „leaf · VRF Tenant:VRF“ (`label`, `display`).
@@ -41,7 +44,7 @@ from app.models import (
     TopoPolicyRoute,
     TopoRoute,
 )
-from app.store import paths, topology
+from app.store import exits, paths, topology
 
 router = APIRouter(prefix="/routing", tags=["routing"])
 
@@ -376,7 +379,7 @@ class ExitIn(BaseModel):
     tenant_id: int
     name: str = Field(min_length=1, max_length=200)
     kind: Literal["internet", "mpls", "wan", "partner", "other"] = "other"
-    source_system_id: int | None = None  # nur fuer diese Firewall (Interfaces/Zonen)
+    source_system_ids: list[int] = []  # nur fuer diese Firewalls (leer = jede)
     interfaces: list[str] = []  # Interfaces bzw. Zonen
     next_hops: list[str] = []  # IPs der Gegenstelle
     prefixes: list[str] = []  # Netze dahinter (leer = alles, was dorthin geroutet wird)
@@ -393,9 +396,16 @@ def _net(value: str, what: str) -> str:
 
 def _clean(session: Session, body: ExitIn) -> dict:
     """Eingaben pruefen und vereinheitlichen (Netze in CIDR, Next-Hops als IP)."""
-    if body.source_system_id is not None:
-        src = session.get(SourceSystem, body.source_system_id)
-        if src is None or src.tenant_id != body.tenant_id:
+    sids = sorted(set(body.source_system_ids))
+    if sids:
+        known = set(
+            session.scalars(
+                select(SourceSystem.id).where(
+                    SourceSystem.id.in_(sids), SourceSystem.tenant_id == body.tenant_id
+                )
+            )
+        )
+        if known != set(sids):
             raise HTTPException(status_code=422, detail="source system not in tenant")
     hops = [str(_ip(h, "next_hops")) for h in body.next_hops if h.strip()]
     ifaces = [i.strip() for i in body.interfaces if i.strip()]
@@ -409,7 +419,7 @@ def _clean(session: Session, body: ExitIn) -> dict:
     return {
         "name": body.name.strip(),
         "kind": body.kind,
-        "source_system_id": body.source_system_id,
+        "source_system_ids": sids,
         "interfaces": ifaces,
         "next_hops": hops,
         "prefixes": [_net(p, "prefixes") for p in body.prefixes if p.strip()],
@@ -418,20 +428,22 @@ def _clean(session: Session, body: ExitIn) -> dict:
     }
 
 
-def _exit_out(e: TopoExit, names: dict[int, str]) -> dict:
+def _exit_out(e: TopoExit, names: dict[int, str], status: dict | None = None) -> dict:
+    ids = e.source_system_ids or []
     return {
         "id": e.id,
         "tenant_id": e.tenant_id,
         "name": e.name,
         "kind": e.kind,
-        "source_system_id": e.source_system_id,
-        "source": names.get(e.source_system_id) if e.source_system_id else None,
+        "source_system_ids": ids,
+        "sources": [names.get(i, f"#{i}") for i in ids],
         "interfaces": e.interfaces or [],
         "next_hops": e.next_hops or [],
         "prefixes": e.prefixes or [],
         "routes": e.routes or [],
         "description": e.description,
         "updated_at": e.updated_at,
+        **({"status": status} if status is not None else {}),
     }
 
 
@@ -451,12 +463,27 @@ def list_exits(
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
+    """Anbindungen mit den erkannten Routern, die sie abdecken (`status`)."""
     tid = _tenant(session, principal, tenant_id)
     names = _names(session, tid)
+    found = exits.status(session, tid)
     rows = session.scalars(
         select(TopoExit).where(TopoExit.tenant_id == tid).order_by(TopoExit.name, TopoExit.id)
     )
-    return [_exit_out(e, names) for e in rows]
+    return [_exit_out(e, names, found.get(e.id)) for e in rows]
+
+
+@router.get("/exits/suggestions")
+def exit_suggestions(
+    tenant_id: int | None = None,
+    covered: bool = Query(False, description="auch schon ganz abgedeckte"),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    """Erkannte Anbindungen: Router (Next-Hops, BGP-Nachbarn) ohne gelesenes Geraet, je
+    Firewall bzw. Verbund zusammengefasst, mit aktiv/Backup/BGP-Zustand - nur gelesene Daten."""
+    tid = _tenant(session, principal, tenant_id)
+    return exits.suggestions(session, tid, include_covered=covered)
 
 
 @router.post("/exits", status_code=201)
