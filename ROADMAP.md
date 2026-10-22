@@ -304,11 +304,14 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.12.0** | IPv4/IPv6-Paare bestätigen/ablehnen; VIP-Ziele als Objekte; Ports je Gerät; Betriebszustand als Ampel (System-Seite, Übersicht) |
 | **0.13.0** | Ansicht „Läufe“ (alle, seitenweise, Filter); Übersicht zeigt alle offenen Läufe; Ports kompakt mit Detail; Portgruppen im Detail (EPG, Subnetze, VMs) |
 | **0.14.0–0.14.1** | Applikationen: Doku im Mittelpunkt (Übersicht, alle VMs, EPGs mit ganzem ACI-Pfad, Regeln mit Richtung/Bezug spezifisch–unspezifisch, Filter, Erklärung, Links), externer/interner Name, Zweck Dev/Test/Prod; NAT/VIPs mit Prüfung; VM-Angaben in den Detailansichten; Läufe unter Administration; Regeln mit Objekt (Host/Netz/any) und VMs darin, Firewall-Objekte je Name, Listen mit Scrollbalken im Bild |
+| **0.15.0** | VDOM-Kontext: alle VDOMs lesen, VDOM an Regeln, Objekten, NAT, Interfaces, Subnetzen (ADR 0019 Stufe 1) |
+| **0.16.0–0.16.1** | Routing je VDOM (RIB mit ECMP, BGP-Pfade inkl. Backup, Nachbarn, statische/Policy-Routen, SD-WAN), HA/FGSP, ACI-L3Outs und Border-Leaf-Routen (Stufe 2); Agent aktualisiert sich vor dem Lauf, robustes Selbst-Update |
+| **0.17.0** | Weg Hop für Hop mit Quelle bzw. Startpunkt (Stufe 3, erste Fassung); FortiGate nur mit root = Firewall (auch in Regeln, Objekten, NAT); Nachbarn und Next-Hops mit Namen aus dem IPAM |
 
-### Nächste Arbeiten (Stand 0.16.0)
+### Nächste Arbeiten (Stand 0.17.0)
 
-Phase A und die Stände 0.11–0.15 sind gegen die echten Systeme abgenommen; 0.16.0 (Routing,
-HA, L3Out) steht zur Abnahme an. Konzeptbefund
+Phase A und die Stände 0.11–0.16 sind gegen die echten Systeme abgenommen; 0.17.0 (Weg mit
+Startpunkt, Bezeichnungen, IPAM-Namen) steht zur Abnahme an. Konzeptbefund
 des Anwenders: Ohne Routing, Verbindungswege und Redundanzen zeigt die Doku Zugriffe, die
 routingtechnisch nicht möglich sind, und `any` aus dem Internet wie eine Liste aller
 Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
@@ -320,10 +323,11 @@ Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
    abgenommen: alle VDOMs lesen, VDOM an Policies, Objekten, NAT, Interfaces und Subnetzen.
 3. **Umgebung und Kunden** (ADR 0018): Selektoren, abgeleitete Zugehörigkeit, Kunden-Filter,
    danach Kunden-Benutzer mit serverseitiger Einschränkung.
-4. **Routing, HA und L3Out lesen** (ADR 0019, Stufe 2) – **umgesetzt in 0.16.0**, Test gegen
-   die echten Systeme offen. Danach **Pfade und Relevanz** (Stufe 3): Regeln nur, wo der
-   Verkehr durchkommt; „Internet“ zusammengefasst; Befund bei abweichenden Regeln zweier
-   Session-Sync-Cluster.
+4. **Routing, HA und L3Out lesen** (ADR 0019, Stufe 2) – **umgesetzt in 0.16.0** und
+   abgenommen. **Pfade und Relevanz** (Stufe 3): Weg Hop für Hop mit Quelle bzw. Startpunkt –
+   **erste Fassung in 0.17.0**. Offen: Regeln nur, wo der Verkehr durchkommt (Zonen-Paar je
+   Hop → Regeln); „Internet“ zusammengefasst; Session-Sync-Paar als ein Hop; Befund bei
+   abweichenden Regeln zweier Session-Sync-Cluster.
 5. **Designer** (ADR 0019, Stufe 4), Zeichnung später. Vorgesehen: normale Switches und
    weitere Geräte erfassen, Verkabelung dokumentieren (L1/L2-Sicht neben dem Routing).
 6. **Applikationen ausbauen:** Regeln direkt zuordnen, Abhängigkeiten zwischen

@@ -7,6 +7,44 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.17.0 – 2026-10-22
+
+Weg Hop für Hop mit Startpunkt (ADR 0019 Stufe 3, erste Fassung), Bezeichnungen und Namen aus
+dem IPAM (keine Migration). Dev-Befunde 0.16.0.
+
+- **Weg für IP mit Quelle und Startpunkt:** Quelle (IP) und/oder Startpunkt (Firewall, VDOM
+  bzw. ACI-VRF), dazu das Ziel. Der Weg beginnt am gewählten Startpunkt bzw. dort, wo die
+  Quelle angeschlossen ist (angeschlossenes Netz, sonst EPG-/BD-Subnetz im ACI), und folgt Hop
+  für Hop:
+  - Eine Policy-Route bzw. SD-WAN-Regel, die sicher passt (Quelle, Ziel, Eingang als Subnetz
+    bzw. Interface), geht vor. Über Adressobjekte bestimmte steht als „möglich“ dabei.
+  - Sonst gilt das längste Präfix der Routing-Tabelle; ECMP verzweigt in mehrere Wege.
+  - Der nächste Knoten ist der, dem der Next-Hop gehört (Interface-IP der FortiGate,
+    SVI/Interface eines L3Outs). Sonst ist es ein Knoten mit diesem Transfernetz („vermutet“).
+  - Alle Border-Leafs einer VRF sind ein Knoten (vier Anbindungen = ein Hop).
+  - Je Hop: Eingang und Ausgang mit Zone, Route bzw. Policy-Route und Next-Hop mit Namen aus
+    dem IPAM.
+  - Ende: Ziel angeschlossen, Ziel im Fabric (EPG/BD), extern (Default-Route ohne gelesenen
+    Nachbarn), Next-Hop ohne gelesenes Gerät, keine Route, Schleife.
+  - Ohne Quelle und Start bleibt es bei der bisherigen Sicht: je Kontext die wirksame Route.
+- **Bezeichnungen:** Eine FortiGate nur mit `root` erscheint als **Firewall** (ihr Name),
+  sonst als „fw · VDOM x“. ACI erscheint als „leaf · VRF Tenant:VRF“. Das gilt für alle
+  Routing-Reiter und den Kontext-Filter der Routen (jetzt mit dem Namen der Firewall; ACI-VRF
+  über alle Border-Leafs). Auch Regeln, Objekte, NAT und Ports zeigen „VDOM root“ nur noch
+  bei Firewalls mit weiteren VDOMs (`vdoms` je Quellsystem in `GET /systems`). Bisher reichte
+  dafür irgendeine Firewall mit VDOMs auf der Seite.
+- **Nachbarn mit Namen aus dem IPAM:** BGP-Nachbarn, Next-Hops, Policy-Routen-Gateways,
+  Session-Sync-Peers, L3Out-Peers und die Next-Hops statischer L3Out-Routen zeigen den Namen
+  aus DDI/NetBox. Ohne Namen zur IP erscheint das IPAM-Netz mit Beschreibung (z. B.
+  „Transfer ISP B“). Dazu kommt, falls gelesen, der Knoten hinter der Adresse (z. B. die ACI-VRF
+  hinter dem BGP-Nachbarn der Firewall). L3Out-Border-Leafs tragen ihren Namen statt
+  `node-101`.
+- **Korrektur:** SD-WAN-Regeln haben bei Quelle/Ziel Adressobjekte, keine Subnetze. Bisher
+  fielen sie bei „Weg für IP“ deshalb weg. Jetzt stehen sie als „möglich“ dabei.
+- **API:** `GET /routing/trace?dst=&src=&start=`. Die Routing-Antworten tragen `label` bzw.
+  `display` und die IPAM-Namen (`names`, `network`). `GET /routing/summary` liefert die
+  Knoten für den Startpunkt (`nodes`).
+
 ## 0.16.1 – 2026-10-22
 
 Korrektur des Selbst-Updates (keine Migration). Dev-Befund 0.16.0: Das Update von 0.15.0 auf

@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { decidePair, Endpoint, fetchRuleDetail, NatBrief, resetPairDecision, RuleDetail, RuleRef } from "./api";
 import type { View, ViewParams } from "./App";
 import { EpgCard } from "./EpgCard";
-import { FamilyMarks, RefCard, SideMarks, VdomChip, VmChip, VmSection } from "./refs";
+import { FamilyMarks, RefCard, SideMarks, useVdomShown, VdomChip, VmChip, VmSection } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, fmtTime, Loading, MatchBadge, Note } from "./ui";
 
 function EndpointList({ items }: { items: Endpoint[] }) {
@@ -182,6 +182,7 @@ export default function RuleDetailDrawer({
   onChanged?: () => void; // Paar entschieden: Liste neu laden
   intro?: ReactNode; // z. B. Applikations-Doku: warum die Regel für die Applikation gilt
 }) {
+  const vdomShown = useVdomShown();
   const [detail, setDetail] = useState<RuleDetail | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
@@ -224,7 +225,7 @@ export default function RuleDetailDrawer({
       sub={
         detail
           ? `${aci ? "ACI-Contract" : "Regel"} #${detail.id} · ${systemName(detail.source_system_id)}` +
-            (detail.vdom ? ` · VDOM ${detail.vdom}` : "")
+            (vdomShown(detail.source_system_id, detail.vdom) ? ` · VDOM ${detail.vdom}` : "")
           : undefined
       }
       onClose={onClose}
@@ -239,7 +240,7 @@ export default function RuleDetailDrawer({
             <dd>
               <ActionBadge action={detail.action} />
             </dd>
-            {detail.vdom && (
+            {vdomShown(detail.source_system_id, detail.vdom) && (
               <>
                 <dt>VDOM</dt>
                 <dd>

@@ -307,6 +307,11 @@ test("Regel-Detail zeigt die VM mit allen Angaben aus dem vCenter", async ({ pag
 
 test("VDOMs: Filter, Kennzeichnung und Detail je VDOM", async ({ page }) => {
   await page.goto("/#regeln");
+  // FortiGate nur mit root: die Firewall, ohne „VDOM root“ (0.17.0)
+  await search(page).fill("to-web-net");
+  await expect(rows(page).first()).toContainText("fw-04");
+  await expect(rows(page).first()).not.toContainText("VDOM");
+  await search(page).fill("");
   await page.locator(".filterbar select").filter({ hasText: "VDOM: alle" }).selectOption("kunde-a");
   await expect(rows(page)).toHaveCount(2);
   await expect(rows(page).first()).toContainText("VDOM kunde-a");
@@ -326,20 +331,45 @@ test("VDOMs: Filter, Kennzeichnung und Detail je VDOM", async ({ page }) => {
 test("Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", async ({ page }) => {
   await page.goto("/#routing");
   const ctx = page.locator(".card", { hasText: "Gelesene Kontexte" });
-  await expect(ctx).toContainText("leaf-101");
+  await expect(ctx).toContainText("leaf-101 · VRF TE:VRF1");
+  await expect(ctx).toContainText("fw-05 · VDOM root");
+  await expect(ctx.locator("tbody tr").filter({ hasText: "fw-04" })).toContainText("Firewall"); // nur root
   await expect(ctx).toContainText("BGP-Pfade IPv4 (HTTP 403)"); // nicht lesbar -> unbekannt
-  await search(page).fill("10.20.0.5");
+  // nur Ziel: je Kontext die wirksame Route
+  const dst = page.getByPlaceholder("Ziel (IP)");
+  await dst.fill("10.20.0.5");
   await page.click("button:has-text('Weg suchen')");
   const way = page.locator(".card", { hasText: "Geht vor" }).locator("tbody tr");
-  const root = way.filter({ hasText: "fw-05" }).filter({ hasText: "root" });
+  const root = way.filter({ hasText: "fw-05 · VDOM root" });
   await expect(root).toContainText("10.20.0.0/24");
   await expect(root).toContainText("Policy-Route #5");
   await expect(way.filter({ hasText: "leaf-101" })).toContainText("ECMP ×2");
+  // mit Quelle: Weg Hop für Hop, ECMP über zwei Provider, Namen aus dem IPAM
+  await page.getByPlaceholder("Quelle (IP)").fill("10.20.0.5");
+  await dst.fill("203.0.113.10");
+  await page.click("button:has-text('Weg suchen')");
+  const first = page.locator(".card", { hasText: "Weg 1 von 2" });
+  await expect(first).toContainText("extern");
+  await expect(first).toContainText("isp-a-gw.example.ch");
+  await expect(first).toContainText("fw-05 · VDOM root");
+  // Startpunkt gewählt: Firewall nur mit root
+  await page.getByPlaceholder("Quelle (IP)").fill("");
+  await page.locator(".filterbar select").filter({ hasText: "Start: aus der Quelle" }).selectOption({ label: "fw-04" });
+  await page.click("button:has-text('Weg suchen')");
+  await expect(page.locator(".card", { hasText: "Weg 1" })).toContainText("keine Route zum Ziel"); // kein Default
+  await dst.fill("10.20.0.5");
+  await page.click("button:has-text('Weg suchen')");
+  await expect(page.locator(".card", { hasText: "Weg 1" })).toContainText("Next-Hop 10.70.0.1 gehört keinem");
+  await page.click(".tabbar button:has-text('BGP-Nachbarn')");
+  await expect(page.locator(".card", { hasText: "Gelesen als" })).toContainText("isp-a-gw.example.ch");
   await page.click(".tabbar button:has-text('Routen')");
   await page.locator(".filterbar select").filter({ hasText: "Tabelle: alle" }).selectOption("bgp");
   const routes = page.locator(".card", { hasText: "Weitere Angaben" }).locator("tbody tr");
   await expect(routes).toHaveCount(2);
   await expect(routes.filter({ hasText: "Backup" })).toContainText("64500 64501");
+  await page.locator(".filterbar select").filter({ hasText: "Kontext: alle" }).selectOption({ label: "fw-04" });
+  await page.locator(".filterbar select").filter({ hasText: "Tabelle: alle" }).selectOption("");
+  await expect(routes).toHaveCount(3);
   await page.click(".tabbar button:has-text('HA & Session-Sync')");
   await expect(page.locator(".card", { hasText: "Session-Sync (FGSP)" })).toContainText("cluster-a");
   await page.click(".tabbar button:has-text('L3Outs (ACI)')");

@@ -1,6 +1,6 @@
 // Darstellung von Firewall-Objekten mit Referenzdaten aus dem IPAM (DDI/NetBox), ADR 0010.
-import type { ReactNode } from "react";
-import { RefInfo, RefValue, Rule, RuleRef, VmInfo } from "./api";
+import { ReactNode, useEffect, useState } from "react";
+import { fetchSystems, RefInfo, RefValue, Rule, RuleRef, VmInfo } from "./api";
 import { Dash, Icon, MatchBadge } from "./ui";
 
 export const PLATFORM_LABEL: Record<string, string> = {
@@ -440,8 +440,34 @@ export function SideMarks({ r, side }: { r: Rule; side: "src" | "dst" | "service
 
 export const FAMILY_LABEL: Record<string, string> = { v4: "IPv4", v6: "IPv6", dual: "IPv4+IPv6" };
 
+// VDOMs je Quellsystem (GET /systems, hoechstens einmal je Minute geladen)
+let vdomCache: { at: number; map: Promise<Map<number, string[]>> } | null = null;
+function loadVdoms(): Promise<Map<number, string[]>> {
+  if (!vdomCache || Date.now() - vdomCache.at > 60_000) {
+    const map = fetchSystems()
+      .then((list) => new Map(list.map((s) => [s.id, s.vdoms ?? []] as [number, string[]])))
+      .catch(() => new Map<number, string[]>());
+    vdomCache = { at: Date.now(), map };
+  }
+  return vdomCache.map;
+}
+
+// VDOM anzeigen? Eine FortiGate nur mit „root“ ist die Firewall selbst – „VDOM root“ nur bei
+// Firewalls mit weiteren VDOMs, andere VDOMs immer (0.17.0)
+export function useVdomShown(): (sourceSystemId: number | null | undefined, vdom?: string | null) => boolean {
+  const [map, setMap] = useState<Map<number, string[]> | null>(null);
+  useEffect(() => {
+    let active = true;
+    loadVdoms().then((m) => active && setMap(m));
+    return () => {
+      active = false;
+    };
+  }, []);
+  return (sid, vdom) => !!vdom && (vdom !== "root" || (map?.get(sid ?? -1)?.length ?? 0) > 1);
+}
+
 // FortiGate-VDOM (ADR 0019): Policy-IDs und Objektnamen gelten je VDOM. Den Standard-VDOM
-// „root“ nur zeigen, wenn es weitere VDOMs gibt (`always`).
+// „root“ nur zeigen, wenn es weitere VDOMs gibt (`always`, siehe useVdomShown).
 export function VdomChip({ vdom, always }: { vdom?: string | null; always?: boolean }) {
   if (!vdom || (vdom === "root" && !always)) return null;
   return (

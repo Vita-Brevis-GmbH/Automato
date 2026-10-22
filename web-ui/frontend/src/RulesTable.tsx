@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchRules, fetchRuleSummary, fetchSystems, Rule, RuleDomain, RuleSummary, System } from "./api";
 import type { View, ViewParams } from "./App";
 import RuleDetailDrawer from "./RuleDetail";
-import { FAMILY_LABEL, FamilyMarks, SideMarks, VdomChip } from "./refs";
+import { FAMILY_LABEL, FamilyMarks, SideMarks, useVdomShown, VdomChip } from "./refs";
 import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
 // Seitengrösse: Server filtert nach Art/System/Suche, der Rest wird mit "Weitere laden" geholt.
@@ -227,7 +227,8 @@ export default function RulesTable({
   const actions = Object.keys(summary?.by_action ?? {}).sort();
   // VDOMs (ADR 0019): Filter und „root“ nur, wenn es mehrere gibt
   const vdoms = summary?.by_vdom ?? [];
-  const multiVdom = vdoms.length > 1;
+  const multiVdom = vdoms.length > 1; // Filter nur mit mehreren VDOMs
+  const vdomShown = useVdomShown();
 
   const filtered = (rules ?? []).filter((r) => !onlyFindings || r.num_unmatched > 0);
   const loaded = rules?.length ?? 0;
@@ -409,9 +410,9 @@ export default function RulesTable({
                     </td>
                     <td>
                       {systemName(r.source_system_id)}
-                      {r.vdom && (r.vdom !== "root" || multiVdom) && (
+                      {vdomShown(r.source_system_id, r.vdom) && (
                         <div>
-                          <VdomChip vdom={r.vdom} always={multiVdom} />
+                          <VdomChip vdom={r.vdom} always />
                         </div>
                       )}
                     </td>

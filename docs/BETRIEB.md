@@ -191,19 +191,37 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Pool-Bereich), Port, DNS-Name, Server, Interface, Kommentar. Klick → Detail mit
   Einstellungen, IPAM-Sicht (Netz, VLAN, Standort) und den Firewall-Regeln, die den Eintrag
   nutzen.
-- **Routing & Wege** (0.16.0, ADR 0019): oben die gelesenen Kontexte (FortiGate-VDOM bzw.
-  ACI-VRF auf dem Border-Leaf) mit Anzahl Routen und dem, was nicht lesbar war (dort ist die
-  Aussage „unbekannt“). Reiter:
-  - **Weg für IP:** je Kontext die wirksame Route (längstes Präfix) mit Next-Hops, Interface
-    und Zone (ECMP = mehrere); daneben Policy-Routen bzw. SD-WAN-Regeln, die vorgehen (blau =
-    Ziel passt sicher, grau = Ziel nur über Objekte bestimmt, also möglich). Das ist ein Hop,
-    noch kein Pfad über mehrere Firewalls (folgt mit Stufe 3).
+- **Routing & Wege** (0.16.0, ADR 0019): oben die gelesenen Kontexte mit Anzahl Routen und dem,
+  was nicht lesbar war (dort ist die Aussage „unbekannt“). Bezeichnungen (0.17.0):
+  - Eine FortiGate nur mit `root` heisst wie die **Firewall**, sonst „fw-01 · VDOM kunde-a“.
+  - ACI: „leaf-101 · VRF Tenant:VRF“, im Weg und im Kontext-Filter die VRF über alle
+    Border-Leafs („apic-01 · VRF Tenant:VRF“).
+
+  Reiter:
+  - **Weg für IP** (0.17.0): **Quelle (IP)** und/oder **Start** (Firewall, VDOM, ACI-VRF), dazu
+    das **Ziel**.
+    - Der Weg beginnt am Start bzw. dort, wo die Quelle angeschlossen ist (im ACI: im EPG-/
+      BD-Subnetz). Je Weg eine Karte, Hop für Hop: Knoten, Eingang (Interface, Zone),
+      Entscheidung (Route mit Präfix bzw. Policy-Route, die vorgeht) und Ausgang mit Next-Hop
+      und Namen aus dem IPAM.
+    - Blau heisst: die Policy-Route bzw. SD-WAN-Regel passt sicher. „möglich“ heisst: nur über
+      Objekte bestimmt, der Weg folgt dann der Tabelle.
+    - ECMP ergibt mehrere Wege. Der nächste Knoten ist der Besitzer der Next-Hop-Adresse;
+      sonst ein Knoten mit diesem Transfernetz („Transfernetz (vermutet)“).
+    - Das Ende steht oben in der Karte: Ziel erreicht, im Fabric, extern, Weg endet (Next-Hop
+      ohne gelesenes Gerät), keine Route.
+    - Ohne Quelle und Start: je Kontext die wirksame Route wie bisher. Geräte, deren Routing
+      nicht gelesen ist (Switches, Router der Provider), beenden den Weg.
   - **Routen:** wirksam (RIB), BGP-Pfade (bester bzw. Backup) und statische Routen (aktiv bzw.
     inaktiv); Suche, „enthält IP“ (längstes Präfix zuerst), Filter Tabelle und Kontext.
-  - **BGP-Nachbarn**, **HA & Session-Sync** (Modus, Gruppe, Mitglieder mit Rolle, FGSP-Peers),
-    **Policy-Routen & SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)**
-    (VRF, Border-Leafs mit Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und
-    Adressen, BGP-Peers).
+  - **BGP-Nachbarn** (mit Name aus dem IPAM und, falls gelesen, dem Knoten dahinter), **HA &
+    Session-Sync** (Modus, Gruppe, Mitglieder mit Rolle, FGSP-Peers), **Policy-Routen &
+    SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)** (VRF, Border-Leafs mit
+    Namen, Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und Adressen, BGP-Peers
+    mit Namen).
+  - **Namen aus dem IPAM:** DNS-Name bzw. Name der IP aus DDI/NetBox. Ohne Eintrag zur IP
+    erscheint blass das kleinste IPAM-Netz mit Beschreibung. Für Transfernetze lohnt sich
+    deshalb eine Beschreibung im IPAM (z. B. „Transfer ISP B“).
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
   (Application Profiles, EPGs, Server); **Vorschläge** nach der Projektnummer aus

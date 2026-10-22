@@ -6,8 +6,9 @@
 aus ADR 0002 und das Epic E7 (ROADMAP) um; baut auf ADR 0018 (Umgebung und Kunden) auf.
 
 **Stufe 1 (VDOM-Kontext) umgesetzt in 0.15.0** und gegen die echten VDOMs getestet
-(2026-10-22). **Stufe 2 (Routing, HA, L3Out lesen) umgesetzt in 0.16.0;** der Test gegen die
-echten Systeme steht aus.
+(2026-10-22). **Stufe 2 (Routing, HA, L3Out lesen) umgesetzt in 0.16.0** und gegen die echten
+Systeme getestet (Dev-Befunde in 0.17.0 umgesetzt). **Stufe 3, erste Fassung (Weg Hop für Hop
+mit Startpunkt) in 0.17.0;** Regel-Relevanz und „Internet“ zusammengefasst folgen.
 
 Rahmen laut Anwender (2026-10-22):
 
@@ -152,6 +153,24 @@ Rahmen laut Anwender (2026-10-22):
      Policy-Routen bzw. SD-WAN-Regeln, die vorgehen. Das ist noch kein Pfad über mehrere Hops
      (Stufe 3).
 3. **Pfade und Relevanz** in Regeln und Applikations-Doku, „Internet“ zusammengefasst.
+   Erste Fassung in 0.17.0 (`store/paths.py`, `GET /routing/trace`):
+   - Knoten: FortiGate-VDOM, bei einer FortiGate nur mit `root` die Firewall selbst; ACI-VRF
+     über alle Border-Leafs zusammen.
+   - Start: gewählter Knoten bzw. der, an dem die Quelle angeschlossen ist (RIB `connected`,
+     sonst EPG-/BD-Subnetz einer gelesenen VRF).
+   - Je Hop:
+     - Eine Policy-Route bzw. SD-WAN-Regel, die sicher passt (Subnetze, Eingangs-Interface),
+       geht vor. Über Objekte bestimmte ist „möglich“; der Weg folgt dann der Tabelle.
+     - Sonst gilt das längste Präfix mit kleinster Distanz; die Next-Hops aller
+       Border-Leafs werden zusammengefasst, ECMP verzweigt.
+   - Nächster Knoten: Besitzer der Next-Hop-Adresse (Interface-IP, L3Out-SVI inkl.
+     vPC-Seiten), sonst ein Knoten mit dem Transfernetz („vermutet“).
+   - Ende: angeschlossen, im Fabric (EPG/BD der VRF), extern (Default ohne gelesenen
+     Nachbarn), unbekannter Next-Hop, keine Route, Schleife, mehr als 12 Hops; höchstens 16
+     Wege.
+   - IPs mit Namen aus dem IPAM (sonst das IPAM-Netz mit Beschreibung).
+   - Offen: Session-Sync-Paar als ein Hop, Inter-VDOM-Links als Kanten, „Internet“
+     zusammengefasst, Regel-Relevanz je Hop (Zonen-Paar → Regeln), NAT auf dem Weg.
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde.
 5. **Zeichnung** (optional).
 6. **Später:** Switches und weitere Geräte, Verkabelung (L1/L2-Sicht, siehe Punkt 9).

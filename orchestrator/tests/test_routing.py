@@ -168,7 +168,7 @@ def test_routing_speichern_und_abfragen(client):
     (ha,) = client.get("/routing/ha", params=p).json()
     assert (ha["mode"], ha["group_name"], ha["source"]) == ("a-p", "cluster-a", "fw-01")
     assert [m["role"] for m in ha["members"]] == ["primary", "secondary"]
-    assert ha["sync_peers"] == [{"peerip": "10.0.0.2", "syncvd": ["root"]}]
+    assert ha["sync_peers"] == [{"peerip": "10.0.0.2", "syncvd": ["root"], "node": None}]
     peers = client.get("/routing/peers", params=p).json()
     assert {(x["node"], x["peer_ip"], x["state"]) for x in peers} == {
         ("fw-01", "198.51.100.1", "Established"),

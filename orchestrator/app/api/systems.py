@@ -29,6 +29,8 @@ from app.models import (
     REFERENCE_PLATFORMS,
     Agent,
     CollectorRun,
+    DeviceObject,
+    InvInterface,
     NatRule,
     ReferenceRecordRow,
     ReferenceRole,
@@ -36,6 +38,7 @@ from app.models import (
     Site,
     SourceSystem,
     Tenant,
+    TopoContext,
 )
 from app.models.source_system import Platform
 from app.store import deletion, sites
@@ -65,6 +68,8 @@ class SystemOut(BaseModel):
     next_run_at: datetime | None = None  # naechster Termin laut Zeitplan
     rule_count: int = 0
     nat_count: int = 0
+    # FortiGate: gelesene VDOMs - nur `root` = die Firewall selbst (ohne VDOM anzeigen)
+    vdoms: list[str] = []
 
 
 class SystemIn(BaseModel):
@@ -117,6 +122,22 @@ def _counts(session: Session, model) -> dict[int, int]:
         select(model.source_system_id, func.count()).group_by(model.source_system_id)
     )
     return {sid: n for sid, n in rows}
+
+
+def _vdoms(session: Session, source_ids: list[int]) -> dict[int, list[str]]:
+    """VDOMs je Quellsystem aus Regeln, Objekten, NAT, Interfaces und Routing."""
+    out: dict[int, set[str]] = {}
+    if not source_ids:
+        return {}
+    columns = [(m, m.vdom) for m in (Rule, DeviceObject, NatRule, InvInterface)]
+    for model, column in [*columns, (TopoContext, TopoContext.context)]:
+        stmt = select(model.source_system_id, column).where(model.source_system_id.in_(source_ids))
+        if model is TopoContext:
+            stmt = stmt.where(TopoContext.kind == "vdom")
+        for sid, vdom in session.execute(stmt.distinct()):
+            if vdom:
+                out.setdefault(sid, set()).add(vdom)
+    return {sid: sorted(v) for sid, v in out.items()}
 
 
 def _reference_stats(session: Session, sources) -> dict[int, tuple[int, datetime | None]]:
@@ -173,6 +194,7 @@ def _out(
     nat: dict[int, int],
     refs: dict | None = None,
     site_hint: dict | None = None,
+    vdoms: list[str] | None = None,
 ) -> SystemOut:
     ref_count, ref_at = (refs or {}).get(s.id, (0, None))
     return SystemOut(
@@ -198,14 +220,15 @@ def _out(
         else None,
         rule_count=rules.get(s.id, 0),
         nat_count=nat.get(s.id, 0),
+        vdoms=vdoms or [],
     )
 
 
 def _single_out(session: Session, s: SourceSystem) -> SystemOut:
     usage = deletion.source_usage(session, s.id)
-    return _out(
-        s, {s.id: usage["rules"]}, {s.id: usage["nat_rules"]}, _reference_stats(session, [s])
-    )
+    rules, nat = {s.id: usage["rules"]}, {s.id: usage["nat_rules"]}
+    vdoms = _vdoms(session, [s.id]).get(s.id)
+    return _out(s, rules, nat, _reference_stats(session, [s]), vdoms=vdoms)
 
 
 def _get_scoped(session: Session, principal: Principal, system_id: int) -> SourceSystem:
@@ -373,7 +396,8 @@ def list_systems(
     sources = list(session.scalars(query))
     refs = _reference_stats(session, sources)
     hints = _site_hints(session, sources)
-    return [_out(s, rules, nat, refs, hints.get(s.id)) for s in sources]
+    vdoms = _vdoms(session, [s.id for s in sources if s.platform == Platform.FORTIGATE])
+    return [_out(s, rules, nat, refs, hints.get(s.id), vdoms.get(s.id)) for s in sources]
 
 
 @router.post("", response_model=SystemOut, status_code=201)

@@ -144,20 +144,31 @@ class Interfaces:
         return out
 
 
-def _matches_dst(match: dict | None, ip) -> bool | None:
-    """Passt das Ziel einer Policy-Route zur IP? True/False; None = Ziel nur ueber Objekte
-    (Namen) bestimmt - dann „moeglich“."""
+def matches(kind: str, match: dict | None, side: str, ip) -> bool | None:
+    """Passt Quelle (`side="src"`) bzw. Ziel (`"dst"`) einer Policy-Route bzw. SD-WAN-Regel
+    zur IP? True/False; None = nur ueber Objekte (Namen) bestimmt - dann „moeglich“.
+
+    Policy-Routen tragen Subnetze (`src`/`dst`) und Adressobjekte (`srcaddr`/`dstaddr`),
+    SD-WAN-Regeln nur Adressobjekte (`src`/`dst`); beim Ziel zaehlen Internet-Services mit.
+    """
     match = match or {}
-    nets = match.get("dst") or []
+    nets = [] if kind == "sdwan" else list(match.get(side) or [])
+    names = list(match.get(f"{side}addr") or [])
+    if kind == "sdwan":
+        names += match.get(side) or []
+    if side == "dst":
+        names += match.get("service") or []
+    if ip is None:  # unbekannt (z. B. Quelle nicht angegeben): sicher nur ohne Einschraenkung
+        return None if nets or names else True
     for net in nets:
         try:
             if ip in ipaddress.ip_network(net, strict=False):
                 return True
         except (ValueError, TypeError):
             continue
-    if nets:
-        return False
-    return None if match.get("dstaddr") or match.get("service") else True
+    if names:
+        return None
+    return False if nets else True
 
 
 def lookup(
@@ -198,7 +209,7 @@ def lookup(
     policies: dict[tuple, list[dict]] = defaultdict(list)
     # FortiOS prueft Policy-Routen vor SD-WAN-Regeln, beide vor der Routing-Tabelle
     for p in session.scalars(pol_stmt.order_by(TopoPolicyRoute.kind, TopoPolicyRoute.seq)):
-        fits = _matches_dst(p.match, ip)
+        fits = matches(p.kind, p.match, "dst", ip)
         if fits is False:
             continue
         policies[(p.source_system_id, p.node, p.context)].append(

@@ -351,6 +351,7 @@ export interface System {
   next_run_at: string | null; // nächster Termin laut Zeitplan
   rule_count: number;
   nat_count: number;
+  vdoms?: string[]; // FortiGate: gelesene VDOMs – nur „root“ = die Firewall selbst
 }
 
 // Anzahl gelöschter Einträge je Art (Rückgabe der Lösch-Endpunkte)
@@ -1451,32 +1452,52 @@ export const applySyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-syn
 export const cancelSyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/cancel`, "POST");
 
 // Routing, BGP, HA und L3Out (ADR 0019 Stufe 2) - nur lesend
-export interface NextHop {
+// Namen einer IP aus dem IPAM (DNS-Name bzw. Name); ohne Namen das Netz mit Beschreibung
+export interface Resolved {
+  names?: string[];
+  network?: string;
+}
+export interface NextHop extends Resolved {
   ip?: string | null;
   interface?: string | null;
   zone?: string | null; // FortiGate: Zone des Interfaces (Inventar)
 }
-export interface RoutingContext {
-  id: number;
+// Bezeichnung eines Kontexts: FortiGate nur mit root = die Firewall, sonst „fw · VDOM x“,
+// ACI „leaf · VRF Tenant:VRF“
+export type ContextKind = "firewall" | "vdom" | "vrf";
+export interface Labeled {
   source_system_id: number;
   source: string | null;
-  node: string; // Firewall bzw. Border-Leaf
+  node: string; // Firewall (Hostname) bzw. Border-Leaf
   context: string; // VDOM bzw. Tenant:VRF
+  display?: ContextKind | "";
+  label?: string;
+}
+export interface RoutingContext extends Labeled {
+  id: number;
   kind: "vdom" | "vrf";
   missing: string[] | null; // nicht lesbar -> Aussage „unbekannt“
   counts: Partial<Record<"rib" | "bgp" | "static" | "peers" | "policy_routes", number>>;
 }
+// Knoten der Weg-Suche: VDOM bzw. Firewall, ACI-VRF über alle Border-Leafs
+export interface RoutingNode {
+  key: string; // <Quellsystem>|<Kontext>
+  source_system_id: number;
+  source: string;
+  context: string;
+  kind: ContextKind;
+  label: string;
+  members: string[];
+  missing: string[];
+}
 export interface RoutingSummary {
   contexts: RoutingContext[];
+  nodes: RoutingNode[];
   ha: number;
   l3outs: number;
 }
-export interface TopoRoute {
+export interface TopoRoute extends Labeled {
   id: number;
-  source_system_id: number;
-  source: string | null;
-  node: string;
-  context: string;
   family: number;
   prefix: string;
   prefix_len: number;
@@ -1492,16 +1513,12 @@ export interface PolicyHit {
   kind: "policy" | "sdwan";
   seq: number | null;
   name: string | null;
-  match: Record<string, unknown>;
+  match?: Record<string, unknown>;
   gateway: string | null;
   output_device: string[];
-  certain: boolean; // Ziel passt sicher (sonst nur über Objekte bestimmt: möglich)
+  certain: boolean; // passt sicher (sonst nur über Objekte bestimmt: möglich)
 }
-export interface RouteLookup {
-  source_system_id: number;
-  source: string | null;
-  node: string;
-  context: string;
+export interface RouteLookup extends Labeled {
   kind: string;
   missing: string[];
   route: {
@@ -1514,15 +1531,43 @@ export interface RouteLookup {
   } | null;
   policy_routes: PolicyHit[];
 }
-export interface TopoPeer {
+export interface TracePort extends Resolved {
+  interface?: string | null;
+  zone?: string;
+  next_hop?: string | null;
+}
+export interface TraceHop extends RoutingNode {
+  via: string; // wie der Weg hierher kam (Quelle angeschlossen, Adresse des Nachbarn, …)
+  ingress: TracePort;
+  egress?: TracePort;
+  route?: {
+    prefix: string;
+    prefix_len: number;
+    protocol: string | null;
+    distance: number | null;
+    next_hops: NextHop[];
+    members: string[];
+  } | null;
+  policy?: PolicyHit; // Policy-Route bzw. SD-WAN-Regel, der der Weg folgt
+  policy_routes?: PolicyHit[];
+}
+export interface TracePath {
+  hops: TraceHop[];
+  end: { kind: "connected" | "fabric" | "external" | "unknown" | "no_route" | "loop" | "max_hops"; text: string };
+}
+export interface TraceResult {
+  start: (RoutingNode & { via: string })[];
+  paths: TracePath[];
+  notes: string[];
+}
+export interface TopoPeer extends Labeled {
   id: number;
-  source: string | null;
-  node: string;
-  context: string;
   peer_ip: string;
   local_ip: string | null;
   remote_as: number | null;
   state: string | null;
+  peer?: Resolved;
+  peer_node?: string | null; // gelesener Knoten hinter der Adresse
 }
 export interface TopoHa {
   id: number;
@@ -1533,13 +1578,10 @@ export interface TopoHa {
   group_id: number | null;
   members: { hostname?: string; serial?: string; role?: string; priority?: number }[] | null;
   session_pickup: boolean | null;
-  sync_peers: Record<string, unknown>[] | null;
+  sync_peers: (Record<string, unknown> & Resolved & { node?: string | null })[] | null;
 }
-export interface TopoPolicyRoute {
+export interface TopoPolicyRoute extends Labeled {
   id: number;
-  source: string | null;
-  node: string;
-  context: string;
   kind: "policy" | "sdwan";
   seq: number | null;
   name: string | null;
@@ -1548,6 +1590,7 @@ export interface TopoPolicyRoute {
   action: string | null;
   gateway: string | null;
   output_device: string[] | null;
+  gateway_resolved?: Resolved;
 }
 export interface TopoL3Out {
   id: number;
@@ -1556,11 +1599,27 @@ export interface TopoL3Out {
   name: string;
   dn: string;
   vrf: string | null;
-  nodes: { pod: string; node: string; router_id?: string; static_routes?: { prefix: string; next_hops?: string[] }[] }[] | null;
-  paths:
-    | { path: string; nodes?: string[]; interface?: string; kind?: string; vlan?: number; ips?: { ip: string; side?: string }[] }[]
+  nodes:
+    | {
+        pod: string;
+        node: string;
+        name?: string | null; // Leaf-Name aus dem Inventar
+        router_id?: string;
+        static_routes?: { prefix: string; next_hops?: string[]; resolved?: Record<string, Resolved> }[];
+      }[]
     | null;
-  peers: { ip: string; asn?: number | null; path?: string }[] | null;
+  paths:
+    | {
+        path: string;
+        nodes?: string[];
+        node_names?: string[];
+        interface?: string;
+        kind?: string;
+        vlan?: number;
+        ips?: { ip: string; side?: string }[];
+      }[]
+    | null;
+  peers: ({ ip: string; asn?: number | null; path?: string; node?: string | null } & Resolved)[] | null;
   ext_epgs: string[] | null;
 }
 
@@ -1581,6 +1640,11 @@ export const fetchRoutes = (opts: {
   );
 export const lookupRoute = (tenantId: number, ip: string) =>
   getJSON<RouteLookup[]>(`/api/routing/lookup${qs({ tenant_id: tenantId, ip: ip.trim() })}`);
+// Weg Hop für Hop: ab der Quelle (dort angeschlossen) bzw. dem Startpunkt (RoutingNode.key)
+export const traceRoute = (tenantId: number, opts: { dst: string; src?: string; start?: string }) =>
+  getJSON<TraceResult>(
+    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim(), src: opts.src?.trim() || undefined, start: opts.start || undefined })}`,
+  );
 export const fetchPeers = (tenantId: number) => getJSON<TopoPeer[]>(`/api/routing/peers${qs({ tenant_id: tenantId })}`);
 export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha${qs({ tenant_id: tenantId })}`);
 export const fetchPolicyRoutes = (tenantId: number) =>

@@ -1,7 +1,8 @@
 """Beispieldaten fuer die UI-Tests - aus denselben Testdaten wie die Orchestrator-Tests.
 
 Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), fuenf FortiGates (eine mit gleichnamigen
-IPv4/IPv6-Objekten und Regelpaaren, eine mit Virtual Server, eine mit zwei VDOMs), einem APIC,
+IPv4/IPv6-Objekten und Regelpaaren, eine mit Virtual Server und Routing nur in root, eine mit
+zwei VDOMs und Routing), einem APIC,
 virtuellen und physischen Standorten, NAT/VIPs, Gruppen, Diensten mit Namensschema-Befunden,
 einem ACI-Contract ohne Consumer, einem vCenter mit einer VM hinter H_web01 und einer
 Applikation (AP mit EPG und VM). Alles ueber die oeffentliche bzw. interne API wie im Betrieb.
@@ -16,6 +17,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "orchestrator" / "tests"))
 import test_findings_explain as fe  # noqa: E402
 import test_ip_family as ipf  # noqa: E402
+import test_paths as tp  # noqa: E402
 import test_routing as rt  # noqa: E402
 import test_search_nat as sn  # noqa: E402
 import test_services as sv  # noqa: E402
@@ -67,7 +69,9 @@ def run(app) -> None:
         password="e2e",
     )  # fmt: skip
     records, seen = [], set()
-    for r in sn.DDI + fe.DDI:
+    # dazu die Namen der Provider-Nachbarn (Weg fuer IP, BGP-Nachbarn)
+    isp = [r for r in tp.DDI if r["value"].startswith("198.51.100.")]
+    for r in sn.DDI + fe.DDI + isp:
         if (r["kind"], r["value"]) not in seen:
             seen.add((r["kind"], r["value"]))
             records.append(r)
@@ -106,8 +110,13 @@ def run(app) -> None:
     fw4 = system(name="fw-04", platform="fortigate", base_url="https://fw-04.example.ch")
     net_rule = {**vs.RULES[0], "external_id": "2", "name": "to-web-net",
                 "sources": ["10.9.0.0/16"], "destinations": ["10.20.0.0/24"],
-                "source_refs": [], "destination_refs": []}  # fmt: skip
-    run_result(fw4, "fortigate", rules=[*vs.RULES, net_rule], objects=vs.OBJECTS, nat_rules=vs.NAT)
+                "source_refs": [], "destination_refs": [], "vdom": "root"}  # fmt: skip
+    # nur VDOM root: im Routing „die Firewall“ (0.17.0)
+    routing4 = json.loads(json.dumps(tp.FW2["routing"]).replace('"fw-02"', '"fw-04"'))
+    run_result(
+        fw4, "fortigate", rules=[*vs.RULES, net_rule], objects=vs.OBJECTS, nat_rules=vs.NAT,
+        routing=routing4,
+    )  # fmt: skip
 
     # FortiGate 5: zwei VDOMs (root, kunde-a) mit gleichen Policy-IDs, Objekt- und VIP-Namen
     fw5 = system(name="fw-05", platform="fortigate", base_url="https://fw-05.example.ch")

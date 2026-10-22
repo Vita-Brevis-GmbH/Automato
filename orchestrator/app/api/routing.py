@@ -1,13 +1,19 @@
-"""Routing, BGP, HA und L3Out (ADR 0019 Stufe 2) - nur lesend, mandantsgescoped (viewer).
+"""Routing, BGP, HA und L3Out (ADR 0019) - nur lesend, mandantsgescoped (viewer).
 
-- `GET /routing/summary`         je Quellsystem die gelesenen Kontexte (VDOM bzw. VRF auf dem
-                                 Border-Leaf) mit Anzahl Routen und dem, was nicht lesbar war
+- `GET /routing/summary`         gelesene Kontexte (Firewall, VDOM bzw. VRF auf dem Border-Leaf)
+                                 mit Anzahl Routen und dem, was nicht lesbar war; dazu die
+                                 Knoten fuer den Startpunkt der Weg-Suche
 - `GET /routing/routes`          Routen seitenweise (RIB, BGP-Pfade, statische); `ip` = Routen,
                                  die die IP enthalten, laengstes Praefix zuerst
 - `GET /routing/lookup?ip=`      je Kontext die wirksame Route und vorgehende Policy-Routen
-- `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs`
+- `GET /routing/trace?dst=&src=&start=`  Weg Hop fuer Hop von der Quelle bzw. dem Startpunkt
+- `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs` - Nachbarn mit Namen aus dem IPAM
+
+Bezeichnung eines Kontexts: eine FortiGate nur mit `root` heisst wie die Firewall, sonst
+„fw · VDOM x“; ACI „leaf · VRF Tenant:VRF“ (`label`, `display`).
 """
 
+import ipaddress
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -27,7 +33,7 @@ from app.models import (
     TopoPolicyRoute,
     TopoRoute,
 )
-from app.store import topology
+from app.store import paths, topology
 
 router = APIRouter(prefix="/routing", tags=["routing"])
 
@@ -48,11 +54,26 @@ def _names(session: Session, tid: int) -> dict[int, str]:
     )
 
 
-def _row(obj, names: dict[int, str], **extra) -> dict:
+def _row(obj, names: dict[int, str], graph: paths.Graph | None = None, **extra) -> dict:
     row = {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
     for key in ("lo", "hi", "tenant_id"):
         row.pop(key, None)
-    return {**row, "source": names.get(obj.source_system_id), **extra}
+    row["source"] = names.get(obj.source_system_id)
+    if graph is not None and hasattr(obj, "context"):
+        row["display"], row["label"] = graph.label(obj.source_system_id, obj.node, obj.context)
+    return {**row, **extra}
+
+
+def _hops(graph: paths.Graph, ifaces: topology.Interfaces, sid: int, hops) -> list[dict]:
+    """Next-Hops mit Zone (Inventar) und Namen aus dem IPAM."""
+    return [{**h, **graph.resolve(h.get("ip"))} for h in ifaces.hops(sid, hops)]
+
+
+def _ip(value: str, what: str):
+    try:
+        return ipaddress.ip_address(value.strip())
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"{what}: keine gueltige IP") from None
 
 
 @router.get("/summary")
@@ -64,6 +85,7 @@ def summary(
     """Gelesene Kontexte je Quellsystem mit Anzahl Routen (je Tabelle), Nachbarn und Regeln."""
     tid = _tenant(session, principal, tenant_id)
     names = _names(session, tid)
+    graph = paths.Graph(session, tid)
     counts: dict[tuple, dict[str, int]] = defaultdict(dict)
     for sid, node, ctx, table, n in session.execute(
         select(
@@ -90,12 +112,13 @@ def summary(
         .order_by(TopoContext.source_system_id, TopoContext.node, TopoContext.context)
     )
     rows = [
-        _row(c, names, counts=counts.get((c.source_system_id, c.node, c.context), {}))
+        _row(c, names, graph, counts=counts.get((c.source_system_id, c.node, c.context), {}))
         for c in contexts
     ]
     ha = session.scalar(select(func.count(TopoHa.id)).where(TopoHa.tenant_id == tid)) or 0
     l3 = session.scalar(select(func.count(TopoL3Out.id)).where(TopoL3Out.tenant_id == tid)) or 0
-    return {"contexts": rows, "ha": ha, "l3outs": l3}
+    nodes = sorted((n.out() for n in graph.nodes.values()), key=lambda n: n["label"].lower())
+    return {"contexts": rows, "nodes": nodes, "ha": ha, "l3outs": l3}
 
 
 @router.get("/routes")
@@ -158,8 +181,12 @@ def routes(
     response.headers["X-Total-Count"] = str(total)
     page = list(session.scalars(stmt.order_by(*order).offset(offset).limit(limit)))
     names = _names(session, tid)
+    graph = paths.Graph(session, tid)
     ifaces = topology.Interfaces(session, {r.source_system_id for r in page})
-    return [_row(r, names, next_hops=ifaces.hops(r.source_system_id, r.next_hops)) for r in page]
+    return [
+        _row(r, names, graph, next_hops=_hops(graph, ifaces, r.source_system_id, r.next_hops))
+        for r in page
+    ]
 
 
 @router.get("/lookup")
@@ -172,21 +199,47 @@ def lookup(
 ) -> list[dict]:
     """Je Kontext die wirksame Route fuer `ip` und Policy-Routen, die vorgehen (koennen)."""
     tid = _tenant(session, principal, tenant_id)
-    if topology.route_range(ip) is None:
-        raise HTTPException(status_code=422, detail="ip: keine gueltige IP")
+    _ip(ip, "ip")
     names = _names(session, tid)
-    return [
-        {**row, "source": names.get(row["source_system_id"])}
-        for row in topology.lookup(session, tid, ip, source_system_id)
-    ]
+    graph = paths.Graph(session, tid)
+    out = []
+    for row in topology.lookup(session, tid, ip, source_system_id):
+        display, label = graph.label(row["source_system_id"], row["node"], row["context"])
+        if row["route"]:
+            row["route"]["next_hops"] = [
+                {**h, **graph.resolve(h.get("ip"))} for h in row["route"]["next_hops"]
+            ]
+        out.append(
+            {**row, "source": names.get(row["source_system_id"]), "display": display,
+             "label": label}
+        )  # fmt: skip
+    return out
 
 
-def _list(session: Session, tid: int, model, source_system_id: int | None, order) -> list[dict]:
+@router.get("/trace")
+def trace(
+    dst: str,
+    src: str | None = None,
+    start: str | None = Query(None, description="Startpunkt: <Quellsystem>|<Kontext>"),
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Weg zum Ziel Hop fuer Hop - ab der Quelle (dort angeschlossen) bzw. dem Startpunkt."""
+    tid = _tenant(session, principal, tenant_id)
+    _ip(dst, "dst")
+    if src:
+        _ip(src, "src")
+    if not src and not start:
+        raise HTTPException(status_code=422, detail="src oder start angeben")
+    return paths.trace(session, tid, dst, src, start)
+
+
+def _list(session: Session, tid: int, model, source_system_id: int | None, order) -> list:
     stmt = select(model).where(model.tenant_id == tid)
     if source_system_id is not None:
         stmt = stmt.where(model.source_system_id == source_system_id)
-    names = _names(session, tid)
-    return [_row(o, names) for o in session.scalars(stmt.order_by(*order))]
+    return list(session.scalars(stmt.order_by(*order)))
 
 
 @router.get("/peers")
@@ -196,9 +249,21 @@ def peers(
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
+    """BGP-Nachbarn mit Namen aus dem IPAM und - falls gelesen - dem Knoten dahinter."""
     tid = _tenant(session, principal, tenant_id)
     order = (TopoPeer.source_system_id, TopoPeer.node, TopoPeer.context, TopoPeer.peer_ip)
-    return _list(session, tid, TopoPeer, source_system_id, order)
+    names = _names(session, tid)
+    graph = paths.Graph(session, tid)
+    return [
+        _row(
+            p,
+            names,
+            graph,
+            peer=graph.resolve(p.peer_ip),
+            peer_node=graph.owner_label(p.peer_ip),
+        )
+        for p in _list(session, tid, TopoPeer, source_system_id, order)
+    ]
 
 
 @router.get("/ha")
@@ -208,7 +273,18 @@ def ha(
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     tid = _tenant(session, principal, tenant_id)
-    return _list(session, tid, TopoHa, None, (TopoHa.source_system_id, TopoHa.node))
+    names = _names(session, tid)
+    graph = paths.Graph(session, tid)
+    rows = _list(session, tid, TopoHa, None, (TopoHa.source_system_id, TopoHa.node))
+    out = []
+    for h in rows:
+        row = _row(h, names)
+        row["sync_peers"] = [
+            {**p, **graph.resolve(p.get("peerip")), "node": graph.owner_label(p.get("peerip"))}
+            for p in h.sync_peers or []
+        ]
+        out.append(row)
+    return out
 
 
 @router.get("/policy-routes")
@@ -226,7 +302,12 @@ def policy_routes(
         TopoPolicyRoute.kind,
         TopoPolicyRoute.seq,
     )
-    return _list(session, tid, TopoPolicyRoute, source_system_id, order)
+    names = _names(session, tid)
+    graph = paths.Graph(session, tid)
+    return [
+        _row(p, names, graph, gateway_resolved=graph.resolve(p.gateway))
+        for p in _list(session, tid, TopoPolicyRoute, source_system_id, order)
+    ]
 
 
 @router.get("/l3outs")
@@ -235,6 +316,38 @@ def l3outs(
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
+    """L3Outs mit Border-Leafs (Namen aus dem Inventar), Peers und Next-Hops mit IPAM-Namen."""
     tid = _tenant(session, principal, tenant_id)
     order = (TopoL3Out.source_system_id, TopoL3Out.aci_tenant, TopoL3Out.name)
-    return _list(session, tid, TopoL3Out, None, order)
+    names = _names(session, tid)
+    graph = paths.Graph(session, tid)
+    rows = _list(session, tid, TopoL3Out, None, order)
+    leafs = paths.device_names(session, {o.source_system_id for o in rows})
+    out = []
+    for o in rows:
+        row = _row(o, names)
+        sid = o.source_system_id
+        row["nodes"] = [
+            {
+                **n,
+                "name": leafs.get((sid, str(n.get("node")))),
+                "static_routes": [
+                    {**r, "resolved": {h: graph.resolve(h) for h in r.get("next_hops") or []}}
+                    for r in n.get("static_routes") or []
+                ],
+            }
+            for n in o.nodes or []
+        ]
+        row["paths"] = [
+            {
+                **p,
+                "node_names": [leafs.get((sid, str(x)), f"node-{x}") for x in p.get("nodes") or []],
+            }
+            for p in o.paths or []
+        ]
+        row["peers"] = [
+            {**p, **graph.resolve(p.get("ip")), "node": graph.owner_label(p.get("ip"))}
+            for p in o.peers or []
+        ]
+        out.append(row)
+    return out

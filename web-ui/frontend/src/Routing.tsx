@@ -1,23 +1,33 @@
-// Routing & Wege (ADR 0019 Stufe 2): gelesene Routing-Tabellen je FortiGate-VDOM und je
+// Routing & Wege (ADR 0019): gelesene Routing-Tabellen je Firewall bzw. FortiGate-VDOM und je
 // ACI-VRF auf den Border-Leafs, BGP-Pfade (auch Backup), Nachbarn, HA/Session-Sync,
-// Policy-Routen/SD-WAN und L3Outs. „Weg für IP“ zeigt je Kontext die wirksame Route.
+// Policy-Routen/SD-WAN und L3Outs. „Weg für IP“ verfolgt den Weg Hop für Hop ab der Quelle
+// bzw. einem gewählten Startpunkt (Stufe 3, erste Fassung); IPs mit Namen aus dem IPAM.
 import { useEffect, useState } from "react";
 import {
+  ContextKind,
   fetchHa,
   fetchL3Outs,
   fetchPeers,
   fetchPolicyRoutes,
   fetchRoutes,
   fetchRoutingSummary,
+  Labeled,
   lookupRoute,
   NextHop,
+  PolicyHit,
+  Resolved,
   RouteLookup,
+  RoutingNode,
   RoutingSummary,
   TopoHa,
   TopoL3Out,
   TopoPeer,
   TopoPolicyRoute,
   TopoRoute,
+  TracePath,
+  TracePort,
+  TraceResult,
+  traceRoute,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
@@ -40,7 +50,20 @@ const TABLE_LABEL: Record<string, [string, string]> = {
   static: ["", "statisch"],
 };
 
-// Next-Hops: IP über Interface (Zone); ECMP = mehrere Zeilen
+const KIND_LABEL: Record<ContextKind, string> = {
+  firewall: "Firewall",
+  vdom: "VDOM",
+  vrf: "VRF (Border-Leaf)",
+};
+
+// Name(n) einer IP aus dem IPAM; ohne Namen das Netz (Beschreibung) – blass
+export function Names({ r }: { r: Resolved | null | undefined }) {
+  if (r?.names?.length) return <b> {r.names.join(", ")}</b>;
+  if (r?.network) return <span className="faint" title="kein Name zur IP im IPAM – Netz aus dem IPAM"> {r.network}</span>;
+  return null;
+}
+
+// Next-Hops: IP (Name aus dem IPAM) über Interface (Zone); ECMP = mehrere Zeilen
 export function Hops({ hops }: { hops: NextHop[] | null | undefined }) {
   if (!hops?.length) return <Dash />;
   return (
@@ -48,6 +71,7 @@ export function Hops({ hops }: { hops: NextHop[] | null | undefined }) {
       {hops.map((h, i) => (
         <span key={i} className="mono">
           {h.ip ?? "direkt"}
+          <Names r={h} />
           {h.interface ? <span className="faint"> via {h.interface}</span> : null}
           {h.zone ? <span className="chip" style={{ marginLeft: 4 }}>{h.zone}</span> : null}
         </span>
@@ -78,14 +102,15 @@ function Missing({ items }: { items: string[] | null | undefined }) {
   );
 }
 
-function where(x: { source: string | null; node: string; context: string }) {
+// System · Kontext: „fw-01 · VDOM root“, eine Firewall nur mit root heisst wie die Firewall,
+// ACI „leaf-101 · VRF T:V“ (darunter der APIC); Hostname, wenn er vom Quellsystem abweicht
+function where(x: Labeled) {
+  const label = x.label || `${x.source ?? x.node} · ${x.context}`;
+  const sub = x.display === "vrf" ? x.source : x.node !== x.source ? x.node : null;
   return (
     <>
-      <b>{x.source ?? x.node}</b>
-      <div className="faint">
-        {x.node !== x.source ? `${x.node} · ` : ""}
-        {x.context}
-      </div>
+      <b>{label}</b>
+      {sub && <div className="faint">{sub}</div>}
     </>
   );
 }
@@ -133,7 +158,7 @@ function ContextCard({ summary }: { summary: RoutingSummary }) {
               <tr key={c.id}>
                 <td>{where(c)}</td>
                 <td>
-                  <span className="chip">{c.kind === "vrf" ? "VRF (Border-Leaf)" : "VDOM"}</span>
+                  <span className="chip">{c.display ? KIND_LABEL[c.display] : c.kind}</span>
                 </td>
                 <td className="num">{c.counts.rib ?? 0}</td>
                 <td className="num">{c.counts.bgp ?? 0}</td>
@@ -150,116 +175,276 @@ function ContextCard({ summary }: { summary: RoutingSummary }) {
   );
 }
 
-function LookupTab({ tenantId }: { tenantId: number }) {
-  const [ip, setIp] = useState("");
+function policyText(p: PolicyHit) {
+  return p.kind === "sdwan" ? `SD-WAN ${p.name ?? `#${p.seq}`}` : `Policy-Route #${p.seq ?? "?"}`;
+}
+
+function Port({ p }: { p: TracePort | undefined }) {
+  if (!p?.interface && !p?.next_hop) return null;
+  return (
+    <div>
+      {p.interface && <span className="mono">{p.interface}</span>}
+      {p.zone && <span className="chip" style={{ marginLeft: 4 }}>{p.zone}</span>}
+      {p.next_hop && (
+        <span className="mono">
+          {" "}
+          → {p.next_hop}
+          <Names r={p} />
+        </span>
+      )}
+    </div>
+  );
+}
+
+const END: Record<TracePath["end"]["kind"], [string, string]> = {
+  connected: ["ok", "Ziel erreicht"],
+  fabric: ["ok", "im Fabric"],
+  external: ["info", "extern"],
+  unknown: ["warn", "Weg endet"],
+  no_route: ["warn", "keine Route"],
+  loop: ["crit", "Schleife"],
+  max_hops: ["warn", "abgebrochen"],
+};
+
+// Ein Weg Hop für Hop: Knoten, Eingang, Entscheidung (Policy-Route bzw. Route), Ausgang
+function TraceCard({ path, index, total }: { path: TracePath; index: number; total: number }) {
+  const [cls, label] = END[path.end.kind] ?? ["", path.end.kind];
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>
+          Weg {index + 1}
+          {total > 1 ? ` von ${total}` : ""}
+        </h2>
+        <span className={`chip ${cls}`}>{label}</span>
+        <span className="faint">{path.end.text}</span>
+      </div>
+      <div className="card-body scroll">
+        <table className="compact">
+          <thead>
+            <tr>
+              <th className="num">#</th>
+              <th>Knoten</th>
+              <th>Eingang</th>
+              <th>Entscheidung</th>
+              <th>Ausgang · Next-Hop</th>
+            </tr>
+          </thead>
+          <tbody>
+            {path.hops.map((h, i) => {
+              const possible = (h.policy_routes ?? []).filter((p) => !p.certain);
+              return (
+                <tr key={i}>
+                  <td className="num">{i + 1}</td>
+                  <td>
+                    <b>{h.label}</b> {h.kind === "firewall" && <span className="chip">Firewall</span>}
+                    <div className="faint">
+                      {h.via}
+                      {h.kind === "vrf" && h.members.length ? ` · ${h.members.join(", ")}` : ""}
+                    </div>
+                    <Missing items={h.missing} />
+                  </td>
+                  <td>{h.ingress?.interface ? <Port p={h.ingress} /> : <Dash />}</td>
+                  <td>
+                    {h.policy ? (
+                      <>
+                        <span className="chip info" title="passt sicher und geht der Routing-Tabelle vor">
+                          {policyText(h.policy)}
+                        </span>
+                        <div className="faint">geht der Routing-Tabelle vor</div>
+                      </>
+                    ) : h.route ? (
+                      <>
+                        <b className="mono">{h.route.prefix}</b>
+                        <div className="faint">
+                          {[h.route.protocol, h.route.distance != null && `Distanz ${h.route.distance}`]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      </>
+                    ) : (
+                      <Dash />
+                    )}
+                    {possible.length > 0 && (
+                      <div className="faint" title="Quelle bzw. Ziel nur über Objekte bestimmt – nicht sicher">
+                        möglich: {possible.map(policyText).join(", ")}
+                      </div>
+                    )}
+                  </td>
+                  <td>{h.egress ? <Port p={h.egress} /> : <Dash />}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function LookupTable({ rows }: { rows: RouteLookup[] }) {
+  return (
+    <div className="card">
+      <div className="card-body scroll viewport">
+        {rows.length === 0 ? (
+          <Empty title="Keine Routing-Daten">Noch kein Quellsystem mit Routing eingelesen.</Empty>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>System · Kontext</th>
+                <th>Route</th>
+                <th>Next-Hop</th>
+                <th>Geht vor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={`${r.source_system_id}|${r.node}|${r.context}`}>
+                  <td>
+                    {where(r)}
+                    <Missing items={r.missing} />
+                  </td>
+                  <td>
+                    {r.route ? (
+                      <>
+                        <b className="mono">{r.route.prefix}</b>
+                        <div className="faint">
+                          {[r.route.protocol, r.route.distance != null && `Distanz ${r.route.distance}`]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      </>
+                    ) : (
+                      <span className={`chip ${r.missing.length ? "warn" : ""}`}>
+                        {r.missing.length ? "unbekannt" : "keine Route"}
+                      </span>
+                    )}
+                  </td>
+                  <td>{r.route ? <Hops hops={r.route.next_hops} /> : <Dash />}</td>
+                  <td>
+                    {r.policy_routes.length ? (
+                      <div className="objs">
+                        {r.policy_routes.map((p, i) => (
+                          <span key={i} title={matchText(p.match)}>
+                            <span className={`chip ${p.certain ? "info" : ""}`}>{policyText(p)}</span>{" "}
+                            <span className="mono">
+                              {[p.gateway, ...p.output_device].filter(Boolean).join(" · ") || "–"}
+                            </span>
+                            {!p.certain && <span className="faint"> (möglich – Ziel über Objekte)</span>}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <Dash />
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Weg für IP: Quelle (IP) und/oder Startpunkt, dazu das Ziel. Ohne beides: je Kontext die Route.
+function LookupTab({ tenantId, nodes }: { tenantId: number; nodes: RoutingNode[] }) {
+  const [src, setSrc] = useState("");
+  const [start, setStart] = useState("");
+  const [dst, setDst] = useState("");
+  const [trace, setTrace] = useState<TraceResult | null>(null);
   const [rows, setRows] = useState<RouteLookup[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const run = () => {
-    if (!ip.trim()) return;
+    if (!dst.trim()) return;
     setBusy(true);
     setError(null);
-    lookupRoute(tenantId, ip)
-      .then(setRows)
-      .catch((e) => {
-        setError(e);
-        setRows(null);
-      })
-      .finally(() => setBusy(false));
+    setTrace(null);
+    setRows(null);
+    const job =
+      src.trim() || start
+        ? traceRoute(tenantId, { dst, src, start }).then(setTrace)
+        : lookupRoute(tenantId, dst).then(setRows);
+    job.catch(setError).finally(() => setBusy(false));
   };
+  const enter = (e: React.KeyboardEvent) => e.key === "Enter" && run();
   return (
     <>
       <div className="filterbar">
-        <div className="search">
+        <div className="search" style={{ flex: "0 1 200px" }}>
           <span className="ico">
             <Icon name="search" />
           </span>
           <input
-            placeholder="Ziel-IP, z. B. 10.20.0.5"
-            value={ip}
-            onChange={(e) => setIp(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && run()}
+            placeholder="Quelle (IP)"
+            title="Quell-IP: der Weg beginnt dort, wo sie angeschlossen ist (bzw. am Startpunkt)"
+            value={src}
+            onChange={(e) => setSrc(e.target.value)}
+            onKeyDown={enter}
           />
         </div>
-        <button className="btn btn-primary btn-sm" onClick={run} disabled={busy || !ip.trim()}>
+        <select
+          className="sel"
+          value={start}
+          onChange={(e) => setStart(e.target.value)}
+          title="Startpunkt: Firewall, VDOM bzw. ACI-VRF – ohne Wahl ergibt er sich aus der Quelle"
+        >
+          <option value="">Start: aus der Quelle</option>
+          {nodes.map((n) => (
+            <option key={n.key} value={n.key}>
+              {n.label}
+            </option>
+          ))}
+        </select>
+        <div className="search" style={{ flex: "0 1 200px" }}>
+          <span className="ico">
+            <Icon name="route" />
+          </span>
+          <input
+            placeholder="Ziel (IP), z. B. 10.20.0.5"
+            value={dst}
+            onChange={(e) => setDst(e.target.value)}
+            onKeyDown={enter}
+          />
+        </div>
+        <button className="btn btn-primary btn-sm" onClick={run} disabled={busy || !dst.trim()}>
           {busy ? "Suche…" : "Weg suchen"}
         </button>
         <span className="faint">
-          Je Kontext die wirksame Route (längstes Präfix) – Policy-Routen und SD-WAN-Regeln gehen ihr vor.
+          Hop für Hop: Policy-Routen und SD-WAN-Regeln, die sicher passen, gehen vor; sonst das längste Präfix.
+          Ohne Quelle und Start: je Kontext die wirksame Route.
         </span>
       </div>
       <ErrorBox error={error} prefix="Weg suchen" />
-      {rows && (
-        <div className="card">
-          <div className="card-body scroll viewport">
-            {rows.length === 0 ? (
-              <Empty title="Keine Routing-Daten">Noch kein Quellsystem mit Routing eingelesen.</Empty>
-            ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>System · Kontext</th>
-                    <th>Route</th>
-                    <th>Next-Hop</th>
-                    <th>Geht vor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <tr key={`${r.source_system_id}|${r.node}|${r.context}`}>
-                      <td>
-                        {where(r)}
-                        <Missing items={r.missing} />
-                      </td>
-                      <td>
-                        {r.route ? (
-                          <>
-                            <b className="mono">{r.route.prefix}</b>
-                            <div className="faint">
-                              {[r.route.protocol, r.route.distance != null && `Distanz ${r.route.distance}`]
-                                .filter(Boolean)
-                                .join(" · ")}
-                            </div>
-                          </>
-                        ) : (
-                          <span className={`chip ${r.missing.length ? "warn" : ""}`}>
-                            {r.missing.length ? "unbekannt" : "keine Route"}
-                          </span>
-                        )}
-                      </td>
-                      <td>{r.route ? <Hops hops={r.route.next_hops} /> : <Dash />}</td>
-                      <td>
-                        {r.policy_routes.length ? (
-                          <div className="objs">
-                            {r.policy_routes.map((p, i) => (
-                              <span key={i} title={matchText(p.match)}>
-                                <span className={`chip ${p.certain ? "info" : ""}`}>
-                                  {p.kind === "sdwan" ? `SD-WAN ${p.name ?? `#${p.seq}`}` : `Policy-Route #${p.seq ?? "?"}`}
-                                </span>{" "}
-                                <span className="mono">
-                                  {[p.gateway, ...p.output_device].filter(Boolean).join(" · ") || "–"}
-                                </span>
-                                {!p.certain && <span className="faint"> (möglich – Ziel über Objekte)</span>}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <Dash />
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
+      {trace && (
+        <>
+          {trace.start.length > 0 && (
+            <div className="faint" style={{ margin: "0 0 8px" }}>
+              Start: {trace.start.map((s) => `${s.label} (${s.via})`).join(" · ")}
+            </div>
+          )}
+          {trace.notes.map((n) => (
+            <Note key={n} warn>
+              {n}
+            </Note>
+          ))}
+          {trace.paths.length === 0 && trace.notes.length === 0 && (
+            <Empty title="Kein Weg">Kein Hop gefunden – Startpunkt wählen bzw. Quellsysteme neu einlesen.</Empty>
+          )}
+          {trace.paths.map((p, i) => (
+            <TraceCard key={i} path={p} index={i} total={trace.paths.length} />
+          ))}
+        </>
       )}
+      {rows && <LookupTable rows={rows} />}
     </>
   );
 }
 
-function RoutesTab({ tenantId, contexts }: { tenantId: number; contexts: string[] }) {
+function RoutesTab({ tenantId, nodes }: { tenantId: number; nodes: RoutingNode[] }) {
   const [q, setQ] = useState("");
   const [ip, setIp] = useState("");
   const [table, setTable] = useState("");
@@ -274,7 +459,18 @@ function RoutesTab({ tenantId, contexts }: { tenantId: number; contexts: string[
   useEffect(() => {
     setPage(null);
     setError(null);
-    fetchRoutes({ tenantId, q: query, ip: ipQuery, table, context, limit: PAGE, offset })
+    // Kontext = Knoten „<Quellsystem>|<VDOM bzw. Tenant:VRF>“ (ACI: alle Border-Leafs)
+    const [sid, ...rest] = context ? context.split("|") : [];
+    fetchRoutes({
+      tenantId,
+      q: query,
+      ip: ipQuery,
+      table,
+      sourceId: sid ? Number(sid) : null,
+      context: rest.join("|"),
+      limit: PAGE,
+      offset,
+    })
       .then(setPage)
       .catch((e) => {
         setError(e);
@@ -310,9 +506,9 @@ function RoutesTab({ tenantId, contexts }: { tenantId: number; contexts: string[
         </select>
         <select className="sel" value={context} onChange={(e) => setContext(e.target.value)}>
           <option value="">Kontext: alle</option>
-          {contexts.map((c) => (
-            <option key={c} value={c}>
-              {c}
+          {nodes.map((n) => (
+            <option key={n.key} value={n.key}>
+              {n.label}
             </option>
           ))}
         </select>
@@ -402,6 +598,7 @@ function PeersTab({ tenantId }: { tenantId: number }) {
         <tr>
           <th>System · Kontext</th>
           <th>Nachbar</th>
+          <th>Gelesen als</th>
           <th>Lokal</th>
           <th className="num">AS</th>
           <th>Zustand</th>
@@ -411,7 +608,11 @@ function PeersTab({ tenantId }: { tenantId: number }) {
         {(rows ?? []).map((p) => (
           <tr key={p.id}>
             <td>{where(p)}</td>
-            <td className="mono">{p.peer_ip}</td>
+            <td className="mono">
+              {p.peer_ip}
+              <Names r={p.peer} />
+            </td>
+            <td>{p.peer_node ?? <Dash />}</td>
             <td className="mono">{p.local_ip ?? "–"}</td>
             <td className="num">{p.remote_as ?? "–"}</td>
             <td>
@@ -471,6 +672,8 @@ function HaTab({ tenantId }: { tenantId: number }) {
                   {h.sync_peers.map((p, i) => (
                     <span key={i} className="mono">
                       {String(p.peerip ?? "?")}
+                      <Names r={p} />
+                      {p.node && <span className="faint"> · {p.node}</span>}
                       {Array.isArray(p.syncvd) && p.syncvd.length ? (
                         <span className="faint"> · VDOMs {(p.syncvd as string[]).join(", ")}</span>
                       ) : null}
@@ -512,6 +715,7 @@ function PolicyTab({ tenantId }: { tenantId: number }) {
             <td>{matchText(p.match)}</td>
             <td className="mono">
               {[p.gateway, ...(p.output_device ?? [])].filter(Boolean).join(" · ") || p.action || "–"}
+              <Names r={p.gateway_resolved} />
             </td>
           </tr>
         ))}
@@ -548,12 +752,22 @@ function L3OutTab({ tenantId }: { tenantId: number }) {
               <div className="objs">
                 {(o.nodes ?? []).map((n) => (
                   <span key={`${n.pod}-${n.node}`} className="mono">
-                    node-{n.node}
+                    <b>{n.name ?? `node-${n.node}`}</b>
+                    {n.name && <span className="faint"> (node-{n.node})</span>}
                     {n.router_id && <span className="faint"> · Router-ID {n.router_id}</span>}
                     {n.static_routes?.map((r) => (
                       <span key={r.prefix} className="faint">
                         {" "}
-                        · {r.prefix} → {(r.next_hops ?? []).join(", ") || "?"}
+                        · {r.prefix} →{" "}
+                        {(r.next_hops ?? []).length
+                          ? (r.next_hops ?? []).map((h, i) => (
+                              <span key={h}>
+                                {i > 0 && ", "}
+                                {h}
+                                <Names r={r.resolved?.[h]} />
+                              </span>
+                            ))
+                          : "?"}
                       </span>
                     ))}
                   </span>
@@ -564,7 +778,7 @@ function L3OutTab({ tenantId }: { tenantId: number }) {
               <div className="objs">
                 {(o.paths ?? []).map((p, i) => (
                   <span key={i} className="mono" title={p.path}>
-                    {(p.nodes ?? []).join("/")} {p.interface}
+                    {(p.node_names?.length ? p.node_names : p.nodes ?? []).join("/")} {p.interface}
                     <span className="faint">
                       {" "}
                       · {p.kind}
@@ -580,7 +794,9 @@ function L3OutTab({ tenantId }: { tenantId: number }) {
                 {(o.peers ?? []).map((p, i) => (
                   <span key={i} className="mono">
                     {p.ip}
+                    <Names r={p} />
                     {p.asn != null && <span className="faint"> · AS {p.asn}</span>}
+                    {p.node && <span className="faint"> · {p.node}</span>}
                   </span>
                 ))}
               </div>
@@ -627,7 +843,7 @@ export default function Routing({ tenantId, tenantLabel }: { tenantId: number | 
       .then(setSummary)
       .catch((e) => {
         setError(e);
-        setSummary({ contexts: [], ha: 0, l3outs: 0 });
+        setSummary({ contexts: [], nodes: [], ha: 0, l3outs: 0 });
       });
   }, [tenantId]);
 
@@ -639,14 +855,15 @@ export default function Routing({ tenantId, tenantLabel }: { tenantId: number | 
       </>
     );
   }
-  const contexts = [...new Set((summary?.contexts ?? []).map((c) => c.context))].sort();
+  const nodes = summary?.nodes ?? [];
 
   return (
     <>
       <PageHead title="Routing & Wege">
-        Routing-Tabellen von „{tenantLabel}“ je FortiGate-VDOM und je ACI-VRF auf den Border-Leafs, dazu BGP-Pfade
-        (auch Backup-Wege), Nachbarn, HA und Session-Sync, Policy-Routen und L3Outs – rein lesend, Stand des letzten
-        Laufs. Grundlage für die Pfade (ADR 0019).
+        Routing-Tabellen von „{tenantLabel}“ je Firewall bzw. FortiGate-VDOM und je ACI-VRF auf den Border-Leafs,
+        dazu BGP-Pfade (auch Backup-Wege), Nachbarn, HA und Session-Sync, Policy-Routen und L3Outs – rein lesend,
+        Stand des letzten Laufs. Der Weg für eine IP folgt Hop für Hop ab Quelle bzw. Startpunkt (ADR 0019); IPs mit
+        Namen aus dem IPAM.
       </PageHead>
       <ErrorBox error={error} prefix="Routing laden" />
       {summary === null ? (
@@ -666,8 +883,8 @@ export default function Routing({ tenantId, tenantLabel }: { tenantId: number | 
           </button>
         ))}
       </div>
-      {tab === "lookup" && <LookupTab tenantId={tenantId} />}
-      {tab === "routes" && <RoutesTab tenantId={tenantId} contexts={contexts} />}
+      {tab === "lookup" && <LookupTab tenantId={tenantId} nodes={nodes} />}
+      {tab === "routes" && <RoutesTab tenantId={tenantId} nodes={nodes} />}
       {tab === "peers" && <PeersTab tenantId={tenantId} />}
       {tab === "ha" && <HaTab tenantId={tenantId} />}
       {tab === "policy" && <PolicyTab tenantId={tenantId} />}

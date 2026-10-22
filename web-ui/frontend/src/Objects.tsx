@@ -23,7 +23,16 @@ import {
   System,
   VmRow,
 } from "./api";
-import { CATEGORY_LABEL, FAMILY_LABEL, IssueChips, REFERENCE_PLATFORMS, ValueList, VdomChip, VmSection } from "./refs";
+import {
+  CATEGORY_LABEL,
+  FAMILY_LABEL,
+  IssueChips,
+  REFERENCE_PLATFORMS,
+  useVdomShown,
+  ValueList,
+  VdomChip,
+  VmSection,
+} from "./refs";
 import { SiteChip } from "./sites";
 import type { View, ViewParams } from "./App";
 import { ActionBadge, Dash, Drawer, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
@@ -258,8 +267,8 @@ function ObjectTable({
         setData({ total: 0, rows: [] });
       });
   }, [tenantId, category, sourceId, query, issuesOnly, offset]);
-  // VDOM „root“ nur zeigen, wenn die Seite Objekte aus mehreren VDOMs hat (ADR 0019)
-  const multiVdom = new Set((data?.rows ?? []).map((o) => o.vdom).filter(Boolean)).size > 1;
+  // VDOM „root“ nur bei Firewalls mit weiteren VDOMs (nur root = die Firewall, 0.17.0)
+  const vdomShown = useVdomShown();
 
   return (
     <>
@@ -365,9 +374,9 @@ function ObjectTable({
                     </td>
                     <td className="nowrap">
                       {o.source ?? <Dash />}
-                      {o.vdom && (o.vdom !== "root" || multiVdom) && (
+                      {vdomShown(o.source_system_id, o.vdom) && (
                         <div>
-                          <VdomChip vdom={o.vdom} always={multiVdom} />
+                          <VdomChip vdom={o.vdom} always />
                         </div>
                       )}
                     </td>
@@ -488,6 +497,7 @@ function EntryTable({ entries }: { entries: Record<string, string>[] }) {
 
 // Objekt-Detail wie in der NAT-Sicht: Attribute, Werte, Mitglieder, Befunde und die Regeln
 function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; onGo?: Go }) {
+  const vdomShown = useVdomShown();
   const [d, setD] = useState<ObjectDetail | null>(null);
   const [err, setErr] = useState<unknown>(null);
   useEffect(() => {
@@ -503,7 +513,7 @@ function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; 
       sub={
         d
           ? `${CATEGORY_LABEL[d.category] ?? d.category}${d.obj_type ? ` · ${d.obj_type}` : ""} · ${d.source ?? ""}` +
-            (d.vdom ? ` · VDOM ${d.vdom}` : "")
+            (vdomShown(d.source_system_id, d.vdom) ? ` · VDOM ${d.vdom}` : "")
           : undefined
       }
       onClose={onClose}
@@ -1335,6 +1345,7 @@ function PortDrawer({
   onPick: (p: InvInterface) => void;
   onClose: () => void;
 }) {
+  const vdomShown = useVdomShown();
   const children = ports.filter((p) => p.name !== i.name && (p.parent === i.name || p.lag === i.name)).sort(byName);
   const up = ports.find((p) => p.name !== i.name && (p.name === i.parent || p.name === i.lag));
   const tagged = i.tagged_vlans ?? [];
@@ -1380,7 +1391,7 @@ function PortDrawer({
         </dd>
         <dt>IPs</dt>
         <dd className="mono">{i.ips?.length ? i.ips.map((ip) => <div key={ip}>{ip}</div>) : <Dash />}</dd>
-        {i.vdom && (
+        {vdomShown(i.source_system_id, i.vdom) && (
           <>
             <dt>VDOM</dt>
             <dd>
