@@ -29,6 +29,24 @@ if (Test-Path $EnvFile) {
 # Ueber python.exe starten (nicht automato-collector.exe): so ist die .exe beim Selbst-Update
 # des Agenten (ADR 0011) nicht gesperrt und kann ersetzt werden.
 $python = Join-Path $PSScriptRoot "venv\Scripts\python.exe"
+
+# Selbstheilung (0.16.1): startet der Agent nicht (z. B. abgebrochenes Update, Dev-Befund 0.16.0),
+# die zuletzt guten Pakete aus packages\ neu installieren (legen Update und install.ps1 ab).
+# Fehlerausgaben nativer Befehle hier nicht als Abbruch werten (Windows PowerShell 5.1)
+$ErrorActionPreference = "Continue"
+& $python -c "import collectors.run, sot_gateway" *> $null
+$startOk = ($LASTEXITCODE -eq 0)
+if (-not $startOk) {
+    $wheels = @(Get-ChildItem -Path (Join-Path $PSScriptRoot "packages") -Filter "*.whl" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+    if ($wheels.Count -gt 0) {
+        Write-Host "Agent startet nicht - installiere die zuletzt guten Pakete neu: $($wheels -join ', ')"
+        & $python -m pip install --disable-pip-version-check --no-deps --force-reinstall @wheels *> $null
+    }
+    else {
+        Write-Host "Agent startet nicht und packages\ fehlt - install.ps1 aus dem Agent-Paket (Web-UI) erneut ausfuehren."
+    }
+}
+$ErrorActionPreference = "Stop"
 if ($Check) { $arguments = @("--check") } else { $arguments = @("--poll") }
 # Wach-Modus: "Jetzt einlesen" im Web-UI wird nach Sekunden abgeholt statt erst beim naechsten
 # Start der geplanten Aufgabe; jeder Neustart prueft weiterhin auf ein Selbst-Update (ADR 0011)

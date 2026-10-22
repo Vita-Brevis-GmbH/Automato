@@ -14,6 +14,14 @@ kompromittierter Orchestrator kann dann keine fremden Pakete verteilen.
 Aktiv nur fuer einen installierten Agenten (venv mit `run-agent.ps1` daneben, wie von
 `install.ps1` angelegt) - nicht im Repo/Dev - und abschaltbar auf der Station mit
 `AUTOMATO_AGENT_AUTO_UPDATE=false`.
+
+Robust gegen halbe Installationen (Dev-Befund 0.16.0: nach dem Update fehlte eine Datei, der
+Agent haette danach nicht mehr gestartet):
+- nur ein Update gleichzeitig je Installation (`update.lock`; geplante Aufgabe und ein Start
+  von Hand duerfen nicht zugleich in dasselbe venv installieren),
+- nach pip pruefen, ob alle Dateien der Wheels da sind, sonst einmal wiederholen,
+- scheitert es trotzdem, die zuletzt guten Pakete (`packages/`) wieder installieren; daraus
+  repariert sich auch `run-agent.ps1`, wenn der Agent nicht startet.
 """
 
 import hashlib
@@ -22,7 +30,10 @@ import os
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
+import time
+import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -34,6 +45,9 @@ log = logging.getLogger(__name__)
 VERSION_FILE = "agent-version.txt"
 WRAPPER = "run-agent.ps1"
 PIP_TIMEOUT = 900  # Sekunden je pip-Aufruf
+LOCK_FILE = "update.lock"
+LOCK_STALE = 1800  # Sekunden: aelter = abgebrochenes Update, Sperre wird uebernommen
+PACKAGES_DIR = "packages"  # zuletzt gute Wheels (Rueckfall, Selbstheilung in run-agent.ps1)
 
 # Ergebnis der letzten Update-Pruefung - geht als Header `X-Agent-Update` an den Orchestrator,
 # die Agentenliste zeigt so, warum ein Agent nicht aktualisiert (Dev-Befund 0.11.4)
@@ -168,9 +182,79 @@ def signature_ok(pubkey_b64: str, info: dict) -> bool:
     return True
 
 
+def _lock(base: Path) -> Path:
+    """Nur ein Update gleichzeitig je Installation; eine alte Sperre (Abbruch) wird uebernommen."""
+    lock = base / LOCK_FILE
+    for _ in range(2):
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                age = time.time() - lock.stat().st_mtime
+            except FileNotFoundError:
+                continue  # gerade freigegeben
+            if age < LOCK_STALE:
+                raise RuntimeError(
+                    "ein anderer Agent-Prozess installiert gerade ein Update (update.lock)"
+                ) from None
+            lock.unlink(missing_ok=True)
+            continue
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+        return lock
+    raise RuntimeError("Update-Sperre (update.lock) nicht moeglich")
+
+
+def _site_packages() -> Path:
+    return Path(sysconfig.get_paths()["purelib"])
+
+
+def _missing_files(wheels: list[str]) -> list[str]:
+    """Dateien der Wheels, die nach pip im venv fehlen (ohne dist-info)."""
+    site = _site_packages()
+    missing = []
+    for wheel in wheels:
+        try:
+            names = zipfile.ZipFile(wheel).namelist()
+        except zipfile.BadZipFile:
+            continue
+        for name in names:
+            top = name.split("/", 1)[0]
+            if name.endswith("/") or top.endswith((".dist-info", ".data")):
+                continue
+            if not (site / name).is_file():
+                missing.append(name)
+    return missing
+
+
+def _restore(base: Path) -> str:
+    """Zuletzt gute Pakete wieder installieren (Rueckfall); Ergebnis fuer die Meldung."""
+    wheels = sorted(str(p) for p in (base / PACKAGES_DIR).glob("*.whl"))
+    if not wheels:
+        return "keine zuletzt guten Pakete fuer den Rueckfall - install.ps1 erneut ausfuehren"
+    try:
+        _pip([sys.executable, "-m", "pip", "--disable-pip-version-check", "install",
+              "--no-deps", "--force-reinstall", *wheels], "Rueckfall")  # fmt: skip
+    except Exception as exc:  # noqa: BLE001 - Meldung reicht, Ursache steht davor
+        return f"Rueckfall fehlgeschlagen: {exc}"
+    return "zuletzt gute Pakete wieder installiert"
+
+
+def _keep(base: Path, wheels: list[str]) -> None:
+    """Neue Wheels als zuletzt gute Pakete ablegen (ersetzt die alten)."""
+    fresh = base / f"{PACKAGES_DIR}.new"
+    shutil.rmtree(fresh, ignore_errors=True)
+    fresh.mkdir()
+    for w in wheels:
+        shutil.copyfile(w, fresh / Path(w).name)
+    shutil.rmtree(base / PACKAGES_DIR, ignore_errors=True)
+    os.replace(fresh, base / PACKAGES_DIR)
+
+
 def install(info: dict, base: Path) -> None:
     """Dateien laden, Pruefsummen pruefen, Wheels installieren, Wrapper + Version ablegen."""
     settings = get_settings()
+    lock = _lock(base)
     staging = Path(tempfile.mkdtemp(prefix="automato-agent-update-"))
     try:
         for f in info.get("files", []):
@@ -190,11 +274,25 @@ def install(info: dict, base: Path) -> None:
         if main_wheel is None:
             raise RuntimeError("collectors-Wheel fehlt im Manifest")
         pip = [sys.executable, "-m", "pip", "--disable-pip-version-check", "install"]
-        _pip([*pip, "--no-deps", "--force-reinstall", *wheels])
-        _pip([*pip, "--find-links", str(staging), main_wheel])  # neue Abhaengigkeiten
-        # Startpruefung: neue Version muss importierbar sein (sonst Version nicht uebernehmen,
-        # der naechste Lauf versucht es erneut)
-        _pip([sys.executable, "-c", "import collectors.run, sot_gateway"], "Startpruefung")
+        try:
+            _pip([*pip, "--no-deps", "--force-reinstall", *wheels])
+            _pip([*pip, "--find-links", str(staging), main_wheel])  # neue Abhaengigkeiten
+            missing = _missing_files(wheels)
+            if missing:  # z. B. zweiter Prozess oder Virenschutz: einmal wiederholen
+                print(f"nach der Installation fehlt {missing[0]} - installiere erneut")
+                _pip([*pip, "--no-deps", "--force-reinstall", *wheels])
+                missing = _missing_files(wheels)
+            if missing:
+                raise RuntimeError(
+                    f"nach der Installation fehlen {len(missing)} Datei(en), z. B. {missing[0]}"
+                    " - Virenschutz (Schutzverlauf) bzw. einen zweiten Agent-Prozess pruefen"
+                )
+            # Startpruefung: neue Version muss importierbar sein (sonst Version nicht
+            # uebernehmen, der naechste Lauf versucht es erneut)
+            _pip([sys.executable, "-c", "import collectors.run, sot_gateway"], "Startpruefung")
+        except Exception as exc:
+            raise RuntimeError(f"{exc} ({_restore(base)})") from exc
+        _keep(base, wheels)
         wrapper = staging / WRAPPER
         if wrapper.is_file():
             # Neue Datei statt Ueberschreiben: so faellt auch eine Sperrmarkierung der alten
@@ -205,6 +303,7 @@ def install(info: dict, base: Path) -> None:
         (base / VERSION_FILE).write_text(str(info["version"]), encoding="utf-8")
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+        lock.unlink(missing_ok=True)
 
 
 def _pip(cmd: list[str], what: str = "pip") -> None:

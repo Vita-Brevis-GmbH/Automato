@@ -461,6 +461,23 @@ an (`deploy/agent-gateway`, Port 8443).
   nächsten vollständigen Lauf. Auf der FortiGate dem REST-API-Konto den VDOM (bzw. alle VDOMs)
   mit einem Read-only-Profil geben.
 
+- **„Selbst-Update fehlgeschlagen: Startpruefung fehlgeschlagen … cannot import name
+  'selfupdate'“** bzw. **„nach der Installation fehlen … Datei(en)“** — pip hat das venv nicht
+  vollständig aktualisiert. Häufigste Ursachen: zwei Agent-Prozesse aktualisieren gleichzeitig
+  (die geplante Aufgabe läuft und `run-agent.ps1` wird zusätzlich von Hand gestartet) oder der
+  Virenschutz entfernt eine Datei (Windows-Sicherheit → Schutzverlauf).
+  - Ab 0.16.1 aktualisiert immer nur ein Prozess (`update.lock`). Fehlende Dateien werden einmal
+    nachinstalliert, sonst kehrt der Agent auf die zuletzt guten Pakete (`packages\`) zurück.
+    `run-agent.ps1` repariert sich beim Start aus `packages\`.
+  - **Ein Agent bis 0.16.0** hat diese Absicherung noch nicht. Bricht sein Update so ab,
+    startet er nach dem Ende des laufenden Prozesses nicht mehr. Dann einmalig von Hand: im
+    Web-UI unter *Collector-Agenten* das Agent-Paket neu herunterladen, entpacken und in einer
+    **administrativen** PowerShell `powershell -ExecutionPolicy Bypass -File .\install.ps1`
+    ausführen. Das Skript hält die geplante Aufgabe an, installiert neu und behält die
+    vorhandene `agent.env`. Danach mit `run-agent.ps1 -Check` testen.
+  - Für Tests von Hand die geplante Aufgabe vorher anhalten oder `run-agent.ps1 -NoUpdate`
+    verwenden.
+
 - **Lauf mit „Routing nicht lesbar: … (HTTP 403)“** (ab 0.16.0) — Regeln und Objekte sind
   eingelesen, aber dem Konto fehlt das Leserecht auf diese Routing-Tabelle (FortiGate: Profil
   mit Router/System lesen; APIC: Fabric-Knoten lesen). Unter **Routing & Wege** steht der

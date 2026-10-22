@@ -63,3 +63,18 @@ Station `install.ps1` von Hand auszuführen. Ein veralteter Agent brach zuletzt 
 - Neue Abhängigkeiten eines Updates holt pip wie bei der Erstinstallation aus dem Paketindex;
   ist die Station ohne Internet, müssen Abhängigkeiten unverändert bleiben (sonst bleibt der
   Agent auf der alten Version und meldet das).
+
+## Ergänzung 0.16.0/0.16.1: Lauf nach dem Update, robuste Installation
+
+- **Läufe erst nach dem Update (0.16.0):** Meldet ein installierter Agent eine alte Version
+  und ist sein Auto-Update an, gibt `next-run` neue Läufe erst nach dem Update heraus
+  (`update: true`; der Agent aktualisiert sich dann sofort). Wartet ein Lauf länger als
+  10 Minuten, holt ihn auch die alte Version – ein scheiterndes Update hält keine Läufe auf.
+- **Robuste Installation (0.16.1, Dev-Befund 0.16.0: nach pip fehlte eine Datei):**
+  - nur ein Update gleichzeitig je Installation (`update.lock`, alte Sperre wird übernommen);
+  - nach pip prüft der Agent, ob alle Dateien der Wheels im venv stehen, und installiert
+    einmal neu, wenn nicht;
+  - scheitert die Installation, installiert er die **zuletzt guten Pakete** (`packages\`)
+    wieder; `install.ps1` und jedes erfolgreiche Update legen sie ab;
+  - `run-agent.ps1` prüft vor dem Start, ob der Agent importierbar ist, und repariert sich
+    sonst aus `packages\`.

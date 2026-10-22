@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.16.1 – 2026-10-22
+
+Korrektur des Selbst-Updates (keine Migration). Dev-Befund 0.16.0: Das Update von 0.15.0 auf
+0.16.0 brach mit „Startpruefung fehlgeschlagen … cannot import name 'selfupdate'“ ab. Nach
+pip fehlte eine Datei im venv (vermutlich zwei Agent-Prozesse gleichzeitig – geplante
+Aufgabe und ein Start von Hand – oder der Virenschutz). Der Agent lief mit der alten Version
+weiter, wäre beim nächsten Start aber nicht mehr hochgekommen.
+
+- **Nur ein Update gleichzeitig** je Installation (`update.lock`); eine Sperre älter als 30 min
+  (Abbruch) wird übernommen.
+- **Nach pip prüfen, ob alle Dateien der Wheels im venv stehen**; fehlt eine, einmal neu
+  installieren. Fehlt sie danach immer noch, nennt die Meldung die Datei und rät, Virenschutz
+  bzw. zweiten Agent-Prozess zu prüfen.
+- **Rückfall:** Scheitert das Update, installiert der Agent die zuletzt guten Pakete wieder
+  (`packages\` im Installationsordner, abgelegt von `install.ps1` und jedem erfolgreichen
+  Update).
+- **Selbstheilung beim Start:** `run-agent.ps1` prüft vor dem Start, ob der Agent importierbar
+  ist, und installiert sonst die Pakete aus `packages\` neu.
+- **Einmalig von Hand:** Ein Agent, dessen Update auf 0.16.0 so abgebrochen ist, startet nach
+  dem Ende des laufenden Prozesses nicht mehr. Das Agent-Paket im Web-UI neu herunterladen und
+  `install.ps1` in einer administrativen PowerShell ausführen (BETRIEB, Fehlerbehebung).
+
 ## 0.16.0 – 2026-10-22
 
 Routing, HA und L3Out lesen (ADR 0019 Stufe 2, Alembic `0038`); Agent aktualisiert sich vor

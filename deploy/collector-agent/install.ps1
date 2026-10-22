@@ -91,6 +91,14 @@ Invoke-Checked "Installation der Abhaengigkeiten" { & $py -m pip install --disab
 # Pruefen, dass der Agent startet (alle Module, inkl. sot_gateway)
 Invoke-Checked "Startpruefung des Agenten" { & $py -c "import collectors, collectors.run, sot_gateway; print('Agent-Pakete OK: collectors ' + collectors.__version__ + ', sot-gateway ' + sot_gateway.__version__)" }
 
+# Zuletzt gute Pakete aufbewahren: daraus repariert sich der Agent, wenn ein Update abbricht
+# (Selbst-Update und run-agent.ps1, 0.16.1)
+$pkgDir = Join-Path $InstallDir "packages"
+if (Test-Path $pkgDir) { Remove-Item $pkgDir -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
+$local | ForEach-Object { Copy-Item $_ $pkgDir -Force }
+Remove-Item (Join-Path $InstallDir "update.lock") -Force -ErrorAction SilentlyContinue
+
 # Wrapper + Config bereitstellen
 Copy-Item "$PSScriptRoot\run-agent.ps1" $InstallDir -Force
 Unblock-File "$InstallDir\run-agent.ps1"

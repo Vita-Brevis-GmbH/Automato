@@ -45,6 +45,11 @@ def agent(monkeypatch, tmp_path):
     monkeypatch.setattr(su.http, "get_json", get_json)
     monkeypatch.setattr(su, "_pip", lambda cmd, what="pip": state["pip"].append(cmd))
     monkeypatch.setattr(su.subprocess, "run", run)
+    # Dateien, die nach pip fehlen (je Pruefung eine Liste; leer = vollstaendig)
+    state["missing"] = []
+    monkeypatch.setattr(
+        su, "_missing_files", lambda wheels: state["missing"].pop(0) if state["missing"] else []
+    )
     state["dir"] = tmp_path
     return state
 
@@ -177,3 +182,64 @@ def test_update_status_im_header(agent, monkeypatch):
     )
     assert su.maybe_update(["--poll"]) is None
     assert "abgeschaltet" in su.agent_headers()["X-Agent-Update"]
+
+
+def test_fehlende_datei_wird_einmal_nachinstalliert(agent):
+    """Dev-Befund 0.16.0: nach dem Update fehlte collectors/common/selfupdate.py (zweiter
+    Agent-Prozess bzw. Virenschutz) - der Agent haette danach nicht mehr gestartet."""
+    agent["missing"] = [["collectors/common/selfupdate.py"], []]
+    assert su.maybe_update(["--poll"]) == 0
+    reinstall = [c for c in agent["pip"] if "--force-reinstall" in c]
+    assert len(reinstall) == 2  # einmal wiederholt
+    assert (agent["dir"] / "agent-version.txt").read_text() == "v2"
+    kept = sorted(p.name for p in (agent["dir"] / "packages").iterdir())
+    assert kept == ["collectors-0.1.0-py3-none-any.whl"]  # zuletzt gute Pakete
+    assert not (agent["dir"] / "update.lock").exists()
+
+
+def test_bleibt_es_unvollstaendig_zurueck_auf_die_guten_pakete(agent, capsys):
+    good = agent["dir"] / "packages"
+    good.mkdir()
+    (good / "collectors-0.0.9-py3-none-any.whl").write_bytes(b"gut")
+    agent["missing"] = [["collectors/common/selfupdate.py"], ["collectors/common/selfupdate.py"]]
+    assert su.maybe_update(["--poll"]) is None  # mit der bisherigen Version weiter
+    assert (agent["dir"] / "agent-version.txt").read_text() == "v1"
+    restore = agent["pip"][-1]
+    assert restore[-1].endswith("collectors-0.0.9-py3-none-any.whl") and "--no-deps" in restore
+    assert not any("import collectors.run" in c[-1] for c in agent["pip"])  # keine Startpruefung
+    note = su.note()
+    assert "fehlen 1 Datei(en), z. B. collectors/common/selfupdate.py" in note
+    assert "zuletzt gute Pakete wieder installiert" in note
+    assert [p.name for p in good.iterdir()] == ["collectors-0.0.9-py3-none-any.whl"]
+    assert not (agent["dir"] / "update.lock").exists()
+
+
+def test_nur_ein_update_gleichzeitig(agent):
+    import os
+    import time
+
+    lock = agent["dir"] / "update.lock"
+    lock.write_text("4711")  # z. B. die geplante Aufgabe installiert gerade
+    assert su.maybe_update(["--poll"]) is None
+    assert agent["pip"] == [] and "anderer Agent-Prozess" in su.note()
+    old = time.time() - su.LOCK_STALE - 60  # abgebrochenes Update: Sperre wird uebernommen
+    os.utime(lock, (old, old))
+    assert su.maybe_update(["--poll"]) == 0 and not lock.exists()
+
+
+def test_dateipruefung_gegen_das_wheel(tmp_path, monkeypatch):
+    import zipfile
+
+    wheel = tmp_path / "collectors-0.1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as z:
+        for name in ("collectors/__init__.py", "collectors/common/selfupdate.py",
+                     "collectors-0.1.0.dist-info/RECORD"):  # fmt: skip
+            z.writestr(name, "x")
+    site = tmp_path / "site-packages"
+    (site / "collectors").mkdir(parents=True)
+    (site / "collectors" / "__init__.py").write_text("x")
+    monkeypatch.setattr(su, "_site_packages", lambda: site)
+    assert su._missing_files([str(wheel)]) == ["collectors/common/selfupdate.py"]
+    (site / "collectors" / "common").mkdir()
+    (site / "collectors" / "common" / "selfupdate.py").write_text("x")
+    assert su._missing_files([str(wheel)]) == []
