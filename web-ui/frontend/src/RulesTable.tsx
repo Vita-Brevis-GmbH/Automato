@@ -1,9 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchRules, fetchRuleSummary, fetchSystems, Rule, RuleDomain, RuleSummary, System } from "./api";
+import {
+  fetchParallelSuggestions,
+  fetchRules,
+  fetchRuleSummary,
+  fetchSystems,
+  ParallelSuggestion,
+  Rule,
+  RuleDomain,
+  RuleSummary,
+  setParallelGroup,
+  System,
+} from "./api";
 import type { View, ViewParams } from "./App";
 import RuleDetailDrawer from "./RuleDetail";
 import { FAMILY_LABEL, FamilyMarks, SideMarks, useVdomShown, VdomChip } from "./refs";
-import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
+import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 
 // Seitengrösse: Server filtert nach Art/System/Suche, der Rest wird mit "Weitere laden" geholt.
 const PAGE = 500;
@@ -110,16 +121,89 @@ export function NameCell({
   );
 }
 
+// Parallele Firewalls (Verbund, 0.18.0): gleiche Policy auf weiteren Firewalls, Abweichung
+export function ParallelChips({ r }: { r: Rule }) {
+  const p = r.parallel;
+  if (!p) return null;
+  return (
+    <div className="chips" style={{ marginTop: 2 }}>
+      {(p.same ?? []).map((n) => (
+        <span key={n} className="chip ok" title={`gleiche Policy auf ${n} (Verbund ${p.group}) – zusammengefasst`}>
+          + {n}
+        </span>
+      ))}
+      {(p.differs ?? []).map((n) => (
+        <span key={n} className="chip warn" title={`auf ${n} anders konfiguriert – siehe Findings`}>
+          ≠ {n}
+        </span>
+      ))}
+      {(p.missing ?? []).map((n) => (
+        <span key={n} className="chip warn" title={`fehlt auf ${n} (Verbund ${p.group})`}>
+          fehlt auf {n}
+        </span>
+      ))}
+      {p.lead && (
+        <span className="chip warn" title={`weicht von ${p.lead} ab: ${(p.fields ?? []).join(", ")}`}>
+          ≠ {p.lead}: {(p.fields ?? []).join(", ")}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// Vorschlag: Firewalls, die parallel aussehen (Session-Sync, gleiche Policies) – Admin fasst zusammen
+function ParallelHint({ tenantId, isAdmin, onDone }: { tenantId: number; isAdmin: boolean; onDone: () => void }) {
+  const [items, setItems] = useState<ParallelSuggestion[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  useEffect(() => {
+    fetchParallelSuggestions(tenantId)
+      .then(setItems)
+      .catch(() => setItems([]));
+  }, [tenantId]);
+  if (!items.length) return null;
+  const join = (s: ParallelSuggestion) => {
+    setBusy(true);
+    setParallelGroup(tenantId, s.group, s.system_ids)
+      .then(() => {
+        setItems(items.filter((x) => x !== s));
+        onDone();
+      })
+      .catch(setError)
+      .finally(() => setBusy(false));
+  };
+  return (
+    <>
+      <ErrorBox error={error} prefix="Verbund setzen" />
+      {items.map((s) => (
+        <Note key={s.system_ids.join("-")}>
+          <b>{s.names.join(" und ")}</b> sehen parallel aus ({s.reasons.join(", ")}) – ihre Regeln stehen doppelt
+          in der Liste.{" "}
+          {isAdmin ? (
+            <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => join(s)}>
+              Als Verbund „{s.group}“ zusammenfassen
+            </button>
+          ) : (
+            <span className="faint">Ein Admin kann sie als Verbund zusammenfassen.</span>
+          )}
+        </Note>
+      ))}
+    </>
+  );
+}
+
 export default function RulesTable({
   tenantId,
   tenantLabel,
   params = {},
   onGo,
+  isAdmin = false,
 }: {
   tenantId: number | null;
   tenantLabel: string;
   params?: ViewParams; // object= / nat= / q= aus einem Link (Objekt, NAT, Finding)
   onGo?: (v: View, p?: ViewParams) => void;
+  isAdmin?: boolean;
 }) {
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -142,6 +226,7 @@ export default function RulesTable({
   const [family, setFamily] = useState("");
   const [vdom, setVdom] = useState(""); // FortiGate-VDOM (nur mit mehreren VDOMs)
   const [pair, setPair] = useState(""); // IPv4/IPv6-Paar: similar = offen zum Bestätigen
+  const [parallel, setParallel] = useState(""); // Verbund: differs | missing
   const [reload, setReload] = useState(0); // nach einer Paar-Entscheidung neu laden
   const [onlyFindings, setOnlyFindings] = useState(false);
   // Maus über einer Regel hebt ihr IPv4/IPv6-Gegenstück hervor
@@ -177,10 +262,29 @@ export default function RulesTable({
       family,
       vdom,
       pair,
+      parallel,
       limit: PAGE,
       reload,
     }),
-    [q, tenantId, domain, system, object, objectId, nat, net, netAny, srcZone, dstZone, action, family, vdom, pair, reload],
+    [
+      q,
+      tenantId,
+      domain,
+      system,
+      object,
+      objectId,
+      nat,
+      net,
+      netAny,
+      srcZone,
+      dstZone,
+      action,
+      family,
+      vdom,
+      pair,
+      parallel,
+      reload,
+    ],
   );
 
   // Suche und alle Filter wertet der Orchestrator aus (über alle Regeln, nicht nur die erste Seite).
@@ -216,6 +320,7 @@ export default function RulesTable({
   };
 
   const systemName = (id: number) => systems.find((s) => s.id === id)?.name ?? `#${id}`;
+  const hasGroups = systems.some((s) => s.parallel_group);
   const ruleSystems = systems.filter((s) =>
     domain ? s.platform === RULE_PLATFORMS[domain] : Object.values(RULE_PLATFORMS).includes(s.platform),
   );
@@ -243,6 +348,18 @@ export default function RulesTable({
           ? "Lade…"
           : `${total} Einträge für „${tenantLabel}“ – Firewall-Policies und ACI-Contracts, read-only eingelesen und gegen die Source of Truth aufgelöst.`}
       </PageHead>
+      {tenantId !== null && (
+        <ParallelHint
+          tenantId={tenantId}
+          isAdmin={isAdmin}
+          onDone={() => {
+            setReload((n) => n + 1);
+            fetchSystems(tenantId)
+              .then(setSystems)
+              .catch(() => undefined);
+          }}
+        />
+      )}
 
       <div className="filterbar">
         <div className="search">
@@ -355,6 +472,18 @@ export default function RulesTable({
           <option value="any">mit Paar</option>
           <option value="none">ohne Paar</option>
         </select>
+        {hasGroups && (
+          <select
+            className="sel"
+            value={parallel}
+            onChange={(e) => setParallel(e.target.value)}
+            title="Parallele Firewalls (Verbund): gleiche Policies sind zusammengefasst"
+          >
+            <option value="">Verbund: alle</option>
+            <option value="differs">abweichend</option>
+            <option value="missing">fehlt auf einer Firewall</option>
+          </select>
+        )}
         <button className={`toggle ${onlyFindings ? "on" : ""}`} onClick={() => setOnlyFindings((v) => !v)}>
           <span className="dot y" />
           nur mit Findings
@@ -415,6 +544,7 @@ export default function RulesTable({
                           <VdomChip vdom={r.vdom} always />
                         </div>
                       )}
+                      <ParallelChips r={r} />
                     </td>
                     <td>
                       <ZoneChip zone={r.src_zone} />

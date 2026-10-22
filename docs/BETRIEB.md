@@ -191,6 +191,17 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Pool-Bereich), Port, DNS-Name, Server, Interface, Kommentar. Klick → Detail mit
   Einstellungen, IPAM-Sicht (Netz, VLAN, Standort) und den Firewall-Regeln, die den Eintrag
   nutzen.
+- **Parallele Firewalls (Verbund, 0.18.0, ADR 0020):** Firewalls mit denselben Regeln (z. B.
+  zwei Cluster mit Session-Sync) bilden einen Verbund.
+  - Gleiche Policies erscheinen in Regeln, Suche und Applikations-Doku nur einmal (führend: die
+    Firewall mit dem kleinsten Namen, Chip „+ fw-b“).
+  - Abweichende Policies stehen beide da („≠ fw-a: Ziel“), fehlende mit „fehlt auf fw-b“. Dazu
+    gibt es Findings in der Kategorie „Parallele Firewalls“, auch für gleichnamige Objekte mit
+    anderen Werten.
+  - Setzen: über den Vorschlag oben in „Regeln & Contracts“ (bei Session-Sync bzw. vielen
+    gleichen Policies, Admin) oder im Quellsystem-Dialog (Feld „Verbund“; leer = keiner).
+  - Filter „Verbund: abweichend / fehlt“; mit Filter „System“ erscheinen die Regeln dieser
+    Firewall vollständig.
 - **Routing & Wege** (0.16.0, ADR 0019): oben die gelesenen Kontexte mit Anzahl Routen und dem,
   was nicht lesbar war (dort ist die Aussage „unbekannt“). Bezeichnungen (0.17.0):
   - Eine FortiGate nur mit `root` heisst wie die **Firewall**, sonst „fw-01 · VDOM kunde-a“.
@@ -222,6 +233,14 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   - **Namen aus dem IPAM:** DNS-Name bzw. Name der IP aus DDI/NetBox. Ohne Eintrag zur IP
     erscheint blass das kleinste IPAM-Netz mit Beschreibung. Für Transfernetze lohnt sich
     deshalb eine Beschreibung im IPAM (z. B. „Transfer ISP B“).
+  - **Anbindungen** (0.18.0, Operator): Anbindungen von Hand erfassen, über die Wege nach
+    aussen gehen.
+    - Felder: Art (Internet, MPLS, WAN, Partner), Next-Hop-IPs der Gegenstelle und/oder
+      Interfaces/Zonen (für eine Firewall oder alle), Netze dahinter, manuelle Routen
+      (Präfix → Firewall/VDOM bzw. VRF, bei der der Weg weitergeht).
+    - Ohne Anbindung endet ein Weg am ersten Next-Hop ohne gelesenes Gerät („Weg endet“).
+      Dort hilft der Knopf „Als Anbindung erfassen“ (vorausgefüllt).
+    - Danach unter „Weg für IP“ einfach neu suchen.
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
   (Application Profiles, EPGs, Server); **Vorschläge** nach der Projektnummer aus

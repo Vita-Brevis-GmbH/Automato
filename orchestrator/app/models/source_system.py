@@ -75,6 +75,9 @@ class SourceSystem(Base):
     site_id: Mapped[int | None] = mapped_column(
         ForeignKey("site.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Parallele Firewalls (0.18.0): gleicher Name = ein Verbund, dessen Regeln zusammengefasst
+    # und auf Abweichungen geprueft werden (z. B. zwei Cluster mit Session-Sync)
+    parallel_group: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # Zeitplan (Cron, 5 Felder, Zeitzone scheduler_timezone) und zuletzt ausgeloester Termin
     schedule: Mapped[str | None] = mapped_column(String(100), nullable=True)
     schedule_last_at: Mapped[datetime | None] = mapped_column(

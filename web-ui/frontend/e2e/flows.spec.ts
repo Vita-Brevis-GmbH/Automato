@@ -185,7 +185,9 @@ test("Alle einlesen: offenen Lauf abbrechen und neu starten", async ({ page }) =
 test("Ports je Gerät: Subinterface getaggt unter dem Parent", async ({ page }) => {
   await page.goto("/#objekte");
   await page.click(".tabbar button:has-text('Ports')");
-  await expect(page.locator("tr.group-row", { hasText: "fw-03" })).toContainText("3 Ports");
+  const group = page.locator("tr.group-row", { hasText: "fw-03" });
+  await expect(group).toContainText("3 Ports");
+  await group.click(); // mehr als drei Geräte: Gruppen zu, ein Klick öffnet
   const sub = rows(page).filter({ hasText: "srv-vl10" });
   await expect(sub).toContainText("└");
   await expect(sub).toContainText("getaggt über internal");
@@ -195,6 +197,7 @@ test("Ports je Gerät: Subinterface getaggt unter dem Parent", async ({ page }) 
 test("Ports kompakt: lange VLAN-/EPG-Listen gekürzt, alles im Detail", async ({ page }) => {
   await page.goto("/#objekte");
   await page.click(".tabbar button:has-text('Ports')");
+  for (const device of ["leaf-101", "fw-03"]) await page.locator("tr.group-row", { hasText: device }).click();
   const trunk = rows(page).filter({ hasText: "eth1/1" });
   await expect(trunk).toContainText("tagged 24 VLANs");
   await expect(trunk).toContainText("3 EPGs");
@@ -374,4 +377,39 @@ test("Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", async ({ page }) =
   await expect(page.locator(".card", { hasText: "Session-Sync (FGSP)" })).toContainText("cluster-a");
   await page.click(".tabbar button:has-text('L3Outs (ACI)')");
   await expect(page.locator(".card", { hasText: "Border-Leafs" })).toContainText("L3O_inet");
+});
+
+test("Parallele Firewalls: Vorschlag zusammenfassen, Abweichungen als Findings", async ({ page }) => {
+  await page.goto("/#regeln");
+  await search(page).fill("par-");
+  await expect(rows(page)).toHaveCount(9); // noch doppelt
+  const hint = page.locator(".note", { hasText: "fw-06 und fw-07" });
+  await expect(hint).toContainText("Session-Sync (FGSP)");
+  await hint.locator("button", { hasText: "zusammenfassen" }).click();
+  await expect(rows(page)).toHaveCount(6); // gleiche Policies einmal, abweichende beide
+  await expect(rows(page).filter({ hasText: "par-web" })).toContainText("+ fw-07");
+  await expect(rows(page).filter({ hasText: "par-db" }).filter({ hasText: "≠ fw-06: Ziel" })).toHaveCount(1);
+  await expect(rows(page).filter({ hasText: "par-nur-06" })).toContainText("fehlt auf fw-07");
+  await rows(page).filter({ hasText: "par-web" }).click();
+  await expect(page.locator(".drawer")).toContainText("gleich auf:");
+  await page.goto("/#findings");
+  await expect(page.locator(".fgroup", { hasText: "Parallele Firewalls" })).toBeVisible();
+});
+
+test("Routing: Anbindung aus einem Weg erfassen", async ({ page }) => {
+  await page.goto("/#routing");
+  await page.locator(".filterbar select").filter({ hasText: "Start: aus der Quelle" }).selectOption({ label: "fw-04" });
+  await page.getByPlaceholder("Ziel (IP)").fill("10.20.0.5");
+  await page.click("button:has-text('Weg suchen')");
+  const card = page.locator(".card", { hasText: "Weg 1" });
+  await expect(card).toContainText("Weg endet");
+  await card.locator("button", { hasText: "Als Anbindung erfassen" }).click();
+  await expect(page.locator("#ex-hops")).toHaveValue("10.70.0.1");
+  await page.locator("#ex-name").fill("MPLS Kunde A");
+  await page.locator("#ex-kind").selectOption("mpls");
+  await page.click("button:has-text('Speichern')");
+  await expect(page.locator(".card", { hasText: "Manuelle Routen" }).locator("tbody tr")).toContainText("MPLS Kunde A");
+  await page.click(".tabbar button:has-text('Weg für IP')");
+  await page.click("button:has-text('Weg suchen')");
+  await expect(page.locator(".card", { hasText: "Weg 1" })).toContainText("weiter über MPLS Kunde A");
 });

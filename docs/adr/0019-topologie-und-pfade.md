@@ -176,6 +176,16 @@ Rahmen laut Anwender (2026-10-22):
    - IPs mit Namen aus dem IPAM (sonst das IPAM-Netz mit Beschreibung).
    - Offen: Session-Sync-Paar als ein Hop, Inter-VDOM-Links als Kanten, „Internet“
      zusammengefasst, Regel-Relevanz je Hop (Zonen-Paar → Regeln), NAT auf dem Weg.
-4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde.
+4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde. Erster Teil in
+   0.18.0: **Anbindungen nach aussen** (`topo_exit`, von Hand erfasst, Operator):
+   - Art (Internet, MPLS, WAN, Partner), optional für eine Firewall, Next-Hop-IPs und/oder
+     Interfaces/Zonen, Netze dahinter, **manuelle Routen** (Präfix → gelesener Knoten).
+   - Im Weg: Gehört der Next-Hop keinem gelesenen Gerät und passt eine Anbindung (zuerst über
+     die Next-Hop-IP, dann über Interface/Zone), endet der Weg dort. Sonst geht er nach der
+     manuellen Route weiter, z. B. über MPLS zur Firewall eines anderen Standorts.
+   - Liegt das Ziel nicht in den Netzen der Anbindung, sagt das der Text am Ende.
+   - Aus einem Weg, der an einem unbekannten Next-Hop endet, lässt sich die Anbindung
+     vorausgefüllt erfassen. Änderungen stehen im Audit (`routing.exit.*`).
+   - Später: Aussenrouter lesen (nur lesend) statt von Hand.
 5. **Zeichnung** (optional).
 6. **Später:** Switches und weitere Geräte, Verkabelung (L1/L2-Sicht, siehe Punkt 9).

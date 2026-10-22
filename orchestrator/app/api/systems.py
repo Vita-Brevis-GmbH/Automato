@@ -70,6 +70,7 @@ class SystemOut(BaseModel):
     nat_count: int = 0
     # FortiGate: gelesene VDOMs - nur `root` = die Firewall selbst (ohne VDOM anzeigen)
     vdoms: list[str] = []
+    parallel_group: str | None = None  # Verbund paralleler Firewalls (0.18.0)
 
 
 class SystemIn(BaseModel):
@@ -102,6 +103,8 @@ class SystemPatch(BaseModel):
     ref_role: Literal["primary", "enrichment"] | None = None
     site_id: int | None = None  # null = Standort entfernen
     schedule: str | None = Field(default=None, max_length=100)  # "" oder null = kein Zeitplan
+    # Verbund paralleler Firewalls (0.18.0); "" oder null = keiner
+    parallel_group: str | None = Field(default=None, max_length=100)
     # weglassen = unverändert, "" = Feld entfernen (alle leer = keine Zugangsdaten)
     token: str | None = Field(default=None, max_length=4096)
     username: str | None = Field(default=None, max_length=200)
@@ -221,6 +224,7 @@ def _out(
         rule_count=rules.get(s.id, 0),
         nat_count=nat.get(s.id, 0),
         vdoms=vdoms or [],
+        parallel_group=s.parallel_group,
     )
 
 
@@ -511,8 +515,13 @@ def update_system(
         _apply_ref_role(session, src, data["ref_role"])
     if "schedule" in data:
         _set_schedule(src, _schedule(data["schedule"]))
+    regroup = "parallel_group" in data and (data["parallel_group"] or None) != src.parallel_group
+    if "parallel_group" in data:
+        src.parallel_group = (data["parallel_group"] or "").strip() or None
     credentials_changed = _apply_credentials(src, _credential_changes(body))
     session.flush()
+    if regroup:
+        _regroup(session, src.tenant_id)
     audit.record(
         session,
         actor=f"user:{principal.subject}",
@@ -528,9 +537,74 @@ def update_system(
             "ref_role": src.ref_role,
             "site_id": src.site_id,
             "schedule": src.schedule,
+            "parallel_group": src.parallel_group,
         },
     )
     return _single_out(session, src)
+
+
+def _regroup(session: Session, tenant_id: int | None) -> None:
+    """Verbund geaendert: Befunde und Zwillinge im Regelindex neu (0.18.0)."""
+    if tenant_id is None:
+        return
+    from app.store import parallel, reconcile
+
+    reconcile.reconcile_tenant(session, tenant_id)
+    parallel.mark(session, tenant_id)
+
+
+class ParallelIn(BaseModel):
+    tenant_id: int
+    group: str = Field(min_length=1, max_length=100)
+    system_ids: list[int]  # alle Firewalls des Verbunds; leer = Verbund aufloesen
+
+
+@router.get("/parallel-suggestions")
+def parallel_suggestions(
+    tenant_id: int,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    """Firewalls, die parallel aussehen (Session-Sync bzw. mindestens halb gleiche Policies)
+    und noch nicht im selben Verbund sind."""
+    from app.store import parallel
+
+    tenant_scope(principal, tenant_id)
+    return parallel.suggestions(session, tenant_id)
+
+
+@router.post("/parallel-group", response_model=list[SystemOut])
+def set_parallel_group(
+    body: ParallelIn,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Verbund paralleler Firewalls setzen - Admin. Die Regeln der Firewalls werden
+    zusammengefasst, Abweichungen erscheinen als Findings (0.18.0)."""
+    tenant_scope(principal, body.tenant_id)
+    group = body.group.strip()
+    members = list(
+        session.scalars(
+            select(SourceSystem).where(
+                SourceSystem.tenant_id == body.tenant_id,
+                or_(SourceSystem.id.in_(body.system_ids), SourceSystem.parallel_group == group),
+            )
+        )
+    )
+    if {s.id for s in members} < set(body.system_ids):
+        raise HTTPException(status_code=422, detail="source system not in tenant")
+    for s in members:
+        s.parallel_group = group if s.id in body.system_ids else None
+    session.flush()
+    _regroup(session, body.tenant_id)
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="source.parallel_group",
+        subject=group,
+        detail={"tenant_id": body.tenant_id, "group": group, "source_ids": sorted(body.system_ids)},
+    )
+    return [_single_out(session, s) for s in members if s.id in body.system_ids]
 
 
 @router.delete("/{system_id}", response_model=SystemDeleted)

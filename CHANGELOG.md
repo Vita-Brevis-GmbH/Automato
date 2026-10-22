@@ -7,6 +7,43 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.18.0 – 2026-10-22
+
+Parallele Firewalls und Anbindungen nach aussen (Alembic `0039`, ADR 0020, ADR 0019 Stufe 4
+erster Teil). Dev-Befunde 0.17.0.
+
+- **Parallele Firewalls (Verbund):** Firewalls mit denselben Regeln (z. B. zwei Cluster mit
+  Session-Sync) bilden einen Verbund.
+  - Gleiche Policies stehen nur einmal in Liste, Suche, Kennzahlen und Applikations-Doku. Führend
+    ist die Firewall mit dem kleinsten Namen, dazu „+ fw-b“.
+  - Gleich heisst: gleiche Policy-ID im selben VDOM (sonst gleicher Name) und gleicher Inhalt.
+    Verglichen werden Quelle, Ziel, Dienst, Aktion, Interfaces, Status, Zeitplan, NAT,
+    Schutzprofile, Logging und Name; uuid und Kommentar nicht.
+  - **Findings** (Kategorie „Parallele Firewalls“): Policy abweichend (mit Feldern und Werten),
+    Policy fehlt auf einer Firewall, gleichnamiges Objekt anders definiert.
+  - Verbund setzen:
+    - Vorschlag oben in „Regeln & Contracts“ bei Session-Sync (FGSP) bzw. wenn mindestens die
+      Hälfte der Policies gleich ist; „zusammenfassen“ ist Admin.
+    - Sonst im Quellsystem-Dialog (Feld „Verbund“).
+  - Filter „Verbund: abweichend / fehlt“; mit Filter auf eine Firewall erscheinen deren Regeln
+    vollständig. Im Regel-Detail stehen der Verbund und die Firewalls, auf denen die Regel gleich
+    steht.
+- **Anbindungen nach aussen** (Routing & Wege, Reiter „Anbindungen“, Operator): Internet, MPLS,
+  WAN oder Partner von Hand erfassen.
+  - Felder: über Next-Hop-IPs und/oder Interfaces/Zonen (für eine Firewall oder alle), Netze
+    dahinter, manuelle Routen (Präfix → Firewall bzw. VRF eines anderen Standorts).
+  - Der Weg endet an der Anbindung („weiter über Internet“) statt an „Next-Hop gehört keinem
+    gelesenen Gerät“. Mit einer manuellen Route geht er weiter, z. B. über MPLS zur Firewall des
+    anderen Standorts.
+  - Endet ein Weg an einem unbekannten Next-Hop, gibt es „Als Anbindung erfassen“ mit Firewall,
+    Interface und Next-Hop vorausgefüllt.
+- **API:**
+  - `GET /systems/parallel-suggestions`, `POST /systems/parallel-group`, `parallel_group` an
+    `/systems`;
+  - `GET /rules?parallel=differs|missing&twins=`, `parallel` an der Regel, `twins` im Detail;
+  - `GET/POST/PUT/DELETE /routing/exits`.
+- Nach dem Update ist nichts neu einzulesen. Der Verbund wirkt sofort, sobald er gesetzt ist.
+
 ## 0.17.1 – 2026-10-22
 
 Korrekturen aus dem Test von 0.17.0 (keine Migration). Die parallelen Firewalls (Regeln

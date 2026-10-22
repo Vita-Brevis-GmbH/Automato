@@ -306,12 +306,14 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.14.0–0.14.1** | Applikationen: Doku im Mittelpunkt (Übersicht, alle VMs, EPGs mit ganzem ACI-Pfad, Regeln mit Richtung/Bezug spezifisch–unspezifisch, Filter, Erklärung, Links), externer/interner Name, Zweck Dev/Test/Prod; NAT/VIPs mit Prüfung; VM-Angaben in den Detailansichten; Läufe unter Administration; Regeln mit Objekt (Host/Netz/any) und VMs darin, Firewall-Objekte je Name, Listen mit Scrollbalken im Bild |
 | **0.15.0** | VDOM-Kontext: alle VDOMs lesen, VDOM an Regeln, Objekten, NAT, Interfaces, Subnetzen (ADR 0019 Stufe 1) |
 | **0.16.0–0.16.1** | Routing je VDOM (RIB mit ECMP, BGP-Pfade inkl. Backup, Nachbarn, statische/Policy-Routen, SD-WAN), HA/FGSP, ACI-L3Outs und Border-Leaf-Routen (Stufe 2); Agent aktualisiert sich vor dem Lauf, robustes Selbst-Update |
-| **0.17.0** | Weg Hop für Hop mit Quelle bzw. Startpunkt (Stufe 3, erste Fassung); FortiGate nur mit root = Firewall (auch in Regeln, Objekten, NAT); Nachbarn und Next-Hops mit Namen aus dem IPAM |
+| **0.17.0–0.17.1** | Weg Hop für Hop mit Quelle bzw. Startpunkt (Stufe 3, erste Fassung); FortiGate nur mit root = Firewall (auch in Regeln, Objekten, NAT); Nachbarn und Next-Hops mit Namen aus dem IPAM; robuste Läufe (Wiederholung, Upload-Quittung), VRF/Management getrennt, kein Raten über Transfernetze |
+| **0.18.0** | Parallele Firewalls (Verbund, ADR 0020): gleiche Policies einmal, Abweichungen als Findings; Anbindungen nach aussen (Internet/MPLS/WAN) von Hand mit manuellen Routen (ADR 0019 Stufe 4, erster Teil) |
 
-### Nächste Arbeiten (Stand 0.17.0)
+### Nächste Arbeiten (Stand 0.18.0)
 
-Phase A und die Stände 0.11–0.16 sind gegen die echten Systeme abgenommen; 0.17.0 (Weg mit
-Startpunkt, Bezeichnungen, IPAM-Namen) steht zur Abnahme an. Konzeptbefund
+Phase A und die Stände 0.11–0.17.0 sind gegen die echten Systeme abgenommen; 0.17.1
+(robuste Läufe, VRF, keine Schleifen) und 0.18.0 (parallele Firewalls, Anbindungen) stehen
+zur Abnahme an. Konzeptbefund
 des Anwenders: Ohne Routing, Verbindungswege und Redundanzen zeigt die Doku Zugriffe, die
 routingtechnisch nicht möglich sind, und `any` aus dem Internet wie eine Liste aller
 Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
@@ -325,9 +327,10 @@ Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
    danach Kunden-Benutzer mit serverseitiger Einschränkung.
 4. **Routing, HA und L3Out lesen** (ADR 0019, Stufe 2) – **umgesetzt in 0.16.0** und
    abgenommen. **Pfade und Relevanz** (Stufe 3): Weg Hop für Hop mit Quelle bzw. Startpunkt –
-   **erste Fassung in 0.17.0**. Offen: Regeln nur, wo der Verkehr durchkommt (Zonen-Paar je
-   Hop → Regeln); „Internet“ zusammengefasst; Session-Sync-Paar als ein Hop; Befund bei
-   abweichenden Regeln zweier Session-Sync-Cluster.
+   **erste Fassung in 0.17.0**, Anbindungen nach aussen und Befund bei abweichenden Regeln
+   paralleler Firewalls **in 0.18.0**. Offen: Regeln nur, wo der Verkehr durchkommt
+   (Zonen-Paar je Hop → Regeln); „Internet“ zusammengefasst; Session-Sync-Paar als ein Hop;
+   Aussenrouter lesen statt von Hand erfassen.
 5. **Designer** (ADR 0019, Stufe 4), Zeichnung später. Vorgesehen: normale Switches und
    weitere Geräte erfassen, Verkabelung dokumentieren (L1/L2-Sicht neben dem Routing).
 6. **Applikationen ausbauen:** Regeln direkt zuordnen, Abhängigkeiten zwischen

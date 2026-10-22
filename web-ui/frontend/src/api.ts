@@ -32,6 +32,19 @@ export interface Rule {
   family?: "v4" | "v6" | "dual" | null; // Adressfamilie der Policy
   vdom?: string | null; // FortiGate-VDOM der Policy (ADR 0019)
   pair?: RulePair | null; // IPv4/IPv6-Gegenstück (nur Markierung, eigene Regel)
+  parallel?: RuleParallel | null; // Verbund paralleler Firewalls (0.18.0)
+}
+
+// Parallele Firewalls (Verbund): führende Regel mit den Firewalls, auf denen sie gleich steht,
+// abweicht bzw. fehlt – oder eine abweichende Regel mit den Feldern zur führenden
+export interface RuleParallel {
+  group: string;
+  same?: string[];
+  differs?: string[];
+  missing?: string[];
+  lead?: string;
+  lead_rule_id?: number;
+  fields?: string[];
 }
 
 // IPv4/IPv6-Gegenstück derselben Firewall: same = gleiche Objekte/Services/Interfaces
@@ -311,6 +324,7 @@ export interface RuleDetail extends Rule {
   comment?: string | null;
   nat_entries?: NatBrief[];
   pair_decisions?: PairDecision[];
+  twins?: { rule_id: number; source_system_id: number; source: string }[]; // gleich im Verbund
 }
 
 export interface Finding {
@@ -352,7 +366,24 @@ export interface System {
   rule_count: number;
   nat_count: number;
   vdoms?: string[]; // FortiGate: gelesene VDOMs – nur „root“ = die Firewall selbst
+  parallel_group?: string | null; // Verbund paralleler Firewalls (Regeln zusammengefasst)
 }
+
+export interface ParallelSuggestion {
+  system_ids: number[];
+  names: string[];
+  group: string; // vorgeschlagener Name des Verbunds
+  reasons: string[]; // z. B. „Session-Sync (FGSP)“, „312 von 320 Policies gleich“
+}
+export const fetchParallelSuggestions = (tenantId: number) =>
+  getJSON<ParallelSuggestion[]>(`/api/systems/parallel-suggestions${qs({ tenant_id: tenantId })}`);
+// Verbund setzen (alle Firewalls); leere Liste = Verbund auflösen
+export const setParallelGroup = (tenantId: number, group: string, systemIds: number[]) =>
+  sendJSON<System[]>("/api/systems/parallel-group", "POST", {
+    tenant_id: tenantId,
+    group,
+    system_ids: systemIds,
+  });
 
 // Anzahl gelöschter Einträge je Art (Rückgabe der Lösch-Endpunkte)
 export type DeleteCounts = Record<string, number>;
@@ -1118,6 +1149,7 @@ export const patchSystem = (
     ref_role?: string | null;
     site_id?: number | null;
     schedule?: string | null;
+    parallel_group?: string | null;
   } & SystemCredentials,
 ) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");
@@ -1224,6 +1256,7 @@ export async function fetchRules(opts: {
   family?: string; // v4 | v6 | dual
   vdom?: string; // FortiGate-VDOM
   pair?: string; // same | similar | confirmed | any | none
+  parallel?: string; // differs | missing (Verbund paralleler Firewalls)
   srcZone?: string;
   dstZone?: string;
   action?: string;
@@ -1243,6 +1276,7 @@ export async function fetchRules(opts: {
     family: opts.family,
     vdom: opts.vdom,
     pair: opts.pair,
+    parallel: opts.parallel,
     src_zone: opts.srcZone,
     dst_zone: opts.dstZone,
     action: opts.action,
@@ -1536,6 +1570,7 @@ export interface TracePort extends Resolved {
   interface?: string | null;
   zone?: string;
   next_hop?: string | null;
+  exit?: { id: number; name: string; kind: string }; // Anbindung nach aussen (0.18.0)
 }
 export interface TraceHop extends RoutingNode {
   via: string; // wie der Weg hierher kam (Quelle angeschlossen, Adresse des Nachbarn, …)
@@ -1555,7 +1590,10 @@ export interface TraceHop extends RoutingNode {
 }
 export interface TracePath {
   hops: TraceHop[];
-  end: { kind: "connected" | "fabric" | "external" | "unknown" | "no_route" | "loop" | "max_hops"; text: string };
+  end: {
+    kind: "connected" | "fabric" | "exit" | "external" | "unknown" | "no_route" | "loop" | "max_hops";
+    text: string;
+  };
 }
 export interface TraceResult {
   start: (RoutingNode & { via: string })[];
@@ -1652,3 +1690,25 @@ export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha$
 export const fetchPolicyRoutes = (tenantId: number) =>
   getJSON<TopoPolicyRoute[]>(`/api/routing/policy-routes${qs({ tenant_id: tenantId })}`);
 export const fetchL3Outs = (tenantId: number) => getJSON<TopoL3Out[]>(`/api/routing/l3outs${qs({ tenant_id: tenantId })}`);
+
+// Anbindungen nach aussen (0.18.0, von Hand): Internet, MPLS, WAN, Partner – der Weg endet dort
+// bzw. geht nach den manuellen Routen bei einem gelesenen Knoten weiter
+export interface TopoExit {
+  id: number;
+  tenant_id: number;
+  name: string;
+  kind: "internet" | "mpls" | "wan" | "partner" | "other";
+  source_system_id: number | null; // nur für diese Firewall (Interfaces/Zonen)
+  source: string | null;
+  interfaces: string[]; // Interfaces bzw. Zonen
+  next_hops: string[]; // IPs der Gegenstelle
+  prefixes: string[]; // Netze dahinter
+  routes: { prefix: string; target: string }[]; // manuell: Präfix -> Knoten (RoutingNode.key)
+  description: string | null;
+  updated_at: string | null;
+}
+export type TopoExitIn = Omit<TopoExit, "id" | "source" | "updated_at">;
+export const fetchExits = (tenantId: number) => getJSON<TopoExit[]>(`/api/routing/exits${qs({ tenant_id: tenantId })}`);
+export const createExit = (body: TopoExitIn) => sendJSON<TopoExit>("/api/routing/exits", "POST", body);
+export const updateExit = (id: number, body: TopoExitIn) => sendJSON<TopoExit>(`/api/routing/exits/${id}`, "PUT", body);
+export const deleteExit = (id: number) => sendJSON<void>(`/api/routing/exits/${id}`, "DELETE");

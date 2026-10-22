@@ -33,6 +33,9 @@ export const FINDING_LABEL: Record<string, string> = {
   vm_not_in_ipam: "VM-IP nicht im IPAM",
   portgroup_no_epg: "Portgruppe ohne EPG",
   mapped_not_in_ipam: "Ziel nicht im IPAM",
+  parallel_rule_mismatch: "Parallele Regel abweichend",
+  parallel_rule_missing: "Regel fehlt parallel",
+  parallel_object_mismatch: "Paralleles Objekt abweichend",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -52,6 +55,9 @@ export const FINDING_HINT: Record<string, string> = {
   rule_incomplete: "Regel/Contract ohne Quelle bzw. Ziel",
   vm_not_in_ipam: "IP einer VM (vCenter) fehlt im IPAM",
   portgroup_no_epg: "Portgruppe nach ACI-Schema ohne eingelesene EPG",
+  parallel_rule_mismatch: "gleiche Policy auf der parallelen Firewall anders konfiguriert",
+  parallel_rule_missing: "Policy fehlt auf einer parallelen Firewall",
+  parallel_object_mismatch: "gleichnamiges Objekt auf der parallelen Firewall anders definiert",
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -80,6 +86,12 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     label: "Regeln",
     help: "ohne Quelle/Ziel bzw. ohne Consumer/Provider",
     types: ["rule_incomplete"],
+  },
+  {
+    key: "parallel",
+    label: "Parallele Firewalls",
+    help: "Regeln und Objekte im Verbund nicht gleich",
+    types: ["parallel_rule_mismatch", "parallel_rule_missing", "parallel_object_mismatch"],
   },
   {
     key: "cleanup",

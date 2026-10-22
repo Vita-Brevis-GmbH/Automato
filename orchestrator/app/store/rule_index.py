@@ -45,7 +45,7 @@ from app.schemas.rules import AciContractOut, RuleNatOut, RuleOut, RulePairOut
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import objects as objects_store
-from app.store import references, rule_pairs, rule_view, virtual
+from app.store import parallel, references, rule_pairs, rule_view, virtual
 from app.store import rules as rules_store
 
 # -- IP-Bereiche --------------------------------------------------------------
@@ -348,6 +348,7 @@ def rebuild(
             session, tenant_id, limit=None, source_system_id=source_system_id
         )
     if not rules:
+        parallel.mark(session, tenant_id)
         return 0
     builder = _Builder(session, rules, tenant_id)
     index_rows: list[dict] = []
@@ -373,6 +374,7 @@ def rebuild(
     if range_rows:
         session.execute(insert(RuleIpRange), range_rows)
     session.flush()
+    parallel.mark(session, tenant_id)  # Zwillinge paralleler Firewalls (Verbund, 0.18.0)
     return len(rules)
 
 
@@ -659,6 +661,7 @@ def outs(session: Session, rules: list[Rule]) -> list[RuleOut]:
                 aci=AciContractOut(**aci) if aci else None,
                 nat=RuleNatOut(**nat) if nat else None,
                 pair=pair,
+                parallel=idx.parallel if idx is not None else None,
             )
         )
     return out

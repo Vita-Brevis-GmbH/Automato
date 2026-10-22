@@ -911,6 +911,7 @@ function SystemDialog({
   const [refRole, setRefRole] = useState(system?.ref_role ?? "");
   const [siteId, setSiteId] = useState<number | null>(system?.site_id ?? null);
   const [schedule, setSchedule] = useState(system?.schedule ?? "");
+  const [parallelGroup, setParallelGroup] = useState(system?.parallel_group ?? "");
   const [sites, setSites] = useState<Site[]>([]);
   // ohne Standort nutzt der NetBox-Sync den einzigen physischen bzw. den einzigen Standort
   const physicalOnly = sites.filter((s) => s.kind === "physical");
@@ -974,7 +975,8 @@ function SystemDialog({
       if (system === null) {
         await createSystem({ tenant_id: tenant.id, platform, ...common, ...creds });
       } else {
-        await patchSystem(system.id, { ...common, enabled, ...creds });
+        const group = platform === "fortigate" ? { parallel_group: parallelGroup.trim() } : {};
+        await patchSystem(system.id, { ...common, enabled, ...group, ...creds });
       }
       await onSaved();
     } catch (ex) {
@@ -1104,6 +1106,22 @@ function SystemDialog({
           </div>
         )}
         <ScheduleField value={schedule} onChange={setSchedule} />
+        {system !== null && platform === "fortigate" && (
+          <div className="field">
+            <label htmlFor="ss-parallel">Verbund (parallele Firewalls)</label>
+            <input
+              id="ss-parallel"
+              className="input"
+              placeholder="z. B. Cluster Nord – leer = keiner"
+              value={parallelGroup}
+              onChange={(e) => setParallelGroup(e.target.value)}
+            />
+            <div className="hint">
+              Firewalls mit demselben Verbund tragen dieselben Regeln (z. B. zwei Cluster mit Session-Sync): gleiche
+              Policies erscheinen einmal, Abweichungen als Findings.
+            </div>
+          </div>
+        )}
         <div className="field">
           <label htmlFor="ss-agent">Verwaltet von</label>
           <select
@@ -1406,6 +1424,11 @@ function SystemTable({
             </td>
             <td className="nowrap">
               {s.enabled ? <span className="chip ok">aktiv</span> : <span className="chip na">inaktiv</span>}
+              {s.parallel_group && (
+                <div className="faint" style={{ fontSize: 11, marginTop: 3 }} title="Verbund paralleler Firewalls">
+                  Verbund {s.parallel_group}
+                </div>
+              )}
               {s.schedule && (
                 <div className="faint" style={{ fontSize: 11, marginTop: 3 }} title={`Zeitplan: ${s.schedule}`}>
                   {scheduleLabel(s.schedule)}

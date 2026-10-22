@@ -51,6 +51,11 @@ class RuleIndex(Base):
     pair_rule_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pair_match: Mapped[str | None] = mapped_column(String(12), nullable=True)
     pair_diff: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Parallele Firewalls (0.18.0): gleiche Regel auf einer anderen Firewall des Verbunds -
+    # Listen zeigen nur die Regel `twin_of` (mit allen Firewalls); `parallel` = Verbund,
+    # gleiche/abweichende/fehlende Firewalls bzw. die Abweichung zur Regel des Verbunds
+    twin_of: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    parallel: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class RuleObjectUsage(Base):

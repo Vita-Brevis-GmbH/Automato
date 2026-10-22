@@ -25,7 +25,15 @@ from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import ObjectClass, Rule, RuleAction, RuleDomain, RuleIndex, RulePairDecision
+from app.models import (
+    ObjectClass,
+    Rule,
+    RuleAction,
+    RuleDomain,
+    RuleIndex,
+    RulePairDecision,
+    SourceSystem,
+)
 from app.schemas.rules import (
     EndpointOut,
     PairDecisionOut,
@@ -79,6 +87,12 @@ def list_rules(
         pattern="^(same|similar|confirmed|any|none)$",
         description="IPv4/IPv6-Paar: gleich, aehnlich (offen), bestaetigt, irgendeins, keins",
     ),
+    twins: bool = Query(
+        False, description="Zwillinge paralleler Firewalls einzeln zeigen (sonst zusammengefasst)"
+    ),
+    parallel: str | None = Query(
+        None, pattern="^(differs|missing)$", description="Verbund: abweichend bzw. fehlt"
+    ),
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
@@ -105,6 +119,21 @@ def list_rules(
         if pair in ("same", "similar", "confirmed"):
             paired = paired.where(RuleIndex.pair_match == pair)
         conds.append(~exists(paired) if pair == "none" else exists(paired))
+    # Parallele Firewalls (0.18.0): je gleicher Policy nur die fuehrende Regel - ausser mit
+    # Filter auf ein Quellsystem (dann dessen Regeln) bzw. auf Wunsch
+    if source_system_id is None and not twins:
+        conds.append(rules_store.not_twin())
+    if parallel:
+        key = "differs" if parallel == "differs" else "missing"
+        flagged = select(RuleIndex.rule_id, RuleIndex.parallel).where(
+            RuleIndex.tenant_id == tenant_id, RuleIndex.parallel.is_not(None)
+        )
+        ids_ = [
+            rid
+            for rid, info in session.execute(flagged)
+            if info and (info.get(key) or (key == "differs" and info.get("fields")))
+        ]
+        conds.append(Rule.id.in_(ids_))
 
     def scoped(stmt):
         stmt = rules_store.filtered(
@@ -185,7 +214,20 @@ def get_rule(
             r.vdom,
         ),
         pair_decisions=_decisions_of(session, r),
+        twins=_twins_of(session, r),
     )
+
+
+def _twins_of(session: Session, r: Rule) -> list[dict]:
+    """Gleiche Regeln der parallelen Firewalls (Verbund, 0.18.0) - in Listen zusammengefasst."""
+    rows = session.execute(
+        select(Rule.id, Rule.source_system_id, SourceSystem.name)
+        .join(RuleIndex, RuleIndex.rule_id == Rule.id)
+        .join(SourceSystem, SourceSystem.id == Rule.source_system_id)
+        .where(RuleIndex.twin_of == r.id)
+        .order_by(SourceSystem.name)
+    )
+    return [{"rule_id": rid, "source_system_id": sid, "source": name} for rid, sid, name in rows]
 
 
 # -- IPv4/IPv6-Paare von Hand entscheiden (0.12.0) ---------------------------------

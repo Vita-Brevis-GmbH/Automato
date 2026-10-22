@@ -11,9 +11,25 @@ Bedarf). Ein Routing-Kontext ist ein FortiGate-VDOM bzw. eine ACI-VRF auf einem 
 - `topo_peer`: BGP-Nachbarn mit Zustand; `topo_ha`: HA-Cluster und Session-Sync (FGSP);
   `topo_policy_route`: Policy-Routen und SD-WAN-Regeln; `topo_l3out`: ACI-L3Outs mit
   Border-Leafs, Interfaces/SVIs, Peers und statischen Routen.
+
+Von Hand gepflegt (0.18.0, nicht je Lauf ersetzt): `topo_exit` - Anbindungen nach aussen
+(Internet, MPLS, WAN, Partner), an denen ein Weg endet bzw. weitergeht.
 """
 
-from sqlalchemy import JSON, BigInteger, Boolean, ForeignKey, Index, Integer, SmallInteger, String
+from datetime import UTC, datetime
+
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+)
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -112,3 +128,31 @@ class TopoL3Out(_TopoRow, Base):
 
 
 TOPOLOGY_MODELS = (TopoContext, TopoRoute, TopoPeer, TopoHa, TopoPolicyRoute, TopoL3Out)
+
+
+class TopoExit(Base):
+    """Anbindung nach aussen (0.18.0, von Hand erfasst): Ein Weg, der ueber einen dieser
+    Next-Hops bzw. ueber dieses Interface/diese Zone (einer Firewall oder aller) geht, endet
+    hier („Internet“, „MPLS Kunde A“) - oder geht nach den manuellen Routen (`routes`: Praefix
+    -> Knoten `<Quellsystem>|<Kontext>`) bei einem gelesenen Knoten weiter (z. B. ueber MPLS
+    zur Firewall eines anderen Standorts). Gilt nur, wenn der Next-Hop keinem gelesenen Geraet
+    gehoert."""
+
+    __tablename__ = "topo_exit"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(16))  # internet | mpls | wan | partner | other
+    # nur fuer diese Firewall (Interfaces/Zonen); None = jede
+    source_system_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_system.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    interfaces: Mapped[list | None] = mapped_column(JSON, nullable=True)  # Interfaces bzw. Zonen
+    next_hops: Mapped[list | None] = mapped_column(JSON, nullable=True)  # IPs der Gegenstelle
+    prefixes: Mapped[list | None] = mapped_column(JSON, nullable=True)  # Netze dahinter
+    routes: Mapped[list | None] = mapped_column(JSON, nullable=True)  # [{prefix, target}]
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

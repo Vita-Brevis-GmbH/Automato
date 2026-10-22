@@ -224,4 +224,32 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
             f"nicht eingelesen ({vms} VM{'s' if vms != 1 else ''} daran).",
             "Tenant im APIC-Quellsystem mitlesen bzw. prüfen, ob die EPG noch existiert.",
         )
+    if ftype == "parallel_rule_mismatch":
+        values = d.get("values") or {}
+        shown = "; ".join(
+            f"{k}: {v[0]} ≠ {v[1]}" for k, v in list(values.items())[:4] if len(v) == 2
+        )
+        return (
+            f"Policy {_q(d.get('name') or subject)} (ID {d.get('external_id')}){on} weicht von "
+            f"der parallelen Firewall {d.get('other')} (Verbund {d.get('group')}) ab: "
+            f"{_list(d.get('fields'), 6)}.{f' {shown}.' if shown else ''}",
+            "Parallele Firewalls sollen dieselben Regeln haben - die Policy angleichen, sonst "
+            "hängt der Zugriff davon ab, über welche Firewall der Verkehr läuft.",
+        )
+    if ftype == "parallel_rule_missing":
+        return (
+            f"Policy {_q(d.get('name') or subject)} (ID {d.get('external_id')}){on} fehlt auf "
+            f"{_list(d.get('missing_on'), 6)} (Verbund {d.get('group')}).",
+            "Policy auf der parallelen Firewall ergänzen bzw. entfernen - sonst gilt sie nur "
+            "auf einem Weg.",
+        )
+    if ftype == "parallel_object_mismatch":
+        values = d.get("values") or ["–", "–"]
+        what = _CATEGORY.get(d.get("category"), "Objekt")
+        return (
+            f"{what} {_q(subject)}{on} ist auf der parallelen Firewall {d.get('other')} "
+            f"(Verbund {d.get('group')}) anders definiert: {values[0]} ≠ {values[1]}.",
+            "Objekt angleichen - gleichnamige Objekte in Regeln paralleler Firewalls müssen "
+            "dasselbe bedeuten.",
+        )
     return subject, ""

@@ -44,7 +44,7 @@ from app.models import (
     VmIp,
     VmNic,
 )
-from app.store import appdoc, finding_text, references, rule_index, sites
+from app.store import appdoc, finding_text, parallel, references, rule_index, sites
 from app.store import naming_profiles as profile_store
 from app.store import rules as rules_store
 from app.store.epgs import inventory_label
@@ -606,6 +606,9 @@ def build_doc(session: Session, app: Application) -> dict:
             }
         )
 
+    # parallele Firewalls (0.18.0): gleiche Policies nur einmal - die der fuehrenden Firewall
+    twins = parallel.twin_ids(session, {row.get(appdoc.RULE) for _, _, row in rows})
+    rows = [r for r in rows if r[2].get(appdoc.RULE) not in twins]
     hits, tables = _hits_and_tables(rows)
     rule_ids = {h["rule_id"] for h in hits}
     ordered = (

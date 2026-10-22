@@ -5,6 +5,9 @@
 import { useEffect, useState } from "react";
 import {
   ContextKind,
+  createExit,
+  deleteExit,
+  fetchExits,
   fetchHa,
   fetchL3Outs,
   fetchPeers,
@@ -23,18 +26,21 @@ import {
   TopoL3Out,
   TopoPeer,
   TopoPolicyRoute,
+  TopoExit,
+  TopoExitIn,
   TopoRoute,
   TracePath,
   TracePort,
   TraceResult,
   traceRoute,
+  updateExit,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 
 const PAGE = 200;
 
-type Tab = "lookup" | "routes" | "peers" | "ha" | "policy" | "l3out";
+type Tab = "lookup" | "routes" | "peers" | "ha" | "policy" | "l3out" | "exits";
 const TABS: { key: Tab; label: string }[] = [
   { key: "lookup", label: "Weg für IP" },
   { key: "routes", label: "Routen" },
@@ -42,6 +48,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "ha", label: "HA & Session-Sync" },
   { key: "policy", label: "Policy-Routen & SD-WAN" },
   { key: "l3out", label: "L3Outs (ACI)" },
+  { key: "exits", label: "Anbindungen" },
 ];
 
 const TABLE_LABEL: Record<string, [string, string]> = {
@@ -189,6 +196,14 @@ function policyText(p: PolicyHit) {
   return p.kind === "sdwan" ? `SD-WAN ${p.name ?? `#${p.seq}`}` : `Policy-Route #${p.seq ?? "?"}`;
 }
 
+const EXIT_KIND: Record<TopoExit["kind"], string> = {
+  internet: "Internet",
+  mpls: "MPLS",
+  wan: "WAN",
+  partner: "Partner",
+  other: "Anbindung",
+};
+
 function Port({ p }: { p: TracePort | undefined }) {
   if (!p?.interface && !p?.next_hop) return null;
   return (
@@ -202,13 +217,22 @@ function Port({ p }: { p: TracePort | undefined }) {
           <Names r={p} />
         </span>
       )}
+      {p.exit && (
+        <span className="chip info" style={{ marginLeft: 4 }} title="Anbindung nach aussen (von Hand erfasst)">
+          {EXIT_KIND[p.exit.kind as TopoExit["kind"]] ?? "Anbindung"} {p.exit.name}
+        </span>
+      )}
     </div>
   );
 }
 
+// Entwurf einer Anbindung aus einem Weg, der an einem unbekannten Next-Hop endet
+type ExitDraft = Partial<TopoExitIn>;
+
 const END: Record<TracePath["end"]["kind"], [string, string]> = {
   connected: ["ok", "Ziel erreicht"],
   fabric: ["ok", "im Fabric"],
+  exit: ["info", "Anbindung"],
   external: ["info", "extern"],
   unknown: ["warn", "Weg endet"],
   no_route: ["warn", "keine Route"],
@@ -217,8 +241,22 @@ const END: Record<TracePath["end"]["kind"], [string, string]> = {
 };
 
 // Ein Weg Hop für Hop: Knoten, Eingang, Entscheidung (Policy-Route bzw. Route), Ausgang
-function TraceCard({ path, index, total }: { path: TracePath; index: number; total: number }) {
+function TraceCard({
+  path,
+  index,
+  total,
+  onCapture,
+}: {
+  path: TracePath;
+  index: number;
+  total: number;
+  onCapture?: (draft: ExitDraft) => void;
+}) {
   const [cls, label] = END[path.end.kind] ?? ["", path.end.kind];
+  const last = path.hops[path.hops.length - 1];
+  const out = last?.egress;
+  // Weg endet an einem Next-Hop ohne gelesenes Gerät: als Anbindung erfassen (Internet, MPLS, …)
+  const capturable = onCapture && out?.next_hop && (path.end.kind === "unknown" || path.end.kind === "external");
   return (
     <div className="card">
       <div className="card-head">
@@ -228,6 +266,23 @@ function TraceCard({ path, index, total }: { path: TracePath; index: number; tot
         </h2>
         <span className={`chip ${cls}`}>{label}</span>
         <span className="faint">{path.end.text}</span>
+        {capturable && (
+          <button
+            className="btn btn-sm"
+            style={{ marginLeft: "auto" }}
+            title="Anbindung nach aussen erfassen – der Weg endet dann dort bzw. geht nach manuellen Routen weiter"
+            onClick={() =>
+              onCapture({
+                kind: path.end.kind === "external" ? "internet" : "wan",
+                source_system_id: last.source_system_id,
+                interfaces: out?.interface ? [out.interface] : [],
+                next_hops: [out!.next_hop!],
+              })
+            }
+          >
+            Als Anbindung erfassen
+          </button>
+        )}
       </div>
       <div className="card-body scroll">
         <table className="compact">
@@ -362,7 +417,15 @@ function LookupTable({ rows }: { rows: RouteLookup[] }) {
 }
 
 // Weg für IP: Quelle (IP) und/oder Startpunkt, dazu das Ziel. Ohne beides: je Kontext die Route.
-function LookupTab({ tenantId, nodes }: { tenantId: number; nodes: RoutingNode[] }) {
+function LookupTab({
+  tenantId,
+  nodes,
+  onCapture,
+}: {
+  tenantId: number;
+  nodes: RoutingNode[];
+  onCapture?: (draft: ExitDraft) => void;
+}) {
   const [src, setSrc] = useState("");
   const [start, setStart] = useState("");
   const [dst, setDst] = useState("");
@@ -447,7 +510,7 @@ function LookupTab({ tenantId, nodes }: { tenantId: number; nodes: RoutingNode[]
             <Empty title="Kein Weg">Kein Hop gefunden – Startpunkt wählen bzw. Quellsysteme neu einlesen.</Empty>
           )}
           {trace.paths.map((p, i) => (
-            <TraceCard key={i} path={p} index={i} total={trace.paths.length} />
+            <TraceCard key={i} path={p} index={i} total={trace.paths.length} onCapture={onCapture} />
           ))}
         </>
       )}
@@ -843,8 +906,283 @@ function List<T>({
   );
 }
 
-export default function Routing({ tenantId, tenantLabel }: { tenantId: number | null; tenantLabel: string }) {
+const csv = (v: string) =>
+  v
+    .split(/[\s,;]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+// Anbindung erfassen/ändern: Next-Hops und/oder Interfaces/Zonen, Netze dahinter, manuelle Routen
+function ExitForm({
+  tenantId,
+  nodes,
+  exit,
+  draft,
+  onSaved,
+  onCancel,
+}: {
+  tenantId: number;
+  nodes: RoutingNode[];
+  exit: TopoExit | null;
+  draft: ExitDraft | null;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const base = exit ?? draft ?? {};
+  const [name, setName] = useState(base.name ?? "");
+  const [kind, setKind] = useState<TopoExit["kind"]>(base.kind ?? "internet");
+  const [source, setSource] = useState(base.source_system_id ? String(base.source_system_id) : "");
+  const [ifaces, setIfaces] = useState((base.interfaces ?? []).join(", "));
+  const [hops, setHops] = useState((base.next_hops ?? []).join(", "));
+  const [prefixes, setPrefixes] = useState((base.prefixes ?? []).join(", "));
+  const [routes, setRoutes] = useState<{ prefix: string; target: string }[]>(base.routes ?? []);
+  const [description, setDescription] = useState(base.description ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const firewalls = [...new Map(nodes.filter((n) => n.kind !== "vrf").map((n) => [n.source_system_id, n.source])).entries()];
+  const save = () => {
+    const body: TopoExitIn = {
+      tenant_id: tenantId,
+      name: name.trim(),
+      kind,
+      source_system_id: source ? Number(source) : null,
+      interfaces: csv(ifaces),
+      next_hops: csv(hops),
+      prefixes: csv(prefixes),
+      routes: routes.filter((r) => r.prefix.trim() && r.target),
+      description: description.trim() || null,
+    };
+    setBusy(true);
+    setError(null);
+    (exit ? updateExit(exit.id, body) : createExit(body))
+      .then(onSaved)
+      .catch(setError)
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>{exit ? `Anbindung „${exit.name}“` : "Neue Anbindung"}</h2>
+        <span className="faint">
+          Ein Weg, der über diesen Next-Hop bzw. dieses Interface geht und dort kein gelesenes Gerät findet, endet hier
+          – oder geht nach den manuellen Routen weiter.
+        </span>
+      </div>
+      <div className="card-body" style={{ padding: 16 }}>
+        <ErrorBox error={error} prefix="Anbindung speichern" />
+        <div className="form-grid">
+          <div className="field">
+            <label htmlFor="ex-name">Name</label>
+            <input id="ex-name" className="input" placeholder="z. B. Internet Provider A" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="ex-kind">Art</label>
+            <select id="ex-kind" className="sel input" value={kind} onChange={(e) => setKind(e.target.value as TopoExit["kind"])}>
+              {Object.entries(EXIT_KIND).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="ex-fw">Firewall</label>
+            <select id="ex-fw" className="sel input" value={source} onChange={(e) => setSource(e.target.value)}>
+              <option value="">alle (Next-Hop bzw. Interface/Zone gilt überall)</option>
+              {firewalls.map(([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="ex-ifaces">Interfaces bzw. Zonen</label>
+            <input id="ex-ifaces" className="input" placeholder="wan1, internet" value={ifaces} onChange={(e) => setIfaces(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="ex-hops">Next-Hops (Gegenstelle)</label>
+            <input id="ex-hops" className="input" placeholder="198.51.100.1" value={hops} onChange={(e) => setHops(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="ex-nets">Netze dahinter</label>
+            <input
+              id="ex-nets"
+              className="input"
+              placeholder="leer = alles, was dorthin geroutet wird"
+              value={prefixes}
+              onChange={(e) => setPrefixes(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="field">
+          <label>Manuelle Routen (z. B. MPLS zu einem anderen Standort)</label>
+          {routes.map((r, i) => (
+            <div key={i} className="filterbar" style={{ margin: "0 0 6px" }}>
+              <input
+                className="input"
+                style={{ flex: "0 1 200px" }}
+                placeholder="10.60.0.0/16"
+                value={r.prefix}
+                onChange={(e) => setRoutes(routes.map((x, j) => (j === i ? { ...x, prefix: e.target.value } : x)))}
+              />
+              <span className="faint">weiter bei</span>
+              <select
+                className="sel"
+                value={r.target}
+                onChange={(e) => setRoutes(routes.map((x, j) => (j === i ? { ...x, target: e.target.value } : x)))}
+              >
+                <option value="">Knoten wählen…</option>
+                {nodes.map((n) => (
+                  <option key={n.key} value={n.key}>
+                    {n.label}
+                  </option>
+                ))}
+              </select>
+              <button className="linkbtn" onClick={() => setRoutes(routes.filter((_, j) => j !== i))}>
+                entfernen
+              </button>
+            </div>
+          ))}
+          <button className="btn btn-sm" onClick={() => setRoutes([...routes, { prefix: "", target: "" }])}>
+            Route hinzufügen
+          </button>
+        </div>
+        <div className="field">
+          <label htmlFor="ex-desc">Beschreibung</label>
+          <input id="ex-desc" className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-primary btn-sm" disabled={busy || !name.trim()} onClick={save}>
+            {busy ? "Speichere…" : "Speichern"}
+          </button>
+          <button className="btn btn-sm" onClick={onCancel}>
+            Abbrechen
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExitsTab({
+  tenantId,
+  nodes,
+  canEdit,
+  draft,
+  onDraftUsed,
+}: {
+  tenantId: number;
+  nodes: RoutingNode[];
+  canEdit: boolean;
+  draft: ExitDraft | null;
+  onDraftUsed: () => void;
+}) {
+  const [reload, setReload] = useState(0);
+  const { rows, error } = useList<TopoExit>(() => fetchExits(tenantId), [tenantId, reload]);
+  const [editing, setEditing] = useState<TopoExit | "new" | null>(draft ? "new" : null);
+  const [err, setErr] = useState<unknown>(null);
+  const label = (key: string) => nodes.find((n) => n.key === key)?.label ?? key;
+  const done = () => {
+    setEditing(null);
+    onDraftUsed();
+    setReload((n) => n + 1);
+  };
+  const remove = (e: TopoExit) => {
+    if (!window.confirm(`Anbindung „${e.name}“ löschen?`)) return;
+    deleteExit(e.id)
+      .then(() => setReload((n) => n + 1))
+      .catch(setErr);
+  };
+  return (
+    <>
+      <div className="filterbar">
+        <span className="faint">
+          Von Hand erfasst: wo Wege nach aussen gehen (Internet, MPLS, WAN, Partner). Ohne Anbindung endet ein Weg am
+          ersten Next-Hop, der keinem gelesenen Gerät gehört.
+        </span>
+        {canEdit && editing === null && (
+          <button className="btn btn-primary btn-sm" style={{ marginLeft: "auto" }} onClick={() => setEditing("new")}>
+            Neue Anbindung
+          </button>
+        )}
+      </div>
+      <ErrorBox error={err} prefix="Anbindung löschen" />
+      {editing !== null && (
+        <ExitForm
+          tenantId={tenantId}
+          nodes={nodes}
+          exit={editing === "new" ? null : editing}
+          draft={editing === "new" ? draft : null}
+          onSaved={done}
+          onCancel={done}
+        />
+      )}
+      <List error={error} rows={rows} empty="Noch keine Anbindungen erfasst.">
+        <thead>
+          <tr>
+            <th>Anbindung</th>
+            <th>Firewall</th>
+            <th>Interfaces / Zonen</th>
+            <th>Next-Hops</th>
+            <th>Netze dahinter</th>
+            <th>Manuelle Routen</th>
+            {canEdit && <th />}
+          </tr>
+        </thead>
+        <tbody>
+          {(rows ?? []).map((e) => (
+            <tr key={e.id}>
+              <td>
+                <span className="chip info">{EXIT_KIND[e.kind] ?? e.kind}</span> <b>{e.name}</b>
+                {e.description && <div className="faint">{e.description}</div>}
+              </td>
+              <td>{e.source ?? <span className="faint">alle</span>}</td>
+              <td className="mono">{e.interfaces.join(", ") || "–"}</td>
+              <td className="mono">{e.next_hops.join(", ") || "–"}</td>
+              <td className="mono">{e.prefixes.join(", ") || <span className="faint">alles</span>}</td>
+              <td>
+                {e.routes.length ? (
+                  <div className="objs">
+                    {e.routes.map((r) => (
+                      <span key={r.prefix + r.target} className="mono">
+                        {r.prefix} <span className="faint">→</span> {label(r.target)}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <Dash />
+                )}
+              </td>
+              {canEdit && (
+                <td className="actions">
+                  <button className="linkbtn" onClick={() => setEditing(e)}>
+                    ändern
+                  </button>{" "}
+                  <button className="linkbtn" onClick={() => remove(e)}>
+                    löschen
+                  </button>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </List>
+    </>
+  );
+}
+
+export default function Routing({
+  tenantId,
+  tenantLabel,
+  canEdit = false,
+}: {
+  tenantId: number | null;
+  tenantLabel: string;
+  canEdit?: boolean;
+}) {
   const [tab, setTab] = useState<Tab>("lookup");
+  const [draft, setDraft] = useState<ExitDraft | null>(null);
   const [summary, setSummary] = useState<RoutingSummary | null>(null);
   const [error, setError] = useState<unknown>(null);
 
@@ -895,12 +1233,36 @@ export default function Routing({ tenantId, tenantLabel }: { tenantId: number | 
           </button>
         ))}
       </div>
-      {tab === "lookup" && <LookupTab tenantId={tenantId} nodes={nodes} />}
+      {/* bleibt geladen: nach dem Erfassen einer Anbindung den Weg einfach neu suchen */}
+      <div hidden={tab !== "lookup"}>
+        <LookupTab
+          tenantId={tenantId}
+          nodes={nodes}
+          onCapture={
+            canEdit
+              ? (d) => {
+                  setDraft(d);
+                  setTab("exits");
+                }
+              : undefined
+          }
+        />
+      </div>
       {tab === "routes" && <RoutesTab tenantId={tenantId} nodes={nodes} />}
       {tab === "peers" && <PeersTab tenantId={tenantId} />}
       {tab === "ha" && <HaTab tenantId={tenantId} />}
       {tab === "policy" && <PolicyTab tenantId={tenantId} />}
       {tab === "l3out" && <L3OutTab tenantId={tenantId} />}
+      {tab === "exits" && (
+        <ExitsTab
+          key={draft ? JSON.stringify(draft) : "list"}
+          tenantId={tenantId}
+          nodes={nodes}
+          canEdit={canEdit}
+          draft={draft}
+          onDraftUsed={() => setDraft(null)}
+        />
+      )}
     </>
   );
 }

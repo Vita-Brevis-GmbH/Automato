@@ -333,14 +333,17 @@ FWA = _fw(
         _r("fw-a", "root", "10.99.0.0/24", [{"interface": "mgmt"}], "connected", attrs=MGMT_ATTRS),
         _r("fw-a", "root", "0.0.0.0/0", [{"ip": "10.99.0.1", "interface": "mgmt"}],
            attrs=MGMT_ATTRS),
+        _r("fw-a", "root", "10.60.0.0/16", [{"ip": "10.80.0.1", "interface": "mpls"}]),
     ],
-    [_if("fw-a", "wan", "203.0.113.2/29", "internet"), _if("fw-a", "mgmt", "10.99.0.2/24")],
+    [_if("fw-a", "wan", "203.0.113.2/29", "internet"), _if("fw-a", "mgmt", "10.99.0.2/24"),
+     _if("fw-a", "mpls", "10.80.0.2/30", "wan")],
 )  # fmt: skip
 FWB = _fw(
     "fw-b",
     [
         _r("fw-b", "root", "203.0.113.0/29", [{"interface": "wan"}], "connected"),
         _r("fw-b", "root", "0.0.0.0/0", [{"ip": "203.0.113.1", "interface": "wan"}]),
+        _r("fw-b", "root", "10.60.0.0/24", [{"interface": "lan"}], "connected"),
     ],
     [_if("fw-b", "wan", "203.0.113.3/29", "internet")],
 )
@@ -370,3 +373,57 @@ def test_kein_raten_ueber_gemeinsames_netz_und_vrf_management(client):
     rows = client.get("/routing/lookup", params={"tenant_id": tid, "ip": "192.0.2.77"}).json()
     fwa = [(r["vrf"], r["route"]["next_hops"][0]["ip"]) for r in rows if r["node"] == "fw-a"]
     assert fwa == [(None, "203.0.113.1"), ("mgmt", "10.99.0.1")]
+
+
+def test_anbindungen_nach_aussen(client):
+    """0.18.0: Anbindungen von Hand - der Weg endet am Internet bzw. geht ueber MPLS nach der
+    manuellen Route bei der Firewall des anderen Standorts weiter."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    ids = {}
+    for name, result in (("fw-a", FWA), ("fw-b", FWB)):
+        ids[name] = _system(client, tid, name, "fortigate")
+        _deliver(client, tid, ids[name], "fortigate", result)
+    operator = {"X-Dev-Roles": "operator", "X-Dev-Tenants": str(tid)}
+    viewer = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid)}
+    inet = {"tenant_id": tid, "name": "Internet", "kind": "internet", "next_hops": ["203.0.113.1"]}
+    assert client.post("/routing/exits", json=inet, headers=viewer).status_code == 403
+    assert client.post("/routing/exits", json={**inet, "next_hops": []},
+                       headers=operator).status_code == 422  # fmt: skip
+    created = client.post("/routing/exits", json=inet, headers=operator)
+    assert created.status_code == 201, created.text
+    mpls = {"tenant_id": tid, "name": "Kunde A", "kind": "mpls",
+            "source_system_id": ids["fw-a"], "interfaces": ["mpls"],
+            "prefixes": ["10.60.0.0/16"],
+            "routes": [{"prefix": "10.60.0.0/16", "target": f"{ids['fw-b']}|root"}]}  # fmt: skip
+    assert client.post("/routing/exits", json={**mpls, "routes": [{"prefix": "10.60.0.0/16",
+                       "target": "fw-b"}]}, headers=operator).status_code == 422  # fmt: skip
+    mpls_id = client.post("/routing/exits", json=mpls, headers=operator).json()["id"]
+    rows = client.get("/routing/exits", params={"tenant_id": tid}).json()
+    assert [(x["name"], x["source"]) for x in rows] == [("Internet", None), ("Kunde A", "fw-a")]
+
+    start = f"{ids['fw-a']}|root"
+    (path,) = _trace(client, tid, start=start, dst="192.0.2.77")["paths"]
+    assert path["end"] == {"kind": "exit", "text": "weiter über Internet"}
+    assert path["hops"][0]["egress"]["exit"]["kind"] == "internet"
+
+    (path,) = _trace(client, tid, start=start, dst="10.60.0.5")["paths"]
+    assert _labels(path) == ["fw-a", "fw-b"]
+    assert path["hops"][1]["via"] == "über MPLS Kunde A (manuelle Route)"
+    assert path["end"]["kind"] == "connected"
+
+    # ohne manuelle Route endet der Weg an der Anbindung, mit Hinweis auf die Netze
+    body = {**mpls, "routes": [], "prefixes": ["10.70.0.0/16"]}
+    assert client.put(f"/routing/exits/{mpls_id}", json=body, headers=operator).status_code == 200
+    (path,) = _trace(client, tid, start=start, dst="10.60.0.5")["paths"]
+    assert path["end"]["text"] == (
+        "weiter über MPLS Kunde A – Ziel liegt nicht in den Netzen der Anbindung"
+    )
+    assert client.delete(f"/routing/exits/{mpls_id}", headers=operator).status_code == 204
+    (path,) = _trace(client, tid, start=start, dst="10.60.0.5")["paths"]
+    assert path["end"]["kind"] == "unknown"
+    # Quellsystem geloescht: seine Anbindungen mit
+    client.post("/routing/exits", json=mpls, headers=operator)
+    assert client.delete(f"/systems/{ids['fw-a']}", headers=ADMIN).status_code in (200, 204)
+    assert [x["name"] for x in client.get("/routing/exits", params={"tenant_id": tid}).json()] == [
+        "Internet"
+    ]

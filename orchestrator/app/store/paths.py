@@ -13,9 +13,13 @@ ein Knoten und nicht vier Wege.
   Sekundaer-IPs, SVI/Interface eines L3Outs). Gehoert er keinem gelesenen Geraet, endet der
   Weg dort - kein Raten ueber ein gemeinsames Transfernetz (0.17.1: das fuehrte bei mehreren
   Firewalls am selben Aussenrouter zu Schleifen).
-- **Ende:** Ziel angeschlossen, Default-Route ohne gelesenen Nachbarn („extern/Internet“),
-  Next-Hop ohne gelesenes Geraet, keine Route, Schleife oder Hop-Grenze - Next-Hops mit dem
-  Namen aus dem IPAM.
+- **Anbindung nach aussen** (0.18.0, von Hand erfasst, `TopoExit`): gehoert der Next-Hop
+  keinem gelesenen Geraet, aber passt eine Anbindung (Next-Hop-IP, sonst Interface bzw. Zone
+  der Firewall), endet der Weg dort („Internet“, „MPLS …“) - oder geht nach ihren manuellen
+  Routen beim gelesenen Knoten weiter (z. B. ueber MPLS zur Firewall eines anderen Standorts).
+- **Ende:** Ziel angeschlossen, Anbindung, Default-Route ohne gelesenen Nachbarn
+  („extern“), Next-Hop ohne gelesenes Geraet, keine Route, Schleife oder Hop-Grenze -
+  Next-Hops mit dem Namen aus dem IPAM.
 """
 
 import ipaddress
@@ -31,6 +35,7 @@ from app.models import (
     InvSubnet,
     SourceSystem,
     TopoContext,
+    TopoExit,
     TopoL3Out,
     TopoPolicyRoute,
     TopoRoute,
@@ -43,6 +48,14 @@ MAX_PATHS = 16
 _CONNECTED = ("connected", "local")
 Key = tuple[int, str]  # (Quellsystem, Kontext: VDOM bzw. Tenant:VRF)
 __all__ = ["MGMT", "Graph", "trace"]
+
+EXIT_LABELS = {
+    "internet": "Internet",
+    "mpls": "MPLS",
+    "wan": "WAN",
+    "partner": "Partner",
+    "other": "Anbindung",
+}
 
 
 @dataclass
@@ -122,6 +135,11 @@ class Graph:
         self._owners: dict[str, list[tuple[Key, str | None, str | None]]] | None = None
         self._zones: dict[tuple[int, str], str] = {}
         self._tables: dict[Key, dict[str, Table]] = {}
+        self.exits = list(
+            session.scalars(
+                select(TopoExit).where(TopoExit.tenant_id == tenant_id).order_by(TopoExit.id)
+            )
+        )
 
     # -- Bezeichnungen --------------------------------------------------------------
 
@@ -302,6 +320,23 @@ class Graph:
                 best[nkey] = (net.prefixlen, text)
         return [(k, v[1]) for k, v in best.items()]
 
+    def exit_for(
+        self, key: Key, interface: str | None, zone: str | None, ip: str | None
+    ) -> TopoExit | None:
+        """Anbindung fuer einen Ausgang: zuerst ueber die Next-Hop-IP, dann ueber Interface
+        bzw. Zone dieser Firewall, zuletzt ueber Interface/Zone einer Anbindung fuer alle."""
+        ports = {p for p in (interface, zone) if p}
+        if ip:
+            for e in self.exits:
+                if ip in (e.next_hops or []) and e.source_system_id in (None, key[0]):
+                    return e
+        for own in (True, False):
+            for e in self.exits:
+                if (e.source_system_id == key[0]) is own and (own or e.source_system_id is None):
+                    if ports & set(e.interfaces or []):
+                        return e
+        return None
+
     def policies(self, key: Key, src, dst, ingress: str | None) -> list[dict]:
         """Policy-Routen bzw. SD-WAN-Regeln des Knotens, die fuer den Verkehr gelten (koennen):
         `certain` = Quelle, Ziel und Eingangs-Interface passen sicher."""
@@ -427,6 +462,16 @@ def trace(
                 queue.append(([*hops, branch], nkey, niface, how, g.table(nkey, niface)))
             if nxt:
                 continue
+            ex = g.exit_for(key, nh.get("interface"), egress.get("zone"), ip)
+            if ex is not None:
+                egress["exit"] = {"id": ex.id, "name": ex.name, "kind": ex.kind}
+                target = _exit_target(ex, dst)
+                if target is not None and target in g.nodes:
+                    via_exit = f"über {_exit_label(ex)} (manuelle Route)"
+                    queue.append(([*hops, branch], target, None, via_exit, 0))
+                    continue
+                paths.append(_end(hops, branch, "exit", _exit_text(ex, dst, g.names(ip))))
+                continue
             known = g.names(ip) or ([egress["network"]] if egress.get("network") else [])
             name = f" ({', '.join(known)})" if known else ""
             if not ip:
@@ -443,6 +488,41 @@ def trace(
         "paths": _unique(paths),
         "notes": notes,
     }
+
+
+def _exit_target(ex: TopoExit, dst) -> Key | None:
+    """Manuelle Route der Anbindung mit dem laengsten passenden Praefix -> Knoten."""
+    best: tuple[int, Key] | None = None
+    for r in ex.routes or []:
+        try:
+            net = ipaddress.ip_network(r.get("prefix") or "", strict=False)
+        except ValueError:
+            continue
+        key = parse_key(r.get("target"))
+        if key is not None and dst in net and (best is None or net.prefixlen > best[0]):
+            best = (net.prefixlen, key)
+    return best[1] if best else None
+
+
+def _exit_label(ex: TopoExit) -> str:
+    """„MPLS Kunde A“ - die Art nur, wenn der Name sie nicht schon nennt."""
+    label = EXIT_LABELS.get(ex.kind, "Anbindung")
+    return ex.name if ex.name.lower().startswith(label.lower()) else f"{label} {ex.name}"
+
+
+def _exit_text(ex: TopoExit, dst, names: list[str]) -> str:
+    text = f"weiter über {_exit_label(ex)}"
+    if names:
+        text += f" ({', '.join(names)})"
+    nets = []
+    for p in ex.prefixes or []:
+        try:
+            nets.append(ipaddress.ip_network(p, strict=False))
+        except ValueError:
+            continue
+    if nets and not any(dst in n for n in nets):
+        text += " – Ziel liegt nicht in den Netzen der Anbindung"
+    return text
 
 
 def _port(g: Graph, key: Key, interface: str | None) -> dict:

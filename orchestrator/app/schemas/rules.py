@@ -72,6 +72,9 @@ class RuleOut(BaseModel):
     family: str | None = None  # v4 | v6 | dual (Adressfamilie der Policy)
     vdom: str | None = None  # FortiGate-VDOM der Policy (ADR 0019)
     pair: RulePairOut | None = None  # IPv4/IPv6-Gegenstueck (nur Markierung)
+    # Parallele Firewalls (Verbund, 0.18.0): fuehrende Regel {group, same, differs, missing}
+    # bzw. abweichende Regel {group, lead, lead_rule_id, fields}
+    parallel: dict | None = None
 
 
 class EpgSubnetOut(BaseModel):
@@ -194,3 +197,4 @@ class RuleDetailOut(RuleOut):
     # VIPs (DNAT) und SNAT-Pools der Regel mit IPs, Ports und DNS-Namen (Link in die NAT-Sicht)
     nat_entries: list[dict] = []
     pair_decisions: list[PairDecisionOut] = []  # von Hand bestaetigt/abgelehnt
+    twins: list[dict] = []  # gleiche Regeln paralleler Firewalls {rule_id, source, ...}

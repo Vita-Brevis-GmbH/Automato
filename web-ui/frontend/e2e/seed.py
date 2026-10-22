@@ -1,8 +1,8 @@
 """Beispieldaten fuer die UI-Tests - aus denselben Testdaten wie die Orchestrator-Tests.
 
-Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), fuenf FortiGates (eine mit gleichnamigen
+Ein Mandant „Kunde A" (ID 1) mit DDI (fuehrend), sieben FortiGates (eine mit gleichnamigen
 IPv4/IPv6-Objekten und Regelpaaren, eine mit Virtual Server und Routing nur in root, eine mit
-zwei VDOMs und Routing), einem APIC,
+zwei VDOMs und Routing, zwei parallele mit Session-Sync), einem APIC,
 virtuellen und physischen Standorten, NAT/VIPs, Gruppen, Diensten mit Namensschema-Befunden,
 einem ACI-Contract ohne Consumer, einem vCenter mit einer VM hinter H_web01 und einer
 Applikation (AP mit EPG und VM). Alles ueber die oeffentliche bzw. interne API wie im Betrieb.
@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "orchestrator" / "tests"))
 import test_findings_explain as fe  # noqa: E402
 import test_ip_family as ipf  # noqa: E402
+import test_parallel as par  # noqa: E402
 import test_paths as tp  # noqa: E402
 import test_routing as rt  # noqa: E402
 import test_search_nat as sn  # noqa: E402
@@ -131,6 +132,18 @@ def run(app) -> None:
         fw5, "fortigate", rules=vd.RESULT["rules"], objects=vd.RESULT["objects"],
         nat_rules=vd.RESULT["nat_rules"], inventory=inventory, routing=routing,
     )  # fmt: skip
+
+    # FortiGate 6 und 7: parallele Firewalls (Session-Sync, gleiche Policies) - noch kein
+    # Verbund, der UI-Test fasst sie per Vorschlag zusammen (0.18.0)
+    renamed = json.dumps([par.FWA, par.FWB])
+    for old, new in (("H_web01", "H_par01"), ("H_web02", "H_par02"), ("N_clients", "N_par"),
+                     ('"fw-a"', '"fw-06"'), ('"fw-b"', '"fw-07"'), ('"web"', '"par-web"'),
+                     ('"api"', '"par-api"'), ('"mail"', '"par-mail"'), ('"db"', '"par-db"'),
+                     ('"nur-a"', '"par-nur-06"')):  # fmt: skip
+        renamed = renamed.replace(old, new)
+    for name, result in zip(("fw-06", "fw-07"), json.loads(renamed), strict=True):
+        sid = system(name=name, platform="fortigate", base_url=f"https://{name}.example.ch")
+        run_result(sid, "fortigate", **{k: v for k, v in result.items() if k != "status"})
 
     # APIC: Inventar, Filter als Dienste, Contract ohne Consumer
     apic = system(name="apic-01", platform="cisco_aci", base_url="https://apic.example.ch")

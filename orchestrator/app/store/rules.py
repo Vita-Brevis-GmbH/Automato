@@ -5,7 +5,7 @@ sowie Batch-Lookups fuer Netzwerkobjekte und Zonen, damit die Anreicherung der
 Liste ohne N+1-Queries auskommt.
 """
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, exists, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
@@ -64,6 +64,16 @@ def filtered(
 ORDER = (Rule.source_system_id, Rule.sequence, Rule.id)  # Reihenfolge wie auf dem Geraet
 
 
+def not_twin():
+    """Ohne Zwillinge paralleler Firewalls (Verbund, 0.18.0): Listen und Kennzahlen zeigen je
+    gleicher Policy nur die Regel der fuehrenden Firewall."""
+    return ~exists(
+        select(RuleIndex.rule_id).where(
+            RuleIndex.rule_id == Rule.id, RuleIndex.twin_of.is_not(None)
+        )
+    )
+
+
 def list_rules(
     session: Session,
     tenant_id: int | None = None,
@@ -106,14 +116,15 @@ def count_rules(
 
 
 def summary(session: Session, tenant_id: int | None = None) -> dict:
-    """Kennzahlen fuer die Uebersicht per SQL - unabhaengig von der Seitengroesse der Liste."""
-    scoped = filtered(select(Rule.id), tenant_id, None, None).subquery()
+    """Kennzahlen fuer die Uebersicht per SQL - unabhaengig von der Seitengroesse der Liste.
+    Zwillinge paralleler Firewalls zaehlen nicht doppelt (0.18.0)."""
+    scoped = filtered(select(Rule.id), tenant_id, None, None).where(not_twin()).subquery()
     by_domain = {
         d.value: n
         for d, n in session.execute(
-            filtered(select(Rule.domain, func.count(Rule.id)), tenant_id, None, None).group_by(
-                Rule.domain
-            )
+            filtered(select(Rule.domain, func.count(Rule.id)), tenant_id, None, None)
+            .where(not_twin())
+            .group_by(Rule.domain)
         )
     }
     systems = sorted(
@@ -136,6 +147,7 @@ def summary(session: Session, tenant_id: int | None = None) -> dict:
     zone_counts = list(
         session.execute(
             filtered(select(Rule.dst_zone_id, func.count(Rule.id)), tenant_id, None, None)
+            .where(not_twin())
             .group_by(Rule.dst_zone_id)
             .order_by(func.count(Rule.id).desc())
         )
@@ -143,6 +155,7 @@ def summary(session: Session, tenant_id: int | None = None) -> dict:
     src_counts = list(
         session.execute(
             filtered(select(Rule.src_zone_id, func.count(Rule.id)), tenant_id, None, None)
+            .where(not_twin())
             .group_by(Rule.src_zone_id)
             .order_by(func.count(Rule.id).desc())
         )
@@ -151,13 +164,14 @@ def summary(session: Session, tenant_id: int | None = None) -> dict:
     actions = {
         a.value: n
         for a, n in session.execute(
-            filtered(select(Rule.action, func.count(Rule.id)), tenant_id, None, None).group_by(
-                Rule.action
-            )
+            filtered(select(Rule.action, func.count(Rule.id)), tenant_id, None, None)
+            .where(not_twin())
+            .group_by(Rule.action)
         )
     }
     vdoms = session.execute(
         filtered(select(Rule.vdom, func.count(Rule.id)), tenant_id, None, None)
+        .where(not_twin())
         .where(Rule.vdom.is_not(None))
         .group_by(Rule.vdom)
         .order_by(Rule.vdom)

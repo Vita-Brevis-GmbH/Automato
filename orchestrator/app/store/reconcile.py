@@ -43,7 +43,7 @@ from app.models import (
     VmIp,
 )
 from app.store import naming_profiles as profile_store
-from app.store import virtual
+from app.store import parallel, virtual
 
 
 @dataclass(frozen=True)
@@ -77,6 +77,11 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     issues += _device_object_issues(session, tenant_id, prefixes)
     issues += references.checks(session, tenant_id, prefixes, ctx)
     issues += _virtual_issues(session, tenant_id, ctx)
+    # Parallele Firewalls: Abweichungen als Befund; der Vergleich bleibt fuer den Regelindex
+    # (Zwillinge) liegen, der gleich danach neu aufgebaut wird
+    comparison = parallel.compare(session, tenant_id)
+    session.info[("parallel", tenant_id)] = comparison
+    issues += comparison.issues
     _sync_findings(session, tenant_id, issues)
     counts: dict[str, int] = defaultdict(int)
     for issue in {i.key: i for i in issues}.values():

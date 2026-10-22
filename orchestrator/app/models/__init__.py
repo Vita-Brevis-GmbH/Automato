@@ -65,6 +65,7 @@ from app.models.tenant import DnsType, IpamType, Tenant
 from app.models.topology import (
     TOPOLOGY_MODELS,
     TopoContext,
+    TopoExit,
     TopoHa,
     TopoL3Out,
     TopoPeer,
@@ -143,6 +144,7 @@ __all__ = [
     "SubjectKind",
     "Tenant",
     "TopoContext",
+    "TopoExit",
     "TopoHa",
     "TopoL3Out",
     "TopoPeer",

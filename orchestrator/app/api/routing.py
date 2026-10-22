@@ -8,6 +8,9 @@
 - `GET /routing/lookup?ip=`      je Kontext die wirksame Route und vorgehende Policy-Routen
 - `GET /routing/trace?dst=&src=&start=`  Weg Hop fuer Hop von der Quelle bzw. dem Startpunkt
 - `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs` - Nachbarn mit Namen aus dem IPAM
+- `GET/POST/PUT/DELETE /routing/exits` - Anbindungen nach aussen (Internet, MPLS, WAN),
+                                 von Hand erfasst (operator), an denen ein Weg endet bzw.
+                                 nach manuellen Routen weitergeht (0.18.0)
 
 Bezeichnung eines Kontexts: eine FortiGate nur mit `root` heisst wie die Firewall, sonst
 „fw · VDOM x“; ACI „leaf · VRF Tenant:VRF“ (`label`, `display`).
@@ -15,18 +18,23 @@ Bezeichnung eines Kontexts: eine FortiGate nur mit `root` heisst wie die Firewal
 
 import ipaddress
 from collections import defaultdict
+from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.audit import reads
-from app.auth.deps import require_viewer, tenant_scope
+from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.models import (
     SourceSystem,
     TopoContext,
+    TopoExit,
     TopoHa,
     TopoL3Out,
     TopoPeer,
@@ -351,3 +359,152 @@ def l3outs(
         ]
         out.append(row)
     return out
+
+
+# -- Anbindungen nach aussen (0.18.0, von Hand erfasst) ------------------------------------
+
+EXIT_KINDS = ("internet", "mpls", "wan", "partner", "other")
+
+
+class ExitRoute(BaseModel):
+    prefix: str = Field(max_length=64)
+    target: str = Field(max_length=300)  # Knoten <Quellsystem>|<Kontext>
+
+
+class ExitIn(BaseModel):
+    tenant_id: int
+    name: str = Field(min_length=1, max_length=200)
+    kind: Literal["internet", "mpls", "wan", "partner", "other"] = "other"
+    source_system_id: int | None = None  # nur fuer diese Firewall (Interfaces/Zonen)
+    interfaces: list[str] = []  # Interfaces bzw. Zonen
+    next_hops: list[str] = []  # IPs der Gegenstelle
+    prefixes: list[str] = []  # Netze dahinter (leer = alles, was dorthin geroutet wird)
+    routes: list[ExitRoute] = []  # manuell: Praefix -> weiter beim gelesenen Knoten
+    description: str | None = Field(default=None, max_length=2000)
+
+
+def _net(value: str, what: str) -> str:
+    try:
+        return str(ipaddress.ip_network(value.strip(), strict=False))
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"{what}: kein gueltiges Netz") from None
+
+
+def _clean(session: Session, body: ExitIn) -> dict:
+    """Eingaben pruefen und vereinheitlichen (Netze in CIDR, Next-Hops als IP)."""
+    if body.source_system_id is not None:
+        src = session.get(SourceSystem, body.source_system_id)
+        if src is None or src.tenant_id != body.tenant_id:
+            raise HTTPException(status_code=422, detail="source system not in tenant")
+    hops = [str(_ip(h, "next_hops")) for h in body.next_hops if h.strip()]
+    ifaces = [i.strip() for i in body.interfaces if i.strip()]
+    if not hops and not ifaces:
+        raise HTTPException(status_code=422, detail="Next-Hop oder Interface/Zone angeben")
+    routes = []
+    for r in body.routes:
+        if paths.parse_key(r.target) is None:
+            raise HTTPException(status_code=422, detail="routes.target: <Quellsystem>|<Kontext>")
+        routes.append({"prefix": _net(r.prefix, "routes.prefix"), "target": r.target})
+    return {
+        "name": body.name.strip(),
+        "kind": body.kind,
+        "source_system_id": body.source_system_id,
+        "interfaces": ifaces,
+        "next_hops": hops,
+        "prefixes": [_net(p, "prefixes") for p in body.prefixes if p.strip()],
+        "routes": routes,
+        "description": (body.description or "").strip() or None,
+    }
+
+
+def _exit_out(e: TopoExit, names: dict[int, str]) -> dict:
+    return {
+        "id": e.id,
+        "tenant_id": e.tenant_id,
+        "name": e.name,
+        "kind": e.kind,
+        "source_system_id": e.source_system_id,
+        "source": names.get(e.source_system_id) if e.source_system_id else None,
+        "interfaces": e.interfaces or [],
+        "next_hops": e.next_hops or [],
+        "prefixes": e.prefixes or [],
+        "routes": e.routes or [],
+        "description": e.description,
+        "updated_at": e.updated_at,
+    }
+
+
+def _audit_exit(session: Session, principal: Principal, action: str, e: TopoExit) -> None:
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action=f"routing.exit.{action}",
+        subject=str(e.id),
+        detail={"tenant_id": e.tenant_id, "exit_id": e.id, "name": e.name, "kind": e.kind},
+    )
+
+
+@router.get("/exits")
+def list_exits(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    tid = _tenant(session, principal, tenant_id)
+    names = _names(session, tid)
+    rows = session.scalars(
+        select(TopoExit).where(TopoExit.tenant_id == tid).order_by(TopoExit.name, TopoExit.id)
+    )
+    return [_exit_out(e, names) for e in rows]
+
+
+@router.post("/exits", status_code=201)
+def create_exit(
+    body: ExitIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Anbindung erfassen - Operator. Nur Daten der Plattform, kein Zugriff auf Geraete."""
+    tenant_scope(principal, body.tenant_id)
+    e = TopoExit(tenant_id=body.tenant_id, **_clean(session, body))
+    session.add(e)
+    session.flush()
+    _audit_exit(session, principal, "created", e)
+    return _exit_out(e, _names(session, body.tenant_id))
+
+
+def _get_exit(session: Session, principal: Principal, exit_id: int) -> TopoExit:
+    e = session.get(TopoExit, exit_id)
+    if e is None:
+        raise HTTPException(status_code=404, detail="exit not found")
+    tenant_scope(principal, e.tenant_id)
+    return e
+
+
+@router.put("/exits/{exit_id}")
+def update_exit(
+    exit_id: int,
+    body: ExitIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    e = _get_exit(session, principal, exit_id)
+    if body.tenant_id != e.tenant_id:
+        raise HTTPException(status_code=422, detail="tenant_id must not change")
+    for key, value in _clean(session, body).items():
+        setattr(e, key, value)
+    e.updated_at = datetime.now(UTC)
+    session.flush()
+    _audit_exit(session, principal, "updated", e)
+    return _exit_out(e, _names(session, e.tenant_id))
+
+
+@router.delete("/exits/{exit_id}", status_code=204)
+def delete_exit(
+    exit_id: int,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> None:
+    e = _get_exit(session, principal, exit_id)
+    _audit_exit(session, principal, "deleted", e)
+    session.delete(e)

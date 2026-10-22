@@ -73,8 +73,15 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "ref_role",
             "site_id",
             "schedule",
+            "parallel_group",
         }
     ),
+    # Parallele Firewalls (0.18.0): Verbund gesetzt bzw. aufgeloest
+    "source.parallel_group": frozenset({"tenant_id", "group", "source_ids"}),
+    # Anbindungen nach aussen (0.18.0): von Hand gepflegte Topologie
+    "routing.exit.created": frozenset({"tenant_id", "exit_id", "name", "kind"}),
+    "routing.exit.updated": frozenset({"tenant_id", "exit_id", "name", "kind"}),
+    "routing.exit.deleted": frozenset({"tenant_id", "exit_id", "name", "kind"}),
     "reconcile.run": frozenset({"tenant_id", "findings"}),
     # NetBox-Sync (ADR 0010): nur Anzahlen, keine Inhalte
     "netbox_sync.planned": frozenset(

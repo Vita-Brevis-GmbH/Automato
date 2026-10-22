@@ -248,6 +248,44 @@ export default function RuleDetailDrawer({
                 </dd>
               </>
             )}
+            {detail.parallel && (
+              <>
+                <dt>Verbund</dt>
+                <dd>
+                  <b>{detail.parallel.group}</b>{" "}
+                  <span className="faint">parallele Firewalls – gleiche Policies sind zusammengefasst</span>
+                  {(detail.twins ?? []).length > 0 && (
+                    <div>
+                      gleich auf:{" "}
+                      {(detail.twins ?? []).map((t) => (
+                        <span key={t.rule_id} className="chip ok" style={{ marginRight: 4 }}>
+                          {t.source}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {(detail.parallel.differs ?? []).length > 0 && (
+                    <div className="faint">abweichend auf {(detail.parallel.differs ?? []).join(", ")} (siehe Findings)</div>
+                  )}
+                  {(detail.parallel.missing ?? []).length > 0 && (
+                    <div className="faint">fehlt auf {(detail.parallel.missing ?? []).join(", ")}</div>
+                  )}
+                  {detail.parallel.lead && (
+                    <div>
+                      weicht von{" "}
+                      {onRule && detail.parallel.lead_rule_id ? (
+                        <button className="linkbtn" onClick={() => onRule(detail.parallel!.lead_rule_id!)}>
+                          {detail.parallel.lead}
+                        </button>
+                      ) : (
+                        detail.parallel.lead
+                      )}{" "}
+                      ab: <span className="chip warn">{(detail.parallel.fields ?? []).join(", ")}</span>
+                    </div>
+                  )}
+                </dd>
+              </>
+            )}
             {/* ACI: eine Zone gibt es nur bei externen EPGs (L3Out) */}
             {!(aci && !detail.src_zone && !detail.dst_zone) && (
               <>
