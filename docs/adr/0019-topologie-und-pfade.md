@@ -8,7 +8,8 @@ aus ADR 0002 und das Epic E7 (ROADMAP) um; baut auf ADR 0018 (Umgebung und Kunde
 **Stufe 1 (VDOM-Kontext) umgesetzt in 0.15.0** und gegen die echten VDOMs getestet
 (2026-10-22). **Stufe 2 (Routing, HA, L3Out lesen) umgesetzt in 0.16.0** und gegen die echten
 Systeme getestet (Dev-Befunde in 0.17.0 umgesetzt). **Stufe 3, erste Fassung (Weg Hop für Hop
-mit Startpunkt) in 0.17.0;** Regel-Relevanz und „Internet“ zusammengefasst folgen.
+mit Startpunkt) in 0.17.0;** Regeln je Hop auf dem Weg in 0.22.0; Relevanz in Regeln und Doku
+sowie „Internet“ zusammengefasst folgen.
 
 Rahmen laut Anwender (2026-10-22):
 
@@ -185,8 +186,21 @@ Rahmen laut Anwender (2026-10-22):
        abgebildet.
      - Länge im Vergleich (0.20.0): je Weg „gleich lang“ bzw. „+n Hops“ gegenüber dem
        kürzesten Weg, der ein Ziel erreicht.
+   - **Regeln auf dem Weg (0.22.0, `store/policy_check.py`)** – Regel-Relevanz je Hop, erster
+     Teil:
+     - Je FortiGate-Hop werden die Policies des VDOMs in der Reihenfolge der Firewall
+       geprüft: Eingang/Ausgang (Interface bzw. Zone, `any`), Quelle, Ziel, optional Dienst.
+     - Die erste sicher passende entscheidet (erlaubt/gesperrt); ohne passende gilt
+       implizit gesperrt.
+     - Nicht prüfbare Bedingungen machen eine Policy „möglich“: Quelle/Interface unbekannt,
+       FQDN/ISDB/Geo, Benutzer/Gruppen, Zeitplan, Dienst offen. Mögliche Policies mit anderer
+       Aktion davor machen den Hop „abhängig“.
+     - Je Weg das Gesamturteil (gesperrt am ersten sperrenden Hop).
+     - Noch nicht: NAT auf dem Weg, ACI-Contracts je Hop, Relevanz in Regel-Liste und
+       Applikations-Doku.
    - Offen: Session-Sync-Paar als ein Hop, Inter-VDOM-Links als Kanten, „Internet“
-     zusammengefasst, Regel-Relevanz je Hop (Zonen-Paar → Regeln), NAT auf dem Weg.
+     zusammengefasst, Regel-Relevanz in Regeln und Doku (Regeln nur, wo der Verkehr
+     durchkommt), NAT auf dem Weg.
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde. Erster Teil in
    0.18.0: **Anbindungen nach aussen** (`topo_exit`, von Hand erfasst, Operator):
    - Art (Internet, MPLS, WAN, Partner), optional für eine Firewall, Next-Hop-IPs und/oder

@@ -236,6 +236,18 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
         bis +1 Hop (Standard), bis +2 Hops, ausblenden.
       - Die Spalte „Länge“ (0.20.0) sagt je Weg „gleich lang“ bzw. „+1 Hop“ gegenüber dem
         kürzesten Weg mit Ziel.
+    - **Regeln auf dem Weg (0.22.0):** Je Firewall bzw. FortiGate-VDOM steht in der Spalte
+      „Regeln“, welche Policy den Verkehr erlaubt oder sperrt.
+      - Die erste sicher passende Policy entscheidet, wie auf der Firewall. Ohne passende ist
+        der Verkehr implizit gesperrt.
+      - Im Feld „Dienst“ (z. B. `tcp/443`) lässt sich der Dienst angeben. Ohne Dienst ist nur
+        eine Policy mit `ALL` sicher.
+      - „möglich (…)“ nennt, was sich nicht prüfen lässt: Eingang/Quelle bei gewähltem Start,
+        FQDN/ISDB, Benutzer/Gruppen, Zeitplan, Dienst. Kann eine solche Policy vor der
+        entscheidenden greifen, ist der Hop „abhängig“.
+      - Je Weg steht das Gesamturteil („gesperrt an fw-x“). Ein Klick auf „Policy n“ öffnet
+        die Regel.
+      - NAT auf dem Weg und ACI-Contracts sind dabei noch nicht berücksichtigt.
   - **Routen:** wirksam (RIB), BGP-Pfade (bester bzw. Backup) und statische Routen (aktiv bzw.
     inaktiv); Suche, „enthält IP“ (längstes Präfix zuerst), Filter Tabelle und Kontext.
   - **BGP-Nachbarn** (mit Name aus dem IPAM und, falls gelesen, dem Knoten dahinter), **HA &

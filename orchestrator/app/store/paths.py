@@ -27,6 +27,8 @@ ein Knoten und nicht vier Wege.
   BGP-Pfad bzw. eine statische Route fuer dasselbe Praefix mit anderem Next-Hop (schwebende
   Route, Backup-Provider). Gezeigt werden Backup-Wege, die ein Ziel erreichen und hoechstens
   `slack` Hops laenger sind als der kuerzeste aktive Weg („gleiche oder fast gleiche Laenge“).
+- **Regeln auf dem Weg** (0.22.0, `store/policy_check.py`): je FortiGate-Hop die Policies, die
+  auf Ein-/Ausgang, Quelle, Ziel und Dienst passen, mit dem Urteil; je Weg das Gesamturteil.
 """
 
 import ipaddress
@@ -454,10 +456,14 @@ def trace(
     src_text: str | None = None,
     start: str | None = None,
     slack: int = 1,
+    service: tuple[str, int | None] | None = None,
 ) -> dict:
     """Weg von der Quelle (bzw. dem Startpunkt) zum Ziel: je Pfad die Hops mit Ein- und
     Ausgang (Interface, Zone), Route bzw. Policy-Route und Next-Hop, dazu das Ende - die
-    aktiven Wege und die Backup-Wege mit hoechstens `slack` Hops mehr."""
+    aktiven Wege und die Backup-Wege mit hoechstens `slack` Hops mehr; je FortiGate-Hop die
+    passenden Policies (Dienst optional, z. B. `("tcp", 443)`)."""
+    from app.store import policy_check  # Regeln je Hop - spaet importiert (Regelindex)
+
     dst = ipaddress.ip_address(dst_text.strip())
     src = ipaddress.ip_address(src_text.strip()) if src_text and src_text.strip() else None
     g = Graph(session, tenant_id)
@@ -584,12 +590,20 @@ def trace(
             "ohne Ziel)"
         )
     _mark_length(primary + shown)
+    policy_check.check_paths(session, tenant_id, primary + shown, src, dst, service)
     return {
         "start": [g.nodes[k].out() | {"via": via} for k, _, via in starts],
         "paths": primary + shown,
         "notes": notes,
         "slack": slack,
+        "service": _service_text(service),
     }
+
+
+def _service_text(service: tuple[str, int | None] | None) -> str | None:
+    if service is None:
+        return None
+    return f"{service[0]}/{service[1]}" if service[1] else service[0]
 
 
 def _signature(p: dict) -> tuple:

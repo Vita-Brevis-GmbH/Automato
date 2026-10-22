@@ -7,6 +7,32 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.22.0 – 2026-10-22
+
+Regeln auf dem Weg (ADR 0019 Stufe 3, Regel-Relevanz je Hop, erster Teil). Ohne Migration.
+
+- **Weg für IP** prüft je Firewall bzw. FortiGate-VDOM auf dem Weg die Policies – nur aus
+  den gelesenen Daten.
+  - Geprüft werden Eingang und Ausgang des Hops (Interface bzw. Zone, `any`), Quelle, Ziel und
+    optional der **Dienst** (neues Feld, z. B. `tcp/443`, `udp/53`, `tcp`, `icmp`).
+  - Die Reihenfolge ist die der Firewall: Die erste Policy, die sicher passt, entscheidet
+    (**erlaubt** bzw. **gesperrt**). Passt keine, ist der Verkehr **implizit gesperrt**.
+  - **Möglich** ist eine Policy, wenn keine Bedingung verletzt, aber eine nicht prüfbar ist:
+    Quelle oder Interface unbekannt (Start gewählt), FQDN/ISDB/Geo, Benutzer/Gruppen,
+    Zeitplan, Dienst nicht angegeben. Hat eine mögliche Policy davor eine andere Aktion, ist
+    der Hop **abhängig** – mit dem Grund.
+  - Abgeschaltete Policies zählen nicht; negierte Quelle/Ziel/Dienst werden umgekehrt.
+- **Anzeige:**
+  - Je Hop die Spalte „Regeln“ mit Urteil, entscheidender Policy und den möglichen davor;
+    „Policy n“ öffnet die Regel.
+  - Je Weg „Regeln: erlaubt / gesperrt an fw-x / abhängig an …“ in der Karte und in der
+    Übersicht.
+  - Ohne gelesene Policies heisst es „unbekannt“.
+- **Grenzen:**
+  - NAT (VIP, SNAT) ändert die Adressen auf dem Weg nicht.
+  - ACI-Contracts werden auf dem Weg noch nicht geprüft.
+- **API:** `GET /routing/trace?service=` mit `rules` je Hop und `policy` je Weg.
+
 ## 0.21.0 – 2026-10-22
 
 Erkannte Anbindungen ausblenden (Alembic `0042`). Dev-Befunde 0.20.0.

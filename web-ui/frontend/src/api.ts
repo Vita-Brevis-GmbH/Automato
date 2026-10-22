@@ -1600,12 +1600,34 @@ export interface TraceHop extends RoutingNode {
   policy?: PolicyHit; // Policy-Route bzw. SD-WAN-Regel, der der Weg folgt
   policy_routes?: PolicyHit[];
   backup?: { prefix: string; protocol: string | null; distance: number | null; reason: string }; // Backup-Weg weicht hier ab
+  rules?: HopRules; // FortiGate-Hop: passende Policies und Urteil (0.22.0)
+}
+// Policy auf dem Weg: sicher (entscheidet) bzw. möglich (`unsure` = nicht prüfbare Bedingungen)
+export interface HopRule {
+  rule_id: number;
+  external_id: string;
+  name: string;
+  action: "allow" | "deny";
+  src: string | null; // Objekt/Wert, über das die Quelle passt (any, negiert)
+  dst: string | null;
+  srcintf: string[];
+  dstintf: string[];
+  services: string[];
+  unsure: string[]; // Eingang, Ausgang, Quelle, Ziel, Dienst, Benutzer/Gruppen, Zeitplan …
+  decides: boolean;
+}
+export type PolicyVerdict = "allow" | "deny" | "implicit_deny" | "depends" | "unknown";
+export interface HopRules {
+  verdict: PolicyVerdict;
+  text: string;
+  rules: HopRule[];
 }
 export interface TracePath {
   kind?: "active" | "backup"; // aktiv (inkl. ECMP) bzw. Backup-Weg (eine Abweichung)
   deviation?: { hop: number; label: string; reason: string }; // Backup: wo und warum
   parallel?: string[]; // redundant über diese Verbünde paralleler Firewalls
   extra?: number | null; // Hops mehr als der kürzeste Weg mit Ziel (0 = gleich lang; null = ohne Ziel)
+  policy?: { verdict: "allow" | "deny" | "depends" | "unknown"; text: string } | null; // Regeln auf dem Weg
   hops: TraceHop[];
   end: {
     kind: "connected" | "fabric" | "exit" | "external" | "unknown" | "no_route" | "loop" | "max_hops";
@@ -1617,6 +1639,7 @@ export interface TraceResult {
   paths: TracePath[];
   notes: string[];
   slack?: number; // Backup-Wege mit höchstens so vielen Hops mehr als der kürzeste aktive
+  service?: string | null; // geprüfter Dienst (z. B. tcp/443)
 }
 export interface TopoPeer extends Labeled {
   id: number;
@@ -1699,9 +1722,12 @@ export const fetchRoutes = (opts: {
 export const lookupRoute = (tenantId: number, ip: string) =>
   getJSON<RouteLookup[]>(`/api/routing/lookup${qs({ tenant_id: tenantId, ip: ip.trim() })}`);
 // Weg Hop für Hop: ab der Quelle (dort angeschlossen) bzw. dem Startpunkt (RoutingNode.key)
-export const traceRoute = (tenantId: number, opts: { dst: string; src?: string; start?: string; slack?: number }) =>
+export const traceRoute = (
+  tenantId: number,
+  opts: { dst: string; src?: string; start?: string; slack?: number; service?: string },
+) =>
   getJSON<TraceResult>(
-    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim(), src: opts.src?.trim() || undefined, start: opts.start || undefined, slack: opts.slack })}`,
+    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim(), src: opts.src?.trim() || undefined, start: opts.start || undefined, slack: opts.slack, service: opts.service?.trim() || undefined })}`,
   );
 export const fetchPeers = (tenantId: number) => getJSON<TopoPeer[]>(`/api/routing/peers${qs({ tenant_id: tenantId })}`);
 export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha${qs({ tenant_id: tenantId })}`);

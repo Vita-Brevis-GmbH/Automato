@@ -481,3 +481,28 @@ test("Routing: erkannte Anbindung mit allen Routern übernehmen, Wege gleich lan
   const overview = page.locator(".card", { hasText: "Wege im Überblick" });
   await expect(overview.locator("tbody tr", { hasText: "gleich lang" })).toHaveCount(3);
 });
+
+test("Routing: Regeln auf dem Weg je Firewall", async ({ page }) => {
+  await page.goto("/#routing");
+  await page.getByPlaceholder("Quelle (IP)").fill("10.20.0.5");
+  const dst = page.getByPlaceholder("Ziel (IP)");
+  await dst.fill("203.0.113.10");
+  await page.click("button:has-text('Weg suchen')");
+  // Servernetz -> Internet: keine Policy von „server“ nach „internet“
+  const first = page.locator(".card[id^='trace-']", { hasText: "Weg 1 von 2" });
+  await expect(first).toContainText("Regeln: gesperrt an fw-05 · VDOM root");
+  await expect(first).toContainText("implizit gesperrt");
+  await expect(page.locator(".card", { hasText: "Wege im Überblick" }).locator("thead")).toContainText("Regeln");
+  // Startpunkt und Dienst: die Policy der VIP ist möglich (Eingang, Ausgang, Quelle nicht prüfbar)
+  await page.getByPlaceholder("Quelle (IP)").fill("");
+  await page.locator(".filterbar select").filter({ hasText: "Start: aus der Quelle" }).selectOption({ label: "fw-05 · VDOM root" });
+  await dst.fill("10.1.0.10");
+  await page.getByPlaceholder("Dienst, z. B. tcp/443").fill("tcp/443");
+  await page.click("button:has-text('Weg suchen')");
+  const card = page.locator(".card[id^='trace-']").first();
+  await expect(card).toContainText("abhängig");
+  await expect(card).toContainText("möglich (Eingang, Ausgang, Quelle)");
+  await card.locator("a", { hasText: "Policy 1" }).click();
+  await expect(page).toHaveURL(/#regeln\?rule=\d+/);
+  await expect(page.locator(".drawer")).toContainText("web");
+});

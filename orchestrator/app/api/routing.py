@@ -6,7 +6,8 @@
 - `GET /routing/routes`          Routen seitenweise (RIB, BGP-Pfade, statische); `ip` = Routen,
                                  die die IP enthalten, laengstes Praefix zuerst
 - `GET /routing/lookup?ip=`      je Kontext die wirksame Route und vorgehende Policy-Routen
-- `GET /routing/trace?dst=&src=&start=`  Weg Hop fuer Hop von der Quelle bzw. dem Startpunkt
+- `GET /routing/trace?dst=&src=&start=&service=`  Weg Hop fuer Hop von der Quelle bzw. dem
+                                 Startpunkt, je FortiGate-Hop die passenden Policies (0.22.0)
 - `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs` - Nachbarn mit Namen aus dem IPAM
 - `GET/POST/PUT/DELETE /routing/exits` - Anbindungen nach aussen (Internet, MPLS, WAN),
                                  von Hand erfasst (operator), an denen ein Weg endet bzw.
@@ -47,7 +48,7 @@ from app.models import (
     TopoPolicyRoute,
     TopoRoute,
 )
-from app.store import exits, paths, topology
+from app.store import exits, paths, policy_check, topology
 
 router = APIRouter(prefix="/routing", tags=["routing"])
 
@@ -236,6 +237,7 @@ def trace(
     src: str | None = None,
     start: str | None = Query(None, description="Startpunkt: <Quellsystem>|<Kontext>"),
     slack: int = Query(1, ge=0, le=3, description="Backup-Wege mit hoechstens so vielen Hops mehr"),
+    service: str | None = Query(None, max_length=16, description="Dienst, z. B. tcp/443"),
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
@@ -247,7 +249,11 @@ def trace(
         _ip(src, "src")
     if not src and not start:
         raise HTTPException(status_code=422, detail="src oder start angeben")
-    return paths.trace(session, tid, dst, src, start, slack)
+    try:
+        wanted = policy_check.parse_service(service)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return paths.trace(session, tid, dst, src, start, slack, wanted)
 
 
 def _list(session: Session, tid: int, model, source_system_id: int | None, order) -> list:

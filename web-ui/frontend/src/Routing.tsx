@@ -19,6 +19,7 @@ import {
   fetchPolicyRoutes,
   fetchRoutes,
   fetchRoutingSummary,
+  HopRules,
   Labeled,
   lookupRoute,
   NextHop,
@@ -357,6 +358,47 @@ function PathKind({ path, activeCount }: { path: TracePath; activeCount: number 
   );
 }
 
+// Regeln auf dem Weg (0.22.0): Urteil je FortiGate-Hop bzw. je Weg
+const VERDICT: Record<string, [string, string]> = {
+  allow: ["ok", "erlaubt"],
+  deny: ["crit", "gesperrt"],
+  implicit_deny: ["crit", "implizit gesperrt"],
+  depends: ["warn", "abhängig"],
+  unknown: ["", "unbekannt"],
+};
+
+function Verdict({ v, title }: { v: string; title?: string }) {
+  const [cls, label] = VERDICT[v] ?? ["", v];
+  return (
+    <span className={`chip ${cls}`} title={title}>
+      {label}
+    </span>
+  );
+}
+
+// Policies eines Hops: die entscheidende und die möglichen davor (mit dem, was nicht prüfbar ist)
+function HopRulesCell({ r }: { r?: HopRules }) {
+  if (!r) return <Dash />;
+  return (
+    <div>
+      <Verdict v={r.verdict} title={r.text} />
+      <div className="objs" style={{ marginTop: 2 }}>
+        {r.rules.map((p) => (
+          <span key={p.rule_id} className={p.decides ? undefined : "faint"}>
+            <a href={`#regeln?rule=${p.rule_id}`} title="Regel öffnen">
+              Policy {p.external_id}
+            </a>
+            {p.name ? ` „${p.name}“` : ""} · {p.action === "allow" ? "erlauben" : "sperren"}
+            {p.services.length ? ` · ${p.services.join(", ")}` : ""}
+            {p.unsure.length ? ` · möglich (${p.unsure.join(", ")})` : ""}
+          </span>
+        ))}
+      </div>
+      {r.rules.length === 0 && <div className="faint">{r.text}</div>}
+    </div>
+  );
+}
+
 // Länge im Vergleich zum kürzesten Weg mit Ziel: „gleich lang“ bzw. „+1 Hop“
 function Length({ extra }: { extra?: number | null }) {
   if (extra == null)
@@ -402,6 +444,7 @@ function PathOverview({ trace }: { trace: TraceResult }) {
               <th>Next-Hops</th>
               <th className="num">Hops</th>
               <th>Länge</th>
+              <th>Regeln</th>
               <th>Ende</th>
             </tr>
           </thead>
@@ -440,6 +483,7 @@ function PathOverview({ trace }: { trace: TraceResult }) {
                   <td>
                     <Length extra={p.extra} />
                   </td>
+                  <td>{p.policy ? <Verdict v={p.policy.verdict} title={p.policy.text} /> : <Dash />}</td>
                   <td>
                     <span className={`chip ${cls}`}>{label}</span>
                   </td>
@@ -486,6 +530,11 @@ function TraceCard({
           <span className="chip info">redundant · Verbund {path.parallel.join(", ")}</span>
         ) : null}
         {compare && path.extra != null && <Length extra={path.extra} />}
+        {path.policy && (
+          <span className={`chip ${VERDICT[path.policy.verdict]?.[0] ?? ""}`} title="Regeln auf dem Weg">
+            Regeln: {path.policy.text}
+          </span>
+        )}
         <span className="faint">{path.end.text}</span>
         {capturable && (
           <button
@@ -514,6 +563,7 @@ function TraceCard({
               <th>Eingang</th>
               <th>Entscheidung</th>
               <th>Ausgang · Next-Hop</th>
+              <th>Regeln</th>
             </tr>
           </thead>
           <tbody>
@@ -567,6 +617,13 @@ function TraceCard({
                     )}
                   </td>
                   <td>{h.egress ? <Port p={h.egress} /> : <Dash />}</td>
+                  <td>
+                    {h.kind === "vrf" ? (
+                      <span className="faint">ACI-Contracts: nicht geprüft</span>
+                    ) : (
+                      <HopRulesCell r={h.rules} />
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -660,6 +717,7 @@ function LookupTab({
   const [dst, setDst] = useState("");
   const [trace, setTrace] = useState<TraceResult | null>(null);
   const [slack, setSlack] = useState("1"); // Backup-Wege: Hops mehr als der kürzeste aktive; "" = keine
+  const [service, setService] = useState(""); // Dienst für die Regeln auf dem Weg, z. B. tcp/443
   const [rows, setRows] = useState<RouteLookup[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -671,7 +729,7 @@ function LookupTab({
     setRows(null);
     const job =
       src.trim() || start
-        ? traceRoute(tenantId, { dst, src, start, slack: slack === "" ? 0 : Number(slack) }).then(setTrace)
+        ? traceRoute(tenantId, { dst, src, start, service, slack: slack === "" ? 0 : Number(slack) }).then(setTrace)
         : lookupRoute(tenantId, dst).then(setRows);
     job.catch(setError).finally(() => setBusy(false));
   };
@@ -715,6 +773,15 @@ function LookupTab({
             onKeyDown={enter}
           />
         </div>
+        <div className="search" style={{ flex: "0 1 150px" }}>
+          <input
+            placeholder="Dienst, z. B. tcp/443"
+            title="Dienst für die Regeln auf dem Weg (tcp/443, udp/53, tcp, icmp) – leer: nur Policies mit ALL sicher"
+            value={service}
+            onChange={(e) => setService(e.target.value)}
+            onKeyDown={enter}
+          />
+        </div>
         <select
           className="sel"
           value={slack}
@@ -730,8 +797,9 @@ function LookupTab({
           {busy ? "Suche…" : "Weg suchen"}
         </button>
         <span className="faint">
-          Hop für Hop: Policy-Routen und SD-WAN-Regeln, die sicher passen, gehen vor; sonst das längste Präfix.
-          Ohne Quelle und Start: je Kontext die wirksame Route.
+          Hop für Hop: Policy-Routen und SD-WAN-Regeln, die sicher passen, gehen vor; sonst das längste Präfix. Je
+          Firewall die passenden Policies (erste sichere entscheidet). Ohne Quelle und Start: je Kontext die wirksame
+          Route.
         </span>
       </div>
       <ErrorBox error={error} prefix="Weg suchen" />
