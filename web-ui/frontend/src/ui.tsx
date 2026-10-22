@@ -38,6 +38,15 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   tenants: <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6" />,
+  // Kunden (ADR 0018): Ausschnitte der Umgebung
+  customers: (
+    <>
+      <rect x="3" y="3" width="8" height="8" rx="1" />
+      <rect x="13" y="3" width="8" height="8" rx="1" />
+      <rect x="3" y="13" width="8" height="8" rx="1" />
+      <path d="M13 17h8M17 13v8" />
+    </>
+  ),
   dict: (
     <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
   ),

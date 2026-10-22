@@ -1852,3 +1852,68 @@ export const dismissExits = (tenantId: number, ips: string[], undo = false) =>
 export const createExit = (body: TopoExitIn) => sendJSON<TopoExit>("/api/routing/exits", "POST", body);
 export const updateExit = (id: number, body: TopoExitIn) => sendJSON<TopoExit>(`/api/routing/exits/${id}`, "PUT", body);
 export const deleteExit = (id: number) => sendJSON<void>(`/api/routing/exits/${id}`, "DELETE");
+
+// Kunden als Ausschnitt der Umgebung (ADR 0018, 0.30.0): Selektoren statt Listen,
+// Zugehörigkeit abgeleitet (nach jedem Lauf und beim Speichern)
+export type SelectorKind =
+  | "aci_tenant"
+  | "aci_vrf"
+  | "aci_ap"
+  | "aci_epg"
+  | "aci_bd"
+  | "fw_vdom"
+  | "fw_zone"
+  | "fw_interface"
+  | "prefix"
+  | "code";
+export interface CustomerSelector {
+  id?: number;
+  kind: SelectorKind;
+  value: string;
+  source_system_id: number | null; // FortiGate-Selektoren: nur dieses Quellsystem
+  exclude: boolean;
+}
+export type CustomerMemberKind = "epg" | "net" | "object" | "rule" | "vm";
+export type CustomerCounts = Record<CustomerMemberKind, number>;
+export interface Customer {
+  id: number;
+  tenant_id: number;
+  name: string;
+  code: string | null;
+  description: string | null;
+  shared: boolean; // geteilter Teil der Umgebung (gilt für alle Kunden)
+  derived_at: string | null;
+  selectors: CustomerSelector[];
+  counts: CustomerCounts;
+}
+export interface CustomerIn {
+  tenant_id: number;
+  name: string;
+  code: string | null;
+  description: string | null;
+  shared: boolean;
+  selectors: CustomerSelector[];
+}
+export interface CustomerPreview {
+  counts: CustomerCounts;
+  samples: Record<CustomerMemberKind, string[]>;
+}
+export interface CustomerSuggestion {
+  name: string;
+  code: string | null;
+  shared: boolean;
+  epgs: number;
+  selectors: CustomerSelector[];
+}
+export type Unassigned = Record<"epg" | "rule" | "vm", { count: number; samples: string[] }>;
+export const fetchCustomers = (tenantId: number) => getJSON<Customer[]>(`/api/customers${qs({ tenant_id: tenantId })}`);
+export const createCustomer = (body: CustomerIn) => sendJSON<Customer>("/api/customers", "POST", body);
+export const updateCustomer = (id: number, body: CustomerIn) => sendJSON<Customer>(`/api/customers/${id}`, "PUT", body);
+export const deleteCustomer = (id: number) => sendJSON<void>(`/api/customers/${id}`, "DELETE");
+export const previewCustomer = (tenantId: number, selectors: CustomerSelector[]) =>
+  sendJSON<CustomerPreview>("/api/customers/preview", "POST", { tenant_id: tenantId, selectors });
+export const fetchCustomerSuggestions = (tenantId: number) =>
+  getJSON<CustomerSuggestion[]>(`/api/customers/suggestions${qs({ tenant_id: tenantId })}`);
+export const fetchUnassigned = (tenantId: number) => getJSON<Unassigned>(`/api/customers/unassigned${qs({ tenant_id: tenantId })}`);
+export const fetchCustomerMembers = (id: number, kind: CustomerMemberKind) =>
+  getJSON<{ id: number | null; name: string; via: string | null }[]>(`/api/customers/${id}/members${qs({ kind })}`);

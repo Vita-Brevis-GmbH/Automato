@@ -2,7 +2,8 @@
 
 ## Status
 
-**Entwurf** (2026-10-22) – zur Durchsicht durch den Anwender. Präzisiert ADR 0004
+**Entwurf** (2026-10-22) – zur Durchsicht durch den Anwender; Schritt 1 umgesetzt in 0.30.0
+(siehe „Umsetzung“). Präzisiert ADR 0004
 (Ergänzung E1, Ebene über dem Mandanten) und ADR 0007 (Rechte); betrifft R13 und R14.
 
 Grundsatzentscheide des Anwenders (2026-10-22):
@@ -108,6 +109,24 @@ Grundsatzentscheide des Anwenders (2026-10-22):
 
 1. Modell und Migration, Ableitung der Zugehörigkeit, API für Kunden und Selektoren mit
    Vorschau, Ansicht „Kunden“ unter Administration, Umschalter „Kunde: alle | …“.
+   **Umgesetzt in 0.30.0** (Alembic `0044`, `store/customers.py`, `/customers`):
+   - `customer` (Name, Kürzel, Beschreibung, `shared` = geteilter Teil),
+     `customer_selector` (Art, Wert, Quellsystem, ausschliessen), `customer_member`
+     (abgeleitet: EPG, Netz, Werte-Objekt, Regel, VM mit Grund).
+   - Selektoren: ACI-Tenant, VRF (aufgelöst wie im APIC: eigener Tenant, sonst `common`), AP,
+     EPG (DN bzw. Pfad), BD; VDOM, Zone, Interface (je Quellsystem); Präfix; Kürzel (Token in
+     Tenant/VRF/AP bzw. in Objekt- und VM-Namen). Ausschliessende Präfixe werden aus den
+     Netzen herausgeschnitten.
+   - Netze des Kunden: Präfixe, Subnetze der EPGs bzw. BDs (nicht die externer EPGs) und die
+     Netze an zugeordneten Interfaces. Regeln: Contracts mit einer EPG des Kunden,
+     Firewall-Regeln über VDOM/Zone/Interface bzw. mit Quelle oder Ziel in einem Netz des
+     Kunden (ohne `any`).
+   - Abgeleitet nach jedem Lauf (auch IPAM), beim Speichern und nach dem Löschen eines
+     Quellsystems; Vorschau, Vorschläge je ACI-Tenant (`common` geteilt), „keinem Kunden
+     zugeordnet“; Audit `customer.*`.
+   - Noch nicht: der Umschalter „Kunde: …“ mit Filter (Schritt 2), Merkmale aus dem IPAM,
+     NAT und Findings als Mitglieder, Relevanz nach Pfad (ADR 0019), „Umgebung“ als Name in
+     der Oberfläche.
 2. Kunden-Filter in allen Ansichten (für Betreuer).
 3. Kunden-Benutzer: `customer_ids` in Keycloak, serverseitige Einschränkung aller Lese-APIs,
    Tests je Endpunkt.

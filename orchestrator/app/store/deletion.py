@@ -16,6 +16,9 @@ from app.models import (
     Application,
     ApplicationMember,
     CollectorRun,
+    Customer,
+    CustomerMember,
+    CustomerSelector,
     DeviceObject,
     Epg,
     EpgEndpoint,
@@ -41,6 +44,7 @@ from app.models import (
     VmNic,
     Zone,
 )
+from app.store import customers
 from app.store import rules as rules_store
 
 
@@ -119,6 +123,8 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
     )
     counts["vms"] = _delete_vms(session, Vm.source_system_id == source.id)
     session.execute(delete(Portgroup).where(Portgroup.source_system_id == source.id))
+    # Kunden (ADR 0018): Selektoren dieses Quellsystems fallen weg
+    session.execute(delete(CustomerSelector).where(CustomerSelector.source_system_id == source.id))
     session.execute(delete(RulePairDecision).where(RulePairDecision.source_system_id == source.id))
     counts["epgs"] = _delete_source_epgs(session, source.id)
     source.reference_run_id = None
@@ -134,8 +140,11 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
         .where(CollectorRun.source_system_id == source.id)
         .values(source_system_id=None)
     )
+    tid = source.tenant_id
     session.delete(source)
     session.flush()
+    if tid is not None:
+        customers.derive(session, tid)  # Zugehoerigkeit ohne die Daten des Quellsystems
     return counts
 
 
@@ -185,6 +194,10 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
 
     counts["objects"] = _count(session, delete(NetworkObject).where(NetworkObject.tenant_id == tid))
     counts["zones"] = _count(session, delete(Zone).where(Zone.tenant_id == tid))
+    customer_ids = select(Customer.id).where(Customer.tenant_id == tid)
+    session.execute(delete(CustomerMember).where(CustomerMember.tenant_id == tid))
+    session.execute(delete(CustomerSelector).where(CustomerSelector.customer_id.in_(customer_ids)))
+    session.execute(delete(Customer).where(Customer.tenant_id == tid))
     app_ids = select(Application.id).where(Application.tenant_id == tid)
     session.execute(delete(ApplicationMember).where(ApplicationMember.application_id.in_(app_ids)))
     counts["applications"] = _count(

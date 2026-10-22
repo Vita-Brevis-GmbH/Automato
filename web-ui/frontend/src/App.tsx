@@ -14,6 +14,7 @@ import {
 } from "./api";
 import Agents from "./Agents";
 import AppDoc from "./AppDoc";
+import Customers from "./Customers";
 import * as auth from "./auth";
 import Design from "./Design";
 import Findings from "./Findings";
@@ -44,6 +45,7 @@ export type View =
   | "design"
   | "users"
   | "tenants"
+  | "kunden"
   | "dict"
   | "agents"
   | "netbox"
@@ -69,6 +71,7 @@ const NAV: NavEntry[] = [
   { key: "design", label: "Netzwerkdesign", icon: "design", section: "doc" },
   { key: "users", label: "Benutzer & Rollen", icon: "users", section: "admin" },
   { key: "tenants", label: "Mandanten & Standorte", icon: "tenants", section: "admin" },
+  { key: "kunden", label: "Kunden", icon: "customers", section: "admin" },
   { key: "dict", label: "Namensprofile", icon: "dict", section: "admin" },
   { key: "agents", label: "Collector-Agenten", icon: "agents", section: "admin", adminOnly: true },
   { key: "laeufe", label: "Läufe", icon: "play", section: "admin" },
@@ -513,6 +516,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                 onTenantsChanged={loadTenants}
               />
             )}
+            {current === "kunden" && <Customers tenantId={tenantId} canEdit={me.isAdmin || me.isOperator} />}
             {current === "dict" && <NamingProfiles me={me} tenants={tenants ?? []} />}
             {current === "agents" && <Agents tenants={tenants ?? []} tenantId={tenantId} onGo={go} />}
             {current === "netbox" && <NetBoxSync tenantId={tenantId} tenantLabel={tenantLabel} onGo={go} />}

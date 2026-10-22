@@ -16,6 +16,7 @@ from app.models.application import (
 from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.collector_run import CollectorRun, RunStatus
+from app.models.customer import Customer, CustomerMember, CustomerSelector
 from app.models.device_object import (
     ADDRESS_CATEGORIES,
     GROUP_CATEGORIES,
@@ -159,4 +160,7 @@ __all__ = [
     "VmNic",
     "Zone",
     "rule_service",
+    "Customer",
+    "CustomerMember",
+    "CustomerSelector",
 ]

@@ -7,6 +7,35 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.30.0 – 2026-10-22
+
+Kunden als Ausschnitt der Umgebung (ADR 0018, Schritt 1). Alembic `0044`.
+
+- **Kunden mit Selektoren** (Administration → Kunden, Operator): statt Listen „gehört dazu,
+  wenn …“.
+  - ACI-Tenant, VRF, Application Profile, EPG, Bridge Domain; VDOM, Zone, Interface (je
+    Firewall); Netz; Kürzel aus der Namenskonvention.
+  - Je Selektor einschliessen oder ausschliessen, z. B. „Tenant TE_ka ohne AP TE_ka/AP_900“
+    bzw. ein Netz ohne ein Teilnetz.
+  - Ein Kunde kann der **geteilte Teil** der Umgebung sein (z. B. Tenant common).
+- **Zugehörigkeit abgeleitet** – nach jedem Lauf, beim Speichern und nach dem Löschen eines
+  Quellsystems, nie von Hand:
+  - EPGs; Netze (Präfixe, Subnetze der EPGs, Netze an zugeordneten Interfaces);
+    Werte-Objekte in diesen Netzen;
+  - Regeln (Contracts mit einer EPG des Kunden; Firewall-Regeln im VDOM, an Zone bzw.
+    Interface oder mit Quelle bzw. Ziel im Netz des Kunden, ohne `any`);
+  - VMs (Portgruppe einer EPG, IP im Netz, Kürzel im Namen).
+  - Ein Element darf mehreren Kunden gehören. Neue EPGs bzw. Netze gehören nach dem nächsten
+    Lauf ohne Pflege dazu.
+- **Vorschau** beim Bearbeiten (Anzahl und Beispiele je Art), **Zugehörigkeit je Art** mit
+  Grund, **Vorschläge** je ACI-Tenant (Kürzel aus `TE_<kürzel>`, `common` als geteilter
+  Teil) und **keinem Kunden zugeordnet** (EPGs, Regeln, VMs).
+- **API:** `/customers` (CRUD, `preview`, `suggestions`, `unassigned`, `{id}/members`), Audit
+  `customer.created|updated|deleted`.
+- Messskript: Ableitung bei 3000 Regeln und 9500 Objekten rund 0,7 s.
+- Tests (Selektoren, Ausschluss, Kürzel, neuer Lauf, Löschen, Rechte, UI).
+- Noch nicht: Kunden-Filter in den Ansichten (Schritt 2), Kunden-Benutzer (Schritt 3).
+
 ## 0.29.0 – 2026-10-22
 
 Verbund bzw. Session-Sync-Paar als ein Hop im Weg (ADR 0019 Punkt 4/5). Ohne Migration.

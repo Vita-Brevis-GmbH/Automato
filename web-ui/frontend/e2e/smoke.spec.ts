@@ -14,6 +14,7 @@ const VIEWS: [string, string][] = [
   ["design", "Netzwerkdesign"],
   ["users", "Benutzer & Rollen"],
   ["tenants", "Mandanten & Standorte"],
+  ["kunden", "Kunden"],
   ["dict", "Namensprofile"],
   ["agents", "Collector-Agenten"],
   ["netbox", "NetBox-Sync"],

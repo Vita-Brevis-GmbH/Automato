@@ -298,3 +298,10 @@ if name:
         f"GET /appdoc/systems/{name}",
         lambda: ok(c.get(f"/appdoc/systems/{name}", params=p, headers=H)),
     )
+# Kunden (ADR 0018): Ableitung ueber Netze - nach jedem Lauf und beim Speichern eines Kunden
+body = {"tenant_id": tid, "name": "Bench-Kunde",
+        "selectors": [{"kind": "prefix", "value": "10.0.0.0/16"},
+                      {"kind": "prefix", "value": "10.0.3.0/24", "exclude": True}]}  # fmt: skip
+cust = timed("POST /customers (Netz, Ausschluss)",
+             lambda: ok(c.post("/customers", json=body, headers=H), 201))  # fmt: skip
+print("  Kunde:", cust.json()["counts"])

@@ -126,6 +126,10 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         {"application_id", "tenant_id", "kind", "ref", "count", "suggestion"}
     ),
     "application.member_removed": frozenset({"application_id", "tenant_id", "kind", "ref"}),
+    # Kunden als Ausschnitt der Umgebung (ADR 0018): Name und Anzahl der Selektoren
+    "customer.created": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
+    "customer.updated": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
+    "customer.deleted": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     # Lesezugriffs-Audit (per Mandant zuschaltbar, ADR 0007 D5)
     "read.rules": frozenset({"tenant_id", "resource"}),
     "read.nat": frozenset({"tenant_id", "resource"}),

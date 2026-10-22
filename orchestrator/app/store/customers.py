@@ -1,0 +1,551 @@
+"""Zugehoerigkeit der Kunden ableiten (ADR 0018, Schritt 1).
+
+Ein Kunde ist ein Ausschnitt der Umgebung (Mandant), beschrieben durch Selektoren
+(`models/customer.py`). Daraus folgt je Kunde, was ihm gehoert:
+
+- **EPGs:** ACI-Tenant, VRF (aufgeloest wie im APIC: eigener Tenant, sonst `common`),
+  Application Profile, EPG (DN bzw. `Tenant/AP/EPG`), Bridge Domain bzw. das Kuerzel in
+  Tenant, VRF oder AP (`TE_<kuerzel>`).
+- **Netze:** Praefixe von Hand, die Subnetze der EPGs bzw. ihrer Bridge Domains (ohne die
+  Subnetze externer EPGs, z. B. 0.0.0.0/0) und die Netze an den Interfaces zugeordneter
+  VDOMs, Zonen bzw. Interfaces. Ausgeschlossene Praefixe werden herausgeschnitten.
+- **Werte-Objekte:** deren IP, Netz bzw. Bereich ganz in einem Netz des Kunden liegt, bzw.
+  mit dem Kuerzel im Namen.
+- **Regeln:** ACI-Contracts mit einer EPG des Kunden; Firewall-Regeln in einem VDOM des
+  Kunden, mit einer Zone bzw. einem Interface des Kunden oder deren Quelle bzw. Ziel ein Netz
+  des Kunden beruehrt (ohne `any`).
+- **VMs:** an einer Portgruppe einer EPG des Kunden, mit einer IP in seinen Netzen bzw. mit
+  dem Kuerzel im Namen.
+
+Ausschliessende Selektoren nehmen ihre Treffer wieder heraus. Ein Element darf mehreren
+Kunden gehoeren. Die Zugehoerigkeit ist abgeleiteter Zustand: nach jedem Lauf und bei
+geaenderten Selektoren neu berechnet (`derive`). Nur lesend gegenueber den Quellsystemen.
+Noch nicht: Merkmale aus dem IPAM (NetBox-Tenant), NAT und Findings, Relevanz nach Pfad.
+"""
+
+import bisect
+import ipaddress
+import re
+from collections import defaultdict
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+
+from sqlalchemy import delete, func, select
+from sqlalchemy.orm import Session
+
+from app.models import (
+    Customer,
+    CustomerMember,
+    Epg,
+    EpgSubnet,
+    InvInterface,
+    NetworkObject,
+    Portgroup,
+    Rule,
+    RuleDomain,
+    RuleEndpoint,
+    RuleIpRange,
+    Vm,
+    VmIp,
+    VmNic,
+    Zone,
+)
+from app.store import aci_relevance
+from app.store import epgs as epg_store
+from app.store.topology import ip_hex
+
+_TOKEN = re.compile(r"[_\-|/.:\s]+")
+SAMPLES = 5  # Beispiele je Art in der Vorschau
+# Tenants der Fabric selbst - keine Kunden-Vorschlaege
+_FABRIC_TENANTS = {"common", "infra", "mgmt"}
+
+Net = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+def tokens(*names: str | None) -> set[str]:
+    """Teile von Namen (`TE_ka`, `web01-007-ka`) in Kleinbuchstaben."""
+    return {t for n in names if n for t in _TOKEN.split(n.casefold()) if t}
+
+
+def _net(value: str | None) -> Net | None:
+    try:
+        return ipaddress.ip_network((value or "").strip(), strict=False)
+    except ValueError:
+        return None
+
+
+def _bounds(value: str | None) -> tuple[int, int, int] | None:
+    """(Familie, erste, letzte) Adresse eines Werts: IP, Netz oder Bereich a-b."""
+    text = (value or "").strip()
+    try:
+        if "-" in text:
+            a, _, b = text.partition("-")
+            lo, hi = ipaddress.ip_address(a.strip()), ipaddress.ip_address(b.strip())
+        else:
+            n = ipaddress.ip_network(text, strict=False)
+            lo, hi = n.network_address, n.broadcast_address
+    except ValueError:
+        return None
+    return (lo.version, int(lo), int(hi)) if lo.version == hi.version else None
+
+
+@dataclass
+class Selector:
+    kind: str
+    value: str
+    source_system_id: int | None = None
+    exclude: bool = False
+
+
+@dataclass
+class Scope:
+    """Was die Selektoren eines Kunden erfassen: je Art id -> Grund (Selektor)."""
+
+    epg: dict[int, str] = field(default_factory=dict)
+    net: dict[str, str] = field(default_factory=dict)  # CIDR -> Grund
+    object: dict[int, str] = field(default_factory=dict)
+    rule: dict[int, str] = field(default_factory=dict)
+    vm: dict[int, str] = field(default_factory=dict)
+
+    def counts(self) -> dict[str, int]:
+        return {k: len(getattr(self, k)) for k in ("epg", "net", "object", "rule", "vm")}
+
+
+def _label(s: Selector) -> str:
+    names = {
+        "aci_tenant": "Tenant",
+        "aci_vrf": "VRF",
+        "aci_ap": "AP",
+        "aci_epg": "EPG",
+        "aci_bd": "BD",
+        "fw_vdom": "VDOM",
+        "fw_zone": "Zone",
+        "fw_interface": "Interface",
+        "prefix": "Netz",
+        "code": "Kürzel",
+    }
+    return f"{names.get(s.kind, s.kind)} {s.value}"
+
+
+class _Data:
+    """Was die Auswertung braucht - einmal je Mandant geladen (auch fuer mehrere Kunden)."""
+
+    def __init__(self, session: Session, tenant_id: int):
+        self.session = session
+        self.tenant_id = tenant_id
+        self.classifier = aci_relevance.Classifier(session, tenant_id)
+        self.epgs = list(session.scalars(select(Epg).where(Epg.tenant_id == tenant_id)))
+        self.vrf = {e.id: self.classifier.vrf_of(e) for e in self.epgs}
+        self.epg_nets: dict[int, list[Net]] = defaultdict(list)
+        ids = [e.id for e in self.epgs]
+        if ids:
+            for s in session.scalars(
+                select(EpgSubnet).where(
+                    EpgSubnet.epg_id.in_(ids), EpgSubnet.origin.in_(("epg", "bd"))
+                )
+            ):
+                net = _net(s.ip)
+                if net is not None:
+                    self.epg_nets[s.epg_id].append(net)
+        self.interfaces = list(
+            session.execute(
+                select(
+                    InvInterface.source_system_id,
+                    InvInterface.name,
+                    InvInterface.vdom,
+                    InvInterface.zone,
+                    InvInterface.ips,
+                ).where(InvInterface.tenant_id == tenant_id, InvInterface.vdom.is_not(None))
+            )
+        )
+        self.zones = dict(
+            session.execute(select(Zone.id, Zone.name).where(Zone.tenant_id == tenant_id)).all()
+        )
+
+    # -- EPGs --------------------------------------------------------------------------
+
+    def epg_matches(self, s: Selector) -> set[int]:
+        v = s.value.strip().casefold()
+        out = set()
+        for e in self.epgs:
+            t, ap, bd = (e.aci_tenant or "").casefold(), (e.ap or ""), (e.bd or "")
+            vrf = (self.vrf.get(e.id) or "").casefold()
+            if s.kind == "aci_tenant":
+                hit = t == v
+            elif s.kind == "aci_vrf":
+                hit = vrf == v if ":" in v else vrf.split(":")[-1] == v
+            elif s.kind == "aci_ap":
+                hit = bool(ap) and f"{t}/{ap.casefold()}" == v
+            elif s.kind == "aci_epg":
+                label = epg_store.inventory_label(e).casefold()
+                hit = (e.dn or "").casefold() == v or label == v
+            elif s.kind == "aci_bd":
+                hit = bool(bd) and f"{t}/{bd.casefold()}" == v
+            elif s.kind == "code":
+                hit = v in tokens(e.aci_tenant, vrf, e.ap)
+            else:
+                hit = False
+            if hit:
+                out.add(e.id)
+        return out
+
+    # -- Firewall ----------------------------------------------------------------------
+
+    def _fw_hit(self, s: Selector, sid: int, vdom: str | None, names: Iterable[str]) -> bool:
+        if s.source_system_id is not None and s.source_system_id != sid:
+            return False
+        v = s.value.strip().casefold()
+        if s.kind == "fw_vdom":
+            return (vdom or "root").casefold() == v
+        return v in {n.casefold() for n in names if n}
+
+    def interface_nets(self, s: Selector) -> set[Net]:
+        out = set()
+        for sid, name, vdom, zone, ips in self.interfaces:
+            names = [zone] if s.kind == "fw_zone" else [name]
+            if self._fw_hit(s, sid, vdom, names):
+                for ip in ips or []:
+                    try:
+                        out.add(ipaddress.ip_interface(ip).network)
+                    except ValueError:
+                        continue
+        return out
+
+    def fw_rules(self, s: Selector) -> set[int]:
+        out = set()
+        rows = self.session.execute(
+            select(
+                Rule.id,
+                Rule.source_system_id,
+                Rule.vdom,
+                Rule.src_zone_id,
+                Rule.dst_zone_id,
+                Rule.raw,
+            ).where(
+                Rule.tenant_id == self.tenant_id, Rule.domain == RuleDomain.FIREWALL
+            )  # fmt: skip
+        )
+        for rid, sid, vdom, src_z, dst_z, raw in rows:
+            if s.kind == "fw_zone":
+                names = [self.zones.get(src_z), self.zones.get(dst_z)]
+            elif s.kind == "fw_interface":
+                raw = raw if isinstance(raw, dict) else {}
+                names = [
+                    str(i.get("name"))
+                    for key in ("srcintf", "dstintf")
+                    for i in raw.get(key) or []
+                    if isinstance(i, dict)
+                ]
+            else:
+                names = []
+            if self._fw_hit(s, sid, vdom, [n for n in names if n]):
+                out.add(rid)
+        return out
+
+
+def _cut(nets: dict[Net, str], removed: list[Net]) -> dict[Net, str]:
+    """Ausgeschlossene Praefixe aus den Netzen herausschneiden."""
+    out = dict(nets)
+    for x in removed:
+        for net in list(out):
+            if net.version != x.version or not net.overlaps(x):
+                continue
+            why = out.pop(net)
+            if not net.subnet_of(x):
+                for rest in net.address_exclude(x):
+                    out[rest] = why
+    return out
+
+
+class _Ranges:
+    """Nicht ueberlappende Netze je Familie fuer schnelles „liegt ganz darin“."""
+
+    def __init__(self, nets: Iterable[Net]):
+        self.nets: dict[int, list[Net]] = {}
+        self.starts: dict[int, list[int]] = {}
+        for version in (4, 6):
+            merged = list(ipaddress.collapse_addresses(n for n in nets if n.version == version))
+            self.nets[version] = merged
+            self.starts[version] = [int(n.network_address) for n in merged]
+
+    def covers(self, family: int, lo: int, hi: int) -> bool:
+        starts, nets = self.starts.get(family, []), self.nets.get(family, [])
+        i = bisect.bisect_right(starts, lo) - 1
+        return i >= 0 and hi <= int(nets[i].broadcast_address)
+
+    def items(self) -> Iterable[Net]:
+        for merged in self.nets.values():
+            yield from merged
+
+
+def evaluate(session: Session, tenant_id: int, selectors: list[Selector],
+             data: _Data | None = None) -> Scope:  # fmt: skip
+    """Was die Selektoren erfassen (siehe Modul) - ohne zu speichern (Vorschau)."""
+    data = data or _Data(session, tenant_id)
+    scope = Scope()
+    include = [s for s in selectors if not s.exclude]
+    exclude = [s for s in selectors if s.exclude]
+    aci_kinds = ("aci_tenant", "aci_vrf", "aci_ap", "aci_epg", "aci_bd", "code")
+
+    # EPGs: eingeschlossene ohne ausgeschlossene
+    dropped = set().union(*(data.epg_matches(s) for s in exclude if s.kind in aci_kinds))
+    for s in include:
+        if s.kind in aci_kinds:
+            for eid in data.epg_matches(s) - dropped:
+                scope.epg.setdefault(eid, _label(s))
+
+    # Netze: von Hand, aus den EPGs, an den Interfaces der Firewall-Selektoren
+    nets: dict[Net, str] = {}
+    for s in include:
+        if s.kind == "prefix" and (net := _net(s.value)) is not None:
+            nets.setdefault(net, _label(s))
+        elif s.kind in ("fw_vdom", "fw_zone", "fw_interface"):
+            for net in data.interface_nets(s):
+                nets.setdefault(net, _label(s))
+    by_id = {e.id: e for e in data.epgs}
+    for eid in scope.epg:
+        for net in data.epg_nets.get(eid, []):
+            nets.setdefault(net, f"EPG {epg_store.inventory_label(by_id[eid])}")
+    removed = [n for s in exclude if s.kind == "prefix" if (n := _net(s.value)) is not None]
+    for s in exclude:
+        if s.kind in ("fw_vdom", "fw_zone", "fw_interface"):
+            removed += list(data.interface_nets(s))
+    nets = _cut(nets, removed)
+    scope.net = {str(n): why for n, why in sorted(nets.items(), key=lambda x: _net_key(x[0]))}
+    ranges = _Ranges(nets)
+    codes_in = {s.value.strip().casefold() for s in include if s.kind == "code"}
+    codes_out = {s.value.strip().casefold() for s in exclude if s.kind == "code"}
+
+    # Werte-Objekte: ganz in einem Netz des Kunden bzw. mit dem Kuerzel im Namen
+    for oid, name, value in session.execute(
+        select(NetworkObject.id, NetworkObject.name, NetworkObject.value).where(
+            NetworkObject.tenant_id == tenant_id
+        )
+    ):
+        names = tokens(name)
+        if names & codes_out:
+            continue
+        b = _bounds(value)
+        if b is not None and ranges.covers(*b):
+            scope.object[oid] = "Netz des Kunden"
+        elif names & codes_in:
+            scope.object[oid] = f"Kürzel {sorted(names & codes_in)[0]}"
+
+    # Regeln: Contracts ueber EPGs, Firewall-Regeln ueber VDOM/Zone/Interface bzw. Netze
+    if scope.epg:
+        for rid, eid in session.execute(
+            select(RuleEndpoint.rule_id, RuleEndpoint.epg_id)
+            .join(Rule, Rule.id == RuleEndpoint.rule_id)
+            .where(Rule.tenant_id == tenant_id, RuleEndpoint.epg_id.in_(list(scope.epg)))
+        ):
+            scope.rule.setdefault(rid, f"EPG {epg_store.inventory_label(by_id[eid])}")
+    fw_out = set().union(
+        *(data.fw_rules(s) for s in exclude if s.kind in ("fw_vdom", "fw_zone", "fw_interface"))
+    )
+    for s in include:
+        if s.kind in ("fw_vdom", "fw_zone", "fw_interface"):
+            for rid in data.fw_rules(s) - fw_out:
+                scope.rule.setdefault(rid, _label(s))
+    for net in ranges.items():
+        for (rid,) in session.execute(
+            select(RuleIpRange.rule_id)
+            .where(
+                RuleIpRange.tenant_id == tenant_id,
+                RuleIpRange.family == net.version,
+                RuleIpRange.is_any.is_(False),
+                RuleIpRange.lo <= ip_hex(net.broadcast_address),
+                RuleIpRange.hi >= ip_hex(net.network_address),
+            )
+            .distinct()
+        ):
+            if rid not in fw_out:
+                scope.rule.setdefault(rid, f"Netz {net}")
+
+    # VMs: Portgruppe einer EPG, IP in einem Netz, Kuerzel im Namen
+    if scope.epg:
+        groups = {
+            (sid, name)
+            for sid, name in session.execute(
+                select(Portgroup.source_system_id, Portgroup.name).where(
+                    Portgroup.tenant_id == tenant_id, Portgroup.epg_id.in_(list(scope.epg))
+                )
+            )
+        }
+        for vid, sid, pg in session.execute(
+            select(Vm.id, Vm.source_system_id, VmNic.portgroup)
+            .join(VmNic, VmNic.vm_id == Vm.id)
+            .where(Vm.tenant_id == tenant_id)
+        ):
+            if (sid, pg) in groups:
+                scope.vm.setdefault(vid, f"Portgruppe {pg}")
+    for vid, ip in session.execute(select(VmIp.vm_id, VmIp.ip).where(VmIp.tenant_id == tenant_id)):
+        b = _bounds(ip)
+        if b is not None and ranges.covers(*b):
+            scope.vm.setdefault(vid, "IP im Netz des Kunden")
+    for vid, name in session.execute(select(Vm.id, Vm.name).where(Vm.tenant_id == tenant_id)):
+        names = tokens(name)
+        if names & codes_out:
+            scope.vm.pop(vid, None)
+        elif names & codes_in:
+            scope.vm.setdefault(vid, f"Kürzel {sorted(names & codes_in)[0]}")
+    return scope
+
+
+def _net_key(n: Net) -> tuple:
+    return (n.version, int(n.network_address), n.prefixlen)
+
+
+def selectors_of(c: Customer) -> list[Selector]:
+    return [Selector(s.kind, s.value, s.source_system_id, s.exclude) for s in c.selectors]
+
+
+def derive(session: Session, tenant_id: int, customer_id: int | None = None) -> int:
+    """Zugehoerigkeit der Kunden des Mandanten (bzw. eines Kunden) neu ableiten; Anzahl der
+    Eintraege."""
+    stmt = select(Customer).where(Customer.tenant_id == tenant_id)
+    if customer_id is not None:
+        stmt = stmt.where(Customer.id == customer_id)
+    customers = list(session.scalars(stmt))
+    if not customers:
+        return 0
+    data = _Data(session, tenant_id)
+    total = 0
+    now = datetime.now(UTC)
+    for c in customers:
+        session.execute(delete(CustomerMember).where(CustomerMember.customer_id == c.id))
+        scope = evaluate(session, tenant_id, selectors_of(c), data)
+        base = {"tenant_id": tenant_id, "customer_id": c.id}
+        rows = [
+            {**base, "kind": kind, "ref_id": ref, "value": None, "via": why[:200]}
+            for kind in ("epg", "object", "rule", "vm")
+            for ref, why in getattr(scope, kind).items()
+        ] + [
+            {**base, "kind": "net", "ref_id": None, "value": net, "via": why[:200]}
+            for net, why in scope.net.items()
+        ]
+        if rows:
+            session.execute(CustomerMember.__table__.insert(), rows)
+        c.derived_at = now
+        total += len(rows)
+    session.flush()
+    return total
+
+
+def counts(session: Session, customer_ids: list[int]) -> dict[int, dict[str, int]]:
+    """Gespeicherte Zugehoerigkeit je Kunde und Art."""
+    out: dict[int, dict[str, int]] = {
+        cid: dict.fromkeys(("epg", "net", "object", "rule", "vm"), 0) for cid in customer_ids
+    }
+    if customer_ids:
+        for cid, kind, n in session.execute(
+            select(CustomerMember.customer_id, CustomerMember.kind, func.count())
+            .where(CustomerMember.customer_id.in_(customer_ids))
+            .group_by(CustomerMember.customer_id, CustomerMember.kind)
+        ):
+            out[cid][kind] = n
+    return out
+
+
+def samples(session: Session, tenant_id: int, scope: Scope, n: int = SAMPLES) -> dict[str, list]:
+    """Erste Beispiele je Art mit Namen (Vorschau)."""
+    out: dict[str, list] = {"net": list(scope.net)[:n]}
+    pick = {k: list(getattr(scope, k))[:n] for k in ("epg", "object", "rule", "vm")}
+    if pick["epg"]:
+        out["epg"] = [
+            epg_store.inventory_label(e)
+            for e in session.scalars(select(Epg).where(Epg.id.in_(pick["epg"])).order_by(Epg.id))
+        ]
+    if pick["object"]:
+        out["object"] = list(
+            session.scalars(
+                select(NetworkObject.name)
+                .where(NetworkObject.id.in_(pick["object"]))
+                .order_by(NetworkObject.id)
+            )
+        )
+    if pick["rule"]:
+        out["rule"] = [
+            name or f"#{ext}"
+            for name, ext in session.execute(
+                select(Rule.name, Rule.external_id)
+                .where(Rule.id.in_(pick["rule"]))
+                .order_by(Rule.id)
+            )
+        ]
+    if pick["vm"]:
+        out["vm"] = list(
+            session.scalars(select(Vm.name).where(Vm.id.in_(pick["vm"])).order_by(Vm.id))
+        )
+    return {k: out.get(k, []) for k in ("epg", "net", "object", "rule", "vm")}
+
+
+def unassigned(session: Session, tenant_id: int, n: int = SAMPLES) -> dict[str, dict]:
+    """Was keinem Kunden (auch keinem geteilten) gehoert: EPGs, Regeln, VMs - Anzahl und
+    die ersten Beispiele."""
+    member = select(CustomerMember.ref_id).where(CustomerMember.tenant_id == tenant_id)
+    out: dict[str, dict] = {}
+    for kind, model, name_col, extra in (
+        ("epg", Epg, Epg.name, [Epg.kind == "epg"]),
+        ("rule", Rule, Rule.name, []),
+        ("vm", Vm, Vm.name, []),
+    ):
+        cond = [
+            model.tenant_id == tenant_id,
+            *extra,
+            model.id.not_in(member.where(CustomerMember.kind == kind)),
+        ]
+        total = session.scalar(select(func.count(model.id)).where(*cond)) or 0
+        if kind == "epg":
+            first = [
+                epg_store.inventory_label(e)
+                for e in session.scalars(select(Epg).where(*cond).order_by(Epg.id).limit(n))
+            ]
+        else:
+            first = [x or "?" for x in session.scalars(
+                select(name_col).where(*cond).order_by(model.id).limit(n))]  # fmt: skip
+        out[kind] = {"count": total, "samples": first}
+    return out
+
+
+def code_of(aci_tenant: str) -> str | None:
+    """Kuerzel aus der Namenskonvention: `TE_<kuerzel>` -> kuerzel."""
+    _, sep, rest = aci_tenant.partition("_")
+    return rest or None if sep else None
+
+
+def suggestions(session: Session, tenant_id: int) -> list[dict]:
+    """Je ACI-Tenant ohne Kunden ein Vorschlag (Kuerzel aus `TE_<kuerzel>`); `common` als
+    geteilter Teil, solange es keinen geteilten Kunden gibt."""
+    customers = list(session.scalars(select(Customer).where(Customer.tenant_id == tenant_id)))
+    covered = {
+        s.value.casefold() for c in customers for s in c.selectors
+        if s.kind == "aci_tenant" and not s.exclude
+    }  # fmt: skip
+    names = {c.name.casefold() for c in customers}
+    found: dict[str, int] = {}
+    for t, n in session.execute(
+        select(Epg.aci_tenant, func.count(Epg.id))
+        .where(Epg.tenant_id == tenant_id, Epg.kind == "epg", Epg.aci_tenant.is_not(None))
+        .group_by(Epg.aci_tenant)
+        .order_by(Epg.aci_tenant)
+    ):
+        found[t] = n
+    out = []
+    for t, n in found.items():
+        if t.casefold() in covered or t.casefold() in names:
+            continue
+        shared = t.casefold() == "common"
+        if t.casefold() in _FABRIC_TENANTS and not shared:
+            continue
+        if shared and any(c.shared for c in customers):
+            continue
+        out.append({
+            "name": "Geteilt" if shared else t,
+            "code": None if shared else code_of(t),
+            "shared": shared,
+            "epgs": n,
+            "selectors": [{"kind": "aci_tenant", "value": t, "source_system_id": None,
+                           "exclude": False}],
+        })  # fmt: skip
+    return out

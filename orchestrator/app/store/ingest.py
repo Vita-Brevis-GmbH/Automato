@@ -66,8 +66,8 @@ from app.schemas.collector import (
     NormalizedObject,
     NormalizedRule,
 )
+from app.store import customers, reconcile, rule_index, topology, virtual
 from app.store import naming_profiles as profile_store
-from app.store import reconcile, rule_index, topology, virtual
 from app.store import rules as rules_store
 
 _ANY_VALUES = {"all", "any", "*"}
@@ -151,6 +151,8 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         rule_index.rebuild(
             session, run.tenant_id, source_system_id=run.source_system_id, rules=rules
         )
+    # Kunden (ADR 0018): Zugehoerigkeit ist abgeleitet - nach jedem Lauf neu
+    customers.derive(session, run.tenant_id)
 
 
 class _Cache:

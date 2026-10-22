@@ -319,15 +319,16 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.27.0** | Inter-VDOM-Links als Kanten im Weg (vdom-link, VLANs auf NPU-vlinks) |
 | **0.28.0** | ACI-Contracts über externe EPGs nach der Zuordnung im ACI (Scope, längstes Subnetz je VRF, Fabric, 0.0.0.0/0 nach Routing) in Doku und Regel-Liste |
 | **0.29.0** | Verbund bzw. Session-Sync-Paar als ein Hop im Weg (je Firewall Eingang, Ausgang, Regeln; verschiedene Urteile = abhängig) |
+| **0.30.0** | Kunden als Ausschnitt der Umgebung (ADR 0018 Schritt 1): Selektoren ein-/ausschliessend, abgeleitete Zugehörigkeit, Vorschau, Vorschläge je ACI-Tenant, nicht Zugeordnetes |
 
-### Nächste Arbeiten (Stand 0.29.0)
+### Nächste Arbeiten (Stand 0.30.0)
 
 Phase A und die Stände 0.11–0.18.0 sind gegen die echten Systeme abgenommen (0.18.0: Regeln
 paralleler Firewalls einmal, keine Schleifen); 0.19.0 (Verbund ablehnen, redundante Wege) und
 0.20.0/0.21.0 (erkannte Anbindungen mit Ausblenden, mehrere Firewalls, Länge der Wege) und
 0.22.0/0.23.0 (Regeln und NAT auf dem Weg), 0.24.0–0.26.0 (Relevanz in Doku und Regel-Liste,
-Gegenstelle any), 0.27.0 (Inter-VDOM-Links), 0.28.0 (ACI-Contracts über externe EPGs) und 0.29.0
-(Verbund als ein Hop) stehen zur Abnahme an. Konzeptbefund
+Gegenstelle any), 0.27.0 (Inter-VDOM-Links), 0.28.0 (ACI-Contracts über externe EPGs), 0.29.0
+(Verbund als ein Hop) und 0.30.0 (Kunden über Selektoren) stehen zur Abnahme an. Konzeptbefund
 des Anwenders: Ohne Routing, Verbindungswege und Redundanzen zeigt die Doku Zugriffe, die
 routingtechnisch nicht möglich sind, und `any` aus dem Internet wie eine Liste aller
 Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
@@ -337,8 +338,9 @@ Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
    Topologie/Pfade.
 2. **VDOM-Kontext** (ADR 0019, Stufe 1) – **umgesetzt in 0.15.0** und gegen die echten VDOMs
    abgenommen: alle VDOMs lesen, VDOM an Policies, Objekten, NAT, Interfaces und Subnetzen.
-3. **Umgebung und Kunden** (ADR 0018): Selektoren, abgeleitete Zugehörigkeit, Kunden-Filter,
-   danach Kunden-Benutzer mit serverseitiger Einschränkung.
+3. **Umgebung und Kunden** (ADR 0018): Selektoren und abgeleitete Zugehörigkeit **in 0.30.0**
+   (Schritt 1); weiter Kunden-Filter in allen Ansichten (Schritt 2), danach Kunden-Benutzer mit
+   serverseitiger Einschränkung (Schritt 3).
 4. **Routing, HA und L3Out lesen** (ADR 0019, Stufe 2) – **umgesetzt in 0.16.0** und
    abgenommen. **Pfade und Relevanz** (Stufe 3): Weg Hop für Hop mit Quelle bzw. Startpunkt –
    **erste Fassung in 0.17.0**, Anbindungen nach aussen und Befund bei abweichenden Regeln

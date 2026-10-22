@@ -10,6 +10,7 @@ from app.api import (
     appdoc,
     applications,
     auth_config,
+    customers,
     findings,
     health,
     internal,
@@ -94,6 +95,7 @@ def create_app() -> FastAPI:
     app.include_router(netbox_sync.router)
     app.include_router(system.router)
     app.include_router(routing.router)
+    app.include_router(customers.router)
     return app
 
 

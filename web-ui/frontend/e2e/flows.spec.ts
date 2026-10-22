@@ -491,6 +491,37 @@ test("Routing: erkannte Anbindung mit allen Routern übernehmen, Wege gleich lan
   await expect(overview.locator("tbody tr", { hasText: "gleich lang" })).toHaveCount(3);
 });
 
+test("Kunden: Vorschlag übernehmen, Selektoren mit Vorschau, löschen", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await page.goto("/#kunden");
+  // Vorschlag je ACI-Tenant: TE mit seinen EPGs
+  const sug = page.locator("#customer-suggestions tbody tr").filter({ hasText: "Tenant TE" });
+  await sug.locator("button", { hasText: "Übernehmen" }).click();
+  const te = page.locator("tbody tr.clickable").filter({ hasText: "ACI-Tenant TE" });
+  await expect(te).toContainText("TE");
+  await te.click(); // Zugehörigkeit je Art
+  await expect(page.locator("tr.subrow")).toContainText("TE/AP/EG_db");
+  // neuer Kunde über ein Netz, ein Teil davon ausgeschlossen - Vorschau vor dem Speichern
+  await page.click("button:has-text('+ Kunde')");
+  const modal = page.locator(".modal");
+  await modal.locator("#cu-name").fill("Kunde A");
+  await modal.getByLabel("Art").selectOption("prefix");
+  await modal.getByLabel("Wert").fill("10.20.0.0/16");
+  const preview = modal.locator("#customer-preview");
+  await expect(preview.locator("tr", { hasText: "Netze" })).toContainText("10.20.0.0/16");
+  await modal.locator("button", { hasText: "+ Selektor" }).click();
+  await modal.getByLabel("Art").nth(1).selectOption("prefix");
+  await modal.getByLabel("Wert").nth(1).fill("10.20.128.0/17");
+  await modal.getByLabel("ausschliessen").nth(1).check();
+  await expect(preview.locator("tr", { hasText: "Netze" })).toContainText("10.20.0.0/17");
+  await modal.locator("button", { hasText: "Speichern" }).click();
+  const a = page.locator("tbody tr.clickable").filter({ hasText: "Kunde A" });
+  await expect(a).toContainText("ohne Netz 10.20.128.0/17");
+  await a.locator("button", { hasText: "Löschen" }).click();
+  await expect(page.locator("tbody tr.clickable").filter({ hasText: "Kunde A" })).toHaveCount(0);
+  await expect(page.locator("#customer-unassigned")).toContainText("Keinem Kunden zugeordnet");
+});
+
 test("Routing: Verbund als ein Hop mit beiden Firewalls", async ({ page }) => {
   await page.goto("/#routing");
   await page.getByPlaceholder("Quelle (IP)").fill("10.88.0.5");
