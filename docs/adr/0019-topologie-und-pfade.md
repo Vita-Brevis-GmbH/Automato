@@ -220,6 +220,19 @@ Rahmen laut Anwender (2026-10-22):
        abgebildet.
      - Länge im Vergleich (0.20.0): je Weg „gleich lang“ bzw. „+n Hops“ gegenüber dem
        kürzesten Weg, der ein Ziel erreicht.
+     - **Verbund als ein Hop (0.29.0, Punkt 4 „Redundanz“):**
+       - Wege, die sich nur in den Firewalls eines Verbunds unterscheiden (z. B.
+         Session-Sync-Paar, ADR 0020), sind ein Weg. Der Verbund ist darin ein Hop „Verbund
+         Nord“ mit den Firewalls (`parts`): je Firewall Eingang, Ausgang mit Next-Hop und
+         Regeln.
+       - Der Hop davor bzw. danach zeigt die Varianten, z. B. die Next-Hops zu beiden
+         Firewalls bzw. die Eingänge von ihnen.
+       - Vergleich ohne die Firewalls des Verbunds: je Hop Verbund (mit Kontext) bzw. Knoten
+         und Next-Hop; in den Verbund hinein zählt der Verbund. ECMP über verschiedene Router
+         bleibt je Weg; Backup-Wege werden genauso zusammengefasst.
+       - Regeln: Urteilen die Firewalls gleich, gilt das Urteil über alle. Sonst ist der Weg
+         „abhängig“ („im Verbund verschieden – fw-a: …; fw-b: …“); Abweichungen der Policies
+         melden zudem die Findings des Verbunds.
    - **Regeln auf dem Weg (0.22.0, `store/policy_check.py`)** – Regel-Relevanz je Hop, erster
      Teil:
      - Je FortiGate-Hop werden die Policies des VDOMs in der Reihenfolge der Firewall
@@ -248,8 +261,8 @@ Rahmen laut Anwender (2026-10-22):
      - Hat der Link IPs, gilt wie bisher der Besitzer der Next-Hop-IP. Das Paar greift nur,
        wenn die IP keinem gelesenen Interface gehört.
      - Die Policies je VDOM prüfen den Link als Aus- bzw. Eingang.
-   - Offen: Session-Sync-Paar als ein Hop, „Internet“ zusammengefasst, Central-NAT und SNAT
-     über eigene NAT-Regeln. Relevanz: Firewall in der Doku (0.24.0) und Regel-Liste
+   - Offen: „Internet“ zusammengefasst, Central-NAT und SNAT über eigene NAT-Regeln.
+     Verbund bzw. Session-Sync-Paar als ein Hop seit 0.29.0. Relevanz: Firewall in der Doku (0.24.0) und Regel-Liste
      (0.26.0), ACI-Contracts über externe EPGs (0.28.0).
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde. Erster Teil in
    0.18.0: **Anbindungen nach aussen** (`topo_exit`, von Hand erfasst, Operator):

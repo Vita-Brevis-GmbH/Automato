@@ -469,12 +469,21 @@ FWS = _fw(
 )
 
 
-def _par(name: str, ip: str) -> dict:
-    return _fw(
+def _par(name: str, ip: str, allow: bool = False) -> dict:
+    result = _fw(
         name,
         [_r(name, "root", "10.88.0.0/24", [{"interface": "lan"}], "connected")],
         [_if(name, "to-fwr", ip)],
     )
+    if allow:  # nur auf einer Firewall des Verbunds: die Regeln weichen ab
+        result["rules"] = [
+            {"source_platform": "fortigate", "external_id": "1", "name": "to-lan",
+             "action": "allow", "sources": ["all"], "destinations": ["all"], "services": ["ALL"],
+             "vdom": "root", "family": "v4",
+             "raw": {"policyid": 1, "srcintf": [{"name": "to-fwr"}], "dstintf": [{"name": "lan"}],
+                     "status": "enable", "schedule": "always"}},
+        ]  # fmt: skip
+    return result
 
 
 def test_redundante_wege_mit_backup_und_verbund(client):
@@ -482,7 +491,8 @@ def test_redundante_wege_mit_backup_und_verbund(client):
     mit gleicher bzw. fast gleicher Laenge; ECMP ueber zwei Firewalls eines Verbunds."""
     tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
     ids = {}
-    for name, result in (("fw-r", FWR), ("fw-s", FWS), ("fw-p1", _par("fw-p1", "10.66.0.2/29")),
+    for name, result in (("fw-r", FWR), ("fw-s", FWS),
+                         ("fw-p1", _par("fw-p1", "10.66.0.2/29", allow=True)),
                          ("fw-p2", _par("fw-p2", "10.66.0.3/29"))):  # fmt: skip
         ids[name] = _system(client, tid, name, "fortigate")
         _deliver(client, tid, ids[name], "fortigate", result)
@@ -508,15 +518,34 @@ def test_redundante_wege_mit_backup_und_verbund(client):
     assert [p["kind"] for p in strict["paths"]] == ["active", "backup"]
     assert "1 weitere Backup-Wege ausgeblendet" in strict["notes"][0]
 
-    # ECMP auf zwei parallele Firewalls: redundant ueber den Verbund
+    # ohne Verbund: ECMP auf zwei Firewalls = zwei Wege
+    out = _trace(client, tid, src="10.10.0.5", dst="10.88.0.7")
+    assert [_labels(p) for p in out["paths"]] == [["fw-r", "fw-p1"], ["fw-r", "fw-p2"]]
+
+    # ECMP auf zwei parallele Firewalls: ein Weg, der Verbund ist ein Hop (0.29.0)
     body = {"tenant_id": tid, "group": "Nord", "system_ids": [ids["fw-p1"], ids["fw-p2"]]}
     client.post("/systems/parallel-group", json=body, headers=ADMIN)
     out = _trace(client, tid, src="10.10.0.5", dst="10.88.0.7")
-    assert [(_labels(p), p.get("parallel")) for p in out["paths"]] == [
-        (["fw-r", "fw-p1"], ["Nord"]),
-        (["fw-r", "fw-p2"], ["Nord"]),
+    (path,) = out["paths"]
+    assert (_labels(path), path["parallel"], path["kind"]) == (
+        ["fw-r", "Verbund Nord"],
+        ["Nord"],
+        "active",
+    )
+    fwr, nord = path["hops"]
+    assert [x["egress"]["next_hop"] for x in fwr["parts"]] == ["10.66.0.2", "10.66.0.3"]
+    assert [(x["label"], x["group"], x["ingress"]["interface"]) for x in nord["parts"]] == [
+        ("fw-p1", "Nord", "to-fwr"),
+        ("fw-p2", "Nord", "to-fwr"),
     ]
-    assert out["paths"][1]["hops"][1]["group"] == "Nord"
+    # Regeln je Firewall des Verbunds: fw-p1 erlaubt, fw-p2 ohne gelesene Policies
+    assert [x["rules"]["verdict"] for x in nord["parts"]] == ["allow", "unknown"]
+    assert path["policy"] == {"verdict": "unknown", "text": "keine Policies gelesen an fw-r, fw-p2"}
+    assert path["end"] == {
+        "kind": "connected",
+        "text": "Ziel angeschlossen an fw-p1 (lan)",
+        "also": ["Ziel angeschlossen an fw-p2 (lan)"],
+    }
 
 
 def _wan(name: str, own: int, to_x: bool) -> dict:
@@ -655,11 +684,13 @@ def test_erkannte_anbindungen_mit_redundanz(client):
     client.put(f"/routing/exits/{exit_id}", headers=operator,
                json={**zone, "next_hops": st["missing"] + ["198.18.10.1"]})  # fmt: skip
     out = _trace(client, tid, src="10.10.0.5", dst="10.60.1.1")
+    # je Router ein Weg; die beiden Firewalls des Verbunds sind darin ein Hop (0.29.0)
     ends = [(p["kind"], p["hops"][0]["label"], p["end"]["kind"], p["extra"]) for p in out["paths"]]
-    assert sorted(ends) == sorted(
-        [(k, fw, "exit", 0) for fw in ("fw-w1", "fw-w2") for k in ("active", "active")]
-        + [("backup", fw, "exit", 0) for fw in ("fw-w1", "fw-w2") for _ in range(2)]
-    )
+    assert ends == [("active", "Verbund Nord", "exit", 0)] * 2 + [("backup", "Verbund Nord",
+                                                                    "exit", 0)] * 2  # fmt: skip
+    assert all([x["label"] for x in p["hops"][0]["parts"]] == ["fw-w1", "fw-w2"]
+               for p in out["paths"])  # fmt: skip
+    assert out["paths"][2]["deviation"]["label"] == "Verbund Nord"
     texts = {p["end"]["text"] for p in out["paths"]}
     assert "weiter über WAN Nord – Router 4 von 4" in texts  # 198.18.10.1 zuletzt eingetragen
     assert (
@@ -738,3 +769,25 @@ def test_weg_ueber_inter_vdom_links(client):
     (phys,) = _trace(client, tid, src="10.10.0.5", dst="10.42.0.5")["paths"]
     assert _labels(phys) == ["fw-v · VDOM root"]
     assert phys["end"]["text"] == "Ziel angeschlossen an fw-v · VDOM root (port10)"
+
+
+def test_verbund_mit_verschiedenen_urteilen():
+    """0.29.0: Urteilen die Regeln der Firewalls eines Verbunds verschieden, haengt der Weg
+    davon ab, welche Firewall den Verkehr bekommt."""
+    from app.store import paths
+
+    def path(fw: str, verdict: str, text: str) -> dict:
+        hop = {"key": f"{fw}|root", "label": fw, "group": "Nord", "context": "root",
+               "kind": "firewall", "ingress": {"interface": "lan"}, "egress": {},
+               "rules": {"verdict": verdict}}  # fmt: skip
+        return {"kind": "active", "hops": [hop], "end": {"kind": "connected", "text": "x"},
+                "policy": {"verdict": verdict, "text": text}}  # fmt: skip
+
+    (merged,) = paths._merge_parallel(
+        [path("fw-p1", "allow", "erlaubt"), path("fw-p2", "deny", "gesperrt an fw-p2")]
+    )
+    assert merged["hops"][0]["label"] == "Verbund Nord"
+    assert merged["policy"] == {
+        "verdict": "depends",
+        "text": "im Verbund verschieden – fw-p1: erlaubt; fw-p2: gesperrt an fw-p2",
+    }

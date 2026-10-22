@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.29.0 – 2026-10-22
+
+Verbund bzw. Session-Sync-Paar als ein Hop im Weg (ADR 0019 Punkt 4/5). Ohne Migration.
+
+- **Ein Weg statt mehrerer:** Wege, die sich nur in den Firewalls eines Verbunds
+  unterscheiden, sind ein Weg. Bisher standen sie als „redundant · Verbund“ nebeneinander.
+  - Der Verbund ist darin ein Hop „Verbund Nord“. Je Firewall steht eine Zeile mit Eingang,
+    Ausgang mit Next-Hop und Regeln.
+  - Der Hop davor zeigt die Next-Hops zu beiden Firewalls; das Ende nennt beide („… bzw. …“).
+  - ECMP über verschiedene Router bleibt je Weg; Backup-Wege werden genauso zusammengefasst.
+- **Regeln:** Urteilen die Firewalls des Verbunds gleich, gilt das Urteil über alle. Sonst
+  ist der Weg „abhängig“ mit „im Verbund verschieden – fw-a: …; fw-b: …“.
+- **API:** `GET /routing/trace` mit `hop.parts` (je Firewall bzw. Variante) und
+  `end.also`.
+- Tests (ECMP in einen Verbund, vier WAN-Router an einem Verbund, verschiedene Urteile, UI),
+  Beispieldaten der UI-Tests mit Verbund „Süd“.
+
 ## 0.28.0 – 2026-10-22
 
 ACI-Contracts über externe EPGs nach der Zuordnung im ACI (ADR 0019 Punkt 6). Alembic `0043`.

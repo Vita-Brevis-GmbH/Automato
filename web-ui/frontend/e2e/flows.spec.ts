@@ -491,6 +491,21 @@ test("Routing: erkannte Anbindung mit allen Routern übernehmen, Wege gleich lan
   await expect(overview.locator("tbody tr", { hasText: "gleich lang" })).toHaveCount(3);
 });
 
+test("Routing: Verbund als ein Hop mit beiden Firewalls", async ({ page }) => {
+  await page.goto("/#routing");
+  await page.getByPlaceholder("Quelle (IP)").fill("10.88.0.5");
+  await page.getByPlaceholder("Ziel (IP)").fill("10.89.0.7");
+  await page.click("button:has-text('Weg suchen')");
+  await expect(page.locator(".card[id^='trace-']")).toHaveCount(1); // ein Weg statt zwei
+  const card = page.locator(".card[id^='trace-']").first();
+  await expect(card).toContainText("redundant · Verbund Süd");
+  await expect(card.locator(".chip", { hasText: "Verbund Süd" }).first()).toBeVisible();
+  await expect(card.locator("tbody tr")).toHaveCount(2); // eine Zeile je Firewall
+  await expect(card).toContainText("fw-09");
+  await expect(card).toContainText("fw-10");
+  await expect(card).toContainText("Ziel angeschlossen an fw-09 (srv) bzw. Ziel angeschlossen an fw-10 (srv)");
+});
+
 test("Routing: Regeln auf dem Weg je Firewall", async ({ page }) => {
   await page.goto("/#routing");
   await page.getByPlaceholder("Quelle (IP)").fill("10.20.0.5");

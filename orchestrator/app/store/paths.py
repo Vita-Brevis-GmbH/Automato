@@ -27,6 +27,9 @@ ein Knoten und nicht vier Wege.
   BGP-Pfad bzw. eine statische Route fuer dasselbe Praefix mit anderem Next-Hop (schwebende
   Route, Backup-Provider). Gezeigt werden Backup-Wege, die ein Ziel erreichen und hoechstens
   `slack` Hops laenger sind als der kuerzeste aktive Weg („gleiche oder fast gleiche Laenge“).
+- **Verbund als ein Hop** (0.29.0): Wege, die sich nur in den Firewalls eines Verbunds (z. B.
+  Session-Sync-Paar) unterscheiden, sind ein Weg; der Verbund ist ein Hop mit den Firewalls
+  darin (`parts`, je mit Ein-/Ausgang und Regeln). ECMP ueber andere Router bleibt je Weg.
 - **Regeln auf dem Weg** (0.22.0, `store/policy_check.py`): je FortiGate-Hop die Policies, die
   auf Ein-/Ausgang, Quelle, Ziel und Dienst passen, mit dem Urteil; je Weg das Gesamturteil.
 - **Inter-VDOM-Links** (0.27.0): Geht eine Route ueber einen VDOM-Link ohne Next-Hop-IP (bzw.
@@ -40,6 +43,7 @@ ein Knoten und nicht vier Wege.
 """
 
 import ipaddress
+import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
@@ -662,7 +666,6 @@ def trace(
     primary = _unique(paths)
     for p in primary:
         p["kind"] = "active"
-    _mark_parallel(primary)
     shown, hidden = _backups(primary, _unique(backups_found), slack)
     if hidden:
         notes.append(
@@ -673,7 +676,8 @@ def trace(
     policy_check.check_paths(session, tenant_id, primary + shown, src, dst, service)
     return {
         "start": [g.nodes[k].out() | {"via": via} for k, _, via in starts],
-        "paths": primary + shown,
+        # Session-Sync-Paar bzw. Verbund als ein Hop (0.29.0)
+        "paths": _merge_parallel(primary) + _merge_parallel(shown),
         "notes": notes,
         "slack": slack,
         "service": _service_text(service),
@@ -693,19 +697,79 @@ def _signature(p: dict) -> tuple:
     ) + (p["end"]["kind"],)
 
 
-def _mark_parallel(primary: list[dict]) -> None:
-    """Aktive Wege, die sich nur in Firewalls desselben Verbunds unterscheiden, sind redundant
-    ueber den Verbund (z. B. ECMP auf zwei Cluster mit Session-Sync)."""
-    seen: dict[tuple, list[dict]] = defaultdict(list)
-    for p in primary:
-        sig = tuple(h.get("group") or h["key"] for h in p["hops"]) + (p["end"]["kind"],)
-        seen[sig].append(p)
-    for same in seen.values():
-        keys = {tuple(h["key"] for h in p["hops"]) for p in same}
-        if len(keys) > 1:
-            groups = sorted({h["group"] for p in same for h in p["hops"] if h.get("group")})
-            for p in same:
-                p["parallel"] = groups
+def _merge_parallel(paths: list[dict]) -> list[dict]:
+    """Session-Sync-Paar als ein Hop (0.29.0, ADR 0019 Punkt 5): Wege, die sich nur in
+    Firewalls desselben Verbunds unterscheiden (z. B. ECMP auf zwei Cluster mit Session-Sync),
+    sind ein Weg, redundant ueber den Verbund (`parallel`). Der Verbund ist ein Hop mit den
+    Firewalls darin (`parts`, je mit Eingang, Ausgang und Regeln); ebenso ein Knoten, den die
+    Firewalls ueber verschiedene Interfaces erreichen. ECMP ueber andere Router bleibt je Weg."""
+    order: dict[tuple, list[dict]] = {}
+    for p in paths:
+        order.setdefault(_parallel_signature(p), []).append(p)
+    out = []
+    for same in order.values():
+        if len({tuple(h["key"] for h in p["hops"]) for p in same}) < 2:
+            out += same
+        else:
+            out.append(_merged(same))
+    return out
+
+
+def _parallel_signature(p: dict) -> tuple:
+    """Weg ohne die Firewalls eines Verbunds: je Hop Verbund (und Kontext) bzw. Knoten und
+    der Next-Hop - in den Verbund hinein zaehlt der Verbund, nicht die Adresse des Mitglieds."""
+    hops, parts = p["hops"], []
+    for i, h in enumerate(hops):
+        nxt = hops[i + 1] if i + 1 < len(hops) else None
+        into = (nxt["group"], nxt["context"]) if nxt is not None and nxt.get("group") else None
+        here = (h["group"], h["context"]) if h.get("group") else h["key"]
+        parts.append((here, into or (h.get("egress") or {}).get("next_hop")))
+    dev = p.get("deviation") or {}
+    return (*parts, p["end"]["kind"], p.get("kind"), dev.get("hop"), dev.get("reason"))
+
+
+def _port_key(h: dict) -> tuple:
+    return (h["key"], *(json.dumps(h.get(k) or {}, sort_keys=True) for k in ("ingress", "egress")))
+
+
+def _merged(same: list[dict]) -> dict:
+    """Ein Weg aus gleichen Wegen ueber die Firewalls eines Verbunds: je Hop die
+    verschiedenen Varianten in `parts`, Urteil der Regeln je Firewall zusammengefasst."""
+    first = same[0]
+    hops = []
+    for i in range(len(first["hops"])):
+        variants = list({_port_key(h): h for h in (p["hops"][i] for p in same)}.values())
+        hop = variants[0]
+        if len(variants) > 1:
+            hop = {**hop, "parts": variants}
+            if len({v["key"] for v in variants}) > 1:
+                vdom = f" · VDOM {hop['context']}" if hop["kind"] == "vdom" else ""
+                hop["label"] = f"Verbund {hop['group']}{vdom}"
+        hops.append(hop)
+    merged = {**first, "hops": hops}
+    merged["parallel"] = sorted({h["group"] for h in hops if h.get("parts") and h.get("group")})
+    ends = list(dict.fromkeys(p["end"]["text"] for p in same))
+    if len(ends) > 1:
+        merged["end"] = {**first["end"], "also": ends[1:]}
+    if first.get("deviation"):
+        idx = first["deviation"]["hop"]
+        merged["deviation"] = {**first["deviation"], "label": hops[idx]["label"]}
+    policies = [p.get("policy") for p in same]
+    if any(policies):
+        verdicts = {x["verdict"] if x else None for x in policies}
+        if len(verdicts) == 1:  # gleiches Urteil: ueber alle Firewalls des Verbunds
+            from app.store import policy_check  # spaet importiert wie in trace()
+
+            hops_rules = [(h["label"], h["rules"]["verdict"]) for p in same for h in p["hops"]
+                          if h.get("rules")]  # fmt: skip
+            merged["policy"] = policy_check._overall(list(dict.fromkeys(hops_rules)))
+        else:
+            who = [", ".join(h["label"] for h in p["hops"] if h.get("group")) for p in same]
+            text = "; ".join(
+                f"{w}: {x['text'] if x else '–'}" for w, x in zip(who, policies, strict=True)
+            )
+            merged["policy"] = {"verdict": "depends", "text": f"im Verbund verschieden – {text}"}
+    return merged
 
 
 def _mark_length(paths: list[dict]) -> None:

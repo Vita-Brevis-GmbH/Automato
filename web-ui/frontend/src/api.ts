@@ -1622,6 +1622,8 @@ export interface TraceHop extends RoutingNode {
   // VIP (DNAT) an diesem Hop: ab hier zur internen IP (Virtual Server: alle Real Server)
   nat?: { name: string; id: number; ext: string | null; to: string[]; type: string | null; ports: (string | null)[] | null };
   snat?: { pool?: string; interface?: string | null; to: string | null }; // SNAT der erlaubenden Policy
+  // Verbund als ein Hop (0.29.0): je Firewall bzw. Variante (andere Interfaces) ein Eintrag
+  parts?: TraceHop[];
 }
 // Policy auf dem Weg: sicher (entscheidet) bzw. möglich (`unsure` = nicht prüfbare Bedingungen)
 export interface HopRule {
@@ -1653,6 +1655,7 @@ export interface TracePath {
   end: {
     kind: "connected" | "fabric" | "exit" | "external" | "unknown" | "no_route" | "loop" | "max_hops";
     text: string;
+    also?: string[]; // Ende über die anderen Firewalls eines Verbunds (0.29.0)
   };
 }
 export interface TraceResult {

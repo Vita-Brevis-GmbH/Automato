@@ -345,7 +345,7 @@ function PathKind({ path, activeCount }: { path: TracePath; activeCount: number 
     );
   if (path.parallel?.length)
     return (
-      <span className="chip info" title="gleicher Weg über eine andere Firewall desselben Verbunds">
+      <span className="chip info" title="die Firewalls des Verbunds (z. B. Session-Sync-Paar) sind ein Hop">
         redundant · Verbund {path.parallel.join(", ")}
       </span>
     );
@@ -469,7 +469,12 @@ function PathOverview({ trace }: { trace: TraceResult }) {
                     {p.hops.map((h, j) => (
                       <span key={j}>
                         {j > 0 && <span className="faint"> → </span>}
-                        <span className={p.deviation && p.deviation.hop === j ? "chip warn" : undefined}>{h.label}</span>
+                        <span
+                          className={p.deviation && p.deviation.hop === j ? "chip warn" : undefined}
+                          title={h.parts ? [...new Set(h.parts.map((x) => x.label))].join(", ") : undefined}
+                        >
+                          {h.label}
+                        </span>
                         {h.nat && (
                           <span className="chip info" style={{ marginLeft: 4 }} title={`VIP → ${h.nat.to.join(", ")}`}>
                             DNAT
@@ -480,7 +485,7 @@ function PathOverview({ trace }: { trace: TraceResult }) {
                   </td>
                   <td className="mono">
                     {p.hops
-                      .map((h) => h.egress?.next_hop)
+                      .map((h) => [...new Set((h.parts ?? [h]).map((x) => x.egress?.next_hop).filter(Boolean))].join(" | "))
                       .filter(Boolean)
                       .join(" → ") || <Dash />}
                   </td>
@@ -540,7 +545,10 @@ function TraceCard({
             Regeln: {path.policy.text}
           </span>
         )}
-        <span className="faint">{path.end.text}</span>
+        <span className="faint">
+          {path.end.text}
+          {path.end.also?.length ? ` bzw. ${path.end.also.join(" bzw. ")}` : ""}
+        </span>
         {capturable && (
           <button
             className="btn btn-sm"
@@ -572,90 +580,105 @@ function TraceCard({
             </tr>
           </thead>
           <tbody>
-            {path.hops.map((h, i) => {
-              const possible = (h.policy_routes ?? []).filter((p) => !p.certain);
-              return (
-                <tr key={i}>
-                  <td className="num">{i + 1}</td>
-                  <td>
-                    <b>{h.label}</b> {h.kind === "firewall" && <span className="chip">Firewall</span>}
-                    <VrfChip vrf={h.vrf} />
-                    {h.dst && (
-                      <div className="faint" title="Ziel nach NAT auf einem Hop davor">
-                        Ziel <span className="mono">{h.dst}</span>
-                      </div>
+            {path.hops.map((hop, i) => {
+              // Verbund als ein Hop (0.29.0): eine Zeile je Firewall bzw. Variante
+              const parts = hop.parts ?? [hop];
+              return parts.map((h, k) => {
+                const possible = (h.policy_routes ?? []).filter((p) => !p.certain);
+                return (
+                  <tr key={`${i}-${k}`}>
+                    {k === 0 && (
+                      <td className="num" rowSpan={parts.length}>
+                        {i + 1}
+                      </td>
                     )}
-                    <div className="faint">
-                      {h.via}
-                      {h.kind === "vrf" && h.members.length ? ` · ${h.members.join(", ")}` : ""}
-                    </div>
-                    <Missing items={h.missing} />
-                  </td>
-                  <td>{h.ingress?.interface ? <Port p={h.ingress} /> : <Dash />}</td>
-                  <td>
-                    {h.nat && (
-                      <div style={{ marginBottom: 4 }}>
-                        <span className="chip info" title="VIP (DNAT): der Weg geht ab hier zur internen IP">
-                          DNAT {h.nat.name}
-                        </span>{" "}
-                        <span className="mono">
-                          {h.nat.ext} → {h.nat.to.join(", ")}
-                        </span>
-                        {h.nat.ports && <span className="faint"> · Port {h.nat.ports.join(" → ")}</span>}
-                        {h.nat.to.length > 1 && <div className="faint">Weg über den ersten Real Server</div>}
-                      </div>
-                    )}
-                    {h.backup ? (
-                      <>
-                        <span className="chip warn" title="Backup-Weg: anderer Next-Hop für dasselbe Präfix">
-                          Backup
-                        </span>{" "}
-                        <b className="mono">{h.backup.prefix}</b>
-                        <div className="faint">{h.backup.reason}</div>
-                      </>
-                    ) : h.policy ? (
-                      <>
-                        <span className="chip info" title="passt sicher und geht der Routing-Tabelle vor">
-                          {policyText(h.policy)}
-                        </span>
-                        <div className="faint">geht der Routing-Tabelle vor</div>
-                      </>
-                    ) : h.route ? (
-                      <>
-                        <b className="mono">{h.route.prefix}</b>
-                        <div className="faint">
-                          {[h.route.protocol, h.route.distance != null && `Distanz ${h.route.distance}`]
-                            .filter(Boolean)
-                            .join(" · ")}
+                    <td>
+                      {k === 0 && hop.parts && hop.label !== h.label && (
+                        <div>
+                          <span className="chip info" title="Firewalls desselben Verbunds (z. B. Session-Sync-Paar) – ein Hop">
+                            {hop.label}
+                          </span>
                         </div>
-                      </>
-                    ) : (
-                      <Dash />
-                    )}
-                    {possible.length > 0 && (
-                      <div className="faint" title="Quelle bzw. Ziel nur über Objekte bestimmt – nicht sicher">
-                        möglich: {possible.map(policyText).join(", ")}
+                      )}
+                      <b>{h.label}</b> {h.kind === "firewall" && <span className="chip">Firewall</span>}
+                      <VrfChip vrf={h.vrf} />
+                      {h.dst && (
+                        <div className="faint" title="Ziel nach NAT auf einem Hop davor">
+                          Ziel <span className="mono">{h.dst}</span>
+                        </div>
+                      )}
+                      <div className="faint">
+                        {h.via}
+                        {h.kind === "vrf" && h.members.length ? ` · ${h.members.join(", ")}` : ""}
                       </div>
-                    )}
-                  </td>
-                  <td>{h.egress ? <Port p={h.egress} /> : <Dash />}</td>
-                  <td>
-                    {h.kind === "vrf" ? (
-                      <span className="faint">ACI-Contracts: nicht geprüft</span>
-                    ) : (
-                      <>
-                        <HopRulesCell r={h.rules} />
-                        {h.snat && (
-                          <div className="faint" title="SNAT der erlaubenden Policy: Quelle für die Firewalls danach">
-                            SNAT → <span className="mono">{h.snat.to ?? "?"}</span>
-                            {h.snat.pool ? ` (Pool ${h.snat.pool})` : ` (IP von ${h.snat.interface ?? "?"})`}
+                      <Missing items={h.missing} />
+                    </td>
+                    <td>{h.ingress?.interface ? <Port p={h.ingress} /> : <Dash />}</td>
+                    <td>
+                      {h.nat && (
+                        <div style={{ marginBottom: 4 }}>
+                          <span className="chip info" title="VIP (DNAT): der Weg geht ab hier zur internen IP">
+                            DNAT {h.nat.name}
+                          </span>{" "}
+                          <span className="mono">
+                            {h.nat.ext} → {h.nat.to.join(", ")}
+                          </span>
+                          {h.nat.ports && <span className="faint"> · Port {h.nat.ports.join(" → ")}</span>}
+                          {h.nat.to.length > 1 && <div className="faint">Weg über den ersten Real Server</div>}
+                        </div>
+                      )}
+                      {h.backup ? (
+                        <>
+                          <span className="chip warn" title="Backup-Weg: anderer Next-Hop für dasselbe Präfix">
+                            Backup
+                          </span>{" "}
+                          <b className="mono">{h.backup.prefix}</b>
+                          <div className="faint">{h.backup.reason}</div>
+                        </>
+                      ) : h.policy ? (
+                        <>
+                          <span className="chip info" title="passt sicher und geht der Routing-Tabelle vor">
+                            {policyText(h.policy)}
+                          </span>
+                          <div className="faint">geht der Routing-Tabelle vor</div>
+                        </>
+                      ) : h.route ? (
+                        <>
+                          <b className="mono">{h.route.prefix}</b>
+                          <div className="faint">
+                            {[h.route.protocol, h.route.distance != null && `Distanz ${h.route.distance}`]
+                              .filter(Boolean)
+                              .join(" · ")}
                           </div>
-                        )}
-                      </>
-                    )}
-                  </td>
-                </tr>
-              );
+                        </>
+                      ) : (
+                        <Dash />
+                      )}
+                      {possible.length > 0 && (
+                        <div className="faint" title="Quelle bzw. Ziel nur über Objekte bestimmt – nicht sicher">
+                          möglich: {possible.map(policyText).join(", ")}
+                        </div>
+                      )}
+                    </td>
+                    <td>{h.egress ? <Port p={h.egress} /> : <Dash />}</td>
+                    <td>
+                      {h.kind === "vrf" ? (
+                        <span className="faint">ACI-Contracts: nicht geprüft</span>
+                      ) : (
+                        <>
+                          <HopRulesCell r={h.rules} />
+                          {h.snat && (
+                            <div className="faint" title="SNAT der erlaubenden Policy: Quelle für die Firewalls danach">
+                              SNAT → <span className="mono">{h.snat.to ?? "?"}</span>
+                              {h.snat.pool ? ` (Pool ${h.snat.pool})` : ` (IP von ${h.snat.interface ?? "?"})`}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              });
             })}
           </tbody>
         </table>

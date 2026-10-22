@@ -154,6 +154,32 @@ def run(app) -> None:
     fw8 = system(name="fw-08", platform="fortigate", base_url="https://fw-08.example.ch")
     run_result(fw8, "fortigate", **{k: v for k, v in json.loads(raw8).items() if k != "status"})
 
+    # FortiGate 9 und 10: Verbund „Süd“ (Session-Sync-Paar), beide am selben LAN und Servernetz -
+    # im Weg ein Hop mit beiden Firewalls (0.29.0)
+    south = []
+    for name, own in (("fw-09", 2), ("fw-10", 3)):
+        sid = system(name=name, platform="fortigate", base_url=f"https://{name}.example.ch")
+        south.append(sid)
+        nets = (
+            ("lan", "10.88.0.0/24", f"10.88.0.{own}/24"),
+            ("srv", "10.89.0.0/24", f"10.89.0.{own}/24"),
+        )
+        run_result(
+            sid, "fortigate",
+            inventory={"devices": [{"name": name, "role": "firewall"}],
+                       "interfaces": [{"device": name, "name": i, "ips": [ip], "vdom": "root"}
+                                      for i, _p, ip in nets]},
+            routing={"contexts": [{"node": name, "context": "root"}],
+                     "routes": [{"node": name, "context": "root", "prefix": p,
+                                 "protocol": "connected", "next_hops": [{"interface": i}]}
+                                for i, p, _ip in nets]},
+        )  # fmt: skip
+    ok(
+        c.post(
+            "/systems/parallel-group", json={"tenant_id": tid, "group": "Süd", "system_ids": south}
+        )
+    )
+
     # APIC: Inventar, Filter als Dienste, Contract ohne Consumer
     apic = system(name="apic-01", platform="cisco_aci", base_url="https://apic.example.ch")
     filters = [

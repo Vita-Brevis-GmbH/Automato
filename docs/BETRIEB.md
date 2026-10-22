@@ -246,6 +246,13 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
         bis +1 Hop (Standard), bis +2 Hops, ausblenden.
       - Die Spalte „Länge“ (0.20.0) sagt je Weg „gleich lang“ bzw. „+1 Hop“ gegenüber dem
         kürzesten Weg mit Ziel.
+      - **Verbund als ein Hop (0.29.0):** Die Firewalls eines Verbunds (z. B. Session-Sync-
+        Paar) sind im Weg ein Hop „Verbund Nord“ statt zwei Wege.
+        - Je Firewall steht eine Zeile mit Eingang, Ausgang und Regeln. Der Hop davor zeigt
+          die Next-Hops zu beiden.
+        - ECMP über verschiedene Router bleibt je Weg.
+        - Urteilen die Regeln der Firewalls verschieden, steht der Weg auf „abhängig“ mit
+          „im Verbund verschieden“.
     - **Regeln auf dem Weg (0.22.0):** Je Firewall bzw. FortiGate-VDOM steht in der Spalte
       „Regeln“, welche Policy den Verkehr erlaubt oder sperrt.
       - Die erste sicher passende Policy entscheidet, wie auf der Firewall. Ohne passende ist
