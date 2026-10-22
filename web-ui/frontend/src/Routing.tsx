@@ -175,6 +175,16 @@ function ContextCard({ summary }: { summary: RoutingSummary }) {
   );
 }
 
+// VRF innerhalb eines VDOMs (FortiGate 7.x); "mgmt" = dediziertes Management-Interface
+function VrfChip({ vrf }: { vrf?: number | string | null }) {
+  if (vrf == null || vrf === 0) return null;
+  return (
+    <span className="chip warn" title="eigene Routing-Tabelle im VDOM – nicht die Standard-VRF 0">
+      {vrf === "mgmt" ? "Management" : `VRF ${vrf}`}
+    </span>
+  );
+}
+
 function policyText(p: PolicyHit) {
   return p.kind === "sdwan" ? `SD-WAN ${p.name ?? `#${p.seq}`}` : `Policy-Route #${p.seq ?? "?"}`;
 }
@@ -238,6 +248,7 @@ function TraceCard({ path, index, total }: { path: TracePath; index: number; tot
                   <td className="num">{i + 1}</td>
                   <td>
                     <b>{h.label}</b> {h.kind === "firewall" && <span className="chip">Firewall</span>}
+                    <VrfChip vrf={h.vrf} />
                     <div className="faint">
                       {h.via}
                       {h.kind === "vrf" && h.members.length ? ` · ${h.members.join(", ")}` : ""}
@@ -300,9 +311,10 @@ function LookupTable({ rows }: { rows: RouteLookup[] }) {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={`${r.source_system_id}|${r.node}|${r.context}`}>
+                <tr key={`${r.source_system_id}|${r.node}|${r.context}|${r.vrf ?? 0}`}>
                   <td>
                     {where(r)}
+                    <VrfChip vrf={r.vrf} />
                     <Missing items={r.missing} />
                   </td>
                   <td>

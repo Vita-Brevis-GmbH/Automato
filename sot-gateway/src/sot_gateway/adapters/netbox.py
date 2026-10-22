@@ -16,6 +16,7 @@ import httpx
 
 from sot_gateway.models import NetworkObject, NetworkObjectType, ReferenceKind, ReferenceRecord
 from sot_gateway.readonly import enforce_read_only
+from sot_gateway.readonly import get as read_get
 
 PAGE_SIZE = 1000
 
@@ -100,7 +101,7 @@ class NetBoxAdapter:
 
     def ping(self) -> str:
         """Leichter Lese-Zugriff (Status-API); gibt die NetBox-Version zurueck."""
-        response = self._client.get(f"{self._api}/status/")
+        response = read_get(self._client, f"{self._api}/status/")
         response.raise_for_status()
         return str(response.json().get("netbox-version", "?"))
 
@@ -137,8 +138,8 @@ class NetBoxAdapter:
     def _paged(self, path: str) -> Iterator[dict[str, Any]]:
         offset = 0
         while True:
-            response = self._client.get(
-                f"{self._api}/{path}", params={"limit": PAGE_SIZE, "offset": offset}
+            response = read_get(
+                self._client, f"{self._api}/{path}", params={"limit": PAGE_SIZE, "offset": offset}
             )
             response.raise_for_status()
             data = response.json()
@@ -171,7 +172,7 @@ class NetBoxAdapter:
     # -- intern ---------------------------------------------------------------
 
     def _get(self, path: str, params: dict[str, str]) -> list[dict[str, Any]]:
-        response = self._client.get(f"{self._api}/{path}", params=params)
+        response = read_get(self._client, f"{self._api}/{path}", params=params)
         response.raise_for_status()
         return response.json().get("results", [])
 

@@ -45,3 +45,42 @@ def test_search_by_ip_longest_prefix_zuerst():
     prefixes = [int(n.value.split("/")[1]) for n in networks]
     assert prefixes == sorted(prefixes, reverse=True)  # /24 vor /16
     assert any(r.type is NetworkObjectType.HOST for r in results)
+
+
+def test_lesen_wiederholt_bei_timeout_und_503(monkeypatch):
+    """Dev-Befund 0.17.0: ein ConnectTimeout bzw. 503 liess den ganzen Lauf scheitern - Lesen
+    wird wiederholt (nur GET, also gefahrlos); bleibt der Fehler, kommt er an."""
+    from sot_gateway import readonly
+
+    waits: list[float] = []
+    monkeypatch.setattr(readonly, "_sleep", waits.append)
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectTimeout("timed out", request=request)
+        if calls["n"] == 2:
+            return httpx.Response(503, request=request)
+        return httpx.Response(200, json={"netbox-version": "4.2.0"})
+
+    nb = NetBoxAdapter(
+        "https://nb.example.ch", "t", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    assert nb.ping() == "4.2.0"
+    assert (calls["n"], waits) == (3, list(readonly.RETRY_DELAYS[:2]))
+
+    def down(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    nb = NetBoxAdapter(
+        "https://nb.example.ch", "t", client=httpx.Client(transport=httpx.MockTransport(down))
+    )
+    waits.clear()
+    try:
+        nb.ping()
+    except httpx.ReadTimeout:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("ReadTimeout erwartet")
+    assert waits == list(readonly.RETRY_DELAYS)  # 4 Versuche, dann der Fehler

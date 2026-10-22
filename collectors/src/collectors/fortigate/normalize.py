@@ -735,7 +735,13 @@ def _iface_cidr(raw: str | None) -> str | None:
 
 
 def _iface_ips(iface: dict) -> list[str]:
+    """Adressen des Interfaces inkl. Sekundaer-IPs (`secondaryip`) - auch die sind Next-Hops
+    anderer Geraete (Weg fuer IP)."""
     ips = [x for x in (_iface_cidr(iface.get("ip")),) if x]
+    for extra in iface.get("secondaryip") or []:
+        ip = _iface_cidr(extra.get("ip")) if isinstance(extra, dict) else None
+        if ip and ip not in ips:
+            ips.append(ip)
     ip6 = (iface.get("ipv6") or {}).get("ip6-address")
     if ip6 and not ip6.startswith("::/"):
         ips.append(ip6)

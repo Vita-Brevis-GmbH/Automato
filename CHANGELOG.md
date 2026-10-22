@@ -7,6 +7,38 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.17.1 – 2026-10-22
+
+Korrekturen aus dem Test von 0.17.0 (keine Migration). Die parallelen Firewalls (Regeln
+zusammenfassen, Abweichungen als Findings) und Anbindungen nach aussen (Internet, MPLS, WAN)
+folgen mit 0.18.0.
+
+- **Läufe robuster** (Dev-Befund: „nicht erreichbar … ConnectTimeout“, „Ergebnis-Upload
+  fehlgeschlagen: … ReadTimeout“):
+  - Lesen von FortiGate, APIC, DDI und NetBox wird bei Timeouts, abgebrochenen Verbindungen und
+    502/503/504 bis zu dreimal wiederholt (nach 5, 15 und 30 s). Das ist gefahrlos, es wird nur
+    gelesen.
+  - Der Agent wartet bis zu 10 Minuten auf die Quittung des Ergebnis-Uploads (bisher 30 s;
+    das Einspielen dauert mit mehreren Firewalls länger) und sendet bei Netzproblemen erneut.
+  - Der Orchestrator spielt ein Ergebnis für einen schon abgeschlossenen Lauf nicht noch einmal
+    ein, er quittiert dessen Stand. Ein zweiter Upload wartet, bis der erste fertig ist. Bisher
+    konnte die Fehlermeldung „Ergebnis-Upload fehlgeschlagen“ einen eingespielten Lauf auf
+    „failed“ setzen.
+  - Teil-Uploads der Referenzquellen werden nur wiederholt, wenn sie den Orchestrator nicht
+    erreicht haben (sonst gäbe es Doppelte).
+- **VRF der FortiGate** (Dev-Befund: Default-Route in der Management-VRF): Routen gelten je VRF.
+  Bisher ergaben die Default-Routen beider VRFs zusammen ein ECMP.
+  - Die Weg-Suche folgt der VRF des Eingangs; ohne Eingang der Standard-VRF 0.
+  - Routen über ein dediziertes Management-Interface sind eine eigene Tabelle und nie ein Weg
+    für den Datenverkehr.
+  - „Weg für IP“ (nur Ziel) zeigt weitere VRFs als eigene Zeile, in der Routen-Liste steht die
+    VRF unter „Weitere Angaben“.
+- **Keine Schleifen mehr über geratene Transfernetze:** Gehört der Next-Hop keinem gelesenen
+  Gerät (z. B. dem Aussenrouter), endet der Weg dort. Bisher folgte er einer anderen Firewall
+  am selben Netz, und zwei Firewalls am selben Aussenrouter ergaben „Schleife“. Sekundär-IPs
+  der FortiGate-Interfaces zählen jetzt als Adressen der Firewall.
+- Nach dem Update FortiGates neu einlesen (VRF, Sekundär-IPs).
+
 ## 0.17.0 – 2026-10-22
 
 Weg Hop für Hop mit Startpunkt (ADR 0019 Stufe 3, erste Fassung), Bezeichnungen und Namen aus

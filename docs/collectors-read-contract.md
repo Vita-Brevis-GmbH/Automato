@@ -32,7 +32,7 @@
 | `firewall/policy` | `policyid`, `name`, `srcintf`, `dstintf`, `srcaddr`/`dstaddr` (gegen IPv4-Objekte) und `srcaddr6`/`dstaddr6` (gegen IPv6-Objekte, Verweise getrennt `source_refs6`/`destination_refs6`, Familie v4/v6/dual), **Internet Services** `internet-service[6][-src]-name/-group/-custom/-custom-group/-fortiguard` (→ `isdb:<Name>`, extern erwartet), **Identität** `users`/`groups`/`fsso-groups` (→ `user:`/`usergroup:`), ZTNA-Tags `ztna-ems-tag`/`ztna-geo-tag`, Negation `srcaddr-negate`/`dstaddr-negate`/`service-negate`/`internet-service[-src]-negate`, `service`, `action`, `nat`, `poolname`, `utm-status`, **UTM-Refs** `av-profile`/`webfilter-profile`/`dnsfilter-profile`/`application-list`/`ips-sensor`/`waf-profile`/`ssl-ssh-profile`, `schedule`, `comments` | `rule` (+ `rule_endpoint` v4/v6, `rule_service`); UTM-Refs → Spalte „Schutzmechanismen"; `comments` (enthält oft `CTASK…`/`CT_…`) → „Description" |
 | `firewall/policy6` (nur FortiOS 6.x; ab 7.0 fehlt die Tabelle → übersprungen) | wie `firewall/policy`, `srcaddr`/`dstaddr` sind IPv6-Objekte | `rule` mit `external_id` `v6-<policyid>`, Familie v6 |
 | `system/zone` | `name`, `interface[]` | `zone`; Zone je Interface im Netzinventar |
-| `system/interface` | `name`, `type`, `ip`, `ip6`, `alias`, `role`, `vlanid`, `interface` (Parent), `member[]` (Aggregate), `status`, `vdom` | Netzinventar (ADR 0010): `inv_interface` (Modus, VLAN, LAG/Parent, IPs), `inv_vlan`, `inv_subnet`; Zonen-/Subnetz-Ableitung |
+| `system/interface` | `name`, `type`, `ip`, `secondaryip[].ip`, `ip6`, `alias`, `role`, `vlanid`, `interface` (Parent), `member[]` (Aggregate), `status`, `vdom`, `vrf`, `dedicated-to` (nur für das Routing: VRF bzw. Management je Route) | Netzinventar (ADR 0010): `inv_interface` (Modus, VLAN, LAG/Parent, IPs), `inv_vlan`, `inv_subnet`; Zonen-/Subnetz-Ableitung |
 | `system/global` (+ optional `monitor/system/status`) | `hostname`; Modell, Seriennummer, Version | `inv_device` (Firewall) |
 | `system/vdom` (global, 0.15.0) | `name` (interne `vsys_*` ausgenommen) | Liste der VDOMs; danach alle Tabellen oben **je VDOM** |
 
@@ -59,7 +59,7 @@ Positivliste (Passwörter, Pre-Shared-Keys und Schlüssel kommen nie mit):
 
 | Quelle | Felder | → Modell |
 |---|---|---|
-| Monitor `router/ipv4`, `router/ipv6` | `ip_mask`, `type`, `distance`, `metric`, `priority`, `gateway`, `interface` | `topo_route` `rib` (je Präfix/Protokoll/Distanz, mehrere Gateways = ECMP) |
+| Monitor `router/ipv4`, `router/ipv6` | `ip_mask`, `type`, `distance`, `metric`, `priority`, `gateway`, `interface`, `vrf` | `topo_route` `rib` (je Präfix/Protokoll/Distanz/VRF, mehrere Gateways = ECMP; `attrs.vrf`, `attrs.mgmt` bei Management-Interfaces) |
 | Monitor `router/bgp/paths`, `paths6` | `nlri_prefix`/`_len`, `next_hop`, `learned_from`, `is_best`, `as_path`, `local_pref`, `med`, `origin`, `weight` | `topo_route` `bgp` (auch nicht beste Pfade = Backup-Wege) |
 | Monitor `router/bgp/neighbors`, `neighbors6` | `neighbor_ip`, `local_ip`, `remote_as`, `state`, `admin_status` | `topo_peer` |
 | `router/static`, `static6` | `seq-num`, `dst`, `gateway`, `device`, `distance`, `priority`, `status`, `blackhole`, `comment` | `topo_route` `static` (auch inaktive bzw. mit höherer Distanz) |

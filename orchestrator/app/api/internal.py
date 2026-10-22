@@ -80,15 +80,27 @@ class ResultAck(BaseModel):
     message: str | None = None
 
 
+def _settled(run, result: CollectorResult) -> bool:
+    """Lauf schon abgeschlossen - ein weiteres Ergebnis aendert nichts, die Antwort quittiert
+    nur dessen Stand (Dev-Befund 0.17.0): der Agent sendet nach einem Timeout erneut bzw.
+    meldet „Upload fehlgeschlagen“, waehrend der erste Upload noch eingespielt wird. Ein
+    vollstaendiges Ergebnis nach einem Abbruch (failed) wird noch angenommen."""
+    if run.status is RunStatus.COMPLETED:
+        return True
+    return run.status is RunStatus.FAILED and result.status != "completed"
+
+
 def _authorized_run(
     session: Session,
     run_id: str,
     internal: str | None,
     agent_token: str | None,
     channel: mtls.Channel,
+    lock: bool = False,
 ):
-    """Lauf + Akteur: internes Token (zentraler Worker) oder der abholende Agent."""
-    run = session.get(CollectorRun, run_id)
+    """Lauf + Akteur: internes Token (zentraler Worker) oder der abholende Agent. `lock` sperrt
+    den Lauf bis zum Ende der Transaktion (Ergebnis: ein zweiter Upload wartet auf den ersten)."""
+    run = session.get(CollectorRun, run_id, with_for_update=lock)
     if _internal_ok(internal):
         actor = None
     elif agent_token:
@@ -177,7 +189,11 @@ def submit_result(
 ) -> ResultAck:
     """Ergebnis abliefern: zentraler Worker mit internem Token, Agent mit seinem eigenen
     Token - dann nur fuer einen Lauf, den genau dieser Agent abgeholt hat (ADR 0009)."""
-    run, actor = _authorized_run(session, run_id, x_internal_token, x_agent_token, channel)
+    run, actor = _authorized_run(
+        session, run_id, x_internal_token, x_agent_token, channel, lock=True
+    )
+    if _settled(run, result):
+        return ResultAck(run_id=run.id, status=run.status.value, message=run.message)
     if run.platform in REFERENCE_PLATFORMS:
         return _finish_reference_run(session, run, result, actor)
 

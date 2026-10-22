@@ -1520,6 +1520,7 @@ export interface PolicyHit {
 }
 export interface RouteLookup extends Labeled {
   kind: string;
+  vrf?: number | string | null; // weitere VRF des Kontexts (FortiGate), "mgmt" = Management
   missing: string[];
   route: {
     id: number;
@@ -1538,6 +1539,7 @@ export interface TracePort extends Resolved {
 }
 export interface TraceHop extends RoutingNode {
   via: string; // wie der Weg hierher kam (Quelle angeschlossen, Adresse des Nachbarn, …)
+  vrf?: number | string; // VRF des Eingangs, wenn nicht die Standard-VRF ("mgmt" = Management)
   ingress: TracePort;
   egress?: TracePort;
   route?: {

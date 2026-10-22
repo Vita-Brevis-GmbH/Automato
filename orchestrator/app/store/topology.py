@@ -23,6 +23,15 @@ from app.models import (
 )
 from app.schemas.collector import RoutingInventory
 
+MGMT = "mgmt"  # Tabelle der dedizierten Management-Interfaces (FortiGate)
+Table = int | str  # VRF innerhalb des Kontexts (FortiGate 0-251) bzw. MGMT
+
+
+def table_of(route: TopoRoute) -> Table:
+    """VRF einer Route (fehlt = 0, 0.17.1); Routen ueber Management-Interfaces eigene Tabelle."""
+    attrs = route.attrs or {}
+    return MGMT if attrs.get("mgmt") else int(attrs.get("vrf") or 0)
+
 
 def ip_hex(ip) -> str:
     """Wie im Regelindex: IP als Hex fester Breite (Textvergleich = numerischer Vergleich)."""
@@ -175,7 +184,9 @@ def lookup(
     session: Session, tenant_id: int, ip_text: str, source_system_id: int | None = None
 ) -> list[dict]:
     """Je Kontext: wirksame Route (laengstes Praefix der RIB, ECMP = alle Next-Hops) und die
-    Policy-Routen bzw. SD-WAN-Regeln, deren Ziel passt bzw. passen kann."""
+    Policy-Routen bzw. SD-WAN-Regeln, deren Ziel passt bzw. passen kann. Weitere VRFs des
+    Kontexts (FortiGate, Management) mit einer passenden Route stehen als eigene Zeile da
+    (`vrf`); die Policy-Routen gehoeren zur Standard-VRF."""
     try:
         ip = ipaddress.ip_address(ip_text.strip())
     except ValueError:
@@ -199,7 +210,7 @@ def lookup(
         pol_stmt = pol_stmt.where(TopoPolicyRoute.source_system_id == source_system_id)
     best: dict[tuple, TopoRoute] = {}
     for r in session.scalars(stmt):
-        key = (r.source_system_id, r.node, r.context)
+        key = (r.source_system_id, r.node, r.context, table_of(r))
         cur = best.get(key)
         if cur is None or (r.prefix_len, -(r.distance or 0)) > (
             cur.prefix_len,
@@ -229,28 +240,35 @@ def lookup(
         )
     )
     ifaces = Interfaces(session, {c.source_system_id for c in contexts})
+    others: dict[tuple, list[Table]] = defaultdict(list)
+    for sid, node, context, table in best:
+        if table != 0:
+            others[(sid, node, context)].append(table)
     out = []
     for c in contexts:
         key = (c.source_system_id, c.node, c.context)
-        r = best.get(key)
-        out.append(
-            {
-                "source_system_id": c.source_system_id,
-                "node": c.node,
-                "context": c.context,
-                "kind": c.kind,
-                "missing": c.missing or [],
-                "route": None
-                if r is None
-                else {
-                    "id": r.id,
-                    "prefix": r.prefix,
-                    "protocol": r.protocol,
-                    "distance": r.distance,
-                    "metric": r.metric,
-                    "next_hops": ifaces.hops(r.source_system_id, r.next_hops),
-                },
-                "policy_routes": policies.get(key, []),
-            }
-        )
+        tables: list[Table] = [0, *sorted(others.get(key, []), key=str)]
+        for table in tables:
+            r = best.get((*key, table))
+            out.append(
+                {
+                    "source_system_id": c.source_system_id,
+                    "node": c.node,
+                    "context": c.context,
+                    "kind": c.kind,
+                    "vrf": None if table == 0 else table,
+                    "missing": c.missing or [],
+                    "route": None
+                    if r is None
+                    else {
+                        "id": r.id,
+                        "prefix": r.prefix,
+                        "protocol": r.protocol,
+                        "distance": r.distance,
+                        "metric": r.metric,
+                        "next_hops": ifaces.hops(r.source_system_id, r.next_hops),
+                    },
+                    "policy_routes": policies.get(key, []) if table == 0 else [],
+                }
+            )
     return out

@@ -314,3 +314,59 @@ def test_weg_ab_gewaehltem_startpunkt(client):
     p = {"tenant_id": tid, "dst": "10.20.0.5"}
     assert client.get("/routing/trace", params=p).status_code == 422
     assert client.get("/routing/trace", params={**p, "src": "x"}).status_code == 422
+
+
+def _fw(name, routes, interfaces):
+    return {
+        "status": "completed",
+        "inventory": {"devices": [{"name": name, "role": "firewall"}], "interfaces": interfaces},
+        "routing": {"contexts": [{"node": name, "context": "root"}], "routes": routes},
+    }
+
+
+MGMT_ATTRS = {"vrf": 10, "mgmt": True}
+FWA = _fw(
+    "fw-a",
+    [
+        _r("fw-a", "root", "203.0.113.0/29", [{"interface": "wan"}], "connected"),
+        _r("fw-a", "root", "0.0.0.0/0", [{"ip": "203.0.113.1", "interface": "wan"}]),
+        _r("fw-a", "root", "10.99.0.0/24", [{"interface": "mgmt"}], "connected", attrs=MGMT_ATTRS),
+        _r("fw-a", "root", "0.0.0.0/0", [{"ip": "10.99.0.1", "interface": "mgmt"}],
+           attrs=MGMT_ATTRS),
+    ],
+    [_if("fw-a", "wan", "203.0.113.2/29", "internet"), _if("fw-a", "mgmt", "10.99.0.2/24")],
+)  # fmt: skip
+FWB = _fw(
+    "fw-b",
+    [
+        _r("fw-b", "root", "203.0.113.0/29", [{"interface": "wan"}], "connected"),
+        _r("fw-b", "root", "0.0.0.0/0", [{"ip": "203.0.113.1", "interface": "wan"}]),
+    ],
+    [_if("fw-b", "wan", "203.0.113.3/29", "internet")],
+)
+
+
+def test_kein_raten_ueber_gemeinsames_netz_und_vrf_management(client):
+    """Dev-Befund 0.17.0: zwei Firewalls am selben Aussenrouter ergaben Schleifen (fw-a ->
+    „Transfernetz“ -> fw-b -> fw-a), die Management-Default-Route zaehlte als Weg."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    for name, result in (("fw-a", FWA), ("fw-b", FWB)):
+        _deliver(client, tid, _system(client, tid, name, "fortigate"), "fortigate", result)
+    nodes = {n["label"]: n["key"] for n in client.get(
+        "/routing/summary", params={"tenant_id": tid}).json()["nodes"]}  # fmt: skip
+
+    out = _trace(client, tid, start=nodes["fw-a"], dst="192.0.2.77")
+    (path,) = out["paths"]  # nur ueber wan, nicht ueber mgmt, keine Schleife ueber fw-b
+    assert _labels(path) == ["fw-a"]
+    assert path["hops"][0]["egress"]["interface"] == "wan"
+    assert path["end"]["kind"] == "external"
+
+    # Quelle im Management-Netz: Weg in der Management-Tabelle
+    mgmt = _trace(client, tid, src="10.99.0.50", dst="192.0.2.77")
+    (path,) = mgmt["paths"]
+    assert path["hops"][0]["vrf"] == "mgmt"
+    assert path["hops"][0]["egress"]["next_hop"] == "10.99.0.1"
+
+    rows = client.get("/routing/lookup", params={"tenant_id": tid, "ip": "192.0.2.77"}).json()
+    fwa = [(r["vrf"], r["route"]["next_hops"][0]["ip"]) for r in rows if r["node"] == "fw-a"]
+    assert fwa == [(None, "203.0.113.1"), ("mgmt", "10.99.0.1")]

@@ -163,8 +163,13 @@ Rahmen laut Anwender (2026-10-22):
        geht vor. Über Objekte bestimmte ist „möglich“; der Weg folgt dann der Tabelle.
      - Sonst gilt das längste Präfix mit kleinster Distanz; die Next-Hops aller
        Border-Leafs werden zusammengefasst, ECMP verzweigt.
-   - Nächster Knoten: Besitzer der Next-Hop-Adresse (Interface-IP, L3Out-SVI inkl.
-     vPC-Seiten), sonst ein Knoten mit dem Transfernetz („vermutet“).
+   - Nächster Knoten: Besitzer der Next-Hop-Adresse (Interface-IP inkl. Sekundär-IPs, L3Out-SVI
+     inkl. vPC-Seiten). Ein gemeinsames Transfernetz reicht nicht (0.17.1). Dort hängt meist ein
+     Aussenrouter; das Raten ergab bei zwei Firewalls am selben Router Schleifen. Der Weg
+     endet dann. Anbindungen nach aussen werden mit 0.18.0 erfassbar.
+   - VRF (0.17.1): je VDOM gilt die Tabelle der VRF des Eingangs (aus den angeschlossenen
+     Netzen des Interfaces), ohne Eingang die VRF 0. Management-Interfaces (`dedicated-to`)
+     sind eine eigene Tabelle.
    - Ende: angeschlossen, im Fabric (EPG/BD der VRF), extern (Default ohne gelesenen
      Nachbarn), unbekannter Next-Hop, keine Route, Schleife, mehr als 12 Hops; höchstens 16
      Wege.

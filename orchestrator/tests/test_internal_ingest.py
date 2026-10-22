@@ -186,3 +186,31 @@ def test_publizierte_dienste_aus_vips(client, session_factory):
     assert detail["rules"][0]["sources"] == ["10.10.20.0/24"]
 
     assert client.get("/published-services/nicht-da").status_code == 404
+
+
+def test_ergebnis_fuer_abgeschlossenen_lauf_wird_nur_quittiert(client):
+    """Dev-Befund 0.17.0: nach einem Timeout sendet der Agent erneut bzw. meldet „Upload
+    fehlgeschlagen“, obwohl der erste Upload eingespielt wurde - der Lauf bleibt completed."""
+    admin = {"X-Dev-Roles": "admin"}
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=admin).json()["id"]
+    body = {"tenant_id": tid, "name": "fw-01", "platform": "fortigate", "base_url": "https://x"}
+    sid = client.post("/systems", json=body, headers=admin).json()["id"]
+    run = {"platform": "fortigate", "tenant_id": tid, "source_system_id": sid}
+    run_id = client.post("/jobs/collect", json=run).json()["run_id"]
+    url = f"/internal/collector-runs/{run_id}/result"
+    done = {"status": "completed", "message": "3 VDOMs gelesen"}
+    assert client.post(url, headers=TOKEN, json=done).json()["status"] == "completed"
+    late = {"status": "failed", "message": "Ergebnis-Upload fehlgeschlagen: ReadTimeout"}
+    ack = client.post(url, headers=TOKEN, json=late).json()
+    assert (ack["status"], ack["message"]) == ("completed", "3 VDOMs gelesen")
+    assert client.post(url, headers=TOKEN, json=done).json()["status"] == "completed"
+    got = client.get(f"/jobs/{run_id}").json()
+    assert (got["status"], got["message"]) == ("completed", "3 VDOMs gelesen")
+
+    # abgebrochen (failed): eine spaete Fehlermeldung aendert nichts, ein Ergebnis zaehlt noch
+    run_id = client.post("/jobs/collect", json=run).json()["run_id"]
+    url = f"/internal/collector-runs/{run_id}/result"
+    first = {"status": "failed", "message": "FortiGate nicht erreichbar"}
+    client.post(url, headers=TOKEN, json=first)
+    assert client.post(url, headers=TOKEN, json=late).json()["message"] == first["message"]
+    assert client.post(url, headers=TOKEN, json=done).json()["status"] == "completed"

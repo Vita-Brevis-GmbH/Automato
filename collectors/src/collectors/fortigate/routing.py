@@ -11,6 +11,11 @@ Gelesen wird nur lesend:
 
 Felder werden nur ueber eine Positivliste uebernommen: Passwoerter, Pre-Shared-Keys und
 Schluessel (z. B. `system/ha` `password`, FGSP `psksecret`) kommen nie mit.
+
+VRF (FortiOS 7.x, Dev-Befund 0.17.0): Routen gelten je VRF des VDOMs - eine Default-Route in
+der Management-VRF ist kein Weg fuer den Datenverkehr. Jede Route traegt ihre VRF (`attrs.vrf`,
+aus der Route bzw. dem Interface; fehlt = 0); Routen ueber ein dediziertes
+Management-Interface (`dedicated-to management`) tragen `attrs.mgmt`.
 """
 
 import ipaddress
@@ -102,9 +107,37 @@ def _ports(row: dict) -> list[int]:
     return ports
 
 
-def rib(rows: list[dict], node: str, vdom: str) -> list[NormalizedRoute]:
-    """Wirksame Routing-Tabelle: Eintraege je Praefix, Protokoll und Distanz zusammengefasst -
-    mehrere Gateways sind ECMP."""
+Ports = dict[str, dict[str, Any]]  # Interface -> {"vrf": int, "mgmt": bool}
+
+
+def ports(interfaces: list[dict] | None) -> Ports:
+    """VRF und Management-Kennzeichen je Interface (cmdb system/interface)."""
+    out: Ports = {}
+    for i in interfaces or []:
+        if isinstance(i, dict) and i.get("name"):
+            out[str(i["name"])] = {
+                "vrf": _int(i.get("vrf")) or 0,
+                "mgmt": i.get("dedicated-to") == "management",
+            }
+    return out
+
+
+def _table(row: dict, interface: Any, ifaces: Ports | None) -> dict[str, Any]:
+    """VRF (aus der Route, sonst dem Interface) und Management-Kennzeichen einer Route."""
+    port = (ifaces or {}).get(str(interface or ""), {})
+    vrf = _int(row.get("vrf"))
+    vrf = port.get("vrf", 0) if vrf is None else vrf
+    out: dict[str, Any] = {"vrf": vrf} if vrf else {}
+    if port.get("mgmt"):
+        out["mgmt"] = True
+    return out
+
+
+def rib(
+    rows: list[dict], node: str, vdom: str, ifaces: Ports | None = None
+) -> list[NormalizedRoute]:
+    """Wirksame Routing-Tabelle: Eintraege je Praefix, Protokoll, Distanz und VRF
+    zusammengefasst - mehrere Gateways sind ECMP."""
     grouped: dict[tuple, NormalizedRoute] = {}
     for r in rows or []:
         if not isinstance(r, dict):
@@ -114,7 +147,8 @@ def rib(rows: list[dict], node: str, vdom: str) -> list[NormalizedRoute]:
             continue
         proto = str(r.get("type") or "").lower() or None
         proto = _PROTOCOL.get(proto or "", proto)
-        key = (net, proto, _int(r.get("distance")))
+        table = _table(r, r.get("interface"), ifaces)
+        key = (net, proto, _int(r.get("distance")), table.get("vrf", 0), bool(table.get("mgmt")))
         route = grouped.get(key)
         if route is None:
             route = grouped[key] = NormalizedRoute(
@@ -125,7 +159,7 @@ def rib(rows: list[dict], node: str, vdom: str) -> list[NormalizedRoute]:
                 protocol=proto,
                 distance=_int(r.get("distance")),
                 metric=_int(r.get("metric")),
-                attrs=_keep(r, ("priority", "is_tunnel_route", "tunnel_parent")),
+                attrs={**_keep(r, ("priority", "is_tunnel_route", "tunnel_parent")), **table},
             )
         hop = NormalizedNextHop(ip=_gateway(r.get("gateway")), interface=r.get("interface"))
         if hop not in route.next_hops:
@@ -143,6 +177,7 @@ def bgp_paths(rows: list[dict], node: str, vdom: str) -> list[NormalizedRoute]:
         if net is None:
             continue
         attrs = _keep(r, ("as_path", "local_pref", "origin", "learned_from", "weight", "path_id"))
+        attrs.update(_table(r, None, None))
         out.append(
             NormalizedRoute(
                 node=node,
@@ -159,7 +194,9 @@ def bgp_paths(rows: list[dict], node: str, vdom: str) -> list[NormalizedRoute]:
     return out
 
 
-def static(rows: list[dict], node: str, vdom: str) -> list[NormalizedRoute]:
+def static(
+    rows: list[dict], node: str, vdom: str, ifaces: Ports | None = None
+) -> list[NormalizedRoute]:
     """Konfigurierte statische Routen, auch inaktive bzw. mit hoeherer Distanz (Backup)."""
     out = []
     for r in rows or []:
@@ -170,6 +207,7 @@ def static(rows: list[dict], node: str, vdom: str) -> list[NormalizedRoute]:
             continue
         attrs = _keep(r, ("seq-num", "priority", "weight", "comment", "dstaddr", "sdwan-zone"))
         attrs.update({k: True for k in ("blackhole", "dynamic-gateway") if r.get(k) == "enable"})
+        attrs.update(_table(r, r.get("device"), ifaces))
         out.append(
             NormalizedRoute(
                 node=node,
@@ -356,10 +394,14 @@ def _sync_peers(cluster: Any) -> list[dict[str, Any]]:
     return out
 
 
-def normalize(vdoms: list[dict], global_ha: dict | None, node: str) -> RoutingInventory:
+def normalize(
+    vdoms: list[dict], global_ha: dict | None, node: str, interfaces: list[dict] | None = None
+) -> RoutingInventory:
     """Routing aller VDOMs (`vdoms[i]["routing"]` = Rohtabellen + `missing`) und HA - auch leer,
-    damit der Orchestrator den Stand des Quellsystems ersetzt."""
+    damit der Orchestrator den Stand des Quellsystems ersetzt. `interfaces` (cmdb) liefern VRF
+    und Management-Kennzeichen der Routen."""
     inv = RoutingInventory()
+    ifaces = ports(interfaces)
     for v in vdoms:
         raw = v.get("routing")
         if raw is None:
@@ -368,12 +410,12 @@ def normalize(vdoms: list[dict], global_ha: dict | None, node: str) -> RoutingIn
         inv.contexts.append(
             NormalizedRoutingContext(node=node, context=vdom, missing=raw.get("missing", []))
         )
-        inv.routes += rib(raw.get("rib4"), node, vdom) + rib(raw.get("rib6"), node, vdom)
+        inv.routes += rib(raw.get("rib4"), node, vdom, ifaces)
+        inv.routes += rib(raw.get("rib6"), node, vdom, ifaces)
         inv.routes += bgp_paths(raw.get("bgp_paths4"), node, vdom)
         inv.routes += bgp_paths(raw.get("bgp_paths6"), node, vdom)
-        inv.routes += static(raw.get("static4"), node, vdom) + static(
-            raw.get("static6"), node, vdom
-        )
+        inv.routes += static(raw.get("static4"), node, vdom, ifaces)
+        inv.routes += static(raw.get("static6"), node, vdom, ifaces)
         inv.peers += peers(raw.get("bgp_neighbors4"), node, vdom)
         inv.peers += peers(raw.get("bgp_neighbors6"), node, vdom)
         inv.policy_routes += policy_routes(raw.get("policy4"), node, vdom)

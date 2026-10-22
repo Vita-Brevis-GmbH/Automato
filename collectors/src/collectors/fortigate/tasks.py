@@ -190,7 +190,7 @@ def collect_once(
             nat_rules=nat_rules,
             objects=objects,
             inventory=inventory,
-            routing=routing.normalize(d.get("vdoms") or [], d.get("ha"), node),
+            routing=routing.normalize(d.get("vdoms") or [], d.get("ha"), node, d.get("interfaces")),
             message=_vdom_message(d),
         )
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck

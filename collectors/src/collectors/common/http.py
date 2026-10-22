@@ -60,9 +60,14 @@ def _client() -> httpx.Client:
     return httpx.Client(**client_kwargs(get_settings()))
 
 
-def post_json(path_url: str, json: dict, headers: dict[str, str]) -> httpx.Response:
+def post_json(
+    path_url: str, json: dict, headers: dict[str, str], timeout: httpx.Timeout | None = None
+) -> httpx.Response:
     with _client() as client:
-        response = client.post(path_url, json=json, headers=headers)
+        if timeout is None:
+            response = client.post(path_url, json=json, headers=headers)
+        else:
+            response = client.post(path_url, json=json, headers=headers, timeout=timeout)
     response.raise_for_status()
     return response
 

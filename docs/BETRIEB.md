@@ -531,6 +531,18 @@ an (`deploy/agent-gateway`, Port 8443).
   „Ergebnis-Upload fehlgeschlagen: …“ (z. B. HTTP 413, wenn ein Proxy das Ergebnis zu gross
   findet).
 
+- **„nicht erreichbar … ConnectTimeout“ bzw. „Ergebnis-Upload fehlgeschlagen: … ReadTimeout“**
+  (bis 0.17.0) — einzelne Netz-Aussetzer bzw. ein Einspielen, das länger als 30 s dauerte,
+  liessen den Lauf scheitern. Seit 0.17.1 gilt:
+  - Lesen wird bis zu dreimal wiederholt (5, 15, 30 s).
+  - Der Agent wartet bis zu 10 min auf die Quittung und sendet erneut; der Orchestrator nimmt
+    einen fertigen Lauf nicht doppelt an.
+
+  Bleibt der Fehler, ist das Ziel wirklich weg. Bei NetBox auf demselben Docker-Host prüfen,
+  ob der Container läuft und Port 8080 vom Agenten aus erreichbar ist
+  (`Test-NetConnection host.docker.internal -Port 8080`). Beim Orchestrator die Last prüfen
+  (`docker stats`) und „Alle einlesen“ nicht doppelt starten.
+
 - **NetBox-Sync steht seit Langem auf „wird übernommen“** (bis 0.11.3) — die Übernahme läuft
   im Orchestrator-Prozess; ein Neustart (z. B. `deploy/update.sh`) beendete sie, der Plan blieb
   stehen und sperrte jeden weiteren Sync. Seit 0.11.4 werden solche Pläne beim Start beendet,

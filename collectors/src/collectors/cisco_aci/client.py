@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 from sot_gateway.readonly import enforce_read_only
+from sot_gateway.readonly import get as read_get
 
 # Fabric-interne Tenants: ohne ausdrückliche Auswahl nicht lesen (keine Kunden-Contracts)
 SYSTEM_TENANTS = frozenset({"infra", "mgmt"})
@@ -87,7 +88,7 @@ class ApicClient:
     # --- Lesen ---
 
     def _get(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
-        response = self._client.get(f"{self._base}{path}", params=params)
+        response = read_get(self._client, f"{self._base}{path}", params=params)
         response.raise_for_status()
         return response.json().get("imdata", [])
 

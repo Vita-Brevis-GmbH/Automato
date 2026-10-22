@@ -336,3 +336,37 @@ def test_apic_border_routing_nur_lesend_und_fehlende_rechte():
     entry = data[("1", "101", "TE:VRF1")]
     assert entry["missing"] == ["Routing-Tabelle IPv6 (HTTP 403)"] and entry["rib6"] == []
     assert len(entry["rib4"]) == 5
+
+
+def test_fortigate_vrf_und_management_getrennt():
+    """Dev-Befund 0.17.0: die Default-Route der Management-VRF lief als ECMP mit der
+    Daten-Default-Route zusammen - jetzt je VRF, Management-Ports gekennzeichnet."""
+    interfaces = [
+        {"name": "wan1", "vrf": 0},
+        {"name": "mgmt", "vrf": 10, "dedicated-to": "management"},
+        {"name": "port9", "vrf": 10, "secondaryip": [{"ip": "10.9.0.2 255.255.255.0"}]},
+    ]
+    rows = [
+        {"ip_mask": "0.0.0.0/0", "type": "static", "distance": 10, "gateway": "198.51.100.1",
+         "interface": "wan1", "vrf": 0},
+        {"ip_mask": "0.0.0.0/0", "type": "static", "distance": 10, "gateway": "10.99.0.1",
+         "interface": "mgmt"},  # ohne vrf in der Antwort: VRF vom Interface
+        {"ip_mask": "10.9.0.0/24", "type": "connect", "interface": "port9", "vrf": 10},
+    ]  # fmt: skip
+    routes = fgt.rib(rows, "fw-01", "root", fgt.ports(interfaces))
+    by = {(r.prefix, r.attrs.get("vrf", 0)): r for r in routes}
+    assert len(routes) == 3  # keine ECMP aus zwei VRFs
+    assert by[("0.0.0.0/0", 0)].next_hops[0].ip == "198.51.100.1"
+    assert "mgmt" not in by[("0.0.0.0/0", 0)].attrs
+    assert by[("0.0.0.0/0", 10)].attrs == {"vrf": 10, "mgmt": True}
+    assert by[("10.9.0.0/24", 10)].protocol == "connected"
+    static = fgt.static([{"dst": "0.0.0.0 0.0.0.0", "device": "mgmt", "gateway": "10.99.0.1"}],
+                        "fw-01", "root", fgt.ports(interfaces))  # fmt: skip
+    assert static[0].attrs == {"vrf": 10, "mgmt": True}
+
+    from collectors.fortigate import normalize as norm
+
+    inv = norm.normalize_inventory(
+        [{"name": "port9", "ip": "10.8.0.1 255.255.255.0", **interfaces[2]}], [], {}, "fw-01"
+    )
+    assert inv.interfaces[0].ips == ["10.8.0.1/24", "10.9.0.2/24"]  # Sekundaer-IP dabei

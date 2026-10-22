@@ -7,9 +7,12 @@ ein Knoten und nicht vier Wege.
 - **Start:** der gewaehlte Startpunkt bzw. der Knoten, an dem die Quelle angeschlossen ist
   (angeschlossenes Netz in der RIB, sonst EPG-/BD-Subnetz einer gelesenen ACI-VRF).
 - **Je Hop:** eine Policy-Route bzw. SD-WAN-Regel, die sicher passt, geht vor; sonst das
-  laengste Praefix der RIB (ECMP verzweigt).
-- **Naechster Knoten:** dem der Next-Hop gehoert (Interface-IP der FortiGate, SVI/Interface
-  eines L3Outs); sonst ein Knoten mit diesem Transfernetz (vermutet).
+  laengste Praefix der RIB (ECMP verzweigt) - in der VRF des Eingangs (FortiGate; ohne
+  Eingang die Standard-VRF 0, nie die Management-Tabelle).
+- **Naechster Knoten:** dem der Next-Hop gehoert (Interface-IP der FortiGate inkl.
+  Sekundaer-IPs, SVI/Interface eines L3Outs). Gehoert er keinem gelesenen Geraet, endet der
+  Weg dort - kein Raten ueber ein gemeinsames Transfernetz (0.17.1: das fuehrte bei mehreren
+  Firewalls am selben Aussenrouter zu Schleifen).
 - **Ende:** Ziel angeschlossen, Default-Route ohne gelesenen Nachbarn („extern/Internet“),
   Next-Hop ohne gelesenes Geraet, keine Route, Schleife oder Hop-Grenze - Next-Hops mit dem
   Namen aus dem IPAM.
@@ -33,13 +36,13 @@ from app.models import (
     TopoRoute,
 )
 from app.store import references
-from app.store.topology import ip_hex, matches
+from app.store.topology import MGMT, Table, ip_hex, matches, table_of
 
 MAX_HOPS = 12
 MAX_PATHS = 16
 _CONNECTED = ("connected", "local")
-
 Key = tuple[int, str]  # (Quellsystem, Kontext: VDOM bzw. Tenant:VRF)
+__all__ = ["MGMT", "Graph", "trace"]
 
 
 @dataclass
@@ -118,6 +121,7 @@ class Graph:
         self.refs = references.context(session, tenant_id)
         self._owners: dict[str, list[tuple[Key, str | None, str | None]]] | None = None
         self._zones: dict[tuple[int, str], str] = {}
+        self._tables: dict[Key, dict[str, Table]] = {}
 
     # -- Bezeichnungen --------------------------------------------------------------
 
@@ -211,10 +215,10 @@ class Graph:
             stmt = stmt.where(TopoRoute.protocol.in_(_CONNECTED))
         return list(self.session.scalars(stmt))
 
-    def route(self, key: Key, ip) -> dict | None:
-        """Wirksame Route des Knotens: laengstes Praefix, kleinste Distanz; Next-Hops aller
-        Mitglieder (Border-Leafs) zusammen."""
-        rows = self._routes(ip, key)
+    def route(self, key: Key, ip, table: Table = 0) -> dict | None:
+        """Wirksame Route des Knotens in der VRF `table`: laengstes Praefix, kleinste Distanz;
+        Next-Hops aller Mitglieder (Border-Leafs) zusammen."""
+        rows = [r for r in self._routes(ip, key) if table_of(r) == table]
         if not rows:
             return None
         length = max(r.prefix_len for r in rows)
@@ -236,20 +240,40 @@ class Graph:
             "members": sorted({r.node for r in rows}),
         }
 
-    def connected_nodes(self, ip, exclude: Key | None = None) -> list[tuple[Key, str | None]]:
-        """Knoten mit einem angeschlossenen Netz, das die IP enthaelt (laengstes je Knoten)."""
+    def connected_nodes(self, ip) -> list[tuple[Key, str | None, Table]]:
+        """Knoten mit einem angeschlossenen Netz, das die IP enthaelt (laengstes je Knoten, bei
+        gleicher Laenge die Standard-VRF): Knoten, Interface, VRF."""
         best: dict[Key, TopoRoute] = {}
         for r in self._routes(ip, connected=True):
             key = (r.source_system_id, r.context)
-            if key == exclude or key not in self.nodes:
+            if key not in self.nodes:
                 continue
-            if key not in best or r.prefix_len > best[key].prefix_len:
+            rank = (r.prefix_len, table_of(r) == 0)
+            if key not in best or rank > (best[key].prefix_len, table_of(best[key]) == 0):
                 best[key] = r
         out = []
         for key, r in best.items():
             ifaces = [h.get("interface") for h in r.next_hops or [] if h.get("interface")]
-            out.append((key, ifaces[0] if ifaces else None))
+            out.append((key, ifaces[0] if ifaces else None, table_of(r)))
         return out
+
+    def table(self, key: Key, interface: str | None) -> Table:
+        """VRF eines Interfaces - aus seinen angeschlossenen Netzen (fehlt = 0)."""
+        if key not in self._tables:
+            tables: dict[str, Table] = {}
+            for r in self.session.scalars(
+                select(TopoRoute).where(
+                    TopoRoute.source_system_id == key[0],
+                    TopoRoute.context == key[1],
+                    TopoRoute.table == "rib",
+                    TopoRoute.protocol.in_(_CONNECTED),
+                )
+            ):
+                for h in r.next_hops or []:
+                    if h.get("interface"):
+                        tables.setdefault(h["interface"], table_of(r))
+            self._tables[key] = tables
+        return self._tables[key].get(interface or "", 0)
 
     def fabric(self, ip, key: Key | None = None) -> list[tuple[Key, str]]:
         """ACI-VRF-Knoten, deren EPG- bzw. BD-Subnetz die IP enthaelt, mit dem Ort im Fabric
@@ -338,11 +362,12 @@ def trace(
     if start and chosen not in g.nodes:
         notes.append("Startpunkt unbekannt – neu einlesen bzw. einen anderen wählen")
     elif chosen is not None:
-        # Eingang am Startpunkt: das angeschlossene Netz der Quelle, falls bekannt
-        iface = next((i for k, i in g.connected_nodes(src) if k == chosen), None) if src else None
+        # Eingang (und damit VRF) am Startpunkt: das angeschlossene Netz der Quelle, falls bekannt
+        found = g.connected_nodes(src) if src else []
+        iface = next((i for k, i, _ in found if k == chosen), None)
         starts = [(chosen, iface, "gewählt")]
     elif src is not None:
-        starts = [(k, iface, "Quelle angeschlossen") for k, iface in g.connected_nodes(src)]
+        starts = [(k, iface, "Quelle angeschlossen") for k, iface, _ in g.connected_nodes(src)]
         if not starts:
             starts = [(k, None, f"Quelle im Fabric: {text}") for k, text in g.fabric(src)]
         if not starts:
@@ -351,12 +376,14 @@ def trace(
                 "Gerät mit diesem Netz einlesen."
             )
     paths: list[dict] = []
-    queue = [([], key, iface, via) for key, iface, via in starts]
+    queue = [([], key, iface, via, g.table(key, iface)) for key, iface, via in starts]
     while queue and len(paths) < MAX_PATHS:
-        hops, key, ingress, via = queue.pop(0)
+        hops, key, ingress, via, table = queue.pop(0)
         node = g.nodes[key]
         hop = {**node.out(), "via": via, "ingress": _port(g, key, ingress)}
-        if any(h["key"] == node.key for h in hops):
+        if table != 0:
+            hop["vrf"] = table
+        if any((h["key"], h.get("vrf", 0)) == (node.key, table) for h in hops):
             paths.append(_end(hops, hop, "loop", f"Schleife: {node.label} ist schon auf dem Weg"))
             continue
         if len(hops) >= MAX_HOPS:
@@ -367,7 +394,7 @@ def trace(
         follow = next(
             (p for p in policies if p["certain"] and (p["gateway"] or p["output_device"])), None
         )
-        route = g.route(key, dst)
+        route = g.route(key, dst, table)
         hop["route"] = route
         inside = g.fabric(dst, key) if node.kind == "vrf" else []
         if follow is not None:
@@ -378,7 +405,7 @@ def trace(
             paths.append(_end(hops, hop, "fabric", f"Ziel im Fabric: {inside[0][1]}"))
             continue
         elif route is None:
-            text = "keine Route zum Ziel"
+            text = "keine Route zum Ziel" + (f" (VRF {table})" if table != 0 else "")
             if node.missing:
                 text = "keine Route bekannt – Routing-Tabelle nicht (ganz) lesbar"
             paths.append(_end(hops, hop, "no_route", text))
@@ -397,7 +424,7 @@ def trace(
             branch = {**hop, "egress": egress}
             nxt = _neighbors(g, key, ip)
             for nkey, niface, how in nxt:
-                queue.append(([*hops, branch], nkey, niface, how))
+                queue.append(([*hops, branch], nkey, niface, how, g.table(nkey, niface)))
             if nxt:
                 continue
             known = g.names(ip) or ([egress["network"]] if egress.get("network") else [])
@@ -427,20 +454,13 @@ def _port(g: Graph, key: Key, interface: str | None) -> dict:
 
 
 def _neighbors(g: Graph, key: Key, ip: str | None) -> list[tuple[Key, str | None, str]]:
-    """Knoten hinter dem Next-Hop: dem die Adresse gehoert, sonst mit diesem Transfernetz."""
-    if not ip:
-        return []
+    """Knoten hinter dem Next-Hop: dem die Adresse gehoert (Interface, L3Out-SVI). Ein
+    gemeinsames Transfernetz allein reicht nicht - dort haengt meist ein Aussenrouter."""
     exact: list[tuple[Key, str | None, str]] = []
-    for nkey, iface, _zone in g.owners().get(ip, []):
+    for nkey, iface, _zone in g.owners().get(ip or "", []):
         if nkey != key and all(nkey != e[0] for e in exact):
             exact.append((nkey, iface, "Adresse des Nachbarn"))
-    if exact:
-        return exact
-    try:
-        addr = ipaddress.ip_address(ip)
-    except ValueError:
-        return []
-    return [(k, iface, "Transfernetz (vermutet)") for k, iface in g.connected_nodes(addr, key)]
+    return exact
 
 
 def _end(hops: list, hop: dict, kind: str, text: str) -> dict:

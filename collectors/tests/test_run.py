@@ -176,7 +176,7 @@ def test_upload_header_je_rueckkanal(monkeypatch):
     monkeypatch.setattr(up, "get_settings", lambda: AGENT)
     monkeypatch.setattr(su, "get_settings", lambda: AGENT)
 
-    def post(url, json, headers):
+    def post(url, json, headers, timeout=None):
         calls.append(headers)
         return httpx.Response(204)
 
@@ -225,9 +225,10 @@ def test_upload_liefert_quittung(monkeypatch):
 
     monkeypatch.setattr(up, "get_settings", lambda: AGENT)
     ok = httpx.Response(200, json={"run_id": "r1", "status": "completed", "message": None})
-    monkeypatch.setattr(up.http, "post_json", lambda url, json, headers: ok)
+    monkeypatch.setattr(up.http, "post_json", lambda url, json, headers, timeout=None: ok)
     assert up.submit_result("r1", CollectorResult(status="completed"))["status"] == "completed"
-    monkeypatch.setattr(up.http, "post_json", lambda url, json, headers: httpx.Response(204))
+    no_body = httpx.Response(204)
+    monkeypatch.setattr(up.http, "post_json", lambda url, json, headers, timeout=None: no_body)
     assert up.submit_result("r1", CollectorResult(status="completed")) is None  # alter Server
 
 
@@ -488,3 +489,55 @@ def test_agent_log_datei(tmp_path, monkeypatch):
     assert out.getvalue().startswith("fortigate run r1")  # Konsole bekommt es weiterhin
     assert not old.exists()  # aelter als 14 Tage
     assert agentlog.setup(None) is None
+
+
+def test_upload_wiederholt_nach_timeout_und_uebernimmt_die_quittung(monkeypatch):
+    """Dev-Befund 0.17.0: „ReadTimeout“ beim Ergebnis-Upload. Der Agent wartet laenger, sendet
+    erneut (der Orchestrator quittiert einen schon eingespielten Lauf nur) und uebernimmt dessen
+    Urteil; Teil-Uploads nur erneut, wenn sie nicht ankamen (sonst Doppelte)."""
+    import httpx
+
+    import collectors.common.upload as up
+    from collectors.common.dto import CollectorResult, ReferenceBatch
+
+    monkeypatch.setattr(up, "get_settings", lambda: AGENT)
+    waits: list[float] = []
+    monkeypatch.setattr(up, "_sleep", waits.append)
+    request = httpx.Request("POST", "http://orch:8000/internal/collector-runs/r1/result")
+    seen = []
+
+    def post(url, json, headers, timeout=None):
+        seen.append((url.rsplit("/", 1)[-1], timeout.read))
+        if len(seen) == 1:
+            raise httpx.ReadTimeout("timed out", request=request)
+        return httpx.Response(200, json={"run_id": "r1", "status": "completed"}, request=request)
+
+    monkeypatch.setattr(up.http, "post_json", post)
+    ack = up.submit_result("r1", CollectorResult(status="failed", message="Upload abgebrochen"))
+    assert seen == [("result", 600.0), ("result", 600.0)] and waits == [up.RETRY_DELAYS[0]]
+    # der erste Upload wurde doch eingespielt: der Lauf gilt als completed
+    final = up.confirmed(CollectorResult(status="failed", message="Upload abgebrochen"), ack)
+    assert final.status == "completed"
+
+    def lost(url, json, headers, timeout=None):
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    monkeypatch.setattr(up.http, "post_json", lost)
+    waits.clear()
+    try:
+        up.submit_references("r1", ReferenceBatch(records=[]))
+    except httpx.ReadTimeout:
+        pass
+    assert waits == []  # angekommen, aber ohne Quittung: nicht doppelt senden
+
+    tries = []
+
+    def refused(url, json, headers, timeout=None):
+        tries.append(url)
+        if len(tries) < 3:
+            raise httpx.ConnectError("refused", request=request)
+        return httpx.Response(204, request=request)
+
+    monkeypatch.setattr(up.http, "post_json", refused)
+    up.submit_references("r1", ReferenceBatch(records=[]))
+    assert len(tries) == 3

@@ -18,6 +18,7 @@ import httpx
 
 from sot_gateway.models import NetworkObject, NetworkObjectType, ReferenceKind, ReferenceRecord
 from sot_gateway.readonly import enforce_read_only
+from sot_gateway.readonly import get as read_get
 
 log = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ class InfobloxAdapter:
 
     def ping(self) -> str:
         """Leichter Lese-Zugriff (ein Netz); gibt die WAPI-Version zurueck."""
-        response = self._client.get(f"{self._wapi_url}/network", params={"_max_results": "1"})
+        response = read_get(self._client, f"{self._wapi_url}/network", params={"_max_results": "1"})
         response.raise_for_status()
         return self._wapi_url.rsplit("/", 1)[-1]
 
@@ -130,7 +131,7 @@ class InfobloxAdapter:
             "_return_fields+": fields,
         }
         while True:
-            response = self._client.get(f"{self._wapi_url}/{obj_type}", params=params)
+            response = read_get(self._client, f"{self._wapi_url}/{obj_type}", params=params)
             if response.status_code in (400, 404) and "_page_id" not in params:
                 log.warning("WAPI-Objekt %s nicht verfuegbar (%s)", obj_type, response.status_code)
                 return
@@ -164,7 +165,8 @@ class InfobloxAdapter:
     # -- intern ---------------------------------------------------------------
 
     def _get(self, obj_type: str, params: dict[str, str]) -> list[dict[str, Any]]:
-        response = self._client.get(
+        response = read_get(
+            self._client,
             f"{self._wapi_url}/{obj_type}",
             params={**params, "_return_fields+": "extattrs,comment"},
         )

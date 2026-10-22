@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 from sot_gateway.readonly import enforce_read_only
+from sot_gateway.readonly import get as read_get
 
 
 class NotJson(ValueError):
@@ -101,7 +102,8 @@ class FortiGateClient:
         self.default_vdom: str | None = None  # VDOM der Antworten ohne vdom-Parameter
 
     def _get(self, path: str, vdom: str | None = None) -> list[dict[str, Any]]:
-        response = self._client.get(
+        response = read_get(
+            self._client,
             f"{self._base}/{path}",
             headers=self._headers,
             params={"vdom": vdom} if vdom else None,
@@ -138,8 +140,8 @@ class FortiGateClient:
         if isinstance(glob, dict):
             info["hostname"] = glob.get("hostname")
         try:
-            response = self._client.get(
-                f"{self._root}/monitor/system/status", headers=self._headers
+            response = read_get(
+                self._client, f"{self._root}/monitor/system/status", headers=self._headers
             )
             response.raise_for_status()
             body = _json("monitor/system/status", response)
@@ -210,8 +212,11 @@ class FortiGateClient:
 
     def _monitor(self, path: str, vdom: str | None = None, params: dict | None = None) -> Any:
         query = {**(params or {}), **({"vdom": vdom} if vdom else {})}
-        response = self._client.get(
-            f"{self._root}/monitor/{path}", headers=self._headers, params=query or None
+        response = read_get(
+            self._client,
+            f"{self._root}/monitor/{path}",
+            headers=self._headers,
+            params=query or None,
         )
         response.raise_for_status()
         body = _json(f"monitor/{path}", response)
