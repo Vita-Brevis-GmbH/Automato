@@ -797,6 +797,9 @@ def _hits_and_tables(
                 "services": row.get("TCP/UDP") or "",
                 # ACI: die EPG, ueber die der Contract fuer das System gilt (Filter, 0.42.3)
                 "epg": row.get(appdoc.EPG),
+                # ACI (0.43.2): DNs des eigenen Endpunkts und der Gegenstellen im Scope - die
+                # Doku zeigt im Contract nur diese, nicht alle Consumer bzw. Provider
+                "parties": row.get(appdoc.PARTIES),
                 # Routing (0.24.0): possible | impossible | unknown, mit Begruendung
                 "relevance": row.get(appdoc.REL) or "unknown",
                 "relevance_text": row.get(appdoc.REL_TEXT) or "",
@@ -805,6 +808,7 @@ def _hits_and_tables(
     seen_rows: dict[tuple, dict] = {}
     for (idx, *_), group in groups.items():
         row = dict(group["row"])
+        row.pop(appdoc.PARTIES, None)  # nur fuer die Treffer
         if row.get(appdoc.REL) == "impossible":
             continue  # Export/Druck: nur, was das Routing zulaesst
         row["_rules"] = list(group["rules"])

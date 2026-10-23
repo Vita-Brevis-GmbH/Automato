@@ -183,6 +183,7 @@ export default function RuleDetailDrawer({
   onRule,
   onChanged,
   intro,
+  focus,
   isAdmin = false,
 }: {
   ruleId: number;
@@ -192,9 +193,13 @@ export default function RuleDetailDrawer({
   onRule?: (id: number) => void; // andere Regel öffnen (IPv4/IPv6-Gegenstück)
   onChanged?: () => void; // Paar entschieden: Liste neu laden
   intro?: ReactNode; // z. B. Applikations-Doku: warum die Regel für die Applikation gilt
+  // Applikations-Doku (0.43.2): nur diese EPGs (DN) zeigen – die eigenen und die Gegenstellen im
+  // Scope; ein Contract aus common hat sonst hunderte Consumer mit ihren VMs
+  focus?: { dns: string[]; label: string };
   isAdmin?: boolean; // Verbund auflösen
 }) {
   const vdomShown = useVdomShown();
+  const [showAll, setShowAll] = useState(false);
   const [detail, setDetail] = useState<RuleDetail | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
@@ -202,6 +207,7 @@ export default function RuleDetailDrawer({
   useEffect(() => {
     if (!reload) setDetail(null);
     setError(null);
+    setShowAll(false);
     fetchRuleDetail(ruleId)
       .then(setDetail)
       .catch(setError);
@@ -214,8 +220,11 @@ export default function RuleDetailDrawer({
       onChanged?.();
     }, setError);
 
-  const src = detail?.endpoints.filter((e) => e.role === "src") ?? [];
-  const dst = detail?.endpoints.filter((e) => e.role === "dst") ?? [];
+  const focused = (e: Endpoint) => !focus || showAll || !e.epg?.dn || focus.dns.includes(e.epg.dn);
+  const all = detail?.endpoints ?? [];
+  const src = all.filter((e) => e.role === "src" && focused(e));
+  const dst = all.filter((e) => e.role === "dst" && focused(e));
+  const hidden = all.length - src.length - dst.length;
   const refs = (role: string) => detail?.refs?.filter((r) => r.role === role) ?? [];
   const svcRefs = refs("service");
   const aci = detail?.aci ?? null;
@@ -422,6 +431,16 @@ export default function RuleDetailDrawer({
             )}
           </dl>
 
+          {focus && (hidden > 0 || showAll) && (
+            <div className="faint" id="rule-focus" style={{ margin: "10px 0 0" }}>
+              {showAll
+                ? "Alle Consumer und Provider des Contracts. "
+                : `Nur die Beteiligten ${focus.label} – ${hidden} weitere Consumer bzw. Provider des Contracts ausgeblendet. `}
+              <button className="linkbtn" onClick={() => setShowAll((v) => !v)}>
+                {showAll ? "nur Beteiligte" : "alle zeigen"}
+              </button>
+            </div>
+          )}
           {/* ACI: Consumer-EPGs greifen auf die Provider-EPGs zu */}
           <div className="sub-h">
             {aci ? (aci.kind === "taboo" ? "Quelle" : aci.kind === "preferred_group" ? "Mitglieder" : "Consumer-EPGs") : "Quellen"} ({refs("src").length || detail.num_src})

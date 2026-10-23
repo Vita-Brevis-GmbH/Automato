@@ -337,8 +337,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.42.3** | Korrektur: Applikations-Doku nur mit Contracts aus Tenant/VRF der Systeme (gleiche IPs, externe EPGs anderer VRFs), Filter „EPG“ je Contract |
 | **0.43.0** | Docker und Images aktuell halten: Fremd- und Basis-Images bei jedem Update, `deploy/aufbau.sh docker-update` bzw. `AUTOMATO_DOCKER_UPDATE=1`, Stand in `pruefen` |
 | **0.43.1** | Korrektur Applikations-Doku: Scope der Contracts (auch aus `common`), Regeln anderer EPGs im gemeinsamen BD, Portgruppe je NIC über Name/VLAN/Switch, Vorgabe vor gelerntem Endpunkt, Hinweis Projektnummer |
+| **0.43.2** | Korrektur Applikations-Doku: Contracts nur mit den Beteiligten (eigene EPGs, Gegenstellen im Scope), Firewall mit VDOM |
 
-### Nächste Arbeiten (Stand 0.43.1)
+### Nächste Arbeiten (Stand 0.43.2)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
@@ -376,8 +377,8 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 
 | Version | Inhalt |
 |---|---|
-| 0.44.0 | Konfiguration vor Gelerntem überall (VM-Portgruppe, statische Endpunkte `fvStCEp`, EPG-/BD-Subnetz, gelernt nur als Rückfall; Befunde bei Widerspruch), VRF eindeutig aus `tDn` (vzAny); ADR 0021 (logische Zonen und Zonenplan) als Entwurf |
-| 0.45.0 | ACI Shared Services und Route-Leaking (Subnetz-Scope `shared`, `leakRoutes`, Shared L3Out), Kante VRF ↔ VRF, Weg-Suche und Doku |
+| 0.44.0 | ACI zwischen VRFs/Tenants (vorgezogen, Befund 0.43.1: Doku erlaubt, Weg-Suche sperrt): Shared Services und Route-Leaking (Subnetz-Scope `shared`, `leakRoutes`), VRF eindeutig aus `tDn` (vzAny), gleiche Logik in Weg-Suche und Doku |
+| 0.45.0 | Verbindungen Ende zu Ende in der Applikations-Doku (vorgezogen, Anwender): eine Zeile je Verbindung über Firewalls und ACI, je Hop Policy bzw. Contract mit Objekten, Abweichung Regel ↔ Weg markiert; dazu Konfiguration vor Gelerntem überall (statische Endpunkte, Befunde) und ADR 0021 als Entwurf |
 | 0.46.0 | FortiGate SNAT genauer (Pool-Typen, `ippool6`, Interface-IP, `nat-source-vip`; Quelle danach als Bereich; Befunde) |
 | 0.47.0 | Betrieb: Fristen für alte Läufe, getrennte DB-Rollen |
 | 0.48.0 | Betrieb: TLS intern (interne CA) |

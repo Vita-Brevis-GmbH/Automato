@@ -180,6 +180,8 @@ class DocHitOut(BaseModel):
     services: str = ""
     # ACI: EPG (Tenant/AP/EPG), ueber die der Contract fuer das System gilt (Filter, 0.42.3)
     epg: str | None = None
+    # ACI (0.43.2): {"own": [DN], "counter": [DN]} - Beteiligte des Contracts fuer das System
+    parties: dict | None = None
     # Routing (0.24.0, ADR 0019): possible | impossible | unknown - kann die Regel Verkehr zum
     # bzw. vom System ueberhaupt sehen; impossible mit Begruendung
     relevance: str = "unknown"

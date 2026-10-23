@@ -7,6 +7,20 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.43.2 – 2026-10-23
+
+Korrektur der Applikations-Doku (Befunde aus dem Test von 0.43.1). Ohne Migration.
+
+- **Contracts nur mit den Beteiligten:**
+  - Ein Contract (z. B. aus `common`) zeigt in der Applikation nur die eigenen EPGs bzw.
+    VMs und die Gegenstellen, die über den Contract zugreifen können (Scope).
+  - Bisher standen in der Regel-Liste alle Consumer bzw. Provider und im Regel-Detail jede
+    EPG mit ihren VMs, bei Contracts aus `common` hunderte. Die Regel-Liste nennt jetzt dazu
+    „von N im Contract“; das Detail blendet die übrigen aus, „alle zeigen“ holt sie zurück.
+  - Je Treffer tragen die Daten die DNs der Beteiligten (`parties`).
+- **Firewall mit VDOM:** Herkunft und Erklärung nennen bei Firewalls mit mehreren VDOMs den
+  VDOM der Policy („fw-01 · VDOM kunde-a“), wie in Regeln & Contracts.
+
 ## 0.43.1 – 2026-10-23
 
 Korrektur der Applikations-Doku (Befunde aus dem Test von 0.43.0: Regeln, bei denen nicht klar

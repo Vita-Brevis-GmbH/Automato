@@ -318,6 +318,14 @@ def test_befund_contract_scope_bd_und_vm_zuordnung(client, session_factory):
     assert "CT_common:SJ" in names and "CT_ap:SJ" not in names, names
     counter = {h["counterpart"] for h in doc["hits"] if rules.get(h["rule_id"]) == "CT_common:SJ"}
     assert counter and all("TE_kb" not in c for c in counter), counter
+    # Beteiligte je Treffer (0.43.2): eigener Endpunkt und Gegenstellen im Scope - die Doku
+    # zeigt im Contract nur diese, nicht alle Consumer
+    parties = [h["parties"] for h in doc["hits"] if rules.get(h["rule_id"]) == "CT_common:SJ"]
+    assert {dn for p in parties for dn in p["own"]} == {WEB_DN, DB_DN}
+    assert {dn for p in parties for dn in p["counter"]} == {WEB_DN, DB_DN}
+    assert all("TE_kb" not in dn for p in parties for dn in p["counter"])
+    fw_hits = [h for h in doc["hits"] if rules.get(h["rule_id"]) == "bd-in"]
+    assert fw_hits and all(h["parties"] is None for h in fw_hits)
     # 2. gemeinsamer BD: Host von EG_other nicht, das ganze BD-Subnetz schon
     assert "other-in" not in names and "bd-in" in names
     # 3. gelernter Endpunkt von web01 in EG_other: die Portgruppe gilt - kein CT_other

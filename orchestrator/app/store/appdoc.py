@@ -76,6 +76,8 @@ REL, REL_TEXT = "_rel", "_rel_text"
 # EPG (`Tenant/AP/EPG`), ueber die ein ACI-Contract fuer das System gilt - fuer den Filter nach
 # EPG in der Applikations-Doku (0.42.3); leer bei Firewall-Regeln und externen EPGs
 EPG = "_epg"
+# ACI: DNs der Beteiligten eines Treffers - eigener Endpunkt bzw. Gegenstellen im Scope (0.43.2)
+PARTIES = "_parties"
 UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
 _COMMON = [
     "Server Name",
@@ -271,6 +273,9 @@ def _envelope(
     fuer die Applikations-Doku, die selbst filtert)."""
     impossible: list[dict] = []
     if not full:
+        for rows in rows_by_table.values():
+            for row in rows:
+                row.pop(PARTIES, None)  # nur fuer die Treffer der Applikations-Doku
         for i in rows_by_table:
             keep = []
             for row in rows_by_table[i]:
@@ -497,10 +502,13 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
     for r in data.rules(ids):
         eps = [e for e in r.endpoints if e.kind.value == "epg"]
         sides: dict[str, str] = {}
+        own: dict[str, list[str]] = {}  # Seite -> DNs der eigenen Endpunkte (EPG, vzAny, ESG)
         for e in eps:
             v = self_via(e)
             if v and (e.role.value not in sides or v == "direkt"):
                 sides[e.role.value] = v
+            if v and e.epg_id in by_id and by_id[e.epg_id].dn:
+                own.setdefault(e.role.value, []).append(by_id[e.epg_id].dn)
         for side in sorted(sides, key=lambda x: x != "dst"):  # zuerst eingehend
             cp_role = "src" if side == "dst" else "dst"
             cp = [e for e in eps if e.role.value == cp_role]
@@ -550,6 +558,12 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                         OBJECT: obj,
                         OBJECT_VALUE: "",
                         EPG: epg_store.inventory_label(epg) if epg.kind == "epg" else None,
+                        # Beteiligte (0.43.2): eigene Endpunkte und Gegenstellen im Scope (DN) -
+                        # die Applikations-Doku zeigt nur sie, nicht alle des Contracts
+                        PARTIES: {
+                            "own": own.get(side, []),
+                            "counter": [c.dn for c in cp_epgs if c.dn],
+                        },
                     },
                 )
             )

@@ -20,7 +20,7 @@ import {
 import type { View, ViewParams } from "./App";
 import { DocTableView, tablesMarkdown } from "./AppDoc";
 import type { Me } from "./auth";
-import { findingLabel, serviceNames } from "./refs";
+import { findingLabel, serviceNames, useVdomShown } from "./refs";
 import RuleDetailDrawer from "./RuleDetail";
 import { NameCell } from "./RulesTable";
 import { siteLabel } from "./sites";
@@ -128,6 +128,7 @@ export default function ApplicationDocView({
   const [rule, setRule] = useState<number | null>(null);
   const [showTables, setShowTables] = useState(false);
   const [showEmpty, setShowEmpty] = useState(false);
+  const vdomShown = useVdomShown();
 
   useEffect(() => {
     setErr(null);
@@ -159,6 +160,8 @@ export default function ApplicationDocView({
   const a = doc.application;
   const s = doc.summary;
   const sourceName = (sid: number) => systems.find((x) => x.id === sid)?.name ?? `#${sid}`;
+  // Firewall mit VDOM, wenn sie mehrere hat (0.43.2) – wie in Regeln & Contracts
+  const ruleSource = (r: Rule) => sourceName(r.source_system_id) + (vdomShown(r.source_system_id, r.vdom) ? ` · VDOM ${r.vdom}` : "");
   const titles = new Map(doc.tables.map((t) => [t.index, t.title]));
   const epgLabel = f.epg ? names.get(f.epg) : null;
 
@@ -418,7 +421,7 @@ export default function ApplicationDocView({
                     hits={hitsOf.get(r.id) ?? []}
                     names={names}
                     titles={titles}
-                    source={sourceName(r.source_system_id)}
+                    source={ruleSource(r)}
                     findings={findingsOf(r.id).length}
                     onOpen={() => setRule(r.id)}
                     onGo={onGo}
@@ -468,6 +471,7 @@ export default function ApplicationDocView({
           onClose={() => setRule(null)}
           onGo={onGo}
           onRule={setRule}
+          focus={selected ? ruleFocus(selected, doc.hits) : undefined}
           intro={
             selected ? (
               <WhyBlock
@@ -475,7 +479,7 @@ export default function ApplicationDocView({
                 hits={doc.hits.filter((h) => h.rule_id === selected.id)}
                 byKey={byKey}
                 titles={titles}
-                source={sourceName(selected.source_system_id)}
+                source={ruleSource(selected)}
                 findings={findingsOf(selected.id)}
                 onGo={onGo}
               />
@@ -510,11 +514,33 @@ function sideGroups(hits: AppDocHit[], side: string, names: Map<string, string>)
   return [...out.values()];
 }
 
-function SideCell({ items, groups }: { items: string[]; groups: SideGroup[] }) {
+// ACI-Contract in der Applikations-Doku (0.43.2): je Seite nur die Gegenstellen der Systeme der
+// Applikation im Scope des Contracts – nicht alle Consumer bzw. Provider (Contract aus common)
+function sideItems(r: Rule, hits: AppDocHit[], side: "src" | "dst"): string[] {
+  if (r.domain !== "aci_contract" || !hits.length) return side === "src" ? r.sources : r.destinations;
+  return [...new Set(hits.filter((h) => h.side !== side).flatMap((h) => h.counterpart.split(", ")).filter(Boolean))];
+}
+
+// Im Regel-Detail nur die Beteiligten: eigene Endpunkte und Gegenstellen im Scope (DN)
+function ruleFocus(r: Rule, hits: AppDocHit[]): { dns: string[]; label: string } | undefined {
+  if (r.domain !== "aci_contract") return undefined;
+  const mine = hits.filter((h) => h.rule_id === r.id && h.parties);
+  if (!mine.length) return undefined;
+  const dns = [...new Set(mine.flatMap((h) => [...h.parties!.own, ...h.parties!.counter]))];
+  return { dns, label: "der Applikation (eigene EPGs und ihre Gegenstellen im Scope)" };
+}
+
+function SideCell({ items, groups, total = 0 }: { items: string[]; groups: SideGroup[]; total?: number }) {
+  const hidden = total - items.length - groups.length;
   return (
     <>
       <div className="mono">
-        <List items={items} />
+        {items.length > 0 || !groups.length ? <List items={items} /> : null}
+        {hidden > 0 && (
+          <div className="faint" style={{ fontSize: 11 }} title="weitere Consumer bzw. Provider des Contracts, die die Systeme der Applikation nicht betreffen">
+            von {total} im Contract
+          </div>
+        )}
       </div>
       {groups.map((g) => (
         <div key={`${g.object}-${g.value}`} className="appside" title="Objekt der Regel, das Systeme der Applikation erfasst">
@@ -578,10 +604,10 @@ function RuleRow({
         ))}
       </td>
       <td>
-        <SideCell items={r.sources} groups={sideGroups(hits, "src", names)} />
+        <SideCell items={sideItems(r, hits, "src")} groups={sideGroups(hits, "src", names)} total={aci ? r.sources.length : 0} />
       </td>
       <td>
-        <SideCell items={r.destinations} groups={sideGroups(hits, "dst", names)} />
+        <SideCell items={sideItems(r, hits, "dst")} groups={sideGroups(hits, "dst", names)} total={aci ? r.destinations.length : 0} />
       </td>
       <td className="mono">
         <List items={r.service_names.length ? serviceNames(r) : [...new Set(hits.map((h) => h.services).filter(Boolean))]} />

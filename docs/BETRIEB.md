@@ -483,6 +483,11 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - *Hinweis Projektnummer:* Nennt der VM-Name (`app01-000-…`) ein anderes Projekt als das AP
       der EPG ihrer Portgruppe, steht ein Hinweis beim System. Die Zuordnung folgt der
       Portgruppe – zu prüfen ist dann die Portgruppe der VM im vCenter.
+  - **Nur die Beteiligten (0.43.2):** Ein Contract zeigt in der Applikation nur ihre EPGs bzw.
+    VMs und die Gegenstellen, die über ihn zugreifen können. Die Regel-Liste nennt „von N im
+    Contract“. Das Regel-Detail blendet die übrigen Consumer bzw. Provider mit ihren VMs aus,
+    „alle zeigen“ holt sie zurück. Firewalls mit mehreren VDOMs stehen mit dem VDOM der Policy
+    da.
 - **Findings:** oben eine **Übersicht nach Kategorien** (IPAM-Abgleich, Namenskonvention,
   Bereinigung, ACI / VMware) mit offenen/gesamten Befunden je Typ (Klick filtert). Neu mit
   dem vCenter: *VM-IP fehlt im IPAM* und *Portgruppe nach ACI-Schema ohne EPG*. Je Befund ein Satz,

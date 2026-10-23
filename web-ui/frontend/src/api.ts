@@ -747,6 +747,7 @@ export interface AppDocHit {
   counterpart: string;
   services: string;
   epg?: string | null; // ACI: EPG (Tenant/AP/EPG), über die der Contract für das System gilt (0.42.3)
+  parties?: { own: string[]; counter: string[] } | null; // ACI (0.43.2): DNs der Beteiligten
   // Routing (0.24.0): kann die Regel Verkehr zum bzw. vom System sehen; impossible mit Grund
   relevance?: "possible" | "impossible" | "unknown";
   relevance_text?: string;
