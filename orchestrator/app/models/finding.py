@@ -30,6 +30,9 @@ class FindingType(enum.StrEnum):
     SUBNET_NOT_IN_IPAM = "subnet_not_in_ipam"  # ACI-/FortiGate-Subnetz fehlt im IPAM
     VLAN_MISMATCH = "vlan_mismatch"  # VLAN des Subnetzes weicht vom IPAM ab
     SERVICE_MISMATCH = "service_mismatch"  # Service-Name passt nicht zu Protokoll/Port
+    # Standardobjekt des Herstellers (FortiOS-Service, ACI-Filter in common) in einer
+    # erlaubenden Regel - nicht nach Konvention benannt, soll nicht verwendet werden (0.36.0)
+    PREDEFINED_SERVICE_USED = "predefined_service_used"
     RULE_INCOMPLETE = "rule_incomplete"  # Regel ohne Quelle bzw. Ziel (ACI: nicht wirksam)
     VM_NOT_IN_IPAM = "vm_not_in_ipam"  # IP einer VM (vCenter) fehlt im fuehrenden IPAM
     PORTGROUP_NO_EPG = "portgroup_no_epg"  # Portgruppe nach ACI-Schema ohne passende EPG

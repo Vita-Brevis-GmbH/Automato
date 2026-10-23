@@ -22,7 +22,7 @@
 
 | Quelle (REST / CLI) | Schlüsselfelder | → Modell |
 |---|---|---|
-| `firewall/address` **und** `firewall/address6` (je Familie eigene Objekte, gleiche Namen erlaubt) | `name`, `type` (`ipmask`\|`iprange`\|`fqdn`\|`geography`\|`interface-subnet`), `subnet`/`start-ip`+`end-ip`/`fqdn`/`country`/`interface`, `ip6`, `color` (int, optional), `comment` | `network_object` (`object_class` aus Prefix/Typ, `value`, `family` aus Sektion v4/v6, `fqdn`, `zone_id` später) |
+| `firewall/address` **und** `firewall/address6` (je Familie eigene Objekte, gleiche Namen erlaubt) | `name`, `type` (`ipmask`\|`iprange`\|`fqdn`\|`geography`\|`interface-subnet`\|`dynamic`), `subnet`/`start-ip`+`end-ip`/`fqdn`/`country`/`interface`, `ip6`, `color` (int, optional), `comment`; bei `dynamic` (0.36.0, SDN-Connector z. B. ACI über FortiManager) zusätzlich `sub-type`, `sdn`, `filter`, `obj-tag` als Attribute | `network_object` (`object_class` aus Prefix/Typ, `value`, `family` aus Sektion v4/v6, `fqdn`, `zone_id` später) |
 | `firewall/addrgrp` **und** `firewall/addrgrp6` | `name`, `member[]` | Gruppe (rekursiv aufgelöst, Mitglieder in der eigenen Familie); freitext-benannte Vendor-Gruppen zulässig |
 | `firewall.service/custom` | `name` (`FT_…`), `protocol`, `protocol-number`, `icmptype`/`icmpcode`, `tcp-`/`udp-`/`sctp-portrange` (inkl. Quellports nach `:`), `category`, `iprange`/`fqdn`, `session-ttl` und Timer, `helper`, `proxy` | `service_object` (`proto`, `port_start/end`; Ranges `20-21`; tcp+udp möglich); Attribute ohne Standardwerte in `device_object.attrs` |
 | `firewall.service/group` | `name`, `member[]` | Service-Gruppe (`device_object`, Regel-Verweis per Name; Werte aufgelöst) |

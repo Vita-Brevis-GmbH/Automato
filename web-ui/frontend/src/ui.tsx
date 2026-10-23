@@ -322,11 +322,13 @@ export function Modal({
   onClose,
   children,
   footer,
+  wide = false,
 }: {
   title: ReactNode;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  wide?: boolean; // breite Maske für Tabellen im Formular (z. B. Selektoren eines Kunden)
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -335,7 +337,7 @@ export function Modal({
   }, [onClose]);
   return (
     <div className="modal-scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true">
+      <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true">
         <div className="modal-head">
           <h2>{title}</h2>
           <button className="iconbtn" onClick={onClose} aria-label="Schliessen">

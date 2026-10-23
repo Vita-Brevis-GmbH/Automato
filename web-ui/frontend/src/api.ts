@@ -802,6 +802,13 @@ export interface DeviceObject {
   attrs?: Record<string, unknown>; // Services: Protokoll, Ports, ICMP, Kategorie, Timer; ACI-Filter: Einträge
   issues: string[]; // Finding-Typen
   site: SiteHint | null; // Netz-Objekte: Standort aus dem Namen
+  predefined?: boolean; // Standardobjekt des Herstellers (FortiOS-Service, ACI-Filter in common)
+}
+
+// Objekt-Liste (0.36.0): dazu die Anzahl je Typ (Filter) und der Standardobjekte
+export interface ObjectPage extends Paged<DeviceObject> {
+  types?: Record<string, number>; // obj_type -> Anzahl ("" = ohne Typ)
+  predefined?: number;
 }
 
 // Objekt-Detail (wie NAT): Attribute, Mitglieder und die Regeln, die es nutzen
@@ -1509,11 +1516,14 @@ export const fetchObjects = (
     source_system_id?: number | null;
     q?: string;
     issues_only?: boolean;
+    obj_type?: string; // kommagetrennt; "-" = ohne Typ
+    predefined?: "include" | "exclude" | "only";
+    object_id?: number | null; // nur dieses Objekt („Objekt öffnen“)
     limit?: number;
     offset?: number;
   } = {},
 ) =>
-  getJSON<Paged<DeviceObject>>(
+  getJSON<ObjectPage>(
     `/api/objects${cq({
       tenant_id: tenantId,
       ...params,

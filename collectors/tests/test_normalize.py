@@ -287,6 +287,21 @@ def test_device_objects_wie_auf_der_firewall():
     assert objs[("address", "N_share-000-v6")].family == "v6"
 
 
+def test_dynamische_adresse_mit_sdn_connector():
+    """0.36.0: dynamische Adressen (z. B. ACI über FortiManager) tragen den SDN-Connector und
+    den Filter als Attribute (Positivliste) - für den Typ-Filter in der Objekt-Liste."""
+    dyn = {"name": "TE_web_epg", "type": "dynamic", "sub-type": "sdn", "sdn": "aci-fmg",
+           "filter": "EPG=TE_web", "comment": "", "uuid": "x", "list": []}  # fmt: skip
+    (obj,) = norm.build_device_objects([dyn], [], [], [], [], [], [], [])
+    assert (obj.obj_type, obj.values) == ("dynamic", ["dynamic:TE_web_epg"])
+    assert obj.attrs == {"sub-type": "sdn", "sdn": "aci-fmg", "filter": "EPG=TE_web"}
+    (plain,) = norm.build_device_objects(
+        [{"name": "H_a", "type": "ipmask", "subnet": "10.0.0.1 255.255.255.255"}],
+        [], [], [], [], [], [], [],
+    )  # fmt: skip
+    assert plain.attrs == {}
+
+
 def test_service_mit_mehreren_portbereichen():
     smap = norm.build_service_map(
         [{"name": "MULTI", "tcp-portrange": "443 8443-8445:1024-65535", "udp-portrange": "53"}]

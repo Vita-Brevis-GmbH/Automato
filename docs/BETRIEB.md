@@ -130,6 +130,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
 
   **IPv4/IPv6-Paare** (ADR 0016): Je Regel die Familie, und „↔ IPv6 #…“ bzw. „↔ IPv4 #…“
   markiert das Gegenstück auf derselben FortiGate.
+  - Seit 0.36.0 steht die IPv6-Regel eines Paars direkt unter ihrer IPv4-Regel (auch über
+    Seiten hinweg), mit einer Klammer links und „↳“ – grün für gleich bzw. bestätigt, gelb für
+    Vorschläge („ähnlich“). Die Reihenfolge der Firewall gilt sonst unverändert.
   - Grün: gleiche Objektnamen, Dienste und Interfaces.
   - Gelb „ähnlich“: Abweichungen im Tooltip.
   - Klick öffnet das Gegenstück; beim Überfahren wird es hervorgehoben. Beide bleiben eigene
@@ -150,13 +153,26 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Kategorie, Timer, Ziel-Beschränkung bzw. Filter-Einträgen; Prüfung nach FT_-Schema) – mit
   Verwendung in Regeln/Gruppen und Befunden. **Klick auf ein Objekt** öffnet das Detail wie
   bei NAT: Attribute, Werte, Mitglieder, Befunde und die Firewall-Regeln, die es nutzen (auch
-  über Gruppen), mit „In Regeln anzeigen“. Dazu das Netzinventar aus FortiGate/APIC:
+  über Gruppen), mit „In Regeln anzeigen“. „Objekt öffnen“ (z. B. aus NAT / VIPs) filtert
+  seit 0.36.0 auch die Liste dahinter auf genau dieses Objekt („nur „…“ ✕“ hebt es auf).
+  Dazu das Netzinventar aus FortiGate/APIC:
   **Subnetze** (mit Abgleich gegen führendes IPAM und Anreicherung, VLAN-Abweichung
   markiert), **VLANs** (inkl. EPGs), **Ports** (Modus, untagged/tagged VLANs, LAG/Parent,
   IPs, Zone/Policy-Gruppe, LLDP/CDP-Nachbar, EPGs), **Geräte**, **VRFs**. Filter Quelle,
   Suche (auch Mitglieder und DNS-Namen der Werte aus dem IPAM), „nur Abweichungen“.
   - Die **Regel-Zahl** je Objekt zählt die Regeln direkt und über (verschachtelte) Gruppen.
     Klick → genau diese Regeln.
+  - **Typ** (0.36.0): Filter nach dem Typ wie auf dem Gerät (IP/Netz, Bereich, FQDN, Geo,
+    **dynamisch (SDN-Connector)** – z. B. die Objekte der ACI-Integration über den
+    FortiManager –, ACI-Filter …) mit Anzahl je Typ. Dynamische Objekte zeigen den Connector
+    (`sdn`) im Detail (ab dem nächsten Lauf der FortiGate).
+  - **Standardobjekte des Herstellers** (0.36.0): FortiOS-Services und -Gruppen (`HTTPS`,
+    `ALL`, …) und die ACI-Filter in `common` (`default`, `arp`, `est`, `icmp`) stehen in
+    Services und Gruppen zuunterst unter „Standardobjekte des Herstellers“, gedämpft und mit
+    „Standard“ statt grünem Haken; „Standardobjekte ausblenden“ blendet sie aus. Verwendet eine
+    erlaubende Regel ein solches Objekt (direkt bzw. über eine Gruppe), entsteht der Befund
+    **„Standardobjekt verwendet“** – es folgt nicht der Konvention (statt `HTTPS` ein `FT_https`
+    nach Konvention).
   - **IPv4/IPv6:** Gleichnamige Objekte stehen zweimal da, mit Chip „IPv4“ bzw. „IPv6“,
     eigenen Werten, Gruppen und Befunden, wie auf der FortiGate.
   - **VDOMs** (0.15.0): Gleichnamige Objekte zweier VDOMs sind ebenfalls zwei Objekte (VDOM in
@@ -467,6 +483,7 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Attribut (`Kunde=A`) – die Netze und Adressen mit diesem Merkmal.
   - Jeder Selektor schliesst ein oder – mit „ausschliessen“ – aus, z. B. „Tenant TE_ka
     ohne AP TE_ka/AP_900“ oder ein Netz ohne ein Teilnetz.
+  - Die Maske ist seit 0.36.0 breit; Werte (z. B. DNs) sind ganz lesbar, ohne Querscrollen.
   - Was dazugehört, leitet Automato nach jedem Lauf und beim Speichern ab: EPGs, Netze (auch
     die Subnetze der EPGs und die Netze an zugeordneten Interfaces), Werte-Objekte in diesen
     Netzen, Regeln (Contracts mit einer EPG des Kunden; Firewall-Regeln im VDOM, an der Zone
@@ -498,6 +515,13 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   bestehenden Profils, z. B. „default", oder leer), **+ Neue Namenskonvention** (optional die
   Einträge einer bestehenden Konvention – auch aus einem anderen Profil – kopieren),
   Einträge anlegen/bearbeiten/löschen.
+  - **Service- und Filter-Präfix** (0.36.0): In „Objekt-Prefixe → Typ“ steht `FT_` mit dem Typ
+    **„Service / ACI-Filter“** (Migration `0045` im Profil „default“). Darüber prüft Automato die
+    Namen der FortiGate-Services und ACI-Filter; weitere bzw. andere Präfixe hier mit diesem
+    Typ eintragen. Ohne Eintrag gilt weiter `FT_` (vorher war das Präfix fest eingebaut und nur
+    über die ausgeblendete Wörterbuch-Art `service_prefix` erweiterbar – die gilt weiter).
+  - Die **Projektnummern** sind nicht mehr Teil der Namenskonvention (0.36.0): die Tabelle ist
+    ausgeblendet, vorhandene Einträge bleiben gespeichert.
 - **Collector-Agenten (nur Admin):** **+ Agent** erzeugt das Token einmalig; Spalte
   **Geräte** (zugewiesene Quellsysteme); Status online/keine Meldung aus dem Heartbeat;
   Aktivieren/Deaktivieren. **Einrichtung Schritt für Schritt** direkt in der Ansicht: Geräte
@@ -546,7 +570,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | Endpunkt | Zweck |
 |---|---|
 | `GET /health`, `GET /auth/config` | Status (API/DB), öffentliche Login-Konfiguration |
-| `GET /rules` (`?q=`,`?object=`,`?nat=`,`?tenant_id=`,`?domain=firewall\|aci_contract`,`?source_system_id=`,`?src_zone=`,`?dst_zone=`,`?action=`,`?limit=`,`?offset=`), `GET /rules/{id}` | Regeln und ACI-Contracts seitenweise (Standard 500, Gesamtzahl im Header `X-Total-Count`; Suche über alles, was zur Regel gehört; `object` = Regeln mit diesem Objekt auch über Gruppen, `nat` = mit diesem VIP/SNAT-Pool; je Regel `nat`) / Detail (Objektnamen, `refs` mit Referenzdaten, `aci`, `comment`, `nat_entries`) |
+| `GET /rules` (IPv4/IPv6-Paare nebeneinander; `?q=`,`?object=`,`?nat=`,`?tenant_id=`,`?domain=firewall\|aci_contract`,`?source_system_id=`,`?src_zone=`,`?dst_zone=`,`?action=`,`?limit=`,`?offset=`), `GET /rules/{id}` | Regeln und ACI-Contracts seitenweise (Standard 500, Gesamtzahl im Header `X-Total-Count`; Suche über alles, was zur Regel gehört; `object` = Regeln mit diesem Objekt auch über Gruppen, `nat` = mit diesem VIP/SNAT-Pool; je Regel `nat`) / Detail (Objektnamen, `refs` mit Referenzdaten, `aci`, `comment`, `nat_entries`) |
 | `GET /rules/summary` (`?tenant_id=`) | Kennzahlen aller Regeln für die Übersicht (je Art, Endpunkte, nicht aufgelöst, Quell-/Ziel-Zonen, Aktionen) |
 | `GET /objects?tenant_id=` (`category`, `source_system_id`, `q`, `issues_only`), `GET /objects/{id}` | Firewall-Objekte mit IPAM-Abgleich und `attrs` / Detail mit Mitgliedern und Regeln (`rules`, `rule_count`) |
 | `GET /inventory/{devices\|interfaces\|vlans\|subnets\|vrfs}?tenant_id=` | Netzinventar (Subnetze mit IPAM-Abgleich) |

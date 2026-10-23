@@ -2,7 +2,6 @@
 // dazu das Netzinventar aus FortiGate/APIC (Subnetze, VLANs, Ports, Geräte, VRFs). Rein lesend.
 import { Fragment, ReactNode, useEffect, useMemo, useState } from "react";
 import {
-  DeviceObject,
   fetchInventory,
   fetchObjectDetail,
   fetchObjects,
@@ -16,6 +15,7 @@ import {
   InvVlan,
   InvVrf,
   ObjectDetail,
+  ObjectPage,
   Paged,
   PortgroupDetail,
   PortgroupRow,
@@ -87,10 +87,32 @@ export default function Objects({
   const [source, setSource] = useState("");
   const [q, setQ] = useState(params.q ?? "");
   const [issuesOnly, setIssuesOnly] = useState(false);
+  const [objType, setObjType] = useState(""); // Typ (obj_type), z. B. dynamic = SDN/FortiManager
+  const [types, setTypes] = useState<Record<string, number>>({});
+  const [hidePredefined, setHidePredefined] = useState(false); // Standardobjekte ausblenden
   const [linked, setLinked] = useState<number | null>(params.object_id ? Number(params.object_id) : null);
+  const [pinned, setPinned] = useState<{ id: number; name: string } | null>(null);
 
+  // „Objekt öffnen“ (0.36.0): Detail und die Liste dahinter auf genau dieses Objekt gefiltert
   useEffect(() => {
-    setSource("");
+    if (!params.object_id) return;
+    const id = Number(params.object_id);
+    setLinked(id);
+    fetchObjectDetail(id)
+      .then((o) => {
+        const key = tabOf(o.category);
+        if (key && tabs.some((t) => t.key === key)) setTab(key);
+        setQ("");
+        setObjType("");
+        setPinned({ id, name: o.name });
+      })
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.object_id]);
+
+  useEffect(() => setObjType(""), [tab]);
+  useEffect(() => {
+    if (!params.object_id) setSource("");
     if (tenantId === null) return;
     fetchSystems(tenantId)
       .then((list) => setSystems(list.filter((s) => !REFERENCE_PLATFORMS.includes(s.platform))))
@@ -133,7 +155,10 @@ export default function Objects({
           <input
             placeholder={current.category ? "Name, Wert oder Kommentar…" : "Suche…"}
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setPinned(null);
+            }}
           />
         </div>
         <select className="sel" value={source} onChange={(e) => setSource(e.target.value)}>
@@ -144,10 +169,44 @@ export default function Objects({
             </option>
           ))}
         </select>
+        {pinned && current.category && (
+          <span className="chip info" title="Liste auf das geöffnete Objekt gefiltert">
+            nur „{pinned.name}“
+            <button className="linkbtn" style={{ marginLeft: 6 }} aria-label="Filter aufheben" onClick={() => setPinned(null)}>
+              ✕
+            </button>
+          </span>
+        )}
+        {current.category && Object.keys(types).length > 1 && (
+          <select
+            className="sel"
+            value={objType}
+            onChange={(e) => setObjType(e.target.value)}
+            title="Typ des Objekts wie auf dem Gerät – z. B. dynamische Objekte aus SDN-Connectoren (FortiManager/ACI)"
+          >
+            <option value="">Typ: alle</option>
+            {Object.entries(types)
+              .sort(([a], [b]) => typeLabel(a).localeCompare(typeLabel(b)))
+              .map(([t, n]) => (
+                <option key={t || "-"} value={t || "-"}>
+                  {typeLabel(t)} ({n})
+                </option>
+              ))}
+          </select>
+        )}
         {canFilterIssues && (
           <button className={`toggle ${issuesOnly ? "on" : ""}`} onClick={() => setIssuesOnly((v) => !v)}>
             <span className="dot y" />
             nur Abweichungen
+          </button>
+        )}
+        {(tab === "services" || tab === "groups") && (
+          <button
+            className={`toggle ${hidePredefined ? "on" : ""}`}
+            onClick={() => setHidePredefined((v) => !v)}
+            title="Standardobjekte des Herstellers (FortiOS-Services wie HTTPS/ALL, ACI-Filter in common) – nicht nach Konvention benannt, nicht verwenden; sonst zuunterst"
+          >
+            Standardobjekte ausblenden
           </button>
         )}
       </div>
@@ -166,6 +225,10 @@ export default function Objects({
           sourceId={sourceId}
           q={q}
           issuesOnly={issuesOnly}
+          objType={objType}
+          hidePredefined={hidePredefined}
+          objectId={pinned?.id ?? null}
+          onTypes={setTypes}
           onGo={onGo}
         />
       ) : (
@@ -183,6 +246,31 @@ export default function Objects({
     </>
   );
 }
+
+// Reiter einer Objekt-Kategorie (für „Objekt öffnen“)
+function tabOf(category: string): Tab | null {
+  if (category.endsWith("_group")) return "groups";
+  if (category === "service") return "services";
+  if (["address", "vip", "vip_target", "ippool"].includes(category)) return "addr";
+  return null;
+}
+
+// Typ eines Objekts wie auf dem Gerät, lesbar (FortiGate `type`, ACI-Filter)
+const TYPE_LABEL: Record<string, string> = {
+  "": "ohne Typ",
+  ipmask: "IP / Netz",
+  iprange: "Bereich",
+  fqdn: "FQDN",
+  "wildcard-fqdn": "Wildcard-FQDN",
+  geography: "Geo",
+  dynamic: "dynamisch (SDN-Connector)",
+  mac: "MAC",
+  "interface-subnet": "Interface-Subnetz",
+  vzFilter: "ACI-Filter",
+  "static-nat": "VIP (statisch)",
+  "server-load-balance": "Virtual Server",
+};
+export const typeLabel = (t: string | null | undefined) => TYPE_LABEL[t ?? ""] ?? t ?? "";
 
 // Link in die Regeln: genau dieses Objekt (IPv4 und IPv6 heissen teils gleich)
 function objectLink(o: { id: number; name: string; family: string | null }): ViewParams {
@@ -237,6 +325,10 @@ function ObjectTable({
   sourceId,
   q,
   issuesOnly,
+  objType,
+  hidePredefined,
+  objectId,
+  onTypes,
   onGo,
 }: {
   tenantId: number;
@@ -246,15 +338,19 @@ function ObjectTable({
   sourceId: number | null;
   q: string;
   issuesOnly: boolean;
+  objType: string;
+  hidePredefined: boolean;
+  objectId: number | null;
+  onTypes: (t: Record<string, number>) => void;
   onGo?: Go;
 }) {
-  const [data, setData] = useState<{ total: number; rows: DeviceObject[] } | null>(null);
+  const [data, setData] = useState<ObjectPage | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const query = useDebounced(q);
 
-  useEffect(() => setOffset(0), [query, sourceId, issuesOnly]);
+  useEffect(() => setOffset(0), [query, sourceId, issuesOnly, objType, hidePredefined, objectId]);
   useEffect(() => {
     setData(null);
     setError(null);
@@ -263,15 +359,22 @@ function ObjectTable({
       source_system_id: sourceId,
       q: query,
       issues_only: issuesOnly,
+      obj_type: objType || undefined,
+      predefined: hidePredefined ? "exclude" : undefined,
+      object_id: objectId,
       limit: PAGE,
       offset,
     })
-      .then(setData)
+      .then((d) => {
+        setData(d);
+        if (d.types) onTypes(d.types);
+      })
       .catch((e) => {
         setError(e);
         setData({ total: 0, rows: [] });
       });
-  }, [tenantId, category, sourceId, query, issuesOnly, offset]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, category, sourceId, query, issuesOnly, objType, hidePredefined, objectId, offset]);
   // VDOM „root“ nur bei Firewalls mit weiteren VDOMs (nur root = die Firewall, 0.17.0)
   const vdomShown = useVdomShown();
 
@@ -303,8 +406,21 @@ function ObjectTable({
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((o) => (
-                  <tr key={o.id} className="clickable" onClick={() => setSelected(o.id)}>
+                {data.rows.map((o, i) => (
+                  <Fragment key={o.id}>
+                  {o.predefined && !data.rows[i - 1]?.predefined && (
+                    <tr className="group-row">
+                      <td colSpan={8}>
+                        <b>Standardobjekte des Herstellers</b>
+                        <span className="faint">
+                          {" "}
+                          – FortiOS-Services bzw. ACI-Filter in common: nicht nach Konvention benannt, nicht verwenden
+                          {data.predefined ? ` (${data.predefined})` : ""}
+                        </span>
+                      </td>
+                    </tr>
+                  )}
+                  <tr className={`clickable${o.predefined ? " predefined" : ""}`} onClick={() => setSelected(o.id)}>
                     <td>
                       <b className="mono">{o.name}</b>
                       {o.family && !service && (
@@ -349,7 +465,11 @@ function ObjectTable({
                     </td>
                     <td className="nowrap">
                       {CATEGORY_LABEL[o.category] ?? o.category}
-                      {o.obj_type && <div className="faint">{o.obj_type}</div>}
+                      {o.obj_type && (
+                        <div className={o.obj_type === "dynamic" ? "chip info" : "faint"} title={o.obj_type}>
+                          {typeLabel(o.obj_type)}
+                        </div>
+                      )}
                     </td>
                     <td style={{ minWidth: 280 }}>
                       {group ? <Members names={o.members} /> : <ValueList values={o.values} service={service} />}
@@ -386,9 +506,16 @@ function ObjectTable({
                       )}
                     </td>
                     <td>
-                      <IssueChips issues={o.issues} />
+                      {o.predefined && !o.issues.length ? (
+                        <span className="chip na" title="Standardobjekt des Herstellers – nicht nach der Namenskonvention benannt; nicht verwenden">
+                          Standard
+                        </span>
+                      ) : (
+                        <IssueChips issues={o.issues} />
+                      )}
                     </td>
                   </tr>
+                  </Fragment>
                 ))}
               </tbody>
             </table>

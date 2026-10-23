@@ -456,6 +456,7 @@ function CustomerEditor({
 
   return (
     <Modal
+      wide
       title={existing ? `Kunde „${existing.name}“` : "Neuer Kunde"}
       onClose={onClose}
       footer={
@@ -489,13 +490,20 @@ function CustomerEditor({
       </label>
 
       <h3 style={{ marginTop: 12 }}>Selektoren</h3>
-      <table className="compact">
+      <table className="compact form-table" id="customer-selectors">
+        <colgroup>
+          <col style={{ width: "24%" }} />
+          <col />
+          <col style={{ width: "22%" }} />
+          <col style={{ width: 64 }} />
+          <col style={{ width: 92 }} />
+        </colgroup>
         <thead>
           <tr>
             <th>Art</th>
             <th>Wert</th>
             <th>Quellsystem</th>
-            <th>ausschliessen</th>
+            <th title="ausschliessen">aus­schl.</th>
             <th />
           </tr>
         </thead>
@@ -559,7 +567,12 @@ function CustomerEditor({
       {preview == null ? (
         <Loading />
       ) : (
-        <table className="compact" id="customer-preview">
+        <table className="compact form-table" id="customer-preview">
+          <colgroup>
+            <col style={{ width: "24%" }} />
+            <col style={{ width: 70 }} />
+            <col />
+          </colgroup>
           <tbody>
             {KINDS.map(([k, label]) => (
               <tr key={k}>

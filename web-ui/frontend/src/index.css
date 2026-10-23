@@ -213,6 +213,10 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 tbody tr.selected { background: var(--accent-weak); }
 table.compact td { padding-top: 5px; padding-bottom: 5px; } /* Ports: eine Zeile je Port */
 tbody tr.pair-hl { background: var(--accent-weak); box-shadow: inset 3px 0 0 var(--accent); }
+/* IPv4/IPv6-Paar nebeneinander (0.36.0): Klammer links, Vorschläge gelb */
+tbody tr.pair-head td:first-child, tbody tr.pair-tail td:first-child { box-shadow: inset 3px 0 0 var(--good); }
+tbody tr.pair-head.pair-similar td:first-child, tbody tr.pair-tail.pair-similar td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+tbody tr.pair-head td { border-bottom-style: dashed; }
 td .mono, th .mono, td.mono { font-size: 12.5px; }
 .num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
 th.num, td.num { text-align: right; }
@@ -270,6 +274,12 @@ td.nowrap, span.nowrap { white-space: nowrap; }
 .modal-scrim { position: fixed; inset: 0; background: rgba(8,11,17,.45); z-index: 50; display: grid; place-items: center; padding: 16px; }
 .modal { width: min(500px, 100%); max-height: calc(100% - 32px); overflow-y: auto; background: var(--surface); border: 1px solid var(--border);
   border-radius: 14px; box-shadow: var(--shadow); }
+.modal.wide { width: min(1040px, 100%); }
+/* Tabellen im Formular: volle Breite, Felder füllen die Zelle, lange Werte umbrechen statt
+   quer zu scrollen (Kunden-Editor, Dev-Befund 0.35.0) */
+.modal table.form-table { width: 100%; table-layout: fixed; }
+.modal table.form-table td { overflow-wrap: anywhere; vertical-align: middle; }
+.modal table.form-table .input, .modal table.form-table .sel { width: 100%; min-width: 0; box-sizing: border-box; }
 .modal-head { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
 .modal-head h2 { font-size: 16px; font-weight: 600; }
 .modal-head .iconbtn { margin-left: auto; }
@@ -453,6 +463,9 @@ button.linkchip:hover { text-decoration: underline; }
 .okfg { color: var(--good); }
 tbody tr.subrow { background: var(--surface-2); }
 tbody tr.subrow td { padding-top: 8px; padding-bottom: 10px; }
+
+/* Standardobjekte des Herstellers (FortiOS-Services, ACI common): zuunterst, gedämpft */
+tbody tr.predefined td { opacity: 0.72; }
 
 /* Ports je Gerät: Kopfzeile des Geräts (auf-/zuklappbar) */
 tbody tr.group-row td {

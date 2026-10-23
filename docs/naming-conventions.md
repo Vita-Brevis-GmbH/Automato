@@ -14,8 +14,9 @@
 > `docs/usecases/uc1-applikations-doku-spec.md` (Zielausgabe).
 >
 > **Noch ausstehend** (vom Kunden nachzureichen): Kapitel 3.1 (vollständige
-> Gruppengesellschaft-Abkürzungen), Kapitel 3.2 (Projektnummern + vollständige
-> Funktionscodes). Die im Originaldokument eingebetteten Diagramme (`…png`) lagen nicht
+> Gruppengesellschaft-Abkürzungen), Kapitel 3.2 (vollständige Funktionscodes). Die
+> Projektnummern gehören seit 0.36.0 nicht mehr zur Namenskonvention in Automato (Anwender);
+> die Projektnummer im Namen (`AP_<nr>`, `…-007-…`) wird weiterhin gelesen. Die im Originaldokument eingebetteten Diagramme (`…png`) lagen nicht
 > vor; die Grammatik ist aus den Textbeispielen rekonstruiert.
 
 ## Grundprinzip
@@ -96,13 +97,17 @@ Standardisierte Ports mit sprechendem Namen; sonst `FT_<proto><port>`:
 `FT_tcp4444`, `FT_udp3207`, `FT_tcp1024-65535`, `FT_tcpudp6001`. ICMP als Spezialfall.
 
 **Prüfung in Automato** (FortiGate-Services und ACI-Filter, Findings):
-- Ohne Präfix `FT_` → „Name verletzt Konvention“. Das Präfix lässt sich über das Wörterbuch
-  `service_prefix` des Namensprofils erweitern.
+- Ohne Präfix `FT_` → „Name verletzt Konvention“. Das Präfix steht seit 0.36.0 in der Tabelle
+  „Objekt-Präfix → Typ“ (`object_prefix`) mit dem Typ **„Service / ACI-Filter“** (`service`)
+  und ist dort pflegbar; ohne solchen Eintrag gilt `FT_` (die ältere Wörterbuch-Art
+  `service_prefix` gilt zusätzlich).
 - Mit Präfix wird der Port geprüft: Steht der Name im Wörterbuch `service` (z. B.
   `FT_https` = `tcp/443`), gilt dieser Wert; sonst das Schema `FT_<proto><port>`. Weicht der
   Service ab, entsteht der Befund „Service ≠ Name“.
-- FortiOS-Standardservices (`HTTPS`, `ALL`, …) sind ausgenommen; sie gelten auch nicht als
-  unbenutzt.
+- FortiOS-Standardservices (`HTTPS`, `ALL`, …) und die ACI-Filter in `common` (`default`,
+  `arp`, `est`, `icmp`) sind von der Namensprüfung ausgenommen und gelten nicht als unbenutzt.
+  Sie sollen aber nicht verwendet werden: in einer erlaubenden Regel → Befund „Standardobjekt
+  verwendet“ (0.36.0). In der Objekt-Liste stehen sie zuunterst bzw. ausgeblendet.
 
 | Name | Port | | Name | Port |
 |---|---|---|---|---|

@@ -7,6 +7,40 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.36.0 – 2026-10-23
+
+Objekte, Namenskonvention, IPv4/IPv6-Paare und Kunden-Editor (Anwender, „Weitere Arbeiten“
+Punkte 3–10). Mit Migration `0045` (Datenmigration: `FT_` im Profil „default“); für die
+Angaben dynamischer Objekte die FortiGates neu einlesen (Agent aktualisiert sich selbst).
+
+- **IPv4/IPv6-Paare zusammen:** In „Regeln & Contracts“ steht die IPv6-Regel eines Paars
+  direkt unter ihrer IPv4-Regel (auch seitenweise), als zusammengehörend markiert – grün
+  gleich/bestätigt, gelb Vorschlag („ähnlich“).
+- **Typ-Filter für Objekte:** Auswahl nach dem Typ wie auf dem Gerät mit Anzahl, z. B.
+  **dynamisch (SDN-Connector)** für die Objekte der ACI-Integration über den FortiManager.
+  Der Collector liest dazu `sub-type`, `sdn`, `filter`, `obj-tag` dynamischer Adressen
+  (Positivliste).
+- **Standardobjekte des Herstellers** (FortiOS-Services wie `HTTPS`/`ALL`, ACI-Filter in
+  `common`): zuunterst unter eigener Überschrift, gedämpft, „Standard“ statt grünem Haken,
+  „Standardobjekte ausblenden“. Neuer Befund **„Standardobjekt verwendet“**
+  (`predefined_service_used`), wenn eine erlaubende Regel eines verwendet (direkt bzw. über
+  eine Gruppe).
+- **Objekt öffnen** filtert auch die Liste dahinter auf genau dieses Objekt
+  (`GET /objects?object_id=`).
+- **Namenskonvention:**
+  - `FT_` steht in „Objekt-Prefixe → Typ“ mit dem neuen Typ **„Service / ACI-Filter“** und
+    ist dort pflegbar (bisher fest eingebaut); die Prüfung der Services und Filter nimmt die
+    Präfixe von dort.
+  - Die **Projektnummern** sind aus der Namenskonvention entfernt (ausgeblendet, Daten
+    bleiben).
+- **Kunden-Editor:** breite Maske, Felder in voller Breite, Werte ganz lesbar, kein
+  Querscrollen.
+- Tests: Paar-Reihenfolge (auch seitenweise), Standardobjekte (Reihenfolge, Ausblenden,
+  Befund direkt und über Gruppe, nicht bei Deny), Typ-Filter und Anzahl, Objekt-Filter,
+  eigenes Service-Präfix im Profil, Collector (SDN-Attribute); UI (Standardobjekte, Typ
+  dynamisch, Objekt öffnen filtert, Paar zusammen, FT_ im Namensprofil ohne Projektnummern,
+  Kunden-Editor ohne Querscrollen).
+
 ## 0.35.0 – 2026-10-23
 
 Weg-Suche als eigene Ansicht und Dienste mit Objektnamen (Anwender, „Weitere Arbeiten“

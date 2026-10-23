@@ -21,6 +21,8 @@ DEFAULT_DICTIONARY: dict[str, list[tuple[str, str]]] = {
         ("VIP_", "vip"),
         ("IPP_", "snat_pool"),
         ("R_", "range"),
+        # Services (FortiGate) und Filter (ACI) - kein Adressobjekt, Pruefung der Dienste (0.36.0)
+        ("FT_", "service"),
     ],
     "utm_prefix": [
         ("AV_", "antivirus"),

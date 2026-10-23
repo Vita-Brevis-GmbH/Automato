@@ -107,8 +107,21 @@ def expects_ipam_match(object_class: ObjectClass) -> bool:
 
 # -- Services (FortiGate-Services, ACI-Filter): Namenskonvention FT_ ----------------------
 
-# Ohne Woerterbuch `service_prefix`: eingebautes Praefix der Konvention (FT_ = Filter/Service)
-SERVICE_PREFIXES: tuple[str, ...] = ("FT_",)
+# Wert im Woerterbuch `object_prefix` fuer Praefixe von Services und ACI-Filtern (0.36.0: in der
+# Tabelle „Objekt-Praefix -> Typ“ pflegbar). Ohne solchen Eintrag gilt die Standard-Konvention.
+SERVICE_VALUE = "service"
+SERVICE_PREFIXES: tuple[str, ...] = tuple(k for k, v in _DEFAULT_ENTRIES if v == SERVICE_VALUE)
+
+
+def service_prefixes(
+    object_prefixes: dict[str, str], legacy: Iterable[str] = ()
+) -> tuple[str, ...]:
+    """Praefixe fuer Services/Filter: `object_prefix`-Eintraege mit Typ „service“, dazu die
+    aeltere Woerterbuch-Art `service_prefix`; ohne beides FT_ (keine Funktionsabhaengigkeit)."""
+    own = [k for k, v in object_prefixes.items() if k and v == SERVICE_VALUE]
+    own += [k for k in legacy if k and k not in own]
+    return tuple(own) or SERVICE_PREFIXES
+
 
 # FortiOS-Standardobjekte (vordefiniert, nicht umbenennbar) - keine Konventions-/Nutzungspruefung
 FORTIOS_PREDEFINED_SERVICES = frozenset(
@@ -123,6 +136,21 @@ FORTIOS_PREDEFINED_SERVICES = frozenset(
         "RADIUS RADIUS-OLD CVSPSERVER AFS3 TRACEROUTE RTSP MMS KERBEROS SMB NONE webproxy"
     ).split()
 ) | frozenset({"email access", "web access", "windows ad", "exchange server"})
+
+# ACI: Standard-Filter des Tenants `common` (vom APIC angelegt) - wie FortiOS-Standardservices
+# nicht nach der Konvention benannt und nicht umbenennbar
+ACI_DEFAULT_FILTERS = frozenset(f"common/{n}" for n in ("default", "arp", "est", "icmp"))
+
+
+def predefined_service(category: str, obj_type: str | None, name: str) -> bool:
+    """Standardobjekt des Herstellers (FortiOS-Service bzw. -Gruppe, ACI-Filter in `common`)?
+    Sie folgen nicht der Konvention und sollen nicht verwendet werden (0.36.0)."""
+    if category not in ("service", "service_group"):
+        return False
+    if obj_type == "vzFilter":
+        return name.lower() in ACI_DEFAULT_FILTERS
+    return name.lower() in FORTIOS_PREDEFINED_SERVICES
+
 
 _SERVICE_PATTERN = re.compile(r"^FT_(tcpudp|tcp|udp|sctp)(\d+)(?:-(\d+))?$", re.IGNORECASE)
 

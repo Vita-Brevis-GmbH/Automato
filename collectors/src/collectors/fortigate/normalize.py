@@ -201,6 +201,16 @@ def _dest_ranges(rng: str) -> list[str]:
     return out
 
 
+# Dynamische Adressen (SDN-Connector, z. B. ACI ueber FortiManager): Herkunft per Positivliste
+_DYNAMIC_ATTRS = ("sub-type", "sdn", "filter", "obj-tag")
+
+
+def _address_attrs(a: dict) -> dict:
+    if a.get("type") != "dynamic":
+        return {}
+    return {k: a[k] for k in _DYNAMIC_ATTRS if a.get(k) not in (None, "", [])}
+
+
 def resolve_service(name: str, smap: dict[str, list[str]]) -> list[str]:
     if name in smap:
         return smap[name]
@@ -563,6 +573,7 @@ def build_device_objects(
                     comment=a.get("comment") or None,
                     family=family,
                     interface=a.get("associated-interface") or None,
+                    attrs=_address_attrs(a),
                 )
             )
     for family, items in (("v4", groups or []), ("v6", groups6 or [])):

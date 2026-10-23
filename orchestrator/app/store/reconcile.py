@@ -33,7 +33,9 @@ from app.models import (
     ObjectCategory,
     ObjectClass,
     Portgroup,
+    RefRole,
     Rule,
+    RuleAction,
     RuleEndpoint,
     RuleObjectRef,
     Severity,
@@ -258,6 +260,7 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
         return []
     source_names = _source_names(session, tenant_id)
     used = _used_object_ids(session, tenant_id, objects)
+    allowed = _predefined_in_allow(session, tenant_id, objects)
     services = _ServiceConvention(session, tenant_id)
     out: list[Issue] = []
     by_value: dict[tuple[int, str | None, str], list[str]] = defaultdict(list)
@@ -288,6 +291,9 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
         predefined = _predefined_service(o)
         if o.category is ObjectCategory.SERVICE and not predefined:
             out += _service_issues(o, detail, services)
+        if predefined and allowed.get(o.id):  # Standardobjekt in einer erlaubenden Regel
+            used_by = {**detail, "rules": allowed[o.id]}
+            out.append(_issue(FindingType.PREDEFINED_SERVICE_USED, o, used_by))
         if o.category is ObjectCategory.ADDRESS and _first(o):
             by_value[(o.source_system_id, o.vdom, _first(o))].append(o.name)
         derived = o.category is ObjectCategory.VIP_TARGET or bool((o.attrs or {}).get("vip_of"))
@@ -320,12 +326,15 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
 
 
 class _ServiceConvention:
-    """Praefixe (Woerterbuch `service_prefix`, sonst FT_) und Soll-Ports (Woerterbuch
-    `service`, z. B. FT_https -> tcp/443) - ohne Woerterbuch greift das Schema FT_<proto><port>."""
+    """Praefixe (Woerterbuch `object_prefix` mit Typ „service“ bzw. `service_prefix`, sonst FT_)
+    und Soll-Ports (Woerterbuch `service`, z. B. FT_https -> tcp/443) - ohne Woerterbuch greift
+    das Schema FT_<proto><port>."""
 
     def __init__(self, session: Session, tenant_id: int):
-        own = profile_store.entries_for_tenant(session, tenant_id, "service_prefix")
-        self.prefixes = tuple(own) or naming.SERVICE_PREFIXES
+        self.prefixes = naming.service_prefixes(
+            profile_store.entries_for_tenant(session, tenant_id, "object_prefix"),
+            profile_store.entries_for_tenant(session, tenant_id, "service_prefix"),
+        )
         self.catalog = {
             k.lower(): v
             for k, v in profile_store.entries_for_tenant(session, tenant_id, "service").items()
@@ -344,11 +353,7 @@ def _bare_name(o: DeviceObject) -> str:
 
 
 def _predefined_service(o: DeviceObject) -> bool:
-    return (
-        o.category in (ObjectCategory.SERVICE, ObjectCategory.SERVICE_GROUP)
-        and o.obj_type != "vzFilter"
-        and o.name.lower() in naming.FORTIOS_PREDEFINED_SERVICES
-    )
+    return naming.predefined_service(o.category.value, o.obj_type, o.name)
 
 
 def _service_issues(o: DeviceObject, detail: dict, conv: _ServiceConvention) -> list[Issue]:
@@ -426,6 +431,39 @@ def _value_shape(o: DeviceObject) -> str | None:
     if net is None:
         return None
     return "host" if net.num_addresses == 1 else "network"
+
+
+def _predefined_in_allow(
+    session: Session, tenant_id: int, objects: list[DeviceObject]
+) -> dict[int, list[str]]:
+    """Standard-Services (FortiOS, ACI common) in erlaubenden Regeln - direkt bzw. als
+    Mitglied einer verwendeten Service-Gruppe - mit den Regeln (Name bzw. #ID)."""
+    pre = {o.id: o for o in objects if _predefined_service(o)}
+    if not pre:
+        return {}
+    out: dict[int, set[str]] = defaultdict(set)
+    via_group: dict[int, set[str]] = defaultdict(set)
+    for oid, name, ext in session.execute(
+        select(RuleObjectRef.device_object_id, Rule.name, Rule.external_id)
+        .join(Rule, Rule.id == RuleObjectRef.rule_id)
+        .where(
+            Rule.tenant_id == tenant_id,
+            Rule.action == RuleAction.ALLOW,
+            RuleObjectRef.role == RefRole.SERVICE,
+            RuleObjectRef.device_object_id.is_not(None),
+        )
+    ):
+        (out if oid in pre else via_group)[oid].add(name or f"#{ext}")
+    if via_group:
+        by_key = {(o.source_system_id, o.vdom, o.name.lower()): o.id for o in pre.values()}
+        for g in objects:
+            if g.id not in via_group or g.category is not ObjectCategory.SERVICE_GROUP:
+                continue
+            for m in g.members or []:
+                mid = by_key.get((g.source_system_id, g.vdom, str(m).lower()))
+                if mid is not None:
+                    out[mid] |= via_group[g.id]
+    return {k: sorted(v) for k, v in out.items()}
 
 
 def _used_object_ids(session: Session, tenant_id: int, objects: list[DeviceObject]) -> set[int]:

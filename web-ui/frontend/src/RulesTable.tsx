@@ -580,15 +580,27 @@ export default function RulesTable({
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r) => (
+                {filtered.map((r, i) => {
+                  // IPv4/IPv6-Paar (0.36.0): das Gegenstück steht direkt darunter, beide als
+                  // zusammengehörend markiert (Vorschläge = ähnlich, gelb)
+                  const next = filtered[i + 1];
+                  const prev = filtered[i - 1];
+                  const head = !!r.pair && next?.id === r.pair.rule_id && next.pair?.rule_id === r.id;
+                  const tail = !!r.pair && prev?.id === r.pair.rule_id && prev.pair?.rule_id === r.id;
+                  const kind = r.pair?.match === "similar" ? " pair-similar" : "";
+                  return (
                   <tr
                     key={r.id}
-                    className={`clickable${pairHover === r.id ? " pair-hl" : ""}`}
+                    className={`clickable${pairHover === r.id ? " pair-hl" : ""}${head ? ` pair-head${kind}` : ""}${tail ? ` pair-tail${kind}` : ""}`}
                     onClick={() => setSelected(r.id)}
                     onMouseEnter={() => setPairHover(r.pair?.rule_id ?? null)}
                     onMouseLeave={() => setPairHover(null)}
+                    title={head || tail ? (r.pair?.match === "similar" ? "Paar-Vorschlag IPv4/IPv6 (ähnlich)" : "IPv4/IPv6-Paar") : undefined}
                   >
-                    <td className="mono">{r.id}</td>
+                    <td className="mono">
+                      {tail ? <span className="faint" title="Gegenstück der Regel darüber">↳ </span> : null}
+                      {r.id}
+                    </td>
                     <td>
                       <NameCell r={r} onGo={onGo} onPair={setSelected} />
                     </td>
@@ -639,7 +651,8 @@ export default function RulesTable({
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )}

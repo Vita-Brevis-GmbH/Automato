@@ -304,6 +304,45 @@ test("NAT: Korrektheitsprüfung, nur Abweichungen, Objekt öffnen", async ({ pag
   await drawer.locator("button:has-text('Objekt öffnen')").click();
   await expect(page).toHaveURL(/#objekte\?object_id=\d+/);
   await expect(page.locator(".drawer h2")).toHaveText("V-EXT_shop.example.ch");
+  // die Liste dahinter ist auf genau dieses Objekt gefiltert (0.36.0)
+  await page.locator(".drawer button.close").click();
+  await expect(page.locator(".filterbar .chip", { hasText: "nur „V-EXT_shop.example.ch“" })).toBeVisible();
+  await expect(rows(page)).toHaveCount(1);
+  await expect(rows(page).first()).toContainText("V-EXT_shop.example.ch");
+  await page.getByLabel("Filter aufheben").click();
+  await expect(rows(page).filter({ hasText: "H_shop01" })).toBeVisible();
+});
+
+test("Objekte: Standardobjekte zuunterst bzw. ausgeblendet, Typ-Filter für dynamische Objekte", async ({ page }) => {
+  await page.goto("/#objekte");
+  await page.click(".tabbar button:has-text('Services')");
+  const head = page.locator("tr.group-row", { hasText: "Standardobjekte des Herstellers" });
+  await expect(head).toBeVisible();
+  const https = rows(page).filter({ hasText: /^HTTPS/ });
+  await expect(https.first()).toContainText("Standard"); // nicht grün
+  await expect(https.first().locator(".chip.ok")).toHaveCount(0);
+  await page.click("button.toggle:has-text('Standardobjekte ausblenden')");
+  await expect(head).toHaveCount(0);
+  await expect(rows(page).filter({ hasText: "FT_tcp8443" })).toBeVisible();
+  // Adressobjekte: Typ „dynamisch (SDN-Connector)“
+  await page.click(".tabbar button:has-text('Adressobjekte')");
+  const type = page.locator(".filterbar select").filter({ hasText: "Typ: alle" });
+  await type.selectOption({ label: "dynamisch (SDN-Connector) (1)" });
+  await expect(rows(page)).toHaveCount(1);
+  await expect(rows(page).first()).toContainText("TE_web_epg");
+});
+
+test("Regeln: IPv4/IPv6-Paar steht zusammen, Namensprofil mit FT_ und ohne Projektnummern", async ({ page }) => {
+  await page.goto("/#regeln");
+  await search(page).fill("web-in");
+  await expect(rows(page)).toHaveCount(2);
+  await expect(rows(page).nth(0)).toHaveClass(/pair-head/);
+  await expect(rows(page).nth(1)).toHaveClass(/pair-tail/);
+  await expect(rows(page).nth(1).locator("td").first()).toContainText("↳");
+  await page.goto("/#dict");
+  const prefixes = page.locator(".card", { hasText: "Objekt-Prefixe → Typ" });
+  await expect(prefixes.locator("tr", { hasText: "FT_" })).toContainText("Service / ACI-Filter");
+  await expect(page.getByText("Projektnummern")).toHaveCount(0);
 });
 
 test("Regel-Detail zeigt die VM mit allen Angaben aus dem vCenter", async ({ page }) => {
@@ -520,6 +559,12 @@ test("Kunden: Vorschlag übernehmen, Selektoren mit Vorschau, löschen", async (
   await modal.getByLabel("Wert").nth(1).fill("10.20.128.0/17");
   await modal.getByLabel("ausschliessen").nth(1).check();
   await expect(preview.locator("tr", { hasText: "Netze" })).toContainText("10.20.0.0/17");
+  // breite Maske ohne Querscrollen (0.36.0), der Wert ist ganz lesbar
+  const box = await modal.boundingBox();
+  expect(box!.width).toBeGreaterThan(900);
+  expect(await modal.evaluate((m) => m.scrollWidth <= m.clientWidth)).toBe(true);
+  const value = modal.getByLabel("Wert").nth(1);
+  expect(await value.evaluate((i: HTMLInputElement) => i.scrollWidth <= i.clientWidth)).toBe(true);
   await modal.locator("button", { hasText: "Speichern" }).click();
   const a = page.locator("tbody tr.clickable").filter({ hasText: "Kunde A" });
   await expect(a).toContainText("ohne Netz 10.20.128.0/17");

@@ -3,7 +3,10 @@
 - `GET /objects`              Firewall-Objekte wie auf dem Geraet (IPv4 und IPv6 gleichnamig =
                               zwei Objekte): Werte mit Abgleich gegen das IPAM, Verwendung in
                               Regeln (auch ueber Gruppen) und Gruppen, Befunde; Filter
-                              Quellsystem/Kategorie/Suche/„nur Abweichungen".
+                              Quellsystem/Kategorie/Suche/„nur Abweichungen", Typ (`obj_type`,
+                              z. B. dynamische SDN-Objekte) und Standardobjekte des Herstellers
+                              (`predefined=include|exclude|only`, 0.36.0: zuunterst); `types` =
+                              Anzahl je Typ fuer den Filter.
 - `GET /inventory/{art}`      Netzinventar: devices | interfaces | vlans | subnets | vrfs;
                               Subnetze mit Abgleich gegen das fuehrende IPAM und die Anreicherung.
 Lesen = `viewer`, mandantsgescoped. Rein lesend.
@@ -12,10 +15,11 @@ Lesen = `viewer`, mandantsgescoped. Rein lesend.
 from collections import defaultdict
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
+from app import naming
 from app.api.customer_filter import customer_view, own_view
 from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
@@ -48,6 +52,24 @@ def _tenant(principal: Principal, tenant_id: int | None) -> int:
     return tid
 
 
+def _predefined():
+    """SQL: Standardobjekt des Herstellers (wie `naming.predefined_service`)."""
+    name = func.lower(DeviceObject.name)
+    return and_(
+        DeviceObject.category.in_(SERVICE_CATEGORIES),
+        or_(
+            and_(
+                or_(DeviceObject.obj_type.is_(None), DeviceObject.obj_type != "vzFilter"),
+                name.in_(sorted(naming.FORTIOS_PREDEFINED_SERVICES)),
+            ),
+            and_(
+                DeviceObject.obj_type == "vzFilter",
+                name.in_(sorted(naming.ACI_DEFAULT_FILTERS)),
+            ),
+        ),
+    )
+
+
 def _source_names(session: Session, tid: int) -> dict[int, str]:
     return dict(
         session.execute(
@@ -63,6 +85,9 @@ def list_objects(
     category: str | None = None,
     q: str | None = None,
     issues_only: bool = False,
+    obj_type: str | None = Query(None, description="Typ(en), kommagetrennt; `-` = ohne Typ"),
+    predefined: Literal["include", "exclude", "only"] = "include",
+    object_id: int | None = Query(None, description="nur dieses Objekt (Link „Objekt öffnen“)"),
     customer_id: int | None = None,
     limit: int = 200,
     offset: int = 0,
@@ -79,13 +104,37 @@ def list_objects(
     own = view.ids("rule") if principal.is_customer and view else None  # nur seine Regeln
     if source_system_id is not None:
         stmt = stmt.where(DeviceObject.source_system_id == source_system_id)
+    if object_id is not None:
+        stmt = stmt.where(DeviceObject.id == object_id)
     if category:  # eine oder mehrere Kategorien, kommagetrennt
         stmt = stmt.where(DeviceObject.category.in_([c.strip() for c in category.split(",")]))
-    stmt = stmt.order_by(DeviceObject.name, DeviceObject.family, DeviceObject.id)
+    # Typen (vor dem Typ-Filter gezaehlt): fuer die Auswahl, z. B. „dynamic“ (SDN/FortiManager)
+    types = _types(session, stmt)
+    if obj_type:
+        wanted = [t.strip() for t in obj_type.split(",") if t.strip()]
+        named = [t for t in wanted if t != "-"]
+        stmt = stmt.where(
+            or_(
+                DeviceObject.obj_type.in_(named),
+                *([DeviceObject.obj_type.is_(None)] if "-" in wanted else []),
+            )
+        )
+    pre = _predefined()
+    if predefined == "exclude":
+        stmt = stmt.where(~pre)
+    elif predefined == "only":
+        stmt = stmt.where(pre)
+    predefined_count = (
+        session.scalar(select(func.count()).select_from(stmt.where(pre).subquery())) or 0
+    )
+    # Standardobjekte des Herstellers zuunterst (Dev-Befund 0.35.0: nicht verwenden)
+    stmt = stmt.order_by(case((pre, 1), else_=0), DeviceObject.name, DeviceObject.family,
+                         DeviceObject.id)  # fmt: skip
+    extra = {"types": types, "predefined": predefined_count}
     if not q and not issues_only:  # seitenweise per SQL (grosse Objekt-Bestaende)
         total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         page = list(session.scalars(stmt.offset(offset).limit(min(limit, 2000))))
-        return {"total": total, "rows": _object_rows(session, tid, page, own)}
+        return {"total": total, "rows": _object_rows(session, tid, page, own), **extra}
     objects = list(session.scalars(stmt))
     if q:
         # Name, Kommentar, Werte, FQDN, Interface, Mitglieder und die DNS-Namen der Werte aus
@@ -108,7 +157,16 @@ def list_objects(
         issues = objects_store.object_issues(session, tid, objects)
         objects = [o for o in objects if issues.get(o.id)]
     page = objects[offset : offset + min(limit, 2000)]
-    return {"total": len(objects), "rows": _object_rows(session, tid, page, own)}
+    return {"total": len(objects), "rows": _object_rows(session, tid, page, own), **extra}
+
+
+def _types(session: Session, stmt) -> dict[str, int]:
+    """Anzahl Objekte je Typ (`obj_type`; leer = ohne Typ) fuer die gefilterte Menge."""
+    sub = stmt.subquery()
+    return {
+        t or "": n
+        for t, n in session.execute(select(sub.c.obj_type, func.count()).group_by(sub.c.obj_type))
+    }
 
 
 def _object_rows(session: Session, tid: int, objects: list[DeviceObject], only=None) -> list[dict]:
@@ -173,6 +231,8 @@ def _object_rows(session: Session, tid: int, objects: list[DeviceObject], only=N
                 "fqdn": o.fqdn,
                 "attrs": o.attrs or {},
                 "issues": issues.get(o.id, []),
+                # Standardobjekt des Herstellers (FortiOS-Service, ACI-Filter in common)
+                "predefined": naming.predefined_service(o.category.value, o.obj_type, o.name),
                 # Netz-Objekte (N_/T_/IPP_): Standort-Block aus dem Namen (ADR 0015)
                 "site": site_index.from_name(o.name, prefixes, network_only=True),
             }

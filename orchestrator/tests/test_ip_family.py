@@ -234,3 +234,28 @@ def test_paare_bestaetigen_ablehnen_und_zuruecknehmen(client):
     bad = {"partner_id": rules[("dual", "dual")]["id"], "decision": "confirmed"}
     r = client.post(f"/rules/{rules[('api-in', 'v4')]['id']}/pair", json=bad, headers=operator)
     assert r.status_code == 422
+
+
+def test_paare_stehen_in_der_liste_nebeneinander(client):
+    """0.36.0: Die IPv6-Regel eines Paars steht direkt nach ihrer IPv4-Regel - auch wenn sie
+    auf der Firewall weiter unten steht (gleich bzw. Vorschlag „ähnlich“)."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    body = {"tenant_id": tid, "name": "fw-01", "platform": "fortigate", "base_url": "https://x"}
+    sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+    run = {"platform": "fortigate", "tenant_id": tid, "source_system_id": sid}
+    run_id = client.post("/jobs/collect", json=run).json()["run_id"]
+    order = [RULES[0], RULES[2], RULES[4], RULES[1], RULES[3]]  # v4, v4, dual, v6, v6
+    result = {"status": "completed", "rules": order, "objects": OBJECTS}
+    r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
+    assert r.status_code == 200, r.text
+    listed = [(x["name"], x["family"]) for x in _rules(client, tid)]
+    assert listed == [
+        ("web-in", "v4"),
+        ("web-in-v6", "v6"),
+        ("api-in", "v4"),
+        ("api-in", "v6"),  # Vorschlag (ähnlich) ebenso
+        ("dual", "dual"),
+    ]
+    # seitenweise: die Reihenfolge gilt über die Seiten
+    page2 = client.get("/rules", params={"tenant_id": tid, "limit": 2, "offset": 2}).json()
+    assert [(x["name"], x["family"]) for x in page2] == [("api-in", "v4"), ("api-in", "v6")]

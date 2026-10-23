@@ -38,6 +38,7 @@ const OBJECT_CLASSES: Record<string, string> = {
   vip_dnat: "VIP / DNAT",
   snat_pool: "SNAT IP-Pool",
   range: "Adressbereich",
+  service: "Service / ACI-Filter",
 };
 
 const KINDS: Record<string, KindMeta> = {
@@ -45,14 +46,14 @@ const KINDS: Record<string, KindMeta> = {
     title: "Objekt-Prefixe → Typ",
     cols: ["Prefix", "Objekttyp"],
     add: "Prefix",
-    note: "Wird beim Einlesen ausgewertet (längstes Prefix gewinnt). Leer = eingebaute Standard-Konvention.",
+    note:
+      "Wird beim Einlesen ausgewertet (längstes Prefix gewinnt). Typ „Service / ACI-Filter“ (FT_) gilt für die Namensprüfung der Services und Filter. Leer = eingebaute Standard-Konvention.",
     values: OBJECT_CLASSES,
   },
   utm_prefix: { title: "UTM-Schutzprofil-Prefixe", cols: ["Prefix", "Mechanismus"], add: "Prefix" },
   color_code: { title: "FortiGate-Farbcodes", cols: ["Code", "Klasse"], add: "Farbe" },
   l3out: { title: "L3Out-Zonen (ACI)", cols: ["L3Out", "Bedeutung"], add: "L3Out" },
   gg_code: { title: "Gruppengesellschaften (Kap. 3.1)", cols: ["Kürzel", "Tenant-Nr."], add: "GG" },
-  project_code: { title: "Projektnummern (Kap. 3.2)", cols: ["Nummer", "Projekt"], add: "Projekt" },
   function_code: { title: "Funktions-/Gerätecodes", cols: ["Code", "Bedeutung"], add: "Code" },
   site_code: {
     title: "Standort-Codes (3-stellig)",
@@ -60,8 +61,17 @@ const KINDS: Record<string, KindMeta> = {
     add: "Standort",
     note: "DC-/Standort-Kennung im Namen (z. B. 000).",
   },
-  service: { title: "Standard-Services (FT_)", cols: ["Name", "Port"], add: "Service" },
+  service: {
+    title: "Standard-Services (FT_)",
+    cols: ["Name", "Port"],
+    add: "Service",
+    note: "Sprechende Namen mit Soll-Port (z. B. FT_https = tcp/443); sonst gilt das Schema FT_<proto><port>.",
+  },
 };
+
+// nicht mehr Teil der Namenskonvention (0.36.0): bestehende Einträge bleiben gespeichert, werden
+// aber nicht mehr gezeigt
+const HIDDEN_KINDS = ["project_code"];
 
 const KIND_ORDER = Object.keys(KINDS);
 
@@ -115,7 +125,7 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
 
   const kinds = useMemo(() => {
     const present = new Set((entries ?? []).map((e) => e.kind));
-    const custom = [...present, ...extraKinds].filter((k) => !KINDS[k]);
+    const custom = [...present, ...extraKinds].filter((k) => !KINDS[k] && !HIDDEN_KINDS.includes(k));
     return [...KIND_ORDER, ...[...new Set(custom)].sort()];
   }, [entries, extraKinds]);
 

@@ -171,7 +171,7 @@ def list_rules(
     total = session.scalar(scoped(select(func.count(Rule.id)))) or 0
     ids = list(
         session.scalars(
-            scoped(select(Rule.id)).order_by(*rules_store.ORDER).offset(offset).limit(limit)
+            rules_store.paired_order(scoped(select(Rule.id))).offset(offset).limit(limit)
         )
     )
     response.headers["X-Total-Count"] = str(total)

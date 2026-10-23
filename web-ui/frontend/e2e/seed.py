@@ -39,6 +39,9 @@ def run(app) -> None:
         return r.json()
 
     tid = ok(c.post("/tenants", json={"name": "Kunde A", "code": "KA"}), 201)["id"]
+    # Standardprofil „default“ wie nach den Migrationen (Namensprofile, FT_ als Service-Präfix)
+    ok(c.post("/naming-profiles", json={"customer": "default", "name": "default",
+                                        "with_defaults": True}), 201)  # fmt: skip
 
     def system(**body):
         return ok(c.post("/systems", json={"tenant_id": tid, **body}), 201)["id"]
@@ -92,9 +95,13 @@ def run(app) -> None:
     fw = system(name="fwc11-000-infrz", platform="fortigate", base_url="https://fw-01.example.ch")
     run_result(fw, "fortigate", rules=rules, objects=list(objects.values()), nat_rules=sn.NAT)
 
-    # FortiGate 2: Dienste mit Attributen, Internet Service, negiertes Ziel
+    # FortiGate 2: Dienste mit Attributen, Internet Service, negiertes Ziel; dazu eine
+    # dynamische Adresse aus dem SDN-Connector (ACI über FortiManager, 0.36.0)
     fw2 = system(name="fw-02", platform="fortigate", base_url="https://fw-02.example.ch")
-    run_result(fw2, "fortigate", rules=sv.RULES, objects=sv.OBJECTS)
+    sdn = {"sub-type": "sdn", "sdn": "aci-fmg"}
+    dynamic = {"name": "TE_web_epg", "category": "address", "obj_type": "dynamic",
+               "values": ["dynamic:TE_web_epg"], "attrs": sdn}  # fmt: skip
+    run_result(fw2, "fortigate", rules=sv.RULES, objects=[*sv.OBJECTS, dynamic])
 
     # FortiGate 3: IPv4/IPv6 getrennt - gleichnamige Objekte, Regelpaare (gleich/aehnlich)
     fw3 = system(name="fw-03", platform="fortigate", base_url="https://fw-03.example.ch")

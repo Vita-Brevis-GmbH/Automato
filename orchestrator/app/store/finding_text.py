@@ -100,7 +100,7 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
             hint = (
                 "Service nach Konvention benennen: FT_<sprechender Name> (z. B. FT_https) bzw. "
                 "FT_<proto><port> (z. B. FT_tcp8443) – oder den Präfix im Namensprofil ergänzen "
-                "(Wörterbuch service_prefix)."
+                "(Objekt-Präfix → Typ „Service / ACI-Filter“)."
             )
         return (
             f"{what} {_q(subject)}{on} beginnt mit keinem Präfix der Namenskonvention{known}.",
@@ -113,6 +113,15 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
             f"{rule} erwartet: {_list(d.get('expected'), 6)}.",
             "Port/Protokoll am Service oder den Namen korrigieren – der Name soll sagen, was "
             "der Service erlaubt.",
+        )
+    if ftype == "predefined_service_used":
+        rules = d.get("rules") or []
+        return (
+            f"Standardobjekt {_q(subject)}{on} wird in {len(rules)} erlaubenden "
+            f"Regel{'n' if len(rules) != 1 else ''} verwendet ({_list(rules, 4)}) – es folgt "
+            "nicht der Namenskonvention.",
+            "Stattdessen ein eigenes Objekt nach Konvention verwenden (z. B. FT_https statt "
+            "HTTPS); Standardobjekte des Herstellers lassen sich nicht umbenennen.",
         )
     if ftype == "rule_incomplete":
         missing = d.get("missing") or []

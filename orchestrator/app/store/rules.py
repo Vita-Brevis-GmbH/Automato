@@ -5,8 +5,8 @@ sowie Batch-Lookups fuer Netzwerkobjekte und Zonen, damit die Anreicherung der
 Liste ohne N+1-Queries auskommt.
 """
 
-from sqlalchemy import delete, exists, func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import and_, delete, exists, func, select
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from app.models import (
     MatchStatus,
@@ -62,6 +62,31 @@ def filtered(
 
 
 ORDER = (Rule.source_system_id, Rule.sequence, Rule.id)  # Reihenfolge wie auf dem Geraet
+
+
+def paired_order(stmt):
+    """Reihenfolge wie auf dem Geraet, IPv4/IPv6-Paare nebeneinander (0.36.0): die IPv6-Regel
+    eines Paars (gleich, bestaetigt bzw. Vorschlag) steht direkt nach ihrer IPv4-Regel."""
+    idx, partner = aliased(RuleIndex), aliased(Rule)
+    return (
+        stmt.outerjoin(idx, idx.rule_id == Rule.id)
+        .outerjoin(
+            partner,
+            and_(
+                partner.id == idx.pair_rule_id,
+                Rule.ip_family == "v6",
+                partner.ip_family == "v4",
+                partner.source_system_id == Rule.source_system_id,
+            ),
+        )
+        .order_by(
+            Rule.source_system_id,
+            func.coalesce(partner.sequence, Rule.sequence),
+            func.coalesce(partner.id, Rule.id),
+            partner.id.is_not(None),
+            Rule.id,
+        )
+    )
 
 
 def not_twin():
