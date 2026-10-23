@@ -588,16 +588,22 @@ def trace(
     start: str | None = None,
     slack: int = 1,
     service: tuple[str, int | None] | None = None,
+    graph: "Graph | None" = None,
+    checks=None,
+    backups: bool = True,
 ) -> dict:
     """Weg von der Quelle (bzw. dem Startpunkt) zum Ziel: je Pfad die Hops mit Ein- und
     Ausgang (Interface, Zone), Route bzw. Policy-Route und Next-Hop, dazu das Ende - die
     aktiven Wege und die Backup-Wege mit hoechstens `slack` Hops mehr; je FortiGate-Hop die
-    passenden Policies (Dienst optional, z. B. `("tcp", 443)`)."""
+    passenden Policies (Dienst optional, z. B. `("tcp", 443)`).
+
+    Viele Wege eines Mandanten (Verbindungen der Applikations-Doku, 0.45.0): `graph` und
+    `checks` (`policy_check.Checks`) einmal laden; `backups=False` nur die aktiven Wege."""
     from app.store import policy_check  # Regeln je Hop - spaet importiert (Regelindex)
 
     dst = endpoint(dst_text)  # IP bzw. Netz (0.39.0: das Netz als Ganzes)
     src = endpoint(src_text) if src_text and src_text.strip() else None
-    g = Graph(session, tenant_id)
+    g = graph or Graph(session, tenant_id)
     notes: list[str] = []
     starts: list[tuple[Key, str | None, str]] = []
     chosen = parse_key(start)
@@ -697,7 +703,7 @@ def trace(
             next_hops = route["next_hops"]
         branches = [(nh, hop, dev) for nh in next_hops]
         # eine Abweichung je Weg: Backup-Next-Hops dieses Knotens (nicht bei Policy-Routen)
-        if dev is None and follow is None and route is not None:
+        if backups and dev is None and follow is None and route is not None:
             for b in g.backups(key, cur, table, route):
                 info = {k: b[k] for k in ("prefix", "protocol", "distance", "reason")}
                 deviation = {"hop": len(hops), "label": node.label, "reason": b["reason"]}
@@ -752,7 +758,7 @@ def trace(
         )
     _mark_length(primary + shown)
     notes += _inner_notes(primary + shown, dst)
-    policy_check.check_paths(session, tenant_id, primary + shown, src, dst, service)
+    policy_check.check_paths(session, tenant_id, primary + shown, src, dst, service, checks)
     return {
         "start": [g.nodes[k].out() | {"via": via} for k, _, via in starts],
         # Session-Sync-Paar bzw. Verbund als ein Hop (0.29.0)

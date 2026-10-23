@@ -7,6 +7,34 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.45.0 – 2026-10-23
+
+Verbindungen Ende zu Ende in der Applikations-Doku (Wunsch des Anwenders: eine Zeile je Weg,
+wenn mehrere Firewalls und das ACI hintereinander stehen). Ohne Migration. ADR 0021 (Entwurf).
+
+- **Eine Zeile je Verbindung:**
+  - Neue Karte „Verbindungen Ende zu Ende“ über „Regeln & Contracts“. Je Verbindung (Quelle →
+    Ziel, Dienst) der Weg über ACI und Firewalls wie in der Weg-Suche, je Knoten nach seinem
+    Urteil eingefärbt, dazu das Gesamturteil.
+  - Abgeleitet aus den Regeln der Doku: das System der Applikation mit seiner IP, die
+    Gegenseite aus den Objekten der Regel bzw. den Gegenstellen des Contracts im Scope. Gleiche
+    Verbindungen aus mehreren Regeln (Firewall, Contract) stehen einmal da.
+  - Gegenstelle any, vzAny und Preferred Group bleiben Regeln ohne Verbindung.
+- **Details je Hop:** die entscheidende Policy bzw. der Contract mit den Objekten (Quelle,
+  Ziel, Dienste), die möglichen davor, Ein- und Ausgang, NAT und Leak zwischen VRFs.
+- **Regel ↔ Weg:**
+  - Je Regel der Doku: entscheidet, möglich, greift nicht (vorher entscheidet eine andere),
+    nicht auf dem Weg (ihr Gerät liegt nicht auf dem Weg), nicht prüfbar (kein Weg bekannt).
+  - **Abweichung**, wenn eine Regel erlaubt, aber der Weg sperrt bzw. sie nicht auf dem Weg
+    liegt. Das ist der Fall „Regel zeigt Zugriff, Weg-Suche sperrt“. Abweichungen stehen zuerst,
+    ein Filter zeigt nur sie und die Gesperrten.
+- **Weg-Suche aus der Doku:** „In der Weg-Suche öffnen“ füllt Quelle, Ziel und Dienst aus und
+  sucht gleich (`#wege?src=…&dst=…&service=…`).
+- API `GET /applications/{id}/connections`; nicht für Kunden-Benutzer (zeigt die
+  Infrastruktur).
+- Intern: Weg-Suche und Regel-Prüfung laden Graph, Policies und Contracts für viele Wege nur
+  einmal (`paths.trace(graph=, checks=, backups=)`, `policy_check.Checks`).
+
 ## 0.44.1 – 2026-10-23
 
 Korrektur der Web-Oberfläche. Ohne Migration.

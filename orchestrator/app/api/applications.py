@@ -20,8 +20,8 @@ from app.auth.principal import Principal
 from app.db import get_session
 from app.models import Application, Site
 from app.schemas.rules import RuleOut
+from app.store import app_paths, sites
 from app.store import applications as store
-from app.store import sites
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -590,6 +590,20 @@ def remove_member(
         },
     )
     return _detail(session, app)
+
+
+@router.get("/{application_id}/connections")
+def application_connections(
+    application_id: int,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Verbindungen Ende zu Ende (0.45.0): je Verbindung der Weg ueber Firewalls und ACI mit
+    der entscheidenden Policy bzw. dem Contract je Hop und dem Abgleich mit den Regeln der
+    Doku. Nicht fuer Kunden-Benutzer (Freigabeliste): der Weg zeigt die Infrastruktur."""
+    app = _load(session, principal, application_id)
+    reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
+    return app_paths.build(session, app)
 
 
 @router.get("/{application_id}/doc", response_model=ApplicationDocOut)

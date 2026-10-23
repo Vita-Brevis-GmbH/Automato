@@ -18,6 +18,7 @@ import {
   System,
 } from "./api";
 import type { View, ViewParams } from "./App";
+import ConnectionsCard from "./AppConnections";
 import { DocTableView, tablesMarkdown } from "./AppDoc";
 import type { Me } from "./auth";
 import { findingLabel, serviceNames, useVdomShown } from "./refs";
@@ -312,6 +313,9 @@ export default function ApplicationDocView({
           scrollToRules();
         }}
       />
+
+      {/* Verbindungen Ende zu Ende (0.45.0) – zeigt die Infrastruktur, nicht für Kunden-Benutzer */}
+      {!me.isCustomer && <ConnectionsCard appId={id} reload={reload} onRule={setRule} onGo={onGo} />}
 
       <div className="card" id="app-rules" style={{ marginTop: 14 }}>
         <div className="card-head">

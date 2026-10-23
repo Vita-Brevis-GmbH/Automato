@@ -169,3 +169,32 @@ test("Applikationen: Vorschläge aus der Namenskonvention unter der Liste (0.38.
   const [a, b] = [await list.boundingBox(), await suggestions.boundingBox()];
   expect(b!.y).toBeGreaterThan(a!.y + a!.height - 1);
 });
+
+test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichung (0.45.0)", async ({ page }) => {
+  await open(page);
+  const card = page.locator("#app-connections");
+  await expect(card).toContainText("Verbindungen Ende zu Ende");
+  await expect(card.locator(".card-head")).toContainText("6 Verbindungen");
+  await expect(card.locator(".card-head")).toContainText("1 Abweichungen");
+  await expect(card).toContainText("ohne prüfbare Gegenstelle");
+  // CT_rt: Subnetz nur für das Routing – die Doku zeigt den Contract, der Weg sperrt
+  const row = card.locator("tbody tr.clickable").filter({ hasText: "EN_rt" });
+  await expect(row).toContainText("Abweichung");
+  await expect(row).toContainText("apic-01 · VRF TE:VRF1");
+  await expect(row).toContainText("gesperrt");
+  await expect(row).not.toContainText("+1"); // die EPG zählt nicht als weiteres System
+  await row.click();
+  const detail = card.locator("tr.detail-row");
+  await expect(detail).toContainText("Contract CT_rt:SJ_1 erlaubt – der Weg ist gesperrt an apic-01 · VRF TE:VRF1");
+  await expect(detail.locator(".conn-rules")).toContainText("greift nicht");
+  // ohne gelesenes Routing: nicht prüfbar statt „nicht auf dem Weg“
+  await card.locator("button.toggle", { hasText: "nur Abweichungen" }).click();
+  await expect(card.locator("tbody tr.clickable")).toHaveCount(6);
+  await card.locator("tbody tr.clickable").filter({ hasText: "H_db01" }).click();
+  await expect(card.locator(".conn-rules")).toContainText("nicht prüfbar");
+  // in die Weg-Suche mit Quelle, Ziel und Dienst
+  await card.locator("button", { hasText: "In der Weg-Suche öffnen" }).click();
+  await expect(page).toHaveURL(/#wege\?src=10\.10\.10\.5&dst=172\.16\.5\.9&service=tcp%2F443/);
+  await expect(page.getByPlaceholder("Ziel: IP, Netz oder Name")).toHaveValue("172.16.5.9");
+  await expect(page.getByPlaceholder("Dienst: tcp/443 oder FT_https")).toHaveValue("tcp/443");
+});

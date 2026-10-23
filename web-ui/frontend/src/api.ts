@@ -1486,6 +1486,87 @@ export const acceptAppSuggestion = (tenantId: number, code: string, name?: strin
   );
 export const fetchAppDoc = (id: number) => getJSON<ApplicationDoc>(`/api/applications/${id}/doc`);
 
+// Verbindungen Ende zu Ende (0.45.0): je Verbindung (Quelle → Ziel, Dienst) der Weg über
+// Firewalls und ACI mit der entscheidenden Policy bzw. dem Contract je Hop und dem Abgleich mit
+// den Regeln der Doku – nicht für Kunden-Benutzer (zeigt die Infrastruktur)
+export interface AppConnSide {
+  ip: string;
+  label: string;
+  kind: "system" | "object" | "epg" | "external";
+  name: string | null; // IPAM-Name der Gegenstelle
+  systems: string[];
+  more: number;
+  keys: string[]; // Systeme der Applikation (Doku-Schlüssel)
+}
+export interface AppConnRule {
+  rule_id: number | null;
+  external_id?: string | null;
+  name?: string | null;
+  label?: string | null; // ACI: „Contract CT_x“, „Taboo …“
+  kind?: string | null;
+  action: "allow" | "deny";
+  src?: string | null; // Objekt der Policy bzw. EPG, über die die Quelle passt
+  dst?: string | null;
+  services: string[];
+  unsure: string[];
+  decides: boolean;
+}
+export interface AppConnCheck {
+  label: string; // Firewall bzw. VRF (im Verbund je Firewall)
+  verdict: string;
+  text: string;
+  src_epg?: string | null;
+  dst_epg?: string | null;
+  rules: AppConnRule[];
+  ingress?: string | null;
+  egress?: string | null;
+  nat?: TraceHop["nat"];
+  snat?: TraceHop["snat"];
+  leak?: TraceHop["leak"];
+}
+export interface AppConnHop {
+  label: string;
+  kind: string;
+  key: string;
+  source_system_id: number;
+  context: string;
+  verdict: string | null;
+  checks: AppConnCheck[];
+}
+export interface AppConnState {
+  rule_id: number;
+  label: string;
+  action: "allow" | "deny";
+  device: string;
+  state: "decides" | "possible" | "other" | "off_path" | "unknown";
+  text: string;
+}
+export interface AppConnection {
+  key: string;
+  direction: "in" | "out";
+  src: AppConnSide;
+  dst: AppConnSide;
+  service: string | null;
+  verdict: string;
+  text: string;
+  reached: boolean;
+  end: { kind: string; text: string } | null;
+  start: string | null; // Weg ab dem Gerät der Regel (Quelle an keinem gelesenen Gerät)
+  paths: number;
+  parallel: string[] | null;
+  hops: AppConnHop[];
+  rules: AppConnState[];
+  mismatch: string[];
+  notes: string[];
+}
+export interface AppConnections {
+  connections: AppConnection[];
+  notes: string[];
+  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number };
+}
+export const fetchAppConnections = (id: number) =>
+  getJSON<AppConnections>(`/api/applications/${id}/connections`);
+
 // System (Admin)
 export interface SystemStatus {
   version: string;

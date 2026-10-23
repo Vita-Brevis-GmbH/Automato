@@ -16,6 +16,7 @@ import {
   TraceResult,
   traceRoute,
 } from "./api";
+import type { ViewParams } from "./App";
 import { useDebounced } from "./Objects";
 import { Capture, CAPTURE_KEY, Hops, matchText, Missing, policyText, Port, VrfChip, where } from "./Routing";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
@@ -63,7 +64,7 @@ function PathKind({ path, activeCount }: { path: TracePath; activeCount: number 
 }
 
 // Regeln auf dem Weg (0.22.0): Urteil je FortiGate-Hop bzw. je Weg
-const VERDICT: Record<string, [string, string]> = {
+export const VERDICT: Record<string, [string, string]> = {
   allow: ["ok", "erlaubt"],
   deny: ["crit", "gesperrt"],
   implicit_deny: ["crit", "implizit gesperrt"],
@@ -71,7 +72,7 @@ const VERDICT: Record<string, [string, string]> = {
   unknown: ["", "unbekannt"],
 };
 
-function Verdict({ v, title }: { v: string; title?: string }) {
+export function Verdict({ v, title }: { v: string; title?: string }) {
   const [cls, label] = VERDICT[v] ?? ["", v];
   return (
     <span className={`chip ${cls}`} title={title}>
@@ -484,7 +485,7 @@ function LookupTable({ rows }: { rows: RouteLookup[] }) {
 
 // Quelle bzw. Ziel: IP, Netz oder Name; `hit` = gewählter Treffer der Namenssuche
 type Endpoint = { text: string; hit: NameHit | null };
-const EMPTY: Endpoint = { text: "", hit: null };
+const endpointOf = (text?: string): Endpoint => ({ text: text ?? "", hit: null });
 
 const HIT_KIND: Record<NameHit["kind"], string> = {
   ip: "IP",
@@ -704,20 +705,22 @@ function PathSearch({
   tenantId,
   nodes,
   onCapture,
+  initial,
 }: {
   tenantId: number;
   nodes: RoutingNode[];
   onCapture?: (c: Capture) => void;
+  initial?: ViewParams; // aus einem Link (#wege?src=…&dst=…&service=…), z. B. Applikations-Doku
 }) {
-  const [src, setSrc] = useState<Endpoint>(EMPTY);
-  const [start, setStart] = useState("");
-  const [dst, setDst] = useState<Endpoint>(EMPTY);
+  const [src, setSrc] = useState<Endpoint>(endpointOf(initial?.src));
+  const [start, setStart] = useState(initial?.start ?? "");
+  const [dst, setDst] = useState<Endpoint>(endpointOf(initial?.dst));
   const [choices, setChoices] = useState<{ src?: NameResult; dst?: NameResult }>({});
   const [trace, setTrace] = useState<TraceResult | null>(null);
   type Asked = { ip: string; name?: string; net?: string | null };
   const [asked, setAsked] = useState<{ src: Asked; dst: Asked } | null>(null);
   const [slack, setSlack] = useState("1"); // Backup-Wege: Hops mehr als der kürzeste aktive; "" = keine
-  const [service, setService] = useState(""); // tcp/443, udp/53 bzw. Service-Objekt/ACI-Filter
+  const [service, setService] = useState(initial?.service ?? ""); // tcp/443, udp/53 bzw. Service-Objekt/ACI-Filter
   const [rows, setRows] = useState<RouteLookup[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -751,6 +754,10 @@ function PathSearch({
       setBusy(false);
     }
   };
+  // Link mit Ziel: gleich suchen (einmal beim Öffnen)
+  useEffect(() => {
+    if (initial?.dst) void run();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const label = (a: Asked) =>
     a.net ? `${a.name ? `${a.name} = ` : ""}Netz ${a.net}` : a.name ? `${a.name} (${a.ip})` : a.ip;
   return (
@@ -870,10 +877,12 @@ export default function Paths({
   tenantId,
   tenantLabel,
   canEdit = false,
+  params,
 }: {
   tenantId: number | null;
   tenantLabel: string;
   canEdit?: boolean;
+  params?: ViewParams;
 }) {
   const [nodes, setNodes] = useState<RoutingNode[] | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -912,7 +921,7 @@ export default function Paths({
         Laufs. Quelle und Ziel als IP, Netz oder Name aus IPAM, Firewall-Objekten, VMs und Subnetzen.
       </PageHead>
       <ErrorBox error={error} prefix="Routing laden" />
-      {nodes === null ? <Loading /> : <PathSearch tenantId={tenantId} nodes={nodes} onCapture={canEdit ? capture : undefined} />}
+      {nodes === null ? <Loading /> : <PathSearch tenantId={tenantId} nodes={nodes} onCapture={canEdit ? capture : undefined} initial={params} />}
     </>
   );
 }

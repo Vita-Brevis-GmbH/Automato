@@ -340,8 +340,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.43.2** | Korrektur Applikations-Doku: Contracts nur mit den Beteiligten (eigene EPGs, Gegenstellen im Scope), Firewall mit VDOM |
 | **0.44.0** | ACI zwischen VRFs/Tenants: Shared Services (Subnetz-Scope `shared`) und Route-Leaking (`leakRoutes`), VRF aus `tDn` (auch vzAny), Weg-Suche endet im Fabric der anderen VRF, Applikations-Doku urteilt gleich |
 | **0.44.1** | Korrektur: Listen mit Filtern zeigen nur die Antwort zur letzten Anfrage (ältere überschrieb die gefilterte) |
+| **0.45.0** | Verbindungen Ende zu Ende in der Applikations-Doku: eine Zeile je Verbindung mit dem Weg über ACI und Firewalls, je Hop Policy bzw. Contract mit Objekten, Abgleich Regel ↔ Weg mit Abweichungen, Sprung in die Weg-Suche (ADR 0021 Entwurf) |
 
-### Nächste Arbeiten (Stand 0.44.1)
+### Nächste Arbeiten (Stand 0.45.0)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
@@ -380,14 +381,15 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 | Version | Inhalt |
 |---|---|
 | ~~0.44.0~~ | ACI zwischen VRFs/Tenants – **umgesetzt in 0.44.0** (offen: Shared L3Out, vzAny als Consumer eines Shared Service in der Doku) |
-| 0.45.0 | Verbindungen Ende zu Ende in der Applikations-Doku (vorgezogen, Anwender): eine Zeile je Verbindung über Firewalls und ACI, je Hop Policy bzw. Contract mit Objekten, Abweichung Regel ↔ Weg markiert; dazu Konfiguration vor Gelerntem überall (statische Endpunkte, Befunde) und ADR 0021 als Entwurf |
-| 0.46.0 | FortiGate SNAT genauer (Pool-Typen, `ippool6`, Interface-IP, `nat-source-vip`; Quelle danach als Bereich; Befunde) |
-| 0.47.0 | Betrieb: Fristen für alte Läufe, getrennte DB-Rollen |
-| 0.48.0 | Betrieb: TLS intern (interne CA) |
-| 0.49.0 | Topologie-Modell (`GET /topology`) und Plausibilitäts-Befunde |
-| 0.50.0 | Logische Zonen und Zonenplan im Tool, Zonenmatrix |
-| 0.51.0 | Export (draw.io, SVG, PDF) und Versionen des Plans |
-| 0.52.0 | Kunden auf Zonen, Kunden-Benutzer in der Oberfläche |
+| ~~0.45.0~~ | Verbindungen Ende zu Ende in der Applikations-Doku – **umgesetzt in 0.45.0** (ADR 0021 Entwurf; offen: Export/Druck, Abweichung als Befund) |
+| 0.46.0 | Konfiguration vor Gelerntem überall (statische Endpunkte `fvStCEp`, Befunde bei Widerspruch zwischen Portgruppe und gelerntem Endpunkt) – aus 0.45.0 verschoben |
+| 0.47.0 | FortiGate SNAT genauer (Pool-Typen, `ippool6`, Interface-IP, `nat-source-vip`; Quelle danach als Bereich; Befunde) |
+| 0.48.0 | Betrieb: Fristen für alte Läufe, getrennte DB-Rollen |
+| 0.49.0 | Betrieb: TLS intern (interne CA) |
+| 0.50.0 | Topologie-Modell (`GET /topology`) und Plausibilitäts-Befunde |
+| 0.51.0 | Logische Zonen und Zonenplan im Tool, Zonenmatrix |
+| 0.52.0 | Export (draw.io, SVG, PDF) und Versionen des Plans |
+| 0.53.0 | Kunden auf Zonen, Kunden-Benutzer in der Oberfläche |
 
 Frühere Reihenfolge (Stand 0.42.0, zum Nachlesen):
 

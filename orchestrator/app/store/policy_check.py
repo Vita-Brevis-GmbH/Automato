@@ -415,16 +415,30 @@ def _service(p: _Policy, want: tuple[str, int | None] | None) -> bool | None:
     return None if p.service_negate else ok
 
 
-def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, service) -> None:
+@dataclass
+class Checks:
+    """Geladene Policies und Contracts samt Urteilen je Hop - fuer viele Wege eines Mandanten
+    nur einmal (Verbindungen der Applikations-Doku, 0.45.0)."""
+
+    checker: Checker
+    aci: object | None = None
+    cache: dict[tuple, dict] = field(default_factory=dict)
+
+    @classmethod
+    def load(cls, session: Session, tenant_id: int) -> "Checks":
+        return cls(Checker(session, tenant_id))
+
+
+def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, service,
+                checks: Checks | None = None) -> None:  # fmt: skip
     """Je Weg und FortiGate- bzw. ACI-VRF-Hop das Urteil (`hop.rules`), dazu je Weg das
     Gesamturteil (`path.policy`): gesperrt am ersten sperrenden Hop, sonst abhaengig bzw.
     erlaubt. NAT: Ziel je Hop aus dem Weg (`hop.dst` nach einer VIP davor), interner Port bei
     Port-Weiterleitung, Quelle nach SNAT (`hop.snat`) fuer die Hops danach."""
     from app.store.aci_check import AciChecker  # zirkulaer: aci_relevance -> paths
 
-    checker = Checker(session, tenant_id)
-    aci: AciChecker | None = None
-    cache: dict[tuple, dict] = {}
+    checks = checks or Checks.load(session, tenant_id)
+    checker, cache = checks.checker, checks.cache
     for path in paths:
         verdicts = []
         cur_src, cur_svc = src, service
@@ -434,12 +448,12 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
                 continue
             hop_dst = endpoint(hop["dst"]) if hop.get("dst") else dst
             if kind in ACI_KINDS:
-                aci = aci or AciChecker(session, tenant_id)
+                checks.aci = checks.aci or AciChecker(session, tenant_id)
                 sid, vrf = hop["source_system_id"], hop["context"]
                 into = (hop.get("leak") or {}).get("vrf")  # Ziel in geleakter VRF (0.44.0)
                 key = ("aci", sid, vrf, cur_src, hop_dst, cur_svc, into)
                 if key not in cache:
-                    cache[key] = aci.check(sid, vrf, cur_src, hop_dst, cur_svc, into)
+                    cache[key] = checks.aci.check(sid, vrf, cur_src, hop_dst, cur_svc, into)
                 hop["rules"] = cache[key]
                 verdicts.append((hop["label"], cache[key]["verdict"], kind))
                 continue

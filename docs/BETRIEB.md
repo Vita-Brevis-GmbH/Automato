@@ -501,6 +501,22 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Weg-Suche“. Doku und Weg-Suche urteilen so gleich. Fehlt der Scope der Subnetze (Lauf
     vor 0.44.0), bleibt er „unbekannt“ – neu einlesen. Das Regel-Detail zeigt geteilte
     Subnetze mit „geteilt“.
+  - **Verbindungen Ende zu Ende (0.45.0, ADR 0021):** Karte über „Regeln & Contracts“. Je
+    Verbindung (Quelle → Ziel, Dienst) eine Zeile mit dem Weg über ACI und Firewalls wie in der
+    Weg-Suche, je Knoten eingefärbt nach seinem Urteil, und dem Gesamturteil.
+    - Abgeleitet aus den Regeln der Doku: System der Applikation mit seiner IP; Gegenseite die
+      Objekte der Regel (Host, Netz als Ganzes) bzw. beim Contract die Gegenstellen im Scope
+      (EPG mit der IP ihrer ersten VM bzw. ihres ersten Endpunkts). Gegenstelle any, vzAny und
+      Preferred Group bleiben Regeln ohne Verbindung; FQDN/ISDB stehen als Hinweis da.
+    - Klick zeigt je Hop die entscheidende Policy bzw. den Contract mit den Objekten (Quelle,
+      Ziel, Dienste), Ein-/Ausgang, NAT und Leak, dazu je Regel der Doku: *entscheidet*,
+      *möglich*, *greift nicht* (vorher entscheidet eine andere bzw. sie passt nicht), *nicht auf
+      dem Weg* (ihr Gerät liegt nicht auf dem Weg), *nicht prüfbar* (kein Weg bekannt).
+    - **Abweichung:** Eine Regel erlaubt, aber der Weg sperrt, sie liegt nicht auf dem Weg bzw.
+      greift dort nicht. Abweichungen stehen zuerst; „nur Abweichungen und Gesperrte“ filtert.
+    - Liegt die Quelle an keinem gelesenen Gerät (Internet, Partner), beginnt der Weg auf dem
+      Gerät der Regel. „In der Weg-Suche öffnen“ zeigt den ganzen Weg mit allen Varianten.
+    - Nicht für Kunden-Benutzer (zeigt die Infrastruktur).
   - **Nur die Beteiligten (0.43.2):** Ein Contract zeigt in der Applikation nur ihre EPGs bzw.
     VMs und die Gegenstellen, die über ihn zugreifen können. Die Regel-Liste nennt „von N im
     Contract“. Das Regel-Detail blendet die übrigen Consumer bzw. Provider mit ihren VMs aus,

@@ -581,7 +581,13 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
               />
             )}
             {current === "wege" && (
-              <Paths tenantId={tenantId} tenantLabel={tenantLabel} canEdit={me.isAdmin || me.isOperator} />
+              <Paths
+                key={JSON.stringify(params)}
+                tenantId={tenantId}
+                tenantLabel={tenantLabel}
+                canEdit={me.isAdmin || me.isOperator}
+                params={params}
+              />
             )}
             {current === "routing" && (
               <Routing tenantId={tenantId} tenantLabel={tenantLabel} canEdit={me.isAdmin || me.isOperator} />
