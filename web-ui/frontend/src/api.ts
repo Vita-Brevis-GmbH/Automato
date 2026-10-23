@@ -587,8 +587,9 @@ export interface DocTable {
   enforcement: string;
   columns: string[];
   // Spalten als Text; dazu _rule (Regel-ID), _dir (in | out), _scope (Art des Bezugs),
-  // _rules (Applikations-Doku: Regeln der Zeile, bei einem IPv4/IPv6-Paar beide)
-  rows: Record<string, string | number | number[] | null>[];
+  // _rules (Applikations-Doku: Regeln der Zeile, bei einem IPv4/IPv6-Paar beide), _systems
+  // (unspezifische Regel, 0.37.0: Systeme der Applikation, die sie nutzen können)
+  rows: Record<string, string | number | number[] | string[] | null>[];
 }
 
 // VM hinter dem System (vCenter): beim Server die VM der IP, bei der EPG die VMs ihrer Portgruppen

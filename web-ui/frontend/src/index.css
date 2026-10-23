@@ -212,6 +212,9 @@ tbody tr.clickable { cursor: pointer; }
 tbody tr.clickable:hover { background: var(--surface-2); }
 tbody tr.selected { background: var(--accent-weak); }
 table.compact td { padding-top: 5px; padding-bottom: 5px; } /* Ports: eine Zeile je Port */
+.expandable { margin-top: 2px; }
+.expandable .linkbtn { font-size: 12px; }
+.expandable-list { margin-top: 2px; font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
 tbody tr.pair-hl { background: var(--accent-weak); box-shadow: inset 3px 0 0 var(--accent); }
 /* IPv4/IPv6-Paar nebeneinander (0.36.0): Klammer links, Vorschläge gelb */
 tbody tr.pair-head td:first-child, tbody tr.pair-tail td:first-child { box-shadow: inset 3px 0 0 var(--good); }

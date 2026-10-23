@@ -701,9 +701,13 @@ def _hits_and_tables(
     """Treffer je (Regel, System, Seite) und die 10 Kategorien-Tabellen.
 
     In den Tabellen steht eine Regel je Seite und Objekt der Regel nur einmal: erfasst ein Netz
-    bzw. any mehrere Systeme, nennt der Server Name das Objekt wie in der Regel und die Systeme
-    darin (`N_srv16 (10.20.0.0/16): web01, db01`) statt einer Zeile je System (0.14.1). Ein
-    IPv4/IPv6-Paar (`pairs`) steht als eine Zeile da, beide Regeln in `_rules`."""
+    bzw. any mehrere Systeme, nennt der Server Name das Objekt wie in der Regel statt einer
+    Zeile je System (0.14.1). Seit 0.37.0 (Anwender) steht bei unspezifischen Regeln (any,
+    Netz, vzAny, Preferred Group) - typisch Zugriffe ins bzw. aus dem Internet oder MPLS - nur
+    die Regel mit ihrem Objekt (`any`, `N_srv16 (10.20.0.0/16)`); welche Systeme der
+    Applikation sie nutzen koennen, steht in `_systems` (Anzeige auf Knopfdruck). Spezifische
+    Objekte (Server, Gruppe) nennen ihre Systeme weiter direkt. Ein IPv4/IPv6-Paar (`pairs`)
+    steht als eine Zeile da, beide Regeln in `_rules`."""
     pairs = pairs or {}
     tables = {t[0]: {**_table_meta(t), "rows": []} for t in appdoc.TABLES}
     groups: dict[tuple, dict] = {}
@@ -745,7 +749,7 @@ def _hits_and_tables(
                 "relevance_text": row.get(appdoc.REL_TEXT) or "",
             }
         )
-    seen_rows: set[tuple] = set()
+    seen_rows: dict[tuple, dict] = {}
     for (idx, *_), group in groups.items():
         row = dict(group["row"])
         if row.get(appdoc.REL) == "impossible":
@@ -755,14 +759,24 @@ def _hits_and_tables(
         if len(group["rules"]) > 1:  # IPv4/IPv6-Paar
             row["Description"] = " / ".join(names) + " (IPv4 + IPv6)"
         systems = group["systems"]
-        if len(systems) > 1 or row.get(appdoc.SCOPE) not in (None, "specific"):
+        broad = row.get(appdoc.SCOPE) in appdoc.UNSPECIFIC
+        if len(systems) > 1 or broad:
             label = _object_label(row)
             inside = [x for x in systems if x not in label]
-            row["Server Name"] = f"{label}: {', '.join(inside)}" if inside else label
+            if broad:  # nur die Regel; die Systeme auf Knopfdruck
+                row["Server Name"] = label
+                row["_systems"] = inside
+            else:
+                row["Server Name"] = f"{label}: {', '.join(inside)}" if inside else label
         visible = (idx, tuple(row.get(c) for c in appdoc.TABLE_COLUMNS[idx]))
-        if visible not in seen_rows:
-            seen_rows.add(visible)
-            tables[idx]["rows"].append(row)
+        if visible in seen_rows:  # gleiche Zeile (z. B. VM und ihre EPG): Systeme zusammen
+            first = seen_rows[visible]
+            if "_systems" in row:
+                more = [x for x in row["_systems"] if x not in first.get("_systems", [])]
+                first["_systems"] = [*first.get("_systems", []), *more]
+            continue
+        seen_rows[visible] = row
+        tables[idx]["rows"].append(row)
     return hits, [tables[i] for i, _, _ in appdoc.TABLES]
 
 

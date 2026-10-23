@@ -317,6 +317,29 @@ export function Empty({
   );
 }
 
+// Liste auf Knopfdruck (0.37.0): unspezifische Regeln (any, Netz) zeigen nur die Regel; welche
+// Systeme sie nutzen können, klappt der Knopf auf
+export function Expandable({ items, noun }: { items: string[]; noun: [string, string] }) {
+  const [open, setOpen] = useState(false);
+  if (!items.length) return null;
+  return (
+    <div className="expandable">
+      <button
+        type="button"
+        className="linkbtn"
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+      >
+        {open ? "▾" : "▸"} {items.length} {items.length === 1 ? noun[0] : noun[1]}
+      </button>
+      {open && <div className="faint mono expandable-list">{items.join(", ")}</div>}
+    </div>
+  );
+}
+
 export function Modal({
   title,
   onClose,

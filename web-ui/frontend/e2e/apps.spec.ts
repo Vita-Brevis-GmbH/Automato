@@ -57,11 +57,15 @@ test("Applikation: Regeln filtern (System, Richtung, Bezug) und Erklärung im De
   await expect(ruleRows.first()).toContainText("any");
   expect(await ruleRows.count()).toBeLessThan(total);
   await card.locator("button:has-text('Filter zurücksetzen')").click();
-  // Objekt der Regel (any bzw. Netz) mit den VMs darin statt einer Zeile je VM
+  // Objekt der Regel (any bzw. Netz) statt einer Zeile je VM – unspezifisch nur die Regel,
+  // die VMs darin auf Knopfdruck (0.37.0)
   const viaAny = ruleRows.filter({ hasText: "web-via-group" });
   await expect(viaAny).toHaveCount(1);
   await expect(viaAny.locator(".appside")).toContainText("any");
-  await expect(viaAny.locator(".appside")).toContainText("↳ web01-007-ka");
+  await expect(viaAny.locator(".appside")).not.toContainText("web01-007-ka");
+  await viaAny.locator(".appside .expandable button").click();
+  await expect(viaAny.locator(".appside .expandable-list")).toContainText("web01-007-ka");
+  await expect(page.locator(".drawer")).toHaveCount(0); // Knopf öffnet nicht das Detail
   // Detail: warum die Regel gilt, Link in die Regel-Ansicht
   await contract.click();
   const drawer = page.locator(".drawer");
@@ -121,6 +125,11 @@ test("Applikation: Doku nach Kategorien mit Aktion, Gerät und Link zur Regel", 
   await expect(tables.first().locator("thead")).toContainText("Gerät");
   await expect(tables.first().locator("thead")).not.toContainText("Bezug");
   await expect(page.locator(".stack .chip.accept").first()).toHaveText("Allow");
-  await page.locator(".stack .card tbody .linkbtn").first().click();
+  // unspezifische Regel (any, Netz): nur das Objekt der Regel, die Systeme auf Knopfdruck
+  const broad = page.locator(".stack .card tbody tr", { has: page.locator(".expandable") }).first();
+  await expect(broad.locator(".expandable-list")).toHaveCount(0);
+  await broad.locator(".expandable button").click();
+  await expect(broad.locator(".expandable-list")).toContainText("web01-007-ka");
+  await page.locator(".stack .card tbody .linkbtn[title='Regel im Detail']").first().click();
   await expect(page.locator(".drawer")).toContainText("Warum diese Regel für die Applikation gilt");
 });

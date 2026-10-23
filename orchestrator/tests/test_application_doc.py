@@ -144,17 +144,18 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
     assert web["objects"] == [
         {"name": "H_web01", "name_ok": True, "where": [web["objects"][0]["where"][0]]}
     ]
-    # Export: 10 Kategorien - je Regel, Seite und Objekt eine Zeile; Netz bzw. any mit den
-    # Systemen darin statt einer Zeile je System
+    # Export: 10 Kategorien - je Regel, Seite und Objekt eine Zeile statt einer Zeile je
+    # System; unspezifische Regeln (Netz, any) nur mit ihrem Objekt (0.37.0), die Systeme
+    # der Applikation, die sie nutzen können, in `_systems` (Knopf in der Oberfläche)
     rows = {r["Description"]: [] for t in doc["tables"] for r in t["rows"]}
     for t in doc["tables"]:
         for r in t["rows"]:
-            rows[r["Description"]].append(r["Server Name"])
-    assert rows["net-in"] == [
-        "N_srv16 (10.20.0.0/16): db01-007-ka, web01-007-ka, TE_ka/AP_007/EG_web01"
-    ]
-    assert rows["any-out"] == ["any: db01-007-ka, web01-007-ka, TE_ka/AP_007/EG_web01"]
-    assert "EPG TE_ka/AP_007/EG_web01: web01-007-ka" in rows["CT_app:SJ"]  # ganzer ACI-Pfad
+            rows[r["Description"]].append((r["Server Name"], r.get("_systems")))
+    everyone = ["db01-007-ka", "web01-007-ka", "TE_ka/AP_007/EG_web01"]
+    assert rows["net-in"] == [("N_srv16 (10.20.0.0/16)", everyone)]
+    assert rows["any-out"] == [("any", everyone)]
+    # spezifisch: das Objekt mit seinen Systemen, ganzer ACI-Pfad
+    assert ("EPG TE_ka/AP_007/EG_web01: web01-007-ka", None) in rows["CT_app:SJ"]
 
 
 def test_doku_server_ohne_vm(client):

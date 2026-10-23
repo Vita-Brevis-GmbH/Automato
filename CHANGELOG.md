@@ -7,6 +7,21 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.37.0 – 2026-10-23
+
+Applikations-Doku: offene Regeln nur als Regel (Anwender). Ohne Migration.
+
+- **Unspezifische Regeln** (any bzw. grosse Netze, vzAny, Preferred Group – typisch Zugriffe
+  ins oder aus dem Internet bzw. MPLS) stehen nur als Regel mit ihrem Objekt (`any`,
+  `N_srv16 (10.20.0.0/16)`) statt mit allen Systemen, die sie erfasst – in beiden Richtungen.
+  Welche Systeme der Applikation sie nutzen können, zeigt der Knopf **„▸ N Systeme“**:
+  - in „Regeln & Contracts“ unter Quelle bzw. Ziel,
+  - in der Doku nach Kategorien in der Spalte „Server Name“ (`_systems` je Zeile),
+  - im Markdown-Export als Anzahl statt der Liste.
+- Spezifische Objekte (Server, Gruppe, EPG) nennen ihre Systeme weiter direkt.
+- Tests: Kategorien mit Objekt und Systemliste, UI (Knopf in Regeln und Kategorien, öffnet
+  nicht das Detail).
+
 ## 0.36.0 – 2026-10-23
 
 Objekte, Namenskonvention, IPv4/IPv6-Paare und Kunden-Editor (Anwender, „Weitere Arbeiten“

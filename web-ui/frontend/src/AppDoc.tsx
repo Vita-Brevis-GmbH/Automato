@@ -14,7 +14,7 @@ import type { View, ViewParams } from "./App";
 import Apps from "./Apps";
 import type { Me } from "./auth";
 import PublishedServices from "./PublishedServices";
-import { download, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
+import { download, Empty, ErrorBox, Expandable, Icon, Loading, PageHead } from "./ui";
 
 type Mode = "apps" | "doc" | "vips";
 
@@ -287,8 +287,20 @@ function DocCell({
 }) {
   const value = row[column];
   const text = Array.isArray(value) ? value.join(", ") : value;
+  const systems = Array.isArray(row._systems) ? (row._systems as string[]) : [];
+  if (column === "Server Name" && systems.length)
+    return (
+      <>
+        {text || <span className="faint">–</span>}
+        <Expandable items={systems} noun={["System", "Systeme"]} />
+      </>
+    );
   if (column !== "Description" || !onRule) return <>{text || <span className="faint">–</span>}</>;
-  const ids = Array.isArray(row._rules) ? row._rules : typeof row._rule === "number" ? [row._rule] : [];
+  const ids: number[] = Array.isArray(row._rules)
+    ? (row._rules as unknown[]).filter((x): x is number => typeof x === "number")
+    : typeof row._rule === "number"
+      ? [row._rule]
+      : [];
   if (!ids.length) return <>{text || <span className="faint">–</span>}</>;
   return (
     <>

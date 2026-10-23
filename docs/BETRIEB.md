@@ -368,7 +368,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Quellsystem, Quelle, Ziel, Dienste, NAT) mit Richtung, Bezug und Kategorie. Unter
     Quelle bzw. Ziel steht je Objekt der Regel, über das sie Systeme der Applikation erfasst
     (Host, Netz, any, EPG), welche Systeme darin liegen – eine Regel über ein Subnetz oder any
-    erscheint einmal, nicht je VM (0.14.1). Filter System/VM, EPG, **Richtung aus Sicht des Systems** (eingehend = Ziel
+    erscheint einmal, nicht je VM (0.14.1). **Unspezifische Regeln** (any, Netz, vzAny,
+    Preferred Group – typisch Zugriffe ins bzw. aus dem Internet oder MPLS) zeigen seit 0.37.0
+    nur die Regel mit ihrem Objekt (`any`, `N_srv16 10.20.0.0/16`); welche Systeme der
+    Applikation sie nutzen können, klappt **„▸ N Systeme“** auf. Gilt für beide Richtungen und
+    ebenso in der Doku nach Kategorien („Server Name“ = Objekt der Regel) und im Export (statt
+    der Liste die Anzahl). Filter System/VM, EPG, **Richtung aus Sicht des Systems** (eingehend = Ziel
     bzw. Provider, ausgehend = Quelle bzw. Consumer), Art, Bezug, Suche. Klick → Detail mit
     **„Warum diese Regel für die Applikation gilt“** (je System Rolle, Richtung, Bezug,
     Kategorie, Mitglied/AP), Links in Regeln & Contracts und Findings.

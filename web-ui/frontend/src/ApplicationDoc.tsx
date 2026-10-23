@@ -23,7 +23,7 @@ import { findingLabel, serviceNames } from "./refs";
 import RuleDetailDrawer from "./RuleDetail";
 import { NameCell } from "./RulesTable";
 import { siteLabel } from "./sites";
-import { ActionBadge, Dash, download, Empty, ErrorBox, Icon, Loading } from "./ui";
+import { ActionBadge, Dash, download, Empty, ErrorBox, Expandable, Icon, Loading } from "./ui";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -517,9 +517,14 @@ function SideCell({ items, groups }: { items: string[]; groups: SideGroup[] }) {
         <div key={`${g.object}-${g.value}`} className="appside" title="Objekt der Regel, das Systeme der Applikation erfasst">
           <span className="mono">{g.object}</span>
           {g.value && g.value !== g.object && <span className="faint mono"> {g.value}</span>} <ScopeChip scope={g.scope} />
-          <div className="faint mono">
-            ↳ <List items={g.systems} max={4} inline />
-          </div>
+          {g.scope === "specific" ? (
+            <div className="faint mono">
+              ↳ <List items={g.systems} max={4} inline />
+            </div>
+          ) : (
+            // unspezifisch (any, Netz, vzAny): nur die Regel – die Systeme auf Knopfdruck (0.37.0)
+            <Expandable items={g.systems} noun={["System", "Systeme"]} />
+          )}
         </div>
       ))}
     </>
@@ -1019,7 +1024,9 @@ function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string): s
     // routingtechnisch unmögliche Treffer gehören nicht in die Doku (0.24.0)
     const hits = doc.hits.filter((h) => h.rule_id === r.id && h.relevance !== "impossible");
     if (!hits.length) continue;
-    const sys = [...new Set(hits.map((h) => names.get(h.system) ?? h.system))].join(", ");
+    // unspezifisch (any, Netz): nur die Regel – statt aller Systeme ihre Anzahl (0.37.0)
+    const all = [...new Set(hits.map((h) => names.get(h.system) ?? h.system))];
+    const sys = best(hits) === "specific" ? all.join(", ") : `${all.length} System${all.length === 1 ? "" : "e"}`;
     const dir = [...new Set(hits.map((h) => (h.direction === "in" ? "eingehend" : "ausgehend")))].join(", ");
     const via = [...new Set(hits.map((h) => h.via))].join(", ");
     lines.push(
