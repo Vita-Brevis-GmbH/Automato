@@ -243,3 +243,46 @@ def test_container_ausserhalb_der_update_profile(tmp_path):
     assert "orchestrator (startet gerade)" in out.stdout
     assert "nicht in den Profilen von deploy/update.sh: collector" in out.stdout
     assert "--profile collectors" in out.stdout
+
+
+def test_migrate_dienst_einmalig(tmp_path):
+    """0.48.0: der Dienst migrate laeuft je Start einmal (Migration + DB-Rollen) und endet -
+    beendet mit Exit 0 ist in Ordnung, ohne Neustart-Regel auch."""
+
+    def status(lines: str) -> str:
+        stub = _stub(
+            tmp_path / "mig-compose", f"case \"$*\" in *' ps '*) printf '{lines}' ;; esac\n"
+        )
+        return _run(tmp_path, "status", COMPOSE=str(stub)).stdout
+
+    text = status("migrate|exited||m|0\\norchestrator|running|healthy|o|0\\n")
+    assert "migrate (Migration fertig)" in text and "migrate:" not in text
+    assert "ohne Neustart-Regel: migrate" not in text
+    text = status("migrate|exited||m|1\\n")
+    assert "migrate: exited (Exit 1)" in text and "logs --tail 50 migrate" in text
+
+
+def test_db_rollen_einrichten(tmp_path):
+    """0.48.0 (R14): getrennte DB-Rollen - App-Rolle mit Zufalls-Passwort in .env, danach
+    Container neu starten; pruefen warnt vorher und meldet die Rolle danach."""
+    env = {"AUTOMATO_ENV_FILE": str(tmp_path / "env")}
+    (tmp_path / "env").write_text("POSTGRES_PASSWORD=bleibt\n")
+    before = _run(tmp_path, "pruefen", **env).stdout
+    assert "arbeitet als Eigentümer der Tabellen" in before and "db-rollen" in before
+
+    out = _run(tmp_path, "db-rollen", **env)
+    assert out.returncode == 0, out.stdout + out.stderr
+    lines = (tmp_path / "env").read_text().splitlines()
+    assert lines[:2] == ["POSTGRES_PASSWORD=bleibt", "AUTOMATO_DB_USER=automato_app"]
+    password = lines[2].removeprefix("AUTOMATO_DB_PASSWORD=")
+    assert len(password) == 48 and password not in out.stdout
+    assert "Container neu starten" in out.stdout
+
+    again = _run(tmp_path, "db-rollen", **env)
+    assert "ist in" in again.stdout and (tmp_path / "env").read_text().splitlines() == lines
+    rotated = _run(tmp_path, "db-rollen", "--neu", **env)
+    assert rotated.returncode == 0
+    assert (tmp_path / "env").read_text().splitlines()[2] != lines[2]
+
+    after = _run(tmp_path, "pruefen", **env).stdout
+    assert "Orchestrator als automato_app" in after

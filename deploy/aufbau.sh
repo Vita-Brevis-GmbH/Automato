@@ -14,6 +14,9 @@
 #   deploy/aufbau.sh docker-update        Docker (Engine, Compose, containerd) per apt auf den
 #                                         neusten Stand, danach die Container starten (0.43.0);
 #                                         bei jedem Update mit AUTOMATO_DOCKER_UPDATE=1 in .env
+#   deploy/aufbau.sh db-rollen [--neu]    getrennte DB-Rollen (0.48.0): App-Rolle ohne DDL mit
+#                                         Zufalls-Passwort in .env, Container neu starten; --neu
+#                                         = neues Passwort
 #
 # Die Verbindungen prueft der Orchestrator selbst (`automato check-connections`, wie System ->
 # Verbindungen im UI): Datenbank, Redis, Keycloak, jedes zentral gelesene Quellsystem - auf
@@ -27,7 +30,7 @@
 # antwortet die Login-Seite. Befund 0.40.0: NetBox war nach einem Neustart aus, Automato nicht.
 #
 # Exit 0 = alles erreichbar, 1 = mindestens ein Fehler. Aendert nur `firewall --anwenden`,
-# `netbox-start`, `backup-schluessel` und `docker-update` etwas. Einstellungen auch aus .env
+# `netbox-start`, `backup-schluessel`, `docker-update` und `db-rollen` etwas. Einstellungen auch aus .env
 # (deploy/env.sh).
 # Profile ueber AUTOMATO_COMPOSE_PROFILES (Standard "--profile core"), wie deploy/update.sh.
 set -euo pipefail
@@ -210,7 +213,7 @@ regel_von() {
 container() {
   titel "Container"
   local zeilen
-  if ! zeilen=$($COMPOSE "${PROFILES[@]}" ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.Name}}' 2>/dev/null); then
+  if ! zeilen=$($COMPOSE "${PROFILES[@]}" ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.Name}}|{{.ExitCode}}' 2>/dev/null); then
     fehler "docker compose ps fehlgeschlagen – im Repo-Verzeichnis aufrufen"; return
   fi
   [ -n "$zeilen" ] || { fehler "keine Container – starten: $COMPOSE ${PROFILES[*]} up -d"; return; }
@@ -218,9 +221,15 @@ container() {
   # nicht im Profil - er blieb auf altem Stand und ohne Neustart-Regel)
   local aktiv
   aktiv=" $($COMPOSE "${PROFILES[@]}" config --services 2>/dev/null | tr '\n' ' ') "
-  local dienst zustand gesund name ohne="" fremd=""
-  while IFS='|' read -r dienst zustand gesund name; do
+  local dienst zustand gesund name code ohne="" fremd=""
+  while IFS='|' read -r dienst zustand gesund name code; do
     [ -n "$dienst" ] || continue
+    if [ "$dienst" = "migrate" ]; then  # einmalig je Start (0.48.0): Migration + DB-Rollen
+      if [ "$zustand" = "exited" ] && [ "${code:-0}" = "0" ]; then ok "migrate (Migration fertig)"
+      elif [ "$zustand" = "running" ]; then ok "migrate (läuft gerade)"
+      else fehler "migrate: $zustand${code:+ (Exit $code)} – Logs: $COMPOSE logs --tail 50 migrate"; fi
+      continue
+    fi
     if [ "$zustand" != "running" ]; then
       fehler "$dienst: $zustand – Logs: $COMPOSE logs --tail 50 $dienst"
     elif [ "$gesund" = "starting" ]; then
@@ -497,6 +506,48 @@ cmd_backup_schluessel() {
   info "ohne sie ist keine Sicherung lesbar. Danach: deploy/update.sh"
 }
 
+# --- Getrennte DB-Rollen (0.48.0) ----------------------------------------------------------
+db_rollen() {
+  titel "Datenbank-Rollen"
+  if [ -z "${AUTOMATO_DB_USER:-}" ] || [ "$AUTOMATO_DB_USER" = "automato" ]; then
+    warn "Orchestrator arbeitet als Eigentümer der Tabellen (darf Tabellen anlegen/löschen)"
+    info "Einrichten: deploy/aufbau.sh db-rollen – Migration als Eigentümer, Betrieb ohne DDL"
+  else
+    ok "Orchestrator als $AUTOMATO_DB_USER, Migration als automato (Dienst migrate)"
+    info "Rechte der Rolle prüft der Orchestrator selbst (Verbindungen → Datenbank, oben)"
+  fi
+}
+
+cmd_db_rollen() {
+  titel "Getrennte DB-Rollen"
+  local rolle="${AUTOMATO_DB_USER:-}" neu="${1:-}"
+  if [ -n "$rolle" ] && [ "$rolle" != "automato" ] && grep -qE '^AUTOMATO_DB_PASSWORD=.+' "$ENV_DATEI" 2>/dev/null &&
+    [ "$neu" != "--neu" ]; then
+    ok "App-Rolle $rolle ist in $ENV_DATEI eingetragen (neues Passwort: db-rollen --neu)"
+  else
+    rolle=${rolle:-automato_app}
+    [ "$rolle" != "automato" ] || rolle=automato_app
+    local passwort
+    passwort=$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    [ ${#passwort} -ge 32 ] || { fehler "kein Zufalls-Passwort erzeugt (openssl bzw. /dev/urandom)"; return 1; }
+    setze_env AUTOMATO_DB_USER "$rolle"
+    setze_env AUTOMATO_DB_PASSWORD "$passwort"
+    ok "in $ENV_DATEI eingetragen: AUTOMATO_DB_USER=$rolle, AUTOMATO_DB_PASSWORD (zufällig, 48 Zeichen)"
+    info "Die .env enthält Passwörter – nur für den Betreiber lesbar halten (chmod 600 $ENV_DATEI)"
+  fi
+  info "Container neu starten: migrate richtet die Rolle ein, der Orchestrator verbindet sich mit ihr"
+  if ! $COMPOSE "${PROFILES[@]}" up -d; then
+    fehler "Start fehlgeschlagen – Logs: $COMPOSE logs --tail 50 migrate orchestrator"; return 1
+  fi
+  $COMPOSE "${PROFILES[@]}" logs --no-log-prefix --tail 10 migrate 2>/dev/null | grep -E '^(OK|INFO|FEHLER)' || true
+  if curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1 || { sleep 5 && curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1; }; then
+    ok "Orchestrator antwortet"
+  else
+    warn "Orchestrator antwortet noch nicht – deploy/aufbau.sh status"
+  fi
+  info "Prüfen: System → Verbindungen (Datenbank: Rolle ohne DDL) bzw. deploy/aufbau.sh pruefen"
+}
+
 cmd_pruefen() {
   werkzeuge
   docker_stand
@@ -507,6 +558,7 @@ cmd_pruefen() {
   verbindungen || true
   firewall_pruefen
   sicherung
+  db_rollen
   echo
   if [ "$FEHLER" -eq 0 ]; then
     printf '\033[1mAufbau in Ordnung.\033[0m\n'
@@ -530,6 +582,7 @@ case "${1:-pruefen}" in
   netbox-start) cmd_netbox_start ;;
   backup-schluessel) cmd_backup_schluessel ;;
   docker-update) cmd_docker_update ;;
+  db-rollen) shift; cmd_db_rollen "${1:-}" ;;
   -h | --help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' ;;
-  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start, backup-schluessel, docker-update)" >&2; exit 2 ;;
+  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start, backup-schluessel, docker-update, db-rollen [--neu])" >&2; exit 2 ;;
 esac

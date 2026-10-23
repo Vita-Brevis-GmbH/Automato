@@ -1,6 +1,7 @@
 // System (Admin): Betriebsstand auf einen Blick - Version, Datenbank-Migration, Agent-Paket
 // mit Signatur, Zeitplan, Sicherheits-Schalter, letzte Sicherung, seit 0.40.0 die Verbindungen
-// (vom Orchestrator-Container aus). Rein lesend; Updates und Sicherungen laufen auf der VM
+// (vom Orchestrator-Container aus), seit 0.48.0 DB-Rolle und Aufbewahrung ("Jetzt aufräumen"
+// löscht, was über der Frist ist). Updates und Sicherungen laufen auf der VM
 // (deploy/update.sh, deploy/aufbau.sh, deploy/backup) - siehe docs/BETRIEB.md.
 import { useEffect, useState } from "react";
 import {
@@ -8,8 +9,12 @@ import {
   ConnectionItem,
   ConnectionReport,
   fetchOpsHealth,
+  fetchRetention,
   fetchSystemStatus,
   OpsHealth,
+  purgeRetention,
+  RetentionCounts,
+  RetentionStatus,
   SystemStatus,
 } from "./api";
 import { HealthChip, HealthTable } from "./Health";
@@ -142,6 +147,84 @@ function Connections() {
   );
 }
 
+const days = (n: number) => (n > 0 ? `${n} Tage` : "nie löschen");
+const counts = (c: RetentionCounts) =>
+  `${c.runs} Läufe · ${c.sync_plans} NetBox-Sync-Vorschauen · ${c.audit} Audit-Einträge`;
+
+// Aufbewahrung (0.48.0, R14): beendete Läufe, alte Sync-Vorschauen und Audit-Einträge nach Frist
+// löschen; der aktuelle Stand bleibt. Der Zeitplan räumt täglich auf, hier auch von Hand.
+function Retention() {
+  const [r, setR] = useState<RetentionStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  useEffect(() => {
+    let current = true;
+    fetchRetention()
+      .then((d) => current && setR(d))
+      .catch((e) => current && setErr(e));
+    return () => {
+      current = false;
+    };
+  }, []);
+  const purge = () => {
+    if (!r || !window.confirm(`Jetzt löschen: ${counts(r.due)}?`)) return;
+    setBusy(true);
+    setErr(null);
+    purgeRetention()
+      .then(setR)
+      .catch(setErr)
+      .finally(() => setBusy(false));
+  };
+  const due = r ? r.due.runs + r.due.sync_plans + r.due.audit : 0;
+  return (
+    <div className="card" id="retention">
+      <div className="card-head">
+        <h2>Aufbewahrung</h2>
+        {r && (due ? <span className="chip warn">{due} fällig</span> : <span className="chip ok">nichts fällig</span>)}
+        <div className="spacer" />
+        {r?.active && (
+          <button className="btn btn-sm" onClick={purge} disabled={busy || !due}>
+            {busy ? "Räume auf…" : "Jetzt aufräumen"}
+          </button>
+        )}
+      </div>
+      <ErrorBox error={err} prefix="Aufbewahrung" />
+      {r && (
+        <div className="card-body pad">
+          <dl className="kv">
+            <dt>Läufe</dt>
+            <dd>{days(r.policy.runs_days)}</dd>
+            <dt>NetBox-Sync</dt>
+            <dd>{days(r.policy.sync_days)}</dd>
+            <dt>Audit-Log</dt>
+            <dd>{days(r.policy.audit_days)}</dd>
+            <dt>Fällig</dt>
+            <dd>{counts(r.due)}</dd>
+            <dt>Zuletzt</dt>
+            <dd>
+              {r.last ? (
+                <>
+                  {fmtTime(r.last.at)} <span className="faint">({r.last.actor})</span>
+                  <div className="faint">gelöscht: {counts(r.last.counts)}</div>
+                </>
+              ) : (
+                <Dash />
+              )}
+            </dd>
+          </dl>
+          {r.deleted && <Note>Gelöscht: {counts(r.deleted)}</Note>}
+          <div className="faint" style={{ marginTop: 8 }}>
+            Es bleiben immer: der aktuelle Stand (Läufe, auf die Regeln, Objekte, NAT, VMs bzw. der Referenzstand zeigen), je
+            Quellsystem der neuste und der neuste erfolgreiche Lauf, offene Läufe und die neuste Vorschau je NetBox.{" "}
+            {r.scheduled ? "Der Zeitplan räumt täglich auf." : "Zeitplan aus – nur von Hand bzw. automato purge."} Fristen
+            in <code>.env</code>: <code>AUTOMATO_RETENTION_RUNS_DAYS</code>, <code>…_SYNC_DAYS</code>, <code>…_AUDIT_DAYS</code>.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function System() {
   const [s, setS] = useState<SystemStatus | null>(null);
   const [health, setHealth] = useState<OpsHealth | null>(null);
@@ -193,9 +276,32 @@ export default function System() {
                       <span className="chip warn">abweichend</span>
                     )}
                   </dd>
+                  <dt>DB-Rolle</dt>
+                  <dd>
+                    {s.database.role ? (
+                      <>
+                        <span className="mono">{s.database.role.role}</span>{" "}
+                        {s.database.role.separated ? (
+                          <span className="chip ok">ohne DDL</span>
+                        ) : (
+                          <span className="chip warn">
+                            {s.database.role.superuser ? "Superuser" : "Eigentümer"} – darf Tabellen ändern
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <Dash />
+                    )}
+                  </dd>
                   <dt>Umgebung</dt>
                   <dd className="mono">{s.security.environment}</dd>
                 </dl>
+                {s.database.role && !s.database.role.separated && (
+                  <Note>
+                    Getrennte Rollen einrichten: <code>deploy/aufbau.sh db-rollen</code> – die Migration läuft als Eigentümer
+                    (Dienst <code>migrate</code>), der Orchestrator mit einer Rolle ohne DDL.
+                  </Note>
+                )}
               </div>
             </div>
             <div className="card">
@@ -296,6 +402,7 @@ export default function System() {
                 </dl>
               </div>
             </div>
+            <Retention />
           </div>
         </div>
       )}

@@ -4,7 +4,8 @@ Die Pruefung laeuft im Orchestrator-Container - auf genau dem Weg, den Einlesen 
 Worker im selben Docker-Netz) und NetBox-Sync nehmen. Je Ziel ok | warn | error | info mit den
 Schritten und einem Hinweis zur Abhilfe:
 
-- **Plattform:** Datenbank (`SELECT 1`), Redis (`PING`, Kanal zum zentralen Worker),
+- **Plattform:** Datenbank (`SELECT 1`, seit 0.48.0 die Rolle: ohne DDL?), Redis (`PING`, Kanal
+  zum zentralen Worker),
   Keycloak (bei `auth_mode=oidc`: JWKS des Issuers).
 - **Quellsysteme:** jedes eingeschaltete, zentral gelesene Quellsystem ueber
   `reachability.check` (Name, TCP, bei NetBox `GET /api/status/` mit dem Lese-Token; nur
@@ -33,7 +34,7 @@ from sqlalchemy.orm import Session
 from app import credentials
 from app.config import Settings
 from app.models import Agent, SourceSystem
-from app.store import reachability
+from app.store import db_roles, reachability
 
 ORDER = {"ok": 0, "info": 0, "warn": 1, "error": 2}
 TIMEOUT = 3.0
@@ -94,8 +95,21 @@ def _database(session: Session) -> Item:
         return Item("database", "Plattform", "Datenbank", None, "error",
                     [_step("sql", False, type(exc).__name__)],
                     "Container „postgres“ prüfen (docker compose ps, logs postgres).")  # fmt: skip
-    return Item("database", "Plattform", "Datenbank", None, "ok",
-                [_step("sql", True, f"SELECT 1 ({_ms(start)})")])  # fmt: skip
+    steps = [_step("sql", True, f"SELECT 1 ({_ms(start)})")]
+    try:
+        role = db_roles.describe(session)
+    except Exception:  # noqa: BLE001 - die Rolle ist nur ein Zusatz
+        session.rollback()
+        role = None
+    if role is None or role["separated"]:
+        if role:
+            steps.append(_step("rolle", True, f"{role['role']} ohne DDL"))
+        return Item("database", "Plattform", "Datenbank", None, "ok", steps)
+    what = "Superuser" if role["superuser"] else "Eigentümer der Tabellen bzw. mit CREATE"
+    steps.append(_step("rolle", False, f"{role['role']} ({what})"))
+    return Item("database", "Plattform", "Datenbank", None, "warn", steps,
+                "Getrennte Rollen einrichten: deploy/aufbau.sh db-rollen – Migration als "
+                "Eigentümer, Orchestrator ohne DDL.")  # fmt: skip
 
 
 def _redis(url: str) -> Item:

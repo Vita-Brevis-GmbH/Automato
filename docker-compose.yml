@@ -35,6 +35,26 @@ services:
       timeout: 3s
       retries: 10
 
+  # Migration als Eigentuemer der Tabellen (0.48.0, getrennte DB-Rollen): laeuft bei jedem Start
+  # einmal (alembic upgrade head) und richtet danach die App-Rolle ohne DDL ein
+  # (`automato db-roles`, idempotent). Der Orchestrator startet erst, wenn sie fertig ist.
+  # App-Rolle einmal einrichten: deploy/aufbau.sh db-rollen (AUTOMATO_DB_USER/_PASSWORD in .env).
+  migrate:
+    build:
+      context: .
+      dockerfile: orchestrator/Dockerfile
+    profiles: ["core"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AUTOMATO_ENVIRONMENT: ${AUTOMATO_ENVIRONMENT:-dev}
+      AUTOMATO_DATABASE_URL: postgresql+psycopg://automato:${POSTGRES_PASSWORD:-automato}@postgres:5432/automato
+      AUTOMATO_DB_APP_ROLE: ${AUTOMATO_DB_USER:-}
+      AUTOMATO_DB_APP_PASSWORD: ${AUTOMATO_DB_PASSWORD:-}
+    command: ["sh", "-c", "alembic upgrade head && automato db-roles"]
+
   orchestrator:
     build:
       context: .
@@ -42,13 +62,18 @@ services:
     profiles: ["core"]
     restart: unless-stopped
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Migrationen macht der Dienst migrate; der Orchestrator selbst braucht kein DDL
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       AUTOMATO_ENVIRONMENT: ${AUTOMATO_ENVIRONMENT:-dev}
-      AUTOMATO_DATABASE_URL: postgresql+psycopg://automato:${POSTGRES_PASSWORD:-automato}@postgres:5432/automato
+      # mit eigener App-Rolle (0.48.0, deploy/aufbau.sh db-rollen), sonst wie bisher als Eigentuemer
+      AUTOMATO_DATABASE_URL: postgresql+psycopg://${AUTOMATO_DB_USER:-automato}:${AUTOMATO_DB_PASSWORD:-${POSTGRES_PASSWORD:-automato}}@postgres:5432/automato
       AUTOMATO_REDIS_URL: redis://redis:6379/0
       AUTOMATO_INTERNAL_API_TOKEN: ${AUTOMATO_INTERNAL_API_TOKEN:-dev-only-token}
       AUTOMATO_CORS_ORIGINS: ${AUTOMATO_CORS_ORIGINS:-["http://localhost:5173"]}
@@ -79,6 +104,11 @@ services:
       AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS: ${AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS:-24}
       # NetBox-Sync ohne Lebenszeichen beenden (min)
       AUTOMATO_NETBOX_SYNC_TIMEOUT_MINUTES: ${AUTOMATO_NETBOX_SYNC_TIMEOUT_MINUTES:-30}
+      # Aufbewahrung (0.48.0): Laeufe, NetBox-Sync-Vorschauen, Audit nach so vielen Tagen
+      # loeschen (0 = nie); der Zeitplan raeumt taeglich auf
+      AUTOMATO_RETENTION_RUNS_DAYS: ${AUTOMATO_RETENTION_RUNS_DAYS:-90}
+      AUTOMATO_RETENTION_SYNC_DAYS: ${AUTOMATO_RETENTION_SYNC_DAYS:-90}
+      AUTOMATO_RETENTION_AUDIT_DAYS: ${AUTOMATO_RETENTION_AUDIT_DAYS:-365}
       # Agent-Kanal nur ueber das mTLS-Agent-Gateway (Profil agent-gateway): off | require | bind
       AUTOMATO_INTERNAL_MTLS_MODE: ${AUTOMATO_INTERNAL_MTLS_MODE:-off}
       AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}

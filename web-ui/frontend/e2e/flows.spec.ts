@@ -804,3 +804,14 @@ test("Regeln: Suche nach einer IP mit Relevanz nach dem Routing", async ({ page 
   await expect(wrong).toHaveCount(0);
   await expect(rows(page).filter({ hasText: "lan-to-dmz-web" })).toHaveCount(1);
 });
+
+test("System: Aufbewahrung mit Fristen und Knopf zum Aufräumen", async ({ page, problems }) => {
+  await page.goto("/#system");
+  const card = page.locator("#retention");
+  await expect(card).toContainText("90 Tage");
+  await expect(card).toContainText("365 Tage");
+  await expect(card).toContainText("nichts fällig");
+  // nichts über der Frist: der Knopf bleibt aus
+  await expect(card.locator("button:has-text('Jetzt aufräumen')")).toBeDisabled();
+  expect(problems).toEqual([]);
+});

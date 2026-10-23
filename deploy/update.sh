@@ -16,9 +16,10 @@
 # Die Sicherung macht deploy/backup/backup.sh (age-Empfaenger: AUTOMATO_BACKUP_AGE_RECIPIENT,
 # fuer den Rueckfall die Identitaet AUTOMATO_BACKUP_AGE_IDENTITY) - beide seit 0.42.0 auch aus
 # .env, einmal eingerichtet mit `deploy/aufbau.sh backup-schluessel`. Profile ueber
-# AUTOMATO_COMPOSE_PROFILES (Standard "--profile core"). Migrationen laufen beim Start des
-# Orchestrators; deshalb setzt der Rueckfall auch die Datenbank auf die Sicherung zurueck -
-# Daten seit dem Update gehen dabei verloren (meist nur Minuten).
+# AUTOMATO_COMPOSE_PROFILES (Standard "--profile core"). Migrationen laufen vor dem Start des
+# Orchestrators (seit 0.48.0 im Dienst migrate, als Eigentuemer der Tabellen); deshalb setzt der
+# Rueckfall auch die Datenbank auf die Sicherung zurueck - Daten seit dem Update gehen dabei
+# verloren (meist nur Minuten).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # Einstellungen der Sicherung bzw. Profile aus .env (0.42.0), die Umgebung geht vor
@@ -124,7 +125,7 @@ update() {
   echo "4/4 Health"
   if ! health; then
     echo "FEHLER: Orchestrator meldet nach dem Update nicht 'ok'." >&2
-    echo "        Logs: $COMPOSE logs orchestrator | Rueckfall: deploy/update.sh --rollback" >&2
+    echo "        Logs: $COMPOSE logs migrate orchestrator | Rueckfall: deploy/update.sh --rollback" >&2
     exit 1
   fi
   echo "Update fertig: Version $(version). Rueckfall bei Bedarf: deploy/update.sh --rollback"

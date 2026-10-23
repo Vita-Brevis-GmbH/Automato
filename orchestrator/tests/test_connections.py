@@ -27,6 +27,9 @@ def _routes(monkeypatch, tmp_path):
 def _redis_ok(monkeypatch):
     item = connections.Item("redis", "Plattform", "Redis", "redis:6379", "ok", [])
     monkeypatch.setattr(connections, "_redis", lambda url: item)
+    # DB-Rolle eigens geprueft (test_db_rolle_mit_ddl_warnt); gegen Postgres ist der
+    # Test-Benutzer Eigentuemer der Tabellen
+    monkeypatch.setattr(connections.db_roles, "describe", lambda session: None)
 
 
 def _setup(client) -> tuple[int, int]:
@@ -96,6 +99,23 @@ def test_erreichbar_netbox_mit_schreib_token(client, monkeypatch, tmp_path):
     assert (sync["step"], sync["ok"]) == ("sync", False)
     assert sync["detail"] == "kein Schreib-Token – NetBox-Sync nicht möglich"
     assert out["status"] == "ok" and out["problems"] == 0
+
+
+def test_db_rolle_mit_ddl_warnt(client, monkeypatch, tmp_path):
+    _routes(monkeypatch, tmp_path)
+    _redis_ok(monkeypatch)
+    owner = {"role": "automato", "superuser": True, "ddl": True, "owns_tables": 40,
+             "separated": False}  # fmt: skip
+    monkeypatch.setattr(connections.db_roles, "describe", lambda session: owner)
+    db = client.get("/system/connections", headers=ADMIN).json()["items"][0]
+    assert db["key"] == "database" and db["status"] == "warn"
+    assert db["steps"][-1] == {"step": "rolle", "ok": False, "detail": "automato (Superuser)"}
+    assert "deploy/aufbau.sh db-rollen" in db["hint"]
+    app = {"role": "automato_app", "superuser": False, "ddl": False, "owns_tables": 0,
+           "separated": True}  # fmt: skip
+    monkeypatch.setattr(connections.db_roles, "describe", lambda session: app)
+    db = client.get("/system/connections", headers=ADMIN).json()["items"][0]
+    assert db["status"] == "ok" and db["steps"][-1]["detail"] == "automato_app ohne DDL"
 
 
 def test_redis_ping():

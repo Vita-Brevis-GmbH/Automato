@@ -142,6 +142,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "read.objects": frozenset({"tenant_id", "resource", "customers"}),
     "read.virtual": frozenset({"tenant_id", "resource", "customers"}),
     "read.customers": frozenset({"tenant_id", "resource", "customers"}),
+    "retention.purged": frozenset(
+        {"runs", "sync_plans", "audit", "runs_days", "sync_days", "audit_days"}
+    ),
 }
 
 _DROPPED_KEY = "_dropped"

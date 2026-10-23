@@ -77,6 +77,19 @@ class Settings(BaseSettings):
     # NetBox-Sync: Vorschau bzw. Uebernahme ohne Lebenszeichen nach so vielen Minuten beenden
     netbox_sync_timeout_minutes: int = 30
 
+    # Aufbewahrung (0.48.0, R14): beendete Laeufe, alte NetBox-Sync-Vorschauen und Audit-
+    # Eintraege nach so vielen Tagen loeschen (0 = nie); der Zeitplan raeumt taeglich auf
+    # (app.store.retention). Der aktuelle Stand bleibt immer.
+    retention_runs_days: int = 90
+    retention_sync_days: int = 90
+    retention_audit_days: int = 365
+
+    # Getrennte DB-Rollen (0.48.0, R14): die Migration (Eigentuemer der Tabellen) richtet mit
+    # `automato db-roles` diese Rolle ohne DDL ein; der Orchestrator verbindet sich dann mit
+    # ihr (docker-compose: Dienst migrate, AUTOMATO_DB_USER/AUTOMATO_DB_PASSWORD in .env).
+    db_app_role: str = ""
+    db_app_password: str = ""
+
     # Agent-Paket fuer den Download im UI (Wheel + Windows-Skripte, ADR 0008); im Image von
     # der Dockerfile-Stage "agent-package" befuellt.
     agent_package_dir: str = "/workspace/agent-package"

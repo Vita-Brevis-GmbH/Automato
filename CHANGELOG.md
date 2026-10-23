@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.48.0 – 2026-10-23
+
+Betrieb vor dem Produktivbetrieb (Entscheid des Anwenders, R14, ADR 0022): Fristen für alte
+Daten und getrennte DB-Rollen. Ohne Migration; neuer Compose-Dienst `migrate`.
+
+- **Aufbewahrung:** Der Zeitplan löscht einmal am Tag, was über seiner Frist ist – beendete
+  Läufe (90 Tage), NetBox-Sync-Vorschauen (90) und Audit-Einträge (365); `0` = nie
+  (`AUTOMATO_RETENTION_*_DAYS`).
+  - Es bleibt immer der aktuelle Stand: Läufe, auf die Regeln, Objekte, NAT, VMs bzw. der
+    Referenzstand zeigen, je Quellsystem der neuste und der neuste erfolgreiche Lauf, offene
+    Läufe, die neuste Vorschau je NetBox.
+  - System → **Aufbewahrung**: Fristen, was fällig ist, zuletzt aufgeräumt, **Jetzt aufräumen**
+    (Admin); CLI `automato purge [--dry-run]`; jedes Aufräumen im Audit (`retention.purged`).
+  - Betriebszustand: Warnung, wenn Läufe über der Frist liegen und nicht aufgeräumt wurde.
+- **Getrennte DB-Rollen:** Die Migration läuft im Dienst `migrate` als Eigentümer der Tabellen
+  und richtet danach die App-Rolle ein (`automato db-roles`); der Orchestrator verbindet sich
+  mit ihr – Daten lesen und schreiben, aber keine Tabellen anlegen, ändern oder löschen.
+  - Einmal einrichten: `deploy/aufbau.sh db-rollen` (Rolle `automato_app` mit Zufalls-Passwort
+    in `.env`, Neustart; `--neu` = neues Passwort). Das Passwort geht nur als SCRAM-Verifier an
+    Postgres.
+  - Ohne Eintrag bleibt es wie bisher (Orchestrator als Eigentümer); Betriebszustand,
+    System → Verbindungen, System-Seite (DB-Rolle) und `deploy/aufbau.sh pruefen` warnen.
+  - `deploy/aufbau.sh pruefen`/`status` kennen den einmaligen Dienst `migrate` (beendet mit
+    Exit 0 = in Ordnung).
+
 ## 0.47.0 – 2026-10-23
 
 SNAT der FortiGate genauer, damit weniger Wege unbestimmt bleiben (Entscheid des Anwenders,

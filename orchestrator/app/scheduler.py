@@ -5,6 +5,9 @@ auf `source_system.schedule_last_at` beansprucht, nur der Prozess mit dem Treffe
 Lauf an. Nach einem Ausfall wird nur der letzte verpasste Termin nachgeholt (kein Rueckstau).
 Wartet oder laeuft fuer das Quellsystem schon ein Lauf (z. B. Agent offline), faellt der
 Termin aus. Der Lauf selbst entsteht wie bei "Jetzt einlesen" (`store.runs`).
+
+Seit 0.48.0 raeumt dieselbe Schleife einmal am Tag auf (`store.retention.maybe_purge`): alte
+Laeufe, NetBox-Sync-Vorschauen und Audit-Eintraege nach ihrer Frist.
 """
 
 import logging
@@ -16,9 +19,10 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import schedule
+from app.config import get_settings
 from app.jobs import celery_app
 from app.models import SourceSystem
-from app.store import runs
+from app.store import retention, runs
 
 log = logging.getLogger(__name__)
 ACTOR = "system:scheduler"
@@ -132,6 +136,11 @@ def start(factory: sessionmaker, tz: str, interval: int) -> threading.Event:
                 _last_tick = datetime.now(UTC)
             except Exception:  # Schleife darf nicht sterben (DB kurz weg o. ae.)
                 log.exception("Zeitplan-Durchgang fehlgeschlagen")
+            try:
+                if (counts := retention.maybe_purge(factory, get_settings())) is not None:
+                    log.info("Aufbewahrung: geloescht %s", counts)
+            except Exception:
+                log.exception("Aufraeumen nach Frist fehlgeschlagen")
 
     threading.Thread(target=loop, name="automato-scheduler", daemon=True).start()
     log.info("Zeitplan aktiv (alle %s s, Zeitzone %s)", interval, tz)

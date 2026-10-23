@@ -11,6 +11,8 @@ Im Orchestrator-Container (Beispiele):
   automato status --run-id <id>
   automato lab            # Model-2-Happy-Path (NetBox + FortiGate) in einem Schritt
   automato check-connections [--json]   # Verbindungen aus dem Container (deploy/aufbau.sh)
+  automato db-roles       # App-Rolle ohne DDL einrichten (Dienst migrate, nach alembic)
+  automato purge [--dry-run]   # alte Laeufe/Syncs/Audit nach Frist loeschen (0.48.0)
 """
 
 from __future__ import annotations
@@ -249,6 +251,58 @@ def _cmd_check_connections(session: Session, args: argparse.Namespace) -> int:
     return 1 if result["status"] == "error" else 0
 
 
+def _cmd_db_roles(_session: Session, args: argparse.Namespace) -> int:
+    """Getrennte DB-Rollen (0.48.0): als Eigentuemer (Dienst migrate) die App-Rolle einrichten."""
+    from sqlalchemy import create_engine
+
+    from app.secrets import resolve
+    from app.store import db_roles
+
+    settings = get_settings()
+    role = args.role or settings.db_app_role
+    if not role:
+        print("INFO   keine App-Rolle gesetzt (AUTOMATO_DB_USER in .env) - der Orchestrator")
+        print("       arbeitet als Eigentuemer der Tabellen; einrichten:")
+        print("       deploy/aufbau.sh db-rollen")
+        return 0
+    engine = create_engine(settings.database_url)
+    try:
+        with engine.begin() as conn:
+            owner = conn.exec_driver_sql("SELECT current_user").scalar()
+            if role == owner:
+                print(f"INFO   App-Rolle = Eigentuemer ({owner}) - keine getrennte Rolle")
+                return 0
+            password = resolve(settings.db_app_password, settings)
+            steps = db_roles.ensure_app_role(conn, role, password)
+    except db_roles.RoleError as exc:
+        print(f"FEHLER {exc}")
+        return 1
+    finally:
+        engine.dispose()
+    for step in steps:
+        print(f"OK     {step}")
+    return 0
+
+
+def _cmd_purge(session: Session, args: argparse.Namespace) -> int:
+    """Aufbewahrung (0.48.0): was ueber der Frist ist loeschen bzw. mit --dry-run nur zaehlen."""
+    from app.store import retention
+
+    policy = retention.Policy.of(get_settings())
+    if args.dry_run:
+        counts = retention.due(session, policy)
+    else:
+        counts = retention.purge(session, policy, actor="cli:purge")
+        session.commit()
+    days = f"Fristen {policy.runs_days}/{policy.sync_days}/{policy.audit_days} Tage, 0 = nie"
+    verb = "faellig" if args.dry_run else "geloescht"
+    print(
+        f"{verb}: {counts['runs']} Laeufe, {counts['sync_plans']} NetBox-Sync-Vorschauen, "
+        f"{counts['audit']} Audit-Eintraege ({days})"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="automato", description="Automato-Auslöser (CLI)")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -303,6 +357,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("check-connections", help="Verbindungen aus dem Container pruefen")
     p.add_argument("--json", action="store_true", help="Ergebnis als JSON (deploy/aufbau.sh)")
     p.set_defaults(func=_cmd_check_connections)
+
+    p = sub.add_parser("db-roles", help="App-Rolle ohne DDL einrichten (als Eigentuemer)")
+    p.add_argument("--role", help="Rollenname (Standard AUTOMATO_DB_APP_ROLE)")
+    p.set_defaults(func=_cmd_db_roles)
+
+    p = sub.add_parser("purge", help="alte Laeufe, Sync-Vorschauen und Audit nach Frist loeschen")
+    p.add_argument("--dry-run", action="store_true", help="nur zaehlen, nichts loeschen")
+    p.set_defaults(func=_cmd_purge)
 
     return parser
 

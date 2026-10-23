@@ -28,6 +28,7 @@ SECRET_FIELDS: tuple[str, ...] = (
     "audit_encryption_key",
     "credentials_key",
     "agent_gateway_secret",
+    "db_app_password",
 )
 
 _SCHEMES = frozenset({"env", "file", "openbao", "literal"})

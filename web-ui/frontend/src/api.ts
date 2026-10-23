@@ -1571,15 +1571,40 @@ export const fetchAppConnections = (id: number) =>
   getJSON<AppConnections>(`/api/applications/${id}/connections`);
 
 // System (Admin)
+// DB-Rolle des Orchestrators (0.48.0): getrennt vom Eigentümer der Tabellen, ohne DDL?
+export interface DbRole {
+  role: string;
+  superuser: boolean;
+  ddl: boolean;
+  owns_tables: number;
+  separated: boolean;
+}
 export interface SystemStatus {
   version: string;
-  database: { revision: string | null; head: string | null; up_to_date: boolean };
+  database: { revision: string | null; head: string | null; up_to_date: boolean; role: DbRole | null };
   agent_package: { version: string | null; signature: string; pubkey_set: boolean; agents: number; agents_current: number };
   scheduler: { enabled: boolean; interval_seconds: number; timezone: string; scheduled_sources: number; next_run_at: string | null };
   security: { environment: string; auth_mode: string; internal_mtls_mode: string; audit_encryption: boolean; credentials_key: string };
   backup: { at: string | null; file: string | null; encrypted: boolean | null; size: number | null } | null;
 }
 export const fetchSystemStatus = () => getJSON<SystemStatus>("/api/system/status");
+
+// Aufbewahrung (0.48.0): Fristen in Tagen (0 = nie), was fällig ist, zuletzt aufgeräumt
+export interface RetentionCounts {
+  runs: number;
+  sync_plans: number;
+  audit: number;
+}
+export interface RetentionStatus {
+  policy: { runs_days: number; sync_days: number; audit_days: number };
+  active: boolean;
+  scheduled: boolean;
+  due: RetentionCounts;
+  last: { at: string; actor: string; counts: RetentionCounts } | null;
+  deleted?: RetentionCounts;
+}
+export const fetchRetention = () => getJSON<RetentionStatus>("/api/system/retention");
+export const purgeRetention = () => sendJSON<RetentionStatus>("/api/system/retention/purge", "POST");
 
 // Betriebszustand (0.12.0): Ampel je Prüfung
 export interface HealthCheck {

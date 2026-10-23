@@ -65,6 +65,18 @@ Objekte erscheinen als Findings → in NetBox ergänzen oder als extern bestäti
 **Alle auf einmal:** Übersicht → **Alle einlesen** bzw. `POST /jobs/collect-all` legt für jedes
 aktive Quellsystem des Mandanten einen Lauf an (Referenzquellen zuerst).
 
+**Aufbewahrung** (0.48.0, ADR 0022, R14): Was älter ist als seine Frist, löscht der Zeitplan
+einmal am Tag – beendete Läufe nach `AUTOMATO_RETENTION_RUNS_DAYS` (90), NetBox-Sync-Vorschauen
+nach `AUTOMATO_RETENTION_SYNC_DAYS` (90), Audit-Einträge nach `AUTOMATO_RETENTION_AUDIT_DAYS`
+(365); `0` = nie. Es bleiben immer: Läufe, auf die der aktuelle Stand zeigt (Regeln, Objekte,
+NAT, VMs, Referenzstand), je Quellsystem der neuste und der neuste erfolgreiche Lauf, offene
+Läufe und die neuste Vorschau je NetBox (übernommene Syncs stehen mit ihren Zahlen weiter im
+Audit). System → **Aufbewahrung** zeigt Fristen, was fällig ist und wann zuletzt aufgeräumt
+wurde; **Jetzt aufräumen** (Admin) bzw. `docker compose exec orchestrator automato purge
+[--dry-run]` löscht sofort. Jedes Aufräumen steht im Audit (`retention.purged` mit den Zahlen).
+Der Betriebszustand warnt, wenn Läufe über der Frist liegen und seit zwei Tagen nicht
+aufgeräumt wurde (z. B. Zeitplan aus).
+
 **Stoppen / Zurücksetzen:**
 ```bash
 docker compose --profile core --profile collectors down          # stoppen
@@ -826,6 +838,19 @@ an (`deploy/agent-gateway`, Port 8443).
 ## 5. Sicherheit
 
 - Alle Zielsystem-Zugänge **read-only** (Least Privilege). `.env` wird nie committet.
+- **Getrennte DB-Rollen** (0.48.0, ADR 0022, R14): Die Migration läuft im Dienst `migrate` als
+  Eigentümer der Tabellen (`automato`), danach richtet er die App-Rolle ein (`automato
+  db-roles`); der Orchestrator verbindet sich mit ihr und kann Daten lesen und schreiben, aber
+  keine Tabellen anlegen, ändern oder löschen. Einmal einrichten:
+  ```bash
+  deploy/aufbau.sh db-rollen          # AUTOMATO_DB_USER=automato_app + Zufalls-Passwort in .env, Neustart
+  deploy/aufbau.sh db-rollen --neu    # neues Passwort
+  ```
+  Das Passwort geht nur als SCRAM-Verifier an Postgres. Ob es wirkt, zeigen System →
+  Verbindungen (Datenbank: „automato_app ohne DDL“), die System-Seite (DB-Rolle) und
+  `deploy/aufbau.sh pruefen` (Abschnitt Datenbank-Rollen). Ohne den Eintrag arbeitet der
+  Orchestrator wie bis 0.47 als Eigentümer (Warnung im Betriebszustand). Sicherung und
+  Wiederherstellung laufen weiter als `automato`.
 - **AuthN/RBAC** über Keycloak (OIDC, `AUTOMATO_AUTH_MODE=oidc`, ADR 0007); im
   `dev`-Modus laufen alle Anfragen als Standard-Admin — nur im Lab verwenden.
 - Ausserhalb `AUTOMATO_ENVIRONMENT=dev` verweigert der Orchestrator ohne RBAC den Start,

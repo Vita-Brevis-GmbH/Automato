@@ -3,7 +3,8 @@
 Nur lesend und aus dem, was Automato ohnehin weiss: Datenbank/Migration, Zeitplan (letzter
 Durchgang), zentraler Worker (holt er zentrale Laeufe ab?), Agenten (zuletzt gemeldet,
 Update-Probleme), Quellsysteme (letzter Lauf fehlgeschlagen bzw. zu alt), NetBox-Sync und
-Sicherung. Je Pruefung `ok` | `warn` | `error` mit Satz und Ziel-Ansicht im UI.
+Sicherung, seit 0.48.0 die DB-Rolle (ohne DDL?) und die Aufbewahrung (zuletzt aufgeraeumt). Je
+Pruefung `ok` | `warn` | `error` mit Satz und Ziel-Ansicht im UI.
 """
 
 import json
@@ -24,12 +25,14 @@ from app.models import (
     SyncPlan,
     SyncStatus,
 )
+from app.store import db_roles, retention
 
 AGENT_OFFLINE = timedelta(minutes=30)  # Wach-Modus fragt alle 20 s, Neustart alle 15 min
 SOURCE_STALE = timedelta(days=7)
 CENTRAL_WAIT = timedelta(minutes=10)
 BACKUP_MAX_AGE = timedelta(hours=26)
 SYNC_RECENT = timedelta(hours=24)
+PURGE_LATE = timedelta(days=2)  # Zeitplan raeumt taeglich auf
 ORDER = {"ok": 0, "warn": 1, "error": 2}
 
 
@@ -67,11 +70,13 @@ def checks(
     now: datetime | None = None,
 ) -> list[Check]:
     now = now or datetime.now(UTC)
-    out = [_database(database_ok), _scheduler(session, settings, now), _central(session, now)]
+    out = [_database(database_ok), _db_role(session)]
+    out += [_scheduler(session, settings, now), _central(session, now)]
     out += _agents(session, tenant_id, now)
     out += _sources(session, tenant_id, now)
     out += _netbox_sync(session, tenant_id, now)
     out.append(_backup(settings, now))
+    out.append(_retention(session, settings, now))
     return [c for c in out if c is not None]
 
 
@@ -95,6 +100,51 @@ def _database(ok: bool) -> Check:
         "Orchestrator neu starten (führt `alembic upgrade head` aus) bzw. deploy/update.sh",
         "system",
     )
+
+
+def _db_role(session: Session) -> Check | None:
+    """Getrennte DB-Rollen (0.48.0): arbeitet der Orchestrator ohne DDL?"""
+    try:
+        role = db_roles.describe(session)
+    except Exception:  # noqa: BLE001 - Anzeige; die Datenbank-Pruefung meldet Ausfaelle
+        session.rollback()
+        return None
+    if role is None:
+        return None  # nicht PostgreSQL (Tests)
+    if role["separated"]:
+        return Check("db_role", "Plattform", "ok", f"Datenbank-Rolle {role['role']} ohne DDL")
+    what = "Superuser" if role["superuser"] else "Eigentümer der Tabellen bzw. mit CREATE"
+    return Check(
+        "db_role",
+        "Plattform",
+        "warn",
+        f"Orchestrator arbeitet als {role['role']} ({what})",
+        "getrennte Rollen einrichten: deploy/aufbau.sh db-rollen (Migration als Eigentümer, "
+        "Betrieb ohne DDL)",
+        "system",
+    )
+
+
+def _retention(session: Session, settings: Settings, now: datetime) -> Check | None:
+    """Aufbewahrung (0.48.0): raeumt der Zeitplan alte Laeufe auf?"""
+    policy = retention.Policy.of(settings)
+    if not policy.active:
+        if settings.environment == "dev":
+            return None
+        return Check("retention", "Plattform", "warn", "Keine Aufbewahrungsfristen gesetzt",
+                     "AUTOMATO_RETENTION_RUNS_DAYS usw. > 0 (R14)", "system")  # fmt: skip
+    last = retention.last_purge(session)
+    at = last["at"] if last else None
+    if (at is None or now - at > PURGE_LATE) and retention.overdue(session, policy, now):
+        detail = (
+            "Zeitplan aus – System → Aufbewahrung „Jetzt aufräumen“ bzw. automato purge"
+            if not settings.scheduler_enabled
+            else f"Zeitplan räumt täglich auf, zuletzt {_ago(at, now)} – Log des Orchestrators"
+        )
+        return Check("retention", "Plattform", "warn", "Alte Läufe über der Frist", detail,
+                     "system", at)  # fmt: skip
+    title = f"zuletzt aufgeräumt {_ago(at, now)}" if at else "nichts fällig"
+    return Check("retention", "Plattform", "ok", f"Aufbewahrung: {title}", since=at)
 
 
 def _scheduler(session: Session, settings: Settings, now: datetime) -> Check | None:

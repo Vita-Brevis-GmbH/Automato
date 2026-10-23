@@ -1,9 +1,11 @@
 """System-Seite (Admin): Versionen, Datenbank-Migration, Agent-Paket und Signatur, Zeitplan,
 Sicherheits-Schalter und letzte Sicherung - der Betriebsstand auf einen Blick. Seit 0.40.0
 `GET /system/connections`: Verbindungen vom Orchestrator-Container aus (Datenbank, Redis,
-Keycloak, zentral gelesene Quellsysteme) mit Hinweis bzw. ufw-Regel.
+Keycloak, zentral gelesene Quellsysteme) mit Hinweis bzw. ufw-Regel. Seit 0.48.0 die
+DB-Rolle des Orchestrators (getrennt vom Eigentuemer?) und die Aufbewahrung
+(`GET /system/retention`, `POST /system/retention/purge` raeumt sofort auf).
 
-Nur lesend; zeigt nie Schluessel oder Secrets, nur ob sie gesetzt sind.
+Zeigt nie Schluessel oder Secrets, nur ob sie gesetzt sind.
 """
 
 import json
@@ -12,7 +14,7 @@ from pathlib import Path
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -23,17 +25,26 @@ from app.auth.principal import Principal
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.models import Agent, SourceSystem
-from app.store import agent_package, connections, health
+from app.store import agent_package, connections, db_roles, health, retention
 
 router = APIRouter(prefix="/system", tags=["system"])
 
 _ALEMBIC_DIR = Path(__file__).resolve().parents[2] / "alembic"
 
 
+class DbRoleOut(BaseModel):
+    role: str
+    superuser: bool
+    ddl: bool  # darf Tabellen anlegen/aendern (Superuser, CREATE im Schema, Eigentuemer)
+    owns_tables: int
+    separated: bool  # App-Rolle ohne DDL (0.48.0)
+
+
 class DatabaseOut(BaseModel):
     revision: str | None  # Stand der Datenbank
     head: str | None  # neueste Migration im Code
     up_to_date: bool
+    role: DbRoleOut | None = None  # None ausserhalb von PostgreSQL
 
 
 class AgentPackageOut(BaseModel):
@@ -92,6 +103,15 @@ def _database(session: Session) -> DatabaseOut:
     )
 
 
+def _database_role(session: Session) -> DbRoleOut | None:
+    try:
+        role = db_roles.describe(session)
+    except Exception:  # noqa: BLE001 - Anzeige, kein Abbruch der System-Seite
+        session.rollback()
+        return None
+    return DbRoleOut(**role) if role else None
+
+
 def _backup(settings: Settings) -> BackupOut | None:
     try:
         data = json.loads(Path(settings.backup_status_file).read_text(encoding="utf-8"))
@@ -144,7 +164,7 @@ def status(
     key_file = Path(settings.credentials_key_file)
     return SystemStatusOut(
         version=__version__,
-        database=_database(session),
+        database=_database(session).model_copy(update={"role": _database_role(session)}),
         agent_package=AgentPackageOut(
             version=sig["version"],
             signature=sig["state"],
@@ -194,3 +214,28 @@ def connection_checks(
     - nur lesend); Agent-Systeme als Hinweis. Dauert wenige Sekunden; zeigt nie Secrets."""
     tid = tenant_scope(principal, tenant_id)
     return connections.run(session, settings, None if tid is None else {tid})
+
+
+@router.get("/retention")
+def retention_status(
+    _: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Aufbewahrung (0.48.0): Fristen in Tagen, was jetzt faellig ist, zuletzt aufgeraeumt."""
+    return retention.status(session, settings)
+
+
+@router.post("/retention/purge")
+def retention_purge(
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Jetzt aufraeumen: loescht, was ueber der Frist ist (aktueller Stand bleibt); auditiert."""
+    policy = retention.Policy.of(settings)
+    if not policy.active:
+        raise HTTPException(409, "keine Fristen gesetzt (AUTOMATO_RETENTION_*_DAYS = 0)")
+    counts = retention.purge(session, policy, actor=f"user:{principal.subject}")
+    session.commit()
+    return {"deleted": counts, **retention.status(session, settings)}
