@@ -55,13 +55,21 @@ if [ "$NETBOX_RESET" = "1" ]; then
   docker compose down -v --remove-orphans 2>/dev/null || true
 fi
 
-# 2. Overrides: Host-Port + grosszuegigerer Healthcheck.
+# 2. Overrides: Host-Port + grosszuegigerer Healthcheck + Neustart-Regel.
 # netbox-docker liefert kein Host-Port-Mapping; und der erste Start (Migrationen +
 # gunicorn) dauert auf frischer VM/DB laenger, als der Default-Healthcheck erlaubt -
 # sonst gelten die abhaengigen Container (worker/housekeeping) als "unhealthy".
-cat > docker-compose.override.yml <<YAML
-services:
-  netbox:
+# Neustart-Regel (0.41.0): ohne sie bleibt NetBox nach einem Neustart der VM bzw. von
+# Docker aus, waehrend Automato wieder hochkommt ("ConnectTimeout" beim Einlesen).
+# Nur fuer Dienste, die es in dieser netbox-docker-Version gibt (housekeeping fehlt in
+# neueren) - ein unbekannter Dienst im Override liesse `docker compose up` scheitern.
+rm -f docker-compose.override.yml
+{
+  echo "services:"
+  for svc in $(docker compose config --services 2>/dev/null); do
+    echo "  ${svc}:"
+    if [ "$svc" = "netbox" ]; then
+      cat <<YAML
     ports:
       - "${NETBOX_PORT}:8080"
     healthcheck:
@@ -69,6 +77,12 @@ services:
       interval: 15s
       retries: 15
 YAML
+    fi
+    echo "    restart: unless-stopped"
+  done
+} > docker-compose.override.yml
+grep -q "^  netbox:" docker-compose.override.yml \
+  || { echo "FEHLER: Dienst 'netbox' nicht in netbox-docker gefunden"; exit 1; }
 
 # 3. Stack starten - bewusst NUR den netbox-Dienst (+ seine Abhaengigkeiten
 # postgres/redis). Die Worker haengen an "netbox: healthy"; wuerde man sie hier

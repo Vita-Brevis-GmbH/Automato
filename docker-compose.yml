@@ -11,6 +11,8 @@ services:
   postgres:
     image: postgres:16-alpine
     profiles: ["core"]
+    # nach einem Neustart der VM bzw. von Docker wieder hochfahren (0.41.0)
+    restart: unless-stopped
     environment:
       POSTGRES_DB: automato
       POSTGRES_USER: automato
@@ -26,6 +28,7 @@ services:
   redis:
     image: redis:7-alpine
     profiles: ["core"]
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -37,6 +40,7 @@ services:
       context: .
       dockerfile: orchestrator/Dockerfile
     profiles: ["core"]
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,6 +101,7 @@ services:
       context: .
       dockerfile: collectors/Dockerfile
     profiles: ["collectors"]
+    restart: unless-stopped
     depends_on:
       redis:
         condition: service_healthy
@@ -122,6 +127,7 @@ services:
     build:
       context: web-ui/frontend
     profiles: ["core"]
+    restart: unless-stopped
     environment:
       ORCHESTRATOR_URL: http://orchestrator:8000
     ports:
@@ -177,6 +183,7 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     profiles: ["auth"]
+    restart: unless-stopped
     command: ["start-dev", "--import-realm", "--http-port=8081"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}

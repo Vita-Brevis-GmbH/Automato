@@ -7,6 +7,8 @@
 #   deploy/aufbau.sh firewall             noetige ufw-Regeln zeigen (Container -> Docker-Host)
 #   deploy/aufbau.sh firewall --anwenden  ... und setzen (root), danach erneut pruefen
 #   deploy/aufbau.sh status               Container und Health kurz
+#   deploy/aufbau.sh netbox-start         lokale NetBox (netbox-docker) starten, Neustart-Regel
+#                                         setzen und warten, bis sie antwortet (0.41.0)
 #
 # Die Verbindungen prueft der Orchestrator selbst (`automato check-connections`, wie System ->
 # Verbindungen im UI): Datenbank, Redis, Keycloak, jedes zentral gelesene Quellsystem - auf
@@ -14,7 +16,13 @@
 # Docker-Netz zu einem Dienst auf dem Host (z. B. NetBox auf :8080 ueber host.docker.internal).
 # Die Regel dafuer ist schmal: nur das Netz des Containers, nur die Gateway-Adresse, nur der Port.
 #
-# Exit 0 = alles erreichbar, 1 = mindestens ein Fehler. Aendert nichts ausser mit --anwenden.
+# Seit 0.41.0 auch: startet Docker beim Booten, haben die Container eine Neustart-Regel (sonst
+# bleiben sie nach einem Neustart der VM aus), und - wenn es eine lokale NetBox gibt
+# (source-of-truth/netbox/netbox-docker bzw. AUTOMATO_NETBOX_DIR) - laufen ihre Container und
+# antwortet die Login-Seite. Befund 0.40.0: NetBox war nach einem Neustart aus, Automato nicht.
+#
+# Exit 0 = alles erreichbar, 1 = mindestens ein Fehler. Aendert nur `firewall --anwenden` und
+# `netbox-start` etwas.
 # Profile ueber AUTOMATO_COMPOSE_PROFILES (Standard "--profile core"), wie deploy/update.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -22,6 +30,9 @@ cd "$(dirname "$0")/.."
 COMPOSE=${COMPOSE:-docker compose}
 read -r -a PROFILES <<<"${AUTOMATO_COMPOSE_PROFILES:---profile core}"
 HEALTH_URL=${AUTOMATO_HEALTH_URL:-http://127.0.0.1:8000/health}
+NETBOX_DIR=${AUTOMATO_NETBOX_DIR:-source-of-truth/netbox/netbox-docker}
+NETBOX_COMPOSE=${NETBOX_COMPOSE:-docker compose}
+NETBOX_WAIT=${AUTOMATO_NETBOX_WAIT:-300} # Sekunden bis NetBox antwortet (erster Start dauert)
 
 FEHLER=0
 ok() { printf '  \033[32mOK\033[0m      %s\n' "$*"; }
@@ -42,17 +53,27 @@ werkzeuge() {
   if docker info >/dev/null 2>&1; then ok "Docker-Dienst antwortet (Engine $(docker version --format '{{.Server.Version}}' 2>/dev/null))"
   else fehler "Docker-Dienst antwortet nicht (systemctl start docker; als root bzw. Gruppe docker)"; return; fi
   [ -f .env ] && ok ".env vorhanden" || warn ".env fehlt – es gelten die Vorgaben aus docker-compose.yml"
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    if systemctl is-enabled --quiet docker 2>/dev/null; then ok "Docker startet beim Booten"
+    else warn "Docker startet nicht beim Booten: sudo systemctl enable docker containerd"; fi
+  fi
+}
+
+# Neustart-Regel eines Containers (no | unless-stopped | always | on-failure; ? = unbekannt)
+regel_von() {
+  [ -n "${1:-}" ] || { echo "?"; return; }
+  docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$1" 2>/dev/null || echo "?"
 }
 
 container() {
   titel "Container"
   local zeilen
-  if ! zeilen=$($COMPOSE "${PROFILES[@]}" ps -a --format '{{.Service}}|{{.State}}|{{.Health}}' 2>/dev/null); then
+  if ! zeilen=$($COMPOSE "${PROFILES[@]}" ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.Name}}' 2>/dev/null); then
     fehler "docker compose ps fehlgeschlagen – im Repo-Verzeichnis aufrufen"; return
   fi
   [ -n "$zeilen" ] || { fehler "keine Container – starten: $COMPOSE ${PROFILES[*]} up -d"; return; }
-  local dienst zustand gesund
-  while IFS='|' read -r dienst zustand gesund; do
+  local dienst zustand gesund name ohne=""
+  while IFS='|' read -r dienst zustand gesund name; do
     [ -n "$dienst" ] || continue
     if [ "$zustand" != "running" ]; then
       fehler "$dienst: $zustand – Logs: $COMPOSE logs --tail 50 $dienst"
@@ -61,7 +82,86 @@ container() {
     else
       ok "$dienst${gesund:+ ($gesund)}"
     fi
+    [ "$(regel_von "$name")" = "no" ] && ohne="$ohne $dienst"
   done <<<"$zeilen"
+  if [ -n "$ohne" ]; then
+    warn "ohne Neustart-Regel:$ohne – nach einem Neustart der VM bleiben sie aus."
+    info "docker-compose.yml setzt restart: unless-stopped (ab 0.41.0): $COMPOSE ${PROFILES[*]} up -d"
+  fi
+}
+
+# --- Lokale NetBox (netbox-docker auf derselben VM) ----------------------------------------
+dc_netbox() { (cd "$NETBOX_DIR" && $NETBOX_COMPOSE "$@"); }
+
+netbox_port() {  # Host-Port aus dem Override von setup.sh ("8080:8080"), sonst 8080
+  local p
+  p=$(grep -oE '[0-9]+:8080' "$NETBOX_DIR/docker-compose.override.yml" 2>/dev/null | head -1 | cut -d: -f1 || true)
+  echo "${p:-8080}"
+}
+
+netbox_antwortet() { curl -fsS -m 5 -o /dev/null "http://localhost:$(netbox_port)/login/" 2>/dev/null; }
+
+netbox_stack() {
+  [ -d "$NETBOX_DIR" ] || return 0  # keine lokale NetBox (z. B. eigene NetBox im Netz)
+  titel "NetBox auf dieser VM ($NETBOX_DIR)"
+  local zeilen
+  if ! zeilen=$(dc_netbox ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.Name}}' 2>/dev/null); then
+    fehler "docker compose ps im NetBox-Ordner fehlgeschlagen"; return
+  fi
+  [ -n "$zeilen" ] || { fehler "keine NetBox-Container – einrichten: source-of-truth/netbox/setup.sh"; return; }
+  local dienst zustand gesund name aus=0 ohne=""
+  while IFS='|' read -r dienst zustand gesund name; do
+    [ -n "$dienst" ] || continue
+    if [ "$zustand" != "running" ]; then
+      aus=1
+      case "$dienst" in
+        netbox-worker | netbox-housekeeping) warn "$dienst: $zustand (Hintergrunddienst, für Automato nicht nötig)" ;;
+        *) fehler "$dienst: $zustand" ;;
+      esac
+    elif [ -n "$gesund" ] && [ "$gesund" != "healthy" ]; then
+      warn "$dienst: läuft, Health $gesund (erster Start dauert bis 5 min)"
+    else
+      ok "$dienst${gesund:+ ($gesund)}"
+    fi
+    [ "$(regel_von "$name")" = "no" ] && ohne="$ohne $dienst"
+  done <<<"$zeilen"
+  if netbox_antwortet; then ok "Login-Seite antwortet (localhost:$(netbox_port))"
+  else fehler "NetBox antwortet auf localhost:$(netbox_port) nicht"; fi
+  [ -z "$ohne" ] || warn "ohne Neustart-Regel:$ohne – nach einem Neustart der VM bleibt NetBox aus"
+  if [ "$aus" -eq 1 ] || [ -n "$ohne" ]; then
+    info "Starten und Neustart-Regel setzen: deploy/aufbau.sh netbox-start"
+  fi
+}
+
+cmd_netbox_start() {
+  [ -d "$NETBOX_DIR" ] || { fehler "kein NetBox-Ordner $NETBOX_DIR (AUTOMATO_NETBOX_DIR setzen)"; return 1; }
+  titel "NetBox starten ($NETBOX_DIR)"
+  if ! dc_netbox up -d; then
+    fehler "docker compose up -d im NetBox-Ordner fehlgeschlagen (Meldung oben)"; return 1
+  fi
+  ok "Container gestartet"
+  local ids
+  ids=$(dc_netbox ps -aq 2>/dev/null || true)
+  # wirkt sofort und bleibt bis zum Neuerstellen der Container; dauerhaft im Override (setup.sh)
+  # shellcheck disable=SC2086
+  if [ -n "$ids" ] && docker update --restart unless-stopped $ids >/dev/null 2>&1; then
+    ok "Neustart-Regel unless-stopped gesetzt"
+  else
+    warn "Neustart-Regel nicht gesetzt (docker update) – von Hand: restart: unless-stopped je Dienst"
+  fi
+  if ! grep -q "restart:" "$NETBOX_DIR/docker-compose.override.yml" 2>/dev/null; then
+    info "Dauerhaft (auch nach einem Neuerstellen): restart: unless-stopped je Dienst in"
+    info "$NETBOX_DIR/docker-compose.override.yml eintragen – nur Dienste aus: (cd $NETBOX_DIR && docker compose config --services)"
+  fi
+  info "warte, bis NetBox antwortet (erster Start bis $((NETBOX_WAIT / 60)) min) …"
+  local bis=$((SECONDS + NETBOX_WAIT))
+  while :; do
+    if netbox_antwortet; then ok "NetBox antwortet (localhost:$(netbox_port))"; return 0; fi
+    [ "$SECONDS" -lt "$bis" ] || break
+    sleep 5
+  done
+  fehler "NetBox antwortet nicht – Logs: (cd $NETBOX_DIR && docker compose logs --tail 50 netbox)"
+  return 1
 }
 
 health() {
@@ -194,6 +294,7 @@ cmd_firewall() {
 cmd_pruefen() {
   werkzeuge
   container
+  netbox_stack
   health
   verbindungen || true
   firewall_pruefen
@@ -208,6 +309,7 @@ cmd_pruefen() {
 
 cmd_status() {
   container
+  netbox_stack
   health
   return "$FEHLER"
 }
@@ -216,6 +318,7 @@ case "${1:-pruefen}" in
   pruefen | check) cmd_pruefen ;;
   firewall) shift; cmd_firewall "${1:-}" ;;
   status) cmd_status ;;
-  -h | --help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
-  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status)" >&2; exit 2 ;;
+  netbox-start) cmd_netbox_start ;;
+  -h | --help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start)" >&2; exit 2 ;;
 esac

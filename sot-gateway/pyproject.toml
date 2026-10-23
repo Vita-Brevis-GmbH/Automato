@@ -1,6 +1,6 @@
 [project]
 name = "sot-gateway"
-version = "0.40.0"
+version = "0.41.0"
 description = "SoT Gateway - Adapter-Package fuer IPAM/Source-of-Truth-Tools (ADR 0002)"
 requires-python = ">=3.11"
 dependencies = [

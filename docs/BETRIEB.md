@@ -663,6 +663,10 @@ an (`deploy/agent-gateway`, Port 8443).
     sie (root) und prüft danach erneut. Beispiel:
     `ufw allow proto tcp from 172.20.0.0/16 to 172.17.0.1 port 8080 comment 'Automato -> netbox'`.
   - `deploy/aufbau.sh status` – Container und Health kurz.
+  - Seit 0.41.0 prüft `pruefen` auch: startet Docker beim Booten, haben die Container eine
+    Neustart-Regel, und – bei einer NetBox auf derselben VM (`source-of-truth/netbox/
+    netbox-docker`, sonst `AUTOMATO_NETBOX_DIR`) – laufen ihre Container und antwortet die
+    Login-Seite. `deploy/aufbau.sh netbox-start` startet sie und setzt die Neustart-Regel.
 - **Sicherung:** täglich `deploy/backup/backup.sh` (age-verschlüsselt: Datenbank, Schlüssel der
   Zugangsdaten, Agent-Signatur), Wiederherstellung `deploy/backup/restore.sh` – Details und
   Verschlüsselung at rest in `deploy/backup/README.md`.
@@ -827,12 +831,19 @@ an (`deploy/agent-gateway`, Port 8443).
 
 - **NetBox „nicht erreichbar … ConnectTimeout“ beim Einlesen und im NetBox-Sync** (Dev-Befund
   0.33.0) — der Orchestrator- bzw. Collector-Container bekommt keine TCP-Verbindung zu
-  `host.docker.internal:8080`. Das ist kein Rechte- oder Token-Problem. Häufigste Ursache
-  (Befund 0.39.0): **ufw** auf dem Docker-Host verwirft den Weg vom Container-Netz zum Host –
-  im Kernel-Log `[UFW BLOCK] IN=br-… SRC=172.20.0.5 DST=172.17.0.1 … DPT=8080`. Abhilfe:
-  `sudo deploy/aufbau.sh firewall --anwenden` (setzt nur die schmale Regel) bzw. die Regel aus
-  System → Verbindungen. **Nicht** `172.16.0.0/12` freigeben – das LAN kann im selben Bereich
-  liegen.
+  `host.docker.internal:8080`. Das ist kein Rechte- oder Token-Problem. Zuerst
+  `sudo deploy/aufbau.sh pruefen` – es prüft beide Ursachen der Befunde 0.39.0/0.40.0:
+  - **NetBox ist aus** (z. B. nach einem Neustart der VM, Container `Exited (0)`, auch
+    `curl -I http://localhost:8080/login/` auf dem Host bleibt stumm):
+    `deploy/aufbau.sh netbox-start` startet sie, setzt die Neustart-Regel und wartet, bis sie
+    antwortet. Seit 0.41.0 haben Automato (`docker-compose.yml`) und das NetBox-Setup
+    `restart: unless-stopped`; Docker selbst muss beim Booten starten
+    (`systemctl enable docker`).
+  - **ufw** auf dem Docker-Host verwirft den Weg vom Container-Netz zum Host –
+    im Kernel-Log `[UFW BLOCK] IN=br-… SRC=172.20.0.5 DST=172.17.0.1 … DPT=8080`. Abhilfe:
+    `sudo deploy/aufbau.sh firewall --anwenden` (setzt nur die schmale Regel) bzw. die Regel
+    aus System → Verbindungen. **Nicht** `172.16.0.0/12` und nicht `8080/tcp` für alle
+    freigeben – das LAN kann im selben Bereich liegen.
   1. **Quellsysteme → Prüfen** (ab 0.34.0) bzw. **System → Verbindungen** (0.40.0) zeigt in
      Sekunden, wo es hängt:
      - Name nicht auflösbar: `extra_hosts` fehlt bzw. der Container wurde nicht neu

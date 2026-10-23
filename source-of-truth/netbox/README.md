@@ -161,6 +161,24 @@ free -h                                 # RAM: der NetBox-Stack braucht ~3-4 GB
 Sobald `curl -fsS http://localhost:8080/login/` antwortet, ist die API bereit –
 auch wenn `worker`/`housekeeping` noch nicht healthy sind.
 
+### NetBox nach einem Neustart der VM aus („ConnectTimeout“ in Automato)
+
+Bis 0.40.0 schrieb `setup.sh` keine Neustart-Regel: nach einem Neustart der VM bzw. von
+Docker kamen die Automato-Container wieder, NetBox blieb aus (`docker compose ps -a` zeigt
+`Exited (0)`, das Log endet mit „Granian shutdown completed“). Seit 0.41.0 setzt `setup.sh`
+`restart: unless-stopped` für alle Dienste dieser netbox-docker-Version.
+
+Bestehende Installation **ohne** `setup.sh` neu auszuführen (das würde neue Tokens erzeugen):
+
+```bash
+deploy/aufbau.sh netbox-start   # im Automato-Repo: startet NetBox, setzt die Regel, wartet
+```
+
+Dauerhaft (auch nach einem Neuerstellen der Container): in
+`netbox-docker/docker-compose.override.yml` je Dienst `restart: unless-stopped` eintragen –
+nur Dienste aus `docker compose config --services` (ein unbekannter Dienst, z. B.
+`netbox-housekeeping` in neueren Versionen, lässt `docker compose up` scheitern).
+
 ## Hinweise
 
 - Die Token-Anlage nutzt `from users.models import Token`. Sollte sich das App-Layout

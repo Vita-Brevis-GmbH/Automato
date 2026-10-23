@@ -330,8 +330,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.38.0** | Weg-Suche mit Netzen (IPAM, Netz-Objekte, Subnetze des Inventars, Netz direkt; geprüft mit einer Adresse daraus), Trefferliste nach Hosts/Netzen mit Anzahl und „Weitere laden“; IPv4/IPv6-Paare im Rahmen mit Marke; Vorschläge unter der Applikationsliste; Findings der Applikations-Doku nach Tenant/AP/EPG |
 | **0.39.0** | Weg-Suche: ein Netz als Ganzes – Route, die das ganze Netz enthält (anders geroutete Teile als Hinweis), Policies und Contracts sicher nur, wenn sie das ganze Netz erfassen (sonst „nur teilweise“) |
 | **0.40.0** | Verbindungen prüfen: System → Verbindungen (Datenbank, Redis, Keycloak, zentrale Quellsysteme mit ufw-Regel), `deploy/aufbau.sh pruefen/firewall/status`, Prüfung nach jedem Update |
+| **0.41.0** | Neustart-Regeln für Automato und das NetBox-Setup, `deploy/aufbau.sh` prüft Docker beim Booten, Neustart-Regeln und die lokale NetBox, `netbox-start` |
 
-### Nächste Arbeiten (Stand 0.40.0)
+### Nächste Arbeiten (Stand 0.41.0)
 
 Phase A und die Stände 0.11–0.18.0 sind gegen die echten Systeme abgenommen (0.18.0: Regeln
 paralleler Firewalls einmal, keine Schleifen); 0.19.0 (Verbund ablehnen, redundante Wege) und
@@ -341,8 +342,8 @@ Gegenstelle any), 0.27.0 (Inter-VDOM-Links), 0.28.0 (ACI-Contracts über externe
 (Verbund als ein Hop), 0.30.0–0.33.0 (Kunden, Kunden-Filter, Kunden-Benutzer; im Test, Befunde in
 0.34.0), 0.35.0 (Weg-Suche mit Contracts und Namen), 0.36.0 (Objekte, Namenskonvention,
 Paare), 0.37.0 (offene Regeln nur als Regel) 0.38.0 (Netze in der Weg-Suche, Paar-Rahmen,
-Findings nach EPG) 0.39.0 (Netz als Ganzes in der Weg-Suche) und 0.40.0 (Verbindungen prüfen, Aufbau-Skript)
-stehen zur Abnahme an. Konzeptbefund
+Findings nach EPG) 0.39.0 (Netz als Ganzes in der Weg-Suche), 0.40.0 (Verbindungen prüfen, Aufbau-Skript) und
+0.41.0 (Neustart-Regeln, NetBox im Aufbau-Skript) stehen zur Abnahme an. Konzeptbefund
 des Anwenders: Ohne Routing, Verbindungswege und Redundanzen zeigt die Doku Zugriffe, die
 routingtechnisch nicht möglich sind, und `any` aus dem Internet wie eine Liste aller
 Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:

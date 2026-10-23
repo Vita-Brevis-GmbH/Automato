@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.41.0 – 2026-10-23
+
+Neustart-Regeln und NetBox im Aufbau-Skript (Befund 0.40.0: nach einem Neustart der VM liefen
+die Automato-Container wieder, NetBox nicht – „ConnectTimeout“ beim Einlesen und im Sync).
+Ohne Migration.
+
+- **`restart: unless-stopped`** für alle Automato-Dienste in `docker-compose.yml` (postgres,
+  redis, orchestrator, collector, web-ui, keycloak; proxy und agent-gateway hatten sie schon).
+  Wirkt mit dem nächsten `deploy/update.sh` bzw. `docker compose up -d`.
+- **NetBox-Setup:** `setup.sh` schreibt die Neustart-Regel für alle Dienste der vorhandenen
+  netbox-docker-Version ins Override (nur Dienste aus `docker compose config --services` –
+  ein unbekannter Dienst liesse `up` scheitern).
+- **`deploy/aufbau.sh`:**
+  - `pruefen` meldet zusätzlich, ob Docker beim Booten startet, welche Container keine
+    Neustart-Regel haben und – bei einer NetBox auf derselben VM – ob ihre Container laufen
+    und die Login-Seite antwortet (Hintergrunddienste wie `netbox-worker` nur als Warnung).
+  - neu `netbox-start`: startet die lokale NetBox, setzt die Neustart-Regel
+    (`docker update`) und wartet, bis sie antwortet – ohne `setup.sh` neu auszuführen (das
+    würde neue Tokens erzeugen).
+- Doku: Fehlerbild „NetBox aus nach Neustart“ (BETRIEB, NetBox-README).
+- Tests: Aufbau-Skript mit NetBox aus, ohne Neustart-Regel, `netbox-start`.
+
 ## 0.40.0 – 2026-10-23
 
 Verbindungen prüfen – im Aufbau-Skript und unter System (Anwender, Befund: ufw sperrte den Weg
