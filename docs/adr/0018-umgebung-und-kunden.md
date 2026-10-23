@@ -159,3 +159,19 @@ Grundsatzentscheide des Anwenders (2026-10-22):
      protokolliert ist der Lesezugriff.
    - Noch nicht: Relevanz nach Pfad (ADR 0019) für die Zugehörigkeit von Regeln, eigene
      Kunden-Benutzer-Verwaltung in der Oberfläche (heute in Keycloak).
+4. **Kunden auf logischen Zonen** (Entscheide des Anwenders 2026-10-23, geplant mit 0.52.0 nach
+   den logischen Zonen aus ADR 0021):
+   - Ein Kunde besitzt logische Zonen. Geteilte Zonen (Internet, Shared Services, Management)
+     gehören keinem Kunden. Die Selektoren bleiben für Ausnahmen (einzelne Netze, Objekte).
+   - Der Kunde sieht die Contracts und Elemente in seinem Tenant und die Contracts zwischen den
+     Kunden, damit ihm bewusst ist, was offen ist und was nicht. Die Gegenseite eines fremden
+     Kunden erscheint ohne Namen („anderer Kunde“).
+   - Die Zugehörigkeit von Regeln folgt den Zonen auf dem Weg: Quelle oder Ziel in einer Zone
+     des Kunden, und der Weg ist möglich (Relevanz nach Pfad, ADR 0019).
+   - Sein Plan enthält nur seine Systeme und die geteilten Elemente, an denen er angebunden ist
+     (auch Redundanzen), keine Fremdsysteme.
+   - Seine Doku enthält nur seine Dinge – nie die Infrastruktur oder andere Kunden. Der Umfang
+     wächst mit der Zeit.
+   - Die Zuordnung Benutzer → Kunde wird in Automato gepflegt, getrennt von der Anmeldung
+     (Keycloak meldet nur, wer jemand ist). Der Claim `customer_ids` bleibt als Alternative.
+     Die Trennung ist Grundlage für feinere Rollen. Automato schreibt nicht nach Keycloak.

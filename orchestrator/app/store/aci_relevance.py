@@ -117,6 +117,27 @@ class Classifier:
         known = self._vrfs.get(epg.source_system_id, set())
         return own if own in known or not known else f"common:{epg.vrf}"
 
+    def scope_allows(self, scope: str | None, own: Epg, other: Epg) -> bool:
+        """Erlaubt ein Contract mit diesem Scope Verkehr zwischen den beiden EPGs?
+
+        `application-profile`: gleiches AP im gleichen Tenant; `context`: gleiche VRF (und
+        APIC); `tenant`: gleicher ACI-Tenant (vzAny bzw. externe EPG einer VRF aus `common`:
+        gleiche VRF); `global` bzw. ohne Scope: immer. Das gilt auch fuer Contracts aus
+        `common` - mit Scope VRF verbinden sie nur EPGs derselben VRF, auch wenn EPGs vieler
+        Tenants sie nutzen (Dev-Befund 0.43.0). Ist eine VRF unbekannt, bleibt die Gegenstelle
+        (nicht ausgeschlossen)."""
+        if not scope or scope == "global":
+            return True
+        if scope == "application-profile":
+            return own.ap is not None and (own.aci_tenant, own.ap) == (other.aci_tenant, other.ap)
+        a, b = self.vrf_of(own), self.vrf_of(other)
+        same_vrf = None if a is None or b is None else (
+            (own.source_system_id, a) == (other.source_system_id, b))  # fmt: skip
+        regular = own.kind in ("epg", "esg") and other.kind in ("epg", "esg")
+        if scope == "tenant" and (regular or "common" not in {own.aci_tenant, other.aci_tenant}):
+            return own.aci_tenant == other.aci_tenant
+        return same_vrf is not False
+
     @cached_property
     def _ext(self) -> dict[tuple[int | None, str], list[tuple[Epg, Net, str | None]]]:
         """(APIC, VRF) -> Subnetze externer EPGs mit Scope."""

@@ -504,6 +504,13 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
         for side in sorted(sides, key=lambda x: x != "dst"):  # zuerst eingehend
             cp_role = "src" if side == "dst" else "dst"
             cp = [e for e in eps if e.role.value == cp_role]
+            # nur Gegenstellen im Scope des Contracts (Dev-Befund 0.43.0: Contract aus common
+            # mit Scope VRF - die Consumer anderer Tenants bzw. VRFs erreicht er nicht)
+            kept = [e for e in cp if e.epg_id not in by_id
+                    or scope_allows(data, r.aci_scope, epg, by_id[e.epg_id])]  # fmt: skip
+            if cp and not kept:
+                continue
+            cp = kept
             cp_epgs = [by_id[e.epg_id] for e in cp if e.epg_id in by_id]
             cp_names = [_target(by_id.get(e.epg_id), e.inline_value, epg) for e in cp]
             same_ap = any(
@@ -552,6 +559,11 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
 def vrf_key(data: TenantData, epg: Epg) -> tuple[int | None, str | None]:
     """(APIC, `Tenant:VRF`) einer EPG."""
     return epg.source_system_id, data.aci.vrf_of(epg)
+
+
+def scope_allows(data: TenantData, scope: str | None, own: Epg, other: Epg) -> bool:
+    """Gegenstelle im Scope des Contracts (`aci_relevance.Classifier.scope_allows`)."""
+    return data.aci.scope_allows(scope, own, other)
 
 
 def fabric_epgs(
@@ -725,13 +737,21 @@ def _covered_rows(
     overlap: bool,
     direct_ids: set[int] | None = None,
     is_direct=None,
+    contained: list[str] | None = None,
 ) -> list:
     """Firewall-Regeln eines Systems: direkt (Endpunkt) und alle, deren Quelle/Ziel den Wert
     enthaelt (Host-IP) bzw. sich mit ihm ueberschneidet (EPG-Subnetz) - ueber Netze, Bereiche,
-    Gruppen und any, gleichwertig (Dev-Befund 0.10.0)."""
+    Gruppen und any, gleichwertig (Dev-Befund 0.10.0). `contained`: Werte, die eine Regel ganz
+    enthalten muss (Subnetz eines BD, den die EPG mit anderen teilt, 0.43.1)."""
     cover = rule_index.covers(
         session, data.tenant_id, values, overlap=overlap, domain=RuleDomain.FIREWALL
     )
+    if contained:
+        more = rule_index.covers(session, data.tenant_id, contained, domain=RuleDomain.FIREWALL)
+        for rid, c in more.items():
+            for role, side in c.sides.items():
+                cover.setdefault(rid, rule_index.Cover()).add(role, *side)
+        values = [*values, *contained]
     dnat = _nat_context(data, {v.split("/")[0] for v in values})
     out = []
     for r in data.rules((direct_ids or set()) | set(cover)):
@@ -758,6 +778,27 @@ def _covered_rows(
     return out
 
 
+def _epg_values(session: Session, data: TenantData, epg: Epg) -> tuple[list[str], list[str]]:
+    """Adressen einer EPG fuer ihre Firewall-Regeln (Dev-Befund 0.43.0): `own` - eigene
+    Subnetze, Subnetze eines BD nur mit dieser EPG, IPs ihrer VMs (Portgruppe) und Endpunkte;
+    eine Regel, die sich damit ueberschneidet, gilt. `shared` - Subnetze eines BD, den sie mit
+    anderen EPGs teilt: eine Regel gilt nur, wenn sie das ganze Subnetz enthaelt; ein Host bzw.
+    Teilnetz darin gehoert sonst womoeglich zu einer anderen EPG des BD."""
+    bd = (epg.source_system_id, epg.aci_tenant, epg.bd)
+    others = epg.bd is not None and any(
+        e.id != epg.id and e.kind == "epg" and (e.source_system_id, e.aci_tenant, e.bd) == bd
+        for e in data.epgs_by_id.values()
+    )
+    own: list[str] = []
+    shared: list[str] = []
+    for s in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id == epg.id)):
+        (shared if s.origin == "bd" and others else own).append(s.ip)
+    own += session.scalars(select(EpgEndpoint.ip).where(EpgEndpoint.epg_id == epg.id))
+    for vm in epg_store.vms_of(session, [epg.id]).get(epg.id, []):
+        own += vm["ips"]
+    return list(dict.fromkeys(own)), shared
+
+
 def epg_doc(session: Session, epg: Epg, data: TenantData | None = None, full: bool = False) -> dict:
     """ACI-EPG als System: Contracts (direkt, vzAny der VRF, ESGs) nach scope/AP in die
     Tabellen 7/8/9 (+ L3Out-Tabellen) und die Firewall-Regeln, die ihre Subnetze bzw.
@@ -767,11 +808,8 @@ def epg_doc(session: Session, epg: Epg, data: TenantData | None = None, full: bo
     rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
     for idx, row in _aci_rows(data, epg, name):
         rows_by_table[idx].append(row)
-    values = [s.ip for s in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id == epg.id))]
-    values += [
-        ep.ip for ep in session.scalars(select(EpgEndpoint).where(EpgEndpoint.epg_id == epg.id))
-    ]
-    for idx, row in _covered_rows(session, data, values, name, overlap=True):
+    own, shared = _epg_values(session, data, epg)
+    for idx, row in _covered_rows(session, data, own, name, overlap=True, contained=shared):
         rows_by_table[idx].append(row)
     host = session.get(NetworkObject, epg.network_object_id) if epg.network_object_id else None
     return _envelope(
@@ -872,11 +910,16 @@ def vm_rows(
     hosts: list[NetworkObject],
     epg_ids: set[int],
     prefer: frozenset | set = frozenset(),
+    mapped: set[str] | frozenset = frozenset(),
 ) -> list:
     """Zeilen einer VM (Applikations-Doku, 0.14.0): Firewall-Regeln ueber ihre IPs - direkt
     ueber das Host-Objekt einer IP, sonst ueber Netze, Bereiche, Gruppen und any - und die
     Contracts ihrer EPGs (Portgruppe; gelernter Endpunkt bzw. verknuepfter Server nur in den
-    VRFs der Portgruppen, siehe `fabric_epgs`)."""
+    VRFs der Portgruppen, siehe `fabric_epgs`).
+
+    Vorgabe vor Gelerntem (0.43.1, R12): Fuer IPs an einer NIC mit EPG (`mapped`) gilt die EPG
+    der Portgruppe; ein gelernter Endpunkt mit dieser IP in einer anderen EPG (alt, verschoben,
+    gleiche Adresse) bringt keine Contracts."""
     host_ids = {h.id for h in hosts}
     direct: set[int] = set()
     for hid in host_ids:
@@ -890,9 +933,11 @@ def vm_rows(
         direct_ids=direct,
         is_direct=lambda e: e.network_object_id in host_ids,
     )
-    host_ids = {h.id for h in hosts}
-    by_ip = {e.id for e in data.epgs_by_id.values() if e.network_object_id in host_ids}
-    values = list(dict.fromkeys([*ips, *(h.value.split("/")[0] for h in hosts if h.value)]))
+    free = [h for h in hosts if not h.value or h.value.split("/")[0] not in mapped]
+    free_ids = {h.id for h in free}
+    by_ip = {e.id for e in data.epgs_by_id.values() if e.network_object_id in free_ids}
+    values = list(dict.fromkeys([*ips, *(h.value.split("/")[0] for h in free if h.value)]))
+    values = [v for v in values if v not in mapped]
     if values:
         by_ip |= set(session.scalars(select(EpgEndpoint.epg_id).where(EpgEndpoint.ip.in_(values))))
     ids = fabric_epgs(data, set(epg_ids), by_ip, prefer)
@@ -910,8 +955,11 @@ def host_epgs(
     vm_epgs: set[int] = frozenset(),
     prefer: frozenset | set = frozenset(),
 ) -> list[Epg]:
-    """EPGs eines Servers: die Portgruppen seiner VM (`vm_epgs`), sonst ueber die IP (gelernter
-    Endpunkt, verknuepft) - in den VRFs der Portgruppen bzw. von `prefer` (`fabric_epgs`)."""
+    """EPGs eines Servers: die Portgruppen seiner VM (`vm_epgs`, Vorgabe vor Gelerntem, 0.43.1),
+    sonst ueber die IP (gelernter Endpunkt, verknuepft) - in den VRFs von `prefer`
+    (`fabric_epgs`)."""
+    if vm_epgs:
+        return [data.epgs_by_id[i] for i in sorted(fabric_epgs(data, set(vm_epgs), set()))]
     by_ip = {e.id for e in data.epgs_by_id.values() if e.network_object_id == sys_obj.id}
     if sys_obj.value:
         ip = sys_obj.value.split("/")[0]

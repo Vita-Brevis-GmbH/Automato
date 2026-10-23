@@ -49,7 +49,6 @@ from app.models import (
     InvInterface,
     NatRule,
     NetworkObject,
-    Portgroup,
     ReferenceRecordRow,
     Rule,
     RuleDomain,
@@ -450,21 +449,15 @@ def evaluate(session: Session, tenant_id: int, selectors: list[Selector],
 
     # VMs: Portgruppe einer EPG, IP in einem Netz, Kuerzel im Namen
     if scope.epg:
-        groups = {
-            (sid, name)
-            for sid, name in session.execute(
-                select(Portgroup.source_system_id, Portgroup.name).where(
-                    Portgroup.tenant_id == tenant_id, Portgroup.epg_id.in_(list(scope.epg))
-                )
-            )
-        }
-        for vid, sid, pg in session.execute(
-            select(Vm.id, Vm.source_system_id, VmNic.portgroup)
+        groups = virtual.PortgroupIndex.load(session, tenant_id)  # gleichnamige getrennt
+        for vid, sid, nic in session.execute(
+            select(Vm.id, Vm.source_system_id, VmNic)
             .join(VmNic, VmNic.vm_id == Vm.id)
             .where(Vm.tenant_id == tenant_id)
         ):
-            if (sid, pg) in groups:
-                scope.vm.setdefault(vid, f"Portgruppe {pg}")
+            pg = groups.of(sid, nic)
+            if pg is not None and pg.epg_id in scope.epg:
+                scope.vm.setdefault(vid, f"Portgruppe {nic.portgroup}")
     for vid, ip in session.execute(select(VmIp.vm_id, VmIp.ip).where(VmIp.tenant_id == tenant_id)):
         b = _bounds(ip)
         if b is not None and ranges.covers(*b):

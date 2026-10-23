@@ -133,6 +133,9 @@ class DocSystemOut(BaseModel):
     objects: list[dict] = []
     epgs: list[str] = []  # EPGs mit ganzem ACI-Pfad Tenant/AP/EPG
     portgroups: list[str] = []
+    # je NIC (0.43.1): name, portgroup, vlan, ips, epg (Tenant/AP/EPG), match (name | vlan)
+    nics: list[dict] = []
+    hints: list[str] = []  # z. B. VM-Name nennt ein anderes Projekt als das AP der Portgruppe
     vm_id: int | None = None
     power_state: str | None = None
     guest_os: str | None = None

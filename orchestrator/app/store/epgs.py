@@ -171,6 +171,7 @@ def details(session: Session, tenant_id: int, epgs: list[Epg]) -> dict[int, dict
 def vms_of(session: Session, epg_ids: list[int]) -> dict[int, list[dict]]:
     """VMs an den Portgruppen der EPGs (vCenter, ADR 0017): Name, IPs, Status, Portgruppe."""
     from app.models import Portgroup, Vm, VmNic  # spaet: Modelle des VMware-Inventars
+    from app.store.virtual import nic_join  # spaet: virtual importiert dieses Modul
 
     if not epg_ids:
         return {}
@@ -178,7 +179,7 @@ def vms_of(session: Session, epg_ids: list[int]) -> dict[int, list[dict]]:
     rows = session.execute(
         select(Portgroup.epg_id, Portgroup.epg_match, Vm, VmNic)
         .join(Vm, Vm.source_system_id == Portgroup.source_system_id)
-        .join(VmNic, (VmNic.vm_id == Vm.id) & (VmNic.portgroup == Portgroup.name))
+        .join(VmNic, (VmNic.vm_id == Vm.id) & nic_join())
         .where(Portgroup.epg_id.in_(epg_ids), Vm.template.is_(False))
         .order_by(Vm.name)
     )

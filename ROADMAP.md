@@ -336,20 +336,59 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.42.2** | Korrektur: `pruefen` meldet Container ausserhalb der Update-Profile, „starting“ und frühere ufw-Sperren nur als Hinweis |
 | **0.42.3** | Korrektur: Applikations-Doku nur mit Contracts aus Tenant/VRF der Systeme (gleiche IPs, externe EPGs anderer VRFs), Filter „EPG“ je Contract |
 | **0.43.0** | Docker und Images aktuell halten: Fremd- und Basis-Images bei jedem Update, `deploy/aufbau.sh docker-update` bzw. `AUTOMATO_DOCKER_UPDATE=1`, Stand in `pruefen` |
+| **0.43.1** | Korrektur Applikations-Doku: Scope der Contracts (auch aus `common`), Regeln anderer EPGs im gemeinsamen BD, Portgruppe je NIC über Name/VLAN/Switch, Vorgabe vor gelerntem Endpunkt, Hinweis Projektnummer |
 
-### Nächste Arbeiten (Stand 0.43.0)
+### Nächste Arbeiten (Stand 0.43.1)
 
-Phase A und die Stände 0.11–0.18.0 sind gegen die echten Systeme abgenommen (0.18.0: Regeln
-paralleler Firewalls einmal, keine Schleifen); 0.19.0 (Verbund ablehnen, redundante Wege) und
-0.20.0/0.21.0 (erkannte Anbindungen mit Ausblenden, mehrere Firewalls, Länge der Wege) und
-0.22.0/0.23.0 (Regeln und NAT auf dem Weg), 0.24.0–0.26.0 (Relevanz in Doku und Regel-Liste,
-Gegenstelle any), 0.27.0 (Inter-VDOM-Links), 0.28.0 (ACI-Contracts über externe EPGs), 0.29.0
-(Verbund als ein Hop), 0.30.0–0.33.0 (Kunden, Kunden-Filter, Kunden-Benutzer; im Test, Befunde in
-0.34.0), 0.35.0 (Weg-Suche mit Contracts und Namen), 0.36.0 (Objekte, Namenskonvention,
-Paare), 0.37.0 (offene Regeln nur als Regel) 0.38.0 (Netze in der Weg-Suche, Paar-Rahmen,
-Findings nach EPG) 0.39.0 (Netz als Ganzes in der Weg-Suche), 0.40.0 (Verbindungen prüfen, Aufbau-Skript) und
-0.41.0 (Neustart-Regeln, NetBox im Aufbau-Skript) und 0.42.0 (Sicherung einmal einrichten)
-stehen zur Abnahme an. Konzeptbefund
+**Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
+für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
+
+**Entscheide des Anwenders (2026-10-23):**
+
+- **Bewusst später:**
+  - Routing bleibt eine Momentaufnahme; Verlauf und Pflege der BGP-Umgebung viel später.
+  - Aussenrouter bzw. Systeme bis an die Grenzen der Firmen später, absichtlich noch nicht.
+  - Mehrfachausfälle und Redundanz erst nach Zonen und Design, mit Switching und Verkabelung.
+- **Verkehr zwischen VRFs:** über die Firewall; Klarheit bringen Zonen und das Regelwerk der
+  BGP-Filter.
+- **FortiGate:** kein Central-NAT; SNAT genauer, damit weniger Fälle unbestimmt bleiben.
+- **ACI:** Shared Services und Route-Leaking zwischen VRFs und Tenants abbilden. vzAny über die
+  aufgelöste VRF (`fvRsCtx.tDn`) statt über den Namen.
+- **R12:** Die Zuordnung der VMs (IPs über Portgruppen und deren EPGs) geht vor gelernten
+  Endpunkten – konfigurierte Vorgaben statt vom ACI Gelerntes (erster Teil in 0.43.1).
+- **Logische Zonen** werden in Automato gepflegt.
+- **Plan:** im Tool finden und exportieren (draw.io, SVG, PDF); später direkt nach Confluence
+  (neuer Schreibweg, eigene Freigabe).
+- **Vor dem Produktivbetrieb jetzt:** TLS intern, getrennte DB-Rollen, Fristen für das Löschen
+  alter Läufe. UI-Einschränkung, OTP, echte API-Tokens und Verschlüsselung später bzw. mit
+  anderen Mitteln.
+- **Kunden** (ADR 0018, Schritt 4):
+  - Ein Kunde besitzt logische Zonen; geteilte Zonen gehören keinem.
+  - Der Kunde sieht Contracts und Elemente in seinem Tenant und die Contracts zwischen den
+    Kunden, damit ihm bewusst ist, was offen ist und was nicht.
+  - Sein Plan enthält nur seine Systeme und die geteilten Elemente, an denen er angebunden
+    ist (auch Redundanzen), keine Fremdsysteme.
+  - Seine Doku enthält nur seine Dinge – nie die Infrastruktur oder andere Kunden.
+  - Zuordnung Benutzer → Kunde in Automato, getrennt von der Anmeldung (Keycloak); wichtig für
+    feinere Rollen.
+
+**Reihenfolge (Vorschlag, vom Anwender gutgeheissen):**
+
+| Version | Inhalt |
+|---|---|
+| 0.44.0 | Konfiguration vor Gelerntem überall (VM-Portgruppe, statische Endpunkte `fvStCEp`, EPG-/BD-Subnetz, gelernt nur als Rückfall; Befunde bei Widerspruch), VRF eindeutig aus `tDn` (vzAny); ADR 0021 (logische Zonen und Zonenplan) als Entwurf |
+| 0.45.0 | ACI Shared Services und Route-Leaking (Subnetz-Scope `shared`, `leakRoutes`, Shared L3Out), Kante VRF ↔ VRF, Weg-Suche und Doku |
+| 0.46.0 | FortiGate SNAT genauer (Pool-Typen, `ippool6`, Interface-IP, `nat-source-vip`; Quelle danach als Bereich; Befunde) |
+| 0.47.0 | Betrieb: Fristen für alte Läufe, getrennte DB-Rollen |
+| 0.48.0 | Betrieb: TLS intern (interne CA) |
+| 0.49.0 | Topologie-Modell (`GET /topology`) und Plausibilitäts-Befunde |
+| 0.50.0 | Logische Zonen und Zonenplan im Tool, Zonenmatrix |
+| 0.51.0 | Export (draw.io, SVG, PDF) und Versionen des Plans |
+| 0.52.0 | Kunden auf Zonen, Kunden-Benutzer in der Oberfläche |
+
+Frühere Reihenfolge (Stand 0.42.0, zum Nachlesen):
+
+Konzeptbefund
 des Anwenders: Ohne Routing, Verbindungswege und Redundanzen zeigt die Doku Zugriffe, die
 routingtechnisch nicht möglich sind, und `any` aus dem Internet wie eine Liste aller
 Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:

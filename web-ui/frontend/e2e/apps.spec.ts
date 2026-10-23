@@ -17,10 +17,13 @@ test("Applikation: Doku mit Übersicht, VMs und EPGs mit ganzem ACI-Pfad", async
   await expect(kpi("VMs").locator(".k-val")).toHaveText("1");
   await expect(kpi("Regeln spezifisch").locator(".k-val")).toHaveText(/^\d+$/);
   await expect(kpi("Regeln unspezifisch")).toContainText("any");
-  const vm = page.locator(".card", { hasText: "Systeme" }).locator("tbody tr", { hasText: "web01-007-ka" });
+  const systems = page.locator(".card").filter({ has: page.locator("h2", { hasText: /^Systeme$/ }) });
+  const vm = systems.locator("tbody tr", { hasText: "web01-007-ka" });
   await expect(vm).toContainText("TE/AP/EG_db");
   await expect(vm).toContainText("10.10.10.5");
   await expect(vm).toContainText("Portgruppe TE|AP|EG_db → EPG TE/AP/EG_db (AP TE/AP)");
+  // je NIC die Portgruppe mit ihrer EPG (0.43.1)
+  await expect(vm).toContainText("→ TE/AP/EG_db");
   const epg = page.locator(".card", { hasText: "EPGs im ACI" }).locator("tbody tr");
   await expect(epg).toContainText("TE/AP/EG_db");
   // Firewall-Objekte je Name zusammengefasst, mit den Firewalls und der Namensprüfung

@@ -103,7 +103,8 @@ def test_app_doku_gleichnamige_epgs_mehrerer_aci_tenants(client):
                 "sources": [f"epg:{a}"],
                 "destinations": [f"epg:{b}"],
                 "services": ["tcp/443"],
-                "aci_scope": "tenant",
+                # ueber ACI-Tenants hinweg nur mit Scope global (tenant gilt im Tenant, 0.43.1)
+                "aci_scope": "global",
             }
         ],
     }

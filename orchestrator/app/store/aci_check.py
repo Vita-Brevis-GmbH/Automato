@@ -316,11 +316,8 @@ class AciChecker:
             provider = pd.keys() & c.providers
             if not provider or not (consumer or (c.any_consumer and not c.allow)):
                 continue
-            if c.scope == "application-profile" and (s.epg.ap, s.epg.aci_tenant) != (
-                d.epg.ap,
-                d.epg.aci_tenant,
-            ):
-                continue
+            if not self.cls.scope_allows(c.scope, s.epg, d.epg):
+                continue  # Scope (AP, VRF, Tenant) - auch bei Contracts aus common (0.43.1)
             ok = service_ok(c.services, service)
             if ok is False:
                 continue

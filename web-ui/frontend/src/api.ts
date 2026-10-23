@@ -705,6 +705,9 @@ export interface AppDocSystem2 {
   }[];
   epgs: string[]; // Tenant/AP/EPG
   portgroups: string[];
+  // je NIC (0.43.1): Portgruppe → EPG und wie die Zuordnung zustande kam (name | vlan)
+  nics?: { name: string; portgroup: string | null; vlan: number | null; ips: string[]; epg: string | null; match: string | null }[];
+  hints?: string[]; // z. B. VM-Name nennt ein anderes Projekt als das AP der Portgruppe
   vm_id: number | null;
   power_state: string | null;
   guest_os: string | null;

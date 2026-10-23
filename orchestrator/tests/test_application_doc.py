@@ -5,7 +5,12 @@ Subnetz, any), Kennzahlen und Befunde."""
 
 import copy
 
-from test_vmware import ACI, ADMIN, _deliver, _seed, _system
+from app.models import Epg
+from app.store import aci_relevance
+from sqlalchemy import select
+from test_vmware import ACI, ADMIN, VCENTER, _deliver, _seed, _system
+from test_vmware import DB as DB_DN
+from test_vmware import WEB as WEB_DN
 
 OP = {"X-Dev-Roles": "operator"}
 
@@ -158,9 +163,10 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
     for t in doc["tables"]:
         for r in t["rows"]:
             rows[r["Description"]].append((r["Server Name"], r.get("_systems")))
-    everyone = ["db01-007-ka", "web01-007-ka", "TE_ka/AP_007/EG_web01"]
+    # die EPG mit den IPs ihrer VMs (Portgruppe, 0.43.1): EPG_db01 ueber db01 im /16
+    everyone = ["db01-007-ka", "web01-007-ka", "TE_ka/AP_007/EG_web01", "TE_ka/AP_007/EPG_db01"]
     assert rows["net-in"] == [("N_srv16 (10.20.0.0/16)", everyone)]
-    assert rows["any-out"] == [("any", everyone)]
+    assert rows["any-out"] == [("any", [*everyone[:2], "TE_ka/AP_007/EG_backup", *everyone[2:]])]
     # spezifisch: das Objekt mit seinen Systemen, ganzer ACI-Pfad
     assert ("EPG TE_ka/AP_007/EG_web01: web01-007-ka", None) in rows["CT_app:SJ"]
 
@@ -237,6 +243,110 @@ def test_contracts_anderer_tenants_und_vrfs_nicht_in_der_doku(client):
     one = client.get(f"/appdoc/systems/{name}", params={"tenant_id": tid}).json()
     shown = {r["Description"] for t in one["tables"] for r in t["rows"]}
     assert "CT_app:SJ" in shown and not {"CT_kb:SJ", "CT_kc:SJ"} & shown, shown
+
+
+def _befund_043() -> tuple[dict, dict, dict]:
+    """Dev-Befund 0.43.0 (Projekt TE_ka/AP_007, anonymisiert):
+
+    - Contracts aus `common` mit Scope VRF bzw. AP: Consumer anderer Tenants/APs sind keine
+      Gegenstelle;
+    - EG_web01 teilt ihren BD mit EG_other (AP_008): Regeln zu einem Host von EG_other gehoeren
+      nicht zu EG_web01, Regeln ueber das ganze BD-Subnetz schon;
+    - die IP von web01 ist auch als Endpunkt in EG_other gelernt (alt) - die Portgruppe gilt;
+    - VM app01-000-ka an einer gleichnamigen Portgruppe mit anderem VLAN; VM app02-008-ka an
+      der Portgruppe von EG_web01 (Name nennt ein anderes Projekt)."""
+    ka, cm = "uni/tn-TE_ka", "uni/tn-common"
+    aci = copy.deepcopy(ACI)
+    web = next(e for e in aci["epgs"] if e["name"] == "EG_web01")
+    web.pop("subnets")
+    web |= {"bd": "BD_web", "bd_subnets": ["10.20.0.1/24"]}
+    other, mon = f"{ka}/ap-AP_008/epg-EG_other", f"{ka}/ap-AP_008/epg-EG_mon"
+    aci["epgs"] += [
+        {"name": "EG_other", "dn": other, "tenant": "TE_ka", "ap": "AP_008", "vrf": "VRF1",
+         "bd": "BD_web", "bd_subnets": ["10.20.0.1/24"],
+         "endpoints": [{"ip": "10.20.0.77"}, {"ip": "10.20.0.5"}]},
+        {"name": "EG_mon", "dn": mon, "tenant": "TE_ka", "ap": "AP_008", "vrf": "VRF1"},
+        {"name": "EG_x", "dn": "uni/tn-TE_kb/ap-AP_100/epg-EG_x", "tenant": "TE_kb",
+         "ap": "AP_100", "vrf": "VRF1"},
+    ]  # fmt: skip
+
+    def ct(name, scope, consumers, provider, port):
+        return {"source_platform": "cisco_aci", "external_id": f"{cm}/brc-{name}/SJ",
+                "name": f"{name}:SJ", "action": "allow", "aci_scope": scope,
+                "sources": [f"epg:{c}" for c in consumers], "destinations": [f"epg:{provider}"],
+                "services": [f"tcp/{port}"],
+                "raw": {"tenant": "common", "dn": f"{cm}/brc-{name}"}}  # fmt: skip
+
+    aci["rules"] += [
+        ct("CT_common", "context", [DB_DN, "uni/tn-TE_kb/ap-AP_100/epg-EG_x"], WEB_DN, 8080),
+        ct("CT_ap", "application-profile", [mon], WEB_DN, 9090),
+        ct("CT_other", "context", [mon], other, 7070),
+    ]
+    fw = {"status": "completed", "rules": [
+        {"source_platform": "fortigate", "external_id": "30", "name": "other-in",
+         "action": "allow", "sources": ["10.9.0.0/16"], "destinations": ["10.20.0.77"],
+         "services": ["tcp/8080"], "family": "v4"},
+        {"source_platform": "fortigate", "external_id": "31", "name": "bd-in",
+         "action": "allow", "sources": ["10.9.0.0/16"], "destinations": ["10.20.0.0/24"],
+         "services": ["tcp/8443"], "family": "v4"},
+    ]}  # fmt: skip
+    vc = copy.deepcopy(VCENTER)
+    vc["virtual"]["vms"] += [
+        {"name": "app01-000-ka", "uuid": "u-8", "power_state": "poweredOn",
+         "nics": [{"name": "Network adapter 1", "portgroup": "PG_backup", "switch": "vSwitch1",
+                   "vlan": 951, "connected": True, "ips": ["10.95.1.4"]}]},
+        {"name": "app02-008-ka", "uuid": "u-9", "power_state": "poweredOn",
+         "nics": [{"name": "Network adapter 1", "portgroup": "TE_ka|AP_007|EG_web01",
+                   "switch": "DVS-ACI-A", "vlan": 1107, "connected": True,
+                   "ips": ["10.20.0.9"]}]},
+    ]  # fmt: skip
+    return aci, fw, vc
+
+
+def test_befund_contract_scope_bd_und_vm_zuordnung(client, session_factory):
+    tid, app = _app(client)
+    aci, fw, vc = _befund_043()
+    ids = {s["name"]: s["id"] for s in client.get("/systems").json()}
+    _deliver(client, tid, ids["apic-01"], "cisco_aci", aci)
+    _deliver(client, tid, ids["fw-01"], "fortigate", fw)
+    _deliver(client, tid, ids["vc-01"], "vmware", vc)
+    doc = client.get(f"/applications/{app['id']}/doc").json()
+    rules = {r["id"]: r["name"] for r in doc["rules"]}
+    names = set(rules.values())
+
+    # 1. Scope: CT_common nur mit der Gegenstelle derselben VRF, CT_ap (anderes AP) gar nicht
+    assert "CT_common:SJ" in names and "CT_ap:SJ" not in names, names
+    counter = {h["counterpart"] for h in doc["hits"] if rules.get(h["rule_id"]) == "CT_common:SJ"}
+    assert counter and all("TE_kb" not in c for c in counter), counter
+    # 2. gemeinsamer BD: Host von EG_other nicht, das ganze BD-Subnetz schon
+    assert "other-in" not in names and "bd-in" in names
+    # 3. gelernter Endpunkt von web01 in EG_other: die Portgruppe gilt - kein CT_other
+    assert "CT_other:SJ" not in names
+    # 4. VMs: gleichnamige Portgruppe mit anderem VLAN gehoert nicht dazu; abweichendes Projekt
+    #    im Namen als Hinweis, je NIC die EPG mit der Art der Zuordnung
+    vms = {s["name"]: s for s in doc["systems"]}
+    assert "app01-000-ka" not in vms
+    app2 = vms["app02-008-ka"]
+    assert app2["hints"] == [
+        "Name nennt Projekt 008, die Portgruppe TE_ka|AP_007|EG_web01 gehört zur EPG "
+        "TE_ka/AP_007/EG_web01 (Projekt 007)"
+    ]
+    (nic,) = app2["nics"]
+    assert (nic["epg"], nic["match"], nic["vlan"]) == ("TE_ka/AP_007/EG_web01", "name", 1107)
+    assert vms["web01-007-ka"]["hints"] == []
+    # Liste der VMs: die NIC an der fremden Portgruppe ohne EPG
+    rows = {r["name"]: r for r in client.get("/vms", params={"tenant_id": tid}).json()["rows"]}
+    assert rows["app01-000-ka"]["nics"][0]["epg"] is None
+
+    # Weg-Suche (aci_check) nutzt dieselbe Pruefung des Scopes
+    with session_factory() as session:
+        by_name = {e.name: e for e in session.scalars(select(Epg).where(Epg.tenant_id == tid))}
+        cls = aci_relevance.Classifier(session, tid)
+        assert cls.scope_allows("context", by_name["EG_web01"], by_name["EPG_db01"])
+        assert not cls.scope_allows("context", by_name["EG_web01"], by_name["EG_x"])
+        assert not cls.scope_allows("application-profile", by_name["EG_web01"], by_name["EG_mon"])
+        assert not cls.scope_allows("tenant", by_name["EG_web01"], by_name["EG_x"])
+        assert cls.scope_allows("global", by_name["EG_web01"], by_name["EG_x"])
 
 
 def test_doku_server_ohne_vm(client):

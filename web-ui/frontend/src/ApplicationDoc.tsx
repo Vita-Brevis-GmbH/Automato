@@ -803,13 +803,37 @@ function SystemsCard({
                       <div className="faint" style={{ fontSize: 11.5 }}>
                         {x.member}
                       </div>
+                      {(x.hints ?? []).map((h) => (
+                        <div key={h} className="app-hint" style={{ fontSize: 11.5 }}>
+                          <span className="chip warn">Hinweis</span> {h}
+                        </div>
+                      ))}
                     </td>
                     <td className="mono">
                       {x.ips.length ? x.ips.map((ip) => <div key={ip}>{ip}</div>) : <Dash />}
                       {x.dns.length > 0 && <div className="faint">{x.dns.join(", ")}</div>}
                     </td>
                     <td className="mono">{x.epgs.length ? x.epgs.map((e) => <div key={e}>{e}</div>) : <Dash />}</td>
-                    <td className="mono">{x.portgroups.length ? x.portgroups.map((p) => <div key={p}>{p}</div>) : <Dash />}</td>
+                    <td className="mono">
+                      {x.nics?.length ? (
+                        x.nics
+                          .filter((n) => n.portgroup)
+                          .map((n) => (
+                            <div key={n.name} title={n.name}>
+                              {n.portgroup}
+                              {n.vlan != null && <span className="faint"> (VLAN {n.vlan})</span>}
+                              <div className="faint">
+                                → {n.epg ?? "keine EPG"}
+                                {n.epg && n.match === "vlan" && <span className="chip warn"> nur über VLAN</span>}
+                              </div>
+                            </div>
+                          ))
+                      ) : x.portgroups.length ? (
+                        x.portgroups.map((p) => <div key={p}>{p}</div>)
+                      ) : (
+                        <Dash />
+                      )}
+                    </td>
                     <td className="mono">
                       {x.cluster ?? <Dash />}
                       {x.host && <div className="faint">{x.host}</div>}

@@ -38,6 +38,24 @@ def test_normalisierung_vms_portgruppen_vlans_und_ips():
     assert pgs["VM Network"].vlan is None
 
 
+def test_gleichnamige_standard_portgruppen_mit_anderem_vlan():
+    """Dev-Befund 0.43.0: PG_app auf zwei Hosts mit VLAN 950 bzw. 951 - zwei Netze, jede NIC
+    mit dem VLAN ihres Hosts."""
+
+    def host(moid, vlan):
+        pg = {"name": "PG_app", "vlan": vlan, "vswitch": "vSwitch1"}
+        return {"moid": moid, "name": f"{moid}.example.ch", "portgroups": [pg]}
+
+    def vm(name, moid):
+        return {"name": name, "host": moid,
+                "nics": [{"key": 1, "label": "NIC 1", "network_name": "PG_app"}]}  # fmt: skip
+
+    inv = normalize({"HostSystem": [host("h1", 950), host("h2", 951)],
+                     "VirtualMachine": [vm("a", "h1"), vm("b", "h2")]})  # fmt: skip
+    assert sorted((p.name, p.vlan) for p in inv.portgroups) == [("PG_app", 950), ("PG_app", 951)]
+    assert {v.name: v.nics[0].vlan for v in inv.vms} == {"a": 950, "b": 951}
+
+
 class _Stub:
     def __init__(self):
         self.calls = []

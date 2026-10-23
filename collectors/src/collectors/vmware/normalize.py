@@ -128,10 +128,15 @@ def normalize(data: dict[str, list[dict]]) -> VirtualInventory:
         )
         for p in data.get("DistributedVirtualPortgroup", [])
     ]
-    seen = {p.name for p in portgroups}
+    # Standard-Portgruppen je Name und VLAN: gleicher Name mit anderem VLAN auf einem anderen
+    # Host ist ein anderes Netz (Dev-Befund 0.43.0 - sonst erbte die NIC das VLAN, und damit
+    # die EPG, des ersten Hosts)
+    seen = {(p.name, None) for p in portgroups}
+    dvs = {p.name for p in portgroups}
     for (_host, name), pg in sorted(standard.items(), key=lambda x: x[0][1]):
-        if name not in seen:
-            seen.add(name)
+        key = (name, pg.get("vlan") or None)
+        if name not in dvs and key not in seen:
+            seen.add(key)
             portgroups.append(
                 NormalizedPortgroup(
                     name=name,

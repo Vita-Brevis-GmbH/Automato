@@ -58,6 +58,55 @@ def replace(session: Session, run, inv: VirtualInventory) -> int:
     return len(vms)
 
 
+def nic_join():
+    """SQL-Bedingung NIC <-> Portgruppe: gleicher Name und - wo beide es kennen - gleiches
+    VLAN, bei Portgruppen eines Distributed Switch auch derselbe Switch (Standard-vSwitches
+    heissen je Host gleich, `vSwitch0`). Gleichnamige Portgruppen auf verschiedenen Switches
+    bzw. mit anderem VLAN sind verschiedene Netze (Dev-Befund 0.43.0); der Name allein ordnete
+    eine VM der EPG einer fremden Portgruppe zu."""
+    return (
+        (VmNic.portgroup == Portgroup.name)
+        & (
+            (Portgroup.kind != "dvs")
+            | VmNic.switch.is_(None)
+            | Portgroup.switch.is_(None)
+            | (VmNic.switch == Portgroup.switch)
+        )
+        & (VmNic.vlan.is_(None) | Portgroup.vlan.is_(None) | (VmNic.vlan == Portgroup.vlan))
+    )
+
+
+class PortgroupIndex:
+    """Portgruppen je (vCenter, Name) - auch mehrere gleichnamige (`nic_join`)."""
+
+    def __init__(self, groups):
+        self.groups = list(groups)
+        self.by_name: dict[tuple[int, str], list[Portgroup]] = defaultdict(list)
+        for pg in self.groups:
+            self.by_name[(pg.source_system_id, pg.name)].append(pg)
+
+    @classmethod
+    def load(cls, session: Session, tenant_id: int) -> "PortgroupIndex":
+        return cls(session.scalars(select(Portgroup).where(Portgroup.tenant_id == tenant_id)))
+
+    def of(self, source_system_id: int, nic) -> Portgroup | None:
+        """Portgruppe einer NIC; mehrdeutig (verschiedene EPGs) = None statt geraten."""
+        found = [
+            pg
+            for pg in self.by_name.get((source_system_id, nic.portgroup or ""), [])
+            if (
+                pg.kind != "dvs"
+                or nic.switch is None
+                or pg.switch is None
+                or nic.switch == pg.switch
+            )
+            and (nic.vlan is None or pg.vlan is None or nic.vlan == pg.vlan)
+        ]
+        if len({pg.epg_id for pg in found}) > 1:
+            return None
+        return found[0] if found else None
+
+
 def _bare(name: str) -> str:
     return _PREFIX.sub("", name.strip()).lower()
 
@@ -109,7 +158,7 @@ class Lookup:
     def __init__(self, session: Session, tenant_id: int | None, ips: set[str] | None = None):
         self.by_ip: dict[str, list[Vm]] = defaultdict(list)
         self.nic_of: dict[tuple[int, str], VmNic] = {}
-        self.portgroups: dict[tuple[int, str], Portgroup] = {}
+        self.portgroups = PortgroupIndex([])
         self.epgs: dict[int, Epg] = {}
         self.session = session
         self._ips_of: dict[int, list[str]] | None = None
@@ -134,9 +183,8 @@ class Lookup:
                 self.by_ip[ip.ip].append(vm)
             if ip.nic_id in nics:
                 self.nic_of[(vm.id, ip.ip)] = nics[ip.nic_id]
-        for pg in session.scalars(select(Portgroup).where(Portgroup.tenant_id == tenant_id)):
-            self.portgroups[(pg.source_system_id, pg.name)] = pg
-        epg_ids = {pg.epg_id for pg in self.portgroups.values() if pg.epg_id}
+        self.portgroups = PortgroupIndex.load(session, tenant_id)
+        epg_ids = {pg.epg_id for pg in self.portgroups.groups if pg.epg_id}
         if epg_ids:
             self.epgs = {e.id: e for e in session.scalars(select(Epg).where(Epg.id.in_(epg_ids)))}
 
@@ -161,11 +209,7 @@ class Lookup:
             return None
         vm = vms[0]
         nic = self.nic_of.get((vm.id, ip))
-        pg = (
-            self.portgroups.get((vm.source_system_id, nic.portgroup))
-            if nic and nic.portgroup
-            else None
-        )
+        pg = self.portgroups.of(vm.source_system_id, nic) if nic and nic.portgroup else None
         epg = self.epgs.get(pg.epg_id) if pg and pg.epg_id else None
         return {
             "name": vm.name,
@@ -199,7 +243,7 @@ class Lookup:
         out: set[int] = set()
         for vm in self.by_ip.get(ip, []):
             nic = self.nic_of.get((vm.id, ip))
-            pg = self.portgroups.get((vm.source_system_id, nic.portgroup)) if nic else None
+            pg = self.portgroups.of(vm.source_system_id, nic) if nic else None
             if pg is not None and pg.epg_id:
                 out.add(pg.epg_id)
         return out

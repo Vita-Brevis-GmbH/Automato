@@ -34,7 +34,6 @@ from app.models import (
     NetworkObject,
     ObjectCategory,
     ObjectClass,
-    Portgroup,
     Rule,
     RuleDomain,
     RuleIndex,
@@ -45,7 +44,7 @@ from app.models import (
     VmIp,
     VmNic,
 )
-from app.store import appdoc, finding_text, parallel, references, rule_index, sites
+from app.store import appdoc, finding_text, parallel, references, rule_index, sites, virtual
 from app.store import naming_profiles as profile_store
 from app.store import rules as rules_store
 from app.store.epgs import inventory_label
@@ -374,22 +373,28 @@ def _ip(value: str | None) -> str | None:
     return value.split("/")[0] if value else None
 
 
-def _app_vms(session: Session, tenant_id: int, epgs: dict, hosts: dict) -> dict[int, dict]:
+def _app_vms(
+    session: Session, tenant_id: int, epgs: dict, hosts: dict, groups: virtual.PortgroupIndex
+) -> dict[int, dict]:
     """VMs der Applikation: an den Portgruppen ihrer EPGs und hinter ihren Servern (gleiche IP),
-    je VM mit den Gruenden (Portgruppe -> EPG bzw. IP = Server)."""
+    je VM mit den Gruenden (Portgruppe -> EPG bzw. IP = Server). Die Portgruppe einer NIC ueber
+    Name, Switch und VLAN (`virtual.PortgroupIndex`, Dev-Befund 0.43.0)."""
     out: dict[int, dict] = {}
 
     def entry(vm: Vm) -> dict:
         return out.setdefault(vm.id, {"vm": vm, "epg_ids": set(), "hosts": {}, "why": []})
 
-    if epgs:
+    names = {pg.name for pg in groups.groups if pg.epg_id in epgs}
+    if names:
         rows = session.execute(
-            select(Portgroup, Vm)
-            .join(Vm, Vm.source_system_id == Portgroup.source_system_id)
-            .join(VmNic, (VmNic.vm_id == Vm.id) & (VmNic.portgroup == Portgroup.name))
-            .where(Portgroup.epg_id.in_(list(epgs)), Vm.template.is_(False))
+            select(Vm, VmNic)
+            .join(VmNic, VmNic.vm_id == Vm.id)
+            .where(Vm.tenant_id == tenant_id, VmNic.portgroup.in_(names), Vm.template.is_(False))
         )
-        for pg, vm in rows:
+        for vm, nic in rows:
+            pg = groups.of(vm.source_system_id, nic)
+            if pg is None or pg.epg_id not in epgs:
+                continue
             e = entry(vm)
             e["epg_ids"].add(pg.epg_id)
             label = inventory_label(epgs[pg.epg_id][0])
@@ -407,6 +412,20 @@ def _app_vms(session: Session, tenant_id: int, epgs: dict, hosts: dict) -> dict[
             e["hosts"][h.id] = h
             e["why"].append(f"IP {ip} = Server {h.name} ({why})")
     return out
+
+
+def _project_hint(vm_name: str, portgroup: str | None, epg: Epg) -> str | None:
+    """Hinweis, wenn der VM-Name ein anderes Projekt nennt als das AP der EPG ihrer Portgruppe
+    (Dev-Befund 0.43.0: VM `…-000-…` an der Portgruppe einer EPG in `AP_001`). Nur ein Hinweis
+    aus der Namenskonvention - die Zuordnung folgt der Portgruppe."""
+    vm_nr = _HOST_NR.match(vm_name or "")
+    ap_nr = _AP_NR.match(epg.ap or "")
+    if vm_nr is None or ap_nr is None or vm_nr[1] == ap_nr[1]:
+        return None
+    return (
+        f"Name nennt Projekt {vm_nr[1]}, die Portgruppe {portgroup} gehört zur EPG "
+        f"{inventory_label(epg)} (Projekt {ap_nr[1]})"
+    )
 
 
 def _address_objects(session: Session, tenant_id: int, ips: set[str]) -> dict[str, list]:
@@ -481,11 +500,8 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     data = appdoc.TenantData(session, tid)
     ctx = references.context(session, tid)
     site_index = sites.SiteIndex(session, tid)
-    vms = _app_vms(session, tid, epgs, hosts)
-    portgroups = {
-        (pg.source_system_id, pg.name): pg
-        for pg in session.scalars(select(Portgroup).where(Portgroup.tenant_id == tid))
-    }
+    portgroups = virtual.PortgroupIndex.load(session, tid)
+    vms = _app_vms(session, tid, epgs, hosts, portgroups)
 
     # VRFs der Applikation: fuer Systeme ohne Portgruppe zaehlen gleiche IPs in anderen
     # ACI-Tenants/VRFs nicht (Dev-Befund 0.42.2, appdoc.fabric_epgs)
@@ -507,13 +523,32 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         servers = {h.id: h for h in _hosts_with_ips(session, tid, ips)} | e["hosts"]
         covered_hosts |= set(servers)
         nic_epgs = set(e["epg_ids"])
-        nets = []
+        nets: list[str] = []
+        nics: list[dict] = []
+        mapped: set[str] = set()  # IPs an einer NIC mit EPG (Portgruppe) - Vorgabe vor Gelerntem
+        hints: list[str] = []
         for n in vm.nics:
-            pg = portgroups.get((vm.source_system_id, n.portgroup)) if n.portgroup else None
-            if pg is not None and pg.epg_id:
-                nic_epgs.add(pg.epg_id)
+            pg = portgroups.of(vm.source_system_id, n) if n.portgroup else None
+            epg = data.epgs_by_id.get(pg.epg_id) if pg is not None and pg.epg_id else None
+            if epg is not None:
+                nic_epgs.add(epg.id)
+                mapped |= set(n.ips or [])
+                hint = _project_hint(vm.name, n.portgroup, epg)
+                if hint:
+                    hints.append(hint)
             if n.portgroup:
                 nets.append(f"{n.portgroup}" + (f" (VLAN {n.vlan})" if n.vlan is not None else ""))
+            nics.append(
+                {
+                    "name": n.name,
+                    "portgroup": n.portgroup,
+                    "vlan": n.vlan,
+                    "ips": n.ips or [],
+                    "epg": inventory_label(epg) if epg is not None else None,
+                    # wie die Portgruppe zur EPG kam: name | vlan (Befund „nur ueber VLAN“)
+                    "match": pg.epg_match if epg is not None else None,
+                }
+            )
         key = f"vm:{vm_id}"
         systems.append(
             {
@@ -527,6 +562,8 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                     inventory_label(data.epgs_by_id[i]) for i in nic_epgs if i in data.epgs_by_id
                 ),
                 "portgroups": nets,
+                "nics": nics,
+                "hints": list(dict.fromkeys(hints)),
                 "vm_id": vm.id,
                 "power_state": vm.power_state,
                 "guest_os": vm.guest_os,
@@ -537,7 +574,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             }
         )
         for idx, row in appdoc.vm_rows(
-            session, data, vm.name, ips, list(servers.values()), nic_epgs, prefer
+            session, data, vm.name, ips, list(servers.values()), nic_epgs, prefer, mapped
         ):
             rows.append((key, idx, row))
     for hid, (h, why) in sorted(hosts.items(), key=lambda kv: kv[1][0].name):
@@ -558,6 +595,8 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                     inventory_label(x) for x in appdoc.host_epgs(session, data, h, prefer=prefer)
                 ),
                 "portgroups": [],
+                "nics": [],
+                "hints": [],
                 "vm_id": None,
                 "power_state": None,
                 "guest_os": None,

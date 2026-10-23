@@ -38,7 +38,6 @@ from app.models import (
     InvVlan,
     InvVrf,
     Platform,
-    Portgroup,
     Site,
     SourceSystem,
     Tenant,
@@ -46,6 +45,7 @@ from app.models import (
 )
 from app.store import references
 from app.store import sites as site_store
+from app.store import virtual as virtual_store
 from app.store.epgs import inventory_label
 
 TAG = "automato"
@@ -714,12 +714,11 @@ def _virtualization_wants(session: Session, w: Wants, tenant: Tenant, tenant_ref
     ).all()
     if not rows:
         return
-    epg_of = {
-        (sid, name): inventory_label(epg)
-        for sid, name, epg in session.execute(
-            select(Portgroup.source_system_id, Portgroup.name, Epg)
-            .join(Epg, Epg.id == Portgroup.epg_id)
-            .where(Portgroup.tenant_id == tenant.id)
+    groups = virtual_store.PortgroupIndex.load(session, tenant.id)  # gleichnamige getrennt
+    labels = {
+        e.id: inventory_label(e)
+        for e in session.scalars(
+            select(Epg).where(Epg.id.in_({pg.epg_id for pg in groups.groups if pg.epg_id}))
         )
     }
     plens = _PrefixLens(w, references.context(session, tenant.id).primary)
@@ -774,9 +773,9 @@ def _virtualization_wants(session: Session, w: Wants, tenant: Tenant, tenant_ref
         )
         epgs = sorted(
             {
-                epg_of[(vm.source_system_id, n.portgroup)]
+                labels[pg.epg_id]
                 for n in vm.nics
-                if (vm.source_system_id, n.portgroup) in epg_of
+                if (pg := groups.of(vm.source_system_id, n)) is not None and pg.epg_id in labels
             }
         )
         comments = "\n".join(
@@ -809,7 +808,8 @@ def _virtualization_wants(session: Session, w: Wants, tenant: Tenant, tenant_ref
         )
         for nic in vm.nics:
             key = f"{vm.name}/{nic.name}"
-            epg = epg_of.get((vm.source_system_id, nic.portgroup))
+            pg = groups.of(vm.source_system_id, nic)
+            epg = labels.get(pg.epg_id) if pg is not None and pg.epg_id else None
             w.add(
                 Want(
                     "vm_interface",

@@ -7,6 +7,40 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.43.1 – 2026-10-23
+
+Korrektur der Applikations-Doku (Befunde aus dem Test von 0.43.0: Regeln, bei denen nicht klar
+war, warum sie zur Applikation gehören). Ohne Migration; der Collector-Agent aktualisiert sich.
+
+- **Scope der Contracts:**
+  - Ein Contract mit Scope VRF bzw. AP verbindet nur EPGs derselben VRF bzw. desselben AP. Das
+    gilt auch, wenn er in `common` liegt und EPGs vieler Tenants ihn nutzen.
+  - Consumer bzw. Provider ausserhalb des Scopes sind keine Gegenstelle mehr. Bleibt keine
+    übrig, fehlt der Contract in der Doku.
+  - Scope `tenant`: gleicher ACI-Tenant. Gleiche Prüfung in der Weg-Suche.
+- **Firewall-Regeln einer EPG mit gemeinsamem BD:**
+  - Teilt eine EPG ihren BD mit anderen EPGs, zählen Regeln zum BD-Subnetz nur, wenn sie das
+    ganze Subnetz enthalten.
+  - Ein Host bzw. Teilnetz darin zählt nur über die IPs der EPG selbst: ihre VMs
+    (Portgruppe) und ihre Endpunkte. Bisher kam die Regel zum Host einer anderen EPG im
+    gleichen BD dazu – sogar als „spezifisch“.
+- **VMs:**
+  - Die Portgruppe einer NIC wird über Name, VLAN und – beim Distributed Switch – den Switch
+    bestimmt. Bisher nur über den Namen; eine gleichnamige Portgruppe mit anderem VLAN brachte
+    eine fremde EPG.
+  - Ist die Portgruppe mehrdeutig, gibt es keine EPG statt einer geratenen.
+  - Der Collector liefert Standard-Portgruppen je Name und VLAN.
+  - Gilt für Applikations-Doku, VM-Liste, Portgruppen, Kunden und NetBox-Sync.
+- **Vorgabe vor Gelerntem (R12):** Für IPs an einer NIC mit EPG gilt die EPG der Portgruppe.
+  Ein gelernter Endpunkt mit derselben IP in einer anderen EPG (alt, verschoben) bringt keine
+  Contracts mehr. Das gilt auch in der Doku je System.
+- **Applikations-Doku, Systeme:**
+  - Je NIC steht die Portgruppe mit VLAN und EPG da, bei Zuordnung nur über das VLAN mit
+    Hinweis.
+  - Nennt der VM-Name ein anderes Projekt als das AP der EPG, steht ein Hinweis dabei, z. B.
+    „Name nennt Projekt 000, die Portgruppe … gehört zur EPG …/AP_001/… (Projekt 001)“.
+- Tests (Orchestrator, Collector, UI), Doku (BETRIEB, TESTS).
+
 ## 0.43.0 – 2026-10-23
 
 Docker und Images aktuell halten (Anwender: „wie kann man den Docker gleich mit updaten,

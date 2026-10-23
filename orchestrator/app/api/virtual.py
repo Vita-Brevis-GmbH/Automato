@@ -22,6 +22,7 @@ from app.auth.principal import Principal
 from app.db import get_session
 from app.models import Epg, EpgSubnet, InvSubnet, Portgroup, SourceSystem, Vm, VmNic
 from app.store import references
+from app.store import virtual as virtual_store
 from app.store.epgs import inventory_label
 
 router = APIRouter(tags=["virtual"])
@@ -40,11 +41,8 @@ def _context(session: Session, tid: int) -> tuple[dict, dict, dict]:
             select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == tid)
         ).all()
     )
-    groups = {
-        (pg.source_system_id, pg.name): pg
-        for pg in session.scalars(select(Portgroup).where(Portgroup.tenant_id == tid))
-    }
-    epg_ids = {pg.epg_id for pg in groups.values() if pg.epg_id}
+    groups = virtual_store.PortgroupIndex.load(session, tid)  # gleichnamige getrennt (0.43.1)
+    epg_ids = {pg.epg_id for pg in groups.groups if pg.epg_id}
     epgs = (
         {e.id: e for e in session.scalars(select(Epg).where(Epg.id.in_(epg_ids)))}
         if epg_ids
@@ -81,7 +79,7 @@ def list_vms(
     def row(vm: Vm) -> dict:
         nics = []
         for n in vm.nics:
-            pg = groups.get((vm.source_system_id, n.portgroup or ""))
+            pg = groups.of(vm.source_system_id, n)
             e = epgs.get(pg.epg_id) if pg and pg.epg_id else None
             nics.append(
                 {
@@ -154,7 +152,7 @@ def list_portgroups(
     view = customer_view(session, principal, tid, customer_id)
     mine = set(session.scalars(view.ids("epg"))) if view else None  # Portgruppen seiner EPGs
     rows = []
-    for pg in sorted(groups.values(), key=lambda p: (p.name, p.source_system_id)):
+    for pg in sorted(groups.groups, key=lambda p: (p.name, p.source_system_id, p.switch or "")):
         if mine is not None and pg.epg_id not in mine:
             continue
         e = epgs.get(pg.epg_id) if pg.epg_id else None
@@ -242,7 +240,17 @@ def portgroup_detail(
     rows = session.execute(
         select(Vm, VmNic)
         .join(VmNic, VmNic.vm_id == Vm.id)
-        .where(Vm.source_system_id == pg.source_system_id, VmNic.portgroup == pg.name)
+        .where(
+            Vm.source_system_id == pg.source_system_id,
+            VmNic.portgroup == pg.name,
+            # gleichnamige Portgruppe auf einem anderen Switch bzw. VLAN ist ein anderes Netz
+            *(
+                [VmNic.switch.is_(None) | (VmNic.switch == pg.switch)]
+                if pg.switch and pg.kind == "dvs"
+                else []
+            ),
+            *([VmNic.vlan.is_(None) | (VmNic.vlan == pg.vlan)] if pg.vlan is not None else []),
+        )
         .order_by(Vm.name, VmNic.name)
     ).all()
     for vm, nic in rows:

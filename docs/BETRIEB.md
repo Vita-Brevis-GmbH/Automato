@@ -467,6 +467,22 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       in einer EPG nicht. Ihre Contracts gehören zu den Systemen dort.
     - Der Filter „EPG“ in der Applikations-Doku zeigt die Contracts eines Systems nur über
       diese EPG (VM in mehreren EPGs).
+  - **Scope, gemeinsamer BD, Portgruppen (0.43.1):**
+    - *Scope der Contracts:* `application-profile` gilt nur im selben AP, `context` nur in
+      derselben VRF, `tenant` nur im selben ACI-Tenant – auch für Contracts aus `common`.
+      Consumer bzw. Provider ausserhalb des Scopes sind keine Gegenstelle, ebenso in der
+      Weg-Suche.
+    - *Gemeinsamer BD:* Teilt die EPG ihren BD mit anderen EPGs, zählen für sie Regeln, die das
+      ganze BD-Subnetz enthalten. Ein Host bzw. Teilnetz darin zählt nur, wenn es eine IP der
+      EPG trifft (VM an ihrer Portgruppe, Endpunkt der EPG).
+    - *Portgruppe einer NIC:* Sie wird über Name und VLAN bestimmt, beim Distributed Switch
+      auch über den Switch. Mehrdeutig heisst keine EPG. Unter „Systeme“ steht je NIC
+      „Portgruppe (VLAN) → EPG“, bei Zuordnung nur über das VLAN mit Hinweis.
+    - *Vorgabe vor Gelerntem:* Für eine IP an einer NIC mit EPG gilt die EPG der Portgruppe,
+      nicht ein gelernter Endpunkt in einer anderen EPG.
+    - *Hinweis Projektnummer:* Nennt der VM-Name (`app01-000-…`) ein anderes Projekt als das AP
+      der EPG ihrer Portgruppe, steht ein Hinweis beim System. Die Zuordnung folgt der
+      Portgruppe – zu prüfen ist dann die Portgruppe der VM im vCenter.
 - **Findings:** oben eine **Übersicht nach Kategorien** (IPAM-Abgleich, Namenskonvention,
   Bereinigung, ACI / VMware) mit offenen/gesamten Befunden je Typ (Klick filtert). Neu mit
   dem vCenter: *VM-IP fehlt im IPAM* und *Portgruppe nach ACI-Schema ohne EPG*. Je Befund ein Satz,
