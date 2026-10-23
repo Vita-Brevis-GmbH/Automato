@@ -15,6 +15,9 @@ den Verkehr von der Quelle zum Ziel zu? Wie im APIC:
    sicher, sonst „moeglich“.
 5. **Kein Contract:** gesperrt (Whitelist-Modell des ACI).
 
+Ein Netz (0.39.0) gehoert zu einer EPG, wenn ihr Subnetz es ganz enthaelt; erfassen EPGs bzw.
+externe EPGs nur Teile davon, ist die Zuordnung nicht sicher (Urteil „moeglich“ bzw. abhaengig).
+
 Ergebnis wie bei den FortiGate-Hops (`policy_check`): `verdict` allow | deny | implicit_deny |
 depends | unknown, `text`, `rules` (die Contracts mit `decides`/`unsure`), dazu die Zuordnung
 (`src_epg`, `dst_epg`). Nur lesend; nicht beruecksichtigt: VRF im Modus „unenforced“,
@@ -46,6 +49,7 @@ from app.models.rule import EndpointKind, rule_service
 from app.store import aci_relevance
 from app.store import epgs as epg_store
 from app.store.rule_view import bare_service
+from app.store.topology import is_net, overlaps, within
 
 SHOWN = 12
 _ALL = ("", "any", "unspecified")
@@ -182,9 +186,19 @@ class AciChecker:
             net = self.cls.subnet_for(epg, ip)
             label = f"externe EPG {aci_relevance.ext_label(epg)}" + (f" ({net})" if net else "")
             found.append(Member(epg, rel[0] == aci_relevance.POSSIBLE, label))
+        if not found and is_net(ip):  # Netz (0.39.0): externe EPGs, die nur einen Teil erfassen
+            found = self._partial_external(sid, vrf, ip)
         if not found:
             return [], f"keine EPG bzw. externe EPG erfasst {ip} in VRF {vrf}"
         return found, " bzw. ".join(m.text for m in found)
+
+    def _partial_external(self, sid: int, vrf: str, net) -> list[Member]:
+        out: dict[int, Member] = {}
+        for epg, n in self.cls.overlapping(sid, vrf, net):
+            if epg.id not in out:
+                label = f"externe EPG {aci_relevance.ext_label(epg)} ({n}, nur Teil von {net})"
+                out[epg.id] = Member(epg, False, label)
+        return list(out.values())
 
     def _inside(self, sid: int, vrf: str, ip) -> tuple[list[Member], str] | None:
         """Im Fabric der VRF: gelernter Endpunkt, Server der EPG, EPG- bzw. BD-Subnetz."""
@@ -208,7 +222,7 @@ class AciChecker:
             members = [Member(e, True, f"EPG {epg_store.inventory_label(e)}") for e in own]
             return members, " bzw. ".join(m.text for m in members)
         nets = [(n, origin, i) for n, origin, i in self._subnets.get((sid, vrf), [])
-                if n.version == ip.version and ip in n]  # fmt: skip
+                if within(ip, n)]  # fmt: skip
         if nets:
             epg_nets = [x for x in nets if x[1] == "epg"]
             pool = epg_nets or nets
@@ -226,6 +240,14 @@ class AciChecker:
         where = self.cls._fabric(sid, vrf, ip)  # Inventar: BD-Subnetz ohne bekannte EPG
         if where:
             return [], f"im Fabric ({where}), EPG nicht bekannt"
+        if is_net(ip):  # Netz (0.39.0), das EPG-Subnetze nur teilweise enthaelt
+            parts = [i for n, _o, i in self._subnets.get((sid, vrf), []) if overlaps(ip, n)]
+            if parts:
+                members = [
+                    Member(self.epgs[i], False, f"EPG {epg_store.inventory_label(self.epgs[i])}")
+                    for i in dict.fromkeys(parts)
+                ]
+                return members, f"Teile von {ip}: " + " bzw. ".join(m.text for m in members)
         return None
 
     def _server_ids(self, ip: str) -> set[int]:

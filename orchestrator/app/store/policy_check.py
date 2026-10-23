@@ -11,6 +11,9 @@ Reihenfolge der Firewall. Wie auf der FortiGate entscheidet die erste passende P
 - **keine passende Policy:** implizit gesperrt.
 - Abgeschaltete Policies zaehlen nicht.
 
+Netz als Quelle bzw. Ziel (0.39.0): sicher nur, wenn ein Objekt der Policy das ganze Netz
+enthaelt; erfasst sie nur einen Teil, ist sie „moeglich“ („Quelle nur teilweise“).
+
 NAT (0.23.0): Am Hop mit einer VIP gilt fuer die Policy das urspruengliche Ziel (die VIP) und
 - bei Port-Weiterleitung - der interne Port; danach das interne Ziel. SNAT der erlaubenden
 Policy (IP-Pool bzw. IP des Ausgangs-Interfaces) ist die Quelle fuer die Firewalls danach.
@@ -44,6 +47,7 @@ from app.models import (
 )
 from app.models.rule import EndpointKind, rule_service
 from app.store.rule_index import value_range
+from app.store.topology import endpoint, span
 
 FIREWALL_KINDS = ("firewall", "vdom")
 ACI_KINDS = ("vrf",)
@@ -276,9 +280,11 @@ class Checker:
                 "Eingang": _ports(p.srcintf, ingress, known),
                 "Ausgang": _ports(p.dstintf, egress, known),
             }
-            src_ok, src_via = _address(p, "src", src)
-            dst_ok, dst_via = _address(p, "dst", dst)
-            checks["Quelle"], checks["Ziel"] = src_ok, dst_ok
+            src_ok, src_via, src_part = _address(p, "src", src)
+            dst_ok, dst_via, dst_part = _address(p, "dst", dst)
+            # Netz (0.39.0): erfasst die Policy nur einen Teil, ist sie nur „moeglich“
+            checks["Quelle nur teilweise" if src_part else "Quelle"] = src_ok
+            checks["Ziel nur teilweise" if dst_part else "Ziel"] = dst_ok
             checks["Dienst"] = _service(p, service)
             checks["Benutzer/Gruppen"] = None if p.identity else True
             checks[f"Zeitplan {p.schedule}"] = (
@@ -350,26 +356,36 @@ def _ports(names: list[str], port: dict | None, known: set[str]) -> bool | None:
     return False if all(n in known for n in names) else None
 
 
-def _address(p: _Policy, role: str, ip) -> tuple[bool | None, str | None]:
-    """Quelle bzw. Ziel: (passt, ueber welches Objekt); negiert umgekehrt."""
+def _address(p: _Policy, role: str, ip) -> tuple[bool | None, str | None, bool]:
+    """Quelle bzw. Ziel: (passt, ueber welches Objekt, nur teilweise); negiert umgekehrt.
+
+    Ein Netz (0.39.0) passt, wenn ein Objekt der Policy es ganz enthaelt (`10.10.0.0/23` in
+    `10.10.0.0/16`); ueberschneiden sie sich nur, erfasst die Policy einen Teil - „moeglich“."""
     ranges = p.ranges.get(role, [])
     if ip is None:  # Quelle unbekannt (Start gewaehlt)
         if not p.negate.get(role) and any(r[3] for r in ranges):
-            return True, "any"
-        return None, None
-    value = int(ip)
-    hits = [r for r in ranges if r[0] == ip.version and r[1] <= value <= r[2]]
+            return True, "any", False
+        return None, None, False
+    lo, hi = span(ip)
+    same = [r for r in ranges if r[0] == ip.version]
+    hits = [r for r in same if r[1] <= lo and hi <= r[2]]
+    part = [] if hits else [r for r in same if r[1] <= hi and lo <= r[2]]
     best = min(hits, key=lambda r: r[2] - r[1]) if hits else None
-    inside = best is not None
+    unresolved = p.unresolved.get(role)
     if p.negate.get(role):
-        if inside:
-            return (None, None) if p.unresolved.get(role) else (False, None)
-        return (None, None) if p.unresolved.get(role) else (True, "negiert")
-    if inside:
-        return True, "any" if best[3] else (best[4] or "Netz")
-    if p.unresolved.get(role) or not p.endpoints.get(role):
-        return None, None
-    return False, None
+        if best is not None:
+            return (None, None, False) if unresolved else (False, None, False)
+        if part:
+            return None, None, True
+        return (None, None, False) if unresolved else (True, "negiert", False)
+    if best is not None:
+        return True, "any" if best[3] else (best[4] or "Netz"), False
+    if part:
+        widest = max(part, key=lambda r: r[2] - r[1])
+        return None, f"{widest[4] or 'Netz'} (Teil)", True
+    if unresolved or not p.endpoints.get(role):
+        return None, None, False
+    return False, None, False
 
 
 def _service(p: _Policy, want: tuple[str, int | None] | None) -> bool | None:
@@ -416,7 +432,7 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
             kind = hop.get("kind")
             if kind not in FIREWALL_KINDS + ACI_KINDS:
                 continue
-            hop_dst = ipaddress.ip_address(hop["dst"]) if hop.get("dst") else dst
+            hop_dst = endpoint(hop["dst"]) if hop.get("dst") else dst
             if kind in ACI_KINDS:
                 aci = aci or AciChecker(session, tenant_id)
                 sid, vrf = hop["source_system_id"], hop["context"]

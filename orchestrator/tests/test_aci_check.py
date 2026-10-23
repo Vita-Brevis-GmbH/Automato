@@ -221,23 +221,21 @@ def test_suche_nach_namen(client):
 
 
 def test_suche_nach_netzen(client):
-    """0.38.0: Netze aus Firewall-Objekten, IPAM und Inventar (ACI-EPG, Interface); je Netz
-    eine Adresse für die Prüfung, die keinem Gerät gehört."""
+    """0.38.0: Netze aus Firewall-Objekten, IPAM und Inventar (ACI-EPG, Interface); seit
+    0.39.0 geht das Netz als Ganzes in die Weg-Suche (`ip` = das Netz)."""
     tid = _seed(client)
 
-    # Netz-Objekt: 10.20.0.1 ist das Interface srv der fw-01 -> 10.20.0.2
+    # Netz-Objekt
     out = _find(client, tid, "N_server")
     (net,) = out["hits"]
     assert (net["type"], net["kind"], net["name"], net["net"], net["ip"]) == (
-        "net", "object", "N_server", "10.20.0.0/24", "10.20.0.2",
+        "net", "object", "N_server", "10.20.0.0/24", "10.20.0.0/24",
     )  # fmt: skip
     assert out["counts"] == {"host": 0, "net": 1} and out["total"] == 1
 
-    # ACI-EPG über Tenant/AP/EPG; das Gateway 10.50.2.1 ist nicht die Adresse
+    # ACI-EPG über Tenant/AP/EPG
     (epg,) = _find(client, tid, "EPG_db")["hits"]
-    assert (epg["kind"], epg["name"], epg["net"], epg["ip"]) == (
-        "subnet", "TE|AP1|EPG_db", "10.50.2.0/24", "10.50.2.2",
-    )  # fmt: skip
+    assert (epg["kind"], epg["name"], epg["net"]) == ("subnet", "TE|AP1|EPG_db", "10.50.2.0/24")
     assert epg["detail"] == "EPG-Subnetz · VRF TE:VRF1" and epg["source"] == "apic-01"
 
     # IPAM-Netz über die Beschreibung
@@ -245,11 +243,10 @@ def test_suche_nach_netzen(client):
     assert (ipam["kind"], ipam["name"], ipam["net"], ipam["source"]) == (
         "ipam", "Transfer ACI", "10.255.0.0/29", "ddi",
     )  # fmt: skip
-    assert ipam["ip"] == "10.255.0.2"  # .1 ist das Interface to-aci der fw-01
 
     # Netz direkt: mit den Namen aus IPAM bzw. Inventar
     (lit,) = _find(client, tid, "10.50.2.0/24")["hits"]
-    assert (lit["kind"], lit["name"], lit["ip"]) == ("subnet", "TE|AP1|EPG_db", "10.50.2.2")
+    assert (lit["kind"], lit["name"], lit["ip"]) == ("subnet", "TE|AP1|EPG_db", "10.50.2.0/24")
 
     # Anfang einer Adresse: Hosts und Netze, getrennt filterbar
     out = _find(client, tid, "10.20.0.")

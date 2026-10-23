@@ -17,8 +17,8 @@ wird in dem, was gelesen ist - nur lesend, je Mandant:
 7. **Netz-Objekte der Firewalls** (Adressobjekte mit einem Netz, ohne 0.0.0.0/0),
 8. **Subnetze des Inventars** (FortiGate-Interfaces, ACI-BD/-EPG ueber Tenant, AP, EPG, BD).
 
-Ein Netz wird mit einer Adresse daraus geprueft (`ip`): der ersten, die keinem gelesenen
-Geraet gehoert (Interface bzw. Gateway) - die Oberflaeche zeigt sie an.
+Ein Netz geht als Ganzes in die Weg-Suche (`ip` = das Netz, 0.39.0): Route, die es ganz
+enthaelt, Policies und Contracts, die es ganz erfassen (`store/paths.py`, `policy_check`).
 
 Treffer zuerst exakt, dann am Anfang, dann irgendwo im Namen; je IP bzw. Netz einmal. Die
 Antwort ist seitenweise mit Gesamtzahl und Anzahl je Art (Hosts, Netze); je Quelle hoechstens
@@ -37,7 +37,6 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     DeviceObject,
-    InvInterface,
     InvSubnet,
     ReferenceRecordRow,
     SourceSystem,
@@ -85,7 +84,7 @@ def _hit(ip: str, name: str | None, kind: str, source: str | None, detail: str |
 
 
 def _net_hit(net, name, kind: str, source: str | None, detail: str | None) -> dict:
-    return {"ip": None, "name": name, "kind": kind, "type": "net", "net": str(net),
+    return {"ip": str(net), "name": name, "kind": kind, "type": "net", "net": str(net),
             "source": source, "detail": detail}  # fmt: skip
 
 
@@ -121,11 +120,6 @@ def resolve(
     counts = {t: sum(1 for h in found if h["type"] == t) for t in TYPES}
     chosen = [h for h in found if only in (None, h["type"])]
     page = chosen[offset : offset + limit]
-    if any(h["type"] == "net" for h in page):
-        owned = _owned(session, tenant_id)
-        for h in page:
-            if h["type"] == "net":
-                h["ip"] = _sample(ipaddress.ip_network(h["net"]), owned)
     return {"hits": page, "total": len(chosen), "counts": counts, "capped": capped}
 
 
@@ -353,36 +347,6 @@ def _literal_net(session, tenant_id, runs, names, net) -> list[dict]:
         found.add(0, 3, _net_hit(net, name, "subnet", names.get(s.source_system_id), detail))
     (hit,) = found.merged()
     return [hit]
-
-
-def _owned(session: Session, tenant_id: int) -> set[str]:
-    """IPs gelesener Geraete: Interfaces und Gateways (fuer die Adresse eines Netzes)."""
-    out: set[str] = set()
-    values = [g for (g,) in session.execute(
-        select(InvSubnet.gateway).where(InvSubnet.tenant_id == tenant_id)
-    )]  # fmt: skip
-    for (ips,) in session.execute(
-        select(InvInterface.ips).where(InvInterface.tenant_id == tenant_id)
-    ):
-        values += [v for v in ips or [] if isinstance(v, str)]
-    for v in values:
-        try:
-            out.add(str(ipaddress.ip_interface((v or "").strip()).ip))
-        except ValueError:
-            continue
-    return out
-
-
-def _sample(net, owned: set[str]) -> str:
-    """Adresse fuer die Pruefung eines Netzes: die erste, die keinem Geraet gehoert."""
-    first = None
-    for i, ip in enumerate(net.hosts()):
-        first = first or str(ip)
-        if str(ip) not in owned:
-            return str(ip)
-        if i >= 255:
-            break
-    return first or str(net.network_address)
 
 
 def _ipam_by_dns(session: Session, runs: list[str], fqdns: set[str]) -> dict[str, list[str]]:

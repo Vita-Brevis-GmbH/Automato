@@ -361,6 +361,15 @@ function TraceCard({
                               .filter(Boolean)
                               .join(" · ")}
                           </div>
+                          {h.route.inner && h.route.inner.length > 0 && (
+                            <div className="inner-routes" title="Teile des Netzes mit einer genaueren Route über einen anderen Next-Hop">
+                              Teile anders geroutet:{" "}
+                              {h.route.inner.map((r) => `${r.prefix} über ${r.via}`).join(", ")}
+                              {(h.route.inner_total ?? 0) > h.route.inner.length
+                                ? ` (+${(h.route.inner_total ?? 0) - h.route.inner.length})`
+                                : ""}
+                            </div>
+                          )}
                         </>
                       ) : (
                         <Dash />
@@ -476,6 +485,11 @@ const PAGE = 50;
 type HitType = "" | "host" | "net";
 
 const isIp = (v: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(v.trim()) || /^[0-9a-f]*:[0-9a-f:.]+$/i.test(v.trim());
+// Netz direkt (10.10.0.0/23): geht als Ganzes in die Weg-Suche (0.39.0)
+const isNet = (v: string) => {
+  const [ip, len, ...rest] = v.trim().split("/");
+  return rest.length === 0 && !!len && /^\d{1,3}$/.test(len) && isIp(ip);
+};
 const hitKey = (h: NameHit) => (h.type === "net" ? `net:${h.net}` : h.ip);
 
 // Treffer der Namenssuche: Name, IP bzw. Netz und woher
@@ -495,7 +509,6 @@ function HitRow({ h, onPick }: { h: NameHit; onPick: (h: NameHit) => void }) {
         {HIT_KIND[h.kind]}
         {h.source ? ` · ${h.source}` : ""}
         {h.detail ? ` · ${h.detail}` : ""}
-        {h.type === "net" ? ` · geprüft mit ${h.ip}` : ""}
         {h.also?.length ? ` · auch ${h.also.join(", ")}` : ""}
       </div>
     </button>
@@ -530,7 +543,7 @@ function EndpointInput({
   const q = useDebounced(value.text, 300);
   useEffect(() => {
     const t = q.trim();
-    if (value.hit || t.length < 2 || isIp(t)) {
+    if (value.hit || t.length < 2 || isIp(t) || isNet(t)) {
       setRes(null);
       return;
     }
@@ -604,7 +617,7 @@ function EndpointInput({
       />
       {value.hit && (
         <div className="faint mono" style={{ fontSize: 11.5, marginTop: 2 }} title={value.hit.name ?? ""}>
-          {value.hit.type === "net" ? `= Netz ${value.hit.net} · geprüft mit ${value.hit.ip}` : `= ${value.hit.ip}`}
+          {value.hit.type === "net" ? `= Netz ${value.hit.net}` : `= ${value.hit.ip}`}
         </div>
       )}
       {shown && (
@@ -647,8 +660,8 @@ function EndpointInput({
   );
 }
 
-// Name -> IP: IP direkt, gewählter Treffer, sonst genau ein Treffer; mehrere: Auswahl. Ein Netz
-// wird mit einer Adresse daraus geprüft (`net` für die Anzeige).
+// Name -> IP bzw. Netz: direkt, gewählter Treffer, sonst genau ein Treffer; mehrere: Auswahl.
+// Ein Netz geht als Ganzes in die Weg-Suche (0.39.0, `net` für die Anzeige).
 async function toIp(
   tenantId: number,
   ep: Endpoint,
@@ -659,6 +672,7 @@ async function toIp(
   const text = ep.text.trim();
   if (!text) return { ip: "" };
   if (isIp(text)) return { ip: text };
+  if (isNet(text)) return { ip: text, net: text };
   if (ep.hit) return { ip: ep.hit.ip, net: ep.hit.net };
   const res = await resolveName(tenantId, text, { limit: PAGE });
   const keys = new Set(res.hits.map(hitKey));
@@ -725,7 +739,7 @@ function PathSearch({
     }
   };
   const label = (a: Asked) =>
-    a.net ? `${a.name ? `${a.name} = ` : ""}Netz ${a.net} (geprüft mit ${a.ip})` : a.name ? `${a.name} (${a.ip})` : a.ip;
+    a.net ? `${a.name ? `${a.name} = ` : ""}Netz ${a.net}` : a.name ? `${a.name} (${a.ip})` : a.ip;
   return (
     <>
       <div className="filterbar" style={{ alignItems: "flex-start" }}>
@@ -736,7 +750,7 @@ function PathSearch({
           onEnter={run}
           icon="search"
           placeholder="Quelle: IP, Netz oder Name"
-          title="Quelle als IP, Netz bzw. Name/FQDN (IPAM, Objekte der Firewalls, VMs, Subnetze): der Weg beginnt dort, wo sie angeschlossen ist (bzw. am Startpunkt); ein Netz wird mit einer Adresse daraus geprüft"
+          title="Quelle als IP, Netz bzw. Name/FQDN (IPAM, Objekte der Firewalls, VMs, Subnetze): der Weg beginnt dort, wo sie angeschlossen ist (bzw. am Startpunkt); ein Netz gilt als Ganzes"
           forceOpen={choices.src}
         />
         <select
@@ -759,7 +773,7 @@ function PathSearch({
           onEnter={run}
           icon="route"
           placeholder="Ziel: IP, Netz oder Name, z. B. web01"
-          title="Ziel als IP, Netz bzw. Name/FQDN; ein Netz wird mit einer Adresse daraus geprüft"
+          title="Ziel als IP, Netz bzw. Name/FQDN; ein Netz gilt als Ganzes (Route und Regeln für das ganze Netz)"
           forceOpen={choices.dst}
         />
         <div className="search" style={{ flex: "0 1 190px" }}>
@@ -789,8 +803,9 @@ function PathSearch({
       <div className="faint" style={{ margin: "-4px 0 10px" }}>
         Hop für Hop: Policy-Routen und SD-WAN-Regeln, die sicher passen, gehen vor; sonst das längste Präfix. Je Firewall
         die passenden Policies (erste sichere entscheidet), je ACI-VRF die Contracts zwischen den EPGs von Quelle und Ziel
-        (Taboo zuerst, vzAny, ESG, Preferred Group). Ein Netz wird mit einer Adresse daraus geprüft (der ersten ohne
-        Gerät). Ohne Quelle und Start: je Kontext die wirksame Route.
+        (Taboo zuerst, vzAny, ESG, Preferred Group). Ein <b>Netz</b> gilt als Ganzes: die Route, die das ganze Netz enthält
+        (anders geroutete Teile als Hinweis), Regeln nur sicher, wenn sie das ganze Netz erfassen – sonst „nur teilweise“.
+        Ohne Quelle und Start: je Kontext die wirksame Route.
       </div>
       <ErrorBox error={error} prefix="Weg suchen" />
       {trace && (

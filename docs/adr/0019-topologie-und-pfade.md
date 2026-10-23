@@ -281,7 +281,12 @@ Rahmen laut Anwender (2026-10-22):
        VRFs, ESG-IP-Selektoren, Service Graphs.
    - **Weg-Suche als eigene Ansicht (0.35.0):** Quelle und Ziel auch als Name bzw. FQDN
      (`store/resolve.py`, `GET /routing/resolve`: IPAM, Adressobjekte der Firewalls, VMs),
-     der Dienst auch als Service-Objekt bzw. ACI-Filter (`FT_https`).
+     der Dienst auch als Service-Objekt bzw. ACI-Filter (`FT_https`). Seit 0.38.0 auch Netze
+     (IPAM, Netz-Objekte, Subnetze des Inventars).
+   - **Netz als Ganzes (0.39.0):** Quelle bzw. Ziel als Netz - Route, die das ganze Netz
+     enthält (genauere Routen mit anderem Next-Hop als „Teile anders geroutet“), Policies
+     und Contracts sicher nur, wenn sie das ganze Netz erfassen (`/23` in `/16`), sonst
+     „nur teilweise“ = möglich; kein DNAT für ein Netz.
    - Offen: „Internet“ zusammengefasst, Central-NAT und SNAT über eigene NAT-Regeln.
      Verbund bzw. Session-Sync-Paar als ein Hop seit 0.29.0. Relevanz: Firewall in der Doku (0.24.0) und Regel-Liste
      (0.26.0), ACI-Contracts über externe EPGs (0.28.0), Contracts je VRF-Hop im Weg (0.35.0).

@@ -253,10 +253,20 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       ein Netz direkt (`10.20.0.0/24`); der Anfang einer Adresse (`10.20.0.`) sucht Hosts und
       Netze. Die Liste ist nach **Hosts** und **Netzen** gegliedert, oben der Umschalter
       Alle/Hosts/Netze mit Anzahl und „x von y“; **„Weitere laden“** holt alle weiteren
-      Treffer seitenweise. Ein Netz wird mit **einer Adresse daraus** geprüft – der ersten,
-      die keinem gelesenen Gerät gehört (Interface, Gateway). Sie steht unter dem Feld
-      („= Netz 10.20.0.0/24 · geprüft mit 10.20.0.2“) und im Ergebnis. Regeln, die nur einen
-      Teil des Netzes erlauben, gelten dann für diese Adresse.
+      Treffer seitenweise.
+    - **Netz als Ganzes** (0.39.0): Ein Netz als Quelle bzw. Ziel („= Netz 10.10.0.0/23“)
+      wird nicht über eine einzelne Adresse geprüft, sondern ganz:
+      - **Routing:** es gilt die Route, die das ganze Netz enthält (z. B. `10.10.0.0/16`).
+        Werden Teile des Netzes genauer über einen anderen Next-Hop geroutet, steht am Hop
+        „Teile anders geroutet: 10.10.1.0/24 über …“ und oben ein Hinweis.
+      - **Firewall-Regeln:** eine Policy passt sicher, wenn ihr Objekt das ganze Netz enthält –
+        ein `10.10.0.0/23` ist mit der Regel `10.10.0.0/16` offen. Erfasst sie nur einen Teil
+        (z. B. einzelne Hosts), ist sie „möglich (Quelle bzw. Ziel nur teilweise)“; das Urteil
+        wird dann „abhängig“.
+      - **ACI:** die EPG bzw. externe EPG, deren Subnetz das ganze Netz enthält; umfasst das
+        Netz mehrere EPGs, ist die Zuordnung nicht sicher („Teile von …“).
+      - Ein Netz als Quelle muss ganz in einem angeschlossenen Netz liegen, sonst den
+        Startpunkt wählen. Für ein Netz gibt es kein DNAT (eine VIP ist eine Adresse).
     - **Dienst** als `tcp/443`, `udp/53`, `tcp`, `icmp` oder als Name eines Service-Objekts
       bzw. ACI-Filters (`FT_https`, `Tenant/FT_https`). Hat das Objekt mehrere Dienste, wird
       der erste geprüft; die übrigen nennt ein Hinweis.

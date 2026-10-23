@@ -1676,6 +1676,8 @@ export interface TraceHop extends RoutingNode {
     distance: number | null;
     next_hops: NextHop[];
     members: string[];
+    inner?: { prefix: string; protocol: string | null; via: string }[]; // Netz: Teile anders geroutet (0.39.0)
+    inner_total?: number;
   } | null;
   policy?: PolicyHit; // Policy-Route bzw. SD-WAN-Regel, der der Weg folgt
   policy_routes?: PolicyHit[];
@@ -1737,7 +1739,7 @@ export interface TraceResult {
 // Name bzw. FQDN -> IP für die Weg-Suche (0.35.0): IPAM, Objekte der Firewalls, VMs; seit
 // 0.38.0 auch Netze (IPAM, Netz-Objekte, Subnetze des Inventars), seitenweise
 export interface NameHit {
-  ip: string; // bei Netzen: die geprüfte Adresse (erste ohne Gerät)
+  ip: string; // Eingabe für die Weg-Suche: IP bzw. bei Netzen das Netz (0.39.0)
   name: string | null;
   kind: "ip" | "ipam" | "object" | "vm" | "net" | "subnet";
   type: "host" | "net";

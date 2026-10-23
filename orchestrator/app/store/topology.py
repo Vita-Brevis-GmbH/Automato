@@ -38,6 +38,48 @@ def ip_hex(ip) -> str:
     return f"{int(ip):032x}"
 
 
+# -- IP bzw. Netz (0.39.0): ein Netz als Ganzes in Routen, Policies und Contracts ----------
+
+Net = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+def endpoint(text: str):
+    """IP bzw. Netz (`10.10.0.0/23`) als Adresse bzw. Netz; ein /32 bzw. /128 ist die IP.
+    Ungueltig -> ValueError."""
+    text = text.strip()
+    if "/" in text:
+        net = ipaddress.ip_network(text, strict=False)
+        return net.network_address if net.num_addresses == 1 else net
+    return ipaddress.ip_address(text)
+
+
+def is_net(x) -> bool:
+    return isinstance(x, ipaddress.IPv4Network | ipaddress.IPv6Network)
+
+
+def span(x) -> tuple[int, int]:
+    """Erste und letzte Adresse einer IP bzw. eines Netzes als Zahl."""
+    if is_net(x):
+        return int(x.network_address), int(x.broadcast_address)
+    return int(x), int(x)
+
+
+def within(x, net) -> bool:
+    """IP bzw. Netz liegt ganz im Netz `net` (`10.10.0.0/23` in `10.10.0.0/16`)."""
+    if x.version != net.version:
+        return False
+    lo, hi = span(x)
+    return int(net.network_address) <= lo and hi <= int(net.broadcast_address)
+
+
+def overlaps(x, net) -> bool:
+    """IP bzw. Netz und `net` haben Adressen gemeinsam."""
+    if x.version != net.version:
+        return False
+    lo, hi = span(x)
+    return int(net.network_address) <= hi and lo <= int(net.broadcast_address)
+
+
 def route_range(prefix: str) -> tuple[int, int, str, str, str] | None:
     """(Familie, Laenge, von, bis, CIDR) eines Praefixes; ungueltig -> None."""
     try:
@@ -155,7 +197,8 @@ class Interfaces:
 
 def matches(kind: str, match: dict | None, side: str, ip) -> bool | None:
     """Passt Quelle (`side="src"`) bzw. Ziel (`"dst"`) einer Policy-Route bzw. SD-WAN-Regel
-    zur IP? True/False; None = nur ueber Objekte (Namen) bestimmt - dann „moeglich“.
+    zur IP bzw. zum ganzen Netz? True/False; None = nur ueber Objekte (Namen) bestimmt bzw. nur
+    ein Teil des Netzes - dann „moeglich“.
 
     Policy-Routen tragen Subnetze (`src`/`dst`) und Adressobjekte (`srcaddr`/`dstaddr`),
     SD-WAN-Regeln nur Adressobjekte (`src`/`dst`); beim Ziel zaehlen Internet-Services mit.
@@ -169,13 +212,16 @@ def matches(kind: str, match: dict | None, side: str, ip) -> bool | None:
         names += match.get("service") or []
     if ip is None:  # unbekannt (z. B. Quelle nicht angegeben): sicher nur ohne Einschraenkung
         return None if nets or names else True
+    partial = False  # Netz (0.39.0): nur ein Teil davon passt
     for net in nets:
         try:
-            if ip in ipaddress.ip_network(net, strict=False):
-                return True
+            net = ipaddress.ip_network(net, strict=False)
         except (ValueError, TypeError):
             continue
-    if names:
+        if within(ip, net):
+            return True
+        partial = partial or overlaps(ip, net)
+    if names or partial:
         return None
     return False if nets else True
 
@@ -188,17 +234,17 @@ def lookup(
     Kontexts (FortiGate, Management) mit einer passenden Route stehen als eigene Zeile da
     (`vrf`); die Policy-Routen gehoeren zur Standard-VRF."""
     try:
-        ip = ipaddress.ip_address(ip_text.strip())
+        ip = endpoint(ip_text)  # IP bzw. Netz: Routen, die das ganze Netz enthalten
     except ValueError:
         return []
-    hx = ip_hex(ip)
+    lo, hi = (ip_hex(v) for v in span(ip))
     stmt = select(TopoRoute).where(
         TopoRoute.tenant_id == tenant_id,
         TopoRoute.family == ip.version,
         TopoRoute.table == "rib",
         TopoRoute.best.is_(True),
-        TopoRoute.lo <= hx,
-        TopoRoute.hi >= hx,
+        TopoRoute.lo <= lo,
+        TopoRoute.hi >= hi,
     )
     ctx_stmt = select(TopoContext).where(TopoContext.tenant_id == tenant_id)
     pol_stmt = select(TopoPolicyRoute).where(

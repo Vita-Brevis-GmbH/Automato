@@ -6,10 +6,12 @@
 - `GET /routing/routes`          Routen seitenweise (RIB, BGP-Pfade, statische); `ip` = Routen,
                                  die die IP enthalten, laengstes Praefix zuerst
 - `GET /routing/lookup?ip=`      je Kontext die wirksame Route und vorgehende Policy-Routen
+                                 (auch fuer ein Netz: Route, die es ganz enthaelt)
 - `GET /routing/trace?dst=&src=&start=&service=`  Weg Hop fuer Hop von der Quelle bzw. dem
                                  Startpunkt, je FortiGate-Hop die passenden Policies (0.22.0),
                                  je ACI-VRF-Hop die Contracts (0.35.0); Dienst auch als
-                                 Service-Objekt bzw. ACI-Filter (`FT_https`)
+                                 Service-Objekt bzw. ACI-Filter (`FT_https`); Quelle und Ziel
+                                 auch als Netz (0.39.0)
 - `GET /routing/resolve?q=&type=`  Name bzw. FQDN -> Hosts und Netze (IPAM, Objekte, VMs,
                                  Inventar) fuer die Weg-Suche, seitenweise (`limit`, `offset`)
 - `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs` - Nachbarn mit Namen aus dem IPAM
@@ -93,6 +95,16 @@ def _ip(value: str, what: str):
         return ipaddress.ip_address(value.strip())
     except ValueError:
         raise HTTPException(status_code=422, detail=f"{what}: keine gueltige IP") from None
+
+
+def _endpoint(value: str, what: str):
+    """IP bzw. Netz (`10.10.0.0/23`, Weg-Suche 0.39.0)."""
+    try:
+        return topology.endpoint(value)
+    except ValueError:
+        raise HTTPException(
+            status_code=422, detail=f"{what}: keine gueltige IP bzw. kein gueltiges Netz"
+        ) from None
 
 
 @router.get("/summary")
@@ -248,9 +260,10 @@ def lookup(
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
-    """Je Kontext die wirksame Route fuer `ip` und Policy-Routen, die vorgehen (koennen)."""
+    """Je Kontext die wirksame Route fuer `ip` (bzw. ein ganzes Netz) und Policy-Routen, die
+    vorgehen (koennen)."""
     tid = _tenant(session, principal, tenant_id)
-    _ip(ip, "ip")
+    _endpoint(ip, "ip")
     names = _names(session, tid)
     graph = paths.Graph(session, tid)
     out = []
@@ -280,11 +293,12 @@ def trace(
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """Weg zum Ziel Hop fuer Hop - ab der Quelle (dort angeschlossen) bzw. dem Startpunkt."""
+    """Weg zum Ziel Hop fuer Hop - ab der Quelle (dort angeschlossen) bzw. dem Startpunkt;
+    Quelle und Ziel als IP bzw. Netz (das Netz als Ganzes, 0.39.0)."""
     tid = _tenant(session, principal, tenant_id)
-    _ip(dst, "dst")
+    _endpoint(dst, "dst")
     if src:
-        _ip(src, "src")
+        _endpoint(src, "src")
     if not src and not start:
         raise HTTPException(status_code=422, detail="src oder start angeben")
     wanted, note = _service(session, tid, service)

@@ -14,6 +14,8 @@ Contracts:
   L3Outs, ueber den die VRF die IP leitet; fuer die anderen bleibt es unbekannt (nicht
   ausgeschlossen).
 
+Ein Netz (Weg-Suche, 0.39.0) zaehlt wie eine IP, wenn das Subnetz es ganz enthaelt.
+
 Ergebnis je externer EPG und IP: `possible`, `impossible` (mit Begruendung) oder `unknown`;
 None, wenn kein Subnetz der EPG die IP erfasst. Nur lesend - es zaehlen die gelesenen Daten.
 Noch nicht: Shared Services zwischen VRFs (`shared-security`), ESGs mit IP-Selektoren.
@@ -30,6 +32,7 @@ from sqlalchemy.orm import Session
 from app.models import Epg, EpgEndpoint, EpgSubnet, InvSubnet, InvVrf, TopoContext, TopoL3Out
 from app.store import epgs as epg_store
 from app.store.paths import Graph
+from app.store.topology import overlaps, within
 
 POSSIBLE, IMPOSSIBLE, UNKNOWN = "possible", "impossible", "unknown"
 RANK = {POSSIBLE: 0, UNKNOWN: 1, IMPOSSIBLE: 2}
@@ -140,15 +143,21 @@ class Classifier:
         seen: dict[int, Epg] = {}
         for rows in self._ext.values():
             for epg, net, _scope in rows:
-                if net.version == ip.version and ip in net:
+                if within(ip, net):
                     seen.setdefault(epg.id, epg)
         return sorted(seen.values(), key=lambda e: (e.aci_tenant or "", e.l3out or "", e.name))
+
+    def overlapping(self, sid: int | None, vrf: str, net) -> list[tuple[Epg, Net]]:
+        """Zuordnende Subnetze externer EPGs der VRF, die einen Teil des Netzes erfassen
+        (Weg-Suche mit einem Netz, 0.39.0)."""
+        return [(e, n) for e, n, s in self._ext.get((sid, vrf), [])
+                if classifies(s) and overlaps(net, n)]  # fmt: skip
 
     def subnet_for(self, epg: Epg, ip) -> Net | None:
         """Laengstes Subnetz der externen EPG, das die IP erfasst (zuordnende zuerst)."""
         rows = self._ext.get((epg.source_system_id, self.vrf_of(epg) or ""), [])
         own = [(classifies(s), n.prefixlen, n) for e, n, s in rows
-               if e.id == epg.id and n.version == ip.version and ip in n]  # fmt: skip
+               if e.id == epg.id and within(ip, n)]  # fmt: skip
         return max(own, key=lambda x: x[:2])[2] if own else None
 
     def inside(self, epg: Epg, ip) -> str | None:
@@ -165,7 +174,7 @@ class Classifier:
     def _decide(self, epg: Epg, ip) -> tuple[str, str] | None:
         vrf = self.vrf_of(epg)
         rows = self._ext.get((epg.source_system_id, vrf or ""), [])
-        own = [(n, s) for e, n, s in rows if e.id == epg.id and n.version == ip.version and ip in n]
+        own = [(n, s) for e, n, s in rows if e.id == epg.id and within(ip, n)]
         if not own:
             return None
         label = ext_label(epg)
@@ -183,9 +192,7 @@ class Classifier:
                 f"über {epg.l3out or 'einen L3Out'}"
             )
         best = max(n.prefixlen for n in mine)
-        cover = [
-            (e, n) for e, n, s in rows if classifies(s) and n.version == ip.version and ip in n
-        ]
+        cover = [(e, n) for e, n, s in rows if classifies(s) and within(ip, n)]
         top = max(n.prefixlen for _e, n in cover)
         mine_net = next(n for n in mine if n.prefixlen == best)
         if best < top:
@@ -214,7 +221,7 @@ class Classifier:
         if not vrf:
             return None
         for s in self._fabric_subnets.get((sid, vrf), []):
-            if s[0].version == ip.version and ip in s[0]:
+            if within(ip, s[0]):
                 return s[1]
         for epg in self.session.scalars(
             select(Epg)

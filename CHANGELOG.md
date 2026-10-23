@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.39.0 – 2026-10-23
+
+Weg-Suche: ein Netz als Ganzes prüfen (Anwender: „ob das Netzwerk in die Richtung geroutet wird
+und ob das Subnetz über die Firewalls offen ist“). Ohne Migration.
+
+- **Netz als Quelle bzw. Ziel** (`10.10.0.0/23`, aus der Namenssuche oder direkt) statt einer
+  Stellvertreter-Adresse:
+  - **Routing:** die Route, die das ganze Netz enthält (längstes solches Präfix). Genauere
+    Routen innerhalb des Netzes mit anderem Next-Hop stehen am Hop („Teile anders geroutet“)
+    und als Hinweis oben.
+  - **Firewall-Policies:** sicher nur, wenn ein Objekt das ganze Netz enthält (`10.10.0.0/23`
+    in `10.10.0.0/16` = offen); nur teilweise erfasst = „möglich (Quelle/Ziel nur
+    teilweise)“, das Urteil wird „abhängig“. Policy-Routen bzw. SD-WAN-Regeln ebenso.
+  - **ACI:** EPG bzw. externe EPG über das Subnetz, das das ganze Netz enthält; nur Teile =
+    Zuordnung nicht sicher.
+  - Kein DNAT für ein Netz; eine Quelle muss ganz in einem angeschlossenen Netz liegen.
+- `GET /routing/trace` und `GET /routing/lookup` nehmen auch ein Netz; die Namenssuche liefert
+  für Netze das Netz selbst (`ip` = CIDR) statt einer geprüften Adresse.
+- Tests: Route und Policy für ein Netz (Beispiel /23 in /16), nur teilweise, Netz über Firewall
+  und ACI, Lookup; UI (Netz mit „nur teilweise“ und anders gerouteten Teilen).
+
 ## 0.38.0 – 2026-10-23
 
 Weg-Suche mit Netzen, IPv4/IPv6-Paare im Rahmen, Applikationen (Anwender). Ohne Migration.

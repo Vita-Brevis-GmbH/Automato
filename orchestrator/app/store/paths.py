@@ -36,6 +36,10 @@ ein Knoten und nicht vier Wege.
   mit einer IP, die keinem gelesenen Interface gehoert), fuehrt der Weg zum VDOM am anderen
   Ende: `<name>0` <-> `<name>1` derselben FortiGate (vdom-link bzw. NPU-vlink), VLAN-
   Subinterfaces ueber Parent und VLAN-ID.
+- **Netz als Quelle bzw. Ziel** (0.39.0): als Ganzes - es gilt die Route, die das ganze Netz
+  enthaelt (laengstes solches Praefix); genauere Routen innerhalb des Netzes mit anderem
+  Next-Hop stehen am Hop (`route.inner`) und als Hinweis. Policies und Contracts pruefen, ob
+  sie das ganze Netz erfassen (sonst „nur teilweise“ = moeglich); kein DNAT fuer ein Netz.
 - **NAT auf dem Weg** (0.23.0): Ist das Ziel eine VIP der FortiGate (externe IP bzw. Bereich,
   passendes `extintf`), geht der Weg ab diesem Hop zur internen IP weiter (Virtual Server: dem
   ersten Real Server, alle stehen am Hop). SNAT der erlaubenden Policy (IP-Pool bzw.
@@ -64,11 +68,22 @@ from app.models import (
 )
 from app.store import nat as nat_store
 from app.store import references
-from app.store.topology import MGMT, Table, ip_hex, matches, table_of
+from app.store.topology import (
+    MGMT,
+    Table,
+    endpoint,
+    ip_hex,
+    is_net,
+    matches,
+    span,
+    table_of,
+    within,
+)
 
 MAX_HOPS = 12
 MAX_PATHS = 16  # aktive Wege
 MAX_BACKUP = 16  # Backup-Wege (vor dem Filter nach Laenge)
+INNER = 5  # genauere Routen innerhalb eines Netzes je Hop (Anzeige)
 REACHED = ("connected", "fabric", "exit", "external")  # Ende = Ziel erreicht bzw. nach aussen
 _CONNECTED = ("connected", "local")
 Key = tuple[int, str]  # (Quellsystem, Kontext: VDOM bzw. Tenant:VRF)
@@ -248,14 +263,15 @@ class Graph:
     # -- Routen -------------------------------------------------------------------------
 
     def _routes(self, ip, key: Key | None = None, connected: bool = False) -> list[TopoRoute]:
-        hx = ip_hex(ip)
+        """Beste Routen der RIB, die die IP bzw. das ganze Netz enthalten."""
+        lo, hi = (ip_hex(v) for v in span(ip))
         stmt = select(TopoRoute).where(
             TopoRoute.tenant_id == self.tenant_id,
             TopoRoute.family == ip.version,
             TopoRoute.table == "rib",
             TopoRoute.best.is_(True),
-            TopoRoute.lo <= hx,
-            TopoRoute.hi >= hx,
+            TopoRoute.lo <= lo,
+            TopoRoute.hi >= hi,
         )
         if key is not None:
             stmt = stmt.where(TopoRoute.source_system_id == key[0], TopoRoute.context == key[1])
@@ -279,7 +295,7 @@ class Graph:
                 if h not in hops:
                     hops.append(h)
         first = rows[0]
-        return {
+        out = {
             "prefix": first.prefix,
             "prefix_len": first.prefix_len,
             "protocol": first.protocol,
@@ -287,6 +303,41 @@ class Graph:
             "next_hops": hops,
             "members": sorted({r.node for r in rows}),
         }
+        if is_net(ip):  # Netz (0.39.0): Teile davon, die genauer anders geroutet werden
+            out |= self._inner(key, ip, table, hops)
+        return out
+
+    def _inner(self, key: Key, net, table: Table, hops: list[dict]) -> dict:
+        """Genauere Routen innerhalb des Netzes mit anderem Next-Hop bzw. Interface: der Teil
+        geht einen anderen Weg (`inner`, hoechstens INNER, `inner_total`)."""
+        lo, hi = (ip_hex(v) for v in span(net))
+        mine = {(h.get("ip"), h.get("interface")) for h in hops}
+        rows = self.session.scalars(
+            select(TopoRoute)
+            .where(
+                TopoRoute.source_system_id == key[0],
+                TopoRoute.context == key[1],
+                TopoRoute.family == net.version,
+                TopoRoute.table == "rib",
+                TopoRoute.best.is_(True),
+                TopoRoute.prefix_len > net.prefixlen,
+                TopoRoute.lo >= lo,
+                TopoRoute.hi <= hi,
+            )
+            .order_by(TopoRoute.lo, TopoRoute.prefix_len)
+        )
+        other: dict[str, dict] = {}
+        for r in rows:
+            if table_of(r) != table:
+                continue
+            nhs = r.next_hops or []
+            if {(h.get("ip"), h.get("interface")) for h in nhs} <= mine:
+                continue
+            via = ", ".join(h.get("ip") or h.get("interface") or "?" for h in nhs) or "?"
+            other.setdefault(r.prefix, {"prefix": r.prefix, "protocol": r.protocol, "via": via})
+        if not other:
+            return {}
+        return {"inner": list(other.values())[:INNER], "inner_total": len(other)}
 
     def connected_nodes(self, ip) -> list[tuple[Key, str | None, Table]]:
         """Knoten mit einem angeschlossenen Netz, das die IP enthaelt (laengstes je Knoten, bei
@@ -309,7 +360,7 @@ class Graph:
         """Backup-Next-Hops fuer das Praefix der aktiven Route: BGP-Pfade und eingeschaltete
         statische Routen derselben VRF mit einem anderen Next-Hop (z. B. schwebende Route mit
         hoeherer Distanz, zweiter Provider)."""
-        hx = ip_hex(ip)
+        lo, hi = (ip_hex(v) for v in span(ip))
         active = {h.get("ip") for h in route.get("next_hops") or []}
         out: list[dict] = []
         for r in self.session.scalars(
@@ -320,8 +371,8 @@ class Graph:
                 TopoRoute.family == ip.version,
                 TopoRoute.table.in_(("bgp", "static")),
                 TopoRoute.prefix == route["prefix"],
-                TopoRoute.lo <= hx,
-                TopoRoute.hi >= hx,
+                TopoRoute.lo <= lo,
+                TopoRoute.hi >= hi,
             )
             .order_by(TopoRoute.table, TopoRoute.distance, TopoRoute.id)
         ):
@@ -379,8 +430,8 @@ class Graph:
         return self._tables[key].get(interface or "", 0)
 
     def fabric(self, ip, key: Key | None = None) -> list[tuple[Key, str]]:
-        """ACI-VRF-Knoten, deren EPG- bzw. BD-Subnetz die IP enthaelt, mit dem Ort im Fabric
-        (`Tenant|AP|EPG` bzw. BD); laengstes Subnetz je Knoten."""
+        """ACI-VRF-Knoten, deren EPG- bzw. BD-Subnetz die IP bzw. das ganze Netz enthaelt, mit
+        dem Ort im Fabric (`Tenant|AP|EPG` bzw. BD); laengstes Subnetz je Knoten."""
         best: dict[Key, tuple[int, str]] = {}
         stmt = select(InvSubnet).where(
             InvSubnet.tenant_id == self.tenant_id, InvSubnet.context.in_(("bd", "epg"))
@@ -393,7 +444,7 @@ class Graph:
             except ValueError:
                 continue
             nkey = (s.source_system_id, s.vrf or "")
-            if ip not in net or nkey not in self.nodes:
+            if not within(ip, net) or nkey not in self.nodes:
                 continue
             where = (
                 f"EPG {s.aci_tenant}|{s.ap}|{s.epg}"
@@ -438,7 +489,9 @@ class Graph:
     def dnat(self, key: Key, ip, ingress: dict) -> dict | None:
         """VIP der FortiGate (DNAT) fuer das Ziel an diesem Knoten: externe IP bzw. Bereich und
         `extintf` (any bzw. Eingang) passen -> interne IP(s), beim Virtual Server alle Real
-        Server."""
+        Server. Ein Netz als Ziel (0.39.0) geht ohne DNAT weiter - eine VIP ist eine Adresse."""
+        if is_net(ip):
+            return None
         if key not in self._vips:
             self._vips[key] = list(
                 self.session.scalars(
@@ -526,8 +579,8 @@ def trace(
     passenden Policies (Dienst optional, z. B. `("tcp", 443)`)."""
     from app.store import policy_check  # Regeln je Hop - spaet importiert (Regelindex)
 
-    dst = ipaddress.ip_address(dst_text.strip())
-    src = ipaddress.ip_address(src_text.strip()) if src_text and src_text.strip() else None
+    dst = endpoint(dst_text)  # IP bzw. Netz (0.39.0: das Netz als Ganzes)
+    src = endpoint(src_text) if src_text and src_text.strip() else None
     g = Graph(session, tenant_id)
     notes: list[str] = []
     starts: list[tuple[Key, str | None, str]] = []
@@ -544,8 +597,9 @@ def trace(
         if not starts:
             starts = [(k, None, f"Quelle im Fabric: {text}") for k, text in g.fabric(src)]
         if not starts:
+            whole = " (das ganze Netz)" if is_net(src) else ""
             notes.append(
-                f"Kein gelesenes Gerät hat {src} angeschlossen – Startpunkt wählen bzw. das "
+                f"Kein gelesenes Gerät hat {src}{whole} angeschlossen – Startpunkt wählen bzw. das "
                 "Gerät mit diesem Netz einlesen."
             )
     paths: list[dict] = []
@@ -673,6 +727,7 @@ def trace(
             "ohne Ziel)"
         )
     _mark_length(primary + shown)
+    notes += _inner_notes(primary + shown, dst)
     policy_check.check_paths(session, tenant_id, primary + shown, src, dst, service)
     return {
         "start": [g.nodes[k].out() | {"via": via} for k, _, via in starts],
@@ -682,6 +737,20 @@ def trace(
         "slack": slack,
         "service": _service_text(service),
     }
+
+
+def _inner_notes(paths: list[dict], dst) -> list[str]:
+    """Netz als Ziel (0.39.0): je Knoten ein Hinweis, wenn Teile davon anders geroutet werden."""
+    out: dict[str, str] = {}
+    for p in paths:
+        for h in p["hops"]:
+            route = h.get("route") or {}
+            if route.get("inner") and h["label"] not in out:
+                parts = ", ".join(f"{r['prefix']} über {r['via']}" for r in route["inner"])
+                more = route["inner_total"] - len(route["inner"])
+                parts += f" (+{more})" if more > 0 else ""
+                out[h["label"]] = f"Teile von {dst} werden an {h['label']} anders geroutet: {parts}"
+    return list(out.values())
 
 
 def _service_text(service: tuple[str, int | None] | None) -> str | None:
@@ -841,7 +910,7 @@ def _exit_target(ex: TopoExit, dst) -> Key | None:
         except ValueError:
             continue
         key = parse_key(r.get("target"))
-        if key is not None and dst in net and (best is None or net.prefixlen > best[0]):
+        if key is not None and within(dst, net) and (best is None or net.prefixlen > best[0]):
             best = (net.prefixlen, key)
     return best[1] if best else None
 
@@ -865,7 +934,7 @@ def _exit_text(ex: TopoExit, dst, ip: str | None, names: list[str]) -> str:
             nets.append(ipaddress.ip_network(p, strict=False))
         except ValueError:
             continue
-    if nets and not any(dst in n for n in nets):
+    if nets and not any(within(dst, n) for n in nets):
         text += " – Ziel liegt nicht in den Netzen der Anbindung"
     return text
 

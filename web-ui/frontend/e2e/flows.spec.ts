@@ -727,20 +727,38 @@ test("Weg-Suche: Netze in der Namenssuche, Hosts und Netze getrennt (0.38.0)", a
   await expect(menu.locator(".suggest-group")).toHaveCount(0);
   await expect(menu.locator("button[role='option']", { hasText: "N_dmz-net" })).toContainText("10.10.20.0/24");
   await expect(menu.locator("button[role='option']").filter({ hasText: "web01" })).toHaveCount(0);
-  // Netz-Objekt wählen: geprüft wird eine Adresse daraus
+  // Netz-Objekt wählen: das Netz geht als Ganzes in die Suche (0.39.0)
   await dst.fill("dmz-net");
   const option = menu.locator("button[role='option']", { hasText: "N_dmz-net" });
   await expect(option).toContainText("Objekt · fwc11-000-infrz");
-  await expect(option).toContainText("geprüft mit 10.10.20.1");
   await option.click();
-  await expect(page.locator(".search", { has: dst })).toContainText("= Netz 10.10.20.0/24 · geprüft mit 10.10.20.1");
+  await expect(page.locator(".search", { has: dst })).toContainText("= Netz 10.10.20.0/24");
   await page.click("button:has-text('Weg suchen')");
-  await expect(page.locator("main.main")).toContainText("Ziel N_dmz-net = Netz 10.10.20.0/24 (geprüft mit 10.10.20.1)");
+  await expect(page.locator("main.main")).toContainText("Ziel N_dmz-net = Netz 10.10.20.0/24");
   // Netz direkt eingegeben
   await dst.fill("10.10.20.0/24");
   await dst.press("Escape");
   await page.click("button:has-text('Weg suchen')");
-  await expect(page.locator("main.main")).toContainText("Netz 10.10.20.0/24 (geprüft mit 10.10.20.1)");
+  await expect(page.locator("main.main")).toContainText("Ziel Netz 10.10.20.0/24");
+});
+
+test("Weg-Suche: Netz als Ganzes – Regel erfasst nur einen Teil, Teile anders geroutet (0.39.0)", async ({ page }) => {
+  await page.goto("/#wege");
+  const src = page.getByPlaceholder("Quelle: IP, Netz oder Name");
+  const dst = page.getByPlaceholder("Ziel: IP, Netz oder Name");
+  // Quelle /25 liegt ganz in der Regel 10.10.0.0/24, das Ziel /24 nur teilweise in 10.30.0.10
+  await src.fill("10.10.0.0/25");
+  await dst.fill("10.30.0.0/24");
+  await page.getByPlaceholder("Dienst: tcp/443").fill("tcp/443");
+  await page.click("button:has-text('Weg suchen')");
+  const card = page.locator(".card[id^='trace-']").first();
+  await expect(card).toContainText("Regeln: abhängig an fw-08");
+  await expect(card.locator("tbody")).toContainText("„lan-to-dmz-web“ · erlauben · tcp/443 · möglich (Ziel nur teilweise)");
+  // Ziel /23: Route, die das ganze Netz enthält (Default), der /24-Teil ist angeschlossen
+  await dst.fill("10.30.0.0/23");
+  await page.click("button:has-text('Weg suchen')");
+  await expect(card.locator(".inner-routes")).toContainText("Teile anders geroutet: 10.30.0.0/24 über dmz");
+  await expect(page.locator("main.main")).toContainText("Teile von 10.30.0.0/23 werden an");
 });
 
 test("Regeln: Suche nach einer IP mit Relevanz nach dem Routing", async ({ page }) => {
