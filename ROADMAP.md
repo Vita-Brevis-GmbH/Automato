@@ -339,8 +339,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.43.1** | Korrektur Applikations-Doku: Scope der Contracts (auch aus `common`), Regeln anderer EPGs im gemeinsamen BD, Portgruppe je NIC über Name/VLAN/Switch, Vorgabe vor gelerntem Endpunkt, Hinweis Projektnummer |
 | **0.43.2** | Korrektur Applikations-Doku: Contracts nur mit den Beteiligten (eigene EPGs, Gegenstellen im Scope), Firewall mit VDOM |
 | **0.44.0** | ACI zwischen VRFs/Tenants: Shared Services (Subnetz-Scope `shared`) und Route-Leaking (`leakRoutes`), VRF aus `tDn` (auch vzAny), Weg-Suche endet im Fabric der anderen VRF, Applikations-Doku urteilt gleich |
+| **0.44.1** | Korrektur: Listen mit Filtern zeigen nur die Antwort zur letzten Anfrage (ältere überschrieb die gefilterte) |
 
-### Nächste Arbeiten (Stand 0.44.0)
+### Nächste Arbeiten (Stand 0.44.1)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).

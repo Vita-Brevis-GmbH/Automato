@@ -207,9 +207,13 @@ function IpamTable({ tenantId, summary }: { tenantId: number; summary: Reconcile
     if (!ipam.available) return;
     setData(null);
     setError(null);
+    let current = true; // nur die Antwort zur letzten Anfrage (Filter schnell gewechselt)
     fetchIpamCompare(tenantId, { status: status || undefined, q: query, limit: PAGE, offset })
-      .then(setData)
-      .catch((e) => setError(e));
+      .then((d) => current && setData(d))
+      .catch((e) => current && setError(e));
+    return () => {
+      current = false;
+    };
   }, [tenantId, ipam.available, status, query, offset]);
 
   const p = ipam.primary?.name ?? "führend";

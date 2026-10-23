@@ -337,6 +337,9 @@ function RoutesTab({
   useEffect(() => {
     setPage(null);
     setError(null);
+    // nur die Antwort zur letzten Anfrage: eine ältere (z. B. ungefiltert, langsamer) darf die
+    // gefilterte Liste nicht überschreiben
+    let current = true;
     // Kontext = Knoten „<Quellsystem>|<VDOM bzw. Tenant:VRF>“ (ACI: alle Border-Leafs)
     const [sid, ...rest] = context ? context.split("|") : [];
     fetchRoutes({
@@ -350,11 +353,15 @@ function RoutesTab({
       limit: PAGE,
       offset,
     })
-      .then(setPage)
+      .then((p) => current && setPage(p))
       .catch((e) => {
+        if (!current) return;
         setError(e);
         setPage({ rows: [], total: 0 });
       });
+    return () => {
+      current = false;
+    };
   }, [tenantId, query, ipQuery, table, context, vrf, offset]);
 
   return (
@@ -475,12 +482,17 @@ function useList<T>(load: () => Promise<T[]>, deps: unknown[]) {
   const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     setRows(null);
+    let current = true; // nur die Antwort zur letzten Anfrage
     load()
-      .then(setRows)
+      .then((r) => current && setRows(r))
       .catch((e) => {
+        if (!current) return;
         setError(e);
         setRows([]);
       });
+    return () => {
+      current = false;
+    };
   }, deps); // load haengt nur von deps ab
   return { rows, error };
 }

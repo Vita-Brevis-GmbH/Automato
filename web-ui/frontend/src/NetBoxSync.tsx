@@ -494,9 +494,13 @@ function Items({ plan, kinds }: { plan: SyncPlan; kinds: string[] }) {
   useEffect(() => setOffset(0), [action, kind, query, plan.id]);
   useEffect(() => {
     setData(null);
+    let current = true; // nur die Antwort zur letzten Anfrage (Filter schnell gewechselt)
     fetchSyncItems(plan.id, { action, kind: kind || undefined, q: query, limit: PAGE, offset })
-      .then(setData)
-      .catch(setError);
+      .then((d) => current && setData(d))
+      .catch((e) => current && setError(e));
+    return () => {
+      current = false;
+    };
   }, [plan.id, action, kind, query, offset]);
 
   const filters: [string, string][] = [

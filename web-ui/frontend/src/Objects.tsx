@@ -845,12 +845,17 @@ function InventoryTable({
   useEffect(() => {
     setRows(null);
     setError(null);
+    let current = true; // nur die Antwort zur letzten Anfrage (Filter schnell gewechselt)
     fetchInventory(kind, tenantId, { source_system_id: sourceId, q: query })
-      .then(setRows)
+      .then((r) => current && setRows(r))
       .catch((e) => {
+        if (!current) return;
         setError(e);
         setRows([]);
       });
+    return () => {
+      current = false;
+    };
   }, [kind, tenantId, sourceId, query]);
 
   let all = rows ?? [];
@@ -1055,12 +1060,17 @@ function VmTable({ tenantId, sourceId, q, onGo }: { tenantId: number; sourceId: 
   useEffect(() => {
     setData(null);
     setError(null);
+    let current = true;
     fetchVms(tenantId, { q: query, source_system_id: sourceId, limit: PAGE, offset })
-      .then(setData)
+      .then((d) => current && setData(d))
       .catch((e) => {
+        if (!current) return;
         setError(e);
         setData({ total: 0, rows: [] });
       });
+    return () => {
+      current = false;
+    };
   }, [tenantId, sourceId, query, offset]);
   return (
     <>
@@ -1166,12 +1176,17 @@ function PortgroupTable({ tenantId, q, onGo }: { tenantId: number; q: string; on
   const query = useDebounced(q);
   useEffect(() => {
     setRows(null);
+    let current = true;
     fetchPortgroups(tenantId, query)
-      .then(setRows)
+      .then((r) => current && setRows(r))
       .catch((e) => {
+        if (!current) return;
         setError(e);
         setRows([]);
       });
+    return () => {
+      current = false;
+    };
   }, [tenantId, query]);
   return (
     <>

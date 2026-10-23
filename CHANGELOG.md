@@ -7,6 +7,16 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.44.1 – 2026-10-23
+
+Korrektur der Web-Oberfläche. Ohne Migration.
+
+- **Listen mit Filtern:** Kam die Antwort einer älteren Anfrage nach der neueren (z. B. Filter
+  gesetzt, bevor die ungefilterte Liste da war), überschrieb sie die gefilterte Liste. Jetzt
+  zählt nur die Antwort zur letzten Anfrage – in Routen, BGP-Nachbarn und weiteren Reitern des
+  Routings, Inventar, VMs, Portgruppen, Abgleich, NetBox-Sync und Kunden-Zugehörigkeit. Fiel
+  in der CI als sporadisch fehlschlagender UI-Test auf.
+
 ## 0.44.0 – 2026-10-23
 
 ACI zwischen VRFs und Tenants (Befund aus dem Test von 0.43.2: eine Regel zeigte in der

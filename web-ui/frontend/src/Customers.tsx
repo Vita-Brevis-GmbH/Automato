@@ -350,9 +350,13 @@ function Members({ customer }: { customer: Customer }) {
   const [items, setItems] = useState<{ id: number | null; name: string; via: string | null }[] | null>(null);
   useEffect(() => {
     setItems(null);
+    let current = true; // nur die Antwort zur letzten Anfrage (Reiter schnell gewechselt)
     fetchCustomerMembers(customer.id, kind)
-      .then(setItems)
-      .catch(() => setItems([]));
+      .then((r) => current && setItems(r))
+      .catch(() => current && setItems([]));
+    return () => {
+      current = false;
+    };
   }, [customer.id, kind]);
   return (
     <div>
