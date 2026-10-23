@@ -7,6 +7,40 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.44.0 – 2026-10-23
+
+ACI zwischen VRFs und Tenants (Befund aus dem Test von 0.43.2: eine Regel zeigte in der
+Applikations-Doku einen Zugriff auf ein System in einem anderen Tenant, die Weg-Suche sperrte
+ihn). Migration `0046`; der Collector-Agent aktualisiert sich, danach die APICs neu einlesen.
+
+- **Shared Services und Route-Leaking:**
+  - Ein Contract zwischen EPGs verschiedener VRFs öffnet allein keinen Weg: das Fabric muss
+    die Subnetze in die andere VRF leaken.
+  - *Shared Service:* Das Subnetz ist geteilt (`fvSubnet.scope` mit `shared`, an der EPG
+    bzw. ihrem BD), und ein Contract mit Scope `global` bzw. `tenant` verbindet die beiden
+    VRFs.
+  - *Route-Leaking* (`leakRoutes`, ACI 5.0+): Die VRF gibt das Subnetz an die andere VRF.
+  - Neues Modul `store/aci_shared.py`; Weg-Suche und Applikations-Doku entscheiden damit
+    gleich.
+- **Weg-Suche:**
+  - Liegt das Ziel in einer anderen VRF, die es in diese leakt, endet der Weg im Fabric:
+    „Ziel im Fabric der VRF … – Shared Service …“ bzw. „Route-Leaking …“.
+  - Der Hop zeigt „→ VRF …“. Der Contract wird mit der EPG des Ziels in dessen VRF geprüft.
+  - Ohne Leak folgt der Weg wie bisher dem Routing der VRF (L3Out, Firewall).
+- **Applikations-Doku:**
+  - Ein Contract zwischen VRFs zählt nur mit dem Leak beider Seiten (Hin- und Rückweg).
+  - Ohne Leak fehlt er in der Applikations-Doku. In der Doku je System steht er unter „nicht
+    möglich“ mit der Begründung „kein geteiltes Subnetz … siehe Weg-Suche“.
+  - Ohne Scope der Subnetze (Lauf vor 0.44.0) bleibt er „unbekannt“, bis neu eingelesen ist.
+- **VRF eindeutig:**
+  - Der Tenant der VRF kommt aus `fvRsCtx.tDn` (`epg.vrf_tenant`), z. B. eine VRF aus
+    `common`.
+  - vzAny vergleicht die aufgelöste VRF statt Name und Tenant.
+- **Collector:** liest zusätzlich `fvSubnet.scope` der BDs und EPGs, den Tenant der VRF aus
+  `tDn` und `leakRoutes` je VRF (`vrf_leaks`). Alles nur lesend.
+- **UI:** Weg-Suche mit „→ VRF …“ und dem Grund am Hop; im EPG-Detail „geteilt“ an
+  geteilten Subnetzen.
+
 ## 0.43.2 – 2026-10-23
 
 Korrektur der Applikations-Doku (Befunde aus dem Test von 0.43.1). Ohne Migration.

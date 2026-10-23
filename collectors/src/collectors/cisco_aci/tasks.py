@@ -17,7 +17,7 @@ from collectors.celery_app import app
 from collectors.cisco_aci import routing as aci_routing
 from collectors.cisco_aci.client import ApicClient
 from collectors.cisco_aci.inventory import parse_inventory
-from collectors.cisco_aci.mo import parse_epgs, parse_filters, parse_mo_export
+from collectors.cisco_aci.mo import parse_epgs, parse_filters, parse_leaks, parse_mo_export
 from collectors.cisco_aci.normalize import filter_objects, normalize_contract
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
@@ -115,6 +115,7 @@ def collect_once(
         rules = [rule for c in parse_mo_export(export) for rule in normalize_contract(c)]
         epgs = [NormalizedEpg(**e) for e in parse_epgs(export)]
         inventory = parse_inventory(export, data.get("fabric"))
+        inventory.vrf_leaks = parse_leaks(export)  # Route-Leaking zwischen VRFs (0.44.0)
         objects = filter_objects(parse_filters(export))
         routing = aci_routing.normalize(export, data.get("fabric"), data.get("border"))
         result = CollectorResult(

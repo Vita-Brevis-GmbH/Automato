@@ -191,6 +191,11 @@ function PathOverview({ trace }: { trace: TraceResult }) {
                             DNAT
                           </span>
                         )}
+                        {h.leak && (
+                          <span className="chip local" style={{ marginLeft: 4 }} title={h.leak.text}>
+                            → VRF {h.leak.vrf}
+                          </span>
+                        )}
                       </span>
                     ))}
                   </td>
@@ -326,6 +331,14 @@ function TraceCard({
                     </td>
                     <td>{h.ingress?.interface ? <Port p={h.ingress} /> : <Dash />}</td>
                     <td>
+                      {h.leak && (
+                        <div style={{ marginBottom: 4 }} className="hop-leak">
+                          <span className="chip local" title="Ziel in einer anderen VRF – das Fabric leakt es in diese VRF">
+                            {h.leak.text.startsWith("Route-Leaking") ? "Route-Leaking" : "Shared Service"}
+                          </span>{" "}
+                          <span className="mono">VRF {h.leak.vrf}</span> <span className="faint">{h.leak.where}</span>
+                        </div>
+                      )}
                       {h.nat && (
                         <div style={{ marginBottom: 4 }}>
                           <span className="chip info" title="VIP (DNAT): der Weg geht ab hier zur internen IP">

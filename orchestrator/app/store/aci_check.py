@@ -20,8 +20,11 @@ externe EPGs nur Teile davon, ist die Zuordnung nicht sicher (Urteil „moeglich
 
 Ergebnis wie bei den FortiGate-Hops (`policy_check`): `verdict` allow | deny | implicit_deny |
 depends | unknown, `text`, `rules` (die Contracts mit `decides`/`unsure`), dazu die Zuordnung
-(`src_epg`, `dst_epg`). Nur lesend; nicht beruecksichtigt: VRF im Modus „unenforced“,
-Intra-EPG-Isolation, Shared Services zwischen VRFs, ESG-IP-Selektoren, Service Graphs.
+(`src_epg`, `dst_epg`). Shared Services bzw. Route-Leaking (0.44.0): liegt das Ziel in einer
+anderen VRF, in diese geleakt (`hop.leak`, `aci_shared`), gilt dort seine EPG; der Contract
+braucht einen Scope ueber die VRF hinaus (global bzw. tenant). Nur lesend; nicht
+beruecksichtigt: VRF im Modus „unenforced“, Intra-EPG-Isolation, ESG-IP-Selektoren, Service
+Graphs.
 """
 
 import ipaddress
@@ -276,9 +279,11 @@ class AciChecker:
 
     # -- Pruefen -----------------------------------------------------------------
 
-    def check(self, sid: int, vrf: str, src, dst, service) -> dict:
+    def check(self, sid: int, vrf: str, src, dst, service, dst_vrf: str | None = None) -> dict:
+        """Urteil des Fabrics; `dst_vrf`: Ziel in einer anderen VRF, in diese geleakt
+        (Shared Service, Route-Leaking - `aci_shared`, 0.44.0)."""
         srcs, src_text = self.members(sid, vrf, src)
-        dsts, dst_text = self.members(sid, vrf, dst)
+        dsts, dst_text = self.members(sid, dst_vrf or vrf, dst)
         base = {"src_epg": src_text, "dst_epg": dst_text}
         if src is None:
             return base | {"verdict": "unknown", "rules": [],
@@ -289,7 +294,7 @@ class AciChecker:
                 return base | {"verdict": "unknown", "rules": [], "text": missing}
             return base | {"verdict": "implicit_deny", "rules": [],
                            "text": f"{missing} – das Fabric verwirft den Verkehr"}  # fmt: skip
-        results = [self._pair(sid, vrf, s, d, service) for s in srcs for d in dsts]
+        results = [self._pair(sid, vrf, s, d, service, dst_vrf) for s in srcs for d in dsts]
         verdicts = {r["verdict"] for r in results}
         rules: list[dict] = []
         for r in results:
@@ -304,11 +309,12 @@ class AciChecker:
         text = "abhängig von der EPG – je nach Zuordnung erlaubt bzw. gesperrt"
         return base | {"verdict": "depends", "rules": rules, "text": text}
 
-    def _pair(self, sid: int, vrf: str, s: Member, d: Member, service) -> dict:
+    def _pair(self, sid: int, vrf: str, s: Member, d: Member, service,
+              dst_vrf: str | None = None) -> dict:  # fmt: skip
         if s.epg.id == d.epg.id:
             return {"verdict": "allow", "rules": [],
                     "text": f"gleiche EPG ({s.text}) – ohne Contract erlaubt"}  # fmt: skip
-        ps, pd = self.proxies(s.epg, vrf), self.proxies(d.epg, vrf)
+        ps, pd = self.proxies(s.epg, vrf), self.proxies(d.epg, dst_vrf or vrf)
         shown: list[dict] = []
         decisive = None
         for c in self.contracts(sid):

@@ -338,8 +338,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.43.0** | Docker und Images aktuell halten: Fremd- und Basis-Images bei jedem Update, `deploy/aufbau.sh docker-update` bzw. `AUTOMATO_DOCKER_UPDATE=1`, Stand in `pruefen` |
 | **0.43.1** | Korrektur Applikations-Doku: Scope der Contracts (auch aus `common`), Regeln anderer EPGs im gemeinsamen BD, Portgruppe je NIC über Name/VLAN/Switch, Vorgabe vor gelerntem Endpunkt, Hinweis Projektnummer |
 | **0.43.2** | Korrektur Applikations-Doku: Contracts nur mit den Beteiligten (eigene EPGs, Gegenstellen im Scope), Firewall mit VDOM |
+| **0.44.0** | ACI zwischen VRFs/Tenants: Shared Services (Subnetz-Scope `shared`) und Route-Leaking (`leakRoutes`), VRF aus `tDn` (auch vzAny), Weg-Suche endet im Fabric der anderen VRF, Applikations-Doku urteilt gleich |
 
-### Nächste Arbeiten (Stand 0.43.2)
+### Nächste Arbeiten (Stand 0.44.0)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
@@ -377,7 +378,7 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 
 | Version | Inhalt |
 |---|---|
-| 0.44.0 | ACI zwischen VRFs/Tenants (vorgezogen, Befund 0.43.1: Doku erlaubt, Weg-Suche sperrt): Shared Services und Route-Leaking (Subnetz-Scope `shared`, `leakRoutes`), VRF eindeutig aus `tDn` (vzAny), gleiche Logik in Weg-Suche und Doku |
+| ~~0.44.0~~ | ACI zwischen VRFs/Tenants – **umgesetzt in 0.44.0** (offen: Shared L3Out, vzAny als Consumer eines Shared Service in der Doku) |
 | 0.45.0 | Verbindungen Ende zu Ende in der Applikations-Doku (vorgezogen, Anwender): eine Zeile je Verbindung über Firewalls und ACI, je Hop Policy bzw. Contract mit Objekten, Abweichung Regel ↔ Weg markiert; dazu Konfiguration vor Gelerntem überall (statische Endpunkte, Befunde) und ADR 0021 als Entwurf |
 | 0.46.0 | FortiGate SNAT genauer (Pool-Typen, `ippool6`, Interface-IP, `nat-source-vip`; Quelle danach als Bereich; Befunde) |
 | 0.47.0 | Betrieb: Fristen für alte Läufe, getrennte DB-Rollen |

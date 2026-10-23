@@ -336,6 +336,7 @@ def _apply_epgs(session: Session, run, epgs) -> None:
         epg.kind = e.kind or "epg"
         epg.aci_tenant, epg.ap, epg.bd = e.tenant, e.ap, e.bd
         epg.vrf, epg.l3out = e.vrf, e.l3out
+        epg.vrf_tenant = e.vrf_tenant  # aufgeloester Tenant der VRF (0.44.0)
         epg.selectors = e.selectors or None
         epg.pref_group = e.pref_group
         epg.source_system_id = run.source_system_id
@@ -350,7 +351,8 @@ def _apply_epgs(session: Session, run, epgs) -> None:
         subnets.update({(ip, "bd"): None for ip in e.bd_subnets if (ip, own) not in subnets})
         for ip, origin in subnets:
             fam = "v6" if ":" in ip else "v4"
-            scope = e.subnet_scopes.get(ip) if origin == "ext" else None
+            # Scope: externe EPG import-security; EPG/BD shared = zwischen VRFs geteilt (0.44.0)
+            scope = (e.bd_subnet_scopes if origin == "bd" else e.subnet_scopes).get(ip)
             session.add(EpgSubnet(epg_id=epg.id, ip=ip, family=fam, origin=origin, scope=scope))
         macs: dict[str, str | None] = {}
         for ep in e.endpoints:
@@ -491,7 +493,16 @@ def _replace_inventory(session: Session, run, inv: NetworkInventory) -> None:
         rows.append(InvInterface(**base, **data))
     rows += [InvVlan(**base, **{**v.model_dump(), "epgs": v.epgs or None}) for v in inv.vlans]
     rows += [InvSubnet(**base, **s.model_dump()) for s in inv.subnets]
-    rows += [InvVrf(**base, name=name) for name in dict.fromkeys(inv.vrfs)]
+    leaks: dict[str, list[dict]] = {}  # Route-Leaking je VRF (ACI leakRoutes, 0.44.0)
+    for leak in inv.vrf_leaks:
+        if leak.get("vrf") and leak.get("prefix"):
+            leaks.setdefault(leak["vrf"], []).append(
+                {k: leak.get(k) for k in ("prefix", "to", "external")}
+            )
+    rows += [
+        InvVrf(**base, name=name, leaks=leaks.get(name) or None)
+        for name in dict.fromkeys([*inv.vrfs, *leaks])
+    ]
     session.add_all(rows)
     session.flush()
 

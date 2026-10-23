@@ -277,8 +277,24 @@ Rahmen laut Anwender (2026-10-22):
        `application-profile` verlangt dasselbe AP. Kein Contract: gesperrt.
      - Ergebnis im Format der FortiGate-Hops (`hop.rules` mit `src_epg`/`dst_epg`), das
        Gesamturteil zählt Firewalls und ACI-VRFs.
-     - Nicht berücksichtigt: VRF „unenforced“, Intra-EPG-Isolation, Shared Services zwischen
-       VRFs, ESG-IP-Selektoren, Service Graphs.
+     - Nicht berücksichtigt: VRF „unenforced“, Intra-EPG-Isolation, ESG-IP-Selektoren,
+       Service Graphs.
+   - **ACI zwischen VRFs (0.44.0, `store/aci_shared.py`, Befund 0.43.1: Doku erlaubt, Weg-Suche
+     sperrt):**
+     - Gelesen: `fvSubnet.scope` an EPG und BD (`shared`), der Tenant der VRF aus
+       `fvRsCtx.tDn` (`epg.vrf_tenant`, Alembic `0046`) und `leakRoutes` je VRF
+       (`inv_vrf.leaks`).
+     - Ein Subnetz einer EPG in VRF B ist in VRF A geleakt, wenn es geteilt ist und ein
+       Contract mit Scope `global`/`tenant` eine EPG in A mit ihr verbindet (Shared Service),
+       bzw. per `leakRoutes` von B nach A. Vereinfacht zählen EPG- und BD-Subnetz gleich.
+     - Weg-Suche: Liegt das Ziel nicht im Fabric der VRF, aber geleakt aus einer anderen, endet
+       der Weg dort im Fabric (`hop.leak`); `aci_check` ordnet das Ziel in dessen VRF zu, der
+       Scope des Contracts muss über die VRF hinaus gelten.
+     - Applikations-Doku: Contracts zwischen EPGs verschiedener VRFs brauchen den Leak beider
+       Seiten (Hin- und Rückweg); ohne Leak „nicht möglich“, ohne Scope-Daten „unbekannt“.
+     - vzAny vergleicht die aufgelöste VRF (statt Name und Tenant bzw. common).
+     - Noch nicht: Shared L3Out (`shared-rtctrl`/`shared-security` externer EPGs in anderen
+       VRFs), vzAny als Consumer eines Shared Service in der Doku.
    - **Weg-Suche als eigene Ansicht (0.35.0):** Quelle und Ziel auch als Name bzw. FQDN
      (`store/resolve.py`, `GET /routing/resolve`: IPAM, Adressobjekte der Firewalls, VMs),
      der Dienst auch als Service-Objekt bzw. ACI-Filter (`FT_https`). Seit 0.38.0 auch Netze

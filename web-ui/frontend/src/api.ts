@@ -1713,6 +1713,8 @@ export interface TraceHop extends RoutingNode {
   // VIP (DNAT) an diesem Hop: ab hier zur internen IP (Virtual Server: alle Real Server)
   nat?: { name: string; id: number; ext: string | null; to: string[]; type: string | null; ports: (string | null)[] | null };
   snat?: { pool?: string; interface?: string | null; to: string | null }; // SNAT der erlaubenden Policy
+  // ACI (0.44.0): Ziel in einer anderen VRF, in diese geleakt (Shared Service bzw. Route-Leaking)
+  leak?: { vrf: string; where: string; text: string };
   // Verbund als ein Hop (0.29.0): je Firewall bzw. Variante (andere Interfaces) ein Eintrag
   parts?: TraceHop[];
 }

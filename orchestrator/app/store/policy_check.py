@@ -436,9 +436,10 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
             if kind in ACI_KINDS:
                 aci = aci or AciChecker(session, tenant_id)
                 sid, vrf = hop["source_system_id"], hop["context"]
-                key = ("aci", sid, vrf, cur_src, hop_dst, cur_svc)
+                into = (hop.get("leak") or {}).get("vrf")  # Ziel in geleakter VRF (0.44.0)
+                key = ("aci", sid, vrf, cur_src, hop_dst, cur_svc, into)
                 if key not in cache:
-                    cache[key] = aci.check(sid, vrf, cur_src, hop_dst, cur_svc)
+                    cache[key] = aci.check(sid, vrf, cur_src, hop_dst, cur_svc, into)
                 hop["rules"] = cache[key]
                 verdicts.append((hop["label"], cache[key]["verdict"], kind))
                 continue

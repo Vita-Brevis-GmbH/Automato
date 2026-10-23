@@ -444,6 +444,46 @@ def test_aci_mehrere_tenants_gleiche_namen_common_extern_vzany_interface():
     assert vzany["kind"] == "vzany" and vzany["vrf"] == "VRF_b" and vzany["tenant"] == "TE_b"
 
 
+def test_aci_shared_services_vrf_aufgeloest_und_route_leaking():
+    """0.44.0: Scope der BD-/EPG-Subnetze (`shared` = zwischen VRFs geteilt), der Tenant der
+    VRF aus dem aufgeloesten Ziel (`tDn`; BD in TE_c mit der VRF aus common) und das
+    Route-Leaking einer VRF (`leakRoutes`)."""
+    from collectors.cisco_aci.mo import parse_epgs, parse_leaks
+
+    leak = _mo("leakRoutes", children=[
+        _mo("leakInternalSubnet", ip="10.3.0.0/24", scope="public",
+            children=[_mo("leakTo", tenantName="TE_d", ctxName="VRF_d")]),
+        _mo("leakExternalPrefix", ip="0.0.0.0/0",
+            children=[_mo("leakTo", ctxName="VRF_c2")]),
+    ])  # fmt: skip
+    export = [
+        _mo("fvTenant", "common", [_mo("fvCtx", "VRF_shared")]),
+        _mo("fvTenant", "TE_c", [
+            _mo("fvCtx", "VRF_c", [leak]),
+            _mo("fvBD", "BD_c", [
+                _mo("fvRsCtx", tnFvCtxName="VRF_shared", tDn="uni/tn-common/ctx-VRF_shared"),
+                _mo("fvSubnet", ip="10.3.0.1/24", scope="public,shared"),
+            ]),
+            _mo("fvAp", "AP_1", [_mo("fvAEPg", "EG_c", [
+                _mo("fvRsBd", tnFvBDName="BD_c"),
+                _mo("fvSubnet", ip="10.3.0.10/32", scope="private,shared"),
+            ])]),
+        ]),
+    ]  # fmt: skip
+    (epg,) = (e for e in parse_epgs(export) if e["name"] == "EG_c")
+    assert (epg["vrf"], epg["vrf_tenant"]) == ("VRF_shared", "common")
+    assert epg["subnet_scopes"] == {"10.3.0.10/32": "private,shared"}
+    assert epg["bd_subnet_scopes"] == {"10.3.0.1/24": "public,shared"}
+    assert parse_leaks(export) == [
+        {"vrf": "TE_c:VRF_c", "prefix": "10.3.0.0/24", "to": ["TE_d:VRF_d"], "external": False},
+        {"vrf": "TE_c:VRF_c", "prefix": "0.0.0.0/0", "to": ["TE_c:VRF_c2"], "external": True},
+    ]
+    # ohne tDn wie der APIC: eigener Tenant, sonst common
+    eps = {e["dn"]: e for e in parse_epgs(MULTI_TENANT)}
+    assert eps["uni/tn-TE_a/ap-AP_100/epg-EG_web"]["vrf_tenant"] == "TE_a"
+    assert eps["uni/tn-TE_b/ctx-VRF_b/any"]["vrf_tenant"] == "TE_b"
+
+
 def test_aci_zone_nur_wenn_die_ganze_seite_extern_ist():
     """Dev-Befund: eine VPN-EPG konsumiert viele Contracts mit - L3O_vpn nur, wenn alle
     Consumer dahinter liegen."""

@@ -28,6 +28,8 @@ class Epg(Base):
     # DN aus dem APIC; aeltere Laeufe ohne (dann nur ueber den Namen gefunden)
     dn: Mapped[str | None] = mapped_column(String(400), nullable=True)
     vrf: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # ACI-Tenant der VRF (aufgeloest: eigener Tenant bzw. common, `fvRsCtx.tDn`, 0.44.0)
+    vrf_tenant: Mapped[str | None] = mapped_column(String(100), nullable=True)
     l3out: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # APIC, der die EPG zuletzt gemeldet hat (veraltete EPGs je APIC aufraeumen)
     source_system_id: Mapped[int | None] = mapped_column(
@@ -58,7 +60,8 @@ class EpgSubnet(Base):
     family: Mapped[str | None] = mapped_column(String(4), nullable=True)  # "v4" | "v6"
     # epg (fvSubnet der EPG) | bd (Subnetz der Bridge Domain) | ext (l3extSubnet)
     origin: Mapped[str] = mapped_column(String(8), default="epg", server_default=text("'epg'"))
-    # externe EPG: `l3extSubnet.scope` (import-security = Zuordnung); leer = APIC-Standard
+    # externe EPG: `l3extSubnet.scope` (import-security = Zuordnung); leer = APIC-Standard;
+    # EPG/BD (0.44.0): `fvSubnet.scope` (private, public, shared = zwischen VRFs geteilt)
     scope: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 

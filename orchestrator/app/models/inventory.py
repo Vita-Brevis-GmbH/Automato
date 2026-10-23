@@ -83,6 +83,8 @@ class InvVrf(_InventoryRow, Base):
     __tablename__ = "inv_vrf"
 
     name: Mapped[str] = mapped_column(String(200))
+    # Route-Leaking (ACI `leakRoutes`, 0.44.0): [{prefix, to: [Tenant:VRF], external}]
+    leaks: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
 INVENTORY_MODELS = (InvDevice, InvInterface, InvVlan, InvSubnet, InvVrf)

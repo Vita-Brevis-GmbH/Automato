@@ -328,8 +328,18 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       - Ohne Dienst ist nur ein Filter `ip/any` sicher, sonst „möglich“. Ordnet das ACI die
         Quelle nicht eindeutig zu (z. B. 0.0.0.0/0 in zwei L3Outs), ist der Hop „abhängig“,
         wenn die Kandidaten verschieden ausgehen.
-      - Nicht berücksichtigt: VRF „unenforced“, Intra-EPG-Isolation, Shared Services zwischen
-        VRFs, ESG-IP-Selektoren, Service Graphs.
+      - **Zwischen VRFs (0.44.0):** Liegt das Ziel in einer anderen VRF, die es in diese leakt,
+        endet der Weg im Fabric: „Ziel im Fabric der VRF T2:V2 … – Shared Service …“ bzw.
+        „Route-Leaking …“, am Hop „→ VRF …“. Geleakt ist ein Subnetz, wenn
+        - es geteilt ist (`fvSubnet.scope` mit `shared`, an der EPG bzw. ihrem BD) und ein
+          Contract mit Scope `global` (über Tenants) bzw. `tenant` die beiden VRFs verbindet
+          (Shared Service), oder
+        - die VRF es per Route-Leaking (`leakRoutes`, ACI 5.0+) in diese VRF gibt.
+        Dann gilt im Ziel seine EPG der anderen VRF, und der Contract braucht einen Scope über
+        die VRF hinaus. Ohne Leak kennt die VRF das Ziel nicht; der Weg folgt ihrem Routing
+        (L3Out, Firewall) – wie das ACI.
+      - Nicht berücksichtigt: VRF „unenforced“, Intra-EPG-Isolation, ESG-IP-Selektoren,
+        Service Graphs.
     - **NAT auf dem Weg (0.23.0):**
       - Ist das Ziel die externe IP einer VIP, steht am Hop „DNAT VIP_x: extern → intern“.
         Der Weg geht zur internen IP weiter, der nächste Hop zeigt „Ziel …“.
@@ -483,6 +493,14 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - *Hinweis Projektnummer:* Nennt der VM-Name (`app01-000-…`) ein anderes Projekt als das AP
       der EPG ihrer Portgruppe, steht ein Hinweis beim System. Die Zuordnung folgt der
       Portgruppe – zu prüfen ist dann die Portgruppe der VM im vCenter.
+  - **Contracts zwischen VRFs (0.44.0):** Ein Contract zwischen EPGs verschiedener VRFs (z. B.
+    einem anderen Tenant) zählt nur, wenn das Fabric die Subnetze leakt – geteiltes Subnetz
+    beider Seiten (Shared Service) bzw. Route-Leaking. Sonst fehlt er in der Applikations-Doku
+    und steht in der Doku je System unter „nicht möglich“: „… kein geteiltes Subnetz … im
+    Fabric kein Weg. Verkehr geht über das Routing der VRF (L3Out, Firewall) – siehe
+    Weg-Suche“. Doku und Weg-Suche urteilen so gleich. Fehlt der Scope der Subnetze (Lauf
+    vor 0.44.0), bleibt er „unbekannt“ – neu einlesen. Das Regel-Detail zeigt geteilte
+    Subnetze mit „geteilt“.
   - **Nur die Beteiligten (0.43.2):** Ein Contract zeigt in der Applikation nur ihre EPGs bzw.
     VMs und die Gegenstellen, die über ihn zugreifen können. Die Regel-Liste nennt „von N im
     Contract“. Das Regel-Detail blendet die übrigen Consumer bzw. Provider mit ihren VMs aus,

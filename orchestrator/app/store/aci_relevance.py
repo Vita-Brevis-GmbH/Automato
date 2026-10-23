@@ -113,6 +113,10 @@ class Classifier:
             return None
         if ":" in epg.vrf:
             return epg.vrf
+        if epg.vrf_tenant:  # aufgeloest im Collector (`fvRsCtx.tDn`, 0.44.0)
+            return f"{epg.vrf_tenant}:{epg.vrf}"
+        if epg.kind == "vzany":  # vzAny haengt an der VRF seines Tenants
+            return f"{epg.aci_tenant}:{epg.vrf}"
         own = f"{epg.aci_tenant}:{epg.vrf}"
         known = self._vrfs.get(epg.source_system_id, set())
         return own if own in known or not known else f"common:{epg.vrf}"

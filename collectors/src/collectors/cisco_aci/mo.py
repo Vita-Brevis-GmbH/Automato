@@ -67,6 +67,9 @@ class _Bag:
         self.cifs: dict[tuple[str, str], str] = {}  # (Tenant, Contract-Interface) -> CT-DN
         self.taboos: dict[tuple[str, str], dict] = {}  # (Tenant, Taboo) -> {dn, subjects}
         self.vrfs: set[tuple[str, str]] = set()  # (Tenant, VRF)
+        # Route-Leaking zwischen VRFs (fvCtx/leakRoutes, 0.44.0): {vrf, prefix, to, external}
+        self.leaks: list[dict] = []
+        self.l3out_vrf_tenant: dict[tuple[str, str], str | None] = {}  # (Tenant, L3Out) -> T
 
 
 # rn-Praefixe je Klasse (fuer Exporte ohne dn/rn an den Kindern)
@@ -178,16 +181,53 @@ def _values(kids: list[dict], cls: str, attr: str = "ip") -> list[str]:
     return [v for c in kids if cls in c for v in [_attrs(c[cls]).get(attr)] if v]
 
 
-def _subnet_scopes(kids: list[dict]) -> dict[str, str]:
-    """Scope je Subnetz einer externen EPG (`l3extSubnet.scope`, z. B. `import-security`):
-    nur Subnetze mit `import-security` ordnen Verkehr der EPG zu, die uebrigen steuern das
-    Routing. Fehlt das Attribut, gilt der APIC-Standard `import-security`."""
+def _subnet_scopes(kids: list[dict], cls: str = "l3extSubnet") -> dict[str, str]:
+    """Scope je Subnetz: bei externen EPGs `l3extSubnet.scope` (z. B. `import-security`; nur
+    diese Subnetze ordnen Verkehr zu, fehlt das Attribut, gilt der APIC-Standard), bei BD und
+    EPG `fvSubnet.scope` (`private`, `public`, `shared` - `shared` = zwischen VRFs geteilt,
+    Shared Services, 0.44.0)."""
     out = {}
     for c in kids:
-        if "l3extSubnet" in c:
-            a = _attrs(c["l3extSubnet"])
+        if cls in c:
+            a = _attrs(c[cls])
             if a.get("ip") and a.get("scope") is not None:
                 out[a["ip"]] = a["scope"]
+    return out
+
+
+def _vrf_tenant(kids: list[dict], cls: str) -> str | None:
+    """ACI-Tenant der VRF aus dem aufgeloesten Ziel der Beziehung (`tDn`,
+    `uni/tn-common/ctx-VRF1`) - der APIC sucht den Namen erst im eigenen Tenant, dann in
+    `common` (0.44.0: vzAny und Wege zwischen VRFs eindeutig)."""
+    for c in kids:
+        if cls in c:
+            dn = _attrs(c[cls]).get("tDn") or ""
+            if dn.startswith("uni/tn-") and "/ctx-" in dn:
+                return dn[len("uni/tn-") :].split("/", 1)[0]
+    return None
+
+
+def _leaks(kids: list[dict], tenant: str, vrf: str) -> list[dict]:
+    """Route-Leaking einer VRF (ACI 5.0+, `leakRoutes`): interne Subnetze
+    (`leakInternalSubnet`) bzw. externe Praefixe (`leakExternalPrefix`) mit den Ziel-VRFs
+    (`leakTo`, Tenant:VRF)."""
+    out = []
+    for c in kids:
+        if "leakRoutes" not in c:
+            continue
+        for leak in _children(c["leakRoutes"]):
+            for cls, external in (("leakInternalSubnet", False), ("leakExternalPrefix", True)):
+                if cls not in leak:
+                    continue
+                a = _attrs(leak[cls])
+                to = [
+                    f"{t.get('tenantName') or tenant}:{t.get('ctxName')}"
+                    for t in (_attrs(x["leakTo"]) for x in _children(leak[cls]) if "leakTo" in x)
+                    if t.get("ctxName")
+                ]
+                if a.get("ip") and to:
+                    out.append({"vrf": f"{tenant}:{vrf}", "prefix": a["ip"], "to": to,
+                                "external": external})  # fmt: skip
     return out
 
 
@@ -265,10 +305,14 @@ def _walk(
             t = name or (dn.split("/tn-", 1)[1].split("/", 1)[0] if "/tn-" in dn else "")
         elif cls == "fvCtx":
             bag.vrfs.add((t, name))
+            bag.leaks += _leaks(kids, t, name)
         elif cls == "fvBD":
             bag.bds[(t, name)] = {
+                "tenant": t,
                 "vrf": next(iter(_rel(kids, "fvRsCtx", "tnFvCtxName")), None),
+                "vrf_tenant": _vrf_tenant(kids, "fvRsCtx"),
                 "subnets": _values(kids, "fvSubnet"),
+                "subnet_scopes": _subnet_scopes(kids, "fvSubnet"),
             }
         elif cls == "fvAEPg":
             key = dn or f"uni/tn-{t}/epg-{name}"
@@ -282,6 +326,7 @@ def _walk(
                 ap=_ap_from_dn(dn),
                 bd=next(iter(_rel(kids, "fvRsBd", "tnFvBDName")), None),
                 subnets=_values(kids, "fvSubnet"),
+                subnet_scopes=_subnet_scopes(kids, "fvSubnet"),
                 endpoints=_cep_endpoints(kids),
             )
         elif cls == "fvESg":
@@ -296,12 +341,14 @@ def _walk(
                 name=name,
                 ap=_ap_from_dn(dn),
                 vrf=next(iter(_rel(kids, "fvRsScope", "tnFvCtxName")), None),
+                vrf_tenant=_vrf_tenant(kids, "fvRsScope"),
                 selectors=selectors,
                 subnets=subnets,
             )
         elif cls == "l3extOut":
             out = name  # Kontext fuer verschachtelte l3extInstP
             out_vrf = next(iter(_rel(kids, "l3extRsEctx", "tnFvCtxName")), None)
+            bag.l3out_vrf_tenant[(t, name)] = _vrf_tenant(kids, "l3extRsEctx")
         elif cls == "l3extInstP":
             key = dn or f"uni/tn-{t}/out-{out}/instP-{name}"
             bag.endpoints[key] = _contract_endpoint(
@@ -320,7 +367,7 @@ def _walk(
             vrf = parent_dn.rsplit("/ctx-", 1)[-1] if "/ctx-" in parent_dn else None
             key = dn or f"uni/tn-{t}/ctx-{vrf}/any"
             bag.endpoints[key] = _contract_endpoint(
-                "vzany", key, t, kids, attrs, name="vzAny", vrf=vrf
+                "vzany", key, t, kids, attrs, name="vzAny", vrf=vrf, vrf_tenant=t
             )
         elif cls == "vzBrCP":
             subjects = [
@@ -612,6 +659,14 @@ def parse_epgs(data: Any) -> list[dict]:
     out = []
     for dn, ep in sorted(bag.endpoints.items()):
         bd = _lookup(bag.bds, ep["tenant"], ep.get("bd") or "") or {}
+        vrf = ep.get("vrf") or bd.get("vrf")
+        # Tenant der VRF: aufgeloestes Ziel (tDn), sonst wie der APIC (eigener Tenant, common)
+        vrf_tenant = ep.get("vrf_tenant") or bd.get("vrf_tenant")
+        if ep["kind"] == "external":
+            vrf_tenant = bag.l3out_vrf_tenant.get((ep["tenant"], ep.get("l3out") or ""))
+        if not vrf_tenant and vrf and (bd or ep["kind"] != "epg"):
+            key = _vrf_key(bag, bd.get("tenant") or ep["tenant"], vrf)
+            vrf_tenant = key[0] if key and bag.vrfs else None
         out.append(
             {
                 "name": ep["name"],
@@ -620,14 +675,21 @@ def parse_epgs(data: Any) -> list[dict]:
                 "dn": dn,
                 "ap": ep.get("ap"),
                 "bd": ep.get("bd"),
-                "vrf": ep.get("vrf") or bd.get("vrf"),
+                "vrf": vrf,
+                "vrf_tenant": vrf_tenant,
                 "l3out": ep.get("l3out"),
                 "subnets": ep.get("subnets", []),
                 "subnet_scopes": ep.get("subnet_scopes", {}),
                 "bd_subnets": bd.get("subnets", []),
+                "bd_subnet_scopes": bd.get("subnet_scopes", {}),
                 "endpoints": ep.get("endpoints", []),
                 "selectors": ep.get("selectors", []),
                 "pref_group": ep["pref_group"] and ep["kind"] != "vzany",
             }
         )
     return out
+
+
+def parse_leaks(data: Any) -> list[dict]:
+    """Route-Leaking zwischen VRFs aus dem MO-Export (`leakRoutes`, 0.44.0)."""
+    return _collect(data).leaks

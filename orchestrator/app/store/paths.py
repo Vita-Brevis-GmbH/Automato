@@ -180,6 +180,7 @@ class Graph:
         self._tables: dict[Key, dict[str, Table]] = {}
         self._vips: dict[Key, list[NatRule]] = {}
         self._vlinks: dict[int, dict[tuple[str, str], tuple[str, str]]] = {}
+        self._leaks = None  # aci_shared.Leaks, erst bei Bedarf
         self.exits = list(
             session.scalars(
                 select(TopoExit).where(TopoExit.tenant_id == tenant_id).order_by(TopoExit.id)
@@ -456,6 +457,21 @@ class Graph:
                 best[nkey] = (net.prefixlen, text)
         return [(k, v[1]) for k, v in best.items()]
 
+    def leaked(self, key: Key, ip) -> tuple[str, str, str] | None:
+        """Ziel in einer anderen ACI-VRF desselben APIC, die es in diese VRF leakt (Shared
+        Service, Route-Leaking; 0.44.0) -> (VRF dort, Ort `EPG Tenant|AP|EPG`, Grund)."""
+        from app.store import aci_relevance, aci_shared  # spaet: aci_relevance -> paths
+        from app.store.epgs import inventory_label
+
+        if self._leaks is None:
+            cls = aci_relevance.Classifier(self.session, self.tenant_id, lambda: self)
+            self._leaks = aci_shared.Leaks(self.session, self.tenant_id, cls)
+        found = self._leaks.into(key[0], key[1], ip)
+        if found is None:
+            return None
+        epg, vrf, why = found
+        return vrf, f"EPG {inventory_label(epg).replace('/', '|')}", why
+
     def exit_for(
         self, key: Key, interface: str | None, zone: str | None, ip: str | None
     ) -> TopoExit | None:
@@ -654,6 +670,14 @@ def trace(
             next_hops = [{"ip": follow["gateway"], "interface": devices[0]}]
         elif inside:
             _record(out, hops, hop, "fabric", f"Ziel im Fabric: {inside[0][1]}", dev)
+            continue
+        elif node.kind == "vrf" and (leak := g.leaked(key, cur)) is not None:
+            # Ziel in einer anderen VRF, ins Fabric dieser VRF geleakt (0.44.0): im Fabric,
+            # ohne L3Out - der Contract zwischen den VRFs entscheidet (aci_check)
+            vrf, where, why = leak
+            hop["leak"] = {"vrf": vrf, "where": where, "text": why}
+            text = f"Ziel im Fabric der VRF {vrf}: {where} – {why}"
+            _record(out, hops, hop, "fabric", text, dev)
             continue
         elif route is None:
             text = "keine Route zum Ziel" + (f" (VRF {table})" if table != 0 else "")

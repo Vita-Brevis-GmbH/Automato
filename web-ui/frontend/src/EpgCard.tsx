@@ -81,6 +81,11 @@ export function EpgCard({ epg }: { epg: EpgLocation }) {
                     nur Routing
                   </span>
                 )}
+                {s.origin !== "ext" && (s.scope ?? "").split(",").map((x) => x.trim()).includes("shared") && (
+                  <span className="chip local" title="zwischen VRFs geteilt (Shared Services) – das ACI leakt das Subnetz in die VRF der Contract-Partner">
+                    geteilt
+                  </span>
+                )}
                 {s.ipam && (
                   <div className="faint">
                     IPAM {s.ipam.prefix}

@@ -34,7 +34,7 @@ from app.models import (
     Tenant,
 )
 from app.models.rule import EndpointKind
-from app.store import aci_relevance, references, rule_index, rule_view, sites, virtual
+from app.store import aci_relevance, aci_shared, references, rule_index, rule_view, sites, virtual
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import relevance as relevance_store
@@ -451,18 +451,20 @@ class TenantData:
         """Zuordnung zu externen EPGs (0.28.0); teilt den Graph der Wege."""
         return aci_relevance.Classifier(self.session, self.tenant_id, lambda: self.relevance.graph)
 
+    @cached_property
+    def leaks(self) -> aci_shared.Leaks:
+        """Wege zwischen VRFs im Fabric (Shared Services, Route-Leaking; 0.44.0)."""
+        return aci_shared.Leaks(self.session, self.tenant_id, self.aci)
+
 
 def _proxies(data: TenantData, epg: Epg) -> dict[int, str]:
     """EPG-IDs, deren Contracts fuer die EPG gelten, mit Bezug: die EPG selbst, vzAny ihrer
     VRF (alle EPGs der VRF) und ESGs, die sie per EPG-Selektor einschliessen."""
     out = {epg.id: "direkt"}
+    own = vrf_key(data, epg)
     for other in data.epgs_by_id.values():
-        if (
-            other.kind == "vzany"
-            and epg.vrf
-            and other.vrf == epg.vrf
-            and other.aci_tenant in (epg.aci_tenant, "common")
-        ):
+        # vzAny genau der VRF der EPG (0.44.0: aufgeloeste VRF statt Name und Tenant/common)
+        if other.kind == "vzany" and own[1] and vrf_key(data, other) == own:
             out[other.id] = f"vzAny {other.vrf}"
         elif other.kind == "esg" and epg.dn and f"EPG {epg.dn}" in (other.selectors or []):
             out[other.id] = f"ESG {other.name}"
@@ -518,6 +520,27 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                     or scope_allows(data, r.aci_scope, epg, by_id[e.epg_id])]  # fmt: skip
             if cp and not kept:
                 continue
+            # zwischen VRFs nur mit Leak (Shared Service, Route-Leaking; 0.44.0) - sonst
+            # oeffnet der Contract im Fabric keinen Weg (wie die Weg-Suche)
+            rel, rel_text, blocked = None, "", []
+            for e in kept:
+                other = by_id.get(e.epg_id)
+                if (
+                    other is None
+                    or other.kind not in ("epg", "esg")
+                    or epg.kind not in ("epg", "esg")
+                ):
+                    continue
+                state, why = data.leaks.between(epg, other)
+                if state == aci_shared.IMPOSSIBLE:
+                    blocked.append(e)
+                    rel_text = why
+                elif state == aci_shared.UNKNOWN:
+                    rel, rel_text = aci_shared.UNKNOWN, why
+            if blocked and len(blocked) < len(kept):
+                kept = [e for e in kept if e not in blocked]  # die erreichbaren bleiben
+            elif blocked:
+                rel = aci_shared.IMPOSSIBLE
             cp = kept
             cp_epgs = [by_id[e.epg_id] for e in cp if e.epg_id in by_id]
             cp_names = [_target(by_id.get(e.epg_id), e.inline_value, epg) for e in cp]
@@ -564,6 +587,7 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                             "own": own.get(side, []),
                             "counter": [c.dn for c in cp_epgs if c.dn],
                         },
+                        **({REL: rel, REL_TEXT: rel_text} if rel else {}),
                     },
                 )
             )
