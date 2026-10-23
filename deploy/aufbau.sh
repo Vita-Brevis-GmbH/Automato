@@ -62,6 +62,29 @@ werkzeuge() {
   fi
 }
 
+# Compose-Dateien lesbar? (Befund 0.42.0: die NetBox-Override-Datei lag im Automato-Ordner -
+# "service netbox has neither an image nor a build context", update.sh brach ab)
+konfiguration() {
+  titel "Compose-Konfiguration"
+  local meldung
+  if meldung=$($COMPOSE "${PROFILES[@]}" config --quiet 2>&1); then
+    ok "Automato-Projekt gültig$([ -f docker-compose.override.yml ] && echo " (mit docker-compose.override.yml)")"
+  else
+    fehler "Automato-Projekt ungültig: ${meldung:-docker compose config fehlgeschlagen}"
+    if [ -f docker-compose.override.yml ]; then
+      info "Prüfen: $(pwd)/docker-compose.override.yml (VM-spezifisch, gitignored) – steht dort"
+      info "ein fremder Dienst (z. B. netbox: aus $NETBOX_DIR), gehört die Datei dorthin."
+    fi
+  fi
+  [ -d "$NETBOX_DIR" ] || return 0
+  if meldung=$(dc_netbox config --quiet 2>&1); then
+    ok "NetBox-Projekt gültig ($NETBOX_DIR)"
+  else
+    fehler "NetBox-Projekt ungültig: ${meldung:-docker compose config fehlgeschlagen}"
+    info "Im Override nur Dienste aus: (cd $NETBOX_DIR && docker compose -f docker-compose.yml config --services)"
+  fi
+}
+
 # Neustart-Regel eines Containers (no | unless-stopped | always | on-failure; ? = unbekannt)
 regel_von() {
   [ -n "${1:-}" ] || { echo "?"; return; }
@@ -346,6 +369,7 @@ cmd_backup_schluessel() {
 
 cmd_pruefen() {
   werkzeuge
+  konfiguration
   container
   netbox_stack
   health

@@ -332,8 +332,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.40.0** | Verbindungen prüfen: System → Verbindungen (Datenbank, Redis, Keycloak, zentrale Quellsysteme mit ufw-Regel), `deploy/aufbau.sh pruefen/firewall/status`, Prüfung nach jedem Update |
 | **0.41.0** | Neustart-Regeln für Automato und das NetBox-Setup, `deploy/aufbau.sh` prüft Docker beim Booten, Neustart-Regeln und die lokale NetBox, `netbox-start` |
 | **0.42.0** | Sicherung einmal einrichten: Werte aus `.env`, `deploy/aufbau.sh backup-schluessel`, Prüfung der Sicherung in `pruefen` |
+| **0.42.1** | Korrektur: Compose-Konfiguration vor dem Update bzw. in `pruefen` prüfen (fremder Dienst im Override) |
 
-### Nächste Arbeiten (Stand 0.42.0)
+### Nächste Arbeiten (Stand 0.42.1)
 
 Phase A und die Stände 0.11–0.18.0 sind gegen die echten Systeme abgenommen (0.18.0: Regeln
 paralleler Firewalls einmal, keine Schleifen); 0.19.0 (Verbund ablehnen, redundante Wege) und

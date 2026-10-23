@@ -168,3 +168,17 @@ def test_backup_schluessel_einmal_einrichten_und_aus_env_lesen(tmp_path):
     # die Umgebung geht vor
     out = _run(tmp_path, "pruefen", **env, AUTOMATO_BACKUP_AGE_RECIPIENT="age1ausderumgebung")
     assert "verschlüsselt für age1ausderum…" in out.stdout
+
+
+def test_ungueltige_compose_konfiguration_mit_hinweis_auf_override(tmp_path):
+    """0.42.1: NetBox-Override im Automato-Ordner - `config` scheitert, pruefen nennt die Datei."""
+    stub = _stub(
+        tmp_path / "bad-compose",
+        'case "$*" in\n'
+        '  *config*) echo \'service "netbox" has neither an image nor a build context'
+        " specified' >&2; exit 1 ;;\n"
+        "esac\n",
+    )
+    out = _run(tmp_path, "pruefen", COMPOSE=str(stub))
+    assert out.returncode == 1
+    assert 'Automato-Projekt ungültig: service "netbox" has neither an image' in out.stdout

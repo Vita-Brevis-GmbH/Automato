@@ -834,6 +834,12 @@ an (`deploy/agent-gateway`, Port 8443).
   (Orchestrator aktualisieren; der Agent muss nichts tun). Tritt die Meldung danach noch auf,
   ist ein Teil-Upload tatsächlich abgewiesen worden: Agent-Log prüfen.
 
+- **`deploy/update.sh`: „service "netbox" has neither an image nor a build context specified“**
+  (Befund 0.42.0) — im Automato-Ordner liegt eine `docker-compose.override.yml` mit einem
+  fremden Dienst (hier die NetBox-Override-Datei). Sie gehört nach
+  `source-of-truth/netbox/netbox-docker/`; eine eigene Override-Datei von Automato (z. B.
+  `extra_hosts` für Keycloak) danach wiederherstellen. Seit 0.42.1 melden `deploy/update.sh` und
+  `deploy/aufbau.sh pruefen` das vorab mit der Datei.
 - **NetBox „nicht erreichbar … ConnectTimeout“ beim Einlesen und im NetBox-Sync** (Dev-Befund
   0.33.0) — der Orchestrator- bzw. Collector-Container bekommt keine TCP-Verbindung zu
   `host.docker.internal:8080`. Das ist kein Rechte- oder Token-Problem. Zuerst

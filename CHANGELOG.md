@@ -7,6 +7,18 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.42.1 – 2026-10-23
+
+Korrektur (Befund 0.42.0: `deploy/update.sh` brach in der Sicherung mit „service "netbox" has
+neither an image nor a build context specified“ ab – die NetBox-Override-Datei lag im
+Automato-Ordner). Ohne Migration.
+
+- `deploy/update.sh` prüft vor der Sicherung, ob `docker compose` das Projekt lesen kann, und
+  nennt bei einem Fehler die VM-spezifische `docker-compose.override.yml` als Ursache.
+- `deploy/aufbau.sh pruefen`: neuer Abschnitt Compose-Konfiguration – Automato- und
+  NetBox-Projekt gültig, sonst die Meldung mit Hinweis auf die Override-Datei.
+- Doku: Fehlerbild in BETRIEB; Test für die ungültige Konfiguration.
+
 ## 0.42.0 – 2026-10-23
 
 Sicherung einmal einrichten (Befund 0.41.0: `deploy/update.sh` brach ab – „AUTOMATO_BACKUP_AGE_

@@ -62,6 +62,18 @@ update() {
   prev_rev=$(git rev-parse HEAD)
   prev_version=$(version)
 
+  # Projekt lesbar? Sonst scheitert schon die Sicherung mit einer unklaren Meldung (0.42.1)
+  local meldung
+  if ! meldung=$($COMPOSE "${PROFILES[@]}" config --quiet 2>&1); then
+    echo "FEHLER: docker compose kann das Projekt nicht lesen: $meldung" >&2
+    if [ -f docker-compose.override.yml ]; then
+      echo "        Pruefen: $(pwd)/docker-compose.override.yml (VM-spezifisch) - ein fremder" >&2
+      echo "        Dienst darin (z. B. netbox:) gehoert in source-of-truth/netbox/netbox-docker/." >&2
+    fi
+    echo "        Ueberblick: deploy/aufbau.sh pruefen" >&2
+    exit 2
+  fi
+
   echo "1/4 Sicherung"
   if [ -z "${AUTOMATO_BACKUP_AGE_RECIPIENT:-}" ] && [ "${AUTOMATO_BACKUP_PLAIN:-}" != "1" ]; then
     echo "FEHLER: keine verschluesselte Sicherung moeglich - age-Schluessel fehlt." >&2
