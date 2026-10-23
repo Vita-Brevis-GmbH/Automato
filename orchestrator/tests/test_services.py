@@ -179,7 +179,7 @@ def test_aci_filter_als_dienst_und_contract_ohne_consumer(client, no_sot):
     _deliver(client, tid, apic, "cisco_aci", rules=rules, objects=filters)
 
     (rule,) = client.get("/rules", params={"tenant_id": tid}).json()
-    assert rule["missing"] == ["src"] and rule["service_names"] == ["TE/FT_https"]
+    assert rule["missing"] == ["src"] and rule["service_names"] == ["FT_https"]  # ohne Tenant
     (f,) = _findings(client, tid, "rule_incomplete").values()
     assert f["subject_id"] == "TE/CT_db:SJ_1" and f["severity"] == "info"
     assert f["message"] == (

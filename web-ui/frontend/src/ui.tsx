@@ -114,6 +114,13 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   upload: <path d="M12 16V4m0 0-4 4m4-4 4 4M5 20h14" />,
+  path: (
+    <>
+      <circle cx="5" cy="19" r="2" />
+      <path d="M7 19h6a3 3 0 0 0 0-6h-2a3 3 0 0 1 0-6h6" />
+      <path d="M19 3v8M19 3l3 2-3 2" />
+    </>
+  ),
 };
 
 export function Icon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {

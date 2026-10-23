@@ -12,7 +12,7 @@ import {
 } from "./api";
 import type { View, ViewParams } from "./App";
 import { EpgCard } from "./EpgCard";
-import { FamilyMarks, RefCard, SideMarks, useVdomShown, VdomChip, VmChip, VmSection } from "./refs";
+import { FamilyMarks, RefCard, serviceNames, SideMarks, useVdomShown, VdomChip, VmChip, VmSection } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, fmtTime, Loading, MatchBadge, Note } from "./ui";
 
 function EndpointList({ items }: { items: Endpoint[] }) {
@@ -339,15 +339,23 @@ export default function RuleDetailDrawer({
               </>
             )}
             <dt>Dienste</dt>
-            <dd className="chips">
-              {detail.services.length ? (
-                detail.services.map((s) => (
-                  <span className="chip" key={s}>
-                    {s}
-                  </span>
-                ))
-              ) : (
-                <Dash />
+            <dd>
+              {/* Objektname der Konvention (FT_https), die Werte (tcp/443) darunter */}
+              <div className="chips">
+                {serviceNames(detail).length ? (
+                  serviceNames(detail).map((s) => (
+                    <span className="chip" key={s} title={detail.services.join(", ")}>
+                      {s}
+                    </span>
+                  ))
+                ) : (
+                  <Dash />
+                )}
+              </div>
+              {detail.services.length > 0 && serviceNames(detail).join() !== detail.services.join() && (
+                <div className="faint mono" style={{ marginTop: 2 }}>
+                  {detail.services.join(", ")}
+                </div>
               )}
             </dd>
             {aci ? (

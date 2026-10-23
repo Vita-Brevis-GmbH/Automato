@@ -15,8 +15,9 @@ NAT (0.23.0): Am Hop mit einer VIP gilt fuer die Policy das urspruengliche Ziel 
 - bei Port-Weiterleitung - der interne Port; danach das interne Ziel. SNAT der erlaubenden
 Policy (IP-Pool bzw. IP des Ausgangs-Interfaces) ist die Quelle fuer die Firewalls danach.
 
-Grenzen: ACI-Contracts werden hier nicht geprueft. Nur lesend - es zaehlen die gelesenen
-Policies.
+ACI (0.35.0): je ACI-VRF-Hop die Contracts zwischen den EPGs von Quelle und Ziel
+(`store/aci_check.py`), im selben Format. Nur lesend - es zaehlen die gelesenen Policies und
+Contracts.
 """
 
 import ipaddress
@@ -31,11 +32,13 @@ from app.models import (
     NatRule,
     NetworkObject,
     Proto,
+    RefRole,
     Rule,
     RuleAction,
     RuleDomain,
     RuleEndpoint,
     RuleIpRange,
+    RuleObjectRef,
     ServiceObject,
     Zone,
 )
@@ -43,6 +46,7 @@ from app.models.rule import EndpointKind, rule_service
 from app.store.rule_index import value_range
 
 FIREWALL_KINDS = ("firewall", "vdom")
+ACI_KINDS = ("vrf",)
 SHOWN = 12  # moegliche Policies je Hop in der Anzeige
 _OPEN = ("", "always")  # Zeitplan ohne Einschraenkung
 
@@ -82,6 +86,7 @@ class _Policy:
     unresolved: dict[str, bool] = field(default_factory=lambda: defaultdict(bool))
     endpoints: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     snat: list[str] | None = None  # None = kein NAT, [] = IP des Ausgangs, sonst IP-Pools
+    names: list[str] = field(default_factory=list)  # Service-Objekte wie auf der Firewall
 
 
 def _names(raw: dict, key: str) -> list[str]:
@@ -202,6 +207,14 @@ class Checker:
             .where(*where)
         ):
             out[rid].services.append((proto, start, end, name))
+        for rid, name in self.session.execute(
+            select(RuleObjectRef.rule_id, RuleObjectRef.name)
+            .join(Rule, Rule.id == RuleObjectRef.rule_id)
+            .where(*where, RuleObjectRef.role == RefRole.SERVICE)
+            .order_by(RuleObjectRef.rule_id, RuleObjectRef.position)
+        ):
+            if name not in out[rid].names:
+                out[rid].names.append(name)
 
     def known(self, sid: int) -> set[str]:
         """Interface- und Zonennamen der Firewall (unbekannte Namen = nicht pruefbar)."""
@@ -283,7 +296,7 @@ class Checker:
                 "dst": dst_via,
                 "srcintf": p.srcintf,
                 "dstintf": p.dstintf,
-                "services": [s[3] for s in p.services][:4],
+                "services": (p.names or [s[3] for s in p.services])[:4],
                 "unsure": unsure,
                 "decides": not unsure,
                 "snat": p.snat,
@@ -318,6 +331,8 @@ def _verdict(decisive: dict | None, shown: list[dict]) -> dict:
 
 
 def _label(e: dict) -> str:
+    if e.get("label"):
+        return e["label"]
     return f"Policy {e['external_id']}" + (f" „{e['name']}“" if e["name"] else "")
 
 
@@ -385,19 +400,32 @@ def _service(p: _Policy, want: tuple[str, int | None] | None) -> bool | None:
 
 
 def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, service) -> None:
-    """Je Weg und FortiGate-Hop das Urteil (`hop.rules`), dazu je Weg das Gesamturteil
-    (`path.policy`): gesperrt am ersten sperrenden Hop, sonst abhaengig bzw. erlaubt. NAT:
-    Ziel je Hop aus dem Weg (`hop.dst` nach einer VIP davor), interner Port bei
+    """Je Weg und FortiGate- bzw. ACI-VRF-Hop das Urteil (`hop.rules`), dazu je Weg das
+    Gesamturteil (`path.policy`): gesperrt am ersten sperrenden Hop, sonst abhaengig bzw.
+    erlaubt. NAT: Ziel je Hop aus dem Weg (`hop.dst` nach einer VIP davor), interner Port bei
     Port-Weiterleitung, Quelle nach SNAT (`hop.snat`) fuer die Hops danach."""
+    from app.store.aci_check import AciChecker  # zirkulaer: aci_relevance -> paths
+
     checker = Checker(session, tenant_id)
+    aci: AciChecker | None = None
     cache: dict[tuple, dict] = {}
     for path in paths:
         verdicts = []
         cur_src, cur_svc = src, service
         for hop in path["hops"]:
-            if hop.get("kind") not in FIREWALL_KINDS:
+            kind = hop.get("kind")
+            if kind not in FIREWALL_KINDS + ACI_KINDS:
                 continue
             hop_dst = ipaddress.ip_address(hop["dst"]) if hop.get("dst") else dst
+            if kind in ACI_KINDS:
+                aci = aci or AciChecker(session, tenant_id)
+                sid, vrf = hop["source_system_id"], hop["context"]
+                key = ("aci", sid, vrf, cur_src, hop_dst, cur_svc)
+                if key not in cache:
+                    cache[key] = aci.check(sid, vrf, cur_src, hop_dst, cur_svc)
+                hop["rules"] = cache[key]
+                verdicts.append((hop["label"], cache[key]["verdict"], kind))
+                continue
             cur_svc = _forwarded(cur_svc, hop.get("nat"))
             ingress, egress = hop.get("ingress") or {}, hop.get("egress") or {}
             sid, vdom = hop["source_system_id"], hop["context"]
@@ -407,7 +435,7 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
             if key not in cache:
                 cache[key] = checker.check(sid, vdom, ingress, egress, cur_src, hop_dst, cur_svc)
             result = hop["rules"] = cache[key]
-            verdicts.append((hop["label"], result["verdict"]))
+            verdicts.append((hop["label"], result["verdict"], kind))
             decisive = next((r for r in result["rules"] if r["decides"]), None)
             if result["verdict"] == "allow" and decisive and decisive.get("snat") is not None:
                 hop["snat"] = checker.snat(sid, vdom, decisive["snat"], egress)
@@ -434,20 +462,33 @@ def _port_range(text: str | None) -> tuple[int, int] | None:
     return lo, int(b) if b.strip().isdigit() else lo
 
 
-def _overall(verdicts: list[tuple[str, str]]) -> dict | None:
+def _overall(verdicts: list[tuple[str, str, str]]) -> dict | None:
     if not verdicts:
         return None
-    for label, v in verdicts:
+    for label, v, _kind in verdicts:
         if v in ("deny", "implicit_deny"):
             return {"verdict": "deny", "text": f"gesperrt an {label}"}
-    open_ = [label for label, v in verdicts if v == "depends"]
-    unread = [label for label, v in verdicts if v == "unknown"]
+    open_ = [label for label, v, _kind in verdicts if v == "depends"]
+    unread = "; ".join(
+        f"{what} an {', '.join(labels)}"
+        for what, kinds in (
+            ("keine Policies gelesen", FIREWALL_KINDS),
+            ("Contracts nicht prüfbar", ACI_KINDS),
+        )
+        if (labels := [label for label, v, k in verdicts if v == "unknown" and k in kinds])
+    )
     if open_:
         text = f"abhängig an {', '.join(open_)}"
         if unread:
-            text += f"; keine Policies gelesen an {', '.join(unread)}"
+            text += f"; {unread}"
         return {"verdict": "depends", "text": text}
     if unread:
-        return {"verdict": "unknown", "text": f"keine Policies gelesen an {', '.join(unread)}"}
-    n = len(verdicts)
-    return {"verdict": "allow", "text": "erlaubt" + (f" an allen {n} Firewalls" if n > 1 else "")}
+        return {"verdict": "unknown", "text": unread}
+    fw = sum(1 for *_, kind in verdicts if kind in FIREWALL_KINDS)
+    vrfs = len(verdicts) - fw
+    if not vrfs:
+        return {"verdict": "allow",
+                "text": "erlaubt" + (f" an allen {fw} Firewalls" if fw > 1 else "")}  # fmt: skip
+    parts = [f"{fw} Firewall{'s' if fw > 1 else ''}" if fw else "",
+             f"{vrfs} ACI-VRF{'s' if vrfs > 1 else ''}"]  # fmt: skip
+    return {"verdict": "allow", "text": f"erlaubt ({', '.join(p for p in parts if p)})"}

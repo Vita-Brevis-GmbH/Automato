@@ -1689,12 +1689,16 @@ export interface HopRule {
   services: string[];
   unsure: string[]; // Eingang, Ausgang, Quelle, Ziel, Dienst, Benutzer/Gruppen, Zeitplan …
   decides: boolean;
+  label?: string; // ACI (0.35.0): „Contract CT_x“, „Taboo TB_x“, „Preferred Group VRF“
+  kind?: "contract" | "taboo" | "preferred_group";
 }
 export type PolicyVerdict = "allow" | "deny" | "implicit_deny" | "depends" | "unknown";
 export interface HopRules {
   verdict: PolicyVerdict;
   text: string;
   rules: HopRule[];
+  src_epg?: string; // ACI-VRF-Hop (0.35.0): Zuordnung der Quelle bzw. des Ziels
+  dst_epg?: string;
 }
 export interface TracePath {
   kind?: "active" | "backup"; // aktiv (inkl. ECMP) bzw. Backup-Weg (eine Abweichung)
@@ -1715,7 +1719,20 @@ export interface TraceResult {
   notes: string[];
   slack?: number; // Backup-Wege mit höchstens so vielen Hops mehr als der kürzeste aktive
   service?: string | null; // geprüfter Dienst (z. B. tcp/443)
+  service_name?: string; // angegebenes Service-Objekt bzw. ACI-Filter (FT_https)
 }
+
+// Name bzw. FQDN -> IP für die Weg-Suche (0.35.0): IPAM, Objekte der Firewalls, VMs
+export interface NameHit {
+  ip: string;
+  name: string | null;
+  kind: "ip" | "ipam" | "object" | "vm";
+  source: string | null;
+  detail: string | null;
+  also?: string[]; // weitere Namen derselben IP
+}
+export const resolveName = (tenantId: number, q: string) =>
+  getJSON<NameHit[]>(`/api/routing/resolve${qs({ tenant_id: tenantId, q: q.trim() })}`);
 export interface TopoPeer extends Labeled {
   id: number;
   peer_ip: string;

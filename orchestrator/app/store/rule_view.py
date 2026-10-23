@@ -52,6 +52,21 @@ def ref_names(rule, role: RefRole) -> list[str]:
     return list(dict.fromkeys(ref.name for ref in rule.refs if ref.role is role))
 
 
+def bare_service(name: str) -> str:
+    """ACI-Filter heissen im Store `Tenant/FT_x` (gleiche Namen in vielen ACI-Tenants) -
+    angezeigt wird der Name der Konvention `FT_x` (0.36.0)."""
+    return name.rsplit("/", 1)[-1] if "/" in name else name
+
+
+def service_labels(rule) -> list[str]:
+    """Dienste einer Regel mit dem Objektnamen (`FT_https`, `HTTPS`) statt `tcp/443`; ohne
+    Verweise (aeltere Laeufe, Werte direkt in der Regel) die kanonischen Werte."""
+    names = ref_names(rule, RefRole.SERVICE)
+    if rule.domain is RuleDomain.ACI_CONTRACT:
+        names = list(dict.fromkeys(bare_service(n) for n in names))
+    return names or [s.canonical_name for s in rule.services]
+
+
 def endpoint_label(e, objs, epgs=None, home_tenant: str | None = None) -> str:
     """Anzeigename eines Endpunkts: Objektname (Konvention) bevorzugt, ACI-EPG als AP/EPG,
     sonst Wert/inline."""
@@ -121,8 +136,7 @@ def row(rule, objs, epgs, zones: dict, vips: list[str]) -> dict:
         "num_services": len(rule.services),
         "sources": labels(rule, RefRole.SRC, EndpointRole.SRC, objs, epgs),
         "destinations": labels(rule, RefRole.DST, EndpointRole.DST, objs, epgs),
-        "service_names": ref_names(rule, RefRole.SERVICE)
-        or [s.canonical_name for s in rule.services],
+        "service_names": service_labels(rule),
         "aci": aci(rule),
         "nat": nat(rule, vips),
         "missing": missing(rule),

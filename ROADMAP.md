@@ -324,8 +324,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.32.0** | Kunden-Filter: Umschalter „Kunde“, alle Doku-Listen auf den Ausschnitt samt geteiltem Teil (ADR 0018 Schritt 2) |
 | **0.33.0** | Kunden-Benutzer: Keycloak-Rolle `customer`/`customer_ids`, Freigabeliste fail-closed, serverseitige Einschränkung je Endpunkt, Audit immer an (ADR 0018 Schritt 3) |
 | **0.34.0** | Befunde aus dem Test von 0.33.0: Verbindung prüfen (NetBox), fixierter Seitenkopf, Management-Adresse der FortiGate, Portgruppe „Name passt nicht“, VRF und Filter im Routing, Kategorien der Applikations-Doku mit Aktion, Gerät, Link und IPv4/IPv6-Paaren, NAT nur aus der Regel, unmögliche Regeln nicht in der Applikations-Doku, Links in der Kunden-Übersicht |
+| **0.35.0** | Weg-Suche als eigene Ansicht: Quelle und Ziel als Name bzw. FQDN (IPAM, Firewall-Objekte, VMs), Dienst als Service-Objekt bzw. ACI-Filter, ACI-Contracts je VRF-Hop (EPG-Zuordnung, Taboo, vzAny, ESG, Preferred Group); Dienste mit Objektnamen (`FT_https`) statt Werten |
 
-### Nächste Arbeiten (Stand 0.34.0)
+### Nächste Arbeiten (Stand 0.35.0)
 
 Phase A und die Stände 0.11–0.18.0 sind gegen die echten Systeme abgenommen (0.18.0: Regeln
 paralleler Firewalls einmal, keine Schleifen); 0.19.0 (Verbund ablehnen, redundante Wege) und
@@ -333,7 +334,7 @@ paralleler Firewalls einmal, keine Schleifen); 0.19.0 (Verbund ablehnen, redunda
 0.22.0/0.23.0 (Regeln und NAT auf dem Weg), 0.24.0–0.26.0 (Relevanz in Doku und Regel-Liste,
 Gegenstelle any), 0.27.0 (Inter-VDOM-Links), 0.28.0 (ACI-Contracts über externe EPGs), 0.29.0
 (Verbund als ein Hop), 0.30.0–0.33.0 (Kunden, Kunden-Filter, Kunden-Benutzer; im Test, Befunde in
-0.34.0) stehen zur Abnahme an. Konzeptbefund
+0.34.0) und 0.35.0 (Weg-Suche mit Contracts und Namen) stehen zur Abnahme an. Konzeptbefund
 des Anwenders: Ohne Routing, Verbindungswege und Redundanzen zeigt die Doku Zugriffe, die
 routingtechnisch nicht möglich sind, und `any` aus dem Internet wie eine Liste aller
 Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
@@ -352,7 +353,7 @@ Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
    paralleler Firewalls **in 0.18.0**, redundante Wege **in 0.19.0**, erkannte Anbindungen mit
    Redundanz **in 0.20.0**, Regeln je Hop auf dem Weg **in 0.22.0**, NAT auf dem Weg **in 0.23.0**, Regeln nur, wo der Verkehr durchkommt (Doku) **in
    0.24.0**, Gegenstelle `any` als das, was hinter dem Interface liegt, **in 0.25.0**, Relevanz in der
-   Regel-Liste **in 0.26.0**, Inter-VDOM-Links als Kanten **in 0.27.0**, ACI-Contracts über externe EPGs **in 0.28.0**, Verbund bzw. Session-Sync-Paar als ein Hop **in 0.29.0**. Offen:
+   Regel-Liste **in 0.26.0**, Inter-VDOM-Links als Kanten **in 0.27.0**, ACI-Contracts über externe EPGs **in 0.28.0**, Verbund bzw. Session-Sync-Paar als ein Hop **in 0.29.0**, Weg-Suche als eigene Ansicht mit ACI-Contracts je VRF-Hop und Suche nach Namen **in 0.35.0**. Offen:
    Aussenrouter selbst lesen.
 5. **Designer** (ADR 0019, Stufe 4), Zeichnung später. Vorgesehen: normale Switches und
    weitere Geräte erfassen, Verkabelung dokumentieren (L1/L2-Sicht neben dem Routing).

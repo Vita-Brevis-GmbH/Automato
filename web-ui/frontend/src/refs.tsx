@@ -452,6 +452,13 @@ export function SideMarks({ r, side }: { r: Rule; side: "src" | "dst" | "service
   );
 }
 
+// Dienste mit dem Objektnamen der Konvention (0.36.0): ACI-Filter stehen als „Tenant/FT_x“ im
+// Store – angezeigt wird „FT_x“; FortiGate-Services wie auf der Firewall
+export function serviceNames(r: Pick<Rule, "service_names" | "aci">): string[] {
+  const names = r.service_names ?? [];
+  return r.aci ? [...new Set(names.map((n) => n.split("/").pop() ?? n))] : names;
+}
+
 export const FAMILY_LABEL: Record<string, string> = { v4: "IPv4", v6: "IPv6", dual: "IPv4+IPv6" };
 
 // VDOMs je Quellsystem (GET /systems, hoechstens einmal je Minute geladen)

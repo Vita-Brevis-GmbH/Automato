@@ -7,7 +7,10 @@
                                  die die IP enthalten, laengstes Praefix zuerst
 - `GET /routing/lookup?ip=`      je Kontext die wirksame Route und vorgehende Policy-Routen
 - `GET /routing/trace?dst=&src=&start=&service=`  Weg Hop fuer Hop von der Quelle bzw. dem
-                                 Startpunkt, je FortiGate-Hop die passenden Policies (0.22.0)
+                                 Startpunkt, je FortiGate-Hop die passenden Policies (0.22.0),
+                                 je ACI-VRF-Hop die Contracts (0.35.0); Dienst auch als
+                                 Service-Objekt bzw. ACI-Filter (`FT_https`)
+- `GET /routing/resolve?q=`      Name bzw. FQDN -> IPs (IPAM, Objekte, VMs) fuer die Weg-Suche
 - `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs` - Nachbarn mit Namen aus dem IPAM
 - `GET/POST/PUT/DELETE /routing/exits` - Anbindungen nach aussen (Internet, MPLS, WAN),
                                  von Hand erfasst (operator), an denen ein Weg endet bzw.
@@ -48,7 +51,7 @@ from app.models import (
     TopoPolicyRoute,
     TopoRoute,
 )
-from app.store import exits, paths, policy_check, topology
+from app.store import exits, paths, policy_check, resolve, topology
 
 router = APIRouter(prefix="/routing", tags=["routing"])
 
@@ -269,7 +272,9 @@ def trace(
     src: str | None = None,
     start: str | None = Query(None, description="Startpunkt: <Quellsystem>|<Kontext>"),
     slack: int = Query(1, ge=0, le=3, description="Backup-Wege mit hoechstens so vielen Hops mehr"),
-    service: str | None = Query(None, max_length=16, description="Dienst, z. B. tcp/443"),
+    service: str | None = Query(
+        None, max_length=200, description="Dienst, z. B. tcp/443, bzw. Service-Objekt FT_https"
+    ),
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
@@ -281,11 +286,52 @@ def trace(
         _ip(src, "src")
     if not src and not start:
         raise HTTPException(status_code=422, detail="src oder start angeben")
+    wanted, note = _service(session, tid, service)
+    result = paths.trace(session, tid, dst, src, start, slack, wanted)
+    if note:
+        result["notes"].insert(0, note)
+    if service and wanted is not None and result["service"] != service.strip().lower():
+        result["service_name"] = service.strip()
+    return result
+
+
+def _service(session: Session, tid: int, text: str | None) -> tuple[tuple | None, str | None]:
+    """Dienst als `tcp/443` bzw. als Service-Objekt/ACI-Filter (`FT_https`): geprueft wird
+    der erste Dienst des Objekts; mehrere stehen im Hinweis."""
     try:
-        wanted = policy_check.parse_service(service)
+        return policy_check.parse_service(text), None
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    return paths.trace(session, tid, dst, src, start, slack, wanted)
+        values = resolve.service_values(session, tid, text or "")
+        if values is None:
+            detail = f"{exc}; kein Service-Objekt bzw. ACI-Filter „{(text or '').strip()}“"
+            raise HTTPException(status_code=422, detail=detail) from None
+    usable = []
+    for v in values:
+        try:
+            if (parsed := policy_check.parse_service(v)) is not None:
+                usable.append((v, parsed))
+        except ValueError:
+            continue
+    name = (text or "").strip()
+    if not usable:
+        shown = ", ".join(values) or "keine Dienste"
+        return None, f"{name} ({shown}) ist nicht als Port prüfbar – ohne Dienst geprüft"
+    if len(usable) > 1:
+        rest = ", ".join(v for v, _ in usable[1:])
+        return usable[0][1], f"{name}: geprüft {usable[0][0]} – weitere Dienste: {rest}"
+    return usable[0][1], None
+
+
+@router.get("/resolve")
+def resolve_name(
+    q: str = Query(..., min_length=1, max_length=200, description="Name, FQDN bzw. IP"),
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    """IPs zu einem Namen bzw. FQDN aus IPAM, Firewall-Objekten und VMs (Weg-Suche)."""
+    tid = _tenant(session, principal, tenant_id)
+    return resolve.resolve(session, tid, q)
 
 
 def _list(session: Session, tid: int, model, source_system_id: int | None, order) -> list:

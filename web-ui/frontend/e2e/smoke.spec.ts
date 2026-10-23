@@ -7,7 +7,8 @@ const VIEWS: [string, string][] = [
   ["regeln", "Regeln & Contracts"],
   ["objekte", "Objekte & Inventar"],
   ["nat", "NAT / VIPs"],
-  ["routing", "Routing & Wege"],
+  ["wege", "Weg-Suche"],
+  ["routing", "Routing"],
   ["apps", "Applikationen"],
   ["findings", "Findings"],
   ["abgleich", "Abgleich"],
@@ -32,7 +33,7 @@ for (const [key, title] of VIEWS) {
 
 test("Routing: alle Reiter laden", async ({ page, problems }) => {
   await page.goto("/#routing");
-  for (const tab of ["Routen", "BGP-Nachbarn", "HA & Session-Sync", "Policy-Routen & SD-WAN", "L3Outs (ACI)", "Anbindungen", "Weg für IP"]) {
+  for (const tab of ["Routen", "BGP-Nachbarn", "HA & Session-Sync", "Policy-Routen & SD-WAN", "L3Outs (ACI)", "Anbindungen"]) {
     await page.click(`.tabbar button:has-text('${tab}')`);
     await page.waitForLoadState("networkidle");
   }

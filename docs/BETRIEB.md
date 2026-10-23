@@ -212,15 +212,26 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - „N abgelehnte Vorschläge“ → **wieder vorschlagen** hebt das auf.
   - Filter „Verbund: abweichend / fehlt“; mit Filter „System“ erscheinen die Regeln dieser
     Firewall vollständig.
-- **Routing & Wege** (0.16.0, ADR 0019): oben die gelesenen Kontexte mit Anzahl Routen und dem,
-  was nicht lesbar war (dort ist die Aussage „unbekannt“). Bezeichnungen (0.17.0):
+- **Routing** (0.16.0, ADR 0019; bis 0.34.0 „Routing & Wege“): oben die gelesenen Kontexte mit
+  Anzahl Routen und dem, was nicht lesbar war (dort ist die Aussage „unbekannt“). Bezeichnungen
+  (0.17.0):
   - Eine FortiGate nur mit `root` heisst wie die **Firewall**, sonst „fw-01 · VDOM kunde-a“.
   - ACI: „leaf-101 · VRF Tenant:VRF“, im Weg und im Kontext-Filter die VRF über alle
     Border-Leafs („apic-01 · VRF Tenant:VRF“).
 
-  Reiter:
-  - **Weg für IP** (0.17.0): **Quelle (IP)** und/oder **Start** (Firewall, VDOM, ACI-VRF), dazu
-    das **Ziel**.
+  Reiter: Routen, BGP-Nachbarn, HA & Session-Sync, Policy-Routen & SD-WAN, L3Outs, Anbindungen
+  (unten). Den Weg einer Verbindung zeigt seit 0.35.0 die eigene Ansicht **Weg-Suche**:
+  - **Weg-Suche** (0.17.0, eigene Ansicht seit 0.35.0): **Quelle** und/oder **Start** (Firewall,
+    VDOM, ACI-VRF), dazu das **Ziel** – für Fehlersuche und die Kontrolle von Arbeiten.
+    - **Quelle und Ziel als Name** (0.35.0): IP oder Name bzw. FQDN. Ab zwei Zeichen schlägt
+      das Feld Treffer vor – DNS-Namen aus dem IPAM (auch nur das erste Label, `web01`),
+      Adressobjekte der Firewalls (auch ohne Präfix, `web01` findet `H_web01`; FQDN-Objekte
+      über das IPAM) und VMs (Name bzw. Hostname). Ein eindeutiger Name wird direkt
+      aufgelöst; bei mehreren IPs fragt die Suche nach („2 Treffer für „dup“ – bitte einen
+      wählen“). Gesucht wird nur im Gelesenen (`GET /routing/resolve?q=`).
+    - **Dienst** als `tcp/443`, `udp/53`, `tcp`, `icmp` oder als Name eines Service-Objekts
+      bzw. ACI-Filters (`FT_https`, `Tenant/FT_https`). Hat das Objekt mehrere Dienste, wird
+      der erste geprüft; die übrigen nennt ein Hinweis.
     - Der Weg beginnt am Start bzw. dort, wo die Quelle angeschlossen ist (im ACI: im EPG-/
       BD-Subnetz). Je Weg eine Karte, Hop für Hop: Knoten, Eingang (Interface, Zone),
       Entscheidung (Route mit Präfix bzw. Policy-Route, die vorgeht) und Ausgang mit Next-Hop
@@ -262,9 +273,25 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       - „möglich (…)“ nennt, was sich nicht prüfen lässt: Eingang/Quelle bei gewähltem Start,
         FQDN/ISDB, Benutzer/Gruppen, Zeitplan, Dienst. Kann eine solche Policy vor der
         entscheidenden greifen, ist der Hop „abhängig“.
-      - Je Weg steht das Gesamturteil („gesperrt an fw-x“). Ein Klick auf „Policy n“ öffnet
-        die Regel.
-      - ACI-Contracts sind dabei noch nicht berücksichtigt.
+      - Dienste stehen mit dem Objektnamen (`FT_https`, `HTTPS`) wie in Regel-Liste,
+        Regel-Detail und Applikations-Doku (0.35.0); die Werte (`tcp/443`) zeigt das Detail.
+      - Je Weg steht das Gesamturteil („gesperrt an fw-x“, „erlaubt (2 Firewalls, 1 ACI-VRF)“).
+        Ein Klick auf „Policy n“ bzw. „Contract …“ öffnet die Regel.
+    - **ACI-Contracts auf dem Weg (0.35.0):** Je ACI-VRF-Hop steht, wie das Fabric Quelle und
+      Ziel zuordnet und welcher Contract entscheidet.
+      - Zuordnung: im Fabric die EPG (gelernter Endpunkt, EPG-Subnetz, BD-Subnetz mit genau
+        einer EPG, Server der EPG), sonst die externe EPG über das längste Subnetz mit
+        `import-security` (wie in der Doku, 0.28.0). Erfasst keine EPG die IP, verwirft das
+        Fabric den Verkehr.
+      - Gleiche EPG: ohne Contract erlaubt. Taboo-Contracts des Ziels sperren zuerst. Sonst
+        erlaubt ein Contract mit der Quelle als Consumer und dem Ziel als Provider – direkt,
+        über vzAny der VRF, eine ESG oder die Preferred Group – mit passendem Filter. Kein
+        Contract: im ACI gesperrt.
+      - Ohne Dienst ist nur ein Filter `ip/any` sicher, sonst „möglich“. Ordnet das ACI die
+        Quelle nicht eindeutig zu (z. B. 0.0.0.0/0 in zwei L3Outs), ist der Hop „abhängig“,
+        wenn die Kandidaten verschieden ausgehen.
+      - Nicht berücksichtigt: VRF „unenforced“, Intra-EPG-Isolation, Shared Services zwischen
+        VRFs, ESG-IP-Selektoren, Service Graphs.
     - **NAT auf dem Weg (0.23.0):**
       - Ist das Ziel die externe IP einer VIP, steht am Hop „DNAT VIP_x: extern → intern“.
         Der Weg geht zur internen IP weiter, der nächste Hop zeigt „Ziel …“.
@@ -306,8 +333,8 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - Im Formular stehen die erkannten Router zum Ankreuzen.
     - In der Liste zeigt „Erkannte Router · Redundanz“, was die Anbindung abdeckt. „nicht
       eingetragen“ markiert erkannte Router, die noch fehlen; ein Knopf übernimmt sie.
-    - Danach unter „Weg für IP“ einfach neu suchen. Das Ende nennt bei mehreren Routern
-      „Router n von N“.
+    - Danach in der Weg-Suche einfach neu suchen. Das Ende nennt bei mehreren Routern
+      „Router n von N“. „Als Anbindung erfassen“ in der Weg-Suche öffnet das Formular hier.
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
   (Application Profiles, EPGs, Server); **Vorschläge** nach der Projektnummer aus
@@ -369,7 +396,7 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - Zuerst eine erfasste Anbindung („all → Internet Provider (internet)“).
     - Sonst die Default-Route („extern“) bzw. die Netze dahinter („Netze hinter lan: …“).
     - Mit einer Internet-Anbindung landen solche Regeln in „Zugriff aus dem Internet“ bzw.
-      „Internet Zugriff“. Anbindungen erfassen unter Routing & Wege → Anbindungen.
+      „Internet Zugriff“. Anbindungen erfassen unter Routing → Anbindungen.
   - **ACI-Contracts über externe EPGs (0.28.0):** Ein System ausserhalb des Fabrics (z. B.
     hinter der Firewall) bekommt die Contracts der externen EPG, der das ACI seine IP
     zuordnet. Bezug: „externe EPG L3O_fw|EN_srv (10.20.0.0/24)“.
@@ -664,7 +691,7 @@ an (`deploy/agent-gateway`, Port 8443).
 
 - **Lauf mit „Routing nicht lesbar: … (HTTP 403)“** (ab 0.16.0) — Regeln und Objekte sind
   eingelesen, aber dem Konto fehlt das Leserecht auf diese Routing-Tabelle (FortiGate: Profil
-  mit Router/System lesen; APIC: Fabric-Knoten lesen). Unter **Routing & Wege** steht der
+  mit Router/System lesen; APIC: Fabric-Knoten lesen). Unter **Routing** steht der
   Kontext dann als nicht lesbar. Recht ergänzen und neu einlesen. „zu gross“ heisst: mehr als
   50 000 Einträge (z. B. volle Internet-Tabelle per BGP) – diese Tabelle wird nicht übernommen.
 

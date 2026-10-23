@@ -340,15 +340,17 @@ test("VDOMs: Filter, Kennzeichnung und Detail je VDOM", async ({ page }) => {
   await expect(nets.filter({ hasText: "VDOM kunde-a" })).toContainText("10.50.0.0/24");
 });
 
-test("Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", async ({ page }) => {
+test("Weg-Suche und Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", async ({ page }) => {
   await page.goto("/#routing");
   const ctx = page.locator(".card", { hasText: "Gelesene Kontexte" });
   await expect(ctx).toContainText("leaf-101 · VRF TE:VRF1");
   await expect(ctx).toContainText("fw-05 · VDOM root");
   await expect(ctx.locator("tbody tr").filter({ hasText: "fw-04" })).toContainText("Firewall"); // nur root
   await expect(ctx).toContainText("BGP-Pfade IPv4 (HTTP 403)"); // nicht lesbar -> unbekannt
-  // nur Ziel: je Kontext die wirksame Route
-  const dst = page.getByPlaceholder("Ziel (IP)");
+  // Weg-Suche als eigene Ansicht; nur Ziel: je Kontext die wirksame Route
+  await page.locator("nav.nav a, nav.nav button").filter({ hasText: "Weg-Suche" }).first().click();
+  await expect(page.locator("main.main h1")).toHaveText("Weg-Suche");
+  const dst = page.getByPlaceholder("Ziel: IP oder Name");
   await dst.fill("10.20.0.5");
   await page.click("button:has-text('Weg suchen')");
   const way = page.locator(".card", { hasText: "Geht vor" }).locator("tbody tr");
@@ -357,7 +359,7 @@ test("Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", async ({ page }) =
   await expect(root).toContainText("Policy-Route #5");
   await expect(way.filter({ hasText: "leaf-101" })).toContainText("ECMP ×2");
   // mit Quelle: Weg Hop für Hop, ECMP über zwei Provider, Namen aus dem IPAM
-  await page.getByPlaceholder("Quelle (IP)").fill("10.20.0.5");
+  await page.getByPlaceholder("Quelle: IP oder Name").fill("10.20.0.5");
   await dst.fill("203.0.113.10");
   await page.click("button:has-text('Weg suchen')");
   const first = page.locator(".card[id^='trace-']", { hasText: "Weg 1 von 2" });
@@ -370,13 +372,14 @@ test("Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", async ({ page }) =
   await expect(overview).toContainText("Backup ab fw-05 · VDOM root");
   await expect(page.locator(".card[id^='trace-']", { hasText: "Backup-Weg 1" })).toContainText("198.51.100.9");
   // Startpunkt gewählt: Firewall nur mit root
-  await page.getByPlaceholder("Quelle (IP)").fill("");
+  await page.getByPlaceholder("Quelle: IP oder Name").fill("");
   await page.locator(".filterbar select").filter({ hasText: "Start: aus der Quelle" }).selectOption({ label: "fw-04" });
   await page.click("button:has-text('Weg suchen')");
   await expect(page.locator(".card", { hasText: "Weg 1" })).toContainText("keine Route zum Ziel"); // kein Default
   await dst.fill("10.20.0.5");
   await page.click("button:has-text('Weg suchen')");
   await expect(page.locator(".card", { hasText: "Weg 1" })).toContainText("Next-Hop 10.70.0.1 gehört keinem");
+  await page.goto("/#routing");
   await page.click(".tabbar button:has-text('BGP-Nachbarn')");
   await expect(page.locator(".card", { hasText: "Gelesen als" })).toContainText("isp-a-gw.example.ch");
   await page.click(".tabbar button:has-text('Routen')");
@@ -410,21 +413,24 @@ test("Parallele Firewalls: Vorschlag zusammenfassen, Abweichungen als Findings",
   await expect(page.locator(".fgroup", { hasText: "Parallele Firewalls" })).toBeVisible();
 });
 
-test("Routing: Anbindung aus einem Weg erfassen", async ({ page }) => {
-  await page.goto("/#routing");
-  await page.locator(".filterbar select").filter({ hasText: "Start: aus der Quelle" }).selectOption({ label: "fw-04" });
-  await page.getByPlaceholder("Ziel (IP)").fill("10.20.0.5");
-  await page.click("button:has-text('Weg suchen')");
+test("Weg-Suche: Anbindung aus einem Weg erfassen", async ({ page }) => {
+  const search = async () => {
+    await page.goto("/#wege");
+    await page.locator(".filterbar select").filter({ hasText: "Start: aus der Quelle" }).selectOption({ label: "fw-04" });
+    await page.getByPlaceholder("Ziel: IP oder Name").fill("10.20.0.5");
+    await page.click("button:has-text('Weg suchen')");
+  };
+  await search();
   const card = page.locator(".card", { hasText: "Weg 1" });
   await expect(card).toContainText("Weg endet");
   await card.locator("button", { hasText: "Als Anbindung erfassen" }).click();
+  await expect(page).toHaveURL(/#routing/); // im Routing, Reiter Anbindungen
   await expect(page.locator("#ex-hops")).toHaveValue("10.70.0.1");
   await page.locator("#ex-name").fill("MPLS Kunde A");
   await page.locator("#ex-kind").selectOption("mpls");
   await page.click("button:has-text('Speichern')");
   await expect(page.locator(".card", { hasText: "Manuelle Routen" }).locator("tbody tr")).toContainText("MPLS Kunde A");
-  await page.click(".tabbar button:has-text('Weg für IP')");
-  await page.click("button:has-text('Weg suchen')");
+  await search();
   await expect(page.locator(".card", { hasText: "Weg 1" })).toContainText("weiter über MPLS Kunde A");
 });
 
@@ -480,9 +486,9 @@ test("Routing: erkannte Anbindung mit allen Routern übernehmen, Wege gleich lan
   await expect(row).toContainText("3 Router · 3 aktiv (ECMP ×2)");
   await expect(page.locator("#exit-suggestions tbody tr", { hasText: "198.51.100.5" })).toHaveCount(0);
   // Weg: beide Provider enden an der Anbindung, dazu der BGP-Backup – alle gleich lang
-  await page.click(".tabbar button:has-text('Weg für IP')");
-  await page.getByPlaceholder("Quelle (IP)").fill("10.20.0.5");
-  await page.getByPlaceholder("Ziel (IP)").fill("203.0.113.10");
+  await page.goto("/#wege");
+  await page.getByPlaceholder("Quelle: IP oder Name").fill("10.20.0.5");
+  await page.getByPlaceholder("Ziel: IP oder Name").fill("203.0.113.10");
   await page.click("button:has-text('Weg suchen')");
   const first = page.locator(".card[id^='trace-']", { hasText: "Weg 1 von 2" });
   await expect(first).toContainText("weiter über Internet Provider");
@@ -571,7 +577,7 @@ test("Kunden-Benutzer: nur die Doku des eigenen Ausschnitts, ohne Betrieb und Ve
   await expect(page.locator(".u-role")).toHaveText("Kunde");
   const nav = page.locator("nav.nav");
   await expect(nav).toContainText("Regeln & Contracts");
-  for (const hidden of ["Routing & Wege", "Abgleich", "Administration", "Kunden", "Läufe", "Netzwerkdesign"])
+  for (const hidden of ["Routing", "Weg-Suche", "Abgleich", "Administration", "Kunden", "Läufe", "Netzwerkdesign"])
     await expect(nav.getByText(hidden, { exact: true })).toHaveCount(0);
   await expect(page.getByText("Letzte Läufe")).toHaveCount(0);
   await expect(page.getByLabel("Kunde", { exact: true })).toHaveCount(0); // nur ein Kunde
@@ -590,10 +596,10 @@ test("Kunden-Benutzer: nur die Doku des eigenen Ausschnitts, ohne Betrieb und Ve
   await expect(page.locator("main.main h1")).toHaveText("Übersicht");
 });
 
-test("Routing: Verbund als ein Hop mit beiden Firewalls", async ({ page }) => {
-  await page.goto("/#routing");
-  await page.getByPlaceholder("Quelle (IP)").fill("10.88.0.5");
-  await page.getByPlaceholder("Ziel (IP)").fill("10.89.0.7");
+test("Weg-Suche: Verbund als ein Hop mit beiden Firewalls", async ({ page }) => {
+  await page.goto("/#wege");
+  await page.getByPlaceholder("Quelle: IP oder Name").fill("10.88.0.5");
+  await page.getByPlaceholder("Ziel: IP oder Name").fill("10.89.0.7");
   await page.click("button:has-text('Weg suchen')");
   await expect(page.locator(".card[id^='trace-']")).toHaveCount(1); // ein Weg statt zwei
   const card = page.locator(".card[id^='trace-']").first();
@@ -605,10 +611,10 @@ test("Routing: Verbund als ein Hop mit beiden Firewalls", async ({ page }) => {
   await expect(card).toContainText("Ziel angeschlossen an fw-09 (srv) bzw. Ziel angeschlossen an fw-10 (srv)");
 });
 
-test("Routing: Regeln auf dem Weg je Firewall", async ({ page }) => {
-  await page.goto("/#routing");
-  await page.getByPlaceholder("Quelle (IP)").fill("10.20.0.5");
-  const dst = page.getByPlaceholder("Ziel (IP)");
+test("Weg-Suche: Regeln auf dem Weg je Firewall", async ({ page }) => {
+  await page.goto("/#wege");
+  await page.getByPlaceholder("Quelle: IP oder Name").fill("10.20.0.5");
+  const dst = page.getByPlaceholder("Ziel: IP oder Name");
   await dst.fill("203.0.113.10");
   await page.click("button:has-text('Weg suchen')");
   // Servernetz -> Internet: keine Policy von „server“ nach „internet“
@@ -617,10 +623,10 @@ test("Routing: Regeln auf dem Weg je Firewall", async ({ page }) => {
   await expect(first).toContainText("implizit gesperrt");
   await expect(page.locator(".card", { hasText: "Wege im Überblick" }).locator("thead")).toContainText("Regeln");
   // Startpunkt und Dienst: die Policy der VIP ist möglich (Eingang, Ausgang, Quelle nicht prüfbar)
-  await page.getByPlaceholder("Quelle (IP)").fill("");
+  await page.getByPlaceholder("Quelle: IP oder Name").fill("");
   await page.locator(".filterbar select").filter({ hasText: "Start: aus der Quelle" }).selectOption({ label: "fw-05 · VDOM root" });
   await dst.fill("10.1.0.10");
-  await page.getByPlaceholder("Dienst, z. B. tcp/443").fill("tcp/443");
+  await page.getByPlaceholder("Dienst: tcp/443").fill("tcp/443");
   await page.click("button:has-text('Weg suchen')");
   const card = page.locator(".card[id^='trace-']").first();
   await expect(card).toContainText("abhängig");
@@ -633,6 +639,28 @@ test("Routing: Regeln auf dem Weg je Firewall", async ({ page }) => {
   await card.locator("a", { hasText: "Policy 1" }).click();
   await expect(page).toHaveURL(/#regeln\?rule=\d+/);
   await expect(page.locator(".drawer")).toContainText("web");
+});
+
+test("Weg-Suche: Ziel als Name, Dienst als Objekt, mehrdeutige Namen zur Auswahl", async ({ page }) => {
+  await page.goto("/#wege");
+  await page.getByPlaceholder("Quelle: IP oder Name").fill("10.20.0.5");
+  const dst = page.getByPlaceholder("Ziel: IP oder Name");
+  await dst.fill("www.exa");
+  const option = page.locator(".menu.suggest button", { hasText: "www.example.ch" });
+  await expect(option).toContainText("203.0.113.10");
+  await expect(option).toContainText("IPAM · ddi-01");
+  await option.click();
+  await expect(dst).toHaveValue("www.example.ch");
+  await page.getByPlaceholder("Dienst: tcp/443").fill("FT_https");
+  await page.click("button:has-text('Weg suchen')");
+  await expect(page.locator("main.main")).toContainText("Ziel www.example.ch (203.0.113.10) · Dienst FT_https = tcp/443");
+  await expect(page.locator(".card[id^='trace-']", { hasText: "Weg 1 von 2" })).toBeVisible();
+  // mehrdeutig: zwei IPs für „dup“ – Auswahl statt Raten
+  await dst.fill("dup");
+  await dst.press("Escape");
+  await page.click("button:has-text('Weg suchen')");
+  await expect(page.locator(".error")).toContainText("2 Treffer für „dup“");
+  await expect(page.locator(".menu.suggest button")).toHaveCount(2);
 });
 
 test("Regeln: Suche nach einer IP mit Relevanz nach dem Routing", async ({ page }) => {

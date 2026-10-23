@@ -15,7 +15,7 @@ import {
 } from "./api";
 import type { View, ViewParams } from "./App";
 import RuleDetailDrawer from "./RuleDetail";
-import { FAMILY_LABEL, FamilyMarks, SideMarks, useVdomShown, VdomChip } from "./refs";
+import { FAMILY_LABEL, FamilyMarks, serviceNames, SideMarks, useVdomShown, VdomChip } from "./refs";
 import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 
 // Seitengrösse: Server filtert nach Art/System/Suche, der Rest wird mit "Weitere laden" geholt.
@@ -627,7 +627,7 @@ export default function RulesTable({
                     </td>
                     <td>
                       <SideMarks r={r} side="service" />
-                      <ObjCell items={r.service_names?.length ? r.service_names : []} />
+                      <ObjCell items={serviceNames(r)} />
                     </td>
                     <td>
                       {r.num_unmatched > 0 ? (

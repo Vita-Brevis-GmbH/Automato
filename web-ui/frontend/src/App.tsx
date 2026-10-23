@@ -28,6 +28,7 @@ import NetBoxSync from "./NetBoxSync";
 import Objects from "./Objects";
 import Overview from "./Overview";
 import Reconcile from "./Reconcile";
+import Paths from "./Paths";
 import Routing from "./Routing";
 import RulesTable from "./RulesTable";
 import Runs from "./Runs";
@@ -43,6 +44,7 @@ export type View =
   | "objekte"
   | "nat"
   | "routing"
+  | "wege"
   | "apps"
   | "findings"
   | "abgleich"
@@ -69,7 +71,8 @@ const NAV: NavEntry[] = [
   { key: "regeln", label: "Regeln & Contracts", icon: "rules", section: "doc", customer: true },
   { key: "objekte", label: "Objekte & Inventar", icon: "objects", section: "doc", customer: true },
   { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc", customer: true },
-  { key: "routing", label: "Routing & Wege", icon: "route", section: "doc" },
+  { key: "wege", label: "Weg-Suche", icon: "path", section: "doc" },
+  { key: "routing", label: "Routing", icon: "route", section: "doc" },
   { key: "apps", label: "Applikationen", icon: "apps", section: "doc", customer: true },
   { key: "findings", label: "Findings", icon: "findings", section: "doc", customer: true },
   { key: "abgleich", label: "Abgleich", icon: "reconcile", section: "doc" },
@@ -576,6 +579,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                   setFindingType(t);
                 }}
               />
+            )}
+            {current === "wege" && (
+              <Paths tenantId={tenantId} tenantLabel={tenantLabel} canEdit={me.isAdmin || me.isOperator} />
             )}
             {current === "routing" && (
               <Routing tenantId={tenantId} tenantLabel={tenantLabel} canEdit={me.isAdmin || me.isOperator} />

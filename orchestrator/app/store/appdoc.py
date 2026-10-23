@@ -34,7 +34,7 @@ from app.models import (
     Tenant,
 )
 from app.models.rule import EndpointKind
-from app.store import aci_relevance, references, rule_index, sites, virtual
+from app.store import aci_relevance, references, rule_index, rule_view, sites, virtual
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import relevance as relevance_store
@@ -526,7 +526,7 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                     idx,
                     {
                         "Server Name": system_name,
-                        "TCP/UDP": ", ".join(s.canonical_name for s in r.services),
+                        "TCP/UDP": ", ".join(rule_view.service_labels(r)),
                         "Target Systems": ", ".join(n for n in cp_names if n),
                         ACTION: action_label(r),
                         "Schutzmechanismen": ", ".join(r.protections) if r.protections else "",
@@ -628,7 +628,7 @@ def _fw_rows(
             counterpart_external=cp_external,
             is_dnat_target=direction == "in" and bool(rule_dnat),
         )
-        services = ", ".join(s.canonical_name for s in rule.services)
+        services = ", ".join(rule_view.service_labels(rule))
         protections = ", ".join(rule.protections) if rule.protections else ""
         description = rule.name or f"#{rule.external_id}"
         targets = ", ".join(cp_labels)

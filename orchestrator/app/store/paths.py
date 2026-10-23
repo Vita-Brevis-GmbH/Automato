@@ -760,8 +760,8 @@ def _merged(same: list[dict]) -> dict:
         if len(verdicts) == 1:  # gleiches Urteil: ueber alle Firewalls des Verbunds
             from app.store import policy_check  # spaet importiert wie in trace()
 
-            hops_rules = [(h["label"], h["rules"]["verdict"]) for p in same for h in p["hops"]
-                          if h.get("rules")]  # fmt: skip
+            hops_rules = [(h["label"], h["rules"]["verdict"], h["kind"]) for p in same
+                          for h in p["hops"] if h.get("rules")]  # fmt: skip
             merged["policy"] = policy_check._overall(list(dict.fromkeys(hops_rules)))
         else:
             who = [", ".join(h["label"] for h in p["hops"] if h.get("group")) for p in same]

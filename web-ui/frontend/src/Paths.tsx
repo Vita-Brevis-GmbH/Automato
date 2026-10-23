@@ -1,0 +1,805 @@
+// Weg-Suche (0.35.0, ADR 0019 Stufe 3): eigene Ansicht statt Reiter im Routing. Der Weg einer
+// Verbindung Hop für Hop ab Quelle bzw. Startpunkt – je Firewall die Policies, je ACI-VRF die
+// Contracts zwischen den EPGs (Fehlersuche, Kontrolle von Arbeiten). Quelle und Ziel als IP
+// oder Name/FQDN (IPAM, Objekte der Firewalls, VMs), der Dienst als tcp/443 oder Objektname.
+import { useEffect, useState } from "react";
+import {
+  fetchRoutingSummary,
+  HopRules,
+  lookupRoute,
+  NameHit,
+  resolveName,
+  RouteLookup,
+  RoutingNode,
+  TracePath,
+  TraceResult,
+  traceRoute,
+} from "./api";
+import { useDebounced } from "./Objects";
+import { Capture, CAPTURE_KEY, Hops, matchText, Missing, policyText, Port, VrfChip, where } from "./Routing";
+import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
+
+const END: Record<TracePath["end"]["kind"], [string, string]> = {
+  connected: ["ok", "Ziel erreicht"],
+  fabric: ["ok", "im Fabric"],
+  exit: ["info", "Anbindung"],
+  external: ["info", "extern"],
+  unknown: ["warn", "Weg endet"],
+  no_route: ["warn", "keine Route"],
+  loop: ["crit", "Schleife"],
+  max_hops: ["warn", "abgebrochen"],
+};
+
+// Titel eines Wegs: aktive Wege „Weg 1 von 2“, Backup-Wege „Backup-Weg 1“
+function pathTitle(paths: TracePath[], p: TracePath): string {
+  const same = paths.filter((x) => (x.kind ?? "active") === (p.kind ?? "active"));
+  const n = same.indexOf(p) + 1;
+  if (p.kind === "backup") return `Backup-Weg ${n}`;
+  return `Weg ${n}${same.length > 1 ? ` von ${same.length}` : ""}`;
+}
+
+// Art eines Wegs in der Übersicht: aktiv, ECMP, redundant über einen Verbund, Backup
+function PathKind({ path, activeCount }: { path: TracePath; activeCount: number }) {
+  if (path.kind === "backup")
+    return (
+      <span className="chip warn" title={`weicht bei ${path.deviation?.label} ab: ${path.deviation?.reason}`}>
+        Backup ab {path.deviation?.label}
+      </span>
+    );
+  if (path.parallel?.length)
+    return (
+      <span className="chip info" title="die Firewalls des Verbunds (z. B. Session-Sync-Paar) sind ein Hop">
+        redundant · Verbund {path.parallel.join(", ")}
+      </span>
+    );
+  return activeCount > 1 ? (
+    <span className="chip info" title="Equal-Cost-Multipath: der Verkehr verteilt sich auf alle Wege">
+      aktiv · ECMP
+    </span>
+  ) : (
+    <span className="chip ok">aktiv</span>
+  );
+}
+
+// Regeln auf dem Weg (0.22.0): Urteil je FortiGate-Hop bzw. je Weg
+const VERDICT: Record<string, [string, string]> = {
+  allow: ["ok", "erlaubt"],
+  deny: ["crit", "gesperrt"],
+  implicit_deny: ["crit", "implizit gesperrt"],
+  depends: ["warn", "abhängig"],
+  unknown: ["", "unbekannt"],
+};
+
+function Verdict({ v, title }: { v: string; title?: string }) {
+  const [cls, label] = VERDICT[v] ?? ["", v];
+  return (
+    <span className={`chip ${cls}`} title={title}>
+      {label}
+    </span>
+  );
+}
+
+// Regeln eines Hops: FortiGate die entscheidende Policy und die möglichen davor (mit dem, was
+// nicht prüfbar ist); ACI-VRF (0.35.0) die Zuordnung von Quelle und Ziel und die Contracts
+function HopRulesCell({ r }: { r?: HopRules }) {
+  if (!r) return <Dash />;
+  return (
+    <div>
+      <Verdict v={r.verdict} title={r.text} />
+      {(r.src_epg || r.dst_epg) && (
+        <div className="faint" style={{ marginTop: 2 }} title="Zuordnung im ACI: EPG im Fabric bzw. externe EPG (längstes Subnetz)">
+          {r.src_epg || "?"} → {r.dst_epg || "?"}
+        </div>
+      )}
+      <div className="objs" style={{ marginTop: 2 }}>
+        {r.rules.map((p) => (
+          <span key={p.rule_id} className={p.decides ? undefined : "faint"}>
+            <a href={`#regeln?rule=${p.rule_id}`} title="Regel öffnen">
+              {p.label ?? `Policy ${p.external_id}`}
+            </a>
+            {!p.label && p.name ? ` „${p.name}“` : ""} · {p.action === "allow" ? "erlauben" : "sperren"}
+            {p.kind && p.src && p.src !== "direkt" ? ` · über ${p.src}` : ""}
+            {p.services.length ? ` · ${p.services.join(", ")}` : ""}
+            {p.unsure.length ? ` · möglich (${p.unsure.join(", ")})` : ""}
+          </span>
+        ))}
+      </div>
+      {r.rules.length === 0 && <div className="faint">{r.text}</div>}
+    </div>
+  );
+}
+
+// Länge im Vergleich zum kürzesten Weg mit Ziel: „gleich lang“ bzw. „+1 Hop“
+function Length({ extra }: { extra?: number | null }) {
+  if (extra == null)
+    return (
+      <span className="faint" title="Weg ohne Ziel">
+        –
+      </span>
+    );
+  return extra === 0 ? (
+    <span className="chip ok" title="so lang wie der kürzeste Weg">
+      gleich lang
+    </span>
+  ) : (
+    <span className="chip warn" title="Hops mehr als der kürzeste Weg">
+      +{extra} Hop{extra > 1 ? "s" : ""}
+    </span>
+  );
+}
+
+// Übersicht aller Wege: Art, Knoten nacheinander, Länge (Hops, im Vergleich), Ende
+function PathOverview({ trace }: { trace: TraceResult }) {
+  const active = trace.paths.filter((p) => p.kind !== "backup");
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>Wege im Überblick</h2>
+        <span className="faint">
+          {active.length} aktiv{active.length > 1 ? " (redundant)" : ""}
+          {trace.paths.length > active.length
+            ? ` · ${trace.paths.length - active.length} Backup-Weg${trace.paths.length - active.length > 1 ? "e" : ""}`
+            : ""}{" "}
+          – Backup-Wege mit gleicher Länge
+          {trace.slack ? ` bzw. bis ${trace.slack} Hop${trace.slack > 1 ? "s" : ""} mehr` : ""}
+        </span>
+      </div>
+      <div className="card-body scroll">
+        <table className="compact">
+          <thead>
+            <tr>
+              <th>Weg</th>
+              <th>Art</th>
+              <th>Knoten</th>
+              <th>Next-Hops</th>
+              <th className="num">Hops</th>
+              <th>Länge</th>
+              <th>Regeln</th>
+              <th>Ende</th>
+            </tr>
+          </thead>
+          <tbody>
+            {trace.paths.map((p, i) => {
+              const [cls, label] = END[p.end.kind] ?? ["", p.end.kind];
+              return (
+                <tr key={i}>
+                  <td className="nowrap">
+                    <button
+                      className="linkbtn"
+                      onClick={() => document.getElementById(`trace-${i}`)?.scrollIntoView({ behavior: "smooth" })}
+                    >
+                      {pathTitle(trace.paths, p)}
+                    </button>
+                  </td>
+                  <td>
+                    <PathKind path={p} activeCount={active.length} />
+                    {p.kind === "backup" && <div className="faint">{p.deviation?.reason}</div>}
+                  </td>
+                  <td>
+                    {p.hops.map((h, j) => (
+                      <span key={j}>
+                        {j > 0 && <span className="faint"> → </span>}
+                        <span
+                          className={p.deviation && p.deviation.hop === j ? "chip warn" : undefined}
+                          title={h.parts ? [...new Set(h.parts.map((x) => x.label))].join(", ") : undefined}
+                        >
+                          {h.label}
+                        </span>
+                        {h.nat && (
+                          <span className="chip info" style={{ marginLeft: 4 }} title={`VIP → ${h.nat.to.join(", ")}`}>
+                            DNAT
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </td>
+                  <td className="mono">
+                    {p.hops
+                      .map((h) => [...new Set((h.parts ?? [h]).map((x) => x.egress?.next_hop).filter(Boolean))].join(" | "))
+                      .filter(Boolean)
+                      .join(" → ") || <Dash />}
+                  </td>
+                  <td className="num">{p.hops.length}</td>
+                  <td>
+                    <Length extra={p.extra} />
+                  </td>
+                  <td>{p.policy ? <Verdict v={p.policy.verdict} title={p.policy.text} /> : <Dash />}</td>
+                  <td>
+                    <span className={`chip ${cls}`}>{label}</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Ein Weg Hop für Hop: Knoten, Eingang, Entscheidung (Policy-Route bzw. Route), Ausgang
+function TraceCard({
+  path,
+  index,
+  title,
+  compare,
+  onCapture,
+}: {
+  path: TracePath;
+  index: number;
+  title: string;
+  compare?: boolean; // mehrere Wege: Länge im Vergleich zeigen
+  onCapture?: (c: Capture) => void;
+}) {
+  const [cls, label] = END[path.end.kind] ?? ["", path.end.kind];
+  const last = path.hops[path.hops.length - 1];
+  const out = last?.egress;
+  // Weg endet an einem Next-Hop ohne gelesenes Gerät: als Anbindung erfassen (Internet, MPLS, …)
+  const capturable = onCapture && out?.next_hop && (path.end.kind === "unknown" || path.end.kind === "external");
+  return (
+    <div className="card" id={`trace-${index}`}>
+      <div className="card-head">
+        <h2>{title}</h2>
+        <span className={`chip ${cls}`}>{label}</span>
+        {path.kind === "backup" && path.deviation && (
+          <span className="chip warn" title="Weg, wenn der aktive Next-Hop ausfällt">
+            Backup ab {path.deviation.label}: {path.deviation.reason}
+          </span>
+        )}
+        {path.parallel?.length ? (
+          <span className="chip info">redundant · Verbund {path.parallel.join(", ")}</span>
+        ) : null}
+        {compare && path.extra != null && <Length extra={path.extra} />}
+        {path.policy && (
+          <span className={`chip ${VERDICT[path.policy.verdict]?.[0] ?? ""}`} title="Regeln auf dem Weg">
+            Regeln: {path.policy.text}
+          </span>
+        )}
+        <span className="faint">
+          {path.end.text}
+          {path.end.also?.length ? ` bzw. ${path.end.also.join(" bzw. ")}` : ""}
+        </span>
+        {capturable && (
+          <button
+            className="btn btn-sm"
+            style={{ marginLeft: "auto" }}
+            title="Anbindung nach aussen erfassen – mit allen erkannten Routern und Firewalls dieser Anbindung; der Weg endet dann dort bzw. geht nach manuellen Routen weiter"
+            onClick={() =>
+              onCapture({
+                kind: path.end.kind === "external" ? "internet" : "wan",
+                source_system_id: last.source_system_id,
+                interface: out?.interface ?? null,
+                next_hop: out!.next_hop!,
+              })
+            }
+          >
+            Als Anbindung erfassen
+          </button>
+        )}
+      </div>
+      <div className="card-body scroll">
+        <table className="compact">
+          <thead>
+            <tr>
+              <th className="num">#</th>
+              <th>Knoten</th>
+              <th>Eingang</th>
+              <th>Entscheidung</th>
+              <th>Ausgang · Next-Hop</th>
+              <th>Regeln</th>
+            </tr>
+          </thead>
+          <tbody>
+            {path.hops.map((hop, i) => {
+              // Verbund als ein Hop (0.29.0): eine Zeile je Firewall bzw. Variante
+              const parts = hop.parts ?? [hop];
+              return parts.map((h, k) => {
+                const possible = (h.policy_routes ?? []).filter((p) => !p.certain);
+                return (
+                  <tr key={`${i}-${k}`}>
+                    {k === 0 && (
+                      <td className="num" rowSpan={parts.length}>
+                        {i + 1}
+                      </td>
+                    )}
+                    <td>
+                      {k === 0 && hop.parts && hop.label !== h.label && (
+                        <div>
+                          <span className="chip info" title="Firewalls desselben Verbunds (z. B. Session-Sync-Paar) – ein Hop">
+                            {hop.label}
+                          </span>
+                        </div>
+                      )}
+                      <b>{h.label}</b> {h.kind === "firewall" && <span className="chip">Firewall</span>}
+                      <VrfChip vrf={h.vrf} />
+                      {h.dst && (
+                        <div className="faint" title="Ziel nach NAT auf einem Hop davor">
+                          Ziel <span className="mono">{h.dst}</span>
+                        </div>
+                      )}
+                      <div className="faint">
+                        {h.via}
+                        {h.kind === "vrf" && h.members.length ? ` · ${h.members.join(", ")}` : ""}
+                      </div>
+                      <Missing items={h.missing} />
+                    </td>
+                    <td>{h.ingress?.interface ? <Port p={h.ingress} /> : <Dash />}</td>
+                    <td>
+                      {h.nat && (
+                        <div style={{ marginBottom: 4 }}>
+                          <span className="chip info" title="VIP (DNAT): der Weg geht ab hier zur internen IP">
+                            DNAT {h.nat.name}
+                          </span>{" "}
+                          <span className="mono">
+                            {h.nat.ext} → {h.nat.to.join(", ")}
+                          </span>
+                          {h.nat.ports && <span className="faint"> · Port {h.nat.ports.join(" → ")}</span>}
+                          {h.nat.to.length > 1 && <div className="faint">Weg über den ersten Real Server</div>}
+                        </div>
+                      )}
+                      {h.backup ? (
+                        <>
+                          <span className="chip warn" title="Backup-Weg: anderer Next-Hop für dasselbe Präfix">
+                            Backup
+                          </span>{" "}
+                          <b className="mono">{h.backup.prefix}</b>
+                          <div className="faint">{h.backup.reason}</div>
+                        </>
+                      ) : h.policy ? (
+                        <>
+                          <span className="chip info" title="passt sicher und geht der Routing-Tabelle vor">
+                            {policyText(h.policy)}
+                          </span>
+                          <div className="faint">geht der Routing-Tabelle vor</div>
+                        </>
+                      ) : h.route ? (
+                        <>
+                          <b className="mono">{h.route.prefix}</b>
+                          <div className="faint">
+                            {[h.route.protocol, h.route.distance != null && `Distanz ${h.route.distance}`]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </div>
+                        </>
+                      ) : (
+                        <Dash />
+                      )}
+                      {possible.length > 0 && (
+                        <div className="faint" title="Quelle bzw. Ziel nur über Objekte bestimmt – nicht sicher">
+                          möglich: {possible.map(policyText).join(", ")}
+                        </div>
+                      )}
+                    </td>
+                    <td>{h.egress ? <Port p={h.egress} /> : <Dash />}</td>
+                    <td>
+                      <HopRulesCell r={h.rules} />
+                      {h.snat && (
+                        <div className="faint" title="SNAT der erlaubenden Policy: Quelle für die Firewalls danach">
+                          SNAT → <span className="mono">{h.snat.to ?? "?"}</span>
+                          {h.snat.pool ? ` (Pool ${h.snat.pool})` : ` (IP von ${h.snat.interface ?? "?"})`}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              });
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function LookupTable({ rows }: { rows: RouteLookup[] }) {
+  return (
+    <div className="card">
+      <div className="card-body scroll viewport">
+        {rows.length === 0 ? (
+          <Empty title="Keine Routing-Daten">Noch kein Quellsystem mit Routing eingelesen.</Empty>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>System · Kontext</th>
+                <th>Route</th>
+                <th>Next-Hop</th>
+                <th>Geht vor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={`${r.source_system_id}|${r.node}|${r.context}|${r.vrf ?? 0}`}>
+                  <td>
+                    {where(r)}
+                    <VrfChip vrf={r.vrf} />
+                    <Missing items={r.missing} />
+                  </td>
+                  <td>
+                    {r.route ? (
+                      <>
+                        <b className="mono">{r.route.prefix}</b>
+                        <div className="faint">
+                          {[r.route.protocol, r.route.distance != null && `Distanz ${r.route.distance}`]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      </>
+                    ) : (
+                      <span className={`chip ${r.missing.length ? "warn" : ""}`}>
+                        {r.missing.length ? "unbekannt" : "keine Route"}
+                      </span>
+                    )}
+                  </td>
+                  <td>{r.route ? <Hops hops={r.route.next_hops} /> : <Dash />}</td>
+                  <td>
+                    {r.policy_routes.length ? (
+                      <div className="objs">
+                        {r.policy_routes.map((p, i) => (
+                          <span key={i} title={matchText(p.match)}>
+                            <span className={`chip ${p.certain ? "info" : ""}`}>{policyText(p)}</span>{" "}
+                            <span className="mono">
+                              {[p.gateway, ...p.output_device].filter(Boolean).join(" · ") || "–"}
+                            </span>
+                            {!p.certain && <span className="faint"> (möglich – Ziel über Objekte)</span>}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <Dash />
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Quelle bzw. Ziel: IP oder Name; `hit` = gewählter Treffer der Namenssuche
+type Endpoint = { text: string; hit: NameHit | null };
+const EMPTY: Endpoint = { text: "", hit: null };
+
+const HIT_KIND: Record<NameHit["kind"], string> = {
+  ip: "IP",
+  ipam: "IPAM",
+  object: "Objekt",
+  vm: "VM",
+};
+
+const isIp = (v: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(v.trim()) || /^[0-9a-f]*:[0-9a-f:.]+$/i.test(v.trim());
+
+// Eingabe mit Vorschlägen aus IPAM, Objekten und VMs (ab 2 Zeichen, keine IP)
+function EndpointInput({
+  tenantId,
+  value,
+  onChange,
+  onEnter,
+  placeholder,
+  title,
+  icon,
+  forceOpen,
+}: {
+  tenantId: number;
+  value: Endpoint;
+  onChange: (v: Endpoint) => void;
+  onEnter: () => void;
+  placeholder: string;
+  title: string;
+  icon: string;
+  forceOpen?: NameHit[] | null; // mehrere Treffer beim Suchen: Auswahl zeigen
+}) {
+  const [hits, setHits] = useState<NameHit[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const q = useDebounced(value.text, 300);
+  useEffect(() => {
+    const t = q.trim();
+    if (value.hit || t.length < 2 || isIp(t)) {
+      setHits(null);
+      return;
+    }
+    let alive = true;
+    resolveName(tenantId, t)
+      .then((h) => alive && setHits(h))
+      .catch(() => alive && setHits([]));
+    return () => {
+      alive = false;
+    };
+  }, [q, tenantId, value.hit]);
+  useEffect(() => {
+    if (forceOpen?.length) {
+      setHits(forceOpen);
+      setOpen(true);
+    }
+  }, [forceOpen]);
+  const shown = open && hits && hits.length > 0;
+  return (
+    <div className="search" style={{ flex: "0 1 260px" }}>
+      <span className="ico">
+        <Icon name={icon} />
+      </span>
+      <input
+        placeholder={placeholder}
+        title={title}
+        value={value.text}
+        onChange={(e) => {
+          onChange({ text: e.target.value, hit: null });
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            setOpen(false);
+            onEnter();
+          } else if (e.key === "Escape") setOpen(false);
+        }}
+      />
+      {value.hit && (
+        <div className="faint mono" style={{ fontSize: 11.5, marginTop: 2 }} title={value.hit.name ?? ""}>
+          = {value.hit.ip}
+        </div>
+      )}
+      {shown && (
+        <div className="menu suggest" role="listbox">
+          {hits.map((h) => (
+            <button
+              key={h.ip}
+              type="button"
+              role="option"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onChange({ text: h.name ?? h.ip, hit: h });
+                setOpen(false);
+              }}
+            >
+              <b>{h.name ?? h.ip}</b> <span className="mono">{h.ip}</span>
+              <div className="faint">
+                {HIT_KIND[h.kind]}
+                {h.source ? ` · ${h.source}` : ""}
+                {h.detail ? ` · ${h.detail}` : ""}
+                {h.also?.length ? ` · auch ${h.also.join(", ")}` : ""}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Name -> IP: IP direkt, gewählter Treffer, sonst genau ein Treffer; mehrere: Auswahl
+async function toIp(
+  tenantId: number,
+  ep: Endpoint,
+  what: string,
+  set: (v: Endpoint) => void,
+  choose: (hits: NameHit[]) => void,
+): Promise<string> {
+  const text = ep.text.trim();
+  if (!text) return "";
+  if (isIp(text)) return text;
+  if (ep.hit) return ep.hit.ip;
+  const hits = await resolveName(tenantId, text);
+  const ips = [...new Set(hits.map((h) => h.ip))];
+  if (ips.length === 1) {
+    set({ text, hit: hits[0] });
+    return ips[0];
+  }
+  if (!hits.length) throw new Error(`${what}: „${text}“ nicht gefunden (IPAM, Objekte, VMs)`);
+  choose(hits);
+  throw new Error(`${what}: ${hits.length} Treffer für „${text}“ – bitte einen wählen`);
+}
+
+// Weg-Suche: Quelle (IP bzw. Name) und/oder Startpunkt, dazu das Ziel. Ohne beides: je Kontext
+// die Route zum Ziel.
+function PathSearch({
+  tenantId,
+  nodes,
+  onCapture,
+}: {
+  tenantId: number;
+  nodes: RoutingNode[];
+  onCapture?: (c: Capture) => void;
+}) {
+  const [src, setSrc] = useState<Endpoint>(EMPTY);
+  const [start, setStart] = useState("");
+  const [dst, setDst] = useState<Endpoint>(EMPTY);
+  const [choices, setChoices] = useState<{ src?: NameHit[]; dst?: NameHit[] }>({});
+  const [trace, setTrace] = useState<TraceResult | null>(null);
+  const [asked, setAsked] = useState<{ src: string; dst: string; srcName?: string; dstName?: string } | null>(null);
+  const [slack, setSlack] = useState("1"); // Backup-Wege: Hops mehr als der kürzeste aktive; "" = keine
+  const [service, setService] = useState(""); // tcp/443, udp/53 bzw. Service-Objekt/ACI-Filter
+  const [rows, setRows] = useState<RouteLookup[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    if (!dst.text.trim()) return;
+    setBusy(true);
+    setError(null);
+    setTrace(null);
+    setRows(null);
+    setChoices({});
+    try {
+      const [s, d] = await Promise.all([
+        toIp(tenantId, src, "Quelle", setSrc, (h) => setChoices((c) => ({ ...c, src: h }))),
+        toIp(tenantId, dst, "Ziel", setDst, (h) => setChoices((c) => ({ ...c, dst: h }))),
+      ]);
+      const name = (ep: Endpoint, ip: string) => (ep.text.trim() && ep.text.trim() !== ip ? ep.text.trim() : undefined);
+      setAsked({ src: s, dst: d, srcName: name(src, s), dstName: name(dst, d) });
+      if (s || start) {
+        setTrace(await traceRoute(tenantId, { dst: d, src: s, start, service, slack: slack === "" ? 0 : Number(slack) }));
+      } else {
+        setRows(await lookupRoute(tenantId, d));
+      }
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const label = (ip: string, name?: string) => (name ? `${name} (${ip})` : ip);
+  return (
+    <>
+      <div className="filterbar" style={{ alignItems: "flex-start" }}>
+        <EndpointInput
+          tenantId={tenantId}
+          value={src}
+          onChange={setSrc}
+          onEnter={run}
+          icon="search"
+          placeholder="Quelle: IP oder Name"
+          title="Quelle als IP bzw. Name/FQDN (IPAM, Objekte der Firewalls, VMs): der Weg beginnt dort, wo sie angeschlossen ist (bzw. am Startpunkt)"
+          forceOpen={choices.src}
+        />
+        <select
+          className="sel"
+          value={start}
+          onChange={(e) => setStart(e.target.value)}
+          title="Startpunkt: Firewall, VDOM bzw. ACI-VRF – ohne Wahl ergibt er sich aus der Quelle"
+        >
+          <option value="">Start: aus der Quelle</option>
+          {nodes.map((n) => (
+            <option key={n.key} value={n.key}>
+              {n.label}
+            </option>
+          ))}
+        </select>
+        <EndpointInput
+          tenantId={tenantId}
+          value={dst}
+          onChange={setDst}
+          onEnter={run}
+          icon="route"
+          placeholder="Ziel: IP oder Name, z. B. web01"
+          title="Ziel als IP bzw. Name/FQDN"
+          forceOpen={choices.dst}
+        />
+        <div className="search" style={{ flex: "0 1 190px" }}>
+          <input
+            placeholder="Dienst: tcp/443 oder FT_https"
+            title="Dienst für Policies und Contracts: tcp/443, udp/53, tcp, icmp bzw. ein Service-Objekt oder ACI-Filter (FT_https) – leer: nur Regeln mit allen Diensten sicher"
+            value={service}
+            onChange={(e) => setService(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && run()}
+          />
+        </div>
+        <select
+          className="sel"
+          value={slack}
+          onChange={(e) => setSlack(e.target.value)}
+          title="Redundante Wege: Backup-Wege (BGP-Pfade, schwebende statische Routen) mit gleicher bzw. fast gleicher Länge"
+        >
+          <option value="0">Backup: gleich lang</option>
+          <option value="1">Backup: bis +1 Hop</option>
+          <option value="2">Backup: bis +2 Hops</option>
+          <option value="">Backup: ausblenden</option>
+        </select>
+        <button className="btn btn-primary btn-sm" onClick={run} disabled={busy || !dst.text.trim()}>
+          {busy ? "Suche…" : "Weg suchen"}
+        </button>
+      </div>
+      <div className="faint" style={{ margin: "-4px 0 10px" }}>
+        Hop für Hop: Policy-Routen und SD-WAN-Regeln, die sicher passen, gehen vor; sonst das längste Präfix. Je Firewall
+        die passenden Policies (erste sichere entscheidet), je ACI-VRF die Contracts zwischen den EPGs von Quelle und Ziel
+        (Taboo zuerst, vzAny, ESG, Preferred Group). Ohne Quelle und Start: je Kontext die wirksame Route.
+      </div>
+      <ErrorBox error={error} prefix="Weg suchen" />
+      {trace && (
+        <>
+          <div className="faint" style={{ margin: "0 0 8px" }}>
+            {asked && (
+              <>
+                {asked.src ? `Quelle ${label(asked.src, asked.srcName)} → ` : ""}Ziel {label(asked.dst, asked.dstName)}
+                {trace.service ? ` · Dienst ${trace.service_name ? `${trace.service_name} = ` : ""}${trace.service}` : ""}
+                {trace.start.length > 0 ? " · " : ""}
+              </>
+            )}
+            {trace.start.length > 0 && `Start: ${trace.start.map((s) => `${s.label} (${s.via})`).join(" · ")}`}
+          </div>
+          {trace.notes.map((n) => (
+            <Note key={n} warn>
+              {n}
+            </Note>
+          ))}
+          {trace.paths.length === 0 && trace.notes.length === 0 && (
+            <Empty title="Kein Weg">Kein Hop gefunden – Startpunkt wählen bzw. Quellsysteme neu einlesen.</Empty>
+          )}
+          {(() => {
+            const shown = slack === "" ? trace.paths.filter((p) => p.kind !== "backup") : trace.paths;
+            return (
+              <>
+                {shown.length > 1 && <PathOverview trace={{ ...trace, paths: shown }} />}
+                {shown.map((p, i) => (
+                  <TraceCard
+                    key={i}
+                    path={p}
+                    index={i}
+                    title={pathTitle(shown, p)}
+                    compare={shown.length > 1}
+                    onCapture={onCapture}
+                  />
+                ))}
+              </>
+            );
+          })()}
+        </>
+      )}
+      {rows && <LookupTable rows={rows} />}
+    </>
+  );
+}
+
+export default function Paths({
+  tenantId,
+  tenantLabel,
+  canEdit = false,
+}: {
+  tenantId: number | null;
+  tenantLabel: string;
+  canEdit?: boolean;
+}) {
+  const [nodes, setNodes] = useState<RoutingNode[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  useEffect(() => {
+    if (tenantId === null) return;
+    setNodes(null);
+    fetchRoutingSummary(tenantId)
+      .then((s) => setNodes(s.nodes))
+      .catch((e) => {
+        setError(e);
+        setNodes([]);
+      });
+  }, [tenantId]);
+  if (tenantId === null) {
+    return (
+      <>
+        <PageHead title="Weg-Suche" />
+        <Note>Bitte oben einen Mandanten wählen.</Note>
+      </>
+    );
+  }
+  // Weg endet an einem Router ohne gelesenes Gerät: im Routing als Anbindung erfassen
+  const capture = (c: Capture) => {
+    try {
+      sessionStorage.setItem(CAPTURE_KEY, JSON.stringify(c));
+    } catch {
+      /* sessionStorage nicht verfügbar */
+    }
+    window.location.hash = "routing";
+  };
+  return (
+    <>
+      <PageHead title="Weg-Suche">
+        Weg einer Verbindung in „{tenantLabel}“ Hop für Hop – über Firewalls (Policies, NAT) und ACI (Contracts zwischen
+        den EPGs), mit aktiven und Backup-Wegen. Für Fehlersuche und Kontrolle von Arbeiten; rein lesend, Stand des letzten
+        Laufs. Quelle und Ziel als IP oder Name aus IPAM, Firewall-Objekten und VMs.
+      </PageHead>
+      <ErrorBox error={error} prefix="Routing laden" />
+      {nodes === null ? <Loading /> : <PathSearch tenantId={tenantId} nodes={nodes} onCapture={canEdit ? capture : undefined} />}
+    </>
+  );
+}

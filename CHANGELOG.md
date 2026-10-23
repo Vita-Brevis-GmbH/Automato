@@ -7,6 +7,35 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.35.0 – 2026-10-23
+
+Weg-Suche als eigene Ansicht und Dienste mit Objektnamen (Anwender, „Weitere Arbeiten“
+Punkte 1 und 2). Ohne Migration; die Regel-Liste zeigt die Namen für FortiGate-Regeln nach dem
+nächsten Lauf, für ACI-Filter sofort.
+
+- **Weg-Suche** steht als eigener Punkt in der Navigation (`#wege`), nicht mehr als Reiter
+  im Routing. Die Ansicht „Routing & Wege“ heisst jetzt **Routing**. „Als Anbindung erfassen“
+  springt aus der Weg-Suche ins Routing (Reiter Anbindungen, vorausgefüllt).
+- **Quelle und Ziel als Name:** IP oder Name bzw. FQDN. Vorschläge ab zwei Zeichen aus dem
+  IPAM (DNS-Name, auch nur das erste Label), den Adressobjekten der Firewalls (auch ohne
+  Präfix; FQDN-Objekte über das IPAM) und den VMs. Eindeutige Namen werden direkt aufgelöst,
+  bei mehreren IPs fragt die Suche nach (`GET /routing/resolve?q=`).
+- **Dienst als Objekt:** `FT_https` bzw. `Tenant/FT_https` (Service-Objekt der FortiGate bzw.
+  ACI-Filter, Gruppen aufgelöst). Bei mehreren Diensten wird der erste geprüft, ein Hinweis
+  nennt die übrigen.
+- **ACI-Contracts auf dem Weg:** Je ACI-VRF-Hop die Zuordnung von Quelle und Ziel (EPG im
+  Fabric bzw. externe EPG über das längste zuordnende Subnetz) und das Urteil: gleiche EPG
+  erlaubt, Taboo sperrt zuerst, sonst ein Contract Consumer → Provider (direkt, vzAny, ESG,
+  Preferred Group) mit passendem Filter; kein Contract = gesperrt. Das Gesamturteil zählt
+  Firewalls und ACI-VRFs („erlaubt (1 Firewall, 1 ACI-VRF)“). `store/aci_check.py`.
+- **Dienste mit Objektnamen** statt Werten: Regel-Liste, Regel-Detail (Werte darunter),
+  Applikations-Doku (Spalte TCP/UDP) und Weg-Suche zeigen `FT_https` bzw. `HTTPS` wie auf der
+  Firewall statt `tcp/443`; ACI-Filter ohne den Tenant davor. Ohne Objekt (Werte direkt in
+  der Regel) bleiben die Werte.
+- Tests: Contracts je VRF-Hop (externe EPG, Taboo, vzAny, gleiche EPG, mehrdeutige
+  Zuordnung, ohne Quelle), Dienst als Objekt, Namenssuche, Dienstnamen in Liste und Weg; UI
+  (Weg-Suche als Ansicht, Ziel als Name mit Vorschlag, mehrdeutiger Name, Dienst als Objekt).
+
 ## 0.34.0 – 2026-10-23
 
 Befunde aus dem Test von 0.33.0. Ohne Migration; für die Management-Adresse die FortiGates

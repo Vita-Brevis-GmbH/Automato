@@ -188,7 +188,8 @@ Rahmen laut Anwender (2026-10-22):
    - Speicher: `topo_context`, `topo_route` (mit Bereich für das längste Präfix), `topo_peer`,
      `topo_ha`, `topo_policy_route`, `topo_l3out` – je Lauf ersetzt. Ein Verlauf der Routen
      (Punkt 4) folgt bei Bedarf.
-   - Ansicht „Routing & Wege“ mit „Weg für IP“: je Kontext die wirksame Route und die
+   - Ansicht „Routing & Wege“ (seit 0.35.0 „Routing“ und „Weg-Suche“) mit „Weg für IP“: je
+     Kontext die wirksame Route und die
      Policy-Routen bzw. SD-WAN-Regeln, die vorgehen. Das ist noch kein Pfad über mehrere Hops
      (Stufe 3).
 3. **Pfade und Relevanz** in Regeln und Applikations-Doku, „Internet“ zusammengefasst.
@@ -265,9 +266,25 @@ Rahmen laut Anwender (2026-10-22):
      - Hat der Link IPs, gilt wie bisher der Besitzer der Next-Hop-IP. Das Paar greift nur,
        wenn die IP keinem gelesenen Interface gehört.
      - Die Policies je VDOM prüfen den Link als Aus- bzw. Eingang.
+   - **ACI-Contracts auf dem Weg (0.35.0, `store/aci_check.py`):** Je ACI-VRF-Hop wie im APIC:
+     - Zuordnung von Quelle und Ziel in der VRF: im Fabric die EPG (gelernter Endpunkt,
+       EPG-Subnetz, BD-Subnetz mit genau einer EPG, Server der EPG), sonst die externe EPG
+       über das längste zuordnende Subnetz (`aci_relevance.Classifier`). Erfasst keine EPG
+       die IP, verwirft das Fabric den Verkehr.
+     - Gleiche EPG erlaubt; Taboo-Contracts des Ziels sperren vor allen anderen; sonst
+       erlaubt ein Contract mit der Quelle als Consumer und dem Ziel als Provider (direkt, über
+       vzAny der VRF, ESG mit EPG-Selektor, Preferred Group) mit passendem Filter; Scope
+       `application-profile` verlangt dasselbe AP. Kein Contract: gesperrt.
+     - Ergebnis im Format der FortiGate-Hops (`hop.rules` mit `src_epg`/`dst_epg`), das
+       Gesamturteil zählt Firewalls und ACI-VRFs.
+     - Nicht berücksichtigt: VRF „unenforced“, Intra-EPG-Isolation, Shared Services zwischen
+       VRFs, ESG-IP-Selektoren, Service Graphs.
+   - **Weg-Suche als eigene Ansicht (0.35.0):** Quelle und Ziel auch als Name bzw. FQDN
+     (`store/resolve.py`, `GET /routing/resolve`: IPAM, Adressobjekte der Firewalls, VMs),
+     der Dienst auch als Service-Objekt bzw. ACI-Filter (`FT_https`).
    - Offen: „Internet“ zusammengefasst, Central-NAT und SNAT über eigene NAT-Regeln.
      Verbund bzw. Session-Sync-Paar als ein Hop seit 0.29.0. Relevanz: Firewall in der Doku (0.24.0) und Regel-Liste
-     (0.26.0), ACI-Contracts über externe EPGs (0.28.0).
+     (0.26.0), ACI-Contracts über externe EPGs (0.28.0), Contracts je VRF-Hop im Weg (0.35.0).
 4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde. Erster Teil in
    0.18.0: **Anbindungen nach aussen** (`topo_exit`, von Hand erfasst, Operator):
    - Art (Internet, MPLS, WAN, Partner), optional für eine Firewall, Next-Hop-IPs und/oder

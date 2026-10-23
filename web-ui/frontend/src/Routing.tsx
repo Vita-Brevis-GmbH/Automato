@@ -1,7 +1,7 @@
-// Routing & Wege (ADR 0019): gelesene Routing-Tabellen je Firewall bzw. FortiGate-VDOM und je
+// Routing (ADR 0019): gelesene Routing-Tabellen je Firewall bzw. FortiGate-VDOM und je
 // ACI-VRF auf den Border-Leafs, BGP-Pfade (auch Backup), Nachbarn, HA/Session-Sync,
-// Policy-Routen/SD-WAN und L3Outs. „Weg für IP“ verfolgt den Weg Hop für Hop ab der Quelle
-// bzw. einem gewählten Startpunkt (Stufe 3, erste Fassung); IPs mit Namen aus dem IPAM.
+// Policy-Routen/SD-WAN, L3Outs und Anbindungen; IPs mit Namen aus dem IPAM. Die Weg-Suche
+// ist seit 0.35.0 eine eigene Ansicht (`Paths.tsx`).
 import { useEffect, useRef, useState } from "react";
 import {
   ContextKind,
@@ -19,13 +19,10 @@ import {
   fetchPolicyRoutes,
   fetchRoutes,
   fetchRoutingSummary,
-  HopRules,
   Labeled,
-  lookupRoute,
   NextHop,
   PolicyHit,
   Resolved,
-  RouteLookup,
   RoutingNode,
   RoutingSummary,
   TopoHa,
@@ -35,10 +32,7 @@ import {
   TopoExit,
   TopoExitIn,
   TopoRoute,
-  TracePath,
   TracePort,
-  TraceResult,
-  traceRoute,
   updateExit,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
@@ -46,9 +40,8 @@ import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 
 const PAGE = 200;
 
-type Tab = "lookup" | "routes" | "peers" | "ha" | "policy" | "l3out" | "exits";
+type Tab = "routes" | "peers" | "ha" | "policy" | "l3out" | "exits";
 const TABS: { key: Tab; label: string }[] = [
-  { key: "lookup", label: "Weg für IP" },
   { key: "routes", label: "Routen" },
   { key: "peers", label: "BGP-Nachbarn" },
   { key: "ha", label: "HA & Session-Sync" },
@@ -102,7 +95,7 @@ export function Hops({ hops }: { hops: NextHop[] | null | undefined }) {
   );
 }
 
-function Missing({ items }: { items: string[] | null | undefined }) {
+export function Missing({ items }: { items: string[] | null | undefined }) {
   if (!items?.length) return null;
   return (
     <div className="chips">
@@ -117,7 +110,7 @@ function Missing({ items }: { items: string[] | null | undefined }) {
 
 // System · Kontext: „fw-01 · VDOM root“, eine Firewall nur mit root heisst wie die Firewall,
 // ACI „leaf-101 · VRF T:V“ (darunter der APIC); Hostname, wenn er vom Quellsystem abweicht
-function where(x: Labeled) {
+export function where(x: Labeled) {
   const label = x.label || `${x.source ?? x.node} · ${x.context}`;
   const sub = x.display === "vrf" ? x.source : x.node !== x.source ? x.node : null;
   return (
@@ -128,7 +121,7 @@ function where(x: Labeled) {
   );
 }
 
-function matchText(match: Record<string, unknown> | null | undefined): string {
+export function matchText(match: Record<string, unknown> | null | undefined): string {
   const m = match ?? {};
   const parts: string[] = [];
   const list = (k: string) => (Array.isArray(m[k]) ? (m[k] as unknown[]).map(String) : []);
@@ -189,7 +182,7 @@ function ContextCard({ summary }: { summary: RoutingSummary }) {
 }
 
 // VRF innerhalb eines VDOMs (FortiGate 7.x); "mgmt" = dediziertes Management-Interface
-function VrfChip({ vrf }: { vrf?: number | string | null }) {
+export function VrfChip({ vrf }: { vrf?: number | string | null }) {
   if (vrf == null || vrf === 0) return null;
   return (
     <span className="chip warn" title="eigene Routing-Tabelle im VDOM – nicht die Standard-VRF 0">
@@ -198,7 +191,7 @@ function VrfChip({ vrf }: { vrf?: number | string | null }) {
   );
 }
 
-function policyText(p: PolicyHit) {
+export function policyText(p: PolicyHit) {
   return p.kind === "sdwan" ? `SD-WAN ${p.name ?? `#${p.seq}`}` : `Policy-Route #${p.seq ?? "?"}`;
 }
 
@@ -210,7 +203,7 @@ const EXIT_KIND: Record<TopoExit["kind"], string> = {
   other: "Anbindung",
 };
 
-function Port({ p }: { p: TracePort | undefined }) {
+export function Port({ p }: { p: TracePort | undefined }) {
   if (!p?.interface && !p?.next_hop) return null;
   return (
     <div>
@@ -236,7 +229,9 @@ function Port({ p }: { p: TracePort | undefined }) {
 // der an einem unbekannten Next-Hop endet, bzw. aus einer erkannten Anbindung
 type ExitDraft = Partial<TopoExitIn> & { id?: number };
 // Weg endet an einem Router ohne gelesenes Gerät: daraus eine Anbindung erfassen
-type Capture = { next_hop: string; source_system_id: number; interface: string | null; kind: TopoExit["kind"] };
+export type Capture = { next_hop: string; source_system_id: number; interface: string | null; kind: TopoExit["kind"] };
+// Weg-Suche -> Routing: Anbindung aus einem Weg erfassen (sessionStorage, einmal gelesen)
+export const CAPTURE_KEY = "automato_exit_capture";
 
 const union = <T,>(a: T[], b: T[]) => [...a, ...b.filter((x) => !a.includes(x))];
 
@@ -314,586 +309,6 @@ function combined(rows: ExitSuggestion[], routers: ExitRouter[]): Redundancy {
     ecmp: Math.max(0, ...rows.map((s) => s.redundancy.ecmp)),
     firewalls: new Set(routers.flatMap((r) => r.uses.map((u) => u.source_system_id))).size,
   };
-}
-
-const END: Record<TracePath["end"]["kind"], [string, string]> = {
-  connected: ["ok", "Ziel erreicht"],
-  fabric: ["ok", "im Fabric"],
-  exit: ["info", "Anbindung"],
-  external: ["info", "extern"],
-  unknown: ["warn", "Weg endet"],
-  no_route: ["warn", "keine Route"],
-  loop: ["crit", "Schleife"],
-  max_hops: ["warn", "abgebrochen"],
-};
-
-// Titel eines Wegs: aktive Wege „Weg 1 von 2“, Backup-Wege „Backup-Weg 1“
-function pathTitle(paths: TracePath[], p: TracePath): string {
-  const same = paths.filter((x) => (x.kind ?? "active") === (p.kind ?? "active"));
-  const n = same.indexOf(p) + 1;
-  if (p.kind === "backup") return `Backup-Weg ${n}`;
-  return `Weg ${n}${same.length > 1 ? ` von ${same.length}` : ""}`;
-}
-
-// Art eines Wegs in der Übersicht: aktiv, ECMP, redundant über einen Verbund, Backup
-function PathKind({ path, activeCount }: { path: TracePath; activeCount: number }) {
-  if (path.kind === "backup")
-    return (
-      <span className="chip warn" title={`weicht bei ${path.deviation?.label} ab: ${path.deviation?.reason}`}>
-        Backup ab {path.deviation?.label}
-      </span>
-    );
-  if (path.parallel?.length)
-    return (
-      <span className="chip info" title="die Firewalls des Verbunds (z. B. Session-Sync-Paar) sind ein Hop">
-        redundant · Verbund {path.parallel.join(", ")}
-      </span>
-    );
-  return activeCount > 1 ? (
-    <span className="chip info" title="Equal-Cost-Multipath: der Verkehr verteilt sich auf alle Wege">
-      aktiv · ECMP
-    </span>
-  ) : (
-    <span className="chip ok">aktiv</span>
-  );
-}
-
-// Regeln auf dem Weg (0.22.0): Urteil je FortiGate-Hop bzw. je Weg
-const VERDICT: Record<string, [string, string]> = {
-  allow: ["ok", "erlaubt"],
-  deny: ["crit", "gesperrt"],
-  implicit_deny: ["crit", "implizit gesperrt"],
-  depends: ["warn", "abhängig"],
-  unknown: ["", "unbekannt"],
-};
-
-function Verdict({ v, title }: { v: string; title?: string }) {
-  const [cls, label] = VERDICT[v] ?? ["", v];
-  return (
-    <span className={`chip ${cls}`} title={title}>
-      {label}
-    </span>
-  );
-}
-
-// Policies eines Hops: die entscheidende und die möglichen davor (mit dem, was nicht prüfbar ist)
-function HopRulesCell({ r }: { r?: HopRules }) {
-  if (!r) return <Dash />;
-  return (
-    <div>
-      <Verdict v={r.verdict} title={r.text} />
-      <div className="objs" style={{ marginTop: 2 }}>
-        {r.rules.map((p) => (
-          <span key={p.rule_id} className={p.decides ? undefined : "faint"}>
-            <a href={`#regeln?rule=${p.rule_id}`} title="Regel öffnen">
-              Policy {p.external_id}
-            </a>
-            {p.name ? ` „${p.name}“` : ""} · {p.action === "allow" ? "erlauben" : "sperren"}
-            {p.services.length ? ` · ${p.services.join(", ")}` : ""}
-            {p.unsure.length ? ` · möglich (${p.unsure.join(", ")})` : ""}
-          </span>
-        ))}
-      </div>
-      {r.rules.length === 0 && <div className="faint">{r.text}</div>}
-    </div>
-  );
-}
-
-// Länge im Vergleich zum kürzesten Weg mit Ziel: „gleich lang“ bzw. „+1 Hop“
-function Length({ extra }: { extra?: number | null }) {
-  if (extra == null)
-    return (
-      <span className="faint" title="Weg ohne Ziel">
-        –
-      </span>
-    );
-  return extra === 0 ? (
-    <span className="chip ok" title="so lang wie der kürzeste Weg">
-      gleich lang
-    </span>
-  ) : (
-    <span className="chip warn" title="Hops mehr als der kürzeste Weg">
-      +{extra} Hop{extra > 1 ? "s" : ""}
-    </span>
-  );
-}
-
-// Übersicht aller Wege: Art, Knoten nacheinander, Länge (Hops, im Vergleich), Ende
-function PathOverview({ trace }: { trace: TraceResult }) {
-  const active = trace.paths.filter((p) => p.kind !== "backup");
-  return (
-    <div className="card">
-      <div className="card-head">
-        <h2>Wege im Überblick</h2>
-        <span className="faint">
-          {active.length} aktiv{active.length > 1 ? " (redundant)" : ""}
-          {trace.paths.length > active.length
-            ? ` · ${trace.paths.length - active.length} Backup-Weg${trace.paths.length - active.length > 1 ? "e" : ""}`
-            : ""}{" "}
-          – Backup-Wege mit gleicher Länge
-          {trace.slack ? ` bzw. bis ${trace.slack} Hop${trace.slack > 1 ? "s" : ""} mehr` : ""}
-        </span>
-      </div>
-      <div className="card-body scroll">
-        <table className="compact">
-          <thead>
-            <tr>
-              <th>Weg</th>
-              <th>Art</th>
-              <th>Knoten</th>
-              <th>Next-Hops</th>
-              <th className="num">Hops</th>
-              <th>Länge</th>
-              <th>Regeln</th>
-              <th>Ende</th>
-            </tr>
-          </thead>
-          <tbody>
-            {trace.paths.map((p, i) => {
-              const [cls, label] = END[p.end.kind] ?? ["", p.end.kind];
-              return (
-                <tr key={i}>
-                  <td className="nowrap">
-                    <button
-                      className="linkbtn"
-                      onClick={() => document.getElementById(`trace-${i}`)?.scrollIntoView({ behavior: "smooth" })}
-                    >
-                      {pathTitle(trace.paths, p)}
-                    </button>
-                  </td>
-                  <td>
-                    <PathKind path={p} activeCount={active.length} />
-                    {p.kind === "backup" && <div className="faint">{p.deviation?.reason}</div>}
-                  </td>
-                  <td>
-                    {p.hops.map((h, j) => (
-                      <span key={j}>
-                        {j > 0 && <span className="faint"> → </span>}
-                        <span
-                          className={p.deviation && p.deviation.hop === j ? "chip warn" : undefined}
-                          title={h.parts ? [...new Set(h.parts.map((x) => x.label))].join(", ") : undefined}
-                        >
-                          {h.label}
-                        </span>
-                        {h.nat && (
-                          <span className="chip info" style={{ marginLeft: 4 }} title={`VIP → ${h.nat.to.join(", ")}`}>
-                            DNAT
-                          </span>
-                        )}
-                      </span>
-                    ))}
-                  </td>
-                  <td className="mono">
-                    {p.hops
-                      .map((h) => [...new Set((h.parts ?? [h]).map((x) => x.egress?.next_hop).filter(Boolean))].join(" | "))
-                      .filter(Boolean)
-                      .join(" → ") || <Dash />}
-                  </td>
-                  <td className="num">{p.hops.length}</td>
-                  <td>
-                    <Length extra={p.extra} />
-                  </td>
-                  <td>{p.policy ? <Verdict v={p.policy.verdict} title={p.policy.text} /> : <Dash />}</td>
-                  <td>
-                    <span className={`chip ${cls}`}>{label}</span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// Ein Weg Hop für Hop: Knoten, Eingang, Entscheidung (Policy-Route bzw. Route), Ausgang
-function TraceCard({
-  path,
-  index,
-  title,
-  compare,
-  onCapture,
-}: {
-  path: TracePath;
-  index: number;
-  title: string;
-  compare?: boolean; // mehrere Wege: Länge im Vergleich zeigen
-  onCapture?: (c: Capture) => void;
-}) {
-  const [cls, label] = END[path.end.kind] ?? ["", path.end.kind];
-  const last = path.hops[path.hops.length - 1];
-  const out = last?.egress;
-  // Weg endet an einem Next-Hop ohne gelesenes Gerät: als Anbindung erfassen (Internet, MPLS, …)
-  const capturable = onCapture && out?.next_hop && (path.end.kind === "unknown" || path.end.kind === "external");
-  return (
-    <div className="card" id={`trace-${index}`}>
-      <div className="card-head">
-        <h2>{title}</h2>
-        <span className={`chip ${cls}`}>{label}</span>
-        {path.kind === "backup" && path.deviation && (
-          <span className="chip warn" title="Weg, wenn der aktive Next-Hop ausfällt">
-            Backup ab {path.deviation.label}: {path.deviation.reason}
-          </span>
-        )}
-        {path.parallel?.length ? (
-          <span className="chip info">redundant · Verbund {path.parallel.join(", ")}</span>
-        ) : null}
-        {compare && path.extra != null && <Length extra={path.extra} />}
-        {path.policy && (
-          <span className={`chip ${VERDICT[path.policy.verdict]?.[0] ?? ""}`} title="Regeln auf dem Weg">
-            Regeln: {path.policy.text}
-          </span>
-        )}
-        <span className="faint">
-          {path.end.text}
-          {path.end.also?.length ? ` bzw. ${path.end.also.join(" bzw. ")}` : ""}
-        </span>
-        {capturable && (
-          <button
-            className="btn btn-sm"
-            style={{ marginLeft: "auto" }}
-            title="Anbindung nach aussen erfassen – mit allen erkannten Routern und Firewalls dieser Anbindung; der Weg endet dann dort bzw. geht nach manuellen Routen weiter"
-            onClick={() =>
-              onCapture({
-                kind: path.end.kind === "external" ? "internet" : "wan",
-                source_system_id: last.source_system_id,
-                interface: out?.interface ?? null,
-                next_hop: out!.next_hop!,
-              })
-            }
-          >
-            Als Anbindung erfassen
-          </button>
-        )}
-      </div>
-      <div className="card-body scroll">
-        <table className="compact">
-          <thead>
-            <tr>
-              <th className="num">#</th>
-              <th>Knoten</th>
-              <th>Eingang</th>
-              <th>Entscheidung</th>
-              <th>Ausgang · Next-Hop</th>
-              <th>Regeln</th>
-            </tr>
-          </thead>
-          <tbody>
-            {path.hops.map((hop, i) => {
-              // Verbund als ein Hop (0.29.0): eine Zeile je Firewall bzw. Variante
-              const parts = hop.parts ?? [hop];
-              return parts.map((h, k) => {
-                const possible = (h.policy_routes ?? []).filter((p) => !p.certain);
-                return (
-                  <tr key={`${i}-${k}`}>
-                    {k === 0 && (
-                      <td className="num" rowSpan={parts.length}>
-                        {i + 1}
-                      </td>
-                    )}
-                    <td>
-                      {k === 0 && hop.parts && hop.label !== h.label && (
-                        <div>
-                          <span className="chip info" title="Firewalls desselben Verbunds (z. B. Session-Sync-Paar) – ein Hop">
-                            {hop.label}
-                          </span>
-                        </div>
-                      )}
-                      <b>{h.label}</b> {h.kind === "firewall" && <span className="chip">Firewall</span>}
-                      <VrfChip vrf={h.vrf} />
-                      {h.dst && (
-                        <div className="faint" title="Ziel nach NAT auf einem Hop davor">
-                          Ziel <span className="mono">{h.dst}</span>
-                        </div>
-                      )}
-                      <div className="faint">
-                        {h.via}
-                        {h.kind === "vrf" && h.members.length ? ` · ${h.members.join(", ")}` : ""}
-                      </div>
-                      <Missing items={h.missing} />
-                    </td>
-                    <td>{h.ingress?.interface ? <Port p={h.ingress} /> : <Dash />}</td>
-                    <td>
-                      {h.nat && (
-                        <div style={{ marginBottom: 4 }}>
-                          <span className="chip info" title="VIP (DNAT): der Weg geht ab hier zur internen IP">
-                            DNAT {h.nat.name}
-                          </span>{" "}
-                          <span className="mono">
-                            {h.nat.ext} → {h.nat.to.join(", ")}
-                          </span>
-                          {h.nat.ports && <span className="faint"> · Port {h.nat.ports.join(" → ")}</span>}
-                          {h.nat.to.length > 1 && <div className="faint">Weg über den ersten Real Server</div>}
-                        </div>
-                      )}
-                      {h.backup ? (
-                        <>
-                          <span className="chip warn" title="Backup-Weg: anderer Next-Hop für dasselbe Präfix">
-                            Backup
-                          </span>{" "}
-                          <b className="mono">{h.backup.prefix}</b>
-                          <div className="faint">{h.backup.reason}</div>
-                        </>
-                      ) : h.policy ? (
-                        <>
-                          <span className="chip info" title="passt sicher und geht der Routing-Tabelle vor">
-                            {policyText(h.policy)}
-                          </span>
-                          <div className="faint">geht der Routing-Tabelle vor</div>
-                        </>
-                      ) : h.route ? (
-                        <>
-                          <b className="mono">{h.route.prefix}</b>
-                          <div className="faint">
-                            {[h.route.protocol, h.route.distance != null && `Distanz ${h.route.distance}`]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </div>
-                        </>
-                      ) : (
-                        <Dash />
-                      )}
-                      {possible.length > 0 && (
-                        <div className="faint" title="Quelle bzw. Ziel nur über Objekte bestimmt – nicht sicher">
-                          möglich: {possible.map(policyText).join(", ")}
-                        </div>
-                      )}
-                    </td>
-                    <td>{h.egress ? <Port p={h.egress} /> : <Dash />}</td>
-                    <td>
-                      {h.kind === "vrf" ? (
-                        <span className="faint">ACI-Contracts: nicht geprüft</span>
-                      ) : (
-                        <>
-                          <HopRulesCell r={h.rules} />
-                          {h.snat && (
-                            <div className="faint" title="SNAT der erlaubenden Policy: Quelle für die Firewalls danach">
-                              SNAT → <span className="mono">{h.snat.to ?? "?"}</span>
-                              {h.snat.pool ? ` (Pool ${h.snat.pool})` : ` (IP von ${h.snat.interface ?? "?"})`}
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                );
-              });
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function LookupTable({ rows }: { rows: RouteLookup[] }) {
-  return (
-    <div className="card">
-      <div className="card-body scroll viewport">
-        {rows.length === 0 ? (
-          <Empty title="Keine Routing-Daten">Noch kein Quellsystem mit Routing eingelesen.</Empty>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>System · Kontext</th>
-                <th>Route</th>
-                <th>Next-Hop</th>
-                <th>Geht vor</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={`${r.source_system_id}|${r.node}|${r.context}|${r.vrf ?? 0}`}>
-                  <td>
-                    {where(r)}
-                    <VrfChip vrf={r.vrf} />
-                    <Missing items={r.missing} />
-                  </td>
-                  <td>
-                    {r.route ? (
-                      <>
-                        <b className="mono">{r.route.prefix}</b>
-                        <div className="faint">
-                          {[r.route.protocol, r.route.distance != null && `Distanz ${r.route.distance}`]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </div>
-                      </>
-                    ) : (
-                      <span className={`chip ${r.missing.length ? "warn" : ""}`}>
-                        {r.missing.length ? "unbekannt" : "keine Route"}
-                      </span>
-                    )}
-                  </td>
-                  <td>{r.route ? <Hops hops={r.route.next_hops} /> : <Dash />}</td>
-                  <td>
-                    {r.policy_routes.length ? (
-                      <div className="objs">
-                        {r.policy_routes.map((p, i) => (
-                          <span key={i} title={matchText(p.match)}>
-                            <span className={`chip ${p.certain ? "info" : ""}`}>{policyText(p)}</span>{" "}
-                            <span className="mono">
-                              {[p.gateway, ...p.output_device].filter(Boolean).join(" · ") || "–"}
-                            </span>
-                            {!p.certain && <span className="faint"> (möglich – Ziel über Objekte)</span>}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <Dash />
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Weg für IP: Quelle (IP) und/oder Startpunkt, dazu das Ziel. Ohne beides: je Kontext die Route.
-function LookupTab({
-  tenantId,
-  nodes,
-  onCapture,
-}: {
-  tenantId: number;
-  nodes: RoutingNode[];
-  onCapture?: (c: Capture) => void;
-}) {
-  const [src, setSrc] = useState("");
-  const [start, setStart] = useState("");
-  const [dst, setDst] = useState("");
-  const [trace, setTrace] = useState<TraceResult | null>(null);
-  const [slack, setSlack] = useState("1"); // Backup-Wege: Hops mehr als der kürzeste aktive; "" = keine
-  const [service, setService] = useState(""); // Dienst für die Regeln auf dem Weg, z. B. tcp/443
-  const [rows, setRows] = useState<RouteLookup[] | null>(null);
-  const [error, setError] = useState<unknown>(null);
-  const [busy, setBusy] = useState(false);
-  const run = () => {
-    if (!dst.trim()) return;
-    setBusy(true);
-    setError(null);
-    setTrace(null);
-    setRows(null);
-    const job =
-      src.trim() || start
-        ? traceRoute(tenantId, { dst, src, start, service, slack: slack === "" ? 0 : Number(slack) }).then(setTrace)
-        : lookupRoute(tenantId, dst).then(setRows);
-    job.catch(setError).finally(() => setBusy(false));
-  };
-  const enter = (e: React.KeyboardEvent) => e.key === "Enter" && run();
-  return (
-    <>
-      <div className="filterbar">
-        <div className="search" style={{ flex: "0 1 200px" }}>
-          <span className="ico">
-            <Icon name="search" />
-          </span>
-          <input
-            placeholder="Quelle (IP)"
-            title="Quell-IP: der Weg beginnt dort, wo sie angeschlossen ist (bzw. am Startpunkt)"
-            value={src}
-            onChange={(e) => setSrc(e.target.value)}
-            onKeyDown={enter}
-          />
-        </div>
-        <select
-          className="sel"
-          value={start}
-          onChange={(e) => setStart(e.target.value)}
-          title="Startpunkt: Firewall, VDOM bzw. ACI-VRF – ohne Wahl ergibt er sich aus der Quelle"
-        >
-          <option value="">Start: aus der Quelle</option>
-          {nodes.map((n) => (
-            <option key={n.key} value={n.key}>
-              {n.label}
-            </option>
-          ))}
-        </select>
-        <div className="search" style={{ flex: "0 1 200px" }}>
-          <span className="ico">
-            <Icon name="route" />
-          </span>
-          <input
-            placeholder="Ziel (IP), z. B. 10.20.0.5"
-            value={dst}
-            onChange={(e) => setDst(e.target.value)}
-            onKeyDown={enter}
-          />
-        </div>
-        <div className="search" style={{ flex: "0 1 150px" }}>
-          <input
-            placeholder="Dienst, z. B. tcp/443"
-            title="Dienst für die Regeln auf dem Weg (tcp/443, udp/53, tcp, icmp) – leer: nur Policies mit ALL sicher"
-            value={service}
-            onChange={(e) => setService(e.target.value)}
-            onKeyDown={enter}
-          />
-        </div>
-        <select
-          className="sel"
-          value={slack}
-          onChange={(e) => setSlack(e.target.value)}
-          title="Redundante Wege: Backup-Wege (BGP-Pfade, schwebende statische Routen) mit gleicher bzw. fast gleicher Länge"
-        >
-          <option value="0">Backup: gleich lang</option>
-          <option value="1">Backup: bis +1 Hop</option>
-          <option value="2">Backup: bis +2 Hops</option>
-          <option value="">Backup: ausblenden</option>
-        </select>
-        <button className="btn btn-primary btn-sm" onClick={run} disabled={busy || !dst.trim()}>
-          {busy ? "Suche…" : "Weg suchen"}
-        </button>
-        <span className="faint">
-          Hop für Hop: Policy-Routen und SD-WAN-Regeln, die sicher passen, gehen vor; sonst das längste Präfix. Je
-          Firewall die passenden Policies (erste sichere entscheidet). Ohne Quelle und Start: je Kontext die wirksame
-          Route.
-        </span>
-      </div>
-      <ErrorBox error={error} prefix="Weg suchen" />
-      {trace && (
-        <>
-          {trace.start.length > 0 && (
-            <div className="faint" style={{ margin: "0 0 8px" }}>
-              Start: {trace.start.map((s) => `${s.label} (${s.via})`).join(" · ")}
-            </div>
-          )}
-          {trace.notes.map((n) => (
-            <Note key={n} warn>
-              {n}
-            </Note>
-          ))}
-          {trace.paths.length === 0 && trace.notes.length === 0 && (
-            <Empty title="Kein Weg">Kein Hop gefunden – Startpunkt wählen bzw. Quellsysteme neu einlesen.</Empty>
-          )}
-          {(() => {
-            const shown = slack === "" ? trace.paths.filter((p) => p.kind !== "backup") : trace.paths;
-            return (
-              <>
-                {shown.length > 1 && <PathOverview trace={{ ...trace, paths: shown }} />}
-                {shown.map((p, i) => (
-                  <TraceCard
-                    key={i}
-                    path={p}
-                    index={i}
-                    title={pathTitle(shown, p)}
-                    compare={shown.length > 1}
-                    onCapture={onCapture}
-                  />
-                ))}
-              </>
-            );
-          })()}
-        </>
-      )}
-      {rows && <LookupTable rows={rows} />}
-    </>
-  );
 }
 
 function RoutesTab({
@@ -1940,7 +1355,7 @@ export default function Routing({
   tenantLabel: string;
   canEdit?: boolean;
 }) {
-  const [tab, setTab] = useState<Tab>("lookup");
+  const [tab, setTab] = useState<Tab>("routes");
   const [draft, setDraft] = useState<ExitDraft | null>(null);
   const [summary, setSummary] = useState<RoutingSummary | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -1956,18 +1371,10 @@ export default function Routing({
       });
   }, [tenantId]);
 
-  if (tenantId === null) {
-    return (
-      <>
-        <PageHead title="Routing & Wege" />
-        <Note>Bitte oben einen Mandanten wählen.</Note>
-      </>
-    );
-  }
-  const nodes = summary?.nodes ?? [];
   // Weg endet an einem Router ohne gelesenes Gerät: die erkannte Anbindung mit allen Routern und
   // Firewalls vorschlagen (bzw. die Anbindung ergänzen, die schon einen Teil abdeckt)
-  const capture = (c: Capture) => {
+  function capture(c: Capture) {
+    if (tenantId === null) return;
     const plain: ExitDraft = {
       kind: c.kind,
       source_system_ids: [c.source_system_id],
@@ -1984,15 +1391,38 @@ export default function Routing({
         setDraft(d);
         setTab("exits");
       });
-  };
+  }
 
+  // aus der Weg-Suche: „Als Anbindung erfassen“ (einmal, dann gelöscht)
+  useEffect(() => {
+    if (tenantId === null || !canEdit) return;
+    let raw: string | null = null;
+    try {
+      raw = sessionStorage.getItem(CAPTURE_KEY);
+      sessionStorage.removeItem(CAPTURE_KEY);
+    } catch {
+      /* sessionStorage nicht verfügbar */
+    }
+    if (raw) capture(JSON.parse(raw) as Capture);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, canEdit]);
+
+  if (tenantId === null) {
+    return (
+      <>
+        <PageHead title="Routing" />
+        <Note>Bitte oben einen Mandanten wählen.</Note>
+      </>
+    );
+  }
+  const nodes = summary?.nodes ?? [];
   return (
     <>
-      <PageHead title="Routing & Wege">
+      <PageHead title="Routing">
         Routing-Tabellen von „{tenantLabel}“ je Firewall bzw. FortiGate-VDOM und je ACI-VRF auf den Border-Leafs,
-        dazu BGP-Pfade (auch Backup-Wege), Nachbarn, HA und Session-Sync, Policy-Routen und L3Outs – rein lesend,
-        Stand des letzten Laufs. Der Weg für eine IP folgt Hop für Hop ab Quelle bzw. Startpunkt (ADR 0019); IPs mit
-        Namen aus dem IPAM.
+        dazu BGP-Pfade (auch Backup-Wege), Nachbarn, HA und Session-Sync, Policy-Routen, L3Outs und Anbindungen nach
+        aussen – rein lesend, Stand des letzten Laufs; IPs mit Namen aus dem IPAM. Den Weg einer Verbindung zeigt die{" "}
+        <a href="#wege">Weg-Suche</a>.
       </PageHead>
       <ErrorBox error={error} prefix="Routing laden" />
       {summary === null ? (
@@ -2011,14 +1441,6 @@ export default function Routing({
             {t.label}
           </button>
         ))}
-      </div>
-      {/* bleibt geladen: nach dem Erfassen einer Anbindung den Weg einfach neu suchen */}
-      <div hidden={tab !== "lookup"}>
-        <LookupTab
-          tenantId={tenantId}
-          nodes={nodes}
-          onCapture={canEdit ? capture : undefined}
-        />
       </div>
       {tab === "routes" && (
         <RoutesTab tenantId={tenantId} nodes={nodes} vrfs={summary?.vrfs ?? []} mgmt={!!summary?.mgmt_vrf} />

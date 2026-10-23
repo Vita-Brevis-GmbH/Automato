@@ -154,6 +154,11 @@ a { color: var(--accent); }
 .menu button, .menu a { display: block; width: 100%; text-align: left; background: none; border: none; padding: 8px 10px;
   border-radius: 6px; color: var(--fg); font-size: 13px; cursor: pointer; text-decoration: none; }
 .menu button:hover, .menu a:hover { background: var(--surface-2); }
+/* Vorschläge unter einem Eingabefeld (Weg-Suche: Namen aus IPAM, Objekten, VMs) */
+.menu.suggest { left: 0; right: auto; top: calc(100% + 4px); min-width: 100%; width: max-content; max-width: min(520px, 90vw);
+  max-height: 340px; overflow: auto; }
+.menu.suggest button { padding: 6px 10px; }
+.menu.suggest .faint { font-size: 11.5px; }
 .iconbtn { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--border);
   background: var(--surface-2); cursor: pointer; color: var(--fg); flex: none; }
 

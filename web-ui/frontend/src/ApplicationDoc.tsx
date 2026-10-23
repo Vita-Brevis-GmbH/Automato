@@ -19,7 +19,7 @@ import {
 import type { View, ViewParams } from "./App";
 import { DocTableView, tablesMarkdown } from "./AppDoc";
 import type { Me } from "./auth";
-import { findingLabel } from "./refs";
+import { findingLabel, serviceNames } from "./refs";
 import RuleDetailDrawer from "./RuleDetail";
 import { NameCell } from "./RulesTable";
 import { siteLabel } from "./sites";
@@ -576,7 +576,7 @@ function RuleRow({
         <SideCell items={r.destinations} groups={sideGroups(hits, "dst", names)} />
       </td>
       <td className="mono">
-        <List items={r.service_names.length ? r.service_names : [...new Set(hits.map((h) => h.services).filter(Boolean))]} />
+        <List items={r.service_names.length ? serviceNames(r) : [...new Set(hits.map((h) => h.services).filter(Boolean))]} />
       </td>
       <td>
         <ScopeChip scope={best(hits)} />
