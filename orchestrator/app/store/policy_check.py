@@ -46,8 +46,10 @@ from app.models import (
     Zone,
 )
 from app.models.rule import EndpointKind, rule_service
+from app.store import nat as nat_store
+from app.store import rule_view
 from app.store.rule_index import value_range
-from app.store.topology import endpoint, span
+from app.store.topology import endpoint, is_net, span
 
 FIREWALL_KINDS = ("firewall", "vdom")
 ACI_KINDS = ("vrf",)
@@ -90,6 +92,7 @@ class _Policy:
     unresolved: dict[str, bool] = field(default_factory=lambda: defaultdict(bool))
     endpoints: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     snat: list[str] | None = None  # None = kein NAT, [] = IP des Ausgangs, sonst IP-Pools
+    snat6: list[str] | None = None  # dasselbe fuer IPv6 (nat6/poolname6, 0.47.0)
     names: list[str] = field(default_factory=list)  # Service-Objekte wie auf der Firewall
 
 
@@ -105,7 +108,9 @@ class Checker:
         self.tenant_id = tenant_id
         self._policies: dict[tuple[int, str], list[_Policy]] = {}
         self._known: dict[int, set[str]] = {}
-        self._ifaces: dict[int, dict[str, str]] = {}
+        self._ifaces: dict[int, dict[str, list[str]]] = {}
+        self._pool_cache: dict[tuple[int, str], dict[str, NatRule]] = {}
+        self._vip_cache: dict[tuple[int, str], list[NatRule]] = {}
 
     # -- Laden -------------------------------------------------------------------
 
@@ -154,11 +159,8 @@ class Checker:
             p.service_negate = raw.get("service-negate") == "enable"
             p.identity = any(raw.get(k) for k in ("users", "groups", "fsso-groups"))
             p.schedule = str(raw.get("schedule") or "") or None
-            if str(raw.get("nat") or "").lower() == "enable":
-                pools = raw.get("poolname") if raw.get("ippool") == "enable" else []
-                p.snat = [
-                    str(x["name"]) for x in pools or [] if isinstance(x, dict) and x.get("name")
-                ]
+            p.snat = rule_view.snat_pools(r, "v4")  # SNAT je Familie (0.47.0)
+            p.snat6 = rule_view.snat_pools(r, "v6")
             out[r.id] = p
         if out:
             self._load_details(where, out)
@@ -233,25 +235,77 @@ class Checker:
             self._known[sid] = names
         return self._known[sid]
 
-    def snat(self, sid: int, vdom: str, pools: list[str], egress: dict | None) -> dict:
-        """Quelle nach SNAT: erste IP des IP-Pools bzw. die IP des Ausgangs-Interfaces."""
-        if pools:
-            ip = None
-            pool = self.session.scalars(
-                select(NatRule).where(
-                    NatRule.source_system_id == sid,
-                    NatRule.nat_type == "snat_pool",
-                    NatRule.name == pools[0],
-                    or_(NatRule.vdom == vdom, NatRule.vdom.is_(None)),
+    def _pools(self, sid: int, vdom: str) -> dict[str, NatRule]:
+        key = (sid, vdom)
+        if key not in self._pool_cache:
+            self._pool_cache[key] = {
+                n.name: n
+                for n in self.session.scalars(
+                    select(NatRule)
+                    .where(
+                        NatRule.source_system_id == sid,
+                        NatRule.nat_type == "snat_pool",
+                        or_(NatRule.vdom == vdom, NatRule.vdom.is_(None)),
+                    )
+                    .order_by(NatRule.id)
                 )
-            ).first()
-            if pool is not None and pool.ext_ip:
-                ip = pool.ext_ip.split("-")[0].strip()
-            return {"pool": pools[0], "to": ip}
+            }
+            self._vip_cache[key] = [
+                n
+                for n in self.session.scalars(
+                    select(NatRule).where(
+                        NatRule.source_system_id == sid,
+                        NatRule.nat_type == "dnat_vip",
+                        or_(NatRule.vdom == vdom, NatRule.vdom.is_(None)),
+                    )
+                )
+                if str((n.raw or {}).get("nat-source-vip") or "").lower() == "enable"
+            ]
+        return self._pool_cache[key]
+
+    def snat(self, sid: int, vdom: str, pools: list[str], egress: dict | None, src=None) -> dict:
+        """Quelle nach SNAT (0.47.0 genauer):
+
+        - `nat-source-vip` einer VIP, deren interne IP die Quelle ist: die externe IP der VIP
+          (vor dem NAT der Policy);
+        - IP-Pool: `overload`, `one-to-one`, `port-block-allocation` - der ganze Bereich des
+          Pools (als Netz, wenn er eines ist; welche IP, entscheidet die FortiGate);
+          `fixed-port-range` - die IP, die der Quelle fest zugeordnet ist (interner Bereich
+          gleichmaessig auf den externen verteilt);
+        - sonst die IP des Ausgangs-Interfaces in der Familie der Quelle.
+        `to` ist die Quelle danach (IP bzw. Netz), `sure` sagt, ob es genau diese ist."""
+        family = 6 if getattr(src, "version", 4) == 6 else 4
+        by_name = self._pools(sid, vdom)
+        vip = self._vip_source(sid, vdom, src, egress)
+        if vip is not None:
+            return vip
+        if pools:
+            name = next((n for n in pools if n in by_name and _family_of(by_name[n]) == family),
+                        next((n for n in pools if n in by_name), pools[0]))  # fmt: skip
+            pool = by_name.get(name)
+            out = {"pool": name, "to": None, "sure": False}
+            if len(pools) > 1:
+                out["more"] = [p for p in pools if p != name]
+            if pool is None or not pool.ext_ip:
+                return out | {"missing": True}
+            kind = str((pool.attrs or {}).get("type") or (pool.raw or {}).get("type") or "overload")
+            first, last = _range(pool.ext_ip)
+            out |= {"type": kind, "range": pool.ext_ip}
+            if first is None:
+                return out
+            if first == last:
+                return out | {"to": str(first), "sure": True}
+            if kind == "fixed-port-range" and src is not None and not is_net(src):
+                mapped = _fixed(src, (pool.attrs or {}).get("source"), first, last)
+                if mapped is not None:
+                    return out | {"to": str(mapped), "sure": True}
+            nets = list(ipaddress.summarize_address_range(first, last))
+            to = str(nets[0]) if len(nets) == 1 else str(first)
+            return out | {"to": to}
         iface = (egress or {}).get("interface")
         if sid not in self._ifaces:
             self._ifaces[sid] = {
-                name: str(ips[0]).split("/")[0]
+                name: [str(ip).split("/")[0] for ip in ips]
                 for name, ips in self.session.execute(
                     select(InvInterface.name, InvInterface.ips).where(
                         InvInterface.source_system_id == sid
@@ -259,7 +313,27 @@ class Checker:
                 )
                 if ips
             }
-        return {"interface": iface, "to": self._ifaces[sid].get(iface or "")}
+        ips = self._ifaces[sid].get(iface or "", [])
+        ip = next((x for x in ips if (":" in x) == (family == 6)), None)
+        return {"interface": iface, "to": ip, "sure": ip is not None}
+
+    def _vip_source(self, sid: int, vdom: str, src, egress: dict | None) -> dict | None:
+        """VIP mit `nat-source-vip`: Verkehr von ihrer internen IP geht mit der externen IP
+        hinaus (alle Ausgaenge bzw. `extintf`)."""
+        if src is None or is_net(src):
+            return None
+        self._pools(sid, vdom)
+        out = (egress or {}).get("interface"), (egress or {}).get("zone")
+        for n in self._vip_cache.get((sid, vdom), []):
+            mapped = [str(x).split("/")[0].split("-")[0] for x in nat_store.internal_ips(n)]
+            if str(src) not in mapped or not n.ext_ip:
+                continue
+            extintf = str((n.raw or {}).get("extintf") or "any")
+            if extintf != "any" and extintf not in out:
+                continue
+            first, _last = _range(n.ext_ip)
+            return {"vip": n.name, "to": str(first) if first else None, "sure": first is not None}
+        return None
 
     # -- Pruefen -----------------------------------------------------------------
 
@@ -305,7 +379,7 @@ class Checker:
                 "services": (p.names or [s[3] for s in p.services])[:4],
                 "unsure": unsure,
                 "decides": not unsure,
-                "snat": p.snat,
+                "snat": p.snat6 if getattr(src, "version", 4) == 6 else p.snat,
             }
             if unsure:
                 if len(shown) < SHOWN:
@@ -315,6 +389,34 @@ class Checker:
             decisive = entry
             break
         return _verdict(decisive, shown)
+
+
+def _family_of(n: NatRule) -> int:
+    if n.family:
+        return 6 if n.family == "v6" else 4
+    return 6 if ":" in str(n.ext_ip or "") else 4
+
+
+def _range(text: str | None):
+    """`a-b` bzw. `a` (IP-Pool, VIP) -> (erste, letzte) Adresse; ungueltig -> (None, None)."""
+    a, _, b = str(text or "").partition("-")
+    try:
+        first = ipaddress.ip_address(a.strip())
+        last = ipaddress.ip_address(b.strip()) if b.strip() else first
+    except ValueError:
+        return None, None
+    return (first, last) if first.version == last.version and first <= last else (first, first)
+
+
+def _fixed(src, source: str | None, first, last):
+    """fixed-port-range: der interne Bereich verteilt sich gleichmaessig auf den externen -
+    die externe IP der Quelle; ausserhalb des internen Bereichs None."""
+    lo, hi = _range(source)
+    if lo is None or src.version != lo.version or not lo <= src <= hi:
+        return None
+    n_int, n_ext = int(hi) - int(lo) + 1, int(last) - int(first) + 1
+    block = -(-n_int // n_ext)  # aufgerundet: interne IPs je externer IP
+    return first + (int(src) - int(lo)) // block
 
 
 def _verdict(decisive: dict | None, shown: list[dict]) -> dict:
@@ -468,10 +570,17 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
             result = hop["rules"] = cache[key]
             verdicts.append((hop["label"], result["verdict"], kind))
             decisive = next((r for r in result["rules"] if r["decides"]), None)
-            if result["verdict"] == "allow" and decisive and decisive.get("snat") is not None:
-                hop["snat"] = checker.snat(sid, vdom, decisive["snat"], egress)
-                to = hop["snat"].get("to")
-                cur_src = ipaddress.ip_address(to) if to else None  # unbekannt: nur moeglich
+            if result["verdict"] == "allow" and decisive:
+                # Quelle danach (0.47.0): VIP mit nat-source-vip, sonst das NAT der Policy
+                snat = None
+                if cur_src is not None:
+                    snat = checker._vip_source(sid, vdom, cur_src, egress)
+                if snat is None and decisive.get("snat") is not None:
+                    snat = checker.snat(sid, vdom, decisive["snat"], egress, cur_src)
+                if snat is not None:
+                    hop["snat"] = snat
+                    to = snat.get("to")
+                    cur_src = endpoint(to) if to else None  # unbekannt: nur moeglich
         path["policy"] = _overall(verdicts)
 
 

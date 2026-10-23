@@ -1796,7 +1796,18 @@ export interface TraceHop extends RoutingNode {
   dst?: string; // Ziel an diesem Hop nach NAT auf einem Hop davor (0.23.0)
   // VIP (DNAT) an diesem Hop: ab hier zur internen IP (Virtual Server: alle Real Server)
   nat?: { name: string; id: number; ext: string | null; to: string[]; type: string | null; ports: (string | null)[] | null };
-  snat?: { pool?: string; interface?: string | null; to: string | null }; // SNAT der erlaubenden Policy
+  // SNAT der erlaubenden Policy (0.47.0: VIP mit nat-source-vip, Pool mit Typ und Bereich)
+  snat?: {
+    pool?: string;
+    interface?: string | null;
+    vip?: string;
+    type?: string;
+    range?: string;
+    sure?: boolean;
+    missing?: boolean;
+    more?: string[];
+    to: string | null;
+  };
   // ACI (0.44.0): Ziel in einer anderen VRF, in diese geleakt (Shared Service bzw. Route-Leaking)
   leak?: { vrf: string; where: string; text: string };
   // Verbund als ein Hop (0.29.0): je Firewall bzw. Variante (andere Interfaces) ein Eintrag
@@ -2130,3 +2141,15 @@ export const fetchCustomerSuggestions = (tenantId: number) =>
 export const fetchUnassigned = (tenantId: number) => getJSON<Unassigned>(`/api/customers/unassigned${qs({ tenant_id: tenantId })}`);
 export const fetchCustomerMembers = (id: number, kind: CustomerMemberKind) =>
   getJSON<{ id: number | null; name: string; via: string | null }[]>(`/api/customers/${id}/members${qs({ kind })}`);
+
+// SNAT in Worten (0.47.0): „Pool IPP_x, overload: 198.51.100.1-198.51.100.4“ bzw. „IP von wan1“
+export function snatText(s: NonNullable<TraceHop["snat"]>): string {
+  if (s.vip) return `VIP ${s.vip}, nat-source-vip`;
+  if (s.pool) {
+    if (s.missing) return `Pool ${s.pool} nicht gelesen – Quelle danach unbekannt`;
+    const range = s.range && !s.sure ? `: Bereich ${s.range}` : "";
+    const more = s.more?.length ? ` · weitere Pools ${s.more.join(", ")}` : "";
+    return `Pool ${s.pool}${s.type ? `, ${s.type}` : ""}${range}${more}`;
+  }
+  return `IP von ${s.interface ?? "?"}`;
+}

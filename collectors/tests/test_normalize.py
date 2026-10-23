@@ -152,6 +152,19 @@ def test_fortigate_normalize_snat():
     assert nat[0].nat_type == "snat_pool"
     assert nat[0].ext_ip == "1.1.100.168"
     assert nat[0].mapped_ip is None
+    assert (nat[0].family, nat[0].attrs) == ("v4", {"type": "overload"})
+
+
+def test_fortigate_snat_pool_typen_und_ipv6():
+    """0.47.0: Typ des Pools, interner Bereich bei fixed-port-range, IPv6-Pools."""
+    pools = [{"name": "IPP_fpr", "type": "fixed-port-range", "startip": "198.51.100.10",
+              "endip": "198.51.100.11", "source-startip": "10.10.0.0",
+              "source-endip": "10.10.0.255"}]  # fmt: skip
+    pools6 = [{"name": "IPP6_x", "startip": "2001:db8::100", "endip": "2001:db8::1ff"}]
+    fpr, v6 = norm.normalize_snat(pools, pools6)
+    assert (fpr.ext_ip, fpr.family) == ("198.51.100.10-198.51.100.11", "v4")
+    assert fpr.attrs == {"type": "fixed-port-range", "source": "10.10.0.0-10.10.0.255"}
+    assert (v6.name, v6.family, v6.ext_ip) == ("IPP6_x", "v6", "2001:db8::100-2001:db8::1ff")
 
 
 def test_fortigate_object_catalog_farbe_und_wert():

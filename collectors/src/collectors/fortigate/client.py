@@ -286,6 +286,10 @@ class FortiGateClient:
         # IP-Pools fuer Source-NAT (IPP_).
         return self._get("firewall/ippool", vdom)
 
+    def ippools6(self, vdom: str | None = None) -> list[dict[str, Any]]:
+        """IPv6-IP-Pools fuer Source-NAT (0.47.0) - ohne Tabelle bzw. Recht leer."""
+        return self._optional("firewall/ippool6", vdom)
+
     def ping(self) -> None:
         """Leichter Lese-Zugriff zur Erreichbarkeits-/Auth-Pruefung (kein Ingest)."""
         self._get("system/global")
@@ -305,6 +309,7 @@ class FortiGateClient:
             "vips6": self.vips6(vdom),
             "ldb_monitors": self.ldb_monitors(vdom),
             "ippools": self.ippools(vdom),
+            "ippools6": self.ippools6(vdom),
             "zones": self.zones(vdom),
             "interfaces": self.interfaces(vdom),
         }

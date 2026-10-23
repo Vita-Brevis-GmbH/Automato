@@ -79,6 +79,7 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     issues += _rule_incomplete_issues(session, tenant_id)
     issues += _aci_scope_issues(session, tenant_id)
     issues += _epg_conflict_issues(session, tenant_id)
+    issues += _snat_pool_issues(session, tenant_id)
     issues += _device_object_issues(session, tenant_id, prefixes)
     issues += references.checks(session, tenant_id, prefixes, ctx)
     issues += _virtual_issues(session, tenant_id, ctx)
@@ -216,6 +217,58 @@ def _rule_incomplete_issues(session: Session, tenant_id: int) -> list[Issue]:
                     **({"vdom": r.vdom} if r.vdom else {}),
                     "name": label,
                     "tenant": raw.get("tenant") if aci else None,
+                },
+            )
+        )
+    return out
+
+
+def _snat_pool_issues(session: Session, tenant_id: int) -> list[Issue]:
+    """Erlaubende Policies mit SNAT auf einen IP-Pool, den die Firewall im VDOM nicht hat
+    (0.47.0): die Quelle danach ist unbekannt."""
+    from app.models import NatRule
+    from app.store import rule_view
+
+    pools = {
+        (sid, vdom, name)
+        for sid, vdom, name in session.execute(
+            select(NatRule.source_system_id, NatRule.vdom, NatRule.name).where(
+                NatRule.tenant_id == tenant_id, NatRule.nat_type == "snat_pool"
+            )
+        )
+    }
+    names = _source_names(session, tenant_id)
+    out: list[Issue] = []
+    for r in session.scalars(
+        select(Rule).where(
+            Rule.tenant_id == tenant_id,
+            Rule.domain == RuleDomain.FIREWALL,
+            Rule.action == RuleAction.ALLOW,
+        )
+    ):
+        missing = [
+            p
+            for p in rule_view.snat_pools(r) or []
+            if (r.source_system_id, r.vdom, p) not in pools
+            and (r.source_system_id, None, p) not in pools
+        ]
+        if not missing:
+            continue
+        label = (r.name or f"#{r.external_id}") + vdom_suffix(r.vdom)
+        out.append(
+            Issue(
+                FindingType.SNAT_POOL_MISSING,
+                SubjectKind.RULE,
+                label,
+                r.source_system_id,
+                Severity.WARNING,
+                detail={
+                    "rule_id": r.id,
+                    "external_id": r.external_id,
+                    "name": label,
+                    "pools": missing,
+                    "source": names.get(r.source_system_id),
+                    **({"vdom": r.vdom} if r.vdom else {}),
                 },
             )
         )

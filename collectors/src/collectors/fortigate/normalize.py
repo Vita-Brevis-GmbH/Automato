@@ -509,23 +509,35 @@ def normalize_nat(
     return out
 
 
-def normalize_snat(ippools: list[dict] | None) -> list[NormalizedNat]:
-    """FortiGate IP-Pools (IPP_) -> Source-NAT-Dokumentation (externe Quell-IP)."""
+def normalize_snat(
+    ippools: list[dict] | None, ippools6: list[dict] | None = None
+) -> list[NormalizedNat]:
+    """FortiGate IP-Pools (IPP_) -> Source-NAT (externe Quell-IP bzw. Bereich), seit 0.47.0
+    mit IPv6-Pools und den Angaben fuer den Weg: Typ (overload, one-to-one,
+    fixed-port-range, port-block-allocation) und bei fixed-port-range der interne Bereich."""
     out: list[NormalizedNat] = []
-    for pool in ippools or []:
-        start = str(pool.get("startip") or "").strip()
-        end = str(pool.get("endip") or "").strip()
-        ext = f"{start}-{end}" if end and end != start else (start or None)
-        out.append(
-            NormalizedNat(
-                source_platform="fortigate",
-                external_id=pool.get("name", ""),
-                name=pool.get("name", ""),
-                nat_type="snat_pool",
-                ext_ip=ext,
-                raw=pool,
+    for family, pools in (("v4", ippools), ("v6", ippools6)):
+        for pool in pools or []:
+            start = str(pool.get("startip") or "").strip()
+            end = str(pool.get("endip") or "").strip()
+            ext = f"{start}-{end}" if end and end != start else (start or None)
+            attrs: dict[str, Any] = {"type": pool.get("type") or "overload"}
+            src_start = str(pool.get("source-startip") or "").strip()
+            src_end = str(pool.get("source-endip") or "").strip()
+            if src_start and src_start not in ("0.0.0.0", "::"):  # noqa: S104 - kein Bind
+                attrs["source"] = f"{src_start}-{src_end or src_start}"
+            out.append(
+                NormalizedNat(
+                    source_platform="fortigate",
+                    external_id=pool.get("name", ""),
+                    name=pool.get("name", ""),
+                    nat_type="snat_pool",
+                    ext_ip=ext,
+                    family=family,
+                    attrs=attrs,
+                    raw=pool,
+                )
             )
-        )
     return out
 
 

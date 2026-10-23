@@ -12,6 +12,7 @@ import {
   resolveName,
   RouteLookup,
   RoutingNode,
+  snatText,
   TracePath,
   TraceResult,
   traceRoute,
@@ -400,7 +401,7 @@ function TraceCard({
                       {h.snat && (
                         <div className="faint" title="SNAT der erlaubenden Policy: Quelle für die Firewalls danach">
                           SNAT → <span className="mono">{h.snat.to ?? "?"}</span>
-                          {h.snat.pool ? ` (Pool ${h.snat.pool})` : ` (IP von ${h.snat.interface ?? "?"})`}
+                          {` (${snatText(h.snat)})`}
                         </div>
                       )}
                     </td>

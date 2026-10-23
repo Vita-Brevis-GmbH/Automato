@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.47.0 – 2026-10-23
+
+SNAT der FortiGate genauer, damit weniger Wege unbestimmt bleiben (Entscheid des Anwenders,
+ohne Central-NAT). Ohne Migration; der Collector-Agent aktualisiert sich.
+
+- **IP-Pools nach Typ:**
+  - `overload`, `one-to-one`, `port-block-allocation`: Die Quelle danach ist der ganze
+    Bereich des Pools, als Netz, wenn er eines ist. Bisher galt nur die erste IP.
+  - Policies dahinter sind sicher, wenn sie den ganzen Bereich erlauben, sonst „nur teilweise“.
+  - `fixed-port-range`: die IP, die der Quelle fest zugeordnet ist.
+  - Ein Pool mit einer IP ergibt genau diese.
+- **IPv6:** Pools aus `firewall/ippool6`, die Felder `nat6`/`ippool6`/`poolname6`
+  (FortiOS 7.x) bzw. die von `policy6`. Ohne Pool gilt die IPv6-Adresse des Ausgangs.
+- **VIP mit `nat-source-vip`:** Verkehr vom Server geht mit der externen IP der VIP hinaus –
+  vor dem NAT der Policy.
+- **Befund „SNAT-Pool fehlt“** (Regeln): Eine Policy übersetzt auf einen IP-Pool, den die
+  Firewall im VDOM nicht hat. In der Weg-Suche steht dann „Pool … nicht gelesen“.
+- **Anzeige:** Weg-Suche und Verbindungen nennen Pool, Typ und Bereich bzw. die VIP.
+- **Collector:** liest `firewall/ippool6` (nur lesend; ohne Tabelle bzw. Recht leer) und gibt
+  Typ und internen Bereich der Pools mit.
+
 ## 0.46.0 – 2026-10-23
 
 Konfiguration vor Gelerntem überall (R12, Entscheid des Anwenders). Migration `0047`; der

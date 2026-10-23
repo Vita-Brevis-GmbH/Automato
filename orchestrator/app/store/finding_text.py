@@ -123,6 +123,16 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
             "Stattdessen ein eigenes Objekt nach Konvention verwenden (z. B. FT_https statt "
             "HTTPS); Standardobjekte des Herstellers lassen sich nicht umbenennen.",
         )
+    if ftype == "snat_pool_missing":
+        pools = _list(d.get("pools") or [], 3)
+        where = d.get("source") or "der Firewall"
+        vdom = f" (VDOM {d['vdom']})" if d.get("vdom") else ""
+        return (
+            f"Policy {d.get('external_id') or '?'} {_q(d.get('name') or subject)} übersetzt die "
+            f"Quelle auf den IP-Pool {pools}, den {where}{vdom} nicht hat.",
+            "Pool auf der Firewall prüfen bzw. neu einlesen; bis dahin ist die Quelle nach dem "
+            "NAT unbekannt (Weg-Suche: Regeln danach nur „möglich“).",
+        )
     if ftype == "epg_assignment_conflict":
         ips = _list(d.get("ips") or [], 4)
         learned = _list(d.get("learned") or [], 3)

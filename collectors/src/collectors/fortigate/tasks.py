@@ -126,7 +126,7 @@ def _normalize_vdom(d: dict) -> tuple[list, list, list]:
     )
     nat_rules = norm.normalize_nat(
         d["vips"], d.get("vips6", []), d.get("ldb_monitors", [])
-    ) + norm.normalize_snat(d["ippools"])
+    ) + norm.normalize_snat(d["ippools"], d.get("ippools6", []))
     objects = norm.build_device_objects(
         d["addresses"],
         d["groups"],

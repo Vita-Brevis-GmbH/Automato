@@ -4,7 +4,7 @@
 // (Regel erlaubt, Weg sperrt bzw. Gerät nicht auf dem Weg).
 import { Fragment, useEffect, useState } from "react";
 import type { View, ViewParams } from "./App";
-import { AppConnection, AppConnections, AppConnHop, AppConnSide, AppConnState, fetchAppConnections } from "./api";
+import { AppConnection, AppConnections, AppConnHop, AppConnSide, AppConnState, fetchAppConnections, snatText } from "./api";
 import { Verdict, VERDICT } from "./Paths";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note } from "./ui";
 
@@ -111,7 +111,11 @@ function ConnDetail({ c, onRule, onGo }: { c: AppConnection; onRule: (id: number
                         DNAT {k.nat.name}: {k.nat.ext} → {k.nat.to.join(", ")}
                       </div>
                     )}
-                    {k?.snat && <div className="faint">SNAT → {k.snat.to ?? "?"}</div>}
+                    {k?.snat && (
+                      <div className="faint">
+                        SNAT → {k.snat.to ?? "?"} ({snatText(k.snat)})
+                      </div>
+                    )}
                     {k?.leak && <div className="faint">→ VRF {k.leak.vrf}</div>}
                   </td>
                   <td>{k ? <Verdict v={k.verdict} title={k.text} /> : <Dash />}</td>

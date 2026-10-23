@@ -348,7 +348,19 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       - Bei Port-Weiterleitung gilt für die Policy der interne Port (Dienst mit dem externen
         Port eingeben, z. B. `tcp/443`).
       - SNAT der erlaubenden Policy steht als „SNAT → IP (Pool …)“. Diese Quelle gilt für die
-        Firewalls danach.
+        Firewalls danach. Seit 0.47.0 genauer:
+        - *IP-Pool:* `overload`, `one-to-one` und `port-block-allocation` – die Quelle danach
+          ist der ganze Bereich des Pools (als Netz, wenn er eines ist; welche IP, entscheidet
+          die FortiGate). Policies danach sind damit sicher, wenn sie den ganzen Bereich
+          erlauben, sonst „nur teilweise“. `fixed-port-range` – die IP, die der Quelle fest
+          zugeordnet ist (interner Bereich gleichmässig auf den externen verteilt).
+        - *IPv6:* Pools aus `ippool6` (`nat6`/`poolname6` bzw. die Felder von `policy6`), ohne
+          Pool die IPv6-Adresse des Ausgangs.
+        - *VIP mit `nat-source-vip`:* Verkehr von der internen IP der VIP geht mit ihrer
+          externen IP hinaus – vor dem NAT der Policy („SNAT → … (VIP …, nat-source-vip)“).
+        - *Pool fehlt:* „Pool … nicht gelesen – Quelle danach unbekannt“, Policies danach nur
+          „möglich“; dazu der Befund *SNAT-Pool fehlt* (Findings → Regeln).
+        - Central-NAT ist bewusst nicht abgebildet (Entscheid des Anwenders).
   - **Routen:** wirksam (RIB), BGP-Pfade (bester bzw. Backup) und statische Routen (aktiv bzw.
     inaktiv); Suche, „enthält IP“ (längstes Präfix zuerst), Filter Tabelle und Kontext.
   - **BGP-Nachbarn** (mit Name aus dem IPAM und, falls gelesen, dem Knoten dahinter), **HA &

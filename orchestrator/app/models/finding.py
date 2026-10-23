@@ -48,6 +48,8 @@ class FindingType(enum.StrEnum):
     # Konfiguration vor Gelerntem (0.46.0): das ACI hat eine IP in einer anderen EPG gelernt als
     # konfiguriert (Portgruppe der VM bzw. statischer Endpunkt, gleiche VRF)
     EPG_ASSIGNMENT_CONFLICT = "epg_assignment_conflict"
+    # SNAT (0.47.0): Policy mit NAT auf einen IP-Pool, den die Firewall nicht (mehr) hat
+    SNAT_POOL_MISSING = "snat_pool_missing"
 
 
 class Severity(enum.StrEnum):

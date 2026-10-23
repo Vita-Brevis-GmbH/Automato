@@ -23,15 +23,26 @@ def display_name(rule) -> str:
     return rule.name or f"#{rule.external_id}"
 
 
-def snat_pools(rule) -> list[str] | None:
-    """SNAT einer FortiGate-Policy: Pool-Namen; [] = NAT auf die Interface-IP; None = kein NAT."""
+def snat_pools(rule, family: str | None = None) -> list[str] | None:
+    """SNAT einer FortiGate-Policy: Pool-Namen; [] = NAT auf die Interface-IP; None = kein NAT.
+
+    `family` (0.47.0): v4 = `nat`/`ippool`/`poolname`, v6 = `nat6`/`ippool6`/`poolname6`
+    (FortiOS 7.x, eine Policy fuer beide Familien; die alte Tabelle policy6 nutzt die
+    v4-Felder). Ohne Familie beide zusammen."""
     raw = rule.raw if isinstance(rule.raw, dict) else {}
-    if str(raw.get("nat", "")).lower() != "enable":
-        return None
-    if str(raw.get("ippool", "")).lower() != "enable":
-        return []
-    pools = raw.get("poolname") or []
-    return [p["name"] for p in pools if isinstance(p, dict) and p.get("name")]
+    found: list[str] | None = None
+    keys = {"v4": [("nat", "ippool", "poolname")], "v6": [("nat6", "ippool6", "poolname6")]}
+    if raw.get("nat6") is None:  # policy6 (FortiOS 6.x): IPv6 mit den v4-Feldern
+        keys["v6"] = [("nat", "ippool", "poolname")]
+    for nat, ippool, names in keys.get(family or "", []) or keys["v4"] + keys["v6"]:
+        if str(raw.get(nat, "")).lower() != "enable":
+            continue
+        found = found or []
+        if str(raw.get(ippool, "")).lower() == "enable":
+            for p in raw.get(names) or []:
+                if isinstance(p, dict) and p.get("name") and p["name"] not in found:
+                    found.append(p["name"])
+    return found
 
 
 def negated(rule) -> list[str]:

@@ -343,8 +343,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.45.0** | Verbindungen Ende zu Ende in der Applikations-Doku: eine Zeile je Verbindung mit dem Weg über ACI und Firewalls, je Hop Policy bzw. Contract mit Objekten, Abgleich Regel ↔ Weg mit Abweichungen, Sprung in die Weg-Suche (ADR 0021 Entwurf) |
 | **0.45.1** | Korrektur: Scope der Contracts im ganzen Modell (AP, VRF, Tenant über VRFs, global; vzAny mit Scope AP), Regel-Detail mit Paaren, Regel-Liste nach IP, Befund „ohne Gegenstelle im Scope“ |
 | **0.46.0** | Konfiguration vor Gelerntem überall: statischer Endpunkt → Portgruppe der VM → gelernt → Subnetz (Weg-Suche, Regel-Liste), statische Endpunkte und Herkunft gelesen, Befund „EPG: gelernt ≠ konfiguriert“ |
+| **0.47.0** | FortiGate SNAT genauer: Pool-Typen (Bereich bzw. feste IP bei fixed-port-range), IPv6-Pools, `nat-source-vip`, Interface-IP je Familie, Befund „SNAT-Pool fehlt“ |
 
-### Nächste Arbeiten (Stand 0.46.0)
+### Nächste Arbeiten (Stand 0.47.0)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
@@ -385,7 +386,7 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 | ~~0.44.0~~ | ACI zwischen VRFs/Tenants – **umgesetzt in 0.44.0** (offen: Shared L3Out, vzAny als Consumer eines Shared Service in der Doku) |
 | ~~0.45.0~~ | Verbindungen Ende zu Ende in der Applikations-Doku – **umgesetzt in 0.45.0** (ADR 0021 Entwurf; offen: Export/Druck, Abweichung als Befund) |
 | ~~0.46.0~~ | Konfiguration vor Gelerntem überall – **umgesetzt in 0.46.0** |
-| 0.47.0 | FortiGate SNAT genauer (Pool-Typen, `ippool6`, Interface-IP, `nat-source-vip`; Quelle danach als Bereich; Befunde) |
+| ~~0.47.0~~ | FortiGate SNAT genauer – **umgesetzt in 0.47.0** |
 | 0.48.0 | Betrieb: Fristen für alte Läufe, getrennte DB-Rollen |
 | 0.49.0 | Betrieb: TLS intern (interne CA) |
 | 0.50.0 | Topologie-Modell (`GET /topology`) und Plausibilitäts-Befunde |

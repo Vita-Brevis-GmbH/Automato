@@ -40,6 +40,7 @@ export const FINDING_LABEL: Record<string, string> = {
   parallel_object_mismatch: "Paralleles Objekt abweichend",
   aci_scope_unpaired: "Contract: ohne Gegenstelle im Scope",
   epg_assignment_conflict: "EPG: gelernt ≠ konfiguriert",
+  snat_pool_missing: "SNAT-Pool fehlt",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -66,6 +67,7 @@ export const FINDING_HINT: Record<string, string> = {
   parallel_object_mismatch: "gleichnamiges Objekt auf der parallelen Firewall anders definiert",
   aci_scope_unpaired: "Consumer bzw. Provider, die der Scope des Contracts (AP, VRF, Tenant) mit keiner Gegenstelle verbindet",
   epg_assignment_conflict: "IP im ACI in einer anderen EPG gelernt als konfiguriert (Portgruppe der VM bzw. statischer Endpunkt)",
+  snat_pool_missing: "Policy übersetzt die Quelle auf einen IP-Pool, den die Firewall nicht hat",
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -93,7 +95,7 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     key: "rules",
     label: "Regeln",
     help: "ohne Quelle/Ziel bzw. ohne Consumer/Provider, Contract-Scope ohne Gegenstelle",
-    types: ["rule_incomplete", "aci_scope_unpaired"],
+    types: ["rule_incomplete", "aci_scope_unpaired", "snat_pool_missing"],
   },
   {
     key: "parallel",

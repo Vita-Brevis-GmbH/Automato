@@ -209,7 +209,7 @@ EDGE = _fw(
 )  # fmt: skip
 INNER = _fw(
     "fw-i",
-    [_policy(20, "edge-to-app", "transit", "server", ["10.70.0.100"], ["10.40.0.80"],
+    [_policy(20, "edge-to-app", "transit", "server", ["10.70.0.100/31"], ["10.40.0.80"],
              ["tcp/8443"])],
     [_iface("to-e", "10.70.0.2/24", "transit"), _iface("srv", "10.40.0.1/24", "server")],
     [_route("10.70.0.0/24", [{"interface": "to-e"}], "connected"),
@@ -245,7 +245,9 @@ def test_nat_auf_dem_weg(client):
     assert path["end"]["kind"] == "connected"
     # VIP-Policy mit internem Port, SNAT auf den Pool, innen nur die Pool-Adresse erlaubt
     assert edge["rules"]["text"] == "erlaubt durch Policy 10 „inet-to-app“"
-    assert edge["snat"] == {"pool": "IPP_e", "to": "10.70.0.100"}
+    # Pool overload mit zwei IPs (0.47.0): die Quelle danach ist der ganze Bereich
+    assert edge["snat"] == {"pool": "IPP_e", "to": "10.70.0.100/31", "sure": False,
+                            "type": "overload", "range": "10.70.0.100-10.70.0.101"}  # fmt: skip
     assert inner["rules"]["text"] == "erlaubt durch Policy 20 „edge-to-app“"
     assert path["policy"] == {"verdict": "allow", "text": "erlaubt an allen 2 Firewalls"}
 
