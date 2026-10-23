@@ -586,8 +586,9 @@ export interface DocTable {
   title: string;
   enforcement: string;
   columns: string[];
-  // Spalten als Text; dazu _rule (Regel-ID), _dir (in | out), _scope (Art des Bezugs)
-  rows: Record<string, string | number | null>[];
+  // Spalten als Text; dazu _rule (Regel-ID), _dir (in | out), _scope (Art des Bezugs),
+  // _rules (Applikations-Doku: Regeln der Zeile, bei einem IPv4/IPv6-Paar beide)
+  rows: Record<string, string | number | number[] | null>[];
 }
 
 // VM hinter dem System (vCenter): beim Server die VM der IP, bei der EPG die VMs ihrer Portgruppen
@@ -1213,6 +1214,15 @@ export const patchSystem = (
   } & SystemCredentials,
 ) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");
+// Erreichbarkeit vom Orchestrator aus (zentral gelesene Systeme): Name, TCP, NetBox-Status
+export interface SystemCheck {
+  system_id: number;
+  name: string;
+  ok: boolean;
+  hint: string | null;
+  steps: { step: "dns" | "tcp" | "http"; ok: boolean; detail: string }[];
+}
+export const checkSystem = (id: number) => sendJSON<SystemCheck>(`/api/systems/${id}/check`, "POST");
 
 // Läufe
 // Alle Läufe seitenweise mit Gesamtzahl (0.13.0); status: open | queued | running | completed | failed
@@ -1597,6 +1607,8 @@ export interface RoutingSummary {
   nodes: RoutingNode[];
   ha: number;
   l3outs: number;
+  vrfs?: number[]; // VRFs der Routen (FortiGate 7.x, 0 = Standard)
+  mgmt_vrf?: boolean; // Routen in der Management-Tabelle vorhanden
 }
 export interface TopoRoute extends Labeled {
   id: number;
@@ -1774,13 +1786,14 @@ export const fetchRoutes = (opts: {
   sourceId?: number | null;
   context?: string;
   table?: string;
+  vrf?: string; // "0".."n" bzw. "mgmt"
   ip?: string;
   q?: string;
   limit?: number;
   offset?: number;
 }) =>
   getPage<TopoRoute>(
-    `/api/routing/routes${qs({ tenant_id: opts.tenantId, source_system_id: opts.sourceId, context: opts.context || undefined, table: opts.table || undefined, ip: opts.ip?.trim() || undefined, q: opts.q?.trim() || undefined, limit: opts.limit, offset: opts.offset })}`,
+    `/api/routing/routes${qs({ tenant_id: opts.tenantId, source_system_id: opts.sourceId, context: opts.context || undefined, table: opts.table || undefined, vrf: opts.vrf || undefined, ip: opts.ip?.trim() || undefined, q: opts.q?.trim() || undefined, limit: opts.limit, offset: opts.offset })}`,
   );
 export const lookupRoute = (tenantId: number, ip: string) =>
   getJSON<RouteLookup[]>(`/api/routing/lookup${qs({ tenant_id: tenantId, ip: ip.trim() })}`);

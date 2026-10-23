@@ -13,6 +13,7 @@ from app.models import (
     RuleAction,
     RuleDomain,
     RuleEndpoint,
+    RuleIndex,
     Site,
     SourceSystem,
     Tenant,
@@ -115,14 +116,14 @@ def _seed(session):
     session.add_all([sysobj, ext, db])
     session.flush()
 
-    def mk_rule(ext_id, name, src_id, dst_id, protections=None):
+    def mk_rule(ext_id, name, src_id, dst_id, protections=None, action=RuleAction.ALLOW, nat=None):
         r = Rule(
             tenant_id=t.id,
             source_system_id=fw.id,
             domain=RuleDomain.FIREWALL,
             external_id=ext_id,
             name=name,
-            action=RuleAction.ALLOW,
+            action=action,
             protections=protections,
         )
         r.endpoints.append(
@@ -142,11 +143,41 @@ def _seed(session):
             )
         )
         session.add(r)
+        session.flush()
+        # NAT der Regel wie im Regelindex (SNAT-Pools bzw. Interface-IP, VIPs im Ziel)
+        session.add(RuleIndex(rule_id=r.id, tenant_id=t.id, source_system_id=fw.id,
+                              row={"nat": nat, "family": "v4"} if nat else {}))  # fmt: skip
         return r
 
-    mk_rule("1", "out-internet", sysobj.id, ext.id, protections=["WF_default", "IPS_strict"])
-    mk_rule("2", "in-dnat", ext.id, sysobj.id)
+    snat = {"snat": True, "pools": ["IPP_inet"], "vips": []}
+    mk_rule("1", "out-internet", sysobj.id, ext.id, protections=["WF_default", "IPS_strict"],
+            nat=snat)  # fmt: skip
+    vip = {"snat": False, "pools": [], "vips": ["V-EXT_app01.kunde.ch"]}
+    mk_rule("2", "in-dnat", ext.id, sysobj.id, nat=vip)
     mk_rule("3", "intern", sysobj.id, db.id)
+    # sperrende Regel mit VIP und SNAT: kein NAT in der Doku (Dev-Befund 0.33.0)
+    both = {"snat": True, "pools": [], "vips": ["V-EXT_app01.kunde.ch"]}
+    mk_rule("4", "in-deny", ext.id, sysobj.id, action=RuleAction.DENY, nat=both)
+    session.add(
+        NatRule(
+            tenant_id=t.id,
+            source_system_id=fw.id,
+            name="IPP_inet",
+            external_id="p1",
+            nat_type="snat_pool",
+            ext_ip="198.51.100.7",
+        )
+    )
+    session.add(  # ein weiterer Pool, den keine Regel nutzt
+        NatRule(
+            tenant_id=t.id,
+            source_system_id=fw.id,
+            name="IPP_intern",
+            external_id="p2",
+            nat_type="snat_pool",
+            ext_ip="10.99.0.1",
+        )
+    )
     session.add(
         NatRule(
             tenant_id=t.id,
@@ -177,13 +208,20 @@ def test_build_doc_kategorisiert_und_fuellt_spalten(session_factory):
     assert len(t1) == 1
     assert t1[0]["Target Systems"] == "203.0.113.9"
     assert "WF_default" in t1[0]["Schutzmechanismen"]
+    # SNAT nur aus der Regel: ihr Pool, nicht alle Pools des Mandanten (Dev-Befund 0.33.0)
+    assert t1[0]["NAT Externe IPv4"] == "198.51.100.7"
+    assert (t1[0]["Aktion"], t1[0]["Gerät"]) == ("Allow", "fw")
+    assert "Bezug" not in doc["tables"][0]["columns"]
 
     # Tabelle 2: eingehend via DNAT; VIP-IP + externer DNS-Name aus V-EXT_-Objekt
-    t2 = _rows(doc, 2)
-    assert len(t2) == 1
-    assert t2[0]["VIP IP Adresse"] == "203.0.113.5"
-    assert t2[0]["Externer DNS Name"] == "app01.kunde.ch"
-    assert t2[0]["Server Name"] == "H_app01.kunde.ch"
+    t2 = {r["Description"]: r for r in _rows(doc, 2)}
+    assert set(t2) == {"in-dnat", "in-deny"}
+    assert t2["in-dnat"]["VIP IP Adresse"] == "203.0.113.5"
+    assert t2["in-dnat"]["Externer DNS Name"] == "app01.kunde.ch"
+    assert t2["in-dnat"]["Server Name"] == "H_app01.kunde.ch"
+    # sperrende Regel: Deny, ohne VIP
+    deny = t2["in-deny"]
+    assert (deny["Aktion"], deny["VIP IP Adresse"], deny["Externe IP Adressen"]) == ("Deny", "", "")
 
     # Tabelle 10: interner Zugriff ohne Zonensignal -> unspezifisch
     assert len(_rows(doc, 10)) == 1

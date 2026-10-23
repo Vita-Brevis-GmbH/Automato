@@ -331,10 +331,16 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Kategorie, Mitglied/AP), Links in Regeln & Contracts und Findings.
   - **Findings** der Applikation und die **Doku nach Kategorien** (10 Tabellen) mit
     **Export (Markdown)** und **Drucken / PDF**; **Mitglieder** und **Bearbeiten** oben.
+    Seit 0.34.0 je Zeile **Aktion** (Allow/Deny) und **Gerät** (Firewall mit VDOM bzw.
+    APIC); ein IPv4/IPv6-Paar (gleich bzw. bestätigt) steht als eine Zeile; Klick auf die
+    Regel öffnet sie im Detail. NAT nur aus der Regel selbst: Internet-Zugriff mit ihrem SNAT
+    (Pool bzw. „Interface-IP“), Zugriff aus dem Internet mit ihrer VIP; sperrende Regeln ohne
+    NAT.
   Dazu
   *Doku je System* (10 Kategorien, Standort verorten) und *Publizierte Dienste* (VIPs mit
-  Regeln). Die Doku erfasst **alle** Regeln eines Systems. Die Spalte **„Bezug“** sagt, wie
-  die Regel greift:
+  Regeln). Die Doku erfasst **alle** Regeln eines Systems. Der **Bezug** (in den Regeln der
+  Applikation und in der Erklärung, nicht mehr als Spalte der Kategorien) sagt, wie die Regel
+  greift:
   - direkt,
   - über ein Netz, einen Bereich oder eine Gruppe (Objektname),
   - any,
@@ -352,8 +358,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - Solche Treffer fehlen in den Kategorien, im Export und in den Kennzahlen.
       - *Doku je System:* Sie stehen oben unter „Routingtechnisch nicht möglich“ mit
         Begründung.
-      - *Applikations-Doku:* „N routingtechnisch unmögliche einblenden“ zeigt sie, mit
-        „nicht möglich“ in der Spalte Bezug und dem Grund in der Erklärung.
+      - *Applikations-Doku:* Seit 0.34.0 stehen sie gar nicht drin, nur „N routingtechnisch
+        unmögliche ausgelassen“. Beispiel: intern → Internet mit `any` im Ziel – die Antwort
+        braucht keine Regel, ein Zugriff von dort bräuchte eine eigene.
     - Fehlt das Routing, die Route oder ein Interface, bzw. kann eine Policy-Route oder
       SD-WAN anders leiten, bleibt die Regel sichtbar („unbekannt“). Regeln mit `any` als
       Interface sind immer möglich.
@@ -525,6 +532,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern; Vorschläge je ACI-Tenant; nicht Zugeordnetes |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
+| `POST /systems/{id}/check` | Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus (operator): Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint`; Agent-Systeme 409 (`run-agent.ps1 -Check`), 0.34.0 |
 | `GET /systems/labels?tenant_id=` | Bezeichnungen der Quellsysteme (`id`, `name`, `platform`, `vdoms`, `parallel_group`) ohne Konfiguration; Kunden-Benutzer nur die Systeme ihrer Regeln, NAT bzw. Objekte (0.33.0) |
 | `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `site_id`, `read_scope`, `ref_role`, `schedule` → `next_run_at`; `token` bzw. `username`/`password`, NetBox `write_token` nur schreibbar → `has_credentials`/`has_write_token`; Referenzquellen mit `reference_count`/`reference_at`) |
 | `GET /jobs` (`tenant_id`, `status` inkl. `open`, `source_system_id`, `platform`, `trigger`, `limit`, `offset`; Gesamtzahl im Header `X-Total-Count`), `GET /jobs/{id}`, `POST /jobs/collect`, `POST /jobs/collect-all`, `POST /jobs/{id}/cancel` | Läufe (Gerät mit Agent → immer `external`, `started_at` = abgeholt); `collect-all` = alle aktiven Quellsysteme des Mandanten (operator, Antwort je System `run_id` bzw. `skipped` mit `blocking_run_id`); `cancel` beendet einen offenen Lauf (operator) |
@@ -712,6 +720,37 @@ an (`deploy/agent-gateway`, Port 8443).
   Teil-Upload noch nicht gespeichert sein, wenn das Ergebnis eintraf. Behoben in 0.11.2
   (Orchestrator aktualisieren; der Agent muss nichts tun). Tritt die Meldung danach noch auf,
   ist ein Teil-Upload tatsächlich abgewiesen worden: Agent-Log prüfen.
+
+- **NetBox „nicht erreichbar … ConnectTimeout“ beim Einlesen und im NetBox-Sync** (Dev-Befund
+  0.33.0) — der Orchestrator- bzw. Collector-Container bekommt keine TCP-Verbindung zu
+  `host.docker.internal:8080`. Das ist kein Rechte- oder Token-Problem.
+  1. **Quellsysteme → Prüfen** (ab 0.34.0) zeigt in Sekunden, wo es hängt:
+     - Name nicht auflösbar: `extra_hosts` fehlt bzw. der Container wurde nicht neu
+       erstellt.
+     - Keine Antwort: NetBox ist aus, oder der Weg ist gesperrt.
+     - Abgelehnt: Auf dem Port läuft nichts.
+     - HTTP 401/403: Das Token stimmt nicht.
+  2. Läuft NetBox? Auf dem Docker-Host `docker ps | grep netbox` und
+     `curl -sI http://localhost:8080/login/` (Port wie `NETBOX_PORT`).
+  3. Läuft NetBox, und trotzdem keine Antwort: Eine Firewall auf dem Host (ufw/firewalld)
+     bzw. die Trennung der Docker-Netze sperrt den Weg vom Container zum Host. Die robuste
+     Lösung: Automato direkt an das Docker-Netz von NetBox anschliessen und die Adresse
+     `http://netbox:8080` verwenden – in `docker-compose.override.yml` (gitignored):
+
+     ```yaml
+     services:
+       orchestrator:
+         networks: [default, netbox]
+       collector:
+         networks: [default, netbox]
+     networks:
+       netbox:
+         external: true
+         name: netbox-docker_default   # docker network ls | grep netbox
+     ```
+
+     Danach `docker compose up -d --force-recreate orchestrator collector`, am Quellsystem
+     die Adresse auf `http://netbox:8080` ändern und erneut **Prüfen**.
 
 - **NetBox-Sync „Vorschau/Übernahme fehlgeschlagen“** — die Meldung von NetBox steht am
   Plan (z. B. fehlendes Schreibrecht → HTTP 403, Validierungsfehler → HTTP 400 mit Feld).

@@ -133,7 +133,26 @@ def summary(
     ha = session.scalar(select(func.count(TopoHa.id)).where(TopoHa.tenant_id == tid)) or 0
     l3 = session.scalar(select(func.count(TopoL3Out.id)).where(TopoL3Out.tenant_id == tid)) or 0
     nodes = sorted((n.out() for n in graph.nodes.values()), key=lambda n: n["label"].lower())
-    return {"contexts": rows, "nodes": nodes, "ha": ha, "l3outs": l3}
+    # VRFs der Routen (FortiGate 7.x: eigene Tabellen im VDOM) fuer den Filter
+    vrfs = {
+        v or 0
+        for v in session.scalars(
+            select(TopoRoute.attrs["vrf"].as_integer()).where(TopoRoute.tenant_id == tid).distinct()
+        )
+    }
+    mgmt = session.scalar(
+        select(TopoRoute.id)
+        .where(TopoRoute.tenant_id == tid, TopoRoute.attrs["mgmt"].as_boolean().is_(True))
+        .limit(1)
+    )
+    return {
+        "contexts": rows,
+        "nodes": nodes,
+        "ha": ha,
+        "l3outs": l3,
+        "vrfs": sorted(vrfs),
+        "mgmt_vrf": mgmt is not None,
+    }
 
 
 @router.get("/routes")
@@ -145,6 +164,9 @@ def routes(
     context: str | None = None,
     table: str | None = Query(None, pattern="^(rib|bgp|static)$"),
     protocol: str | None = None,
+    vrf: str | None = Query(
+        None, pattern=r"^(\d{1,3}|mgmt)$", description="VRF im VDOM (0 = Standard) bzw. mgmt"
+    ),
     ip: str | None = Query(None, description="Routen, die diese IP enthalten"),
     q: str | None = Query(None, description="Praefix, Next-Hop, Interface, Protokoll"),
     limit: int = Query(200, ge=1, le=2000),
@@ -164,6 +186,15 @@ def routes(
     ):
         if value not in (None, ""):
             stmt = stmt.where(column == value)
+    if vrf == "mgmt":  # dediziertes Management-Interface (eigene Tabelle)
+        stmt = stmt.where(TopoRoute.attrs["mgmt"].as_boolean().is_(True))
+    elif vrf is not None:
+        number = TopoRoute.attrs["vrf"].as_integer()
+        mgmt = TopoRoute.attrs["mgmt"].as_boolean()
+        stmt = stmt.where(
+            or_(number.is_(None), number == 0) if vrf == "0" else number == int(vrf),
+            or_(mgmt.is_(None), ~mgmt),
+        )
     order = [
         TopoRoute.source_system_id,
         TopoRoute.node,
@@ -190,6 +221,7 @@ def routes(
                 func.lower(TopoRoute.context).like(like),
                 func.lower(TopoRoute.node).like(like),
                 func.lower(cast(TopoRoute.next_hops, String)).like(like),
+                func.lower(cast(TopoRoute.attrs, String)).like(like),
             )
         )
     total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0

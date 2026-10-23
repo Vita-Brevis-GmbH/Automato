@@ -323,15 +323,17 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.31.0** | Kunden: Merkmale aus dem IPAM als Selektor, NAT und Findings als Mitglieder |
 | **0.32.0** | Kunden-Filter: Umschalter „Kunde“, alle Doku-Listen auf den Ausschnitt samt geteiltem Teil (ADR 0018 Schritt 2) |
 | **0.33.0** | Kunden-Benutzer: Keycloak-Rolle `customer`/`customer_ids`, Freigabeliste fail-closed, serverseitige Einschränkung je Endpunkt, Audit immer an (ADR 0018 Schritt 3) |
+| **0.34.0** | Befunde aus dem Test von 0.33.0: Verbindung prüfen (NetBox), fixierter Seitenkopf, Management-Adresse der FortiGate, Portgruppe „Name passt nicht“, VRF und Filter im Routing, Kategorien der Applikations-Doku mit Aktion, Gerät, Link und IPv4/IPv6-Paaren, NAT nur aus der Regel, unmögliche Regeln nicht in der Applikations-Doku, Links in der Kunden-Übersicht |
 
-### Nächste Arbeiten (Stand 0.30.0)
+### Nächste Arbeiten (Stand 0.34.0)
 
 Phase A und die Stände 0.11–0.18.0 sind gegen die echten Systeme abgenommen (0.18.0: Regeln
 paralleler Firewalls einmal, keine Schleifen); 0.19.0 (Verbund ablehnen, redundante Wege) und
 0.20.0/0.21.0 (erkannte Anbindungen mit Ausblenden, mehrere Firewalls, Länge der Wege) und
 0.22.0/0.23.0 (Regeln und NAT auf dem Weg), 0.24.0–0.26.0 (Relevanz in Doku und Regel-Liste,
 Gegenstelle any), 0.27.0 (Inter-VDOM-Links), 0.28.0 (ACI-Contracts über externe EPGs), 0.29.0
-(Verbund als ein Hop) und 0.30.0 (Kunden über Selektoren) stehen zur Abnahme an. Konzeptbefund
+(Verbund als ein Hop), 0.30.0–0.33.0 (Kunden, Kunden-Filter, Kunden-Benutzer; im Test, Befunde in
+0.34.0) stehen zur Abnahme an. Konzeptbefund
 des Anwenders: Ohne Routing, Verbindungswege und Redundanzen zeigt die Doku Zugriffe, die
 routingtechnisch nicht möglich sind, und `any` aus dem Internet wie eine Liste aller
 Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
@@ -356,6 +358,13 @@ Gegenstellen. Deshalb zuerst Umgebung/Kunden und Topologie:
    weitere Geräte erfassen, Verkabelung dokumentieren (L1/L2-Sicht neben dem Routing).
 6. **Applikationen ausbauen:** Regeln direkt zuordnen, Abhängigkeiten zwischen
    Applikationen.
+   - **Jede Verbindung einmal, Ende zu Ende** (Anwender, 2026-10-23): Läuft eine Verbindung
+     der Applikation über mehrere Firewalls und das ACI, zeigt die Doku sie einmal – mit dem
+     Weg (ADR 0019) und je Hop, was zugelassen ist und welche Policy bzw. welcher Contract
+     dabei greift. Mit der **Reihenfolge der Regeln** je Firewall, damit bei zwei gleichen
+     Regeln klar ist, welche wirklich zieht (die erste passende; die zweite ist verdeckt).
+     Grundlage: Weg Hop für Hop und Regeln auf dem Weg (0.17.0/0.22.0), ACI-Contracts über
+     externe EPGs (0.28.0).
 7. **Produktiv schalten** (ADR 0013) mit den R14-Massnahmen; **Cockpit** für mehrere
    Instanzen (ADR 0014), **Import-Wizard (E3)**.
 8. Phase B (Bereinigen auf Firewall/DDI) und Phase C (Regeln schreiben,

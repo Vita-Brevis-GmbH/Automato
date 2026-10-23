@@ -224,6 +224,16 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
             f"nicht eingelesen ({vms} VM{'s' if vms != 1 else ''} daran).",
             "Tenant im APIC-Quellsystem mitlesen bzw. prüfen, ob die EPG noch existiert.",
         )
+    if ftype == "portgroup_name_mismatch":
+        path = "/".join(x for x in (d.get("tenant"), d.get("ap"), d.get("epg")) if x)
+        vms = d.get("vms") or 0
+        return (
+            f"Portgruppe {_q(subject)}{on} heisst nach ACI-Schema {path}, ist über VLAN "
+            f"{d.get('vlan')} aber der EPG {d.get('assigned')} zugeordnet – der Name passt nicht "
+            f"({vms} VM{'s' if vms != 1 else ''} daran).",
+            "Portgruppe bzw. EPG umbenennen oder das VLAN prüfen; bis dahin gilt die Zuordnung "
+            "über das VLAN.",
+        )
     if ftype == "parallel_rule_mismatch":
         values = d.get("values") or {}
         shown = "; ".join(

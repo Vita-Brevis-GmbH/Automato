@@ -127,7 +127,6 @@ export default function ApplicationDocView({
   const [rule, setRule] = useState<number | null>(null);
   const [showTables, setShowTables] = useState(false);
   const [showEmpty, setShowEmpty] = useState(false);
-  const [showImpossible, setShowImpossible] = useState(false); // routingtechnisch unmögliche
 
   useEffect(() => {
     setErr(null);
@@ -164,7 +163,6 @@ export default function ApplicationDocView({
 
   // Treffer nach den Filtern; EPG = die EPG selbst oder Systeme in ihr
   const hits = doc.hits.filter((h) => {
-    if (!showImpossible && h.relevance === "impossible") return false;
     if (f.system && h.system !== f.system) return false;
     if (f.epg) {
       const sys = byKey.get(h.system);
@@ -318,13 +316,13 @@ export default function ApplicationDocView({
           </span>
           <div className="spacer" />
           {s.impossible ? (
-            <button
-              className="btn btn-ghost btn-sm no-print"
-              onClick={() => setShowImpossible(!showImpossible)}
-              title="Regeln, die die Systeme nach dem Routing ihrer Firewall nicht sehen können (Ein-/Ausgang passt nicht)"
+            <span
+              className="faint"
+              style={{ fontSize: 12 }}
+              title="Regeln, die die Systeme nach dem Routing ihrer Firewall nicht sehen können (Ein-/Ausgang passt nicht) – sie gehören nicht zur Applikation"
             >
-              {showImpossible ? "routingtechnisch unmögliche ausblenden" : `${s.impossible} routingtechnisch unmögliche einblenden`}
-            </button>
+              {s.impossible} routingtechnisch unmögliche ausgelassen
+            </span>
           ) : null}
           {filtered && (
             <button className="btn btn-ghost btn-sm no-print" onClick={() => setF(NO_FILTER)}>
@@ -455,7 +453,7 @@ export default function ApplicationDocView({
               <Empty title="Noch keine Zugriffe kategorisiert">Die Systeme dieser Applikation haben keine Regeln.</Empty>
             </div>
           ) : (
-            tables.map((t) => <DocTableView key={t.index} table={t} />)
+            tables.map((t) => <DocTableView key={t.index} table={t} onRule={setRule} />)
           )}
         </div>
       )}

@@ -38,18 +38,17 @@ def test_regeln_nur_wo_der_verkehr_durchkommt(client):
     }
     gone = inet
 
-    # Applikations-Doku: Treffer mit Relevanz; Kennzahlen ohne die unmoegliche Regel
+    # Applikations-Doku: unmoegliche Treffer stehen gar nicht drin, sie werden nur gezaehlt
+    # (Dev-Befund 0.33.0, nicht mehr einblendbar)
     body = {"name": "Web", "members": [{"kind": "host", "ref": web}]}
     app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP)
     assert app.status_code == 201, app.text
     out = client.get(f"/applications/{app.json()['id']}/doc", params={"tenant_id": tid}).json()
-    rel = {(h["rule_id"], h["side"]): h["relevance"] for h in out["hits"]}
-    assert rel[(gone["rule_id"], "dst")] == "impossible"
-    assert rel[(gone["rule_id"], "src")] == "impossible"  # Verkehr vom Server kommt über dmz
-    texts = [h["relevance_text"] for h in out["hits"] if h["relevance"] == "impossible"]
-    assert any("kommt bei fw-r über dmz (Zone dmz) an" in t for t in texts)
+    assert all(h["relevance"] != "impossible" for h in out["hits"])
+    assert gone["rule_id"] not in {h["rule_id"] for h in out["hits"]}
+    assert gone["rule_id"] not in {r["id"] for r in out["rules"]}
     assert out["summary"]["impossible"] == 2  # lan-to-inet-users, lan-to-dmz-falsch
-    assert out["summary"]["rules"] == len({h["rule_id"] for h in out["hits"]}) - 2
+    assert out["summary"]["rules"] == len({h["rule_id"] for h in out["hits"]})
     exported = {r.get("_rule") for t in out["tables"] for r in t["rows"]}
     assert gone["rule_id"] not in exported
 

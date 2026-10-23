@@ -32,6 +32,7 @@ export const FINDING_LABEL: Record<string, string> = {
   rule_incomplete: "Regel nicht wirksam",
   vm_not_in_ipam: "VM-IP nicht im IPAM",
   portgroup_no_epg: "Portgruppe ohne EPG",
+  portgroup_name_mismatch: "Portgruppe: Name ≠ EPG",
   mapped_not_in_ipam: "Ziel nicht im IPAM",
   parallel_rule_mismatch: "Parallele Regel abweichend",
   parallel_rule_missing: "Regel fehlt parallel",
@@ -55,6 +56,7 @@ export const FINDING_HINT: Record<string, string> = {
   rule_incomplete: "Regel/Contract ohne Quelle bzw. Ziel",
   vm_not_in_ipam: "IP einer VM (vCenter) fehlt im IPAM",
   portgroup_no_epg: "Portgruppe nach ACI-Schema ohne eingelesene EPG",
+  portgroup_name_mismatch: "Portgruppe nur über das VLAN einer anders benannten EPG zugeordnet",
   parallel_rule_mismatch: "gleiche Policy auf der parallelen Firewall anders konfiguriert",
   parallel_rule_missing: "Policy fehlt auf einer parallelen Firewall",
   parallel_object_mismatch: "gleichnamiges Objekt auf der parallelen Firewall anders definiert",
@@ -103,7 +105,7 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     key: "aci",
     label: "ACI / VMware",
     help: "EPGs ohne Endpunkte, Portgruppen ohne EPG",
-    types: ["epg_no_endpoints", "portgroup_no_epg"],
+    types: ["epg_no_endpoints", "portgroup_no_epg", "portgroup_name_mismatch"],
   },
 ];
 

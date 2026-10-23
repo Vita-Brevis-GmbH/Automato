@@ -385,9 +385,19 @@ def _error_text(exc: Exception) -> str:
     if isinstance(exc, HTTPException):
         return str(exc.detail)
     if isinstance(exc, httpx.HTTPError):
-        url = getattr(getattr(exc, "request", None), "url", None)
-        where = f" ({url.host})" if url is not None else ""
-        return f"NetBox nicht erreichbar{where}: {type(exc).__name__}"
+        try:
+            url = exc.request.url
+        except (AttributeError, RuntimeError):
+            url = None
+        where = ""
+        if url is not None:
+            where = f" ({url.host}:{url.port})" if url.port else f" ({url.host})"
+        hint = {
+            "ConnectTimeout": " – keine Antwort: NetBox aus oder der Weg vom Orchestrator gesperrt"
+            " (Quellsystem → Prüfen)",
+            "ConnectError": " – Verbindung abgelehnt bzw. Name unbekannt (Quellsystem → Prüfen)",
+        }.get(type(exc).__name__, "")
+        return f"NetBox nicht erreichbar{where}: {type(exc).__name__}{hint}"
     if isinstance(exc, credentials.CredentialsUnavailable):
         return str(exc)
     return f"{type(exc).__name__}: {exc}"[:500]

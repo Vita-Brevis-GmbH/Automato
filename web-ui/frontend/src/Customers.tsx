@@ -322,6 +322,28 @@ export default function Customers({
   );
 }
 
+// Link zum Element in seiner Ansicht (Dev-Befund 0.33.0): Regel direkt, sonst über die Suche
+function memberLink(kind: CustomerMemberKind, m: { id: number | null; name: string }): string | null {
+  const q = (v: string) => encodeURIComponent(v);
+  switch (kind) {
+    case "rule":
+      return m.id ? `#regeln?rule=${m.id}` : null;
+    case "epg":
+    case "net":
+      return `#regeln?q=${q(m.name)}`;
+    case "object":
+      return `#objekte?q=${q(m.name)}`;
+    case "vm":
+      return `#objekte?tab=vms&q=${q(m.name)}`;
+    case "nat":
+      return `#nat?q=${q(m.name)}`;
+    case "finding":
+      return `#findings?q=${q(m.name.split(": ").slice(1).join(": ") || m.name)}`;
+    default:
+      return null;
+  }
+}
+
 // Zugehörigkeit eines Kunden je Art mit Grund (Selektor)
 function Members({ customer }: { customer: Customer }) {
   const [kind, setKind] = useState<CustomerMemberKind>("epg");
@@ -348,14 +370,15 @@ function Members({ customer }: { customer: Customer }) {
       ) : (
         <table className="compact">
           <tbody>
-            {items.map((m, i) => (
-              <tr key={`${m.id ?? m.name}-${i}`}>
-                <td className="mono">
-                  {kind === "rule" && m.id ? <a href={`#regeln?rule=${m.id}`}>{m.name}</a> : m.name}
-                </td>
-                <td className="faint">{m.via}</td>
-              </tr>
-            ))}
+            {items.map((m, i) => {
+              const href = memberLink(kind, m);
+              return (
+                <tr key={`${m.id ?? m.name}-${i}`}>
+                  <td className="mono">{href ? <a href={href}>{m.name}</a> : m.name}</td>
+                  <td className="faint">{m.via}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

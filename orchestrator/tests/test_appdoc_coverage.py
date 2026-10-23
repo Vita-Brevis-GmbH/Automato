@@ -95,7 +95,7 @@ def _rows(doc) -> dict[str, list[dict]]:
     """Beschreibung (Regel) -> Zeilen ueber alle Tabellen."""
     out: dict[str, list[dict]] = {}
     for t in doc["tables"]:
-        assert t["columns"][-1] == "Bezug"
+        assert t["columns"][-1] == "Description" and "Bezug" not in t["columns"]  # 0.34.0
         for row in t["rows"]:
             out.setdefault(row["Description"], []).append({**row, "table": t["index"]})
     return out

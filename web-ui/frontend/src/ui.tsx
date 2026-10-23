@@ -1,5 +1,5 @@
 // Gemeinsame Darstellungs-Bausteine: Icons, Chips/Badges, Seitenkopf, Fehler, Modal.
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { describeError } from "./api";
 
 const ICONS: Record<string, ReactNode> = {
@@ -144,8 +144,20 @@ export function PageHead({
   children?: ReactNode;
   actions?: ReactNode;
 }) {
+  // Kopf bleibt beim Scrollen stehen; seine Höhe braucht der Reiter darunter (.tabbar.sticky)
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const main = el?.closest<HTMLElement>(".main");
+    if (!el || !main) return;
+    const set = () => main.style.setProperty("--page-head-h", `${el.offsetHeight}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   return (
-    <div className="page-head">
+    <div className="page-head" ref={ref}>
       <div>
         <h1>{title}</h1>
         {children && <p>{children}</p>}

@@ -220,6 +220,27 @@ def test_befunde_vm_ohne_ipam_und_portgruppe_ohne_epg(client):
     assert pg["severity"] == "info" and pg["message"]
 
 
+def test_befund_portgruppe_nur_ueber_vlan_einer_anderen_epg(client):
+    """Dev-Befund 0.33.0: Portgruppe nach ACI-Schema (Tenant|AP|EPG) passt nur über das VLAN
+    zu einer anders benannten EPG - Zuordnung bleibt, Befund "Name passt nicht"."""
+    ids = _seed(client)
+    vc = copy.deepcopy(VCENTER)
+    vc["virtual"]["portgroups"].append({"name": "TE_kx|AP_000|EG_k8s01", "vlan": 950})
+    _deliver(client, ids["tid"], ids["vc"], "vmware", vc)
+    params = {"tenant_id": ids["tid"], "type": "portgroup_name_mismatch"}
+    (pg,) = client.get("/findings", params=params).json()
+    assert pg["subject_id"] == "TE_kx|AP_000|EG_k8s01"
+    assert pg["detail"]["assigned"] == "TE_ka/AP_007/EG_backup" and pg["detail"]["vlan"] == 950
+    assert "Name passt nicht" in pg["message"] and "VLAN 950" in pg["message"]
+    groups = {
+        g["name"]: g for g in client.get("/portgroups", params={"tenant_id": ids["tid"]}).json()
+    }
+    assert groups["TE_kx|AP_000|EG_k8s01"]["epg_match"] == "vlan"  # Zuordnung bleibt
+    # PG_backup heisst nicht nach ACI-Schema: kein Befund trotz VLAN-Zuordnung
+    found = client.get("/findings", params=params).json()
+    assert all(f["subject_id"] != "PG_backup" for f in found)
+
+
 @pytest.fixture
 def netbox(monkeypatch):
     return fake_netbox(monkeypatch)

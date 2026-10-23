@@ -275,7 +275,45 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
   );
 }
 
-export function DocTableView({ table }: { table: DocTable }) {
+// Zelle der Kategorien; „Description“ öffnet die Regel (bei einem Paar je Familie ein Link)
+function DocCell({
+  row,
+  column,
+  onRule,
+}: {
+  row: DocTable["rows"][number];
+  column: string;
+  onRule?: (id: number) => void;
+}) {
+  const value = row[column];
+  const text = Array.isArray(value) ? value.join(", ") : value;
+  if (column !== "Description" || !onRule) return <>{text || <span className="faint">–</span>}</>;
+  const ids = Array.isArray(row._rules) ? row._rules : typeof row._rule === "number" ? [row._rule] : [];
+  if (!ids.length) return <>{text || <span className="faint">–</span>}</>;
+  return (
+    <>
+      <button className="linkbtn" title="Regel im Detail" onClick={() => onRule(ids[0])}>
+        {text || `#${ids[0]}`}
+      </button>
+      {ids.length > 1 && (
+        <span className="faint">
+          {" "}
+          ·{" "}
+          {ids.map((id, i) => (
+            <span key={id}>
+              {i > 0 && " · "}
+              <button className="linkbtn" onClick={() => onRule(id)}>
+                {i === 0 ? "IPv4" : "IPv6"}
+              </button>
+            </span>
+          ))}
+        </span>
+      )}
+    </>
+  );
+}
+
+export function DocTableView({ table, onRule }: { table: DocTable; onRule?: (id: number) => void }) {
   const aci = table.enforcement === "aci";
   return (
     <div className="card">
@@ -307,7 +345,11 @@ export function DocTableView({ table }: { table: DocTable }) {
                 <tr key={i}>
                   {table.columns.map((c, ci) => (
                     <td key={c} className={ci === 1 ? "mono" : ""}>
-                      {row[c] || <span className="faint">–</span>}
+                      {c === "Aktion" && row[c] ? (
+                        <span className={`chip ${row[c] === "Allow" ? "accept" : "deny"}`}>{String(row[c])}</span>
+                      ) : (
+                        <DocCell row={row} column={c} onRule={onRule} />
+                      )}
                     </td>
                   ))}
                 </tr>

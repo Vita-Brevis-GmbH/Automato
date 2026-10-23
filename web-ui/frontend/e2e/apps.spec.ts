@@ -111,3 +111,16 @@ test("Doku je System: routingtechnisch unmögliche Regeln stehen nicht in den Ka
   await expect(page.locator(".stack")).toContainText("all → Netze hinter lan: 10.10.0.0/24");
   await expect(page.locator(".stack")).toContainText("all → extern (Default-Route über internet)");
 });
+
+test("Applikation: Doku nach Kategorien mit Aktion, Gerät und Link zur Regel", async ({ page }) => {
+  await open(page);
+  const head = page.locator(".card-head", { hasText: "Doku nach Kategorien" });
+  await head.locator("button:has-text('anzeigen')").click();
+  const tables = page.locator(".stack .card table");
+  await expect(tables.first().locator("thead")).toContainText("Aktion");
+  await expect(tables.first().locator("thead")).toContainText("Gerät");
+  await expect(tables.first().locator("thead")).not.toContainText("Bezug");
+  await expect(page.locator(".stack .chip.accept").first()).toHaveText("Allow");
+  await page.locator(".stack .card tbody .linkbtn").first().click();
+  await expect(page.locator(".drawer")).toContainText("Warum diese Regel für die Applikation gilt");
+});

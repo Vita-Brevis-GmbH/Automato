@@ -134,12 +134,9 @@ def test_contracts_ueber_die_externe_epg_mit_dem_laengsten_subnetz(client):
     out = client.get(f"/applications/{app.json()['id']}/doc", params={"tenant_id": tid}).json()
     rules = {r["id"]: r["name"] for r in out["rules"]}
     rel = {rules[h["rule_id"]]: h["relevance"] for h in out["hits"] if h["rule_id"] in rules}
-    assert {k: rel[k] for k in ("CT_srv", "CT_any", "CT_inet", "CT_rt")} == {
-        "CT_srv": "possible",
-        "CT_any": "impossible",
-        "CT_inet": "impossible",
-        "CT_rt": "impossible",
-    }
+    # unmoegliche Contracts gar nicht in der Applikations-Doku (Dev-Befund 0.33.0)
+    assert rel["CT_srv"] == "possible" and not {"CT_any", "CT_inet", "CT_rt"} & set(rel)
+    assert out["summary"]["impossible"] >= 3
 
 
 def test_regel_liste_contracts_fuer_eine_ip(client):

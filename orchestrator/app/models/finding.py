@@ -33,6 +33,8 @@ class FindingType(enum.StrEnum):
     RULE_INCOMPLETE = "rule_incomplete"  # Regel ohne Quelle bzw. Ziel (ACI: nicht wirksam)
     VM_NOT_IN_IPAM = "vm_not_in_ipam"  # IP einer VM (vCenter) fehlt im fuehrenden IPAM
     PORTGROUP_NO_EPG = "portgroup_no_epg"  # Portgruppe nach ACI-Schema ohne passende EPG
+    # Portgruppe nach ACI-Schema, nur ueber das VLAN einer anders benannten EPG zugeordnet
+    PORTGROUP_NAME_MISMATCH = "portgroup_name_mismatch"
     # Parallele Firewalls (Verbund, 0.18.0)
     PARALLEL_RULE_MISMATCH = "parallel_rule_mismatch"  # gleiche Policy-ID, anderer Inhalt
     PARALLEL_RULE_MISSING = "parallel_rule_missing"  # Policy fehlt auf einer Firewall

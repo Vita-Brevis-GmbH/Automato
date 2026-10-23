@@ -7,6 +7,51 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.34.0 – 2026-10-23
+
+Befunde aus dem Test von 0.33.0. Ohne Migration; für die Management-Adresse die FortiGates
+neu einlesen (Agent aktualisiert sich selbst).
+
+- **NetBox nicht erreichbar:** neu **Quellsysteme → Prüfen** für zentral gelesene Systeme.
+  Die Prüfung läuft vom Orchestrator aus in Sekunden: Name auflösen, TCP-Verbindung, bei
+  NetBox `GET /api/status/` mit dem Lese-Token. Jeder Schritt zeigt einen Hinweis, z. B.
+  Firewall/Docker-Netz bei keiner Antwort bzw. Port bei abgelehnter Verbindung
+  (`POST /systems/{id}/check`). Der Verbindungsaufbau zu NetBox bricht nach 10 statt 30 s
+  ab, die Meldung kommt nach rund 1,5 statt 3 Minuten. Die Meldungen nennen den Grund
+  (ConnectTimeout = keine Antwort, ConnectError = abgelehnt bzw. Name unbekannt).
+  Abhilfe-Weg in `docs/BETRIEB.md`.
+- **Seitenkopf fixiert:** Titel und Reiter (Objekte, Routing) bleiben beim Scrollen stehen.
+- **Geräte:** FortiGates haben eine Management-Adresse – die IPv4 des aktiven Interfaces mit
+  HTTPS-Zugriff (`allowaccess`), Management-Interfaces zuerst.
+- **Finding „Portgruppe: Name ≠ EPG“** (`portgroup_name_mismatch`): Portgruppe nach
+  ACI-Schema (`Tenant|AP|EPG`), die nur über das VLAN einer anders benannten EPG zugeordnet
+  ist. Die Zuordnung über das VLAN bleibt.
+- **Routing:**
+  - Spalte VRF an den Routen und ein Filter nach VRF bzw. Management-Tabelle
+    (`GET /routing/routes?vrf=`, VRFs in `/routing/summary`).
+  - Suche und System-Filter in BGP-Nachbarn (dazu Zustand), HA, Policy-Routen/SD-WAN
+    (dazu Art) und L3Outs.
+- **Applikations-Doku, Kategorien:**
+  - Neue Spalten **Aktion** (Allow/Deny) und **Gerät** (Firewall mit VDOM bzw. APIC); die
+    Spalte „Bezug“ entfällt.
+  - **IPv4/IPv6-Paare** (gleich bzw. bestätigt) stehen als eine Zeile.
+  - **Klick auf die Regel** öffnet sie im Detail, bei einem Paar je Familie.
+  - **NAT nur aus der Regel:** Internet-Zugriff mit dem SNAT der Policy (ihr Pool bzw.
+    „Interface-IP“) statt allen Pools des Mandanten. Zugriff aus dem Internet mit der VIP, auf
+    die die Regel zeigt (externer DNS-Name aus dem IPAM). Sperrende Regeln haben kein NAT.
+    Eine VIP zum Server macht eine Regel aus dem eigenen Netz nicht mehr zu „Zugriff aus dem
+    Internet“.
+- **Applikations-Doku ohne unmögliche Regeln:** Routingtechnisch unmögliche Treffer, z. B.
+  intern → Internet mit `any` im Ziel, stehen nicht mehr in der Applikation. Sie sind auch
+  nicht einblendbar, nur gezählt.
+- **Kunden-Übersicht:** Die Zugehörigkeit verlinkt auf Regel, Objekt, VM, NAT, Netz bzw.
+  Finding.
+- **Roadmap:** „Jede Verbindung einmal, Ende zu Ende“ über Firewalls und ACI mit der
+  Reihenfolge der Regeln (Applikationen ausbauen).
+- Tests: Verbindungsprüfung, Management-Adresse, Portgruppen-Befund, VRF-Filter, NAT je Regel
+  (Pool, VIP, Deny), Kategorien-Spalten, IPv4/IPv6-Paar, UI (Kategorien mit Link,
+  Routing-Filter, Kunden-Links).
+
 ## 0.33.0 – 2026-10-22
 
 Kunden-Benutzer mit serverseitiger Einschränkung (ADR 0018, Schritt 3). Ohne Migration.

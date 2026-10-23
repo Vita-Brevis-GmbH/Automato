@@ -488,6 +488,35 @@ def _virtual_issues(session: Session, tenant_id: int, ctx) -> list[Issue]:
             )
     has_aci = session.scalar(select(Epg.id).where(Epg.tenant_id == tenant_id).limit(1))
     if has_aci:
+        # nur ueber das VLAN zugeordnet, obwohl der Name eine andere EPG nennt (Dev-Befund 0.33.0)
+        by_vlan = list(
+            session.execute(
+                select(Portgroup, Epg)
+                .join(Epg, Epg.id == Portgroup.epg_id)
+                .where(Portgroup.tenant_id == tenant_id, Portgroup.epg_match == "vlan")
+            )
+        )
+        for pg, epg in by_vlan:
+            parts = virtual.epg_from_name(pg.name)
+            if parts is None:
+                continue
+            out.append(
+                Issue(
+                    FindingType.PORTGROUP_NAME_MISMATCH,
+                    SubjectKind.PORTGROUP,
+                    pg.name,
+                    pg.source_system_id,
+                    detail={
+                        "source": names.get(pg.source_system_id),
+                        "tenant": parts[0],
+                        "ap": parts[1],
+                        "epg": parts[2],
+                        "assigned": "/".join(x for x in (epg.aci_tenant, epg.ap, epg.name) if x),
+                        "vlan": pg.vlan,
+                        "vms": pg.vm_count,
+                    },
+                )
+            )
         for pg in session.scalars(
             select(Portgroup).where(Portgroup.tenant_id == tenant_id, Portgroup.epg_id.is_(None))
         ):

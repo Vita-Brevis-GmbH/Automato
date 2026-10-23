@@ -48,7 +48,9 @@ class NetBoxAdapter:
             or httpx.Client(
                 headers={**auth_header(token), "Accept": "application/json"},
                 verify=verify_tls,
-                timeout=30.0,
+                # Verbindungsaufbau kurz: ein nicht erreichbares Ziel meldet sich nach
+                # 4 x 10 s statt 4 x 30 s (Wiederholungen in readonly.get)
+                timeout=httpx.Timeout(30.0, connect=10.0),
             )
         )
 

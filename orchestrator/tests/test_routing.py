@@ -7,6 +7,8 @@ Border-Leafs. Die Weg-Abfrage liefert je Kontext die wirksame Route (laengstes P
 die Policy-Routen, die vorgehen.
 """
 
+import copy
+
 ADMIN = {"X-Dev-Roles": "admin"}
 TOKEN = {"X-Internal-Token": "dev-only-token"}
 
@@ -204,3 +206,43 @@ def test_routing_mandant_und_loeschen(client):
         "leaf-101"
     }
     assert client.get("/routing/ha", params=p).json() == []
+
+
+def test_routen_je_vrf_filtern(client):
+    """Dev-Befund 0.33.0: statische Routen liegen nicht in der Standard-VRF - VRF je Route,
+    Filter nach VRF bzw. Management-Tabelle, VRFs in der Übersicht."""
+    tid, fw, _ = _seed(client)
+    fw_vrf = copy.deepcopy(FW)
+    fw_vrf["routing"]["routes"] += [
+        _route(
+            "root",
+            "10.70.0.0/16",
+            [{"ip": "10.20.0.253", "interface": "srv"}],
+            table="static",
+            distance=10,
+            attrs={"vrf": 5},
+        ),
+        _route(
+            "root",
+            "192.0.2.0/24",
+            [{"interface": "mgmt"}],
+            protocol="connected",
+            attrs={"mgmt": True},
+        ),
+    ]
+    _deliver(client, tid, fw, "fortigate", fw_vrf)
+    p = {"tenant_id": tid}
+    summary = client.get("/routing/summary", params=p).json()
+    assert summary["vrfs"] == [0, 5] and summary["mgmt_vrf"] is True
+
+    def prefixes(**params):
+        r = client.get("/routing/routes", params={**p, **params})
+        assert r.status_code == 200, r.text
+        return [x["prefix"] for x in r.json()]
+
+    assert prefixes(vrf="5") == ["10.70.0.0/16"]
+    assert prefixes(vrf="mgmt") == ["192.0.2.0/24"]
+    default = prefixes(vrf="0")
+    assert "10.70.0.0/16" not in default and "192.0.2.0/24" not in default
+    assert "10.99.0.0/16" in default
+    assert client.get("/routing/routes", params={**p, "vrf": "x"}).status_code == 422

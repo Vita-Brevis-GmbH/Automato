@@ -102,7 +102,7 @@ class NetBoxWriter:
                     "Content-Type": "application/json",
                 },
                 verify=verify_tls,
-                timeout=60.0,
+                timeout=httpx.Timeout(60.0, connect=10.0),
             ),
             self._api,
         )

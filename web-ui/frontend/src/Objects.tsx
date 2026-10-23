@@ -117,7 +117,7 @@ export default function Objects({
         (DDI/NetBox) – dazu das Netzinventar aus FortiGate und APIC. Rein lesend.
       </PageHead>
 
-      <div className="tabbar">
+      <div className="tabbar sticky">
         {tabs.map((t) => (
           <button key={t.key} className={tab === t.key ? "on" : ""} onClick={() => setTab(t.key)}>
             {t.label}

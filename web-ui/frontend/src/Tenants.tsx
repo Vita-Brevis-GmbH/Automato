@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Agent,
+  checkSystem,
   createSite,
   createSystem,
   createTenant,
@@ -20,6 +21,7 @@ import {
   Site,
   SiteKind,
   System,
+  SystemCheck,
   SystemCredentials,
   Tenant,
 } from "./api";
@@ -777,6 +779,17 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
   const [editing, setEditing] = useState<System | "new" | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [toDelete, setToDelete] = useState<System | null>(null);
+  // Verbindung prüfen (zentral gelesene Systeme, vom Orchestrator aus)
+  const [check, setCheck] = useState<SystemCheck | "busy" | null>(null);
+  const runCheck = (s: System) => {
+    setCheck("busy");
+    checkSystem(s.id)
+      .then(setCheck)
+      .catch((e) => {
+        setCheck(null);
+        setErr(e);
+      });
+  };
 
   const load = () =>
     fetchSystems(tenant.id)
@@ -816,6 +829,28 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
             <ErrorBox error={err} onClose={() => setErr(null)} />
           </div>
         ) : null}
+        {check === "busy" && <Note>Verbindung wird geprüft…</Note>}
+        {check && check !== "busy" && (
+          <div style={{ padding: "10px 16px 0" }} id="system-check">
+            <Note warn={!check.ok}>
+              <b>
+                {check.name}: {check.ok ? "erreichbar" : "nicht erreichbar"}
+              </b>{" "}
+              (geprüft vom Orchestrator)
+              <ul style={{ margin: "4px 0" }}>
+                {check.steps.map((st, i) => (
+                  <li key={i}>
+                    {st.ok ? "✓" : "✗"} {{ dns: "Name", tcp: "Verbindung", http: "NetBox-API" }[st.step]}: {st.detail}
+                  </li>
+                ))}
+              </ul>
+              {check.hint && <div>{check.hint}</div>}
+              <button className="linkbtn" onClick={() => setCheck(null)}>
+                schliessen
+              </button>
+            </Note>
+          </div>
+        )}
         {systems === null ? (
           <Loading />
         ) : systems.length === 0 ? (
@@ -832,6 +867,16 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
               me.isAdmin
                 ? (s) => (
                     <>
+                      {s.agent_id == null && s.base_url && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          disabled={check === "busy"}
+                          title="Erreichbarkeit vom Orchestrator aus prüfen (Name, Verbindung, bei NetBox die API)"
+                          onClick={() => runCheck(s)}
+                        >
+                          Prüfen
+                        </button>
+                      )}
                       <button className="btn btn-ghost btn-sm" onClick={() => setEditing(s)}>
                         Bearbeiten
                       </button>

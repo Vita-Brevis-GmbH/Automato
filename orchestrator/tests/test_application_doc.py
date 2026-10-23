@@ -169,3 +169,31 @@ def test_doku_server_ohne_vm(client):
     assert web["member"] == "IP 10.20.0.5 = Server 10.20.0.5 (Server 10.20.0.5)"
     assert doc["epgs"] == [] and doc["summary"]["vms"] == 1
     assert client.get(f"/applications/{app['id']}/doc", headers=ADMIN).status_code == 200
+
+
+def test_kategorien_paar_ipv4_ipv6_als_eine_zeile():
+    """Dev-Befund 0.33.0: gepaarte IPv4/IPv6-Regeln (gleich bzw. bestaetigt) stehen in den
+    Kategorien als eine Zeile mit beiden Regeln; ungepaarte bleiben getrennt."""
+    from app.store import appdoc
+    from app.store.applications import _hits_and_tables
+
+    def row(rid, name, system, obj="H_web01"):
+        return {"Server Name": system, "TCP/UDP": "tcp/443", "Target Systems": "any",
+                "Aktion": "Allow", "Schutzmechanismen": "", "Gerät": "fw-01",
+                "Description": name, appdoc.RULE: rid, appdoc.DIRECTION: "in",
+                appdoc.SIDE: "dst", appdoc.OBJECT: obj, appdoc.SCOPE: "specific"}  # fmt: skip
+
+    rows = [
+        ("vm:1", 10, row(1, "web-in", "web01")),
+        ("vm:1", 10, row(2, "web-in6", "web01")),  # IPv6-Gegenstueck von 1
+        ("vm:1", 10, row(3, "db-in", "web01")),
+    ]
+    hits, tables = _hits_and_tables(rows, {1: 1, 2: 1})
+    t10 = next(t for t in tables if t["index"] == 10)["rows"]
+    by_desc = {r["Description"]: r for r in t10}
+    assert set(by_desc) == {"web-in / web-in6 (IPv4 + IPv6)", "db-in"}
+    assert by_desc["web-in / web-in6 (IPv4 + IPv6)"]["_rules"] == [1, 2]
+    assert by_desc["db-in"]["_rules"] == [3]
+    assert {h["rule_id"] for h in hits} == {1, 2, 3}  # Treffer bleiben je Regel
+    _, separate = _hits_and_tables(rows)
+    assert len(next(t for t in separate if t["index"] == 10)["rows"]) == 3

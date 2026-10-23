@@ -522,6 +522,33 @@ test("Kunden: Vorschlag übernehmen, Selektoren mit Vorschau, löschen", async (
   await expect(page.locator("#customer-unassigned")).toContainText("Keinem Kunden zugeordnet");
 });
 
+test("Kunden: Zugehörigkeit verlinkt auf die Elemente", async ({ page }) => {
+  await page.goto("/#kunden");
+  await page.locator("tbody tr.clickable").filter({ hasText: "ACI-Tenant TE" }).click();
+  const sub = page.locator("tr.subrow");
+  await sub.locator(".tabbar button", { hasText: "Regeln" }).click();
+  await sub.locator("a").first().click();
+  await expect(page).toHaveURL(/#regeln\?rule=\d+/);
+  await expect(page.locator(".drawer")).toBeVisible();
+});
+
+test("Routing: Filter in BGP-Nachbarn und Policy-Routen, VRF an den Routen", async ({ page }) => {
+  await page.goto("/#routing");
+  await page.click(".tabbar button:has-text('Routen')");
+  await expect(page.locator("thead", { hasText: "Präfix" })).toContainText("VRF");
+  await page.click(".tabbar button:has-text('BGP-Nachbarn')");
+  const peers = page.locator(".card-body.viewport tbody tr");
+  await expect(peers.first()).toBeVisible();
+  const all = await peers.count();
+  expect(all).toBeGreaterThan(1);
+  await page.getByPlaceholder("Nachbar, Name, AS, Zustand…").fill("isp-a-gw");
+  await expect(peers).toHaveCount(1);
+  await expect(page.locator(".filterbar .count")).toContainText(`1 von ${all}`);
+  await page.click(".tabbar button:has-text('Policy-Routen & SD-WAN')");
+  await page.getByLabel("Art").selectOption("sdwan");
+  await expect(page.locator(".card-body.viewport tbody tr").first()).toContainText("SD-WAN");
+});
+
 test("Kunden-Filter: Umschalter zeigt nur den Ausschnitt des Kunden", async ({ page }) => {
   await page.goto("/#regeln");
   await expect(rows(page).first()).toBeVisible();

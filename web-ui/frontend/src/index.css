@@ -158,7 +158,13 @@ a { color: var(--accent); }
   background: var(--surface-2); cursor: pointer; color: var(--fg); flex: none; }
 
 /* Seitenkopf */
-.page-head { margin-bottom: 18px; display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+/* Seitenkopf und Reiter bleiben beim Scrollen stehen (Dev-Befund 0.33.0) */
+/* .main hat oben 22px Innenabstand: der Kopf deckt ihn mit ab (top/padding/margin -22px) */
+.page-head { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; position: sticky; top: -22px; z-index: 6;
+  background: var(--bg); margin: 0 -26px; padding: 22px 26px 18px; }
+.main > .page-head:first-child { margin-top: -22px; }
+.tabbar.sticky { position: sticky; top: calc(var(--page-head-h, 0px) - 22px); z-index: 5; background: var(--bg);
+  margin-left: -26px; margin-right: -26px; padding: 0 26px; }
 .page-head > div:first-child { flex: 1 1 320px; }
 .page-head h1 { font-size: 21px; font-weight: 600; letter-spacing: -.01em; }
 .page-head p { color: var(--muted); font-size: 13px; margin: 4px 0 0; max-width: 820px; }
@@ -339,6 +345,9 @@ pre.block { background: var(--surface-2); border: 1px solid var(--border); borde
   .nav-item { width: auto; white-space: nowrap; }
   .nav-item .badge-n { display: none; }
   .main { overflow: visible; padding: 16px; }
+  .page-head { position: static; margin: 0 0 18px; padding: 0; }
+  .main > .page-head:first-child { margin-top: 0; }
+  .tabbar.sticky { position: static; margin: 0 0 14px; padding: 0; }
   .kpis { grid-template-columns: repeat(2, 1fr); }
   .role-grid { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }

@@ -98,7 +98,11 @@ Rahmen laut Anwender (2026-10-22):
      - Ziel: Die Route der Firewall zum System verlässt sie über den Ausgang der Regel.
      - Quelle: Die Route zum System führt über den Eingang der Regel (symmetrisches Routing).
      - Sonst ist der Treffer „nicht möglich“ und fehlt in Doku je System, Applikations-Doku,
-       Kennzahlen und Export (einblendbar, mit Begründung).
+       Kennzahlen und Export (einblendbar, mit Begründung). **Seit 0.34.0** (Anwender,
+       Dev-Befund 0.33.0) fehlt er in der Applikations-Doku ganz, nur noch gezählt – z. B.
+       intern → Internet mit `any` im Ziel: die Antwort braucht keine Regel, ein Zugriff von
+       dort bräuchte eine eigene. Die Doku je System nennt sie weiter eingeklappt mit
+       Begründung.
      - „Unbekannt“ bei fehlendem Routing, fehlender Route, unbekanntem Interface bzw.
        möglicher Policy-Route/SD-WAN.
      - Berechnet beim Aufruf der Doku (Zwischenspeicher je Firewall, Seite, Interfaces und

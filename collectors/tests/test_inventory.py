@@ -115,3 +115,20 @@ def test_fortigate_vdom_link_als_eigene_art():
         ("vl_root_dmz0", "vdom-link", "root", []),
         ("vl_root_dmz1", "vdom-link", "dmz", []),
     ]
+
+
+def test_fortigate_mgmt_ip_aus_interface_mit_https():
+    """Dev-Befund 0.33.0: Management-Adresse = IPv4 des Interfaces mit HTTPS-Zugriff,
+    Management-Interfaces zuerst; ohne HTTPS bzw. ohne Adresse keine."""
+    raw = [
+        {"name": "port1", "type": "physical", "ip": "10.1.1.1 255.255.255.0",
+         "allowaccess": "ping https ssh"},
+        {"name": "mgmt", "type": "physical", "ip": "192.0.2.10 255.255.255.0",
+         "allowaccess": "https ssh", "dedicated-to": "management"},
+        {"name": "port2", "type": "physical", "ip": "10.2.2.1 255.255.255.0",
+         "allowaccess": "ping"},
+    ]  # fmt: skip
+    assert norm.normalize_inventory(raw, [], {}, "fw").devices[0].mgmt_ip == "192.0.2.10"
+    assert norm.normalize_inventory(raw[:1], [], {}, "fw").devices[0].mgmt_ip == "10.1.1.1"
+    off = [{**raw[0], "status": "down"}, raw[2]]
+    assert norm.normalize_inventory(off, [], {}, "fw").devices[0].mgmt_ip is None

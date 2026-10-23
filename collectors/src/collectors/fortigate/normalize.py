@@ -755,6 +755,25 @@ def _vdom_name(iface: dict) -> str | None:
     return vdom if isinstance(vdom, str) and vdom else None
 
 
+def _mgmt_ip(items: list[dict]) -> str | None:
+    """Management-Adresse: IPv4 eines aktiven Interfaces mit HTTPS-Zugriff (`allowaccess`) -
+    Management-Interfaces (`dedicated-to management`, Name mgmt*) zuerst (Dev-Befund 0.33.0)."""
+
+    def rank(i: dict) -> int:
+        name = str(i.get("name") or "").lower()
+        return 0 if i.get("dedicated-to") == "management" else 1 if name.startswith("mgmt") else 2
+
+    for i in sorted(items, key=rank):
+        if "https" not in str(i.get("allowaccess") or "").split():
+            continue
+        if (i.get("status") or "up") == "down":
+            continue
+        ip = _iface_cidr(i.get("ip"))
+        if ip:
+            return ip.split("/")[0]
+    return None
+
+
 def normalize_inventory(
     interfaces: list[dict] | None,
     zones: list[dict] | None,
@@ -834,6 +853,7 @@ def normalize_inventory(
         model=system.get("model"),
         serial=system.get("serial"),
         version=system.get("version"),
+        mgmt_ip=_mgmt_ip(items),
     )
     return NetworkInventory(
         devices=[dev], interfaces=out_ifaces, vlans=list(vlans.values()), subnets=subnets

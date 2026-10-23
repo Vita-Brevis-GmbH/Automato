@@ -25,13 +25,16 @@ from app.models import (
     NetworkObject,
     ObjectClass,
     Rule,
+    RuleAction,
     RuleDomain,
     RuleEndpoint,
+    RuleIndex,
     Site,
+    SourceSystem,
     Tenant,
 )
 from app.models.rule import EndpointKind
-from app.store import aci_relevance, rule_index, sites, virtual
+from app.store import aci_relevance, references, rule_index, sites, virtual
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import relevance as relevance_store
@@ -54,8 +57,12 @@ TABLES: list[tuple[int, str, str]] = [
 ]
 
 # "Bezug": wie die Regel das System erfasst - direkt, ueber ein Netz/einen Bereich bzw. eine
-# Gruppe (Objektname), any, vzAny der VRF, ESG oder die EPG des Servers (Dev-Befund 0.10.0)
+# Gruppe (Objektname), any, vzAny der VRF, ESG oder die EPG des Servers (Dev-Befund 0.10.0).
+# Steht in jeder Zeile (Treffer, Erklaerung), seit 0.34.0 aber nicht mehr als Spalte der
+# Kategorien - dort sagte er den Anwendern nichts.
 VIA = "Bezug"
+# Spalten seit 0.34.0 (Dev-Befund 0.33.0): Aktion der Regel und das Geraet, auf dem sie steht
+ACTION, DEVICE = "Aktion", "Gerät"
 # Zusatzfelder je Zeile (nicht als Spalte, 0.14.0): Regel-ID, Richtung aus Sicht des Systems
 # (in = System ist Ziel, out = Quelle) und Art des Bezugs (specific = der Host bzw. die EPG
 # selbst, subnet = groesseres Netz, any, vzany = vzAny der VRF, pref_group = Preferred Group)
@@ -67,16 +74,25 @@ SIDE, OBJECT, OBJECT_VALUE = "_side", "_obj", "_val"
 # (possible | impossible | unknown) und warum nicht - nach dem Routing ihrer Firewall
 REL, REL_TEXT = "_rel", "_rel_text"
 UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
-_COMMON = ["Server Name", "TCP/UDP", "Target Systems", "Schutzmechanismen", "Description", VIA]
+_COMMON = [
+    "Server Name",
+    "TCP/UDP",
+    "Target Systems",
+    ACTION,
+    "Schutzmechanismen",
+    DEVICE,
+    "Description",
+]
 TABLE_COLUMNS: dict[int, list[str]] = {
     1: [
         "Server Name",
         "TCP/UDP",
         "Target Systems",
+        ACTION,
         "Schutzmechanismen",
         "NAT Externe IPv4",
+        DEVICE,
         "Description",
-        VIA,
     ],
     2: [
         "Source",
@@ -85,9 +101,10 @@ TABLE_COLUMNS: dict[int, list[str]] = {
         "VIP IP Adresse",
         "Externer DNS Name",
         "Externe IP Adressen",
+        ACTION,
         "Schutzmechanismen",
+        DEVICE,
         "Description",
-        VIA,
     ],
 }
 for _i in (3, 4, 5, 6, 7, 8, 9, 10):
@@ -302,11 +319,17 @@ class TenantData:
         self._rules: dict[int, Rule] = {}
         self._objs: dict[int, NetworkObject] = {}
         self._zones: dict[int, str] = {}
+        self._nat: dict[int, dict] = {}
 
     def rules(self, ids: set[int]) -> list[Rule]:
         """Regeln mit Endpunkten/Services in Firewall-Reihenfolge (fehlende nachgeladen)."""
         todo = [i for i in ids if i not in self._rules]
         if todo:
+            # NAT je Regel aus dem Regelindex: SNAT (Pool bzw. Interface-IP) und VIPs im Ziel
+            for rid, row in self.session.execute(
+                select(RuleIndex.rule_id, RuleIndex.row).where(RuleIndex.rule_id.in_(todo))
+            ):
+                self._nat[rid] = (row or {}).get("nat") or {}
             for r in rules_store.list_rules(
                 self.session, self.tenant_id, limit=None, rule_ids=todo
             ):
@@ -346,6 +369,67 @@ class TenantData:
         return list(self.session.scalars(stmt))
 
     @cached_property
+    def nat_by_name(self) -> dict[tuple[int, str | None, str], NatRule]:
+        """VIPs und SNAT-Pools je (Firewall, VDOM, Name) - wie im Regelindex."""
+        return {(n.source_system_id, n.vdom, n.name.lower()): n for n in self.nats}
+
+    def rule_nat(self, rule: Rule) -> tuple[list[NatRule], str]:
+        """NAT einer erlaubenden Firewall-Policy (Dev-Befund 0.33.0): ihre VIPs (DNAT) und ihr
+        SNAT - die Pool-Adressen bzw. „Interface-IP“. Sperrende Regeln haben kein NAT."""
+        if rule.domain is not RuleDomain.FIREWALL or rule.action is not RuleAction.ALLOW:
+            return [], ""
+        info = self._nat.get(rule.id) or {}
+        key = (rule.source_system_id, rule.vdom)
+        vips = [self.nat_by_name.get((*key, str(v).lower())) for v in info.get("vips") or []]
+        snat = ""
+        if info.get("snat"):
+            pools = info.get("pools") or []
+            found = [self.nat_by_name.get((*key, str(p).lower())) for p in pools]
+            snat = (
+                ", ".join(
+                    (n.ext_ip if n is not None and n.ext_ip else p)
+                    for n, p in zip(found, pools, strict=True)
+                )
+                if pools
+                else "Interface-IP"
+            )
+        return [v for v in vips if v is not None], snat
+
+    @cached_property
+    def device_names(self) -> dict[int, str]:
+        stmt = select(SourceSystem.id, SourceSystem.name).where(
+            SourceSystem.tenant_id == self.tenant_id
+        )
+        return dict(self.session.execute(stmt).all())
+
+    @cached_property
+    def vdom_counts(self) -> dict[int, int]:
+        """Anzahl VDOMs je Firewall (nur root = die Firewall selbst, ohne VDOM-Angabe)."""
+        out: dict[int, set[str]] = {}
+        for sid, vdom in self.session.execute(
+            select(Rule.source_system_id, Rule.vdom)
+            .where(Rule.tenant_id == self.tenant_id, Rule.vdom.is_not(None))
+            .distinct()
+        ):
+            out.setdefault(sid, set()).add(vdom)
+        return {sid: len(v) for sid, v in out.items()}
+
+    def device(self, rule: Rule) -> str:
+        """Geraet der Regel: Firewall (mit VDOM, wenn es mehrere gibt) bzw. APIC."""
+        sid = rule.source_system_id
+        if sid not in self.device_names:  # Altbestand ohne Mandant am Quellsystem
+            system = self.session.get(SourceSystem, sid)
+            self.device_names[sid] = system.name if system else f"#{sid}"
+        name = self.device_names[sid]
+        if rule.vdom and self.vdom_counts.get(rule.source_system_id, 0) > 1:
+            return f"{name} · VDOM {rule.vdom}"
+        return name
+
+    @cached_property
+    def dns(self):
+        return references.context(self.session, self.tenant_id)
+
+    @cached_property
     def epgs_by_id(self) -> dict[int, Epg]:
         stmt = select(Epg).where(Epg.tenant_id == self.tenant_id)
         return {e.id: e for e in self.session.scalars(stmt)}
@@ -375,6 +459,10 @@ def _proxies(data: TenantData, epg: Epg) -> dict[int, str]:
         elif other.kind == "esg" and epg.dn and f"EPG {epg.dn}" in (other.selectors or []):
             out[other.id] = f"ESG {other.name}"
     return out
+
+
+def action_label(rule: Rule) -> str:
+    return "Allow" if rule.action is RuleAction.ALLOW else "Deny"
 
 
 def _aci_scope(rule: Rule, via: str) -> str:
@@ -440,7 +528,9 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                         "Server Name": system_name,
                         "TCP/UDP": ", ".join(s.canonical_name for s in r.services),
                         "Target Systems": ", ".join(n for n in cp_names if n),
+                        ACTION: action_label(r),
                         "Schutzmechanismen": ", ".join(r.protections) if r.protections else "",
+                        DEVICE: data.device(r),
                         "Description": r.name or f"#{r.external_id}",
                         VIA: text,
                         RULE: r.id,
@@ -494,13 +584,19 @@ def _fw_rows(
     sides: dict[str, tuple[str, str, str, str]],
     system_name: str,
     dnat_for_sys: list[NatRule],
-    snat_ips: list[str],
     rels: dict[str, dict] | None = None,
 ) -> list:
     """Firewall-Regel als (Tabelle, Zeile) je Seite, auf der das System steht (Ziel =
     eingehend, Quelle = ausgehend); `sides` = Seite -> (Bezug, Art des Bezugs, Objekt der
-    Regel, sein Bereich); `rels` = Seite -> Relevanz (Routing)."""
+    Regel, sein Bereich); `rels` = Seite -> Relevanz (Routing).
+
+    NAT nur aus der Regel selbst (Dev-Befund 0.33.0): ihre VIPs, sofern sie auf das System
+    zeigen, und ihr SNAT - nicht alle VIPs bzw. Pools des Mandanten, und nie bei sperrenden
+    Regeln."""
     objs, zones = data.objs, data.zones
+    vips, snat = data.rule_nat(rule)
+    mine = {n.id for n in dnat_for_sys}
+    rule_dnat = [n for n in vips if n.id in mine]
     out = []
     for side in sorted(sides, key=lambda x: x != "dst"):
         direction = "in" if side == "dst" else "out"
@@ -530,35 +626,38 @@ def _fw_rows(
             direction=direction,
             counterpart_zone=cp_zone,
             counterpart_external=cp_external,
-            is_dnat_target=direction == "in" and bool(dnat_for_sys),
+            is_dnat_target=direction == "in" and bool(rule_dnat),
         )
         services = ", ".join(s.canonical_name for s in rule.services)
         protections = ", ".join(rule.protections) if rule.protections else ""
         description = rule.name or f"#{rule.external_id}"
         targets = ", ".join(cp_labels)
+        common = {ACTION: action_label(rule), DEVICE: data.device(rule), "Description": description}
         if idx == 1:
             row = {
                 "Server Name": system_name,
                 "TCP/UDP": services,
                 "Target Systems": targets,
                 "Schutzmechanismen": protections,
-                "NAT Externe IPv4": ", ".join(snat_ips),
-                "Description": description,
+                "NAT Externe IPv4": snat if direction == "out" else "",
+                **common,
             }
         elif idx == 2:
-            vip = dnat_for_sys[0] if dnat_for_sys else None
-            dns = ""
-            if vip and vip.name:
-                dns = vip.name.split("_", 1)[1] if "_" in vip.name else vip.name
+            vip = rule_dnat[0] if direction == "in" and rule_dnat else None
+            ext = (vip.ext_ip if vip else "") or ""
+            names = references.dns_names(data.dns, ext) if ext else []
+            dns = names[0] if names else ""
+            if not dns and vip and vip.name:  # V-EXT_www.example.ch -> www.example.ch
+                dns = vip.name.split("_", 1)[1] if "_" in vip.name else ""
             row = {
                 "Source": targets,
                 "TCP/UDP": services,
                 "Server Name": system_name,
-                "VIP IP Adresse": (vip.ext_ip if vip else "") or "",
+                "VIP IP Adresse": ext,
                 "Externer DNS Name": dns,
-                "Externe IP Adressen": (vip.ext_ip if vip else "") or "",
+                "Externe IP Adressen": ", ".join(n.ext_ip for n in rule_dnat if n.ext_ip),
                 "Schutzmechanismen": protections,
-                "Description": description,
+                **common,
             }
         else:
             row = {
@@ -566,7 +665,7 @@ def _fw_rows(
                 "TCP/UDP": services,
                 "Target Systems": targets,
                 "Schutzmechanismen": protections,
-                "Description": description,
+                **common,
             }
         via, scope, obj, value = sides[side]
         meta = {RULE: rule.id, DIRECTION: direction, SCOPE: scope, SIDE: side}
@@ -577,13 +676,11 @@ def _fw_rows(
     return out
 
 
-def _nat_context(data: TenantData, ips: set[str]) -> tuple[list[NatRule], list[str]]:
-    """VIPs mit einem der IPs als internem Ziel (auch Real Server) und alle SNAT-Pool-IPs."""
-    dnat = [
+def _nat_context(data: TenantData, ips: set[str]) -> list[NatRule]:
+    """VIPs mit einem der IPs als internem Ziel (auch Real Server)."""
+    return [
         n for n in data.nats if n.nat_type == "dnat_vip" and ips & set(nat_store.internal_ips(n))
     ]
-    snat = sorted({n.ext_ip for n in data.nats if n.nat_type == "snat_pool" and n.ext_ip})
-    return dnat, snat
 
 
 def _covered_rows(
@@ -601,7 +698,7 @@ def _covered_rows(
     cover = rule_index.covers(
         session, data.tenant_id, values, overlap=overlap, domain=RuleDomain.FIREWALL
     )
-    dnat, snat = _nat_context(data, {v.split("/")[0] for v in values})
+    dnat = _nat_context(data, {v.split("/")[0] for v in values})
     out = []
     for r in data.rules((direct_ids or set()) | set(cover)):
         sides: dict[str, tuple[str, str, str, str]] = {}
@@ -623,7 +720,7 @@ def _covered_rows(
             sides = {k: v for k, v in sides.items() if v[1] != "any"}
         zones = {"src": data.zones.get(r.src_zone_id), "dst": data.zones.get(r.dst_zone_id)}
         rels = {s: data.relevance.check(r, s, values, zones[s]) for s in sides}
-        out += _fw_rows(data, r, sides, system_name, dnat, snat, rels)
+        out += _fw_rows(data, r, sides, system_name, dnat, rels)
     return out
 
 

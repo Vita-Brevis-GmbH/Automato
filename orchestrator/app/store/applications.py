@@ -37,6 +37,7 @@ from app.models import (
     Portgroup,
     Rule,
     RuleDomain,
+    RuleIndex,
     Site,
     SubjectKind,
     Tenant,
@@ -611,7 +612,13 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     # parallele Firewalls (0.18.0): gleiche Policies nur einmal - die der fuehrenden Firewall
     twins = parallel.twin_ids(session, {row.get(appdoc.RULE) for _, _, row in rows})
     rows = [r for r in rows if r[2].get(appdoc.RULE) not in twins]
-    hits, tables = _hits_and_tables(rows)
+    hits, tables = _hits_and_tables(rows, _pairs(session, {r[2].get(appdoc.RULE) for r in rows}))
+    # Routingtechnisch unmoegliche Treffer gehoeren nicht in die Applikations-Doku (Dev-Befund
+    # 0.33.0, z. B. intern -> Internet ueber any im Ziel: die Antwort braucht keine Regel, ein
+    # Zugriff von dort braeuchte eine eigene) - nicht einblendbar, nur gezaehlt
+    possible = [h for h in hits if h["relevance"] != "impossible"]
+    impossible = {h["rule_id"] for h in hits} - {h["rule_id"] for h in possible}
+    hits = possible
     rule_ids = {h["rule_id"] for h in hits}
     ordered = (
         list(
@@ -623,10 +630,6 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         else []
     )
     rules = rule_index.outs(session, rule_index.load_rules(session, ordered))
-    # Kennzahlen nur aus Treffern, die das Routing zulaesst (bzw. unbekannt); Regeln, die nur
-    # routingtechnisch unmoegliche Treffer haben, zaehlen separat (0.24.0)
-    possible = [h for h in hits if h["relevance"] != "impossible"]
-    impossible = {h["rule_id"] for h in hits} - {h["rule_id"] for h in possible}
     best: dict[int, str] = {}
     for h in possible:
         cur = best.get(h["rule_id"])
@@ -649,10 +652,8 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             "vms": sum(1 for x in systems if x["kind"] == "vm"),
             "servers": sum(1 for x in systems if x["kind"] == "host"),
             "epgs": len(epg_out),
-            "rules": len(ordered) - len(impossible),
-            "firewall": sum(
-                1 for r in rules if r.domain == RuleDomain.FIREWALL.value and r.id not in impossible
-            ),
+            "rules": len(ordered),
+            "firewall": sum(1 for r in rules if r.domain == RuleDomain.FIREWALL.value),
             "aci": sum(1 for r in rules if r.domain == RuleDomain.ACI_CONTRACT.value),
             "impossible": len(impossible),
             "specific": sum(1 for v in best.values() if v == "specific"),
@@ -676,22 +677,46 @@ def _object_label(row: dict) -> str:
     return f"{obj} ({value})" if value and value != obj else obj
 
 
-def _hits_and_tables(rows: list[tuple[str, int, dict]]) -> tuple[list[dict], list[dict]]:
+def _pairs(session: Session, rule_ids: set) -> dict[int, int]:
+    """IPv4/IPv6-Paare (gleich bzw. von Hand bestaetigt) -> die IPv4-Regel des Paars: in den
+    Kategorien eine Zeile fuer beide (Dev-Befund 0.33.0)."""
+    ids = [i for i in rule_ids if i is not None]
+    if not ids:
+        return {}
+    out: dict[int, int] = {}
+    for rid, partner, match, row in session.execute(
+        select(
+            RuleIndex.rule_id, RuleIndex.pair_rule_id, RuleIndex.pair_match, RuleIndex.row
+        ).where(RuleIndex.rule_id.in_(ids), RuleIndex.pair_rule_id.is_not(None))
+    ):
+        if match in ("same", "confirmed") and partner in rule_ids:
+            v4 = rid if (row or {}).get("family") == "v4" else partner
+            out[rid] = v4
+    return out
+
+
+def _hits_and_tables(
+    rows: list[tuple[str, int, dict]], pairs: dict[int, int] | None = None
+) -> tuple[list[dict], list[dict]]:
     """Treffer je (Regel, System, Seite) und die 10 Kategorien-Tabellen.
 
     In den Tabellen steht eine Regel je Seite und Objekt der Regel nur einmal: erfasst ein Netz
     bzw. any mehrere Systeme, nennt der Server Name das Objekt wie in der Regel und die Systeme
-    darin (`N_srv16 (10.20.0.0/16): web01, db01`) statt einer Zeile je System (0.14.1)."""
+    darin (`N_srv16 (10.20.0.0/16): web01, db01`) statt einer Zeile je System (0.14.1). Ein
+    IPv4/IPv6-Paar (`pairs`) steht als eine Zeile da, beide Regeln in `_rules`."""
+    pairs = pairs or {}
     tables = {t[0]: {**_table_meta(t), "rows": []} for t in appdoc.TABLES}
     groups: dict[tuple, dict] = {}
     seen_hits: set[tuple] = set()
     hits: list[dict] = []
     for key, idx, row in rows:
         rid = row.get(appdoc.RULE)
-        gkey = (idx, rid, row.get(appdoc.SIDE), row.get(appdoc.OBJECT))
+        gkey = (idx, pairs.get(rid, rid), row.get(appdoc.SIDE), row.get(appdoc.OBJECT))
         if rid is None:
             gkey = (idx, None, len(groups))
-        group = groups.setdefault(gkey, {"row": row, "systems": []})
+        group = groups.setdefault(gkey, {"row": row, "systems": [], "rules": {}})
+        if rid is not None:
+            group["rules"].setdefault(rid, row.get("Description") or "")
         name = row.get("Server Name")
         if name and name not in group["systems"]:
             group["systems"].append(name)
@@ -725,6 +750,10 @@ def _hits_and_tables(rows: list[tuple[str, int, dict]]) -> tuple[list[dict], lis
         row = dict(group["row"])
         if row.get(appdoc.REL) == "impossible":
             continue  # Export/Druck: nur, was das Routing zulaesst
+        row["_rules"] = list(group["rules"])
+        names = list(dict.fromkeys(n for n in group["rules"].values() if n))
+        if len(group["rules"]) > 1:  # IPv4/IPv6-Paar
+            row["Description"] = " / ".join(names) + " (IPv4 + IPv6)"
         systems = group["systems"]
         if len(systems) > 1 or row.get(appdoc.SCOPE) not in (None, "specific"):
             label = _object_label(row)

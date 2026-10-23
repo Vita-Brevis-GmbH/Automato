@@ -32,7 +32,11 @@ def describe_error(exc: Exception) -> str:
         text = f" - {detail}" if detail else ""
         return f"HTTP {exc.response.status_code}{url}{text}"
     if isinstance(exc, httpx.ConnectError | httpx.TimeoutException):
-        return f"nicht erreichbar{url}: {type(exc).__name__} {exc}".rstrip()
+        hint = {
+            "ConnectTimeout": " - keine Antwort: Ziel aus oder Weg gesperrt (Firewall/Netz)",
+            "ConnectError": " - Verbindung abgelehnt bzw. Name unbekannt",
+        }.get(type(exc).__name__, "")
+        return f"nicht erreichbar{url}: {type(exc).__name__} {exc}".rstrip() + hint
     return f"{type(exc).__name__}: {exc}{url}"
 
 

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app import audit, credentials, schedule, scheduler
 from app.api.customer_filter import own_view
-from app.auth.deps import require_admin, require_viewer, tenant_scope
+from app.auth.deps import require_admin, require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.config import get_settings
 from app.db import get_session
@@ -42,7 +42,7 @@ from app.models import (
     TopoContext,
 )
 from app.models.source_system import Platform
-from app.store import deletion, sites
+from app.store import deletion, reachability, sites
 from app.store import naming_profiles as profile_store
 
 router = APIRouter(prefix="/systems", tags=["systems"])
@@ -458,6 +458,36 @@ def system_labels(
         )
         for s in sources
     ]
+
+
+@router.post("/{system_id}/check")
+def check_system(
+    system_id: int,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus: Name, TCP,
+    bei NetBox `GET /api/status/` mit dem Lese-Token (nur lesend). Agent-Systeme prüft der
+    Agent selbst (`run-agent.ps1 -Check`)."""
+    s = session.get(SourceSystem, system_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="source system not found")
+    tenant_scope(principal, s.tenant_id)
+    if s.agent_id is not None:
+        raise HTTPException(
+            status_code=409, detail="read by an agent - check on the agent (run-agent.ps1 -Check)"
+        )
+    try:
+        secrets = credentials.decrypt(s.credentials) if s.credentials else {}
+    except credentials.CredentialsUnavailable:
+        secrets = {}
+    result = reachability.check(
+        s.base_url,
+        s.platform.value,
+        token=secrets.get("token"),
+        verify_tls=s.verify_tls,
+    )
+    return {"system_id": s.id, "name": s.name, "from": "orchestrator", **result.out()}
 
 
 @router.post("", response_model=SystemOut, status_code=201)

@@ -107,3 +107,22 @@ def test_describe_error_nennt_ziel_und_ursache():
     assert text.startswith("nicht erreichbar http://host.docker.internal:8080/api/ipam/prefixes/")
     assert "Connection refused" in text and "limit" not in text
     assert describe_error(RuntimeError("kein Lese-Token")) == "kein Lese-Token"
+
+
+def test_describe_error_nennt_den_grund_beim_verbindungsaufbau():
+    """Dev-Befund 0.33.0: ConnectTimeout bzw. abgelehnte Verbindung mit kurzem Hinweis."""
+    import httpx
+
+    from collectors.common.http import describe_error
+
+    def timeout(request):
+        raise httpx.ConnectTimeout("timed out", request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(timeout))
+    try:
+        client.get("http://host.docker.internal:8080/api/ipam/prefixes/")
+    except httpx.HTTPError as exc:
+        text = describe_error(exc)
+    assert text.endswith(
+        "ConnectTimeout timed out - keine Antwort: Ziel aus oder Weg gesperrt (Firewall/Netz)"
+    )
