@@ -8,6 +8,7 @@ import {
   HopRules,
   lookupRoute,
   NameHit,
+  NameResult,
   resolveName,
   RouteLookup,
   RoutingNode,
@@ -459,7 +460,7 @@ function LookupTable({ rows }: { rows: RouteLookup[] }) {
   );
 }
 
-// Quelle bzw. Ziel: IP oder Name; `hit` = gewählter Treffer der Namenssuche
+// Quelle bzw. Ziel: IP, Netz oder Name; `hit` = gewählter Treffer der Namenssuche
 type Endpoint = { text: string; hit: NameHit | null };
 const EMPTY: Endpoint = { text: "", hit: null };
 
@@ -468,11 +469,41 @@ const HIT_KIND: Record<NameHit["kind"], string> = {
   ipam: "IPAM",
   object: "Objekt",
   vm: "VM",
+  net: "Netz",
+  subnet: "Inventar",
 };
+const PAGE = 50;
+type HitType = "" | "host" | "net";
 
 const isIp = (v: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(v.trim()) || /^[0-9a-f]*:[0-9a-f:.]+$/i.test(v.trim());
+const hitKey = (h: NameHit) => (h.type === "net" ? `net:${h.net}` : h.ip);
 
-// Eingabe mit Vorschlägen aus IPAM, Objekten und VMs (ab 2 Zeichen, keine IP)
+// Treffer der Namenssuche: Name, IP bzw. Netz und woher
+function HitRow({ h, onPick }: { h: NameHit; onPick: (h: NameHit) => void }) {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={false}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        onPick(h);
+      }}
+    >
+      <b>{h.name ?? h.net ?? h.ip}</b> <span className="mono">{h.type === "net" ? h.net : h.ip}</span>
+      <div className="faint">
+        {HIT_KIND[h.kind]}
+        {h.source ? ` · ${h.source}` : ""}
+        {h.detail ? ` · ${h.detail}` : ""}
+        {h.type === "net" ? ` · geprüft mit ${h.ip}` : ""}
+        {h.also?.length ? ` · auch ${h.also.join(", ")}` : ""}
+      </div>
+    </button>
+  );
+}
+
+// Eingabe mit Vorschlägen aus IPAM, Objekten, VMs und dem Inventar (ab 2 Zeichen, keine IP):
+// Hosts und Netze getrennt, mit Anzahl je Art, alle Treffer seitenweise (0.38.0)
 function EndpointInput({
   tenantId,
   value,
@@ -490,32 +521,65 @@ function EndpointInput({
   placeholder: string;
   title: string;
   icon: string;
-  forceOpen?: NameHit[] | null; // mehrere Treffer beim Suchen: Auswahl zeigen
+  forceOpen?: NameResult | null; // mehrere Treffer beim Suchen: Auswahl zeigen
 }) {
-  const [hits, setHits] = useState<NameHit[] | null>(null);
+  const [res, setRes] = useState<NameResult | null>(null);
+  const [type, setType] = useState<HitType>("");
   const [open, setOpen] = useState(false);
+  const [more, setMore] = useState(false);
   const q = useDebounced(value.text, 300);
   useEffect(() => {
     const t = q.trim();
     if (value.hit || t.length < 2 || isIp(t)) {
-      setHits(null);
+      setRes(null);
       return;
     }
     let alive = true;
-    resolveName(tenantId, t)
-      .then((h) => alive && setHits(h))
-      .catch(() => alive && setHits([]));
+    resolveName(tenantId, t, { type, limit: PAGE })
+      .then((r) => alive && setRes(r))
+      .catch(() => alive && setRes(null));
     return () => {
       alive = false;
     };
-  }, [q, tenantId, value.hit]);
+  }, [q, tenantId, value.hit, type]);
   useEffect(() => {
-    if (forceOpen?.length) {
-      setHits(forceOpen);
+    if (forceOpen?.hits.length) {
+      setType("");
+      setRes(forceOpen);
       setOpen(true);
     }
   }, [forceOpen]);
-  const shown = open && hits && hits.length > 0;
+  const loadMore = async () => {
+    if (!res) return;
+    setMore(true);
+    try {
+      const next = await resolveName(tenantId, value.text, { type, limit: PAGE, offset: res.hits.length });
+      setRes({ ...next, hits: [...res.hits, ...next.hits] });
+    } finally {
+      setMore(false);
+    }
+  };
+  const pick = (h: NameHit) => {
+    onChange({ text: h.name ?? h.net ?? h.ip, hit: h });
+    setOpen(false);
+  };
+  const all = (res?.counts.host ?? 0) + (res?.counts.net ?? 0);
+  const shown = open && res && all > 0;
+  const hosts = res?.hits.filter((h) => h.type === "host") ?? [];
+  const nets = res?.hits.filter((h) => h.type === "net") ?? [];
+  const seg = (t: HitType, label: string, n: number) => (
+    <button
+      type="button"
+      className={type === t ? "on" : ""}
+      disabled={n === 0 && t !== ""}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        setType(t);
+      }}
+    >
+      {label} {n}
+    </button>
+  );
   return (
     <div className="search" style={{ flex: "0 1 260px" }}>
       <span className="ico">
@@ -540,58 +604,71 @@ function EndpointInput({
       />
       {value.hit && (
         <div className="faint mono" style={{ fontSize: 11.5, marginTop: 2 }} title={value.hit.name ?? ""}>
-          = {value.hit.ip}
+          {value.hit.type === "net" ? `= Netz ${value.hit.net} · geprüft mit ${value.hit.ip}` : `= ${value.hit.ip}`}
         </div>
       )}
       {shown && (
-        <div className="menu suggest" role="listbox">
-          {hits.map((h) => (
+        <div className="menu suggest" role="listbox" aria-label="Treffer">
+          <div className="suggest-head" onMouseDown={(e) => e.preventDefault()}>
+            <div className="seg">
+              {seg("", "Alle", all)}
+              {seg("host", "Hosts", res.counts.host)}
+              {seg("net", "Netze", res.counts.net)}
+            </div>
+            <span className="faint">
+              {res.hits.length} von {res.total}
+              {res.capped ? " – mehr gelesen als gezeigt, genauer suchen" : ""}
+            </span>
+          </div>
+          {hosts.length > 0 && type === "" && nets.length > 0 && <div className="suggest-group">Hosts</div>}
+          {hosts.map((h) => (
+            <HitRow key={hitKey(h)} h={h} onPick={pick} />
+          ))}
+          {nets.length > 0 && type === "" && hosts.length > 0 && <div className="suggest-group">Netze</div>}
+          {nets.map((h) => (
+            <HitRow key={hitKey(h)} h={h} onPick={pick} />
+          ))}
+          {res.hits.length < res.total && (
             <button
-              key={h.ip}
               type="button"
-              role="option"
+              className="suggest-more"
+              disabled={more}
               onMouseDown={(e) => {
                 e.preventDefault();
-                onChange({ text: h.name ?? h.ip, hit: h });
-                setOpen(false);
+                void loadMore();
               }}
             >
-              <b>{h.name ?? h.ip}</b> <span className="mono">{h.ip}</span>
-              <div className="faint">
-                {HIT_KIND[h.kind]}
-                {h.source ? ` · ${h.source}` : ""}
-                {h.detail ? ` · ${h.detail}` : ""}
-                {h.also?.length ? ` · auch ${h.also.join(", ")}` : ""}
-              </div>
+              {more ? "Lade…" : `Weitere laden (${res.total - res.hits.length})`}
             </button>
-          ))}
+          )}
         </div>
       )}
     </div>
   );
 }
 
-// Name -> IP: IP direkt, gewählter Treffer, sonst genau ein Treffer; mehrere: Auswahl
+// Name -> IP: IP direkt, gewählter Treffer, sonst genau ein Treffer; mehrere: Auswahl. Ein Netz
+// wird mit einer Adresse daraus geprüft (`net` für die Anzeige).
 async function toIp(
   tenantId: number,
   ep: Endpoint,
   what: string,
   set: (v: Endpoint) => void,
-  choose: (hits: NameHit[]) => void,
-): Promise<string> {
+  choose: (res: NameResult) => void,
+): Promise<{ ip: string; net?: string | null }> {
   const text = ep.text.trim();
-  if (!text) return "";
-  if (isIp(text)) return text;
-  if (ep.hit) return ep.hit.ip;
-  const hits = await resolveName(tenantId, text);
-  const ips = [...new Set(hits.map((h) => h.ip))];
-  if (ips.length === 1) {
-    set({ text, hit: hits[0] });
-    return ips[0];
+  if (!text) return { ip: "" };
+  if (isIp(text)) return { ip: text };
+  if (ep.hit) return { ip: ep.hit.ip, net: ep.hit.net };
+  const res = await resolveName(tenantId, text, { limit: PAGE });
+  const keys = new Set(res.hits.map(hitKey));
+  if (keys.size === 1 && res.total === 1) {
+    set({ text, hit: res.hits[0] });
+    return { ip: res.hits[0].ip, net: res.hits[0].net };
   }
-  if (!hits.length) throw new Error(`${what}: „${text}“ nicht gefunden (IPAM, Objekte, VMs)`);
-  choose(hits);
-  throw new Error(`${what}: ${hits.length} Treffer für „${text}“ – bitte einen wählen`);
+  if (!res.hits.length) throw new Error(`${what}: „${text}“ nicht gefunden (IPAM, Objekte, VMs, Netze)`);
+  choose(res);
+  throw new Error(`${what}: ${res.total} Treffer für „${text}“ – bitte einen wählen`);
 }
 
 // Weg-Suche: Quelle (IP bzw. Name) und/oder Startpunkt, dazu das Ziel. Ohne beides: je Kontext
@@ -608,9 +685,10 @@ function PathSearch({
   const [src, setSrc] = useState<Endpoint>(EMPTY);
   const [start, setStart] = useState("");
   const [dst, setDst] = useState<Endpoint>(EMPTY);
-  const [choices, setChoices] = useState<{ src?: NameHit[]; dst?: NameHit[] }>({});
+  const [choices, setChoices] = useState<{ src?: NameResult; dst?: NameResult }>({});
   const [trace, setTrace] = useState<TraceResult | null>(null);
-  const [asked, setAsked] = useState<{ src: string; dst: string; srcName?: string; dstName?: string } | null>(null);
+  type Asked = { ip: string; name?: string; net?: string | null };
+  const [asked, setAsked] = useState<{ src: Asked; dst: Asked } | null>(null);
   const [slack, setSlack] = useState("1"); // Backup-Wege: Hops mehr als der kürzeste aktive; "" = keine
   const [service, setService] = useState(""); // tcp/443, udp/53 bzw. Service-Objekt/ACI-Filter
   const [rows, setRows] = useState<RouteLookup[] | null>(null);
@@ -628,12 +706,17 @@ function PathSearch({
         toIp(tenantId, src, "Quelle", setSrc, (h) => setChoices((c) => ({ ...c, src: h }))),
         toIp(tenantId, dst, "Ziel", setDst, (h) => setChoices((c) => ({ ...c, dst: h }))),
       ]);
-      const name = (ep: Endpoint, ip: string) => (ep.text.trim() && ep.text.trim() !== ip ? ep.text.trim() : undefined);
-      setAsked({ src: s, dst: d, srcName: name(src, s), dstName: name(dst, d) });
-      if (s || start) {
-        setTrace(await traceRoute(tenantId, { dst: d, src: s, start, service, slack: slack === "" ? 0 : Number(slack) }));
+      const named = (ep: Endpoint, r: { ip: string; net?: string | null }): Asked => {
+        const t = ep.text.trim();
+        return { ...r, name: t && t !== r.ip && t !== r.net ? t : undefined };
+      };
+      setAsked({ src: named(src, s), dst: named(dst, d) });
+      if (s.ip || start) {
+        setTrace(
+          await traceRoute(tenantId, { dst: d.ip, src: s.ip, start, service, slack: slack === "" ? 0 : Number(slack) }),
+        );
       } else {
-        setRows(await lookupRoute(tenantId, d));
+        setRows(await lookupRoute(tenantId, d.ip));
       }
     } catch (e) {
       setError(e);
@@ -641,7 +724,8 @@ function PathSearch({
       setBusy(false);
     }
   };
-  const label = (ip: string, name?: string) => (name ? `${name} (${ip})` : ip);
+  const label = (a: Asked) =>
+    a.net ? `${a.name ? `${a.name} = ` : ""}Netz ${a.net} (geprüft mit ${a.ip})` : a.name ? `${a.name} (${a.ip})` : a.ip;
   return (
     <>
       <div className="filterbar" style={{ alignItems: "flex-start" }}>
@@ -651,8 +735,8 @@ function PathSearch({
           onChange={setSrc}
           onEnter={run}
           icon="search"
-          placeholder="Quelle: IP oder Name"
-          title="Quelle als IP bzw. Name/FQDN (IPAM, Objekte der Firewalls, VMs): der Weg beginnt dort, wo sie angeschlossen ist (bzw. am Startpunkt)"
+          placeholder="Quelle: IP, Netz oder Name"
+          title="Quelle als IP, Netz bzw. Name/FQDN (IPAM, Objekte der Firewalls, VMs, Subnetze): der Weg beginnt dort, wo sie angeschlossen ist (bzw. am Startpunkt); ein Netz wird mit einer Adresse daraus geprüft"
           forceOpen={choices.src}
         />
         <select
@@ -674,8 +758,8 @@ function PathSearch({
           onChange={setDst}
           onEnter={run}
           icon="route"
-          placeholder="Ziel: IP oder Name, z. B. web01"
-          title="Ziel als IP bzw. Name/FQDN"
+          placeholder="Ziel: IP, Netz oder Name, z. B. web01"
+          title="Ziel als IP, Netz bzw. Name/FQDN; ein Netz wird mit einer Adresse daraus geprüft"
           forceOpen={choices.dst}
         />
         <div className="search" style={{ flex: "0 1 190px" }}>
@@ -705,7 +789,8 @@ function PathSearch({
       <div className="faint" style={{ margin: "-4px 0 10px" }}>
         Hop für Hop: Policy-Routen und SD-WAN-Regeln, die sicher passen, gehen vor; sonst das längste Präfix. Je Firewall
         die passenden Policies (erste sichere entscheidet), je ACI-VRF die Contracts zwischen den EPGs von Quelle und Ziel
-        (Taboo zuerst, vzAny, ESG, Preferred Group). Ohne Quelle und Start: je Kontext die wirksame Route.
+        (Taboo zuerst, vzAny, ESG, Preferred Group). Ein Netz wird mit einer Adresse daraus geprüft (der ersten ohne
+        Gerät). Ohne Quelle und Start: je Kontext die wirksame Route.
       </div>
       <ErrorBox error={error} prefix="Weg suchen" />
       {trace && (
@@ -713,7 +798,7 @@ function PathSearch({
           <div className="faint" style={{ margin: "0 0 8px" }}>
             {asked && (
               <>
-                {asked.src ? `Quelle ${label(asked.src, asked.srcName)} → ` : ""}Ziel {label(asked.dst, asked.dstName)}
+                {asked.src.ip ? `Quelle ${label(asked.src)} → ` : ""}Ziel {label(asked.dst)}
                 {trace.service ? ` · Dienst ${trace.service_name ? `${trace.service_name} = ` : ""}${trace.service}` : ""}
                 {trace.start.length > 0 ? " · " : ""}
               </>
@@ -796,7 +881,7 @@ export default function Paths({
       <PageHead title="Weg-Suche">
         Weg einer Verbindung in „{tenantLabel}“ Hop für Hop – über Firewalls (Policies, NAT) und ACI (Contracts zwischen
         den EPGs), mit aktiven und Backup-Wegen. Für Fehlersuche und Kontrolle von Arbeiten; rein lesend, Stand des letzten
-        Laufs. Quelle und Ziel als IP oder Name aus IPAM, Firewall-Objekten und VMs.
+        Laufs. Quelle und Ziel als IP, Netz oder Name aus IPAM, Firewall-Objekten, VMs und Subnetzen.
       </PageHead>
       <ErrorBox error={error} prefix="Routing laden" />
       {nodes === null ? <Loading /> : <PathSearch tenantId={tenantId} nodes={nodes} onCapture={canEdit ? capture : undefined} />}

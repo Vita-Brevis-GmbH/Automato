@@ -6,6 +6,7 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import {
   AppDocEpg,
+  AppDocFinding,
   AppDocHit,
   AppDocSystem2,
   ApplicationDoc,
@@ -933,25 +934,85 @@ function EpgsCard({ items, onPick }: { items: AppDocEpg[]; onPick: (key: string)
   );
 }
 
+// Filter der Findings nach Tenant, AP und EPG (0.38.0): je Befund die EPGs seiner Systeme
+type Scope = { tenant: string; ap: string; epg: string };
+const parts = (label: string): Scope => {
+  const [tenant = "", ap = "", epg = ""] = label.split("/");
+  return { tenant, ap, epg };
+};
+
 function FindingsCard({ doc, onRule, onGo }: { doc: ApplicationDoc; onRule: (id: number) => void; onGo?: Go }) {
+  const [sel, setSel] = useState<Scope>({ tenant: "", ap: "", epg: "" });
+  const labels = [...new Set(doc.findings.flatMap((x) => x.epgs ?? []))].sort();
+  const scopes = labels.map(parts);
+  const tenants = [...new Set(scopes.map((p) => p.tenant))].filter(Boolean);
+  const aps = [...new Set(scopes.filter((p) => !sel.tenant || p.tenant === sel.tenant).map((p) => p.ap))].filter(Boolean);
+  const epgs = scopes.filter((p) => (!sel.tenant || p.tenant === sel.tenant) && (!sel.ap || p.ap === sel.ap));
+  const matches = (x: AppDocFinding) =>
+    (!sel.tenant && !sel.ap && !sel.epg) ||
+    (x.epgs ?? []).map(parts).some(
+      (p) => (!sel.tenant || p.tenant === sel.tenant) && (!sel.ap || p.ap === sel.ap) && (!sel.epg || p.epg === sel.epg),
+    );
+  const shown = doc.findings.filter(matches);
   return (
     <div className="card" id="app-findings" style={{ marginTop: 14 }}>
       <div className="card-head">
         <h2>Findings</h2>
         <span className="mono faint" style={{ fontSize: 12 }}>
-          {doc.findings.length}
+          {shown.length}
+          {shown.length !== doc.findings.length ? ` von ${doc.findings.length}` : ""}
         </span>
         <span className="faint" style={{ fontSize: 12 }}>
           offene Befunde zu Regeln, Servern, VMs, Portgruppen und Subnetzen der Applikation
         </span>
       </div>
+      {labels.length > 0 && (
+        <div className="card-body pad no-print" style={{ paddingBottom: 0 }}>
+          <div className="filterbar" style={{ marginBottom: 10 }} id="finding-scope">
+            <select
+              className="sel"
+              aria-label="Tenant"
+              value={sel.tenant}
+              onChange={(e) => setSel({ tenant: e.target.value, ap: "", epg: "" })}
+            >
+              <option value="">Tenant: alle</option>
+              {tenants.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+            <select className="sel" aria-label="AP" value={sel.ap} onChange={(e) => setSel({ ...sel, ap: e.target.value, epg: "" })}>
+              <option value="">AP: alle</option>
+              {aps.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+            <select className="sel" aria-label="EPG" value={sel.epg} onChange={(e) => setSel({ ...sel, epg: e.target.value })}>
+              <option value="">EPG: alle</option>
+              {[...new Set(epgs.map((p) => p.epg))].filter(Boolean).map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </select>
+            {(sel.tenant || sel.ap || sel.epg) && (
+              <button className="btn btn-ghost btn-sm" onClick={() => setSel({ tenant: "", ap: "", epg: "" })}>
+                Filter zurücksetzen
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       <div className="card-body scroll">
-        {doc.findings.length === 0 ? (
-          <div className="loading">Keine offenen Befunde.</div>
+        {shown.length === 0 ? (
+          <div className="loading">{doc.findings.length ? "Keine Befunde für diese Auswahl." : "Keine offenen Befunde."}</div>
         ) : (
           <table>
             <tbody>
-              {doc.findings.map((x) => (
+              {shown.map((x) => (
                 <tr key={x.id}>
                   <td className="nowrap">
                     <span className={`chip ${x.severity === "info" ? "na" : "warn"}`}>{findingLabel(x.type)}</span>
@@ -959,6 +1020,11 @@ function FindingsCard({ doc, onRule, onGo }: { doc: ApplicationDoc; onRule: (id:
                   <td>
                     {x.message}
                     {x.hint && <div className="faint">{x.hint}</div>}
+                    {x.epgs && x.epgs.length > 0 && (
+                      <div className="faint mono" style={{ fontSize: 11.5 }} title="EPGs, zu denen der Befund gehört">
+                        {x.epgs.join(", ")}
+                      </div>
+                    )}
                   </td>
                   <td className="nowrap no-print">
                     {x.rule_id != null && (

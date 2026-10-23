@@ -158,9 +158,6 @@ export default function Apps({
   return (
     <>
       <ErrorBox error={err} onClose={() => setErr(null)} />
-      {me.isOperator && suggestions.length > 0 && (
-        <Suggestions tenantId={tenantId} items={suggestions} onDone={load} onError={setErr} />
-      )}
       <div className="card">
         <div className="card-head">
           <h2>Applikationen</h2>
@@ -178,7 +175,7 @@ export default function Apps({
           {apps.length === 0 ? (
             <Empty title="Noch keine Applikationen">
               {suggestions.length > 0
-                ? "Vorschläge aus der Namenskonvention übernehmen oder eine Applikation von Hand anlegen."
+                ? "Vorschläge aus der Namenskonvention (unten) übernehmen oder eine Applikation von Hand anlegen."
                 : "Eine Applikation fasst Application Profiles, EPGs und Server zusammen."}
             </Empty>
           ) : (
@@ -222,6 +219,10 @@ export default function Apps({
           )}
         </div>
       </div>
+      {/* Vorschläge aus der Namenskonvention unter der Liste (Dev-Befund 0.37.0) */}
+      {me.isOperator && suggestions.length > 0 && (
+        <Suggestions tenantId={tenantId} items={suggestions} onDone={load} onError={setErr} />
+      )}
 
       {overlays}
     </>
@@ -258,7 +259,7 @@ function Suggestions({
   };
 
   return (
-    <div className="card">
+    <div className="card" id="app-suggestions" style={{ marginTop: 14 }}>
       <div className="card-head">
         <h2>Vorschläge aus der Namenskonvention</h2>
         <span className="chip info">{items.length}</span>

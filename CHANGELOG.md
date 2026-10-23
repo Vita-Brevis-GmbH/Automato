@@ -7,6 +7,34 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.38.0 – 2026-10-23
+
+Weg-Suche mit Netzen, IPv4/IPv6-Paare im Rahmen, Applikationen (Anwender). Ohne Migration.
+
+- **Weg-Suche – Netze und vollständige Trefferliste:** Die Namenssuche bei Quelle und Ziel
+  findet neben Hosts auch **Netze**:
+  - IPAM-Netze (Name, Beschreibung bzw. Anfang des Netzes),
+  - Netz-Objekte der Firewalls (ohne 0.0.0.0/0),
+  - Subnetze des Inventars (FortiGate-Interfaces, ACI-BD/-EPG über Tenant, AP, EPG, BD),
+  - ein Netz direkt (`10.20.0.0/24`).
+  Die Liste ist nach **Hosts** und **Netzen** gegliedert, mit Anzahl je Art und Umschalter
+  (Alle/Hosts/Netze), zeigt „x von y“ und lädt mit **„Weitere laden“** alle Treffer
+  seitenweise nach (statt der ersten 20). Auch der Anfang einer Adresse sucht (`10.20.0.`).
+  Ein Netz wird mit **einer Adresse daraus** geprüft – der ersten, die keinem gelesenen
+  Gerät gehört (Interface, Gateway); sie steht beim Feld und im Ergebnis
+  („Netz 10.20.0.0/24 (geprüft mit 10.20.0.2)“). `GET /routing/resolve` antwortet mit
+  `hits`, `total`, `counts`, `capped` (Parameter `type`, `limit`, `offset`).
+- **IPv4/IPv6-Paare in „Regeln & Contracts“:** beide Regeln eines Paars stehen in einem
+  **Rahmen** (oben und unten durchgezogen, dazwischen gestrichelt), je Paar abwechselnd
+  getönt, mit der Marke **„Paar“** (Vorschlag: „Paar?“, gelb) – auch viele Paare
+  nacheinander bleiben unterscheidbar.
+- **Applikationen:** die Vorschläge aus der Namenskonvention stehen **unter** der Liste.
+- **Applikations-Doku – Findings nach Tenant, AP, EPG filtern:** je Befund die EPGs, zu
+  denen er gehört (Server/VM über ihre EPGs, Subnetz über seine EPG, Regel über die Systeme,
+  die sie trifft); Auswahl Tenant → AP → EPG mit „x von y“.
+- Tests: Netze und Seiten der Namenssuche, EPGs der Befunde, UI (Netze und Umschalter in der
+  Weg-Suche, Paar-Rahmen, Lage der Vorschläge, Findings-Filter).
+
 ## 0.37.0 – 2026-10-23
 
 Applikations-Doku: offene Regeln nur als Regel (Anwender). Ohne Migration.

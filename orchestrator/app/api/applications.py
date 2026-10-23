@@ -205,6 +205,7 @@ class DocFindingOut(BaseModel):
     message: str
     hint: str | None = None
     rule_id: int | None = None
+    epgs: list[str] = []  # EPGs (Tenant/AP/EPG) des Befunds - Filter nach Tenant, AP, EPG
 
 
 class ApplicationDocOut(BaseModel):

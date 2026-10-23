@@ -384,6 +384,16 @@ export default function RulesTable({
   const vdomShown = useVdomShown();
 
   const filtered = (rules ?? []).filter((r) => !onlyFindings || r.num_unmatched > 0);
+  // Tönung je IPv4/IPv6-Paar (0.38.0): aufeinanderfolgende Paare abwechselnd
+  const pairTone = new Map<number, string>();
+  filtered.forEach((r, i) => {
+    const next = filtered[i + 1];
+    if (r.pair && next?.id === r.pair.rule_id && next.pair?.rule_id === r.id) {
+      const tone = pairTone.size % 4 === 0 ? "pair-a" : "pair-b";
+      pairTone.set(r.id, tone);
+      pairTone.set(next.id, tone);
+    }
+  });
   const loaded = rules?.length ?? 0;
   // ACI: Quelle = Consumer-EPGs, Ziel = Provider-EPGs
   const srcHead = domain === "aci_contract" ? "Consumer" : domain === "firewall" ? "Quelle" : "Quelle / Consumer";
@@ -581,17 +591,19 @@ export default function RulesTable({
               </thead>
               <tbody>
                 {filtered.map((r, i) => {
-                  // IPv4/IPv6-Paar (0.36.0): das Gegenstück steht direkt darunter, beide als
-                  // zusammengehörend markiert (Vorschläge = ähnlich, gelb)
+                  // IPv4/IPv6-Paar (0.36.0): das Gegenstück steht direkt darunter; seit 0.38.0
+                  // beide in einem Rahmen, je Paar abwechselnd getönt (Vorschläge = ähnlich, gelb)
                   const next = filtered[i + 1];
                   const prev = filtered[i - 1];
                   const head = !!r.pair && next?.id === r.pair.rule_id && next.pair?.rule_id === r.id;
                   const tail = !!r.pair && prev?.id === r.pair.rule_id && prev.pair?.rule_id === r.id;
+                  const tone = ` ${pairTone.get(r.id) ?? ""}`;
                   const kind = r.pair?.match === "similar" ? " pair-similar" : "";
+                  const pairCls = head ? ` pair-head${kind}${tone}` : tail ? ` pair-tail${kind}${tone}` : "";
                   return (
                   <tr
                     key={r.id}
-                    className={`clickable${pairHover === r.id ? " pair-hl" : ""}${head ? ` pair-head${kind}` : ""}${tail ? ` pair-tail${kind}` : ""}`}
+                    className={`clickable${pairHover === r.id ? " pair-hl" : ""}${pairCls}`}
                     onClick={() => setSelected(r.id)}
                     onMouseEnter={() => setPairHover(r.pair?.rule_id ?? null)}
                     onMouseLeave={() => setPairHover(null)}
@@ -600,6 +612,13 @@ export default function RulesTable({
                     <td className="mono">
                       {tail ? <span className="faint" title="Gegenstück der Regel darüber">↳ </span> : null}
                       {r.id}
+                      {head && (
+                        <div>
+                          <span className="pair-tag" title={r.pair?.match === "similar" ? "Paar-Vorschlag (ähnlich)" : "IPv4/IPv6-Paar"}>
+                            {r.pair?.match === "similar" ? "Paar?" : "Paar"}
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td>
                       <NameCell r={r} onGo={onGo} onPair={setSelected} />

@@ -133,3 +133,36 @@ test("Applikation: Doku nach Kategorien mit Aktion, Gerät und Link zur Regel", 
   await page.locator(".stack .card tbody .linkbtn[title='Regel im Detail']").first().click();
   await expect(page.locator(".drawer")).toContainText("Warum diese Regel für die Applikation gilt");
 });
+
+test("Applikation: Findings nach Tenant, AP und EPG filtern (0.38.0)", async ({ page }) => {
+  await open(page);
+  const card = page.locator("#app-findings");
+  const items = card.locator("tbody tr");
+  const total = await items.count();
+  expect(total).toBeGreaterThan(0);
+  await expect(items.first()).toContainText("TE/AP/EG_db"); // je Befund seine EPGs
+  const scope = card.locator("#finding-scope");
+  await scope.getByLabel("Tenant").selectOption("TE");
+  await expect(scope.getByLabel("AP").locator("option")).toHaveText(["AP: alle", "AP"]);
+  await scope.getByLabel("AP").selectOption("AP");
+  await scope.getByLabel("EPG").selectOption("EG_db");
+  await expect(items).toHaveCount(total);
+  await scope.locator("button:has-text('Filter zurücksetzen')").click();
+  await expect(scope.getByLabel("Tenant")).toHaveValue("");
+});
+
+test("Applikationen: Vorschläge aus der Namenskonvention unter der Liste (0.38.0)", async ({ page }) => {
+  // Vorschlag gestellt (die Beispieldaten haben alle Projekte zugeordnet)
+  await page.route("**/api/applications/suggestions*", (route) =>
+    route.fulfill({
+      json: [{ code: "042", name: "Projekt 042", application_id: null,
+               members: [{ kind: "ap", ref: "TE/AP_042", label: "TE/AP_042", detail: null, project: "042", applications: [] }] }],
+    }),
+  );
+  await page.goto("/#apps");
+  const list = page.locator(".card", { has: page.locator("h2", { hasText: /^Applikationen$/ }) });
+  const suggestions = page.locator("#app-suggestions");
+  await expect(suggestions).toContainText("Projekt 042");
+  const [a, b] = [await list.boundingBox(), await suggestions.boundingBox()];
+  expect(b!.y).toBeGreaterThan(a!.y + a!.height - 1);
+});

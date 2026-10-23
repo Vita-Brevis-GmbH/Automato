@@ -154,11 +154,20 @@ a { color: var(--accent); }
 .menu button, .menu a { display: block; width: 100%; text-align: left; background: none; border: none; padding: 8px 10px;
   border-radius: 6px; color: var(--fg); font-size: 13px; cursor: pointer; text-decoration: none; }
 .menu button:hover, .menu a:hover { background: var(--surface-2); }
-/* Vorschläge unter einem Eingabefeld (Weg-Suche: Namen aus IPAM, Objekten, VMs) */
-.menu.suggest { left: 0; right: auto; top: calc(100% + 4px); min-width: 100%; width: max-content; max-width: min(520px, 90vw);
-  max-height: 340px; overflow: auto; }
+/* Vorschläge unter einem Eingabefeld (Weg-Suche: Namen aus IPAM, Objekten, VMs, Netze) */
+.menu.suggest { left: 0; right: auto; top: calc(100% + 4px); min-width: 100%; width: max-content; max-width: min(560px, 90vw);
+  max-height: 420px; overflow: auto; }
 .menu.suggest button { padding: 6px 10px; }
 .menu.suggest .faint { font-size: 11.5px; }
+/* Kopf der Trefferliste: Art (Alle/Hosts/Netze) mit Anzahl, bleibt beim Scrollen stehen (0.38.0) */
+.menu.suggest .suggest-head { position: sticky; top: -6px; z-index: 1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--surface); margin: -6px -6px 4px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.menu.suggest .suggest-head .seg button { display: inline-block; width: auto; border-radius: 0; padding: 4px 10px; font-size: 12px; }
+.menu.suggest .suggest-head .seg button:disabled { opacity: .45; cursor: default; }
+.menu.suggest .suggest-group { padding: 8px 10px 2px; font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--muted); }
+.menu.suggest .suggest-more { text-align: center; color: var(--accent); font-weight: 600; border-top: 1px solid var(--border);
+  border-radius: 0; margin-top: 4px; }
 .iconbtn { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--border);
   background: var(--surface-2); cursor: pointer; color: var(--fg); flex: none; }
 
@@ -216,10 +225,19 @@ table.compact td { padding-top: 5px; padding-bottom: 5px; } /* Ports: eine Zeile
 .expandable .linkbtn { font-size: 12px; }
 .expandable-list { margin-top: 2px; font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
 tbody tr.pair-hl { background: var(--accent-weak); box-shadow: inset 3px 0 0 var(--accent); }
-/* IPv4/IPv6-Paar nebeneinander (0.36.0): Klammer links, Vorschläge gelb */
-tbody tr.pair-head td:first-child, tbody tr.pair-tail td:first-child { box-shadow: inset 3px 0 0 var(--good); }
-tbody tr.pair-head.pair-similar td:first-child, tbody tr.pair-tail.pair-similar td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
-tbody tr.pair-head td { border-bottom-style: dashed; }
+/* IPv4/IPv6-Paar (0.36.0, Rahmen seit 0.38.0): beide Regeln in einem Rahmen, je Paar
+   abwechselnd getönt – auch viele Paare nacheinander bleiben unterscheidbar; Vorschläge gelb */
+tbody tr.pair-head td, tbody tr.pair-tail td { --pair: var(--good); background: var(--pair-bg); }
+tbody tr.pair-similar td { --pair: var(--warn); }
+tbody tr.pair-a td { --pair-bg: color-mix(in srgb, var(--good-weak) 55%, transparent); }
+tbody tr.pair-b td { --pair-bg: color-mix(in srgb, var(--info-weak) 55%, transparent); }
+tbody tr.pair-similar.pair-a td, tbody tr.pair-similar.pair-b td { --pair-bg: color-mix(in srgb, var(--warn-weak) 55%, transparent); }
+tbody tr.pair-head td { border-top: 2px solid var(--pair); border-bottom: 1px dashed var(--pair); }
+tbody tr.pair-tail td { border-bottom: 2px solid var(--pair); }
+tbody tr.pair-head td:first-child, tbody tr.pair-tail td:first-child { border-left: 2px solid var(--pair); }
+tbody tr.pair-head td:last-child, tbody tr.pair-tail td:last-child { border-right: 2px solid var(--pair); }
+.pair-tag { display: inline-block; font-size: 10.5px; padding: 0 5px; border-radius: 6px; margin-left: 4px;
+  background: var(--pair, var(--good)); color: var(--surface); white-space: nowrap; }
 td .mono, th .mono, td.mono { font-size: 12.5px; }
 .num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
 th.num, td.num { text-align: right; }

@@ -131,8 +131,11 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   **IPv4/IPv6-Paare** (ADR 0016): Je Regel die Familie, und „↔ IPv6 #…“ bzw. „↔ IPv4 #…“
   markiert das Gegenstück auf derselben FortiGate.
   - Seit 0.36.0 steht die IPv6-Regel eines Paars direkt unter ihrer IPv4-Regel (auch über
-    Seiten hinweg), mit einer Klammer links und „↳“ – grün für gleich bzw. bestätigt, gelb für
-    Vorschläge („ähnlich“). Die Reihenfolge der Firewall gilt sonst unverändert.
+    Seiten hinweg), mit „↳“. Seit 0.38.0 stehen beide in einem **Rahmen** (oben und unten
+    durchgezogen, dazwischen gestrichelt), je Paar abwechselnd getönt, mit der Marke
+    **„Paar“** – grün für gleich bzw. bestätigt, gelb „Paar?“ für Vorschläge („ähnlich“). So
+    bleiben auch viele Paare nacheinander unterscheidbar. Die Reihenfolge der Firewall gilt
+    sonst unverändert.
   - Grün: gleiche Objektnamen, Dienste und Interfaces.
   - Gelb „ähnlich“: Abweichungen im Tooltip.
   - Klick öffnet das Gegenstück; beim Überfahren wird es hervorgehoben. Beide bleiben eigene
@@ -239,12 +242,21 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   (unten). Den Weg einer Verbindung zeigt seit 0.35.0 die eigene Ansicht **Weg-Suche**:
   - **Weg-Suche** (0.17.0, eigene Ansicht seit 0.35.0): **Quelle** und/oder **Start** (Firewall,
     VDOM, ACI-VRF), dazu das **Ziel** – für Fehlersuche und die Kontrolle von Arbeiten.
-    - **Quelle und Ziel als Name** (0.35.0): IP oder Name bzw. FQDN. Ab zwei Zeichen schlägt
-      das Feld Treffer vor – DNS-Namen aus dem IPAM (auch nur das erste Label, `web01`),
-      Adressobjekte der Firewalls (auch ohne Präfix, `web01` findet `H_web01`; FQDN-Objekte
-      über das IPAM) und VMs (Name bzw. Hostname). Ein eindeutiger Name wird direkt
-      aufgelöst; bei mehreren IPs fragt die Suche nach („2 Treffer für „dup“ – bitte einen
-      wählen“). Gesucht wird nur im Gelesenen (`GET /routing/resolve?q=`).
+    - **Quelle und Ziel als Name** (0.35.0): IP, Netz oder Name bzw. FQDN. Ab zwei Zeichen
+      schlägt das Feld Treffer vor – DNS-Namen aus dem IPAM (auch nur das erste Label,
+      `web01`), Adressobjekte der Firewalls (auch ohne Präfix, `web01` findet `H_web01`;
+      FQDN-Objekte über das IPAM) und VMs (Name bzw. Hostname). Ein eindeutiger Name wird
+      direkt aufgelöst; bei mehreren Treffern fragt die Suche nach („2 Treffer für „dup“ –
+      bitte einen wählen“). Gesucht wird nur im Gelesenen (`GET /routing/resolve?q=`).
+    - **Netze** (0.38.0): auch IPAM-Netze (Name, Beschreibung), Netz-Objekte der Firewalls,
+      Subnetze des Inventars (FortiGate-Interface, ACI-BD/-EPG über Tenant, AP, EPG, BD) und
+      ein Netz direkt (`10.20.0.0/24`); der Anfang einer Adresse (`10.20.0.`) sucht Hosts und
+      Netze. Die Liste ist nach **Hosts** und **Netzen** gegliedert, oben der Umschalter
+      Alle/Hosts/Netze mit Anzahl und „x von y“; **„Weitere laden“** holt alle weiteren
+      Treffer seitenweise. Ein Netz wird mit **einer Adresse daraus** geprüft – der ersten,
+      die keinem gelesenen Gerät gehört (Interface, Gateway). Sie steht unter dem Feld
+      („= Netz 10.20.0.0/24 · geprüft mit 10.20.0.2“) und im Ergebnis. Regeln, die nur einen
+      Teil des Netzes erlauben, gelten dann für diese Adresse.
     - **Dienst** als `tcp/443`, `udp/53`, `tcp`, `icmp` oder als Name eines Service-Objekts
       bzw. ACI-Filters (`FT_https`, `Tenant/FT_https`). Hat das Objekt mehrere Dienste, wird
       der erste geprüft; die übrigen nennt ein Hinweis.
@@ -354,7 +366,8 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
   (Application Profiles, EPGs, Server); **Vorschläge** nach der Projektnummer aus
-  `AP_<nr>`/`H_…-<nr>-…` mit einem Klick übernehmen (Operator).
+  `AP_<nr>`/`H_…-<nr>-…` mit einem Klick übernehmen (Operator) – seit 0.38.0 unter der
+  Liste der Applikationen.
   - **Klick auf eine Applikation öffnet ihre Doku** (0.14.0, Link `#apps?app=<id>`). Oben
     Stammdaten und Übersicht: VMs, EPGs, Regeln **spezifisch** bzw. **unspezifisch**
     (Subnetz, any, vzAny, Preferred Group; Klick filtert) und offene Findings.
@@ -377,7 +390,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     bzw. Provider, ausgehend = Quelle bzw. Consumer), Art, Bezug, Suche. Klick → Detail mit
     **„Warum diese Regel für die Applikation gilt“** (je System Rolle, Richtung, Bezug,
     Kategorie, Mitglied/AP), Links in Regeln & Contracts und Findings.
-  - **Findings** der Applikation und die **Doku nach Kategorien** (10 Tabellen) mit
+  - **Findings** der Applikation: seit 0.38.0 je Befund die EPGs, zu denen er gehört
+    (Server/VM über ihre EPGs, Subnetz über seine EPG, Regel über die Systeme, die sie
+    trifft), filterbar nach **Tenant → AP → EPG** mit „x von y“.
+  - Die **Doku nach Kategorien** (10 Tabellen) mit
     **Export (Markdown)** und **Drucken / PDF**; **Mitglieder** und **Bearbeiten** oben.
     Seit 0.34.0 je Zeile **Aktion** (Allow/Deny) und **Gerät** (Firewall mit VDOM bzw.
     APIC); ein IPv4/IPv6-Paar (gleich bzw. bestätigt) steht als eine Zeile; Klick auf die

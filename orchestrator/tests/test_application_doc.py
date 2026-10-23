@@ -131,6 +131,11 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
         f["type"] == "vm_not_in_ipam" and f["subject_id"] == "db01-007-ka" for f in doc["findings"]
     )
     assert s["findings"] == len(doc["findings"])
+    # je Befund die EPGs (Tenant/AP/EPG) - Filter nach Tenant, AP, EPG (0.38.0): die VM db01
+    # haengt an zwei EPGs, Befunde zu Regeln an den EPGs der Systeme, die sie treffen
+    (vm,) = (f for f in doc["findings"] if f["type"] == "vm_not_in_ipam")
+    assert vm["epgs"] == ["TE_ka/AP_007/EG_backup", "TE_ka/AP_007/EPG_db01"]
+    assert all(e.startswith("TE_ka/AP_007/") for f in doc["findings"] for e in f["epgs"])
     # Seite und Objekt der Regel, ueber das das System erfasst wird (0.14.1)
     obj = {
         (rules[h["rule_id"]]["name"], names[h["system"]]): (h["side"], h["object"], h["value"])
@@ -156,6 +161,21 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
     assert rows["any-out"] == [("any", everyone)]
     # spezifisch: das Objekt mit seinen Systemen, ganzer ACI-Pfad
     assert ("EPG TE_ka/AP_007/EG_web01: web01-007-ka", None) in rows["CT_app:SJ"]
+
+
+def test_befund_einer_regel_mit_den_epgs_ihrer_treffer(client):
+    """0.38.0: Befund zu einer Regel (ohne Quelle) - die EPGs der Systeme, die sie trifft, fuer
+    den Filter nach Tenant, AP, EPG in der Doku."""
+    tid, app = _app(client)
+    fw3 = _system(client, tid, "fw-03", "fortigate", base_url="https://fw3")
+    rule = {"source_platform": "fortigate", "external_id": "20", "name": "web-halb",
+            "action": "allow", "sources": [], "destinations": ["10.20.0.5"],
+            "services": ["tcp/8443"], "destination_refs": ["H_web01"], "family": "v4"}  # fmt: skip
+    _deliver(client, tid, fw3, "fortigate", {"status": "completed", "rules": [rule]})
+    doc = client.get(f"/applications/{app['id']}/doc").json()
+    (f,) = (f for f in doc["findings"] if f["type"] == "rule_incomplete")
+    assert f["rule_id"] is not None
+    assert f["epgs"] == ["TE_ka/AP_007/EG_web01"]
 
 
 def test_doku_server_ohne_vm(client):

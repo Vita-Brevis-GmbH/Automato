@@ -757,6 +757,7 @@ export interface AppDocFinding {
   message: string;
   hint: string | null;
   rule_id: number | null;
+  epgs?: string[]; // EPGs (Tenant/AP/EPG) des Befunds – Filter nach Tenant, AP, EPG (0.38.0)
 }
 export interface ApplicationDoc {
   application: Application;
@@ -1733,17 +1734,32 @@ export interface TraceResult {
   service_name?: string; // angegebenes Service-Objekt bzw. ACI-Filter (FT_https)
 }
 
-// Name bzw. FQDN -> IP für die Weg-Suche (0.35.0): IPAM, Objekte der Firewalls, VMs
+// Name bzw. FQDN -> IP für die Weg-Suche (0.35.0): IPAM, Objekte der Firewalls, VMs; seit
+// 0.38.0 auch Netze (IPAM, Netz-Objekte, Subnetze des Inventars), seitenweise
 export interface NameHit {
-  ip: string;
+  ip: string; // bei Netzen: die geprüfte Adresse (erste ohne Gerät)
   name: string | null;
-  kind: "ip" | "ipam" | "object" | "vm";
+  kind: "ip" | "ipam" | "object" | "vm" | "net" | "subnet";
+  type: "host" | "net";
+  net: string | null; // Netz (CIDR) bei type "net"
   source: string | null;
   detail: string | null;
-  also?: string[]; // weitere Namen derselben IP
+  also?: string[]; // weitere Namen derselben IP bzw. desselben Netzes
 }
-export const resolveName = (tenantId: number, q: string) =>
-  getJSON<NameHit[]>(`/api/routing/resolve${qs({ tenant_id: tenantId, q: q.trim() })}`);
+export interface NameResult {
+  hits: NameHit[];
+  total: number; // mit dem Art-Filter
+  counts: { host: number; net: number };
+  capped: boolean; // je Quelle mehr Treffer, als gelesen: genauer suchen
+}
+export const resolveName = (
+  tenantId: number,
+  q: string,
+  opts: { type?: "host" | "net" | ""; limit?: number; offset?: number } = {},
+) =>
+  getJSON<NameResult>(
+    `/api/routing/resolve${qs({ tenant_id: tenantId, q: q.trim(), type: opts.type || undefined, limit: opts.limit, offset: opts.offset })}`,
+  );
 export interface TopoPeer extends Labeled {
   id: number;
   peer_ip: string;

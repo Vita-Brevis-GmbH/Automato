@@ -10,7 +10,8 @@
                                  Startpunkt, je FortiGate-Hop die passenden Policies (0.22.0),
                                  je ACI-VRF-Hop die Contracts (0.35.0); Dienst auch als
                                  Service-Objekt bzw. ACI-Filter (`FT_https`)
-- `GET /routing/resolve?q=`      Name bzw. FQDN -> IPs (IPAM, Objekte, VMs) fuer die Weg-Suche
+- `GET /routing/resolve?q=&type=`  Name bzw. FQDN -> Hosts und Netze (IPAM, Objekte, VMs,
+                                 Inventar) fuer die Weg-Suche, seitenweise (`limit`, `offset`)
 - `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs` - Nachbarn mit Namen aus dem IPAM
 - `GET/POST/PUT/DELETE /routing/exits` - Anbindungen nach aussen (Internet, MPLS, WAN),
                                  von Hand erfasst (operator), an denen ein Weg endet bzw.
@@ -324,14 +325,18 @@ def _service(session: Session, tid: int, text: str | None) -> tuple[tuple | None
 
 @router.get("/resolve")
 def resolve_name(
-    q: str = Query(..., min_length=1, max_length=200, description="Name, FQDN bzw. IP"),
+    q: str = Query(..., min_length=1, max_length=200, description="Name, FQDN, IP bzw. Netz"),
     tenant_id: int | None = None,
+    only: str | None = Query(None, alias="type", pattern="^(host|net)$"),
+    limit: int = Query(resolve.LIMIT, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
-) -> list[dict]:
-    """IPs zu einem Namen bzw. FQDN aus IPAM, Firewall-Objekten und VMs (Weg-Suche)."""
+) -> dict:
+    """Hosts und Netze zu einem Namen bzw. FQDN aus IPAM, Firewall-Objekten, VMs und dem
+    Inventar (Weg-Suche): seitenweise mit Gesamtzahl und Anzahl je Art."""
     tid = _tenant(session, principal, tenant_id)
-    return resolve.resolve(session, tid, q)
+    return resolve.resolve(session, tid, q, limit, offset, only)
 
 
 def _list(session: Session, tid: int, model, source_system_id: int | None, order) -> list:

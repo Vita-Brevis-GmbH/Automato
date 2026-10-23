@@ -176,13 +176,17 @@ def test_dienst_als_objektname(client):
     assert r.status_code == 422 and "FT_nix" in r.json()["detail"]
 
 
+def _find(client, tid, q, **params) -> dict:
+    r = client.get("/routing/resolve", params={"tenant_id": tid, "q": q, **params})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 def test_suche_nach_namen(client):
     tid = _seed(client)
 
     def find(q):
-        r = client.get("/routing/resolve", params={"tenant_id": tid, "q": q})
-        assert r.status_code == 200, r.text
-        return r.json()
+        return [h for h in _find(client, tid, q)["hits"] if h["type"] == "host"]
 
     # IPAM: DNS-Name, auch nur das erste Label; das Firewall-Objekt mit derselben IP dazu
     (hit,) = find("app01")
@@ -197,11 +201,11 @@ def test_suche_nach_namen(client):
 
     # IP direkt mit dem Namen aus dem IPAM
     assert find("10.20.0.5") == [
-        {"ip": "10.20.0.5", "name": "app01.example.ch", "kind": "ip", "source": None,
-         "detail": None}
+        {"ip": "10.20.0.5", "name": "app01.example.ch", "kind": "ip", "type": "host",
+         "net": None, "source": None, "detail": None}
     ]  # fmt: skip
 
-    # Objekt der Firewall ohne IPAM-Eintrag (ohne Präfix gesucht); Netze zählen nicht
+    # Objekt der Firewall ohne IPAM-Eintrag (ohne Präfix gesucht)
     (fw,) = find("legacy01")
     assert (fw["ip"], fw["name"], fw["kind"], fw["source"]) == (
         "10.20.0.9",
@@ -209,11 +213,66 @@ def test_suche_nach_namen(client):
         "object",
         "fw-01",
     )
-    assert find("N_server") == [] and find("x") == [] and find("gibtsnicht") == []
+    assert find("x") == [] and find("gibtsnicht") == []
 
     # Weg zum Namen: Oberfläche löst auf, die API nimmt IPs
     r = client.get("/routing/trace", params={"tenant_id": tid, "dst": "app01"})
     assert r.status_code == 422
+
+
+def test_suche_nach_netzen(client):
+    """0.38.0: Netze aus Firewall-Objekten, IPAM und Inventar (ACI-EPG, Interface); je Netz
+    eine Adresse für die Prüfung, die keinem Gerät gehört."""
+    tid = _seed(client)
+
+    # Netz-Objekt: 10.20.0.1 ist das Interface srv der fw-01 -> 10.20.0.2
+    out = _find(client, tid, "N_server")
+    (net,) = out["hits"]
+    assert (net["type"], net["kind"], net["name"], net["net"], net["ip"]) == (
+        "net", "object", "N_server", "10.20.0.0/24", "10.20.0.2",
+    )  # fmt: skip
+    assert out["counts"] == {"host": 0, "net": 1} and out["total"] == 1
+
+    # ACI-EPG über Tenant/AP/EPG; das Gateway 10.50.2.1 ist nicht die Adresse
+    (epg,) = _find(client, tid, "EPG_db")["hits"]
+    assert (epg["kind"], epg["name"], epg["net"], epg["ip"]) == (
+        "subnet", "TE|AP1|EPG_db", "10.50.2.0/24", "10.50.2.2",
+    )  # fmt: skip
+    assert epg["detail"] == "EPG-Subnetz · VRF TE:VRF1" and epg["source"] == "apic-01"
+
+    # IPAM-Netz über die Beschreibung
+    (ipam,) = _find(client, tid, "transfer aci")["hits"]
+    assert (ipam["kind"], ipam["name"], ipam["net"], ipam["source"]) == (
+        "ipam", "Transfer ACI", "10.255.0.0/29", "ddi",
+    )  # fmt: skip
+    assert ipam["ip"] == "10.255.0.2"  # .1 ist das Interface to-aci der fw-01
+
+    # Netz direkt: mit den Namen aus IPAM bzw. Inventar
+    (lit,) = _find(client, tid, "10.50.2.0/24")["hits"]
+    assert (lit["kind"], lit["name"], lit["ip"]) == ("subnet", "TE|AP1|EPG_db", "10.50.2.2")
+
+    # Anfang einer Adresse: Hosts und Netze, getrennt filterbar
+    out = _find(client, tid, "10.20.0.")
+    assert out["counts"] == {"host": 2, "net": 1}  # app01 (mit H_app01), H_legacy01
+    nets = _find(client, tid, "10.20.0.", type="net")
+    assert [h["net"] for h in nets["hits"]] == ["10.20.0.0/24"] and nets["total"] == 1
+
+
+def test_suche_vollstaendig_seitenweise(client):
+    """0.38.0: alle Treffer mit Gesamtzahl, seitenweise (statt der ersten 20)."""
+    tid = _seed(client)
+    fw = copy.deepcopy(FW1)
+    fw["objects"] = [
+        {"name": f"H_srv{i:02d}", "category": "address", "values": [f"10.21.0.{i}/32"],
+         "vdom": "root"} for i in range(1, 31)
+    ]  # fmt: skip
+    sid = tp._system(client, tid, "fw-03", "fortigate")
+    tp._deliver(client, tid, sid, "fortigate", fw)
+
+    first = _find(client, tid, "srv", type="host", limit=25)
+    assert first["total"] == 30 and len(first["hits"]) == 25 and not first["capped"]
+    rest = _find(client, tid, "srv", type="host", limit=25, offset=25)
+    assert [h["name"] for h in rest["hits"]] == [f"H_srv{i}" for i in range(26, 31)]
 
 
 def test_dienste_mit_objektnamen(client):

@@ -644,7 +644,13 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         }
         item["rules"] = {"specific": len(spec), "unspecific": len(mine - spec)}
     by_scope = {k: sum(1 for v in best.values() if v == k) for k in appdoc.UNSPECIFIC}
-    findings = _app_findings(session, tid, systems, epg_out, set(ordered))
+    # EPGs je Regel (ueber die Systeme ihrer Treffer) - fuer den Filter der Findings
+    epgs_of: dict[str, list[str]] = {x["key"]: x["epgs"] for x in systems}
+    epgs_of |= {e["key"]: [e["label"]] for e in epg_out}
+    rule_epgs: dict[int, set[str]] = defaultdict(set)
+    for h in possible:
+        rule_epgs[h["rule_id"]] |= set(epgs_of.get(h["system"], []))
+    findings = _app_findings(session, tid, systems, epg_out, set(ordered), rule_epgs)
     tenant = session.get(Tenant, tid)
     return {
         "tenant_code": tenant.code if tenant else None,
@@ -781,21 +787,32 @@ def _hits_and_tables(
 
 
 def _app_findings(
-    session: Session, tenant_id: int, systems: list[dict], epgs: list[dict], rule_ids: set[int]
+    session: Session,
+    tenant_id: int,
+    systems: list[dict],
+    epgs: list[dict],
+    rule_ids: set[int],
+    rule_epgs: dict[int, set[str]] | None = None,
 ) -> list[dict]:
     """Offene (bzw. bestaetigte) Befunde der Applikation: zu ihren Regeln, Servern (Objekt im
-    IPAM bzw. auf der Firewall), VMs, Portgruppen und den Subnetzen ihrer EPGs."""
-    wanted: set[tuple[SubjectKind, str]] = set()
+    IPAM bzw. auf der Firewall), VMs, Portgruppen und den Subnetzen ihrer EPGs - je Befund die
+    EPGs (`Tenant/AP/EPG`), zu denen er gehoert (Filter nach Tenant, AP, EPG; 0.38.0)."""
+    wanted: dict[tuple[SubjectKind, str], set[str]] = defaultdict(set)
     for x in systems:
+        mine = set(x["epgs"])
         for name in x["servers"]:
-            wanted |= {(SubjectKind.NETWORK_OBJECT, name), (SubjectKind.DEVICE_OBJECT, name)}
+            wanted[(SubjectKind.NETWORK_OBJECT, name)] |= mine
+            wanted[(SubjectKind.DEVICE_OBJECT, name)] |= mine
         if x["kind"] == "vm":
-            wanted.add((SubjectKind.VM, x["name"]))
-            wanted |= {(SubjectKind.PORTGROUP, pg.split(" (VLAN")[0]) for pg in x["portgroups"]}
+            wanted[(SubjectKind.VM, x["name"])] |= mine
+            for pg in x["portgroups"]:
+                wanted[(SubjectKind.PORTGROUP, pg.split(" (VLAN")[0])] |= mine
     for e in epgs:
         for ip in e["subnets"]:
             try:
-                wanted.add((SubjectKind.SUBNET, str(ipaddress.ip_interface(ip).network)))
+                wanted[(SubjectKind.SUBNET, str(ipaddress.ip_interface(ip).network))].add(
+                    e["label"]
+                )
             except ValueError:
                 continue
     out = []
@@ -808,6 +825,9 @@ def _app_findings(
         rule_id = detail.get("rule_id") if f.subject_kind == SubjectKind.RULE else None
         if (f.subject_kind, f.subject_id) not in wanted and rule_id not in rule_ids:
             continue
+        scope = set(wanted.get((f.subject_kind, f.subject_id), set()))
+        if rule_id is not None:
+            scope |= (rule_epgs or {}).get(rule_id, set())
         message, hint = finding_text.explain(f.type.value, f.subject_id, f.detail)
         out.append(
             {
@@ -820,6 +840,7 @@ def _app_findings(
                 "message": message,
                 "hint": hint or None,
                 "rule_id": rule_id,
+                "epgs": sorted(scope),
             }
         )
     return out
