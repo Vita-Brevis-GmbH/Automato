@@ -141,6 +141,8 @@ class EndpointOut(BaseModel):
     nat_target: str | None = None  # bei VIPs: internes Ziel (mapped_ip[:port][/proto])
     vm: dict | None = None  # VM hinter der IP (vCenter, ADR 0017)
     epg: EpgOut | None = None  # ACI: Lage der EPG (Tenant, AP, BD, VRF, Subnetze, Endpunkte)
+    # ACI (0.45.1): Gegenstellen dieser EPG, die der Scope des Contracts verbindet (0 = keine)
+    scope_partners: int | None = None
 
 
 class RefValueOut(BaseModel):
@@ -202,3 +204,5 @@ class RuleDetailOut(RuleOut):
     nat_entries: list[dict] = []
     pair_decisions: list[PairDecisionOut] = []  # von Hand bestaetigt/abgelehnt
     twins: list[dict] = []  # gleiche Regeln paralleler Firewalls {rule_id, source, ...}
+    # ACI (0.45.1): was der Scope verbindet {scope, label, text, pairs, unpaired}
+    aci_scope: dict | None = None

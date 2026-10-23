@@ -60,7 +60,7 @@ function Side({
   return (
     <>
       {located.map((e, i) => (
-        <EpgCard key={`${e.epg!.dn ?? e.epg!.name}-${i}`} epg={e.epg!} />
+        <EpgCard key={`${e.epg!.dn ?? e.epg!.name}-${i}`} epg={e.epg!} unpaired={e.scope_partners === 0} />
       ))}
       {(rest.length > 0 || located.length === 0) && <EndpointList items={rest} />}
     </>
@@ -390,7 +390,19 @@ export default function RuleDetailDrawer({
                 <dt>ACI-Tenant</dt>
                 <dd className="mono">{aci.tenant ?? <Dash />}</dd>
                 <dt>Scope</dt>
-                <dd>{aci.scope ?? <Dash />}</dd>
+                <dd>
+                  {aci.scope ?? <Dash />}
+                  {detail.aci_scope && (
+                    <div className="faint" id="rule-scope">
+                      {detail.aci_scope.text} · {detail.aci_scope.pairs} Paar{detail.aci_scope.pairs === 1 ? "" : "e"} Consumer → Provider
+                      {detail.aci_scope.unpaired > 0 && (
+                        <span className="chip warn" style={{ marginLeft: 6 }}>
+                          {detail.aci_scope.unpaired} ohne Gegenstelle im Scope
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </dd>
                 <dt>DN</dt>
                 <dd className="mono">{aci.dn ?? detail.external_id}</dd>
               </>

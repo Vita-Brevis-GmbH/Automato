@@ -42,6 +42,9 @@ class FindingType(enum.StrEnum):
     PARALLEL_RULE_MISMATCH = "parallel_rule_mismatch"  # gleiche Policy-ID, anderer Inhalt
     PARALLEL_RULE_MISSING = "parallel_rule_missing"  # Policy fehlt auf einer Firewall
     PARALLEL_OBJECT_MISMATCH = "parallel_object_mismatch"  # gleiches Objekt, andere Werte
+    # ACI (0.45.1): Consumer bzw. Provider ohne Gegenstelle im Scope des Contracts (AP, VRF,
+    # Tenant) - der Contract verbindet sie nicht
+    ACI_SCOPE_UNPAIRED = "aci_scope_unpaired"
 
 
 class Severity(enum.StrEnum):

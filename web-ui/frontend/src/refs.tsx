@@ -38,6 +38,7 @@ export const FINDING_LABEL: Record<string, string> = {
   parallel_rule_mismatch: "Parallele Regel abweichend",
   parallel_rule_missing: "Regel fehlt parallel",
   parallel_object_mismatch: "Paralleles Objekt abweichend",
+  aci_scope_unpaired: "Contract: ohne Gegenstelle im Scope",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -62,6 +63,7 @@ export const FINDING_HINT: Record<string, string> = {
   parallel_rule_mismatch: "gleiche Policy auf der parallelen Firewall anders konfiguriert",
   parallel_rule_missing: "Policy fehlt auf einer parallelen Firewall",
   parallel_object_mismatch: "gleichnamiges Objekt auf der parallelen Firewall anders definiert",
+  aci_scope_unpaired: "Consumer bzw. Provider, die der Scope des Contracts (AP, VRF, Tenant) mit keiner Gegenstelle verbindet",
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -88,8 +90,8 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
   {
     key: "rules",
     label: "Regeln",
-    help: "ohne Quelle/Ziel bzw. ohne Consumer/Provider",
-    types: ["rule_incomplete"],
+    help: "ohne Quelle/Ziel bzw. ohne Consumer/Provider, Contract-Scope ohne Gegenstelle",
+    types: ["rule_incomplete", "aci_scope_unpaired"],
   },
   {
     key: "parallel",

@@ -43,10 +43,10 @@ from app.schemas.rules import (
     RuleOut,
     RuleSummaryOut,
 )
+from app.store import aci_relevance, relevance, rule_index, virtual
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import objects as objects_store
-from app.store import relevance, rule_index, virtual
 from app.store import rules as rules_store
 
 router = APIRouter(prefix="/rules", tags=["rules"])
@@ -217,6 +217,7 @@ def get_rule(
         session, r.tenant_id, {o.value.split("/")[0] for o in objs.values() if o.value}
     )
 
+    scope = _scope_info(session, r, epgs)
     endpoints: list[EndpointOut] = []
     for e in r.endpoints:
         obj = objs.get(e.network_object_id) if e.network_object_id else None
@@ -235,6 +236,7 @@ def get_rule(
                 nat_target=nat_store.nat_target(nat) if nat else None,
                 epg=epg,
                 vm=vms.info(obj.value) if obj and obj.value else None,
+                scope_partners=scope["partners"].get(e.epg_id) if scope and e.epg_id else None,
             )
         )
 
@@ -257,7 +259,47 @@ def get_rule(
         ),
         pair_decisions=_decisions_of(session, r),
         twins=_twins_of(session, r),
+        aci_scope={k: v for k, v in scope.items() if k != "partners"} if scope else None,
     )
+
+
+_SCOPE_WHAT = {
+    "application-profile": "nur EPGs im selben AP",
+    "context": "nur EPGs derselben VRF",
+    "tenant": "nur EPGs im selben Tenant (auch über mehrere VRFs)",
+    "global": "alle verbundenen EPGs, auch über Tenants",
+}
+
+
+def _scope_info(session: Session, r, epgs: dict) -> dict | None:
+    """ACI-Contract (0.45.1): welche Consumer und Provider der Scope verbindet (AP, VRF,
+    Tenant, global) - je EPG die Zahl ihrer Gegenstellen im Scope."""
+    raw = r.raw if isinstance(r.raw, dict) else {}
+    if r.domain is not RuleDomain.ACI_CONTRACT or raw.get("kind") in ("taboo", "preferred_group"):
+        return None
+    scope = r.aci_scope or raw.get("scope")  # ohne gelesenen Scope: alle Paare zaehlen
+    cls = aci_relevance.Classifier(session, r.tenant_id)
+    sides = {"src": [], "dst": []}
+    for e in r.endpoints:
+        if e.epg_id in epgs and epgs[e.epg_id] not in sides[e.role.value]:
+            sides[e.role.value].append(epgs[e.epg_id])
+    pairs, unpaired = cls.scope_pairs(scope, sides["src"], sides["dst"])
+    partners: dict[int, int] = {e.id: 0 for e in sides["src"] + sides["dst"]}
+    for c, p in pairs:
+        partners[c.id] += 1
+        partners[p.id] += 1
+    label = aci_relevance.SCOPE_LABEL.get(scope, scope) if scope else "unbekannt"
+    what = _SCOPE_WHAT.get(
+        scope or "", "alle verbundenen EPGs (Scope nicht gelesen – neu einlesen)"
+    )
+    return {
+        "scope": scope,
+        "label": label,
+        "text": f"Scope {label}: verbindet {what}",
+        "pairs": len(pairs),
+        "unpaired": len(unpaired),
+        "partners": partners,
+    }
 
 
 def _twins_of(session: Session, r: Rule) -> list[dict]:

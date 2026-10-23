@@ -32,6 +32,8 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Epg,
+    EpgEndpoint,
+    EpgSubnet,
     InvInterface,
     Rule,
     RuleDomain,
@@ -318,11 +320,13 @@ def for_ip(session: Session, tenant_id: int, rule_ids: list[int], ip_text: str) 
 def _aci_for_ip(
     session: Session, tenant_id: int, sides: dict[int, set[str]], ip, rel: Relevance
 ) -> dict[int, dict]:
-    """ACI-Contracts, die die IP ueber Subnetze externer EPGs erfassen: je Seite die Zuordnung
-    (laengstes Subnetz der VRF, Scope, Fabric). Seiten mit internen EPGs bleiben ungeprueft
-    (`unknown`) - der Contract ist dann nie ganz ausgeschlossen."""
+    """ACI-Contracts, die die IP erfassen: je Seite die Zuordnung ueber Subnetze externer EPGs
+    (laengstes Subnetz der VRF, Scope, Fabric) und - fuer EPGs im Fabric - der Scope des
+    Contracts (0.45.1): verbindet er die EPG der IP mit keiner Gegenstelle (anderes AP, andere
+    VRF bzw. anderer Tenant), ist die Seite nicht moeglich. Sonst bleiben Seiten mit internen
+    EPGs ungeprueft (`unknown`) - der Contract ist dann nie ganz ausgeschlossen."""
     rows = session.execute(
-        select(RuleEndpoint.rule_id, RuleEndpoint.role, RuleEndpoint.epg_id)
+        select(RuleEndpoint.rule_id, RuleEndpoint.role, RuleEndpoint.epg_id, Rule.aci_scope)
         .join(Rule, Rule.id == RuleEndpoint.rule_id)
         .where(
             RuleEndpoint.rule_id.in_(list(sides)),
@@ -335,22 +339,37 @@ def _aci_for_ip(
     epgs = {e.id: e for e in session.scalars(select(Epg).where(Epg.id.in_({r[2] for r in rows})))}
     cls = aci_relevance.Classifier(session, tenant_id, lambda: rel.graph)
     found: dict[int, dict[str, list[tuple[str, str]]]] = defaultdict(lambda: defaultdict(list))
-    internal: set[tuple[int, str]] = set()
-    for rid, role, eid in rows:
+    internal: dict[tuple[int, str], list[Epg]] = defaultdict(list)
+    members: dict[tuple[int, str], list[Epg]] = defaultdict(list)
+    scopes: dict[int, str | None] = {}
+    for rid, role, eid, scope in rows:
         side, epg = getattr(role, "value", role), epgs.get(eid)
-        if side not in sides[rid] or epg is None:
+        if epg is None:
+            continue
+        scopes[rid] = scope
+        members[(rid, side)].append(epg)
+        if side not in sides[rid]:
             continue
         if epg.kind != "external":
-            internal.add((rid, side))
+            internal[(rid, side)].append(epg)
             continue
         result = cls.check(epg, ip)
         if result is not None:
             found[rid][side].append(result)
+    covering = _covering(session, [e for es in internal.values() for e in es], ip)
+    for (rid, side), own in internal.items():
+        mine = [e for e in own if e.id in covering]
+        others = members.get((rid, "dst" if side == "src" else "src"), [])
+        if not mine or not others:
+            continue
+        reasons = [cls.scope_reason(scopes.get(rid), e, o) for e in mine for o in others]
+        if all(reasons):  # keine EPG der IP hat eine Gegenstelle im Scope
+            found[rid][side].append((IMPOSSIBLE, reasons[0]))
     out: dict[int, dict] = {}
     for rid, by_side in found.items():
         results = {}
         for side, items in by_side.items():
-            if (rid, side) in internal:
+            if (rid, side) in internal and not any(s == IMPOSSIBLE for s, _t in items):
                 continue
             state = summarize([s for s, _t in items])
             results[side] = {"state": state, "text": next(t for s, t in items if s == state)}
@@ -363,4 +382,24 @@ def _aci_for_ip(
         text = next((x["text"] for x in results.values() if x["state"] == state), "")
         out[rid] = {"state": state, "text": text,
                     "sides": {k: x["state"] for k, x in results.items()}}  # fmt: skip
+    return out
+
+
+def _covering(session: Session, epgs: list[Epg], ip) -> set[int]:
+    """EPGs (im Fabric), zu denen die IP gehoert: Subnetz der EPG bzw. ihres BD, Endpunkt."""
+    ids = {e.id for e in epgs}
+    if not ids:
+        return set()
+    where = (EpgEndpoint.epg_id.in_(ids), EpgEndpoint.ip == str(ip))
+    out = set(session.scalars(select(EpgEndpoint.epg_id).where(*where)))
+    for eid, value in session.execute(
+        select(EpgSubnet.epg_id, EpgSubnet.ip).where(
+            EpgSubnet.epg_id.in_(ids), EpgSubnet.origin.in_(("epg", "bd", "esg"))
+        )
+    ):
+        try:
+            if ip in ipaddress.ip_interface(value).network:
+                out.add(eid)
+        except ValueError:
+            continue
     return out

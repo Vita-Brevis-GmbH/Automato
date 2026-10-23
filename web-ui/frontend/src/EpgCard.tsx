@@ -13,7 +13,7 @@ const SHOWN = 8;
 const routingOnly = (scope?: string | null) =>
   scope != null && !scope.split(",").map((x) => x.trim()).includes("import-security");
 
-export function EpgCard({ epg }: { epg: EpgLocation }) {
+export function EpgCard({ epg, unpaired }: { epg: EpgLocation; unpaired?: boolean }) {
   const [all, setAll] = useState(false);
   const eps = all ? epg.endpoints : epg.endpoints.slice(0, SHOWN);
   return (
@@ -21,6 +21,11 @@ export function EpgCard({ epg }: { epg: EpgLocation }) {
       <div className="refcard-head">
         <b className="mono">{epg.name}</b>
         <span className={`chip ${epg.kind === "epg" ? "local" : "info"}`}>{KIND[epg.kind] ?? epg.kind}</span>
+        {unpaired && (
+          <span className="chip warn scope-unpaired" title="Der Scope des Contracts verbindet diese EPG mit keiner Gegenstelle (anderes AP, andere VRF bzw. anderer Tenant) – für sie ohne Wirkung">
+            ohne Gegenstelle im Scope
+          </span>
+        )}
         {epg.pref_group && (
           <span className="chip info" title="Mitglied der Preferred Group seiner VRF">
             Preferred Group

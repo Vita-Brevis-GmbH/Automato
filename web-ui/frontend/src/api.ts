@@ -131,6 +131,7 @@ export interface Endpoint {
   nat_target: string | null;
   epg?: EpgLocation | null; // ACI: wo liegt der Consumer/Provider
   vm?: VmInfo | null; // VM hinter der IP (vCenter)
+  scope_partners?: number | null; // ACI (0.45.1): Gegenstellen im Scope des Contracts, 0 = keine
 }
 
 // Lage einer EPG (Contract-Consumer/-Provider): Tenant, AP, BD, VRF, Subnetze, Endpunkte
@@ -329,6 +330,8 @@ export interface RuleDetail extends Rule {
   nat_entries?: NatBrief[];
   pair_decisions?: PairDecision[];
   twins?: { rule_id: number; source_system_id: number; source: string }[]; // gleich im Verbund
+  // ACI (0.45.1): was der Scope verbindet (AP, VRF, Tenant, global)
+  aci_scope?: { scope: string | null; label: string; text: string; pairs: number; unpaired: number } | null;
 }
 
 export interface Finding {

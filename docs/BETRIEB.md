@@ -478,10 +478,21 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - Der Filter „EPG“ in der Applikations-Doku zeigt die Contracts eines Systems nur über
       diese EPG (VM in mehreren EPGs).
   - **Scope, gemeinsamer BD, Portgruppen (0.43.1):**
-    - *Scope der Contracts:* `application-profile` gilt nur im selben AP, `context` nur in
-      derselben VRF, `tenant` nur im selben ACI-Tenant – auch für Contracts aus `common`.
-      Consumer bzw. Provider ausserhalb des Scopes sind keine Gegenstelle, ebenso in der
-      Weg-Suche.
+    - *Scope der Contracts:* Der Scope legt fest, was ein Contract verbindet – auch für
+      Contracts aus `common`:
+      - `application-profile` (AP): nur EPGs im selben AP; vzAny steht für alle EPGs seiner
+        VRF und verbindet mit einer EPG derselben VRF die EPGs ihres AP (seit 0.45.1);
+      - `context` (VRF): nur EPGs derselben VRF;
+      - `tenant`: nur EPGs im selben Tenant, auch über mehrere seiner VRFs;
+      - `global`: alle verbundenen EPGs, auch über Tenants.
+      Zwischen verschiedenen VRFs braucht es zusätzlich geteilte Subnetze bzw. Route-Leaking
+      (0.44.0). Consumer bzw. Provider ausserhalb des Scopes sind keine Gegenstelle – in der
+      Applikations-Doku, der Weg-Suche und seit 0.45.1 auch in der Regel-Liste (Suche nach
+      einer IP: „nicht möglich“ mit „Scope VRF: … liegen in verschiedenen VRFs“) und im
+      Regel-Detail: „Scope VRF: verbindet nur EPGs derselben VRF · N Paare“, EPGs ohne
+      Gegenstelle im Scope mit „ohne Gegenstelle im Scope“. Befund *Contract: ohne
+      Gegenstelle im Scope* (Findings → Regeln): Warnung, wenn der Contract wegen des Scopes
+      gar nichts verbindet, sonst Hinweis mit den betroffenen EPGs.
     - *Gemeinsamer BD:* Teilt die EPG ihren BD mit anderen EPGs, zählen für sie Regeln, die das
       ganze BD-Subnetz enthalten. Ein Host bzw. Teilnetz darin zählt nur, wenn es eine IP der
       EPG trifft (VM an ihrer Portgruppe, Endpunkt der EPG).

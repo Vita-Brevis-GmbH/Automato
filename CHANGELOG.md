@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.45.1 – 2026-10-23
+
+Korrektur: Scope der ACI-Contracts im ganzen Modell (Hinweis des Anwenders). Ohne Migration.
+
+- **Was der Scope verbindet** (eine Stelle für alle Prüfungen, `aci_relevance.Classifier`):
+  - AP: nur innerhalb des AP. vzAny steht für alle EPGs seiner VRF und verbindet mit einer
+    EPG derselben VRF die EPGs ihres AP. Bisher fiel ein solcher Contract weg.
+  - VRF: nur innerhalb der VRF.
+  - Tenant: im Tenant, auch über mehrere VRFs.
+  - Global: alle verbundenen EPGs.
+  - Zwischen VRFs braucht es weiter geteilte Subnetze bzw. Route-Leaking (0.44.0).
+- **Regel-Detail:** Beim Scope steht, was er verbindet, und wie viele Paare Consumer →
+  Provider es gibt. EPGs ohne Gegenstelle im Scope tragen „ohne Gegenstelle im Scope“.
+- **Regel-Liste:** Bei der Suche nach einer IP ist ein Contract „nicht möglich“, wenn sein
+  Scope die EPG dieser IP mit keiner Gegenstelle verbindet, mit Begründung („Scope VRF: …
+  liegen in verschiedenen VRFs“).
+- **Neuer Befund „Contract: ohne Gegenstelle im Scope“** (Findings → Regeln): Warnung, wenn
+  der Contract wegen des Scopes gar nichts verbindet; sonst Hinweis mit den EPGs, für die
+  er keine Wirkung hat.
+- Applikations-Doku, Weg-Suche, Shared Services und Verbindungen Ende zu Ende nutzen
+  dieselbe Prüfung wie bisher.
+
 ## 0.45.0 – 2026-10-23
 
 Verbindungen Ende zu Ende in der Applikations-Doku (Wunsch des Anwenders: eine Zeile je Weg,

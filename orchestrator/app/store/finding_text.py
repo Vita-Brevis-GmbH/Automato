@@ -123,6 +123,26 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
             "Stattdessen ein eigenes Objekt nach Konvention verwenden (z. B. FT_https statt "
             "HTTPS); Standardobjekte des Herstellers lassen sich nicht umbenennen.",
         )
+    if ftype == "aci_scope_unpaired":
+        scope = {"application-profile": "AP", "context": "VRF", "tenant": "Tenant"}.get(
+            d.get("scope") or "", d.get("scope") or "?"
+        )
+        name = d.get("name") or subject
+        epgs = _list(d.get("epgs") or [], 5)
+        n = d.get("unpaired") or 0
+        if not d.get("pairs"):
+            what = (f"Contract {_q(name)} (Scope {scope}) verbindet keinen Consumer mit einem "
+                    "Provider – sie liegen nicht im selben " + scope)  # fmt: skip
+        else:
+            what = (f"Contract {_q(name)} (Scope {scope}): {n} EPG{'s' if n != 1 else ''} ohne "
+                    f"Gegenstelle im selben {scope} ({epgs})")  # fmt: skip
+        reason = f" Beispiel: {d['reason']}." if d.get("reason") else ""
+        return (
+            what + "." + reason,
+            "Für diese EPGs hat der Contract keine Wirkung. Scope prüfen (VRF, Tenant bzw. global "
+            "für Verbindungen darüber hinaus – zwischen VRFs zusätzlich geteilte Subnetze bzw. "
+            "Route-Leaking) oder die EPG aus dem Contract nehmen.",
+        )
     if ftype == "rule_incomplete":
         missing = d.get("missing") or []
         name = d.get("name") or subject

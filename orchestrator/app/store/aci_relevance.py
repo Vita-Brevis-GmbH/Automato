@@ -38,6 +38,9 @@ POSSIBLE, IMPOSSIBLE, UNKNOWN = "possible", "impossible", "unknown"
 RANK = {POSSIBLE: 0, UNKNOWN: 1, IMPOSSIBLE: 2}
 
 CLASSIFY = "import-security"
+# Scope eines Contracts in Worten (Regel-Detail, Begruendungen)
+SCOPE_LABEL = {"application-profile": "AP", "context": "VRF", "tenant": "Tenant",
+               "global": "global"}  # fmt: skip
 
 Net = ipaddress.IPv4Network | ipaddress.IPv6Network
 
@@ -122,25 +125,62 @@ class Classifier:
         return own if own in known or not known else f"common:{epg.vrf}"
 
     def scope_allows(self, scope: str | None, own: Epg, other: Epg) -> bool:
-        """Erlaubt ein Contract mit diesem Scope Verkehr zwischen den beiden EPGs?
+        """Erlaubt ein Contract mit diesem Scope Verkehr zwischen den beiden EPGs? (Anwender,
+        2026-10-23: der Scope legt fest, was der Contract verbindet.)
 
-        `application-profile`: gleiches AP im gleichen Tenant; `context`: gleiche VRF (und
-        APIC); `tenant`: gleicher ACI-Tenant (vzAny bzw. externe EPG einer VRF aus `common`:
-        gleiche VRF); `global` bzw. ohne Scope: immer. Das gilt auch fuer Contracts aus
-        `common` - mit Scope VRF verbinden sie nur EPGs derselben VRF, auch wenn EPGs vieler
-        Tenants sie nutzen (Dev-Befund 0.43.0). Ist eine VRF unbekannt, bleibt die Gegenstelle
-        (nicht ausgeschlossen)."""
-        if not scope or scope == "global":
-            return True
-        if scope == "application-profile":
-            return own.ap is not None and (own.aci_tenant, own.ap) == (other.aci_tenant, other.ap)
+        - `application-profile`: nur innerhalb des AP (gleicher Tenant und AP). vzAny steht fuer
+          alle EPGs seiner VRF - mit einer EPG derselben VRF verbindet es die EPGs ihres AP.
+          Externe EPGs liegen in keinem AP.
+        - `context`: nur innerhalb der VRF (und des APIC).
+        - `tenant`: innerhalb des Tenants, auch ueber mehrere seiner VRFs (vzAny bzw. externe
+          EPG einer VRF aus `common`: gleiche VRF).
+        - `global` bzw. ohne Scope: alle verbundenen EPGs.
+
+        Das gilt auch fuer Contracts aus `common` - mit Scope VRF verbinden sie nur EPGs
+        derselben VRF, auch wenn EPGs vieler Tenants sie nutzen (Dev-Befund 0.43.0). Ist eine
+        VRF unbekannt, bleibt die Gegenstelle (nicht ausgeschlossen). Zwischen verschiedenen
+        VRFs braucht es zusaetzlich den Leak der Subnetze (`aci_shared`, 0.44.0)."""
+        return self.scope_reason(scope, own, other) is None
+
+    def _same_vrf(self, own: Epg, other: Epg) -> bool | None:
         a, b = self.vrf_of(own), self.vrf_of(other)
-        same_vrf = None if a is None or b is None else (
-            (own.source_system_id, a) == (other.source_system_id, b))  # fmt: skip
+        if a is None or b is None:
+            return None
+        return (own.source_system_id, a) == (other.source_system_id, b)
+
+    def scope_reason(self, scope: str | None, own: Epg, other: Epg) -> str | None:
+        """Warum der Scope die beiden nicht verbindet - None, wenn er sie verbindet."""
+        if not scope or scope == "global":
+            return None
+        a, b = epg_store.inventory_label(own), epg_store.inventory_label(other)
+        same_vrf = self._same_vrf(own, other)
+        if scope == "application-profile":
+            if "vzany" in (own.kind, other.kind):
+                return None if same_vrf is not False else (
+                    f"Scope AP: vzAny gilt nur in seiner VRF ({a} – {b})")  # fmt: skip
+            if own.ap is not None and (own.aci_tenant, own.ap) == (other.aci_tenant, other.ap):
+                return None
+            return f"Scope AP: {a} und {b} liegen nicht im selben AP"
         regular = own.kind in ("epg", "esg") and other.kind in ("epg", "esg")
         if scope == "tenant" and (regular or "common" not in {own.aci_tenant, other.aci_tenant}):
-            return own.aci_tenant == other.aci_tenant
-        return same_vrf is not False
+            if own.aci_tenant == other.aci_tenant:
+                return None
+            return (f"Scope Tenant: {a} (Tenant {own.aci_tenant}) und {b} (Tenant "
+                    f"{other.aci_tenant}) liegen in verschiedenen Tenants")  # fmt: skip
+        if same_vrf is not False:
+            return None
+        return (f"Scope {SCOPE_LABEL.get(scope, scope)}: {a} (VRF {self.vrf_of(own)}) und {b} "
+                f"(VRF {self.vrf_of(other)}) liegen in verschiedenen VRFs")  # fmt: skip
+
+    def scope_pairs(
+        self, scope: str | None, consumers: list[Epg], providers: list[Epg]
+    ) -> tuple[list[tuple[Epg, Epg]], set[int]]:
+        """Consumer -> Provider, die der Scope verbindet, und die EPG-IDs ohne Gegenstelle im
+        Scope (fuer Regel-Detail und Befund)."""
+        pairs = [(c, p) for c in consumers for p in providers
+                 if c.id != p.id and self.scope_allows(scope, c, p)]  # fmt: skip
+        paired = {e.id for pair in pairs for e in pair}
+        return pairs, {e.id for e in [*consumers, *providers]} - paired
 
     @cached_property
     def _ext(self) -> dict[tuple[int | None, str], list[tuple[Epg, Net, str | None]]]:

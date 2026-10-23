@@ -341,8 +341,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.44.0** | ACI zwischen VRFs/Tenants: Shared Services (Subnetz-Scope `shared`) und Route-Leaking (`leakRoutes`), VRF aus `tDn` (auch vzAny), Weg-Suche endet im Fabric der anderen VRF, Applikations-Doku urteilt gleich |
 | **0.44.1** | Korrektur: Listen mit Filtern zeigen nur die Antwort zur letzten Anfrage (ältere überschrieb die gefilterte) |
 | **0.45.0** | Verbindungen Ende zu Ende in der Applikations-Doku: eine Zeile je Verbindung mit dem Weg über ACI und Firewalls, je Hop Policy bzw. Contract mit Objekten, Abgleich Regel ↔ Weg mit Abweichungen, Sprung in die Weg-Suche (ADR 0021 Entwurf) |
+| **0.45.1** | Korrektur: Scope der Contracts im ganzen Modell (AP, VRF, Tenant über VRFs, global; vzAny mit Scope AP), Regel-Detail mit Paaren, Regel-Liste nach IP, Befund „ohne Gegenstelle im Scope“ |
 
-### Nächste Arbeiten (Stand 0.45.0)
+### Nächste Arbeiten (Stand 0.45.1)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).

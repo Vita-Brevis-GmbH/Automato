@@ -273,8 +273,13 @@ Rahmen laut Anwender (2026-10-22):
        die IP, verwirft das Fabric den Verkehr.
      - Gleiche EPG erlaubt; Taboo-Contracts des Ziels sperren vor allen anderen; sonst
        erlaubt ein Contract mit der Quelle als Consumer und dem Ziel als Provider (direkt, über
-       vzAny der VRF, ESG mit EPG-Selektor, Preferred Group) mit passendem Filter; Scope
-       `application-profile` verlangt dasselbe AP. Kein Contract: gesperrt.
+       vzAny der VRF, ESG mit EPG-Selektor, Preferred Group) mit passendem Filter. Kein
+       Contract: gesperrt.
+     - Scope des Contracts (0.43.1, vereinheitlicht 0.45.1, `Classifier.scope_allows`):
+       `application-profile` nur im selben AP (vzAny: die EPGs seiner VRF in diesem AP),
+       `context` nur in derselben VRF, `tenant` im Tenant auch über mehrere VRFs, `global`
+       alle verbundenen EPGs. Dieselbe Prüfung gilt in Applikations-Doku, Regel-Liste,
+       Regel-Detail, Befund `aci_scope_unpaired` und für Shared Services.
      - Ergebnis im Format der FortiGate-Hops (`hop.rules` mit `src_epg`/`dst_epg`), das
        Gesamturteil zählt Firewalls und ACI-VRFs.
      - Nicht berücksichtigt: VRF „unenforced“, Intra-EPG-Isolation, ESG-IP-Selektoren,
