@@ -663,6 +663,11 @@ an (`deploy/agent-gateway`, Port 8443).
     sie (root) und prüft danach erneut. Beispiel:
     `ufw allow proto tcp from 172.20.0.0/16 to 172.17.0.1 port 8080 comment 'Automato -> netbox'`.
   - `deploy/aufbau.sh status` – Container und Health kurz.
+  - **Profile:** `deploy/update.sh` baut und startet nur die Profile aus
+    `AUTOMATO_COMPOSE_PROFILES` (Standard `--profile core`). Laufen weitere Dienste (zentraler
+    Collector, Proxy), gehören sie dazu – einmal in `.env`:
+    `AUTOMATO_COMPOSE_PROFILES=--profile core --profile collectors --profile proxy`. Seit
+    0.42.2 meldet `pruefen` Container ausserhalb dieser Profile (sie blieben auf altem Stand).
   - `deploy/aufbau.sh backup-schluessel` (0.42.0) – legt den age-Schlüssel für die Sicherung an
     (bzw. nimmt den vorhandenen) und trägt Empfänger und Pfad in `.env` ein. `deploy/update.sh`
     bricht ohne Empfänger bei der Sicherung ab; seit 0.42.0 liest es ihn aus `.env`, ein

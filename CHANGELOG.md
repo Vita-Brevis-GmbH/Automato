@@ -7,6 +7,19 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.42.2 – 2026-10-23
+
+Korrektur der Prüfung (Befund nach dem Update auf 0.42.0). Ohne Migration.
+
+- `deploy/aufbau.sh pruefen` meldet Container, die laufen, aber nicht in den Profilen von
+  `deploy/update.sh` sind (`AUTOMATO_COMPOSE_PROFILES`) – sie blieben bei jedem Update auf
+  altem Stand, hier der Collector. Abhilfe in `.env`:
+  `AUTOMATO_COMPOSE_PROFILES=--profile core --profile collectors --profile proxy`.
+- „Health starting“ direkt nach dem Start gilt nicht mehr als Warnung.
+- Frühere ufw-Sperren, deren Ziele jetzt antworten, stehen nur noch als Hinweis da.
+- Scheitert `docker compose ps` im NetBox-Ordner, steht die Meldung dabei (und ob NetBox
+  trotzdem antwortet).
+
 ## 0.42.1 – 2026-10-23
 
 Korrektur (Befund 0.42.0: `deploy/update.sh` brach in der Sicherung mit „service "netbox" has

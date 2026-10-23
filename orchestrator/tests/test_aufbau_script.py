@@ -182,3 +182,19 @@ def test_ungueltige_compose_konfiguration_mit_hinweis_auf_override(tmp_path):
     out = _run(tmp_path, "pruefen", COMPOSE=str(stub))
     assert out.returncode == 1
     assert 'Automato-Projekt ungültig: service "netbox" has neither an image' in out.stdout
+
+
+def test_container_ausserhalb_der_update_profile(tmp_path):
+    """0.42.2: der Collector lief, war aber nicht in AUTOMATO_COMPOSE_PROFILES - update.sh
+    baute und startete ihn nie neu (alter Stand, ohne Neustart-Regel)."""
+    stub = _stub(
+        tmp_path / "prof-compose",
+        'case "$*" in\n'
+        "  *'config --services'*) printf 'orchestrator\\nredis\\n' ;;\n"
+        "  *' ps '*) printf 'orchestrator|running|starting|o\\ncollector|running||c\\n' ;;\n"
+        "esac\n",
+    )
+    out = _run(tmp_path, "status", COMPOSE=str(stub))
+    assert "orchestrator (startet gerade)" in out.stdout
+    assert "nicht in den Profilen von deploy/update.sh: collector" in out.stdout
+    assert "--profile collectors" in out.stdout

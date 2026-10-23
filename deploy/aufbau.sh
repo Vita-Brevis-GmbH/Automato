@@ -98,18 +98,29 @@ container() {
     fehler "docker compose ps fehlgeschlagen – im Repo-Verzeichnis aufrufen"; return
   fi
   [ -n "$zeilen" ] || { fehler "keine Container – starten: $COMPOSE ${PROFILES[*]} up -d"; return; }
-  local dienst zustand gesund name ohne=""
+  # Dienste der Profile, die update.sh baut und startet (0.42.2: der Collector lief, war aber
+  # nicht im Profil - er blieb auf altem Stand und ohne Neustart-Regel)
+  local aktiv
+  aktiv=" $($COMPOSE "${PROFILES[@]}" config --services 2>/dev/null | tr '\n' ' ') "
+  local dienst zustand gesund name ohne="" fremd=""
   while IFS='|' read -r dienst zustand gesund name; do
     [ -n "$dienst" ] || continue
     if [ "$zustand" != "running" ]; then
       fehler "$dienst: $zustand – Logs: $COMPOSE logs --tail 50 $dienst"
+    elif [ "$gesund" = "starting" ]; then
+      ok "$dienst (startet gerade)"
     elif [ -n "$gesund" ] && [ "$gesund" != "healthy" ]; then
       warn "$dienst: läuft, Health $gesund"
     else
       ok "$dienst${gesund:+ ($gesund)}"
     fi
     [ "$(regel_von "$name")" = "no" ] && ohne="$ohne $dienst"
+    [ "$aktiv" = "  " ] || [[ "$aktiv" == *" $dienst "* ]] || fremd="$fremd $dienst"
   done <<<"$zeilen"
+  if [ -n "$fremd" ]; then
+    warn "läuft, ist aber nicht in den Profilen von deploy/update.sh:$fremd – bleibt auf altem Stand."
+    info "In .env ergänzen, z. B.: AUTOMATO_COMPOSE_PROFILES=--profile core --profile collectors --profile proxy"
+  fi
   if [ -n "$ohne" ]; then
     warn "ohne Neustart-Regel:$ohne – nach einem Neustart der VM bleiben sie aus."
     info "docker-compose.yml setzt restart: unless-stopped (ab 0.41.0): $COMPOSE ${PROFILES[*]} up -d"
@@ -131,8 +142,10 @@ netbox_stack() {
   [ -d "$NETBOX_DIR" ] || return 0  # keine lokale NetBox (z. B. eigene NetBox im Netz)
   titel "NetBox auf dieser VM ($NETBOX_DIR)"
   local zeilen
-  if ! zeilen=$(dc_netbox ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.Name}}' 2>/dev/null); then
-    fehler "docker compose ps im NetBox-Ordner fehlgeschlagen"; return
+  if ! zeilen=$(dc_netbox ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.Name}}' 2>&1); then
+    fehler "docker compose ps im NetBox-Ordner fehlgeschlagen: ${zeilen:-?}"
+    netbox_antwortet && info "NetBox antwortet trotzdem auf localhost:$(netbox_port) – Override korrigieren (oben)"
+    return
   fi
   [ -n "$zeilen" ] || { fehler "keine NetBox-Container – einrichten: source-of-truth/netbox/setup.sh"; return; }
   local dienst zustand gesund name aus=0 ohne=""
@@ -262,15 +275,16 @@ firewall_pruefen() {
   esac
   ok "ufw aktiv"
   # Sperren aus den Docker-Netzen der letzten Stunde (Kernel-Log)
-  local log
+  local log zeilen
   log=$( (journalctl -k --since "-1 hour" 2>/dev/null || dmesg 2>/dev/null) | grep "UFW BLOCK" | grep -E "IN=(br-|docker)" || true)
+  zeilen=$(regeln)
   if [ -n "$log" ]; then
-    warn "ufw hat Verbindungen aus Docker-Netzen gesperrt (letzte Stunde):"
+    # gesperrt und jetzt erreichbar: frueher, z. B. vor der Freigabe (0.42.2: nur Hinweis)
+    if [ -n "$zeilen" ]; then warn "ufw hat Verbindungen aus Docker-Netzen gesperrt (letzte Stunde):"
+    else info "frühere Sperren aus Docker-Netzen (letzte Stunde) – die Ziele antworten jetzt:"; fi
     grep -oE "SRC=[^ ]+ DST=[^ ]+ .*DPT=[0-9]+" <<<"$log" | sed -E 's/ LEN.*PROTO=([A-Z]+).*DPT=/ \1 Port /' |
       sort | uniq -c | sort -rn | head -5 | while read -r n zeile; do info "$n×  $zeile"; done || true
   fi
-  local zeilen
-  zeilen=$(regeln)
   if [ -z "$zeilen" ]; then
     ok "keine Freigabe nötig (kein gesperrtes Ziel auf dem Docker-Host)"
     return
