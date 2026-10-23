@@ -66,7 +66,7 @@ class EpgSubnet(Base):
 
 
 class EpgEndpoint(Base):
-    """Gelernter Endpunkt einer EPG (fvCEp/fvIp) - akkumulierend."""
+    """Endpunkt einer EPG (fvCEp/fvIp gelernt, fvStCEp statisch) - je Lauf ersetzt."""
 
     __tablename__ = "epg_endpoint"
     __table_args__ = (UniqueConstraint("epg_id", "ip", name="uq_epg_endpoint_epg_ip"),)
@@ -75,3 +75,5 @@ class EpgEndpoint(Base):
     epg_id: Mapped[int] = mapped_column(ForeignKey("epg.id"), index=True)
     ip: Mapped[str] = mapped_column(String(64))
     mac: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # static (Konfiguration) | vmm (vom vCenter) | learned (vom Fabric); leer = gelernt (0.46.0)
+    origin: Mapped[str | None] = mapped_column(String(8), nullable=True)

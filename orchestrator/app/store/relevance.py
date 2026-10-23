@@ -32,8 +32,6 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Epg,
-    EpgEndpoint,
-    EpgSubnet,
     InvInterface,
     Rule,
     RuleDomain,
@@ -356,11 +354,19 @@ def _aci_for_ip(
         result = cls.check(epg, ip)
         if result is not None:
             found[rid][side].append(result)
-    covering = _covering(session, [e for es in internal.values() for e in es], ip)
+    covering, placed = _covering(session, [e for es in internal.values() for e in es], ip, cls)
     for (rid, side), own in internal.items():
         mine = [e for e in own if e.id in covering]
         others = members.get((rid, "dst" if side == "src" else "src"), [])
-        if not mine or not others:
+        if not mine:
+            # Konfiguration bzw. gelernter Endpunkt ordnet die IP einer anderen EPG der VRF zu
+            # (0.46.0) - der Contract erfasst sie nur ueber das (gemeinsame) Subnetz
+            vrfs = {(e.source_system_id, cls.vrf_of(e)) for e in own}
+            why = next((t for w, t in placed.items() if w in vrfs), None)
+            if why:
+                found[rid][side].append((IMPOSSIBLE, why))
+            continue
+        if not others:
             continue
         reasons = [cls.scope_reason(scopes.get(rid), e, o) for e in mine for o in others]
         if all(reasons):  # keine EPG der IP hat eine Gegenstelle im Scope
@@ -385,21 +391,23 @@ def _aci_for_ip(
     return out
 
 
-def _covering(session: Session, epgs: list[Epg], ip) -> set[int]:
-    """EPGs (im Fabric), zu denen die IP gehoert: Subnetz der EPG bzw. ihres BD, Endpunkt."""
-    ids = {e.id for e in epgs}
-    if not ids:
-        return set()
-    where = (EpgEndpoint.epg_id.in_(ids), EpgEndpoint.ip == str(ip))
-    out = set(session.scalars(select(EpgEndpoint.epg_id).where(*where)))
-    for eid, value in session.execute(
-        select(EpgSubnet.epg_id, EpgSubnet.ip).where(
-            EpgSubnet.epg_id.in_(ids), EpgSubnet.origin.in_(("epg", "bd", "esg"))
-        )
-    ):
-        try:
-            if ip in ipaddress.ip_interface(value).network:
-                out.add(eid)
-        except ValueError:
-            continue
-    return out
+def _covering(session: Session, epgs: list[Epg], ip, cls=None) -> tuple[set[int], dict[tuple, str]]:
+    """EPGs (im Fabric), zu denen die IP gehoert - je VRF Konfiguration vor Gelerntem
+    (0.46.0, `epg_locate`): statischer Endpunkt, Portgruppe der VM, gelernter Endpunkt,
+    EPG- bzw. BD-Subnetz. Dazu je VRF, wo eine sichere Stufe (nicht nur ein Subnetz) die IP
+    hinlegt - als Begruendung fuer Contracts anderer EPGs."""
+    from app.store import epg_locate  # spaet: epg_locate -> aci_relevance -> paths
+    from app.store import epgs as epg_store
+
+    if not epgs:
+        return set(), {}
+    loc = epg_locate.Locator(session, epgs[0].tenant_id, cls)
+    out: set[int] = set()
+    placed: dict[tuple, str] = {}
+    for sid, vrf in {(e.source_system_id, loc.cls.vrf_of(e)) for e in epgs}:
+        found, how = loc.locate(str(ip), sid, vrf)
+        out |= {e.id for e in found}
+        if found and how != epg_locate.LABEL[epg_locate.SUBNET]:
+            where = " bzw. ".join(epg_store.inventory_label(e) for e in found)
+            placed[(sid, vrf)] = f"{ip} gehört nach {how} zur EPG {where}"
+    return out, placed

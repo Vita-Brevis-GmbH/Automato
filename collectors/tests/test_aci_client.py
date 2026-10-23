@@ -268,7 +268,9 @@ def test_parser_echte_apic_antwort_ohne_dn_an_kindern():
 
     epgs = {e["name"]: e for e in parse_epgs(APIC_TREE)}
     assert epgs["EG_app"]["ap"] == "AP_007" and epgs["EG_web"]["ap"] == "AP_007"
-    assert epgs["EG_app"]["endpoints"] == [{"ip": "10.7.0.5", "mac": "AA"}]  # je IP einmal
+    assert epgs["EG_app"]["endpoints"] == [
+        {"ip": "10.7.0.5", "mac": "AA", "origin": "learned"}
+    ]  # je IP einmal
 
     (contract,) = parse_mo_export(APIC_TREE)
     assert contract["dn"] == "uni/tn-TE_x/brc-CT_web"

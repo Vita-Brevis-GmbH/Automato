@@ -45,6 +45,9 @@ class FindingType(enum.StrEnum):
     # ACI (0.45.1): Consumer bzw. Provider ohne Gegenstelle im Scope des Contracts (AP, VRF,
     # Tenant) - der Contract verbindet sie nicht
     ACI_SCOPE_UNPAIRED = "aci_scope_unpaired"
+    # Konfiguration vor Gelerntem (0.46.0): das ACI hat eine IP in einer anderen EPG gelernt als
+    # konfiguriert (Portgruppe der VM bzw. statischer Endpunkt, gleiche VRF)
+    EPG_ASSIGNMENT_CONFLICT = "epg_assignment_conflict"
 
 
 class Severity(enum.StrEnum):

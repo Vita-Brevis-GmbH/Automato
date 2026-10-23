@@ -39,6 +39,7 @@ export const FINDING_LABEL: Record<string, string> = {
   parallel_rule_missing: "Regel fehlt parallel",
   parallel_object_mismatch: "Paralleles Objekt abweichend",
   aci_scope_unpaired: "Contract: ohne Gegenstelle im Scope",
+  epg_assignment_conflict: "EPG: gelernt ≠ konfiguriert",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -64,6 +65,7 @@ export const FINDING_HINT: Record<string, string> = {
   parallel_rule_missing: "Policy fehlt auf einer parallelen Firewall",
   parallel_object_mismatch: "gleichnamiges Objekt auf der parallelen Firewall anders definiert",
   aci_scope_unpaired: "Consumer bzw. Provider, die der Scope des Contracts (AP, VRF, Tenant) mit keiner Gegenstelle verbindet",
+  epg_assignment_conflict: "IP im ACI in einer anderen EPG gelernt als konfiguriert (Portgruppe der VM bzw. statischer Endpunkt)",
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -108,8 +110,8 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
   {
     key: "aci",
     label: "ACI / VMware",
-    help: "EPGs ohne Endpunkte, Portgruppen ohne EPG",
-    types: ["epg_no_endpoints", "portgroup_no_epg", "portgroup_name_mismatch"],
+    help: "EPGs ohne Endpunkte, Portgruppen ohne EPG, gelernt ≠ konfiguriert",
+    types: ["epg_no_endpoints", "portgroup_no_epg", "portgroup_name_mismatch", "epg_assignment_conflict"],
   },
 ];
 

@@ -78,6 +78,7 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     issues += _rule_endpoint_issues(session, tenant_id, ctx, prefixes)
     issues += _rule_incomplete_issues(session, tenant_id)
     issues += _aci_scope_issues(session, tenant_id)
+    issues += _epg_conflict_issues(session, tenant_id)
     issues += _device_object_issues(session, tenant_id, prefixes)
     issues += references.checks(session, tenant_id, prefixes, ctx)
     issues += _virtual_issues(session, tenant_id, ctx)
@@ -215,6 +216,41 @@ def _rule_incomplete_issues(session: Session, tenant_id: int) -> list[Issue]:
                     **({"vdom": r.vdom} if r.vdom else {}),
                     "name": label,
                     "tenant": raw.get("tenant") if aci else None,
+                },
+            )
+        )
+    return out
+
+
+def _epg_conflict_issues(session: Session, tenant_id: int) -> list[Issue]:
+    """Konfiguration vor Gelerntem (0.46.0): IPs, die das ACI in einer anderen EPG gelernt hat,
+    als die Portgruppe ihrer VM bzw. ein statischer Endpunkt vorgibt (gleiche VRF). Je VM bzw.
+    konfigurierter EPG ein Befund mit allen IPs."""
+    from app.store import epg_locate  # spaet: epg_locate -> aci_relevance -> paths
+
+    grouped: dict[tuple, list[dict]] = defaultdict(list)
+    for c in epg_locate.Locator(session, tenant_id).conflicts():
+        kind = SubjectKind.VM if c["vm"] else SubjectKind.EPG
+        grouped[(kind, c["vm"] or c["configured"], c["source_system_id"])].append(c)
+    names = _source_names(session, tenant_id)
+    out: list[Issue] = []
+    for (kind, subject, sid), items in grouped.items():
+        first = items[0]
+        out.append(
+            Issue(
+                FindingType.EPG_ASSIGNMENT_CONFLICT,
+                kind,
+                subject,
+                sid,
+                Severity.WARNING,
+                detail={
+                    "ips": [c["ip"] for c in items][:10],
+                    "configured": first["configured"],
+                    "via": first["via"],
+                    "vm": first["vm"],
+                    "learned": list(dict.fromkeys(e for c in items for e in c["learned"]))[:5],
+                    "vrf": first["vrf"],
+                    "source": names.get(sid),
                 },
             )
         )

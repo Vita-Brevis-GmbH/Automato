@@ -355,10 +355,12 @@ def _apply_epgs(session: Session, run, epgs) -> None:
             scope = (e.bd_subnet_scopes if origin == "bd" else e.subnet_scopes).get(ip)
             session.add(EpgSubnet(epg_id=epg.id, ip=ip, family=fam, origin=origin, scope=scope))
         macs: dict[str, str | None] = {}
+        origins: dict[str, str | None] = {}
         for ep in e.endpoints:
             macs.setdefault(ep.ip, ep.mac)
+            origins.setdefault(ep.ip, ep.origin)  # static | vmm | learned (0.46.0)
         for ip, mac in macs.items():
-            session.add(EpgEndpoint(epg_id=epg.id, ip=ip, mac=mac))
+            session.add(EpgEndpoint(epg_id=epg.id, ip=ip, mac=mac, origin=origins.get(ip)))
         # EPG <-> Host: ersten gelernten Endpunkt, der auf ein Host-Objekt zeigt, verknuepfen
         host = _host_by_ips(session, tenant_id, list(macs))
         if host is not None:

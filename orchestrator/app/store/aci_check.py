@@ -49,7 +49,7 @@ from app.models import (
     ServiceObject,
 )
 from app.models.rule import EndpointKind, rule_service
-from app.store import aci_relevance
+from app.store import aci_relevance, epg_locate
 from app.store import epgs as epg_store
 from app.store.rule_view import bare_service
 from app.store.topology import is_net, overlaps, within
@@ -99,6 +99,11 @@ class AciChecker:
     def epgs(self) -> dict[int, Epg]:
         stmt = select(Epg).where(Epg.tenant_id == self.tenant_id)
         return {e.id: e for e in self.session.scalars(stmt)}
+
+    @cached_property
+    def locator(self) -> epg_locate.Locator:
+        """Konfiguration vor Gelerntem (0.46.0): statischer Endpunkt, Portgruppe der VM."""
+        return epg_locate.Locator(self.session, self.tenant_id, self.cls, self.epgs)
 
     @cached_property
     def _subnets(self) -> dict[tuple[int | None, str], list[tuple[object, str, int]]]:
@@ -204,7 +209,15 @@ class AciChecker:
         return list(out.values())
 
     def _inside(self, sid: int, vrf: str, ip) -> tuple[list[Member], str] | None:
-        """Im Fabric der VRF: gelernter Endpunkt, Server der EPG, EPG- bzw. BD-Subnetz."""
+        """Im Fabric der VRF - Konfiguration vor Gelerntem (0.46.0): statischer Endpunkt,
+        Portgruppe der VM (vCenter), dann gelernter Endpunkt bzw. Server der EPG, EPG- bzw.
+        BD-Subnetz."""
+        conf = [] if is_net(ip) else self.locator.configured(str(ip), sid, vrf)
+        if conf:
+            sure = len(conf) == 1
+            members = [Member(e, sure, f"EPG {epg_store.inventory_label(e)} ({why})")
+                       for e, why in conf]  # fmt: skip
+            return members, " bzw. ".join(m.text for m in members)
         own = [
             self.epgs[i]
             for i in self.session.scalars(

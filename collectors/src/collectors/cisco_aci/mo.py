@@ -123,19 +123,35 @@ def _dn(cls: str, attrs: dict, parent_dn: str) -> str:
 
 
 def _cep_endpoints(kids: list[dict]) -> list[dict]:
-    """Gelernte Endpunkte aus fvCEp (mac, ip) + fvIp (addr) unter einer EPG - je IP einmal."""
-    out: dict[str, str | None] = {}
+    """Endpunkte einer EPG - je IP einmal, mit Herkunft (0.46.0, Konfiguration vor Gelerntem):
+
+    - `static`: statischer Endpunkt (fvStCEp mit fvStIp, Konfiguration) bzw. fvCEp mit
+      `lcC` static;
+    - `vmm`: fvCEp aus der VMM-Domaene (das ACI kennt die VM vom vCenter);
+    - `learned`: vom Fabric gelernt (fvCEp/fvIp).
+    """
+    out: dict[str, tuple[str | None, str]] = {}
+    rank = {"static": 0, "vmm": 1, "learned": 2}
     for c in kids:
-        if "fvCEp" not in c:
+        if "fvStCEp" in c:
+            node, ip_cls, origin = c["fvStCEp"], "fvStIp", "static"
+        elif "fvCEp" in c:
+            node, ip_cls = c["fvCEp"], "fvIp"
+            life = str(_attrs(node).get("lcC") or "")
+            origin = "static" if "static" in life else "vmm" if "vmm" in life else "learned"
+        else:
             continue
-        attrs = _attrs(c["fvCEp"])
+        attrs = _attrs(node)
         mac = attrs.get("mac")
-        ips = [_attrs(ic["fvIp"]).get("addr") for ic in _children(c["fvCEp"]) if "fvIp" in ic]
-        ips.append(attrs.get("ip"))  # aeltere APIC-Versionen: nur fvCEp.ip
+        ips = [_attrs(ic[ip_cls]).get("addr") for ic in _children(node) if ip_cls in ic]
+        ips.append(attrs.get("ip"))  # aeltere APIC-Versionen bzw. fvStCEp: Attribut ip
         for ip in ips:
-            if ip and ip not in _NO_IP:
-                out.setdefault(ip, mac)
-    return [{"ip": ip, "mac": mac} for ip, mac in out.items()]
+            if not ip or ip in _NO_IP:
+                continue
+            prev = out.get(ip)
+            if prev is None or rank[origin] < rank[prev[1]]:
+                out[ip] = (mac or (prev[0] if prev else None), origin)
+    return [{"ip": ip, "mac": mac, "origin": origin} for ip, (mac, origin) in out.items()]
 
 
 def _ap_from_dn(dn: str) -> str | None:

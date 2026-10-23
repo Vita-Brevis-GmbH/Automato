@@ -123,6 +123,22 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
             "Stattdessen ein eigenes Objekt nach Konvention verwenden (z. B. FT_https statt "
             "HTTPS); Standardobjekte des Herstellers lassen sich nicht umbenennen.",
         )
+    if ftype == "epg_assignment_conflict":
+        ips = _list(d.get("ips") or [], 4)
+        learned = _list(d.get("learned") or [], 3)
+        who = (
+            f"VM {_q(d['vm'])}"
+            if d.get("vm")
+            else f"Statischer Endpunkt der EPG {_q(d.get('configured'))}"
+        )
+        conf = d.get("configured") or "?"
+        return (
+            f"{who}: {ips} gehört laut {d.get('via') or 'Konfiguration'} zur EPG {conf}, das ACI "
+            f"hat sie in {learned} gelernt (VRF {d.get('vrf') or '?'}).",
+            "Automato ordnet nach der Konfiguration zu (Portgruppe bzw. statischer Endpunkt). "
+            "Prüfen, ob die VM an der richtigen Portgruppe hängt, die IP doppelt vergeben ist "
+            "oder der statische Endpunkt veraltet ist.",
+        )
     if ftype == "aci_scope_unpaired":
         scope = {"application-profile": "AP", "context": "VRF", "tenant": "Tenant"}.get(
             d.get("scope") or "", d.get("scope") or "?"

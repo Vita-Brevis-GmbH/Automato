@@ -7,6 +7,30 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.46.0 – 2026-10-23
+
+Konfiguration vor Gelerntem überall (R12, Entscheid des Anwenders). Migration `0047`; der
+Collector-Agent aktualisiert sich, danach APICs neu einlesen.
+
+- **Reihenfolge der Zuordnung IP → EPG** (`store/epg_locate.py`):
+  1. statischer Endpunkt (fvStCEp);
+  2. Portgruppe der VM (vCenter);
+  3. gelernter Endpunkt;
+  4. EPG-Subnetz, dann BD-Subnetz.
+  Bisher galt in der Weg-Suche zuerst der gelernte Endpunkt, und die Portgruppe der VM
+  zählte dort gar nicht.
+- **Weg-Suche:** Die EPG von Quelle bzw. Ziel folgt der Konfiguration und nennt die Herkunft,
+  z. B. „EPG TE/AP/EG_a (Portgruppe der VM vm-a)“.
+- **Regel-Liste (Suche nach einer IP):** Erfasst ein Contract die IP nur über ein gemeinsames
+  Subnetz, gehört sie nach der Konfiguration aber zu einer anderen EPG, ist er „nicht möglich“
+  mit Begründung.
+- **Neuer Befund „EPG: gelernt ≠ konfiguriert“** (ACI / VMware): Das ACI hat eine IP in einer
+  anderen EPG gelernt, als Portgruppe bzw. statischer Endpunkt vorgeben (gleiche VRF). Ein
+  Befund je VM bzw. EPG, mit den IPs.
+- **Collector:** liest statische Endpunkte (`fvStCEp`/`fvStIp`) und die Herkunft gelernter
+  Endpunkte (`fvCEp.lcC`: static, vmm, learned). Alles nur lesend, aus dem bereits
+  gelesenen Baum des Tenants.
+
 ## 0.45.1 – 2026-10-23
 
 Korrektur: Scope der ACI-Contracts im ganzen Modell (Hinweis des Anwenders). Ohne Migration.

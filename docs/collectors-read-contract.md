@@ -111,7 +111,7 @@ APIC-Benutzer aus dem Quellsystem, ADR 0009) → `GET /api/class/fvTenant.json` 
 (`infraRsAccPortP`, `infraNodeBlk`, `infraPortBlk`, `infraRsAccBaseGrp`, `infraAccBndlGrp` →
 Ports zu Policy-Gruppen/PC/vPC), `l1PhysIf` (Port-Status/Beschreibung) und `lldpAdjEp`/`cdpAdjEp`
 (Nachbarn) per `GET /api/class/<klasse>.json`. Aus den EPGs: `fvRsPathAtt` (statische Pfade,
-`encap` → VLAN, Modus) und `fvCEp.encap`; aus BD/EPG: `fvSubnet` + `fvRsCtx` → reale Subnetze mit VRF.
+`encap` → VLAN, Modus) und `fvCEp.encap`; Endpunkte aus `fvCEp`/`fvIp` (mit `lcC`: static, vmm, gelernt) und statische Endpunkte `fvStCEp`/`fvStIp` (0.46.0, Konfiguration vor Gelerntem); aus BD/EPG: `fvSubnet` + `fvRsCtx` → reale Subnetze mit VRF.
 
 **ACI-Regel-Rekonstruktion:** eine EPG↔EPG-Verbindung ergibt sich aus Provider
 (`fvRsProv`) + Consumer (`fvRsCons`) desselben `vzBrCP`; die Ports kommen aus den

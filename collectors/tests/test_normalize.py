@@ -238,7 +238,7 @@ def test_aci_parse_epgs_gelernte_endpunkte():
 
     epgs = {e["name"]: e for e in parse_epgs(fetch_mo_export())}
     eps = epgs["EG_web"]["endpoints"]
-    assert eps == [{"ip": "10.20.1.50", "mac": "00:50:56:AA:BB:CC"}]
+    assert eps == [{"ip": "10.20.1.50", "mac": "00:50:56:AA:BB:CC", "origin": "learned"}]
     assert epgs["EG_db"]["endpoints"] == []
 
 
@@ -439,7 +439,7 @@ def test_aci_mehrere_tenants_gleiche_namen_common_extern_vzany_interface():
     assert len([e for e in eps.values() if e["name"] == "EG_app"]) == 2  # nicht zusammengelegt
     web = eps["uni/tn-TE_a/ap-AP_100/epg-EG_web"]
     assert web["vrf"] == "VRF_a" and web["bd_subnets"] == ["10.1.0.1/24"]
-    assert web["endpoints"] == [{"ip": "10.1.0.10", "mac": "AA"}]
+    assert web["endpoints"] == [{"ip": "10.1.0.10", "mac": "AA", "origin": "learned"}]
     vzany = eps["uni/tn-TE_b/ctx-VRF_b/any"]
     assert vzany["kind"] == "vzany" and vzany["vrf"] == "VRF_b" and vzany["tenant"] == "TE_b"
 
@@ -837,3 +837,21 @@ def test_aci_scope_der_subnetze_externer_epgs():
         "10.20.0.0/24": "import-security,shared-rtctrl",
         "10.20.0.0/16": "export-rtctrl",
     }
+
+
+def test_aci_statische_und_vmm_endpunkte():
+    """0.46.0 (Konfiguration vor Gelerntem): statischer Endpunkt (fvStCEp/fvStIp) und
+    Lebenszyklus des gelernten (`lcC`: static, vmm, learned) - je IP die staerkste Herkunft."""
+    from collectors.cisco_aci.mo import parse_epgs
+
+    epg = _mo("fvAEPg", "EG_s", [
+        _mo("fvStCEp", mac="AA", ip="10.9.0.7", children=[_mo("fvStIp", addr="10.9.0.8")]),
+        _mo("fvCEp", mac="AA", ip="10.9.0.7", lcC="learned"),  # dieselbe IP: statisch bleibt
+        _mo("fvCEp", mac="BB", ip="10.9.0.5", lcC="learned,vmm"),
+        _mo("fvCEp", mac="CC", ip="10.9.0.6", lcC="learned"),
+    ])  # fmt: skip
+    export = [_mo("fvTenant", "TE", [_mo("fvAp", "AP", [epg])])]
+    (e,) = parse_epgs(export)
+    assert {x["ip"]: x["origin"] for x in e["endpoints"]} == {
+        "10.9.0.7": "static", "10.9.0.8": "static", "10.9.0.5": "vmm", "10.9.0.6": "learned",
+    }  # fmt: skip

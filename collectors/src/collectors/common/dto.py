@@ -41,6 +41,7 @@ class NormalizedRule(BaseModel):
 class NormalizedEpgEndpoint(BaseModel):
     ip: str
     mac: str | None = None
+    origin: str | None = None  # static (fvStCEp) | vmm | learned (fvCEp, 0.46.0)
 
 
 class NormalizedEpg(BaseModel):

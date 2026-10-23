@@ -317,10 +317,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
         Ein Klick auf „Policy n“ bzw. „Contract …“ öffnet die Regel.
     - **ACI-Contracts auf dem Weg (0.35.0):** Je ACI-VRF-Hop steht, wie das Fabric Quelle und
       Ziel zuordnet und welcher Contract entscheidet.
-      - Zuordnung: im Fabric die EPG (gelernter Endpunkt, EPG-Subnetz, BD-Subnetz mit genau
-        einer EPG, Server der EPG), sonst die externe EPG über das längste Subnetz mit
-        `import-security` (wie in der Doku, 0.28.0). Erfasst keine EPG die IP, verwirft das
-        Fabric den Verkehr.
+      - Zuordnung im Fabric – seit 0.46.0 **Konfiguration vor Gelerntem**: statischer
+        Endpunkt (fvStCEp), Portgruppe der VM (vCenter), dann gelernter Endpunkt bzw. Server
+        der EPG, EPG-Subnetz, BD-Subnetz mit genau einer EPG. Die Herkunft steht dabei („EPG
+        TE/AP/EG_a (Portgruppe der VM vm-a)“). Sonst die externe EPG über das längste
+        Subnetz mit `import-security` (wie in der Doku, 0.28.0). Erfasst keine EPG die IP,
+        verwirft das Fabric den Verkehr.
       - Gleiche EPG: ohne Contract erlaubt. Taboo-Contracts des Ziels sperren zuerst. Sonst
         erlaubt ein Contract mit der Quelle als Consumer und dem Ziel als Provider – direkt,
         über vzAny der VRF, eine ESG oder die Preferred Group – mit passendem Filter. Kein
@@ -500,7 +502,17 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       auch über den Switch. Mehrdeutig heisst keine EPG. Unter „Systeme“ steht je NIC
       „Portgruppe (VLAN) → EPG“, bei Zuordnung nur über das VLAN mit Hinweis.
     - *Vorgabe vor Gelerntem:* Für eine IP an einer NIC mit EPG gilt die EPG der Portgruppe,
-      nicht ein gelernter Endpunkt in einer anderen EPG.
+      nicht ein gelernter Endpunkt in einer anderen EPG. Seit 0.46.0 gilt das überall
+      (Weg-Suche, Regel-Liste, Verbindungen) und auch für statische Endpunkte (fvStCEp):
+      Reihenfolge statischer Endpunkt → Portgruppe der VM → gelernter Endpunkt → EPG-Subnetz
+      → BD-Subnetz. Erfasst ein Contract eine IP nur über ein gemeinsames Subnetz, gehört sie
+      aber nach der Konfiguration zu einer anderen EPG, ist er in der Regel-Liste für sie
+      „nicht möglich“ („10.1.0.5 gehört nach Portgruppe der VM vm-a zur EPG …“).
+    - *Befund „EPG: gelernt ≠ konfiguriert“* (Findings → ACI / VMware, 0.46.0): Das ACI hat
+      eine IP in einer anderen EPG gelernt, als die Portgruppe ihrer VM bzw. ein statischer
+      Endpunkt vorgibt (gleiche VRF). Je VM bzw. EPG ein Befund mit den IPs. Zu prüfen: VM an
+      der richtigen Portgruppe, IP doppelt vergeben, statischer Endpunkt veraltet. Gleiche IPs
+      in verschiedenen VRFs sind verschiedene Systeme und kein Befund.
     - *Hinweis Projektnummer:* Nennt der VM-Name (`app01-000-…`) ein anderes Projekt als das AP
       der EPG ihrer Portgruppe, steht ein Hinweis beim System. Die Zuordnung folgt der
       Portgruppe – zu prüfen ist dann die Portgruppe der VM im vCenter.
