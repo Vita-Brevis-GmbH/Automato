@@ -7,6 +7,12 @@
 #
 # Am Ende prueft deploy/aufbau.sh den Aufbau und die Verbindungen (nur Hinweis, kein Abbruch).
 #
+# Aktuell halten (0.43.0): Fremd-Images (Postgres, Redis, Keycloak, Caddy) und die Basis-Images
+# der eigenen holt jedes Update neu - innerhalb ihres Tags (Sicherheitskorrekturen, die
+# Hauptversion legt docker-compose.yml fest; abschalten mit AUTOMATO_PULL_IMAGES=0). Docker
+# selbst (Engine, Compose, containerd) mit AUTOMATO_DOCKER_UPDATE=1 in .env, sonst von Hand:
+# sudo deploy/aufbau.sh docker-update. Alte Image-Staende raeumt es danach auf.
+#
 # Die Sicherung macht deploy/backup/backup.sh (age-Empfaenger: AUTOMATO_BACKUP_AGE_RECIPIENT,
 # fuer den Rueckfall die Identitaet AUTOMATO_BACKUP_AGE_IDENTITY) - beide seit 0.42.0 auch aus
 # .env, einmal eingerichtet mit `deploy/aufbau.sh backup-schluessel`. Profile ueber
@@ -97,8 +103,22 @@ update() {
   if [ -n "$ref" ]; then git checkout --quiet --detach "$ref"; else git pull --quiet --ff-only; fi
   echo "    $prev_version ($prev_rev) -> $(version) ($(git rev-parse HEAD))"
 
-  echo "3/4 Images bauen und starten"
-  $COMPOSE "${PROFILES[@]}" build
+  echo "3/4 Images holen, bauen und starten"
+  if [ "${AUTOMATO_DOCKER_UPDATE:-}" = "1" ]; then
+    deploy/aufbau.sh docker-update || echo "HINWEIS: Docker nicht aktualisiert – weiter mit der bisherigen Version"
+  fi
+  if [ "${AUTOMATO_PULL_IMAGES:-1}" != "0" ]; then
+    # neuster Stand je Tag; eigene Images werden gebaut, nicht geholt
+    $COMPOSE "${PROFILES[@]}" pull --quiet --ignore-buildable 2>/dev/null ||
+      $COMPOSE "${PROFILES[@]}" pull --quiet --ignore-pull-failures ||
+      echo "HINWEIS: Images nicht geholt – weiter mit den vorhandenen"
+    $COMPOSE "${PROFILES[@]}" build --pull || {
+      echo "HINWEIS: Basis-Images nicht erreichbar – Bau mit den vorhandenen"
+      $COMPOSE "${PROFILES[@]}" build
+    }
+  else
+    $COMPOSE "${PROFILES[@]}" build
+  fi
   $COMPOSE "${PROFILES[@]}" up -d
 
   echo "4/4 Health"
@@ -108,12 +128,14 @@ update() {
     exit 1
   fi
   echo "Update fertig: Version $(version). Rueckfall bei Bedarf: deploy/update.sh --rollback"
+  # alte, nicht mehr benutzte Image-Staende (ohne Tag) freigeben - sonst fuellt sich die Platte
+  docker image prune -f >/dev/null 2>&1 || true
   # Aufbau und Verbindungen pruefen (0.40.0) - meldet, bricht das Update aber nicht ab
   deploy/aufbau.sh pruefen || echo "HINWEIS: Die Prüfung meldet Fehler (oben) – Abhilfe dort bzw. System → Verbindungen."
 }
 
 case "${1:-}" in
   --rollback) rollback ;;
-  -h | --help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h | --help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' ;;
   *) update "${1:-}" ;;
 esac

@@ -11,6 +11,9 @@
 #                                         setzen und warten, bis sie antwortet (0.41.0)
 #   deploy/aufbau.sh backup-schluessel    age-Schluessel fuer die Sicherung anlegen bzw. den
 #                                         vorhandenen nehmen und in .env eintragen (0.42.0)
+#   deploy/aufbau.sh docker-update        Docker (Engine, Compose, containerd) per apt auf den
+#                                         neusten Stand, danach die Container starten (0.43.0);
+#                                         bei jedem Update mit AUTOMATO_DOCKER_UPDATE=1 in .env
 #
 # Die Verbindungen prueft der Orchestrator selbst (`automato check-connections`, wie System ->
 # Verbindungen im UI): Datenbank, Redis, Keycloak, jedes zentral gelesene Quellsystem - auf
@@ -24,7 +27,8 @@
 # antwortet die Login-Seite. Befund 0.40.0: NetBox war nach einem Neustart aus, Automato nicht.
 #
 # Exit 0 = alles erreichbar, 1 = mindestens ein Fehler. Aendert nur `firewall --anwenden`,
-# `netbox-start` und `backup-schluessel` etwas. Einstellungen auch aus .env (deploy/env.sh).
+# `netbox-start`, `backup-schluessel` und `docker-update` etwas. Einstellungen auch aus .env
+# (deploy/env.sh).
 # Profile ueber AUTOMATO_COMPOSE_PROFILES (Standard "--profile core"), wie deploy/update.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -59,6 +63,118 @@ werkzeuge() {
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     if systemctl is-enabled --quiet docker 2>/dev/null; then ok "Docker startet beim Booten"
     else warn "Docker startet nicht beim Booten: sudo systemctl enable docker containerd"; fi
+  fi
+}
+
+# --- Docker selbst aktuell halten (0.43.0) -------------------------------------------------
+# Pakete aus dem Docker-Repository (download.docker.com) bzw. von Ubuntu (docker.io …); es
+# zaehlen nur die installierten. Der Stand der Paketliste ist der vom letzten `apt-get update`.
+DOCKER_PAKETE="docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin \
+docker-ce-rootless-extras docker.io docker-compose-v2 docker-buildx containerd runc"
+APT_CACHE=${APT_CACHE:-apt-cache}
+APT_GET=${APT_GET:-apt-get}
+SUDO=${SUDO-sudo} # leer = ohne sudo
+
+docker_pakete() {  # je installiertem Paket: name|installiert|verfuegbar
+  command -v "$APT_CACHE" >/dev/null 2>&1 || return 0
+  # shellcheck disable=SC2086
+  LC_ALL=C "$APT_CACHE" policy $DOCKER_PAKETE 2>/dev/null | awk '
+    /^[^ ].*:$/ { p = substr($0, 1, length($0) - 1); i = ""; next }
+    /^  Installed:/ { i = $2; next }
+    /^  Candidate:/ { if (i != "" && i != "(none)") print p "|" i "|" $2 }' || true
+}
+
+docker_aus_snap() { command -v snap >/dev/null 2>&1 && snap list docker >/dev/null 2>&1; }
+
+paketliste_alt() {  # Datum der Paketliste, wenn sie aelter als 7 Tage ist
+  local f t
+  for f in /var/lib/apt/periodic/update-success-stamp /var/cache/apt/pkgcache.bin; do
+    [ -e "$f" ] || continue
+    t=$(stat -c %Y "$f" 2>/dev/null) || continue
+    if [ $(($(date +%s) - t)) -gt 604800 ]; then date -d "@$t" +%F; fi
+    return 0
+  done
+  return 0
+}
+
+docker_stand() {
+  titel "Docker aktuell?"
+  if docker_aus_snap; then
+    info "Docker aus snap – snap aktualisiert ihn selbst (snap refresh docker)"
+    return
+  fi
+  local zeilen
+  zeilen=$(docker_pakete)
+  if [ -z "$zeilen" ]; then
+    info "keine Docker-Pakete über apt gefunden – Docker von Hand aktuell halten"
+    return
+  fi
+  local p inst kand offen=""
+  while IFS='|' read -r p inst kand; do
+    if [ "$kand" = "(none)" ] || [ "$inst" = "$kand" ]; then
+      ok "$p $inst"
+    else
+      warn "$p $inst – verfügbar: $kand"
+      offen="$offen $p"
+    fi
+  done <<<"$zeilen"
+  if grep -q '^docker\.io|' <<<"$zeilen"; then
+    info "Ubuntu-Paket docker.io – neuere Versionen bringt das Docker-Repository (download.docker.com)"
+  fi
+  local alt
+  alt=$(paketliste_alt)
+  [ -z "$alt" ] || info "Paketliste vom $alt – sudo deploy/aufbau.sh docker-update holt sie neu"
+  if [ -n "$offen" ]; then
+    info "Aktualisieren: sudo deploy/aufbau.sh docker-update (der Docker-Dienst startet neu, die"
+    info "Container danach auch). Bei jedem Update mit: AUTOMATO_DOCKER_UPDATE=1 in .env"
+  fi
+}
+
+cmd_docker_update() {
+  titel "Docker aktualisieren"
+  if docker_aus_snap; then
+    info "Docker aus snap: sudo snap refresh docker"
+    return 0
+  fi
+  command -v "$APT_GET" >/dev/null 2>&1 || { fehler "apt-get fehlt – Docker von Hand aktualisieren"; return 1; }
+  local als_root=()
+  if [ "$(id -u)" -ne 0 ] && [ -n "$SUDO" ]; then als_root=("$SUDO"); fi
+  if ! "${als_root[@]}" "$APT_GET" update -qq >/dev/null; then
+    fehler "apt-get update fehlgeschlagen (Netz bzw. Paketquellen prüfen)"
+    return 1
+  fi
+  local pakete=() p inst kand
+  while IFS='|' read -r p inst kand; do
+    if [ -n "$p" ] && [ "$kand" != "(none)" ] && [ "$inst" != "$kand" ]; then pakete+=("$p"); fi
+  done < <(docker_pakete)
+  local vorher
+  vorher=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "?")
+  if [ "${#pakete[@]}" -eq 0 ]; then
+    ok "Docker $vorher ist aktuell"
+    return 0
+  fi
+  info "aktualisiere ${pakete[*]} – der Docker-Dienst startet neu, die Container danach auch"
+  # nur diese Pakete, eigene Konfiguration (/etc/docker/daemon.json) behalten
+  if ! "${als_root[@]}" env DEBIAN_FRONTEND=noninteractive "$APT_GET" install -y -qq \
+    --only-upgrade -o Dpkg::Options::=--force-confold "${pakete[@]}" >/dev/null; then
+    fehler "apt-get install fehlgeschlagen (Meldung oben)"
+    return 1
+  fi
+  local bis=$((SECONDS + 120))
+  until docker info >/dev/null 2>&1; do
+    if [ "$SECONDS" -ge "$bis" ]; then
+      fehler "Docker-Dienst antwortet nach dem Update nicht: systemctl status docker"
+      return 1
+    fi
+    sleep 2
+  done
+  ok "Docker $vorher → $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "?")"
+  # die Neustart-Regeln bringen die Container zurueck - sicherheitshalber starten
+  if $COMPOSE "${PROFILES[@]}" up -d >/dev/null 2>&1; then ok "Automato-Container laufen"
+  else warn "Automato-Container nicht gestartet: $COMPOSE ${PROFILES[*]} up -d"; fi
+  if [ -d "$NETBOX_DIR" ]; then
+    if dc_netbox up -d >/dev/null 2>&1; then ok "NetBox-Container laufen"
+    else warn "NetBox nicht gestartet: deploy/aufbau.sh netbox-start"; fi
   fi
 }
 
@@ -383,6 +499,7 @@ cmd_backup_schluessel() {
 
 cmd_pruefen() {
   werkzeuge
+  docker_stand
   konfiguration
   container
   netbox_stack
@@ -412,6 +529,7 @@ case "${1:-pruefen}" in
   status) cmd_status ;;
   netbox-start) cmd_netbox_start ;;
   backup-schluessel) cmd_backup_schluessel ;;
-  -h | --help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//' ;;
-  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start, backup-schluessel)" >&2; exit 2 ;;
+  docker-update) cmd_docker_update ;;
+  -h | --help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' ;;
+  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start, backup-schluessel, docker-update)" >&2; exit 2 ;;
 esac

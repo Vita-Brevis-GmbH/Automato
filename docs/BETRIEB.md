@@ -658,7 +658,8 @@ an (`deploy/agent-gateway`, Port 8443).
   Fusszeile der Web-UI), Collector-Agent, SoT-Gateway, Web-UI. Neue Version:
   `python3 scripts/version.py set X.Y.Z`, Änderungen in `CHANGELOG.md`.
 - **Orchestrator aktualisieren:** `deploy/update.sh` (bzw. `deploy/update.sh <tag>`):
-  verschlüsselte Sicherung → Code holen → Images bauen → starten → `/health`. Migrationen
+  verschlüsselte Sicherung → Code holen → (Docker aktualisieren) → Images holen und bauen →
+  starten → `/health`. Migrationen
   laufen beim Start (`alembic upgrade head`). Schlägt etwas fehl: `deploy/update.sh --rollback`
   setzt Code **und** Datenbank auf den Stand vor dem Update zurück (ADR 0013). Am Ende prüft
   `deploy/aufbau.sh pruefen` den Aufbau (nur Hinweis, kein Abbruch).
@@ -686,6 +687,29 @@ an (`deploy/agent-gateway`, Port 8443).
     Neustart-Regel, und – bei einer NetBox auf derselben VM (`source-of-truth/netbox/
     netbox-docker`, sonst `AUTOMATO_NETBOX_DIR`) – laufen ihre Container und antwortet die
     Login-Seite. `deploy/aufbau.sh netbox-start` startet sie und setzt die Neustart-Regel.
+- **Docker und Images aktuell halten (0.43.0):**
+  - **Images:** Jedes `deploy/update.sh` holt die Fremd-Images (Postgres, Redis, Keycloak,
+    Caddy) und die Basis-Images der eigenen neu (`pull`, `build --pull`). Es nimmt den
+    neusten Stand im festen Tag (`postgres:16-alpine`, `keycloak:26.0`), also
+    Sicherheitskorrekturen. Ein Wechsel der Hauptversion bleibt eine Änderung an
+    `docker-compose.yml`. Danach räumt es alte Image-Stände auf (`docker image prune`).
+    Abschalten mit `AUTOMATO_PULL_IMAGES=0` in `.env`.
+  - **Docker selbst** (Engine, Compose-Plugin, containerd):
+    - `pruefen` zeigt im Abschnitt „Docker aktuell?“ je installiertem Paket die Version und
+      die neuere aus der Paketliste.
+    - `sudo deploy/aufbau.sh docker-update` hebt nur die installierten Docker-Pakete an
+      (`apt-get install --only-upgrade`, `/etc/docker/daemon.json` bleibt). Der Docker-Dienst
+      startet neu. Die Container kommen über ihre Neustart-Regel zurück, das Skript startet
+      Automato und die lokale NetBox sicherheitshalber.
+    - Bei jedem Update mit: `AUTOMATO_DOCKER_UPDATE=1` in `.env`. `deploy/update.sh`
+      aktualisiert Docker dann nach der Sicherung und vor dem Bau.
+    - Docker aus snap aktualisiert snap selbst. Das Ubuntu-Paket `docker.io` hinkt hinterher;
+      aktuelle Versionen bringt das Docker-Repository (`download.docker.com`).
+  - **Nicht automatisch** über `unattended-upgrades`: Dort startet der Docker-Dienst zu einer
+    beliebigen Zeit neu, mitten in einem Lauf. Über `deploy/update.sh` geschieht es nach einer
+    Sicherung und mit Health-Prüfung danach.
+  - Die NetBox-Images (`netbox-docker`) aktualisiert Automato nicht. Ein NetBox-Update bringt
+    Migrationen mit; vorher die NetBox-Datenbank sichern (Anleitung von netbox-docker).
 - **Sicherung:** täglich `deploy/backup/backup.sh` (age-verschlüsselt: Datenbank, Schlüssel der
   Zugangsdaten, Agent-Signatur), Wiederherstellung `deploy/backup/restore.sh` – Details und
   Verschlüsselung at rest in `deploy/backup/README.md`.

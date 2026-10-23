@@ -7,6 +7,24 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.43.0 – 2026-10-23
+
+Docker und Images aktuell halten (Anwender: „wie kann man den Docker gleich mit updaten,
+damit er immer aktuell ist?“). Ohne Migration.
+
+- **Images:** `deploy/update.sh` holt die Fremd-Images (Postgres, Redis, Keycloak, Caddy)
+  und die Basis-Images der eigenen bei jedem Update neu (`pull --ignore-buildable`,
+  `build --pull`). Es nimmt den neusten Stand im festen Tag, die Hauptversion bleibt in
+  `docker-compose.yml`. Alte Image-Stände räumt es danach auf. Abschalten mit
+  `AUTOMATO_PULL_IMAGES=0`; ist die Registry nicht erreichbar, baut es mit den vorhandenen.
+- **Docker selbst:** `deploy/aufbau.sh pruefen` zeigt je installiertem Docker-Paket die
+  Version und eine neuere aus der Paketliste. `deploy/aufbau.sh docker-update` hebt nur
+  diese Pakete an und startet danach Automato und die lokale NetBox. Mit
+  `AUTOMATO_DOCKER_UPDATE=1` in `.env` macht `deploy/update.sh` das bei jedem Update,
+  nach der Sicherung. snap bzw. das Ubuntu-Paket `docker.io` werden erkannt.
+- `--help` beider Skripte zeigt den ganzen Kopf. Doku (BETRIEB), Test mit Ersatz für
+  apt-cache/apt-get/docker.
+
 ## 0.42.3 – 2026-10-23
 
 Korrektur der Applikations-Doku (Befund: im Projekt eines Tenants standen Contracts anderer

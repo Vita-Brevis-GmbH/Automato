@@ -184,6 +184,51 @@ def test_ungueltige_compose_konfiguration_mit_hinweis_auf_override(tmp_path):
     assert 'Automato-Projekt ungültig: service "netbox" has neither an image' in out.stdout
 
 
+def _apt(tmp_path) -> tuple[dict, Path]:
+    """Ersatz fuer apt-cache, apt-get und docker (0.43.0): docker-ce mit neuerer Version in der
+    Paketliste, containerd.io aktuell, docker.io nicht installiert. apt-get schreibt seine
+    Aufrufe ins Log; `install` hebt die Engine-Version an."""
+    bin_dir = tmp_path / "aptbin"
+    bin_dir.mkdir()
+    log, engine = tmp_path / "apt.log", tmp_path / "engine"
+    engine.write_text("27.3.1\n")
+    _stub(bin_dir / "apt-cache", "cat <<'X'\n"
+          "docker-ce:\n  Installed: 5:27.3.1-1~ubuntu.24.04~noble\n"
+          "  Candidate: 5:27.4.0-1~ubuntu.24.04~noble\n  Version table:\n"
+          "containerd.io:\n  Installed: 1.7.22-1\n  Candidate: 1.7.22-1\n"
+          "docker.io:\n  Installed: (none)\n  Candidate: 24.0.7-0ubuntu4\nX\n")  # fmt: skip
+    _stub(bin_dir / "apt-get", f'echo "$*" >> {log}\n'
+          f'case "$*" in *install*) echo 27.4.0 > {engine} ;; esac\n')  # fmt: skip
+    _stub(bin_dir / "docker", f'case "$1" in version) cat {engine} ;;\n'
+          "  inspect) echo unless-stopped ;; *) exit 0 ;; esac\n")  # fmt: skip
+    env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "APT_CACHE": str(bin_dir / "apt-cache"),
+           "APT_GET": str(bin_dir / "apt-get"), "SUDO": ""}  # fmt: skip
+    return env, log
+
+
+def test_docker_stand_und_docker_update(tmp_path):
+    """Anwender: Docker gleich mit aktualisieren, damit er immer aktuell ist - pruefen zeigt,
+    was apt neuer kennt, docker-update hebt nur die installierten Docker-Pakete an."""
+    env, log = _apt(tmp_path)
+    out = _run(tmp_path, "pruefen", **env)
+    text = out.stdout
+    assert "Docker aktuell?" in text
+    assert "docker-ce 5:27.3.1-1~ubuntu.24.04~noble – verfügbar: 5:27.4.0-1" in text
+    assert "OK\x1b[0m      containerd.io 1.7.22-1" in text
+    assert "docker.io" not in text  # nicht installiert
+    assert "sudo deploy/aufbau.sh docker-update" in text and "AUTOMATO_DOCKER_UPDATE=1" in text
+
+    out = _run(tmp_path, "docker-update", **env)
+    assert out.returncode == 0, out.stdout + out.stderr
+    calls = log.read_text().splitlines()
+    assert calls == [
+        "update -qq",
+        "install -y -qq --only-upgrade -o Dpkg::Options::=--force-confold docker-ce",
+    ]
+    assert "Docker 27.3.1 → 27.4.0" in out.stdout
+    assert "Automato-Container laufen" in out.stdout
+
+
 def test_container_ausserhalb_der_update_profile(tmp_path):
     """0.42.2: der Collector lief, war aber nicht in AUTOMATO_COMPOSE_PROFILES - update.sh
     baute und startete ihn nie neu (alter Stand, ohne Neustart-Regel)."""
