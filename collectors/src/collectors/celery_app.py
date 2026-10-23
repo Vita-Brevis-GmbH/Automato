@@ -19,3 +19,5 @@ app = Celery(
     ],
 )
 app.conf.task_default_queue = "collectors"
+# TLS intern (0.49.0): rediss:// mit Pruefung gegen die interne CA
+app.conf.broker_use_ssl = get_settings().broker_ssl()

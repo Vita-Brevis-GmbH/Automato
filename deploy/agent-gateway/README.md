@@ -56,6 +56,10 @@ Der zentrale Worker (internes Token) spricht weiter direkt mit dem Orchestrator.
 
 4. **Netz:** Port 8000 des Orchestrators nicht in die Agent-Netze freigeben – nur 8443.
 
+   Mit **TLS intern** (0.49.0, ADR 0023, `deploy/aufbau.sh tls-intern`) spricht das Gateway den
+   Orchestrator per HTTPS an und prüft ihn gegen die interne CA – für die Agenten ändert sich
+   nichts (sie pinnen weiter die Agent-CA bzw. das Gateway-Zertifikat).
+
 ## Prüfen
 
 - ohne Client-Zertifikat: TLS-Abbruch („certificate required“),

@@ -18,7 +18,7 @@ gehärtet wird und was **bewusst vertagt** ist (mit Meilenstein bzw. Folge-ADR).
 |---|---|---|---|
 | 1 | Least Privilege (Worker/Collector) | ✓ Design | Collectors haben keinen DB-Zugriff, liefern nur über die interne API. **Bedingung:** die Zielsystem-Accounts (FortiGate/ACI/NetBox) müssen read-only sein – wird mit dem Lab (M6) durchgesetzt und geprüft. |
 | 2 | Strikte Kommunikationswege | ✓ | Web-UI → Orchestrator → Queue → Collector → interne API. Kein Bypass. |
-| 3 | Verschlüsselung überall (auch intern, mTLS) | ✗ offen | Intern heute HTTP/plain (Compose). **Vertagt** (Folge-ADR „mTLS/Zertifikate", vor Produktion). Für das isolierte Lab akzeptiert, hier dokumentiert. |
+| 3 | Verschlüsselung überall (auch intern, mTLS) | ✓ (0.49.0) | Agenten nur über das mTLS-Gateway (0.12.0); **intern seit 0.49.0 TLS mit eigener CA** (ADR 0023, Schalter `AUTOMATO_INTERNAL_TLS=on` über `deploy/aufbau.sh tls-intern`): Postgres nur `hostssl`/`verify-full`, Redis nur TLS, Orchestrator und Web-UI per HTTPS, alle Gegenstellen gegen die CA geprüft. Bis 0.48 intern HTTP/plain. |
 | 4 | Secrets nie im Code/Repo | ⚠ teilweise | gitleaks (CI + pre-commit), `.env` nie committet. **Befund:** `AUTOMATO_INTERNAL_API_TOKEN` hat einen Default `dev-only-token`, der in Produktion ein Footgun wäre. **Härtung jetzt:** Fail-closed – ausserhalb `dev` wird der Default-Token abgelehnt (Startup-Check). Ziel-Credentials via Ansible Vault ab M6; HashiCorp Vault später (Folge-ADR „Secrets-Backend"). |
 | 5 | Lückenloses Audit-Log | ✓ / ⚠ | Collector-Läufe und Finding-Statusänderungen werden auditiert. **Lücke:** lesender UI-Zugriff wird erst mit AuthN/RBAC protokollierbar – siehe #6. |
 | 6 | RBAC | ✗ offen (**wichtigster Punkt**) | Noch keine AuthN/AuthZ. Durch die Mandantenfähigkeit ist **Tenant-Isolation** sicherheitskritisch (Risiko R13). **Entscheid:** (a) `tenant_id`-Scoping ist ab jetzt in **jeder** Store-Query Pflicht; (b) RBAC-Rollenmodell + Tenant-Scoping als Folge-ADR „RBAC", umgesetzt **bevor** das UI echte Daten exponiert / vor Produktion. Für den Lab-Durchstich (ein Operator) akzeptiert. |
@@ -35,7 +35,8 @@ bewusst vertagt"):
 - **ADR (geplant) RBAC-Rollenmodell:** Rollen, Tenant-Scoping, read-access-Audit.
   Auslöser: vor UI-Exposition realer Daten.
 - **ADR (geplant) Netzwerksegmentierung:** Orchestrator/Worker/Redis/Zielsysteme.
-- **ADR (geplant) mTLS/Zertifikatsverwaltung:** interne Service-Kommunikation.
+- **ADR (geplant) mTLS/Zertifikatsverwaltung:** interne Service-Kommunikation – umgesetzt als
+  ADR 0023 (TLS intern mit eigener CA, 0.49.0).
 
 Diese sind bewusst **nicht** jetzt entschieden (kein Nutzen ohne Lab/Produktion, R6:
 kein Vorratsbau), aber terminiert.

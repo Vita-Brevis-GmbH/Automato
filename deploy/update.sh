@@ -27,13 +27,13 @@ cd "$(dirname "$0")/.."
 
 COMPOSE=${COMPOSE:-docker compose}
 read -r -a PROFILES <<<"${AUTOMATO_COMPOSE_PROFILES:---profile core}"
-HEALTH_URL=${AUTOMATO_HEALTH_URL:-http://127.0.0.1:8000/health}
+HEALTH_URL=${AUTOMATO_HEALTH_URL:-$(standard_health_url)}
 BACKUP_DIR=${AUTOMATO_BACKUP_DIR:-/var/backups/automato}
 STATE=.automato-update # letzter Update-Stand (gitignored)
 
 health() {
   for _ in $(seq 1 60); do
-    if curl -fsS "$HEALTH_URL" 2>/dev/null | grep -q '"status":"ok"'; then return 0; fi
+    if health_curl -fsS "$HEALTH_URL" 2>/dev/null | grep -q '"status":"ok"'; then return 0; fi
     sleep 2
   done
   return 1

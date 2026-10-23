@@ -90,6 +90,12 @@ class Settings(BaseSettings):
     db_app_role: str = ""
     db_app_password: str = ""
 
+    # TLS intern (0.49.0, ADR 0023): Verbindungen zwischen den Containern verschluesselt und
+    # gegen die interne CA geprueft (app.tls); Zertifikate je Dienst in diesem Ordner
+    # (`deploy/aufbau.sh tls-intern`). Aus = wie bis 0.48 (Klartext im Compose-Netz).
+    internal_tls: bool = False
+    internal_tls_dir: str = "/etc/automato/tls"
+
     # Agent-Paket fuer den Download im UI (Wheel + Windows-Skripte, ADR 0008); im Image von
     # der Dockerfile-Stage "agent-package" befuellt.
     agent_package_dir: str = "/workspace/agent-package"

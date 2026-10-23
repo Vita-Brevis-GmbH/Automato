@@ -6,12 +6,17 @@ from functools import lru_cache
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app import tls
 from app.config import get_settings
 
 
 @lru_cache
 def get_engine():
-    return create_engine(get_settings().database_url, pool_pre_ping=True)
+    settings = get_settings()
+    # TLS intern (0.49.0): verify-full gegen die interne CA
+    return create_engine(
+        settings.database_url, pool_pre_ping=True, connect_args=tls.db_connect_args(settings)
+    )
 
 
 @lru_cache

@@ -17,6 +17,10 @@
 #   deploy/aufbau.sh db-rollen [--neu]    getrennte DB-Rollen (0.48.0): App-Rolle ohne DDL mit
 #                                         Zufalls-Passwort in .env, Container neu starten; --neu
 #                                         = neues Passwort
+#   deploy/aufbau.sh tls-intern [--erneuern]  TLS intern (0.49.0): eigene CA und Zertifikate je
+#                                         Dienst (deploy/tls/pki), AUTOMATO_INTERNAL_TLS=on in
+#                                         .env, Container neu starten; --erneuern = Zertifikate
+#                                         neu ausstellen (CA bleibt)
 #
 # Die Verbindungen prueft der Orchestrator selbst (`automato check-connections`, wie System ->
 # Verbindungen im UI): Datenbank, Redis, Keycloak, jedes zentral gelesene Quellsystem - auf
@@ -30,7 +34,7 @@
 # antwortet die Login-Seite. Befund 0.40.0: NetBox war nach einem Neustart aus, Automato nicht.
 #
 # Exit 0 = alles erreichbar, 1 = mindestens ein Fehler. Aendert nur `firewall --anwenden`,
-# `netbox-start`, `backup-schluessel`, `docker-update` und `db-rollen` etwas. Einstellungen auch aus .env
+# `netbox-start`, `backup-schluessel`, `docker-update`, `db-rollen` und `tls-intern` etwas. Einstellungen auch aus .env
 # (deploy/env.sh).
 # Profile ueber AUTOMATO_COMPOSE_PROFILES (Standard "--profile core"), wie deploy/update.sh.
 set -euo pipefail
@@ -39,10 +43,11 @@ cd "$(dirname "$0")/.."
 
 COMPOSE=${COMPOSE:-docker compose}
 read -r -a PROFILES <<<"${AUTOMATO_COMPOSE_PROFILES:---profile core}"
-HEALTH_URL=${AUTOMATO_HEALTH_URL:-http://127.0.0.1:8000/health}
+HEALTH_URL=${AUTOMATO_HEALTH_URL:-$(standard_health_url)}
 NETBOX_DIR=${AUTOMATO_NETBOX_DIR:-source-of-truth/netbox/netbox-docker}
 NETBOX_COMPOSE=${NETBOX_COMPOSE:-docker compose}
 NETBOX_WAIT=${AUTOMATO_NETBOX_WAIT:-300} # Sekunden bis NetBox antwortet (erster Start dauert)
+TLS_WAIT=${AUTOMATO_TLS_WAIT:-90} # Sekunden bis der Orchestrator nach tls-intern antwortet
 
 FEHLER=0
 ok() { printf '  \033[32mOK\033[0m      %s\n' "$*"; }
@@ -331,7 +336,7 @@ cmd_netbox_start() {
 health() {
   titel "Orchestrator"
   local antwort
-  if antwort=$(curl -fsS -m 5 "$HEALTH_URL" 2>/dev/null) && grep -q '"status":"ok"' <<<"$antwort"; then
+  if antwort=$(health_curl -fsS -m 5 "$HEALTH_URL" 2>/dev/null) && grep -q '"status":"ok"' <<<"$antwort"; then
     ok "$HEALTH_URL antwortet (Version $(cat VERSION 2>/dev/null || echo ?))"
   else
     fehler "$HEALTH_URL antwortet nicht mit ok – Logs: $COMPOSE logs --tail 50 orchestrator"
@@ -540,12 +545,68 @@ cmd_db_rollen() {
     fehler "Start fehlgeschlagen – Logs: $COMPOSE logs --tail 50 migrate orchestrator"; return 1
   fi
   $COMPOSE "${PROFILES[@]}" logs --no-log-prefix --tail 10 migrate 2>/dev/null | grep -E '^(OK|INFO|FEHLER)' || true
-  if curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1 || { sleep 5 && curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1; }; then
+  if health_curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1 || { sleep 5 && health_curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1; }; then
     ok "Orchestrator antwortet"
   else
     warn "Orchestrator antwortet noch nicht – deploy/aufbau.sh status"
   fi
   info "Prüfen: System → Verbindungen (Datenbank: Rolle ohne DDL) bzw. deploy/aufbau.sh pruefen"
+}
+
+# --- TLS intern (0.49.0) ----------------------------------------------------------------
+tls_intern() {
+  titel "TLS intern"
+  if [ "${AUTOMATO_INTERNAL_TLS:-off}" != "on" ]; then
+    warn "Verbindungen zwischen den Containern unverschlüsselt (Datenbank, Redis, Orchestrator)"
+    info "Einschalten: deploy/aufbau.sh tls-intern – eigene CA, Postgres/Redis nur mit TLS, HTTPS intern"
+    return
+  fi
+  local crt="$TLS_PKI/orchestrator/server.crt"
+  [ -r "$crt" ] || { fehler "eingeschaltet, aber kein Zertifikat ($crt) – deploy/aufbau.sh tls-intern"; return; }
+  command -v openssl >/dev/null 2>&1 || { ok "eingeschaltet (Ablauf ungeprüft: openssl fehlt)"; return; }
+  local bis tage
+  bis=$(openssl x509 -enddate -noout -in "$crt" 2>/dev/null | cut -d= -f2)
+  tage=$(( ($(date -d "$bis" +%s 2>/dev/null || date +%s) - $(date +%s)) / 86400 ))
+  if [ "$tage" -lt 0 ]; then fehler "Zertifikate abgelaufen ($bis) – deploy/aufbau.sh tls-intern --erneuern"
+  elif [ "$tage" -lt 30 ]; then warn "Zertifikate laufen in $tage Tagen ab – deploy/aufbau.sh tls-intern --erneuern"
+  else ok "eingeschaltet, Zertifikate noch $tage Tage gültig (bis $bis)"; fi
+}
+
+cmd_tls_intern() {
+  titel "TLS intern (eigene CA)"
+  local erneuern=() namen=() n
+  [ "${1:-}" = "--erneuern" ] && erneuern=(--renew)
+  # Adressen der VM: Agenten direkt auf :8000 bzw. der Browser direkt auf :5173
+  namen+=("$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)")
+  for n in $(hostname -I 2>/dev/null || true) ${AUTOMATO_AGENT_GATEWAY_HOST:-} ${AUTOMATO_UI_HOST:-}; do namen+=("$n"); done
+  local args=()
+  for n in "${namen[@]}"; do [ -n "$n" ] && args+=(--name "$n"); done
+  mkdir -p "$TLS_PKI"
+  local ablage
+  ablage=$(cd "$TLS_PKI" && pwd)
+  # als root im Image des Orchestrators: Schluessel gehoeren dem Dienstbenutzer, die CA bleibt
+  # in pki/ca (in keinem Container)
+  if ! $COMPOSE "${PROFILES[@]}" run --rm --no-deps --user root -v "$ablage:/pki" migrate \
+    automato tls-init --dir /pki "${args[@]}" "${erneuern[@]}"; then
+    fehler "Zertifikate nicht ausgestellt – Image bauen ($COMPOSE build migrate), dann erneut"; return 1
+  fi
+  setze_env AUTOMATO_INTERNAL_TLS on
+  export AUTOMATO_INTERNAL_TLS=on
+  HEALTH_URL=${AUTOMATO_HEALTH_URL:-$(standard_health_url)}
+  ok "in $ENV_DATEI eingetragen: AUTOMATO_INTERNAL_TLS=on"
+  info "Container neu starten: Postgres und Redis nur noch mit TLS, Orchestrator und Web-UI per HTTPS"
+  if ! $COMPOSE "${PROFILES[@]}" up -d --force-recreate; then
+    fehler "Start fehlgeschlagen – Logs: $COMPOSE logs --tail 50 postgres redis migrate orchestrator"; return 1
+  fi
+  local bis=$((SECONDS + TLS_WAIT))
+  while [ "$SECONDS" -lt "$bis" ] && ! health_curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1; do
+    sleep 2
+  done
+  if health_curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1; then ok "Orchestrator antwortet per HTTPS ($HEALTH_URL)"
+  else warn "Orchestrator antwortet noch nicht – deploy/aufbau.sh status"; fi
+  info "Agenten direkt auf Port 8000: URL https://<VM>:8000 und AUTOMATO_ORCHESTRATOR_CA_BUNDLE ="
+  info "  $TLS_PKI/client/ca.crt auf die Station kopieren – über das Agent-Gateway ändert sich nichts."
+  info "Web-UI direkt auf :5173 jetzt per https (interne CA); über den Proxy (:443) wie bisher."
 }
 
 cmd_pruefen() {
@@ -559,6 +620,7 @@ cmd_pruefen() {
   firewall_pruefen
   sicherung
   db_rollen
+  tls_intern
   echo
   if [ "$FEHLER" -eq 0 ]; then
     printf '\033[1mAufbau in Ordnung.\033[0m\n'
@@ -583,6 +645,7 @@ case "${1:-pruefen}" in
   backup-schluessel) cmd_backup_schluessel ;;
   docker-update) cmd_docker_update ;;
   db-rollen) shift; cmd_db_rollen "${1:-}" ;;
+  tls-intern) shift; cmd_tls_intern "${1:-}" ;;
   -h | --help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' ;;
-  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start, backup-schluessel, docker-update, db-rollen [--neu])" >&2; exit 2 ;;
+  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start, backup-schluessel, docker-update, db-rollen [--neu], tls-intern [--erneuern])" >&2; exit 2 ;;
 esac

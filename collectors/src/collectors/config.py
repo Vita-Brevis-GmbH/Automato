@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,6 +35,35 @@ class Settings(BaseSettings):
     aci_password: str = ""
     aci_verify_tls: bool = True
     aci_tenants: str = ""  # kommagetrennt, leer = alle ausser infra/mgmt
+
+    # TLS intern (0.49.0, ADR 0023) - nur der zentrale Worker im Compose-Netz: Orchestrator per
+    # HTTPS und Redis per rediss://, beide gegen die interne CA geprueft. Agenten nutzen
+    # weiter orchestrator_url/_ca_bundle (bzw. das Agent-Gateway).
+    internal_tls: bool = False
+    internal_tls_dir: str = "/etc/automato/tls"
+
+    @model_validator(mode="after")
+    def _internal_tls(self) -> "Settings":
+        if not self.internal_tls:
+            return self
+        if self.orchestrator_url.startswith("http://"):
+            self.orchestrator_url = "https://" + self.orchestrator_url.removeprefix("http://")
+        if self.redis_url.startswith("redis://"):
+            self.redis_url = "rediss://" + self.redis_url.removeprefix("redis://")
+        if not self.orchestrator_ca_bundle:
+            self.orchestrator_ca_bundle = f"{self.internal_tls_dir}/ca.crt"
+        return self
+
+    def broker_ssl(self) -> dict | None:
+        """Celery `broker_use_ssl` fuer rediss:// (Pruefung gegen die interne CA)."""
+        if not self.redis_url.startswith("rediss://"):
+            return None
+        import ssl
+
+        return {
+            "ssl_cert_reqs": ssl.CERT_REQUIRED,
+            "ssl_ca_certs": f"{self.internal_tls_dir}/ca.crt",
+        }
 
 
 @lru_cache

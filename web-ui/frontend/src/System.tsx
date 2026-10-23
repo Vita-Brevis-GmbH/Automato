@@ -346,6 +346,24 @@ export default function System() {
                       <span className="chip warn">dev – ohne Login</span>
                     )}
                   </dd>
+                  <dt>Intern</dt>
+                  <dd>
+                    {s.security.internal_tls?.enabled ? (
+                      <>
+                        <span className={`chip ${(s.security.internal_tls.days_left ?? 0) < 30 ? "warn" : "ok"}`}>
+                          TLS mit eigener CA
+                        </span>{" "}
+                        {s.security.internal_tls.not_after && (
+                          <span className="faint">Zertifikat bis {fmtTime(s.security.internal_tls.not_after)}</span>
+                        )}
+                        {s.security.internal_tls.database && (
+                          <div className="faint">Datenbank {s.security.internal_tls.database}</div>
+                        )}
+                      </>
+                    ) : (
+                      <span className="chip warn">unverschlüsselt – deploy/aufbau.sh tls-intern</span>
+                    )}
+                  </dd>
                   <dt>Agent-Kanal</dt>
                   <dd>
                     <Chip map={MTLS} value={s.security.internal_mtls_mode} />

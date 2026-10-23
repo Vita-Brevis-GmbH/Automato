@@ -838,6 +838,29 @@ an (`deploy/agent-gateway`, Port 8443).
 ## 5. Sicherheit
 
 - Alle Zielsystem-Zugänge **read-only** (Least Privilege). `.env` wird nie committet.
+- **TLS intern** (0.49.0, ADR 0023, R14): Mit `AUTOMATO_INTERNAL_TLS=on` laufen alle
+  Verbindungen zwischen den Containern verschlüsselt, jede Gegenstelle wird gegen die eigene CA
+  geprüft:
+  - Postgres nimmt über das Netz nur noch TLS an (`hostssl`), Orchestrator und Migration
+    verbinden mit `verify-full`; im Container (Healthcheck, `pg_dump` der Sicherung) wie bisher;
+  - Redis nur TLS (kein Klartext-Port), Orchestrator und Collector über `rediss://`;
+  - Orchestrator und Web-UI per HTTPS; Collector, Web-UI, Proxy und Agent-Gateway prüfen ihn.
+  ```bash
+  deploy/aufbau.sh tls-intern             # CA + Zertifikate je Dienst, Schalter in .env, Neustart
+  deploy/aufbau.sh tls-intern --erneuern  # Zertifikate neu ausstellen (CA bleibt), z. B. vor Ablauf
+  ```
+  Die Zertifikate liegen je Dienst unter `deploy/tls/pki/<dienst>` (gitignored; jeder
+  Container sieht nur seinen Schlüssel), der CA-Schlüssel in `deploy/tls/pki/ca` und in keinem
+  Container. Gültig: CA 10 Jahre, Dienste 825 Tage; `pruefen` warnt 30 Tage vorher, der
+  Betriebszustand ebenso. Zeigt: Betriebszustand („TLS intern aktiv“), System → Verbindungen
+  (Schritt `tls` bei Datenbank und Redis), System-Seite (Intern), `deploy/aufbau.sh pruefen`.
+  **Danach beachten:**
+  - Agenten, die direkt auf Port 8000 gehen (ohne Agent-Gateway): URL `https://<VM>:8000` und
+    `AUTOMATO_ORCHESTRATOR_CA_BUNDLE` = `deploy/tls/pki/client/ca.crt` auf der Station. Über das
+    Agent-Gateway ändert sich nichts.
+  - Die Web-UI direkt auf `:5173` ist dann `https://` mit der internen CA (Browser-Warnung,
+    CA importieren); über den Proxy (`:443`) wie bisher.
+  - Zurück: `AUTOMATO_INTERNAL_TLS=off` in `.env`, `docker compose … up -d`.
 - **Getrennte DB-Rollen** (0.48.0, ADR 0022, R14): Die Migration läuft im Dienst `migrate` als
   Eigentümer der Tabellen (`automato`), danach richtet er die App-Rolle ein (`automato
   db-roles`); der Orchestrator verbindet sich mit ihr und kann Daten lesen und schreiben, aber

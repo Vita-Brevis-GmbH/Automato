@@ -3,8 +3,9 @@
 Nur lesend und aus dem, was Automato ohnehin weiss: Datenbank/Migration, Zeitplan (letzter
 Durchgang), zentraler Worker (holt er zentrale Laeufe ab?), Agenten (zuletzt gemeldet,
 Update-Probleme), Quellsysteme (letzter Lauf fehlgeschlagen bzw. zu alt), NetBox-Sync und
-Sicherung, seit 0.48.0 die DB-Rolle (ohne DDL?) und die Aufbewahrung (zuletzt aufgeraeumt). Je
-Pruefung `ok` | `warn` | `error` mit Satz und Ziel-Ansicht im UI.
+Sicherung, seit 0.48.0 die DB-Rolle (ohne DDL?) und die Aufbewahrung (zuletzt aufgeraeumt), seit
+0.49.0 TLS intern (eingeschaltet, Zertifikat gueltig?). Je Pruefung `ok` | `warn` | `error` mit
+Satz und Ziel-Ansicht im UI.
 """
 
 import json
@@ -15,7 +16,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import scheduler
+from app import scheduler, tls
 from app.config import Settings
 from app.models import (
     Agent,
@@ -33,6 +34,7 @@ CENTRAL_WAIT = timedelta(minutes=10)
 BACKUP_MAX_AGE = timedelta(hours=26)
 SYNC_RECENT = timedelta(hours=24)
 PURGE_LATE = timedelta(days=2)  # Zeitplan raeumt taeglich auf
+CERT_WARN_DAYS = 30  # Zertifikat der internen CA bald erneuern
 ORDER = {"ok": 0, "warn": 1, "error": 2}
 
 
@@ -70,7 +72,7 @@ def checks(
     now: datetime | None = None,
 ) -> list[Check]:
     now = now or datetime.now(UTC)
-    out = [_database(database_ok), _db_role(session)]
+    out = [_database(database_ok), _db_role(session), _internal_tls(session, settings, now)]
     out += [_scheduler(session, settings, now), _central(session, now)]
     out += _agents(session, tenant_id, now)
     out += _sources(session, tenant_id, now)
@@ -123,6 +125,40 @@ def _db_role(session: Session) -> Check | None:
         "Betrieb ohne DDL)",
         "system",
     )
+
+
+def _internal_tls(session: Session, settings: Settings, now: datetime) -> Check | None:
+    """TLS intern (0.49.0): eingeschaltet, Datenbank verschluesselt, Zertifikat gueltig?"""
+    try:
+        secure = tls.db_tls(session)
+    except Exception:  # noqa: BLE001 - Anzeige; die Datenbank-Pruefung meldet Ausfaelle
+        session.rollback()
+        return None
+    if secure is None:
+        return None  # nicht PostgreSQL (Tests)
+    hint = "deploy/aufbau.sh tls-intern"
+    if not settings.internal_tls:
+        return Check("internal_tls", "Plattform", "warn",
+                     "Verbindungen zwischen den Containern unverschlüsselt",
+                     f"TLS intern mit eigener CA einschalten: {hint}", "system")  # fmt: skip
+    info = tls.cert_info(tls.server_files(settings)[0])
+    if info is None:
+        return Check("internal_tls", "Plattform", "error", "TLS intern: Zertifikat fehlt",
+                     f"Zertifikate ausstellen: {hint}", "system")  # fmt: skip
+    if not secure[0]:
+        return Check("internal_tls", "Plattform", "error", "Datenbank-Verbindung ohne TLS",
+                     "AUTOMATO_INTERNAL_TLS im Orchestrator prüfen", "system")  # fmt: skip
+    left = info.days_left(now)
+    until = f"{info.not_after:%d.%m.%Y}"
+    if left < 0:
+        return Check("internal_tls", "Plattform", "error", f"Zertifikat abgelaufen ({until})",
+                     f"neu ausstellen: {hint} --erneuern", "system")  # fmt: skip
+    if left < CERT_WARN_DAYS:
+        return Check("internal_tls", "Plattform", "warn",
+                     f"Zertifikat läuft in {left} Tagen ab ({until})",
+                     f"neu ausstellen: {hint} --erneuern", "system")  # fmt: skip
+    return Check("internal_tls", "Plattform", "ok",
+                 f"TLS intern aktiv ({secure[1]}, Zertifikat bis {until})")  # fmt: skip
 
 
 def _retention(session: Session, settings: Settings, now: datetime) -> Check | None:

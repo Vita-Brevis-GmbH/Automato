@@ -1,6 +1,7 @@
 from logging.config import fileConfig
 
 from alembic import context
+from app import tls
 from app.config import get_settings
 from app.models import Base
 from sqlalchemy import create_engine
@@ -24,7 +25,8 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    engine = create_engine(get_settings().database_url)
+    settings = get_settings()
+    engine = create_engine(settings.database_url, connect_args=tls.db_connect_args(settings))
     with engine.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():

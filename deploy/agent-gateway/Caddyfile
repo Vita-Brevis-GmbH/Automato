@@ -37,6 +37,8 @@
 		reverse_proxy orchestrator:8000 {
 			header_up X-Gateway-Secret {$AUTOMATO_AGENT_GATEWAY_SECRET}
 			header_up X-Client-Cert-Subject {http.request.tls.client.subject}
+			# TLS intern (0.49.0): zum Orchestrator per HTTPS gegen die interne CA
+			import /etc/caddy/automato-tls/upstream-{$AUTOMATO_INTERNAL_TLS:off}.caddy
 		}
 	}
 	respond 404

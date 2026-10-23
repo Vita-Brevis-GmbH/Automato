@@ -72,3 +72,6 @@ Login (+ OTP) → zurück in Automato.
 - Die Web-UI läuft hier als Vite-Dev-Server — für Test/Lab gedacht. Produktiv folgt ein
   statischer Build, den Caddy direkt ausliefert.
 - Läuft der Proxy, können die Direkt-Ports 5173/8000 später auf `127.0.0.1` gebunden werden.
+- **TLS intern** (0.49.0, ADR 0023, `deploy/aufbau.sh tls-intern`): Der Proxy spricht die Web-UI
+  dann ebenfalls per HTTPS an und prüft ihr Zertifikat gegen die interne CA
+  (`deploy/tls/caddy/upstream-on.caddy`); für den Browser ändert sich nichts.

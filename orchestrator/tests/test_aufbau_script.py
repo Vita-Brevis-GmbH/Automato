@@ -286,3 +286,43 @@ def test_db_rollen_einrichten(tmp_path):
 
     after = _run(tmp_path, "pruefen", **env).stdout
     assert "Orchestrator als automato_app" in after
+
+
+def test_tls_intern_einrichten_und_pruefen(tmp_path):
+    """0.49.0 (ADR 0023): tls-intern stellt die Zertifikate im Dienst migrate als root aus,
+    traegt den Schalter in .env ein und startet neu; pruefen meldet Zustand und Ablauf."""
+    log = tmp_path / "calls.log"
+    stub = _stub(tmp_path / "tls-compose", f'echo "$*" >> {log}\n')
+    pki = tmp_path / "pki"
+    env = {"AUTOMATO_ENV_FILE": str(tmp_path / "env"), "AUTOMATO_TLS_PKI": str(pki),
+           "COMPOSE": str(stub), "AUTOMATO_UI_HOST": "ui.example.ch",
+           "AUTOMATO_TLS_WAIT": "0"}  # fmt: skip
+    (tmp_path / "env").write_text("POSTGRES_PASSWORD=bleibt\n")
+    before = _run(tmp_path, "pruefen", **env).stdout
+    assert "Verbindungen zwischen den Containern unverschlüsselt" in before
+    assert "deploy/aufbau.sh tls-intern" in before
+
+    out = _run(tmp_path, "tls-intern", **env)
+    assert out.returncode == 0, out.stdout + out.stderr
+    calls = log.read_text().splitlines()
+    (init,) = (c for c in calls if " run " in f" {c} ")
+    assert (
+        f"run --rm --no-deps --user root -v {pki}:/pki migrate automato tls-init --dir /pki" in init
+    )
+    assert "--name ui.example.ch" in init and "--renew" not in init
+    assert any(c.endswith("up -d --force-recreate") for c in calls)
+    assert (tmp_path / "env").read_text().splitlines() == [
+        "POSTGRES_PASSWORD=bleibt",
+        "AUTOMATO_INTERNAL_TLS=on",
+    ]
+    assert "AUTOMATO_ORCHESTRATOR_CA_BUNDLE" in out.stdout  # Hinweis fuer Agenten direkt auf :8000
+
+    renew = _run(tmp_path, "tls-intern", "--erneuern", **env)
+    assert renew.returncode == 0 and "--renew" in log.read_text().splitlines()[-2]
+
+    # pruefen: eingeschaltet, Zertifikat noch lange gueltig
+    from app import tls
+
+    tls.issue(pki, [])
+    after = _run(tmp_path, "pruefen", **env).stdout
+    assert "eingeschaltet, Zertifikate noch" in after

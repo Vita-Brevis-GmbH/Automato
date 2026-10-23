@@ -13,6 +13,7 @@ Im Orchestrator-Container (Beispiele):
   automato check-connections [--json]   # Verbindungen aus dem Container (deploy/aufbau.sh)
   automato db-roles       # App-Rolle ohne DDL einrichten (Dienst migrate, nach alembic)
   automato purge [--dry-run]   # alte Laeufe/Syncs/Audit nach Frist loeschen (0.48.0)
+  automato tls-init --dir /pki [--name <vm>] [--renew]   # interne CA + Zertifikate (0.49.0)
 """
 
 from __future__ import annotations
@@ -265,7 +266,9 @@ def _cmd_db_roles(_session: Session, args: argparse.Namespace) -> int:
         print("       arbeitet als Eigentuemer der Tabellen; einrichten:")
         print("       deploy/aufbau.sh db-rollen")
         return 0
-    engine = create_engine(settings.database_url)
+    from app import tls
+
+    engine = create_engine(settings.database_url, connect_args=tls.db_connect_args(settings))
     try:
         with engine.begin() as conn:
             owner = conn.exec_driver_sql("SELECT current_user").scalar()
@@ -300,6 +303,15 @@ def _cmd_purge(session: Session, args: argparse.Namespace) -> int:
         f"{verb}: {counts['runs']} Laeufe, {counts['sync_plans']} NetBox-Sync-Vorschauen, "
         f"{counts['audit']} Audit-Eintraege ({days})"
     )
+    return 0
+
+
+def _cmd_tls_init(_session: Session, args: argparse.Namespace) -> int:
+    """TLS intern (0.49.0): CA und Server-Zertifikate je Dienst (als root im Dienst migrate)."""
+    from app import tls
+
+    for step in tls.issue(args.dir, args.name, renew=args.renew):
+        print(f"OK     {step}")
     return 0
 
 
@@ -361,6 +373,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("db-roles", help="App-Rolle ohne DDL einrichten (als Eigentuemer)")
     p.add_argument("--role", help="Rollenname (Standard AUTOMATO_DB_APP_ROLE)")
     p.set_defaults(func=_cmd_db_roles)
+
+    p = sub.add_parser("tls-init", help="interne CA und Server-Zertifikate anlegen/erneuern")
+    p.add_argument("--dir", required=True, help="Ablage (deploy/tls/pki im Container)")
+    p.add_argument("--name", action="append", default=[],
+                   help="weitere Namen/IPs fuer Orchestrator und Web-UI (VM)")  # fmt: skip
+    p.add_argument("--renew", action="store_true", help="Server-Zertifikate neu ausstellen")
+    p.set_defaults(func=_cmd_tls_init)
 
     p = sub.add_parser("purge", help="alte Laeufe, Sync-Vorschauen und Audit nach Frist loeschen")
     p.add_argument("--dry-run", action="store_true", help="nur zaehlen, nichts loeschen")

@@ -7,7 +7,7 @@
 
 AUTOMATO_ENV_KEYS="AUTOMATO_BACKUP_AGE_RECIPIENT AUTOMATO_BACKUP_AGE_IDENTITY AUTOMATO_BACKUP_DIR \
 AUTOMATO_BACKUP_KEEP_DAYS AUTOMATO_BACKUP_PLAIN AUTOMATO_COMPOSE_PROFILES AUTOMATO_NETBOX_DIR \
-AUTOMATO_DOCKER_UPDATE AUTOMATO_PULL_IMAGES AUTOMATO_DB_USER"
+AUTOMATO_DOCKER_UPDATE AUTOMATO_PULL_IMAGES AUTOMATO_DB_USER AUTOMATO_INTERNAL_TLS"
 
 ENV_DATEI=${AUTOMATO_ENV_FILE:-.env}  # andere Datei nur fuer Tests
 
@@ -41,3 +41,18 @@ setze_env() {  # $1 = Schluessel, $2 = Wert, $3 = Datei (Standard .env): ersetze
 }
 
 env_aus_datei
+
+# TLS intern (0.49.0): Zertifikate je Dienst (gitignored); der Orchestrator antwortet dann per
+# HTTPS - Health-Abfrage auf der VM gegen die interne CA
+TLS_PKI=${AUTOMATO_TLS_PKI:-deploy/tls/pki}
+standard_health_url() {
+  if [ "${AUTOMATO_INTERNAL_TLS:-off}" = "on" ]; then echo "https://127.0.0.1:8000/health"
+  else echo "http://127.0.0.1:8000/health"; fi
+}
+health_curl() {  # wie curl, mit TLS intern gegen die interne CA
+  if [ "${AUTOMATO_INTERNAL_TLS:-off}" = "on" ] && [ -r "$TLS_PKI/client/ca.crt" ]; then
+    curl --cacert "$TLS_PKI/client/ca.crt" "$@"
+  else
+    curl "$@"
+  fi
+}

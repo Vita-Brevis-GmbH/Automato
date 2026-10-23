@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from app import __version__, scheduler
+from app import __version__, scheduler, tls
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.config import Settings, get_settings
@@ -63,12 +63,20 @@ class SchedulerOut(BaseModel):
     next_run_at: datetime | None
 
 
+class InternalTlsOut(BaseModel):
+    enabled: bool
+    not_after: datetime | None = None  # Zertifikat des Orchestrators
+    days_left: int | None = None
+    database: str | None = None  # TLS-Version der eigenen DB-Verbindung, None = ohne
+
+
 class SecurityOut(BaseModel):
     environment: str
     auth_mode: str
     internal_mtls_mode: str
     audit_encryption: bool
     credentials_key: str  # setting | file | missing
+    internal_tls: InternalTlsOut | None = None  # TLS intern (0.49.0)
 
 
 class BackupOut(BaseModel):
@@ -118,6 +126,21 @@ def _backup(settings: Settings) -> BackupOut | None:
     except (OSError, ValueError):
         return None
     return BackupOut(**{k: data.get(k) for k in ("at", "file", "encrypted", "size")})
+
+
+def _internal_tls(session: Session, settings: Settings) -> InternalTlsOut:
+    info = tls.cert_info(tls.server_files(settings)[0]) if settings.internal_tls else None
+    try:
+        secure = tls.db_tls(session)
+    except Exception:  # noqa: BLE001 - Anzeige
+        session.rollback()
+        secure = None
+    return InternalTlsOut(
+        enabled=settings.internal_tls,
+        not_after=info.not_after if info else None,
+        days_left=info.days_left() if info else None,
+        database=secure[1] if secure and secure[0] else None,
+    )
 
 
 def _scheduler(session: Session, settings: Settings) -> SchedulerOut:
@@ -181,6 +204,7 @@ def status(
             credentials_key="setting"
             if settings.credentials_key
             else ("file" if key_file.is_file() else "missing"),
+            internal_tls=_internal_tls(session, settings),
         ),
         backup=_backup(settings),
     )

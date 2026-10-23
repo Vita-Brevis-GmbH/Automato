@@ -1584,7 +1584,15 @@ export interface SystemStatus {
   database: { revision: string | null; head: string | null; up_to_date: boolean; role: DbRole | null };
   agent_package: { version: string | null; signature: string; pubkey_set: boolean; agents: number; agents_current: number };
   scheduler: { enabled: boolean; interval_seconds: number; timezone: string; scheduled_sources: number; next_run_at: string | null };
-  security: { environment: string; auth_mode: string; internal_mtls_mode: string; audit_encryption: boolean; credentials_key: string };
+  security: {
+    environment: string;
+    auth_mode: string;
+    internal_mtls_mode: string;
+    audit_encryption: boolean;
+    credentials_key: string;
+    // TLS intern (0.49.0): Zertifikat des Orchestrators, TLS-Version der DB-Verbindung
+    internal_tls: { enabled: boolean; not_after: string | null; days_left: number | null; database: string | null } | null;
+  };
   backup: { at: string | null; file: string | null; encrypted: boolean | null; size: number | null } | null;
 }
 export const fetchSystemStatus = () => getJSON<SystemStatus>("/api/system/status");

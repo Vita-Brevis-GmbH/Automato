@@ -7,6 +7,33 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.49.0 – 2026-10-23
+
+TLS intern mit eigener CA (Entscheid des Anwenders vor dem Produktivbetrieb, R14, ADR 0023,
+ADR 0005 Nr. 3). Ohne Migration; eingeschaltet wird bewusst (`deploy/aufbau.sh tls-intern`),
+bis dahin bleibt alles wie bisher.
+
+- **Eigene CA:** `automato tls-init` stellt CA und Zertifikate für Postgres, Redis, Orchestrator
+  und Web-UI aus, je Dienst in einem eigenen Ordner unter `deploy/tls/pki` (gitignored). Den
+  CA-Schlüssel bekommt kein Container.
+- **Mit `AUTOMATO_INTERNAL_TLS=on`:**
+  - Postgres nimmt über das Netz nur noch TLS an; Orchestrator und Migration prüfen CA und Name
+    (`verify-full`). Healthcheck und Sicherung im Container wie bisher.
+  - Redis nur noch über TLS; Orchestrator und zentraler Collector über `rediss://`.
+  - Orchestrator und Web-UI per HTTPS. Collector, Web-UI, Proxy und Agent-Gateway prüfen das
+    Zertifikat gegen die interne CA.
+- **`deploy/aufbau.sh tls-intern [--erneuern]`:** Zertifikate ausstellen (als root im Dienst
+  `migrate`), Schalter in `.env`, Container neu starten, Hinweise für Agenten ohne Gateway.
+  `pruefen` zeigt Zustand und Ablauf (Warnung 30 Tage vorher). `update.sh` und `aufbau.sh`
+  fragen den Orchestrator dann per HTTPS ab.
+- **Anzeige:** Betriebszustand („TLS intern aktiv“ bzw. Warnung), System → Verbindungen
+  (Schritt `tls` bei Datenbank und Redis), System-Seite (Intern: Zertifikat, TLS der Datenbank).
+- **CI:** Postgres und Redis aus `docker-compose.yml` mit TLS – Klartext und fremde CA werden
+  abgewiesen.
+- **Achtung beim Einschalten:** Agenten, die direkt auf Port 8000 gehen, brauchen
+  `https://<VM>:8000` und die CA (`deploy/tls/pki/client/ca.crt`); über das Agent-Gateway
+  ändert sich nichts.
+
 ## 0.48.0 – 2026-10-23
 
 Betrieb vor dem Produktivbetrieb (Entscheid des Anwenders, R14, ADR 0022): Fristen für alte

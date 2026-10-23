@@ -26,7 +26,7 @@ def _routes(monkeypatch, tmp_path):
 
 def _redis_ok(monkeypatch):
     item = connections.Item("redis", "Plattform", "Redis", "redis:6379", "ok", [])
-    monkeypatch.setattr(connections, "_redis", lambda url: item)
+    monkeypatch.setattr(connections, "_redis", lambda url, cafile=None: item)
     # DB-Rolle eigens geprueft (test_db_rolle_mit_ddl_warnt); gegen Postgres ist der
     # Test-Benutzer Eigentuemer der Tabellen
     monkeypatch.setattr(connections.db_roles, "describe", lambda session: None)

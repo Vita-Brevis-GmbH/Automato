@@ -5,7 +5,7 @@ Worker im selben Docker-Netz) und NetBox-Sync nehmen. Je Ziel ok | warn | error 
 Schritten und einem Hinweis zur Abhilfe:
 
 - **Plattform:** Datenbank (`SELECT 1`, seit 0.48.0 die Rolle: ohne DDL?), Redis (`PING`, Kanal
-  zum zentralen Worker),
+  zum zentralen Worker; seit 0.49.0 mit TLS intern je ein Schritt `tls`),
   Keycloak (bei `auth_mode=oidc`: JWKS des Issuers).
 - **Quellsysteme:** jedes eingeschaltete, zentral gelesene Quellsystem ueber
   `reachability.check` (Name, TCP, bei NetBox `GET /api/status/` mit dem Lese-Token; nur
@@ -20,6 +20,7 @@ kann. Secrets erscheinen nie in der Antwort.
 
 import ipaddress
 import socket
+import ssl
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -31,7 +32,7 @@ import httpx
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from app import credentials
+from app import credentials, tls
 from app.config import Settings
 from app.models import Agent, SourceSystem
 from app.store import db_roles, reachability
@@ -66,7 +67,9 @@ def run(
 ) -> dict:
     """Alle Pruefungen; `tenant_ids` None = alle Mandanten (globaler Admin)."""
     network = own_network()
-    items = [_database(session), (redis_check or _redis)(settings.redis_url)]
+    redis_url = tls.redis_url(settings)
+    redis = redis_check or (lambda url: _redis(url, tls.ca_file(settings)))
+    items = [_database(session), redis(redis_url)]
     if settings.auth_mode == "oidc":
         items.append((oidc_check or _oidc)(settings))
     sources, agents = _sources(session, tenant_ids)
@@ -98,9 +101,12 @@ def _database(session: Session) -> Item:
     steps = [_step("sql", True, f"SELECT 1 ({_ms(start)})")]
     try:
         role = db_roles.describe(session)
-    except Exception:  # noqa: BLE001 - die Rolle ist nur ein Zusatz
+        secure = _db_tls(session)
+    except Exception:  # noqa: BLE001 - Rolle und TLS sind nur ein Zusatz
         session.rollback()
-        role = None
+        role = secure = None
+    if secure is not None and secure[0]:
+        steps.append(_step("tls", True, f"verschlüsselt ({secure[1]})"))
     if role is None or role["separated"]:
         if role:
             steps.append(_step("rolle", True, f"{role['role']} ohne DDL"))
@@ -112,19 +118,38 @@ def _database(session: Session) -> Item:
                 "Eigentümer, Orchestrator ohne DDL.")  # fmt: skip
 
 
-def _redis(url: str) -> Item:
-    """Redis per TCP und `PING` (ohne Bibliothek; ein Passwort-Fehler heisst: erreichbar)."""
+def _db_tls(session: Session) -> tuple[bool, str | None] | None:
+    """Nur bei TLS intern als Schritt gezeigt (`tls.db_tls`); eigene Funktion fuer Tests."""
+    return tls.db_tls(session)
+
+
+def _redis(url: str, cafile: str | None = None) -> Item:
+    """Redis per TCP und `PING` (ohne Bibliothek; ein Passwort-Fehler heisst: erreichbar).
+    `rediss://` (TLS intern, 0.49.0): TLS mit Pruefung gegen die interne CA."""
     parts = urlsplit(url or "")
     host, port = parts.hostname or "localhost", parts.port or 6379
     target = f"{host}:{port}"
     steps = []
     start = time.monotonic()
     try:
-        with socket.create_connection((host, port), timeout=TIMEOUT) as sock:
+        with socket.create_connection((host, port), timeout=TIMEOUT) as raw:
             steps.append(_step("tcp", True, f"{target} verbunden ({_ms(start)})"))
+            sock = raw
+            if parts.scheme == "rediss":
+                sock = ssl.create_default_context(cafile=cafile).wrap_socket(
+                    raw, server_hostname=host
+                )
+                steps.append(_step("tls", True, f"{sock.version()}, Zertifikat geprüft"))
             sock.settimeout(TIMEOUT)
             sock.sendall(b"PING\r\n")
             answer = sock.recv(64).decode(errors="replace").strip()
+    except ssl.SSLError as exc:
+        steps.append(_step("tls", False, getattr(exc, "verify_message", None) or exc.reason
+                           or type(exc).__name__))  # fmt: skip
+        return Item("redis", "Plattform", "Redis (Warteschlange zum zentralen Worker)", target,
+                    "error", steps,
+                    "TLS zu Redis scheitert – Zertifikate der internen CA prüfen: "
+                    "deploy/aufbau.sh tls-intern")  # fmt: skip
     except OSError as exc:
         steps.append(_step("tcp", False, f"{target} {type(exc).__name__}"))
         return Item("redis", "Plattform", "Redis (Warteschlange zum zentralen Worker)", target,

@@ -33,6 +33,9 @@
 	@internal path /api/internal /api/internal/*
 	respond @internal 404
 
-	# Web-UI (Vite); sie leitet /api/* selbst an den Orchestrator weiter.
-	reverse_proxy web-ui:5173
+	# Web-UI (Vite); sie leitet /api/* selbst an den Orchestrator weiter. Mit TLS intern
+	# (0.49.0, AUTOMATO_INTERNAL_TLS=on) per HTTPS, Zertifikat gegen die interne CA geprueft.
+	reverse_proxy web-ui:5173 {
+		import /etc/caddy/automato-tls/upstream-{$AUTOMATO_INTERNAL_TLS:off}.caddy
+	}
 }
