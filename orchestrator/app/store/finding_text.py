@@ -82,6 +82,71 @@ def _unmatched(subject: str, d: dict) -> tuple[str, str]:
     return msg, hint
 
 
+def _where(nodes: list[dict]) -> str:
+    parts = [" ".join(str(n[k]) for k in ("label", "interface", "address") if n.get(k))
+             for n in nodes]  # fmt: skip
+    return _list(parts, 4)
+
+
+def _dup_ip(subject: str, d: dict) -> tuple[str, str]:
+    return (
+        f"Die IP {subject} ist im Netz {d.get('network')} mehrfach vergeben: "
+        f"{_where(d.get('nodes') or [])}.",
+        "Eine Adresse je Gerät im selben Netz – Konfiguration der Interfaces prüfen (bei "
+        "absichtlich gleichen Firewalls: als Verbund erfassen).",
+    )
+
+
+def _mask(subject: str, d: dict) -> tuple[str, str]:
+    return (
+        f"Im Netz {subject} verwenden die Gegenstellen verschiedene Netzmasken: "
+        f"{_where(d.get('nodes') or [])}.",
+        "Gleiche Maske auf beiden Seiten setzen – sonst erreicht eine Seite einen Teil der "
+        "anderen nicht (Broadcast, Adressen ausserhalb).",
+    )
+
+
+def _loop(subject: str, d: dict) -> tuple[str, str]:
+    a, b = (d.get("labels") or ["?", "?"])[:2]
+    return (
+        f"Routing-Schleife: {a} leitet {d.get('prefix')} über {b}, {b} es über "
+        f"{d.get('back')} zurück zu {a}.",
+        "Routen beider Seiten prüfen (Default-Route, Filter der BGP-Nachbarn) – Pakete "
+        "kreisen sonst bis zum Ablauf der TTL.",
+    )
+
+
+def _static(subject: str, d: dict) -> tuple[str, str]:
+    via = _list(d.get("next_hops") or [], 3) or "?"
+    return (
+        f"Die statische Route {d.get('prefix')} über {via} auf {d.get('label')} ist "
+        "eingeschaltet, steht aber nicht in der Routing-Tabelle – und keine andere Route deckt "
+        "das Präfix.",
+        "Next-Hop bzw. Interface prüfen (nicht erreichbar, Interface aus) – oder die Route "
+        "entfernen, wenn sie nicht mehr gebraucht wird.",
+    )
+
+
+def _bgp(subject: str, d: dict) -> tuple[str, str]:
+    name = f" ({_list(d.get('peer_names') or [], 1)})" if d.get("peer_names") else ""
+    asn = f", AS {d['remote_as']}" if d.get("remote_as") else ""
+    return (
+        f"BGP-Sitzung von {d.get('label')} zu {d.get('peer')}{name}{asn} ist nicht aufgebaut "
+        f"(Zustand {d.get('state') or '?'}).",
+        "Nachbar prüfen (erreichbar, AS, Passwort, Filter); Wege über ihn fehlen, Backup-Wege "
+        "übernehmen.",
+    )
+
+
+_TOPO_TEXT = {
+    "topo_duplicate_ip": _dup_ip,
+    "topo_mask_mismatch": _mask,
+    "topo_route_loop": _loop,
+    "topo_static_unused": _static,
+    "topo_bgp_down": _bgp,
+}
+
+
 def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
     """(Befund, Hinweis) fuer die Anzeige."""
     d = detail or {}
@@ -133,6 +198,8 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
             "Pool auf der Firewall prüfen bzw. neu einlesen; bis dahin ist die Quelle nach dem "
             "NAT unbekannt (Weg-Suche: Regeln danach nur „möglich“).",
         )
+    if ftype in _TOPO_TEXT:
+        return _TOPO_TEXT[ftype](subject, d)
     if ftype == "epg_assignment_conflict":
         ips = _list(d.get("ips") or [], 4)
         learned = _list(d.get("learned") or [], 3)

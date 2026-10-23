@@ -33,7 +33,7 @@ for (const [key, title] of VIEWS) {
 
 test("Routing: alle Reiter laden", async ({ page, problems }) => {
   await page.goto("/#routing");
-  for (const tab of ["Routen", "BGP-Nachbarn", "HA & Session-Sync", "Policy-Routen & SD-WAN", "L3Outs (ACI)", "Anbindungen"]) {
+  for (const tab of ["Routen", "BGP-Nachbarn", "HA & Session-Sync", "Policy-Routen & SD-WAN", "L3Outs (ACI)", "Anbindungen", "Topologie"]) {
     await page.click(`.tabbar button:has-text('${tab}')`);
     await page.waitForLoadState("networkidle");
   }

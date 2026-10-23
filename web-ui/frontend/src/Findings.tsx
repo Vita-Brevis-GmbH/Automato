@@ -55,6 +55,19 @@ const DETAIL_LABEL: Record<string, string | null> = {
   external_id: "ID",
   tenant: "ACI-Tenant",
   rule: "Prüfung",
+  // Topologie (0.50.0): Knoten stehen im Satz, die Adressen sind lesbar
+  nodes: null,
+  node: null,
+  label: null,
+  labels: null,
+  network: "Netz",
+  next_hops: "Next-Hop",
+  distance: "Distanz",
+  back: "Rückweg über",
+  peer: "Nachbar",
+  peer_names: "Name im IPAM",
+  remote_as: "AS",
+  state: "Zustand",
 };
 
 const SIDE: Record<string, string> = { src: "Quelle / Consumer", dst: "Ziel / Provider" };

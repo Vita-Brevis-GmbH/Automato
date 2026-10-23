@@ -346,8 +346,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.47.0** | FortiGate SNAT genauer: Pool-Typen (Bereich bzw. feste IP bei fixed-port-range), IPv6-Pools, `nat-source-vip`, Interface-IP je Familie, Befund „SNAT-Pool fehlt“ |
 | **0.48.0** | Betrieb: Fristen für alte Läufe, Sync-Vorschauen und Audit (täglich, System → Aufbewahrung), getrennte DB-Rollen (Dienst `migrate` als Eigentümer, Orchestrator ohne DDL, `deploy/aufbau.sh db-rollen`), ADR 0022 |
 | **0.49.0** | Betrieb: TLS intern mit eigener CA (Postgres/Redis nur TLS, Orchestrator und Web-UI per HTTPS, Gegenstellen gegen die CA geprüft), `deploy/aufbau.sh tls-intern`, CI mit echten Containern, ADR 0023 |
+| **0.50.0** | Topologie-Modell (`GET /topology`, Routing → Topologie): Knoten (Firewall/VDOM, ACI-VRF, Segment, Anbindung, Router) und Kanten mit Herkunft und Routen; Plausibilitäts-Befunde (doppelte IP, Maske, Schleife, statische Route ohne Wirkung, BGP nicht aufgebaut) |
 
-### Nächste Arbeiten (Stand 0.49.0)
+### Nächste Arbeiten (Stand 0.50.0)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
@@ -391,7 +392,7 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 | ~~0.47.0~~ | FortiGate SNAT genauer – **umgesetzt in 0.47.0** |
 | ~~0.48.0~~ | Betrieb: Fristen für alte Läufe, getrennte DB-Rollen – **umgesetzt in 0.48.0** (ADR 0022) |
 | ~~0.49.0~~ | Betrieb: TLS intern (interne CA) – **umgesetzt in 0.49.0** (ADR 0023) |
-| 0.50.0 | Topologie-Modell (`GET /topology`) und Plausibilitäts-Befunde |
+| ~~0.50.0~~ | Topologie-Modell (`GET /topology`) und Plausibilitäts-Befunde – **umgesetzt in 0.50.0** |
 | 0.51.0 | Logische Zonen und Zonenplan im Tool, Zonenmatrix |
 | 0.52.0 | Export (draw.io, SVG, PDF) und Versionen des Plans |
 | 0.53.0 | Kunden auf Zonen, Kunden-Benutzer in der Oberfläche |

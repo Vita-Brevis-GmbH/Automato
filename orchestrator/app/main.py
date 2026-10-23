@@ -26,6 +26,7 @@ from app.api import (
     system,
     systems,
     tenants,
+    topology,
     virtual,
 )
 from app.config import Settings, check_security_config, get_settings
@@ -95,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(netbox_sync.router)
     app.include_router(system.router)
     app.include_router(routing.router)
+    app.include_router(topology.router)
     app.include_router(customers.router)
     return app
 

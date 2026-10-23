@@ -37,7 +37,9 @@ test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page })
 
 test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page }) => {
   await page.goto("/#findings");
-  await expect(page.locator(".fgroup")).toHaveCount(4);
+  await expect(page.locator(".fgroup")).toHaveCount(5);
+  // seit 0.50.0: Plausibilität der Topologie (statische Route ohne Wirkung in den Beispieldaten)
+  await expect(page.locator(".fgroup", { hasText: "Topologie" })).toContainText("Statische Route ohne Wirkung");
   await page.click(".fline:has-text('Nicht im IPAM')");
   const row = rows(page).filter({ hasText: "172.16.5.9" });
   await expect(row).toContainText("Den Server db01.example.ch kennt das IPAM unter 10.30.0.9");
@@ -813,5 +815,25 @@ test("System: Aufbewahrung mit Fristen und Knopf zum Aufräumen", async ({ page,
   await expect(card).toContainText("nichts fällig");
   // nichts über der Frist: der Knopf bleibt aus
   await expect(card.locator("button:has-text('Jetzt aufräumen')")).toBeDisabled();
+  expect(problems).toEqual([]);
+});
+
+test("Routing: Topologie mit Knoten, Kanten und Herkunft", async ({ page, problems }) => {
+  await page.goto("/#routing");
+  await page.click(".tabbar button:has-text('Topologie')");
+  await expect(page.locator("#topology-summary")).toContainText("Firewalls/VDOMs");
+  const nodes = page.locator("#topology-nodes tbody tr.clickable");
+  await page.getByPlaceholder("Knoten, Leaf, IP, Netz…").fill("fw-05");
+  const fw = nodes.filter({ hasText: "fw-05 · VDOM root" });
+  await expect(fw).toHaveCount(1);
+  await fw.click();
+  const detail = page.locator("tr.detail-row");
+  await expect(detail.locator("table.topo-edges")).toBeVisible();
+  await expect(detail).toContainText("nach aussen"); // Provider ohne gelesenes Gerät
+  await expect(detail.locator(".chip", { hasText: "abgeleitet" }).first()).toBeVisible();
+  // Art filtern: nur Router
+  await page.getByPlaceholder("Knoten, Leaf, IP, Netz…").fill("");
+  await page.locator(".filterbar select[aria-label='Art']").selectOption("router");
+  await expect(nodes.first()).toContainText("Router");
   expect(problems).toEqual([]);
 });

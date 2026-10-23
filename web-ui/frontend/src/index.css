@@ -507,3 +507,8 @@ tbody tr.group-row td {
 .conn-fail { color: var(--crit); }
 .conn-cmd { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
 .conn-cmd code { font-size: 11.5px; white-space: normal; overflow-wrap: anywhere; }
+
+/* Topologie (0.50.0): Kanten eines Knotens im aufgeklappten Detail */
+.topo-edges { width: 100%; }
+.topo-edges th { font-weight: 600; }
+.topo-detail > div + div { margin-top: 2px; }

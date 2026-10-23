@@ -80,6 +80,7 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     issues += _aci_scope_issues(session, tenant_id)
     issues += _epg_conflict_issues(session, tenant_id)
     issues += _snat_pool_issues(session, tenant_id)
+    issues += _topology_issues(session, tenant_id)
     issues += _device_object_issues(session, tenant_id, prefixes)
     issues += references.checks(session, tenant_id, prefixes, ctx)
     issues += _virtual_issues(session, tenant_id, ctx)
@@ -272,6 +273,34 @@ def _snat_pool_issues(session: Session, tenant_id: int) -> list[Issue]:
                 },
             )
         )
+    return out
+
+
+_TOPO = {  # Befund-Typ -> (Gegenstand, Schwere)
+    "topo_duplicate_ip": (SubjectKind.SUBNET, Severity.WARNING),
+    "topo_mask_mismatch": (SubjectKind.SUBNET, Severity.WARNING),
+    "topo_route_loop": (SubjectKind.NODE, Severity.ERROR),
+    "topo_static_unused": (SubjectKind.NODE, Severity.INFO),
+    "topo_bgp_down": (SubjectKind.NODE, Severity.WARNING),
+}
+
+
+def _topology_issues(session: Session, tenant_id: int) -> list[Issue]:
+    """Plausibilitaet der Topologie (0.50.0, `store/topo_model.checks`): doppelte IP und
+    abweichende Maske im selben Netz, Routing-Schleifen, statische Routen ohne Wirkung,
+    BGP-Sitzungen nicht aufgebaut."""
+    from app.store import topo_model
+
+    out: list[Issue] = []
+    for item in topo_model.checks(session, tenant_id):
+        kind, severity = _TOPO[item["type"]]
+        node = item.get("node") or next(iter(item.get("nodes") or []), None)
+        sid = int(node.split("|")[0]) if isinstance(node, str) else None
+        detail = {k: v for k, v in item.items() if k not in ("type", "subject")}
+        if kind is not SubjectKind.NODE:
+            sid = None  # mehrere Geraete im selben Netz
+        out.append(Issue(FindingType(item["type"]), kind, item["subject"], sid, severity,
+                         detail=detail))  # fmt: skip
     return out
 
 

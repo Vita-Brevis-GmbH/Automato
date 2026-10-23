@@ -50,6 +50,12 @@ class FindingType(enum.StrEnum):
     EPG_ASSIGNMENT_CONFLICT = "epg_assignment_conflict"
     # SNAT (0.47.0): Policy mit NAT auf einen IP-Pool, den die Firewall nicht (mehr) hat
     SNAT_POOL_MISSING = "snat_pool_missing"
+    # Topologie (0.50.0, `store/topo_model`): Plausibilitaet der gelesenen Netze und Routen
+    TOPO_DUPLICATE_IP = "topo_duplicate_ip"  # dieselbe IP auf zwei Knoten im selben Netz
+    TOPO_MASK_MISMATCH = "topo_mask_mismatch"  # Gegenstellen mit verschiedener Netzmaske
+    TOPO_ROUTE_LOOP = "topo_route_loop"  # A leitet ueber B, B zurueck ueber A
+    TOPO_STATIC_UNUSED = "topo_static_unused"  # statische Route ohne Wirkung (nicht in der RIB)
+    TOPO_BGP_DOWN = "topo_bgp_down"  # BGP-Sitzung nicht aufgebaut
 
 
 class Severity(enum.StrEnum):
@@ -73,6 +79,7 @@ class SubjectKind(enum.StrEnum):
     SUBNET = "subnet"
     VM = "vm"
     PORTGROUP = "portgroup"
+    NODE = "node"  # Knoten der Topologie (`<Quellsystem>|<Kontext>`, 0.50.0)
 
 
 class Finding(Base):

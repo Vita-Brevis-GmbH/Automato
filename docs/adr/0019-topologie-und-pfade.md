@@ -311,7 +311,21 @@ Rahmen laut Anwender (2026-10-22):
    - Offen: „Internet“ zusammengefasst, Central-NAT und SNAT über eigene NAT-Regeln.
      Verbund bzw. Session-Sync-Paar als ein Hop seit 0.29.0. Relevanz: Firewall in der Doku (0.24.0) und Regel-Liste
      (0.26.0), ACI-Contracts über externe EPGs (0.28.0), Contracts je VRF-Hop im Weg (0.35.0).
-4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde. Erster Teil in
+4. **Designer-Oberfläche:** Modell, Korrekturen, Verbindungen je Kunde.
+   - **Topologie-Modell (0.50.0, `store/topo_model.py`, `GET /topology`):** Knoten wie im Weg
+     (Firewall/VDOM, Rand der ACI-VRF) plus Segmente (ein Netz mit mehr als zwei gelesenen
+     Knoten), Anbindungen (von Hand) und Router ohne gelesenes Gerät (`exits.detect`; beim ACI
+     nur Adressen in L3Out-Netzen bzw. L3Out-Peers, nicht TEP/Spine-Proxy). Kanten mit
+     Herkunft (abgeleitet, von Hand, bestätigt): Transfernetz (Interface-IPs bzw. L3Out-SVIs im
+     selben Netz, auch bei abweichender Maske bis /16 bzw. /64; ohne Management; gleiche IP
+     auf parallelen Firewalls eines Verbunds = Kopie, keine Kante), Mitglied eines Segments,
+     Inter-VDOM-Link, Route über die Adresse eines anderen Knotens ohne gemeinsames Netz, BGP,
+     nach aussen (Router bzw. Anbindung, aktiv/Backup/Nachbar), manuelle Route einer Anbindung,
+     Verbund, Session-Sync. Je Kante die Routen darüber je Richtung (aktiv, Backup).
+     **Plausibilität** als Befunde (Abgleich nach jedem Lauf): doppelte IP im selben Netz,
+     abweichende Maske, Schleife (A leitet P über B, B das Netz von P über A zurück; bis 3000
+     Routen je Lauf), statische Route ohne Wirkung, BGP-Sitzung nicht aufgebaut.
+   - Erster Teil in
    0.18.0: **Anbindungen nach aussen** (`topo_exit`, von Hand erfasst, Operator):
    - Art (Internet, MPLS, WAN, Partner), optional für eine Firewall, Next-Hop-IPs und/oder
      Interfaces/Zonen, Netze dahinter, **manuelle Routen** (Präfix → gelesener Knoten).

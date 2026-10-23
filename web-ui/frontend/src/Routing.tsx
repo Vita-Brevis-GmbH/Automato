@@ -36,11 +36,12 @@ import {
   updateExit,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
+import TopologyTab from "./Topology";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 
 const PAGE = 200;
 
-type Tab = "routes" | "peers" | "ha" | "policy" | "l3out" | "exits";
+type Tab = "routes" | "peers" | "ha" | "policy" | "l3out" | "exits" | "topology";
 const TABS: { key: Tab; label: string }[] = [
   { key: "routes", label: "Routen" },
   { key: "peers", label: "BGP-Nachbarn" },
@@ -48,6 +49,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "policy", label: "Policy-Routen & SD-WAN" },
   { key: "l3out", label: "L3Outs (ACI)" },
   { key: "exits", label: "Anbindungen" },
+  { key: "topology", label: "Topologie" },
 ];
 
 const TABLE_LABEL: Record<string, [string, string]> = {
@@ -1461,6 +1463,7 @@ export default function Routing({
       {tab === "ha" && <HaTab tenantId={tenantId} />}
       {tab === "policy" && <PolicyTab tenantId={tenantId} />}
       {tab === "l3out" && <L3OutTab tenantId={tenantId} />}
+      {tab === "topology" && <TopologyTab tenantId={tenantId} />}
       {tab === "exits" && (
         <ExitsTab
           key={draft ? JSON.stringify(draft) : "list"}

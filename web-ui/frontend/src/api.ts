@@ -2186,3 +2186,81 @@ export function snatText(s: NonNullable<TraceHop["snat"]>): string {
   }
   return `IP von ${s.interface ?? "?"}`;
 }
+
+// Topologie-Modell (0.50.0, ADR 0019): Knoten und Kanten der Umgebung mit Herkunft und den
+// Plausibilitäts-Befunden
+export type TopoNodeKind = "firewall" | "vdom" | "vrf" | "segment" | "exit" | "router";
+export type TopoOrigin = "derived" | "manual" | "confirmed";
+export interface TopoNode {
+  id: string;
+  kind: TopoNodeKind;
+  label: string;
+  origin: TopoOrigin;
+  source?: string;
+  context?: string;
+  members?: string[];
+  missing?: string[];
+  group?: string | null;
+  ha?: { mode: string | null; group: string | null; members: string[] } | null;
+  network?: string;
+  exit_kind?: string;
+  prefixes?: string[];
+  ip?: string;
+  remote_as?: number | null;
+  names?: string[];
+  dismissed?: boolean;
+  degree: number;
+  issues: number;
+}
+export interface TopoVia {
+  node: string;
+  label: string;
+  interface: string | null;
+  zone: string | null;
+  address: string;
+}
+export interface TopoEdgeRouter {
+  ip: string;
+  status: "active" | "backup" | "neighbor";
+  interface: string | null;
+  zone: string | null;
+  remote_as: number | null;
+  state: string | null;
+  active: number;
+  backup: number;
+  default: boolean;
+}
+export interface TopoEdge {
+  id: string;
+  kind: "transfer" | "member" | "vdom_link" | "route" | "bgp" | "uplink" | "exit_route" | "parallel" | "sync";
+  a: string;
+  b: string;
+  origin: TopoOrigin;
+  network: string | null;
+  via: TopoVia[];
+  routes: { active: Record<string, number>; backup: Record<string, number>; samples: Record<string, string[]> };
+  sessions?: { from: string; peer: string; remote_as: number | null; state: string | null }[];
+  routers?: TopoEdgeRouter[];
+  status?: string;
+  links?: { a: string; b: string }[];
+  next_hops?: string[];
+  ports?: string[];
+  prefixes?: string[];
+  group?: string;
+  peer?: string;
+  to?: Record<string, number>;
+}
+export interface TopoIssue {
+  type: string;
+  subject: string;
+  node?: string;
+  nodes?: (string | TopoVia)[];
+}
+export interface TopologyModel {
+  nodes: TopoNode[];
+  edges: TopoEdge[];
+  issues: TopoIssue[];
+  summary: { nodes: Record<string, number>; edges: Record<string, number>; issues: Record<string, number> };
+}
+export const fetchTopology = (tenantId: number, node?: string) =>
+  getJSON<TopologyModel>(`/api/topology${qs({ tenant_id: tenantId, node })}`);

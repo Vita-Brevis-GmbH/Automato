@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.50.0 – 2026-10-23
+
+Topologie-Modell (ADR 0019): die Umgebung als ein Modell aus Knoten und Kanten, Grundlage für
+Zonen, Zonenplan und Export. Dazu Befunde zur Plausibilität. Ohne Migration, nur lesend.
+
+- **`GET /topology`** (`store/topo_model.py`), Routing → **Topologie**:
+  - Knoten: Firewalls bzw. VDOMs, ACI-VRFs (alle Border-Leafs), Segmente (ein Netz mit mehr
+    als zwei gelesenen Geräten), Anbindungen (von Hand) und Router ohne gelesenes Gerät. Beim
+    ACI zählen nur Gegenstellen an den L3Outs, nicht die Adressen im Fabric.
+  - Kanten mit Herkunft (abgeleitet, von Hand, bestätigt): Transfernetz, Segment,
+    Inter-VDOM-Link, BGP, nach aussen (aktiv/Backup, AS), manuelle Route, Verbund,
+    Session-Sync. Dazu je Kante die Routen darüber, je Richtung.
+  - Klick auf einen Knoten zeigt seine Verbindungen mit Netz, Adressen und Details.
+  - Nicht für Kunden-Benutzer.
+- **Plausibilität** (Findings → Topologie, nach jedem Lauf):
+  - dieselbe IP auf zwei Geräten im selben Netz;
+  - Gegenstellen im selben Netz mit verschiedener Netzmaske;
+  - Routing-Schleife zwischen zwei gelesenen Geräten;
+  - eingeschaltete statische Route, die nicht in der Routing-Tabelle steht und für die keine
+    andere Route gilt;
+  - BGP-Sitzung nicht aufgebaut.
+
 ## 0.49.0 – 2026-10-23
 
 TLS intern mit eigener CA (Entscheid des Anwenders vor dem Produktivbetrieb, R14, ADR 0023,

@@ -41,6 +41,11 @@ export const FINDING_LABEL: Record<string, string> = {
   aci_scope_unpaired: "Contract: ohne Gegenstelle im Scope",
   epg_assignment_conflict: "EPG: gelernt ≠ konfiguriert",
   snat_pool_missing: "SNAT-Pool fehlt",
+  topo_duplicate_ip: "IP doppelt im Netz",
+  topo_mask_mismatch: "Netzmaske abweichend",
+  topo_route_loop: "Routing-Schleife",
+  topo_static_unused: "Statische Route ohne Wirkung",
+  topo_bgp_down: "BGP nicht aufgebaut",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -68,6 +73,11 @@ export const FINDING_HINT: Record<string, string> = {
   aci_scope_unpaired: "Consumer bzw. Provider, die der Scope des Contracts (AP, VRF, Tenant) mit keiner Gegenstelle verbindet",
   epg_assignment_conflict: "IP im ACI in einer anderen EPG gelernt als konfiguriert (Portgruppe der VM bzw. statischer Endpunkt)",
   snat_pool_missing: "Policy übersetzt die Quelle auf einen IP-Pool, den die Firewall nicht hat",
+  topo_duplicate_ip: "dieselbe IP auf zwei Geräten im selben Netz",
+  topo_mask_mismatch: "Gegenstellen im selben Netz mit verschiedener Netzmaske",
+  topo_route_loop: "zwei gelesene Knoten leiten ein Netz gegenseitig zueinander",
+  topo_static_unused: "eingeschaltete statische Route, die nicht in der Routing-Tabelle steht",
+  topo_bgp_down: "BGP-Sitzung eines gelesenen Knotens nicht aufgebaut",
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -108,6 +118,12 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     label: "Bereinigung",
     help: "Doppelte und unbenutzte Objekte",
     types: ["duplicate_value", "unused_object"],
+  },
+  {
+    key: "topology",
+    label: "Topologie",
+    help: "Plausibilität von Netzen und Routing: doppelte IPs, Masken, Schleifen, Routen ohne Wirkung, BGP",
+    types: ["topo_duplicate_ip", "topo_mask_mismatch", "topo_route_loop", "topo_static_unused", "topo_bgp_down"],
   },
   {
     key: "aci",

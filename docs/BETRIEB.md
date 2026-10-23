@@ -409,6 +409,21 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       eingetragen“ markiert erkannte Router, die noch fehlen; ein Knopf übernimmt sie.
     - Danach in der Weg-Suche einfach neu suchen. Das Ende nennt bei mehreren Routern
       „Router n von N“. „Als Anbindung erfassen“ in der Weg-Suche öffnet das Formular hier.
+  - **Topologie** (0.50.0, ADR 0019, `GET /topology`): das Modell der Umgebung als Liste.
+    - Knoten: Firewalls bzw. VDOMs, ACI-VRFs (alle Border-Leafs), Segmente (ein Netz mit mehr
+      als zwei gelesenen Geräten), Anbindungen (von Hand) und Router ohne gelesenes Gerät
+      (beim ACI nur an den L3Outs). Je Knoten Mitglieder, HA, Verbund und die Zahl der Befunde.
+    - Klick auf einen Knoten zeigt seine Verbindungen: Transfernetz (gemeinsames Netz der
+      Interfaces bzw. L3Out-SVIs), Inter-VDOM-Link, BGP-Sitzung, „nach aussen“ (Router bzw.
+      Anbindung mit aktiv/Backup, AS, Interface), manuelle Route, Verbund, Session-Sync – mit
+      Netz, Adressen, den Routen darüber (→ hinaus, ← herein, Backup) und der Herkunft
+      (abgeleitet, von Hand, bestätigt).
+    - **Plausibilität** (Findings → Topologie): doppelte IP im selben Netz, abweichende
+      Netzmaske der Gegenstellen, Routing-Schleife zwischen zwei gelesenen Geräten, statische
+      Route ohne Wirkung (eingeschaltet, nicht in der RIB, keine andere Route dafür),
+      BGP-Sitzung nicht aufgebaut. Nach jedem Lauf neu berechnet.
+    - Nicht für Kunden-Benutzer (zeigt die ganze Umgebung). Zeichnung und Export folgen
+      (0.52.0), Korrekturen im Designer später.
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
   (Application Profiles, EPGs, Server); **Vorschläge** nach der Projektnummer aus
