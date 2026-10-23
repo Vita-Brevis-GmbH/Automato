@@ -1,5 +1,7 @@
 """System-Seite (Admin): Versionen, Datenbank-Migration, Agent-Paket und Signatur, Zeitplan,
-Sicherheits-Schalter und letzte Sicherung - der Betriebsstand auf einen Blick.
+Sicherheits-Schalter und letzte Sicherung - der Betriebsstand auf einen Blick. Seit 0.40.0
+`GET /system/connections`: Verbindungen vom Orchestrator-Container aus (Datenbank, Redis,
+Keycloak, zentral gelesene Quellsysteme) mit Hinweis bzw. ufw-Regel.
 
 Nur lesend; zeigt nie Schluessel oder Secrets, nur ob sie gesetzt sind.
 """
@@ -21,7 +23,7 @@ from app.auth.principal import Principal
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.models import Agent, SourceSystem
-from app.store import agent_package, health
+from app.store import agent_package, connections, health
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -178,3 +180,17 @@ def health_status(
     # ohne alembic_version (Tests/Dev mit create_all) gilt die Datenbank als aktuell
     items = health.checks(session, settings, tid, database_ok=db.up_to_date or db.revision is None)
     return health.summary(items)
+
+
+@router.get("/connections")
+def connection_checks(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Verbindungen jetzt pruefen (0.40.0), vom Orchestrator-Container aus: Datenbank, Redis,
+    Keycloak (OIDC), jedes zentral gelesene Quellsystem (Name, TCP, bei NetBox `/api/status/`
+    - nur lesend); Agent-Systeme als Hinweis. Dauert wenige Sekunden; zeigt nie Secrets."""
+    tid = tenant_scope(principal, tenant_id)
+    return connections.run(session, settings, None if tid is None else {tid})

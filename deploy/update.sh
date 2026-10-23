@@ -5,6 +5,8 @@
 #   deploy/update.sh <git-ref>  wie oben, aber auf einen bestimmten Stand (Tag/Commit/Branch)
 #   deploy/update.sh --rollback zurueck auf Code UND Datenbank vor dem letzten Update
 #
+# Am Ende prueft deploy/aufbau.sh den Aufbau und die Verbindungen (nur Hinweis, kein Abbruch).
+#
 # Die Sicherung macht deploy/backup/backup.sh (age-Empfaenger: AUTOMATO_BACKUP_AGE_RECIPIENT,
 # fuer den Rueckfall die Identitaet AUTOMATO_BACKUP_AGE_IDENTITY). Profile ueber
 # AUTOMATO_COMPOSE_PROFILES (Standard "--profile core"). Migrationen laufen beim Start des
@@ -86,10 +88,12 @@ update() {
     exit 1
   fi
   echo "Update fertig: Version $(version). Rueckfall bei Bedarf: deploy/update.sh --rollback"
+  # Aufbau und Verbindungen pruefen (0.40.0) - meldet, bricht das Update aber nicht ab
+  deploy/aufbau.sh pruefen || echo "HINWEIS: Die Prüfung meldet Fehler (oben) – Abhilfe dort bzw. System → Verbindungen."
 }
 
 case "${1:-}" in
   --rollback) rollback ;;
-  -h | --help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h | --help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) update "${1:-}" ;;
 esac

@@ -1,8 +1,17 @@
 // System (Admin): Betriebsstand auf einen Blick - Version, Datenbank-Migration, Agent-Paket
-// mit Signatur, Zeitplan, Sicherheits-Schalter, letzte Sicherung. Rein lesend; Updates und
-// Sicherungen laufen auf der VM (deploy/update.sh, deploy/backup) - siehe docs/BETRIEB.md.
+// mit Signatur, Zeitplan, Sicherheits-Schalter, letzte Sicherung, seit 0.40.0 die Verbindungen
+// (vom Orchestrator-Container aus). Rein lesend; Updates und Sicherungen laufen auf der VM
+// (deploy/update.sh, deploy/aufbau.sh, deploy/backup) - siehe docs/BETRIEB.md.
 import { useEffect, useState } from "react";
-import { fetchOpsHealth, fetchSystemStatus, OpsHealth, SystemStatus } from "./api";
+import {
+  checkConnections,
+  ConnectionItem,
+  ConnectionReport,
+  fetchOpsHealth,
+  fetchSystemStatus,
+  OpsHealth,
+  SystemStatus,
+} from "./api";
 import { HealthChip, HealthTable } from "./Health";
 import { Dash, ErrorBox, fmtTime, Loading, Note, PageHead } from "./ui";
 
@@ -29,6 +38,110 @@ function Chip({ map, value }: { map: Record<string, [string, string]>; value: st
   return <span className={`chip ${cls}`}>{label}</span>;
 }
 
+const CONN: Record<ConnectionItem["status"], [string, string]> = {
+  ok: ["ok", "ok"],
+  info: ["na", "Hinweis"],
+  warn: ["warn", "Warnung"],
+  error: ["crit", "Fehler"],
+};
+
+// Verbindungen (0.40.0): auf Knopfdruck vom Orchestrator-Container aus - derselbe Weg wie
+// Einlesen und NetBox-Sync; je Ziel die Schritte (Name, TCP, HTTP) und die Abhilfe
+function Connections() {
+  const [report, setReport] = useState<ConnectionReport | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  const run = () => {
+    setBusy(true);
+    setErr(null);
+    checkConnections()
+      .then(setReport)
+      .catch(setErr)
+      .finally(() => setBusy(false));
+  };
+  const status = report ? CONN[report.status] : null;
+  return (
+    <div className="card" id="connections" style={{ marginBottom: 16 }}>
+      <div className="card-head">
+        <h2>Verbindungen</h2>
+        {status && report && (
+          <span className={`chip ${status[0]}`}>
+            {report.problems ? `${report.problems} Problem${report.problems === 1 ? "" : "e"}` : "alles erreichbar"}
+          </span>
+        )}
+        <span className="faint" style={{ fontSize: 12 }}>
+          vom Orchestrator-Container aus – derselbe Weg wie Einlesen und NetBox-Sync
+          {report?.container.network ? ` · Container-Netz ${report.container.network}` : ""}
+        </span>
+        <div className="spacer" />
+        <button className="btn btn-primary btn-sm" onClick={run} disabled={busy}>
+          {busy ? "Prüfe…" : report ? "Erneut prüfen" : "Jetzt prüfen"}
+        </button>
+      </div>
+      <ErrorBox error={err} prefix="Verbindungen prüfen" />
+      {report ? (
+        <div className="card-body scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Ziel</th>
+                <th>Ergebnis</th>
+                <th>Schritte</th>
+                <th>Abhilfe</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.items.map((i) => (
+                <tr key={i.key} className={`conn-${i.status}`}>
+                  <td>
+                    <b>{i.name}</b>
+                    <div className="faint">{i.area}</div>
+                    {i.target && <div className="faint mono">{i.target}</div>}
+                  </td>
+                  <td className="nowrap">
+                    <span className={`chip ${CONN[i.status][0]}`}>{CONN[i.status][1]}</span>
+                  </td>
+                  <td>
+                    {i.steps.map((st) => (
+                      <div key={st.step + st.detail} className={st.ok ? "" : "conn-fail"}>
+                        {st.ok ? "✓" : "✗"} <span className="mono">{st.step}</span> {st.detail}
+                      </div>
+                    ))}
+                  </td>
+                  <td>
+                    {i.status !== "ok" && i.hint}
+                    {i.ufw && (
+                      <div className="conn-cmd">
+                        <code>{i.ufw.command}</code>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          title="Befehl kopieren – auf dem Docker-Host als root ausführen"
+                          onClick={() => void navigator.clipboard?.writeText(i.ufw!.command)}
+                        >
+                          Kopieren
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="faint" style={{ padding: "8px 12px" }}>
+            geprüft {fmtTime(report.checked_at)} · auf der VM dasselbe mit <code>deploy/aufbau.sh pruefen</code>; Firewall-Regeln
+            setzt <code>deploy/aufbau.sh firewall --anwenden</code>
+          </div>
+        </div>
+      ) : (
+        <div className="card-body pad faint">
+          Prüft Datenbank, Redis (Warteschlange zum zentralen Worker), Keycloak bei OIDC und jedes zentral gelesene Quellsystem
+          (Name, TCP, bei NetBox die API mit dem Lese-Token – nur lesend). Systeme, die ein Agent liest, prüft der Agent selbst.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function System() {
   const [s, setS] = useState<SystemStatus | null>(null);
   const [health, setHealth] = useState<OpsHealth | null>(null);
@@ -41,8 +154,8 @@ export default function System() {
   return (
     <>
       <PageHead title="System">
-        Betriebsstand der Plattform. Updates, Rückfall und Sicherungen laufen auf der VM
-        (<code>deploy/update.sh</code>, <code>deploy/backup/</code>).
+        Betriebsstand der Plattform. Updates, Rückfall, Prüfung des Aufbaus und Sicherungen laufen auf der VM
+        (<code>deploy/update.sh</code>, <code>deploy/aufbau.sh</code>, <code>deploy/backup/</code>).
       </PageHead>
       <ErrorBox error={err} prefix="Status laden" />
       {health && (
@@ -56,6 +169,7 @@ export default function System() {
           </div>
         </div>
       )}
+      <Connections />
       {!s && !err && <Loading />}
       {s && (
         <div className="two-col">

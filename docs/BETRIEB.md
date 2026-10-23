@@ -573,6 +573,16 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Signaturzustand und Anzahl aktueller Agenten, Anmeldung, Agent-Kanal (mTLS-Modus),
   Verschlüsselung von Audit-Log und Zugangsdaten, Zeitplan mit nächstem Termin, letzte
   Sicherung. Rein lesend, zeigt nie Schlüssel.
+  - **Verbindungen** (0.40.0): „Jetzt prüfen“ prüft vom Orchestrator-Container aus – auf dem
+    Weg, den Einlesen und NetBox-Sync nehmen:
+    - Datenbank, Redis (Warteschlange zum zentralen Worker), Keycloak (bei OIDC die JWKS),
+    - jedes zentral gelesene Quellsystem: Name, TCP, bei NetBox die API mit dem Lese-Token
+      (nur lesend) und ob ein Schreib-Token für den Sync hinterlegt ist,
+    - Systeme, die ein Agent liest, als Hinweis je Agent (prüft der Agent: `.\run-agent.ps1 -Check`).
+
+    Je Ziel die Schritte (✓/✗) und die Abhilfe. Antwortet ein Dienst auf dem Docker-Host nicht
+    (`host.docker.internal`), steht die passende ufw-Regel zum Kopieren da – schmal: nur das
+    Netz des Containers, nur die Gateway-Adresse, nur der Port.
 - **NetBox-Sync (nur Admin, ADR 0010):** einziger Schreibweg von Automato. Standorte werden
   NetBox-Sites in den Standort-Gruppen *Virtuelle Standorte* bzw. *Physische Standorte*, der
   Kommentar nennt die Zuordnung (ADR 0015; das Schreib-Token braucht dafür auch
@@ -625,6 +635,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /netbox-sync/targets`, `GET/POST /netbox-sync/plans`, `GET …/plans/{id}[/items]`, `POST …/plans/{id}/apply` | NetBox-Sync (admin): Vorschau, Aktionen, Übernahme |
 | `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}` | Namensprofile |
 | `GET /system/status` | Betriebsstand (admin, siehe System-Seite) |
+| `GET /system/connections` (`?tenant_id=`) | Verbindungen jetzt prüfen (admin, 0.40.0): `status`, `problems`, `container.network`, `items` je Ziel mit `area`, `status` (ok/warn/error/info), `steps`, `hint`, `ufw` (Regel); dasselbe auf der VM: `automato check-connections [--json]` |
 | `GET /system/health` (`?tenant_id=`) | Betriebszustand als Ampel (viewer, mandantsgescoped): `status`, `problems`, `checks` je Prüfung mit `area`, `status` (ok/warn/error), `title`, `detail`, `view` |
 | `POST /rules/{id}/pair` (`partner_id`, `decision` confirmed/rejected), `DELETE /rules/pair-decisions/{id}` | IPv4/IPv6-Paar bestätigen/ablehnen bzw. zurücknehmen (operator); Liste `GET /rules?pair=similar\|confirmed\|same\|any\|none` |
 
@@ -640,7 +651,18 @@ an (`deploy/agent-gateway`, Port 8443).
 - **Orchestrator aktualisieren:** `deploy/update.sh` (bzw. `deploy/update.sh <tag>`):
   verschlüsselte Sicherung → Code holen → Images bauen → starten → `/health`. Migrationen
   laufen beim Start (`alembic upgrade head`). Schlägt etwas fehl: `deploy/update.sh --rollback`
-  setzt Code **und** Datenbank auf den Stand vor dem Update zurück (ADR 0013).
+  setzt Code **und** Datenbank auf den Stand vor dem Update zurück (ADR 0013). Am Ende prüft
+  `deploy/aufbau.sh pruefen` den Aufbau (nur Hinweis, kein Abbruch).
+- **Aufbau prüfen** (0.40.0, nach dem Muster von Magisters `plattform-aufbau.sh`):
+  - `deploy/aufbau.sh pruefen` – Werkzeuge (docker, compose, curl, git, python3), Docker-Dienst,
+    Container (läuft, Health), `/health`, die Verbindungen aus dem Orchestrator-Container
+    (`automato check-connections`, wie System → Verbindungen) und die Host-Firewall: ufw aktiv,
+    Sperren aus Docker-Netzen der letzten Stunde (Kernel-Log), nötige Freigaben. Als root
+    aufrufen, sonst bleibt ufw ungeprüft. Exit 0 = in Ordnung, 1 = Fehler.
+  - `deploy/aufbau.sh firewall` zeigt die nötigen ufw-Regeln, `… firewall --anwenden` setzt
+    sie (root) und prüft danach erneut. Beispiel:
+    `ufw allow proto tcp from 172.20.0.0/16 to 172.17.0.1 port 8080 comment 'Automato -> netbox'`.
+  - `deploy/aufbau.sh status` – Container und Health kurz.
 - **Sicherung:** täglich `deploy/backup/backup.sh` (age-verschlüsselt: Datenbank, Schlüssel der
   Zugangsdaten, Agent-Signatur), Wiederherstellung `deploy/backup/restore.sh` – Details und
   Verschlüsselung at rest in `deploy/backup/README.md`.
@@ -805,8 +827,14 @@ an (`deploy/agent-gateway`, Port 8443).
 
 - **NetBox „nicht erreichbar … ConnectTimeout“ beim Einlesen und im NetBox-Sync** (Dev-Befund
   0.33.0) — der Orchestrator- bzw. Collector-Container bekommt keine TCP-Verbindung zu
-  `host.docker.internal:8080`. Das ist kein Rechte- oder Token-Problem.
-  1. **Quellsysteme → Prüfen** (ab 0.34.0) zeigt in Sekunden, wo es hängt:
+  `host.docker.internal:8080`. Das ist kein Rechte- oder Token-Problem. Häufigste Ursache
+  (Befund 0.39.0): **ufw** auf dem Docker-Host verwirft den Weg vom Container-Netz zum Host –
+  im Kernel-Log `[UFW BLOCK] IN=br-… SRC=172.20.0.5 DST=172.17.0.1 … DPT=8080`. Abhilfe:
+  `sudo deploy/aufbau.sh firewall --anwenden` (setzt nur die schmale Regel) bzw. die Regel aus
+  System → Verbindungen. **Nicht** `172.16.0.0/12` freigeben – das LAN kann im selben Bereich
+  liegen.
+  1. **Quellsysteme → Prüfen** (ab 0.34.0) bzw. **System → Verbindungen** (0.40.0) zeigt in
+     Sekunden, wo es hängt:
      - Name nicht auflösbar: `extra_hosts` fehlt bzw. der Container wurde nicht neu
        erstellt.
      - Keine Antwort: NetBox ist aus, oder der Weg ist gesperrt.

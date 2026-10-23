@@ -10,6 +10,7 @@ Im Orchestrator-Container (Beispiele):
   automato collect --platform fortigate --tenant kunde-a --source fw-01
   automato status --run-id <id>
   automato lab            # Model-2-Happy-Path (NetBox + FortiGate) in einem Schritt
+  automato check-connections [--json]   # Verbindungen aus dem Container (deploy/aufbau.sh)
 """
 
 from __future__ import annotations
@@ -227,6 +228,27 @@ def _cmd_pkg_install_signature(_session: Session, args: argparse.Namespace) -> i
     return 0
 
 
+MARK = {"ok": "OK    ", "info": "INFO  ", "warn": "WARN  ", "error": "FEHLER"}
+
+
+def _cmd_check_connections(session: Session, args: argparse.Namespace) -> int:
+    """Verbindungen vom Container aus (0.40.0) - wie System → Verbindungen; Exit 1 bei Fehler."""
+    from app.store import connections
+
+    result = connections.run(session, get_settings())
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        for item in result["items"]:
+            target = f"  {item['target']}" if item["target"] else ""
+            print(f"{MARK[item['status']]} {item['name']}{target}")
+            for step in item["steps"]:
+                print(f"         {'✓' if step['ok'] else '✗'} {step['step']}: {step['detail']}")
+            if item["hint"] and item["status"] != "ok":
+                print(f"         → {item['hint']}")
+    return 1 if result["status"] == "error" else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="automato", description="Automato-Auslöser (CLI)")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -277,6 +299,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source", default="fw-01")
     p.add_argument("--base-url", default="", help="FortiGate-URL (Doku; Creds liest der Collector)")
     p.set_defaults(func=_cmd_lab)
+
+    p = sub.add_parser("check-connections", help="Verbindungen aus dem Container pruefen")
+    p.add_argument("--json", action="store_true", help="Ergebnis als JSON (deploy/aufbau.sh)")
+    p.set_defaults(func=_cmd_check_connections)
 
     return parser
 

@@ -1510,6 +1510,27 @@ export interface OpsHealth {
 export const fetchOpsHealth = (tenantId?: number | null) =>
   getJSON<OpsHealth>(`/api/system/health${qs({ tenant_id: tenantId })}`);
 
+// Verbindungen (0.40.0): vom Orchestrator-Container aus geprüft - Datenbank, Redis, Keycloak,
+// zentral gelesene Quellsysteme; Agent-Systeme als Hinweis
+export interface ConnectionItem {
+  key: string;
+  area: string; // Plattform | Anmeldung | Quellsysteme | Agenten
+  name: string;
+  target: string | null;
+  status: "ok" | "warn" | "error" | "info";
+  steps: { step: string; ok: boolean; detail: string }[];
+  hint: string | null;
+  ufw: { from: string; to: string; port: number; command: string } | null;
+}
+export interface ConnectionReport {
+  status: "ok" | "warn" | "error";
+  problems: number;
+  checked_at: string;
+  container: { network: string | null; host: string };
+  items: ConnectionItem[];
+}
+export const checkConnections = () => getJSON<ConnectionReport>("/api/system/connections");
+
 // Objekte & Inventar (rein lesend, Mandant nötig)
 export const fetchObjects = (
   tenantId: number,

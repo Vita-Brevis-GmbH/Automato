@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.40.0 – 2026-10-23
+
+Verbindungen prüfen – im Aufbau-Skript und unter System (Anwender, Befund: ufw sperrte den Weg
+vom Container zu NetBox). Ohne Migration.
+
+- **System → Verbindungen:** „Jetzt prüfen“ vom Orchestrator-Container aus, auf dem Weg von
+  Einlesen und NetBox-Sync:
+  - Datenbank, Redis (Warteschlange zum zentralen Worker), Keycloak (JWKS bei OIDC),
+  - jedes zentral gelesene Quellsystem (Name, TCP, bei NetBox `/api/status/` mit dem
+    Lese-Token, nur lesend; Schreib-Token für den Sync hinterlegt?),
+  - Agent-Systeme als Hinweis je Agent.
+
+  Je Ziel die Schritte und die Abhilfe. Antwortet ein Dienst auf dem Docker-Host nicht, steht
+  die schmale ufw-Regel zum Kopieren da (Container-Netz aus der Routing-Tabelle, Gateway-
+  Adresse, Port). API `GET /system/connections` (admin), CLI `automato check-connections
+  [--json]`.
+- **`deploy/aufbau.sh`** (nach dem Muster von Magisters `plattform-aufbau.sh`): `pruefen`
+  (Werkzeuge, Docker, Container, Health, Verbindungen aus dem Container, ufw aktiv und Sperren
+  aus Docker-Netzen der letzten Stunde), `firewall [--anwenden]` (nötige ufw-Regeln zeigen bzw.
+  setzen und erneut prüfen), `status`. `deploy/update.sh` ruft am Ende `pruefen` auf (Hinweis,
+  kein Abbruch).
+- Doku: Fehlerbild „NetBox ConnectTimeout“ mit der Ursache ufw und der Abhilfe.
+- Tests: Verbindungen (Netz aus `/proc/net/route`, ufw-Regel, Agent-Hinweis, Rechte, Redis-PING,
+  CLI), Aufbau-Skript mit Ersatz für `docker compose`, UI (Karte mit Regel zum Kopieren).
+
 ## 0.39.0 – 2026-10-23
 
 Weg-Suche: ein Netz als Ganzes prüfen (Anwender: „ob das Netzwerk in die Richtung geroutet wird

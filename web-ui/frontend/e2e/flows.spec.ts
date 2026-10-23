@@ -290,6 +290,39 @@ test("Betriebszustand auf der System-Seite", async ({ page }) => {
   await expect(card).toContainText("Quellsysteme");
 });
 
+test("System: Verbindungen prüfen mit ufw-Regel zum Kopieren (0.40.0)", async ({ page }) => {
+  // Antwort gestellt: die echte Prüfung ginge im Test an Adressen ohne Gegenstelle
+  const command = "sudo ufw allow proto tcp from 172.20.0.0/16 to 172.17.0.1 port 8080 comment 'Automato -> nb'";
+  await page.route("**/api/system/connections*", (route) =>
+    route.fulfill({
+      json: {
+        status: "error", problems: 1, checked_at: "2026-10-23T12:00:00Z",
+        container: { network: "172.20.0.0/16", host: "orchestrator" },
+        items: [
+          { key: "database", area: "Plattform", name: "Datenbank", target: null, status: "ok",
+            steps: [{ step: "sql", ok: true, detail: "SELECT 1 (2 ms)" }], hint: null, ufw: null },
+          { key: "source:1", area: "Quellsysteme", name: "nb (netbox)", target: "http://host.docker.internal:8080",
+            status: "error", hint: "Keine Antwort vom Docker-Host: meist sperrt die Host-Firewall (ufw) den Weg",
+            steps: [{ step: "dns", ok: true, detail: "host.docker.internal → 172.17.0.1" },
+                    { step: "tcp", ok: false, detail: "172.17.0.1:8080 keine Antwort nach 5 s" }],
+            ufw: { from: "172.20.0.0/16", to: "172.17.0.1", port: 8080, command } },
+        ],
+      },
+    }),
+  );
+  await page.goto("/#system");
+  const card = page.locator("#connections");
+  await card.locator("button", { hasText: "Jetzt prüfen" }).click();
+  await expect(card.locator(".card-head .chip")).toHaveText("1 Problem");
+  await expect(card).toContainText("Container-Netz 172.20.0.0/16");
+  const nb = card.locator("tbody tr", { hasText: "nb (netbox)" });
+  await expect(nb).toContainText("Fehler");
+  await expect(nb.locator(".conn-fail")).toContainText("172.17.0.1:8080 keine Antwort");
+  await expect(nb.locator(".conn-cmd code")).toHaveText(command);
+  await expect(card.locator("tbody tr", { hasText: "Datenbank" })).toContainText("ok");
+  await expect(card.locator("button", { hasText: "Erneut prüfen" })).toBeVisible();
+});
+
 test("NAT: Korrektheitsprüfung, nur Abweichungen, Objekt öffnen", async ({ page }) => {
   await page.goto("/#nat");
   const shop = rows(page).filter({ hasText: "V-EXT_shop.example.ch" });
