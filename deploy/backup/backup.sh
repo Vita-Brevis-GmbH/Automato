@@ -11,6 +11,7 @@
 # unlesbar - beide zusammen aufbewahren, den age-Identitaetsschluessel getrennt davon.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+. deploy/env.sh # AUTOMATO_BACKUP_* auch aus .env (0.42.0)
 
 DEST=${1:-${AUTOMATO_BACKUP_DIR:-/var/backups/automato}}
 RECIPIENT=${AUTOMATO_BACKUP_AGE_RECIPIENT:-}
@@ -20,6 +21,7 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 
 if [ -z "$RECIPIENT" ] && [ "${AUTOMATO_BACKUP_PLAIN:-}" != "1" ]; then
   echo "FEHLER: AUTOMATO_BACKUP_AGE_RECIPIENT fehlt (age-Empfaenger, 'age-keygen -y')." >&2
+  echo "        Einmal einrichten: deploy/aufbau.sh backup-schluessel (schreibt ihn in .env)." >&2
   echo "        Unverschluesselt nur bewusst mit AUTOMATO_BACKUP_PLAIN=1." >&2
   exit 2
 fi

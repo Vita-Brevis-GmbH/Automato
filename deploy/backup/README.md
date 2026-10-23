@@ -3,10 +3,19 @@
 ## Sicherung (`backup.sh`)
 
 ```bash
-age-keygen -o ~/automato-backup.agekey        # einmalig, Identität getrennt aufbewahren
-export AUTOMATO_BACKUP_AGE_RECIPIENT=$(age-keygen -y ~/automato-backup.agekey)
+apt-get install -y age                         # falls nicht vorhanden
+deploy/aufbau.sh backup-schluessel             # einmalig (0.42.0): Identität ~/automato-backup.agekey,
+                                               # Empfänger + Pfad in .env (AUTOMATO_BACKUP_AGE_*)
 deploy/backup/backup.sh                        # Standard /var/backups/automato, 14 Tage
 ```
+
+Seit 0.42.0 lesen `backup.sh`, `restore.sh`, `deploy/update.sh` und `deploy/aufbau.sh` die
+Werte `AUTOMATO_BACKUP_AGE_RECIPIENT`, `AUTOMATO_BACKUP_AGE_IDENTITY`, `AUTOMATO_BACKUP_DIR`,
+`AUTOMATO_BACKUP_KEEP_DAYS`, `AUTOMATO_BACKUP_PLAIN` und `AUTOMATO_COMPOSE_PROFILES` auch aus
+`.env` (gelesen, nicht ausgeführt; eine Umgebungsvariable geht vor). Von Hand geht es weiter so:
+`age-keygen -o ~/automato-backup.agekey` und
+`export AUTOMATO_BACKUP_AGE_RECIPIENT=$(age-keygen -y ~/automato-backup.agekey)`. Die Identität
+zusätzlich getrennt von der VM aufbewahren – ohne sie ist keine Sicherung lesbar.
 
 Gesichert werden, je mit [age](https://age-encryption.org) verschlüsselt:
 
@@ -20,7 +29,8 @@ Gesichert werden, je mit [age](https://age-encryption.org) verschlüsselt:
 
 Ohne age-Empfänger bricht das Skript ab (unverschlüsselt nur bewusst mit
 `AUTOMATO_BACKUP_PLAIN=1`). Den Zeitpunkt der letzten Sicherung zeigt die System-Seite. Täglich
-per cron, z. B. `15 1 * * * cd /opt/automato && AUTOMATO_BACKUP_AGE_RECIPIENT=age1… deploy/backup/backup.sh`.
+per cron, z. B. `15 1 * * * cd /opt/automato/automato && deploy/backup/backup.sh` (Empfänger aus
+`.env`).
 Sicherungen zusätzlich auf ein anderes System kopieren (die Dateien sind verschlüsselt).
 
 ## Wiederherstellung (`restore.sh`)

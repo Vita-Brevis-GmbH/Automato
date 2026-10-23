@@ -663,6 +663,11 @@ an (`deploy/agent-gateway`, Port 8443).
     sie (root) und prüft danach erneut. Beispiel:
     `ufw allow proto tcp from 172.20.0.0/16 to 172.17.0.1 port 8080 comment 'Automato -> netbox'`.
   - `deploy/aufbau.sh status` – Container und Health kurz.
+  - `deploy/aufbau.sh backup-schluessel` (0.42.0) – legt den age-Schlüssel für die Sicherung an
+    (bzw. nimmt den vorhandenen) und trägt Empfänger und Pfad in `.env` ein. `deploy/update.sh`
+    bricht ohne Empfänger bei der Sicherung ab; seit 0.42.0 liest es ihn aus `.env`, ein
+    `export` vor jedem Update ist nicht mehr nötig. `pruefen` meldet fehlenden Empfänger,
+    fehlende Identität für den Rückfall und das Alter der letzten Sicherung.
   - Seit 0.41.0 prüft `pruefen` auch: startet Docker beim Booten, haben die Container eine
     Neustart-Regel, und – bei einer NetBox auf derselben VM (`source-of-truth/netbox/
     netbox-docker`, sonst `AUTOMATO_NETBOX_DIR`) – laufen ihre Container und antwortet die

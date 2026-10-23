@@ -9,6 +9,7 @@
 # ohne Rueckfrage mit AUTOMATO_RESTORE_YES=1.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+. deploy/env.sh # AUTOMATO_BACKUP_AGE_IDENTITY auch aus .env (0.42.0)
 
 DUMP=${1:?Dump-Datei angeben}
 KEYFILE=${2:-}

@@ -9,6 +9,8 @@
 #   deploy/aufbau.sh status               Container und Health kurz
 #   deploy/aufbau.sh netbox-start         lokale NetBox (netbox-docker) starten, Neustart-Regel
 #                                         setzen und warten, bis sie antwortet (0.41.0)
+#   deploy/aufbau.sh backup-schluessel    age-Schluessel fuer die Sicherung anlegen bzw. den
+#                                         vorhandenen nehmen und in .env eintragen (0.42.0)
 #
 # Die Verbindungen prueft der Orchestrator selbst (`automato check-connections`, wie System ->
 # Verbindungen im UI): Datenbank, Redis, Keycloak, jedes zentral gelesene Quellsystem - auf
@@ -21,11 +23,12 @@
 # (source-of-truth/netbox/netbox-docker bzw. AUTOMATO_NETBOX_DIR) - laufen ihre Container und
 # antwortet die Login-Seite. Befund 0.40.0: NetBox war nach einem Neustart aus, Automato nicht.
 #
-# Exit 0 = alles erreichbar, 1 = mindestens ein Fehler. Aendert nur `firewall --anwenden` und
-# `netbox-start` etwas.
+# Exit 0 = alles erreichbar, 1 = mindestens ein Fehler. Aendert nur `firewall --anwenden`,
+# `netbox-start` und `backup-schluessel` etwas. Einstellungen auch aus .env (deploy/env.sh).
 # Profile ueber AUTOMATO_COMPOSE_PROFILES (Standard "--profile core"), wie deploy/update.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. deploy/env.sh
 
 COMPOSE=${COMPOSE:-docker compose}
 read -r -a PROFILES <<<"${AUTOMATO_COMPOSE_PROFILES:---profile core}"
@@ -291,6 +294,56 @@ cmd_firewall() {
   fi
 }
 
+# --- Sicherung (age-verschluesselt, deploy/backup) -------------------------------------
+BACKUP_DIR=${AUTOMATO_BACKUP_DIR:-/var/backups/automato}
+IDENTITY_STANDARD=${HOME:-/root}/automato-backup.agekey
+
+sicherung() {
+  titel "Sicherung"
+  if [ "${AUTOMATO_BACKUP_PLAIN:-}" = "1" ] && [ -z "${AUTOMATO_BACKUP_AGE_RECIPIENT:-}" ]; then
+    warn "Sicherung unverschlüsselt (AUTOMATO_BACKUP_PLAIN=1) – besser: deploy/aufbau.sh backup-schluessel"
+  elif [ -z "${AUTOMATO_BACKUP_AGE_RECIPIENT:-}" ]; then
+    fehler "kein age-Empfänger – deploy/update.sh bricht bei der Sicherung ab. Einrichten: deploy/aufbau.sh backup-schluessel"
+  else
+    ok "verschlüsselt für ${AUTOMATO_BACKUP_AGE_RECIPIENT:0:12}…"
+    command -v age >/dev/null 2>&1 || fehler "age fehlt (apt-get install -y age)"
+    if [ -n "${AUTOMATO_BACKUP_AGE_IDENTITY:-}" ] && [ -r "$AUTOMATO_BACKUP_AGE_IDENTITY" ]; then
+      ok "Identität für den Rückfall lesbar ($AUTOMATO_BACKUP_AGE_IDENTITY) – zusätzlich getrennt aufbewahren"
+    else
+      warn "keine lesbare Identität (AUTOMATO_BACKUP_AGE_IDENTITY) – deploy/update.sh --rollback kann nicht entschlüsseln"
+    fi
+  fi
+  local neu
+  neu=$(ls -t "$BACKUP_DIR"/automato-*.dump* 2>/dev/null | head -1 || true)
+  if [ -z "$neu" ]; then
+    warn "noch keine Sicherung in $BACKUP_DIR (täglich per cron: deploy/backup/README.md)"
+  else
+    local alter=$(( ($(date +%s) - $(stat -c %Y "$neu")) / 3600 ))
+    if [ "$alter" -gt 26 ]; then warn "letzte Sicherung vor ${alter} h: $(basename "$neu")"
+    else ok "letzte Sicherung vor ${alter} h: $(basename "$neu")"; fi
+  fi
+}
+
+cmd_backup_schluessel() {
+  titel "age-Schlüssel für die Sicherung"
+  command -v age-keygen >/dev/null 2>&1 || { fehler "age fehlt: apt-get install -y age"; return 1; }
+  local id="${AUTOMATO_BACKUP_AGE_IDENTITY:-$IDENTITY_STANDARD}"
+  if [ -f "$id" ]; then
+    ok "vorhandene Identität: $id"
+  else
+    (umask 077 && age-keygen -o "$id" >/dev/null 2>&1) || { fehler "age-keygen -o $id fehlgeschlagen"; return 1; }
+    chmod 600 "$id"
+    ok "neue Identität: $id (nur für $(id -un) lesbar)"
+  fi
+  local empfaenger
+  empfaenger=$(age-keygen -y "$id") || { fehler "$id ist keine age-Identität"; return 1; }
+  setze_env AUTOMATO_BACKUP_AGE_RECIPIENT "$empfaenger"
+  setze_env AUTOMATO_BACKUP_AGE_IDENTITY "$id"
+  ok "in $ENV_DATEI eingetragen: AUTOMATO_BACKUP_AGE_RECIPIENT, AUTOMATO_BACKUP_AGE_IDENTITY"
+  info "Die Identität $id zusätzlich getrennt von der VM aufbewahren (z. B. Passwort-Tresor) –"
+  info "ohne sie ist keine Sicherung lesbar. Danach: deploy/update.sh"
+}
+
 cmd_pruefen() {
   werkzeuge
   container
@@ -298,6 +351,7 @@ cmd_pruefen() {
   health
   verbindungen || true
   firewall_pruefen
+  sicherung
   echo
   if [ "$FEHLER" -eq 0 ]; then
     printf '\033[1mAufbau in Ordnung.\033[0m\n'
@@ -319,6 +373,7 @@ case "${1:-pruefen}" in
   firewall) shift; cmd_firewall "${1:-}" ;;
   status) cmd_status ;;
   netbox-start) cmd_netbox_start ;;
-  -h | --help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' ;;
-  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start)" >&2; exit 2 ;;
+  backup-schluessel) cmd_backup_schluessel ;;
+  -h | --help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start, backup-schluessel)" >&2; exit 2 ;;
 esac

@@ -8,12 +8,15 @@
 # Am Ende prueft deploy/aufbau.sh den Aufbau und die Verbindungen (nur Hinweis, kein Abbruch).
 #
 # Die Sicherung macht deploy/backup/backup.sh (age-Empfaenger: AUTOMATO_BACKUP_AGE_RECIPIENT,
-# fuer den Rueckfall die Identitaet AUTOMATO_BACKUP_AGE_IDENTITY). Profile ueber
+# fuer den Rueckfall die Identitaet AUTOMATO_BACKUP_AGE_IDENTITY) - beide seit 0.42.0 auch aus
+# .env, einmal eingerichtet mit `deploy/aufbau.sh backup-schluessel`. Profile ueber
 # AUTOMATO_COMPOSE_PROFILES (Standard "--profile core"). Migrationen laufen beim Start des
 # Orchestrators; deshalb setzt der Rueckfall auch die Datenbank auf die Sicherung zurueck -
 # Daten seit dem Update gehen dabei verloren (meist nur Minuten).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Einstellungen der Sicherung bzw. Profile aus .env (0.42.0), die Umgebung geht vor
+. deploy/env.sh
 
 COMPOSE=${COMPOSE:-docker compose}
 read -r -a PROFILES <<<"${AUTOMATO_COMPOSE_PROFILES:---profile core}"
@@ -60,6 +63,11 @@ update() {
   prev_version=$(version)
 
   echo "1/4 Sicherung"
+  if [ -z "${AUTOMATO_BACKUP_AGE_RECIPIENT:-}" ] && [ "${AUTOMATO_BACKUP_PLAIN:-}" != "1" ]; then
+    echo "FEHLER: keine verschluesselte Sicherung moeglich - age-Schluessel fehlt." >&2
+    echo "        Einmal einrichten: deploy/aufbau.sh backup-schluessel (schreibt ihn in .env)" >&2
+    exit 2
+  fi
   deploy/backup/backup.sh "$BACKUP_DIR"
   local dump key
   dump=$(ls -t "$BACKUP_DIR"/automato-*.dump* | head -1)
@@ -94,6 +102,6 @@ update() {
 
 case "${1:-}" in
   --rollback) rollback ;;
-  -h | --help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h | --help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) update "${1:-}" ;;
 esac

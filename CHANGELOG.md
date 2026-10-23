@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.42.0 – 2026-10-23
+
+Sicherung einmal einrichten (Befund 0.41.0: `deploy/update.sh` brach ab – „AUTOMATO_BACKUP_AGE_
+RECIPIENT fehlt“). Ohne Migration.
+
+- **Einstellungen aus `.env`:** `deploy/update.sh`, `deploy/aufbau.sh`, `deploy/backup/backup.sh`
+  und `restore.sh` lesen `AUTOMATO_BACKUP_AGE_RECIPIENT`, `…_AGE_IDENTITY`, `…_DIR`,
+  `…_KEEP_DAYS`, `…_PLAIN` und `AUTOMATO_COMPOSE_PROFILES` auch aus `.env` (`deploy/env.sh`:
+  nur bekannte Schlüssel, gelesen statt ausgeführt; die Umgebung geht vor). Ein Update
+  vergisst damit keine Angabe.
+- **`deploy/aufbau.sh backup-schluessel`:** legt die age-Identität an (bzw. nimmt die
+  vorhandene, nur für root lesbar) und trägt Empfänger und Pfad in `.env` ein.
+- **`deploy/aufbau.sh pruefen`:** neuer Abschnitt Sicherung – Empfänger, age, Identität für
+  den Rückfall, Alter der letzten Sicherung.
+- `deploy/update.sh` nennt ohne Empfänger gleich den Weg (`backup-schluessel`).
+- Tests: Schlüssel einrichten, wiederholt aufrufen, Werte aus `.env`, Umgebung geht vor.
+
 ## 0.41.0 – 2026-10-23
 
 Neustart-Regeln und NetBox im Aufbau-Skript (Befund 0.40.0: nach einem Neustart der VM liefen

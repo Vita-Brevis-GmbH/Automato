@@ -125,3 +125,46 @@ def test_netbox_start_setzt_neustart_regel_und_wartet(tmp_path):
     assert "NetBox antwortet nicht" in text
     missing = _run(tmp_path, "netbox-start", AUTOMATO_NETBOX_DIR=str(tmp_path / "fehlt"))
     assert missing.returncode == 1 and "kein NetBox-Ordner" in missing.stdout
+
+
+def _age(tmp_path) -> dict:
+    """Ersatz fuer age-keygen: -o schreibt eine Identitaet, -y gibt den Empfaenger."""
+    bin_dir = tmp_path / "agebin"
+    bin_dir.mkdir()
+    _stub(bin_dir / "age-keygen",
+          'case "$1" in -o) echo AGE-SECRET-KEY-1TEST > "$2" ;;\n'
+          "  -y) echo age1testempfaenger ;; esac\n")  # fmt: skip
+    _stub(bin_dir / "age", "exit 0\n")
+    return {"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path),
+            "AUTOMATO_ENV_FILE": str(tmp_path / "env"),
+            "AUTOMATO_BACKUP_DIR": str(tmp_path / "bk")}  # fmt: skip
+
+
+def test_backup_schluessel_einmal_einrichten_und_aus_env_lesen(tmp_path):
+    """0.42.0: deploy/update.sh brach ohne AUTOMATO_BACKUP_AGE_RECIPIENT ab - einmal mit
+    backup-schluessel in .env eintragen, danach liest jedes Skript ihn von dort."""
+    env = _age(tmp_path)
+    (tmp_path / "env").write_text("AUTOMATO_NETBOX_TOKEN=bleibt\n")
+    out = _run(tmp_path, "pruefen", **env)
+    assert "kein age-Empfänger" in out.stdout and "backup-schluessel" in out.stdout
+
+    out = _run(tmp_path, "backup-schluessel", **env)
+    assert out.returncode == 0, out.stdout + out.stderr
+    ident = tmp_path / "automato-backup.agekey"
+    assert ident.is_file() and oct(ident.stat().st_mode & 0o777) == "0o600"
+    lines = (tmp_path / "env").read_text().splitlines()
+    assert lines == ["AUTOMATO_NETBOX_TOKEN=bleibt",
+                     "AUTOMATO_BACKUP_AGE_RECIPIENT=age1testempfaenger",
+                     f"AUTOMATO_BACKUP_AGE_IDENTITY={ident}"]  # fmt: skip
+    # zweiter Aufruf: dieselbe Identitaet, keine doppelten Zeilen
+    again = _run(tmp_path, "backup-schluessel", **env)
+    assert "vorhandene Identität" in again.stdout
+    assert (tmp_path / "env").read_text().splitlines() == lines
+
+    out = _run(tmp_path, "pruefen", **env)
+    assert "verschlüsselt für age1testempf…" in out.stdout
+    assert "Identität für den Rückfall lesbar" in out.stdout
+    assert "noch keine Sicherung" in out.stdout
+    # die Umgebung geht vor
+    out = _run(tmp_path, "pruefen", **env, AUTOMATO_BACKUP_AGE_RECIPIENT="age1ausderumgebung")
+    assert "verschlüsselt für age1ausderum…" in out.stdout
