@@ -3,7 +3,9 @@ interner Name, Verwendungszweck), alle VMs der Applikation als Systeme, ihre EPG
 jede Regel mit Richtung und Bezug aus Sicht des Systems (spezifisch bzw. unspezifisch:
 Subnetz, any), Kennzahlen und Befunde."""
 
-from test_vmware import ADMIN, _deliver, _seed, _system
+import copy
+
+from test_vmware import ACI, ADMIN, _deliver, _seed, _system
 
 OP = {"X-Dev-Roles": "operator"}
 
@@ -176,6 +178,65 @@ def test_befund_einer_regel_mit_den_epgs_ihrer_treffer(client):
     (f,) = (f for f in doc["findings"] if f["type"] == "rule_incomplete")
     assert f["rule_id"] is not None
     assert f["epgs"] == ["TE_ka/AP_007/EG_web01"]
+
+
+def _other_tenants() -> dict:
+    """Dev-Befund 0.42.2: weitere ACI-Tenants im selben APIC - TE_kb mit gleichem EPG-Namen und
+    einem Endpunkt mit der IP von web01 (gleiche Adressen in einer anderen VRF), TE_kc mit einer
+    externen EPG 0.0.0.0/0; je ein Contract, der die Applikation nicht betrifft."""
+    kb, kc = "uni/tn-TE_kb", "uni/tn-TE_kc"
+    aci = copy.deepcopy(ACI)
+    aci["epgs"] += [
+        {"name": "EG_web01", "dn": f"{kb}/ap-AP_100/epg-EG_web01", "tenant": "TE_kb",
+         "ap": "AP_100", "vrf": "VRF1", "bd_subnets": ["10.20.0.1/24"],
+         "endpoints": [{"ip": "10.20.0.5"}]},
+        {"name": "EG_db", "dn": f"{kb}/ap-AP_100/epg-EG_db", "tenant": "TE_kb", "ap": "AP_100",
+         "vrf": "VRF1"},
+        {"name": "EG_app", "dn": f"{kc}/ap-AP_200/epg-EG_app", "tenant": "TE_kc", "ap": "AP_200",
+         "vrf": "VRF_c", "bd_subnets": ["10.30.0.1/24"]},
+        {"name": "EN_any", "kind": "external", "dn": f"{kc}/out-L3O_c/instP-EN_any",
+         "tenant": "TE_kc", "l3out": "L3O_c", "vrf": "VRF_c", "subnets": ["0.0.0.0/0"]},  # noqa: S104
+    ]  # fmt: skip
+    aci["rules"] += [
+        {"source_platform": "cisco_aci", "external_id": f"{kb}/brc-CT_kb/SJ", "name": "CT_kb:SJ",
+         "action": "allow", "sources": [f"epg:{kb}/ap-AP_100/epg-EG_web01"],
+         "destinations": [f"epg:{kb}/ap-AP_100/epg-EG_db"], "services": ["tcp/1433"],
+         "aci_scope": "context", "raw": {"tenant": "TE_kb", "dn": f"{kb}/brc-CT_kb"}},
+        {"source_platform": "cisco_aci", "external_id": f"{kc}/brc-CT_kc/SJ", "name": "CT_kc:SJ",
+         "action": "allow", "sources": [f"epg:{kc}/out-L3O_c/instP-EN_any"],
+         "destinations": [f"epg:{kc}/ap-AP_200/epg-EG_app"], "services": ["tcp/443"],
+         "aci_scope": "context", "raw": {"tenant": "TE_kc", "dn": f"{kc}/brc-CT_kc"}},
+    ]  # fmt: skip
+    return aci
+
+
+def test_contracts_anderer_tenants_und_vrfs_nicht_in_der_doku(client):
+    """Dev-Befund 0.42.2: in der Doku eines Projekts (Tenant A, AP_007) standen Contracts
+    anderer Tenants, die weder Tenant noch VRF der Applikation betreffen - ueber einen Endpunkt
+    mit gleicher IP in einer anderen VRF und ueber eine externe EPG 0.0.0.0/0 einer anderen
+    VRF. Die EPGs einer VM stehen fest (Portgruppe); was nur ueber die IP passt, zaehlt nur in
+    ihren VRFs, externe EPGs anderer VRFs gar nicht."""
+    tid, app = _app(client)
+    apic = next(s["id"] for s in client.get("/systems").json() if s["name"] == "apic-01")
+    _deliver(client, tid, apic, "cisco_aci", _other_tenants())
+    doc = client.get(f"/applications/{app['id']}/doc").json()
+    names = {r["name"] for r in doc["rules"]}
+    assert "CT_app:SJ" in names
+    assert not {"CT_kb:SJ", "CT_kc:SJ"} & names, names
+    vms = {s["name"]: s for s in doc["systems"]}
+    assert vms["web01-007-ka"]["epgs"] == ["TE_ka/AP_007/EG_web01"]
+    # Treffer der ACI-Contracts mit der EPG, ueber die sie gelten (Filter nach EPG)
+    (ct,) = (r["id"] for r in doc["rules"] if r["name"] == "CT_app:SJ")
+    epgs = {h["epg"] for h in doc["hits"] if h["rule_id"] == ct}
+    assert epgs == {"TE_ka/AP_007/EG_web01", "TE_ka/AP_007/EPG_db01"}
+    assert all(h["epg"] is None for h in doc["hits"] if h["rule_id"] not in {ct})
+
+    # Doku je System: der Server 10.20.0.5 (EPG ueber die Portgruppe seiner VM) ebenso
+    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    name = next(s["name"] for s in systems if s["ip"] == "10.20.0.5")
+    one = client.get(f"/appdoc/systems/{name}", params={"tenant_id": tid}).json()
+    shown = {r["Description"] for t in one["tables"] for r in t["rows"]}
+    assert "CT_app:SJ" in shown and not {"CT_kb:SJ", "CT_kc:SJ"} & shown, shown
 
 
 def test_doku_server_ohne_vm(client):

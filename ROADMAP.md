@@ -334,8 +334,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.42.0** | Sicherung einmal einrichten: Werte aus `.env`, `deploy/aufbau.sh backup-schluessel`, Prüfung der Sicherung in `pruefen` |
 | **0.42.1** | Korrektur: Compose-Konfiguration vor dem Update bzw. in `pruefen` prüfen (fremder Dienst im Override) |
 | **0.42.2** | Korrektur: `pruefen` meldet Container ausserhalb der Update-Profile, „starting“ und frühere ufw-Sperren nur als Hinweis |
+| **0.42.3** | Korrektur: Applikations-Doku nur mit Contracts aus Tenant/VRF der Systeme (gleiche IPs, externe EPGs anderer VRFs), Filter „EPG“ je Contract |
 
-### Nächste Arbeiten (Stand 0.42.2)
+### Nächste Arbeiten (Stand 0.42.3)
 
 Phase A und die Stände 0.11–0.18.0 sind gegen die echten Systeme abgenommen (0.18.0: Regeln
 paralleler Firewalls einmal, keine Schleifen); 0.19.0 (Verbund ablehnen, redundante Wege) und

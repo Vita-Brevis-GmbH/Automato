@@ -487,6 +487,10 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         for pg in session.scalars(select(Portgroup).where(Portgroup.tenant_id == tid))
     }
 
+    # VRFs der Applikation: fuer Systeme ohne Portgruppe zaehlen gleiche IPs in anderen
+    # ACI-Tenants/VRFs nicht (Dev-Befund 0.42.2, appdoc.fabric_epgs)
+    prefer = {appdoc.vrf_key(data, e) for e, _why in epgs.values() if e.kind == "epg"}
+
     def dns(ips: list[str]) -> list[str]:
         return list(dict.fromkeys(n for ip in ips for n in references.dns_names(ctx, ip)))
 
@@ -533,14 +537,14 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             }
         )
         for idx, row in appdoc.vm_rows(
-            session, data, vm.name, ips, list(servers.values()), nic_epgs
+            session, data, vm.name, ips, list(servers.values()), nic_epgs, prefer
         ):
             rows.append((key, idx, row))
     for hid, (h, why) in sorted(hosts.items(), key=lambda kv: kv[1][0].name):
         if hid in covered_hosts:
             continue  # steht als VM da
         key = f"host:{hid}"
-        doc = appdoc.host_doc(session, h, data, full=True)
+        doc = appdoc.host_doc(session, h, data, full=True, prefer=prefer)
         ip = _ip(h.value)
         systems.append(
             {
@@ -550,7 +554,9 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                 "ips": [ip] if ip else [],
                 "dns": dns([ip] if ip else []),
                 "servers": [h.name],
-                "epgs": sorted(inventory_label(x) for x in appdoc.host_epgs(session, data, h)),
+                "epgs": sorted(
+                    inventory_label(x) for x in appdoc.host_epgs(session, data, h, prefer=prefer)
+                ),
                 "portgroups": [],
                 "vm_id": None,
                 "power_state": None,
@@ -750,6 +756,8 @@ def _hits_and_tables(
                 "scope": row.get(appdoc.SCOPE) or "specific",
                 "counterpart": row.get("Target Systems") or row.get("Source") or "",
                 "services": row.get("TCP/UDP") or "",
+                # ACI: die EPG, ueber die der Contract fuer das System gilt (Filter, 0.42.3)
+                "epg": row.get(appdoc.EPG),
                 # Routing (0.24.0): possible | impossible | unknown, mit Begruendung
                 "relevance": row.get(appdoc.REL) or "unknown",
                 "relevance_text": row.get(appdoc.REL_TEXT) or "",

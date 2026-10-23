@@ -73,6 +73,9 @@ SIDE, OBJECT, OBJECT_VALUE = "_side", "_obj", "_val"
 # Relevanz (0.24.0, ADR 0019): kann die Regel Verkehr zum bzw. vom System ueberhaupt sehen
 # (possible | impossible | unknown) und warum nicht - nach dem Routing ihrer Firewall
 REL, REL_TEXT = "_rel", "_rel_text"
+# EPG (`Tenant/AP/EPG`), ueber die ein ACI-Contract fuer das System gilt - fuer den Filter nach
+# EPG in der Applikations-Doku (0.42.3); leer bei Firewall-Regeln und externen EPGs
+EPG = "_epg"
 UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
 _COMMON = [
     "Server Name",
@@ -539,22 +542,53 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                         SIDE: side,
                         OBJECT: obj,
                         OBJECT_VALUE: "",
+                        EPG: epg_store.inventory_label(epg) if epg.kind == "epg" else None,
                     },
                 )
             )
     return out
 
 
-def _ext_rows(data: TenantData, ips: list[str], system_name: str) -> list:
+def vrf_key(data: TenantData, epg: Epg) -> tuple[int | None, str | None]:
+    """(APIC, `Tenant:VRF`) einer EPG."""
+    return epg.source_system_id, data.aci.vrf_of(epg)
+
+
+def fabric_epgs(
+    data: TenantData, known: set[int], by_ip: set[int], prefer: frozenset | set = frozenset()
+) -> set[int]:
+    """EPGs eines Systems im ACI (Dev-Befund 0.42.2): die bekannten (Portgruppe der VM) und
+    die nur ueber die IP gefundenen (gelernter Endpunkt, damit verknuepfter Server) - diese nur
+    in den VRFs der bekannten. Gleiche Adressen gibt es in mehreren ACI-Tenants bzw. VRFs; ein
+    Endpunkt mit der IP einer VM in einer fremden VRF ist ein anderes System. Ohne bekannte EPG
+    gelten die VRFs in `prefer` (die der Applikation), sofern eine passt, sonst alle."""
+    epgs = data.epgs_by_id
+    known = {i for i in known if i in epgs and epgs[i].kind == "epg"}
+    found = {i for i in by_ip if i in epgs and epgs[i].kind == "epg"} - known
+    allowed = {vrf_key(data, epgs[i]) for i in known}
+    if not allowed and prefer:
+        allowed = {vrf_key(data, epgs[i]) for i in found} & set(prefer)
+    if not allowed:
+        return known | found
+    return known | {i for i in found if vrf_key(data, epgs[i]) in allowed}
+
+
+def _ext_rows(data: TenantData, ips: list[str], system_name: str, vrfs: set | None = None) -> list:
     """ACI-Contracts eines Systems ausserhalb des Fabrics (0.28.0): ueber die externen EPGs,
     deren Subnetze seine IP erfassen - mit der Relevanz nach der Zuordnung im ACI (zuordnender
-    Scope, laengstes Subnetz der VRF, nicht im Fabric, bei Gleichstand das Routing)."""
+    Scope, laengstes Subnetz der VRF, nicht im Fabric, bei Gleichstand das Routing).
+
+    Steht das System in EPGs (`vrfs` = deren VRFs), zaehlen nur externe EPGs dieser VRFs
+    (Dev-Befund 0.42.2): 0.0.0.0/0 einer fremden VRF erfasst jede Adresse, ihre Contracts
+    gehoeren zu den Systemen dort, nicht zur Applikation."""
     best: dict[int, tuple[Epg, object, tuple[str, str]]] = {}
     for value in dict.fromkeys(ips):
         ip = relevance_store._ip(value)
         if ip is None:
             continue
         for epg in data.aci.externals(ip):
+            if vrfs and vrf_key(data, epg) not in vrfs:
+                continue
             if data.aci.inside(epg, ip):
                 continue  # im Fabric: die Contracts seiner EPG gelten, nicht die externen
             rel = data.aci.check(epg, ip)
@@ -779,10 +813,15 @@ def build_doc(session: Session, system_name: str, tenant_id: int | None) -> dict
 
 
 def host_doc(
-    session: Session, sys_obj: NetworkObject, data: TenantData | None = None, full: bool = False
+    session: Session,
+    sys_obj: NetworkObject,
+    data: TenantData | None = None,
+    full: bool = False,
+    prefer: frozenset | set = frozenset(),
 ) -> dict:
     """Doku eines Host-Systems: alle Firewall-Regeln, die den Server erfassen - direkt und ueber
-    Netze, Bereiche, Gruppen und any -, dazu die ACI-Contracts der EPG(s) des Servers."""
+    Netze, Bereiche, Gruppen und any -, dazu die ACI-Contracts der EPG(s) des Servers
+    (`prefer` = VRFs der Applikation, siehe `fabric_epgs`)."""
     system_name = sys_obj.name
     tenant_id = sys_obj.tenant_id
     sys_ip = sys_obj.value
@@ -802,13 +841,15 @@ def host_doc(
         rows_by_table[idx].append(row)
     ip = sys_ip.split("/")[0] if sys_ip else None
     vms = virtual.Lookup(session, tenant_id, {ip} if ip else set())
-    # ACI: die EPG(s), in denen der Server steht (verknuepft, gelernter Endpunkt, Portgruppe
-    # der VM)
-    for epg in host_epgs(session, data, sys_obj, vms.epg_ids(ip)):
+    # ACI: die EPG(s), in denen der Server steht (Portgruppe der VM, gelernter Endpunkt,
+    # verknuepft)
+    epgs = host_epgs(session, data, sys_obj, vms.epg_ids(ip), prefer)
+    for epg in epgs:
         for idx, row in _aci_rows(data, epg, system_name, via=f"EPG {epg_store.label(epg)}"):
             rows_by_table[idx].append(row)
     # ausserhalb des Fabrics: ueber die externe EPG, der das ACI die IP zuordnet (0.28.0)
-    for idx, row in _ext_rows(data, [ip] if ip else [], system_name):
+    vrfs = {vrf_key(data, e) for e in epgs}
+    for idx, row in _ext_rows(data, [ip] if ip else [], system_name, vrfs):
         rows_by_table[idx].append(row)
     info = vms.info(ip)
     return _envelope(
@@ -830,10 +871,12 @@ def vm_rows(
     ips: list[str],
     hosts: list[NetworkObject],
     epg_ids: set[int],
+    prefer: frozenset | set = frozenset(),
 ) -> list:
     """Zeilen einer VM (Applikations-Doku, 0.14.0): Firewall-Regeln ueber ihre IPs - direkt
     ueber das Host-Objekt einer IP, sonst ueber Netze, Bereiche, Gruppen und any - und die
-    Contracts ihrer EPGs (Portgruppe, gelernter Endpunkt, verknuepfter Server)."""
+    Contracts ihrer EPGs (Portgruppe; gelernter Endpunkt bzw. verknuepfter Server nur in den
+    VRFs der Portgruppen, siehe `fabric_epgs`)."""
     host_ids = {h.id for h in hosts}
     direct: set[int] = set()
     for hid in host_ids:
@@ -847,31 +890,34 @@ def vm_rows(
         direct_ids=direct,
         is_direct=lambda e: e.network_object_id in host_ids,
     )
-    ids = set(epg_ids)
-    for h in hosts:
-        ids |= {e.id for e in host_epgs(session, data, h)}
-    if ips:
-        ids |= set(session.scalars(select(EpgEndpoint.epg_id).where(EpgEndpoint.ip.in_(ips))))
+    host_ids = {h.id for h in hosts}
+    by_ip = {e.id for e in data.epgs_by_id.values() if e.network_object_id in host_ids}
+    values = list(dict.fromkeys([*ips, *(h.value.split("/")[0] for h in hosts if h.value)]))
+    if values:
+        by_ip |= set(session.scalars(select(EpgEndpoint.epg_id).where(EpgEndpoint.ip.in_(values))))
+    ids = fabric_epgs(data, set(epg_ids), by_ip, prefer)
     for i in sorted(ids):
-        epg = data.epgs_by_id.get(i)
-        if epg is not None and epg.kind == "epg":
-            out += _aci_rows(data, epg, name, via=f"EPG {epg_store.inventory_label(epg)}")
-    return out + _ext_rows(data, ips, name)
+        epg = data.epgs_by_id[i]
+        out += _aci_rows(data, epg, name, via=f"EPG {epg_store.inventory_label(epg)}")
+    vrfs = {vrf_key(data, data.epgs_by_id[i]) for i in ids}
+    return out + _ext_rows(data, ips, name, vrfs)
 
 
 def host_epgs(
-    session: Session, data: TenantData, sys_obj: NetworkObject, vm_epgs: set[int] = frozenset()
+    session: Session,
+    data: TenantData,
+    sys_obj: NetworkObject,
+    vm_epgs: set[int] = frozenset(),
+    prefer: frozenset | set = frozenset(),
 ) -> list[Epg]:
-    ids = {e.id for e in data.epgs_by_id.values() if e.network_object_id == sys_obj.id}
-    ids |= vm_epgs
+    """EPGs eines Servers: die Portgruppen seiner VM (`vm_epgs`), sonst ueber die IP (gelernter
+    Endpunkt, verknuepft) - in den VRFs der Portgruppen bzw. von `prefer` (`fabric_epgs`)."""
+    by_ip = {e.id for e in data.epgs_by_id.values() if e.network_object_id == sys_obj.id}
     if sys_obj.value:
         ip = sys_obj.value.split("/")[0]
-        ids |= set(session.scalars(select(EpgEndpoint.epg_id).where(EpgEndpoint.ip == ip)))
-    return [
-        data.epgs_by_id[i]
-        for i in sorted(ids)
-        if i in data.epgs_by_id and data.epgs_by_id[i].kind == "epg"
-    ]
+        by_ip |= set(session.scalars(select(EpgEndpoint.epg_id).where(EpgEndpoint.ip == ip)))
+    ids = fabric_epgs(data, set(vm_epgs), by_ip, prefer)
+    return [data.epgs_by_id[i] for i in sorted(ids)]
 
 
 def assign_site(

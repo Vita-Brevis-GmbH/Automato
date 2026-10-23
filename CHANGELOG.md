@@ -7,6 +7,21 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.42.3 – 2026-10-23
+
+Korrektur der Applikations-Doku (Befund: im Projekt eines Tenants standen Contracts anderer
+Tenants, die weder Tenant noch VRF der Applikation betreffen). Ohne Migration.
+
+- EPGs, die nur über die IP passen (gelernter Endpunkt, damit verknüpfter Server), zählen
+  nur in den VRFs der Portgruppen der VM. Ohne Portgruppe gelten die VRFs der Applikation,
+  sofern eine passt. Gleiche Adressen in anderen Tenants bzw. VRFs bringen keine fremden
+  Contracts mehr.
+- Externe EPGs anderer VRFs (z. B. 0.0.0.0/0) zählen für Systeme in einer EPG nicht mehr –
+  in der Applikations-Doku und in der Doku je System.
+- Jeder Treffer eines ACI-Contracts nennt die EPG, über die er gilt; der Filter „EPG“ zeigt
+  die Contracts eines Systems nur über diese EPG.
+- Test mit zwei weiteren Tenants (gleicher EPG-Name, gleiche IP, externe EPG 0.0.0.0/0).
+
 ## 0.42.2 – 2026-10-23
 
 Korrektur der Prüfung (Befund nach dem Update auf 0.42.0). Ohne Migration.

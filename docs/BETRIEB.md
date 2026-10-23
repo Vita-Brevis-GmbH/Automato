@@ -458,6 +458,15 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       leitet; die übrigen bleiben sichtbar („unbekannt“).
     - Das Regel-Detail zeigt bei Subnetzen externer EPGs „nur Routing“, wenn sie nicht
       zuordnen.
+  - **Nur Tenant/VRF des Systems (0.42.3):** Gleiche Adressen gibt es in mehreren ACI-Tenants
+    bzw. VRFs.
+    - Steht ein System in einer EPG (Portgruppe seiner VM), zählen gelernte Endpunkte mit
+      seiner IP nur in deren VRF. Ein Endpunkt mit derselben IP in einer anderen VRF ist ein
+      anderes System. Ohne Portgruppe gelten die VRFs der Applikation, sofern eine passt.
+    - Externe EPGs anderer VRFs (z. B. 0.0.0.0/0 eines fremden Tenants) zählen für Systeme
+      in einer EPG nicht. Ihre Contracts gehören zu den Systemen dort.
+    - Der Filter „EPG“ in der Applikations-Doku zeigt die Contracts eines Systems nur über
+      diese EPG (VM in mehreren EPGs).
 - **Findings:** oben eine **Übersicht nach Kategorien** (IPAM-Abgleich, Namenskonvention,
   Bereinigung, ACI / VMware) mit offenen/gesamten Befunden je Typ (Klick filtert). Neu mit
   dem vCenter: *VM-IP fehlt im IPAM* und *Portgruppe nach ACI-Schema ohne EPG*. Je Befund ein Satz,

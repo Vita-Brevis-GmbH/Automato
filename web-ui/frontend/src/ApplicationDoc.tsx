@@ -162,13 +162,15 @@ export default function ApplicationDocView({
   const titles = new Map(doc.tables.map((t) => [t.index, t.title]));
   const epgLabel = f.epg ? names.get(f.epg) : null;
 
-  // Treffer nach den Filtern; EPG = die EPG selbst oder Systeme in ihr
+  // Treffer nach den Filtern; EPG = die EPG selbst oder Systeme in ihr – ACI-Contracts eines
+  // Systems nur über diese EPG (0.42.3: eine VM in mehreren EPGs)
   const hits = doc.hits.filter((h) => {
     if (f.system && h.system !== f.system) return false;
     if (f.epg) {
       const sys = byKey.get(h.system);
       const inEpg = sys && "epgs" in sys && epgLabel ? sys.epgs.includes(epgLabel) : false;
       if (h.system !== f.epg && !inEpg) return false;
+      if (h.epg && epgLabel && h.epg !== epgLabel) return false;
     }
     if (f.direction && h.direction !== f.direction) return false;
     if (f.scope === "unspecific" && h.scope === "specific") return false;

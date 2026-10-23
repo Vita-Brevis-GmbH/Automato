@@ -175,6 +175,8 @@ class DocHitOut(BaseModel):
     scope: str  # specific | subnet | any | vzany | pref_group
     counterpart: str = ""
     services: str = ""
+    # ACI: EPG (Tenant/AP/EPG), ueber die der Contract fuer das System gilt (Filter, 0.42.3)
+    epg: str | None = None
     # Routing (0.24.0, ADR 0019): possible | impossible | unknown - kann die Regel Verkehr zum
     # bzw. vom System ueberhaupt sehen; impossible mit Begruendung
     relevance: str = "unknown"
