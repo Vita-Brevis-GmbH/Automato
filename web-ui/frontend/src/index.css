@@ -363,16 +363,39 @@ button.site-card:hover { background: var(--surface-2); }
 .bars-x { display: flex; gap: 7px; padding: 6px 16px 14px; }
 .bars-x span { flex: 1; text-align: center; font-size: 10.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Netzwerkdesign (geplant) */
-.draw-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
-.draw-tools { display: flex; align-items: center; gap: 4px; padding: 8px 10px; background: var(--surface-2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.draw-tool { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; border: 1px solid var(--border);
-  background: var(--surface); color: var(--faint); }
-.draw-canvas { height: 380px; display: grid; place-items: center; text-align: center; color: var(--muted); background:
-    linear-gradient(var(--border) 1px, transparent 1px) 0 0 / 22px 22px,
-    linear-gradient(90deg, var(--border) 1px, transparent 1px) 0 0 / 22px 22px,
-    var(--surface); }
-.draw-canvas > div { background: var(--surface); padding: 14px 18px; border-radius: 10px; border: 1px solid var(--border); }
+/* Netzwerkdesign (0.51.0): Zonen, Zonenmatrix, Zonenplan */
+.zone-swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px; border: 1px solid var(--border-strong);
+  vertical-align: -1px; }
+.zone-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 0 14px; }
+.zone-form input[type="color"] { padding: 2px; height: 34px; }
+.zone-nets td { padding: 3px 8px; }
+table.zone-matrix { border-collapse: separate; border-spacing: 3px; width: auto; }
+table.zone-matrix th.axis { font-weight: 600; white-space: nowrap; text-align: left; padding: 6px 8px; }
+table.zone-matrix thead th.axis { text-align: center; }
+table.zone-matrix th.corner { font-size: 11px; color: var(--faint); font-weight: 500; }
+td.zcell { min-width: 84px; text-align: center; padding: 7px 8px; border-radius: 6px; cursor: pointer; background: var(--surface-2);
+  border: 1px solid transparent; font-family: var(--font-mono); font-size: 12px; }
+td.zcell:hover { border-color: var(--border-strong); }
+td.zcell.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+td.zcell.i-ok { background: var(--good-weak); }
+td.zcell.i-warn { background: var(--warn-weak); }
+td.zcell.i-crit { background: var(--crit-weak); }
+td.zcell.viol { border-color: var(--crit); }
+td.zcell .z-allow { color: var(--good); font-weight: 600; }
+td.zcell .z-deny { color: var(--crit); font-weight: 600; margin-left: 6px; }
+td.zcell .z-viol { color: var(--crit); font-size: 10.5px; font-family: var(--font-ui); font-weight: 600; margin-top: 2px; }
+.zone-legend { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.zone-intent { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.zone-intent .input { flex: 1; min-width: 220px; }
+.crit { color: var(--crit); }
+svg.zone-plan { min-width: 760px; display: block; }
+.zp-edge line { stroke: var(--border-strong); stroke-width: 1.6; }
+.zp-edge text { fill: var(--muted); font-size: 10.5px; font-family: var(--font-mono); paint-order: stroke; stroke: var(--surface);
+  stroke-width: 3px; }
+.zp-zone rect { fill-opacity: .22; stroke: var(--border-strong); }
+.zp-node rect { fill: var(--surface-2); stroke: var(--accent); stroke-width: 1.4; }
+.zone-plan .zp-title { fill: var(--fg); font-size: 12.5px; font-weight: 600; }
+.zone-plan .zp-sub { fill: var(--muted); font-size: 10.5px; }
 
 /* Markdown-Vorschau etc. */
 pre.block { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-size: 12.5px;

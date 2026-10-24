@@ -276,3 +276,22 @@ def run(app) -> None:
         "members": [{"kind": "ap", "ref": "TE/AP"}],
     }
     ok(c.post(f"/applications?tenant_id={tid}", json=app), 201)
+
+    # Logische Zonen (0.51.0): LAN, DMZ und Internet an fw-08; LAN -> DMZ gesperrt - die zwei
+    # erlaubenden Policies dorthin sind Verstoesse (Befund); Internet ohne die privaten Netze
+    def sel(kind, value, exclude=False, source_system_id=None):
+        return {"kind": kind, "value": value, "exclude": exclude,
+                "source_system_id": source_system_id}  # fmt: skip
+
+    def zone(name, kind, color, selectors):
+        body = {"tenant_id": tid, "name": name, "kind": kind, "color": color,
+                "selectors": selectors}  # fmt: skip
+        return ok(c.post("/zones", json=body), 201)["id"]
+
+    lan = zone("LAN", "internal", "#3b82c4", [sel("fw_zone", "lan", source_system_id=fw8)])
+    dmz = zone("DMZ", "dmz", "#d08a1e", [sel("fw_interface", "dmz", source_system_id=fw8)])
+    zone("Internet", "external", "#c0392b",
+         [sel("prefix", "0.0.0.0/0"), sel("prefix", "10.0.0.0/8", exclude=True)])  # fmt: skip
+    policy = {"tenant_id": tid, "src_zone_id": lan, "dst_zone_id": dmz, "intent": "deny",
+              "note": "nur über den Proxy"}  # fmt: skip
+    ok(c.put("/zones/policy", json=policy))

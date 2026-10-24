@@ -56,6 +56,7 @@ from app.models import (
     RuleIpRange,
     SourceSystem,
     SubjectKind,
+    TopoExit,
     Vm,
     VmIp,
     VmNic,
@@ -143,6 +144,7 @@ def _label(s: Selector) -> str:
         "ipam_tenant": "IPAM-Tenant",
         "ipam_vrf": "IPAM-VRF/Netzansicht",
         "ipam_tag": "IPAM-Merkmal",
+        "exit": "Anbindung",
     }
     return f"{names.get(s.kind, s.kind)} {s.value}"
 
@@ -221,6 +223,34 @@ class _Data:
                 hit = v in {str(t).casefold() for t in tags or []} | pairs
             if hit:
                 out |= _record_nets(kind, value)
+        return out
+
+    def selector_nets(self, s: Selector) -> set[Net]:
+        """Netze, die ein Selektor direkt nennt (ohne die Subnetze seiner EPGs)."""
+        if s.kind == "prefix":
+            net = _net(s.value)
+            return {net} if net is not None else set()
+        if s.kind in IPAM_KINDS:
+            return self.ipam_nets(s)
+        if s.kind in FW_KINDS:
+            return self.interface_nets(s)
+        if s.kind == "exit":
+            return self.exit_nets(s)
+        return set()
+
+    @cached_property
+    def exits(self) -> list:
+        return list(
+            self.session.scalars(select(TopoExit).where(TopoExit.tenant_id == self.tenant_id))
+        )
+
+    def exit_nets(self, s: Selector) -> set[Net]:
+        """Netze hinter einer Anbindung (Name bzw. `#id`) - z. B. 0.0.0.0/0 fuer Internet."""
+        v = s.value.strip().casefold()
+        out: set[Net] = set()
+        for e in self.exits:
+            if (e.name or "").casefold() == v or f"#{e.id}" == v:
+                out |= {n for p in e.prefixes or [] if (n := _net(str(p))) is not None}
         return out
 
     # -- EPGs --------------------------------------------------------------------------
@@ -358,6 +388,38 @@ class _Ranges:
             yield from merged
 
 
+ACI_KINDS = ("aci_tenant", "aci_vrf", "aci_ap", "aci_epg", "aci_bd", "code")
+FW_KINDS = ("fw_vdom", "fw_zone", "fw_interface")
+
+
+def nets_of(data: _Data, selectors: list[Selector]) -> tuple[dict[int, str], dict[Net, str]]:
+    """EPGs und Netze der Selektoren, je mit Grund: Netze von Hand, aus dem IPAM, an den
+    Interfaces der Firewall-Selektoren, die Subnetze der EPGs bzw. Bridge Domains und - nur
+    fuer logische Zonen (0.51.0) - hinter einer Anbindung (`exit`); ausgeschlossene
+    herausgeschnitten. Auch fuer die logischen Zonen (`store/zones.py`)."""
+    include = [s for s in selectors if not s.exclude]
+    exclude = [s for s in selectors if s.exclude]
+
+    # EPGs: eingeschlossene ohne ausgeschlossene
+    epgs: dict[int, str] = {}
+    dropped = set().union(*(data.epg_matches(s) for s in exclude if s.kind in ACI_KINDS))
+    for s in include:
+        if s.kind in ACI_KINDS:
+            for eid in data.epg_matches(s) - dropped:
+                epgs.setdefault(eid, _label(s))
+
+    nets: dict[Net, str] = {}
+    for s in include:
+        for net in data.selector_nets(s):
+            nets.setdefault(net, _label(s))
+    by_id = {e.id: e for e in data.epgs}
+    for eid in epgs:
+        for net in data.epg_nets.get(eid, []):
+            nets.setdefault(net, f"EPG {epg_store.inventory_label(by_id[eid])}")
+    removed = [n for s in exclude for n in data.selector_nets(s)]
+    return epgs, _cut(nets, removed)
+
+
 def evaluate(session: Session, tenant_id: int, selectors: list[Selector],
              data: _Data | None = None) -> Scope:  # fmt: skip
     """Was die Selektoren erfassen (siehe Modul) - ohne zu speichern (Vorschau)."""
@@ -365,38 +427,8 @@ def evaluate(session: Session, tenant_id: int, selectors: list[Selector],
     scope = Scope()
     include = [s for s in selectors if not s.exclude]
     exclude = [s for s in selectors if s.exclude]
-    aci_kinds = ("aci_tenant", "aci_vrf", "aci_ap", "aci_epg", "aci_bd", "code")
-
-    # EPGs: eingeschlossene ohne ausgeschlossene
-    dropped = set().union(*(data.epg_matches(s) for s in exclude if s.kind in aci_kinds))
-    for s in include:
-        if s.kind in aci_kinds:
-            for eid in data.epg_matches(s) - dropped:
-                scope.epg.setdefault(eid, _label(s))
-
-    # Netze: von Hand, aus den EPGs, an den Interfaces der Firewall-Selektoren
-    nets: dict[Net, str] = {}
-    for s in include:
-        if s.kind == "prefix" and (net := _net(s.value)) is not None:
-            nets.setdefault(net, _label(s))
-        elif s.kind in IPAM_KINDS:
-            for net in data.ipam_nets(s):
-                nets.setdefault(net, _label(s))
-        elif s.kind in ("fw_vdom", "fw_zone", "fw_interface"):
-            for net in data.interface_nets(s):
-                nets.setdefault(net, _label(s))
+    scope.epg, nets = nets_of(data, selectors)
     by_id = {e.id: e for e in data.epgs}
-    for eid in scope.epg:
-        for net in data.epg_nets.get(eid, []):
-            nets.setdefault(net, f"EPG {epg_store.inventory_label(by_id[eid])}")
-    removed = [n for s in exclude if s.kind == "prefix" if (n := _net(s.value)) is not None]
-    for s in exclude:
-        if s.kind in IPAM_KINDS:
-            removed += list(data.ipam_nets(s))
-    for s in exclude:
-        if s.kind in ("fw_vdom", "fw_zone", "fw_interface"):
-            removed += list(data.interface_nets(s))
-    nets = _cut(nets, removed)
     scope.net = {str(n): why for n, why in sorted(nets.items(), key=lambda x: _net_key(x[0]))}
     ranges = _Ranges(nets)
     codes_in = {s.value.strip().casefold() for s in include if s.kind == "code"}
@@ -425,11 +457,9 @@ def evaluate(session: Session, tenant_id: int, selectors: list[Selector],
             .where(Rule.tenant_id == tenant_id, RuleEndpoint.epg_id.in_(list(scope.epg)))
         ):
             scope.rule.setdefault(rid, f"EPG {epg_store.inventory_label(by_id[eid])}")
-    fw_out = set().union(
-        *(data.fw_rules(s) for s in exclude if s.kind in ("fw_vdom", "fw_zone", "fw_interface"))
-    )
+    fw_out = set().union(*(data.fw_rules(s) for s in exclude if s.kind in FW_KINDS))
     for s in include:
-        if s.kind in ("fw_vdom", "fw_zone", "fw_interface"):
+        if s.kind in FW_KINDS:
             for rid in data.fw_rules(s) - fw_out:
                 scope.rule.setdefault(rid, _label(s))
     for net in ranges.items():

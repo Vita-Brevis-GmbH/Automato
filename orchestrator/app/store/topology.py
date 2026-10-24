@@ -29,7 +29,12 @@ Table = int | str  # VRF innerhalb des Kontexts (FortiGate 0-251) bzw. MGMT
 
 def table_of(route: TopoRoute) -> Table:
     """VRF einer Route (fehlt = 0, 0.17.1); Routen ueber Management-Interfaces eigene Tabelle."""
-    attrs = route.attrs or {}
+    return table_from(route.attrs)
+
+
+def table_from(attrs: dict | None) -> Table:
+    """Wie `table_of`, aus den Attributen der Route (Abfragen nur einzelner Spalten)."""
+    attrs = attrs or {}
     return MGMT if attrs.get("mgmt") else int(attrs.get("vrf") or 0)
 
 

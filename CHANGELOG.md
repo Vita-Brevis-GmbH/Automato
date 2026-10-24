@@ -7,6 +7,30 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.51.0 – 2026-10-24
+
+Logische Zonen, Zonenmatrix und Zonenplan (Entscheid des Anwenders: Zonen in Automato pflegen,
+ADR 0024). Migration `0048` (`logical_zone`, `logical_zone_selector`, `zone_policy`); nur
+lesend gegenüber allen Quellsystemen.
+
+- **Zonen** (Netzwerkdesign → Zonen, `/zones`, Operator schreibt):
+  - Name, Kurzname, Art (intern, DMZ, extern, Management, geteilt, Transfer), Farbe,
+    Reihenfolge, Kunde (leer = geteilt).
+  - Selektoren wie beim Kunden, dazu **Anbindung** (Netze hinter einer Anbindung, z. B.
+    Internet 0.0.0.0/0); ein- bzw. ausschliessend. Die Netze sind abgeleitet – neue EPGs und
+    Interfaces gehören ohne Pflege dazu. Vorschau mit gleichen Netzen in anderen Zonen.
+  - Eine IP gehört zur Zone mit dem längsten Präfix.
+- **Zonenmatrix:** je Paar Quell-/Zielzone die erlaubenden und sperrenden Regeln
+  (Firewall-Policies, ACI-Contracts, ohne Zwillinge), dazu „any“ und „ohne Zone“; Klick zeigt
+  die Regeln. **Absicht** je Paar (erlaubt, eingeschränkt, gesperrt, Notiz).
+- **Zonenplan:** Zonen an Firewalls/VDOMs und ACI-VRFs (Interface, L3Out, Fabric, Anbindung,
+  sonst Route zu einem Router ohne gelesenes Gerät), Übergänge zwischen Zonen, Netze ohne Zone;
+  als Zeichnung und Tabelle.
+- **Befunde** (Findings → Zonen, sofort nach dem Speichern und nach jedem Lauf): erlaubende
+  Regel zwischen Zonen mit Absicht „gesperrt“; dasselbe Netz in mehreren Zonen.
+- Nicht für Kunden-Benutzer (folgt mit 0.53.0). Beim Löschen eines Kunden bleiben seine Zonen
+  (ohne Kunde), beim Löschen einer Zone fällt ihre Absicht weg.
+
 ## 0.50.0 – 2026-10-23
 
 Topologie-Modell (ADR 0019): die Umgebung als ein Modell aus Knoten und Kanten, Grundlage für

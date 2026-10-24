@@ -159,8 +159,8 @@ Grundsatzentscheide des Anwenders (2026-10-22):
      protokolliert ist der Lesezugriff.
    - Noch nicht: Relevanz nach Pfad (ADR 0019) für die Zugehörigkeit von Regeln, eigene
      Kunden-Benutzer-Verwaltung in der Oberfläche (heute in Keycloak).
-4. **Kunden auf logischen Zonen** (Entscheide des Anwenders 2026-10-23, geplant mit 0.52.0 nach
-   den logischen Zonen aus ADR 0021):
+4. **Kunden auf logischen Zonen** (Entscheide des Anwenders 2026-10-23, geplant mit 0.53.0 nach
+   den logischen Zonen aus ADR 0024, 0.51.0 – dort schon der Kunde je Zone):
    - Ein Kunde besitzt logische Zonen. Geteilte Zonen (Internet, Shared Services, Management)
      gehören keinem Kunden. Die Selektoren bleiben für Ausnahmen (einzelne Netze, Objekte).
    - Der Kunde sieht die Contracts und Elemente in seinem Tenant und die Contracts zwischen den

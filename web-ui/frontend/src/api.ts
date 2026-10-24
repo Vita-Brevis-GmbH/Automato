@@ -2264,3 +2264,127 @@ export interface TopologyModel {
 }
 export const fetchTopology = (tenantId: number, node?: string) =>
   getJSON<TopologyModel>(`/api/topology${qs({ tenant_id: tenantId, node })}`);
+
+// Logische Zonen (0.51.0, ADR 0024): in Automato gepflegt, Selektoren wie beim Kunden und dazu
+// `exit` (Netze hinter einer Anbindung); Zonenmatrix mit Absicht je Paar, Zonenplan
+export type ZoneSelectorKind = SelectorKind | "exit";
+export type ZoneKind = "internal" | "dmz" | "external" | "management" | "shared" | "transfer";
+export type ZoneIntent = "allow" | "limited" | "deny";
+export interface ZoneSelector {
+  id?: number;
+  kind: ZoneSelectorKind;
+  value: string;
+  source_system_id: number | null;
+  exclude: boolean;
+}
+export interface LogicalZone {
+  id: number;
+  tenant_id: number;
+  name: string;
+  code: string | null;
+  kind: ZoneKind;
+  color: string | null;
+  customer_id: number | null;
+  customer: string | null;
+  position: number;
+  description: string | null;
+  nets: number;
+  epgs: number;
+  updated_at: string;
+  selectors: ZoneSelector[];
+}
+export interface ZoneIn {
+  tenant_id: number;
+  name: string;
+  code: string | null;
+  kind: ZoneKind;
+  color: string | null;
+  customer_id: number | null;
+  position: number;
+  description: string | null;
+  selectors: ZoneSelector[];
+}
+export interface ZonePreview {
+  counts: { net: number; epg: number };
+  samples: { net: { network: string; via: string }[]; epg: string[] };
+  overlaps: { network: string; zone: string }[];
+  overlaps_total: number;
+}
+export type ZoneCell = number | "any" | "none";
+export interface ZoneSummary {
+  id: number;
+  name: string;
+  code: string | null;
+  kind: ZoneKind;
+  color: string | null;
+  customer_id: number | null;
+  position: number;
+  nets: number;
+  epgs: number;
+}
+export interface ZoneMatrix {
+  zones: ZoneSummary[];
+  axes: ZoneCell[];
+  cells: {
+    src: ZoneCell;
+    dst: ZoneCell;
+    allow: number;
+    deny: number;
+    violations: number;
+    intent: ZoneIntent | null;
+    note: string | null;
+  }[];
+  intents: { src: number; dst: number; intent: ZoneIntent; note: string | null; updated_by: string | null; updated_at: string }[];
+  summary: { zones: number; rules: number; assigned: number; without: number; violations: number };
+}
+export interface ZoneCellRule {
+  id: number;
+  name: string;
+  external_id: string;
+  action: "allow" | "deny";
+  domain: string;
+  source: string | null;
+  source_system_id: number;
+  vdom: string | null;
+  tenant: string | null;
+  violation: boolean;
+}
+export interface ZonePlan {
+  zones: (ZoneSummary & { samples: string[] })[];
+  nodes: { id: string; kind: string; label: string; source: string; group: string | null; zones: number }[];
+  attachments: {
+    zone: number;
+    node: string;
+    via: ("interface" | "fabric" | "exit" | "route")[];
+    interfaces: string[];
+    networks: string[];
+    count: number;
+    routes: { prefix: string; next_hop: string | null; interface: string | null; names: string[] }[];
+    default: boolean;
+  }[];
+  links: { a: number; b: number; nodes: string[] }[];
+  unzoned: { total: number; items: { network: string; node: string; where: string | null }[] };
+  summary: { zones: number; nodes: number; attachments: number; links: number; unzoned: number; without_node: number };
+}
+export const fetchZones = (tenantId: number) => getJSON<LogicalZone[]>(`/api/zones${qs({ tenant_id: tenantId })}`);
+export const createZone = (body: ZoneIn) => sendJSON<LogicalZone>("/api/zones", "POST", body);
+export const updateZone = (id: number, body: ZoneIn) => sendJSON<LogicalZone>(`/api/zones/${id}`, "PUT", body);
+export const deleteZone = (id: number) => sendJSON<void>(`/api/zones/${id}`, "DELETE");
+export const previewZone = (tenantId: number, selectors: ZoneSelector[], zoneId?: number) =>
+  sendJSON<ZonePreview>("/api/zones/preview", "POST", { tenant_id: tenantId, selectors, zone_id: zoneId ?? null });
+export const fetchZoneNets = (id: number) =>
+  getJSON<{ total: number; items: { network: string; via: string }[] }>(`/api/zones/${id}/nets`);
+export const fetchZoneMatrix = (tenantId: number) => getJSON<ZoneMatrix>(`/api/zones/matrix${qs({ tenant_id: tenantId })}`);
+export const fetchZoneCellRules = (tenantId: number, src: ZoneCell, dst: ZoneCell, offset = 0) =>
+  getJSON<{ total: number; violations: number; items: ZoneCellRule[] }>(
+    `/api/zones/matrix/rules${qs({ tenant_id: tenantId, src: String(src), dst: String(dst), offset, limit: 100 })}`,
+  );
+export const setZonePolicy = (tenantId: number, src: number, dst: number, intent: ZoneIntent | null, note: string | null) =>
+  sendJSON<{ src: number; dst: number; intent: ZoneIntent | null; note: string | null }>("/api/zones/policy", "PUT", {
+    tenant_id: tenantId,
+    src_zone_id: src,
+    dst_zone_id: dst,
+    intent,
+    note,
+  });
+export const fetchZonePlan = (tenantId: number) => getJSON<ZonePlan>(`/api/zones/plan${qs({ tenant_id: tenantId })}`);

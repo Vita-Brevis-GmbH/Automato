@@ -592,7 +592,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             {current === "routing" && (
               <Routing tenantId={tenantId} tenantLabel={tenantLabel} canEdit={me.isAdmin || me.isOperator} />
             )}
-            {current === "design" && <Design />}
+            {current === "design" && <Design tenantId={tenantId} tenantLabel={tenantLabel} canEdit={me.isAdmin || me.isOperator} />}
             {current === "users" && <Users cfg={cfg} me={me} tenants={tenants ?? []} />}
             {current === "tenants" && (
               <Tenants

@@ -26,6 +26,7 @@ RESOURCES = frozenset(
         "objects",
         "virtual",
         "customers",
+        "zones",
     }
 )
 

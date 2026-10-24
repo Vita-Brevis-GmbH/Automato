@@ -56,6 +56,10 @@ class FindingType(enum.StrEnum):
     TOPO_ROUTE_LOOP = "topo_route_loop"  # A leitet ueber B, B zurueck ueber A
     TOPO_STATIC_UNUSED = "topo_static_unused"  # statische Route ohne Wirkung (nicht in der RIB)
     TOPO_BGP_DOWN = "topo_bgp_down"  # BGP-Sitzung nicht aufgebaut
+    # Logische Zonen (0.51.0, `store/zones`): erlaubende Regel zwischen Zonen mit Absicht
+    # „gesperrt“ bzw. dasselbe Praefix in zwei Zonen
+    ZONE_POLICY_VIOLATION = "zone_policy_violation"
+    ZONE_OVERLAP = "zone_overlap"
 
 
 class Severity(enum.StrEnum):

@@ -34,6 +34,14 @@ from app.models.inventory import (
     InvVlan,
     InvVrf,
 )
+from app.models.logical_zone import (
+    INTENTS,
+    ZONE_KINDS,
+    ZONE_SELECTOR_KINDS,
+    LogicalZone,
+    LogicalZoneSelector,
+    ZonePolicy,
+)
 from app.models.naming_profile import DictionaryEntry, NamingProfile
 from app.models.nat_rule import NatRule
 from app.models.network_object import (
@@ -159,6 +167,12 @@ __all__ = [
     "VmIp",
     "VmNic",
     "Zone",
+    "ZonePolicy",
+    "INTENTS",
+    "ZONE_KINDS",
+    "ZONE_SELECTOR_KINDS",
+    "LogicalZone",
+    "LogicalZoneSelector",
     "rule_service",
     "Customer",
     "CustomerMember",

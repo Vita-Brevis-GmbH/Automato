@@ -1,0 +1,80 @@
+# ADR 0024 — Logische Zonen, Zonenmatrix und Zonenplan
+
+## Status
+
+Entwurf (2026-10-24), umgesetzt in 0.51.0. Baut auf dem Topologie-Modell (ADR 0019, 0.50.0)
+und den Selektoren der Kunden (ADR 0018) auf. Export und Versionen des Plans folgen in 0.52.0,
+Kunden auf Zonen in 0.53.0 (ADR 0018 Schritt 4).
+
+## Kontext
+
+Die Doku zeigt Regeln je Gerät. Ob eine Regel zum Sicherheitskonzept passt, sieht man so
+nicht: Dafür braucht es Zonen über die Geräte hinweg („Server“, „DMZ“, „Internet“,
+„Kunde A“) und eine Matrix, was zwischen ihnen erlaubt sein soll. Die Firewall-Zonen der
+FortiGate gelten nur je Gerät und VDOM. Das ACI kennt Tenants, VRFs und EPGs, aber keine Zonen.
+
+Entscheide des Anwenders (2026-10-23):
+
+- Logische Zonen werden **in Automato gepflegt**, nicht aus einem Quellsystem gelesen.
+- Der Plan wird im Tool gezeigt und später exportiert (draw.io, SVG, PDF).
+- Ein Kunde besitzt Zonen; geteilte Zonen gehören keinem.
+
+## Entscheidung
+
+1. **Zone mit Selektoren** (`logical_zone`, `logical_zone_selector`, Migration 0048):
+   - Name, Kurzname, Art (intern, DMZ, extern, Management, geteilt, Transfer), Farbe,
+     Reihenfolge, Beschreibung, optional ein Kunde (leer = geteilt bzw. Infrastruktur).
+   - Selektoren wie beim Kunden: ACI-Tenant/VRF/AP/EPG/BD, VDOM/Zone/Interface (je
+     Quellsystem), Netz, Kürzel, IPAM-Merkmal; dazu **Anbindung** (`exit`: die Netze hinter
+     einer von Hand erfassten Anbindung, z. B. 0.0.0.0/0 für Internet). Ein- bzw.
+     ausschliessend.
+   - Welche Netze dazugehören, ist abgeleitet (`customers.nets_of`, gleiche Auswertung wie beim
+     Kunden): neue EPGs oder Interfaces gehören ohne Pflege dazu. Nichts wird gespeichert,
+     was sich aus den gelesenen Daten ergibt.
+2. **Zugehörigkeit nach längstem Präfix:** Eine IP bzw. ein Netz gehört zur Zone mit dem
+   längsten Netz, das es enthält. Eine DMZ 10.1.5.0/24 in der Server-Zone 10.1.0.0/16 geht vor.
+   Ein Bereich, der mehrere Zonen berührt, zählt für jede davon; der Rest ohne Zone ist „ohne
+   Zone“. Dasselbe Präfix in zwei Zonen ist ein Befund (`zone_overlap`).
+   - Empfehlung: Internet = Anbindung „Internet“ (0.0.0.0/0) **ohne** die privaten Netze
+     (ausschliessende Selektoren), sonst fallen interne Netze ohne Zone ins Internet.
+3. **Zonenmatrix** (`GET /zones/matrix`):
+   - Je Regel (FortiGate-Policy, ACI-Contract; ohne Zwillinge paralleler Firewalls) Quelle und
+     Ziel aus dem Regelindex (`rule_ip_range`) auf die Zonen abgebildet. Je Paar Quell- und
+     Zielzone die erlaubenden und sperrenden Regeln, dazu Zeile bzw. Spalte `any` und „ohne
+     Zone“.
+   - **Absicht** je Paar (`zone_policy`): erlaubt, eingeschränkt, gesperrt, mit Notiz. Gesetzt
+     vom Operator (Audit `zone_policy.set`).
+   - Eine erlaubende Regel zwischen Zonen mit Absicht „gesperrt“ ist ein Befund
+     (`zone_policy_violation`, je Regel mit allen Paaren). `any` und „ohne Zone“ sind kein
+     Verstoss – sie stehen als eigene Zeile da und sind ein eigenes Thema (zu weite Regeln).
+   - Regeln ohne IP-Bereich (nur FQDN, ungelöste Gruppe) werden gezählt, aber keiner Zelle
+     zugeordnet.
+4. **Zonenplan** (`GET /zones/plan`): je Zone die gelesenen Knoten des Topologie-Modells
+   (Firewall/VDOM, ACI-VRF), an denen sie hängt:
+   - am Interface bzw. L3Out (das Netz des Interfaces liegt in der Zone, ohne Management);
+   - im Fabric (EPG- bzw. BD-Subnetz der VRF);
+   - über die Interfaces einer Anbindung (Selektor `exit`);
+   - nur für Zonen ohne Netz an einem Knoten: über eine Route zu einem Router ohne gelesenes
+     Gerät (z. B. Default-Route zum Provider, MPLS). Routen über einen anderen gelesenen Knoten
+     zählen nicht – die Zone hängt dort.
+   - Zonen am selben Knoten sind über ihn verbunden (Übergang). Dazu die gelesenen Netze ohne
+     Zone (Interfaces, L3Outs, Fabric).
+   - Im Tool als Zeichnung (Zonen links/rechts nach Art, Knoten in der Mitte) und Tabelle.
+5. **Befunde sofort:** Nach dem Speichern einer Zone bzw. Absicht rechnet Automato nur die
+   Zonen-Befunde neu (`reconcile.refresh_zone_findings`); nach jedem Lauf wie alle anderen.
+6. **Rechte:** Lesen Viewer, ändern Operator; Audit `zone.created/updated/deleted`,
+   `zone_policy.set`. **Nicht für Kunden-Benutzer** (Freigabeliste, ADR 0018) – ihre Sicht auf
+   die eigenen Zonen kommt mit 0.53.0.
+7. **Nur lesend** gegenüber allen Quellsystemen; Zonen und Absichten sind Daten der Plattform.
+
+## Folgen
+
+- Die Firewall-Zonen (`zone`, gelesen) bleiben, was sie sind; eine logische Zone kann sie als
+  Selektor nutzen.
+- Beim Löschen eines Kunden bleiben seine Zonen und gehören keinem mehr; beim Löschen einer
+  Zone fällt ihre Absicht weg; beim Löschen eines Quellsystems seine Selektoren.
+- Zonen sind nicht funktionsrelevant für den Rest: ohne Zonen arbeitet die Plattform wie
+  bisher (Matrix und Plan sind leer, keine Befunde).
+- Offen: Export und Versionen des Plans (0.52.0), Kunden auf Zonen mit eingeschränkter Sicht
+  (0.53.0), Zonen in der Weg-Suche (Zonen je Hop), Absicht je Dienst (eingeschränkt = nur
+  bestimmte Dienste), Relevanz nach Pfad für die Matrix (ADR 0019).

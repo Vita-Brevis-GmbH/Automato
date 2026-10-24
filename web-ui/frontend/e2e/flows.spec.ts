@@ -37,9 +37,11 @@ test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page })
 
 test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page }) => {
   await page.goto("/#findings");
-  await expect(page.locator(".fgroup")).toHaveCount(5);
+  await expect(page.locator(".fgroup")).toHaveCount(6);
   // seit 0.50.0: Plausibilität der Topologie (statische Route ohne Wirkung in den Beispieldaten)
   await expect(page.locator(".fgroup", { hasText: "Topologie" })).toContainText("Statische Route ohne Wirkung");
+  // seit 0.51.0: Regeln gegen die Absicht der Zonenmatrix (LAN -> DMZ gesperrt)
+  await expect(page.locator(".fgroup", { hasText: "Zonen" })).toContainText("Zone: gegen die Absicht");
   await page.click(".fline:has-text('Nicht im IPAM')");
   const row = rows(page).filter({ hasText: "172.16.5.9" });
   await expect(row).toContainText("Den Server db01.example.ch kennt das IPAM unter 10.30.0.9");
@@ -835,5 +837,52 @@ test("Routing: Topologie mit Knoten, Kanten und Herkunft", async ({ page, proble
   await page.getByPlaceholder("Knoten, Leaf, IP, Netz…").fill("");
   await page.locator(".filterbar select[aria-label='Art']").selectOption("router");
   await expect(nodes.first()).toContainText("Router");
+  expect(problems).toEqual([]);
+});
+
+test("Netzwerkdesign: Zonen, Zonenmatrix mit Absicht und Zonenplan", async ({ page, problems }) => {
+  await page.goto("/#design");
+  const list = page.locator("#zone-list tbody tr.clickable");
+  await expect(list.filter({ hasText: "LAN" })).toContainText("Zone lan (fw-08)");
+  await expect(list.filter({ hasText: "Internet" })).toContainText("ohne Netz 10.0.0.0/8");
+  // Netze einer Zone: 0.0.0.0/0 ohne 10.0.0.0/8
+  await list.filter({ hasText: "Internet" }).click();
+  await expect(page.locator(".zone-nets")).toContainText("128.0.0.0/1");
+  // neue Zone mit Vorschau (Name je Versuch, die Beispieldaten bleiben stehen)
+  const name = `Server ${test.info().retry}`;
+  await page.click("button:has-text('+ Zone')");
+  await page.fill("#zo-name", name);
+  await page.locator("#zone-selectors input[aria-label='Wert']").first().fill("10.10.10.0/24");
+  await expect(page.locator("#zone-preview")).toContainText("10.10.10.0/24 (Netz 10.10.10.0/24)");
+  await page.click(".modal button:has-text('Speichern')");
+  await expect(list.filter({ hasText: name })).toHaveCount(1);
+
+  // Zonenmatrix: LAN -> DMZ gesperrt, zwei erlaubende Policies dagegen
+  await page.click(".tabbar button:has-text('Zonenmatrix')");
+  await expect(page.locator("#zone-matrix-summary")).toContainText("gegen die Absicht");
+  const viol = page.locator("td.zcell.viol");
+  await expect(viol).toHaveCount(1);
+  await viol.click();
+  const cell = page.locator("#zone-cell");
+  await expect(cell.locator("h2")).toHaveText("LAN → DMZ");
+  await expect(cell.locator("#zone-cell-rules")).toContainText("lan-to-dmz-web");
+  await expect(cell.locator("#zone-cell-rules .chip.crit").first()).toBeVisible();
+  // Absicht „eingeschränkt“: kein Verstoss mehr - danach zurück auf „gesperrt“
+  await cell.locator("select[aria-label='Absicht']").selectOption("limited");
+  await cell.locator("button:has-text('Absicht speichern')").click();
+  await expect(viol).toHaveCount(0);
+  await page.locator("td.zcell.i-warn").first().click();
+  await page.locator("#zone-cell select[aria-label='Absicht']").selectOption("deny");
+  await page.locator("#zone-cell button:has-text('Absicht speichern')").click();
+  await expect(viol).toHaveCount(1);
+
+  // Zonenplan: LAN und DMZ an fw-08, Internet über das WAN-Interface
+  await page.click(".tabbar button:has-text('Zonenplan')");
+  await expect(page.locator("#zone-plan-summary")).toContainText("Übergänge");
+  await expect(page.locator("#zone-plan .zp-node", { hasText: "fw-08" })).toBeVisible();
+  const att = page.locator("#zone-attachments tbody tr");
+  await expect(att.filter({ hasText: "fw-08" }).filter({ hasText: "dmz" })).toHaveCount(1);
+  await expect(att.filter({ hasText: "wan" }).first()).toContainText("fw-08");
+  await expect(page.locator("#zone-unzoned")).toContainText("Netze ohne Zone");
   expect(problems).toEqual([]);
 });

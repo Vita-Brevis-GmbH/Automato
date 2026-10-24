@@ -130,6 +130,11 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "customer.created": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.updated": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.deleted": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
+    # Logische Zonen und Absicht je Zonenpaar (0.51.0, ADR 0024)
+    "zone.created": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
+    "zone.updated": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
+    "zone.deleted": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
+    "zone_policy.set": frozenset({"tenant_id", "src_zone_id", "dst_zone_id", "intent"}),
     # Lesezugriffs-Audit (per Mandant zuschaltbar, ADR 0007 D5)
     # Kunden-Benutzer (ADR 0018): immer, mit ihren Kunden-IDs
     "read.rules": frozenset({"tenant_id", "resource", "customers"}),
@@ -142,6 +147,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "read.objects": frozenset({"tenant_id", "resource", "customers"}),
     "read.virtual": frozenset({"tenant_id", "resource", "customers"}),
     "read.customers": frozenset({"tenant_id", "resource", "customers"}),
+    "read.zones": frozenset({"tenant_id", "resource"}),
     "retention.purged": frozenset(
         {"runs", "sync_plans", "audit", "runs_days", "sync_days", "audit_days"}
     ),

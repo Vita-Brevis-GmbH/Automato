@@ -81,6 +81,7 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     issues += _epg_conflict_issues(session, tenant_id)
     issues += _snat_pool_issues(session, tenant_id)
     issues += _topology_issues(session, tenant_id)
+    issues += _zone_issues(session, tenant_id)
     issues += _device_object_issues(session, tenant_id, prefixes)
     issues += references.checks(session, tenant_id, prefixes, ctx)
     issues += _virtual_issues(session, tenant_id, ctx)
@@ -302,6 +303,67 @@ def _topology_issues(session: Session, tenant_id: int) -> list[Issue]:
         out.append(Issue(FindingType(item["type"]), kind, item["subject"], sid, severity,
                          detail=detail))  # fmt: skip
     return out
+
+
+ZONE_TYPES = frozenset({FindingType.ZONE_POLICY_VIOLATION, FindingType.ZONE_OVERLAP})
+
+
+def _zone_issues(session: Session, tenant_id: int) -> list[Issue]:
+    """Logische Zonen (0.51.0, `store/zones.checks`): erlaubende Regel zwischen Zonen mit
+    Absicht „gesperrt“ (je Regel ein Befund mit allen Paaren), dasselbe Praefix in mehreren
+    Zonen."""
+    from app.store import zones
+
+    items = zones.checks(session, tenant_id)
+    rule_ids = [i["rule_id"] for i in items if i.get("rule_id")]
+    rules = {
+        r.id: r for r in session.scalars(select(Rule).where(Rule.id.in_(rule_ids)))
+    } if rule_ids else {}  # fmt: skip
+    names = _source_names(session, tenant_id)
+    out: list[Issue] = []
+    for item in items:
+        if item["type"] == "zone_overlap":
+            detail = {k: v for k, v in item.items() if k not in ("type", "subject")}
+            out.append(Issue(FindingType.ZONE_OVERLAP, SubjectKind.SUBNET, item["subject"],
+                             None, Severity.WARNING, detail=detail))  # fmt: skip
+            continue
+        r = rules.get(item["rule_id"])
+        if r is None:
+            continue
+        raw = r.raw if isinstance(r.raw, dict) else {}
+        aci = r.domain is RuleDomain.ACI_CONTRACT
+        label = (r.name or f"#{r.external_id}") + vdom_suffix(r.vdom)
+        subject = f"{raw.get('tenant')}/{label}" if aci and raw.get("tenant") else label
+        out.append(
+            Issue(
+                FindingType.ZONE_POLICY_VIOLATION,
+                SubjectKind.RULE,
+                subject,
+                r.source_system_id,
+                Severity.WARNING,
+                detail={
+                    "rule_id": r.id,
+                    "external_id": r.external_id,
+                    "domain": r.domain.value,
+                    "name": label,
+                    "source_system_id": r.source_system_id,
+                    "source": names.get(r.source_system_id),
+                    **({"vdom": r.vdom} if r.vdom else {}),
+                    "tenant": raw.get("tenant") if aci else None,
+                    "pairs": item["pairs"],
+                    "notes": item["notes"],
+                },
+            )
+        )
+    return out
+
+
+def refresh_zone_findings(session: Session, tenant_id: int) -> int:
+    """Nur die Zonen-Befunde neu berechnen (nach dem Speichern einer Zone bzw. Absicht) - ohne
+    den ganzen Abgleich; Triage-Status bleibt wie sonst erhalten."""
+    issues = _zone_issues(session, tenant_id)
+    _sync_findings(session, tenant_id, issues, types=ZONE_TYPES)
+    return len(issues)
 
 
 def _epg_conflict_issues(session: Session, tenant_id: int) -> list[Issue]:
@@ -769,11 +831,16 @@ def _virtual_issues(session: Session, tenant_id: int, ctx) -> list[Issue]:
 # -- Findings synchronisieren (Triage bleibt erhalten) ------------------------
 
 
-def _sync_findings(session: Session, tenant_id: int, issues: list[Issue]) -> None:
+def _sync_findings(session: Session, tenant_id: int, issues: list[Issue],
+                   types: frozenset | None = None) -> None:  # fmt: skip
+    """Gespeicherte Befunde auf `issues` bringen; mit `types` nur Befunde dieser Typen."""
     now = datetime.now(UTC)
     wanted = {i.key: i for i in issues}
     existing: dict[tuple, Finding] = {}
-    for f in session.scalars(select(Finding).where(Finding.tenant_id == tenant_id)):
+    stmt = select(Finding).where(Finding.tenant_id == tenant_id)
+    if types is not None:
+        stmt = stmt.where(Finding.type.in_(list(types)))
+    for f in session.scalars(stmt):
         key = (f.type, f.subject_kind, f.subject_id, f.source_system_id)
         if key in wanted and key not in existing:
             existing[key] = f

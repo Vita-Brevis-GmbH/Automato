@@ -28,6 +28,7 @@ from app.api import (
     tenants,
     topology,
     virtual,
+    zones,
 )
 from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
@@ -98,6 +99,7 @@ def create_app() -> FastAPI:
     app.include_router(routing.router)
     app.include_router(topology.router)
     app.include_router(customers.router)
+    app.include_router(zones.router)
     return app
 
 

@@ -138,12 +138,35 @@ def _bgp(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _zone_violation(subject: str, d: dict) -> tuple[str, str]:
+    pairs = _list([f"{p.get('src')} → {p.get('dst')}" for p in d.get("pairs") or []], 4)
+    name = d.get("name") or subject
+    on = f" auf {d['source']}" if d.get("source") else ""
+    note = f" Absicht: {_list(d.get('notes') or [], 2)}." if d.get("notes") else ""
+    return (
+        f"Regel {_q(name)}{on} erlaubt Verkehr zwischen Zonen, die laut Zonenmatrix gesperrt "
+        f"sind: {pairs}.{note}",
+        "Regel einschränken bzw. entfernen – oder die Absicht in der Zonenmatrix anpassen "
+        "(eingeschränkt), wenn der Zugriff gewollt ist.",
+    )
+
+
+def _zone_overlap(subject: str, d: dict) -> tuple[str, str]:
+    return (
+        f"Das Netz {subject} gehört zu mehreren logischen Zonen: {_list(d.get('zones') or [], 4)}.",
+        "Das Netz nur einer Zone zuordnen (Selektor ausschliessen) – sonst zählt jede Regel "
+        "dorthin in allen diesen Zonen.",
+    )
+
+
 _TOPO_TEXT = {
     "topo_duplicate_ip": _dup_ip,
     "topo_mask_mismatch": _mask,
     "topo_route_loop": _loop,
     "topo_static_unused": _static,
     "topo_bgp_down": _bgp,
+    "zone_policy_violation": _zone_violation,
+    "zone_overlap": _zone_overlap,
 }
 
 

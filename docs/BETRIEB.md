@@ -423,7 +423,8 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       Route ohne Wirkung (eingeschaltet, nicht in der RIB, keine andere Route dafür),
       BGP-Sitzung nicht aufgebaut. Nach jedem Lauf neu berechnet.
     - Nicht für Kunden-Benutzer (zeigt die ganze Umgebung). Zeichnung und Export folgen
-      (0.52.0), Korrekturen im Designer später.
+      (0.52.0), Korrekturen im Designer später. Die logischen Zonen hängt der Zonenplan an
+      diese Knoten (Netzwerkdesign, 0.51.0).
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
   (Application Profiles, EPGs, Server); **Vorschläge** nach der Projektnummer aus
@@ -600,7 +601,39 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Objekte. Darunter **Vergleich DDI ↔ NetBox** (fehlt in NetBox / abweichend / nur in
   NetBox) mit Suche. **Jetzt abgleichen** (Operator) rechnet neu, ohne etwas zu lesen oder
   zu schreiben.
-- **Netzwerkdesign:** geplant (Platzhalter).
+- **Netzwerkdesign** (0.51.0, ADR 0024): logische Zonen, Zonenmatrix und Zonenplan – in
+  Automato gepflegt, rein lesend gegenüber den Geräten. Nicht für Kunden-Benutzer.
+  - **Zonen** (Operator schreibt): Name, Kurzname, Art (intern, DMZ, extern, Management,
+    geteilt, Transfer), Farbe, Reihenfolge, Kunde (leer = geteilt bzw. Infrastruktur).
+    - Selektoren wie beim Kunden (ACI-Tenant/VRF/AP/EPG/BD, VDOM/Zone/Interface je Firewall,
+      Netz, Kürzel, IPAM-Merkmal), dazu **Anbindung**: die Netze hinter einer Anbindung aus
+      Routing → Anbindungen. Ein- bzw. ausschliessend; die Vorschau zeigt Netze, EPGs und
+      gleiche Netze in anderen Zonen.
+    - Eine IP gehört zur Zone mit dem **längsten Präfix** (DMZ 10.1.5.0/24 in Server
+      10.1.0.0/16 geht vor). Internet am besten als Anbindung „Internet“ **ohne** die privaten
+      Netze (Netz 10.0.0.0/8 usw. ausschliessen) – sonst landen interne Netze ohne Zone im
+      Internet.
+    - Klick auf eine Zone zeigt ihre Netze mit Grund (Link in die Regel-Suche).
+  - **Zonenmatrix:** Zeilen = Quellzone, Spalten = Zielzone, dazu „any“ und „ohne Zone“. Je
+    Zelle ✓ erlaubende und ✕ sperrende Regeln (Firewall-Policies und ACI-Contracts, ohne
+    Zwillinge paralleler Firewalls); oben, wie viele Regeln zugeordnet sind (ohne IP-Bereich,
+    z. B. nur FQDN, zählt nicht).
+    - Klick auf eine Zelle: die Regeln (Link zur Regel) und – als Operator – die **Absicht**
+      für das Zonenpaar: erlaubt, eingeschränkt, gesperrt, mit Notiz.
+    - Eine erlaubende Regel zwischen Zonen mit Absicht „gesperrt“ ist rot umrandet und ein
+      Befund (Findings → Zonen, „Zone: gegen die Absicht“). „any“ und „ohne Zone“ zählen
+      nicht als Verstoss.
+  - **Zonenplan:** Zonen links (intern, Management, Transfer) bzw. rechts (DMZ, extern,
+    geteilt), die gelesenen Knoten (Firewall/VDOM, ACI-VRF) in der Mitte, Linien mit den
+    Interfaces.
+    - Eine Zone hängt an einem Knoten, wenn ein Netz seiner Interfaces bzw. L3Outs oder ein
+      EPG-/BD-Subnetz der VRF in ihr liegt, über die Interfaces ihrer Anbindung – und, nur
+      wenn sie sonst an keinem Knoten hängt, über eine Route zu einem Router ohne gelesenes
+      Gerät (gestrichelt, z. B. Default-Route zum Provider).
+    - Darunter die Tabelle je Zone und Knoten und die **Netze ohne Zone**.
+  - Befunde: „Netz in mehreren Zonen“ (gleiches Präfix in zwei Zonen) und „gegen die
+    Absicht“; sofort nach dem Speichern und nach jedem Lauf neu berechnet. Export und
+    Versionen des Plans folgen (0.52.0).
 
 **Administration**
 - **Benutzer & Rollen:** Rollen viewer/operator/admin, eigenes Konto, Links in die
@@ -749,6 +782,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern; Vorschläge je ACI-Tenant; nicht Zugeordnetes |
+| `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy`, `GET /zones/plan` (je `tenant_id`) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan mit `attachments` (Zone ↔ Knoten über interface/fabric/exit/route), `links`, `unzoned` |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `POST /systems/{id}/check` | Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus (operator): Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint`; Agent-Systeme 409 (`run-agent.ps1 -Check`), 0.34.0 |
 | `GET /systems/labels?tenant_id=` | Bezeichnungen der Quellsysteme (`id`, `name`, `platform`, `vdoms`, `parallel_group`) ohne Konfiguration; Kunden-Benutzer nur die Systeme ihrer Regeln, NAT bzw. Objekte (0.33.0) |

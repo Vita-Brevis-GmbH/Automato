@@ -24,6 +24,8 @@ from app.models import (
     EpgEndpoint,
     EpgSubnet,
     Finding,
+    LogicalZone,
+    LogicalZoneSelector,
     NatRule,
     NetworkObject,
     ParallelRejection,
@@ -43,6 +45,7 @@ from app.models import (
     VmIp,
     VmNic,
     Zone,
+    ZonePolicy,
 )
 from app.store import customers
 from app.store import rules as rules_store
@@ -125,6 +128,9 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
     session.execute(delete(Portgroup).where(Portgroup.source_system_id == source.id))
     # Kunden (ADR 0018): Selektoren dieses Quellsystems fallen weg
     session.execute(delete(CustomerSelector).where(CustomerSelector.source_system_id == source.id))
+    session.execute(
+        delete(LogicalZoneSelector).where(LogicalZoneSelector.source_system_id == source.id)
+    )
     session.execute(delete(RulePairDecision).where(RulePairDecision.source_system_id == source.id))
     counts["epgs"] = _delete_source_epgs(session, source.id)
     source.reference_run_id = None
@@ -194,6 +200,11 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
 
     counts["objects"] = _count(session, delete(NetworkObject).where(NetworkObject.tenant_id == tid))
     counts["zones"] = _count(session, delete(Zone).where(Zone.tenant_id == tid))
+    # logische Zonen (0.51.0) vor den Kunden: sie verweisen auf sie
+    zone_ids = select(LogicalZone.id).where(LogicalZone.tenant_id == tid)
+    session.execute(delete(ZonePolicy).where(ZonePolicy.tenant_id == tid))
+    session.execute(delete(LogicalZoneSelector).where(LogicalZoneSelector.zone_id.in_(zone_ids)))
+    session.execute(delete(LogicalZone).where(LogicalZone.tenant_id == tid))
     customer_ids = select(Customer.id).where(Customer.tenant_id == tid)
     session.execute(delete(CustomerMember).where(CustomerMember.tenant_id == tid))
     session.execute(delete(CustomerSelector).where(CustomerSelector.customer_id.in_(customer_ids)))

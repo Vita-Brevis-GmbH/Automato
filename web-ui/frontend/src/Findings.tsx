@@ -68,6 +68,10 @@ const DETAIL_LABEL: Record<string, string | null> = {
   peer_names: "Name im IPAM",
   remote_as: "AS",
   state: "Zustand",
+  // Zonen (0.51.0): Paare und Absicht stehen im Satz
+  pairs: null,
+  notes: null,
+  zones: "Zonen",
 };
 
 const SIDE: Record<string, string> = { src: "Quelle / Consumer", dst: "Ziel / Provider" };

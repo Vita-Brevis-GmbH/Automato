@@ -1,6 +1,6 @@
 """Topologie-Modell (0.50.0, ADR 0019): Knoten und Kanten der Umgebung als ein Modell -
 abgeleitet aus den gelesenen Daten, ergaenzt um das von Hand Erfasste (`GET /topology`).
-Grundlage fuer Zonen und Zonenplan (0.51.0), Export (0.52.0) und den Designer.
+Grundlage fuer Zonen und Zonenplan (0.51.0, `store/zones.py`), Export (0.52.0) und den Designer.
 
 Knoten (`kind`):
 - gelesene Routing-Instanzen wie im Weg (`paths.Graph`): `firewall` (FortiGate nur mit root),
@@ -550,6 +550,16 @@ def _issue_nodes(issue: dict) -> list[str]:
     out = [issue["node"]] if issue.get("node") else []
     out += issue.get("nodes", []) if isinstance(issue.get("nodes"), list) else []
     return [n if isinstance(n, str) else n.get("node") for n in out]
+
+
+def addresses(
+    session: Session, tenant_id: int, graph: Graph | None = None
+) -> tuple[list[Addr], dict[Key, set[str]]]:
+    """Adressen der gelesenen Knoten (Interfaces ohne Management, L3Out-SVIs) und die
+    Interfaces bzw. Zonen je Knoten - fuer den Zonenplan (0.51.0)."""
+    m = Model(session, tenant_id, graph)
+    m._addresses()
+    return m.addrs, m.ports
 
 
 def build(session: Session, tenant_id: int, graph: Graph | None = None) -> dict:

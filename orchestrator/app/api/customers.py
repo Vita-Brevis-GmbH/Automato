@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -24,6 +24,7 @@ from app.models import (
     CustomerSelector,
     Epg,
     Finding,
+    LogicalZone,
     NatRule,
     NetworkObject,
     Rule,
@@ -247,6 +248,10 @@ def delete_customer(
     c = _get(session, principal, customer_id)
     _audit(session, principal, "deleted", c)
     session.execute(CustomerMember.__table__.delete().where(CustomerMember.customer_id == c.id))
+    # seine logischen Zonen bleiben, gehoeren dann keinem Kunden (0.51.0)
+    session.execute(
+        update(LogicalZone).where(LogicalZone.customer_id == c.id).values(customer_id=None)
+    )
     session.delete(c)
 
 

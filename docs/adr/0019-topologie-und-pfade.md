@@ -325,6 +325,9 @@ Rahmen laut Anwender (2026-10-22):
      **Plausibilität** als Befunde (Abgleich nach jedem Lauf): doppelte IP im selben Netz,
      abweichende Maske, Schleife (A leitet P über B, B das Netz von P über A zurück; bis 3000
      Routen je Lauf), statische Route ohne Wirkung, BGP-Sitzung nicht aufgebaut.
+   - **Logische Zonen, Zonenmatrix und Zonenplan (0.51.0, ADR 0024):** Zonen in Automato über
+     Selektoren gepflegt; der Plan hängt sie an die Knoten dieses Modells (Interface, Fabric,
+     Anbindung, Route zu einem Router ohne gelesenes Gerät).
    - Erster Teil in
    0.18.0: **Anbindungen nach aussen** (`topo_exit`, von Hand erfasst, Operator):
    - Art (Internet, MPLS, WAN, Partner), optional für eine Firewall, Next-Hop-IPs und/oder

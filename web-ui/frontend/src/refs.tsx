@@ -46,6 +46,8 @@ export const FINDING_LABEL: Record<string, string> = {
   topo_route_loop: "Routing-Schleife",
   topo_static_unused: "Statische Route ohne Wirkung",
   topo_bgp_down: "BGP nicht aufgebaut",
+  zone_policy_violation: "Zone: gegen die Absicht",
+  zone_overlap: "Netz in mehreren Zonen",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -78,6 +80,8 @@ export const FINDING_HINT: Record<string, string> = {
   topo_route_loop: "zwei gelesene Knoten leiten ein Netz gegenseitig zueinander",
   topo_static_unused: "eingeschaltete statische Route, die nicht in der Routing-Tabelle steht",
   topo_bgp_down: "BGP-Sitzung eines gelesenen Knotens nicht aufgebaut",
+  zone_policy_violation: "erlaubende Regel zwischen Zonen, die laut Zonenmatrix gesperrt sind",
+  zone_overlap: "dasselbe Netz in mehreren logischen Zonen",
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -124,6 +128,12 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     label: "Topologie",
     help: "Plausibilität von Netzen und Routing: doppelte IPs, Masken, Schleifen, Routen ohne Wirkung, BGP",
     types: ["topo_duplicate_ip", "topo_mask_mismatch", "topo_route_loop", "topo_static_unused", "topo_bgp_down"],
+  },
+  {
+    key: "zones",
+    label: "Zonen",
+    help: "Regeln gegen die Absicht der Zonenmatrix, Netze in mehreren logischen Zonen",
+    types: ["zone_policy_violation", "zone_overlap"],
   },
   {
     key: "aci",
