@@ -2365,7 +2365,60 @@ export interface ZonePlan {
   links: { a: number; b: number; nodes: string[] }[];
   unzoned: { total: number; items: { network: string; node: string; where: string | null }[] };
   summary: { zones: number; nodes: number; attachments: number; links: number; unzoned: number; without_node: number };
+  layout?: PlanLayout; // Zeichnung (0.52.0), gleich wie im Export
 }
+// Zeichnung des Zonenplans (0.52.0, `store/plan_export.layout`): Pixel, Ursprung oben links
+export interface PlanBox {
+  id: string | number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  title: string;
+  sub: string;
+  kind: string | null;
+  side?: "l" | "r";
+  color?: string | null;
+  fill?: string;
+}
+export interface PlanLayout {
+  width: number;
+  height: number;
+  zones: PlanBox[];
+  nodes: PlanBox[];
+  edges: { zone: number; node: string; x1: number; y1: number; x2: number; y2: number; label: string; dashed: boolean }[];
+}
+// Versionen des Zonenplans (0.52.0)
+export interface PlanVersion {
+  id: number;
+  number: number;
+  label: string;
+  note: string | null;
+  fingerprint: string;
+  created_by: string | null;
+  created_at: string;
+  app_version: string | null;
+  summary: Partial<ZonePlan["summary"]>;
+}
+export interface PlanVersionFull extends PlanVersion {
+  data: { zones: (ZoneSummary & { customer: string | null; selectors: { kind: string; value: string; exclude: boolean; source: string | null }[] })[]; plan: ZonePlan; matrix: ZoneMatrix };
+}
+export interface PlanChanges<T> {
+  added: string[];
+  removed: string[];
+  changed: { key: string; old: T; new: T }[];
+}
+export interface PlanDiff {
+  from: number;
+  to: number | null;
+  same: boolean;
+  zones: PlanChanges<{ kind: string; customer: string | null; color: string | null; selectors: string[] }>;
+  intents: PlanChanges<{ intent: ZoneIntent; note: string | null }>;
+  attachments: PlanChanges<{ via: string[]; interfaces: string[] }>;
+  unzoned: { added: string[]; removed: string[] };
+  matrix: { cell: string; old: [number, number, number]; new: [number, number, number] }[];
+}
+export type PlanFormat = "svg" | "drawio" | "pdf";
 export const fetchZones = (tenantId: number) => getJSON<LogicalZone[]>(`/api/zones${qs({ tenant_id: tenantId })}`);
 export const createZone = (body: ZoneIn) => sendJSON<LogicalZone>("/api/zones", "POST", body);
 export const updateZone = (id: number, body: ZoneIn) => sendJSON<LogicalZone>(`/api/zones/${id}`, "PUT", body);
@@ -2388,3 +2441,17 @@ export const setZonePolicy = (tenantId: number, src: number, dst: number, intent
     note,
   });
 export const fetchZonePlan = (tenantId: number) => getJSON<ZonePlan>(`/api/zones/plan${qs({ tenant_id: tenantId })}`);
+export const fetchPlanVersions = (tenantId: number) =>
+  getJSON<{ current_fingerprint: string; items: PlanVersion[] }>(`/api/zones/plan/versions${qs({ tenant_id: tenantId })}`);
+export const savePlanVersion = (tenantId: number, label: string, note: string | null) =>
+  sendJSON<PlanVersion>("/api/zones/plan/versions", "POST", { tenant_id: tenantId, label, note });
+export const fetchPlanVersion = (id: number) => getJSON<PlanVersionFull>(`/api/zones/plan/versions/${id}`);
+export const fetchPlanVersionDiff = (id: number, to?: number) =>
+  getJSON<PlanDiff>(`/api/zones/plan/versions/${id}/diff${qs({ to })}`);
+export const deletePlanVersion = (id: number) => sendJSON<void>(`/api/zones/plan/versions/${id}`, "DELETE");
+// Export als Datei: Name aus Content-Disposition (zonenplan-<Datum> bzw. zonenplan-v<n>)
+export async function exportZonePlan(tenantId: number, format: PlanFormat, versionId?: number): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetchChecked(`/api/zones/plan/export${qs({ tenant_id: tenantId, format, version_id: versionId })}`);
+  const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+  return { blob: await response.blob(), filename: match?.[1] ?? `zonenplan.${format}` };
+}

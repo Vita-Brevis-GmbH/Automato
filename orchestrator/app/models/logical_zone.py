@@ -20,6 +20,7 @@ Management) gehoeren keinem. Die Sicht der Kunden auf ihre Zonen folgt mit 0.53.
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     ForeignKey,
@@ -112,3 +113,29 @@ class ZonePolicy(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+
+
+class ZonePlanVersion(Base):
+    """Gespeicherter Stand des Zonenplans (0.52.0, ADR 0024): Zonen mit Selektoren, Plan und
+    Matrix samt Absichten so, wie sie beim Speichern abgeleitet waren - zum Nachlesen,
+    Vergleichen und Exportieren. `fingerprint` fasst das Design zusammen (Zonen, Absichten,
+    Zonen an den Knoten, Netze ohne Zone; ohne Regel-Zahlen), damit „unveraendert“ erkennbar
+    ist. Nur Daten der Plattform; geloescht wird nur der Stand, die Nummer bleibt vergeben."""
+
+    __tablename__ = "zone_plan_version"
+    __table_args__ = (UniqueConstraint("tenant_id", "number", name="uq_zone_plan_version_number"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
+    number: Mapped[int] = mapped_column(Integer)  # je Mandant fortlaufend
+    label: Mapped[str] = mapped_column(String(200))
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    data: Mapped[dict] = mapped_column(JSON)
+    # geloescht (Admin): der Stand faellt weg, die Nummer bleibt vergeben
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[str | None] = mapped_column(String(200), nullable=True)

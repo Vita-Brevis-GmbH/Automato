@@ -1,14 +1,20 @@
 // Netzwerkdesign (0.51.0, ADR 0024): logische Zonen in Automato pflegen (Selektoren wie beim
 // Kunden, dazu „Anbindung“), die Zonenmatrix (Regeln je Paar Quell-/Zielzone mit Absicht und
 // Verstössen) und der Zonenplan (Zonen an Firewalls/VDOMs und ACI-VRFs, Übergänge, Netze ohne
-// Zone). Lesen = viewer, Zonen und Absicht ändern = operator. Export und Versionen folgen (0.52.0).
+// Zone). Lesen = viewer, Zonen und Absicht ändern = operator. Seit 0.52.0 Export (draw.io, SVG, PDF)
+// und Versionen des Plans (speichern = operator, löschen = admin).
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   createZone,
   Customer,
+  deletePlanVersion,
   deleteZone,
+  exportZonePlan,
   fetchCustomers,
   fetchExits,
+  fetchPlanVersion,
+  fetchPlanVersionDiff,
+  fetchPlanVersions,
   fetchSystems,
   fetchZoneCellRules,
   fetchZoneMatrix,
@@ -16,7 +22,13 @@ import {
   fetchZonePlan,
   fetchZones,
   LogicalZone,
+  PlanDiff,
+  PlanFormat,
+  PlanLayout,
+  PlanVersion,
+  PlanVersionFull,
   previewZone,
+  savePlanVersion,
   setZonePolicy,
   System,
   TopoExit,
@@ -34,7 +46,7 @@ import {
   ZoneSummary,
 } from "./api";
 import { SELECTOR_LABEL } from "./Customers";
-import { Dash, Empty, ErrorBox, Loading, Modal, Note, PageHead } from "./ui";
+import { Dash, download, Empty, ErrorBox, fmtTime, Loading, Modal, Note, PageHead } from "./ui";
 
 export const ZONE_KIND: Record<ZoneKind, string> = {
   internal: "intern",
@@ -61,16 +73,27 @@ const PLACEHOLDER: Partial<Record<ZoneSelectorKind, string>> = {
 const FW_KINDS: ZoneSelectorKind[] = ["fw_vdom", "fw_zone", "fw_interface"];
 const VIA: Record<string, string> = { interface: "Interface", fabric: "im Fabric", exit: "Anbindung", route: "über Route" };
 
-type Tab = "zones" | "matrix" | "plan";
+type Tab = "zones" | "matrix" | "plan" | "versions";
 
-export default function Design({ tenantId, tenantLabel, canEdit }: { tenantId: number | null; tenantLabel: string; canEdit: boolean }) {
+export default function Design({
+  tenantId,
+  tenantLabel,
+  canEdit,
+  isAdmin,
+}: {
+  tenantId: number | null;
+  tenantLabel: string;
+  canEdit: boolean;
+  isAdmin: boolean;
+}) {
   const [tab, setTab] = useState<Tab>("zones");
   return (
     <>
       <PageHead title="Netzwerkdesign">
         Logische Zonen von „{tenantLabel}“ – in Automato gepflegt, die Netze leitet Automato aus Selektoren ab (wie
         beim Kunden). Die Zonenmatrix zeigt je Paar Quell- und Zielzone die Regeln und die Absicht, der Zonenplan, an
-        welchen Firewalls und ACI-VRFs die Zonen hängen. Rein lesend gegenüber den Geräten.
+        welchen Firewalls und ACI-VRFs die Zonen hängen – exportierbar als draw.io, SVG und PDF, mit Versionen zum
+        Vergleichen. Rein lesend gegenüber den Geräten.
       </PageHead>
       {tenantId === null ? (
         <Note>Bitte oben einen Mandanten wählen.</Note>
@@ -82,6 +105,7 @@ export default function Design({ tenantId, tenantLabel, canEdit }: { tenantId: n
                 ["zones", "Zonen"],
                 ["matrix", "Zonenmatrix"],
                 ["plan", "Zonenplan"],
+                ["versions", "Versionen"],
               ] as const
             ).map(([k, label]) => (
               <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
@@ -92,6 +116,7 @@ export default function Design({ tenantId, tenantLabel, canEdit }: { tenantId: n
           {tab === "zones" && <ZonesTab tenantId={tenantId} canEdit={canEdit} />}
           {tab === "matrix" && <MatrixTab tenantId={tenantId} canEdit={canEdit} />}
           {tab === "plan" && <PlanTab tenantId={tenantId} />}
+          {tab === "versions" && <VersionsTab tenantId={tenantId} canEdit={canEdit} isAdmin={isAdmin} />}
         </>
       )}
     </>
@@ -768,8 +793,6 @@ function CellDetail({
 
 // -- Zonenplan -----------------------------------------------------------------------------
 
-const RIGHT_KINDS = new Set<ZoneKind>(["external", "dmz", "shared"]);
-
 function PlanTab({ tenantId }: { tenantId: number }) {
   const [plan, setPlan] = useState<ZonePlan | null>(null);
   const [err, setErr] = useState<unknown>(null);
@@ -792,10 +815,11 @@ function PlanTab({ tenantId }: { tenantId: number }) {
             {s.without_node ? ` · ${s.without_node} Zonen ohne Knoten` : ""}
             {s.unzoned ? ` · ${s.unzoned} Netze ohne Zone` : ""}
           </span>
+          <span style={{ marginLeft: "auto" }}>
+            <ExportButtons tenantId={tenantId} />
+          </span>
         </div>
-        <div className="card-body scroll">
-          <PlanDrawing plan={plan} />
-        </div>
+        <div className="card-body scroll">{plan.layout && <PlanDrawing layout={plan.layout} />}</div>
       </div>
 
       <div className="card">
@@ -894,75 +918,320 @@ function PlanTab({ tenantId }: { tenantId: number }) {
   );
 }
 
-// Zeichnung: Zonen links (intern, Management, Transfer) und rechts (DMZ, extern, geteilt), die
-// Knoten in der Mitte; Linien = Zone am Knoten (gestrichelt: über Route), beschriftet mit den
-// Interfaces. Export (draw.io, SVG, PDF) folgt mit 0.52.0.
-function PlanDrawing({ plan }: { plan: ZonePlan }) {
-  const W = 980;
-  const ROW = 58;
-  const ZW = 230;
-  const NW = 250;
-  const left = plan.zones.filter((z) => !RIGHT_KINDS.has(z.kind));
-  const right = plan.zones.filter((z) => RIGHT_KINDS.has(z.kind));
-  const rows = Math.max(left.length, right.length, plan.nodes.length, 1);
-  const H = rows * ROW + 24;
-  const y = (i: number, n: number) => 12 + (rows - n) * (ROW / 2) + i * ROW;
-  const pos = new Map<string, { x: number; y: number; side: "l" | "r" | "m" }>();
-  left.forEach((z, i) => pos.set(`z${z.id}`, { x: 16, y: y(i, left.length), side: "l" }));
-  right.forEach((z, i) => pos.set(`z${z.id}`, { x: W - ZW - 16, y: y(i, right.length), side: "r" }));
-  plan.nodes.forEach((n, i) => pos.set(n.id, { x: (W - NW) / 2, y: y(i, plan.nodes.length), side: "m" }));
-  const h = ROW - 16;
+// Zeichnung aus dem Layout des Servers (0.52.0, `plan_export.layout`) – dieselbe wie im Export:
+// Zonen links (intern, Management, Transfer) und rechts (DMZ, extern, geteilt), die Knoten in der
+// Mitte; Linien = Zone am Knoten (gestrichelt: nur über eine Route), beschriftet mit den Interfaces.
+export function PlanDrawing({ layout, id = "zone-plan" }: { layout: PlanLayout; id?: string }) {
   return (
-    <svg className="zone-plan" id="zone-plan" viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Zonenplan">
-      {plan.attachments.map((a) => {
-        const z = pos.get(`z${a.zone}`);
-        const n = pos.get(a.node);
-        if (!z || !n) return null;
-        const x1 = z.side === "l" ? z.x + ZW : z.x;
-        const x2 = z.side === "l" ? n.x : n.x + NW;
-        const y1 = z.y + h / 2;
-        const y2 = n.y + h / 2;
-        const label = a.interfaces.slice(0, 2).join(", ") + (a.interfaces.length > 2 ? " …" : "");
-        const routed = a.via.length === 1 && a.via[0] === "route";
-        return (
-          <g key={`${a.zone}-${a.node}`} className="zp-edge">
-            <line x1={x1} y1={y1} x2={x2} y2={y2} strokeDasharray={routed ? "5 4" : undefined} />
-            {label && (
-              <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 4} textAnchor="middle">
-                {label}
-              </text>
-            )}
-          </g>
-        );
-      })}
-      {plan.zones.map((z) => {
-        const p = pos.get(`z${z.id}`)!;
-        return (
-          <g key={z.id} className="zp-zone">
-            <rect x={p.x} y={p.y} width={ZW} height={h} rx={8} style={{ fill: z.color ?? "var(--surface-3)" }} />
-            <text x={p.x + 12} y={p.y + 18} className="zp-title">
-              {z.name}
+    <svg className="zone-plan" id={id} viewBox={`0 0 ${layout.width} ${layout.height}`} width="100%" role="img" aria-label="Zonenplan">
+      {layout.edges.map((e) => (
+        <g key={`${e.zone}-${e.node}`} className="zp-edge">
+          <line x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} strokeDasharray={e.dashed ? "5 4" : undefined} />
+          {e.label && (
+            <text x={(e.x1 + e.x2) / 2} y={(e.y1 + e.y2) / 2 - 4} textAnchor="middle">
+              {e.label}
             </text>
-            <text x={p.x + 12} y={p.y + 33} className="zp-sub">
-              {ZONE_KIND[z.kind]} · {z.nets} {z.nets === 1 ? "Netz" : "Netze"}
-            </text>
-          </g>
-        );
-      })}
-      {plan.nodes.map((n) => {
-        const p = pos.get(n.id)!;
-        return (
-          <g key={n.id} className="zp-node">
-            <rect x={p.x} y={p.y} width={NW} height={h} rx={6} />
-            <text x={p.x + NW / 2} y={p.y + 18} textAnchor="middle" className="zp-title">
-              {n.label}
-            </text>
-            <text x={p.x + NW / 2} y={p.y + 33} textAnchor="middle" className="zp-sub">
-              {n.kind === "vrf" ? "ACI-VRF" : n.kind === "vdom" ? "VDOM" : "Firewall"} · {n.zones} {n.zones === 1 ? "Zone" : "Zonen"}
-            </text>
-          </g>
-        );
-      })}
+          )}
+        </g>
+      ))}
+      {layout.zones.map((z) => (
+        <g key={z.id} className="zp-zone">
+          <rect x={z.x} y={z.y} width={z.w} height={z.h} rx={8} style={{ fill: z.color ?? "var(--surface-3)" }} />
+          <text x={z.x + 12} y={z.y + 18} className="zp-title">
+            {z.title}
+          </text>
+          <text x={z.x + 12} y={z.y + 33} className="zp-sub">
+            {z.sub}
+          </text>
+        </g>
+      ))}
+      {layout.nodes.map((n) => (
+        <g key={n.id} className="zp-node">
+          <rect x={n.x} y={n.y} width={n.w} height={n.h} rx={6} />
+          <text x={n.x + n.w / 2} y={n.y + 18} textAnchor="middle" className="zp-title">
+            {n.title}
+          </text>
+          <text x={n.x + n.w / 2} y={n.y + 33} textAnchor="middle" className="zp-sub">
+            {n.sub}
+          </text>
+        </g>
+      ))}
     </svg>
+  );
+}
+
+// Export-Knöpfe: draw.io (bearbeitbar), SVG, PDF (mit Matrix und Tabellen) – aktueller Stand bzw. Version
+function ExportButtons({ tenantId, versionId }: { tenantId: number; versionId?: number }) {
+  const [busy, setBusy] = useState<PlanFormat | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const run = async (format: PlanFormat) => {
+    setBusy(format);
+    setErr(null);
+    try {
+      const { blob, filename } = await exportZonePlan(tenantId, format, versionId);
+      download(filename, blob);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <span className="plan-export">
+      <ErrorBox error={err} onClose={() => setErr(null)} />
+      <span className="faint">Export:</span>
+      {(
+        [
+          ["drawio", "draw.io"],
+          ["svg", "SVG"],
+          ["pdf", "PDF"],
+        ] as const
+      ).map(([f, label]) => (
+        <button key={f} className="btn btn-sm" disabled={busy !== null} onClick={() => run(f)}>
+          {busy === f ? "…" : label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+// -- Versionen -----------------------------------------------------------------------------
+
+function VersionsTab({ tenantId, canEdit, isAdmin }: { tenantId: number; canEdit: boolean; isAdmin: boolean }) {
+  const [list, setList] = useState<{ current_fingerprint: string; items: PlanVersion[] } | null>(null);
+  const [label, setLabel] = useState("");
+  const [note, setNote] = useState("");
+  const [open, setOpen] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  const load = useCallback(() => {
+    fetchPlanVersions(tenantId).then(setList).catch(setErr);
+  }, [tenantId]);
+  useEffect(() => {
+    setList(null);
+    setOpen(null);
+    load();
+  }, [load]);
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const v = await savePlanVersion(tenantId, label.trim(), note.trim() || null);
+      setLabel("");
+      setNote("");
+      setOpen(v.id);
+      load();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async (v: PlanVersion) => {
+    if (!window.confirm(`Version ${v.number} „${v.label}“ löschen? Der gespeicherte Stand fällt weg, die Nummer bleibt vergeben.`)) return;
+    try {
+      await deletePlanVersion(v.id);
+      if (open === v.id) setOpen(null);
+      load();
+    } catch (e) {
+      setErr(e);
+    }
+  };
+  if (list == null) return err ? <ErrorBox error={err} /> : <Loading />;
+  const latest = list.items[0];
+  const unchanged = list.items.find((v) => v.fingerprint === list.current_fingerprint);
+  return (
+    <>
+      <ErrorBox error={err} onClose={() => setErr(null)} />
+      <div className="card">
+        <div className="card-head">
+          <h2>Versionen des Zonenplans</h2>
+          <span className="faint" id="plan-version-state">
+            {latest == null
+              ? "noch keine Version gespeichert"
+              : unchanged
+                ? `aktueller Stand = Version ${unchanged.number}`
+                : `geändert seit Version ${latest.number}`}
+          </span>
+        </div>
+        <div className="card-body">
+          {canEdit && (
+            <div className="zone-intent" id="plan-version-save">
+              <input className="input" aria-label="Bezeichnung" placeholder="Bezeichnung, z. B. Stand nach Umbau DMZ" value={label} maxLength={200} onChange={(e) => setLabel(e.target.value)} />
+              <input className="input" aria-label="Notiz" placeholder="Notiz (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
+              <button className="btn btn-sm btn-primary" disabled={busy || !label.trim()} onClick={save}>
+                {busy ? "Speichere…" : "Version speichern"}
+              </button>
+            </div>
+          )}
+          {list.items.length === 0 ? (
+            <Empty title="Noch keine Versionen">
+              Eine Version hält Zonen, Plan, Matrix und Absichten so fest, wie sie jetzt abgeleitet sind – zum Nachlesen,
+              Vergleichen und Exportieren.
+            </Empty>
+          ) : (
+            <table className="compact" id="plan-versions">
+              <thead>
+                <tr>
+                  <th className="num">Nr.</th>
+                  <th>Bezeichnung</th>
+                  <th>Gespeichert</th>
+                  <th className="num">Zonen</th>
+                  <th className="num">Knoten</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {list.items.map((v) => (
+                  <Fragment key={v.id}>
+                    <tr className="clickable" onClick={() => setOpen(open === v.id ? null : v.id)}>
+                      <td className="num">{v.number}</td>
+                      <td>
+                        <b>{v.label}</b> {v.fingerprint === list.current_fingerprint && <span className="chip ok">= aktuell</span>}
+                        {v.note && <div className="faint">{v.note}</div>}
+                      </td>
+                      <td className="faint nowrap">
+                        {fmtTime(v.created_at)} · {v.created_by ?? "?"}
+                      </td>
+                      <td className="num">{v.summary.zones ?? 0}</td>
+                      <td className="num">{v.summary.nodes ?? 0}</td>
+                      <td className="nowrap" onClick={(e) => e.stopPropagation()}>
+                        {isAdmin && (
+                          <button className="btn btn-sm btn-ghost" onClick={() => remove(v)}>
+                            Löschen
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {open === v.id && (
+                      <tr className="subrow">
+                        <td colSpan={6}>
+                          <VersionDetail tenantId={tenantId} version={v} others={list.items.filter((x) => x.id !== v.id)} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function VersionDetail({ tenantId, version, others }: { tenantId: number; version: PlanVersion; others: PlanVersion[] }) {
+  const [full, setFull] = useState<PlanVersionFull | null>(null);
+  const [to, setTo] = useState<number | "">("");
+  const [diff, setDiff] = useState<PlanDiff | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  useEffect(() => {
+    let current = true;
+    fetchPlanVersion(version.id)
+      .then((v) => current && setFull(v))
+      .catch((e) => current && setErr(e));
+    return () => {
+      current = false;
+    };
+  }, [version.id]);
+  useEffect(() => {
+    let current = true;
+    setDiff(null);
+    fetchPlanVersionDiff(version.id, to === "" ? undefined : to)
+      .then((d) => current && setDiff(d))
+      .catch((e) => current && setErr(e));
+    return () => {
+      current = false;
+    };
+  }, [version.id, to]);
+  return (
+    <div className="plan-version">
+      <ErrorBox error={err} onClose={() => setErr(null)} />
+      <div className="plan-version-head">
+        <span>
+          Vergleich von Version {version.number} mit{" "}
+          <select className="sel" aria-label="Vergleich mit" value={to} onChange={(e) => setTo(e.target.value ? Number(e.target.value) : "")}>
+            <option value="">dem aktuellen Stand</option>
+            {others.map((o) => (
+              <option key={o.id} value={o.id}>
+                Version {o.number} – {o.label}
+              </option>
+            ))}
+          </select>
+        </span>
+        <ExportButtons tenantId={tenantId} versionId={version.id} />
+      </div>
+      {diff == null ? <Loading /> : <DiffView diff={diff} />}
+      {full?.data.plan.layout && (
+        <div className="scroll">
+          <PlanDrawing layout={full.data.plan.layout} id={`plan-version-${version.number}`} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DiffView({ diff }: { diff: PlanDiff }) {
+  const rows: [string, string, string][] = [];
+  for (const z of diff.zones.added) rows.push(["Zone", z, "neu"]);
+  for (const z of diff.zones.removed) rows.push(["Zone", z, "entfernt"]);
+  for (const c of diff.zones.changed) {
+    const what: string[] = [];
+    if (c.old.kind !== c.new.kind) what.push(`Art ${ZONE_KIND[c.old.kind as ZoneKind] ?? c.old.kind} → ${ZONE_KIND[c.new.kind as ZoneKind] ?? c.new.kind}`);
+    if (c.old.customer !== c.new.customer) what.push(`Kunde ${c.old.customer ?? "–"} → ${c.new.customer ?? "–"}`);
+    if (c.old.color !== c.new.color) what.push("Farbe");
+    if (JSON.stringify(c.old.selectors) !== JSON.stringify(c.new.selectors)) what.push("Selektoren");
+    rows.push(["Zone", c.key, `geändert: ${what.join(", ")}`]);
+  }
+  for (const k of diff.intents.added) rows.push(["Absicht", k, "neu"]);
+  for (const k of diff.intents.removed) rows.push(["Absicht", k, "entfernt"]);
+  for (const c of diff.intents.changed) rows.push(["Absicht", c.key, `${INTENT[c.old.intent]?.[1] ?? c.old.intent} → ${INTENT[c.new.intent]?.[1] ?? c.new.intent}`]);
+  for (const k of diff.attachments.added) rows.push(["Zone am Knoten", k, "neu"]);
+  for (const k of diff.attachments.removed) rows.push(["Zone am Knoten", k, "entfernt"]);
+  for (const c of diff.attachments.changed) rows.push(["Zone am Knoten", c.key, `Interfaces ${c.old.interfaces.join(", ") || "–"} → ${c.new.interfaces.join(", ") || "–"}`]);
+  for (const n of diff.unzoned.added) rows.push(["Netz ohne Zone", n, "neu"]);
+  for (const n of diff.unzoned.removed) rows.push(["Netz ohne Zone", n, "jetzt in einer Zone bzw. weg"]);
+  return (
+    <div id="plan-diff">
+      {diff.same ? (
+        <div className="faint">Design unverändert (Zonen, Absichten, Zonen an den Knoten, Netze ohne Zone).</div>
+      ) : (
+        <table className="compact">
+          <tbody>
+            {rows.map(([what, key, change], i) => (
+              <tr key={i}>
+                <td className="faint nowrap">{what}</td>
+                <td>{key}</td>
+                <td>{change}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {diff.matrix.length > 0 && (
+        <details className="plan-diff-matrix">
+          <summary>{diff.matrix.length} Zellen der Matrix mit anderen Regel-Zahlen</summary>
+          <table className="compact">
+            <thead>
+              <tr>
+                <th>Zelle</th>
+                <th>vorher (erlaubend / sperrend / gegen Absicht)</th>
+                <th>nachher</th>
+              </tr>
+            </thead>
+            <tbody>
+              {diff.matrix.map((c) => (
+                <tr key={c.cell}>
+                  <td>{c.cell}</td>
+                  <td className="mono">{c.old.join(" / ")}</td>
+                  <td className="mono">{c.new.join(" / ")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+    </div>
   );
 }

@@ -135,6 +135,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "zone.updated": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
     "zone.deleted": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
     "zone_policy.set": frozenset({"tenant_id", "src_zone_id", "dst_zone_id", "intent"}),
+    # Versionen des Zonenplans (0.52.0)
+    "zone_plan.version_saved": frozenset({"tenant_id", "version_id", "number", "label"}),
+    "zone_plan.version_deleted": frozenset({"tenant_id", "version_id", "number", "label"}),
     # Lesezugriffs-Audit (per Mandant zuschaltbar, ADR 0007 D5)
     # Kunden-Benutzer (ADR 0018): immer, mit ihren Kunden-IDs
     "read.rules": frozenset({"tenant_id", "resource", "customers"}),

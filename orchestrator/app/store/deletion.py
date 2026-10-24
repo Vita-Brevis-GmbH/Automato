@@ -45,6 +45,7 @@ from app.models import (
     VmIp,
     VmNic,
     Zone,
+    ZonePlanVersion,
     ZonePolicy,
 )
 from app.store import customers
@@ -203,6 +204,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     # logische Zonen (0.51.0) vor den Kunden: sie verweisen auf sie
     zone_ids = select(LogicalZone.id).where(LogicalZone.tenant_id == tid)
     session.execute(delete(ZonePolicy).where(ZonePolicy.tenant_id == tid))
+    session.execute(delete(ZonePlanVersion).where(ZonePlanVersion.tenant_id == tid))
     session.execute(delete(LogicalZoneSelector).where(LogicalZoneSelector.zone_id.in_(zone_ids)))
     session.execute(delete(LogicalZone).where(LogicalZone.tenant_id == tid))
     customer_ids = select(Customer.id).where(Customer.tenant_id == tid)

@@ -597,7 +597,7 @@ def plan(session: Session, tenant_id: int) -> dict:
         for key in sorted(by_node, key=lambda k: g.nodes[k].label)
     ]  # fmt: skip
     rest = sorted(unzoned.values(), key=lambda u: _net_key(ipaddress.ip_network(u["network"])))
-    return {
+    out = {
         "zones": [
             {
                 **zone_out(z, by_zone.get(z.id)),
@@ -618,3 +618,13 @@ def plan(session: Session, tenant_id: int) -> dict:
             "without_node": sum(1 for z in items if z.id not in {a["zone"] for a in attachments}),
         },
     }
+    return out
+
+
+def plan_with_layout(session: Session, tenant_id: int) -> dict:
+    """Plan samt Zeichnung (`plan_export.layout`) fuer die Oberflaeche."""
+    from app.store import plan_export
+
+    out = plan(session, tenant_id)
+    out["layout"] = plan_export.layout(out)
+    return out

@@ -7,6 +7,29 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.52.0 – 2026-10-24
+
+Zonenplan exportieren und Versionen des Plans (ADR 0024, Entscheid des Anwenders: Plan im Tool
+finden und exportieren). Migration `0049` (`zone_plan_version`); ohne neue Abhängigkeit, nur
+lesend gegenüber allen Quellsystemen.
+
+- **Export** (Netzwerkdesign → Zonenplan, `GET /zones/plan/export`):
+  - **draw.io**: Zonen und Knoten als Formen mit Eigenschaften (Zone, Art, Netze, Interfaces),
+    Verbindungen als Kanten – in diagrams.net weiter bearbeitbar;
+  - **SVG** für Wiki und Präsentation;
+  - **PDF**: Plan, Zonenmatrix (Zahlen, Absicht als Farbe, Verstösse umrandet, Notizen), Zonen
+    an den Knoten, Netze ohne Zone.
+  - Ein Layout auf dem Server für Oberfläche und alle Formate.
+- **Versionen** (Netzwerkdesign → Versionen, `/zones/plan/versions`):
+  - Version speichern (Operator, Bezeichnung und Notiz): Zonen mit Selektoren, Plan, Matrix und
+    Absichten, so wie sie gerade abgeleitet sind; Nummer je Umgebung fortlaufend.
+  - „aktueller Stand = Version n“ bzw. „geändert seit Version n“ (Fingerabdruck über das
+    Design, ohne Regel-Zahlen).
+  - Vergleich mit dem aktuellen Stand oder einer anderen Version: Zonen, Absichten, Zonen an den
+    Knoten, Netze ohne Zone, Zellen der Matrix mit anderen Zahlen. Zeichnung und Export je
+    Version.
+  - Löschen nur Admin; die Nummer bleibt vergeben. Nicht für Kunden-Benutzer.
+
 ## 0.51.0 – 2026-10-24
 
 Logische Zonen, Zonenmatrix und Zonenplan (Entscheid des Anwenders: Zonen in Automato pflegen,

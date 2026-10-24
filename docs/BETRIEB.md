@@ -631,9 +631,20 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       wenn sie sonst an keinem Knoten hängt, über eine Route zu einem Router ohne gelesenes
       Gerät (gestrichelt, z. B. Default-Route zum Provider).
     - Darunter die Tabelle je Zone und Knoten und die **Netze ohne Zone**.
+    - **Export** (0.52.0, Knöpfe oben rechts): **draw.io** (in diagrams.net weiter
+      bearbeitbar, Zonen und Knoten mit Eigenschaften), **SVG** (Wiki, Präsentation), **PDF**
+      (Plan, Zonenmatrix, Zonen an den Knoten, Netze ohne Zone). Dateiname
+      `zonenplan-<Datum>` bzw. `zonenplan-v<Nummer>`.
+  - **Versionen** (0.52.0): **Version speichern** (Operator, mit Bezeichnung und Notiz) hält
+    Zonen, Plan, Matrix und Absichten fest. Oben steht „aktueller Stand = Version n“ bzw.
+    „geändert seit Version n“ (verglichen wird das Design, nicht die Regel-Zahlen).
+    - Klick auf eine Version: Vergleich mit dem aktuellen Stand oder einer anderen Version
+      (Zonen, Absichten, Zonen an den Knoten, Netze ohne Zone; aufklappbar die Zellen der Matrix
+      mit anderen Zahlen), ihre Zeichnung und der Export dieser Version.
+    - **Löschen** nur als Admin: der Stand fällt weg, die Nummer bleibt vergeben. Versionen
+      fallen nicht unter die Aufbewahrungsfristen.
   - Befunde: „Netz in mehreren Zonen“ (gleiches Präfix in zwei Zonen) und „gegen die
-    Absicht“; sofort nach dem Speichern und nach jedem Lauf neu berechnet. Export und
-    Versionen des Plans folgen (0.52.0).
+    Absicht“; sofort nach dem Speichern und nach jedem Lauf neu berechnet.
 
 **Administration**
 - **Benutzer & Rollen:** Rollen viewer/operator/admin, eigenes Konto, Links in die
@@ -782,7 +793,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern; Vorschläge je ACI-Tenant; nicht Zugeordnetes |
-| `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy`, `GET /zones/plan` (je `tenant_id`) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan mit `attachments` (Zone ↔ Knoten über interface/fabric/exit/route), `links`, `unzoned` |
+| `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy`, `GET /zones/plan` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]`, `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan mit `attachments` (Zone ↔ Knoten über interface/fabric/exit/route), `links`, `unzoned`, `layout` (Zeichnung); Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`) |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `POST /systems/{id}/check` | Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus (operator): Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint`; Agent-Systeme 409 (`run-agent.ps1 -Check`), 0.34.0 |
 | `GET /systems/labels?tenant_id=` | Bezeichnungen der Quellsysteme (`id`, `name`, `platform`, `vdoms`, `parallel_group`) ohne Konfiguration; Kunden-Benutzer nur die Systeme ihrer Regeln, NAT bzw. Objekte (0.33.0) |

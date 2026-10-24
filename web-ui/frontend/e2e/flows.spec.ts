@@ -886,3 +886,49 @@ test("Netzwerkdesign: Zonen, Zonenmatrix mit Absicht und Zonenplan", async ({ pa
   await expect(page.locator("#zone-unzoned")).toContainText("Netze ohne Zone");
   expect(problems).toEqual([]);
 });
+
+test("Netzwerkdesign: Export (draw.io, SVG, PDF) und Versionen des Zonenplans", async ({ page, problems }) => {
+  await page.goto("/#design");
+  await page.click(".tabbar button:has-text('Zonenplan')");
+  await expect(page.locator("#zone-plan .zp-node", { hasText: "fw-08" })).toBeVisible();
+  for (const [label, ext] of [
+    ["draw.io", "drawio"],
+    ["SVG", "svg"],
+    ["PDF", "pdf"],
+  ]) {
+    const [file] = await Promise.all([page.waitForEvent("download"), page.locator(".plan-export button", { hasText: label }).first().click()]);
+    expect(file.suggestedFilename()).toMatch(new RegExp(`^zonenplan-\\d{4}-\\d\\d-\\d\\d\\.${ext}$`));
+  }
+
+  // Version speichern: gleich wie der aktuelle Stand, Detail mit Zeichnung und Export
+  await page.click(".tabbar button:has-text('Versionen')");
+  const label = `Abnahme ${test.info().retry}`;
+  await page.fill("#plan-version-save input[aria-label='Bezeichnung']", label);
+  await page.click("#plan-version-save button:has-text('Version speichern')");
+  const row = page.locator("#plan-versions tbody tr.clickable", { hasText: label });
+  await expect(row).toContainText("= aktuell");
+  await expect(page.locator("#plan-version-state")).toContainText("aktueller Stand = Version");
+  await expect(page.locator("#plan-diff")).toContainText("Design unverändert");
+  await expect(page.locator("svg[id^='plan-version-'] .zp-node", { hasText: "fw-08" })).toBeVisible();
+  const [file] = await Promise.all([page.waitForEvent("download"), page.locator(".plan-version .plan-export button", { hasText: "SVG" }).click()]);
+  expect(file.suggestedFilename()).toMatch(/^zonenplan-v\d+\.svg$/);
+
+  // neue Zone: der Stand weicht ab, der Vergleich nennt sie
+  const zoneName = `Neu ${test.info().retry}`;
+  const created = await page.request.post("/api/zones", {
+    data: { tenant_id: 1, name: zoneName, kind: "internal", selectors: [{ kind: "prefix", value: "10.77.0.0/24", exclude: false, source_system_id: null }] },
+  });
+  expect(created.status()).toBe(201);
+  await page.click(".tabbar button:has-text('Zonen')");
+  await page.click(".tabbar button:has-text('Versionen')");
+  await expect(page.locator("#plan-version-state")).toContainText("geändert seit Version");
+  await row.click();
+  await expect(page.locator("#plan-diff")).toContainText(zoneName);
+
+  // aufräumen: Zone weg, Version löschen (Admin, mit Bestätigung)
+  expect((await page.request.delete(`/api/zones/${(await created.json()).id}`)).status()).toBe(204);
+  page.once("dialog", (d) => d.accept());
+  await row.locator("button:has-text('Löschen')").click();
+  await expect(row).toHaveCount(0);
+  expect(problems).toEqual([]);
+});

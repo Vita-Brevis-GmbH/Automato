@@ -40,6 +40,7 @@ from app.models.logical_zone import (
     ZONE_SELECTOR_KINDS,
     LogicalZone,
     LogicalZoneSelector,
+    ZonePlanVersion,
     ZonePolicy,
 )
 from app.models.naming_profile import DictionaryEntry, NamingProfile
@@ -168,6 +169,7 @@ __all__ = [
     "VmNic",
     "Zone",
     "ZonePolicy",
+    "ZonePlanVersion",
     "INTENTS",
     "ZONE_KINDS",
     "ZONE_SELECTOR_KINDS",

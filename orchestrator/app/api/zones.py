@@ -6,18 +6,22 @@ Anbindung). Die Netze je Zone, die Matrix und der Plan sind abgeleitet (`store/z
 Lesen: Viewer; Zonen und Absicht je Zonenpaar aendern: Operator. Nicht fuer Kunden-Benutzer
 (Freigabeliste, ADR 0018) - deren Sicht auf ihre Zonen folgt mit 0.53.0. Nur Daten der
 Plattform - kein Zugriff auf Geraete.
+
+Seit 0.52.0: Export des Plans (draw.io, SVG, PDF; `store/plan_export.py`) und Versionen
+(`store/plan_versions.py`): Stand speichern (Operator), ansehen, vergleichen, exportieren,
+loeschen (Admin).
 """
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.audit import reads
-from app.auth.deps import require_operator, require_viewer, tenant_scope
+from app.auth.deps import require_admin, require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.models import (
@@ -28,10 +32,12 @@ from app.models import (
     LogicalZone,
     LogicalZoneSelector,
     SourceSystem,
+    Tenant,
+    ZonePlanVersion,
     ZonePolicy,
 )
 from app.store import customers as customer_store
-from app.store import reconcile
+from app.store import plan_export, plan_versions, reconcile
 from app.store import zones as store
 
 router = APIRouter(prefix="/zones", tags=["zones"])
@@ -62,6 +68,12 @@ class PreviewIn(BaseModel):
     tenant_id: int
     zone_id: int | None = None
     selectors: list[SelectorIn] = Field(default_factory=list, max_length=200)
+
+
+class VersionIn(BaseModel):
+    tenant_id: int
+    label: str = Field(min_length=1, max_length=200)
+    note: str | None = Field(default=None, max_length=4000)
 
 
 class PolicyIn(BaseModel):
@@ -294,7 +306,164 @@ def plan(
 ) -> dict:
     """Zonenplan: je Zone die Knoten (Firewall/VDOM, ACI-VRF), an denen sie haengt, und die
     Uebergaenge zwischen Zonen ueber einen Knoten; dazu Netze ohne Zone."""
-    return store.plan(session, _tenant(session, principal, tenant_id))
+    return store.plan_with_layout(session, _tenant(session, principal, tenant_id))
+
+
+_FORMATS = {
+    "svg": ("image/svg+xml", "svg"),
+    "drawio": ("application/vnd.jgraph.mxfile", "drawio"),
+    "pdf": ("application/pdf", "pdf"),
+}
+
+
+def _version(session: Session, principal: Principal, version_id: int) -> ZonePlanVersion:
+    v = session.get(ZonePlanVersion, version_id)
+    if v is None or v.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="version not found")
+    tenant_scope(principal, v.tenant_id)
+    return v
+
+
+@router.get("/plan/export")
+def export_plan(
+    format: str = Query("svg", pattern="^(svg|drawio|pdf)$"),  # noqa: A002 - Name der API
+    tenant_id: int | None = None,
+    version_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> Response:
+    """Zonenplan als Datei: draw.io (bearbeitbar), SVG oder PDF (mit Matrix und Tabellen) -
+    aktueller Stand bzw. eine gespeicherte Version."""
+    if version_id is not None:
+        v = _version(session, principal, version_id)
+        tid = v.tenant_id
+        reads.maybe_audit_read(session, principal, tid, "zones")
+        plan, matrix = v.data.get("plan") or {}, v.data.get("matrix")
+        when, meta = v.created_at, {"number": v.number, "label": v.label}
+        name = f"zonenplan-v{v.number}"
+    else:
+        tid = _tenant(session, principal, tenant_id)
+        plan, matrix = store.plan(session, tid), None
+        if format == "pdf":
+            matrix = store.matrix(session, tid)
+        when, meta = datetime.now(UTC), None
+        name = f"zonenplan-{when:%Y-%m-%d}"
+    tenant = session.get(Tenant, tid)
+    title = f"Zonenplan {tenant.name}" if tenant else "Zonenplan"
+    media, ext = _FORMATS[format]
+    if format == "svg":
+        body: bytes | str = plan_export.svg(plan, title, when, meta)
+    elif format == "drawio":
+        body = plan_export.drawio(plan, title, when, meta)
+    else:
+        body = plan_export.pdf(plan, matrix, title, when, meta)
+    return Response(
+        content=body,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{name}.{ext}"'},
+    )
+
+
+@router.get("/plan/versions")
+def list_versions(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Gespeicherte Versionen (neuste zuerst) und der Fingerabdruck des aktuellen Stands:
+    gleich wie eine Version = seither unveraendert."""
+    tid = _tenant(session, principal, tenant_id)
+    items = list(
+        session.scalars(
+            select(ZonePlanVersion)
+            .where(ZonePlanVersion.tenant_id == tid, ZonePlanVersion.deleted_at.is_(None))
+            .order_by(ZonePlanVersion.number.desc())
+        )
+    )
+    current = plan_versions.fingerprint(plan_versions.snapshot(session, tid))
+    return {
+        "current_fingerprint": current,
+        "items": [plan_versions.version_out(v) for v in items],
+    }
+
+
+@router.post("/plan/versions", status_code=201)
+def save_version(
+    body: VersionIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Aktuellen Stand als Version speichern (Operator): Zonen, Plan, Matrix, Absichten."""
+    tid = tenant_scope(principal, body.tenant_id)
+    v = plan_versions.save(session, tid, body.label.strip(), (body.note or "").strip() or None,
+                           principal.subject)  # fmt: skip
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="zone_plan.version_saved",
+        subject=str(v.id),
+        detail={"tenant_id": tid, "version_id": v.id, "number": v.number, "label": v.label},
+    )
+    return plan_versions.version_out(v)
+
+
+@router.get("/plan/versions/{version_id}")
+def get_version(
+    version_id: int,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Eine Version mit dem gespeicherten Stand (Plan mit Zeichnung, Matrix, Zonen)."""
+    v = _version(session, principal, version_id)
+    reads.maybe_audit_read(session, principal, v.tenant_id, "zones")
+    out = plan_versions.version_out(v, with_data=True)
+    out["data"] = {**out["data"], "plan": {**(out["data"].get("plan") or {})}}
+    out["data"]["plan"]["layout"] = plan_export.layout(out["data"]["plan"])
+    return out
+
+
+@router.get("/plan/versions/{version_id}/diff")
+def diff_version(
+    version_id: int,
+    to: int | None = Query(None, description="andere Version; leer = aktueller Stand"),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Was sich seit der Version geaendert hat (bzw. bis zur Version `to`)."""
+    v = _version(session, principal, version_id)
+    reads.maybe_audit_read(session, principal, v.tenant_id, "zones")
+    if to is None:
+        new, against = plan_versions.snapshot(session, v.tenant_id), None
+    else:
+        other = _version(session, principal, to)
+        if other.tenant_id != v.tenant_id:
+            raise HTTPException(status_code=404, detail="version not found")
+        new, against = other.data, other.number
+    return {"from": v.number, "to": against, **plan_versions.diff(v.data, new)}
+
+
+@router.delete("/plan/versions/{version_id}", status_code=204)
+def delete_version(
+    version_id: int,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+) -> None:
+    """Version loeschen (Admin): der gespeicherte Stand faellt weg, die Nummer wird nicht wieder
+    vergeben."""
+    v = _version(session, principal, version_id)
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="zone_plan.version_deleted",
+        subject=str(v.id),
+        detail={
+            "tenant_id": v.tenant_id,
+            "version_id": v.id,
+            "number": v.number,
+            "label": v.label,
+        },  # fmt: skip
+    )
+    v.data, v.deleted_at, v.deleted_by = {}, datetime.now(UTC), principal.subject
 
 
 @router.post("", status_code=201)

@@ -2,9 +2,9 @@
 
 ## Status
 
-Entwurf (2026-10-24), umgesetzt in 0.51.0. Baut auf dem Topologie-Modell (ADR 0019, 0.50.0)
-und den Selektoren der Kunden (ADR 0018) auf. Export und Versionen des Plans folgen in 0.52.0,
-Kunden auf Zonen in 0.53.0 (ADR 0018 Schritt 4).
+Entwurf (2026-10-24), umgesetzt in 0.51.0 (Zonen, Matrix, Plan) und 0.52.0 (Export, Versionen).
+Baut auf dem Topologie-Modell (ADR 0019, 0.50.0) und den Selektoren der Kunden (ADR 0018) auf.
+Kunden auf Zonen folgen in 0.53.0 (ADR 0018 Schritt 4).
 
 ## Kontext
 
@@ -66,6 +66,29 @@ Entscheide des Anwenders (2026-10-23):
    `zone_policy.set`. **Nicht für Kunden-Benutzer** (Freigabeliste, ADR 0018) – ihre Sicht auf
    die eigenen Zonen kommt mit 0.53.0.
 7. **Nur lesend** gegenüber allen Quellsystemen; Zonen und Absichten sind Daten der Plattform.
+8. **Export (0.52.0):** ein Layout auf dem Server (`store/plan_export.layout`) für Oberfläche
+   und Dateien – Zonen links bzw. rechts nach Art, Knoten in der Mitte:
+   - **draw.io** (unkomprimiertes mxGraph-XML): Zonen und Knoten als Formen mit Eigenschaften
+     (`automato_zone`, `automato_kind`, Netze bzw. Interfaces), Verbindungen als Kanten – in
+     diagrams.net weiter bearbeitbar;
+   - **SVG** für Wiki und Präsentation;
+   - **PDF**: Plan, Zonenmatrix (Zahlen, Absicht als Farbe, Verstösse umrandet, Notizen), Zonen an
+     den Knoten und Netze ohne Zone.
+   - Ohne zusätzliche Abhängigkeit: XML über die Standardbibliothek, das PDF schreibt ein
+     kleiner eigener Schreiber mit den Standardschriften (Helvetica, WinAnsi). Ausgeliefert als
+     Download; nach Confluence erst später (neuer Schreibweg, eigene Freigabe).
+9. **Versionen (0.52.0, `zone_plan_version`, Migration 0049):**
+   - Operator speichert den aktuellen Stand mit Bezeichnung und Notiz: Zonen mit Selektoren,
+     Plan und Matrix samt Absichten, so wie sie gerade abgeleitet sind. Nummer je Umgebung
+     fortlaufend.
+   - **Fingerabdruck** über das Design (Zonen, Absichten, Zonen an den Knoten, Netze ohne Zone;
+     ohne Regel-Zahlen): „aktueller Stand = Version n“ bzw. „geändert seit Version n“.
+   - **Vergleich** einer Version mit dem aktuellen Stand oder einer anderen Version: Zonen neu,
+     entfernt bzw. geändert (Art, Kunde, Farbe, Selektoren), Absichten, Zonen an den Knoten,
+     Netze ohne Zone, dazu Zellen der Matrix mit anderen Zahlen.
+   - Jede Version lässt sich ansehen (Zeichnung) und exportieren.
+   - Löschen nur Admin: der gespeicherte Stand fällt weg, die Nummer bleibt vergeben
+     (`deleted_at`). Die Aufbewahrungsfristen (ADR 0022) gelten nicht für Versionen.
 
 ## Folgen
 
@@ -75,6 +98,6 @@ Entscheide des Anwenders (2026-10-23):
   Zone fällt ihre Absicht weg; beim Löschen eines Quellsystems seine Selektoren.
 - Zonen sind nicht funktionsrelevant für den Rest: ohne Zonen arbeitet die Plattform wie
   bisher (Matrix und Plan sind leer, keine Befunde).
-- Offen: Export und Versionen des Plans (0.52.0), Kunden auf Zonen mit eingeschränkter Sicht
-  (0.53.0), Zonen in der Weg-Suche (Zonen je Hop), Absicht je Dienst (eingeschränkt = nur
+- Offen: Kunden auf Zonen mit eingeschränkter Sicht (0.53.0), Export nach Confluence (eigene
+  Freigabe), draw.io-Datei zurück einlesen (Korrekturen im Designer), Zonen in der Weg-Suche (Zonen je Hop), Absicht je Dienst (eingeschränkt = nur
   bestimmte Dienste), Relevanz nach Pfad für die Matrix (ADR 0019).

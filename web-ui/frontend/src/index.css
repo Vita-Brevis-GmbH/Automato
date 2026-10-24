@@ -396,6 +396,13 @@ svg.zone-plan { min-width: 760px; display: block; }
 .zp-node rect { fill: var(--surface-2); stroke: var(--accent); stroke-width: 1.4; }
 .zone-plan .zp-title { fill: var(--fg); font-size: 12.5px; font-weight: 600; }
 .zone-plan .zp-sub { fill: var(--muted); font-size: 10.5px; }
+/* Export und Versionen (0.52.0) */
+.plan-export { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.plan-version { display: flex; flex-direction: column; gap: 12px; padding: 4px 0 8px; }
+.plan-version-head { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.plan-version-head .sel { width: auto; display: inline-block; }
+.plan-diff-matrix { margin-top: 8px; }
+.plan-diff-matrix summary { cursor: pointer; color: var(--muted); }
 
 /* Markdown-Vorschau etc. */
 pre.block { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-size: 12.5px;
