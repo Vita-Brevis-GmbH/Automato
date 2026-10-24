@@ -24,6 +24,9 @@
    Lese-API schränkt serverseitig auf den Ausschnitt ihrer Kunden ein, Details ausserhalb sind
    nicht auffindbar (404), Kunden-Benutzer sind nie Admin und werden immer auditiert. Kunden-IDs
    kommen bei SAML-Brokern fest aus der IdP-Konfiguration, nie aus der Assertion des Kunden.
+   Seit 0.53.0 auch über die **Zuordnung in Automato** (`customer_user`, nur Admin, auditiert):
+   sie schränkt immer ein (ein zugeordneter Benutzer ist Kunden-Benutzer, nie Admin), das eigene
+   Konto lässt sich nicht zuordnen, ist die Zuordnung nicht lesbar, gibt es keinen Zugriff (503).
 
 ## Offene Punkte für spätere ADRs
 - Wahl des Secrets-Backends (Ansible Vault vs. HashiCorp Vault) und Migrationszeitpunkt

@@ -130,6 +130,10 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "customer.created": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.updated": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.deleted": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
+    # Zuordnung Benutzer -> Kunde in Automato (0.53.0, ADR 0018 Schritt 4)
+    "customer_user.assigned": frozenset({"tenant_id", "customer_id", "login", "role"}),
+    "customer_user.changed": frozenset({"tenant_id", "customer_id", "login", "role"}),
+    "customer_user.removed": frozenset({"tenant_id", "customer_id", "login", "role"}),
     # Logische Zonen und Absicht je Zonenpaar (0.51.0, ADR 0024)
     "zone.created": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
     "zone.updated": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),

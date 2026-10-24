@@ -63,8 +63,9 @@ Entscheide des Anwenders (2026-10-23):
 5. **Befunde sofort:** Nach dem Speichern einer Zone bzw. Absicht rechnet Automato nur die
    Zonen-Befunde neu (`reconcile.refresh_zone_findings`); nach jedem Lauf wie alle anderen.
 6. **Rechte:** Lesen Viewer, ändern Operator; Audit `zone.created/updated/deleted`,
-   `zone_policy.set`. **Nicht für Kunden-Benutzer** (Freigabeliste, ADR 0018) – ihre Sicht auf
-   die eigenen Zonen kommt mit 0.53.0.
+   `zone_policy.set`. **Kunden-Benutzer** (seit 0.53.0, ADR 0018 Schritt 4) lesen ihre Zonen,
+   die Matrix mit ihren Zonen (andere Kunden als „anderer Kunde“) und ihren Plan samt Export –
+   ohne Selektoren, Vorschau, Versionen und Netze ohne Zone.
 7. **Nur lesend** gegenüber allen Quellsystemen; Zonen und Absichten sind Daten der Plattform.
 8. **Export (0.52.0):** ein Layout auf dem Server (`store/plan_export.layout`) für Oberfläche
    und Dateien – Zonen links bzw. rechts nach Art, Knoten in der Mitte:

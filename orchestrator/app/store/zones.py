@@ -55,6 +55,31 @@ PLAN_ROUTES = 32  # Netze je Zone, fuer die der Plan Routen nachschlaegt
 UNZONED = 200  # Netze ohne Zone in der Anzeige
 BITS = {4: 32, 6: 128}
 Cell = int | str  # Zone (id), ANY oder NONE
+OTHER = "other"  # Zonen anderer Kunden in der Sicht eines Kunden-Benutzers (0.53.0)
+
+
+@dataclass
+class CustomerView:
+    """Sicht eines Kunden-Benutzers (0.53.0, ADR 0018 Schritt 4): seine Zonen mit Namen, die
+    geteilten (ohne Kunde) mit Namen, Zonen anderer Kunden nur als „anderer Kunde“; nur Zellen
+    mit einer eigenen Zone."""
+
+    own: set[int]
+    shared: set[int]
+
+    def mask(self, c: Cell) -> Cell:
+        if not isinstance(c, int) or c in self.own or c in self.shared:
+            return c
+        return OTHER
+
+    def pairs(self, pairs) -> set[tuple[Cell, Cell]]:
+        return {(self.mask(s), self.mask(d)) for s, d in pairs if s in self.own or d in self.own}
+
+
+def customer_view(items: list[LogicalZone], customer_ids) -> CustomerView:
+    ids = set(customer_ids or ())
+    return CustomerView(own={z.id for z in items if z.customer_id in ids},
+                        shared={z.id for z in items if z.customer_id is None})  # fmt: skip
 
 
 def selectors_of(z: LogicalZone) -> list[Selector]:
@@ -289,46 +314,65 @@ def _intent_out(p: ZonePolicy) -> dict:
     }
 
 
-def matrix(session: Session, tenant_id: int, source_system_id: int | None = None) -> dict:
+def matrix(session: Session, tenant_id: int, source_system_id: int | None = None,
+           customer_ids=None) -> dict:  # fmt: skip
     """Zonenmatrix: je Paar Quell-/Zielzone die Regeln (erlaubend, sperrend), Verstoesse gegen
-    die Absicht; Zeilen und Spalten sind die Zonen, dazu `any` und `none` wo benutzt."""
+    die Absicht; Zeilen und Spalten sind die Zonen, dazu `any` und `none` wo benutzt. Mit
+    `customer_ids` die Sicht eines Kunden-Benutzers (`CustomerView`)."""
     a = assign(session, tenant_id, source_system_id=source_system_id)
+    view = customer_view(a.zones, customer_ids) if customer_ids is not None else None
     cells: dict[tuple[Cell, Cell], Counter] = defaultdict(Counter)
     without = assigned = violating = 0
     for rid, (action, _domain, _sid) in a.rules.items():
         pairs = a.pairs(rid)
-        if not pairs:
-            without += 1  # Quelle bzw. Ziel ohne IP-Bereich (z. B. FQDN, ungeloeste Gruppe)
-            continue
+        if view is not None:
+            bad = view.pairs(a.denied(rid))
+            pairs = view.pairs(pairs)
+            if not pairs:
+                continue  # beruehrt keine Zone des Kunden
+        else:
+            bad = set(a.denied(rid))
+            if not pairs:
+                without += 1  # Quelle bzw. Ziel ohne IP-Bereich (z. B. FQDN, ungeloeste Gruppe)
+                continue
         assigned += 1
-        bad = set(a.denied(rid))
         violating += bool(bad)
         for pair in pairs:
             c = cells[pair]
             c[action.value] += 1
             c["violations"] += pair in bad
+    intents = a.intents
+    zones = a.zones
+    if view is not None:
+        visible = view.own | view.shared
+        intents = {k: p for k, p in a.intents.items()
+                   if set(k) <= visible and set(k) & view.own}  # fmt: skip
+        used_ids = {x for pair in [*cells, *intents] for x in pair if isinstance(x, int)}
+        zones = [z for z in a.zones if z.id in view.own or z.id in used_ids]
     used = {x for pair in cells for x in pair}
-    axes: list[Cell] = [z.id for z in a.zones] + [x for x in (ANY, NONE) if x in used]
-    keys = set(cells) | set(a.intents)
+    axes: list[Cell] = [z.id for z in zones] + [x for x in (OTHER, ANY, NONE) if x in used]
+    keys = set(cells) | set(intents)
     out = []
     for s, d in sorted(keys, key=lambda p: (axes.index(p[0]) if p[0] in axes else 99,
                                             axes.index(p[1]) if p[1] in axes else 99)):  # fmt: skip
         c = cells.get((s, d), Counter())
-        p = a.intents.get((s, d)) if isinstance(s, int) and isinstance(d, int) else None
+        p = intents.get((s, d)) if isinstance(s, int) and isinstance(d, int) else None
         out.append({
             "src": s, "dst": d, "allow": c["allow"], "deny": c["deny"],
             "violations": c["violations"], "intent": p.intent if p else None,
             "note": p.note if p else None,
         })  # fmt: skip
     by_id = {n.id: n for n in a.nets}
+    if view is not None:  # Netze geteilter Zonen gehoeren nicht zur Sicht des Kunden
+        by_id = {k: v for k, v in by_id.items() if k in view.own}
     return {
-        "zones": [zone_out(z, by_id.get(z.id)) for z in a.zones],
+        "zones": [zone_out(z, by_id.get(z.id)) for z in zones],
         "axes": axes,
         "cells": out,
-        "intents": [_intent_out(p) for p in a.intents.values()],
+        "intents": [_intent_out(p) for p in intents.values()],
         "summary": {
-            "zones": len(a.zones),
-            "rules": len(a.rules),
+            "zones": len(zones),
+            "rules": len(a.rules) if view is None else assigned,
             "assigned": assigned,
             "without": without,
             "violations": violating,
@@ -338,17 +382,24 @@ def matrix(session: Session, tenant_id: int, source_system_id: int | None = None
 
 def parse_cell(value: str) -> Cell:
     v = value.strip().casefold()
-    if v in (ANY, NONE):
+    if v in (ANY, NONE, OTHER):
         return v
     return int(v)  # ValueError -> 422
 
 
 def cell_rules(session: Session, tenant_id: int, src: Cell, dst: Cell, limit: int = 100,
-               offset: int = 0, source_system_id: int | None = None) -> dict:  # fmt: skip
-    """Regeln einer Zelle der Matrix (Quellzone -> Zielzone), Verstoesse zuerst."""
+               offset: int = 0, source_system_id: int | None = None,
+               customer_ids=None) -> dict:  # fmt: skip
+    """Regeln einer Zelle der Matrix (Quellzone -> Zielzone), Verstoesse zuerst. Fuer
+    Kunden-Benutzer nur Zellen mit einer eigenen Zone (`anderer Kunde` = OTHER)."""
     a = assign(session, tenant_id, source_system_id=source_system_id)
-    ids = [rid for rid in a.rules if src in a.src.get(rid, ()) and dst in a.dst.get(rid, ())]
-    bad = {rid for rid in ids if (src, dst) in set(a.denied(rid))}
+    if customer_ids is not None:
+        view = customer_view(a.zones, customer_ids)
+        ids = [rid for rid in a.rules if (src, dst) in view.pairs(a.pairs(rid))]
+        bad = {rid for rid in ids if (src, dst) in view.pairs(a.denied(rid))}
+    else:
+        ids = [rid for rid in a.rules if src in a.src.get(rid, ()) and dst in a.dst.get(rid, ())]
+        bad = {rid for rid in ids if (src, dst) in set(a.denied(rid))}
     names = dict(
         session.execute(
             select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == tenant_id)
@@ -621,10 +672,55 @@ def plan(session: Session, tenant_id: int) -> dict:
     return out
 
 
-def plan_with_layout(session: Session, tenant_id: int) -> dict:
-    """Plan samt Zeichnung (`plan_export.layout`) fuer die Oberflaeche."""
+def plan_with_layout(session: Session, tenant_id: int, customer_ids=None) -> dict:
+    """Plan samt Zeichnung (`plan_export.layout`) fuer die Oberflaeche; mit `customer_ids`
+    die Sicht eines Kunden-Benutzers."""
     from app.store import plan_export
 
     out = plan(session, tenant_id)
+    if customer_ids is not None:
+        out = restrict_plan(out, customer_view(load(session, tenant_id), customer_ids))
     out["layout"] = plan_export.layout(out)
     return out
+
+
+def restrict_plan(full: dict, view: CustomerView) -> dict:
+    """Plan eines Kunden-Benutzers (ADR 0018 Schritt 4): seine Zonen, die Knoten, an denen sie
+    haengen, und die geteilten Zonen an diesen Knoten - keine Zonen anderer Kunden, keine Netze
+    ohne Zone, keine Netze und Router der geteilten Zonen."""
+    own_att = [a for a in full["attachments"] if a["zone"] in view.own]
+    nodes = {a["node"] for a in own_att}
+    shared_att = [a for a in full["attachments"] if a["zone"] in view.shared and a["node"] in nodes]
+    attachments = [{**a, "routes": []} for a in own_att] + [
+        {**a, "routes": [], "networks": [], "count": 0} for a in shared_att
+    ]
+    visible = view.own | {a["zone"] for a in shared_att}
+    by_node: dict[str, set[int]] = defaultdict(set)
+    for a in attachments:
+        by_node[a["node"]].add(a["zone"])
+    zones = [
+        z if z["id"] in view.own else {**z, "nets": 0, "epgs": 0, "samples": []}
+        for z in full["zones"]
+        if z["id"] in visible
+    ]
+    links = []
+    for link in full["links"]:
+        via = [n for n in link["nodes"] if n in nodes]
+        if link["a"] in visible and link["b"] in visible and via:
+            links.append({**link, "nodes": via})
+    node_list = [{**n, "zones": len(by_node[n["id"]])} for n in full["nodes"] if n["id"] in nodes]
+    return {
+        "zones": zones,
+        "nodes": node_list,
+        "attachments": attachments,
+        "links": links,
+        "unzoned": {"total": 0, "items": []},
+        "summary": {
+            "zones": len(zones),
+            "nodes": len(node_list),
+            "attachments": len(attachments),
+            "links": len(links),
+            "unzoned": 0,
+            "without_node": sum(1 for z in view.own if z not in {a["zone"] for a in own_att}),
+        },
+    }

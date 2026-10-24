@@ -4,10 +4,11 @@ import logging
 
 from fastapi import Depends, Header, HTTPException, Request
 
-from app.auth import customer_routes, oidc
+from app.auth import assignments, customer_routes, oidc
 from app.auth import roles as R
 from app.auth.principal import Principal
 from app.config import get_settings
+from app.db import get_session_factory
 
 log = logging.getLogger(__name__)
 
@@ -23,7 +24,18 @@ def get_principal(
     x_dev_roles: str | None = Header(default=None),
     x_dev_tenants: str | None = Header(default=None),
     x_dev_customers: str | None = Header(default=None),
+    x_dev_user: str | None = Header(default=None),
+    factory=Depends(get_session_factory),
 ) -> Principal:
+    """Aufrufer aus dem Token (bzw. im dev-Modus aus den Kopfzeilen) - dazu die Zuordnung
+    Benutzer -> Kunde aus Automato (0.53.0), die einen Benutzer zum Kunden-Benutzer macht."""
+    principal = _authenticate(authorization, x_dev_roles, x_dev_tenants, x_dev_customers,
+                              x_dev_user)  # fmt: skip
+    return assignments.resolve(factory, principal)
+
+
+def _authenticate(authorization, x_dev_roles, x_dev_tenants, x_dev_customers,
+                  x_dev_user) -> Principal:  # fmt: skip
     settings = get_settings()
     if settings.auth_mode == "oidc":
         try:
@@ -33,6 +45,12 @@ def get_principal(
         except Exception as exc:  # noqa: BLE001 - jede weitere Validierungs-Panne -> 401
             log.warning("OIDC-Token abgelehnt: %s: %s", type(exc).__name__, exc)
             raise HTTPException(status_code=401, detail="invalid token") from exc
+    if x_dev_user is not None:  # dev: angemeldeter Benutzer (Rollen und Kunden aus Automato)
+        login = x_dev_user.strip().lower()
+        rs = frozenset(r.strip() for r in (x_dev_roles or "").split(",") if r.strip())
+        return Principal(subject=login or "dev-user", roles=rs,
+                         tenant_ids=_parse_tenants(x_dev_tenants) or (),
+                         logins=(login,) if login else ())  # fmt: skip
     # dev-Modus: Standard = Admin (alle Mandanten) -> unveraendertes Verhalten.
     # Override via X-Dev-Roles/X-Dev-Tenants zum Testen/Vorfuehren von RBAC + Scoping.
     if x_dev_customers is not None:  # Kunden-Benutzer (ADR 0018): nie Admin, fail-closed

@@ -4,6 +4,11 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import {
   createCustomer,
+  createCustomerUser,
+  CustomerUserRow,
+  deleteCustomerUser,
+  fetchCustomerUsers,
+  updateCustomerUser,
   Customer,
   CustomerIn,
   CustomerPreview,
@@ -73,10 +78,12 @@ function selectorText(s: CustomerSelector, systems: System[]): string {
 export default function Customers({
   tenantId,
   canEdit,
+  isAdmin = false,
   onChanged,
 }: {
   tenantId: number | null;
   canEdit: boolean;
+  isAdmin?: boolean; // Kunden-Benutzer zuordnen (0.53.0)
   onChanged?: () => void; // Kunden geändert: Umschalter oben neu laden
 }) {
   const [rows, setRows] = useState<Customer[] | null>(null);
@@ -145,8 +152,8 @@ export default function Customers({
       >
         Ein Kunde ist ein Ausschnitt der Umgebung, beschrieben durch Selektoren: ACI-Tenant, VRF, AP, EPG, Bridge
         Domain, VDOM, Zone, Interface, Netz, Kürzel oder ein Merkmal aus dem IPAM (Tenant, VRF bzw. Netzansicht,
-        Tag bzw. Attribut) – ein- bzw. ausschliessend. Was dazugehört, leitet Automato
-        nach jedem Lauf neu ab; neue EPGs oder Netze gehören ohne Pflege dazu.
+        Tag bzw. Attribut) – ein- bzw. ausschliessend – und seit 0.53.0 durch seine logischen Zonen (Netzwerkdesign).
+        Was dazugehört, leitet Automato nach jedem Lauf neu ab; neue EPGs oder Netze gehören ohne Pflege dazu.
       </PageHead>
       <ErrorBox error={err} onClose={() => setErr(null)} />
 
@@ -163,6 +170,7 @@ export default function Customers({
                   <th>Kunde</th>
                   <th>Kürzel</th>
                   <th>Selektoren</th>
+                  <th>Zonen</th>
                   {KINDS.map(([k, label]) => (
                     <th key={k} className="num">
                       {label}
@@ -195,6 +203,19 @@ export default function Customers({
                           ))}
                         </div>
                       </td>
+                      <td>
+                        {c.zones.length ? (
+                          <div className="objs">
+                            {c.zones.map((z) => (
+                              <a key={z} className="chip info" href="#design" onClick={(e) => e.stopPropagation()}>
+                                {z}
+                              </a>
+                            ))}
+                          </div>
+                        ) : (
+                          <Dash />
+                        )}
+                      </td>
                       {KINDS.map(([k]) => (
                         <td key={k} className="num">
                           {c.counts[k]}
@@ -216,7 +237,7 @@ export default function Customers({
                     </tr>
                     {open === c.id && (
                       <tr className="subrow">
-                        <td colSpan={KINDS.length + 5}>
+                        <td colSpan={KINDS.length + 6}>
                           <Members customer={c} />
                         </td>
                       </tr>
@@ -305,6 +326,8 @@ export default function Customers({
           </div>
         </div>
       )}
+
+      {isAdmin && rows && <CustomerUsers tenantId={tenantId} customers={rows} />}
 
       {editing && (
         <CustomerEditor
@@ -423,7 +446,7 @@ function CustomerEditor({
   // Vorschau: was die Selektoren erfassen (verzögert, ohne zu speichern)
   useEffect(() => {
     const t = window.setTimeout(() => {
-      previewCustomer(tenantId, valid)
+      previewCustomer(tenantId, valid, existing?.id)
         .then((p) => {
           setPreview(p);
           setErr(null);
@@ -592,5 +615,127 @@ function CustomerEditor({
         </table>
       )}
     </Modal>
+  );
+}
+
+// Zuordnung Benutzer → Kunde in Automato (0.53.0, nur Admin): Keycloak meldet, wer jemand ist;
+// hier steht, welchen Kunden er sieht. Eine Zuordnung schränkt immer ein (nie Admin).
+function CustomerUsers({ tenantId, customers }: { tenantId: number; customers: Customer[] }) {
+  const [rows, setRows] = useState<CustomerUserRow[] | null>(null);
+  const [login, setLogin] = useState("");
+  const [customerId, setCustomerId] = useState<number | "">("");
+  const [role, setRole] = useState("viewer");
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    fetchCustomerUsers(tenantId).then(setRows).catch(setErr);
+  }, [tenantId]);
+  useEffect(load, [load]);
+  const add = async () => {
+    if (customerId === "") return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await createCustomerUser({ customer_id: customerId, login: login.trim(), role, note: note.trim() || null });
+      setLogin("");
+      setNote("");
+      load();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const change = async (r: CustomerUserRow, next: string) => {
+    try {
+      await updateCustomerUser(r.id, { role: next });
+      load();
+    } catch (e) {
+      setErr(e);
+    }
+  };
+  const remove = async (r: CustomerUserRow) => {
+    if (!window.confirm(`Zuordnung von „${r.login}“ zu „${r.customer ?? "?"}“ entfernen? Der Benutzer sieht den Kunden ab der nächsten Anfrage nicht mehr.`)) return;
+    try {
+      await deleteCustomerUser(r.id);
+      load();
+    } catch (e) {
+      setErr(e);
+    }
+  };
+  return (
+    <div className="card" id="customer-users">
+      <div className="card-head">
+        <h2>Kunden-Benutzer</h2>
+        <span className="faint">
+          Anmeldung in Keycloak, Zuordnung hier: Benutzername bzw. E-Mail → Kunde. Ein zugeordneter Benutzer sieht nur
+          die Doku seines Kunden (nie Admin). Alternativ das Attribut customer_ids in Keycloak.
+        </span>
+      </div>
+      <div className="card-body">
+        <ErrorBox error={err} onClose={() => setErr(null)} />
+        <div className="zone-intent" id="customer-user-add">
+          <input className="input mono" aria-label="Benutzer" placeholder="Benutzername bzw. E-Mail" value={login} onChange={(e) => setLogin(e.target.value)} />
+          <select className="sel" aria-label="Kunde" value={customerId} onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : "")}>
+            <option value="">– Kunde –</option>
+            {customers.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <select className="sel" aria-label="Rolle" value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="viewer">lesen</option>
+            <option value="operator">lesen + eigene Findings triagieren</option>
+          </select>
+          <input className="input" aria-label="Notiz" placeholder="Notiz (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
+          <button className="btn btn-sm btn-primary" disabled={busy || !login.trim() || customerId === ""} onClick={add}>
+            Zuordnen
+          </button>
+        </div>
+        {rows == null ? (
+          <Loading />
+        ) : rows.length === 0 ? (
+          <span className="faint">noch keine Zuordnungen</span>
+        ) : (
+          <table className="compact" id="customer-user-list">
+            <thead>
+              <tr>
+                <th>Benutzer</th>
+                <th>Kunde</th>
+                <th>Rolle</th>
+                <th>Notiz</th>
+                <th>Angelegt</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  <td className="mono">{r.login}</td>
+                  <td>{r.customer ?? "?"}</td>
+                  <td>
+                    <select className="sel" aria-label="Rolle ändern" value={r.role} onChange={(e) => change(r, e.target.value)}>
+                      <option value="viewer">lesen</option>
+                      <option value="operator">lesen + Triage</option>
+                    </select>
+                  </td>
+                  <td className="faint">{r.note ?? ""}</td>
+                  <td className="faint nowrap">
+                    {fmtTime(r.created_at)} · {r.created_by ?? "?"}
+                  </td>
+                  <td>
+                    <button className="btn btn-sm btn-ghost" onClick={() => remove(r)}>
+                      Entfernen
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
   );
 }

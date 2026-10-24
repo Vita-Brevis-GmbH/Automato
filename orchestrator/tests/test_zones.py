@@ -249,10 +249,12 @@ def test_rechte_kunde_und_loeschen(client):
     zone = _zone(client, tid, "Kunde A Server", [_sel("prefix", "10.20.0.0/24")],
                  customer_id=cust["id"])  # fmt: skip
     assert zone["customer"] == "Kunde A"
-    # Kunden-Benutzer: Zonen sind (noch) nicht freigegeben
-    who = {"X-Dev-Roles": "customer", "X-Dev-Customers": str(cust["id"])}
-    assert client.get("/zones", params={"tenant_id": tid}, headers=who).status_code == 403
-    assert client.get("/zones/plan", params={"tenant_id": tid}, headers=who).status_code == 403
+    # Kunden-Benutzer (seit 0.53.0): lesen ihre Zonen, aendern nichts
+    who = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid), "X-Dev-Customers": str(cust["id"])}
+    (mine,) = client.get("/zones", params={"tenant_id": tid}, headers=who).json()
+    assert mine["name"] == "Kunde A Server" and mine["own"] and mine["selectors"] == []
+    body = {"tenant_id": tid, "name": "X", "selectors": []}
+    assert client.post("/zones", json=body, headers=who).status_code == 403
     # Kunde geloescht: die Zone bleibt, gehoert keinem mehr
     assert client.delete(f"/customers/{cust['id']}", headers=OP).status_code == 204
     (left,) = client.get("/zones", params={"tenant_id": tid}).json()

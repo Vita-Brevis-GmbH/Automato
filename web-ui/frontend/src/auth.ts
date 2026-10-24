@@ -1,3 +1,4 @@
+import type { ServerMe } from "./api";
 // OIDC-Login fürs Web-UI (E1.3b, ADR 0007) via oidc-client-ts gegen Keycloak.
 // Authorization Code + PKCE. Der UserManager ist die einzige Quelle für das Token:
 // abgelaufene Tokens werden still per Refresh-Token erneuert, sonst geht es zurück
@@ -167,7 +168,21 @@ function devCustomer(): { tenant: number; customers: number[] } | null {
   return { tenant: Number(m[1]), customers: m[2].split(",").filter(Boolean).map(Number) };
 }
 
+// dev-Modus: angemeldeter Benutzer ohne Rollen vorführen (`automato_dev_user` = Kennung, 0.53.0) –
+// Rollen und Kunden kommen dann wie mit Keycloak aus der Zuordnung in Automato (X-Dev-User)
+const DEV_USER = "automato_dev_user";
+
+function devUser(): string | null {
+  try {
+    return localStorage.getItem(DEV_USER)?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 export function devMe(): Me {
+  const user = devUser();
+  if (user) return { ...DEV_ME, name: user, username: user, roles: [], tenantIds: [], isAdmin: false, isOperator: false };
   const c = devCustomer();
   if (!c) return DEV_ME;
   return {
@@ -184,6 +199,8 @@ export function devMe(): Me {
 
 // Kopfzeilen des dev-Modus für einen vorgeführten Kunden-Benutzer
 export function devHeaders(): Record<string, string> {
+  const user = devUser();
+  if (user) return { "X-Dev-User": user };
   const c = devCustomer();
   if (!c) return {};
   return { "X-Dev-Roles": "viewer", "X-Dev-Tenants": String(c.tenant), "X-Dev-Customers": c.customers.join(",") };
@@ -237,6 +254,21 @@ export function meFromUser(user: User): Me {
     customerIds: isCustomer ? numbers(claims["customer_ids"]) : null,
     isCustomer,
     dev: false,
+  };
+}
+
+// Sicht des Orchestrators übernehmen (0.53.0): die Zuordnung Benutzer → Kunde in Automato kennt
+// das Token nicht – der Orchestrator entscheidet, die Oberfläche zeigt es nur an
+export function withServer(me: Me, s: ServerMe): Me {
+  const roles = s.roles.filter((r) => ["viewer", "operator", "admin"].includes(r));
+  return {
+    ...me,
+    roles,
+    tenantIds: s.tenant_ids,
+    isAdmin: s.is_admin,
+    isOperator: s.is_admin || roles.includes("operator"),
+    customerIds: s.customer_ids,
+    isCustomer: s.is_customer,
   };
 }
 

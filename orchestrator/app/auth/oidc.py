@@ -53,8 +53,19 @@ def _parse_tenant_ids(raw) -> tuple[int, ...]:
     return tuple(out)
 
 
+def logins_of(claims: dict) -> tuple[str, ...]:
+    """Kennungen fuer die Zuordnung in Automato: sub, Benutzername, E-Mail (klein)."""
+    out: list[str] = []
+    for key in ("sub", "preferred_username", "email"):
+        value = str(claims.get(key) or "").strip().lower()
+        if value and value not in out:
+            out.append(value)
+    return tuple(out)
+
+
 def claims_to_principal(claims: dict, settings) -> Principal:
     subject = claims.get("sub") or claims.get("preferred_username") or "unknown"
+    logins = logins_of(claims)
     raw_roles = _dig(claims, settings.oidc_roles_claim) or []
     roles = (
         frozenset(str(r) for r in raw_roles) if isinstance(raw_roles, list | tuple) else frozenset()
@@ -73,11 +84,13 @@ def claims_to_principal(claims: dict, settings) -> Principal:
             roles=roles,
             tenant_ids=_parse_tenant_ids(_dig(claims, settings.oidc_tenants_claim)),
             customer_ids=_parse_tenant_ids(raw_customers),
+            logins=logins,
+            customer_source="claim",
         )
     tenant_ids = (
         None if "admin" in roles else _parse_tenant_ids(_dig(claims, settings.oidc_tenants_claim))
     )
-    return Principal(subject=str(subject), roles=roles, tenant_ids=tenant_ids)
+    return Principal(subject=str(subject), roles=roles, tenant_ids=tenant_ids, logins=logins)
 
 
 @lru_cache(maxsize=8)

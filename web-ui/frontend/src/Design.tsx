@@ -80,20 +80,32 @@ export default function Design({
   tenantLabel,
   canEdit,
   isAdmin,
+  isCustomer = false,
 }: {
   tenantId: number | null;
   tenantLabel: string;
   canEdit: boolean;
   isAdmin: boolean;
+  isCustomer?: boolean; // Kunden-Benutzer (0.53.0): eigene Zonen, geteilte nur mit Namen
 }) {
   const [tab, setTab] = useState<Tab>("zones");
   return (
     <>
       <PageHead title="Netzwerkdesign">
-        Logische Zonen von „{tenantLabel}“ – in Automato gepflegt, die Netze leitet Automato aus Selektoren ab (wie
-        beim Kunden). Die Zonenmatrix zeigt je Paar Quell- und Zielzone die Regeln und die Absicht, der Zonenplan, an
-        welchen Firewalls und ACI-VRFs die Zonen hängen – exportierbar als draw.io, SVG und PDF, mit Versionen zum
-        Vergleichen. Rein lesend gegenüber den Geräten.
+        {isCustomer ? (
+          <>
+            Ihre logischen Zonen, die Zonenmatrix mit den Regeln Ihrer Zonen (Zonen anderer Kunden als „anderer
+            Kunde“) und Ihr Zonenplan mit den geteilten Elementen, an denen Ihre Zonen hängen – exportierbar als draw.io,
+            SVG und PDF.
+          </>
+        ) : (
+          <>
+            Logische Zonen von „{tenantLabel}“ – in Automato gepflegt, die Netze leitet Automato aus Selektoren ab (wie
+            beim Kunden). Die Zonenmatrix zeigt je Paar Quell- und Zielzone die Regeln und die Absicht, der Zonenplan, an
+            welchen Firewalls und ACI-VRFs die Zonen hängen – exportierbar als draw.io, SVG und PDF, mit Versionen zum
+            Vergleichen. Rein lesend gegenüber den Geräten.
+          </>
+        )}
       </PageHead>
       {tenantId === null ? (
         <Note>Bitte oben einen Mandanten wählen.</Note>
@@ -107,15 +119,17 @@ export default function Design({
                 ["plan", "Zonenplan"],
                 ["versions", "Versionen"],
               ] as const
-            ).map(([k, label]) => (
+            )
+              .filter(([k]) => !isCustomer || k !== "versions")
+              .map(([k, label]) => (
               <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
                 {label}
               </button>
             ))}
           </div>
-          {tab === "zones" && <ZonesTab tenantId={tenantId} canEdit={canEdit} />}
+          {tab === "zones" && <ZonesTab tenantId={tenantId} canEdit={canEdit} isCustomer={isCustomer} />}
           {tab === "matrix" && <MatrixTab tenantId={tenantId} canEdit={canEdit} />}
-          {tab === "plan" && <PlanTab tenantId={tenantId} />}
+          {tab === "plan" && <PlanTab tenantId={tenantId} isCustomer={isCustomer} />}
           {tab === "versions" && <VersionsTab tenantId={tenantId} canEdit={canEdit} isAdmin={isAdmin} />}
         </>
       )}
@@ -134,7 +148,7 @@ function selectorText(s: ZoneSelector, systems: System[]): string {
 
 // -- Zonen ---------------------------------------------------------------------------------
 
-function ZonesTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }) {
+function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit: boolean; isCustomer: boolean }) {
   const [rows, setRows] = useState<LogicalZone[] | null>(null);
   const [systems, setSystems] = useState<System[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -150,10 +164,11 @@ function ZonesTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean })
   useEffect(() => {
     setRows(null);
     load();
+    if (isCustomer) return; // Kunden-Benutzer: keine Selektoren, kein Editor
     fetchSystems(tenantId).then(setSystems).catch(() => setSystems([]));
     fetchCustomers(tenantId).then(setCustomers).catch(() => setCustomers([]));
     fetchExits(tenantId).then(setExits).catch(() => setExits([]));
-  }, [tenantId, load]);
+  }, [tenantId, load, isCustomer]);
 
   const remove = async (z: LogicalZone) => {
     if (!window.confirm(`Zone „${z.name}“ löschen? Ihre Absicht in der Zonenmatrix fällt mit weg.`)) return;
@@ -195,7 +210,7 @@ function ZonesTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean })
                   <th>Zone</th>
                   <th>Art</th>
                   <th>Kunde</th>
-                  <th>Selektoren</th>
+                  {!isCustomer && <th>Selektoren</th>}
                   <th className="num">Netze</th>
                   <th className="num">EPGs</th>
                   <th />
@@ -204,24 +219,29 @@ function ZonesTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean })
               <tbody>
                 {rows.map((z) => (
                   <Fragment key={z.id}>
-                    <tr className="clickable" onClick={() => setOpen(open === z.id ? null : z.id)}>
+                    <tr
+                      className={z.own === false ? "" : "clickable"}
+                      onClick={() => z.own !== false && setOpen(open === z.id ? null : z.id)}
+                    >
                       <td>
                         <Swatch color={z.color} /> <b>{z.name}</b> {z.code && <span className="mono faint">{z.code}</span>}
                         {z.description && <div className="faint">{z.description}</div>}
                       </td>
                       <td>{ZONE_KIND[z.kind] ?? z.kind}</td>
                       <td>{z.customer ?? <span className="faint">geteilt</span>}</td>
-                      <td>
-                        <div className="objs">
-                          {z.selectors.map((s) => (
-                            <span key={s.id} className={`chip ${s.exclude ? "warn" : ""}`}>
-                              {selectorText(s, systems)}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="num">{z.nets}</td>
-                      <td className="num">{z.epgs}</td>
+                      {!isCustomer && (
+                        <td>
+                          <div className="objs">
+                            {z.selectors.map((s) => (
+                              <span key={s.id} className={`chip ${s.exclude ? "warn" : ""}`}>
+                                {selectorText(s, systems)}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      )}
+                      <td className="num">{z.own === false ? <Dash /> : z.nets}</td>
+                      <td className="num">{z.own === false ? <Dash /> : z.epgs}</td>
                       <td className="nowrap" onClick={(e) => e.stopPropagation()}>
                         {canEdit && (
                           <>
@@ -237,7 +257,7 @@ function ZonesTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean })
                     </tr>
                     {open === z.id && (
                       <tr className="subrow">
-                        <td colSpan={7}>
+                        <td colSpan={isCustomer ? 6 : 7}>
                           <ZoneNets zoneId={z.id} />
                         </td>
                       </tr>
@@ -574,6 +594,7 @@ function ZoneEditor({
 function cellLabel(c: ZoneCell, zones: Map<number, ZoneSummary>): string {
   if (c === "any") return "any";
   if (c === "none") return "ohne Zone";
+  if (c === "other") return "anderer Kunde";
   return zones.get(c)?.name ?? `#${c}`;
 }
 
@@ -793,7 +814,7 @@ function CellDetail({
 
 // -- Zonenplan -----------------------------------------------------------------------------
 
-function PlanTab({ tenantId }: { tenantId: number }) {
+function PlanTab({ tenantId, isCustomer = false }: { tenantId: number; isCustomer?: boolean }) {
   const [plan, setPlan] = useState<ZonePlan | null>(null);
   const [err, setErr] = useState<unknown>(null);
   useEffect(() => {
@@ -888,6 +909,7 @@ function PlanTab({ tenantId }: { tenantId: number }) {
         </div>
       </div>
 
+      {!isCustomer && (
       <div className="card" id="zone-unzoned">
         <div className="card-head">
           <h2>Netze ohne Zone</h2>
@@ -914,6 +936,7 @@ function PlanTab({ tenantId }: { tenantId: number }) {
           )}
         </div>
       </div>
+      )}
     </>
   );
 }

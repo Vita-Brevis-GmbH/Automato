@@ -25,6 +25,9 @@ Ein Kunde ist ein Ausschnitt der Umgebung (Mandant), beschrieben durch Selektore
 Ausschliessende Selektoren nehmen ihre Treffer wieder heraus. Ein Element darf mehreren
 Kunden gehoeren. Die Zugehoerigkeit ist abgeleiteter Zustand: nach jedem Lauf und bei
 geaenderten Selektoren neu berechnet (`derive`). Nur lesend gegenueber den Quellsystemen.
+- **Zonen** (0.53.0): die logischen Zonen des Kunden (`logical_zone.customer_id`) zaehlen mit
+  ihren Netzen und EPGs dazu - die Selektoren des Kunden bleiben fuer Ausnahmen.
+
 Noch nicht: Relevanz nach Pfad (ADR 0019).
 """
 
@@ -47,6 +50,7 @@ from app.models import (
     EpgSubnet,
     Finding,
     InvInterface,
+    LogicalZone,
     NatRule,
     NetworkObject,
     ReferenceRecordRow,
@@ -420,14 +424,42 @@ def nets_of(data: _Data, selectors: list[Selector]) -> tuple[dict[int, str], dic
     return epgs, _cut(nets, removed)
 
 
+def owned_zones(session: Session, tenant_id: int,
+                customer_id: int | None) -> list[tuple[str, list[Selector]]]:  # fmt: skip
+    """Logische Zonen des Kunden (0.53.0, ADR 0018 Schritt 4) mit ihren Selektoren."""
+    if customer_id is None:
+        return []
+    zones = session.scalars(
+        select(LogicalZone)
+        .where(LogicalZone.tenant_id == tenant_id, LogicalZone.customer_id == customer_id)
+        .order_by(LogicalZone.position, LogicalZone.name)
+    )
+    return [
+        (z.name, [Selector(s.kind, s.value, s.source_system_id, s.exclude) for s in z.selectors])
+        for z in zones
+    ]
+
+
 def evaluate(session: Session, tenant_id: int, selectors: list[Selector],
-             data: _Data | None = None) -> Scope:  # fmt: skip
-    """Was die Selektoren erfassen (siehe Modul) - ohne zu speichern (Vorschau)."""
+             data: _Data | None = None,
+             zones: list[tuple[str, list[Selector]]] = ()) -> Scope:  # fmt: skip
+    """Was die Selektoren erfassen (siehe Modul) - ohne zu speichern (Vorschau). Seit 0.53.0
+    zaehlen die Netze und EPGs der Zonen des Kunden dazu (`zones`, Grund „Zone …“); die
+    ausschliessenden Selektoren des Kunden gelten auch fuer sie."""
     data = data or _Data(session, tenant_id)
     scope = Scope()
     include = [s for s in selectors if not s.exclude]
     exclude = [s for s in selectors if s.exclude]
     scope.epg, nets = nets_of(data, selectors)
+    if zones:
+        dropped = set().union(*(data.epg_matches(s) for s in exclude if s.kind in ACI_KINDS))
+        for name, zone_selectors in zones:
+            z_epgs, z_nets = nets_of(data, zone_selectors)
+            for eid in z_epgs:
+                if eid not in dropped:
+                    scope.epg.setdefault(eid, f"Zone {name}")
+            for net in _cut(z_nets, [n for s in exclude for n in data.selector_nets(s)]):
+                nets.setdefault(net, f"Zone {name}")
     by_id = {e.id: e for e in data.epgs}
     scope.net = {str(n): why for n, why in sorted(nets.items(), key=lambda x: _net_key(x[0]))}
     ranges = _Ranges(nets)
@@ -579,7 +611,8 @@ def derive(session: Session, tenant_id: int, customer_id: int | None = None) -> 
     now = datetime.now(UTC)
     for c in customers:
         session.execute(delete(CustomerMember).where(CustomerMember.customer_id == c.id))
-        scope = evaluate(session, tenant_id, selectors_of(c), data)
+        scope = evaluate(session, tenant_id, selectors_of(c), data,
+                         owned_zones(session, tenant_id, c.id))  # fmt: skip
         base = {"tenant_id": tenant_id, "customer_id": c.id}
         rows = [
             {**base, "kind": kind, "ref_id": ref, "value": None, "via": why[:200]}

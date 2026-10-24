@@ -3,9 +3,10 @@
 Zonen werden in Automato gepflegt: Selektoren wie beim Kunden (ACI-Tenant/VRF/AP/EPG/BD,
 VDOM/Zone/Interface, Netz, Kuerzel, IPAM-Merkmal) und dazu `exit` (Netze hinter einer
 Anbindung). Die Netze je Zone, die Matrix und der Plan sind abgeleitet (`store/zones.py`).
-Lesen: Viewer; Zonen und Absicht je Zonenpaar aendern: Operator. Nicht fuer Kunden-Benutzer
-(Freigabeliste, ADR 0018) - deren Sicht auf ihre Zonen folgt mit 0.53.0. Nur Daten der
-Plattform - kein Zugriff auf Geraete.
+Lesen: Viewer; Zonen und Absicht je Zonenpaar aendern: Operator. Kunden-Benutzer (seit 0.53.0,
+ADR 0018 Schritt 4) lesen ihre Zonen, die Matrix mit ihren Zonen (fremde Kunden als „anderer
+Kunde“) und ihren Plan samt Export - keine Selektoren, Vorschau, Versionen oder Netze ohne Zone.
+Nur Daten der Plattform - kein Zugriff auf Geraete.
 
 Seit 0.52.0: Export des Plans (draw.io, SVG, PDF; `store/plan_export.py`) und Versionen
 (`store/plan_versions.py`): Stand speichern (Operator), ansehen, vergleichen, exportieren,
@@ -84,6 +85,11 @@ class PolicyIn(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+def _scope(principal: Principal) -> tuple[int, ...] | None:
+    """Kunden eines Kunden-Benutzers (Sicht nur auf seine Zonen, 0.53.0); None = Betreuer."""
+    return tuple(principal.customer_ids or ()) if principal.is_customer else None
+
+
 def _tenant(session: Session, principal: Principal, tenant_id: int | None) -> int:
     tid = tenant_scope(principal, tenant_id)
     if tid is None:
@@ -132,6 +138,18 @@ def _out(z: LogicalZone, nets: store.ZoneNets | None = None,
     }
 
 
+def _customer_out(z: LogicalZone, nets: store.ZoneNets | None, names: dict[int, str],
+                  own: bool) -> dict:  # fmt: skip
+    """Zone in der Sicht eines Kunden-Benutzers: ohne Selektoren (Infrastruktur); geteilte
+    Zonen nur mit Name, Art und Farbe."""
+    out = _out(z, nets if own else None, names)
+    out["selectors"] = []
+    if not own:
+        out["description"] = None
+    out["own"] = own
+    return out
+
+
 def _customers(session: Session, tid: int) -> dict[int, str]:
     return dict(
         session.execute(select(Customer.id, Customer.name).where(Customer.tenant_id == tid)).all()
@@ -160,6 +178,12 @@ def _get(session: Session, principal: Principal, zone_id: int) -> LogicalZone:
         raise HTTPException(status_code=404, detail="zone not found")
     tenant_scope(principal, z.tenant_id)
     return z
+
+
+def _rederive(session: Session, tid: int, customer_ids: set[int | None]) -> None:
+    """Zugehoerigkeit der Kunden neu ableiten, deren Zonen sich geaendert haben (0.53.0)."""
+    for cid in sorted(c for c in customer_ids if c is not None):
+        customer_store.derive(session, tid, cid)
 
 
 def _apply(session: Session, z: LogicalZone, body: ZoneIn, sel: list[store.Selector]) -> None:
@@ -199,6 +223,15 @@ def list_zones(
     """Zonen der Umgebung in ihrer Reihenfolge, mit Selektoren und Anzahl Netze/EPGs."""
     tid = _tenant(session, principal, tenant_id)
     items = store.load(session, tid)
+    if principal.is_customer:  # eigene Zonen und die geteilten, an denen er haengt (Plan)
+        plan = store.plan_with_layout(session, tid, _scope(principal))
+        view = store.customer_view(items, _scope(principal))
+        visible = {z["id"] for z in plan["zones"]} | view.own
+        own = [z for z in items if z.id in view.own]
+        nets = {n.id: n for n in store.derive(session, tid, own)}
+        names = _customers(session, tid)
+        return [_customer_out(z, nets.get(z.id), names, z.id in view.own)
+                for z in items if z.id in visible]  # fmt: skip
     nets = {n.id: n for n in store.derive(session, tid, items)}
     names = _customers(session, tid)
     return [_out(z, nets.get(z.id), names) for z in items]
@@ -226,7 +259,7 @@ def matrix(
     """Zonenmatrix: je Paar Quell-/Zielzone die Regeln (erlaubend, sperrend), Absicht und
     Verstoesse; dazu `any` und `none` (Adressen ohne Zone)."""
     tid = _tenant(session, principal, tenant_id)
-    return store.matrix(session, tid, source_system_id)
+    return store.matrix(session, tid, source_system_id, customer_ids=_scope(principal))
 
 
 @router.get("/matrix/rules")
@@ -245,9 +278,10 @@ def matrix_rules(
     try:
         cells = store.parse_cell(src), store.parse_cell(dst)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail="src/dst: zone id, any or none") from exc
+        raise HTTPException(status_code=422, detail="src/dst: zone id, any, none or other") from exc
     return store.cell_rules(session, tid, *cells, limit=limit, offset=offset,
-                            source_system_id=source_system_id)  # fmt: skip
+                            source_system_id=source_system_id,
+                            customer_ids=_scope(principal))  # fmt: skip
 
 
 @router.put("/policy")
@@ -306,7 +340,8 @@ def plan(
 ) -> dict:
     """Zonenplan: je Zone die Knoten (Firewall/VDOM, ACI-VRF), an denen sie haengt, und die
     Uebergaenge zwischen Zonen ueber einen Knoten; dazu Netze ohne Zone."""
-    return store.plan_with_layout(session, _tenant(session, principal, tenant_id))
+    tid = _tenant(session, principal, tenant_id)
+    return store.plan_with_layout(session, tid, _scope(principal))
 
 
 _FORMATS = {
@@ -335,6 +370,8 @@ def export_plan(
     """Zonenplan als Datei: draw.io (bearbeitbar), SVG oder PDF (mit Matrix und Tabellen) -
     aktueller Stand bzw. eine gespeicherte Version."""
     if version_id is not None:
+        if principal.is_customer:  # Versionen zeigen die ganze Umgebung
+            raise HTTPException(status_code=403, detail="not available for customer users")
         v = _version(session, principal, version_id)
         tid = v.tenant_id
         reads.maybe_audit_read(session, principal, tid, "zones")
@@ -343,13 +380,17 @@ def export_plan(
         name = f"zonenplan-v{v.number}"
     else:
         tid = _tenant(session, principal, tenant_id)
-        plan, matrix = store.plan(session, tid), None
+        plan, matrix = store.plan_with_layout(session, tid, _scope(principal)), None
         if format == "pdf":
-            matrix = store.matrix(session, tid)
+            matrix = store.matrix(session, tid, customer_ids=_scope(principal))
         when, meta = datetime.now(UTC), None
         name = f"zonenplan-{when:%Y-%m-%d}"
     tenant = session.get(Tenant, tid)
     title = f"Zonenplan {tenant.name}" if tenant else "Zonenplan"
+    if principal.is_customer:  # Titel mit den eigenen Kunden, nicht der Umgebung
+        names = sorted(n for cid, n in _customers(session, tid).items()
+                       if cid in (principal.customer_ids or ()))  # fmt: skip
+        title = "Zonenplan " + (", ".join(names) or "Kunde")
     media, ext = _FORMATS[format]
     if format == "svg":
         body: bytes | str = plan_export.svg(plan, title, when, meta)
@@ -485,6 +526,7 @@ def create_zone(
     session.add(z)
     session.flush()
     _audit(session, principal, "created", z)
+    _rederive(session, tid, {z.customer_id})
     reconcile.refresh_zone_findings(session, tid)
     nets = store.derive(session, tid, [z])
     return _out(z, nets[0], _customers(session, tid))
@@ -502,9 +544,11 @@ def update_zone(
     if body.tenant_id != z.tenant_id:
         raise HTTPException(status_code=422, detail="tenant_id does not match")
     sel = _selectors(session, z.tenant_id, body.selectors)
+    before = z.customer_id
     _apply(session, z, body, sel)
     session.flush()
     _audit(session, principal, "updated", z)
+    _rederive(session, z.tenant_id, {before, z.customer_id})
     reconcile.refresh_zone_findings(session, z.tenant_id)
     nets = store.derive(session, z.tenant_id, [z])
     return _out(z, nets[0], _customers(session, z.tenant_id))
@@ -525,8 +569,10 @@ def delete_zone(
             (ZonePolicy.src_zone_id == z.id) | (ZonePolicy.dst_zone_id == z.id)
         )
     )
+    owner = z.customer_id
     session.delete(z)
     session.flush()
+    _rederive(session, tid, {owner})
     reconcile.refresh_zone_findings(session, tid)
 
 
@@ -539,6 +585,8 @@ def zone_nets(
 ) -> dict:
     """Netze einer Zone mit Grund (Selektor bzw. EPG)."""
     z = _get(session, principal, zone_id)
+    if principal.is_customer and z.customer_id not in (principal.customer_ids or ()):
+        raise HTTPException(status_code=404, detail="zone not found")  # nur eigene Zonen
     reads.maybe_audit_read(session, principal, z.tenant_id, "zones")
     nets = store.derive(session, z.tenant_id, [z])[0]
     ordered = sorted(nets.nets.items(), key=lambda x: store._net_key(x[0]))

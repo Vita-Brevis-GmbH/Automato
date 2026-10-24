@@ -349,8 +349,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.50.0** | Topologie-Modell (`GET /topology`, Routing → Topologie): Knoten (Firewall/VDOM, ACI-VRF, Segment, Anbindung, Router) und Kanten mit Herkunft und Routen; Plausibilitäts-Befunde (doppelte IP, Maske, Schleife, statische Route ohne Wirkung, BGP nicht aufgebaut) |
 | **0.51.0** | Logische Zonen in Automato (Selektoren wie beim Kunden plus Anbindung, längstes Präfix), Zonenmatrix mit Absicht je Zonenpaar und Befund „gegen die Absicht“, Zonenplan (Zonen an Firewalls/VDOMs und ACI-VRFs, Übergänge, Netze ohne Zone), Netzwerkdesign im Tool, ADR 0024 |
 | **0.52.0** | Zonenplan exportieren (draw.io bearbeitbar, SVG, PDF mit Matrix und Tabellen; ein Layout für Oberfläche und Dateien, ohne neue Abhängigkeit) und Versionen des Plans (speichern, Fingerabdruck „geändert seit“, Vergleich, Export je Version, Löschen nur Admin) |
+| **0.53.0** | Kunden auf Zonen (Netze und EPGs der Zonen eines Kunden in seiner Zugehörigkeit), Sicht der Kunden-Benutzer auf ihre Zonen, Matrix („anderer Kunde“) und Plan samt Export, Zuordnung Benutzer → Kunde in Automato (Administration → Kunden, `GET /auth/me`) |
 
-### Nächste Arbeiten (Stand 0.52.0)
+### Nächste Arbeiten (Stand 0.53.0)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
@@ -397,7 +398,8 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 | ~~0.50.0~~ | Topologie-Modell (`GET /topology`) und Plausibilitäts-Befunde – **umgesetzt in 0.50.0** |
 | ~~0.51.0~~ | Logische Zonen und Zonenplan im Tool, Zonenmatrix – **umgesetzt in 0.51.0** (ADR 0024; offen: Zonen je Hop in der Weg-Suche, Absicht je Dienst) |
 | ~~0.52.0~~ | Export (draw.io, SVG, PDF) und Versionen des Plans – **umgesetzt in 0.52.0** (offen: nach Confluence mit eigener Freigabe, draw.io zurück einlesen) |
-| 0.53.0 | Kunden auf Zonen, Kunden-Benutzer in der Oberfläche |
+| ~~0.53.0~~ | Kunden auf Zonen, Kunden-Benutzer in der Oberfläche – **umgesetzt in 0.53.0** (ADR 0018 Schritt 4; offen: Regeln nach dem Weg, Doku des Kunden ohne Gerätenamen, feinere Rollen) |
+| danach | Abnahme 0.43.1–0.53.0 gegen die grössere Testumgebung (Pilot Zonen und Pläne); weitere Schritte legt der Anwender fest |
 
 Frühere Reihenfolge (Stand 0.42.0, zum Nachlesen):
 

@@ -8,7 +8,8 @@ schraenkt selbst auf den Ausschnitt des Kunden ein (`api/customer_filter.py`).
 Von den Quellsystemen nur die Bezeichnungen (`/systems/labels`). Nicht freigegeben: die
 Konfiguration der Quellsysteme, Agenten, Laeufe, Zeitplaene, NetBox-Sync, Namensprofile,
 Abgleich, Routing & Wege (Topologie der ganzen Umgebung), Inventar, publizierte Dienste,
-System und das Anlegen bzw. Aendern von Kunden, Mandanten und Applikationen.
+System, Versionen des Zonenplans, Vorschauen und das Anlegen bzw. Aendern von Kunden,
+Zonen, Mandanten und Applikationen.
 """
 
 CUSTOMER_ROUTES: frozenset[tuple[str, str]] = frozenset(
@@ -36,6 +37,15 @@ CUSTOMER_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("GET", "/applications"),
         ("GET", "/applications/{application_id}"),
         ("GET", "/applications/{application_id}/doc"),
+        # 0.53.0: wer bin ich; die eigenen Zonen, Matrix und Plan (ohne fremde Kunden, ohne
+        # Netze ohne Zone; Gegenseite fremder Kunden als „anderer Kunde“)
+        ("GET", "/auth/me"),
+        ("GET", "/zones"),
+        ("GET", "/zones/{zone_id}/nets"),
+        ("GET", "/zones/matrix"),
+        ("GET", "/zones/matrix/rules"),
+        ("GET", "/zones/plan"),
+        ("GET", "/zones/plan/export"),
     }
 )
 

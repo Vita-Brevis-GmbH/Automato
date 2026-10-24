@@ -159,7 +159,7 @@ Grundsatzentscheide des Anwenders (2026-10-22):
      protokolliert ist der Lesezugriff.
    - Noch nicht: Relevanz nach Pfad (ADR 0019) für die Zugehörigkeit von Regeln, eigene
      Kunden-Benutzer-Verwaltung in der Oberfläche (heute in Keycloak).
-4. **Kunden auf logischen Zonen** (Entscheide des Anwenders 2026-10-23, geplant mit 0.53.0 nach
+4. **Kunden auf logischen Zonen** (Entscheide des Anwenders 2026-10-23; umgesetzt in 0.53.0 nach
    den logischen Zonen aus ADR 0024, 0.51.0 – dort schon der Kunde je Zone):
    - Ein Kunde besitzt logische Zonen. Geteilte Zonen (Internet, Shared Services, Management)
      gehören keinem Kunden. Die Selektoren bleiben für Ausnahmen (einzelne Netze, Objekte).
@@ -175,3 +175,19 @@ Grundsatzentscheide des Anwenders (2026-10-22):
    - Die Zuordnung Benutzer → Kunde wird in Automato gepflegt, getrennt von der Anmeldung
      (Keycloak meldet nur, wer jemand ist). Der Claim `customer_ids` bleibt als Alternative.
      Die Trennung ist Grundlage für feinere Rollen. Automato schreibt nicht nach Keycloak.
+   - **Umsetzung 0.53.0:**
+     - Zugehörigkeit: Netze und EPGs der Zonen des Kunden zählen wie seine Selektoren
+       (`customers.owned_zones`, Grund „Zone …“); ausschliessende Selektoren des Kunden gelten
+       auch für sie; geänderte Zonen leiten die betroffenen Kunden sofort neu ab.
+     - Sicht der Kunden-Benutzer (`zones.CustomerView`): eigene Zonen mit Netzen, geteilte nur
+       mit Name/Art/Farbe; Matrix nur Zellen mit einer eigenen Zone, Zonen anderer Kunden als
+       `other` („anderer Kunde“), Absichten nur eigener Paare; Plan mit den Knoten der eigenen
+       Zonen und den geteilten Zonen dort (ohne Netze, Router und Netze ohne Zone); Export davon;
+       keine Selektoren, Vorschau, Versionen.
+     - Zuordnung Benutzer → Kunde (`customer_user`, Migration 0050, `/customer-users`, Admin):
+       Kennung = Benutzername, E-Mail bzw. `sub` (klein); Rolle viewer/operator; angewendet in
+       `get_principal` (`auth/assignments.py`) – macht immer zum Kunden-Benutzer, Mandanten =
+       die der Kunden, Vereinigung mit dem Claim; eigenes Konto nicht zuordenbar; nicht lesbar =
+       503 (fail-closed). `GET /auth/me` liefert der Oberfläche die Sicht des Orchestrators.
+     - Noch offen: Zugehörigkeit von Regeln nach dem Weg (Relevanz nach Pfad), Doku des Kunden
+       ohne Infrastruktur (Gerätenamen) und feinere Rollen.

@@ -22,6 +22,7 @@ from app.models import (
     Customer,
     CustomerMember,
     CustomerSelector,
+    CustomerUser,
     Epg,
     Finding,
     LogicalZone,
@@ -57,6 +58,7 @@ class CustomerIn(BaseModel):
 class PreviewIn(BaseModel):
     tenant_id: int
     selectors: list[SelectorIn] = Field(default_factory=list, max_length=200)
+    customer_id: int | None = None  # mit den Zonen dieses Kunden (0.53.0)
 
 
 def _tenant(session: Session, principal: Principal, tenant_id: int | None) -> int:
@@ -86,7 +88,21 @@ def _selectors(session: Session, tid: int, items: list[SelectorIn]) -> list[stor
     return out
 
 
-def _out(c: Customer, counts: dict[str, int] | None = None) -> dict:
+def _zones(session: Session, customer_ids: list[int]) -> dict[int, list[str]]:
+    """Logische Zonen je Kunde (0.53.0)."""
+    out: dict[int, list[str]] = {cid: [] for cid in customer_ids}
+    if customer_ids:
+        for cid, name in session.execute(
+            select(LogicalZone.customer_id, LogicalZone.name)
+            .where(LogicalZone.customer_id.in_(customer_ids))
+            .order_by(LogicalZone.position, LogicalZone.name)
+        ):
+            out[cid].append(name)
+    return out
+
+
+def _out(c: Customer, counts: dict[str, int] | None = None,
+         zones: list[str] | None = None) -> dict:  # fmt: skip
     return {
         "id": c.id,
         "tenant_id": c.tenant_id,
@@ -106,6 +122,7 @@ def _out(c: Customer, counts: dict[str, int] | None = None) -> dict:
             for s in c.selectors
         ],  # fmt: skip
         "counts": counts or dict.fromkeys(MEMBER_KINDS, 0),
+        "zones": zones or [],
     }
 
 
@@ -165,7 +182,8 @@ def list_customers(
         stmt = stmt.where(Customer.id.in_(list(principal.customer_ids or ())))
     rows = list(session.scalars(stmt.order_by(Customer.shared.desc(), Customer.name)))
     counts = store.counts(session, [c.id for c in rows])
-    return [_out(c, counts[c.id]) for c in rows]
+    zones = _zones(session, [c.id for c in rows])
+    return [_out(c, counts[c.id], zones[c.id]) for c in rows]
 
 
 @router.post("/preview")
@@ -176,7 +194,8 @@ def preview(
 ) -> dict:
     """Was die Selektoren erfassen - ohne zu speichern: Anzahl und Beispiele je Art."""
     tid = _tenant(session, principal, body.tenant_id)
-    scope = store.evaluate(session, tid, _selectors(session, tid, body.selectors))
+    zones = store.owned_zones(session, tid, body.customer_id)
+    scope = store.evaluate(session, tid, _selectors(session, tid, body.selectors), zones=zones)
     return {"counts": scope.counts(), "samples": store.samples(session, tid, scope)}
 
 
@@ -216,7 +235,7 @@ def create_customer(
     session.flush()
     store.derive(session, tid, c.id)
     _audit(session, principal, "created", c)
-    return _out(c, store.counts(session, [c.id])[c.id])
+    return _out(c, store.counts(session, [c.id])[c.id], _zones(session, [c.id])[c.id])
 
 
 @router.put("/{customer_id}")
@@ -235,7 +254,7 @@ def update_customer(
     session.flush()
     store.derive(session, c.tenant_id, c.id)
     _audit(session, principal, "updated", c)
-    return _out(c, store.counts(session, [c.id])[c.id])
+    return _out(c, store.counts(session, [c.id])[c.id], _zones(session, [c.id])[c.id])
 
 
 @router.delete("/{customer_id}", status_code=204)
@@ -248,6 +267,8 @@ def delete_customer(
     c = _get(session, principal, customer_id)
     _audit(session, principal, "deleted", c)
     session.execute(CustomerMember.__table__.delete().where(CustomerMember.customer_id == c.id))
+    # Zuordnungen seiner Benutzer fallen weg (0.53.0)
+    session.execute(CustomerUser.__table__.delete().where(CustomerUser.customer_id == c.id))
     # seine logischen Zonen bleiben, gehoeren dann keinem Kunden (0.51.0)
     session.execute(
         update(LogicalZone).where(LogicalZone.customer_id == c.id).values(customer_id=None)

@@ -7,6 +7,34 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.53.0 – 2026-10-24
+
+Kunden auf Zonen und Kunden-Benutzer in der Oberfläche (ADR 0018 Schritt 4, ADR 0024;
+Entscheid des Anwenders: Kunden auf Zonen mit Benutzer-Zuordnung in Automato). Migration `0050`
+(`customer_user`); nur lesend gegenüber allen Quellsystemen, Automato schreibt nicht nach
+Keycloak.
+
+- **Zonen des Kunden:** Die Zonen, die einem Kunden gehören, zählen für seine Zugehörigkeit
+  (EPGs und Netze der Zone mit Grund „Zone …“; ausschliessende Selektoren des Kunden gelten
+  auch hier). Nach dem Speichern bzw. Löschen einer Zone rechnet Automato die betroffenen Kunden
+  neu ab. Administration → Kunden zeigt die Zonen je Kunde.
+- **Sicht der Kunden-Benutzer** (Netzwerkdesign, lesend):
+  - **Zonen:** die eigenen mit Netzen und EPGs, die geteilten Zonen am eigenen Plan nur mit
+    Namen; keine Selektoren, keine Vorschau.
+  - **Zonenmatrix:** nur Regeln, die eine eigene Zone berühren; Zonen anderer Kunden als
+    „anderer Kunde“; Absichten nur zwischen sichtbaren Zonen.
+  - **Zonenplan** samt Export (draw.io, SVG, PDF): eigene Zonen, ihre Knoten und die geteilten
+    Zonen daran (ohne deren Netze); keine Netze ohne Zone, keine Versionen.
+- **Kunden-Benutzer in Automato zuordnen** (Administration → Kunden → Kunden-Benutzer,
+  `/customer-users`, Admin):
+  - Kennung (Benutzername, E-Mail bzw. `sub` aus Keycloak, klein verglichen) → Kunde mit Rolle
+    Viewer bzw. Operator, Notiz; Audit `customer_user.assigned/changed/removed`.
+  - Eine Zuordnung schränkt immer ein, nie Admin; zusammen mit dem Claim `customer_ids` gilt die
+    Vereinigung. Das eigene Konto lässt sich nicht zuordnen. Wirkt bei der nächsten Anfrage.
+  - Zuordnung nicht lesbar → 503 (fail-closed), nicht „ohne Einschränkung“.
+  - `GET /auth/me`: Rollen, Mandanten und Kunden laut Orchestrator – die Oberfläche richtet
+    sich danach (auch ein Konto ohne Rolle in Keycloak, das nur in Automato zugeordnet ist).
+
 ## 0.52.0 – 2026-10-24
 
 Zonenplan exportieren und Versionen des Plans (ADR 0024, Entscheid des Anwenders: Plan im Tool

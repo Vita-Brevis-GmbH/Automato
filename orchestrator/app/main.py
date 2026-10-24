@@ -10,6 +10,7 @@ from app.api import (
     appdoc,
     applications,
     auth_config,
+    customer_users,
     customers,
     findings,
     health,
@@ -99,6 +100,7 @@ def create_app() -> FastAPI:
     app.include_router(routing.router)
     app.include_router(topology.router)
     app.include_router(customers.router)
+    app.include_router(customer_users.router)
     app.include_router(zones.router)
     return app
 

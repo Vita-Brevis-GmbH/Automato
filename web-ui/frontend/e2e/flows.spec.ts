@@ -665,7 +665,7 @@ test("Kunden-Benutzer: nur die Doku des eigenen Ausschnitts, ohne Betrieb und Ve
   await expect(page.locator(".u-role")).toHaveText("Kunde");
   const nav = page.locator("nav.nav");
   await expect(nav).toContainText("Regeln & Contracts");
-  for (const hidden of ["Routing", "Weg-Suche", "Abgleich", "Administration", "Kunden", "Läufe", "Netzwerkdesign"])
+  for (const hidden of ["Routing", "Weg-Suche", "Abgleich", "Administration", "Kunden", "Läufe"])
     await expect(nav.getByText(hidden, { exact: true })).toHaveCount(0);
   await expect(page.getByText("Letzte Läufe")).toHaveCount(0);
   await expect(page.getByLabel("Kunde", { exact: true })).toHaveCount(0); // nur ein Kunde
@@ -682,6 +682,10 @@ test("Kunden-Benutzer: nur die Doku des eigenen Ausschnitts, ohne Betrieb und Ve
   }
   await page.goto("/#routing"); // nicht freigegeben -> Übersicht
   await expect(page.locator("main.main h1")).toHaveText("Übersicht");
+  // seit 0.53.0: Netzwerkdesign mit den eigenen Zonen, ohne Versionen
+  await page.goto("/#design");
+  await expect(page.locator("main.main h1")).toHaveText("Netzwerkdesign");
+  await expect(page.locator(".tabbar")).not.toContainText("Versionen");
 });
 
 test("Weg-Suche: Verbund als ein Hop mit beiden Firewalls", async ({ page }) => {
@@ -932,3 +936,65 @@ test("Netzwerkdesign: Export (draw.io, SVG, PDF) und Versionen des Zonenplans", 
   await expect(row).toHaveCount(0);
   expect(problems).toEqual([]);
 });
+
+test("Kunden-Benutzer in Automato zuordnen: Zonen des Kunden, Anmeldung ohne Rolle sieht nur ihn", async ({ page, browser, problems }) => {
+  const login = `kunde.dmz${test.info().retry}@example.ch`;
+  const name = `Kunde DMZ ${test.info().retry}`;
+  // eigener Kunde, dem die Zone DMZ gehört (danach zurück)
+  const zones = (await (await page.request.get("/api/zones?tenant_id=1")).json()) as LogicalZoneRow[];
+  const dmz = zones.find((z) => z.name === "DMZ")!;
+  const created = await page.request.post("/api/customers", { data: { tenant_id: 1, name, selectors: [] } });
+  expect(created.status()).toBe(201);
+  const te = (await created.json()) as { id: number };
+  const put = (customer: number | null) =>
+    page.request.put(`/api/zones/${dmz.id}`, {
+      data: { tenant_id: 1, name: dmz.name, kind: dmz.kind, color: dmz.color, position: dmz.position, customer_id: customer, selectors: dmz.selectors },
+    });
+  expect((await put(te.id)).status()).toBe(200);
+
+  await page.goto("/#kunden");
+  await expect(page.locator("tbody tr", { hasText: name }).first()).toContainText("DMZ"); // Zonen des Kunden
+  const card = page.locator("#customer-users");
+  await card.locator("input[aria-label='Benutzer']").fill(login);
+  await card.locator("select[aria-label='Kunde']").selectOption({ label: name });
+  await card.locator("button:has-text('Zuordnen')").click();
+  const row = card.locator("#customer-user-list tbody tr", { hasText: login });
+  await expect(row).toContainText(name);
+
+  // derselbe Benutzer meldet sich an (dev: X-Dev-User, ohne Rolle aus Keycloak) - eigener
+  // Browser-Kontext, sonst teilen sich beide Seiten den localStorage
+  const ctx = await browser.newContext({ baseURL: "http://localhost:5173" });
+  const user = await ctx.newPage();
+  await user.addInitScript((u) => {
+    localStorage.setItem("automato_dev_user", u);
+    localStorage.setItem("automato_tenant", "1");
+  }, login);
+  await user.goto("/#uebersicht");
+  await expect(user.locator(".u-role")).toHaveText("Kunde");
+  await expect(user.locator("nav.nav")).not.toContainText("Administration");
+  await user.goto("/#design");
+  const own = user.locator("#zone-list tbody tr.clickable", { hasText: "DMZ" });
+  await expect(own).toHaveCount(1);
+  await expect(user.locator("#zone-list tbody tr", { hasText: "LAN" })).toContainText("geteilt");
+  await user.click(".tabbar button:has-text('Zonenplan')");
+  await expect(user.locator("#zone-plan .zp-node", { hasText: "fw-08" })).toBeVisible();
+  await expect(user.locator("#zone-unzoned")).toHaveCount(0);
+  await ctx.close();
+
+  // aufräumen: Zuordnung entfernen, Zone wieder ohne Kunde
+  page.once("dialog", (d) => d.accept());
+  await row.locator("button:has-text('Entfernen')").click();
+  await expect(row).toHaveCount(0);
+  expect((await put(null)).status()).toBe(200);
+  expect((await page.request.delete(`/api/customers/${te.id}`)).status()).toBe(204);
+  expect(problems).toEqual([]);
+});
+
+interface LogicalZoneRow {
+  id: number;
+  name: string;
+  kind: string;
+  color: string | null;
+  position: number;
+  selectors: unknown[];
+}

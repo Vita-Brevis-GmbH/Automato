@@ -602,7 +602,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   NetBox) mit Suche. **Jetzt abgleichen** (Operator) rechnet neu, ohne etwas zu lesen oder
   zu schreiben.
 - **Netzwerkdesign** (0.51.0, ADR 0024): logische Zonen, Zonenmatrix und Zonenplan – in
-  Automato gepflegt, rein lesend gegenüber den Geräten. Nicht für Kunden-Benutzer.
+  Automato gepflegt, rein lesend gegenüber den Geräten. **Kunden-Benutzer** (seit 0.53.0) sehen
+  ihre Zonen (ohne Selektoren), die geteilten Zonen an ihren Knoten nur mit Namen, die Matrix
+  mit Zellen ihrer Zonen (Zonen anderer Kunden als „anderer Kunde“), ihren Plan ohne Netze
+  ohne Zone und können ihn exportieren; keine Versionen, keine Änderungen.
   - **Zonen** (Operator schreibt): Name, Kurzname, Art (intern, DMZ, extern, Management,
     geteilt, Transfer), Farbe, Reihenfolge, Kunde (leer = geteilt bzw. Infrastruktur).
     - Selektoren wie beim Kunden (ACI-Tenant/VRF/AP/EPG/BD, VDOM/Zone/Interface je Firewall,
@@ -711,6 +714,18 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     (`saml-mappers.example.json`). Vorführen im dev-Modus: im Browser
     `localStorage.setItem("automato_dev_customer", "<Mandant>:<Kunden>")`, entfernen zum
     Zurückschalten.
+  - **Kunden-Benutzer in Automato zuordnen (0.53.0, Admin):** Karte „Kunden-Benutzer“ unten in
+    Administration → Kunden. Benutzername bzw. E-Mail (wie in Keycloak) → Kunde, Rolle „lesen“
+    oder „lesen + eigene Findings triagieren“, Notiz. Keycloak meldet nur, wer jemand ist – eine
+    Rolle oder Attribute in Keycloak braucht der Benutzer dafür nicht. Die Zuordnung macht ihn
+    immer zum Kunden-Benutzer (nie Admin, auch wenn Keycloak ihm mehr gibt); das eigene Konto
+    lässt sich nicht zuordnen. Wirkt ab der nächsten Anfrage, Entfernen ebenso; jede Änderung im
+    Audit (`customer_user.*`). Das Attribut `customer_ids` bleibt als Alternative, beides
+    zusammen ergibt die Kunden beider Quellen. Vorführen im dev-Modus:
+    `localStorage.setItem("automato_dev_user", "<Benutzer>")`.
+  - **Zonen des Kunden (0.53.0):** In Netzwerkdesign → Zonen „Kunde“ setzen; ihre Netze, EPGs und
+    alles daran gehören dann zum Kunden (Spalte „Zonen“ in der Kundenliste). Die Selektoren des
+    Kunden bleiben für Ausnahmen; ausschliessende gelten auch für seine Zonen.
 - **Namensprofile:** Standardprofil **„default"** (per Migration angelegt, gilt für alle
   Mandanten ohne eigenes Profil, frei pflegbar), **+ Neues Profil** (Vorlage: Kopie eines
   bestehenden Profils, z. B. „default", oder leer), **+ Neue Namenskonvention** (optional die
@@ -794,6 +809,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern; Vorschläge je ACI-Tenant; nicht Zugeordnetes |
 | `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy`, `GET /zones/plan` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]`, `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan mit `attachments` (Zone ↔ Knoten über interface/fabric/exit/route), `links`, `unzoned`, `layout` (Zeichnung); Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`) |
+| `GET /auth/me`, `GET/POST /customer-users`, `PATCH/DELETE /customer-users/{id}` | Wer bin ich laut Orchestrator (Rollen, Mandanten, Kunden, `customer_source` claim/automato) – die Oberfläche richtet sich danach; Zuordnung Benutzer → Kunde (0.53.0, Admin): `login`, `customer_id`, `role` viewer/operator, `note` |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `POST /systems/{id}/check` | Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus (operator): Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint`; Agent-Systeme 409 (`run-agent.ps1 -Check`), 0.34.0 |
 | `GET /systems/labels?tenant_id=` | Bezeichnungen der Quellsysteme (`id`, `name`, `platform`, `vdoms`, `parallel_group`) ohne Konfiguration; Kunden-Benutzer nur die Systeme ihrer Regeln, NAT bzw. Objekte (0.33.0) |

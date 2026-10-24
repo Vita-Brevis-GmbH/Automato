@@ -19,6 +19,7 @@ from app.models import (
     Customer,
     CustomerMember,
     CustomerSelector,
+    CustomerUser,
     DeviceObject,
     Epg,
     EpgEndpoint,
@@ -208,6 +209,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     session.execute(delete(LogicalZoneSelector).where(LogicalZoneSelector.zone_id.in_(zone_ids)))
     session.execute(delete(LogicalZone).where(LogicalZone.tenant_id == tid))
     customer_ids = select(Customer.id).where(Customer.tenant_id == tid)
+    session.execute(delete(CustomerUser).where(CustomerUser.tenant_id == tid))
     session.execute(delete(CustomerMember).where(CustomerMember.tenant_id == tid))
     session.execute(delete(CustomerSelector).where(CustomerSelector.customer_id.in_(customer_ids)))
     session.execute(delete(Customer).where(Customer.tenant_id == tid))

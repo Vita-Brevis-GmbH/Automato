@@ -120,3 +120,33 @@ class CustomerMember(Base):
     ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     value: Mapped[str | None] = mapped_column(String(64), nullable=True)  # Netz (CIDR)
     via: Mapped[str | None] = mapped_column(String(200), nullable=True)  # warum (Selektor)
+
+
+CUSTOMER_USER_ROLES = ("viewer", "operator")  # lesen bzw. dazu eigene Findings triagieren
+
+
+class CustomerUser(Base):
+    """Zuordnung Benutzer -> Kunde in Automato (0.53.0, ADR 0018 Schritt 4).
+
+    Keycloak meldet nur, wer jemand ist; welchen Kunden ein Benutzer sieht, pflegt ein Admin
+    hier. `login` (klein geschrieben) passt auf Benutzername, E-Mail bzw. `sub` des Tokens. Eine
+    Zuordnung macht den Benutzer immer zum Kunden-Benutzer (nie Admin, nur die freigegebenen
+    Endpunkte) - sie schraenkt ein, nie aus. Der Claim `customer_ids` bleibt als Alternative;
+    beides zusammen ergibt die Vereinigung. Automato schreibt nicht nach Keycloak.
+    """
+
+    __tablename__ = "customer_user"
+    __table_args__ = (UniqueConstraint("customer_id", "login", name="uq_customer_user_login"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("customer.id", ondelete="CASCADE"), index=True
+    )
+    login: Mapped[str] = mapped_column(String(200), index=True)
+    role: Mapped[str] = mapped_column(String(16), default="viewer")  # siehe CUSTOMER_USER_ROLES
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

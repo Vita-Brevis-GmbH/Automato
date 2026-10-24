@@ -2142,6 +2142,7 @@ export interface Customer {
   derived_at: string | null;
   selectors: CustomerSelector[];
   counts: CustomerCounts;
+  zones: string[]; // logische Zonen des Kunden (0.53.0)
 }
 export interface CustomerIn {
   tenant_id: number;
@@ -2167,8 +2168,8 @@ export const fetchCustomers = (tenantId: number) => getJSON<Customer[]>(`/api/cu
 export const createCustomer = (body: CustomerIn) => sendJSON<Customer>("/api/customers", "POST", body);
 export const updateCustomer = (id: number, body: CustomerIn) => sendJSON<Customer>(`/api/customers/${id}`, "PUT", body);
 export const deleteCustomer = (id: number) => sendJSON<void>(`/api/customers/${id}`, "DELETE");
-export const previewCustomer = (tenantId: number, selectors: CustomerSelector[]) =>
-  sendJSON<CustomerPreview>("/api/customers/preview", "POST", { tenant_id: tenantId, selectors });
+export const previewCustomer = (tenantId: number, selectors: CustomerSelector[], customerId?: number) =>
+  sendJSON<CustomerPreview>("/api/customers/preview", "POST", { tenant_id: tenantId, selectors, customer_id: customerId ?? null });
 export const fetchCustomerSuggestions = (tenantId: number) =>
   getJSON<CustomerSuggestion[]>(`/api/customers/suggestions${qs({ tenant_id: tenantId })}`);
 export const fetchUnassigned = (tenantId: number) => getJSON<Unassigned>(`/api/customers/unassigned${qs({ tenant_id: tenantId })}`);
@@ -2292,6 +2293,7 @@ export interface LogicalZone {
   epgs: number;
   updated_at: string;
   selectors: ZoneSelector[];
+  own?: boolean; // Sicht eines Kunden-Benutzers (0.53.0): eigene bzw. geteilte Zone
 }
 export interface ZoneIn {
   tenant_id: number;
@@ -2310,7 +2312,7 @@ export interface ZonePreview {
   overlaps: { network: string; zone: string }[];
   overlaps_total: number;
 }
-export type ZoneCell = number | "any" | "none";
+export type ZoneCell = number | "any" | "none" | "other"; // other = anderer Kunde (0.53.0)
 export interface ZoneSummary {
   id: number;
   name: string;
@@ -2455,3 +2457,36 @@ export async function exportZonePlan(tenantId: number, format: PlanFormat, versi
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `zonenplan.${format}` };
 }
+
+// Wer bin ich laut Orchestrator (0.53.0): Rollen, Mandanten, Kunden – auch aus der Zuordnung in
+// Automato (Benutzer → Kunde), die Keycloak nicht kennt
+export interface ServerMe {
+  subject: string;
+  roles: string[];
+  tenant_ids: number[] | null;
+  customer_ids: number[] | null;
+  is_admin: boolean;
+  is_customer: boolean;
+  customer_source: "claim" | "automato" | "claim+automato" | null;
+  customers: { id: number; name: string }[];
+}
+export const fetchServerMe = () => getJSON<ServerMe>("/api/auth/me");
+
+// Zuordnung Benutzer → Kunde (0.53.0, nur Admin)
+export interface CustomerUserRow {
+  id: number;
+  tenant_id: number;
+  customer_id: number;
+  customer: string | null;
+  login: string;
+  role: "viewer" | "operator";
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+export const fetchCustomerUsers = (tenantId: number) => getJSON<CustomerUserRow[]>(`/api/customer-users${qs({ tenant_id: tenantId })}`);
+export const createCustomerUser = (body: { customer_id: number; login: string; role: string; note: string | null }) =>
+  sendJSON<CustomerUserRow>("/api/customer-users", "POST", body);
+export const updateCustomerUser = (id: number, body: { role?: string; note?: string | null }) =>
+  sendJSON<CustomerUserRow>(`/api/customer-users/${id}`, "PATCH", body);
+export const deleteCustomerUser = (id: number) => sendJSON<void>(`/api/customer-users/${id}`, "DELETE");

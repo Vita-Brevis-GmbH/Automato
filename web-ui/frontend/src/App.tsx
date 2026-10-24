@@ -8,6 +8,7 @@ import {
   fetchHealth,
   fetchNat,
   fetchRuleSummary,
+  fetchServerMe,
   fetchTenants,
   FindingSummary,
   HealthStatus,
@@ -76,7 +77,7 @@ const NAV: NavEntry[] = [
   { key: "apps", label: "Applikationen", icon: "apps", section: "doc", customer: true },
   { key: "findings", label: "Findings", icon: "findings", section: "doc", customer: true },
   { key: "abgleich", label: "Abgleich", icon: "reconcile", section: "doc" },
-  { key: "design", label: "Netzwerkdesign", icon: "design", section: "doc" },
+  { key: "design", label: "Netzwerkdesign", icon: "design", section: "doc", customer: true },
   { key: "users", label: "Benutzer & Rollen", icon: "users", section: "admin" },
   { key: "tenants", label: "Mandanten & Standorte", icon: "tenants", section: "admin" },
   { key: "kunden", label: "Kunden", icon: "customers", section: "admin" },
@@ -148,6 +149,16 @@ function initials(name: string): string {
   return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "")).toUpperCase();
 }
 
+// Rollen und Kunden laut Orchestrator (0.53.0: auch die Zuordnung Benutzer → Kunde in Automato);
+// ohne Antwort (z. B. Konto ohne Rolle) bleibt die Sicht aus dem Token
+async function withServerMe(me: auth.Me): Promise<auth.Me> {
+  try {
+    return auth.withServer(me, await fetchServerMe());
+  } catch {
+    return me;
+  }
+}
+
 export default function App() {
   const [boot, setBoot] = useState<Boot>({ state: "loading" });
   const [problem, setProblem] = useState<string | null>(null);
@@ -169,7 +180,7 @@ export default function App() {
         return;
       }
       if (cfg.auth_mode !== "oidc") {
-        const me = auth.devMe();
+        const me = await withServerMe(auth.devMe());
         setCustomerUser(me.isCustomer);
         setBoot({ state: "ready", cfg, me });
         return;
@@ -182,7 +193,7 @@ export default function App() {
           setBoot({ state: "redirect" });
           return;
         }
-        const me = auth.meFromUser(user);
+        const me = await withServerMe(auth.meFromUser(user));
         setCustomerUser(me.isCustomer);
         setBoot({ state: "ready", cfg, me });
       } catch (e) {
@@ -506,8 +517,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
           </Note>
         ) : me.isCustomer && !me.customerIds?.length ? (
           <Note warn>
-            Ihrem Konto ist noch kein Kunde zugeordnet. Bitte den Betreuer, in Keycloak das Attribut{" "}
-            <code>customer_ids</code> zu setzen, und danach neu anmelden.
+            Ihrem Konto ist noch kein Kunde zugeordnet. Bitte den Betreuer, Sie in Automato (Administration →
+            Kunden → Kunden-Benutzer) einem Kunden zuzuordnen – oder in Keycloak das Attribut <code>customer_ids</code>{" "}
+            zu setzen und danach neu anmelden.
           </Note>
         ) : (
           <>
@@ -592,7 +604,15 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             {current === "routing" && (
               <Routing tenantId={tenantId} tenantLabel={tenantLabel} canEdit={me.isAdmin || me.isOperator} />
             )}
-            {current === "design" && <Design tenantId={tenantId} tenantLabel={tenantLabel} canEdit={me.isAdmin || me.isOperator} isAdmin={me.isAdmin} />}
+            {current === "design" && (
+              <Design
+                tenantId={tenantId}
+                tenantLabel={tenantLabel}
+                canEdit={!me.isCustomer && (me.isAdmin || me.isOperator)}
+                isAdmin={me.isAdmin}
+                isCustomer={me.isCustomer}
+              />
+            )}
             {current === "users" && <Users cfg={cfg} me={me} tenants={tenants ?? []} />}
             {current === "tenants" && (
               <Tenants
@@ -607,6 +627,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
               <Customers
                 tenantId={tenantId}
                 canEdit={me.isAdmin || me.isOperator}
+                isAdmin={me.isAdmin}
                 onChanged={() => setCustomersVersion((v) => v + 1)}
               />
             )}
