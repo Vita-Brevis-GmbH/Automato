@@ -23,6 +23,8 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "agent.updated": frozenset({"agent_id", "enabled", "auto_update"}),
     "agent.update_downloaded": frozenset({"agent_id", "from_version", "to"}),
     "naming_profile.created": frozenset({"profile_id", "customer", "name", "copied_from"}),
+    "zone_schema.saved": frozenset({"profile_id", "zones", "links"}),
+    "zone_schema.deleted": frozenset({"profile_id"}),
     "dictionary.copied": frozenset(
         {"profile_id", "kind", "source_profile_id", "source_kind", "count"}
     ),
@@ -138,7 +140,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "zone.created": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),
     "zone.updated": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),
     "zone.deleted": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
-    "zone_policy.set": frozenset({"tenant_id", "src_zone_id", "dst_zone_id", "intent"}),
+    "zone_policy.set": frozenset({"tenant_id", "src_zone_id", "dst_zone_id", "intent", "via"}),
     # Versionen des Zonenplans (0.52.0)
     "zone_suggestion.dismissed": frozenset({"tenant_id", "keys"}),
     "zone_suggestion.undismissed": frozenset({"tenant_id", "keys"}),

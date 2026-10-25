@@ -974,6 +974,77 @@ test("Netzwerkdesign: Zonen-Vorschläge ansehen, ausblenden, übernehmen", async
   expect(problems).toEqual([]);
 });
 
+const SCHEMA_DRAWING = `<mxfile><diagram name="Zonenschema"><mxGraphModel><root>
+<mxCell id="0"/><mxCell id="1" parent="0"/>
+<object id="lan" label="LAN" automato_match="lan*"><mxCell vertex="1" parent="1" style="fillColor=#dae8fc;">
+<mxGeometry x="20" y="20" width="140" height="60" as="geometry"/></mxCell></object>
+<object id="dmz" label="DMZ" automato_kind="DMZ"><mxCell vertex="1" parent="1" style="fillColor=#ffe6cc;">
+<mxGeometry x="240" y="20" width="140" height="60" as="geometry"/></mxCell></object>
+<object id="inet" label="Internet" automato_kind="extern"><mxCell vertex="1" parent="1" style="fillColor=#f8cecc;">
+<mxGeometry x="460" y="20" width="140" height="60" as="geometry"/></mxCell></object>
+<object id="trf" label="Transfernetze" automato_kind="Transfer"><mxCell vertex="1" parent="1">
+<mxGeometry x="20" y="140" width="140" height="60" as="geometry"/></mxCell></object>
+<object id="prt" label="Partner" automato_kind="extern"><mxCell vertex="1" parent="1">
+<mxGeometry x="460" y="140" width="140" height="60" as="geometry"/></mxCell></object>
+<mxCell id="e1" value="" edge="1" parent="1" source="inet" target="dmz" style="endArrow=classic;dashed=1;"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="e2" value="gesperrt" edge="1" parent="1" source="dmz" target="lan" style="endArrow=classic;"><mxGeometry relative="1" as="geometry"/></mxCell>
+</root></mxGraphModel></diagram></mxfile>`;
+
+test("Grundschema der Zonen: draw.io hochladen, Vorschläge und Absichten danach", async ({ page, problems }) => {
+  await page.goto("/#dict");
+  const card = page.locator("#zone-schema");
+  await expect(card).toContainText("Noch kein Grundschema");
+  // Vorlage herunterladen
+  const [tpl] = await Promise.all([page.waitForEvent("download"), card.locator("button:has-text('Vorlage (draw.io)')").click()]);
+  expect(tpl.suggestedFilename()).toBe("zonenschema-vorlage.drawio");
+  // Zeichnung hochladen: Vorschau mit Unterschied, dann speichern
+  await card.locator("input[type='file']").setInputFiles({ name: "zonen.drawio", mimeType: "application/xml", buffer: Buffer.from(SCHEMA_DRAWING) });
+  const modal = page.locator(".modal");
+  await expect(modal.locator("#zone-schema-diff")).toContainText("neu: DMZ, Internet, LAN, Partner, Transfernetze");
+  await expect(modal.locator("#zone-schema-links tbody tr")).toHaveCount(2);
+  await modal.locator("#zone-schema-save").click();
+  await expect(card.locator("#zone-schema-zones tbody tr")).toHaveCount(5);
+  await expect(card.locator("#zone-schema-drawing rect")).toHaveCount(5);
+  await expect(card).toContainText("zonen.drawio");
+  const [drawing] = await Promise.all([page.waitForEvent("download"), card.locator("button:has-text('Zeichnung herunterladen')").click()]);
+  expect(drawing.suggestedFilename()).toBe("zonen.drawio");
+
+  // Netzwerkdesign: Transfer heisst wie im Schema, fehlende Zone und Absichten aus dem Schema
+  await page.goto("/#design");
+  await page.click(".tabbar button:has-text('Vorschläge')");
+  const transfer = page.locator("#zone-suggestions tbody tr[data-key='transfernetze']");
+  await expect(transfer).toContainText("Transfernetze");
+  await expect(transfer.locator(".chip", { hasText: "Schema" })).toBeVisible();
+  const status = page.locator("#zone-schema-status");
+  await expect(status.locator("#zone-schema-missing")).toContainText("Partner");
+  const intents = status.locator("#zone-schema-intents tbody tr");
+  await expect(intents).toHaveCount(2);
+  await expect(intents.filter({ hasText: "DMZ → LAN" })).toContainText("gesperrt");
+  await status.locator("#zone-schema-apply").click();
+  await expect(page.getByText("2 Absicht(en) aus dem Grundschema gesetzt")).toBeVisible();
+  await expect(status).toContainText("die Zonenmatrix entspricht dem Schema");
+  // „anlegen…“ öffnet den Editor mit der Zone aus dem Schema (abbrechen)
+  await status.locator("#zone-schema-missing button").click();
+  await expect(page.locator("#zo-name")).toHaveValue("Partner");
+  await expect(page.locator("#zo-kind")).toHaveValue("external");
+  await page.click(".modal button:has-text('Abbrechen')");
+
+  // aufräumen: Absichten und Schema wieder weg
+  const zones = (await (await page.request.get("/api/zones?tenant_id=1")).json()) as LogicalZoneRow[];
+  const id = (name: string) => zones.find((z) => z.name === name)!.id;
+  for (const [src, dst] of [
+    ["Internet", "DMZ"],
+    ["DMZ", "LAN"],
+  ]) {
+    const r = await page.request.put("/api/zones/policy", { data: { tenant_id: 1, src_zone_id: id(src), dst_zone_id: id(dst), intent: null } });
+    expect(r.status()).toBe(200);
+  }
+  const profiles = (await (await page.request.get("/api/naming-profiles")).json()) as { id: number; name: string }[];
+  const pid = profiles.find((p) => p.name === "default")!.id;
+  expect((await page.request.delete(`/api/naming-profiles/${pid}/zone-schema`)).status()).toBe(204);
+  expect(problems).toEqual([]);
+});
+
 test("Kunden-Benutzer in Automato zuordnen: Zonen des Kunden, Anmeldung ohne Rolle sieht nur ihn", async ({ page, browser, problems }) => {
   const login = `kunde.dmz${test.info().retry}@example.ch`;
   const name = `Kunde DMZ ${test.info().retry}`;

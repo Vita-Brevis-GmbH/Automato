@@ -7,6 +7,32 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.55.0 – 2026-10-25
+
+Grundschema der Zonen in der Namenskonvention als draw.io-Zeichnung (Entscheid des Anwenders,
+ADR 0024 Nr. 11). Ohne Migration (Wörterbuch-Arten `zone_schema`, `zone_schema_link`,
+`zone_schema_meta`); ohne Schema arbeitet alles wie bisher. Nur lesend gegenüber allen
+Quellsystemen.
+
+- **Namensprofile → Grundschema der Zonen:**
+  - **Vorlage (draw.io)** mit Beispiel-Zonen und Übergängen bzw. **aus den Zonen** eines
+    Mandanten als Ausgangspunkt; in draw.io bearbeiten.
+  - **Zeichnung hochladen** (Admin, `.drawio`, auch komprimiert): jede Form = Zone (Name,
+    Beschreibung, Füllfarbe), Eigenschaften `automato_kind`, `automato_code`, `automato_match`
+    (Erkennungsmuster), `automato_order`; Formen mit Zonen darin = Gruppe. Pfeile = Übergänge mit
+    Absicht aus Beschriftung (erlaubt, eingeschränkt, gesperrt), `automato_intent`, Strichart
+    bzw. Farbe; Richtung nach Pfeil.
+  - Vorschau mit Zonen, Übergängen, Hinweisen und Unterschied zum gespeicherten Schema; Ansicht
+    als Zeichnung und Tabellen; Zeichnung wieder herunterladen; entfernen.
+- **Vorschläge nach dem Schema** (Netzwerkdesign → Vorschläge): Name, Art und Farbe der passenden
+  Schema-Zone (Name, Kurzname bzw. Muster), Interfaces auch allein über die Muster; Chip
+  „Schema“ bzw. „nicht im Schema“, Filter „nur aus dem Grundschema“.
+- **Karte Grundschema:** Schema-Zonen ohne Zone und ohne Vorschlag (anlegen über den Editor),
+  Zonen ausserhalb des Schemas und die **Absichten** des Schemas, die in der Zonenmatrix fehlen
+  bzw. abweichen – fehlende auf einmal übernehmen, abweichende einzeln ersetzen (Operator,
+  `POST /zones/schema/intents`, Audit mit `via`).
+- Sicherheit: Upload höchstens 2 MB, keine DTD/Entitäten, entpackt höchstens 10 MB.
+
 ## 0.54.0 – 2026-10-25
 
 Zonen automatisch erkennen und vorschlagen (Entscheid des Anwenders, ADR 0024 Nr. 10).

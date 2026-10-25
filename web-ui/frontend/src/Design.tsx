@@ -7,6 +7,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   acceptZoneSuggestions,
+  applySchemaIntents,
   createZone,
   Customer,
   deletePlanVersion,
@@ -33,6 +34,7 @@ import {
   PlanVersionFull,
   previewZone,
   savePlanVersion,
+  SchemaZone,
   setZonePolicy,
   System,
   TopoExit,
@@ -47,6 +49,7 @@ import {
   ZonePreview,
   ZoneSelector,
   ZoneSelectorKind,
+  ZoneSchemaStatus,
   ZoneSuggestion,
   ZoneSuggestions,
   ZoneSuggestionSource,
@@ -316,6 +319,8 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [exits, setExits] = useState<TopoExit[]>([]);
   const [editing, setEditing] = useState<ZoneSuggestion | null>(null);
+  const [fromSchema, setFromSchema] = useState<SchemaZone | null>(null);
+  const [onlySchema, setOnlySchema] = useState(false);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const [err, setErr] = useState<unknown>(null);
@@ -348,6 +353,7 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
       return n;
     });
   const open = data?.items.filter((s) => !s.dismissed) ?? [];
+  const shown = data?.items.filter((s) => !onlySchema || s.schema) ?? [];
 
   const accept = async (keys: string[]) => {
     setBusy(true);
@@ -361,6 +367,16 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
       setErr(e);
     } finally {
       setBusy(false);
+    }
+  };
+  const applyIntents = async (pairs?: [number, number][], overwrite = false) => {
+    setErr(null);
+    try {
+      const r = await applySchemaIntents(tenantId, pairs, overwrite);
+      setDone(`${r.changed.length} Absicht(en) aus dem Grundschema gesetzt`);
+      load();
+    } catch (e) {
+      setErr(e);
     }
   };
   const dismiss = async (s: ZoneSuggestion) => {
@@ -393,7 +409,12 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
               Vorschlag
             </span>
           )}
-          <label className="check" style={{ marginLeft: "auto" }}>
+          {data?.schema && (
+            <label className="check" style={{ marginLeft: "auto" }}>
+              <input type="checkbox" checked={onlySchema} onChange={(e) => setOnlySchema(e.target.checked)} /> nur aus dem Grundschema
+            </label>
+          )}
+          <label className="check" style={data?.schema ? undefined : { marginLeft: "auto" }}>
             <input type="checkbox" checked={showDismissed} onChange={(e) => setShowDismissed(e.target.checked)} /> ausgeblendete zeigen
             {data && data.summary.dismissed > 0 && ` (${data.summary.dismissed})`}
           </label>
@@ -445,7 +466,7 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
                 </tr>
               </thead>
               <tbody>
-                {data.items.map((s) => (
+                {shown.map((s) => (
                   <tr key={s.key} className={s.dismissed ? "muted" : ""} data-key={s.key}>
                     {canEdit && (
                       <td>
@@ -456,6 +477,14 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
                       <Swatch color={s.color} /> <b>{s.name}</b>{" "}
                       {s.action === "extend" ? <span className="chip">ergänzt Zone</span> : <span className="chip ok">neu</span>}
                       {s.dismissed && <span className="chip warn">ausgeblendet</span>}
+                      {data.schema &&
+                        (s.schema ? (
+                          <span className="chip local" title={`Zone „${s.schema}“ im Grundschema`}>
+                            Schema
+                          </span>
+                        ) : (
+                          <span className="chip warn">nicht im Schema</span>
+                        ))}
                       {s.refines.length > 0 && <div className="faint">genauer als {s.refines.join(", ")}</div>}
                     </td>
                     <td>
@@ -504,6 +533,9 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
           )}
         </div>
       </div>
+      {data?.schema && (
+        <SchemaStatus status={data.schema} canEdit={canEdit} onCreate={setFromSchema} onApply={applyIntents} />
+      )}
       {data && data.rest.total > 0 && (
         <div className="card">
           <div className="card-head">
@@ -539,6 +571,31 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
           </div>
         </div>
       )}
+      {fromSchema && (
+        <ZoneEditor
+          tenantId={tenantId}
+          systems={systems}
+          customers={customers}
+          exits={exits}
+          initial={null}
+          draft={{
+            tenant_id: tenantId,
+            name: fromSchema.name,
+            code: fromSchema.code,
+            kind: fromSchema.kind,
+            color: fromSchema.color,
+            customer_id: null,
+            position: 0,
+            description: fromSchema.description ?? "aus dem Grundschema",
+            selectors: [],
+          }}
+          onClose={() => setFromSchema(null)}
+          onSaved={() => {
+            setFromSchema(null);
+            load();
+          }}
+        />
+      )}
       {editing && (editing.action === "create" || target) && (
         <ZoneEditor
           tenantId={tenantId}
@@ -569,6 +626,106 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
         />
       )}
     </>
+  );
+}
+
+// Grundschema des Mandanten (0.55.0): fehlende Zonen, Absichten aus dem Schema, Zonen ausserhalb
+function SchemaStatus({
+  status,
+  canEdit,
+  onCreate,
+  onApply,
+}: {
+  status: ZoneSchemaStatus;
+  canEdit: boolean;
+  onCreate: (z: SchemaZone) => void;
+  onApply: (pairs?: [number, number][], overwrite?: boolean) => void;
+}) {
+  const missing = status.intents.filter((x) => x.current == null);
+  return (
+    <div className="card" id="zone-schema-status">
+      <div className="card-head">
+        <h2>Grundschema</h2>
+        <span className="faint">
+          „{status.profile}“: {status.zones} Zonen, {status.links} Übergänge –{" "}
+          <a href="#dict">in den Namensprofilen pflegen</a>
+        </span>
+      </div>
+      <div className="card-body pad">
+        <div className="field">
+          <label>Fehlen (im Schema, ohne Zone und ohne Vorschlag)</label>
+          {status.missing.length === 0 ? (
+            <span className="faint">keine</span>
+          ) : (
+            <div className="objs" id="zone-schema-missing">
+              {status.missing.map((z) => (
+                <span key={z.key} className="chip">
+                  <Swatch color={z.color} /> {z.name} <span className="faint">{ZONE_KIND[z.kind]}</span>
+                  {canEdit && (
+                    <button className="linkbtn" title="Zone anlegen" onClick={() => onCreate(z)}>
+                      anlegen…
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="field" style={{ marginTop: 10 }}>
+          <label>Absichten aus dem Schema, die in der Zonenmatrix fehlen bzw. abweichen</label>
+          {status.intents.length === 0 ? (
+            <span className="faint">keine – die Zonenmatrix entspricht dem Schema</span>
+          ) : (
+            <>
+              <table className="compact" id="zone-schema-intents">
+                <tbody>
+                  {status.intents.map((x) => (
+                    <tr key={`${x.src_zone_id}>${x.dst_zone_id}`}>
+                      <td>
+                        {x.src} → {x.dst}
+                        {(x.schema_src !== x.src || x.schema_dst !== x.dst) && (
+                          <div className="faint">
+                            Schema: {x.schema_src} → {x.schema_dst}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <span className={`chip ${INTENT[x.intent][0]}`}>{INTENT[x.intent][1]}</span>
+                      </td>
+                      <td className="faint">{x.current ? `in Automato: ${INTENT[x.current][1]}` : "fehlt"}</td>
+                      <td className="nowrap">
+                        {canEdit && x.current && (
+                          <button className="btn btn-sm btn-ghost" onClick={() => onApply([[x.src_zone_id, x.dst_zone_id]], true)}>
+                            Ersetzen
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {canEdit && missing.length > 0 && (
+                <button className="btn btn-sm btn-primary" id="zone-schema-apply" style={{ marginTop: 8 }} onClick={() => onApply()}>
+                  Fehlende Absichten übernehmen ({missing.length})
+                </button>
+              )}
+            </>
+          )}
+        </div>
+        {status.outside.length > 0 && (
+          <div className="field" style={{ marginTop: 10 }}>
+            <label>Zonen ausserhalb des Schemas</label>
+            <div className="objs">
+              {status.outside.map((z) => (
+                <span key={z.id} className="chip warn">
+                  {z.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

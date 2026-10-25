@@ -1322,6 +1322,63 @@ export const copyDictionary = (
   );
 export const fetchDictionary = (profileId: number) =>
   getJSON<DictionaryEntry[]>(`/api/naming-profiles/${profileId}/dictionary`);
+
+// Grundschema der Zonen (0.55.0): draw.io-Zeichnung im Namensprofil – Zonen mit Art, Kurzname,
+// Farbe und Erkennungsmustern, Übergänge mit Absicht
+export interface SchemaZone {
+  name: string;
+  key: string;
+  kind: ZoneKind;
+  kind_reason: string;
+  code: string | null;
+  color: string | null;
+  match: string[];
+  position: number;
+  group: string | null;
+  description: string | null;
+  geometry: [number, number, number, number] | null;
+}
+export interface SchemaLink {
+  src: string;
+  dst: string;
+  intent: ZoneIntent;
+  reason: string;
+  note: string | null;
+}
+export interface ZoneSchemaData {
+  zones: SchemaZone[];
+  links: SchemaLink[];
+  warnings: string[];
+  page: string | null;
+  pages: string[];
+}
+export interface ZoneSchemaState {
+  profile_id: number;
+  schema: ZoneSchemaData | null;
+  drawing: { filename: string | null; uploaded_by: string | null; uploaded_at: string | null } | null;
+}
+export interface ZoneSchemaDiff {
+  zones: { added: string[]; removed: string[]; changed: { name: string; fields: string[] }[] };
+  links: { added: SchemaLink[]; removed: SchemaLink[]; changed: (SchemaLink & { before: ZoneIntent })[] };
+}
+export const fetchZoneSchema = (profileId: number) => getJSON<ZoneSchemaState>(`/api/naming-profiles/${profileId}/zone-schema`);
+export const previewZoneSchema = (profileId: number, content: string, filename: string | null) =>
+  sendJSON<{ schema: ZoneSchemaData; diff: ZoneSchemaDiff }>(`/api/naming-profiles/${profileId}/zone-schema/preview`, "POST", {
+    content,
+    filename,
+  });
+export const saveZoneSchema = (profileId: number, content: string, filename: string | null) =>
+  sendJSON<ZoneSchemaState>(`/api/naming-profiles/${profileId}/zone-schema`, "PUT", { content, filename });
+export const deleteZoneSchema = (profileId: number) => sendJSON<void>(`/api/naming-profiles/${profileId}/zone-schema`, "DELETE");
+async function fileOf(url: string, fallback: string): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetchChecked(url);
+  const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+  return { blob: await response.blob(), filename: match?.[1] ?? fallback };
+}
+export const zoneSchemaDrawing = (profileId: number) => fileOf(`/api/naming-profiles/${profileId}/zone-schema/drawing`, "zonenschema.drawio");
+// Vorlage: ohne Mandant Beispiel-Zonen, mit Mandant dessen Zonen und Absichten als Ausgangspunkt
+export const zoneSchemaTemplate = (tenantId?: number) =>
+  fileOf(`/api/naming-profiles/zone-schema/template${qs({ tenant_id: tenantId })}`, "zonenschema-vorlage.drawio");
 export const upsertEntry = (
   profileId: number,
   body: { kind: string; key: string; value?: string | null },
@@ -2451,9 +2508,32 @@ export interface ZoneSuggestion {
   refines: string[];
   conflicts: { network: string; zone?: string; suggestion?: string }[];
   dismissed: boolean;
+  schema: string | null; // Zone des Grundschemas (0.55.0)
+}
+export interface SchemaIntent {
+  src_zone_id: number;
+  src: string;
+  dst_zone_id: number;
+  dst: string;
+  intent: ZoneIntent;
+  current: ZoneIntent | null;
+  schema_src: string;
+  schema_dst: string;
+  note: string | null;
+}
+export interface ZoneSchemaStatus {
+  profile_id: number;
+  profile: string;
+  zones: number;
+  links: number;
+  matched: Record<string, string>;
+  missing: SchemaZone[];
+  outside: { id: number; name: string }[];
+  intents: SchemaIntent[];
 }
 export interface ZoneSuggestions {
   items: ZoneSuggestion[];
+  schema: ZoneSchemaStatus | null;
   rest: { total: number; items: { network: string; node: string; where: string }[] };
   summary: { suggestions: number; create: number; extend: number; dismissed: number; open: number; rest: number };
 }
@@ -2463,6 +2543,13 @@ export const acceptZoneSuggestions = (tenantId: number, keys: string[]) =>
   sendJSON<{ created: number[]; updated: number[]; missing: string[] }>("/api/zones/suggestions/accept", "POST", {
     tenant_id: tenantId,
     keys,
+  });
+// Absichten aus dem Grundschema setzen (ohne `pairs` alle fehlenden; abweichende nur mit `overwrite`)
+export const applySchemaIntents = (tenantId: number, pairs?: [number, number][], overwrite = false) =>
+  sendJSON<{ changed: { src: number; dst: number; intent: ZoneIntent; before: ZoneIntent | null }[] }>("/api/zones/schema/intents", "POST", {
+    tenant_id: tenantId,
+    pairs: pairs ?? null,
+    overwrite,
   });
 export const dismissZoneSuggestions = (tenantId: number, keys: string[], undo = false) =>
   sendJSON<{ keys: string[] }>(`/api/zones/suggestions/dismiss${undo ? "/undo" : ""}`, "POST", { tenant_id: tenantId, keys });

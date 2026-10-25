@@ -3,7 +3,8 @@
 ## Status
 
 Entwurf (2026-10-24), umgesetzt in 0.51.0 (Zonen, Matrix, Plan), 0.52.0 (Export, Versionen),
-0.53.0 (Kunden auf Zonen, ADR 0018 Schritt 4) und 0.54.0 (Zonen erkennen und vorschlagen).
+0.53.0 (Kunden auf Zonen, ADR 0018 Schritt 4), 0.54.0 (Zonen erkennen und vorschlagen) und 0.55.0
+(Grundschema der Zonen aus draw.io).
 Baut auf dem Topologie-Modell (ADR 0019, 0.50.0) und den Selektoren der Kunden (ADR 0018) auf.
 
 ## Kontext
@@ -122,8 +123,44 @@ Entscheide des Anwenders (2026-10-23):
     - Ausblenden (`zone_suggestion_dismissal`, Migration 0051) und wieder vorschlagen (Operator,
       Audit `zone_suggestion.dismissed/undismissed`).
     - Dazu die gelesenen Netze ohne Zone und ohne Vorschlag („nicht erkannt“).
-    - Die Erkennung arbeitet ohne Wörterbücher; ein Grundschema der Zonen in der Namenskonvention
-      (draw.io, 0.55.0) soll Namen und Art später vorgeben.
+    - Die Erkennung arbeitet ohne Wörterbücher; das Grundschema (Nr. 11) gibt Namen und Art vor,
+      wenn es gepflegt ist.
+11. **Grundschema der Zonen (0.55.0, `store/zone_schema.py`):** Entscheid des Anwenders
+    (2026-10-25): ein Grundschema der möglichen Zonen als Grundlage, in der Namenskonvention
+    anhand einer Zeichnung (draw.io) definiert.
+    - **Ort:** im Namensprofil (Namensprofile → Grundschema der Zonen), gespeichert als
+      Wörterbuch-Arten `zone_schema` (Zone), `zone_schema_link` (Übergang) und `zone_schema_meta`
+      (die Zeichnung) – ohne Migration, kopierbar wie jede Art. Gilt für alle Mandanten des
+      Profils (eigenes bzw. „default“). Ohne Funktionszwang: ohne Schema arbeiten Zonen und
+      Vorschläge wie in 0.54.0.
+    - **Zeichnung lesen:** `.drawio` unkomprimiert oder komprimiert (Base64 + Deflate), erste
+      Seite bzw. die Seite mit „Zone“/„Schema“ im Namen. Jede Form mit Beschriftung = Zone (erste
+      Zeile = Name, weitere = Beschreibung); Text, Beschriftungen von Verbindungen, Knoten aus dem
+      Zonenplan-Export (`automato_node`) und `automato_ignore` nicht; eine Form mit Zonen darin =
+      Gruppe. Eigenschaften (draw.io „Daten bearbeiten“): `automato_kind` (deutsch oder englisch),
+      `automato_code`, `automato_match` (Muster mit `*`/`?`), `automato_order`; Farbe = Füllfarbe;
+      ohne Art aus dem Namen. Jede Verbindung zwischen zwei Zonen = Übergang; Absicht aus
+      `automato_intent`, der Beschriftung (erlaubt/eingeschränkt/gesperrt, auch englisch),
+      gestrichelt = eingeschränkt, rote Linie = gesperrt, sonst erlaubt; Richtung nach Pfeil, ohne
+      bzw. mit zwei Pfeilen beide Richtungen; doppelte Übergänge: der strengere gilt. Hinweise
+      (doppelte Namen, lose Verbindungen, unbekannte Art, weitere Seiten) werden angezeigt.
+    - **Hochladen** (Admin) mit Vorschau: Zonen, Übergänge, Hinweise und der Unterschied zum
+      gespeicherten Schema; erst „speichern“ ersetzt es. Die Zeichnung bleibt erhalten
+      (herunterladen, in draw.io weiterbearbeiten). Vorlage mit Beispiel-Zonen bzw. aus den Zonen
+      und Absichten eines Mandanten als Ausgangspunkt; der Export des Zonenplans (Nr. 8) lässt sich
+      ebenfalls lesen (nur die Zonen).
+    - **Vorschläge nach dem Schema:** passt ein Name (bzw. bei Interfaces auch Alias) auf eine
+      Zone des Schemas – gleicher normalisierter Name oder Kurzname, sonst das erste passende
+      Muster –, gelten deren Name, Art und Farbe; Interfaces werden auch allein über die Muster
+      erkannt. Transfer und Management gehören zur Schema-Zone dieser Art. Vorschläge ohne
+      Treffer bleiben (markiert „nicht im Schema“).
+    - **Abgleich mit den Zonen** (Reiter Vorschläge): Schema-Zonen ohne Zone und ohne Vorschlag
+      (anlegen über den Editor), Zonen ausserhalb des Schemas, und die **Absichten** des Schemas
+      zwischen den bestehenden Zonen, die in der Zonenmatrix fehlen bzw. abweichen. Fehlende
+      übernimmt der Operator auf einmal, abweichende nur einzeln („ersetzen“); Notiz
+      „Grundschema: A → B“, Audit `zone_policy.set` mit `via`.
+    - **Sicherheit:** höchstens 2 MB, keine DTD/Entitäten, entpackt höchstens 10 MB, nur Daten der
+      Plattform (SECURITY.md Nr. 10).
 
 ## Folgen
 
@@ -133,6 +170,6 @@ Entscheide des Anwenders (2026-10-23):
   Zone fällt ihre Absicht weg; beim Löschen eines Quellsystems seine Selektoren.
 - Zonen sind nicht funktionsrelevant für den Rest: ohne Zonen arbeitet die Plattform wie
   bisher (Matrix und Plan sind leer, keine Befunde).
-- Offen: Grundschema der Zonen in der Namenskonvention aus einer draw.io-Zeichnung (0.55.0),
-  Export nach Confluence (eigene Freigabe), draw.io-Datei zurück einlesen (Korrekturen im Designer), Zonen in der Weg-Suche (Zonen je Hop), Absicht je Dienst (eingeschränkt = nur
+- Offen: Zonen je Kunde im Grundschema (Vorlage „je Kunde“), Befund „Zone ausserhalb des
+  Schemas“, Export nach Confluence (eigene Freigabe), draw.io-Datei zurück einlesen (Korrekturen im Designer), Zonen in der Weg-Suche (Zonen je Hop), Absicht je Dienst (eingeschränkt = nur
   bestimmte Dienste), Relevanz nach Pfad für die Matrix (ADR 0019).

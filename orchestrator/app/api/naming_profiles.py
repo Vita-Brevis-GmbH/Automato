@@ -2,16 +2,21 @@
 
 Lesen = `viewer`, Schreiben (Profile/Einträge pflegen) = `admin` (RBAC, E1/ADR 0007).
 `kind` ist ein offener String → neue Namenskonventionsvorgaben ohne Schema-Änderung.
+
+Seit 0.55.0 das **Grundschema der Zonen** als draw.io-Zeichnung je Profil
+(`store/zone_schema.py`): Vorschau, speichern und entfernen = `admin`, lesen, Zeichnung und
+Vorlage herunterladen = `viewer`.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.auth.deps import require_admin, require_viewer
+from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import DictionaryEntry
+from app.models import DictionaryEntry, Tenant
 from app.schemas.naming_profile import (
     DictionaryCopyIn,
     DictionaryCopyOut,
@@ -21,6 +26,7 @@ from app.schemas.naming_profile import (
     NamingProfileOut,
 )
 from app.store import naming_profiles as store
+from app.store import zone_schema
 
 router = APIRouter(prefix="/naming-profiles", tags=["naming-profiles"])
 
@@ -165,4 +171,147 @@ def delete_entry(
         action="dictionary_entry.deleted",
         subject=str(entry_id),
         detail={"entry_id": entry_id},
+    )
+
+
+# -- Grundschema der Zonen (0.55.0, ADR 0024 Nr. 11) -------------------------------------
+
+
+class ZoneSchemaIn(BaseModel):
+    filename: str | None = Field(default=None, max_length=500)
+    content: str = Field(min_length=1, max_length=zone_schema.MAX_BYTES)
+
+
+def _profile(session: Session, profile_id: int):
+    p = store.get_profile(session, profile_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="profile not found")
+    return p
+
+
+def _parse(body: ZoneSchemaIn) -> zone_schema.Schema:
+    try:
+        return zone_schema.parse(body.content)
+    except zone_schema.SchemaError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _schema_out(session: Session, profile_id: int) -> dict:
+    schema = zone_schema.load(session, profile_id)
+    m = zone_schema.meta(session, profile_id)
+    info = (m.extra or {}) if m else {}
+    return {
+        "profile_id": profile_id,
+        "schema": schema.out() if schema else None,
+        "drawing": {"filename": m.value, "uploaded_by": info.get("uploaded_by"),
+                    "uploaded_at": info.get("uploaded_at")} if m else None,
+    }  # fmt: skip
+
+
+def _file(content: str, name: str) -> Response:
+    return Response(content=content, media_type="application/vnd.jgraph.mxfile",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+
+
+@router.get("/zone-schema/template")
+def zone_schema_template(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> Response:
+    """Vorlage als draw.io: Beispiel-Zonen mit Eigenschaften und Uebergaengen - bzw. mit
+    `tenant_id` die logischen Zonen und Absichten dieses Mandanten als Ausgangspunkt."""
+    if tenant_id is None:
+        return _file(zone_schema.drawing(zone_schema.default_schema(), "Zonenschema (Vorlage)"),
+                     "zonenschema-vorlage.drawio")  # fmt: skip
+    tid = tenant_scope(principal, tenant_id)
+    tenant = session.get(Tenant, tid)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="tenant not found")
+    schema = zone_schema.from_zones(session, tid)
+    return _file(zone_schema.drawing(schema, f"Zonenschema {tenant.name}"),
+                 "zonenschema-aus-zonen.drawio")  # fmt: skip
+
+
+@router.get("/{profile_id}/zone-schema")
+def get_zone_schema(
+    profile_id: int,
+    _: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Grundschema des Profils: Zonen, Uebergaenge, Hinweise und die Zeichnung."""
+    _profile(session, profile_id)
+    return _schema_out(session, profile_id)
+
+
+@router.post("/{profile_id}/zone-schema/preview")
+def preview_zone_schema(
+    profile_id: int,
+    body: ZoneSchemaIn,
+    _: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Zeichnung lesen, ohne zu speichern: Schema, Hinweise, Unterschied zum gespeicherten."""
+    _profile(session, profile_id)
+    schema = _parse(body)
+    return {"schema": schema.out(),
+            "diff": zone_schema.diff(zone_schema.load(session, profile_id), schema)}  # fmt: skip
+
+
+@router.put("/{profile_id}/zone-schema")
+def save_zone_schema(
+    profile_id: int,
+    body: ZoneSchemaIn,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Zeichnung als Grundschema des Profils speichern (Admin) - ersetzt das bisherige."""
+    _profile(session, profile_id)
+    schema = _parse(body)
+    zone_schema.save(session, profile_id, schema, body.content, body.filename, principal.subject)
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="zone_schema.saved",
+        subject=str(profile_id),
+        detail={"profile_id": profile_id, "zones": len(schema.zones), "links": len(schema.links)},
+    )
+    return _schema_out(session, profile_id)
+
+
+@router.delete("/{profile_id}/zone-schema", status_code=204)
+def delete_zone_schema(
+    profile_id: int,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+) -> None:
+    """Grundschema entfernen (Admin) - Zonen und Absichten in Automato bleiben."""
+    _profile(session, profile_id)
+    if zone_schema.remove(session, profile_id):
+        audit.record(
+            session,
+            actor=f"user:{principal.subject}",
+            action="zone_schema.deleted",
+            subject=str(profile_id),
+            detail={"profile_id": profile_id},
+        )
+
+
+@router.get("/{profile_id}/zone-schema/drawing")
+def zone_schema_drawing(
+    profile_id: int,
+    _: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> Response:
+    """Die hochgeladene Zeichnung (zum Weiterbearbeiten in draw.io)."""
+    p = _profile(session, profile_id)
+    m = zone_schema.meta(session, profile_id)
+    if m is None or not (m.extra or {}).get("content"):
+        schema = zone_schema.load(session, profile_id)
+        if schema is None:
+            raise HTTPException(status_code=404, detail="no zone schema")
+        return _file(zone_schema.drawing(schema, f"Zonenschema {p.name}"), "zonenschema.drawio")
+    name = (m.value or "zonenschema.drawio").replace('"', "").replace("\n", " ")
+    return _file(
+        m.extra["content"], name if name.endswith((".drawio", ".xml")) else f"{name}.drawio"
     )

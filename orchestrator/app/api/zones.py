@@ -15,6 +15,9 @@ loeschen (Admin).
 Seit 0.54.0: Vorschlaege aus dem Gelesenen (`store/zone_detect.py`, lesen Viewer):
 uebernehmen (neue Zone bzw. Selektoren einer bestehenden ergaenzen), ausblenden und wieder
 vorschlagen (Operator). Nicht fuer Kunden-Benutzer.
+
+Seit 0.55.0: die Vorschlaege richten sich nach dem Grundschema im Namensprofil; die Absichten,
+die es zwischen bestehenden Zonen vorgibt, uebernimmt `POST /zones/schema/intents` (Operator).
 """
 
 from datetime import UTC, datetime
@@ -84,6 +87,14 @@ class VersionIn(BaseModel):
 class KeysIn(BaseModel):
     tenant_id: int
     keys: list[str] = Field(min_length=1, max_length=500)  # Vorschlaege (normalisierter Name)
+
+
+class SchemaIntentsIn(BaseModel):
+    tenant_id: int
+    pairs: list[tuple[int, int]] | None = Field(
+        default=None, max_length=5000
+    )  # leer = alle fehlenden
+    overwrite: bool = False  # auch abweichende Absichten ersetzen (nur mit `pairs`)
 
 
 class PolicyIn(BaseModel):
@@ -367,6 +378,56 @@ def undismiss_suggestions(
 ) -> dict:
     """Ausgeblendete Vorschlaege wieder zeigen (Operator)."""
     return _dismiss(session, principal, body, undo=True)
+
+
+@router.post("/schema/intents")
+def apply_schema_intents(
+    body: SchemaIntentsIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Absichten aus dem Grundschema setzen (Operator): ohne `pairs` alle fehlenden; mit
+    `pairs` nur diese, abweichende nur mit `overwrite`."""
+    tid = tenant_scope(principal, body.tenant_id)
+    if session.get(Tenant, tid) is None:
+        raise HTTPException(status_code=404, detail="tenant not found")
+    wanted = {tuple(p) for p in body.pairs} if body.pairs is not None else None
+    changed = []
+    for x in zone_detect.schema_intents(session, tid):
+        pair = (x["src_zone_id"], x["dst_zone_id"])
+        if wanted is not None and pair not in wanted:
+            continue
+        if x["current"] is not None and not (body.overwrite and wanted is not None):
+            continue
+        p = session.scalar(
+            select(ZonePolicy).where(ZonePolicy.src_zone_id == pair[0],
+                                     ZonePolicy.dst_zone_id == pair[1])
+        )  # fmt: skip
+        if p is None:
+            p = ZonePolicy(tenant_id=tid, src_zone_id=pair[0], dst_zone_id=pair[1])
+            session.add(p)
+        note = f"Grundschema: {x['schema_src']} → {x['schema_dst']}"
+        p.intent, p.note = x["intent"], (f"{note} ({x['note']})" if x["note"] else note)[:2000]
+        p.updated_by, p.updated_at = principal.subject, datetime.now(UTC)
+        session.flush()
+        audit.record(
+            session,
+            actor=f"user:{principal.subject}",
+            action="zone_policy.set",
+            subject=f"{pair[0]}>{pair[1]}",
+            detail={
+                "tenant_id": tid,
+                "src_zone_id": pair[0],
+                "dst_zone_id": pair[1],
+                "intent": x["intent"],
+                "via": "schema",
+            },  # fmt: skip
+        )
+        changed.append({"src": pair[0], "dst": pair[1], "intent": x["intent"],
+                        "before": x["current"]})  # fmt: skip
+    if changed:
+        reconcile.refresh_zone_findings(session, tid)
+    return {"changed": changed}
 
 
 @router.get("/matrix")

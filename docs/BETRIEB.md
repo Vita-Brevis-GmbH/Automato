@@ -637,6 +637,14 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - Die Rolle der FortiGate-Interfaces liest der Agent ab 0.54.0 mit; bis zum nächsten Lauf
       fehlt sie (dann nur Name bzw. Management-Tabelle). Die NetBox-Rolle erst nach dem nächsten
       Einlesen der NetBox.
+    - **Mit Grundschema** (0.55.0, Namensprofile → Grundschema der Zonen): passt ein Name auf eine
+      Zone des Schemas (Name, Kurzname bzw. Erkennungsmuster), übernimmt der Vorschlag deren
+      Name, Art und Farbe (Chip „Schema“); Interfaces werden auch allein über die Muster erkannt
+      (z. B. `srv*`). Vorschläge ohne Treffer sind „nicht im Schema“ (Filter „nur aus dem
+      Grundschema“). Darunter die Karte **Grundschema**: Zonen des Schemas ohne Zone und ohne
+      Vorschlag (**anlegen…** öffnet den Editor), die **Absichten** des Schemas, die in der
+      Zonenmatrix fehlen bzw. abweichen (**Fehlende Absichten übernehmen**, abweichende einzeln
+      **Ersetzen**; Operator), und die Zonen ausserhalb des Schemas.
   - **Zonenmatrix:** Zeilen = Quellzone, Spalten = Zielzone, dazu „any“ und „ohne Zone“. Je
     Zelle ✓ erlaubende und ✕ sperrende Regeln (Firewall-Policies und ACI-Contracts, ohne
     Zwillinge paralleler Firewalls); oben, wie viele Regeln zugeordnet sind (ohne IP-Bereich,
@@ -758,6 +766,25 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     über die ausgeblendete Wörterbuch-Art `service_prefix` erweiterbar – die gilt weiter).
   - Die **Projektnummern** sind nicht mehr Teil der Namenskonvention (0.36.0): die Tabelle ist
     ausgeblendet, vorhandene Einträge bleiben gespeichert.
+  - **Grundschema der Zonen** (0.55.0, ADR 0024 Nr. 11): die möglichen Zonen und die Absicht
+    zwischen ihnen als **draw.io-Zeichnung** (diagrams.net).
+    - **Vorlage (draw.io)** herunterladen (Beispiel-Zonen Internet, DMZ, Server, Clients, Shared
+      Services, Management, Transfer mit Mustern und Übergängen) bzw. **aus den Zonen von …**
+      einem Mandanten als Ausgangspunkt; in draw.io anpassen.
+    - Zeichnen: jede Form = Zone (erste Zeile = Name, weitere = Beschreibung, Füllfarbe =
+      Farbe), Text und Beschriftungen zählen nicht, eine Form mit Zonen darin ist eine Gruppe.
+      Unter „Daten bearbeiten“ (Rechtsklick → Edit Data): `automato_kind` (intern, DMZ, extern,
+      Management, geteilt, Transfer), `automato_code` (Kurzname), `automato_match`
+      (Erkennungsmuster, mit Komma getrennt, z. B. `dmz*, *-web`), `automato_order`.
+    - Pfeil = Übergang: Beschriftung „erlaubt“, „eingeschränkt“ bzw. „gesperrt“ (oder
+      `automato_intent`), sonst gestrichelt = eingeschränkt, rote Linie = gesperrt, sonst
+      erlaubt; Linie ohne bzw. mit zwei Pfeilen gilt in beide Richtungen.
+    - **Zeichnung hochladen…** (Admin, `.drawio`, höchstens 2 MB, auch komprimiert): Vorschau
+      mit Zonen, Übergängen, Hinweisen und dem Unterschied zum gespeicherten Schema; **Als
+      Grundschema speichern** ersetzt es. **Zeichnung herunterladen** gibt die hochgeladene Datei
+      zurück, **Schema entfernen** löscht es (Zonen und Absichten bleiben).
+    - Das Schema gilt für alle Mandanten des Profils (bzw. „default“) und ist ohne Funktionszwang:
+      ohne Schema arbeiten Zonen und Vorschläge wie bisher.
 - **Collector-Agenten (nur Admin):** **+ Agent** erzeugt das Token einmalig; Spalte
   **Geräte** (zugewiesene Quellsysteme); Status online/keine Meldung aus dem Heartbeat;
   Aktivieren/Deaktivieren. **Einrichtung Schritt für Schritt** direkt in der Ansicht: Geräte
@@ -828,7 +855,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern; Vorschläge je ACI-Tenant; nicht Zugeordnetes |
-| `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy`, `GET /zones/plan` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]`, `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin); seit 0.54.0 `GET /zones/suggestions[?dismissed=true]`, `POST /zones/suggestions/accept` und `POST /zones/suggestions/dismiss[/undo]` (`keys`, operator) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan mit `attachments` (Zone ↔ Knoten über interface/fabric/exit/route), `links`, `unzoned`, `layout` (Zeichnung); Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`); Vorschläge je `key` (normalisierter Name) mit `action` create/extend, `kind`/`kind_reason`, `customer_id`, `sources`, `evidence`, `selectors`, `counts` (nets/open/epgs), `conflicts`, `dismissed`, dazu `rest` (Netze ohne Zone und Vorschlag); übernehmen liefert `created`/`updated`/`missing` |
+| `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy`, `GET /zones/plan` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]`, `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin); seit 0.54.0 `GET /zones/suggestions[?dismissed=true]`, `POST /zones/suggestions/accept` und `POST /zones/suggestions/dismiss[/undo]` (`keys`, operator); seit 0.55.0 `POST /zones/schema/intents` (`pairs`, `overwrite`, operator) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan mit `attachments` (Zone ↔ Knoten über interface/fabric/exit/route), `links`, `unzoned`, `layout` (Zeichnung); Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`); Vorschläge je `key` (normalisierter Name) mit `action` create/extend, `kind`/`kind_reason`, `customer_id`, `sources`, `evidence`, `selectors`, `counts` (nets/open/epgs), `conflicts`, `dismissed`, dazu `rest` (Netze ohne Zone und Vorschlag); übernehmen liefert `created`/`updated`/`missing`; seit 0.55.0 je Vorschlag `schema` und `schema` mit `missing`/`outside`/`intents`/`matched` (Grundschema), Absichten übernehmen liefert `changed` |
 | `GET /auth/me`, `GET/POST /customer-users`, `PATCH/DELETE /customer-users/{id}` | Wer bin ich laut Orchestrator (Rollen, Mandanten, Kunden, `customer_source` claim/automato) – die Oberfläche richtet sich danach; Zuordnung Benutzer → Kunde (0.53.0, Admin): `login`, `customer_id`, `role` viewer/operator, `note` |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `POST /systems/{id}/check` | Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus (operator): Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint`; Agent-Systeme 409 (`run-agent.ps1 -Check`), 0.34.0 |
@@ -840,7 +867,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `POST /internal/collector-runs/{id}/result`, `GET …/{id}/target` | Ergebnis (Agent-Token des abholenden Agenten oder internes Token; Antwort = Quittung `status`/`message`); Ziel für den zentralen Worker |
 | `POST /internal/collector-runs/{id}/references` | Teil-Upload einer Referenzquelle (Infoblox/NetBox, je bis 2000 Einträge; das Ergebnis meldet `reference_count`, sonst wird der Lauf verworfen) |
 | `GET /netbox-sync/targets`, `GET/POST /netbox-sync/plans`, `GET …/plans/{id}[/items]`, `POST …/plans/{id}/apply` | NetBox-Sync (admin): Vorschau, Aktionen, Übernahme |
-| `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}` | Namensprofile |
+| `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}`; seit 0.55.0 `GET/PUT/DELETE …/{id}/zone-schema`, `POST …/{id}/zone-schema/preview`, `GET …/{id}/zone-schema/drawing`, `GET /naming-profiles/zone-schema/template[?tenant_id=]` | Namensprofile; Grundschema der Zonen (`content` = draw.io-XML, `filename`; schreiben = admin): `schema` mit `zones` (Name, Art, Kurzname, Farbe, `match`, Gruppe, Position) und `links` (`src`, `dst`, `intent`, `reason`), `warnings`, Vorschau mit `diff`; Zeichnung bzw. Vorlage als Datei |
 | `GET /system/status` | Betriebsstand (admin, siehe System-Seite) |
 | `GET /system/connections` (`?tenant_id=`) | Verbindungen jetzt prüfen (admin, 0.40.0): `status`, `problems`, `container.network`, `items` je Ziel mit `area`, `status` (ok/warn/error/info), `steps`, `hint`, `ufw` (Regel); dasselbe auf der VM: `automato check-connections [--json]` |
 | `GET /system/health` (`?tenant_id=`) | Betriebszustand als Ampel (viewer, mandantsgescoped): `status`, `problems`, `checks` je Prüfung mit `area`, `status` (ok/warn/error), `title`, `detail`, `view` |

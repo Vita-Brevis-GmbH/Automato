@@ -26,6 +26,12 @@ schliesst der Vorschlag aus - kein `zone_overlap` nach dem Uebernehmen. Ausgeble
 (`zone_suggestion_dismissal`) erscheinen nur auf Wunsch. Dazu die gelesenen Netze, fuer die es
 weder Zone noch Vorschlag gibt („nicht erkannt“).
 
+Seit 0.55.0 richtet sich die Erkennung nach dem **Grundschema** im Namensprofil des Mandanten
+(`store/zone_schema.py`, draw.io): passt ein Name auf eine Zone des Schemas (Name, Kurzname bzw.
+Erkennungsmuster), gelten deren Name, Art und Farbe; Interfaces werden auch ueber die Muster
+erkannt. Dazu die Schema-Zonen ohne Zone und Vorschlag, die Zonen ausserhalb des Schemas und die
+Absichten, die das Schema zwischen den bestehenden Zonen vorgibt (`schema_intents`).
+
 Nur lesend; die Erkennung schreibt nichts.
 """
 
@@ -42,11 +48,13 @@ from app.models import (
     InvInterface,
     InvSubnet,
     LogicalZone,
+    NamingProfile,
     SourceSystem,
     TopoExit,
+    ZonePolicy,
     ZoneSuggestionDismissal,
 )
-from app.store import customers, topo_model, zones
+from app.store import customers, topo_model, zone_schema, zones
 from app.store.customers import Net, Selector
 from app.store.paths import Graph, Key
 from app.store.topology import MGMT
@@ -160,6 +168,7 @@ class Candidate:
     epgs: dict[int, str] = field(default_factory=dict)
     conflicts: list[dict] = field(default_factory=list)
     target: LogicalZone | None = None
+    schema: "zone_schema.SchemaZone | None" = None
 
     @property
     def rank(self) -> int:
@@ -180,23 +189,33 @@ class _Found:
     # Name aus dieser Quelle zuerst (sprechender als Interface- bzw. VRF-Namen)
     NAME_ORDER = ("exit", "ipam", "fw_zone", "interface", "aci_vrf", "transfer")
 
-    def __init__(self) -> None:
+    def __init__(self, schema: "zone_schema.Schema | None" = None) -> None:
         self.by_key: dict[str, Candidate] = {}
         self._named: dict[str, int] = {}
+        self.schema = schema
 
     def put(self, key: str, name: str, source: str, kind: str | None, reason: str | None,
-            selectors: list[Selector], evidence: str) -> Candidate:  # fmt: skip
-        if kind in SINGLE:
+            selectors: list[Selector], evidence: str, names: tuple = ()) -> Candidate:  # fmt: skip
+        # Grundschema (0.55.0): passt der Name auf eine Zone des Schemas, gelten ihr Name und
+        # ihre Art; Transfer und Management gehoeren zur Schema-Zone dieser Art
+        sz = self.schema.match(name, *names) if self.schema else None
+        if sz is None and self.schema and kind in SINGLE:
+            sz = self.schema.of_kind(kind)
+        if sz is not None:
+            key, name = sz.key, sz.name
+        elif kind in SINGLE:
             key, name = kind, SINGLE[kind]
         c = self.by_key.get(key)
         if c is None:
-            c = self.by_key[key] = Candidate(key, _nice(name), source)
+            c = self.by_key[key] = Candidate(key, name if sz else _nice(name), source)
             self._named[key] = self.NAME_ORDER.index(source)
-        elif self.NAME_ORDER.index(source) < self._named[key]:
+            if sz is not None:
+                c.schema, c.kind, c.reason = sz, sz.kind, f"Grundschema „{sz.name}“"
+        elif c.schema is None and self.NAME_ORDER.index(source) < self._named[key]:
             c.name, self._named[key] = _nice(name), self.NAME_ORDER.index(source)
         if source not in c.sources:
             c.sources.append(source)
-        if kind and kind != "internal" and c.kind == "internal":
+        if c.schema is None and kind and kind != "internal" and c.kind == "internal":
             c.kind, c.reason = kind, reason
         for s in selectors:
             c.add(s)
@@ -263,7 +282,8 @@ def _interfaces(session: Session, tenant_id: int, g: Graph) -> list[_Iface]:
 def _from_transfer(found: _Found, nets: dict[str, list[str]]) -> None:
     for net in sorted(nets, key=lambda n: zones._net_key(ipaddress.ip_network(n))):
         found.put("transfer", "Transfer", "transfer", "transfer", "Netz zwischen gelesenen Knoten",
-                  [Selector("prefix", net)], f"{net}: {' ↔ '.join(nets[net])}")  # fmt: skip
+                  [Selector("prefix", net)], f"{net}: {' ↔ '.join(nets[net])}",
+                  ("transfer",))  # fmt: skip
 
 
 def _from_fw_zones(found: _Found, ifaces: list[_Iface]) -> None:
@@ -281,7 +301,7 @@ def _from_fw_zones(found: _Found, ifaces: list[_Iface]) -> None:
         sel = [Selector("fw_zone", n) for n in zone_names]
         for i in members:
             found.put(key, zone_names[0], "fw_zone", kind, reason, sel,
-                      f"Zone {i.zone} · {i.label}")  # fmt: skip
+                      f"Zone {i.zone} · {i.label}", tuple(zone_names))  # fmt: skip
 
 
 def _from_interfaces(found: _Found, ifaces: list[_Iface]) -> None:
@@ -292,6 +312,7 @@ def _from_interfaces(found: _Found, ifaces: list[_Iface]) -> None:
             continue
         sel = [Selector("fw_interface", i.name, i.sid)]
         where = f"Interface {i.name} · {i.label}" + (f" ({i.description})" if i.description else "")
+        names = (i.name, i.description or "")
         if i.mgmt:
             found.put("management", "Management", "interface", "management",
                       "Management-Interface", sel, where)  # fmt: skip
@@ -300,11 +321,15 @@ def _from_interfaces(found: _Found, ifaces: list[_Iface]) -> None:
         if hit is not None:
             label = i.description if classify(i.description) else i.name
             found.put(key_of(label, strip_digits=True), label, "interface", hit[0],
-                      f"Name „{hit[1]}“", sel, where)  # fmt: skip
+                      f"Name „{hit[1]}“", sel, where, names)  # fmt: skip
         elif i.role in ("dmz", "wan"):
             name = "DMZ" if i.role == "dmz" else "WAN"
             found.put(i.role, name, "interface", ROLE_KIND[i.role], f"FortiOS-Rolle {i.role}",
-                      sel, where)  # fmt: skip
+                      sel, where, names)  # fmt: skip
+        elif found.schema is not None and found.schema.match(*names):
+            # Erkennungsmuster des Grundschemas (z. B. `srv*`) - auch ohne Hinweis im Namen
+            found.put(key_of(i.name, strip_digits=True), i.name, "interface", None, None, sel,
+                      where, names)  # fmt: skip
 
 
 def _from_ipam(found: _Found, data: customers._Data) -> None:
@@ -317,7 +342,7 @@ def _from_ipam(found: _Found, data: customers._Data) -> None:
         hit = classify(v)
         kind, reason = (hit[0], f"Name „{hit[1]}“") if hit else (None, None)
         found.put(key_of(v), v, "ipam", kind, reason, [Selector("ipam_tag", f"{k}={v}")],
-                  f"IPAM {k}={v} ({n} Einträge)")  # fmt: skip
+                  f"IPAM {k}={v} ({n} Einträge)", (v,))  # fmt: skip
 
 
 def _from_aci(found: _Found, data: customers._Data) -> None:
@@ -340,7 +365,8 @@ def _from_aci(found: _Found, data: customers._Data) -> None:
         else:
             kind, reason = None, None
         found.put(f"aci:{vrf.casefold()}", vrf, "aci_vrf", kind, reason,
-                  [Selector("aci_vrf", vrf)], f"VRF {vrf}: {len(ids)} EPGs")  # fmt: skip
+                  [Selector("aci_vrf", vrf)], f"VRF {vrf}: {len(ids)} EPGs",
+                  (name,))  # fmt: skip
 
 
 def _from_exits(found: _Found, exits: list[TopoExit], used: set[str]) -> None:
@@ -361,6 +387,7 @@ def _from_exits(found: _Found, exits: list[TopoExit], used: set[str]) -> None:
             f"Anbindung ({e.kind})",
             sel,
             f"Anbindung {e.name}" + (f": {', '.join(map(str, nets[:3]))}" if nets else ""),
+            (e.name,),
         )
 
 
@@ -379,14 +406,18 @@ def _target(c: Candidate, items: list[LogicalZone]) -> LogicalZone | None:
     for z in items:
         if c.key == key_of(z.name) or (z.code and c.key == key_of(z.code)):
             return z
-    if c.key in SINGLE:
-        return next((z for z in items if z.kind == c.key), None)
+    if c.kind in SINGLE and (c.schema is not None or c.key in SINGLE):
+        return next((z for z in items if z.kind == c.kind), None)
     return None
+
+
+def _color(c: Candidate) -> str:
+    return (c.schema.color if c.schema else None) or KIND_COLOR[c.kind]
 
 
 def _owner(c: Candidate, owners: list[tuple[Customer, set[int], customers._Ranges]]
            ) -> Customer | None:  # fmt: skip
-    if c.key in SINGLE or "exit" in c.sources or not (c.nets or c.epgs):
+    if c.kind in SINGLE or "exit" in c.sources or not (c.nets or c.epgs):
         return None
     hits = [
         cust for cust, epgs, ranges in owners
@@ -415,7 +446,8 @@ def suggest(session: Session, tenant_id: int, include_dismissed: bool = False) -
     used = {s.value.strip().casefold() for z in items for s in z.selectors
             if s.kind == "exit" and not s.exclude}  # fmt: skip
 
-    found = _Found()
+    schema, profile = zone_schema.for_tenant(session, tenant_id)
+    found = _Found(schema)
     _from_transfer(found, topo_model.transfer_nets(session, tenant_id, g))
     _from_fw_zones(found, ifaces)
     _from_interfaces(found, ifaces)
@@ -499,7 +531,8 @@ def suggest(session: Session, tenant_id: int, include_dismissed: bool = False) -
             "name": target.name if target else c.name,
             "kind": target.kind if target else c.kind,
             "kind_reason": None if target else c.reason,
-            "color": target.color if target else KIND_COLOR[c.kind],
+            "color": target.color if target else _color(c),
+            "schema": c.schema.name if c.schema else None,
             "customer_id": cust_id,
             "customer": cust_names.get(cust_id) if cust_id else None,
             "sources": c.sources,
@@ -515,8 +548,10 @@ def suggest(session: Session, tenant_id: int, include_dismissed: bool = False) -
     out.sort(key=lambda s: (s["action"] != "extend", KIND_ORDER.index(s["kind"]),
                             s["name"].casefold()))  # fmt: skip
     rest = _rest(session, tenant_id, ifaces, idx, customers._Ranges(covered))
+    offered = {c.schema.key for c in cands if c.schema is not None}
     return {
         "items": out,
+        "schema": _schema_status(session, tenant_id, schema, profile, items, offered),
         "rest": {"total": len(rest), "items": rest[:REST]},
         "summary": {
             "suggestions": sum(1 for s in out if not s["dismissed"]),
@@ -527,6 +562,66 @@ def suggest(session: Session, tenant_id: int, include_dismissed: bool = False) -
             "rest": len(rest),
         },
     }
+
+
+def _mapped(
+    schema: "zone_schema.Schema", items: list[LogicalZone]
+) -> dict[int, "zone_schema.SchemaZone"]:
+    """Bestehende Zonen -> Zone des Grundschemas (Name, Kurzname bzw. Erkennungsmuster)."""
+    return {z.id: sz for z in items if (sz := schema.match(z.name, z.code)) is not None}
+
+
+def schema_intents(session: Session, tenant_id: int, schema: "zone_schema.Schema | None" = None,
+                   items: list[LogicalZone] | None = None) -> list[dict]:  # fmt: skip
+    """Absichten, die das Grundschema fuer die bestehenden Zonen vorgibt und die in Automato
+    fehlen bzw. abweichen (`current`)."""
+    if schema is None:
+        schema, _profile = zone_schema.for_tenant(session, tenant_id)
+    if schema is None:
+        return []
+    items = zones.load(session, tenant_id) if items is None else items
+    names = {z.id: z.name for z in items}
+    by_schema: dict[str, list[int]] = defaultdict(list)
+    for zid, sz in _mapped(schema, items).items():
+        by_schema[sz.key].append(zid)
+    current = {
+        (p.src_zone_id, p.dst_zone_id): p
+        for p in session.scalars(select(ZonePolicy).where(ZonePolicy.tenant_id == tenant_id))
+    }
+    out = []
+    for link in schema.links:
+        for s in by_schema.get(key_of(link.src), []):
+            for d in by_schema.get(key_of(link.dst), []):
+                p = current.get((s, d))
+                if s == d or (p is not None and p.intent == link.intent):
+                    continue
+                out.append({"src_zone_id": s, "src": names[s], "dst_zone_id": d, "dst": names[d],
+                            "intent": link.intent, "current": p.intent if p else None,
+                            "schema_src": link.src, "schema_dst": link.dst,
+                            "note": link.note})  # fmt: skip
+    return out
+
+
+def _schema_status(session: Session, tenant_id: int, schema: "zone_schema.Schema | None",
+                   profile: NamingProfile | None, items: list[LogicalZone],
+                   offered: set[str]) -> dict | None:  # fmt: skip
+    """Grundschema des Mandanten gegen die Zonen: fehlende Schema-Zonen (ohne Zone und ohne
+    Vorschlag), Zonen ausserhalb des Schemas, Absichten aus dem Schema."""
+    if schema is None or profile is None:
+        return None
+    mapped = _mapped(schema, items)
+    have = {sz.key for sz in mapped.values()}
+    return {
+        "profile_id": profile.id,
+        "profile": profile.name if profile.customer == profile.name
+        else f"{profile.customer} · {profile.name}",
+        "zones": len(schema.zones),
+        "links": len(schema.links),
+        "matched": {str(zid): sz.name for zid, sz in mapped.items()},
+        "missing": [sz.out() for sz in schema.zones if sz.key not in have | offered],
+        "outside": [{"id": z.id, "name": z.name} for z in items if z.id not in mapped],
+        "intents": schema_intents(session, tenant_id, schema, items),
+    }  # fmt: skip
 
 
 def _rest(session: Session, tenant_id: int, ifaces: list[_Iface], idx: zones.ZoneIndex,

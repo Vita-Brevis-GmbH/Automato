@@ -27,6 +27,11 @@
    Seit 0.53.0 auch über die **Zuordnung in Automato** (`customer_user`, nur Admin, auditiert):
    sie schränkt immer ein (ein zugeordneter Benutzer ist Kunden-Benutzer, nie Admin), das eigene
    Konto lässt sich nicht zuordnen, ist die Zuordnung nicht lesbar, gibt es keinen Zugriff (503).
+10. **Hochgeladene Zeichnungen** (Grundschema der Zonen, 0.55.0, ADR 0024 Nr. 11): nur Admin,
+    höchstens 2 MB; XML mit DTD bzw. Entitäten wird abgewiesen (kein XXE, keine „Billion
+    Laughs“), komprimierte draw.io-Seiten werden höchstens auf 10 MB entpackt, höchstens 300 Zonen
+    und 3000 Übergänge. Die Zeichnung wird nur gelesen und als Daten der Plattform gespeichert –
+    kein Code, kein Abruf externer Inhalte; Beschriftungen werden als Text (ohne HTML) übernommen.
 
 ## Offene Punkte für spätere ADRs
 - Wahl des Secrets-Backends (Ansible Vault vs. HashiCorp Vault) und Migrationszeitpunkt
