@@ -7,6 +7,7 @@ export const PLATFORM_LABEL: Record<string, string> = {
   fortigate: "FortiGate",
   cisco_aci: "Cisco ACI",
   vmware: "VMware vCenter",
+  cisco_switch: "Cisco-Switches",
   infoblox: "Infoblox DDI",
   netbox: "NetBox",
 };
@@ -49,6 +50,11 @@ export const FINDING_LABEL: Record<string, string> = {
   zone_policy_violation: "Zone: gegen die Absicht",
   zone_overlap: "Netz in mehreren Zonen",
   app_connection_mismatch: "Applikation: Regel ↔ Weg",
+  link_speed_mismatch: "Kabel: Speed abweichend",
+  link_duplex_mismatch: "Kabel: Duplex abweichend",
+  link_vlan_mismatch: "Kabel: VLANs abweichend",
+  link_lag_mismatch: "Kabel: Port-Channel einseitig",
+  link_one_sided: "Kabel: nur eine Seite meldet",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -84,6 +90,11 @@ export const FINDING_HINT: Record<string, string> = {
   zone_policy_violation: "erlaubende Regel zwischen Zonen, die laut Zonenmatrix gesperrt sind",
   zone_overlap: "dasselbe Netz in mehreren logischen Zonen",
   app_connection_mismatch: "erlaubende Regel einer Applikation, deren Verbindung der Weg sperrt bzw. die nicht auf dem Weg liegt",
+  link_speed_mismatch: "zwei verbundene Switch-Ports mit verschiedener Geschwindigkeit",
+  link_duplex_mismatch: "zwei verbundene Switch-Ports mit verschiedenem Duplex",
+  link_vlan_mismatch: "Modus, Access- bzw. Native VLAN oder erlaubte VLANs der beiden Ports verschieden",
+  link_lag_mismatch: "Port in einem Port-Channel, der Port gegenüber nicht",
+  link_one_sided: "Verbindung, die nur einer von zwei gelesenen Switches per CDP/LLDP meldet",
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -130,6 +141,12 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     label: "Topologie",
     help: "Plausibilität von Netzen und Routing: doppelte IPs, Masken, Schleifen, Routen ohne Wirkung, BGP",
     types: ["topo_duplicate_ip", "topo_mask_mismatch", "topo_route_loop", "topo_static_unused", "topo_bgp_down"],
+  },
+  {
+    key: "cabling",
+    label: "Verkabelung",
+    help: "Verbindungen zwischen Switches: Speed, Duplex, VLANs, Port-Channel, einseitig gemeldet",
+    types: ["link_speed_mismatch", "link_duplex_mismatch", "link_vlan_mismatch", "link_lag_mismatch", "link_one_sided"],
   },
   {
     key: "zones",

@@ -114,6 +114,13 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   upload: <path d="M12 16V4m0 0-4 4m4-4 4 4M5 20h14" />,
+  cable: (
+    <>
+      <rect x="3" y="4" width="6" height="5" rx="1" />
+      <rect x="15" y="15" width="6" height="5" rx="1" />
+      <path d="M6 9v3a3 3 0 0 0 3 3h6a3 3 0 0 1 3 3" />
+    </>
+  ),
   path: (
     <>
       <circle cx="5" cy="19" r="2" />

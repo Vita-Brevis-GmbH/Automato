@@ -37,6 +37,11 @@ _HINTS = {
         "Agent-Rechner enthalten"
     ),
     "netbox": "Lese-Token im Web-UI neu setzen (NetBox v2-Token: nbt_<Schluessel>.<Token>)",
+    "cisco_switch": (
+        "SSH-Benutzer/-Passwort im Web-UI neu setzen; das Konto braucht nur Leserechte (IOS "
+        "privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle network-operator), "
+        "Anmeldung mit Passwort (keyboard-interactive bzw. password) muss erlaubt sein"
+    ),
 }
 # vCenter: Rolle Read-only reicht (System.View/System.Read) - fehlt sie, ist sie meist am
 # falschen Ort oder ohne Weitergabe zugewiesen
@@ -58,6 +63,9 @@ def device_error(
     vsphere = _vsphere_fault(exc)
     if vsphere:
         return vsphere
+    ssh = _ssh_error(exc, platform, target, local)
+    if ssh:
+        return ssh
     base = http.describe_error(exc)
     if not (
         isinstance(exc, httpx.HTTPStatusError)
@@ -75,6 +83,26 @@ def device_error(
     if hint:
         parts.append(f"Hinweis: {hint}")
     return ". ".join(parts)
+
+
+def _ssh_error(exc: Exception, platform: str, target: Target | None, local: bool) -> str | None:
+    """SSH (Switches, paramiko): Anmeldung, Host-Schluessel, Erreichbarkeit als ein Satz."""
+    name = type(exc).__name__
+    if name in ("AuthenticationException", "BadAuthenticationType"):
+        parts = ["Anmeldung abgelehnt (SSH: Benutzer oder Passwort falsch bzw. Passwort-Anmeldung "
+                 "nicht erlaubt)"]  # fmt: skip
+        if local and target is not None:
+            parts.extend(_credential_notes(platform, target))
+        return ". ".join([*parts, f"Hinweis: {_HINTS['cisco_switch']}"])
+    if name == "HostKeyChanged":
+        return str(exc)
+    if name == "NoValidConnectionsError":
+        return "nicht erreichbar: Verbindung zu Port 22 abgelehnt (SSH aus bzw. Weg gesperrt)"
+    if name in ("TimeoutError", "timeout") and platform == "cisco_switch":
+        return f"nicht erreichbar bzw. keine Antwort: {exc}".rstrip(": ")
+    if name == "SSHException":
+        return f"SSH-Fehler: {exc}"
+    return None
 
 
 def _vsphere_fault(exc: Exception) -> str | None:

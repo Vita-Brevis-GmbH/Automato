@@ -3,7 +3,8 @@
 Lebendes Dokument: wird an **jedem Meilenstein-Abschluss** (siehe `ROADMAP.md`) überprüft und
 aktualisiert – neue Risiken aufnehmen, erledigte schliessen, Bewertungen nachziehen.
 
-Letzter Review: 0.9.0 (2026-10-21) – R18 gemildert (Regelindex, ADR 0016). Davor 0.8.1:
+Letzter Review: 0.62.0 (2026-10-25) – R22 neu (SSH-Zugang zu den Switches, ADR 0025). Davor
+0.9.0 (2026-10-21) – R18 gemildert (Regelindex, ADR 0016). Davor 0.8.1:
 R18–R20 aus dem Betrieb gegen die echten Systeme ergänzt (Datenmenge, NetBox-Teilstand,
 Collector-Lücken). Davor M2/M3 (2026-07-22):
 R13/R14 aus der Mandantenfähigkeit, R4 auf das Finding-Konstrukt (ADR 0004) und R7 auf den
@@ -37,6 +38,7 @@ Bewertung: Auswirkung und Eintrittswahrscheinlichkeit jeweils **hoch / mittel / 
 | R19 | NetBox-Sync bricht mitten in der Übernahme ab (NetBox-Fehler, z. B. Eindeutigkeit) und hinterlässt einen Teilstand | mittel | mittel | Bulk je Objekttyp, Plan neu berechnen setzt beim Teilstand an; eindeutige Namen vor dem Schreiben (0.8.0); Fake-NetBox prüft Eindeutigkeit wie NetBox; Sync-Benutzer nur mit den nötigen Objekttypen | 0.8.0, ADR 0010 |
 | R20 | Collector-Lücken: Herstellerfelder, die Automato nicht liest (z. B. FortiGate Internet Services, ACI Contract Master – erst durch Dev-Befund gefunden), führen zu unvollständigen Regeln | mittel | hoch | Befund „Regel nicht wirksam“ macht fehlende Quelle/Ziel sichtbar; Lesevertrag `docs/collectors-read-contract.md` je Feld; anonymisierte Echt-Samples als Fixture-Tests aufnehmen | 0.8.0 |
 | R21 | vCenter-Zugang über SOAP: anders als bei REST schützt keine HTTP-Methode vor Schreibaufrufen; ein Konto mit Rechten plus ein Fehler im Collector könnte VMs verändern | hoch | tief | Konto mit der vSphere-Rolle **Read-only** (erste Linie); im Code nur lesende vSphere-Methoden per WSDL-Name zugelassen, alles andere bricht vor dem Senden ab (zweite Linie, Test deckt `Destroy_Task`, `PowerOffVM_Task`, `ReconfigVM_Task` ab); keine Gast-Inhalte, keine Leistungsdaten | 0.11.0, ADR 0017 |
+| R22 | Switch-Zugang über SSH (0.62.0): die Kommandozeile kennt keine Lese-/Schreib-Trennung wie HTTP; ein Konto mit Schreibrechten plus ein Fehler im Collector könnte die Konfiguration ändern. Dazu: viele Switches mit einem gemeinsamen Konto, Passwort-Anmeldung an jedes Gerät (ein untergeschobenes Gerät bekäme das Passwort) | hoch | tief | Konto nur lesend (erste Linie: IOS privilege 1 bzw. Parser-View, NX-OS `network-operator`); im Code je Befehl ein Exec-Aufruf ohne Shell/Terminal/Konfigurationsmodus, nur feste `show`-Befehle (Positivliste, alles andere bricht vor dem Senden ab, Test), kein `show running-config` (keine Secrets im Collector); SSH-Host-Schlüssel je Adresse beim ersten Lauf festgehalten (Audit), danach Pflicht vor dem Senden des Passworts, Wechsel nur durch einen Operator; Ausgabe je Befehl begrenzt (32 MB, 120 s); Rest: der erste Lauf vertraut dem Schlüssel (TOFU) – ersten Lauf im vertrauten Netz, Fingerabdrücke im Quellsystem prüfbar; Alternative SNMPv3 `authPriv` lesend (später) | 0.62.0, ADR 0025 |
 
 ## Geschlossene Risiken
 

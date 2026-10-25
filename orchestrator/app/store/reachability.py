@@ -70,7 +70,7 @@ def check(
     host = parts.hostname
     if not host:
         return Result(False, hint="Keine gültige Adresse am Quellsystem hinterlegt.")
-    port = parts.port or (443 if parts.scheme == "https" else 80)
+    port = parts.port or {"https": 443, "ssh": 22}.get(parts.scheme, 80)
     result = Result(True)
 
     try:

@@ -72,6 +72,8 @@ class SystemOut(BaseModel):
     # FortiGate: gelesene VDOMs - nur `root` = die Firewall selbst (ohne VDOM anzeigen)
     vdoms: list[str] = []
     parallel_group: str | None = None  # Verbund paralleler Firewalls (0.18.0)
+    # Switches (0.62.0): festgehaltene SSH-Host-Schluessel je Adresse (nur Fingerabdruck)
+    host_keys: list[dict] = []
 
 
 class SystemIn(BaseModel):
@@ -81,7 +83,7 @@ class SystemIn(BaseModel):
     base_url: str = Field(default="", max_length=500)
     agent_id: int | None = None
     verify_tls: bool = True
-    read_scope: str = Field(default="", max_length=500)
+    read_scope: str = Field(default="", max_length=20000)
     ref_role: Literal["primary", "enrichment"] | None = None
     site_id: int | None = None
     schedule: str | None = Field(default=None, max_length=100)  # leer/None = kein Zeitplan
@@ -100,9 +102,11 @@ class SystemPatch(BaseModel):
     enabled: bool | None = None
     agent_id: int | None = None  # null = Zuweisung aufheben
     verify_tls: bool | None = None
-    read_scope: str | None = Field(default=None, max_length=500)
+    read_scope: str | None = Field(default=None, max_length=20000)
     ref_role: Literal["primary", "enrichment"] | None = None
     site_id: int | None = None  # null = Standort entfernen
+    # Switches: Host-Schluessel dieser Adressen vergessen (beim naechsten Lauf neu lernen)
+    forget_host_keys: list[str] | None = Field(default=None, max_length=2000)
     schedule: str | None = Field(default=None, max_length=100)  # "" oder null = kein Zeitplan
     # Verbund paralleler Firewalls (0.18.0); "" oder null = keiner
     parallel_group: str | None = Field(default=None, max_length=100)
@@ -226,6 +230,10 @@ def _out(
         nat_count=nat.get(s.id, 0),
         vdoms=vdoms or [],
         parallel_group=s.parallel_group,
+        host_keys=[
+            {"host": h, "fingerprint": fingerprint(k)}
+            for h, k in sorted((s.ssh_host_keys or {}).items())
+        ],  # fmt: skip
     )
 
 
@@ -332,13 +340,53 @@ def _check_site(session: Session, site_id: int | None, tenant_id: int | None) ->
         raise HTTPException(status_code=422, detail="site belongs to another tenant")
 
 
+_SWITCH_HOST = re.compile(r"^(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9_.:-]+?)(:\d{1,5})?$")
+MAX_SWITCHES = 1000
+
+
+def fingerprint(key_line: str) -> str:
+    """SHA256-Fingerabdruck eines SSH-Host-Schluessels (`<typ> <base64>`) wie bei OpenSSH."""
+    import base64
+    import binascii
+    import hashlib
+
+    try:
+        raw = base64.b64decode(key_line.split()[1], validate=True)
+    except (IndexError, ValueError, binascii.Error):
+        return "?"
+    digest = base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
+    return f"{key_line.split()[0]} SHA256:{digest}"
+
+
+def _switch_hosts(value: str) -> str:
+    """Switches (0.62.0): Adressen je Zeile bzw. kommagetrennt, `host`, `host:port`,
+    `[v6]:port`; eine je Zeile gespeichert, ohne Doppelte."""
+    hosts = list(dict.fromkeys(h for h in re.split(r"[\s,;]+", value or "") if h))
+    if len(hosts) > MAX_SWITCHES:
+        raise HTTPException(status_code=422, detail=f"at most {MAX_SWITCHES} switches")
+    bad = [h for h in hosts if not _SWITCH_HOST.match(h) or len(h) > 255]
+    if bad:
+        raise HTTPException(status_code=422, detail=f"invalid switch address: {bad[0]}")
+    return "\n".join(hosts)
+
+
+def _switch_base_url(read_scope: str) -> str:
+    """Adresse fuer „Verbindung pruefen“: der erste Switch per SSH."""
+    first = next(iter(read_scope.split()), "")
+    return f"ssh://{first}" if first else ""
+
+
 def _read_scope(platform: Platform, value: str) -> str:
-    """Lesebereich normalisieren: ACI-Tenant-Namen, kommagetrennt (nur Cisco ACI)."""
+    """Lesebereich normalisieren: ACI-Tenant-Namen, kommagetrennt (Cisco ACI) bzw. die
+    Adressen der Switches (Cisco-Switches)."""
+    if platform == Platform.CISCO_SWITCH:
+        return _switch_hosts(value)
     names = [x.strip() for x in value.split(",") if x.strip()]
     if not names:
         return ""
     if platform != Platform.CISCO_ACI:
-        raise HTTPException(status_code=422, detail="read_scope only supported for cisco_aci")
+        detail = "read_scope only supported for cisco_aci/cisco_switch"
+        raise HTTPException(status_code=422, detail=detail)
     bad = [n for n in names if not _ACI_NAME.match(n)]
     if bad:
         raise HTTPException(status_code=422, detail=f"invalid ACI tenant name: {bad[0]}")
@@ -517,6 +565,10 @@ def create_system(
         read_scope=_read_scope(body.platform, body.read_scope),
         site_id=body.site_id,
     )
+    if src.platform == Platform.CISCO_SWITCH:
+        if not src.read_scope:
+            raise HTTPException(status_code=422, detail="switch addresses required")
+        src.base_url = src.base_url or _switch_base_url(src.read_scope)
     _set_schedule(src, _schedule(body.schedule))
     _apply_credentials(src, _credential_changes(body))
     session.add(src)
@@ -597,6 +649,18 @@ def update_system(
         src.verify_tls = data["verify_tls"]
     if data.get("read_scope") is not None:
         src.read_scope = _read_scope(src.platform, data["read_scope"])
+        if src.platform == Platform.CISCO_SWITCH:
+            if not src.read_scope:
+                raise HTTPException(status_code=422, detail="switch addresses required")
+            src.base_url = _switch_base_url(src.read_scope)
+            hosts = set(src.read_scope.split())  # Schluessel entfernter Switches vergessen
+            src.ssh_host_keys = {h: k for h, k in (src.ssh_host_keys or {}).items()
+                                 if h in hosts} or None  # fmt: skip
+    forgotten: list[str] = []
+    if data.get("forget_host_keys"):
+        keys = dict(src.ssh_host_keys or {})
+        forgotten = [h for h in data["forget_host_keys"] if keys.pop(h, None) is not None]
+        src.ssh_host_keys = keys or None
     if data.get("ref_role") is not None:
         _apply_ref_role(session, src, data["ref_role"])
     if "schedule" in data:
@@ -634,6 +698,7 @@ def update_system(
             "site_id": src.site_id,
             "schedule": src.schedule,
             "parallel_group": src.parallel_group,
+            **({"host_keys_forgotten": forgotten} if forgotten else {}),
         },
     )
     return _single_out(session, src)

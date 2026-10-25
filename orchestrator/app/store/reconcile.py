@@ -81,6 +81,7 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     issues += _epg_conflict_issues(session, tenant_id)
     issues += _snat_pool_issues(session, tenant_id)
     issues += _topology_issues(session, tenant_id)
+    issues += _cabling_issues(session, tenant_id)
     issues += _zone_issues(session, tenant_id)
     issues += _device_object_issues(session, tenant_id, prefixes)
     issues += references.checks(session, tenant_id, prefixes, ctx)
@@ -303,6 +304,20 @@ def _topology_issues(session: Session, tenant_id: int) -> list[Issue]:
         if kind is not SubjectKind.NODE:
             sid = None  # mehrere Geraete im selben Netz
         out.append(Issue(FindingType(item["type"]), kind, item["subject"], sid, severity,
+                         detail=detail))  # fmt: skip
+    return out
+
+
+def _cabling_issues(session: Session, tenant_id: int) -> list[Issue]:
+    """Verkabelung (0.62.0, `store/cabling.checks`): Speed, Duplex, VLANs bzw. Port-Channel
+    zwischen zwei gelesenen Switches abweichend, Verbindung nur von einer Seite gemeldet."""
+    from app.store import cabling
+
+    out: list[Issue] = []
+    for item in cabling.checks(session, tenant_id):
+        detail = {k: v for k, v in item.items() if k not in ("type", "subject", "severity")}
+        out.append(Issue(FindingType(item["type"]), SubjectKind.LINK, item["subject"],
+                         item.get("source_system_id"), Severity(item["severity"]),
                          detail=detail))  # fmt: skip
     return out
 

@@ -970,8 +970,11 @@ function SystemDialog({
   const isInfoblox = platform === "infoblox";
   const isNetbox = platform === "netbox";
   const isVmware = platform === "vmware";
+  const isSwitch = platform === "cisco_switch";
   const isRef = REFERENCE_PLATFORMS.includes(platform);
-  const userPass = isAci || isInfoblox || isVmware;
+  const userPass = isAci || isInfoblox || isVmware || isSwitch;
+  // Switches (0.62.0): Host-Schlüssel vergessen (beim nächsten Lauf neu lernen)
+  const [forget, setForget] = useState<string[]>([]);
 
   useEffect(() => {
     fetchSites(tenant.id)
@@ -996,7 +999,7 @@ function SystemDialog({
       base_url: baseUrl.trim(),
       agent_id: agentId,
       verify_tls: verifyTls,
-      ...(isAci ? { read_scope: readScope.trim() } : {}),
+      ...(isAci || isSwitch ? { read_scope: readScope.trim() } : {}),
       ...(isRef && refRole ? { ref_role: refRole } : {}),
       ...(isRef ? {} : { site_id: siteId }),
       schedule: schedule.trim(),
@@ -1021,7 +1024,8 @@ function SystemDialog({
         await createSystem({ tenant_id: tenant.id, platform, ...common, ...creds });
       } else {
         const group = platform === "fortigate" ? { parallel_group: parallelGroup.trim() } : {};
-        await patchSystem(system.id, { ...common, enabled, ...group, ...creds });
+        const keys = isSwitch && forget.length ? { forget_host_keys: forget } : {};
+        await patchSystem(system.id, { ...common, enabled, ...group, ...keys, ...creds });
       }
       await onSaved();
     } catch (ex) {
@@ -1071,6 +1075,7 @@ function SystemDialog({
             <option value="fortigate">FortiGate</option>
             <option value="cisco_aci">Cisco ACI</option>
             <option value="vmware">VMware vCenter</option>
+            <option value="cisco_switch">Cisco-Switches (SSH, IOS/IOS-XE/NX-OS)</option>
             <option value="infoblox">Infoblox DDI (Referenzquelle)</option>
             <option value="netbox">NetBox (Referenzquelle)</option>
           </select>
@@ -1092,6 +1097,53 @@ function SystemDialog({
             <div className="hint">Je Mandant gibt es genau ein führendes IPAM; ein neues führendes stuft das bisherige zur Anreicherung herab.</div>
           </div>
         )}
+        {isSwitch && (
+          <div className="field">
+            <label htmlFor="ss-switches">Switches</label>
+            <textarea
+              id="ss-switches"
+              className="input mono"
+              rows={5}
+              value={readScope}
+              placeholder={"10.0.0.11\nsw-acc-02.kunde.lan\n10.0.0.2:2222"}
+              onChange={(e) => setReadScope(e.target.value)}
+            />
+            <div className="hint">
+              Eine Adresse je Zeile (bzw. kommagetrennt), optional mit SSH-Port. Alle Switches teilen das Konto unten; der
+              Agent liest sie parallel und meldet, welche nicht erreichbar waren.
+            </div>
+          </div>
+        )}
+        {system !== null && isSwitch && (system.host_keys ?? []).length > 0 && (
+          <div className="field" id="ss-hostkeys">
+            <label>SSH-Host-Schlüssel (beim ersten Lauf festgehalten)</label>
+            <table className="compact">
+              <tbody>
+                {(system.host_keys ?? []).map((k) => (
+                  <tr key={k.host}>
+                    <td className="mono">{k.host}</td>
+                    <td className="mono faint">{k.fingerprint}</td>
+                    <td>
+                      <label className="check">
+                        <input
+                          type="checkbox"
+                          checked={forget.includes(k.host)}
+                          onChange={(e) => setForget((f) => (e.target.checked ? [...f, k.host] : f.filter((h) => h !== k.host)))}
+                        />
+                        vergessen
+                      </label>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="hint">
+              Weist ein Switch einen anderen Schlüssel vor, bricht die Verbindung vor der Anmeldung ab. Nach einem
+              geplanten Wechsel (neues Gerät, neuer Schlüssel) hier „vergessen“ – der nächste Lauf lernt ihn neu.
+            </div>
+          </div>
+        )}
+        {!isSwitch && (
         <div className="field">
           <label htmlFor="ss-url">Adresse</label>
           <input
@@ -1114,6 +1166,7 @@ function SystemDialog({
           />
           <div className="hint">So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).</div>
         </div>
+        )}
         {!isRef && (
           <div className="field">
             <label htmlFor="ss-site">Standort</label>
@@ -1284,6 +1337,35 @@ function SystemDialog({
               </div>
             </div>
           </>
+        ) : isSwitch ? (
+          <>
+            <div className="field">
+              <label htmlFor="ss-user">SSH-Benutzer (nur Leserechte)</label>
+              <CredentialInput
+                id="ss-user"
+                value={username}
+                maxLength={200}
+                disabled={clearCreds}
+                placeholder={hasCreds ? kept : "z. B. ro-automato"}
+                onChange={setUsername}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="ss-password">SSH-Passwort</label>
+              <SecretInput
+                id="ss-password"
+                value={password}
+                disabled={clearCreds}
+                onChange={setPassword}
+                placeholder={hasCreds ? kept : "Passwort des SSH-Benutzers"}
+              />
+              <div className="hint">
+                Konto nur mit Leserechten (IOS/IOS-XE privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle{" "}
+                <code>network-operator</code>). Automato führt nur feste <code>show</code>-Befehle aus (je Befehl ein
+                SSH-Aufruf, keine Shell, kein Konfigurationsmodus). Wird verschlüsselt gespeichert.
+              </div>
+            </div>
+          </>
         ) : isAci ? (
           <>
             <div className="field">
@@ -1409,10 +1491,16 @@ function SystemTable({
             </td>
             <td className="mono nowrap">
               {s.base_url || <span className="faint">–</span>}
-              {s.read_scope && (
-                <div className="faint" style={{ fontSize: 11 }} title="gelesene ACI-Tenants">
-                  Tenants: {s.read_scope}
+              {s.read_scope && s.platform === "cisco_switch" ? (
+                <div className="faint" style={{ fontSize: 11 }} title={s.read_scope}>
+                  {s.read_scope.split(/\s+/).length} Switches
                 </div>
+              ) : (
+                s.read_scope && (
+                  <div className="faint" style={{ fontSize: 11 }} title="gelesene ACI-Tenants">
+                    Tenants: {s.read_scope}
+                  </div>
+                )
               )}
             </td>
             <td className="nowrap">

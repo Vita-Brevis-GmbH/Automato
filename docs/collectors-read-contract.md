@@ -1,4 +1,4 @@
-# Collector-Lesevertrag — FortiGate, Cisco ACI & VMware (read-only)
+# Collector-Lesevertrag — FortiGate, Cisco ACI, VMware & Cisco-Switches (read-only)
 
 > Was die Collectors **rein lesend** erfassen (Felder/Relationen) und wie es auf das
 > Datenmodell (ADR 0004 + Ergänzung) abgebildet wird. Abgeleitet aus realen Samples einer Referenzumgebung
@@ -186,6 +186,34 @@ zu – geprüft wird der WSDL-Name, jeder andere Aufruf bricht vor dem Senden ab
 
 Nicht gelesen: Zugangsdaten, Gast-Inhalte, Leistungsdaten, Snapshots, Ereignisse.
 Portgruppe → EPG ordnet der Orchestrator zu (Name `Tenant|AP|EPG`, sonst eindeutiges VLAN).
+
+## 5. Cisco-Switches (SSH, `show`-Befehle; read-only, ADR 0025)
+
+Ein Quellsystem `cisco_switch` ist eine Gruppe von Switches (Adressen im Lesebereich, eine je
+Zeile, `host` bzw. `host:port`) mit einem Konto, das nur lesen darf: IOS/IOS-XE
+**privilege 1** (bzw. eine Parser-View mit den Befehlen unten), NX-OS Rolle
+**`network-operator`**. Je Befehl ein SSH-Exec-Aufruf, keine interaktive Shell, kein Terminal,
+kein Konfigurationsmodus. Nur die Befehle der Tabelle sind zugelassen; jeder andere bricht vor
+dem Senden ab (`ReadOnlyViolation`). **Kein** `show running-config` – so werden weder
+Passwörter noch Schlüssel noch Community-Strings gelesen. Der SSH-Host-Schlüssel jeder Adresse
+wird beim ersten Lauf festgehalten und danach verlangt (ADR 0025 Nr. 3).
+
+| Befehl (IOS/IOS-XE · NX-OS) | gelesen | → Automato |
+|---|---|---|
+| `show version` | Hostname, Modell, Version, Seriennummer; erkennt die Plattform | `inv_device` (Rolle `switch`) |
+| `show interfaces status` · `show interface status` | Port, Status, VLAN, Duplex, Speed, Medium | `inv_interface` (`status`, `speed`, `duplex`, `attrs.media`) |
+| `show interfaces description` · `show interface description` | Beschreibung, Admin-Status | `inv_interface.description`, `enabled` |
+| `show interfaces switchport` · `show interface switchport` | Modus Access/Trunk, Access-VLAN, Native VLAN, erlaubte VLANs | `mode`, `untagged_vlan`, `native_vlan`, `trunk_vlans` (Bereiche), `tagged_vlans` (bis 512) |
+| `show vlan brief` | VLAN-ID, Name (ohne 1002–1005) | `inv_vlan` |
+| `show etherchannel summary` · `show port-channel summary` | Port-Channel mit Mitgliedern, Protokoll | `inv_interface` (`kind` lag, `lag` am Mitglied) |
+| `show cdp neighbors detail` | je Port Nachbar: Name, Port, IP, Plattform, Fähigkeiten | `inv_neighbor` (`protocol` cdp) |
+| `show lldp neighbors detail` | je Port Nachbar: Systemname, Port, Management-IP, Beschreibung, Fähigkeiten | `inv_neighbor` (`protocol` lldp); am Port (`inv_interface.neighbor`) gilt CDP vor LLDP |
+| `show vpc` (nur NX-OS) | vPC-Nummer je Port-Channel, Peer-Link | `inv_interface.attrs.vpc` |
+
+Meldet ein Befehl einen Fehler (z. B. LLDP ausgeschaltet) oder fehlt eine Vorlage, bleibt der
+Teil leer und steht als Hinweis in der Meldung des Laufs. Nicht gelesen: Konfiguration,
+Zugangsdaten, Logs, MAC-Adress-Tabelle, ARP, Zähler. Die Verkabelung leitet der Orchestrator
+aus den Nachbarn aller Quellen ab (Switches, ACI-Leafs über `lldpAdjEp`/`cdpAdjEp`).
 
 ## Daraus folgende Modell-/Collector-Arbeiten (später, je Phase)
 

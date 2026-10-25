@@ -7,6 +7,36 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.62.0 – 2026-10-25
+
+Switching/Verkabelung (ROADMAP, ADR 0025): Cisco-Switches strikt lesend über SSH und die
+Verkabelung aus CDP/LLDP mit Befunden. Migration `0054` (`inv_neighbor`, neue Spalten an
+`inv_interface`, `source_system.ssh_host_keys`, `read_scope` als Text). Neue Abhängigkeiten des
+Collectors: paramiko, textfsm, ntc-templates (Agenten laden sie mit dem Selbst-Update).
+
+- **Neues Quellsystem „Cisco-Switches“** (IOS, IOS-XE, NX-OS): eine Gruppe von Switches mit
+  einem Konto, das nur lesen darf (IOS privilege 1 bzw. Parser-View, NX-OS
+  `network-operator`); Adressen eine je Zeile. Gelesen über den Agenten, 8 Switches parallel;
+  ein Switch, der nicht antwortet, steht in der Meldung, die anderen werden eingelesen.
+- **Nur lesen, auch im Code:** je Befehl ein SSH-Exec-Aufruf ohne Shell und Terminal; nur feste
+  `show`-Befehle (Version, Ports, Beschreibungen, Switchport, VLANs, Port-Channel, CDP, LLDP,
+  vPC), alles andere bricht vor dem Senden ab; kein `show running-config`.
+- **Host-Schlüssel:** der erste Lauf hält den SSH-Host-Schlüssel je Switch fest (Audit), danach
+  muss der Switch ihn vorweisen, bevor das Passwort gesendet wird. Fingerabdrücke im Dialog des
+  Quellsystems, „vergessen“ nach einem Gerätetausch.
+- **Ports und Nachbarn:** Status, Speed, Duplex, Medium, Access-VLAN, Native VLAN, erlaubte
+  VLANs, Port-Channel, vPC; VLANs mit Namen; Nachbarn je Port aus CDP und LLDP. Geräte und Ports
+  erscheinen auch unter Objekte & Inventar.
+- **Ansicht Verkabelung** (nach Routing): Verbindungen (beidseitig, einseitig, Gegenstelle ohne
+  CDP/LLDP) aus den Nachbarn aller Quellen – Switches und ACI-Leafs –, Geräte (auch Firewalls,
+  ESXi-Hosts und nicht gelesene Geräte), Ports der Switches mit Gegenstelle, VLANs je Switch.
+- **Befunde** (Kategorie „Verkabelung“) zwischen zwei gelesenen Switches: Speed bzw. Duplex
+  verschieden, VLANs verschieden (Modus, Access-VLAN, Native VLAN, erlaubte VLANs), Port-Channel
+  nur auf einer Seite, Verbindung nur einseitig gemeldet.
+- **Verbindung prüfen** (`automato-collector --check`): je Switch erreichbar, Plattform und
+  Fingerabdruck des Host-Schlüssels.
+- Neues Risiko R22 (SSH-Zugang), Lesevertrag Abschnitt 5.
+
 ## 0.61.0 – 2026-10-25
 
 Zonenplan übersichtlich (Wunsch des Anwenders, ADR 0024 Nr. 14): bei vielen Tenants und Zonen

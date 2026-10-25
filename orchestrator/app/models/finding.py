@@ -63,6 +63,13 @@ class FindingType(enum.StrEnum):
     # Verbindungen Ende zu Ende (0.59.0, ADR 0021): erlaubende Regel einer Applikation, deren
     # Verbindung der Weg sperrt, die nicht auf dem Weg liegt bzw. dort nicht greift
     APP_CONNECTION_MISMATCH = "app_connection_mismatch"
+    # Verkabelung (0.62.0, ADR 0025, `store/cabling`): Verbindung zwischen zwei gelesenen
+    # Switches mit abweichender Konfiguration bzw. nur von einer Seite gemeldet
+    LINK_SPEED_MISMATCH = "link_speed_mismatch"
+    LINK_DUPLEX_MISMATCH = "link_duplex_mismatch"
+    LINK_VLAN_MISMATCH = "link_vlan_mismatch"
+    LINK_LAG_MISMATCH = "link_lag_mismatch"
+    LINK_ONE_SIDED = "link_one_sided"
 
 
 class Severity(enum.StrEnum):
@@ -87,6 +94,7 @@ class SubjectKind(enum.StrEnum):
     VM = "vm"
     PORTGROUP = "portgroup"
     NODE = "node"  # Knoten der Topologie (`<Quellsystem>|<Kontext>`, 0.50.0)
+    LINK = "link"  # Verbindung der Verkabelung (`<Geraet>|<Port>~<Geraet>|<Port>`, 0.62.0)
 
 
 class Finding(Base):

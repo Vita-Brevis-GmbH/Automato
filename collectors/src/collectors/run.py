@@ -41,6 +41,7 @@ from collectors.config import get_settings
 try:
     from collectors.cisco_aci.tasks import check as _aci_check
     from collectors.cisco_aci.tasks import collect_once as _aci_collect
+    from collectors.cisco_switch import tasks as _switch
     from collectors.common import agent as agent_api
     from collectors.common.dto import CollectorResult, Target
     from collectors.common.upload import confirmed, submit_result
@@ -56,6 +57,7 @@ try:
         "infoblox": _ipam.collect_infoblox,
         "netbox": _ipam.collect_netbox,
         "vmware": _vmware.collect_once,
+        "cisco_switch": _switch.collect_once,
     }
     CHECKERS: dict[str, Callable[..., tuple[bool, str]]] = {
         "fortigate": _fgt_check,
@@ -63,6 +65,7 @@ try:
         "infoblox": _ipam.check_infoblox,
         "netbox": _ipam.check_netbox,
         "vmware": _vmware.check,
+        "cisco_switch": _switch.check,
     }
     # --check --strict: Negativtest je Plattform (nur wo sinnvoll und vertretbar)
     STRICT_CHECKERS: dict[str, Callable[..., tuple[bool, str]]] = {"fortigate": _fgt_strict}

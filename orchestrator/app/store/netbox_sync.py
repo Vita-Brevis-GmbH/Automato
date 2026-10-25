@@ -256,7 +256,8 @@ class Wants:
         return sorted(self.items.values(), key=lambda w: (order[w.kind], w.key))
 
 
-_MANUFACTURER = {Platform.FORTIGATE: "Fortinet", Platform.CISCO_ACI: "Cisco"}
+_MANUFACTURER = {Platform.FORTIGATE: "Fortinet", Platform.CISCO_ACI: "Cisco",
+                 Platform.CISCO_SWITCH: "Cisco"}  # fmt: skip
 _IFACE_TYPE = {"physical": "other", "lag": "lag"}
 
 

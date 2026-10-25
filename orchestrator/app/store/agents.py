@@ -91,6 +91,7 @@ def target_for(src: SourceSystem, agent_id: int | None) -> dict:
         "base_url": src.base_url,
         "verify_tls": src.verify_tls,
         "read_scope": src.read_scope,
+        "known_hosts": dict(src.ssh_host_keys or {}),  # Switches: festgehaltene Schluessel
         "token": secret.get("token"),
         "username": secret.get("username"),
         "password": secret.get("password"),

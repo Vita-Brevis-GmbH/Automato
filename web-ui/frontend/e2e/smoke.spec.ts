@@ -9,6 +9,7 @@ const VIEWS: [string, string][] = [
   ["nat", "NAT / VIPs"],
   ["wege", "Weg-Suche"],
   ["routing", "Routing"],
+  ["verkabelung", "Verkabelung"],
   ["apps", "Applikationen"],
   ["findings", "Findings"],
   ["abgleich", "Abgleich"],

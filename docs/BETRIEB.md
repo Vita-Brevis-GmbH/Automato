@@ -431,6 +431,27 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - Nicht für Kunden-Benutzer (zeigt die ganze Umgebung). Zeichnung und Export folgen
       (0.52.0), Korrekturen im Designer später. Die logischen Zonen hängt der Zonenplan an
       diese Knoten (Netzwerkdesign, 0.51.0).
+- **Verkabelung** (0.62.0, ADR 0025): welches Gerät an welchem Port welches anderen hängt –
+  abgeleitet aus CDP/LLDP aller gelesenen Geräte (Cisco-Switches, ACI-Leafs), nichts von Hand.
+  Oben die Kennzahlen (gelesene Geräte, Switches, Verbindungen je Zustand, Abweichungen,
+  Gegenstellen ohne CDP/LLDP), darunter vier Reiter:
+  - **Verbindungen:** je Zeile beide Enden (Gerät, Port, Beschreibung, Speed/Duplex, Modus/VLAN)
+    mit Zustand **beidseitig** (beide melden einander), **einseitig** (die Gegenseite wird
+    gelesen und meldet Nachbarn, aber diesen nicht – z. B. CDP/LLDP am Port aus) bzw.
+    **Gegenstelle ohne CDP/LLDP** (Firewall, Server oder Gerät, das Automato nicht liest).
+    Filter Gerät, Zustand, „nur Abweichungen“ und Suche (Gerät, Port, Beschreibung).
+    Abweichungen zuerst.
+  - **Geräte:** gelesene Geräte und die nur von Nachbarn gemeldeten, mit Ports (verbunden),
+    Verbindungen und Abweichungen; ein Klick öffnet die Verbindungen bzw. Ports des Geräts.
+    ESXi-Hosts aus dem vCenter erscheinen, wenn ein Switch sie meldet.
+  - **Ports:** alle Ports der gelesenen Switches (Status, Speed, Duplex, Modus, VLAN bzw.
+    Native VLAN und erlaubte VLANs, Port-Channel, vPC, Beschreibung, Gegenstelle); Filter
+    Gerät, Status (up/down/abgeschaltet), VLAN, Suche.
+  - **VLANs:** je VLAN die Namen und je Switch die Anzahl Access-Ports und Trunks.
+  - **Befunde** (Kategorie „Verkabelung“ in Findings) nur zwischen zwei gelesenen Switches:
+    Speed bzw. Duplex verschieden, VLANs verschieden (Modus, Access-VLAN, Native VLAN, erlaubte
+    VLANs je Seite), Port-Channel nur auf einer Seite, Verbindung nur einseitig gemeldet.
+  - Nicht für Kunden-Benutzer (Infrastruktur).
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
   (Application Profiles, EPGs, Server); **Vorschläge** nach der Projektnummer aus
@@ -773,13 +794,18 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   gruppiert. Den Standort aus dem Namen (Netz `N_<tenant>-000-…`, Cluster
   `fwc11-000-<tenant>`, Host `evh01-chzrh1-<tenant>`) zeigen Objekte, Inventar (Geräte,
   Subnetze) und der Quellsystem-Dialog als Vorschlag („?“ = Code nicht erfasst). Weiter: die **Quellsysteme des
-  Mandanten** (**+ Quellsystem** / **Bearbeiten**: FortiGate/Cisco ACI/Infoblox DDI/NetBox/VMware,
+  Mandanten** (**+ Quellsystem** / **Bearbeiten**: FortiGate/Cisco ACI/Infoblox DDI/NetBox/VMware/Cisco-Switches,
   Adresse, **Standort** des Geräts (für den NetBox-Sync), **Verwaltet von** = Collector-Agent
   oder zentraler Worker, read-only Zugangsdaten – FortiGate: **API-Token**, Cisco ACI:
   **APIC-Benutzer/Passwort** + **ACI-Tenants** (leer = alle ausser infra/mgmt), Infoblox:
   **WAPI-Benutzer/Passwort**, VMware: **vCenter-Benutzer/Passwort** (Konto mit der Rolle
   *Read-only* auf dem vCenter-Objekt bzw. als globale Berechtigung, jeweils mit „An
-  untergeordnete Objekte weitergeben“), NetBox: **Lese-Token** + optional **Schreib-Token** (nur
+  untergeordnete Objekte weitergeben“), Cisco-Switches (0.62.0, ADR 0025): **SSH-Benutzer/
+  Passwort** eines Kontos, das nur lesen darf (IOS/IOS-XE privilege 1 bzw. eine Parser-View mit
+  den `show`-Befehlen des Lesevertrags, NX-OS Rolle `network-operator`) und statt der Adresse
+  die **Switches** (eine Adresse je Zeile, `host` bzw. `host:port`, bis 1000) – ein Quellsystem
+  ist eine Gruppe von Switches mit demselben Konto; die **SSH-Host-Schlüssel** hält der erste
+  Lauf je Adresse fest (Fingerabdruck im Dialog, „vergessen“ nach Tausch des Geräts), NetBox: **Lese-Token** + optional **Schreib-Token** (nur
   NetBox-Sync, geht nie an einen Agenten) – nur schreibbar, verschlüsselt gespeichert, Anzeige
   nur „hinterlegt"; bei Infoblox/NetBox die **Rolle** *IPAM führend* oder *Anreicherung*
   (genau ein führendes IPAM je Mandant); TLS-Prüfung, aktiv; **Zeitplan** (stündlich,
@@ -953,11 +979,12 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern (seit 0.58.0 mit `off_path`: Regeln über Netze nicht auf dem Weg, `count`/`samples` mit `why`); Vorschläge je ACI-Tenant; nicht Zugeordnetes |
 | `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy` (seit 0.57.0 mit `services`), `GET /zones/plan[?customer_id=&all=true]` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]`, `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin); seit 0.54.0 `GET /zones/suggestions[?dismissed=true]`, `POST /zones/suggestions/accept` und `POST /zones/suggestions/dismiss[/undo]` (`keys`, operator); seit 0.55.0 `POST /zones/schema/intents` (`pairs`, `overwrite`, operator); seit 0.56.0 `POST /zones/{id}/nodes` (`nodes` = `<Quellsystem>\|<Kontext>`, operator) und `customer_id`/`all` auch am Export; seit 0.61.0 Filter an Plan und Export (`q`, `focus` mehrfach, `depth` 0–3, `hide_layer` mehrfach: dc/customer/edge/transfer/core/distribution/access/public/none/outside, `hide` mehrfach: nodes/labels/contacts/empty) und `PUT /zones/plan/arrangement` (`view` overview/all/customer:<id>, `positions` je Zone `[x, y]`), `DELETE /zones/plan/arrangement?view=` (operator) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan (seit 0.56.0 `format` 2) mit `view` (all/overview/customer), `customers`, `zones` (mit `nodes`, `internal`, zusammengefasste Kunden `collapsed`/`members`, Pseudo-Zonen `none`/`outside`), `nodes`, `transitions` (`name`, `networks` mit `legs`/`routers`, `l3out`, `contact`), `conflicts`, `unzoned`, `layout` (Zeichnung; seit 0.61.0 `offset`, `placed` je Zone), seit 0.61.0 `filter` (gezeigt/gesamt, `label`), `zone_choices`, `arrangement`, `positions`; Zonen mit `color_source` (schema/template/zone/kind), `nodes`, `transitions`; Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`); Vorschläge je `key` (normalisierter Name) mit `action` create/extend, `kind`/`kind_reason`, `customer_id`, `sources`, `evidence`, `selectors`, `counts` (nets/epgs/nodes), `nodes`, `code`, `conflicts`, `dismissed`, dazu `nodes` (Knoten ohne Zone) und `rest` (Netze ohne Zone und Vorschlag); übernehmen liefert `created`/`updated`/`missing`; seit 0.55.0 je Vorschlag `schema` und `schema` mit `missing`/`outside`/`intents`/`matched` (Grundschema), Absichten übernehmen liefert `changed` |
+| `GET /cabling/devices`, `GET /cabling/links` (`device`, `state` both/one_sided/unread, `q`, `issues`, `limit`, `offset`), `GET /cabling/ports` (`device`, `status` up/down/disabled, `vlan`, `q`, `limit`, `offset`), `GET /cabling/vlans`, `GET /cabling/sources` (je `tenant_id`) | Verkabelung (0.62.0, ADR 0025; viewer, nicht für Kunden-Benutzer): Geräte mit `summary` (devices, switches, links, `states`, issues, unread) und je Gerät `read`, `kind`, Ports/verbunden, Verbindungen, Abweichungen; Verbindungen mit `a`/`b` (Gerät, Port, Schnittstelle), `state`, `protocols`, `issues`; Ports der Switches mit `peer`, `link_state`, `issues`; VLANs mit Namen und je Switch Access-Ports/Trunks; Quellsysteme der Switches |
 | `GET /auth/me`, `GET/POST /customer-users`, `PATCH/DELETE /customer-users/{id}` | Wer bin ich laut Orchestrator (Rollen, Mandanten, Kunden, `customer_source` claim/automato) – die Oberfläche richtet sich danach; Zuordnung Benutzer → Kunde (0.53.0, Admin): `login`, `customer_id`, `role` viewer/operator, `note` |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `POST /systems/{id}/check` | Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus (operator): Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint`; Agent-Systeme 409 (`run-agent.ps1 -Check`), 0.34.0 |
 | `GET /systems/labels?tenant_id=` | Bezeichnungen der Quellsysteme (`id`, `name`, `platform`, `vdoms`, `parallel_group`) ohne Konfiguration; Kunden-Benutzer nur die Systeme ihrer Regeln, NAT bzw. Objekte (0.33.0), seit 0.58.0 mit neutralen Namen („Firewall 1“, VDOM-Nummern) wie alle Antworten an Kunden-Benutzer |
-| `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `site_id`, `read_scope`, `ref_role`, `schedule` → `next_run_at`; `token` bzw. `username`/`password`, NetBox `write_token` nur schreibbar → `has_credentials`/`has_write_token`; Referenzquellen mit `reference_count`/`reference_at`) |
+| `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `site_id`, `read_scope`, `ref_role`, `schedule` → `next_run_at`; Switches: `read_scope` = Adressen, `host_keys` (Adresse, Art, Fingerabdruck), `forget_host_keys` beim PATCH; `token` bzw. `username`/`password`, NetBox `write_token` nur schreibbar → `has_credentials`/`has_write_token`; Referenzquellen mit `reference_count`/`reference_at`) |
 | `GET /jobs` (`tenant_id`, `status` inkl. `open`, `source_system_id`, `platform`, `trigger`, `limit`, `offset`; Gesamtzahl im Header `X-Total-Count`), `GET /jobs/{id}`, `POST /jobs/collect`, `POST /jobs/collect-all`, `POST /jobs/{id}/cancel` | Läufe (Gerät mit Agent → immer `external`, `started_at` = abgeholt); `collect-all` = alle aktiven Quellsysteme des Mandanten (operator, Antwort je System `run_id` bzw. `skipped` mit `blocking_run_id`); `cancel` beendet einen offenen Lauf (operator) |
 | `GET/POST /agents`, `PATCH /agents/{id}`, `GET /agents/package` | Collector-Agenten (inkl. zugewiesener Geräte), Agent-Paket |
 | `GET /internal/agent/next-run`, `…/targets`, `POST …/heartbeat` | Agent-Kanal (`X-Agent-Token`): Lauf + Zugangsdaten nur für zugewiesene Geräte |
@@ -1113,7 +1140,10 @@ an (`deploy/agent-gateway`, Port 8443).
 - **Nur lesen, ausser NetBox (ADR 0010):** Die Lese-Clients für FortiGate, APIC, Infoblox und
   NetBox lassen technisch nur GET zu (APIC zusätzlich Login/Logout) – ein Schreibversuch
   bricht vor dem Senden ab. Der vCenter-Client (SOAP) lässt nur lesende vSphere-Methoden zu
-  (Anmelden, Container-View, Eigenschaften abrufen; ADR 0017). Einziger Schreibweg ist der
+  (Anmelden, Container-View, Eigenschaften abrufen; ADR 0017). Der Switch-Client (SSH) setzt je
+  Befehl einen Exec-Aufruf ohne Shell und Terminal ab und lässt nur die festen `show`-Befehle
+  des Lesevertrags zu (kein `show running-config`); er verlangt den beim ersten Lauf
+  festgehaltenen Host-Schlüssel, bevor er das Passwort sendet (ADR 0025, R22). Einziger Schreibweg ist der
   NetBox-Sync im Orchestrator mit dem Schreib-Token des NetBox-Quellsystems; er schreibt nur
   die synchronisierten Objekttypen (Tags, Tenants, Standort-Gruppen, Sites, Hersteller,
   Geräterollen/-typen, Geräte, Interfaces, VRFs, VLAN-Gruppen, VLANs, Prefixe, Ranges,
@@ -1197,6 +1227,19 @@ an (`deploy/agent-gateway`, Port 8443).
   dort „keine VM sichtbar“, reicht die Berechtigung nicht bis zu den VMs (Weitergabe fehlt
   oder liegt nur auf einem Teil des Inventars).
 
+- **Switch „Host-Schluessel hat sich geaendert (… gespeichert, … vorgewiesen)“** (ab 0.62.0) —
+  der Switch weist einen anderen SSH-Host-Schlüssel vor als beim ersten Lauf. Die Verbindung
+  bricht vor der Anmeldung ab (kein Passwort an ein fremdes Gerät). Wurde das Gerät getauscht
+  bzw. neu aufgesetzt: am Gerät den Schlüssel prüfen (IOS `show crypto key mypubkey rsa`, NX-OS
+  `show ssh key`), dann im Quellsystem beim Switch „vergessen“ anhaken und speichern – der
+  nächste Lauf lernt den neuen Schlüssel. Sonst: Adresse und Netz prüfen (anderes Gerät unter
+  der Adresse?).
+- **Switches „Hinweise: show lldp neighbors detail: … LLDP is not enabled“ bzw. ein Switch unter
+  „nicht gelesen“** — ein Befehl lieferte einen Fehler (der Rest ist eingelesen) bzw. der
+  Switch war nicht erreichbar oder lehnte die Anmeldung ab (Meldung je Adresse). Fehlt einem
+  Konto ein Befehl („% Invalid input“, „% Permission denied“), die Parser-View bzw. Rolle um
+  den Befehl ergänzen; `automato-collector --check` meldet je Switch Erreichbarkeit, Plattform
+  und Fingerabdruck.
 - **„Alle einlesen“ überspringt ein System, obwohl nichts läuft** (bis 0.11.2) — ein früherer
   Lauf wurde abgeholt, aber nie abgeschlossen (Agent beendet, Upload verloren), und steht
   ausserhalb der letzten acht Läufe noch auf „läuft“ (seit 0.13.0 zeigt die Übersicht alle

@@ -1,6 +1,6 @@
 [project]
 name = "collectors"
-version = "0.61.0"
+version = "0.62.0"
 description = "Automato Collectors - read-only Erfassung von Firewall-Regeln (UC1)"
 requires-python = ">=3.11"
 dependencies = [
@@ -13,6 +13,9 @@ dependencies = [
     # Infoblox-/NetBox-Leser fuer Referenzquellen (ADR 0010), lokal als Wheel im Agent-Paket
     "sot-gateway",
     "pyvmomi>=8.0",
+    "paramiko>=3.4",
+    "textfsm>=1.1.3",
+    "ntc-templates>=5.0",
 ]
 
 # Externer Standalone-Collector (ADR 0008): laeuft ohne Celery/Redis, nur ausgehend HTTPS.

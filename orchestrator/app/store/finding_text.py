@@ -196,6 +196,30 @@ def _app_mismatch(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _end(e: dict | None) -> str:
+    e = e or {}
+    return f"{e.get('device')} {e.get('port') or '?'}"
+
+
+def _link(subject: str, d: dict) -> tuple[str, str]:
+    """Verkabelung (0.62.0, ADR 0025)."""
+    text = d.get("text") or ""
+    return (
+        f"Verbindung {_end(d.get('a'))} ↔ {_end(d.get('b'))}: {text}.",
+        "Konfiguration beider Ports angleichen (Speed/Duplex, Modus, Access- bzw. Native VLAN, "
+        "erlaubte VLANs, Port-Channel auf beiden Seiten) – Unterschiede führen zu Fehlern, "
+        "Paketverlust bzw. Spanning-Tree-Blockaden.",
+    )
+
+
+def _link_one_sided(subject: str, d: dict) -> tuple[str, str]:
+    return (
+        f"Verbindung {_end(d.get('a'))} ↔ {_end(d.get('b'))}: {d.get('text') or ''}.",
+        "CDP bzw. LLDP auf dem anderen Port einschalten – oder prüfen, ob das Kabel dort steckt, "
+        "wo die Gegenseite es meldet.",
+    )
+
+
 _TOPO_TEXT = {
     "topo_duplicate_ip": _dup_ip,
     "topo_mask_mismatch": _mask,
@@ -205,6 +229,11 @@ _TOPO_TEXT = {
     "zone_policy_violation": _zone_violation,
     "zone_overlap": _zone_overlap,
     "app_connection_mismatch": _app_mismatch,
+    "link_speed_mismatch": _link,
+    "link_duplex_mismatch": _link,
+    "link_vlan_mismatch": _link,
+    "link_lag_mismatch": _link,
+    "link_one_sided": _link_one_sided,
 }
 
 

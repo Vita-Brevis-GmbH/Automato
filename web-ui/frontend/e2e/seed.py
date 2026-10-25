@@ -266,6 +266,57 @@ def run(app) -> None:
     groups = [{"name": "TE|AP|EG_db", "vlan": 1107, "vm_count": 1}]  # fmt: skip
     run_result(vc, "vmware", virtual={"vms": [vm], "portgroups": groups})
 
+    # Switches (0.62.0, ADR 0025): zwei Cisco-Switches per SSH; Gi1/0/48 <-> Eth1/2 mit
+    # abweichendem Speed und Native VLAN, Uplink zu fw-08 (dmz), ESXi-Host, ein Port zu leaf-101
+    sw = system(name="Switches Zürich", platform="cisco_switch", read_scope="10.0.0.11\n10.0.0.2",
+                username="ro", password="x")  # fmt: skip
+
+    def port(device, name, **kw):
+        return {"device": device, "name": name, "kind": "physical", "status": "connected",
+                "enabled": True, "speed": "a-1000", "duplex": "a-full", **kw}  # fmt: skip
+
+    trunk = {"mode": "tagged", "untagged_vlan": 1, "native_vlan": 1, "trunk_vlans": "10,20,30",
+             "tagged_vlans": [10, 20, 30]}  # fmt: skip
+
+    def nb(device, p, remote, rport, proto="cdp"):
+        return {"device": device, "port": p, "protocol": proto, "remote_name": remote,
+                "remote_port": rport}  # fmt: skip
+
+    switches = {
+        "devices": [
+            {"name": "sw-acc-01", "role": "switch", "model": "C9300-48P", "mgmt_ip": "10.0.0.11",
+             "version": "17.9.4a"},
+            {"name": "sw-core-01", "role": "switch", "model": "C93180YC-FX",
+             "mgmt_ip": "10.0.0.2", "version": "10.3(4a)"},
+        ],
+        "interfaces": [
+            port("sw-acc-01", "Gi1/0/47", lag="Po1", description="Uplink sw-core-01", **trunk),
+            port("sw-acc-01", "Gi1/0/48", lag="Po1", description="Uplink sw-core-01", **trunk),
+            port("sw-acc-01", "Te1/1/1", mode="access", untagged_vlan=30, speed="10G",
+                 duplex="full", description="fw-08 dmz"),
+            port("sw-acc-01", "Gi1/0/2", mode="access", untagged_vlan=20, status="notconnect",
+                 description="Drucker 2.OG"),
+            port("sw-core-01", "Eth1/1", lag="Po10", speed="1000", duplex="full", **trunk),
+            port("sw-core-01", "Eth1/2", lag="Po10", speed="100", duplex="full",
+                 **{**trunk, "native_vlan": 99, "untagged_vlan": 99}),
+            port("sw-core-01", "Eth1/3", mode="access", untagged_vlan=10, speed="10G",
+                 duplex="full", description="esx01 vmnic2"),
+            port("sw-core-01", "Eth1/48", speed="10G", duplex="full", **trunk),
+        ],
+        "vlans": [{"vid": 10, "name": "Server"}, {"vid": 20, "name": "Clients"},
+                  {"vid": 30, "name": "DMZ"}],
+        "neighbors": [
+            nb("sw-acc-01", "Gi1/0/47", "sw-core-01", "Ethernet1/1"),
+            nb("sw-acc-01", "Gi1/0/48", "sw-core-01", "Ethernet1/2"),
+            nb("sw-acc-01", "Te1/1/1", "fw-08", "dmz", "lldp"),
+            nb("sw-core-01", "Eth1/1", "sw-acc-01", "GigabitEthernet1/0/47"),
+            nb("sw-core-01", "Eth1/2", "sw-acc-01", "GigabitEthernet1/0/48"),
+            nb("sw-core-01", "Eth1/3", "esx01-chzrh1.example.ch", "vmnic2", "lldp"),
+            nb("sw-core-01", "Eth1/48", "leaf-101", "Ethernet1/48"),
+        ],
+    }  # fmt: skip
+    run_result(sw, "cisco_switch", inventory=switches, message="Switches: 2 gelesen")
+
     # Applikation (0.14.0): AP TE/AP mit der EPG EG_db und der VM dahinter
     app = {
         "name": "Webshop",

@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-PlatformName = Literal["fortigate", "cisco_aci", "infoblox", "netbox", "vmware"]
+PlatformName = Literal["fortigate", "cisco_aci", "infoblox", "netbox", "vmware", "cisco_switch"]
 
 
 class CollectJobRequest(BaseModel):

@@ -360,7 +360,8 @@ export interface System {
   base_url: string;
   agent_id: number | null; // verwaltender Collector-Agent (null = zentraler Worker)
   verify_tls: boolean;
-  read_scope: string; // Cisco ACI: gelesene ACI-Tenants (kommagetrennt, leer = alle)
+  read_scope: string; // Cisco ACI: gelesene ACI-Tenants (kommagetrennt, leer = alle); Switches: Adressen
+  host_keys?: { host: string; fingerprint: string }[]; // Switches (0.62.0): festgehaltene SSH-Host-Schlüssel
   has_credentials: boolean; // Zugangsdaten selbst werden nie ausgegeben (nur schreibbar)
   ref_role: string | null; // Referenzquellen: primary (IPAM führend) | enrichment (ADR 0010)
   has_write_token: boolean; // NetBox: Schreib-Token für den NetBox-Sync hinterlegt
@@ -1239,6 +1240,7 @@ export const patchSystem = (
     site_id?: number | null;
     schedule?: string | null;
     parallel_group?: string | null;
+    forget_host_keys?: string[];
   } & SystemCredentials,
 ) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");
@@ -2835,3 +2837,100 @@ export const createCustomerUser = (body: { customer_id: number; login: string; r
 export const updateCustomerUser = (id: number, body: { role?: string; note?: string | null }) =>
   sendJSON<CustomerUserRow>(`/api/customer-users/${id}`, "PATCH", body);
 export const deleteCustomerUser = (id: number) => sendJSON<void>(`/api/customer-users/${id}`, "DELETE");
+
+// Verkabelung (0.62.0, ADR 0025): Geräte, Verbindungen aus CDP/LLDP, Ports der Switches, VLANs
+export type LinkState = "both" | "one_sided" | "unread";
+export interface CablingDevice {
+  key: string;
+  name: string;
+  kind: string; // switch | leaf | spine | firewall | esxi | unknown
+  read: boolean;
+  source: string | null;
+  source_system_id: number | null;
+  platform: string | null;
+  model: string | null;
+  version: string | null;
+  mgmt_ip: string | null;
+  ports: number;
+  connected: number;
+  links: number;
+  issues: number;
+  one_sided: number;
+}
+export interface CablingSummary {
+  devices: number;
+  switches: number;
+  links: number;
+  states: Record<LinkState, number>;
+  issues: number;
+  unread: number;
+}
+export interface CablingEnd {
+  device: string;
+  device_key: string;
+  kind: string;
+  read: boolean;
+  source: string | null;
+  source_system_id: number | null;
+  port: string | null;
+  status: string | null;
+  speed: string | null;
+  duplex: string | null;
+  mode: string | null;
+  vlan: number | null;
+  native_vlan: number | null;
+  trunk_vlans: string | null;
+  lag: string | null;
+  vpc: string | null;
+  description: string | null;
+}
+export interface CablingLink {
+  id: string;
+  a: CablingEnd;
+  b: CablingEnd;
+  protocols: string[];
+  state: LinkState;
+  issues: { type: string; text: string }[];
+}
+export interface CablingPort {
+  device: string;
+  name: string;
+  kind: string;
+  status: string | null;
+  enabled: boolean | null;
+  speed: string | null;
+  duplex: string | null;
+  mode: string | null;
+  vlan: number | null;
+  native_vlan: number | null;
+  trunk_vlans: string | null;
+  lag: string | null;
+  description: string | null;
+  media: string | null;
+  vpc: string | null;
+  peer: { device: string; port: string | null; read: boolean; kind: string } | null;
+  link_state: LinkState | null;
+  issues: string[];
+}
+export interface CablingVlan {
+  vid: number;
+  names: string[];
+  devices: { device: string; access: number; trunks: number }[];
+}
+export const fetchCablingDevices = (tenantId: number) =>
+  getJSON<{ summary: CablingSummary; items: CablingDevice[] }>(`/api/cabling/devices${qs({ tenant_id: tenantId })}`);
+export const fetchCablingLinks = (
+  tenantId: number,
+  f: { device?: string; state?: LinkState | ""; q?: string; issues?: boolean; offset?: number; limit?: number } = {},
+) =>
+  getJSON<{ total: number; items: CablingLink[] }>(
+    `/api/cabling/links${qs({ tenant_id: tenantId, device: f.device, state: f.state || undefined, q: f.q, issues: f.issues ? "true" : undefined, offset: f.offset, limit: f.limit })}`,
+  );
+export const fetchCablingPorts = (
+  tenantId: number,
+  f: { device?: string; status?: string; vlan?: number | null; q?: string; offset?: number; limit?: number } = {},
+) =>
+  getJSON<{ total: number; items: CablingPort[] }>(
+    `/api/cabling/ports${qs({ tenant_id: tenantId, device: f.device, status: f.status || undefined, vlan: f.vlan ?? undefined, q: f.q, offset: f.offset, limit: f.limit })}`,
+  );
+export const fetchCablingVlans = (tenantId: number) => getJSON<CablingVlan[]>(`/api/cabling/vlans${qs({ tenant_id: tenantId })}`);

@@ -21,6 +21,7 @@ import Agents from "./Agents";
 import AppDoc from "./AppDoc";
 import Customers from "./Customers";
 import * as auth from "./auth";
+import Cabling from "./Cabling";
 import Design from "./Design";
 import Findings from "./Findings";
 import NamingProfiles from "./NamingProfiles";
@@ -45,6 +46,7 @@ export type View =
   | "objekte"
   | "nat"
   | "routing"
+  | "verkabelung"
   | "wege"
   | "apps"
   | "findings"
@@ -74,6 +76,7 @@ const NAV: NavEntry[] = [
   { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc", customer: true },
   { key: "wege", label: "Weg-Suche", icon: "path", section: "doc" },
   { key: "routing", label: "Routing", icon: "route", section: "doc" },
+  { key: "verkabelung", label: "Verkabelung", icon: "cable", section: "doc" },
   { key: "apps", label: "Applikationen", icon: "apps", section: "doc", customer: true },
   { key: "findings", label: "Findings", icon: "findings", section: "doc", customer: true },
   { key: "abgleich", label: "Abgleich", icon: "reconcile", section: "doc" },
@@ -605,6 +608,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             {current === "routing" && (
               <Routing tenantId={tenantId} tenantLabel={tenantLabel} canEdit={me.isAdmin || me.isOperator} />
             )}
+            {current === "verkabelung" && <Cabling tenantId={tenantId} tenantLabel={tenantLabel} />}
             {current === "design" && (
               <Design
                 tenantId={tenantId}

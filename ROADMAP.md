@@ -359,8 +359,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.59.0** | Applikationen: Abweichung Regel ↔ Weg als Befund (je Regel und Applikation, nach jedem Lauf, Zeitbudget), Verbindungen Ende zu Ende in Export und Druck der Applikations-Doku |
 | **0.60.0** | Applikationen: Regeln direkt zuordnen bzw. ausschliessen (stabiler Verweis über Läufe, auch any/unspezifische; in der Applikations-Doku und in „Regeln & Contracts“), Abhängigkeiten zwischen Applikationen (nutzt / wird genutzt von, mit Regeln) |
 | **0.61.0** | Zonenplan übersichtlich: Suche und Fokus mit Nachbarn, Ebenen und Elemente ausblenden, Zonen ziehen (Anordnung je Ansicht gespeichert); Export und Versionen wie die Ansicht |
+| **0.62.0** | Switching/Verkabelung erste Fassung: Cisco-Switches (IOS, IOS-XE, NX-OS) strikt lesend über SSH (Exec je Befehl, feste `show`-Befehle, Host-Schlüssel festgehalten), Ports/VLANs/Port-Channel/vPC und Nachbarn aus CDP/LLDP; Ansicht Verkabelung (Verbindungen beidseitig/einseitig/Gegenstelle ohne CDP/LLDP, Geräte, Ports, VLANs) aus Switches und ACI-Leafs; Befunde Speed/Duplex/VLAN/Port-Channel (ADR 0025) |
 
-### Nächste Arbeiten (Stand 0.61.0)
+### Nächste Arbeiten (Stand 0.62.0)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
@@ -415,6 +416,11 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
    Nr. 14). Offen bei den Applikationen: Export nach NetBox (eigene Freigabe).
 5. **Switching/Verkabelung:** Cisco-Switches strikt lesend (Interfaces, VLANs, LLDP/CDP),
    Verkabelung als L1/L2-Sicht – Grundlage für Redundanz und Mehrfachausfälle; vorher eigene ADR.
+   Erste Fassung in 0.62.0 (ADR 0025): Switches über SSH mit fester Befehlsliste, Verkabelung aus
+   CDP/LLDP aller Quellen, Befunde zwischen zwei gelesenen Switches. Weiter: MAC-Tabelle/ARP
+   (welcher Server an welchem Port), L2-Sicht in Topologie und Weg (Switches als Knoten,
+   VLAN-Wege, Redundanz von Uplinks und vPC-Paaren, Mehrfachausfälle), Kabel/Ports nach NetBox
+   (eigene Freigabe), SNMPv3 als Alternative zu SSH.
 
 **Reihenfolge bis 0.53.0 (Vorschlag, vom Anwender gutgeheissen):**
 
@@ -438,7 +444,8 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 | ~~0.59.0~~ | Verbindungen Ende zu Ende exportieren/drucken, Abweichung Regel ↔ Weg als Befund – **umgesetzt in 0.59.0** (ADR 0021) |
 | ~~0.60.0~~ | Applikationen: Regeln direkt zuordnen (auch any/unspezifische), Abhängigkeiten zwischen Applikationen – **umgesetzt in 0.60.0** (ADR 0012 Ergänzung 0.60.0) |
 | ~~0.61.0~~ | Zonenplan übersichtlich: Filter, Ebenen ein-/ausblenden, Zonen ziehen – **umgesetzt in 0.61.0** (ADR 0024 Nr. 14) |
-| danach | Applikationen ausbauen, Switching/Verkabelung (siehe oben); Abnahme 0.43.1 ff. gegen die grössere Testumgebung (Pilot Zonen und Pläne) |
+| ~~0.62.0~~ | Switching/Verkabelung erste Fassung: Cisco-Switches strikt lesend, Verkabelung aus CDP/LLDP, Befunde – **umgesetzt in 0.62.0** (ADR 0025) |
+| danach | Switching/Verkabelung weiter (MAC-Tabelle, L2-Sicht in Topologie und Weg, Redundanz/Mehrfachausfälle; siehe oben); Abnahme 0.43.1 ff. gegen die grössere Testumgebung (Pilot Zonen und Pläne) |
 
 Frühere Reihenfolge (Stand 0.42.0, zum Nachlesen):
 

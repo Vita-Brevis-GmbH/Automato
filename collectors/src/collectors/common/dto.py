@@ -149,6 +149,28 @@ class NormalizedInterface(BaseModel):
     neighbor_port: str | None = None
     policy_group: str | None = None  # ACI Access Policy Group
     epgs: list[str] = Field(default_factory=list)  # ACI: EPGs mit statischem Pfad
+    # Switches (0.62.0, ADR 0025): Betriebszustand, Speed/Duplex wie vom Switch gemeldet, Native
+    # VLAN des Trunks, erlaubte VLANs als Bereiche (`10,20,30-40`), Medium und vPC in `attrs`
+    status: str | None = None
+    speed: str | None = None
+    duplex: str | None = None
+    native_vlan: int | None = None
+    trunk_vlans: str | None = None
+    attrs: dict | None = None
+
+
+class NormalizedNeighbor(BaseModel):
+    """Nachbar an einem Port aus CDP bzw. LLDP (0.62.0, ADR 0025) - Grundlage der Verkabelung."""
+
+    device: str
+    port: str
+    protocol: str = "lldp"  # cdp | lldp
+    remote_name: str
+    remote_port: str | None = None
+    remote_ip: str | None = None
+    remote_platform: str | None = None
+    remote_caps: list[str] = Field(default_factory=list)
+    remote_description: str | None = None
 
 
 class NormalizedVlan(BaseModel):
@@ -184,6 +206,7 @@ class NetworkInventory(BaseModel):
     vrfs: list[str] = Field(default_factory=list)
     # ACI-Route-Leaking zwischen VRFs (0.44.0): {vrf, prefix, to: [Tenant:VRF], external}
     vrf_leaks: list[dict] = Field(default_factory=list)
+    neighbors: list[NormalizedNeighbor] = Field(default_factory=list)  # CDP/LLDP (0.62.0)
 
 
 class ReferenceBatch(BaseModel):
@@ -352,6 +375,9 @@ class CollectorResult(BaseModel):
     # hier nur die Gesamtzahl zur Kontrolle (ADR 0010)
     reference_count: int | None = None
     message: str | None = None
+    # Switches (0.62.0): beim ersten Kontakt uebernommene SSH-Host-Schluessel je Adresse
+    # (`<typ> <base64>`), der Orchestrator haelt sie fest
+    host_keys: dict[str, str] = Field(default_factory=dict)
 
 
 class Target(BaseModel):
@@ -367,7 +393,8 @@ class Target(BaseModel):
     platform: str = "fortigate"
     base_url: str = ""
     verify_tls: bool = True
-    read_scope: str = ""  # ACI: zu lesende Tenants (kommagetrennt, leer = alle)
+    read_scope: str = ""  # ACI: zu lesende Tenants (kommagetrennt, leer = alle); Switches: Adressen
+    known_hosts: dict[str, str] = Field(default_factory=dict)  # Switches: gespeicherte Schluessel
     token: str | None = None
     username: str | None = None
     password: str | None = None

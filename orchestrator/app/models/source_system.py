@@ -6,9 +6,11 @@ ist nur fuer Altbestaende vor Migration 0015 leer ("nicht zugeordnet").
 Geraete-Zugangsdaten (ADR 0009): `agent_id` = Collector-Agent, der das Geraet verwaltet;
 `credentials` = verschluesselte Zugangsdaten (app.credentials, nie im Klartext gespeichert
 oder ausgegeben) - der Agent bekommt sie beim Abholen eines Laufs. Inhalt je Plattform:
-FortiGate `{"token"}`, Cisco ACI und VMware vCenter `{"username", "password"}`.
+FortiGate `{"token"}`, Cisco ACI, VMware vCenter und Cisco-Switches `{"username", "password"}`.
 `read_scope` = Lesebereich: bei Cisco ACI die zu lesenden ACI-Tenants (kommagetrennt, leer =
-alle ausser infra/mgmt).
+alle ausser infra/mgmt), bei Cisco-Switches die Adressen der Switches (0.62.0, ADR 0025; je
+Zeile bzw. kommagetrennt). `ssh_host_keys` = beim ersten Lauf festgehaltene SSH-Host-Schluessel
+je Adresse (`<typ> <base64>`); ein anderer Schluessel bricht die Verbindung ab.
 
 Referenzquellen (Infoblox, NetBox; ADR 0010): `ref_role` = primary | enrichment,
 `reference_run_id` = Lauf, dessen Eintraege (`reference_record`) der aktuelle Stand sind.
@@ -20,7 +22,7 @@ den NetBox-Sync des Orchestrators, nie an einen Agenten. `site_id` = Standort de
 import enum
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, UniqueConstraint, true
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -32,6 +34,7 @@ class Platform(enum.StrEnum):
     INFOBLOX = "infoblox"  # Referenzquelle (DDI), ADR 0010
     NETBOX = "netbox"  # Referenzquelle / Anreicherung, ADR 0010
     VMWARE = "vmware"  # vCenter: VMs, Portgruppen (ADR 0017)
+    CISCO_SWITCH = "cisco_switch"  # Cisco IOS/IOS-XE/NX-OS per SSH, Gruppe von Switches (ADR 0025)
 
 
 # Referenzquellen (IPAM) - liefern keinen Regeln, sondern den Referenz-Stand
@@ -60,7 +63,8 @@ class SourceSystem(Base):
     agent_id: Mapped[int | None] = mapped_column(ForeignKey("agent.id"), nullable=True, index=True)
     credentials: Mapped[str | None] = mapped_column(Text, nullable=True)  # Fernet-Token
     verify_tls: Mapped[bool] = mapped_column(default=True, server_default=true())
-    read_scope: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    read_scope: Mapped[str] = mapped_column(Text, default="", server_default="")
+    ssh_host_keys: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     ref_role: Mapped[str | None] = mapped_column(String(16), nullable=True)  # RefRole
     reference_run_id: Mapped[str | None] = mapped_column(
         ForeignKey(

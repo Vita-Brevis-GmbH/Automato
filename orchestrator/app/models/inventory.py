@@ -22,7 +22,7 @@ class InvDevice(_InventoryRow, Base):
     __tablename__ = "inv_device"
 
     name: Mapped[str] = mapped_column(String(200))
-    role: Mapped[str] = mapped_column(String(32))  # firewall | leaf | spine | controller
+    role: Mapped[str] = mapped_column(String(32))  # firewall | leaf | spine | controller | switch
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     serial: Mapped[str | None] = mapped_column(String(100), nullable=True)
     node_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -53,6 +53,14 @@ class InvInterface(_InventoryRow, Base):
     neighbor_port: Mapped[str | None] = mapped_column(String(100), nullable=True)
     policy_group: Mapped[str | None] = mapped_column(String(200), nullable=True)
     epgs: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Switches (0.62.0, ADR 0025): Betriebszustand, Speed/Duplex wie gemeldet, Native VLAN und
+    # erlaubte VLANs des Trunks als Bereiche (`10,20,30-40`), dazu Medium/vPC in `attrs`
+    status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    speed: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    duplex: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    native_vlan: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    trunk_vlans: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attrs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class InvVlan(_InventoryRow, Base):
@@ -90,4 +98,21 @@ class InvVrf(_InventoryRow, Base):
     leaks: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
-INVENTORY_MODELS = (InvDevice, InvInterface, InvVlan, InvSubnet, InvVrf)
+class InvNeighbor(_InventoryRow, Base):
+    """Nachbar an einem Port aus CDP bzw. LLDP (0.62.0, ADR 0025) - Grundlage der Verkabelung
+    (`store/cabling`). ACI-Leafs melden ihre Nachbarn am Port (`inv_interface.neighbor`)."""
+
+    __tablename__ = "inv_neighbor"
+
+    device: Mapped[str] = mapped_column(String(200))
+    port: Mapped[str] = mapped_column(String(200))
+    protocol: Mapped[str] = mapped_column(String(8))  # cdp | lldp
+    remote_name: Mapped[str] = mapped_column(String(300))
+    remote_port: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    remote_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    remote_platform: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    remote_caps: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    remote_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+INVENTORY_MODELS = (InvDevice, InvInterface, InvVlan, InvSubnet, InvVrf, InvNeighbor)

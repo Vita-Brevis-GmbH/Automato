@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, select, true
 from sqlalchemy.orm import Session
 
-from app import naming
+from app import audit, naming
 from app.models import (
     INVENTORY_MODELS,
     SERVICE_CATEGORIES,
@@ -39,6 +39,7 @@ from app.models import (
     Family,
     InvDevice,
     InvInterface,
+    InvNeighbor,
     InvSubnet,
     InvVlan,
     InvVrf,
@@ -47,6 +48,7 @@ from app.models import (
     NetworkObject,
     ObjectCategory,
     ObjectClass,
+    Platform,
     Proto,
     RefRole,
     Rule,
@@ -56,6 +58,7 @@ from app.models import (
     RuleObjectRef,
     ServiceObject,
     SourceOfRecord,
+    SourceSystem,
     Zone,
 )
 from app.naming import PrefixList
@@ -136,6 +139,8 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         _vip_targets(session, run, device_objects, cache)
     if result.inventory is not None:  # aeltere Collectors liefern kein Inventar
         _replace_inventory(session, run, result.inventory)
+    if result.host_keys:  # Switches: SSH-Host-Schluessel beim ersten Kontakt festhalten
+        _pin_host_keys(session, run, result.host_keys)
     if result.virtual is not None:  # vCenter: VMs und Portgruppen (ADR 0017)
         virtual.replace(session, run, result.virtual)
     if result.routing is not None:  # Routing, BGP, HA, L3Out (ADR 0019 Stufe 2)
@@ -507,8 +512,33 @@ def _replace_inventory(session: Session, run, inv: NetworkInventory) -> None:
         InvVrf(**base, name=name, leaks=leaks.get(name) or None)
         for name in dict.fromkeys([*inv.vrfs, *leaks])
     ]
+    rows += [  # CDP/LLDP (Switches, 0.62.0)
+        InvNeighbor(**base, **{**n.model_dump(), "remote_caps": n.remote_caps or None})
+        for n in inv.neighbors
+    ]
     session.add_all(rows)
     session.flush()
+
+
+def _pin_host_keys(session: Session, run, keys: dict[str, str]) -> None:
+    """SSH-Host-Schluessel der Switches festhalten (Trust on first use, ADR 0025): nur fuer
+    Adressen ohne gespeicherten Schluessel - einen geaenderten lehnt schon der Agent ab, neu
+    lernen setzt der Operator im Quellsystem zurueck."""
+    src = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
+    if src is None or src.platform is not Platform.CISCO_SWITCH:
+        return
+    known = dict(src.ssh_host_keys or {})
+    new = {h: k for h, k in keys.items() if h not in known and isinstance(k, str) and k.strip()}
+    if not new:
+        return
+    src.ssh_host_keys = {**known, **new}
+    audit.record(
+        session,
+        actor="system:ingest",
+        action="source.ssh_host_keys_learned",
+        subject=str(src.id),
+        detail={"tenant_id": src.tenant_id, "source_system_id": src.id, "hosts": sorted(new)},
+    )
 
 
 def _apply_object_catalog(cache: "_Cache", objects) -> None:

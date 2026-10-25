@@ -37,7 +37,9 @@ test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page })
 
 test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page }) => {
   await page.goto("/#findings");
-  await expect(page.locator(".fgroup")).toHaveCount(7);
+  await expect(page.locator(".fgroup")).toHaveCount(8);
+  // seit 0.62.0: Verkabelung (Speed/Native VLAN zwischen den Switches der Beispieldaten)
+  await expect(page.locator(".fgroup", { hasText: "Verkabelung" })).toContainText("Kabel: Speed abweichend");
   // seit 0.59.0: Abweichung Regel ↔ Weg der Applikation Webshop (CT_rt)
   await expect(page.locator(".fgroup", { hasText: "Applikationen" })).toContainText("Applikation: Regel ↔ Weg");
   // seit 0.50.0: Plausibilität der Topologie (statische Route ohne Wirkung in den Beispieldaten)
@@ -1255,3 +1257,44 @@ interface LogicalZoneRow {
   position: number;
   selectors: unknown[];
 }
+
+test("Verkabelung: Switches, Verbindungen mit Abweichungen, Ports und VLANs (0.62.0)", async ({ page, problems }) => {
+  await page.goto("/#verkabelung");
+  await expect(page.locator("#cabling-summary")).toContainText("2 Switches");
+  await expect(page.locator("#cabling-summary")).toContainText("1 einseitig");
+  const rows = page.locator("#cabling-links tbody tr");
+  // Gi1/0/48 <-> Eth1/2: Speed und Native VLAN abweichend, zuerst gelistet
+  const bad = rows.filter({ hasText: "Gi1/0/48" });
+  await expect(bad).toContainText("Eth1/2");
+  await expect(bad.locator(".crit", { hasText: "Speed a-1000 ↔ 100" })).toBeVisible();
+  await expect(bad.locator(".crit", { hasText: "Native VLAN 1 ↔ 99" })).toBeVisible();
+  await expect(rows.first()).toContainText("Gi1/0/48");
+  await expect(rows.filter({ hasText: "Gi1/0/47" }).locator(".chip.ok")).toHaveText("beidseitig");
+  // Firewall ohne CDP/LLDP-Daten, ESXi-Host aus dem vCenter, ACI-Leaf meldet nicht
+  await expect(rows.filter({ hasText: "fw-08" })).toContainText("Gegenstelle ohne CDP/LLDP");
+  await expect(rows.filter({ hasText: "vmnic2" })).toContainText("esx01-chzrh1.example.ch (ESXi-Host)");
+  await expect(rows.filter({ hasText: "leaf-101" }).locator(".chip.warn")).toHaveText("einseitig");
+  await page.locator("#cabling-links label", { hasText: "nur Abweichungen" }).locator("input").check();
+  await expect(rows).toHaveCount(1);
+
+  // Geräte -> Ports des Switches; VLAN 30 nur auf den Trunks
+  await page.click(".tabbar button:has-text('Geräte')");
+  await page.locator("#cabling-devices tbody tr", { hasText: "sw-core-01" }).click();
+  const ports = page.locator("#cabling-ports tbody tr");
+  await expect(ports.filter({ hasText: "Eth1/3" })).toContainText("esx01-chzrh1.example.ch");
+  await page.locator("#cabling-ports input[aria-label='VLAN']").fill("30");
+  await expect(ports).toHaveCount(3);
+  await expect(ports.filter({ hasText: "Eth1/2" })).toContainText("Native VLAN 1 ↔ 99");
+
+  // VLANs: DMZ als Access an sw-acc-01, in den Trunks beider Switches
+  await page.click(".tabbar button:has-text('VLANs')");
+  const dmz = page.locator("#cabling-vlans tbody tr[data-vlan='30']");
+  await expect(dmz).toContainText("DMZ");
+  await expect(dmz).toContainText("sw-acc-01 · 1 · 2");
+  await expect(dmz).toContainText("sw-core-01 · 0 · 3");
+
+  // Befunde in der Kategorie „Verkabelung“
+  await page.goto("/#findings");
+  await expect(page.locator("body")).toContainText("Verkabelung");
+  expect(problems).toEqual([]);
+});
