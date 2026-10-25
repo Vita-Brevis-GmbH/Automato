@@ -213,3 +213,42 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   const finding = page.locator("tbody tr", { hasText: "CT_rt" }).first();
   await expect(finding).toContainText("erlaubt für die Applikation „Webshop“");
 });
+
+test("Applikation: Regeln zuordnen bzw. ausschliessen, Abhängigkeiten (0.60.0)", async ({ page, problems }) => {
+  // zweite Applikation mit dem Server H_db01 (172.16.5.9) – Webshop nutzt sie (Policy to-db)
+  const created = await page.request.post("/api/applications?tenant_id=1", {
+    data: { name: `Datenbank ${test.info().retry}`, members: [{ kind: "host", ref: "172.16.5.9" }] },
+  });
+  expect(created.status()).toBe(201);
+  const db = (await created.json()) as { id: number; name: string };
+  await open(page);
+  await expect(page.locator("#app-dependencies #app-deps-uses")).toContainText(db.name);
+
+  // CT_rt ausschliessen: fällt aus der Liste, steht als ausgeschlossen da – und zurück
+  const ct = page.locator("#app-rules tbody tr.clickable", { hasText: "CT_rt" });
+  await ct.click();
+  await page.locator("#app-rule-actions button", { hasText: "Aus der Applikation ausschliessen" }).click();
+  await expect(page.locator("#app-rule-members")).toContainText("1 ausgeschlossen");
+  await expect(ct).toHaveCount(0);
+  await page.locator("#app-rule-actions button", { hasText: "Ausschluss aufheben" }).click();
+  await expect(page.locator("#app-rule-members")).toHaveCount(0);
+  await expect(ct).toHaveCount(1);
+  await page.locator(".drawer button.close").click();
+
+  // in Regeln & Contracts eine Regel ohne Treffer bei Webshop direkt zuordnen
+  await page.goto("/#regeln");
+  await rows(page).filter({ hasText: "lan-to-dmz-web" }).first().click();
+  const assign = page.locator("#rule-assign-app");
+  await assign.locator("select[aria-label='Applikation']").selectOption({ label: "Webshop" });
+  await assign.locator("button", { hasText: "Zuordnen" }).click();
+  await assign.locator("button", { hasText: "zugeordnet zu Webshop" }).click();
+  await expect(page.locator("h1.app-title")).toHaveText("Webshop");
+  const assigned = page.locator("#app-rules tbody tr.clickable", { hasText: "lan-to-dmz-web" });
+  await expect(assigned).toContainText("zugeordnet");
+  await page.locator("#app-rule-members button").first().click();
+  await page.locator("#app-rule-members button", { hasText: "rückgängig" }).click();
+  await expect(assigned).toHaveCount(0);
+
+  expect((await page.request.delete(`/api/applications/${db.id}`)).status()).toBe(204);
+  expect(problems).toEqual([]);
+});

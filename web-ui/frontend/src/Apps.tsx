@@ -37,7 +37,7 @@ const CRIT: Record<Criticality, [string, string]> = {
   high: ["warn", "hoch"],
   critical: ["crit", "kritisch"],
 };
-const KIND: Record<MemberKind, string> = { ap: "AP", epg: "EPG", host: "Server" };
+const KIND: Record<MemberKind, string> = { ap: "AP", epg: "EPG", host: "Server", rule: "Regel", norule: "ohne Regel" };
 const PREVIEW = 6;
 
 function CritChip({ value }: { value: Criticality | null }) {

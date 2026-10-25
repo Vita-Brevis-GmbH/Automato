@@ -38,6 +38,28 @@ Die Doku je System – und damit je Applikation – erfasst alle Regeln, gleichw
 - Dazu die offenen Befunde der Applikation (Regeln, Server, VMs, Portgruppen, Subnetze der
   EPGs). Alles rein lesend.
 
+**Ergänzung 0.60.0 (Applikationen ausbauen, ROADMAP):**
+- **Regeln direkt zuordnen bzw. ausschliessen.** Zwei neue Arten von Mitgliedern: `rule`
+  (Regel gehört zur Applikation, auch wenn sie nur über any, ein grosses Netz oder gar nicht
+  trifft) und `norule` (Regel gehört trotz Treffer nicht dazu). Der Verweis ist stabil über
+  Läufe hinweg: `<Quellsystem-ID>|<VDOM>|<externe ID>` (Policy-ID bzw. Kennung des Contracts)
+  statt der Regel-ID, die bei jedem Lauf neu vergeben werden kann. Fällt die Regel weg,
+  erscheint das Mitglied als „nicht mehr gelesen“ wie ein umbenannter Server.
+- Eine zugeordnete Regel steht in der Doku mit der Art **„direkt zugeordnet“** (`assigned`,
+  spezifisch – sie zählt in der Übersicht wie eine spezifische Regel) und dem Bezug „direkt
+  zugeordnet“; eine ausgeschlossene fällt aus Doku, Kategorien, Verbindungen und Kennzahlen.
+  Zuordnen ersetzt einen Ausschluss derselben Regel und umgekehrt. Pflege im Regel-Detail der
+  Applikations-Doku (zuordnen/ausschliessen/aufheben) und in „Regeln & Contracts“ (Regel einer
+  Applikation zuordnen); nur Operator, Audit `application.member_added`. Die Liste der
+  zugeordneten und ausgeschlossenen Regeln steht über der Regel-Tabelle.
+- **Abhängigkeiten zwischen Applikationen** werden abgeleitet, nicht erfasst: Eine erlaubende
+  Regel mit spezifischem Treffer bei der Applikation, deren Gegenseite den Fussabdruck einer
+  anderen Applikation trifft (ihre EPGs; ihre Server bzw. ein Netz im Subnetz ihrer EPGs),
+  ergibt „nutzt“ (Applikation ist Quelle bzw. Consumer) bzw. „wird genutzt von“ (Ziel bzw.
+  Provider). Trifft die Gegenseite auch die eigene Applikation, zählt die Regel nicht (interne
+  Verbindung). Je Abhängigkeit die Regeln mit Bezug und Diensten; Kunden-Benutzer sehen nur
+  Applikationen ihres Ausschnitts. Im Export (Markdown) als Abschnitt „Abhängigkeiten“.
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:
@@ -97,6 +119,6 @@ gehören zu mehreren Applikationen.
   Namen bzw. DNs gleich bleiben.
 - Benennt jemand ein AP, eine EPG oder einen Server um, verliert das Mitglied den Bezug und
   erscheint als „nicht mehr gelesen“. Der Vorschlag bietet das umbenannte Objekt wieder an.
-- Noch offen: Regeln direkt einer Applikation zuordnen (heute nur über ihre Systeme),
-  Applikations-Abhängigkeiten (Applikation ↔ Applikation) und ein Export nach NetBox
-  (Tag/Custom Field, nur mit eigener Freigabe gemäss ADR 0010).
+- Regeln direkt zuordnen bzw. ausschliessen und Abhängigkeiten zwischen Applikationen seit
+  0.60.0 (Ergänzung oben). Noch offen: ein Export nach NetBox (Tag/Custom Field, nur mit
+  eigener Freigabe gemäss ADR 0010).

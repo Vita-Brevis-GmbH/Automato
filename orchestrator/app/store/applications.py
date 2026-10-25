@@ -17,6 +17,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import cached_property
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -39,6 +40,7 @@ from app.models import (
     RuleDomain,
     RuleIndex,
     Site,
+    SourceSystem,
     SubjectKind,
     Tenant,
     Vm,
@@ -99,6 +101,26 @@ class Resolved:
     exists: bool
     epgs: list[Epg] = field(default_factory=list)
     hosts: list[NetworkObject] = field(default_factory=list)
+    rules: list[Rule] = field(default_factory=list)
+
+
+# Regeln direkt zuordnen bzw. ausschliessen (0.60.0): Verweis `<Quellsystem>|<VDOM>|<ID>` -
+# Regeln werden je Lauf ersetzt, Quellsystem, VDOM und Policy-ID bzw. DN des Contracts bleiben
+RULE_KINDS = ("rule", "norule")
+
+
+def rule_ref(rule: Rule) -> str:
+    return f"{rule.source_system_id}|{rule.vdom or ''}|{rule.external_id}"
+
+
+def _rule_label(rule: Rule, source: str | None) -> str:
+    if rule.domain == RuleDomain.ACI_CONTRACT:
+        name = f"Contract {rule.name or rule.external_id}"
+    else:
+        name = f"Policy {rule.external_id}" + (f" „{rule.name}“" if rule.name else "")
+    vdom = rule.vdom if rule.domain == RuleDomain.FIREWALL and rule.vdom != "root" else None
+    where = (source or f"#{rule.source_system_id}") + (f" · VDOM {vdom}" if vdom else "")
+    return f"{name} ({where})"
 
 
 class Resolver:
@@ -143,7 +165,33 @@ class Resolver:
         if kind == "host":
             obj = self.host(ref)
             return Resolved(label=ref, exists=obj is not None, hosts=[obj] if obj else [])
+        if kind in RULE_KINDS:
+            rule = self.rule(ref)
+            if rule is None:
+                return Resolved(label=f"Regel {ref.split('|')[-1]}", exists=False)
+            return Resolved(label=_rule_label(rule, self.sources.get(rule.source_system_id)),
+                            exists=True, rules=[rule])  # fmt: skip
         return Resolved(label=ref, exists=False)
+
+    @cached_property
+    def sources(self) -> dict[int, str]:
+        return dict(self.session.execute(
+            select(SourceSystem.id, SourceSystem.name).where(
+                SourceSystem.tenant_id == self.tenant_id)).all())  # fmt: skip
+
+    def rule(self, ref: str) -> Rule | None:
+        """Aktuelle Regel zu `<Quellsystem>|<VDOM>|<ID>` (die neuste, falls mehrere)."""
+        sid, _, rest = ref.partition("|")
+        vdom, _, ext = rest.partition("|")
+        if not sid.isdigit() or not ext:
+            return None
+        stmt = select(Rule).where(
+            Rule.tenant_id == self.tenant_id,
+            Rule.source_system_id == int(sid),
+            Rule.external_id == ext,
+        )
+        stmt = stmt.where(Rule.vdom == vdom) if vdom else stmt.where(Rule.vdom.is_(None))
+        return self.session.scalars(stmt.order_by(Rule.id.desc())).first()
 
 
 def _dn_label(dn: str) -> str:
@@ -359,9 +407,11 @@ def _systems(session: Session, app: Application, resolver: Resolver | None = Non
     return list(hosts.values()), list(epgs.values())
 
 
-KIND_LABEL = {"ap": "AP", "epg": "EPG", "host": "Server"}
-# Reihenfolge der Bezugsarten: eine Regel zaehlt mit ihrem engsten Bezug
-_SCOPE_RANK = {"specific": 0, "subnet": 1, "vzany": 2, "pref_group": 3, "any": 4}
+KIND_LABEL = {"ap": "AP", "epg": "EPG", "host": "Server", "rule": "Regel",
+              "norule": "ohne Regel"}  # fmt: skip
+# Reihenfolge der Bezugsarten: eine Regel zaehlt mit ihrem engsten Bezug; direkt zugeordnet
+# (0.60.0) vor allem
+_SCOPE_RANK = {"assigned": -1, "specific": 0, "subnet": 1, "vzany": 2, "pref_group": 3, "any": 4}
 _OPEN = (FindingStatus.OPEN, FindingStatus.ACKNOWLEDGED)
 
 
@@ -505,6 +555,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     - `tables`: die 10 Kategorien fuer Export und Druck (gleiche Zeilen einmal).
     """
     tid = app.tenant_id
+    restricted = rule_ids is not None  # Kunden-Benutzer: nur ihre Regeln (ADR 0018)
     res = Resolver(session, tid)
     hosts, epgs = _origins(session, app, res)
     data = appdoc.TenantData(session, tid)
@@ -664,6 +715,9 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
 
     if rule_ids is not None:  # Kunden-Benutzer: nur ihre Regeln (ADR 0018)
         rows = [r for r in rows if r[2].get(appdoc.RULE) in rule_ids]
+    # Regeln direkt zugeordnet bzw. ausgeschlossen (0.60.0)
+    assigned, excluded = _rule_members(app, res, rule_ids)
+    rows = [r for r in rows if r[2].get(appdoc.RULE) not in excluded]
     # parallele Firewalls (0.18.0): gleiche Policies nur einmal - die der fuehrenden Firewall
     twins = parallel.twin_ids(session, {row.get(appdoc.RULE) for _, _, row in rows})
     rows = [r for r in rows if r[2].get(appdoc.RULE) not in twins]
@@ -673,6 +727,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     # Zugriff von dort braeuchte eine eigene) - nicht einblendbar, nur gezaehlt
     possible = [h for h in hits if h["relevance"] != "impossible"]
     impossible = {h["rule_id"] for h in hits} - {h["rule_id"] for h in possible}
+    possible += [_assigned_hit(rid, m) for rid, m in assigned.items() if rid not in excluded]
     hits = possible
     rule_ids = {h["rule_id"] for h in hits}
     ordered = (
@@ -706,7 +761,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     for h in possible:
         rule_epgs[h["rule_id"]] |= set(epgs_of.get(h["system"], []))
     findings = _app_findings(session, tid, systems, epg_out, set(ordered), rule_epgs,
-                             restricted=rule_ids is not None, app_id=app.id)  # fmt: skip
+                             restricted=restricted, app_id=app.id)  # fmt: skip
     tenant = session.get(Tenant, tid)
     return {
         "tenant_code": tenant.code if tenant else None,
@@ -718,7 +773,9 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             "firewall": sum(1 for r in rules if r.domain == RuleDomain.FIREWALL.value),
             "aci": sum(1 for r in rules if r.domain == RuleDomain.ACI_CONTRACT.value),
             "impossible": len(impossible),
-            "specific": sum(1 for v in best.values() if v == "specific"),
+            "specific": sum(1 for v in best.values() if v in ("specific", "assigned")),
+            "assigned": sum(1 for v in best.values() if v == "assigned"),
+            "excluded": len(excluded),
             "unspecific": sum(by_scope.values()),
             "by_scope": by_scope,
             "findings": len(findings),
@@ -729,7 +786,37 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         "rules": rules,
         "findings": findings,
         "tables": tables,
+        # zugeordnete bzw. ausgeschlossene Regeln mit dem Mitglied (zum Rueckgaengigmachen)
+        "rule_members": [
+            {"member_id": m.id, "kind": m.kind, "label": label, "rule_id": rid}
+            for rid, (m, label) in (assigned | excluded).items()
+        ],
     }
+
+
+def _rule_members(app: Application, res: Resolver, allowed: set[int] | None):
+    """Direkt zugeordnete bzw. ausgeschlossene Regeln der Applikation (0.60.0): je aktuelle
+    Regel das Mitglied und die Bezeichnung; Kunden-Benutzer nur ihre Regeln."""
+    assigned: dict[int, tuple] = {}
+    excluded: dict[int, tuple] = {}
+    for m in app.members:
+        if m.kind not in RULE_KINDS:
+            continue
+        r = res.resolve(m.kind, m.ref)
+        for rule in r.rules:
+            if allowed is not None and rule.id not in allowed:
+                continue
+            (excluded if m.kind == "norule" else assigned)[rule.id] = (m, r.label)
+    return assigned, excluded
+
+
+def _assigned_hit(rule_id: int, member: tuple) -> dict:
+    """Treffer einer direkt zugeordneten Regel - gilt fuer die ganze Applikation."""
+    return {"rule_id": rule_id, "system": "app", "table": 0, "direction": "assigned",
+            "side": "app", "object": "", "value": "", "via": "direkt zugeordnet",
+            "scope": "assigned", "counterpart": "", "services": "", "epg": None,
+            "parties": None, "relevance": "possible", "relevance_text": "",
+            "member_id": member[0].id}  # fmt: skip
 
 
 def _object_label(row: dict) -> str:
@@ -926,3 +1013,119 @@ def _table_meta(t: tuple[int, str, str]) -> dict:
         "enforcement": enforcement,
         "columns": appdoc.TABLE_COLUMNS[index],
     }
+
+
+# -- Abhaengigkeiten zwischen Applikationen (0.60.0, ADR 0012) ------------------------------
+
+
+@dataclass
+class Footprint:
+    """Was eine Applikation im Netz ausmacht: ihre EPGs, die IPs ihrer Systeme (VMs, Server)
+    und die Subnetze ihrer EPGs."""
+
+    epgs: set[int] = field(default_factory=set)
+    ips: set[str] = field(default_factory=set)
+    nets: list = field(default_factory=list)
+
+    def matches(self, epg_ids: set[int], ranges: list[tuple]) -> str | None:
+        """Gegenseite einer Regel spezifisch bei dieser Applikation? EPG, Host mit einer IP
+        ihrer Systeme bzw. Netz bzw. Bereich innerhalb eines Subnetzes ihrer EPGs; any und
+        groessere Netze zaehlen nicht. -> Bezug (Objekt) bzw. None."""
+        if epg_ids & self.epgs:
+            return "EPG"
+        for fam, lo, hi, via in ranges:
+            if lo == hi and str(ipaddress.ip_address(lo) if fam == 4 else
+                                ipaddress.IPv6Address(lo)) in self.ips:  # fmt: skip
+                return via or "Host"
+            for net in self.nets:
+                if net.version == fam and int(net.network_address) <= lo \
+                        and hi <= int(net.broadcast_address):  # fmt: skip
+                    return via or str(net)
+        return None
+
+
+def footprint(session: Session, app: Application, res: Resolver,
+              groups: virtual.PortgroupIndex) -> Footprint:  # fmt: skip
+    hosts, epgs = _origins(session, app, res)
+    out = Footprint(epgs=set(epgs))
+    out.ips |= {ip for h, _w in hosts.values() if (ip := _ip(h.value))}
+    for e in _app_vms(session, app.tenant_id, epgs, hosts, groups).values():
+        out.ips |= {ip for n in e["vm"].nics for ip in n.ips or []}
+    if epgs:
+        stmt = select(EpgSubnet.ip).where(
+            EpgSubnet.epg_id.in_(list(epgs)), EpgSubnet.origin.in_(("epg", "bd"))
+        )
+        for ip in session.scalars(stmt):
+            try:
+                out.nets.append(ipaddress.ip_interface(ip).network)
+            except ValueError:
+                continue
+    return out
+
+
+def dependencies(session: Session, app: Application, doc: dict,
+                 visible: set[int] | None = None) -> dict:  # fmt: skip
+    """Abhaengigkeiten der Applikation (0.60.0): Regeln, die ein System von ihr spezifisch mit
+    einem System einer anderen Applikation verbinden (EPG, Host bzw. Netz in deren EPG-Subnetz -
+    nicht any, nicht groessere Netze). Eigene Seite Quelle bzw. Consumer -> sie **nutzt** die
+    andere; Ziel bzw. Provider -> sie **wird genutzt**. `visible` = sichtbare Applikationen
+    (Kunden-Benutzer). -> {uses, used_by} je Applikation mit den Regeln."""
+    from app.models import RuleEndpoint, RuleIpRange
+
+    tid = app.tenant_id
+    res = Resolver(session, tid)
+    groups = virtual.PortgroupIndex.load(session, tid)
+    others = [a for a in session.scalars(
+        select(Application).where(Application.tenant_id == tid, Application.id != app.id)
+        .order_by(Application.name)) if visible is None or a.id in visible]  # fmt: skip
+    empty: dict = {"uses": [], "used_by": []}
+    sides: dict[int, set[str]] = defaultdict(set)
+    for h in doc["hits"]:
+        if h["scope"] == "specific" and h["side"] in ("src", "dst"):
+            sides[h["rule_id"]].add(h["side"])
+    if not others or not sides:
+        return empty
+    own = footprint(session, app, res, groups)
+    prints = {a.id: footprint(session, a, res, groups) for a in others}
+    epgs_of: dict[tuple[int, str], set[int]] = defaultdict(set)
+    for rid, role, eid in session.execute(
+        select(RuleEndpoint.rule_id, RuleEndpoint.role, RuleEndpoint.epg_id).where(
+            RuleEndpoint.rule_id.in_(list(sides)), RuleEndpoint.epg_id.is_not(None))
+    ):  # fmt: skip
+        epgs_of[(rid, getattr(role, "value", role))].add(eid)
+    ranges_of: dict[tuple[int, str], list[tuple]] = defaultdict(list)
+    for rid, role, fam, lo, hi, is_any, via in session.execute(
+        select(RuleIpRange.rule_id, RuleIpRange.role, RuleIpRange.family, RuleIpRange.lo,
+               RuleIpRange.hi, RuleIpRange.is_any, RuleIpRange.via)
+        .where(RuleIpRange.rule_id.in_(list(sides)))
+    ):  # fmt: skip
+        if not is_any:
+            ranges_of[(rid, role)].append((fam, int(lo, 16), int(hi, 16), via))
+    rules = {r.id: r for r in doc["rules"]}
+    found: dict[str, dict[int, dict]] = {"uses": {}, "used_by": {}}
+    names = {a.id: a.name for a in others}
+    for rid, mine in sides.items():
+        r = rules.get(rid)
+        if r is None or getattr(r, "action", "allow") != "allow":
+            continue
+        for side in mine:
+            other = "dst" if side == "src" else "src"
+            epg_ids, ranges = epgs_of.get((rid, other), set()), ranges_of.get((rid, other), [])
+            if own.matches(epg_ids, ranges):
+                continue  # Gegenseite gehoert auch zur Applikation selbst (intern)
+            for aid, fp in prints.items():
+                via = fp.matches(epg_ids, ranges)
+                if via is None:
+                    continue
+                kind = "uses" if side == "src" else "used_by"
+                entry = found[kind].setdefault(
+                    aid, {"application_id": aid, "name": names[aid], "rules": {}}
+                )
+                entry["rules"].setdefault(rid, {
+                    "rule_id": rid, "name": r.aci.contract if r.aci else r.name,
+                    "domain": r.domain, "via": via, "services": list(r.service_names)})  # fmt: skip
+    return {
+        kind: [{**e, "rules": list(e["rules"].values())}
+               for e in sorted(items.values(), key=lambda x: x["name"].casefold())]
+        for kind, items in found.items()
+    }  # fmt: skip

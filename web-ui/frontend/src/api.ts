@@ -616,7 +616,7 @@ export interface SystemDoc {
 }
 
 // Applikationen (ADR 0012): Mitglieder AP (`Tenant/AP`), EPG (DN) und Server (Objektname)
-export type MemberKind = "ap" | "epg" | "host";
+export type MemberKind = "ap" | "epg" | "host" | "rule" | "norule"; // rule/norule: Regel zugeordnet bzw. ausgeschlossen (0.60.0)
 export type Criticality = "low" | "medium" | "high" | "critical";
 export type Purpose = "dev" | "test" | "prod";
 export interface SiteRef {
@@ -688,7 +688,7 @@ export interface ApplicationInput {
 
 // Applikations-Doku (0.14.0): Systeme (VMs bzw. Server ohne VM), EPGs, Treffer je Regel und
 // System (Richtung, Bezug), Regeln wie in der Regel-Ansicht, Kennzahlen, Befunde
-export type DocScope = "specific" | "subnet" | "any" | "vzany" | "pref_group";
+export type DocScope = "assigned" | "specific" | "subnet" | "any" | "vzany" | "pref_group"; // assigned: direkt zugeordnet (0.60.0)
 export interface DocRuleCounts {
   specific: number;
   unspecific: number;
@@ -741,8 +741,9 @@ export interface AppDocHit {
   rule_id: number;
   system: string; // Schlüssel aus systems/epgs
   table: number; // Kategorie 1–10
-  direction: "in" | "out";
-  side: "src" | "dst"; // Seite der Regel
+  direction: "in" | "out" | "assigned"; // assigned: Regel direkt zugeordnet (0.60.0)
+  side: "src" | "dst" | "app"; // Seite der Regel (app: direkt zugeordnet)
+  member_id?: number | null;
   object: string; // Objekt der Regel, das das System erfasst (H_web01, N_srv16, any, EPG …)
   value: string; // sein Bereich (10.20.0.0/16; leer bei any/EPG)
   via: string; // Bezug
@@ -782,6 +783,8 @@ export interface ApplicationDoc {
     by_scope: Record<string, number>;
     findings: number;
     impossible?: number; // Regeln nur mit routingtechnisch unmöglichen Treffern
+    assigned?: number; // direkt zugeordnete Regeln (0.60.0)
+    excluded?: number; // ausgeschlossene Regeln (0.60.0)
   };
   systems: AppDocSystem2[];
   epgs: AppDocEpg[];
@@ -789,6 +792,14 @@ export interface ApplicationDoc {
   rules: Rule[];
   findings: AppDocFinding[];
   tables: DocTable[];
+  // 0.60.0: direkt zugeordnete (rule) bzw. ausgeschlossene (norule) Regeln, Abhängigkeiten
+  rule_members?: { member_id: number; kind: "rule" | "norule"; label: string; rule_id: number }[];
+  dependencies?: { uses: AppDependency[]; used_by: AppDependency[] };
+}
+export interface AppDependency {
+  application_id: number;
+  name: string;
+  rules: { rule_id: number; name: string; domain: string; via: string; services: string[] }[];
 }
 
 // Firewall-Objekt wie auf dem Gerät (Objekt-Ansicht)
@@ -1530,6 +1541,9 @@ export const addAppMembers = (id: number, members: { kind: MemberKind; ref: stri
   sendJSON<ApplicationDetail>(`/api/applications/${id}/members`, "POST", { members });
 export const removeAppMember = (id: number, memberId: number) =>
   sendJSON<ApplicationDetail>(`/api/applications/${id}/members/${memberId}`, "DELETE");
+// Regel direkt zuordnen bzw. ausschliessen (0.60.0, operator)
+export const assignAppRule = (id: number, ruleId: number, exclude = false) =>
+  sendJSON<ApplicationDetail>(`/api/applications/${id}/rules`, "POST", { rule_id: ruleId, exclude });
 export const fetchAppCandidates = (
   tenantId: number,
   opts: { kind?: MemberKind | ""; q?: string; limit?: number } = {},

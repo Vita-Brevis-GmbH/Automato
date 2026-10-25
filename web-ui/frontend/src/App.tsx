@@ -544,6 +544,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                 onGo={go}
                 isAdmin={me.isAdmin}
                 customer={me.isCustomer}
+                canAssign={me.isOperator && !me.isCustomer}
               />
             )}
             {current === "objekte" && tenantReady && (

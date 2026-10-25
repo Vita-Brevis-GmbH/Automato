@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.60.0 – 2026-10-25
+
+Applikationen ausbauen (ROADMAP, ADR 0012 Ergänzung 0.60.0): Regeln direkt zuordnen bzw.
+ausschliessen und Abhängigkeiten zwischen Applikationen. Ohne Migration (neue Arten von
+Mitgliedern im bestehenden Text-Verweis); nur lesend gegenüber allen Quellsystemen.
+
+- **Regeln direkt zuordnen:** Im Regel-Detail der Applikations-Doku „Der Applikation
+  zuordnen“ – die Regel gehört dazu, auch wenn sie nur über any, ein grosses Netz oder gar
+  nicht trifft; sie steht mit der Art „direkt zugeordnet“ in der Doku und zählt wie eine
+  spezifische. In „Regeln & Contracts“ ordnet das Regel-Detail eine Regel einer Applikation zu
+  und springt in deren Doku. Nur Operator, mit Audit.
+- **Regeln ausschliessen:** „Aus der Applikation ausschliessen“ nimmt eine Regel trotz Treffer
+  aus Doku, Kategorien, Verbindungen Ende zu Ende und Kennzahlen. Über der Regel-Tabelle „N
+  zugeordnet · M ausgeschlossen“ mit „rückgängig“.
+- Die Zuordnung hält über neue Läufe (Quellsystem, VDOM, Policy-ID bzw. Kennung des Contracts
+  statt der Regel-ID).
+- **Abhängigkeiten zwischen Applikationen:** Karte „Abhängigkeiten“ mit „nutzt“ bzw. „wird
+  genutzt von“ – abgeleitet aus erlaubenden Regeln mit spezifischem Treffer, deren Gegenseite
+  EPGs, Server bzw. ein Netz im Subnetz der EPGs einer anderen Applikation trifft; je
+  Applikation die Regeln mit Bezug und Diensten, auch im Export (Markdown). Kunden-Benutzer
+  sehen nur Applikationen ihres Ausschnitts.
+
 ## 0.59.0 – 2026-10-25
 
 Applikationen ausbauen (ROADMAP, ADR 0021 Ergänzung 0.59.0): Abweichung Regel ↔ Weg als Befund,

@@ -8,6 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -18,14 +19,14 @@ from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import Application, Site
+from app.models import Application, Rule, Site
 from app.schemas.rules import RuleOut
 from app.store import app_paths, sites
 from app.store import applications as store
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
-MemberKind = Literal["ap", "epg", "host"]
+MemberKind = Literal["ap", "epg", "host", "rule", "norule"]  # rule/norule seit 0.60.0
 Criticality = Literal["low", "medium", "high", "critical"]
 Purpose = Literal["dev", "test", "prod"]
 
@@ -186,6 +187,7 @@ class DocHitOut(BaseModel):
     # bzw. vom System ueberhaupt sehen; impossible mit Begruendung
     relevance: str = "unknown"
     relevance_text: str = ""
+    member_id: int | None = None  # direkt zugeordnet (0.60.0): das Mitglied
 
 
 class DocSummaryOut(BaseModel):
@@ -200,6 +202,8 @@ class DocSummaryOut(BaseModel):
     by_scope: dict[str, int] = {}  # subnet | any | vzany | pref_group
     findings: int = 0
     impossible: int = 0  # Regeln nur mit routingtechnisch unmoeglichen Treffern
+    assigned: int = 0  # direkt zugeordnete Regeln (0.60.0)
+    excluded: int = 0  # ausgeschlossene Regeln (0.60.0)
 
 
 class DocFindingOut(BaseModel):
@@ -225,6 +229,14 @@ class ApplicationDocOut(BaseModel):
     rules: list[RuleOut]
     findings: list[DocFindingOut]
     tables: list[DocTableOut]
+    # 0.60.0: direkt zugeordnete bzw. ausgeschlossene Regeln, Abhaengigkeiten zu anderen
+    rule_members: list[dict] = []
+    dependencies: dict = {}
+
+
+class RuleMemberIn(BaseModel):
+    rule_id: int
+    exclude: bool = False  # True: aus der Doku der Applikation ausschliessen
 
 
 def _site(session: Session, site_id: int | None) -> SiteRef | None:
@@ -633,6 +645,42 @@ def application_doc(
     view = _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
     doc = store.build_doc(session, app, view_ids(session, view, "rule"))
+    visible = None
+    if view is not None:  # Kunden-Benutzer: nur Applikationen in ihrem Ausschnitt
+        mine = view.applications(session)
+        stmt = select(Application).where(Application.tenant_id == app.tenant_id)
+        visible = {a.id for a in session.scalars(stmt) if mine(a)}
+    doc["dependencies"] = store.dependencies(session, app, doc, visible)
     return ApplicationDocOut(
         application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
     )
+
+
+@router.post("/{application_id}/rules", response_model=ApplicationDetailOut)
+def assign_rule(
+    application_id: int,
+    body: RuleMemberIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Regel direkt zuordnen bzw. ausschliessen (0.60.0): Mitglied `rule` bzw. `norule` mit
+    stabilem Verweis (Quellsystem, VDOM, Policy-ID bzw. DN) - die Gegenrichtung faellt weg."""
+    app = _load(session, principal, application_id)
+    rule = session.get(Rule, body.rule_id)
+    if rule is None or rule.tenant_id != app.tenant_id:
+        raise HTTPException(status_code=404, detail="rule not found")
+    ref = store.rule_ref(rule)
+    kind = "norule" if body.exclude else "rule"
+    for m in [m for m in app.members if m.ref == ref and m.kind in store.RULE_KINDS]:
+        if m.kind != kind:
+            app.members.remove(m)
+    store.add_members(session, app, [(kind, ref)])
+    audit.record(
+        session,
+        actor=_actor(principal),
+        action="application.member_added",
+        subject=str(app.id),
+        detail={"application_id": app.id, "tenant_id": app.tenant_id, "kind": kind, "ref": ref},
+    )
+    _refresh(session, app.tenant_id, app.id)
+    return _detail(session, app)

@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Application,
+  assignAppRule,
+  fetchApps,
   fetchParallelSuggestions,
   fetchRules,
   fetchRuleSummary,
@@ -240,6 +243,7 @@ export default function RulesTable({
   onGo,
   isAdmin = false,
   customer = false,
+  canAssign = false,
 }: {
   tenantId: number | null;
   tenantLabel: string;
@@ -247,6 +251,7 @@ export default function RulesTable({
   onGo?: (v: View, p?: ViewParams) => void;
   isAdmin?: boolean;
   customer?: boolean; // Kunden-Benutzer: keine Verbund-Vorschläge (ADR 0018)
+  canAssign?: boolean; // Operator: Regel einer Applikation zuordnen (0.60.0)
 }) {
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -695,8 +700,53 @@ export default function RulesTable({
           onRule={setSelected}
           onChanged={() => setReload((n) => n + 1)}
           isAdmin={isAdmin}
+          intro={canAssign && tenantId != null ? <AssignToApp tenantId={tenantId} ruleId={selected} onGo={onGo} /> : null}
         />
       )}
     </>
+  );
+}
+
+// Regel einer Applikation direkt zuordnen (0.60.0) – auch ohne Treffer bei ihren Systemen
+function AssignToApp({ tenantId, ruleId, onGo }: { tenantId: number; ruleId: number; onGo?: (v: View, p?: ViewParams) => void }) {
+  const [apps, setApps] = useState<Application[] | null>(null);
+  const [app, setApp] = useState("");
+  const [done, setDone] = useState<Application | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  useEffect(() => {
+    setDone(null);
+    fetchApps(tenantId)
+      .then(setApps)
+      .catch(() => setApps([]));
+  }, [tenantId, ruleId]);
+  if (!apps?.length) return null;
+  const assign = () => {
+    const target = apps.find((a) => String(a.id) === app);
+    if (!target) return;
+    assignAppRule(target.id, ruleId)
+      .then(() => setDone(target))
+      .catch(setError);
+  };
+  return (
+    <div id="rule-assign-app" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+      <span className="faint">Applikation:</span>
+      <select className="sel" aria-label="Applikation" value={app} onChange={(e) => setApp(e.target.value)}>
+        <option value="">wählen…</option>
+        {apps.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.name}
+          </option>
+        ))}
+      </select>
+      <button className="btn btn-ghost btn-sm" disabled={!app} onClick={assign}>
+        Zuordnen
+      </button>
+      {done && (
+        <button className="linkbtn objlink" onClick={() => onGo?.("apps", { app: String(done.id) })}>
+          zugeordnet zu {done.name} – Doku öffnen
+        </button>
+      )}
+      <ErrorBox error={error} onClose={() => setError(null)} prefix="Zuordnen" />
+    </div>
   );
 }

@@ -10,12 +10,15 @@ import {
   AppDocHit,
   AppDocSystem2,
   AppConnections,
+  AppDependency,
   ApplicationDoc,
+  assignAppRule,
   DocScope,
   fetchAppConnections,
   fetchAppDoc,
   fetchSystems,
   Purpose,
+  removeAppMember,
   Rule,
   System,
 } from "./api";
@@ -49,14 +52,16 @@ export function PurposeChip({ value }: { value: Purpose | null }) {
 
 // Art des Bezugs: spezifisch = das System bzw. die EPG selbst; sonst unspezifisch
 const SCOPE: Record<DocScope, [string, string, string]> = {
+  assigned: ["ok", "zugeordnet", "der Applikation direkt zugeordnet (0.60.0)"],
   specific: ["ok", "spezifisch", "nennt das System bzw. die EPG selbst (direkt, Gruppe, EPG, ESG)"],
   subnet: ["warn", "Subnetz", "gilt über ein Netz bzw. einen Bereich, der das System enthält"],
   any: ["warn", "any", "gilt für alle Adressen (any)"],
   vzany: ["warn", "vzAny", "gilt für alle EPGs der VRF (vzAny)"],
   pref_group: ["warn", "Preferred Group", "die Mitglieder der Preferred Group sprechen frei miteinander"],
 };
-const RANK: Record<DocScope, number> = { specific: 0, subnet: 1, vzany: 2, pref_group: 3, any: 4 };
+const RANK: Record<DocScope, number> = { assigned: -1, specific: 0, subnet: 1, vzany: 2, pref_group: 3, any: 4 };
 const DIRECTION: Record<string, [string, string]> = {
+  assigned: ["• zugeordnet", "der Applikation direkt zugeordnet"],
   in: ["↓ eingehend", "das System ist Ziel bzw. Provider"],
   out: ["↑ ausgehend", "das System ist Quelle bzw. Consumer"],
 };
@@ -132,6 +137,8 @@ export default function ApplicationDocView({
   const [showTables, setShowTables] = useState(false);
   const [showEmpty, setShowEmpty] = useState(false);
   const [conns, setConns] = useState<AppConnections | null>(null); // für den Export (0.59.0)
+  const [tick, setTick] = useState(0); // Regel zugeordnet bzw. ausgeschlossen (0.60.0)
+  const [busy, setBusy] = useState<unknown>(null);
   const vdomShown = useVdomShown();
 
   useEffect(() => {
@@ -139,7 +146,7 @@ export default function ApplicationDocView({
     fetchAppDoc(id)
       .then(setDoc)
       .catch(setErr);
-  }, [id, reload]);
+  }, [id, reload, tick]);
   useEffect(() => {
     fetchSystems()
       .then(setSystems)
@@ -324,7 +331,11 @@ export default function ApplicationDocView({
       />
 
       {/* Verbindungen Ende zu Ende (0.45.0) – zeigt die Infrastruktur, nicht für Kunden-Benutzer */}
-      {!me.isCustomer && <ConnectionsCard appId={id} reload={reload} onRule={setRule} onGo={onGo} onData={setConns} />}
+      {(doc.dependencies?.uses.length || doc.dependencies?.used_by.length) ? (
+        <DependenciesCard deps={doc.dependencies} onGo={onGo} onRule={setRule} />
+      ) : null}
+
+      {!me.isCustomer && <ConnectionsCard appId={id} reload={reload + tick} onRule={setRule} onGo={onGo} onData={setConns} />}
 
       <div className="card" id="app-rules" style={{ marginTop: 14 }}>
         <div className="card-head">
@@ -333,6 +344,18 @@ export default function ApplicationDocView({
             {rules.length}
             {rules.length !== doc.rules.length ? ` von ${doc.rules.length}` : ""}
           </span>
+          {(doc.rule_members ?? []).length > 0 && (
+            <RuleMembers
+              members={doc.rule_members ?? []}
+              canEdit={me.isOperator}
+              onOpen={setRule}
+              onRemove={(mid) =>
+                removeAppMember(id, mid)
+                  .then(() => setTick((n) => n + 1))
+                  .catch(setBusy)
+              }
+            />
+          )}
           <div className="spacer" />
           {s.impossible ? (
             <span
@@ -487,7 +510,18 @@ export default function ApplicationDocView({
           focus={selected ? ruleFocus(selected, doc.hits) : undefined}
           intro={
             selected ? (
-              <WhyBlock
+              <>
+                {me.isOperator && (
+                  <RuleMemberActions
+                    appId={id}
+                    ruleId={selected.id}
+                    hits={doc.hits.filter((h) => h.rule_id === selected.id)}
+                    members={doc.rule_members ?? []}
+                    onDone={() => setTick((n) => n + 1)}
+                    onError={setBusy}
+                  />
+                )}
+                <WhyBlock
                 r={selected}
                 hits={doc.hits.filter((h) => h.rule_id === selected.id)}
                 byKey={byKey}
@@ -496,10 +530,14 @@ export default function ApplicationDocView({
                 findings={findingsOf(selected.id)}
                 onGo={onGo}
               />
+              </>
+            ) : rule != null && me.isOperator ? (
+              <RuleMemberActions appId={id} ruleId={rule} hits={[]} members={doc.rule_members ?? []} onDone={() => setTick((n) => n + 1)} onError={setBusy} />
             ) : null
           }
         />
       )}
+      <ErrorBox error={busy} onClose={() => setBusy(null)} prefix="Regel zuordnen" />
     </div>
   );
 }
@@ -593,7 +631,7 @@ function RuleRow({
   onGo?: Go;
 }) {
   const directions = [...new Set(hits.map((h) => h.direction))];
-  const tables = [...new Set(hits.map((h) => h.table))].sort((x, y) => x - y);
+  const tables = [...new Set(hits.map((h) => h.table))].filter((t) => t > 0).sort((x, y) => x - y);
   const aci = r.domain === "aci_contract";
   const impossible = hits.filter((h) => h.relevance === "impossible");
   return (
@@ -1113,6 +1151,174 @@ function FindingsCard({ doc, onRule, onGo }: { doc: ApplicationDoc; onRule: (id:
   );
 }
 
+// Regel direkt zuordnen bzw. ausschliessen (0.60.0, Operator) – im Regel-Detail der Doku
+function RuleMemberActions({
+  appId,
+  ruleId,
+  hits,
+  members,
+  onDone,
+  onError,
+}: {
+  appId: number;
+  ruleId: number;
+  hits: AppDocHit[];
+  members: NonNullable<ApplicationDoc["rule_members"]>;
+  onDone: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const mine = members.find((m) => m.rule_id === ruleId);
+  const viaSystems = hits.some((h) => h.scope !== "assigned");
+  const run = (p: Promise<unknown>) => {
+    setBusy(true);
+    p.then(onDone)
+      .catch(onError)
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="app-rule-actions" id="app-rule-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+      {mine ? (
+        <>
+          <span className={`chip ${mine.kind === "rule" ? "ok" : "crit"}`}>{mine.kind === "rule" ? "direkt zugeordnet" : "ausgeschlossen"}</span>
+          <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(removeAppMember(appId, mine.member_id))}>
+            {mine.kind === "rule" ? "Zuordnung entfernen" : "Ausschluss aufheben"}
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={busy}
+            title="Die Regel gehört zur Applikation, auch ohne Treffer bzw. nur über any oder ein Netz"
+            onClick={() => run(assignAppRule(appId, ruleId))}
+          >
+            Der Applikation zuordnen
+          </button>
+          {viaSystems && (
+            <button className="btn btn-ghost btn-sm" disabled={busy} title="Die Regel betrifft die Applikation nicht – aus ihrer Doku nehmen" onClick={() => run(assignAppRule(appId, ruleId, true))}>
+              Aus der Applikation ausschliessen
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Direkt zugeordnete bzw. ausgeschlossene Regeln (0.60.0) – mit Rückgängig
+function RuleMembers({
+  members,
+  canEdit,
+  onOpen,
+  onRemove,
+}: {
+  members: NonNullable<ApplicationDoc["rule_members"]>;
+  canEdit: boolean;
+  onOpen: (ruleId: number) => void;
+  onRemove: (memberId: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const assigned = members.filter((m) => m.kind === "rule");
+  const excluded = members.filter((m) => m.kind === "norule");
+  return (
+    <span className="rule-members" id="app-rule-members" style={{ position: "relative" }}>
+      <button className="btn btn-ghost btn-sm" onClick={() => setOpen((v) => !v)} title="Regeln direkt zugeordnet bzw. ausgeschlossen">
+        {assigned.length > 0 && `${assigned.length} zugeordnet`}
+        {assigned.length > 0 && excluded.length > 0 && " · "}
+        {excluded.length > 0 && `${excluded.length} ausgeschlossen`} {open ? "▴" : "▾"}
+      </button>
+      {open && (
+        <div className="card" style={{ position: "absolute", zIndex: 20, minWidth: 380, marginTop: 4, padding: 8 }}>
+          <table className="compact">
+            <tbody>
+              {members.map((m) => (
+                <tr key={m.member_id}>
+                  <td>
+                    <span className={`chip ${m.kind === "rule" ? "ok" : "crit"}`}>{m.kind === "rule" ? "zugeordnet" : "ausgeschlossen"}</span>
+                  </td>
+                  <td>
+                    <button className="linkbtn objlink" onClick={() => onOpen(m.rule_id)}>
+                      {m.label}
+                    </button>
+                  </td>
+                  <td>
+                    {canEdit && (
+                      <button className="btn btn-ghost btn-sm" onClick={() => onRemove(m.member_id)}>
+                        rückgängig
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </span>
+  );
+}
+
+// Abhängigkeiten zu anderen Applikationen (0.60.0): abgeleitet aus spezifischen Regeln
+function DependenciesCard({
+  deps,
+  onGo,
+  onRule,
+}: {
+  deps: NonNullable<ApplicationDoc["dependencies"]>;
+  onGo?: Go;
+  onRule: (id: number) => void;
+}) {
+  const column = (title: string, hint: string, items: AppDependency[], id: string) => (
+    <div style={{ flex: "1 1 320px" }} id={id}>
+      <h3 style={{ margin: "0 0 6px" }} title={hint}>
+        {title} <span className="faint mono">{items.length}</span>
+      </h3>
+      {items.length === 0 ? (
+        <span className="faint">keine</span>
+      ) : (
+        <table className="compact">
+          <tbody>
+            {items.map((d) => (
+              <tr key={d.application_id}>
+                <td>
+                  <button className="linkbtn objlink" onClick={() => onGo?.("apps", { app: String(d.application_id) })}>
+                    {d.name}
+                  </button>
+                </td>
+                <td>
+                  {d.rules.map((r) => (
+                    <div key={r.rule_id}>
+                      <button className="linkbtn objlink mono" onClick={() => onRule(r.rule_id)} title={`über ${r.via}`}>
+                        {r.name}
+                      </button>{" "}
+                      <span className="faint mono">{r.services.join(", ")}</span>
+                    </div>
+                  ))}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+  return (
+    <div className="card" id="app-dependencies" style={{ marginTop: 14 }}>
+      <div className="card-head">
+        <h2>Abhängigkeiten</h2>
+        <span className="faint" style={{ fontSize: 12 }}>
+          aus Regeln, die ein System dieser Applikation gezielt mit einem System einer anderen verbinden (EPG, Host, Netz in deren EPG-Subnetz – nicht any)
+        </span>
+      </div>
+      <div className="card-body pad" style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+        {column("nutzt", "diese Applikation ist Quelle bzw. Consumer", deps.uses, "app-deps-uses")}
+        {column("wird genutzt von", "diese Applikation ist Ziel bzw. Provider", deps.used_by, "app-deps-used-by")}
+      </div>
+    </div>
+  );
+}
+
 const md = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
 function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string, conns: AppConnections | null = null): string {
@@ -1157,13 +1363,26 @@ function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string, co
     if (!hits.length) continue;
     // unspezifisch (any, Netz): nur die Regel – statt aller Systeme ihre Anzahl (0.37.0)
     const all = [...new Set(hits.map((h) => names.get(h.system) ?? h.system))];
-    const sys = best(hits) === "specific" ? all.join(", ") : `${all.length} System${all.length === 1 ? "" : "e"}`;
-    const dir = [...new Set(hits.map((h) => (h.direction === "in" ? "eingehend" : "ausgehend")))].join(", ");
+    const scope = best(hits);
+    const sys =
+      scope === "assigned" ? "direkt zugeordnet" : scope === "specific" ? all.join(", ") : `${all.length} System${all.length === 1 ? "" : "e"}`;
+    const dir = [...new Set(hits.map((h) => DIRECTION[h.direction]?.[0].replace(/^\S+ /, "") ?? h.direction))].join(", ");
     const via = [...new Set(hits.map((h) => h.via))].join(", ");
     lines.push(
       `| ${md(r.aci?.contract ?? r.name)} | ${r.action} | ${r.domain === "aci_contract" ? "ACI" : "Firewall"} ${md(sourceName(r.source_system_id))} | ${dir} | ${md(sys)} | ${SCOPE[best(hits)][1]}: ${md(via)} |`,
     );
   }
   lines.push("");
+  const deps = doc.dependencies;
+  if (deps && (deps.uses.length || deps.used_by.length)) {
+    lines.push("## Abhängigkeiten", "", "| Richtung | Applikation | Regeln |", "| --- | --- | --- |");
+    for (const [label, items] of [
+      ["nutzt", deps.uses],
+      ["wird genutzt von", deps.used_by],
+    ] as const) {
+      for (const d of items) lines.push(`| ${label} | ${md(d.name)} | ${md(d.rules.map((r) => `${r.name} (${r.services.join(", ") || "alle"})`).join(", "))} |`);
+    }
+    lines.push("");
+  }
   return lines.concat(conns ? connectionsMarkdown(conns) : [], tablesMarkdown(doc.tables)).join("\n");
 }
