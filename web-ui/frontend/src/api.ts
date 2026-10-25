@@ -1676,9 +1676,10 @@ export interface RetentionCounts {
   runs: number;
   sync_plans: number;
   audit: number;
+  l2?: number; // MAC-/ARP-Einträge der Switches (0.63.0)
 }
 export interface RetentionStatus {
-  policy: { runs_days: number; sync_days: number; audit_days: number };
+  policy: { runs_days: number; sync_days: number; audit_days: number; l2_days?: number };
   active: boolean;
   scheduled: boolean;
   due: RetentionCounts;
@@ -2864,6 +2865,7 @@ export interface CablingSummary {
   states: Record<LinkState, number>;
   issues: number;
   unread: number;
+  endpoints?: number; // MACs an Ports ohne Uplinks (0.63.0)
 }
 export interface CablingEnd {
   device: string;
@@ -2911,6 +2913,7 @@ export interface CablingPort {
   peer: { device: string; port: string | null; read: boolean; kind: string } | null;
   link_state: LinkState | null;
   issues: string[];
+  endpoints?: number; // MACs am Port (0.63.0)
 }
 export interface CablingVlan {
   vid: number;
@@ -2934,3 +2937,57 @@ export const fetchCablingPorts = (
     `/api/cabling/ports${qs({ tenant_id: tenantId, device: f.device, status: f.status || undefined, vlan: f.vlan ?? undefined, q: f.q, offset: f.offset, limit: f.limit })}`,
   );
 export const fetchCablingVlans = (tenantId: number) => getJSON<CablingVlan[]>(`/api/cabling/vlans${qs({ tenant_id: tenantId })}`);
+
+// Endpunkte (0.63.0): MAC-Tabelle und ARP der Switches
+export interface EndpointVm {
+  id: number;
+  name: string;
+  nic: string;
+  portgroup: string | null;
+  vlan: number | null;
+  switch: string | null;
+  host: string | null;
+  cluster: string | null;
+  power_state: string | null;
+}
+export interface CablingEndpoint {
+  mac: string;
+  vlan: number | null;
+  device: string;
+  port: string;
+  kind: string | null;
+  source_system_id: number;
+  first_seen: string;
+  last_seen: string;
+  uplink: boolean;
+  port_description: string | null;
+  port_mode: string | null;
+  via: { device: string; port: string | null; kind: string; read: boolean } | null;
+  ips: string[];
+  names: string[];
+  vm: EndpointVm | null;
+  epgs: string[];
+}
+export interface EndpointLocation {
+  mac: string;
+  ips: string[];
+  names: string[];
+  vm: EndpointVm | null;
+  epgs: string[];
+  reason: string;
+  seen_on: number;
+  locations: CablingEndpoint[];
+  behind: CablingEndpoint[];
+  earlier: CablingEndpoint[];
+}
+export const fetchCablingEndpoints = (
+  tenantId: number,
+  f: { device?: string; port?: string; vlan?: number | null; q?: string; uplinks?: boolean; offset?: number; limit?: number } = {},
+) =>
+  getJSON<{ total: number; summary: { macs: number; ports: number; vms: number; with_ip: number }; items: CablingEndpoint[] }>(
+    `/api/cabling/endpoints${qs({ tenant_id: tenantId, device: f.device, port: f.port, vlan: f.vlan ?? undefined, q: f.q, uplinks: f.uplinks ? "true" : undefined, offset: f.offset, limit: f.limit })}`,
+  );
+export const locateEndpoint = (tenantId: number, q: string) =>
+  getJSON<{ query: string; kind: string | null; ips: string[]; items: EndpointLocation[] }>(
+    `/api/cabling/locate${qs({ tenant_id: tenantId, q })}`,
+  );

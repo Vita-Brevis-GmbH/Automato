@@ -110,6 +110,24 @@ class Device:
     mgmt_ip: str | None = None
     read: bool = False  # Automato liest das Geraet (Ports bekannt)
     reports: bool = False  # liefert Nachbarn aus CDP/LLDP (Switches, ACI-Leafs/-Spines)
+    # wie der Nachbar sich meldet (CDP/LLDP): Plattform und Faehigkeiten (Switch, Router, Phone)
+    remote_platform: str | None = None
+    caps: set[str] = field(default_factory=set)
+
+    @property
+    def switching(self) -> bool:
+        """Leitet weiter (Switch, Leaf, Spine bzw. meldet Switch/Bridge/Router) - an seinem Port
+        stehen fremde MACs (0.63.0). ESXi-Hosts, Firewalls und Telefone nicht."""
+        if self.kind in ("switch", "leaf", "spine"):
+            return True
+        if self.kind in ("esxi", "firewall", "controller"):
+            return False
+        if re.search(r"vmware|esx", self.remote_platform or "", re.I):
+            return False
+        if self.caps & {"phone", "telephone", "t"}:
+            return False
+        return bool(self.caps & {"switch", "bridge", "router", "b", "r", "trans-bridge",
+                                 "source-route-bridge"})  # fmt: skip
 
 
 @dataclass
@@ -211,6 +229,10 @@ class Cabling:
         for n in session.scalars(select(InvNeighbor).where(InvNeighbor.tenant_id == tenant_id)):
             claimed.add((device_key(n.device), port_key(n.port)))
             self._claim(n.device, n.port, n.remote_name, n.remote_port, n.remote_ip, n.protocol)
+            remote = self.device(n.remote_name, n.remote_ip)
+            if not remote.read:  # Plattform/Faehigkeiten nur fuer Geraete ohne eigene Daten
+                remote.remote_platform = remote.remote_platform or n.remote_platform
+                remote.caps |= {c.strip(",").lower() for c in n.remote_caps or [] if c}
         for i in self.ports:  # ACI-Leafs u. a.: Nachbar am Port (ohne eigene Nachbar-Tabelle)
             if i.neighbor and (device_key(i.device), port_key(i.name)) not in claimed:
                 self._claim(i.device, i.name, i.neighbor, i.neighbor_port, None, "lldp")
@@ -317,10 +339,10 @@ _FINDINGS = {
 }
 
 
-def checks(session: Session, tenant_id: int) -> list[dict]:
+def checks(session: Session, tenant_id: int, cab: Cabling | None = None) -> list[dict]:
     """Befunde der Verkabelung: Abweichungen zwischen zwei gelesenen Switches und Verbindungen,
     die nur eine von zwei gelesenen Seiten meldet. Je Verbindung und Art ein Eintrag."""
-    cab = build(session, tenant_id)
+    cab = cab or build(session, tenant_id)
     out: list[dict] = []
     for link in cab.links.values():
         ends = {"a": link.a.out(), "b": link.b.out()}

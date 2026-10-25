@@ -297,11 +297,12 @@ def _cmd_purge(session: Session, args: argparse.Namespace) -> int:
     else:
         counts = retention.purge(session, policy, actor="cli:purge")
         session.commit()
-    days = f"Fristen {policy.runs_days}/{policy.sync_days}/{policy.audit_days} Tage, 0 = nie"
+    days = (f"Fristen {policy.runs_days}/{policy.sync_days}/{policy.audit_days}/"
+            f"{policy.l2_days} Tage, 0 = nie")  # fmt: skip
     verb = "faellig" if args.dry_run else "geloescht"
     print(
         f"{verb}: {counts['runs']} Laeufe, {counts['sync_plans']} NetBox-Sync-Vorschauen, "
-        f"{counts['audit']} Audit-Eintraege ({days})"
+        f"{counts['audit']} Audit-Eintraege, {counts['l2']} MAC-/ARP-Eintraege ({days})"
     )
     return 0
 

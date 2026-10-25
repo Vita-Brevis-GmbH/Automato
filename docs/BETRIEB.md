@@ -68,7 +68,8 @@ aktive Quellsystem des Mandanten einen Lauf an (Referenzquellen zuerst).
 **Aufbewahrung** (0.48.0, ADR 0022, R14): Was älter ist als seine Frist, löscht der Zeitplan
 einmal am Tag – beendete Läufe nach `AUTOMATO_RETENTION_RUNS_DAYS` (90), NetBox-Sync-Vorschauen
 nach `AUTOMATO_RETENTION_SYNC_DAYS` (90), Audit-Einträge nach `AUTOMATO_RETENTION_AUDIT_DAYS`
-(365); `0` = nie. Es bleiben immer: Läufe, auf die der aktuelle Stand zeigt (Regeln, Objekte,
+(365), seit 0.63.0 MAC-/ARP-Einträge der Switches, die so lange kein Lauf mehr gesehen hat, nach
+`AUTOMATO_RETENTION_L2_DAYS` (30); `0` = nie. Es bleiben immer: Läufe, auf die der aktuelle Stand zeigt (Regeln, Objekte,
 NAT, VMs, Referenzstand), je Quellsystem der neuste und der neuste erfolgreiche Lauf, offene
 Läufe und die neuste Vorschau je NetBox (übernommene Syncs stehen mit ihren Zahlen weiter im
 Audit). System → **Aufbewahrung** zeigt Fristen, was fällig ist und wann zuletzt aufgeräumt
@@ -434,7 +435,7 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
 - **Verkabelung** (0.62.0, ADR 0025): welches Gerät an welchem Port welches anderen hängt –
   abgeleitet aus CDP/LLDP aller gelesenen Geräte (Cisco-Switches, ACI-Leafs), nichts von Hand.
   Oben die Kennzahlen (gelesene Geräte, Switches, Verbindungen je Zustand, Abweichungen,
-  Gegenstellen ohne CDP/LLDP), darunter vier Reiter:
+  Gegenstellen ohne CDP/LLDP, seit 0.63.0 Endpunkte), darunter die Reiter:
   - **Verbindungen:** je Zeile beide Enden (Gerät, Port, Beschreibung, Speed/Duplex, Modus/VLAN)
     mit Zustand **beidseitig** (beide melden einander), **einseitig** (die Gegenseite wird
     gelesen und meldet Nachbarn, aber diesen nicht – z. B. CDP/LLDP am Port aus) bzw.
@@ -446,11 +447,29 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     ESXi-Hosts aus dem vCenter erscheinen, wenn ein Switch sie meldet.
   - **Ports:** alle Ports der gelesenen Switches (Status, Speed, Duplex, Modus, VLAN bzw.
     Native VLAN und erlaubte VLANs, Port-Channel, vPC, Beschreibung, Gegenstelle); Filter
-    Gerät, Status (up/down/abgeschaltet), VLAN, Suche.
+    Gerät, Status (up/down/abgeschaltet), VLAN, Suche. Seit 0.63.0 die Anzahl **Endpunkte**
+    (MACs) je Port – ein Klick zeigt sie.
+  - **Endpunkte** (0.63.0, ADR 0025 Nr. 8): aus der MAC-Tabelle und ARP der Switches.
+    - **Wo hängt …:** MAC (jede Schreibweise), IP oder Name (VM, DNS-Name aus dem IPAM)
+      eingeben → je MAC der **Anschluss** (Switch, Port, VLAN, Beschreibung, „über“ die
+      Gegenstelle am Port, z. B. `esx01 (vmnic2)`, zuletzt gesehen), sonst „nur auf Uplinks
+      gesehen – dahinter …“ (Gerät hinter dem ACI bzw. einem Switch ohne Zugang) und früher
+      gesehene Ports (Umzug, vMotion).
+    - **Endpunkte an den Ports:** alle MACs an Ports, die keine Uplinks sind, mit VM (Host,
+      Portgruppe), IPs (ARP, VMware Tools, ACI), IPAM-Namen; Filter Switch, VLAN, Suche.
+    - Ein Port ist Uplink, wenn an ihm bzw. einem Mitglied seines Port-Channels laut CDP/LLDP
+      ein Switch, Leaf, Spine bzw. ein Gerät mit Switch-/Router-Fähigkeit hängt (nicht
+      ESXi-Host, Firewall, Telefon).
+    - Die Einträge werden gesammelt: aktuell ist je Switch, was sein letzter Lauf gesehen hat;
+      ältere bleiben als „früher“ bis zur Frist `AUTOMATO_RETENTION_L2_DAYS` (30 Tage).
   - **VLANs:** je VLAN die Namen und je Switch die Anzahl Access-Ports und Trunks.
   - **Befunde** (Kategorie „Verkabelung“ in Findings) nur zwischen zwei gelesenen Switches:
     Speed bzw. Duplex verschieden, VLANs verschieden (Modus, Access-VLAN, Native VLAN, erlaubte
     VLANs je Seite), Port-Channel nur auf einer Seite, Verbindung nur einseitig gemeldet.
+    Seit 0.63.0 **VLAN fehlt am ESXi-Uplink**: an einem Port werden VMs eines ESXi-Hosts
+    gesehen, er lässt aber ein VLAN nicht durch, das VMs im selben Cluster auf demselben
+    vSwitch/DVS nutzen (nach vMotion bzw. beim Ausfall des anderen Uplinks ohne Netz). Ist der
+    Port bewusst nur für einen Teil der VLANs da, den Befund quittieren.
   - Nicht für Kunden-Benutzer (Infrastruktur).
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
@@ -979,7 +998,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern (seit 0.58.0 mit `off_path`: Regeln über Netze nicht auf dem Weg, `count`/`samples` mit `why`); Vorschläge je ACI-Tenant; nicht Zugeordnetes |
 | `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy` (seit 0.57.0 mit `services`), `GET /zones/plan[?customer_id=&all=true]` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]`, `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin); seit 0.54.0 `GET /zones/suggestions[?dismissed=true]`, `POST /zones/suggestions/accept` und `POST /zones/suggestions/dismiss[/undo]` (`keys`, operator); seit 0.55.0 `POST /zones/schema/intents` (`pairs`, `overwrite`, operator); seit 0.56.0 `POST /zones/{id}/nodes` (`nodes` = `<Quellsystem>\|<Kontext>`, operator) und `customer_id`/`all` auch am Export; seit 0.61.0 Filter an Plan und Export (`q`, `focus` mehrfach, `depth` 0–3, `hide_layer` mehrfach: dc/customer/edge/transfer/core/distribution/access/public/none/outside, `hide` mehrfach: nodes/labels/contacts/empty) und `PUT /zones/plan/arrangement` (`view` overview/all/customer:<id>, `positions` je Zone `[x, y]`), `DELETE /zones/plan/arrangement?view=` (operator) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan (seit 0.56.0 `format` 2) mit `view` (all/overview/customer), `customers`, `zones` (mit `nodes`, `internal`, zusammengefasste Kunden `collapsed`/`members`, Pseudo-Zonen `none`/`outside`), `nodes`, `transitions` (`name`, `networks` mit `legs`/`routers`, `l3out`, `contact`), `conflicts`, `unzoned`, `layout` (Zeichnung; seit 0.61.0 `offset`, `placed` je Zone), seit 0.61.0 `filter` (gezeigt/gesamt, `label`), `zone_choices`, `arrangement`, `positions`; Zonen mit `color_source` (schema/template/zone/kind), `nodes`, `transitions`; Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`); Vorschläge je `key` (normalisierter Name) mit `action` create/extend, `kind`/`kind_reason`, `customer_id`, `sources`, `evidence`, `selectors`, `counts` (nets/epgs/nodes), `nodes`, `code`, `conflicts`, `dismissed`, dazu `nodes` (Knoten ohne Zone) und `rest` (Netze ohne Zone und Vorschlag); übernehmen liefert `created`/`updated`/`missing`; seit 0.55.0 je Vorschlag `schema` und `schema` mit `missing`/`outside`/`intents`/`matched` (Grundschema), Absichten übernehmen liefert `changed` |
-| `GET /cabling/devices`, `GET /cabling/links` (`device`, `state` both/one_sided/unread, `q`, `issues`, `limit`, `offset`), `GET /cabling/ports` (`device`, `status` up/down/disabled, `vlan`, `q`, `limit`, `offset`), `GET /cabling/vlans`, `GET /cabling/sources` (je `tenant_id`) | Verkabelung (0.62.0, ADR 0025; viewer, nicht für Kunden-Benutzer): Geräte mit `summary` (devices, switches, links, `states`, issues, unread) und je Gerät `read`, `kind`, Ports/verbunden, Verbindungen, Abweichungen; Verbindungen mit `a`/`b` (Gerät, Port, Schnittstelle), `state`, `protocols`, `issues`; Ports der Switches mit `peer`, `link_state`, `issues`; VLANs mit Namen und je Switch Access-Ports/Trunks; Quellsysteme der Switches |
+| `GET /cabling/devices`, `GET /cabling/links` (`device`, `state` both/one_sided/unread, `q`, `issues`, `limit`, `offset`), `GET /cabling/ports` (`device`, `status` up/down/disabled, `vlan`, `q`, `limit`, `offset`), `GET /cabling/vlans`, `GET /cabling/sources` (je `tenant_id`); seit 0.63.0 `GET /cabling/endpoints` (`device`, `port`, `vlan`, `q`, `uplinks`, `limit`, `offset`) und `GET /cabling/locate?q=` | Verkabelung (0.62.0, ADR 0025; viewer, nicht für Kunden-Benutzer): Geräte mit `summary` (devices, switches, links, `states`, issues, unread, seit 0.63.0 `endpoints`) und je Gerät `read`, `kind`, Ports/verbunden, Verbindungen, Abweichungen; Verbindungen mit `a`/`b` (Gerät, Port, Schnittstelle), `state`, `protocols`, `issues`; Ports der Switches mit `peer`, `link_state`, `issues`, `endpoints`; VLANs mit Namen und je Switch Access-Ports/Trunks; Quellsysteme der Switches; Endpunkte mit `summary` (macs, ports, vms, with_ip) und je MAC-Eintrag `mac`, `vlan`, `device`, `port`, `uplink`, `via` (Gegenstelle am Port), `vm`, `ips`, `names`, `epgs`, `first_seen`/`last_seen`; Suche mit `kind` (mac/ip/name), `ips` und je MAC `reason`, `locations`, `behind`, `earlier`, `seen_on` |
 | `GET /auth/me`, `GET/POST /customer-users`, `PATCH/DELETE /customer-users/{id}` | Wer bin ich laut Orchestrator (Rollen, Mandanten, Kunden, `customer_source` claim/automato) – die Oberfläche richtet sich danach; Zuordnung Benutzer → Kunde (0.53.0, Admin): `login`, `customer_id`, `role` viewer/operator, `note` |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `POST /systems/{id}/check` | Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus (operator): Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint`; Agent-Systeme 409 (`run-agent.ps1 -Check`), 0.34.0 |
@@ -1234,6 +1253,12 @@ an (`deploy/agent-gateway`, Port 8443).
   `show ssh key`), dann im Quellsystem beim Switch „vergessen“ anhaken und speichern – der
   nächste Lauf lernt den neuen Schlüssel. Sonst: Adresse und Netz prüfen (anderes Gerät unter
   der Adresse?).
+- **„Wo hängt …“ findet eine VM nicht bzw. zeigt „zurzeit in keiner MAC-Tabelle“** (ab 0.63.0) —
+  die MAC-Tabelle kennt nur Geräte, die in den letzten Minuten gesendet haben (Standard 300 s),
+  und nur auf gelesenen Switches. Steht unter „früher“ ein Port, hing das Gerät dort beim
+  letzten Lauf, der es gesehen hat. „nur auf Uplinks gesehen“ heisst: das Gerät hängt hinter
+  dem ACI bzw. einem Switch ohne Zugang (Gegenstelle genannt) – dort weitersuchen bzw. den
+  Switch ins Quellsystem aufnehmen.
 - **Switches „Hinweise: show lldp neighbors detail: … LLDP is not enabled“ bzw. ein Switch unter
   „nicht gelesen“** — ein Befehl lieferte einen Fehler (der Rest ist eingelesen) bzw. der
   Switch war nicht erreichbar oder lehnte die Anmeldung ab (Meldung je Adresse). Fehlt einem

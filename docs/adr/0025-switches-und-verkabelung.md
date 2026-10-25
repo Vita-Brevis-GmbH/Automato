@@ -2,7 +2,8 @@
 
 ## Status
 
-Entwurf (2026-10-25), umgesetzt in 0.62.0. Nächster Schritt der ROADMAP nach Zonen/Kunden und
+Entwurf (2026-10-25), umgesetzt in 0.62.0 und 0.63.0 (Endpunkte aus MAC-Tabelle und ARP,
+Nr. 8). Nächster Schritt der ROADMAP nach Zonen/Kunden und
 Applikationen (Entscheid des Anwenders 2026-10-25: „Switching/Verkabelung“). Ergänzt ADR 0010
 (Inventar, Schreiben nur nach NetBox), ADR 0008/0009 (Agent, Zugangsdaten zentral) und ADR 0019
 (Topologie: bisher L3, jetzt die L1/L2-Sicht darunter).
@@ -83,19 +84,47 @@ Secrets, Open Source bevorzugt.
    API `/cabling/{devices,links,ports,vlans,sources}`, Rolle viewer, mandantsgescoped, **nicht
    für Kunden-Benutzer** (Infrastruktur, Freigabeliste bleibt unverändert).
 
+8. **Endpunkte aus MAC-Tabelle und ARP** (0.63.0):
+   - Zwei weitere Befehle der Positivliste: `show mac address-table` und ARP (`show ip arp`
+     bzw. NX-OS `show ip arp detail vrf all`). Übernommen werden nur Unicast-MACs an einzelnen
+     Ports (nicht CPU, Supervisor, Router, vPC-Peer-Link), höchstens 50 000 je Switch; ARP ohne
+     die eigenen Adressen des Switches.
+   - **Gesammelt statt ersetzt** (`mac_entry`, `arp_entry`, Migration 0055): bekannte
+     Einträge bekommen ein neues `last_seen`, neue kommen dazu. Aktuell ist je Switch, was
+     sein letzter Lauf gesehen hat; ältere Einträge zeigen, wo ein Gerät früher hing. Nach
+     der Frist `AUTOMATO_RETENTION_L2_DAYS` (30 Tage, Aufbewahrung ADR 0022) fallen sie weg.
+   - **Anschluss** eines Endpunkts (`store/l2.py`): der Port mit der MAC, der kein Uplink ist.
+     Uplink = an dem Port bzw. einem Mitglied seines Port-Channels hängt laut CDP/LLDP ein
+     weiterleitendes Gerät (Switch, Leaf, Spine, meldet Switch/Bridge/Router; nicht ESXi-Host,
+     Firewall, Telefon). Steht die MAC nur auf Uplinks, hängt das Gerät hinter einem Gerät
+     ohne MAC-Tabelle in Automato – gezeigt wird die Gegenstelle.
+   - **Identität**: VM-NIC aus dem vCenter (MAC), IPs aus ARP, VMware Tools und
+     ACI-Endpunkten, Namen aus dem IPAM.
+   - **„Wo hängt …“** (`GET /cabling/locate`): MAC, IP oder Name (VM, IPAM) → Anschluss mit
+     VLAN, Gegenstelle am Port (z. B. ESXi-Host mit vmnic), früher gesehene Ports.
+   - **Befund `uplink_vlan_missing`**: Die Ports, an denen VMs eines ESXi-Hosts gesehen werden,
+     sind seine Uplinks für diesen vSwitch/DVS. Jedes VLAN, das VMs des Clusters auf diesem
+     vSwitch/DVS nutzen, muss dort erlaubt sein – sonst verliert eine VM nach vMotion bzw.
+     beim Ausfall eines Uplinks das Netz. Nur Ports gelesener Switches mit bekannter
+     VLAN-Konfiguration; ESXi-Hosts müssen dafür kein CDP senden.
+   - Wie die übrigen Daten der Verkabelung nicht für Kunden-Benutzer.
+
 ## Konsequenzen
 
 - Neuer Lese-Zugang über SSH. Anders als bei REST schützt keine HTTP-Methode; die
   Positivliste und das Read-only-Konto tragen die Garantie (Risiko R22).
 - Neue Abhängigkeiten des Collectors: paramiko, textfsm, ntc-templates. Agenten laden sie beim
   Selbst-Update wie die übrigen (ADR 0011).
+- MAC- und IP-Adressen sind Betriebsdaten über Geräte und (indirekt) Personen (Clients). Sie
+  werden nur für die Verkabelung genutzt, nicht an Kunden-Benutzer gegeben und nach der Frist
+  gelöscht (R14, R22).
 - Nach NetBox wird noch nichts geschrieben. Kabel und Ports nach NetBox (`dcim/cables`,
   `dcim/interfaces`) folgen bei Bedarf als weiterer Abschnitt des NetBox-Syncs mit eigener
   Freigabe – nie auf die Switches.
 - Offen bzw. später:
   - **SNMPv3** (nur lesend, `authPriv`) als Alternative, wo SSH nicht erlaubt ist.
-  - MAC-Adress-Tabelle und ARP (welcher Server an welchem Port), mit Frist wie gelernte
-    Endpunkte.
+  - ~~MAC-Adress-Tabelle und ARP~~ – umgesetzt in 0.63.0 (Nr. 8). Offen: IPv6-Nachbarn
+    (`show ipv6 neighbors`), ARP der VRFs auf IOS (`show ip arp vrf …`), ARP der FortiGate.
   - L2-Sicht in der Topologie (Switches als Knoten, VLAN-Wege, Redundanz von Uplinks und
     vPC-Paaren) und im Weg Hop für Hop.
   - Weitere Hersteller (z. B. Aruba, Juniper) über dieselbe Struktur (Positivliste,

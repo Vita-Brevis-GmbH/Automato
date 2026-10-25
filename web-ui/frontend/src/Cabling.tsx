@@ -1,29 +1,35 @@
 // Verkabelung (0.62.0, ADR 0025): Verbindungen zwischen Geräten aus CDP/LLDP aller Quellen (Switches,
 // ACI-Leafs), beidseitig bzw. einseitig gemeldet, mit Abweichungen zwischen zwei gelesenen Switches
-// (Speed, Duplex, VLANs, Port-Channel); Geräte, Ports der Switches und VLANs. Rein lesend.
-import { useEffect, useState } from "react";
+// (Speed, Duplex, VLANs, Port-Channel); Geräte, Ports der Switches und VLANs. Seit 0.63.0 Endpunkte aus
+// MAC-Tabelle und ARP: „Wo hängt …“ und die MACs je Port (ohne Uplinks). Rein lesend.
+import { FormEvent, useEffect, useState } from "react";
 import {
   CablingDevice,
   CablingEnd,
+  CablingEndpoint,
   CablingLink,
   CablingPort,
   CablingSummary,
   CablingVlan,
+  EndpointLocation,
   fetchCablingDevices,
+  fetchCablingEndpoints,
   fetchCablingLinks,
   fetchCablingPorts,
   fetchCablingVlans,
   LinkState,
+  locateEndpoint,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
-import { Dash, Empty, ErrorBox, Loading, Note, PageHead } from "./ui";
+import { Dash, Empty, ErrorBox, fmtTime, Loading, Note, PageHead } from "./ui";
 
 const PAGE = 200;
-type Tab = "links" | "devices" | "ports" | "vlans";
+type Tab = "links" | "devices" | "ports" | "endpoints" | "vlans";
 const TABS: { key: Tab; label: string }[] = [
   { key: "links", label: "Verbindungen" },
   { key: "devices", label: "Geräte" },
   { key: "ports", label: "Ports" },
+  { key: "endpoints", label: "Endpunkte" },
   { key: "vlans", label: "VLANs" },
 ];
 const STATE: Record<LinkState, [string, string, string]> = {
@@ -64,6 +70,7 @@ export default function Cabling({ tenantId, tenantLabel }: { tenantId: number | 
   const [tab, setTab] = useState<Tab>("links");
   const [data, setData] = useState<{ summary: CablingSummary; items: CablingDevice[] } | null>(null);
   const [device, setDevice] = useState("");
+  const [epPort, setEpPort] = useState<{ device: string; port: string } | null>(null);
   const [err, setErr] = useState<unknown>(null);
   useEffect(() => {
     if (tenantId === null) return;
@@ -74,6 +81,10 @@ export default function Cabling({ tenantId, tenantLabel }: { tenantId: number | 
   const open = (key: string, to: Tab) => {
     setDevice(key);
     setTab(to);
+  };
+  const endpointsAt = (dev: string, port: string) => {
+    setEpPort({ device: dev, port });
+    setTab("endpoints");
   };
   return (
     <>
@@ -96,6 +107,7 @@ export default function Cabling({ tenantId, tenantLabel }: { tenantId: number | 
             {s.switches} Switches · {s.devices} gelesene Geräte · {s.links} Verbindungen ({s.states.both} beidseitig,{" "}
             {s.states.one_sided} einseitig, {s.states.unread} Gegenstelle ohne CDP/LLDP) ·{" "}
             <span className={s.issues ? "crit" : ""}>{s.issues} Abweichungen</span>
+            {s.endpoints ? <> · {s.endpoints} Endpunkte (MACs an den Ports)</> : null}
           </p>
         )
       )}
@@ -111,7 +123,10 @@ export default function Cabling({ tenantId, tenantLabel }: { tenantId: number | 
       )}
       {tab === "devices" && <DevicesTab items={data?.items ?? []} onOpen={open} />}
       {tenantId !== null && tab === "ports" && (
-        <PortsTab tenantId={tenantId} devices={data?.items ?? []} device={device} onDevice={setDevice} />
+        <PortsTab tenantId={tenantId} devices={data?.items ?? []} device={device} onDevice={setDevice} onEndpoints={endpointsAt} />
+      )}
+      {tenantId !== null && tab === "endpoints" && (
+        <EndpointsTab tenantId={tenantId} devices={data?.items ?? []} at={epPort} onClearAt={() => setEpPort(null)} />
       )}
       {tenantId !== null && tab === "vlans" && <VlansTab tenantId={tenantId} />}
     </>
@@ -284,11 +299,12 @@ function DevicesTab({ items, onOpen }: { items: CablingDevice[]; onOpen: (key: s
   );
 }
 
-function PortsTab({ tenantId, devices, device, onDevice }: {
+function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
   tenantId: number;
   devices: CablingDevice[];
   device: string;
   onDevice: (v: string) => void;
+  onEndpoints: (device: string, port: string) => void;
 }) {
   const [status, setStatus] = useState("");
   const [vlan, setVlan] = useState("");
@@ -341,6 +357,7 @@ function PortsTab({ tenantId, devices, device, onDevice }: {
                 <th>Konfiguration</th>
                 <th>Beschreibung</th>
                 <th>Gegenstelle</th>
+                <th title="MACs am Port (ohne Uplinks)">Endpunkte</th>
               </tr>
             </thead>
             <tbody>
@@ -370,6 +387,15 @@ function PortsTab({ tenantId, devices, device, onDevice }: {
                       <Dash />
                     )}
                   </td>
+                  <td>
+                    {p.endpoints ? (
+                      <button className="chip linkchip" onClick={() => onEndpoints(p.device, p.name)} title="Endpunkte am Port">
+                        {p.endpoints}
+                      </button>
+                    ) : (
+                      <span className="faint">–</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -378,6 +404,201 @@ function PortsTab({ tenantId, devices, device, onDevice }: {
         {data && <Pager total={data.total} offset={offset} onOffset={setOffset} pageSize={PAGE} />}
       </div>
     </div>
+  );
+}
+
+// Wer ist das: VM (mit Host), sonst IPAM-Namen, IPs, EPG
+function Who({ e }: { e: { vm: CablingEndpoint["vm"]; names: string[]; ips: string[]; epgs: string[] } }) {
+  return (
+    <>
+      {e.vm ? (
+        <>
+          <b>{e.vm.name}</b>{" "}
+          <span className="faint">
+            VM{e.vm.host ? ` auf ${e.vm.host}` : ""}
+            {e.vm.portgroup ? ` · ${e.vm.portgroup}` : ""}
+          </span>
+        </>
+      ) : e.names.length ? (
+        <b>{e.names.join(", ")}</b>
+      ) : (
+        <span className="faint">unbekannt</span>
+      )}
+      {e.ips.length > 0 && <span className="mono faint"> · {e.ips.join(", ")}</span>}
+      {e.epgs.length > 0 && <span className="faint"> · EPG {e.epgs.join(", ")}</span>}
+    </>
+  );
+}
+
+function at(e: CablingEndpoint): string {
+  const via = e.via ? ` · über ${e.via.device}${e.via.port ? ` (${e.via.port})` : ""}${KIND[e.via.kind] && !e.via.read ? ` – ${KIND[e.via.kind]}` : ""}` : "";
+  return `${e.device} ${e.port}${e.vlan ? ` · VLAN ${e.vlan}` : ""}${via}`;
+}
+
+function Locate({ tenantId }: { tenantId: number }) {
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<{ query: string; items: EndpointLocation[] } | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const run = (ev: FormEvent) => {
+    ev.preventDefault();
+    if (q.trim().length < 2) return;
+    setBusy(true);
+    setErr(null);
+    locateEndpoint(tenantId, q.trim())
+      .then(setRes)
+      .catch(setErr)
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="card" id="cabling-locate">
+      <div className="card-head">
+        <h2>Wo hängt …</h2>
+        <form onSubmit={run} style={{ marginLeft: "auto", display: "inline-flex", gap: 8 }}>
+          <input className="input" type="search" aria-label="Wo hängt" placeholder="MAC, IP oder Name (VM, DNS)" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 280 }} />
+          <button className="btn btn-sm" type="submit" disabled={busy || q.trim().length < 2}>
+            {busy ? "Suche…" : "Suchen"}
+          </button>
+        </form>
+      </div>
+      <div className="card-body pad">
+        <ErrorBox error={err} onClose={() => setErr(null)} />
+        {res === null ? (
+          <span className="faint">
+            Sucht die MAC über das vCenter (VM), ARP der Switches, ACI-Endpunkte bzw. das IPAM und zeigt den Port, an dem sie
+            gelernt ist – nicht die Uplinks zwischen den Switches.
+          </span>
+        ) : res.items.length === 0 ? (
+          <Empty title={`keine MAC zu „${res.query}“ in den MAC-Tabellen`} />
+        ) : (
+          res.items.map((it) => (
+            <div key={it.mac} className="locate-hit" data-mac={it.mac} style={{ marginBottom: 12 }}>
+              <div>
+                <span className="mono">{it.mac}</span> <span className="chip">{it.reason}</span> <Who e={it} />
+              </div>
+              {it.locations.map((l) => (
+                <div key={`${l.device}|${l.port}|${l.vlan}`} className="locate-at">
+                  ▸ <b>{at(l)}</b> <span className="faint">· zuletzt {fmtTime(l.last_seen)}</span>
+                  {l.port_description && <span className="faint"> · „{l.port_description}“</span>}
+                </div>
+              ))}
+              {it.locations.length === 0 && it.behind.length > 0 && (
+                <div className="locate-behind faint">
+                  nur auf Uplinks gesehen – dahinter:{" "}
+                  {it.behind.map((l) => (
+                    <span key={`${l.device}|${l.port}`}>
+                      {l.via ? `${l.via.device} (${KIND[l.via.kind] ?? l.via.kind})` : "?"} an {l.device} {l.port}{" "}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {it.locations.length === 0 && it.behind.length === 0 && <div className="faint">zurzeit in keiner MAC-Tabelle</div>}
+              {it.earlier.length > 0 && (
+                <div className="locate-earlier faint">
+                  früher: {it.earlier.map((l) => `${l.device} ${l.port} (${fmtTime(l.last_seen)})`).join(", ")}
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EndpointsTab({ tenantId, devices, at: port, onClearAt }: {
+  tenantId: number;
+  devices: CablingDevice[];
+  at: { device: string; port: string } | null;
+  onClearAt: () => void;
+}) {
+  const [device, setDevice] = useState("");
+  const [vlan, setVlan] = useState("");
+  const [q, setQ] = useState("");
+  const query = useDebounced(q);
+  const vlanNo = useDebounced(vlan);
+  const [offset, setOffset] = useState(0);
+  const [data, setData] = useState<Awaited<ReturnType<typeof fetchCablingEndpoints>> | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  useEffect(() => setOffset(0), [device, vlanNo, query, port]);
+  useEffect(() => {
+    let live = true;
+    const v = /^\d+$/.test(vlanNo) ? Number(vlanNo) : null;
+    const dev = port ? port.device : device;
+    fetchCablingEndpoints(tenantId, { device: dev, port: port?.port, vlan: v, q: query, offset, limit: PAGE })
+      .then((d) => live && setData(d))
+      .catch((e) => live && setErr(e));
+    return () => {
+      live = false;
+    };
+  }, [tenantId, device, vlanNo, query, offset, port]);
+  return (
+    <>
+      <Locate tenantId={tenantId} />
+      <div className="card" id="cabling-endpoints">
+        <div className="card-head">
+          <h2>Endpunkte an den Ports</h2>
+          {port && (
+            <span className="chip" id="cabling-endpoints-port">
+              {port.device} {port.port}{" "}
+              <button className="linkchip" style={{ border: 0, background: "none", padding: 0 }} onClick={onClearAt} aria-label="Port-Filter entfernen">
+                ✕
+              </button>
+            </span>
+          )}
+          <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {!port && <DeviceSelect devices={devices} value={device} onChange={setDevice} readOnly />}
+            <input className="input" style={{ width: 90 }} aria-label="VLAN" placeholder="VLAN" value={vlan} onChange={(e) => setVlan(e.target.value)} />
+            <input className="input" type="search" aria-label="Suchen" placeholder="MAC, VM, IP, Port" value={q} onChange={(e) => setQ(e.target.value)} />
+          </span>
+        </div>
+        <div className="card-body scroll">
+          <ErrorBox error={err} onClose={() => setErr(null)} />
+          {data === null ? (
+            <Loading />
+          ) : data.items.length === 0 ? (
+            <Empty title="keine Endpunkte" />
+          ) : (
+            <>
+              <p className="faint" id="cabling-endpoints-summary">
+                {data.summary.macs} MACs an {data.summary.ports} Ports · {data.summary.vms} VMs · {data.summary.with_ip} mit IP
+              </p>
+              <table className="compact">
+                <thead>
+                  <tr>
+                    <th>Switch</th>
+                    <th>Port</th>
+                    <th>VLAN</th>
+                    <th>MAC</th>
+                    <th>Gerät</th>
+                    <th>über</th>
+                    <th>zuletzt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.items.map((e) => (
+                    <tr key={`${e.device}|${e.port}|${e.vlan}|${e.mac}`} data-mac={e.mac}>
+                      <td className="nowrap">{e.device}</td>
+                      <td className="mono nowrap" title={e.port_description ?? undefined}>
+                        {e.port}
+                      </td>
+                      <td className="mono">{e.vlan ?? <Dash />}</td>
+                      <td className="mono nowrap">{e.mac}</td>
+                      <td>
+                        <Who e={e} />
+                      </td>
+                      <td className="faint">{e.via ? `${e.via.device}${e.via.port ? ` ${e.via.port}` : ""}` : <Dash />}</td>
+                      <td className="faint nowrap">{fmtTime(e.last_seen)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+          {data && <Pager total={data.total} offset={offset} onOffset={setOffset} pageSize={PAGE} />}
+        </div>
+      </div>
+    </>
   );
 }
 

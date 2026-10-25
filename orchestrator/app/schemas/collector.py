@@ -170,6 +170,26 @@ class NormalizedNeighbor(BaseModel):
     remote_description: str | None = None
 
 
+class NormalizedMac(BaseModel):
+    """Eintrag der MAC-Adress-Tabelle eines Switches (0.63.0): wo die MAC gelernt ist."""
+
+    device: str = Field(max_length=200)
+    mac: str = Field(max_length=32)
+    port: str = Field(max_length=200)
+    vlan: int | None = None
+    kind: str | None = Field(default=None, max_length=16)
+
+
+class NormalizedArp(BaseModel):
+    """ARP-Eintrag eines Switches mit L3-Interface (0.63.0): IP -> MAC."""
+
+    device: str = Field(max_length=200)
+    ip: str = Field(max_length=64)
+    mac: str = Field(max_length=32)
+    interface: str | None = Field(default=None, max_length=200)
+    vrf: str | None = Field(default=None, max_length=100)
+
+
 class NormalizedVlan(BaseModel):
     vid: int
     name: str
@@ -204,6 +224,8 @@ class NetworkInventory(BaseModel):
     # ACI-Route-Leaking zwischen VRFs (0.44.0): {vrf, prefix, to: [Tenant:VRF], external}
     vrf_leaks: list[dict] = Field(default_factory=list)
     neighbors: list[NormalizedNeighbor] = Field(default_factory=list)  # CDP/LLDP (0.62.0)
+    macs: list[NormalizedMac] = Field(default_factory=list)  # MAC-Tabelle (0.63.0)
+    arps: list[NormalizedArp] = Field(default_factory=list)  # ARP (0.63.0)
 
 
 class ReferenceBatch(BaseModel):

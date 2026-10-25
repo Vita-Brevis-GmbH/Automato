@@ -149,7 +149,7 @@ function Connections() {
 
 const days = (n: number) => (n > 0 ? `${n} Tage` : "nie löschen");
 const counts = (c: RetentionCounts) =>
-  `${c.runs} Läufe · ${c.sync_plans} NetBox-Sync-Vorschauen · ${c.audit} Audit-Einträge`;
+  `${c.runs} Läufe · ${c.sync_plans} NetBox-Sync-Vorschauen · ${c.audit} Audit-Einträge · ${c.l2 ?? 0} MAC-/ARP-Einträge`;
 
 // Aufbewahrung (0.48.0, R14): beendete Läufe, alte Sync-Vorschauen und Audit-Einträge nach Frist
 // löschen; der aktuelle Stand bleibt. Der Zeitplan räumt täglich auf, hier auch von Hand.
@@ -175,7 +175,7 @@ function Retention() {
       .catch(setErr)
       .finally(() => setBusy(false));
   };
-  const due = r ? r.due.runs + r.due.sync_plans + r.due.audit : 0;
+  const due = r ? r.due.runs + r.due.sync_plans + r.due.audit + (r.due.l2 ?? 0) : 0;
   return (
     <div className="card" id="retention">
       <div className="card-head">
@@ -198,6 +198,8 @@ function Retention() {
             <dd>{days(r.policy.sync_days)}</dd>
             <dt>Audit-Log</dt>
             <dd>{days(r.policy.audit_days)}</dd>
+            <dt>MAC/ARP der Switches</dt>
+            <dd>{days(r.policy.l2_days ?? 30)}</dd>
             <dt>Fällig</dt>
             <dd>{counts(r.due)}</dd>
             <dt>Zuletzt</dt>

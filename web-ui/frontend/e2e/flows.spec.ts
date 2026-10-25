@@ -830,6 +830,7 @@ test("System: Aufbewahrung mit Fristen und Knopf zum Aufräumen", async ({ page,
   const card = page.locator("#retention");
   await expect(card).toContainText("90 Tage");
   await expect(card).toContainText("365 Tage");
+  await expect(card).toContainText("MAC/ARP der Switches30 Tage"); // seit 0.63.0
   await expect(card).toContainText("nichts fällig");
   // nichts über der Frist: der Knopf bleibt aus
   await expect(card.locator("button:has-text('Jetzt aufräumen')")).toBeDisabled();
@@ -1296,5 +1297,41 @@ test("Verkabelung: Switches, Verbindungen mit Abweichungen, Ports und VLANs (0.6
   // Befunde in der Kategorie „Verkabelung“
   await page.goto("/#findings");
   await expect(page.locator("body")).toContainText("Verkabelung");
+  expect(problems).toEqual([]);
+});
+
+test("Endpunkte: Wo hängt … nach Name und IP, MACs je Port, VLAN am ESXi-Uplink (0.63.0)", async ({ page, problems }) => {
+  await page.goto("/#verkabelung");
+  await expect(page.locator("#cabling-summary")).toContainText("2 Endpunkte");
+  // Ports: Anzahl Endpunkte je Port öffnet den Reiter mit Port-Filter
+  await page.click(".tabbar button:has-text('Ports')");
+  const gi5 = page.locator("#cabling-ports tbody tr[data-port='Gi1/0/5']");
+  await gi5.locator("button.linkchip").click();
+  await expect(page.locator("#cabling-endpoints-port")).toContainText("sw-acc-01 Gi1/0/5");
+  const rows = page.locator("#cabling-endpoints tbody tr");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("a0:b1:c2:d3:e4:f5");
+  await expect(rows.first()).toContainText("10.20.0.15");
+  await page.locator("#cabling-endpoints-port button").click();
+  await expect(rows).toHaveCount(2); // ohne die Uplinks Po1/Po10
+  await expect(page.locator("#cabling-endpoints-summary")).toContainText("2 MACs an 2 Ports · 1 VMs");
+
+  // Wo hängt …: VM-Name -> ESXi-Host am Core-Switch; IP aus ARP -> Access-Port
+  const locate = page.locator("#cabling-locate");
+  await locate.getByLabel("Wo hängt").fill("web01");
+  await locate.locator("button:has-text('Suchen')").click();
+  const hit = locate.locator(".locate-hit[data-mac='00:50:56:aa:00:01']");
+  await expect(hit).toContainText("VM web01-007-ka");
+  await expect(hit.locator(".locate-at")).toContainText("sw-core-01 Eth1/3 · VLAN 10 · über esx01-chzrh1.example.ch (vmnic2)");
+  await locate.getByLabel("Wo hängt").fill("10.20.0.15");
+  await locate.locator("button:has-text('Suchen')").click();
+  await expect(locate.locator(".locate-hit .locate-at")).toContainText("sw-acc-01 Gi1/0/5 · VLAN 20");
+  await locate.getByLabel("Wo hängt").fill("gibt-es-nicht");
+  await locate.locator("button:has-text('Suchen')").click();
+  await expect(locate).toContainText("keine MAC zu „gibt-es-nicht“");
+
+  // Befund: VLAN der VM fehlt am Uplink des ESXi-Hosts
+  await page.goto("/#findings");
+  await expect(page.locator(".fgroup", { hasText: "Verkabelung" })).toContainText("VLAN fehlt am ESXi-Uplink");
   expect(problems).toEqual([]);
 });

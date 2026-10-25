@@ -70,6 +70,8 @@ class FindingType(enum.StrEnum):
     LINK_VLAN_MISMATCH = "link_vlan_mismatch"
     LINK_LAG_MISMATCH = "link_lag_mismatch"
     LINK_ONE_SIDED = "link_one_sided"
+    # Endpunkte (0.63.0, `store/l2`): VLAN der VMs eines ESXi-Hosts fehlt an seinem Uplink
+    UPLINK_VLAN_MISSING = "uplink_vlan_missing"
 
 
 class Severity(enum.StrEnum):
@@ -95,6 +97,7 @@ class SubjectKind(enum.StrEnum):
     PORTGROUP = "portgroup"
     NODE = "node"  # Knoten der Topologie (`<Quellsystem>|<Kontext>`, 0.50.0)
     LINK = "link"  # Verbindung der Verkabelung (`<Geraet>|<Port>~<Geraet>|<Port>`, 0.62.0)
+    # bzw. ein Port (`<Geraet>|<Port>`, 0.63.0)
 
 
 class Finding(Base):

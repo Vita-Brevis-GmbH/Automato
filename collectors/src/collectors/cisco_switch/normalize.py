@@ -4,6 +4,9 @@ Geparst wird mit den TextFSM-Vorlagen von ntc-templates (Apache-2.0) je Plattfor
 fuer IOS/IOS-XE, `cisco_nxos`). Ergebnis je Switch: das Geraet (Rolle `switch`), die Ports mit
 Status, Speed/Duplex, Modus und VLANs, Port-Channel und vPC, die VLANs und die Nachbarn aus
 CDP/LLDP. Portnamen in der Kurzform des Switches (`Gi1/0/1`, `Eth1/1`, `Po10`).
+
+Seit 0.63.0 die MAC-Adress-Tabelle (nur Unicast an Ports, nicht CPU/Router/Peer-Link) und ARP
+(ohne die eigenen Adressen des Switches); MACs einheitlich `aa:bb:cc:dd:ee:ff`.
 """
 
 import ipaddress
@@ -11,8 +14,10 @@ import re
 
 from collectors.common.dto import (
     NetworkInventory,
+    NormalizedArp,
     NormalizedDevice,
     NormalizedInterface,
+    NormalizedMac,
     NormalizedNeighbor,
     NormalizedVlan,
 )
@@ -39,6 +44,9 @@ _SHORT = (
 )
 _DEFAULT_VLANS = {1002, 1003, 1004, 1005}  # fddi-/token-ring-default (IOS)
 TAGGED_MAX = 512  # bis zu so vielen VLANs je Trunk auch als Liste
+MAX_MACS = 50_000  # MAC-Eintraege je Switch (grosse Cores); mehr = Hinweis im Lauf
+_PORT_LIKE = re.compile(r"^[A-Za-z][A-Za-z-]*\d[\d/.:]*$")
+_NOT_PORT = ("sup", "vl", "lo", "tu", "nve", "mgmt")  # Supervisor, SVI, Loopback, Tunnel, VXLAN
 
 
 def short_name(name: str | None) -> str:
@@ -153,8 +161,56 @@ def _ip(value) -> str | None:
         return None
 
 
-def switch_inventory(host: str, platform: str, outputs: dict[str, str]) -> NetworkInventory:
-    """Ein Switch: Ausgaben der Befehle (`COMMANDS`) -> Netzinventar."""
+def mac_text(value) -> str | None:
+    """`0050.5601.0001`, `00-50-56-01-00-01`, `00:50:56:01:00:01` -> `00:50:56:01:00:01`."""
+    digits = re.sub(r"[^0-9a-fA-F]", "", value if isinstance(value, str) else "")
+    if len(digits) != 12:
+        return None
+    return ":".join(digits[i : i + 2] for i in range(0, 12, 2)).lower()
+
+
+def _l2_port(value) -> str | None:
+    """Port eines MAC-Eintrags: nur ein einzelner Port (nicht CPU, Router, Supervisor,
+    `vPC Peer-Link`, mehrere Ports bei Multicast)."""
+    if isinstance(value, list):
+        value = value[0] if len(value) == 1 else None
+    name = short_name(value)
+    if not _PORT_LIKE.match(name) or name.lower().startswith(_NOT_PORT):
+        return None
+    return name
+
+
+def _l2(name: str, p: dict[str, list[dict]], arp_cmd: str):
+    """MAC-Tabelle und ARP eines Switches -> (MACs, ARP, Anzahl ueber MAX_MACS)."""
+    macs: list[NormalizedMac] = []
+    seen: set[tuple] = set()
+    for r in p.get("show mac address-table") or []:
+        mac = mac_text(r.get("destination_address") or r.get("mac_address"))
+        port = _l2_port(r.get("destination_port") or r.get("ports"))
+        if not mac or not port or int(mac[:2], 16) & 1:  # Multicast/Broadcast
+            continue
+        vlan = _int(r.get("vlan_id"))
+        if (mac, vlan, port) in seen:
+            continue
+        seen.add((mac, vlan, port))
+        macs.append(NormalizedMac(device=name, mac=mac, port=port, vlan=vlan,
+                                  kind=(r.get("type") or "").strip().lower() or None))  # fmt: skip
+    arps: list[NormalizedArp] = []
+    for r in p.get(arp_cmd) or []:
+        mac, ip = mac_text(r.get("mac_address")), _ip(r.get("ip_address"))
+        if not mac or not ip or (r.get("age") or "").strip() == "-":  # eigene Adresse (IOS)
+            continue
+        arps.append(NormalizedArp(device=name, ip=ip, mac=mac,
+                                  interface=short_name(r.get("interface")) or None,
+                                  vrf=_text(r.get("vrf"))))  # fmt: skip
+    over = max(len(macs) - MAX_MACS, 0)
+    return macs[:MAX_MACS], arps, over
+
+
+def switch_inventory(
+    host: str, platform: str, outputs: dict[str, str], notes: list[str] | None = None
+) -> NetworkInventory:
+    """Ein Switch: Ausgaben der Befehle (`COMMANDS`) -> Netzinventar; Hinweise nach `notes`."""
     from collectors.cisco_switch.client import COMMANDS
 
     cmds = COMMANDS[platform]
@@ -249,8 +305,11 @@ def switch_inventory(host: str, platform: str, outputs: dict[str, str]) -> Netwo
         if vid is None or vid in _DEFAULT_VLANS:
             continue
         vlans.append(NormalizedVlan(vid=vid, name=(r.get("vlan_name") or str(vid)).strip()))
+    macs, arps, over = _l2(name, p, cmds[-1])
+    if over and notes is not None:
+        notes.append(f"MAC-Tabelle: {over} Eintraege ueber {MAX_MACS} nicht uebernommen")
     return NetworkInventory(devices=[device], interfaces=interfaces, vlans=vlans,
-                            neighbors=neighbors)  # fmt: skip
+                            neighbors=neighbors, macs=macs, arps=arps)  # fmt: skip
 
 
 def _interface(device: str, e: dict, nb: NormalizedNeighbor | None) -> NormalizedInterface:
@@ -297,10 +356,13 @@ def normalize(raw: dict) -> NetworkInventory:
     inv = NetworkInventory()
     seen_vlans: dict[int, NormalizedVlan] = {}
     for sw in raw.get("switches") or []:
-        part = switch_inventory(sw["host"], sw["platform"], sw.get("outputs") or {})
+        part = switch_inventory(sw["host"], sw["platform"], sw.get("outputs") or {},
+                                sw.setdefault("notes", []))  # fmt: skip
         inv.devices += part.devices
         inv.interfaces += part.interfaces
         inv.neighbors += part.neighbors
+        inv.macs += part.macs
+        inv.arps += part.arps
         for v in part.vlans:  # VLAN-ID je Quellsystem einmal (erster Name)
             seen_vlans.setdefault(v.vid, v)
     inv.vlans = sorted(seen_vlans.values(), key=lambda v: v.vid)

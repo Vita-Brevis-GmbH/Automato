@@ -69,7 +69,7 @@ from app.schemas.collector import (
     NormalizedObject,
     NormalizedRule,
 )
-from app.store import customers, reconcile, rule_index, topology, virtual
+from app.store import customers, l2, reconcile, rule_index, topology, virtual
 from app.store import naming_profiles as profile_store
 from app.store import rules as rules_store
 
@@ -139,6 +139,8 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         _vip_targets(session, run, device_objects, cache)
     if result.inventory is not None:  # aeltere Collectors liefern kein Inventar
         _replace_inventory(session, run, result.inventory)
+        if result.inventory.macs or result.inventory.arps:  # Switches: gesammelt (0.63.0)
+            l2.merge(session, run, result.inventory)
     if result.host_keys:  # Switches: SSH-Host-Schluessel beim ersten Kontakt festhalten
         _pin_host_keys(session, run, result.host_keys)
     if result.virtual is not None:  # vCenter: VMs und Portgruppen (ADR 0017)

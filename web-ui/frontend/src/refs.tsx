@@ -55,6 +55,7 @@ export const FINDING_LABEL: Record<string, string> = {
   link_vlan_mismatch: "Kabel: VLANs abweichend",
   link_lag_mismatch: "Kabel: Port-Channel einseitig",
   link_one_sided: "Kabel: nur eine Seite meldet",
+  uplink_vlan_missing: "VLAN fehlt am ESXi-Uplink",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -95,6 +96,7 @@ export const FINDING_HINT: Record<string, string> = {
   link_vlan_mismatch: "Modus, Access- bzw. Native VLAN oder erlaubte VLANs der beiden Ports verschieden",
   link_lag_mismatch: "Port in einem Port-Channel, der Port gegenüber nicht",
   link_one_sided: "Verbindung, die nur einer von zwei gelesenen Switches per CDP/LLDP meldet",
+  uplink_vlan_missing: "Port, an dem VMs eines ESXi-Hosts gesehen werden, lässt ein VLAN ihres Clusters/vSwitches nicht durch",
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -146,7 +148,7 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     key: "cabling",
     label: "Verkabelung",
     help: "Verbindungen zwischen Switches: Speed, Duplex, VLANs, Port-Channel, einseitig gemeldet",
-    types: ["link_speed_mismatch", "link_duplex_mismatch", "link_vlan_mismatch", "link_lag_mismatch", "link_one_sided"],
+    types: ["link_speed_mismatch", "link_duplex_mismatch", "link_vlan_mismatch", "link_lag_mismatch", "link_one_sided", "uplink_vlan_missing"],
   },
   {
     key: "zones",

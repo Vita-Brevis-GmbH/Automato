@@ -10,6 +10,8 @@ Weniger speichern heisst auch: nicht ewig. Je Art eine Frist in Tagen (0 = nie l
   NetBox und keine, die gerade rechnet bzw. uebernimmt. Was uebernommen wurde, steht weiter im
   Audit (`netbox_sync.applied` mit den Zahlen).
 - **Audit** (`retention_audit_days`, 365): Eintraege aelter als die Frist.
+- **Endpunkte der Switches** (`retention_l2_days`, 30, seit 0.63.0): MAC- und ARP-Eintraege, die
+  so lange kein Lauf mehr gesehen hat (der aktuelle Stand je Switch bleibt).
 
 `purge` loescht und schreibt selbst einen Audit-Eintrag `retention.purged` mit den Zahlen - der
 neuste ist zugleich „zuletzt aufgeraeumt“. Der Zeitplan ruft `maybe_purge` auf (hoechstens einmal
@@ -24,9 +26,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit
 from app.models import (
+    ArpEntry,
     AuditLog,
     CollectorRun,
     DeviceObject,
+    MacEntry,
     NatRule,
     ReferenceRecordRow,
     Rule,
@@ -50,6 +54,7 @@ class Policy:
     runs_days: int
     sync_days: int
     audit_days: int
+    l2_days: int = 30
 
     @classmethod
     def of(cls, settings) -> "Policy":
@@ -57,11 +62,12 @@ class Policy:
             max(settings.retention_runs_days, 0),
             max(settings.retention_sync_days, 0),
             max(settings.retention_audit_days, 0),
+            max(getattr(settings, "retention_l2_days", 30), 0),
         )
 
     @property
     def active(self) -> bool:
-        return any((self.runs_days, self.sync_days, self.audit_days))
+        return any((self.runs_days, self.sync_days, self.audit_days, self.l2_days))
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -125,6 +131,14 @@ def _old_audit(session: Session, cutoff: datetime) -> int:
     return session.scalar(stmt) or 0
 
 
+def _old_l2(session: Session, cutoff: datetime) -> int:
+    """MAC-/ARP-Eintraege, die seit der Frist kein Lauf gesehen hat."""
+    return sum(
+        session.scalar(select(func.count()).select_from(m).where(m.last_seen < cutoff)) or 0
+        for m in (MacEntry, ArpEntry)
+    )
+
+
 def _chunks(ids: list, size: int = CHUNK):
     for i in range(0, len(ids), size):
         yield ids[i : i + size]
@@ -136,10 +150,12 @@ def due(session: Session, policy: Policy, now: datetime | None = None) -> dict[s
     runs = _cutoff(policy.runs_days, now)
     plans = _cutoff(policy.sync_days, now)
     entries = _cutoff(policy.audit_days, now)
+    l2 = _cutoff(policy.l2_days, now)
     return {
         "runs": len(_old_runs(session, runs)) if runs else 0,
         "sync_plans": len(_old_plans(session, plans)) if plans else 0,
         "audit": _old_audit(session, entries) if entries else 0,
+        "l2": _old_l2(session, l2) if l2 else 0,
     }
 
 
@@ -148,7 +164,7 @@ def purge(
 ) -> dict[str, int]:
     """Loeschen, was ueber der Frist ist; Rueckgabe = Anzahl je Art (Aufrufer committet)."""
     now = now or datetime.now(UTC)
-    counts = {"runs": 0, "sync_plans": 0, "audit": 0}
+    counts = {"runs": 0, "sync_plans": 0, "audit": 0, "l2": 0}
     if cutoff := _cutoff(policy.runs_days, now):
         ids = _old_runs(session, cutoff)
         for chunk in _chunks(ids):
@@ -166,6 +182,10 @@ def purge(
     if cutoff := _cutoff(policy.audit_days, now):
         counts["audit"] = _old_audit(session, cutoff)
         session.execute(delete(AuditLog).where(AuditLog.timestamp < cutoff))
+    if cutoff := _cutoff(policy.l2_days, now):
+        counts["l2"] = _old_l2(session, cutoff)
+        for model in (MacEntry, ArpEntry):
+            session.execute(delete(model).where(model.last_seen < cutoff))
     audit.record(
         session,
         actor=actor,
@@ -176,6 +196,7 @@ def purge(
             "runs_days": policy.runs_days,
             "sync_days": policy.sync_days,
             "audit_days": policy.audit_days,
+            "l2_days": policy.l2_days,
         },
     )
     return counts
@@ -189,7 +210,7 @@ def last_purge(session: Session) -> dict | None:
     if row is None:
         return None
     detail = audit.decode_detail(row) or {}
-    counts = {k: detail.get(k, 0) for k in ("runs", "sync_plans", "audit")}
+    counts = {k: detail.get(k, 0) for k in ("runs", "sync_plans", "audit", "l2")}
     return {"at": _aware(row.timestamp), "actor": row.actor, "counts": counts}
 
 

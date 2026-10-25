@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     INVENTORY_MODELS,
+    L2_MODELS,
     TOPOLOGY_MODELS,
     Agent,
     Application,
@@ -120,7 +121,7 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
         session, delete(NatRule).where(NatRule.source_system_id == source.id)
     )
     session.execute(delete(DeviceObject).where(DeviceObject.source_system_id == source.id))
-    for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS):
+    for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS, *L2_MODELS):
         session.execute(delete(model).where(model.source_system_id == source.id))
     _drop_from_exits(session, source)
     session.execute(
@@ -185,7 +186,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     counts["nat_rules"] = _count(session, delete(NatRule).where(NatRule.tenant_id == tid))
     counts["findings"] = _count(session, delete(Finding).where(Finding.tenant_id == tid))
     session.execute(delete(DeviceObject).where(DeviceObject.tenant_id == tid))
-    for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS, TopoExit, TopoExitDismissal,
+    for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS, *L2_MODELS, TopoExit, TopoExitDismissal,
                   ParallelRejection):  # fmt: skip
         session.execute(delete(model).where(model.tenant_id == tid))
     counts["vms"] = _delete_vms(session, Vm.tenant_id == tid)

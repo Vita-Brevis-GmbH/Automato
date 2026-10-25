@@ -220,6 +220,22 @@ def _link_one_sided(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _uplink_vlan(subject: str, d: dict) -> tuple[str, str]:
+    """Endpunkte (0.63.0): VLAN der VMs fehlt am Uplink des ESXi-Hosts."""
+    groups = d.get("portgroups") or {}
+    pgs = sorted({p for names in groups.values() for p in names})
+    where = ", ".join(d.get("clusters") or []) or "der VMs"
+    allowed = d.get("allowed") or "?"
+    return (
+        f"{d.get('text') or subject}: VMs im Cluster {where} nutzen "
+        f"{', '.join(pgs[:6]) or 'Portgruppen'}{' …' if len(pgs) > 6 else ''}, der Port lässt "
+        f"nur {allowed} durch ({'Trunk' if d.get('mode') == 'tagged' else 'Access'}).",
+        "VLAN auf dem Port (bzw. Port-Channel) erlauben – sonst verliert eine VM nach vMotion "
+        "auf diesen Host bzw. beim Ausfall des anderen Uplinks das Netz. Ist der Port bewusst "
+        "nur für einen Teil der VLANs (eigener vSwitch), Befund quittieren.",
+    )
+
+
 _TOPO_TEXT = {
     "topo_duplicate_ip": _dup_ip,
     "topo_mask_mismatch": _mask,
@@ -234,6 +250,7 @@ _TOPO_TEXT = {
     "link_vlan_mismatch": _link,
     "link_lag_mismatch": _link,
     "link_one_sided": _link_one_sided,
+    "uplink_vlan_missing": _uplink_vlan,
 }
 
 

@@ -296,6 +296,8 @@ def run(app) -> None:
                  duplex="full", description="fw-08 dmz"),
             port("sw-acc-01", "Gi1/0/2", mode="access", untagged_vlan=20, status="notconnect",
                  description="Drucker 2.OG"),
+            port("sw-acc-01", "Gi1/0/5", mode="access", untagged_vlan=20,
+                 description="Server srv-phys"),
             port("sw-core-01", "Eth1/1", lag="Po10", speed="1000", duplex="full", **trunk),
             port("sw-core-01", "Eth1/2", lag="Po10", speed="100", duplex="full",
                  **{**trunk, "native_vlan": 99, "untagged_vlan": 99}),
@@ -314,6 +316,16 @@ def run(app) -> None:
             nb("sw-core-01", "Eth1/3", "esx01-chzrh1.example.ch", "vmnic2", "lldp"),
             nb("sw-core-01", "Eth1/48", "leaf-101", "Ethernet1/48"),
         ],
+        # Endpunkte (0.63.0): web01 am ESXi-Host (VLAN 1107 am Access-Port 10 nicht erlaubt ->
+        # Befund), ein physischer Server mit IP aus ARP, derselbe auf den Uplinks
+        "macs": [
+            {"device": "sw-core-01", "port": "Eth1/3", "mac": "00:50:56:aa:00:01", "vlan": 10},
+            {"device": "sw-acc-01", "port": "Po1", "mac": "00:50:56:aa:00:01", "vlan": 10},
+            {"device": "sw-acc-01", "port": "Gi1/0/5", "mac": "a0:b1:c2:d3:e4:f5", "vlan": 20},
+            {"device": "sw-core-01", "port": "Po10", "mac": "a0:b1:c2:d3:e4:f5", "vlan": 20},
+        ],
+        "arps": [{"device": "sw-core-01", "ip": "10.20.0.15", "mac": "a0:b1:c2:d3:e4:f5",
+                  "interface": "Vl20"}],
     }  # fmt: skip
     run_result(sw, "cisco_switch", inventory=switches, message="Switches: 2 gelesen")
 

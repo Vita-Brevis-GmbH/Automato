@@ -162,7 +162,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "read.customers": frozenset({"tenant_id", "resource", "customers"}),
     "read.zones": frozenset({"tenant_id", "resource"}),
     "retention.purged": frozenset(
-        {"runs", "sync_plans", "audit", "runs_days", "sync_days", "audit_days"}
+        {"runs", "sync_plans", "audit", "l2", "runs_days", "sync_days", "audit_days", "l2_days"}
     ),
 }
 

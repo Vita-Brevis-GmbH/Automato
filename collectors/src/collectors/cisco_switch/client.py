@@ -30,6 +30,8 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show etherchannel summary",
         "show cdp neighbors detail",
         "show lldp neighbors detail",
+        "show mac address-table",  # 0.63.0: Endpunkte je Port
+        "show ip arp",
     ),
     "nxos": (
         "show version",
@@ -41,6 +43,8 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show cdp neighbors detail",
         "show lldp neighbors detail",
         "show vpc",
+        "show mac address-table",  # 0.63.0
+        "show ip arp detail vrf all",
     ),
 }
 ALLOWED = frozenset(c for cmds in COMMANDS.values() for c in cmds)

@@ -7,6 +7,30 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.63.0 – 2026-10-25
+
+Switching/Verkabelung weiter (ROADMAP, ADR 0025 Nr. 8): welches Gerät an welchem Port hängt –
+aus MAC-Tabelle und ARP der Switches. Migration `0055` (`mac_entry`, `arp_entry`); nur lesend.
+
+- **Zwei weitere Befehle** der Positivliste: `show mac address-table` und ARP (`show ip arp`
+  bzw. NX-OS `show ip arp detail vrf all`). Nur Unicast-MACs an einzelnen Ports (nicht CPU,
+  Supervisor, vPC-Peer-Link), höchstens 50 000 je Switch; ARP ohne die eigenen Adressen.
+- **Gesammelt statt ersetzt:** ein stiller Server fällt aus der MAC-Tabelle, bleibt in Automato
+  aber mit „zuletzt gesehen“; aktuell ist je Switch, was sein letzter Lauf gesehen hat, ältere
+  Einträge zeigen, wo ein Gerät früher hing. Neue Frist `AUTOMATO_RETENTION_L2_DAYS` (30 Tage)
+  in der Aufbewahrung (System-Seite, `automato purge`).
+- **Reiter Endpunkte** in der Verkabelung: „Wo hängt …“ nach MAC, IP oder Name (VM, DNS) →
+  Switch, Port, VLAN, Gegenstelle am Port (z. B. ESXi-Host mit vmnic), früher gesehene Ports;
+  „nur auf Uplinks gesehen“ nennt das Gerät, hinter dem es hängt (ACI, Switch ohne Zugang).
+  Liste aller MACs an den Ports (ohne Uplinks) mit VM, IPs, IPAM-Namen, EPG.
+- **Ports:** Anzahl Endpunkte je Port, ein Klick zeigt sie.
+- **Befund „VLAN fehlt am ESXi-Uplink“** (`uplink_vlan_missing`): an einem Port werden VMs eines
+  ESXi-Hosts gesehen, er lässt aber ein VLAN nicht durch, das VMs im selben Cluster auf
+  demselben vSwitch/DVS nutzen – nach vMotion bzw. beim Ausfall des anderen Uplinks ohne Netz.
+  Funktioniert ohne CDP der ESXi-Hosts (über die MACs der VMs).
+- Korrektur Test: der echte SSH-Testserver bediente nach einer abgebrochenen Verbindung keine
+  weitere mehr (wackliger Test, 0.62.0).
+
 ## 0.62.0 – 2026-10-25
 
 Switching/Verkabelung (ROADMAP, ADR 0025): Cisco-Switches strikt lesend über SSH und die

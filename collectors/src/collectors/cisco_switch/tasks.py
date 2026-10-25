@@ -124,6 +124,7 @@ def collect_once(
         errors = raw.get("errors") or []
         if not switches:
             raise RuntimeError("; ".join(errors) or "kein Switch gelesen")
+        inventory = normalize(raw)  # ergaenzt Hinweise je Switch (z. B. MAC-Tabelle gekappt)
         notes = [f"{sw['host']}: {n}" for sw in switches for n in sw.get("notes") or []]
         message = [f"Switches: {len(switches)} gelesen"]
         if errors:
@@ -132,7 +133,7 @@ def collect_once(
             message.append(f"Hinweise: {'; '.join(notes[:20])}")
         result = CollectorResult(
             status="completed",
-            inventory=normalize(raw),
+            inventory=inventory,
             host_keys={sw["host"]: sw["host_key"] for sw in switches if sw.get("host_key")},
             message=" · ".join(message),
         )

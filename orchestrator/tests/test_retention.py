@@ -46,14 +46,14 @@ def test_fristen_loeschen_nur_altes(client, session_factory):
         s.commit()
 
     st = client.get("/system/retention", headers=ADMIN).json()
-    assert st["policy"] == {"runs_days": 90, "sync_days": 90, "audit_days": 365}
-    assert st["due"] == {"runs": 3, "sync_plans": 1, "audit": 1} and st["last"] is None
+    assert st["policy"] == {"runs_days": 90, "sync_days": 90, "audit_days": 365, "l2_days": 30}
+    assert st["due"] == {"runs": 3, "sync_plans": 1, "audit": 1, "l2": 0} and st["last"] is None
 
     r = client.post("/system/retention/purge", headers=ADMIN)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["deleted"] == {"runs": 3, "sync_plans": 1, "audit": 1}
-    assert body["due"] == {"runs": 0, "sync_plans": 0, "audit": 0}
+    assert body["deleted"] == {"runs": 3, "sync_plans": 1, "audit": 1, "l2": 0}
+    assert body["due"] == {"runs": 0, "sync_plans": 0, "audit": 0, "l2": 0}
     assert body["last"]["counts"] == body["deleted"] and body["last"]["actor"].startswith("user:")
     with session_factory() as s:
         left = set(s.scalars(select(CollectorRun.id)))
@@ -69,6 +69,7 @@ def test_fristen_loeschen_nur_altes(client, session_factory):
         "runs": 0,
         "sync_plans": 0,
         "audit": 0,
+        "l2": 0,
     }
     checks = {c["key"]: c for c in client.get("/system/health").json()["checks"]}
     assert checks["retention"]["status"] == "ok"
@@ -78,7 +79,8 @@ def test_fristen_loeschen_nur_altes(client, session_factory):
 def test_frist_null_heisst_nie(client, session_factory, monkeypatch):
     tid, sid = _seed(client)
     settings = get_settings()
-    for field in ("retention_runs_days", "retention_sync_days", "retention_audit_days"):
+    for field in ("retention_runs_days", "retention_sync_days", "retention_audit_days",
+                  "retention_l2_days"):  # fmt: skip
         monkeypatch.setattr(settings, field, 0)
     now = datetime.now(UTC)
     with session_factory() as s:

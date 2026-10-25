@@ -10,9 +10,11 @@ import pytest
 from sot_gateway.readonly import ReadOnlyViolation
 
 from collectors.cisco_switch import client as sc
+from collectors.cisco_switch import normalize as sn
 from collectors.cisco_switch import tasks
 from collectors.cisco_switch.normalize import (
     cli_error,
+    mac_text,
     normalize,
     short_name,
     vlan_ranges,
@@ -71,6 +73,35 @@ def test_normalisierung_ios_und_nxos():
     assert nbs[("sw-core-01", "Eth1/3", "lldp")].remote_name == "esx02.example.ch"
     assert [(v.vid, v.name) for v in inv.vlans] == [(1, "default"), (10, "Server"),
                                                     (20, "Clients"), (30, "DMZ")]  # fmt: skip
+
+
+def test_mac_tabelle_und_arp():
+    """0.63.0: nur Unicast an Ports (nicht CPU, Supervisor, Peer-Link), MACs einheitlich, ARP
+    ohne die eigenen Adressen."""
+    inv = normalize(SAMPLE)
+    macs = {(m.device, m.port, m.mac): m for m in inv.macs}
+    assert ("sw-acc-01", "Gi1/0/1", "00:50:56:01:00:01") in macs
+    assert macs[("sw-core-01", "Eth1/3", "00:50:56:02:00:03")].vlan == 10
+    assert macs[("sw-core-01", "Po10", "a0:b1:c2:d3:e4:f5")].kind == "dynamic"
+    assert not [m for m in inv.macs if m.mac.startswith(("01:", "ff:"))]  # Multicast/Broadcast
+    assert not [m for m in inv.macs if m.mac == "00:50:56:03:00:04"]  # nur am vPC-Peer-Link
+    assert not [m for m in inv.macs if m.port.lower().startswith(("cpu", "sup"))]
+    assert len(inv.macs) == 10
+    arps = {(a.device, a.ip): a for a in inv.arps}
+    assert set(arps) == {("sw-acc-01", "10.0.0.2"), ("sw-core-01", "10.10.0.21"),
+                         ("sw-core-01", "10.10.0.33"), ("sw-core-01", "10.20.0.15")}  # fmt: skip
+    assert arps[("sw-core-01", "10.20.0.15")].interface == "Vl20"
+    assert mac_text("00-50-56-AA-BB-CC") == "00:50:56:aa:bb:cc" and mac_text("Incomplete") is None
+    assert sn._l2_port(["Gi1/0/1", "Gi1/0/2"]) is None and sn._l2_port("Router") is None
+    assert sn._l2_port("port-channel10") == "Po10"
+
+
+def test_mac_tabelle_gekappt(monkeypatch):
+    monkeypatch.setattr(sn, "MAX_MACS", 3)
+    raw = {"switches": [dict(sw, notes=[]) for sw in SAMPLE["switches"]]}
+    inv = normalize(raw)
+    assert len([m for m in inv.macs if m.device == "sw-acc-01"]) == 3
+    assert raw["switches"][0]["notes"] == ["MAC-Tabelle: 3 Eintraege ueber 3 nicht uebernommen"]
 
 
 def test_hilfen():
@@ -194,7 +225,10 @@ def _serve(key, log, connections=4):
                 return
             t = paramiko.Transport(conn)
             t.add_server_key(key)
-            t.start_server(server=_Server(log))
+            try:  # bricht der Client ab (fremder Schluessel), weiter mit der naechsten
+                t.start_server(server=_Server(log))
+            except (OSError, EOFError, paramiko.SSHException):
+                t.close()
 
     threading.Thread(target=loop, daemon=True).start()
     return sock, sock.getsockname()[1]

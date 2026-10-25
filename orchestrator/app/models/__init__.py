@@ -41,6 +41,7 @@ from app.models.inventory import (
     InvVlan,
     InvVrf,
 )
+from app.models.l2 import L2_MODELS, ArpEntry, MacEntry
 from app.models.logical_zone import (
     INTENTS,
     ZONE_KINDS,
@@ -102,12 +103,14 @@ __all__ = [
     "PURPOSES",
     "GROUP_CATEGORIES",
     "INVENTORY_MODELS",
+    "L2_MODELS",
     "MEMBER_KINDS",
     "REFERENCE_PLATFORMS",
     "SERVICE_CATEGORIES",
     "TOPOLOGY_MODELS",
     "Agent",
     "Application",
+    "ArpEntry",
     "ApplicationMember",
     "AuditLog",
     "Base",
@@ -131,6 +134,7 @@ __all__ = [
     "InvVlan",
     "InvVrf",
     "IpamType",
+    "MacEntry",
     "MatchStatus",
     "NamingProfile",
     "NatRule",

@@ -310,11 +310,14 @@ def _topology_issues(session: Session, tenant_id: int) -> list[Issue]:
 
 def _cabling_issues(session: Session, tenant_id: int) -> list[Issue]:
     """Verkabelung (0.62.0, `store/cabling.checks`): Speed, Duplex, VLANs bzw. Port-Channel
-    zwischen zwei gelesenen Switches abweichend, Verbindung nur von einer Seite gemeldet."""
-    from app.store import cabling
+    zwischen zwei gelesenen Switches abweichend, Verbindung nur von einer Seite gemeldet; seit
+    0.63.0 VLAN der VMs am Uplink ihres ESXi-Hosts nicht erlaubt (`store/l2.checks`)."""
+    from app.store import cabling, l2
 
     out: list[Issue] = []
-    for item in cabling.checks(session, tenant_id):
+    cab = cabling.build(session, tenant_id)
+    items = cabling.checks(session, tenant_id, cab) + l2.checks(session, tenant_id, cab=cab)
+    for item in items:
         detail = {k: v for k, v in item.items() if k not in ("type", "subject", "severity")}
         out.append(Issue(FindingType(item["type"]), SubjectKind.LINK, item["subject"],
                          item.get("source_system_id"), Severity(item["severity"]),

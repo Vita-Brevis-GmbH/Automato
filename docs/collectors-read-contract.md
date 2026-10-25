@@ -209,10 +209,13 @@ wird beim ersten Lauf festgehalten und danach verlangt (ADR 0025 Nr. 3).
 | `show cdp neighbors detail` | je Port Nachbar: Name, Port, IP, Plattform, Fähigkeiten | `inv_neighbor` (`protocol` cdp) |
 | `show lldp neighbors detail` | je Port Nachbar: Systemname, Port, Management-IP, Beschreibung, Fähigkeiten | `inv_neighbor` (`protocol` lldp); am Port (`inv_interface.neighbor`) gilt CDP vor LLDP |
 | `show vpc` (nur NX-OS) | vPC-Nummer je Port-Channel, Peer-Link | `inv_interface.attrs.vpc` |
+| `show mac address-table` (seit 0.63.0) | MAC, VLAN, Port, Art (dynamic/static); nur Unicast an einzelnen Ports, nicht CPU/Supervisor/Router/vPC-Peer-Link; höchstens 50 000 je Switch | `mac_entry` (gesammelt, `first_seen`/`last_seen`) |
+| `show ip arp` · `show ip arp detail vrf all` (seit 0.63.0) | IP, MAC, L3-Interface, VRF (NX-OS); ohne die eigenen Adressen des Switches | `arp_entry` (gesammelt) |
 
 Meldet ein Befehl einen Fehler (z. B. LLDP ausgeschaltet) oder fehlt eine Vorlage, bleibt der
 Teil leer und steht als Hinweis in der Meldung des Laufs. Nicht gelesen: Konfiguration,
-Zugangsdaten, Logs, MAC-Adress-Tabelle, ARP, Zähler. Die Verkabelung leitet der Orchestrator
+Zugangsdaten, Logs, Zähler, IPv6-Nachbarn. MAC- und ARP-Einträge werden gesammelt und nach
+`AUTOMATO_RETENTION_L2_DAYS` (30) Tagen ohne neue Sichtung gelöscht. Die Verkabelung leitet der Orchestrator
 aus den Nachbarn aller Quellen ab (Switches, ACI-Leafs über `lldpAdjEp`/`cdpAdjEp`).
 
 ## Daraus folgende Modell-/Collector-Arbeiten (später, je Phase)

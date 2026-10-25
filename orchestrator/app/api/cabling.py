@@ -7,6 +7,10 @@
                           Abweichungen.
 - `GET /cabling/ports`    Ports der gelesenen Switches seitenweise; Filter Geraet, Status, VLAN.
 - `GET /cabling/vlans`    VLANs mit den Switches, an denen sie als Access bzw. im Trunk liegen.
+- `GET /cabling/endpoints` (0.63.0) MACs an den Ports der Switches (ohne Uplinks) mit VM, IPs,
+                          IPAM-Namen; Filter Geraet, Port, VLAN, Suche.
+- `GET /cabling/locate`   (0.63.0) „Wo haengt …“: MAC, IP oder Name -> Anschluss (Switch,
+                          Port, VLAN), sonst hinter welcher Gegenstelle, frueher gesehen.
 Lesen = `viewer`, mandantsgescoped; nicht fuer Kunden-Benutzer (Infrastruktur). Rein lesend.
 """
 
@@ -20,9 +24,10 @@ from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import InvVlan, SourceSystem
+from app.models import InvVlan, MacEntry, SourceSystem
 from app.models.source_system import Platform
 from app.store import cabling as store
+from app.store import l2
 
 router = APIRouter(prefix="/cabling", tags=["cabling"])
 STATES = ("both", "one_sided", "unread")
@@ -87,6 +92,8 @@ def devices(
         "states": {s: sum(1 for link in cab.links.values() if link.state == s) for s in STATES},
         "issues": sum(len(link.issues) for link in cab.links.values()),
         "unread": sum(1 for x in items if not x["read"]),
+        # Endpunkte (0.63.0): MACs an Ports, die keine Uplinks sind
+        "endpoints": len({e.mac for e in l2.Locator(session, tid, cab).edge_entries()}),
     }
     return {"summary": summary, "items": items}
 
@@ -148,6 +155,9 @@ def ports(
     """Ports der gelesenen Switches (Quellsysteme `cisco_switch`) mit Verbindung."""
     tid = _tenant(session, principal, tenant_id)
     cab = store.build(session, tid)
+    macs: dict[tuple[str, str], int] = defaultdict(int)  # Endpunkte je Port (0.63.0)
+    for e in l2.Locator(session, tid, cab).edge_entries():
+        macs[(store.device_key(e.device), store.port_key(e.port))] += 1
     peer: dict[tuple[str, str], tuple[store.Link, store.End]] = {}
     for link in cab.links.values():
         peer[link.a.key] = (link, link.b)
@@ -188,6 +198,7 @@ def ports(
                       "kind": other.device.kind} if other is not None else None),
             "link_state": link.state if link is not None else None,
             "issues": [i["text"] for i in link.issues] if link is not None else [],
+            "endpoints": macs.get((store.device_key(p.device), store.port_key(p.name)), 0),
         })  # fmt: skip
     return {"total": len(rows), "items": out}
 
@@ -249,3 +260,70 @@ def sources(
                                    SourceSystem.platform == Platform.CISCO_SWITCH)
     )  # fmt: skip
     return [{"id": s.id, "name": s.name, "switches": len(s.read_scope.split())} for s in rows]
+
+
+def _endpoint_text(loc: l2.Locator, e: MacEntry) -> str:
+    ident = loc.identity(e.mac)
+    iface = loc.iface(e)
+    vm = ident.vm or {}
+    return " ".join(str(t) for t in (e.mac, e.device, e.port, e.vlan, vm.get("name"),
+                                      vm.get("host"), *ident.ips, *ident.epgs,
+                                      iface.description if iface is not None else None)
+                    if t).casefold()  # fmt: skip
+
+
+@router.get("/endpoints")
+def endpoints(
+    tenant_id: int | None = None,
+    device: str | None = None,
+    port: str | None = Query(None, max_length=200),
+    vlan: int | None = Query(None, ge=1, le=4094),
+    q: str | None = Query(None, max_length=200),
+    uplinks: bool = Query(False, description="auch Eintraege auf Uplinks"),
+    limit: int = Query(200, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """MACs an den Ports der Switches (aktueller Stand je Switch), ohne Uplinks."""
+    tid = _tenant(session, principal, tenant_id)
+    loc = l2.Locator(session, tid)
+    conds = [MacEntry.vlan == vlan] if vlan else []
+    rows = loc.current(*conds)
+    if not uplinks:
+        rows = [e for e in rows if not loc.is_uplink(e)]
+    if device:
+        key = store.device_key(device)
+        rows = [e for e in rows if store.device_key(e.device) == key]
+    if port:
+        pkey = store.port_key(port)
+        rows = [e for e in rows if store.port_key(e.port) == pkey]
+    if q and q.strip():
+        needle = q.strip().casefold()
+        mac = l2.mac_key(needle)
+        rows = [e for e in rows if (mac and e.mac == mac) or needle in _endpoint_text(loc, e)]
+    rows.sort(key=lambda e: (e.device.casefold(), _port_order(e.port), e.vlan or 0, e.mac))
+    summary = {
+        "macs": len({e.mac for e in rows}),
+        "ports": len({(e.device, e.port) for e in rows}),
+        "vms": sum(1 for m in {e.mac for e in rows} if loc.identity(m).vm),
+        "with_ip": sum(1 for m in {e.mac for e in rows} if loc.identity(m).ips),
+    }
+    return {"total": len(rows), "summary": summary,
+            "items": [loc.row(e) for e in rows[offset : offset + limit]]}  # fmt: skip
+
+
+@router.get("/locate")
+def locate(
+    q: str = Query(..., min_length=2, max_length=200),
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Wo haengt …: MAC, IP oder Name (VM, IPAM) -> je MAC Anschluss, Gegenstelle, frueher."""
+    tid = _tenant(session, principal, tenant_id)
+    found = l2.find_macs(session, tid, q)
+    loc = l2.Locator(session, tid)
+    items = [{**loc.locate(mac), "reason": why} for mac, why in found["macs"].items()]
+    items.sort(key=lambda x: (not x["locations"], not x["behind"], x["mac"]))
+    return {"query": q, "kind": found["kind"], "ips": found["ips"], "items": items}
