@@ -46,6 +46,9 @@ class InvInterface(_InventoryRow, Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     zone: Mapped[str | None] = mapped_column(String(100), nullable=True)
     vdom: Mapped[str | None] = mapped_column(String(64), nullable=True)  # FortiGate-VDOM
+    # FortiGate (0.54.0): Rolle lan | wan | dmz bzw. management (`dedicated-to`) - Hinweis fuer
+    # die Zonen-Vorschlaege
+    role: Mapped[str | None] = mapped_column(String(16), nullable=True)
     neighbor: Mapped[str | None] = mapped_column(String(200), nullable=True)
     neighbor_port: Mapped[str | None] = mapped_column(String(100), nullable=True)
     policy_group: Mapped[str | None] = mapped_column(String(200), nullable=True)

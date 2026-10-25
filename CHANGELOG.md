@@ -7,6 +7,29 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.54.0 – 2026-10-25
+
+Zonen automatisch erkennen und vorschlagen (Entscheid des Anwenders, ADR 0024 Nr. 10).
+Migration `0051` (`inv_interface.role`, `zone_suggestion_dismissal`); nur lesend gegenüber allen
+Quellsystemen – gespeichert wird erst, was der Operator übernimmt.
+
+- **Netzwerkdesign → Vorschläge** (`GET /zones/suggestions`): Zonen aus dem Gelesenen –
+  - Transfernetze zwischen gelesenen Firewalls/VDOMs/VRFs → „Transfer“;
+  - FortiGate-Zonen (gleicher Name auf mehreren Firewalls = eine Zone);
+  - Interfaces ohne Firewall-Zone mit sprechendem Namen bzw. Alias (`dmz-web`, `wan1`), FortiOS-Rolle
+    dmz/wan bzw. Management-Interfaces → „Management“;
+  - IPAM-Merkmal Zone bzw. Rolle (NetBox-Rolle des Prefixes, Custom Field, DDI-Attribut);
+  - ACI-VRFs (`common` geteilt, `mgmt` Management), mit Kunde, wenn alle Netze in einem Kunden
+    liegen;
+  - Anbindungen: Internet als eine Zone ohne die privaten Netze, sonst je Anbindung.
+- Art aus dem Namen, der Rolle bzw. der Anbindung; gleicher Name = ein Vorschlag; eine
+  bestehende Zone mit dem Namen wird **ergänzt**. Netze, die schon in einer Zone liegen, schliesst
+  der Vorschlag aus (kein `zone_overlap` nach dem Übernehmen).
+- **Übernehmen** einzeln über den Editor (vorbelegt) oder mehrere auf einmal; **ausblenden** und
+  wieder vorschlagen (Operator, Audit). Dazu die gelesenen Netze ohne Zone und ohne Vorschlag.
+- Collector: Rolle des FortiGate-Interfaces (`role`, `dedicated-to management`); SoT-Gateway:
+  Rolle des NetBox-Prefixes als Merkmal `role=…`.
+
 ## 0.53.0 – 2026-10-24
 
 Kunden auf Zonen und Kunden-Benutzer in der Oberfläche (ADR 0018 Schritt 4, ADR 0024;

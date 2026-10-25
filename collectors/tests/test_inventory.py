@@ -132,3 +132,19 @@ def test_fortigate_mgmt_ip_aus_interface_mit_https():
     assert norm.normalize_inventory(raw[:1], [], {}, "fw").devices[0].mgmt_ip == "10.1.1.1"
     off = [{**raw[0], "status": "down"}, raw[2]]
     assert norm.normalize_inventory(off, [], {}, "fw").devices[0].mgmt_ip is None
+
+
+def test_fortigate_rolle_des_interfaces():
+    """0.54.0: Rolle lan/wan/dmz bzw. management (`dedicated-to`) als Hinweis fuer die
+    Zonen-Vorschlaege; `undefined` bzw. fehlend = keine."""
+    raw = [
+        {"name": "wan1", "type": "physical", "role": "wan"},
+        {"name": "dmz", "type": "physical", "role": "dmz"},
+        {"name": "port3", "type": "physical", "role": "undefined"},
+        {"name": "mgmt", "type": "physical", "role": "lan", "dedicated-to": "management"},
+        {"name": "port4", "type": "physical"},
+    ]
+    inv = norm.normalize_inventory(raw, [], {}, "fw")
+    assert [(i.name, i.role) for i in inv.interfaces] == [
+        ("wan1", "wan"), ("dmz", "dmz"), ("port3", None), ("mgmt", "management"), ("port4", None),
+    ]  # fmt: skip

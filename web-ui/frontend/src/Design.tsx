@@ -2,12 +2,15 @@
 // Kunden, dazu „Anbindung“), die Zonenmatrix (Regeln je Paar Quell-/Zielzone mit Absicht und
 // Verstössen) und der Zonenplan (Zonen an Firewalls/VDOMs und ACI-VRFs, Übergänge, Netze ohne
 // Zone). Lesen = viewer, Zonen und Absicht ändern = operator. Seit 0.52.0 Export (draw.io, SVG, PDF)
-// und Versionen des Plans (speichern = operator, löschen = admin).
+// und Versionen des Plans (speichern = operator, löschen = admin). Seit 0.54.0 Vorschläge für Zonen aus
+// dem Gelesenen (übernehmen bzw. ausblenden = operator).
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  acceptZoneSuggestions,
   createZone,
   Customer,
   deletePlanVersion,
+  dismissZoneSuggestions,
   deleteZone,
   exportZonePlan,
   fetchCustomers,
@@ -21,6 +24,7 @@ import {
   fetchZoneNets,
   fetchZonePlan,
   fetchZones,
+  fetchZoneSuggestions,
   LogicalZone,
   PlanDiff,
   PlanFormat,
@@ -43,6 +47,9 @@ import {
   ZonePreview,
   ZoneSelector,
   ZoneSelectorKind,
+  ZoneSuggestion,
+  ZoneSuggestions,
+  ZoneSuggestionSource,
   ZoneSummary,
 } from "./api";
 import { SELECTOR_LABEL } from "./Customers";
@@ -73,7 +80,16 @@ const PLACEHOLDER: Partial<Record<ZoneSelectorKind, string>> = {
 const FW_KINDS: ZoneSelectorKind[] = ["fw_vdom", "fw_zone", "fw_interface"];
 const VIA: Record<string, string> = { interface: "Interface", fabric: "im Fabric", exit: "Anbindung", route: "über Route" };
 
-type Tab = "zones" | "matrix" | "plan" | "versions";
+const SOURCE: Record<ZoneSuggestionSource, string> = {
+  transfer: "Transfernetz",
+  fw_zone: "FortiGate-Zone",
+  interface: "Interface",
+  ipam: "IPAM",
+  aci_vrf: "ACI-VRF",
+  exit: "Anbindung",
+};
+
+type Tab = "zones" | "suggestions" | "matrix" | "plan" | "versions";
 
 export default function Design({
   tenantId,
@@ -115,12 +131,13 @@ export default function Design({
             {(
               [
                 ["zones", "Zonen"],
+                ["suggestions", "Vorschläge"],
                 ["matrix", "Zonenmatrix"],
                 ["plan", "Zonenplan"],
                 ["versions", "Versionen"],
               ] as const
             )
-              .filter(([k]) => !isCustomer || k !== "versions")
+              .filter(([k]) => !isCustomer || (k !== "versions" && k !== "suggestions"))
               .map(([k, label]) => (
               <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
                 {label}
@@ -128,6 +145,7 @@ export default function Design({
             ))}
           </div>
           {tab === "zones" && <ZonesTab tenantId={tenantId} canEdit={canEdit} isCustomer={isCustomer} />}
+          {tab === "suggestions" && <SuggestionsTab tenantId={tenantId} canEdit={canEdit} />}
           {tab === "matrix" && <MatrixTab tenantId={tenantId} canEdit={canEdit} />}
           {tab === "plan" && <PlanTab tenantId={tenantId} isCustomer={isCustomer} />}
           {tab === "versions" && <VersionsTab tenantId={tenantId} canEdit={canEdit} isAdmin={isAdmin} />}
@@ -287,6 +305,273 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
   );
 }
 
+// -- Vorschläge (0.54.0) ----------------------------------------------------------------------
+
+function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }) {
+  const [data, setData] = useState<ZoneSuggestions | null>(null);
+  const [showDismissed, setShowDismissed] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [zones, setZones] = useState<LogicalZone[]>([]);
+  const [systems, setSystems] = useState<System[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [exits, setExits] = useState<TopoExit[]>([]);
+  const [editing, setEditing] = useState<ZoneSuggestion | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+
+  const load = useCallback(() => {
+    setErr(null);
+    fetchZoneSuggestions(tenantId, showDismissed)
+      .then((d) => {
+        setData(d);
+        setPicked((p) => new Set([...p].filter((k) => d.items.some((s) => s.key === k && !s.dismissed))));
+      })
+      .catch(setErr);
+    fetchZones(tenantId).then(setZones).catch(() => setZones([]));
+  }, [tenantId, showDismissed]);
+  useEffect(() => {
+    setData(null);
+    load();
+  }, [load]);
+  useEffect(() => {
+    fetchSystems(tenantId).then(setSystems).catch(() => setSystems([]));
+    fetchCustomers(tenantId).then(setCustomers).catch(() => setCustomers([]));
+    fetchExits(tenantId).then(setExits).catch(() => setExits([]));
+  }, [tenantId]);
+
+  const toggle = (key: string) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
+      return n;
+    });
+  const open = data?.items.filter((s) => !s.dismissed) ?? [];
+
+  const accept = async (keys: string[]) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await acceptZoneSuggestions(tenantId, keys);
+      setDone(`${r.created.length} Zone(n) angelegt, ${r.updated.length} ergänzt` + (r.missing.length ? ` – ${r.missing.length} nicht mehr vorgeschlagen` : ""));
+      setPicked(new Set());
+      load();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const dismiss = async (s: ZoneSuggestion) => {
+    try {
+      await dismissZoneSuggestions(tenantId, [s.key], s.dismissed);
+      load();
+    } catch (e) {
+      setErr(e);
+    }
+  };
+
+  const target = editing?.zone_id ? zones.find((z) => z.id === editing.zone_id) ?? null : null;
+  return (
+    <>
+      <ErrorBox error={err} onClose={() => setErr(null)} />
+      {done && (
+        <Note>
+          {done}{" "}
+          <button className="btn btn-sm btn-ghost" onClick={() => setDone(null)}>
+            OK
+          </button>
+        </Note>
+      )}
+      <div className="card">
+        <div className="card-head">
+          <h2>Vorschläge</h2>
+          {data && (
+            <span className="faint">
+              {data.summary.create} neu, {data.summary.extend} ergänzen eine Zone · {data.summary.rest} gelesene Netze ohne Zone und
+              Vorschlag
+            </span>
+          )}
+          <label className="check" style={{ marginLeft: "auto" }}>
+            <input type="checkbox" checked={showDismissed} onChange={(e) => setShowDismissed(e.target.checked)} /> ausgeblendete zeigen
+            {data && data.summary.dismissed > 0 && ` (${data.summary.dismissed})`}
+          </label>
+          {canEdit && (
+            <button
+              id="zone-suggestions-accept"
+              className="btn btn-primary btn-sm"
+              disabled={busy || picked.size === 0}
+              onClick={() => accept([...picked])}
+            >
+              {busy ? "Übernehme…" : `Ausgewählte übernehmen (${picked.size})`}
+            </button>
+          )}
+        </div>
+        <div className="card-body scroll">
+          <p className="faint" style={{ margin: "4px 16px 10px" }}>
+            Aus dem Gelesenen erkannt: Transfernetze zwischen gelesenen Knoten, Zonen und Interfaces der FortiGates (Name, Rolle,
+            Management), Zone bzw. Rolle im IPAM, ACI-VRFs und die Anbindungen. Übernehmen legt eine normale Zone mit Selektoren an
+            bzw. ergänzt die bestehende – neue Interfaces oder EPGs gehören danach ohne Pflege dazu. Netze, die schon in einer Zone
+            liegen, schliesst ein Vorschlag aus.
+          </p>
+          {data == null ? (
+            <Loading />
+          ) : data.items.length === 0 ? (
+            <Empty title="Keine Vorschläge">Alles Gelesene liegt in einer Zone oder ist ausgeblendet.</Empty>
+          ) : (
+            <table id="zone-suggestions">
+              <thead>
+                <tr>
+                  {canEdit && (
+                    <th>
+                      <input
+                        type="checkbox"
+                        aria-label="alle wählen"
+                        checked={open.length > 0 && open.every((s) => picked.has(s.key))}
+                        onChange={(e) => setPicked(e.target.checked ? new Set(open.map((s) => s.key)) : new Set())}
+                      />
+                    </th>
+                  )}
+                  <th>Zone</th>
+                  <th>Art</th>
+                  <th>Kunde</th>
+                  <th>Erkannt aus</th>
+                  <th>Selektoren</th>
+                  <th className="num" title="ohne Zone / Netze des Vorschlags">
+                    Netze
+                  </th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map((s) => (
+                  <tr key={s.key} className={s.dismissed ? "muted" : ""} data-key={s.key}>
+                    {canEdit && (
+                      <td>
+                        {!s.dismissed && <input type="checkbox" aria-label={`${s.name} wählen`} checked={picked.has(s.key)} onChange={() => toggle(s.key)} />}
+                      </td>
+                    )}
+                    <td>
+                      <Swatch color={s.color} /> <b>{s.name}</b>{" "}
+                      {s.action === "extend" ? <span className="chip">ergänzt Zone</span> : <span className="chip ok">neu</span>}
+                      {s.dismissed && <span className="chip warn">ausgeblendet</span>}
+                      {s.refines.length > 0 && <div className="faint">genauer als {s.refines.join(", ")}</div>}
+                    </td>
+                    <td>
+                      {ZONE_KIND[s.kind] ?? s.kind}
+                      {s.kind_reason && <div className="faint">{s.kind_reason}</div>}
+                    </td>
+                    <td>{s.customer ?? <span className="faint">geteilt</span>}</td>
+                    <td>
+                      <div className="faint">{s.sources.map((x) => SOURCE[x] ?? x).join(", ")}</div>
+                      {s.evidence.slice(0, 3).map((e) => (
+                        <div key={e}>{e}</div>
+                      ))}
+                      {s.evidence_total > 3 && <div className="faint">… {s.evidence_total - 3} weitere</div>}
+                    </td>
+                    <td>
+                      <div className="objs">
+                        {s.selectors.map((x, i) => (
+                          <span key={i} className={`chip ${x.exclude ? "warn" : ""}`}>
+                            {selectorText(x, systems)}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="num nowrap" title={s.samples.join("\n")}>
+                      {s.counts.open} / {s.counts.nets}
+                      {s.counts.epgs > 0 && <div className="faint">{s.counts.epgs} EPGs</div>}
+                    </td>
+                    <td className="nowrap">
+                      {canEdit && !s.dismissed && (
+                        <>
+                          <button className="btn btn-sm" onClick={() => setEditing(s)}>
+                            Übernehmen…
+                          </button>{" "}
+                        </>
+                      )}
+                      {canEdit && (
+                        <button className="btn btn-sm btn-ghost" onClick={() => dismiss(s)}>
+                          {s.dismissed ? "Wieder vorschlagen" : "Ausblenden"}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+      {data && data.rest.total > 0 && (
+        <div className="card">
+          <div className="card-head">
+            <h2>Nicht erkannt</h2>
+            <span className="faint">Gelesene Netze ohne Zone und ohne Vorschlag – von Hand einer Zone zuordnen</span>
+          </div>
+          <div className="card-body scroll">
+            <table id="zone-suggestions-rest" className="compact">
+              <thead>
+                <tr>
+                  <th>Netz</th>
+                  <th>Knoten</th>
+                  <th>Wo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rest.items.map((r) => (
+                  <tr key={r.network}>
+                    <td className="mono">{r.network}</td>
+                    <td>{r.node}</td>
+                    <td className="faint">{r.where}</td>
+                  </tr>
+                ))}
+                {data.rest.total > data.rest.items.length && (
+                  <tr>
+                    <td colSpan={3} className="faint">
+                      … {data.rest.total - data.rest.items.length} weitere
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {editing && (editing.action === "create" || target) && (
+        <ZoneEditor
+          tenantId={tenantId}
+          systems={systems}
+          customers={customers}
+          exits={exits}
+          initial={target ? { ...target, selectors: [...target.selectors, ...editing.selectors] } : null}
+          draft={
+            target
+              ? null
+              : {
+                  tenant_id: tenantId,
+                  name: editing.name,
+                  code: null,
+                  kind: editing.kind,
+                  color: editing.color,
+                  customer_id: editing.customer_id,
+                  position: 0,
+                  description: `Vorschlag aus ${editing.sources.map((x) => SOURCE[x] ?? x).join(", ")}`,
+                  selectors: editing.selectors,
+                }
+          }
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            load();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
 function ZoneNets({ zoneId }: { zoneId: number }) {
   const [data, setData] = useState<{ total: number; items: { network: string; via: string }[] } | null>(null);
   useEffect(() => {
@@ -331,6 +616,7 @@ function ZoneEditor({
   customers,
   exits,
   initial,
+  draft = null,
   onClose,
   onSaved,
 }: {
@@ -339,17 +625,19 @@ function ZoneEditor({
   customers: Customer[];
   exits: TopoExit[];
   initial: LogicalZone | null;
+  draft?: ZoneIn | null; // neue Zone aus einem Vorschlag (0.54.0)
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [name, setName] = useState(initial?.name ?? "");
-  const [code, setCode] = useState(initial?.code ?? "");
-  const [kind, setKind] = useState<ZoneKind>(initial?.kind ?? "internal");
-  const [color, setColor] = useState(initial?.color ?? "#3b82c4");
-  const [customerId, setCustomerId] = useState<number | null>(initial?.customer_id ?? null);
-  const [position, setPosition] = useState(initial?.position ?? 0);
-  const [description, setDescription] = useState(initial?.description ?? "");
-  const [selectors, setSelectors] = useState<ZoneSelector[]>(initial?.selectors.map((s) => ({ ...s })) ?? [{ ...EMPTY_SELECTOR }]);
+  const base = initial ?? draft;
+  const [name, setName] = useState(base?.name ?? "");
+  const [code, setCode] = useState(base?.code ?? "");
+  const [kind, setKind] = useState<ZoneKind>(base?.kind ?? "internal");
+  const [color, setColor] = useState(base?.color ?? "#3b82c4");
+  const [customerId, setCustomerId] = useState<number | null>(base?.customer_id ?? null);
+  const [position, setPosition] = useState(base?.position ?? 0);
+  const [description, setDescription] = useState(base?.description ?? "");
+  const [selectors, setSelectors] = useState<ZoneSelector[]>(base?.selectors.map((s) => ({ ...s })) ?? [{ ...EMPTY_SELECTOR }]);
   const [preview, setPreview] = useState<ZonePreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
@@ -398,7 +686,7 @@ function ZoneEditor({
   return (
     <Modal
       wide
-      title={initial ? `Zone „${initial.name}“` : "Neue Zone"}
+      title={initial ? `Zone „${initial.name}“` : draft ? `Vorschlag „${draft.name}“ übernehmen` : "Neue Zone"}
       onClose={onClose}
       footer={
         <>

@@ -2429,6 +2429,43 @@ export const previewZone = (tenantId: number, selectors: ZoneSelector[], zoneId?
   sendJSON<ZonePreview>("/api/zones/preview", "POST", { tenant_id: tenantId, selectors, zone_id: zoneId ?? null });
 export const fetchZoneNets = (id: number) =>
   getJSON<{ total: number; items: { network: string; via: string }[] }>(`/api/zones/${id}/nets`);
+// Zonen-Vorschläge aus dem Gelesenen (0.54.0): neue Zone bzw. Selektoren einer bestehenden
+export type ZoneSuggestionSource = "transfer" | "fw_zone" | "interface" | "ipam" | "aci_vrf" | "exit";
+export interface ZoneSuggestion {
+  key: string;
+  action: "create" | "extend";
+  zone_id: number | null;
+  zone: string | null;
+  name: string;
+  kind: ZoneKind;
+  kind_reason: string | null;
+  color: string | null;
+  customer_id: number | null;
+  customer: string | null;
+  sources: ZoneSuggestionSource[];
+  evidence: string[];
+  evidence_total: number;
+  selectors: ZoneSelector[];
+  counts: { nets: number; open: number; epgs: number };
+  samples: string[];
+  refines: string[];
+  conflicts: { network: string; zone?: string; suggestion?: string }[];
+  dismissed: boolean;
+}
+export interface ZoneSuggestions {
+  items: ZoneSuggestion[];
+  rest: { total: number; items: { network: string; node: string; where: string }[] };
+  summary: { suggestions: number; create: number; extend: number; dismissed: number; open: number; rest: number };
+}
+export const fetchZoneSuggestions = (tenantId: number, dismissed = false) =>
+  getJSON<ZoneSuggestions>(`/api/zones/suggestions${qs({ tenant_id: tenantId, dismissed: dismissed ? "true" : undefined })}`);
+export const acceptZoneSuggestions = (tenantId: number, keys: string[]) =>
+  sendJSON<{ created: number[]; updated: number[]; missing: string[] }>("/api/zones/suggestions/accept", "POST", {
+    tenant_id: tenantId,
+    keys,
+  });
+export const dismissZoneSuggestions = (tenantId: number, keys: string[], undo = false) =>
+  sendJSON<{ keys: string[] }>(`/api/zones/suggestions/dismiss${undo ? "/undo" : ""}`, "POST", { tenant_id: tenantId, keys });
 export const fetchZoneMatrix = (tenantId: number) => getJSON<ZoneMatrix>(`/api/zones/matrix${qs({ tenant_id: tenantId })}`);
 export const fetchZoneCellRules = (tenantId: number, src: ZoneCell, dst: ZoneCell, offset = 0) =>
   getJSON<{ total: number; violations: number; items: ZoneCellRule[] }>(

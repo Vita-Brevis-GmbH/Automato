@@ -778,6 +778,15 @@ def _vdom_name(iface: dict) -> str | None:
     return vdom if isinstance(vdom, str) and vdom else None
 
 
+def _role(iface: dict) -> str | None:
+    """Rolle des Interfaces (cmdb `role` lan/wan/dmz; `dedicated-to management` =
+    management) - Hinweis fuer die Zonen-Vorschlaege (0.54.0); `undefined` = keine."""
+    if iface.get("dedicated-to") == "management":
+        return "management"
+    role = iface.get("role")
+    return role if role in ("lan", "wan", "dmz") else None
+
+
 def _mgmt_ip(items: list[dict]) -> str | None:
     """Management-Adresse: IPv4 eines aktiven Interfaces mit HTTPS-Zugriff (`allowaccess`) -
     Management-Interfaces (`dedicated-to management`, Name mgmt*) zuerst (Dev-Befund 0.33.0)."""
@@ -849,6 +858,7 @@ def normalize_inventory(
                 description=i.get("description") or i.get("alias") or None,
                 zone=zone_of.get(name),
                 vdom=_vdom_name(i),
+                role=_role(i),
             )
         )
         if vid is not None and vid not in vlans:

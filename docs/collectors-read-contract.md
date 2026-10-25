@@ -33,7 +33,7 @@
 | `firewall/policy` | `policyid`, `name`, `srcintf`, `dstintf`, `srcaddr`/`dstaddr` (gegen IPv4-Objekte) und `srcaddr6`/`dstaddr6` (gegen IPv6-Objekte, Verweise getrennt `source_refs6`/`destination_refs6`, Familie v4/v6/dual), **Internet Services** `internet-service[6][-src]-name/-group/-custom/-custom-group/-fortiguard` (→ `isdb:<Name>`, extern erwartet), **Identität** `users`/`groups`/`fsso-groups` (→ `user:`/`usergroup:`), ZTNA-Tags `ztna-ems-tag`/`ztna-geo-tag`, Negation `srcaddr-negate`/`dstaddr-negate`/`service-negate`/`internet-service[-src]-negate`, `service`, `action`, `nat`, `poolname`, `utm-status`, **UTM-Refs** `av-profile`/`webfilter-profile`/`dnsfilter-profile`/`application-list`/`ips-sensor`/`waf-profile`/`ssl-ssh-profile`, `schedule`, `comments` | `rule` (+ `rule_endpoint` v4/v6, `rule_service`); UTM-Refs → Spalte „Schutzmechanismen"; `comments` (enthält oft `CTASK…`/`CT_…`) → „Description" |
 | `firewall/policy6` (nur FortiOS 6.x; ab 7.0 fehlt die Tabelle → übersprungen) | wie `firewall/policy`, `srcaddr`/`dstaddr` sind IPv6-Objekte | `rule` mit `external_id` `v6-<policyid>`, Familie v6 |
 | `system/zone` | `name`, `interface[]` | `zone`; Zone je Interface im Netzinventar |
-| `system/interface` | `name`, `type`, `ip`, `secondaryip[].ip`, `ip6`, `alias`, `role`, `vlanid`, `interface` (Parent), `member[]` (Aggregate), `status`, `vdom`, `vrf`, `dedicated-to` (nur für das Routing: VRF bzw. Management je Route) | Netzinventar (ADR 0010): `inv_interface` (Modus, VLAN, LAG/Parent, IPs), `inv_vlan`, `inv_subnet`; Zonen-/Subnetz-Ableitung |
+| `system/interface` | `name`, `type`, `ip`, `secondaryip[].ip`, `ip6`, `alias`, `role`, `vlanid`, `interface` (Parent), `member[]` (Aggregate), `status`, `vdom`, `vrf`, `dedicated-to` (nur für das Routing: VRF bzw. Management je Route) | Netzinventar (ADR 0010): `inv_interface` (Modus, VLAN, LAG/Parent, IPs; seit 0.54.0 `role` lan/wan/dmz bzw. management aus `dedicated-to` als Hinweis für die Zonen-Vorschläge), `inv_vlan`, `inv_subnet`; Zonen-/Subnetz-Ableitung |
 | `system/global` (+ optional `monitor/system/status`) | `hostname`; Modell, Seriennummer, Version | `inv_device` (Firewall) |
 | `system/vdom` (global, 0.15.0) | `name` (interne `vsys_*` ausgenommen) | Liste der VDOMs; danach alle Tabellen oben **je VDOM** |
 
@@ -162,7 +162,7 @@ steht die Tabelle in der Lauf-Meldung.
 | Quelle | gelesen | → Referenz-Eintrag |
 |---|---|---|
 | Infoblox WAPI (`/wapi/v2.x/…`, seitenweise `_paging`) | `network`, `ipv6network`, `range`, `record:host`, `record:a`, `record:aaaa`, `record:ptr`, `fixedaddress` (+ Extensible Attributes Site/VLAN) | `reference_record` (prefix, range, host, a/ptr, fixed_address; DNS-Name, Beschreibung, VLAN, Site) |
-| NetBox REST (`/api/ipam/…`, seitenweise) | `prefixes`, `ip-addresses`, `ip-ranges`, `vlans` (+ Tenant, Scope/Site, Tags, Custom Fields, Link) | `reference_record` (prefix, ip_address, range, vlan) |
+| NetBox REST (`/api/ipam/…`, seitenweise) | `prefixes`, `ip-addresses`, `ip-ranges`, `vlans` (+ Tenant, Scope/Site, Tags, Custom Fields, Link; seit 0.54.0 die Rolle des Prefixes als Merkmal `role`) | `reference_record` (prefix, ip_address, range, vlan) |
 
 Der Agent lädt den Stand in Teilen hoch (`POST /internal/collector-runs/{id}/references`); erst
 das Ergebnis mit passender Anzahl macht ihn zum aktuellen Stand der Quelle.

@@ -135,11 +135,13 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "customer_user.changed": frozenset({"tenant_id", "customer_id", "login", "role"}),
     "customer_user.removed": frozenset({"tenant_id", "customer_id", "login", "role"}),
     # Logische Zonen und Absicht je Zonenpaar (0.51.0, ADR 0024)
-    "zone.created": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
-    "zone.updated": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
+    "zone.created": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),
+    "zone.updated": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),
     "zone.deleted": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
     "zone_policy.set": frozenset({"tenant_id", "src_zone_id", "dst_zone_id", "intent"}),
     # Versionen des Zonenplans (0.52.0)
+    "zone_suggestion.dismissed": frozenset({"tenant_id", "keys"}),
+    "zone_suggestion.undismissed": frozenset({"tenant_id", "keys"}),
     "zone_plan.version_saved": frozenset({"tenant_id", "version_id", "number", "label"}),
     "zone_plan.version_deleted": frozenset({"tenant_id", "version_id", "number", "label"}),
     # Lesezugriffs-Audit (per Mandant zuschaltbar, ADR 0007 D5)

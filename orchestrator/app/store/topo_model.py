@@ -562,6 +562,21 @@ def addresses(
     return m.addrs, m.ports
 
 
+def transfer_nets(
+    session: Session, tenant_id: int, graph: Graph | None = None
+) -> dict[str, list[str]]:
+    """Netze zwischen gelesenen Knoten (Transfer bzw. Segment) mit den Knoten daran - fuer die
+    Zonen-Vorschlaege (0.54.0)."""
+    m = Model(session, tenant_id, graph)
+    m._addresses()
+    m._segments()
+    out: dict[str, set[str]] = defaultdict(set)
+    for e in m.edges.values():
+        if e.kind in ("transfer", "member") and e.network:
+            out[e.network].update(v["label"] for v in e.via)
+    return {net: sorted(labels) for net, labels in out.items()}
+
+
 def build(session: Session, tenant_id: int, graph: Graph | None = None) -> dict:
     return Model(session, tenant_id, graph).build().out()
 

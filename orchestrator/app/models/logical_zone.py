@@ -15,6 +15,9 @@ Zonenmatrix; eine erlaubende Regel zwischen gesperrten Zonen ist ein Befund.
 
 Ein Kunde besitzt Zonen (`customer_id`); geteilte Zonen (Internet, Shared Services,
 Management) gehoeren keinem. Die Sicht der Kunden auf ihre Zonen folgt mit 0.53.0.
+
+Seit 0.54.0 schlaegt Automato Zonen aus dem Gelesenen vor (`store/zone_detect.py`);
+ausgeblendete Vorschlaege merkt sich `zone_suggestion_dismissal`.
 """
 
 from datetime import UTC, datetime
@@ -111,6 +114,23 @@ class ZonePolicy(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class ZoneSuggestionDismissal(Base):
+    """Zonen-Vorschlag, der nicht mehr vorgeschlagen wird (0.54.0, „ausblenden“): Schluessel
+    = normalisierter Name des Vorschlags (`store/zone_detect.key_of`). Rueckgaengig mit
+    „wieder vorschlagen“."""
+
+    __tablename__ = "zone_suggestion_dismissal"
+    __table_args__ = (UniqueConstraint("tenant_id", "key", name="uq_zone_suggestion_dismissal"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
+    key: Mapped[str] = mapped_column(String(200))
+    created_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 

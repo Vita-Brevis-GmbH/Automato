@@ -937,6 +937,43 @@ test("Netzwerkdesign: Export (draw.io, SVG, PDF) und Versionen des Zonenplans", 
   expect(problems).toEqual([]);
 });
 
+test("Netzwerkdesign: Zonen-Vorschläge ansehen, ausblenden, übernehmen", async ({ page, problems }) => {
+  await page.goto("/#design");
+  await page.click(".tabbar button:has-text('Vorschläge')");
+  const transfer = page.locator("#zone-suggestions tbody tr[data-key='transfer']");
+  // Transfernetze zwischen gelesenen Firewalls: neue Zone; die Firewall-Zone internet ergänzt „Internet“
+  await expect(transfer).toContainText("neu");
+  await expect(transfer).toContainText("fw-06 ↔ fw-07");
+  await expect(page.locator("#zone-suggestions tbody tr[data-key='internet']")).toContainText("ergänzt Zone");
+  await expect(page.locator("#zone-suggestions tbody tr[data-key='internet']")).toContainText("Zone internet");
+
+  // ausblenden und wieder vorschlagen
+  await transfer.locator("button:has-text('Ausblenden')").click();
+  await expect(transfer).toHaveCount(0);
+  await page.locator("label.check", { hasText: "ausgeblendete zeigen" }).locator("input").check();
+  await expect(transfer).toContainText("ausgeblendet");
+  await transfer.locator("button:has-text('Wieder vorschlagen')").click();
+  await expect(transfer).not.toContainText("ausgeblendet");
+
+  // Übernehmen… öffnet den Editor mit dem Vorschlag (abbrechen)
+  await transfer.locator("button:has-text('Übernehmen')").click();
+  await expect(page.locator(".modal")).toContainText("Vorschlag „Transfer“ übernehmen");
+  await expect(page.locator("#zone-selectors tbody tr")).toHaveCount(3);
+  await expect(page.locator("#zo-kind")).toHaveValue("transfer");
+  await page.click(".modal button:has-text('Abbrechen')");
+
+  // ausgewählte übernehmen: neue Zone, der Vorschlag verschwindet (danach aufräumen)
+  await transfer.locator("input[type='checkbox']").check();
+  await page.click("#zone-suggestions-accept");
+  await expect(page.getByText("1 Zone(n) angelegt, 0 ergänzt")).toBeVisible();
+  await expect(transfer).toHaveCount(0);
+  const zones = (await (await page.request.get("/api/zones?tenant_id=1")).json()) as LogicalZoneRow[];
+  const made = zones.find((z) => z.name === "Transfer")!;
+  expect(made.kind).toBe("transfer");
+  expect((await page.request.delete(`/api/zones/${made.id}`)).status()).toBe(204);
+  expect(problems).toEqual([]);
+});
+
 test("Kunden-Benutzer in Automato zuordnen: Zonen des Kunden, Anmeldung ohne Rolle sieht nur ihn", async ({ page, browser, problems }) => {
   const login = `kunde.dmz${test.info().retry}@example.ch`;
   const name = `Kunde DMZ ${test.info().retry}`;

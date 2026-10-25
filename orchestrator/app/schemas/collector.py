@@ -141,6 +141,7 @@ class NormalizedInterface(BaseModel):
     description: str | None = None
     zone: str | None = None
     vdom: str | None = None  # FortiGate: VDOM des Interfaces (Zone gilt in diesem VDOM)
+    role: str | None = None  # FortiGate: lan | wan | dmz | management (0.54.0)
     neighbor: str | None = None  # LLDP/CDP: Systemname der Gegenstelle
     neighbor_port: str | None = None
     policy_group: str | None = None  # ACI Access Policy Group

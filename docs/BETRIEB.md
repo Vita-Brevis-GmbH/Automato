@@ -617,6 +617,26 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       Netze (Netz 10.0.0.0/8 usw. ausschliessen) – sonst landen interne Netze ohne Zone im
       Internet.
     - Klick auf eine Zone zeigt ihre Netze mit Grund (Link in die Regel-Suche).
+  - **Vorschläge** (0.54.0): Automato erkennt Zonen im Gelesenen – Transfernetze zwischen
+    gelesenen Firewalls/VRFs („Transfer“), FortiGate-Zonen (gleicher Name auf mehreren Firewalls
+    = eine Zone), Interfaces ohne Zone mit sprechendem Namen bzw. Alias (`dmz-web`, `wan1`), mit
+    FortiOS-Rolle dmz/wan oder als Management-Interface („Management“), IPAM-Merkmal Zone bzw.
+    Rolle (NetBox-Rolle des Prefixes, Custom Field, DDI-Attribut), ACI-VRFs (`common` geteilt)
+    und die Anbindungen (Internet als eine Zone ohne die privaten Netze).
+    - Je Vorschlag Art (mit Grund), Kunde (wenn alle Netze in einem Kunden liegen), woraus
+      erkannt, die Selektoren und die Netze (ohne Zone / gesamt). „ergänzt Zone“: es gibt schon
+      eine Zone mit dem Namen – übernehmen fügt nur die neuen Selektoren hinzu.
+    - Netze, die genau so schon in einer Zone liegen, schliesst der Vorschlag aus (ausschliessender
+      Selektor) – nach dem Übernehmen gibt es keinen Befund „Netz in mehreren Zonen“.
+    - **Übernehmen…** öffnet den Zonen-Editor mit dem Vorschlag (Name, Art, Farbe, Selektoren
+      anpassen); **Ausgewählte übernehmen** legt mehrere Zonen auf einmal an (Operator).
+    - **Ausblenden** (Operator): der Vorschlag erscheint nicht mehr; „ausgeblendete zeigen“ →
+      **Wieder vorschlagen**.
+    - **Nicht erkannt:** gelesene Netze (Interfaces, EPG-/BD-Subnetze) ohne Zone und ohne
+      Vorschlag – von Hand einer Zone zuordnen.
+    - Die Rolle der FortiGate-Interfaces liest der Agent ab 0.54.0 mit; bis zum nächsten Lauf
+      fehlt sie (dann nur Name bzw. Management-Tabelle). Die NetBox-Rolle erst nach dem nächsten
+      Einlesen der NetBox.
   - **Zonenmatrix:** Zeilen = Quellzone, Spalten = Zielzone, dazu „any“ und „ohne Zone“. Je
     Zelle ✓ erlaubende und ✕ sperrende Regeln (Firewall-Policies und ACI-Contracts, ohne
     Zwillinge paralleler Firewalls); oben, wie viele Regeln zugeordnet sind (ohne IP-Bereich,
@@ -808,7 +828,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern; Vorschläge je ACI-Tenant; nicht Zugeordnetes |
-| `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy`, `GET /zones/plan` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]`, `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan mit `attachments` (Zone ↔ Knoten über interface/fabric/exit/route), `links`, `unzoned`, `layout` (Zeichnung); Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`) |
+| `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy`, `GET /zones/plan` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]`, `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin); seit 0.54.0 `GET /zones/suggestions[?dismissed=true]`, `POST /zones/suggestions/accept` und `POST /zones/suggestions/dismiss[/undo]` (`keys`, operator) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan mit `attachments` (Zone ↔ Knoten über interface/fabric/exit/route), `links`, `unzoned`, `layout` (Zeichnung); Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`); Vorschläge je `key` (normalisierter Name) mit `action` create/extend, `kind`/`kind_reason`, `customer_id`, `sources`, `evidence`, `selectors`, `counts` (nets/open/epgs), `conflicts`, `dismissed`, dazu `rest` (Netze ohne Zone und Vorschlag); übernehmen liefert `created`/`updated`/`missing` |
 | `GET /auth/me`, `GET/POST /customer-users`, `PATCH/DELETE /customer-users/{id}` | Wer bin ich laut Orchestrator (Rollen, Mandanten, Kunden, `customer_source` claim/automato) – die Oberfläche richtet sich danach; Zuordnung Benutzer → Kunde (0.53.0, Admin): `login`, `customer_id`, `role` viewer/operator, `note` |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `POST /systems/{id}/check` | Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus (operator): Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint`; Agent-Systeme 409 (`run-agent.ps1 -Check`), 0.34.0 |

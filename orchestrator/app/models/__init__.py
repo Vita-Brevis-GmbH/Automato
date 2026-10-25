@@ -48,6 +48,7 @@ from app.models.logical_zone import (
     LogicalZoneSelector,
     ZonePlanVersion,
     ZonePolicy,
+    ZoneSuggestionDismissal,
 )
 from app.models.naming_profile import DictionaryEntry, NamingProfile
 from app.models.nat_rule import NatRule
@@ -176,6 +177,7 @@ __all__ = [
     "Zone",
     "ZonePolicy",
     "ZonePlanVersion",
+    "ZoneSuggestionDismissal",
     "INTENTS",
     "ZONE_KINDS",
     "ZONE_SELECTOR_KINDS",

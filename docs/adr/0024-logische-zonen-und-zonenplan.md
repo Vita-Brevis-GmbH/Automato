@@ -2,9 +2,9 @@
 
 ## Status
 
-Entwurf (2026-10-24), umgesetzt in 0.51.0 (Zonen, Matrix, Plan) und 0.52.0 (Export, Versionen).
+Entwurf (2026-10-24), umgesetzt in 0.51.0 (Zonen, Matrix, Plan), 0.52.0 (Export, Versionen),
+0.53.0 (Kunden auf Zonen, ADR 0018 Schritt 4) und 0.54.0 (Zonen erkennen und vorschlagen).
 Baut auf dem Topologie-Modell (ADR 0019, 0.50.0) und den Selektoren der Kunden (ADR 0018) auf.
-Kunden auf Zonen folgen in 0.53.0 (ADR 0018 Schritt 4).
 
 ## Kontext
 
@@ -91,6 +91,40 @@ Entscheide des Anwenders (2026-10-23):
    - Löschen nur Admin: der gespeicherte Stand fällt weg, die Nummer bleibt vergeben
      (`deleted_at`). Die Aufbewahrungsfristen (ADR 0022) gelten nicht für Versionen.
 
+10. **Vorschläge (0.54.0, `store/zone_detect.py`, `GET /zones/suggestions`):** Entscheid des
+    Anwenders (2026-10-25): Zonen automatisch erkennen und vorschlagen. Automato schlägt Zonen aus
+    dem Gelesenen vor; gespeichert wird erst beim Übernehmen (Operator) – als normale Zone mit
+    Selektoren, also weiter abgeleitet. Quellen in dieser Reihenfolge:
+    - **Transfernetze** zwischen gelesenen Knoten (wie die Kanten `transfer`/`member` im
+      Topologie-Modell) → eine Zone „Transfer“ mit den Netzen;
+    - **FortiGate-Zonen**: gleicher Name auf mehreren Firewalls bzw. VDOMs = eine Zone (Selektor
+      Zone für alle Firewalls);
+    - **Interfaces ohne Firewall-Zone** mit sprechendem Namen bzw. Alias (`dmz-web`, `wan1`), der
+      FortiOS-Rolle dmz/wan (`inv_interface.role`, Migration 0051) bzw. Management-Interfaces
+      (`dedicated-to management`, Management-Tabelle) → Selektor Interface je Firewall;
+    - **IPAM-Merkmal** Zone bzw. Rolle (NetBox-Rolle des Prefixes als `role=…`, Custom Field bzw.
+      DDI-Attribut `zone`, `security_zone`, `role` …);
+    - **ACI-VRFs** (`Tenant:VRF` mit EPG-/BD-Subnetzen; `common` geteilt, `mgmt` Management);
+    - **Anbindungen**: alle Internet-Anbindungen als eine Zone „Internet“ ohne die privaten Netze
+      (RFC 1918, 100.64/10, fc00::/7), sonst je Anbindung.
+
+    Gleicher normalisierter Name (Trenner, „zone“/„vlan“, bei Interfaces Ziffern am Ende
+    ignoriert) = ein Vorschlag mit allen Selektoren; Transfer und Management je eine Zone. Die
+    **Art** aus Wörtern im Namen (dmz; internet/wan/outside/untrust; mgmt/oob/ilo; transfer/transit;
+    shared/common), der FortiOS-Rolle bzw. der Anbindung, sonst intern. Der **Kunde**, wenn alle
+    Netze und EPGs in genau einem Kunden liegen. Gibt es schon eine Zone mit dem Namen bzw.
+    Kurznamen (Transfer/Management: die erste Zone dieser Art), **ergänzt** der Vorschlag ihre
+    Selektoren. Ein Netz, das genau so schon in einer Zone bzw. einem früheren Vorschlag liegt,
+    schliesst der Vorschlag mit einem ausschliessenden Selektor aus – nach dem Übernehmen kein
+    `zone_overlap`. Ohne eigenes Netz kein Vorschlag (ausser Anbindungen).
+    - Übernehmen: einzeln über den Editor (vorbelegt, anpassbar) oder mehrere auf einmal
+      (`POST /zones/suggestions/accept`, Audit `zone.created`/`zone.updated` mit `via`).
+    - Ausblenden (`zone_suggestion_dismissal`, Migration 0051) und wieder vorschlagen (Operator,
+      Audit `zone_suggestion.dismissed/undismissed`).
+    - Dazu die gelesenen Netze ohne Zone und ohne Vorschlag („nicht erkannt“).
+    - Die Erkennung arbeitet ohne Wörterbücher; ein Grundschema der Zonen in der Namenskonvention
+      (draw.io, 0.55.0) soll Namen und Art später vorgeben.
+
 ## Folgen
 
 - Die Firewall-Zonen (`zone`, gelesen) bleiben, was sie sind; eine logische Zone kann sie als
@@ -99,6 +133,6 @@ Entscheide des Anwenders (2026-10-23):
   Zone fällt ihre Absicht weg; beim Löschen eines Quellsystems seine Selektoren.
 - Zonen sind nicht funktionsrelevant für den Rest: ohne Zonen arbeitet die Plattform wie
   bisher (Matrix und Plan sind leer, keine Befunde).
-- Offen: Kunden auf Zonen mit eingeschränkter Sicht (0.53.0), Export nach Confluence (eigene
-  Freigabe), draw.io-Datei zurück einlesen (Korrekturen im Designer), Zonen in der Weg-Suche (Zonen je Hop), Absicht je Dienst (eingeschränkt = nur
+- Offen: Grundschema der Zonen in der Namenskonvention aus einer draw.io-Zeichnung (0.55.0),
+  Export nach Confluence (eigene Freigabe), draw.io-Datei zurück einlesen (Korrekturen im Designer), Zonen in der Weg-Suche (Zonen je Hop), Absicht je Dienst (eingeschränkt = nur
   bestimmte Dienste), Relevanz nach Pfad für die Matrix (ADR 0019).

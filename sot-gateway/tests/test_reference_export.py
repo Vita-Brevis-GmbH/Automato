@@ -51,6 +51,7 @@ def _netbox_handler(request: httpx.Request) -> httpx.Response:
                 "status": {"value": "active"},
                 "description": "Web",
                 "tags": [{"slug": "zone-server"}],
+                "role": {"id": 4, "name": "Server", "slug": "server"},
                 "custom_fields": {"owner": "team-web", "leer": None},
                 "url": "https://nb/api/ipam/prefixes/1/",
             },
@@ -90,7 +91,9 @@ def test_netbox_export_komplett_mit_paging(monkeypatch):
         "Kunde A",
         "active",
     )
-    assert p.tags == ["zone-server"] and p.attrs == {"owner": "team-web"}
+    # Rolle des Prefixes als Merkmal (Zonen-Vorschlaege, 0.54.0)
+    assert p.tags == ["zone-server"] and p.attrs == {"owner": "team-web", "role": "Server"}
+    assert records[1].attrs == {}
     assert p.url == "https://nb/ipam/prefixes/1/" and p.ref_id == "1"
     ip = next(r for r in records if r.kind is ReferenceKind.IP_ADDRESS)
     assert (ip.value, ip.prefix_len, ip.dns_name) == ("10.20.0.5", 24, "web01.example.ch")

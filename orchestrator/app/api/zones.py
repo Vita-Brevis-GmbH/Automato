@@ -11,6 +11,10 @@ Nur Daten der Plattform - kein Zugriff auf Geraete.
 Seit 0.52.0: Export des Plans (draw.io, SVG, PDF; `store/plan_export.py`) und Versionen
 (`store/plan_versions.py`): Stand speichern (Operator), ansehen, vergleichen, exportieren,
 loeschen (Admin).
+
+Seit 0.54.0: Vorschlaege aus dem Gelesenen (`store/zone_detect.py`, lesen Viewer):
+uebernehmen (neue Zone bzw. Selektoren einer bestehenden ergaenzen), ausblenden und wieder
+vorschlagen (Operator). Nicht fuer Kunden-Benutzer.
 """
 
 from datetime import UTC, datetime
@@ -38,7 +42,7 @@ from app.models import (
     ZonePolicy,
 )
 from app.store import customers as customer_store
-from app.store import plan_export, plan_versions, reconcile
+from app.store import plan_export, plan_versions, reconcile, zone_detect
 from app.store import zones as store
 
 router = APIRouter(prefix="/zones", tags=["zones"])
@@ -75,6 +79,11 @@ class VersionIn(BaseModel):
     tenant_id: int
     label: str = Field(min_length=1, max_length=200)
     note: str | None = Field(default=None, max_length=4000)
+
+
+class KeysIn(BaseModel):
+    tenant_id: int
+    keys: list[str] = Field(min_length=1, max_length=500)  # Vorschlaege (normalisierter Name)
 
 
 class PolicyIn(BaseModel):
@@ -156,20 +165,19 @@ def _customers(session: Session, tid: int) -> dict[int, str]:
     )
 
 
-def _audit(session: Session, principal: Principal, action: str, z: LogicalZone) -> None:
-    audit.record(
-        session,
-        actor=f"user:{principal.subject}",
-        action=f"zone.{action}",
-        subject=str(z.id),
-        detail={
-            "tenant_id": z.tenant_id,
-            "zone_id": z.id,
-            "name": z.name,
-            "kind": z.kind,
-            "selectors": len(z.selectors),
-        },  # fmt: skip
-    )
+def _audit(session: Session, principal: Principal, action: str, z: LogicalZone,
+           via: str | None = None) -> None:  # fmt: skip
+    detail = {
+        "tenant_id": z.tenant_id,
+        "zone_id": z.id,
+        "name": z.name,
+        "kind": z.kind,
+        "selectors": len(z.selectors),
+    }
+    if via:
+        detail["via"] = via
+    audit.record(session, actor=f"user:{principal.subject}", action=f"zone.{action}",
+                 subject=str(z.id), detail=detail)  # fmt: skip
 
 
 def _get(session: Session, principal: Principal, zone_id: int) -> LogicalZone:
@@ -247,6 +255,118 @@ def preview(
     anderen Zonen."""
     tid = _tenant(session, principal, body.tenant_id)
     return store.preview(session, tid, _selectors(session, tid, body.selectors), body.zone_id)
+
+
+@router.get("/suggestions")
+def suggestions(
+    tenant_id: int | None = None,
+    dismissed: bool = Query(False, description="auch ausgeblendete"),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Vorschlaege fuer Zonen aus dem Gelesenen (Transfernetze, FortiGate-Zonen und
+    -Interfaces, IPAM-Merkmal, ACI-VRFs, Anbindungen) und die Netze ohne Zone und Vorschlag."""
+    tid = _tenant(session, principal, tenant_id)
+    return zone_detect.suggest(session, tid, include_dismissed=dismissed)
+
+
+@router.post("/suggestions/accept")
+def accept_suggestions(
+    body: KeysIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Vorschlaege uebernehmen (Operator): neue Zone mit den Selektoren des Vorschlags bzw.
+    die Selektoren einer bestehenden Zone ergaenzen. Ausgeblendete auch."""
+    tid = tenant_scope(principal, body.tenant_id)
+    if session.get(Tenant, tid) is None:
+        raise HTTPException(status_code=404, detail="tenant not found")
+    found = {s["key"]: s for s in zone_detect.suggest(session, tid, True)["items"]}
+    keys = list(dict.fromkeys(body.keys))
+    missing = [k for k in keys if k not in found]
+    last = session.scalar(
+        select(func.max(LogicalZone.position)).where(LogicalZone.tenant_id == tid)
+    )
+    position, owners = last or 0, set()
+    created, updated = [], []
+    for key in keys:
+        if key in missing:
+            continue
+        s = found[key]
+        sel = [
+            LogicalZoneSelector(kind=x["kind"], value=x["value"],
+                                source_system_id=x["source_system_id"], exclude=x["exclude"])
+            for x in s["selectors"]
+        ]  # fmt: skip
+        if s["action"] == "extend":
+            z = _get(session, principal, s["zone_id"])
+            z.selectors = [*z.selectors, *sel]
+            z.updated_at = datetime.now(UTC)
+            session.flush()
+            _audit(session, principal, "updated", z, via="suggestion")
+            updated.append(z.id)
+        else:
+            name, n = s["name"], 1
+            taken = set(
+                session.scalars(select(LogicalZone.name).where(LogicalZone.tenant_id == tid))
+            )
+            while name in taken:
+                n += 1
+                name = f"{s['name']} ({n})"
+            position += 10
+            sources = ", ".join(zone_detect.SOURCE_LABEL[x] for x in s["sources"])
+            z = LogicalZone(tenant_id=tid, name=name[:200], kind=s["kind"], color=s["color"],
+                            customer_id=s["customer_id"], position=position, selectors=sel,
+                            description=f"Vorschlag aus {sources}")  # fmt: skip
+            session.add(z)
+            session.flush()
+            _audit(session, principal, "created", z, via="suggestion")
+            created.append(z.id)
+        owners.add(z.customer_id)
+    zone_detect.undismiss(session, tid, [k for k in keys if k not in missing])
+    _rederive(session, tid, owners)
+    reconcile.refresh_zone_findings(session, tid)
+    return {"created": created, "updated": updated, "missing": missing}
+
+
+def _dismiss(session: Session, principal: Principal, body: KeysIn, undo: bool) -> dict:
+    tid = tenant_scope(principal, body.tenant_id)
+    if session.get(Tenant, tid) is None:
+        raise HTTPException(status_code=404, detail="tenant not found")
+    keys = [k.strip()[:200] for k in body.keys if k.strip()]
+    if undo:
+        changed = zone_detect.undismiss(session, tid, keys)
+    else:
+        changed = zone_detect.dismiss(session, tid, keys, principal.subject)
+    if changed:
+        audit.record(
+            session,
+            actor=f"user:{principal.subject}",
+            action=f"zone_suggestion.{'undismissed' if undo else 'dismissed'}",
+            subject=str(tid),
+            detail={"tenant_id": tid, "keys": changed},
+        )
+    return {"keys": changed}
+
+
+@router.post("/suggestions/dismiss")
+def dismiss_suggestions(
+    body: KeysIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Vorschlaege nicht mehr zeigen (Operator) - nur Daten der Plattform."""
+    return _dismiss(session, principal, body, undo=False)
+
+
+@router.post("/suggestions/dismiss/undo")
+def undismiss_suggestions(
+    body: KeysIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Ausgeblendete Vorschlaege wieder zeigen (Operator)."""
+    return _dismiss(session, principal, body, undo=True)
 
 
 @router.get("/matrix")

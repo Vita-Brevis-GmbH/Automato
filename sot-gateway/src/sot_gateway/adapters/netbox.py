@@ -109,7 +109,11 @@ class NetBoxAdapter:
 
     def export(self) -> Iterator[ReferenceRecord]:
         for rec in self._paged("ipam/prefixes/"):
-            yield self._record(ReferenceKind.PREFIX, rec, value=rec["prefix"])
+            # Rolle des Prefixes (z. B. DMZ, Server) als Merkmal `role=...` - Hinweis fuer die
+            # Zonen-Vorschlaege (0.54.0)
+            role = _name(rec.get("role"))
+            extra = {"role": role} if role else None
+            yield self._record(ReferenceKind.PREFIX, rec, value=rec["prefix"], extra=extra)
         for rec in self._paged("ipam/ip-addresses/"):
             ip, _, plen = str(rec["address"]).partition("/")
             yield self._record(

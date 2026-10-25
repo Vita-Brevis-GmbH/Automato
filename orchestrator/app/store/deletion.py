@@ -48,6 +48,7 @@ from app.models import (
     Zone,
     ZonePlanVersion,
     ZonePolicy,
+    ZoneSuggestionDismissal,
 )
 from app.store import customers
 from app.store import rules as rules_store
@@ -206,6 +207,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     zone_ids = select(LogicalZone.id).where(LogicalZone.tenant_id == tid)
     session.execute(delete(ZonePolicy).where(ZonePolicy.tenant_id == tid))
     session.execute(delete(ZonePlanVersion).where(ZonePlanVersion.tenant_id == tid))
+    session.execute(delete(ZoneSuggestionDismissal).where(ZoneSuggestionDismissal.tenant_id == tid))
     session.execute(delete(LogicalZoneSelector).where(LogicalZoneSelector.zone_id.in_(zone_ids)))
     session.execute(delete(LogicalZone).where(LogicalZone.tenant_id == tid))
     customer_ids = select(Customer.id).where(Customer.tenant_id == tid)
