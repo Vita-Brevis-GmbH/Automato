@@ -2,7 +2,8 @@
 // ihnen als draw.io-Zeichnung in der Namenskonvention. Hochladen mit Vorschau und Unterschied,
 // Zeichnung bzw. Vorlage herunterladen, entfernen (Admin). Die Zonen-Vorschläge im Netzwerkdesign
 // richten sich danach; ohne Schema gilt die eingebaute Vorlage (seit 0.56.0 nach Ebenen: DC, Edge,
-// Transfer, Core, Distribution, Access, Public – mit festen Farben).
+// Transfer, Core, Distribution, Access, Public – mit festen Farben). Seit 0.57.0 trägt ein
+// Übergang mit `automato_services` die erlaubten Dienste („eingeschränkt“).
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteZoneSchema,
@@ -332,6 +333,7 @@ function SchemaView({ schema }: { schema: ZoneSchemaData }) {
                 <td>{x.dst}</td>
                 <td>
                   <span className={`chip ${INTENT[x.intent][0]}`}>{INTENT[x.intent][1]}</span>
+                  {x.services && x.services.length > 0 && <span className="mono"> nur {x.services.join(", ")}</span>}
                   {x.note && <span className="faint"> {x.note}</span>}
                 </td>
                 <td className="faint">{x.reason}</td>

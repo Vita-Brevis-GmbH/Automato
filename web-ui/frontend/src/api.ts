@@ -1344,6 +1344,7 @@ export interface SchemaLink {
   intent: ZoneIntent;
   reason: string;
   note: string | null;
+  services?: string[]; // erlaubte Dienste bei „eingeschränkt“ (`automato_services`, 0.57.0)
 }
 export interface ZoneSchemaData {
   zones: SchemaZone[];
@@ -1902,6 +1903,31 @@ export interface TraceHop extends RoutingNode {
   leak?: { vrf: string; where: string; text: string };
   // Verbund als ein Hop (0.29.0): je Firewall bzw. Variante (andere Interfaces) ein Eintrag
   parts?: TraceHop[];
+  zone?: TraceZone | null; // logische Zone des Knotens (0.57.0)
+}
+// Zonen in der Weg-Suche (0.57.0): Zone je Hop und die Kette Quelle → Hops → Ziel mit Übergängen
+export interface TraceZone {
+  id: number | null;
+  name: string;
+  code: string | null;
+  kind: string;
+  color: string | null;
+}
+export interface TraceZoneStep extends TraceZone {
+  role: "src" | "hop" | "dst";
+  hops: string[]; // Hops in dieser Zone
+  transition?: string; // Übergang hierher („DC-EINET“)
+}
+export interface TraceZoneIntent {
+  src: number;
+  dst: number;
+  src_name: string;
+  dst_name: string;
+  intent: ZoneIntent;
+  note: string | null;
+  services: string[];
+  verdict: "ok" | "violation" | "warn" | "info";
+  text: string;
 }
 // Policy auf dem Weg: sicher (entscheidet) bzw. möglich (`unsure` = nicht prüfbare Bedingungen)
 export interface HopRule {
@@ -1934,6 +1960,7 @@ export interface TracePath {
   extra?: number | null; // Hops mehr als der kürzeste Weg mit Ziel (0 = gleich lang; null = ohne Ziel)
   policy?: { verdict: "allow" | "deny" | "depends" | "unknown"; text: string } | null; // Regeln auf dem Weg
   hops: TraceHop[];
+  zones?: TraceZoneStep[]; // Zonen auf dem Weg (0.57.0)
   end: {
     kind: "connected" | "fabric" | "exit" | "external" | "unknown" | "no_route" | "loop" | "max_hops";
     text: string;
@@ -1947,6 +1974,8 @@ export interface TraceResult {
   slack?: number; // Backup-Wege mit höchstens so vielen Hops mehr als der kürzeste aktive
   service?: string | null; // geprüfter Dienst (z. B. tcp/443)
   service_name?: string; // angegebenes Service-Objekt bzw. ACI-Filter (FT_https)
+  // Zonen (0.57.0): Quell- und Zielzone, Absicht zwischen ihnen mit Urteil; null = keine Zonen
+  zones?: { src: TraceZone[]; dst: TraceZone[]; intents: TraceZoneIntent[] } | null;
 }
 
 // Name bzw. FQDN -> IP für die Weg-Suche (0.35.0): IPAM, Objekte der Firewalls, VMs; seit
@@ -2413,8 +2442,17 @@ export interface ZoneMatrix {
     violations: number;
     intent: ZoneIntent | null;
     note: string | null;
+    services?: string[]; // Absicht je Dienst (0.57.0): erlaubte Dienste bei „eingeschränkt“
   }[];
-  intents: { src: number; dst: number; intent: ZoneIntent; note: string | null; updated_by: string | null; updated_at: string }[];
+  intents: {
+    src: number;
+    dst: number;
+    intent: ZoneIntent;
+    note: string | null;
+    services?: string[];
+    updated_by: string | null;
+    updated_at: string;
+  }[];
   summary: { zones: number; rules: number; assigned: number; without: number; violations: number };
 }
 export interface ZoneCellRule {
@@ -2428,6 +2466,7 @@ export interface ZoneCellRule {
   vdom: string | null;
   tenant: string | null;
   violation: boolean;
+  outside?: string[]; // Dienste ausserhalb der Absicht „eingeschränkt“ (0.57.0)
 }
 // Netz eines Übergangs (0.56.0): Beine der Knoten (Interface bzw. L3Out) und Router ohne gelesenes Gerät
 export interface TransitionNet {
@@ -2623,6 +2662,8 @@ export interface SchemaIntent {
   dst: string;
   intent: ZoneIntent;
   current: ZoneIntent | null;
+  services?: string[]; // Dienste aus dem Schema bzw. in Automato (0.57.0)
+  current_services?: string[];
   schema_src: string;
   schema_dst: string;
   note: string | null;
@@ -2676,13 +2717,14 @@ export const fetchZoneCellRules = (tenantId: number, src: ZoneCell, dst: ZoneCel
   getJSON<{ total: number; violations: number; items: ZoneCellRule[] }>(
     `/api/zones/matrix/rules${qs({ tenant_id: tenantId, src: String(src), dst: String(dst), offset, limit: 100 })}`,
   );
-export const setZonePolicy = (tenantId: number, src: number, dst: number, intent: ZoneIntent | null, note: string | null) =>
-  sendJSON<{ src: number; dst: number; intent: ZoneIntent | null; note: string | null }>("/api/zones/policy", "PUT", {
+export const setZonePolicy = (tenantId: number, src: number, dst: number, intent: ZoneIntent | null, note: string | null, services?: string[]) =>
+  sendJSON<{ src: number; dst: number; intent: ZoneIntent | null; note: string | null; services: string[] }>("/api/zones/policy", "PUT", {
     tenant_id: tenantId,
     src_zone_id: src,
     dst_zone_id: dst,
     intent,
     note,
+    services: services ?? null,
   });
 // Ansicht (0.56.0): ohne Kunde die Übersicht (Kunden je als eine Zone), mit Kunde dessen Plan, `all` alle Zonen einzeln
 export interface PlanView {

@@ -19,7 +19,8 @@ die Seite mit „Zone“ oder „Schema“ im Namen):
   (Erkennungsmuster, mit Komma getrennt, `*`/`?`), `automato_order` (Reihenfolge, sonst von
   oben nach unten, links nach rechts). Ohne Art: aus dem Namen, sonst intern. Farbe =
   Fuellfarbe.
-- jede Verbindung zwischen zwei Zonen ist ein Uebergang. Absicht aus `automato_intent`, sonst
+- jede Verbindung zwischen zwei Zonen ist ein Uebergang (seit 0.57.0 bei „eingeschraenkt“ mit den
+  erlaubten Diensten aus `automato_services`). Absicht aus `automato_intent`, sonst
   aus der Beschriftung (erlaubt, eingeschraenkt, gesperrt), sonst gestrichelt = eingeschraenkt,
   rote Linie = gesperrt, sonst erlaubt. Richtung = Pfeil; ohne bzw. mit zwei Pfeilen in beide
   Richtungen.
@@ -127,10 +128,11 @@ class SchemaLink:
     intent: str = "allow"
     reason: str = "Standard"
     note: str | None = None
+    services: list[str] = field(default_factory=list)  # bei „eingeschraenkt“ (0.57.0)
 
     def out(self) -> dict:
         return {"src": self.src, "dst": self.dst, "intent": self.intent, "reason": self.reason,
-                "note": self.note}  # fmt: skip
+                "note": self.note, "services": self.services}  # fmt: skip
 
 
 @dataclass
@@ -458,6 +460,10 @@ def parse(content: str) -> Schema:
             intent, reason = hue, "Linienfarbe"
         if intent is None:
             intent, reason = "allow", "Standard"
+        raw_services = re.split(r"[,;\n]", c.props.get("automato_services", ""))
+        services = [x.strip()[:100] for x in raw_services if x.strip()][:50]
+        if services and intent == "allow" and reason == "Standard":
+            intent, reason = "limited", "Eigenschaft automato_services"
         start = c.style.get("startArrow", "none") not in ("none", "")
         end = c.style.get("endArrow", "classic") not in ("none", "")
         pairs = (
@@ -471,7 +477,8 @@ def parse(content: str) -> Schema:
                                     "die strengere gilt")  # fmt: skip
                 if _RANK[intent] <= _RANK[old.intent]:
                     continue
-            links[k] = SchemaLink(s.name, d.name, intent, reason, text[:500] or None)
+            links[k] = SchemaLink(s.name, d.name, intent, reason, text[:500] or None,
+                                  services if intent == "limited" else [])  # fmt: skip
     if loose:
         out.warnings.append(f"{loose} Verbindung(en) nicht zwischen zwei Zonen - nicht gelesen")
     out.links = list(links.values())[:MAX_LINKS]
@@ -561,6 +568,7 @@ def load(session: Session, profile_id: int | None) -> Schema | None:
                     r.value,
                     r.extra.get("reason") or "Standard",
                     r.extra.get("note"),
+                    list(r.extra.get("services") or []),
                 )
             )
         if r.kind == KIND_META and r.extra:
@@ -607,7 +615,8 @@ def diff(old: Schema | None, new: Schema) -> dict:
         "links": {"added": [la[k].out() for k in la.keys() - lb.keys()],
                   "removed": [lb[k].out() for k in lb.keys() - la.keys()],
                   "changed": [{**la[k].out(), "before": lb[k].intent}
-                              for k in la.keys() & lb.keys() if la[k].intent != lb[k].intent]},
+                              for k in la.keys() & lb.keys()
+                              if (la[k].intent, la[k].services) != (lb[k].intent, lb[k].services)]},
     }  # fmt: skip
 
 
@@ -670,7 +679,8 @@ def from_zones(session: Session, tenant_id: int) -> Schema:
     for p in session.scalars(select(ZonePolicy).where(ZonePolicy.tenant_id == tenant_id)):
         if p.src_zone_id in names and p.dst_zone_id in names:
             out.links.append(SchemaLink(names[p.src_zone_id], names[p.dst_zone_id], p.intent,
-                                        "Absicht in Automato", p.note))  # fmt: skip
+                                        "Absicht in Automato", p.note,
+                                        list(p.services or [])))  # fmt: skip
     return out
 
 
@@ -732,8 +742,11 @@ def drawing(schema: Schema, title: str) -> str:
         style = f"endArrow=classic;html=1;strokeColor={_LINE[x.intent]};strokeWidth=2;"
         if x.intent == "limited":
             style += "dashed=1;"
-        obj = ET.SubElement(root, "object", {"id": f"link-{i + 1}", "label": INTENT_LABEL[x.intent],
-                                             "automato_intent": x.intent})  # fmt: skip
+        attrs = {"id": f"link-{i + 1}", "label": INTENT_LABEL[x.intent],
+                 "automato_intent": x.intent}  # fmt: skip
+        if x.services:
+            attrs["automato_services"] = ", ".join(x.services)
+        obj = ET.SubElement(root, "object", attrs)
         cell = ET.SubElement(obj, "mxCell", {"edge": "1", "parent": "1", "source": a,
                                              "target": b, "style": style})  # fmt: skip
         ET.SubElement(cell, "mxGeometry", {"relative": "1", "as": "geometry"})

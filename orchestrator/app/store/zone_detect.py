@@ -553,10 +553,17 @@ def schema_intents(session: Session, tenant_id: int, schema: "zone_schema.Schema
         for s in by_schema.get(key_of(link.src), []):
             for d in by_schema.get(key_of(link.dst), []):
                 p = current.get((s, d))
-                if s == d or (p is not None and p.intent == link.intent):
+                same = (
+                    p is not None
+                    and p.intent == link.intent
+                    and (link.intent != "limited" or list(p.services or []) == link.services)
+                )
+                if s == d or same:
                     continue
                 out.append({"src_zone_id": s, "src": names[s], "dst_zone_id": d, "dst": names[d],
                             "intent": link.intent, "current": p.intent if p else None,
+                            "services": link.services,
+                            "current_services": list(p.services or []) if p else [],
                             "schema_src": link.src, "schema_dst": link.dst,
                             "note": link.note})  # fmt: skip
     return out

@@ -4,7 +4,8 @@
 
 Entwurf (2026-10-24), umgesetzt in 0.51.0 (Zonen, Matrix, Plan), 0.52.0 (Export, Versionen),
 0.53.0 (Kunden auf Zonen, ADR 0018 Schritt 4), 0.54.0 (Zonen erkennen und vorschlagen), 0.55.0
-(Grundschema der Zonen aus draw.io) und 0.56.0 (Zonenmodell nach Ebenen, Plan je Kunde).
+(Grundschema der Zonen aus draw.io), 0.56.0 (Zonenmodell nach Ebenen, Plan je Kunde) und 0.57.0
+(Zonen je Hop in der Weg-Suche, Absicht je Dienst).
 Baut auf dem Topologie-Modell (ADR 0019, 0.50.0) und den Selektoren der Kunden (ADR 0018) auf.
 
 ## Kontext
@@ -211,6 +212,26 @@ Entscheide des Anwenders (2026-10-23):
       in der gewählten Ansicht. Versionen speichern alle Zonen einzeln (Format 2); ältere
       Versionen behalten ihre Zeichnung.
 
+13. **Zonen je Hop und Absicht je Dienst (0.57.0, `store/zone_path.py`, `store/zone_services.py`,
+    Migration 0052):** Reihenfolge des Anwenders „Zonen/Kunden fertig“ (2026-10-25).
+    - **Absicht je Dienst:** „eingeschränkt“ nennt die erlaubten Dienste (`zone_policy.services`):
+      `tcp/443`, `udp/53`, `tcp/8000-8080`, `tcp` (alle Ports), `icmp`, `any` bzw. den Namen eines
+      Service-Objekts oder ACI-Filters (aufgelöst wie in der Weg-Suche). Unbekannte Angaben lehnt die
+      API ab (422). Eine erlaubende Regel zwischen den Zonen, deren Dienste nicht ganz abgedeckt
+      sind (`ALL` bzw. negierte Dienste nur durch `any`), verstösst gegen die Absicht – in der
+      Matrix gezählt, in den Regeln der Zelle mit den Diensten ausserhalb, als Befund
+      `zone_policy_violation` („öffnet tcp/22 – erlaubt sind nur tcp/443“). Regeln ohne gelesene
+      Dienste werden nicht beurteilt; ohne Dienste ist „eingeschränkt“ nur Absicht (kein Befund).
+      Im Grundschema trägt ein Übergang die Dienste in `automato_services` (setzt „eingeschränkt“).
+    - **Zonen in der Weg-Suche** (`GET /routing/trace`): Zone der Quelle und des Ziels (längstes
+      Präfix), je Hop die Zone des Knotens (`hop.zone`), je Weg die Kette Quelle → Zonen der Hops →
+      Ziel mit den Übergängen dazwischen (`path.zones`, „LAN-EINET“, „DMZ-EINET“; Knoten ohne Zone
+      als „ohne Zone“). Dazu die **Absicht** zwischen Quell- und Zielzone mit Urteil gegenüber dem
+      aktiven Weg (`zones.intents`): gesperrt und der Weg erlaubt → gegen die Absicht;
+      eingeschränkt mit Diensten → der gesuchte Dienst ist erlaubt bzw. nicht (erlaubt der Weg ihn,
+      gegen die Absicht; ohne Dienst nur ein Hinweis); erlaubt und der Weg sperrt → Hinweis.
+      Ohne Zonen bleibt der Weg wie bisher. Nicht für Kunden-Benutzer (Weg-Suche gesperrt).
+
 ## Folgen
 
 - Die Firewall-Zonen (`zone`, gelesen) bleiben, was sie sind; eine logische Zone kann sie als
@@ -221,6 +242,6 @@ Entscheide des Anwenders (2026-10-23):
   bisher (Matrix und Plan sind leer, keine Befunde).
 - Offen: Zonen je Kunde im Grundschema (Vorlage „je Kunde“), Befund „Zone ausserhalb des
   Schemas“, Export nach Confluence (eigene Freigabe), draw.io-Datei zurück einlesen (Korrekturen
-  im Designer), Zonen in der Weg-Suche (Zonen je Hop), Absicht je Dienst (eingeschränkt = nur
-  bestimmte Dienste), Relevanz nach Pfad für die Matrix (ADR 0019), Übergänge über Routen ohne
-  gemeinsames Netz (Zonen nur hinter einem Router) im Plan.
+  im Designer), Relevanz nach Pfad für die Matrix (ADR 0019), Übergänge über Routen ohne
+  gemeinsames Netz (Zonen nur hinter einem Router) im Plan, Absicht je Dienst und Richtung im
+  Zonenplan, Zonen in den Verbindungen der Applikations-Doku.

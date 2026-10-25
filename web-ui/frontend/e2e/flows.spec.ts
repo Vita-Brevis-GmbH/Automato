@@ -888,7 +888,14 @@ test("Netzwerkdesign: Zonen, Zonenmatrix mit Absicht und Zonenplan", async ({ pa
   await cell.locator("select[aria-label='Absicht']").selectOption("limited");
   await cell.locator("button:has-text('Absicht speichern')").click();
   await expect(viol).toHaveCount(0);
+  // Absicht je Dienst (0.57.0): nur tcp/22 - die Policy mit tcp/443 ist wieder ein Verstoss
   await page.locator("td.zcell.i-warn").first().click();
+  await page.locator("#zone-cell input[aria-label='Dienste']").fill("tcp/22");
+  await page.locator("#zone-cell button:has-text('Absicht speichern')").click();
+  await expect(viol).toHaveCount(1);
+  await expect(viol).toContainText("nur tcp/22");
+  await viol.click();
+  await expect(page.locator("#zone-cell-rules")).toContainText("Dienste ausserhalb: tcp/443");
   await page.locator("#zone-cell select[aria-label='Absicht']").selectOption("deny");
   await page.locator("#zone-cell button:has-text('Absicht speichern')").click();
   await expect(viol).toHaveCount(1);
@@ -902,6 +909,27 @@ test("Netzwerkdesign: Zonen, Zonenmatrix mit Absicht und Zonenplan", async ({ pa
   await expect(trans.filter({ hasText: "EINET-Internet" })).toContainText("192.0.2.0/30");
   await expect(page.locator("#zone-plan .zp-zone2.pseudo", { hasText: "Knoten ohne Zone" })).toBeVisible();
   await expect(page.locator("#zone-unzoned")).toContainText("Netze ohne Zone");
+  expect(problems).toEqual([]);
+});
+
+test("Weg-Suche: Zonen je Hop und Absicht zwischen Quell- und Zielzone", async ({ page, problems }) => {
+  await page.goto("/#wege");
+  await page.getByPlaceholder("Quelle: IP, Netz oder Name").fill("10.10.0.5");
+  await page.getByPlaceholder("Ziel: IP, Netz oder Name").fill("10.30.0.10");
+  await page.getByPlaceholder("Dienst", { exact: false }).first().fill("tcp/443");
+  await page.click("button:has-text('Weg suchen')");
+  const card = page.locator("#path-zones");
+  await expect(card).toContainText("Quelle LAN → Ziel DMZ");
+  // LAN → Edge Internet (fw-08) → DMZ mit den Übergängen
+  await expect(card.locator(".zone-chain")).toContainText("LAN-EINET");
+  await expect(card.locator(".zone-chain")).toContainText("DMZ-EINET");
+  await expect(card.locator(".zone-chain")).toContainText("Edge Internet");
+  // LAN → DMZ ist gesperrt, die Policy lan-to-dmz-web erlaubt: gegen die Absicht
+  const intent = card.locator("#path-zone-intents tbody tr");
+  await expect(intent).toContainText("Absicht gesperrt");
+  await expect(intent.locator(".chip.crit")).toContainText("gegen die Absicht");
+  const hop = page.locator(".card[id^='trace-'] tbody tr", { hasText: "fw-08" }).first();
+  await expect(hop.locator(".zone-chip")).toContainText("Edge Internet");
   expect(problems).toEqual([]);
 });
 

@@ -2,6 +2,8 @@
 // Verbindung Hop für Hop ab Quelle bzw. Startpunkt – je Firewall die Policies, je ACI-VRF die
 // Contracts zwischen den EPGs (Fehlersuche, Kontrolle von Arbeiten). Quelle und Ziel als IP
 // oder Name/FQDN (IPAM, Objekte der Firewalls, VMs), der Dienst als tcp/443 oder Objektname.
+// Seit 0.57.0 die logischen Zonen je Hop, die Übergänge dazwischen und die Absicht zwischen
+// Quell- und Zielzone (auch je Dienst) mit Urteil.
 import { useEffect, useState } from "react";
 import {
   fetchRoutingSummary,
@@ -16,6 +18,8 @@ import {
   TracePath,
   TraceResult,
   traceRoute,
+  TraceZone,
+  TraceZoneStep,
 } from "./api";
 import type { ViewParams } from "./App";
 import { useDebounced } from "./Objects";
@@ -112,6 +116,88 @@ function HopRulesCell({ r }: { r?: HopRules }) {
   );
 }
 
+// Zonen (0.57.0): Zone als Chip in ihrer Farbe, Kette des Wegs mit den Übergängen
+function ZoneChip({ z }: { z?: TraceZone | null }) {
+  if (!z) return null;
+  return (
+    <span className="chip zone-chip" title={z.code ? `${z.name} (${z.code})` : z.name}>
+      <span className="zone-swatch" style={{ background: z.color ?? "var(--surface-3)" }} /> {z.name}
+    </span>
+  );
+}
+
+function ZoneChain({ steps }: { steps?: TraceZoneStep[] }) {
+  if (!steps || steps.length === 0) return <Dash />;
+  return (
+    <span className="zone-chain">
+      {steps.map((z, i) => (
+        <span key={i}>
+          {z.transition && (
+            <span className="faint mono" title="Übergang zwischen den Zonen">
+              {" "}
+              →{z.transition}→{" "}
+            </span>
+          )}
+          <span title={z.hops.length ? z.hops.join(", ") : z.role === "src" ? "Quelle" : z.role === "dst" ? "Ziel" : undefined}>
+            <ZoneChip z={z} />
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+const ZONE_VERDICT: Record<string, string> = { ok: "ok", violation: "crit", warn: "warn", info: "" };
+const INTENT_LABEL: Record<string, string> = { allow: "erlaubt", limited: "eingeschränkt", deny: "gesperrt" };
+
+// Quell- und Zielzone mit der Absicht zwischen ihnen (je Dienst) und dem Urteil gegenüber dem Weg
+function ZoneIntentCard({ trace }: { trace: TraceResult }) {
+  const z = trace.zones;
+  if (!z) return null;
+  const first = trace.paths.find((p) => p.kind !== "backup");
+  return (
+    <div className="card" id="path-zones">
+      <div className="card-head">
+        <h2>Zonen</h2>
+        <span className="faint">
+          Quelle {z.src.length ? z.src.map((x) => x.name).join(", ") : "ohne Zone"} → Ziel{" "}
+          {z.dst.length ? z.dst.map((x) => x.name).join(", ") : "ohne Zone"}
+        </span>
+      </div>
+      <div className="card-body pad">
+        {first?.zones && first.zones.length > 0 && (
+          <div style={{ marginBottom: 8 }}>
+            <ZoneChain steps={first.zones} />
+          </div>
+        )}
+        {z.intents.length === 0 ? (
+          <span className="faint">keine Absicht für dieses Zonenpaar in der Zonenmatrix</span>
+        ) : (
+          <table className="compact" id="path-zone-intents">
+            <tbody>
+              {z.intents.map((x) => (
+                <tr key={`${x.src}>${x.dst}`}>
+                  <td className="nowrap">
+                    {x.src_name} → {x.dst_name}
+                  </td>
+                  <td className="nowrap">
+                    Absicht {INTENT_LABEL[x.intent] ?? x.intent}
+                    {x.services.length > 0 && <span className="faint"> · nur {x.services.join(", ")}</span>}
+                  </td>
+                  <td>
+                    <span className={`chip ${ZONE_VERDICT[x.verdict] ?? ""}`}>{x.text}</span>
+                    {x.note && <div className="faint">{x.note}</div>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Länge im Vergleich zum kürzesten Weg mit Ziel: „gleich lang“ bzw. „+1 Hop“
 function Length({ extra }: { extra?: number | null }) {
   if (extra == null)
@@ -158,6 +244,7 @@ function PathOverview({ trace }: { trace: TraceResult }) {
               <th className="num">Hops</th>
               <th>Länge</th>
               <th>Regeln</th>
+              {trace.zones && <th>Zonen</th>}
               <th>Ende</th>
             </tr>
           </thead>
@@ -212,6 +299,11 @@ function PathOverview({ trace }: { trace: TraceResult }) {
                     <Length extra={p.extra} />
                   </td>
                   <td>{p.policy ? <Verdict v={p.policy.verdict} title={p.policy.text} /> : <Dash />}</td>
+                  {trace.zones && (
+                    <td>
+                      <ZoneChain steps={p.zones} />
+                    </td>
+                  )}
                   <td>
                     <span className={`chip ${cls}`}>{label}</span>
                   </td>
@@ -258,6 +350,7 @@ function TraceCard({
           <span className="chip info">redundant · Verbund {path.parallel.join(", ")}</span>
         ) : null}
         {compare && path.extra != null && <Length extra={path.extra} />}
+        {path.zones && path.zones.length > 0 && <ZoneChain steps={path.zones} />}
         {path.policy && (
           <span className={`chip ${VERDICT[path.policy.verdict]?.[0] ?? ""}`} title="Regeln auf dem Weg">
             Regeln: {path.policy.text}
@@ -320,6 +413,11 @@ function TraceCard({
                       )}
                       <b>{h.label}</b> {h.kind === "firewall" && <span className="chip">Firewall</span>}
                       <VrfChip vrf={h.vrf} />
+                      {k === 0 && hop.zone && (
+                        <div>
+                          <ZoneChip z={hop.zone} />
+                        </div>
+                      )}
                       {h.dst && (
                         <div className="faint" title="Ziel nach NAT auf einem Hop davor">
                           Ziel <span className="mono">{h.dst}</span>
@@ -853,6 +951,7 @@ function PathSearch({
             const shown = slack === "" ? trace.paths.filter((p) => p.kind !== "backup") : trace.paths;
             return (
               <>
+                <ZoneIntentCard trace={trace} />
                 {shown.length > 1 && <PathOverview trace={{ ...trace, paths: shown }} />}
                 {shown.map((p, i) => (
                   <TraceCard

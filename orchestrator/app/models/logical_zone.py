@@ -11,7 +11,8 @@ Die Firewall-Zonen der FortiGate (`zone`, gelesen) sind etwas anderes: sie gelte
 und VDOM; eine logische Zone gilt in der ganzen Umgebung.
 
 Je Zonenpaar haelt `zone_policy` die **Absicht** (erlaubt, eingeschraenkt, gesperrt) fuer die
-Zonenmatrix; eine erlaubende Regel zwischen gesperrten Zonen ist ein Befund.
+Zonenmatrix; eine erlaubende Regel zwischen gesperrten Zonen ist ein Befund. Seit 0.57.0 nennt
+„eingeschraenkt“ die erlaubten Dienste - eine Regel mit anderen Diensten ist ebenfalls ein Befund.
 
 Ein Kunde besitzt Zonen (`customer_id`); geteilte Zonen (Internet, Shared Services,
 Management) gehoeren keinem. Die Sicht der Kunden auf ihre Zonen folgt mit 0.53.0.
@@ -115,6 +116,9 @@ class ZonePolicy(Base):
     )
     intent: Mapped[str] = mapped_column(String(8))  # siehe INTENTS
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Absicht je Dienst (0.57.0): bei „eingeschraenkt“ die erlaubten Dienste (`tcp/443`,
+    # `udp/53`, `tcp/8000-8080`, `icmp` bzw. Name eines Service-Objekts); leer = nicht geprueft
+    services: Mapped[list | None] = mapped_column(JSON, nullable=True)
     updated_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

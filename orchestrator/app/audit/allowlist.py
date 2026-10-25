@@ -140,7 +140,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "zone.created": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),
     "zone.updated": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),
     "zone.deleted": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
-    "zone_policy.set": frozenset({"tenant_id", "src_zone_id", "dst_zone_id", "intent", "via"}),
+    "zone_policy.set": frozenset(
+        {"tenant_id", "src_zone_id", "dst_zone_id", "intent", "services", "via"}
+    ),
     # Versionen des Zonenplans (0.52.0)
     "zone_suggestion.dismissed": frozenset({"tenant_id", "keys"}),
     "zone_suggestion.undismissed": frozenset({"tenant_id", "keys"}),

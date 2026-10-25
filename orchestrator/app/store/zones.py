@@ -39,7 +39,7 @@ from app.models import (
     SourceSystem,
     ZonePolicy,
 )
-from app.store import customers, topo_model
+from app.store import customers, topo_model, zone_services
 from app.store import epgs as epg_store
 from app.store.customers import Net, Selector
 from app.store.rules import not_twin
@@ -243,18 +243,34 @@ class Assignment:
     src: dict[int, set] = field(default_factory=lambda: defaultdict(set))
     dst: dict[int, set] = field(default_factory=lambda: defaultdict(set))
     intents: dict[tuple[int, int], ZonePolicy] = field(default_factory=dict)
+    # Absicht je Dienst (0.57.0): erlaubte Dienste der eingeschraenkten Paare, Dienste der Regeln
+    services: dict[tuple[int, int], "zone_services.Allowed"] = field(default_factory=dict)
+    rule_services: "zone_services.RuleServices | None" = None
 
     def pairs(self, rid: int) -> list[tuple[Cell, Cell]]:
         return [(s, d) for s in self.src.get(rid, ()) for d in self.dst.get(rid, ())]
 
+    def outside(self, rid: int, pair: tuple) -> list[str] | None:
+        """Dienste der Regel ausserhalb der Absicht „eingeschraenkt“ des Paars (None = keine
+        Dienste vorgegeben bzw. nicht beurteilbar)."""
+        allow = self.services.get(pair)
+        if allow is None or self.rule_services is None:
+            return None
+        return self.rule_services.outside(rid, allow)
+
     def denied(self, rid: int) -> list[tuple[int, int]]:
-        """Paare mit Absicht „gesperrt“, die eine erlaubende Regel trotzdem oeffnet."""
+        """Paare, gegen deren Absicht eine erlaubende Regel verstoesst: „gesperrt“ bzw.
+        „eingeschraenkt“ mit Diensten, die die Regel ueberschreitet (0.57.0)."""
         if self.rules[rid][0] is not RuleAction.ALLOW:
             return []
-        return [
-            (s, d) for s, d in self.pairs(rid)
-            if (p := self.intents.get((s, d))) is not None and p.intent == "deny"
-        ]  # fmt: skip
+        out = []
+        for s, d in self.pairs(rid):
+            p = self.intents.get((s, d))
+            if p is None:
+                continue
+            if p.intent == "deny" or (p.intent == "limited" and self.outside(rid, (s, d))):
+                out.append((s, d))
+        return out
 
 
 def assign(session: Session, tenant_id: int, items: list[LogicalZone] | None = None,
@@ -291,6 +307,17 @@ def assign(session: Session, tenant_id: int, items: list[LogicalZone] | None = N
             continue
         zones = {ANY} if is_any else a.index.zones_of(fam, int(lo, 16), int(hi, 16))
         (a.src if role == "src" else a.dst)[rid].update(zones)
+    # Absicht je Dienst: nur die Regeln laden, die ein eingeschraenktes Paar mit Diensten oeffnen
+    a.services = {
+        k: zone_services.allowed(session, tenant_id, p.services)
+        for k, p in a.intents.items() if p.intent == "limited" and p.services
+    }  # fmt: skip
+    if a.services:
+        ids = [
+            rid for rid, (action, _d, _s) in a.rules.items()
+            if action is RuleAction.ALLOW and any(k in a.services for k in a.pairs(rid))
+        ]  # fmt: skip
+        a.rule_services = zone_services.rule_services(session, ids)
     return a
 
 
@@ -316,6 +343,7 @@ def _intent_out(p: ZonePolicy) -> dict:
         "dst": p.dst_zone_id,
         "intent": p.intent,
         "note": p.note,
+        "services": list(p.services or []),
         "updated_by": p.updated_by,
         "updated_at": p.updated_at,
     }
@@ -367,7 +395,7 @@ def matrix(session: Session, tenant_id: int, source_system_id: int | None = None
         out.append({
             "src": s, "dst": d, "allow": c["allow"], "deny": c["deny"],
             "violations": c["violations"], "intent": p.intent if p else None,
-            "note": p.note if p else None,
+            "note": p.note if p else None, "services": list(p.services or []) if p else [],
         })  # fmt: skip
     by_id = {n.id: n for n in a.nets}
     color = colors(session, tenant_id, a.zones)
@@ -408,6 +436,7 @@ def cell_rules(session: Session, tenant_id: int, src: Cell, dst: Cell, limit: in
     else:
         ids = [rid for rid in a.rules if src in a.src.get(rid, ()) and dst in a.dst.get(rid, ())]
         bad = {rid for rid in ids if (src, dst) in set(a.denied(rid))}
+    pair = (src, dst) if isinstance(src, int) and isinstance(dst, int) else None
     names = dict(
         session.execute(
             select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == tenant_id)
@@ -432,6 +461,8 @@ def cell_rules(session: Session, tenant_id: int, src: Cell, dst: Cell, limit: in
             "source_system_id": r.source_system_id, "vdom": r.vdom,
             "tenant": raw.get("tenant") if r.domain.value == "aci_contract" else None,
             "violation": rid in bad,
+            # Dienste ausserhalb der Absicht „eingeschraenkt“ (0.57.0)
+            "outside": (a.outside(rid, pair) or []) if rid in bad and pair else [],
         })  # fmt: skip
     return {"total": len(ids), "violations": len(bad), "items": items}
 
@@ -441,7 +472,7 @@ def cell_rules(session: Session, tenant_id: int, src: Cell, dst: Cell, limit: in
 
 def checks(session: Session, tenant_id: int) -> list[dict]:
     """Befunde fuer den Abgleich: gleiches Praefix in mehreren Zonen, erlaubende Regeln
-    zwischen Zonen mit Absicht „gesperrt“."""
+    zwischen Zonen mit Absicht „gesperrt“ bzw. mit Diensten ausserhalb von „eingeschraenkt“."""
     items = load(session, tenant_id)
     if not items:
         return []
@@ -454,9 +485,16 @@ def checks(session: Session, tenant_id: int) -> list[dict]:
     for rid in a.rules:
         bad = a.denied(rid)
         if bad:
+            pairs = []
+            for s, d in bad:
+                p = a.intents[(s, d)]
+                item = {"src": names[s], "dst": names[d], "intent": p.intent}
+                if p.intent == "limited":
+                    item |= {"services": list(p.services or []),
+                             "outside": a.outside(rid, (s, d)) or []}  # fmt: skip
+                pairs.append(item)
             out.append({
-                "type": "zone_policy_violation", "rule_id": rid,
-                "pairs": [{"src": names[s], "dst": names[d]} for s, d in bad],
+                "type": "zone_policy_violation", "rule_id": rid, "pairs": pairs,
                 "notes": [n for s, d in bad if (n := a.intents[(s, d)].note)],
             })  # fmt: skip
     return out

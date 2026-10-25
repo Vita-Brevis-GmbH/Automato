@@ -827,6 +827,7 @@ function SchemaStatus({
                       </td>
                       <td>
                         <span className={`chip ${INTENT[x.intent][0]}`}>{INTENT[x.intent][1]}</span>
+                        {x.services && x.services.length > 0 && <div className="faint">nur {x.services.join(", ")}</div>}
                       </td>
                       <td className="faint">{x.current ? `in Automato: ${INTENT[x.current][1]}` : "fehlt"}</td>
                       <td className="nowrap">
@@ -1288,7 +1289,7 @@ function MatrixTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                       <td
                         key={String(dst)}
                         className={`zcell ${intent ? `i-${intent}` : ""} ${c?.violations ? "viol" : ""} ${on ? "on" : ""}`}
-                        title={c?.note ?? undefined}
+                        title={[c?.services?.length ? `nur ${c.services.join(", ")}` : "", c?.note ?? ""].filter(Boolean).join(" · ") || undefined}
                         onClick={() => setSel({ src, dst })}
                       >
                         {c && (c.allow || c.deny) ? (
@@ -1299,6 +1300,7 @@ function MatrixTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                         ) : (
                           <span className="faint">·</span>
                         )}
+                        {c?.services?.length ? <div className="z-svc">nur {c.services.join(", ")}</div> : null}
                         {c?.violations ? <div className="z-viol">{c.violations} gegen Absicht</div> : null}
                       </td>
                     );
@@ -1314,7 +1316,8 @@ function MatrixTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                 {INTENT[k][1]}
               </span>
             ))}{" "}
-            · „any“ und „ohne Zone“ zählen nicht als Verstoss
+            · eingeschränkt mit Diensten: andere Dienste sind gegen die Absicht · „any“ und „ohne Zone“ zählen nicht
+            als Verstoss
           </div>
         </div>
       </div>
@@ -1354,8 +1357,11 @@ function CellDetail({
   const [rules, setRules] = useState<{ total: number; violations: number; items: ZoneCellRule[] } | null>(null);
   const [intent, setIntent] = useState<ZoneIntent | "">(cell?.intent ?? "");
   const [note, setNote] = useState(cell?.note ?? "");
+  const [services, setServices] = useState((cell?.services ?? []).join(", "));
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // nach dem Speichern der Absicht (Dienste) neu laden: Verstösse und Dienste ausserhalb
+  const stamp = `${cell?.intent ?? ""}|${(cell?.services ?? []).join(",")}|${cell?.violations ?? 0}`;
   useEffect(() => {
     let current = true;
     fetchZoneCellRules(tenantId, src, dst)
@@ -1364,13 +1370,17 @@ function CellDetail({
     return () => {
       current = false;
     };
-  }, [tenantId, src, dst]);
+  }, [tenantId, src, dst, stamp]);
   const zonePair = typeof src === "number" && typeof dst === "number";
   const save = async () => {
     if (!zonePair) return;
     setBusy(true);
     try {
-      await setZonePolicy(tenantId, src, dst, intent || null, note.trim() || null);
+      const list = services
+        .split(/[,;\n]/)
+        .map((x) => x.trim())
+        .filter(Boolean);
+      await setZonePolicy(tenantId, src, dst, intent || null, note.trim() || null, intent === "limited" ? list : undefined);
       onChanged();
     } catch (e) {
       setErr(e);
@@ -1385,6 +1395,7 @@ function CellDetail({
           {cellLabel(src, zones)} → {cellLabel(dst, zones)}
         </h2>
         {cell?.intent && <span className={`chip ${INTENT[cell.intent][0]}`}>Absicht: {INTENT[cell.intent][1]}</span>}
+        {cell?.services?.length ? <span className="faint">nur {cell.services.join(", ")}</span> : null}
       </div>
       <div className="card-body">
         <ErrorBox error={err} onClose={() => setErr(null)} />
@@ -1398,6 +1409,15 @@ function CellDetail({
                 </option>
               ))}
             </select>
+            {intent === "limited" && (
+              <input
+                className="input mono"
+                aria-label="Dienste"
+                placeholder="erlaubte Dienste, z. B. tcp/443, udp/53, FT_https"
+                value={services}
+                onChange={(e) => setServices(e.target.value)}
+              />
+            )}
             <input className="input" aria-label="Notiz" placeholder="Notiz, z. B. nur über Reverse Proxy" value={note} onChange={(e) => setNote(e.target.value)} />
             <button className="btn btn-sm btn-primary" onClick={save} disabled={busy}>
               Absicht speichern
@@ -1432,7 +1452,10 @@ function CellDetail({
                     {r.source ?? "?"}
                     {r.vdom && r.vdom !== "root" ? ` · VDOM ${r.vdom}` : ""}
                   </td>
-                  <td>{r.violation && <span className="chip crit">gegen Absicht</span>}</td>
+                  <td>
+                    {r.violation && <span className="chip crit">gegen Absicht</span>}
+                    {r.outside && r.outside.length > 0 && <div className="faint">Dienste ausserhalb: {r.outside.join(", ")}</div>}
+                  </td>
                 </tr>
               ))}
             </tbody>

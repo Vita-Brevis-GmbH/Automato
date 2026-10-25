@@ -139,15 +139,25 @@ def _bgp(subject: str, d: dict) -> tuple[str, str]:
 
 
 def _zone_violation(subject: str, d: dict) -> tuple[str, str]:
-    pairs = _list([f"{p.get('src')} → {p.get('dst')}" for p in d.get("pairs") or []], 4)
+    all_pairs = d.get("pairs") or []
+    denied = [p for p in all_pairs if p.get("intent", "deny") == "deny"]
+    limited = [p for p in all_pairs if p.get("intent") == "limited"]
     name = d.get("name") or subject
     on = f" auf {d['source']}" if d.get("source") else ""
     note = f" Absicht: {_list(d.get('notes') or [], 2)}." if d.get("notes") else ""
+    parts = []
+    if denied:
+        pairs = _list([f"{p.get('src')} → {p.get('dst')}" for p in denied], 4)
+        parts.append(f"erlaubt Verkehr zwischen Zonen, die laut Zonenmatrix gesperrt sind: {pairs}")
+    for p in limited[:3]:  # Absicht je Dienst (0.57.0)
+        parts.append(
+            f"öffnet zwischen {p.get('src')} → {p.get('dst')} {_list(p.get('outside') or [], 4)} "
+            f"– erlaubt sind nur {_list(p.get('services') or [], 4)}"
+        )
     return (
-        f"Regel {_q(name)}{on} erlaubt Verkehr zwischen Zonen, die laut Zonenmatrix gesperrt "
-        f"sind: {pairs}.{note}",
+        f"Regel {_q(name)}{on} {'; '.join(parts)}.{note}",
         "Regel einschränken bzw. entfernen – oder die Absicht in der Zonenmatrix anpassen "
-        "(eingeschränkt), wenn der Zugriff gewollt ist.",
+        "(eingeschränkt bzw. weitere Dienste), wenn der Zugriff gewollt ist.",
     )
 
 

@@ -353,8 +353,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.54.0** | Zonen automatisch erkennen und vorschlagen (Netzwerkdesign → Vorschläge): Transfernetze, FortiGate-Zonen und -Interfaces (Name, Rolle, Management), IPAM-Merkmal Zone/Rolle, ACI-VRFs, Anbindungen; übernehmen (neu bzw. ergänzen), ausblenden; Netze ohne Zone und Vorschlag |
 | **0.55.0** | Grundschema der Zonen in der Namenskonvention als draw.io-Zeichnung (Namensprofile → Grundschema der Zonen: Vorlage, hochladen mit Vorschau, Zeichnung zurück): Zonen mit Art, Kurzname, Farbe und Erkennungsmustern, Übergänge mit Absicht; Vorschläge nach dem Schema, fehlende Schema-Zonen anlegen, Absichten aus dem Schema in die Zonenmatrix übernehmen |
 | **0.56.0** | Zonenmodell nach Ebenen (Korrekturen des Anwenders): Zonen mit Knoten (VDOM, ACI-Tenant/VRF), Netze zwischen Knoten verschiedener Zonen = Übergänge („DC-EINET“), Netze in der Zone nur ohne Übergang; Vorlage DC/Edge/Transfer/Core/Distribution/Access/Public mit festen Farben; Vorschläge nach dem Modell (ACI = DC je Kunde, Internet-Firewalls = Edge Internet, Knoten zuordnen); Zonenplan je Kunde (andere Kunden je als eine Zone) |
+| **0.57.0** | Zonen je Hop in der Weg-Suche (Quell-/Zielzone, Zone je Hop, Übergänge, Absicht mit Urteil gegenüber dem Weg) und Absicht je Dienst (eingeschränkt = erlaubte Dienste, Verstoss in Matrix und Befund, Grundschema `automato_services`) |
 
-### Nächste Arbeiten (Stand 0.56.0)
+### Nächste Arbeiten (Stand 0.57.0)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
@@ -397,8 +398,8 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
    (Wörterbücher ohne Funktionsrelevanz).
 3. **Zonen/Kunden fertig:** Zonenmodell nach Ebenen mit Übergängen, Vorlage mit festen Farben und
    Plan je Kunde nach den Korrekturen des Anwenders – umgesetzt in 0.56.0 (ADR 0024 Nr. 12).
-   Weiter: Zonen je Hop in der Weg-Suche, Absicht je Dienst (eingeschränkt = nur bestimmte
-   Dienste), Doku des Kunden ohne Gerätenamen, Zugehörigkeit nach dem Weg.
+   Zonen je Hop in der Weg-Suche und Absicht je Dienst – umgesetzt in 0.57.0 (ADR 0024 Nr. 13).
+   Weiter: Doku des Kunden ohne Gerätenamen, Zugehörigkeit nach dem Weg.
 4. **Applikationen ausbauen:** Verbindungen Ende zu Ende exportieren/drucken, Abweichung Regel ↔
    Weg als Befund, Regeln direkt zuordnen, Abhängigkeiten zwischen Applikationen.
 5. **Switching/Verkabelung:** Cisco-Switches strikt lesend (Interfaces, VLANs, LLDP/CDP),
@@ -421,7 +422,9 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 | ~~0.54.0~~ | Zonen automatisch erkennen und vorschlagen – **umgesetzt in 0.54.0** (ADR 0024 Nr. 10) |
 | ~~0.55.0~~ | Grundschema der Zonen in der Namenskonvention (draw.io) – **umgesetzt in 0.55.0** (ADR 0024 Nr. 11; offen: Zonen je Kunde im Schema, Befund „ausserhalb des Schemas“) |
 | ~~0.56.0~~ | Zonenmodell nach Ebenen, Vorlage mit festen Farben, Plan je Kunde – **umgesetzt in 0.56.0** (ADR 0024 Nr. 12; Korrekturen des Anwenders nach dem Test der Zonen) |
-| danach | Zonen/Kunden fertig (Zonen je Hop, Absicht je Dienst, Kunden-Doku), Applikationen ausbauen, Switching/Verkabelung (siehe oben); Abnahme 0.43.1 ff. gegen die grössere Testumgebung (Pilot Zonen und Pläne) |
+| ~~0.57.0~~ | Zonen je Hop in der Weg-Suche, Absicht je Dienst – **umgesetzt in 0.57.0** (ADR 0024 Nr. 13) |
+| 0.58.0 | Kunden-Doku ohne Gerätenamen, Zugehörigkeit nach dem Weg (ADR 0018) |
+| danach | Applikationen ausbauen, Switching/Verkabelung (siehe oben); Abnahme 0.43.1 ff. gegen die grössere Testumgebung (Pilot Zonen und Pläne) |
 
 Frühere Reihenfolge (Stand 0.42.0, zum Nachlesen):
 

@@ -93,6 +93,7 @@ def design(data: dict) -> dict:
             f"{names.get(i['src'], i['src'])} → {names.get(i['dst'], i['dst'])}": {
                 "intent": i["intent"],
                 "note": i.get("note"),
+                **({"services": i["services"]} if i.get("services") else {}),
             }
             for i in intents
         },  # fmt: skip

@@ -7,6 +7,25 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.57.0 – 2026-10-25
+
+Zonen je Hop in der Weg-Suche und Absicht je Dienst (ROADMAP „Zonen/Kunden fertig“, ADR 0024
+Nr. 13). Migration `0052` (`zone_policy.services`); nur lesend gegenüber allen Quellsystemen.
+
+- **Absicht je Dienst:** „eingeschränkt“ nennt die erlaubten Dienste – `tcp/443`, `udp/53`,
+  `tcp/8000-8080`, `tcp`, `icmp`, `any` bzw. Service-Objekt/ACI-Filter (`FT_https`). Eine
+  erlaubende Regel mit anderen Diensten (auch `ALL`) zwischen den Zonen ist gegen die Absicht:
+  Zonenmatrix („nur tcp/443“, Verstösse), Regeln der Zelle mit „Dienste ausserhalb“, Befund
+  „öffnet tcp/22 – erlaubt sind nur tcp/443“. Unbekannte Dienste lehnt die API ab.
+- **Grundschema:** ein Übergang mit `automato_services` ist „eingeschränkt“ auf diese Dienste;
+  „Absichten übernehmen“ setzt sie mit, die Vorlage aus den Zonen trägt sie weiter.
+- **Weg-Suche mit Zonen:** Karte „Zonen“ mit Quell- und Zielzone, der Kette des Wegs mit den
+  Übergängen („LAN →LAN-EINET→ Edge Internet →DMZ-EINET→ DMZ“) und der Absicht der Zonenmatrix
+  mit Urteil gegenüber dem Weg (gegen die Absicht, Dienst erlaubt bzw. nicht, Hinweis); je Hop
+  die Zone, in der Übersicht je Weg die Kette.
+- Korrektur: das Detail einer Zelle der Zonenmatrix lädt die Regeln nach dem Speichern der
+  Absicht neu.
+
 ## 0.56.0 – 2026-10-25
 
 Zonenmodell nach Ebenen – Korrekturen des Anwenders nach dem Test der Zonen (ADR 0024 Nr. 12).

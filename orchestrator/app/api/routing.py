@@ -54,7 +54,7 @@ from app.models import (
     TopoPolicyRoute,
     TopoRoute,
 )
-from app.store import exits, paths, policy_check, resolve, topology
+from app.store import exits, paths, policy_check, resolve, topology, zone_path
 
 router = APIRouter(prefix="/routing", tags=["routing"])
 
@@ -302,11 +302,14 @@ def trace(
     if not src and not start:
         raise HTTPException(status_code=422, detail="src oder start angeben")
     wanted, note = _service(session, tid, service)
-    result = paths.trace(session, tid, dst, src, start, slack, wanted)
+    graph = paths.Graph(session, tid)
+    result = paths.trace(session, tid, dst, src, start, slack, wanted, graph=graph)
     if note:
         result["notes"].insert(0, note)
     if service and wanted is not None and result["service"] != service.strip().lower():
         result["service_name"] = service.strip()
+    # Zonen je Hop, Uebergaenge und Absicht Quell-/Zielzone (0.57.0)
+    zone_path.annotate(session, tid, result, src, dst, wanted, result.get("service_name"), graph)
     return result
 
 

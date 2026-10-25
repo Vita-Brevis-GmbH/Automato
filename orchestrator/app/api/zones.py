@@ -45,7 +45,14 @@ from app.models import (
     ZonePolicy,
 )
 from app.store import customers as customer_store
-from app.store import plan_export, plan_versions, reconcile, zone_detect, zone_struct
+from app.store import (
+    plan_export,
+    plan_versions,
+    reconcile,
+    zone_detect,
+    zone_services,
+    zone_struct,
+)
 from app.store import zones as store
 
 router = APIRouter(prefix="/zones", tags=["zones"])
@@ -103,6 +110,8 @@ class PolicyIn(BaseModel):
     dst_zone_id: int
     intent: str | None = None  # leer = keine Absicht (entfernen)
     note: str | None = Field(default=None, max_length=2000)
+    # Absicht je Dienst (0.57.0): bei „eingeschraenkt“ die erlaubten Dienste
+    services: list[str] | None = Field(default=None, max_length=200)
 
 
 def _scope(principal: Principal) -> tuple[int, ...] | None:
@@ -443,6 +452,8 @@ def apply_schema_intents(
             session.add(p)
         note = f"Grundschema: {x['schema_src']} → {x['schema_dst']}"
         p.intent, p.note = x["intent"], (f"{note} ({x['note']})" if x["note"] else note)[:2000]
+        # Dienste aus dem Schema (`automato_services`, 0.57.0), nur bei „eingeschraenkt“
+        p.services = (x.get("services") or None) if x["intent"] == "limited" else None
         p.updated_by, p.updated_at = principal.subject, datetime.now(UTC)
         session.flush()
         audit.record(
@@ -455,6 +466,7 @@ def apply_schema_intents(
                 "src_zone_id": pair[0],
                 "dst_zone_id": pair[1],
                 "intent": x["intent"],
+                "services": p.services,
                 "via": "schema",
             },  # fmt: skip
         )
@@ -514,6 +526,12 @@ def set_policy(
             raise HTTPException(status_code=404, detail="zone not found")
     if body.intent is not None and body.intent not in INTENTS:
         raise HTTPException(status_code=422, detail=f"unknown intent {body.intent!r}")
+    services = None
+    if body.intent == "limited":  # Dienste nur bei „eingeschraenkt“
+        try:
+            services = zone_services.normalize(session, tid, body.services)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
     p = session.scalar(
         select(ZonePolicy).where(
             ZonePolicy.src_zone_id == body.src_zone_id,
@@ -529,6 +547,7 @@ def set_policy(
                            dst_zone_id=body.dst_zone_id)  # fmt: skip
             session.add(p)
         p.intent, p.note = body.intent, (body.note or "").strip() or None
+        p.services = services
         p.updated_by, p.updated_at = principal.subject, datetime.now(UTC)
     session.flush()
     audit.record(
@@ -541,11 +560,13 @@ def set_policy(
             "src_zone_id": body.src_zone_id,
             "dst_zone_id": body.dst_zone_id,
             "intent": body.intent,
+            "services": services,
         },  # fmt: skip
     )
     reconcile.refresh_zone_findings(session, tid)
     return {"src": body.src_zone_id, "dst": body.dst_zone_id, "intent": body.intent,
-            "note": p.note if body.intent is not None else None}  # fmt: skip
+            "note": p.note if body.intent is not None else None,
+            "services": services or []}  # fmt: skip
 
 
 @router.get("/plan")
