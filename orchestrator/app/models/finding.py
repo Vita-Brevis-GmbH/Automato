@@ -60,6 +60,9 @@ class FindingType(enum.StrEnum):
     # „gesperrt“ bzw. dasselbe Praefix in zwei Zonen
     ZONE_POLICY_VIOLATION = "zone_policy_violation"
     ZONE_OVERLAP = "zone_overlap"
+    # Verbindungen Ende zu Ende (0.59.0, ADR 0021): erlaubende Regel einer Applikation, deren
+    # Verbindung der Weg sperrt, die nicht auf dem Weg liegt bzw. dort nicht greift
+    APP_CONNECTION_MISMATCH = "app_connection_mismatch"
 
 
 class Severity(enum.StrEnum):

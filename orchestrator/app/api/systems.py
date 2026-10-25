@@ -647,6 +647,7 @@ def _regroup(session: Session, tenant_id: int | None) -> None:
 
     reconcile.reconcile_tenant(session, tenant_id)
     parallel.mark(session, tenant_id)
+    reconcile.refresh_app_findings(session, tenant_id)  # Verbund = ein Hop (0.59.0)
 
 
 class ParallelIn(BaseModel):

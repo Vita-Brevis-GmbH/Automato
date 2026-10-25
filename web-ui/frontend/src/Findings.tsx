@@ -72,6 +72,11 @@ const DETAIL_LABEL: Record<string, string | null> = {
   pairs: null,
   notes: null,
   zones: "Zonen",
+  // Abweichung Regel ↔ Weg (0.59.0): Verbindungen stehen im Satz
+  application: "Applikation",
+  application_id: null,
+  connections: null,
+  count: "Verbindungen",
 };
 
 const SIDE: Record<string, string> = { src: "Quelle / Consumer", dst: "Ziel / Provider" };
@@ -95,7 +100,7 @@ function ruleLinks(f: Finding): { label: string; params: ViewParams }[] {
     return [{ label: f.subject_id, params: { q: String(d.value ?? f.subject_id) } }];
   }
   if (f.type === "duplicate_value") return names("names").map((n) => ({ label: n, params: { object: n } }));
-  if (["rule_incomplete", "aci_scope_unpaired", "snat_pool_missing"].includes(f.type) && d.rule_id != null)
+  if (["rule_incomplete", "aci_scope_unpaired", "snat_pool_missing", "app_connection_mismatch"].includes(f.type) && d.rule_id != null)
     return [{ label: String(d.name ?? f.subject_id), params: { rule: String(d.rule_id) } }];
   if (f.subject_kind === "device_object" && f.type !== "unused_object")
     return [{ label: f.subject_id, params: { object: f.subject_id } }];

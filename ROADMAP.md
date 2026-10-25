@@ -356,8 +356,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.57.0** | Zonen je Hop in der Weg-Suche (Quell-/Zielzone, Zone je Hop, Übergänge, Absicht mit Urteil gegenüber dem Weg) und Absicht je Dienst (eingeschränkt = erlaubte Dienste, Verstoss in Matrix und Befund, Grundschema `automato_services`) |
 | **0.57.1** | Korrektur Zonenplan je Kunde: nur die Firewalls/ACI-VRFs, die der Kunde braucht (an seinen Netzen, kürzeste Wege zu den Zonen seiner Regeln), Kopfzeilen-Filter „Kunde“ öffnet seine Ansicht |
 | **0.58.0** | Kunden fertig: Zugehörigkeit von Regeln nach dem Weg (Relevanz bzw. Zuordnung im ACI, Vorschau „nicht auf dem Weg“) und Kunden-Doku ohne Gerätenamen (neutrale Bezeichnungen in jeder Antwort an Kunden-Benutzer und im Export) |
+| **0.59.0** | Applikationen: Abweichung Regel ↔ Weg als Befund (je Regel und Applikation, nach jedem Lauf, Zeitbudget), Verbindungen Ende zu Ende in Export und Druck der Applikations-Doku |
 
-### Nächste Arbeiten (Stand 0.58.0)
+### Nächste Arbeiten (Stand 0.59.0)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
@@ -404,8 +405,9 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
    Plan je Kunde nur mit den benötigten Firewalls/ACI-VRFs – Korrektur in 0.57.1. Doku des
    Kunden ohne Gerätenamen und Zugehörigkeit nach dem Weg – umgesetzt in 0.58.0 (ADR 0018
    Schritt 4). Offen: feinere Rollen.
-4. **Applikationen ausbauen:** Verbindungen Ende zu Ende exportieren/drucken, Abweichung Regel ↔
-   Weg als Befund, Regeln direkt zuordnen, Abhängigkeiten zwischen Applikationen.
+4. **Applikationen ausbauen:** Verbindungen Ende zu Ende exportieren/drucken und Abweichung
+   Regel ↔ Weg als Befund – umgesetzt in 0.59.0 (ADR 0021). Weiter: Regeln direkt zuordnen,
+   Abhängigkeiten zwischen Applikationen.
 5. **Switching/Verkabelung:** Cisco-Switches strikt lesend (Interfaces, VLANs, LLDP/CDP),
    Verkabelung als L1/L2-Sicht – Grundlage für Redundanz und Mehrfachausfälle; vorher eigene ADR.
 
@@ -428,7 +430,8 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 | ~~0.56.0~~ | Zonenmodell nach Ebenen, Vorlage mit festen Farben, Plan je Kunde – **umgesetzt in 0.56.0** (ADR 0024 Nr. 12; Korrekturen des Anwenders nach dem Test der Zonen) |
 | ~~0.57.0~~ | Zonen je Hop in der Weg-Suche, Absicht je Dienst – **umgesetzt in 0.57.0** (ADR 0024 Nr. 13) |
 | ~~0.58.0~~ | Kunden-Doku ohne Gerätenamen, Zugehörigkeit nach dem Weg – **umgesetzt in 0.58.0** (ADR 0018 Schritt 4) |
-| 0.59.0 | Applikationen ausbauen: Verbindungen Ende zu Ende exportieren/drucken, Abweichung Regel ↔ Weg als Befund (ADR 0021), danach Regeln direkt zuordnen und Abhängigkeiten |
+| ~~0.59.0~~ | Verbindungen Ende zu Ende exportieren/drucken, Abweichung Regel ↔ Weg als Befund – **umgesetzt in 0.59.0** (ADR 0021) |
+| 0.60.0 | Applikationen: Regeln direkt zuordnen (auch any/unspezifische), Abhängigkeiten zwischen Applikationen (ADR 0012/0021) |
 | danach | Applikationen ausbauen, Switching/Verkabelung (siehe oben); Abnahme 0.43.1 ff. gegen die grössere Testumgebung (Pilot Zonen und Pläne) |
 
 Frühere Reihenfolge (Stand 0.42.0, zum Nachlesen):

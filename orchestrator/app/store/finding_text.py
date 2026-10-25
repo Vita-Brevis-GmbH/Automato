@@ -169,6 +169,33 @@ def _zone_overlap(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+_STATE = {"off_path": "nicht auf dem Weg", "other": "greift auf dem Weg nicht",
+          "decides": "entscheidet", "possible": "möglich", "unknown": "nicht prüfbar"}  # fmt: skip
+
+
+def _app_mismatch(subject: str, d: dict) -> tuple[str, str]:
+    """Abweichung Regel <-> Weg einer Applikation (0.59.0, ADR 0021)."""
+    name = d.get("name") or subject
+    on = f" auf {d['source']}" if d.get("source") else ""
+    conns = d.get("connections") or []
+    shown = [
+        f"{c.get('src')} → {c.get('dst')}{' ' + c['service'] if c.get('service') else ''} "
+        f"({c.get('why') if c.get('state') in ('off_path', 'other') else c.get('path')})"
+        for c in conns[:3]
+    ]
+    count = d.get("count") or len(conns)
+    more = f" (+{count - len(shown)} weitere)" if count > len(shown) else ""
+    return (
+        f"Regel {_q(name)}{on} erlaubt für die Applikation {_q(d.get('application'))} "
+        f"{count} Verbindung{'en' if count != 1 else ''}, die der Weg nicht öffnet: "
+        f"{'; '.join(shown)}{more}.",
+        "In der Applikations-Doku unter „Verbindungen Ende zu Ende“ bzw. in der Weg-Suche den "
+        "Weg prüfen: eine andere Regel bzw. ein anderes Gerät sperrt, die Regel liegt auf einem "
+        "Gerät ausserhalb des Wegs oder das Routing führt anders. Regel bzw. Routing anpassen – "
+        "oder die Regel entfernen, wenn sie nicht gebraucht wird.",
+    )
+
+
 _TOPO_TEXT = {
     "topo_duplicate_ip": _dup_ip,
     "topo_mask_mismatch": _mask,
@@ -177,6 +204,7 @@ _TOPO_TEXT = {
     "topo_bgp_down": _bgp,
     "zone_policy_violation": _zone_violation,
     "zone_overlap": _zone_overlap,
+    "app_connection_mismatch": _app_mismatch,
 }
 
 

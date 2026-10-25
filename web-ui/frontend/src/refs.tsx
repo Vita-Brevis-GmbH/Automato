@@ -48,6 +48,7 @@ export const FINDING_LABEL: Record<string, string> = {
   topo_bgp_down: "BGP nicht aufgebaut",
   zone_policy_violation: "Zone: gegen die Absicht",
   zone_overlap: "Netz in mehreren Zonen",
+  app_connection_mismatch: "Applikation: Regel ↔ Weg",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -82,6 +83,7 @@ export const FINDING_HINT: Record<string, string> = {
   topo_bgp_down: "BGP-Sitzung eines gelesenen Knotens nicht aufgebaut",
   zone_policy_violation: "erlaubende Regel zwischen Zonen, die laut Zonenmatrix gesperrt sind",
   zone_overlap: "dasselbe Netz in mehreren logischen Zonen",
+  app_connection_mismatch: "erlaubende Regel einer Applikation, deren Verbindung der Weg sperrt bzw. die nicht auf dem Weg liegt",
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -134,6 +136,12 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     label: "Zonen",
     help: "Regeln gegen die Absicht der Zonenmatrix, Netze in mehreren logischen Zonen",
     types: ["zone_policy_violation", "zone_overlap"],
+  },
+  {
+    key: "apps",
+    label: "Applikationen",
+    help: "Verbindungen Ende zu Ende: Regel erlaubt, der Weg öffnet die Verbindung nicht",
+    types: ["app_connection_mismatch"],
   },
   {
     key: "aci",

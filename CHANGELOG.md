@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.59.0 – 2026-10-25
+
+Applikationen ausbauen (ROADMAP, ADR 0021 Ergänzung 0.59.0): Abweichung Regel ↔ Weg als Befund,
+Verbindungen Ende zu Ende in Export und Druck. Ohne Migration; nur lesend gegenüber allen
+Quellsystemen.
+
+- **Befund „Applikation: Regel ↔ Weg“:** je erlaubender Regel und Applikation, deren Verbindung
+  der Weg sperrt, die nicht auf dem Weg liegt bzw. dort nicht greift – mit den betroffenen
+  Verbindungen (Quelle → Ziel, Dienst, Begründung). Neue Kategorie „Applikationen“ in den
+  Findings, Link auf die Regel, in der Applikations-Doku bei den Befunden. Neu berechnet nach
+  jedem Lauf und Abgleich sowie beim Ändern einer Applikation; die Triage bleibt erhalten.
+- **Zeitbudget** `AUTOMATO_APP_FINDINGS_SECONDS` (120 s) für die Neuberechnung nach einem Lauf –
+  der Rest kommt beim nächsten Lauf zuerst dran.
+- **Export und Druck:** „Export (Markdown)“ der Applikations-Doku mit dem Abschnitt
+  „Verbindungen Ende zu Ende“ (Weg mit der entscheidenden Regel je Hop, Urteil, Abweichung);
+  „Drucken / PDF“ schreibt Weg und Abweichung je Verbindung aus.
+
 ## 0.58.0 – 2026-10-25
 
 Kunden fertig (ROADMAP „Zonen/Kunden fertig“, ADR 0018 Schritt 4): Zugehörigkeit von Regeln nach

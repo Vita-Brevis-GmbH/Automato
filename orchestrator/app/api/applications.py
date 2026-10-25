@@ -283,6 +283,15 @@ def _load(session: Session, principal: Principal, application_id: int) -> Applic
     return app
 
 
+def _refresh(session: Session, tenant_id: int, application_id: int) -> None:
+    """Applikation geaendert: Abweichungen Regel <-> Weg neu (0.59.0) und - weil Befunde ueber
+    ihre Regel Kunden gehoeren - die Zugehoerigkeit der Kunden."""
+    from app.store import customers, reconcile
+
+    reconcile.refresh_app_findings(session, tenant_id, application_id)
+    customers.derive(session, tenant_id)
+
+
 def _actor(principal: Principal) -> str:
     return f"user:{principal.subject}"
 
@@ -357,6 +366,7 @@ def create_application(
             "members": len(app.members),
         },
     )
+    _refresh(session, app.tenant_id, app.id)
     return _detail(session, app)
 
 
@@ -435,6 +445,7 @@ def accept_suggestion(
         subject=str(app.id),
         detail=detail,
     )
+    _refresh(session, app.tenant_id, app.id)
     return _detail(session, app)
 
 
@@ -505,6 +516,7 @@ def update_application(
             "fields": sorted(fields),
         },
     )
+    _refresh(session, app.tenant_id, app.id)
     return _detail(session, app)
 
 
@@ -521,8 +533,10 @@ def delete_application(
         "name": app.name,
         "members": len(app.members),
     }
+    tid = app.tenant_id
     session.delete(app)
     session.flush()
+    _refresh(session, tid, application_id)  # ihre Befunde fallen weg
     audit.record(
         session,
         actor=_actor(principal),
@@ -560,6 +574,7 @@ def add_members(
                 "count": added,
             },
         )
+    _refresh(session, app.tenant_id, app.id)
     return _detail(session, app)
 
 
@@ -589,6 +604,7 @@ def remove_member(
             "ref": member.ref,
         },
     )
+    _refresh(session, app.tenant_id, app.id)
     return _detail(session, app)
 
 

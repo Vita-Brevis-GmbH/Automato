@@ -84,6 +84,7 @@ def _delete_stale_findings(session: Session, tenant_id: int) -> int:
 
     before = _count_findings(session, tenant_id)
     reconcile.reconcile_tenant(session, tenant_id)
+    reconcile.refresh_app_findings(session, tenant_id)  # Regel <-> Weg (0.59.0)
     return max(before - _count_findings(session, tenant_id), 0)
 
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Entwurf (2026-10-23), erste Fassung in 0.45.0. Baut auf ADR 0012 (Applikation), ADR 0019
+Entwurf (2026-10-23), erste Fassung in 0.45.0, Befund und Export in 0.59.0. Baut auf ADR 0012 (Applikation), ADR 0019
 (Weg Hop für Hop, Regeln und NAT auf dem Weg, ACI zwischen VRFs) und ADR 0020 (Verbund als ein
 Hop) auf. Nur lesend.
 
@@ -88,6 +88,26 @@ Abweichungen zuerst.
   zeigt den ganzen Weg mit allen Varianten.
 - Offen:
   - Regeln einer Applikation direkt zuordnen;
-  - Abhängigkeiten zwischen Applikationen;
-  - Verbindungen in Export und Druck;
-  - Abweichungen als Befund (Finding).
+  - Abhängigkeiten zwischen Applikationen.
+
+## Ergänzung 0.59.0 — Abweichung als Befund, Export und Druck
+
+- **Befund `app_connection_mismatch`** (Gegenstand Regel, `store/reconcile._app_issues`): je
+  erlaubender Regel und Applikation, deren Verbindungen der Weg nicht öffnet (`app_paths.deviates`:
+  Weg sperrt, Regel nicht auf dem Weg, greift dort nicht bzw. erlaubter Weg endet vor dem Ziel –
+  wie die Abweichung der Verbindung). Gegenstand „<Regel> · Applikation <Name>“, im Detail die
+  Applikation und bis zu 10 Verbindungen (Quelle, Ziel, Dienst, Urteil, Zustand der Regel,
+  Begründung). Der Befund gehört über seine Regel zum Kunden (ADR 0018) und erscheint in der
+  Applikations-Doku nur bei seiner Applikation.
+- **Wann:** nach jedem Lauf und nach dem Abgleich – erst nach dem Regelindex, eigener Schritt
+  (`refresh_app_findings`), damit der allgemeine Abgleich diese Befunde nicht anfasst und die
+  Triage bleibt; nach dem Löschen eines Quellsystems und bei Änderungen am Verbund; beim
+  Anlegen, Ändern, Ergänzen und Löschen einer Applikation nur für sie. Graph und Policies werden
+  für alle Applikationen einmal geladen. Fehler einer Applikation lassen den Lauf nicht
+  scheitern (ihre Befunde bleiben).
+- **Zeitbudget:** nach einem Lauf höchstens `AUTOMATO_APP_FINDINGS_SECONDS` (Standard 120 s, 0 =
+  ohne Grenze); die übrigen Applikationen behalten ihre Befunde und kommen beim nächsten Mal
+  zuerst dran.
+- **Export und Druck:** der Markdown-Export der Applikations-Doku enthält „Verbindungen Ende zu
+  Ende“ (eine Zeile je Verbindung mit dem Weg und der entscheidenden Regel je Hop, Urteil und
+  Abweichung); der Druck zeigt Weg und Abweichung ausgeschrieben. Nicht für Kunden-Benutzer.

@@ -583,6 +583,16 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       dem Weg* (ihr Gerät liegt nicht auf dem Weg), *nicht prüfbar* (kein Weg bekannt).
     - **Abweichung:** Eine Regel erlaubt, aber der Weg sperrt, sie liegt nicht auf dem Weg bzw.
       greift dort nicht. Abweichungen stehen zuerst; „nur Abweichungen und Gesperrte“ filtert.
+    - **Als Befund (0.59.0):** je erlaubender Regel und Applikation ein Befund „Applikation:
+      Regel ↔ Weg“ (Findings → Applikationen, auch in der Applikations-Doku bei den Befunden)
+      mit den Verbindungen, die der Weg nicht öffnet. Neu berechnet nach jedem Lauf, nach
+      „Abgleich“ und beim Ändern bzw. Löschen einer Applikation; Triage bleibt erhalten. Nach
+      einem Lauf höchstens `AUTOMATO_APP_FINDINGS_SECONDS` (120, `0` = ohne Grenze) – was nicht
+      drankommt, behält seine Befunde und ist beim nächsten Lauf zuerst dran (Hinweis im Log).
+    - **Export und Druck (0.59.0):** „Export (Markdown)“ der Applikations-Doku enthält den
+      Abschnitt „Verbindungen Ende zu Ende“ (Richtung, Quelle, Ziel, Dienst, Weg mit der
+      entscheidenden Regel je Hop, Urteil, Abweichung); „Drucken / PDF“ zeigt je Verbindung den
+      Weg mit den entscheidenden Regeln und die Abweichung ausgeschrieben.
     - Liegt die Quelle an keinem gelesenen Gerät (Internet, Partner), beginnt der Weg auf dem
       Gerät der Regel. „In der Weg-Suche öffnen“ zeigt den ganzen Weg mit allen Varianten.
     - Nicht für Kunden-Benutzer (zeigt die Infrastruktur).

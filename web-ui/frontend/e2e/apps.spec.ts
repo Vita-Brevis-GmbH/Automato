@@ -1,5 +1,6 @@
 // Applikationen (0.14.0): Klick öffnet die Doku – Übersicht, VMs, EPGs, Regeln mit Filtern und
 // Erklärung im Detail; Stammdaten mit externem/internem Namen und Verwendungszweck.
+import { readFileSync } from "fs";
 import { expect, rows, test } from "./fixtures";
 
 const open = async (page: import("@playwright/test").Page) => {
@@ -192,9 +193,23 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   await expect(card.locator("tbody tr.clickable")).toHaveCount(6);
   await card.locator("tbody tr.clickable").filter({ hasText: "H_db01" }).click();
   await expect(card.locator(".conn-rules")).toContainText("nicht prüfbar");
+  // Export (Markdown) mit den Verbindungen und dem Weg je Hop (0.59.0)
+  const [file] = await Promise.all([page.waitForEvent("download"), page.locator("#app-doc-export").click()]);
+  const text = readFileSync((await file.path())!, "utf-8");
+  expect(text).toContain("## Verbindungen Ende zu Ende");
+  expect(text).toContain("| Richtung | Quelle | Ziel | Dienst | Weg (entscheidende Regel) | Urteil | Abweichung |");
+  expect(text).toMatch(/EN_rt.*apic-01 · VRF TE:VRF1.*Contract CT_rt:SJ_1 erlaubt – der Weg ist gesperrt/);
   // in die Weg-Suche mit Quelle, Ziel und Dienst
   await card.locator("button", { hasText: "In der Weg-Suche öffnen" }).click();
   await expect(page).toHaveURL(/#wege\?src=10\.10\.10\.5&dst=172\.16\.5\.9&service=tcp%2F443/);
   await expect(page.getByPlaceholder("Ziel: IP, Netz oder Name")).toHaveValue("172.16.5.9");
   await expect(page.getByPlaceholder("Dienst: tcp/443 oder FT_https")).toHaveValue("tcp/443");
+
+  // Abweichung als Befund (0.59.0): Kategorie Applikationen, Satz mit der Verbindung
+  await page.goto("/#findings");
+  const group = page.locator(".card.fgroup", { hasText: "Applikationen" });
+  await expect(group).toContainText("Applikation: Regel ↔ Weg");
+  await group.locator(".fline", { hasText: "Applikation: Regel ↔ Weg" }).click();
+  const finding = page.locator("tbody tr", { hasText: "CT_rt" }).first();
+  await expect(finding).toContainText("erlaubt für die Applikation „Webshop“");
 });

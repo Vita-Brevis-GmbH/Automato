@@ -31,6 +31,7 @@ from app.models import (
     EpgSubnet,
     Finding,
     FindingStatus,
+    FindingType,
     NetworkObject,
     ObjectCategory,
     ObjectClass,
@@ -705,7 +706,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     for h in possible:
         rule_epgs[h["rule_id"]] |= set(epgs_of.get(h["system"], []))
     findings = _app_findings(session, tid, systems, epg_out, set(ordered), rule_epgs,
-                             restricted=rule_ids is not None)  # fmt: skip
+                             restricted=rule_ids is not None, app_id=app.id)  # fmt: skip
     tenant = session.get(Tenant, tid)
     return {
         "tenant_code": tenant.code if tenant else None,
@@ -855,6 +856,7 @@ def _app_findings(
     rule_ids: set[int],
     rule_epgs: dict[int, set[str]] | None = None,
     restricted: bool = False,
+    app_id: int | None = None,
 ) -> list[dict]:
     """Offene (bzw. bestaetigte) Befunde der Applikation: zu ihren Regeln, Servern (Objekt im
     IPAM bzw. auf der Firewall), VMs, Portgruppen und den Subnetzen ihrer EPGs - je Befund die
@@ -885,6 +887,8 @@ def _app_findings(
         .order_by(Finding.type, Finding.subject_id)
     ):
         detail = f.detail if isinstance(f.detail, dict) else {}
+        if f.type is FindingType.APP_CONNECTION_MISMATCH and detail.get("application_id") != app_id:
+            continue  # Abweichung Regel <-> Weg einer anderen Applikation (0.59.0)
         rule_id = detail.get("rule_id") if f.subject_kind == SubjectKind.RULE else None
         if (f.subject_kind, f.subject_id) not in wanted and rule_id not in rule_ids:
             continue

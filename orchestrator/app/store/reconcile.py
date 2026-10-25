@@ -90,7 +90,9 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     comparison = parallel.compare(session, tenant_id)
     session.info[("parallel", tenant_id)] = comparison
     issues += comparison.issues
-    _sync_findings(session, tenant_id, issues)
+    # Abweichungen Regel <-> Weg der Applikationen (0.59.0) brauchen den neuen Regelindex -
+    # eigener Schritt (`refresh_app_findings`), hier unberuehrt
+    _sync_findings(session, tenant_id, issues, keep=lambda f: f.type in APP_TYPES)
     counts: dict[str, int] = defaultdict(int)
     for issue in {i.key: i for i in issues}.values():
         counts[issue.type.value] += 1
@@ -363,6 +365,117 @@ def refresh_zone_findings(session: Session, tenant_id: int) -> int:
     den ganzen Abgleich; Triage-Status bleibt wie sonst erhalten."""
     issues = _zone_issues(session, tenant_id)
     _sync_findings(session, tenant_id, issues, types=ZONE_TYPES)
+    return len(issues)
+
+
+APP_TYPES = frozenset({FindingType.APP_CONNECTION_MISMATCH})
+APP_CONNECTIONS = 10  # Verbindungen je Befund im Detail
+
+
+_app_next: dict[int, int] = {}  # je Mandant: hier beginnt die naechste Neuberechnung
+
+
+def _app_issues(session: Session, tenant_id: int, apps: list,
+                budget: float | None = None) -> tuple[list[Issue], set[int]]:  # fmt: skip
+    """Abweichung Regel <-> Weg (0.59.0, ADR 0021): je erlaubender Regel und Applikation ein
+    Befund mit den Verbindungen, die der Weg nicht oeffnet (`app_paths`). Graph und Policies
+    einmal fuer alle Applikationen; nach `budget` Sekunden ist Schluss. -> (Befunde,
+    Applikationen ohne Ergebnis - Fehler bzw. Zeitbudget; deren Befunde bleiben)."""
+    import logging
+    import time
+
+    from app.store import app_paths, paths, policy_check
+
+    if not apps:
+        return [], set()
+    started = time.monotonic()
+    graph = paths.Graph(session, tenant_id)
+    checks = policy_check.Checks.load(session, tenant_id)
+    names = _source_names(session, tenant_id)
+    out: list[Issue] = []
+    failed: set[int] = set()
+    for n, app in enumerate(apps):
+        if budget and time.monotonic() - started > budget:
+            rest = apps[n:]
+            failed |= {a.id for a in rest}
+            _app_next[tenant_id] = rest[0].id
+            logging.getLogger(__name__).warning(
+                "Abweichungen Regel <-> Weg: %d von %d Applikationen nach %.0f s (Zeitbudget), "
+                "Rest beim naechsten Mal", n, len(apps), budget)  # fmt: skip
+            break
+        try:
+            with session.begin_nested():
+                result = app_paths.build(session, app, graph=graph, checks=checks)
+        except Exception:  # noqa: BLE001 - eine Applikation darf den Lauf nicht scheitern lassen
+            logging.getLogger(__name__).exception("Verbindungen von Applikation %s", app.id)
+            failed.add(app.id)
+            continue
+        per_rule: dict[int, list[dict]] = defaultdict(list)
+        for c in result["connections"]:
+            for st in c["rules"]:
+                if not app_paths.deviates(st, c["verdict"], c["reached"]):
+                    continue
+                per_rule[st["rule_id"]].append({
+                    "src": c["src"]["label"], "dst": c["dst"]["label"],
+                    "service": c["service"], "verdict": c["verdict"],
+                    "reached": c["reached"], "state": st["state"], "why": st["text"],
+                    "path": c["text"],
+                })  # fmt: skip
+        rules = {r.id: r for r in session.scalars(select(Rule).where(
+            Rule.id.in_(list(per_rule))))} if per_rule else {}  # fmt: skip
+        for rid, conns in per_rule.items():
+            r = rules.get(rid)
+            if r is None:
+                continue
+            raw = r.raw if isinstance(r.raw, dict) else {}
+            aci = r.domain is RuleDomain.ACI_CONTRACT
+            label = (r.name or f"#{r.external_id}") + vdom_suffix(r.vdom)
+            subject = f"{raw.get('tenant')}/{label}" if aci and raw.get("tenant") else label
+            out.append(Issue(
+                FindingType.APP_CONNECTION_MISMATCH, SubjectKind.RULE,
+                f"{subject} · Applikation {app.name}", r.source_system_id, Severity.WARNING,
+                detail={
+                    "rule_id": r.id, "external_id": r.external_id, "domain": r.domain.value,
+                    "name": label, "source_system_id": r.source_system_id,
+                    "source": names.get(r.source_system_id),
+                    **({"vdom": r.vdom} if r.vdom else {}),
+                    "tenant": raw.get("tenant") if aci else None,
+                    "application_id": app.id, "application": app.name,
+                    "count": len(conns), "connections": conns[:APP_CONNECTIONS],
+                },
+            ))  # fmt: skip
+    return out, failed
+
+
+def refresh_app_findings(session: Session, tenant_id: int | None,
+                         application_id: int | None = None) -> int:  # fmt: skip
+    """Abweichungen Regel <-> Weg neu berechnen: alle Applikationen des Mandanten (nach einem
+    Lauf) bzw. eine (nach dem Aendern, nach dem Loeschen ihre Befunde entfernen). Triage-Status
+    bleibt wie sonst erhalten."""
+    from app.models import Application
+
+    if tenant_id is None:
+        return 0
+    session.flush()
+    stmt = select(Application).where(Application.tenant_id == tenant_id)
+    if application_id is not None:
+        stmt = stmt.where(Application.id == application_id)
+    apps = list(session.scalars(stmt.order_by(Application.id)))
+    budget = None
+    if application_id is None:
+        from app.config import get_settings
+
+        budget = get_settings().app_findings_seconds or None
+        start = _app_next.pop(tenant_id, None)  # zuerst, was beim letzten Mal nicht drankam
+        if start is not None:
+            apps = [a for a in apps if a.id >= start] + [a for a in apps if a.id < start]
+    issues, failed = _app_issues(session, tenant_id, apps, budget)
+
+    def keep(f: Finding) -> bool:
+        app = (f.detail or {}).get("application_id") if isinstance(f.detail, dict) else None
+        return app in failed or (application_id is not None and app != application_id)
+
+    _sync_findings(session, tenant_id, issues, types=APP_TYPES, keep=keep)
     return len(issues)
 
 
@@ -832,8 +945,9 @@ def _virtual_issues(session: Session, tenant_id: int, ctx) -> list[Issue]:
 
 
 def _sync_findings(session: Session, tenant_id: int, issues: list[Issue],
-                   types: frozenset | None = None) -> None:  # fmt: skip
-    """Gespeicherte Befunde auf `issues` bringen; mit `types` nur Befunde dieser Typen."""
+                   types: frozenset | None = None, keep=None) -> None:  # fmt: skip
+    """Gespeicherte Befunde auf `issues` bringen; mit `types` nur Befunde dieser Typen, `keep`
+    (Befund -> bool) laesst gespeicherte Befunde ausserhalb des Abgleichs unberuehrt."""
     now = datetime.now(UTC)
     wanted = {i.key: i for i in issues}
     existing: dict[tuple, Finding] = {}
@@ -842,6 +956,8 @@ def _sync_findings(session: Session, tenant_id: int, issues: list[Issue],
         stmt = stmt.where(Finding.type.in_(list(types)))
     for f in session.scalars(stmt):
         key = (f.type, f.subject_kind, f.subject_id, f.source_system_id)
+        if keep is not None and key not in wanted and keep(f):
+            continue
         if key in wanted and key not in existing:
             existing[key] = f
         else:

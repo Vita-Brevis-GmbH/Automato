@@ -9,8 +9,10 @@ import {
   AppDocFinding,
   AppDocHit,
   AppDocSystem2,
+  AppConnections,
   ApplicationDoc,
   DocScope,
+  fetchAppConnections,
   fetchAppDoc,
   fetchSystems,
   Purpose,
@@ -18,7 +20,7 @@ import {
   System,
 } from "./api";
 import type { View, ViewParams } from "./App";
-import ConnectionsCard from "./AppConnections";
+import ConnectionsCard, { connectionsMarkdown } from "./AppConnections";
 import { DocTableView, tablesMarkdown } from "./AppDoc";
 import type { Me } from "./auth";
 import { findingLabel, serviceNames, useVdomShown } from "./refs";
@@ -129,6 +131,7 @@ export default function ApplicationDocView({
   const [rule, setRule] = useState<number | null>(null);
   const [showTables, setShowTables] = useState(false);
   const [showEmpty, setShowEmpty] = useState(false);
+  const [conns, setConns] = useState<AppConnections | null>(null); // für den Export (0.59.0)
   const vdomShown = useVdomShown();
 
   useEffect(() => {
@@ -201,6 +204,12 @@ export default function ApplicationDocView({
     setShowTables(true);
     setTimeout(() => window.print(), 50);
   };
+  // Export mit den Verbindungen Ende zu Ende (0.59.0) – noch nicht geladen: jetzt holen
+  const exportMarkdown = async () => {
+    let c = me.isCustomer ? null : conns;
+    if (!me.isCustomer && c == null) c = await fetchAppConnections(id).catch(() => null);
+    download(`${a.name}.md`, docMarkdown(doc, sourceName, c));
+  };
   const tables = doc.tables.filter((t) => showEmpty || t.rows.length > 0);
   const selected = rule != null ? doc.rules.find((r) => r.id === rule) ?? null : null;
 
@@ -219,7 +228,7 @@ export default function ApplicationDocView({
             Bearbeiten
           </button>
         )}
-        <button className="btn btn-ghost btn-sm" onClick={() => download(`${a.name}.md`, docMarkdown(doc, sourceName))}>
+        <button className="btn btn-ghost btn-sm" id="app-doc-export" onClick={exportMarkdown}>
           <Icon name="download" size={14} /> Export (Markdown)
         </button>
         <button className="btn btn-ghost btn-sm" onClick={print} title="Drucken oder als PDF sichern">
@@ -315,7 +324,7 @@ export default function ApplicationDocView({
       />
 
       {/* Verbindungen Ende zu Ende (0.45.0) – zeigt die Infrastruktur, nicht für Kunden-Benutzer */}
-      {!me.isCustomer && <ConnectionsCard appId={id} reload={reload} onRule={setRule} onGo={onGo} />}
+      {!me.isCustomer && <ConnectionsCard appId={id} reload={reload} onRule={setRule} onGo={onGo} onData={setConns} />}
 
       <div className="card" id="app-rules" style={{ marginTop: 14 }}>
         <div className="card-head">
@@ -1106,7 +1115,7 @@ function FindingsCard({ doc, onRule, onGo }: { doc: ApplicationDoc; onRule: (id:
 
 const md = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
-function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string): string {
+function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string, conns: AppConnections | null = null): string {
   const a = doc.application;
   const s = doc.summary;
   const lines = [`# Applikation ${a.name}`, ""];
@@ -1156,5 +1165,5 @@ function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string): s
     );
   }
   lines.push("");
-  return lines.concat(tablesMarkdown(doc.tables)).join("\n");
+  return lines.concat(conns ? connectionsMarkdown(conns) : [], tablesMarkdown(doc.tables)).join("\n");
 }

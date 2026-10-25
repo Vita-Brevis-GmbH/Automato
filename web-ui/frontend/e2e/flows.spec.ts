@@ -37,7 +37,9 @@ test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page })
 
 test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page }) => {
   await page.goto("/#findings");
-  await expect(page.locator(".fgroup")).toHaveCount(6);
+  await expect(page.locator(".fgroup")).toHaveCount(7);
+  // seit 0.59.0: Abweichung Regel ↔ Weg der Applikation Webshop (CT_rt)
+  await expect(page.locator(".fgroup", { hasText: "Applikationen" })).toContainText("Applikation: Regel ↔ Weg");
   // seit 0.50.0: Plausibilität der Topologie (statische Route ohne Wirkung in den Beispieldaten)
   await expect(page.locator(".fgroup", { hasText: "Topologie" })).toContainText("Statische Route ohne Wirkung");
   // seit 0.51.0: Regeln gegen die Absicht der Zonenmatrix (LAN -> DMZ gesperrt)

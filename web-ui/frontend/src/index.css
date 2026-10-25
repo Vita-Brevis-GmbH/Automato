@@ -506,7 +506,9 @@ pre.block { background: var(--surface-2); border: 1px solid var(--border); borde
 
 /* Druck (Applikations-Doku "Drucken / PDF"): nur der Inhalt, ohne Navigation */
 .print-title { display: none; }
+.print-only { display: none; }
 @media print {
+  .print-only { display: block !important; }
   .topbrand, .topbar, .nav, .no-print, .page-head { display: none !important; }
   .app { display: block; height: auto; }
   .main { overflow: visible; padding: 0; }

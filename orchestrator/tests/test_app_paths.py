@@ -135,3 +135,76 @@ def test_kunden_benutzer_ohne_verbindungen(client):
     r = client.get(f"/applications/{app['id']}/connections",
                    headers={"X-Dev-Roles": "customer", "X-Dev-Customers": "1"})  # fmt: skip
     assert r.status_code == 403
+
+
+def _mismatches(client, tid) -> dict[str, dict]:
+    r = client.get("/findings", params={"tenant_id": tid, "type": "app_connection_mismatch",
+                                        "limit": 100})  # fmt: skip
+    assert r.status_code == 200, r.text
+    return {f["subject_id"]: f for f in r.json()}
+
+
+def test_abweichung_regel_weg_als_befund(client):
+    """0.59.0 (ADR 0021): je erlaubender Regel und Applikation ein Befund, wenn ihre Verbindung
+    der Weg sperrt bzw. sie nicht auf dem Weg liegt - nach dem Anlegen bzw. Aendern der
+    Applikation und nach jedem Lauf; Triage bleibt beim Abgleich erhalten."""
+    tid = _seed(client)
+    assert _mismatches(client, tid) == {}  # ohne Applikation keine
+    body = {"name": "Web", "members": [{"kind": "epg", "ref": ar.WEB}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).json()
+    found = _mismatches(client, tid)
+    assert set(found) == {"web-lan-alt · Applikation Web", "web-lan-8080 · Applikation Web"}
+    alt = found["web-lan-alt · Applikation Web"]
+    assert alt["detail"]["application_id"] == app["id"] and alt["detail"]["count"] == 1
+    assert alt["message"].startswith("Regel „web-lan-alt“ auf fw-03 erlaubt für die Applikation")
+    assert "fw-03 liegt nicht auf dem Weg dieser Verbindung" in alt["message"]
+    blocked = found["web-lan-8080 · Applikation Web"]["message"]
+    assert "10.60.0.5 tcp/8080 (gesperrt an apic-01 · VRF TE:VRF1)" in blocked
+    # in der Doku der Applikation bei den Befunden
+    doc = client.get(f"/applications/{app['id']}/doc").json()
+    assert {f["type"] for f in doc["findings"]} >= {"app_connection_mismatch"}
+
+    # Triage bleibt beim Abgleich (Befunde werden nicht neu angelegt)
+    fid = alt["id"]
+    r = client.patch(f"/findings/{fid}", json={"status": "acknowledged"}, headers=OP)
+    assert r.status_code == 200, r.text
+    assert client.post("/reconcile", params={"tenant_id": tid}, headers=OP).status_code == 200
+    again = _mismatches(client, tid)["web-lan-alt · Applikation Web"]
+    assert again["id"] == fid and again["status"] == "acknowledged"
+    # neuer Lauf von fw-03 ohne die Regel: der Befund faellt weg
+    sid = next(s["id"] for s in client.get("/systems", params={"tenant_id": tid}).json()
+               if s["name"] == "fw-03")  # fmt: skip
+    tp._deliver(client, tid, sid, "fortigate", {**FW3, "rules": []})
+    assert set(_mismatches(client, tid)) == {"web-lan-8080 · Applikation Web"}
+
+    # Name geaendert: Befund mit neuem Namen; geloescht: Befunde weg
+    r = client.patch(f"/applications/{app['id']}", json={"name": "Webshop"}, headers=OP)
+    assert r.status_code == 200, r.text
+    assert set(_mismatches(client, tid)) == {"web-lan-8080 · Applikation Webshop"}
+    assert client.delete(f"/applications/{app['id']}", headers=OP).status_code == 204
+    assert _mismatches(client, tid) == {}
+
+
+def test_zeitbudget_der_neuberechnung(client, session_factory):
+    """Nach dem Zeitbudget ist Schluss: die uebrigen Applikationen behalten ihre Befunde und
+    sind beim naechsten Mal zuerst dran."""
+    from app.models import Application
+    from app.store import reconcile
+
+    tid = _seed(client)
+    body = {"name": "Web", "members": [{"kind": "epg", "ref": ar.WEB}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).json()
+    before = _mismatches(client, tid)
+    assert len(before) == 2
+    s = session_factory()
+    apps = list(s.query(Application).filter(Application.tenant_id == tid))
+    issues, failed = reconcile._app_issues(s, tid, apps, budget=1e-9)
+    assert issues == [] and failed == {app["id"]}
+    assert reconcile._app_next.pop(tid) == app["id"]
+    s.close()
+    # ohne Grenze wieder alle
+    s = session_factory()
+    apps = list(s.query(Application).filter(Application.tenant_id == tid))
+    issues, failed = reconcile._app_issues(s, tid, apps, budget=None)
+    assert len(issues) == 2 and failed == set()
+    s.close()

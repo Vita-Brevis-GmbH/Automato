@@ -63,8 +63,11 @@ class _Conn:
     starts: list[str] = field(default_factory=list)  # Geraet der Regel (Quelle unbekannt)
 
 
-def build(session: Session, app: Application, doc: dict | None = None) -> dict:
-    """Verbindungen der Applikation mit Weg, Urteil je Hop und Abgleich mit den Regeln."""
+def build(session: Session, app: Application, doc: dict | None = None,
+          graph: paths.Graph | None = None,
+          checks: policy_check.Checks | None = None) -> dict:  # fmt: skip
+    """Verbindungen der Applikation mit Weg, Urteil je Hop und Abgleich mit den Regeln. Graph
+    und Policies lassen sich fuer mehrere Applikationen teilen (Befunde, 0.59.0)."""
     from app.store import applications  # spaet: applications nutzt appdoc wie dieses Modul
 
     tid = app.tenant_id
@@ -78,8 +81,8 @@ def build(session: Session, app: Application, doc: dict | None = None) -> dict:
         )
     }
     conns, notes = _candidates(session, data, doc, rules)
-    graph = paths.Graph(session, tid)
-    checks = policy_check.Checks.load(session, tid)
+    graph = graph or paths.Graph(session, tid)
+    checks = checks or policy_check.Checks.load(session, tid)
     out: list[dict] = []
     cut = len(conns) > MAX_TRACES
     for c in list(conns.values())[:MAX_TRACES]:
@@ -616,6 +619,17 @@ def _state(rule: Rule, active: list[dict], data: appdoc.TenantData) -> dict:
     else:
         text = f"passt auf dem Weg nicht ({r.get('text') or 'Ein-/Ausgang, Quelle, Ziel, Dienst'})"
     return base | {"state": "other", "text": text}
+
+
+def deviates(state: dict, verdict: str, reached: bool) -> bool:
+    """Weicht diese Regel der Verbindung vom Weg ab (Befund, 0.59.0)? Eine erlaubende Regel,
+    deren Weg sperrt, die nicht auf dem Weg liegt, dort nicht greift (Weg nicht erlaubt) bzw.
+    deren erlaubter Weg vor dem Ziel endet - wie `_mismatch`."""
+    if state["action"] != "allow":
+        return False
+    return (verdict == "deny" or state["state"] == "off_path"
+            or (state["state"] == "other" and verdict != "allow")
+            or (verdict == "allow" and not reached))  # fmt: skip
 
 
 def _mismatch(states: list[dict], verdict: str, text: str, reached: bool) -> list[str]:

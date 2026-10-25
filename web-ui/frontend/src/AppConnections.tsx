@@ -43,6 +43,43 @@ function SideLabel({ s }: { s: AppConnSide }) {
   );
 }
 
+// Hop mit der entscheidenden Policy bzw. dem Contract – für Druck und Export (0.59.0)
+export function hopText(h: AppConnHop): string {
+  const deciding = h.checks.flatMap((c) =>
+    c.rules.filter((r) => r.decides).map((r) => (h.checks.length > 1 ? `${c.label}: ` : "") + (r.label || r.name || r.external_id || "Regel")),
+  );
+  return deciding.length ? `${h.label} (${[...new Set(deciding)].join(", ")})` : h.label;
+}
+
+const sideText = (s: AppConnSide) => {
+  const more = s.kind === "system" && s.systems.length + s.more > 1 ? ` +${s.systems.length + s.more - 1}` : "";
+  return `${s.label}${more} (${s.ip}${s.name ? ` · ${s.name}` : ""})`;
+};
+
+const mdCell = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
+
+// Verbindungen Ende zu Ende als Markdown (Export der Applikations-Doku, 0.59.0)
+export function connectionsMarkdown(data: AppConnections): string[] {
+  const s = data.summary;
+  const lines = ["## Verbindungen Ende zu Ende", ""];
+  lines.push(
+    `${s.total} Verbindungen · ${s.allow} erlaubt · ${s.blocked} gesperrt · ${s.open} abhängig bzw. offen · ${s.mismatch} Abweichungen`,
+    "",
+  );
+  data.notes.forEach((n) => lines.push(`> ${n}`, ""));
+  if (!data.connections.length) return [...lines, "Keine prüfbaren Verbindungen.", ""];
+  lines.push("| Richtung | Quelle | Ziel | Dienst | Weg (entscheidende Regel) | Urteil | Abweichung |", "| --- | --- | --- | --- | --- | --- | --- |");
+  for (const c of data.connections) {
+    const way = c.hops.map(hopText).join(" → ") + (!c.reached && c.end ? ` – ${c.end.text}` : "");
+    const verdict = c.text || (VERDICT[c.verdict]?.[1] ?? c.verdict);
+    lines.push(
+      `| ${c.direction === "in" ? "eingehend" : "ausgehend"} | ${mdCell(sideText(c.src))} | ${mdCell(sideText(c.dst))} | ${c.service ?? "alle"} | ${mdCell(way || "–")} | ${mdCell(verdict)} | ${mdCell(c.mismatch.join("; "))} |`,
+    );
+  }
+  lines.push("");
+  return lines;
+}
+
 // Weg als Folge der Knoten, je Knoten nach seinem Urteil eingefärbt
 function HopChain({ hops }: { hops: AppConnHop[] }) {
   if (!hops.length) return <Dash />;
@@ -187,11 +224,13 @@ export default function ConnectionsCard({
   reload,
   onRule,
   onGo,
+  onData,
 }: {
   appId: number;
   reload: number;
   onRule: (id: number) => void;
   onGo?: Go;
+  onData?: (d: AppConnections | null) => void; // für Export der Doku (0.59.0)
 }) {
   const [data, setData] = useState<AppConnections | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -202,12 +241,18 @@ export default function ConnectionsCard({
     let current = true;
     setData(null);
     setError(null);
+    onData?.(null);
     fetchAppConnections(appId)
-      .then((d) => current && setData(d))
+      .then((d) => {
+        if (!current) return;
+        setData(d);
+        onData?.(d);
+      })
       .catch((e) => current && setError(e));
     return () => {
       current = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId, reload]);
   const needle = q.trim().toLowerCase();
   const rows = (data?.connections ?? []).filter((c) => {
@@ -300,6 +345,7 @@ export default function ConnectionsCard({
                     <td>
                       <HopChain hops={c.hops} />
                       {!c.reached && c.end && <div className="faint">{c.end.text}</div>}
+                      {c.hops.length > 0 && <div className="print-only faint">{c.hops.map(hopText).join(" → ")}</div>}
                     </td>
                     <td>
                       <Verdict v={c.verdict} title={c.text} />
@@ -311,6 +357,7 @@ export default function ConnectionsCard({
                           Abweichung
                         </span>
                       )}
+                      {c.mismatch.length > 0 && <div className="print-only conn-why">{c.mismatch.join("; ")}</div>}
                     </td>
                   </tr>
                   {open === c.key && (

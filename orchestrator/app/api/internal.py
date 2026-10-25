@@ -159,6 +159,7 @@ def _finish_reference_run(session: Session, run, result: CollectorResult, actor)
                 reconcile.reconcile_tenant(session, run.tenant_id)
                 # Suchtext der Regeln enthaelt DNS-Namen aus dem IPAM -> Index neu
                 rule_index.rebuild(session, run.tenant_id)
+                reconcile.refresh_app_findings(session, run.tenant_id)  # Regel <-> Weg
                 customers.derive(session, run.tenant_id)  # Kunden (ADR 0018)
             run.status = RunStatus.COMPLETED
         except Exception as exc:  # noqa: BLE001 - wie beim Ingest: Lauf failed statt 500

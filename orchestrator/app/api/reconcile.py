@@ -95,8 +95,9 @@ def run_reconcile(
 ) -> dict:
     tid = _tenant(principal, tenant_id)
     counts = reconcile.reconcile_tenant(session, tid)
-    customers.derive(session, tid)  # Findings gehoeren Kunden ueber ihr Subjekt (ADR 0018)
     rule_index.rebuild(session, tid)  # Werte/DNS-Namen aus dem IPAM im Suchtext
+    reconcile.refresh_app_findings(session, tid)  # Regel <-> Weg (0.59.0), mit dem Index
+    customers.derive(session, tid)  # Findings gehoeren Kunden ueber ihr Subjekt (ADR 0018)
     audit.record(
         session,
         actor=f"user:{principal.subject}",
