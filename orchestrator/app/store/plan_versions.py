@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app import __version__
 from app.models import Customer, SourceSystem, ZonePlanVersion
+from app.store import plan_view
 from app.store import zones as zone_store
 
 FORMAT = 2  # 0.56.0: Plan nach dem Zonenmodell (Knoten, Uebergaenge)
@@ -39,6 +40,8 @@ def snapshot(session: Session, tenant_id: int) -> dict:
         ).all()
     )
     plan = zone_store.plan(session, tenant_id, everything=True)
+    # Anordnung von Hand (0.61.0): die Version zeichnet wie beim Speichern
+    plan["positions"] = plan_view.positions(session, tenant_id, "all")
     nets = {z["id"]: z for z in plan["zones"]}
     zones = [
         {

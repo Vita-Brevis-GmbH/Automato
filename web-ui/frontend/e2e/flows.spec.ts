@@ -943,6 +943,68 @@ test("Weg-Suche: Zonen je Hop und Absicht zwischen Quell- und Zielzone", async (
   expect(problems).toEqual([]);
 });
 
+test("Zonenplan übersichtlich: Suche, Fokus, Ebenen und Zonen ziehen (0.61.0)", async ({ page, problems }) => {
+  await page.goto("/#design");
+  await page.click(".tabbar button:has-text('Zonenplan')");
+  const titles = page.locator("#zone-plan .zp-zone2 .zp-title");
+  const zone = (name: string) => page.locator("#zone-plan .zp-zone2", { has: page.locator(".zp-title", { hasText: new RegExp(`^${name}`) }) });
+  await expect(zone("LAN")).toHaveCount(1);
+  const all = await titles.count();
+
+  // Suche mit den direkten Nachbarn: DMZ und Edge Internet, nicht LAN
+  await page.getByLabel("Im Plan suchen").fill("DMZ");
+  await expect(page.locator("#zone-plan-filtered")).toContainText("Suche „DMZ“ + Nachbarn");
+  await expect(zone("Edge Internet")).toHaveCount(1);
+  await expect(zone("LAN")).toHaveCount(0);
+  await page.locator("#zone-plan-filter select[aria-label='Nachbarn']").selectOption("0");
+  await expect(zone("Edge Internet")).toHaveCount(0);
+  await expect(zone("DMZ")).toHaveCount(1);
+  // Export zeigt denselben Ausschnitt
+  const [file] = await Promise.all([page.waitForEvent("download"), page.locator(".plan-export button", { hasText: "SVG" }).click()]);
+  const svg = await (await file.createReadStream())!.toArray().then((parts) => Buffer.concat(parts).toString("utf8"));
+  expect(svg).toContain("Suche „DMZ“");
+  expect(svg).not.toContain(">LAN<");
+  await page.click("#zone-plan-filter button:has-text('Filter zurücksetzen')");
+  await expect(titles).toHaveCount(all);
+
+  // Ebenen: Edge ausblenden, Namen der Übergänge ausblenden – und wieder zeigen
+  await page.click("#zone-plan-layers summary");
+  await page.locator("#zone-plan-layers label", { hasText: /^ ?Edge$/ }).locator("input").uncheck();
+  await expect(zone("Edge Internet")).toHaveCount(0);
+  await expect(page.locator("#zone-plan-layers summary")).toContainText("1 ausgeblendet");
+  await page.locator("#zone-plan-layers label", { hasText: /^ ?Edge$/ }).locator("input").check();
+  await page.locator("#zone-plan-layers label", { hasText: "Namen der Übergänge" }).locator("input").uncheck();
+  await expect(zone("Edge Internet")).toHaveCount(1);
+  await expect(page.locator("#zone-plan .zp-edge text")).toHaveCount(0);
+  await page.locator("#zone-plan-layers label", { hasText: "Namen der Übergänge" }).locator("input").check();
+  await expect(page.locator("#zone-plan .zp-edge text").first()).toBeVisible();
+  await page.click("#zone-plan-layers summary");
+
+  // Doppelklick = Fokus auf die Zone (mit Nachbarn), Fokus wieder entfernen
+  await zone("LAN").dblclick();
+  await expect(page.locator("#zone-plan-focus")).toContainText("LAN");
+  await expect(zone("DMZ")).toHaveCount(0);
+  await page.locator("#zone-plan-focus button[aria-label='Fokus LAN entfernen']").click();
+  await expect(titles).toHaveCount(all);
+
+  // LAN ziehen: Anordnung gespeichert (Operator), Linien folgen; zurücksetzen
+  const box = (await zone("LAN").locator("rect").boundingBox())!;
+  const before = await zone("LAN").getAttribute("data-y");
+  await page.mouse.move(box.x + 30, box.y + 12);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 90, box.y + 130, { steps: 6 });
+  const saved = page.waitForResponse((r) => r.url().includes("/zones/plan/arrangement") && r.request().method() === "PUT");
+  await page.mouse.up();
+  expect((await saved).status()).toBe(200);
+  await expect(page.locator("#zone-plan-arrange")).toContainText("Anordnung gespeichert");
+  await expect(zone("LAN")).not.toHaveAttribute("data-y", before ?? "");
+  page.once("dialog", (d) => d.accept());
+  await page.click("#zone-plan-arrange button:has-text('Anordnung zurücksetzen')");
+  await expect(page.locator("#zone-plan-arrange")).not.toContainText("Anordnung gespeichert");
+  await expect(zone("LAN")).toHaveAttribute("data-y", before ?? "");
+  expect(problems).toEqual([]);
+});
+
 test("Netzwerkdesign: Export (draw.io, SVG, PDF) und Versionen des Zonenplans", async ({ page, problems }) => {
   await page.goto("/#design");
   await page.click(".tabbar button:has-text('Zonenplan')");

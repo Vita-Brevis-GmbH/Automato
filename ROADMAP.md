@@ -358,8 +358,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.58.0** | Kunden fertig: Zugehörigkeit von Regeln nach dem Weg (Relevanz bzw. Zuordnung im ACI, Vorschau „nicht auf dem Weg“) und Kunden-Doku ohne Gerätenamen (neutrale Bezeichnungen in jeder Antwort an Kunden-Benutzer und im Export) |
 | **0.59.0** | Applikationen: Abweichung Regel ↔ Weg als Befund (je Regel und Applikation, nach jedem Lauf, Zeitbudget), Verbindungen Ende zu Ende in Export und Druck der Applikations-Doku |
 | **0.60.0** | Applikationen: Regeln direkt zuordnen bzw. ausschliessen (stabiler Verweis über Läufe, auch any/unspezifische; in der Applikations-Doku und in „Regeln & Contracts“), Abhängigkeiten zwischen Applikationen (nutzt / wird genutzt von, mit Regeln) |
+| **0.61.0** | Zonenplan übersichtlich: Suche und Fokus mit Nachbarn, Ebenen und Elemente ausblenden, Zonen ziehen (Anordnung je Ansicht gespeichert); Export und Versionen wie die Ansicht |
 
-### Nächste Arbeiten (Stand 0.60.0)
+### Nächste Arbeiten (Stand 0.61.0)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
@@ -410,7 +411,8 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
    Regel ↔ Weg als Befund – umgesetzt in 0.59.0 (ADR 0021); Regeln direkt zuordnen bzw.
    ausschliessen und Abhängigkeiten zwischen Applikationen – umgesetzt in 0.60.0 (ADR 0012).
    Dazwischen (Wunsch des Anwenders, 2026-10-25): Zonenplan übersichtlich bei vielen Tenants
-   und Zonen – Filter, Ebenen ausblenden, Zonen von Hand anordnen (0.61.0).
+   und Zonen – Filter, Ebenen ausblenden, Zonen von Hand anordnen – umgesetzt in 0.61.0 (ADR 0024
+   Nr. 14). Offen bei den Applikationen: Export nach NetBox (eigene Freigabe).
 5. **Switching/Verkabelung:** Cisco-Switches strikt lesend (Interfaces, VLANs, LLDP/CDP),
    Verkabelung als L1/L2-Sicht – Grundlage für Redundanz und Mehrfachausfälle; vorher eigene ADR.
 
@@ -435,7 +437,7 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 | ~~0.58.0~~ | Kunden-Doku ohne Gerätenamen, Zugehörigkeit nach dem Weg – **umgesetzt in 0.58.0** (ADR 0018 Schritt 4) |
 | ~~0.59.0~~ | Verbindungen Ende zu Ende exportieren/drucken, Abweichung Regel ↔ Weg als Befund – **umgesetzt in 0.59.0** (ADR 0021) |
 | ~~0.60.0~~ | Applikationen: Regeln direkt zuordnen (auch any/unspezifische), Abhängigkeiten zwischen Applikationen – **umgesetzt in 0.60.0** (ADR 0012 Ergänzung 0.60.0) |
-| 0.61.0 | Zonenplan übersichtlich: Filter (Kunde/Tenant, Ebene, Suche), Ebenen ein-/ausblenden, Zonen ziehen (Anordnung gespeichert, Export folgt) (ADR 0024) |
+| ~~0.61.0~~ | Zonenplan übersichtlich: Filter, Ebenen ein-/ausblenden, Zonen ziehen – **umgesetzt in 0.61.0** (ADR 0024 Nr. 14) |
 | danach | Applikationen ausbauen, Switching/Verkabelung (siehe oben); Abnahme 0.43.1 ff. gegen die grössere Testumgebung (Pilot Zonen und Pläne) |
 
 Frühere Reihenfolge (Stand 0.42.0, zum Nachlesen):

@@ -790,16 +790,26 @@ def _customer_view(session: Session, tenant_id: int, items: list[LogicalZone], s
 
 
 def plan_with_layout(session: Session, tenant_id: int, customer_ids=None,
-                     customer_id: int | None = None, everything: bool = False) -> dict:  # fmt: skip
+                     customer_id: int | None = None, everything: bool = False,
+                     view_filter=None) -> dict:  # fmt: skip
     """Plan samt Zeichnung (`plan_export.layout`) fuer die Oberflaeche; mit `customer_ids` die
-    Sicht eines Kunden-Benutzers (`restrict_plan`)."""
-    from app.store import plan_export
+    Sicht eines Kunden-Benutzers (`restrict_plan`). Seit 0.61.0 mit der gespeicherten Anordnung
+    der Ansicht und dem Filter (`plan_view.Filter`: Suche, Fokus, Ebenen)."""
+    from app.store import plan_export, plan_view
 
     if customer_ids is not None:
         out = plan(session, tenant_id, set(customer_ids) or {-1})
         out = restrict_plan(out, customer_view(load(session, tenant_id), customer_ids))
     else:
         out = plan(session, tenant_id, customer_id, everything)
+    key = plan_view.view_key(out)
+    row = plan_view.get(session, tenant_id, key)
+    out["positions"] = dict(row.positions or {}) if row is not None else {}
+    if customer_ids is None:
+        out["arrangement"] = plan_view.arrangement_out(row, key)
+    out = plan_view.apply(out, view_filter or plan_view.Filter(), devices=customer_ids is None)
+    visible = {str(z["id"]) for z in out["zones"]}
+    out["positions"] = {k: v for k, v in out["positions"].items() if k in visible}
     out["layout"] = plan_export.layout(out)
     return out
 

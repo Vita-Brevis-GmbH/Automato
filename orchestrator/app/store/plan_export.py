@@ -99,9 +99,11 @@ def layout(plan: dict) -> dict:
     return _layout1(plan)
 
 
-def _box_lines(z: dict, nodes: dict[str, str]) -> list[str]:
+def _box_lines(z: dict, nodes: dict[str, str], show_nodes: bool = True) -> list[str]:
     if z.get("collapsed"):
         return [m for m in (z.get("members") or [])][:MAX_LINES]
+    if not show_nodes:
+        return []
     labels = [nodes.get(n, n) for n in z.get("nodes") or []]
     if len(labels) > MAX_LINES:
         return labels[: MAX_LINES - 1] + [f"… {len(labels) - MAX_LINES + 1} weitere"]
@@ -121,9 +123,17 @@ def _sub(z: dict) -> str:
 
 def _layout2(plan: dict) -> dict:
     """Zonen in Spalten nach Ebene (DC links, Public rechts), je Zone ihre Knoten; Uebergaenge
-    als Linien zwischen den Zonen, beschriftet mit dem Namen („DC-EINET“)."""
+    als Linien zwischen den Zonen, beschriftet mit dem Namen („DC-EINET“).
+
+    Seit 0.61.0 (`plan_view`): `positions` = von Hand gezogene Zonen an ihrem Platz, die
+    uebrigen in ihrer Spalte darunter; der Plan ruckt an den Rand (`offset` = Verschiebung
+    gegenueber den gespeicherten Positionen). `display` blendet Knoten bzw. Namen der Uebergaenge
+    aus."""
     zones = plan.get("zones") or []
     nodes = {n["id"]: n["label"] for n in plan.get("nodes") or []}
+    display = plan.get("display") or {}
+    show_nodes, show_labels = display.get("nodes", True), display.get("labels", True)
+    stored = plan.get("positions") or {}
     # Spalte je Ebene; eine Zone ohne Knoten mit Uebergang zu einer Zone derselben Ebene (z. B.
     # DMZ hinter der Edge-Firewall) rueckt in die Spalte rechts daneben
     col = {z["id"]: LAYER.get(z.get("kind"), 0) * 2 for z in zones}
@@ -139,78 +149,113 @@ def _layout2(plan: dict) -> dict:
     for z in zones:
         cols[col[z["id"]]].append(z)
     order = sorted(cols)
-    boxes, pos = [], {}
-    height = 0.0
 
     def box_h(z: dict) -> float:
-        lines = _box_lines(z, nodes)
+        lines = _box_lines(z, nodes, show_nodes)
         return 42 + len(lines) * LINE_H + (6 if lines else 0)
 
     def first(c: int) -> list[dict]:
         return sorted(cols[c], key=lambda z: (not isinstance(z["id"], int),
                                               z.get("position") or 0, z["name"]))  # fmt: skip
 
-    # Zwischenspalten beginnen unter der ersten Zeile - Uebergaenge zwischen den Ebenen bleiben frei
-    top = max((box_h(first(c)[0]) for c in order if c % 2 == 0), default=42) + 34
+    def box_of(z: dict, x: float, y: float) -> dict:
+        return {
+            "id": z["id"], "x": x, "y": y, "w": ZW, "h": box_h(z), "title": z["name"],
+            "sub": _sub(z), "lines": _box_lines(z, nodes, show_nodes), "kind": z.get("kind"),
+            "color": z.get("color"), "fill": _tint(z.get("color")) if z.get("color")
+            else "#f4f6f9", "collapsed": bool(z.get("collapsed")),
+            "pseudo": not isinstance(z["id"], int), "samples": z.get("samples") or [],
+            "code": z.get("code"), "placed": False,
+        }  # fmt: skip
+
+    boxes: list[dict] = []
+    placed = {z["id"]: stored[str(z["id"])] for z in zones if str(z["id"]) in stored}
+    for z in zones:
+        if z["id"] in placed:
+            x, y = placed[z["id"]]
+            boxes.append({**box_of(z, float(x), float(y)), "placed": True})
+    # Zwischenspalten beginnen unter der ersten Zeile - Uebergaenge zwischen den Ebenen bleiben
+    # frei; neben gezogenen Zonen beginnen die uebrigen unter ihnen
+    rest = {c: [z for z in first(c) if z["id"] not in placed] for c in order}
+    below = max((b["y"] + b["h"] for b in boxes), default=None)
+    top = max((box_h(rest[c][0]) for c in order if c % 2 == 0 and rest[c]), default=42) + 34
+    height = 0.0
     for ci, layer in enumerate(order):
-        y = 12.0 if layer % 2 == 0 else 12.0 + top
-        group = first(layer)
-        for z in group:
-            lines, h = _box_lines(z, nodes), box_h(z)
-            box = {
-                "id": z["id"], "x": 16 + ci * (ZW + GAP), "y": y, "w": ZW, "h": h,
-                "title": z["name"], "sub": _sub(z), "lines": lines, "kind": z.get("kind"),
-                "color": z.get("color"), "fill": _tint(z.get("color")) if z.get("color")
-                else "#f4f6f9", "collapsed": bool(z.get("collapsed")),
-                "pseudo": not isinstance(z["id"], int), "samples": z.get("samples") or [],
-                "code": z.get("code"),
-            }  # fmt: skip
+        if below is not None:
+            y = below + 40
+        else:
+            y = 12.0 if layer % 2 == 0 else 12.0 + top
+        for z in rest[layer]:
+            box = box_of(z, 16 + ci * (ZW + GAP), y)
             boxes.append(box)
-            pos[z["id"]] = (ci, box)
-            y += h + 22
+            y += box["h"] + 22
         height = max(height, y)
-    # Anschlusspunkte je Box und Seite gleichmaessig verteilen
+    offset = [0.0, 0.0]
+    if placed:  # an den Rand ruecken
+        offset = [16 - min(b["x"] for b in boxes), 12 - min(b["y"] for b in boxes)]
+        for b in boxes:
+            b["x"] += offset[0]
+            b["y"] += offset[1]
+        height = max(b["y"] + b["h"] for b in boxes) + 22
+    edges = route(boxes, [
+        {
+            "id": t["id"], "a": t["a"], "b": t["b"],
+            "label": "" if t.get("contact") or not show_labels else t["name"],
+            "name": t["name"], "count": t.get("count") or 0,
+            "networks": [x["network"] for x in t.get("networks") or []],
+            "dashed": "outside" in (t["a"], t["b"]) or "none" in (t["a"], t["b"]),
+            "contact": bool(t.get("contact")),
+        }
+        for t in plan.get("transitions") or []
+    ])  # fmt: skip
+    if placed:
+        width = max(b["x"] + b["w"] for b in boxes) + 16
+        width = max([width] + [x + 60 for e in edges for x, _ in e["points"]])
+    else:
+        width = 16 + len(order) * (ZW + GAP) - GAP + 16 if order else W
+    return {"format": 2, "width": width, "height": height + 12, "zones": boxes, "nodes": [],
+            "edges": edges, "offset": offset}  # fmt: skip
+
+
+def route(boxes: list[dict], edges: list[dict]) -> list[dict]:
+    """Linien der Uebergaenge nach der Lage der Zonen: nebeneinander von rechts nach links,
+    uebereinander (Spalten ueberlappen) rechts herum; Anschlusspunkte je Seite gleichmaessig
+    verteilt. Die Oberflaeche rechnet beim Ziehen gleich (`routeEdges` in `Design.tsx`)."""
+    pos = {b["id"]: b for b in boxes}
     ends: dict[tuple, list] = defaultdict(list)
     plans = []
-    for t in plan.get("transitions") or []:
-        if t["a"] not in pos or t["b"] not in pos:
+    for e in edges:
+        if e["a"] not in pos or e["b"] not in pos:
             continue
-        (ca, a), (cb, b) = pos[t["a"]], pos[t["b"]]
-        if cb < ca:
-            (ca, a), (cb, b) = (cb, b), (ca, a)
-        sa, sb = ("r", "l") if ca != cb else ("r", "r")
-        plans.append((t, a, b, sa, sb, ca == cb))
-        ends[(a["id"], sa)].append(t["id"])
-        ends[(b["id"], sb)].append(t["id"])
+        a, b = pos[e["a"]], pos[e["b"]]
+        if b["x"] < a["x"]:
+            a, b = b, a
+        apart = a["x"] + a["w"] <= b["x"]
+        sa, sb = ("r", "l") if apart else ("r", "r")
+        plans.append((e, a, b, sa, sb, not apart))
+        ends[(a["id"], sa)].append(e["id"])
+        ends[(b["id"], sb)].append(e["id"])
 
-    def at(box: dict, side: str, tid: str) -> tuple[float, float]:
+    def at(box: dict, side: str, eid: str) -> tuple[float, float]:
         ids = ends[(box["id"], side)]
-        k = ids.index(tid)
+        k = ids.index(eid)
         y = box["y"] + 14 + (box["h"] - 20) * (k + 1) / (len(ids) + 1)
         return (box["x"] + box["w"] if side == "r" else box["x"]), y
 
-    edges = []
-    for n, (t, a, b, sa, sb, same) in enumerate(plans):
-        x1, y1 = at(a, sa, t["id"])
-        x2, y2 = at(b, sb, t["id"])
+    out = []
+    for n, (e, a, b, sa, sb, same) in enumerate(plans):
+        x1, y1 = at(a, sa, e["id"])
+        x2, y2 = at(b, sb, e["id"])
         if same:
-            bend = x1 + 24 + (n % 4) * 8
+            bend = max(x1, x2) + 24 + (n % 4) * 8
             points = [[x1, y1], [bend, y1], [bend, y2], [x2, y2]]
             lx, ly = bend + 4, (y1 + y2) / 2
         else:
             points = [[x1, y1], [x2, y2]]
             lx, ly = (x1 + x2) / 2, (y1 + y2) / 2 - 5
-        edges.append({
-            "id": t["id"], "a": t["a"], "b": t["b"], "points": points,
-            "x1": x1, "y1": y1, "x2": x2, "y2": y2, "lx": lx, "ly": ly,
-            "label": "" if t.get("contact") else t["name"], "count": t.get("count") or 0,
-            "networks": [x["network"] for x in t.get("networks") or []],
-            "dashed": "outside" in (t["a"], t["b"]) or "none" in (t["a"], t["b"]),
-            "contact": bool(t.get("contact")),
-        })  # fmt: skip
-    width = 16 + len(order) * (ZW + GAP) - GAP + 16 if order else W
-    return {"format": 2, "width": width, "height": height + 12, "zones": boxes, "nodes": [],
-            "edges": edges}  # fmt: skip
+        out.append({**e, "points": points, "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                    "lx": lx, "ly": ly})  # fmt: skip
+    return out
 
 
 def _layout1(plan: dict) -> dict:
@@ -271,6 +316,16 @@ def _stamp(title: str, when: datetime | None, version: dict | None) -> str:
     return f"{title} · {stand}".rstrip(" ·")
 
 
+def _view_stamp(plan: dict, when: datetime | None, version: dict | None) -> str:
+    """Stand bzw. Version, dazu der Filter der Ansicht (0.61.0) - der Export zeigt nur einen
+    Ausschnitt."""
+    stamp = _stamp("Zonenplan", when, version)
+    f = plan.get("filter") or {}
+    if f.get("active") and f.get("label"):
+        stamp += f" · {f['label']} ({f.get('zones', 0)} von {f.get('total', 0)} Zonen)"
+    return stamp
+
+
 # -- SVG --------------------------------------------------------------------------------
 
 
@@ -287,7 +342,7 @@ def svg(plan: dict, title: str, when: datetime | None = None, version: dict | No
                                         "font-weight": "bold", "fill": FG})  # fmt: skip
     head.text = title
     sub = ET.SubElement(root, "text", {"x": "16", "y": "44", "font-size": "11", "fill": MUTED})
-    sub.text = _stamp("Zonenplan", when, version)
+    sub.text = _view_stamp(plan, when, version)
     g = ET.SubElement(root, "g", {"transform": f"translate(0 {HEAD})"})
     if lay.get("format") == 2:
         _svg2(g, lay)
@@ -380,7 +435,7 @@ def drawio(plan: dict, title: str, when: datetime | None = None,
     """mxGraph-Datei fuer diagrams.net/draw.io: Zonen und Knoten als Formen mit Eigenschaften
     (`automato_*`), Verbindungen als Kanten zwischen ihnen - in draw.io weiter bearbeitbar."""
     lay = layout(plan)
-    stamp = _stamp("Zonenplan", when, version)
+    stamp = _view_stamp(plan, when, version)
     if lay.get("format") == 2:
         return _drawio2(lay, title, stamp)
     mxfile = ET.Element("mxfile", {"host": "Automato", "type": "device"})
@@ -486,7 +541,8 @@ def _drawio2(lay: dict, title: str, stamp: str) -> str:
             style += "dashed=1;"
         obj = ET.SubElement(root, "UserObject", {
             "id": f"transition-{_id(e['id'])}", "label": _html(e["label"]),
-            "automato_transition": e["label"], "automato_networks": ", ".join(e["networks"]),
+            "automato_transition": "" if e["contact"] else e["name"],
+            "automato_networks": ", ".join(e["networks"]),
         })  # fmt: skip
         cell = ET.SubElement(obj, "mxCell", {
             "edge": "1", "parent": "1", "style": style,
@@ -658,7 +714,7 @@ def pdf(plan: dict, matrix: dict | None, title: str, when: datetime | None = Non
     """PDF: Seite 1 der Plan, danach Zonenmatrix, Zonen an den Knoten und Netze ohne Zone."""
     doc = _Pdf(title)
     lay = layout(plan)
-    stamp = _stamp("Zonenplan", when, version)
+    stamp = _view_stamp(plan, when, version)
     p = doc.page(lay["width"], lay["height"] + HEAD)
     p.text(16, 26, title, 16, bold=True)
     p.text(16, 44, stamp, 10, MUTED)

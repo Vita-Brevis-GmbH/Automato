@@ -166,3 +166,22 @@ class ZonePlanVersion(Base):
     # geloescht (Admin): der Stand faellt weg, die Nummer bleibt vergeben
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+
+class ZonePlanArrangement(Base):
+    """Von Hand gezogene Anordnung des Zonenplans (0.61.0, ADR 0024 Nr. 14) je Ansicht
+    (`overview`, `all`, `customer:<id>`): Position je Zone (`{"<id>": [x, y]}`, auch Kunden als
+    eine Zone und „Knoten ohne Zone“). Zonen ohne Position legt das Layout unter die
+    angeordneten; Export und Versionen folgen der Anordnung. Nur Daten der Plattform."""
+
+    __tablename__ = "zone_plan_arrangement"
+    __table_args__ = (UniqueConstraint("tenant_id", "view", name="uq_zone_plan_arrangement"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
+    view: Mapped[str] = mapped_column(String(64))
+    positions: Mapped[dict] = mapped_column(JSON)
+    updated_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

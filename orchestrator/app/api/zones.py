@@ -21,6 +21,7 @@ die es zwischen bestehenden Zonen vorgibt, uebernimmt `POST /zones/schema/intent
 """
 
 from datetime import UTC, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -48,6 +49,7 @@ from app.store import (
     customer_alias,
     plan_export,
     plan_versions,
+    plan_view,
     reconcile,
     zone_detect,
     zone_services,
@@ -92,6 +94,15 @@ class VersionIn(BaseModel):
     note: str | None = Field(default=None, max_length=4000)
 
 
+class ArrangementIn(BaseModel):
+    """Anordnung des Zonenplans (0.61.0): Position je Zone (`{"<id>": [x, y]}`) in der Ansicht
+    `overview`, `all` bzw. `customer:<id>`; gesetzte Zonen ersetzen ihre Position."""
+
+    tenant_id: int
+    view: str = Field(pattern=r"^(overview|all|customer:\d+)$")
+    positions: dict[str, list[float]] = Field(max_length=plan_view.MAX_POSITIONS)
+
+
 class KeysIn(BaseModel):
     tenant_id: int
     keys: list[str] = Field(min_length=1, max_length=500)  # Vorschlaege (normalisierter Name)
@@ -118,6 +129,27 @@ class PolicyIn(BaseModel):
 def _scope(principal: Principal) -> tuple[int, ...] | None:
     """Kunden eines Kunden-Benutzers (Sicht nur auf seine Zonen, 0.53.0); None = Betreuer."""
     return tuple(principal.customer_ids or ()) if principal.is_customer else None
+
+
+def _plan_filter(
+    q: str = Query("", max_length=200, description="Suche: Zone, Kurzname, Kunde, Knoten, Netz"),
+    focus: Annotated[
+        list[str] | None, Query(description="Fokus auf Zonen (ID, customer:<id>)")
+    ] = None,
+    depth: int = Query(1, ge=0, le=plan_view.MAX_DEPTH, description="Nachbarn bis so weit"),
+    hide_layer: Annotated[
+        list[str] | None, Query(description="Ebenen ausblenden (dc, edge, …)")
+    ] = None,
+    hide: Annotated[list[str] | None, Query(description="nodes, labels, contacts, empty")] = None,
+) -> plan_view.Filter:
+    """Filter des Zonenplans (0.61.0) - Oberflaeche und Export gleich."""
+    layers, elements = hide_layer or [], hide or []
+    unknown = [x for x in layers if x not in plan_view.LAYERS]
+    unknown += [x for x in elements if x not in plan_view.ELEMENTS]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"unknown layer: {', '.join(unknown)}")
+    return plan_view.Filter(q=q, focus=(focus or [])[:200], depth=depth, hide_layers=set(layers),
+                            hide=set(elements))  # fmt: skip
 
 
 def _tenant(session: Session, principal: Principal, tenant_id: int | None) -> int:
@@ -575,13 +607,59 @@ def plan(
     tenant_id: int | None = None,
     customer_id: int | None = Query(None, description="Plan dieses Kunden"),
     everything: bool = Query(False, alias="all", description="alle Zonen einzeln"),
+    view_filter: plan_view.Filter = Depends(_plan_filter),
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Zonenplan nach dem Zonenmodell: Zonen mit ihren Knoten und Netzen, Uebergaenge zwischen
-    den Zonen; ohne Kunde die Uebersicht (Kunden je als eine Zone), mit Kunde dessen Plan."""
+    den Zonen; ohne Kunde die Uebersicht (Kunden je als eine Zone), mit Kunde dessen Plan. Seit
+    0.61.0 gefiltert (Suche, Fokus, Ebenen) und mit der gespeicherten Anordnung."""
     tid = _tenant(session, principal, tenant_id)
-    return store.plan_with_layout(session, tid, _scope(principal), customer_id, everything)
+    return store.plan_with_layout(session, tid, _scope(principal), customer_id, everything,
+                                  view_filter)  # fmt: skip
+
+
+@router.put("/plan/arrangement")
+def save_arrangement(
+    body: ArrangementIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Anordnung speichern (Operator, 0.61.0): gezogene Zonen behalten ihren Platz in dieser
+    Ansicht - auch im Export und in neuen Versionen."""
+    tid = tenant_scope(principal, body.tenant_id)
+    try:
+        positions = plan_view.clean_positions(body.positions)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    row = plan_view.save(session, tid, body.view, positions, principal.subject)
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="zone_plan.arranged",
+        subject=body.view,
+        detail={"tenant_id": tid, "view": body.view, "zones": len(positions)},
+    )
+    return plan_view.arrangement_out(row, body.view)
+
+
+@router.delete("/plan/arrangement", status_code=204)
+def reset_arrangement(
+    tenant_id: int,
+    view: str = Query(pattern=r"^(overview|all|customer:\d+)$"),
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> None:
+    """Anordnung zuruecksetzen (Operator): die Ansicht ordnet wieder nach Ebenen."""
+    tid = tenant_scope(principal, tenant_id)
+    if plan_view.reset(session, tid, view):
+        audit.record(
+            session,
+            actor=f"user:{principal.subject}",
+            action="zone_plan.arrangement_reset",
+            subject=view,
+            detail={"tenant_id": tid, "view": view},
+        )
 
 
 _FORMATS = {
@@ -606,11 +684,13 @@ def export_plan(
     version_id: int | None = None,
     customer_id: int | None = None,
     everything: bool = Query(False, alias="all"),
+    view_filter: plan_view.Filter = Depends(_plan_filter),
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> Response:
     """Zonenplan als Datei: draw.io (bearbeitbar), SVG oder PDF (mit Matrix und Tabellen) -
-    aktueller Stand bzw. eine gespeicherte Version."""
+    aktueller Stand (wie in der Ansicht gefiltert und angeordnet) bzw. eine gespeicherte
+    Version."""
     if version_id is not None:
         if principal.is_customer:  # Versionen zeigen die ganze Umgebung
             raise HTTPException(status_code=403, detail="not available for customer users")
@@ -622,7 +702,8 @@ def export_plan(
         name = f"zonenplan-v{v.number}"
     else:
         tid = _tenant(session, principal, tenant_id)
-        plan = store.plan_with_layout(session, tid, _scope(principal), customer_id, everything)
+        plan = store.plan_with_layout(session, tid, _scope(principal), customer_id, everything,
+                                      view_filter)  # fmt: skip
         matrix = None
         if format == "pdf":
             matrix = store.matrix(session, tid, customer_ids=_scope(principal))

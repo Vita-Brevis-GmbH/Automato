@@ -405,6 +405,24 @@ svg.zone-plan { min-width: 760px; display: block; }
 .zp-zone2.collapsed rect { stroke-width: 2; }
 .zone-plan .zp-line { fill: var(--fg); font-size: 10.5px; }
 .zone-plan .zp-code { fill: var(--muted); font-family: var(--font-mono); font-weight: 400; font-size: 10.5px; }
+/* Zonenplan übersichtlich (0.61.0): Filter, Ebenen, Zonen ziehen */
+.plan-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.plan-filter .input { flex: 1; min-width: 220px; max-width: 420px; }
+.plan-filter .sel { width: auto; }
+.plan-layers { position: relative; }
+.plan-layers > summary { list-style: none; cursor: pointer; }
+.plan-layers > summary::-webkit-details-marker { display: none; }
+.plan-layers-body { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; display: flex; gap: 18px; padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .14);
+  white-space: nowrap; }
+.plan-layers-body > div { display: grid; gap: 4px; align-content: start; }
+.plan-focus { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.plan-focus .chip .linkbtn { padding: 0 2px; font-size: 13px; line-height: 1; }
+.plan-arrange { margin: 0 0 6px; }
+.zp-zone2.draggable { cursor: grab; touch-action: none; }
+svg.zone-plan.dragging, .zp-zone2.dragging { cursor: grabbing; }
+.zp-zone2.dragging rect { stroke-width: 2.2; filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .18)); }
+svg.zone-plan.dragging text { user-select: none; }
 .zone-detail { display: grid; gap: 8px; }
 .zone-fixed-color { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; min-height: 32px; }
 /* Export und Versionen (0.52.0) */

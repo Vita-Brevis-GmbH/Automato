@@ -2553,6 +2553,11 @@ export interface ZonePlan {
     without_node: number;
   };
   layout?: PlanLayout; // Zeichnung (0.52.0), gleich wie im Export
+  // 0.61.0: Filter der Ansicht, alle Zonen der Ansicht (Fokus), gespeicherte Anordnung
+  filter?: { active: boolean; zones: number; total: number; hidden: number; matches?: number; label?: string };
+  zone_choices?: { id: string; name: string; kind: string | null; layer: string }[];
+  arrangement?: { view: string | null; saved: boolean; count: number; updated_by: string | null; updated_at: string | null };
+  positions?: Record<string, [number, number]>;
 }
 // Zeichnung des Zonenplans (0.52.0, `store/plan_export.layout`): Pixel, Ursprung oben links
 export interface PlanBox {
@@ -2571,6 +2576,7 @@ export interface PlanBox {
   pseudo?: boolean; // Knoten ohne Zone, ausserhalb
   collapsed?: boolean;
   code?: string | null;
+  placed?: boolean; // 0.61.0: von Hand angeordnet
 }
 export interface PlanEdge {
   id?: string;
@@ -2590,6 +2596,7 @@ export interface PlanEdge {
   count?: number;
   networks?: string[];
   contact?: boolean;
+  name?: string; // 0.61.0: Name des Übergangs auch bei ausgeblendeter Beschriftung
 }
 export interface PlanLayout {
   format?: number;
@@ -2598,6 +2605,7 @@ export interface PlanLayout {
   zones: PlanBox[];
   nodes: PlanBox[];
   edges: PlanEdge[];
+  offset?: [number, number]; // 0.61.0: Verschiebung gegenüber den gespeicherten Positionen
 }
 // Versionen des Zonenplans (0.52.0)
 export interface PlanVersion {
@@ -2747,13 +2755,34 @@ export const setZonePolicy = (tenantId: number, src: number, dst: number, intent
 export interface PlanView {
   customerId?: number | null;
   all?: boolean;
+  filter?: PlanFilter;
 }
-const planQuery = (tenantId: number, view?: PlanView) => ({
-  tenant_id: tenantId,
-  customer_id: view?.customerId ?? undefined,
-  all: view?.all ? "true" : undefined,
-});
-export const fetchZonePlan = (tenantId: number, view?: PlanView) => getJSON<ZonePlan>(`/api/zones/plan${qs(planQuery(tenantId, view))}`);
+// Filter des Zonenplans (0.61.0): Suche bzw. Fokus mit Nachbarn bis `depth`, Ebenen (Spalten) und Elemente
+// ausblenden – Ansicht und Export gleich
+export interface PlanFilter {
+  q?: string;
+  focus?: string[];
+  depth?: number;
+  hideLayers?: string[];
+  hide?: string[];
+}
+function planQs(tenantId: number, view?: PlanView, extra: Record<string, string | number | undefined> = {}): string {
+  const p = new URLSearchParams(qs({ tenant_id: tenantId, customer_id: view?.customerId ?? undefined, all: view?.all ? "true" : undefined, ...extra }).slice(1));
+  const f = view?.filter;
+  if (f?.q?.trim()) p.set("q", f.q.trim());
+  for (const z of f?.focus ?? []) p.append("focus", z);
+  if ((f?.q?.trim() || f?.focus?.length) && f?.depth !== undefined && f.depth !== 1) p.set("depth", String(f.depth));
+  for (const l of f?.hideLayers ?? []) p.append("hide_layer", l);
+  for (const h of f?.hide ?? []) p.append("hide", h);
+  const s = p.toString();
+  return s ? `?${s}` : "";
+}
+export const fetchZonePlan = (tenantId: number, view?: PlanView) => getJSON<ZonePlan>(`/api/zones/plan${planQs(tenantId, view)}`);
+// Anordnung (0.61.0, Operator): Position je Zone in der Ansicht `overview`, `all` bzw. `customer:<id>`
+export const savePlanArrangement = (tenantId: number, view: string, positions: Record<string, [number, number]>) =>
+  sendJSON<NonNullable<ZonePlan["arrangement"]>>("/api/zones/plan/arrangement", "PUT", { tenant_id: tenantId, view, positions });
+export const resetPlanArrangement = (tenantId: number, view: string) =>
+  sendJSON<void>(`/api/zones/plan/arrangement${qs({ tenant_id: tenantId, view })}`, "DELETE");
 export const fetchPlanVersions = (tenantId: number) =>
   getJSON<{ current_fingerprint: string; items: PlanVersion[] }>(`/api/zones/plan/versions${qs({ tenant_id: tenantId })}`);
 export const savePlanVersion = (tenantId: number, label: string, note: string | null) =>
@@ -2769,7 +2798,7 @@ export async function exportZonePlan(
   versionId?: number,
   view?: PlanView,
 ): Promise<{ blob: Blob; filename: string }> {
-  const response = await fetchChecked(`/api/zones/plan/export${qs({ ...planQuery(tenantId, view), format, version_id: versionId })}`);
+  const response = await fetchChecked(`/api/zones/plan/export${planQs(tenantId, versionId ? undefined : view, { format, version_id: versionId })}`);
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `zonenplan.${format}` };
 }

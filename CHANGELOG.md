@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.61.0 – 2026-10-25
+
+Zonenplan übersichtlich (Wunsch des Anwenders, ADR 0024 Nr. 14): bei vielen Tenants und Zonen
+Filter, Ebenen zum Ausblenden und Zonen von Hand anordnen. Migration `0053`
+(`zone_plan_arrangement`); nur lesend gegenüber allen Quellsystemen.
+
+- **Suche und Fokus:** Leiste über dem Plan – Suche nach Zone, Kunde, Firewall/VRF, Übergang
+  oder Netz bzw. „Fokus auf Zone …“ (auch Doppelklick auf eine Zone); gezeigt werden die Treffer
+  mit ihren direkten Nachbarn (wählbar: nur die Treffer bis 3 Übergänge weit), „N von M Zonen
+  gezeigt“.
+- **Ebenen:** Spalten (DC, Kunden, Edge, Transfer, Core, Distribution, Access, Public, Knoten
+  ohne Zone, ausserhalb) und Elemente (Knoten in den Zonen, Namen der Übergänge, Kontakte, Zonen
+  ohne Knoten und Übergang) ein- und ausblenden; die Auswahl merkt sich der Browser.
+- **Zonen ziehen:** Zonen in der Zeichnung verschieben, die Linien folgen. Als Operator wird die
+  Anordnung je Ansicht (Übersicht, Kunde, alle Zonen) gespeichert, neue Zonen kommen darunter;
+  „Anordnung zurücksetzen“ ordnet wieder nach Ebenen.
+- **Export und Versionen** zeigen dasselbe wie die Ansicht: gefiltert (Filter im Kopf der Datei)
+  und angeordnet; der Fingerabdruck einer Version hängt nicht an der Anordnung.
+- Kunden-Benutzer filtern ihren Plan ebenfalls (Suche nur über Zonen- und Kundennamen), ordnen
+  aber nicht.
+
 ## 0.60.0 – 2026-10-25
 
 Applikationen ausbauen (ROADMAP, ADR 0012 Ergänzung 0.60.0): Regeln direkt zuordnen bzw.

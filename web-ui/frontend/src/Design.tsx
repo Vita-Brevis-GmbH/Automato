@@ -6,7 +6,7 @@
 // dem Gelesenen (übernehmen bzw. ausblenden = operator). Seit 0.56.0 das Zonenmodell nach Ebenen: Zonen mit
 // Knoten (Firewall/VDOM, ACI-VRF), Übergänge zwischen den Zonen, Farben aus Grundschema bzw. Vorlage, Plan je
 // Kunde (andere Kunden je als eine Zone).
-import { CSSProperties, Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { CSSProperties, Fragment, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptZoneSuggestions,
   applySchemaIntents,
@@ -31,7 +31,10 @@ import {
   fetchZoneSuggestions,
   getCustomerFilter,
   LogicalZone,
+  PlanBox,
   PlanDiff,
+  PlanEdge,
+  PlanFilter,
   PlanFormat,
   PlanLayout,
   PlanTransition,
@@ -39,6 +42,8 @@ import {
   PlanVersionFull,
   PlanView,
   previewZone,
+  resetPlanArrangement,
+  savePlanArrangement,
   savePlanVersion,
   SchemaZone,
   setZonePolicy,
@@ -171,7 +176,7 @@ export default function Design({
           {tab === "zones" && <ZonesTab tenantId={tenantId} canEdit={canEdit} isCustomer={isCustomer} />}
           {tab === "suggestions" && <SuggestionsTab tenantId={tenantId} canEdit={canEdit} />}
           {tab === "matrix" && <MatrixTab tenantId={tenantId} canEdit={canEdit} />}
-          {tab === "plan" && <PlanTab tenantId={tenantId} isCustomer={isCustomer} />}
+          {tab === "plan" && <PlanTab tenantId={tenantId} isCustomer={isCustomer} canArrange={canEdit && !isCustomer} />}
           {tab === "versions" && <VersionsTab tenantId={tenantId} canEdit={canEdit} isAdmin={isAdmin} />}
         </>
       )}
@@ -1470,28 +1475,127 @@ function CellDetail({
 
 // -- Zonenplan -----------------------------------------------------------------------------
 
-function PlanTab({ tenantId, isCustomer = false }: { tenantId: number; isCustomer?: boolean }) {
+// Ebenen (Spalten) und Elemente des Zonenplans (0.61.0, `store/plan_view`) – ausblenden je Betrachter
+const PLAN_LAYERS: [string, string][] = [
+  ["dc", "DC"],
+  ["customer", "Kunden"],
+  ["edge", "Edge"],
+  ["transfer", "Transfer"],
+  ["core", "Core"],
+  ["distribution", "Distribution"],
+  ["access", "Access"],
+  ["public", "Public"],
+  ["none", "Knoten ohne Zone"],
+  ["outside", "ausserhalb"],
+];
+const PLAN_ELEMENTS: [string, string][] = [
+  ["nodes", "Knoten in den Zonen"],
+  ["labels", "Namen der Übergänge"],
+  ["contacts", "Kontakte zu Knoten ohne Zone"],
+  ["empty", "Zonen ohne Knoten und Übergang"],
+];
+const PLAN_HIDDEN_KEY = "automato_plan_hidden";
+type PlanHidden = { layers: string[]; hide: string[] };
+
+function loadPlanHidden(): PlanHidden {
+  try {
+    const v = JSON.parse(localStorage.getItem(PLAN_HIDDEN_KEY) ?? "{}") as Partial<PlanHidden>;
+    return { layers: Array.isArray(v.layers) ? v.layers : [], hide: Array.isArray(v.hide) ? v.hide : [] };
+  } catch {
+    return { layers: [], hide: [] };
+  }
+}
+
+function storePlanHidden(v: PlanHidden) {
+  try {
+    localStorage.setItem(PLAN_HIDDEN_KEY, JSON.stringify(v));
+  } catch {
+    // ohne Speicher im Browser gilt die Auswahl nur bis zum Neuladen
+  }
+}
+
+function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantId: number; isCustomer?: boolean; canArrange?: boolean }) {
   const [plan, setPlan] = useState<ZonePlan | null>(null);
   // "" Übersicht, "all" alle Zonen, sonst Kunde – vorgewählt nach dem Kunden-Filter der Kopfzeile
   const [view, setView] = useState<string>(() => (!isCustomer && getCustomerFilter() ? String(getCustomerFilter()) : ""));
   const [err, setErr] = useState<unknown>(null);
-  const planView: PlanView = view === "all" ? { all: true } : view ? { customerId: Number(view) } : {};
+  // Filter (0.61.0): Suche bzw. Fokus mit Nachbarn, Ebenen und Elemente ausblenden – Ansicht und Export gleich
+  const [q, setQ] = useState("");
+  const [query, setQuery] = useState("");
+  const [focus, setFocus] = useState<string[]>([]);
+  const [depth, setDepth] = useState(1);
+  const [hidden, setHidden] = useState<PlanHidden>(loadPlanHidden);
+  const [tick, setTick] = useState(0);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
-    setPlan(null);
-    fetchZonePlan(tenantId, view === "all" ? { all: true } : view ? { customerId: Number(view) } : {})
-      .then(setPlan)
-      .catch(setErr);
-  }, [tenantId, view]);
+    const t = window.setTimeout(() => setQuery(q), 300);
+    return () => window.clearTimeout(t);
+  }, [q]);
+  const filter: PlanFilter = { q: query, focus, depth, hideLayers: hidden.layers, hide: hidden.hide };
+  const planView: PlanView = { ...(view === "all" ? { all: true } : view ? { customerId: Number(view) } : {}), filter };
+  const key = JSON.stringify(planView);
+  useEffect(() => {
+    let live = true;
+    fetchZonePlan(tenantId, JSON.parse(key) as PlanView)
+      .then((p) => live && setPlan(p))
+      .catch((e) => live && setErr(e));
+    return () => {
+      live = false;
+    };
+  }, [tenantId, key, tick]);
+  const toggle = (kind: keyof PlanHidden, value: string) =>
+    setHidden((h) => {
+      const next = { ...h, [kind]: h[kind].includes(value) ? h[kind].filter((x) => x !== value) : [...h[kind], value] };
+      storePlanHidden(next);
+      return next;
+    });
+  const clearFilter = () => {
+    setQ("");
+    setQuery("");
+    setFocus([]);
+    setDepth(1);
+    setHidden({ layers: [], hide: [] });
+    storePlanHidden({ layers: [], hide: [] });
+  };
   if (err) return <ErrorBox error={err} onClose={() => setErr(null)} />;
   if (plan == null) return <Loading />;
   const own = plan.view?.mode === "customer";
-  if (plan.zones.length === 0 && !own) return <Note>Noch keine Zonen – zuerst im Reiter „Zonen“ anlegen.</Note>;
+  const f = plan.filter;
+  if (plan.zones.length === 0 && !own && !f?.active) return <Note>Noch keine Zonen – zuerst im Reiter „Zonen“ anlegen.</Note>;
   const s = plan.summary;
-  const hidden = plan.zones.reduce((n, z) => n + Math.max(0, (z.nodes_total ?? 0) - (z.nodes?.length ?? 0)), 0);
+  const hiddenNodes = plan.zones.reduce((n, z) => n + Math.max(0, (z.nodes_total ?? 0) - (z.nodes?.length ?? 0)), 0);
   const zoneName = new Map(plan.zones.map((z) => [String(z.id), z.name]));
+  const choiceName = new Map((plan.zone_choices ?? []).map((c) => [c.id, c.name]));
   const transitions = (plan.transitions ?? []).filter((t) => !t.contact);
   const contacts = (plan.transitions ?? []).filter((t) => t.contact);
   const customers = plan.customers ?? [];
+  const arrangeView = plan.arrangement?.view ?? null;
+  const narrowed = Boolean(query.trim() || focus.length);
+  const hiddenCount = hidden.layers.length + hidden.hide.length;
+  const arrange = async (positions: Record<string, [number, number]>) => {
+    if (!canArrange || !arrangeView) return;
+    setBusy(true);
+    try {
+      await savePlanArrangement(tenantId, arrangeView, positions);
+      setTick((t) => t + 1);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const resetArrangement = async () => {
+    if (!arrangeView || !window.confirm("Anordnung dieser Ansicht zurücksetzen? Die Zonen stehen wieder nach Ebenen.")) return;
+    setBusy(true);
+    try {
+      await resetPlanArrangement(tenantId, arrangeView);
+      setTick((t) => t + 1);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <>
       <div className="card">
@@ -1506,7 +1610,17 @@ function PlanTab({ tenantId, isCustomer = false }: { tenantId: number; isCustome
           </span>
           <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             {!isCustomer && customers.length > 0 && (
-              <select className="sel" id="zone-plan-view" aria-label="Ansicht" value={view} onChange={(e) => setView(e.target.value)}>
+              <select
+                className="sel"
+                id="zone-plan-view"
+                aria-label="Ansicht"
+                value={view}
+                onChange={(e) => {
+                  setView(e.target.value);
+                  setFocus([]);
+                  setPlan(null);
+                }}
+              >
                 <option value="">Übersicht – Kunden je als eine Zone</option>
                 {customers.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -1523,16 +1637,121 @@ function PlanTab({ tenantId, isCustomer = false }: { tenantId: number; isCustome
           </span>
         </div>
         <div className="card-body scroll">
+          <div className="plan-filter" id="zone-plan-filter">
+            <input
+              className="input"
+              type="search"
+              aria-label="Im Plan suchen"
+              placeholder="Suchen: Zone, Kunde, Firewall/VRF, Übergang, Netz"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+            <select
+              className="sel"
+              aria-label="Fokus auf Zone"
+              value=""
+              onChange={(e) => e.target.value && setFocus((list) => [...list, e.target.value])}
+            >
+              <option value="">Fokus auf Zone …</option>
+              {(plan.zone_choices ?? [])
+                .filter((c) => !focus.includes(c.id))
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+            </select>
+            {narrowed && (
+              <select className="sel" aria-label="Nachbarn" value={depth} onChange={(e) => setDepth(Number(e.target.value))}>
+                <option value={0}>nur die Treffer</option>
+                <option value={1}>+ direkte Nachbarn</option>
+                <option value={2}>+ 2 Übergänge weit</option>
+                <option value={3}>+ 3 Übergänge weit</option>
+              </select>
+            )}
+            <details className="plan-layers" id="zone-plan-layers">
+              <summary className="btn btn-sm">Ebenen{hiddenCount ? ` (${hiddenCount} ausgeblendet)` : ""}</summary>
+              <div className="plan-layers-body">
+                <div>
+                  <div className="faint">Spalten</div>
+                  {PLAN_LAYERS.map(([k, label]) => (
+                    <label key={k} className="check">
+                      <input type="checkbox" checked={!hidden.layers.includes(k)} onChange={() => toggle("layers", k)} /> {label}
+                    </label>
+                  ))}
+                </div>
+                <div>
+                  <div className="faint">Elemente</div>
+                  {PLAN_ELEMENTS.map(([k, label]) => (
+                    <label key={k} className="check">
+                      <input type="checkbox" checked={!hidden.hide.includes(k)} onChange={() => toggle("hide", k)} /> {label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </details>
+            {(f?.active || q) && (
+              <button className="btn btn-sm" onClick={clearFilter}>
+                Filter zurücksetzen
+              </button>
+            )}
+          </div>
+          {focus.length > 0 && (
+            <div className="plan-focus" id="zone-plan-focus">
+              <span className="faint">Fokus:</span>
+              {focus.map((id) => (
+                <span key={id} className="chip">
+                  {choiceName.get(id) ?? id}{" "}
+                  <button className="linkbtn" aria-label={`Fokus ${choiceName.get(id) ?? id} entfernen`} onClick={() => setFocus((list) => list.filter((x) => x !== id))}>
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {f?.active && (
+            <p className="faint" id="zone-plan-filtered" style={{ margin: "0 0 6px" }}>
+              {f.zones} von {f.total} Zonen gezeigt{f.label ? ` · ${f.label}` : ""}
+              {narrowed && f.matches === 0 ? " · kein Treffer" : ""} – der Export zeigt dasselbe.
+            </p>
+          )}
           {own && (
             <p className="faint" style={{ margin: "4px 0 8px" }} id="zone-plan-customer">
               Zonen von {plan.view?.customer ?? "Kunde"}, die genutzten Zugänge zu anderen Kunden (je als eine Zone) und von
               den geteilten Zonen nur die Firewalls/VRFs, die der Kunde braucht – an seinen Netzen und auf den Wegen zu den
               Zonen seiner Regeln
-              {hidden > 0 ? ` (${hidden} weitere Knoten ausgeblendet – „alle Zonen einzeln“ zeigt sie)` : ""}.
-              {plan.zones.length === 0 && " Dem Kunden sind keine Zonen zugeordnet."}
+              {hiddenNodes > 0 ? ` (${hiddenNodes} weitere Knoten ausgeblendet – „alle Zonen einzeln“ zeigt sie)` : ""}.
+              {plan.zones.length === 0 && !f?.active && " Dem Kunden sind keine Zonen zugeordnet."}
             </p>
           )}
-          {plan.layout && <PlanDrawing layout={plan.layout} />}
+          <p className="faint plan-arrange" id="zone-plan-arrange">
+            {canArrange && arrangeView
+              ? "Zonen lassen sich ziehen – die Anordnung gilt für diese Ansicht, Export und neue Versionen folgen."
+              : "Zonen lassen sich ziehen (nur hier, nicht gespeichert)."}{" "}
+            Doppelklick auf eine Zone setzt den Fokus.
+            {plan.arrangement?.saved && (
+              <>
+                {" "}
+                Anordnung gespeichert ({plan.arrangement.count} Zonen
+                {plan.arrangement.updated_by ? `, ${plan.arrangement.updated_by}` : ""}
+                {plan.arrangement.updated_at ? `, ${fmtTime(plan.arrangement.updated_at)}` : ""}).{" "}
+                {canArrange && (
+                  <button className="btn btn-sm" disabled={busy} onClick={resetArrangement}>
+                    Anordnung zurücksetzen
+                  </button>
+                )}
+              </>
+            )}
+          </p>
+          {plan.layout && plan.layout.zones.length > 0 ? (
+            <PlanDrawing
+              layout={plan.layout}
+              onArrange={canArrange && arrangeView ? arrange : undefined}
+              onFocus={(id) => setFocus((list) => (list.includes(id) ? list : [...list, id]))}
+            />
+          ) : (
+            f?.active && <Note>Keine Zone passt zum Filter.</Note>
+          )}
         </div>
       </div>
 
@@ -1637,43 +1856,20 @@ function TransitionTable({ transitions, zoneName, id }: { transitions: PlanTrans
 // Zeichnung aus dem Layout des Servers (`plan_export.layout`) – dieselbe wie im Export. Seit 0.56.0
 // (Format 2) Zonen in Spalten nach Ebene (DC links, Public rechts) mit ihren Knoten, Übergänge als Linien
 // beschriftet mit dem Namen („DC-EINET“), gestrichelt zu „Knoten ohne Zone“ bzw. „ausserhalb“; Versionen
-// bis 0.55.0 im alten Layout (Zonen links/rechts, Knoten in der Mitte).
-export function PlanDrawing({ layout, id = "zone-plan" }: { layout: PlanLayout; id?: string }) {
-  if (layout.format === 2) {
-    return (
-      <svg className="zone-plan" id={id} viewBox={`0 0 ${layout.width} ${layout.height}`} width="100%" role="img" aria-label="Zonenplan">
-        {layout.edges.map((e) => (
-          <g key={e.id} className={`zp-edge ${e.contact ? "contact" : ""}`}>
-            <polyline points={(e.points ?? []).map(([x, y]) => `${x},${y}`).join(" ")} strokeDasharray={e.dashed ? "5 4" : undefined}>
-              <title>{`${e.label || "Kontakt"}: ${(e.networks ?? []).join(", ")}`}</title>
-            </polyline>
-            {e.label && (
-              <text x={e.lx} y={e.ly} textAnchor={(e.points ?? []).length > 2 ? "start" : "middle"}>
-                {e.label}
-              </text>
-            )}
-          </g>
-        ))}
-        {layout.zones.map((z) => (
-          <g key={z.id} className={`zp-zone2 ${z.pseudo ? "pseudo" : ""} ${z.collapsed ? "collapsed" : ""}`} data-zone={String(z.id)}>
-            <rect x={z.x} y={z.y} width={z.w} height={z.h} rx={8} style={zoneStyle(z.color)} />
-            <text x={z.x + 12} y={z.y + 18} className="zp-title">
-              {z.title}
-              {z.code && <tspan className="zp-code"> {z.code}</tspan>}
-            </text>
-            <text x={z.x + 12} y={z.y + 33} className="zp-sub">
-              {z.sub}
-            </text>
-            {(z.lines ?? []).map((line, k) => (
-              <text key={k} x={z.x + 12} y={z.y + 52 + k * 15} className="zp-line">
-                {line}
-              </text>
-            ))}
-          </g>
-        ))}
-      </svg>
-    );
-  }
+// bis 0.55.0 im alten Layout (Zonen links/rechts, Knoten in der Mitte). Seit 0.61.0 lassen sich die Zonen
+// ziehen (`onArrange` speichert die Anordnung), Doppelklick setzt den Fokus.
+export function PlanDrawing({
+  layout,
+  id = "zone-plan",
+  onArrange,
+  onFocus,
+}: {
+  layout: PlanLayout;
+  id?: string;
+  onArrange?: (positions: Record<string, [number, number]>) => void;
+  onFocus?: (zoneId: string) => void;
+}) {
+  if (layout.format === 2) return <PlanDrawing2 layout={layout} id={id} onArrange={onArrange} onFocus={onFocus} />;
   return (
     <svg className="zone-plan" id={id} viewBox={`0 0 ${layout.width} ${layout.height}`} width="100%" role="img" aria-label="Zonenplan">
       {layout.edges.map((e) => (
@@ -1706,6 +1902,185 @@ export function PlanDrawing({ layout, id = "zone-plan" }: { layout: PlanLayout; 
           <text x={n.x + n.w / 2} y={n.y + 33} textAnchor="middle" className="zp-sub">
             {n.sub}
           </text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+// Linien der Übergänge nach der Lage der Zonen – gleich wie `plan_export.route` im Orchestrator: nebeneinander
+// von rechts nach links, übereinander rechts herum; Anschlusspunkte je Seite gleichmässig verteilt
+export function routeEdges(boxes: PlanBox[], edges: PlanEdge[]): PlanEdge[] {
+  const pos = new Map(boxes.map((b) => [String(b.id), b]));
+  const ends = new Map<string, string[]>();
+  const plans: { e: PlanEdge; a: PlanBox; b: PlanBox; sa: "r" | "l"; sb: "r" | "l"; same: boolean }[] = [];
+  const add = (k: string, v: string) => ends.set(k, [...(ends.get(k) ?? []), v]);
+  for (const e of edges) {
+    let a = pos.get(String(e.a));
+    let b = pos.get(String(e.b));
+    if (!a || !b) continue;
+    if (b.x < a.x) [a, b] = [b, a];
+    const apart = a.x + a.w <= b.x;
+    const sb = apart ? "l" : "r";
+    plans.push({ e, a, b, sa: "r", sb, same: !apart });
+    add(`${a.id}|r`, e.id ?? "");
+    add(`${b.id}|${sb}`, e.id ?? "");
+  }
+  const at = (box: PlanBox, side: "r" | "l", eid: string): [number, number] => {
+    const ids = ends.get(`${box.id}|${side}`) ?? [];
+    const k = ids.indexOf(eid);
+    return [side === "r" ? box.x + box.w : box.x, box.y + 14 + ((box.h - 20) * (k + 1)) / (ids.length + 1)];
+  };
+  return plans.map(({ e, a, b, sa, sb, same }, n) => {
+    const [x1, y1] = at(a, sa, e.id ?? "");
+    const [x2, y2] = at(b, sb, e.id ?? "");
+    if (same) {
+      const bend = Math.max(x1, x2) + 24 + (n % 4) * 8;
+      return { ...e, points: [[x1, y1], [bend, y1], [bend, y2], [x2, y2]], x1, y1, x2, y2, lx: bend + 4, ly: (y1 + y2) / 2 };
+    }
+    return { ...e, points: [[x1, y1], [x2, y2]], x1, y1, x2, y2, lx: (x1 + x2) / 2, ly: (y1 + y2) / 2 - 5 };
+  });
+}
+
+function PlanDrawing2({
+  layout,
+  id,
+  onArrange,
+  onFocus,
+}: {
+  layout: PlanLayout;
+  id: string;
+  onArrange?: (positions: Record<string, [number, number]>) => void;
+  onFocus?: (zoneId: string) => void;
+}) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const drag = useRef<{ id: string; dx: number; dy: number; cx: number; cy: number; moved: boolean } | null>(null);
+  const [moved, setMoved] = useState<Record<string, [number, number]>>({});
+  const movedRef = useRef<Record<string, [number, number]>>({}); // auch vor dem nächsten Rendern aktuell
+  const [dragging, setDragging] = useState<string | null>(null);
+  useEffect(() => {
+    movedRef.current = {};
+    setMoved({});
+  }, [layout]);
+  const boxes = layout.zones.map((z) => (moved[String(z.id)] ? { ...z, x: moved[String(z.id)][0], y: moved[String(z.id)][1] } : z));
+  const local = Object.keys(moved).length > 0;
+  const edges = local ? routeEdges(boxes, layout.edges) : layout.edges;
+  // Ausschnitt: während des Ziehens fest (sonst springt die Skalierung), danach um alle Zonen und Linien
+  let view = `0 0 ${layout.width} ${layout.height}`;
+  if (local && !dragging) {
+    const xs = boxes.flatMap((b) => [b.x, b.x + b.w]).concat(edges.flatMap((e) => (e.points ?? []).map(([x]) => x + 60)));
+    const ys = boxes.flatMap((b) => [b.y, b.y + b.h]);
+    const x0 = Math.min(0, ...xs.map((x) => x - 16));
+    const y0 = Math.min(0, ...ys.map((y) => y - 12));
+    view = `${x0} ${y0} ${Math.max(...xs) + 16 - x0} ${Math.max(...ys) + 24 - y0}`;
+  }
+  const point = (e: ReactPointerEvent): { x: number; y: number } => {
+    const svg = svgRef.current;
+    const m = svg?.getScreenCTM();
+    if (!svg || !m) return { x: e.clientX, y: e.clientY };
+    const p = svg.createSVGPoint();
+    p.x = e.clientX;
+    p.y = e.clientY;
+    const r = p.matrixTransform(m.inverse());
+    return { x: r.x, y: r.y };
+  };
+  const down = (e: ReactPointerEvent, box: PlanBox) => {
+    if (e.button !== 0) return;
+    e.preventDefault(); // keine Textauswahl bzw. kein Ziehen des Browsers (bricht den Zeiger sonst ab)
+    const p = point(e);
+    drag.current = { id: String(box.id), dx: p.x - box.x, dy: p.y - box.y, cx: e.clientX, cy: e.clientY, moved: false };
+  };
+  const move = (e: ReactPointerEvent) => {
+    const d = drag.current;
+    if (!d) return;
+    if (e.buttons === 0) {
+      // Taste schon losgelassen (z. B. ausserhalb des Plans): kein Ziehen mehr
+      drag.current = null;
+      setDragging(null);
+      return;
+    }
+    if (!d.moved && Math.hypot(e.clientX - d.cx, e.clientY - d.cy) < 4) return;
+    // erst beim Ziehen festhalten – sonst kommt der Doppelklick nicht mehr bei der Zone an
+    if (!d.moved) svgRef.current?.setPointerCapture?.(e.pointerId);
+    d.moved = true;
+    setDragging(d.id);
+    const p = point(e);
+    movedRef.current = { ...movedRef.current, [d.id]: [Math.round(p.x - d.dx), Math.round(p.y - d.dy)] };
+    setMoved(movedRef.current);
+  };
+  const up = () => {
+    const d = drag.current;
+    drag.current = null;
+    setDragging(null);
+    if (!d?.moved || !onArrange) return;
+    // alle Zonen der Ansicht festhalten (sonst ordnet das Layout die übrigen neu), in gespeicherten Koordinaten
+    const [ox, oy] = layout.offset ?? [0, 0];
+    const positions: Record<string, [number, number]> = {};
+    for (const b of layout.zones) {
+      const [x, y] = movedRef.current[String(b.id)] ?? [b.x, b.y];
+      positions[String(b.id)] = [Math.round(x - ox), Math.round(y - oy)];
+    }
+    onArrange(positions);
+  };
+  // Abbruch durch den Browser: die Zone springt zurück, nichts wird gespeichert
+  const cancel = () => {
+    const d = drag.current;
+    drag.current = null;
+    setDragging(null);
+    if (!d?.moved) return;
+    const { [d.id]: _, ...rest } = movedRef.current;
+    movedRef.current = rest;
+    setMoved(rest);
+  };
+  return (
+    <svg
+      ref={svgRef}
+      className={`zone-plan ${dragging ? "dragging" : ""}`}
+      id={id}
+      viewBox={view}
+      width="100%"
+      role="img"
+      aria-label="Zonenplan"
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={cancel}
+    >
+      {edges.map((e) => (
+        <g key={e.id} className={`zp-edge ${e.contact ? "contact" : ""}`}>
+          <polyline points={(e.points ?? []).map(([x, y]) => `${x},${y}`).join(" ")} strokeDasharray={e.dashed ? "5 4" : undefined}>
+            <title>{`${e.name || e.label || "Kontakt"}: ${(e.networks ?? []).join(", ")}`}</title>
+          </polyline>
+          {e.label && (
+            <text x={e.lx} y={e.ly} textAnchor={(e.points ?? []).length > 2 ? "start" : "middle"}>
+              {e.label}
+            </text>
+          )}
+        </g>
+      ))}
+      {boxes.map((z) => (
+        <g
+          key={z.id}
+          className={`zp-zone2 draggable ${z.pseudo ? "pseudo" : ""} ${z.collapsed ? "collapsed" : ""} ${dragging === String(z.id) ? "dragging" : ""}`}
+          data-zone={String(z.id)}
+          data-x={Math.round(z.x)}
+          data-y={Math.round(z.y)}
+          onPointerDown={(e) => down(e, z)}
+          onDoubleClick={() => onFocus?.(String(z.id))}
+        >
+          <title>{`${z.title} – ziehen zum Anordnen, Doppelklick = Fokus`}</title>
+          <rect x={z.x} y={z.y} width={z.w} height={z.h} rx={8} style={zoneStyle(z.color)} />
+          <text x={z.x + 12} y={z.y + 18} className="zp-title">
+            {z.title}
+            {z.code && <tspan className="zp-code"> {z.code}</tspan>}
+          </text>
+          <text x={z.x + 12} y={z.y + 33} className="zp-sub">
+            {z.sub}
+          </text>
+          {(z.lines ?? []).map((line, k) => (
+            <text key={k} x={z.x + 12} y={z.y + 52 + k * 15} className="zp-line">
+              {line}
+            </text>
+          ))}
         </g>
       ))}
     </svg>

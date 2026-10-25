@@ -240,6 +240,32 @@ Entscheide des Anwenders (2026-10-23):
       eingeschränkt mit Diensten → der gesuchte Dienst ist erlaubt bzw. nicht (erlaubt der Weg ihn,
       gegen die Absicht; ohne Dienst nur ein Hinweis); erlaubt und der Weg sperrt → Hinweis.
       Ohne Zonen bleibt der Weg wie bisher. Nicht für Kunden-Benutzer (Weg-Suche gesperrt).
+14. **Zonenplan übersichtlich (0.61.0, `store/plan_view.py`, Migration 0053):** Wunsch des
+    Anwenders (2026-10-25): bei mehr als drei Tenants und mehreren Zonen ist der Plan
+    unübersichtlich – Filter, Ebenen zum Ausblenden, Zonen von Hand anordnen.
+    - **Filter** auf dem Server, damit Oberfläche und Export (draw.io, SVG, PDF) dasselbe zeigen:
+      Suche (`q`: Name, Kurzname, Kunde, zusammengefasste Zonen, Knoten, Beispielnetze; Name eines
+      Übergangs bzw. eines seiner Netze → beide Seiten) bzw. Fokus auf gewählte Zonen (`focus`),
+      je mit den Nachbarn bis `depth` Übergänge weit (0–3, Vorgabe 1). Die übrigen Zonen und
+      Übergänge fallen weg, das Layout rückt zusammen; der Export nennt den Filter im Kopf („Suche
+      „DMZ“ + Nachbarn (2 von 5 Zonen)“). Kunden-Benutzer suchen nur über Zonen- und Kundennamen
+      (kein Raten von Gerätenamen, ADR 0018).
+    - **Ebenen** ausblenden (`hide_layer`): die Spalten DC (mit intern/geteilt), Kunden, Edge (mit
+      DMZ/Management), Transfer, Core, Distribution, Access, Public, Knoten ohne Zone, ausserhalb;
+      **Elemente** (`hide`): Knoten in den Zonen, Namen der Übergänge (bleiben als Eigenschaft im
+      draw.io), Kontakte zu Knoten ohne Zone, Zonen ohne Knoten und Übergang. Gewählte bzw.
+      gefundene Zonen bleiben sichtbar. Die Auswahl merkt sich der Browser je Betrachter.
+    - **Anordnung** (`zone_plan_arrangement` je Mandant und Ansicht `overview`, `all`,
+      `customer:<id>`): Zonen lassen sich in der Zeichnung ziehen; ein Operator speichert damit
+      die Position aller Zonen der Ansicht (`PUT /zones/plan/arrangement`, zusammengeführt;
+      `DELETE` setzt zurück; Audit `zone_plan.arranged`/`zone_plan.arrangement_reset`). Das Layout
+      setzt gespeicherte Zonen an ihren Platz, neue Zonen in ihrer Spalte darunter, und rückt den
+      Plan an den Rand (`offset`); Linien laufen nach der Lage (nebeneinander von rechts nach
+      links, übereinander rechts herum – `plan_export.route`, in der Oberfläche gleich beim
+      Ziehen). Filter behalten die Anordnung. Export und neue Versionen folgen ihr (die Version
+      speichert die Positionen der Ansicht „alle Zonen einzeln“, ohne Einfluss auf den
+      Fingerabdruck). Ohne Recht zum Speichern ordnet das Ziehen nur die eigene Ansicht.
+      Doppelklick auf eine Zone setzt den Fokus. Kunden-Benutzer lesen gefiltert, speichern nicht.
 
 ## Folgen
 

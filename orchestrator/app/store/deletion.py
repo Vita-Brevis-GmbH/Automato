@@ -46,6 +46,7 @@ from app.models import (
     VmIp,
     VmNic,
     Zone,
+    ZonePlanArrangement,
     ZonePlanVersion,
     ZonePolicy,
     ZoneSuggestionDismissal,
@@ -208,6 +209,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     zone_ids = select(LogicalZone.id).where(LogicalZone.tenant_id == tid)
     session.execute(delete(ZonePolicy).where(ZonePolicy.tenant_id == tid))
     session.execute(delete(ZonePlanVersion).where(ZonePlanVersion.tenant_id == tid))
+    session.execute(delete(ZonePlanArrangement).where(ZonePlanArrangement.tenant_id == tid))
     session.execute(delete(ZoneSuggestionDismissal).where(ZoneSuggestionDismissal.tenant_id == tid))
     session.execute(delete(LogicalZoneSelector).where(LogicalZoneSelector.zone_id.in_(zone_ids)))
     session.execute(delete(LogicalZone).where(LogicalZone.tenant_id == tid))
