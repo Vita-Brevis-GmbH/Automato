@@ -611,49 +611,36 @@ def plan(session: Session, tenant_id: int, customer_id=None,
     mode = "all" if everything or not any(owners.values()) else (
         "customer" if mine else "overview")  # fmt: skip
     group: dict = {}
+    own: set = set()
+    need: set = set()
     if mode == "all":
         group = {z.id: z.id for z in items}
     elif mode == "overview":
         group = {zid: (f"customer:{c}" if c else zid) for zid, c in owners.items()}
     else:
-        adj: dict = defaultdict(set)
-        for t in transitions:
-            adj[t.a].add(t.b)
-            adj[t.b].add(t.a)
-        own = {zid for zid, c in owners.items() if c in mine}
-        seen, todo = set(own), list(own)
-        while todo:  # geteilte Zonen, von den eigenen aus ueber geteilte erreichbar
-            for nxt in adj[todo.pop()]:
-                if isinstance(nxt, int) and owners.get(nxt) is None and nxt not in seen:
-                    seen.add(nxt)
-                    todo.append(nxt)
-        group = {zid: zid for zid in seen}
-
-        def foreign(x) -> bool:
-            return isinstance(x, int) and owners.get(x) is not None and owners[x] not in mine
-
-        # genutzte Zugaenge zu anderen Kunden - Uebergang von einer eigenen Zone bzw. Regeln
-        # zwischen einer eigenen Zone und ihrer: je Kunde eine Zone
-        other = {nxt for zid in own for nxt in adj[zid] if foreign(nxt)}
-        a = assign(session, tenant_id, items, nets=list(by_zone.values()))
-        for rid in a.rules:
-            for s, d in a.pairs(rid):
-                other |= {y for x, y in ((s, d), (d, s)) if x in own and foreign(y)}
-        for zid in other:
-            group[zid] = f"customer:{owners[zid]}"
+        own, need, group = _customer_view(session, tenant_id, items, st, transitions, by_zone,
+                                          owners, mine)  # fmt: skip
+        for z in zones_full.values():  # geteilte Zonen nur mit den benoetigten Knoten
+            if z["id"] not in own:
+                z["nodes_total"] = len(z["nodes"])
+                z["nodes"] = [n for n in z["nodes"] if n in need]
     for pseudo in PSEUDO:
         group[pseudo] = pseudo
 
     merged: dict[tuple, dict] = {}
+    node_zone = {topo_model.node_id(k): zid for k, zid in st.node_zone.items()}
     for t in transitions:
         ga, gb = group.get(t.a), group.get(t.b)
         if ga is None or gb is None or ga == gb:
             continue
-        if mode == "customer" and not ({t.a, t.b} & set(group) - set(PSEUDO)):
-            continue
+        nets = t.networks
+        if mode == "customer":  # nur Netze an benoetigten Knoten
+            nets = [n for n in nets if _needed_net(n, (t.a, t.b), node_zone, need)]
+            if not nets:
+                continue
         k = tuple(sorted((ga, gb), key=lambda x: (isinstance(x, str), str(x))))
         m = merged.setdefault(k, {"a": k[0], "b": k[1], "networks": []})
-        m["networks"] += [n for n in t.networks if n not in m["networks"]]
+        m["networks"] += [n for n in nets if n not in m["networks"]]
     if mode != "customer":  # Knoten ohne Zone an Netzen einer Zone (gestrichelt)
         for zid, infos in st.contacts.items():
             gz = group.get(zid)
@@ -667,8 +654,12 @@ def plan(session: Session, tenant_id: int, customer_id=None,
     zones_out: list[dict] = []
     for z in items:
         gid = group.get(z.id)
-        if gid == z.id:
-            zones_out.append(zones_full[z.id])
+        if gid != z.id:
+            continue
+        hidden = z.id not in own and not zones_full[z.id]["nodes"] and z.id not in used
+        if mode == "customer" and hidden:  # geteilte Zone ohne benoetigte Knoten und Uebergang
+            continue
+        zones_out.append(zones_full[z.id])
     collapsed = {int(str(x).split(":")[1]) for x in group.values()
                  if str(x).startswith("customer:")}  # fmt: skip
     for cid in sorted(collapsed, key=lambda c: cust.get(c, "")):
@@ -679,7 +670,9 @@ def plan(session: Session, tenant_id: int, customer_id=None,
                           "nodes": [], "nets": 0, "epgs": 0, "internal": 0, "samples": [],
                           "position": 0})  # fmt: skip
     unassigned = [topo_model.node_id(k) for k in st.unassigned()]
-    if mode != "customer" and unassigned:
+    if mode == "customer":  # Knoten ohne Zone nur, wenn der Kunde sie braucht
+        unassigned = [n for n in unassigned if n in need]
+    if unassigned:
         used.add("none")
     for pseudo, (name, kind) in PSEUDO.items():
         if pseudo in used:
@@ -740,6 +733,62 @@ def plan(session: Session, tenant_id: int, customer_id=None,
     }
 
 
+def _needed_net(net: dict, sides: tuple, node_zone: dict, need: set) -> bool:
+    """Netz eines Uebergangs im Plan eines Kunden: an einem benoetigten Knoten und je Seite mit
+    Knoten daran (Zone bzw. ohne Zone) einer davon benoetigt - sonst fuehrt es zu Geraeten, die
+    der Kunde nicht braucht."""
+    nodes = [leg["node"] for leg in net["legs"]]
+    if not any(n in need for n in nodes):
+        return False
+    for side in sides:
+        at = [n for n in nodes if node_zone.get(n, "none") == side]
+        if at and not any(n in need for n in at):
+            return False
+    return True
+
+
+def _customer_view(session: Session, tenant_id: int, items: list[LogicalZone], st, transitions,
+                   by_zone: dict, owners: dict, mine: set) -> tuple[set, set, dict]:  # fmt: skip
+    """Plan eines Kunden (0.57.1): seine Zonen; die Knoten, die er braucht (`zone_struct.needed`:
+    an seinen Netzen und auf den kuerzesten Wegen zu den Zonen seiner Regeln); geteilte Zonen mit
+    solchen Knoten, an seinen Zonen bzw. als Ziel seiner Regeln; andere Kunden mit genutztem
+    Zugang (Uebergang bzw. Regeln) je als eine Zone. -> (eigene Zonen, Knoten, Gruppen)."""
+    from app.store import zone_struct
+
+    own = {zid for zid, c in owners.items() if c in mine}
+
+    def foreign(x) -> bool:
+        return isinstance(x, int) and owners.get(x) is not None and owners[x] not in mine
+
+    adjacent = {y for t in transitions for x, y in ((t.a, t.b), (t.b, t.a)) if x in own}
+    other = {z for z in adjacent if foreign(z)}
+    targets: set = set()
+    external = {z.id for z in items if z.kind == "external"}
+    a = assign(session, tenant_id, items, nets=list(by_zone.values()))
+    for rid in a.rules:
+        for s, d in a.pairs(rid):
+            for x, y in ((s, d), (d, s)):
+                if x not in own:
+                    continue
+                if foreign(y):
+                    other.add(y)
+                elif isinstance(y, int) and y not in own:
+                    targets.add(y)
+                elif y == ANY:  # any: ueber die Zonen nach aussen (Public)
+                    targets |= external
+    need, reached = zone_struct.needed(st, own, targets | other)
+    zone_nodes = st.zone_nodes()
+    shared = {
+        zid for zid, owner in owners.items()
+        if owner is None and (zid in reached or zid in adjacent or any(
+            topo_model.node_id(k) in need for k in zone_nodes.get(zid, [])))
+    }  # fmt: skip
+    group: dict = {zid: zid for zid in own | shared}
+    for zid in other:
+        group[zid] = f"customer:{owners[zid]}"
+    return own, need, group
+
+
 def plan_with_layout(session: Session, tenant_id: int, customer_ids=None,
                      customer_id: int | None = None, everything: bool = False) -> dict:  # fmt: skip
     """Plan samt Zeichnung (`plan_export.layout`) fuer die Oberflaeche; mit `customer_ids` die
@@ -757,8 +806,9 @@ def plan_with_layout(session: Session, tenant_id: int, customer_ids=None,
 
 def restrict_plan(full: dict, view: CustomerView) -> dict:
     """Plan eines Kunden-Benutzers (ADR 0018 Schritt 4): seine Zonen mit ihren Knoten, die
-    geteilten Zonen ohne Netze und Knoten, andere Kunden als eine Zone „anderer Kunde“; Netze
-    der Uebergaenge nur an den eigenen Zonen, ohne fremde Geraete und Router-Namen."""
+    geteilten Zonen ohne Netze und Knoten (nur mit Uebergang im Ausschnitt), andere Kunden als
+    eine Zone „anderer Kunde“; Netze der Uebergaenge nur an den eigenen Zonen, ohne fremde
+    Geraete und Router-Namen."""
     own = {z["id"] for z in full["zones"] if isinstance(z["id"], int) and z["id"] in view.own}
     rename = {z["id"]: "other" for z in full["zones"] if z.get("collapsed")}
     own_nodes = {n for z in full["zones"] if z["id"] in own for n in z["nodes"]}
@@ -768,8 +818,9 @@ def restrict_plan(full: dict, view: CustomerView) -> dict:
             zones.append(z)
         elif z["id"] in rename:
             continue
-        elif isinstance(z["id"], int):
-            zones.append({**z, "nets": 0, "epgs": 0, "internal": 0, "samples": [], "nodes": []})
+        elif isinstance(z["id"], int):  # ohne Knoten, auch nicht deren Anzahl
+            rest = {k: v for k, v in z.items() if k != "nodes_total"}
+            zones.append({**rest, "nets": 0, "epgs": 0, "internal": 0, "samples": [], "nodes": []})
         elif z["id"] == "outside":
             zones.append(z)
     if rename:
@@ -794,6 +845,10 @@ def restrict_plan(full: dict, view: CustomerView) -> dict:
                                  "count": 0})  # fmt: skip
         x["networks"] += nets
         x["count"] += t["count"] if mine else 0
+    # geteilte Zonen nur mit einem Uebergang im Ausschnitt (sonst erreicht ueber Knoten ohne
+    # Zone, die er nicht sieht); andere Kunden auch ueber Regeln
+    linked = {x for t in trans.values() for x in (t["a"], t["b"])} | own | {"other"}
+    zones = [z for z in zones if z["id"] in linked]
     nodes = [n for n in full["nodes"] if n["id"] in own_nodes]
     real = [z for z in zones if isinstance(z["id"], int)]
     return {

@@ -2488,6 +2488,7 @@ export interface PlanZone {
   epgs: number;
   samples: string[];
   nodes?: string[]; // Knoten-IDs (0.56.0)
+  nodes_total?: number; // Plan je Kunde: Knoten der geteilten Zone insgesamt (0.57.1)
   internal?: number;
   collapsed?: boolean; // Kunde als eine Zone
   members?: string[];

@@ -691,9 +691,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     links, Public rechts) mit ihren Knoten, Übergänge als Linien mit Namen („DC-EINET“);
     gestrichelt „Knoten ohne Zone“ und „ausserhalb“ (Router ohne gelesenes Gerät).
     - **Ansicht** (oben rechts): **Übersicht** – die Zonen der Kunden je Kunde als eine Zone, damit
-      die Zeichnung überschaubar bleibt; **Kunde X** – seine Zonen, die geteilten Zonen dahinter und
-      die genutzten Zugänge zu anderen Kunden (Übergang bzw. Regeln zwischen den Zonen) je als eine
-      Zone; **alle Zonen einzeln**.
+      die Zeichnung überschaubar bleibt; **Kunde X** – seine Zonen, die genutzten Zugänge zu anderen
+      Kunden (Übergang bzw. Regeln zwischen den Zonen) je als eine Zone und von den geteilten Zonen
+      **nur die Firewalls/VRFs, die der Kunde braucht** (seit 0.57.1: an seinen Netzen und auf den
+      kürzesten Wegen zu den Zonen seiner Regeln; geteilte Zonen ohne solche Knoten und ohne
+      Übergang fallen weg, der Hinweis nennt die ausgeblendeten Knoten); **alle Zonen einzeln**.
+      Ist in der Kopfzeile ein **Kunde** gewählt, öffnet der Zonenplan dessen Ansicht.
     - Darunter die **Übergänge** mit Netz und den Beinen (Knoten mit Interface bzw. L3Out, Router),
       die Knoten ohne Zone an Netzen einer Zone (Kontakt, kein Übergang), Knoten in mehreren Zonen
       und die **Netze ohne Zone**.

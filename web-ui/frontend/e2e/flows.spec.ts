@@ -1154,6 +1154,18 @@ test("Kunden-Benutzer in Automato zuordnen: Zonen des Kunden, Anmeldung ohne Rol
   await expect(user.locator("#zone-unzoned")).toHaveCount(0);
   await ctx.close();
 
+  // Kunden-Filter der Kopfzeile (0.57.1): der Zonenplan zeigt die Ansicht dieses Kunden, von den
+  // geteilten Zonen nur die Knoten, die er braucht
+  await page.goto("/#design");
+  await page.getByLabel("Kunde", { exact: true }).selectOption({ label: name });
+  await page.click(".tabbar button:has-text('Zonenplan')");
+  await expect(page.locator("#zone-plan-view")).toHaveValue(String(te.id));
+  await expect(page.locator("#zone-plan-customer")).toContainText("die der Kunde braucht");
+  await expect(page.locator("#zone-plan .zp-zone2", { hasText: "Edge Internet" })).toContainText("fw-08");
+  await expect(page.locator("#zone-transitions")).toContainText("DMZ-EINET");
+  await page.getByLabel("Kunde", { exact: true }).selectOption("");
+  await page.goto("/#kunden");
+
   // aufräumen: Zuordnung entfernen, Zone wieder ohne Kunde
   page.once("dialog", (d) => d.accept());
   await row.locator("button:has-text('Entfernen')").click();

@@ -29,6 +29,7 @@ import {
   fetchZonePlan,
   fetchZones,
   fetchZoneSuggestions,
+  getCustomerFilter,
   LogicalZone,
   PlanDiff,
   PlanFormat,
@@ -1471,7 +1472,8 @@ function CellDetail({
 
 function PlanTab({ tenantId, isCustomer = false }: { tenantId: number; isCustomer?: boolean }) {
   const [plan, setPlan] = useState<ZonePlan | null>(null);
-  const [view, setView] = useState<string>(""); // "" Übersicht, "all" alle Zonen, sonst Kunde
+  // "" Übersicht, "all" alle Zonen, sonst Kunde – vorgewählt nach dem Kunden-Filter der Kopfzeile
+  const [view, setView] = useState<string>(() => (!isCustomer && getCustomerFilter() ? String(getCustomerFilter()) : ""));
   const [err, setErr] = useState<unknown>(null);
   const planView: PlanView = view === "all" ? { all: true } : view ? { customerId: Number(view) } : {};
   useEffect(() => {
@@ -1482,8 +1484,10 @@ function PlanTab({ tenantId, isCustomer = false }: { tenantId: number; isCustome
   }, [tenantId, view]);
   if (err) return <ErrorBox error={err} onClose={() => setErr(null)} />;
   if (plan == null) return <Loading />;
-  if (plan.zones.length === 0) return <Note>Noch keine Zonen – zuerst im Reiter „Zonen“ anlegen.</Note>;
+  const own = plan.view?.mode === "customer";
+  if (plan.zones.length === 0 && !own) return <Note>Noch keine Zonen – zuerst im Reiter „Zonen“ anlegen.</Note>;
   const s = plan.summary;
+  const hidden = plan.zones.reduce((n, z) => n + Math.max(0, (z.nodes_total ?? 0) - (z.nodes?.length ?? 0)), 0);
   const zoneName = new Map(plan.zones.map((z) => [String(z.id), z.name]));
   const transitions = (plan.transitions ?? []).filter((t) => !t.contact);
   const contacts = (plan.transitions ?? []).filter((t) => t.contact);
@@ -1509,6 +1513,9 @@ function PlanTab({ tenantId, isCustomer = false }: { tenantId: number; isCustome
                     Kunde {c.name}
                   </option>
                 ))}
+                {own && plan.view?.customer_id != null && !customers.some((c) => c.id === plan.view?.customer_id) && (
+                  <option value={plan.view.customer_id}>Kunde {plan.view.customer ?? plan.view.customer_id} (ohne Zonen)</option>
+                )}
                 <option value="all">alle Zonen einzeln</option>
               </select>
             )}
@@ -1516,10 +1523,13 @@ function PlanTab({ tenantId, isCustomer = false }: { tenantId: number; isCustome
           </span>
         </div>
         <div className="card-body scroll">
-          {plan.view?.mode === "customer" && (
-            <p className="faint" style={{ margin: "4px 0 8px" }}>
-              Zonen von {plan.view.customer ?? "Kunde"}, die geteilten Zonen dahinter und die genutzten Zugänge zu anderen
-              Kunden (je als eine Zone).
+          {own && (
+            <p className="faint" style={{ margin: "4px 0 8px" }} id="zone-plan-customer">
+              Zonen von {plan.view?.customer ?? "Kunde"}, die genutzten Zugänge zu anderen Kunden (je als eine Zone) und von
+              den geteilten Zonen nur die Firewalls/VRFs, die der Kunde braucht – an seinen Netzen und auf den Wegen zu den
+              Zonen seiner Regeln
+              {hidden > 0 ? ` (${hidden} weitere Knoten ausgeblendet – „alle Zonen einzeln“ zeigt sie)` : ""}.
+              {plan.zones.length === 0 && " Dem Kunden sind keine Zonen zugeordnet."}
             </p>
           )}
           {plan.layout && <PlanDrawing layout={plan.layout} />}

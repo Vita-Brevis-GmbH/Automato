@@ -83,6 +83,8 @@ class Structure:
     unzoned: list[dict] = field(default_factory=list)
     # Knoten ohne Zone an Netzen einer Zone (kein Uebergang, Hinweis fuer den Plan)
     contacts: dict[int, list[dict]] = field(default_factory=lambda: defaultdict(list))
+    # je Netz an den Knoten: die Knoten daran und die Zonen, die es beruehrt (Plan je Kunde)
+    segments: list[tuple[set[str], set]] = field(default_factory=list)
 
     def zone_nodes(self) -> dict[int, list[Key]]:
         out: dict[int, list[Key]] = defaultdict(list)
@@ -245,6 +247,7 @@ def build(session: Session, tenant_id: int, items: list[LogicalZone],
         info = {"network": text, "legs": legs,
                 "routers": [{"ip": ip, "names": names}
                             for ip, names in sorted(routers.get(i, {}).items())]}  # fmt: skip
+        st.segments.append(({x["node"] for x in legs}, assigned | explicit))
         pairs: set[tuple[Side, Side]] = set()
         if explicit:
             if any(z is None for z in nodes.values()):
@@ -282,6 +285,55 @@ def build(session: Session, tenant_id: int, items: list[LogicalZone],
             t = st.transitions.setdefault(key, Transition(*key))
             t.networks.append(info)
     return st
+
+
+def needed(st: Structure, own: set[int], targets: set[int]) -> tuple[set[str], set[int]]:
+    """Knoten, die ein Kunde braucht (0.57.1): die Knoten seiner Zonen und die an seinen Netzen,
+    dazu je Zielzone (Gegenstelle seiner Regeln) die Knoten auf den kuerzesten Wegen zu ihren
+    Knoten (Zone ohne Knoten: zu den Knoten an ihren Netzen) - ueber gemeinsame Netze der Knoten,
+    gleich lange Wege alle (Redundanz) - und die Partner eines Verbunds.
+    -> (Knoten-IDs `<Quellsystem>|<Kontext>`, erreichte Zielzonen)."""
+    adj: dict[str, set[str]] = defaultdict(set)
+    touches: dict = defaultdict(set)  # Zone -> Knoten an ihren Netzen bzw. in ihr
+    for nodes, zones in st.segments:
+        for n in nodes:
+            adj[n] |= nodes - {n}
+        for z in zones:
+            touches[z] |= nodes
+    inside: dict = defaultdict(set)  # Zone -> ihre Knoten
+    for key, zid in st.node_zone.items():
+        touches[zid].add(node_id(key))
+        inside[zid].add(node_id(key))
+    sources = set().union(*(touches.get(z, set()) for z in own)) if own else set()
+    out, reached = set(sources), set()
+    if not sources:
+        return out, reached
+    from_src = _distances(adj, sources)
+    for t in targets - own:
+        goal = inside.get(t) or touches.get(t, set())  # Zone ohne Knoten: an ihren Netzen
+        best = min((from_src[n] for n in goal if n in from_src), default=None)
+        if best is None:
+            continue
+        reached.add(t)
+        to_goal = _distances(adj, goal)
+        out |= {n for n, d in from_src.items() if n in to_goal and d + to_goal[n] == best}
+    groups = {n.group for k, n in st.graph.nodes.items() if n.group and node_id(k) in out}
+    out |= {node_id(k) for k, n in st.graph.nodes.items() if n.group in groups and n.group}
+    return out, reached
+
+
+def _distances(adj: dict[str, set[str]], start: set[str]) -> dict[str, int]:
+    dist = dict.fromkeys(start, 0)
+    todo = list(start)
+    while todo:
+        nxt = []
+        for n in todo:
+            for m in adj.get(n, ()):
+                if m not in dist:
+                    dist[m] = dist[n] + 1
+                    nxt.append(m)
+        todo = nxt
+    return dist
 
 
 def _inside(ip: str, net: Net) -> bool:

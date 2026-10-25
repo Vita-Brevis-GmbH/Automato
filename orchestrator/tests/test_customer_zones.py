@@ -217,6 +217,87 @@ def test_zonenplan_je_kunde(client):
     assert "anderer Kunde" in texts and "Kunde B" not in texts and "fw-01 · VDOM root" not in texts
 
 
+def test_zonenplan_kunde_nur_benoetigte_knoten(client):
+    """Plan eines Kunden (0.57.1): nur die Firewalls/VRFs, die er braucht - an seinen Netzen und
+    auf den kuerzesten Wegen zu den Zonen seiner Regeln; geteilte Zonen ohne solche Knoten und
+    ohne Uebergang fallen weg."""
+    tid, ids = _seed(client)
+    z = _model(client, tid, ids)
+    a, b = _customer(client, tid, "Kunde A"), _customer(client, tid, "Kunde B")
+    for key, owner in (("server", a), ("office", b)):
+        zone = z[key]
+        body = {"tenant_id": tid, "name": zone["name"], "kind": zone["kind"],
+                "code": zone["code"], "customer_id": owner["id"],
+                "selectors": zone["selectors"]}  # fmt: skip
+        assert client.put(f"/zones/{zone['id']}", json=body, headers=OP).status_code == 200
+
+    def plan(customer):
+        p = client.get("/zones/plan", params={"tenant_id": tid, "customer_id": customer}).json()
+        labels = {n["id"]: n["label"] for n in p["nodes"]}
+        zones = {x["name"]: [labels[n] for n in x["nodes"]] for x in p["zones"]}
+        return p, zones, {t["name"] for t in p["transitions"]}
+
+    # Kunde B (Office an fw-02): Regeln zu Server (Kunde A) und ins DC - kein Internet, also
+    # ohne Public (frueher ueber Edge Internet erreichbar und gezeigt)
+    p, zones, trans = plan(b["id"])
+    assert set(zones) == {"Office", "Edge Internet", "DC", "Kunde A"}
+    assert zones["Edge Internet"] == ["fw-01 · VDOM root", "fw-02"]
+    assert zones["DC"] == ["apic-01 · VRF TE:VRF1"]
+    assert trans == {"DC-EINET", "EINET-OACC", "Kunde A-EINET"}
+    assert "1|kunde-a" not in str(p["nodes"])
+
+    # ohne die Zone Office liegt 10.60.0.0/24 in Edge Internet: Kunde A braucht fw-02 nicht
+    assert client.delete(f"/zones/{z['office']['id']}", headers=OP).status_code == 204
+    p, zones, trans = plan(a["id"])
+    assert zones["Edge Internet"] == ["fw-01 · VDOM root"]
+    einet = next(x for x in p["zones"] if x["name"] == "Edge Internet")
+    assert einet["nodes_total"] == 2
+    assert set(zones) == {"Server", "Edge Internet", "DC", "Public"}
+    assert trans == {"DC-EINET", "EINET-PUB", "SRV-EINET"}
+    assert "fw-02" not in {n["label"] for n in p["nodes"]}
+    full = client.get("/zones/plan", params={"tenant_id": tid, "all": "true"}).json()
+    assert "fw-02" in {n["label"] for n in full["nodes"]}  # alle Zonen: unveraendert
+    # Kunden-Benutzer: auch die Anzahl der Knoten geteilter Zonen nicht
+    ua = _as(tid, a["id"])
+    mine = client.get("/zones/plan", params={"tenant_id": tid}, headers=ua).json()
+    assert all("nodes_total" not in x for x in mine["zones"] if x["name"] != "Server")
+
+    # Kunde C mit der VDOM kunde-a (ohne Regeln): nur sein Knoten und der Router dahinter
+    c = _customer(client, tid, "Kunde C")
+    body = {"tenant_id": tid, "name": "Mandant C", "customer_id": c["id"],
+            "selectors": [_sel("fw_vdom", "kunde-a", source_system_id=ids["fw-01"])]}  # fmt: skip
+    assert client.post("/zones", json=body, headers=OP).status_code == 201
+    p, zones, trans = plan(c["id"])
+    assert zones == {"Mandant C": ["fw-01 · VDOM kunde-a"], "ausserhalb (nicht gelesen)": []}
+    assert {n["label"] for n in p["nodes"]} == {"fw-01 · VDOM kunde-a"}
+
+
+def test_benoetigte_knoten_kuerzeste_wege():
+    """`zone_struct.needed`: eigene Knoten, alle gleich kurzen Wege zur Zielzone, Verbund-Partner;
+    Sackgassen und laengere Wege nicht."""
+    from types import SimpleNamespace
+
+    from app.store import zone_struct
+
+    key = {n: (i, "root") for i, n in enumerate("ABCDEFG", start=1)}
+    nid = {n: zone_struct.node_id(k) for n, k in key.items()}
+    nodes = {k: SimpleNamespace(group="v" if n in "BF" else None) for n, k in key.items()}
+    st = zone_struct.Structure(SimpleNamespace(nodes=nodes))
+    st.node_zone = {key["A"]: 1, key["D"]: 2}
+    # A - B - D und A - C - D (gleich lang), A - E (Sackgasse), A - G - X - D gibt es nicht
+    for pair in ("AB", "BD", "AC", "CD", "AE"):
+        st.segments.append(({nid[x] for x in pair}, set()))
+    st.segments.append(({nid["G"]}, {3}))  # Zone 3 nur an G - von A aus nicht erreichbar
+    need, reached = zone_struct.needed(st, {1}, {2, 3})
+    names = {n for n, i in nid.items() if i in need}
+    assert names == {"A", "B", "C", "D", "F"}  # F: Verbund-Partner von B
+    assert reached == {2}
+    # Netz der eigenen Zone mit einem Nachbarn: der Nachbar gehoert dazu
+    st.segments.append(({nid["A"], nid["E"]}, {1}))
+    need, _ = zone_struct.needed(st, {1}, set())
+    assert {n for n, i in nid.items() if i in need} == {"A", "E"}
+
+
 def test_zuordnung_benutzer_kunde_in_automato(client, session_factory):
     tid, ids = _seed(client)
     z, a, b = _owned(client, tid, ids)

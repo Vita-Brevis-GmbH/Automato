@@ -7,6 +7,22 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.57.1 – 2026-10-25
+
+Korrektur des Anwenders am Zonenplan je Kunde („es zeigt immer noch alles an – lediglich die
+Firewall und ACI, welche der Kunde braucht“, ADR 0024 Nr. 12). Ohne Migration; nur lesend.
+
+- **Nur benötigte Knoten:** der Plan eines Kunden zeigt seine Zonen mit ihren Knoten, von den
+  geteilten Zonen aber nur die Firewalls/VDOMs und ACI-VRFs, die er braucht – an seinen Netzen und
+  auf den kürzesten Wegen zu den Zonen seiner Regeln (gleich lange Wege alle, Partner eines
+  Verbunds dazu). Geteilte Zonen ohne solche Knoten und ohne Übergang fallen weg, Übergänge nur
+  mit Netzen an benötigten Knoten; Knoten ohne Zone nur, wenn der Kunde sie braucht. Der Hinweis
+  über der Zeichnung nennt die ausgeblendeten Knoten („alle Zonen einzeln“ zeigt sie).
+- **Kunden-Filter der Kopfzeile:** ist oben ein Kunde gewählt, öffnet der Zonenplan dessen Ansicht
+  (bisher immer die Übersicht mit allem).
+- Kunden-Benutzer: geteilte Zonen nur mit einem Übergang in ihrem Ausschnitt, ohne die Anzahl
+  ihrer Knoten.
+
 ## 0.57.0 – 2026-10-25
 
 Zonen je Hop in der Weg-Suche und Absicht je Dienst (ROADMAP „Zonen/Kunden fertig“, ADR 0024

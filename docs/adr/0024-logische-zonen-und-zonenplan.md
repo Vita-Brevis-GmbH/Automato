@@ -206,8 +206,17 @@ Entscheide des Anwenders (2026-10-23):
     - **Zonenplan je Kunde** (`GET /zones/plan?customer_id=&all=`): ohne Kunde die Übersicht –
       Zonen der Kunden je Kunde als **eine Zone**; mit Kunde dessen Zonen, die geteilten Zonen
       dahinter und die **genutzten Zugänge** zu anderen Kunden (Übergang oder Regeln zwischen den
-      Zonen) je als eine Zone; `all` alle Zonen einzeln. Kunden-Benutzer sehen ihren Plan, andere
-      Kunden als „anderer Kunde“, geteilte Zonen ohne Knoten und Netze. Zeichnung in Spalten nach
+      Zonen) je als eine Zone; `all` alle Zonen einzeln. Seit 0.57.1 (Korrektur des Anwenders:
+      „lediglich die Firewall und ACI, welche der Kunde braucht“) zeigen die geteilten Zonen im
+      Plan eines Kunden nur die **benötigten Knoten** (`zone_struct.needed`): die Knoten an den
+      Netzen seiner Zonen und die auf den kürzesten Wegen über gemeinsame Netze zu den Knoten der
+      Zonen seiner Regeln (Zone ohne Knoten: die Knoten an ihren Netzen; gleich lange Wege alle,
+      Partner eines Verbunds dazu); geteilte Zonen ohne benötigte Knoten und ohne Übergang fallen
+      weg, Übergänge nur mit Netzen, an denen je Seite ein benötigter Knoten hängt
+      (`nodes_total` nennt die Knoten der Zone insgesamt). Die Oberfläche folgt dem Kunden-Filter
+      der Kopfzeile. Kunden-Benutzer sehen ihren Plan, andere
+      Kunden als „anderer Kunde“, geteilte Zonen ohne Knoten und Netze (nur mit Übergang im
+      Ausschnitt, ohne `nodes_total`). Zeichnung in Spalten nach
       Ebene, Zonen mit ihren Knoten, Übergänge als Linien mit Namen; Export (draw.io, SVG, PDF)
       in der gewählten Ansicht. Versionen speichern alle Zonen einzeln (Format 2); ältere
       Versionen behalten ihre Zeichnung.
