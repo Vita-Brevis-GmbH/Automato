@@ -38,8 +38,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 from app.models.customer import SELECTOR_KINDS
 
-# Art der Zone - Gliederung in Matrix und Plan, keine Funktion
-ZONE_KINDS = ("internal", "dmz", "external", "management", "shared", "transfer")
+# Art der Zone - Gliederung in Matrix und Plan, keine Funktion. Seit 0.56.0 die Ebenen des
+# Zonenmodells (Datacenter, Edge, Transfer, Core, Distribution, Access, Public = extern) - in
+# dieser Reihenfolge von links nach rechts im Zonenplan; die bisherigen Arten bleiben gueltig.
+ZONE_KINDS = ("dc", "edge", "transfer", "core", "distribution", "access", "external", "internal",
+              "dmz", "management", "shared")  # fmt: skip
 # Selektoren wie beim Kunden, dazu die Netze hinter einer Anbindung (`topo_exit`, Name)
 ZONE_SELECTOR_KINDS = (*SELECTOR_KINDS, "exit")
 # Absicht je Zonenpaar: erlaubt, eingeschraenkt (nur bestimmte Dienste), gesperrt

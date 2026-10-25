@@ -1,7 +1,8 @@
 // Grundschema der Zonen (0.55.0, ADR 0024 Nr. 11): die möglichen Zonen und die Absicht zwischen
 // ihnen als draw.io-Zeichnung in der Namenskonvention. Hochladen mit Vorschau und Unterschied,
 // Zeichnung bzw. Vorlage herunterladen, entfernen (Admin). Die Zonen-Vorschläge im Netzwerkdesign
-// richten sich danach; ohne Schema arbeitet alles wie bisher.
+// richten sich danach; ohne Schema gilt die eingebaute Vorlage (seit 0.56.0 nach Ebenen: DC, Edge,
+// Transfer, Core, Distribution, Access, Public – mit festen Farben).
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteZoneSchema,
@@ -22,20 +23,31 @@ import {
 import { download, ErrorBox, fmtTime, Loading, Modal } from "./ui";
 
 const KIND: Record<ZoneKind, string> = {
+  dc: "Datacenter",
+  edge: "Edge",
+  transfer: "Transfer",
+  core: "Core",
+  distribution: "Distribution",
+  access: "Access",
+  external: "Public / extern",
   internal: "intern",
   dmz: "DMZ",
-  external: "extern",
   management: "Management",
   shared: "geteilt",
-  transfer: "Transfer",
 };
+// Farbe der Art, wenn die Zeichnung keine nennt (wie `zones.KIND_COLOR` im Orchestrator)
 const KIND_COLOR: Record<ZoneKind, string> = {
+  dc: "#3b82c4",
+  edge: "#d9822b",
+  transfer: "#8a93a3",
+  core: "#2f9e44",
+  distribution: "#1098ad",
+  access: "#74b816",
+  external: "#cc3333",
   internal: "#3b82c4",
   dmz: "#d9822b",
-  external: "#cc3333",
   management: "#7a5cc4",
   shared: "#2f9e8f",
-  transfer: "#8a93a3",
 };
 const INTENT: Record<ZoneIntent, [string, string]> = {
   allow: ["ok", "erlaubt"],

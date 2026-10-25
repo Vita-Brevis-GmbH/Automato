@@ -45,7 +45,7 @@ from app.models import (
     ZonePolicy,
 )
 from app.store import customers as customer_store
-from app.store import plan_export, plan_versions, reconcile, zone_detect
+from app.store import plan_export, plan_versions, reconcile, zone_detect, zone_struct
 from app.store import zones as store
 
 router = APIRouter(prefix="/zones", tags=["zones"])
@@ -138,9 +138,9 @@ def _selectors(session: Session, tid: int, items: list[SelectorIn]) -> list[stor
 
 
 def _out(z: LogicalZone, nets: store.ZoneNets | None = None,
-         customers: dict[int, str] | None = None) -> dict:  # fmt: skip
+         customers: dict[int, str] | None = None, color: dict | None = None) -> dict:  # fmt: skip
     return {
-        **store.zone_out(z, nets),
+        **store.zone_out(z, nets, color),
         "tenant_id": z.tenant_id,
         "description": z.description,
         "customer": (customers or {}).get(z.customer_id) if z.customer_id else None,
@@ -159,10 +159,10 @@ def _out(z: LogicalZone, nets: store.ZoneNets | None = None,
 
 
 def _customer_out(z: LogicalZone, nets: store.ZoneNets | None, names: dict[int, str],
-                  own: bool) -> dict:  # fmt: skip
+                  own: bool, color: dict | None = None) -> dict:  # fmt: skip
     """Zone in der Sicht eines Kunden-Benutzers: ohne Selektoren (Infrastruktur); geteilte
     Zonen nur mit Name, Art und Farbe."""
-    out = _out(z, nets if own else None, names)
+    out = _out(z, nets if own else None, names, color)
     out["selectors"] = []
     if not own:
         out["description"] = None
@@ -242,18 +242,52 @@ def list_zones(
     """Zonen der Umgebung in ihrer Reihenfolge, mit Selektoren und Anzahl Netze/EPGs."""
     tid = _tenant(session, principal, tenant_id)
     items = store.load(session, tid)
+    color = store.colors(session, tid, items)
     if principal.is_customer:  # eigene Zonen und die geteilten, an denen er haengt (Plan)
         plan = store.plan_with_layout(session, tid, _scope(principal))
         view = store.customer_view(items, _scope(principal))
         visible = {z["id"] for z in plan["zones"]} | view.own
-        own = [z for z in items if z.id in view.own]
-        nets = {n.id: n for n in store.derive(session, tid, own)}
+        nets = {n.id: n for n in store.derive(session, tid, items)}
         names = _customers(session, tid)
-        return [_customer_out(z, nets.get(z.id), names, z.id in view.own)
+        return [_customer_out(z, nets.get(z.id), names, z.id in view.own, color.get(z.id))
                 for z in items if z.id in visible]  # fmt: skip
-    nets = {n.id: n for n in store.derive(session, tid, items)}
+    data = customer_store._Data(session, tid)
+    st = zone_struct.build(session, tid, items, data)
+    nets = {n.id: n for n in store.derive(session, tid, items, data, st)}
     names = _customers(session, tid)
-    return [_out(z, nets.get(z.id), names) for z in items]
+    zone_nodes = st.zone_nodes()
+    by_id = {z.id: z for z in items}
+    out = []
+    for z in items:
+        row = _out(z, nets.get(z.id), names, color.get(z.id))
+        row["nodes"] = [st.graph.nodes[k].label for k in zone_nodes.get(z.id, [])]
+        row["transitions"] = [
+            {"to": _side_name(t.b if t.a == z.id else t.a, by_id),
+             "to_id": t.b if t.a == z.id else t.a,
+             "name": _transition_name(z, t.b if t.a == z.id else t.a, by_id),
+             "count": len(t.networks)}
+            for t in st.of_zone(z.id)
+        ]  # fmt: skip
+        out.append(row)
+    return out
+
+
+def _side_name(side, by_id: dict[int, LogicalZone]) -> str:
+    if isinstance(side, int):
+        z = by_id.get(side)
+        return z.name if z else f"#{side}"
+    return store.PSEUDO.get(side, (side,))[0]
+
+
+def _side(side, by_id: dict[int, LogicalZone]) -> dict:
+    z = by_id.get(side) if isinstance(side, int) else None
+    if z is None:
+        return {"name": _side_name(side, by_id), "code": None, "kind": side, "position": 0}
+    return {"name": z.name, "code": z.code, "kind": z.kind, "position": z.position}
+
+
+def _transition_name(z: LogicalZone, other, by_id: dict[int, LogicalZone]) -> str:
+    return store.transition_name(_side(z.id, {z.id: z, **by_id}), _side(other, by_id))
 
 
 @router.post("/preview")
@@ -327,6 +361,7 @@ def accept_suggestions(
             position += 10
             sources = ", ".join(zone_detect.SOURCE_LABEL[x] for x in s["sources"])
             z = LogicalZone(tenant_id=tid, name=name[:200], kind=s["kind"], color=s["color"],
+                            code=(s.get("code") or None) and s["code"][:50],
                             customer_id=s["customer_id"], position=position, selectors=sel,
                             description=f"Vorschlag aus {sources}")  # fmt: skip
             session.add(z)
@@ -516,13 +551,15 @@ def set_policy(
 @router.get("/plan")
 def plan(
     tenant_id: int | None = None,
+    customer_id: int | None = Query(None, description="Plan dieses Kunden"),
+    everything: bool = Query(False, alias="all", description="alle Zonen einzeln"),
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """Zonenplan: je Zone die Knoten (Firewall/VDOM, ACI-VRF), an denen sie haengt, und die
-    Uebergaenge zwischen Zonen ueber einen Knoten; dazu Netze ohne Zone."""
+    """Zonenplan nach dem Zonenmodell: Zonen mit ihren Knoten und Netzen, Uebergaenge zwischen
+    den Zonen; ohne Kunde die Uebersicht (Kunden je als eine Zone), mit Kunde dessen Plan."""
     tid = _tenant(session, principal, tenant_id)
-    return store.plan_with_layout(session, tid, _scope(principal))
+    return store.plan_with_layout(session, tid, _scope(principal), customer_id, everything)
 
 
 _FORMATS = {
@@ -545,6 +582,8 @@ def export_plan(
     format: str = Query("svg", pattern="^(svg|drawio|pdf)$"),  # noqa: A002 - Name der API
     tenant_id: int | None = None,
     version_id: int | None = None,
+    customer_id: int | None = None,
+    everything: bool = Query(False, alias="all"),
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> Response:
@@ -561,13 +600,17 @@ def export_plan(
         name = f"zonenplan-v{v.number}"
     else:
         tid = _tenant(session, principal, tenant_id)
-        plan, matrix = store.plan_with_layout(session, tid, _scope(principal)), None
+        plan = store.plan_with_layout(session, tid, _scope(principal), customer_id, everything)
+        matrix = None
         if format == "pdf":
             matrix = store.matrix(session, tid, customer_ids=_scope(principal))
         when, meta = datetime.now(UTC), None
         name = f"zonenplan-{when:%Y-%m-%d}"
     tenant = session.get(Tenant, tid)
     title = f"Zonenplan {tenant.name}" if tenant else "Zonenplan"
+    view = (plan.get("view") or {}) if version_id is None else {}
+    if view.get("customer"):
+        title += f" – {view['customer']}"
     if principal.is_customer:  # Titel mit den eigenen Kunden, nicht der Umgebung
         names = sorted(n for cid, n in _customers(session, tid).items()
                        if cid in (principal.customer_ids or ()))  # fmt: skip
@@ -757,6 +800,46 @@ def delete_zone(
     reconcile.refresh_zone_findings(session, tid)
 
 
+class NodesIn(BaseModel):
+    nodes: list[str] = Field(min_length=1, max_length=500)  # Knoten `<Quellsystem>|<Kontext>`
+
+
+@router.post("/{zone_id}/nodes")
+def assign_nodes(
+    zone_id: int,
+    body: NodesIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Knoten (Firewall bzw. VDOM, ACI-VRF) der Zone zuordnen (Operator): als Selektor VDOM
+    bzw. ACI-VRF - die Netze daran werden Netze der Zone bzw. Uebergaenge (0.56.0)."""
+    z = _get(session, principal, zone_id)
+    from app.store.paths import Graph
+
+    g = Graph(session, z.tenant_id)
+    have = {(s.kind, s.value.casefold(), s.source_system_id) for s in z.selectors}
+    added = []
+    for raw in dict.fromkeys(body.nodes):
+        sid, _, ctx = raw.partition("|")
+        key = (int(sid), ctx) if sid.isdigit() else None
+        node = g.nodes.get(key) if key else None
+        if node is None:
+            raise HTTPException(status_code=404, detail=f"node not found: {raw}")
+        sel = ("aci_vrf", ctx, None) if node.kind == "vrf" else ("fw_vdom", ctx, key[0])
+        if (sel[0], sel[1].casefold(), sel[2]) in have:
+            continue
+        z.selectors = [*z.selectors, LogicalZoneSelector(kind=sel[0], value=sel[1],
+                                                         source_system_id=sel[2])]  # fmt: skip
+        added.append(node.label)
+    if added:
+        z.updated_at = datetime.now(UTC)
+        session.flush()
+        _audit(session, principal, "updated", z, via="node")
+        _rederive(session, z.tenant_id, {z.customer_id})
+        reconcile.refresh_zone_findings(session, z.tenant_id)
+    return {"zone_id": z.id, "added": added}
+
+
 @router.get("/{zone_id}/nets")
 def zone_nets(
     zone_id: int,
@@ -769,9 +852,36 @@ def zone_nets(
     if principal.is_customer and z.customer_id not in (principal.customer_ids or ()):
         raise HTTPException(status_code=404, detail="zone not found")  # nur eigene Zonen
     reads.maybe_audit_read(session, principal, z.tenant_id, "zones")
-    nets = store.derive(session, z.tenant_id, [z])[0]
+    items = store.load(session, z.tenant_id)
+    data = customer_store._Data(session, z.tenant_id)
+    st = zone_struct.build(session, z.tenant_id, items, data)
+    nets = next(n for n in store.derive(session, z.tenant_id, items, data, st) if n.id == z.id)
     ordered = sorted(nets.nets.items(), key=lambda x: store._net_key(x[0]))
+    by_id = {x.id: x for x in items}
+    customer = principal.is_customer
+    view = store.customer_view(items, principal.customer_ids) if customer else None
+    own_ids = {zone_struct.node_id(k) for k, zid in st.node_zone.items() if zid == z.id}
+    transitions = []
+    for t in st.of_zone(z.id):
+        other = t.b if t.a == z.id else t.a
+        networks = [
+            {"network": n["network"],
+             "legs": [leg for leg in n["legs"] if not customer or leg["node"] in own_ids],
+             "routers": [] if customer else n["routers"]}
+            for n in t.networks
+        ]  # fmt: skip
+        if view is not None and view.mask(other) == store.OTHER:  # Zone eines anderen Kunden
+            masked = {"name": "anderer Kunde", "code": None, "kind": "customer", "position": 0}
+            transitions.append({"to": masked["name"], "to_id": store.OTHER,
+                                "name": store.transition_name(_side(z.id, by_id), masked),
+                                "networks": networks[:limit]})  # fmt: skip
+            continue
+        transitions.append({"to": _side_name(other, by_id), "to_id": other,
+                            "name": _transition_name(z, other, by_id),
+                            "networks": networks[:limit]})  # fmt: skip
     return {
         "total": len(ordered),
         "items": [{"network": str(n), "via": why} for n, why in ordered[:limit]],
+        "nodes": [st.graph.nodes[k].label for k in st.zone_nodes().get(z.id, [])],
+        "transitions": transitions,
     }

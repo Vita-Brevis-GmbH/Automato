@@ -10,8 +10,8 @@ import re
 import xml.etree.ElementTree as ET
 import zlib
 
-from app.store import plan_export
-from test_zones import ADMIN, OP, VIEW, _seed, _sel, _zone, _zones
+from app.store import plan_export, zone_schema
+from test_zones import ADMIN, OP, VIEW, _model, _seed, _sel, _zone, _zones
 
 SVG = "{http://www.w3.org/2000/svg}"
 
@@ -28,39 +28,53 @@ def _export(client, tid, fmt, **params):
     return r
 
 
-def test_layout_links_rechts_und_route_gestrichelt(client):
+def test_layout_spalten_nach_ebene(client):
     tid, ids = _seed(client)
-    z = _zones(client, tid, ids)
-    _zone(client, tid, "Remote", [_sel("prefix", "10.99.0.0/16")])
+    _model(client, tid, ids)
     plan = _plan(client, tid)
     lay = plan["layout"]
-    side = {b["title"]: b["x"] < lay["width"] / 2 for b in lay["zones"]}
-    assert side["Server"] and side["Transfer"] and not side["Internet"]  # extern rechts
-    inet = next(b for b in lay["zones"] if b["title"] == "Internet")
-    assert inet["sub"] == "extern · 8 Netze" and inet["fill"] == "#f2cccc"  # aufgehellt
-    assert {b["title"] for b in lay["nodes"]} >= {"fw-01 · VDOM root", "fw-02"}
-    assert len(lay["edges"]) == len(plan["attachments"])
-    server = next(e for e in lay["edges"] if e["zone"] == z["server"]["id"])
-    assert server["label"] == "srv" and not server["dashed"]
-    remote = [e for e in lay["edges"] if e["zone"] not in {x["id"] for x in z.values()}]
-    assert remote and all(e["dashed"] for e in remote)  # nur ueber eine Route
+    assert lay["format"] == 2
+    box = {b["title"]: b for b in lay["zones"]}
+    # DC links, Edge, Access, Public rechts; Knoten ohne Zone gestrichelt bei Edge
+    assert box["DC"]["x"] < box["Edge Internet"]["x"] < box["Office"]["x"] < box["Public"]["x"]
+    assert box["Knoten ohne Zone"]["pseudo"] and box["Knoten ohne Zone"]["x"] == box[
+        "Edge Internet"]["x"]  # fmt: skip
+    dc = box["DC"]
+    assert dc["sub"] == "Datacenter · 1 Netz" and dc["fill"] == "#dae8fc"  # Farbe der Vorlage
+    assert dc["lines"] == ["apic-01 · VRF TE:VRF1"]
+    assert box["Edge Internet"]["lines"] == ["fw-01 · VDOM root", "fw-02"]
+    edges = {e["label"]: e for e in lay["edges"]}
+    assert set(edges) == {t["name"] for t in plan["transitions"]}
+    assert edges["DC-EINET"]["networks"] == ["10.255.0.0/29"] and not edges["DC-EINET"]["dashed"]
     # keine Ueberlappung: Boxen einer Spalte untereinander
-    ys = sorted(b["y"] for b in lay["zones"] if b["x"] < lay["width"] / 2)
-    assert all(b - a >= plan_export.BOX_H for a, b in zip(ys, ys[1:], strict=False))
+    cols: dict = {}
+    for b in lay["zones"]:
+        cols.setdefault(b["x"], []).append((b["y"], b["y"] + b["h"]))
+    for spans in cols.values():
+        spans.sort()
+        assert all(a[1] <= b[0] for a, b in zip(spans, spans[1:], strict=False))
+    # Versionen bis 0.55.0: altes Layout (Zonen links/rechts, Knoten in der Mitte)
+    old = {
+        "zones": [{"id": 1, "name": "A", "kind": "internal", "nets": 1}],
+        "nodes": [{"id": "1|root", "label": "fw", "zones": 1}],
+        "attachments": [{"zone": 1, "node": "1|root", "via": ["route"], "interfaces": []}],
+    }
+    lay1 = plan_export.layout(old)
+    assert "format" not in lay1 and lay1["edges"][0]["dashed"] and lay1["nodes"][0]["title"] == "fw"
 
 
 def test_export_svg_und_drawio(client):
     tid, ids = _seed(client)
-    _zones(client, tid, ids)
+    _model(client, tid, ids)
     r = _export(client, tid, "svg")
     assert r.headers["content-type"].startswith("image/svg+xml")
     assert re.match(r'attachment; filename="zonenplan-\d{4}-\d\d-\d\d\.svg"',
                     r.headers["content-disposition"])  # fmt: skip
     root = ET.fromstring(r.content)
     texts = [t.text for t in root.iter(f"{SVG}text")]
-    assert "Zonenplan Kunde A" in texts and "Server" in texts and "fw-02" in texts
-    assert "srv" in texts  # Interface an der Linie
-    assert len(list(root.iter(f"{SVG}line"))) == len(_plan(client, tid)["attachments"])
+    assert "Zonenplan Kunde A" in texts and "DC" in texts and "fw-02" in texts
+    assert "DC-EINET" in texts  # Uebergang an der Linie
+    assert len(list(root.iter(f"{SVG}polyline"))) == len(_plan(client, tid)["transitions"])
 
     r = _export(client, tid, "drawio")
     assert r.headers["content-disposition"].endswith('.drawio"')
@@ -68,13 +82,22 @@ def test_export_svg_und_drawio(client):
     assert mx.tag == "mxfile" and mx.find("diagram/mxGraphModel/root") is not None
     objs = {o.get("id"): o for o in mx.iter("UserObject")}
     zones = [o for o in objs.values() if o.get("automato_zone")]
-    assert {o.get("automato_zone") for o in zones} == {"Server", "ACI Web", "LAN", "Internet",
-                                                       "Transfer"}  # fmt: skip
-    inet = next(o for o in zones if o.get("automato_zone") == "Internet")
-    assert inet.get("automato_kind") == "extern" and "128.0.0.0/1" in inet.get("automato_networks")
-    assert inet.get("label").startswith("<b>Internet</b><br>")  # HTML-Label fuer draw.io
-    edges = [o.find("mxCell") for o in objs.values() if o.find("mxCell").get("edge") == "1"]
-    assert edges and all(e.get("source") in objs and e.get("target") in objs for e in edges)
+    assert {o.get("automato_zone") for o in zones} == {"DC", "Edge Internet", "Office", "Server",
+                                                       "Public"}  # fmt: skip
+    einet = next(o for o in zones if o.get("automato_zone") == "Edge Internet")
+    assert einet.get("automato_kind") == "Edge" and einet.get("automato_code") == "EINET"
+    assert einet.get("automato_nodes") == "fw-01 · VDOM root, fw-02"
+    assert einet.get("label").startswith("<b>Edge Internet</b><br>")  # HTML-Label fuer draw.io
+    pseudo = [o for o in objs.values() if o.get("automato_ignore") == "1"]
+    assert [o.get("automato_kind") for o in pseudo] == ["ohne Zone"]
+    edges = [o for o in objs.values() if o.find("mxCell").get("edge") == "1"]
+    assert {o.get("automato_transition") for o in edges} >= {"DC-EINET", "EINET-PUB"}
+    assert all(o.find("mxCell").get("source") in objs and o.find("mxCell").get("target") in objs
+               for o in edges)  # fmt: skip
+    # als Grundschema wieder einlesbar: Zonen ja, Uebergaenge und Hilfsformen nicht
+    schema = zone_schema.parse(r.text)
+    assert {z.name for z in schema.zones} == {"DC", "Edge Internet", "Office", "Server", "Public"}
+    assert schema.links == [] and schema.zone("Edge Internet").kind == "edge"
 
 
 def _pdf_objects(data: bytes) -> dict[int, bytes]:
@@ -104,8 +127,8 @@ def _pdf_text(objs: dict[int, bytes]) -> str:
 
 def test_export_pdf(client):
     tid, ids = _seed(client)
-    z = _zones(client, tid, ids)
-    body = {"tenant_id": tid, "src_zone_id": z["inet"]["id"], "dst_zone_id": z["server"]["id"],
+    z = _model(client, tid, ids)
+    body = {"tenant_id": tid, "src_zone_id": z["public"]["id"], "dst_zone_id": z["server"]["id"],
             "intent": "deny", "note": "nur über Reverse Proxy"}  # fmt: skip
     assert client.put("/zones/policy", json=body, headers=OP).status_code == 200
     r = _export(client, tid, "pdf")
@@ -114,12 +137,13 @@ def test_export_pdf(client):
     assert data.startswith(b"%PDF-1.4") and data.rstrip().endswith(b"%%EOF")
     objs = _pdf_objects(data)
     pages = [b for b in objs.values() if b"/Type /Page " in b]
-    assert len(pages) == 4  # Plan, Matrix, Zonen an den Knoten, Netze ohne Zone
+    assert len(pages) == 5  # Plan, Matrix, Zonen, Uebergaenge, Netze ohne Zone
     assert b"/MediaBox [0 0 842.00 595.00]" in pages[1]
     text = _pdf_text(objs)
-    for part in ("Zonenplan Kunde A", "Server", "fw-01 · VDOM root", "Zonenmatrix",
-                 "Zonen an den Knoten", "Netze ohne Zone", "10.255.1.0/30", "1 / 0",
-                 "Internet -> Server: gesperrt – nur über Reverse Proxy"):  # fmt: skip
+    for part in ("Zonenplan Kunde A", "Edge Internet", "fw-01 · VDOM root", "Zonenmatrix",
+                 "Netze in der Zone", "Übergänge", "DC-EINET", "10.255.0.0/29",
+                 "isp-a-gw.example.ch", "Netze ohne Zone", "10.255.1.0/30", "1 / 0",
+                 "Public -> Server: gesperrt – nur über Reverse Proxy"):  # fmt: skip
         assert part in text, part
 
 
@@ -168,7 +192,12 @@ def test_versionen_speichern_vergleichen_exportieren(client):
     assert changed["key"] == "LAN" and changed["old"]["kind"] == "internal"
     assert changed["new"]["kind"] == "management"
     assert d["intents"]["added"] == ["Internet → Server"]
-    assert "Remote @ fw-01 · VDOM root" in d["attachments"]["added"]
+    assert d["attachments"]["added"] == []
+    # Knoten einer Zone: neuer Teil „Zone @ Knoten“ (seit 0.56.0)
+    client.post(f"/zones/{z['transfer']['id']}/nodes", json={"nodes": [f"{ids['fw-02']}|root"]},
+                headers=OP)  # fmt: skip
+    d = client.get(f"/zones/plan/versions/{v1['id']}/diff").json()
+    assert "Transfer @ fw-02" in d["attachments"]["added"]
     # Zahlen der Matrix: die Regel 10.20.0.0/16 -> 10.99.1.1 liegt jetzt in der Zone Remote
     cells = {c["cell"]: c for c in d["matrix"]}
     assert cells["Server → Remote"]["new"][0] == 1 and cells["Server → ohne Zone"]["new"][0] == 0

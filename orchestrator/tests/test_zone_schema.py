@@ -12,7 +12,7 @@ from urllib.parse import quote
 import pytest
 from app.store import plan_export, zone_schema
 from app.store.zone_schema import SchemaError, parse
-from test_zone_detect import _by_key, _get, _setup
+from test_zone_detect import _by_key, _get, _sels, _setup
 from test_zones import ADMIN, OP, VIEW, _sel, _zone
 
 DRAWING = """<mxfile host="drawio"><diagram id="a" name="Netz"><mxGraphModel><root>
@@ -155,7 +155,11 @@ def test_schema_im_namensprofil(client):
     d = client.get(f"{url}/drawing", headers=VIEW)
     assert d.text == DRAWING and 'filename="zonen.drawio"' in d.headers["content-disposition"]
     t = client.get("/naming-profiles/zone-schema/template", headers=VIEW)
-    assert "automato_match" in t.text and len(parse(t.text).zones) == 7
+    tpl = parse(t.text)  # Vorlage nach dem Zonenmodell (0.56.0): Ebenen mit festen Farben
+    assert "automato_match" in t.text and len(tpl.zones) == 12
+    assert len(tpl.links) == len(zone_schema.DEFAULT_LINKS)
+    assert [z.name for z in tpl.zones][:3] == ["DC", "Edge Internet", "Edge Office"]
+    assert (tpl.zone("Edge Internet").code, tpl.zone("Edge Internet").color) == ("EINET", "#ffcc99")
     # neue Zeichnung: Unterschied zum gespeicherten
     changed = DRAWING.replace('automato_code="SRV"', 'automato_code="SV"').replace(
         'value="gesperrt"', 'value="erlaubt"')  # fmt: skip
@@ -202,20 +206,26 @@ def test_vorschlaege_und_absichten_nach_dem_schema(client):
 
     out = _get(client, tid)
     s = _by_key(out)
-    # Name, Art und Farbe aus dem Schema; Interface port5 ueber das Muster; dmz und dmz-mail = DMZ
-    # „Server Zone“ heisst normalisiert `server` (wie Z_SERVER) - die Firewall-Zone server passt
-    assert (s["server"]["name"], s["server"]["schema"]) == ("Server Zone", "Server Zone")
-    assert s["server"]["kind_reason"] == "Grundschema „Server Zone“"
+    cid = ids["customer"]
+    assert set(s) == {f"dc:{cid}", "internet", "backup", "server", "labor"}
+    # Name, Art und Farbe aus dem Schema: Firewall-Zonen bzw. Interfaces ueber die Muster
+    srv = s["server"]  # „Server Zone“ heisst normalisiert `server` (wie Z_SERVER)
+    assert (srv["name"], srv["code"], srv["schema"]) == ("Server Zone", "SRV", "Server Zone")
+    assert srv["kind_reason"] == "Grundschema „Server Zone“"
+    assert _sels(srv) == {("fw_zone", "server", False)}
+    # Anbindung und Firewall-Zone internet = die externe Zone des Schemas
     assert (s["internet"]["color"], s["internet"]["schema"]) == ("#ff0000", "Internet")
+    assert ("fw_zone", "internet", False) in _sels(s["internet"])
     assert s["labor"]["selectors"][0]["value"] == "port5"
-    assert {x["value"] for x in s["dmz"]["selectors"]} == {"port3", "port4"}
-    assert (s["transit-netze"]["kind"], s["admin"]["kind"]) == ("transfer", "management")
-    # ohne Schema-Treffer: wie bisher (LAN, ACI-VRF, IPAM-Merkmal)
-    assert s["lan"]["schema"] is None and s["aci:te:vrf1"]["schema"] is None
-    assert [r["network"] for r in out["rest"]["items"]] == ["10.255.1.0/30"]
+    # ohne DC im Schema: Datacenter des Kunden mit der Farbe der Art
+    dc = s[f"dc:{cid}"]
+    assert (dc["name"], dc["kind"], dc["schema"], dc["color"]) == (
+        "DC Kunde TE", "dc", None, "#3b82c4")  # fmt: skip
+    # ohne Edge im Schema: keine Internet-Firewall, alle Knoten zum Zuordnen
+    assert len(out["nodes"]) == 4
     sch = out["schema"]
     assert (sch["profile"], sch["zones"], sch["links"]) == ("Kunde A · Zonen", 7, 2)
-    assert [z["name"] for z in sch["missing"]] == ["Partner"]  # kein Vorschlag, keine Zone
+    assert [z["name"] for z in sch["missing"]] == ["DMZ", "Transit-Netze", "Admin", "Partner"]
 
     # Zonen anlegen: die Absichten des Schemas fehlen in der Matrix
     srv = _zone(client, tid, "Server Zone", [_sel("prefix", "10.20.0.0/24")])

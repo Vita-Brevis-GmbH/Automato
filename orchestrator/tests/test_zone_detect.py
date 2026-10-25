@@ -1,5 +1,5 @@
 # ruff: noqa: S104 - 0.0.0.0/0 sind Netze, keine Bind-Adressen
-"""Zonen erkennen und vorschlagen (0.54.0, ADR 0024 Nr. 10).
+"""Zonen erkennen und vorschlagen (0.54.0, ADR 0024 Nr. 10; seit 0.56.0 nach dem Zonenmodell).
 
 Umgebung wie in test_zones (fw-01 mit Zonen server/aci/transit/internet, fw-02 mit lan,
 ACI-VRF TE:VRF1, Anbindung Internet) und dazu fw-03: Management-Interface, Interface mit
@@ -84,91 +84,99 @@ def test_namen_und_art():
 
 
 def test_vorschlaege_aus_dem_gelesenen(client):
+    """Vorschlaege nach dem Zonenmodell (0.56.0) mit der eingebauten Vorlage: DC aus den
+    ACI-Tenants (je Kunde), Edge Internet fuer die Firewall mit einem Bein an der Anbindung,
+    Public aus der Anbindung, Muster der Vorlage auf Firewall-Zonen und Interfaces, IPAM."""
     tid, ids = _setup(client)
     out = _get(client, tid)
     s = _by_key(out)
-    assert set(s) == {"transfer", "server", "internet", "lan", "management", "dmz", "dmz-mail",
-                      "backup", "aci:te:vrf1"}  # fmt: skip
+    cid = ids["customer"]
+    assert set(s) == {f"dc:{cid}", "edge-internet", "edge-management", "edge-transfer",
+                      "public", "backup"}  # fmt: skip
     assert all(x["action"] == "create" for x in out["items"])
+    assert out["summary"]["template"] and out["schema"] is None
 
-    # Transfernetze zwischen gelesenen Knoten plus die Firewall-Zone transit; die Zone aci auf
-    # fw-01 hat nur das Transfernetz zur ACI und faellt weg
-    t = s["transfer"]
-    assert (t["name"], t["kind"]) == ("Transfer", "transfer")
-    assert _sels(t) == {("prefix", "10.70.0.0/30", False), ("prefix", "10.255.0.0/29", False),
-                        ("fw_zone", "transit", False)}  # fmt: skip
-    assert t["sources"] == ["transfer", "fw_zone"] and t["counts"]["open"] == 2
-    # Firewall-Zone und Anbindung mit gleichem Namen = eine Zone, ohne die privaten Netze
-    inet = s["internet"]
-    assert (inet["name"], inet["kind"], inet["color"]) == ("Internet", "external", "#cc3333")
-    assert {("fw_zone", "internet", False), ("exit", "Internet", False),
-            ("prefix", "10.0.0.0/8", True)} <= _sels(inet)  # fmt: skip
-    # die Stuecke von 0.0.0.0/0 ohne die privaten Netze zaehlen als ein Eintrag
-    assert inet["samples"] == ["198.51.100.0/30", "198.51.100.4/30", "Anbindung Internet"]
-    assert inet["counts"] == {"nets": 3, "open": 3, "epgs": 0}
-    # gleiche Firewall-Zone auf zwei Firewalls
-    lan = s["lan"]
-    assert lan["name"] == "LAN" and _sels(lan) == {("fw_zone", "lan", False)}
-    assert lan["samples"] == ["10.60.0.0/24", "10.61.0.0/24"]
-    assert {e.split(" · ")[1] for e in lan["evidence"]} == {"fw-02", "fw-03"}
-    # Management-Interface, Rolle dmz, Name mit dmz - Interface je Firewall
-    mg = s["management"]
-    assert mg["kind"] == "management" and mg["selectors"] == [
-        {"kind": "fw_interface", "value": "mgmt", "source_system_id": ids["fw-03"],
-         "exclude": False}]  # fmt: skip
-    assert (s["dmz"]["name"], s["dmz"]["kind_reason"]) == ("DMZ", "FortiOS-Rolle dmz")
-    assert (s["dmz-mail"]["name"], s["dmz-mail"]["kind"]) == ("DMZ-Mail", "dmz")
-    # IPAM-Merkmal und ACI-VRF (mit Kunde)
+    # ACI: alle Tenants sind Datacenter, der Tenant des Kunden in seiner DC-Zone
+    dc = s[f"dc:{cid}"]
+    assert (dc["name"], dc["code"], dc["kind"], dc["customer"]) == (
+        "DC Kunde TE", "DC-TE", "dc", "Kunde TE")  # fmt: skip
+    assert _sels(dc) == {("aci_tenant", "TE", False)} and dc["color"] == "#dae8fc"
+    assert dc["counts"] == {"nets": 1, "epgs": 1, "nodes": 0}
+    # Internet-Firewall: Bein an der Anbindung -> Edge Internet (Farbe der Vorlage)
+    edge = s["edge-internet"]
+    assert (edge["name"], edge["code"], edge["kind"], edge["color"]) == (
+        "Edge Internet", "EINET", "edge", "#ffcc99")  # fmt: skip
+    assert edge["selectors"] == [{"kind": "fw_vdom", "value": "root",
+                                  "source_system_id": ids["fw-01"], "exclude": False}]  # fmt: skip
+    assert edge["nodes"] == ["fw-01 · VDOM root"] and edge["sources"] == ["node"]
+    assert edge["evidence"] == ["Firewall fw-01 · VDOM root: Anbindung Internet über wan1"]
+    # Public: Anbindung ohne private Netze und die Firewall-Zone internet (Muster internet*)
+    pub = s["public"]
+    assert (pub["name"], pub["code"], pub["kind"]) == ("Public", "PUB", "external")
+    assert {("exit", "Internet", False), ("prefix", "10.0.0.0/8", True),
+            ("fw_zone", "internet", False)} <= _sels(pub)  # fmt: skip
+    assert pub["samples"] == ["198.51.100.0/30", "198.51.100.4/30", "Anbindung Internet"]
+    # Muster der Vorlage: Zone transit -> Edge Transfer, Interface mgmt -> Edge Management
+    assert _sels(s["edge-transfer"]) == {("fw_zone", "transit", False)}
+    assert s["edge-transfer"]["samples"] == ["10.70.0.0/30"]
+    mg = s["edge-management"]
+    assert mg["selectors"] == [{"kind": "fw_interface", "value": "mgmt",
+                                "source_system_id": ids["fw-03"], "exclude": False}]  # fmt: skip
     assert _sels(s["backup"]) == {("ipam_tag", "Zone=Backup", False)}
-    assert s["backup"]["samples"] == ["10.40.0.0/24"]
-    vrf = s["aci:te:vrf1"]
-    assert (vrf["name"], vrf["customer_id"], vrf["customer"]) == (
-        "TE:VRF1",
-        ids["customer"],
-        "Kunde TE",
-    )
-    assert vrf["counts"]["epgs"] == 1 and vrf["samples"] == ["10.50.1.0/24"]
-    # nicht erkannt: Interface ohne Hinweis, Interface im VDOM kunde-a
-    assert [r["network"] for r in out["rest"]["items"]] == ["10.32.0.0/24", "10.255.1.0/30"]
-    assert out["summary"]["create"] == 9 and out["summary"]["rest"] == 2
+    # Knoten ohne Treffer zum Zuordnen; Netze ohne Zone und Vorschlag ohne die Netze der
+    # vorgeschlagenen Knoten (fw-01 root)
+    assert [n["label"] for n in out["nodes"]] == ["fw-01 · VDOM kunde-a", "fw-02", "fw-03"]
+    assert out["nodes"][1]["id"] == f"{ids['fw-02']}|root"
+    assert [r["network"] for r in out["rest"]["items"]] == [
+        "10.255.1.0/30", "10.60.0.0/24", "10.30.0.0/24", "10.31.0.0/24", "10.32.0.0/24",
+        "10.61.0.0/24"]  # fmt: skip
+    assert out["summary"]["create"] == 6 and out["summary"]["nodes"] == 3
 
 
 def test_uebernehmen_ergaenzen_ausblenden(client, session_factory):
     tid, ids = _setup(client)
-    # bestehende Zonen: Transfer (ein Netz) wird ergaenzt; das Netz der ACI-VRF liegt schon in
-    # einer Zone - der Vorschlag schliesst es aus und faellt weg
-    transfer = _zone(client, tid, "Transfer", [_sel("prefix", "10.70.0.0/30")], kind="transfer")
+    # bestehende Zonen: Edge Transfer (ein Netz) wird ergaenzt; das Netz der EPG liegt schon in
+    # einer Zone - der DC-Vorschlag schliesst es aus
+    transfer = _zone(client, tid, "Edge Transfer", [_sel("prefix", "10.70.0.0/30")],
+                     kind="transfer", code="ETRF")  # fmt: skip
     _zone(client, tid, "Web", [_sel("prefix", "10.50.1.0/24")])
     s = _by_key(_get(client, tid))
-    assert "aci:te:vrf1" not in s
-    t = s["transfer"]
-    assert (t["action"], t["zone_id"], t["zone"]) == ("extend", transfer["id"], "Transfer")
-    assert _sels(t) == {("prefix", "10.255.0.0/29", False), ("fw_zone", "transit", False)}
-    assert t["samples"] == ["10.255.0.0/29"]
-    assert t["refines"] == []  # die ergaenzte Zone selbst ist kein „genauer als“
+    t = s["edge-transfer"]
+    assert (t["action"], t["zone_id"], t["zone"]) == ("extend", transfer["id"], "Edge Transfer")
+    assert _sels(t) == {("fw_zone", "transit", False)} and t["samples"] == []
+    dc = s[f"dc:{ids['customer']}"]
+    assert dc["conflicts"] == [{"network": "10.50.1.0/24", "zone": "Web"}]
+    assert ("prefix", "10.50.1.0/24", True) in _sels(dc)
 
     # nur Operator
-    body = {"tenant_id": tid, "keys": ["transfer", "dmz", "server", "gibt-es-nicht"]}
+    keys = ["edge-transfer", "edge-internet", "public", f"dc:{ids['customer']}", "gibt-es-nicht"]
+    body = {"tenant_id": tid, "keys": keys}
     assert client.post("/zones/suggestions/accept", json=body, headers=VIEW).status_code == 403
     r = client.post("/zones/suggestions/accept", json=body, headers=OP)
     assert r.status_code == 200, r.text
     res = r.json()
-    assert res["updated"] == [transfer["id"]] and len(res["created"]) == 2
+    assert res["updated"] == [transfer["id"]] and len(res["created"]) == 3
     assert res["missing"] == ["gibt-es-nicht"]
     zones = {z["name"]: z for z in client.get("/zones", params={"tenant_id": tid}).json()}
-    assert zones["Transfer"]["nets"] == 2 and len(zones["Transfer"]["selectors"]) == 3
-    assert (
-        zones["DMZ"]["kind"] == "dmz" and zones["DMZ"]["description"] == "Vorschlag aus Interface"
-    )
-    assert zones["Server"]["nets"] == 1
-    assert not {"transfer", "dmz", "server"} & set(_by_key(_get(client, tid)))
+    assert len(zones["Edge Transfer"]["selectors"]) == 2
+    einet = zones["Edge Internet"]
+    assert (einet["kind"], einet["code"], einet["description"]) == (
+        "edge", "EINET", "Vorschlag aus Firewall")  # fmt: skip
+    assert einet["nodes"] == ["fw-01 · VDOM root"]
+    # Farbe aus der Vorlage, ueberall gleich
+    assert (einet["color"], einet["color_source"]) == ("#ffcc99", "template")
+    assert zones["DC Kunde TE"]["customer_id"] == ids["customer"]
+    assert zones["DC Kunde TE"]["code"] == "DC-TE"
+    names = {t["name"] for t in zones["Edge Internet"]["transitions"]}
+    assert {"EINET-PUB", "DC-TE-EINET"} <= names
+    assert not {"edge-transfer", "edge-internet", "public"} & set(_by_key(_get(client, tid)))
     # kein gleiches Netz in zwei Zonen nach dem Uebernehmen
     f = client.get("/findings", params={"tenant_id": tid, "type": "zone_overlap"}).json()
     assert (f["items"] if isinstance(f, dict) else f) == []
     s = session_factory()
     vias = [a.detail.get("via") for a in s.query(AuditLog).filter_by(action="zone.created")]
     s.close()
-    assert vias.count("suggestion") == 2
+    assert vias.count("suggestion") == 3
 
     # ausblenden und wieder vorschlagen
     body = {"tenant_id": tid, "keys": ["backup"]}

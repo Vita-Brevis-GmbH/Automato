@@ -50,8 +50,15 @@ SCHEMA_KINDS = (KIND_ZONE, KIND_LINK, KIND_META)
 MAX_BYTES = 2_000_000
 MAX_XML = 10_000_000
 MAX_ZONES, MAX_LINKS = 300, 3000
-ZONE_KINDS = ("internal", "dmz", "external", "management", "shared", "transfer")
+ZONE_KINDS = ("dc", "edge", "transfer", "core", "distribution", "access", "external", "internal",
+              "dmz", "management", "shared")  # fmt: skip
 KIND_ALIAS = {
+    "dc": "dc", "datacenter": "dc", "rechenzentrum": "dc", "rz": "dc",
+    "edge": "edge", "perimeter": "edge",
+    "core": "core", "kern": "core",
+    "distribution": "distribution", "dist": "distribution", "verteilung": "distribution",
+    "access": "access", "zugang": "access",
+    "public": "external", "öffentlich": "external", "oeffentlich": "external",
     "internal": "internal", "intern": "internal", "innen": "internal", "inside": "internal",
     "dmz": "dmz",
     "external": "external", "extern": "external", "aussen": "external", "outside": "external",
@@ -59,8 +66,10 @@ KIND_ALIAS = {
     "shared": "shared", "geteilt": "shared", "gemeinsam": "shared",
     "transfer": "transfer", "transit": "transfer",
 }  # fmt: skip
-KIND_LABEL = {"internal": "intern", "dmz": "DMZ", "external": "extern",
-              "management": "Management", "shared": "geteilt", "transfer": "Transfer"}  # fmt: skip
+KIND_LABEL = {"dc": "Datacenter", "edge": "Edge", "transfer": "Transfer", "core": "Core",
+              "distribution": "Distribution", "access": "Access", "external": "extern",
+              "internal": "intern", "dmz": "DMZ", "management": "Management",
+              "shared": "geteilt"}  # fmt: skip
 INTENTS = ("allow", "limited", "deny")
 INTENT_LABEL = {"allow": "erlaubt", "limited": "eingeschränkt", "deny": "gesperrt"}
 INTENT_WORDS = {
@@ -426,8 +435,8 @@ def parse(content: str) -> Schema:
     links: dict[tuple[str, str], SchemaLink] = {}
     loose = 0
     for c in cells.values():
-        if not c.edge:
-            continue
+        if not c.edge or "automato_transition" in c.props:
+            continue  # Uebergaenge aus dem Export des Zonenplans sind keine Absichten
         a, b = zone_at(c.source), zone_at(c.target)
         if a is None or b is None:
             loose += 1
@@ -604,22 +613,36 @@ def diff(old: Schema | None, new: Schema) -> dict:
 
 # -- Zeichnung erzeugen (Vorlage bzw. aus den aktuellen Zonen) ------------------------------
 
+# Zonenmodell (0.56.0): Datacenter (ACI-Tenants), Edge-Zonen je Anbindung (Internet, Office,
+# VPN, Management) mit L3Outs zum DC, Edge Transfer zwischen den Firewalls, Core, Office und
+# Branch je Distribution und Access, Public. Feste Farben je Zone.
 DEFAULT_ZONES = [
-    ("Internet", "external", "INET", "#f8cecc", "internet*, inet*, untrust*, outside*, wan*"),
-    ("DMZ", "dmz", "DMZ", "#ffe6cc", "dmz*"),
-    ("Server", "internal", "SRV", "#dae8fc", "srv*, server*"),
-    ("Clients", "internal", "CLT", "#d5e8d4", "client*, lan*, user*"),
-    ("Shared Services", "shared", "SHR", "#e1d5e7", "shared*, common*"),
-    ("Management", "management", "MGMT", "#eeeeee", "mgmt*, oob*, management*"),
-    ("Transfer", "transfer", "TRF", "#f5f5f5", "transfer*, transit*"),
+    ("DC", "dc", "DC", "#dae8fc", "dc*, datacenter*, rz*"),
+    ("Edge Internet", "edge", "EINET", "#ffcc99", "*inet*, edge-internet*"),
+    ("Edge Office", "edge", "EOFF", "#fff2cc", "*eoff*, edge-office*"),
+    ("Edge VPN", "edge", "EVPN", "#e1d5e7", "*vpn*"),
+    ("Edge Management", "edge", "EMGMT", "#e6e6e6", "*mgmt*, *oob*"),
+    ("Edge Transfer", "transfer", "ETRF", "#f5f5f5", "*transfer*, *transit*"),
+    ("Core", "core", "CORE", "#d5e8d4", "*core*"),
+    ("Office Distribution", "distribution", "ODIST", "#b9e0a5", "*odist*, office-dist*"),
+    ("Office Access", "access", "OACC", "#e2f0d9", "*oacc*, office-acc*"),
+    ("Branch Distribution", "distribution", "BDIST", "#ffe599", "*bdist*, branch-dist*"),
+    ("Branch Access", "access", "BACC", "#fff4c2", "*bacc*, branch-acc*"),
+    ("Public", "external", "PUB", "#f8cecc", "public*, internet*"),
 ]  # fmt: skip
 DEFAULT_LINKS = [
-    ("Clients", "Internet", "allow"), ("Clients", "Server", "limited"),
-    ("Server", "Internet", "limited"), ("Internet", "DMZ", "limited"),
-    ("DMZ", "Server", "limited"), ("Internet", "Server", "deny"), ("Internet", "Clients", "deny"),
-    ("Server", "Shared Services", "allow"), ("Management", "Server", "allow"),
+    ("DC", "Edge Internet", "limited"), ("DC", "Edge Office", "limited"),
+    ("DC", "Edge VPN", "limited"), ("Edge Management", "DC", "allow"),
+    ("Edge Internet", "Public", "allow"), ("Public", "Edge Internet", "limited"),
+    ("Public", "DC", "deny"), ("Edge Internet", "Edge Transfer", "allow"),
+    ("Edge Office", "Edge Transfer", "allow"), ("Edge Office", "Core", "allow"),
+    ("Core", "Office Distribution", "allow"), ("Office Distribution", "Office Access", "allow"),
+    ("Edge VPN", "Branch Distribution", "allow"),
+    ("Branch Distribution", "Branch Access", "allow"),
 ]  # fmt: skip
-_COLUMNS = ("external", "dmz", "internal", "shared", "management", "transfer")
+# Spalte je Art in der Zeichnung: DC links, Public rechts
+_COLUMN = {"dc": 0, "internal": 0, "shared": 0, "edge": 1, "dmz": 1, "management": 1,
+           "transfer": 2, "core": 3, "distribution": 4, "access": 5, "external": 6}  # fmt: skip
 _LINE = {"allow": "#2d7d46", "limited": "#d79b00", "deny": "#b85450"}
 
 
@@ -682,9 +705,9 @@ def drawing(schema: Schema, title: str) -> str:
     col: dict[str, int] = {}
     ids: dict[str, str] = {}
     for i, z in enumerate(schema.zones):
-        c = _COLUMNS.index(z.kind) if z.kind in _COLUMNS else 2
-        row = col.get(z.kind, 0)
-        col[z.kind] = row + 1
+        c = _COLUMN.get(z.kind, 0)
+        row = col.get(c, 0)
+        col[c] = row + 1
         # Spalten nach Art, jede zweite versetzt - Pfeile laufen nicht durch fremde Zonen
         x, y, w, h = z.geometry or [20 + c * 220, 100 + row * 130 + (c % 2) * 65, 180, 70]
         zid = f"zone-{i + 1}"

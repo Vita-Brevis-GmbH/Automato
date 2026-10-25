@@ -1,36 +1,33 @@
-"""Logische Zonen erkennen und vorschlagen (0.54.0, ADR 0024 Nr. 10).
+"""Logische Zonen erkennen und vorschlagen (0.54.0, ADR 0024 Nr. 10; seit 0.56.0 nach dem
+Zonenmodell, Nr. 12).
 
 Automato schlaegt Zonen aus dem Gelesenen vor; gespeichert wird erst, wenn der Operator einen
-Vorschlag uebernimmt - dann als normale Zone mit Selektoren, also weiter abgeleitet: neue
-Interfaces bzw. EPGs gehoeren ohne Pflege dazu. Quellen in dieser Reihenfolge:
+Vorschlag uebernimmt - als normale Zone mit Selektoren, also weiter abgeleitet. Das Zonenmodell
+des Anwenders: Zonen umfassen **Knoten**, Netze zwischen Knoten verschiedener Zonen sind
+**Uebergaenge** (`zone_struct`). Daraus die Vorschlaege:
 
-1. **Transfernetze** zwischen gelesenen Knoten (Interface-Netze bzw. L3Out-SVIs zweier
-   Firewalls/VDOMs/VRFs, `topo_model`) -> eine Zone „Transfer“ (Netze von Hand).
-2. **FortiGate-Zonen**: gleicher Name auf mehreren Firewalls bzw. VDOMs = ein Vorschlag mit dem
-   Selektor Zone fuer alle Firewalls.
-3. **Interfaces ohne Firewall-Zone** mit sprechendem Namen (`dmz-web`, `wan1`), der FortiOS-Rolle
-   dmz/wan bzw. Management-Interfaces (eigene Tabelle) - Selektor Interface je Firewall.
-4. **IPAM-Merkmal** Zone bzw. Rolle (NetBox-Rolle des Prefixes, Custom Field bzw. DDI-Attribut
-   `zone`, `role`, ...).
-5. **ACI-VRFs** (`Tenant:VRF` mit EPG-/BD-Subnetzen): `common` geteilt, `mgmt` Management.
-6. **Anbindungen** (von Hand): alle Internet-Anbindungen als eine Zone ohne die privaten Netze,
-   sonst je Anbindung.
+1. **Datacenter aus dem ACI:** alle Tenants (ohne `infra`, `mgmt`) sind DC - je Kunde eine Zone
+   „DC <Kunde>“ mit seinen Tenants (Kunde = sein Selektor ACI-Tenant), die uebrigen (z. B.
+   `common`) in „DC“. Die L3Outs ergeben dann die Uebergaenge zum Edge.
+2. **Firewalls:** je Firewall bzw. VDOM ohne Zone die Zone des Grundschemas (bzw. der
+   eingebauten Vorlage), deren Name, Kurzname oder Muster auf Quellsystem, Hostname oder VDOM
+   passt (z. B. `*inet*` -> Edge Internet); sonst Edge Internet, wenn sie ein Bein an einer
+   Internet-Anbindung hat. Firewalls derselben Zone untereinander sind kein Uebergang. Ohne
+   Treffer stehen sie unter „Knoten ohne Zone“ zum Zuordnen.
+3. **Public aus den Anbindungen:** alle Internet-Anbindungen als eine Zone ohne die privaten
+   Netze, sonst je Anbindung.
+4. **IPAM-Merkmal** Zone bzw. Rolle (NetBox-Rolle, Custom Field bzw. DDI-Attribut).
+5. **Firewall-Zonen und Interfaces**, deren Name auf ein Muster des Grundschemas bzw. der
+   Vorlage passt (z. B. `transit` -> Edge Transfer, `mgmt` -> Edge Management).
 
-Gleicher normalisierter Name (`key_of`) = ein Vorschlag mit allen Selektoren; Management und
-Transfer je eine Zone. Die **Art** folgt aus dem Namen (dmz; internet/wan/outside; mgmt/oob;
-transfer/transit; shared/common), der FortiOS-Rolle bzw. der Anbindung, sonst intern. Ein
-**Kunde**, wenn alle Netze und EPGs in genau einem Kunden liegen (ADR 0018). Gibt es schon eine
-Zone mit dem Namen (bzw. die Transfer- oder Management-Zone), ergaenzt der Vorschlag ihre
-Selektoren. Ein Netz, das genau so schon in einer Zone bzw. einem frueheren Vorschlag liegt,
-schliesst der Vorschlag aus - kein `zone_overlap` nach dem Uebernehmen. Ausgeblendete Vorschlaege
-(`zone_suggestion_dismissal`) erscheinen nur auf Wunsch. Dazu die gelesenen Netze, fuer die es
-weder Zone noch Vorschlag gibt („nicht erkannt“).
+Transfernetze werden nicht mehr vorgeschlagen - sie liegen in der Zone ihrer Firewalls bzw. sind
+Uebergaenge. Gleicher normalisierter Name = ein Vorschlag; Name, Art und Farbe aus der passenden
+Zone des Grundschemas (sonst der Vorlage). Gibt es die Zone schon, ergaenzt der Vorschlag ihre
+Selektoren. Ein Netz, das genau so schon in einer Zone liegt, schliesst der Vorschlag aus.
+Ausgeblendete Vorschlaege (`zone_suggestion_dismissal`) erscheinen nur auf Wunsch.
 
-Seit 0.55.0 richtet sich die Erkennung nach dem **Grundschema** im Namensprofil des Mandanten
-(`store/zone_schema.py`, draw.io): passt ein Name auf eine Zone des Schemas (Name, Kurzname bzw.
-Erkennungsmuster), gelten deren Name, Art und Farbe; Interfaces werden auch ueber die Muster
-erkannt. Dazu die Schema-Zonen ohne Zone und Vorschlag, die Zonen ausserhalb des Schemas und die
-Absichten, die das Schema zwischen den bestehenden Zonen vorgibt (`schema_intents`).
+Dazu der Abgleich mit dem gespeicherten Grundschema (0.55.0): Schema-Zonen ohne Zone und
+Vorschlag, Zonen ausserhalb des Schemas, Absichten des Schemas (`schema_intents`).
 
 Nur lesend; die Erkennung schreibt nichts.
 """
@@ -45,37 +42,36 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Customer,
-    InvInterface,
-    InvSubnet,
     LogicalZone,
     NamingProfile,
-    SourceSystem,
     TopoExit,
     ZonePolicy,
     ZoneSuggestionDismissal,
 )
-from app.store import customers, topo_model, zone_schema, zones
+from app.store import customers, topo_model, zone_schema, zone_struct, zones
 from app.store.customers import Net, Selector
 from app.store.paths import Graph, Key
-from app.store.topology import MGMT
 
-SOURCES = ("transfer", "fw_zone", "interface", "ipam", "aci_vrf", "exit")
+SOURCES = ("aci", "node", "exit", "ipam", "schema")
 SOURCE_LABEL = {
-    "transfer": "Transfernetz",
-    "fw_zone": "FortiGate-Zone",
-    "interface": "Interface",
-    "ipam": "IPAM",
-    "aci_vrf": "ACI-VRF",
+    "aci": "ACI-Tenants",
+    "node": "Firewall",
     "exit": "Anbindung",
+    "ipam": "IPAM",
+    "schema": "Grundschema",
 }
 # Woerter im Namen -> Art der Zone (Teile des Namens, Ziffern am Ende ohne Bedeutung)
 KIND_WORDS = {
+    "dc": ("dc", "datacenter", "rechenzentrum", "rz"),
+    "edge": ("edge", "perimeter"),
+    "core": ("core",),
+    "distribution": ("dist", "distribution", "verteilung"),
+    "access": ("access", "zugang"),
     "management": ("mgmt", "mgt", "management", "oob", "inb", "ilo", "idrac", "ipmi"),
-    "dmz": ("dmz", "perimeter"),
+    "dmz": ("dmz",),
     "transfer": ("transfer", "transit", "p2p", "ptp", "interco", "interconnect"),
     "external": (
         "internet",
-        "inet",
         "wan",
         "outside",
         "untrust",
@@ -89,23 +85,14 @@ KIND_WORDS = {
     ),  # fmt: skip
     "shared": ("shared", "common", "infra", "infrastructure"),
 }
-ROLE_KIND = {"dmz": "dmz", "wan": "external", "management": "management"}
-# Arten mit genau einer Zone (alle Transfernetze, alles Management)
-SINGLE = {"transfer": "Transfer", "management": "Management"}
-KIND_COLOR = {
-    "internal": "#3b82c4",
-    "dmz": "#d9822b",
-    "external": "#cc3333",
-    "management": "#7a5cc4",
-    "shared": "#2f9e8f",
-    "transfer": "#8a93a3",
-}
-KIND_ORDER = ("external", "dmz", "internal", "shared", "management", "transfer")
+KIND_ORDER = ("dc", "internal", "shared", "edge", "dmz", "management", "transfer", "core",
+              "distribution", "access", "external")  # fmt: skip
 # IPAM-Merkmale, die eine Zone nennen (klein geschrieben)
 ZONE_ATTRS = ("zone", "zone_name", "zonename", "security_zone", "securityzone", "sicherheitszone",
               "netzzone", "network_zone", "role", "netzrolle")  # fmt: skip
 PRIVATE = {4: ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"),
            6: ("fc00::/7",)}  # fmt: skip
+FABRIC_ONLY = {"infra", "mgmt"}  # ACI-Tenants der Fabric selbst - kein Datacenter
 _NOISE = {"zone", "zn", "z", "vlan", "vl", "if", "intf", "iface"}
 _SPLIT = re.compile(r"[_\-|/.:\s]+")
 SAMPLES = 10
@@ -138,13 +125,6 @@ def classify(*names: str | None) -> tuple[str, str] | None:
     return None
 
 
-def _nice(name: str) -> str:
-    """`dmz` -> `DMZ`, `server` -> `Server`; gemischte Schreibweise bleibt."""
-    if name != name.casefold():
-        return name
-    return name.upper() if len(name) <= 3 else name[:1].upper() + name[1:]
-
-
 def _sel_key(s: Selector) -> tuple:
     return (s.kind, s.value.strip().casefold(), s.source_system_id, s.exclude)
 
@@ -161,9 +141,12 @@ class Candidate:
     source: str
     kind: str = "internal"
     reason: str | None = None
+    code: str | None = None
+    customer_id: int | None = None
     selectors: list[Selector] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
+    nodes: list[Key] = field(default_factory=list)
     nets: dict[Net, str] = field(default_factory=dict)
     epgs: dict[int, str] = field(default_factory=dict)
     conflicts: list[dict] = field(default_factory=list)
@@ -184,38 +167,30 @@ class Candidate:
 
 
 class _Found:
-    """Gesammelte Vorschlaege je normalisiertem Namen."""
+    """Gesammelte Vorschlaege je normalisiertem Namen; Name, Art und Farbe aus der passenden
+    Zone des Grundschemas bzw. der Vorlage."""
 
-    # Name aus dieser Quelle zuerst (sprechender als Interface- bzw. VRF-Namen)
-    NAME_ORDER = ("exit", "ipam", "fw_zone", "interface", "aci_vrf", "transfer")
-
-    def __init__(self, schema: "zone_schema.Schema | None" = None) -> None:
+    def __init__(self, schema: "zone_schema.Schema") -> None:
         self.by_key: dict[str, Candidate] = {}
-        self._named: dict[str, int] = {}
         self.schema = schema
 
     def put(self, key: str, name: str, source: str, kind: str | None, reason: str | None,
-            selectors: list[Selector], evidence: str, names: tuple = ()) -> Candidate:  # fmt: skip
-        # Grundschema (0.55.0): passt der Name auf eine Zone des Schemas, gelten ihr Name und
-        # ihre Art; Transfer und Management gehoeren zur Schema-Zone dieser Art
-        sz = self.schema.match(name, *names) if self.schema else None
-        if sz is None and self.schema and kind in SINGLE:
-            sz = self.schema.of_kind(kind)
-        if sz is not None:
+            selectors: list[Selector], evidence: str, names: tuple = (),
+            sz: "zone_schema.SchemaZone | None" = None,
+            customer_id: int | None = None) -> Candidate:  # fmt: skip
+        if sz is None and customer_id is None:
+            sz = self.schema.match(name, *names)
+        if sz is not None and customer_id is None:
             key, name = sz.key, sz.name
-        elif kind in SINGLE:
-            key, name = kind, SINGLE[kind]
         c = self.by_key.get(key)
         if c is None:
-            c = self.by_key[key] = Candidate(key, name if sz else _nice(name), source)
-            self._named[key] = self.NAME_ORDER.index(source)
+            c = self.by_key[key] = Candidate(key, name, source, customer_id=customer_id)
             if sz is not None:
-                c.schema, c.kind, c.reason = sz, sz.kind, f"Grundschema „{sz.name}“"
-        elif c.schema is None and self.NAME_ORDER.index(source) < self._named[key]:
-            c.name, self._named[key] = _nice(name), self.NAME_ORDER.index(source)
+                c.schema, c.kind, c.code = sz, sz.kind, sz.code
+                c.reason = f"Grundschema „{sz.name}“"
         if source not in c.sources:
             c.sources.append(source)
-        if c.schema is None and kind and kind != "internal" and c.kind == "internal":
+        if c.schema is None and kind and c.kind == "internal":
             c.kind, c.reason = kind, reason
         for s in selectors:
             c.add(s)
@@ -226,110 +201,114 @@ class _Found:
 # -- Quellen ------------------------------------------------------------------------------
 
 
-def _nets_of_ips(ips) -> list[Net]:
-    out = []
-    for text in ips or []:
-        try:
-            iface = ipaddress.ip_interface(text)
-        except ValueError:
+def _from_aci(found: _Found, data: customers._Data, owners: dict[str, Customer]) -> None:
+    """Alle Tenants sind Datacenter - je Kunde eine Zone, die uebrigen gemeinsam."""
+    tenants: dict[str, int] = defaultdict(int)
+    for e in data.epgs:
+        if e.kind == "epg" and e.aci_tenant and e.aci_tenant.casefold() not in FABRIC_ONLY:
+            tenants[e.aci_tenant] += 1
+    if not tenants:
+        return
+    dc = found.schema.of_kind("dc")
+    base = dc.name if dc else "DC"
+    for t, n in sorted(tenants.items()):
+        cust = owners.get(t.casefold())
+        sel = [Selector("aci_tenant", t)]
+        if cust is None:
+            found.put(key_of(base), base, "aci", "dc", "ACI-Tenant", sel,
+                      f"Tenant {t}: {n} EPGs", sz=dc)  # fmt: skip
+        else:
+            name = f"{base} {cust.name}"
+            c = found.put(f"dc:{cust.id}", name, "aci", "dc", "ACI-Tenant des Kunden", sel,
+                          f"Tenant {t}: {n} EPGs", customer_id=cust.id)  # fmt: skip
+            c.code = (
+                f"{dc.code if dc and dc.code else 'DC'}-{cust.code.upper()}" if cust.code else None
+            )
+            if dc is not None:
+                c.schema, c.kind, c.reason = dc, dc.kind, f"Grundschema „{dc.name}“"
+
+
+def _internet_nodes(data: customers._Data, exits: list[TopoExit]) -> dict[Key, str]:
+    """Firewalls bzw. VDOMs mit einem Bein an einer Internet-Anbindung (Next-Hop im Netz eines
+    Interfaces bzw. Interface der Anbindung) - die Internet-Firewalls des Edge."""
+    out: dict[Key, str] = {}
+    for e in exits:
+        if e.kind != "internet":
             continue
-        net = iface.network
-        if net.prefixlen < net.max_prefixlen and not iface.ip.is_link_local:
-            out.append(net)
+        ports = {p.casefold() for p in e.interfaces or []}
+        hops = [a for h in e.next_hops or [] if (a := _ip(h)) is not None]
+        for sid, name, vdom, _zone, ips in data.interfaces:
+            if e.source_system_ids and sid not in e.source_system_ids:
+                continue
+            nets = [n for ip in ips or [] if (n := _iface_net(ip)) is not None]
+            hit = any(h.version == n.version and h in n for h in hops for n in nets)
+            if hit or (name or "").casefold() in ports:
+                out.setdefault((sid, vdom), f"Anbindung {e.name} über {name}")
     return out
 
 
-@dataclass
-class _Iface:
-    sid: int
-    key: Key | None
-    label: str
-    name: str
-    zone: str | None
-    role: str | None
-    description: str | None
-    nets: list[Net]
-    mgmt: bool
+def _ip(value) -> "ipaddress.IPv4Address | ipaddress.IPv6Address | None":
+    try:
+        return ipaddress.ip_address(str(value).split("/")[0])
+    except ValueError:
+        return None
 
 
-def _interfaces(session: Session, tenant_id: int, g: Graph) -> list[_Iface]:
-    """FortiGate-Interfaces mit Netz, je mit Knoten (Firewall bzw. VDOM) und Management."""
-    names = dict(session.execute(
-        select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == tenant_id)
-    ).all())  # fmt: skip
-    ctxs: dict[int, list[str]] = defaultdict(list)
-    for key in g.nodes:
-        ctxs[key[0]].append(key[1])
-    out = []
-    for i in session.scalars(
-        select(InvInterface).where(
-            InvInterface.tenant_id == tenant_id, InvInterface.vdom.is_not(None)
-        )
-    ):
-        nets = _nets_of_ips(i.ips)
-        if not nets:
+def _iface_net(value) -> Net | None:
+    try:
+        return ipaddress.ip_interface(str(value)).network
+    except ValueError:
+        return None
+
+
+def _edge_internet(schema: "zone_schema.Schema") -> "zone_schema.SchemaZone | None":
+    """Zone des Schemas fuer die Internet-Firewalls: Edge mit „inet“/„internet“ im Namen bzw.
+    Muster."""
+    for sz in schema.zones:
+        words = " ".join([sz.name, sz.code or "", *sz.match]).casefold()
+        if sz.kind == "edge" and ("inet" in words or "internet" in words):
+            return sz
+    return None
+
+
+def _from_nodes(found: _Found, g: Graph, assigned: dict[Key, int],
+                internet: dict[Key, str]) -> list[Key]:  # fmt: skip
+    """Firewalls ohne Zone: Zone der Vorlage nach Quellsystem, Hostname bzw. VDOM, sonst Edge
+    Internet bei einem Bein an einer Internet-Anbindung; der Rest kommt in die Liste zum
+    Zuordnen."""
+    rest = []
+    inet = _edge_internet(found.schema)
+    for key, n in sorted(g.nodes.items(), key=lambda x: x[1].label):
+        if n.kind not in ("firewall", "vdom") or key in assigned:
             continue
-        own = ctxs.get(i.source_system_id, [])
-        key = (i.source_system_id, i.vdom or (own[0] if len(own) == 1 else ""))
-        known = key in g.nodes
-        label = g.nodes[key].label if known else names.get(i.source_system_id, "?")
-        mgmt = i.role == "management" or (known and g.table(key, i.name) == MGMT)
-        out.append(_Iface(i.source_system_id, key if known else None, label, i.name, i.zone,
-                          i.role, i.description, nets, mgmt))  # fmt: skip
-    return out
-
-
-def _from_transfer(found: _Found, nets: dict[str, list[str]]) -> None:
-    for net in sorted(nets, key=lambda n: zones._net_key(ipaddress.ip_network(n))):
-        found.put("transfer", "Transfer", "transfer", "transfer", "Netz zwischen gelesenen Knoten",
-                  [Selector("prefix", net)], f"{net}: {' ↔ '.join(nets[net])}",
-                  ("transfer",))  # fmt: skip
-
-
-def _from_fw_zones(found: _Found, ifaces: list[_Iface]) -> None:
-    groups: dict[str, list[_Iface]] = defaultdict(list)
-    for i in ifaces:
-        if i.zone and not i.mgmt:
-            groups[key_of(i.zone)].append(i)
-    for key, members in groups.items():
-        zone_names = list(dict.fromkeys(i.zone for i in members if i.zone))
-        hit = classify(*zone_names)
-        kind, reason = (hit[0], f"Name „{hit[1]}“") if hit else (None, None)
-        roles = {i.role for i in members}
-        if hit is None and len(roles) == 1 and (role := roles.pop()) in ROLE_KIND:
-            kind, reason = ROLE_KIND[role], f"FortiOS-Rolle {role}"
-        sel = [Selector("fw_zone", n) for n in zone_names]
-        for i in members:
-            found.put(key, zone_names[0], "fw_zone", kind, reason, sel,
-                      f"Zone {i.zone} · {i.label}", tuple(zone_names))  # fmt: skip
-
-
-def _from_interfaces(found: _Found, ifaces: list[_Iface]) -> None:
-    """Interfaces ohne Firewall-Zone mit sprechendem Namen bzw. Rolle; der Rest bleibt „nicht
-    erkannt“."""
-    for i in ifaces:
-        if i.zone:
+        names = (n.source, *n.members, key[1] if n.kind == "vdom" else "")
+        sz, why = found.schema.match(*names), f"Firewall {n.label}"
+        if sz is None and key in internet and inet is not None:
+            sz, why = inet, f"Firewall {n.label}: {internet[key]}"
+        if sz is None:
+            rest.append(key)
             continue
-        sel = [Selector("fw_interface", i.name, i.sid)]
-        where = f"Interface {i.name} · {i.label}" + (f" ({i.description})" if i.description else "")
-        names = (i.name, i.description or "")
-        if i.mgmt:
-            found.put("management", "Management", "interface", "management",
-                      "Management-Interface", sel, where)  # fmt: skip
+        c = found.put(sz.key, sz.name, "node", sz.kind, None,
+                      [Selector("fw_vdom", key[1], key[0])], why, sz=sz)  # fmt: skip
+        c.nodes.append(key)
+    return rest
+
+
+def _from_exits(found: _Found, exits: list[TopoExit], used: set[str]) -> None:
+    public = found.schema.of_kind("external")
+    for e in exits:
+        if (e.name or "").casefold() in used or f"#{e.id}" in used:
             continue
-        hit = classify(i.name, i.description)
-        if hit is not None:
-            label = i.description if classify(i.description) else i.name
-            found.put(key_of(label, strip_digits=True), label, "interface", hit[0],
-                      f"Name „{hit[1]}“", sel, where, names)  # fmt: skip
-        elif i.role in ("dmz", "wan"):
-            name = "DMZ" if i.role == "dmz" else "WAN"
-            found.put(i.role, name, "interface", ROLE_KIND[i.role], f"FortiOS-Rolle {i.role}",
-                      sel, where, names)  # fmt: skip
-        elif found.schema is not None and found.schema.match(*names):
-            # Erkennungsmuster des Grundschemas (z. B. `srv*`) - auch ohne Hinweis im Namen
-            found.put(key_of(i.name, strip_digits=True), i.name, "interface", None, None, sel,
-                      where, names)  # fmt: skip
+        sel = [Selector("exit", e.name)]
+        nets = [n for p in e.prefixes or [] if (n := customers._net(str(p))) is not None]
+        if e.kind == "internet" or any(n.prefixlen == 0 for n in nets):
+            fams = {n.version for n in nets if n.prefixlen == 0}
+            sel += [Selector("prefix", p, None, True) for f in sorted(fams) for p in PRIVATE[f]]
+        sz = public if e.kind == "internet" else None
+        name = (sz.name if sz else "Internet") if e.kind == "internet" else e.name
+        found.put(key_of(name), name, "exit", "external", f"Anbindung ({e.kind})", sel,
+                  f"Anbindung {e.name}" + (f": {', '.join(map(str, nets[:3]))}" if nets else ""),
+                  (e.name,), sz=sz)  # fmt: skip
 
 
 def _from_ipam(found: _Found, data: customers._Data) -> None:
@@ -345,50 +324,22 @@ def _from_ipam(found: _Found, data: customers._Data) -> None:
                   f"IPAM {k}={v} ({n} Einträge)", (v,))  # fmt: skip
 
 
-def _from_aci(found: _Found, data: customers._Data) -> None:
-    by_vrf: dict[str, list[int]] = defaultdict(list)
-    for e in data.epgs:
-        vrf = data.vrf.get(e.id)
-        if e.kind == "epg" and vrf and data.epg_nets.get(e.id):
-            by_vrf[vrf].append(e.id)
-    for vrf, ids in sorted(by_vrf.items()):
-        tenant, _, name = vrf.partition(":")
-        t = tenant.casefold()
-        if t == "infra":
+def _from_schema_interfaces(found: _Found, schema: "zone_schema.Schema", data: customers._Data,
+                            g: Graph) -> None:  # fmt: skip
+    """Firewall-Zonen und Interfaces, deren Name auf ein Muster des Grundschemas bzw. der
+    Vorlage passt - Netze hinter einer Firewall in einer anderen Zone (Transfer, Management,
+    Office-Access)."""
+    for sid, name, vdom, zone, ips in data.interfaces:
+        if not ips:
             continue
-        if t == "common":
-            kind, reason = "shared", "ACI-Tenant common"
-        elif t == "mgmt":
-            kind, reason = "management", "ACI-Tenant mgmt"
-        elif hit := classify(name):
-            kind, reason = hit[0], f"Name „{hit[1]}“"
-        else:
-            kind, reason = None, None
-        found.put(f"aci:{vrf.casefold()}", vrf, "aci_vrf", kind, reason,
-                  [Selector("aci_vrf", vrf)], f"VRF {vrf}: {len(ids)} EPGs",
-                  (name,))  # fmt: skip
-
-
-def _from_exits(found: _Found, exits: list[TopoExit], used: set[str]) -> None:
-    for e in exits:
-        if (e.name or "").casefold() in used or f"#{e.id}" in used:
-            continue
-        sel = [Selector("exit", e.name)]
-        nets = [n for p in e.prefixes or [] if (n := customers._net(str(p))) is not None]
-        if e.kind == "internet" or any(n.prefixlen == 0 for n in nets):
-            fams = {n.version for n in nets if n.prefixlen == 0}
-            sel += [Selector("prefix", p, None, True) for f in sorted(fams) for p in PRIVATE[f]]
-        key, name = ("internet", "Internet") if e.kind == "internet" else (key_of(e.name), e.name)
-        found.put(
-            key,
-            name,
-            "exit",
-            "external",
-            f"Anbindung ({e.kind})",
-            sel,
-            f"Anbindung {e.name}" + (f": {', '.join(map(str, nets[:3]))}" if nets else ""),
-            (e.name,),
-        )
+        label = g.nodes[(sid, vdom)].label if (sid, vdom) in g.nodes else f"#{sid}"
+        if zone and (sz := schema.match(zone)) is not None:
+            found.put(sz.key, sz.name, "schema", sz.kind, None, [Selector("fw_zone", zone)],
+                      f"Zone {zone} · {label}", sz=sz)  # fmt: skip
+        elif not zone and (sz := schema.match(name)) is not None:
+            found.put(sz.key, sz.name, "schema", sz.kind, None,
+                      [Selector("fw_interface", name, sid)], f"Interface {name} · {label}",
+                      sz=sz)  # fmt: skip
 
 
 # -- Auswertung ---------------------------------------------------------------------------
@@ -400,68 +351,76 @@ def dismissed(session: Session, tenant_id: int) -> set[str]:
     ))  # fmt: skip
 
 
-def _target(c: Candidate, items: list[LogicalZone]) -> LogicalZone | None:
-    """Bestehende Zone, die der Vorschlag ergaenzt: gleicher Name bzw. Kurzname, bei Transfer
-    und Management die erste Zone dieser Art."""
+def _target(c: Candidate, items: list[LogicalZone],
+            schema: "zone_schema.Schema | None" = None) -> LogicalZone | None:  # fmt: skip
+    """Bestehende Zone, die der Vorschlag ergaenzt: gleicher Name bzw. Kurzname, sonst dieselbe
+    Zone des Grundschemas bzw. der Vorlage (z. B. „Internet“ = Public)."""
     for z in items:
         if c.key == key_of(z.name) or (z.code and c.key == key_of(z.code)):
             return z
-    if c.kind in SINGLE and (c.schema is not None or c.key in SINGLE):
-        return next((z for z in items if z.kind == c.kind), None)
+    for z in items:
+        if c.schema is not None and c.customer_id is None and z.customer_id is None \
+                and schema is not None and schema.match(z.name, z.code) is c.schema:  # fmt: skip
+            return z
+    for z in items:
+        if c.customer_id is not None and z.customer_id == c.customer_id and z.kind == c.kind \
+                and key_of(z.name) == key_of(c.name):  # fmt: skip
+            return z
     return None
 
 
-def _color(c: Candidate) -> str:
-    return (c.schema.color if c.schema else None) or KIND_COLOR[c.kind]
+def _owners(session: Session, tenant_id: int) -> dict[str, Customer]:
+    """ACI-Tenant -> Kunde (genau einer nennt ihn als Selektor)."""
+    found: dict[str, list[Customer]] = defaultdict(list)
+    for cust in session.scalars(select(Customer).where(Customer.tenant_id == tenant_id)):
+        if cust.shared:
+            continue
+        for s in cust.selectors:
+            if s.kind == "aci_tenant" and not s.exclude:
+                found[s.value.strip().casefold()].append(cust)
+    return {t: cs[0] for t, cs in found.items() if len(cs) == 1}
 
 
-def _owner(c: Candidate, owners: list[tuple[Customer, set[int], customers._Ranges]]
-           ) -> Customer | None:  # fmt: skip
-    if c.kind in SINGLE or "exit" in c.sources or not (c.nets or c.epgs):
-        return None
-    hits = [
-        cust for cust, epgs, ranges in owners
-        if set(c.epgs) <= epgs and all(
-            ranges.covers(n.version, int(n.network_address), int(n.broadcast_address))
-            for n in c.nets
-        )
-    ]  # fmt: skip
-    return hits[0] if len(hits) == 1 else None
+def node_row(g: Graph, key: Key, hint: "zone_schema.SchemaZone | None" = None) -> dict:
+    n = g.nodes[key]
+    hit = classify(n.source, *n.members, key[1])
+    return {"id": topo_model.node_id(key), "label": n.label, "kind": n.kind,
+            "source_system_id": key[0], "context": key[1], "group": n.group,
+            "hint": hint.name if hint else None, "kind_hint": hit[0] if hit else None}  # fmt: skip
 
 
 def suggest(session: Session, tenant_id: int, include_dismissed: bool = False) -> dict:
-    """Vorschlaege fuer logische Zonen aus dem Gelesenen (siehe Modul-Doku)."""
+    """Vorschlaege fuer logische Zonen nach dem Zonenmodell (siehe Modul-Doku)."""
     data = customers._Data(session, tenant_id)
     items = zones.load(session, tenant_id)
-    existing = zones.derive(session, tenant_id, items, data)
-    idx = zones.ZoneIndex(existing)
+    g = Graph(session, tenant_id)
+    st = zone_struct.build(session, tenant_id, items, data, g)
+    existing = zones.derive(session, tenant_id, items, data, st)
     names = {z.id: z.name for z in items}
     owned: dict[Net, int] = {}
     for zn in existing:
         for net in zn.nets:
             owned.setdefault(net, zn.id)
-    g = Graph(session, tenant_id)
-    ifaces = _interfaces(session, tenant_id, g)
     exits = list(session.scalars(select(TopoExit).where(TopoExit.tenant_id == tenant_id)))
     used = {s.value.strip().casefold() for z in items for s in z.selectors
             if s.kind == "exit" and not s.exclude}  # fmt: skip
 
     schema, profile = zone_schema.for_tenant(session, tenant_id)
-    found = _Found(schema)
-    _from_transfer(found, topo_model.transfer_nets(session, tenant_id, g))
-    _from_fw_zones(found, ifaces)
-    _from_interfaces(found, ifaces)
-    _from_ipam(found, data)
-    _from_aci(found, data)
+    found = _Found(schema or zone_schema.default_schema())
+    _from_aci(found, data, _owners(session, tenant_id))
+    rest_nodes = _from_nodes(found, g, st.node_zone, _internet_nodes(data, exits))
     _from_exits(found, exits, used)
+    _from_ipam(found, data)
+    _from_schema_interfaces(found, found.schema, data, g)
 
-    # Netze je Vorschlag; ein Netz, das genau so schon in einer Zone bzw. einem frueheren
-    # Vorschlag liegt, schliesst der Vorschlag aus
+    # Netze je Vorschlag (ohne die Knoten-Selektoren); ein Netz, das genau so schon in einer
+    # Zone bzw. einem frueheren Vorschlag liegt, schliesst der Vorschlag aus
     claimed: dict[Net, str] = {}
     cands = sorted(found.by_key.values(), key=lambda c: (c.rank, c.key))
     for c in cands:
-        c.target = _target(c, items)
-        c.epgs, c.nets = customers.nets_of(data, c.selectors)
+        c.target = _target(c, items, found.schema)
+        explicit = [s for s in c.selectors if s.kind != "fw_vdom"]
+        c.epgs, c.nets = customers.nets_of(data, explicit)
         mine = c.target.id if c.target else None
         for net in sorted(c.nets, key=zones._net_key):
             other = owned.get(net)
@@ -473,22 +432,17 @@ def suggest(session: Session, tenant_id: int, include_dismissed: bool = False) -
                 continue
             c.add(Selector("prefix", str(net), None, True))
         if c.conflicts:
-            c.epgs, c.nets = customers.nets_of(data, c.selectors)
+            c.epgs, c.nets = customers.nets_of(data, [s for s in c.selectors
+                                                      if s.kind != "fw_vdom"])  # fmt: skip
         for net in c.nets:
             claimed.setdefault(net, c.name)
 
-    owners = []
-    for cust in session.scalars(select(Customer).where(Customer.tenant_id == tenant_id)):
-        if cust.shared:
-            continue
-        epgs, nets = customers.nets_of(data, customers.selectors_of(cust))
-        owners.append((cust, set(epgs), customers._Ranges(nets)))
     hidden = dismissed(session, tenant_id)
     cust_names = dict(session.execute(
         select(Customer.id, Customer.name).where(Customer.tenant_id == tenant_id)
     ).all())  # fmt: skip
-
-    out, covered = [], []
+    colors = zones.colors(session, tenant_id, items)
+    out = []
     for c in cands:
         new_nets, new_sel = c.nets, c.selectors
         target = c.target
@@ -497,11 +451,10 @@ def suggest(session: Session, tenant_id: int, include_dismissed: bool = False) -
             new_sel = [s for s in c.selectors if _sel_key(s) not in have]
             own = next((zn.nets for zn in existing if zn.id == target.id), {})
             new_nets = {n: w for n, w in c.nets.items() if n not in own}
-            if not new_sel or not (new_nets or any(s.kind == "exit" for s in new_sel)):
+            if not new_sel:
                 continue
-        elif not (c.nets or "exit" in c.sources):
-            continue  # ohne eigenes Netz keine Zone (EPGs allein zaehlen in Matrix und Plan nicht)
-        covered += list(c.nets)
+        elif not (c.nets or c.epgs or c.nodes or "exit" in c.sources):
+            continue
         is_hidden = c.key in hidden
         if is_hidden and not include_dismissed:
             continue
@@ -510,28 +463,24 @@ def suggest(session: Session, tenant_id: int, include_dismissed: bool = False) -
         groups: dict[str, list[Net]] = defaultdict(list)
         for net, why in new_nets.items():
             groups[why if why.startswith(_EXIT) else str(net)].append(net)
-        open_, refines = 0, set()
-        for label, members in groups.items():
-            zs = set().union(*(idx.of_net(n) for n in members))
-            open_ += zones.NONE in zs if label.startswith(_EXIT) else zs == {zones.NONE}
-            refines |= {
-                names[z]
-                for z in zs
-                if isinstance(z, int) and z in names and (target is None or z != target.id)
-            }
         plain = sorted((n for n, why in new_nets.items() if not why.startswith(_EXIT)),
                        key=zones._net_key)  # fmt: skip
-        samples = [str(n) for n in plain] + sorted(g for g in groups if g.startswith(_EXIT))
-        cust_id = target.customer_id if target else getattr(_owner(c, owners), "id", None)
+        samples = [str(n) for n in plain] + sorted(x for x in groups if x.startswith(_EXIT))
+        cust_id = target.customer_id if target else c.customer_id
+        if target is not None:
+            color = colors.get(target.id, {}).get("color")
+        else:
+            color = (c.schema.color if c.schema else None) or zones.KIND_COLOR.get(c.kind)
         out.append({
             "key": c.key,
             "action": "extend" if target else "create",
             "zone_id": target.id if target else None,
             "zone": target.name if target else None,
             "name": target.name if target else c.name,
+            "code": target.code if target else c.code,
             "kind": target.kind if target else c.kind,
             "kind_reason": None if target else c.reason,
-            "color": target.color if target else _color(c),
+            "color": color,
             "schema": c.schema.name if c.schema else None,
             "customer_id": cust_id,
             "customer": cust_names.get(cust_id) if cust_id else None,
@@ -539,18 +488,22 @@ def suggest(session: Session, tenant_id: int, include_dismissed: bool = False) -
             "evidence": c.evidence[:SAMPLES],
             "evidence_total": len(c.evidence),
             "selectors": [_sel_out(s) for s in new_sel],
-            "counts": {"nets": len(groups), "open": open_, "epgs": len(c.epgs)},
+            "nodes": [g.nodes[k].label for k in c.nodes],
+            "counts": {"nets": len(groups), "epgs": len(c.epgs), "nodes": len(c.nodes)},
             "samples": samples[:SAMPLES],
-            "refines": sorted(refines),
             "conflicts": c.conflicts[:SAMPLES],
             "dismissed": is_hidden,
         })  # fmt: skip
-    out.sort(key=lambda s: (s["action"] != "extend", KIND_ORDER.index(s["kind"]),
-                            s["name"].casefold()))  # fmt: skip
-    rest = _rest(session, tenant_id, ifaces, idx, customers._Ranges(covered))
+    out.sort(key=lambda s: (s["action"] != "extend", KIND_ORDER.index(s["kind"])
+                            if s["kind"] in KIND_ORDER else 99, s["name"].casefold()))  # fmt: skip
     offered = {c.schema.key for c in cands if c.schema is not None}
+    covered = customers._Ranges(n for c in cands for n in c.nets)
+    placed = {topo_model.node_id(k) for c in cands for k in c.nodes}  # Netze ihrer Knoten
+    rest = [u for u in st.unzoned
+            if not _covered(covered, u["network"]) and not placed & set(u["nodes"])]  # fmt: skip
     return {
         "items": out,
+        "nodes": [node_row(g, k) for k in rest_nodes],
         "schema": _schema_status(session, tenant_id, schema, profile, items, offered),
         "rest": {"total": len(rest), "items": rest[:REST]},
         "summary": {
@@ -558,10 +511,17 @@ def suggest(session: Session, tenant_id: int, include_dismissed: bool = False) -
             "create": sum(1 for s in out if s["action"] == "create" and not s["dismissed"]),
             "extend": sum(1 for s in out if s["action"] == "extend" and not s["dismissed"]),
             "dismissed": len(hidden),
-            "open": sum(s["counts"]["open"] for s in out if not s["dismissed"]),
+            "nodes": len(rest_nodes),
             "rest": len(rest),
+            "template": schema is None,
         },
     }
+
+
+def _covered(ranges: customers._Ranges, network: str) -> bool:
+    net = customers._net(network)
+    return net is not None and ranges.covers(net.version, int(net.network_address),
+                                             int(net.broadcast_address))  # fmt: skip
 
 
 def _mapped(
@@ -622,41 +582,6 @@ def _schema_status(session: Session, tenant_id: int, schema: "zone_schema.Schema
         "outside": [{"id": z.id, "name": z.name} for z in items if z.id not in mapped],
         "intents": schema_intents(session, tenant_id, schema, items),
     }  # fmt: skip
-
-
-def _rest(session: Session, tenant_id: int, ifaces: list[_Iface], idx: zones.ZoneIndex,
-          covered: customers._Ranges) -> list[dict]:  # fmt: skip
-    """Gelesene Netze (Interfaces ohne Management, EPG-/BD-Subnetze) ohne Zone und ohne
-    Vorschlag."""
-    found: dict[Net, dict] = {}
-
-    def check(net: Net, where: str, node: str) -> None:
-        if net in found or zones.NONE not in idx.of_net(net):
-            return
-        if covered.covers(net.version, int(net.network_address), int(net.broadcast_address)):
-            return
-        found[net] = {"network": str(net), "node": node, "where": where}
-
-    for i in ifaces:
-        if not i.mgmt:
-            for net in i.nets:
-                check(net, f"Interface {i.name}" + (f" ({i.description})" if i.description
-                                                    else ""), i.label)  # fmt: skip
-    for s in session.scalars(
-        select(InvSubnet).where(
-            InvSubnet.tenant_id == tenant_id, InvSubnet.context.in_(("bd", "epg"))
-        )
-    ):
-        net = customers._net(s.prefix)
-        if net is not None:
-            if s.epg and s.ap:
-                where = f"EPG {s.aci_tenant}|{s.ap}|{s.epg}"
-            elif s.bd:
-                where = f"BD {s.aci_tenant}|{s.bd}"
-            else:
-                where = s.context_name or "Fabric"
-            check(net, where, f"VRF {s.vrf}" if s.vrf else "ACI")
-    return [found[n] for n in sorted(found, key=zones._net_key)]
 
 
 def dismiss(session: Session, tenant_id: int, keys, actor: str | None) -> list[str]:

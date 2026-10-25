@@ -396,6 +396,16 @@ svg.zone-plan { min-width: 760px; display: block; }
 .zp-node rect { fill: var(--surface-2); stroke: var(--accent); stroke-width: 1.4; }
 .zone-plan .zp-title { fill: var(--fg); font-size: 12.5px; font-weight: 600; }
 .zone-plan .zp-sub { fill: var(--muted); font-size: 10.5px; }
+/* Zonenmodell (0.56.0): Zonen mit Knoten, Übergänge als Linien */
+.zp-edge polyline { fill: none; stroke: var(--border-strong); stroke-width: 1.6; }
+.zp-edge.contact polyline { opacity: .7; }
+.zp-zone2 rect { stroke: var(--border-strong); stroke-width: 1.4; }
+.zp-zone2.pseudo rect { stroke-dasharray: 4 3; }
+.zp-zone2.collapsed rect { stroke-width: 2; }
+.zone-plan .zp-line { fill: var(--fg); font-size: 10.5px; }
+.zone-plan .zp-code { fill: var(--muted); font-family: var(--font-mono); font-weight: 400; font-size: 10.5px; }
+.zone-detail { display: grid; gap: 8px; }
+.zone-fixed-color { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; min-height: 32px; }
 /* Export und Versionen (0.52.0) */
 .plan-export { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .plan-version { display: flex; flex-direction: column; gap: 12px; padding: 4px 0 8px; }

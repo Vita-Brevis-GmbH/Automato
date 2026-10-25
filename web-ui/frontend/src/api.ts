@@ -2326,7 +2326,22 @@ export const fetchTopology = (tenantId: number, node?: string) =>
 // Logische Zonen (0.51.0, ADR 0024): in Automato gepflegt, Selektoren wie beim Kunden und dazu
 // `exit` (Netze hinter einer Anbindung); Zonenmatrix mit Absicht je Paar, Zonenplan
 export type ZoneSelectorKind = SelectorKind | "exit";
-export type ZoneKind = "internal" | "dmz" | "external" | "management" | "shared" | "transfer";
+// Art = Ebene des Zonenmodells (0.56.0): Datacenter, Edge, Transfer, Core, Distribution, Access,
+// Public (extern) – dazu die bisherigen Arten
+export type ZoneKind =
+  | "dc"
+  | "edge"
+  | "transfer"
+  | "core"
+  | "distribution"
+  | "access"
+  | "external"
+  | "internal"
+  | "dmz"
+  | "management"
+  | "shared";
+// Woher die Farbe kommt (0.56.0): Grundschema, eingebaute Vorlage, Zone selbst, Art
+export type ZoneColorSource = "schema" | "template" | "zone" | "kind";
 export type ZoneIntent = "allow" | "limited" | "deny";
 export interface ZoneSelector {
   id?: number;
@@ -2351,6 +2366,11 @@ export interface LogicalZone {
   updated_at: string;
   selectors: ZoneSelector[];
   own?: boolean; // Sicht eines Kunden-Benutzers (0.53.0): eigene bzw. geteilte Zone
+  color_source?: ZoneColorSource;
+  schema?: string | null; // passende Zone des Grundschemas bzw. der Vorlage
+  own_color?: string | null; // an der Zone gespeicherte Farbe
+  nodes?: string[]; // Knoten der Zone (Firewall/VDOM, ACI-VRF)
+  transitions?: { to: string; to_id: number | string; name: string; count: number }[];
 }
 export interface ZoneIn {
   tenant_id: number;
@@ -2380,6 +2400,7 @@ export interface ZoneSummary {
   position: number;
   nets: number;
   epgs: number;
+  color_source?: ZoneColorSource;
 }
 export interface ZoneMatrix {
   zones: ZoneSummary[];
@@ -2408,10 +2429,51 @@ export interface ZoneCellRule {
   tenant: string | null;
   violation: boolean;
 }
+// Netz eines Übergangs (0.56.0): Beine der Knoten (Interface bzw. L3Out) und Router ohne gelesenes Gerät
+export interface TransitionNet {
+  network: string;
+  legs: { node: string; label: string; interface: string | null; address: string; l3out: boolean }[];
+  routers: { ip: string; names: string[] }[];
+}
+export type PlanZoneId = number | string; // Zone, "customer:<id>", "none", "outside", "other"
+export interface PlanZone {
+  id: PlanZoneId;
+  name: string;
+  code: string | null;
+  kind: string;
+  color: string | null;
+  customer_id: number | null;
+  customer?: string | null;
+  position: number;
+  nets: number;
+  epgs: number;
+  samples: string[];
+  nodes?: string[]; // Knoten-IDs (0.56.0)
+  internal?: number;
+  collapsed?: boolean; // Kunde als eine Zone
+  members?: string[];
+}
+export interface PlanTransition {
+  id: string;
+  a: PlanZoneId;
+  b: PlanZoneId;
+  name: string; // „DC-EINET“
+  networks: TransitionNet[];
+  count: number;
+  l3out: boolean;
+  contact: boolean; // Knoten ohne Zone an einem Netz der Zone (kein Übergang)
+}
+// Zonenplan: seit 0.56.0 Format 2 (Zonen mit Knoten, Übergänge, Ansicht je Kunde); Versionen bis
+// 0.55.0 im Format 1 (Zonen an den Knoten)
 export interface ZonePlan {
-  zones: (ZoneSummary & { samples: string[] })[];
-  nodes: { id: string; kind: string; label: string; source: string; group: string | null; zones: number }[];
-  attachments: {
+  format?: number;
+  view?: { mode: "all" | "overview" | "customer"; customer_id: number | null; customer: string | null };
+  customers?: { id: number; name: string }[];
+  zones: PlanZone[];
+  nodes: { id: string; kind: string; label: string; source: string; group: string | null; zone?: number | null; zones?: number }[];
+  transitions?: PlanTransition[];
+  conflicts?: { node: string; label: string; zones: string[] }[];
+  attachments?: {
     zone: number;
     node: string;
     via: ("interface" | "fabric" | "exit" | "route")[];
@@ -2421,9 +2483,19 @@ export interface ZonePlan {
     routes: { prefix: string; next_hop: string | null; interface: string | null; names: string[] }[];
     default: boolean;
   }[];
-  links: { a: number; b: number; nodes: string[] }[];
-  unzoned: { total: number; items: { network: string; node: string; where: string | null }[] };
-  summary: { zones: number; nodes: number; attachments: number; links: number; unzoned: number; without_node: number };
+  links?: { a: number; b: number; nodes: string[] }[];
+  unzoned: { total: number; items: { network: string; node: string; where: string | null; nodes?: string[] }[] };
+  summary: {
+    zones: number;
+    nodes: number;
+    transitions?: number;
+    collapsed?: number;
+    unassigned?: number;
+    attachments?: number;
+    links?: number;
+    unzoned: number;
+    without_node: number;
+  };
   layout?: PlanLayout; // Zeichnung (0.52.0), gleich wie im Export
 }
 // Zeichnung des Zonenplans (0.52.0, `store/plan_export.layout`): Pixel, Ursprung oben links
@@ -2439,13 +2511,37 @@ export interface PlanBox {
   side?: "l" | "r";
   color?: string | null;
   fill?: string;
+  lines?: string[]; // Format 2: Knoten der Zone bzw. Zonen des Kunden
+  pseudo?: boolean; // Knoten ohne Zone, ausserhalb
+  collapsed?: boolean;
+  code?: string | null;
+}
+export interface PlanEdge {
+  id?: string;
+  zone?: number; // Format 1: Zone am Knoten
+  node?: string;
+  a?: PlanZoneId; // Format 2: Übergang zwischen Zonen
+  b?: PlanZoneId;
+  points?: [number, number][];
+  lx?: number;
+  ly?: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  label: string;
+  dashed: boolean;
+  count?: number;
+  networks?: string[];
+  contact?: boolean;
 }
 export interface PlanLayout {
+  format?: number;
   width: number;
   height: number;
   zones: PlanBox[];
   nodes: PlanBox[];
-  edges: { zone: number; node: string; x1: number; y1: number; x2: number; y2: number; label: string; dashed: boolean }[];
+  edges: PlanEdge[];
 }
 // Versionen des Zonenplans (0.52.0)
 export interface PlanVersion {
@@ -2484,16 +2580,26 @@ export const updateZone = (id: number, body: ZoneIn) => sendJSON<LogicalZone>(`/
 export const deleteZone = (id: number) => sendJSON<void>(`/api/zones/${id}`, "DELETE");
 export const previewZone = (tenantId: number, selectors: ZoneSelector[], zoneId?: number) =>
   sendJSON<ZonePreview>("/api/zones/preview", "POST", { tenant_id: tenantId, selectors, zone_id: zoneId ?? null });
-export const fetchZoneNets = (id: number) =>
-  getJSON<{ total: number; items: { network: string; via: string }[] }>(`/api/zones/${id}/nets`);
+export interface ZoneNetsData {
+  total: number;
+  items: { network: string; via: string }[];
+  nodes?: string[]; // Knoten der Zone (0.56.0)
+  transitions?: { to: string; to_id: number | string; name: string; networks: TransitionNet[] }[];
+}
+export const fetchZoneNets = (id: number) => getJSON<ZoneNetsData>(`/api/zones/${id}/nets`);
+// Knoten (Firewall bzw. VDOM, ACI-VRF) einer Zone zuordnen (0.56.0, Operator)
+export const assignZoneNodes = (zoneId: number, nodes: string[]) =>
+  sendJSON<{ zone_id: number; added: string[] }>(`/api/zones/${zoneId}/nodes`, "POST", { nodes });
 // Zonen-Vorschläge aus dem Gelesenen (0.54.0): neue Zone bzw. Selektoren einer bestehenden
-export type ZoneSuggestionSource = "transfer" | "fw_zone" | "interface" | "ipam" | "aci_vrf" | "exit";
+// Quellen seit 0.56.0: ACI-Tenants (DC), Firewall (Knoten), Anbindung, IPAM, Grundschema bzw. Vorlage
+export type ZoneSuggestionSource = "aci" | "node" | "exit" | "ipam" | "schema";
 export interface ZoneSuggestion {
   key: string;
   action: "create" | "extend";
   zone_id: number | null;
   zone: string | null;
   name: string;
+  code: string | null;
   kind: ZoneKind;
   kind_reason: string | null;
   color: string | null;
@@ -2503,9 +2609,9 @@ export interface ZoneSuggestion {
   evidence: string[];
   evidence_total: number;
   selectors: ZoneSelector[];
-  counts: { nets: number; open: number; epgs: number };
+  nodes: string[]; // Knoten, die die Zone bekommt
+  counts: { nets: number; epgs: number; nodes: number };
   samples: string[];
-  refines: string[];
   conflicts: { network: string; zone?: string; suggestion?: string }[];
   dismissed: boolean;
   schema: string | null; // Zone des Grundschemas (0.55.0)
@@ -2531,11 +2637,23 @@ export interface ZoneSchemaStatus {
   outside: { id: number; name: string }[];
   intents: SchemaIntent[];
 }
+// Knoten ohne Zone und ohne Vorschlag – zum Zuordnen (0.56.0)
+export interface SuggestionNode {
+  id: string;
+  label: string;
+  kind: string;
+  source_system_id: number;
+  context: string;
+  group: string | null;
+  hint: string | null;
+  kind_hint: ZoneKind | null;
+}
 export interface ZoneSuggestions {
   items: ZoneSuggestion[];
+  nodes: SuggestionNode[];
   schema: ZoneSchemaStatus | null;
-  rest: { total: number; items: { network: string; node: string; where: string }[] };
-  summary: { suggestions: number; create: number; extend: number; dismissed: number; open: number; rest: number };
+  rest: { total: number; items: { network: string; node: string; where: string; nodes?: string[] }[] };
+  summary: { suggestions: number; create: number; extend: number; dismissed: number; nodes: number; rest: number; template: boolean };
 }
 export const fetchZoneSuggestions = (tenantId: number, dismissed = false) =>
   getJSON<ZoneSuggestions>(`/api/zones/suggestions${qs({ tenant_id: tenantId, dismissed: dismissed ? "true" : undefined })}`);
@@ -2566,7 +2684,17 @@ export const setZonePolicy = (tenantId: number, src: number, dst: number, intent
     intent,
     note,
   });
-export const fetchZonePlan = (tenantId: number) => getJSON<ZonePlan>(`/api/zones/plan${qs({ tenant_id: tenantId })}`);
+// Ansicht (0.56.0): ohne Kunde die Übersicht (Kunden je als eine Zone), mit Kunde dessen Plan, `all` alle Zonen einzeln
+export interface PlanView {
+  customerId?: number | null;
+  all?: boolean;
+}
+const planQuery = (tenantId: number, view?: PlanView) => ({
+  tenant_id: tenantId,
+  customer_id: view?.customerId ?? undefined,
+  all: view?.all ? "true" : undefined,
+});
+export const fetchZonePlan = (tenantId: number, view?: PlanView) => getJSON<ZonePlan>(`/api/zones/plan${qs(planQuery(tenantId, view))}`);
 export const fetchPlanVersions = (tenantId: number) =>
   getJSON<{ current_fingerprint: string; items: PlanVersion[] }>(`/api/zones/plan/versions${qs({ tenant_id: tenantId })}`);
 export const savePlanVersion = (tenantId: number, label: string, note: string | null) =>
@@ -2576,8 +2704,13 @@ export const fetchPlanVersionDiff = (id: number, to?: number) =>
   getJSON<PlanDiff>(`/api/zones/plan/versions/${id}/diff${qs({ to })}`);
 export const deletePlanVersion = (id: number) => sendJSON<void>(`/api/zones/plan/versions/${id}`, "DELETE");
 // Export als Datei: Name aus Content-Disposition (zonenplan-<Datum> bzw. zonenplan-v<n>)
-export async function exportZonePlan(tenantId: number, format: PlanFormat, versionId?: number): Promise<{ blob: Blob; filename: string }> {
-  const response = await fetchChecked(`/api/zones/plan/export${qs({ tenant_id: tenantId, format, version_id: versionId })}`);
+export async function exportZonePlan(
+  tenantId: number,
+  format: PlanFormat,
+  versionId?: number,
+  view?: PlanView,
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetchChecked(`/api/zones/plan/export${qs({ ...planQuery(tenantId, view), format, version_id: versionId })}`);
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `zonenplan.${format}` };
 }

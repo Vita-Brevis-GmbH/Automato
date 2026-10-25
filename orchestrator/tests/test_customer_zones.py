@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from app.auth import assignments
 from app.auth.principal import Principal
 from app.models import AuditLog
-from test_zones import ADMIN, OP, VIEW, _seed, _sel, _zones
+from test_zones import ADMIN, OP, VIEW, _model, _seed, _sel, _zones
 
 SVG = "{http://www.w3.org/2000/svg}"
 
@@ -80,25 +80,22 @@ def test_kunden_benutzer_sehen_ihre_zonen(client):
     zones = {
         x["name"]: x for x in client.get("/zones", params={"tenant_id": tid}, headers=ua).json()
     }
-    # eigene Zone mit Netzen, geteilte an seinem Knoten nur mit Namen; Kunde B nicht
-    assert set(zones) == {"Server", "Transfer", "Internet"}
+    # eigene Zone mit Netzen; Zonen nur ueber Netze haben keine Uebergaenge - geteilte Zonen
+    # zeigt erst das Zonenmodell (test_zonenplan_je_kunde); Kunde B nicht
+    assert set(zones) == {"Server"}
     assert zones["Server"]["own"] and zones["Server"]["nets"] == 1
-    assert not zones["Internet"]["own"] and zones["Internet"]["nets"] == 0
     assert all(x["selectors"] == [] for x in zones.values())
     nets = client.get(f"/zones/{z['server']['id']}/nets", headers=ua)
     assert nets.json()["items"][0]["network"] == "10.20.0.0/24"
     assert client.get(f"/zones/{z['lan']['id']}/nets", headers=ua).status_code == 404
     assert client.get(f"/zones/{z['inet']['id']}/nets", headers=ua).status_code == 404
 
-    # Plan: nur fw-01 (dort haengt Server), keine Netze ohne Zone, keine Router
+    # Plan: seine Zone, der genutzte Zugang zu Kunde B (Regel lan-to-srv) als „anderer Kunde“;
+    # keine Knoten ohne Zone, keine Netze ohne Zone
     plan = client.get("/zones/plan", params={"tenant_id": tid}, headers=ua).json()
-    assert {n["label"] for n in plan["nodes"]} == {"fw-01 · VDOM root"}
-    assert {x["name"] for x in plan["zones"]} == {"Server", "Transfer", "Internet"}
-    assert plan["unzoned"] == {"total": 0, "items": []}
-    assert all(a_["routes"] == [] for a_ in plan["attachments"])
-    shared = [a_ for a_ in plan["attachments"] if a_["zone"] == z["inet"]["id"]]
-    assert shared and shared[0]["networks"] == [] and shared[0]["interfaces"] == ["wan1", "wan2"]
-    assert {t["title"] for t in plan["layout"]["zones"]} == {"Server", "Transfer", "Internet"}
+    assert plan["nodes"] == [] and plan["unzoned"] == {"total": 0, "items": []}
+    assert {x["name"] for x in plan["zones"]} == {"Server", "anderer Kunde"}
+    assert {t["title"] for t in plan["layout"]["zones"]} == {"Server", "anderer Kunde"}
 
     # Matrix: Zellen mit Server; Kunde B als „anderer Kunde“
     m = client.get("/zones/matrix", params={"tenant_id": tid}, headers=ua).json()
@@ -146,6 +143,78 @@ def test_kunden_benutzer_sehen_ihre_zonen(client):
         assert r.status_code == 403, (url, r.text)
     body = {"tenant_id": tid, "selectors": [_sel("prefix", "10.0.0.0/8")]}
     assert client.post("/zones/preview", json=body, headers=ua).status_code == 403
+
+
+def test_zonenplan_je_kunde(client):
+    """Zonenmodell mit Kunden: Kunde A besitzt Server, Kunde B Office; DC, Edge Internet und
+    Public sind geteilt. Die Uebersicht zeigt die Kunden je als eine Zone, der Plan eines Kunden
+    seine Zonen, die geteilten dahinter und genutzte Zugaenge zu anderen Kunden."""
+    tid, ids = _seed(client)
+    z = _model(client, tid, ids)
+    a, b = _customer(client, tid, "Kunde A"), _customer(client, tid, "Kunde B")
+    for key, owner in (("server", a), ("office", b)):
+        zone = z[key]
+        body = {"tenant_id": tid, "name": zone["name"], "kind": zone["kind"],
+                "code": zone["code"], "customer_id": owner["id"],
+                "selectors": zone["selectors"]}  # fmt: skip
+        assert client.put(f"/zones/{zone['id']}", json=body, headers=OP).status_code == 200
+    ka, kb = f"customer:{a['id']}", f"customer:{b['id']}"
+
+    over = client.get("/zones/plan", params={"tenant_id": tid}).json()
+    assert over["view"]["mode"] == "overview"
+    assert [c["name"] for c in over["customers"]] == ["Kunde A", "Kunde B"]
+    zones = {x["id"]: x for x in over["zones"]}
+    assert zones[ka]["collapsed"] and zones[ka]["members"] == ["Server"]
+    assert zones[kb]["members"] == ["Office"] and z["server"]["id"] not in zones
+    assert {t["name"] for t in over["transitions"]} == {
+        "DC-EINET", "EINET-PUB", "Kunde A-EINET", "Kunde B-EINET"}  # fmt: skip
+    assert over["summary"]["collapsed"] == 2
+
+    # Plan von Kunde A: Server, die geteilten Zonen dahinter, Kunde B (Regel lan-to-srv)
+    mine = client.get("/zones/plan", params={"tenant_id": tid, "customer_id": a["id"]}).json()
+    assert mine["view"] == {"mode": "customer", "customer_id": a["id"], "customer": "Kunde A"}
+    assert {x["name"] for x in mine["zones"]} == {
+        "Server", "Edge Internet", "DC", "Public", "Kunde B"}  # fmt: skip
+    assert {t["name"] for t in mine["transitions"]} == {
+        "DC-EINET", "EINET-PUB", "SRV-EINET", "Kunde B-EINET"}  # fmt: skip
+    # alle Zonen einzeln
+    full = client.get("/zones/plan", params={"tenant_id": tid, "all": "true"}).json()
+    assert full["view"]["mode"] == "all" and full["summary"]["collapsed"] == 0
+
+    # Kunden-Benutzer A: geteilte Zonen ohne Knoten und Netze, Kunde B als „anderer Kunde“
+    ua = _as(tid, a["id"])
+    plan = client.get("/zones/plan", params={"tenant_id": tid}, headers=ua).json()
+    names = {x["name"]: x for x in plan["zones"]}
+    assert set(names) == {"Server", "Edge Internet", "DC", "Public", "anderer Kunde"}
+    assert names["Edge Internet"]["nodes"] == [] and names["DC"]["samples"] == []
+    assert plan["nodes"] == [] and "Kunde B" not in str(plan)
+    trans = {t["name"]: t for t in plan["transitions"]}
+    assert set(trans) == {"DC-EINET", "EINET-PUB", "SRV-EINET", "anderer Kunde-EINET"}
+    assert trans["DC-EINET"]["networks"] == [] and trans["EINET-PUB"]["count"] == 0
+    (srv,) = trans["SRV-EINET"]["networks"]  # eigene Zone: Netz ja, fremde Geraete nein
+    assert srv["network"] == "10.20.0.0/24" and srv["legs"] == [] and srv["routers"] == []
+    listed = {x["name"] for x in client.get("/zones", params={"tenant_id": tid},
+                                            headers=ua).json()}  # fmt: skip
+    assert listed == {"Server", "Edge Internet", "DC", "Public"}
+    # Netze der eigenen Zone: Uebergang ohne fremde Geraete; Zone eines anderen Kunden maskiert
+    nets = client.get(f"/zones/{z['server']['id']}/nets", headers=ua).json()
+    (t,) = nets["transitions"]
+    assert (t["to"], t["name"]) == ("Edge Internet", "SRV-EINET")
+    assert t["networks"][0]["legs"] == [] and nets["nodes"] == []
+    office = client.get(f"/zones/{z['office']['id']}/nets", headers=ua)
+    assert office.status_code == 404  # Zone von Kunde B
+    # fw-01 gehoert vorne in der Reihenfolge einer Zone von Kunde B: der Uebergang von Server
+    # dorthin heisst fuer A „anderer Kunde“
+    body = {"tenant_id": tid, "name": "Firewall B", "customer_id": b["id"], "position": 1,
+            "selectors": [_sel("fw_vdom", "root", source_system_id=ids["fw-01"])]}  # fmt: skip
+    assert client.post("/zones", json=body, headers=OP).status_code == 201
+    srv_b = client.get(f"/zones/{z['server']['id']}/nets", headers=ua).json()
+    assert [(t["to"], t["to_id"]) for t in srv_b["transitions"]] == [("anderer Kunde", "other")]
+    assert "Firewall B" not in str(srv_b) and "Kunde B" not in str(srv_b)
+    svg = client.get("/zones/plan/export", params={"tenant_id": tid, "format": "svg"},
+                     headers=ua)  # fmt: skip
+    texts = [t.text for t in ET.fromstring(svg.content).iter(f"{SVG}text")]
+    assert "anderer Kunde" in texts and "Kunde B" not in texts and "fw-01 · VDOM root" not in texts
 
 
 def test_zuordnung_benutzer_kunde_in_automato(client, session_factory):

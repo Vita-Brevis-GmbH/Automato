@@ -106,8 +106,11 @@ def test_zonen_aus_selektoren_und_vorschau(client):
     assert nets["items"] == [{"network": "10.20.0.0/24", "via": "Interface srv"}]
     # Internet: 0.0.0.0/0 ohne die privaten 10.0.0.0/8
     inet = client.get(f"/zones/{z['inet']['id']}/nets").json()["items"]
-    assert "10.0.0.0/8" not in {n["network"] for n in inet} and len(inet) == 8
-    assert all(n["via"] == "Anbindung Internet" for n in inet)
+    behind = [n for n in inet if n["via"] == "Anbindung Internet"]
+    assert "10.0.0.0/8" not in {n["network"] for n in inet} and len(behind) == 8
+    # dazu (seit 0.56.0) die Netze der Provider-Beine von fw-01 (Knoten ohne Zone)
+    assert {n["network"] for n in inet} - {n["network"] for n in behind} == {
+        "198.51.100.0/30", "198.51.100.4/30"}  # fmt: skip
 
     # Vorschau: gleiches Praefix in einer anderen Zone
     body = {"tenant_id": tid, "selectors": [_sel("prefix", "10.20.0.0/24")]}
@@ -204,40 +207,127 @@ def test_gleiches_netz_in_zwei_zonen(client):
     assert (f["items"] if isinstance(f, dict) else f) == []
 
 
-def test_zonenplan(client):
+def test_zonenplan_nur_netze(client):
+    """Zonen nur ueber Netze (ohne Knoten): die Netze bleiben in ihren Zonen, Knoten ohne Zone
+    haengen gestrichelt daran (Kontakt); ein Uebergang nur, wo eine Zone einen Knoten hat."""
     tid, ids = _seed(client)
     z = _zones(client, tid, ids)
-    remote = _zone(client, tid, "Remote", [_sel("prefix", "10.99.0.0/16")])
     plan = client.get("/zones/plan", params={"tenant_id": tid}).json()
-    nodes = {n["id"]: n["label"] for n in plan["nodes"]}
-    att = {(a["zone"], nodes[a["node"]]): a for a in plan["attachments"]}
-
-    srv = att[(z["server"]["id"], "fw-01 · VDOM root")]
-    assert srv["via"] == ["interface"] and srv["interfaces"] == ["srv"]
-    assert srv["networks"] == ["10.20.0.0/24"]
-    assert att[(z["lan"]["id"], "fw-02")]["interfaces"] == ["lan"]
-    web = att[(z["web"]["id"], "apic-01 · VRF TE:VRF1")]
-    assert web["via"] == ["fabric"] and web["networks"] == ["10.50.1.0/24"]
-    # Transfernetze an allen drei Knoten (auch die L3Out-SVI)
-    assert {k[1] for k in att if k[0] == z["transfer"]["id"]} == {
-        "fw-01 · VDOM root", "fw-02", "apic-01 · VRF TE:VRF1"}  # fmt: skip
-    inet = att[(z["inet"]["id"], "fw-01 · VDOM root")]
-    assert inet["interfaces"] == ["wan1", "wan2"]
-    # Zone ohne eigenes Netz an einem Knoten: ueber Routen zu Routern ohne gelesenes Geraet
-    rem = att[(remote["id"], "fw-01 · VDOM root")]
-    assert rem["via"] == ["route"] and rem["default"]
-    assert {r["next_hop"] for r in rem["routes"]} == {"198.51.100.1", "198.51.100.5"}
-    assert "isp-a-gw.example.ch" in {n for r in rem["routes"] for n in r["names"]}
-    assert att[(remote["id"], "fw-01 · VDOM kunde-a")]["interfaces"] == ["vl-kunde"]
-    assert (remote["id"], "fw-02") not in att  # fw-02 kennt 10.99/16 nicht
-
-    links = {frozenset((x["a"], x["b"])) for x in plan["links"]}
-    assert frozenset((z["server"]["id"], z["inet"]["id"])) in links
-    assert frozenset((z["lan"]["id"], z["transfer"]["id"])) in links
-    assert frozenset((z["web"]["id"], z["transfer"]["id"])) in links
-    # Netze ohne Zone: Transfer im VDOM kunde-a
+    assert plan["format"] == 2 and plan["view"]["mode"] == "all"
+    byname = {x["name"]: x for x in plan["zones"]}
+    assert byname["Knoten ohne Zone"]["nodes"] == ["1|kunde-a", "1|root", "2|root"]
+    assert byname["ACI Web"]["nodes"] == ["3|TE:VRF1"]
+    trans = {t["name"]: t for t in plan["transitions"]}
+    web = trans["ACI Web-Transfer"]
+    assert web["l3out"] and not web["contact"] and web["count"] == 1
+    (net,) = web["networks"]
+    assert net["network"] == "10.255.0.0/29"
+    assert {(x["label"], x["interface"]) for x in net["legs"]} == {
+        ("apic-01 · VRF TE:VRF1", "vpc_fw"), ("fw-01 · VDOM root", "to-aci")}  # fmt: skip
+    contacts = {t["name"] for t in plan["transitions"] if t["contact"]}
+    # Namen nach Ebene: intern links, „ohne Zone“ beim Edge, Transfer und extern rechts davon
+    assert contacts == {"Server-Knoten ohne Zone", "LAN-Knoten ohne Zone",
+                        "Knoten ohne Zone-Internet", "Knoten ohne Zone-Transfer"}  # fmt: skip
+    assert plan["summary"]["transitions"] == 1
+    # Zone ohne Knoten: das Netz zur ACI bleibt ihres (kein Router dahinter), die L3Out der VRF
+    # ist der Uebergang
+    tr = client.get(f"/zones/{z['transfer']['id']}/nets").json()
+    assert [n["network"] for n in tr["items"]] == ["10.70.0.0/30", "10.255.0.0/29"]
+    assert tr["transitions"][0]["to"] == "ACI Web" and tr["nodes"] == []
+    # Internet: die Netze der Provider-Beine an fw-01 (ohne Zone) liegen in der Zone
+    inet = client.get(f"/zones/{z['inet']['id']}/nets").json()["items"]
+    assert {n["via"] for n in inet if n["network"].startswith("198.51.100.")} == {
+        "Interface wan1 · fw-01 · VDOM root", "Interface wan2 · fw-01 · VDOM root"}  # fmt: skip
     assert [u["network"] for u in plan["unzoned"]["items"]] == ["10.255.1.0/30"]
-    assert plan["summary"]["without_node"] == 0
+    lay = plan["layout"]
+    assert lay["format"] == 2 and {e["label"] for e in lay["edges"]} == {"ACI Web-Transfer", ""}
+    assert all(e["dashed"] for e in lay["edges"] if e["contact"])
+
+
+def _model(client, tid, ids) -> dict[str, dict]:
+    """Zonenmodell nach Ebenen: DC = ACI-Tenant, Edge Internet = beide Firewalls (root),
+    Office und Server ueber ihr Netz bzw. Interface, Public hinter der Anbindung."""
+    fw = [_sel("fw_vdom", "root", source_system_id=ids[n]) for n in ("fw-01", "fw-02")]
+    return {
+        "dc": _zone(client, tid, "DC", [_sel("aci_tenant", "TE")], kind="dc", code="DC"),
+        "einet": _zone(client, tid, "Edge Internet", fw, kind="edge", code="EINET"),
+        "office": _zone(client, tid, "Office", [_sel("prefix", "10.60.0.0/24")], kind="access",
+                        code="OACC"),
+        "server": _zone(client, tid, "Server", [_sel("fw_interface", "srv",
+                                                     source_system_id=ids["fw-01"])],
+                        code="SRV"),
+        "public": _zone(client, tid, "Public", [_sel("exit", "Internet")], kind="external",
+                        code="PUB"),
+    }  # fmt: skip
+
+
+def test_zonenmodell_knoten_und_uebergaenge(client):
+    tid, ids = _seed(client)
+    z = _model(client, tid, ids)
+    plan = client.get("/zones/plan", params={"tenant_id": tid}).json()
+    byid = {x["id"]: x for x in plan["zones"]}
+    labels = {n["id"]: n["label"] for n in plan["nodes"]}
+    einet = byid[z["einet"]["id"]]
+    assert [labels[n] for n in einet["nodes"]] == ["fw-01 · VDOM root", "fw-02"]
+    assert [labels[n] for n in byid[z["dc"]["id"]]["nodes"]] == ["apic-01 · VRF TE:VRF1"]
+    assert byid["none"]["nodes"] == ["1|kunde-a"]
+    trans = {t["name"]: t for t in plan["transitions"]}
+    assert set(trans) == {"DC-EINET", "EINET-OACC", "EINET-PUB", "SRV-EINET"}
+    assert trans["DC-EINET"]["l3out"] and not trans["EINET-PUB"]["l3out"]
+    pub = trans["EINET-PUB"]
+    assert [n["network"] for n in pub["networks"]] == ["198.51.100.0/30", "198.51.100.4/30"]
+    routers = {r["ip"]: r["names"] for n in pub["networks"] for r in n["routers"]}
+    assert set(routers) == {"198.51.100.1", "198.51.100.5"}
+    assert "isp-a-gw.example.ch" in routers["198.51.100.1"]
+    # Firewalls derselben Zone: Transfernetz in der Zone, kein Uebergang
+    nets = client.get(f"/zones/{z['einet']['id']}/nets").json()
+    assert nets["items"] == [{"network": "10.70.0.0/30",
+                              "via": "Transfer fw-01 · VDOM root ↔ fw-02"}]  # fmt: skip
+    assert nets["nodes"] == ["fw-01 · VDOM root", "fw-02"]
+    assert {t["name"] for t in nets["transitions"]} == {
+        "DC-EINET", "EINET-OACC", "EINET-PUB", "SRV-EINET"}  # fmt: skip
+    # Transfernetze (Router bzw. Knoten auf beiden Seiten) gehoeren keiner Zone, ein LAN am
+    # Interface bleibt Netz seiner Zone; Public behaelt 0.0.0.0/0
+    office = client.get(f"/zones/{z['office']['id']}/nets").json()
+    assert office["items"] == [{"network": "10.60.0.0/24", "via": "Netz 10.60.0.0/24"}]
+    assert office["transitions"][0]["name"] == "EINET-OACC"  # nach Ebene: Edge vor Access
+    pub_nets = client.get(f"/zones/{z['public']['id']}/nets").json()["items"]
+    assert [n["network"] for n in pub_nets] == ["0.0.0.0/0"]
+    dc = client.get(f"/zones/{z['dc']['id']}/nets").json()["items"]
+    assert [n["network"] for n in dc] == ["10.50.1.0/24"]
+    # Liste: Knoten und Uebergaenge je Zone, Farbe aus der Vorlage (DC passt auf „dc*“)
+    listed = {x["name"]: x for x in client.get("/zones", params={"tenant_id": tid}).json()}
+    assert listed["Edge Internet"]["nodes"] == ["fw-01 · VDOM root", "fw-02"]
+    assert listed["DC"]["transitions"] == [{"to": "Edge Internet", "to_id": z["einet"]["id"],
+                                            "name": "DC-EINET", "count": 1}]  # fmt: skip
+    assert (listed["DC"]["color"], listed["DC"]["color_source"]) == ("#dae8fc", "template")
+    # Spalten nach Ebene: DC links, Public rechts
+    lay = {b["title"]: b for b in plan["layout"]["zones"]}
+    assert lay["DC"]["x"] < lay["Edge Internet"]["x"] < lay["Office"]["x"] < lay["Public"]["x"]
+    assert lay["Edge Internet"]["lines"] == ["fw-01 · VDOM root", "fw-02"]
+    assert [u["network"] for u in plan["unzoned"]["items"]] == ["10.255.1.0/30"]
+
+
+def test_knoten_einer_zone_zuordnen(client):
+    tid, ids = _seed(client)
+    z = _model(client, tid, ids)
+    url = f"/zones/{z['einet']['id']}/nodes"
+    body = {"nodes": ["1|kunde-a"]}
+    assert client.post(url, json=body, headers=VIEW).status_code == 403
+    r = client.post(url, json=body, headers=OP)
+    assert r.status_code == 200, r.text
+    assert r.json()["added"] == ["fw-01 · VDOM kunde-a"]
+    assert client.post(url, json=body, headers=OP).json()["added"] == []  # schon da
+    listed = {x["name"]: x for x in client.get("/zones", params={"tenant_id": tid}).json()}
+    sel = {(s["kind"], s["value"], s["source_system_id"])
+           for s in listed["Edge Internet"]["selectors"]}  # fmt: skip
+    assert ("fw_vdom", "kunde-a", ids["fw-01"]) in sel
+    plan = client.get("/zones/plan", params={"tenant_id": tid}).json()
+    assert "none" not in {x["id"] for x in plan["zones"]}
+    # das Netz am VDOM kunde-a liegt jetzt in der Zone (Router dahinter: ausserhalb)
+    assert plan["unzoned"]["total"] == 0
+    assert "EINET-ausserhalb (nicht gelesen)" in {t["name"] for t in plan["transitions"]}
+    assert client.post(url, json={"nodes": ["99|x"]}, headers=OP).status_code == 404
 
 
 def test_rechte_kunde_und_loeschen(client):

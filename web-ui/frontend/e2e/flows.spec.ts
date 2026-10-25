@@ -847,11 +847,24 @@ test("Routing: Topologie mit Knoten, Kanten und Herkunft", async ({ page, proble
 test("Netzwerkdesign: Zonen, Zonenmatrix mit Absicht und Zonenplan", async ({ page, problems }) => {
   await page.goto("/#design");
   const list = page.locator("#zone-list tbody tr.clickable");
-  await expect(list.filter({ hasText: "LAN" })).toContainText("Zone lan (fw-08)");
-  await expect(list.filter({ hasText: "Internet" })).toContainText("ohne Netz 10.0.0.0/8");
-  // Netze einer Zone: 0.0.0.0/0 ohne 10.0.0.0/8
-  await list.filter({ hasText: "Internet" }).click();
+  const zoneRow = (name: string) => list.filter({ has: page.locator("td:first-child b", { hasText: new RegExp(`^${name}$`) }) });
+  await expect(zoneRow("LAN")).toContainText("Zone lan (fw-08)");
+  await expect(zoneRow("Internet")).toContainText("ohne Netz 10.0.0.0/8");
+  // Zonenmodell (0.56.0): fw-08 deklariert Edge Internet, LAN/DMZ/Internet sind Übergänge an ihr
+  await expect(zoneRow("Edge Internet")).toContainText("fw-08");
+  await expect(zoneRow("Edge Internet").locator(".chip", { hasText: "LAN-EINET" })).toBeVisible();
+  // Netze einer Zone: 0.0.0.0/0 ohne 10.0.0.0/8, das WAN-Transfernetz ist ein Übergang
+  await zoneRow("Internet").click();
   await expect(page.locator(".zone-nets")).toContainText("128.0.0.0/1");
+  await expect(page.locator(".zone-transitions")).toContainText("EINET-Internet");
+  await expect(page.locator(".zone-transitions")).toContainText("192.0.2.0/30");
+  // Edge Internet: keine eigenen Netze (reiner Übergang)
+  await zoneRow("Edge Internet").click();
+  await expect(page.locator(".zone-detail")).toContainText("reiner Übergang");
+  // Farbe aus der Vorlage: „Internet“ passt auf „Public“, im Editor fest
+  await zoneRow("Internet").locator("button:has-text('Bearbeiten')").click();
+  await expect(page.locator("#zo-color")).toContainText("aus der Vorlage („Public“)");
+  await page.click(".modal button:has-text('Abbrechen')");
   // neue Zone mit Vorschau (Name je Versuch, die Beispieldaten bleiben stehen)
   const name = `Server ${test.info().retry}`;
   await page.click("button:has-text('+ Zone')");
@@ -880,13 +893,14 @@ test("Netzwerkdesign: Zonen, Zonenmatrix mit Absicht und Zonenplan", async ({ pa
   await page.locator("#zone-cell button:has-text('Absicht speichern')").click();
   await expect(viol).toHaveCount(1);
 
-  // Zonenplan: LAN und DMZ an fw-08, Internet über das WAN-Interface
+  // Zonenplan: Edge Internet mit fw-08, Übergänge zu LAN, DMZ und Internet an ihren Interfaces
   await page.click(".tabbar button:has-text('Zonenplan')");
-  await expect(page.locator("#zone-plan-summary")).toContainText("Übergänge");
-  await expect(page.locator("#zone-plan .zp-node", { hasText: "fw-08" })).toBeVisible();
-  const att = page.locator("#zone-attachments tbody tr");
-  await expect(att.filter({ hasText: "fw-08" }).filter({ hasText: "dmz" })).toHaveCount(1);
-  await expect(att.filter({ hasText: "wan" }).first()).toContainText("fw-08");
+  await expect(page.locator("#zone-plan-summary")).toContainText("3 Übergänge");
+  await expect(page.locator("#zone-plan .zp-zone2", { hasText: "Edge Internet" })).toContainText("fw-08");
+  const trans = page.locator("#zone-transitions tbody tr");
+  await expect(trans.filter({ hasText: "DMZ-EINET" })).toContainText("fw-08 (Interface dmz)");
+  await expect(trans.filter({ hasText: "EINET-Internet" })).toContainText("192.0.2.0/30");
+  await expect(page.locator("#zone-plan .zp-zone2.pseudo", { hasText: "Knoten ohne Zone" })).toBeVisible();
   await expect(page.locator("#zone-unzoned")).toContainText("Netze ohne Zone");
   expect(problems).toEqual([]);
 });
@@ -894,7 +908,7 @@ test("Netzwerkdesign: Zonen, Zonenmatrix mit Absicht und Zonenplan", async ({ pa
 test("Netzwerkdesign: Export (draw.io, SVG, PDF) und Versionen des Zonenplans", async ({ page, problems }) => {
   await page.goto("/#design");
   await page.click(".tabbar button:has-text('Zonenplan')");
-  await expect(page.locator("#zone-plan .zp-node", { hasText: "fw-08" })).toBeVisible();
+  await expect(page.locator("#zone-plan .zp-zone2", { hasText: "fw-08" })).toBeVisible();
   for (const [label, ext] of [
     ["draw.io", "drawio"],
     ["SVG", "svg"],
@@ -913,7 +927,7 @@ test("Netzwerkdesign: Export (draw.io, SVG, PDF) und Versionen des Zonenplans", 
   await expect(row).toContainText("= aktuell");
   await expect(page.locator("#plan-version-state")).toContainText("aktueller Stand = Version");
   await expect(page.locator("#plan-diff")).toContainText("Design unverändert");
-  await expect(page.locator("svg[id^='plan-version-'] .zp-node", { hasText: "fw-08" })).toBeVisible();
+  await expect(page.locator("svg[id^='plan-version-'] .zp-zone2", { hasText: "fw-08" })).toBeVisible();
   const [file] = await Promise.all([page.waitForEvent("download"), page.locator(".plan-version .plan-export button", { hasText: "SVG" }).click()]);
   expect(file.suggestedFilename()).toMatch(/^zonenplan-v\d+\.svg$/);
 
@@ -937,40 +951,58 @@ test("Netzwerkdesign: Export (draw.io, SVG, PDF) und Versionen des Zonenplans", 
   expect(problems).toEqual([]);
 });
 
-test("Netzwerkdesign: Zonen-Vorschläge ansehen, ausblenden, übernehmen", async ({ page, problems }) => {
+test("Netzwerkdesign: Zonen-Vorschläge nach dem Zonenmodell, Knoten zuordnen", async ({ page, problems }) => {
   await page.goto("/#design");
   await page.click(".tabbar button:has-text('Vorschläge')");
-  const transfer = page.locator("#zone-suggestions tbody tr[data-key='transfer']");
-  // Transfernetze zwischen gelesenen Firewalls: neue Zone; die Firewall-Zone internet ergänzt „Internet“
-  await expect(transfer).toContainText("neu");
-  await expect(transfer).toContainText("fw-06 ↔ fw-07");
-  await expect(page.locator("#zone-suggestions tbody tr[data-key='internet']")).toContainText("ergänzt Zone");
-  await expect(page.locator("#zone-suggestions tbody tr[data-key='internet']")).toContainText("Zone internet");
+  await expect(page.locator("#zone-suggestions-summary")).toContainText("nach der eingebauten Vorlage");
+  // ACI-Tenants = Datacenter (gehört der Tenant einem Kunden aus früheren Tests: „DC <Kunde>“);
+  // die Firewall-Zone internet ergänzt „Internet“ (= Public der Vorlage)
+  const dc = page.locator("#zone-suggestions tbody tr[data-key^='dc']");
+  await expect(dc).toContainText("neu");
+  await expect(dc).toContainText("Datacenter");
+  await expect(dc).toContainText("ACI-Tenant TE");
+  const pub = page.locator("#zone-suggestions tbody tr[data-key='public']");
+  await expect(pub).toContainText("ergänzt Zone");
+  await expect(pub).toContainText("Zone internet · fw-08");
 
   // ausblenden und wieder vorschlagen
-  await transfer.locator("button:has-text('Ausblenden')").click();
-  await expect(transfer).toHaveCount(0);
+  await dc.locator("button:has-text('Ausblenden')").click();
+  await expect(dc).toHaveCount(0);
   await page.locator("label.check", { hasText: "ausgeblendete zeigen" }).locator("input").check();
-  await expect(transfer).toContainText("ausgeblendet");
-  await transfer.locator("button:has-text('Wieder vorschlagen')").click();
-  await expect(transfer).not.toContainText("ausgeblendet");
+  await expect(dc).toContainText("ausgeblendet");
+  await dc.locator("button:has-text('Wieder vorschlagen')").click();
+  await expect(dc).not.toContainText("ausgeblendet");
 
   // Übernehmen… öffnet den Editor mit dem Vorschlag (abbrechen)
-  await transfer.locator("button:has-text('Übernehmen')").click();
-  await expect(page.locator(".modal")).toContainText("Vorschlag „Transfer“ übernehmen");
-  await expect(page.locator("#zone-selectors tbody tr")).toHaveCount(3);
-  await expect(page.locator("#zo-kind")).toHaveValue("transfer");
+  await dc.locator("button:has-text('Übernehmen')").click();
+  await expect(page.locator(".modal")).toContainText("Vorschlag „DC");
+  await expect(page.locator("#zo-kind")).toHaveValue("dc");
   await page.click(".modal button:has-text('Abbrechen')");
 
-  // ausgewählte übernehmen: neue Zone, der Vorschlag verschwindet (danach aufräumen)
-  await transfer.locator("input[type='checkbox']").check();
+  // ausgewählte übernehmen: neue Zone, der Vorschlag verschwindet
+  await dc.locator("input[type='checkbox']").check();
   await page.click("#zone-suggestions-accept");
   await expect(page.getByText("1 Zone(n) angelegt, 0 ergänzt")).toBeVisible();
-  await expect(transfer).toHaveCount(0);
+  await expect(dc).toHaveCount(0);
+
+  // Knoten ohne Zone: fw-06 der Zone Edge Internet zuordnen
+  const fw6 = page.locator("#zone-suggestions-nodes tbody tr", { hasText: "fw-06" });
+  await fw6.locator("select").selectOption({ label: "Edge Internet" });
+  await fw6.locator("button:has-text('Zuordnen')").click();
+  await expect(page.getByText("fw-06 → Edge Internet")).toBeVisible();
+  await expect(fw6).toHaveCount(0);
+
+  // aufräumen: neue Zone weg, Edge Internet wieder nur mit fw-08
   const zones = (await (await page.request.get("/api/zones?tenant_id=1")).json()) as LogicalZoneRow[];
-  const made = zones.find((z) => z.name === "Transfer")!;
-  expect(made.kind).toBe("transfer");
+  const made = zones.find((z) => z.name.startsWith("DC"))!;
+  expect(made.kind).toBe("dc");
   expect((await page.request.delete(`/api/zones/${made.id}`)).status()).toBe(204);
+  const edge = zones.find((z) => z.name === "Edge Internet")!;
+  expect(edge.selectors).toHaveLength(2);
+  const back = await page.request.put(`/api/zones/${edge.id}`, {
+    data: { tenant_id: 1, name: edge.name, kind: edge.kind, code: "EINET", position: edge.position, selectors: edge.selectors.slice(0, 1) },
+  });
+  expect(back.status()).toBe(200);
   expect(problems).toEqual([]);
 });
 
@@ -1009,14 +1041,16 @@ test("Grundschema der Zonen: draw.io hochladen, Vorschläge und Absichten danach
   const [drawing] = await Promise.all([page.waitForEvent("download"), card.locator("button:has-text('Zeichnung herunterladen')").click()]);
   expect(drawing.suggestedFilename()).toBe("zonen.drawio");
 
-  // Netzwerkdesign: Transfer heisst wie im Schema, fehlende Zone und Absichten aus dem Schema
+  // Netzwerkdesign: die Firewall-Zone internet ergänzt „Internet“ des Schemas, fehlende Zonen und
+  // Absichten aus dem Schema
   await page.goto("/#design");
   await page.click(".tabbar button:has-text('Vorschläge')");
-  const transfer = page.locator("#zone-suggestions tbody tr[data-key='transfernetze']");
-  await expect(transfer).toContainText("Transfernetze");
-  await expect(transfer.locator(".chip", { hasText: "Schema" })).toBeVisible();
+  const inet = page.locator("#zone-suggestions tbody tr[data-key='internet']");
+  await expect(inet).toContainText("ergänzt Zone");
+  await expect(inet.locator(".chip", { hasText: "Schema" })).toBeVisible();
   const status = page.locator("#zone-schema-status");
   await expect(status.locator("#zone-schema-missing")).toContainText("Partner");
+  await expect(status.locator("#zone-schema-missing")).toContainText("Transfernetze");
   const intents = status.locator("#zone-schema-intents tbody tr");
   await expect(intents).toHaveCount(2);
   await expect(intents.filter({ hasText: "DMZ → LAN" })).toContainText("gesperrt");
@@ -1024,7 +1058,7 @@ test("Grundschema der Zonen: draw.io hochladen, Vorschläge und Absichten danach
   await expect(page.getByText("2 Absicht(en) aus dem Grundschema gesetzt")).toBeVisible();
   await expect(status).toContainText("die Zonenmatrix entspricht dem Schema");
   // „anlegen…“ öffnet den Editor mit der Zone aus dem Schema (abbrechen)
-  await status.locator("#zone-schema-missing button").click();
+  await status.locator("#zone-schema-missing .chip", { hasText: "Partner" }).locator("button").click();
   await expect(page.locator("#zo-name")).toHaveValue("Partner");
   await expect(page.locator("#zo-kind")).toHaveValue("external");
   await page.click(".modal button:has-text('Abbrechen')");
@@ -1084,8 +1118,11 @@ test("Kunden-Benutzer in Automato zuordnen: Zonen des Kunden, Anmeldung ohne Rol
   const own = user.locator("#zone-list tbody tr.clickable", { hasText: "DMZ" });
   await expect(own).toHaveCount(1);
   await expect(user.locator("#zone-list tbody tr", { hasText: "LAN" })).toContainText("geteilt");
+  // Plan: seine Zone, die geteilten Zonen dahinter (Edge Internet ohne Knoten), keine Geräte
   await user.click(".tabbar button:has-text('Zonenplan')");
-  await expect(user.locator("#zone-plan .zp-node", { hasText: "fw-08" })).toBeVisible();
+  await expect(user.locator("#zone-plan .zp-zone2", { hasText: "Edge Internet" })).toBeVisible();
+  await expect(user.locator("#zone-transitions")).toContainText("DMZ-EINET");
+  await expect(user.locator("#zone-plan")).not.toContainText("fw-08");
   await expect(user.locator("#zone-unzoned")).toHaveCount(0);
   await ctx.close();
 

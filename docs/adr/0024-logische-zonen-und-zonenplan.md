@@ -3,8 +3,8 @@
 ## Status
 
 Entwurf (2026-10-24), umgesetzt in 0.51.0 (Zonen, Matrix, Plan), 0.52.0 (Export, Versionen),
-0.53.0 (Kunden auf Zonen, ADR 0018 Schritt 4), 0.54.0 (Zonen erkennen und vorschlagen) und 0.55.0
-(Grundschema der Zonen aus draw.io).
+0.53.0 (Kunden auf Zonen, ADR 0018 Schritt 4), 0.54.0 (Zonen erkennen und vorschlagen), 0.55.0
+(Grundschema der Zonen aus draw.io) und 0.56.0 (Zonenmodell nach Ebenen, Plan je Kunde).
 Baut auf dem Topologie-Modell (ADR 0019, 0.50.0) und den Selektoren der Kunden (ADR 0018) auf.
 
 ## Kontext
@@ -162,6 +162,55 @@ Entscheide des Anwenders (2026-10-23):
     - **Sicherheit:** höchstens 2 MB, keine DTD/Entitäten, entpackt höchstens 10 MB, nur Daten der
       Plattform (SECURITY.md Nr. 10).
 
+12. **Zonenmodell nach Ebenen (0.56.0, `store/zone_struct.py`):** Korrekturen des Anwenders nach
+    dem Test der Zonen (2026-10-25). Die Zonen folgen dem Aufbau der Umgebung: die ACI-Tenants
+    sind das **Datacenter**, die L3Outs die Übergänge vom DC zum **Edge** (Internet,
+    Office-Anbindung, VPN, Management …), zwischen den Firewalls **Edge-Transferzonen**, danach
+    **Core**, **Office Distribution/Access**, **Branch Distribution/Access** und zuletzt
+    **Public/Internet**. Zwischen den Zonen liegen **Übergänge** – im ACI die L3Outs, bei den
+    Firewalls die Interfaces, meist mit Border-Routern.
+    - **Knoten einer Zone:** Selektoren VDOM (`fw_vdom`, je Firewall), ACI-Tenant (alle VRFs der
+      EPGs des Tenants) und ACI-VRF ordnen ganze Knoten (Firewall bzw. VDOM, ACI-VRF wie im
+      Topologie-Modell) einer Zone zu; es gilt die erste Zone in der Reihenfolge, mehrere Zonen
+      je Knoten sind ein Hinweis im Plan. Die übrigen Selektoren nennen Netze wie bisher.
+      Zuordnen auch direkt (`POST /zones/{id}/nodes`, Operator, Audit `zone.updated` mit `via`).
+    - **Netze an den Knoten** (Interfaces bzw. L3Out-SVIs, verbunden wie im Topologie-Modell): nur
+      Knoten einer Zone = Netz der Zone (Transfernetz zweier Firewalls derselben Zone ist
+      zoneninterner Zugriff, kein Übergang); Knoten verschiedener Zonen = **Übergang**, das Netz
+      gehört keiner Zone; ein Netz ausdrücklich in einer Zone mit Knoten anderer Zonen daran = deren
+      Übergang zu ihr – ein LAN direkt am Interface (kein Router, keine Knoten der Zone) bleibt Netz
+      seiner Zone, ein Transfernetz (Router dahinter, Knoten der Zone, Anbindung) nicht; Router ohne
+      gelesenes Gerät = Übergang nach „ausserhalb“; Knoten ohne Zone an einem Netz einer Zone =
+      Kontakt (gestrichelt), kein Übergang. Netze hinter einer Anbindung (0.0.0.0/0) ordnen kein
+      Netz an den Knoten zu; dort zählen Next-Hop bzw. Interface der Anbindung.
+    - **Zonen ohne eigene Netze** sind normal (z. B. die Internet-Firewall: ein Bein zur L3Out des
+      DC, eines in Public; sie deklariert die Zone Edge Internet). Beispiel: zwei Firewalls der
+      Zone „EdgeA“ mit einem Transfernetz in der Zone, der VPN-Abgang der einen ist der Übergang
+      „EdgeA-Branch“, die andere hat den Übergang „DC-EdgeA“.
+    - **Namen der Übergänge:** Kurz- bzw. Name beider Zonen, nach Ebene geordnet (DC vor Edge vor
+      Transfer … vor Public), von beiden Seiten gleich („DC-EINET“, „EINET-PUB“).
+    - **Vorlage** (eingebaut, ohne Grundschema): DC, Edge Internet/Office/VPN/Management, Edge
+      Transfer, Core, Office Distribution/Access, Branch Distribution/Access, Public – mit Kurzname,
+      Muster und **fester Farbe**, Übergänge mit Absicht. Neue Arten `dc`, `edge`, `core`,
+      `distribution`, `access` (ohne Migration, Text).
+    - **Farben:** aus dem Grundschema (gleiche Zone dort), ohne Schema aus der Vorlage, sonst die
+      der Zone, sonst die der Art – dieselbe Zone ist überall gleich gefärbt; im Editor fest, wenn
+      Schema bzw. Vorlage sie vorgeben.
+    - **Vorschläge:** ACI-Tenants = DC (je Kunde eine Zone „DC <Kunde>“, Kunde über seinen
+      Selektor ACI-Tenant), Firewalls in die Zone, deren Name/Muster passt, Firewalls mit einem Bein
+      an einer Internet-Anbindung in Edge Internet, Anbindungen in Public, Firewall-Zonen und
+      Interfaces nach den Mustern (auch der Vorlage), IPAM-Merkmal. Bestehende Zonen derselben
+      Schema-Zone werden ergänzt. Knoten ohne Treffer stehen zum Zuordnen da. Transfernetze werden
+      nicht mehr als eigene Zone vorgeschlagen.
+    - **Zonenplan je Kunde** (`GET /zones/plan?customer_id=&all=`): ohne Kunde die Übersicht –
+      Zonen der Kunden je Kunde als **eine Zone**; mit Kunde dessen Zonen, die geteilten Zonen
+      dahinter und die **genutzten Zugänge** zu anderen Kunden (Übergang oder Regeln zwischen den
+      Zonen) je als eine Zone; `all` alle Zonen einzeln. Kunden-Benutzer sehen ihren Plan, andere
+      Kunden als „anderer Kunde“, geteilte Zonen ohne Knoten und Netze. Zeichnung in Spalten nach
+      Ebene, Zonen mit ihren Knoten, Übergänge als Linien mit Namen; Export (draw.io, SVG, PDF)
+      in der gewählten Ansicht. Versionen speichern alle Zonen einzeln (Format 2); ältere
+      Versionen behalten ihre Zeichnung.
+
 ## Folgen
 
 - Die Firewall-Zonen (`zone`, gelesen) bleiben, was sie sind; eine logische Zone kann sie als
@@ -171,5 +220,7 @@ Entscheide des Anwenders (2026-10-23):
 - Zonen sind nicht funktionsrelevant für den Rest: ohne Zonen arbeitet die Plattform wie
   bisher (Matrix und Plan sind leer, keine Befunde).
 - Offen: Zonen je Kunde im Grundschema (Vorlage „je Kunde“), Befund „Zone ausserhalb des
-  Schemas“, Export nach Confluence (eigene Freigabe), draw.io-Datei zurück einlesen (Korrekturen im Designer), Zonen in der Weg-Suche (Zonen je Hop), Absicht je Dienst (eingeschränkt = nur
-  bestimmte Dienste), Relevanz nach Pfad für die Matrix (ADR 0019).
+  Schemas“, Export nach Confluence (eigene Freigabe), draw.io-Datei zurück einlesen (Korrekturen
+  im Designer), Zonen in der Weg-Suche (Zonen je Hop), Absicht je Dienst (eingeschränkt = nur
+  bestimmte Dienste), Relevanz nach Pfad für die Matrix (ADR 0019), Übergänge über Routen ohne
+  gemeinsames Netz (Zonen nur hinter einem Router) im Plan.

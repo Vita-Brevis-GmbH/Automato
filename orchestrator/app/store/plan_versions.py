@@ -3,7 +3,8 @@
 Eine Version haelt, was beim Speichern abgeleitet war: die Zonen mit ihren Selektoren, den
 Zonenplan und die Zonenmatrix samt Absichten (`snapshot`). Der **Fingerabdruck** fasst das
 Design zusammen - Zonen (Name, Art, Kunde, Farbe, Selektoren), Absichten, Zonen an den Knoten
-(Knoten, Weg, Interfaces) und Netze ohne Zone, ohne Regel-Zahlen -, damit sichtbar ist, ob
+(seit 0.56.0 Knoten der Zonen und Uebergaenge mit ihren Netzen) und Netze ohne Zone, ohne
+Regel-Zahlen -, damit sichtbar ist, ob
 sich der Plan seit einer Version geaendert hat. Der **Vergleich** (`diff`) zeigt das je Teil,
 dazu geaenderte Zahlen in der Matrix. Versionen bleiben bei Aufraeumen und Loeschen von Zonen
 stehen; nur Daten der Plattform.
@@ -20,7 +21,7 @@ from app import __version__
 from app.models import Customer, SourceSystem, ZonePlanVersion
 from app.store import zones as zone_store
 
-FORMAT = 1
+FORMAT = 2  # 0.56.0: Plan nach dem Zonenmodell (Knoten, Uebergaenge)
 _AXIS = {"any": "any", "none": "ohne Zone"}
 
 
@@ -37,7 +38,7 @@ def snapshot(session: Session, tenant_id: int) -> dict:
             select(Customer.id, Customer.name).where(Customer.tenant_id == tenant_id)
         ).all()
     )
-    plan = zone_store.plan(session, tenant_id)
+    plan = zone_store.plan(session, tenant_id, everything=True)
     nets = {z["id"]: z for z in plan["zones"]}
     zones = [
         {
@@ -95,15 +96,34 @@ def design(data: dict) -> dict:
             }
             for i in intents
         },  # fmt: skip
-        "attachments": {
+        "attachments": _attachments(plan, names, nodes),
+        "unzoned": sorted(u["network"] for u in (plan.get("unzoned") or {}).get("items") or []),
+    }
+
+
+def _attachments(plan: dict, names: dict, nodes: dict) -> dict:
+    """Zonen an den Knoten: bis 0.55.0 mit Weg und Interfaces, seit 0.56.0 (Format 2) die Knoten
+    je Zone und die Uebergaenge mit ihren Netzen."""
+    if plan.get("format") != 2:
+        return {
             f"{names.get(a['zone'], a['zone'])} @ {nodes.get(a['node'], a['node'])}": {
                 "via": list(a.get("via") or []),
                 "interfaces": list(a.get("interfaces") or []),
             }
             for a in plan.get("attachments") or []
-        },  # fmt: skip
-        "unzoned": sorted(u["network"] for u in (plan.get("unzoned") or {}).get("items") or []),
-    }
+        }  # fmt: skip
+    zname = {z["id"]: z["name"] for z in plan.get("zones") or []}
+    out: dict = {}
+    for z in plan.get("zones") or []:
+        for n in z.get("nodes") or []:
+            out[f"{z['name']} @ {nodes.get(n, n)}"] = {"via": ["node"], "interfaces": []}
+    for t in plan.get("transitions") or []:
+        key = f"{zname.get(t['a'], t['a'])} ↔ {zname.get(t['b'], t['b'])}"
+        out[key] = {
+            "via": ["transition"],
+            "interfaces": sorted(n["network"] for n in t.get("networks") or []),
+        }
+    return out
 
 
 def fingerprint(data: dict) -> str:

@@ -13,11 +13,11 @@ Dasselbe Praefix in zwei Zonen ist ein Befund (`zone_overlap`).
   „nicht zugeordnet“. Mit der Absicht je Paar (`zone_policy`): eine erlaubende Regel zwischen
   Zonen mit Absicht „gesperrt“ ist ein Befund (`zone_policy_violation`). `any` ist kein
   Verstoss - es steht als eigene Zeile bzw. Spalte da.
-- **Zonenplan** (`plan`): je Zone die gelesenen Knoten (Firewall/VDOM, ACI-VRF), an denen sie
-  haengt - am Interface bzw. L3Out (Netz des Interfaces), im Fabric (EPG-/BD-Subnetz), ueber
-  die Interfaces einer Anbindung bzw. - fuer Zonen ohne eigenes Netz an einem Knoten - ueber
-  eine Route zu einem Router ohne gelesenes Geraet (Default-Route ins Internet, MPLS). Zonen am
-  selben Knoten sind ueber ihn verbunden (Uebergang). Dazu Netze ohne Zone.
+- **Zonenplan** (`plan`, seit 0.56.0 nach dem Zonenmodell, `zone_struct`): Zonen mit ihren
+  Knoten (Firewall/VDOM, ACI-VRF) und Netzen, die Uebergaenge zwischen den Zonen (L3Outs,
+  Interfaces, Router ohne gelesenes Geraet), je Kunde bzw. als Uebersicht mit den Kunden als je
+  eine Zone. Dazu Knoten und Netze ohne Zone.
+- **Farben** (`colors`, 0.56.0): aus dem Grundschema, sonst die der Zone, sonst die der Art.
 
 Nur lesend; die Zonen pflegt der Operator in Automato.
 """
@@ -31,27 +31,22 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
-    InvSubnet,
+    Customer,
     LogicalZone,
     Rule,
     RuleAction,
     RuleIpRange,
     SourceSystem,
-    TopoExit,
-    TopoRoute,
     ZonePolicy,
 )
 from app.store import customers, topo_model
 from app.store import epgs as epg_store
 from app.store.customers import Net, Selector
-from app.store.paths import _CONNECTED, Graph, Key
 from app.store.rules import not_twin
-from app.store.topology import MGMT, table_from
 
 ANY = "any"  # Quelle bzw. Ziel any
 NONE = "none"  # Adressen ohne Zone
 SAMPLES = 10  # Beispiele in Vorschau und Plan
-PLAN_ROUTES = 32  # Netze je Zone, fuer die der Plan Routen nachschlaegt
 UNZONED = 200  # Netze ohne Zone in der Anzeige
 BITS = {4: 32, 6: 128}
 Cell = int | str  # Zone (id), ANY oder NONE
@@ -105,15 +100,24 @@ class ZoneNets:
 
 
 def derive(session: Session, tenant_id: int, items: list[LogicalZone] | None = None,
-           data=None) -> list[ZoneNets]:  # fmt: skip
-    """Netze (und EPGs) je Zone aus ihren Selektoren."""
+           data=None, struct=None) -> list[ZoneNets]:  # fmt: skip
+    """Netze (und EPGs) je Zone aus ihren Selektoren. Mit Knoten-Selektoren (0.56.0: VDOM,
+    ACI-Tenant/VRF) aus der Zonenstruktur: die ausdruecklich zugeordneten Netze und die Netze
+    ihrer Knoten in der Zone, ohne Netze von Uebergaengen (`zone_struct`)."""
+    from app.store import zone_struct
+
     items = load(session, tenant_id) if items is None else items
     if not items:
         return []
     data = data or customers._Data(session, tenant_id)
+    if struct is None and zone_struct.has_nodes(items):
+        struct = zone_struct.build(session, tenant_id, items, data)
     out = []
     for z in items:
-        epgs, nets = customers.nets_of(data, selectors_of(z))
+        if struct is not None:
+            epgs, nets = struct.nets(z.id)
+        else:
+            epgs, nets = customers.nets_of(data, selectors_of(z))
         out.append(ZoneNets(z.id, z.name, nets, epgs))
     return out
 
@@ -254,9 +258,10 @@ class Assignment:
 
 
 def assign(session: Session, tenant_id: int, items: list[LogicalZone] | None = None,
-           source_system_id: int | None = None) -> Assignment:  # fmt: skip
+           source_system_id: int | None = None,
+           nets: list[ZoneNets] | None = None) -> Assignment:  # fmt: skip
     items = load(session, tenant_id) if items is None else items
-    nets = derive(session, tenant_id, items)
+    nets = derive(session, tenant_id, items) if nets is None else nets
     a = Assignment(items, nets, ZoneIndex(nets), {})
     a.intents = {
         (p.src_zone_id, p.dst_zone_id): p
@@ -289,13 +294,15 @@ def assign(session: Session, tenant_id: int, items: list[LogicalZone] | None = N
     return a
 
 
-def zone_out(z: LogicalZone, nets: ZoneNets | None = None) -> dict:
+def zone_out(z: LogicalZone, nets: ZoneNets | None = None, color: dict | None = None) -> dict:
+    """Zone mit Zahlen; `color` aus `colors` (Grundschema, Zone bzw. Art)."""
     return {
         "id": z.id,
         "name": z.name,
         "code": z.code,
         "kind": z.kind,
-        "color": z.color,
+        **(color or {"color": z.color, "color_source": "zone", "schema": None}),
+        "own_color": z.color,
         "customer_id": z.customer_id,
         "position": z.position,
         "nets": len(nets.nets) if nets else 0,
@@ -363,10 +370,11 @@ def matrix(session: Session, tenant_id: int, source_system_id: int | None = None
             "note": p.note if p else None,
         })  # fmt: skip
     by_id = {n.id: n for n in a.nets}
+    color = colors(session, tenant_id, a.zones)
     if view is not None:  # Netze geteilter Zonen gehoeren nicht zur Sicht des Kunden
         by_id = {k: v for k, v in by_id.items() if k in view.own}
     return {
-        "zones": [zone_out(z, by_id.get(z.id)) for z in zones],
+        "zones": [zone_out(z, by_id.get(z.id), color.get(z.id)) for z in zones],
         "axes": axes,
         "cells": out,
         "intents": [_intent_out(p) for p in intents.values()],
@@ -454,273 +462,319 @@ def checks(session: Session, tenant_id: int) -> list[dict]:
     return out
 
 
-# -- Zonenplan --------------------------------------------------------------------------
+# -- Farben (0.56.0) ---------------------------------------------------------------------
+
+# Feste Farbe je Art (Ebene), wenn weder das Grundschema noch die Zone eine nennt
+KIND_COLOR = {
+    "dc": "#3b82c4",
+    "edge": "#d9822b",
+    "transfer": "#8a93a3",
+    "core": "#2f9e44",
+    "distribution": "#1098ad",
+    "access": "#74b816",
+    "external": "#cc3333",
+    "internal": "#3b82c4",
+    "dmz": "#d9822b",
+    "management": "#7a5cc4",
+    "shared": "#2f9e8f",
+}
 
 
-class _Rib:
-    """Beste Routen der RIB je Knoten im Speicher (ohne Management): laengstes Praefix ohne
-    eine Abfrage je Netz."""
+def colors(session: Session, tenant_id: int, items: list[LogicalZone]) -> dict[int, dict]:
+    """Farbe je Zone: aus dem Grundschema (gleiche Zone dort; ohne Grundschema aus der
+    eingebauten Vorlage), sonst die eigene, sonst die der Art - so ist dieselbe Zone ueberall
+    gleich gefaerbt."""
+    from app.store import zone_schema
 
-    def __init__(self, session: Session, tenant_id: int):
-        self.by: dict[tuple, dict[int, dict[int, dict]]] = defaultdict(dict)
-        for sid, ctx, fam, prefix, plen, lo, proto, hops, attrs in session.execute(
-            select(
-                TopoRoute.source_system_id,
-                TopoRoute.context,
-                TopoRoute.family,
-                TopoRoute.prefix,
-                TopoRoute.prefix_len,
-                TopoRoute.lo,
-                TopoRoute.protocol,
-                TopoRoute.next_hops,
-                TopoRoute.attrs,
-            ).where(
-                TopoRoute.tenant_id == tenant_id,
-                TopoRoute.table == "rib",
-                TopoRoute.best.is_(True),
-            )
-        ):
-            table = table_from(attrs)
-            if table == MGMT:
-                continue
-            slot = self.by[((sid, ctx), fam, table)].setdefault(plen, {})
-            key = int(lo, 16) >> (BITS[fam] - plen)
-            entry = slot.setdefault(key, {"prefix": prefix, "protocol": proto, "next_hops": []})
-            for h in hops or []:
-                if h not in entry["next_hops"]:
-                    entry["next_hops"].append(h)
-        self.lengths = {k: sorted(v, reverse=True) for k, v in self.by.items()}
-        self.tables: dict[tuple[Key, int], list] = defaultdict(list)
-        for key, fam, table in self.by:
-            self.tables[(key, fam)].append(table)
-
-    def lookup(self, key: Key, family: int, lo: int, hi: int) -> list[dict]:
-        """Wirksame Route je VRF des Knotens, die lo..hi ganz enthaelt."""
-        out = []
-        for table in self.tables.get((key, family), []):
-            slot = (key, family, table)
-            for plen in self.lengths[slot]:
-                shift = BITS[family] - plen
-                if lo >> shift == hi >> shift and (e := self.by[slot][plen].get(lo >> shift)):
-                    out.append(e)
-                    break
-        return out
-
-    def interface_to(self, key: Key, ip: str) -> str | None:
-        """Interface des angeschlossenen Netzes, in dem die IP (Next-Hop) liegt."""
-        try:
-            addr = ipaddress.ip_address(ip)
-        except ValueError:
-            return None
-        for e in self.lookup(key, addr.version, int(addr), int(addr)):
-            if e["protocol"] in _CONNECTED:
-                for h in e["next_hops"]:
-                    if h.get("interface"):
-                        return h["interface"]
-        return None
-
-
-@dataclass
-class _Attach:
-    via: set[str] = field(default_factory=set)  # interface | fabric | exit | route
-    interfaces: set[str] = field(default_factory=set)
-    networks: list[str] = field(default_factory=list)
-    routes: list[dict] = field(default_factory=list)
-    count: int = 0  # Netze bzw. Subnetze
-
-    def add(self, via: str, interface: str | None, network: str | None) -> None:
-        self.via.add(via)
-        if interface:
-            self.interfaces.add(interface)
-        if network and network not in self.networks:
-            self.count += 1
-            if len(self.networks) < SAMPLES:
-                self.networks.append(network)
-
-
-def plan(session: Session, tenant_id: int) -> dict:
-    """Zonenplan: Zonen, die Knoten, an denen sie haengen, und die Uebergaenge zwischen Zonen
-    ueber einen Knoten; dazu Netze ohne Zone."""
-    items = load(session, tenant_id)
-    nets = derive(session, tenant_id, items)
-    idx = ZoneIndex(nets)
-    g = Graph(session, tenant_id)
-    att: dict[tuple[int, Key], _Attach] = defaultdict(_Attach)
-    unzoned: dict[str, dict] = {}
-
-    # am Interface bzw. L3Out: das Netz des Interfaces
-    addrs, ports = topo_model.addresses(session, tenant_id, g)
-    for a in addrs:
-        for zid in idx.of_net(a.net):
-            if zid == NONE:
-                unzoned.setdefault(str(a.net), {"network": str(a.net), "node": g.nodes[a.key].label,
-                                                "where": a.interface})  # fmt: skip
-            else:
-                att[(zid, a.key)].add("interface", a.interface, str(a.net))
-    # im Fabric: EPG- bzw. BD-Subnetze der VRF
-    for s in session.scalars(
-        select(InvSubnet).where(
-            InvSubnet.tenant_id == tenant_id, InvSubnet.context.in_(("bd", "epg"))
-        )
-    ):
-        key = (s.source_system_id, s.vrf or "")
-        net = customers._net(s.prefix)
-        if key not in g.nodes or net is None:
-            continue
-        where = (
-            f"EPG {s.aci_tenant}|{s.ap}|{s.epg}" if s.epg and s.ap else f"BD {s.aci_tenant}|{s.bd}"
-        )
-        for zid in idx.of_net(net):
-            if zid == NONE:
-                unzoned.setdefault(str(net), {"network": str(net), "node": g.nodes[key].label,
-                                              "where": where})  # fmt: skip
-            else:
-                att[(zid, key)].add("fabric", None, str(net))
-    # ueber die Interfaces einer Anbindung (Selektor `exit`)
-    exits = list(session.scalars(select(TopoExit).where(TopoExit.tenant_id == tenant_id)))
+    schema, _profile = zone_schema.for_tenant(session, tenant_id)
+    source = "schema" if schema is not None else "template"
+    schema = schema or zone_schema.default_schema()
+    out = {}
     for z in items:
-        names = {
-            s.value.strip().casefold() for s in z.selectors if s.kind == "exit" and not s.exclude
-        }
-        for e in exits:
-            if (e.name or "").casefold() not in names and f"#{e.id}" not in names:
-                continue
-            for key in g.nodes:
-                if e.source_system_ids and key[0] not in e.source_system_ids:
-                    continue
-                for port in sorted(set(e.interfaces or []) & ports.get(key, set())):
-                    att[(z.id, key)].add("exit", port, None)
-    # Zonen ohne Netz an einem Knoten: ueber Routen zu Routern ohne gelesenes Geraet
-    direct = {zid for zid, _key in att}
-    rib = _Rib(session, tenant_id)
-    owners = g.owners()
-    for zn in nets:
-        if zn.id in direct:
-            continue
-        sample = sorted(zn.nets, key=_net_key)[:PLAN_ROUTES]
-        for key in g.nodes:
-            for net in sample:
-                lo, hi = int(net.network_address), int(net.broadcast_address)
-                for r in rib.lookup(key, net.version, lo, hi):
-                    if r["protocol"] in _CONNECTED:
-                        continue
-                    for h in r["next_hops"]:
-                        ip = str(h.get("ip") or "").split("%")[0]
-                        if ip and any(o[0] != key for o in owners.get(ip, [])):
-                            continue  # ueber einen anderen gelesenen Knoten: die Zone haengt dort
-                        iface = h.get("interface") or (rib.interface_to(key, ip) if ip else None)
-                        entry = att[(zn.id, key)]
-                        entry.add("route", iface, str(net))
-                        route = {"prefix": r["prefix"], "next_hop": ip or None, "interface": iface,
-                                 "names": g.names(ip) if ip else []}  # fmt: skip
-                        if route not in entry.routes and len(entry.routes) < SAMPLES:
-                            entry.routes.append(route)
-
-    # Uebergaenge: Zonen am selben Knoten
-    by_node: dict[Key, list[int]] = defaultdict(list)
-    for zid, key in att:
-        by_node[key].append(zid)
-    order = {z.id: i for i, z in enumerate(items)}
-    links: dict[tuple[int, int], list[str]] = defaultdict(list)
-    for key, zids in by_node.items():
-        zids.sort(key=lambda z: order.get(z, 0))
-        for i, a in enumerate(zids):
-            for b in zids[i + 1 :]:
-                links[(a, b)].append(topo_model.node_id(key))
-    by_zone = {n.id: n for n in nets}
-    attachments = [
-        {
-            "zone": zid,
-            "node": topo_model.node_id(key),
-            "via": sorted(x.via),
-            "interfaces": sorted(x.interfaces),
-            "networks": x.networks,
-            "count": x.count,
-            "routes": x.routes,
-            "default": any(r["prefix"].endswith("/0") for r in x.routes),
-        }
-        for (zid, key), x in sorted(att.items(), key=lambda i: (order.get(i[0][0], 0), i[0][1]))
-    ]
-    nodes = [
-        {"id": topo_model.node_id(key), **{k: v for k, v in g.nodes[key].out().items()
-                                          if k in ("kind", "label", "source", "group")},
-         "zones": len(by_node[key])}
-        for key in sorted(by_node, key=lambda k: g.nodes[k].label)
-    ]  # fmt: skip
-    rest = sorted(unzoned.values(), key=lambda u: _net_key(ipaddress.ip_network(u["network"])))
-    out = {
-        "zones": [
-            {
-                **zone_out(z, by_zone.get(z.id)),
-                "samples": [str(n) for n in sorted(by_zone[z.id].nets, key=_net_key)[:SAMPLES]],
-            }
-            for z in items
-        ],  # fmt: skip
-        "nodes": nodes,
-        "attachments": attachments,
-        "links": [{"a": a, "b": b, "nodes": n} for (a, b), n in links.items()],
-        "unzoned": {"total": len(rest), "items": rest[:UNZONED]},
-        "summary": {
-            "zones": len(items),
-            "nodes": len(nodes),
-            "attachments": len(attachments),
-            "links": len(links),
-            "unzoned": len(rest),
-            "without_node": sum(1 for z in items if z.id not in {a["zone"] for a in attachments}),
-        },
-    }
+        sz = schema.match(z.name, z.code)
+        if sz is not None and sz.color:
+            out[z.id] = {"color": sz.color, "color_source": source, "schema": sz.name}
+        elif z.color:
+            out[z.id] = {"color": z.color, "color_source": "zone",
+                         "schema": sz.name if sz else None}  # fmt: skip
+        else:
+            out[z.id] = {"color": KIND_COLOR.get(z.kind, "#8a93a3"), "color_source": "kind",
+                         "schema": sz.name if sz else None}  # fmt: skip
     return out
 
 
-def plan_with_layout(session: Session, tenant_id: int, customer_ids=None) -> dict:
-    """Plan samt Zeichnung (`plan_export.layout`) fuer die Oberflaeche; mit `customer_ids`
-    die Sicht eines Kunden-Benutzers."""
+# -- Zonenplan (0.56.0) ------------------------------------------------------------------
+
+PSEUDO = {
+    "none": ("Knoten ohne Zone", "none"),
+    "outside": ("ausserhalb (nicht gelesen)", "outside"),
+}
+
+
+# Ebenen von links nach rechts (Zonenplan, Namen der Uebergaenge): DC, Edge, Transfer, Core,
+# Distribution, Access, Public; Kunden als eine Zone wie das DC, ausserhalb ganz rechts
+LAYER = {"dc": 0, "internal": 0, "shared": 0, "customer": 0, "edge": 1, "dmz": 1,
+         "management": 1, "none": 1, "transfer": 2, "core": 3, "distribution": 4, "access": 5,
+         "external": 6, "outside": 6}  # fmt: skip
+
+
+def _layer_key(z: dict) -> tuple:
+    return (LAYER.get(z.get("kind") or "", 0), z.get("position") or 0, z["name"].casefold())
+
+
+def transition_name(a: dict, b: dict) -> str:
+    """„DC-EINET“: Kurz- bzw. Namen der beiden Seiten, nach Ebene geordnet (DC vor Edge vor
+    Public) - von beiden Seiten aus gleich."""
+    x, y = sorted((a, b), key=_layer_key)
+    return f"{x.get('code') or x['name']}-{y.get('code') or y['name']}"
+
+
+def plan(session: Session, tenant_id: int, customer_id=None,
+         everything: bool = False) -> dict:  # fmt: skip
+    """Zonenplan nach dem Zonenmodell: Zonen mit ihren Knoten (Firewall/VDOM, ACI-VRF), Netze in
+    der Zone und die Uebergaenge zwischen den Zonen (`zone_struct`).
+
+    Ansicht (`view`): ohne Kunde die Infrastruktur - Zonen der Kunden je Kunde als eine Zone
+    zusammengefasst; mit Kunde dessen Zonen, die geteilten Zonen, die von ihnen aus erreichbar
+    sind, und die Kunden, zu denen seine Zonen einen Uebergang haben, je als eine Zone;
+    `everything` = alle Zonen einzeln. `customer_id` ist eine ID oder (Kunden-Benutzer) mehrere."""
+    from app.store import zone_struct
+
+    if isinstance(customer_id, set | frozenset | list | tuple):
+        mine = set(customer_id)
+    else:
+        mine = set() if customer_id is None else {customer_id}
+
+    items = load(session, tenant_id)
+    data = customers._Data(session, tenant_id)
+    st = zone_struct.build(session, tenant_id, items, data)
+    by_zone = {n.id: n for n in derive(session, tenant_id, items, data, st)}
+    color = colors(session, tenant_id, items)
+    cust = dict(session.execute(
+        select(Customer.id, Customer.name).where(Customer.tenant_id == tenant_id)
+    ).all())  # fmt: skip
+    g = st.graph
+    zone_nodes = st.zone_nodes()
+    zmap = {z.id: z for z in items}
+    zones_full = {
+        z.id: {
+            **zone_out(z, by_zone.get(z.id), color.get(z.id)),
+            "customer": cust.get(z.customer_id) if z.customer_id else None,
+            "nodes": [topo_model.node_id(k) for k in zone_nodes.get(z.id, [])],
+            "internal": len(st.internal.get(z.id, {})),
+            "samples": [str(n) for n in sorted(by_zone[z.id].nets, key=_net_key)[:SAMPLES]],
+        }
+        for z in items
+    }  # fmt: skip
+    transitions = list(st.transitions.values())
+
+    # Ansicht: welche Zone erscheint wie
+    owners = {z.id: z.customer_id for z in items}
+    mode = "all" if everything or not any(owners.values()) else (
+        "customer" if mine else "overview")  # fmt: skip
+    group: dict = {}
+    if mode == "all":
+        group = {z.id: z.id for z in items}
+    elif mode == "overview":
+        group = {zid: (f"customer:{c}" if c else zid) for zid, c in owners.items()}
+    else:
+        adj: dict = defaultdict(set)
+        for t in transitions:
+            adj[t.a].add(t.b)
+            adj[t.b].add(t.a)
+        own = {zid for zid, c in owners.items() if c in mine}
+        seen, todo = set(own), list(own)
+        while todo:  # geteilte Zonen, von den eigenen aus ueber geteilte erreichbar
+            for nxt in adj[todo.pop()]:
+                if isinstance(nxt, int) and owners.get(nxt) is None and nxt not in seen:
+                    seen.add(nxt)
+                    todo.append(nxt)
+        group = {zid: zid for zid in seen}
+
+        def foreign(x) -> bool:
+            return isinstance(x, int) and owners.get(x) is not None and owners[x] not in mine
+
+        # genutzte Zugaenge zu anderen Kunden - Uebergang von einer eigenen Zone bzw. Regeln
+        # zwischen einer eigenen Zone und ihrer: je Kunde eine Zone
+        other = {nxt for zid in own for nxt in adj[zid] if foreign(nxt)}
+        a = assign(session, tenant_id, items, nets=list(by_zone.values()))
+        for rid in a.rules:
+            for s, d in a.pairs(rid):
+                other |= {y for x, y in ((s, d), (d, s)) if x in own and foreign(y)}
+        for zid in other:
+            group[zid] = f"customer:{owners[zid]}"
+    for pseudo in PSEUDO:
+        group[pseudo] = pseudo
+
+    merged: dict[tuple, dict] = {}
+    for t in transitions:
+        ga, gb = group.get(t.a), group.get(t.b)
+        if ga is None or gb is None or ga == gb:
+            continue
+        if mode == "customer" and not ({t.a, t.b} & set(group) - set(PSEUDO)):
+            continue
+        k = tuple(sorted((ga, gb), key=lambda x: (isinstance(x, str), str(x))))
+        m = merged.setdefault(k, {"a": k[0], "b": k[1], "networks": []})
+        m["networks"] += [n for n in t.networks if n not in m["networks"]]
+    if mode != "customer":  # Knoten ohne Zone an Netzen einer Zone (gestrichelt)
+        for zid, infos in st.contacts.items():
+            gz = group.get(zid)
+            if gz is None:
+                continue
+            k = tuple(sorted((gz, "none"), key=lambda x: (isinstance(x, str), str(x))))
+            m = merged.setdefault(k, {"a": k[0], "b": k[1], "networks": [], "contact": True})
+            m["networks"] += [n for n in infos if n not in m["networks"]]
+    used = {x for k in merged for x in k}
+
+    zones_out: list[dict] = []
+    for z in items:
+        gid = group.get(z.id)
+        if gid == z.id:
+            zones_out.append(zones_full[z.id])
+    collapsed = {int(str(x).split(":")[1]) for x in group.values()
+                 if str(x).startswith("customer:")}  # fmt: skip
+    for cid in sorted(collapsed, key=lambda c: cust.get(c, "")):
+        members = [zmap[zid].name for zid, gid in group.items() if gid == f"customer:{cid}"]
+        zones_out.append({"id": f"customer:{cid}", "name": cust.get(cid, f"Kunde #{cid}"),
+                          "code": None, "kind": "customer", "color": None, "customer_id": cid,
+                          "customer": cust.get(cid), "collapsed": True, "members": members,
+                          "nodes": [], "nets": 0, "epgs": 0, "internal": 0, "samples": [],
+                          "position": 0})  # fmt: skip
+    unassigned = [topo_model.node_id(k) for k in st.unassigned()]
+    if mode != "customer" and unassigned:
+        used.add("none")
+    for pseudo, (name, kind) in PSEUDO.items():
+        if pseudo in used:
+            zones_out.append({"id": pseudo, "name": name, "code": None, "kind": kind,
+                              "color": None, "customer_id": None, "customer": None,
+                              "nodes": unassigned if pseudo == "none" else [], "nets": 0,
+                              "epgs": 0, "internal": 0, "samples": [], "position": 0})  # fmt: skip
+    by_id = {z["id"]: z for z in zones_out}
+    trans_out = []
+    for (a, b), m in merged.items():
+        if a not in by_id or b not in by_id:
+            continue
+        nets = m["networks"]
+        trans_out.append({
+            "id": f"{a}~{b}", "a": a, "b": b, "name": transition_name(by_id[a], by_id[b]),
+            "networks": nets[:zone_struct.SAMPLES], "count": len(nets),
+            "l3out": any(leg["l3out"] for n in nets for leg in n["legs"]),
+            "contact": bool(m.get("contact")),
+        })  # fmt: skip
+    trans_out.sort(key=lambda t: (t["contact"], t["name"].casefold()))
+    node_ids = {n for z in zones_out for n in z["nodes"]}
+    nodes_out = [
+        {"id": topo_model.node_id(k), "label": n.label, "kind": n.kind, "source": n.source,
+         "group": n.group, "zone": st.node_zone.get(k)}
+        for k, n in sorted(g.nodes.items(), key=lambda x: x[1].label)
+        if topo_model.node_id(k) in node_ids
+    ]  # fmt: skip
+    unzoned = st.unzoned if mode != "customer" else []
+    unzoned = sorted(unzoned, key=lambda u: _net_key(ipaddress.ip_network(u["network"])))
+    real = [z for z in zones_out if isinstance(z["id"], int)]
+    one = next(iter(mine)) if len(mine) == 1 else None
+    return {
+        "format": 2,
+        "view": {
+            "mode": mode,
+            "customer_id": one if mode == "customer" else None,
+            "customer": cust.get(one) if mode == "customer" else None,
+        },
+        "customers": [
+            {"id": c, "name": n}
+            for c, n in sorted(cust.items(), key=lambda x: x[1])
+            if c in set(owners.values())
+        ],  # fmt: skip
+        "zones": zones_out,
+        "nodes": nodes_out,
+        "transitions": trans_out,
+        "conflicts": st.conflicts,
+        "unzoned": {"total": len(unzoned), "items": unzoned[:UNZONED]},
+        "summary": {
+            "zones": len(real),
+            "nodes": len(nodes_out),
+            "transitions": sum(1 for t in trans_out if not t["contact"]),
+            "collapsed": sum(1 for z in zones_out if z.get("collapsed")),
+            "unassigned": len(unassigned),
+            "unzoned": len(unzoned),
+            "without_node": sum(1 for z in real if not z["nodes"] and not z["nets"]),
+        },
+    }
+
+
+def plan_with_layout(session: Session, tenant_id: int, customer_ids=None,
+                     customer_id: int | None = None, everything: bool = False) -> dict:  # fmt: skip
+    """Plan samt Zeichnung (`plan_export.layout`) fuer die Oberflaeche; mit `customer_ids` die
+    Sicht eines Kunden-Benutzers (`restrict_plan`)."""
     from app.store import plan_export
 
-    out = plan(session, tenant_id)
     if customer_ids is not None:
+        out = plan(session, tenant_id, set(customer_ids) or {-1})
         out = restrict_plan(out, customer_view(load(session, tenant_id), customer_ids))
+    else:
+        out = plan(session, tenant_id, customer_id, everything)
     out["layout"] = plan_export.layout(out)
     return out
 
 
 def restrict_plan(full: dict, view: CustomerView) -> dict:
-    """Plan eines Kunden-Benutzers (ADR 0018 Schritt 4): seine Zonen, die Knoten, an denen sie
-    haengen, und die geteilten Zonen an diesen Knoten - keine Zonen anderer Kunden, keine Netze
-    ohne Zone, keine Netze und Router der geteilten Zonen."""
-    own_att = [a for a in full["attachments"] if a["zone"] in view.own]
-    nodes = {a["node"] for a in own_att}
-    shared_att = [a for a in full["attachments"] if a["zone"] in view.shared and a["node"] in nodes]
-    attachments = [{**a, "routes": []} for a in own_att] + [
-        {**a, "routes": [], "networks": [], "count": 0} for a in shared_att
-    ]
-    visible = view.own | {a["zone"] for a in shared_att}
-    by_node: dict[str, set[int]] = defaultdict(set)
-    for a in attachments:
-        by_node[a["node"]].add(a["zone"])
-    zones = [
-        z if z["id"] in view.own else {**z, "nets": 0, "epgs": 0, "samples": []}
-        for z in full["zones"]
-        if z["id"] in visible
-    ]
-    links = []
-    for link in full["links"]:
-        via = [n for n in link["nodes"] if n in nodes]
-        if link["a"] in visible and link["b"] in visible and via:
-            links.append({**link, "nodes": via})
-    node_list = [{**n, "zones": len(by_node[n["id"]])} for n in full["nodes"] if n["id"] in nodes]
+    """Plan eines Kunden-Benutzers (ADR 0018 Schritt 4): seine Zonen mit ihren Knoten, die
+    geteilten Zonen ohne Netze und Knoten, andere Kunden als eine Zone „anderer Kunde“; Netze
+    der Uebergaenge nur an den eigenen Zonen, ohne fremde Geraete und Router-Namen."""
+    own = {z["id"] for z in full["zones"] if isinstance(z["id"], int) and z["id"] in view.own}
+    rename = {z["id"]: "other" for z in full["zones"] if z.get("collapsed")}
+    own_nodes = {n for z in full["zones"] if z["id"] in own for n in z["nodes"]}
+    zones = []
+    for z in full["zones"]:
+        if z["id"] in own:
+            zones.append(z)
+        elif z["id"] in rename:
+            continue
+        elif isinstance(z["id"], int):
+            zones.append({**z, "nets": 0, "epgs": 0, "internal": 0, "samples": [], "nodes": []})
+        elif z["id"] == "outside":
+            zones.append(z)
+    if rename:
+        zones.append({"id": "other", "name": "anderer Kunde", "code": None, "kind": "customer",
+                      "color": None, "customer_id": None, "customer": None, "collapsed": True,
+                      "members": [], "nodes": [], "nets": 0, "epgs": 0, "internal": 0,
+                      "samples": [], "position": 0})  # fmt: skip
+    ids = {z["id"] for z in zones}
+    by_id = {z["id"]: z for z in zones}
+    trans: dict[tuple, dict] = {}
+    for t in full["transitions"]:
+        a, b = rename.get(t["a"], t["a"]), rename.get(t["b"], t["b"])
+        if a not in ids or b not in ids or a == b:
+            continue
+        mine = bool({a, b} & own)
+        nets = [{"network": n["network"], "routers": [],
+                 "legs": [leg for leg in n["legs"] if leg["node"] in own_nodes]}
+                for n in t["networks"]] if mine else []  # fmt: skip
+        k = (a, b)
+        x = trans.setdefault(k, {**t, "id": f"{a}~{b}", "a": a, "b": b, "networks": [],
+                                 "name": transition_name(by_id[a], by_id[b]),
+                                 "count": 0})  # fmt: skip
+        x["networks"] += nets
+        x["count"] += t["count"] if mine else 0
+    nodes = [n for n in full["nodes"] if n["id"] in own_nodes]
+    real = [z for z in zones if isinstance(z["id"], int)]
     return {
+        **full,
+        "customers": [],
         "zones": zones,
-        "nodes": node_list,
-        "attachments": attachments,
-        "links": links,
+        "nodes": nodes,
+        "transitions": list(trans.values()),
+        "conflicts": [],
         "unzoned": {"total": 0, "items": []},
         "summary": {
-            "zones": len(zones),
-            "nodes": len(node_list),
-            "attachments": len(attachments),
-            "links": len(links),
+            "zones": len(real),
+            "nodes": len(nodes),
+            "transitions": len(trans),
+            "collapsed": 1 if rename else 0,
+            "unassigned": 0,
             "unzoned": 0,
-            "without_node": sum(1 for z in view.own if z not in {a["zone"] for a in own_att}),
+            "without_node": sum(
+                1 for z in real if z["id"] in own and not z["nodes"] and not z["nets"]
+            ),  # fmt: skip
         },
     }

@@ -292,6 +292,11 @@ def run(app) -> None:
     dmz = zone("DMZ", "dmz", "#d08a1e", [sel("fw_interface", "dmz", source_system_id=fw8)])
     zone("Internet", "external", "#c0392b",
          [sel("prefix", "0.0.0.0/0"), sel("prefix", "10.0.0.0/8", exclude=True)])  # fmt: skip
+    # Zonenmodell (0.56.0): fw-08 deklariert die Zone Edge Internet - LAN, DMZ und Internet sind
+    # Uebergaenge an ihren Interfaces
+    edge = {"tenant_id": tid, "name": "Edge Internet", "kind": "edge", "code": "EINET",
+            "selectors": [sel("fw_vdom", "root", source_system_id=fw8)]}  # fmt: skip
+    ok(c.post("/zones", json=edge), 201)
     policy = {"tenant_id": tid, "src_zone_id": lan, "dst_zone_id": dmz, "intent": "deny",
               "note": "nur über den Proxy"}  # fmt: skip
     ok(c.put("/zones/policy", json=policy))

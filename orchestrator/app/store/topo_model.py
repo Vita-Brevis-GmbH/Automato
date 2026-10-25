@@ -140,6 +140,8 @@ class Model:
         self.ports: dict[Key, set[str]] = defaultdict(set)  # Interfaces und Zonen je Knoten
         self.l3out_nets: dict[Key, list] = defaultdict(list)
         self.l3out_peers: dict[Key, set[str]] = defaultdict(set)
+        # alle Netze (auch mit nur einem Knoten): Netz -> Adressen (Zonenstruktur, 0.56.0)
+        self.components: list[tuple[str, list[Addr]]] = []
 
     # -- Aufbau ---------------------------------------------------------------------------
 
@@ -255,10 +257,11 @@ class Model:
         for members in comps.values():
             addrs = [self.addrs[i] for i in members]
             keys = sorted({a.key for a in addrs})
-            if len(keys) < 2:
-                continue
             net = min((a.net for a in addrs), key=lambda n: n.prefixlen)
             text = str(net)
+            self.components.append((text, addrs))
+            if len(keys) < 2:
+                continue
             self._plausible_segment(text, addrs)
             via = [a.out(self.g) for a in sorted(addrs, key=lambda a: (a.key, int(a.ip)))]
             if len(keys) == 2:

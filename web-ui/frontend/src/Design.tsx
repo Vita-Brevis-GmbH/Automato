@@ -3,11 +3,14 @@
 // Verstössen) und der Zonenplan (Zonen an Firewalls/VDOMs und ACI-VRFs, Übergänge, Netze ohne
 // Zone). Lesen = viewer, Zonen und Absicht ändern = operator. Seit 0.52.0 Export (draw.io, SVG, PDF)
 // und Versionen des Plans (speichern = operator, löschen = admin). Seit 0.54.0 Vorschläge für Zonen aus
-// dem Gelesenen (übernehmen bzw. ausblenden = operator).
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+// dem Gelesenen (übernehmen bzw. ausblenden = operator). Seit 0.56.0 das Zonenmodell nach Ebenen: Zonen mit
+// Knoten (Firewall/VDOM, ACI-VRF), Übergänge zwischen den Zonen, Farben aus Grundschema bzw. Vorlage, Plan je
+// Kunde (andere Kunden je als eine Zone).
+import { CSSProperties, Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   acceptZoneSuggestions,
   applySchemaIntents,
+  assignZoneNodes,
   createZone,
   Customer,
   deletePlanVersion,
@@ -30,12 +33,15 @@ import {
   PlanDiff,
   PlanFormat,
   PlanLayout,
+  PlanTransition,
   PlanVersion,
   PlanVersionFull,
+  PlanView,
   previewZone,
   savePlanVersion,
   SchemaZone,
   setZonePolicy,
+  SuggestionNode,
   System,
   TopoExit,
   updateZone,
@@ -44,7 +50,9 @@ import {
   ZoneIn,
   ZoneIntent,
   ZoneKind,
+  ZoneColorSource,
   ZoneMatrix,
+  ZoneNetsData,
   ZonePlan,
   ZonePreview,
   ZoneSelector,
@@ -58,13 +66,25 @@ import {
 import { SELECTOR_LABEL } from "./Customers";
 import { Dash, download, Empty, ErrorBox, fmtTime, Loading, Modal, Note, PageHead } from "./ui";
 
+// Reihenfolge = Ebenen des Zonenmodells (0.56.0) von links nach rechts im Plan, danach die bisherigen Arten
 export const ZONE_KIND: Record<ZoneKind, string> = {
+  dc: "Datacenter",
+  edge: "Edge",
+  transfer: "Transfer",
+  core: "Core",
+  distribution: "Distribution",
+  access: "Access",
+  external: "Public / extern",
   internal: "intern",
   dmz: "DMZ",
-  external: "extern",
   management: "Management",
   shared: "geteilt",
-  transfer: "Transfer",
+};
+const COLOR_SOURCE: Record<ZoneColorSource, string> = {
+  schema: "aus dem Grundschema",
+  template: "aus der Vorlage",
+  zone: "an der Zone gesetzt",
+  kind: "Farbe der Art",
 };
 const INTENT: Record<ZoneIntent, [string, string]> = {
   allow: ["ok", "erlaubt"],
@@ -81,15 +101,14 @@ const PLACEHOLDER: Partial<Record<ZoneSelectorKind, string>> = {
   exit: "Internet",
 };
 const FW_KINDS: ZoneSelectorKind[] = ["fw_vdom", "fw_zone", "fw_interface"];
-const VIA: Record<string, string> = { interface: "Interface", fabric: "im Fabric", exit: "Anbindung", route: "über Route" };
+const NODE_KIND: Record<string, string> = { firewall: "Firewall", vdom: "VDOM", vrf: "ACI-VRF" };
 
 const SOURCE: Record<ZoneSuggestionSource, string> = {
-  transfer: "Transfernetz",
-  fw_zone: "FortiGate-Zone",
-  interface: "Interface",
-  ipam: "IPAM",
-  aci_vrf: "ACI-VRF",
+  aci: "ACI-Tenants",
+  node: "Firewall",
   exit: "Anbindung",
+  ipam: "IPAM",
+  schema: "Grundschema",
 };
 
 type Tab = "zones" | "suggestions" | "matrix" | "plan" | "versions";
@@ -119,10 +138,11 @@ export default function Design({
           </>
         ) : (
           <>
-            Logische Zonen von „{tenantLabel}“ – in Automato gepflegt, die Netze leitet Automato aus Selektoren ab (wie
-            beim Kunden). Die Zonenmatrix zeigt je Paar Quell- und Zielzone die Regeln und die Absicht, der Zonenplan, an
-            welchen Firewalls und ACI-VRFs die Zonen hängen – exportierbar als draw.io, SVG und PDF, mit Versionen zum
-            Vergleichen. Rein lesend gegenüber den Geräten.
+            Logische Zonen von „{tenantLabel}“ – in Automato gepflegt, nach Ebenen: Datacenter (ACI-Tenants), Edge, Transfer,
+            Core, Distribution, Access und Public. Eine Zone umfasst Knoten (Firewall bzw. VDOM, ACI-VRF) und Netze; zwischen
+            den Zonen liegen Übergänge (L3Outs, Interfaces). Die Zonenmatrix zeigt je Paar Quell- und Zielzone die Regeln
+            und die Absicht, der Zonenplan die Zonen mit ihren Übergängen – je Kunde, exportierbar als draw.io, SVG und PDF,
+            mit Versionen zum Vergleichen. Rein lesend gegenüber den Geräten.
           </>
         )}
       </PageHead>
@@ -158,8 +178,13 @@ export default function Design({
   );
 }
 
-function Swatch({ color }: { color: string | null }) {
-  return <span className="zone-swatch" style={{ background: color ?? "var(--surface-3)" }} />;
+function Swatch({ color, title }: { color: string | null; title?: string }) {
+  return <span className="zone-swatch" title={title} style={{ background: color ?? "var(--surface-3)" }} />;
+}
+
+function colorTitle(z: { color_source?: ZoneColorSource; schema?: string | null }): string | undefined {
+  if (!z.color_source) return undefined;
+  return `Farbe ${COLOR_SOURCE[z.color_source]}${z.schema && z.color_source !== "zone" && z.color_source !== "kind" ? ` („${z.schema}“)` : ""}`;
 }
 
 function selectorText(s: ZoneSelector, systems: System[]): string {
@@ -208,7 +233,8 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
         <div className="card-head">
           <h2>Zonen</h2>
           <span className="faint">
-            Eine IP gehört zur Zone mit dem längsten Präfix; z. B. Internet = Anbindung „Internet“ ohne die privaten Netze
+            Knoten über VDOM bzw. ACI-Tenant/VRF, Netze über die übrigen Selektoren (längstes Präfix); Netze zwischen Knoten
+            verschiedener Zonen sind Übergänge
           </span>
           {canEdit && (
             <button className="btn btn-primary btn-sm" style={{ marginLeft: "auto" }} onClick={() => setEditing("new")}>
@@ -221,8 +247,8 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
             <Loading />
           ) : rows.length === 0 ? (
             <Empty title="Noch keine Zonen">
-              Zonen anlegen: z. B. „Server“ über die Interfaces bzw. Zonen der Firewall, „Kunde A“ über den ACI-Tenant,
-              „Internet“ über die Anbindung.
+              Zonen anlegen bzw. im Reiter „Vorschläge“ übernehmen: z. B. „DC“ über die ACI-Tenants, „Edge Internet“ über
+              die VDOMs der Internet-Firewalls, „Public“ über die Anbindung.
             </Empty>
           ) : (
             <table id="zone-list">
@@ -232,6 +258,7 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
                   <th>Art</th>
                   <th>Kunde</th>
                   {!isCustomer && <th>Selektoren</th>}
+                  <th>Knoten · Übergänge</th>
                   <th className="num">Netze</th>
                   <th className="num">EPGs</th>
                   <th />
@@ -245,7 +272,8 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
                       onClick={() => z.own !== false && setOpen(open === z.id ? null : z.id)}
                     >
                       <td>
-                        <Swatch color={z.color} /> <b>{z.name}</b> {z.code && <span className="mono faint">{z.code}</span>}
+                        <Swatch color={z.color} title={colorTitle(z)} /> <b>{z.name}</b>{" "}
+                        {z.code && <span className="mono faint">{z.code}</span>}
                         {z.description && <div className="faint">{z.description}</div>}
                       </td>
                       <td>{ZONE_KIND[z.kind] ?? z.kind}</td>
@@ -261,6 +289,24 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
                           </div>
                         </td>
                       )}
+                      <td>
+                        {(z.nodes ?? []).length === 0 && (z.transitions ?? []).length === 0 ? (
+                          <Dash />
+                        ) : (
+                          <>
+                            {(z.nodes ?? []).length > 0 && <div>{(z.nodes ?? []).join(", ")}</div>}
+                            {(z.transitions ?? []).length > 0 && (
+                              <div className="objs">
+                                {(z.transitions ?? []).map((t) => (
+                                  <span key={String(t.to_id)} className="chip" title={`Übergang zu ${t.to} · ${t.count} Netz(e)`}>
+                                    {t.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </td>
                       <td className="num">{z.own === false ? <Dash /> : z.nets}</td>
                       <td className="num">{z.own === false ? <Dash /> : z.epgs}</td>
                       <td className="nowrap" onClick={(e) => e.stopPropagation()}>
@@ -278,7 +324,7 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
                     </tr>
                     {open === z.id && (
                       <tr className="subrow">
-                        <td colSpan={isCustomer ? 6 : 7}>
+                        <td colSpan={isCustomer ? 7 : 8}>
                           <ZoneNets zoneId={z.id} />
                         </td>
                       </tr>
@@ -404,9 +450,10 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
         <div className="card-head">
           <h2>Vorschläge</h2>
           {data && (
-            <span className="faint">
-              {data.summary.create} neu, {data.summary.extend} ergänzen eine Zone · {data.summary.rest} gelesene Netze ohne Zone und
-              Vorschlag
+            <span className="faint" id="zone-suggestions-summary">
+              {data.summary.create} neu, {data.summary.extend} ergänzen eine Zone · {data.summary.nodes} Knoten ohne Zone ·{" "}
+              {data.summary.rest} Netze ohne Zone und Vorschlag
+              {data.summary.template && " · nach der eingebauten Vorlage"}
             </span>
           )}
           {data?.schema && (
@@ -431,10 +478,11 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
         </div>
         <div className="card-body scroll">
           <p className="faint" style={{ margin: "4px 16px 10px" }}>
-            Aus dem Gelesenen erkannt: Transfernetze zwischen gelesenen Knoten, Zonen und Interfaces der FortiGates (Name, Rolle,
-            Management), Zone bzw. Rolle im IPAM, ACI-VRFs und die Anbindungen. Übernehmen legt eine normale Zone mit Selektoren an
-            bzw. ergänzt die bestehende – neue Interfaces oder EPGs gehören danach ohne Pflege dazu. Netze, die schon in einer Zone
-            liegen, schliesst ein Vorschlag aus.
+            Nach dem Zonenmodell: die ACI-Tenants sind das Datacenter (je Kunde eine Zone), Firewalls kommen in die Zone des
+            Grundschemas bzw. der Vorlage, deren Name oder Muster passt (Firewalls mit einem Bein an der Internet-Anbindung in
+            Edge Internet), die Anbindungen in Public, dazu Firewall-Zonen und Interfaces nach den Mustern und Zone bzw. Rolle im
+            IPAM. Netze zwischen Knoten verschiedener Zonen werden Übergänge. Übernehmen legt eine normale Zone mit Selektoren
+            an bzw. ergänzt die bestehende; Knoten ohne Treffer stehen darunter zum Zuordnen.
           </p>
           {data == null ? (
             <Loading />
@@ -459,9 +507,7 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
                   <th>Kunde</th>
                   <th>Erkannt aus</th>
                   <th>Selektoren</th>
-                  <th className="num" title="ohne Zone / Netze des Vorschlags">
-                    Netze
-                  </th>
+                  <th className="num">Netze</th>
                   <th />
                 </tr>
               </thead>
@@ -485,7 +531,7 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
                         ) : (
                           <span className="chip warn">nicht im Schema</span>
                         ))}
-                      {s.refines.length > 0 && <div className="faint">genauer als {s.refines.join(", ")}</div>}
+                      {s.code && <span className="mono faint"> {s.code}</span>}
                     </td>
                     <td>
                       {ZONE_KIND[s.kind] ?? s.kind}
@@ -507,9 +553,10 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
                           </span>
                         ))}
                       </div>
+                      {s.nodes.length > 0 && <div className="faint">Knoten: {s.nodes.join(", ")}</div>}
                     </td>
                     <td className="num nowrap" title={s.samples.join("\n")}>
-                      {s.counts.open} / {s.counts.nets}
+                      {s.counts.nets}
                       {s.counts.epgs > 0 && <div className="faint">{s.counts.epgs} EPGs</div>}
                     </td>
                     <td className="nowrap">
@@ -533,6 +580,12 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
           )}
         </div>
       </div>
+      {data && data.nodes.length > 0 && (
+        <NodesCard nodes={data.nodes} zones={zones} canEdit={canEdit} onAssigned={(msg) => {
+            setDone(msg);
+            load();
+          }} onError={setErr} />
+      )}
       {data?.schema && (
         <SchemaStatus status={data.schema} canEdit={canEdit} onCreate={setFromSchema} onApply={applyIntents} />
       )}
@@ -609,7 +662,7 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
               : {
                   tenant_id: tenantId,
                   name: editing.name,
-                  code: null,
+                  code: editing.code,
                   kind: editing.kind,
                   color: editing.color,
                   customer_id: editing.customer_id,
@@ -626,6 +679,89 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
         />
       )}
     </>
+  );
+}
+
+// Knoten ohne Zone und ohne Vorschlag (0.56.0): einer Zone zuordnen = Selektor VDOM bzw. ACI-VRF
+function NodesCard({
+  nodes,
+  zones,
+  canEdit,
+  onAssigned,
+  onError,
+}: {
+  nodes: SuggestionNode[];
+  zones: LogicalZone[];
+  canEdit: boolean;
+  onAssigned: (message: string) => void;
+  onError: (e: unknown) => void;
+}) {
+  const [target, setTarget] = useState<Record<string, number>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const assign = async (n: SuggestionNode) => {
+    const zoneId = target[n.id];
+    if (!zoneId) return;
+    setBusy(n.id);
+    try {
+      await assignZoneNodes(zoneId, [n.id]);
+      onAssigned(`${n.label} → ${zones.find((z) => z.id === zoneId)?.name ?? "Zone"}`);
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="card" id="zone-suggestions-nodes">
+      <div className="card-head">
+        <h2>Knoten ohne Zone</h2>
+        <span className="faint">Firewalls bzw. VDOMs ohne passende Zone – einer Zone zuordnen (Selektor VDOM)</span>
+      </div>
+      <div className="card-body scroll">
+        <table className="compact">
+          <thead>
+            <tr>
+              <th>Knoten</th>
+              <th>Art</th>
+              <th>Hinweis</th>
+              {canEdit && <th>Zone</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {nodes.map((n) => (
+              <tr key={n.id} data-node={n.id}>
+                <td>
+                  <b>{n.label}</b>
+                  {n.group && <span className="faint"> · Verbund {n.group}</span>}
+                </td>
+                <td>{NODE_KIND[n.kind] ?? n.kind}</td>
+                <td className="faint">{n.hint ?? (n.kind_hint ? `Name deutet auf ${ZONE_KIND[n.kind_hint] ?? n.kind_hint}` : "–")}</td>
+                {canEdit && (
+                  <td className="nowrap">
+                    <select
+                      className="sel"
+                      aria-label={`Zone für ${n.label}`}
+                      value={target[n.id] ?? ""}
+                      onChange={(e) => setTarget((t) => ({ ...t, [n.id]: Number(e.target.value) }))}
+                    >
+                      <option value="">– Zone wählen –</option>
+                      {zones.map((z) => (
+                        <option key={z.id} value={z.id}>
+                          {z.name}
+                        </option>
+                      ))}
+                    </select>{" "}
+                    <button className="btn btn-sm" disabled={!target[n.id] || busy === n.id} onClick={() => assign(n)}>
+                      Zuordnen
+                    </button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -730,7 +866,7 @@ function SchemaStatus({
 }
 
 function ZoneNets({ zoneId }: { zoneId: number }) {
-  const [data, setData] = useState<{ total: number; items: { network: string; via: string }[] } | null>(null);
+  const [data, setData] = useState<ZoneNetsData | null>(null);
   useEffect(() => {
     let current = true;
     fetchZoneNets(zoneId)
@@ -741,28 +877,69 @@ function ZoneNets({ zoneId }: { zoneId: number }) {
     };
   }, [zoneId]);
   if (data == null) return <Loading />;
-  if (data.items.length === 0) return <span className="faint">keine Netze</span>;
+  const transitions = data.transitions ?? [];
   return (
-    <table className="compact zone-nets">
-      <tbody>
-        {data.items.map((n) => (
-          <tr key={n.network}>
-            <td className="mono">
-              <a href={`#regeln?q=${encodeURIComponent(n.network)}`}>{n.network}</a>
-            </td>
-            <td className="faint">{n.via}</td>
-          </tr>
-        ))}
-        {data.total > data.items.length && (
-          <tr>
-            <td colSpan={2} className="faint">
-              … {data.total - data.items.length} weitere
-            </td>
-          </tr>
+    <div className="zone-detail">
+      {(data.nodes ?? []).length > 0 && (
+        <div className="field">
+          <label>Knoten</label>
+          <div>{(data.nodes ?? []).join(", ")}</div>
+        </div>
+      )}
+      <div className="field">
+        <label>Netze in der Zone</label>
+        {data.items.length === 0 ? (
+          <span className="faint">keine – die Zone ist ein reiner Übergang (normal z. B. für eine Internet-Firewall)</span>
+        ) : (
+          <table className="compact zone-nets">
+            <tbody>
+              {data.items.map((n) => (
+                <tr key={n.network}>
+                  <td className="mono">
+                    <a href={`#regeln?q=${encodeURIComponent(n.network)}`}>{n.network}</a>
+                  </td>
+                  <td className="faint">{n.via}</td>
+                </tr>
+              ))}
+              {data.total > data.items.length && (
+                <tr>
+                  <td colSpan={2} className="faint">
+                    … {data.total - data.items.length} weitere
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         )}
-      </tbody>
-    </table>
+      </div>
+      {transitions.length > 0 && (
+        <div className="field">
+          <label>Übergänge zu anderen Zonen</label>
+          <table className="compact zone-transitions">
+            <tbody>
+              {transitions.flatMap((t) =>
+                t.networks.map((n, i) => (
+                  <tr key={`${t.to_id}-${n.network}`}>
+                    <td className="nowrap">{i === 0 && <b className="mono">{t.name}</b>}</td>
+                    <td className="faint nowrap">{i === 0 && `→ ${t.to}`}</td>
+                    <td className="mono">{n.network}</td>
+                    <td className="faint">{legsText(n)}</td>
+                  </tr>
+                )),
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
+}
+
+function legsText(n: { legs: { label: string; interface: string | null; l3out: boolean }[]; routers: { ip: string; names: string[] }[] }): string {
+  const legs = n.legs.map((l) => `${l.label} (${l.l3out ? "L3Out" : "Interface"} ${l.interface ?? "?"})`);
+  const legsUnique = [...new Set(legs)];
+  const routers = n.routers.map((r) => `Router ${r.names[0] ?? r.ip}`);
+  return [...legsUnique, ...routers].join(", ");
 }
 
 const EMPTY_SELECTOR: ZoneSelector = { kind: "prefix", value: "", source_system_id: null, exclude: false };
@@ -790,7 +967,9 @@ function ZoneEditor({
   const [name, setName] = useState(base?.name ?? "");
   const [code, setCode] = useState(base?.code ?? "");
   const [kind, setKind] = useState<ZoneKind>(base?.kind ?? "internal");
-  const [color, setColor] = useState(base?.color ?? "#3b82c4");
+  // eigene Farbe der Zone; gilt nur, wenn weder Grundschema noch Vorlage die Zone kennen (0.56.0)
+  const [color, setColor] = useState((initial ? (initial.own_color ?? initial.color) : draft?.color) ?? "#3b82c4");
+  const fixedColor = initial && (initial.color_source === "schema" || initial.color_source === "template") ? initial : null;
   const [customerId, setCustomerId] = useState<number | null>(base?.customer_id ?? null);
   const [position, setPosition] = useState(base?.position ?? 0);
   const [description, setDescription] = useState(base?.description ?? "");
@@ -894,7 +1073,15 @@ function ZoneEditor({
         </div>
         <div className="field">
           <label htmlFor="zo-color">Farbe</label>
-          <input id="zo-color" type="color" className="input" value={color} onChange={(e) => setColor(e.target.value)} />
+          {fixedColor ? (
+            <div id="zo-color" className="zone-fixed-color">
+              <Swatch color={fixedColor.color} /> {COLOR_SOURCE[fixedColor.color_source as ZoneColorSource]}
+              {fixedColor.schema && <> („{fixedColor.schema}“)</>}
+              <div className="hint">überall gleich – im Grundschema der Namensprofile ändern</div>
+            </div>
+          ) : (
+            <input id="zo-color" type="color" className="input" value={color} onChange={(e) => setColor(e.target.value)} />
+          )}
         </div>
         <div className="field">
           <label htmlFor="zo-pos">Reihenfolge</label>
@@ -1261,135 +1448,199 @@ function CellDetail({
 
 function PlanTab({ tenantId, isCustomer = false }: { tenantId: number; isCustomer?: boolean }) {
   const [plan, setPlan] = useState<ZonePlan | null>(null);
+  const [view, setView] = useState<string>(""); // "" Übersicht, "all" alle Zonen, sonst Kunde
   const [err, setErr] = useState<unknown>(null);
+  const planView: PlanView = view === "all" ? { all: true } : view ? { customerId: Number(view) } : {};
   useEffect(() => {
     setPlan(null);
-    fetchZonePlan(tenantId).then(setPlan).catch(setErr);
-  }, [tenantId]);
+    fetchZonePlan(tenantId, view === "all" ? { all: true } : view ? { customerId: Number(view) } : {})
+      .then(setPlan)
+      .catch(setErr);
+  }, [tenantId, view]);
   if (err) return <ErrorBox error={err} onClose={() => setErr(null)} />;
   if (plan == null) return <Loading />;
   if (plan.zones.length === 0) return <Note>Noch keine Zonen – zuerst im Reiter „Zonen“ anlegen.</Note>;
-  const nodes = new Map(plan.nodes.map((n) => [n.id, n]));
   const s = plan.summary;
+  const zoneName = new Map(plan.zones.map((z) => [String(z.id), z.name]));
+  const transitions = (plan.transitions ?? []).filter((t) => !t.contact);
+  const contacts = (plan.transitions ?? []).filter((t) => t.contact);
+  const customers = plan.customers ?? [];
   return (
     <>
       <div className="card">
         <div className="card-head">
           <h2>Zonenplan</h2>
           <span className="faint" id="zone-plan-summary">
-            {s.zones} Zonen an {s.nodes} Knoten · {s.links} Übergänge
-            {s.without_node ? ` · ${s.without_node} Zonen ohne Knoten` : ""}
+            {s.zones} Zonen · {s.nodes} Knoten · {s.transitions ?? 0} Übergänge
+            {s.collapsed ? ` · ${s.collapsed} ${s.collapsed === 1 ? "Kunde" : "Kunden"} zusammengefasst` : ""}
+            {s.unassigned ? ` · ${s.unassigned} Knoten ohne Zone` : ""}
+            {s.without_node ? ` · ${s.without_node} Zonen ohne Knoten und Netze` : ""}
             {s.unzoned ? ` · ${s.unzoned} Netze ohne Zone` : ""}
           </span>
-          <span style={{ marginLeft: "auto" }}>
-            <ExportButtons tenantId={tenantId} />
+          <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {!isCustomer && customers.length > 0 && (
+              <select className="sel" id="zone-plan-view" aria-label="Ansicht" value={view} onChange={(e) => setView(e.target.value)}>
+                <option value="">Übersicht – Kunden je als eine Zone</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    Kunde {c.name}
+                  </option>
+                ))}
+                <option value="all">alle Zonen einzeln</option>
+              </select>
+            )}
+            <ExportButtons tenantId={tenantId} view={planView} />
           </span>
         </div>
-        <div className="card-body scroll">{plan.layout && <PlanDrawing layout={plan.layout} />}</div>
+        <div className="card-body scroll">
+          {plan.view?.mode === "customer" && (
+            <p className="faint" style={{ margin: "4px 0 8px" }}>
+              Zonen von {plan.view.customer ?? "Kunde"}, die geteilten Zonen dahinter und die genutzten Zugänge zu anderen
+              Kunden (je als eine Zone).
+            </p>
+          )}
+          {plan.layout && <PlanDrawing layout={plan.layout} />}
+        </div>
       </div>
 
       <div className="card">
         <div className="card-head">
-          <h2>Zonen an den Knoten</h2>
-          <span className="faint">am Interface, im Fabric, über die Anbindung bzw. über eine Route zu einem Router ohne gelesenes Gerät</span>
+          <h2>Übergänge</h2>
+          <span className="faint">Netze zwischen Knoten verschiedener Zonen – L3Outs im ACI, Interfaces der Firewalls, Border-Router</span>
         </div>
         <div className="card-body scroll">
-          <table className="compact" id="zone-attachments">
-            <thead>
-              <tr>
-                <th>Zone</th>
-                <th>Knoten</th>
-                <th>über</th>
-                <th>Interfaces</th>
-                <th>Netze</th>
-              </tr>
-            </thead>
-            <tbody>
-              {plan.zones.map((z) => {
-                const att = plan.attachments.filter((a) => a.zone === z.id);
-                if (att.length === 0)
-                  return (
-                    <tr key={z.id}>
-                      <td>
-                        <Swatch color={z.color} /> <b>{z.name}</b>
-                      </td>
-                      <td colSpan={4} className="faint">
-                        an keinem gelesenen Knoten{z.nets === 0 ? " (keine Netze)" : ""}
-                      </td>
-                    </tr>
-                  );
-                return att.map((a, i) => (
-                  <tr key={`${z.id}-${a.node}`}>
-                    <td>
-                      {i === 0 && (
-                        <>
-                          <Swatch color={z.color} /> <b>{z.name}</b>
-                        </>
-                      )}
-                    </td>
-                    <td>{nodes.get(a.node)?.label ?? a.node}</td>
-                    <td>
-                      {a.via.map((v) => (
-                        <span key={v} className={`chip ${v === "route" ? "info" : "na"}`}>
-                          {VIA[v] ?? v}
-                        </span>
-                      ))}
-                      {a.default && <span className="chip warn">Default-Route</span>}
-                    </td>
-                    <td className="mono">{a.interfaces.join(", ") || <Dash />}</td>
-                    <td className="mono">
-                      {a.networks.join(", ")}
-                      {a.count > a.networks.length ? ` … (${a.count})` : ""}
-                      {a.routes.length > 0 && (
-                        <div className="faint">
-                          {a.routes.map((r) => `${r.prefix} → ${r.names[0] ?? r.next_hop ?? r.interface ?? "?"}`).join(", ")}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ));
-              })}
-            </tbody>
-          </table>
+          {transitions.length === 0 ? (
+            <span className="faint">keine Übergänge – Knoten über VDOM bzw. ACI-Tenant/VRF den Zonen zuordnen</span>
+          ) : (
+            <TransitionTable transitions={transitions} zoneName={zoneName} id="zone-transitions" />
+          )}
         </div>
       </div>
 
+      {contacts.length > 0 && (
+        <div className="card" id="zone-contacts">
+          <div className="card-head">
+            <h2>Knoten ohne Zone an Netzen einer Zone</h2>
+            <span className="faint">kein Übergang – das Netz bleibt in seiner Zone; den Knoten einer Zone zuordnen</span>
+          </div>
+          <div className="card-body scroll">
+            <TransitionTable transitions={contacts} zoneName={zoneName} />
+          </div>
+        </div>
+      )}
+
+      {(plan.conflicts ?? []).length > 0 && (
+        <Note warn>
+          Knoten in mehreren Zonen (es gilt die erste in der Reihenfolge):{" "}
+          {(plan.conflicts ?? []).map((c) => `${c.label} (${c.zones.join(", ")})`).join("; ")}
+        </Note>
+      )}
+
       {!isCustomer && (
-      <div className="card" id="zone-unzoned">
-        <div className="card-head">
-          <h2>Netze ohne Zone</h2>
-          <span className="faint">an Interfaces, L3Outs und im Fabric gelesen, keiner Zone zugeordnet</span>
+        <div className="card" id="zone-unzoned">
+          <div className="card-head">
+            <h2>Netze ohne Zone</h2>
+            <span className="faint">an Interfaces und L3Outs gelesen, an Knoten ohne Zone und keiner Zone zugeordnet</span>
+          </div>
+          <div className="card-body scroll">
+            {plan.unzoned.total === 0 ? (
+              <span className="faint">alle gelesenen Netze gehören zu einer Zone bzw. einem Übergang</span>
+            ) : (
+              <table className="compact">
+                <tbody>
+                  {plan.unzoned.items.map((u) => (
+                    <tr key={u.network}>
+                      <td className="mono">{u.network}</td>
+                      <td>{u.node}</td>
+                      <td className="faint">{u.where}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {plan.unzoned.total > plan.unzoned.items.length && (
+              <div className="faint">die ersten {plan.unzoned.items.length} von {plan.unzoned.total}</div>
+            )}
+          </div>
         </div>
-        <div className="card-body scroll">
-          {plan.unzoned.total === 0 ? (
-            <span className="faint">alle gelesenen Netze gehören zu einer Zone</span>
-          ) : (
-            <table className="compact">
-              <tbody>
-                {plan.unzoned.items.map((u) => (
-                  <tr key={u.network}>
-                    <td className="mono">{u.network}</td>
-                    <td>{u.node}</td>
-                    <td className="faint">{u.where}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          {plan.unzoned.total > plan.unzoned.items.length && (
-            <div className="faint">die ersten {plan.unzoned.items.length} von {plan.unzoned.total}</div>
-          )}
-        </div>
-      </div>
       )}
     </>
   );
 }
 
-// Zeichnung aus dem Layout des Servers (0.52.0, `plan_export.layout`) – dieselbe wie im Export:
-// Zonen links (intern, Management, Transfer) und rechts (DMZ, extern, geteilt), die Knoten in der
-// Mitte; Linien = Zone am Knoten (gestrichelt: nur über eine Route), beschriftet mit den Interfaces.
+function TransitionTable({ transitions, zoneName, id }: { transitions: PlanTransition[]; zoneName: Map<string, string>; id?: string }) {
+  return (
+    <table className="compact" id={id}>
+      <thead>
+        <tr>
+          <th>Übergang</th>
+          <th>Zonen</th>
+          <th>Netz</th>
+          <th>über</th>
+        </tr>
+      </thead>
+      <tbody>
+        {transitions.map((t) =>
+          (t.networks.length ? t.networks : [null]).map((n, i) => (
+            <tr key={`${t.id}-${n?.network ?? i}`} data-transition={t.name}>
+              <td className="nowrap">
+                {i === 0 && (
+                  <>
+                    <b className="mono">{t.contact ? "–" : t.name}</b> {t.l3out && <span className="chip na">L3Out</span>}
+                  </>
+                )}
+              </td>
+              <td className="nowrap">{i === 0 && `${zoneName.get(String(t.a)) ?? t.a} ↔ ${zoneName.get(String(t.b)) ?? t.b}`}</td>
+              <td className="mono">{n ? n.network : <span className="faint">{t.count ? `${t.count} Netze` : "–"}</span>}</td>
+              <td className="faint">{n ? legsText(n) : ""}</td>
+            </tr>
+          )),
+        )}
+      </tbody>
+    </table>
+  );
+}
+
+// Zeichnung aus dem Layout des Servers (`plan_export.layout`) – dieselbe wie im Export. Seit 0.56.0
+// (Format 2) Zonen in Spalten nach Ebene (DC links, Public rechts) mit ihren Knoten, Übergänge als Linien
+// beschriftet mit dem Namen („DC-EINET“), gestrichelt zu „Knoten ohne Zone“ bzw. „ausserhalb“; Versionen
+// bis 0.55.0 im alten Layout (Zonen links/rechts, Knoten in der Mitte).
 export function PlanDrawing({ layout, id = "zone-plan" }: { layout: PlanLayout; id?: string }) {
+  if (layout.format === 2) {
+    return (
+      <svg className="zone-plan" id={id} viewBox={`0 0 ${layout.width} ${layout.height}`} width="100%" role="img" aria-label="Zonenplan">
+        {layout.edges.map((e) => (
+          <g key={e.id} className={`zp-edge ${e.contact ? "contact" : ""}`}>
+            <polyline points={(e.points ?? []).map(([x, y]) => `${x},${y}`).join(" ")} strokeDasharray={e.dashed ? "5 4" : undefined}>
+              <title>{`${e.label || "Kontakt"}: ${(e.networks ?? []).join(", ")}`}</title>
+            </polyline>
+            {e.label && (
+              <text x={e.lx} y={e.ly} textAnchor={(e.points ?? []).length > 2 ? "start" : "middle"}>
+                {e.label}
+              </text>
+            )}
+          </g>
+        ))}
+        {layout.zones.map((z) => (
+          <g key={z.id} className={`zp-zone2 ${z.pseudo ? "pseudo" : ""} ${z.collapsed ? "collapsed" : ""}`} data-zone={String(z.id)}>
+            <rect x={z.x} y={z.y} width={z.w} height={z.h} rx={8} style={zoneStyle(z.color)} />
+            <text x={z.x + 12} y={z.y + 18} className="zp-title">
+              {z.title}
+              {z.code && <tspan className="zp-code"> {z.code}</tspan>}
+            </text>
+            <text x={z.x + 12} y={z.y + 33} className="zp-sub">
+              {z.sub}
+            </text>
+            {(z.lines ?? []).map((line, k) => (
+              <text key={k} x={z.x + 12} y={z.y + 52 + k * 15} className="zp-line">
+                {line}
+              </text>
+            ))}
+          </g>
+        ))}
+      </svg>
+    );
+  }
   return (
     <svg className="zone-plan" id={id} viewBox={`0 0 ${layout.width} ${layout.height}`} width="100%" role="img" aria-label="Zonenplan">
       {layout.edges.map((e) => (
@@ -1428,15 +1679,25 @@ export function PlanDrawing({ layout, id = "zone-plan" }: { layout: PlanLayout; 
   );
 }
 
-// Export-Knöpfe: draw.io (bearbeitbar), SVG, PDF (mit Matrix und Tabellen) – aktueller Stand bzw. Version
-function ExportButtons({ tenantId, versionId }: { tenantId: number; versionId?: number }) {
+// Helle Farben (Pastell der Vorlage) kräftiger füllen, dunkle wie bisher mit 22 % – beides lesbar im
+// hellen und dunklen Design; Rahmen in der Zonenfarbe bzw. neutral
+function zoneStyle(color: string | null | undefined): CSSProperties {
+  if (!color) return { fill: "var(--surface-3)", fillOpacity: 0.6 };
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color);
+  const light = m ? (0.299 * parseInt(m[1], 16) + 0.587 * parseInt(m[2], 16) + 0.114 * parseInt(m[3], 16)) / 255 > 0.8 : false;
+  return light ? { fill: color, fillOpacity: 0.55 } : { fill: color, fillOpacity: 0.22, stroke: color };
+}
+
+// Export-Knöpfe: draw.io (bearbeitbar), SVG, PDF (mit Matrix und Tabellen) – aktueller Stand (in der gewählten
+// Ansicht) bzw. Version
+function ExportButtons({ tenantId, versionId, view }: { tenantId: number; versionId?: number; view?: PlanView }) {
   const [busy, setBusy] = useState<PlanFormat | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const run = async (format: PlanFormat) => {
     setBusy(format);
     setErr(null);
     try {
-      const { blob, filename } = await exportZonePlan(tenantId, format, versionId);
+      const { blob, filename } = await exportZonePlan(tenantId, format, versionId, view);
       download(filename, blob);
     } catch (e) {
       setErr(e);
@@ -1655,15 +1916,18 @@ function DiffView({ diff }: { diff: PlanDiff }) {
   for (const k of diff.intents.added) rows.push(["Absicht", k, "neu"]);
   for (const k of diff.intents.removed) rows.push(["Absicht", k, "entfernt"]);
   for (const c of diff.intents.changed) rows.push(["Absicht", c.key, `${INTENT[c.old.intent]?.[1] ?? c.old.intent} → ${INTENT[c.new.intent]?.[1] ?? c.new.intent}`]);
-  for (const k of diff.attachments.added) rows.push(["Zone am Knoten", k, "neu"]);
-  for (const k of diff.attachments.removed) rows.push(["Zone am Knoten", k, "entfernt"]);
-  for (const c of diff.attachments.changed) rows.push(["Zone am Knoten", c.key, `Interfaces ${c.old.interfaces.join(", ") || "–"} → ${c.new.interfaces.join(", ") || "–"}`]);
+  // seit 0.56.0: „Zone @ Knoten“ = Knoten der Zone, „A ↔ B“ = Übergang mit seinen Netzen
+  const part = (k: string) => (k.includes(" ↔ ") ? "Übergang" : "Zone am Knoten");
+  for (const k of diff.attachments.added) rows.push([part(k), k, "neu"]);
+  for (const k of diff.attachments.removed) rows.push([part(k), k, "entfernt"]);
+  for (const c of diff.attachments.changed)
+    rows.push([part(c.key), c.key, `${c.key.includes(" ↔ ") ? "Netze" : "Interfaces"} ${c.old.interfaces.join(", ") || "–"} → ${c.new.interfaces.join(", ") || "–"}`]);
   for (const n of diff.unzoned.added) rows.push(["Netz ohne Zone", n, "neu"]);
   for (const n of diff.unzoned.removed) rows.push(["Netz ohne Zone", n, "jetzt in einer Zone bzw. weg"]);
   return (
     <div id="plan-diff">
       {diff.same ? (
-        <div className="faint">Design unverändert (Zonen, Absichten, Zonen an den Knoten, Netze ohne Zone).</div>
+        <div className="faint">Design unverändert (Zonen, Absichten, Knoten der Zonen, Übergänge, Netze ohne Zone).</div>
       ) : (
         <table className="compact">
           <tbody>

@@ -603,11 +603,27 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   zu schreiben.
 - **Netzwerkdesign** (0.51.0, ADR 0024): logische Zonen, Zonenmatrix und Zonenplan – in
   Automato gepflegt, rein lesend gegenüber den Geräten. **Kunden-Benutzer** (seit 0.53.0) sehen
-  ihre Zonen (ohne Selektoren), die geteilten Zonen an ihren Knoten nur mit Namen, die Matrix
-  mit Zellen ihrer Zonen (Zonen anderer Kunden als „anderer Kunde“), ihren Plan ohne Netze
-  ohne Zone und können ihn exportieren; keine Versionen, keine Änderungen.
-  - **Zonen** (Operator schreibt): Name, Kurzname, Art (intern, DMZ, extern, Management,
-    geteilt, Transfer), Farbe, Reihenfolge, Kunde (leer = geteilt bzw. Infrastruktur).
+  ihre Zonen (ohne Selektoren), die geteilten Zonen dahinter nur mit Namen, die Matrix
+  mit Zellen ihrer Zonen (Zonen anderer Kunden als „anderer Kunde“), ihren Plan ohne Geräte und
+  ohne Netze ohne Zone und können ihn exportieren; keine Versionen, keine Änderungen.
+  - **Zonenmodell** (0.56.0, ADR 0024 Nr. 12): Zonen nach Ebenen – **Datacenter** (die
+    ACI-Tenants), **Edge** (Internet, Office-Anbindung, VPN, Management), **Transfer** (zwischen
+    den Firewalls), **Core**, **Distribution** und **Access** (Office, Branch), **Public**.
+    - Eine Zone umfasst **Knoten** (Selektor VDOM einer Firewall, ACI-Tenant bzw. ACI-VRF) und
+      **Netze**. Netze zwischen Knoten verschiedener Zonen sind **Übergänge** („DC-EINET“: die
+      L3Out der VRF zur Internet-Firewall) und gehören keiner Zone; Firewalls derselben Zone
+      untereinander sind zonenintern (ihr Transfernetz liegt in der Zone). Ein LAN direkt am
+      Interface einer Firewall (ohne Router dahinter) bleibt Netz seiner Zone, das Interface ist
+      der Übergang.
+    - Zonen ohne eigene Netze sind normal – z. B. Edge Internet: ein Bein zur L3Out des DC, eines
+      in Public.
+    - Namen der Übergänge aus den Kurznamen, nach Ebene geordnet (DC vor Edge vor Public).
+    - **Farben** kommen aus dem Grundschema bzw. der eingebauten Vorlage und sind überall gleich;
+      im Editor ist die Farbe dann fest (ändern im Grundschema der Namensprofile). Nur Zonen ohne
+      Treffer in Schema bzw. Vorlage haben ihre eigene Farbe.
+  - **Zonen** (Operator schreibt): Name, Kurzname, Art (Datacenter, Edge, Transfer, Core,
+    Distribution, Access, Public/extern, dazu intern, DMZ, Management, geteilt), Farbe,
+    Reihenfolge, Kunde (leer = geteilt bzw. Infrastruktur).
     - Selektoren wie beim Kunden (ACI-Tenant/VRF/AP/EPG/BD, VDOM/Zone/Interface je Firewall,
       Netz, Kürzel, IPAM-Merkmal), dazu **Anbindung**: die Netze hinter einer Anbindung aus
       Routing → Anbindungen. Ein- bzw. ausschliessend; die Vorschau zeigt Netze, EPGs und
@@ -616,24 +632,29 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       10.1.0.0/16 geht vor). Internet am besten als Anbindung „Internet“ **ohne** die privaten
       Netze (Netz 10.0.0.0/8 usw. ausschliessen) – sonst landen interne Netze ohne Zone im
       Internet.
-    - Klick auf eine Zone zeigt ihre Netze mit Grund (Link in die Regel-Suche).
-  - **Vorschläge** (0.54.0): Automato erkennt Zonen im Gelesenen – Transfernetze zwischen
-    gelesenen Firewalls/VRFs („Transfer“), FortiGate-Zonen (gleicher Name auf mehreren Firewalls
-    = eine Zone), Interfaces ohne Zone mit sprechendem Namen bzw. Alias (`dmz-web`, `wan1`), mit
-    FortiOS-Rolle dmz/wan oder als Management-Interface („Management“), IPAM-Merkmal Zone bzw.
-    Rolle (NetBox-Rolle des Prefixes, Custom Field, DDI-Attribut), ACI-VRFs (`common` geteilt)
-    und die Anbindungen (Internet als eine Zone ohne die privaten Netze).
-    - Je Vorschlag Art (mit Grund), Kunde (wenn alle Netze in einem Kunden liegen), woraus
-      erkannt, die Selektoren und die Netze (ohne Zone / gesamt). „ergänzt Zone“: es gibt schon
-      eine Zone mit dem Namen – übernehmen fügt nur die neuen Selektoren hinzu.
+    - Klick auf eine Zone zeigt ihre Knoten, ihre Netze mit Grund (Link in die Regel-Suche) und
+      die Übergänge zu anderen Zonen mit Netz und Interface bzw. L3Out; die Liste zeigt je Zone
+      Knoten und Übergänge.
+  - **Vorschläge** (0.54.0, seit 0.56.0 nach dem Zonenmodell): Automato schlägt Zonen aus dem
+    Gelesenen vor – die **ACI-Tenants** als Datacenter (je Kunde eine Zone „DC <Kunde>“, der Kunde
+    über seinen Selektor ACI-Tenant), **Firewalls** in die Zone des Grundschemas bzw. der Vorlage,
+    deren Name oder Muster passt (z. B. `*inet*` → Edge Internet), Firewalls mit einem Bein an
+    einer Internet-Anbindung in **Edge Internet**, die Anbindungen in **Public** (ohne die
+    privaten Netze), Firewall-Zonen und Interfaces nach den Mustern (z. B. `transit` → Edge
+    Transfer, `mgmt` → Edge Management) und das IPAM-Merkmal Zone bzw. Rolle.
+    - Je Vorschlag Art (mit Grund), Kurzname, Kunde, woraus erkannt, die Selektoren, die Knoten
+      und die Netze. „ergänzt Zone“: es gibt schon eine Zone mit dem Namen bzw. derselben Zone der
+      Vorlage (z. B. „Internet“ = Public) – übernehmen fügt nur die neuen Selektoren hinzu.
     - Netze, die genau so schon in einer Zone liegen, schliesst der Vorschlag aus (ausschliessender
       Selektor) – nach dem Übernehmen gibt es keinen Befund „Netz in mehreren Zonen“.
-    - **Übernehmen…** öffnet den Zonen-Editor mit dem Vorschlag (Name, Art, Farbe, Selektoren
+    - **Übernehmen…** öffnet den Zonen-Editor mit dem Vorschlag (Name, Kurzname, Art, Selektoren
       anpassen); **Ausgewählte übernehmen** legt mehrere Zonen auf einmal an (Operator).
+    - **Knoten ohne Zone:** Firewalls bzw. VDOMs ohne passende Zone – Zone wählen und
+      **Zuordnen** (Operator, Selektor VDOM).
     - **Ausblenden** (Operator): der Vorschlag erscheint nicht mehr; „ausgeblendete zeigen“ →
       **Wieder vorschlagen**.
-    - **Nicht erkannt:** gelesene Netze (Interfaces, EPG-/BD-Subnetze) ohne Zone und ohne
-      Vorschlag – von Hand einer Zone zuordnen.
+    - **Nicht erkannt:** gelesene Netze an Knoten ohne Zone und ohne Vorschlag – den Knoten bzw.
+      das Netz von Hand einer Zone zuordnen.
     - Die Rolle der FortiGate-Interfaces liest der Agent ab 0.54.0 mit; bis zum nächsten Lauf
       fehlt sie (dann nur Name bzw. Management-Tabelle). Die NetBox-Rolle erst nach dem nächsten
       Einlesen der NetBox.
@@ -654,24 +675,29 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - Eine erlaubende Regel zwischen Zonen mit Absicht „gesperrt“ ist rot umrandet und ein
       Befund (Findings → Zonen, „Zone: gegen die Absicht“). „any“ und „ohne Zone“ zählen
       nicht als Verstoss.
-  - **Zonenplan:** Zonen links (intern, Management, Transfer) bzw. rechts (DMZ, extern,
-    geteilt), die gelesenen Knoten (Firewall/VDOM, ACI-VRF) in der Mitte, Linien mit den
-    Interfaces.
-    - Eine Zone hängt an einem Knoten, wenn ein Netz seiner Interfaces bzw. L3Outs oder ein
-      EPG-/BD-Subnetz der VRF in ihr liegt, über die Interfaces ihrer Anbindung – und, nur
-      wenn sie sonst an keinem Knoten hängt, über eine Route zu einem Router ohne gelesenes
-      Gerät (gestrichelt, z. B. Default-Route zum Provider).
-    - Darunter die Tabelle je Zone und Knoten und die **Netze ohne Zone**.
-    - **Export** (0.52.0, Knöpfe oben rechts): **draw.io** (in diagrams.net weiter
-      bearbeitbar, Zonen und Knoten mit Eigenschaften), **SVG** (Wiki, Präsentation), **PDF**
-      (Plan, Zonenmatrix, Zonen an den Knoten, Netze ohne Zone). Dateiname
+  - **Zonenplan** (seit 0.56.0 nach dem Zonenmodell): Zonen in Spalten nach Ebene (Datacenter
+    links, Public rechts) mit ihren Knoten, Übergänge als Linien mit Namen („DC-EINET“);
+    gestrichelt „Knoten ohne Zone“ und „ausserhalb“ (Router ohne gelesenes Gerät).
+    - **Ansicht** (oben rechts): **Übersicht** – die Zonen der Kunden je Kunde als eine Zone, damit
+      die Zeichnung überschaubar bleibt; **Kunde X** – seine Zonen, die geteilten Zonen dahinter und
+      die genutzten Zugänge zu anderen Kunden (Übergang bzw. Regeln zwischen den Zonen) je als eine
+      Zone; **alle Zonen einzeln**.
+    - Darunter die **Übergänge** mit Netz und den Beinen (Knoten mit Interface bzw. L3Out, Router),
+      die Knoten ohne Zone an Netzen einer Zone (Kontakt, kein Übergang), Knoten in mehreren Zonen
+      und die **Netze ohne Zone**.
+    - **Export** (0.52.0, Knöpfe oben rechts) in der gewählten Ansicht: **draw.io** (in
+      diagrams.net weiter bearbeitbar, Zonen mit Knoten und Übergänge mit Netzen als
+      Eigenschaften; als Grundschema wieder einlesbar), **SVG** (Wiki, Präsentation), **PDF**
+      (Plan, Zonenmatrix, Zonen mit Knoten und Netzen, Übergänge, Netze ohne Zone). Dateiname
       `zonenplan-<Datum>` bzw. `zonenplan-v<Nummer>`.
   - **Versionen** (0.52.0): **Version speichern** (Operator, mit Bezeichnung und Notiz) hält
     Zonen, Plan, Matrix und Absichten fest. Oben steht „aktueller Stand = Version n“ bzw.
     „geändert seit Version n“ (verglichen wird das Design, nicht die Regel-Zahlen).
     - Klick auf eine Version: Vergleich mit dem aktuellen Stand oder einer anderen Version
-      (Zonen, Absichten, Zonen an den Knoten, Netze ohne Zone; aufklappbar die Zellen der Matrix
-      mit anderen Zahlen), ihre Zeichnung und der Export dieser Version.
+      (Zonen, Absichten, Knoten der Zonen, Übergänge, Netze ohne Zone; aufklappbar die Zellen der
+      Matrix mit anderen Zahlen), ihre Zeichnung und der Export dieser Version. Versionen bis
+      0.55.0 behalten ihre alte Zeichnung (Zonen an den Knoten); der Vergleich mit dem aktuellen
+      Stand zeigt beim ersten Mal den Wechsel des Modells.
     - **Löschen** nur als Admin: der Stand fällt weg, die Nummer bleibt vergeben. Versionen
       fallen nicht unter die Aufbewahrungsfristen.
   - Befunde: „Netz in mehreren Zonen“ (gleiches Präfix in zwei Zonen) und „gegen die
@@ -855,7 +881,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern; Vorschläge je ACI-Tenant; nicht Zugeordnetes |
-| `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy`, `GET /zones/plan` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]`, `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin); seit 0.54.0 `GET /zones/suggestions[?dismissed=true]`, `POST /zones/suggestions/accept` und `POST /zones/suggestions/dismiss[/undo]` (`keys`, operator); seit 0.55.0 `POST /zones/schema/intents` (`pairs`, `overwrite`, operator) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan mit `attachments` (Zone ↔ Knoten über interface/fabric/exit/route), `links`, `unzoned`, `layout` (Zeichnung); Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`); Vorschläge je `key` (normalisierter Name) mit `action` create/extend, `kind`/`kind_reason`, `customer_id`, `sources`, `evidence`, `selectors`, `counts` (nets/open/epgs), `conflicts`, `dismissed`, dazu `rest` (Netze ohne Zone und Vorschlag); übernehmen liefert `created`/`updated`/`missing`; seit 0.55.0 je Vorschlag `schema` und `schema` mit `missing`/`outside`/`intents`/`matched` (Grundschema), Absichten übernehmen liefert `changed` |
+| `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy`, `GET /zones/plan[?customer_id=&all=true]` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]`, `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin); seit 0.54.0 `GET /zones/suggestions[?dismissed=true]`, `POST /zones/suggestions/accept` und `POST /zones/suggestions/dismiss[/undo]` (`keys`, operator); seit 0.55.0 `POST /zones/schema/intents` (`pairs`, `overwrite`, operator); seit 0.56.0 `POST /zones/{id}/nodes` (`nodes` = `<Quellsystem>\|<Kontext>`, operator) und `customer_id`/`all` auch am Export | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan (seit 0.56.0 `format` 2) mit `view` (all/overview/customer), `customers`, `zones` (mit `nodes`, `internal`, zusammengefasste Kunden `collapsed`/`members`, Pseudo-Zonen `none`/`outside`), `nodes`, `transitions` (`name`, `networks` mit `legs`/`routers`, `l3out`, `contact`), `conflicts`, `unzoned`, `layout` (Zeichnung); Zonen mit `color_source` (schema/template/zone/kind), `nodes`, `transitions`; Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`); Vorschläge je `key` (normalisierter Name) mit `action` create/extend, `kind`/`kind_reason`, `customer_id`, `sources`, `evidence`, `selectors`, `counts` (nets/epgs/nodes), `nodes`, `code`, `conflicts`, `dismissed`, dazu `nodes` (Knoten ohne Zone) und `rest` (Netze ohne Zone und Vorschlag); übernehmen liefert `created`/`updated`/`missing`; seit 0.55.0 je Vorschlag `schema` und `schema` mit `missing`/`outside`/`intents`/`matched` (Grundschema), Absichten übernehmen liefert `changed` |
 | `GET /auth/me`, `GET/POST /customer-users`, `PATCH/DELETE /customer-users/{id}` | Wer bin ich laut Orchestrator (Rollen, Mandanten, Kunden, `customer_source` claim/automato) – die Oberfläche richtet sich danach; Zuordnung Benutzer → Kunde (0.53.0, Admin): `login`, `customer_id`, `role` viewer/operator, `note` |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `POST /systems/{id}/check` | Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus (operator): Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint`; Agent-Systeme 409 (`run-agent.ps1 -Check`), 0.34.0 |

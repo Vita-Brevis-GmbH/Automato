@@ -7,6 +7,34 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.56.0 – 2026-10-25
+
+Zonenmodell nach Ebenen – Korrekturen des Anwenders nach dem Test der Zonen (ADR 0024 Nr. 12).
+Ohne Migration (neue Arten als Text); nur lesend gegenüber allen Quellsystemen.
+
+- **Zonen mit Knoten und Übergängen:** Selektor VDOM (je Firewall), ACI-Tenant bzw. ACI-VRF ordnet
+  ganze Knoten einer Zone zu (die ACI-Tenants sind das Datacenter, eine Internet-Firewall
+  „deklariert“ Edge Internet). Netze zwischen Knoten verschiedener Zonen sind **Übergänge**
+  („DC-EINET“: L3Out ↔ Firewall-Interface, mit Beinen und Border-Routern) und gehören keiner
+  Zone; Firewalls derselben Zone untereinander sind zonenintern (Transfernetz in der Zone); ein
+  LAN direkt am Interface bleibt Netz seiner Zone. Zonen ohne eigene Netze sind normal.
+  Namen der Übergänge nach Ebene geordnet, von beiden Seiten gleich.
+- **Vorlage** nach Ebenen: DC, Edge Internet/Office/VPN/Management, Edge Transfer, Core, Office
+  Distribution/Access, Branch Distribution/Access, Public – mit Kurzname, Muster, **fester
+  Farbe** und Übergängen. Neue Arten Datacenter, Edge, Core, Distribution, Access.
+- **Farben** aus dem Grundschema bzw. der Vorlage, überall gleich (Liste, Matrix, Plan, Export);
+  im Editor fest, wenn sie vorgegeben sind.
+- **Vorschläge nach dem Modell:** ACI-Tenants = DC (je Kunde eine Zone), Firewalls nach Name bzw.
+  Muster, Firewalls mit einem Bein an einer Internet-Anbindung = Edge Internet, Anbindungen =
+  Public, Firewall-Zonen und Interfaces nach den Mustern der Vorlage; bestehende Zonen derselben
+  Vorlagen-Zone werden ergänzt; **Knoten ohne Zone** direkt zuordnen
+  (`POST /zones/{id}/nodes`, Operator). Keine Transfer-Zonen aus Transfernetzen mehr.
+- **Zonenplan je Kunde:** Übersicht mit den Kunden je als eine Zone, Plan eines Kunden mit seinen
+  Zonen, den geteilten Zonen dahinter und den genutzten Zugängen zu anderen Kunden (je als eine
+  Zone), alle Zonen einzeln; Spalten nach Ebene, Zonen mit ihren Knoten, Übergänge mit Namen,
+  Tabelle der Übergänge, Knoten ohne Zone; Export in der gewählten Ansicht. Kunden-Benutzer
+  sehen ihren Plan ohne Geräte. Versionen bis 0.55.0 behalten ihre Zeichnung.
+
 ## 0.55.0 – 2026-10-25
 
 Grundschema der Zonen in der Namenskonvention als draw.io-Zeichnung (Entscheid des Anwenders,
