@@ -192,11 +192,13 @@ def preview(
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """Was die Selektoren erfassen - ohne zu speichern: Anzahl und Beispiele je Art."""
+    """Was die Selektoren erfassen - ohne zu speichern: Anzahl und Beispiele je Art; dazu die
+    Regeln ueber Netze des Kunden, die nicht auf einem moeglichen Weg liegen (0.58.0)."""
     tid = _tenant(session, principal, body.tenant_id)
     zones = store.owned_zones(session, tid, body.customer_id)
     scope = store.evaluate(session, tid, _selectors(session, tid, body.selectors), zones=zones)
-    return {"counts": scope.counts(), "samples": store.samples(session, tid, scope)}
+    return {"counts": scope.counts(), "samples": store.samples(session, tid, scope),
+            "off_path": store.off_path_samples(session, scope)}  # fmt: skip
 
 
 @router.get("/suggestions")

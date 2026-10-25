@@ -76,6 +76,8 @@ def require_role(required: str):
             path = getattr(route, "path", None)
             if path is None or not customer_routes.allowed(request.method, path):
                 raise HTTPException(status_code=403, detail="not available for customer users")
+            # Antwort ohne Geraetenamen (0.58.0, `customer_alias`, Middleware in `main.py`)
+            request.state.customer_tenants = tuple(principal.tenant_ids or ())
         return principal
 
     return dep

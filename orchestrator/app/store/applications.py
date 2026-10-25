@@ -44,7 +44,16 @@ from app.models import (
     VmIp,
     VmNic,
 )
-from app.store import appdoc, finding_text, parallel, references, rule_index, sites, virtual
+from app.store import (
+    appdoc,
+    customer_scope,
+    finding_text,
+    parallel,
+    references,
+    rule_index,
+    sites,
+    virtual,
+)
 from app.store import naming_profiles as profile_store
 from app.store import rules as rules_store
 from app.store.epgs import inventory_label
@@ -695,7 +704,8 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     rule_epgs: dict[int, set[str]] = defaultdict(set)
     for h in possible:
         rule_epgs[h["rule_id"]] |= set(epgs_of.get(h["system"], []))
-    findings = _app_findings(session, tid, systems, epg_out, set(ordered), rule_epgs)
+    findings = _app_findings(session, tid, systems, epg_out, set(ordered), rule_epgs,
+                             restricted=rule_ids is not None)  # fmt: skip
     tenant = session.get(Tenant, tid)
     return {
         "tenant_code": tenant.code if tenant else None,
@@ -844,10 +854,12 @@ def _app_findings(
     epgs: list[dict],
     rule_ids: set[int],
     rule_epgs: dict[int, set[str]] | None = None,
+    restricted: bool = False,
 ) -> list[dict]:
     """Offene (bzw. bestaetigte) Befunde der Applikation: zu ihren Regeln, Servern (Objekt im
     IPAM bzw. auf der Firewall), VMs, Portgruppen und den Subnetzen ihrer EPGs - je Befund die
-    EPGs (`Tenant/AP/EPG`), zu denen er gehoert (Filter nach Tenant, AP, EPG; 0.38.0)."""
+    EPGs (`Tenant/AP/EPG`), zu denen er gehoert (Filter nach Tenant, AP, EPG; 0.38.0).
+    `restricted` (Ausschnitt eines Kunden, 0.58.0): Saetze ohne Angaben zu fremden Regeln."""
     wanted: dict[tuple[SubjectKind, str], set[str]] = defaultdict(set)
     for x in systems:
         mine = set(x["epgs"])
@@ -879,7 +891,12 @@ def _app_findings(
         scope = set(wanted.get((f.subject_kind, f.subject_id), set()))
         if rule_id is not None:
             scope |= (rule_epgs or {}).get(rule_id, set())
-        message, hint = finding_text.explain(f.type.value, f.subject_id, f.detail)
+        if restricted:
+            detail = {k: v for k, v in detail.items()
+                      if k not in customer_scope.FINDING_DETAIL_HIDDEN}  # fmt: skip
+        message, hint = finding_text.explain(
+            f.type.value, f.subject_id, detail if restricted else f.detail
+        )
         out.append(
             {
                 "id": f.id,

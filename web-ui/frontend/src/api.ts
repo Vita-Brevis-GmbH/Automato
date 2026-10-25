@@ -2241,6 +2241,8 @@ export interface CustomerIn {
 export interface CustomerPreview {
   counts: CustomerCounts;
   samples: Record<CustomerMemberKind, string[]>;
+  // Regeln über Netze des Kunden, aber nicht auf einem möglichen Weg (0.58.0)
+  off_path?: { count: number; samples: { id: number; name: string; why: string }[] };
 }
 export interface CustomerSuggestion {
   name: string;

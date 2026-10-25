@@ -44,8 +44,8 @@ from app.models import (
     ZonePlanVersion,
     ZonePolicy,
 )
-from app.store import customers as customer_store
 from app.store import (
+    customer_alias,
     plan_export,
     plan_versions,
     reconcile,
@@ -53,6 +53,7 @@ from app.store import (
     zone_services,
     zone_struct,
 )
+from app.store import customers as customer_store
 from app.store import zones as store
 
 router = APIRouter(prefix="/zones", tags=["zones"])
@@ -636,6 +637,9 @@ def export_plan(
         names = sorted(n for cid, n in _customers(session, tid).items()
                        if cid in (principal.customer_ids or ()))  # fmt: skip
         title = "Zonenplan " + (", ".join(names) or "Kunde")
+        # ohne Geraetenamen (0.58.0) - die Middleware sieht die Datei nicht als JSON
+        aliases = customer_alias.Aliases(session, [tid])
+        plan, matrix = aliases.clean(plan), aliases.clean(matrix)
     media, ext = _FORMATS[format]
     if format == "svg":
         body: bytes | str = plan_export.svg(plan, title, when, meta)

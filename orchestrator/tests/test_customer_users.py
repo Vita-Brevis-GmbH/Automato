@@ -6,6 +6,7 @@ eine FortiGate fw-u mit Objekten und NAT: Kunde A = TE_ka + 10.10.1.0/24, Kunde 
 10.10.2.0/24, geteilt = common (mit dem DNS-Netz 10.0.53.0/24).
 """
 
+import copy
 import re
 
 import pytest
@@ -16,7 +17,7 @@ from app.auth.principal import Principal
 from app.config import Settings
 from app.models import AuditLog
 from fastapi.routing import APIRoute
-from test_customers import ADMIN, APP, OP, WEB, _create, _deliver, _policy, _seed, _system
+from test_customers import ADMIN, APP, OP, VC, WEB, _create, _deliver, _policy, _seed, _system
 
 
 def _obj(name, value):
@@ -128,9 +129,10 @@ def test_kunden_benutzer_sehen_nur_ihren_ausschnitt(client):
     assert get(f"/nat/{nat[0]['id']}").json()["name"] == "VIP_a"
 
     # Quellsysteme: nur Bezeichnungen der Systeme mit eigenen Regeln, NAT bzw. Objekten
+    # - ohne Geraetenamen (0.58.0): ACI = apic, Firewall 1 = fw-k, Firewall 2 = fw-u
     labels = {s["name"]: s for s in get("/systems/labels", tenant_id=tid).json()}
-    assert set(labels) == {"apic", "fw-k", "fw-u"} and labels["fw-k"]["vdoms"] == ["root"]
-    assert "base_url" not in labels["fw-k"]
+    assert set(labels) == {"ACI", "Firewall 1", "Firewall 2"}
+    assert labels["Firewall 1"]["vdoms"] == ["root"] and "base_url" not in labels["Firewall 1"]
     get("/systems", 403, tenant_id=tid)
     full = client.get("/systems/labels", params={"tenant_id": tid}).json()  # Betreuer
     assert {s["name"] for s in full} == {"apic", "fw-k", "fw-u", "vc"}
@@ -172,6 +174,88 @@ def test_kunden_benutzer_sehen_nur_ihren_ausschnitt(client):
     ub = _user(tid, b)
     rules_b = {x["name"] for x in client.get("/rules", headers=ub).json()}
     assert rules_b == {"CT_app", "CT_dns", "b-dns", "b-leer"}
+
+
+# Namen der Infrastruktur in den Beispieldaten (Quellsysteme, VDOM, vCenter)
+_INFRA = ("fw-k", "fw-u", "apic", "kunde-b", "esx-zrh-01", "CL-PROD-A", "DC-ZRH", "dvs-core")
+
+
+def test_kunden_doku_ohne_geraetenamen(client):
+    """0.58.0 (ADR 0018 Schritt 4): jede Antwort an Kunden-Benutzer ohne Namen der Infrastruktur -
+    Quellsysteme neutral („Firewall 1“, „ACI“), VDOMs nummeriert, ESXi-Host, Cluster, Datacenter
+    und Switch leer; Betreuer sehen weiter alles."""
+    tid, ids, a, b, shared = _env(client)
+    vc = copy.deepcopy(VC)
+    for vm in vc["virtual"]["vms"]:
+        vm.update(host="esx-zrh-01", cluster="CL-PROD-A", datacenter="DC-ZRH")
+        vm["nics"][0]["switch"] = "dvs-core"
+    for pg in vc["virtual"]["portgroups"]:
+        pg["switch"] = "dvs-core"
+    _deliver(client, tid, ids["vc"], "vmware", vc)
+    ua = _user(tid, a)
+
+    def get(path, **params):
+        r = client.get(path, params={"tenant_id": tid, **params}, headers=ua)
+        assert r.status_code == 200, (path, r.status_code, r.text[:300])
+        return r
+
+    rules = get("/rules").json()
+    objects = get("/objects").json()["rows"]
+    pgs = get("/portgroups").json()
+    apps = get("/applications").json()
+    paths = ["/rules/summary", "/findings", "/findings/summary", "/nat", "/vms", "/appdoc/systems",
+             "/appdoc/systems/EPG_web", "/systems/labels", "/customers", "/zones",
+             "/zones/matrix", "/zones/plan", "/auth/me", f"/customers/{a}/members"]  # fmt: skip
+    paths += [f"/rules/{r['id']}" for r in rules] + [f"/objects/{o['id']}" for o in objects]
+    paths += [f"/nat/{n['id']}" for n in get("/nat").json()]
+    paths += [f"/portgroups/{p['id']}" for p in pgs]
+    paths += [f"/applications/{x['id']}" for x in apps] + [f"/applications/{x['id']}/doc"
+                                                           for x in apps]  # fmt: skip
+    seen = []
+    for path in paths:
+        text = get(path, kind="rule").text
+        seen.append(text)
+        for name in _INFRA:
+            assert not re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text), (path, name)
+    joined = "\n".join(seen)
+    assert "Firewall 1" in joined and "web01-007-ka" in joined  # eigene VM bleibt
+    vms = get("/vms").json()["rows"]
+    assert vms[0]["host"] is None and vms[0]["cluster"] is None
+    by_name = {r["name"]: r for r in rules}
+    assert by_name["a-dns"]["vdom"] == "root"
+    # Export des Zonenplans (SVG) ebenso
+    svg = get("/zones/plan/export", format="svg").text
+    assert not any(name in svg for name in ("fw-k", "fw-u"))
+
+    # Betreuer: unveraendert
+    full = client.get("/vms", params={"tenant_id": tid}).json()["rows"]
+    assert {v["host"] for v in full} == {"esx-zrh-01"}
+    assert "fw-k" in {s["name"] for s in client.get("/systems/labels").json()}
+
+
+def test_neutrale_bezeichnungen():
+    """`customer_alias.Aliases` ohne Datenbank: Namen als ganze Woerter, laengste zuerst, VDOMs in
+    Bezeichnungen und Knoten-IDs, Felder leer bzw. nummeriert."""
+    from app.store.customer_alias import Aliases
+
+    al = Aliases.__new__(Aliases)
+    al.systems = {1: "Firewall 1", 2: "ACI"}
+    al.names = {"fw-01": "Firewall 1", "fw-01-ha": "Firewall 1", "apic-1": "ACI",
+                "leaf-101": "Leaf"}  # fmt: skip
+    al.vdoms = {"kunde-x": "2", "edge": "1", "root": "root"}
+    al._pattern = al._vdom_pattern = None
+    al._compiled = False
+    text = "fw-01 · VDOM kunde-x leitet 10.0.0.1 über port1 (fw-01-ha, leaf-101); fw-01.example.ch"
+    assert al.text(text) == (
+        "Firewall 1 · VDOM 2 leitet 10.0.0.1 über port1 (Firewall 1, Leaf); Firewall 1.example.ch"
+    )
+    assert al.text("H_fw-01_x und fw-010 bleiben") == "H_fw-01_x und fw-010 bleiben"
+    assert al.text("Knoten 3|kunde-x, 3|root") == "Knoten 3|2, 3|root"
+    data = {"vdom": "edge", "vdoms": ["root", "kunde-x"], "host": "esx", "nics": [{"switch": "d"}],
+            "by_vdom": {"kunde-x": 3}, "source": "apic-1", "hostname": "web01"}  # fmt: skip
+    assert al.clean(data) == {"vdom": "1", "vdoms": ["root", "2"], "host": None,
+                              "nics": [{"switch": None}], "by_vdom": {"2": 3}, "source": "ACI",
+                              "hostname": "web01"}  # fmt: skip
 
 
 def test_kunden_benutzer_ohne_zuordnung_und_ohne_admin(client):

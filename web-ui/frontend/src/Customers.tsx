@@ -611,6 +611,23 @@ function CustomerEditor({
                 </td>
               </tr>
             ))}
+            {(preview.off_path?.count ?? 0) > 0 && (
+              <tr id="customer-preview-offpath">
+                <td>nicht auf dem Weg</td>
+                <td className="num">{preview.off_path!.count}</td>
+                <td className="faint">
+                  Regeln über ein Netz des Kunden, die der Verkehr nach dem Routing nicht erreicht (Firewall: Ein- bzw.
+                  Ausgang der Regel, ACI: Zuordnung in der VRF) – zählen nicht:{" "}
+                  {preview.off_path!.samples.map((x, i) => (
+                    <Fragment key={x.id}>
+                      {i > 0 && ", "}
+                      <span title={x.why}>{x.name}</span>
+                    </Fragment>
+                  ))}
+                  {preview.off_path!.count > preview.off_path!.samples.length ? " …" : ""}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       )}

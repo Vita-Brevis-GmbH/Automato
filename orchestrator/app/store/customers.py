@@ -13,7 +13,7 @@ Ein Kunde ist ein Ausschnitt der Umgebung (Mandant), beschrieben durch Selektore
   mit dem Kuerzel im Namen.
 - **Regeln:** ACI-Contracts mit einer EPG des Kunden; Firewall-Regeln in einem VDOM des
   Kunden, mit einer Zone bzw. einem Interface des Kunden oder deren Quelle bzw. Ziel ein Netz
-  des Kunden beruehrt (ohne `any`).
+  des Kunden beruehrt (ohne `any`) - seit 0.58.0 nur auf einem moeglichen Weg (unten).
 - **VMs:** an einer Portgruppe einer EPG des Kunden, mit einer IP in seinen Netzen bzw. mit
   dem Kuerzel im Namen.
 - **IPAM-Merkmale** (0.31.0): Netze und Adressen des Referenzstands mit NetBox-Tenant, VRF bzw.
@@ -28,7 +28,12 @@ geaenderten Selektoren neu berechnet (`derive`). Nur lesend gegenueber den Quell
 - **Zonen** (0.53.0): die logischen Zonen des Kunden (`logical_zone.customer_id`) zaehlen mit
   ihren Netzen und EPGs dazu - die Selektoren des Kunden bleiben fuer Ausnahmen.
 
-Noch nicht: Relevanz nach Pfad (ADR 0019).
+- **Nach dem Weg** (0.58.0, ADR 0018 Schritt 4, Relevanz nach Pfad aus ADR 0019): eine Regel,
+  die nur ueber ein Netz des Kunden dazukommt, zaehlt nur, wenn der Verkehr sie erreichen kann -
+  die Firewall leitet das Netz ueber den Ein- bzw. Ausgang der Regel (`relevance.Relevance`),
+  im ACI ordnet die VRF das Netz der externen EPG des Contracts zu (`aci_relevance`). Sind alle
+  Treffer unmoeglich, faellt die Regel weg (`Scope.off_path` mit Begruendung, in der Vorschau);
+  nicht pruefbar (Routing nicht gelesen, Policy-Route …) zaehlt sie weiter.
 """
 
 import bisect
@@ -76,6 +81,7 @@ SAMPLES = 5  # Beispiele je Art in der Vorschau
 _FABRIC_TENANTS = {"common", "infra", "mgmt"}
 
 Net = ipaddress.IPv4Network | ipaddress.IPv6Network
+Address = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 
 def tokens(*names: str | None) -> set[str]:
@@ -124,6 +130,8 @@ class Scope:
     vm: dict[int, str] = field(default_factory=dict)
     nat: dict[int, str] = field(default_factory=dict)
     finding: dict[int, str] = field(default_factory=dict)
+    # Regeln ueber Netze des Kunden, aber nicht auf einem moeglichen Weg (0.58.0): id -> warum
+    off_path: dict[int, str] = field(default_factory=dict)
 
     def counts(self) -> dict[str, int]:
         return {k: len(getattr(self, k)) for k in KINDS}
@@ -187,6 +195,58 @@ class _Data:
         self.zones = dict(
             session.execute(select(Zone.id, Zone.name).where(Zone.tenant_id == tenant_id)).all()
         )
+        self._rules: dict[int, object] = {}  # Regeln fuer die Pruefung nach dem Weg
+
+    # -- Weg (0.58.0) --------------------------------------------------------------------
+
+    @cached_property
+    def relevance(self):
+        from app.store import relevance  # spaet: relevance -> paths -> customers
+
+        return relevance.Relevance(self.session, self.tenant_id)
+
+    def off_path(self, hits: dict[int, list[tuple[str, Address]]]) -> dict[int, str]:
+        """Regeln, deren Treffer auf Netze des Kunden (Seite, erste Adresse) alle nicht auf
+        einem moeglichen Weg liegen - mit der Begruendung des ersten Treffers."""
+        from app.store import relevance
+
+        missing = [rid for rid in hits if rid not in self._rules]
+        for i in range(0, len(missing), 1000):
+            for r in self.session.execute(
+                select(Rule.id, Rule.domain, Rule.source_system_id, Rule.vdom, Rule.raw,
+                       Rule.src_zone_id, Rule.dst_zone_id)
+                .where(Rule.id.in_(missing[i : i + 1000]))
+            ):  # fmt: skip
+                self._rules[r.id] = r
+        rel = self.relevance
+        out: dict[int, str] = {}
+        contracts: dict = defaultdict(lambda: defaultdict(set))  # Adresse -> Regel -> Seiten
+        for rid, items in hits.items():
+            r = self._rules.get(rid)
+            if r is None:
+                continue
+            if r.domain is RuleDomain.ACI_CONTRACT:
+                for side, ip in items:
+                    contracts[ip][rid].add(side)
+                continue
+            if r.domain is not RuleDomain.FIREWALL:
+                continue
+            results = []
+            for side, ip in dict.fromkeys(items):
+                zone = self.zones.get(r.src_zone_id if side == "src" else r.dst_zone_id)
+                results.append(rel.check(r, side, [str(ip)], zone))
+            if results and all(x["state"] == relevance.IMPOSSIBLE for x in results):
+                out[rid] = results[0]["text"]
+        verdicts: dict[int, list[tuple[str, str]]] = defaultdict(list)
+        for ip, sides in contracts.items():
+            found = relevance._aci_for_ip(self.session, self.tenant_id, sides, ip, rel)
+            for rid in sides:
+                x = found.get(rid)
+                verdicts[rid].append((x["state"], x["text"]) if x else (relevance.UNKNOWN, ""))
+        for rid, items in verdicts.items():
+            if all(state == relevance.IMPOSSIBLE for state, _t in items):
+                out[rid] = items[0][1]
+        return out
 
     # -- IPAM (Referenzstand, 0.31.0) ---------------------------------------------------
 
@@ -494,20 +554,31 @@ def evaluate(session: Session, tenant_id: int, selectors: list[Selector],
         if s.kind in FW_KINDS:
             for rid in data.fw_rules(s) - fw_out:
                 scope.rule.setdefault(rid, _label(s))
+    # ueber Netze nur auf einem moeglichen Weg (0.58.0): je Treffer Seite und erste Adresse
+    hits: dict[int, list[tuple[str, Address]]] = defaultdict(list)
+    first_net: dict[int, Net] = {}
     for net in ranges.items():
-        for (rid,) in session.execute(
-            select(RuleIpRange.rule_id)
-            .where(
+        lo_n, hi_n = ip_hex(net.network_address), ip_hex(net.broadcast_address)
+        make = ipaddress.IPv4Address if net.version == 4 else ipaddress.IPv6Address
+        for rid, role, lo in session.execute(
+            select(RuleIpRange.rule_id, RuleIpRange.role, RuleIpRange.lo).where(
                 RuleIpRange.tenant_id == tenant_id,
                 RuleIpRange.family == net.version,
                 RuleIpRange.is_any.is_(False),
-                RuleIpRange.lo <= ip_hex(net.broadcast_address),
-                RuleIpRange.hi >= ip_hex(net.network_address),
+                RuleIpRange.lo <= hi_n,
+                RuleIpRange.hi >= lo_n,
             )
-            .distinct()
         ):
-            if rid not in fw_out:
-                scope.rule.setdefault(rid, f"Netz {net}")
+            if rid in fw_out or rid in scope.rule:
+                continue
+            hits[rid].append((role, make(int(max(lo, lo_n), 16))))
+            first_net.setdefault(rid, net)
+    blocked = data.off_path(hits) if hits else {}
+    for rid in hits:
+        if rid in blocked:
+            scope.off_path[rid] = blocked[rid]
+        else:
+            scope.rule[rid] = f"Netz {first_net[rid]}"
 
     # VMs: Portgruppe einer EPG, IP in einem Netz, Kuerzel im Namen
     if scope.epg:
@@ -681,6 +752,20 @@ def samples(session: Session, tenant_id: int, scope: Scope, n: int = SAMPLES) ->
                 session.scalars(select(col).where(model.id.in_(ids)).order_by(model.id))
             )
     return {k: out.get(k, []) for k in KINDS}
+
+
+def off_path_samples(session: Session, scope: Scope, n: int = SAMPLES) -> dict:
+    """Regeln ueber Netze des Kunden, die nicht auf einem moeglichen Weg liegen (0.58.0):
+    Anzahl und die ersten mit Begruendung."""
+    ids = sorted(scope.off_path)[:n]
+    names = dict(session.execute(
+        select(Rule.id, func.coalesce(Rule.name, Rule.external_id)).where(Rule.id.in_(ids))
+    ).all()) if ids else {}  # fmt: skip
+    return {
+        "count": len(scope.off_path),
+        "samples": [{"id": rid, "name": names.get(rid) or f"#{rid}", "why": scope.off_path[rid]}
+                    for rid in ids],
+    }  # fmt: skip
 
 
 def unassigned(session: Session, tenant_id: int, n: int = SAMPLES) -> dict[str, dict]:

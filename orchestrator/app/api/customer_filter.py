@@ -15,8 +15,7 @@ from sqlalchemy.orm import Session
 from app.auth.principal import Principal
 from app.store import customer_scope
 
-# Angaben in Findings, die Regeln ausserhalb des Ausschnitts nennen koennten
-_FINDING_DETAIL_HIDDEN = ("rule_names", "rules", "firewall_objects")
+_FINDING_DETAIL_HIDDEN = customer_scope.FINDING_DETAIL_HIDDEN
 
 
 def customer_view(

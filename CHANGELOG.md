@@ -7,6 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.58.0 – 2026-10-25
+
+Kunden fertig (ROADMAP „Zonen/Kunden fertig“, ADR 0018 Schritt 4): Zugehörigkeit von Regeln nach
+dem Weg und die Doku des Kunden ohne Gerätenamen. Ohne Migration; nur lesend gegenüber allen
+Quellsystemen.
+
+- **Zugehörigkeit nach dem Weg:** Eine Regel, die nur über ein Netz des Kunden dazukommt (Quelle
+  bzw. Ziel überschneidet es), zählt nur noch, wenn der Verkehr sie erreichen kann – die Firewall
+  leitet das Netz über den Ein- bzw. Ausgang der Regel, im ACI ordnet die VRF das Netz der
+  externen EPG des Contracts zu. Nicht prüfbar zählt sie weiter; Regeln über VDOM, Zone,
+  Interface bzw. EPG des Kunden zählen wie bisher. Die Vorschau im Kunden-Editor zeigt die
+  ausgeschlossenen Regeln als „nicht auf dem Weg“ mit Begründung.
+- **Kunden-Doku ohne Gerätenamen:** Kunden-Benutzer sehen statt der Namen der Infrastruktur
+  neutrale Bezeichnungen – „Firewall 1“, „ACI“, „vCenter“, „IPAM“, nummerierte VDOMs, „Verbund 1“,
+  „Leaf“, „Nachbar“; ESXi-Host, Cluster, Datacenter und Switch bleiben leer. Das gilt für jede
+  Antwort an Kunden-Benutzer (zentral, auch für künftige Endpunkte), für Texte wie Begründungen
+  und Befunde und für den Export des Zonenplans. Betreuer sehen weiter alles.
+- Korrektur: Befunde in der Applikations-Doku eines Kunden-Benutzers nennen keine fremden Regeln
+  mehr (wie die Findings-Liste seit 0.33.0).
+
 ## 0.57.1 – 2026-10-25
 
 Korrektur des Anwenders am Zonenplan je Kunde („es zeigt immer noch alles an – lediglich die

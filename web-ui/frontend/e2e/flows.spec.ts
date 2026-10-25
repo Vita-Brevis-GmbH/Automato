@@ -597,6 +597,10 @@ test("Kunden: Vorschlag übernehmen, Selektoren mit Vorschau, löschen", async (
   await modal.getByLabel("Wert").fill("10.20.0.0/16");
   const preview = modal.locator("#customer-preview");
   await expect(preview.locator("tr", { hasText: "Netze" })).toContainText("10.20.0.0/16");
+  // Zugehörigkeit nach dem Weg (0.58.0): Regeln über das Netz, die das Routing nicht erreicht
+  const off = preview.locator("#customer-preview-offpath");
+  await expect(off).toContainText("nicht auf dem Weg");
+  await expect(off.locator("span[title]", { hasText: "CT_rt" })).toBeVisible(); // mit Begründung
   await modal.locator("button", { hasText: "+ Selektor" }).click();
   await modal.getByLabel("Art").nth(1).selectOption("prefix");
   await modal.getByLabel("Wert").nth(1).fill("10.20.128.0/17");
@@ -671,8 +675,12 @@ test("Kunden-Benutzer: nur die Doku des eigenen Ausschnitts, ohne Betrieb und Ve
   await expect(page.getByLabel("Kunde", { exact: true })).toHaveCount(0); // nur ein Kunde
   await page.goto("/#regeln");
   await expect(rows(page)).toHaveCount(2); // die Contracts der EPGs von TE
+  // ohne Gerätenamen (0.58.0): statt „apic-01“ die neutrale Bezeichnung „ACI“
+  await expect(page.locator("main.main")).not.toContainText("apic-01");
   await rows(page).filter({ hasText: "CT_rt" }).click();
   await expect(page.locator(".drawer")).toContainText("CT_rt");
+  await expect(page.locator(".drawer")).toContainText("ACI");
+  await expect(page.locator(".drawer")).not.toContainText("apic-01");
   await page.goto("/#objekte");
   await expect(page.locator(".tabbar")).toContainText("Adressobjekte");
   await expect(page.locator(".tabbar")).not.toContainText("Subnetze");

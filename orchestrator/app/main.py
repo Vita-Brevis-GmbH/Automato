@@ -34,6 +34,7 @@ from app.api import (
 from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
 from app.secrets import resolve_settings
+from app.store import customer_alias
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +77,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         expose_headers=["X-Total-Count"],  # Gesamtzahl seitenweiser Listen (/rules)
     )
+
+    # Antworten an Kunden-Benutzer ohne Geraetenamen (0.58.0, ADR 0018 Schritt 4)
+    app.middleware("http")(customer_alias.middleware)
 
     app.include_router(health.router)
     app.include_router(auth_config.router)

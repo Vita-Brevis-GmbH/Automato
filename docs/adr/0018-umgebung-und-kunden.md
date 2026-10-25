@@ -2,7 +2,7 @@
 
 ## Status
 
-**Entwurf** (2026-10-22) – zur Durchsicht durch den Anwender; Schritte 1–3 umgesetzt in 0.30.0–0.33.0
+**Entwurf** (2026-10-22) – zur Durchsicht durch den Anwender; Schritte 1–3 umgesetzt in 0.30.0–0.33.0, Schritt 4 in 0.53.0 und 0.58.0
 (siehe „Umsetzung“). Präzisiert ADR 0004
 (Ergänzung E1, Ebene über dem Mandanten) und ADR 0007 (Rechte); betrifft R13 und R14.
 
@@ -189,5 +189,27 @@ Grundsatzentscheide des Anwenders (2026-10-22):
        `get_principal` (`auth/assignments.py`) – macht immer zum Kunden-Benutzer, Mandanten =
        die der Kunden, Vereinigung mit dem Claim; eigenes Konto nicht zuordenbar; nicht lesbar =
        503 (fail-closed). `GET /auth/me` liefert der Oberfläche die Sicht des Orchestrators.
-     - Noch offen: Zugehörigkeit von Regeln nach dem Weg (Relevanz nach Pfad), Doku des Kunden
-       ohne Infrastruktur (Gerätenamen) und feinere Rollen.
+     - Noch offen (in 0.58.0 umgesetzt bis auf feinere Rollen): Zugehörigkeit von Regeln nach
+       dem Weg, Doku des Kunden ohne Infrastruktur.
+   - **Umsetzung 0.58.0:**
+     - **Zugehörigkeit nach dem Weg** (`customers.evaluate`, `_Data.off_path`): Regeln, die nur
+       über ein Netz des Kunden dazukommen (Quelle bzw. Ziel überschneidet es, ohne `any`),
+       zählen nur, wenn der Weg möglich ist – je Treffer Seite und erste gemeinsame Adresse:
+       Firewall-Regel über die Relevanz (`relevance.Relevance.check`: Route der Firewall bzw. des
+       VDOMs zum Netz über Ein- bzw. Ausgang der Regel), Contract über die Zuordnung im ACI
+       (`relevance._aci_for_ip`: externe EPG, Scope, Konfiguration vor Gelerntem). Sind alle
+       Treffer unmöglich, fällt die Regel weg (`Scope.off_path` mit Begründung, in der Vorschau
+       `off_path`); nicht prüfbar zählt sie weiter. Regeln über VDOM, Zone, Interface bzw. EPG des
+       Kunden zählen ohne Prüfung. Folgt nach jedem Lauf und beim Speichern (wie bisher).
+     - **Ohne Gerätenamen** (`store/customer_alias.py`): Jede JSON-Antwort an Kunden-Benutzer läuft
+       durch eine Middleware (`require_role` merkt sich die Mandanten des Kunden-Benutzers), der
+       Export des Zonenplans vor dem Zeichnen – auch künftige Endpunkte. Quellsysteme „Firewall
+       1“ … (Reihenfolge der Anlage), „ACI“, „vCenter“, „IPAM“; VDOMs über alle Firewalls nach
+       Namen nummeriert (`root` bleibt), Verbund „Verbund n“, Inventar-Geräte „Leaf“/„Spine“/
+       „Controller“, LLDP-Nachbarn „Nachbar“; Felder `vdom`/`vdoms`/`by_vdom` neutral, `host`,
+       `cluster`, `datacenter`, `switch`, `neighbor` leer; in Texten (Begründungen, Sätze der
+       Findings, Knoten „fw-01 · VDOM x“, Knoten-IDs) dieselben Ersetzungen als ganze Wörter.
+       Befunde in der Applikations-Doku des Kunden ohne Angaben zu fremden Regeln (wie in der
+       Findings-Liste). Grenze: Namen der Infrastruktur in Namen von Regeln, Objekten und VMs
+       bzw. in Kommentaren bleiben.
+     - Noch offen: feinere Rollen.

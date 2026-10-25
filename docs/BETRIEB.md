@@ -763,8 +763,15 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     bzw. am Interface oder mit Quelle bzw. Ziel in einem Netz des Kunden, ohne `any`) und VMs
     (Portgruppe einer EPG, IP im Netz, Kürzel im Namen); NAT mit interner bzw. externer IP im
     Netz; Findings über ihr Subjekt (0.31.0). Ein Element kann mehreren Kunden gehören.
-  - Beim Bearbeiten zeigt die **Vorschau**, was die Selektoren erfassen. Klick auf einen
-    Kunden zeigt die Zugehörigkeit je Art mit dem Grund.
+  - **Nach dem Weg (0.58.0):** Eine Regel, die nur über ein Netz des Kunden dazukommt, zählt nur,
+    wenn der Verkehr sie erreichen kann – die Firewall leitet das Netz über den Ein- bzw. Ausgang
+    der Regel (wie die Relevanz in der Doku), im ACI ordnet die VRF das Netz der externen EPG des
+    Contracts zu (z. B. nicht über ein Subnetz nur mit `export-rtctrl`). Nicht prüfbar (Routing
+    nicht gelesen, Policy-Route, Interface unbekannt) zählt sie weiter. Über VDOM, Zone,
+    Interface bzw. EPG des Kunden zählt eine Regel immer.
+  - Beim Bearbeiten zeigt die **Vorschau**, was die Selektoren erfassen, dazu die Zeile **„nicht
+    auf dem Weg“** mit den so ausgeschlossenen Regeln (Begründung beim Darüberfahren). Klick auf
+    einen Kunden zeigt die Zugehörigkeit je Art mit dem Grund.
   - **Vorschläge:** je ACI-Tenant ohne Kunden ein Kunde (Kürzel aus `TE_<kürzel>`), `common`
     als **geteilter Teil** (gilt für alle Kunden) – „Übernehmen“ bzw. „Anpassen…“.
   - **Keinem Kunden zugeordnet** zeigt EPGs, Regeln und VMs ohne Kunden.
@@ -778,7 +785,13 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Übersicht (ohne Betriebszustand/Läufe), Regeln, Objekte (ohne Netzinventar), NAT,
     Applikationen und Findings – nur ihren Ausschnitt; Regel-Zahlen nennen nur ihre Regeln.
     Kein Routing, keine Verwaltung, keine Quellsysteme; `admin` gilt für sie nicht, ohne
-    Kunden-IDs sehen sie nichts. Ihre Lesezugriffe stehen immer im Audit (`read.*` mit den
+    Kunden-IDs sehen sie nichts. **Ohne Gerätenamen (0.58.0):** statt der Namen der
+    Quellsysteme „Firewall 1“, „Firewall 2“ … (Reihenfolge der Anlage), „ACI“, „vCenter“, „IPAM“;
+    VDOMs nummeriert („VDOM 2“, `root` bleibt), Verbund „Verbund 1“, Leafs/Spines „Leaf“/„Spine“,
+    LLDP-Nachbarn „Nachbar“; ESXi-Host, Cluster, Datacenter und verteilter Switch leer – in allen
+    Antworten, Texten und dem Export des Zonenplans. Betreuer sehen weiter die echten Namen. Namen
+    der Infrastruktur in Regel-, Objekt- oder VM-Namen bzw. Kommentaren bleiben stehen (nur ganze
+    Wörter werden ersetzt). Ihre Lesezugriffe stehen immer im Audit (`read.*` mit den
     Kunden-IDs). Bei SAML-Brokern Kunden-IDs und Rolle **fest je IdP** hinterlegen
     (`saml-mappers.example.json`). Vorführen im dev-Modus: im Browser
     `localStorage.setItem("automato_dev_customer", "<Mandant>:<Kunden>")`, entfernen zum
@@ -895,12 +908,12 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET/POST /applications`, `GET/PATCH/DELETE /applications/{id}`, `POST …/{id}/members`, `DELETE …/{id}/members/{mid}`, `GET …/{id}/doc` | Applikationen (ADR 0012; Schreiben = operator): Stammdaten (inkl. `external_name`, `internal_name`, `purpose` dev/test/prod), Mitglieder AP/EPG/Server, Doku mit `summary`, `systems` (VMs), `epgs`, `hits` (Regel × System: Richtung, Bezug, `scope`), `rules`, `findings`, `tables` |
 | `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
-| `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern; Vorschläge je ACI-Tenant; nicht Zugeordnetes |
+| `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern (seit 0.58.0 mit `off_path`: Regeln über Netze nicht auf dem Weg, `count`/`samples` mit `why`); Vorschläge je ACI-Tenant; nicht Zugeordnetes |
 | `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy` (seit 0.57.0 mit `services`), `GET /zones/plan[?customer_id=&all=true]` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]`, `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin); seit 0.54.0 `GET /zones/suggestions[?dismissed=true]`, `POST /zones/suggestions/accept` und `POST /zones/suggestions/dismiss[/undo]` (`keys`, operator); seit 0.55.0 `POST /zones/schema/intents` (`pairs`, `overwrite`, operator); seit 0.56.0 `POST /zones/{id}/nodes` (`nodes` = `<Quellsystem>\|<Kontext>`, operator) und `customer_id`/`all` auch am Export | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan (seit 0.56.0 `format` 2) mit `view` (all/overview/customer), `customers`, `zones` (mit `nodes`, `internal`, zusammengefasste Kunden `collapsed`/`members`, Pseudo-Zonen `none`/`outside`), `nodes`, `transitions` (`name`, `networks` mit `legs`/`routers`, `l3out`, `contact`), `conflicts`, `unzoned`, `layout` (Zeichnung); Zonen mit `color_source` (schema/template/zone/kind), `nodes`, `transitions`; Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`); Vorschläge je `key` (normalisierter Name) mit `action` create/extend, `kind`/`kind_reason`, `customer_id`, `sources`, `evidence`, `selectors`, `counts` (nets/epgs/nodes), `nodes`, `code`, `conflicts`, `dismissed`, dazu `nodes` (Knoten ohne Zone) und `rest` (Netze ohne Zone und Vorschlag); übernehmen liefert `created`/`updated`/`missing`; seit 0.55.0 je Vorschlag `schema` und `schema` mit `missing`/`outside`/`intents`/`matched` (Grundschema), Absichten übernehmen liefert `changed` |
 | `GET /auth/me`, `GET/POST /customer-users`, `PATCH/DELETE /customer-users/{id}` | Wer bin ich laut Orchestrator (Rollen, Mandanten, Kunden, `customer_source` claim/automato) – die Oberfläche richtet sich danach; Zuordnung Benutzer → Kunde (0.53.0, Admin): `login`, `customer_id`, `role` viewer/operator, `note` |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `POST /systems/{id}/check` | Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus (operator): Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint`; Agent-Systeme 409 (`run-agent.ps1 -Check`), 0.34.0 |
-| `GET /systems/labels?tenant_id=` | Bezeichnungen der Quellsysteme (`id`, `name`, `platform`, `vdoms`, `parallel_group`) ohne Konfiguration; Kunden-Benutzer nur die Systeme ihrer Regeln, NAT bzw. Objekte (0.33.0) |
+| `GET /systems/labels?tenant_id=` | Bezeichnungen der Quellsysteme (`id`, `name`, `platform`, `vdoms`, `parallel_group`) ohne Konfiguration; Kunden-Benutzer nur die Systeme ihrer Regeln, NAT bzw. Objekte (0.33.0), seit 0.58.0 mit neutralen Namen („Firewall 1“, VDOM-Nummern) wie alle Antworten an Kunden-Benutzer |
 | `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `site_id`, `read_scope`, `ref_role`, `schedule` → `next_run_at`; `token` bzw. `username`/`password`, NetBox `write_token` nur schreibbar → `has_credentials`/`has_write_token`; Referenzquellen mit `reference_count`/`reference_at`) |
 | `GET /jobs` (`tenant_id`, `status` inkl. `open`, `source_system_id`, `platform`, `trigger`, `limit`, `offset`; Gesamtzahl im Header `X-Total-Count`), `GET /jobs/{id}`, `POST /jobs/collect`, `POST /jobs/collect-all`, `POST /jobs/{id}/cancel` | Läufe (Gerät mit Agent → immer `external`, `started_at` = abgeholt); `collect-all` = alle aktiven Quellsysteme des Mandanten (operator, Antwort je System `run_id` bzw. `skipped` mit `blocking_run_id`); `cancel` beendet einen offenen Lauf (operator) |
 | `GET/POST /agents`, `PATCH /agents/{id}`, `GET /agents/package` | Collector-Agenten (inkl. zugewiesener Geräte), Agent-Paket |
