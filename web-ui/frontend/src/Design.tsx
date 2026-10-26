@@ -373,6 +373,7 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
   const [editing, setEditing] = useState<ZoneSuggestion | null>(null);
   const [fromSchema, setFromSchema] = useState<SchemaZone | null>(null);
   const [onlySchema, setOnlySchema] = useState(false);
+  const [q, setQ] = useState(""); // 0.65.1: Vorschläge filtern (Name, Herkunft, Selektoren)
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const [err, setErr] = useState<unknown>(null);
@@ -404,8 +405,12 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
       else n.add(key);
       return n;
     });
-  const open = data?.items.filter((s) => !s.dismissed) ?? [];
-  const shown = data?.items.filter((s) => !onlySchema || s.schema) ?? [];
+  const needle = q.trim().toLowerCase();
+  const hit = (s: ZoneSuggestion) =>
+    !needle ||
+    [s.name, s.code ?? "", s.customer ?? "", ...s.evidence, ...s.selectors.map((x) => x.value)].some((x) => x.toLowerCase().includes(needle));
+  const shown = data?.items.filter((s) => (!onlySchema || s.schema) && hit(s)) ?? [];
+  const open = shown.filter((s) => !s.dismissed);
 
   const accept = async (keys: string[]) => {
     setBusy(true);
@@ -437,6 +442,21 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
       load();
     } catch (e) {
       setErr(e);
+    }
+  };
+  // mehrere auf einmal ausblenden (0.65.1), z. B. alle mit „SZ_“ nach dem Filter
+  const dismissPicked = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await dismissZoneSuggestions(tenantId, [...picked]);
+      setDone(`${r.keys.length} Vorschlag/Vorschläge ausgeblendet – mit „ausgeblendete zeigen“ wieder vorschlagen`);
+      setPicked(new Set());
+      load();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -471,6 +491,26 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
             <input type="checkbox" checked={showDismissed} onChange={(e) => setShowDismissed(e.target.checked)} /> ausgeblendete zeigen
             {data && data.summary.dismissed > 0 && ` (${data.summary.dismissed})`}
           </label>
+          <div className="search" style={{ flex: "0 1 200px" }}>
+            <input
+              type="search"
+              aria-label="Vorschläge filtern"
+              placeholder="Filtern, z. B. SZ_"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+          </div>
+          {canEdit && (
+            <button
+              id="zone-suggestions-dismiss"
+              className="btn btn-sm"
+              disabled={busy || picked.size === 0}
+              onClick={() => void dismissPicked()}
+              title="Gewählte Vorschläge ausblenden (bleiben ausgeblendet, bis sie wieder vorgeschlagen werden)"
+            >
+              Ausgewählte ausblenden ({picked.size})
+            </button>
+          )}
           {canEdit && (
             <button
               id="zone-suggestions-accept"
@@ -487,13 +527,16 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
             Nach dem Zonenmodell: die ACI-Tenants sind das Datacenter (je Kunde eine Zone), Firewalls kommen in die Zone des
             Grundschemas bzw. der Vorlage, deren Name oder Muster passt (Firewalls mit einem Bein an der Internet-Anbindung in
             Edge Internet), die Anbindungen in Public, dazu Firewall-Zonen und Interfaces nach den Mustern und Zone bzw. Rolle im
-            IPAM. Netze zwischen Knoten verschiedener Zonen werden Übergänge. Übernehmen legt eine normale Zone mit Selektoren
+            IPAM (ohne Werte, die ein Objekt im ACI nennen, z. B. ESGs). Netze zwischen Knoten verschiedener Zonen werden
+            Übergänge. Unerwünschte Vorschläge filtern, wählen und gesammelt ausblenden. Übernehmen legt eine normale Zone mit Selektoren
             an bzw. ergänzt die bestehende; Knoten ohne Treffer stehen darunter zum Zuordnen.
           </p>
           {data == null ? (
             <Loading />
           ) : data.items.length === 0 ? (
             <Empty title="Keine Vorschläge">Alles Gelesene liegt in einer Zone oder ist ausgeblendet.</Empty>
+          ) : shown.length === 0 ? (
+            <Empty title="Kein Vorschlag passt zum Filter" />
           ) : (
             <table id="zone-suggestions">
               <thead>
@@ -1908,37 +1951,83 @@ export function PlanDrawing({
   );
 }
 
-// Linien der Übergänge nach der Lage der Zonen – gleich wie `plan_export.route` im Orchestrator: nebeneinander
-// von rechts nach links, übereinander rechts herum; Anschlusspunkte je Seite gleichmässig verteilt
-export function routeEdges(boxes: PlanBox[], edges: PlanEdge[]): PlanEdge[] {
-  const pos = new Map(boxes.map((b) => [String(b.id), b]));
-  const ends = new Map<string, string[]>();
-  const plans: { e: PlanEdge; a: PlanBox; b: PlanBox; sa: "r" | "l"; sb: "r" | "l"; same: boolean }[] = [];
-  const add = (k: string, v: string) => ends.set(k, [...(ends.get(k) ?? []), v]);
-  for (const e of edges) {
-    let a = pos.get(String(e.a));
-    let b = pos.get(String(e.b));
-    if (!a || !b) continue;
-    if (b.x < a.x) [a, b] = [b, a];
-    const apart = a.x + a.w <= b.x;
-    const sb = apart ? "l" : "r";
-    plans.push({ e, a, b, sa: "r", sb, same: !apart });
-    add(`${a.id}|r`, e.id ?? "");
-    add(`${b.id}|${sb}`, e.id ?? "");
+// Linien der Übergänge nach der Lage der Zonen – gleich wie `plan_export.route` im Orchestrator (seit 0.65.1
+// weich): die Linie verlässt die Zone senkrecht an der Seite zur anderen Zone (nebeneinander rechts/links,
+// übereinander unten/oben, sonst rechts herum) und läuft als Kurve hinüber; Anschlusspunkte je Seite nach der
+// Lage der Gegenseite geordnet
+type Side = "r" | "l" | "t" | "b";
+const SIDE_NORMAL: Record<Side, [number, number]> = { r: [1, 0], l: [-1, 0], t: [0, -1], b: [0, 1] };
+const SIDE_GAP = 12;
+const CURVE_STEPS = 16;
+
+function edgeSides(a: PlanBox, b: PlanBox, boxes: PlanBox[]): [Side, Side] {
+  if (a.x + a.w + SIDE_GAP <= b.x) return ["r", "l"];
+  if (b.x + b.w + SIDE_GAP <= a.x) return ["l", "r"];
+  const [up, low] = a.y <= b.y ? [a, b] : [b, a];
+  if (up.y + up.h + SIDE_GAP <= low.y) {
+    const x0 = Math.max(up.x, low.x);
+    const x1 = Math.min(up.x + up.w, low.x + low.w);
+    const y0 = up.y + up.h;
+    const y1 = low.y;
+    const blocked = boxes.some((o) => o !== a && o !== b && o.x < x1 && o.x + o.w > x0 && o.y < y1 && o.y + o.h > y0);
+    if (!blocked) return up === a ? ["b", "t"] : ["t", "b"];
   }
-  const at = (box: PlanBox, side: "r" | "l", eid: string): [number, number] => {
-    const ids = ends.get(`${box.id}|${side}`) ?? [];
-    const k = ids.indexOf(eid);
-    return [side === "r" ? box.x + box.w : box.x, box.y + 14 + ((box.h - 20) * (k + 1)) / (ids.length + 1)];
-  };
-  return plans.map(({ e, a, b, sa, sb, same }, n) => {
-    const [x1, y1] = at(a, sa, e.id ?? "");
-    const [x2, y2] = at(b, sb, e.id ?? "");
-    if (same) {
-      const bend = Math.max(x1, x2) + 24 + (n % 4) * 8;
-      return { ...e, points: [[x1, y1], [bend, y1], [bend, y2], [x2, y2]], x1, y1, x2, y2, lx: bend + 4, ly: (y1 + y2) / 2 };
+  return ["r", "r"];
+}
+
+const round1 = (v: number) => Math.round(v * 10) / 10;
+
+function bezier(p0: [number, number], c1: [number, number], c2: [number, number], p3: [number, number], t: number): [number, number] {
+  const u = 1 - t;
+  const at = (i: 0 | 1) => u ** 3 * p0[i] + 3 * u * u * t * c1[i] + 3 * u * t * t * c2[i] + t ** 3 * p3[i];
+  return [round1(at(0)), round1(at(1))];
+}
+
+export function routeEdges(boxes: PlanBox[], edges: PlanEdge[]): PlanEdge[] {
+  // gleiche Box-Objekte wie in `boxes` (Hindernisse vergleichen über die Identität)
+  const pos = new Map(boxes.map((b) => [String(b.id), b]));
+  const ends = new Map<string, [number, string][]>();
+  const plans: { e: PlanEdge; a: PlanBox; b: PlanBox; sa: Side; sb: Side }[] = [];
+  const center = (box: PlanBox): [number, number] => [box.x + box.w / 2, box.y + box.h / 2];
+  for (const e of edges) {
+    const a = pos.get(String(e.a));
+    const b = pos.get(String(e.b));
+    if (!a || !b || a === b) continue;
+    const [sa, sb] = edgeSides(a, b, boxes);
+    plans.push({ e, a, b, sa, sb });
+    for (const [box, side, other] of [
+      [a, sa, b],
+      [b, sb, a],
+    ] as const) {
+      const [cx, cy] = center(other);
+      const k = `${box.id}|${side}`;
+      ends.set(k, [...(ends.get(k) ?? []), [side === "l" || side === "r" ? cy : cx, String(e.id)]]);
     }
-    return { ...e, points: [[x1, y1], [x2, y2]], x1, y1, x2, y2, lx: (x1 + x2) / 2, ly: (y1 + y2) / 2 - 5 };
+  }
+  const order = new Map(
+    [...ends].map(([k, v]) => [k, [...v].sort((x, y) => x[0] - y[0] || (x[1] < y[1] ? -1 : x[1] > y[1] ? 1 : 0)).map((x) => x[1])]),
+  );
+  const at = (box: PlanBox, side: Side, eid: string): [number, number] => {
+    const ids = order.get(`${box.id}|${side}`) ?? [];
+    const k = ids.indexOf(eid);
+    const n = ids.length;
+    if (side === "l" || side === "r") return [side === "r" ? box.x + box.w : box.x, box.y + 14 + ((box.h - 20) * (k + 1)) / (n + 1)];
+    return [box.x + 24 + ((box.w - 48) * (k + 1)) / (n + 1), side === "t" ? box.y : box.y + box.h];
+  };
+  return plans.map(({ e, a, b, sa, sb }, n) => {
+    const p0 = at(a, sa, String(e.id));
+    const p3 = at(b, sb, String(e.id));
+    const [x1, y1] = p0;
+    const [x2, y2] = p3;
+    const reach = sa === sb ? 40 + (n % 4) * 10 + Math.abs(y2 - y1) * 0.12 : Math.min(Math.max(Math.hypot(x2 - x1, y2 - y1) * 0.4, 24), 160);
+    const c1: [number, number] = [x1 + SIDE_NORMAL[sa][0] * reach, y1 + SIDE_NORMAL[sa][1] * reach];
+    const c2: [number, number] = [x2 + SIDE_NORMAL[sb][0] * reach, y2 + SIDE_NORMAL[sb][1] * reach];
+    const points = Array.from({ length: CURVE_STEPS + 1 }, (_, i) => bezier(p0, c1, c2, p3, i / CURVE_STEPS));
+    const [mx, my] = bezier(p0, c1, c2, p3, 0.5);
+    const across = (sa === "l" || sa === "r") && (sb === "l" || sb === "r") && sa !== sb;
+    return across
+      ? { ...e, points, x1, y1, x2, y2, lx: mx, ly: my - 5, anchor: "middle" as const }
+      : { ...e, points, x1, y1, x2, y2, lx: mx + 6, ly: my + 4, anchor: "start" as const };
   });
 }
 
@@ -2051,7 +2140,7 @@ function PlanDrawing2({
             <title>{`${e.name || e.label || "Kontakt"}: ${(e.networks ?? []).join(", ")}`}</title>
           </polyline>
           {e.label && (
-            <text x={e.lx} y={e.ly} textAnchor={(e.points ?? []).length > 2 ? "start" : "middle"}>
+            <text x={e.lx} y={e.ly} textAnchor={e.anchor ?? ((e.points ?? []).length > 2 ? "start" : "middle")}>
               {e.label}
             </text>
           )}

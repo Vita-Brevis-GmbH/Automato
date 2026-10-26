@@ -217,44 +217,93 @@ def _layout2(plan: dict) -> dict:
             "edges": edges, "offset": offset}  # fmt: skip
 
 
+SIDE_NORMAL = {"r": (1, 0), "l": (-1, 0), "t": (0, -1), "b": (0, 1)}
+SIDE_GAP = 12  # so weit auseinander gelten Zonen als neben- bzw. uebereinander
+CURVE_STEPS = 16
+
+
+def _sides(a: dict, b: dict, boxes: list[dict]) -> tuple[str, str]:
+    """Seiten, an denen die Linie ansetzt (0.65.1): die einander zugewandten - nebeneinander
+    rechts/links, uebereinander unten/oben (liegt keine andere Zone dazwischen), sonst beide
+    rechts (rechts herum)."""
+    if a["x"] + a["w"] + SIDE_GAP <= b["x"]:
+        return "r", "l"
+    if b["x"] + b["w"] + SIDE_GAP <= a["x"]:
+        return "l", "r"
+    up, low = (a, b) if a["y"] <= b["y"] else (b, a)
+    if up["y"] + up["h"] + SIDE_GAP <= low["y"]:
+        x0, x1 = max(up["x"], low["x"]), min(up["x"] + up["w"], low["x"] + low["w"])
+        y0, y1 = up["y"] + up["h"], low["y"]
+        blocked = any(
+            o is not a and o is not b and o["x"] < x1 and o["x"] + o["w"] > x0
+            and o["y"] < y1 and o["y"] + o["h"] > y0
+            for o in boxes
+        )  # fmt: skip
+        if not blocked:
+            return ("b", "t") if up is a else ("t", "b")
+    return "r", "r"
+
+
+def _bezier(p0, c1, c2, p3, t: float) -> list[float]:
+    u = 1 - t
+    return [
+        round(u**3 * p0[i] + 3 * u * u * t * c1[i] + 3 * u * t * t * c2[i] + t**3 * p3[i], 1)
+        for i in (0, 1)
+    ]
+
+
 def route(boxes: list[dict], edges: list[dict]) -> list[dict]:
-    """Linien der Uebergaenge nach der Lage der Zonen: nebeneinander von rechts nach links,
-    uebereinander (Spalten ueberlappen) rechts herum; Anschlusspunkte je Seite gleichmaessig
-    verteilt. Die Oberflaeche rechnet beim Ziehen gleich (`routeEdges` in `Design.tsx`)."""
+    """Linien der Uebergaenge nach der Lage der Zonen. Seit 0.65.1 weich: die Linie verlaesst die
+    Zone senkrecht an der Seite, die zur anderen Zone zeigt (`_sides`), und laeuft als Kurve
+    (kubische Bezier, als Punktfolge in `points`) hinueber; die Anschlusspunkte je Seite sind
+    nach der Lage der Gegenseite geordnet (weniger Kreuzungen). Die Oberflaeche rechnet beim
+    Ziehen gleich (`routeEdges` in `Design.tsx`)."""
     pos = {b["id"]: b for b in boxes}
     ends: dict[tuple, list] = defaultdict(list)
     plans = []
+
+    def center(box: dict) -> tuple[float, float]:
+        return box["x"] + box["w"] / 2, box["y"] + box["h"] / 2
+
     for e in edges:
-        if e["a"] not in pos or e["b"] not in pos:
+        if e["a"] not in pos or e["b"] not in pos or e["a"] == e["b"]:
             continue
         a, b = pos[e["a"]], pos[e["b"]]
-        if b["x"] < a["x"]:
-            a, b = b, a
-        apart = a["x"] + a["w"] <= b["x"]
-        sa, sb = ("r", "l") if apart else ("r", "r")
-        plans.append((e, a, b, sa, sb, not apart))
-        ends[(a["id"], sa)].append(e["id"])
-        ends[(b["id"], sb)].append(e["id"])
+        sa, sb = _sides(a, b, boxes)
+        plans.append((e, a, b, sa, sb))
+        for box, side, other in ((a, sa, b), (b, sb, a)):
+            cx, cy = center(other)
+            ends[(box["id"], side)].append((cy if side in ("l", "r") else cx, str(e["id"])))
+    order = {k: [eid for _, eid in sorted(v)] for k, v in ends.items()}
 
     def at(box: dict, side: str, eid: str) -> tuple[float, float]:
-        ids = ends[(box["id"], side)]
-        k = ids.index(eid)
-        y = box["y"] + 14 + (box["h"] - 20) * (k + 1) / (len(ids) + 1)
-        return (box["x"] + box["w"] if side == "r" else box["x"]), y
+        ids = order[(box["id"], side)]
+        k, n = ids.index(eid), len(ids)
+        if side in ("l", "r"):
+            y = box["y"] + 14 + (box["h"] - 20) * (k + 1) / (n + 1)
+            return (box["x"] + box["w"] if side == "r" else box["x"]), y
+        x = box["x"] + 24 + (box["w"] - 48) * (k + 1) / (n + 1)
+        return x, (box["y"] if side == "t" else box["y"] + box["h"])
 
     out = []
-    for n, (e, a, b, sa, sb, same) in enumerate(plans):
-        x1, y1 = at(a, sa, e["id"])
-        x2, y2 = at(b, sb, e["id"])
-        if same:
-            bend = max(x1, x2) + 24 + (n % 4) * 8
-            points = [[x1, y1], [bend, y1], [bend, y2], [x2, y2]]
-            lx, ly = bend + 4, (y1 + y2) / 2
+    for n, (e, a, b, sa, sb) in enumerate(plans):
+        x1, y1 = at(a, sa, str(e["id"]))
+        x2, y2 = at(b, sb, str(e["id"]))
+        if sa == sb:  # rechts herum
+            reach = 40 + (n % 4) * 10 + abs(y2 - y1) * 0.12
         else:
-            points = [[x1, y1], [x2, y2]]
-            lx, ly = (x1 + x2) / 2, (y1 + y2) / 2 - 5
+            reach = min(max(((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5 * 0.4, 24), 160)
+        (ax, ay), (bx, by) = SIDE_NORMAL[sa], SIDE_NORMAL[sb]
+        p0, p3 = (x1, y1), (x2, y2)
+        c1, c2 = (x1 + ax * reach, y1 + ay * reach), (x2 + bx * reach, y2 + by * reach)
+        points = [_bezier(p0, c1, c2, p3, i / CURVE_STEPS) for i in range(CURVE_STEPS + 1)]
+        mx, my = _bezier(p0, c1, c2, p3, 0.5)
+        if sa in ("l", "r") and sb in ("l", "r") and sa != sb:
+            lx, ly, anchor = mx, my - 5, "middle"
+        else:  # senkrecht bzw. rechts herum: neben der Linie
+            lx, ly, anchor = mx + 6, my + 4, "start"
         out.append({**e, "points": points, "x1": x1, "y1": y1, "x2": x2, "y2": y2,
-                    "lx": lx, "ly": ly})  # fmt: skip
+                    "lx": lx, "ly": ly, "anchor": anchor, "sides": [sa, sb]})  # fmt: skip
     return out
 
 
@@ -389,8 +438,7 @@ def _svg2(g, lay: dict) -> None:
             attrs["stroke-dasharray"] = "5 4"
         line = ET.SubElement(g, "polyline", attrs)
         ET.SubElement(line, "title").text = f"{e['label']}: " + ", ".join(e["networks"])
-        bent = len(e["points"]) > 2
-        _text(g, e["lx"], e["ly"], e["label"], "10.5", MUTED, anchor="start" if bent else "middle",
+        _text(g, e["lx"], e["ly"], e["label"], "10.5", MUTED, anchor=e.get("anchor", "middle"),
               mono=True)  # fmt: skip
     for z in lay["zones"]:
         attrs = {"x": _n(z["x"]), "y": _n(z["y"]), "width": _n(z["w"]), "height": _n(z["h"]),
@@ -535,8 +583,17 @@ def _drawio2(lay: dict, title: str, stamp: str) -> str:
             style += "dashed=1;"
         cell = ET.SubElement(obj, "mxCell", {"vertex": "1", "parent": "1", "style": style})
         _geometry(cell, z["x"], z["y"] + HEAD, z["w"], z["h"])
+    boxes = {z["id"]: z for z in lay["zones"]}
     for e in lay["edges"]:
         style = f"endArrow=none;html=1;strokeColor={LINE};fontSize=10;fontFamily=Courier New;"
+        a, b = boxes.get(e["a"]), boxes.get(e["b"])
+        if a is not None and b is not None:  # 0.65.1: weich an den Seiten wie in der Ansicht
+            style += (
+                "edgeStyle=orthogonalEdgeStyle;curved=1;rounded=1;"
+                f"exitX={_rel(e['x1'], a['x'], a['w'])};exitY={_rel(e['y1'], a['y'], a['h'])};"
+                f"entryX={_rel(e['x2'], b['x'], b['w'])};entryY={_rel(e['y2'], b['y'], b['h'])};"
+                "exitDx=0;exitDy=0;entryDx=0;entryDy=0;"
+            )
         if e["dashed"]:
             style += "dashed=1;"
         obj = ET.SubElement(root, "UserObject", {
@@ -550,6 +607,11 @@ def _drawio2(lay: dict, title: str, stamp: str) -> str:
         })  # fmt: skip
         ET.SubElement(cell, "mxGeometry", {"relative": "1", "as": "geometry"})
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(mxfile, encoding="unicode")
+
+
+def _rel(v: float, start: float, size: float) -> str:
+    """Lage auf der Seite einer Form (0..1) fuer draw.io."""
+    return f"{(v - start) / size:.3f}" if size else "0.5"
 
 
 def _id(node: str) -> str:
@@ -635,9 +697,17 @@ class _Page:
                         + " ".join(path) + f" {paint} Q")  # fmt: skip
 
     def line(self, x1, y1, x2, y2, color=LINE, width=1.0, dashed=False) -> None:
+        self.polyline([(x1, y1), (x2, y2)], color, width, dashed)
+
+    def polyline(self, points, color=LINE, width=1.0, dashed=False) -> None:
+        """Ein Pfad durch alle Punkte (Strichmuster laeuft durch, auch ueber Kurven)."""
+        if len(points) < 2:
+            return
         dash = "[5 4] 0 d " if dashed else ""
-        self.ops.append(f"q {_rgb(color)} RG {width:.2f} w {dash}{x1:.2f} {self._y(y1):.2f} m "
-                        f"{x2:.2f} {self._y(y2):.2f} l S Q")  # fmt: skip
+        (x0, y0), rest = points[0], points[1:]
+        path = " ".join(f"{x:.2f} {self._y(y):.2f} l" for x, y in rest)
+        self.ops.append(f"q {_rgb(color)} RG {width:.2f} w {dash}{x0:.2f} {self._y(y0):.2f} m "
+                        f"{path} S Q")  # fmt: skip
 
     def text(self, x, y, text, size=10.0, color=FG, bold=False, anchor="start",
              width: float | None = None) -> None:  # fmt: skip
@@ -761,11 +831,8 @@ def _pdf2(doc: "_Pdf", p: "_Page", plan: dict, lay: dict, matrix: dict | None,
           stamp: str) -> None:  # fmt: skip
     """PDF des Zonenmodells: Plan, Matrix, Zonen mit Knoten, Uebergaenge mit Netzen."""
     for e in lay["edges"]:
-        pts = e["points"]
-        for (x1, y1), (x2, y2) in zip(pts, pts[1:], strict=False):
-            p.line(x1, y1 + HEAD, x2, y2 + HEAD, LINE, 1.4, e["dashed"])
-        p.text(e["lx"], e["ly"] + HEAD, e["label"], 9, MUTED,
-               anchor="start" if len(pts) > 2 else "middle")  # fmt: skip
+        p.polyline([(x, y + HEAD) for x, y in e["points"]], LINE, 1.4, e["dashed"])
+        p.text(e["lx"], e["ly"] + HEAD, e["label"], 9, MUTED, anchor=e.get("anchor", "middle"))
     for z in lay["zones"]:
         p.rect(z["x"], z["y"] + HEAD, z["w"], z["h"], z["fill"], _stroke(z.get("color")), 8)
         p.text(z["x"] + 12, z["y"] + HEAD + 18, z["title"], 11, bold=True, width=z["w"] - 20)

@@ -1077,6 +1077,18 @@ test("Netzwerkdesign: Zonen-Vorschläge nach dem Zonenmodell, Knoten zuordnen", 
   await dc.locator("button:has-text('Wieder vorschlagen')").click();
   await expect(dc).not.toContainText("ausgeblendet");
 
+  // filtern, alle Treffer wählen und gesammelt ausblenden (0.65.1), dann wieder vorschlagen
+  const filter = page.getByLabel("Vorschläge filtern");
+  await filter.fill("tenant te");
+  await expect(page.locator("#zone-suggestions tbody tr")).toHaveCount(1);
+  await page.locator("#zone-suggestions thead input[type='checkbox']").check();
+  await page.click("#zone-suggestions-dismiss");
+  await expect(page.getByText("1 Vorschlag/Vorschläge ausgeblendet")).toBeVisible();
+  await expect(dc).toContainText("ausgeblendet");
+  await dc.locator("button:has-text('Wieder vorschlagen')").click();
+  await expect(dc).not.toContainText("ausgeblendet");
+  await filter.fill("");
+
   // Übernehmen… öffnet den Editor mit dem Vorschlag (abbrechen)
   await dc.locator("button:has-text('Übernehmen')").click();
   await expect(page.locator(".modal")).toContainText("Vorschlag „DC");
@@ -1334,6 +1346,12 @@ test("L2-Sicht: Plan, Ausfall simulieren, VLAN-Weg, Befunde und L2 in der Weg-Su
   await page.click("button:has-text('Weg suchen')");
   await expect(page.locator("#trace-l2-dst")).toContainText("Ziel hängt an sw-acc-01 Gi1/0/9 (VLAN 30)");
   await expect(page.locator(".card[id^='trace-'] .l2-seg").first()).toContainText("L2: fw-08 dmz → sw-acc-01 (Te1/1/1 → Gi1/0/9)");
+  // Richtung tauschen (0.65.1): Quelle und Ziel getauscht, der Rückweg gleich gesucht
+  await page.click("#trace-swap");
+  await expect(page.getByPlaceholder("Quelle: IP, Netz oder Name")).toHaveValue("10.30.0.10");
+  await expect(page.getByPlaceholder("Ziel: IP, Netz oder Name")).toHaveValue("10.10.0.5");
+  await expect(page.getByText("Quelle 10.30.0.10 → Ziel 10.10.0.5")).toBeVisible();
+  await expect(page.locator("#trace-l2-src")).toContainText("sw-acc-01 Gi1/0/9");
   expect(problems).toEqual([]);
 });
 

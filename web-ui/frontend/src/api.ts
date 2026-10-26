@@ -2605,9 +2605,10 @@ export interface PlanEdge {
   node?: string;
   a?: PlanZoneId; // Format 2: Übergang zwischen Zonen
   b?: PlanZoneId;
-  points?: [number, number][];
+  points?: [number, number][]; // seit 0.65.1 eine Kurve als Punktfolge
   lx?: number;
   ly?: number;
+  anchor?: "start" | "middle"; // Beschriftung neben bzw. über der Linie (0.65.1)
   x1: number;
   y1: number;
   x2: number;

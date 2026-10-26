@@ -363,6 +363,7 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.63.0** | Endpunkte aus MAC-Tabelle und ARP der Switches (gesammelt mit Frist): „Wo hängt …“ nach MAC/IP/Name, MACs je Port ohne Uplinks, Befund VLAN fehlt am ESXi-Uplink (ADR 0025 Nr. 8) |
 | **0.64.0** | L2-Sicht: Plan der Verkabelung nach Ebenen, Ausfall eines Geräts/Kabels simulieren, VLAN-Wege mit Inseln, Befunde zu Redundanz (Einzelkabel, ein Switch, Ausfallpunkt, Port-Channel unvollständig) und getrennten VLANs, L2-Abschnitte und Anschluss von Quelle/Ziel in der Weg-Suche (ADR 0025 Nr. 9) |
 | **0.65.0** | Verkabelung abgerundet: Spanning Tree lesen (blockierte VLANs im Plan als Reserve, L2-Weg meidet sie), vPC-Paar als logischer Switch (Rahmen im Plan, Befund vPC-Paar uneinheitlich), mehrere gleichzeitige Ausfälle (Shift-Klick), Export des Plans als SVG/draw.io (ADR 0025 Nr. 10) |
+| **0.65.1** | Korrekturen nach dem Test: Weg-Suche Richtung tauschen, Linien des Zonenplans weich aus der zugewandten Seite, Zonen-Vorschläge ohne ACI-Gruppen aus dem IPAM (`SZ_…`), filtern und gesammelt ausblenden |
 
 ### Nächste Arbeiten (Stand 0.65.0)
 

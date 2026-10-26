@@ -7,6 +7,19 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.65.1 – 2026-10-26
+
+Korrekturen nach dem Test des Anwenders.
+
+- **Weg-Suche:** Knopf **⇄ Richtung tauschen** – Quelle und Ziel getauscht, war schon gesucht,
+  gleich der Rückweg.
+- **Zonenplan:** die Linien der Übergänge verlassen die Zone an der Seite zur anderen Zone und
+  laufen als weiche Kurve hinüber (übereinander von unten nach oben, mit einer Zone dazwischen
+  rechts herum); Anschlüsse je Seite nach der Lage der Gegenseite geordnet, weniger Kreuzungen.
+  Gleich in der Oberfläche, im SVG/PDF und im draw.io (gebogene Kanten an denselben Seiten).
+- **Zonen-Vorschläge:** IPAM-Werte, die ein Objekt im ACI nennen (z. B. die ESGs `SZ_…`), werden
+  keine Zone mehr. Vorschläge lassen sich filtern und gesammelt ausblenden.
+
 ## 0.65.0 – 2026-10-26
 
 Switching/Verkabelung abgerundet (ROADMAP, ADR 0025 Nr. 10): vPC-Paare, Spanning Tree, mehrere

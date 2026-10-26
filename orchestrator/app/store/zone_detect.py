@@ -311,13 +311,28 @@ def _from_exits(found: _Found, exits: list[TopoExit], used: set[str]) -> None:
                   (e.name,), sz=sz)  # fmt: skip
 
 
+def aci_names(data: customers._Data) -> set[str]:
+    """Namen der ACI-Objekte (Tenant, VRF, AP, BD, EPG, ESG, externe EPG, L3Out), klein und
+    normalisiert - ein IPAM-Merkmal mit einem solchen Namen (z. B. die ESGs `SZ_…`) ist eine
+    Gruppe im ACI, keine logische Zone (das ACI ist schon das Datacenter)."""
+    out: set[str] = set()
+    for e in data.epgs:
+        for v in (e.name, e.aci_tenant, e.vrf, e.ap, e.bd, e.l3out):
+            if v and v.strip():
+                out |= {v.strip().casefold(), key_of(v)}
+    return out
+
+
 def _from_ipam(found: _Found, data: customers._Data) -> None:
     seen: dict[tuple[str, str], int] = defaultdict(int)
     for _kind, _value, _vrf, _tenant, _tags, attrs in data.references:
         for k, v in (attrs or {}).items():
             if str(k).casefold() in ZONE_ATTRS and str(v).strip():
                 seen[(str(k), str(v).strip())] += 1
+    aci = aci_names(data)  # 0.65.1: Gruppen des ACI nicht als Zone
     for (k, v), n in sorted(seen.items()):
+        if v.casefold() in aci or key_of(v) in aci:
+            continue
         hit = classify(v)
         kind, reason = (hit[0], f"Name „{hit[1]}“") if hit else (None, None)
         found.put(key_of(v), v, "ipam", kind, reason, [Selector("ipam_tag", f"{k}={v}")],

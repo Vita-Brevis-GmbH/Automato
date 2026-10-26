@@ -255,6 +255,8 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   (unten). Den Weg einer Verbindung zeigt seit 0.35.0 die eigene Ansicht **Weg-Suche**:
   - **Weg-Suche** (0.17.0, eigene Ansicht seit 0.35.0): **Quelle** und/oder **Start** (Firewall,
     VDOM, ACI-VRF), dazu das **Ziel** – für Fehlersuche und die Kontrolle von Arbeiten.
+    - **⇄ Richtung tauschen** (0.65.1): Quelle und Ziel tauschen (der Start ergibt sich wieder aus
+      der neuen Quelle); war schon gesucht, zeigt die Weg-Suche gleich den Rückweg.
     - **Quelle und Ziel als Name** (0.35.0): IP, Netz oder Name bzw. FQDN. Ab zwei Zeichen
       schlägt das Feld Treffer vor – DNS-Namen aus dem IPAM (auch nur das erste Label,
       `web01`), Adressobjekte der Firewalls (auch ohne Präfix, `web01` findet `H_web01`;
@@ -759,7 +761,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     deren Name oder Muster passt (z. B. `*inet*` → Edge Internet), Firewalls mit einem Bein an
     einer Internet-Anbindung in **Edge Internet**, die Anbindungen in **Public** (ohne die
     privaten Netze), Firewall-Zonen und Interfaces nach den Mustern (z. B. `transit` → Edge
-    Transfer, `mgmt` → Edge Management) und das IPAM-Merkmal Zone bzw. Rolle.
+    Transfer, `mgmt` → Edge Management) und das IPAM-Merkmal Zone bzw. Rolle – seit 0.65.1 ohne
+    Werte, die ein Objekt im ACI nennen (Tenant, VRF, AP, BD, EPG, ESG, L3Out; z. B. die ESGs
+    `SZ_…`): das sind Gruppen im ACI, das ACI ist schon das Datacenter.
     - Je Vorschlag Art (mit Grund), Kurzname, Kunde, woraus erkannt, die Selektoren, die Knoten
       und die Netze. „ergänzt Zone“: es gibt schon eine Zone mit dem Namen bzw. derselben Zone der
       Vorlage (z. B. „Internet“ = Public) – übernehmen fügt nur die neuen Selektoren hinzu.
@@ -770,7 +774,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - **Knoten ohne Zone:** Firewalls bzw. VDOMs ohne passende Zone – Zone wählen und
       **Zuordnen** (Operator, Selektor VDOM).
     - **Ausblenden** (Operator): der Vorschlag erscheint nicht mehr; „ausgeblendete zeigen“ →
-      **Wieder vorschlagen**.
+      **Wieder vorschlagen**. Seit 0.65.1 **filtern** (Name, Kurzname, Kunde, Herkunft,
+      Selektoren, z. B. `SZ_`), mit dem Kästchen im Kopf alle Treffer wählen und **Ausgewählte
+      ausblenden**.
     - **Nicht erkannt:** gelesene Netze an Knoten ohne Zone und ohne Vorschlag – den Knoten bzw.
       das Netz von Hand einer Zone zuordnen.
     - Die Rolle der FortiGate-Interfaces liest der Agent ab 0.54.0 mit; bis zum nächsten Lauf
@@ -821,7 +827,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
         merkt sich der Browser; „Filter zurücksetzen“ zeigt wieder alles.
       - **Zonen ziehen**: mit der Maus an einen anderen Platz. Als Operator wird die Anordnung
         der Ansicht gespeichert (alle Zonen der Ansicht behalten ihren Platz, neue Zonen kommen
-        darunter); Linien folgen der Lage. „Anordnung zurücksetzen“ ordnet wieder nach Ebenen.
+        darunter); Linien folgen der Lage – seit 0.65.1 als Kurve, die die Zone an der Seite zur
+        anderen Zone verlässt (nebeneinander rechts/links, übereinander unten/oben, mit einer
+        Zone dazwischen rechts herum), Anschlüsse je Seite nach der Lage der Gegenseite geordnet. „Anordnung zurücksetzen“ ordnet wieder nach Ebenen.
         Ohne Operator-Recht ordnet das Ziehen nur die eigene Anzeige (bis zum Neuladen).
       - **Export** und neue **Versionen** zeigen dasselbe: gefiltert (Filter im Kopf der Datei)
         und angeordnet.

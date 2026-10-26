@@ -868,7 +868,14 @@ function PathSearch({
   const [rows, setRows] = useState<RouteLookup[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const run = async () => {
+  const srcNow = src;
+  const dstNow = dst;
+  const startNow = start;
+  // `over`: Werte statt des Zustands (Richtung tauschen sucht sofort mit den getauschten)
+  const run = async (over?: { src: Endpoint; dst: Endpoint; start: string }) => {
+    const src = over?.src ?? srcNow;
+    const dst = over?.dst ?? dstNow;
+    const start = over ? over.start : startNow;
     if (!dst.text.trim()) return;
     setBusy(true);
     setError(null);
@@ -898,6 +905,16 @@ function PathSearch({
       setBusy(false);
     }
   };
+  // Richtung tauschen (0.65.1): Quelle <-> Ziel, der Startpunkt gehörte zur alten Quelle; war schon gesucht,
+  // gleich den Rückweg suchen
+  const swap = () => {
+    const next = { src: dst, dst: src, start: "" };
+    setSrc(next.src);
+    setDst(next.dst);
+    setStart("");
+    setChoices({});
+    if ((trace || rows) && next.dst.text.trim()) void run(next);
+  };
   // Link mit Ziel: gleich suchen (einmal beim Öffnen)
   useEffect(() => {
     if (initial?.dst) void run();
@@ -911,7 +928,7 @@ function PathSearch({
           tenantId={tenantId}
           value={src}
           onChange={setSrc}
-          onEnter={run}
+          onEnter={() => void run()}
           icon="search"
           placeholder="Quelle: IP, Netz oder Name"
           title="Quelle als IP, Netz bzw. Name/FQDN (IPAM, Objekte der Firewalls, VMs, Subnetze): der Weg beginnt dort, wo sie angeschlossen ist (bzw. am Startpunkt); ein Netz gilt als Ganzes"
@@ -930,11 +947,22 @@ function PathSearch({
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          id="trace-swap"
+          onClick={swap}
+          disabled={busy || (!src.text.trim() && !dst.text.trim())}
+          title="Richtung tauschen: Quelle und Ziel tauschen (Start aus der neuen Quelle) und – wenn schon gesucht – den Rückweg suchen"
+          aria-label="Richtung tauschen"
+        >
+          ⇄
+        </button>
         <EndpointInput
           tenantId={tenantId}
           value={dst}
           onChange={setDst}
-          onEnter={run}
+          onEnter={() => void run()}
           icon="route"
           placeholder="Ziel: IP, Netz oder Name, z. B. web01"
           title="Ziel als IP, Netz bzw. Name/FQDN; ein Netz gilt als Ganzes (Route und Regeln für das ganze Netz)"
@@ -960,7 +988,7 @@ function PathSearch({
           <option value="2">Backup: bis +2 Hops</option>
           <option value="">Backup: ausblenden</option>
         </select>
-        <button className="btn btn-primary btn-sm" onClick={run} disabled={busy || !dst.text.trim()}>
+        <button className="btn btn-primary btn-sm" onClick={() => void run()} disabled={busy || !dst.text.trim()}>
           {busy ? "Suche…" : "Weg suchen"}
         </button>
       </div>

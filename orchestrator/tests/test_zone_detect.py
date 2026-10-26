@@ -48,11 +48,16 @@ def _setup(client) -> tuple[int, dict[str, int]]:
     _deliver(client, tid, ids["fw-03"], "fortigate", FW3)
     ddi = _system(client, tid, "ddi-2", "infoblox", username="u", password="p")
     run_id = _run(client, tid, ddi, "infoblox")
-    rec = [{"kind": "prefix", "value": "10.40.0.0/24", "attrs": {"Zone": "Backup"}}]
+    # Zone=Backup wird eine Zone; Zone=EPG_web nennt eine Gruppe im ACI (wie die ESGs `SZ_…`) -
+    # keine eigene Zone (0.65.1)
+    rec = [
+        {"kind": "prefix", "value": "10.40.0.0/24", "attrs": {"Zone": "Backup"}},
+        {"kind": "prefix", "value": "10.41.0.0/24", "attrs": {"Zone": "EPG_web"}},
+    ]
     client.post(f"/internal/collector-runs/{run_id}/references", headers=TOKEN,
                 json={"records": rec})  # fmt: skip
     client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN,
-                json={"status": "completed", "reference_count": 1})  # fmt: skip
+                json={"status": "completed", "reference_count": len(rec)})  # fmt: skip
     body = {"tenant_id": tid, "name": "Kunde TE", "code": "te",
             "selectors": [_sel("aci_tenant", "TE")]}  # fmt: skip
     r = client.post("/customers", json=body, headers=OP)

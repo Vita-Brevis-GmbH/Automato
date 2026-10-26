@@ -149,15 +149,28 @@ def test_layout_mit_positionen_und_linien():
     assert min(b["x"] for b in lay["zones"]) == 16 and min(b["y"] for b in lay["zones"]) == 12
     assert box["B"]["x"] - box["A"]["x"] == 20 and box["B"]["y"] - box["A"]["y"] == 200
     edges = {e["name"]: e for e in lay["edges"]}
-    # A und B ueberlappen in x: rechts herum; B und C nebeneinander: von rechts nach links
-    assert len(edges["A-B"]["points"]) == 4
-    bend = edges["A-B"]["points"][1][0]
-    assert bend > max(box["A"]["x"] + box["A"]["w"], box["B"]["x"] + box["B"]["w"])
-    b_c = edges["B-C"]["points"]
-    assert len(b_c) == 2
-    left, right = sorted((box["B"], box["C"]), key=lambda b: b["x"])
-    assert b_c[0][0] == left["x"] + left["w"] and b_c[1][0] == right["x"]
+    # seit 0.65.1 weich: A ueber B (nichts dazwischen) - von unten nach oben; B und C nebeneinander
+    # - von rechts nach links; je eine Kurve (Punktfolge), die senkrecht aus der Zone kommt
+    a_b = edges["A-B"]
+    assert a_b["sides"] == ["b", "t"] and len(a_b["points"]) == 17
+    assert a_b["points"][0][1] == box["A"]["y"] + box["A"]["h"]
+    assert a_b["points"][-1][1] == box["B"]["y"]
+    assert abs(a_b["points"][0][0] - a_b["points"][1][0]) < 1  # senkrecht aus der Zone
+    b_c = edges["B-C"]
+    assert b_c["sides"] == ["r", "l"] and b_c["anchor"] == "middle"
+    assert b_c["points"][0][0] == box["B"]["x"] + box["B"]["w"]
+    assert b_c["points"][-1][0] == box["C"]["x"]
+    assert abs(b_c["points"][0][1] - b_c["points"][1][1]) < 1  # waagrecht aus der Zone
     assert lay["width"] >= max(b["x"] + b["w"] for b in lay["zones"]) + 16
+    # liegt eine Zone dazwischen: rechts herum (Kurve rechts neben den Zonen)
+    loop = plan_export.route(
+        [{"id": 1, "x": 0, "y": 0, "w": 200, "h": 60}, {"id": 2, "x": 0, "y": 100, "w": 200,
+         "h": 60}, {"id": 3, "x": 0, "y": 200, "w": 200, "h": 60}],
+        [{"id": "1~3", "a": 1, "b": 3}, {"id": "1~2", "a": 1, "b": 2}],
+    )  # fmt: skip
+    by = {e["id"]: e for e in loop}
+    assert by["1~3"]["sides"] == ["r", "r"] and max(x for x, _ in by["1~3"]["points"]) > 200
+    assert by["1~2"]["sides"] == ["b", "t"]
     # ohne Positionen: Spalten nach Ebene wie bisher
     auto = plan_export.layout({**plan, "positions": {}})
     assert auto["offset"] == [0.0, 0.0]
