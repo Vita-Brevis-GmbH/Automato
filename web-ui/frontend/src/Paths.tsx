@@ -110,6 +110,14 @@ function HopRulesCell({ r }: { r?: HopRules }) {
             {p.kind && p.src && p.src !== "direkt" ? ` · über ${p.src}` : ""}
             {p.services.length ? ` · ${p.services.join(", ")}` : ""}
             {p.unsure.length ? ` · möglich (${p.unsure.join(", ")})` : ""}
+            {p.reverse && (
+              <>
+                {" "}
+                <span className="chip warn aci-reverse" title="ACI ist zustandslos: Filter ohne Ports gelten auch vom Provider zum Consumer">
+                  ↩ Rückrichtung
+                </span>
+              </>
+            )}
           </span>
         ))}
       </div>

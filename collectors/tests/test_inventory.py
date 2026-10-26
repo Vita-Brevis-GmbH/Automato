@@ -148,3 +148,34 @@ def test_fortigate_rolle_des_interfaces():
     assert [(i.name, i.role) for i in inv.interfaces] == [
         ("wan1", "wan"), ("dmz", "dmz"), ("port3", None), ("mgmt", "management"), ("port4", None),
     ]  # fmt: skip
+
+
+def test_aci_vlans_ausgerollt_auch_ohne_statischen_pfad():
+    """0.69.1 (Anwender: „VLANs werden auf dem ACI nicht ausgelesen“): vlanCktEp der Leafs mit
+    den Ports (l2RsPathDomAtt), Port-Channel ueber pcAggrIf (po<n> -> Policy Group)."""
+
+    def mo(cls, children=(), **attrs):
+        return {cls: {"attributes": attrs, "children": list(children)}}
+
+    tenant = [mo("fvTenant", [mo("fvAp", [mo("fvAEPg", name="EG_vm")], name="AP_1")],
+                 name="TE_x")]  # fmt: skip
+    node = "topology/pod-1/node-101"
+    fabric = {
+        "fabricNode": [mo("fabricNode", id="101", name="leaf-101", role="leaf")],
+        "vlanCktEp": [mo("vlanCktEp", [
+            mo("l2RsPathDomAtt", tDn=f"{node}/sys/conng/path-[eth1/5]"),
+            mo("l2RsPathDomAtt", tDn=f"{node}/sys/conng/path-[po2]"),
+        ], dn=f"{node}/sys/ctx-[vxlan-1]/bd-[vxlan-2]/vlan-[vlan-300]", encap="vlan-300",
+            epgDn="uni/tn-TE_x/ap-AP_1/epg-EG_vm")],
+        "pcAggrIf": [mo("pcAggrIf", [mo("pcRsMbrIfs", tSKey="eth1/7")],
+                        dn=f"{node}/sys/aggr-[po2]", id="po2", name="PG_esx")],
+    }  # fmt: skip
+    inv = parse_inventory({"imdata": tenant}, fabric)
+    vlans = {v.vid: v for v in inv.vlans}
+    assert vlans[300].name == "EG_vm" and vlans[300].epgs == ["TE_x/AP_1/EG_vm"]
+    ifaces = {(i.device, i.name): i for i in inv.interfaces}
+    assert ifaces[("leaf-101", "eth1/5")].tagged_vlans == [300]
+    assert ifaces[("leaf-101", "eth1/5")].epgs == ["TE_x/AP_1/EG_vm"]
+    pc = ifaces[("leaf-101", "PG_esx")]
+    assert (pc.kind, pc.tagged_vlans) == ("lag", [300])
+    assert ifaces[("leaf-101", "eth1/7")].lag == "PG_esx"

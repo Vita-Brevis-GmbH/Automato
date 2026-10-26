@@ -10,6 +10,10 @@ Aus dem Tenant-Baum (`rsp-subtree=full`) und Fabric-Klassen des APIC:
   infraNodeP/AccPortP/HPortS    -> Port -> Access Policy Group (PC/vPC-Mitgliedschaft)
   l1PhysIf                      -> Port-Beschreibung, Admin-Status
   lldpAdjEp / cdpAdjEp          -> Gegenstelle am Port (Server/Switch)
+  vlanCktEp + l2RsPathDomAtt    -> VLANs, wie sie auf den Leafs ausgerollt sind (EPG ueber
+                                   `epgDn`, auch AAEP- und VMM-Bindungen), mit ihren Ports
+                                   (seit 0.69.1)
+  pcAggrIf + pcRsMbrIfs         -> Port-Channel des Leafs (`po<n>` -> Policy Group, Mitglieder)
 
 Reine Funktion; Ports ohne jede Information (kein Pfad, keine Policy, keine Gegenstelle,
 keine Beschreibung) werden weggelassen.
@@ -38,6 +42,10 @@ _NPROF = re.compile(r"uni/infra/nprof-(?P<p>[^/]+)/")
 _ACCPORTPROF = re.compile(r"uni/infra/accportprof-(?P<ip>[^/\]]+)")
 _HPORTS = re.compile(r"uni/infra/accportprof-(?P<ip>[^/\]]+)/hports-(?P<s>.+)-typ-[^/]+/")
 _PG = re.compile(r"uni/infra/funcprof/(?P<kind>accbundle|accportgrp)-(?P<pg>[^/]+)$")
+_NODE = re.compile(r"topology/pod-\d+/node-(?P<node>\d+)/")
+_PATH_PORT = re.compile(r"/path-\[(?P<port>[^\]]+)\]$")
+_MEMBER = re.compile(r"(?:phys-)?\[?(?P<port>eth[\d/]+)\]?$")
+_EPG_DN = re.compile(r"uni/tn-(?P<t>[^/]+)/ap-(?P<a>[^/]+)/epg-(?P<e>[^/]+)$")
 
 
 def _vid(encap: str | None) -> int | None:
@@ -126,6 +134,55 @@ class _Tenants:
                 )
             for child in kids:
                 self.walk(child, t, a, dn)
+
+
+def _nodes(fabric: dict, cls: str) -> list[tuple[dict, list[dict]]]:
+    """Objekte einer Klasse mit ihren Kindern (rsp-subtree=children)."""
+    return [(_attrs(r[cls]), _children(r[cls])) for r in fabric.get(cls, []) or [] if cls in r]
+
+
+def _port_channels(fabric: dict) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], str]]:
+    """Port-Channels der Leafs (pcAggrIf): (Knoten, po<n>) -> Policy Group bzw. Name, dazu
+    (Knoten, Mitglied) -> Policy Group."""
+    names: dict[tuple[str, str], str] = {}
+    members: dict[tuple[str, str], str] = {}
+    for attrs, kids in _nodes(fabric, "pcAggrIf"):
+        m = _NODE.match(attrs.get("dn", ""))
+        po = attrs.get("id") or ""
+        if not m or not po:
+            continue
+        name = attrs.get("name") or po
+        names[(m["node"], po)] = name
+        for c in kids:
+            if "pcRsMbrIfs" not in c:
+                continue
+            a = _attrs(c["pcRsMbrIfs"])
+            mm = _MEMBER.search(a.get("tSKey") or a.get("tDn") or "")
+            if mm:
+                members[(m["node"], mm["port"])] = name
+    return names, members
+
+
+def _deployed(fabric: dict, pcs: dict[tuple[str, str], str]) -> list[tuple]:
+    """Ausgerollte VLANs (vlanCktEp): (Knoten, Port, Art, VLAN, EPG `Tenant/AP/EPG`)."""
+    out = []
+    for attrs, kids in _nodes(fabric, "vlanCktEp"):
+        m, vid = _NODE.match(attrs.get("dn", "")), _vid(attrs.get("encap"))
+        e = _EPG_DN.match(attrs.get("epgDn") or "")
+        if not m or vid is None or not e:
+            continue
+        label = f"{e['t']}/{e['a']}/{e['e']}"
+        for c in kids:
+            if "l2RsPathDomAtt" not in c:
+                continue
+            p = _PATH_PORT.search(_attrs(c["l2RsPathDomAtt"]).get("tDn") or "")
+            if not p:
+                continue
+            name, kind = p["port"], "physical"
+            if not name.startswith("eth"):
+                name, kind = pcs.get((m["node"], name), name), "lag"
+            out.append((m["node"], name, kind, vid, label))
+    return out
 
 
 def _ap_from(dn: str) -> str | None:
@@ -261,6 +318,21 @@ def parse_inventory(tenant_export: Any, fabric: dict | None) -> NetworkInventory
             if label not in v["epgs"]:
                 v["epgs"].append(label)
 
+    # ausgerollte VLANs (0.69.1): auch EPGs ohne statischen Pfad (AAEP, VMM-Domaene)
+    pc_names, pc_members = _port_channels(fabric)
+    epg_names = {_epg_label(e): e["name"] for e in tenants.epgs}
+    for node, pname, kind, vid, label in _deployed(fabric, pc_names):
+        p = port(node, pname, kind)
+        if label not in p["epgs"]:
+            p["epgs"].append(label)
+        if p["untagged"] != vid:
+            p["tagged"].add(vid)
+        epg_vids[label].add(vid)
+        v = vlans.setdefault(vid, {"name": epg_names.get(label) or label.rsplit("/", 1)[-1],
+                                   "epgs": []})  # fmt: skip
+        if label not in v["epgs"]:
+            v["epgs"].append(label)
+
     pgs, lag_type = _port_policy_groups(fabric)
     for (node, pname), (kind, pg) in pgs.items():
         p = port(node, pname)
@@ -269,6 +341,11 @@ def parse_inventory(tenant_export: Any, fabric: dict | None) -> NetworkInventory
             port(node, pg, "lag")["lag_type"] = lag_type.get(pg)
         else:
             p["policy_group"] = pg
+    for (node, pname), pg in pc_members.items():  # Port-Channel des Leafs (Laufzeit)
+        p = port(node, pname)
+        if not p.get("lag"):
+            p["lag"] = pg
+        port(node, pg, "lag")
     phys = {}
     for r in _rows(fabric, "l1PhysIf"):
         m = _NODE_PORT.match(r.get("dn", ""))

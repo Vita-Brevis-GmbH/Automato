@@ -111,7 +111,10 @@ APIC-Benutzer aus dem Quellsystem, ADR 0009) → `GET /api/class/fvTenant.json` 
 `fabricNode` (Leaf/Spine/Controller mit Modell/Seriennummer), Access Policies
 (`infraRsAccPortP`, `infraNodeBlk`, `infraPortBlk`, `infraRsAccBaseGrp`, `infraAccBndlGrp` →
 Ports zu Policy-Gruppen/PC/vPC), `l1PhysIf` (Port-Status/Beschreibung) und `lldpAdjEp`/`cdpAdjEp`
-(Nachbarn) per `GET /api/class/<klasse>.json`. Aus den EPGs: `fvRsPathAtt` (statische Pfade,
+(Nachbarn) per `GET /api/class/<klasse>.json`; seit 0.69.1 auch `vlanCktEp` mit den Kindern
+`l2RsPathDomAtt` (`rsp-subtree=children`: die auf den Leafs **ausgerollten VLANs** mit EPG
+(`epgDn`) und Ports – auch über AAEP und VMM-Domänen, nicht nur statische Pfade) und `pcAggrIf`
+mit `pcRsMbrIfs` (Port-Channel des Leafs `po<n>` → Policy Group, Mitglieder). Aus den EPGs: `fvRsPathAtt` (statische Pfade,
 `encap` → VLAN, Modus) und `fvCEp.encap`; Endpunkte aus `fvCEp`/`fvIp` (mit `lcC`: static, vmm, gelernt) und statische Endpunkte `fvStCEp`/`fvStIp` (0.46.0, Konfiguration vor Gelerntem); aus BD/EPG: `fvSubnet` + `fvRsCtx` → reale Subnetze mit VRF.
 
 **ACI-Regel-Rekonstruktion:** eine EPG↔EPG-Verbindung ergibt sich aus Provider
@@ -130,6 +133,15 @@ VRF aus `l3extRsEctx`) und **vzAny** einer VRF (`vzRsAnyToProv`/`vzRsAnyToCons`)
 Exportierte Contracts eines anderen Tenants kommen über Contract-Interfaces (`vzCPIf` +
 `vzRsIf.tDn`, verbraucht per `fvRsConsIf`/`vzRsAnyToConsIf`). Nicht-reflexive Subjects
 liefern ihre Filter aus `vzInTerm`/`vzOutTerm` (`vzRsFiltAtt`).
+
+**Richtung der Contracts (seit 0.69.1, ACI ist zustandslos):** je Subject gelesen werden die
+Filter mit „Apply Both Directions“ (`vzRsSubjFiltAtt`), `vzInTerm` (nur Consumer → Provider) und
+`vzOutTerm` (nur Provider → Consumer), dazu `vzSubj.revFltPorts` und an den `vzEntry`
+`sFromPort`/`dFromPort`, `stateful`, `tcpRules`. Die Regel trägt die Dienste Consumer → Provider;
+`raw.reverse` die Dienste, die der Provider zum Consumer **aufbauen** kann: Filter ohne Ports
+(`ip`, `tcp`/`udp` ohne Port, ICMP) gelten in beide Richtungen, mit Zielport (tcp/443) zurück nur
+Antworten (Quellport 443), `stateful` bzw. `tcpRules` ohne SYN ebenso. Vor 0.69.1 eingelesene
+Contracts: Automato leitet die Rückrichtung aus den Filtern ohne Ports ab (Standard des APIC).
 
 **Seit 0.5.0:** **ESGs** (`fvESg`) sind Consumer/Provider wie EPGs; ihre Selektoren stehen als
 Text an der ESG (`EPG <DN>`, `Tag k=v`, `IP <Ausdruck>`), IP-Selektoren zusätzlich als

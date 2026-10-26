@@ -5,7 +5,8 @@ auch verschachtelt) und leitet daraus die Contract-Struktur ab, die `normalize_c
 konsumiert. Umsetzung des Lesevertrags `docs/collectors-read-contract.md` (Abschnitt 2):
 
   vzBrCP (CT_)  + vzSubj (SJ_) + vzRsSubjFiltAtt -> Regel + Services (vzFilter/vzEntry FT_)
-                  (auch vzInTerm/vzOutTerm vzRsFiltAtt bei nicht-reflexiven Subjects)
+                  (auch vzInTerm/vzOutTerm vzRsFiltAtt bei nicht-reflexiven Subjects; je
+                  Richtung, `revFltPorts`, `stateful` -> Dienste der Rueckrichtung, 0.69.1)
   fvAEPg (EG_)  fvRsProv/fvRsCons/fvRsConsIf     -> Provider-/Consumer-EPGs
                 fvRsIntraEpg                     -> Intra-EPG-Contract (EPG ist beides)
                 fvRsSecInherited (Contract Master) -> erbt Provider-/Consumer-Contracts
@@ -294,13 +295,24 @@ def _esg_selectors(kids: list[dict]) -> tuple[list[str], list[str]]:
     return selectors, subnets
 
 
-def _subject_filters(subj_kids: list[dict]) -> list[str]:
-    names = _rel(subj_kids, "vzRsSubjFiltAtt", "tnVzFilterName")
+def _subject_filters(subj_attrs: dict, subj_kids: list[dict]) -> dict:
+    """Filter eines Subjects je Richtung (ACI ist zustandslos, 0.69.1): `both`
+    (vzRsSubjFiltAtt, „Apply Both Directions“: Consumer -> Provider wie angegeben, zurueck mit
+    vertauschten Ports, solange `revFltPorts` nicht `no` ist), `in` (vzInTerm: nur Consumer ->
+    Provider) und `out` (vzOutTerm: nur Provider -> Consumer); `filters` = alle (Verweise)."""
+    both = _rel(subj_kids, "vzRsSubjFiltAtt", "tnVzFilterName")
+    terms: dict[str, list[str]] = {"in": [], "out": []}
     for c in subj_kids:  # nicht-reflexive Subjects: Filter je Richtung
-        for term in ("vzInTerm", "vzOutTerm"):
+        for term, key in (("vzInTerm", "in"), ("vzOutTerm", "out")):
             if term in c:
-                names += _rel(_children(c[term]), "vzRsFiltAtt", "tnVzFilterName")
-    return list(dict.fromkeys(names))
+                terms[key] += _rel(_children(c[term]), "vzRsFiltAtt", "tnVzFilterName")
+    return {
+        "filters": list(dict.fromkeys(both + terms["in"] + terms["out"])),
+        "both": both,
+        "in": terms["in"],
+        "out": terms["out"],
+        "rev_ports": str(subj_attrs.get("revFltPorts") or "yes").lower() != "no",
+    }
 
 
 def _walk(
@@ -389,7 +401,7 @@ def _walk(
             subjects = [
                 {
                     "name": _attrs(c["vzSubj"]).get("name", ""),
-                    "filters": _subject_filters(_children(c["vzSubj"])),
+                    **_subject_filters(_attrs(c["vzSubj"]), _children(c["vzSubj"])),
                 }
                 for c in kids
                 if "vzSubj" in c
@@ -528,8 +540,9 @@ def _unique_eps(eps: list[dict]) -> list[dict]:
 
 
 def _subjects(bag: _Bag, c: dict) -> list[dict]:
-    return [
-        {
+    out = []
+    for s in c["subjects"]:
+        entry = {
             "name": s["name"],
             "services": [
                 svc for fn in s["filters"] for svc in (_lookup(bag.filters, c["tenant"], fn) or [])
@@ -539,8 +552,56 @@ def _subjects(bag: _Bag, c: dict) -> list[dict]:
                 ref for fn in s["filters"] if (ref := _filter_ref(bag, c["tenant"], fn))
             ],
         }
-        for s in c["subjects"]
-    ]
+        if "both" in s:  # Contract-Subject (Taboos sperren nur zum geschuetzten EPG)
+            entry["services"], entry["reverse"] = _directions(bag, c["tenant"], s)
+        out.append(entry)
+    return out
+
+
+def _directions(bag: _Bag, tenant: str, s: dict) -> tuple[list[str], list[str]]:
+    """Dienste eines Subjects je Richtung (0.69.1, ACI ist zustandslos): Consumer -> Provider
+    (`both` und `in`) und die, die der Provider zum Consumer **aufbauen** kann (`reverse`):
+    `both` zurueck mit vertauschten Ports (`revFltPorts`, Standard) bzw. unveraendert, dazu
+    `out`. Ein Filter mit Zielport (tcp/443) laesst zurueck nur Antworten mit Quellport 443
+    zu - keine neuen Verbindungen; ohne Ports (ip, tcp/any, ICMP) ist der Rueckweg offen."""
+
+    def entries(names: list[str]) -> list[dict]:
+        return [e for fn in names for e in (_lookup(bag.filter_info, tenant, fn) or {})
+                .get("entries", [])]  # fmt: skip
+
+    forward = [_entry_service(e) for e in entries(s["both"] + s["in"]) if _opens(e)]
+    back = [_swap(e) if s["rev_ports"] else e for e in entries(s["both"])] + entries(s["out"])
+    reverse = [_entry_service(e) for e in back if _opens(e) and not _acked(e)]
+    return list(dict.fromkeys(forward)), list(dict.fromkeys(reverse))
+
+
+def _swap(e: dict) -> dict:
+    """Filtereintrag mit vertauschten Quell- und Zielports (Rueckweg, „Reverse Filter Ports“)."""
+    out = {k: v for k, v in e.items() if k not in ("sFromPort", "sToPort", "dFromPort", "dToPort")}
+    for a, b in (("sFromPort", "dFromPort"), ("sToPort", "dToPort")):
+        if e.get(a) is not None:
+            out[b] = e[a]
+        if e.get(b) is not None:
+            out[a] = e[b]
+    return out
+
+
+def _opens(e: dict) -> bool:
+    """Baut der Eintrag Verbindungen auf? Nicht mit festem Quellport ohne Zielport (Antwort
+    eines Dienstes, z. B. Quellport 443) und nicht mit TCP-Flags ohne SYN (`est`)."""
+    flags = str(e.get("tcpRules") or "").lower()
+    if flags and flags != "unspecified" and "syn" not in flags:
+        return False
+    src = _port(e.get("sFromPort"))
+    if src is None or _port(e.get("dFromPort")) is not None:
+        return True
+    return src.isdigit() and int(src) >= 1024  # Quellports eines Clients
+
+
+def _acked(e: dict) -> bool:
+    """`stateful` an einem TCP-Eintrag: zurueck nur mit ACK - der Provider baut nichts auf."""
+    prot = str(e.get("prot") or "").lower()
+    return prot == "tcp" and str(e.get("stateful") or "").lower() == "yes"
 
 
 def _filter_ref(bag: _Bag, tenant: str, name: str) -> str | None:

@@ -2,7 +2,9 @@
 
 ACI kennt keine klassischen Firewall-Regeln: Contracts (CT_) + Subjects (SJ_) + Filter
 (FT_) zwischen EPGs. Abbildung:
-  Contract-Subject  -> eine Regel (action=allow)
+  Contract-Subject  -> eine Regel (action=allow); Dienste Consumer -> Provider, in `raw`
+                       `reverse` = Dienste, die der Provider zum Consumer aufbauen kann
+                       (ACI ist zustandslos, 0.69.1 - `mo._directions`)
   Taboo-Subject     -> eine Regel (action=deny, Quelle any, Ziel = geschuetzte EPGs)
   Preferred Group   -> eine Regel je VRF (Mitglieder untereinander, ip/any)
   Consumer-/Provider  -> sources/destinations als `epg:<DN>` (typisiert; EPG, externe EPG
@@ -51,6 +53,9 @@ def normalize_contract(contract: dict[str, Any]) -> list[NormalizedRule]:
         name = contract["name"]
         if kind != "preferred_group":
             name = f"{name}:{subject['name']}"
+        raw = contract
+        if "reverse" in subject:  # ACI ist zustandslos (0.69.1): Dienste Provider -> Consumer
+            raw = {**contract, "subject": subject["name"], "reverse": list(subject["reverse"])}
         rules.append(
             NormalizedRule(
                 source_platform="cisco_aci",
@@ -64,7 +69,7 @@ def normalize_contract(contract: dict[str, Any]) -> list[NormalizedRule]:
                 src_zone=src_zone,
                 dst_zone=dst_zone,
                 aci_scope=contract.get("scope"),
-                raw=contract,
+                raw=raw,
             )
         )
     return rules

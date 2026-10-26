@@ -7,6 +7,33 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.69.1 – 2026-10-26
+
+Korrekturen nach dem Test des Anwenders. Ohne Migration; der Agent holt die neue Version mit dem
+Selbst-Update, danach die ACI-Quellsysteme einmal neu einlesen.
+
+- **ACI ist zustandslos:** ein Contract mit Filter ohne Ports (`any`, `ip`, `tcp`/`udp` ohne
+  Port, ICMP) erlaubt den Verkehr in **beide Richtungen** – auch der Provider kann Verbindungen
+  zum Consumer aufbauen. Mit Zielport (`tcp/443`) lässt der Rückweg nur Antworten zu (fast
+  zustandsbehaftet), ebenso `stateful` an TCP-Filtern. Der Collector liest die Richtung je
+  Subject (`vzInTerm`/`vzOutTerm`, „Reverse Filter Ports“); Filter nur für Provider → Consumer
+  zählen nicht mehr als Dienste Consumer → Provider (bisher zusammengelegt). Ältere Läufe: aus
+  den Filtern ohne Ports abgeleitet (`store/aci_direction.py`).
+  - **Weg-Suche:** prüft den Contract auch in der Rückrichtung (Quelle = Provider), Hinweis
+    „↩ Rückrichtung“ und Text „… in der Rückrichtung (ACI ist zustandslos …)“.
+  - **Regel-Detail:** „Richtung“ – „↔ beide Richtungen“ mit den Diensten bzw. „→ Consumer →
+    Provider“.
+  - **Applikations-Doku:** Contract mit Rückrichtung zusätzlich in der Gegenrichtung (z. B.
+    externe EPG Internet als Consumer → auch „Internet Zugriff“ der Applikation), innerhalb des
+    Fabrics „(↔ beide Richtungen)“ an der Zeile; Verbindungen Ende zu Ende und Abhängigkeiten
+    auch in der Gegenrichtung; Kategorie 2 der ACI-Zeilen mit der Spalte „Source“.
+  - **Zonenmatrix:** der Contract öffnet auch Provider-Zone → Consumer-Zone; Absicht und Befund
+    `zone_policy_violation` prüfen die Rückrichtung mit ihren Diensten.
+- **VLANs aus dem ACI:** der Reiter Verkabelung → VLANs zeigt auch die VLANs des APIC (Name,
+  EPGs, je Leaf Ports und Port-Channel/vPC; Kennzeichen ACI/Switch). Der Collector liest dazu
+  die auf den Leafs ausgerollten VLANs (`vlanCktEp` mit Ports) – auch EPGs ohne statischen Pfad
+  (AAEP, VMM-Domäne) – und die Port-Channels der Leafs (`pcAggrIf`).
+
 ## 0.69.0 – 2026-10-26
 
 Applikations-Doku: Firewall-Regeln je Kategorie ausblenden, mit Begründung und Audit (Wunsch

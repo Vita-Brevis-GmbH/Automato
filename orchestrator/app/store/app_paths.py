@@ -61,6 +61,9 @@ class _Conn:
     direction: str
     rules: dict[int, None] = field(default_factory=dict)  # Regeln der Doku, aus denen sie kommt
     starts: list[str] = field(default_factory=list)  # Geraet der Regel (Quelle unbekannt)
+    # ACI ist zustandslos (0.69.1): nur aus der Rueckrichtung eines Contracts (Provider ->
+    # Consumer mit Filtern ohne Ports)
+    reverse: bool = False
 
 
 def build(session: Session, app: Application, doc: dict | None = None,
@@ -148,7 +151,7 @@ def _candidates(
         if not counters[key]:
             skipped.add(rule.name or f"#{rule.external_id}")
             continue
-        services = _services(rule)
+        services = _named(h["services"]) if h.get("reverse") else _services(rule)
         for cp in counters[key]:
             ip = next((i for i in own_ips if _family(i) == _family(cp.ip)), None)
             if ip is None:
@@ -159,7 +162,8 @@ def _candidates(
                 ckey = _group_key(rule, h, cp, svc)
                 conn = conns.get(ckey)
                 if conn is None:
-                    conn = conns[ckey] = _Conn(_copy(src), _copy(dst), svc, h["direction"])
+                    conn = conns[ckey] = _Conn(_copy(src), _copy(dst), svc, h["direction"],
+                                               reverse=bool(h.get("reverse")))  # fmt: skip
                 else:
                     _add_system(conn.dst if h["direction"] == "in" else conn.src, system)
                 conn.rules.setdefault(rule.id)
@@ -195,6 +199,7 @@ def _candidates(
 
 
 def _merge(m: _Conn, c: _Conn) -> None:
+    m.reverse = m.reverse and c.reverse
     m.rules.update(c.rules)
     m.starts += [s for s in c.starts if s not in m.starts]
     for a, b in ((m.src, c.src), (m.dst, c.dst)):
@@ -412,6 +417,24 @@ def _services(rule: Rule) -> list[tuple[str, int | None] | None]:
     return out[:MAX_SERVICES]
 
 
+def _named(text: str) -> list[tuple[str, int | None] | None]:
+    """Dienste der Rueckrichtung (`ip/any`, `tcp/any`, `icmp/any` … aus dem Treffer, 0.69.1)."""
+    out: list = []
+    for name in (text or "").replace("(Rückrichtung)", "").split(","):
+        proto, _, port = name.strip().lower().partition("/")
+        if proto in ("tcp", "udp"):
+            svc = (proto, int(port)) if port.isdigit() else (proto, None)
+        elif proto.startswith("icmp"):
+            svc = ("icmp", None)
+        else:
+            svc = None
+        if svc not in out:
+            out.append(svc)
+    if not out or None in out:
+        return [None]
+    return out[:MAX_SERVICES]
+
+
 def _start(data: appdoc.TenantData, rule: Rule, h: dict, by_label: dict[str, Epg]) -> str | None:
     """Startpunkt, falls die Quelle an keinem gelesenen Geraet haengt: das Geraet der Regel
     (FortiGate: VDOM; ACI: VRF der EPG des Systems)."""
@@ -461,6 +484,7 @@ def _connection(
     return {
         "key": f"{c.src.ip}>{c.dst.ip}>{_service_text(c.service) or 'alle'}",
         "direction": c.direction,
+        "reverse": c.reverse,
         "src": _side_out(c.src, graph),
         "dst": _side_out(c.dst, graph),
         "service": _service_text(c.service),

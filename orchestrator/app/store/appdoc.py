@@ -34,7 +34,16 @@ from app.models import (
     Tenant,
 )
 from app.models.rule import EndpointKind
-from app.store import aci_relevance, aci_shared, references, rule_index, rule_view, sites, virtual
+from app.store import (
+    aci_direction,
+    aci_relevance,
+    aci_shared,
+    references,
+    rule_index,
+    rule_view,
+    sites,
+    virtual,
+)
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import relevance as relevance_store
@@ -78,6 +87,9 @@ REL, REL_TEXT = "_rel", "_rel_text"
 EPG = "_epg"
 # ACI: DNs der Beteiligten eines Treffers - eigener Endpunkt bzw. Gegenstellen im Scope (0.43.2)
 PARTIES = "_parties"
+# ACI ist zustandslos (0.69.1): Zeile der Rueckrichtung (Provider -> Consumer) mit den Diensten,
+# die der Provider aufbauen kann (`aci_direction`); die Seite (`SIDE`) bleibt die des Contracts
+REVERSE = "_reverse"
 UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
 _COMMON = [
     "Server Name",
@@ -550,47 +562,58 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
             )
             same_tenant = all(c.aci_tenant == epg.aci_tenant for c in cp_epgs)
             external = [c for c in cp_epgs if c.kind == "external"]
-            if external and len(external) == len(cp_epgs):
-                idx = categorize(
-                    direction="in" if side == "dst" else "out",
-                    counterpart_zone=external[0].l3out,
-                    counterpart_external=False,
-                    is_dnat_target=False,
-                )
-            else:
-                idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
+            only_external = bool(external) and len(external) == len(cp_epgs)
             how = sides[side]
             text = how if via is None else (via if how == "direkt" else f"{how} · {via}")
             obj = f"EPG {epg_store.inventory_label(epg)}" if how == "direkt" else how
-            out.append(
-                (
-                    idx,
-                    {
-                        "Server Name": system_name,
-                        "TCP/UDP": ", ".join(rule_view.service_labels(r)),
-                        "Target Systems": ", ".join(n for n in cp_names if n),
-                        ACTION: action_label(r),
-                        "Schutzmechanismen": ", ".join(r.protections) if r.protections else "",
-                        DEVICE: data.device(r),
-                        "Description": r.name or f"#{r.external_id}",
-                        VIA: text,
-                        RULE: r.id,
-                        DIRECTION: "in" if side == "dst" else "out",
-                        SCOPE: _aci_scope(r, how),
-                        SIDE: side,
-                        OBJECT: obj,
-                        OBJECT_VALUE: "",
-                        EPG: epg_store.inventory_label(epg) if epg.kind == "epg" else None,
-                        # Beteiligte (0.43.2): eigene Endpunkte und Gegenstellen im Scope (DN) -
-                        # die Applikations-Doku zeigt nur sie, nicht alle des Contracts
-                        PARTIES: {
-                            "own": own.get(side, []),
-                            "counter": [c.dn for c in cp_epgs if c.dn],
+            targets = ", ".join(n for n in cp_names if n)
+            forward = "in" if side == "dst" else "out"
+            # ACI ist zustandslos (0.69.1): Filter ohne Ports oeffnen auch den Weg vom Provider
+            # zum Consumer - eine eigene Zeile in der Gegenrichtung (z. B. aus dem Internet)
+            back = aci_direction.reverse(r)
+            for direction in (forward, "out" if forward == "in" else "in")[: 2 if back else 1]:
+                reverse = direction != forward
+                if only_external:
+                    idx = categorize(
+                        direction=direction,
+                        counterpart_zone=external[0].l3out,
+                        counterpart_external=False,
+                        is_dnat_target=False,
+                    )
+                else:
+                    idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
+                services = ", ".join(back if reverse else rule_view.service_labels(r))
+                out.append(
+                    (
+                        idx,
+                        {
+                            "Server Name": system_name,
+                            "TCP/UDP": services + (" (Rückrichtung)" if reverse else ""),
+                            "Target Systems": targets,
+                            **({"Source": targets} if idx == 2 else {}),
+                            ACTION: action_label(r),
+                            "Schutzmechanismen": ", ".join(r.protections) if r.protections else "",
+                            DEVICE: data.device(r),
+                            "Description": r.name or f"#{r.external_id}",
+                            VIA: f"{text} · Rückrichtung" if reverse else text,
+                            RULE: r.id,
+                            DIRECTION: direction,
+                            SCOPE: _aci_scope(r, how),
+                            SIDE: side,
+                            OBJECT: obj,
+                            OBJECT_VALUE: "",
+                            EPG: epg_store.inventory_label(epg) if epg.kind == "epg" else None,
+                            # Beteiligte (0.43.2): eigene Endpunkte und Gegenstellen im Scope (DN)
+                            # - die Applikations-Doku zeigt nur sie, nicht alle des Contracts
+                            PARTIES: {
+                                "own": own.get(side, []),
+                                "counter": [c.dn for c in cp_epgs if c.dn],
+                            },
+                            **({REVERSE: back} if reverse else {}),
+                            **({REL: rel, REL_TEXT: rel_text} if rel else {}),
                         },
-                        **({REL: rel, REL_TEXT: rel_text} if rel else {}),
-                    },
+                    )
                 )
-            )
     return out
 
 

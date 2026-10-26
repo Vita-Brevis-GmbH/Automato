@@ -217,3 +217,34 @@ def test_verkabelung_verbindungen_und_befunde(client, session_factory):
         in (200, 204)  # fmt: skip
     dev = client.get("/cabling/devices", params={"tenant_id": tid}).json()
     assert dev["summary"]["switches"] == 0
+
+
+def test_vlans_auch_aus_dem_aci(client):
+    """0.69.1 (Anwender: „Die VLANs werden auf dem ACI nicht ausgelesen, die Liste ist leer“):
+    der Reiter VLANs zeigt auch die VLANs des APIC mit ihren EPGs, je Leaf Ports und vPCs."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    apic = {"tenant_id": tid, "name": "apic", "platform": "cisco_aci", "base_url": "https://apic"}
+    aci = client.post("/systems", json=apic, headers=ADMIN).json()
+    result = {"status": "completed", "inventory": {
+        "devices": [{"name": "leaf-101", "role": "leaf", "node_id": "101"}],
+        "interfaces": [
+            {"device": "leaf-101", "name": "eth1/5", "kind": "physical", "mode": "tagged",
+             "tagged_vlans": [300], "epgs": ["TE/AP1/EPG_vm"]},
+            {"device": "leaf-101", "name": "PG_esx", "kind": "lag", "mode": "tagged",
+             "tagged_vlans": [300, 310]},
+            {"device": "leaf-101", "name": "eth1/20", "kind": "physical", "mode": "access",
+             "untagged_vlan": 310},
+        ],
+        "vlans": [{"vid": 300, "name": "EPG_vm", "epgs": ["TE/AP1/EPG_vm"]},
+                  {"vid": 310, "name": "EPG_db", "epgs": ["TE/AP1/EPG_db"]}],
+    }}  # fmt: skip
+    req = {"platform": "cisco_aci", "tenant_id": tid, "source_system_id": aci["id"]}
+    run_id = client.post("/jobs/collect", json=req).json()["run_id"]
+    r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
+    assert r.status_code == 200, r.text
+    vlans = {v["vid"]: v for v in client.get("/cabling/vlans", params={"tenant_id": tid}).json()}
+    assert set(vlans) == {300, 310}
+    vm = vlans[300]
+    assert (vm["names"], vm["epgs"], vm["sources"]) == (["EPG_vm"], ["TE/AP1/EPG_vm"], ["aci"])
+    assert vm["devices"] == [{"device": "leaf-101", "access": 0, "trunks": 2}]  # Port + vPC
+    assert vlans[310]["devices"] == [{"device": "leaf-101", "access": 1, "trunks": 1}]

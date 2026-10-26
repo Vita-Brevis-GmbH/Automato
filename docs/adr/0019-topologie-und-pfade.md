@@ -298,6 +298,16 @@ Rahmen laut Anwender (2026-10-22):
      - Applikations-Doku: Contracts zwischen EPGs verschiedener VRFs brauchen den Leak beider
        Seiten (Hin- und Rückweg); ohne Leak „nicht möglich“, ohne Scope-Daten „unbekannt“.
      - vzAny vergleicht die aufgelöste VRF (statt Name und Tenant bzw. common).
+   - **ACI ist zustandslos (0.69.1, Anwender, `store/aci_direction.py`):** ein Contract gilt
+     Consumer → Provider nach seinen Filtern; zurück (Provider → Consumer) nur, was der Provider
+     **aufbauen** kann – Filter ohne Ports (`ip`, `tcp`/`udp` ohne Port, ICMP) in beide
+     Richtungen, mit Zielport nur Antworten (Quellport = Dienst), `stateful` bzw. `tcpRules`
+     ohne SYN ebenso. Je Subject vom Collector berechnet (`raw.reverse`, aus „Apply Both
+     Directions“/`vzInTerm`/`vzOutTerm`, `revFltPorts`, Quell-/Zielports der Einträge); ältere
+     Läufe: Filter ohne Ports. Gilt in der Weg-Suche (`aci_check._match`, Hinweis
+     „Rückrichtung“), im Regel-Detail, in der Applikations-Doku (Zeile in der Gegenrichtung,
+     Verbindungen, Abhängigkeiten) und in der Zonenmatrix (Paar Provider-Zone → Consumer-Zone mit
+     den Diensten der Rückrichtung). Taboos sperren nur zum geschützten EPG.
      - Noch nicht: Shared L3Out (`shared-rtctrl`/`shared-security` externer EPGs in anderen
        VRFs), vzAny als Consumer eines Shared Service in der Doku.
    - **Weg-Suche als eigene Ansicht (0.35.0):** Quelle und Ziel auch als Name bzw. FQDN

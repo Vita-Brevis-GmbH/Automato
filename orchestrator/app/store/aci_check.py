@@ -13,6 +13,9 @@ den Verkehr von der Quelle zum Ziel zu? Wie im APIC:
    ESG; Preferred Group (Mitglieder untereinander) gleich. Scope `application-profile`
    verlangt dasselbe AP. Ein passender Filter (Dienst) erlaubt; ohne Dienst nur `ip/any`
    sicher, sonst „moeglich“.
+   **Rueckrichtung** (0.69.1, ACI ist zustandslos - `aci_direction`): Quelle ist Provider,
+   Ziel Consumer - erlaubt nur mit den Diensten, die der Provider aufbauen kann (Filter ohne
+   Ports wie `ip/any`, `tcp/any`; mit Zielport zurueck nur Antworten).
 5. **Kein Contract:** gesperrt (Whitelist-Modell des ACI).
 
 Ein Netz (0.39.0) gehoert zu einer EPG, wenn ihr Subnetz es ganz enthaelt; erfassen EPGs bzw.
@@ -49,7 +52,7 @@ from app.models import (
     ServiceObject,
 )
 from app.models.rule import EndpointKind, rule_service
-from app.store import aci_relevance, epg_locate
+from app.store import aci_direction, aci_relevance, epg_locate
 from app.store import epgs as epg_store
 from app.store.rule_view import bare_service
 from app.store.topology import is_net, overlaps, within
@@ -71,6 +74,9 @@ class _Contract:
     any_consumer: bool = False
     services: list[str] = field(default_factory=list)
     names: list[str] = field(default_factory=list)  # Filter mit Namen (FT_https)
+    # Dienste, die der Provider zum Consumer aufbauen kann (ACI zustandslos, 0.69.1)
+    reverse: list[str] = field(default_factory=list)
+    raw: dict = field(default_factory=dict, repr=False)
 
 
 @dataclass
@@ -142,6 +148,7 @@ class AciChecker:
                 r.action is RuleAction.ALLOW,
                 str(raw.get("kind") or "contract"),
                 r.aci_scope,
+                raw=raw,
             )
         if out:
             for rid, role, kind, epg_id in self.session.execute(
@@ -171,6 +178,9 @@ class AciChecker:
             ):
                 if (bare := bare_service(name)) not in out[rid].names:
                     out[rid].names.append(bare)
+            for c in out.values():
+                if c.allow and c.kind == "contract":
+                    c.reverse = aci_direction.reverse_of(c.raw, c.services)
         # Taboos zuerst (sperren vor allen anderen), dann nach Name
         self._contracts[sid] = sorted(out.values(), key=lambda c: (c.allow, c.name.lower()))
         return self._contracts[sid]
@@ -331,16 +341,15 @@ class AciChecker:
         shown: list[dict] = []
         decisive = None
         for c in self.contracts(sid):
-            consumer = ps.keys() & c.consumers
-            provider = pd.keys() & c.providers
-            if not provider or not (consumer or (c.any_consumer and not c.allow)):
+            hit = self._match(c, ps, pd, s, d, service)
+            if hit is None:
                 continue
-            if not self.cls.scope_allows(c.scope, s.epg, d.epg):
-                continue  # Scope (AP, VRF, Tenant) - auch bei Contracts aus common (0.43.1)
-            ok = service_ok(c.services, service)
-            if ok is False:
-                continue
-            via_src = "any" if not consumer else ps[min(consumer)]
+            ok, back, consumer, provider = hit
+            if back:  # Rueckrichtung: die Quelle ist Provider, das Ziel Consumer
+                via_src, via_dst = ps[min(provider)], pd[min(consumer)]
+            else:
+                via_src = "any" if not consumer else ps[min(consumer)]
+                via_dst = pd[min(provider)]
             entry = {
                 "rule_id": c.id,
                 "external_id": c.external_id,
@@ -349,13 +358,14 @@ class AciChecker:
                 "kind": c.kind,
                 "action": "allow" if c.allow else "deny",
                 "src": via_src,
-                "dst": pd[min(provider)],
+                "dst": via_dst,
                 "srcintf": [],
                 "dstintf": [],
-                "services": (c.names or c.services)[:4],
+                "services": (c.reverse if back else (c.names or c.services))[:4],
                 "unsure": [] if ok else ["Dienst"],
                 "decides": bool(ok),
                 "snat": None,
+                "reverse": back,
             }
             if not ok:
                 if len(shown) < SHOWN:
@@ -365,6 +375,30 @@ class AciChecker:
             decisive = entry  # Taboos stehen vorn: sie sperren vor allen Contracts
             break
         return _verdict(decisive, shown, s, d)
+
+    def _match(self, c: _Contract, ps: dict, pd: dict, s: Member, d: Member, service):
+        """(Urteil Dienst, Rueckrichtung, Consumer, Provider) bzw. None: Consumer -> Provider
+        nach den Filtern, sonst zurueck (ACI zustandslos) mit den Diensten, die der Provider
+        aufbauen kann - die sichere Richtung gewinnt."""
+        best = None
+        for back in (False, True):
+            if back and not c.reverse:
+                break
+            consumer = (pd if back else ps).keys() & c.consumers
+            provider = (ps if back else pd).keys() & c.providers
+            if not provider or not (consumer or (c.any_consumer and not c.allow and not back)):
+                continue
+            a, b = (d, s) if back else (s, d)
+            if not self.cls.scope_allows(c.scope, a.epg, b.epg):
+                continue  # Scope (AP, VRF, Tenant) - auch bei Contracts aus common (0.43.1)
+            ok = service_ok(c.reverse if back else c.services, service)
+            if ok is False:
+                continue
+            if best is None or (ok and not best[0]):
+                best = (ok, back, consumer, provider)
+            if ok:
+                break
+        return best
 
 
 def _label(c: _Contract) -> str:
@@ -384,6 +418,8 @@ def _verdict(decisive: dict | None, shown: list[dict], s: Member, d: Member) -> 
             return {"verdict": "depends", "rules": shown, "text": text}
         verb = "erlaubt" if decisive["action"] == "allow" else "gesperrt"
         text = f"{verb} durch {decisive['label']}"
+        if decisive.get("reverse"):
+            text += f" in der Rückrichtung ({aci_direction.TEXT})"
         return {"verdict": decisive["action"], "rules": shown, "text": text}
     if before:
         text = "nur mögliche Contracts (Dienst nicht angegeben), sonst gesperrt"

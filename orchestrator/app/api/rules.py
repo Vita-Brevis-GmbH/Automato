@@ -43,7 +43,7 @@ from app.schemas.rules import (
     RuleOut,
     RuleSummaryOut,
 )
-from app.store import aci_relevance, relevance, rule_index, virtual
+from app.store import aci_direction, aci_relevance, relevance, rule_index, virtual
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import objects as objects_store
@@ -260,6 +260,7 @@ def get_rule(
         pair_decisions=_decisions_of(session, r),
         twins=_twins_of(session, r),
         aci_scope={k: v for k, v in scope.items() if k != "partners"} if scope else None,
+        aci_direction=aci_direction.info(r),
     )
 
 

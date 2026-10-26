@@ -403,6 +403,24 @@ export default function RuleDetailDrawer({
                     </div>
                   )}
                 </dd>
+                {detail.aci_direction && (
+                  <>
+                    <dt>Richtung</dt>
+                    <dd id="rule-aci-direction">
+                      {detail.aci_direction.both ? (
+                        <span className="chip warn">↔ beide Richtungen</span>
+                      ) : (
+                        <span className="chip">→ Consumer → Provider</span>
+                      )}
+                      <div className="faint">
+                        {detail.aci_direction.text}
+                        {detail.aci_direction.derived && detail.aci_direction.both
+                          ? " – aus den Filtern abgeleitet (Standard des APIC; neu einlesen für die Richtung je Subject)"
+                          : ""}
+                      </div>
+                    </dd>
+                  </>
+                )}
                 <dt>DN</dt>
                 <dd className="mono">{aci.dn ?? detail.external_id}</dd>
               </>

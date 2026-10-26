@@ -39,7 +39,7 @@ from app.models import (
     SourceSystem,
     ZonePolicy,
 )
-from app.store import customers, topo_model, zone_services
+from app.store import aci_direction, customers, topo_model, zone_services
 from app.store import epgs as epg_store
 from app.store.customers import Net, Selector
 from app.store.rules import not_twin
@@ -246,16 +246,27 @@ class Assignment:
     # Absicht je Dienst (0.57.0): erlaubte Dienste der eingeschraenkten Paare, Dienste der Regeln
     services: dict[tuple[int, int], "zone_services.Allowed"] = field(default_factory=dict)
     rule_services: "zone_services.RuleServices | None" = None
+    # ACI ist zustandslos (0.69.1): Contracts, deren Filter ohne Ports auch Provider -> Consumer
+    # oeffnen, mit diesen Diensten (`aci_direction`)
+    back: dict[int, list[str]] = field(default_factory=dict)
+
+    def forward(self, rid: int) -> list[tuple[Cell, Cell]]:
+        return [(s, d) for s in self.src.get(rid, ()) for d in self.dst.get(rid, ())]
 
     def pairs(self, rid: int) -> list[tuple[Cell, Cell]]:
-        return [(s, d) for s in self.src.get(rid, ()) for d in self.dst.get(rid, ())]
+        out = self.forward(rid)
+        if rid in self.back:  # Rueckrichtung: Zone des Providers -> Zone des Consumers
+            out += [(d, s) for s, d in out if (d, s) not in out]
+        return out
 
     def outside(self, rid: int, pair: tuple) -> list[str] | None:
         """Dienste der Regel ausserhalb der Absicht „eingeschraenkt“ des Paars (None = keine
-        Dienste vorgegeben bzw. nicht beurteilbar)."""
+        Dienste vorgegeben bzw. nicht beurteilbar); nur zurueck offen: deren Dienste."""
         allow = self.services.get(pair)
         if allow is None or self.rule_services is None:
             return None
+        if rid in self.back and pair not in self.forward(rid):
+            return zone_services.outside_of(self.back[rid], allow)
         return self.rule_services.outside(rid, allow)
 
     def denied(self, rid: int) -> list[tuple[int, int]]:
@@ -307,6 +318,8 @@ def assign(session: Session, tenant_id: int, items: list[LogicalZone] | None = N
             continue
         zones = {ANY} if is_any else a.index.zones_of(fam, int(lo, 16), int(hi, 16))
         (a.src if role == "src" else a.dst)[rid].update(zones)
+    a.back = {rid: back for rid, back in aci_direction.reverse_map(session, tenant_id).items()
+              if rid in a.rules}  # fmt: skip
     # Absicht je Dienst: nur die Regeln laden, die ein eingeschraenktes Paar mit Diensten oeffnen
     a.services = {
         k: zone_services.allowed(session, tenant_id, p.services)
@@ -434,7 +447,7 @@ def cell_rules(session: Session, tenant_id: int, src: Cell, dst: Cell, limit: in
         ids = [rid for rid in a.rules if (src, dst) in view.pairs(a.pairs(rid))]
         bad = {rid for rid in ids if (src, dst) in view.pairs(a.denied(rid))}
     else:
-        ids = [rid for rid in a.rules if src in a.src.get(rid, ()) and dst in a.dst.get(rid, ())]
+        ids = [rid for rid in a.rules if (src, dst) in a.pairs(rid)]
         bad = {rid for rid in ids if (src, dst) in set(a.denied(rid))}
     pair = (src, dst) if isinstance(src, int) and isinstance(dst, int) else None
     names = dict(

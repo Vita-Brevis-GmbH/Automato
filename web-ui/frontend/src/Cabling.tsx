@@ -629,7 +629,7 @@ function VlansTab({ tenantId }: { tenantId: number }) {
   }, [tenantId]);
   if (err) return <ErrorBox error={err} onClose={() => setErr(null)} />;
   if (items === null) return <Loading />;
-  if (items.length === 0) return <Empty title="keine VLANs auf den Switches" />;
+  if (items.length === 0) return <Empty title="keine VLANs auf den Switches bzw. im ACI" />;
   return (
     <div className="card" id="cabling-vlans">
       <div className="card-body scroll">
@@ -638,14 +638,23 @@ function VlansTab({ tenantId }: { tenantId: number }) {
             <tr>
               <th>VLAN</th>
               <th>Name</th>
-              <th>Switches (Access-Ports · Trunks)</th>
+              <th>EPGs (ACI)</th>
+              <th>Geräte (Access-Ports · Trunks)</th>
             </tr>
           </thead>
           <tbody>
             {items.map((v) => (
               <tr key={v.vid} data-vlan={v.vid}>
-                <td className="mono">{v.vid}</td>
+                <td className="mono">
+                  {v.vid}
+                  {(v.sources ?? []).map((s) => (
+                    <span key={s} className="chip" style={{ marginLeft: 4 }} title={s === "aci" ? "aus dem APIC" : "von den Switches"}>
+                      {s === "aci" ? "ACI" : "Switch"}
+                    </span>
+                  ))}
+                </td>
                 <td>{v.names.join(" / ") || <Dash />}</td>
+                <td className="mono">{v.epgs?.length ? v.epgs.join(", ") : <Dash />}</td>
                 <td>
                   {v.devices.length === 0 ? (
                     <span className="faint">an keinem Port</span>

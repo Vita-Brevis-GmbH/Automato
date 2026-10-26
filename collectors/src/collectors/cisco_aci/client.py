@@ -27,7 +27,13 @@ FABRIC_CLASSES = (
     "l1PhysIf",
     "lldpAdjEp",
     "cdpAdjEp",
+    # seit 0.69.1: VLANs, wie sie auf den Leafs ausgerollt sind (auch ueber AAEP und VMM), mit
+    # den Ports (l2RsPathDomAtt), und Port-Channels der Leafs (po<n> -> Policy Group, Mitglieder)
+    "vlanCktEp",
+    "pcAggrIf",
 )
+# Kinder einer Klasse mitlesen (rsp-subtree=children)
+FABRIC_CHILDREN = {"vlanCktEp": "l2RsPathDomAtt", "pcAggrIf": "pcRsMbrIfs"}
 
 
 def parse_scope(read_scope: str) -> list[str]:
@@ -118,8 +124,10 @@ class ApicClient:
         """Fabric-Klassen je Name; fehlende Leserechte auf einzelne Klassen -> leer."""
         out: dict[str, list[dict[str, Any]]] = {}
         for cls in FABRIC_CLASSES:
+            kids = FABRIC_CHILDREN.get(cls)
+            params = {"rsp-subtree": "children", "rsp-subtree-class": kids} if kids else None
             try:
-                out[cls] = self._get(f"/api/class/{cls}.json")
+                out[cls] = self._get(f"/api/class/{cls}.json", params)
             except httpx.HTTPStatusError:
                 out[cls] = []
         return out

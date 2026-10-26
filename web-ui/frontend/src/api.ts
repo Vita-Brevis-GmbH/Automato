@@ -332,6 +332,8 @@ export interface RuleDetail extends Rule {
   twins?: { rule_id: number; source_system_id: number; source: string }[]; // gleich im Verbund
   // ACI (0.45.1): was der Scope verbindet (AP, VRF, Tenant, global)
   aci_scope?: { scope: string | null; label: string; text: string; pairs: number; unpaired: number } | null;
+  // ACI ist zustandslos (0.69.1): Dienste, die der Provider zum Consumer aufbauen kann
+  aci_direction?: { reverse: string[]; both: boolean; text: string; derived: boolean } | null;
 }
 
 export interface Finding {
@@ -1605,6 +1607,7 @@ export interface AppConnRule {
   services: string[];
   unsure: string[];
   decides: boolean;
+  reverse?: boolean; // ACI (0.69.1): Contract in der Rückrichtung (zustandslos)
 }
 export interface AppConnCheck {
   label: string; // Firewall bzw. VRF (im Verbund je Firewall)
@@ -2059,6 +2062,7 @@ export interface HopRule {
   decides: boolean;
   label?: string; // ACI (0.35.0): „Contract CT_x“, „Taboo TB_x“, „Preferred Group VRF“
   kind?: "contract" | "taboo" | "preferred_group";
+  reverse?: boolean; // ACI (0.69.1): passt in der Rückrichtung (Provider → Consumer, zustandslos)
 }
 export type PolicyVerdict = "allow" | "deny" | "implicit_deny" | "depends" | "unknown";
 export interface HopRules {
@@ -3048,6 +3052,8 @@ export interface CablingPort {
 export interface CablingVlan {
   vid: number;
   names: string[];
+  epgs: string[]; // ACI (0.69.1): EPGs mit dem VLAN (Tenant/AP/EPG)
+  sources: ("aci" | "switch")[];
   devices: { device: string; access: number; trunks: number }[];
 }
 export const fetchCablingDevices = (tenantId: number) =>

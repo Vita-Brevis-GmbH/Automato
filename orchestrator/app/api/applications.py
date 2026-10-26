@@ -190,6 +190,9 @@ class DocHitOut(BaseModel):
     relevance: str = "unknown"
     relevance_text: str = ""
     member_id: int | None = None  # direkt zugeordnet (0.60.0): das Mitglied
+    # ACI ist zustandslos (0.69.1): Treffer der Rueckrichtung (Provider -> Consumer, Filter
+    # ohne Ports); `side` bleibt die Seite des Contracts, `direction` ist umgekehrt
+    reverse: bool = False
 
 
 class DocSummaryOut(BaseModel):

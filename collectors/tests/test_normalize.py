@@ -868,3 +868,48 @@ def test_aci_statische_und_vmm_endpunkte():
     assert {x["ip"]: x["origin"] for x in e["endpoints"]} == {
         "10.9.0.7": "static", "10.9.0.8": "static", "10.9.0.5": "vmm", "10.9.0.6": "learned",
     }  # fmt: skip
+
+
+def test_aci_zustandslos_dienste_je_richtung():
+    """0.69.1 (Anwender): ACI ist zustandslos. Filter ohne Ports oeffnen auch den Weg vom
+    Provider zum Consumer; mit Zielport (tcp/443) zurueck nur Antworten (Quellport 443)."""
+    from collectors.cisco_aci.mo import parse_mo_export
+
+    def flt(name, **entry):
+        return _mo("vzFilter", name, [_mo("vzEntry", "e", **entry)])
+
+    def subj(name, kids, **attrs):
+        return _mo("vzSubj", name, kids, **attrs)
+
+    both = lambda *fs: [_mo("vzRsSubjFiltAtt", tnVzFilterName=f) for f in fs]  # noqa: E731
+    term = lambda cls, *fs: _mo(cls, "", [_mo("vzRsFiltAtt", tnVzFilterName=f) for f in fs])  # noqa: E731
+    export = [_mo("fvTenant", "TE", [
+        flt("FT_any", etherT="unspecified"),
+        flt("FT_https", prot="tcp", dFromPort="https", dToPort="https"),
+        flt("FT_ret", prot="tcp", sFromPort="443", sToPort="443"),
+        flt("FT_ssh", prot="tcp", dFromPort="22", dToPort="22"),
+        flt("FT_tcp_st", prot="tcp", stateful="yes"),
+        flt("FT_icmp", prot="icmp"),
+        _mo("vzBrCP", "CT_x", [
+            subj("SJ_both", both("FT_https", "FT_any")),
+            subj("SJ_norev", both("FT_https"), revFltPorts="no"),
+            subj("SJ_terms", [term("vzInTerm", "FT_https"), term("vzOutTerm", "FT_ret", "FT_ssh")]),
+            subj("SJ_state", both("FT_tcp_st", "FT_icmp")),
+        ]),
+        _mo("fvAp", "AP", [_epg("EG_c", cons=["CT_x"]), _epg("EG_p", prov=["CT_x"])]),
+    ])]  # fmt: skip
+    (c,) = parse_mo_export(export)
+    subjects = {s["name"]: s for s in c["subjects"]}
+    assert subjects["SJ_both"]["services"] == ["tcp/443", "ip/any"]
+    assert subjects["SJ_both"]["reverse"] == ["ip/any"]  # tcp/443 zurueck: nur Antworten
+    assert subjects["SJ_norev"]["reverse"] == ["tcp/443"]  # ohne Vertauschen: auch zurueck
+    # je Richtung: Out-Term nur Provider -> Consumer (Antwort mit Quellport 443, SSH)
+    assert subjects["SJ_terms"]["services"] == ["tcp/443"]
+    assert subjects["SJ_terms"]["reverse"] == ["tcp/22"]
+    # stateful: TCP zurueck nur mit ACK - ICMP bleibt offen
+    assert subjects["SJ_state"]["services"] == ["tcp/any", "icmp/any"]
+    assert subjects["SJ_state"]["reverse"] == ["icmp/any"]
+    rules = {r.external_id.rsplit("/", 1)[-1]: r for r in normalize_contract(c)}
+    assert rules["SJ_both"].raw["reverse"] == ["ip/any"]
+    assert rules["SJ_both"].raw["subject"] == "SJ_both"
+    assert rules["SJ_terms"].services == ["tcp/443"]

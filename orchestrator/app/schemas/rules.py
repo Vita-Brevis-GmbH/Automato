@@ -206,3 +206,6 @@ class RuleDetailOut(RuleOut):
     twins: list[dict] = []  # gleiche Regeln paralleler Firewalls {rule_id, source, ...}
     # ACI (0.45.1): was der Scope verbindet {scope, label, text, pairs, unpaired}
     aci_scope: dict | None = None
+    # ACI ist zustandslos (0.69.1): {reverse, both, text, derived} - Dienste, die der Provider
+    # zum Consumer aufbauen kann (`aci_direction`)
+    aci_direction: dict | None = None

@@ -137,6 +137,19 @@ class RuleServices:
         return list(dict.fromkeys(out))
 
 
+def outside_of(names: list[str], allow: Allowed) -> list[str] | None:
+    """Wie `RuleServices.outside` fuer Dienste als Text - die Rueckrichtung eines ACI-Contracts
+    (`ip/any`, `tcp/any`, `icmp/any`; 0.69.1)."""
+    services: list[tuple[str, int | None, int | None, str]] = []
+    for name in names:
+        proto, _, port = (name or "").lower().partition("/")
+        if proto in ("ip", "all", "unspecified"):
+            services.append(("all", None, None, "ALL"))
+        elif (parsed := parse(proto if port in ("", "any") else name)) is not None:
+            services.append((*parsed, name))
+    return RuleServices({0: services}, set()).outside(0, allow)
+
+
 def label(proto: str, lo: int | None, hi: int | None, name: str | None) -> str:
     if proto in ("tcp", "udp") and lo:
         ports = f"{lo}" if not hi or hi == lo else f"{lo}-{hi}"

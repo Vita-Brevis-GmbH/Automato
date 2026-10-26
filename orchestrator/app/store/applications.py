@@ -931,6 +931,8 @@ def _hits_and_tables(
         group = groups.setdefault(gkey, {"row": row, "systems": [], "rules": {}})
         if rid is not None:
             group["rules"].setdefault(rid, row.get("Description") or "")
+        if row.get(appdoc.REVERSE) and group["row"] is not row:
+            group["both"] = True  # ACI (0.69.1): Rueckrichtung in derselben Kategorie
         name = row.get("Server Name")
         if name and name not in group["systems"]:
             group["systems"].append(name)
@@ -962,12 +964,16 @@ def _hits_and_tables(
                 # Routing (0.24.0): possible | impossible | unknown, mit Begruendung
                 "relevance": row.get(appdoc.REL) or "unknown",
                 "relevance_text": row.get(appdoc.REL_TEXT) or "",
+                # ACI ist zustandslos (0.69.1): Treffer der Rueckrichtung (Provider -> Consumer)
+                "reverse": bool(row.get(appdoc.REVERSE)),
             }
         )
     seen_rows: dict[tuple, dict] = {}
     for (idx, *_), group in groups.items():
         row = dict(group["row"])
         row.pop(appdoc.PARTIES, None)  # nur fuer die Treffer
+        if group.get("both") and not row.get(appdoc.REVERSE):
+            row["TCP/UDP"] = f"{row.get('TCP/UDP') or ''} (↔ beide Richtungen)".strip()
         if row.get(appdoc.REL) == "impossible":
             continue  # Export/Druck: nur, was das Routing zulaesst
         row["_rules"] = list(group["rules"])
@@ -1141,9 +1147,12 @@ def dependencies(session: Session, app: Application, doc: dict,
         .order_by(Application.name)) if visible is None or a.id in visible]  # fmt: skip
     empty: dict = {"uses": [], "used_by": []}
     sides: dict[int, set[str]] = defaultdict(set)
+    both: set[int] = set()  # ACI zustandslos (0.69.1): Contract auch in der Rueckrichtung
     for h in doc["hits"]:
         if h["scope"] == "specific" and h["side"] in ("src", "dst"):
             sides[h["rule_id"]].add(h["side"])
+            if h.get("reverse"):
+                both.add(h["rule_id"])
     if not others or not sides:
         return empty
     own = footprint(session, app, res, groups)
@@ -1178,13 +1187,15 @@ def dependencies(session: Session, app: Application, doc: dict,
                 via = fp.matches(epg_ids, ranges)
                 if via is None:
                     continue
-                kind = "uses" if side == "src" else "used_by"
-                entry = found[kind].setdefault(
-                    aid, {"application_id": aid, "name": names[aid], "rules": {}}
-                )
-                entry["rules"].setdefault(rid, {
-                    "rule_id": rid, "name": r.aci.contract if r.aci else r.name,
-                    "domain": r.domain, "via": via, "services": list(r.service_names)})  # fmt: skip
+                kinds = ["uses", "used_by"] if side == "src" else ["used_by", "uses"]
+                for kind in kinds[: 2 if rid in both else 1]:
+                    entry = found[kind].setdefault(
+                        aid, {"application_id": aid, "name": names[aid], "rules": {}}
+                    )
+                    entry["rules"].setdefault(rid, {
+                        "rule_id": rid, "name": r.aci.contract if r.aci else r.name,
+                        "domain": r.domain, "via": via, "services": list(r.service_names),
+                        "reverse": kind != kinds[0]})  # fmt: skip
     return {
         kind: [{**e, "rules": list(e["rules"].values())}
                for e in sorted(items.values(), key=lambda x: x["name"].casefold())]

@@ -234,21 +234,38 @@ def vlans(
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
-    """VLANs der Switches: Name, je Switch Anzahl Access-Ports und Trunks mit dem VLAN."""
+    """VLANs der Switches und des ACI (0.69.1): Name, EPGs, je Geraet Anzahl Access-Ports und
+    Trunks mit dem VLAN. Beim ACI zaehlen auch Port-Channels/vPCs (dort steht das VLAN)."""
     tid = _tenant(session, principal, tenant_id)
     cab = store.build(session, tid)
-    switch_ids = cab.switch_sources
+    platforms = dict(session.execute(
+        select(SourceSystem.id, SourceSystem.platform).where(SourceSystem.tenant_id == tid)
+    ).all())  # fmt: skip
+    ids = {sid for sid, p in platforms.items() if p in (Platform.CISCO_SWITCH, Platform.CISCO_ACI)}
     names: dict[int, set[str]] = defaultdict(set)
-    if switch_ids:
+    epgs: dict[int, set[str]] = defaultdict(set)
+    kinds: dict[int, set[str]] = defaultdict(set)
+    if ids:
         rows = session.execute(
-            select(InvVlan.vid, InvVlan.name).where(InvVlan.tenant_id == tid,
-                                                    InvVlan.source_system_id.in_(switch_ids))
+            select(InvVlan.vid, InvVlan.name, InvVlan.epgs, InvVlan.source_system_id)
+            .where(InvVlan.tenant_id == tid, InvVlan.source_system_id.in_(ids))
         )  # fmt: skip
-        for vid, name in rows:
+        for vid, name, vlan_epgs, sid in rows:
             names[vid].add(name)
+            epgs[vid].update(vlan_epgs or [])
+            kinds[vid].add("aci" if platforms[sid] is Platform.CISCO_ACI else "switch")
     use: dict[int, dict[str, list[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
     for p in cab.ports:
-        if p.source_system_id not in switch_ids or p.kind != "physical":
+        platform = platforms.get(p.source_system_id)
+        if platform is Platform.CISCO_ACI and p.kind in ("physical", "lag"):
+            if p.untagged_vlan:
+                use[p.untagged_vlan][p.device][0] += 1
+                names.setdefault(p.untagged_vlan, set())
+            for vid in p.tagged_vlans or []:
+                use[vid][p.device][1] += 1
+                names.setdefault(vid, set())
+            continue
+        if platform is not Platform.CISCO_SWITCH or p.kind != "physical":
             continue
         if p.mode == "access" and p.untagged_vlan:
             use[p.untagged_vlan][p.device][0] += 1
@@ -258,7 +275,8 @@ def vlans(
                 if vid in names:  # nur VLANs, die ein Switch kennt (nicht 1-4094 aufblaehen)
                     use[vid][p.device][1] += 1
     return [
-        {"vid": vid, "names": sorted(names[vid]),
+        {"vid": vid, "names": sorted(names[vid]), "epgs": sorted(epgs[vid]),
+         "sources": sorted(kinds[vid]),
          "devices": [{"device": d, "access": a, "trunks": t}
                      for d, (a, t) in sorted(use.get(vid, {}).items())]}
         for vid in sorted(names)
