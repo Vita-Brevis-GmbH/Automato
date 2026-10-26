@@ -464,7 +464,7 @@ export function Drawer({
 const MATCH: Record<string, [string, string]> = {
   matched: ["ok", "gematcht"],
   unmatched: ["crit", "nicht aufgelöst"],
-  expected_external: ["ext", "extern bestätigt"],
+  expected_external: ["ext", "extern (ohne IPAM)"],
   not_applicable: ["na", "n/a"],
   ambiguous: ["warn", "mehrdeutig"],
 };

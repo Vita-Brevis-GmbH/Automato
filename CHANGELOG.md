@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.76.1 – 2026-10-26
+
+Korrektur nach Rückmeldung des Anwenders: externe Netze und Hosts tauchen nicht mehr als
+Befund „nicht im IPAM“ auf. Ohne Migration.
+
+- **Extern** (`store/external.py`) = öffentliche Adresse bzw. öffentliches Netz/Bereich, das
+  keinem gemanagten Netz angehört; gemanagt sind die Netze der gelesenen Geräte (`inv_subnet`:
+  Interface-Netze der Firewalls inkl. WAN, ACI-BD/-EPG-Subnetze, Router-Interfaces). Solche
+  Werte-Objekte stehen auf `expected_external` („extern (ohne IPAM)“) und zählen nicht als
+  Problem (Befunde, „nur mit Befund“, Kennzahlen der Regeln).
+- **Bleibt Befund:** öffentliche Adressen im Interface-Netz am WAN-Anschluss, das WAN-Netz
+  selbst („Subnetz fehlt im IPAM“), private Adressen, VIPs und Objekte ohne Wert.
+- Nach jedem Abgleich neu eingeordnet: kommt die Adresse ins IPAM, gilt sie als gefunden; ein
+  neues Interface-Netz macht sie wieder gemanagt (`references.rematch` prüft öffentliche Werte
+  wieder gegen das IPAM, `external.apply` danach).
+- ADR 0010 Ergänzung 0.76.1, BETRIEB, TESTS.
+
 ## 0.76.0 – 2026-10-26
 
 Kunde oben wählen filtert alle Ansichten (Rückmeldung des Anwenders: „keine zusätzlichen

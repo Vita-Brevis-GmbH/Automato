@@ -378,18 +378,20 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.74.1** | Korrekturen: Speichern einer Applikation ohne Warten (Befunde im Hintergrund), Routing als Index im Speicher, Vorschläge je ACI-Tenant, Typ-Filter der Objekte beim Reiterwechsel, Network Container aus Infoblox |
 | **0.75.0** | Stammdaten der Applikationen aus CSV (Vorschau, Ausnahme vom „kein CSV-Import“), Applikationen ohne VMs ausblenden bzw. mehrere löschen, Routing-Kontexte zugeklappt, Erklärung je Seite einzeilig (ADR 0012 Ergänzung 0.75.0) |
 | **0.76.0** | Kunde oben wählen filtert alle Ansichten (Routing, Topologie, Weg-Suche, Inventar, Verkabelung, Abgleich, Zonen, parallele Firewalls, publizierte Dienste), Geteiltes markiert (ADR 0018 Ergänzung 0.76.0) |
+| **0.76.1** | Korrektur: externe Netze und Hosts (öffentlich, ausserhalb der Interface-/BD-Netze der gelesenen Geräte) ohne Befund „nicht im IPAM“; im WAN-Interface-Netz bleibt der Befund (ADR 0010 Ergänzung 0.76.1) |
 
-### Nächste Arbeiten (Stand 0.76.0)
+### Nächste Arbeiten (Stand 0.76.1)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.76.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.76.1.
 
 **Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
 Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in
 0.74.1**; Import der Stammdaten von Applikationen aus CSV (Ausnahme vom „kein CSV-Import“ nur
 dafür), Applikationen ohne VMs ausblenden bzw. löschen, Infos zuklappbar (Routing: „Gelesene
 Kontexte“ zu, Reiter ohne Scrollen sichtbar) – **umgesetzt in 0.75.0**; Kunde oben wählen
-filtert alles (eigenes plus geteiltes, markiert) – **umgesetzt in 0.76.0**; als Nächstes
+filtert alles (eigenes plus geteiltes, markiert) – **umgesetzt in 0.76.0**; externe Netze/Hosts
+ohne IPAM-Befund (ausser im WAN-Interface-Netz) – **umgesetzt in 0.76.1**; als Nächstes
 **VMware NSX Advanced Load Balancer (Avi)** als lesende Quelle für die Doku (eigene ADR); dann
 weiter mit Schritt 5.
 

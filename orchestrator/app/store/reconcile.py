@@ -6,7 +6,8 @@ Bestehende Befunde behalten Triage-Status und Notiz; Befunde, die nicht mehr zut
 fallen weg. Nur lesend gegenueber allen Quellsystemen.
 
 Pruefungen (Inventar ↔ Konvention):
-- unmatched_object      Regel-Endpunkt ohne Treffer im IPAM
+- unmatched_object      Regel-Endpunkt ohne Treffer im IPAM (nicht: oeffentliche Adressen
+                        ausserhalb gemanagter Netze, `store/external`)
 - invalid_name          Objektname passt zu keinem Praefix der Namenskonvention
 - name_type_mismatch    Praefix sagt Host, Wert ist ein Netz (oder umgekehrt)
 - duplicate_value       gleicher Wert in mehreren Adressobjekten derselben Firewall
@@ -45,8 +46,8 @@ from app.models import (
     Vm,
     VmIp,
 )
+from app.store import external, parallel, virtual
 from app.store import naming_profiles as profile_store
-from app.store import parallel, virtual
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     ctx = references.context(session, tenant_id)
     prefixes = profile_store.prefixes_for_tenant(session, tenant_id)
     references.rematch(session, tenant_id, ctx, prefixes)  # zuerst: Werte gegen den Stand
+    external.apply(session, tenant_id)  # öffentlich ausserhalb gemanagter Netze: kein Befund
     virtual.map_epgs(session, tenant_id)  # Portgruppen -> EPGs (EPGs aendern sich je APIC-Lauf)
     issues: list[Issue] = []
     issues += _rule_endpoint_issues(session, tenant_id, ctx, prefixes)

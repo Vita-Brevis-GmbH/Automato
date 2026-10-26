@@ -839,6 +839,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   (Triage) als Operator – bleibt über spätere Läufe erhalten (Findings werden nach jedem Lauf
   neu berechnet). Der Abgleich berücksichtigt, dass das IPAM den Server **ohne Präfix**
   führt: `H_web01` passt zu `web01` bzw. `web01.example.ch` (Kurzname nur, wenn eindeutig).
+  **Externe Adressen** (seit 0.76.1): öffentliche Hosts und Netze, die in keinem Netz der
+  gelesenen Geräte liegen (Interface-Netze der Firewalls inkl. WAN, ACI-BD/-EPG-Subnetze),
+  erwartet niemand im IPAM – kein Befund „nicht im IPAM“, Status „extern (ohne IPAM)“. Eine
+  öffentliche Adresse im Interface-Netz am WAN-Anschluss bleibt ein Befund, ebenso das WAN-Netz
+  selbst („Subnetz fehlt im IPAM“), private Adressen und VIPs. Steht die Adresse später im
+  IPAM, gilt sie wieder als gefunden.
 - **Abgleich:** Referenzquellen des Mandanten (führend/Anreicherung, eingelesen?), Kacheln je
   Befund-Typ (Klick → Findings vorgefiltert): nicht im IPAM, Name ≠ DNS-Name, Subnetz fehlt
   im IPAM, VLAN weicht ab, Namenskonvention, Präfix/Typ, doppelte Werte, unbenutzte

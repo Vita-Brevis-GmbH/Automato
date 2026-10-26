@@ -29,6 +29,7 @@ from app.models import (
 from app.models import (
     NetworkObject as NetworkObjectRow,
 )
+from app.store import external
 
 _SOURCE_OF_RECORD = {"infoblox": SourceOfRecord.INFOBLOX, "netbox": SourceOfRecord.NETBOX}
 _IP_KIND_VALUES = {k.value for k in IP_KINDS}
@@ -408,7 +409,13 @@ def rematch(session: Session, tenant_id: int, ctx: Context, prefixes=None) -> No
         obj.reference_id = best.id if best else None
         obj.reference_prefix_id = prefix.id if prefix else None
         obj.enrichment_id = enrichment.id if enrichment else None
-        if ctx.primary is None or obj.match_status is MatchStatus.EXPECTED_EXTERNAL:
+        if ctx.primary is None:
+            continue
+        # bewusst extern (H-EXT_, FQDN, ISDB) bleibt; öffentliche Werte ordnet `external` nach
+        # dem Abgleich neu ein (0.76.1) - hier zuerst gegen das IPAM
+        if obj.match_status is MatchStatus.EXPECTED_EXTERNAL and (
+            not obj.value or obj.object_class not in external.VALUE_CLASSES
+        ):
             continue
         if best is not None:
             obj.match_status = MatchStatus.MATCHED
