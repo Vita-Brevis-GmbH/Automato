@@ -312,8 +312,10 @@ Entscheide des Anwenders (2026-10-23):
   Zone fällt ihre Absicht weg; beim Löschen eines Quellsystems seine Selektoren.
 - Zonen sind nicht funktionsrelevant für den Rest: ohne Zonen arbeitet die Plattform wie
   bisher (Matrix und Plan sind leer, keine Befunde).
+- Export für Confluence seit 0.71.0 als Word + draw.io zum Import von Hand (ADR 0026, kein
+  Schreibweg).
 - Offen: Zonen je Kunde im Grundschema (Vorlage „je Kunde“), Befund „Zone ausserhalb des
-  Schemas“, Export nach Confluence (eigene Freigabe), draw.io-Datei zurück einlesen (Korrekturen
+  Schemas“, draw.io-Datei zurück einlesen (Korrekturen
   im Designer), Relevanz nach Pfad für die Matrix (ADR 0019), Übergänge über Routen ohne
   gemeinsames Netz (Zonen nur hinter einem Router) im Plan, Absicht je Dienst und Richtung im
   Zonenplan, Zonen in den Verbindungen der Applikations-Doku.
