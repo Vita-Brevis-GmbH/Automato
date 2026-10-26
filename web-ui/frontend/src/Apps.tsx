@@ -14,6 +14,7 @@ import {
   createApp,
   Criticality,
   deleteApp,
+  deleteApps,
   fetchApp,
   fetchAppCandidates,
   fetchApps,
@@ -30,6 +31,8 @@ import ApplicationDocView, { PURPOSE, PurposeChip } from "./ApplicationDoc";
 import { siteLabel, SiteOptions } from "./sites";
 import type { Me } from "./auth";
 import { Dash, Drawer, Empty, ErrorBox, Icon, Loading, Modal, Note } from "./ui";
+import AppImport from "./AppImport";
+import { readStored, writeJson } from "./fold";
 
 const CRIT: Record<Criticality, [string, string]> = {
   low: ["", "niedrig"],
@@ -39,6 +42,7 @@ const CRIT: Record<Criticality, [string, string]> = {
 };
 const KIND: Record<MemberKind, string> = { ap: "AP", epg: "EPG", host: "Server", rule: "Regel", norule: "ohne Regel" };
 const PREVIEW = 6;
+const HIDE_KEY = "automato_apps_hide_empty"; // 0.75.0: ohne VMs ausblenden (je Browser)
 
 function CritChip({ value }: { value: Criticality | null }) {
   if (!value) return <Dash />;
@@ -68,6 +72,10 @@ export default function Apps({
   const [selected, setSelected] = useState<number | null>(null); // Mitglieder (Drawer)
   const [editing, setEditing] = useState<ApplicationDetail | "new" | null>(null);
   const [docReload, setDocReload] = useState(0);
+  const [hideEmpty, setHideEmpty] = useState(() => readStored(HIDE_KEY, false)); // 0.75.0
+  const [chosen, setChosen] = useState<Set<number>>(new Set());
+  const [confirmBulk, setConfirmBulk] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const load = useCallback(() => {
     if (tenantId == null) return;
@@ -86,6 +94,7 @@ export default function Apps({
   useEffect(() => {
     setApps(null);
     setSelected(null);
+    setChosen(new Set());
     load();
     if (tenantId != null)
       fetchSites(tenantId)
@@ -155,6 +164,32 @@ export default function Apps({
     );
   if (apps === null) return <Loading>Lade Applikationen…</Loading>;
 
+  // 0.75.0: Applikationen ohne VMs ausblenden bzw. auswählen und löschen
+  const empty = apps.filter((a) => a.vm_count === 0);
+  const shown = hideEmpty ? apps.filter((a) => a.vm_count > 0) : apps;
+  const toggleHide = () => {
+    writeJson(HIDE_KEY, !hideEmpty);
+    setHideEmpty(!hideEmpty);
+  };
+  const pick = (id: number) =>
+    setChosen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const removeChosen = async () => {
+    try {
+      await deleteApps(tenantId, [...chosen]);
+      setChosen(new Set());
+      setConfirmBulk(false);
+      load();
+    } catch (e) {
+      setErr(e);
+      setConfirmBulk(false);
+    }
+  };
+
   return (
     <>
       <ErrorBox error={err} onClose={() => setErr(null)} />
@@ -162,9 +197,38 @@ export default function Apps({
         <div className="card-head">
           <h2>Applikationen</h2>
           <span className="mono faint" style={{ fontSize: 12 }}>
-            {apps.length}
+            {shown.length === apps.length ? apps.length : `${shown.length} / ${apps.length}`}
           </span>
+          {empty.length > 0 && (
+            <button
+              className={`toggle${hideEmpty ? " on" : ""}`}
+              id="apps-hide-empty"
+              title="Applikationen ohne VMs (an den Portgruppen ihrer EPGs bzw. hinter ihren Servern) ausblenden"
+              onClick={toggleHide}
+            >
+              ohne VMs ausblenden ({empty.length})
+            </button>
+          )}
           <div className="spacer" />
+          {me.isOperator && empty.length > 0 && !hideEmpty && (
+            <button
+              className="btn btn-ghost btn-sm"
+              id="apps-select-empty"
+              onClick={() => setChosen(new Set(empty.map((a) => a.id)))}
+            >
+              ohne VMs auswählen
+            </button>
+          )}
+          {me.isOperator && chosen.size > 0 && (
+            <button className="btn btn-danger btn-sm" id="apps-delete" onClick={() => setConfirmBulk(true)}>
+              {chosen.size} löschen
+            </button>
+          )}
+          {me.isOperator && (
+            <button className="btn btn-ghost btn-sm" id="app-import" onClick={() => setImporting(true)}>
+              CSV importieren
+            </button>
+          )}
           {me.isOperator && (
             <button className="btn btn-primary btn-sm" onClick={() => setEditing("new")}>
               <Icon name="plus" size={13} /> Applikation
@@ -179,9 +243,10 @@ export default function Apps({
                 : "Eine Applikation fasst Application Profiles, EPGs und Server zusammen."}
             </Empty>
           ) : (
-            <table>
+            <table id="apps-list">
               <thead>
                 <tr>
+                  {me.isOperator && <th style={{ width: 28 }} />}
                   <th>Name</th>
                   <th>Zweck</th>
                   <th>Kürzel</th>
@@ -190,11 +255,22 @@ export default function Apps({
                   <th>Standort</th>
                   <th className="num">Mitglieder</th>
                   <th className="num">Systeme</th>
+                  <th className="num" title="VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern">VMs</th>
                 </tr>
               </thead>
               <tbody>
-                {apps.map((a) => (
-                  <tr key={a.id} className="clickable" title="Doku öffnen" onClick={() => onOpen(a.id)}>
+                {shown.map((a) => (
+                  <tr key={a.id} className="clickable" title="Doku öffnen" data-id={a.id} onClick={() => onOpen(a.id)}>
+                    {me.isOperator && (
+                      <td
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          pick(a.id);
+                        }}
+                      >
+                        <input type="checkbox" checked={chosen.has(a.id)} readOnly aria-label={`${a.name} auswählen`} />
+                      </td>
+                    )}
                     <td>
                       <b>{a.name}</b>
                       {(a.external_name || a.internal_name) && (
@@ -212,6 +288,7 @@ export default function Apps({
                     <td>{a.site ? siteLabel(a.site) : <Dash />}</td>
                     <td className="num">{a.member_count}</td>
                     <td className="num">{a.system_count}</td>
+                    <td className="num">{a.vm_count > 0 ? a.vm_count : <span className="chip na">keine</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -225,6 +302,46 @@ export default function Apps({
       )}
 
       {overlays}
+      {importing && (
+        <AppImport
+          tenantId={tenantId}
+          onClose={() => setImporting(false)}
+          onDone={() => {
+            setImporting(false);
+            load();
+          }}
+        />
+      )}
+      {confirmBulk && (
+        <Modal
+          title="Applikationen löschen"
+          onClose={() => setConfirmBulk(false)}
+          footer={
+            <>
+              <button className="btn btn-ghost" onClick={() => setConfirmBulk(false)}>
+                Abbrechen
+              </button>
+              <button className="btn btn-danger" id="apps-delete-confirm" onClick={removeChosen}>
+                {chosen.size} löschen
+              </button>
+            </>
+          }
+        >
+          <p>
+            {chosen.size} Applikation{chosen.size === 1 ? "" : "en"} mit ihren Mitgliedern löschen? Gelesene Daten (Regeln,
+            EPGs, Server) bleiben unverändert.
+          </p>
+          <div className="objs">
+            {apps
+              .filter((a) => chosen.has(a.id))
+              .map((a) => (
+                <span key={a.id} className="mono">
+                  {a.name}
+                </span>
+              ))}
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

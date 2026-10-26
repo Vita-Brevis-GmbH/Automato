@@ -261,8 +261,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - Im Befund steht zuerst der Wert der Firewall des Befunds, dann der führenden; „Anzeigen“
       öffnet die Routen des VDOMs, die Policy-Routen bzw. die NAT-Ansicht.
 - **Routing** (0.16.0, ADR 0019; bis 0.34.0 „Routing & Wege“): oben die gelesenen Kontexte mit
-  Anzahl Routen und dem, was nicht lesbar war (dort ist die Aussage „unbekannt“). Bezeichnungen
-  (0.17.0):
+  Anzahl Routen und dem, was nicht lesbar war (dort ist die Aussage „unbekannt“) – seit 0.75.0
+  zugeklappt (Klick auf den Titel; die Zahl der Kontexte mit nicht Lesbarem bleibt sichtbar),
+  damit die Reiter ohne Scrollen erscheinen. Allgemein seit 0.75.0: die Erklärung unter dem
+  Titel jeder Seite ist eine Zeile, Klick klappt sie auf bzw. zu (gilt für alle Seiten, bleibt
+  im Browser); in der Übersicht „Letzte Läufe“ und „Regeln je Zone“, in der Weg-Suche „Zonen“
+  und „Anschluss (L2)“ zuklappbar. Bezeichnungen (0.17.0):
   - Eine FortiGate nur mit `root` heisst wie die **Firewall**, sonst „fw-01 · VDOM kunde-a“.
   - ACI: „leaf-101 · VRF Tenant:VRF“, im Weg und im Kontext-Filter die VRF über alle
     Border-Leafs („apic-01 · VRF Tenant:VRF“).
@@ -556,7 +560,19 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
   (Application Profiles, EPGs, Server); **Vorschläge** nach der Projektnummer aus
   `AP_<nr>`/`H_…-<nr>-…` mit einem Klick übernehmen (Operator) – seit 0.38.0 unter der
-  Liste der Applikationen.
+  Liste der Applikationen, seit 0.74.1 je ACI-Tenant getrennt („Projekt 001 · TE_a“).
+  - **Stammdaten aus CSV** (0.75.0, Operator, einzige Ausnahme vom „kein CSV-Import“):
+    „CSV importieren“ über der Liste → Datei wählen (Excel-CSV mit „;“ oder „,“, UTF-8 bzw.
+    Windows-1252) → Vorschau je Zeile (neu, ändern, unverändert, Fehler mit Grund) →
+    „N übernehmen“. Spalten: Name (Pflicht), Externer Name, Interner Name, Zweck
+    (dev/test/prod bzw. Entwicklung/Test/Produktion), Kürzel, Verantwortlich, Kritikalität
+    (niedrig/mittel/hoch/kritisch), Standort (Code), Beschreibung; „Vorlage herunterladen“
+    liefert die Kopfzeile. Gleicher Name = bestehende Applikation: ausgefüllte Zellen ändern,
+    leere lassen den Wert; Zeilen mit Fehler werden ausgelassen. Mitglieder danach in der Doku
+    bzw. im Drawer zuordnen. Audit `application.imported` (nur Zahlen und Kennungen).
+  - **Ohne VMs** (0.75.0): Spalte „VMs“ (an den Portgruppen der EPGs bzw. hinter den Servern);
+    „ohne VMs ausblenden“ (bleibt im Browser), „ohne VMs auswählen“ bzw. einzeln ankreuzen und
+    „N löschen“ (Operator, mit Bestätigung; gelesene Daten bleiben).
   - **Klick auf eine Applikation öffnet ihre Doku** (0.14.0, Link `#apps?app=<id>`). Oben
     Stammdaten und Übersicht: VMs, EPGs, Regeln **spezifisch** bzw. **unspezifisch**
     (Subnetz, any, vzAny, Preferred Group; Klick filtert) und offene Findings.

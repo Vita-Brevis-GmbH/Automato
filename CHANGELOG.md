@@ -7,6 +7,29 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.75.0 – 2026-10-26
+
+Applikationen anlegen und aufräumen, weniger Info auf einen Blick (Rückmeldung des Anwenders).
+Ohne Migration.
+
+- **Stammdaten aus CSV** (einzige Ausnahme vom „kein CSV-Import“, Entscheid des Anwenders):
+  „CSV importieren“ über der Liste der Applikationen – Name, externer/interner Name, Zweck,
+  Kürzel, Verantwortlich, Kritikalität, Standort, Beschreibung; Kopfzeile deutsch oder
+  englisch, „;“/„,“/Tabulator, UTF-8 bzw. Windows-1252 (Excel). Vorschau je Zeile (neu,
+  ändern, unverändert, Fehler mit Grund), dann „N übernehmen“; gleicher Name ändert nur die
+  ausgefüllten Zellen, Zeilen mit Fehler bleiben aus. Vorlage zum Herunterladen. Die Mitglieder
+  werden danach wie bisher zugeordnet. API `POST /applications/import[?apply=true]`,
+  `GET /applications/import/template`, Audit `application.imported`.
+- **Applikationen ohne VMs:** Spalte „VMs“ (an den Portgruppen der EPGs bzw. hinter den
+  Servern, `vm_count`), „ohne VMs ausblenden“ (bleibt im Browser), „ohne VMs auswählen“ bzw.
+  ankreuzen und mehrere auf einmal löschen (`POST /applications/delete`, Audit je Applikation).
+- **Weniger Info auf einen Blick:** Routing „Gelesene Kontexte“ standardmässig zugeklappt
+  (die Reiter ohne Scrollen sichtbar, nicht Lesbares als Zahl); die Erklärung unter jedem
+  Seitentitel eine Zeile, Klick klappt auf (für alle Seiten, bleibt im Browser); zuklappbar
+  auch „Letzte Läufe“ und „Regeln je Zone“ (Übersicht), „Zonen“ und „Anschluss (L2)“
+  (Weg-Suche).
+- CLAUDE.md, ADR 0012 (Ergänzung 0.75.0), BETRIEB.
+
 ## 0.74.1 – 2026-10-26
 
 Korrekturen nach der Rückmeldung des Anwenders (Wartezeiten von Minuten beim Speichern,

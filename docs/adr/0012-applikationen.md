@@ -139,6 +139,16 @@ gehören zu mehreren Applikationen.
     `<Tenant>|<Nummer>` (`key`); die Nummer allein wird nur angenommen, wenn sie eindeutig ist.
     Eine bestehende Applikation wird ergänzt, wenn ihr Name passt bzw. ihre APs im selben
     Tenant liegen.
+- **Ergänzung 0.75.0 – Stammdaten aus CSV** (Entscheid des Anwenders 2026-10-26, einzige
+  Ausnahme vom Grundsatz „kein CSV-Import“): Name, externer/interner Name, Zweck, Kürzel,
+  Verantwortlich, Kritikalität, Standort und Beschreibung aus einer CSV-Datei
+  (`POST /applications/import`, ohne `apply` Vorschau, mit `apply=true` übernehmen; Vorlage
+  `GET /applications/import/template`; `store/app_import.py`). Kopfzeile deutsch oder englisch,
+  Werte auch deutsch (Produktion, hoch); gleicher Name (ohne Gross-/Kleinschreibung) ändert die
+  bestehende Applikation nur in ausgefüllten Zellen; fehlerhafte Zeilen werden ausgelassen.
+  Mitglieder bleiben in der Oberfläche – die Stammdaten haben keine Funktionsrelevanz. Dazu
+  `vm_count` je Applikation in der Liste und `POST /applications/delete` (mehrere löschen,
+  Audit je Applikation).
 - **Doku je Applikation:** die Tabellen 1–10 aller Systeme der Applikation (Server →
   Firewall-Tabellen, EPGs → ACI-Tabellen), gleiche Zeilen einmal. Regeln, Objekte und NAT
   werden je Mandant einmal geladen. Export als Markdown sowie als Druckansicht (PDF über den

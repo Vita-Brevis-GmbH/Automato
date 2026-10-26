@@ -149,6 +149,15 @@ export function Icon({ name, size = 16, className }: { name: string; size?: numb
   );
 }
 
+const HELP_KEY = "automato_page_help";
+function readHelp(): boolean {
+  try {
+    return localStorage.getItem(HELP_KEY) === "open";
+  } catch {
+    return false;
+  }
+}
+
 export function PageHead({
   title,
   children,
@@ -170,11 +179,32 @@ export function PageHead({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  // Erklärung unter dem Titel (0.75.0, Anwender: zu viel Info): eine Zeile, Klick klappt auf
+  // bzw. zu – gilt für alle Seiten und bleibt im Browser
+  const [help, setHelp] = useState(() => readHelp());
+  const toggle = (e: React.MouseEvent) => {
+    if ((e.target as Element).closest("a")) return; // Links bleiben Links
+    const next = !help;
+    try {
+      localStorage.setItem(HELP_KEY, next ? "open" : "closed");
+    } catch {
+      /* localStorage nicht verfügbar */
+    }
+    setHelp(next);
+  };
   return (
     <div className="page-head" ref={ref}>
       <div>
         <h1>{title}</h1>
-        {children && <p>{children}</p>}
+        {children && (
+          <p
+            className={`page-help${help ? " open" : ""}`}
+            title={help ? "Erklärung zuklappen" : "Erklärung aufklappen"}
+            onClick={toggle}
+          >
+            {children}
+          </p>
+        )}
       </div>
       {actions && <div className="actions">{actions}</div>}
     </div>

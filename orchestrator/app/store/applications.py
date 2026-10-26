@@ -441,6 +441,47 @@ def system_count(session: Session, app: Application, resolver: Resolver | None =
     return len(hosts) + len(epgs)
 
 
+class VmCounter:
+    """VMs je Applikation fuer die Liste (0.75.0, Anwender: Applikationen ohne VMs ausblenden
+    bzw. loeschen) - wie `_app_vms` (Portgruppe einer EPG bzw. IP eines Servers), aber fuer
+    alle Applikationen mit einmal geladenen VMs statt zwei Abfragen je Applikation."""
+
+    def __init__(self, session: Session, tenant_id: int):
+        self.session = session
+        self.tenant_id = tenant_id
+
+    @cached_property
+    def _index(self) -> tuple[dict[int, set[int]], dict[str, set[int]]]:
+        groups = virtual.PortgroupIndex.load(self.session, self.tenant_id)
+        by_epg: dict[int, set[int]] = defaultdict(set)
+        for vid, sid, nic in self.session.execute(
+            select(Vm.id, Vm.source_system_id, VmNic)
+            .join(VmNic, VmNic.vm_id == Vm.id)
+            .where(Vm.tenant_id == self.tenant_id, Vm.template.is_(False))
+        ):
+            pg = groups.of(sid, nic)
+            if pg is not None and pg.epg_id is not None:
+                by_epg[pg.epg_id].add(vid)
+        by_ip: dict[str, set[int]] = defaultdict(set)
+        for ip, vid in self.session.execute(
+            select(VmIp.ip, Vm.id)
+            .join(Vm, Vm.id == VmIp.vm_id)
+            .where(VmIp.tenant_id == self.tenant_id, Vm.template.is_(False))
+        ):
+            by_ip[ip].add(vid)
+        return by_epg, by_ip
+
+    def count(self, app: Application, resolver: Resolver | None = None) -> int:
+        hosts, epgs = _systems(self.session, app, resolver)
+        by_epg, by_ip = self._index
+        vms: set[int] = set()
+        for e in epgs:
+            vms |= by_epg.get(e.id, set())
+        for h in hosts:
+            vms |= by_ip.get(_ip(h.value) or "", set())
+        return len(vms)
+
+
 def _systems(session: Session, app: Application, resolver: Resolver | None = None):
     res = resolver or Resolver(session, app.tenant_id)
     hosts: dict[int, NetworkObject] = {}

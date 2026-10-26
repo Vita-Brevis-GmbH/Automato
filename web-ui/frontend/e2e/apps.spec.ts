@@ -461,3 +461,36 @@ test("Applikation: Regeln zuordnen bzw. ausschliessen (0.60.0)", async ({ page, 
   expect((await page.request.delete(`/api/applications/${db.id}`)).status()).toBe(204);
   expect(problems).toEqual([]);
 });
+
+test("Applikationen: Stammdaten aus CSV, ohne VMs ausblenden und mehrere löschen (0.75.0)", async ({ page }) => {
+  await page.goto("/#apps");
+  const list = page.locator("#apps-list");
+  await expect(list.locator("tbody tr", { hasText: "Webshop" })).not.toContainText("keine"); // hat eine VM
+  await page.locator("#app-import").click();
+  const csv = "Name;Verwendungszweck;Kritikalität;Kürzel\nImport A;Produktion;hoch;901\nImport B;irgendwas;;\n";
+  await page.locator("#app-import-file").setInputFiles({ name: "apps.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  const counts = page.locator("#app-import-counts");
+  await expect(counts).toContainText("1 neu");
+  await expect(counts).toContainText("1 mit Fehler");
+  await expect(page.locator('#app-import-rows tr[data-action="error"]')).toContainText("Zweck „irgendwas“ unbekannt");
+  await expect(page.locator('#app-import-rows tr[data-action="create"]')).toContainText("Prod");
+  await page.locator("#app-import-apply").click();
+  const row = list.locator("tbody tr", { hasText: "Import A" });
+  await expect(row).toContainText("901");
+  await expect(row).toContainText("keine"); // ohne VMs
+  // ohne VMs ausblenden (bleibt im Browser), danach wieder zeigen
+  await page.locator("#apps-hide-empty").click();
+  await expect(row).toHaveCount(0);
+  await expect(list.locator("tbody tr", { hasText: "Webshop" })).toBeVisible();
+  await page.reload();
+  await expect(list.locator("tbody tr", { hasText: "Webshop" })).toBeVisible();
+  await expect(list.locator("tbody tr", { hasText: "Import A" })).toHaveCount(0);
+  await page.locator("#apps-hide-empty").click();
+  // auswählen und löschen
+  await list.locator("tbody tr", { hasText: "Import A" }).locator("td").first().click();
+  await page.locator("#apps-delete").click();
+  await expect(page.locator(".modal")).toContainText("Import A");
+  await page.locator("#apps-delete-confirm").click();
+  await expect(list.locator("tbody tr", { hasText: "Import A" })).toHaveCount(0);
+  await expect(list.locator("tbody tr", { hasText: "Webshop" })).toBeVisible();
+});

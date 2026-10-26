@@ -39,6 +39,7 @@ import {
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
 import TopologyTab from "./Topology";
+import { FoldTitle, useFolds } from "./fold";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 
 const PAGE = 200;
@@ -100,6 +101,8 @@ export function Hops({ hops }: { hops: NextHop[] | null | undefined }) {
   );
 }
 
+const FOLD_KEY = "automato_routing_folds"; // zugeklappte Bereiche im Routing (0.75.0)
+
 export function Missing({ items }: { items: string[] | null | undefined }) {
   if (!items?.length) return null;
   return (
@@ -141,15 +144,26 @@ export function matchText(match: Record<string, unknown> | null | undefined): st
   return parts.join(" · ") || "alles";
 }
 
+// 0.75.0 (Anwender: man muss scrollen, um die Reiter zu sehen): standardmässig zugeklappt,
+// zugeklappt bleiben Zahlen und nicht lesbare Kontexte sichtbar
 function ContextCard({ summary }: { summary: RoutingSummary }) {
+  const { fold } = useFolds(FOLD_KEY);
+  const f = fold("contexts", false);
+  const unread = summary.contexts.filter((c) => c.missing?.length).length;
   return (
-    <div className="card">
+    <div className="card" id="routing-contexts">
       <div className="card-head">
-        <h2>Gelesene Kontexte</h2>
+        <FoldTitle fold={f}>Gelesene Kontexte</FoldTitle>
         <span className="faint">
           {summary.contexts.length} Kontexte · {summary.ha} HA-Cluster · {summary.l3outs} L3Outs
         </span>
+        {unread > 0 && (
+          <span className="chip warn" title="Teile des Routings nicht lesbar – die Aussage dort ist „unbekannt“">
+            {unread} mit nicht Lesbarem
+          </span>
+        )}
       </div>
+      {f.open && (
       <div className="card-body scroll">
         <table className="compact">
           <thead>
@@ -182,6 +196,7 @@ function ContextCard({ summary }: { summary: RoutingSummary }) {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }

@@ -440,6 +440,11 @@ test("VDOMs: Filter, Kennzeichnung und Detail je VDOM", async ({ page }) => {
 test("Weg-Suche und Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", async ({ page }) => {
   await page.goto("/#routing");
   const ctx = page.locator(".card", { hasText: "Gelesene Kontexte" });
+  // 0.75.0: zugeklappt, die Reiter ohne Scrollen sichtbar; nicht Lesbares bleibt als Zahl
+  await expect(ctx.locator("table")).toHaveCount(0);
+  await expect(ctx).toContainText("mit nicht Lesbarem");
+  await expect(page.locator(".tabbar")).toBeInViewport();
+  await ctx.locator(".fold-title").click();
   await expect(ctx).toContainText("leaf-101 · VRF TE:VRF1");
   await expect(ctx).toContainText("fw-05 · VDOM root");
   await expect(ctx.locator("tbody tr").filter({ hasText: "fw-04" })).toContainText("Firewall"); // nur root

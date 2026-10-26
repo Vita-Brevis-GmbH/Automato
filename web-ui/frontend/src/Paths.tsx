@@ -27,6 +27,7 @@ import type { ViewParams } from "./App";
 import { useDebounced } from "./Objects";
 import { Capture, CAPTURE_KEY, Hops, matchText, Missing, policyText, Port, VrfChip, where } from "./Routing";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
+import { FoldTitle, useFolds } from "./fold";
 
 const END: Record<TracePath["end"]["kind"], [string, string]> = {
   connected: ["ok", "Ziel erreicht"],
@@ -163,18 +164,20 @@ const INTENT_LABEL: Record<string, string> = { allow: "erlaubt", limited: "einge
 
 // Quell- und Zielzone mit der Absicht zwischen ihnen (je Dienst) und dem Urteil gegenüber dem Weg
 function ZoneIntentCard({ trace }: { trace: TraceResult }) {
+  const f = useFolds("automato_paths_zones").fold("open"); // 0.75.0: zuklappbar
   const z = trace.zones;
   if (!z) return null;
   const first = trace.paths.find((p) => p.kind !== "backup");
   return (
     <div className="card" id="path-zones">
       <div className="card-head">
-        <h2>Zonen</h2>
+        <FoldTitle fold={f}>Zonen</FoldTitle>
         <span className="faint">
           Quelle {z.src.length ? z.src.map((x) => x.name).join(", ") : "ohne Zone"} → Ziel{" "}
           {z.dst.length ? z.dst.map((x) => x.name).join(", ") : "ohne Zone"}
         </span>
       </div>
+      {f.open && (
       <div className="card-body pad">
         {first?.zones && first.zones.length > 0 && (
           <div style={{ marginBottom: 8 }}>
@@ -205,6 +208,7 @@ function ZoneIntentCard({ trace }: { trace: TraceResult }) {
           </table>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -339,6 +343,7 @@ function L2Line({ seg, prefix = "L2" }: { seg: L2Segment; prefix?: string }) {
 }
 
 function L2Ends({ trace }: { trace: TraceResult }) {
+  const f = useFolds("automato_paths_l2").fold("open"); // 0.75.0: zuklappbar
   const ends = trace.l2;
   const src = trace.paths.find((p) => p.l2_src)?.l2_src;
   if (!ends?.src && !ends?.dst && !src) return null;
@@ -347,8 +352,9 @@ function L2Ends({ trace }: { trace: TraceResult }) {
   return (
     <div className="card" id="trace-l2">
       <div className="card-head">
-        <h2>Anschluss (L2)</h2>
+        <FoldTitle fold={f}>Anschluss (L2)</FoldTitle>
       </div>
+      {f.open && (
       <div className="card-body pad">
         {ends?.src && (
           <div id="trace-l2-src">
@@ -364,6 +370,7 @@ function L2Ends({ trace }: { trace: TraceResult }) {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

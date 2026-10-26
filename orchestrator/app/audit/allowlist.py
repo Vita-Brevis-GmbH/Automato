@@ -127,6 +127,10 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         }
     ),
     "application.deleted": frozenset({"application_id", "tenant_id", "name", "members"}),
+    # 0.75.0: Stammdaten aus CSV - nur Zahlen und Kennungen, keine Inhalte der Datei
+    "application.imported": frozenset(
+        {"tenant_id", "created", "updated", "errors", "application_ids"}
+    ),
     "application.member_added": frozenset(
         {"application_id", "tenant_id", "kind", "ref", "count", "suggestion"}
     ),

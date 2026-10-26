@@ -191,6 +191,9 @@ tr.detail-row > td { background: var(--surface-2); }
 .page-head > div:first-child { flex: 1 1 320px; }
 .page-head h1 { font-size: 21px; font-weight: 600; letter-spacing: -.01em; }
 .page-head p { color: var(--muted); font-size: 13px; margin: 4px 0 0; max-width: 820px; }
+/* 0.75.0: Erklärung eine Zeile, Klick klappt auf */
+.page-head p.page-help { cursor: pointer; }
+.page-head p.page-help:not(.open) { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .page-head .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* KPI-Kacheln */

@@ -6,6 +6,7 @@ import type { Me } from "./auth";
 import CollectDialog, { CollectAllDialog } from "./CollectDialog";
 import { RunsTable } from "./Runs";
 import { ErrorBox, Icon, Loading, PageHead } from "./ui";
+import { FoldTitle, useFolds } from "./fold";
 
 const RECENT = 8; // letzte Läufe; offene kommen immer dazu (auch ältere, siehe Läufe-Ansicht)
 
@@ -29,6 +30,9 @@ export default function Overview({
   onReload: () => void;
 }) {
   const [runs, setRuns] = useState<Run[] | null>(null);
+  const { fold } = useFolds("automato_overview_folds"); // 0.75.0: Bereiche zuklappbar
+  const runsFold = fold("runs");
+  const zoneFold = fold("zones");
   const [runsTotal, setRunsTotal] = useState(0);
   const [openTotal, setOpenTotal] = useState(0);
   const [runsErr, setRunsErr] = useState<unknown>(null);
@@ -185,7 +189,7 @@ export default function Overview({
         {!customer && (
           <div className="card">
             <div className="card-head">
-              <h2>Letzte Läufe</h2>
+              <FoldTitle fold={runsFold}>Letzte Läufe</FoldTitle>
               {openTotal > 0 && (
                 <span className="chip info" title="wartet oder läuft">
                   {openTotal} offen
@@ -201,6 +205,8 @@ export default function Overview({
                 </button>
               )}
             </div>
+            {runsFold.open && (
+            <>
             <div className="card-body scroll tall">
               <ErrorBox error={runsErr} prefix="Läufe laden" />
               {runs === null ? (
@@ -234,14 +240,16 @@ export default function Overview({
                 Externe Läufe warten, bis ein Agent sie per <code>--poll</code> abholt.
               </div>
             )}
+            </>
+            )}
           </div>
         )}
 
         <div className="card">
           <div className="card-head">
-            <h2>Regeln je Zone (Ziel)</h2>
+            <FoldTitle fold={zoneFold}>Regeln je Zone (Ziel)</FoldTitle>
           </div>
-          {rules === null ? (
+          {!zoneFold.open ? null : rules === null ? (
             <Loading />
           ) : zoneRows.length === 0 ? (
             <div className="empty">

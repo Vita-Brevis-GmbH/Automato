@@ -678,6 +678,7 @@ export interface Application {
   description: string | null;
   member_count: number;
   system_count: number;
+  vm_count: number; // 0.75.0: VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern
 }
 
 export interface AppMember {
@@ -1612,6 +1613,26 @@ export const createApp = (
 export const patchApp = (id: number, body: ApplicationInput) =>
   sendJSON<ApplicationDetail>(`/api/applications/${id}`, "PATCH", body);
 export const deleteApp = (id: number) => sendJSON<void>(`/api/applications/${id}`, "DELETE");
+// 0.75.0: mehrere löschen (z. B. ohne VMs), Stammdaten aus CSV mit Vorschau
+export const deleteApps = (tenantId: number, ids: number[]) =>
+  sendJSON<{ deleted: number }>(`/api/applications/delete${qs({ tenant_id: tenantId })}`, "POST", { ids });
+export interface AppImportRow {
+  line: number;
+  name: string | null;
+  action: "create" | "update" | "unchanged" | "error";
+  errors: string[];
+  changes: Record<string, [unknown, unknown]>;
+  application_id: number | null;
+}
+export interface AppImportPlan {
+  columns: Record<string, string>; // Kopfzeile -> Feld
+  ignored: string[];
+  counts: Record<AppImportRow["action"], number>;
+  rows: AppImportRow[];
+}
+export const importApps = (tenantId: number, csv: string, apply: boolean) =>
+  sendJSON<AppImportPlan>(`/api/applications/import${qs({ tenant_id: tenantId, apply: apply ? "true" : undefined })}`, "POST", { csv });
+export const fetchAppImportTemplate = async (): Promise<Blob> => (await fetchChecked("/api/applications/import/template")).blob();
 export const addAppMembers = (id: number, members: { kind: MemberKind; ref: string }[]) =>
   sendJSON<ApplicationDetail>(`/api/applications/${id}/members`, "POST", { members });
 export const removeAppMember = (id: number, memberId: number) =>

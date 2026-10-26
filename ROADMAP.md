@@ -376,19 +376,21 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.73.0** | Applikations-Doku übersichtlich: Bereiche zuklappen, Systeme kompakt mit Detail, Export und Druck mit wählbaren Abschnitten, Abhängigkeiten vorerst entfernt, Befund nur bei uneinheitlichen Wegen (ADR 0012/0021 Ergänzung 0.73.0) |
 | **0.74.0** | Netzwerkplan der Applikation kompakt: Rahmen je AP mit EPGs und ihren VMs, ACI als L3Out, Regeln mit Diensten als ausblendbare Ebene (auch im draw.io), Zoom und Verschieben (ADR 0021 Ergänzung 0.74.0) |
 | **0.74.1** | Korrekturen: Speichern einer Applikation ohne Warten (Befunde im Hintergrund), Routing als Index im Speicher, Vorschläge je ACI-Tenant, Typ-Filter der Objekte beim Reiterwechsel, Network Container aus Infoblox |
+| **0.75.0** | Stammdaten der Applikationen aus CSV (Vorschau, Ausnahme vom „kein CSV-Import“), Applikationen ohne VMs ausblenden bzw. mehrere löschen, Routing-Kontexte zugeklappt, Erklärung je Seite einzeilig (ADR 0012 Ergänzung 0.75.0) |
 
-### Nächste Arbeiten (Stand 0.74.1)
+### Nächste Arbeiten (Stand 0.75.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.74.1.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.75.0.
 
 **Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
 Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in
-0.74.1**; danach **0.75.0**: Kunde oben wählen filtert alles (eigenes plus geteiltes, markiert),
-Infos allgemein zuklappbar (Routing: „Gelesene Kontexte“ zu, Reiter ohne Scrollen sichtbar),
-Applikationen ohne VMs ausblenden bzw. löschen, Import der Stammdaten von Applikationen aus
-CSV (Ausnahme vom „kein CSV-Import“ nur dafür); danach **VMware NSX Advanced Load Balancer
-(Avi)** als lesende Quelle für die Doku (eigene ADR); dann weiter mit Schritt 5.
+0.74.1**; Import der Stammdaten von Applikationen aus CSV (Ausnahme vom „kein CSV-Import“ nur
+dafür), Applikationen ohne VMs ausblenden bzw. löschen, Infos zuklappbar (Routing: „Gelesene
+Kontexte“ zu, Reiter ohne Scrollen sichtbar) – **umgesetzt in 0.75.0**; als Nächstes
+**0.76.0**: Kunde oben wählen filtert alles (eigenes plus geteiltes, markiert); danach
+**VMware NSX Advanced Load Balancer (Avi)** als lesende Quelle für die Doku (eigene ADR); dann
+weiter mit Schritt 5.
 
 **Dazwischen (Rückmeldung des Anwenders zur Applikations-Doku, 2026-10-26):** Übersicht mit
 zuklappbaren Bereichen, Systeme kompakt, Export mit Auswahl, Abhängigkeiten vorerst entfernt,

@@ -23,7 +23,7 @@ from app.auth.principal import Principal
 from app.db import get_session, get_session_factory
 from app.models import Application, Rule, Site, SourceSystem, Tenant
 from app.schemas.rules import RuleOut
-from app.store import app_paths, app_plan, app_refresh, sites, word_export
+from app.store import app_import, app_paths, app_plan, app_refresh, sites, word_export
 from app.store import applications as store
 
 router = APIRouter(prefix="/applications", tags=["applications"])
@@ -91,6 +91,7 @@ class ApplicationOut(BaseModel):
     description: str | None
     member_count: int
     system_count: int
+    vm_count: int = 0  # VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern (0.75.0)
 
 
 class ApplicationDetailOut(ApplicationOut):
@@ -263,7 +264,8 @@ def _site(session: Session, site_id: int | None) -> SiteRef | None:
     return SiteRef(**ref) if ref else None
 
 
-def _out(session: Session, app: Application, resolver: store.Resolver) -> ApplicationOut:
+def _out(session: Session, app: Application, resolver: store.Resolver,
+         vms: store.VmCounter | None = None) -> ApplicationOut:  # fmt: skip
     return ApplicationOut(
         id=app.id,
         tenant_id=app.tenant_id,
@@ -278,6 +280,7 @@ def _out(session: Session, app: Application, resolver: store.Resolver) -> Applic
         description=app.description,
         member_count=len(app.members),
         system_count=store.system_count(session, app, resolver),
+        vm_count=(vms or store.VmCounter(session, app.tenant_id)).count(app, resolver),
     )
 
 
@@ -341,12 +344,14 @@ def list_applications(
     view = customer_view(session, principal, tenant_id, customer_id)
     mine = view.applications(session) if view else None
     resolvers: dict[int, store.Resolver] = {}
+    counters: dict[int, store.VmCounter] = {}
     out = []
     for app in store.list_applications(session, tenant_id):
         if mine is not None and not mine(app):
             continue
         res = resolvers.setdefault(app.tenant_id, store.Resolver(session, app.tenant_id))
-        out.append(_out(session, app, res))
+        vms = counters.setdefault(app.tenant_id, store.VmCounter(session, app.tenant_id))
+        out.append(_out(session, app, res, vms))
     return out
 
 
@@ -399,6 +404,99 @@ def create_application(
     )
     _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)
+
+
+class ImportIn(BaseModel):
+    csv: str = Field(min_length=1, max_length=app_import.MAX_BYTES)
+
+
+class DeleteManyIn(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=2000)
+
+
+@router.get("/import/template")
+def import_template(principal: Principal = Depends(require_operator)):
+    """Vorlage fuer den CSV-Import (0.75.0): Kopfzeile und ein Beispiel, Trennzeichen `;`."""
+    body = "\ufeff" + app_import.TEMPLATE  # BOM: Excel erkennt UTF-8
+    return Response(
+        content=body.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="applikationen-vorlage.csv"'},
+    )
+
+
+@router.post("/import")
+def import_applications(
+    body: ImportIn,
+    tenant_id: int | None = None,
+    apply: bool = False,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Stammdaten aus CSV (0.75.0, Ausnahme vom „kein CSV-Import“ nur dafuer): ohne `apply`
+    die Vorschau je Zeile, mit `apply=true` werden die Zeilen ohne Fehler uebernommen. Die
+    Mitglieder folgen in der Oberflaeche."""
+    tid = _require_tenant(principal, tenant_id)
+    try:
+        if not apply:
+            return app_import.plan(session, tid, body.csv).out()
+        result, touched = app_import.apply(session, tid, body.csv)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    counts = result.counts()
+    audit.record(
+        session,
+        actor=_actor(principal),
+        action="application.imported",
+        subject=str(tid),
+        detail={
+            "tenant_id": tid,
+            "created": counts["create"],
+            "updated": counts["update"],
+            "errors": counts["error"],
+            "application_ids": touched[:500],
+        },
+    )
+    return result.out()
+
+
+@router.post("/delete")
+def delete_applications(
+    body: DeleteManyIn,
+    background: BackgroundTasks,
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+):
+    """Mehrere Applikationen loeschen (0.75.0, z. B. ohne VMs und ohne Funktion). Gelesene Daten
+    bleiben; ihre Befunde fallen im Hintergrund weg."""
+    tid = _require_tenant(principal, tenant_id)
+    apps = list(
+        session.scalars(
+            select(Application).where(
+                Application.tenant_id == tid, Application.id.in_(set(body.ids))
+            )
+        )
+    )
+    for app in apps:
+        audit.record(
+            session,
+            actor=_actor(principal),
+            action="application.deleted",
+            subject=str(app.id),
+            detail={
+                "application_id": app.id,
+                "tenant_id": tid,
+                "name": app.name,
+                "members": len(app.members),
+            },
+        )
+        session.delete(app)
+    session.flush()
+    for app in apps:
+        _refresh(background, factory, tid, app.id)
+    return {"deleted": len(apps)}
 
 
 @router.get("/candidates", response_model=list[CandidateOut])
