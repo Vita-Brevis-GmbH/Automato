@@ -531,7 +531,11 @@ test("Parallele Firewalls: Verbund auflösen, Vorschlag abgelehnt und wieder vor
   await search(page).fill("par-");
   await expect(rows(page)).toHaveCount(6); // aus dem Test davor zusammengefasst
   await rows(page).filter({ hasText: "par-web" }).click();
-  await page.locator(".drawer button", { hasText: "Verbund auflösen" }).click();
+  // erst nach der Antwort neu laden – sonst holt die Seite die Vorschläge vor der Ablehnung
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/systems/parallel-reject") && r.ok()),
+    page.locator(".drawer button", { hasText: "Verbund auflösen" }).click(),
+  ]);
   await page.locator(".drawer button.close").click();
   await page.reload();
   await search(page).fill("par-");

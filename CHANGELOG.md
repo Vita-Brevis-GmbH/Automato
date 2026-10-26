@@ -7,6 +7,33 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.74.0 – 2026-10-26
+
+Netzwerkplan der Applikation kompakt (Rückmeldung des Anwenders: zu gross, zu viele Linien).
+Eigener Plan in Automato, der Export nach draw.io bleibt. Ohne Migration.
+
+- **Applikation als Aufbau:** je Application Profile ein Rahmen (Tenant/AP), darin je EPG ein
+  Kasten mit ihren VMs bzw. Servern (höchstens sechs, der Rest als Zahl); Systeme ohne EPG im
+  Rahmen „ohne EPG“. Die Linien beginnen an der EPG statt an jeder VM.
+- **ACI als L3Out:** der Hop im ACI heisst nach dem L3Out zur Gegenstelle hin – nach dem
+  Routing (Next-Hop im Netz bzw. Peer eines L3Out-Pfads, Interface des Pfads; ausgehend der
+  Ausgang, eingehend der Eingang), sonst der L3Out der externen EPG; ohne L3Out bleibt die VRF.
+- **Ebene „Regeln“:** unter jedem Knoten des Wegs ein kleiner Kasten mit den entscheidenden
+  Policies bzw. Contracts und ihren Diensten (Filter), „✕ implizit gesperrt“ ohne Regel; im
+  Verbund je Firewall. Ein- und ausblendbar, ebenso die Ebene „Dienste und Interfaces“ an den
+  Linien; die Wahl bleibt im Browser.
+- **Zoom und Verschieben:** −/+/100 %/einpassen, Strg bzw. ⌘ + Mausrad, Ziehen auf freier
+  Fläche; der Plan scrollt in seinem Rahmen.
+- **Export:** SVG und draw.io zeichnen dasselbe – Rahmen der APs, EPGs mit VMs, im draw.io die
+  Regeln als eigene Ebene „Regeln“ (in draw.io ein- und ausblendbar). Ohne die Ebene mit
+  `GET …/connections/plan/export?rules=false` (folgt der Wahl in der Oberfläche); auch der
+  Netzwerkplan im ZIP für Confluence ist kompakt.
+- API: `GET /applications/{id}/connections` liefert `members` (EPGs mit Tenant/AP, Systeme mit
+  ihren EPGs), der Plan `groups` und je Knoten `lines`/`rules`/`rules_box`; je ACI-Hop
+  `l3out_in`/`l3out_out`/`l3outs`.
+- UI-Test „Verbund auflösen“ wartet auf die Antwort, bevor er neu lädt (Wettlauf, in der CI von
+  0.73.0 rot; die Anwendung war nicht betroffen).
+
 ## 0.73.0 – 2026-10-26
 
 Applikations-Doku übersichtlicher (Rückmeldung des Anwenders). Ohne Migration.

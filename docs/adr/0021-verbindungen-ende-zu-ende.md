@@ -165,3 +165,31 @@ Verbindung über einen Weg offen und über einen anderen gesperrt ist.
   Zeitbudget wie in 0.59.0; ohne Migration (abgeleiteter Zustand, bestehende Befunde fallen beim
   nächsten Abgleich weg).
 
+## Ergänzung 0.74.0 — Netzwerkplan kompakt
+
+Rückmeldung des Anwenders (2026-10-26): der Plan ist zu gross und hat zu viele Linien; die VMs in
+der EPG zeigen, Rahmen um das Application Profile, Verbindungen zu den aktiven L3Outs, die
+angebundenen Firewalls und Ziele, je Knoten eine kleine Box mit Regel und Filter in einer
+ausblendbaren Ebene, Zoom/Scrollen. Entscheid: eigener Plan in Automato (keine Einbettung von
+draw.io), der Export nach draw.io bleibt.
+
+- **Aufbau statt Systeme:** `app_paths.members` (EPGs mit Tenant/AP und VRF, Systeme mit ihren
+  EPGs) geht an `app_plan.build`. Eigene Knoten sind EPGs (`epg:<Tenant/AP/EPG>`) mit ihren VMs
+  bzw. Servern als Zeilen (höchstens 6) im Rahmen ihres APs; ein System gehört zu seiner ersten
+  EPG der Applikation. Systeme ohne EPG stehen einzeln im Rahmen „ohne EPG“; ohne `members`
+  (reine Tests) wie bisher je System.
+- **L3Out:** `app_paths.L3Outs` liest die L3Outs der ACI-Quellsysteme je VRF (Netze und
+  Interfaces der Pfade, Peers) und bestimmt je ACI-Hop den L3Out des Ein- und Ausgangs
+  (`l3out_in`/`l3out_out`); `aci_check` nennt die L3Outs der externen EPGs (`l3outs`). Der Plan
+  nimmt den zur Gegenstelle hin (ausgehend Ausgang, eingehend Eingang), sonst den der Prüfung,
+  sonst – Hop direkt vor einer externen EPG – deren L3Out; Knoten `l3o:<Hop>|<L3Out>`, sonst die
+  VRF.
+- **Ebene „Regeln“:** je Knoten des Wegs die entscheidenden Policies bzw. Contracts der
+  erreichenden Verbindungen mit ihren Diensten (`rules`, `rule_lines`, höchstens 5), ohne
+  entscheidende Regel und gesperrt „implizit gesperrt“, im Verbund mit der Firewall. Der Kasten
+  steht unter dem Knoten (`rules_box`) und nimmt in der Spalte Platz; im draw.io eine eigene
+  Ebene (`mxCell` „Regeln“ mit `parent="0"`), im SVG eine Gruppe; `rules=false` lässt sie weg.
+- **Layout:** die Applikation nach AP und EPG (nicht nach dem Baryzentrum), Rahmen je AP
+  (`groups`), schmalere Spalten. Oberfläche mit Zoom, Verschieben und den Ebenen „Regeln“ bzw.
+  „Dienste und Interfaces“ (Browser).
+

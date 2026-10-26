@@ -310,7 +310,10 @@ class AciChecker:
         (Shared Service, Route-Leaking - `aci_shared`, 0.44.0)."""
         srcs, src_text = self.members(sid, vrf, src)
         dsts, dst_text = self.members(sid, dst_vrf or vrf, dst)
-        base = {"src_epg": src_text, "dst_epg": dst_text}
+        # L3Outs der externen EPGs (0.74.0, Netzwerkplan der Applikation)
+        l3outs = sorted({m.epg.l3out for m in (srcs or []) + (dsts or [])
+                         if m.epg.kind == "external" and m.epg.l3out})  # fmt: skip
+        base = {"src_epg": src_text, "dst_epg": dst_text, "l3outs": l3outs}
         if src is None:
             return base | {"verdict": "unknown", "rules": [],
                            "text": "Quelle unbekannt – Contracts nicht prüfbar"}  # fmt: skip

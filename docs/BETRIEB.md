@@ -726,9 +726,18 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       Verbindung den Weg mit den entscheidenden Regeln und die Abweichung ausgeschrieben.
     - Liegt die Quelle an keinem gelesenen Gerät (Internet, Partner), beginnt der Weg auf dem
       Gerät der Regel. „In der Weg-Suche öffnen“ zeigt den ganzen Weg mit allen Varianten.
-    - **Netzwerkplan (0.67.0):** Umschalter **Tabelle | Plan** im Kopf der Karte (bleibt
-      gewählt). Links die Systeme der Applikation, in der Mitte Firewalls, VDOMs und ACI-VRFs
-      auf den Wegen, rechts die Gegenstellen. An jeder Linie die Dienste (→ von der Applikation
+    - **Netzwerkplan (0.67.0, kompakt seit 0.74.0):** Umschalter **Tabelle | Plan** im Kopf der
+      Karte (bleibt gewählt). Links die Applikation: je Application Profile ein Rahmen
+      (Tenant/AP) mit einem Kasten je EPG und ihren VMs bzw. Servern (höchstens sechs, sonst
+      „+n weitere“), Systeme ohne EPG im Rahmen „ohne EPG“; in der Mitte L3Outs, Firewalls und
+      VDOMs auf den Wegen (das ACI als der L3Out zur Gegenstelle hin – nach dem Routing bzw. der
+      externen EPG –, sonst als VRF), rechts die Gegenstellen.
+      - **Ebene „Regeln“:** unter jedem Knoten des Wegs ein Kasten mit den entscheidenden
+        Policies bzw. Contracts und ihren Diensten („web-lan (#11) · tcp/443“, „Contract CT_web ·
+        tcp/443“, „✕ implizit gesperrt“). Häkchen **Regeln** bzw. **Dienste und Interfaces**
+        blenden die Ebenen aus (bleibt im Browser); der Export folgt dem Häkchen „Regeln“.
+      - **Zoom und Verschieben:** −, +, 100 % und „einpassen“; Strg bzw. ⌘ + Mausrad zoomt,
+        Ziehen auf freier Fläche verschiebt, sonst scrollt der Plan in seinem Rahmen. An jeder Linie die Dienste (→ von der Applikation
       weg, ← zu ihr hin, ✕ vorher gesperrt – kommt hier nicht mehr an), an den Enden die
       Interfaces (z. B. `port3`, `vlan5`). Farbe nach dem Urteil, gestrichelt = Weg nicht
       bekannt; Knoten mit Rahmen in der Farbe ihres Urteils. Linien über mehrere Spalten laufen
@@ -738,7 +747,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
         Verbindung in der Tabelle; erneuter Klick hebt die Auswahl auf).
       - **Export** draw.io bzw. SVG – mit Hervorhebung nur diese Verbindungen („Export (n
         Verbindungen)“). Im draw.io tragen Knoten IPs, Systeme und Urteil, Linien Dienste je
-        Richtung und die Interfaces (`automato_ports_a`/`_b`) als Eigenschaften.
+        Richtung und die Interfaces (`automato_ports_a`/`_b`) als Eigenschaften; die Rahmen der
+        APs stehen hinter den Kästen, die Regeln auf der eigenen Ebene „Regeln“ (in draw.io
+        über *Ansicht → Ebenen* ein- und ausblendbar). API
+        `GET /applications/{id}/connections/plan/export?format=svg|drawio&key=…&rules=false`.
     - Nicht für Kunden-Benutzer (zeigt die Infrastruktur).
   - **Regeln direkt zuordnen bzw. ausschliessen (0.60.0, ADR 0012):** Im Regel-Detail der
     Applikations-Doku „Der Applikation zuordnen“ (die Regel gehört dazu, auch wenn sie nur über

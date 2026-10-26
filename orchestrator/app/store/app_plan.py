@@ -1,20 +1,26 @@
 """Netzwerkplan je Applikation (0.67.0, ADR 0021 Nr. 6): die Verbindungen Ende zu Ende als Plan.
 
-- **Knoten:** links die Systeme der Applikation (VM, Server bzw. EPG), in der Mitte die Knoten
-  ihrer Wege (Firewall, VDOM, ACI-VRF; Verbund als ein Knoten wie im Weg), rechts die
-  Gegenstellen (Host, Netz, EPG, externe EPG). Je Knoten das Urteil ueber alle Verbindungen
-  (z. B. gesperrt an der ACI-VRF).
+- **Knoten:** links die Systeme der Applikation, in der Mitte die Knoten ihrer Wege (Firewall,
+  VDOM, ACI; Verbund als ein Knoten wie im Weg), rechts die Gegenstellen (Host, Netz, EPG,
+  externe EPG). Je Knoten das Urteil ueber alle Verbindungen (z. B. gesperrt im ACI).
 - **Linien:** je Knotenpaar auf den Wegen eine Linie mit den Diensten in beide Richtungen
   („→ tcp/443 · ← tcp/22“; Richtung von der Applikation aus) und an den Enden den Interfaces
   der Knoten (Ein- bzw. Ausgang des Wegs). Farbe nach dem Urteil der Verbindungen darueber,
   gestrichelt, wo der Weg nicht bekannt ist (vor dem Ziel zu Ende, Quelle an keinem gelesenen
   Geraet).
+- **Kompakt (0.74.0, Anwender: zu gross, zu viele Linien):** die Applikation als Rahmen je
+  Application Profile (Tenant/AP) mit einem Kasten je EPG, darin ihre VMs bzw. Server - die
+  Linien beginnen an der EPG statt an jeder VM; Systeme ohne EPG im Rahmen „ohne EPG“. Das ACI
+  steht als der genutzte **L3Out** da (Routing bzw. externe EPG, `app_paths.L3Outs`), sonst als
+  VRF. Unter jedem Knoten des Wegs ein kleiner Kasten mit den entscheidenden Policies bzw.
+  Contracts und ihren Diensten - eine eigene **Ebene „Regeln“** (Oberflaeche ausblendbar,
+  draw.io eigene Ebene, SVG/draw.io mit `rules=False` ohne).
 - **Layout:** Spalten nach der Entfernung von der Applikation, Reihen nach den Nachbarn links
-  (Baryzentrum), Linien weich wie im Zonenplan (`plan_export.route`).
+  (Baryzentrum), die Applikation nach AP und EPG; Linien weich wie im Zonenplan.
 
-Reine Funktion ueber dem Ergebnis von `app_paths.build`: Oberflaeche, SVG und draw.io zeichnen
-dasselbe Layout; `keys` = nur diese Verbindungen (Filter der Ansicht beim Export). Nur lesend,
-nicht fuer Kunden-Benutzer (zeigt die Infrastruktur, ADR 0018).
+Reine Funktion ueber dem Ergebnis von `app_paths.build` (`connections`, `members`): Oberflaeche,
+SVG und draw.io zeichnen dasselbe Layout; `keys` = nur diese Verbindungen (Filter der Ansicht
+beim Export). Nur lesend, nicht fuer Kunden-Benutzer (zeigt die Infrastruktur, ADR 0018).
 """
 
 import xml.etree.ElementTree as ET
@@ -23,14 +29,21 @@ from datetime import datetime
 
 from app.store.plan_export import CURVE_STEPS, _bezier, _geometry, _html, _id, _n, _rel, _text
 
-NODE_W, NODE_H = 210, 46
-COL_GAP, ROW_GAP, TOP = 150, 22, 34
+NODE_W, NODE_H = 190, 44
+COL_GAP, ROW_GAP, TOP = 120, 18, 34
 MAX_SERVICES = 4  # Dienste je Richtung an einer Linie
 MAX_PORTS = 2  # Interfaces je Ende
 HEAD = 56
+LINE_H = 14  # Zeile: VM in der EPG, Regel im Kasten
+MAX_LINES = 6  # VMs je EPG
+MAX_RULES = 5  # Regeln je Kasten
+RULE_GAP, RULE_PAD = 6, 5
+GROUP_HEAD, GROUP_PAD, GROUP_GAP = 20, 8, 14
+X0 = 16 + GROUP_PAD
+NO_EPG = "ohne EPG"
 
 KIND = {"system": "System der Applikation", "firewall": "Firewall", "vdom": "VDOM",
-        "vrf": "ACI-VRF", "object": "Gegenstelle", "epg": "EPG",
+        "vrf": "ACI-VRF", "l3out": "L3Out", "object": "Gegenstelle", "epg": "EPG",
         "external": "externe EPG"}  # fmt: skip
 VERDICT = {"allow": "erlaubt", "deny": "gesperrt", "depends": "abhängig", "unknown": "unbekannt",
            "blocked": "vorher gesperrt"}  # fmt: skip
@@ -40,6 +53,8 @@ COLOR = {"allow": "#2e7d32", "deny": "#c62828", "depends": "#ef6c00", "unknown":
          "blocked": "#b8bfca"}  # fmt: skip
 FILL = {"own": "#e8f0fe", "hop": "#eef1f6", "peer": "#ffffff"}
 STROKE = {"own": "#2563eb", "hop": "#0e7c86", "peer": LINE}
+GROUP_FILL, GROUP_STROKE = "#f7f9fc", "#9aa5b8"
+RULE_FILL, RULE_STROKE = "#fffbea", "#d6b656"
 
 
 def _verdict(values) -> str:
@@ -58,16 +73,61 @@ def _facing(h: dict, direction: str) -> tuple[list[str], list[str]]:
     return (ing, eg) if direction == "out" else (eg, ing)
 
 
-def _chain(c: dict) -> list[dict]:
+class _Place:
+    """Wo ein System der Applikation steht (0.74.0): in seiner EPG (Kasten im Rahmen des APs)
+    bzw. ohne EPG als eigener Kasten. Ohne `members` (reine Tests) je System ein Kasten."""
+
+    def __init__(self, members: dict | None):
+        m = members or {}
+        self.epgs = {e["label"]: e for e in m.get("epgs") or []}
+        self.of_key = {e["key"]: e["label"] for e in m.get("epgs") or []}
+        self.vms: dict[str, list[str]] = defaultdict(list)
+        for x in m.get("systems") or []:
+            labels = [label for label in x.get("epgs") or [] if label in self.epgs]
+            if labels:
+                self.of_key.setdefault(x["key"], labels[0])
+            for label in labels:
+                if x["name"] not in self.vms[label]:
+                    self.vms[label].append(x["name"])
+
+    def own(self, side: dict) -> tuple[str, str | None]:
+        for key in side.get("keys") or []:
+            label = self.of_key.get(key)
+            if label:
+                return f"epg:{label}", label
+        return f"sys:{side['label']}", None
+
+
+def _l3outs(h: dict, direction: str) -> list[str]:
+    """L3Out zur Gegenstelle hin: nach dem Routing der Ausgang (ausgehend) bzw. der Eingang
+    (eingehend), sonst die L3Outs der externen EPGs der Pruefung."""
+    side = "l3out_out" if direction == "out" else "l3out_in"
+    checks = h.get("checks") or []
+    names = [c[side] for c in checks if c.get(side)]
+    return list(dict.fromkeys(names or [n for c in checks for n in c.get("l3outs") or []]))
+
+
+def _chain(c: dict, place: _Place | None = None) -> list[dict]:
     """Knoten einer Verbindung von der Applikation zur Gegenstelle: je Knoten Id, Art, Name und
-    die Interfaces nach links (zur Applikation) bzw. rechts."""
+    die Interfaces nach links (zur Applikation) bzw. rechts. Das ACI als L3Out (0.74.0): ueber
+    das Routing bzw. die Pruefung, sonst - zur externen EPG als Gegenstelle - deren L3Out."""
+    place = place or _Place(None)
     out = c["direction"] == "out"
     own, peer = (c["src"], c["dst"]) if out else (c["dst"], c["src"])
-    chain = [{"id": f"sys:{own['label']}", "role": "own", "side": own, "left": [], "right": []}]
-    for h in c["hops"] if out else list(reversed(c["hops"])):
+    oid, epg = place.own(own)
+    chain = [{"id": oid, "role": "own", "side": own, "epg": epg, "left": [], "right": []}]
+    hops = c["hops"] if out else list(reversed(c["hops"]))
+    for i, h in enumerate(hops):
         left, right = _facing(h, c["direction"])
-        chain.append({"id": f"hop:{h['key']}", "role": "hop", "hop": h, "left": left,
-                      "right": right})  # fmt: skip
+        x = {"id": f"hop:{h['key']}", "role": "hop", "hop": h, "left": left, "right": right}
+        if h["kind"] == "vrf":
+            names = _l3outs(h, c["direction"])
+            if not names and i == len(hops) - 1 and peer.get("l3out"):
+                names = [peer["l3out"]]
+            if names:
+                x["l3out"] = " / ".join(names)
+                x["id"] = f"l3o:{h['key']}|{x['l3out']}"
+        chain.append(x)
     chain.append({"id": f"peer:{peer['ip']}", "role": "peer", "side": peer, "left": [],
                   "right": []})  # fmt: skip
     return chain
@@ -128,20 +188,23 @@ def edge_label(e: dict) -> str:
     return " · ".join(parts)
 
 
-def build(connections: list[dict], keys: set[str] | None = None) -> dict:
-    """Plan (Knoten, Linien, Lage) aus den Verbindungen; `keys` = nur diese."""
+def build(connections: list[dict], keys: set[str] | None = None,
+          members: dict | None = None) -> dict:  # fmt: skip
+    """Plan (Knoten, Linien, Lage) aus den Verbindungen; `keys` = nur diese; `members` = Aufbau
+    der Applikation (`app_paths.members`: EPGs mit Tenant/AP, Systeme mit ihren EPGs)."""
     conns = [c for c in connections if keys is None or c["key"] in keys]
+    place = _Place(members)
     nodes: dict[str, dict] = {}
     edges: dict[tuple[str, str], dict] = {}
     col: dict[str, int] = {}
     for c in conns:
-        chain = _chain(c)
+        chain = _chain(c, place)
         opened = _open_segments(c, len(chain))
         behind, block = _after_block(c, chain)
         for i, x in enumerate(chain):
             node = nodes.get(x["id"])
             if node is None:
-                node = nodes[x["id"]] = _node(x)
+                node = nodes[x["id"]] = _node(x, place)
             # hinter dem sperrenden Hop kommt der Verkehr nicht an: kein Urteil dort
             reached = block is None or (i <= block if c["direction"] == "out" else i >= block)
             _add(node, x, c, reached)
@@ -183,15 +246,57 @@ def build(connections: list[dict], keys: set[str] | None = None) -> dict:
     return lay
 
 
-def _node(x: dict) -> dict:
+def _node(x: dict, place: _Place) -> dict:
+    base = {"id": x["id"], "role": x["role"], "hops": [], "conns": [], "ips": [], "systems": [],
+            "lines": [], "more": 0, "rules": [], "group": None}  # fmt: skip
     if x["role"] == "hop":
         h = x["hop"]
-        return {"id": x["id"], "role": "hop", "kind": h["kind"], "label": h["label"],
-                "hops": [], "conns": [], "ips": [], "systems": []}  # fmt: skip
+        if x.get("l3out"):
+            return base | {"kind": "l3out", "label": x["l3out"], "via": h["label"]}
+        return base | {"kind": h["kind"], "label": h["label"]}
     s = x["side"]
+    if x.get("epg"):  # EPG mit ihren VMs bzw. Servern im Rahmen ihres APs
+        e = place.epgs[x["epg"]]
+        vms = place.vms.get(x["epg"], [])
+        group = "/".join(v for v in (e.get("tenant"), e.get("ap")) if v) or "ACI"
+        return base | {"kind": "epg", "label": x["epg"], "short": e.get("name") or x["epg"],
+                       "vrf": e.get("vrf"), "group": group, "lines": vms[:MAX_LINES],
+                       "more": max(0, len(vms) - MAX_LINES), "name": None}  # fmt: skip
     kind = "system" if x["role"] == "own" else s["kind"]
-    return {"id": x["id"], "role": x["role"], "kind": kind, "label": s["label"],
-            "name": s.get("name"), "hops": [], "conns": [], "ips": [], "systems": []}  # fmt: skip
+    group = NO_EPG if x["role"] == "own" and place.epgs else None
+    return base | {"kind": kind, "label": s["label"], "name": s.get("name"), "group": group}
+
+
+def _rule_text(r: dict) -> str:
+    """Entscheidende Policy bzw. Contract: „Contract CT_web“, „web-lan (#11)“."""
+    if r.get("kind") == "contract":
+        return r.get("label") or f"Contract {r.get('name')}"
+    name, ext = r.get("name"), r.get("external_id")
+    if name and ext:
+        return f"{name} (#{ext})"
+    return r.get("label") or name or f"Policy {ext}"
+
+
+def _add_rules(node: dict, h: dict) -> None:
+    """Regeln des Kastens (0.74.0): je Hop die entscheidenden Policies bzw. Contracts mit ihren
+    Diensten; ohne entscheidende Regel und gesperrt „implizit gesperrt“. Im Verbund mit der
+    Firewall."""
+    checks = h.get("checks") or []
+    for k in checks:
+        on = k["label"] if len(checks) > 1 else None
+        deciding = [r for r in k.get("rules") or [] if r.get("decides")]
+        if not deciding and k.get("verdict") in BLOCK:
+            deciding = [{"name": "implizit gesperrt", "action": "deny", "services": []}]
+        for r in deciding:
+            text = _rule_text(r) if r.get("name") != "implizit gesperrt" else r["name"]
+            entry = next((x for x in node["rules"] if (x["name"], x["on"]) == (text, on)), None)
+            if entry is None:
+                entry = {"name": text, "on": on, "action": r.get("action") or "allow",
+                         "services": [], "rule_id": r.get("rule_id")}  # fmt: skip
+                node["rules"].append(entry)
+            for svc in r.get("services") or []:
+                if svc not in entry["services"]:
+                    entry["services"].append(svc)
 
 
 def _add(node: dict, x: dict, c: dict, reached: bool) -> None:
@@ -200,6 +305,7 @@ def _add(node: dict, x: dict, c: dict, reached: bool) -> None:
     if x["role"] == "hop":
         if reached:
             node["hops"].append(x["hop"].get("verdict"))
+            _add_rules(node, x["hop"])
         return
     s = x["side"]
     if s["ip"] not in node["ips"]:
@@ -223,10 +329,14 @@ def _edge_out(e: dict) -> dict:
 
 
 def _sub(n: dict) -> str:
+    if n["kind"] == "l3out":
+        return f"L3Out · {VERDICT[n['verdict']]}"
     if n["role"] == "hop":
         return f"{KIND.get(n['kind'], n['kind'])} · {VERDICT[n['verdict']]}"
     ips = n["ips"]
     text = ips[0] + (f" +{len(ips) - 1}" if len(ips) > 1 else "")
+    if n["kind"] == "epg":
+        return " · ".join(v for v in (f"VRF {n['vrf']}" if n.get("vrf") else "", text) if v)
     if n["role"] == "own" and len(n["systems"]) > 1:
         text += f" · {len(n['systems'])} Systeme"
     elif n.get("name"):
@@ -234,15 +344,40 @@ def _sub(n: dict) -> str:
     return text
 
 
+def _rule_lines(n: dict) -> list[str]:
+    lines = []
+    shown = sorted(n["rules"], key=lambda r: r["name"] == "implizit gesperrt")  # erlaubende zuerst
+    for r in shown[:MAX_RULES]:
+        svc = _services(r["services"]) if r["services"] else ""
+        on = f"{r['on']}: " if r["on"] else ""
+        mark = "✕ " if r["action"] in BLOCK else ""
+        lines.append(f"{mark}{on}{r['name']}" + (f" · {svc}" if svc else ""))
+    if len(n["rules"]) > MAX_RULES:
+        lines.append(f"+{len(n['rules']) - MAX_RULES} weitere")
+    return lines
+
+
+def _sizes(n: dict) -> None:
+    """Hoehe des Kastens (EPG mit ihren VMs) und Platz in der Spalte (mit dem Regel-Kasten)."""
+    lines = len(n["lines"]) + (1 if n["more"] else 0)
+    n["h"] = NODE_H + LINE_H * lines + (4 if lines else 0)
+    n["rule_lines"] = _rule_lines(n) if n["role"] == "hop" else []
+    rule_h = 2 * RULE_PAD + LINE_H * len(n["rule_lines"]) if n["rule_lines"] else 0
+    n["rule_h"] = rule_h
+    n["stack"] = n["h"] + (RULE_GAP + rule_h if rule_h else 0)
+
+
 def _layout(nodes: list[dict], edges: list[dict]) -> dict:
     """Spalten wie berechnet; eine Linie ueber mehrere Spalten bekommt je Spalte dazwischen eine
     Spur (Platzhalter wie im Sugiyama-Verfahren) und laeuft an den Knoten vorbei. Reihen nach dem
-    Mittel der Nachbarn (links, rechts, wieder links), Linien weich mit waagrechten Enden."""
+    Mittel der Nachbarn (links, rechts, wieder links), die Applikation nach AP und EPG mit einem
+    Rahmen je AP; Linien weich mit waagrechten Enden."""
     for n in nodes:
         if n["role"] == "hop":  # ohne erreichende Verbindung: vorher gesperrt
             n["verdict"] = _verdict(n["hops"]) if n["hops"] else "blocked"
         else:
             n["verdict"] = None
+        _sizes(n)
     order = sorted({n["col"] for n in nodes})
     by_id = {n["id"]: n for n in nodes}
     items: dict[int, list[dict]] = defaultdict(list)  # je Spalte Knoten und Spuren
@@ -256,7 +391,8 @@ def _layout(nodes: list[dict], edges: list[dict]) -> dict:
         lo, hi = sorted((by_id[e["a"]], by_id[e["b"]]), key=lambda n: n["vc"])
         chain = [lo]
         for c in range(lo["vc"] + 1, hi["vc"]):
-            lane = {"id": f"lane:{e['id']}:{c}", "role": "lane", "vc": c, "label": hi["label"]}
+            lane = {"id": f"lane:{e['id']}:{c}", "role": "lane", "vc": c, "label": hi["label"],
+                    "h": LANE_H, "stack": LANE_H, "group": None}  # fmt: skip
             items[c].append(lane)
             chain.append(lane)
         chain.append(hi)
@@ -268,47 +404,80 @@ def _layout(nodes: list[dict], edges: list[dict]) -> dict:
     _order(items, left, right)
     tall, heights = 0.0, {}
     for c, col in items.items():
-        heights[c] = sum(_h(x) for x in col) + sum(
-            _gap(x, y) for x, y in zip(col, col[1:], strict=False)
+        heights[c] = (
+            _top(col)
+            + sum(x["stack"] for x in col)
+            + sum(_gap(x, y) for x, y in zip(col, col[1:], strict=False))
         )
         tall = max(tall, heights[c])
     for c, col in items.items():
-        y = TOP + (tall - heights[c]) / 2
+        y = TOP + (tall - heights[c]) / 2 + _top(col)
         for i, x in enumerate(col):
             if i:
                 y += _gap(col[i - 1], x)
-            x["x"], x["y"], x["h"] = 16 + c * (NODE_W + COL_GAP), y, _h(x)
-            y += x["h"]
+            x["x"], x["y"] = X0 + c * (NODE_W + COL_GAP), y
+            y += x["stack"]
     boxes = []
     for n in nodes:
-        box = {k: v for k, v in n.items() if k not in ("hops", "col", "vc")}
-        boxes.append(box | {"w": NODE_W, "title": n["label"], "sub": _sub(n)})
+        box = {k: v for k, v in n.items() if k not in ("hops", "col", "vc", "stack", "rule_h")}
+        title = n.get("short") or n["label"]
+        box |= {"w": NODE_W, "title": title, "sub": _sub(n)}
+        box["rules_box"] = ({"x": n["x"], "y": n["y"] + n["h"] + RULE_GAP, "w": NODE_W,
+                             "h": n["rule_h"]} if n["rule_h"] else None)  # fmt: skip
+        boxes.append(box)
     routed = _route(by_id, [{**e, "label": edge_label(e)} for e in edges], lanes)
-    width = 16 + len(order) * (NODE_W + COL_GAP) - COL_GAP + 16 if order else 400
+    width = X0 + len(order) * (NODE_W + COL_GAP) - COL_GAP + 16 if order else 400
     width = max([width] + [x + 60 for e in routed for x, _ in e["points"]])
     columns = []
     for ci, c in enumerate(order):  # Kopf je Spalte (der Weg nur ueber der ersten)
         title = ("Applikation" if c == 0 else "Gegenstellen" if ci == len(order) - 1
                  else "Weg" if ci == 1 else "")  # fmt: skip
-        columns.append({"x": 16 + ci * (NODE_W + COL_GAP), "title": title})
+        columns.append({"x": X0 + ci * (NODE_W + COL_GAP), "title": title})
     return {"width": width, "height": TOP + tall + 24, "nodes": boxes, "edges": routed,
-            "columns": columns}  # fmt: skip
+            "columns": columns, "groups": _groups(nodes)}  # fmt: skip
+
+
+def _groups(nodes: list[dict]) -> list[dict]:
+    """Rahmen je AP (bzw. „ohne EPG“) um die Kaesten der Applikation."""
+    by: dict[str, list[dict]] = defaultdict(list)
+    for n in nodes:
+        if n["role"] == "own" and n.get("group"):
+            by[n["group"]].append(n)
+    out = []
+    for title in sorted(by, key=_group_rank):
+        members = by[title]
+        top = min(n["y"] for n in members)
+        bottom = max(n["y"] + n["stack"] for n in members)
+        out.append({"title": title, "x": members[0]["x"] - GROUP_PAD,
+                    "y": top - GROUP_HEAD - GROUP_PAD, "w": NODE_W + 2 * GROUP_PAD,
+                    "h": bottom - top + GROUP_HEAD + 2 * GROUP_PAD,
+                    "nodes": [n["id"] for n in members]})  # fmt: skip
+    return out
+
+
+def _group_rank(title: str | None) -> tuple:
+    return (title is None, title == NO_EPG, title or "")
 
 
 LANE_H, LANE_GAP = 12, 12
 
 
-def _h(x: dict) -> float:
-    return LANE_H if x["role"] == "lane" else NODE_H
+def _top(col: list[dict]) -> float:
+    """Platz ueber dem ersten Kasten fuer den Kopf seines Rahmens."""
+    return GROUP_HEAD + GROUP_PAD if col and col[0].get("group") else 0
 
 
 def _gap(x: dict, y: dict) -> float:
-    return LANE_GAP if "lane" in (x["role"], y["role"]) else ROW_GAP
+    if "lane" in (x["role"], y["role"]):
+        return LANE_GAP
+    if x.get("group") != y.get("group") and (x.get("group") or y.get("group")):
+        return GROUP_GAP + 2 * GROUP_PAD + (GROUP_HEAD if y.get("group") else 0)
+    return ROW_GAP
 
 
 def _order(items: dict[int, list[dict]], left: dict, right: dict) -> None:
-    """Reihenfolge je Spalte: erste nach Namen, dann nach dem Mittel der Nachbarn links, rechts
-    und wieder links (weniger Kreuzungen)."""
+    """Reihenfolge je Spalte: die Applikation nach AP und EPG, die uebrigen nach dem Mittel der
+    Nachbarn links, rechts und wieder links (weniger Kreuzungen)."""
     rank: dict[str, float] = {}
     cols = sorted(items)
 
@@ -320,7 +489,7 @@ def _order(items: dict[int, list[dict]], left: dict, right: dict) -> None:
                     x["label"])  # fmt: skip
 
         if nbrs is None:
-            items[c].sort(key=lambda x: x["label"])
+            items[c].sort(key=lambda x: (_group_rank(x.get("group")), x["label"]))
         else:
             items[c].sort(key=key)
         for i, x in enumerate(items[c]):
@@ -329,7 +498,8 @@ def _order(items: dict[int, list[dict]], left: dict, right: dict) -> None:
     for c in cols:
         place(c, left if c else None)
     for c in reversed(cols[:-1]):
-        place(c, right)
+        if c:  # die Applikation bleibt nach AP und EPG geordnet
+            place(c, right)
     for c in cols[1:]:
         place(c, left)
 
@@ -429,7 +599,7 @@ def _style(n: dict) -> tuple[str, str]:
     return FILL[role], stroke
 
 
-def svg(plan: dict, title: str, when: datetime | None = None) -> str:
+def svg(plan: dict, title: str, when: datetime | None = None, rules: bool = True) -> str:
     width, height = max(plan["width"], 400), plan["height"] + HEAD
     root = ET.Element("svg", {
         "xmlns": "http://www.w3.org/2000/svg", "viewBox": f"0 0 {_n(width)} {_n(height)}",
@@ -442,6 +612,11 @@ def svg(plan: dict, title: str, when: datetime | None = None) -> str:
     g = ET.SubElement(root, "g", {"transform": f"translate(0 {HEAD})"})
     for c in plan["columns"]:
         _text(g, c["x"], 18, c["title"], "11", MUTED, "bold")
+    for f in plan.get("groups") or []:  # Rahmen je AP
+        ET.SubElement(g, "rect", {"x": _n(f["x"]), "y": _n(f["y"]), "width": _n(f["w"]),
+                                  "height": _n(f["h"]), "rx": "8", "fill": GROUP_FILL,
+                                  "stroke": GROUP_STROKE, "stroke-dasharray": "5 3"})  # fmt: skip
+        _text(g, f["x"] + 8, f["y"] + 14, _short(f["title"], 32), "10.5", MUTED, "bold")
     for e in plan["edges"]:
         attrs = {"points": " ".join(f"{_n(x)},{_n(y)}" for x, y in e["points"]), "fill": "none",
                  "stroke": COLOR[e["verdict"]], "stroke-width": "1.8"}  # fmt: skip
@@ -464,16 +639,37 @@ def svg(plan: dict, title: str, when: datetime | None = None) -> str:
         ET.SubElement(g, "rect", attrs)
         _text(g, n["x"] + 10, n["y"] + 18, _short(n["title"]), "12", FG, "bold")
         _text(g, n["x"] + 10, n["y"] + 34, _short(n["sub"], 36), "10", MUTED)
+        for i, line in enumerate(_vm_lines(n)):
+            _text(g, n["x"] + 14, n["y"] + NODE_H + 8 + i * LINE_H, _short(line, 32), "10.5", FG)
+    if rules:
+        layer = ET.SubElement(g, "g", {"id": "regeln"})
+        for n in plan["nodes"]:
+            b = n.get("rules_box")
+            if not b:
+                continue
+            ET.SubElement(layer, "rect", {"x": _n(b["x"]), "y": _n(b["y"]), "width": _n(b["w"]),
+                                          "height": _n(b["h"]), "rx": "3", "fill": RULE_FILL,
+                                          "stroke": RULE_STROKE})  # fmt: skip
+            for i, line in enumerate(n["rule_lines"]):
+                _text(layer, b["x"] + 6, b["y"] + RULE_PAD + 10 + i * LINE_H, _short(line, 34),
+                      "9.5", FG, mono=True)  # fmt: skip
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode")
+
+
+def _vm_lines(n: dict) -> list[str]:
+    return [f"• {v}" for v in n.get("lines") or []] + (
+        [f"+{n['more']} weitere"] if n.get("more") else []
+    )
 
 
 def _short(text: str, n: int = 30) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def drawio(plan: dict, title: str, when: datetime | None = None) -> str:
-    """mxGraph fuer diagrams.net/draw.io: Knoten als Formen (`automato_*` mit IPs, Systemen,
-    Urteil), Linien als Kanten mit den Diensten und den Interfaces an den Enden."""
+def drawio(plan: dict, title: str, when: datetime | None = None, rules: bool = True) -> str:
+    """mxGraph fuer diagrams.net/draw.io: Rahmen je AP, Knoten als Formen (`automato_*` mit IPs,
+    Systemen, Urteil), Linien als Kanten mit den Diensten und den Interfaces an den Enden; die
+    Regel-Kaesten auf der eigenen Ebene „Regeln“ (0.74.0)."""
     mxfile = ET.Element("mxfile", {"host": "Automato", "type": "device"})
     diagram = ET.SubElement(mxfile, "diagram", {"id": "applikation", "name": "Applikation"})
     model = ET.SubElement(diagram, "mxGraphModel", {
@@ -484,26 +680,36 @@ def drawio(plan: dict, title: str, when: datetime | None = None) -> str:
     })  # fmt: skip
     root = ET.SubElement(model, "root")
     ET.SubElement(root, "mxCell", {"id": "0"})
-    ET.SubElement(root, "mxCell", {"id": "1", "parent": "0"})
+    ET.SubElement(root, "mxCell", {"id": "1", "value": "Plan", "parent": "0"})
     head = ET.SubElement(root, "mxCell", {
         "id": "title", "value": f"<b>{_html(title)}</b><br>{_html(_stamp(plan, when))}",
         "vertex": "1", "parent": "1",
         "style": "text;html=1;align=left;verticalAlign=top;fontSize=14;",
     })  # fmt: skip
     _geometry(head, 16, 8, 600, 40)
+    for i, f in enumerate(plan.get("groups") or []):  # Rahmen je AP, hinter den Kaesten
+        frame = ET.SubElement(root, "mxCell", {
+            "id": f"g-{i}", "value": _html(f["title"]), "vertex": "1", "parent": "1",
+            "style": f"rounded=1;arcSize=4;whiteSpace=wrap;html=1;dashed=1;fillColor={GROUP_FILL};"
+                     f"strokeColor={GROUP_STROKE};verticalAlign=top;align=left;spacingLeft=8;"
+                     "fontStyle=1;fontSize=11;fontColor=#5a6475;",
+        })  # fmt: skip
+        _geometry(frame, f["x"], f["y"] + HEAD, f["w"], f["h"])
     boxes = {n["id"]: n for n in plan["nodes"]}
     for n in plan["nodes"]:
         fill, stroke = _style(n)
+        vms = "".join(f"<br>{_html(v)}" for v in _vm_lines(n))
         obj = ET.SubElement(root, "UserObject", {
             "id": f"n-{_id(n['id'])}",
-            "label": f"<b>{_html(n['title'])}</b><br>{_html(n['sub'])}",
+            "label": f"<b>{_html(n['title'])}</b><br>{_html(n['sub'])}{vms}",
             "automato_kind": KIND.get(n["kind"], n["kind"]),
             "automato_ips": ", ".join(n["ips"]), "automato_systems": ", ".join(n["systems"]),
             "automato_verdict": VERDICT[n["verdict"]] if n["verdict"] else "",
             "tooltip": ", ".join(n["systems"] or n["ips"]),
         })  # fmt: skip
-        style = (f"rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;spacingLeft=8;"
-                 f"fillColor={fill};strokeColor={stroke};fontSize=12;")  # fmt: skip
+        style = ("rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;spacingLeft=8;"
+                 f"verticalAlign=top;fillColor={fill};strokeColor={stroke};"
+                 "fontSize=12;")  # fmt: skip
         if n["kind"] == "external":
             style += "dashed=1;"
         cell = ET.SubElement(obj, "mxCell", {"vertex": "1", "parent": "1", "style": style})
@@ -552,4 +758,22 @@ def drawio(plan: dict, title: str, when: datetime | None = None) -> str:
             at = ET.SubElement(label, "mxGeometry", {"x": pos, "relative": "1",
                                                      "as": "geometry"})  # fmt: skip
             ET.SubElement(at, "mxPoint", {"y": "-8", "as": "offset"})
+    if rules:  # eigene Ebene „Regeln“ - in draw.io ein- und ausblendbar
+        ET.SubElement(root, "mxCell", {"id": "regeln", "value": "Regeln", "parent": "0"})
+        for n in plan["nodes"]:
+            b = n.get("rules_box")
+            if not b:
+                continue
+            obj = ET.SubElement(root, "UserObject", {
+                "id": f"r-{_id(n['id'])}",
+                "label": "<br>".join(_html(line) for line in n["rule_lines"]),
+                "automato_rules": "; ".join(r["name"] for r in n["rules"]),
+            })  # fmt: skip
+            cell = ET.SubElement(obj, "mxCell", {
+                "vertex": "1", "parent": "regeln",
+                "style": f"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;"
+                         f"spacingLeft=6;fillColor={RULE_FILL};strokeColor={RULE_STROKE};"
+                         "fontSize=10;fontFamily=Courier New;",
+            })  # fmt: skip
+            _geometry(cell, b["x"], b["y"] + HEAD, b["w"], b["h"])
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(mxfile, encoding="unicode")

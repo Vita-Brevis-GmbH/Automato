@@ -310,34 +310,52 @@ test("Applikation: Netzwerkplan mit Knoten, Diensten, Interfaces und Export (0.6
   await expect(svg.locator("g.app-plan-node")).toHaveCount(7);
   await expect(svg.locator("g.app-plan-edge")).toHaveCount(6);
   await expect(svg.locator(".app-plan-col")).toHaveText(["Applikation", "Weg", "Gegenstellen"]);
-  // links das System, in der Mitte die ACI-VRF (sperrt), rechts die Gegenstellen
+  // 0.74.0 kompakt: die EPG mit ihrer VM im Rahmen des APs, das ACI als L3Out der externen EPG
   const node = (name: string) => svg.locator(`g.app-plan-node[data-node="${name}"]`);
-  const own = await node("web01-007-ka").boundingBox();
-  const aci = await node("apic-01 · VRF TE:VRF1").boundingBox();
+  await expect(svg.locator('g.app-plan-group[data-group="TE/AP"]')).toBeVisible();
+  await expect(node("EG_db").locator(".app-plan-vm")).toHaveText("• web01-007-ka");
+  const own = await node("EG_db").boundingBox();
+  const aci = await node("L3O_fw").boundingBox();
   const peer = await node("externe EPG L3O_fw|EN_rt (10.20.0.0/16)").boundingBox();
   expect(own!.x).toBeLessThan(aci!.x);
   expect(aci!.x).toBeLessThan(peer!.x);
-  await expect(node("apic-01 · VRF TE:VRF1")).toHaveAttribute("data-verdict", "deny");
+  await expect(node("L3O_fw")).toHaveAttribute("data-kind", "l3out");
+  await expect(node("L3O_fw")).toHaveAttribute("data-verdict", "deny");
   // je Linie die Dienste (← zur Applikation hin, ✕ vorher gesperrt) und die Interfaces
   const edge = (a: string, b: string) => svg.locator(`g.app-plan-edge[data-edge="${a} → ${b}"]`);
-  const ext = edge("apic-01 · VRF TE:VRF1", "externe EPG L3O_fw|EN_rt (10.20.0.0/16)");
+  const ext = edge("L3O_fw", "externe EPG L3O_fw|EN_rt (10.20.0.0/16)");
   await expect(ext).toHaveAttribute("data-verdict", "deny");
   await expect(ext.locator(".app-plan-label")).toHaveText("← tcp/22");
-  const inner = edge("web01-007-ka", "apic-01 · VRF TE:VRF1");
+  const inner = edge("EG_db", "L3O_fw");
   await expect(inner).toHaveAttribute("data-verdict", "blocked");
   await expect(inner.locator(".app-plan-label")).toHaveText("✕ tcp/22");
   await expect(inner.locator(".app-plan-port")).toHaveText("vlan5");
-  await expect(edge("web01-007-ka", "N_clients (10.5.0.0/16)").locator(".app-plan-label")).toHaveText("← tcp/443, tcp/9000");
+  await expect(edge("EG_db", "N_clients (10.5.0.0/16)").locator(".app-plan-label")).toHaveText("← tcp/443, tcp/9000");
+  // Ebene „Regeln“ unter dem L3Out; Ebenen ausblenden (Regeln, Dienste)
+  const rules = svg.locator('g.app-plan-rulebox[data-node="L3O_fw"]');
+  await expect(rules).toContainText("✕ implizit gesperrt");
+  await card.locator("#app-plan-rules").uncheck();
+  await expect(svg.locator("g.app-plan-rulebox")).toHaveCount(0);
+  await card.locator("#app-plan-services").uncheck();
+  await expect(svg.locator(".app-plan-label")).toHaveCount(0);
+  await card.locator("#app-plan-services").check();
+  // Zoom: Knöpfe ändern die Grösse, 100 % setzt zurück
+  const width = Number(await svg.getAttribute("width"));
+  await card.locator("#app-plan-zoom-in").click();
+  expect(Number(await svg.getAttribute("width"))).toBeGreaterThan(width);
+  await card.locator("#app-plan-zoom-reset").click();
+  await expect(card.locator("#app-plan-zoom-reset")).toHaveText("100 %");
+  expect(Number(await svg.getAttribute("width"))).toBe(width);
   // Suche der Karte hebt hervor, der Rest wird blass
   await card.getByPlaceholder("System, Gegenstelle, Firewall, Regel…").fill("EN_rt");
   await expect(svg.locator("g.app-plan-edge.dim")).toHaveCount(4);
   await expect(card.locator("#app-plan-export")).toContainText("Export (1 Verbindungen)");
   await card.getByPlaceholder("System, Gegenstelle, Firewall, Regel…").fill("");
   await expect(svg.locator("g.app-plan-edge.dim")).toHaveCount(0);
-  // Klick auf einen Knoten: seine Verbindungen, Export nur mit ihnen
-  await node("apic-01 · VRF TE:VRF1").click();
+  // Klick auf einen Knoten: seine Verbindungen, Export nur mit ihnen (ohne Ebene „Regeln“)
+  await node("L3O_fw").click();
   const focus = card.locator("#app-plan-focus");
-  await expect(focus).toContainText("apic-01 · VRF TE:VRF1 – 1 Verbindungen");
+  await expect(focus).toContainText("L3O_fw – 1 Verbindungen");
   const [file] = await Promise.all([
     page.waitForEvent("download"),
     card.locator("#app-plan-export button", { hasText: "draw.io" }).click(),
@@ -347,14 +365,16 @@ test("Applikation: Netzwerkplan mit Knoten, Diensten, Interfaces und Export (0.6
   expect(xml).toContain("Netzwerkplan Webshop");
   expect(xml).toContain("1 Verbindungen (von 6, gefiltert)");
   expect(xml).toContain('automato_ports_b="vlan5"');
+  expect(xml).not.toContain("automato_rules");
   // Details öffnen die Verbindung in der Tabelle
   await focus.locator("button", { hasText: "Details" }).click();
   await expect(card.locator("#app-conn-table")).toHaveClass(/on/);
   await expect(card.locator("tr.detail-row")).toContainText("Contract CT_rt:SJ_1 erlaubt – der Weg ist gesperrt");
-  // die gewählte Ansicht bleibt
+  // die gewählte Ansicht und die Ebenen bleiben
   await card.locator("#app-conn-plan").click();
   await page.reload();
   await expect(page.locator("#app-plan-svg")).toBeVisible();
+  await expect(page.locator("#app-plan-rules")).not.toBeChecked();
 });
 
 test("Applikation: Regel in einer Kategorie ausblenden mit Begründung, Export, einblenden (0.69.0)", async ({ page }) => {

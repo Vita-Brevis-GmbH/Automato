@@ -374,18 +374,19 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.72.0** | Parallele Firewalls: Policy-Routen/SD-WAN, Routing je VDOM und NAT im Verbund vergleichen, Befunde und Übersicht „Parallele Firewalls“ im Routing (ADR 0020 Ergänzung) |
 | **0.72.1** | Korrekturen: ACI-Filter nur mit Quellport = nur Antworten (gesperrt statt „möglich“), Doku je System fasst die Rückrichtung wie die Applikations-Doku zusammen, Leistung der Zonenmatrix gemessen |
 | **0.73.0** | Applikations-Doku übersichtlich: Bereiche zuklappen, Systeme kompakt mit Detail, Export und Druck mit wählbaren Abschnitten, Abhängigkeiten vorerst entfernt, Befund nur bei uneinheitlichen Wegen (ADR 0012/0021 Ergänzung 0.73.0) |
+| **0.74.0** | Netzwerkplan der Applikation kompakt: Rahmen je AP mit EPGs und ihren VMs, ACI als L3Out, Regeln mit Diensten als ausblendbare Ebene (auch im draw.io), Zoom und Verschieben (ADR 0021 Ergänzung 0.74.0) |
 
-### Nächste Arbeiten (Stand 0.73.0)
+### Nächste Arbeiten (Stand 0.74.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.73.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.74.0.
 
 **Dazwischen (Rückmeldung des Anwenders zur Applikations-Doku, 2026-10-26):** Übersicht mit
 zuklappbaren Bereichen, Systeme kompakt, Export mit Auswahl, Abhängigkeiten vorerst entfernt,
 Befund nur bei uneinheitlichen Wegen – **umgesetzt in 0.73.0**; der Netzwerkplan der
 Applikation kompakt (VMs in der EPG, Rahmen um AP und EPGs, aktive L3Outs, Firewalls und Ziele,
 Regeln und Filter als ausblendbare Ebene, Zoom und Scrollen; eigener Plan, Export draw.io
-bleibt) – **geplant als 0.74.0**, danach weiter mit Schritt 5.
+bleibt) – **umgesetzt in 0.74.0**; weiter mit Schritt 5.
 
 **Umplanung des Anwenders (2026-10-26) – Reihenfolge bis zum Abschluss des ersten Projekts:**
 

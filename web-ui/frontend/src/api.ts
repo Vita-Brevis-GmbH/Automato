@@ -1649,6 +1649,7 @@ export interface AppConnSide {
   systems: string[];
   more: number;
   keys: string[]; // Systeme der Applikation (Doku-Schlüssel)
+  l3out?: string | null; // externe EPG: ihr L3Out (0.74.0)
 }
 export interface AppConnRule {
   rule_id: number | null;
@@ -1735,6 +1736,14 @@ export interface AppPlanNode {
   y: number;
   w: number;
   h: number;
+  // kompakt (0.74.0): EPG mit ihren VMs im Rahmen des APs, ACI als L3Out, Regeln je Knoten
+  group?: string | null;
+  lines?: string[];
+  more?: number;
+  via?: string; // L3Out: ACI-VRF des Wegs
+  rules?: { name: string; on: string | null; action: string; services: string[]; rule_id: number | null }[];
+  rule_lines?: string[];
+  rules_box?: { x: number; y: number; w: number; h: number } | null;
 }
 export interface AppPlanPort {
   x: number;
@@ -1770,6 +1779,7 @@ export interface AppPlan {
   nodes: AppPlanNode[];
   edges: AppPlanEdge[];
   columns: { x: number; title: string }[];
+  groups?: { title: string; x: number; y: number; w: number; h: number; nodes: string[] }[]; // Rahmen je AP (0.74.0)
   summary: { connections: number; total: number; nodes: number; edges: number };
 }
 export interface AppConnections {
@@ -1780,9 +1790,11 @@ export interface AppConnections {
 }
 export const fetchAppConnections = (id: number) =>
   getJSON<AppConnections>(`/api/applications/${id}/connections`);
-export async function exportAppPlan(id: number, format: "svg" | "drawio", keys?: string[]): Promise<{ blob: Blob; filename: string }> {
+// 0.74.0: `rules` = Ebene „Regeln“ mit exportieren
+export async function exportAppPlan(id: number, format: "svg" | "drawio", keys?: string[], rules = true): Promise<{ blob: Blob; filename: string }> {
   const params = new URLSearchParams({ format });
   (keys ?? []).forEach((k) => params.append("key", k));
+  if (!rules) params.set("rules", "false");
   const response = await fetchChecked(`/api/applications/${id}/connections/plan/export?${params.toString()}`);
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `netzwerkplan.${format}` };

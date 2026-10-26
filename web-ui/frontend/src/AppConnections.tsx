@@ -2,8 +2,9 @@
 // wenn mehrere Firewalls und das ACI hintereinander stehen – im Detail je Hop die Policy bzw.
 // der Contract, der entscheidet, mit den Objekten; dazu der Abgleich mit den Regeln der Doku
 // (Regel erlaubt, Weg sperrt bzw. Gerät nicht auf dem Weg). Seit 0.67.0 auch als Netzwerkplan:
-// Systeme der Applikation → Knoten der Wege → Gegenstellen, je Linie Dienste und Interfaces.
-import { Fragment, useEffect, useState } from "react";
+// Systeme der Applikation → Knoten der Wege → Gegenstellen, je Linie Dienste und Interfaces;
+// seit 0.74.0 kompakt (EPGs mit VMs im Rahmen des APs, L3Outs, Regeln als Ebene, Zoom).
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { View, ViewParams } from "./App";
 import {
   AppConnection,
@@ -291,6 +292,10 @@ const PLAN_FILL = { own: "var(--info-weak)", hop: "var(--surface-2)", peer: "var
 const PLAN_STROKE = { own: "var(--info)", hop: "var(--accent)", peer: "var(--border-strong)" };
 const short = (t: string, n = 30) => (t.length <= n ? t : `${t.slice(0, n - 1)}…`);
 const VIEW_KEY = "automato_app_conn_view";
+const LAYER_KEY = "automato_app_plan_layers"; // Ebenen Regeln/Dienste (0.74.0)
+const ZOOM = { min: 0.3, max: 2.5, step: 1.2 };
+const NODE_H = 44;
+const LINE_H = 14;
 
 function loadView(): "table" | "plan" {
   try {
@@ -308,10 +313,73 @@ function storeView(v: "table" | "plan") {
   }
 }
 
+type Layers = { rules: boolean; services: boolean };
+function loadLayers(): Layers {
+  try {
+    return { rules: true, services: true, ...(JSON.parse(localStorage.getItem(LAYER_KEY) ?? "{}") as Partial<Layers>) };
+  } catch {
+    return { rules: true, services: true };
+  }
+}
+
 type Focus = { kind: "node" | "edge"; id: string } | null;
 
+// Zoom und Verschieben (0.74.0): Knöpfe, Strg/⌘ + Mausrad, Ziehen auf freier Fläche
+function usePanZoom(width: number) {
+  const box = useRef<HTMLDivElement | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const clamp = (z: number) => Math.min(ZOOM.max, Math.max(ZOOM.min, z));
+  const fit = () => {
+    const el = box.current;
+    if (el && width > 0) setZoom(clamp(Math.min(1, (el.clientWidth - 8) / width)));
+  };
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return; // ohne Taste: normal scrollen
+      e.preventDefault();
+      setZoom((z) => clamp(e.deltaY < 0 ? z * 1.1 : z / 1.1));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+  const handlers = {
+    onPointerDown: (e: React.PointerEvent) => {
+      const el = box.current;
+      // nur auf freier Fläche: Knoten und Linien bleiben klickbar
+      if (!el || e.button !== 0 || (e.target as Element).closest(".app-plan-node, .app-plan-edge")) return;
+      drag.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
+      el.setPointerCapture?.(e.pointerId);
+      el.classList.add("panning");
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      const el = box.current;
+      const d = drag.current;
+      if (!el || !d) return;
+      el.scrollLeft = d.left - (e.clientX - d.x);
+      el.scrollTop = d.top - (e.clientY - d.y);
+    },
+    onPointerUp: () => {
+      drag.current = null;
+      box.current?.classList.remove("panning");
+    },
+  };
+  return {
+    box,
+    zoom,
+    handlers,
+    zoomIn: () => setZoom((z) => clamp(z * ZOOM.step)),
+    zoomOut: () => setZoom((z) => clamp(z / ZOOM.step)),
+    reset: () => setZoom(1),
+    fit,
+  };
+}
+
 // Plan der Verbindungen: Filter der Karte bzw. Klick auf Knoten/Linie hebt hervor, der Rest wird
-// blass; der Export nimmt die hervorgehobenen Verbindungen
+// blass; der Export nimmt die hervorgehobenen Verbindungen. Seit 0.74.0 kompakt: EPGs mit ihren
+// VMs im Rahmen ihres APs, das ACI als L3Out, je Knoten des Wegs die Regeln als eigene Ebene.
 function PlanView({
   appId,
   plan,
@@ -330,6 +398,19 @@ function PlanView({
   const [focus, setFocus] = useState<Focus>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<unknown>(null);
+  const [layers, setLayers] = useState<Layers>(loadLayers);
+  const width = Math.max(plan.width, 400);
+  const pz = usePanZoom(width);
+  const toggleLayer = (k: keyof Layers) =>
+    setLayers((prev) => {
+      const next = { ...prev, [k]: !prev[k] };
+      try {
+        localStorage.setItem(LAYER_KEY, JSON.stringify(next));
+      } catch {
+        // ohne Speicher: nur für diese Sitzung
+      }
+      return next;
+    });
   const byId = new Map(plan.nodes.map((n) => [n.id, n]));
   const focused = focus ? (focus.kind === "node" ? byId.get(focus.id)?.conns : plan.edges.find((e) => e.id === focus.id)?.conns) ?? [] : null;
   const active = new Set((focused ?? [...shown]).filter((k) => shown.has(k)));
@@ -341,7 +422,7 @@ function PlanView({
     setBusy(format);
     setErr(null);
     try {
-      const { blob, filename } = await exportAppPlan(appId, format, narrowed ? [...active] : undefined);
+      const { blob, filename } = await exportAppPlan(appId, format, narrowed ? [...active] : undefined, layers.rules);
       download(filename, blob);
     } catch (e) {
       setErr(e);
@@ -357,9 +438,10 @@ function PlanView({
       <ErrorBox error={err} onClose={() => setErr(null)} />
       <div className="app-plan-bar">
         <span className="faint">
-          Links die Systeme der Applikation, in der Mitte Firewalls und ACI auf den Wegen, rechts die Gegenstellen. An den Linien die
-          Dienste (→ von der Applikation weg, ← zu ihr hin, ✕ vorher gesperrt), an den Enden die Interfaces. Klick auf einen Knoten
-          bzw. eine Linie hebt seine Verbindungen hervor.
+          Links die EPGs der Applikation mit ihren VMs im Rahmen ihres Application Profiles, in der Mitte die L3Outs, Firewalls und
+          VDOMs auf den Wegen, rechts die Gegenstellen. Unter jedem Knoten des Wegs die entscheidenden Regeln mit ihren Diensten
+          (Ebene „Regeln“), an den Linien die Dienste (→ von der Applikation weg, ← zu ihr hin, ✕ vorher gesperrt). Klick hebt hervor;
+          ziehen verschiebt, Strg + Mausrad zoomt.
         </span>
         <span className="plan-export" id="app-plan-export">
           <span className="faint">Export{narrowed ? ` (${active.size} Verbindungen)` : ""}:</span>
@@ -375,8 +457,39 @@ function PlanView({
           ))}
         </span>
       </div>
-      <div className="app-plan-scroll">
-        <svg id="app-plan-svg" width={Math.max(plan.width, 400)} height={plan.height} role="img" aria-label="Netzwerkplan der Applikation">
+      <div className="app-plan-tools">
+        <span className="seg" id="app-plan-zoom">
+          <button id="app-plan-zoom-out" title="verkleinern" onClick={pz.zoomOut}>
+            −
+          </button>
+          <button id="app-plan-zoom-reset" title="100 %" onClick={pz.reset}>
+            {Math.round(pz.zoom * 100)} %
+          </button>
+          <button id="app-plan-zoom-in" title="vergrössern" onClick={pz.zoomIn}>
+            +
+          </button>
+          <button id="app-plan-zoom-fit" title="in die Breite einpassen" onClick={pz.fit}>
+            einpassen
+          </button>
+        </span>
+        <span className="faint">Ebenen:</span>
+        <label className="check">
+          <input type="checkbox" id="app-plan-rules" checked={layers.rules} onChange={() => toggleLayer("rules")} /> Regeln
+        </label>
+        <label className="check">
+          <input type="checkbox" id="app-plan-services" checked={layers.services} onChange={() => toggleLayer("services")} /> Dienste und
+          Interfaces
+        </label>
+      </div>
+      <div className="app-plan-scroll" ref={pz.box} {...pz.handlers}>
+        <svg
+          id="app-plan-svg"
+          width={width * pz.zoom}
+          height={plan.height * pz.zoom}
+          viewBox={`0 0 ${width} ${plan.height}`}
+          role="img"
+          aria-label="Netzwerkplan der Applikation"
+        >
           {plan.columns.map((c) =>
             c.title ? (
               <text key={c.x} x={c.x} y={18} className="app-plan-col">
@@ -384,6 +497,14 @@ function PlanView({
               </text>
             ) : null,
           )}
+          {(plan.groups ?? []).map((g) => (
+            <g key={g.title} className="app-plan-group" data-group={g.title}>
+              <rect x={g.x} y={g.y} width={g.w} height={g.h} rx={8} fill="var(--surface-2)" stroke="var(--border-strong)" strokeDasharray="5 3" />
+              <text x={g.x + 8} y={g.y + 14} className="app-plan-group-title">
+                {short(g.title, 32)}
+              </text>
+            </g>
+          ))}
           {plan.edges.map((e) => {
             const color = PLAN_COLOR[e.verdict];
             const pts = e.points.map(([x, y]) => `${x},${y}`).join(" ");
@@ -401,30 +522,36 @@ function PlanView({
                 </title>
                 <polyline points={pts} fill="none" stroke="transparent" strokeWidth={12} />
                 <polyline points={pts} fill="none" stroke={color} strokeWidth={focus?.id === e.id ? 3.2 : 1.8} strokeDasharray={e.dashed ? "5 4" : undefined} />
-                <text x={e.lx} y={e.ly} textAnchor={e.anchor ?? "middle"} fill={color} className="app-plan-label">
-                  {e.label}
-                </text>
-                {[e.port_a, e.port_b].map((p, i) =>
-                  p ? (
-                    <text key={i} x={p.x} y={p.y} textAnchor={p.anchor} className="app-plan-port">
-                      {p.text}
+                {layers.services && (
+                  <>
+                    <text x={e.lx} y={e.ly} textAnchor={e.anchor ?? "middle"} fill={color} className="app-plan-label">
+                      {e.label}
                     </text>
-                  ) : null,
+                    {[e.port_a, e.port_b].map((p, i) =>
+                      p ? (
+                        <text key={i} x={p.x} y={p.y} textAnchor={p.anchor} className="app-plan-port">
+                          {p.text}
+                        </text>
+                      ) : null,
+                    )}
+                  </>
                 )}
               </g>
             );
           })}
           {plan.nodes.map((n) => {
             const stroke = n.role === "hop" && n.verdict && n.verdict !== "unknown" ? PLAN_COLOR[n.verdict] : PLAN_STROKE[n.role];
+            const vms = [...(n.lines ?? []).map((v) => `• ${v}`), ...(n.more ? [`+${n.more} weitere`] : [])];
             const tip =
               n.role === "hop"
-                ? `${n.title} – ${PLAN_VERDICT[n.verdict ?? "unknown"]}`
-                : `${n.title}\n${[...n.ips, ...(n.role === "own" ? n.systems : n.name ? [n.name] : [])].join("\n")}`;
+                ? `${n.label}${n.via ? ` (${n.via})` : ""} – ${PLAN_VERDICT[n.verdict ?? "unknown"]}`
+                : `${n.label}\n${[...n.ips, ...(n.role === "own" ? n.systems : n.name ? [n.name] : [])].join("\n")}`;
             return (
               <g
                 key={n.id}
                 className={`app-plan-node clickable${lit(n.conns) ? "" : " dim"}`}
                 data-node={n.title}
+                data-kind={n.kind}
                 data-verdict={n.verdict ?? undefined}
                 transform={`translate(${n.x},${n.y})`}
                 onClick={() => pick("node", n.id)}
@@ -445,9 +572,34 @@ function PlanView({
                 <text x={10} y={34} fontSize={10} fill="var(--muted)">
                   {short(n.sub, 36)}
                 </text>
+                {vms.map((v, i) => (
+                  <text key={i} x={14} y={NODE_H + 8 + i * LINE_H} fontSize={10.5} fill="var(--fg)" className="app-plan-vm">
+                    {short(v, 32)}
+                  </text>
+                ))}
               </g>
             );
           })}
+          {layers.rules && (
+            <g className="app-plan-rules" id="app-plan-rules-layer">
+              {plan.nodes
+                .filter((n) => n.rules_box)
+                .map((n) => {
+                  const b = n.rules_box!;
+                  return (
+                    <g key={n.id} className={`app-plan-rulebox${lit(n.conns) ? "" : " dim"}`} data-node={n.title}>
+                      <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={3} fill="var(--warn-weak)" stroke="var(--warn)" strokeWidth={0.8} />
+                      {(n.rule_lines ?? []).map((line, i) => (
+                        <text key={i} x={b.x + 6} y={b.y + 15 + i * LINE_H} className="app-plan-rule">
+                          <title>{line}</title>
+                          {short(line, 34)}
+                        </text>
+                      ))}
+                    </g>
+                  );
+                })}
+            </g>
+          )}
         </svg>
       </div>
       <div className="app-plan-legend">

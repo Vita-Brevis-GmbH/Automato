@@ -25,20 +25,31 @@ def test_plan_der_applikation(client):
     out = client.get(f"/applications/{aid}/connections").json()
     plan = out["plan"]
     nodes = {n["id"]: n for n in plan["nodes"]}
-    # Spalten: Applikation, Weg (apic, fw-01, fw-02), Gegenstellen
+    # Spalten: Applikation (EPG im Rahmen ihres APs), Weg (L3Out, fw-01, fw-02), Gegenstellen
     order = sorted(nodes.values(), key=lambda n: n["x"])
-    assert [n["title"] for n in order] == ["TE/AP1/EPG_web", "apic-01 · VRF TE:VRF1",
-                                           "fw-01 · VDOM root", "fw-02", SRV]  # fmt: skip
+    assert [n["title"] for n in order] == ["EPG_web", "L3O_fw", "fw-01 · VDOM root", "fw-02",
+                                           SRV]  # fmt: skip
     assert [c["title"] for c in plan["columns"]] == ["Applikation", "Weg", "", "", "Gegenstellen"]
-    own = nodes["sys:TE/AP1/EPG_web"]
-    assert own["role"] == "own" and own["ips"] == [WEB] and own["sub"] == WEB
-    # Urteil je Knoten nur aus den Verbindungen, die ihn erreichen: tcp/8080 endet im ACI
-    aci = next(n for n in order if n["kind"] == "vrf")
-    assert aci["verdict"] == "depends" and aci["sub"] == "ACI-VRF · abhängig"
+    own = nodes["epg:TE/AP1/EPG_web"]
+    assert own["role"] == "own" and own["ips"] == [WEB] and own["sub"] == f"VRF VRF1 · {WEB}"
+    (frame,) = plan["groups"]
+    assert frame["title"] == "TE/AP1" and frame["nodes"] == [own["id"]]
+    assert frame["x"] < own["x"] and frame["y"] < own["y"]
+    assert frame["y"] + frame["h"] >= own["y"] + own["h"]
+    # das ACI als der L3Out, den das Routing nimmt (Next-Hop im Netz des L3Out-Pfads); Urteil
+    # je Knoten nur aus den Verbindungen, die ihn erreichen: tcp/8080 endet im ACI
+    aci = order[1]
+    assert aci["kind"] == "l3out" and aci["via"] == "apic-01 · VRF TE:VRF1"
+    assert aci["verdict"] == "depends" and aci["sub"] == "L3Out · abhängig"
     assert [n["verdict"] for n in order[2:4]] == ["allow", "allow"]
+    # Ebene „Regeln“: je Knoten des Wegs die entscheidenden Contracts bzw. Policies mit Diensten
+    assert aci["rule_lines"] == ["Contract CT_lan · tcp/443", "✕ implizit gesperrt"]
+    assert order[2]["rule_lines"] == ["web-lan (#11) · tcp/443"]
+    box = aci["rules_box"]
+    assert box["y"] > aci["y"] + aci["h"] and box["h"] > 0 and own["rules_box"] is None
     # Linien: Dienste je Richtung, hinter der Sperre durchgestrichen, Interfaces an den Enden
     by = {(nodes[e["a"]]["title"], nodes[e["b"]]["title"]): e for e in plan["edges"]}
-    first = by[("TE/AP1/EPG_web", "apic-01 · VRF TE:VRF1")]
+    first = by[("EPG_web", "L3O_fw")]
     assert first["label"] == "→ tcp/443, tcp/8080" and first["verdict"] == "depends"
     fw = by[("fw-01 · VDOM root", "fw-02")]
     assert fw["label"] == "→ tcp/443 · ✕ tcp/8080" and fw["verdict"] == "allow"
@@ -49,6 +60,8 @@ def test_plan_der_applikation(client):
     assert lan["ports_a"] == ["lan"] and lan["port_b"] is None and not lan["dashed"]
     assert len(lan["conns"]) == 2 and len(lan["points"]) == 17
     assert plan["summary"] == {"connections": 2, "total": 2, "nodes": 5, "edges": 4}
+    # Aufbau der Applikation fuer den Plan
+    assert out["members"]["epgs"][0]["ap"] == "AP1"
 
 
 def test_export_svg_und_drawio(client):
@@ -74,6 +87,17 @@ def test_export_svg_und_drawio(client):
                for c in doc.iter("mxCell"))  # fmt: skip
     ports = [c for c in doc.iter("mxCell") if (c.get("style") or "").startswith("edgeLabel")]
     assert {c.get("value") for c in ports} >= {"to-fw02", "to-fw01", "lan"}
+    # 0.74.0: Rahmen des APs und die Ebene „Regeln“ (ausblendbar), ohne sie mit rules=false
+    cells = {c.get("id"): c for c in doc.iter("mxCell") if c.get("id")}
+    assert cells["regeln"].get("value") == "Regeln" and cells["regeln"].get("parent") == "0"
+    rules = [o for o in doc.iter("UserObject") if o.get("automato_rules")]
+    assert {o.get("automato_rules") for o in rules} >= {"Contract CT_lan", "web-lan (#11)"}
+    assert all(o.find("mxCell").get("parent") == "regeln" for o in rules)
+    assert any(c.get("value") == "TE/AP1" for c in doc.iter("mxCell"))
+    bare = ET.fromstring(client.get(base, params={"format": "drawio", "rules": "false"}).text)
+    assert not [o for o in bare.iter("UserObject") if o.get("automato_rules")]
+    plain = client.get(base, params={"rules": "false"}).text
+    assert 'id="regeln"' in svg.text and 'id="regeln"' not in plain
     assert client.get(base, params={"format": "pdf"}).status_code == 422
     # nicht fuer Kunden-Benutzer
     cust = {"X-Dev-Roles": "customer", "X-Dev-Customers": "1"}
@@ -152,3 +176,72 @@ def test_eingehend_offen_und_ohne_weg():
     sub = app_plan.build(conns, {"lost"})
     assert sub["summary"] == {"connections": 1, "total": 4, "nodes": 2, "edges": 1}
     assert "1 Verbindungen (von 4, gefiltert)" in app_plan.svg(sub, "Plan")
+
+
+def test_kompakt_nach_ap_und_epg():
+    """0.74.0: VMs in ihrer EPG, Rahmen je AP bzw. „ohne EPG“, eine Linie je EPG statt je VM;
+    das ACI zur externen EPG als deren L3Out, wenn das Routing keinen nennt."""
+    members = {
+        "epgs": [
+            {"key": "epg:1", "label": "TE/AP_web/EPG_web", "name": "EPG_web", "tenant": "TE",
+             "ap": "AP_web", "vrf": "VRF1"},
+            {"key": "epg:2", "label": "TE/AP_db/EPG_db", "name": "EPG_db", "tenant": "TE",
+             "ap": "AP_db", "vrf": "VRF1"},
+        ],
+        "systems": [
+            *({"key": f"vm:{i}", "name": f"web0{i}", "kind": "vm", "ips": [f"10.1.0.{i}"],
+               "epgs": ["TE/AP_web/EPG_web"]} for i in range(1, 9)),
+            {"key": "vm:20", "name": "db01", "kind": "vm", "ips": ["10.2.0.1"],
+             "epgs": ["TE/AP_db/EPG_db"]},
+            {"key": "host:1", "name": "srv-phys", "kind": "host", "ips": ["10.3.0.1"],
+             "epgs": []},
+        ],
+    }  # fmt: skip
+
+    def own(name, key, ip):
+        return {**_side(ip, name, "system"), "keys": [key]}
+
+    vrf = {**_hop("4|TE:VRF1", "apic-01 · VRF TE:VRF1", None, "vlan5"), "kind": "vrf"}
+    vrf["checks"][0]["rules"] = [{"name": "CT_ext", "label": "Contract CT_ext",
+                                  "kind": "contract", "action": "allow", "services": ["tcp/443"],
+                                  "decides": True, "rule_id": 9}]  # fmt: skip
+    ext = {**_side("192.0.2.0/24", "externe EPG L3O_inet|EN_inet", "external"),
+           "l3out": "L3O_inet"}  # fmt: skip
+    conns = [
+        _conn(
+            f"w{i}", "out", own(f"web0{i}", f"vm:{i}", f"10.1.0.{i}"), ext, [vrf], service="tcp/443"
+        )  # fmt: skip
+        for i in (1, 2)
+    ] + [
+        _conn("db", "out", own("db01", "vm:20", "10.2.0.1"), ext, [vrf], service="tcp/443"),
+        _conn(
+            "phys",
+            "out",
+            own("srv-phys", "host:1", "10.3.0.1"),
+            _side("10.9.0.9", "Backup"),
+            [],
+            verdict="unknown",
+            reached=False,
+        ),  # fmt: skip
+    ]
+    plan = app_plan.build(conns, members=members)
+    nodes = {n["id"]: n for n in plan["nodes"]}
+    web = nodes["epg:TE/AP_web/EPG_web"]
+    # die VMs in der EPG (hoechstens sechs, der Rest als Zahl), der Kasten waechst mit
+    assert web["lines"] == [f"web0{i}" for i in range(1, 7)] and web["more"] == 2
+    assert web["h"] == app_plan.NODE_H + 7 * app_plan.LINE_H + 4
+    assert "sys:web01" not in nodes  # eine Linie je EPG, nicht je VM
+    # externe EPG als Gegenstelle: das ACI als ihr L3Out, mit dem Contract in der Ebene „Regeln“
+    l3o = nodes["l3o:4|TE:VRF1|L3O_inet"]
+    assert l3o["title"] == "L3O_inet" and l3o["rule_lines"] == ["Contract CT_ext · tcp/443"]
+    assert len([e for e in plan["edges"] if e["b"] == l3o["id"]]) == 2  # web, db
+    # Rahmen: AP_db, AP_web, zuletzt „ohne EPG“ - untereinander, ohne Ueberlappung
+    frames = plan["groups"]
+    assert [f["title"] for f in frames] == ["TE/AP_db", "TE/AP_web", "ohne EPG"]
+    for a, b in zip(frames, frames[1:], strict=False):
+        assert a["y"] + a["h"] < b["y"]
+    assert frames[2]["nodes"] == ["sys:srv-phys"]
+    svg = app_plan.svg(plan, "Plan")
+    assert "• web01" in svg and "+2 weitere" in svg and "TE/AP_web" in svg
+    assert "Contract CT_ext · tcp/443" in svg
+    assert "Contract CT_ext" not in app_plan.svg(plan, "Plan", rules=False)

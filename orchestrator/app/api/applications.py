@@ -648,7 +648,8 @@ def application_connections(
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
     out = app_paths.build(session, app)
-    out["plan"] = app_plan.build(out["connections"])  # Netzwerkplan (0.67.0)
+    # Netzwerkplan (0.67.0), kompakt nach AP/EPG (0.74.0)
+    out["plan"] = app_plan.build(out["connections"], members=out["members"])
     return out
 
 
@@ -660,20 +661,22 @@ def export_connections_plan(
     application_id: int,
     format: str = Query("svg", pattern="^(svg|drawio)$"),  # noqa: A002 - Name der Abfrage
     key: Annotated[list[str] | None, Query(description="nur diese Verbindungen")] = None,
+    rules: bool = True,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> Response:
     """Netzwerkplan der Applikation (0.67.0) als SVG bzw. draw.io - wie in der Ansicht; mit
-    `key` nur die Verbindungen des Filters. Nicht fuer Kunden-Benutzer (Freigabeliste)."""
+    `key` nur die Verbindungen des Filters, mit `rules=false` ohne die Ebene „Regeln“ (0.74.0).
+    Nicht fuer Kunden-Benutzer (Freigabeliste)."""
     if key and len(key) > app_paths.MAX_TRACES:
         raise HTTPException(status_code=422, detail="zu viele Verbindungen")
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    conns = app_paths.build(session, app)["connections"]
-    plan = app_plan.build(conns, set(key) if key else None)
+    built = app_paths.build(session, app)
+    plan = app_plan.build(built["connections"], set(key) if key else None, built["members"])
     when = datetime.now(UTC)
     title = f"Netzwerkplan {app.name}"
-    body = (app_plan.svg if format == "svg" else app_plan.drawio)(plan, title, when)
+    body = (app_plan.svg if format == "svg" else app_plan.drawio)(plan, title, when, rules)
     media, ext = _EXPORT[format]
     slug = re.sub(r"[^A-Za-z0-9_-]+", "-", app.name).strip("-").lower() or "applikation"
     name = f"netzwerkplan-{slug}-{when:%Y-%m-%d}.{ext}"
@@ -723,7 +726,8 @@ def export_application(
     else:
         files = [(f"{base}.docx", body)]
         if with_plan and conns is not None:
-            plan = app_plan.drawio(app_plan.build(conns["connections"]),
+            plan = app_plan.drawio(app_plan.build(conns["connections"],
+                                                  members=conns["members"]),
                                    f"Netzwerkplan {app.name}", when)  # fmt: skip
             files.append((plan_file, plan))
         body = word_export.bundle(files)

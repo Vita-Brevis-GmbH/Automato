@@ -24,6 +24,10 @@ mit ihrem Weg; je Hop die Policy bzw. der Contract, der entscheidet, mit den Obj
   je Firewall eines Verbunds (`variants`). Offen ueber einen Weg und gesperrt ueber einen
   anderen (`inconsistent`) ist der Befund „Applikation: Wege uneinheitlich“; durchgehend
   gesperrt ist gewollt und kein Befund mehr.
+- **Fuer den Netzwerkplan (0.74.0):** je ACI-Hop der L3Out des Ein- bzw. Ausgangs nach dem
+  Routing (`l3out_in`/`l3out_out`: Next-Hop im Netz bzw. Peer eines L3Out-Pfads, Interface des
+  Pfads), dazu die L3Outs der externen EPGs der Pruefung (`l3outs`), und der Aufbau der
+  Applikation (`members`: EPGs mit Tenant/AP, Systeme mit ihren EPGs).
 
 Nur lesend; Stand der letzten Laeufe. Nicht fuer Kunden-Benutzer: der Weg zeigt die
 Infrastruktur (ADR 0018).
@@ -35,7 +39,16 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Application, Epg, EpgEndpoint, EpgSubnet, Rule, RuleDomain, RuleIpRange
+from app.models import (
+    Application,
+    Epg,
+    EpgEndpoint,
+    EpgSubnet,
+    Rule,
+    RuleDomain,
+    RuleIpRange,
+    TopoL3Out,
+)
 from app.store import aci_direction, appdoc, paths, policy_check
 from app.store import epgs as epg_store
 from app.store.topology import endpoint, is_net, within
@@ -55,6 +68,7 @@ class _Side:
     kind: str  # system | object | epg | external
     systems: list[str] = field(default_factory=list)
     keys: list[str] = field(default_factory=list)  # Systeme der Applikation (Doku-Schluessel)
+    l3out: str | None = None  # externe EPG: ihr L3Out (Netzwerkplan, 0.74.0)
 
 
 @dataclass
@@ -92,8 +106,9 @@ def build(session: Session, app: Application, doc: dict | None = None,
     checks = checks or policy_check.Checks.load(session, tid)
     out: list[dict] = []
     cut = len(conns) > MAX_TRACES
+    l3 = L3Outs(session, {k[0] for k in graph.nodes})
     for c in list(conns.values())[:MAX_TRACES]:
-        out.append(_connection(session, tid, graph, checks, data, rules, c))
+        out.append(_connection(session, tid, graph, checks, data, rules, c, l3))
     if cut:
         notes.append(f"{len(conns)} Verbindungen – nur die ersten {MAX_TRACES} geprüft")
     order = {"deny": 0, "depends": 1, "unknown": 2, "allow": 3}
@@ -111,7 +126,69 @@ def build(session: Session, app: Application, doc: dict | None = None,
             "mismatch": sum(1 for c in out if c["mismatch"]),
             "inconsistent": sum(1 for c in out if c["inconsistent"]),
         },
+        "members": members(doc),
     }
+
+
+def members(doc: dict) -> dict:
+    """Aufbau der Applikation fuer den Netzwerkplan (0.74.0): EPGs mit Tenant/AP und VRF,
+    Systeme mit ihren EPGs."""
+    return {
+        "epgs": [
+            {k: e.get(k) for k in ("key", "label", "name", "tenant", "ap", "vrf")}
+            for e in doc["epgs"]
+        ],  # fmt: skip
+        "systems": [
+            {
+                "key": x["key"],
+                "name": x["name"],
+                "kind": x["kind"],
+                "ips": x["ips"][:4],
+                "epgs": x["epgs"],
+            }
+            for x in doc["systems"]
+        ],  # fmt: skip
+    }
+
+
+class L3Outs:
+    """L3Outs der ACI-Quellsysteme je VRF mit den Netzen und Interfaces ihrer Pfade und den
+    Peers - welcher L3Out einen Hop verlaesst bzw. betritt (0.74.0)."""
+
+    def __init__(self, session: Session, sources: set[int]):
+        self.by_vrf: dict[tuple[int, str], list[tuple[str, list, set[str], set[str]]]] = {}
+        if not sources:
+            return
+        for o in session.scalars(select(TopoL3Out).where(TopoL3Out.source_system_id.in_(sources))):
+            nets, ifaces = [], set()
+            for p in o.paths or []:
+                if p.get("interface"):
+                    ifaces.add(p["interface"])
+                for e in p.get("ips") or []:
+                    try:
+                        nets.append(ipaddress.ip_interface(str(e.get("ip") or "")).network)
+                    except ValueError:
+                        continue
+            peers = {str(p.get("ip")) for p in o.peers or [] if p.get("ip")}
+            entry = (o.name, nets, ifaces, peers)
+            self.by_vrf.setdefault((o.source_system_id, o.vrf or ""), []).append(entry)
+
+    def match(self, sid: int, vrf: str, port: dict | None) -> str | None:
+        if not port:
+            return None
+        hop, iface = port.get("next_hop"), port.get("interface")
+        try:
+            ip = ipaddress.ip_address(hop) if hop else None
+        except ValueError:
+            ip = None
+        for name, nets, ifaces, peers in self.by_vrf.get((sid, vrf), []):
+            if hop and hop in peers:
+                return name
+            if ip is not None and any(ip.version == n.version and ip in n for n in nets):
+                return name
+            if iface and iface in ifaces:
+                return name
+        return None
 
 
 # -- Verbindungen aus den Treffern ------------------------------------------------------
@@ -264,7 +341,7 @@ def _group_key(rule: Rule, h: dict, cp: _Side, svc) -> tuple:
 
 
 def _copy(s: _Side) -> _Side:
-    return _Side(s.ip, s.label, s.kind, list(s.systems), list(s.keys))
+    return _Side(s.ip, s.label, s.kind, list(s.systems), list(s.keys), s.l3out)
 
 
 def _add_system(side: _Side, system: dict) -> None:
@@ -379,7 +456,12 @@ def _aci_counter(session: Session, data: appdoc.TenantData, h: dict) -> list[_Si
             for net in _subnets(session, e.id)[:3]:
                 if net.prefixlen:
                     out.append(
-                        _Side(str(net), f"externe EPG {e.l3out}|{e.name} ({net})", "external")
+                        _Side(
+                            str(net),
+                            f"externe EPG {e.l3out}|{e.name} ({net})",
+                            "external",
+                            l3out=e.l3out,
+                        )  # fmt: skip
                     )
             continue
         names = [v["name"] for v in vms.get(e.id, []) if v["ips"]]
@@ -471,6 +553,7 @@ def _connection(
     data: appdoc.TenantData,
     rules: dict[int, Rule],
     c: _Conn,
+    l3: "L3Outs | None" = None,
 ) -> dict:
     # mit Backup-Wegen gleicher Laenge (slack 0): uneinheitliche Wege (0.73.0)
     res = paths.trace(session, tid, c.dst.ip, c.src.ip, None, 0, c.service, graph=graph,
@@ -486,7 +569,7 @@ def _connection(
                     break
     active = [p for p in res["paths"] if p.get("kind") != "backup"]
     first = active[0] if active else None
-    hops = [_hop(h) for h in first["hops"]] if first else []
+    hops = [_hop(h, l3) for h in first["hops"]] if first else []
     verdict, text = _verdict(active, res["notes"])
     reached = bool(active) and all(p["end"]["kind"] in paths.REACHED for p in active)
     states = [_state(rules[rid], active, data) for rid in c.rules if rid in rules]
@@ -526,6 +609,7 @@ def _side_out(s: _Side, graph: paths.Graph) -> dict:
         "systems": s.systems[:MAX_SYSTEMS],
         "more": max(0, len(s.systems) - MAX_SYSTEMS),
         "keys": s.keys,
+        "l3out": s.l3out,
     }
 
 
@@ -578,14 +662,19 @@ def _parts(h: dict) -> list[dict]:
     return h.get("parts") or [h]
 
 
-def _hop(h: dict) -> dict:
+def _hop(h: dict, l3: L3Outs | None = None) -> dict:
     """Hop fuer die Anzeige: je Firewall (bzw. Variante im Verbund) das Urteil mit der
-    entscheidenden Policy bzw. dem Contract und den Objekten (Quelle, Ziel, Dienste)."""
+    entscheidenden Policy bzw. dem Contract und den Objekten (Quelle, Ziel, Dienste); im ACI
+    die genutzten L3Outs (Routing vor den externen EPGs der Pruefung, 0.74.0)."""
     checks = []
     for p in _parts(h):
         r = p.get("rules")
         if not r:
             continue
+        # ACI: L3Out des Ein- bzw. Ausgangs nach dem Routing (0.74.0)
+        vrf = h["kind"] == "vrf" and l3 is not None
+        l3_in = l3.match(h["source_system_id"], h["context"], p.get("ingress")) if vrf else None
+        l3_out = l3.match(h["source_system_id"], h["context"], p.get("egress")) if vrf else None
         checks.append(
             {
                 "label": p["label"],
@@ -617,6 +706,9 @@ def _hop(h: dict) -> dict:
                 "nat": p.get("nat"),
                 "snat": p.get("snat"),
                 "leak": p.get("leak"),
+                "l3out_in": l3_in,
+                "l3out_out": l3_out,
+                "l3outs": list(r.get("l3outs") or []),  # der externen EPGs der Pruefung
             }
         )
     return {
