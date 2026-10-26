@@ -7,7 +7,7 @@ export const PLATFORM_LABEL: Record<string, string> = {
   fortigate: "FortiGate",
   cisco_aci: "Cisco ACI",
   vmware: "VMware vCenter",
-  cisco_switch: "Cisco-Switches",
+  cisco_switch: "Switches & Router",
   infoblox: "Infoblox DDI",
   netbox: "NetBox",
 };

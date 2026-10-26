@@ -181,6 +181,14 @@ class _FakeClient:
     def __exit__(self, *exc):
         return None
 
+    mode = "exec"
+
+    def version(self):
+        return self.run("show version")
+
+    def prepare(self, platform):
+        return None
+
     def run(self, cmd):
         if cmd not in sc.ALLOWED:
             raise ReadOnlyViolation(cmd)

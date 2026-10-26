@@ -4,7 +4,8 @@
 
 Entwurf (2026-10-25), umgesetzt in 0.62.0, 0.63.0 (Endpunkte aus MAC-Tabelle und ARP,
 Nr. 8), 0.64.0 (L2-Sicht: Plan, Ausfall, Redundanz, VLAN-Wege, L2 in der Weg-Suche, Nr. 9) und
-0.65.0 (vPC-Paare, Spanning Tree, mehrere Ausfälle, Export des Plans, Nr. 10).
+0.65.0 (vPC-Paare, Spanning Tree, mehrere Ausfälle, Export des Plans, Nr. 10), 0.68.0 (weitere
+Produkte: Catalyst 1200/1300, Juniper MX/EX/QFX, Nr. 11).
 Nächster Schritt der ROADMAP nach Zonen/Kunden und
 Applikationen (Entscheid des Anwenders 2026-10-25: „Switching/Verkabelung“). Ergänzt ADR 0010
 (Inventar, Schreiben nur nach NetBox), ADR 0008/0009 (Agent, Zugangsdaten zentral) und ADR 0019
@@ -160,6 +161,38 @@ Secrets, Open Source bevorzugt.
       Lage wie in der Ansicht mit vPC-Rahmen, Kabelzahl, Port-Channels und STP; draw.io mit
       `automato_device/kind/source` an den Geräten und `automato_ports/links/stp_blocked` an
       den Kabeln, dort weiter bearbeitbar.
+
+11. **Weitere Produkte** (0.68.0, Wunsch des Anwenders: Catalyst 1300, 9200L, 3650, 4500,
+    Nexus 9000, Juniper MX). Dasselbe Quellsystem (`cisco_switch`, in der Oberfläche „Switches &
+    Router“); die Plattform erkennt der Collector je Gerät an `show version`:
+    - **Cisco IOS/IOS-XE** – Catalyst 9200L, 9300, 3650, 4500 (auch klassisches IOS 15 der
+      4500 mit eigener Form der MAC-Tabelle) und **NX-OS** – Nexus 9000: wie bisher.
+    - **Cisco Business-CLI** – Catalyst 1200/1300 (wie CBS 250/350): eigene Befehlsliste
+      (`show version`, `show system`, `show inventory`, `show interfaces status/description`,
+      `show vlan`, `show interfaces port-channel`, `show lldp neighbors`,
+      `show mac address-table`, `show arp`) und eigene Auswertung der Tabellen (Spalten nach
+      der Strichzeile, umgebrochene Zeilen; die ntc-Vorlagen `cisco_s300` kennen keine
+      Umbrüche). VLANs der Ports aus `show vlan` (getaggt/ungetaggt). Diese Geräte nehmen
+      **kein Exec** an: der Collector liest sie über eine **begrenzte Sitzung** (`_Shell`):
+      Terminal mit Prompt, Anmeldung in der Sitzung („User Name:“/„Password:“, nur einmal),
+      danach ausschliesslich die Befehle der Positivliste und `terminal datadump` (Seitenumbruch
+      nur für diese Sitzung aus, keine Konfiguration); bei „More“ ein Leerzeichen. Nie
+      Konfigurationsmodus, keine Antwort auf Rückfragen, Ausgabe wie bisher begrenzt. Die
+      Sitzung wird nur genommen, wenn `show version` per Exec nicht antwortet.
+    - **Juniper Junos** – MX (Rolle **`router`**), EX/QFX (Rolle `switch`): Befehle mit
+      strukturierter Ausgabe `| display json | no-more` (`show chassis hardware`,
+      `show interfaces`, `show lldp neighbors`, `show vlans`, `show arp no-resolve`,
+      `show ethernet-switching table`, `show bridge mac-table`), Konto der Klasse `read-only`.
+      Logische Units mit VLAN-Tag werden VLAN-Interfaces am Port (wie Subinterfaces der
+      FortiGate), Unit 0 ohne Tag gehört zum Port; IPv4/IPv6-Adressen kommen ans Interface,
+      ihre Netze als Interface-Netze ins Inventar (`inv_subnet`). Aggregat `ae` aus der
+      Adressfamilie `aenet`, MAC-Tabelle je nach Plattform (ELS bzw. Bridge-Domains, der
+      jeweils andere Befehl fehlt ohne Hinweis). Interne Interfaces (`pfe-`, `cbp`, `lsi` …)
+      fallen weg. **Nicht** gelesen: Routing-Tabelle des MX (beim Internet-Router zu gross) –
+      die Wege über den MX folgen bei Bedarf mit einer Zusammenfassung.
+    - Ein Router leitet in der L2-Sicht nicht weiter (`Device.switching` falsch); Speed und
+      Duplex der Hersteller (`10gbps`, `10G`, `10000`, `Full`/`full`) vergleicht die Verkabelung
+      einheitlich.
 
 ## Konsequenzen
 

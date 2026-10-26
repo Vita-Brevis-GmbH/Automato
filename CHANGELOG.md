@@ -7,6 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.68.0 – 2026-10-26
+
+Weitere Switches und Router als Quellsysteme (Wunsch des Anwenders, ADR 0025 Nr. 11). Ohne
+Migration; der Agent holt die neue Version mit dem Selbst-Update.
+
+- **Quellsystem „Switches & Router“** (bisher „Cisco-Switches“): die Plattform erkennt der
+  Collector je Gerät an `show version` – gemischte Gruppen sind möglich.
+  - **Cisco Catalyst 9200L, 9300, 3650, 4500** (IOS/IOS-XE, auch klassisches IOS der 4500 mit
+    eigener Form der MAC-Tabelle) und **Nexus 9000** (NX-OS): wie bisher, mit Tests je Modell.
+  - **Cisco Catalyst 1200/1300** (Business-CLI): eigene Befehle und Auswertung (Ports, VLANs aus
+    `show vlan`, Port-Channel, LLDP, MAC, ARP). Diese Geräte nehmen kein Exec an – Automato liest
+    sie über eine **begrenzte Sitzung**: Anmeldung in der Sitzung, danach nur die Befehle der
+    Positivliste und das Abschalten des Seitenumbruchs für die Sitzung.
+  - **Juniper MX** (Router) sowie EX/QFX (Switches): Junos mit strukturierter Ausgabe (JSON) –
+    Ports, Aggregate, Units mit VLAN und IPv4/IPv6-Adressen, Interface-Netze ins Inventar, LLDP,
+    ARP, MAC-Tabelle, VLANs. Konto der Klasse `read-only`.
+- **Verkabelung:** Router als eigene Art (in der L2-Sicht Endgerät, nicht Switch), Kennzahl
+  Router; Speed/Duplex verschiedener Hersteller (`10gbps`, `10G`, `Full`) gleich verglichen.
+- „Verbindung prüfen“ nennt je Gerät die erkannte Plattform (und „Sitzung“ beim Catalyst 1300).
+
 ## 0.67.0 – 2026-10-26
 
 Netzwerkplan je Applikation (Wunsch des Anwenders, ADR 0021 Ergänzung 0.67.0). Ohne Migration.

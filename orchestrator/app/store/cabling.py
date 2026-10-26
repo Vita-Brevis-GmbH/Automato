@@ -101,7 +101,7 @@ def _ranges(vlans: set[int], limit: int = 12) -> str:
 class Device:
     key: str
     name: str
-    kind: str  # switch | leaf | spine | firewall | controller | esxi | unknown
+    kind: str  # switch | leaf | spine | firewall | controller | router | esxi | unknown
     source_system_id: int | None = None
     source: str | None = None
     platform: str | None = None
@@ -120,7 +120,7 @@ class Device:
         stehen fremde MACs (0.63.0). ESXi-Hosts, Firewalls und Telefone nicht."""
         if self.kind in ("switch", "leaf", "spine"):
             return True
-        if self.kind in ("esxi", "firewall", "controller"):
+        if self.kind in ("esxi", "firewall", "controller", "router"):  # Router (MX) seit 0.68.0
             return False
         if re.search(r"vmware|esx", self.remote_platform or "", re.I):
             return False

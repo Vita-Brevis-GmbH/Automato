@@ -39,8 +39,9 @@ _HINTS = {
     "netbox": "Lese-Token im Web-UI neu setzen (NetBox v2-Token: nbt_<Schluessel>.<Token>)",
     "cisco_switch": (
         "SSH-Benutzer/-Passwort im Web-UI neu setzen; das Konto braucht nur Leserechte (IOS "
-        "privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle network-operator), "
-        "Anmeldung mit Passwort (keyboard-interactive bzw. password) muss erlaubt sein"
+        "privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle network-operator, Junos-"
+        "Klasse read-only, Catalyst 1200/1300 Stufe 1), Anmeldung mit Passwort "
+        "(keyboard-interactive bzw. password) muss erlaubt sein"
     ),
 }
 # vCenter: Rolle Read-only reicht (System.View/System.Read) - fehlt sie, ist sie meist am
@@ -96,6 +97,11 @@ def _ssh_error(exc: Exception, platform: str, target: Target | None, local: bool
         return ". ".join([*parts, f"Hinweis: {_HINTS['cisco_switch']}"])
     if name == "HostKeyChanged":
         return str(exc)
+    if name == "SessionLoginFailed":  # Catalyst 1200/1300: Anmeldung in der Sitzung (0.68.0)
+        return (
+            f"Anmeldung abgelehnt (SSH-Sitzung: „User Name:“/„Password:“). Hinweis: "
+            f"{_HINTS['cisco_switch']}"
+        )
     if name == "NoValidConnectionsError":
         return "nicht erreichbar: Verbindung zu Port 22 abgelehnt (SSH aus bzw. Weg gesperrt)"
     if name in ("TimeoutError", "timeout") and platform == "cisco_switch":

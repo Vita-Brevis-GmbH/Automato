@@ -51,6 +51,7 @@ const KIND: Record<string, string> = {
   spine: "ACI-Spine",
   controller: "APIC",
   firewall: "Firewall",
+  router: "Router",
   esxi: "ESXi-Host",
   unknown: "nicht gelesen",
 };
@@ -97,7 +98,7 @@ export default function Cabling({ tenantId, tenantLabel }: { tenantId: number | 
   return (
     <>
       <PageHead title="Verkabelung">
-        Verbindungen zwischen Geräten aus CDP/LLDP von {tenantLabel}: Switches (Cisco IOS, IOS-XE, NX-OS, per SSH gelesen),
+        Verbindungen zwischen Geräten aus CDP/LLDP von {tenantLabel}: Switches und Router (Cisco IOS/IOS-XE, NX-OS, Catalyst 1200/1300, Juniper Junos – per SSH gelesen),
         ACI-Leafs und weitere Geräte. Beidseitig = beide Seiten melden die Verbindung; Abweichungen (Speed, Duplex, VLANs,
         Port-Channel) zwischen zwei gelesenen Switches sind Befunde. Rein lesend.
       </PageHead>
@@ -106,7 +107,7 @@ export default function Cabling({ tenantId, tenantLabel }: { tenantId: number | 
         <Loading />
       ) : s && s.links === 0 && s.switches === 0 ? (
         <Note>
-          Noch keine Verkabelung. Unter „Mandanten &amp; Standorte“ ein Quellsystem „Cisco-Switches“ mit den Adressen der
+          Noch keine Verkabelung. Unter „Mandanten &amp; Standorte“ ein Quellsystem „Switches &amp; Router“ mit den Adressen der
           Switches und einem Konto nur mit Leserechten anlegen und einlesen; ACI-Leafs bringen ihre LLDP-Nachbarn mit.
         </Note>
       ) : (

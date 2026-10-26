@@ -1305,6 +1305,7 @@ interface LogicalZoneRow {
 
 test("Verkabelung: Switches, Verbindungen mit Abweichungen, Ports und VLANs (0.62.0)", async ({ page, problems }) => {
   await page.goto("/#verkabelung");
+  await expect(page.locator("body")).toContainText("Catalyst 1200/1300, Juniper Junos"); // 0.68.0
   await expect(page.locator("#cabling-summary")).toContainText("2 Switches");
   await expect(page.locator("#cabling-summary")).toContainText("1 einseitig");
   const rows = page.locator("#cabling-links tbody tr");

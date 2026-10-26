@@ -1,8 +1,9 @@
 """Collector-Task fuer Cisco-Switches (ADR 0025, read-only).
 
-Ein Quellsystem ist eine Gruppe von Switches mit gemeinsamem Read-only-Konto: die Adressen
-stehen im Lesebereich (`read_scope`, eine je Zeile bzw. kommagetrennt, `host[:port]`). Je
-Switch `show version` (erkennt IOS/IOS-XE bzw. NX-OS), danach die festen Befehle der Plattform.
+Ein Quellsystem ist eine Gruppe von Switches bzw. Routern mit gemeinsamem Read-only-Konto: die
+Adressen stehen im Lesebereich (`read_scope`, eine je Zeile bzw. kommagetrennt, `host[:port]`).
+Je Geraet `show version` (erkennt IOS/IOS-XE, NX-OS, seit 0.68.0 Junos und die Business-CLI der
+Catalyst 1200/1300 - diese ueber die begrenzte Sitzung), danach die festen Befehle der Plattform.
 Ein Switch, der nicht antwortet, fehlt im Ergebnis und steht in der Meldung; antwortet keiner,
 schlaegt der Lauf fehl. Ohne Zugangsdaten liest nur der zentrale Worker (Lab) die Beispieldaten.
 """
@@ -14,7 +15,13 @@ from importlib import resources
 
 from collectors.celery_app import app
 from collectors.cisco_switch.client import COMMANDS, SwitchClient, fingerprint
-from collectors.cisco_switch.normalize import cli_error, detect_platform, normalize
+from collectors.cisco_switch.normalize import (
+    PLATFORM_LABEL,
+    cli_error,
+    detect_platform,
+    normalize,
+    quiet,
+)
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, Target
@@ -47,8 +54,10 @@ def read_switch(entry: str, target: Target) -> dict:
     outputs: dict[str, str] = {}
     notes: list[str] = []
     with client:
-        version = client.run("show version")
+        version = client.version()  # per Exec, sonst begrenzte Sitzung (Catalyst 1200/1300)
         platform = detect_platform(version)
+        mode = client.mode
+        client.prepare(platform)
         outputs["show version"] = version
         for cmd in COMMANDS[platform][1:]:
             try:
@@ -57,11 +66,11 @@ def read_switch(entry: str, target: Target) -> dict:
                 notes.append(f"{cmd}: {type(exc).__name__}")
                 continue
             error = cli_error(text)
-            if error and "not enabled" not in error.lower():
+            if error and not quiet(platform, cmd, error):
                 notes.append(f"{cmd}: {error}")
             outputs[cmd] = text
     return {"host": entry, "platform": platform, "outputs": outputs, "notes": notes,
-            "host_key": client.host_key}  # fmt: skip
+            "host_key": client.host_key, "mode": mode}  # fmt: skip
 
 
 def gather(target: Target | None = None) -> dict:
@@ -103,12 +112,15 @@ def check(target: Target | None = None) -> tuple[bool, str]:
                               known_key=target.known_hosts.get(entry))  # fmt: skip
         try:
             with client:
-                version = client.run("show version")
+                version = client.version()
+                mode = client.mode
         except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
             ok = False
             lines.append(f"{entry}: {diagnose.device_error(exc, 'cisco_switch', target, True)}")
             continue
-        kind = "NX-OS" if detect_platform(version) == "nxos" else "IOS/IOS-XE"
+        kind = PLATFORM_LABEL[detect_platform(version)]
+        if mode == "shell":
+            kind += ", Sitzung"
         lines.append(f"{entry}: erreichbar ({kind}, Host-Schluessel "
                      f"{fingerprint(client.host_key or '')})")  # fmt: skip
     return ok, "; ".join(lines)
@@ -126,7 +138,8 @@ def collect_once(
             raise RuntimeError("; ".join(errors) or "kein Switch gelesen")
         inventory = normalize(raw)  # ergaenzt Hinweise je Switch (z. B. MAC-Tabelle gekappt)
         notes = [f"{sw['host']}: {n}" for sw in switches for n in sw.get("notes") or []]
-        message = [f"Switches: {len(switches)} gelesen"]
+        kinds = sorted({PLATFORM_LABEL.get(sw.get("platform"), "?") for sw in switches})
+        message = [f"Switches: {len(switches)} gelesen ({', '.join(kinds)})"]
         if errors:
             message.append(f"nicht gelesen: {'; '.join(errors)}")
         if notes:

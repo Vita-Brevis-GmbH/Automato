@@ -8,6 +8,10 @@ CDP/LLDP. Portnamen in der Kurzform des Switches (`Gi1/0/1`, `Eth1/1`, `Po10`).
 Seit 0.63.0 die MAC-Adress-Tabelle (nur Unicast an Ports, nicht CPU/Router/Peer-Link) und ARP
 (ohne die eigenen Adressen des Switches); MACs einheitlich `aa:bb:cc:dd:ee:ff`.
 
+Seit 0.68.0 weitere Plattformen nach `show version`: Cisco Business-CLI (Catalyst 1200/1300,
+`cbs.py`) und Juniper Junos (MX, EX, QFX; `junos.py`); IOS/IOS-XE deckt Catalyst 9200L, 3650,
+4500 und 9300 ab, NX-OS die Nexus 9000.
+
 Seit 0.65.0 Spanning Tree (je Port die VLANs, in denen er blockiert bzw. Root-Port ist, in
 `attrs.stp_blocked`/`stp_root`) und `show vpc` selbst ausgewertet: Domaene, Rolle, Peer- und
 Keepalive-Status am Peer-Link (`attrs.vpc_peer_link`), je vPC Status und Konsistenz.
@@ -27,6 +31,9 @@ from collectors.common.dto import (
 )
 
 NTC_PLATFORM = {"ios": "cisco_ios", "nxos": "cisco_nxos"}
+# Bezeichnung je Plattform (Meldungen, Pruefung der Verbindung)
+PLATFORM_LABEL = {"ios": "IOS/IOS-XE", "nxos": "NX-OS", "cbs": "Catalyst 1200/1300 (Business-CLI)",
+                  "junos": "Junos"}  # fmt: skip
 # Langform -> Kurzform (wie in `show interfaces status`); laengste zuerst
 _SHORT = (
     ("hundredgigabitethernet", "Hu"),
@@ -120,7 +127,22 @@ def cli_error(text: str) -> str | None:
     low = first.lower()
     if first.startswith("%") or "invalid command" in low or "not enabled" in low:
         return first.lstrip("% ").strip()
+    if low.startswith("error:") or low.startswith("syntax error"):  # Junos (0.68.0)
+        return first.split(":", 1)[-1].strip() if low.startswith("error:") else first
     return None
+
+
+def quiet(platform: str, command: str, error: str) -> bool:
+    """Fehlermeldung ohne Hinweis im Lauf: Funktion aus (LLDP), Befehl gibt es auf der Plattform
+    nicht (Junos: MX ohne ELS bzw. EX ohne Bridge-Domains)."""
+    from collectors.cisco_switch import junos
+
+    low = error.lower()
+    return (
+        "not enabled" in low
+        or "not running" in low
+        or (platform == "junos" and command in junos.OPTIONAL)
+    )
 
 
 def parse(platform: str, command: str, text: str) -> list[dict]:
@@ -195,7 +217,15 @@ def _stp(rows: list[dict]) -> dict[str, dict[str, set[int]]]:
 
 
 def detect_platform(version_text: str) -> str:
-    return "nxos" if re.search(r"NX-OS|Nexus", version_text) else "ios"
+    """Plattform aus `show version`: NX-OS, Junos, Business-CLI (Catalyst 1200/1300), sonst IOS."""
+    if re.search(r"NX-OS|Nexus", version_text):
+        return "nxos"
+    if re.search(r"^(Junos:|JUNOS )", version_text, re.M):
+        return "junos"
+    if re.search(r"^\s*(Active-image:|SW version\s)|Catalyst 1[23]00|\bC1[23]00-|\bCBS\d{3}",
+                 version_text, re.M):  # fmt: skip
+        return "cbs"
+    return "ios"
 
 
 def _first(value) -> str | None:
@@ -276,8 +306,13 @@ def switch_inventory(
     host: str, platform: str, outputs: dict[str, str], notes: list[str] | None = None
 ) -> NetworkInventory:
     """Ein Switch: Ausgaben der Befehle (`COMMANDS`) -> Netzinventar; Hinweise nach `notes`."""
+    from collectors.cisco_switch import cbs, junos
     from collectors.cisco_switch.client import COMMANDS
 
+    if platform == "cbs":
+        return cbs.inventory(host, outputs, notes)
+    if platform == "junos":
+        return junos.inventory(host, outputs, notes)
     cmds = COMMANDS[platform]
     p: dict[str, list[dict]] = {}
     for c in cmds:
@@ -452,6 +487,7 @@ def normalize(raw: dict) -> NetworkInventory:
         inv.neighbors += part.neighbors
         inv.macs += part.macs
         inv.arps += part.arps
+        inv.subnets += part.subnets  # Junos: Netze der Interface-Adressen (0.68.0)
         for v in part.vlans:  # VLAN-ID je Quellsystem einmal (erster Name)
             seen_vlans.setdefault(v.vid, v)
     inv.vlans = sorted(seen_vlans.values(), key=lambda v: v.vid)

@@ -34,7 +34,9 @@ class Platform(enum.StrEnum):
     INFOBLOX = "infoblox"  # Referenzquelle (DDI), ADR 0010
     NETBOX = "netbox"  # Referenzquelle / Anreicherung, ADR 0010
     VMWARE = "vmware"  # vCenter: VMs, Portgruppen (ADR 0017)
-    CISCO_SWITCH = "cisco_switch"  # Cisco IOS/IOS-XE/NX-OS per SSH, Gruppe von Switches (ADR 0025)
+    # Switches und Router per SSH (ADR 0025): Cisco IOS/IOS-XE/NX-OS, seit 0.68.0 auch Business-CLI
+    # (Catalyst 1200/1300) und Juniper Junos (MX, EX, QFX); Gruppe von Geraeten
+    CISCO_SWITCH = "cisco_switch"
 
 
 # Referenzquellen (IPAM) - liefern keinen Regeln, sondern den Referenz-Stand

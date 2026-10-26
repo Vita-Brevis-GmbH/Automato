@@ -90,11 +90,13 @@ def devices(
             "issues": sum(len(link.issues) for link in mine),
             "one_sided": sum(1 for link in mine if link.state == "one_sided"),
         })  # fmt: skip
-    order = {"switch": 0, "leaf": 1, "spine": 1, "firewall": 2, "esxi": 4, "unknown": 5}
+    order = {"switch": 0, "leaf": 1, "spine": 1, "router": 2, "firewall": 2, "esxi": 4,
+             "unknown": 5}  # fmt: skip
     items.sort(key=lambda x: (not x["read"], order.get(x["kind"], 3), x["name"].casefold()))
     summary = {
         "devices": sum(1 for x in items if x["read"]),
         "switches": sum(1 for x in items if x["kind"] == "switch"),
+        "routers": sum(1 for x in items if x["kind"] == "router"),  # 0.68.0 (Juniper MX)
         "links": len(cab.links),
         "states": {s: sum(1 for link in cab.links.values() if link.state == s) for s in STATES},
         "issues": sum(len(link.issues) for link in cab.links.values()),
@@ -105,7 +107,8 @@ def devices(
     return {"summary": summary, "items": items}
 
 
-_KIND_RANK = {"switch": 0, "leaf": 1, "spine": 1, "controller": 2, "firewall": 3, "esxi": 4}
+_KIND_RANK = {"switch": 0, "leaf": 1, "spine": 1, "controller": 2, "router": 3, "firewall": 3,
+              "esxi": 4}  # fmt: skip
 
 
 def _rank(d: store.Device) -> tuple:

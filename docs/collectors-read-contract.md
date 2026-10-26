@@ -213,6 +213,20 @@ wird beim ersten Lauf festgehalten und danach verlangt (ADR 0025 Nr. 3).
 | `show mac address-table` (seit 0.63.0) | MAC, VLAN, Port, Art (dynamic/static); nur Unicast an einzelnen Ports, nicht CPU/Supervisor/Router/vPC-Peer-Link; höchstens 50 000 je Switch | `mac_entry` (gesammelt, `first_seen`/`last_seen`) |
 | `show ip arp` · `show ip arp detail vrf all` (seit 0.63.0) | IP, MAC, L3-Interface, VRF (NX-OS); ohne die eigenen Adressen des Switches | `arp_entry` (gesammelt) |
 
+**Seit 0.68.0 weitere Produkte** (ADR 0025 Nr. 11), Plattform nach `show version`:
+
+| Plattform | Geräte | Befehle | Konto |
+|---|---|---|---|
+| IOS/IOS-XE | Catalyst 9200L, 9300, 3650, 4500 | wie oben | privilege 1 bzw. Parser-View |
+| NX-OS | Nexus 9000 | wie oben | `network-operator` |
+| Business-CLI | Catalyst 1200/1300 (CBS) | `show version`, `show system`, `show inventory`, `show interfaces status`, `show interfaces description`, `show vlan`, `show interfaces port-channel`, `show lldp neighbors`, `show mac address-table`, `show arp` – über die **begrenzte Sitzung** (kein Exec): Anmeldung in der Sitzung, nur diese Befehle und `terminal datadump` (Seitenumbruch der Sitzung aus) | Stufe 1 (nur lesen) |
+| Junos | Juniper MX (Router), EX, QFX | `show version`; mit `\| display json \| no-more`: `show chassis hardware`, `show interfaces`, `show lldp neighbors`, `show vlans`, `show arp no-resolve`, `show ethernet-switching table`, `show bridge mac-table` | Klasse `read-only` |
+
+Gelesen werden dieselben Inhalte wie oben (Gerät, Ports mit Zustand/Speed/Duplex/VLANs/LAG,
+Nachbarn, MAC, ARP); bei Junos zusätzlich die Adressen der Interfaces (`inv_interface.ips`) und
+ihre Netze (`inv_subnet`, Kontext Interface). Nicht gelesen: Konfiguration, Routing-Tabelle,
+Zähler.
+
 Meldet ein Befehl einen Fehler (z. B. LLDP ausgeschaltet) oder fehlt eine Vorlage, bleibt der
 Teil leer und steht als Hinweis in der Meldung des Laufs. Nicht gelesen: Konfiguration,
 Zugangsdaten, Logs, Zähler, IPv6-Nachbarn. MAC- und ARP-Einträge werden gesammelt und nach

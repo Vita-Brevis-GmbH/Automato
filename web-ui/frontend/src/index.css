@@ -600,3 +600,4 @@ tbody tr.group-row td {
 .app-plan-focus { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); font-size: 13px; }
 .app-plan-focus ul { margin: 6px 0 0; padding-left: 18px; }
 .app-plan-focus li { margin: 2px 0; }
+.ss-products { margin: 4px 0 0; padding-left: 18px; }

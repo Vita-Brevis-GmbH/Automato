@@ -441,7 +441,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       (0.52.0), Korrekturen im Designer später. Die logischen Zonen hängt der Zonenplan an
       diese Knoten (Netzwerkdesign, 0.51.0).
 - **Verkabelung** (0.62.0, ADR 0025): welches Gerät an welchem Port welches anderen hängt –
-  abgeleitet aus CDP/LLDP aller gelesenen Geräte (Cisco-Switches, ACI-Leafs), nichts von Hand.
+  abgeleitet aus CDP/LLDP aller gelesenen Geräte (Switches & Router, ACI-Leafs), nichts von Hand.
+  Seit 0.68.0 auch Catalyst 1200/1300 und Juniper MX/EX/QFX; ein MX steht als **Router** da
+  (in der L2-Sicht ein Endgerät, kein Switch), seine Interface-Netze im Inventar.
   Oben die Kennzahlen (gelesene Geräte, Switches, Verbindungen je Zustand, Abweichungen,
   Gegenstellen ohne CDP/LLDP, seit 0.63.0 Endpunkte), darunter die Reiter:
   - **Plan** (0.64.0, ADR 0025 Nr. 9): die L2-Sicht als Zeichnung – oben der Kern (Spines bzw.
@@ -894,17 +896,22 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   gruppiert. Den Standort aus dem Namen (Netz `N_<tenant>-000-…`, Cluster
   `fwc11-000-<tenant>`, Host `evh01-chzrh1-<tenant>`) zeigen Objekte, Inventar (Geräte,
   Subnetze) und der Quellsystem-Dialog als Vorschlag („?“ = Code nicht erfasst). Weiter: die **Quellsysteme des
-  Mandanten** (**+ Quellsystem** / **Bearbeiten**: FortiGate/Cisco ACI/Infoblox DDI/NetBox/VMware/Cisco-Switches,
+  Mandanten** (**+ Quellsystem** / **Bearbeiten**: FortiGate/Cisco ACI/Infoblox DDI/NetBox/VMware/Switches & Router,
   Adresse, **Standort** des Geräts (für den NetBox-Sync), **Verwaltet von** = Collector-Agent
   oder zentraler Worker, read-only Zugangsdaten – FortiGate: **API-Token**, Cisco ACI:
   **APIC-Benutzer/Passwort** + **ACI-Tenants** (leer = alle ausser infra/mgmt), Infoblox:
   **WAPI-Benutzer/Passwort**, VMware: **vCenter-Benutzer/Passwort** (Konto mit der Rolle
   *Read-only* auf dem vCenter-Objekt bzw. als globale Berechtigung, jeweils mit „An
-  untergeordnete Objekte weitergeben“), Cisco-Switches (0.62.0, ADR 0025): **SSH-Benutzer/
+  untergeordnete Objekte weitergeben“), Switches & Router (0.62.0, ADR 0025; bis 0.67.0
+  „Cisco-Switches“): **SSH-Benutzer/
   Passwort** eines Kontos, das nur lesen darf (IOS/IOS-XE privilege 1 bzw. eine Parser-View mit
-  den `show`-Befehlen des Lesevertrags, NX-OS Rolle `network-operator`) und statt der Adresse
+  den `show`-Befehlen des Lesevertrags, NX-OS Rolle `network-operator`, seit 0.68.0 Junos-Klasse
+  `read-only`, Catalyst 1200/1300 Stufe 1) und statt der Adresse
   die **Switches** (eine Adresse je Zeile, `host` bzw. `host:port`, bis 1000) – ein Quellsystem
-  ist eine Gruppe von Switches mit demselben Konto; die **SSH-Host-Schlüssel** hält der erste
+  ist eine Gruppe von Switches mit demselben Konto, gemischt aus Catalyst 9200L/9300/3650/4500
+  (IOS/IOS-XE), Nexus 9000 (NX-OS), Catalyst 1200/1300 (Business-CLI, gelesen über eine
+  begrenzte Sitzung, weil diese Geräte kein Exec annehmen) und Juniper MX/EX/QFX (Junos) – die
+  Plattform erkennt der Collector je Gerät, „Verbindung prüfen“ nennt sie; die **SSH-Host-Schlüssel** hält der erste
   Lauf je Adresse fest (Fingerabdruck im Dialog, „vergessen“ nach Tausch des Geräts), NetBox: **Lese-Token** + optional **Schreib-Token** (nur
   NetBox-Sync, geht nie an einen Agenten) – nur schreibbar, verschlüsselt gespeichert, Anzeige
   nur „hinterlegt"; bei Infoblox/NetBox die **Rolle** *IPAM führend* oder *Anreicherung*

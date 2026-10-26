@@ -14,7 +14,8 @@ FILL_SW, FILL_END, STROKE_SW, STROKE_END = "#f4f6f8", "#ffffff", "#1565c0", "#9a
 EDGE = {"yes": "#2e7d32", "no": "#c62828", "partial": "#ef6c00", "standby": "#7b1fa2",
         "unknown": "#9aa5b1"}  # fmt: skip
 KIND = {"switch": "Switch", "leaf": "ACI-Leaf", "spine": "ACI-Spine", "controller": "APIC",
-        "firewall": "Firewall", "esxi": "ESXi-Host", "unknown": "nicht gelesen"}  # fmt: skip
+        "firewall": "Firewall", "router": "Router", "esxi": "ESXi-Host",
+        "unknown": "nicht gelesen"}  # fmt: skip
 
 
 def _stamp(plan: dict, when: datetime | None) -> str:

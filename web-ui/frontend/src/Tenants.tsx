@@ -1075,7 +1075,7 @@ function SystemDialog({
             <option value="fortigate">FortiGate</option>
             <option value="cisco_aci">Cisco ACI</option>
             <option value="vmware">VMware vCenter</option>
-            <option value="cisco_switch">Cisco-Switches (SSH, IOS/IOS-XE/NX-OS)</option>
+            <option value="cisco_switch">Switches &amp; Router (SSH: Cisco Catalyst/Nexus, Juniper)</option>
             <option value="infoblox">Infoblox DDI (Referenzquelle)</option>
             <option value="netbox">NetBox (Referenzquelle)</option>
           </select>
@@ -1099,7 +1099,7 @@ function SystemDialog({
         )}
         {isSwitch && (
           <div className="field">
-            <label htmlFor="ss-switches">Switches</label>
+            <label htmlFor="ss-switches">Switches und Router</label>
             <textarea
               id="ss-switches"
               className="input mono"
@@ -1109,8 +1109,15 @@ function SystemDialog({
               onChange={(e) => setReadScope(e.target.value)}
             />
             <div className="hint">
-              Eine Adresse je Zeile (bzw. kommagetrennt), optional mit SSH-Port. Alle Switches teilen das Konto unten; der
-              Agent liest sie parallel und meldet, welche nicht erreichbar waren.
+              Eine Adresse je Zeile (bzw. kommagetrennt), optional mit SSH-Port. Alle Geräte teilen das Konto unten; der
+              Agent liest sie parallel und meldet, welche nicht erreichbar waren. Die Plattform erkennt Automato an{" "}
+              <code>show version</code>:
+              <ul className="ss-products" id="ss-switch-products">
+                <li>Cisco Catalyst 9200L, 9300, 3650, 4500 – IOS/IOS-XE</li>
+                <li>Cisco Nexus 9000 – NX-OS (mit vPC)</li>
+                <li>Cisco Catalyst 1200/1300 – Business-CLI, über eine begrenzte Sitzung (kein Exec)</li>
+                <li>Juniper MX (Router), EX/QFX – Junos, strukturierte Ausgabe (JSON)</li>
+              </ul>
             </div>
           </div>
         )}
@@ -1361,8 +1368,10 @@ function SystemDialog({
               />
               <div className="hint">
                 Konto nur mit Leserechten (IOS/IOS-XE privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle{" "}
-                <code>network-operator</code>). Automato führt nur feste <code>show</code>-Befehle aus (je Befehl ein
-                SSH-Aufruf, keine Shell, kein Konfigurationsmodus). Wird verschlüsselt gespeichert.
+                <code>network-operator</code>, Junos-Klasse <code>read-only</code>, Catalyst 1200/1300 Stufe 1). Automato
+                führt nur feste <code>show</code>-Befehle aus (je Befehl ein SSH-Aufruf, kein Konfigurationsmodus); nur der
+                Catalyst 1200/1300 wird über eine Sitzung gelesen, in der ausschliesslich dieselben Befehle und das
+                Abschalten des Seitenumbruchs für die Sitzung gesendet werden. Wird verschlüsselt gespeichert.
               </div>
             </div>
           </>
