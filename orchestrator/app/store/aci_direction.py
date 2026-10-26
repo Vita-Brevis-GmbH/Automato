@@ -15,7 +15,12 @@ Filter Ports“, Standard). Ohne Zustand im Fabric heisst das:
   zurueck.
 
 Der Collector rechnet je Subject die Dienste der Rueckrichtung aus (`raw.reverse`, seit
-0.69.1). Fuer aeltere Laeufe gilt der Standard des APIC: die Filter ohne Ports. Taboos sperren
+0.69.1). Fuer aeltere Laeufe gilt der Standard des APIC: die Filter ohne Ports.
+
+**Nur Antworten** (0.72.1): Hat ein Subject seit 0.69.1 (`raw.reverse` gesetzt) keine Dienste
+Consumer -> Provider, lassen seine Filter in dieser Richtung nur Antworten zu (Eintraege nur mit
+Quellport, z. B. 443, bzw. TCP ohne SYN) - der Contract baut dort keine Verbindung auf
+(`replies_only`); bisher war das Urteil „moeglich“. Taboos sperren
 nur zum geschuetzten EPG; Preferred Groups verbinden ihre Mitglieder ohnehin in beide
 Richtungen. Genutzt von der Weg-Suche (`aci_check`), der Applikations-Doku, den Verbindungen
 Ende zu Ende und der Zonenmatrix.
@@ -30,6 +35,7 @@ from app.models.rule import rule_service
 _ANY = ("", "any", "unspecified")
 _PORTLESS = ("ip", "all", "unspecified", "tcp", "udp", "icmp", "icmpv4", "icmpv6")
 TEXT = "ACI ist zustandslos: Filter ohne Ports gelten auch vom Provider zum Consumer"
+REPLIES = "Filter nur mit Quellport bzw. ohne SYN: Consumer → Provider nur Antworten"
 
 
 def portless(name: str) -> bool:
@@ -47,6 +53,15 @@ def reverse_of(raw: dict | None, services: list[str]) -> list[str]:
     return [s for s in services if portless(s)]
 
 
+def replies_only(raw: dict | None, services: list[str]) -> bool:
+    """Oeffnet der Contract Consumer -> Provider nichts (nur Antworten)? Erst ab Laeufen mit
+    `raw.reverse` (0.69.1) sicher - davor fehlten die Dienste bei solchen Filtern nicht."""
+    raw = raw if isinstance(raw, dict) else {}
+    if raw.get("kind") not in (None, "contract"):
+        return False
+    return isinstance(raw.get("reverse"), list) and not services
+
+
 def reverse(rule: Rule) -> list[str]:
     """Rueckrichtung einer Regel (nur erlaubende ACI-Contracts)."""
     if rule.domain is not RuleDomain.ACI_CONTRACT or rule.action is not RuleAction.ALLOW:
@@ -62,24 +77,32 @@ def info(rule: Rule) -> dict | None:
     if raw.get("kind") in ("taboo", "preferred_group"):
         return None
     back = reverse(rule)
-    if back:
+    only = replies_only(raw, [s.canonical_name for s in rule.services])
+    if only and back:
+        text = (f"nur Provider → Consumer: {', '.join(back)} (Consumer → Provider nur "
+                "Antworten – Filter nur mit Quellport)")  # fmt: skip
+    elif only:
+        text = ("öffnet keine Verbindung: in beide Richtungen nur Antworten (Filter nur mit "
+                "Quellport)")  # fmt: skip
+    elif back:
         text = (f"gilt in beide Richtungen: der Provider kann {', '.join(back)} zum Consumer "
                 "aufbauen (ACI ist zustandslos, Filter ohne Ports)")  # fmt: skip
     else:
         text = ("nur Consumer → Provider: zurück nur Antworten (Filter mit Zielport bzw. "
                 "stateful)")  # fmt: skip
-    return {"reverse": back, "both": bool(back), "text": text,
-            "derived": not isinstance(raw.get("reverse"), list)}  # fmt: skip
+    return {"reverse": back, "both": bool(back) and not only, "text": text,
+            "replies_only": only, "derived": not isinstance(raw.get("reverse"), list)}  # fmt: skip
 
 
-def reverse_map(session: Session, tenant_id: int, rule_ids=None) -> dict[int, list[str]]:
-    """Regel-ID -> Dienste der Rueckrichtung fuer die erlaubenden Contracts des Mandanten."""
+def directions(session: Session, tenant_id: int, rule_ids=None) -> tuple[dict, set[int]]:
+    """(Regel-ID -> Dienste der Rueckrichtung, Contracts nur mit Antworten Consumer ->
+    Provider) fuer die erlaubenden Contracts des Mandanten - eine Abfrage fuer beides."""
     where = [Rule.tenant_id == tenant_id, Rule.domain == RuleDomain.ACI_CONTRACT,
              Rule.action == RuleAction.ALLOW]  # fmt: skip
     if rule_ids is not None:
         ids = list(rule_ids)
         if not ids:
-            return {}
+            return {}, set()
         where.append(Rule.id.in_(ids))
     # nur die beiden Felder statt des ganzen Contracts (Consumer/Provider-Listen)
     raws = {
@@ -89,7 +112,7 @@ def reverse_map(session: Session, tenant_id: int, rule_ids=None) -> dict[int, li
         )
     }
     if not raws:
-        return {}
+        return {}, set()
     services: dict[int, list[str]] = {}
     for rid, name in session.execute(
         select(rule_service.c.rule_id, ServiceObject.canonical_name)
@@ -97,9 +120,11 @@ def reverse_map(session: Session, tenant_id: int, rule_ids=None) -> dict[int, li
         .where(rule_service.c.rule_id.in_(list(raws)))
     ):
         services.setdefault(rid, []).append(name)
-    out = {}
+    out, only = {}, set()
     for rid, raw in raws.items():
         back = reverse_of(raw, services.get(rid, []))
         if back:
             out[rid] = back
-    return out
+        if replies_only(raw, services.get(rid, [])):
+            only.add(rid)
+    return out, only

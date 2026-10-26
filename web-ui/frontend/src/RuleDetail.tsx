@@ -409,6 +409,10 @@ export default function RuleDetailDrawer({
                     <dd id="rule-aci-direction">
                       {detail.aci_direction.both ? (
                         <span className="chip warn">↔ beide Richtungen</span>
+                      ) : detail.aci_direction.replies_only ? (
+                        <span className="chip warn">
+                          {detail.aci_direction.reverse.length ? "← nur Provider → Consumer" : "nur Antworten"}
+                        </span>
                       ) : (
                         <span className="chip">→ Consumer → Provider</span>
                       )}

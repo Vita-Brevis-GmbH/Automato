@@ -373,6 +373,16 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       - Ohne Dienst ist nur ein Filter `ip/any` sicher, sonst „möglich“. Ordnet das ACI die
         Quelle nicht eindeutig zu (z. B. 0.0.0.0/0 in zwei L3Outs), ist der Hop „abhängig“,
         wenn die Kandidaten verschieden ausgehen.
+      - **ACI ist zustandslos (0.69.1):** Filter ohne Ports (`ip`, `tcp/any`, ICMP) gelten auch
+        vom Provider zum Consumer („↩ Rückrichtung“, Regel-Detail „↔ beide Richtungen“); mit
+        Zielport (`tcp/443`) bzw. `stateful` kommen zurück nur Antworten.
+      - **Nur Antworten (0.72.1):** Lassen die Filter eines Subjects vom Consumer zum Provider
+        nur Antworten zu (Eintrag nur mit Quellport, z. B. 443, bzw. TCP ohne SYN), greift der
+        Contract in dieser Richtung nicht – das Urteil ist „gesperrt“ statt „möglich“, der
+        Contract steht mit „greift nicht: … nur Antworten“ dabei. Zurück (vertauschte Ports)
+        kann er gelten: Regel-Detail „← nur Provider → Consumer“. Gilt so auch in der
+        Applikations-Doku (nur die Zeile der Rückrichtung), in den Verbindungen Ende zu Ende
+        und in der Zonenmatrix. Erst ab einem Lauf mit 0.69.1 (Richtung je Subject).
       - **Zwischen VRFs (0.44.0):** Liegt das Ziel in einer anderen VRF, die es in diese leakt,
         endet der Weg im Fabric: „Ziel im Fabric der VRF T2:V2 … – Shared Service …“ bzw.
         „Route-Leaking …“, am Hop „→ VRF …“. Geleakt ist ein Subnetz, wenn
@@ -592,6 +602,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Für EPGs zählen ihre Subnetze und Endpunkte. Der Kopf nennt die **VM** des Servers bzw.
   die VMs an den Portgruppen der EPG; ein Server bringt auch die Contracts der EPG seiner
   Portgruppe mit (ohne gelernten Endpunkt).
+  - **Rückrichtung (0.72.1):** Gilt ein ACI-Contract in beide Richtungen und fallen beide in
+    dieselbe Kategorie, steht er in der Doku je System wie in der Applikations-Doku als eine
+    Zeile mit „(↔ beide Richtungen)“; in verschiedenen Kategorien (z. B. aus dem Internet und
+    ins Internet) bleibt die Rückrichtung eine eigene Zeile „(Rückrichtung)“.
   - **Nur, wo der Verkehr durchkommt (0.24.0):** Automato prüft jede Firewall-Regel gegen das
     Routing ihrer Firewall.
     - Ziel: Leitet die Firewall den Server über den Ausgang der Regel (Interface bzw. Zone)?

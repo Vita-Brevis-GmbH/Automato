@@ -183,6 +183,7 @@ function ConnDetail({ c, onRule, onGo }: { c: AppConnection; onRule: (id: number
                           )}
                           {!r.label && r.name ? ` „${r.name}“` : ""} · {r.action === "allow" ? "erlauben" : "sperren"}
                           {r.unsure.length ? ` · möglich (${r.unsure.join(", ")})` : ""}
+                          {r.note ? ` · greift nicht: ${r.note}` : ""}
                         </div>
                       ))
                     )}

@@ -9,6 +9,9 @@ Taboo TB_db, CT_db web -> db tcp/1433+3306, CT_mgmt vzAny -> db tcp/22), dazu:
 - CT_open web -> db mit tcp/1433 und ICMP; der Collector meldet zurueck nur ICMP (`reverse`);
 - CT_legacy web -> db mit udp/any, ohne `reverse` (aelterer Lauf: aus den Filtern abgeleitet);
 - CT_world: Consumer EN_inet (L3O_inet, 0.0.0.0/0), Provider EPG_web, ip/any.
+
+0.72.1 (nur Antworten): CT_reply web -> db nur mit Quellport 443 - vorwaerts keine Dienste,
+zurueck (vertauschte Ports) tcp/443; CT_none web -> db ohne Dienste in beide Richtungen.
 """
 
 import copy
@@ -42,9 +45,16 @@ APIC["rules"] += [
 ]  # fmt: skip
 
 
-def _seed(client) -> int:
+REPLY = copy.deepcopy(APIC)
+REPLY["rules"] += [
+    _contract("CT_reply", [f"epg:{ar.WEB}"], [f"epg:{ac.DB}"], [], reverse=["tcp/443"]),
+    _contract("CT_none", [f"epg:{ar.WEB}"], [f"epg:{ac.DB}"], [], reverse=[]),
+]  # fmt: skip
+
+
+def _seed(client, apic=APIC) -> int:
     tid = client.post("/tenants", json={"name": "Kunde A"}, headers=tp.ADMIN).json()["id"]
-    for name, platform, result in (("fw-01", "fortigate", ac.FW1), ("apic-01", "cisco_aci", APIC)):
+    for name, platform, result in (("fw-01", "fortigate", ac.FW1), ("apic-01", "cisco_aci", apic)):
         tp._deliver(client, tid, tp._system(client, tid, name, platform), platform, result)
     return tid
 
@@ -148,26 +158,85 @@ def test_zonenmatrix_rueckrichtung(client, monkeypatch):
                   reverse=["ip/any"]),
         _contract("CT_lan_https", [f"epg:{ar.WEB}"], [f"epg:{lan_epg['dn']}"], ["tcp/443"],
                   reverse=[]),
+        # 0.72.1: vorwaerts nur Antworten (Quellport 443), zurueck tcp/443
+        _contract("CT_lan_reply", [f"epg:{ar.WEB}"], [f"epg:{lan_epg['dn']}"], [],
+                  reverse=["tcp/443"]),
     ]  # fmt: skip
     tp._deliver(client, tid, ids["apic-01"], "cisco_aci", result)
     z = tz._zones(client, tid, ids)
     web_z, lan = z["web"]["id"], z["lan"]["id"]
     cells = tz._cells(client.get("/zones/matrix", params={"tenant_id": tid}).json())
-    assert cells[(web_z, lan)]["allow"] == 2
-    assert cells[(lan, web_z)]["allow"] == 1  # nur CT_lan_any (ohne Ports) zurueck
+    assert cells[(web_z, lan)]["allow"] == 2  # CT_lan_reply oeffnet vorwaerts nichts
+    assert cells[(lan, web_z)]["allow"] == 2  # CT_lan_any (ohne Ports) und CT_lan_reply zurueck
     rules = client.get("/zones/matrix/rules", params={"tenant_id": tid, "src": lan,
                                                       "dst": web_z}).json()  # fmt: skip
     names = [x["name"] for x in rules["items"]]
     assert "CT_lan_any" in names and "CT_lan_https" not in names  # dazu die Deny-Policy der FW
+    assert "CT_lan_reply" in names
+    fwd = client.get("/zones/matrix/rules", params={"tenant_id": tid, "src": web_z,
+                                                    "dst": lan}).json()  # fmt: skip
+    assert "CT_lan_reply" not in [x["name"] for x in fwd["items"]]
 
     # Absicht LAN -> ACI Web gesperrt: der Contract verstoesst in der Rueckrichtung
     body = {"tenant_id": tid, "src_zone_id": lan, "dst_zone_id": web_z, "intent": "deny"}
     assert client.put("/zones/policy", json=body, headers=OP).status_code == 200
     m = client.get("/zones/matrix", params={"tenant_id": tid}).json()
-    assert tz._cells(m)[(lan, web_z)]["violations"] == 1
+    assert tz._cells(m)[(lan, web_z)]["violations"] == 2  # CT_lan_any und CT_lan_reply
     # eingeschraenkt auf tcp/443: ip/any zurueck geht darueber hinaus
     body |= {"intent": "limited", "services": ["tcp/443"]}
     assert client.put("/zones/policy", json=body, headers=OP).status_code == 200
     rules = client.get("/zones/matrix/rules", params={"tenant_id": tid, "src": lan,
                                                       "dst": web_z}).json()  # fmt: skip
     assert rules["violations"] == 1 and rules["items"][0]["outside"] == ["ALL"]
+
+
+def test_nur_antworten_filter_nur_mit_quellport(client):
+    """0.72.1: ein Subject, dessen Filter Consumer -> Provider nur Antworten zulassen (nur
+    Quellport), greift vorwaerts nicht - Urteil gesperrt statt „moeglich“; zurueck gilt es."""
+    tid = _seed(client, REPLY)
+    rules = _aci(client, tid, src="10.50.1.10", dst="10.50.2.20", service="tcp/443")
+    assert rules["verdict"] == "implicit_deny" and "nur Antworten" in rules["text"]
+    notes = {e["name"]: e for e in rules["rules"] if e.get("note")}
+    assert set(notes) == {"CT_reply", "CT_none"}
+    assert notes["CT_reply"]["decides"] is False and notes["CT_reply"]["unsure"] == []
+
+    back = _aci(client, tid, src="10.50.2.20", dst="10.50.1.10", service="tcp/443")
+    assert back["verdict"] == "allow" and back["text"].startswith(
+        "erlaubt durch Contract CT_reply in der Rückrichtung"
+    )
+
+    d = _rule(client, tid, "CT_reply")["aci_direction"]
+    assert (d["replies_only"], d["both"], d["reverse"]) == (True, False, ["tcp/443"])
+    assert d["text"].startswith("nur Provider → Consumer: tcp/443")
+    assert _rule(client, tid, "CT_none")["aci_direction"]["text"].startswith(
+        "öffnet keine Verbindung"
+    )
+    assert _rule(client, tid, "CT_db")["aci_direction"]["replies_only"] is False
+
+    # Applikations-Doku: CT_reply nur zurueck, CT_none mit Hinweis; keine Verbindung vorwaerts
+    body = {"name": "Web", "members": [{"kind": "epg", "ref": ar.WEB}]}
+    aid = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).json()["id"]
+    doc = client.get(f"/applications/{aid}/doc").json()
+    rows = {r["Description"]: r for t in doc["tables"] for r in t["rows"]}
+    reply = next(r for k, r in rows.items() if k.startswith("CT_reply"))
+    assert reply["TCP/UDP"] == "tcp/443 (Rückrichtung)"
+    none = next(r for k, r in rows.items() if k.startswith("CT_none"))
+    assert none["TCP/UDP"] == "nur Antworten (Filter nur mit Quellport)"
+    out = client.get(f"/applications/{aid}/connections").json()["connections"]
+    names = {(x["label"], c["reverse"]) for c in out for x in c["rules"]}
+    assert ("Contract CT_reply", True) in names
+    assert ("Contract CT_reply", False) not in names and ("Contract CT_none", False) not in names
+
+
+def test_doku_je_system_rueckrichtung_wie_applikation(client):
+    """0.72.1: die Doku je System fasst Vorwaerts- und Rueckrichtung derselben Kategorie zu
+    einer Zeile „beide Richtungen“ zusammen - wie die Applikations-Doku."""
+    tid = _seed(client)
+    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    web = next(s for s in systems if s["ip"] == "10.50.1.10" or "10.50.1.10" in s["name"])
+    doc = client.get(f"/appdoc/systems/{web['name']}", params={"tenant_id": tid}).json()
+    rows = [r for t in doc["tables"] for r in t["rows"] if r["Description"].startswith("CT_open")]
+    assert len(rows) == 1 and rows[0]["TCP/UDP"].endswith("(↔ beide Richtungen)")
+    world = [r for t in doc["tables"] for r in t["rows"] if r["Description"].startswith("CT_world")]
+    # andere Kategorie (aus dem Internet / ins Internet): eigene Zeile der Rueckrichtung
+    assert sorted(r["TCP/UDP"] for r in world) == ["ip/any", "ip/any (Rückrichtung)"]

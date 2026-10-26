@@ -110,6 +110,7 @@ function HopRulesCell({ r }: { r?: HopRules }) {
             {p.kind && p.src && p.src !== "direkt" ? ` · über ${p.src}` : ""}
             {p.services.length ? ` · ${p.services.join(", ")}` : ""}
             {p.unsure.length ? ` · möglich (${p.unsure.join(", ")})` : ""}
+            {p.note ? <span className="aci-note"> · greift nicht: {p.note}</span> : null}
             {p.reverse && (
               <>
                 {" "}

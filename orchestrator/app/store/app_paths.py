@@ -32,7 +32,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Application, Epg, EpgEndpoint, EpgSubnet, Rule, RuleDomain, RuleIpRange
-from app.store import appdoc, paths, policy_check
+from app.store import aci_direction, appdoc, paths, policy_check
 from app.store import epgs as epg_store
 from app.store.topology import endpoint, is_net, within
 
@@ -138,6 +138,10 @@ def _candidates(
         if h["relevance"] == "impossible" or h["scope"] in _SKIP:
             continue
         system = systems[h["system"]]
+        if rule.domain == RuleDomain.ACI_CONTRACT and not h.get("reverse"):
+            names = [x.canonical_name for x in rule.services]
+            if aci_direction.replies_only(rule.raw, names):
+                continue  # Consumer -> Provider nur Antworten (0.72.1): keine Verbindung
         if rule.domain == RuleDomain.ACI_CONTRACT:
             key = f"aci:{rule.id}:{h['side']}:{h.get('epg') or h['system']}"
             if key not in counters:

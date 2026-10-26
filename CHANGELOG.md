@@ -7,7 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
-## 0.72.0 – 2026-10-26
+## 0.72.1 – 2026-10-26
+
+Korrekturen aus der Übersicht der Schwachstellen (Umplanung des Anwenders, Schritt 3). Ohne
+Migration.
+
+- **ACI: Filter nur mit Quellport.** Lässt ein Contract-Subject vom Consumer zum Provider nur
+  Antworten zu (Einträge nur mit Quellport wie 443 bzw. TCP ohne SYN; Läufe ab 0.69.1), greift
+  der Contract in dieser Richtung nicht mehr als „möglich“: die Weg-Suche urteilt „gesperrt“ und
+  nennt ihn mit „greift nicht: … nur Antworten“, das Regel-Detail zeigt „← nur Provider →
+  Consumer“ bzw. „nur Antworten“. Die Applikations-Doku führt dann nur die Rückrichtung, die
+  Verbindungen Ende zu Ende bauen vorwärts keine Verbindung (kein falscher Befund „Regel ↔
+  Weg“), die Zonenmatrix zählt den Contract nur zurück.
+- **Doku je System wie die Applikations-Doku:** Vorwärts- und Rückrichtung eines ACI-Contracts
+  in derselben Kategorie stehen als eine Zeile „(↔ beide Richtungen)“; in verschiedenen
+  Kategorien bleibt die Rückrichtung eine eigene Zeile.
+- **Leistung der Zonenmatrix mit der Rückrichtung gemessen:** Richtung und „nur Antworten“ kommen
+  aus einer Abfrage (`aci_direction.directions`). Gemessen gegen Postgres: 5 000 Contracts
+  0,1–0,3 s für die Richtungen, 0,2–0,4 s für die ganze Matrix; 20 000 Contracts 0,5–0,7 s bzw.
+  rund 1,2 s – linear, kein Zwischenspeicher nötig.
+
 
 Parallele Firewalls: Abweichungen bei Policy-Routen, Routing und NAT (Umplanung des Anwenders,
 Schritt 2; ADR 0020 Ergänzung 0.72.0). Rein lesend, ohne Migration.

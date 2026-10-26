@@ -249,14 +249,19 @@ class Assignment:
     # ACI ist zustandslos (0.69.1): Contracts, deren Filter ohne Ports auch Provider -> Consumer
     # oeffnen, mit diesen Diensten (`aci_direction`)
     back: dict[int, list[str]] = field(default_factory=dict)
+    # Contracts, die Consumer -> Provider nur Antworten zulassen (0.72.1): nur zurueck
+    replies: set[int] = field(default_factory=set)
+
+    def _both(self, rid: int) -> list[tuple[Cell, Cell]]:
+        return [(s, d) for s in self.src.get(rid, ()) for d in self.dst.get(rid, ())]
 
     def forward(self, rid: int) -> list[tuple[Cell, Cell]]:
-        return [(s, d) for s in self.src.get(rid, ()) for d in self.dst.get(rid, ())]
+        return [] if rid in self.replies else self._both(rid)
 
     def pairs(self, rid: int) -> list[tuple[Cell, Cell]]:
         out = self.forward(rid)
         if rid in self.back:  # Rueckrichtung: Zone des Providers -> Zone des Consumers
-            out += [(d, s) for s, d in out if (d, s) not in out]
+            out += [(d, s) for s, d in self._both(rid) if (d, s) not in out]
         return out
 
     def outside(self, rid: int, pair: tuple) -> list[str] | None:
@@ -318,8 +323,9 @@ def assign(session: Session, tenant_id: int, items: list[LogicalZone] | None = N
             continue
         zones = {ANY} if is_any else a.index.zones_of(fam, int(lo, 16), int(hi, 16))
         (a.src if role == "src" else a.dst)[rid].update(zones)
-    a.back = {rid: back for rid, back in aci_direction.reverse_map(session, tenant_id).items()
-              if rid in a.rules}  # fmt: skip
+    back, replies = aci_direction.directions(session, tenant_id)
+    a.back = {rid: b for rid, b in back.items() if rid in a.rules}
+    a.replies = {rid for rid in replies if rid in a.rules}
     # Absicht je Dienst: nur die Regeln laden, die ein eingeschraenktes Paar mit Diensten oeffnen
     a.services = {
         k: zone_services.allowed(session, tenant_id, p.services)

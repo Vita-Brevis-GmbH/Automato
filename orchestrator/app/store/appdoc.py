@@ -270,6 +270,22 @@ def categorize_aci(scope: str | None, same_ap: bool, same_tenant: bool) -> int:
     return 8  # context/tenant, anderes AP
 
 
+def _merge_reverse(rows: list[dict]) -> list[dict]:
+    """Doku je System wie die Applikations-Doku (0.72.1): steht die Rueckrichtung eines
+    Contracts in derselben Kategorie wie seine Vorwaertsrichtung, eine Zeile „↔ beide
+    Richtungen“; sonst bleibt sie eine eigene Zeile „(Rueckrichtung)“."""
+    forward = {(r.get(RULE), r.get(SIDE), r.get(OBJECT)): r for r in rows if not r.get(REVERSE)}
+    out = []
+    for row in rows:
+        twin = forward.get((row.get(RULE), row.get(SIDE), row.get(OBJECT)))
+        if row.get(REVERSE) and twin is not None:
+            if "beide Richtungen" not in (twin.get("TCP/UDP") or ""):
+                twin["TCP/UDP"] = f"{twin.get('TCP/UDP') or ''} (↔ beide Richtungen)".strip()
+            continue
+        out.append(row)
+    return out
+
+
 def _envelope(
     session: Session,
     system_name: str,
@@ -304,7 +320,7 @@ def _envelope(
                             "text": row.get(REL_TEXT) or "",
                         }  # fmt: skip
                     )
-            rows_by_table[i] = keep
+            rows_by_table[i] = _merge_reverse(keep)
     tables = [
         {
             "index": i,
@@ -571,7 +587,13 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
             # ACI ist zustandslos (0.69.1): Filter ohne Ports oeffnen auch den Weg vom Provider
             # zum Consumer - eine eigene Zeile in der Gegenrichtung (z. B. aus dem Internet)
             back = aci_direction.reverse(r)
-            for direction in (forward, "out" if forward == "in" else "in")[: 2 if back else 1]:
+            # nur Antworten Consumer -> Provider (0.72.1): nur die Rueckrichtung, sonst eine Zeile
+            # mit Hinweis
+            only = aci_direction.replies_only(r.raw, [s.canonical_name for s in r.services])
+            directions = (forward, "out" if forward == "in" else "in")[: 2 if back else 1]
+            if only and back:
+                directions = directions[1:]
+            for direction in directions:
                 reverse = direction != forward
                 if only_external:
                     idx = categorize(
@@ -583,6 +605,8 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                 else:
                     idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
                 services = ", ".join(back if reverse else rule_view.service_labels(r))
+                if only and not reverse:
+                    services = "nur Antworten (Filter nur mit Quellport)"
                 out.append(
                     (
                         idx,

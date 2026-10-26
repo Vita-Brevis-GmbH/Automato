@@ -76,6 +76,8 @@ class _Contract:
     names: list[str] = field(default_factory=list)  # Filter mit Namen (FT_https)
     # Dienste, die der Provider zum Consumer aufbauen kann (ACI zustandslos, 0.69.1)
     reverse: list[str] = field(default_factory=list)
+    # Consumer -> Provider nur Antworten (Filter nur mit Quellport, 0.72.1)
+    replies_only: bool = False
     raw: dict = field(default_factory=dict, repr=False)
 
 
@@ -181,6 +183,7 @@ class AciChecker:
             for c in out.values():
                 if c.allow and c.kind == "contract":
                     c.reverse = aci_direction.reverse_of(c.raw, c.services)
+                    c.replies_only = aci_direction.replies_only(c.raw, c.services)
         # Taboos zuerst (sperren vor allen anderen), dann nach Name
         self._contracts[sid] = sorted(out.values(), key=lambda c: (c.allow, c.name.lower()))
         return self._contracts[sid]
@@ -344,7 +347,7 @@ class AciChecker:
             hit = self._match(c, ps, pd, s, d, service)
             if hit is None:
                 continue
-            ok, back, consumer, provider = hit
+            ok, back, consumer, provider, note = hit
             if back:  # Rueckrichtung: die Quelle ist Provider, das Ziel Consumer
                 via_src, via_dst = ps[min(provider)], pd[min(consumer)]
             else:
@@ -367,6 +370,8 @@ class AciChecker:
                 "snat": None,
                 "reverse": back,
             }
+            if note:  # greift nicht: nur Antworten (0.72.1) - zur Erklaerung, entscheidet nicht
+                entry |= {"note": note, "unsure": [], "services": c.names[:4]}
             if not ok:
                 if len(shown) < SHOWN:
                     shown.append(entry)
@@ -379,8 +384,10 @@ class AciChecker:
     def _match(self, c: _Contract, ps: dict, pd: dict, s: Member, d: Member, service):
         """(Urteil Dienst, Rueckrichtung, Consumer, Provider) bzw. None: Consumer -> Provider
         nach den Filtern, sonst zurueck (ACI zustandslos) mit den Diensten, die der Provider
-        aufbauen kann - die sichere Richtung gewinnt."""
+        aufbauen kann - die sichere Richtung gewinnt. Oeffnet der Contract Consumer -> Provider
+        nur Antworten (0.72.1), greift er dort nicht - mit Hinweis, wenn sonst nichts passt."""
         best = None
+        note = None
         for back in (False, True):
             if back and not c.reverse:
                 break
@@ -391,14 +398,17 @@ class AciChecker:
             a, b = (d, s) if back else (s, d)
             if not self.cls.scope_allows(c.scope, a.epg, b.epg):
                 continue  # Scope (AP, VRF, Tenant) - auch bei Contracts aus common (0.43.1)
+            if not back and c.replies_only:
+                note = (False, False, consumer, provider, aci_direction.REPLIES)
+                continue
             ok = service_ok(c.reverse if back else c.services, service)
             if ok is False:
                 continue
             if best is None or (ok and not best[0]):
-                best = (ok, back, consumer, provider)
+                best = (ok, back, consumer, provider, None)
             if ok:
                 break
-        return best
+        return best or note
 
 
 def _label(c: _Contract) -> str:
@@ -410,7 +420,8 @@ def _label(c: _Contract) -> str:
 
 
 def _verdict(decisive: dict | None, shown: list[dict], s: Member, d: Member) -> dict:
-    before = [e for e in shown if not e["decides"]]
+    # Contracts, die nur Antworten zulassen (`note`), greifen nicht - kein „moeglich“
+    before = [e for e in shown if not e["decides"] and not e.get("note")]
     if decisive is not None:
         other = [e for e in before if e["action"] != decisive["action"]]
         if other:
@@ -425,7 +436,10 @@ def _verdict(decisive: dict | None, shown: list[dict], s: Member, d: Member) -> 
         text = "nur mögliche Contracts (Dienst nicht angegeben), sonst gesperrt"
         return {"verdict": "depends", "rules": shown, "text": text}
     text = f"kein Contract von {s.text} zu {d.text} – im ACI gesperrt"
-    return {"verdict": "implicit_deny", "rules": [], "text": text}
+    notes = [e for e in shown if e.get("note")]
+    if notes:
+        text += f" ({notes[0]['label']}: {notes[0]['note']})"
+    return {"verdict": "implicit_deny", "rules": notes, "text": text}
 
 
 def service_ok(names: list[str], want: tuple[str, int | None] | None) -> bool | None:
