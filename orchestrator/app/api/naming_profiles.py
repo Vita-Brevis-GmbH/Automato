@@ -182,6 +182,33 @@ class ZoneSchemaIn(BaseModel):
     content: str = Field(min_length=1, max_length=zone_schema.MAX_BYTES)
 
 
+class SchemaZoneIn(BaseModel):
+    """Zone des Grundschemas aus der Bearbeitung in der Oberflaeche (0.70.0)."""
+
+    name: str = Field(min_length=1, max_length=200)
+    kind: str = Field(default="internal", max_length=32)
+    code: str | None = Field(default=None, max_length=50)
+    color: str | None = Field(default=None, max_length=20)
+    match: list[str] = Field(default_factory=list, max_length=30)
+    group: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=1000)
+    geometry: list[float] | None = Field(default=None, max_length=4)
+    previous: str | None = Field(default=None, max_length=200)  # bisheriger Name (Umbenennen)
+
+
+class SchemaLinkIn(BaseModel):
+    src: str = Field(min_length=1, max_length=200)
+    dst: str = Field(min_length=1, max_length=200)
+    intent: str = Field(default="allow", max_length=16)
+    services: list[str] = Field(default_factory=list, max_length=50)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ZoneSchemaEditIn(BaseModel):
+    zones: list[SchemaZoneIn] = Field(max_length=200)
+    links: list[SchemaLinkIn] = Field(default_factory=list, max_length=1000)
+
+
 def _profile(session: Session, profile_id: int):
     p = store.get_profile(session, profile_id)
     if p is None:
@@ -204,7 +231,10 @@ def _schema_out(session: Session, profile_id: int) -> dict:
         "profile_id": profile_id,
         "schema": schema.out() if schema else None,
         "drawing": {"filename": m.value, "uploaded_by": info.get("uploaded_by"),
-                    "uploaded_at": info.get("uploaded_at")} if m else None,
+                    "uploaded_at": info.get("uploaded_at"),
+                    # in der Oberflaeche bearbeitet (0.70.0): Download aus dem bearbeiteten Stand
+                    "edited_by": info.get("edited_by"),
+                    "edited_at": info.get("edited_at")} if m else None,
     }  # fmt: skip
 
 
@@ -279,6 +309,42 @@ def save_zone_schema(
     return _schema_out(session, profile_id)
 
 
+@router.patch("/{profile_id}/zone-schema")
+def edit_zone_schema(
+    profile_id: int,
+    body: ZoneSchemaEditIn,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Grundschema in der Oberflaeche bearbeiten (Admin, 0.70.0): Zonen (Name, Art, Kurzname,
+    Farbe, Erkennung, Gruppe, Beschreibung, Reihenfolge) und Uebergaenge (Absicht, Dienste,
+    Notiz) - ohne neue Zeichnung. Ersetzt Zonen und Uebergaenge; Audit mit dem Unterschied."""
+    _profile(session, profile_id)
+    try:
+        schema = zone_schema.edited(
+            session, profile_id, [z.model_dump() for z in body.zones],
+            [x.model_dump() for x in body.links],
+        )  # fmt: skip
+    except zone_schema.SchemaError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    change = zone_schema.diff(zone_schema.load(session, profile_id), schema)
+    zone_schema.save_edit(session, profile_id, schema, principal.subject)
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="zone_schema.edited",
+        subject=str(profile_id),
+        detail={
+            "profile_id": profile_id, "zones": len(schema.zones), "links": len(schema.links),
+            "added": change["zones"]["added"], "removed": change["zones"]["removed"],
+            "changed": [c["name"] for c in change["zones"]["changed"]],
+            "links_changed": len(change["links"]["added"]) + len(change["links"]["removed"])
+            + len(change["links"]["changed"]),
+        },
+    )  # fmt: skip
+    return _schema_out(session, profile_id)
+
+
 @router.delete("/{profile_id}/zone-schema", status_code=204)
 def delete_zone_schema(
     profile_id: int,
@@ -306,7 +372,8 @@ def zone_schema_drawing(
     """Die hochgeladene Zeichnung (zum Weiterbearbeiten in draw.io)."""
     p = _profile(session, profile_id)
     m = zone_schema.meta(session, profile_id)
-    if m is None or not (m.extra or {}).get("content"):
+    extra = (m.extra or {}) if m else {}
+    if m is None or not extra.get("content") or extra.get("edited_at"):
         schema = zone_schema.load(session, profile_id)
         if schema is None:
             raise HTTPException(status_code=404, detail="no zone schema")

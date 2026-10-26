@@ -1226,6 +1226,52 @@ test("Grundschema der Zonen: draw.io hochladen, Vorschläge und Absichten danach
   expect(problems).toEqual([]);
 });
 
+test("Grundschema in der Oberfläche bearbeiten: Namen, Art, Absicht, neue Zone (0.70.0)", async ({ page, problems }) => {
+  const profiles = (await (await page.request.get("/api/naming-profiles")).json()) as { id: number; name: string }[];
+  const pid = profiles.find((p) => p.name === "default")!.id;
+  const put = await page.request.put(`/api/naming-profiles/${pid}/zone-schema`, { data: { filename: "zonen.drawio", content: SCHEMA_DRAWING } });
+  expect(put.status()).toBe(200);
+  await page.goto("/#dict");
+  const card = page.locator("#zone-schema");
+  await expect(card.locator("#zone-schema-zones tbody tr")).toHaveCount(5);
+  await card.locator("#zone-schema-edit").click();
+  const editor = card.locator("#zone-schema-editor");
+  // Partner umbenennen - der Hinweis zeigt den bisherigen Namen
+  const partner = editor.locator("#zone-schema-edit-zones tbody tr[data-zone='Partner']");
+  await partner.getByLabel("Name der Zone").fill("Partner extern");
+  await expect(editor.locator("#zone-schema-edit-zones")).toContainText("bisher Partner");
+  // Absicht DMZ → LAN: eingeschränkt auf tcp/443
+  const dmzLan = editor.locator("#zone-schema-edit-links tbody tr[data-link='DMZ>LAN']");
+  await dmzLan.getByLabel("Absicht").selectOption("limited");
+  await dmzLan.getByLabel("Dienste").fill("tcp/443");
+  // neue Zone, an den Anfang
+  await editor.locator("#zone-schema-add-zone").click();
+  const fresh = editor.locator("#zone-schema-edit-zones tbody tr").last();
+  await fresh.getByLabel("Name der Zone").fill("Backup");
+  await fresh.getByLabel("Art").selectOption("management");
+  // doppelter Name sperrt das Speichern
+  await fresh.getByLabel("Name der Zone").fill("dmz");
+  await expect(editor.locator("#zone-schema-edit-save")).toBeDisabled();
+  await fresh.getByLabel("Name der Zone").fill("Backup");
+  for (let i = 0; i < 5; i++) await editor.locator("#zone-schema-edit-zones tbody tr[data-zone='Backup'] button[title='nach oben']").click();
+  await editor.locator("#zone-schema-edit-save").click();
+  // gespeichert: Reihenfolge, neuer Name, Absicht mit Dienst
+  await expect(editor).toHaveCount(0);
+  const rows = card.locator("#zone-schema-zones tbody tr");
+  await expect(rows).toHaveCount(6);
+  await expect(rows.first()).toContainText("Backup");
+  await expect(card.locator("#zone-schema-zones")).toContainText("Partner extern");
+  await expect(card.locator("#zone-schema-links tbody tr", { hasText: "DMZ" }).filter({ hasText: "LAN" })).toContainText("nur tcp/443");
+  await expect(card.locator("#zone-schema-edited")).toContainText("in der Oberfläche bearbeitet");
+  // Zeichnung zum Herunterladen folgt dem bearbeiteten Stand
+  const [file] = await Promise.all([page.waitForEvent("download"), card.locator("button:has-text('Zeichnung herunterladen')").click()]);
+  const text = readFileSync((await file.path())!, "utf-8");
+  expect(text).toContain("Partner extern");
+  expect(text).toContain("Backup");
+  expect((await page.request.delete(`/api/naming-profiles/${pid}/zone-schema`)).status()).toBe(204);
+  expect(problems).toEqual([]);
+});
+
 test("Kunden-Benutzer in Automato zuordnen: Zonen des Kunden, Anmeldung ohne Rolle sieht nur ihn", async ({ page, browser, problems }) => {
   const login = `kunde.dmz${test.info().retry}@example.ch`;
   const name = `Kunde DMZ ${test.info().retry}`;
@@ -1355,7 +1401,8 @@ test("L2-Sicht: Plan, Ausfall simulieren, VLAN-Weg, Befunde und L2 in der Weg-Su
   const y = async (name: string) =>
     Number((await svg.locator(`g[data-node='${name}']`).getAttribute("transform"))!.split(",")[1].replace(")", ""));
   expect(await y("sw-core-01")).toBeLessThan(await y("sw-acc-01"));
-  // Ausfall des Kerns: Leaf und ESXi-Host getrennt
+  // Ausfall des Kerns: Leaf und ESXi-Host getrennt (seit 0.70.0 Umschalter „Ausfall“)
+  await page.locator("#cabling-plan-mode button", { hasText: "Ausfall" }).click();
   await svg.locator("g[data-node='sw-core-01']").click();
   const fail = page.locator("#cabling-failure");
   await expect(fail).toContainText("Fällt sw-core-01 aus");
@@ -1400,6 +1447,7 @@ test("Plan: Spanning Tree, mehrere Ausfälle gleichzeitig, Export SVG/draw.io (0
   await page.getByLabel("VLAN hervorheben").fill("");
   await expect(toLeaf).not.toHaveAttribute("data-vlan", "standby");
   // mehrere Ausfälle: das Kabel zum Leaf trennt nur den Leaf (der ESXi-Host hängt auch am Kern) …
+  await page.locator("#cabling-plan-mode button", { hasText: "Ausfall" }).click();
   await toLeaf.click();
   const fail = page.locator("#cabling-failure");
   await expect(fail).toContainText("ist getrennt: leaf-101");
@@ -1425,6 +1473,43 @@ test("Plan: Spanning Tree, mehrere Ausfälle gleichzeitig, Export SVG/draw.io (0
   // Ports: Spanning Tree am Port
   await page.click(".tabbar button:has-text('Ports')");
   await expect(page.locator("#cabling-ports tbody tr[data-port='Eth1/48'] .port-l2.warn")).toHaveText("STP blockiert VLAN 30");
+  expect(problems).toEqual([]);
+});
+
+test("Plan: Patchungen des gewählten Geräts mit Details (0.70.0)", async ({ page, problems }) => {
+  await page.goto("/#verkabelung");
+  await page.click(".tabbar button:has-text('Plan')");
+  const svg = page.locator("#cabling-plan-svg");
+  // Standard: Klick zeigt die Patchungen (kein Ausfall)
+  await expect(page.locator("#cabling-plan-mode button", { hasText: "Patchungen" })).toHaveAttribute("aria-pressed", "true");
+  await svg.locator("g[data-node='sw-core-01']").click();
+  await expect(page.locator("#cabling-failure")).toHaveCount(0);
+  const panel = page.locator("#cabling-patches");
+  await expect(panel.locator("h3")).toContainText("Patchungen sw-core-01");
+  await expect(panel).toContainText("C93180YC-FX");
+  // Port-Channel als Gruppe, je Kabel beide Enden mit Konfiguration
+  await expect(panel.locator("tr.patch-lag")).toContainText("Port-Channel Po10");
+  const eth1 = panel.locator("tbody tr[data-patch]", { hasText: "Eth1/1" }).first();
+  await expect(eth1).toContainText("sw-acc-01");
+  await expect(eth1).toContainText("Gi1/0/47");
+  await expect(eth1).toContainText("Trunk");
+  await expect(panel.locator("tbody tr[data-patch]", { hasText: "Eth1/48" })).toContainText("STP blockiert 30");
+  await expect(panel.locator("tr.patch-issue").first()).toBeVisible(); // Speed-Abweichung Eth1/2
+  // Klick auf ein Kabel: nur die Kabel zwischen den beiden Geräten
+  await svg.locator("g.plan-edge[data-edge*='sw-core-01'][data-edge*='esx01']").click();
+  await expect(panel.locator("h3")).toContainText("↔ esx01-chzrh1.example.ch");
+  await expect(panel.locator("tbody tr[data-patch]")).toHaveCount(1);
+  await expect(panel).toContainText("vmnic2");
+  await panel.locator("button", { hasText: "alle Kabel von sw-core-01" }).click();
+  await expect(panel.locator("h3")).not.toContainText("↔");
+  // Gegenstelle öffnen: Patchungen von sw-acc-01
+  await eth1.locator("button.patch-link", { hasText: "sw-acc-01" }).click();
+  await expect(panel.locator("h3")).toContainText("Patchungen sw-acc-01");
+  await expect(panel).toContainText("Te1/1/1");
+  // Endpunkte am Port öffnen den Reiter Endpunkte
+  await svg.locator("g[data-node='sw-core-01']").click();
+  await panel.locator("tbody tr[data-patch]", { hasText: "Eth1/3" }).locator("button.patch-endpoints").click();
+  await expect(page.locator("#cabling-endpoints-port")).toContainText("sw-core-01 Eth1/3");
   expect(problems).toEqual([]);
 });
 

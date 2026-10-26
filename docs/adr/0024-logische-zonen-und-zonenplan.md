@@ -291,6 +291,18 @@ Entscheide des Anwenders (2026-10-23):
       Selektoren der Zone sie schon erfassen und welche schon in einer anderen Zone liegen;
       gewählte Selektoren fallen weg. Übernehmen fügt den Selektor im Editor an (gespeichert
       wird mit der Zone).
+16. **Grundschema in der Oberfläche bearbeiten (0.70.0):** Wunsch des Anwenders – nach dem
+    ersten Hochladen Namen, Absicht usw. auch im Web-UI anpassen, ohne die Zeichnung neu zu
+    zeichnen. `PATCH /naming-profiles/{id}/zone-schema` (Admin) ersetzt Zonen und Übergänge des
+    Profils: je Zone Name (Umbenennen mit `previous`, die Übergänge ziehen mit), Art, Kurzname,
+    Farbe (Hex), Erkennungsmuster, Gruppe, Beschreibung, Reihenfolge (= Liste); je Übergang
+    Absicht, Dienste (nur bei „eingeschränkt“), Notiz. Geprüft wie beim Hochladen (Name doppelt,
+    Zone fehlt, gleiche Zone, unbekannte Art/Absicht, Farbe → 422); die Lage in der Zeichnung
+    bleibt, geänderte Art bzw. Absicht gilt als „von Hand“. Die hochgeladene Zeichnung bleibt
+    gespeichert, „Zeichnung herunterladen“ erzeugt danach die Zeichnung aus dem bearbeiteten
+    Stand (`edited_at`) – ein neues Hochladen beginnt wieder mit der Zeichnung. Audit
+    `zone_schema.edited` mit neuen, entfernten und geänderten Zonen. Zonen und Absichten im
+    Netzwerkdesign bleiben unverändert; die Vorschläge folgen dem neuen Schema.
 
 ## Folgen
 

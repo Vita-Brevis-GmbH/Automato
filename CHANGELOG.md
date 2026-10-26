@@ -7,6 +7,25 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.70.0 – 2026-10-26
+
+Patchungen im Verkabelungsplan und Grundschema der Zonen in der Oberfläche bearbeiten (Wünsche
+des Anwenders, ADR 0025 Nr. 12, ADR 0024 Nr. 16). Ohne Migration.
+
+- **Patchungen im Plan:** Umschalter „Klick: Patchungen | Ausfall“ (Standard Patchungen). Klick
+  auf ein Gerät zeigt unter dem Plan seine Kabel: eigener Port und Gegenstelle je mit
+  Beschreibung, Speed/Duplex, Access/Trunk mit Native VLAN, Port-Channel/vPC (als Gruppe),
+  Spanning Tree, Medium, EPGs (ACI), dazu Zustand, Protokoll, Abweichungen und die Endpunkte am
+  Port. Klick auf ein Kabel zeigt nur die Kabel zwischen den beiden Geräten; die Gegenstelle
+  öffnet ihre Patchungen, die Zahl der Endpunkte den Reiter Endpunkte. API
+  `GET /cabling/patches?device=&peer=`.
+- **Grundschema bearbeiten** (Namensprofile → Grundschema der Zonen → „Bearbeiten“, Admin):
+  Zonen umbenennen (Übergänge ziehen mit), Art, Kurzname, Farbe, Erkennung, Gruppe,
+  Beschreibung, Reihenfolge, Zonen hinzufügen/entfernen; Übergänge mit Absicht, Diensten und
+  Notiz; Vorschau der Zeichnung beim Bearbeiten. „Zeichnung herunterladen“ liefert danach den
+  bearbeiteten Stand (Lage wie hochgeladen). API `PATCH /naming-profiles/{id}/zone-schema`,
+  Audit `zone_schema.edited`.
+
 ## 0.69.1 – 2026-10-26
 
 Korrekturen nach dem Test des Anwenders. Ohne Migration; der Agent holt die neue Version mit dem

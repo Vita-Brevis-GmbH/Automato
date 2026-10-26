@@ -248,3 +248,44 @@ def test_vlans_auch_aus_dem_aci(client):
     assert (vm["names"], vm["epgs"], vm["sources"]) == (["EPG_vm"], ["TE/AP1/EPG_vm"], ["aci"])
     assert vm["devices"] == [{"device": "leaf-101", "access": 0, "trunks": 2}]  # Port + vPC
     assert vlans[310]["devices"] == [{"device": "leaf-101", "access": 1, "trunks": 1}]
+
+
+def test_patchungen_eines_geraets(client):
+    """0.70.0 (Anwender: „im Plan unten gleich die Patchungen der Kabel mit Details“)."""
+    tid, _sw = _setup(client)
+    r = client.get("/cabling/patches", params={"tenant_id": tid, "device": "sw-core-01"})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["device"]["model"] == "C93180YC-FX" and out["device"]["mgmt_ip"] == "10.0.0.2"
+    assert out["total"] == 4 and out["issues"] >= 1
+    rows = {x["a"]["port"]: x for x in out["items"]}
+    assert set(rows) == {"Eth1/1", "Eth1/2", "Eth1/3", "Eth1/10"}
+    # eigenes Ende links, Port-Channel zuerst (gruppiert), vPC am Channel gelesen
+    assert out["items"][0]["a"]["port"] == "Eth1/1"
+    eth1 = rows["Eth1/1"]
+    assert (eth1["a"]["lag"], eth1["a"]["vpc"], eth1["a"]["trunk_vlans"]) == (
+        "Po10",
+        "10",
+        "10,20,30",
+    )
+    assert (eth1["b"]["device"], eth1["b"]["port"], eth1["b"]["model"]) == (
+        "sw-acc-01",
+        "Gi1/0/47",
+        "C9300-48P",
+    )
+    assert eth1["state"] == "both" and eth1["protocols"] == ["cdp"]
+    assert rows["Eth1/2"]["issues"]  # Speed/Duplex/VLAN weichen ab
+    assert rows["Eth1/10"]["b"]["device"] == "leaf-101"
+    # nur die Kabel zu einer Gegenstelle
+    only = client.get("/cabling/patches", params={"tenant_id": tid, "device": "sw-core-01",
+                                                  "peer": "leaf-101"}).json()  # fmt: skip
+    assert only["peer"] == "leaf-101" and [x["a"]["port"] for x in only["items"]] == ["Eth1/10"]
+    # ACI-Leaf: VLANs aus der Liste, Gegenrichtung
+    leaf = client.get("/cabling/patches", params={"tenant_id": tid, "device": "leaf-101"}).json()
+    assert [x["b"]["device"] for x in leaf["items"]] == ["sw-core-01"]
+    assert (
+        client.get(
+            "/cabling/patches", params={"tenant_id": tid, "device": "gibtsnicht"}
+        ).status_code
+        == 404
+    )

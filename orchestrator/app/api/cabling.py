@@ -6,6 +6,9 @@
                           beiden Enden und Abweichungen; Filter Geraet, Zustand, Suche, nur
                           Abweichungen.
 - `GET /cabling/ports`    Ports der gelesenen Switches seitenweise; Filter Geraet, Status, VLAN.
+- `GET /cabling/patches`  (0.70.0) Patchungen eines Geraets fuer den Plan: je Kabel beide Enden
+                          mit Konfiguration, Zustand, Abweichungen, Endpunkten; optional nur zu
+                          einer Gegenstelle.
 - `GET /cabling/vlans`    VLANs mit den Switches, an denen sie als Access bzw. im Trunk liegen.
 - `GET /cabling/endpoints` (0.63.0) MACs an den Ports der Switches (ohne Uplinks) mit VM, IPs,
                           IPAM-Namen; Filter Geraet, Port, VLAN, Suche.
@@ -148,6 +151,59 @@ def links(
     rows.sort(key=lambda r: (not r.issues, r.state != "one_sided", r.a.device.name.casefold(),
                              store.port_key(r.a.port)))  # fmt: skip
     return {"total": len(rows), "items": [r.out() for r in rows[offset : offset + limit]]}
+
+
+@router.get("/patches")
+def patches(
+    device: str = Query(..., max_length=200),
+    tenant_id: int | None = None,
+    peer: str | None = Query(None, max_length=200, description="nur Kabel zu diesem Geraet"),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Patchungen eines Geraets (0.70.0, Anwender: „im Plan unten gleich die Patchungen“): je
+    Kabel das eigene Ende links, die Gegenstelle rechts - Port, Beschreibung, Speed/Duplex,
+    Access/Trunk, Port-Channel/vPC, Spanning Tree, EPGs; Zustand, Protokolle, Abweichungen und
+    die Endpunkte (MACs) am Port. Port-Channel: Kabel nach Channel gruppiert."""
+    tid = _tenant(session, principal, tenant_id)
+    cab = store.build(session, tid)
+    key = store.device_key(device)
+    dev = cab.devices.get(key)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="device not found")
+    other = store.device_key(peer) if peer else None
+    macs: dict[tuple[str, str], int] = defaultdict(int)
+    for e in l2.Locator(session, tid, cab).edge_entries():
+        macs[(store.device_key(e.device), store.port_key(e.port))] += 1
+    lag_attrs = {(store.device_key(p.device), store.port_key(p.name)): p.attrs or {}
+                 for p in cab.ports if p.kind == "lag"}  # fmt: skip
+    rows = []
+    for link in cab.links.values():
+        ends = (link.a, link.b) if link.a.device.key == key else (link.b, link.a)
+        if ends[0].device.key != key or (other and ends[1].device.key != other):
+            continue
+        out = []
+        for end in ends:
+            d = end.detail()
+            channel = lag_attrs.get((end.device.key, store.port_key(d["lag"]))) if d["lag"] else {}
+            for k in ("stp_blocked", "stp_root", "vpc"):  # am Port-Channel gelesen
+                if not d.get(k) and (channel or {}).get(k):
+                    d[k] = channel[k]
+            d["endpoints"] = macs.get(end.key, 0)
+            d["model"], d["mgmt_ip"] = end.device.model, end.device.mgmt_ip
+            out.append(d)
+        rows.append({"id": link.id, "a": out[0], "b": out[1], "state": link.state,
+                     "protocols": sorted(link.protocols), "issues": link.issues})  # fmt: skip
+    rows.sort(key=lambda r: (r["a"]["lag"] or "~", _port_order(r["a"]["port"] or "")))
+    return {
+        "device": {"name": dev.name, "key": dev.key, "kind": dev.kind, "model": dev.model,
+                   "version": dev.version, "mgmt_ip": dev.mgmt_ip, "source": dev.source,
+                   "read": dev.read},
+        "peer": cab.devices[other].name if other in cab.devices else None,
+        "total": len(rows),
+        "issues": sum(1 for r in rows if r["issues"]),
+        "items": rows,
+    }  # fmt: skip
 
 
 @router.get("/ports")

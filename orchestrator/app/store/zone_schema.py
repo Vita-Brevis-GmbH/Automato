@@ -525,6 +525,97 @@ def save(session: Session, profile_id: int, schema: Schema, content: str, filena
     session.flush()
 
 
+def edited(session: Session, profile_id: int, zones: list[dict], links: list[dict]) -> Schema:
+    """Schema aus der Bearbeitung in der Oberflaeche (0.70.0, Anwender: „Anpassungen nach dem
+    ersten Hochladen auch im Web UI“) pruefen und bauen - Reihenfolge = Liste, Lage in der
+    Zeichnung bleibt. Fehler als `SchemaError` (422)."""
+    old = load(session, profile_id)
+    before = {z.key: z for z in (old.zones if old else [])}
+    out = Schema(page=old.page if old else None, pages=list(old.pages) if old else [])
+    for i, z in enumerate(zones):
+        name = " ".join(str(z.get("name") or "").split())
+        if not name or not key_of(name):
+            raise SchemaError(f"Zone {i + 1}: Name fehlt")
+        if out.zone(name) is not None:
+            raise SchemaError(f"Zone „{name}“ doppelt")
+        kind = str(z.get("kind") or "internal")
+        if kind not in ZONE_KINDS:
+            raise SchemaError(f"Zone „{name}“: unbekannte Art „{kind}“")
+        color = None
+        if (raw := str(z.get("color") or "").strip()) and (color := _color(raw)) is None:
+            raise SchemaError(f"Zone „{name}“: Farbe „{raw}“ ist kein Hex-Wert (#rrggbb)")
+        match = z.get("match") or []
+        match = _patterns(", ".join(match) if isinstance(match, list) else str(match))
+        prev = before.get(key_of(z.get("previous") or name))
+        geometry = z.get("geometry")
+        if geometry is not None and (
+            len(geometry) != 4 or not all(isinstance(v, int | float) for v in geometry)
+        ):
+            geometry = None
+        out.zones.append(SchemaZone(
+            name=name[:200], kind=kind,
+            kind_reason=prev.kind_reason if prev and prev.kind == kind else "von Hand",
+            code=(str(z.get("code") or "").strip() or None), color=color, match=match,
+            position=(i + 1) * 10, group=(str(z.get("group") or "").strip() or None),
+            description=(str(z.get("description") or "").strip() or None),
+            geometry=geometry if geometry is not None else (prev.geometry if prev else None),
+        ))  # fmt: skip
+    old_links = {(key_of(x.src), key_of(x.dst)): x for x in (old.links if old else [])}
+    seen: set[tuple[str, str]] = set()
+    for x in links:
+        a, b = out.zone(str(x.get("src") or "")), out.zone(str(x.get("dst") or ""))
+        if a is None or b is None:
+            raise SchemaError(f"Übergang {x.get('src')} → {x.get('dst')}: Zone fehlt im Schema")
+        if a.key == b.key:
+            raise SchemaError(f"Übergang {a.name} → {b.name}: gleiche Zone")
+        if (a.key, b.key) in seen:
+            raise SchemaError(f"Übergang {a.name} → {b.name} doppelt")
+        seen.add((a.key, b.key))
+        intent = str(x.get("intent") or "allow")
+        if intent not in INTENTS:
+            raise SchemaError(f"Übergang {a.name} → {b.name}: unbekannte Absicht „{intent}“")
+        services = []
+        for t in x.get("services") or []:
+            t = " ".join(str(t).split())
+            if t and t not in services:
+                if len(t) > 100:
+                    raise SchemaError(f"Übergang {a.name} → {b.name}: Dienst zu lang")
+                services.append(t)
+        prev = old_links.get((a.key, b.key))
+        same = prev is not None and (prev.intent, prev.services) == (intent, services)
+        note = str(x.get("note") or "").strip() or None
+        allowed = services[:50] if intent == "limited" else []
+        out.links.append(SchemaLink(a.name, b.name, intent, prev.reason if same else "von Hand",
+                                    note, allowed))  # fmt: skip
+    if not out.zones:
+        raise SchemaError("mindestens eine Zone – sonst das Schema entfernen")
+    return out
+
+
+def save_edit(session: Session, profile_id: int, schema: Schema, actor: str | None) -> None:
+    """Zonen und Uebergaenge ersetzen; die hochgeladene Zeichnung bleibt, der Download erzeugt
+    danach die Zeichnung aus dem bearbeiteten Stand (Lage der Formen wie hochgeladen)."""
+    session.execute(delete(DictionaryEntry).where(
+        DictionaryEntry.profile_id == profile_id, DictionaryEntry.kind.in_((KIND_ZONE, KIND_LINK))
+    ))  # fmt: skip
+    for z in schema.zones:
+        extra = {k: v for k, v in z.out().items() if k not in ("name", "key", "kind")}
+        session.add(DictionaryEntry(profile_id=profile_id, kind=KIND_ZONE, key=z.name,
+                                    value=z.kind, extra=extra))  # fmt: skip
+    for x in schema.links:
+        session.add(DictionaryEntry(profile_id=profile_id, kind=KIND_LINK, key=_link_key(x),
+                                    value=x.intent, extra=x.out()))  # fmt: skip
+    m = meta(session, profile_id)
+    stamp = {"edited_by": actor, "edited_at": datetime.now(UTC).isoformat()}
+    if m is None:
+        session.add(DictionaryEntry(profile_id=profile_id, kind=KIND_META, key="drawing",
+                                    value=None, extra={"page": schema.page, "pages": schema.pages,
+                                                       "warnings": [], **stamp}))  # fmt: skip
+    else:
+        m.extra = {**(m.extra or {}), **stamp, "warnings": []}
+    session.flush()
+
+
 def remove(session: Session, profile_id: int) -> int:
     n = session.execute(
         delete(DictionaryEntry).where(

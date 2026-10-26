@@ -606,3 +606,19 @@ tbody tr.group-row td {
 .doc-hidden > summary { cursor: pointer; color: var(--muted); }
 .doc-hidden table { margin-top: 6px; }
 .doc-hide-btn { font-size: 12px; color: var(--muted); }
+
+/* Verkabelungsplan: Patchungen des gewählten Geräts (0.70.0) */
+.patch-panel { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+.patch-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.patch-head h3 { margin: 0; font-size: 15px; }
+.patch-table td { vertical-align: top; }
+.patch-table .patch-descr { font-family: var(--font, inherit); font-size: 11px; white-space: normal; max-width: 220px; }
+.patch-table tr.patch-lag td { background: var(--surface-2); font-size: 12px; color: var(--muted); }
+.patch-table tr.patch-issue td { font-size: 12px; padding-top: 0; }
+.linkbtn.patch-link { color: var(--accent); font-size: inherit; padding: 0; }
+
+/* Grundschema in der Oberfläche bearbeiten (0.70.0) */
+.zone-schema-edit td { vertical-align: top; }
+.zone-schema-edit .input { width: 100%; min-width: 80px; }
+.zone-schema-edit input[type="color"] { width: 34px; height: 26px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; background: none; }
+.input.invalid { border-color: var(--crit); }

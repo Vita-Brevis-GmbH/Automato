@@ -258,3 +258,79 @@ def test_vorschlaege_und_absichten_nach_dem_schema(client):
     done = client.post("/zones/schema/intents", json=body, headers=OP).json()["changed"]
     assert done == [{"src": dmz["id"], "dst": srv["id"], "intent": "limited", "before": "allow"}]
     assert _get(client, tid)["schema"]["intents"] == []
+
+
+def test_schema_in_der_oberflaeche_bearbeiten(client, session_factory):
+    """0.70.0 (Anwender: „Anpassungen nach erstmaligem Hochladen auch im Web UI, Anpassen von
+    Namen und Absicht usw.“): Zonen umbenennen, Art/Kurzname/Farbe/Erkennung, Reihenfolge,
+    Uebergaenge mit Absicht und Diensten; Zeichnung danach aus dem bearbeiteten Stand."""
+    pid = client.post("/naming-profiles", json={"customer": "Kunde A", "name": "Std"},
+                      headers=ADMIN).json()["id"]  # fmt: skip
+    url = f"/naming-profiles/{pid}/zone-schema"
+    client.put(url, json={"filename": "zonen.drawio", "content": DRAWING}, headers=ADMIN)
+    schema = client.get(url).json()["schema"]
+    zones = [{k: z[k] for k in ("name", "kind", "code", "color", "match", "group",
+                                "description", "geometry")} for z in schema["zones"]]  # fmt: skip
+    links = [{k: x[k] for k in ("src", "dst", "intent", "services", "note")}
+             for x in schema["links"]]  # fmt: skip
+    # Server -> Applikationsserver (umbenannt), DMZ nach vorne, Farbe und Muster
+    srv = next(z for z in zones if z["name"] == "Server")
+    srv |= {
+        "name": "Applikationsserver",
+        "previous": "Server",
+        "code": "APP",
+        "match": ["app*", "SRV*"],
+        "color": "#abc",
+    }
+    dmz = next(z for z in zones if z["name"] == "DMZ")
+    zones = [dmz] + [z for z in zones if z is not dmz]
+    for x in links:
+        for end in ("src", "dst"):
+            if x[end] == "Server":
+                x[end] = "Applikationsserver"
+        if (x["src"], x["dst"]) == ("Internet", "Applikationsserver"):
+            x |= {"intent": "limited", "services": ["tcp/443", "FT_https"], "note": "nur Web"}
+    body = {"zones": zones, "links": links}
+    assert client.patch(url, json=body, headers=OP).status_code == 403  # nur Admin
+    r = client.patch(url, json=body, headers=ADMIN)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert [z["name"] for z in got["schema"]["zones"]][:2] == ["DMZ", "Internet"]
+    app = next(z for z in got["schema"]["zones"] if z["name"] == "Applikationsserver")
+    assert (app["code"], app["color"], app["match"]) == ("APP", "#aabbcc", ["app*", "srv*"])
+    assert app["geometry"] == srv["geometry"] and app["kind_reason"] == srv_reason(schema)
+    lim = next(x for x in got["schema"]["links"] if x["dst"] == "Applikationsserver"
+               and x["src"] == "Internet")  # fmt: skip
+    assert (lim["intent"], lim["services"], lim["note"], lim["reason"]) == (
+        "limited",
+        ["tcp/443", "FT_https"],
+        "nur Web",
+        "von Hand",
+    )
+    assert got["drawing"]["edited_at"] and got["drawing"]["filename"] == "zonen.drawio"
+    # Download: aus dem bearbeiteten Stand - wieder lesbar, mit dem neuen Namen
+    back = parse(client.get(f"{url}/drawing").text)
+    assert back.zone("Applikationsserver").code == "APP" and back.zone("Server") is None
+    assert _links(back)[("Internet", "Applikationsserver")][0] == "limited"
+    # Audit mit dem Unterschied
+    from app.models import AuditLog
+
+    entry = session_factory().query(AuditLog).filter(AuditLog.action == "zone_schema.edited").one()
+    assert entry.detail["added"] == ["Applikationsserver"] and entry.detail["removed"] == ["Server"]
+    # Fehler: Uebergang zu fehlender Zone, doppelte Zone, Farbe, Art
+    for bad, text in (
+        ({"zones": zones, "links": [{"src": "DMZ", "dst": "Nirgends"}]}, "Zone fehlt"),
+        ({"zones": zones + [{"name": "dmz"}], "links": []}, "doppelt"),
+        ({"zones": [{"name": "X", "color": "rot"}], "links": []}, "Hex"),
+        ({"zones": [{"name": "X", "kind": "magic"}], "links": []}, "Art"),
+        ({"zones": [], "links": []}, "mindestens eine Zone"),
+    ):
+        r = client.patch(url, json=bad, headers=ADMIN)
+        assert r.status_code == 422 and text in r.json()["detail"], r.text
+    # neue Zeichnung hochladen: die Bearbeitung ist vorbei, Download wie hochgeladen
+    client.put(url, json={"filename": "neu.drawio", "content": DRAWING}, headers=ADMIN)
+    assert client.get(f"{url}/drawing").text == DRAWING
+
+
+def srv_reason(schema: dict) -> str:
+    return next(z["kind_reason"] for z in schema["zones"] if z["name"] == "Server")

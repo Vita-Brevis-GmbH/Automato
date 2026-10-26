@@ -498,7 +498,13 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       ESXi-Host, Firewall, Telefon).
     - Die Einträge werden gesammelt: aktuell ist je Switch, was sein letzter Lauf gesehen hat;
       ältere bleiben als „früher“ bis zur Frist `AUTOMATO_RETENTION_L2_DAYS` (30 Tage).
-  - **VLANs:** je VLAN die Namen und je Switch die Anzahl Access-Ports und Trunks.
+  - **VLANs:** je VLAN die Namen und je Switch die Anzahl Access-Ports und Trunks; seit 0.69.1
+    auch die VLANs des ACI (EPGs, je Leaf Ports und Port-Channel/vPC, Kennzeichen ACI/Switch).
+  - **Patchungen im Plan** (seit 0.70.0): „Klick: Patchungen“ (Standard) zeigt unter dem Plan die
+    Kabel des gewählten Geräts – je Kabel eigener Port und Gegenstelle mit Beschreibung, Speed/
+    Duplex, Access/Trunk, Port-Channel/vPC, Spanning Tree, Medium, EPGs, Zustand, Abweichungen
+    und Endpunkten am Port; Klick auf ein Kabel nur die Kabel zwischen den beiden Geräten. Für
+    die Ausfall-Simulation auf „Ausfall“ umschalten.
   - **Befunde** (Kategorie „Verkabelung“ in Findings) nur zwischen zwei gelesenen Switches:
     Speed bzw. Duplex verschieden, VLANs verschieden (Modus, Access-VLAN, Native VLAN, erlaubte
     VLANs je Seite), Port-Channel nur auf einer Seite, Verbindung nur einseitig gemeldet.
@@ -1023,6 +1029,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       mit Zonen, Übergängen, Hinweisen und dem Unterschied zum gespeicherten Schema; **Als
       Grundschema speichern** ersetzt es. **Zeichnung herunterladen** gibt die hochgeladene Datei
       zurück, **Schema entfernen** löscht es (Zonen und Absichten bleiben).
+    - **Bearbeiten** (seit 0.70.0, Admin): Zonen umbenennen (die Übergänge ziehen mit), Art,
+      Kurzname, Farbe, Erkennung, Gruppe, Beschreibung, Reihenfolge (↑/↓), Zonen hinzufügen bzw.
+      entfernen; Übergänge mit Absicht, Diensten (bei „eingeschränkt“) und Notiz. Doppelte Namen
+      bzw. Übergänge sperren das Speichern. Danach steht „in der Oberfläche bearbeitet“ am
+      Schema und **Zeichnung herunterladen** liefert den bearbeiteten Stand (Lage der Formen wie
+      hochgeladen) – zum Weiterzeichnen in draw.io. Audit `zone_schema.edited`.
     - Das Schema gilt für alle Mandanten des Profils (bzw. „default“) und ist ohne Funktionszwang:
       ohne Schema arbeiten Zonen und Vorschläge wie bisher.
 - **Collector-Agenten (nur Admin):** **+ Agent** erzeugt das Token einmalig; Spalte

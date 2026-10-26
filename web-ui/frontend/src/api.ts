@@ -1385,7 +1385,13 @@ export interface ZoneSchemaData {
 export interface ZoneSchemaState {
   profile_id: number;
   schema: ZoneSchemaData | null;
-  drawing: { filename: string | null; uploaded_by: string | null; uploaded_at: string | null } | null;
+  drawing: {
+    filename: string | null;
+    uploaded_by: string | null;
+    uploaded_at: string | null;
+    edited_by?: string | null; // in der Oberfläche bearbeitet (0.70.0)
+    edited_at?: string | null;
+  } | null;
 }
 export interface ZoneSchemaDiff {
   zones: { added: string[]; removed: string[]; changed: { name: string; fields: string[] }[] };
@@ -1400,6 +1406,27 @@ export const previewZoneSchema = (profileId: number, content: string, filename: 
 export const saveZoneSchema = (profileId: number, content: string, filename: string | null) =>
   sendJSON<ZoneSchemaState>(`/api/naming-profiles/${profileId}/zone-schema`, "PUT", { content, filename });
 export const deleteZoneSchema = (profileId: number) => sendJSON<void>(`/api/naming-profiles/${profileId}/zone-schema`, "DELETE");
+// Grundschema in der Oberfläche bearbeiten (0.70.0, Admin): Zonen und Übergänge ersetzen
+export interface SchemaZoneEdit {
+  name: string;
+  kind: ZoneKind;
+  code: string | null;
+  color: string | null;
+  match: string[];
+  group: string | null;
+  description: string | null;
+  geometry: [number, number, number, number] | null;
+  previous: string | null; // bisheriger Name (Umbenennen)
+}
+export interface SchemaLinkEdit {
+  src: string;
+  dst: string;
+  intent: ZoneIntent;
+  services: string[];
+  note: string | null;
+}
+export const editZoneSchema = (profileId: number, body: { zones: SchemaZoneEdit[]; links: SchemaLinkEdit[] }) =>
+  sendJSON<ZoneSchemaState>(`/api/naming-profiles/${profileId}/zone-schema`, "PATCH", body);
 async function fileOf(url: string, fallback: string): Promise<{ blob: Blob; filename: string }> {
   const response = await fetchChecked(url);
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
@@ -3065,6 +3092,35 @@ export const fetchCablingLinks = (
   getJSON<{ total: number; items: CablingLink[] }>(
     `/api/cabling/links${qs({ tenant_id: tenantId, device: f.device, state: f.state || undefined, q: f.q, issues: f.issues ? "true" : undefined, offset: f.offset, limit: f.limit })}`,
   );
+// Patchungen eines Geräts im Plan (0.70.0): je Kabel beide Enden mit Konfiguration
+export interface CablingPatchEnd extends CablingEnd {
+  media?: string | null;
+  stp_blocked?: string | null;
+  stp_root?: string | null;
+  epgs?: string[];
+  neighbor?: string | null;
+  enabled?: boolean | null;
+  endpoints: number;
+  model: string | null;
+  mgmt_ip: string | null;
+}
+export interface CablingPatch {
+  id: string;
+  a: CablingPatchEnd;
+  b: CablingPatchEnd;
+  state: LinkState;
+  protocols: string[];
+  issues: { type: string; text: string }[];
+}
+export interface CablingPatches {
+  device: { name: string; key: string; kind: string; model: string | null; version: string | null; mgmt_ip: string | null; source: string | null; read: boolean };
+  peer: string | null;
+  total: number;
+  issues: number;
+  items: CablingPatch[];
+}
+export const fetchCablingPatches = (tenantId: number, device: string, peer?: string | null) =>
+  getJSON<CablingPatches>(`/api/cabling/patches${qs({ tenant_id: tenantId, device, peer: peer ?? undefined })}`);
 export const fetchCablingPorts = (
   tenantId: number,
   f: { device?: string; status?: string; vlan?: number | null; q?: string; offset?: number; limit?: number } = {},

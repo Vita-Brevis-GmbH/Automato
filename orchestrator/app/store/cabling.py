@@ -162,6 +162,19 @@ class End:
             "description": i.description if i is not None else None,
         }
 
+    def detail(self) -> dict:
+        """Mit Medium, Spanning Tree, EPGs (ACI) und VLANs auch aus der Liste (0.70.0)."""
+        i = self.iface
+        out = self.out()
+        if i is None:
+            return out
+        attrs = i.attrs or {}
+        if not out["trunk_vlans"] and i.tagged_vlans:  # ACI: VLANs als Liste
+            out["trunk_vlans"] = _ranges(set(i.tagged_vlans), limit=40)
+        return out | {"media": attrs.get("media"), "stp_blocked": attrs.get("stp_blocked"),
+                      "stp_root": attrs.get("stp_root"), "epgs": list(i.epgs or []),
+                      "neighbor": i.neighbor, "enabled": i.enabled}  # fmt: skip
+
 
 @dataclass
 class Link:

@@ -9,6 +9,9 @@ import {
   CablingEnd,
   CablingEndpoint,
   CablingLink,
+  CablingPatch,
+  CablingPatchEnd,
+  CablingPatches,
   CablingPort,
   CablingSummary,
   CablingVlan,
@@ -17,6 +20,7 @@ import {
   fetchCablingDevices,
   fetchCablingEndpoints,
   fetchCablingLinks,
+  fetchCablingPatches,
   fetchCablingPorts,
   fetchCablingVlans,
   fetchL2Failure,
@@ -127,7 +131,7 @@ export default function Cabling({ tenantId, tenantLabel }: { tenantId: number | 
           </button>
         ))}
       </div>
-      {tenantId !== null && tab === "plan" && <PlanTab tenantId={tenantId} />}
+      {tenantId !== null && tab === "plan" && <PlanTab tenantId={tenantId} onEndpoints={endpointsAt} />}
       {tenantId !== null && tab === "links" && (
         <LinksTab tenantId={tenantId} devices={data?.items ?? []} device={device} onDevice={setDevice} />
       )}
@@ -730,8 +734,11 @@ function failText(s: FailSel): ReactNode {
   );
 }
 
-function PlanTab({ tenantId }: { tenantId: number }) {
+function PlanTab({ tenantId, onEndpoints }: { tenantId: number; onEndpoints?: (device: string, port: string) => void }) {
   const [ends, setEnds] = useState(true);
+  // Klick zeigt die Patchungen (0.70.0, Standard) bzw. simuliert den Ausfall
+  const [mode, setMode] = useState<"patch" | "fail">("patch");
+  const [pick, setPick] = useState<{ device: string; peer?: string } | null>(null);
   const [vlan, setVlan] = useState("");
   const vlanNo = useDebounced(vlan);
   const vlanId = /^\d+$/.test(vlanNo) ? Number(vlanNo) : null;
@@ -769,11 +776,13 @@ function PlanTab({ tenantId }: { tenantId: number }) {
   };
   // Klick = nur dieser Ausfall; Shift-Klick = hinzufügen bzw. wieder entfernen
   const clickDevice = (name: string, add: boolean) => {
+    if (mode === "patch") return setPick({ device: name });
     if (!add) return run({ devices: [name], edges: [] });
     const has = sel.devices.includes(name);
     run({ ...sel, devices: has ? sel.devices.filter((d) => d !== name) : [...sel.devices, name] });
   };
-  const clickEdge = (label: string, ids: string[], add: boolean) => {
+  const clickEdge = (label: string, ids: string[], add: boolean, a: string, b: string) => {
+    if (mode === "patch") return setPick(pick?.device === b ? { device: b, peer: a } : { device: a, peer: b });
     if (add) {
       const has = sel.edges.some((e) => e.label === label);
       return run({ ...sel, edges: has ? sel.edges.filter((e) => e.label !== label) : [...sel.edges, { label, ids }] });
@@ -785,6 +794,11 @@ function PlanTab({ tenantId }: { tenantId: number }) {
     setMulti(label);
   };
   const reset = () => run(NO_FAIL);
+  const switchMode = (m: "patch" | "fail") => {
+    setMode(m);
+    setPick(null);
+    run(NO_FAIL);
+  };
   const exportPlan = async (format: "svg" | "drawio") => {
     setBusy(format);
     setErr(null);
@@ -800,6 +814,8 @@ function PlanTab({ tenantId }: { tenantId: number }) {
   const failedDevs = new Set(sel.devices);
   const failedEdges = new Set(sel.edges.map((e) => e.label));
   const dim = (name: string) => fail !== null && !main.has(name) && !failedDevs.has(name);
+  const picked = (a: string, b: string) =>
+    pick !== null && (pick.peer ? new Set([a, b]).has(pick.device) && new Set([a, b]).has(pick.peer) : a === pick.device || b === pick.device);
   return (
     <div className="card" id="cabling-plan">
       <div className="card-head">
@@ -809,6 +825,15 @@ function PlanTab({ tenantId }: { tenantId: number }) {
             <input type="checkbox" checked={ends} onChange={(e) => setEnds(e.target.checked)} /> Endgeräte
           </label>
           <input className="input" style={{ width: 110 }} aria-label="VLAN hervorheben" placeholder="VLAN" value={vlan} onChange={(e) => setVlan(e.target.value)} />
+          <span className="faint">Klick:</span>
+          <span className="seg" id="cabling-plan-mode" role="group" aria-label="Klick zeigt">
+            <button className={mode === "patch" ? "on" : ""} aria-pressed={mode === "patch"} onClick={() => switchMode("patch")}>
+              Patchungen
+            </button>
+            <button className={mode === "fail" ? "on" : ""} aria-pressed={mode === "fail"} onClick={() => switchMode("fail")}>
+              Ausfall
+            </button>
+          </span>
           {fail && (
             <button className="btn btn-sm btn-ghost" onClick={reset}>
               Ausfall zurücksetzen
@@ -833,9 +858,18 @@ function PlanTab({ tenantId }: { tenantId: number }) {
         <ErrorBox error={err} onClose={() => setErr(null)} />
         <p className="faint" style={{ marginTop: 0 }}>
           Kern oben (meistvernetzte Switches bzw. Spines), darunter je Abstand die weiteren Switches, Endgeräte unter ihrem
-          obersten Nachbarn; vPC-Paare nebeneinander im Rahmen, von Spanning Tree blockierte Kabel gestrichelt. Klick auf ein
-          Gerät bzw. ein Kabel simuliert dessen Ausfall, <b>Shift-Klick</b> nimmt weitere hinzu (mehrere gleichzeitig, bei
-          mehreren Kabeln zwischen zwei Geräten alle).
+          obersten Nachbarn; vPC-Paare nebeneinander im Rahmen, von Spanning Tree blockierte Kabel gestrichelt.{" "}
+          {mode === "patch" ? (
+            <>
+              Klick auf ein Gerät zeigt darunter seine <b>Patchungen</b> (Ports beider Seiten mit Konfiguration), Klick auf ein Kabel nur die
+              Kabel zwischen den beiden Geräten. Umschalten auf „Ausfall“, um Ausfälle zu simulieren.
+            </>
+          ) : (
+            <>
+              Klick auf ein Gerät bzw. ein Kabel simuliert dessen Ausfall, <b>Shift-Klick</b> nimmt weitere hinzu (mehrere gleichzeitig,
+              bei mehreren Kabeln zwischen zwei Geräten alle).
+            </>
+          )}
         </p>
         {fail && (
           <div className="note" id="cabling-failure">
@@ -897,7 +931,8 @@ function PlanTab({ tenantId }: { tenantId: number }) {
                 const b = byKey.get(e.b);
                 if (!a || !b) return null;
                 const label = `${a.name} ↔ ${b.name}`;
-                const off = dim(a.name) || dim(b.name);
+                const isPicked = picked(a.name, b.name);
+                const off = dim(a.name) || dim(b.name) || (pick !== null && !isPicked);
                 const isFailed = failedEdges.has(label);
                 const title =
                   `${label}: ${e.links} Kabel${e.lags.length ? ` (${e.lags.join(", ")})` : ""}` +
@@ -911,7 +946,8 @@ function PlanTab({ tenantId }: { tenantId: number }) {
                     data-stp={e.stp ?? undefined}
                     data-vlan={e.vlan}
                     opacity={off ? 0.25 : 1}
-                    onClick={(ev) => clickEdge(label, e.ids, ev.shiftKey)}
+                    data-picked={isPicked || undefined}
+                    onClick={(ev) => clickEdge(label, e.ids, ev.shiftKey, a.name, b.name)}
                   >
                     <title>{title}</title>
                     <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={12} />
@@ -920,8 +956,8 @@ function PlanTab({ tenantId }: { tenantId: number }) {
                       y1={a.y}
                       x2={b.x}
                       y2={b.y}
-                      stroke={isFailed ? "var(--crit)" : edgeColor(e)}
-                      strokeWidth={1 + Math.min(e.links, 4)}
+                      stroke={isFailed ? "var(--crit)" : isPicked && !e.vlan ? "var(--accent)" : edgeColor(e)}
+                      strokeWidth={1 + Math.min(e.links, 4) + (isPicked ? 2 : 0)}
                       strokeDasharray={isFailed ? "6 4" : edgeDash(e)}
                     />
                     {(e.links > 1 || e.stp) && (
@@ -933,6 +969,7 @@ function PlanTab({ tenantId }: { tenantId: number }) {
                 );
               })}
               {plan.nodes.map((n) => {
+                const isPick = pick !== null && (pick.device === n.name || pick.peer === n.name);
                 const off = dim(n.name);
                 const isFailed = failedDevs.has(n.name);
                 return (
@@ -950,8 +987,8 @@ function PlanTab({ tenantId }: { tenantId: number }) {
                       height={NODE_H}
                       rx={6}
                       fill={n.switching ? "var(--surface-2)" : "var(--surface)"}
-                      stroke={isFailed ? "var(--crit)" : n.vlan_present ? "var(--good)" : n.switching ? "var(--accent)" : "var(--border-strong)"}
-                      strokeWidth={isFailed || n.vlan_present ? 3 : 1.5}
+                      stroke={isFailed ? "var(--crit)" : n.vlan_present ? "var(--good)" : n.switching || isPick ? "var(--accent)" : "var(--border-strong)"}
+                      strokeWidth={isFailed || n.vlan_present || isPick ? 3 : 1.5}
                       strokeDasharray={n.read ? undefined : "4 3"}
                     />
                     <text x={NODE_W / 2} y={19} textAnchor="middle" fontSize={12} fontWeight={600} fill="var(--fg)">
@@ -971,7 +1008,179 @@ function PlanTab({ tenantId }: { tenantId: number }) {
             {multi}: mehrere Kabel – fällt eines aus, bleiben die anderen (Shift-Klick: alle fallen aus).
           </p>
         )}
+        {pick && (
+          <PatchPanel
+            tenantId={tenantId}
+            device={pick.device}
+            peer={pick.peer ?? null}
+            onPick={(device, peer) => setPick({ device, peer })}
+            onClose={() => setPick(null)}
+            onEndpoints={onEndpoints}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+// Patchungen (0.70.0): die Kabel des gewählten Geräts - eigenes Ende links, Gegenstelle rechts,
+// je Ende Port, Beschreibung und Konfiguration; Port-Channel als Gruppe, Abweichungen darunter
+function endText(e: CablingPatchEnd): string {
+  const parts = [portText(e)];
+  if (e.status) parts.push(e.enabled === false ? "deaktiviert" : e.status);
+  if (e.media) parts.push(e.media);
+  if (e.stp_blocked) parts.push(`STP blockiert ${e.stp_blocked}`);
+  if (e.epgs?.length) parts.push(`EPG ${e.epgs.slice(0, 3).join(", ")}${e.epgs.length > 3 ? ` +${e.epgs.length - 3}` : ""}`);
+  return parts.filter(Boolean).join(" · ");
+}
+
+function PatchPanel({ tenantId, device, peer, onPick, onClose, onEndpoints }: {
+  tenantId: number;
+  device: string;
+  peer: string | null;
+  onPick: (device: string, peer?: string) => void;
+  onClose: () => void;
+  onEndpoints?: (device: string, port: string) => void;
+}) {
+  const [data, setData] = useState<CablingPatches | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  useEffect(() => {
+    let live = true;
+    setData(null);
+    setErr(null);
+    fetchCablingPatches(tenantId, device, peer)
+      .then((d) => live && setData(d))
+      .catch((e) => live && setErr(e));
+    return () => {
+      live = false;
+    };
+  }, [tenantId, device, peer]);
+  const d = data?.device;
+  let lag: string | null | undefined;
+  const rows: ReactNode[] = [];
+  for (const l of data?.items ?? []) {
+    if (l.a.lag !== lag) {
+      lag = l.a.lag;
+      if (lag)
+        rows.push(
+          <tr key={`lag:${lag}`} className="patch-lag">
+            <td colSpan={8}>
+              Port-Channel <b className="mono">{lag}</b>
+              {l.a.vpc ? ` · vPC ${l.a.vpc}` : ""}
+            </td>
+          </tr>,
+        );
+    }
+    rows.push(<PatchRow key={l.id} l={l} onPick={onPick} onEndpoints={onEndpoints} />);
+  }
+  return (
+    <div className="patch-panel" id="cabling-patches" data-device={device}>
+      <div className="patch-head">
+        <h3>
+          Patchungen <span className="mono">{device}</span>
+          {peer && (
+            <>
+              {" "}
+              ↔ <span className="mono">{peer}</span>
+            </>
+          )}
+        </h3>
+        {d && (
+          <span className="faint">
+            {KIND[d.kind] ?? d.kind}
+            {d.model ? ` · ${d.model}` : ""}
+            {d.mgmt_ip ? ` · ${d.mgmt_ip}` : ""}
+            {d.source ? ` · ${d.source}` : ""}
+            {data && ` · ${data.total} Kabel`}
+            {data && data.issues > 0 && <span className="crit"> · {data.issues} mit Abweichung</span>}
+          </span>
+        )}
+        <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
+          {peer && (
+            <button className="btn btn-sm btn-ghost" onClick={() => onPick(device)}>
+              alle Kabel von {device}
+            </button>
+          )}
+          <button className="btn btn-sm btn-ghost" aria-label="Patchungen schliessen" onClick={onClose}>
+            ✕
+          </button>
+        </span>
+      </div>
+      <ErrorBox error={err} onClose={() => setErr(null)} />
+      {data === null ? (
+        !err && <Loading />
+      ) : data.items.length === 0 ? (
+        <Empty title={d?.read ? "keine Kabel aus CDP/LLDP" : "Gerät nicht gelesen – keine Ports bekannt"} />
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="compact patch-table">
+            <thead>
+              <tr>
+                <th>Port</th>
+                <th>Konfiguration</th>
+                <th />
+                <th>Gegenstelle</th>
+                <th>Port</th>
+                <th>Konfiguration</th>
+                <th>Zustand</th>
+                <th title="MACs am eigenen Port (ohne Uplinks)">Endpunkte</th>
+              </tr>
+            </thead>
+            <tbody>{rows}</tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PatchRow({ l, onPick, onEndpoints }: {
+  l: CablingPatch;
+  onPick: (device: string, peer?: string) => void;
+  onEndpoints?: (device: string, port: string) => void;
+}) {
+  return (
+    <>
+      <tr data-patch={l.id} className={l.issues.length ? "row-crit" : undefined}>
+        <td className="mono nowrap">
+          {l.a.port ?? <Dash />}
+          {l.a.description && <div className="faint patch-descr">{l.a.description}</div>}
+        </td>
+        <td className="faint">{endText(l.a) || <Dash />}</td>
+        <td className="faint">↔</td>
+        <td className="nowrap">
+          <button className="linkbtn patch-link" title="Patchungen dieses Geräts" onClick={() => onPick(l.b.device)}>
+            <b>{l.b.device}</b>
+          </button>
+          {!l.b.read && <span className="faint"> ({KIND[l.b.kind] ?? l.b.kind})</span>}
+          {l.b.model && <div className="faint">{l.b.model}</div>}
+        </td>
+        <td className="mono nowrap">
+          {l.b.port ?? <Dash />}
+          {l.b.description && <div className="faint patch-descr">{l.b.description}</div>}
+        </td>
+        <td className="faint">{l.b.read ? endText(l.b) || <Dash /> : <span>nicht gelesen</span>}</td>
+        <td className="nowrap">
+          <StateChip state={l.state} /> <span className="faint">{l.protocols.join("/").toUpperCase()}</span>
+        </td>
+        <td className="nowrap">
+          {l.a.endpoints > 0 && l.a.port && onEndpoints ? (
+            <button className="linkbtn patch-link patch-endpoints" title="Endpunkte an diesem Port" onClick={() => onEndpoints(l.a.device, l.a.port!)}>
+              {l.a.endpoints}
+            </button>
+          ) : (
+            <span className="faint">{l.a.endpoints || "–"}</span>
+          )}
+        </td>
+      </tr>
+      {l.issues.map((i) => (
+        <tr key={`${l.id}:${i.type}`} className="row-crit patch-issue">
+          <td />
+          <td colSpan={7} className="crit">
+            {i.text}
+          </td>
+        </tr>
+      ))}
+    </>
   );
 }

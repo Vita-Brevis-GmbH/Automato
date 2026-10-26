@@ -3,15 +3,20 @@
 // Zeichnung bzw. Vorlage herunterladen, entfernen (Admin). Die Zonen-Vorschläge im Netzwerkdesign
 // richten sich danach; ohne Schema gilt die eingebaute Vorlage (seit 0.56.0 nach Ebenen: DC, Edge,
 // Transfer, Core, Distribution, Access, Public – mit festen Farben). Seit 0.57.0 trägt ein
-// Übergang mit `automato_services` die erlaubten Dienste („eingeschränkt“).
+// Übergang mit `automato_services` die erlaubten Dienste („eingeschränkt“). Seit 0.70.0 lässt sich
+// das Schema nach dem Hochladen auch hier bearbeiten (Namen, Art, Kurzname, Farbe, Erkennung,
+// Reihenfolge, Übergänge mit Absicht und Diensten); die Zeichnung zum Herunterladen folgt dem Stand.
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteZoneSchema,
+  editZoneSchema,
   fetchZoneSchema,
   previewZoneSchema,
   saveZoneSchema,
   SchemaLink,
+  SchemaLinkEdit,
   SchemaZone,
+  SchemaZoneEdit,
   Tenant,
   ZoneIntent,
   ZoneKind,
@@ -70,6 +75,7 @@ export default function ZoneSchemaCard({
   const [state, setState] = useState<ZoneSchemaState | null>(null);
   const [upload, setUpload] = useState<{ content: string; filename: string; schema: ZoneSchemaData; diff: ZoneSchemaDiff } | null>(null);
   const [fromTenant, setFromTenant] = useState<number | "">("");
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   const file = useRef<HTMLInputElement>(null);
@@ -110,6 +116,19 @@ export default function ZoneSchemaCard({
     try {
       setState(await saveZoneSchema(profileId, upload.content, upload.filename));
       setUpload(null);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const saveDraft = async () => {
+    if (!draft) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      setState(await editZoneSchema(profileId, fromDraft(draft)));
+      setDraft(null);
     } catch (e) {
       setErr(e);
     } finally {
@@ -196,7 +215,12 @@ export default function ZoneSchemaCard({
               </button>
             </>
           )}
-          {editable && schema && (
+          {editable && schema && !draft && (
+            <button className="btn btn-sm" id="zone-schema-edit" onClick={() => setDraft(toDraft(schema))}>
+              Bearbeiten
+            </button>
+          )}
+          {editable && schema && !draft && (
             <button className="btn btn-sm btn-ghost" style={{ marginLeft: "auto" }} onClick={remove}>
               Schema entfernen
             </button>
@@ -212,9 +236,20 @@ export default function ZoneSchemaCard({
                 {schema.page && ` · Seite „${schema.page}“`}
                 {state.drawing.uploaded_at && ` · ${fmtTime(state.drawing.uploaded_at)}`}
                 {state.drawing.uploaded_by && ` · ${state.drawing.uploaded_by}`}
+                {state.drawing.edited_at && (
+                  <span id="zone-schema-edited">
+                    {" "}
+                    · in der Oberfläche bearbeitet {fmtTime(state.drawing.edited_at)}
+                    {state.drawing.edited_by ? ` von ${state.drawing.edited_by}` : ""}
+                  </span>
+                )}
               </div>
             )}
-            <SchemaView schema={schema} />
+            {draft ? (
+              <SchemaEditor draft={draft} onChange={setDraft} onSave={saveDraft} onCancel={() => setDraft(null)} busy={busy} />
+            ) : (
+              <SchemaView schema={schema} />
+            )}
           </>
         ) : (
           <div className="loading" style={{ marginTop: 10 }}>
@@ -417,5 +452,280 @@ function SchemaDrawing({ zones, links }: { zones: SchemaZone[]; links: SchemaLin
         </g>
       ))}
     </svg>
+  );
+}
+
+// -- Bearbeiten (0.70.0) ------------------------------------------------------------------------
+// Zonen tragen eine feste `uid`, die Übergänge verweisen darauf - Umbenennen zieht die Übergänge mit.
+type DraftZone = Omit<SchemaZoneEdit, "match"> & { uid: string; match: string };
+type DraftLink = { uid: string; src: string; dst: string; intent: ZoneIntent; services: string; note: string };
+type Draft = { zones: DraftZone[]; links: DraftLink[] };
+
+let uidSeq = 0;
+const uid = () => `u${++uidSeq}`;
+const list = (text: string) =>
+  text
+    .split(/[,;\n]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+function toDraft(schema: ZoneSchemaData): Draft {
+  const zones = schema.zones.map((z) => ({
+    uid: uid(),
+    name: z.name,
+    kind: z.kind,
+    code: z.code,
+    color: z.color,
+    match: z.match.join(", "),
+    group: z.group,
+    description: z.description,
+    geometry: z.geometry,
+    previous: z.name,
+  }));
+  const byName = new Map(zones.map((z) => [z.name, z.uid]));
+  const links = schema.links
+    .filter((x) => byName.has(x.src) && byName.has(x.dst))
+    .map((x) => ({
+      uid: uid(),
+      src: byName.get(x.src)!,
+      dst: byName.get(x.dst)!,
+      intent: x.intent,
+      services: (x.services ?? []).join(", "),
+      note: x.note ?? "",
+    }));
+  return { zones, links };
+}
+
+function fromDraft(d: Draft): { zones: SchemaZoneEdit[]; links: SchemaLinkEdit[] } {
+  const name = new Map(d.zones.map((z) => [z.uid, z.name.trim()]));
+  return {
+    zones: d.zones.map(({ uid: _u, match, ...z }) => ({
+      ...z,
+      name: z.name.trim(),
+      code: z.code?.trim() || null,
+      color: z.color?.trim() || null,
+      group: z.group?.trim() || null,
+      description: z.description?.trim() || null,
+      match: list(match),
+    })),
+    links: d.links.map((x) => ({
+      src: name.get(x.src) ?? "",
+      dst: name.get(x.dst) ?? "",
+      intent: x.intent,
+      services: x.intent === "limited" ? list(x.services) : [],
+      note: x.note.trim() || null,
+    })),
+  };
+}
+
+function SchemaEditor({ draft, onChange, onSave, onCancel, busy }: {
+  draft: Draft;
+  onChange: (d: Draft) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  const setZone = (i: number, patch: Partial<DraftZone>) =>
+    onChange({ ...draft, zones: draft.zones.map((z, j) => (j === i ? { ...z, ...patch } : z)) });
+  const move = (i: number, by: number) => {
+    const zones = [...draft.zones];
+    const [z] = zones.splice(i, 1);
+    zones.splice(Math.max(0, Math.min(zones.length, i + by)), 0, z);
+    onChange({ ...draft, zones });
+  };
+  const dropZone = (i: number) => {
+    const gone = draft.zones[i].uid;
+    onChange({ zones: draft.zones.filter((_, j) => j !== i), links: draft.links.filter((x) => x.src !== gone && x.dst !== gone) });
+  };
+  const addZone = () =>
+    onChange({
+      ...draft,
+      zones: [
+        ...draft.zones,
+        { uid: uid(), name: "", kind: "internal", code: null, color: null, match: "", group: null, description: null, geometry: null, previous: null },
+      ],
+    });
+  const setLink = (i: number, patch: Partial<DraftLink>) =>
+    onChange({ ...draft, links: draft.links.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+  const addLink = () => {
+    const [a, b] = draft.zones;
+    if (!a || !b) return;
+    onChange({ ...draft, links: [...draft.links, { uid: uid(), src: a.uid, dst: b.uid, intent: "allow", services: "", note: "" }] });
+  };
+  const names = new Map(draft.zones.map((z) => [z.uid, z.name]));
+  const preview = fromDraft(draft);
+  const keys = preview.zones.map((z) => z.name.toLowerCase());
+  const dupes = new Set(keys.filter((k, i) => k && keys.indexOf(k) !== i));
+  const empty = preview.zones.some((z) => !z.name);
+  const pairs = draft.links.map((x) => `${x.src}>${x.dst}`);
+  const badLink = draft.links.some((x, i) => x.src === x.dst || pairs.indexOf(pairs[i]) !== i);
+  const shown: SchemaZone[] = preview.zones.map((z, i) => ({
+    ...z,
+    key: `${i}:${z.name}`,
+    kind_reason: "",
+    position: (i + 1) * 10,
+    color: /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(z.color ?? "") ? z.color : null,
+  }));
+  const shownLinks: SchemaLink[] = preview.links.map((x) => ({ ...x, reason: "", note: x.note }));
+  return (
+    <div id="zone-schema-editor">
+      <SchemaDrawing zones={shown} links={shownLinks} />
+      <table className="compact zone-schema-edit" id="zone-schema-edit-zones" style={{ marginTop: 10 }}>
+        <thead>
+          <tr>
+            <th />
+            <th>Zone</th>
+            <th>Art</th>
+            <th>Kurzname</th>
+            <th>Farbe</th>
+            <th title="Erkennungsmuster, mit Komma getrennt (* und ?)">Erkennung</th>
+            <th>Gruppe</th>
+            <th>Beschreibung</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {draft.zones.map((z, i) => (
+            <tr key={z.uid} data-zone={z.name}>
+              <td className="nowrap">
+                <button className="linkbtn" title="nach oben" disabled={i === 0} onClick={() => move(i, -1)}>
+                  ↑
+                </button>
+                <button className="linkbtn" title="nach unten" disabled={i === draft.zones.length - 1} onClick={() => move(i, 1)}>
+                  ↓
+                </button>
+              </td>
+              <td>
+                <input
+                  className={`input${!z.name.trim() || dupes.has(z.name.trim().toLowerCase()) ? " invalid" : ""}`}
+                  aria-label="Name der Zone"
+                  value={z.name}
+                  onChange={(e) => setZone(i, { name: e.target.value })}
+                />
+                {z.previous && z.previous !== z.name.trim() && <div className="faint">bisher {z.previous}</div>}
+              </td>
+              <td>
+                <select className="sel" aria-label="Art" value={z.kind} onChange={(e) => setZone(i, { kind: e.target.value as ZoneKind })}>
+                  {(Object.keys(KIND) as ZoneKind[]).map((k) => (
+                    <option key={k} value={k}>
+                      {KIND[k]}
+                    </option>
+                  ))}
+                </select>
+              </td>
+              <td>
+                <input className="input mono" style={{ width: 90 }} aria-label="Kurzname" value={z.code ?? ""} onChange={(e) => setZone(i, { code: e.target.value })} />
+              </td>
+              <td className="nowrap">
+                <input
+                  type="color"
+                  aria-label="Farbe"
+                  value={/^#[0-9a-f]{6}$/i.test(z.color ?? "") ? z.color! : KIND_COLOR[z.kind]}
+                  onChange={(e) => setZone(i, { color: e.target.value })}
+                />
+                {z.color && (
+                  <button className="linkbtn" title="Farbe der Art" onClick={() => setZone(i, { color: null })}>
+                    ✕
+                  </button>
+                )}
+              </td>
+              <td>
+                <input className="input mono" aria-label="Erkennung" placeholder="dmz*, srv*" value={z.match} onChange={(e) => setZone(i, { match: e.target.value })} />
+              </td>
+              <td>
+                <input className="input" style={{ width: 110 }} aria-label="Gruppe" value={z.group ?? ""} onChange={(e) => setZone(i, { group: e.target.value })} />
+              </td>
+              <td>
+                <input className="input" aria-label="Beschreibung" value={z.description ?? ""} onChange={(e) => setZone(i, { description: e.target.value })} />
+              </td>
+              <td>
+                <button className="linkbtn danger" title="Zone entfernen (mit ihren Übergängen)" onClick={() => dropZone(i)}>
+                  ✕
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <button className="btn btn-sm btn-ghost" id="zone-schema-add-zone" style={{ marginTop: 6 }} onClick={addZone}>
+        + Zone
+      </button>
+      <table className="compact zone-schema-edit" id="zone-schema-edit-links" style={{ marginTop: 12 }}>
+        <thead>
+          <tr>
+            <th>Von</th>
+            <th>Nach</th>
+            <th>Absicht</th>
+            <th title="bei „eingeschränkt“: erlaubte Dienste, mit Komma getrennt (tcp/443, FT_https)">Dienste</th>
+            <th>Notiz</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {draft.links.map((x, i) => (
+            <tr key={x.uid} data-link={`${names.get(x.src)}>${names.get(x.dst)}`} className={x.src === x.dst || pairs.indexOf(pairs[i]) !== i ? "row-crit" : undefined}>
+              {(["src", "dst"] as const).map((end) => (
+                <td key={end}>
+                  <select className="sel" aria-label={end === "src" ? "Von" : "Nach"} value={x[end]} onChange={(e) => setLink(i, { [end]: e.target.value })}>
+                    {draft.zones.map((z) => (
+                      <option key={z.uid} value={z.uid}>
+                        {z.name || "(ohne Namen)"}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+              ))}
+              <td>
+                <select className="sel" aria-label="Absicht" value={x.intent} onChange={(e) => setLink(i, { intent: e.target.value as ZoneIntent })}>
+                  {(Object.keys(INTENT) as ZoneIntent[]).map((k) => (
+                    <option key={k} value={k}>
+                      {INTENT[k][1]}
+                    </option>
+                  ))}
+                </select>
+              </td>
+              <td>
+                <input
+                  className="input mono"
+                  aria-label="Dienste"
+                  placeholder={x.intent === "limited" ? "tcp/443, FT_https" : "nur bei eingeschränkt"}
+                  disabled={x.intent !== "limited"}
+                  value={x.services}
+                  onChange={(e) => setLink(i, { services: e.target.value })}
+                />
+              </td>
+              <td>
+                <input className="input" aria-label="Notiz" value={x.note} onChange={(e) => setLink(i, { note: e.target.value })} />
+              </td>
+              <td>
+                <button className="linkbtn danger" title="Übergang entfernen" onClick={() => onChange({ ...draft, links: draft.links.filter((_, j) => j !== i) })}>
+                  ✕
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <button className="btn btn-sm btn-ghost" id="zone-schema-add-link" style={{ marginTop: 6 }} disabled={draft.zones.length < 2} onClick={addLink}>
+        + Übergang
+      </button>
+      <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
+        <button className="btn btn-primary btn-sm" id="zone-schema-edit-save" disabled={busy || empty || dupes.size > 0 || badLink || draft.zones.length === 0} onClick={onSave}>
+          {busy ? "Speichere…" : "Speichern"}
+        </button>
+        <button className="btn btn-sm btn-ghost" onClick={onCancel}>
+          Abbrechen
+        </button>
+        <span className="faint">
+          {empty
+            ? "Jede Zone braucht einen Namen."
+            : dupes.size > 0
+              ? `Name doppelt: ${[...dupes].join(", ")}`
+              : badLink
+                ? "Übergang doppelt bzw. von einer Zone zu sich selbst."
+                : "Die Zonen-Vorschläge folgen dem gespeicherten Schema; Zonen und Absichten im Netzwerkdesign bleiben unverändert."}
+        </span>
+      </div>
+    </div>
   );
 }

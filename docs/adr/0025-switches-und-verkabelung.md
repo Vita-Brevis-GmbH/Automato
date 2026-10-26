@@ -193,6 +193,16 @@ Secrets, Open Source bevorzugt.
     - Ein Router leitet in der L2-Sicht nicht weiter (`Device.switching` falsch); Speed und
       Duplex der Hersteller (`10gbps`, `10G`, `10000`, `Full`/`full`) vergleicht die Verkabelung
       einheitlich.
+12. **Patchungen im Plan** (0.70.0, Wunsch des Anwenders: „wenn ich ein Gerät auswähle, unten
+    gleich die Patchungen der Kabel mit Details“). Im Plan schaltet „Klick: Patchungen |
+    Ausfall“ um (Standard Patchungen): Klick auf ein Gerät zeigt darunter seine Kabel, Klick auf
+    ein Kabel nur die zwischen den beiden Geräten. `GET /cabling/patches?device=&peer=` (viewer,
+    nicht Kunden-Benutzer): je Kabel das eigene Ende links, die Gegenstelle rechts – Port,
+    Beschreibung, Speed/Duplex, Access/Trunk mit Native VLAN (ACI aus der VLAN-Liste), Port-
+    Channel/vPC (Werte des Channels an den Mitgliedern), Spanning Tree, Medium, EPGs, Status;
+    Zustand, Protokolle, Abweichungen und die Endpunkte am eigenen Port; Port-Channel als
+    Gruppe. Die Gegenstelle öffnet ihre Patchungen, die Zahl der Endpunkte den Reiter
+    Endpunkte. Rein lesend.
 
 ## Konsequenzen
 

@@ -25,6 +25,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "naming_profile.created": frozenset({"profile_id", "customer", "name", "copied_from"}),
     "zone_schema.saved": frozenset({"profile_id", "zones", "links"}),
     "zone_schema.deleted": frozenset({"profile_id"}),
+    "zone_schema.edited": frozenset(
+        {"profile_id", "zones", "links", "added", "removed", "changed", "links_changed"}
+    ),
     "dictionary.copied": frozenset(
         {"profile_id", "kind", "source_profile_id", "source_kind", "count"}
     ),
