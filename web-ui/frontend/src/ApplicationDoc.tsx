@@ -2,7 +2,9 @@
 // Übersicht (VMs, EPGs, Regeln spezifisch/unspezifisch, Befunde), darunter alle VMs der
 // Applikation, ihre EPGs im ACI und die Regeln wie in „Regeln & Contracts“ – filterbar nach
 // System/VM, EPG, Richtung (aus Sicht des Systems), Art und Bezug. Das Regel-Detail erklärt,
-// warum die Regel für die Applikation gilt; Links in Regeln, Objekte und Findings.
+// warum die Regel für die Applikation gilt; Links in Regeln, Objekte und Findings. Seit 0.73.0
+// (Anwender: Übersicht) Bereiche zuklappbar, Systeme kompakt mit Detail auf Klick, Export und
+// Druck mit wählbaren Abschnitten; Abhängigkeiten zu anderen Applikationen vorerst entfernt.
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import {
   AppDocEpg,
@@ -10,7 +12,6 @@ import {
   AppDocHit,
   AppDocSystem2,
   AppConnections,
-  AppDependency,
   ApplicationDoc,
   assignAppRule,
   DocScope,
@@ -30,11 +31,12 @@ import type { View, ViewParams } from "./App";
 import ConnectionsCard, { connectionsMarkdown } from "./AppConnections";
 import { DocRow, DocTableView, tablesMarkdown } from "./AppDoc";
 import type { Me } from "./auth";
+import { Fold, FoldTitle, readStored, useFolds, writeJson } from "./fold";
 import { findingLabel, serviceNames, useVdomShown } from "./refs";
 import RuleDetailDrawer from "./RuleDetail";
 import { NameCell } from "./RulesTable";
 import { siteLabel } from "./sites";
-import { ActionBadge, Dash, download, Empty, ErrorBox, Expandable, Icon, Loading, Modal } from "./ui";
+import { ActionBadge, Dash, download, Drawer, Empty, ErrorBox, Expandable, Icon, Loading, Modal } from "./ui";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -116,6 +118,23 @@ interface Filters {
 }
 const NO_FILTER: Filters = { system: "", epg: "", direction: "", domain: "", scope: "", q: "" };
 
+// Abschnitte der Doku (0.73.0): Export und Druck nach Wahl – gleiche Schlüssel wie der Word-Export
+// (`word_export.SECTIONS`); der Kopf mit dem Steckbrief steht immer da
+const DOC_SECTIONS: [string, string, string][] = [
+  ["overview", "Übersicht", "Kennzahlen der Applikation"],
+  ["systems", "Systeme", "VMs und Server ohne VM"],
+  ["epgs", "EPGs im ACI", ""],
+  ["connections", "Verbindungen Ende zu Ende", "Weg je Verbindung mit der entscheidenden Regel"],
+  ["plan", "Netzwerkplan", "als draw.io-Datei – nur Word + draw.io (ZIP)"],
+  ["rules", "Regeln & Contracts", ""],
+  ["findings", "Findings", ""],
+  ["categories", "Doku nach Kategorien", "die 10 Kategorien nach UC1"],
+  ["hidden", "Ausgeblendete Regeln", "mit Begründung"],
+];
+const INFRA = new Set(["connections", "plan"]); // nicht für Kunden-Benutzer
+const EXPORT_KEY = "automato_app_export"; // gewählte Abschnitte (Browser)
+const FOLD_KEY = "automato_app_folds"; // zugeklappte Bereiche (Browser)
+
 export default function ApplicationDocView({
   me,
   id,
@@ -138,14 +157,26 @@ export default function ApplicationDocView({
   const [systems, setSystems] = useState<System[]>([]);
   const [f, setF] = useState<Filters>(NO_FILTER);
   const [rule, setRule] = useState<number | null>(null);
-  const [showTables, setShowTables] = useState(false);
   const [showEmpty, setShowEmpty] = useState(false);
+  const [printing, setPrinting] = useState<Set<string> | null>(null); // Druck: gewählte Abschnitte offen
+  const [exportOpen, setExportOpen] = useState(false);
+  const [systemKey, setSystemKey] = useState<string | null>(null); // Detail eines Systems (0.73.0)
   const [conns, setConns] = useState<AppConnections | null>(null); // für den Export (0.59.0)
   const [tick, setTick] = useState(0); // Regel zugeordnet bzw. ausgeschlossen (0.60.0)
   const [busy, setBusy] = useState<unknown>(null);
-  const [exporting, setExporting] = useState(false);
   const [hiding, setHiding] = useState<{ table: DocTable; row: DocRow } | null>(null); // 0.69.0
   const vdomShown = useVdomShown();
+  const { fold, setAll } = useFolds(FOLD_KEY, printing);
+  useEffect(() => {
+    if (!printing) return;
+    const done = () => setPrinting(null);
+    window.addEventListener("afterprint", done);
+    const timer = setTimeout(() => window.print(), 80);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("afterprint", done);
+    };
+  }, [printing]);
 
   useEffect(() => {
     setErr(null);
@@ -212,30 +243,40 @@ export default function ApplicationDocView({
   const findingsOf = (rid: number) => doc.findings.filter((x) => x.rule_id === rid);
   const set = (patch: Partial<Filters>) => setF((prev) => ({ ...prev, ...patch }));
   const filtered = JSON.stringify(f) !== JSON.stringify(NO_FILTER);
-  const scrollToRules = () => document.getElementById("app-rules")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  const print = () => {
-    setShowTables(true);
-    setTimeout(() => window.print(), 50);
+  // Bereich aufklappen (falls zu) und hinscrollen
+  const reveal = (key: string, el: string) => {
+    const x = fold(key);
+    if (!x.open) x.toggle();
+    setTimeout(() => document.getElementById(el)?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   };
-  // Export mit den Verbindungen Ende zu Ende (0.59.0) – noch nicht geladen: jetzt holen
-  // Export für Confluence (0.71.0): Word + draw.io im ZIP, verbessert und importiert von Hand
-  const exportConfluence = async () => {
-    setExporting(true);
-    try {
-      const { blob, filename } = await exportApplication(id, "zip");
-      download(filename, blob);
-    } catch (e) {
-      setBusy(e);
-    } finally {
-      setExporting(false);
+  const scrollToRules = () => reveal("rules", "app-rules");
+  // Export und Druck (0.73.0) mit den gewählten Abschnitten: Markdown mit den Verbindungen Ende
+  // zu Ende (0.59.0, noch nicht geladen: jetzt holen), Word bzw. Word + draw.io (ZIP) für
+  // Confluence (0.71.0, verbessert und importiert von Hand), Drucken mit offenen Abschnitten
+  const runExport = async (kind: "md" | "word" | "print", sections: string[]) => {
+    const want = new Set(sections);
+    if (kind === "print") {
+      setExportOpen(false);
+      setPrinting(want);
+      return;
     }
+    if (kind === "word") {
+      const { blob, filename } = await exportApplication(id, want.has("plan") ? "zip" : "docx", sections);
+      download(filename, blob);
+    } else {
+      let c = me.isCustomer || !want.has("connections") ? null : conns;
+      if (c == null && !me.isCustomer && want.has("connections")) c = await fetchAppConnections(id).catch(() => null);
+      download(`${a.name}.md`, docMarkdown(doc, sourceName, c, want));
+    }
+    setExportOpen(false);
   };
-  const exportMarkdown = async () => {
-    let c = me.isCustomer ? null : conns;
-    if (!me.isCustomer && c == null) c = await fetchAppConnections(id).catch(() => null);
-    download(`${a.name}.md`, docMarkdown(doc, sourceName, c));
-  };
-  const tables = doc.tables.filter((t) => showEmpty || t.rows.length > 0 || (t.hidden?.length ?? 0) > 0);
+  // Druck: nicht gewählte Abschnitte fallen weg
+  const off = (key: string) => (printing && !printing.has(key) ? " print-hide" : "");
+  // im Druck nur mit „Ausgeblendete Regeln“: nur Kategorien mit ausgeblendeten Regeln
+  const onlyHidden = !!printing && !printing.has("categories");
+  const tables = doc.tables.filter((t) => (t.hidden?.length ?? 0) > 0 || (!onlyHidden && (showEmpty || t.rows.length > 0)));
+  const foldKeys = ["systems", "epgs", "connections", "rules", "findings", "categories", ...doc.tables.map((t) => `cat:${t.index}`)];
+  const categories = fold("categories", false);
   // Ausblenden je Kategorie (0.69.0): nur Operator, Kunden-Benutzer sehen die Liste ohne Knöpfe
   const hideControls = {
     canEdit: me.isOperator && !me.isCustomer,
@@ -267,22 +308,19 @@ export default function ApplicationDocView({
             Bearbeiten
           </button>
         )}
-        <button className="btn btn-ghost btn-sm" id="app-doc-export" onClick={exportMarkdown}>
-          <Icon name="download" size={14} /> Export (Markdown)
+        <button className="btn btn-ghost btn-sm" id="app-folds-open" onClick={() => setAll(foldKeys, true)} title="alle Bereiche aufklappen">
+          alle aufklappen
         </button>
-        {!me.isCustomer && (
-          <button
-            className="btn btn-ghost btn-sm"
-            id="app-doc-confluence"
-            disabled={exporting}
-            title="Word-Datei der Doku plus Netzwerkplan als draw.io – zum Verbessern und Importieren in Confluence"
-            onClick={exportConfluence}
-          >
-            <Icon name="download" size={14} /> {exporting ? "…" : "Für Confluence (Word + draw.io)"}
-          </button>
-        )}
-        <button className="btn btn-ghost btn-sm" onClick={print} title="Drucken oder als PDF sichern">
-          Drucken / PDF
+        <button className="btn btn-ghost btn-sm" id="app-folds-close" onClick={() => setAll(foldKeys, false)} title="alle Bereiche zuklappen">
+          alle zuklappen
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          id="app-doc-export"
+          onClick={() => setExportOpen(true)}
+          title="Markdown, Word (für Confluence) oder Drucken / PDF – mit den gewählten Abschnitten"
+        >
+          <Icon name="download" size={14} /> Export / Drucken…
         </button>
       </div>
 
@@ -315,7 +353,7 @@ export default function ApplicationDocView({
         </div>
       </div>
 
-      <div className="kpis wrap">
+      <div className={`kpis wrap${off("overview")}`}>
         <Kpi label="VMs" value={s.vms} sub={s.servers ? `+ ${s.servers} Server ohne VM` : "aus dem vCenter"} />
         <Kpi
           label="EPGs im ACI"
@@ -352,37 +390,34 @@ export default function ApplicationDocView({
           value={s.findings}
           tone={s.findings ? "warn" : "ok"}
           sub={s.findings ? "offene Befunde der Applikation" : "keine offenen Befunde"}
-          onClick={() => document.getElementById("app-findings")?.scrollIntoView({ behavior: "smooth" })}
+          onClick={() => reveal("findings", "app-findings")}
         />
       </div>
 
-      <SystemsCard
-        items={doc.systems}
-        sourceName={sourceName}
-        onGo={onGo}
-        onPick={(key) => {
-          setF({ ...NO_FILTER, system: key });
-          scrollToRules();
-        }}
-      />
-      <EpgsCard
-        items={doc.epgs}
-        onPick={(key) => {
-          setF({ ...NO_FILTER, epg: key });
-          scrollToRules();
-        }}
-      />
+      <div className={off("systems").trim()}>
+        <SystemsCard items={doc.systems} fold={fold("systems")} onOpen={setSystemKey} />
+      </div>
+      <div className={off("epgs").trim()}>
+        <EpgsCard
+          items={doc.epgs}
+          fold={fold("epgs")}
+          onPick={(key) => {
+            setF({ ...NO_FILTER, epg: key });
+            scrollToRules();
+          }}
+        />
+      </div>
 
       {/* Verbindungen Ende zu Ende (0.45.0) – zeigt die Infrastruktur, nicht für Kunden-Benutzer */}
-      {(doc.dependencies?.uses.length || doc.dependencies?.used_by.length) ? (
-        <DependenciesCard deps={doc.dependencies} onGo={onGo} onRule={setRule} />
-      ) : null}
+      {!me.isCustomer && (
+        <div className={off("connections").trim()}>
+          <ConnectionsCard appId={id} reload={reload + tick} onRule={setRule} onGo={onGo} onData={setConns} fold={fold("connections")} />
+        </div>
+      )}
 
-      {!me.isCustomer && <ConnectionsCard appId={id} reload={reload + tick} onRule={setRule} onGo={onGo} onData={setConns} />}
-
-      <div className="card" id="app-rules" style={{ marginTop: 14 }}>
+      <div className={`card${off("rules")}`} id="app-rules" style={{ marginTop: 14 }}>
         <div className="card-head">
-          <h2>Regeln &amp; Contracts</h2>
+          <FoldTitle fold={fold("rules")}>Regeln &amp; Contracts</FoldTitle>
           <span className="mono faint" style={{ fontSize: 12 }}>
             {rules.length}
             {rules.length !== doc.rules.length ? ` von ${doc.rules.length}` : ""}
@@ -415,6 +450,8 @@ export default function ApplicationDocView({
             </button>
           )}
         </div>
+        {fold("rules").open && (
+        <>
         <div className="card-body pad no-print" style={{ paddingBottom: 0 }}>
           <div className="filterbar" style={{ marginBottom: 10 }}>
             <div className="search">
@@ -510,44 +547,76 @@ export default function ApplicationDocView({
             </table>
           )}
         </div>
+        </>
+        )}
       </div>
 
-      <FindingsCard doc={doc} onRule={setRule} onGo={onGo} />
-
-      <div className="card" style={{ marginTop: 14 }}>
-        <div className="card-head">
-          <h2>Doku nach Kategorien</h2>
-          <span className="faint" style={{ fontSize: 12 }}>
-            10 Kategorien nach UC1 – für Export und Druck
-          </span>
-          <div className="spacer" />
-          {showTables && (
-            <button className={`toggle no-print ${showEmpty ? "on" : ""}`} onClick={() => setShowEmpty((v) => !v)}>
-              leere Kategorien zeigen
-            </button>
-          )}
-          <button className="btn btn-ghost btn-sm no-print" onClick={() => setShowTables((v) => !v)}>
-            {showTables ? "ausblenden" : "anzeigen"}
-          </button>
-        </div>
+      <div className={off("findings").trim()}>
+        <FindingsCard doc={doc} onRule={setRule} onGo={onGo} fold={fold("findings")} />
       </div>
-      {showTables && (
-        <div className="stack" style={{ marginTop: 10 }}>
-          {tables.length === 0 ? (
-            <div className="card">
-              <Empty title="Noch keine Zugriffe kategorisiert">Die Systeme dieser Applikation haben keine Regeln.</Empty>
-            </div>
-          ) : (
-            tables.map((t) => (
-              <DocTableView
-                key={t.index}
-                table={t}
-                onRule={setRule}
-                hide={{ canEdit: hideControls.canEdit, onHide: hideControls.onHide(t), onShow: hideControls.onShow }}
-              />
-            ))
-          )}
+
+      {/* Kategorien (UC1): im Druck auch nur mit „Ausgeblendete Regeln“ – dann ohne die Zeilen */}
+      <div
+        className={[
+          printing && !printing.has("categories") && !printing.has("hidden") ? "print-hide" : "",
+          printing && !printing.has("categories") ? "print-no-rows" : "",
+          printing && !printing.has("hidden") ? "print-no-hidden" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        id="app-categories"
+      >
+        <div className="card" style={{ marginTop: 14 }}>
+          <div className="card-head">
+            <FoldTitle fold={printing?.has("hidden") ? { ...categories, open: true } : categories}>Doku nach Kategorien</FoldTitle>
+            <span className="faint" style={{ fontSize: 12 }}>
+              10 Kategorien nach UC1 – für Export und Druck
+            </span>
+            <div className="spacer" />
+            {categories.open && (
+              <button className={`toggle no-print ${showEmpty ? "on" : ""}`} onClick={() => setShowEmpty((v) => !v)}>
+                leere Kategorien zeigen
+              </button>
+            )}
+          </div>
         </div>
+        {(categories.open || printing?.has("hidden")) && (
+          <div className="stack" style={{ marginTop: 10 }}>
+            {tables.length === 0 ? (
+              <div className="card">
+                <Empty title="Noch keine Zugriffe kategorisiert">Die Systeme dieser Applikation haben keine Regeln.</Empty>
+              </div>
+            ) : (
+              tables.map((t) => (
+                <DocTableView
+                  key={t.index}
+                  table={t}
+                  onRule={setRule}
+                  fold={printing ? undefined : fold(`cat:${t.index}`)}
+                  hiddenOpen={!!printing?.has("hidden")}
+                  hide={{ canEdit: hideControls.canEdit, onHide: hideControls.onHide(t), onShow: hideControls.onShow }}
+                />
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      {exportOpen && (
+        <ExportDialog customer={me.isCustomer} onClose={() => setExportOpen(false)} onRun={runExport} />
+      )}
+      {systemKey && (
+        <SystemDrawer
+          x={doc.systems.find((x) => x.key === systemKey)}
+          sourceName={sourceName}
+          onGo={onGo}
+          onClose={() => setSystemKey(null)}
+          onRules={(key) => {
+            setSystemKey(null);
+            setF({ ...NO_FILTER, system: key });
+            scrollToRules();
+          }}
+        />
       )}
 
       {hiding && (
@@ -891,155 +960,207 @@ function WhyBlock({
   );
 }
 
-function SystemsCard({
-  items,
-  sourceName,
-  onGo,
-  onPick,
-}: {
-  items: AppDocSystem2[];
-  sourceName: (id: number) => string;
-  onGo?: Go;
-  onPick: (key: string) => void;
-}) {
+// Systeme kompakt (0.73.0, Anwender: weniger Details in der Übersicht) – Klick öffnet das Detail
+function SystemsCard({ items, fold, onOpen }: { items: AppDocSystem2[]; fold: Fold; onOpen: (key: string) => void }) {
   return (
-    <div className="card" style={{ marginTop: 14 }}>
+    <div className="card" id="app-systems" style={{ marginTop: 14 }}>
       <div className="card-head">
-        <h2>Systeme</h2>
+        <FoldTitle fold={fold}>Systeme</FoldTitle>
         <span className="mono faint" style={{ fontSize: 12 }}>
           {items.length}
         </span>
         <span className="faint" style={{ fontSize: 12 }}>
-          alle VMs der Applikation (Portgruppen ihrer EPGs, VMs hinter ihren Servern) und Server ohne VM – Klick zeigt
-          ihre Regeln
+          alle VMs der Applikation (Portgruppen ihrer EPGs, VMs hinter ihren Servern) und Server ohne VM – Klick zeigt das Detail
         </span>
       </div>
-      <div className="card-body scroll">
-        {items.length === 0 ? (
-          <div className="loading">Keine Systeme – Mitglieder hinzufügen.</div>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>System</th>
-                <th>IPs / DNS</th>
-                <th>EPG</th>
-                <th>Portgruppe</th>
-                <th>Cluster / Host</th>
-                <th title="Firewall-Objekte mit dieser IP je Name – darunter die Firewalls, auf denen er steht">Firewall-Objekt</th>
-                <th>Standort</th>
-                <th>Regeln</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((x) => {
-                const [tone, state] = POWER[x.power_state ?? ""] ?? ["na", x.power_state ?? ""];
-                return (
-                  <tr key={x.key} className="clickable" title="Regeln dieses Systems zeigen" onClick={() => onPick(x.key)}>
-                    <td>
-                      <span className={`chip ${x.kind === "vm" ? "info" : ""}`}>{x.kind === "vm" ? "VM" : "Server"}</span>{" "}
-                      <b className="mono">{x.name}</b>
-                      {x.kind === "vm" && state && <span className={`chip ${tone}`}>{state}</span>}
-                      {x.guest_os && <div className="faint">{x.guest_os}</div>}
-                      <div className="faint" style={{ fontSize: 11.5 }}>
-                        {x.member}
-                      </div>
-                      {(x.hints ?? []).map((h) => (
-                        <div key={h} className="app-hint" style={{ fontSize: 11.5 }}>
-                          <span className="chip warn">Hinweis</span> {h}
-                        </div>
-                      ))}
-                    </td>
-                    <td className="mono">
-                      {x.ips.length ? x.ips.map((ip) => <div key={ip}>{ip}</div>) : <Dash />}
-                      {x.dns.length > 0 && <div className="faint">{x.dns.join(", ")}</div>}
-                    </td>
-                    <td className="mono">{x.epgs.length ? x.epgs.map((e) => <div key={e}>{e}</div>) : <Dash />}</td>
-                    <td className="mono">
-                      {x.nics?.length ? (
-                        x.nics
-                          .filter((n) => n.portgroup)
-                          .map((n) => (
-                            <div key={n.name} title={n.name}>
-                              {n.portgroup}
-                              {n.vlan != null && <span className="faint"> (VLAN {n.vlan})</span>}
-                              <div className="faint">
-                                → {n.epg ?? "keine EPG"}
-                                {n.epg && n.match === "vlan" && <span className="chip warn"> nur über VLAN</span>}
-                              </div>
-                            </div>
-                          ))
-                      ) : x.portgroups.length ? (
-                        x.portgroups.map((p) => <div key={p}>{p}</div>)
-                      ) : (
-                        <Dash />
-                      )}
-                    </td>
-                    <td className="mono">
-                      {x.cluster ?? <Dash />}
-                      {x.host && <div className="faint">{x.host}</div>}
-                    </td>
-                    <td className="mono">
-                      {x.objects.length ? (
-                        x.objects.map((o) => (
-                          <div key={o.name} className="objgroup">
-                            <span className="mono">{o.name}</span>{" "}
-                            {o.name_ok === true && (
-                              <span className="chip ok" title="Name passt zum DNS-Namen im IPAM">
-                                ✓
-                              </span>
-                            )}
-                            {o.name_ok === false && (
-                              <span className="chip warn" title={`Name passt nicht zum DNS-Namen im IPAM (${x.dns.join(", ")})`}>
-                                Name ≠ DNS
-                              </span>
-                            )}
-                            <div className="chips" title="auf diesen Firewalls erfasst – Klick öffnet das Objekt">
-                              {o.where.map((w) => (
-                                <button
-                                  key={w.id}
-                                  className="chip linkchip"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onGo?.("objekte", { object_id: String(w.id) });
-                                  }}
-                                >
-                                  {sourceName(w.source_system_id)}
-                                  {w.vdom && w.vdom !== "root" ? ` · VDOM ${w.vdom}` : ""}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <Dash />
-                      )}
-                    </td>
-                    <td>{x.site ? siteLabel(x.site) : <Dash />}</td>
-                    <td className="nowrap">
-                      <span className="chip ok" title="spezifische Regeln">
-                        {x.rules.specific}
-                      </span>{" "}
-                      <span className={`chip ${x.rules.unspecific ? "warn" : "na"}`} title="unspezifische Regeln (Subnetz, any, vzAny)">
-                        {x.rules.unspecific}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
+      {fold.open && (
+        <div className="card-body scroll">
+          {items.length === 0 ? (
+            <div className="loading">Keine Systeme – Mitglieder hinzufügen.</div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>System</th>
+                  <th>IPs</th>
+                  <th>EPG</th>
+                  <th>Regeln</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((x) => {
+                  const [tone, state] = POWER[x.power_state ?? ""] ?? ["na", x.power_state ?? ""];
+                  return (
+                    <tr key={x.key} className="clickable app-system" title="Detail des Systems" onClick={() => onOpen(x.key)}>
+                      <td>
+                        <span className={`chip ${x.kind === "vm" ? "info" : ""}`}>{x.kind === "vm" ? "VM" : "Server"}</span>{" "}
+                        <b className="mono">{x.name}</b>
+                        {x.kind === "vm" && state && <span className={`chip ${tone}`}>{state}</span>}
+                        {(x.hints ?? []).length > 0 && (
+                          <span className="chip warn" title={(x.hints ?? []).join("\n")}>
+                            Hinweis
+                          </span>
+                        )}
+                      </td>
+                      <td className="mono">
+                        <List items={x.ips} max={2} inline />
+                      </td>
+                      <td className="mono">
+                        <List items={x.epgs} max={2} inline />
+                      </td>
+                      <td className="nowrap">
+                        <span className="chip ok" title="spezifische Regeln">
+                          {x.rules.specific}
+                        </span>{" "}
+                        <span className={`chip ${x.rules.unspecific ? "warn" : "na"}`} title="unspezifische Regeln (Subnetz, any, vzAny)">
+                          {x.rules.unspecific}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function EpgsCard({ items, onPick }: { items: AppDocEpg[]; onPick: (key: string) => void }) {
+// Detail eines Systems (0.73.0): alles, was die Übersicht früher zeigte – wie die Detailansichten
+// der anderen Menüs; Knopf zeigt die Regeln des Systems
+function SystemDrawer({
+  x,
+  sourceName,
+  onGo,
+  onClose,
+  onRules,
+}: {
+  x: AppDocSystem2 | undefined;
+  sourceName: (id: number) => string;
+  onGo?: Go;
+  onClose: () => void;
+  onRules: (key: string) => void;
+}) {
+  if (!x) return null;
+  const [tone, state] = POWER[x.power_state ?? ""] ?? ["na", x.power_state ?? ""];
+  const row = (label: string, value: ReactNode) => (
+    <>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </>
+  );
   return (
-    <div className="card" style={{ marginTop: 14 }}>
+    <Drawer title={x.name} sub={x.kind === "vm" ? "VM der Applikation" : "Server der Applikation (ohne VM)"} onClose={onClose}>
+      <div id="app-system-detail">
+        <div className="chips" style={{ marginBottom: 10 }}>
+          <span className={`chip ${x.kind === "vm" ? "info" : ""}`}>{x.kind === "vm" ? "VM" : "Server"}</span>
+          {x.kind === "vm" && state && <span className={`chip ${tone}`}>{state}</span>}
+          <span className="chip ok" title="spezifische Regeln">
+            {x.rules.specific} spezifisch
+          </span>
+          <span className={`chip ${x.rules.unspecific ? "warn" : "na"}`} title="unspezifische Regeln (Subnetz, any, vzAny)">
+            {x.rules.unspecific} unspezifisch
+          </span>
+        </div>
+        {(x.hints ?? []).map((h) => (
+          <div key={h} className="app-hint" style={{ marginBottom: 6 }}>
+            <span className="chip warn">Hinweis</span> {h}
+          </div>
+        ))}
+        <dl className="kv">
+          {row("gehört dazu über", x.member)}
+          {x.guest_os && row("Betriebssystem", x.guest_os)}
+          {row("IPs", x.ips.length ? <span className="mono">{x.ips.join(", ")}</span> : <Dash />)}
+          {row("DNS", x.dns.length ? <span className="mono">{x.dns.join(", ")}</span> : <Dash />)}
+          {x.servers.length > 0 && row("Server (IPAM)", <span className="mono">{x.servers.join(", ")}</span>)}
+          {row("EPG", x.epgs.length ? x.epgs.map((e) => <div key={e} className="mono">{e}</div>) : <Dash />)}
+          {row(
+            "Portgruppe",
+            x.nics?.some((n) => n.portgroup) ? (
+              x.nics
+                .filter((n) => n.portgroup)
+                .map((n) => (
+                  <div key={n.name} title={n.name} className="mono">
+                    {n.portgroup}
+                    {n.vlan != null && <span className="faint"> (VLAN {n.vlan})</span>}
+                    {n.ips.length > 0 && <span className="faint"> · {n.ips.join(", ")}</span>}
+                    <div className="faint">
+                      → {n.epg ?? "keine EPG"}
+                      {n.epg && n.match === "vlan" && <span className="chip warn"> nur über VLAN</span>}
+                    </div>
+                  </div>
+                ))
+            ) : x.portgroups.length ? (
+              x.portgroups.map((p) => <div key={p} className="mono">{p}</div>)
+            ) : (
+              <Dash />
+            ),
+          )}
+          {row(
+            "Cluster / Host",
+            x.cluster || x.host ? (
+              <span className="mono">
+                {x.cluster ?? "–"}
+                {x.host && <span className="faint"> · {x.host}</span>}
+              </span>
+            ) : (
+              <Dash />
+            ),
+          )}
+          {row("Standort", x.site ? siteLabel(x.site) : <Dash />)}
+          {row(
+            "Firewall-Objekt",
+            x.objects.length ? (
+              x.objects.map((o) => (
+                <div key={o.name} className="objgroup">
+                  <span className="mono">{o.name}</span>{" "}
+                  {o.name_ok === true && (
+                    <span className="chip ok" title="Name passt zum DNS-Namen im IPAM">
+                      ✓
+                    </span>
+                  )}
+                  {o.name_ok === false && (
+                    <span className="chip warn" title={`Name passt nicht zum DNS-Namen im IPAM (${x.dns.join(", ")})`}>
+                      Name ≠ DNS
+                    </span>
+                  )}
+                  <div className="chips" title="auf diesen Firewalls erfasst – Klick öffnet das Objekt">
+                    {o.where.map((w) => (
+                      <button key={w.id} className="chip linkchip" onClick={() => onGo?.("objekte", { object_id: String(w.id) })}>
+                        {sourceName(w.source_system_id)}
+                        {w.vdom && w.vdom !== "root" ? ` · VDOM ${w.vdom}` : ""}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <Dash />
+            ),
+          )}
+        </dl>
+        <div className="chips" style={{ marginTop: 12 }}>
+          <button className="btn btn-sm" id="app-system-rules" onClick={() => onRules(x.key)}>
+            Regeln dieses Systems zeigen
+          </button>
+          {onGo && x.ips[0] && (
+            <button className="btn btn-ghost btn-sm" onClick={() => onGo("regeln", { q: x.ips[0] })} title="alle Regeln mit dieser IP">
+              In Regeln &amp; Contracts
+            </button>
+          )}
+        </div>
+      </div>
+    </Drawer>
+  );
+}
+
+function EpgsCard({ items, fold, onPick }: { items: AppDocEpg[]; fold: Fold; onPick: (key: string) => void }) {
+  return (
+    <div className="card" id="app-epgs" style={{ marginTop: 14 }}>
       <div className="card-head">
-        <h2>EPGs im ACI</h2>
+        <FoldTitle fold={fold}>EPGs im ACI</FoldTitle>
         <span className="mono faint" style={{ fontSize: 12 }}>
           {items.length}
         </span>
@@ -1047,6 +1168,7 @@ function EpgsCard({ items, onPick }: { items: AppDocEpg[]; onPick: (key: string)
           ganzer Pfad Tenant/AP/EPG – Klick zeigt die Regeln der EPG und ihrer Systeme
         </span>
       </div>
+      {fold.open && (
       <div className="card-body scroll">
         {items.length === 0 ? (
           <div className="loading">Keine EPGs – Application Profile oder EPG als Mitglied hinzufügen.</div>
@@ -1097,6 +1219,7 @@ function EpgsCard({ items, onPick }: { items: AppDocEpg[]; onPick: (key: string)
           </table>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -1108,7 +1231,7 @@ const parts = (label: string): Scope => {
   return { tenant, ap, epg };
 };
 
-function FindingsCard({ doc, onRule, onGo }: { doc: ApplicationDoc; onRule: (id: number) => void; onGo?: Go }) {
+function FindingsCard({ doc, onRule, onGo, fold }: { doc: ApplicationDoc; onRule: (id: number) => void; onGo?: Go; fold: Fold }) {
   const [sel, setSel] = useState<Scope>({ tenant: "", ap: "", epg: "" });
   const labels = [...new Set(doc.findings.flatMap((x) => x.epgs ?? []))].sort();
   const scopes = labels.map(parts);
@@ -1124,7 +1247,7 @@ function FindingsCard({ doc, onRule, onGo }: { doc: ApplicationDoc; onRule: (id:
   return (
     <div className="card" id="app-findings" style={{ marginTop: 14 }}>
       <div className="card-head">
-        <h2>Findings</h2>
+        <FoldTitle fold={fold}>Findings</FoldTitle>
         <span className="mono faint" style={{ fontSize: 12 }}>
           {shown.length}
           {shown.length !== doc.findings.length ? ` von ${doc.findings.length}` : ""}
@@ -1133,7 +1256,7 @@ function FindingsCard({ doc, onRule, onGo }: { doc: ApplicationDoc; onRule: (id:
           offene Befunde zu Regeln, Servern, VMs, Portgruppen und Subnetzen der Applikation
         </span>
       </div>
-      {labels.length > 0 && (
+      {fold.open && labels.length > 0 && (
         <div className="card-body pad no-print" style={{ paddingBottom: 0 }}>
           <div className="filterbar" style={{ marginBottom: 10 }} id="finding-scope">
             <select
@@ -1173,6 +1296,7 @@ function FindingsCard({ doc, onRule, onGo }: { doc: ApplicationDoc; onRule: (id:
           </div>
         </div>
       )}
+      {fold.open && (
       <div className="card-body scroll">
         {shown.length === 0 ? (
           <div className="loading">{doc.findings.length ? "Keine Befunde für diese Auswahl." : "Keine offenen Befunde."}</div>
@@ -1211,6 +1335,7 @@ function FindingsCard({ doc, onRule, onGo }: { doc: ApplicationDoc; onRule: (id:
           </table>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -1323,69 +1448,10 @@ function RuleMembers({
   );
 }
 
-// Abhängigkeiten zu anderen Applikationen (0.60.0): abgeleitet aus spezifischen Regeln
-function DependenciesCard({
-  deps,
-  onGo,
-  onRule,
-}: {
-  deps: NonNullable<ApplicationDoc["dependencies"]>;
-  onGo?: Go;
-  onRule: (id: number) => void;
-}) {
-  const column = (title: string, hint: string, items: AppDependency[], id: string) => (
-    <div style={{ flex: "1 1 320px" }} id={id}>
-      <h3 style={{ margin: "0 0 6px" }} title={hint}>
-        {title} <span className="faint mono">{items.length}</span>
-      </h3>
-      {items.length === 0 ? (
-        <span className="faint">keine</span>
-      ) : (
-        <table className="compact">
-          <tbody>
-            {items.map((d) => (
-              <tr key={d.application_id}>
-                <td>
-                  <button className="linkbtn objlink" onClick={() => onGo?.("apps", { app: String(d.application_id) })}>
-                    {d.name}
-                  </button>
-                </td>
-                <td>
-                  {d.rules.map((r) => (
-                    <div key={r.rule_id}>
-                      <button className="linkbtn objlink mono" onClick={() => onRule(r.rule_id)} title={`über ${r.via}`}>
-                        {r.name}
-                      </button>{" "}
-                      <span className="faint mono">{r.services.join(", ")}</span>
-                    </div>
-                  ))}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
-  return (
-    <div className="card" id="app-dependencies" style={{ marginTop: 14 }}>
-      <div className="card-head">
-        <h2>Abhängigkeiten</h2>
-        <span className="faint" style={{ fontSize: 12 }}>
-          aus Regeln, die ein System dieser Applikation gezielt mit einem System einer anderen verbinden (EPG, Host, Netz in deren EPG-Subnetz – nicht any)
-        </span>
-      </div>
-      <div className="card-body pad" style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-        {column("nutzt", "diese Applikation ist Quelle bzw. Consumer", deps.uses, "app-deps-uses")}
-        {column("wird genutzt von", "diese Applikation ist Ziel bzw. Provider", deps.used_by, "app-deps-used-by")}
-      </div>
-    </div>
-  );
-}
-
 const md = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
-function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string, conns: AppConnections | null = null): string {
+// Doku als Markdown (0.73.0: nur die gewählten Abschnitte, ohne Abhängigkeiten)
+function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string, conns: AppConnections | null, want: Set<string>): string {
   const a = doc.application;
   const s = doc.summary;
   const lines = [`# Applikation ${a.name}`, ""];
@@ -1401,18 +1467,22 @@ function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string, co
   ].filter(Boolean);
   if (meta.length) lines.push(meta.join(" · "), "");
   if (a.description) lines.push(a.description, "");
-  lines.push(
-    `**Übersicht:** ${s.vms} VMs${s.servers ? ` + ${s.servers} Server` : ""} · ${s.epgs} EPGs · ${s.rules} Regeln (${s.specific} spezifisch, ${s.unspecific} unspezifisch) · ${s.findings} Findings`,
-    "",
-  );
-  lines.push("## Systeme", "", "| System | IPs | EPG | Portgruppe | Regeln spez./unspez. |", "| --- | --- | --- | --- | --- |");
-  for (const x of doc.systems) {
+  if (want.has("overview")) {
     lines.push(
-      `| ${x.kind === "vm" ? "VM" : "Server"} ${md(x.name)} | ${md(x.ips.join(", "))} | ${md(x.epgs.join(", "))} | ${md(x.portgroups.join(", "))} | ${x.rules.specific} / ${x.rules.unspecific} |`,
+      `**Übersicht:** ${s.vms} VMs${s.servers ? ` + ${s.servers} Server` : ""} · ${s.epgs} EPGs · ${s.rules} Regeln (${s.specific} spezifisch, ${s.unspecific} unspezifisch) · ${s.findings} Findings`,
+      "",
     );
   }
-  lines.push("");
-  if (doc.epgs.length) {
+  if (want.has("systems")) {
+    lines.push("## Systeme", "", "| System | IPs | EPG | Portgruppe | Regeln spez./unspez. |", "| --- | --- | --- | --- | --- |");
+    for (const x of doc.systems) {
+      lines.push(
+        `| ${x.kind === "vm" ? "VM" : "Server"} ${md(x.name)} | ${md(x.ips.join(", "))} | ${md(x.epgs.join(", "))} | ${md(x.portgroups.join(", "))} | ${x.rules.specific} / ${x.rules.unspecific} |`,
+      );
+    }
+    lines.push("");
+  }
+  if (want.has("epgs") && doc.epgs.length) {
     lines.push("## EPGs im ACI", "", "| EPG | BD | VRF | Subnetze | VMs |", "| --- | --- | --- | --- | --- |");
     for (const e of doc.epgs) {
       lines.push(`| ${md(e.label)} | ${md(e.bd ?? "")} | ${md(e.vrf ?? "")} | ${md(e.subnets.join(", "))} | ${e.vm_count} |`);
@@ -1420,35 +1490,132 @@ function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string, co
     lines.push("");
   }
   const names = new Map<string, string>([...doc.systems.map((x) => [x.key, x.name] as [string, string]), ...doc.epgs.map((e) => [e.key, e.label] as [string, string])]);
-  lines.push("## Regeln & Contracts", "", "| Regel | Aktion | Herkunft | Richtung | System | Bezug |", "| --- | --- | --- | --- | --- | --- |");
-  for (const r of doc.rules) {
-    // routingtechnisch unmögliche Treffer gehören nicht in die Doku (0.24.0)
-    const hits = doc.hits.filter((h) => h.rule_id === r.id && h.relevance !== "impossible");
-    if (!hits.length) continue;
-    // unspezifisch (any, Netz): nur die Regel – statt aller Systeme ihre Anzahl (0.37.0)
-    const all = [...new Set(hits.map((h) => names.get(h.system) ?? h.system))];
-    const scope = best(hits);
-    const sys =
-      scope === "assigned" ? "direkt zugeordnet" : scope === "specific" ? all.join(", ") : `${all.length} System${all.length === 1 ? "" : "e"}`;
-    const dir = [...new Set(hits.map((h) => DIRECTION[h.direction]?.[0].replace(/^\S+ /, "") ?? h.direction))].join(", ");
-    const via = [...new Set(hits.map((h) => h.via))].join(", ");
-    lines.push(
-      `| ${md(r.aci?.contract ?? r.name)} | ${r.action} | ${r.domain === "aci_contract" ? "ACI" : "Firewall"} ${md(sourceName(r.source_system_id))} | ${dir} | ${md(sys)} | ${SCOPE[best(hits)][1]}: ${md(via)} |`,
-    );
-  }
-  lines.push("");
-  const deps = doc.dependencies;
-  if (deps && (deps.uses.length || deps.used_by.length)) {
-    lines.push("## Abhängigkeiten", "", "| Richtung | Applikation | Regeln |", "| --- | --- | --- |");
-    for (const [label, items] of [
-      ["nutzt", deps.uses],
-      ["wird genutzt von", deps.used_by],
-    ] as const) {
-      for (const d of items) lines.push(`| ${label} | ${md(d.name)} | ${md(d.rules.map((r) => `${r.name} (${r.services.join(", ") || "alle"})`).join(", "))} |`);
+  if (want.has("rules")) {
+    lines.push("## Regeln & Contracts", "", "| Regel | Aktion | Herkunft | Richtung | System | Bezug |", "| --- | --- | --- | --- | --- | --- |");
+    for (const r of doc.rules) {
+      // routingtechnisch unmögliche Treffer gehören nicht in die Doku (0.24.0)
+      const hits = doc.hits.filter((h) => h.rule_id === r.id && h.relevance !== "impossible");
+      if (!hits.length) continue;
+      // unspezifisch (any, Netz): nur die Regel – statt aller Systeme ihre Anzahl (0.37.0)
+      const all = [...new Set(hits.map((h) => names.get(h.system) ?? h.system))];
+      const scope = best(hits);
+      const sys =
+        scope === "assigned" ? "direkt zugeordnet" : scope === "specific" ? all.join(", ") : `${all.length} System${all.length === 1 ? "" : "e"}`;
+      const dir = [...new Set(hits.map((h) => DIRECTION[h.direction]?.[0].replace(/^\S+ /, "") ?? h.direction))].join(", ");
+      const via = [...new Set(hits.map((h) => h.via))].join(", ");
+      lines.push(
+        `| ${md(r.aci?.contract ?? r.name)} | ${r.action} | ${r.domain === "aci_contract" ? "ACI" : "Firewall"} ${md(sourceName(r.source_system_id))} | ${dir} | ${md(sys)} | ${SCOPE[best(hits)][1]}: ${md(via)} |`,
+      );
     }
     lines.push("");
   }
-  return lines.concat(conns ? connectionsMarkdown(conns) : [], tablesMarkdown(doc.tables)).join("\n");
+  if (conns && want.has("connections")) lines.push(...connectionsMarkdown(conns));
+  if (want.has("findings")) {
+    lines.push("## Findings", "");
+    if (!doc.findings.length) lines.push("Keine offenen Befunde.", "");
+    else {
+      lines.push("| Befund | Meldung | Hinweis |", "| --- | --- | --- |");
+      for (const x of doc.findings) lines.push(`| ${md(findingLabel(x.type))} | ${md(x.message)} | ${md(x.hint ?? "")} |`);
+      lines.push("");
+    }
+  }
+  return lines.concat(tablesMarkdown(doc.tables, want.has("categories"), want.has("hidden"))).join("\n");
+}
+
+// Export und Druck mit wählbaren Abschnitten (0.73.0); die Auswahl bleibt im Browser
+function ExportDialog({
+  customer,
+  onClose,
+  onRun,
+}: {
+  customer: boolean;
+  onClose: () => void;
+  onRun: (kind: "md" | "word" | "print", sections: string[]) => Promise<void>;
+}) {
+  const options = DOC_SECTIONS.filter(([k]) => !customer || !INFRA.has(k));
+  const [sel, setSel] = useState<Set<string>>(() => {
+    const stored = readStored<string[] | null>(EXPORT_KEY, null);
+    const keys = options.map(([k]) => k);
+    return new Set(Array.isArray(stored) ? stored.filter((k) => keys.includes(k)) : keys);
+  });
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const chosen = options.map(([k]) => k).filter((k) => sel.has(k));
+  const toggle = (key: string) =>
+    setSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      writeJson(EXPORT_KEY, [...next]);
+      return next;
+    });
+  const run = async (kind: "md" | "word" | "print") => {
+    setBusy(kind);
+    setErr(null);
+    try {
+      await onRun(kind, chosen);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const pick = (keys: string[]) => {
+    setSel(new Set(keys));
+    writeJson(EXPORT_KEY, keys);
+  };
+  const empty = chosen.length === 0;
+  return (
+    <Modal
+      title="Export / Drucken"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>
+            Abbrechen
+          </button>
+          <button className="btn" id="app-export-md" disabled={empty || busy !== null} onClick={() => void run("md")}>
+            {busy === "md" ? "…" : "Markdown"}
+          </button>
+          {!customer && (
+            <button
+              className="btn"
+              id="app-doc-confluence"
+              disabled={empty || busy !== null}
+              title="Word-Datei der Doku – mit Netzwerkplan als draw.io im ZIP – zum Verbessern und Importieren in Confluence"
+              onClick={() => void run("word")}
+            >
+              {busy === "word" ? "…" : sel.has("plan") ? "Word + draw.io (ZIP)" : "Word (.docx)"}
+            </button>
+          )}
+          <button className="btn btn-primary" id="app-export-print" disabled={empty || busy !== null} onClick={() => void run("print")}>
+            Drucken / PDF
+          </button>
+        </>
+      }
+    >
+      <div id="app-export-dialog">
+        <ErrorBox error={err} prefix="Export" />
+        <p className="faint" style={{ marginTop: 0, fontSize: 12 }}>
+          Abschnitte für Export und Druck – der Kopf mit dem Steckbrief steht immer da. Die Auswahl bleibt in diesem Browser.
+        </p>
+        <div className="chips" style={{ marginBottom: 8 }}>
+          <button className="linkbtn" onClick={() => pick(options.map(([k]) => k))}>
+            alle
+          </button>
+          <button className="linkbtn" onClick={() => pick([])}>
+            keine
+          </button>
+        </div>
+        {options.map(([key, label, hint]) => (
+          <label key={key} className="check" style={{ display: "block", margin: "4px 0" }}>
+            <input type="checkbox" data-section={key} checked={sel.has(key)} onChange={() => toggle(key)} /> {label}
+            {hint && <span className="faint"> – {hint}</span>}
+          </label>
+        ))}
+      </div>
+    </Modal>
+  );
 }
 
 // Regel in einer Kategorie ausblenden (0.69.0): Begründung Pflicht, nur diese bzw. alle Kategorien

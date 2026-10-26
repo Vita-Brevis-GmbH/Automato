@@ -390,6 +390,7 @@ def refresh_zone_findings(session: Session, tenant_id: int) -> int:
 
 APP_TYPES = frozenset({FindingType.APP_CONNECTION_MISMATCH})
 APP_CONNECTIONS = 10  # Verbindungen je Befund im Detail
+APP_VARIANTS = 6  # Wege je Verbindung im Detail (0.73.0)
 
 
 _app_next: dict[int, int] = {}  # je Mandant: hier beginnt die naechste Neuberechnung
@@ -397,10 +398,12 @@ _app_next: dict[int, int] = {}  # je Mandant: hier beginnt die naechste Neuberec
 
 def _app_issues(session: Session, tenant_id: int, apps: list,
                 budget: float | None = None) -> tuple[list[Issue], set[int]]:  # fmt: skip
-    """Abweichung Regel <-> Weg (0.59.0, ADR 0021): je erlaubender Regel und Applikation ein
-    Befund mit den Verbindungen, die der Weg nicht oeffnet (`app_paths`). Graph und Policies
-    einmal fuer alle Applikationen; nach `budget` Sekunden ist Schluss. -> (Befunde,
-    Applikationen ohne Ergebnis - Fehler bzw. Zeitbudget; deren Befunde bleiben)."""
+    """Wege uneinheitlich (0.73.0, ADR 0021; bis 0.72 „Regel <-> Weg“): je erlaubender Regel und
+    Applikation ein Befund mit den Verbindungen, die ueber einen Weg offen und ueber einen
+    anderen gesperrt sind (aktiv, ECMP, Backup, Firewalls im Verbund - `app_paths`). Durchgehend
+    gesperrte Verbindungen sind gewollt und kein Befund (Anwender). Graph und Policies einmal
+    fuer alle Applikationen; nach `budget` Sekunden ist Schluss. -> (Befunde, Applikationen ohne
+    Ergebnis - Fehler bzw. Zeitbudget; deren Befunde bleiben)."""
     import logging
     import time
 
@@ -432,14 +435,17 @@ def _app_issues(session: Session, tenant_id: int, apps: list,
             continue
         per_rule: dict[int, list[dict]] = defaultdict(list)
         for c in result["connections"]:
+            if not c["inconsistent"]:
+                continue
+            variants = [{k: v.get(k) for k in ("kind", "via", "verdict", "text", "reason")}
+                        for v in c["variants"][:APP_VARIANTS]]  # fmt: skip
             for st in c["rules"]:
-                if not app_paths.deviates(st, c["verdict"], c["reached"]):
+                if st["action"] != "allow":
                     continue
                 per_rule[st["rule_id"]].append({
                     "src": c["src"]["label"], "dst": c["dst"]["label"],
                     "service": c["service"], "verdict": c["verdict"],
-                    "reached": c["reached"], "state": st["state"], "why": st["text"],
-                    "path": c["text"],
+                    "state": st["state"], "path": c["text"], "variants": variants,
                 })  # fmt: skip
         rules = {r.id: r for r in session.scalars(select(Rule).where(
             Rule.id.in_(list(per_rule))))} if per_rule else {}  # fmt: skip

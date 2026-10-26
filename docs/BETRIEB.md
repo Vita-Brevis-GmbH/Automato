@@ -708,16 +708,22 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       dem Weg* (ihr Gerät liegt nicht auf dem Weg), *nicht prüfbar* (kein Weg bekannt).
     - **Abweichung:** Eine Regel erlaubt, aber der Weg sperrt, sie liegt nicht auf dem Weg bzw.
       greift dort nicht. Abweichungen stehen zuerst; „nur Abweichungen und Gesperrte“ filtert.
-    - **Als Befund (0.59.0):** je erlaubender Regel und Applikation ein Befund „Applikation:
-      Regel ↔ Weg“ (Findings → Applikationen, auch in der Applikations-Doku bei den Befunden)
-      mit den Verbindungen, die der Weg nicht öffnet. Neu berechnet nach jedem Lauf, nach
+    - **Wege uneinheitlich (0.73.0):** Ist eine Verbindung über einen Weg offen und über einen
+      anderen gesperrt (aktive Wege bzw. ECMP, Backup-Wege gleicher Länge, die Firewalls eines
+      Verbunds), steht in der Zeile „Wege uneinheitlich“; das Detail zeigt je Weg (aktiv bzw.
+      Backup, über welche Firewalls) das Urteil. Im Kopf der Karte „N Wege uneinheitlich“.
+    - **Als Befund (0.59.0, seit 0.73.0 nur bei uneinheitlichen Wegen):** je erlaubender Regel
+      und Applikation ein Befund „Applikation: Wege uneinheitlich“ (Findings → Applikationen,
+      auch in der Applikations-Doku bei den Befunden) mit den Verbindungen und dem Urteil je
+      Weg. Sperrt der Weg durchgehend bzw. liegt die Regel nicht auf dem Weg, hat das einen
+      Grund – Abweichung in der Karte, aber kein Befund. Neu berechnet nach jedem Lauf, nach
       „Abgleich“ und beim Ändern bzw. Löschen einer Applikation; Triage bleibt erhalten. Nach
       einem Lauf höchstens `AUTOMATO_APP_FINDINGS_SECONDS` (120, `0` = ohne Grenze) – was nicht
       drankommt, behält seine Befunde und ist beim nächsten Lauf zuerst dran (Hinweis im Log).
-    - **Export und Druck (0.59.0):** „Export (Markdown)“ der Applikations-Doku enthält den
-      Abschnitt „Verbindungen Ende zu Ende“ (Richtung, Quelle, Ziel, Dienst, Weg mit der
-      entscheidenden Regel je Hop, Urteil, Abweichung); „Drucken / PDF“ zeigt je Verbindung den
-      Weg mit den entscheidenden Regeln und die Abweichung ausgeschrieben.
+    - **Export und Druck (0.59.0):** der Export der Applikations-Doku enthält den Abschnitt
+      „Verbindungen Ende zu Ende“ (Richtung, Quelle, Ziel, Dienst, Weg mit der entscheidenden
+      Regel je Hop, Urteil, Abweichung bzw. Wege uneinheitlich); „Drucken / PDF“ zeigt je
+      Verbindung den Weg mit den entscheidenden Regeln und die Abweichung ausgeschrieben.
     - Liegt die Quelle an keinem gelesenen Gerät (Internet, Partner), beginnt der Weg auf dem
       Gerät der Regel. „In der Weg-Suche öffnen“ zeigt den ganzen Weg mit allen Varianten.
     - **Netzwerkplan (0.67.0):** Umschalter **Tabelle | Plan** im Kopf der Karte (bleibt
@@ -755,27 +761,41 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - Export (Markdown): Abschnitt „Ausgeblendete Regeln“ mit Kategorie und Begründung.
     - Audit: `application.rule_hidden` bzw. `application.rule_shown` mit Regel, Kategorie und
       Begründung (System → Audit).
-  - **Für Confluence (0.71.0, ADR 0026):** Knopf „Für Confluence (Word + draw.io)“ oben in der
-    Applikations-Doku lädt ein ZIP `applikation-<Name>-<Datum>.zip` mit
-    - `….docx` – die Doku als Word-Datei (Querformat A4): Steckbrief, Übersicht, Systeme,
-      EPGs, Regeln & Contracts, Abhängigkeiten, Verbindungen Ende zu Ende, Doku nach
-      Kategorien, ausgeblendete Regeln, Befunde; Überschriften mit Gliederung, Tabellen mit
-      wiederholter Kopfzeile;
+  - **Übersicht (0.73.0):** Systeme, EPGs, Verbindungen Ende zu Ende, Regeln & Contracts,
+    Findings und Doku nach Kategorien (auch jede Kategorie) klappen per Klick auf den Titel
+    auf bzw. zu (▾/▸); oben „alle aufklappen“ / „alle zuklappen“. Der Zustand bleibt im
+    Browser; die Kategorien sind zu Beginn zu. Die Tabelle **Systeme** zeigt nur System,
+    Zustand, IPs, EPG und Regeln – Klick öffnet das Detail (Mitgliedschaft, Betriebssystem,
+    DNS, Portgruppe je NIC mit EPG, Cluster/Host, Standort, Firewall-Objekte mit Namensprüfung
+    und Link) mit „Regeln dieses Systems zeigen“.
+  - **Export / Drucken (0.73.0):** der Knopf oben öffnet einen Dialog mit den Abschnitten
+    (Übersicht, Systeme, EPGs, Verbindungen Ende zu Ende, Netzwerkplan, Regeln & Contracts,
+    Findings, Doku nach Kategorien, ausgeblendete Regeln; der Kopf mit dem Steckbrief steht
+    immer da). Die Auswahl bleibt im Browser.
+    - **Markdown** – die gewählten Abschnitte (ohne Netzwerkplan).
+    - **Word + draw.io (ZIP)** bzw. **Word (.docx)**, wenn der Netzwerkplan nicht gewählt ist –
+      für Confluence, siehe unten.
+    - **Drucken / PDF** – die gewählten Abschnitte offen, die übrigen fallen im Druck weg.
+  - **Für Confluence (0.71.0, ADR 0026):** im Export-Dialog „Word + draw.io (ZIP)“ lädt
+    `applikation-<Name>-<Datum>.zip` (Umlaute ausgeschrieben) mit
+    - `….docx` – die Doku als Word-Datei (Querformat A4) mit den gewählten Abschnitten;
+      Überschriften mit Gliederung, Tabellen mit wiederholter Kopfzeile;
     - `…-netzwerkplan.drawio` – der Netzwerkplan als bearbeitbare Zeichnung (wie der Export
-      draw.io der Karte, alle Verbindungen).
+      draw.io der Karte, alle Verbindungen); nur mit dem Abschnitt Netzwerkplan.
     - Automato schreibt **nicht** nach Confluence. Ablauf: Word-Datei in Word bzw. LibreOffice
       überarbeiten, in Confluence *Seite erstellen → ⋯ → Importieren → Word-Dokument* (bzw.
       *Inhalt importieren*); den Plan in draw.io (diagrams.net) bearbeiten und auf der Seite
       mit dem draw.io-Makro *Diagramm importieren* einfügen. Änderungen in Confluence fliessen
       nicht zurück.
     - Nicht für Kunden-Benutzer (die Verbindungen zeigen die Infrastruktur). API
-      `GET /applications/{id}/export?format=zip|docx`.
-  - **Abhängigkeiten (0.60.0):** Karte „Abhängigkeiten“ mit „nutzt“ (die Applikation ist
-    Quelle bzw. Consumer) und „wird genutzt von“ (Ziel bzw. Provider). Abgeleitet aus den
-    erlaubenden Regeln mit spezifischem Treffer, deren Gegenseite EPGs, Server bzw. ein Netz
-    im Subnetz der EPGs einer anderen Applikation trifft; je Applikation die Regeln mit Bezug
-    und Diensten. Regeln über any bzw. grosse Netze ergeben keine Abhängigkeit. Im Export
-    (Markdown) als Abschnitt „Abhängigkeiten“.
+      `GET /applications/{id}/export?format=zip|docx&sections=…` (Komma-Liste `overview`,
+      `systems`, `epgs`, `connections`, `plan`, `rules`, `findings`, `categories`, `hidden`;
+      leer = alle).
+  - **Abhängigkeiten (0.60.0, seit 0.73.0 vorerst entfernt):** sie zeigten z. B. einen
+    Monitoring-Contract als Abhängigkeit ohne fachliche Aussage. Keine Karte, kein Export; die
+    API liefert sie nur noch mit `GET /applications/{id}/doc?dependencies=true` (abgeleitet
+    aus den erlaubenden Regeln mit spezifischem Treffer, deren Gegenseite EPGs, Server bzw. ein
+    Netz im Subnetz der EPGs einer anderen Applikation trifft).
   - **Nur die Beteiligten (0.43.2):** Ein Contract zeigt in der Applikation nur ihre EPGs bzw.
     VMs und die Gegenstellen, die über ihn zugreifen können. Die Regel-Liste nennt „von N im
     Contract“. Das Regel-Detail blendet die übrigen Consumer bzw. Provider mit ihren VMs aus,

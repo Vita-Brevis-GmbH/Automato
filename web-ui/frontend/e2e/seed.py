@@ -163,9 +163,16 @@ def run(app) -> None:
 
     # FortiGate 9 und 10: Verbund „Süd“ (Session-Sync-Paar), beide am selben LAN und Servernetz -
     # im Weg ein Hop mit beiden Firewalls (0.29.0); die Policy-Route 1 hat je Firewall ein anderes
-    # Gateway (Abweichung im Verbund, 0.72.0)
+    # Gateway (Abweichung im Verbund, 0.72.0); Policy 5 zum Portal erlaubt fw-09, fw-10 sperrt -
+    # Wege uneinheitlich (0.73.0, Befund der Applikation „Portal Süd“)
     south = []
     for name, own in (("fw-09", 2), ("fw-10", 3)):
+        portal = {"source_platform": "fortigate", "external_id": "5", "name": "portal-https",
+                  "action": "allow" if own == 2 else "deny", "sources": ["10.88.0.6"],
+                  "destinations": ["10.89.0.8"], "services": ["tcp/443"], "vdom": "root",
+                  "family": "v4",
+                  "raw": {"policyid": 5, "srcintf": [{"name": "lan"}],
+                          "dstintf": [{"name": "srv"}], "status": "enable"}}  # fmt: skip
         sid = system(name=name, platform="fortigate", base_url=f"https://{name}.example.ch")
         south.append(sid)
         nets = (
@@ -173,7 +180,7 @@ def run(app) -> None:
             ("srv", "10.89.0.0/24", f"10.89.0.{own}/24"),
         )
         run_result(
-            sid, "fortigate",
+            sid, "fortigate", rules=[portal],
             inventory={"devices": [{"name": name, "role": "firewall"}],
                        "interfaces": [{"device": name, "name": i, "ips": [ip], "vdom": "root"}
                                       for i, _p, ip in nets]},
@@ -351,6 +358,8 @@ def run(app) -> None:
         "members": [{"kind": "ap", "ref": "TE/AP"}],
     }
     ok(c.post(f"/applications?tenant_id={tid}", json=app), 201)
+    portal = {"name": "Portal Süd", "members": [{"kind": "host", "ref": "10.89.0.8"}]}
+    ok(c.post(f"/applications?tenant_id={tid}", json=portal), 201)
 
     # Logische Zonen (0.51.0): LAN, DMZ und Internet an fw-08; LAN -> DMZ gesperrt - die zwei
     # erlaubenden Policies dorthin sind Verstoesse (Befund); Internet ohne die privaten Netze

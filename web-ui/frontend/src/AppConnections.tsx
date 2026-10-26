@@ -17,6 +17,7 @@ import {
   fetchAppConnections,
   snatText,
 } from "./api";
+import { Fold, FoldTitle } from "./fold";
 import { Verdict, VERDICT } from "./Paths";
 import { Dash, download, Empty, ErrorBox, Icon, Loading, Note } from "./ui";
 
@@ -75,7 +76,7 @@ export function connectionsMarkdown(data: AppConnections): string[] {
   const s = data.summary;
   const lines = ["## Verbindungen Ende zu Ende", ""];
   lines.push(
-    `${s.total} Verbindungen · ${s.allow} erlaubt · ${s.blocked} gesperrt · ${s.open} abhängig bzw. offen · ${s.mismatch} Abweichungen`,
+    `${s.total} Verbindungen · ${s.allow} erlaubt · ${s.blocked} gesperrt · ${s.open} abhängig bzw. offen · ${s.mismatch} Abweichungen · ${s.inconsistent ?? 0} Wege uneinheitlich`,
     "",
   );
   data.notes.forEach((n) => lines.push(`> ${n}`, ""));
@@ -85,11 +86,48 @@ export function connectionsMarkdown(data: AppConnections): string[] {
     const way = c.hops.map(hopText).join(" → ") + (!c.reached && c.end ? ` – ${c.end.text}` : "");
     const verdict = c.text || (VERDICT[c.verdict]?.[1] ?? c.verdict);
     lines.push(
-      `| ${c.direction === "in" ? "eingehend" : "ausgehend"} | ${mdCell(sideText(c.src))} | ${mdCell(sideText(c.dst))} | ${c.service ?? "alle"} | ${mdCell(way || "–")} | ${mdCell(verdict)} | ${mdCell(c.mismatch.join("; "))} |`,
+      `| ${c.direction === "in" ? "eingehend" : "ausgehend"} | ${mdCell(sideText(c.src))} | ${mdCell(sideText(c.dst))} | ${c.service ?? "alle"} | ${mdCell(way || "–")} | ${mdCell(verdict)} | ${mdCell([...(c.inconsistent ? [variantsText(c)] : []), ...c.mismatch].join("; "))} |`,
     );
   }
   lines.push("");
   return lines;
+}
+
+// Wege uneinheitlich (0.73.0): je Weg (aktiv, ECMP, Backup) bzw. Firewall im Verbund das Urteil
+const VARIANT_KIND = { active: "aktiv", backup: "Backup" } as const;
+function variantsText(c: AppConnection): string {
+  const parts = c.variants.map((v) => `${VARIANT_KIND[v.kind]} über ${v.via}: ${VERDICT[v.verdict]?.[1] ?? v.verdict}`);
+  return `Wege uneinheitlich (${parts.join(", ")})`;
+}
+
+function Variants({ c }: { c: AppConnection }) {
+  if (c.variants.length < 2) return null;
+  return (
+    <div className="conn-variants" id="conn-variants">
+      <b>Wege</b>{" "}
+      <span className="faint">
+        {c.inconsistent
+          ? "– je nach Weg offen bzw. gesperrt: Regeln auf den Wegen angleichen"
+          : "– alle Wege mit gleichem Urteil"}
+      </span>
+      <table className="compact">
+        <tbody>
+          {c.variants.map((v, i) => (
+            <tr key={i}>
+              <td>
+                <span className={`chip ${v.kind === "backup" ? "na" : "info"}`}>{VARIANT_KIND[v.kind]}</span>
+              </td>
+              <td className="mono">{v.via}</td>
+              <td>
+                <Verdict v={v.verdict} title={v.text} />
+              </td>
+              <td className="faint">{[v.text, v.reason].filter(Boolean).join(" · ")}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 // Weg als Folge der Knoten, je Knoten nach seinem Urteil eingefärbt
@@ -125,6 +163,7 @@ function ConnDetail({ c, onRule, onGo }: { c: AppConnection; onRule: (id: number
         {c.paths > 1 ? ` · ${c.paths} aktive Wege (ECMP), gezeigt der erste` : ""}
         {c.parallel?.length ? ` · redundant über Verbund ${c.parallel.join(", ")}` : ""}
       </div>
+      <Variants c={c} />
       <table className="compact">
         <thead>
           <tr>
@@ -454,12 +493,14 @@ export default function ConnectionsCard({
   onRule,
   onGo,
   onData,
+  fold,
 }: {
   appId: number;
   reload: number;
   onRule: (id: number) => void;
   onGo?: Go;
   onData?: (d: AppConnections | null) => void; // für Export der Doku (0.59.0)
+  fold?: Fold; // 0.73.0: Bereich zuklappbar
 }) {
   const [data, setData] = useState<AppConnections | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -490,7 +531,7 @@ export default function ConnectionsCard({
   }, [appId, reload]);
   const needle = q.trim().toLowerCase();
   const rows = (data?.connections ?? []).filter((c) => {
-    if (onlyIssues && !c.mismatch.length && c.verdict === "allow" && c.reached) return false;
+    if (onlyIssues && !c.mismatch.length && !c.inconsistent && c.verdict === "allow" && c.reached) return false;
     if (!needle) return true;
     const text = [c.src.label, c.src.ip, c.dst.label, c.dst.ip, c.service, ...c.hops.map((h) => h.label), ...c.rules.map((r) => r.label)]
       .join("\n")
@@ -501,7 +542,7 @@ export default function ConnectionsCard({
   return (
     <div className="card" id="app-connections" style={{ marginTop: 14 }}>
       <div className="card-head">
-        <h2>Verbindungen Ende zu Ende</h2>
+        <FoldTitle fold={fold}>Verbindungen Ende zu Ende</FoldTitle>
         {s && (
           <span className="chips">
             <span className="chip">{s.total} Verbindungen</span>
@@ -513,9 +554,16 @@ export default function ConnectionsCard({
                 {s.mismatch} Abweichungen
               </span>
             )}
+            {(s.inconsistent ?? 0) > 0 && (
+              <span className="chip crit" id="conn-inconsistent" title="je nach Weg (aktiv, ECMP, Backup bzw. Firewall im Verbund) erlaubt bzw. gesperrt – als Befund">
+                {s.inconsistent} Wege uneinheitlich
+              </span>
+            )}
           </span>
         )}
         <div className="spacer" />
+        {(!fold || fold.open) && (
+        <>
         <span className="seg no-print" id="app-conn-view">
           <button className={view === "table" ? "on" : ""} id="app-conn-table" onClick={() => pickView("table")}>
             Tabelle
@@ -527,7 +575,11 @@ export default function ConnectionsCard({
         <button className={`toggle no-print ${onlyIssues ? "on" : ""}`} onClick={() => setOnlyIssues((v) => !v)}>
           nur Abweichungen und Gesperrte
         </button>
+        </>
+        )}
       </div>
+      {(!fold || fold.open) && (
+      <>
       <div className="card-body pad no-print" style={{ paddingBottom: 0 }}>
         <div className="faint" style={{ fontSize: 12, marginBottom: 8 }}>
           Je Verbindung (Quelle → Ziel, Dienst) eine Zeile mit dem Weg über Firewalls und ACI wie in der Weg-Suche; Klick zeigt je
@@ -582,7 +634,7 @@ export default function ConnectionsCard({
                 <th>Weg</th>
                 <th>Urteil</th>
                 <th title="Regeln der Doku, aus denen die Verbindung stammt">Regeln</th>
-                <th title="Regel erlaubt, Weg sperrt bzw. Gerät nicht auf dem Weg"></th>
+                <th title="Wege uneinheitlich (je nach Weg offen bzw. gesperrt) bzw. Regel erlaubt, Weg sperrt oder Gerät nicht auf dem Weg"></th>
               </tr>
             </thead>
             <tbody>
@@ -609,6 +661,12 @@ export default function ConnectionsCard({
                     </td>
                     <td className="num">{c.rules.length}</td>
                     <td>
+                      {c.inconsistent && (
+                        <span className="chip crit" title={variantsText(c)}>
+                          Wege uneinheitlich
+                        </span>
+                      )}
+                      {c.inconsistent && <div className="print-only conn-why">{variantsText(c)}</div>}
                       {c.mismatch.length > 0 && (
                         <span className="chip crit" title={c.mismatch.join("\n")}>
                           Abweichung
@@ -630,6 +688,8 @@ export default function ConnectionsCard({
           </table>
         )}
       </div>
+      )}
+      </>
       )}
     </div>
   );

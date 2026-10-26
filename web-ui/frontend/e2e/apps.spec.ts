@@ -22,18 +22,31 @@ test("Applikation: Doku mit Übersicht, VMs und EPGs mit ganzem ACI-Pfad", async
   const vm = systems.locator("tbody tr", { hasText: "web01-007-ka" });
   await expect(vm).toContainText("TE/AP/EG_db");
   await expect(vm).toContainText("10.10.10.5");
-  await expect(vm).toContainText("Portgruppe TE|AP|EG_db → EPG TE/AP/EG_db (AP TE/AP)");
-  // je NIC die Portgruppe mit ihrer EPG (0.43.1)
-  await expect(vm).toContainText("→ TE/AP/EG_db");
+  // 0.73.0: in der Übersicht kompakt, alles Weitere im Detail
+  await expect(vm).not.toContainText("Portgruppe");
+  await expect(vm.locator(".objgroup")).toHaveCount(0);
   const epg = page.locator(".card", { hasText: "EPGs im ACI" }).locator("tbody tr");
   await expect(epg).toContainText("TE/AP/EG_db");
+  await vm.click();
+  const detail = page.locator("#app-system-detail");
+  await expect(page.locator(".drawer h2")).toHaveText("web01-007-ka");
+  await expect(detail).toContainText("Portgruppe TE|AP|EG_db → EPG TE/AP/EG_db (AP TE/AP)");
+  // je NIC die Portgruppe mit ihrer EPG (0.43.1)
+  await expect(detail).toContainText("→ TE/AP/EG_db");
+  await expect(detail).toContainText("Ubuntu Linux (64-bit)");
+  await expect(detail).toContainText("clu01-chzrh1");
   // Firewall-Objekte je Name zusammengefasst, mit den Firewalls und der Namensprüfung
-  const web01 = vm.locator(".objgroup", { hasText: "H_web01" });
+  const web01 = detail.locator(".objgroup", { hasText: "H_web01" });
   await expect(web01).toHaveCount(1);
   await expect(web01).toContainText("fwc11-000-infrz");
   await expect(web01).toContainText("fw-03");
   await expect(web01).not.toContainText("Name ≠ DNS");
-  await expect(vm.locator(".objgroup", { hasText: "H_web03" })).toContainText("Name ≠ DNS");
+  await expect(detail.locator(".objgroup", { hasText: "H_web03" })).toContainText("Name ≠ DNS");
+  // Regeln des Systems: schliesst das Detail und filtert die Regeln
+  await detail.locator("#app-system-rules").click();
+  await expect(page.locator(".drawer")).toHaveCount(0);
+  await expect(page.locator("#app-rules select").first()).toHaveValue(/^vm:/);
+  await vm.click();
   await web01.locator("button:has-text('fw-03')").click();
   await expect(page).toHaveURL(/#objekte\?object_id=\d+/);
   await expect(page.locator(".drawer h2")).toHaveText("H_web01");
@@ -122,8 +135,9 @@ test("Doku je System: routingtechnisch unmögliche Regeln stehen nicht in den Ka
 
 test("Applikation: Doku nach Kategorien mit Aktion, Gerät und Link zur Regel", async ({ page }) => {
   await open(page);
-  const head = page.locator(".card-head", { hasText: "Doku nach Kategorien" });
-  await head.locator("button:has-text('anzeigen')").click();
+  // zugeklappt, bis man sie öffnet (0.73.0)
+  await expect(page.locator("#app-categories .stack")).toHaveCount(0);
+  await page.locator("#app-categories h2.fold-title").click();
   const tables = page.locator(".stack .card table");
   await expect(tables.first().locator("thead")).toContainText("Aktion");
   await expect(tables.first().locator("thead")).toContainText("Gerät");
@@ -193,13 +207,16 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   await expect(card.locator("tbody tr.clickable")).toHaveCount(6);
   await card.locator("tbody tr.clickable").filter({ hasText: "H_db01" }).click();
   await expect(card.locator(".conn-rules")).toContainText("nicht prüfbar");
-  // Export (Markdown) mit den Verbindungen und dem Weg je Hop (0.59.0)
-  const [file] = await Promise.all([page.waitForEvent("download"), page.locator("#app-doc-export").click()]);
+  // Export (Markdown) mit den Verbindungen und dem Weg je Hop (0.59.0) – seit 0.73.0 im Dialog
+  await page.locator("#app-doc-export").click();
+  const [file] = await Promise.all([page.waitForEvent("download"), page.locator("#app-export-md").click()]);
   const text = readFileSync((await file.path())!, "utf-8");
   expect(text).toContain("## Verbindungen Ende zu Ende");
   expect(text).toContain("| Richtung | Quelle | Ziel | Dienst | Weg (entscheidende Regel) | Urteil | Abweichung |");
   expect(text).toMatch(/EN_rt.*apic-01 · VRF TE:VRF1.*Contract CT_rt:SJ_1 erlaubt – der Weg ist gesperrt/);
   // Für Confluence (0.71.0): ZIP mit Word und dem Netzwerkplan als draw.io
+  await page.locator("#app-doc-export").click();
+  await expect(page.locator("#app-doc-confluence")).toHaveText("Word + draw.io (ZIP)");
   const [zip] = await Promise.all([page.waitForEvent("download"), page.locator("#app-doc-confluence").click()]);
   expect(zip.suggestedFilename()).toMatch(/^applikation-.+-\d{4}-\d\d-\d\d\.zip$/);
   const bytes = readFileSync((await zip.path())!);
@@ -212,13 +229,75 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   await expect(page.getByPlaceholder("Ziel: IP, Netz oder Name")).toHaveValue("172.16.5.9");
   await expect(page.getByPlaceholder("Dienst: tcp/443 oder FT_https")).toHaveValue("tcp/443");
 
-  // Abweichung als Befund (0.59.0): Kategorie Applikationen, Satz mit der Verbindung
+  // seit 0.73.0 kein Befund: der Weg sperrt durchgehend (das hat einen Grund) – Befund nur bei
+  // uneinheitlichen Wegen (Applikation „Portal Süd“)
   await page.goto("/#findings");
   const group = page.locator(".card.fgroup", { hasText: "Applikationen" });
-  await expect(group).toContainText("Applikation: Regel ↔ Weg");
-  await group.locator(".fline", { hasText: "Applikation: Regel ↔ Weg" }).click();
-  const finding = page.locator("tbody tr", { hasText: "CT_rt" }).first();
-  await expect(finding).toContainText("erlaubt für die Applikation „Webshop“");
+  await expect(group).toContainText("Applikation: Wege uneinheitlich");
+  await group.locator(".fline", { hasText: "Applikation: Wege uneinheitlich" }).click();
+  await expect(page.locator("tbody tr", { hasText: "CT_rt" })).toHaveCount(0);
+  const finding = page.locator("tbody tr", { hasText: "portal-https" }).first();
+  await expect(finding).toContainText("je nach Weg offen bzw. gesperrt");
+  await expect(finding).toContainText("über fw-09 erlaubt; über fw-10 gesperrt");
+});
+
+test("Applikation: Wege uneinheitlich, Bereiche zuklappen, Export mit Auswahl (0.73.0)", async ({ page }) => {
+  await page.goto("/#apps");
+  await rows(page).filter({ hasText: "Portal Süd" }).click();
+  await expect(page.locator("h1.app-title")).toHaveText("Portal Süd");
+  // Verbund Süd: fw-09 erlaubt, fw-10 sperrt – je nach Weg offen bzw. gesperrt
+  const card = page.locator("#app-connections");
+  await expect(card.locator("#conn-inconsistent")).toHaveText("1 Wege uneinheitlich");
+  const row = card.locator("tbody tr.clickable").first();
+  await expect(row).toContainText("Wege uneinheitlich");
+  await row.click();
+  const ways = card.locator("#conn-variants");
+  await expect(ways).toContainText("je nach Weg offen bzw. gesperrt");
+  await expect(ways.locator("tr", { hasText: "fw-09" })).toContainText("erlaubt");
+  await expect(ways.locator("tr", { hasText: "fw-10" })).toContainText("gesperrt");
+  // Bereich zuklappen: bleibt nach dem Neuladen zu; alle aufklappen
+  await page.locator("#app-systems h2.fold-title").click();
+  await expect(page.locator("#app-systems table")).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator("#app-systems h2.fold-title")).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("#app-systems table")).toHaveCount(0);
+  await page.locator("#app-folds-open").click();
+  await expect(page.locator("#app-systems table")).toHaveCount(1);
+  await expect(page.locator("#app-categories .stack")).toHaveCount(1);
+  await page.locator("#app-folds-close").click();
+  await expect(page.locator("#app-rules table")).toHaveCount(0);
+  // Export mit Auswahl: ohne Regeln, die Auswahl bleibt
+  await page.locator("#app-doc-export").click();
+  const dialog = page.locator("#app-export-dialog");
+  await dialog.locator("input[data-section='rules']").uncheck();
+  await dialog.locator("input[data-section='plan']").uncheck();
+  await expect(page.locator("#app-doc-confluence")).toHaveText("Word (.docx)");
+  const [file] = await Promise.all([page.waitForEvent("download"), page.locator("#app-export-md").click()]);
+  const text = readFileSync((await file.path())!, "utf-8");
+  expect(text).toContain("## Systeme");
+  expect(text).toContain("## Verbindungen Ende zu Ende");
+  expect(text).toContain("Wege uneinheitlich (aktiv über fw-09: erlaubt, aktiv über fw-10: gesperrt)");
+  expect(text).toContain("## Findings");
+  expect(text).not.toContain("## Regeln & Contracts");
+  await page.reload();
+  await page.locator("#app-doc-export").click();
+  await expect(dialog.locator("input[data-section='rules']")).not.toBeChecked();
+  await expect(dialog.locator("input[data-section='systems']")).toBeChecked();
+  // Word ohne Plan: nur die .docx
+  const [docx] = await Promise.all([page.waitForEvent("download"), page.locator("#app-doc-confluence").click()]);
+  expect(docx.suggestedFilename()).toMatch(/^applikation-portal-sued-\d{4}-\d\d-\d\d\.docx$/);
+  // Drucken: gewählte Abschnitte offen, die übrigen fallen weg; danach wie vorher
+  await page.evaluate(() => {
+    window.print = () => document.body.setAttribute("data-printed", "1");
+  });
+  await page.locator("#app-doc-export").click();
+  await page.locator("#app-export-print").click();
+  await expect(page.locator("body")).toHaveAttribute("data-printed", "1");
+  await expect(page.locator("#app-rules")).toHaveClass(/print-hide/);
+  await expect(page.locator("#app-systems table")).toHaveCount(1); // zugeklappt, im Druck offen
+  await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+  await expect(page.locator("#app-rules")).not.toHaveClass(/print-hide/);
+  await expect(page.locator("#app-systems table")).toHaveCount(0);
 });
 
 test("Applikation: Netzwerkplan mit Knoten, Diensten, Interfaces und Export (0.67.0)", async ({ page }) => {
@@ -280,8 +359,7 @@ test("Applikation: Netzwerkplan mit Knoten, Diensten, Interfaces und Export (0.6
 
 test("Applikation: Regel in einer Kategorie ausblenden mit Begründung, Export, einblenden (0.69.0)", async ({ page }) => {
   await open(page);
-  const head = page.locator(".card", { has: page.locator("h2", { hasText: "Doku nach Kategorien" }) });
-  await head.locator("button", { hasText: "anzeigen" }).click();
+  await page.locator("#app-categories h2.fold-title").click();
   // die erste Kategorie mit Regeln (über den Titel festhalten - die Zeile fällt gleich weg)
   const title = (await page.locator(".card", { has: page.locator(".doc-hide-btn") }).first().locator("h2").innerText()).trim();
   const card = page.locator(".card", { has: page.locator("h2", { hasText: title }) });
@@ -305,7 +383,8 @@ test("Applikation: Regel in einer Kategorie ausblenden mit Begründung, Export, 
   await expect(hidden).toContainText(rule);
   await expect(hidden).toContainText("user:dev");
   // Export: Abschnitt „Ausgeblendete Regeln“ mit der Begründung
-  const [file] = await Promise.all([page.waitForEvent("download"), page.locator("#app-doc-export").click()]);
+  await page.locator("#app-doc-export").click();
+  const [file] = await Promise.all([page.waitForEvent("download"), page.locator("#app-export-md").click()]);
   const text = readFileSync((await file.path())!, "utf-8");
   expect(text).toContain("## Ausgeblendete Regeln");
   expect(text).toContain("Grundregel, nicht applikationsspezifisch");
@@ -315,15 +394,17 @@ test("Applikation: Regel in einer Kategorie ausblenden mit Begründung, Export, 
   await expect(card.locator(".card-body > table tbody tr")).toHaveCount(before);
 });
 
-test("Applikation: Regeln zuordnen bzw. ausschliessen, Abhängigkeiten (0.60.0)", async ({ page, problems }) => {
-  // zweite Applikation mit dem Server H_db01 (172.16.5.9) – Webshop nutzt sie (Policy to-db)
+test("Applikation: Regeln zuordnen bzw. ausschliessen (0.60.0)", async ({ page, problems }) => {
+  // zweite Applikation mit dem Server H_db01 (172.16.5.9) – Webshop nutzt sie (Policy to-db);
+  // Abhängigkeiten seit 0.73.0 nicht mehr in der Doku (Anwender: vorerst entfernt)
   const created = await page.request.post("/api/applications?tenant_id=1", {
     data: { name: `Datenbank ${test.info().retry}`, members: [{ kind: "host", ref: "172.16.5.9" }] },
   });
   expect(created.status()).toBe(201);
   const db = (await created.json()) as { id: number; name: string };
   await open(page);
-  await expect(page.locator("#app-dependencies #app-deps-uses")).toContainText(db.name);
+  await expect(page.locator("#app-rules")).toBeVisible();
+  await expect(page.locator("#app-dependencies")).toHaveCount(0);
 
   // CT_rt ausschliessen: fällt aus der Liste, steht als ausgeschlossen da – und zurück
   const ct = page.locator("#app-rules tbody tr.clickable", { hasText: "CT_rt" });

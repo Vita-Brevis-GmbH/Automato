@@ -142,3 +142,26 @@ an den Verbindungen die Ports.
 - **Nicht** Teil dieser Stufe: physische Ports der Switches (L2-Abschnitte stehen in der
   Weg-Suche, ADR 0025), Export nach NetBox.
 
+## Ergänzung 0.73.0 — Befund nur bei uneinheitlichen Wegen
+
+Rückmeldung des Anwenders (2026-10-26): Verbindungen, die der Weg sperrt bzw. deren Regel nicht
+auf dem Weg liegt, haben einen Grund und sind kein Befund; gefunden werden soll, wenn eine
+Verbindung über einen Weg offen und über einen anderen gesperrt ist.
+
+- **Wege je Verbindung** (`app_paths.path_variants`): die Weg-Suche liefert neben den aktiven
+  Wegen (ECMP) die Backup-Wege gleicher Länge (`slack` 0); je Weg das Urteil aus den Hops mit
+  Regeln. Ein Verbund ist ein Hop mit einer Zeile je Firewall (`hop.parts`); urteilen seine
+  Firewalls verschieden, zählt je Firewall ein eigener Weg („fw-r → fw-p1“, „fw-r → fw-p2“).
+  `variants` (aktiv bzw. Backup, über, Urteil, Text, Grund der Abweichung) nur bei mehr als
+  einem Weg.
+- **Uneinheitlich** (`inconsistent`): mindestens ein Weg erlaubt und mindestens einer sperrt.
+  „Abhängig“ bzw. „unbekannt“ allein reichen nicht. Zusammenfassung `inconsistent`; Oberfläche
+  „Wege uneinheitlich“ in Kopf, Zeile und Detail (Urteil je Weg), Markdown und Word in der
+  Spalte Abweichung.
+- **Befund `app_connection_mismatch`** (Bezeichnung „Applikation: Wege uneinheitlich“) nur noch
+  für uneinheitliche Verbindungen einer erlaubenden Regel; im Detail je Verbindung die Wege
+  (höchstens 6). Die bisherige Abweichung (Weg sperrt, Regel nicht auf dem Weg bzw. greift dort
+  nicht) bleibt in der Karte, ist aber kein Befund mehr. Typ, Gegenstand, Zeitpunkte und
+  Zeitbudget wie in 0.59.0; ohne Migration (abgeleiteter Zustand, bestehende Befunde fallen beim
+  nächsten Abgleich weg).
+

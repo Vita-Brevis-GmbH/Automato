@@ -40,8 +40,14 @@ ZONE_KIND = {"dc": "Datacenter", "edge": "Edge", "transfer": "Transfer", "core":
 MAX_ROWS = 2000  # je Tabelle; der Rest steht als Hinweis da (Word bleibt bedienbar)
 
 
+_UMLAUT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue",
+                         "ß": "ss"})  # fmt: skip
+
+
 def slug(name: str, fallback: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_-]+", "-", name or "").strip("-").lower() or fallback
+    """Dateiname: Umlaute ausgeschrieben (0.73.0), sonst nur Buchstaben, Ziffern, `_`, `-`."""
+    plain = (name or "").translate(_UMLAUT)
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", plain).strip("-").lower() or fallback
 
 
 def bundle(files: list[tuple[str, bytes | str]]) -> bytes:
@@ -69,11 +75,19 @@ def _capped(doc: Document, rows: list, what: str) -> list:
 
 # -- Applikations-Doku ---------------------------------------------------------------------
 
+# Abschnitte zur Wahl beim Export (0.73.0, wie im Export-Dialog der Oberflaeche); der Kopf mit
+# Steckbrief steht immer da
+SECTIONS = ("overview", "systems", "epgs", "connections", "plan", "rules", "categories",
+            "hidden", "findings")  # fmt: skip
+
 
 def application(doc: dict, conns: dict | None, sources: dict[int, str], when: datetime,
-                tenant: str | None = None, plan_file: str | None = None) -> bytes:  # fmt: skip
+                tenant: str | None = None, plan_file: str | None = None,
+                sections: set[str] | None = None) -> bytes:  # fmt: skip
     """Applikations-Doku als Word: `doc` wie `GET /applications/{id}/doc`, `conns` wie
-    `GET …/connections` (None = ohne Verbindungen)."""
+    `GET …/connections` (None = ohne Verbindungen); `sections` = gewaehlte Abschnitte (None =
+    alle, `SECTIONS`)."""
+    want = set(SECTIONS) if sections is None else sections
     a = doc["application"]
     out = Document(f"Applikation {a['name']}", "Applikations-Doku (Automato)")
     out.heading(f"Applikation {a['name']}", 0)
@@ -92,12 +106,41 @@ def application(doc: dict, conns: dict | None, sources: dict[int, str], when: da
     ])  # fmt: skip
     s = doc.get("summary") or {}
     servers = f" + {s['servers']} Server" if s.get("servers") else ""
-    out.paragraph(("Übersicht: ", {"bold": True}),
-                  f"{s.get('vms', 0)} VMs{servers}"
-                  f" · {s.get('epgs', 0)} EPGs · {s.get('rules', 0)} Regeln "
-                  f"({s.get('specific', 0)} spezifisch, {s.get('unspecific', 0)} unspezifisch) · "
-                  f"{s.get('findings', 0)} Befunde")  # fmt: skip
+    if "overview" in want:
+        out.paragraph(("Übersicht: ", {"bold": True}),
+                      f"{s.get('vms', 0)} VMs{servers}"
+                      f" · {s.get('epgs', 0)} EPGs · {s.get('rules', 0)} Regeln "
+                      f"({s.get('specific', 0)} spezifisch, {s.get('unspecific', 0)} "
+                      f"unspezifisch) · {s.get('findings', 0)} Befunde")  # fmt: skip
+    if "systems" in want:
+        _systems(out, doc)
+    epgs = doc.get("epgs") or []
+    if epgs and "epgs" in want:
+        out.heading("EPGs im ACI", 1)
+        out.table(["EPG", "BD", "VRF", "Subnetze", "VMs"],
+                  [[e["label"], e.get("bd") or "", e.get("vrf") or "",
+                    ", ".join(e.get("subnets") or []), str(e.get("vm_count") or 0)]
+                   for e in epgs], [4, 2.4, 2.4, 3, 0.8])  # fmt: skip
+    if "rules" in want:
+        _rules(out, doc, sources)
+    if conns is not None and "connections" in want:
+        _connections(out, conns)
+    if "plan" in want:
+        out.heading("Netzwerkplan", 1)
+        if plan_file:
+            out.paragraph("Der Plan liegt als eigene Datei bei: ", (plan_file, {"bold": True}),
+                          " – in Confluence mit der draw.io-App einfügen (Diagramm importieren) "
+                          "bzw. in draw.io bearbeiten.")  # fmt: skip
+        else:
+            out.note("Netzwerkplan als draw.io-Datei in Automato (Verbindungen → Plan → Export).")
+    if "categories" in want or "hidden" in want:
+        _tables(out, doc.get("tables") or [], "categories" in want, "hidden" in want)
+    if "findings" in want:
+        _findings(out, doc.get("findings") or [])
+    return out.bytes(when)
 
+
+def _systems(out: Document, doc: dict) -> None:
     out.heading("Systeme", 1)
     rows = [[("VM " if x["kind"] == "vm" else "Server ") + x["name"], ", ".join(x.get("ips") or []),
              ", ".join(x.get("epgs") or []), ", ".join(x.get("portgroups") or []),
@@ -109,29 +152,6 @@ def application(doc: dict, conns: dict | None, sources: dict[int, str], when: da
                   _capped(out, rows, "Systeme"), [3, 3, 3, 3, 1.4])  # fmt: skip
     else:
         out.note("keine Systeme")
-
-    epgs = doc.get("epgs") or []
-    if epgs:
-        out.heading("EPGs im ACI", 1)
-        out.table(["EPG", "BD", "VRF", "Subnetze", "VMs"],
-                  [[e["label"], e.get("bd") or "", e.get("vrf") or "",
-                    ", ".join(e.get("subnets") or []), str(e.get("vm_count") or 0)]
-                   for e in epgs], [4, 2.4, 2.4, 3, 0.8])  # fmt: skip
-
-    _rules(out, doc, sources)
-    _dependencies(out, doc.get("dependencies") or {})
-    if conns is not None:
-        _connections(out, conns)
-    out.heading("Netzwerkplan", 1)
-    if plan_file:
-        out.paragraph("Der Plan liegt als eigene Datei bei: ", (plan_file, {"bold": True}),
-                      " – in Confluence mit der draw.io-App einfügen (Diagramm importieren) bzw. "
-                      "in draw.io bearbeiten.")  # fmt: skip
-    else:
-        out.note("Netzwerkplan als draw.io-Datei in Automato (Verbindungen → Plan → Export).")
-    _tables(out, doc.get("tables") or [])
-    _findings(out, doc.get("findings") or [])
-    return out.bytes(when)
 
 
 def _rules(out: Document, doc: dict, sources: dict[int, str]) -> None:
@@ -170,6 +190,8 @@ def _rules(out: Document, doc: dict, sources: dict[int, str]) -> None:
 
 
 def _dependencies(out: Document, deps: dict) -> None:
+    """Abhaengigkeiten zu anderen Applikationen (0.60.0) - seit 0.73.0 nicht im Export (Anwender:
+    vorerst entfernt, Monitoring u. a. sind keine fachlichen Abhaengigkeiten)."""
     rows = []
     for label, key in (("nutzt", "uses"), ("wird genutzt von", "used_by")):
         for d in deps.get(key) or []:
@@ -204,7 +226,8 @@ def _connections(out: Document, data: dict) -> None:
     s = data.get("summary") or {}
     out.paragraph(f"{s.get('total', 0)} Verbindungen · {s.get('allow', 0)} erlaubt · "
                   f"{s.get('blocked', 0)} gesperrt · {s.get('open', 0)} abhängig bzw. offen · "
-                  f"{s.get('mismatch', 0)} Abweichungen")  # fmt: skip
+                  f"{s.get('mismatch', 0)} Abweichungen · {s.get('inconsistent', 0)} Wege "
+                  "uneinheitlich")  # fmt: skip
     for n in data.get("notes") or []:
         out.note(n)
     rows = []
@@ -216,7 +239,8 @@ def _connections(out: Document, data: dict) -> None:
                      + (" (Rückrichtung)" if c.get("reverse") else ""),
                      _side(c["src"]), _side(c["dst"]), c.get("service") or "alle", way or "–",
                      c.get("text") or VERDICT.get(c.get("verdict"), c.get("verdict") or ""),
-                     "; ".join(c.get("mismatch") or [])])  # fmt: skip
+                     "; ".join((["Wege uneinheitlich"] if c.get("inconsistent") else [])
+                               + (c.get("mismatch") or []))])  # fmt: skip
     if rows:
         out.table(["Richtung", "Quelle", "Ziel", "Dienst", "Weg (entscheidende Regel)", "Urteil",
                    "Abweichung"], _capped(out, rows, "Verbindungen"),
@@ -225,10 +249,11 @@ def _connections(out: Document, data: dict) -> None:
         out.note("keine prüfbaren Verbindungen")
 
 
-def _tables(out: Document, tables: list[dict]) -> None:
-    out.heading("Doku nach Kategorien", 1)
+def _tables(out: Document, tables: list[dict], rows_too: bool = True,
+            hidden_too: bool = True) -> None:  # fmt: skip
+    out.heading("Doku nach Kategorien" if rows_too else "Ausgeblendete Regeln", 1)
     empty = []
-    for t in tables:
+    for t in tables if rows_too else []:
         if not t.get("rows"):
             empty.append(f"{t['index']}. {t['title']}")
             continue
@@ -239,9 +264,12 @@ def _tables(out: Document, tables: list[dict]) -> None:
         out.table(cols, _capped(out, rows, t["title"]))
     if empty:
         out.note("ohne Einträge: " + ", ".join(empty))
-    hidden = [(t, row) for t in tables for row in t.get("hidden") or []]
+    hidden = [(t, row) for t in tables for row in t.get("hidden") or []] if hidden_too else []
+    if not rows_too and not hidden:
+        out.note("keine ausgeblendeten Regeln")
     if hidden:
-        out.heading("Ausgeblendete Regeln", 2)
+        if rows_too:
+            out.heading("Ausgeblendete Regeln", 2)
         rows = []
         for t, row in hidden:
             hides = row.get("_hides") or []

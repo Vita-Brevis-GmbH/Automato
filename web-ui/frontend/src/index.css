@@ -522,6 +522,15 @@ pre.block { background: var(--surface-2); border: 1px solid var(--border); borde
 .run-msg { font-size: 11.5px; color: var(--muted); margin-top: 3px; max-width: 360px; white-space: normal; word-break: break-word; }
 .run-msg.err { color: var(--crit); }
 
+/* Zuklappbare Bereiche (0.73.0, Applikations-Doku) */
+.fold-title { cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 6px; }
+.fold-title:hover { color: var(--accent); }
+.fold-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.fold-title::before { content: "▾"; color: var(--muted); font-size: 12px; width: 12px; display: inline-block; }
+.fold-title[aria-expanded="false"]::before { content: "▸"; }
+.conn-variants { margin: 4px 0 8px; }
+.conn-variants table { margin-top: 4px; }
+
 /* Druck (Applikations-Doku "Drucken / PDF"): nur der Inhalt, ohne Navigation */
 .print-title { display: none; }
 .print-only { display: none; }
@@ -534,6 +543,9 @@ pre.block { background: var(--surface-2); border: 1px solid var(--border); borde
   .card-body.scroll, .card-body.viewport { overflow: visible; max-height: none; }
   .print-title { display: block; font-size: 20px; margin: 0 0 8px; }
   body { background: #fff; }
+  /* 0.73.0: nicht gewählte Abschnitte bzw. Teile der Kategorien */
+  .print-hide, .print-no-rows .doc-rows, .print-no-hidden .doc-hidden { display: none !important; }
+  .fold-title::before { display: none; }
 }
 
 /* Verlinkung zwischen den Ansichten (Objekt -> Regeln, NAT <-> Regeln) */

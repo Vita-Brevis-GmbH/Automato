@@ -72,7 +72,7 @@ const DETAIL_LABEL: Record<string, string | null> = {
   pairs: null,
   notes: null,
   zones: "Zonen",
-  // Abweichung Regel ↔ Weg (0.59.0): Verbindungen stehen im Satz
+  // Wege uneinheitlich (0.73.0, vorher Regel ↔ Weg): Verbindungen stehen im Satz
   application: "Applikation",
   application_id: null,
   connections: null,

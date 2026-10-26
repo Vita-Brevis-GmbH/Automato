@@ -79,6 +79,19 @@ Begründung und Audit):**
   `application.rule_shown` mit Regel-Verweis, Kategorie und Begründung. Kunden-Benutzer sehen
   die ausgeblendeten Zeilen ihrer Regeln, ändern aber nichts (Freigabeliste).
 
+**Ergänzung 0.73.0 (Anwender: mehr Übersicht in der Applikations-Doku):**
+- **Abhängigkeiten vorerst entfernt:** Die Ableitung aus spezifischen Regeln zeigte z. B. einen
+  Monitoring-Contract als Abhängigkeit – technisch eine Verbindung, fachlich keine Aussage über
+  die Produktion. Bis eine bessere Bewertung nötig wird (z. B. Art der Gegenstelle, Dienste,
+  von Hand bestätigt), keine Karte und kein Export; `GET /applications/{id}/doc` rechnet sie
+  nur noch mit `dependencies=true` (spart die Zeit), die Ableitung `applications.dependencies`
+  bleibt für einen späteren Ausbau.
+- **Übersicht:** Bereiche der Doku zuklappbar (Zustand im Browser), Systeme kompakt mit Detail
+  auf Klick. Export (Markdown, Word bzw. Word + draw.io) und Druck mit wählbaren Abschnitten
+  (`word_export.SECTIONS`: `overview`, `systems`, `epgs`, `connections`, `plan`, `rules`,
+  `findings`, `categories`, `hidden`; `GET /applications/{id}/export?sections=…`, der
+  Steckbrief steht immer da). Reine Darstellung, keine Änderung an den Daten.
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:
@@ -139,5 +152,5 @@ gehören zu mehreren Applikationen.
 - Benennt jemand ein AP, eine EPG oder einen Server um, verliert das Mitglied den Bezug und
   erscheint als „nicht mehr gelesen“. Der Vorschlag bietet das umbenannte Objekt wieder an.
 - Regeln direkt zuordnen bzw. ausschliessen und Abhängigkeiten zwischen Applikationen seit
-  0.60.0 (Ergänzung oben). Noch offen: ein Export nach NetBox (Tag/Custom Field, nur mit
+  0.60.0 (Ergänzung oben; Abhängigkeiten seit 0.73.0 vorerst nicht angezeigt). Noch offen: ein Export nach NetBox (Tag/Custom Field, nur mit
   eigener Freigabe gemäss ADR 0010).

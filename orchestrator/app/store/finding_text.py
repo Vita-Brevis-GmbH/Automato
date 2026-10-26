@@ -173,26 +173,37 @@ _STATE = {"off_path": "nicht auf dem Weg", "other": "greift auf dem Weg nicht",
           "decides": "entscheidet", "possible": "möglich", "unknown": "nicht prüfbar"}  # fmt: skip
 
 
+_VERDICT = {"allow": "erlaubt", "deny": "gesperrt", "implicit_deny": "gesperrt"}
+
+
+def _variant(v: dict) -> str:
+    backup = "Backup " if v.get("kind") == "backup" else ""
+    return f"{backup}über {v.get('via')} {_VERDICT.get(v.get('verdict'), v.get('verdict'))}"
+
+
 def _app_mismatch(subject: str, d: dict) -> tuple[str, str]:
-    """Abweichung Regel <-> Weg einer Applikation (0.59.0, ADR 0021)."""
+    """Wege uneinheitlich (0.73.0, ADR 0021): Verbindungen einer Applikation, die über einen
+    Weg offen und über einen anderen gesperrt sind. Befunde bis 0.72 (Regel <-> Weg) ohne
+    Wege im Detail werden beim nächsten Abgleich ersetzt."""
     name = d.get("name") or subject
     on = f" auf {d['source']}" if d.get("source") else ""
     conns = d.get("connections") or []
-    shown = [
-        f"{c.get('src')} → {c.get('dst')}{' ' + c['service'] if c.get('service') else ''} "
-        f"({c.get('why') if c.get('state') in ('off_path', 'other') else c.get('path')})"
-        for c in conns[:3]
-    ]
+    shown = []
+    for c in conns[:3]:
+        ways = [v for v in c.get("variants") or [] if v.get("verdict") in _VERDICT]
+        text = "; ".join(_variant(v) for v in ways[:3]) or c.get("path") or ""
+        shown.append(f"{c.get('src')} → {c.get('dst')}"
+                     f"{' ' + c['service'] if c.get('service') else ''} ({text})")  # fmt: skip
     count = d.get("count") or len(conns)
     more = f" (+{count - len(shown)} weitere)" if count > len(shown) else ""
     return (
-        f"Regel {_q(name)}{on} erlaubt für die Applikation {_q(d.get('application'))} "
-        f"{count} Verbindung{'en' if count != 1 else ''}, die der Weg nicht öffnet: "
-        f"{'; '.join(shown)}{more}.",
-        "In der Applikations-Doku unter „Verbindungen Ende zu Ende“ bzw. in der Weg-Suche den "
-        "Weg prüfen: eine andere Regel bzw. ein anderes Gerät sperrt, die Regel liegt auf einem "
-        "Gerät ausserhalb des Wegs oder das Routing führt anders. Regel bzw. Routing anpassen – "
-        "oder die Regel entfernen, wenn sie nicht gebraucht wird.",
+        f"Regel {_q(name)}{on}: {count} Verbindung{'en' if count != 1 else ''} der Applikation "
+        f"{_q(d.get('application'))} {'sind' if count != 1 else 'ist'} je nach Weg offen bzw. "
+        f"gesperrt: {'; '.join(shown)}{more}.",
+        "Die Wege (aktiv, ECMP, Backup bzw. die Firewalls eines Verbunds) urteilen verschieden – "
+        "je nach Lastverteilung bzw. bei einem Ausfall ist die Verbindung unterbrochen. Regeln "
+        "auf dem anderen Weg angleichen (Applikations-Doku „Verbindungen Ende zu Ende“, "
+        "Weg-Suche).",
     )
 
 

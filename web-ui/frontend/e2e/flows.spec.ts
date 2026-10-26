@@ -45,8 +45,8 @@ test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page 
   );
   // seit 0.62.0: Verkabelung (Speed/Native VLAN zwischen den Switches der Beispieldaten)
   await expect(page.locator(".fgroup", { hasText: "Verkabelung" })).toContainText("Kabel: Speed abweichend");
-  // seit 0.59.0: Abweichung Regel ↔ Weg der Applikation Webshop (CT_rt)
-  await expect(page.locator(".fgroup", { hasText: "Applikationen" })).toContainText("Applikation: Regel ↔ Weg");
+  // seit 0.73.0: Wege uneinheitlich bei der Applikation Portal Süd (Verbund Süd: fw-09 erlaubt, fw-10 sperrt)
+  await expect(page.locator(".fgroup", { hasText: "Applikationen" })).toContainText("Applikation: Wege uneinheitlich");
   // seit 0.50.0: Plausibilität der Topologie (statische Route ohne Wirkung in den Beispieldaten)
   await expect(page.locator(".fgroup", { hasText: "Topologie" })).toContainText("Statische Route ohne Wirkung");
   // seit 0.51.0: Regeln gegen die Absicht der Zonenmatrix (LAN -> DMZ gesperrt)

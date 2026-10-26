@@ -9,6 +9,7 @@ import zipfile
 import test_aci_relevance as ar
 import test_app_paths as tap
 import test_zones as tz
+from app.store import word_export
 from app.store.docx_writer import Document
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -48,6 +49,12 @@ def test_word_schreiber():
     assert 'w:orient="landscape"' in body and "<w:tblHeader/>" in body and "<w:br/>" in body
 
 
+def test_dateiname():
+    assert word_export.slug("Portal Süd", "x") == "portal-sued"
+    assert word_export.slug("Größe/Ärger", "x") == "groesse-aerger"
+    assert word_export.slug("§§", "applikation") == "applikation"
+
+
 def test_applikation_als_word_und_drawio(client):
     tid = tap._seed(client)
     body = {"name": "Web", "members": [{"kind": "epg", "ref": ar.WEB}]}
@@ -80,6 +87,17 @@ def test_applikation_als_word_und_drawio(client):
     assert _text(r.content)[1][0] == "Applikation Web"
     assert client.get(f"/applications/{app['id']}/export",
                       params={"format": "pdf"}).status_code == 422  # fmt: skip
+    # 0.73.0: Abschnitte zur Wahl - ohne Plan nur die Word-Datei im ZIP
+    r = client.get(f"/applications/{app['id']}/export", params={"sections": "systems,rules"})
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    (only,) = z.namelist()
+    _text_, heads = _text(z.read(only))
+    assert heads == ["Applikation Web", "Systeme", "Regeln & Contracts"]
+    r = client.get(f"/applications/{app['id']}/export",
+                   params={"sections": "plan,hidden", "format": "zip"})  # fmt: skip
+    assert len(zipfile.ZipFile(io.BytesIO(r.content)).namelist()) == 2
+    assert client.get(f"/applications/{app['id']}/export",
+                      params={"sections": "abhaengigkeiten"}).status_code == 422  # fmt: skip
     # nicht fuer Kunden-Benutzer
     cust = client.post("/customers", json={"tenant_id": tid, "name": "K", "selectors": []},
                        headers=OP).json()  # fmt: skip

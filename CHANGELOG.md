@@ -7,6 +7,34 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.73.0 – 2026-10-26
+
+Applikations-Doku übersichtlicher (Rückmeldung des Anwenders). Ohne Migration.
+
+- **Bereiche zuklappen:** Systeme, EPGs, Verbindungen Ende zu Ende, Regeln & Contracts,
+  Findings und Doku nach Kategorien (auch jede Kategorie einzeln) klappen per Klick auf den
+  Titel auf bzw. zu; „alle aufklappen“ / „alle zuklappen“. Der Zustand bleibt im Browser. Die
+  Kategorien sind zu Beginn zu (wie bisher „anzeigen“).
+- **Systeme kompakt:** in der Übersicht nur System, Zustand, IPs, EPG und Regeln; Klick öffnet
+  das Detail (Mitgliedschaft, Betriebssystem, DNS, Portgruppe je NIC mit EPG, Cluster/Host,
+  Standort, Firewall-Objekte mit Namensprüfung) mit „Regeln dieses Systems zeigen“.
+- **Export / Drucken mit Auswahl:** ein Dialog mit den Abschnitten (Übersicht, Systeme, EPGs,
+  Verbindungen, Netzwerkplan, Regeln, Findings, Kategorien, ausgeblendete Regeln) für Markdown,
+  Word bzw. Word + draw.io (ZIP, nur mit Netzwerkplan) und Drucken / PDF – im Druck sind die
+  gewählten Abschnitte offen, die übrigen fallen weg. Die Auswahl bleibt im Browser.
+  `GET /applications/{id}/export?sections=…` (Komma-Liste, unbekannte 422). Markdown neu mit den
+  Findings. Dateinamen schreiben Umlaute aus (`portal-sued`).
+- **Abhängigkeiten vorerst entfernt:** sie zeigten z. B. einen Monitoring-Contract als
+  Abhängigkeit, ohne fachliche Aussage. Weder Karte noch Export; die API liefert sie nur noch mit
+  `GET /applications/{id}/doc?dependencies=true` (für einen späteren Ausbau).
+- **Befund nur bei uneinheitlichen Wegen:** „Applikation: Wege uneinheitlich“ (vorher „Regel ↔
+  Weg“) entsteht nur noch, wenn eine Verbindung über einen Weg offen und über einen anderen
+  gesperrt ist – aktive Wege bzw. ECMP, Backup-Wege oder die Firewalls eines Verbunds urteilen
+  verschieden. Sperrt der Weg durchgehend bzw. liegt die Regel nicht auf dem Weg, hat das einen
+  Grund: weiter als „Abweichung“ in den Verbindungen, aber kein Befund. Die Verbindungen zeigen
+  „Wege uneinheitlich“ mit dem Urteil je Weg (`variants`, `inconsistent`; Zusammenfassung
+  `inconsistent`), auch in Markdown und Word.
+
 ## 0.72.1 – 2026-10-26
 
 Korrekturen aus der Übersicht der Schwachstellen (Umplanung des Anwenders, Schritt 3). Ohne
@@ -27,6 +55,7 @@ Migration.
   0,1–0,3 s für die Richtungen, 0,2–0,4 s für die ganze Matrix; 20 000 Contracts 0,5–0,7 s bzw.
   rund 1,2 s – linear, kein Zwischenspeicher nötig.
 
+## 0.72.0 – 2026-10-26
 
 Parallele Firewalls: Abweichungen bei Policy-Routen, Routing und NAT (Umplanung des Anwenders,
 Schritt 2; ADR 0020 Ergänzung 0.72.0). Rein lesend, ohne Migration.
@@ -46,6 +75,7 @@ Schritt 2; ADR 0020 Ergänzung 0.72.0). Rein lesend, ohne Migration.
   (`GET /systems/parallel`). Die Befunde öffnen die Routen des VDOMs, die Policy-Routen bzw. die
   NAT-Ansicht; Werte im Befund zuerst die Firewall des Befunds, dann die führende.
 
+## 0.71.0 – 2026-10-26
 
 Export für Confluence (Umplanung des Anwenders, Schritt 1; ADR 0026). Kein Schreibweg:
 Automato liefert Dateien, der Import in Confluence geschieht von Hand. Ohne Migration.

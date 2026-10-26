@@ -1454,8 +1454,12 @@ async function fileOf(url: string, fallback: string): Promise<{ blob: Blob; file
   return { blob: await response.blob(), filename: match?.[1] ?? fallback };
 }
 // Export für Confluence (0.71.0): Applikations-Doku als Word bzw. Word + Netzwerkplan (draw.io) im ZIP
-export const exportApplication = (id: number, format: "docx" | "zip") =>
-  fileOf(`/api/applications/${id}/export${qs({ format })}`, `applikation.${format}`);
+// 0.73.0: `sections` = gewählte Abschnitte (leer = alle)
+export const exportApplication = (id: number, format: "docx" | "zip", sections?: string[]) =>
+  fileOf(
+    `/api/applications/${id}/export${qs({ format, sections: sections?.length ? sections.join(",") : undefined })}`,
+    `applikation.${format}`,
+  );
 export const zoneSchemaDrawing = (profileId: number) => fileOf(`/api/naming-profiles/${profileId}/zone-schema/drawing`, "zonenschema.drawio");
 // Vorlage: ohne Mandant Beispiel-Zonen, mit Mandant dessen Zonen und Absichten als Ausgangspunkt
 export const zoneSchemaTemplate = (tenantId?: number) =>
@@ -1707,6 +1711,9 @@ export interface AppConnection {
   hops: AppConnHop[];
   rules: AppConnState[];
   mismatch: string[];
+  // Wege uneinheitlich (0.73.0): Urteil je Weg (aktiv, ECMP, Backup) bzw. Firewall im Verbund
+  variants: { kind: "active" | "backup"; via: string; verdict: string; text: string; reason: string | null }[];
+  inconsistent: boolean;
   notes: string[];
 }
 // Netzwerkplan je Applikation (0.67.0): Systeme → Knoten der Wege → Gegenstellen; je Linie die
@@ -1768,7 +1775,7 @@ export interface AppPlan {
 export interface AppConnections {
   connections: AppConnection[];
   notes: string[];
-  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number };
+  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number };
   plan?: AppPlan;
 }
 export const fetchAppConnections = (id: number) =>

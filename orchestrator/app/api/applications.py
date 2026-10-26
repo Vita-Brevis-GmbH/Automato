@@ -685,20 +685,29 @@ def export_connections_plan(
 def export_application(
     application_id: int,
     format: str = Query("zip", pattern="^(docx|zip)$"),  # noqa: A002 - Name der Abfrage
+    sections: str | None = Query(None, max_length=200),
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> Response:
     """Export fuer Confluence (0.71.0, ADR 0026): die Applikations-Doku als Word (`docx`) bzw.
     als ZIP mit Word und dem Netzwerkplan als draw.io (`zip`) - zum Verbessern in Word/draw.io
-    und Import von Hand. Nicht fuer Kunden-Benutzer (Verbindungen zeigen die Infrastruktur)."""
+    und Import von Hand. Seit 0.73.0 `sections` (Komma-Liste aus `word_export.SECTIONS`, leer =
+    alle) wie im Export-Dialog; den Plan legt das ZIP nur mit `plan` bei. Nicht fuer
+    Kunden-Benutzer (Verbindungen zeigen die Infrastruktur)."""
+    want = None
+    if sections:
+        want = {s.strip() for s in sections.split(",") if s.strip()}
+        if not want or not want <= set(word_export.SECTIONS):
+            raise HTTPException(status_code=422, detail="unbekannter Abschnitt")
+    with_plan = want is None or "plan" in want
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
     doc = store.build_doc(session, app, None)
-    doc["dependencies"] = store.dependencies(session, app, doc, None)
     out = ApplicationDocOut(
         application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
     ).model_dump(mode="json")
-    conns = app_paths.build(session, app)
+    needs_paths = want is None or bool(want & {"connections", "plan"})
+    conns = app_paths.build(session, app) if needs_paths else None
     when = datetime.now(UTC)
     tenant = session.get(Tenant, app.tenant_id)
     sources = dict(session.execute(
@@ -707,13 +716,17 @@ def export_application(
     base = f"applikation-{word_export.slug(app.name, 'applikation')}-{when:%Y-%m-%d}"
     plan_file = f"{base}-netzwerkplan.drawio"
     body = word_export.application(out, conns, sources, when, tenant.name if tenant else None,
-                                   plan_file if format == "zip" else None)  # fmt: skip
+                                   plan_file if format == "zip" and with_plan else None,
+                                   want)  # fmt: skip
     if format == "docx":
         media, name = _DOCX, f"{base}.docx"
     else:
-        plan = app_plan.drawio(app_plan.build(conns["connections"]), f"Netzwerkplan {app.name}",
-                               when)  # fmt: skip
-        body = word_export.bundle([(f"{base}.docx", body), (plan_file, plan)])
+        files = [(f"{base}.docx", body)]
+        if with_plan and conns is not None:
+            plan = app_plan.drawio(app_plan.build(conns["connections"]),
+                                   f"Netzwerkplan {app.name}", when)  # fmt: skip
+            files.append((plan_file, plan))
+        body = word_export.bundle(files)
         media, name = "application/zip", f"{base}.zip"
     return Response(content=body, media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
@@ -725,10 +738,13 @@ _DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document
 @router.get("/{application_id}/doc", response_model=ApplicationDocOut)
 def application_doc(
     application_id: int,
+    dependencies: bool = False,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ):
-    """Applikations-Doku ueber alle Systeme der Applikation (Tabellen 1–10)."""
+    """Applikations-Doku ueber alle Systeme der Applikation (Tabellen 1–10). Abhaengigkeiten zu
+    anderen Applikationen (0.60.0) seit 0.73.0 nur mit `dependencies=true` - in der Oberflaeche
+    vorerst entfernt (Anwender: Monitoring u. a. sind keine fachlichen Abhaengigkeiten)."""
     app = _load(session, principal, application_id)
     view = _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
@@ -738,7 +754,8 @@ def application_doc(
         mine = view.applications(session)
         stmt = select(Application).where(Application.tenant_id == app.tenant_id)
         visible = {a.id for a in session.scalars(stmt) if mine(a)}
-    doc["dependencies"] = store.dependencies(session, app, doc, visible)
+    if dependencies:
+        doc["dependencies"] = store.dependencies(session, app, doc, visible)
     return ApplicationDocOut(
         application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
     )

@@ -20,6 +20,10 @@ mit ihrem Weg; je Hop die Policy bzw. der Contract, der entscheidet, mit den Obj
   Geraet gar nicht auf dem Weg liegt. Erlaubt eine Regel und sperrt der Weg (bzw. liegt sie
   nicht auf dem Weg), ist die Verbindung als Abweichung markiert - der Fall „Regel zeigt
   Zugriff, Weg-Suche sperrt“ (Befund 0.43.2).
+- **Wege uneinheitlich (0.73.0, Anwender):** je Verbindung alle Wege - aktiv, ECMP, Backup und
+  je Firewall eines Verbunds (`variants`). Offen ueber einen Weg und gesperrt ueber einen
+  anderen (`inconsistent`) ist der Befund „Applikation: Wege uneinheitlich“; durchgehend
+  gesperrt ist gewollt und kein Befund mehr.
 
 Nur lesend; Stand der letzten Laeufe. Nicht fuer Kunden-Benutzer: der Weg zeigt die
 Infrastruktur (ADR 0018).
@@ -105,6 +109,7 @@ def build(session: Session, app: Application, doc: dict | None = None,
                 1 for c in out if c["verdict"] in ("depends", "unknown") or not c["reached"]
             ),  # fmt: skip
             "mismatch": sum(1 for c in out if c["mismatch"]),
+            "inconsistent": sum(1 for c in out if c["inconsistent"]),
         },
     }
 
@@ -467,14 +472,15 @@ def _connection(
     rules: dict[int, Rule],
     c: _Conn,
 ) -> dict:
+    # mit Backup-Wegen gleicher Laenge (slack 0): uneinheitliche Wege (0.73.0)
     res = paths.trace(session, tid, c.dst.ip, c.src.ip, None, 0, c.service, graph=graph,
-                      checks=checks, backups=False)  # fmt: skip
+                      checks=checks)  # fmt: skip
     start = None
     if not res["paths"]:
         for key in c.starts:
             if paths.parse_key(key) in graph.nodes:
                 res = paths.trace(session, tid, c.dst.ip, c.src.ip, key, 0, c.service,
-                                  graph=graph, checks=checks, backups=False)  # fmt: skip
+                                  graph=graph, checks=checks)  # fmt: skip
                 if res["paths"]:
                     start = graph.nodes[paths.parse_key(key)].label
                     break
@@ -485,6 +491,7 @@ def _connection(
     reached = bool(active) and all(p["end"]["kind"] in paths.REACHED for p in active)
     states = [_state(rules[rid], active, data) for rid in c.rules if rid in rules]
     mismatch = _mismatch(states, verdict, text, reached)
+    variants = path_variants(res["paths"])
     return {
         "key": f"{c.src.ip}>{c.dst.ip}>{_service_text(c.service) or 'alle'}",
         "direction": c.direction,
@@ -502,6 +509,9 @@ def _connection(
         "hops": hops,
         "rules": states,
         "mismatch": mismatch,
+        # Wege uneinheitlich (0.73.0): je Weg bzw. Firewall im Verbund das Urteil
+        "variants": variants if len(variants) > 1 else [],
+        "inconsistent": inconsistent(variants),
         "notes": res["notes"],
     }
 
@@ -530,6 +540,38 @@ def _verdict(active: list[dict], notes: list[str]) -> tuple[str, str]:
     if "allow" in verdicts and verdicts & {"deny"}:
         return "depends", "je nach Weg (ECMP) erlaubt bzw. gesperrt"
     return "depends", "; ".join(dict.fromkeys(x["text"] for x in policies if x))
+
+
+def path_variants(found: list[dict]) -> list[dict]:
+    """Urteil je Weg (aktiv, ECMP, Backup) und - wenn die Firewalls eines Verbunds verschieden
+    urteilen - je Firewall: [{kind, via, verdict, text, reason}] (0.73.0)."""
+    out: list[dict] = []
+    for p in found:
+        kind = "backup" if p.get("kind") == "backup" else "active"
+        reason = (p.get("deviation") or {}).get("reason")
+        checked = [h for h in p["hops"] if h.get("rules")]
+        split = next((h for h in checked if len({_part_verdict(x) for x in _parts(h)}) > 1), None)
+        for part in _parts(split) if split else [None]:
+            seq = []
+            for h in checked:
+                x = part if h is split else h
+                if x.get("rules"):
+                    seq.append((x["label"], x["rules"]["verdict"], x["kind"]))
+            overall = policy_check._overall(seq) or {"verdict": "unknown", "text": "keine Regeln"}
+            via = " → ".join(label for label, _v, _k in seq) or "–"
+            out.append({"kind": kind, "via": via, "verdict": overall["verdict"],
+                        "text": overall["text"], "reason": reason})  # fmt: skip
+    return out
+
+
+def _part_verdict(x: dict) -> str | None:
+    return (x.get("rules") or {}).get("verdict")
+
+
+def inconsistent(variants: list[dict]) -> bool:
+    """Offen ueber einen Weg, gesperrt ueber einen anderen (0.73.0)."""
+    verdicts = {v["verdict"] for v in variants}
+    return "allow" in verdicts and bool(verdicts & set(_BLOCK))
 
 
 def _parts(h: dict) -> list[dict]:
@@ -650,9 +692,10 @@ def _state(rule: Rule, active: list[dict], data: appdoc.TenantData) -> dict:
 
 
 def deviates(state: dict, verdict: str, reached: bool) -> bool:
-    """Weicht diese Regel der Verbindung vom Weg ab (Befund, 0.59.0)? Eine erlaubende Regel,
-    deren Weg sperrt, die nicht auf dem Weg liegt, dort nicht greift (Weg nicht erlaubt) bzw.
-    deren erlaubter Weg vor dem Ziel endet - wie `_mismatch`."""
+    """Weicht diese Regel der Verbindung vom Weg ab (Anzeige „Abweichung“, 0.59.0)? Eine
+    erlaubende Regel, deren Weg sperrt, die nicht auf dem Weg liegt, dort nicht greift (Weg
+    nicht erlaubt) bzw. deren erlaubter Weg vor dem Ziel endet - wie `_mismatch`. Der Befund
+    seit 0.73.0: nur uneinheitliche Wege (`inconsistent`)."""
     if state["action"] != "allow":
         return False
     return (verdict == "deny" or state["state"] == "off_path"

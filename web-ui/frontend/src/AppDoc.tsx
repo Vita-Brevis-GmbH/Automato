@@ -15,6 +15,7 @@ import type { View, ViewParams } from "./App";
 import Apps from "./Apps";
 import type { Me } from "./auth";
 import PublishedServices from "./PublishedServices";
+import { Fold, FoldTitle } from "./fold";
 import { download, Empty, ErrorBox, Expandable, Icon, Loading, PageHead } from "./ui";
 
 type Mode = "apps" | "doc" | "vips";
@@ -341,20 +342,25 @@ export function DocTableView({
   table,
   onRule,
   hide,
+  fold,
+  hiddenOpen,
 }: {
   table: DocTable;
   onRule?: (id: number) => void;
   hide?: HideControls;
+  fold?: Fold; // 0.73.0: Kategorie zuklappbar (Applikations-Doku)
+  hiddenOpen?: boolean; // Druck: ausgeblendete Regeln aufgeklappt
 }) {
   const aci = table.enforcement === "aci";
   const hidden = table.hidden ?? [];
   const editable = !!hide?.canEdit;
+  const open = fold?.open ?? true;
   return (
     <div className="card">
       <div className="card-head">
-        <h2>
+        <FoldTitle fold={fold}>
           {table.index}. {table.title}
-        </h2>
+        </FoldTitle>
         <span className="chip">{aci ? "ACI intern" : "Über eine Firewall"}</span>
         {aci && <span className="chip warn">ACI · Model 1</span>}
         <div className="spacer" />
@@ -363,11 +369,12 @@ export function DocTableView({
           {hidden.length > 0 ? ` · ${hidden.length} ausgeblendet` : ""}
         </span>
       </div>
+      {open && (
       <div className="card-body scroll">
         {table.rows.length === 0 ? (
-          <div className="loading">Keine Einträge.</div>
+          <div className="loading doc-rows">Keine Einträge.</div>
         ) : (
-          <table>
+          <table className="doc-rows">
             <thead>
               <tr>
                 {table.columns.map((c) => (
@@ -407,7 +414,7 @@ export function DocTableView({
           </table>
         )}
         {hidden.length > 0 && (
-          <details className="doc-hidden" id={`doc-hidden-${table.index}`}>
+          <details className="doc-hidden" id={`doc-hidden-${table.index}`} open={hiddenOpen || undefined}>
             <summary>
               {hidden.length} ausgeblendet <span className="faint">– nicht relevant für die Applikation, mit Begründung</span>
             </summary>
@@ -454,6 +461,7 @@ export function DocTableView({
           </details>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -473,10 +481,11 @@ function toMarkdown(doc: SystemDoc): string {
 
 const mdCell = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
-// Tabellen 1–10 als Markdown (leere Kategorien entfallen) samt Fusszeile.
-export function tablesMarkdown(tables: DocTable[]): string[] {
+// Tabellen 1–10 als Markdown (leere Kategorien entfallen) samt Fusszeile; 0.73.0: Kategorien
+// bzw. ausgeblendete Regeln nach Auswahl im Export-Dialog
+export function tablesMarkdown(tables: DocTable[], rows = true, hiddenToo = true): string[] {
   const lines: string[] = [];
-  for (const t of tables) {
+  for (const t of rows ? tables : []) {
     if (t.rows.length === 0) continue;
     lines.push(`## ${t.index}. ${t.title}`, "");
     lines.push(`| ${t.columns.join(" | ")} |`);
@@ -487,7 +496,7 @@ export function tablesMarkdown(tables: DocTable[]): string[] {
     lines.push("");
   }
   // 0.69.0: ausgeblendete Regeln mit Begründung (Nachweis, warum sie in den Kategorien fehlen)
-  const hidden = tables.flatMap((t) => (t.hidden ?? []).map((row) => ({ t, row })));
+  const hidden = hiddenToo ? tables.flatMap((t) => (t.hidden ?? []).map((row) => ({ t, row }))) : [];
   if (hidden.length) {
     lines.push("## Ausgeblendete Regeln", "", "| Kategorie | Regel | System bzw. Objekt | Begründung | von | am |", "| --- | --- | --- | --- | --- | --- |");
     for (const { t, row } of hidden) {

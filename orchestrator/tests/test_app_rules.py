@@ -25,8 +25,8 @@ def _rule(client, tid, name):
     return next(r for r in rows if r["name"] == name)
 
 
-def _doc(client, app_id):
-    r = client.get(f"/applications/{app_id}/doc")
+def _doc(client, app_id, **params):
+    r = client.get(f"/applications/{app_id}/doc", params=params)
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -91,7 +91,7 @@ def test_abhaengigkeiten_zwischen_applikationen(client):
     a = _app(client, tid, "Kunde A", [{"kind": "host", "ref": "10.10.1.5"}])  # H_a01
 
     def deps(x):
-        d = _doc(client, x["id"])["dependencies"]
+        d = _doc(client, x["id"], dependencies=True)["dependencies"]
         return (
             {e["name"]: [r["name"] for r in e["rules"]] for e in d["uses"]},
             {e["name"]: [r["name"] for r in e["rules"]] for e in d["used_by"]},
@@ -102,12 +102,14 @@ def test_abhaengigkeiten_zwischen_applikationen(client):
     assert deps(app) == ({"DNS": ["CT_dns"], "Web": ["CT_app"]}, {})
     # Firewall-Regel: H_a01 -> N_dns (Netz im Subnetz von EPG_dns) - Kunde A nutzt DNS; der
     # Bezug nennt das Objekt der Gegenseite
-    d = _doc(client, a["id"])["dependencies"]
+    d = _doc(client, a["id"], dependencies=True)["dependencies"]
     assert [(e["name"], e["rules"][0]["name"], e["rules"][0]["via"]) for e in d["uses"]] == [
         ("DNS", "a-dns", "N_dns")]  # fmt: skip
     assert d["used_by"] == []
-    d = _doc(client, dns["id"])["dependencies"]
+    d = _doc(client, dns["id"], dependencies=True)["dependencies"]
     by = {e["name"]: e for e in d["used_by"]}
     assert set(by) == {"App", "Kunde A"}
     assert by["Kunde A"]["rules"][0]["via"] == "H_a01" and by["App"]["rules"][0]["via"] == "EPG"
     assert deps(db) == ({"Web": ["CT_web"]}, {})
+    # 0.73.0: in der Doku nur auf Anfrage (die Oberflaeche zeigt sie vorerst nicht)
+    assert _doc(client, web["id"])["dependencies"] == {}
