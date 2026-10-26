@@ -4,8 +4,9 @@
 
 Entwurf (2026-10-24), umgesetzt in 0.51.0 (Zonen, Matrix, Plan), 0.52.0 (Export, Versionen),
 0.53.0 (Kunden auf Zonen, ADR 0018 Schritt 4), 0.54.0 (Zonen erkennen und vorschlagen), 0.55.0
-(Grundschema der Zonen aus draw.io), 0.56.0 (Zonenmodell nach Ebenen, Plan je Kunde) und 0.57.0
-(Zonen je Hop in der Weg-Suche, Absicht je Dienst).
+(Grundschema der Zonen aus draw.io), 0.56.0 (Zonenmodell nach Ebenen, Plan je Kunde), 0.57.0
+(Zonen je Hop in der Weg-Suche, Absicht je Dienst), 0.61.0 (Plan übersichtlich, Nr. 14) und
+0.66.0 (Kommunikation im Plan, Vorschläge beim Erfassen, Nr. 15).
 Baut auf dem Topologie-Modell (ADR 0019, 0.50.0) und den Selektoren der Kunden (ADR 0018) auf.
 
 ## Kontext
@@ -266,6 +267,30 @@ Entscheide des Anwenders (2026-10-23):
       speichert die Positionen der Ansicht „alle Zonen einzeln“, ohne Einfluss auf den
       Fingerabdruck). Ohne Recht zum Speichern ordnet das Ziehen nur die eigene Ansicht.
       Doppelklick auf eine Zone setzt den Fokus. Kunden-Benutzer lesen gefiltert, speichern nicht.
+      Seit 0.65.1 laufen die Linien weich: sie verlassen die Zone an der Seite zur anderen Zone
+      (nebeneinander rechts/links, übereinander unten/oben, mit einer Zone dazwischen rechts herum)
+      als Bezier-Kurve; die Anschlüsse je Seite sind nach der Lage der Gegenseite geordnet.
+15. **Kommunikation im Plan und Vorschläge beim Erfassen (0.66.0):** Korrekturen des Anwenders
+    nach dem Test (2026-10-26): im Plan eines Tenants fehlen die Tenants, mit denen er
+    kommuniziert; Netze und Firewall-Interfaces einer Zone von Hand zuzuweisen ist mühsam.
+    - **Kommunikation** (`flows`, Schalter „Kommunikation (Regeln)“, Ansicht und Export): je Paar
+      der Zonen der Ansicht die erlaubenden Regeln zwischen ihnen (aus der Zuordnung der Matrix,
+      ohne `any` und Adressen ohne Zone) als eigene, blau gepunktete Linie mit der Zahl der Regeln
+      und je Richtung im Titel – auch zwischen Zonen ohne Übergang. Mit Fokus bzw. Suche kommen
+      die Zonen dazu, mit denen die Treffer kommunizieren. Im Plan eines Kunden nur seine
+      Kommunikation; die Zonen anderer Kunden, mit denen er Regeln hat, stehen einzeln da
+      („Partner“, ohne ihre Knoten) statt je Kunde zusammengefasst. Kunden-Benutzer sehen den
+      Partner weiter als „anderer Kunde“.
+    - **Vorschläge beim Erfassen** (`store/zone_assist.py`, `POST /zones/assist`, nur lesend):
+      der Zonen-Editor fragt mit Name, Kurzname und Art; vorgeschlagen werden FortiGate-Zonen
+      (je Firewall), Interfaces (Name, Beschreibung, Rolle dmz/wan zur Art; nicht die Interfaces
+      einer passenden FortiGate-Zone), VDOMs, IPAM-Netze (Name, Beschreibung, VLAN-Name),
+      -Merkmale, -Tags, -Tenant und -VRF, ACI-Tenant/VRF/AP/BD/EPG und Anbindungen, deren Name
+      passt: gleicher normalisierter Name bzw. Kurzname, alle Wörter des Namens, Erkennungsmuster
+      der passenden Zone des Grundschemas bzw. der Vorlage. Je Vorschlag die Netze, ob die
+      Selektoren der Zone sie schon erfassen und welche schon in einer anderen Zone liegen;
+      gewählte Selektoren fallen weg. Übernehmen fügt den Selektor im Editor an (gespeichert
+      wird mit der Zone).
 
 ## Folgen
 

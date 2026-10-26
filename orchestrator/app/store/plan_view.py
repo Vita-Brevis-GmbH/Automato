@@ -56,6 +56,9 @@ class Filter:
     depth: int = 1
     hide_layers: set[str] = field(default_factory=set)
     hide: set[str] = field(default_factory=set)
+    # 0.66.0: Kommunikation (erlaubende Regeln je Zonenpaar) einblenden - mit Suche bzw. Fokus
+    # auch die Zonen, mit denen die Treffer kommunizieren
+    flows: bool = False
 
     def __post_init__(self) -> None:
         self.q = (self.q or "").strip()
@@ -96,8 +99,11 @@ def apply(plan: dict, f: Filter, devices: bool = True) -> dict:
         {"id": str(z["id"]), "name": z["name"], "kind": z.get("kind"), "layer": _layer(z)}
         for z in zones
     ]
-    display = {"nodes": "nodes" not in f.hide, "labels": "labels" not in f.hide}
+    display = {"nodes": "nodes" not in f.hide, "labels": "labels" not in f.hide,
+               "flows": f.flows}  # fmt: skip
     out = {**plan, "zone_choices": choices, "display": display}
+    if not f.flows:
+        out["flows"] = []
     real = sum(1 for z in zones if isinstance(z["id"], int))
     if not f.active:
         out["filter"] = {"active": False, "zones": real, "total": real, "hidden": 0}
@@ -134,10 +140,18 @@ def apply(plan: dict, f: Filter, devices: bool = True) -> dict:
                     near.add(a)
             frontier = near - shown
             shown |= near
+        if f.flows:  # mit wem die Treffer kommunizieren (auch ohne Uebergang dazwischen)
+            for x in out.get("flows") or []:
+                a, b = str(x["a"]), str(x["b"])
+                if a in seeds and b in keep:
+                    shown.add(b)
+                if b in seeds and a in keep:
+                    shown.add(a)
         keep = (keep & shown) | seeds
     edges = [t for t in edges if str(t["a"]) in keep and str(t["b"]) in keep]
+    flows = [x for x in out.get("flows") or [] if str(x["a"]) in keep and str(x["b"]) in keep]
     if "empty" in f.hide:
-        linked = {str(x) for t in edges for x in (t["a"], t["b"])}
+        linked = {str(x) for t in [*edges, *flows] for x in (t["a"], t["b"])}
         keep = {k for k in keep if by_id[k].get("nodes") or k in linked or k in seeds}
     kept = [z for z in zones if str(z["id"]) in keep]
     node_ids = {n for z in kept for n in z.get("nodes") or []}
@@ -145,6 +159,7 @@ def apply(plan: dict, f: Filter, devices: bool = True) -> dict:
     out.update({
         "zones": kept,
         "transitions": edges,
+        "flows": [x for x in flows if str(x["a"]) in keep and str(x["b"]) in keep],
         "nodes": [n for n in plan.get("nodes") or [] if n["id"] in node_ids],
         "filter": {"active": True, "zones": shown_real, "total": real,
                    "hidden": len(zones) - len(kept), "matches": len(seeds),
@@ -163,6 +178,8 @@ def describe(f: Filter, by_id: dict | None = None) -> str:
     if f.focus:
         names = [(by_id or {}).get(k, {}).get("name", k) for k in f.focus]
         parts.append(f"Fokus: {', '.join(names)}{near}")
+    if f.flows:
+        parts.append("mit Kommunikation (Regeln)")
     hidden = [LAYERS[x][0] for x in LAYERS if x in f.hide_layers]
     hidden += [ELEMENTS[x] for x in ELEMENTS if x in f.hide]
     if hidden:

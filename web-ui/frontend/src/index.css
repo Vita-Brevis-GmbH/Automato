@@ -579,3 +579,10 @@ tbody tr.group-row td {
 /* Verkabelung: Spanning Tree und vPC je Port (0.65.0) */
 .port-l2 { font-size: 11px; color: var(--muted); }
 .port-l2.warn { color: var(--warn); }
+/* Zonenplan: Kommunikation (Regeln) zwischen Zonen (0.66.0) */
+.zp-edge.flow polyline { stroke: #2563eb; }
+.zp-edge.flow text { fill: #2563eb; }
+.zp-zone2.partner rect { stroke-dasharray: 4 3; }
+/* Zonen-Editor: Vorschläge beim Erfassen (0.66.0) */
+.warn-text { color: var(--warn); }
+.zone-assist table { margin-bottom: 6px; }

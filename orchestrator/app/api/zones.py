@@ -51,6 +51,7 @@ from app.store import (
     plan_versions,
     plan_view,
     reconcile,
+    zone_assist,
     zone_detect,
     zone_services,
     zone_struct,
@@ -84,6 +85,17 @@ class ZoneIn(BaseModel):
 
 class PreviewIn(BaseModel):
     tenant_id: int
+    zone_id: int | None = None
+    selectors: list[SelectorIn] = Field(default_factory=list, max_length=200)
+
+
+class AssistIn(BaseModel):
+    """Zone beim Erfassen (0.66.0): Name, Kurzname, Art und die Selektoren bis jetzt."""
+
+    tenant_id: int
+    name: str = Field(default="", max_length=200)
+    code: str | None = Field(default=None, max_length=50)
+    kind: str | None = Field(default=None, max_length=32)
     zone_id: int | None = None
     selectors: list[SelectorIn] = Field(default_factory=list, max_length=200)
 
@@ -141,6 +153,7 @@ def _plan_filter(
         list[str] | None, Query(description="Ebenen ausblenden (dc, edge, …)")
     ] = None,
     hide: Annotated[list[str] | None, Query(description="nodes, labels, contacts, empty")] = None,
+    flows: bool = Query(False, description="Kommunikation (Regeln je Zonenpaar) einblenden"),
 ) -> plan_view.Filter:
     """Filter des Zonenplans (0.61.0) - Oberflaeche und Export gleich."""
     layers, elements = hide_layer or [], hide or []
@@ -149,7 +162,7 @@ def _plan_filter(
     if unknown:
         raise HTTPException(status_code=422, detail=f"unknown layer: {', '.join(unknown)}")
     return plan_view.Filter(q=q, focus=(focus or [])[:200], depth=depth, hide_layers=set(layers),
-                            hide=set(elements))  # fmt: skip
+                            hide=set(elements), flows=flows)  # fmt: skip
 
 
 def _tenant(session: Session, principal: Principal, tenant_id: int | None) -> int:
@@ -342,6 +355,20 @@ def preview(
     anderen Zonen."""
     tid = _tenant(session, principal, body.tenant_id)
     return store.preview(session, tid, _selectors(session, tid, body.selectors), body.zone_id)
+
+
+@router.post("/assist")
+def assist(
+    body: AssistIn,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Vorschlaege beim Erfassen einer Zone (0.66.0): Firewall-Zonen, Interfaces, VDOMs, IPAM-Netze
+    und -Merkmale, ACI-Objekte und Anbindungen, deren Name zur Zone passt - je mit Netzen und
+    Ueberschneidungen. Nur lesend."""
+    tid = _tenant(session, principal, body.tenant_id)
+    return zone_assist.suggest(session, tid, body.name, body.code, body.kind,
+                               _selectors(session, tid, body.selectors), body.zone_id)  # fmt: skip
 
 
 @router.get("/suggestions")

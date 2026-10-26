@@ -2529,6 +2529,7 @@ export interface PlanZone {
   internal?: number;
   collapsed?: boolean; // Kunde als eine Zone
   members?: string[];
+  partner?: boolean; // 0.66.0: Zone eines anderen Kunden, mit dem kommuniziert wird (ohne Knoten)
 }
 export interface PlanTransition {
   id: string;
@@ -2549,6 +2550,8 @@ export interface ZonePlan {
   zones: PlanZone[];
   nodes: { id: string; kind: string; label: string; source: string; group: string | null; zone?: number | null; zones?: number }[];
   transitions?: PlanTransition[];
+  // 0.66.0: erlaubende Regeln je Zonenpaar (`ab` von a nach b, `ba` zurück)
+  flows?: { id: string; a: PlanZoneId; b: PlanZoneId; rules: number; ab: number; ba: number }[];
   conflicts?: { node: string; label: string; zones: string[] }[];
   attachments?: {
     zone: number;
@@ -2598,6 +2601,7 @@ export interface PlanBox {
   collapsed?: boolean;
   code?: string | null;
   placed?: boolean; // 0.61.0: von Hand angeordnet
+  partner?: boolean; // 0.66.0: Zone eines anderen Kunden (Kommunikation)
 }
 export interface PlanEdge {
   id?: string;
@@ -2609,6 +2613,7 @@ export interface PlanEdge {
   lx?: number;
   ly?: number;
   anchor?: "start" | "middle"; // Beschriftung neben bzw. über der Linie (0.65.1)
+  flow?: boolean; // 0.66.0: Kommunikation (Regeln), keine Netz-Verbindung
   x1: number;
   y1: number;
   x2: number;
@@ -2664,6 +2669,24 @@ export const fetchZones = (tenantId: number) => getJSON<LogicalZone[]>(`/api/zon
 export const createZone = (body: ZoneIn) => sendJSON<LogicalZone>("/api/zones", "POST", body);
 export const updateZone = (id: number, body: ZoneIn) => sendJSON<LogicalZone>(`/api/zones/${id}`, "PUT", body);
 export const deleteZone = (id: number) => sendJSON<void>(`/api/zones/${id}`, "DELETE");
+// Vorschläge beim Erfassen einer Zone (0.66.0): Selektoren, deren Name zur Zone passt
+export interface ZoneAssistItem {
+  selector: ZoneSelector;
+  source: string;
+  source_label: string;
+  label: string;
+  reason: string;
+  score: number;
+  nets: number;
+  epgs: number;
+  samples: string[];
+  new: number;
+  covered: boolean;
+  conflicts: { network: string; zone: string }[];
+  conflicts_total: number;
+}
+export const assistZone = (tenantId: number, body: { name: string; code: string | null; kind: string; zone_id?: number | null; selectors: ZoneSelector[] }) =>
+  sendJSON<{ name: string; schema: string | null; items: ZoneAssistItem[]; total: number }>("/api/zones/assist", "POST", { tenant_id: tenantId, ...body });
 export const previewZone = (tenantId: number, selectors: ZoneSelector[], zoneId?: number) =>
   sendJSON<ZonePreview>("/api/zones/preview", "POST", { tenant_id: tenantId, selectors, zone_id: zoneId ?? null });
 export interface ZoneNetsData {
@@ -2787,6 +2810,7 @@ export interface PlanFilter {
   depth?: number;
   hideLayers?: string[];
   hide?: string[];
+  flows?: boolean; // 0.66.0: Kommunikation (erlaubende Regeln je Zonenpaar) einblenden
 }
 function planQs(tenantId: number, view?: PlanView, extra: Record<string, string | number | undefined> = {}): string {
   const p = new URLSearchParams(qs({ tenant_id: tenantId, customer_id: view?.customerId ?? undefined, all: view?.all ? "true" : undefined, ...extra }).slice(1));
@@ -2796,6 +2820,7 @@ function planQs(tenantId: number, view?: PlanView, extra: Record<string, string 
   if ((f?.q?.trim() || f?.focus?.length) && f?.depth !== undefined && f.depth !== 1) p.set("depth", String(f.depth));
   for (const l of f?.hideLayers ?? []) p.append("hide_layer", l);
   for (const h of f?.hide ?? []) p.append("hide", h);
+  if (f?.flows) p.set("flows", "true");
   const s = p.toString();
   return s ? `?${s}` : "";
 }

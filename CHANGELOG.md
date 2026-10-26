@@ -7,6 +7,21 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.66.0 – 2026-10-26
+
+Zonen nach dem Test des Anwenders (ADR 0024 Nr. 15): Kommunikation im Zonenplan, Vorschläge beim
+Erfassen einer Zone. Ohne Migration.
+
+- **Zonenplan – Kommunikation (Regeln):** Schalter in der Leiste; je Paar Zonen die erlaubenden
+  Regeln als blau gepunktete Linie („2 Regeln“, je Richtung im Titel), auch ohne Übergang. Mit
+  Fokus bzw. Suche kommen die Zonen dazu, mit denen die Treffer kommunizieren – so lassen sich
+  die Nachbar-Tenants eines Tenants einblenden. Im Plan eines Kunden stehen die Partner (Zonen
+  anderer Kunden mit Regeln) einzeln da. Auch im Export (SVG, draw.io, PDF).
+- **Zonen-Editor – Vorschläge beim Erfassen:** zu Name, Kurzname und Art passende
+  FortiGate-Zonen, Interfaces, VDOMs, IPAM-Netze und -Merkmale, ACI-Objekte und Anbindungen,
+  je mit Netzen und dem Hinweis, wenn sie schon in einer anderen Zone liegen; mit einem Klick
+  übernehmen. API `POST /zones/assist`.
+
 ## 0.65.1 – 2026-10-26
 
 Korrekturen nach dem Test des Anwenders.

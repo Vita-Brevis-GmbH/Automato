@@ -567,15 +567,20 @@ def transition_name(a: dict, b: dict) -> str:
     return f"{x.get('code') or x['name']}-{y.get('code') or y['name']}"
 
 
-def plan(session: Session, tenant_id: int, customer_id=None,
-         everything: bool = False) -> dict:  # fmt: skip
+def plan(session: Session, tenant_id: int, customer_id=None, everything: bool = False,
+         flows: bool = False, expand: bool = True) -> dict:  # fmt: skip
     """Zonenplan nach dem Zonenmodell: Zonen mit ihren Knoten (Firewall/VDOM, ACI-VRF), Netze in
     der Zone und die Uebergaenge zwischen den Zonen (`zone_struct`).
 
     Ansicht (`view`): ohne Kunde die Infrastruktur - Zonen der Kunden je Kunde als eine Zone
     zusammengefasst; mit Kunde dessen Zonen, die geteilten Zonen, die von ihnen aus erreichbar
     sind, und die Kunden, zu denen seine Zonen einen Uebergang haben, je als eine Zone;
-    `everything` = alle Zonen einzeln. `customer_id` ist eine ID oder (Kunden-Benutzer) mehrere."""
+    `everything` = alle Zonen einzeln. `customer_id` ist eine ID oder (Kunden-Benutzer) mehrere.
+
+    Mit `flows` (0.66.0) die **Kommunikation**: je Paar (nach der Ansicht zusammengefasster)
+    Zonen die erlaubenden Regeln zwischen ihnen (`flows`, auch ohne Uebergang); im Plan eines
+    Kunden nur seine, und die Zonen der Partner (andere Kunden) einzeln statt je als eine Zone
+    (`expand`, ohne ihre Knoten - nicht fuer Kunden-Benutzer)."""
     from app.store import zone_struct
 
     if isinstance(customer_id, set | frozenset | list | tuple):
@@ -613,17 +618,23 @@ def plan(session: Session, tenant_id: int, customer_id=None,
     group: dict = {}
     own: set = set()
     need: set = set()
+    a = assign(session, tenant_id, items, nets=list(by_zone.values())) \
+        if flows or mode == "customer" else None  # fmt: skip
     if mode == "all":
         group = {z.id: z.id for z in items}
     elif mode == "overview":
         group = {zid: (f"customer:{c}" if c else zid) for zid, c in owners.items()}
     else:
-        own, need, group = _customer_view(session, tenant_id, items, st, transitions, by_zone,
-                                          owners, mine)  # fmt: skip
+        own, need, group, partners = _customer_view(session, tenant_id, items, st, transitions,
+                                                    owners, mine, a)  # fmt: skip
+        if flows and expand:  # Partner einzeln (ohne Knoten) statt je Kunde zusammengefasst
+            for zid in partners:
+                group[zid] = zid
+                zones_full[zid]["partner"] = True
         for z in zones_full.values():  # geteilte Zonen nur mit den benoetigten Knoten
             if z["id"] not in own:
                 z["nodes_total"] = len(z["nodes"])
-                z["nodes"] = [n for n in z["nodes"] if n in need]
+                z["nodes"] = [] if z.get("partner") else [n for n in z["nodes"] if n in need]
     for pseudo in PSEUDO:
         group[pseudo] = pseudo
 
@@ -649,7 +660,8 @@ def plan(session: Session, tenant_id: int, customer_id=None,
             k = tuple(sorted((gz, "none"), key=lambda x: (isinstance(x, str), str(x))))
             m = merged.setdefault(k, {"a": k[0], "b": k[1], "networks": [], "contact": True})
             m["networks"] += [n for n in infos if n not in m["networks"]]
-    used = {x for k in merged for x in k}
+    flow_m = _flows(a, group, own if mode == "customer" else None) if flows and a else {}
+    used = {x for k in merged for x in k} | {x for k in flow_m for x in k}
 
     zones_out: list[dict] = []
     for z in items:
@@ -693,6 +705,12 @@ def plan(session: Session, tenant_id: int, customer_id=None,
             "contact": bool(m.get("contact")),
         })  # fmt: skip
     trans_out.sort(key=lambda t: (t["contact"], t["name"].casefold()))
+    flows_out = [
+        {"id": f"flow:{x}~{y}", "a": x, "b": y, "rules": len(f["rules"]), "ab": len(f["ab"]),
+         "ba": len(f["ba"])}
+        for (x, y), f in flow_m.items() if x in by_id and y in by_id
+    ]  # fmt: skip
+    flows_out.sort(key=lambda f: -f["rules"])
     node_ids = {n for z in zones_out for n in z["nodes"]}
     nodes_out = [
         {"id": topo_model.node_id(k), "label": n.label, "kind": n.kind, "source": n.source,
@@ -719,6 +737,7 @@ def plan(session: Session, tenant_id: int, customer_id=None,
         "zones": zones_out,
         "nodes": nodes_out,
         "transitions": trans_out,
+        "flows": flows_out,
         "conflicts": st.conflicts,
         "unzoned": {"total": len(unzoned), "items": unzoned[:UNZONED]},
         "summary": {
@@ -747,12 +766,36 @@ def _needed_net(net: dict, sides: tuple, node_zone: dict, need: set) -> bool:
     return True
 
 
+def _flows(a: "Assignment", group: dict, own: set | None) -> dict[tuple, dict]:
+    """Erlaubende Regeln je Paar der Gruppen der Ansicht (0.66.0); mit `own` nur Paare mit einer
+    eigenen Zone. Richtung: `ab` von a nach b, `ba` zurueck."""
+    out: dict[tuple, dict] = {}
+    for rid, (action, _domain, _sid) in a.rules.items():
+        if action is not RuleAction.ALLOW:
+            continue
+        for s, d in a.pairs(rid):
+            if not isinstance(s, int) or not isinstance(d, int):  # any bzw. ohne Zone
+                continue
+            gs, gd = group.get(s), group.get(d)
+            if gs is None or gd is None or gs == gd:
+                continue
+            if own is not None and s not in own and d not in own:
+                continue
+            k = tuple(sorted((gs, gd), key=lambda x: (isinstance(x, str), str(x))))
+            f = out.setdefault(k, {"rules": set(), "ab": set(), "ba": set()})
+            f["rules"].add(rid)
+            f["ab" if gs == k[0] else "ba"].add(rid)
+    return out
+
+
 def _customer_view(session: Session, tenant_id: int, items: list[LogicalZone], st, transitions,
-                   by_zone: dict, owners: dict, mine: set) -> tuple[set, set, dict]:  # fmt: skip
+                   owners: dict, mine: set,
+                   a: "Assignment") -> tuple[set, set, dict, set]:  # fmt: skip
     """Plan eines Kunden (0.57.1): seine Zonen; die Knoten, die er braucht (`zone_struct.needed`:
     an seinen Netzen und auf den kuerzesten Wegen zu den Zonen seiner Regeln); geteilte Zonen mit
     solchen Knoten, an seinen Zonen bzw. als Ziel seiner Regeln; andere Kunden mit genutztem
-    Zugang (Uebergang bzw. Regeln) je als eine Zone. -> (eigene Zonen, Knoten, Gruppen)."""
+    Zugang (Uebergang bzw. Regeln) je als eine Zone. -> (eigene Zonen, Knoten, Gruppen, Zonen
+    der anderen Kunden mit Regeln zu den eigenen)."""
     from app.store import zone_struct
 
     own = {zid for zid, c in owners.items() if c in mine}
@@ -763,8 +806,8 @@ def _customer_view(session: Session, tenant_id: int, items: list[LogicalZone], s
     adjacent = {y for t in transitions for x, y in ((t.a, t.b), (t.b, t.a)) if x in own}
     other = {z for z in adjacent if foreign(z)}
     targets: set = set()
+    partners: set = set()
     external = {z.id for z in items if z.kind == "external"}
-    a = assign(session, tenant_id, items, nets=list(by_zone.values()))
     for rid in a.rules:
         for s, d in a.pairs(rid):
             for x, y in ((s, d), (d, s)):
@@ -772,6 +815,7 @@ def _customer_view(session: Session, tenant_id: int, items: list[LogicalZone], s
                     continue
                 if foreign(y):
                     other.add(y)
+                    partners.add(y)
                 elif isinstance(y, int) and y not in own:
                     targets.add(y)
                 elif y == ANY:  # any: ueber die Zonen nach aussen (Public)
@@ -786,7 +830,7 @@ def _customer_view(session: Session, tenant_id: int, items: list[LogicalZone], s
     group: dict = {zid: zid for zid in own | shared}
     for zid in other:
         group[zid] = f"customer:{owners[zid]}"
-    return own, need, group
+    return own, need, group, partners
 
 
 def plan_with_layout(session: Session, tenant_id: int, customer_ids=None,
@@ -797,11 +841,12 @@ def plan_with_layout(session: Session, tenant_id: int, customer_ids=None,
     der Ansicht und dem Filter (`plan_view.Filter`: Suche, Fokus, Ebenen)."""
     from app.store import plan_export, plan_view
 
+    flows = bool(view_filter is not None and view_filter.flows)
     if customer_ids is not None:
-        out = plan(session, tenant_id, set(customer_ids) or {-1})
+        out = plan(session, tenant_id, set(customer_ids) or {-1}, flows=flows, expand=False)
         out = restrict_plan(out, customer_view(load(session, tenant_id), customer_ids))
     else:
-        out = plan(session, tenant_id, customer_id, everything)
+        out = plan(session, tenant_id, customer_id, everything, flows=flows)
     key = plan_view.view_key(out)
     row = plan_view.get(session, tenant_id, key)
     out["positions"] = dict(row.positions or {}) if row is not None else {}
@@ -855,9 +900,20 @@ def restrict_plan(full: dict, view: CustomerView) -> dict:
                                  "count": 0})  # fmt: skip
         x["networks"] += nets
         x["count"] += t["count"] if mine else 0
+    # Kommunikation (0.66.0): nur Paare mit einer eigenen Zone, andere Kunden als „anderer Kunde“
+    flows: dict[tuple, dict] = {}
+    for f in full.get("flows") or []:
+        a, b = rename.get(f["a"], f["a"]), rename.get(f["b"], f["b"])
+        if a not in ids or b not in ids or a == b or not ({a, b} & own):
+            continue
+        x = flows.setdefault((a, b), {"id": f"flow:{a}~{b}", "a": a, "b": b, "rules": 0,
+                                      "ab": 0, "ba": 0})  # fmt: skip
+        for k in ("rules", "ab", "ba"):
+            x[k] += f[k]
     # geteilte Zonen nur mit einem Uebergang im Ausschnitt (sonst erreicht ueber Knoten ohne
     # Zone, die er nicht sieht); andere Kunden auch ueber Regeln
     linked = {x for t in trans.values() for x in (t["a"], t["b"])} | own | {"other"}
+    linked |= {x for f in flows.values() for x in (f["a"], f["b"])}
     zones = [z for z in zones if z["id"] in linked]
     nodes = [n for n in full["nodes"] if n["id"] in own_nodes]
     real = [z for z in zones if isinstance(z["id"], int)]
@@ -867,6 +923,7 @@ def restrict_plan(full: dict, view: CustomerView) -> dict:
         "zones": zones,
         "nodes": nodes,
         "transitions": list(trans.values()),
+        "flows": list(flows.values()),
         "conflicts": [],
         "unzoned": {"total": 0, "items": []},
         "summary": {

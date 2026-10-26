@@ -53,6 +53,7 @@ FG, MUTED, LINE, NODE_FILL, NODE_STROKE, ZONE_STROKE = (
     "#171b22", "#5a6475", "#8a93a3", "#eef1f6", "#0e7c86", "#c7cedb",
 )  # fmt: skip
 DEFAULT_ZONE = "#e5e9f0"
+FLOW = "#2563eb"  # Kommunikation (Regeln) zwischen Zonen (0.66.0)
 
 
 def _plural(n: int, one: str, many: str) -> str:
@@ -118,6 +119,8 @@ def _sub(z: dict) -> str:
         return _plural(len(z.get("nodes") or []), "Knoten", "Knoten")
     if kind == "outside":
         return "Router ohne gelesenes Gerät"
+    if z.get("partner"):  # Zone eines anderen Kunden, mit dem kommuniziert wird (0.66.0)
+        return f"{ZONE_KIND.get(kind, kind)} · Partner {z.get('customer') or ''}".rstrip()
     return f"{ZONE_KIND.get(kind, kind)} · {_plural(z.get('nets') or 0, 'Netz', 'Netze')}"
 
 
@@ -165,7 +168,7 @@ def _layout2(plan: dict) -> dict:
             "color": z.get("color"), "fill": _tint(z.get("color")) if z.get("color")
             else "#f4f6f9", "collapsed": bool(z.get("collapsed")),
             "pseudo": not isinstance(z["id"], int), "samples": z.get("samples") or [],
-            "code": z.get("code"), "placed": False,
+            "code": z.get("code"), "placed": False, "partner": bool(z.get("partner")),
         }  # fmt: skip
 
     boxes: list[dict] = []
@@ -207,6 +210,14 @@ def _layout2(plan: dict) -> dict:
             "contact": bool(t.get("contact")),
         }
         for t in plan.get("transitions") or []
+    ] + [
+        {   # Kommunikation (0.66.0): erlaubende Regeln je Zonenpaar, eigene Linie
+            "id": f["id"], "a": f["a"], "b": f["b"],
+            "label": _plural(f["rules"], "Regel", "Regeln") if show_labels else "",
+            "name": _flow_text(f, by_id), "count": f["rules"], "networks": [],
+            "dashed": True, "contact": False, "flow": True,
+        }
+        for f in plan.get("flows") or []
     ])  # fmt: skip
     if placed:
         width = max(b["x"] + b["w"] for b in boxes) + 16
@@ -250,6 +261,13 @@ def _bezier(p0, c1, c2, p3, t: float) -> list[float]:
         round(u**3 * p0[i] + 3 * u * u * t * c1[i] + 3 * u * t * t * c2[i] + t**3 * p3[i], 1)
         for i in (0, 1)
     ]
+
+
+def _flow_text(f: dict, by_id: dict) -> str:
+    """Titel der Linie: „DC A → DC B: 5, DC B → DC A: 2 erlaubende Regeln“."""
+    a = (by_id.get(f["a"]) or {}).get("name", f["a"])
+    b = (by_id.get(f["b"]) or {}).get("name", f["b"])
+    return f"{a} → {b}: {f.get('ab', 0)}, {b} → {a}: {f.get('ba', 0)} erlaubende Regeln"
 
 
 def route(boxes: list[dict], edges: list[dict]) -> list[dict]:
@@ -432,14 +450,17 @@ def _text(g, x: float, y: float, text: str, size: str, color: str = FG, weight: 
 def _svg2(g, lay: dict) -> None:
     """Zonenmodell (0.56.0): Uebergaenge als Linien, Zonen mit ihren Knoten."""
     for e in lay["edges"]:
+        flow = bool(e.get("flow"))
         attrs = {"points": " ".join(f"{_n(x)},{_n(y)}" for x, y in e["points"]), "fill": "none",
-                 "stroke": LINE, "stroke-width": "1.6"}  # fmt: skip
+                 "stroke": FLOW if flow else LINE, "stroke-width": "1.6"}  # fmt: skip
         if e["dashed"]:
-            attrs["stroke-dasharray"] = "5 4"
+            attrs["stroke-dasharray"] = "2 4" if flow else "5 4"
         line = ET.SubElement(g, "polyline", attrs)
-        ET.SubElement(line, "title").text = f"{e['label']}: " + ", ".join(e["networks"])
-        _text(g, e["lx"], e["ly"], e["label"], "10.5", MUTED, anchor=e.get("anchor", "middle"),
-              mono=True)  # fmt: skip
+        ET.SubElement(line, "title").text = (
+            e["name"] if flow else f"{e['label']}: " + ", ".join(e["networks"])
+        )
+        _text(g, e["lx"], e["ly"], e["label"], "10.5", FLOW if flow else MUTED,
+              anchor=e.get("anchor", "middle"), mono=True)  # fmt: skip
     for z in lay["zones"]:
         attrs = {"x": _n(z["x"]), "y": _n(z["y"]), "width": _n(z["w"]), "height": _n(z["h"]),
                  "rx": "8", "fill": z["fill"], "stroke": _stroke(z.get("color")),
@@ -585,7 +606,10 @@ def _drawio2(lay: dict, title: str, stamp: str) -> str:
         _geometry(cell, z["x"], z["y"] + HEAD, z["w"], z["h"])
     boxes = {z["id"]: z for z in lay["zones"]}
     for e in lay["edges"]:
-        style = f"endArrow=none;html=1;strokeColor={LINE};fontSize=10;fontFamily=Courier New;"
+        color = FLOW if e.get("flow") else LINE
+        style = f"endArrow=none;html=1;strokeColor={color};fontSize=10;fontFamily=Courier New;"
+        if e.get("flow"):
+            style += f"fontColor={FLOW};dashPattern=2 4;"
         a, b = boxes.get(e["a"]), boxes.get(e["b"])
         if a is not None and b is not None:  # 0.65.1: weich an den Seiten wie in der Ansicht
             style += (
@@ -598,7 +622,8 @@ def _drawio2(lay: dict, title: str, stamp: str) -> str:
             style += "dashed=1;"
         obj = ET.SubElement(root, "UserObject", {
             "id": f"transition-{_id(e['id'])}", "label": _html(e["label"]),
-            "automato_transition": "" if e["contact"] else e["name"],
+            "automato_transition": "" if e["contact"] or e.get("flow") else e["name"],
+            "automato_rules": str(e["count"]) if e.get("flow") else "",
             "automato_networks": ", ".join(e["networks"]),
         })  # fmt: skip
         cell = ET.SubElement(obj, "mxCell", {
@@ -831,8 +856,10 @@ def _pdf2(doc: "_Pdf", p: "_Page", plan: dict, lay: dict, matrix: dict | None,
           stamp: str) -> None:  # fmt: skip
     """PDF des Zonenmodells: Plan, Matrix, Zonen mit Knoten, Uebergaenge mit Netzen."""
     for e in lay["edges"]:
-        p.polyline([(x, y + HEAD) for x, y in e["points"]], LINE, 1.4, e["dashed"])
-        p.text(e["lx"], e["ly"] + HEAD, e["label"], 9, MUTED, anchor=e.get("anchor", "middle"))
+        color = FLOW if e.get("flow") else LINE
+        p.polyline([(x, y + HEAD) for x, y in e["points"]], color, 1.4, e["dashed"])
+        p.text(e["lx"], e["ly"] + HEAD, e["label"], 9, FLOW if e.get("flow") else MUTED,
+               anchor=e.get("anchor", "middle"))  # fmt: skip
     for z in lay["zones"]:
         p.rect(z["x"], z["y"] + HEAD, z["w"], z["h"], z["fill"], _stroke(z.get("color")), 8)
         p.text(z["x"] + 12, z["y"] + HEAD + 18, z["title"], 11, bold=True, width=z["w"] - 20)

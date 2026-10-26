@@ -42,6 +42,8 @@ import {
   PlanVersionFull,
   PlanView,
   previewZone,
+  assistZone,
+  type ZoneAssistItem,
   resetPlanArrangement,
   savePlanArrangement,
   savePlanVersion,
@@ -1025,6 +1027,8 @@ function ZoneEditor({
   const [description, setDescription] = useState(base?.description ?? "");
   const [selectors, setSelectors] = useState<ZoneSelector[]>(base?.selectors.map((s) => ({ ...s })) ?? [{ ...EMPTY_SELECTOR }]);
   const [preview, setPreview] = useState<ZonePreview | null>(null);
+  // Vorschläge beim Erfassen (0.66.0): Firewall-Zonen, Interfaces, IPAM, ACI, Anbindungen nach dem Namen
+  const [assist, setAssist] = useState<{ items: ZoneAssistItem[]; total: number; schema: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   const firewalls = systems.filter((s) => s.platform === "fortigate");
@@ -1043,7 +1047,24 @@ function ZoneEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, JSON.stringify(valid)]);
 
+  useEffect(() => {
+    if (name.trim().length < 2 && !code.trim()) {
+      setAssist(null);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      assistZone(tenantId, { name: name.trim(), code: code.trim() || null, kind, zone_id: initial?.id ?? null, selectors: valid })
+        .then(setAssist)
+        .catch(() => setAssist(null)); // z. B. ein halb getipptes Netz – die Vorschau meldet es
+    }, 500);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, name, code, kind, JSON.stringify(valid)]);
+
   const set = (i: number, patch: Partial<ZoneSelector>) => setSelectors((xs) => xs.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  // Vorschlag übernehmen: als Selektor anhängen (eine leere Zeile ersetzt er)
+  const take = (items: ZoneSelector[]) => setSelectors((xs) => [...xs.filter((x) => x.value.trim()), ...items.map((s) => ({ ...s }))]);
+  const takeable = (assist?.items ?? []).filter((a) => !a.covered && a.conflicts.length === 0);
 
   const save = async () => {
     setBusy(true);
@@ -1228,6 +1249,78 @@ function ZoneEditor({
       <button className="btn btn-sm" onClick={() => setSelectors((xs) => [...xs, { ...EMPTY_SELECTOR }])}>
         + Selektor
       </button>
+
+      {assist && assist.items.length > 0 && (
+        <div id="zone-assist" className="zone-assist">
+          <h3 style={{ marginTop: 12 }}>
+            Vorschläge zu „{name.trim() || code.trim()}“{" "}
+            <span className="faint">
+              {assist.items.length}
+              {assist.total > assist.items.length ? ` von ${assist.total}` : ""} Treffer
+              {assist.schema ? ` · Grundschema „${assist.schema}“` : ""}
+            </span>
+          </h3>
+          <p className="faint" style={{ margin: "0 0 6px" }}>
+            Firewall-Zonen, Interfaces und VDOMs, Netze und Merkmale im IPAM, ACI-Objekte und Anbindungen, deren Name zur
+            Zone passt (gleicher Name bzw. Kurzname, alle Wörter, Muster des Grundschemas, Rolle des Interfaces zur Art).
+          </p>
+          <table className="compact" id="zone-assist-items">
+            <thead>
+              <tr>
+                <th>Treffer</th>
+                <th>Selektor</th>
+                <th className="num">Netze</th>
+                <th>Hinweis</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {assist.items.map((a) => (
+                <tr key={`${a.selector.kind}|${a.selector.value}|${a.selector.source_system_id ?? ""}`} data-selector={`${a.selector.kind}:${a.selector.value}`}>
+                  <td>
+                    {a.label}
+                    <div className="faint">
+                      {a.source_label} · {a.reason}
+                    </div>
+                  </td>
+                  <td>
+                    <span className="chip">{selectorText(a.selector, systems)}</span>
+                  </td>
+                  <td className="num nowrap" title={a.samples.join("\n")}>
+                    {a.nets}
+                    {a.epgs > 0 && <div className="faint">{a.epgs} EPGs</div>}
+                  </td>
+                  <td>
+                    {a.covered ? (
+                      <span className="faint">schon erfasst</span>
+                    ) : a.conflicts.length > 0 ? (
+                      <span className="warn-text">
+                        in Zone {a.conflicts.map((c) => `${c.zone} (${c.network})`).join(", ")}
+                        {a.conflicts_total > a.conflicts.length ? " …" : ""}
+                      </span>
+                    ) : (
+                      <span className="faint mono">
+                        {a.samples.join(", ")}
+                        {a.nets > a.samples.length ? " …" : ""}
+                      </span>
+                    )}
+                  </td>
+                  <td className="nowrap">
+                    <button className="btn btn-sm" onClick={() => take([a.selector])}>
+                      + Übernehmen
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {takeable.length > 1 && (
+            <button className="btn btn-sm" id="zone-assist-all" onClick={() => take(takeable.map((a) => a.selector))}>
+              Alle ohne Überschneidung übernehmen ({takeable.length})
+            </button>
+          )}
+        </div>
+      )}
 
       <h3 style={{ marginTop: 12 }}>Vorschau</h3>
       {preview == null ? (
@@ -1549,6 +1642,24 @@ function loadPlanHidden(): PlanHidden {
   }
 }
 
+const PLAN_FLOWS_KEY = "automato_plan_flows";
+
+function loadPlanFlows(): boolean {
+  try {
+    return localStorage.getItem(PLAN_FLOWS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function storePlanFlows(v: boolean) {
+  try {
+    localStorage.setItem(PLAN_FLOWS_KEY, v ? "1" : "0");
+  } catch {
+    // ohne Speicher im Browser gilt die Auswahl nur bis zum Neuladen
+  }
+}
+
 function storePlanHidden(v: PlanHidden) {
   try {
     localStorage.setItem(PLAN_HIDDEN_KEY, JSON.stringify(v));
@@ -1568,13 +1679,14 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
   const [focus, setFocus] = useState<string[]>([]);
   const [depth, setDepth] = useState(1);
   const [hidden, setHidden] = useState<PlanHidden>(loadPlanHidden);
+  const [flows, setFlows] = useState(loadPlanFlows); // 0.66.0: Kommunikation (Regeln) einblenden
   const [tick, setTick] = useState(0);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     const t = window.setTimeout(() => setQuery(q), 300);
     return () => window.clearTimeout(t);
   }, [q]);
-  const filter: PlanFilter = { q: query, focus, depth, hideLayers: hidden.layers, hide: hidden.hide };
+  const filter: PlanFilter = { q: query, focus, depth, hideLayers: hidden.layers, hide: hidden.hide, flows };
   const planView: PlanView = { ...(view === "all" ? { all: true } : view ? { customerId: Number(view) } : {}), filter };
   const key = JSON.stringify(planView);
   useEffect(() => {
@@ -1733,6 +1845,21 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
                 </div>
               </div>
             </details>
+            <label
+              className="check"
+              id="zone-plan-flows"
+              title="Erlaubende Regeln je Zonenpaar als eigene (blaue, gepunktete) Linie – auch zwischen Zonen ohne Übergang; mit Fokus bzw. Suche kommen die Zonen dazu, mit denen die Treffer kommunizieren; im Plan eines Kunden die anderen Kunden einzeln"
+            >
+              <input
+                type="checkbox"
+                checked={flows}
+                onChange={(e) => {
+                  setFlows(e.target.checked);
+                  storePlanFlows(e.target.checked);
+                }}
+              />{" "}
+              Kommunikation (Regeln)
+            </label>
             {(f?.active || q) && (
               <button className="btn btn-sm" onClick={clearFilter}>
                 Filter zurücksetzen
@@ -1760,7 +1887,8 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
           )}
           {own && (
             <p className="faint" style={{ margin: "4px 0 8px" }} id="zone-plan-customer">
-              Zonen von {plan.view?.customer ?? "Kunde"}, die genutzten Zugänge zu anderen Kunden (je als eine Zone) und von
+              Zonen von {plan.view?.customer ?? "Kunde"}, die genutzten Zugänge zu anderen Kunden (je als eine Zone, mit
+              „Kommunikation“ die Zonen der Partner einzeln) und von
               den geteilten Zonen nur die Firewalls/VRFs, die der Kunde braucht – an seinen Netzen und auf den Wegen zu den
               Zonen seiner Regeln
               {hiddenNodes > 0 ? ` (${hiddenNodes} weitere Knoten ausgeblendet – „alle Zonen einzeln“ zeigt sie)` : ""}.
@@ -2135,9 +2263,9 @@ function PlanDrawing2({
       onPointerCancel={cancel}
     >
       {edges.map((e) => (
-        <g key={e.id} className={`zp-edge ${e.contact ? "contact" : ""}`}>
-          <polyline points={(e.points ?? []).map(([x, y]) => `${x},${y}`).join(" ")} strokeDasharray={e.dashed ? "5 4" : undefined}>
-            <title>{`${e.name || e.label || "Kontakt"}: ${(e.networks ?? []).join(", ")}`}</title>
+        <g key={e.id} className={`zp-edge ${e.contact ? "contact" : ""} ${e.flow ? "flow" : ""}`} data-flow={e.flow ? `${e.a}~${e.b}` : undefined}>
+          <polyline points={(e.points ?? []).map(([x, y]) => `${x},${y}`).join(" ")} strokeDasharray={e.flow ? "2 4" : e.dashed ? "5 4" : undefined}>
+            <title>{e.flow ? e.name : `${e.name || e.label || "Kontakt"}: ${(e.networks ?? []).join(", ")}`}</title>
           </polyline>
           {e.label && (
             <text x={e.lx} y={e.ly} textAnchor={e.anchor ?? ((e.points ?? []).length > 2 ? "start" : "middle")}>
@@ -2149,7 +2277,7 @@ function PlanDrawing2({
       {boxes.map((z) => (
         <g
           key={z.id}
-          className={`zp-zone2 draggable ${z.pseudo ? "pseudo" : ""} ${z.collapsed ? "collapsed" : ""} ${dragging === String(z.id) ? "dragging" : ""}`}
+          className={`zp-zone2 draggable ${z.pseudo ? "pseudo" : ""} ${z.collapsed ? "collapsed" : ""} ${z.partner ? "partner" : ""} ${dragging === String(z.id) ? "dragging" : ""}`}
           data-zone={String(z.id)}
           data-x={Math.round(z.x)}
           data-y={Math.round(z.y)}

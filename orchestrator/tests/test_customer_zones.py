@@ -217,6 +217,59 @@ def test_zonenplan_je_kunde(client):
     assert "anderer Kunde" in texts and "Kunde B" not in texts and "fw-01 · VDOM root" not in texts
 
 
+def test_kommunikation_im_zonenplan(client):
+    """Kommunikation (0.66.0): erlaubende Regeln je Zonenpaar als eigene Linie; im Plan eines
+    Kunden die Partner (andere Kunden) einzeln ohne Knoten, mit Fokus auch ohne Uebergang;
+    Kunden-Benutzer sehen den Partner als „anderer Kunde“."""
+    tid, ids = _seed(client)
+    z = _model(client, tid, ids)
+    a, b = _customer(client, tid, "Kunde A"), _customer(client, tid, "Kunde B")
+    for key, owner in (("server", a), ("office", b)):
+        zone = z[key]
+        body = {"tenant_id": tid, "name": zone["name"], "kind": zone["kind"],
+                "code": zone["code"], "customer_id": owner["id"],
+                "selectors": zone["selectors"]}  # fmt: skip
+        assert client.put(f"/zones/{zone['id']}", json=body, headers=OP).status_code == 200
+    srv, office, dc = z["server"]["id"], z["office"]["id"], z["dc"]["id"]
+
+    def get(headers=None, **params):
+        r = client.get("/zones/plan", params={"tenant_id": tid, **params}, headers=headers or {})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    assert get(all="true")["flows"] == []  # nur auf Wunsch
+    full = get(all="true", flows="true")
+    pairs = {(f["a"], f["b"]): f for f in full["flows"]}
+    # lan-to-srv: Office -> Server (erlaubt); srv-to-web: Server -> DC; lan-to-web ist gesperrt
+    assert pairs[(office, srv)] == {"id": f"flow:{office}~{srv}", "a": office, "b": srv,
+                                    "rules": 1, "ab": 1, "ba": 0}  # fmt: skip
+    assert pairs[(dc, srv)]["ba"] == 1 and (dc, office) not in pairs
+    edges = [e for e in full["layout"]["edges"] if e.get("flow")]
+    assert len(edges) == len(pairs) and all(e["dashed"] for e in edges)
+    flow = next(e for e in edges if {e["a"], e["b"]} == {office, srv})
+    assert flow["label"] == "1 Regel" and flow["name"] == (
+        "Office → Server: 1, Server → Office: 0 erlaubende Regeln")  # fmt: skip
+    # Plan von Kunde A: Office (Kunde B) einzeln als Partner, ohne Knoten
+    mine = get(customer_id=a["id"], flows="true")
+    partner = next(x for x in mine["zones"] if x["id"] == office)
+    assert partner["partner"] and partner["nodes"] == []
+    assert not any(x.get("collapsed") for x in mine["zones"])
+    assert (office, srv) in {(f["a"], f["b"]) for f in mine["flows"]}
+    # Fokus auf Office ohne Nachbarn: mit Kommunikation kommt Server dazu
+    focus = get(all="true", flows="true", focus=str(office), depth=0)
+    assert {x["id"] for x in focus["zones"]} == {office, srv}
+    assert "mit Kommunikation (Regeln)" in focus["filter"]["label"]
+    # Kunden-Benutzer A: Partner als „anderer Kunde“, keine fremden Namen
+    user = get(_as(tid, a["id"]), flows="true")
+    names = {x["id"]: x["name"] for x in user["zones"]}
+    assert ("Server", "anderer Kunde") in {(names[f["a"]], names[f["b"]]) for f in user["flows"]}
+    assert "Office" not in str(user["flows"]) and "Kunde B" not in str(user)
+    # Export zeigt die Linien
+    svg = client.get("/zones/plan/export", params={"tenant_id": tid, "format": "svg", "all": "true",
+                                                   "flows": "true"}).text  # fmt: skip
+    assert "1 Regel" in svg and "#2563eb" in svg
+
+
 def test_zonenplan_kunde_nur_benoetigte_knoten(client):
     """Plan eines Kunden (0.57.1): nur die Firewalls/VRFs, die er braucht - an seinen Netzen und
     auf den kuerzesten Wegen zu den Zonen seiner Regeln; geteilte Zonen ohne solche Knoten und

@@ -926,6 +926,37 @@ test("Netzwerkdesign: Zonen, Zonenmatrix mit Absicht und Zonenplan", async ({ pa
   expect(problems).toEqual([]);
 });
 
+test("Zonen: Vorschläge beim Erfassen und Kommunikation im Zonenplan (0.66.0)", async ({ page, problems }) => {
+  await page.goto("/#design");
+  // neue Zone „DMZ“: die FortiGate-Zone dmz passt (gleicher Name), liegt aber schon in der Zone DMZ
+  await page.click("button:has-text('+ Zone')");
+  await page.fill("#zo-name", "DMZ");
+  const assist = page.locator("#zone-assist-items tbody tr");
+  const fwZone = assist.filter({ hasText: "Zone dmz · fw-08" });
+  await expect(fwZone).toContainText("gleicher Name");
+  await expect(fwZone).toContainText("in Zone DMZ (10.30.0.0/24)");
+  await fwZone.locator("button:has-text('+ Übernehmen')").click();
+  await expect(page.locator("#zone-selectors input[aria-label='Wert']").first()).toHaveValue("dmz");
+  await expect(page.locator("#zone-selectors select[aria-label='Art']").first()).toHaveValue("fw_zone");
+  await expect(page.locator("#zone-preview")).toContainText("Gleiches Netz schon in einer anderen Zone");
+  await expect(fwZone).toHaveCount(0); // übernommen: kein Vorschlag mehr
+  await page.click(".modal button:has-text('Abbrechen')");
+
+  // Zonenplan: Kommunikation LAN -> DMZ (zwei erlaubende Policies), nur auf Wunsch
+  await page.click(".tabbar button:has-text('Zonenplan')");
+  await expect(page.locator("#zone-plan .zp-zone2").first()).toBeVisible();
+  await expect(page.locator("#zone-plan .zp-edge.flow")).toHaveCount(0);
+  await page.locator("#zone-plan-flows input").check();
+  const flow = page.locator("#zone-plan .zp-edge.flow").filter({ has: page.locator("title", { hasText: "LAN → DMZ: 2" }) });
+  await expect(flow).toHaveCount(1);
+  await expect(flow).toContainText("2 Regeln");
+  // keine Linie zu „Knoten ohne Zone“ (Adressen ohne Zone sind keine Zone)
+  await expect(page.locator("#zone-plan .zp-edge.flow title", { hasText: "Knoten ohne Zone" })).toHaveCount(0);
+  await page.locator("#zone-plan-flows input").uncheck();
+  await expect(page.locator("#zone-plan .zp-edge.flow")).toHaveCount(0);
+  expect(problems).toEqual([]);
+});
+
 test("Weg-Suche: Zonen je Hop und Absicht zwischen Quell- und Zielzone", async ({ page, problems }) => {
   await page.goto("/#wege");
   await page.getByPlaceholder("Quelle: IP, Netz oder Name").fill("10.10.0.5");
