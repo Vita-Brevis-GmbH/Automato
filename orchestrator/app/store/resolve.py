@@ -109,14 +109,18 @@ def resolve(
     limit: int = LIMIT,
     offset: int = 0,
     only: str | None = None,
+    keep=None,
 ) -> dict:
     """Treffer fuer `query`: {hits, total, counts {host, net}, capped}; je Treffer {ip, name,
-    kind (ip|ipam|object|vm|net|subnet), type (host|net), net, source, detail, also}."""
+    kind (ip|ipam|object|vm|net|subnet), type (host|net), net, source, detail, also}. `keep`
+    (0.76.0, Kunde gewaehlt): Treffer -> behalten?, darf ihn ergaenzen (z. B. `shared`)."""
     q = (query or "").strip().lower()
     if not _ADDRESSISH.match(q):  # FQDN mit Punkt am Ende; `10.20.1.` bleibt (nicht 10.20.100)
         q = q.rstrip(".")
     hits = _collect(session, tenant_id, q) if q else ([], False)
     found, capped = hits
+    if keep is not None:
+        found = [h for h in found if keep(h)]
     counts = {t: sum(1 for h in found if h["type"] == t) for t in TYPES}
     chosen = [h for h in found if only in (None, h["type"])]
     page = chosen[offset : offset + limit]

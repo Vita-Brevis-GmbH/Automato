@@ -410,7 +410,7 @@ export type ParallelGroup = {
   };
 };
 export const fetchParallelGroups = (tenantId: number) =>
-  getJSON<ParallelGroup[]>(`/api/systems/parallel${qs({ tenant_id: tenantId })}`);
+  getJSON<ParallelGroup[]>(`/api/systems/parallel${cq({ tenant_id: tenantId })}`);
 // Nicht parallel: Vorschlag ablehnen bzw. Verbund auflösen (beides: nicht mehr vorschlagen)
 export const rejectParallel = (tenantId: number, sel: { system_ids?: number[]; group?: string }) =>
   sendJSON<{ source_ids: number[] }>("/api/systems/parallel-reject", "POST", { tenant_id: tenantId, ...sel });
@@ -896,6 +896,7 @@ interface InvBase {
   id: number;
   source_system_id: number;
   source: string | null;
+  shared?: boolean; // 0.76.0: Kunde gewählt, geteilter Teil der Umgebung
 }
 export interface InvDevice extends InvBase {
   name: string;
@@ -1586,7 +1587,7 @@ export const fetchFindingSummary = (tenantId?: number | null, type?: string, q?:
 export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
   sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);
 export const fetchPublishedServices = (tenantId?: number | null) =>
-  getJSON<PublishedService[]>(`/api/published-services${qs({ tenant_id: tenantId })}`);
+  getJSON<PublishedService[]>(`/api/published-services${cq({ tenant_id: tenantId })}`);
 export const fetchPublishedService = (name: string, tenantId?: number | null) =>
   getJSON<PublishedServiceDetail>(
     `/api/published-services/${encodeURIComponent(name)}${qs({ tenant_id: tenantId })}`,
@@ -1936,15 +1937,15 @@ export const fetchInventory = <K extends keyof Inventory>(
   tenantId: number,
   params: { source_system_id?: number | null; q?: string } = {},
 ) =>
-  getJSON<Inventory[K][]>(`/api/inventory/${kind}${qs({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
+  getJSON<Inventory[K][]>(`/api/inventory/${kind}${cq({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
 
 // Abgleich
 export const fetchReconcileSummary = (tenantId: number) =>
-  getJSON<ReconcileSummary>(`/api/reconcile/summary${qs({ tenant_id: tenantId })}`);
+  getJSON<ReconcileSummary>(`/api/reconcile/summary${cq({ tenant_id: tenantId })}`);
 export const fetchIpamCompare = (
   tenantId: number,
   params: { status?: string; q?: string; limit?: number; offset?: number } = {},
-) => getJSON<IpamCompare>(`/api/reconcile/ipam${qs({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
+) => getJSON<IpamCompare>(`/api/reconcile/ipam${cq({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
 export const runReconcile = (tenantId: number) =>
   sendJSON<{ tenant_id: number; findings: Record<string, number> }>(
     `/api/reconcile${qs({ tenant_id: tenantId })}`,
@@ -1992,6 +1993,7 @@ export interface Labeled {
   context: string; // VDOM bzw. Tenant:VRF
   display?: ContextKind | "";
   label?: string;
+  shared?: boolean; // 0.76.0: Kunde gewählt, Kontext gehört zum geteilten Teil
 }
 export interface RoutingContext extends Labeled {
   id: number;
@@ -2218,7 +2220,7 @@ export const resolveName = (
   opts: { type?: "host" | "net" | ""; limit?: number; offset?: number } = {},
 ) =>
   getJSON<NameResult>(
-    `/api/routing/resolve${qs({ tenant_id: tenantId, q: q.trim(), type: opts.type || undefined, limit: opts.limit, offset: opts.offset })}`,
+    `/api/routing/resolve${cq({ tenant_id: tenantId, q: q.trim(), type: opts.type || undefined, limit: opts.limit, offset: opts.offset })}`,
   );
 export interface TopoPeer extends Labeled {
   id: number;
@@ -2284,7 +2286,7 @@ export interface TopoL3Out {
 }
 
 export const fetchRoutingSummary = (tenantId: number) =>
-  getJSON<RoutingSummary>(`/api/routing/summary${qs({ tenant_id: tenantId })}`);
+  getJSON<RoutingSummary>(`/api/routing/summary${cq({ tenant_id: tenantId })}`);
 export const fetchRoutes = (opts: {
   tenantId: number;
   sourceId?: number | null;
@@ -2297,10 +2299,10 @@ export const fetchRoutes = (opts: {
   offset?: number;
 }) =>
   getPage<TopoRoute>(
-    `/api/routing/routes${qs({ tenant_id: opts.tenantId, source_system_id: opts.sourceId, context: opts.context || undefined, table: opts.table || undefined, vrf: opts.vrf || undefined, ip: opts.ip?.trim() || undefined, q: opts.q?.trim() || undefined, limit: opts.limit, offset: opts.offset })}`,
+    `/api/routing/routes${cq({ tenant_id: opts.tenantId, source_system_id: opts.sourceId, context: opts.context || undefined, table: opts.table || undefined, vrf: opts.vrf || undefined, ip: opts.ip?.trim() || undefined, q: opts.q?.trim() || undefined, limit: opts.limit, offset: opts.offset })}`,
   );
 export const lookupRoute = (tenantId: number, ip: string) =>
-  getJSON<RouteLookup[]>(`/api/routing/lookup${qs({ tenant_id: tenantId, ip: ip.trim() })}`);
+  getJSON<RouteLookup[]>(`/api/routing/lookup${cq({ tenant_id: tenantId, ip: ip.trim() })}`);
 // Weg Hop für Hop: ab der Quelle (dort angeschlossen) bzw. dem Startpunkt (RoutingNode.key)
 export const traceRoute = (
   tenantId: number,
@@ -2309,11 +2311,11 @@ export const traceRoute = (
   getJSON<TraceResult>(
     `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim(), src: opts.src?.trim() || undefined, start: opts.start || undefined, slack: opts.slack, service: opts.service?.trim() || undefined })}`,
   );
-export const fetchPeers = (tenantId: number) => getJSON<TopoPeer[]>(`/api/routing/peers${qs({ tenant_id: tenantId })}`);
-export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha${qs({ tenant_id: tenantId })}`);
+export const fetchPeers = (tenantId: number) => getJSON<TopoPeer[]>(`/api/routing/peers${cq({ tenant_id: tenantId })}`);
+export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha${cq({ tenant_id: tenantId })}`);
 export const fetchPolicyRoutes = (tenantId: number) =>
-  getJSON<TopoPolicyRoute[]>(`/api/routing/policy-routes${qs({ tenant_id: tenantId })}`);
-export const fetchL3Outs = (tenantId: number) => getJSON<TopoL3Out[]>(`/api/routing/l3outs${qs({ tenant_id: tenantId })}`);
+  getJSON<TopoPolicyRoute[]>(`/api/routing/policy-routes${cq({ tenant_id: tenantId })}`);
+export const fetchL3Outs = (tenantId: number) => getJSON<TopoL3Out[]>(`/api/routing/l3outs${cq({ tenant_id: tenantId })}`);
 
 // Anbindungen nach aussen (0.18.0, von Hand): Internet, MPLS, WAN, Partner – der Weg endet dort
 // bzw. geht nach den manuellen Routen bei einem gelesenen Knoten weiter
@@ -2396,11 +2398,11 @@ export interface TopoExit {
   };
 }
 export type TopoExitIn = Omit<TopoExit, "id" | "sources" | "updated_at" | "status">;
-export const fetchExits = (tenantId: number) => getJSON<TopoExit[]>(`/api/routing/exits${qs({ tenant_id: tenantId })}`);
+export const fetchExits = (tenantId: number) => getJSON<TopoExit[]>(`/api/routing/exits${cq({ tenant_id: tenantId })}`);
 // erkannte Anbindungen; `covered` = auch die schon ganz erfassten, `dismissed` = auch ausgeblendete
 export const fetchExitSuggestions = (tenantId: number, opts: { covered?: boolean; dismissed?: boolean } = {}) =>
   getJSON<ExitSuggestion[]>(
-    `/api/routing/exits/suggestions${qs({ tenant_id: tenantId, covered: opts.covered ? "true" : undefined, dismissed: opts.dismissed ? "true" : undefined })}`,
+    `/api/routing/exits/suggestions${cq({ tenant_id: tenantId, covered: opts.covered ? "true" : undefined, dismissed: opts.dismissed ? "true" : undefined })}`,
   );
 // erkannte Router nicht mehr vorschlagen bzw. wieder vorschlagen (Operator, 0.21.0)
 export const dismissExits = (tenantId: number, ips: string[], undo = false) =>
@@ -2568,7 +2570,7 @@ export interface TopologyModel {
   summary: { nodes: Record<string, number>; edges: Record<string, number>; issues: Record<string, number> };
 }
 export const fetchTopology = (tenantId: number, node?: string) =>
-  getJSON<TopologyModel>(`/api/topology${qs({ tenant_id: tenantId, node })}`);
+  getJSON<TopologyModel>(`/api/topology${cq({ tenant_id: tenantId, node })}`);
 
 // Logische Zonen (0.51.0, ADR 0024): in Automato gepflegt, Selektoren wie beim Kunden und dazu
 // `exit` (Netze hinter einer Anbindung); Zonenmatrix mit Absicht je Paar, Zonenplan
@@ -2601,6 +2603,7 @@ export interface LogicalZone {
   id: number;
   tenant_id: number;
   name: string;
+  shared?: boolean; // 0.76.0: Kunde gewählt, Zone eines anderen bzw. geteilten Kunden
   code: string | null;
   kind: ZoneKind;
   color: string | null;
@@ -2846,7 +2849,7 @@ export interface PlanDiff {
   matrix: { cell: string; old: [number, number, number]; new: [number, number, number] }[];
 }
 export type PlanFormat = "drawio" | "svg" | "pdf" | "docx" | "zip"; // docx/zip: Word (+ draw.io) für Confluence (0.71.0)
-export const fetchZones = (tenantId: number) => getJSON<LogicalZone[]>(`/api/zones${qs({ tenant_id: tenantId })}`);
+export const fetchZones = (tenantId: number) => getJSON<LogicalZone[]>(`/api/zones${cq({ tenant_id: tenantId })}`);
 export const createZone = (body: ZoneIn) => sendJSON<LogicalZone>("/api/zones", "POST", body);
 export const updateZone = (id: number, body: ZoneIn) => sendJSON<LogicalZone>(`/api/zones/${id}`, "PUT", body);
 export const deleteZone = (id: number) => sendJSON<void>(`/api/zones/${id}`, "DELETE");
@@ -2963,10 +2966,10 @@ export const applySchemaIntents = (tenantId: number, pairs?: [number, number][],
   });
 export const dismissZoneSuggestions = (tenantId: number, keys: string[], undo = false) =>
   sendJSON<{ keys: string[] }>(`/api/zones/suggestions/dismiss${undo ? "/undo" : ""}`, "POST", { tenant_id: tenantId, keys });
-export const fetchZoneMatrix = (tenantId: number) => getJSON<ZoneMatrix>(`/api/zones/matrix${qs({ tenant_id: tenantId })}`);
+export const fetchZoneMatrix = (tenantId: number) => getJSON<ZoneMatrix>(`/api/zones/matrix${cq({ tenant_id: tenantId })}`);
 export const fetchZoneCellRules = (tenantId: number, src: ZoneCell, dst: ZoneCell, offset = 0) =>
   getJSON<{ total: number; violations: number; items: ZoneCellRule[] }>(
-    `/api/zones/matrix/rules${qs({ tenant_id: tenantId, src: String(src), dst: String(dst), offset, limit: 100 })}`,
+    `/api/zones/matrix/rules${cq({ tenant_id: tenantId, src: String(src), dst: String(dst), offset, limit: 100 })}`,
   );
 export const setZonePolicy = (tenantId: number, src: number, dst: number, intent: ZoneIntent | null, note: string | null, services?: string[]) =>
   sendJSON<{ src: number; dst: number; intent: ZoneIntent | null; note: string | null; services: string[] }>("/api/zones/policy", "PUT", {
@@ -3069,6 +3072,7 @@ export type LinkState = "both" | "one_sided" | "unread";
 export interface CablingDevice {
   key: string;
   name: string;
+  shared?: boolean; // 0.76.0: Kunde gewählt, geteilter Teil der Umgebung
   kind: string; // switch | leaf | spine | firewall | esxi | unknown
   read: boolean;
   source: string | null;
@@ -3152,13 +3156,13 @@ export interface CablingVlan {
   devices: { device: string; access: number; trunks: number }[];
 }
 export const fetchCablingDevices = (tenantId: number) =>
-  getJSON<{ summary: CablingSummary; items: CablingDevice[] }>(`/api/cabling/devices${qs({ tenant_id: tenantId })}`);
+  getJSON<{ summary: CablingSummary; items: CablingDevice[] }>(`/api/cabling/devices${cq({ tenant_id: tenantId })}`);
 export const fetchCablingLinks = (
   tenantId: number,
   f: { device?: string; state?: LinkState | ""; q?: string; issues?: boolean; offset?: number; limit?: number } = {},
 ) =>
   getJSON<{ total: number; items: CablingLink[] }>(
-    `/api/cabling/links${qs({ tenant_id: tenantId, device: f.device, state: f.state || undefined, q: f.q, issues: f.issues ? "true" : undefined, offset: f.offset, limit: f.limit })}`,
+    `/api/cabling/links${cq({ tenant_id: tenantId, device: f.device, state: f.state || undefined, q: f.q, issues: f.issues ? "true" : undefined, offset: f.offset, limit: f.limit })}`,
   );
 // Patchungen eines Geräts im Plan (0.70.0): je Kabel beide Enden mit Konfiguration
 export interface CablingPatchEnd extends CablingEnd {
@@ -3188,15 +3192,15 @@ export interface CablingPatches {
   items: CablingPatch[];
 }
 export const fetchCablingPatches = (tenantId: number, device: string, peer?: string | null) =>
-  getJSON<CablingPatches>(`/api/cabling/patches${qs({ tenant_id: tenantId, device, peer: peer ?? undefined })}`);
+  getJSON<CablingPatches>(`/api/cabling/patches${cq({ tenant_id: tenantId, device, peer: peer ?? undefined })}`);
 export const fetchCablingPorts = (
   tenantId: number,
   f: { device?: string; status?: string; vlan?: number | null; q?: string; offset?: number; limit?: number } = {},
 ) =>
   getJSON<{ total: number; items: CablingPort[] }>(
-    `/api/cabling/ports${qs({ tenant_id: tenantId, device: f.device, status: f.status || undefined, vlan: f.vlan ?? undefined, q: f.q, offset: f.offset, limit: f.limit })}`,
+    `/api/cabling/ports${cq({ tenant_id: tenantId, device: f.device, status: f.status || undefined, vlan: f.vlan ?? undefined, q: f.q, offset: f.offset, limit: f.limit })}`,
   );
-export const fetchCablingVlans = (tenantId: number) => getJSON<CablingVlan[]>(`/api/cabling/vlans${qs({ tenant_id: tenantId })}`);
+export const fetchCablingVlans = (tenantId: number) => getJSON<CablingVlan[]>(`/api/cabling/vlans${cq({ tenant_id: tenantId })}`);
 
 // Endpunkte (0.63.0): MAC-Tabelle und ARP der Switches
 export interface EndpointVm {
@@ -3245,7 +3249,7 @@ export const fetchCablingEndpoints = (
   f: { device?: string; port?: string; vlan?: number | null; q?: string; uplinks?: boolean; offset?: number; limit?: number } = {},
 ) =>
   getJSON<{ total: number; summary: { macs: number; ports: number; vms: number; with_ip: number }; items: CablingEndpoint[] }>(
-    `/api/cabling/endpoints${qs({ tenant_id: tenantId, device: f.device, port: f.port, vlan: f.vlan ?? undefined, q: f.q, uplinks: f.uplinks ? "true" : undefined, offset: f.offset, limit: f.limit })}`,
+    `/api/cabling/endpoints${cq({ tenant_id: tenantId, device: f.device, port: f.port, vlan: f.vlan ?? undefined, q: f.q, uplinks: f.uplinks ? "true" : undefined, offset: f.offset, limit: f.limit })}`,
   );
 // L2-Sicht (0.64.0): Plan der Verkabelung und Ausfall
 export interface L2PlanNode {
@@ -3292,7 +3296,7 @@ export interface L2Failure {
   cut_off_keys: string[];
 }
 export const fetchL2Plan = (tenantId: number, f: { ends?: boolean; vlan?: number | null } = {}) =>
-  getJSON<L2Plan>(`/api/cabling/plan${qs({ tenant_id: tenantId, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`);
+  getJSON<L2Plan>(`/api/cabling/plan${cq({ tenant_id: tenantId, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`);
 // Ausfall: mehrere Geräte bzw. Kabel gleichzeitig (0.65.0) - Parameter je Wert wiederholt
 export const fetchL2Failure = (tenantId: number, f: { devices?: string[]; links?: string[] }) => {
   const p = new URLSearchParams({ tenant_id: String(tenantId) });
@@ -3307,12 +3311,12 @@ export async function exportL2Plan(
   f: { ends?: boolean; vlan?: number | null } = {},
 ): Promise<{ blob: Blob; filename: string }> {
   const response = await fetchChecked(
-    `/api/cabling/plan/export${qs({ tenant_id: tenantId, format, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`,
+    `/api/cabling/plan/export${cq({ tenant_id: tenantId, format, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`,
   );
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `verkabelung.${format}` };
 }
 export const locateEndpoint = (tenantId: number, q: string) =>
   getJSON<{ query: string; kind: string | null; ips: string[]; items: EndpointLocation[] }>(
-    `/api/cabling/locate${qs({ tenant_id: tenantId, q })}`,
+    `/api/cabling/locate${cq({ tenant_id: tenantId, q })}`,
   );

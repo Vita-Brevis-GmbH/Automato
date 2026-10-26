@@ -32,7 +32,7 @@ import {
   locateEndpoint,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
-import { Dash, download, Empty, ErrorBox, fmtTime, Loading, Note, PageHead } from "./ui";
+import { Dash, download, Empty, ErrorBox, fmtTime, Loading, Note, PageHead, SharedChip } from "./ui";
 
 const PAGE = 200;
 type Tab = "plan" | "links" | "devices" | "ports" | "endpoints" | "vlans";
@@ -292,6 +292,7 @@ function DevicesTab({ items, onOpen }: { items: CablingDevice[]; onOpen: (key: s
               <tr key={d.key} className="clickable" onClick={() => onOpen(d.key, d.kind === "switch" ? "ports" : "links")}>
                 <td className="nowrap">
                   <b>{d.name}</b> {d.mgmt_ip && <span className="faint mono">{d.mgmt_ip}</span>}
+                  <SharedChip shared={d.shared} />
                 </td>
                 <td>{KIND[d.kind] ?? d.kind}</td>
                 <td className="faint">{d.source ?? (d.read ? "" : "nur von Nachbarn gemeldet")}</td>

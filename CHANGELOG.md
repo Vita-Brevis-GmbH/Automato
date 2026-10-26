@@ -7,6 +7,25 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.76.0 – 2026-10-26
+
+Kunde oben wählen filtert alle Ansichten (Rückmeldung des Anwenders: „keine zusätzlichen
+Infos“; Entscheid: eigenes plus geteiltes, das geteilte markiert). Ohne Migration.
+
+- **Alle Ansichten im Ausschnitt:** Routing (Kontexte, Routen, Nachbarn, HA, Policy-Routen,
+  L3Outs, Anbindungen, Vorschläge, parallele Firewalls), Topologie, Weg-Suche (Namenssuche),
+  Inventar (Subnetze, VLANs, Ports, Geräte, VRFs), Verkabelung (Geräte, Kabel, Ports, VLANs,
+  Endpunkte, „Wo hängt …“, Plan und Export), Abgleich (Befunde, DDI ↔ NetBox), publizierte
+  Dienste und Zonen (Liste, Matrix, Regeln einer Zelle) nehmen `customer_id` an.
+- **Eigen oder geteilt** (`store/customer_infra.py`): ein VDOM ist eigen über einen
+  VDOM-Selektor des Kunden, eine VRF im eigenen ACI-Tenant – jeweils ohne Regeln bzw. EPGs
+  anderer Kunden; VDOMs nur mit Regeln (z. B. `root`) und VRFs aus `common` sind geteilt und
+  zeigen nur Routen zu den Netzen des Kunden (samt Default-Route). VLANs, Ports, Geräte, Kabel
+  und Endpunkte folgen aus seinen EPGs, Netzen, VDOMs und VMs. Geteiltes trägt `shared`.
+- **Oberfläche:** Hinweis „Ausschnitt <Kunde>“ über der Ansicht mit „alle Kunden“; „geteilt“
+  an Kontexten, Routen, Nachbarn, Inventar, Geräten der Verkabelung und Zonen.
+- ADR 0018 Ergänzung 0.76.0, BETRIEB, TESTS.
+
 ## 0.75.0 – 2026-10-26
 
 Applikationen anlegen und aufräumen, weniger Info auf einen Blick (Rückmeldung des Anwenders).

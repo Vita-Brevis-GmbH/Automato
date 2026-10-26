@@ -698,7 +698,22 @@ test("Kunden-Filter: Umschalter zeigt nur den Ausschnitt des Kunden", async ({ p
   await expect(rows(page).filter({ hasText: "CT_rt" })).toHaveCount(1);
   await page.goto("/#findings"); // bleibt gewählt (je Umgebung gemerkt)
   await expect(page.getByLabel("Kunde", { exact: true })).toHaveValue(/\d+/);
-  await page.getByLabel("Kunde", { exact: true }).selectOption("");
+  // 0.76.0: auch Routing, Inventar und Verkabelung nur im Ausschnitt, mit Hinweis oben
+  await page.goto("/#routing");
+  await expect(page.locator("#customer-scope")).toContainText("Ausschnitt TE");
+  const ctx = page.locator("#routing-contexts");
+  await expect(ctx).toContainText("1 Kontexte");
+  await ctx.locator(".fold-title").click();
+  await expect(ctx.locator("tbody tr")).toHaveCount(1);
+  await expect(ctx).toContainText("leaf-101 · VRF TE:VRF1");
+  await expect(ctx).not.toContainText("fw-05");
+  await page.goto("/#verkabelung");
+  await expect(page.locator("main.main")).toContainText("leaf-101");
+  await expect(page.locator("main.main")).not.toContainText("fw-05");
+  await page.goto("/#routing");
+  await page.locator("#customer-scope button", { hasText: "alle Kunden" }).click();
+  await expect(page.locator("#customer-scope")).toHaveCount(0);
+  await expect(page.locator("#routing-contexts")).toContainText("9 Kontexte");
   await page.goto("/#regeln");
   await expect(rows(page)).not.toHaveCount(2);
 });

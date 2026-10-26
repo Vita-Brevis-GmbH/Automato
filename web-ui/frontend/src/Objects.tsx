@@ -35,7 +35,7 @@ import {
 } from "./refs";
 import { SiteChip } from "./sites";
 import type { View, ViewParams } from "./App";
-import { ActionBadge, Dash, Drawer, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
+import { ActionBadge, Dash, Drawer, Empty, ErrorBox, Icon, Loading, Note, PageHead, SharedChip } from "./ui";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -937,7 +937,10 @@ function InventoryTable({
                   <td>
                     <IpamCell info={s.enrichment} />
                   </td>
-                  <td className="nowrap">{cell(s.source)}</td>
+                  <td className="nowrap">
+                    {cell(s.source)}
+                    <SharedChip shared={s.shared} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -968,7 +971,10 @@ function InventoryTable({
                     <Short items={v.epgs} />
                   </td>
                   <td className="muted">{cell(v.description)}</td>
-                  <td className="nowrap">{cell(v.source)}</td>
+                  <td className="nowrap">
+                    {cell(v.source)}
+                    <SharedChip shared={v.shared} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1005,7 +1011,10 @@ function InventoryTable({
                   <td className="mono">{cell(d.mgmt_ip)}</td>
                   <td className="mono">{cell(d.version)}</td>
                   <td>{d.site ? <SiteChip site={d.site} from={d.site_from} /> : <Dash />}</td>
-                  <td className="nowrap">{cell(d.source)}</td>
+                  <td className="nowrap">
+                    {cell(d.source)}
+                    <SharedChip shared={d.shared} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1026,7 +1035,10 @@ function InventoryTable({
                   <td className="mono">
                     <b>{v.name}</b>
                   </td>
-                  <td>{cell(v.source)}</td>
+                  <td>
+                    {cell(v.source)}
+                    <SharedChip shared={v.shared} />
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -513,6 +513,17 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
 
       <main className="main" key={`${tenantId ?? "alle"}-${customerId ?? "alle"}`}>
         {tenantsErr ? <ErrorBox error={tenantsErr} prefix="Mandanten laden" /> : null}
+        {customerId != null && !me.isCustomer && docView && (
+          // 0.76.0: der Kunde oben filtert alle Ansichten; Geteiltes ist markiert
+          <div className="customer-scope" id="customer-scope">
+            Ausschnitt <b>{customers.find((c) => c.id === customerId)?.name ?? "Kunde"}</b> – alle Ansichten zeigen nur, was
+            zu diesem Kunden gehört; <span className="chip na">geteilt</span> = gemeinsamer Teil der Umgebung (z. B. Tenant
+            common, VDOM bzw. Firewall für mehrere Kunden).
+            <button className="linkbtn" onClick={() => setCustomerId(null)}>
+              alle Kunden
+            </button>
+          </div>
+        )}
         {noTenant && docView ? (
           <Note warn>
             Ihrem Konto ist noch kein Mandant zugeordnet. Bitte den Administrator, in Keycloak das

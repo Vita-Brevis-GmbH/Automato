@@ -1069,6 +1069,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Umgebung gemerkt). Übersicht, Regeln, Objekte, NAT, Findings, VMs/Portgruppen, Doku je
     System und Applikationen zeigen dann nur seinen Ausschnitt; vom geteilten Teil zählen
     EPGs, Netze und Objekte, Regeln, NAT, Findings und VMs nur aus dem Kunden selbst (0.33.0).
+    Seit 0.76.0 gilt er **für alle Ansichten**: Routing (nur seine VDOMs/VRFs; in geteilten
+    VDOMs wie `root` bzw. VRFs aus `common` nur die Routen zu seinen Netzen), Topologie,
+    Weg-Suche (Namen nur in seinen Netzen), Inventar, Verkabelung (Geräte, Kabel, Ports, VLANs
+    und Endpunkte des Kunden), Abgleich, publizierte Dienste und Zonen. Oben steht „Ausschnitt
+    <Kunde>“ mit „alle Kunden“ zum Aufheben; Elemente des geteilten Teils tragen „geteilt“.
+    Läufe, Betriebszustand und Quellsysteme bleiben unverändert.
   - **Kunden-Benutzer (0.33.0):** eigene Logins für Kunden. In Keycloak die Realm-Rolle
     `customer`, das Attribut **Mandanten-IDs** (die Umgebung) und **Kunden-IDs** (IDs aus der
     Ansicht „Kunden“) setzen, Anleitung `deploy/keycloak/PROD-INSTALL.md` 9a/9b. Sie sehen

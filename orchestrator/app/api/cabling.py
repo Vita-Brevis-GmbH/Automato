@@ -30,6 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -37,7 +38,8 @@ from app.db import get_session
 from app.models import InvVlan, MacEntry, SourceSystem, Tenant
 from app.models.source_system import Platform
 from app.store import cabling as store
-from app.store import l2, l2_export, l2_topo
+from app.store import customer_infra, l2, l2_export, l2_topo
+from app.store.customer_infra import SHARED
 
 router = APIRouter(prefix="/cabling", tags=["cabling"])
 STATES = ("both", "one_sided", "unread")
@@ -49,6 +51,49 @@ def _tenant(session: Session, principal: Principal, tenant_id: int | None) -> in
         raise HTTPException(status_code=422, detail="tenant_id required")
     reads.maybe_audit_read(session, principal, tid, "cabling")
     return tid
+
+
+def _infra(session: Session, principal: Principal, tid: int,
+           customer_id: int | None) -> customer_infra.Infra | None:  # fmt: skip
+    """Kunde oben gewaehlt (0.76.0): sein Ausschnitt, sonst None."""
+    return customer_infra.of(session, customer_view(session, principal, tid, customer_id))
+
+
+def _end_mark(infra: customer_infra.Infra, end: store.End) -> str | None:
+    if end.iface is not None:
+        mark = infra.ports.get((end.iface.source_system_id, end.iface.device, end.iface.name))
+        if mark:
+            return mark
+    if end.device.kind == "esxi":
+        return infra.vm_hosts.get(end.device.name)
+    return None
+
+
+def _link_mark(infra: customer_infra.Infra, link: store.Link) -> str | None:
+    """Kabel im Ausschnitt: ein Ende ist ein Port des Kunden bzw. ein ESXi-Host seiner VMs."""
+    return customer_infra._mark(_end_mark(infra, link.a), _end_mark(infra, link.b))
+
+
+def _device_keys(infra: customer_infra.Infra, cab: store.Cabling) -> dict[str, str]:
+    """Geraete (Schluessel) im Ausschnitt: eigene Geraete und die an seinen Kabeln."""
+    out: dict[str, str] = {}
+    for d in cab.devices.values():
+        mark = infra.device_mark(d.source_system_id, d.name)
+        if mark:
+            out[d.key] = mark
+    for link in cab.links.values():
+        mark = _link_mark(infra, link)
+        if mark:
+            for end in (link.a, link.b):
+                out[end.device.key] = customer_infra._mark(out.get(end.device.key), mark) or mark
+    return out
+
+
+def _mac_visible(infra: customer_infra.Infra, loc: l2.Locator, mac: str) -> bool:
+    """Endpunkt des Kunden: NIC einer seiner VMs bzw. IP in seinen Netzen."""
+    if mac in infra.macs:
+        return True
+    return any(infra.net_mark(ip) for ip in loc.identity(mac).ips)
 
 
 def _matches(link: store.Link, q: str) -> bool:
@@ -63,12 +108,19 @@ def _matches(link: store.Link, q: str) -> bool:
 @router.get("/devices")
 def devices(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """Geraete mit Anzahl Ports (verbunden), Verbindungen und Abweichungen."""
+    """Geraete mit Anzahl Ports (verbunden), Verbindungen und Abweichungen; mit Kunde (0.76.0)
+    nur seine Geraete und Kabel."""
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     cab = store.build(session, tid)
+    edge_macs = _edge_macs(session, tid, cab, infra)  # vor dem Ausschnitt: Uplinks erkennen
+    marks = _device_keys(infra, cab) if infra is not None else None
+    if infra is not None:
+        cab.links = {i: lk for i, lk in cab.links.items() if _link_mark(infra, lk)}
     ports: dict[str, list] = defaultdict(list)
     for p in cab.ports:
         ports[store.device_key(p.device)].append(p)
@@ -81,6 +133,8 @@ def devices(
         mine = links.get(d.key, [])
         if not d.read and not mine:
             continue  # ESXi-Host ohne Verbindung
+        if marks is not None and d.key not in marks:
+            continue
         own = ports.get(d.key, [])
         items.append({
             "key": d.key, "name": d.name, "kind": d.kind, "read": d.read, "source": d.source,
@@ -92,6 +146,7 @@ def devices(
             "links": len(mine),
             "issues": sum(len(link.issues) for link in mine),
             "one_sided": sum(1 for link in mine if link.state == "one_sided"),
+            **({"shared": marks[d.key] == SHARED} if marks is not None else {}),
         })  # fmt: skip
     order = {"switch": 0, "leaf": 1, "spine": 1, "router": 2, "firewall": 2, "esxi": 4,
              "unknown": 5}  # fmt: skip
@@ -105,9 +160,15 @@ def devices(
         "issues": sum(len(link.issues) for link in cab.links.values()),
         "unread": sum(1 for x in items if not x["read"]),
         # Endpunkte (0.63.0): MACs an Ports, die keine Uplinks sind
-        "endpoints": len({e.mac for e in l2.Locator(session, tid, cab).edge_entries()}),
+        "endpoints": len(edge_macs),
     }
     return {"summary": summary, "items": items}
+
+
+def _edge_macs(session: Session, tid: int, cab: store.Cabling, infra) -> set[str]:
+    loc = l2.Locator(session, tid, cab)
+    macs = {e.mac for e in loc.edge_entries()}
+    return macs if infra is None else {m for m in macs if _mac_visible(infra, loc, m)}
 
 
 _KIND_RANK = {"switch": 0, "leaf": 1, "spine": 1, "controller": 2, "router": 3, "firewall": 3,
@@ -127,12 +188,17 @@ def links(
     issues: bool = Query(False, description="nur Verbindungen mit Abweichungen"),
     limit: int = Query(200, ge=1, le=2000),
     offset: int = Query(0, ge=0),
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     cab = store.build(session, tid)
     rows = list(cab.links.values())
+    marks = {r.id: _link_mark(infra, r) for r in rows} if infra is not None else None
+    if marks is not None:
+        rows = [r for r in rows if marks[r.id]]
     key = store.device_key(device) if device else None
     if key:
         rows = [r for r in rows if key in (r.a.device.key, r.b.device.key)]
@@ -150,7 +216,13 @@ def links(
         rows = [r for r in rows if _matches(r, needle)]
     rows.sort(key=lambda r: (not r.issues, r.state != "one_sided", r.a.device.name.casefold(),
                              store.port_key(r.a.port)))  # fmt: skip
-    return {"total": len(rows), "items": [r.out() for r in rows[offset : offset + limit]]}
+    items = []
+    for r in rows[offset : offset + limit]:
+        item = r.out()
+        if marks is not None:
+            item["shared"] = marks[r.id] == SHARED
+        items.append(item)
+    return {"total": len(rows), "items": items}
 
 
 @router.get("/patches")
@@ -158,6 +230,7 @@ def patches(
     device: str = Query(..., max_length=200),
     tenant_id: int | None = None,
     peer: str | None = Query(None, max_length=200, description="nur Kabel zu diesem Geraet"),
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
@@ -166,15 +239,18 @@ def patches(
     Access/Trunk, Port-Channel/vPC, Spanning Tree, EPGs; Zustand, Protokolle, Abweichungen und
     die Endpunkte (MACs) am Port. Port-Channel: Kabel nach Channel gruppiert."""
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     cab = store.build(session, tid)
     key = store.device_key(device)
     dev = cab.devices.get(key)
-    if dev is None:
+    if dev is None or (infra is not None and key not in _device_keys(infra, cab)):
         raise HTTPException(status_code=404, detail="device not found")
     other = store.device_key(peer) if peer else None
     macs: dict[tuple[str, str], int] = defaultdict(int)
     for e in l2.Locator(session, tid, cab).edge_entries():
         macs[(store.device_key(e.device), store.port_key(e.port))] += 1
+    if infra is not None:  # nach den Endpunkten: Uplinks aus allen Kabeln erkennen
+        cab.links = {i: lk for i, lk in cab.links.items() if _link_mark(infra, lk)}
     lag_attrs = {(store.device_key(p.device), store.port_key(p.name)): p.attrs or {}
                  for p in cab.ports if p.kind == "lag"}  # fmt: skip
     rows = []
@@ -215,11 +291,14 @@ def ports(
     q: str | None = Query(None, max_length=200),
     limit: int = Query(200, ge=1, le=2000),
     offset: int = Query(0, ge=0),
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """Ports der gelesenen Switches (Quellsysteme `cisco_switch`) mit Verbindung."""
+    """Ports der gelesenen Switches (Quellsysteme `cisco_switch`) mit Verbindung; mit Kunde
+    (0.76.0) nur Ports mit seinen VLANs, EPGs, Netzen bzw. zu Hosts seiner VMs."""
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     cab = store.build(session, tid)
     macs: dict[tuple[str, str], int] = defaultdict(int)  # Endpunkte je Port (0.63.0)
     for e in l2.Locator(session, tid, cab).edge_entries():
@@ -229,6 +308,18 @@ def ports(
         peer[link.a.key] = (link, link.b)
         peer[link.b.key] = (link, link.a)
     rows = [p for p in cab.ports if p.source_system_id in cab.switch_sources]
+    port_marks: dict[tuple, str] = {}
+    if infra is not None:
+        for p in rows:
+            mark = infra.ports.get((p.source_system_id, p.device, p.name))
+            link, other = peer.get(
+                (store.device_key(p.device), store.port_key(p.name)), (None, None)
+            )
+            if not mark and other is not None:
+                mark = _end_mark(infra, other)
+            if mark:
+                port_marks[(p.source_system_id, p.device, p.name)] = mark
+        rows = [p for p in rows if (p.source_system_id, p.device, p.name) in port_marks]
     if device:
         key = store.device_key(device)
         rows = [p for p in rows if store.device_key(p.device) == key]
@@ -274,6 +365,8 @@ def ports(
             "issues": [i["text"] for i in link.issues] if link is not None else [],
             "endpoints": macs.get((store.device_key(p.device), store.port_key(p.name)), 0),
         })  # fmt: skip
+        if infra is not None:
+            out[-1]["shared"] = port_marks[(p.source_system_id, p.device, p.name)] == SHARED
     return {"total": len(rows), "items": out}
 
 
@@ -287,6 +380,7 @@ def _port_order(name: str) -> tuple:
 @router.get("/vlans")
 def vlans(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
@@ -330,13 +424,22 @@ def vlans(
             for vid in store.vlan_set(p.trunk_vlans) or set():
                 if vid in names:  # nur VLANs, die ein Switch kennt (nicht 1-4094 aufblaehen)
                     use[vid][p.device][1] += 1
-    return [
-        {"vid": vid, "names": sorted(names[vid]), "epgs": sorted(epgs[vid]),
-         "sources": sorted(kinds[vid]),
-         "devices": [{"device": d, "access": a, "trunks": t}
-                     for d, (a, t) in sorted(use.get(vid, {}).items())]}
-        for vid in sorted(names)
-    ]  # fmt: skip
+    infra = _infra(session, principal, tid, customer_id)
+    out = []
+    for vid in sorted(names):
+        row = {"vid": vid, "names": sorted(names[vid]), "epgs": sorted(epgs[vid]),
+               "sources": sorted(kinds[vid]),
+               "devices": [{"device": d, "access": a, "trunks": t}
+                           for d, (a, t) in sorted(use.get(vid, {}).items())]}  # fmt: skip
+        if infra is not None:  # 0.76.0: nur VLANs des Kunden (EPGs, Netze, Portgruppen)
+            mark = customer_infra._mark(
+                infra.vlans.get(vid), *(infra.epg_paths.get(e) for e in epgs[vid])
+            )
+            if not mark:
+                continue
+            row["shared"] = mark == SHARED
+        out.append(row)
+    return out
 
 
 @router.get("/sources")
@@ -374,14 +477,19 @@ def endpoints(
     uplinks: bool = Query(False, description="auch Eintraege auf Uplinks"),
     limit: int = Query(200, ge=1, le=2000),
     offset: int = Query(0, ge=0),
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """MACs an den Ports der Switches (aktueller Stand je Switch), ohne Uplinks."""
+    """MACs an den Ports der Switches (aktueller Stand je Switch), ohne Uplinks; mit Kunde
+    (0.76.0) nur seine (NIC seiner VMs bzw. IP in seinen Netzen)."""
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     loc = l2.Locator(session, tid)
     conds = [MacEntry.vlan == vlan] if vlan else []
     rows = loc.current(*conds)
+    if infra is not None:
+        rows = [e for e in rows if _mac_visible(infra, loc, e.mac)]
     if not uplinks:
         rows = [e for e in rows if not loc.is_uplink(e)]
     if device:
@@ -409,14 +517,20 @@ def endpoints(
 def locate(
     q: str = Query(..., min_length=2, max_length=200),
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Wo haengt …: MAC, IP oder Name (VM, IPAM) -> je MAC Anschluss, Gegenstelle, frueher."""
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     found = l2.find_macs(session, tid, q)
     loc = l2.Locator(session, tid)
-    items = [{**loc.locate(mac), "reason": why} for mac, why in found["macs"].items()]
+    items = [
+        {**loc.locate(mac), "reason": why}
+        for mac, why in found["macs"].items()
+        if infra is None or _mac_visible(infra, loc, mac)
+    ]
     items.sort(key=lambda x: (not x["locations"], not x["behind"], x["mac"]))
     return {"query": q, "kind": found["kind"], "ips": found["ips"], "items": items}
 
@@ -426,12 +540,25 @@ def plan(
     tenant_id: int | None = None,
     ends: bool = Query(True, description="auch Endgeraete (ESXi-Hosts, Firewalls, nicht gelesene)"),
     vlan: int | None = Query(None, ge=1, le=4094),
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """Plan der Verkabelung: Knoten mit Ebene und Lage, Kanten je Geraetepaar."""
+    """Plan der Verkabelung: Knoten mit Ebene und Lage, Kanten je Geraetepaar; mit Kunde
+    (0.76.0) nur seine Geraete."""
     tid = _tenant(session, principal, tenant_id)
-    return l2_topo.L2(session, tid).plan(ends=ends, vlan=vlan)
+    return _plan(session, tid, ends, vlan, _infra(session, principal, tid, customer_id))
+
+
+def _plan(session: Session, tid: int, ends: bool, vlan: int | None, infra) -> dict:
+    topo = l2_topo.L2(session, tid)
+    if infra is None:
+        return topo.plan(ends=ends, vlan=vlan)
+    marks = _device_keys(infra, topo.cab)
+    out = topo.plan(ends=ends, vlan=vlan, only=set(marks))
+    for n in out["nodes"]:
+        n["shared"] = marks.get(n["key"]) == SHARED
+    return out
 
 
 @router.get("/failure")
@@ -468,12 +595,13 @@ def export_plan(
     tenant_id: int | None = None,
     ends: bool = True,
     vlan: int | None = Query(None, ge=1, le=4094),
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> Response:
     """Plan der Verkabelung als Datei (wie in der Ansicht, mit Endgeraeten bzw. VLAN)."""
     tid = _tenant(session, principal, tenant_id)
-    plan = l2_topo.L2(session, tid).plan(ends=ends, vlan=vlan)
+    plan = _plan(session, tid, ends, vlan, _infra(session, principal, tid, customer_id))
     tenant = session.get(Tenant, tid)
     title = f"Verkabelung {tenant.name}" if tenant else "Verkabelung"
     if vlan:

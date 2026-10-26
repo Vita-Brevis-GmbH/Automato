@@ -13,11 +13,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.api.customer_filter import customer_view
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.models import Finding, FindingStatus, SourceSystem
-from app.store import customers, reconcile, references, rule_index
+from app.store import customer_infra, customers, reconcile, references, rule_index
 
 router = APIRouter(prefix="/reconcile", tags=["reconcile"])
 
@@ -29,19 +30,32 @@ def _tenant(principal: Principal, tenant_id: int | None) -> int:
     return tid
 
 
+def _keep(session: Session, principal: Principal, tid: int, customer_id: int | None):
+    """Kunde oben gewaehlt (0.76.0): Werte in seinen Netzen (eigen bzw. geteilt)."""
+    infra = customer_infra.of(session, customer_view(session, principal, tid, customer_id))
+    if infra is None:
+        return None, None
+    return infra, (lambda value: infra.net_mark(value) is not None)
+
+
 @router.get("/summary")
 def summary(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     tid = _tenant(principal, tenant_id)
+    infra, keep = _keep(session, principal, tid, customer_id)
     by_type: dict[str, dict[str, int]] = {}
-    for ftype, status, n in session.execute(
+    stmt = (
         select(Finding.type, Finding.status, func.count())
         .where(Finding.tenant_id == tid)
         .group_by(Finding.type, Finding.status)
-    ):
+    )
+    if infra is not None:  # Findings des Kunden (ueber ihr Subjekt, ADR 0018)
+        stmt = stmt.where(Finding.id.in_(infra.view.ids("finding")))
+    for ftype, status, n in session.execute(stmt):
         entry = by_type.setdefault(ftype.value, {"open": 0, "total": 0})
         entry["total"] += n
         if status is FindingStatus.OPEN:
@@ -60,7 +74,7 @@ def summary(
             )
         )
     ]
-    ipam = references.compare_sources(session, tid, limit=0)
+    ipam = references.compare_sources(session, tid, limit=0, keep=keep)
     return {
         "tenant_id": tid,
         "findings": by_type,
@@ -78,13 +92,17 @@ def ipam_compare(
     q: str | None = None,
     limit: int = 200,
     offset: int = 0,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     tid = _tenant(principal, tenant_id)
     if status is not None and status not in references.COMPARE_STATUSES:
         raise HTTPException(status_code=422, detail="invalid status")
-    return references.compare_sources(session, tid, status, q, min(limit, 2000), max(offset, 0))
+    _, keep = _keep(session, principal, tid, customer_id)
+    return references.compare_sources(
+        session, tid, status, q, min(limit, 2000), max(offset, 0), keep=keep
+    )
 
 
 @router.post("")

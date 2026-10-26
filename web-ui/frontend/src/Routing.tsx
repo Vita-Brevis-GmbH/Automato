@@ -40,7 +40,7 @@ import {
 import { Pager, useDebounced } from "./Objects";
 import TopologyTab from "./Topology";
 import { FoldTitle, useFolds } from "./fold";
-import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
+import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead, SharedChip } from "./ui";
 
 const PAGE = 200;
 
@@ -124,6 +124,7 @@ export function where(x: Labeled) {
   return (
     <>
       <b>{label}</b>
+      <SharedChip shared={x.shared} />
       {sub && <div className="faint">{sub}</div>}
     </>
   );

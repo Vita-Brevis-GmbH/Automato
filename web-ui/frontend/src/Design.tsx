@@ -72,7 +72,7 @@ import {
   ZoneSummary,
 } from "./api";
 import { SELECTOR_LABEL } from "./Customers";
-import { Dash, download, Empty, ErrorBox, fmtTime, Loading, Modal, Note, PageHead } from "./ui";
+import { Dash, download, Empty, ErrorBox, fmtTime, Loading, Modal, Note, PageHead, SharedChip } from "./ui";
 
 // Reihenfolge = Ebenen des Zonenmodells (0.56.0) von links nach rechts im Plan, danach die bisherigen Arten
 export const ZONE_KIND: Record<ZoneKind, string> = {
@@ -280,7 +280,8 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
                       onClick={() => z.own !== false && setOpen(open === z.id ? null : z.id)}
                     >
                       <td>
-                        <Swatch color={z.color} title={colorTitle(z)} /> <b>{z.name}</b>{" "}
+                        <Swatch color={z.color} title={colorTitle(z)} /> <b>{z.name}</b>
+                        <SharedChip shared={z.shared} />{" "}
                         {z.code && <span className="mono faint">{z.code}</span>}
                         {z.description && <div className="faint">{z.description}</div>}
                       </td>

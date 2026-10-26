@@ -688,9 +688,11 @@ def compare_sources(
     q: str | None = None,
     limit: int = 200,
     offset: int = 0,
+    keep=None,
 ) -> dict:
     """Fuehrendes IPAM gegen die Anreicherung vergleichen (nur Felder mit DDI-Hoheit:
-    Existenz von Netzen/Ranges/IPs und der DNS-Name je IP)."""
+    Existenz von Netzen/Ranges/IPs und der DNS-Name je IP). `keep` (0.76.0, Kunde gewaehlt):
+    Wert (IP, Netz, Range) -> im Ausschnitt?"""
     ctx = context(session, tenant_id)
     if ctx.primary is None or not ctx.enrichments:
         return {"available": False}
@@ -734,13 +736,14 @@ def compare_sources(
         if ip not in pips:
             add("only_enrichment", "ip", ip, None, e)
 
+    if keep is not None:
+        rows = [r for r in rows if keep(r["value"])]
     summary = {s: 0 for s in COMPARE_STATUSES}
     for r in rows:
         summary[r["status"]] += 1
+    values = [*pips, *primary.prefix_by_value, *(r.value for *_, r in primary.ranges)]
     equal = (
-        len(pips)
-        + len(primary.prefix_by_value)
-        + len(primary.ranges)
+        sum(1 for v in values if keep is None or keep(v))
         - summary["missing"]
         - summary["different"]
     )

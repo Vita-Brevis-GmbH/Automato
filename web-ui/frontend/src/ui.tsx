@@ -211,6 +211,19 @@ export function PageHead({
   );
 }
 
+// Kunde oben gewählt (0.76.0): Element gehört zum geteilten Teil der Umgebung
+export function SharedChip({ shared }: { shared?: boolean }) {
+  if (!shared) return null;
+  return (
+    <span
+      className="chip na shared-chip"
+      title="geteilter Teil der Umgebung – gehört nicht dem gewählten Kunden allein (z. B. Tenant common, VDOM für mehrere Kunden)"
+    >
+      geteilt
+    </span>
+  );
+}
+
 export function Note({ children, warn }: { children: ReactNode; warn?: boolean }) {
   return (
     <div className={`note ${warn ? "warn" : ""}`}>

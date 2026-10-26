@@ -29,6 +29,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_admin, require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -142,6 +143,16 @@ class PolicyIn(BaseModel):
 def _scope(principal: Principal) -> tuple[int, ...] | None:
     """Kunden eines Kunden-Benutzers (Sicht nur auf seine Zonen, 0.53.0); None = Betreuer."""
     return tuple(principal.customer_ids or ()) if principal.is_customer else None
+
+
+def _filter_scope(session: Session, principal: Principal, tid: int,
+                  customer_id: int | None) -> tuple[int, ...] | None:  # fmt: skip
+    """Sicht fuer Matrix und Liste: Kunden-Benutzer wie bisher, Betreuer mit oben gewaehltem
+    Kunden (0.76.0) dessen Sicht - die Gegenseite fremder Kunden als „anderer Kunde“."""
+    if principal.is_customer or customer_id is None:
+        return _scope(principal)
+    customer_view(session, principal, tid, customer_id)  # 404 bei fremdem Kunden
+    return (customer_id,)
 
 
 def _plan_filter(
@@ -292,13 +303,21 @@ def _apply(session: Session, z: LogicalZone, body: ZoneIn, sel: list[store.Selec
 @router.get("")
 def list_zones(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
-    """Zonen der Umgebung in ihrer Reihenfolge, mit Selektoren und Anzahl Netze/EPGs."""
+    """Zonen der Umgebung in ihrer Reihenfolge, mit Selektoren und Anzahl Netze/EPGs; mit
+    Kunde (0.76.0) seine Zonen und die geteilten an seinen Knoten (`shared`)."""
     tid = _tenant(session, principal, tenant_id)
     items = store.load(session, tid)
     color = store.colors(session, tid, items)
+    chosen: tuple[set[int], set[int]] | None = None  # (sichtbar, eigen) bei gewaehltem Kunden
+    if not principal.is_customer and customer_id is not None:
+        scope = _filter_scope(session, principal, tid, customer_id)
+        plan = store.plan_with_layout(session, tid, scope)
+        cview = store.customer_view(items, scope)
+        chosen = ({z["id"] for z in plan["zones"]} | cview.own, set(cview.own))
     if principal.is_customer:  # eigene Zonen und die geteilten, an denen er haengt (Plan)
         plan = store.plan_with_layout(session, tid, _scope(principal))
         view = store.customer_view(items, _scope(principal))
@@ -315,7 +334,11 @@ def list_zones(
     by_id = {z.id: z for z in items}
     out = []
     for z in items:
+        if chosen is not None and z.id not in chosen[0]:
+            continue
         row = _out(z, nets.get(z.id), names, color.get(z.id))
+        if chosen is not None:
+            row["shared"] = z.id not in chosen[1]
         row["nodes"] = [st.graph.nodes[k].label for k in zone_nodes.get(z.id, [])]
         row["transitions"] = [
             {"to": _side_name(t.b if t.a == z.id else t.a, by_id),
@@ -542,13 +565,15 @@ def apply_schema_intents(
 def matrix(
     tenant_id: int | None = None,
     source_system_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Zonenmatrix: je Paar Quell-/Zielzone die Regeln (erlaubend, sperrend), Absicht und
     Verstoesse; dazu `any` und `none` (Adressen ohne Zone)."""
     tid = _tenant(session, principal, tenant_id)
-    return store.matrix(session, tid, source_system_id, customer_ids=_scope(principal))
+    scope = _filter_scope(session, principal, tid, customer_id)
+    return store.matrix(session, tid, source_system_id, customer_ids=scope)
 
 
 @router.get("/matrix/rules")
@@ -559,18 +584,20 @@ def matrix_rules(
     source_system_id: int | None = None,
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Regeln einer Zelle (Quellzone -> Zielzone; Zone-ID, `any` bzw. `none`)."""
     tid = _tenant(session, principal, tenant_id)
+    scope = _filter_scope(session, principal, tid, customer_id)
     try:
         cells = store.parse_cell(src), store.parse_cell(dst)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="src/dst: zone id, any, none or other") from exc
     return store.cell_rules(session, tid, *cells, limit=limit, offset=offset,
                             source_system_id=source_system_id,
-                            customer_ids=_scope(principal))  # fmt: skip
+                            customer_ids=scope)  # fmt: skip
 
 
 @router.put("/policy")

@@ -645,3 +645,9 @@ tbody tr.group-row td {
 .zone-schema-edit .input { width: 100%; min-width: 80px; }
 .zone-schema-edit input[type="color"] { width: 34px; height: 26px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; background: none; }
 .input.invalid { border-color: var(--crit); }
+
+/* 0.76.0: Kunde oben gewählt – Hinweis über der Ansicht, „geteilt“ an Elementen */
+.customer-scope { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted);
+  background: var(--accent-weak); border-radius: 8px; padding: 6px 10px; margin-bottom: 12px; }
+.customer-scope b { color: var(--fg); }
+.chip.shared-chip { margin-left: 6px; font-size: 10.5px; }

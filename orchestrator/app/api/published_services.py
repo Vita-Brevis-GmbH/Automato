@@ -7,6 +7,8 @@ APs/EPGs/Server) liegt unter /applications (ADR 0012).
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.customer_filter import customer_view
+from app.api.customer_filter import ids as view_ids
 from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
@@ -35,15 +37,19 @@ def _base(nat: NatRule, rule_count: int) -> dict:
 @router.get("", response_model=list[PublishedServiceOut])
 def list_published_services(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ):
     tenant_id = tenant_scope(principal, tenant_id)
     reads.maybe_audit_read(session, principal, tenant_id, "published_services")
+    view = customer_view(session, principal, tenant_id, customer_id)  # 0.76.0: VIPs des Kunden
+    mine = view_ids(session, view, "nat")
     vmap = app_store.vip_rule_ids(session, tenant_id)
     return [
         PublishedServiceOut(**_base(nat, len(vmap.get(nat.name, set()))))
         for nat in app_store.list_vips(session, tenant_id)
+        if mine is None or nat.id in mine
     ]
 
 
