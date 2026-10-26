@@ -1,12 +1,24 @@
 // Verbindungen Ende zu Ende (0.45.0, Anwender): eine Zeile je Verbindung der Applikation, auch
 // wenn mehrere Firewalls und das ACI hintereinander stehen – im Detail je Hop die Policy bzw.
 // der Contract, der entscheidet, mit den Objekten; dazu der Abgleich mit den Regeln der Doku
-// (Regel erlaubt, Weg sperrt bzw. Gerät nicht auf dem Weg).
+// (Regel erlaubt, Weg sperrt bzw. Gerät nicht auf dem Weg). Seit 0.67.0 auch als Netzwerkplan:
+// Systeme der Applikation → Knoten der Wege → Gegenstellen, je Linie Dienste und Interfaces.
 import { Fragment, useEffect, useState } from "react";
 import type { View, ViewParams } from "./App";
-import { AppConnection, AppConnections, AppConnHop, AppConnSide, AppConnState, fetchAppConnections, snatText } from "./api";
+import {
+  AppConnection,
+  AppConnections,
+  AppConnHop,
+  AppConnSide,
+  AppConnState,
+  AppPlan,
+  AppPlanVerdict,
+  exportAppPlan,
+  fetchAppConnections,
+  snatText,
+} from "./api";
 import { Verdict, VERDICT } from "./Paths";
-import { Dash, Empty, ErrorBox, Icon, Loading, Note } from "./ui";
+import { Dash, download, Empty, ErrorBox, Icon, Loading, Note } from "./ui";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -219,6 +231,222 @@ function ConnDetail({ c, onRule, onGo }: { c: AppConnection; onRule: (id: number
   );
 }
 
+// -- Netzwerkplan (0.67.0) ------------------------------------------------------------------
+
+const PLAN_COLOR: Record<AppPlanVerdict, string> = {
+  allow: "var(--good)",
+  deny: "var(--crit)",
+  depends: "var(--warn)",
+  unknown: "var(--faint)",
+  blocked: "var(--border-strong)",
+};
+const PLAN_VERDICT: Record<AppPlanVerdict, string> = {
+  allow: "erlaubt",
+  deny: "gesperrt",
+  depends: "abhängig",
+  unknown: "unbekannt",
+  blocked: "vorher gesperrt",
+};
+const PLAN_FILL = { own: "var(--info-weak)", hop: "var(--surface-2)", peer: "var(--surface)" };
+const PLAN_STROKE = { own: "var(--info)", hop: "var(--accent)", peer: "var(--border-strong)" };
+const short = (t: string, n = 30) => (t.length <= n ? t : `${t.slice(0, n - 1)}…`);
+const VIEW_KEY = "automato_app_conn_view";
+
+function loadView(): "table" | "plan" {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "plan" ? "plan" : "table";
+  } catch {
+    return "table";
+  }
+}
+
+function storeView(v: "table" | "plan") {
+  try {
+    localStorage.setItem(VIEW_KEY, v);
+  } catch {
+    // ohne Speicher: nur für diese Sitzung
+  }
+}
+
+type Focus = { kind: "node" | "edge"; id: string } | null;
+
+// Plan der Verbindungen: Filter der Karte bzw. Klick auf Knoten/Linie hebt hervor, der Rest wird
+// blass; der Export nimmt die hervorgehobenen Verbindungen
+function PlanView({
+  appId,
+  plan,
+  conns,
+  shown,
+  filtered,
+  onOpen,
+}: {
+  appId: number;
+  plan: AppPlan;
+  conns: AppConnection[];
+  shown: Set<string>;
+  filtered: boolean;
+  onOpen: (key: string) => void;
+}) {
+  const [focus, setFocus] = useState<Focus>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const byId = new Map(plan.nodes.map((n) => [n.id, n]));
+  const focused = focus ? (focus.kind === "node" ? byId.get(focus.id)?.conns : plan.edges.find((e) => e.id === focus.id)?.conns) ?? [] : null;
+  const active = new Set((focused ?? [...shown]).filter((k) => shown.has(k)));
+  const narrowed = filtered || focus !== null;
+  const lit = (keys: string[]) => !narrowed || keys.some((k) => active.has(k));
+  const pick = (kind: "node" | "edge", id: string) => setFocus((f) => (f && f.kind === kind && f.id === id ? null : { kind, id }));
+  const title = (id: string) => byId.get(id)?.title ?? id;
+  const exportPlan = async (format: "svg" | "drawio") => {
+    setBusy(format);
+    setErr(null);
+    try {
+      const { blob, filename } = await exportAppPlan(appId, format, narrowed ? [...active] : undefined);
+      download(filename, blob);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const listed = focus ? conns.filter((c) => active.has(c.key)) : [];
+  const pickedEdge = focus?.kind === "edge" ? plan.edges.find((x) => x.id === focus.id) : undefined;
+  const pickedLabel = focus === null ? "" : pickedEdge ? `${title(pickedEdge.a)} ↔ ${title(pickedEdge.b)}` : title(focus.id);
+  return (
+    <div id="app-plan">
+      <ErrorBox error={err} onClose={() => setErr(null)} />
+      <div className="app-plan-bar">
+        <span className="faint">
+          Links die Systeme der Applikation, in der Mitte Firewalls und ACI auf den Wegen, rechts die Gegenstellen. An den Linien die
+          Dienste (→ von der Applikation weg, ← zu ihr hin, ✕ vorher gesperrt), an den Enden die Interfaces. Klick auf einen Knoten
+          bzw. eine Linie hebt seine Verbindungen hervor.
+        </span>
+        <span className="plan-export" id="app-plan-export">
+          <span className="faint">Export{narrowed ? ` (${active.size} Verbindungen)` : ""}:</span>
+          {(
+            [
+              ["drawio", "draw.io"],
+              ["svg", "SVG"],
+            ] as const
+          ).map(([f, label]) => (
+            <button key={f} className="btn btn-sm" disabled={busy !== null || (narrowed && active.size === 0)} onClick={() => void exportPlan(f)}>
+              {busy === f ? "…" : label}
+            </button>
+          ))}
+        </span>
+      </div>
+      <div className="app-plan-scroll">
+        <svg id="app-plan-svg" width={Math.max(plan.width, 400)} height={plan.height} role="img" aria-label="Netzwerkplan der Applikation">
+          {plan.columns.map((c) =>
+            c.title ? (
+              <text key={c.x} x={c.x} y={18} className="app-plan-col">
+                {c.title}
+              </text>
+            ) : null,
+          )}
+          {plan.edges.map((e) => {
+            const color = PLAN_COLOR[e.verdict];
+            const pts = e.points.map(([x, y]) => `${x},${y}`).join(" ");
+            const ports = [e.ports_a.length ? `${title(e.a)}: ${e.ports_a.join(", ")}` : "", e.ports_b.length ? `${title(e.b)}: ${e.ports_b.join(", ")}` : ""];
+            return (
+              <g
+                key={e.id}
+                className={`app-plan-edge clickable${lit(e.conns) ? "" : " dim"}${focus?.id === e.id ? " picked" : ""}`}
+                data-edge={`${title(e.a)} → ${title(e.b)}`}
+                data-verdict={e.verdict}
+                onClick={() => pick("edge", e.id)}
+              >
+                <title>
+                  {[`${title(e.a)} ↔ ${title(e.b)}: ${e.label} – ${PLAN_VERDICT[e.verdict]}`, ...ports.filter(Boolean), `${e.conns.length} Verbindungen`].join("\n")}
+                </title>
+                <polyline points={pts} fill="none" stroke="transparent" strokeWidth={12} />
+                <polyline points={pts} fill="none" stroke={color} strokeWidth={focus?.id === e.id ? 3.2 : 1.8} strokeDasharray={e.dashed ? "5 4" : undefined} />
+                <text x={e.lx} y={e.ly} textAnchor={e.anchor ?? "middle"} fill={color} className="app-plan-label">
+                  {e.label}
+                </text>
+                {[e.port_a, e.port_b].map((p, i) =>
+                  p ? (
+                    <text key={i} x={p.x} y={p.y} textAnchor={p.anchor} className="app-plan-port">
+                      {p.text}
+                    </text>
+                  ) : null,
+                )}
+              </g>
+            );
+          })}
+          {plan.nodes.map((n) => {
+            const stroke = n.role === "hop" && n.verdict && n.verdict !== "unknown" ? PLAN_COLOR[n.verdict] : PLAN_STROKE[n.role];
+            const tip =
+              n.role === "hop"
+                ? `${n.title} – ${PLAN_VERDICT[n.verdict ?? "unknown"]}`
+                : `${n.title}\n${[...n.ips, ...(n.role === "own" ? n.systems : n.name ? [n.name] : [])].join("\n")}`;
+            return (
+              <g
+                key={n.id}
+                className={`app-plan-node clickable${lit(n.conns) ? "" : " dim"}`}
+                data-node={n.title}
+                data-verdict={n.verdict ?? undefined}
+                transform={`translate(${n.x},${n.y})`}
+                onClick={() => pick("node", n.id)}
+              >
+                <title>{tip}</title>
+                <rect
+                  width={n.w}
+                  height={n.h}
+                  rx={6}
+                  fill={PLAN_FILL[n.role]}
+                  stroke={stroke}
+                  strokeWidth={focus?.id === n.id ? 3 : n.role === "hop" ? 2 : 1.4}
+                  strokeDasharray={n.kind === "external" ? "4 3" : undefined}
+                />
+                <text x={10} y={18} fontSize={12} fontWeight={600} fill="var(--fg)">
+                  {short(n.title)}
+                </text>
+                <text x={10} y={34} fontSize={10} fill="var(--muted)">
+                  {short(n.sub, 36)}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="app-plan-legend">
+        {(["allow", "deny", "depends", "unknown", "blocked"] as const).map((v) => (
+          <span key={v}>
+            <i style={{ borderTopColor: PLAN_COLOR[v] }} />
+            {PLAN_VERDICT[v]}
+          </span>
+        ))}
+        <span>
+          <i style={{ borderTopColor: "var(--faint)", borderTopStyle: "dashed" }} />
+          Weg nicht bekannt
+        </span>
+      </div>
+      {focus && (
+        <div className="app-plan-focus" id="app-plan-focus">
+          <div>
+            <b>{pickedLabel}</b>
+            <span className="faint"> – {listed.length} Verbindungen</span>{" "}
+            <button className="linkbtn" onClick={() => setFocus(null)}>
+              Auswahl aufheben
+            </button>
+          </div>
+          <ul>
+            {listed.map((c) => (
+              <li key={c.key}>
+                <Verdict v={c.verdict} title={c.text} /> {sideText(c.src)} → {sideText(c.dst)} <span className="mono">{c.service ?? "alle"}</span>{" "}
+                <button className="linkbtn" onClick={() => onOpen(c.key)}>
+                  Details
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ConnectionsCard({
   appId,
   reload,
@@ -237,6 +465,11 @@ export default function ConnectionsCard({
   const [open, setOpen] = useState<string | null>(null);
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [q, setQ] = useState("");
+  const [view, setView] = useState<"table" | "plan">(loadView);
+  const pickView = (v: "table" | "plan") => {
+    setView(v);
+    storeView(v);
+  };
   useEffect(() => {
     let current = true;
     setData(null);
@@ -282,6 +515,14 @@ export default function ConnectionsCard({
           </span>
         )}
         <div className="spacer" />
+        <span className="seg no-print" id="app-conn-view">
+          <button className={view === "table" ? "on" : ""} id="app-conn-table" onClick={() => pickView("table")}>
+            Tabelle
+          </button>
+          <button className={view === "plan" ? "on" : ""} id="app-conn-plan" onClick={() => pickView("plan")}>
+            Plan
+          </button>
+        </span>
         <button className={`toggle no-print ${onlyIssues ? "on" : ""}`} onClick={() => setOnlyIssues((v) => !v)}>
           nur Abweichungen und Gesperrte
         </button>
@@ -307,6 +548,21 @@ export default function ConnectionsCard({
           <Note>{n}</Note>
         </div>
       ))}
+      {view === "plan" && data && data.plan && data.plan.nodes.length > 0 ? (
+        <div className="card-body pad">
+          <PlanView
+            appId={appId}
+            plan={data.plan}
+            conns={data.connections}
+            shown={new Set(rows.map((c) => c.key))}
+            filtered={rows.length !== data.connections.length}
+            onOpen={(key) => {
+              pickView("table");
+              setOpen(key);
+            }}
+          />
+        </div>
+      ) : (
       <div className="card-body scroll viewport">
         {!data && !error ? (
           <Loading>Prüfe die Wege…</Loading>
@@ -373,6 +629,7 @@ export default function ConnectionsCard({
           </table>
         )}
       </div>
+      )}
     </div>
   );
 }

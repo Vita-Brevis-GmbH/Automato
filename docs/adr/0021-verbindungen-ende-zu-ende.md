@@ -2,7 +2,7 @@
 
 ## Status
 
-Entwurf (2026-10-23), erste Fassung in 0.45.0, Befund und Export in 0.59.0. Baut auf ADR 0012 (Applikation), ADR 0019
+Entwurf (2026-10-23), erste Fassung in 0.45.0, Befund und Export in 0.59.0, Netzwerkplan in 0.67.0. Baut auf ADR 0012 (Applikation), ADR 0019
 (Weg Hop für Hop, Regeln und NAT auf dem Weg, ACI zwischen VRFs) und ADR 0020 (Verbund als ein
 Hop) auf. Nur lesend.
 
@@ -111,3 +111,34 @@ Abweichungen zuerst.
 - **Export und Druck:** der Markdown-Export der Applikations-Doku enthält „Verbindungen Ende zu
   Ende“ (eine Zeile je Verbindung mit dem Weg und der entscheidenden Regel je Hop, Urteil und
   Abweichung); der Druck zeigt Weg und Abweichung ausgeschrieben. Nicht für Kunden-Benutzer.
+
+## Ergänzung 0.67.0 — Netzwerkplan je Applikation
+
+Wunsch des Anwenders (2026-10-26): ein Netzwerkplan bei der Applikation, der ihre Knoten zeigt und
+an den Verbindungen die Ports.
+
+- **Plan aus den Verbindungen** (`store/app_plan.py`, reine Funktion über `app_paths.build`):
+  links die Systeme der Applikation, in der Mitte die Knoten ihrer Wege (Firewall, VDOM, ACI-VRF;
+  Verbund als ein Knoten wie im Weg), rechts die Gegenstellen (Host, Netz, EPG, externe EPG).
+  Spalte eines Hops = grösste Entfernung von der Applikation auf seinen Wegen.
+- **Linien je Knotenpaar** mit den Diensten in beide Richtungen von der Applikation aus
+  („→ tcp/443 · ← tcp/22“) und an den Enden den Interfaces des Knotens (Ein- bzw. Ausgang des
+  Wegs, im Verbund alle). Hinter dem ersten sperrenden Hop kommt der Verkehr nicht an: dort
+  steht der Dienst als „✕ …“ (vorher gesperrt) und zählt nicht zum Urteil der Linie bzw. des
+  Knotens. Farbe nach dem Urteil der erreichenden Verbindungen (erlaubt, gesperrt, abhängig,
+  unbekannt); gestrichelt, wo der Weg nicht bekannt ist (kein Weg, vor dem Ziel zu Ende, Quelle
+  an keinem gelesenen Gerät).
+- **Layout:** Spalten wie oben; eine Linie über mehrere Spalten bekommt je Spalte dazwischen
+  eine Spur (Platzhalter wie im Sugiyama-Verfahren) und läuft an den Knoten vorbei; Reihen nach
+  dem Mittel der Nachbarn (links, rechts, wieder links); weiche Kurven mit waagrechten Enden.
+  Oberfläche, SVG und draw.io (Kanten mit Ein-/Austritt, Wegpunkten durch die Spuren und den
+  Interfaces als Beschriftung an den Enden, `automato_*`-Eigenschaften) zeichnen dasselbe
+  Layout.
+- **Ansicht:** Umschalter Tabelle/Plan in „Verbindungen Ende zu Ende“; Suche bzw. „nur
+  Abweichungen“ der Karte und ein Klick auf Knoten bzw. Linie heben hervor (der Rest blass), der
+  Export nimmt die hervorgehobenen Verbindungen (`GET /applications/{id}/connections/plan/export
+  ?format=svg|drawio&key=…`). Nur lesend, nicht für Kunden-Benutzer (Freigabeliste wie die
+  Verbindungen).
+- **Nicht** Teil dieser Stufe: physische Ports der Switches (L2-Abschnitte stehen in der
+  Weg-Suche, ADR 0025), Export nach NetBox.
+

@@ -7,6 +7,22 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.67.0 – 2026-10-26
+
+Netzwerkplan je Applikation (Wunsch des Anwenders, ADR 0021 Ergänzung 0.67.0). Ohne Migration.
+
+- **Plan in „Verbindungen Ende zu Ende“:** Umschalter **Tabelle | Plan**. Links die Systeme der
+  Applikation, in der Mitte Firewalls, VDOMs und ACI-VRFs auf ihren Wegen, rechts die
+  Gegenstellen. Je Linie die Dienste in beide Richtungen (→ von der Applikation weg, ← zu ihr
+  hin, ✕ vorher gesperrt) und an den Enden die Interfaces der Knoten; Farbe nach dem Urteil,
+  gestrichelt, wo der Weg nicht bekannt ist. Linien über mehrere Spalten laufen an den Knoten
+  vorbei.
+- **Hervorheben:** Suche und „nur Abweichungen und Gesperrte“ der Karte bzw. ein Klick auf
+  Knoten oder Linie heben deren Verbindungen hervor; Liste darunter mit Sprung in die Tabelle.
+- **Export** als draw.io bzw. SVG (nur die hervorgehobenen Verbindungen, falls gewählt), mit
+  Interfaces, Diensten und Urteil als Eigenschaften. API: `plan` in
+  `GET /applications/{id}/connections`, `GET /applications/{id}/connections/plan/export`.
+
 ## 0.66.0 – 2026-10-26
 
 Zonen nach dem Test des Anwenders (ADR 0024 Nr. 15): Kommunikation im Zonenplan, Vorschläge beim

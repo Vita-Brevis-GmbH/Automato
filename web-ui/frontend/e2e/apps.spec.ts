@@ -214,6 +214,63 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   await expect(finding).toContainText("erlaubt für die Applikation „Webshop“");
 });
 
+test("Applikation: Netzwerkplan mit Knoten, Diensten, Interfaces und Export (0.67.0)", async ({ page }) => {
+  await open(page);
+  const card = page.locator("#app-connections");
+  await expect(card.locator(".card-head")).toContainText("6 Verbindungen");
+  await card.locator("#app-conn-plan").click();
+  const svg = card.locator("#app-plan-svg");
+  await expect(svg).toBeVisible();
+  await expect(svg.locator("g.app-plan-node")).toHaveCount(7);
+  await expect(svg.locator("g.app-plan-edge")).toHaveCount(6);
+  await expect(svg.locator(".app-plan-col")).toHaveText(["Applikation", "Weg", "Gegenstellen"]);
+  // links das System, in der Mitte die ACI-VRF (sperrt), rechts die Gegenstellen
+  const node = (name: string) => svg.locator(`g.app-plan-node[data-node="${name}"]`);
+  const own = await node("web01-007-ka").boundingBox();
+  const aci = await node("apic-01 · VRF TE:VRF1").boundingBox();
+  const peer = await node("externe EPG L3O_fw|EN_rt (10.20.0.0/16)").boundingBox();
+  expect(own!.x).toBeLessThan(aci!.x);
+  expect(aci!.x).toBeLessThan(peer!.x);
+  await expect(node("apic-01 · VRF TE:VRF1")).toHaveAttribute("data-verdict", "deny");
+  // je Linie die Dienste (← zur Applikation hin, ✕ vorher gesperrt) und die Interfaces
+  const edge = (a: string, b: string) => svg.locator(`g.app-plan-edge[data-edge="${a} → ${b}"]`);
+  const ext = edge("apic-01 · VRF TE:VRF1", "externe EPG L3O_fw|EN_rt (10.20.0.0/16)");
+  await expect(ext).toHaveAttribute("data-verdict", "deny");
+  await expect(ext.locator(".app-plan-label")).toHaveText("← tcp/22");
+  const inner = edge("web01-007-ka", "apic-01 · VRF TE:VRF1");
+  await expect(inner).toHaveAttribute("data-verdict", "blocked");
+  await expect(inner.locator(".app-plan-label")).toHaveText("✕ tcp/22");
+  await expect(inner.locator(".app-plan-port")).toHaveText("vlan5");
+  await expect(edge("web01-007-ka", "N_clients (10.5.0.0/16)").locator(".app-plan-label")).toHaveText("← tcp/443, tcp/9000");
+  // Suche der Karte hebt hervor, der Rest wird blass
+  await card.getByPlaceholder("System, Gegenstelle, Firewall, Regel…").fill("EN_rt");
+  await expect(svg.locator("g.app-plan-edge.dim")).toHaveCount(4);
+  await expect(card.locator("#app-plan-export")).toContainText("Export (1 Verbindungen)");
+  await card.getByPlaceholder("System, Gegenstelle, Firewall, Regel…").fill("");
+  await expect(svg.locator("g.app-plan-edge.dim")).toHaveCount(0);
+  // Klick auf einen Knoten: seine Verbindungen, Export nur mit ihnen
+  await node("apic-01 · VRF TE:VRF1").click();
+  const focus = card.locator("#app-plan-focus");
+  await expect(focus).toContainText("apic-01 · VRF TE:VRF1 – 1 Verbindungen");
+  const [file] = await Promise.all([
+    page.waitForEvent("download"),
+    card.locator("#app-plan-export button", { hasText: "draw.io" }).click(),
+  ]);
+  expect(file.suggestedFilename()).toMatch(/^netzwerkplan-webshop-\d{4}-\d{2}-\d{2}\.drawio$/);
+  const xml = readFileSync((await file.path())!, "utf-8");
+  expect(xml).toContain("Netzwerkplan Webshop");
+  expect(xml).toContain("1 Verbindungen (von 6, gefiltert)");
+  expect(xml).toContain('automato_ports_b="vlan5"');
+  // Details öffnen die Verbindung in der Tabelle
+  await focus.locator("button", { hasText: "Details" }).click();
+  await expect(card.locator("#app-conn-table")).toHaveClass(/on/);
+  await expect(card.locator("tr.detail-row")).toContainText("Contract CT_rt:SJ_1 erlaubt – der Weg ist gesperrt");
+  // die gewählte Ansicht bleibt
+  await card.locator("#app-conn-plan").click();
+  await page.reload();
+  await expect(page.locator("#app-plan-svg")).toBeVisible();
+});
+
 test("Applikation: Regeln zuordnen bzw. ausschliessen, Abhängigkeiten (0.60.0)", async ({ page, problems }) => {
   // zweite Applikation mit dem Server H_db01 (172.16.5.9) – Webshop nutzt sie (Policy to-db)
   const created = await page.request.post("/api/applications?tenant_id=1", {

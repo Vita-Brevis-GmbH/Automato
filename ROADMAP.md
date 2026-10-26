@@ -365,6 +365,7 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.65.0** | Verkabelung abgerundet: Spanning Tree lesen (blockierte VLANs im Plan als Reserve, L2-Weg meidet sie), vPC-Paar als logischer Switch (Rahmen im Plan, Befund vPC-Paar uneinheitlich), mehrere gleichzeitige Ausfälle (Shift-Klick), Export des Plans als SVG/draw.io (ADR 0025 Nr. 10) |
 | **0.65.1** | Korrekturen nach dem Test: Weg-Suche Richtung tauschen, Linien des Zonenplans weich aus der zugewandten Seite, Zonen-Vorschläge ohne ACI-Gruppen aus dem IPAM (`SZ_…`), filtern und gesammelt ausblenden |
 | **0.66.0** | Zonen: Kommunikation (erlaubende Regeln je Zonenpaar) im Zonenplan einblendbar – Nachbar-Tenants eines Tenants, Partner im Plan eines Kunden einzeln; Vorschläge beim Erfassen einer Zone (FortiGate-Zonen, Interfaces, IPAM, ACI, Anbindungen nach dem Namen) (ADR 0024 Nr. 15) |
+| **0.67.0** | Netzwerkplan je Applikation: Systeme → Firewalls/ACI auf den Wegen → Gegenstellen, je Linie Dienste je Richtung und Interfaces an den Enden, Urteil als Farbe, Hervorheben per Suche/Klick, Export draw.io/SVG (ADR 0021 Ergänzung 0.67.0) |
 
 ### Nächste Arbeiten (Stand 0.65.0)
 
@@ -418,7 +419,9 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
    ausschliessen und Abhängigkeiten zwischen Applikationen – umgesetzt in 0.60.0 (ADR 0012).
    Dazwischen (Wunsch des Anwenders, 2026-10-25): Zonenplan übersichtlich bei vielen Tenants
    und Zonen – Filter, Ebenen ausblenden, Zonen von Hand anordnen – umgesetzt in 0.61.0 (ADR 0024
-   Nr. 14). Offen bei den Applikationen: Export nach NetBox (eigene Freigabe).
+   Nr. 14). Netzwerkplan je Applikation (Knoten der Wege, Dienste und Interfaces an den
+   Verbindungen, Export) – umgesetzt in 0.67.0 (ADR 0021). Offen bei den Applikationen: Export
+   nach NetBox (eigene Freigabe).
 5. **Switching/Verkabelung:** Cisco-Switches strikt lesend (Interfaces, VLANs, LLDP/CDP),
    Verkabelung als L1/L2-Sicht – Grundlage für Redundanz und Mehrfachausfälle; vorher eigene ADR.
    Erste Fassung in 0.62.0 (ADR 0025): Switches über SSH mit fester Befehlsliste, Verkabelung aus
@@ -455,6 +458,7 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 | ~~0.63.0~~ | Endpunkte aus MAC-Tabelle und ARP, „Wo hängt …“, VLAN am ESXi-Uplink – **umgesetzt in 0.63.0** (ADR 0025 Nr. 8) |
 | ~~0.64.0~~ | L2-Sicht: Plan, Ausfall simulieren, Redundanz- und VLAN-Befunde, L2 in der Weg-Suche – **umgesetzt in 0.64.0** (ADR 0025 Nr. 9) |
 | ~~0.65.0~~ | Switching/Verkabelung abrunden: vPC-Paar, Spanning Tree, mehrere Ausfälle, Export des Plans – **umgesetzt in 0.65.0** (ADR 0025 Nr. 10) |
+| ~~0.67.0~~ | Netzwerkplan je Applikation mit Diensten und Interfaces an den Verbindungen – **umgesetzt in 0.67.0** (ADR 0021; Wunsch des Anwenders 2026-10-26) |
 | danach | Abnahme 0.43.1 ff. gegen die grössere Testumgebung (Pilot Zonen und Pläne); Kabel/Ports nach NetBox nur mit eigener Freigabe, SNMPv3 (siehe oben) |
 
 Frühere Reihenfolge (Stand 0.42.0, zum Nachlesen):

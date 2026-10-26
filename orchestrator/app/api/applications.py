@@ -4,7 +4,9 @@ Lesen = `viewer`, Schreiben = `operator`, alles mandantsgescoped und auditiert. 
 publizierten Dienste (VIPs) liegen unter /published-services.
 """
 
-from typing import Literal
+import re
+from datetime import UTC, datetime
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -21,7 +23,7 @@ from app.auth.principal import Principal
 from app.db import get_session
 from app.models import Application, Rule, Site
 from app.schemas.rules import RuleOut
-from app.store import app_paths, sites
+from app.store import app_paths, app_plan, sites
 from app.store import applications as store
 
 router = APIRouter(prefix="/applications", tags=["applications"])
@@ -631,7 +633,38 @@ def application_connections(
     Doku. Nicht fuer Kunden-Benutzer (Freigabeliste): der Weg zeigt die Infrastruktur."""
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    return app_paths.build(session, app)
+    out = app_paths.build(session, app)
+    out["plan"] = app_plan.build(out["connections"])  # Netzwerkplan (0.67.0)
+    return out
+
+
+_EXPORT = {"svg": ("image/svg+xml", "svg"), "drawio": ("application/xml", "drawio")}
+
+
+@router.get("/{application_id}/connections/plan/export")
+def export_connections_plan(
+    application_id: int,
+    format: str = Query("svg", pattern="^(svg|drawio)$"),  # noqa: A002 - Name der Abfrage
+    key: Annotated[list[str] | None, Query(description="nur diese Verbindungen")] = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> Response:
+    """Netzwerkplan der Applikation (0.67.0) als SVG bzw. draw.io - wie in der Ansicht; mit
+    `key` nur die Verbindungen des Filters. Nicht fuer Kunden-Benutzer (Freigabeliste)."""
+    if key and len(key) > app_paths.MAX_TRACES:
+        raise HTTPException(status_code=422, detail="zu viele Verbindungen")
+    app = _load(session, principal, application_id)
+    reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
+    conns = app_paths.build(session, app)["connections"]
+    plan = app_plan.build(conns, set(key) if key else None)
+    when = datetime.now(UTC)
+    title = f"Netzwerkplan {app.name}"
+    body = (app_plan.svg if format == "svg" else app_plan.drawio)(plan, title, when)
+    media, ext = _EXPORT[format]
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", app.name).strip("-").lower() or "applikation"
+    name = f"netzwerkplan-{slug}-{when:%Y-%m-%d}.{ext}"
+    return Response(content=body, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
 
 
 @router.get("/{application_id}/doc", response_model=ApplicationDocOut)

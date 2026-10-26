@@ -1636,13 +1636,77 @@ export interface AppConnection {
   mismatch: string[];
   notes: string[];
 }
+// Netzwerkplan je Applikation (0.67.0): Systeme → Knoten der Wege → Gegenstellen; je Linie die
+// Dienste je Richtung (von der Applikation aus) und an den Enden die Interfaces
+export type AppPlanVerdict = "allow" | "deny" | "depends" | "unknown" | "blocked";
+export interface AppPlanNode {
+  id: string;
+  role: "own" | "hop" | "peer";
+  kind: string; // system | firewall | vdom | vrf | object | epg | external
+  label: string;
+  title: string;
+  sub: string;
+  name?: string | null;
+  ips: string[];
+  systems: string[];
+  conns: string[]; // Schlüssel der Verbindungen über den Knoten
+  verdict: AppPlanVerdict | null; // nur Hops: Urteil der Verbindungen, die ihn erreichen
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+export interface AppPlanPort {
+  x: number;
+  y: number;
+  anchor: "start" | "end" | "middle";
+  text: string;
+}
+export interface AppPlanEdge {
+  id: string;
+  a: string;
+  b: string;
+  fwd: string[]; // Dienste von der Applikation weg
+  back: string[]; // Dienste zur Applikation hin
+  blocked: string[]; // vorher gesperrt – erreichen diese Linie nicht
+  verdict: AppPlanVerdict;
+  conns: string[];
+  ports_a: string[];
+  ports_b: string[];
+  port_a: AppPlanPort | null;
+  port_b: AppPlanPort | null;
+  dashed: boolean; // Weg hier nicht bekannt
+  mismatch: boolean;
+  label: string;
+  points: [number, number][];
+  via: [number, number][]; // Spuren in den Spalten dazwischen (Linie an den Knoten vorbei)
+  lx: number;
+  ly: number;
+  anchor?: "start" | "middle";
+}
+export interface AppPlan {
+  width: number;
+  height: number;
+  nodes: AppPlanNode[];
+  edges: AppPlanEdge[];
+  columns: { x: number; title: string }[];
+  summary: { connections: number; total: number; nodes: number; edges: number };
+}
 export interface AppConnections {
   connections: AppConnection[];
   notes: string[];
   summary: { total: number; allow: number; blocked: number; open: number; mismatch: number };
+  plan?: AppPlan;
 }
 export const fetchAppConnections = (id: number) =>
   getJSON<AppConnections>(`/api/applications/${id}/connections`);
+export async function exportAppPlan(id: number, format: "svg" | "drawio", keys?: string[]): Promise<{ blob: Blob; filename: string }> {
+  const params = new URLSearchParams({ format });
+  (keys ?? []).forEach((k) => params.append("key", k));
+  const response = await fetchChecked(`/api/applications/${id}/connections/plan/export?${params.toString()}`);
+  const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+  return { blob: await response.blob(), filename: match?.[1] ?? `netzwerkplan.${format}` };
+}
 
 // System (Admin)
 // DB-Rolle des Orchestrators (0.48.0): getrennt vom Eigentümer der Tabellen, ohne DDL?
