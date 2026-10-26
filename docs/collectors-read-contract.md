@@ -208,7 +208,8 @@ wird beim ersten Lauf festgehalten und danach verlangt (ADR 0025 Nr. 3).
 | `show etherchannel summary` · `show port-channel summary` | Port-Channel mit Mitgliedern, Protokoll | `inv_interface` (`kind` lag, `lag` am Mitglied) |
 | `show cdp neighbors detail` | je Port Nachbar: Name, Port, IP, Plattform, Fähigkeiten | `inv_neighbor` (`protocol` cdp) |
 | `show lldp neighbors detail` | je Port Nachbar: Systemname, Port, Management-IP, Beschreibung, Fähigkeiten | `inv_neighbor` (`protocol` lldp); am Port (`inv_interface.neighbor`) gilt CDP vor LLDP |
-| `show vpc` (nur NX-OS) | vPC-Nummer je Port-Channel, Peer-Link | `inv_interface.attrs.vpc` |
+| `show vpc` (nur NX-OS) | vPC-Nummer je Port-Channel mit Status und Konsistenz; seit 0.65.0 auch Domäne, Rolle, Peer- und Keepalive-Status, Peer-Link (eigene Auswertung) | `inv_interface.attrs` (`vpc`, `vpc_status`, `vpc_consistency`; am Peer-Link `vpc_peer_link` = Domäne, `vpc_role`, `vpc_peer`, `vpc_keepalive`, `vpc_peer_link_status`) |
+| `show spanning-tree` (seit 0.65.0) | je VLAN Port, Rolle, Zustand (auf NX-OS ohne passende Vorlage mit der IOS-Vorlage) | `inv_interface.attrs.stp_blocked` (VLANs mit `BLK` bzw. Alternate/Backup), `attrs.stp_root` (Root-Port), als Bereiche |
 | `show mac address-table` (seit 0.63.0) | MAC, VLAN, Port, Art (dynamic/static); nur Unicast an einzelnen Ports, nicht CPU/Supervisor/Router/vPC-Peer-Link; höchstens 50 000 je Switch | `mac_entry` (gesammelt, `first_seen`/`last_seen`) |
 | `show ip arp` · `show ip arp detail vrf all` (seit 0.63.0) | IP, MAC, L3-Interface, VRF (NX-OS); ohne die eigenen Adressen des Switches | `arp_entry` (gesammelt) |
 

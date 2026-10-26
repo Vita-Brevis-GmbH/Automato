@@ -4,6 +4,7 @@ Normalisierung der show-Ausgaben (IOS-XE und NX-OS), Lauf mit Teilfehlern."""
 import socket
 import threading
 import time
+from unittest.mock import patch
 
 import paramiko
 import pytest
@@ -62,7 +63,8 @@ def test_normalisierung_ios_und_nxos():
     assert vl1.enabled is False and vl1.kind == "vlan"
     peer = ports[("sw-core-01", "Eth1/48")]
     assert peer.trunk_vlans == "1-4094" and peer.tagged_vlans == []  # alle VLANs: nur Bereich
-    assert ports[("sw-core-01", "Po10")].attrs == {"vpc": "10"}
+    assert ports[("sw-core-01", "Po10")].attrs == {"vpc": "10", "vpc_status": "up",
+                                                    "vpc_consistency": "success"}  # fmt: skip
     assert ports[("sw-core-01", "Eth1/1")].lag == "Po10"
     assert ports[("sw-core-01", "mgmt0")].description is None  # "--" ist kein Text
     nbs = {(n.device, n.port, n.protocol): n for n in inv.neighbors}
@@ -94,6 +96,49 @@ def test_mac_tabelle_und_arp():
     assert mac_text("00-50-56-AA-BB-CC") == "00:50:56:aa:bb:cc" and mac_text("Incomplete") is None
     assert sn._l2_port(["Gi1/0/1", "Gi1/0/2"]) is None and sn._l2_port("Router") is None
     assert sn._l2_port("port-channel10") == "Po10"
+
+
+def test_spanning_tree_und_vpc():
+    """0.65.0: blockierte VLANs und Root-Port je Port (IOS-Vorlage auch fuer NX-OS), `show vpc`
+    selbst ausgewertet (Domaene, Peer-Link, Status, Konsistenz)."""
+    inv = normalize(SAMPLE)
+    ports = {(i.device, i.name): i for i in inv.interfaces}
+    assert ports[("sw-acc-01", "Te1/1/1")].attrs["stp_blocked"] == "30"
+    assert ports[("sw-acc-01", "Po1")].attrs == {"stp_root": "10,30"}
+    assert "stp_blocked" not in ports[("sw-core-01", "Eth1/3")].attrs
+    peer = ports[("sw-core-01", "Po1")]
+    assert peer.kind == "lag" and peer.attrs["vpc_peer_link"] == "1"
+    assert peer.attrs["vpc_peer"] == "peer adjacency formed ok"
+    info = sn.vpc_info("""vPC domain id : 7
+Peer status : peer link is down
+vPC Peer-link status
+id    Port   Status Active vlans
+1     Po1    down   -
+vPC status
+Id    Port   Status Consistency Reason   Active vlans
+20    Po20   down*  failed      Compatibility check failed  -
+""")
+    assert (info["domain"], info["peer"], info["peer_link_status"]) == ("7", "peer link is down",
+                                                                       "down")  # fmt: skip
+    assert info["vpcs"] == [{"id": "20", "port": "Po20", "status": "down*",
+                             "consistency": "failed"}]  # fmt: skip
+    assert sn.vpc_info("% Invalid command")["domain"] is None
+    # passt eine Vorlage nicht: der Teil bleibt leer, der Switch wird trotzdem eingelesen
+    real = sn.parse
+
+    def broken(platform, command, text):
+        if command == "show spanning-tree":
+            raise ValueError("Vorlage passt nicht")
+        return real(platform, command, text)
+
+    raw = {"switches": [dict(sw, notes=[]) for sw in SAMPLE["switches"]]}
+    with patch.object(sn, "parse", broken):
+        inv = normalize(raw)
+    assert {d.name for d in inv.devices} == {"sw-acc-01", "sw-core-01"}
+    assert not any("stp_blocked" in (i.attrs or {}) for i in inv.interfaces)
+    assert (
+        "show spanning-tree: Ausgabe nicht auswertbar (ValueError)" in raw["switches"][0]["notes"]
+    )
 
 
 def test_mac_tabelle_gekappt(monkeypatch):

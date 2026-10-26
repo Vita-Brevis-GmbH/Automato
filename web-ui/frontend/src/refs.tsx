@@ -61,6 +61,7 @@ export const FINDING_LABEL: Record<string, string> = {
   l2_single_point: "L2: Switch als einzelner Ausfallpunkt",
   lag_degraded: "Port-Channel unvollständig",
   vlan_split: "VLAN getrennt",
+  vpc_mismatch: "vPC-Paar uneinheitlich",
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -107,6 +108,7 @@ export const FINDING_HINT: Record<string, string> = {
   l2_single_point: "fällt dieser Switch aus, zerfällt das Netz in getrennte Teile",
   lag_degraded: "Port-Channel, von dem nicht alle Mitglieder verbunden sind",
   vlan_split: "VLAN wird an Access-Ports bzw. als SVI auf mehreren Switches genutzt, die Trunks dazwischen lassen es nicht durch",
+  vpc_mismatch: "vPC nur auf einem Peer, down bzw. inkonsistent – oder der Peer des vPC-Paars ist nicht verbunden",
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -158,7 +160,7 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     key: "cabling",
     label: "Verkabelung",
     help: "Verbindungen zwischen Switches: Speed, Duplex, VLANs, Port-Channel, einseitig gemeldet",
-    types: ["link_speed_mismatch", "link_duplex_mismatch", "link_vlan_mismatch", "link_lag_mismatch", "link_one_sided", "uplink_vlan_missing", "l2_single_link", "l2_single_switch", "l2_single_point", "lag_degraded", "vlan_split"],
+    types: ["link_speed_mismatch", "link_duplex_mismatch", "link_vlan_mismatch", "link_lag_mismatch", "link_one_sided", "uplink_vlan_missing", "l2_single_link", "l2_single_switch", "l2_single_point", "lag_degraded", "vlan_split", "vpc_mismatch"],
   },
   {
     key: "zones",

@@ -576,3 +576,6 @@ tbody tr.group-row td {
 /* Weg-Suche: Zonen je Hop und Kette mit Übergängen (0.57.0) */
 .zone-chip { display: inline-flex; align-items: center; gap: 4px; }
 .zone-chain { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+/* Verkabelung: Spanning Tree und vPC je Port (0.65.0) */
+.port-l2 { font-size: 11px; color: var(--muted); }
+.port-l2.warn { color: var(--warn); }

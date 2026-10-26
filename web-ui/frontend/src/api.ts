@@ -2928,6 +2928,10 @@ export interface CablingPort {
   description: string | null;
   media: string | null;
   vpc: string | null;
+  // 0.65.0: Peer-Link (vPC-Domäne), Spanning Tree je Port bzw. Port-Channel (VLAN-Bereiche)
+  vpc_peer_link?: string | null;
+  stp_blocked?: string | null;
+  stp_root?: string | null;
   peer: { device: string; port: string | null; read: boolean; kind: string } | null;
   link_state: LinkState | null;
   issues: string[];
@@ -3027,16 +3031,21 @@ export interface L2PlanEdge {
   issues: number;
   lags: string[];
   ports: [string, string][];
-  vlan?: "yes" | "no" | "partial" | "unknown";
+  // mit VLAN; „standby“ = Spanning Tree blockiert das VLAN hier (Reserve, 0.65.0)
+  vlan?: "yes" | "no" | "partial" | "standby" | "unknown";
+  stp: string | null; // von Spanning Tree blockierte VLANs (Bereiche) auf diesem Gerätepaar
 }
 export interface L2Plan {
   nodes: L2PlanNode[];
   edges: L2PlanEdge[];
+  pairs: { a: string; b: string; domain: string }[]; // vPC-Paare (0.65.0)
   width: number;
   height: number;
   vlan?: { vid: number; present: string[]; islands: string[][] };
 }
 export interface L2Failure {
+  devices: string[];
+  links: string[];
   device: string | null;
   link: string | null;
   main: string[];
@@ -3046,8 +3055,25 @@ export interface L2Failure {
 }
 export const fetchL2Plan = (tenantId: number, f: { ends?: boolean; vlan?: number | null } = {}) =>
   getJSON<L2Plan>(`/api/cabling/plan${qs({ tenant_id: tenantId, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`);
-export const fetchL2Failure = (tenantId: number, f: { device?: string; link?: string }) =>
-  getJSON<L2Failure>(`/api/cabling/failure${qs({ tenant_id: tenantId, device: f.device, link: f.link })}`);
+// Ausfall: mehrere Geräte bzw. Kabel gleichzeitig (0.65.0) - Parameter je Wert wiederholt
+export const fetchL2Failure = (tenantId: number, f: { devices?: string[]; links?: string[] }) => {
+  const p = new URLSearchParams({ tenant_id: String(tenantId) });
+  for (const d of f.devices ?? []) p.append("device", d);
+  for (const l of f.links ?? []) p.append("link", l);
+  return getJSON<L2Failure>(`/api/cabling/failure?${p}`);
+};
+// Export des Plans (0.65.0): SVG bzw. draw.io wie in der Ansicht, Name aus Content-Disposition
+export async function exportL2Plan(
+  tenantId: number,
+  format: "svg" | "drawio",
+  f: { ends?: boolean; vlan?: number | null } = {},
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetchChecked(
+    `/api/cabling/plan/export${qs({ tenant_id: tenantId, format, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`,
+  );
+  const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+  return { blob: await response.blob(), filename: match?.[1] ?? `verkabelung.${format}` };
+}
 export const locateEndpoint = (tenantId: number, q: string) =>
   getJSON<{ query: string; kind: string | null; ips: string[]; items: EndpointLocation[] }>(
     `/api/cabling/locate${qs({ tenant_id: tenantId, q })}`,

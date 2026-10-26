@@ -78,6 +78,8 @@ class FindingType(enum.StrEnum):
     L2_SINGLE_POINT = "l2_single_point"
     LAG_DEGRADED = "lag_degraded"
     VLAN_SPLIT = "vlan_split"
+    # vPC-Paar (0.65.0): Peer nicht verbunden, vPC nur auf einem Peer, down bzw. inkonsistent
+    VPC_MISMATCH = "vpc_mismatch"
 
 
 class Severity(enum.StrEnum):

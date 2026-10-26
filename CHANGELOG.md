@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.65.0 – 2026-10-26
+
+Switching/Verkabelung abgerundet (ROADMAP, ADR 0025 Nr. 10): vPC-Paare, Spanning Tree, mehrere
+gleichzeitige Ausfälle, Export des Plans. Ohne Migration; ein weiterer Lesebefehl auf den
+Switches (`show spanning-tree`), die Agenten holen ihn mit dem Selbst-Update.
+
+- **Spanning Tree lesen:** je Port bzw. Port-Channel die VLANs, in denen er blockiert, und die
+  Root-Ports. Im Plan sind solche Kabel gestrichelt („STP 30“), mit VLAN als *Reserve*
+  (violett); der L2-Weg in der Weg-Suche meidet blockierte Kabel. Im Reiter Ports unter der
+  Konfiguration (Mitglieder zeigen die Werte ihres Port-Channels).
+- **vPC-Paar als logischer Switch:** `show vpc` genauer (Domäne, Rolle, Peer, Keepalive, je vPC
+  Status und Konsistenz); im Plan nebeneinander im Rahmen „vPC-Domäne n“. Neuer Befund
+  **vPC-Paar uneinheitlich** (Peer nicht verbunden, vPC nur auf einem Peer, vPC down bzw.
+  inkonsistent); „alle Kabel am selben Switch“ nennt den ungenutzten vPC-Peer.
+- **Mehrere Ausfälle gleichzeitig:** im Plan Shift-Klick auf weitere Geräte bzw. Kabel (bei
+  mehreren Kabeln zwischen zwei Geräten alle); `GET /cabling/failure` nimmt `device`/`link`
+  mehrfach.
+- **Export des Plans** als SVG bzw. draw.io (wie gezeigt, mit VLAN), `GET /cabling/plan/export`.
+- Korrektur: Passt eine Vorlage nicht auf die Ausgabe eines Befehls, bleibt nur dieser Teil leer
+  (Hinweis im Lauf); bisher brach die Auswertung aller Switches des Quellsystems ab.
+
 ## 0.64.0 – 2026-10-26
 
 Switching/Verkabelung weiter (ROADMAP, ADR 0025 Nr. 9): die L2-Sicht – Plan der Verkabelung,

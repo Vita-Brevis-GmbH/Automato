@@ -179,3 +179,124 @@ def test_l2_in_der_weg_suche(client, session_factory):
     assert hops[1]["l2"]["text"] == ("leaf-101 eth1/10 → sw-core-01 (Eth1/10 → Eth1/20) → "
                                      "sw-acc-02 (Gi1/0/1 → Gi1/0/10)")  # fmt: skip
     assert "src" not in result["l2"]  # Quelle in keiner MAC-Tabelle
+
+
+def _switches_vpc():
+    """sw-core-02 als vPC-Peer von sw-core-01 (Peer-Link Po1 ueber Eth1/49-50), vPC 10 nur auf
+    sw-core-01, vPC 20 nur auf sw-core-02, vPC 30 down; sw-core-02 meldet den Peer als getrennt.
+    sw-acc-01 zusaetzlich mit Gi1/0/45 an sw-core-02; Spanning Tree blockiert Po1 in VLAN 30."""
+    result = _switches()
+    inv = result["inventory"]
+    inv["devices"].append({"name": "sw-core-02", "role": "switch", "mgmt_ip": "10.0.0.3"})
+    peer = {"vpc_role": "primary", "vpc_peer": "peer adjacency formed ok",
+            "vpc_keepalive": "peer is alive", "vpc_peer_link_status": "up"}  # fmt: skip
+    for p in inv["interfaces"]:
+        if (p["device"], p["name"]) == ("sw-acc-01", "Po1"):
+            p["attrs"] = {"stp_blocked": "30"}
+    inv["interfaces"] += [
+        tc._port("sw-core-01", "Po1", kind="lag", attrs={"vpc_peer_link": "100", **peer},
+                 **tc.TRUNK),
+        tc._port("sw-core-01", "Eth1/49", lag="Po1", **tc.TRUNK),
+        tc._port("sw-core-01", "Eth1/50", lag="Po1", **tc.TRUNK),
+        tc._port("sw-core-01", "Po30", kind="lag", attrs={"vpc": "30", "vpc_status": "down*",
+                                                          "vpc_consistency": "failed"}),
+        tc._port("sw-core-02", "Po1", kind="lag",
+                 attrs={"vpc_peer_link": "100", **peer, "vpc_role": "secondary",
+                        "vpc_peer": "peer link is down"}, **tc.TRUNK),
+        tc._port("sw-core-02", "Eth1/49", lag="Po1", **tc.TRUNK),
+        tc._port("sw-core-02", "Eth1/50", lag="Po1", **tc.TRUNK),
+        tc._port("sw-core-02", "Eth1/45", **tc.TRUNK),
+        tc._port("sw-core-02", "Po20", kind="lag", attrs={"vpc": "20", "vpc_status": "up",
+                                                          "vpc_consistency": "success"}),
+        tc._port("sw-acc-01", "Gi1/0/45", **tc.TRUNK),
+        tc._port("sw-acc-02", "Gi1/0/2", trunk_vlans="10,20", mode="tagged", native_vlan=1),
+        tc._port("sw-core-01", "Eth1/21", trunk_vlans="10,20", mode="tagged", native_vlan=1),
+    ]  # fmt: skip
+    for a, b in (("Eth1/49", "Eth1/49"), ("Eth1/50", "Eth1/50")):
+        inv["neighbors"] += [
+            {"device": "sw-core-01", "port": a, "protocol": "cdp", "remote_name": "sw-core-02",
+             "remote_port": f"Ethernet{b[3:]}"},
+            {"device": "sw-core-02", "port": b, "protocol": "cdp", "remote_name": "sw-core-01",
+             "remote_port": f"Ethernet{a[3:]}"},
+        ]  # fmt: skip
+    inv["neighbors"] += [
+        {"device": "sw-acc-02", "port": "Gi1/0/2", "protocol": "cdp",
+         "remote_name": "sw-core-01", "remote_port": "Ethernet1/21"},
+        {"device": "sw-acc-01", "port": "Gi1/0/45", "protocol": "cdp",
+         "remote_name": "sw-core-02", "remote_port": "Ethernet1/45"},
+        {"device": "sw-core-02", "port": "Eth1/45", "protocol": "cdp",
+         "remote_name": "sw-acc-01", "remote_port": "GigabitEthernet1/0/45"},
+    ]  # fmt: skip
+    return result
+
+
+def test_vpc_stp_mehrere_ausfaelle_und_export(client, session_factory):
+    tid, sw = tc._setup(client)
+    for name, platform, result in (("vc", "vmware", VCENTER), ("fw-08", "fortigate", FORTIGATE)):
+        body = {"tenant_id": tid, "name": name, "platform": platform,
+                "base_url": f"https://{name}.example.ch"}  # fmt: skip
+        sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+        _deliver(client, tid, sid, platform, result)
+    _deliver(client, tid, sw["id"], "cisco_switch", _switches_vpc())
+
+    plan = client.get("/cabling/plan", params={"tenant_id": tid, "vlan": 30}).json()
+    assert plan["pairs"] == [{"a": "sw-core-01", "b": "sw-core-02", "domain": "100"}]
+    by = {n["name"]: n for n in plan["nodes"]}
+    assert by["sw-core-01"]["layer"] == by["sw-core-02"]["layer"] == 0  # Paar auf einer Ebene
+    assert abs(by["sw-core-01"]["x"] - by["sw-core-02"]["x"]) == l2_topo.X_STEP  # nebeneinander
+    acc = next(e for e in plan["edges"] if {e["a"], e["b"]} == {"sw-acc-01", "sw-core-01"})
+    assert acc["vlan"] == "standby" and acc["stp"] == "30"  # Po1 blockiert, Rest sperrt VLAN 30
+    with session_factory() as s:
+        topo = l2_topo.L2(s, tid)
+        # VLAN 30 ab fw-08: nicht ueber den blockierten Po1, sondern ueber sw-core-02
+        seg = topo.between(["fw-08"], "dmz", ["leaf-101"])
+        assert seg is not None
+        assert [st.device.name for st in seg.steps] == ["fw-08", "sw-acc-01", "sw-core-02",
+                                                        "sw-core-01", "leaf-101"]  # fmt: skip
+        # blockiert Spanning Tree jeden Weg (Laeufe zu verschiedenen Zeiten): dann mit den
+        # blockierten Kabeln, statt keinen Weg zu zeigen
+        topo.stp_blocked = lambda end: {30}
+        seg = topo.between(["fw-08"], "dmz", ["leaf-101"])
+        assert seg is not None
+        assert [st.device.name for st in seg.steps] == ["fw-08", "sw-acc-01", "sw-core-01",
+                                                        "leaf-101"]  # fmt: skip
+    # Ports: Mitglieder zeigen Spanning Tree bzw. Peer-Link ihres Port-Channels
+    ports = {(p["device"], p["name"]): p for p in client.get(
+        "/cabling/ports", params={"tenant_id": tid, "limit": 2000}).json()["items"]}  # fmt: skip
+    assert ports[("sw-acc-01", "Gi1/0/47")]["stp_blocked"] == "30"
+    assert ports[("sw-core-02", "Eth1/49")]["vpc_peer_link"] == "100"
+    assert ports[("sw-core-02", "Eth1/45")]["stp_blocked"] is None
+    # Ausfall beider Peers: Zugang, Leaf und sw-acc-02 getrennt
+    both = client.get("/cabling/failure", params=[("tenant_id", tid), ("device", "sw-core-01"),
+                                                  ("device", "sw-core-02")]).json()  # fmt: skip
+    assert both["devices"] == ["sw-core-01", "sw-core-02"] and len(both["parts"]) == 3
+    one = client.get("/cabling/failure", params={"tenant_id": tid, "device": "sw-core-02"}).json()
+    assert one["cut_off"] == []  # sw-acc-01 haengt auch an sw-core-01
+    # Befunde zum vPC-Paar
+    found = client.get("/findings", params={"tenant_id": tid, "type": "vpc_mismatch"}).json()
+    items = found["items"] if isinstance(found, dict) else found
+    texts = sorted(f["message"] for f in items)
+    assert any("vPC-Domäne 100: sw-core-02 meldet „peer link is down“" in t for t in texts)
+    assert any("vPC 10 nur auf sw-core-01 (Po10), nicht auf sw-core-02" in t for t in texts)
+    assert any("vPC 20 nur auf sw-core-02 (Po20), nicht auf sw-core-01" in t for t in texts)
+    assert any("vPC 30 auf sw-core-01 (Po30): down*, Konsistenz failed" in t for t in texts)
+    peer = next(f for f in items if "meldet" in f["message"])
+    assert peer["severity"] == "error"
+    single = client.get("/findings", params={"tenant_id": tid, "type": "l2_single_switch"}).json()
+    single = single["items"] if isinstance(single, dict) else single
+    assert not any(f["detail"]["device"] == "sw-acc-01" for f in single)  # jetzt an beiden Peers
+    acc2 = next(f for f in single if f["detail"]["device"] == "sw-acc-02")
+    assert "alle 2 Kabel von sw-acc-02 enden an sw-core-01 – sw-core-02 (vPC-Peer) nicht genutzt" \
+        in acc2["message"]  # fmt: skip
+    # Export
+    r = client.get("/cabling/plan/export", params={"tenant_id": tid, "format": "svg"})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg+xml")
+    assert "vPC-Domäne 100" in r.text and "sw-core-02" in r.text
+    assert 'filename="verkabelung-' in r.headers["content-disposition"]
+    d = client.get("/cabling/plan/export", params={"tenant_id": tid, "format": "drawio",
+                                                   "vlan": 30})  # fmt: skip
+    assert d.status_code == 200 and "<mxGraphModel" in d.text
+    assert 'automato_device="sw-acc-01"' in d.text and "STP blockiert 30" in d.text
+    assert "-vlan30.drawio" in d.headers["content-disposition"]
+    pdf = {"tenant_id": tid, "format": "pdf"}
+    assert client.get("/cabling/plan/export", params=pdf).status_code == 422

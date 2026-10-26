@@ -7,6 +7,10 @@ CDP/LLDP. Portnamen in der Kurzform des Switches (`Gi1/0/1`, `Eth1/1`, `Po10`).
 
 Seit 0.63.0 die MAC-Adress-Tabelle (nur Unicast an Ports, nicht CPU/Router/Peer-Link) und ARP
 (ohne die eigenen Adressen des Switches); MACs einheitlich `aa:bb:cc:dd:ee:ff`.
+
+Seit 0.65.0 Spanning Tree (je Port die VLANs, in denen er blockiert bzw. Root-Port ist, in
+`attrs.stp_blocked`/`stp_root`) und `show vpc` selbst ausgewertet: Domaene, Rolle, Peer- und
+Keepalive-Status am Peer-Link (`attrs.vpc_peer_link`), je vPC Status und Konsistenz.
 """
 
 import ipaddress
@@ -125,8 +129,69 @@ def parse(platform: str, command: str, text: str) -> list[dict]:
         return []
     from ntc_templates.parse import parse_output
 
-    rows = parse_output(platform=NTC_PLATFORM[platform], command=command, data=text)
+    try:
+        rows = parse_output(platform=NTC_PLATFORM[platform], command=command, data=text)
+    except Exception:  # noqa: BLE001 - keine Vorlage fuer NX-OS: gleiche Spalten wie IOS
+        if platform != "nxos" or command not in _IOS_FALLBACK:
+            raise
+        rows = parse_output(platform="cisco_ios", command=command, data=text)
     return [{k.lower(): v for k, v in r.items()} for r in rows]
+
+
+_IOS_FALLBACK = {"show spanning-tree"}
+_VPC_ROW = re.compile(r"^\s*(\d+)\s+(\S+)\s+(\S+)(?:\s+(\S+))?")
+
+
+def vpc_info(text: str) -> dict:
+    """`show vpc` (NX-OS): Domaene, Rolle, Peer-/Keepalive-Status, Peer-Link und je vPC Port,
+    Status und Konsistenz."""
+    out: dict = {"domain": None, "role": None, "peer": None, "keepalive": None,
+                 "peer_link": None, "peer_link_status": None, "vpcs": []}  # fmt: skip
+    if not text.strip() or cli_error(text):
+        return out
+    fields = {"vpc domain id": "domain", "vpc role": "role", "peer status": "peer",
+              "vpc keep-alive status": "keepalive"}  # fmt: skip
+    section = None
+    for line in text.splitlines():
+        low = line.strip().lower()
+        key, _, value = line.partition(":")
+        if key.strip().lower() in fields and value.strip():
+            out[fields[key.strip().lower()]] = value.strip()
+            continue
+        if low.startswith("vpc peer-link status"):
+            section = "peer"
+            continue
+        if low.startswith("vpc status"):
+            section = "vpc"
+            continue
+        m = _VPC_ROW.match(line)
+        if not m or section is None:
+            continue
+        port = short_name(m.group(2))
+        if section == "peer" and out["peer_link"] is None:
+            out["peer_link"], out["peer_link_status"] = port, m.group(3).lower()
+        elif section == "vpc":
+            out["vpcs"].append({"id": m.group(1), "port": port, "status": m.group(3).lower(),
+                                "consistency": (m.group(4) or "").lower() or None})  # fmt: skip
+    return out
+
+
+def _stp(rows: list[dict]) -> dict[str, dict[str, set[int]]]:
+    """Spanning Tree: je Port die VLANs, in denen er blockiert (BLK) bzw. Root-Port ist."""
+    out: dict[str, dict[str, set[int]]] = {}
+    for r in rows:
+        port = short_name(r.get("interface"))
+        vlan = _int(r.get("vlan_id"))
+        if not port or vlan is None:
+            continue
+        status = (r.get("status") or "").upper()
+        role = (r.get("role") or "").lower()
+        entry = out.setdefault(port, {"blocked": set(), "root": set()})
+        if status.startswith("BLK") or (role in ("altn", "back") and status != "FWD"):
+            entry["blocked"].add(vlan)
+        if role == "root":
+            entry["root"].add(vlan)
+    return out
 
 
 def detect_platform(version_text: str) -> str:
@@ -214,7 +279,14 @@ def switch_inventory(
     from collectors.cisco_switch.client import COMMANDS
 
     cmds = COMMANDS[platform]
-    p: dict[str, list[dict]] = {c: parse(platform, c, outputs.get(c, "")) for c in cmds}
+    p: dict[str, list[dict]] = {}
+    for c in cmds:
+        try:
+            p[c] = parse(platform, c, outputs.get(c, ""))
+        except Exception as exc:  # noqa: BLE001 - Vorlage passt nicht: Teil leer, Hinweis im Lauf
+            p[c] = []
+            if notes is not None:
+                notes.append(f"{c}: Ausgabe nicht auswertbar ({type(exc).__name__})")
     ver = (p["show version"] or [{}])[0]
     nx = platform == "nxos"
     name = _first(ver.get("hostname")) or host
@@ -260,11 +332,22 @@ def switch_inventory(
         port(bundle)
         for m in r.get("member_interface") or []:
             port(m)["lag"] = bundle
-    if nx:
-        for r in p["show vpc"]:  # vPC (und Peer-Link) je vorhandenem Port-Channel
-            key = short_name(r.get("port"))
-            if key in ports:
-                ports[key]["vpc"] = r.get("id")
+    if nx:  # vPC (0.65.0 selbst ausgewertet): Peer-Link und je vPC Status/Konsistenz
+        vpc = vpc_info(outputs.get("show vpc", ""))
+        if vpc["peer_link"]:
+            port(vpc["peer_link"]).update(
+                vpc_peer_link=vpc["domain"] or "?", vpc_role=vpc["role"],
+                vpc_peer=vpc["peer"], vpc_keepalive=vpc["keepalive"],
+                vpc_peer_link_status=vpc["peer_link_status"])  # fmt: skip
+        for v in vpc["vpcs"]:
+            port(v["port"]).update(vpc=v["id"], vpc_status=v["status"],
+                                   vpc_consistency=v["consistency"])  # fmt: skip
+    for key, st in _stp(p.get("show spanning-tree") or []).items():
+        if key in ports:
+            if st["blocked"]:
+                ports[key]["stp_blocked"] = vlan_ranges(st["blocked"])
+            if st["root"]:
+                ports[key]["stp_root"] = vlan_ranges(st["root"])
 
     neighbors: list[NormalizedNeighbor] = []
     for r in p["show cdp neighbors detail"]:
@@ -305,11 +388,17 @@ def switch_inventory(
         if vid is None or vid in _DEFAULT_VLANS:
             continue
         vlans.append(NormalizedVlan(vid=vid, name=(r.get("vlan_name") or str(vid)).strip()))
-    macs, arps, over = _l2(name, p, cmds[-1])
+    macs, arps, over = _l2(name, p, next(c for c in cmds if c.startswith("show ip arp")))
     if over and notes is not None:
         notes.append(f"MAC-Tabelle: {over} Eintraege ueber {MAX_MACS} nicht uebernommen")
     return NetworkInventory(devices=[device], interfaces=interfaces, vlans=vlans,
                             neighbors=neighbors, macs=macs, arps=arps)  # fmt: skip
+
+
+_ATTRS = (
+    "media", "vpc", "vpc_status", "vpc_consistency", "vpc_peer_link", "vpc_role", "vpc_peer",
+    "vpc_keepalive", "vpc_peer_link_status", "stp_blocked", "stp_root",
+)  # fmt: skip
 
 
 def _interface(device: str, e: dict, nb: NormalizedNeighbor | None) -> NormalizedInterface:
@@ -336,7 +425,7 @@ def _interface(device: str, e: dict, nb: NormalizedNeighbor | None) -> Normalize
         if vset is not None:
             trunk_text = vlan_ranges(vset)
             tagged = sorted(vset) if len(vset) <= TAGGED_MAX else []
-    attrs = {k: e[k] for k in ("media", "vpc") if e.get(k)}
+    attrs = {k: e[k] for k in _ATTRS if e.get(k)}
     enabled = None
     if status is not None or e.get("admin_down") is not None:
         enabled = not (status == "disabled" or e.get("admin_down"))

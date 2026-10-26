@@ -14,12 +14,16 @@
 - `GET /cabling/plan`     (0.64.0) Plan: Geraete nach Ebenen mit Kabeln; mit `vlan` je Kabel,
                           ob es das VLAN durchlaesst, und die Inseln des VLANs.
 - `GET /cabling/failure`  (0.64.0) Ausfall eines Geraets bzw. Kabels: was ist dann getrennt?
+                          Seit 0.65.0 auch mehrere gleichzeitig (`device`/`link` mehrfach).
+- `GET /cabling/plan/export` (0.65.0) Plan als SVG bzw. draw.io.
 Lesen = `viewer`, mandantsgescoped; nicht fuer Kunden-Benutzer (Infrastruktur). Rein lesend.
 """
 
 from collections import defaultdict
+from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -27,10 +31,10 @@ from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import InvVlan, MacEntry, SourceSystem
+from app.models import InvVlan, MacEntry, SourceSystem, Tenant
 from app.models.source_system import Platform
 from app.store import cabling as store
-from app.store import l2, l2_topo
+from app.store import l2, l2_export, l2_topo
 
 router = APIRouter(prefix="/cabling", tags=["cabling"])
 STATES = ("both", "one_sided", "unread")
@@ -188,16 +192,24 @@ def ports(
                                        for t in (p.name, p.description, p.neighbor,
                                                  p.device))]  # fmt: skip
     rows.sort(key=lambda p: (p.device.casefold(), _port_order(p.name)))
+    # Spanning Tree und vPC stehen am Port-Channel - Mitglieder zeigen die Werte ihres Channels
+    by_port = {(store.device_key(p.device), store.port_key(p.name)): p.attrs or {}
+               for p in cab.ports}  # fmt: skip
     out = []
     for p in rows[offset : offset + limit]:
         link, other = peer.get((store.device_key(p.device), store.port_key(p.name)), (None, None))
+        own = p.attrs or {}
+        lag = by_port.get((store.device_key(p.device), store.port_key(p.lag)), {}) if p.lag else {}
         out.append({
             "device": p.device, "name": p.name, "kind": p.kind, "status": p.status,
             "enabled": p.enabled, "speed": p.speed, "duplex": p.duplex, "mode": p.mode,
             "vlan": p.untagged_vlan, "native_vlan": p.native_vlan, "trunk_vlans": p.trunk_vlans,
-            "lag": p.lag, "description": p.description, "media": (p.attrs or {}).get("media"),
-            "vpc": (p.attrs or {}).get("vpc"),
-            "peer": ({"device": other.device.name, "port": other.port, "read": other.device.read,
+            "lag": p.lag, "description": p.description, "media": own.get("media"),
+            "vpc": own.get("vpc") or lag.get("vpc"),
+            "vpc_peer_link": own.get("vpc_peer_link") or lag.get("vpc_peer_link"),
+            "stp_blocked": own.get("stp_blocked") or lag.get("stp_blocked"),
+            "stp_root": own.get("stp_root") or lag.get("stp_root"),
+            "peer":({"device": other.device.name, "port": other.port, "read": other.device.read,
                       "kind": other.device.kind} if other is not None else None),
             "link_state": link.state if link is not None else None,
             "issues": [i["text"] for i in link.issues] if link is not None else [],
@@ -348,18 +360,50 @@ def plan(
 @router.get("/failure")
 def failure(
     tenant_id: int | None = None,
-    device: str | None = Query(None, max_length=300),
-    link: str | None = Query(None, max_length=1000),
+    device: Annotated[list[str] | None, Query(description="Geraet (mehrfach)")] = None,
+    link: Annotated[list[str] | None, Query(description="Kabel/Link-ID (mehrfach)")] = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """Ausfall simulieren: ohne das Geraet (Name bzw. Schluessel) oder das Kabel (Link-ID)."""
-    if bool(device) == bool(link):
+    """Ausfall simulieren: ohne die Geraete (Name bzw. Schluessel) und Kabel (Link-ID) - auch
+    mehrere gleichzeitig (0.65.0)."""
+    devices = [d for d in device or [] if d.strip()]
+    links = [lk for lk in link or [] if lk.strip()]
+    if not devices and not links:
         raise HTTPException(status_code=422, detail="device oder link angeben")
+    if len(devices) + len(links) > 50 or any(len(x) > 1000 for x in devices + links):
+        raise HTTPException(status_code=422, detail="zu viele bzw. zu lange Angaben")
     tid = _tenant(session, principal, tenant_id)
     topo = l2_topo.L2(session, tid)
-    if device and store.device_key(device) not in topo.devices:
+    if any(store.device_key(d) not in topo.devices for d in devices):
         raise HTTPException(status_code=404, detail="Gerät unbekannt")
-    if link and link not in topo.cab.links:
+    if any(lk not in topo.cab.links for lk in links):
         raise HTTPException(status_code=404, detail="Kabel unbekannt")
-    return topo.failure(device=device, link=link)
+    return topo.failure(devices=devices, links=links)
+
+
+_EXPORT = {"svg": ("image/svg+xml", "svg"), "drawio": ("application/xml", "drawio")}
+
+
+@router.get("/plan/export")
+def export_plan(
+    format: str = Query("svg", pattern="^(svg|drawio)$"),  # noqa: A002 - Name der Abfrage
+    tenant_id: int | None = None,
+    ends: bool = True,
+    vlan: int | None = Query(None, ge=1, le=4094),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> Response:
+    """Plan der Verkabelung als Datei (wie in der Ansicht, mit Endgeraeten bzw. VLAN)."""
+    tid = _tenant(session, principal, tenant_id)
+    plan = l2_topo.L2(session, tid).plan(ends=ends, vlan=vlan)
+    tenant = session.get(Tenant, tid)
+    title = f"Verkabelung {tenant.name}" if tenant else "Verkabelung"
+    if vlan:
+        title += f" – VLAN {vlan}"
+    when = datetime.now(UTC)
+    body = (l2_export.svg if format == "svg" else l2_export.drawio)(plan, title, when)
+    media, ext = _EXPORT[format]
+    name = f"verkabelung-{when:%Y-%m-%d}{f'-vlan{vlan}' if vlan else ''}.{ext}"
+    return Response(content=body, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip

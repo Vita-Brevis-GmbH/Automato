@@ -1,4 +1,5 @@
 // Kernabläufe aus den Dev-Befunden: Suche, NAT-Verlinkung, Findings, Dienste, Standorte.
+import { readFileSync } from "fs";
 import { expect, rows, test } from "./fixtures";
 
 const search = (page: import("@playwright/test").Page) => page.locator(".filterbar .search input");
@@ -1333,6 +1334,47 @@ test("L2-Sicht: Plan, Ausfall simulieren, VLAN-Weg, Befunde und L2 in der Weg-Su
   await page.click("button:has-text('Weg suchen')");
   await expect(page.locator("#trace-l2-dst")).toContainText("Ziel hängt an sw-acc-01 Gi1/0/9 (VLAN 30)");
   await expect(page.locator(".card[id^='trace-'] .l2-seg").first()).toContainText("L2: fw-08 dmz → sw-acc-01 (Te1/1/1 → Gi1/0/9)");
+  expect(problems).toEqual([]);
+});
+
+test("Plan: Spanning Tree, mehrere Ausfälle gleichzeitig, Export SVG/draw.io (0.65.0)", async ({ page, problems }) => {
+  await page.goto("/#verkabelung");
+  await page.click(".tabbar button:has-text('Plan')");
+  const svg = page.locator("#cabling-plan-svg");
+  // Kabel zum Leaf: Spanning Tree blockiert VLAN 30 - gestrichelt, mit VLAN 30 als Reserve
+  const toLeaf = svg.locator("g.plan-edge[data-edge*='sw-core-01'][data-edge*='leaf-101']");
+  await expect(toLeaf).toHaveAttribute("data-stp", "30");
+  await expect(toLeaf.locator("text")).toHaveText("STP 30");
+  await page.getByLabel("VLAN hervorheben").fill("30");
+  await expect(toLeaf).toHaveAttribute("data-vlan", "standby");
+  await page.getByLabel("VLAN hervorheben").fill("");
+  await expect(toLeaf).not.toHaveAttribute("data-vlan", "standby");
+  // mehrere Ausfälle: das Kabel zum Leaf trennt nur den Leaf (der ESXi-Host hängt auch am Kern) …
+  await toLeaf.click();
+  const fail = page.locator("#cabling-failure");
+  await expect(fail).toContainText("ist getrennt: leaf-101");
+  // … mit Shift-Klick auch das Kabel zum ESXi-Host: beide getrennt
+  const toEsx = svg.locator("g.plan-edge[data-edge*='sw-core-01'][data-edge*='esx01']");
+  await toEsx.click({ modifiers: ["Shift"] });
+  await expect(fail).toContainText("Fallen das Kabel");
+  await expect(fail).toContainText("ist getrennt: esx01-chzrh1.example.ch, leaf-101");
+  // nochmals Shift-Klick nimmt es wieder heraus
+  await toEsx.click({ modifiers: ["Shift"] });
+  await expect(fail).toContainText("Fällt das Kabel");
+  await expect(fail).toContainText("ist getrennt: leaf-101");
+  await page.click("button:has-text('Ausfall zurücksetzen')");
+  await expect(fail).toHaveCount(0);
+  // Export wie in der Ansicht
+  for (const [label, ext] of [["SVG", "svg"], ["draw.io", "drawio"]] as const) {
+    const [file] = await Promise.all([page.waitForEvent("download"), page.locator("#cabling-plan-export button", { hasText: label }).click()]);
+    expect(file.suggestedFilename()).toMatch(new RegExp(`^verkabelung-\\d{4}-\\d\\d-\\d\\d\\.${ext}$`));
+    const text = readFileSync((await file.path())!, "utf-8");
+    expect(text).toContain("sw-core-01");
+    expect(text).toContain("STP blockiert 30");
+  }
+  // Ports: Spanning Tree am Port
+  await page.click(".tabbar button:has-text('Ports')");
+  await expect(page.locator("#cabling-ports tbody tr[data-port='Eth1/48'] .port-l2.warn")).toHaveText("STP blockiert VLAN 30");
   expect(problems).toEqual([]);
 });
 

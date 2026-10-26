@@ -362,8 +362,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.62.0** | Switching/Verkabelung erste Fassung: Cisco-Switches (IOS, IOS-XE, NX-OS) strikt lesend über SSH (Exec je Befehl, feste `show`-Befehle, Host-Schlüssel festgehalten), Ports/VLANs/Port-Channel/vPC und Nachbarn aus CDP/LLDP; Ansicht Verkabelung (Verbindungen beidseitig/einseitig/Gegenstelle ohne CDP/LLDP, Geräte, Ports, VLANs) aus Switches und ACI-Leafs; Befunde Speed/Duplex/VLAN/Port-Channel (ADR 0025) |
 | **0.63.0** | Endpunkte aus MAC-Tabelle und ARP der Switches (gesammelt mit Frist): „Wo hängt …“ nach MAC/IP/Name, MACs je Port ohne Uplinks, Befund VLAN fehlt am ESXi-Uplink (ADR 0025 Nr. 8) |
 | **0.64.0** | L2-Sicht: Plan der Verkabelung nach Ebenen, Ausfall eines Geräts/Kabels simulieren, VLAN-Wege mit Inseln, Befunde zu Redundanz (Einzelkabel, ein Switch, Ausfallpunkt, Port-Channel unvollständig) und getrennten VLANs, L2-Abschnitte und Anschluss von Quelle/Ziel in der Weg-Suche (ADR 0025 Nr. 9) |
+| **0.65.0** | Verkabelung abgerundet: Spanning Tree lesen (blockierte VLANs im Plan als Reserve, L2-Weg meidet sie), vPC-Paar als logischer Switch (Rahmen im Plan, Befund vPC-Paar uneinheitlich), mehrere gleichzeitige Ausfälle (Shift-Klick), Export des Plans als SVG/draw.io (ADR 0025 Nr. 10) |
 
-### Nächste Arbeiten (Stand 0.64.0)
+### Nächste Arbeiten (Stand 0.65.0)
 
 **Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
 für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
@@ -421,9 +422,10 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
    Erste Fassung in 0.62.0 (ADR 0025): Switches über SSH mit fester Befehlsliste, Verkabelung aus
    CDP/LLDP aller Quellen, Befunde zwischen zwei gelesenen Switches. MAC-Tabelle/ARP (welcher
    Server an welchem Port, „Wo hängt …“, VLAN am ESXi-Uplink) in 0.63.0. L2-Sicht (Plan,
-   Ausfall simulieren, Redundanz, VLAN-Wege, L2 in der Weg-Suche) in 0.64.0. Weiter: vPC-Paar als
-   ein logischer Switch, Spanning Tree, mehrere gleichzeitige Ausfälle, Export des Plans,
-   Kabel/Ports nach NetBox (eigene Freigabe), SNMPv3 als Alternative zu SSH.
+   Ausfall simulieren, Redundanz, VLAN-Wege, L2 in der Weg-Suche) in 0.64.0. vPC-Paar als ein
+   logischer Switch, Spanning Tree, mehrere gleichzeitige Ausfälle und Export des Plans in
+   0.65.0. Weiter: Kabel/Ports nach NetBox (eigene Freigabe), SNMPv3 als Alternative zu SSH,
+   IPv6-Nachbarn, weitere Hersteller.
 
 **Reihenfolge bis 0.53.0 (Vorschlag, vom Anwender gutgeheissen):**
 
@@ -450,7 +452,8 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 | ~~0.62.0~~ | Switching/Verkabelung erste Fassung: Cisco-Switches strikt lesend, Verkabelung aus CDP/LLDP, Befunde – **umgesetzt in 0.62.0** (ADR 0025) |
 | ~~0.63.0~~ | Endpunkte aus MAC-Tabelle und ARP, „Wo hängt …“, VLAN am ESXi-Uplink – **umgesetzt in 0.63.0** (ADR 0025 Nr. 8) |
 | ~~0.64.0~~ | L2-Sicht: Plan, Ausfall simulieren, Redundanz- und VLAN-Befunde, L2 in der Weg-Suche – **umgesetzt in 0.64.0** (ADR 0025 Nr. 9) |
-| danach | Switching/Verkabelung abrunden (vPC-Paar, Spanning Tree, Export des Plans; siehe oben); Abnahme 0.43.1 ff. gegen die grössere Testumgebung (Pilot Zonen und Pläne) |
+| ~~0.65.0~~ | Switching/Verkabelung abrunden: vPC-Paar, Spanning Tree, mehrere Ausfälle, Export des Plans – **umgesetzt in 0.65.0** (ADR 0025 Nr. 10) |
+| danach | Abnahme 0.43.1 ff. gegen die grössere Testumgebung (Pilot Zonen und Pläne); Kabel/Ports nach NetBox nur mit eigener Freigabe, SNMPv3 (siehe oben) |
 
 Frühere Reihenfolge (Stand 0.42.0, zum Nachlesen):
 

@@ -3,7 +3,8 @@
 ## Status
 
 Entwurf (2026-10-25), umgesetzt in 0.62.0, 0.63.0 (Endpunkte aus MAC-Tabelle und ARP,
-Nr. 8) und 0.64.0 (L2-Sicht: Plan, Ausfall, Redundanz, VLAN-Wege, L2 in der Weg-Suche, Nr. 9).
+Nr. 8), 0.64.0 (L2-Sicht: Plan, Ausfall, Redundanz, VLAN-Wege, L2 in der Weg-Suche, Nr. 9) und
+0.65.0 (vPC-Paare, Spanning Tree, mehrere Ausfälle, Export des Plans, Nr. 10).
 Nächster Schritt der ROADMAP nach Zonen/Kunden und
 Applikationen (Entscheid des Anwenders 2026-10-25: „Switching/Verkabelung“). Ergänzt ADR 0010
 (Inventar, Schreiben nur nach NetBox), ADR 0008/0009 (Agent, Zugangsdaten zentral) und ADR 0019
@@ -131,6 +132,34 @@ Secrets, Open Source bevorzugt.
      zum nächsten Gerät (`hop.l2`); Anschluss von Quelle und Ziel aus MAC-Tabelle/ARP
      (`l2.src`/`l2.dst`) und der Weg vom letzten Hop bis zum Port des Ziels bzw. von der Quelle
      zum ersten Hop. Nur wo die Kabel bekannt sind; sonst bleibt die Weg-Suche wie bisher.
+10. **Verkabelung abgerundet** (0.65.0):
+    - **Spanning Tree**: ein weiterer Befehl der Positivliste, `show spanning-tree` (IOS und
+      NX-OS; auf NX-OS ohne passende Vorlage mit der IOS-Vorlage ausgewertet). Je Port bzw.
+      Port-Channel die VLANs, in denen er blockiert (`BLK` bzw. Rolle Alternate/Backup ohne
+      Weiterleitung, `attrs.stp_blocked`), und die Root-Ports (`attrs.stp_root`), als
+      VLAN-Bereiche. Keine neue Tabelle.
+    - **vPC** genauer aus `show vpc` (eigene Auswertung, die Vorlage kennt nur einen Teil):
+      Domäne, Rolle, Peer- und Keepalive-Status am Peer-Link (`attrs.vpc_peer_link` = Domäne,
+      `vpc_role`, `vpc_peer`, `vpc_keepalive`, `vpc_peer_link_status`), je vPC Status und
+      Konsistenz (`vpc_status`, `vpc_consistency`).
+    - **vPC-Paar als logischer Switch**: Paar = Switch mit Peer-Link und das weiterleitende
+      Gerät an dessen Mitgliedern (CDP/LLDP). Im Plan auf derselben Ebene nebeneinander mit
+      Rahmen „vPC-Domäne n“; hängt ein Gerät nur an einem Peer, nennt der Befund
+      `l2_single_switch` den ungenutzten Peer. Befund **`vpc_mismatch`** (Kategorie
+      Verkabelung): Peer nicht verbunden (Fehler, mit Keepalive), vPC nur auf einem Peer
+      (wenn beide gelesen), vPC down bzw. Konsistenz nicht erfolgreich (Warnung).
+    - **Spanning Tree im Plan und im L2-Weg**: Kanten mit blockierten VLANs gestrichelt, mit
+      VLAN „Reserve“ (`standby`); der Weg in der Weg-Suche meidet blockierte Kabel. Führt ohne
+      sie kein Weg zum Ziel (Läufe zu verschiedenen Zeiten), dann mit ihnen. Die Inseln eines
+      VLANs richten sich weiter nur nach der Konfiguration – ein blockiertes Kabel ist Reserve,
+      keine Trennung.
+    - **Mehrere gleichzeitige Ausfälle**: `GET /cabling/failure` mit `device` bzw. `link`
+      mehrfach (höchstens 50 Angaben); im Plan Shift-Klick auf weitere Geräte bzw. Kabel (bei
+      mehreren Kabeln zwischen zwei Geräten fallen mit Shift-Klick alle aus).
+    - **Export des Plans** (`GET /cabling/plan/export?format=svg|drawio`, `ends`, `vlan`): dieselbe
+      Lage wie in der Ansicht mit vPC-Rahmen, Kabelzahl, Port-Channels und STP; draw.io mit
+      `automato_device/kind/source` an den Geräten und `automato_ports/links/stp_blocked` an
+      den Kabeln, dort weiter bearbeitbar.
 
 ## Konsequenzen
 
@@ -148,8 +177,8 @@ Secrets, Open Source bevorzugt.
   - **SNMPv3** (nur lesend, `authPriv`) als Alternative, wo SSH nicht erlaubt ist.
   - ~~MAC-Adress-Tabelle und ARP~~ – umgesetzt in 0.63.0 (Nr. 8). Offen: IPv6-Nachbarn
     (`show ipv6 neighbors`), ARP der VRFs auf IOS (`show ip arp vrf …`), ARP der FortiGate.
-  - ~~L2-Sicht~~ – umgesetzt in 0.64.0 (Nr. 9). Offen: vPC-Paar als ein logischer Switch
-    (Redundanz über beide Peers bewerten), Spanning Tree (blockierte Ports lesen), mehrere
-    gleichzeitige Ausfälle, Export des Plans (draw.io/SVG wie der Zonenplan).
+  - ~~L2-Sicht~~ – umgesetzt in 0.64.0 (Nr. 9); ~~vPC-Paar, Spanning Tree, mehrere Ausfälle,
+    Export des Plans~~ – umgesetzt in 0.65.0 (Nr. 10). Offen: Root-Bridge und Topologie-
+    Wechsel je VLAN (`show spanning-tree detail`), StackWise/VSS als ein Gerät.
   - Weitere Hersteller (z. B. Aruba, Juniper) über dieselbe Struktur (Positivliste,
     Vorlagen).

@@ -3,7 +3,7 @@
 // (Speed, Duplex, VLANs, Port-Channel); Geräte, Ports der Switches und VLANs. Seit 0.63.0 Endpunkte aus
 // MAC-Tabelle und ARP: „Wo hängt …“ und die MACs je Port (ohne Uplinks). Seit 0.64.0 der Plan (L2-Sicht):
 // Geräte nach Ebenen, VLAN-Wege mit Inseln, Ausfall eines Geräts bzw. Kabels simulieren. Rein lesend.
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   CablingDevice,
   CablingEnd,
@@ -13,6 +13,7 @@ import {
   CablingSummary,
   CablingVlan,
   EndpointLocation,
+  exportL2Plan,
   fetchCablingDevices,
   fetchCablingEndpoints,
   fetchCablingLinks,
@@ -27,7 +28,7 @@ import {
   locateEndpoint,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
-import { Dash, Empty, ErrorBox, fmtTime, Loading, Note, PageHead } from "./ui";
+import { Dash, download, Empty, ErrorBox, fmtTime, Loading, Note, PageHead } from "./ui";
 
 const PAGE = 200;
 type Tab = "plan" | "links" | "devices" | "ports" | "endpoints" | "vlans";
@@ -378,7 +379,16 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
                       {p.enabled === false ? "abgeschaltet" : (p.status ?? "?")}
                     </span>
                   </td>
-                  <td className="faint">{portText(p) || <Dash />}</td>
+                  <td className="faint">
+                    {portText(p) || <Dash />}
+                    {p.vpc_peer_link && <div className="port-l2">vPC-Peer-Link (Domäne {p.vpc_peer_link})</div>}
+                    {p.stp_blocked && (
+                      <div className="port-l2 warn" title="Spanning Tree blockiert diese VLANs am Port (Reserve)">
+                        STP blockiert VLAN {p.stp_blocked}
+                      </div>
+                    )}
+                    {p.stp_root && <div className="port-l2">Root-Port VLAN {p.stp_root}</div>}
+                  </td>
                   <td>{p.description ?? <Dash />}</td>
                   <td>
                     {p.peer ? (
@@ -656,13 +666,16 @@ function VlansTab({ tenantId }: { tenantId: number }) {
 }
 
 // Plan (0.64.0): Geräte nach Ebenen ab dem Kern, Kabel je Gerätepaar; VLAN hervorheben (Inseln), Ausfall
-// eines Geräts (Klick) bzw. Kabels (Klick auf die Linie) simulieren - getrennte Geräte blass.
+// eines Geräts (Klick) bzw. Kabels (Klick auf die Linie) simulieren - getrennte Geräte blass. Seit 0.65.0
+// vPC-Paare nebeneinander mit Rahmen, von Spanning Tree blockierte Kabel gestrichelt, mit Shift-Klick
+// mehrere gleichzeitige Ausfälle, Export als SVG bzw. draw.io.
 const NODE_W = 160;
 const NODE_H = 44;
 const VLAN_EDGE: Record<string, [string, string]> = {
   yes: ["var(--good)", "lässt das VLAN durch"],
   no: ["var(--crit)", "sperrt das VLAN"],
   partial: ["var(--warn)", "nur ein Teil der Kabel lässt das VLAN durch"],
+  standby: ["#7b1fa2", "Spanning Tree blockiert das VLAN hier – Reserve"],
   unknown: ["var(--faint)", "Konfiguration unbekannt"],
 };
 
@@ -673,37 +686,110 @@ function edgeColor(e: L2PlanEdge): string {
   return "var(--faint)";
 }
 
+function edgeDash(e: L2PlanEdge): string | undefined {
+  if (e.vlan === "no") return "6 4";
+  if (e.vlan === "standby" || (!e.vlan && e.stp)) return "3 3";
+  if (e.vlan === "unknown") return "2 4";
+  return undefined;
+}
+
+// Ausgewählte Ausfälle: Geräte (Name) und Kabel je Gerätepaar (alle Link-IDs des Paars)
+type FailSel = { devices: string[]; edges: { label: string; ids: string[] }[] };
+const NO_FAIL: FailSel = { devices: [], edges: [] };
+
+function failText(s: FailSel): ReactNode {
+  const items = [
+    ...s.devices.map((d) => <b key={`d:${d}`}>{d}</b>),
+    ...s.edges.map((e) => (
+      <span key={`e:${e.label}`}>
+        das Kabel{e.ids.length > 1 ? ` (alle ${e.ids.length})` : ""} <b>{e.label}</b>
+      </span>
+    )),
+  ];
+  return (
+    <>
+      {items.length > 1 ? "Fallen " : "Fällt "}
+      {items.map((x, i) => (
+        <span key={i}>
+          {i > 0 && (i === items.length - 1 ? " und " : ", ")}
+          {x}
+        </span>
+      ))}{" "}
+      aus
+    </>
+  );
+}
+
 function PlanTab({ tenantId }: { tenantId: number }) {
   const [ends, setEnds] = useState(true);
   const [vlan, setVlan] = useState("");
   const vlanNo = useDebounced(vlan);
+  const vlanId = /^\d+$/.test(vlanNo) ? Number(vlanNo) : null;
   const [plan, setPlan] = useState<L2Plan | null>(null);
   const [fail, setFail] = useState<L2Failure | null>(null);
-  const [failed, setFailed] = useState<{ device?: string; edge?: string } | null>(null);
+  const [sel, setSel] = useState<FailSel>(NO_FAIL);
+  const [multi, setMulti] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<unknown>(null);
+  const seq = useRef(0);
   useEffect(() => {
     let live = true;
-    const v = /^\d+$/.test(vlanNo) ? Number(vlanNo) : null;
     setPlan(null);
-    fetchL2Plan(tenantId, { ends, vlan: v })
+    fetchL2Plan(tenantId, { ends, vlan: vlanId })
       .then((d) => live && setPlan(d))
       .catch((e) => live && setErr(e));
     return () => {
       live = false;
     };
-  }, [tenantId, ends, vlanNo]);
+  }, [tenantId, ends, vlanId]);
   const byKey = useMemo(() => new Map((plan?.nodes ?? []).map((n) => [n.key, n])), [plan]);
   const main = useMemo(() => new Set(fail?.main ?? []), [fail]);
-  const simulate = (f: { device?: string; link?: string; edge?: string }) => {
+  const run = (s: FailSel) => {
+    const n = ++seq.current;
     setErr(null);
-    setFailed({ device: f.device, edge: f.edge });
-    fetchL2Failure(tenantId, { device: f.device, link: f.link }).then(setFail).catch(setErr);
+    setMulti(null);
+    setSel(s);
+    if (!s.devices.length && !s.edges.length) {
+      setFail(null);
+      return;
+    }
+    fetchL2Failure(tenantId, { devices: s.devices, links: s.edges.flatMap((e) => e.ids) })
+      .then((d) => n === seq.current && setFail(d))
+      .catch((e) => n === seq.current && setErr(e));
   };
-  const reset = () => {
+  // Klick = nur dieser Ausfall; Shift-Klick = hinzufügen bzw. wieder entfernen
+  const clickDevice = (name: string, add: boolean) => {
+    if (!add) return run({ devices: [name], edges: [] });
+    const has = sel.devices.includes(name);
+    run({ ...sel, devices: has ? sel.devices.filter((d) => d !== name) : [...sel.devices, name] });
+  };
+  const clickEdge = (label: string, ids: string[], add: boolean) => {
+    if (add) {
+      const has = sel.edges.some((e) => e.label === label);
+      return run({ ...sel, edges: has ? sel.edges.filter((e) => e.label !== label) : [...sel.edges, { label, ids }] });
+    }
+    if (ids.length === 1) return run({ devices: [], edges: [{ label, ids }] });
+    seq.current++;
     setFail(null);
-    setFailed(null);
+    setSel(NO_FAIL);
+    setMulti(label);
   };
-  const dim = (name: string) => fail !== null && !main.has(name) && name !== failed?.device;
+  const reset = () => run(NO_FAIL);
+  const exportPlan = async (format: "svg" | "drawio") => {
+    setBusy(format);
+    setErr(null);
+    try {
+      const { blob, filename } = await exportL2Plan(tenantId, format, { ends, vlan: vlanId });
+      download(filename, blob);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const failedDevs = new Set(sel.devices);
+  const failedEdges = new Set(sel.edges.map((e) => e.label));
+  const dim = (name: string) => fail !== null && !main.has(name) && !failedDevs.has(name);
   return (
     <div className="card" id="cabling-plan">
       <div className="card-head">
@@ -718,17 +804,32 @@ function PlanTab({ tenantId }: { tenantId: number }) {
               Ausfall zurücksetzen
             </button>
           )}
+          <span className="plan-export" id="cabling-plan-export">
+            <span className="faint">Export:</span>
+            {(
+              [
+                ["drawio", "draw.io"],
+                ["svg", "SVG"],
+              ] as const
+            ).map(([f, label]) => (
+              <button key={f} className="btn btn-sm" disabled={busy !== null || plan === null} onClick={() => void exportPlan(f)}>
+                {busy === f ? "…" : label}
+              </button>
+            ))}
+          </span>
         </span>
       </div>
       <div className="card-body pad">
         <ErrorBox error={err} onClose={() => setErr(null)} />
         <p className="faint" style={{ marginTop: 0 }}>
           Kern oben (meistvernetzte Switches bzw. Spines), darunter je Abstand die weiteren Switches, Endgeräte unter ihrem
-          obersten Nachbarn. Klick auf ein Gerät bzw. ein Kabel simuliert dessen Ausfall.
+          obersten Nachbarn; vPC-Paare nebeneinander im Rahmen, von Spanning Tree blockierte Kabel gestrichelt. Klick auf ein
+          Gerät bzw. ein Kabel simuliert dessen Ausfall, <b>Shift-Klick</b> nimmt weitere hinzu (mehrere gleichzeitig, bei
+          mehreren Kabeln zwischen zwei Geräten alle).
         </p>
         {fail && (
           <div className="note" id="cabling-failure">
-            {failed?.device ? <>Fällt <b>{failed.device}</b> aus</> : <>Fällt das Kabel <b>{failed?.edge}</b> aus</>}
+            {failText(sel)}
             {fail.cut_off.length === 0 ? (
               <>: nichts getrennt – es gibt einen anderen Weg.</>
             ) : (
@@ -756,28 +857,51 @@ function PlanTab({ tenantId }: { tenantId: number }) {
         ) : (
           <div style={{ overflow: "auto", maxHeight: "70vh" }}>
             <svg width={Math.max(plan.width, 400)} height={plan.height} id="cabling-plan-svg" role="img" aria-label="Plan der Verkabelung">
+              {plan.pairs.map((pr) => {
+                const a = byKey.get(pr.a);
+                const b = byKey.get(pr.b);
+                if (!a || !b) return null;
+                const x0 = Math.min(a.x, b.x) - NODE_W / 2 - 8;
+                const y0 = Math.min(a.y, b.y) - NODE_H / 2 - 16;
+                return (
+                  <g key={`${pr.a}~${pr.b}`} className="plan-vpc" data-vpc={pr.domain}>
+                    <title>{`vPC-Paar ${a.name} + ${b.name} (Domäne ${pr.domain}) – zusammen ein logischer Switch`}</title>
+                    <rect
+                      x={x0}
+                      y={y0}
+                      width={Math.abs(a.x - b.x) + NODE_W + 16}
+                      height={Math.abs(a.y - b.y) + NODE_H + 24}
+                      rx={10}
+                      fill="none"
+                      stroke="var(--accent)"
+                      strokeDasharray="4 3"
+                    />
+                    <text x={x0 + 6} y={y0 + 11} fontSize={10} fill="var(--accent)">
+                      vPC-Domäne {pr.domain}
+                    </text>
+                  </g>
+                );
+              })}
               {plan.edges.map((e) => {
                 const a = byKey.get(e.a);
                 const b = byKey.get(e.b);
                 if (!a || !b) return null;
                 const label = `${a.name} ↔ ${b.name}`;
                 const off = dim(a.name) || dim(b.name);
-                const isFailed = failed?.edge === label;
-                const title = `${label}: ${e.links} Kabel${e.lags.length ? ` (${e.lags.join(", ")})` : ""}${e.vlan ? ` – ${VLAN_EDGE[e.vlan][1]}` : ""}${e.issues ? ` – ${e.issues} Abweichungen` : ""}`;
+                const isFailed = failedEdges.has(label);
+                const title =
+                  `${label}: ${e.links} Kabel${e.lags.length ? ` (${e.lags.join(", ")})` : ""}` +
+                  `${e.vlan ? ` – ${VLAN_EDGE[e.vlan][1]}` : ""}${e.stp ? ` – Spanning Tree blockiert VLAN ${e.stp}` : ""}` +
+                  `${e.issues ? ` – ${e.issues} Abweichungen` : ""}`;
                 return (
                   <g
                     key={`${e.a}~${e.b}`}
                     className="plan-edge clickable"
                     data-edge={label}
+                    data-stp={e.stp ?? undefined}
+                    data-vlan={e.vlan}
                     opacity={off ? 0.25 : 1}
-                    onClick={() => {
-                      if (e.links === 1) {
-                        simulate({ link: e.ids[0], edge: label });
-                      } else {
-                        setFail(null);
-                        setFailed({ edge: label });
-                      }
-                    }}
+                    onClick={(ev) => clickEdge(label, e.ids, ev.shiftKey)}
                   >
                     <title>{title}</title>
                     <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={12} />
@@ -788,11 +912,11 @@ function PlanTab({ tenantId }: { tenantId: number }) {
                       y2={b.y}
                       stroke={isFailed ? "var(--crit)" : edgeColor(e)}
                       strokeWidth={1 + Math.min(e.links, 4)}
-                      strokeDasharray={e.vlan === "no" || isFailed ? "6 4" : e.vlan === "unknown" ? "2 4" : undefined}
+                      strokeDasharray={isFailed ? "6 4" : edgeDash(e)}
                     />
-                    {e.links > 1 && (
+                    {(e.links > 1 || e.stp) && (
                       <text x={(a.x + b.x) / 2 + 6} y={(a.y + b.y) / 2 - 4} className="plan-edge-label" fontSize={11} fill="var(--muted)">
-                        {e.links}×
+                        {[e.links > 1 ? `${e.links}×` : "", e.stp ? `STP ${e.stp}` : ""].filter(Boolean).join(" · ")}
                       </text>
                     )}
                   </g>
@@ -800,7 +924,7 @@ function PlanTab({ tenantId }: { tenantId: number }) {
               })}
               {plan.nodes.map((n) => {
                 const off = dim(n.name);
-                const isFailed = failed?.device === n.name;
+                const isFailed = failedDevs.has(n.name);
                 return (
                   <g
                     key={n.key}
@@ -808,7 +932,7 @@ function PlanTab({ tenantId }: { tenantId: number }) {
                     data-node={n.name}
                     transform={`translate(${n.x - NODE_W / 2},${n.y - NODE_H / 2})`}
                     opacity={off ? 0.3 : 1}
-                    onClick={() => simulate({ device: n.name })}
+                    onClick={(ev) => clickDevice(n.name, ev.shiftKey)}
                   >
                     <title>{`${n.name} – ${KIND[n.kind] ?? n.kind}${n.source ? ` (${n.source})` : ""}`}</title>
                     <rect
@@ -832,9 +956,9 @@ function PlanTab({ tenantId }: { tenantId: number }) {
             </svg>
           </div>
         )}
-        {failed?.edge && !fail && (
+        {multi && !fail && (
           <p className="faint" id="cabling-failure-multi">
-            {failed.edge}: mehrere Kabel – fällt eines aus, bleiben die anderen.
+            {multi}: mehrere Kabel – fällt eines aus, bleiben die anderen (Shift-Klick: alle fallen aus).
           </p>
         )}
       </div>

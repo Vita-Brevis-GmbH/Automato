@@ -305,7 +305,9 @@ def run(app) -> None:
                  **{**trunk, "native_vlan": 99, "untagged_vlan": 99}),
             port("sw-core-01", "Eth1/3", mode="access", untagged_vlan=10, speed="10G",
                  duplex="full", description="esx01 vmnic2"),
-            port("sw-core-01", "Eth1/48", speed="10G", duplex="full", **trunk),
+            # Spanning Tree (0.65.0): VLAN 30 zum Leaf blockiert (Reserve)
+            port("sw-core-01", "Eth1/48", speed="10G", duplex="full", attrs={"stp_blocked": "30"},
+                 **trunk),
         ],
         "vlans": [{"vid": 10, "name": "Server"}, {"vid": 20, "name": "Clients"},
                   {"vid": 30, "name": "DMZ"}],

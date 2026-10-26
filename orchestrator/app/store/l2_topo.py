@@ -70,6 +70,22 @@ def _label(end: End) -> str:
     return end.port or "?"
 
 
+def _attrs(iface: InvInterface | None) -> dict:
+    return (iface.attrs or {}) if iface is not None else {}
+
+
+def _edge_vlan(states: list[str]) -> str:
+    """Zustand einer Kante (mehrere Kabel) fuer ein VLAN: yes, no, partial, standby (STP
+    blockiert, laesst das VLAN aber zu) bzw. unknown."""
+    if "yes" in states:
+        return "partial" if "no" in states else "yes"
+    if "standby" in states:
+        return "standby"
+    if "no" in states:
+        return "no"
+    return "unknown"
+
+
 @dataclass
 class Step:
     device: Device
@@ -123,6 +139,67 @@ class L2:
         dev = self.devices.get(key)
         return dev is not None and dev.switching
 
+    # Spanning Tree und vPC (0.65.0) --------------------------------------------------------
+
+    def _lag_iface(self, end: End) -> InvInterface | None:
+        """Port-Channel des Endes - STP und vPC stehen am Port-Channel, nicht am Mitglied."""
+        if end.iface is None or not end.iface.lag:
+            return None
+        return self.cab.ifaces.get((end.device.key, port_key(end.iface.lag)))
+
+    def stp_blocked(self, end: End) -> set[int]:
+        out: set[int] = set()
+        for i in (end.iface, self._lag_iface(end)):
+            text = _attrs(i).get("stp_blocked")
+            if text:
+                out |= vlan_set(text) or set()
+        return out
+
+    def link_blocked(self, link: Link, vlan: int) -> bool:
+        """Blockiert Spanning Tree das Kabel im VLAN (an einem Ende)?"""
+        return any(vlan in self.stp_blocked(e) for e in (link.a, link.b))
+
+    def link_state(self, link: Link, vlan: int) -> str:
+        ok = link_allows(link, vlan)
+        if ok is False:
+            return "no"
+        if self.link_blocked(link, vlan):
+            return "standby"
+        return "yes" if ok else "unknown"
+
+    def vpc_pairs(self) -> list[dict]:
+        """vPC-Paare: der Port-Channel mit `vpc_peer_link` und das weiterleitende Geraet an
+        seinen Mitgliedern (CDP/LLDP). Je Seite Domaene, Rolle, Peer- und Keepalive-Status."""
+        pairs: dict[tuple[str, str], dict] = {}
+        for i in self.cab.ports:
+            a = _attrs(i)
+            if not a.get("vpc_peer_link"):
+                continue
+            dk, po = device_key(i.device), port_key(i.name)
+            peers = set()
+            for links in self.adj.get(dk, {}).values():
+                for lk in links:
+                    mine = lk.a if lk.a.device.key == dk else lk.b
+                    other = lk.b if mine is lk.a else lk.a
+                    lag = mine.iface.lag if mine.iface is not None else None
+                    if lag and port_key(lag) == po and other.device.switching:
+                        peers.add(other.device.key)
+            if len(peers) != 1:
+                continue
+            key = tuple(sorted((dk, peers.pop())))
+            entry = pairs.setdefault(key, {"devices": list(key), "domain": a["vpc_peer_link"],
+                                           "sides": {}})  # fmt: skip
+            entry["sides"][dk] = {"peer_link": i.name, "role": a.get("vpc_role"),
+                                  "peer": a.get("vpc_peer"), "keepalive": a.get("vpc_keepalive"),
+                                  "peer_link_status": a.get("vpc_peer_link_status")}  # fmt: skip
+        return list(pairs.values())
+
+    def vpcs_of(self, key: str) -> dict[str, InvInterface]:
+        """vPCs eines Switches: Nummer -> Port-Channel (ohne Peer-Link)."""
+        return {str(_attrs(i)["vpc"]): i for i in self.cab.ports
+                if device_key(i.device) == key and _attrs(i).get("vpc")
+                and not _attrs(i).get("vpc_peer_link")}  # fmt: skip
+
     def nodes(self, ends: bool = True) -> list[str]:
         keys = {k for k in self.adj} | {k for k, d in self.devices.items() if d.read
                                         and d.kind in SWITCHING_KINDS}  # fmt: skip
@@ -130,17 +207,18 @@ class L2:
             keys = {k for k in keys if self.switching(k)}
         return sorted(keys)
 
-    def components(self, keys: set[str], skip_dev: str | None = None,
-                   skip_link: str | None = None) -> list[set[str]]:  # fmt: skip
-        """Zusammenhaengende Teile ueber die weiterleitenden Geraete; ein Endgeraet gehoert zum
-        groessten Teil, an dem es haengt - durch Endgeraete fuehrt kein Weg."""
+    def components(self, keys: set[str], skip_devs: set[str] | frozenset = frozenset(),
+                   skip_links: set[str] | frozenset = frozenset()) -> list[set[str]]:  # fmt: skip
+        """Zusammenhaengende Teile ueber die weiterleitenden Geraete (ohne die ausgefallenen
+        Geraete bzw. Kabel); ein Endgeraet gehoert zum groessten Teil, an dem es haengt - durch
+        Endgeraete fuehrt kein Weg."""
 
         def usable(a: str, b: str) -> bool:
-            return any(lk.id != skip_link for lk in self.adj[a][b])
+            return any(lk.id not in skip_links for lk in self.adj[a][b])
 
         comp_of: dict[str, int] = {}
         parts: list[set[str]] = []
-        for start in sorted(k for k in keys if self.switching(k) and k != skip_dev):
+        for start in sorted(k for k in keys if self.switching(k) and k not in skip_devs):
             if start in comp_of:
                 continue
             idx, part, queue = len(parts), {start}, deque([start])
@@ -148,7 +226,7 @@ class L2:
             while queue:
                 cur = queue.popleft()
                 for nb in self.adj.get(cur, {}):
-                    if nb in comp_of or nb == skip_dev or nb not in keys:
+                    if nb in comp_of or nb in skip_devs or nb not in keys:
                         continue
                     if not self.switching(nb) or not usable(cur, nb):
                         continue
@@ -157,7 +235,7 @@ class L2:
                     queue.append(nb)
             parts.append(part)
         for k in sorted(keys):
-            if k == skip_dev or self.switching(k):
+            if k in skip_devs or self.switching(k):
                 continue
             cands = {comp_of[nb] for nb in self.adj.get(k, {}) if nb in comp_of and usable(k, nb)}
             if cands:
@@ -187,6 +265,10 @@ class L2:
                     if nb in part and nb not in level:
                         level[nb] = level[cur] + 1
                         queue.append(nb)
+        for pr in self.vpc_pairs():  # vPC-Peers auf dieselbe Ebene
+            a, b = pr["devices"]
+            if a in level and b in level:
+                level[a] = level[b] = min(level[a], level[b])
         for k in keys:
             if k in level:
                 continue
@@ -202,6 +284,11 @@ class L2:
             rows[level[k]].append(k)
         pos: dict[str, tuple[float, float]] = {}
         width = max((len(r) for r in rows.values()), default=1)
+        pairs = self.vpc_pairs()
+        partner: dict[str, str] = {}
+        for pr in pairs:
+            a, b = pr["devices"]
+            partner[a], partner[b] = b, a
         for lv in sorted(rows):
             row = rows[lv]
 
@@ -212,6 +299,14 @@ class L2:
                 return (sum(ups) / len(ups) if ups else 1e9, kind, (dev.name if dev else k).lower())
 
             row.sort(key=bary)
+            ordered: list[str] = []
+            for k in row:  # vPC-Peers nebeneinander
+                if k in ordered:
+                    continue
+                ordered.append(k)
+                if partner.get(k) in row and partner[k] not in ordered:
+                    ordered.append(partner[k])
+            row[:] = ordered
             offset = (width - len(row)) * X_STEP / 2
             for i, k in enumerate(row):
                 pos[k] = (offset + i * X_STEP + X_STEP / 2, lv * Y_STEP + 40)
@@ -240,14 +335,16 @@ class L2:
                         "ports": [[_label(lk.a) if lk.a.device.key == a else _label(lk.b),
                                    _label(lk.b) if lk.b.device.key == b else _label(lk.a)]
                                   for lk in links]}  # fmt: skip
+                blocked = set().union(*(self.stp_blocked(e) for lk in links
+                                        for e in (lk.a, lk.b)))  # fmt: skip
+                edge["stp"] = cab_store._ranges(blocked) if blocked else None
                 if vlan:
-                    seen = [link_allows(lk, vlan) for lk in links]
-                    edge["vlan"] = ("yes" if True in seen and False not in seen else
-                                    "no" if False in seen and True not in seen else
-                                    "partial" if False in seen else "unknown")  # fmt: skip
+                    edge["vlan"] = _edge_vlan([self.link_state(lk, vlan) for lk in links])
                 edges.append(edge)
         height = (max(rows, default=0) + 1) * Y_STEP + 40
-        out = {"nodes": nodes, "edges": edges, "width": width * X_STEP, "height": height}
+        out = {"nodes": nodes, "edges": edges, "width": width * X_STEP, "height": height,
+               "pairs": [{"a": pr["devices"][0], "b": pr["devices"][1], "domain": pr["domain"]}
+                         for pr in pairs if set(pr["devices"]) <= shown]}  # fmt: skip
         if vlan:
             islands = self.vlan_islands(vlan, present)
             names = [[self._name(k) for k in sorted(p, key=self._name)] for p in islands]
@@ -307,28 +404,33 @@ class L2:
 
     # Ausfall ---------------------------------------------------------------------------------
 
-    def failure(self, device: str | None = None, link: str | None = None) -> dict:
-        """Was ist ohne das Geraet bzw. das Kabel getrennt? Bezug ist der groesste verbleibende
-        Teil (meiste Switches); getrennt ist, was vorher mit ihm verbunden war."""
+    def failure(self, devices: list[str] | None = None, links: list[str] | None = None) -> dict:
+        """Was ist ohne die Geraete bzw. Kabel getrennt (auch mehrere gleichzeitig)? Bezug ist
+        der groesste verbleibende Teil (meiste Switches); getrennt ist, was vorher mit ihm
+        verbunden war."""
         keys = set(self.nodes())
-        dev = device_key(device) if device else None
+        devs = {device_key(d) for d in devices or [] if d}
+        cut_links = set(links or [])
         before = self.components(keys)
-        after = self.components(keys, skip_dev=dev, skip_link=link)
+        after = self.components(keys, skip_devs=devs, skip_links=cut_links)
+        names = sorted(self._name(k) for k in devs)
+        base = {"devices": names, "device": names[0] if len(names) == 1 else None,
+                "links": sorted(cut_links), "link": next(iter(cut_links)) if len(cut_links) == 1
+                else None}  # fmt: skip
         if not after:
-            return {"device": dev, "link": link, "cut_off": [], "main": [], "parts": []}
+            return {**base, "cut_off": [], "main": [], "parts": [], "cut_off_keys": []}
 
         def size(p: set[str]) -> tuple:
             return (sum(1 for k in p if self.switching(k)), len(p), sorted(p, reverse=True))
 
         main = max(after, key=size)
-        home = next((p for p in before if main & p), set())
+        homes = [p for p in before if p & main]
+        home = homes[0] if homes else set()
         cut = [p for p in after if p is not main and p & home]
         return {
-            "device": self._name(dev) if dev else None,
-            "link": link,
+            **base,
             "main": sorted(self._name(k) for k in main),
-            # alle Teile des Netzes, in dem das Geraet bzw. Kabel war (ohne Einzelgeraete fremder
-            # Teile), groesste zuerst
+            # alle Teile des Netzes, in dem die Geraete bzw. Kabel waren, groesste zuerst
             "parts": [sorted(self._name(k) for k in p)
                       for p in sorted((p for p in after if p & home), key=size, reverse=True)],
             "cut_off": [sorted(self._name(k) for k in p) for p in sorted(cut, key=size,
@@ -345,6 +447,11 @@ class L2:
                    if d.read and d.kind == "switch" and d.source_system_id in sources}  # fmt: skip
         if not sw_read:
             return out
+        pairs = self.vpc_pairs()
+        partner: dict[str, str] = {}
+        for pr in pairs:
+            x, y = pr["devices"]
+            partner[x], partner[y] = y, x
         for key in sorted(self.adj):
             dev = self.devices.get(key)
             if dev is None or not (key in sw_read or dev.kind == "esxi"):
@@ -364,15 +471,58 @@ class L2:
                                        neighbors=[other.device.name]))  # fmt: skip
             elif len(ups) == 1:
                 nb = next(iter(ups))
+                peer = partner.get(nb)
+                hint = f" – {self._name(peer)} (vPC-Peer) nicht genutzt" if peer else ""
                 out.append(self._issue("l2_single_switch",
                                        "warning" if dev.kind == "esxi" else "info",
                                        f"{dev.name}|{nb}", dev,
                                        f"alle {count} Kabel von {dev.name} enden an "
-                                       f"{self._name(nb)}",
-                                       neighbors=[self._name(nb)]))  # fmt: skip
+                                       f"{self._name(nb)}{hint}",
+                                       neighbors=[self._name(nb)], vpc_peer=self._name(peer)
+                                       if peer else None))  # fmt: skip
         out += self._single_points(sw_read)
         out += self._lags()
         out += self._vlan_splits()
+        out += self._vpc(pairs)
+        return out
+
+    def _vpc(self, pairs: list[dict]) -> list[dict]:
+        """vPC-Paare: Peer nicht verbunden (Fehler), vPC nur auf einem Peer, vPC down bzw.
+        Konsistenz nicht erfolgreich (Warnung)."""
+        out = []
+        for pr in pairs:
+            a, b = pr["devices"]
+            tag = f"vpc|{a}~{b}"
+            domain = pr["domain"]
+            for side, info in sorted(pr["sides"].items()):
+                dev = self.devices.get(side)
+                peer = (info.get("peer") or "").lower()
+                if peer and "formed ok" not in peer:
+                    out.append(self._issue("vpc_mismatch", "error", f"{tag}|peer|{side}", dev,
+                                           f"vPC-Domäne {domain}: {self._name(side)} meldet "
+                                           f"„{info['peer']}“ (Keepalive: "
+                                           f"{info.get('keepalive') or '?'})", domain=domain,
+                                           pair=[self._name(a), self._name(b)]))  # fmt: skip
+            ids = {k: self.vpcs_of(k) for k in (a, b)}
+            both_read = all(self.devices.get(k) and self.devices[k].read
+                            and k in pr["sides"] for k in (a, b))  # fmt: skip
+            for k in (a, b):
+                other = b if k == a else a
+                for vid, po in sorted(ids[k].items()):
+                    dev = self.devices.get(k)
+                    attrs = _attrs(po)
+                    if both_read and vid not in ids[other]:
+                        out.append(self._issue("vpc_mismatch", "warning", f"{tag}|{vid}|{k}",
+                                               dev, f"vPC {vid} nur auf {self._name(k)} "
+                                               f"({po.name}), nicht auf {self._name(other)}",
+                                               domain=domain, vpc=vid))  # fmt: skip
+                    status = (attrs.get("vpc_status") or "").lower()
+                    consistency = (attrs.get("vpc_consistency") or "").lower()
+                    if status.startswith("down") or consistency not in ("", "success"):
+                        text = (f"vPC {vid} auf {self._name(k)} ({po.name}): {status or '?'}, "
+                                f"Konsistenz {consistency or '?'}")  # fmt: skip
+                        out.append(self._issue("vpc_mismatch", "warning", f"{tag}|{vid}|{k}|st",
+                                               dev, text, domain=domain, vpc=vid))  # fmt: skip
         return out
 
     def _issue(self, kind: str, severity: str, subject: str, dev: Device | None, text: str,
@@ -391,7 +541,7 @@ class L2:
         before = len([p for p in self.components(keys) if any(self.switching(k) for k in p)])
         for key in sorted(switching & sw_read):
             parts = [sorted(self._name(k) for k in p if self.switching(k))
-                     for p in self.components(keys, skip_dev=key)]  # fmt: skip
+                     for p in self.components(keys, skip_devs={key})]  # fmt: skip
             parts = sorted((p for p in parts if p), key=lambda p: (-len(p), p))
             if len(parts) <= before:
                 continue
@@ -472,14 +622,18 @@ class L2:
         members = {pk for pk, i in ports.items() if i.lag and port_key(i.lag) == port_key(row.name)}
         return (members or {port_key(row.name)}), vlan
 
-    def route(self, starts: list[tuple[End, End]], goal, vlan: int | None) -> Segment | None:
+    def route(self, starts: list[tuple[End, End]], goal, vlan: int | None,
+              stp: bool = True) -> Segment | None:  # fmt: skip
         """Kuerzester Weg ab den Kabeln `starts` (eigenes Ende, Gegenstelle) bis zu einem
         Geraet mit `goal(key)`; nur ueber weiterleitende Geraete und Kanten, die das VLAN nicht
-        sicher sperren."""
+        sicher sperren und (mit `stp`) nicht von Spanning Tree blockiert sind. Fuehrt ohne die
+        blockierten Kabel kein Weg zum Ziel (Stand der Laeufe verschieden), dann mit ihnen."""
         best: dict[str, tuple] = {}
         queue: deque = deque()
         for mine, other in starts:
-            if vlan is not None and link_allows(self._link(mine, other), vlan) is False:
+            first = self._link(mine, other)
+            if vlan is not None and (link_allows(first, vlan) is False
+                                     or (stp and self.link_blocked(first, vlan))):  # fmt: skip
                 continue
             key = other.device.key
             if key not in best:
@@ -496,7 +650,13 @@ class L2:
             for nb, links in self.adj.get(cur, {}).items():
                 if nb in best:
                     continue
-                usable = [lk for lk in links if vlan is None or link_allows(lk, vlan) is not False]
+                usable = [
+                    lk
+                    for lk in links
+                    if vlan is None
+                    or (link_allows(lk, vlan) is not False
+                        and not (stp and self.link_blocked(lk, vlan)))
+                ]  # fmt: skip
                 if not usable:
                     continue
                 lk = usable[0]
@@ -505,7 +665,7 @@ class L2:
                 best[nb] = (cur, mine, other)
                 queue.append((nb, depth + 1))
         if found is None:
-            return None
+            return self.route(starts, goal, vlan, stp=False) if vlan is not None and stp else None
         chain = []
         cur = found
         while cur is not None:

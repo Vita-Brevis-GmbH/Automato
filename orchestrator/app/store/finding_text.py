@@ -246,6 +246,9 @@ _L2_HINT = {
     "Ausfall simulieren.",
     "lag_degraded": "Mitglied prüfen (Kabel, SFP, Gegenseite, err-disabled) – der Port-Channel "
     "läuft ohne Reserve und mit weniger Bandbreite.",
+    "vpc_mismatch": "vPC auf beiden Peers gleich konfigurieren (gleiche vPC-Nummer am "
+    "Port-Channel zum selben Gerät), Konsistenz prüfen (`show vpc consistency-parameters`) bzw. "
+    "Peer-Link und Keepalive wiederherstellen – sonst läuft das Gerät nur über einen Peer.",
     "vlan_split": "VLAN auf den Trunks dazwischen erlauben (bzw. bewusst getrennte Netze mit "
     "eigener VLAN-Nummer führen) – sonst erreichen die Geräte der Teile einander und das "
     "Gateway nicht.",
