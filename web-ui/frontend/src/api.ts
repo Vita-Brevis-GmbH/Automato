@@ -594,6 +594,18 @@ export interface DocTable {
   // _rules (Applikations-Doku: Regeln der Zeile, bei einem IPv4/IPv6-Paar beide), _systems
   // (unspezifische Regel, 0.37.0: Systeme der Applikation, die sie nutzen können)
   rows: Record<string, string | number | number[] | string[] | null>[];
+  // 0.69.0 (Applikations-Doku): ausgeblendete Zeilen mit _hides (Begründung, wer, wann)
+  hidden?: (Record<string, string | number | number[] | string[] | null> & { _hides?: DocHide[] })[];
+}
+export interface DocHide {
+  id: number;
+  rule_ref: string;
+  category: number | null; // leer = alle Kategorien
+  reason: string;
+  label: string;
+  by: string;
+  at: string | null;
+  active?: boolean; // steht in einer Kategorie
 }
 
 // VM hinter dem System (vCenter): beim Server die VM der IP, bei der EPG die VMs ihrer Portgruppen
@@ -786,6 +798,7 @@ export interface ApplicationDoc {
     impossible?: number; // Regeln nur mit routingtechnisch unmöglichen Treffern
     assigned?: number; // direkt zugeordnete Regeln (0.60.0)
     excluded?: number; // ausgeschlossene Regeln (0.60.0)
+    hidden?: number; // in den Kategorien ausgeblendete Zeilen (0.69.0)
   };
   systems: AppDocSystem2[];
   epgs: AppDocEpg[];
@@ -796,6 +809,7 @@ export interface ApplicationDoc {
   // 0.60.0: direkt zugeordnete (rule) bzw. ausgeschlossene (norule) Regeln, Abhängigkeiten
   rule_members?: { member_id: number; kind: "rule" | "norule"; label: string; rule_id: number }[];
   dependencies?: { uses: AppDependency[]; used_by: AppDependency[] };
+  hides?: DocHide[]; // 0.69.0
 }
 export interface AppDependency {
   application_id: number;
@@ -1544,6 +1558,10 @@ export const addAppMembers = (id: number, members: { kind: MemberKind; ref: stri
 export const removeAppMember = (id: number, memberId: number) =>
   sendJSON<ApplicationDetail>(`/api/applications/${id}/members/${memberId}`, "DELETE");
 // Regel direkt zuordnen bzw. ausschliessen (0.60.0, operator)
+// Regel(n) einer Zeile in einer Kategorie (bzw. allen) ausblenden – mit Begründung (0.69.0)
+export const hideAppRules = (id: number, ruleIds: number[], category: number | null, reason: string) =>
+  sendJSON<DocHide[]>(`/api/applications/${id}/hidden`, "POST", { rule_ids: ruleIds, category, reason });
+export const showAppRule = (id: number, hideId: number) => sendJSON<void>(`/api/applications/${id}/hidden/${hideId}`, "DELETE");
 export const assignAppRule = (id: number, ruleId: number, exclude = false) =>
   sendJSON<ApplicationDetail>(`/api/applications/${id}/rules`, "POST", { rule_id: ruleId, exclude });
 export const fetchAppCandidates = (

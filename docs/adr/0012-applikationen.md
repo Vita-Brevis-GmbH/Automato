@@ -60,6 +60,25 @@ Die Doku je System – und damit je Applikation – erfasst alle Regeln, gleichw
   Verbindung). Je Abhängigkeit die Regeln mit Bezug und Diensten; Kunden-Benutzer sehen nur
   Applikationen ihres Ausschnitts. Im Export (Markdown) als Abschnitt „Abhängigkeiten“.
 
+**Ergänzung 0.69.0 (Anwender: irrelevante Firewall-Regeln in den Kategorien ausblenden, mit
+Begründung und Audit):**
+- In der „Doku nach Kategorien“ (1–10, Grundlage für Export und Druck) lässt sich eine Zeile
+  ausblenden, wenn ihre Regel für die Applikation nicht relevant ist (z. B. Grundregel des
+  Rechenzentrums über `any`). **Begründung ist Pflicht** (5–1000 Zeichen); gilt nur in dieser
+  Kategorie oder in allen. Tabelle `application_rule_hide` (Migration `0056`): Applikation,
+  Regel über den stabilen Verweis wie bei `rule`/`norule` (`<Quellsystem-ID>|<VDOM>|<externe
+  ID>`), Kategorie (leer = alle), Begründung, Bezeichnung der Regel, wer und wann. Bei einem
+  IPv4/IPv6-Paar je Regel ein Eintrag; die Zeile fällt weg, sobald eine ihrer Regeln
+  ausgeblendet ist.
+- Anders als der Ausschluss (`norule`) bleibt die Regel in der Doku (Regel-Liste, Treffer,
+  Verbindungen Ende zu Ende, Kennzahlen); nur die Zeile der Kategorie fällt weg und steht
+  unter „N ausgeblendet“ mit Begründung, wer, wann – im Export (Markdown) als Abschnitt
+  „Ausgeblendete Regeln“. Wieder einblenden löscht den Eintrag.
+- Nur Operator (`POST /applications/{id}/hidden` mit `rule_ids`, `category`, `reason`;
+  `DELETE /applications/{id}/hidden/{hide_id}`), Audit `application.rule_hidden` bzw.
+  `application.rule_shown` mit Regel-Verweis, Kategorie und Begründung. Kunden-Benutzer sehen
+  die ausgeblendeten Zeilen ihrer Regeln, ändern aber nichts (Freigabeliste).
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:

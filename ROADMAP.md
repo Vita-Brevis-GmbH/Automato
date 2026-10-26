@@ -367,6 +367,7 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.66.0** | Zonen: Kommunikation (erlaubende Regeln je Zonenpaar) im Zonenplan einblendbar – Nachbar-Tenants eines Tenants, Partner im Plan eines Kunden einzeln; Vorschläge beim Erfassen einer Zone (FortiGate-Zonen, Interfaces, IPAM, ACI, Anbindungen nach dem Namen) (ADR 0024 Nr. 15) |
 | **0.67.0** | Netzwerkplan je Applikation: Systeme → Firewalls/ACI auf den Wegen → Gegenstellen, je Linie Dienste je Richtung und Interfaces an den Enden, Urteil als Farbe, Hervorheben per Suche/Klick, Export draw.io/SVG (ADR 0021 Ergänzung 0.67.0) |
 | **0.68.0** | Weitere Switches/Router: Catalyst 1200/1300 (Business-CLI über begrenzte Sitzung), Juniper MX/EX/QFX (Junos, JSON, Interface-Netze), Catalyst 9200L/3650/4500 und Nexus 9000 mit Tests; Router in der Verkabelung (ADR 0025 Nr. 11) |
+| **0.69.0** | Applikations-Doku: Regeln je Kategorie ausblenden mit Pflicht-Begründung, Liste „ausgeblendet“ mit wer/wann, Export-Abschnitt, Audit (ADR 0012 Ergänzung 0.69.0) |
 
 ### Nächste Arbeiten (Stand 0.65.0)
 
@@ -461,6 +462,7 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 | ~~0.65.0~~ | Switching/Verkabelung abrunden: vPC-Paar, Spanning Tree, mehrere Ausfälle, Export des Plans – **umgesetzt in 0.65.0** (ADR 0025 Nr. 10) |
 | ~~0.67.0~~ | Netzwerkplan je Applikation mit Diensten und Interfaces an den Verbindungen – **umgesetzt in 0.67.0** (ADR 0021; Wunsch des Anwenders 2026-10-26) |
 | ~~0.68.0~~ | Weitere Produkte: Catalyst 1300/9200L/3650/4500, Nexus 9000, Juniper MX – **umgesetzt in 0.68.0** (ADR 0025 Nr. 11; offen: Routing-Tabelle des MX für die Wege) |
+| ~~0.69.0~~ | Regeln je Kategorie der Applikations-Doku ausblenden mit Begründung und Audit – **umgesetzt in 0.69.0** (ADR 0012) |
 | danach | Abnahme 0.43.1 ff. gegen die grössere Testumgebung (Pilot Zonen und Pläne); Kabel/Ports nach NetBox nur mit eigener Freigabe, SNMPv3 (siehe oben) |
 
 Frühere Reihenfolge (Stand 0.42.0, zum Nachlesen):

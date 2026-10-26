@@ -601,3 +601,8 @@ tbody tr.group-row td {
 .app-plan-focus ul { margin: 6px 0 0; padding-left: 18px; }
 .app-plan-focus li { margin: 2px 0; }
 .ss-products { margin: 4px 0 0; padding-left: 18px; }
+/* Ausgeblendete Regeln je Kategorie (0.69.0) */
+.doc-hidden { margin: 8px 12px 10px; font-size: 13px; }
+.doc-hidden > summary { cursor: pointer; color: var(--muted); }
+.doc-hidden table { margin-top: 6px; }
+.doc-hide-btn { font-size: 12px; color: var(--muted); }

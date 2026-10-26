@@ -709,6 +709,16 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       „rückgängig“ auf.
     - Die Zuordnung hält über neue Läufe (Quellsystem, VDOM und Policy-ID bzw. Kennung des
       Contracts); fehlt die Regel im Lauf, steht das Mitglied als „nicht mehr gelesen“ da.
+  - **Regeln je Kategorie ausblenden (0.69.0, ADR 0012):** In „Doku nach Kategorien“ hat jede
+    Zeile (Operator) „ausblenden“. Der Dialog verlangt eine **Begründung** und fragt, ob die
+    Regel nur in dieser Kategorie oder in allen ausgeblendet wird. Die Zeile fällt aus der
+    Kategorie (Ansicht, Export, Druck); im Kopf der Kategorie „N ausgeblendet“, darunter
+    aufklappbar die Liste mit Regel, System, Begründung, wer und wann sowie „einblenden“.
+    - Die Regel bleibt sonst in der Doku (Regel-Liste, Verbindungen, Kennzahlen) – anders als
+      „Aus der Applikation ausschliessen“. Das Ausblenden hält über neue Läufe.
+    - Export (Markdown): Abschnitt „Ausgeblendete Regeln“ mit Kategorie und Begründung.
+    - Audit: `application.rule_hidden` bzw. `application.rule_shown` mit Regel, Kategorie und
+      Begründung (System → Audit).
   - **Abhängigkeiten (0.60.0):** Karte „Abhängigkeiten“ mit „nutzt“ (die Applikation ist
     Quelle bzw. Consumer) und „wird genutzt von“ (Ziel bzw. Provider). Abgeleitet aus den
     erlaubenden Regeln mit spezifischem Treffer, deren Gegenseite EPGs, Server bzw. ein Netz
@@ -1081,7 +1091,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /reconcile/summary`, `GET /reconcile/ipam`, `POST /reconcile` | Abgleich: Befunde je Typ, DDI ↔ NetBox, neu berechnen (operator) |
 | `GET /findings` (`?status=`,`?type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /findings/summary`, `PATCH /findings/{id}` | Datenqualität seitenweise (je Befund `message` = was nicht stimmt, `hint` = was tun), Zähler je Status/Typ, Triage |
 | `GET /nat` (`?nat_type=`,`?q=`,`?issues_only=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /nat/{id}`, `GET /published-services[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku: NAT mit DNS-Namen, Server, Regelzahl und Prüfung (`issues`) / Detail mit IPAM-Sicht, Regeln, VMs und `object_id`, publizierte Dienste (VIPs), Doku je System |
-| `GET/POST /applications`, `GET/PATCH/DELETE /applications/{id}`, `POST …/{id}/members`, `DELETE …/{id}/members/{mid}`, `POST …/{id}/rules`, `GET …/{id}/doc`, `GET …/{id}/connections` (seit 0.67.0 mit `plan`), `GET …/{id}/connections/plan/export?format=svg\|drawio[&key=…]` (0.67.0) | Applikationen (ADR 0012; Schreiben = operator): Stammdaten (inkl. `external_name`, `internal_name`, `purpose` dev/test/prod), Mitglieder AP/EPG/Server und Regeln (`rule`/`norule`, seit 0.60.0 über `POST …/rules` mit `rule_id`, `exclude`), Doku mit `summary`, `systems` (VMs), `epgs`, `hits` (Regel × System: Richtung, Bezug, `scope` inkl. `assigned`), `rules`, `rule_members`, `dependencies` (`uses`/`used_by`), `findings`, `tables` |
+| `GET/POST /applications`, `GET/PATCH/DELETE /applications/{id}`, `POST …/{id}/members`, `DELETE …/{id}/members/{mid}`, `POST …/{id}/rules`, `GET …/{id}/doc`, `GET …/{id}/connections` (seit 0.67.0 mit `plan`), `GET …/{id}/connections/plan/export?format=svg\|drawio[&key=…]` (0.67.0), `POST …/{id}/hidden` (`rule_ids`, `category`, `reason`; 0.69.0), `DELETE …/{id}/hidden/{hide_id}` | Applikationen (ADR 0012; Schreiben = operator): Stammdaten (inkl. `external_name`, `internal_name`, `purpose` dev/test/prod), Mitglieder AP/EPG/Server und Regeln (`rule`/`norule`, seit 0.60.0 über `POST …/rules` mit `rule_id`, `exclude`), Doku mit `summary`, `systems` (VMs), `epgs`, `hits` (Regel × System: Richtung, Bezug, `scope` inkl. `assigned`), `rules`, `rule_members`, `dependencies` (`uses`/`used_by`), `findings`, `tables` |
 | `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern (seit 0.58.0 mit `off_path`: Regeln über Netze nicht auf dem Weg, `count`/`samples` mit `why`); Vorschläge je ACI-Tenant; nicht Zugeordnetes |

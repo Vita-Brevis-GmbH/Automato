@@ -14,23 +14,26 @@ import {
   ApplicationDoc,
   assignAppRule,
   DocScope,
+  DocTable,
   fetchAppConnections,
   fetchAppDoc,
   fetchSystems,
+  hideAppRules,
   Purpose,
   removeAppMember,
+  showAppRule,
   Rule,
   System,
 } from "./api";
 import type { View, ViewParams } from "./App";
 import ConnectionsCard, { connectionsMarkdown } from "./AppConnections";
-import { DocTableView, tablesMarkdown } from "./AppDoc";
+import { DocRow, DocTableView, tablesMarkdown } from "./AppDoc";
 import type { Me } from "./auth";
 import { findingLabel, serviceNames, useVdomShown } from "./refs";
 import RuleDetailDrawer from "./RuleDetail";
 import { NameCell } from "./RulesTable";
 import { siteLabel } from "./sites";
-import { ActionBadge, Dash, download, Empty, ErrorBox, Expandable, Icon, Loading } from "./ui";
+import { ActionBadge, Dash, download, Empty, ErrorBox, Expandable, Icon, Loading, Modal } from "./ui";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -139,6 +142,7 @@ export default function ApplicationDocView({
   const [conns, setConns] = useState<AppConnections | null>(null); // für den Export (0.59.0)
   const [tick, setTick] = useState(0); // Regel zugeordnet bzw. ausgeschlossen (0.60.0)
   const [busy, setBusy] = useState<unknown>(null);
+  const [hiding, setHiding] = useState<{ table: DocTable; row: DocRow } | null>(null); // 0.69.0
   const vdomShown = useVdomShown();
 
   useEffect(() => {
@@ -217,7 +221,21 @@ export default function ApplicationDocView({
     if (!me.isCustomer && c == null) c = await fetchAppConnections(id).catch(() => null);
     download(`${a.name}.md`, docMarkdown(doc, sourceName, c));
   };
-  const tables = doc.tables.filter((t) => showEmpty || t.rows.length > 0);
+  const tables = doc.tables.filter((t) => showEmpty || t.rows.length > 0 || (t.hidden?.length ?? 0) > 0);
+  // Ausblenden je Kategorie (0.69.0): nur Operator, Kunden-Benutzer sehen die Liste ohne Knöpfe
+  const hideControls = {
+    canEdit: me.isOperator && !me.isCustomer,
+    onHide: (table: DocTable) => (row: DocRow) => setHiding({ table, row }),
+    onShow: async (hides: { id: number }[]) => {
+      setBusy(null);
+      try {
+        for (const h of hides) await showAppRule(id, h.id);
+        setTick((t) => t + 1);
+      } catch (e) {
+        setBusy(e);
+      }
+    },
+  };
   const selected = rule != null ? doc.rules.find((r) => r.id === rule) ?? null : null;
 
   return (
@@ -495,9 +513,30 @@ export default function ApplicationDocView({
               <Empty title="Noch keine Zugriffe kategorisiert">Die Systeme dieser Applikation haben keine Regeln.</Empty>
             </div>
           ) : (
-            tables.map((t) => <DocTableView key={t.index} table={t} onRule={setRule} />)
+            tables.map((t) => (
+              <DocTableView
+                key={t.index}
+                table={t}
+                onRule={setRule}
+                hide={{ canEdit: hideControls.canEdit, onHide: hideControls.onHide(t), onShow: hideControls.onShow }}
+              />
+            ))
           )}
         </div>
+      )}
+
+      {hiding && (
+        <HideDialog
+          table={hiding.table}
+          row={hiding.row}
+          onClose={() => setHiding(null)}
+          onSave={async (category, reason) => {
+            const ids = (hiding.row._rules as number[]) ?? [];
+            await hideAppRules(id, ids, category, reason);
+            setHiding(null);
+            setTick((t) => t + 1);
+          }}
+        />
       )}
 
       {rule != null && (
@@ -1385,4 +1424,79 @@ function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string, co
     lines.push("");
   }
   return lines.concat(conns ? connectionsMarkdown(conns) : [], tablesMarkdown(doc.tables)).join("\n");
+}
+
+// Regel in einer Kategorie ausblenden (0.69.0): Begründung Pflicht, nur diese bzw. alle Kategorien
+function HideDialog({
+  table,
+  row,
+  onClose,
+  onSave,
+}: {
+  table: DocTable;
+  row: DocRow;
+  onClose: () => void;
+  onSave: (category: number | null, reason: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [all, setAll] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  const ok = reason.trim().length >= 5;
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await onSave(all ? null : table.index, reason.trim());
+    } catch (e) {
+      setErr(e);
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      title="Regel in der Kategorie ausblenden"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>
+            Abbrechen
+          </button>
+          <button className="btn btn-primary" id="hide-submit" disabled={!ok || busy} onClick={() => void save()}>
+            {busy ? "…" : "Ausblenden"}
+          </button>
+        </>
+      }
+    >
+      <div id="hide-dialog">
+        <ErrorBox error={err} prefix="Ausblenden" />
+        <p style={{ marginTop: 0 }}>
+          <b>{String(row.Description ?? "Regel")}</b>
+          <span className="faint"> · {String(row["Server Name"] ?? row.Source ?? "")}</span>
+        </p>
+        <p className="faint" style={{ fontSize: 12 }}>
+          Die Regel fällt aus der Kategorie (Ansicht, Export, Druck) und steht dort unter „ausgeblendet“ mit der Begründung.
+          Sonst bleibt sie in der Doku; das Ausblenden steht im Audit und hält über neue Läufe.
+        </p>
+        <div className="field">
+          <label htmlFor="hide-reason">Begründung (Pflicht)</label>
+          <textarea
+            id="hide-reason"
+            className="input"
+            rows={3}
+            maxLength={1000}
+            value={reason}
+            placeholder="z. B. Grundregel des Rechenzentrums, nicht applikationsspezifisch"
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </div>
+        <label className="check">
+          <input type="radio" name="hide-scope" checked={!all} onChange={() => setAll(false)} /> nur in Kategorie {table.index}. {table.title}
+        </label>
+        <label className="check" style={{ display: "block", marginTop: 4 }}>
+          <input type="radio" name="hide-scope" id="hide-all" checked={all} onChange={() => setAll(true)} /> in allen Kategorien
+        </label>
+      </div>
+    </Modal>
+  );
 }

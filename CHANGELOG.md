@@ -7,6 +7,20 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.69.0 – 2026-10-26
+
+Applikations-Doku: Firewall-Regeln je Kategorie ausblenden, mit Begründung und Audit (Wunsch
+des Anwenders, ADR 0012 Ergänzung 0.69.0). Migration `0056` (`application_rule_hide`).
+
+- **Ausblenden:** in „Doku nach Kategorien“ je Zeile „ausblenden“ (Operator); Begründung ist
+  Pflicht, gilt nur in dieser Kategorie oder in allen. Die Zeile fällt aus Ansicht, Export und
+  Druck der Kategorie; die Regel bleibt sonst in der Doku (Liste, Verbindungen, Kennzahlen).
+- **Nachweis:** je Kategorie „N ausgeblendet“ mit Regel, System, Begründung, wer und wann und
+  „einblenden“; im Markdown-Export der Abschnitt „Ausgeblendete Regeln“; Audit
+  `application.rule_hidden`/`application.rule_shown` mit Begründung. Hält über neue Läufe.
+- API: `POST /applications/{id}/hidden`, `DELETE /applications/{id}/hidden/{hide_id}`; in der
+  Doku `tables[].hidden`, `hides`, `summary.hidden`.
+
 ## 0.68.0 – 2026-10-26
 
 Weitere Switches und Router als Quellsysteme (Wunsch des Anwenders, ADR 0025 Nr. 11). Ohne

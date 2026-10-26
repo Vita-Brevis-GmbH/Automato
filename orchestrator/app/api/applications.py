@@ -206,6 +206,7 @@ class DocSummaryOut(BaseModel):
     impossible: int = 0  # Regeln nur mit routingtechnisch unmoeglichen Treffern
     assigned: int = 0  # direkt zugeordnete Regeln (0.60.0)
     excluded: int = 0  # ausgeschlossene Regeln (0.60.0)
+    hidden: int = 0  # in den Kategorien ausgeblendete Zeilen (0.69.0)
 
 
 class DocFindingOut(BaseModel):
@@ -234,11 +235,21 @@ class ApplicationDocOut(BaseModel):
     # 0.60.0: direkt zugeordnete bzw. ausgeschlossene Regeln, Abhaengigkeiten zu anderen
     rule_members: list[dict] = []
     dependencies: dict = {}
+    # 0.69.0: ausgeblendete Regeln je Kategorie (`active` = steht in einer Kategorie)
+    hides: list[dict] = []
 
 
 class RuleMemberIn(BaseModel):
     rule_id: int
     exclude: bool = False  # True: aus der Doku der Applikation ausschliessen
+
+
+class HideIn(BaseModel):
+    """Regel(n) einer Zeile in einer Kategorie ausblenden (0.69.0): IPv4/IPv6-Paar = zwei."""
+
+    rule_ids: list[int] = Field(min_length=1, max_length=4)
+    category: int | None = Field(default=None, ge=1, le=10)  # leer = alle Kategorien
+    reason: str = Field(min_length=5, max_length=1000)
 
 
 def _site(session: Session, site_id: int | None) -> SiteRef | None:
@@ -687,6 +698,72 @@ def application_doc(
     return ApplicationDocOut(
         application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
     )
+
+
+@router.post("/{application_id}/hidden", status_code=201)
+def hide_rules(
+    application_id: int,
+    body: HideIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    """Regel in einer Kategorie (bzw. in allen) der Doku ausblenden - mit Begruendung, im Audit
+    (0.69.0). Die Regel bleibt sonst in der Doku; der Verweis haelt ueber neue Laeufe."""
+    app = _load(session, principal, application_id)
+    reason = body.reason.strip()
+    if len(reason) < 5:
+        raise HTTPException(status_code=422, detail="Begründung zu kurz")
+    out = []
+    for rule_id in dict.fromkeys(body.rule_ids):
+        rule = session.get(Rule, rule_id)
+        if rule is None or rule.tenant_id != app.tenant_id:
+            raise HTTPException(status_code=404, detail="rule not found")
+        hide = store.hide_rule(session, app, rule, body.category, reason, _actor(principal))
+        audit.record(
+            session,
+            actor=_actor(principal),
+            action="application.rule_hidden",
+            subject=str(app.id),
+            detail={
+                "application_id": app.id,
+                "tenant_id": app.tenant_id,
+                "rule_ref": hide.rule_ref,
+                "category": hide.category,
+                "reason": reason[:500],
+            },  # fmt: skip
+        )
+        out.append(store.hide_out(hide))
+    return out
+
+
+@router.delete("/{application_id}/hidden/{hide_id}", status_code=204)
+def show_rule(
+    application_id: int,
+    hide_id: int,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> Response:
+    """Ausgeblendete Regel wieder einblenden (0.69.0), im Audit mit der alten Begruendung."""
+    app = _load(session, principal, application_id)
+    hide = next((h for h in app.hides if h.id == hide_id), None)
+    if hide is None:
+        raise HTTPException(status_code=404, detail="hide not found")
+    app.hides.remove(hide)
+    session.flush()
+    audit.record(
+        session,
+        actor=_actor(principal),
+        action="application.rule_shown",
+        subject=str(app.id),
+        detail={
+            "application_id": app.id,
+            "tenant_id": app.tenant_id,
+            "rule_ref": hide.rule_ref,
+            "category": hide.category,
+            "reason": hide.reason[:500],
+        },  # fmt: skip
+    )
+    return Response(status_code=204)
 
 
 @router.post("/{application_id}/rules", response_model=ApplicationDetailOut)

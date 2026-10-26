@@ -12,6 +12,7 @@ from app.models.application import (
     PURPOSES,
     Application,
     ApplicationMember,
+    ApplicationRuleHide,
 )
 from app.models.audit import AuditLog
 from app.models.base import Base
@@ -112,6 +113,7 @@ __all__ = [
     "Application",
     "ArpEntry",
     "ApplicationMember",
+    "ApplicationRuleHide",
     "AuditLog",
     "Base",
     "CollectorRun",

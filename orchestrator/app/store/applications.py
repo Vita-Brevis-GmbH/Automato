@@ -26,6 +26,7 @@ from app import naming
 from app.models import (
     Application,
     ApplicationMember,
+    ApplicationRuleHide,
     DeviceObject,
     Epg,
     EpgEndpoint,
@@ -762,6 +763,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         rule_epgs[h["rule_id"]] |= set(epgs_of.get(h["system"], []))
     findings = _app_findings(session, tid, systems, epg_out, set(ordered), rule_epgs,
                              restricted=restricted, app_id=app.id)  # fmt: skip
+    hidden, hides = _apply_hides(session, app, tables, restricted)  # 0.69.0
     tenant = session.get(Tenant, tid)
     return {
         "tenant_code": tenant.code if tenant else None,
@@ -776,6 +778,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             "specific": sum(1 for v in best.values() if v in ("specific", "assigned")),
             "assigned": sum(1 for v in best.values() if v == "assigned"),
             "excluded": len(excluded),
+            "hidden": hidden,
             "unspecific": sum(by_scope.values()),
             "by_scope": by_scope,
             "findings": len(findings),
@@ -791,7 +794,65 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             {"member_id": m.id, "kind": m.kind, "label": label, "rule_id": rid}
             for rid, (m, label) in (assigned | excluded).items()
         ],
+        "hides": hides,
     }
+
+
+def hide_out(h: ApplicationRuleHide) -> dict:
+    return {"id": h.id, "rule_ref": h.rule_ref, "category": h.category, "reason": h.reason,
+            "label": h.label, "by": h.created_by,
+            "at": h.created_at.isoformat() if h.created_at else None}  # fmt: skip
+
+
+def hide_rule(session: Session, app: Application, rule: Rule, category: int | None, reason: str,
+              actor: str) -> ApplicationRuleHide:  # fmt: skip
+    """Regel in einer Kategorie (leer = alle) ausblenden (0.69.0); schon ausgeblendet = neue
+    Begruendung."""
+    ref = rule_ref(rule)
+    hide = next((h for h in app.hides if h.rule_ref == ref and h.category == category), None)
+    source = session.get(SourceSystem, rule.source_system_id)
+    if hide is None:
+        hide = ApplicationRuleHide(rule_ref=ref, category=category, reason=reason,
+                                   label=_rule_label(rule, source.name if source else None),
+                                   created_by=actor)  # fmt: skip
+        app.hides.append(hide)
+    else:
+        hide.reason, hide.created_by, hide.created_at = reason, actor, datetime.now(UTC)
+    session.flush()
+    return hide
+
+
+def _apply_hides(session: Session, app: Application, tables: list[dict],
+                 restricted: bool) -> tuple[int, list[dict]]:  # fmt: skip
+    """Ausgeblendete Regeln (0.69.0): Zeilen der Kategorie mit einer ihrer Regeln -> `hidden`
+    (mit `_hides`). Dazu alle Eintraege mit `active` (steht in einer Kategorie); Kunden-Benutzer
+    sehen nur die ihrer Regeln."""
+    for t in tables:
+        t["hidden"] = []
+    if not app.hides:
+        return 0, []
+    ids = {rid for t in tables for r in t["rows"] for rid in r.get("_rules") or [] if rid}
+    refs = {r.id: rule_ref(r) for r in session.scalars(select(Rule).where(Rule.id.in_(ids)))}
+    by_ref: dict[str, list[ApplicationRuleHide]] = defaultdict(list)
+    for h in app.hides:
+        by_ref[h.rule_ref].append(h)
+    used: set[int] = set()
+    count = 0
+    for t in tables:
+        keep = []
+        for row in t["rows"]:
+            hs = [h for rid in row.get("_rules") or [] for h in by_ref.get(refs.get(rid), [])
+                  if h.category in (None, t["index"])]  # fmt: skip
+            if not hs:
+                keep.append(row)
+                continue
+            used |= {h.id for h in hs}
+            t["hidden"].append({**row, "_hides": [hide_out(h) for h in dict.fromkeys(hs)]})
+            count += 1
+        t["rows"] = keep
+    listed = [hide_out(h) | {"active": h.id in used} for h in app.hides
+              if not restricted or h.id in used]  # fmt: skip
+    return count, listed
 
 
 def _rule_members(app: Application, res: Resolver, allowed: set[int] | None):

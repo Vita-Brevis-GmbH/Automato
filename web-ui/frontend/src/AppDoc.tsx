@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useMemo, useState } from "react";
 import {
   AppDocSystem,
   assignSystemSite,
+  DocHide,
   DocTable,
   fetchAppDocSystems,
   fetchSites,
@@ -325,8 +326,29 @@ function DocCell({
   );
 }
 
-export function DocTableView({ table, onRule }: { table: DocTable; onRule?: (id: number) => void }) {
+export type DocRow = DocTable["rows"][number];
+
+// Ausblenden je Kategorie (0.69.0, nur Applikations-Doku): Knopf je Zeile, Liste der ausgeblendeten
+export interface HideControls {
+  canEdit: boolean;
+  onHide: (row: DocRow) => void;
+  onShow: (hides: DocHide[]) => void;
+}
+
+const dateText = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("de-CH") : "");
+
+export function DocTableView({
+  table,
+  onRule,
+  hide,
+}: {
+  table: DocTable;
+  onRule?: (id: number) => void;
+  hide?: HideControls;
+}) {
   const aci = table.enforcement === "aci";
+  const hidden = table.hidden ?? [];
+  const editable = !!hide?.canEdit;
   return (
     <div className="card">
       <div className="card-head">
@@ -338,6 +360,7 @@ export function DocTableView({ table, onRule }: { table: DocTable; onRule?: (id:
         <div className="spacer" />
         <span className="mono faint" style={{ fontSize: 12 }}>
           {table.rows.length} Regel{table.rows.length === 1 ? "" : "n"}
+          {hidden.length > 0 ? ` · ${hidden.length} ausgeblendet` : ""}
         </span>
       </div>
       <div className="card-body scroll">
@@ -350,6 +373,7 @@ export function DocTableView({ table, onRule }: { table: DocTable; onRule?: (id:
                 {table.columns.map((c) => (
                   <th key={c}>{c}</th>
                 ))}
+                {editable && <th className="no-print" />}
               </tr>
             </thead>
             <tbody>
@@ -364,10 +388,70 @@ export function DocTableView({ table, onRule }: { table: DocTable; onRule?: (id:
                       )}
                     </td>
                   ))}
+                  {editable && (
+                    <td className="no-print">
+                      {Array.isArray(row._rules) && row._rules.length > 0 && (
+                        <button
+                          className="linkbtn doc-hide-btn"
+                          title="In dieser Kategorie ausblenden – nicht relevant für die Applikation (mit Begründung)"
+                          onClick={() => hide!.onHide(row)}
+                        >
+                          ausblenden
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
+        )}
+        {hidden.length > 0 && (
+          <details className="doc-hidden" id={`doc-hidden-${table.index}`}>
+            <summary>
+              {hidden.length} ausgeblendet <span className="faint">– nicht relevant für die Applikation, mit Begründung</span>
+            </summary>
+            <table className="compact">
+              <thead>
+                <tr>
+                  <th>Regel</th>
+                  <th>System bzw. Objekt</th>
+                  <th>Begründung</th>
+                  <th>von</th>
+                  <th>am</th>
+                  {editable && <th className="no-print" />}
+                </tr>
+              </thead>
+              <tbody>
+                {hidden.map((row, i) => {
+                  const hs = row._hides ?? [];
+                  return (
+                    <tr key={i}>
+                      <td>{String(row.Description ?? "")}</td>
+                      <td>{String(row["Server Name"] ?? row.Source ?? "")}</td>
+                      <td>
+                        {hs.map((h) => (
+                          <div key={h.id}>
+                            {h.reason}
+                            {h.category == null && <span className="faint"> (in allen Kategorien)</span>}
+                          </div>
+                        ))}
+                      </td>
+                      <td>{[...new Set(hs.map((h) => h.by))].join(", ")}</td>
+                      <td>{dateText(hs[0]?.at)}</td>
+                      {editable && (
+                        <td className="no-print">
+                          <button className="linkbtn" onClick={() => hide!.onShow(hs)}>
+                            einblenden
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </details>
         )}
       </div>
     </div>
@@ -399,6 +483,18 @@ export function tablesMarkdown(tables: DocTable[]): string[] {
     lines.push(`| ${t.columns.map(() => "---").join(" | ")} |`);
     for (const row of t.rows) {
       lines.push(`| ${t.columns.map((c) => mdCell(String(row[c] ?? ""))).join(" | ")} |`);
+    }
+    lines.push("");
+  }
+  // 0.69.0: ausgeblendete Regeln mit Begründung (Nachweis, warum sie in den Kategorien fehlen)
+  const hidden = tables.flatMap((t) => (t.hidden ?? []).map((row) => ({ t, row })));
+  if (hidden.length) {
+    lines.push("## Ausgeblendete Regeln", "", "| Kategorie | Regel | System bzw. Objekt | Begründung | von | am |", "| --- | --- | --- | --- | --- | --- |");
+    for (const { t, row } of hidden) {
+      const hs = row._hides ?? [];
+      lines.push(
+        `| ${t.index}. ${mdCell(t.title)} | ${mdCell(String(row.Description ?? ""))} | ${mdCell(String(row["Server Name"] ?? row.Source ?? ""))} | ${mdCell(hs.map((h) => h.reason).join("; "))} | ${mdCell([...new Set(hs.map((h) => h.by))].join(", "))} | ${dateText(hs[0]?.at)} |`,
+      );
     }
     lines.push("");
   }

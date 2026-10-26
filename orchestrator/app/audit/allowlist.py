@@ -128,6 +128,13 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         {"application_id", "tenant_id", "kind", "ref", "count", "suggestion"}
     ),
     "application.member_removed": frozenset({"application_id", "tenant_id", "kind", "ref"}),
+    # 0.69.0: Regel in den Kategorien der Doku aus-/eingeblendet, mit Begruendung
+    "application.rule_hidden": frozenset(
+        {"application_id", "tenant_id", "rule_ref", "category", "reason"}
+    ),
+    "application.rule_shown": frozenset(
+        {"application_id", "tenant_id", "rule_ref", "category", "reason"}
+    ),
     # Kunden als Ausschnitt der Umgebung (ADR 0018): Name und Anzahl der Selektoren
     "customer.created": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.updated": frozenset({"tenant_id", "customer_id", "name", "selectors"}),

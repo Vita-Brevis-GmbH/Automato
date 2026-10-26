@@ -271,6 +271,43 @@ test("Applikation: Netzwerkplan mit Knoten, Diensten, Interfaces und Export (0.6
   await expect(page.locator("#app-plan-svg")).toBeVisible();
 });
 
+test("Applikation: Regel in einer Kategorie ausblenden mit Begründung, Export, einblenden (0.69.0)", async ({ page }) => {
+  await open(page);
+  const head = page.locator(".card", { has: page.locator("h2", { hasText: "Doku nach Kategorien" }) });
+  await head.locator("button", { hasText: "anzeigen" }).click();
+  // die erste Kategorie mit Regeln (über den Titel festhalten - die Zeile fällt gleich weg)
+  const title = (await page.locator(".card", { has: page.locator(".doc-hide-btn") }).first().locator("h2").innerText()).trim();
+  const card = page.locator(".card", { has: page.locator("h2", { hasText: title }) });
+  const button = card.locator(".card-body > table tbody tr").first().locator(".doc-hide-btn");
+  await expect(button).toBeVisible();
+  const before = await card.locator(".card-body > table tbody tr").count();
+  await button.click();
+  const dialog = page.locator("#hide-dialog");
+  await expect(dialog).toContainText("nur in Kategorie");
+  const rule = (await dialog.locator("b").first().innerText()).trim();
+  // Begründung ist Pflicht
+  await expect(page.locator("#hide-submit")).toBeDisabled();
+  await page.locator("#hide-reason").fill("Grundregel, nicht applikationsspezifisch");
+  await page.locator("#hide-submit").click();
+  await expect(dialog).toHaveCount(0);
+  await expect(card.locator(".card-head")).toContainText("1 ausgeblendet");
+  await expect(card.locator(".card-body > table tbody tr")).toHaveCount(before - 1);
+  const hidden = card.locator(".doc-hidden");
+  await hidden.locator("summary").click();
+  await expect(hidden).toContainText("Grundregel, nicht applikationsspezifisch");
+  await expect(hidden).toContainText(rule);
+  await expect(hidden).toContainText("user:dev");
+  // Export: Abschnitt „Ausgeblendete Regeln“ mit der Begründung
+  const [file] = await Promise.all([page.waitForEvent("download"), page.locator("#app-doc-export").click()]);
+  const text = readFileSync((await file.path())!, "utf-8");
+  expect(text).toContain("## Ausgeblendete Regeln");
+  expect(text).toContain("Grundregel, nicht applikationsspezifisch");
+  // wieder einblenden
+  await hidden.locator("button", { hasText: "einblenden" }).click();
+  await expect(card.locator(".doc-hidden")).toHaveCount(0);
+  await expect(card.locator(".card-body > table tbody tr")).toHaveCount(before);
+});
+
 test("Applikation: Regeln zuordnen bzw. ausschliessen, Abhängigkeiten (0.60.0)", async ({ page, problems }) => {
   // zweite Applikation mit dem Server H_db01 (172.16.5.9) – Webshop nutzt sie (Policy to-db)
   const created = await page.request.post("/api/applications?tenant_id=1", {
