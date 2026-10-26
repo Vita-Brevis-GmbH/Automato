@@ -2339,12 +2339,22 @@ function ExportButtons({ tenantId, versionId, view }: { tenantId: number; versio
           ["drawio", "draw.io"],
           ["svg", "SVG"],
           ["pdf", "PDF"],
+          ["docx", "Word"],
         ] as const
       ).map(([f, label]) => (
         <button key={f} className="btn btn-sm" disabled={busy !== null} onClick={() => run(f)}>
           {busy === f ? "…" : label}
         </button>
       ))}
+      <button
+        className="btn btn-sm"
+        id="zone-plan-confluence"
+        disabled={busy !== null}
+        title="Word mit Zonen, Übergängen und Matrix plus der Plan als draw.io – zum Verbessern und Importieren in Confluence"
+        onClick={() => run("zip")}
+      >
+        {busy === "zip" ? "…" : "Für Confluence (Word + draw.io)"}
+      </button>
     </span>
   );
 }

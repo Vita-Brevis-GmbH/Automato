@@ -1432,6 +1432,9 @@ async function fileOf(url: string, fallback: string): Promise<{ blob: Blob; file
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? fallback };
 }
+// Export für Confluence (0.71.0): Applikations-Doku als Word bzw. Word + Netzwerkplan (draw.io) im ZIP
+export const exportApplication = (id: number, format: "docx" | "zip") =>
+  fileOf(`/api/applications/${id}/export${qs({ format })}`, `applikation.${format}`);
 export const zoneSchemaDrawing = (profileId: number) => fileOf(`/api/naming-profiles/${profileId}/zone-schema/drawing`, "zonenschema.drawio");
 // Vorlage: ohne Mandant Beispiel-Zonen, mit Mandant dessen Zonen und Absichten als Ausgangspunkt
 export const zoneSchemaTemplate = (tenantId?: number) =>
@@ -2777,7 +2780,7 @@ export interface PlanDiff {
   unzoned: { added: string[]; removed: string[] };
   matrix: { cell: string; old: [number, number, number]; new: [number, number, number] }[];
 }
-export type PlanFormat = "svg" | "drawio" | "pdf";
+export type PlanFormat = "drawio" | "svg" | "pdf" | "docx" | "zip"; // docx/zip: Word (+ draw.io) für Confluence (0.71.0)
 export const fetchZones = (tenantId: number) => getJSON<LogicalZone[]>(`/api/zones${qs({ tenant_id: tenantId })}`);
 export const createZone = (body: ZoneIn) => sendJSON<LogicalZone>("/api/zones", "POST", body);
 export const updateZone = (id: number, body: ZoneIn) => sendJSON<LogicalZone>(`/api/zones/${id}`, "PUT", body);

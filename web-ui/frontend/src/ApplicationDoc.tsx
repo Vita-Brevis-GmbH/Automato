@@ -15,6 +15,7 @@ import {
   assignAppRule,
   DocScope,
   DocTable,
+  exportApplication,
   fetchAppConnections,
   fetchAppDoc,
   fetchSystems,
@@ -142,6 +143,7 @@ export default function ApplicationDocView({
   const [conns, setConns] = useState<AppConnections | null>(null); // für den Export (0.59.0)
   const [tick, setTick] = useState(0); // Regel zugeordnet bzw. ausgeschlossen (0.60.0)
   const [busy, setBusy] = useState<unknown>(null);
+  const [exporting, setExporting] = useState(false);
   const [hiding, setHiding] = useState<{ table: DocTable; row: DocRow } | null>(null); // 0.69.0
   const vdomShown = useVdomShown();
 
@@ -216,6 +218,18 @@ export default function ApplicationDocView({
     setTimeout(() => window.print(), 50);
   };
   // Export mit den Verbindungen Ende zu Ende (0.59.0) – noch nicht geladen: jetzt holen
+  // Export für Confluence (0.71.0): Word + draw.io im ZIP, verbessert und importiert von Hand
+  const exportConfluence = async () => {
+    setExporting(true);
+    try {
+      const { blob, filename } = await exportApplication(id, "zip");
+      download(filename, blob);
+    } catch (e) {
+      setBusy(e);
+    } finally {
+      setExporting(false);
+    }
+  };
   const exportMarkdown = async () => {
     let c = me.isCustomer ? null : conns;
     if (!me.isCustomer && c == null) c = await fetchAppConnections(id).catch(() => null);
@@ -256,6 +270,17 @@ export default function ApplicationDocView({
         <button className="btn btn-ghost btn-sm" id="app-doc-export" onClick={exportMarkdown}>
           <Icon name="download" size={14} /> Export (Markdown)
         </button>
+        {!me.isCustomer && (
+          <button
+            className="btn btn-ghost btn-sm"
+            id="app-doc-confluence"
+            disabled={exporting}
+            title="Word-Datei der Doku plus Netzwerkplan als draw.io – zum Verbessern und Importieren in Confluence"
+            onClick={exportConfluence}
+          >
+            <Icon name="download" size={14} /> {exporting ? "…" : "Für Confluence (Word + draw.io)"}
+          </button>
+        )}
         <button className="btn btn-ghost btn-sm" onClick={print} title="Drucken oder als PDF sichern">
           Drucken / PDF
         </button>

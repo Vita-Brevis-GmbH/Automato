@@ -1048,10 +1048,15 @@ test("Netzwerkdesign: Export (draw.io, SVG, PDF) und Versionen des Zonenplans", 
     ["draw.io", "drawio"],
     ["SVG", "svg"],
     ["PDF", "pdf"],
+    ["Word", "docx"], // 0.71.0
   ]) {
     const [file] = await Promise.all([page.waitForEvent("download"), page.locator(".plan-export button", { hasText: label }).first().click()]);
     expect(file.suggestedFilename()).toMatch(new RegExp(`^zonenplan-\\d{4}-\\d\\d-\\d\\d\\.${ext}$`));
   }
+  // Für Confluence: Word + draw.io im ZIP
+  const [zip] = await Promise.all([page.waitForEvent("download"), page.locator("#zone-plan-confluence").first().click()]);
+  expect(zip.suggestedFilename()).toMatch(/^zonenplan-\d{4}-\d\d-\d\d\.zip$/);
+  expect(readFileSync((await zip.path())!).toString("latin1")).toMatch(/zonenplan-.*\.drawio/);
 
   // Version speichern: gleich wie der aktuelle Stand, Detail mit Zeichnung und Export
   await page.click(".tabbar button:has-text('Versionen')");

@@ -21,9 +21,9 @@ from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import Application, Rule, Site
+from app.models import Application, Rule, Site, SourceSystem, Tenant
 from app.schemas.rules import RuleOut
-from app.store import app_paths, app_plan, sites
+from app.store import app_paths, app_plan, sites, word_export
 from app.store import applications as store
 
 router = APIRouter(prefix="/applications", tags=["applications"])
@@ -679,6 +679,47 @@ def export_connections_plan(
     name = f"netzwerkplan-{slug}-{when:%Y-%m-%d}.{ext}"
     return Response(content=body, media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+
+
+@router.get("/{application_id}/export")
+def export_application(
+    application_id: int,
+    format: str = Query("zip", pattern="^(docx|zip)$"),  # noqa: A002 - Name der Abfrage
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> Response:
+    """Export fuer Confluence (0.71.0, ADR 0026): die Applikations-Doku als Word (`docx`) bzw.
+    als ZIP mit Word und dem Netzwerkplan als draw.io (`zip`) - zum Verbessern in Word/draw.io
+    und Import von Hand. Nicht fuer Kunden-Benutzer (Verbindungen zeigen die Infrastruktur)."""
+    app = _load(session, principal, application_id)
+    reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
+    doc = store.build_doc(session, app, None)
+    doc["dependencies"] = store.dependencies(session, app, doc, None)
+    out = ApplicationDocOut(
+        application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
+    ).model_dump(mode="json")
+    conns = app_paths.build(session, app)
+    when = datetime.now(UTC)
+    tenant = session.get(Tenant, app.tenant_id)
+    sources = dict(session.execute(
+        select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == app.tenant_id)
+    ).all())  # fmt: skip
+    base = f"applikation-{word_export.slug(app.name, 'applikation')}-{when:%Y-%m-%d}"
+    plan_file = f"{base}-netzwerkplan.drawio"
+    body = word_export.application(out, conns, sources, when, tenant.name if tenant else None,
+                                   plan_file if format == "zip" else None)  # fmt: skip
+    if format == "docx":
+        media, name = _DOCX, f"{base}.docx"
+    else:
+        plan = app_plan.drawio(app_plan.build(conns["connections"]), f"Netzwerkplan {app.name}",
+                               when)  # fmt: skip
+        body = word_export.bundle([(f"{base}.docx", body), (plan_file, plan)])
+        media, name = "application/zip", f"{base}.zip"
+    return Response(content=body, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+
+
+_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 @router.get("/{application_id}/doc", response_model=ApplicationDocOut)

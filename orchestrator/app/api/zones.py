@@ -51,6 +51,7 @@ from app.store import (
     plan_versions,
     plan_view,
     reconcile,
+    word_export,
     zone_assist,
     zone_detect,
     zone_services,
@@ -693,6 +694,9 @@ _FORMATS = {
     "svg": ("image/svg+xml", "svg"),
     "drawio": ("application/vnd.jgraph.mxfile", "drawio"),
     "pdf": ("application/pdf", "pdf"),
+    # Export fuer Confluence (0.71.0, ADR 0026): Word bzw. Word + draw.io im ZIP
+    "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
+    "zip": ("application/zip", "zip"),
 }
 
 
@@ -706,7 +710,7 @@ def _version(session: Session, principal: Principal, version_id: int) -> ZonePla
 
 @router.get("/plan/export")
 def export_plan(
-    format: str = Query("svg", pattern="^(svg|drawio|pdf)$"),  # noqa: A002 - Name der API
+    format: str = Query("svg", pattern="^(svg|drawio|pdf|docx|zip)$"),  # noqa: A002 - Name der API
     tenant_id: int | None = None,
     version_id: int | None = None,
     customer_id: int | None = None,
@@ -715,7 +719,8 @@ def export_plan(
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> Response:
-    """Zonenplan als Datei: draw.io (bearbeitbar), SVG oder PDF (mit Matrix und Tabellen) -
+    """Zonenplan als Datei: draw.io (bearbeitbar), SVG oder PDF (mit Matrix und Tabellen), seit
+    0.71.0 Word (`docx`) bzw. Word + draw.io im ZIP (`zip`) fuer den Import in Confluence -
     aktueller Stand (wie in der Ansicht gefiltert und angeordnet) bzw. eine gespeicherte
     Version."""
     if version_id is not None:
@@ -732,7 +737,7 @@ def export_plan(
         plan = store.plan_with_layout(session, tid, _scope(principal), customer_id, everything,
                                       view_filter)  # fmt: skip
         matrix = None
-        if format == "pdf":
+        if format in ("pdf", "docx", "zip"):
             matrix = store.matrix(session, tid, customer_ids=_scope(principal))
         when, meta = datetime.now(UTC), None
         name = f"zonenplan-{when:%Y-%m-%d}"
@@ -753,6 +758,14 @@ def export_plan(
         body: bytes | str = plan_export.svg(plan, title, when, meta)
     elif format == "drawio":
         body = plan_export.drawio(plan, title, when, meta)
+    elif format in ("docx", "zip"):
+        tenant_label = None if principal.is_customer or tenant is None else tenant.name
+        drawio_name = f"{name}.drawio"
+        body = word_export.zone_plan(plan, matrix, title, when, tenant_label,
+                                     drawio_name if format == "zip" else None, meta)  # fmt: skip
+        if format == "zip":
+            drawing = plan_export.drawio(plan, title, when, meta)
+            body = word_export.bundle([(f"{name}.docx", body), (drawio_name, drawing)])
     else:
         body = plan_export.pdf(plan, matrix, title, when, meta)
     return Response(

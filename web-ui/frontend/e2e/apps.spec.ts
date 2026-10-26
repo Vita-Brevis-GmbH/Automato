@@ -199,6 +199,13 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   expect(text).toContain("## Verbindungen Ende zu Ende");
   expect(text).toContain("| Richtung | Quelle | Ziel | Dienst | Weg (entscheidende Regel) | Urteil | Abweichung |");
   expect(text).toMatch(/EN_rt.*apic-01 · VRF TE:VRF1.*Contract CT_rt:SJ_1 erlaubt – der Weg ist gesperrt/);
+  // Für Confluence (0.71.0): ZIP mit Word und dem Netzwerkplan als draw.io
+  const [zip] = await Promise.all([page.waitForEvent("download"), page.locator("#app-doc-confluence").click()]);
+  expect(zip.suggestedFilename()).toMatch(/^applikation-.+-\d{4}-\d\d-\d\d\.zip$/);
+  const bytes = readFileSync((await zip.path())!);
+  expect(bytes.subarray(0, 2).toString()).toBe("PK");
+  expect(bytes.toString("latin1")).toMatch(/\.docx/);
+  expect(bytes.toString("latin1")).toMatch(/-netzwerkplan\.drawio/);
   // in die Weg-Suche mit Quelle, Ziel und Dienst
   await card.locator("button", { hasText: "In der Weg-Suche öffnen" }).click();
   await expect(page).toHaveURL(/#wege\?src=10\.10\.10\.5&dst=172\.16\.5\.9&service=tcp%2F443/);

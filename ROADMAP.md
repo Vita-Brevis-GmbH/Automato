@@ -370,17 +370,18 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.69.0** | Applikations-Doku: Regeln je Kategorie ausblenden mit Pflicht-Begründung, Liste „ausgeblendet“ mit wer/wann, Export-Abschnitt, Audit (ADR 0012 Ergänzung 0.69.0) |
 | **0.69.1** | Korrekturen: ACI-Contracts zustandslos (Filter ohne Ports in beide Richtungen, mit Zielport nur Antworten) in Weg-Suche, Regel-Detail, Applikations-Doku, Verbindungen und Zonenmatrix; VLANs aus dem ACI (`vlanCktEp`, `pcAggrIf`) im Reiter VLANs (ADR 0019) |
 | **0.70.0** | Patchungen im Verkabelungsplan (Gerät bzw. Kabel wählen, Ports beider Seiten mit Konfiguration, Abweichungen, Endpunkten); Grundschema der Zonen in der Oberfläche bearbeiten (ADR 0025 Nr. 12, ADR 0024 Nr. 16) |
+| **0.71.0** | Export für Confluence: Applikations-Doku und Zonenplan als Word (.docx) plus draw.io-Plan in einem ZIP, Import von Hand, kein Schreibweg (ADR 0026) |
 
-### Nächste Arbeiten (Stand 0.70.0)
+### Nächste Arbeiten (Stand 0.71.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.70.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.71.0.
 
 **Umplanung des Anwenders (2026-10-26) – Reihenfolge bis zum Abschluss des ersten Projekts:**
 
 | Schritt | Inhalt | Stand |
 |---|---|---|
-| 1 | **Export nach Confluence** – neuer Schreibweg, eigene ADR (0026) und Freigabe: Doku und Pläne als Seiten unter einer festgelegten Elternseite, nur eigene Seiten, Vorschau → Übernehmen, Audit | als Erstes |
+| 1 | **Export nach Confluence** – Entscheid des Anwenders: kein Schreibweg, Word (.docx) und draw.io zum Import von Hand, zuerst Applikations-Doku und Zonenplan (ADR 0026) | **umgesetzt in 0.71.0** |
 | 2 | **Parallele Firewalls:** Abweichungen bei Policy-Routen, Routing und NAT zwischen den Firewalls eines Verbunds (ADR 0020) | geplant |
 | 3 | **Schwachstellen** aus der Übersicht 0.70.0: ACI-Filter nur mit Quellport (Urteil statt „möglich“), Rückrichtung in der Doku je System wie in der Applikations-Doku, Leistung der Zonenmatrix mit der Rückrichtung messen und zwischenspeichern | geplant |
 | 4 | **Lücken im Ablauf:** nächtlicher CI-Lauf auf dem aktuellen Stand (`main` nachführen), Überschriften der Roadmap | geplant |
@@ -410,8 +411,8 @@ Datenhaltung R14). Eigene ADR vor dem Umbau.
 - **R12:** Die Zuordnung der VMs (IPs über Portgruppen und deren EPGs) geht vor gelernten
   Endpunkten – konfigurierte Vorgaben statt vom ACI Gelerntes (erster Teil in 0.43.1).
 - **Logische Zonen** werden in Automato gepflegt.
-- **Plan:** im Tool finden und exportieren (draw.io, SVG, PDF); später direkt nach Confluence
-  (neuer Schreibweg, eigene Freigabe).
+- **Plan:** im Tool finden und exportieren (draw.io, SVG, PDF); für Confluence seit 0.71.0
+  Word + draw.io zum Import von Hand (ADR 0026, Entscheid 2026-10-26: kein Schreibweg).
 - **Vor dem Produktivbetrieb jetzt:** TLS intern, getrennte DB-Rollen, Fristen für das Löschen
   alter Läufe. UI-Einschränkung, OTP, echte API-Tokens und Verschlüsselung später bzw. mit
   anderen Mitteln.
@@ -468,7 +469,7 @@ Datenhaltung R14). Eigene ADR vor dem Umbau.
 | ~~0.49.0~~ | Betrieb: TLS intern (interne CA) – **umgesetzt in 0.49.0** (ADR 0023) |
 | ~~0.50.0~~ | Topologie-Modell (`GET /topology`) und Plausibilitäts-Befunde – **umgesetzt in 0.50.0** |
 | ~~0.51.0~~ | Logische Zonen und Zonenplan im Tool, Zonenmatrix – **umgesetzt in 0.51.0** (ADR 0024; offen: Zonen je Hop in der Weg-Suche, Absicht je Dienst) |
-| ~~0.52.0~~ | Export (draw.io, SVG, PDF) und Versionen des Plans – **umgesetzt in 0.52.0** (offen: nach Confluence mit eigener Freigabe, draw.io zurück einlesen) |
+| ~~0.52.0~~ | Export (draw.io, SVG, PDF) und Versionen des Plans – **umgesetzt in 0.52.0** (Confluence: Word + draw.io in 0.71.0; offen: draw.io zurück einlesen) |
 | ~~0.53.0~~ | Kunden auf Zonen, Kunden-Benutzer in der Oberfläche – **umgesetzt in 0.53.0** (ADR 0018 Schritt 4; offen: Regeln nach dem Weg, Doku des Kunden ohne Gerätenamen, feinere Rollen) |
 | ~~0.54.0~~ | Zonen automatisch erkennen und vorschlagen – **umgesetzt in 0.54.0** (ADR 0024 Nr. 10) |
 | ~~0.55.0~~ | Grundschema der Zonen in der Namenskonvention (draw.io) – **umgesetzt in 0.55.0** (ADR 0024 Nr. 11; offen: Zonen je Kunde im Schema, Befund „ausserhalb des Schemas“) |

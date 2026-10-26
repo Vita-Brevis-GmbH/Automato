@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.71.0 – 2026-10-26
+
+Export für Confluence (Umplanung des Anwenders, Schritt 1; ADR 0026). Kein Schreibweg:
+Automato liefert Dateien, der Import in Confluence geschieht von Hand. Ohne Migration.
+
+- **Applikations-Doku:** Knopf „Für Confluence (Word + draw.io)“ lädt ein ZIP mit der Doku als
+  Word-Datei (Steckbrief, Übersicht, Systeme, EPGs, Regeln & Contracts, Abhängigkeiten,
+  Verbindungen Ende zu Ende, Doku nach Kategorien, ausgeblendete Regeln, Befunde) und dem
+  Netzwerkplan als draw.io-Datei. API `GET /applications/{id}/export?format=zip|docx` (nicht für
+  Kunden-Benutzer).
+- **Zonenplan:** Export zusätzlich als **Word** (Zonen, Übergänge, Zonenmatrix mit Absicht,
+  Diensten und Notiz, Netze ohne Zone) und „Für Confluence (Word + draw.io)“; wie die Ansicht
+  gefiltert bzw. von einer gespeicherten Version. `GET /zones/plan/export?format=docx|zip`.
+- Word-Dateien aus einem eigenen, kleinen Schreiber (`store/docx_writer.py`, keine neue
+  Abhängigkeit): Querformat A4, Überschriften mit Gliederung (Confluence übernimmt die
+  Struktur), Tabellen mit wiederholter Kopfzeile, keine Makros, keine eingebetteten Objekte.
+
 ## 0.70.0 – 2026-10-26
 
 Patchungen im Verkabelungsplan und Grundschema der Zonen in der Oberfläche bearbeiten (Wünsche

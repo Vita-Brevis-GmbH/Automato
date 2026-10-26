@@ -30,3 +30,4 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0023 | TLS intern mit eigener CA: Postgres/Redis nur TLS, Orchestrator und Web-UI per HTTPS, Gegenstellen gegen die CA geprüft (Entwurf) |
 | 0024 | Logische Zonen in Automato (Selektoren, längstes Präfix), Zonenmatrix mit Absicht je Paar, Zonenplan an Firewalls/VRFs, Export draw.io/SVG/PDF und Versionen (Entwurf) |
 | 0025 | Cisco-Switches strikt lesend über SSH (Exec je Befehl, Positivliste, Host-Schlüssel festhalten) und Verkabelung aus CDP/LLDP mit Befunden (Entwurf) |
+| 0026 | Export für Confluence: Word (.docx) und draw.io zum Import von Hand – kein Schreibweg |
