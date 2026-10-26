@@ -1921,6 +1921,22 @@ export interface TraceHop extends RoutingNode {
   // Verbund als ein Hop (0.29.0): je Firewall bzw. Variante (andere Interfaces) ein Eintrag
   parts?: TraceHop[];
   zone?: TraceZone | null; // logische Zone des Knotens (0.57.0)
+  l2?: L2Segment; // L2 bis zum nächsten Hop bzw. zum Anschluss des Ziels (0.64.0)
+}
+// L2-Abschnitt (0.64.0): Geräte vom Ausgang bis zum nächsten Gerät, je Gerät Ein- und Ausgang
+export interface L2Segment {
+  steps: { device: string; kind: string; read: boolean; in: string | null; out: string | null }[];
+  vlan: number | null;
+  text: string;
+  switches: number;
+}
+export interface L2Location {
+  mac: string;
+  device: string;
+  port: string;
+  vlan: number | null;
+  via: { device: string; port: string | null; kind: string; read: boolean } | null;
+  vm: { name: string; host: string | null } | null;
 }
 // Zonen in der Weg-Suche (0.57.0): Zone je Hop und die Kette Quelle → Hops → Ziel mit Übergängen
 export interface TraceZone {
@@ -1978,6 +1994,7 @@ export interface TracePath {
   policy?: { verdict: "allow" | "deny" | "depends" | "unknown"; text: string } | null; // Regeln auf dem Weg
   hops: TraceHop[];
   zones?: TraceZoneStep[]; // Zonen auf dem Weg (0.57.0)
+  l2_src?: L2Segment; // vom Anschluss der Quelle zum ersten Hop (0.64.0)
   end: {
     kind: "connected" | "fabric" | "exit" | "external" | "unknown" | "no_route" | "loop" | "max_hops";
     text: string;
@@ -1993,6 +2010,7 @@ export interface TraceResult {
   service_name?: string; // angegebenes Service-Objekt bzw. ACI-Filter (FT_https)
   // Zonen (0.57.0): Quell- und Zielzone, Absicht zwischen ihnen mit Urteil; null = keine Zonen
   zones?: { src: TraceZone[]; dst: TraceZone[]; intents: TraceZoneIntent[] } | null;
+  l2?: { src?: L2Location[]; dst?: L2Location[] }; // Anschluss von Quelle/Ziel (0.64.0)
 }
 
 // Name bzw. FQDN -> IP für die Weg-Suche (0.35.0): IPAM, Objekte der Firewalls, VMs; seit
@@ -2987,6 +3005,49 @@ export const fetchCablingEndpoints = (
   getJSON<{ total: number; summary: { macs: number; ports: number; vms: number; with_ip: number }; items: CablingEndpoint[] }>(
     `/api/cabling/endpoints${qs({ tenant_id: tenantId, device: f.device, port: f.port, vlan: f.vlan ?? undefined, q: f.q, uplinks: f.uplinks ? "true" : undefined, offset: f.offset, limit: f.limit })}`,
   );
+// L2-Sicht (0.64.0): Plan der Verkabelung und Ausfall
+export interface L2PlanNode {
+  key: string;
+  name: string;
+  kind: string;
+  read: boolean;
+  switching: boolean;
+  layer: number;
+  x: number;
+  y: number;
+  source: string | null;
+  vlan_present: boolean | null;
+}
+export interface L2PlanEdge {
+  a: string;
+  b: string;
+  ids: string[];
+  links: number;
+  state: LinkState;
+  issues: number;
+  lags: string[];
+  ports: [string, string][];
+  vlan?: "yes" | "no" | "partial" | "unknown";
+}
+export interface L2Plan {
+  nodes: L2PlanNode[];
+  edges: L2PlanEdge[];
+  width: number;
+  height: number;
+  vlan?: { vid: number; present: string[]; islands: string[][] };
+}
+export interface L2Failure {
+  device: string | null;
+  link: string | null;
+  main: string[];
+  parts: string[][];
+  cut_off: string[][];
+  cut_off_keys: string[];
+}
+export const fetchL2Plan = (tenantId: number, f: { ends?: boolean; vlan?: number | null } = {}) =>
+  getJSON<L2Plan>(`/api/cabling/plan${qs({ tenant_id: tenantId, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`);
+export const fetchL2Failure = (tenantId: number, f: { device?: string; link?: string }) =>
+  getJSON<L2Failure>(`/api/cabling/failure${qs({ tenant_id: tenantId, device: f.device, link: f.link })}`);
 export const locateEndpoint = (tenantId: number, q: string) =>
   getJSON<{ query: string; kind: string | null; ips: string[]; items: EndpointLocation[] }>(
     `/api/cabling/locate${qs({ tenant_id: tenantId, q })}`,

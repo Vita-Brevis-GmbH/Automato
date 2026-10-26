@@ -1291,7 +1291,7 @@ test("Verkabelung: Switches, Verbindungen mit Abweichungen, Ports und VLANs (0.6
   await page.click(".tabbar button:has-text('VLANs')");
   const dmz = page.locator("#cabling-vlans tbody tr[data-vlan='30']");
   await expect(dmz).toContainText("DMZ");
-  await expect(dmz).toContainText("sw-acc-01 · 1 · 2");
+  await expect(dmz).toContainText("sw-acc-01 · 2 · 2"); // seit 0.64.0 auch der DMZ-Webserver
   await expect(dmz).toContainText("sw-core-01 · 0 · 3");
 
   // Befunde in der Kategorie „Verkabelung“
@@ -1300,9 +1300,45 @@ test("Verkabelung: Switches, Verbindungen mit Abweichungen, Ports und VLANs (0.6
   expect(problems).toEqual([]);
 });
 
+test("L2-Sicht: Plan, Ausfall simulieren, VLAN-Weg, Befunde und L2 in der Weg-Suche (0.64.0)", async ({ page, problems }) => {
+  await page.goto("/#verkabelung");
+  await page.click(".tabbar button:has-text('Plan')");
+  const svg = page.locator("#cabling-plan-svg");
+  for (const name of ["sw-core-01", "sw-acc-01", "leaf-101", "fw-08", "esx01-chzrh1.example.ch"])
+    await expect(svg.locator(`g[data-node='${name}']`)).toHaveCount(1);
+  // Kern oben: sw-core-01 über sw-acc-01
+  const y = async (name: string) =>
+    Number((await svg.locator(`g[data-node='${name}']`).getAttribute("transform"))!.split(",")[1].replace(")", ""));
+  expect(await y("sw-core-01")).toBeLessThan(await y("sw-acc-01"));
+  // Ausfall des Kerns: Leaf und ESXi-Host getrennt
+  await svg.locator("g[data-node='sw-core-01']").click();
+  const fail = page.locator("#cabling-failure");
+  await expect(fail).toContainText("Fällt sw-core-01 aus");
+  // esx01 hängt auch am Leaf (ACI meldet vmnic0) - beide zusammen getrennt
+  await expect(fail).toContainText("ist getrennt: esx01-chzrh1.example.ch, leaf-101");
+  await page.click("button:has-text('Ausfall zurücksetzen')");
+  await expect(fail).toHaveCount(0);
+  // VLAN 20: Access-Ports auf beiden Switches, der Port-Channel lässt es durch
+  await page.getByLabel("VLAN hervorheben").fill("20");
+  await expect(page.locator("#cabling-vlan-islands")).toContainText("VLAN 20: durchgehend (sw-acc-01, sw-core-01)");
+  // Befunde der L2-Sicht
+  await page.goto("/#findings");
+  const group = page.locator(".fgroup", { hasText: "Verkabelung" });
+  await expect(group).toContainText("L2: Switch als einzelner Ausfallpunkt");
+  await expect(group).toContainText("L2: alle Kabel am selben Switch"); // sw-acc-01 nur am Kern
+  // Weg-Suche: Ziel in der DMZ - Anschluss und Weg über die Switches ab der Firewall
+  await page.goto("/#wege");
+  await page.getByPlaceholder("Quelle: IP, Netz oder Name").fill("10.10.0.5");
+  await page.getByPlaceholder("Ziel: IP, Netz oder Name").fill("10.30.0.10");
+  await page.click("button:has-text('Weg suchen')");
+  await expect(page.locator("#trace-l2-dst")).toContainText("Ziel hängt an sw-acc-01 Gi1/0/9 (VLAN 30)");
+  await expect(page.locator(".card[id^='trace-'] .l2-seg").first()).toContainText("L2: fw-08 dmz → sw-acc-01 (Te1/1/1 → Gi1/0/9)");
+  expect(problems).toEqual([]);
+});
+
 test("Endpunkte: Wo hängt … nach Name und IP, MACs je Port, VLAN am ESXi-Uplink (0.63.0)", async ({ page, problems }) => {
   await page.goto("/#verkabelung");
-  await expect(page.locator("#cabling-summary")).toContainText("2 Endpunkte");
+  await expect(page.locator("#cabling-summary")).toContainText("3 Endpunkte"); // seit 0.64.0 auch der DMZ-Webserver
   // Ports: Anzahl Endpunkte je Port öffnet den Reiter mit Port-Filter
   await page.click(".tabbar button:has-text('Ports')");
   const gi5 = page.locator("#cabling-ports tbody tr[data-port='Gi1/0/5']");
@@ -1313,8 +1349,8 @@ test("Endpunkte: Wo hängt … nach Name und IP, MACs je Port, VLAN am ESXi-Upli
   await expect(rows.first()).toContainText("a0:b1:c2:d3:e4:f5");
   await expect(rows.first()).toContainText("10.20.0.15");
   await page.locator("#cabling-endpoints-port button").click();
-  await expect(rows).toHaveCount(2); // ohne die Uplinks Po1/Po10
-  await expect(page.locator("#cabling-endpoints-summary")).toContainText("2 MACs an 2 Ports · 1 VMs");
+  await expect(rows).toHaveCount(3); // ohne die Uplinks Po1/Po10
+  await expect(page.locator("#cabling-endpoints-summary")).toContainText("3 MACs an 3 Ports · 1 VMs");
 
   // Wo hängt …: VM-Name -> ESXi-Host am Core-Switch; IP aus ARP -> Access-Port
   const locate = page.locator("#cabling-locate");

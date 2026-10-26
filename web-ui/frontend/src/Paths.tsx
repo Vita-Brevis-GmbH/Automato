@@ -8,6 +8,8 @@ import { useEffect, useState } from "react";
 import {
   fetchRoutingSummary,
   HopRules,
+  L2Location,
+  L2Segment,
   lookupRoute,
   NameHit,
   NameResult,
@@ -317,6 +319,46 @@ function PathOverview({ trace }: { trace: TraceResult }) {
   );
 }
 
+// L2 (0.64.0): Switches zwischen zwei Hops bzw. bis zum Anschluss des Ziels (aus CDP/LLDP und MAC-Tabelle)
+function L2Line({ seg, prefix = "L2" }: { seg: L2Segment; prefix?: string }) {
+  return (
+    <div className="faint l2-seg" title="Weg über die Switches (CDP/LLDP), im VLAN des Ausgangs">
+      {prefix}: {seg.text}
+      {seg.vlan ? ` · VLAN ${seg.vlan}` : ""}
+    </div>
+  );
+}
+
+function L2Ends({ trace }: { trace: TraceResult }) {
+  const ends = trace.l2;
+  const src = trace.paths.find((p) => p.l2_src)?.l2_src;
+  if (!ends?.src && !ends?.dst && !src) return null;
+  const where = (l: L2Location) =>
+    `${l.device} ${l.port}${l.vlan ? ` (VLAN ${l.vlan})` : ""}${l.via ? ` über ${l.via.device}${l.via.port ? ` ${l.via.port}` : ""}` : ""}`;
+  return (
+    <div className="card" id="trace-l2">
+      <div className="card-head">
+        <h2>Anschluss (L2)</h2>
+      </div>
+      <div className="card-body pad">
+        {ends?.src && (
+          <div id="trace-l2-src">
+            Quelle hängt an <b>{ends.src.map(where).join(" bzw. ")}</b>
+            {ends.src[0].vm ? <span className="faint"> · VM {ends.src[0].vm.name}</span> : null}
+          </div>
+        )}
+        {src && <L2Line seg={src} prefix="Weg zum ersten Hop" />}
+        {ends?.dst && (
+          <div id="trace-l2-dst">
+            Ziel hängt an <b>{ends.dst.map(where).join(" bzw. ")}</b>
+            {ends.dst[0].vm ? <span className="faint"> · VM {ends.dst[0].vm.name}</span> : null}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Ein Weg Hop für Hop: Knoten, Eingang, Entscheidung (Policy-Route bzw. Route), Ausgang
 function TraceCard({
   path,
@@ -493,7 +535,10 @@ function TraceCard({
                         </div>
                       )}
                     </td>
-                    <td>{h.egress ? <Port p={h.egress} /> : <Dash />}</td>
+                    <td>
+                      {h.egress ? <Port p={h.egress} /> : <Dash />}
+                      {h.l2 && <L2Line seg={h.l2} />}
+                    </td>
                     <td>
                       <HopRulesCell r={h.rules} />
                       {h.snat && (
@@ -952,6 +997,7 @@ function PathSearch({
             return (
               <>
                 <ZoneIntentCard trace={trace} />
+                <L2Ends trace={trace} />
                 {shown.length > 1 && <PathOverview trace={{ ...trace, paths: shown }} />}
                 {shown.map((p, i) => (
                   <TraceCard

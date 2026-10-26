@@ -72,6 +72,12 @@ class FindingType(enum.StrEnum):
     LINK_ONE_SIDED = "link_one_sided"
     # Endpunkte (0.63.0, `store/l2`): VLAN der VMs eines ESXi-Hosts fehlt an seinem Uplink
     UPLINK_VLAN_MISSING = "uplink_vlan_missing"
+    # L2-Sicht (0.64.0, `store/l2_topo`): Redundanz und VLAN-Wege
+    L2_SINGLE_LINK = "l2_single_link"
+    L2_SINGLE_SWITCH = "l2_single_switch"
+    L2_SINGLE_POINT = "l2_single_point"
+    LAG_DEGRADED = "lag_degraded"
+    VLAN_SPLIT = "vlan_split"
 
 
 class Severity(enum.StrEnum):
@@ -97,7 +103,7 @@ class SubjectKind(enum.StrEnum):
     PORTGROUP = "portgroup"
     NODE = "node"  # Knoten der Topologie (`<Quellsystem>|<Kontext>`, 0.50.0)
     LINK = "link"  # Verbindung der Verkabelung (`<Geraet>|<Port>~<Geraet>|<Port>`, 0.62.0)
-    # bzw. ein Port (`<Geraet>|<Port>`, 0.63.0)
+    # bzw. ein Port (`<Geraet>|<Port>`, 0.63.0), Geraet, Geraetepaar bzw. `vlan|<VLAN>` (0.64.0)
 
 
 class Finding(Base):

@@ -236,6 +236,27 @@ def _uplink_vlan(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+_L2_HINT = {
+    "l2_single_link": "Zweites Kabel (am besten an einen zweiten Switch bzw. das vPC-Paar) "
+    "vorsehen – fällt das Kabel oder ein Port aus, ist das Gerät getrennt.",
+    "l2_single_switch": "Kabel auf zwei Switches verteilen (vPC, Stack mit getrennten "
+    "Mitgliedern) – fällt der Switch aus, ist das Gerät getrennt.",
+    "l2_single_point": "Bewusster Kern ohne Redundanz? Sonst einen zweiten Weg zwischen den "
+    "Teilen vorsehen (zweiter Kern-Switch, Querverbindung). In der Verkabelung → Plan den "
+    "Ausfall simulieren.",
+    "lag_degraded": "Mitglied prüfen (Kabel, SFP, Gegenseite, err-disabled) – der Port-Channel "
+    "läuft ohne Reserve und mit weniger Bandbreite.",
+    "vlan_split": "VLAN auf den Trunks dazwischen erlauben (bzw. bewusst getrennte Netze mit "
+    "eigener VLAN-Nummer führen) – sonst erreichen die Geräte der Teile einander und das "
+    "Gateway nicht.",
+}
+
+
+def _l2(subject: str, d: dict, ftype: str) -> tuple[str, str]:
+    """L2-Sicht (0.64.0)."""
+    return f"{d.get('text') or subject}.", _L2_HINT[ftype]
+
+
 _TOPO_TEXT = {
     "topo_duplicate_ip": _dup_ip,
     "topo_mask_mismatch": _mask,
@@ -251,6 +272,7 @@ _TOPO_TEXT = {
     "link_lag_mismatch": _link,
     "link_one_sided": _link_one_sided,
     "uplink_vlan_missing": _uplink_vlan,
+    **{t: (lambda s, d, t=t: _l2(s, d, t)) for t in _L2_HINT},
 }
 
 

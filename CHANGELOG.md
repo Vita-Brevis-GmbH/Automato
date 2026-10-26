@@ -7,6 +7,25 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.64.0 – 2026-10-26
+
+Switching/Verkabelung weiter (ROADMAP, ADR 0025 Nr. 9): die L2-Sicht – Plan der Verkabelung,
+Ausfall simulieren, Redundanz und VLAN-Wege, L2 in der Weg-Suche. Ohne Migration, ohne neue
+Befehle auf den Geräten; alles aus der gelesenen Verkabelung abgeleitet.
+
+- **Reiter Plan** in der Verkabelung: Geräte nach Ebenen ab dem Kern, Linien je Gerätepaar
+  (mehrere Kabel bzw. Port-Channel „2×“, Abweichungen rot), Endgeräte ein-/ausblendbar.
+- **Ausfall simulieren:** Klick auf ein Gerät bzw. ein Kabel zeigt, was dann getrennt ist;
+  durch ESXi-Hosts und Firewalls führt kein Weg.
+- **VLAN hervorheben:** je Linie, ob sie das VLAN durchlässt, welche Geräte es nutzen und ob es
+  durchgehend ist oder in Inseln zerfällt.
+- **Neue Befunde** (Kategorie Verkabelung): nur ein Kabel, alle Kabel am selben Switch, Switch
+  als einzelner Ausfallpunkt, Port-Channel mit nicht verbundenem Mitglied, VLAN getrennt.
+- **Weg-Suche:** Karte „Anschluss (L2)“ mit dem Port von Quelle und Ziel (MAC-Tabelle/ARP) und
+  je Hop die Zeile „L2: …“ – der Weg über die Switches bis zum nächsten Hop bzw. bis zum Port des
+  Ziels, im VLAN des Ausgangs.
+- API `GET /cabling/plan`, `GET /cabling/failure`; L2-Abschnitte in `GET /routing/trace`.
+
 ## 0.63.0 – 2026-10-25
 
 Switching/Verkabelung weiter (ROADMAP, ADR 0025 Nr. 8): welches Gerät an welchem Port hängt –

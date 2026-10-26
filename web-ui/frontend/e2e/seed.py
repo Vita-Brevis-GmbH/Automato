@@ -298,6 +298,8 @@ def run(app) -> None:
                  description="Drucker 2.OG"),
             port("sw-acc-01", "Gi1/0/5", mode="access", untagged_vlan=20,
                  description="Server srv-phys"),
+            port("sw-acc-01", "Gi1/0/9", mode="access", untagged_vlan=30, description="DMZ web"),
+            port("sw-core-01", "Eth1/5", mode="access", untagged_vlan=20, description="Drucker"),
             port("sw-core-01", "Eth1/1", lag="Po10", speed="1000", duplex="full", **trunk),
             port("sw-core-01", "Eth1/2", lag="Po10", speed="100", duplex="full",
                  **{**trunk, "native_vlan": 99, "untagged_vlan": 99}),
@@ -323,9 +325,13 @@ def run(app) -> None:
             {"device": "sw-acc-01", "port": "Po1", "mac": "00:50:56:aa:00:01", "vlan": 10},
             {"device": "sw-acc-01", "port": "Gi1/0/5", "mac": "a0:b1:c2:d3:e4:f5", "vlan": 20},
             {"device": "sw-core-01", "port": "Po10", "mac": "a0:b1:c2:d3:e4:f5", "vlan": 20},
+            # L2 in der Weg-Suche (0.64.0): Webserver der DMZ an sw-acc-01
+            {"device": "sw-acc-01", "port": "Gi1/0/9", "mac": "a0:b1:c2:00:30:10", "vlan": 30},
         ],
         "arps": [{"device": "sw-core-01", "ip": "10.20.0.15", "mac": "a0:b1:c2:d3:e4:f5",
-                  "interface": "Vl20"}],
+                  "interface": "Vl20"},
+                 {"device": "sw-core-01", "ip": "10.30.0.10", "mac": "a0:b1:c2:00:30:10",
+                  "interface": "Vl30"}],
     }  # fmt: skip
     run_result(sw, "cisco_switch", inventory=switches, message="Switches: 2 gelesen")
 

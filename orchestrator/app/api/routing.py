@@ -54,7 +54,7 @@ from app.models import (
     TopoPolicyRoute,
     TopoRoute,
 )
-from app.store import exits, paths, policy_check, resolve, topology, zone_path
+from app.store import exits, l2_topo, paths, policy_check, resolve, topology, zone_path
 
 router = APIRouter(prefix="/routing", tags=["routing"])
 
@@ -310,6 +310,8 @@ def trace(
         result["service_name"] = service.strip()
     # Zonen je Hop, Uebergaenge und Absicht Quell-/Zielzone (0.57.0)
     zone_path.annotate(session, tid, result, src, dst, wanted, result.get("service_name"), graph)
+    # L2 zwischen den Hops, Anschluss von Quelle und Ziel (0.64.0)
+    l2_topo.annotate(session, tid, result, src, dst)
     return result
 
 

@@ -11,6 +11,9 @@
                           IPAM-Namen; Filter Geraet, Port, VLAN, Suche.
 - `GET /cabling/locate`   (0.63.0) „Wo haengt …“: MAC, IP oder Name -> Anschluss (Switch,
                           Port, VLAN), sonst hinter welcher Gegenstelle, frueher gesehen.
+- `GET /cabling/plan`     (0.64.0) Plan: Geraete nach Ebenen mit Kabeln; mit `vlan` je Kabel,
+                          ob es das VLAN durchlaesst, und die Inseln des VLANs.
+- `GET /cabling/failure`  (0.64.0) Ausfall eines Geraets bzw. Kabels: was ist dann getrennt?
 Lesen = `viewer`, mandantsgescoped; nicht fuer Kunden-Benutzer (Infrastruktur). Rein lesend.
 """
 
@@ -27,7 +30,7 @@ from app.db import get_session
 from app.models import InvVlan, MacEntry, SourceSystem
 from app.models.source_system import Platform
 from app.store import cabling as store
-from app.store import l2
+from app.store import l2, l2_topo
 
 router = APIRouter(prefix="/cabling", tags=["cabling"])
 STATES = ("both", "one_sided", "unread")
@@ -327,3 +330,36 @@ def locate(
     items = [{**loc.locate(mac), "reason": why} for mac, why in found["macs"].items()]
     items.sort(key=lambda x: (not x["locations"], not x["behind"], x["mac"]))
     return {"query": q, "kind": found["kind"], "ips": found["ips"], "items": items}
+
+
+@router.get("/plan")
+def plan(
+    tenant_id: int | None = None,
+    ends: bool = Query(True, description="auch Endgeraete (ESXi-Hosts, Firewalls, nicht gelesene)"),
+    vlan: int | None = Query(None, ge=1, le=4094),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Plan der Verkabelung: Knoten mit Ebene und Lage, Kanten je Geraetepaar."""
+    tid = _tenant(session, principal, tenant_id)
+    return l2_topo.L2(session, tid).plan(ends=ends, vlan=vlan)
+
+
+@router.get("/failure")
+def failure(
+    tenant_id: int | None = None,
+    device: str | None = Query(None, max_length=300),
+    link: str | None = Query(None, max_length=1000),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Ausfall simulieren: ohne das Geraet (Name bzw. Schluessel) oder das Kabel (Link-ID)."""
+    if bool(device) == bool(link):
+        raise HTTPException(status_code=422, detail="device oder link angeben")
+    tid = _tenant(session, principal, tenant_id)
+    topo = l2_topo.L2(session, tid)
+    if device and store.device_key(device) not in topo.devices:
+        raise HTTPException(status_code=404, detail="Gerät unbekannt")
+    if link and link not in topo.cab.links:
+        raise HTTPException(status_code=404, detail="Kabel unbekannt")
+    return topo.failure(device=device, link=link)

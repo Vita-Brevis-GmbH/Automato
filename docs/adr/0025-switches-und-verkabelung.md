@@ -2,8 +2,9 @@
 
 ## Status
 
-Entwurf (2026-10-25), umgesetzt in 0.62.0 und 0.63.0 (Endpunkte aus MAC-Tabelle und ARP,
-Nr. 8). Nächster Schritt der ROADMAP nach Zonen/Kunden und
+Entwurf (2026-10-25), umgesetzt in 0.62.0, 0.63.0 (Endpunkte aus MAC-Tabelle und ARP,
+Nr. 8) und 0.64.0 (L2-Sicht: Plan, Ausfall, Redundanz, VLAN-Wege, L2 in der Weg-Suche, Nr. 9).
+Nächster Schritt der ROADMAP nach Zonen/Kunden und
 Applikationen (Entscheid des Anwenders 2026-10-25: „Switching/Verkabelung“). Ergänzt ADR 0010
 (Inventar, Schreiben nur nach NetBox), ADR 0008/0009 (Agent, Zugangsdaten zentral) und ADR 0019
 (Topologie: bisher L3, jetzt die L1/L2-Sicht darunter).
@@ -108,6 +109,28 @@ Secrets, Open Source bevorzugt.
      beim Ausfall eines Uplinks das Netz. Nur Ports gelesener Switches mit bekannter
      VLAN-Konfiguration; ESXi-Hosts müssen dafür kein CDP senden.
    - Wie die übrigen Daten der Verkabelung nicht für Kunden-Benutzer.
+9. **L2-Sicht** (0.64.0, `store/l2_topo.py`), abgeleitet aus der Verkabelung, nichts gepflegt:
+   - **Graph**: Knoten = Geräte, Kante = alle Kabel zwischen zwei Geräten (Port-Channel bzw.
+     mehrere Kabel = eine Kante mit mehreren Links). Durch weiterleitende Geräte (Switch,
+     Leaf, Spine, Switch-/Router-Fähigkeit) führt ein Weg, durch Endgeräte (ESXi, Firewall,
+     Telefon) nicht – ein ESXi-Host an zwei Switches verbindet sie nicht.
+   - **Plan** (`GET /cabling/plan`): Ebenen ab dem Kern (Spines bzw. die meistvernetzten
+     Switches je Teilnetz), darunter je Abstand; Endgeräte unter ihrem obersten Nachbarn;
+     innerhalb der Ebene nach den Nachbarn darüber sortiert. Mit `vlan` je Kante ja/nein/
+     teilweise/unbekannt und die Inseln des VLANs.
+   - **Ausfall** (`GET /cabling/failure`): ohne ein Gerät bzw. ein Kabel – welche Teile
+     entstehen, was ist vom grössten Teil (meiste Switches) getrennt.
+   - **Befunde** (Kategorie Verkabelung): `l2_single_link` (Switch bzw. ESXi-Host mit einem
+     einzigen Kabel zu weiterleitenden Geräten), `l2_single_switch` (alle Kabel am selben
+     Switch; ESXi Warnung, Switch Information), `l2_single_point` (ohne den Switch zerfällt das
+     Netz; Information), `lag_degraded` (Port-Channel mit nicht verbundenen Mitgliedern),
+     `vlan_split` (VLAN an verbundenen Access-Ports bzw. SVI auf mehreren Switches, die Trunks
+     dazwischen sperren es; VLAN 1 und 1002–1005 nicht).
+   - **Weg-Suche**: zwischen zwei Hops der Weg über die Switches vom physischen Port des
+     Ausgangs (VLAN-Subinterface → Parent, Aggregat → Mitglieder) im VLAN des Subinterfaces bis
+     zum nächsten Gerät (`hop.l2`); Anschluss von Quelle und Ziel aus MAC-Tabelle/ARP
+     (`l2.src`/`l2.dst`) und der Weg vom letzten Hop bis zum Port des Ziels bzw. von der Quelle
+     zum ersten Hop. Nur wo die Kabel bekannt sind; sonst bleibt die Weg-Suche wie bisher.
 
 ## Konsequenzen
 
@@ -125,7 +148,8 @@ Secrets, Open Source bevorzugt.
   - **SNMPv3** (nur lesend, `authPriv`) als Alternative, wo SSH nicht erlaubt ist.
   - ~~MAC-Adress-Tabelle und ARP~~ – umgesetzt in 0.63.0 (Nr. 8). Offen: IPv6-Nachbarn
     (`show ipv6 neighbors`), ARP der VRFs auf IOS (`show ip arp vrf …`), ARP der FortiGate.
-  - L2-Sicht in der Topologie (Switches als Knoten, VLAN-Wege, Redundanz von Uplinks und
-    vPC-Paaren) und im Weg Hop für Hop.
+  - ~~L2-Sicht~~ – umgesetzt in 0.64.0 (Nr. 9). Offen: vPC-Paar als ein logischer Switch
+    (Redundanz über beide Peers bewerten), Spanning Tree (blockierte Ports lesen), mehrere
+    gleichzeitige Ausfälle, Export des Plans (draw.io/SVG wie der Zonenplan).
   - Weitere Hersteller (z. B. Aruba, Juniper) über dieselbe Struktur (Positivliste,
     Vorlagen).

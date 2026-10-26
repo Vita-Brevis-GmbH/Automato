@@ -1,8 +1,9 @@
 // Verkabelung (0.62.0, ADR 0025): Verbindungen zwischen Geräten aus CDP/LLDP aller Quellen (Switches,
 // ACI-Leafs), beidseitig bzw. einseitig gemeldet, mit Abweichungen zwischen zwei gelesenen Switches
 // (Speed, Duplex, VLANs, Port-Channel); Geräte, Ports der Switches und VLANs. Seit 0.63.0 Endpunkte aus
-// MAC-Tabelle und ARP: „Wo hängt …“ und die MACs je Port (ohne Uplinks). Rein lesend.
-import { FormEvent, useEffect, useState } from "react";
+// MAC-Tabelle und ARP: „Wo hängt …“ und die MACs je Port (ohne Uplinks). Seit 0.64.0 der Plan (L2-Sicht):
+// Geräte nach Ebenen, VLAN-Wege mit Inseln, Ausfall eines Geräts bzw. Kabels simulieren. Rein lesend.
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   CablingDevice,
   CablingEnd,
@@ -17,6 +18,11 @@ import {
   fetchCablingLinks,
   fetchCablingPorts,
   fetchCablingVlans,
+  fetchL2Failure,
+  fetchL2Plan,
+  L2Failure,
+  L2Plan,
+  L2PlanEdge,
   LinkState,
   locateEndpoint,
 } from "./api";
@@ -24,9 +30,10 @@ import { Pager, useDebounced } from "./Objects";
 import { Dash, Empty, ErrorBox, fmtTime, Loading, Note, PageHead } from "./ui";
 
 const PAGE = 200;
-type Tab = "links" | "devices" | "ports" | "endpoints" | "vlans";
+type Tab = "plan" | "links" | "devices" | "ports" | "endpoints" | "vlans";
 const TABS: { key: Tab; label: string }[] = [
   { key: "links", label: "Verbindungen" },
+  { key: "plan", label: "Plan" },
   { key: "devices", label: "Geräte" },
   { key: "ports", label: "Ports" },
   { key: "endpoints", label: "Endpunkte" },
@@ -118,6 +125,7 @@ export default function Cabling({ tenantId, tenantLabel }: { tenantId: number | 
           </button>
         ))}
       </div>
+      {tenantId !== null && tab === "plan" && <PlanTab tenantId={tenantId} />}
       {tenantId !== null && tab === "links" && (
         <LinksTab tenantId={tenantId} devices={data?.items ?? []} device={device} onDevice={setDevice} />
       )}
@@ -642,6 +650,193 @@ function VlansTab({ tenantId }: { tenantId: number }) {
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// Plan (0.64.0): Geräte nach Ebenen ab dem Kern, Kabel je Gerätepaar; VLAN hervorheben (Inseln), Ausfall
+// eines Geräts (Klick) bzw. Kabels (Klick auf die Linie) simulieren - getrennte Geräte blass.
+const NODE_W = 160;
+const NODE_H = 44;
+const VLAN_EDGE: Record<string, [string, string]> = {
+  yes: ["var(--good)", "lässt das VLAN durch"],
+  no: ["var(--crit)", "sperrt das VLAN"],
+  partial: ["var(--warn)", "nur ein Teil der Kabel lässt das VLAN durch"],
+  unknown: ["var(--faint)", "Konfiguration unbekannt"],
+};
+
+function edgeColor(e: L2PlanEdge): string {
+  if (e.vlan) return VLAN_EDGE[e.vlan][0];
+  if (e.issues) return "var(--crit)";
+  if (e.state === "one_sided") return "var(--warn)";
+  return "var(--faint)";
+}
+
+function PlanTab({ tenantId }: { tenantId: number }) {
+  const [ends, setEnds] = useState(true);
+  const [vlan, setVlan] = useState("");
+  const vlanNo = useDebounced(vlan);
+  const [plan, setPlan] = useState<L2Plan | null>(null);
+  const [fail, setFail] = useState<L2Failure | null>(null);
+  const [failed, setFailed] = useState<{ device?: string; edge?: string } | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  useEffect(() => {
+    let live = true;
+    const v = /^\d+$/.test(vlanNo) ? Number(vlanNo) : null;
+    setPlan(null);
+    fetchL2Plan(tenantId, { ends, vlan: v })
+      .then((d) => live && setPlan(d))
+      .catch((e) => live && setErr(e));
+    return () => {
+      live = false;
+    };
+  }, [tenantId, ends, vlanNo]);
+  const byKey = useMemo(() => new Map((plan?.nodes ?? []).map((n) => [n.key, n])), [plan]);
+  const main = useMemo(() => new Set(fail?.main ?? []), [fail]);
+  const simulate = (f: { device?: string; link?: string; edge?: string }) => {
+    setErr(null);
+    setFailed({ device: f.device, edge: f.edge });
+    fetchL2Failure(tenantId, { device: f.device, link: f.link }).then(setFail).catch(setErr);
+  };
+  const reset = () => {
+    setFail(null);
+    setFailed(null);
+  };
+  const dim = (name: string) => fail !== null && !main.has(name) && name !== failed?.device;
+  return (
+    <div className="card" id="cabling-plan">
+      <div className="card-head">
+        <h2>Plan</h2>
+        <span style={{ marginLeft: "auto", display: "inline-flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <label className="check">
+            <input type="checkbox" checked={ends} onChange={(e) => setEnds(e.target.checked)} /> Endgeräte
+          </label>
+          <input className="input" style={{ width: 110 }} aria-label="VLAN hervorheben" placeholder="VLAN" value={vlan} onChange={(e) => setVlan(e.target.value)} />
+          {fail && (
+            <button className="btn btn-sm btn-ghost" onClick={reset}>
+              Ausfall zurücksetzen
+            </button>
+          )}
+        </span>
+      </div>
+      <div className="card-body pad">
+        <ErrorBox error={err} onClose={() => setErr(null)} />
+        <p className="faint" style={{ marginTop: 0 }}>
+          Kern oben (meistvernetzte Switches bzw. Spines), darunter je Abstand die weiteren Switches, Endgeräte unter ihrem
+          obersten Nachbarn. Klick auf ein Gerät bzw. ein Kabel simuliert dessen Ausfall.
+        </p>
+        {fail && (
+          <div className="note" id="cabling-failure">
+            {failed?.device ? <>Fällt <b>{failed.device}</b> aus</> : <>Fällt das Kabel <b>{failed?.edge}</b> aus</>}
+            {fail.cut_off.length === 0 ? (
+              <>: nichts getrennt – es gibt einen anderen Weg.</>
+            ) : (
+              <>
+                , ist getrennt: {fail.cut_off.map((p) => p.join(", ")).join(" | ")}
+                {fail.parts.length > 2 && <span className="faint"> ({fail.parts.length} Teile)</span>}
+              </>
+            )}
+          </div>
+        )}
+        {plan?.vlan && (
+          <div className={`note ${plan.vlan.islands.length > 1 ? "warn" : ""}`} id="cabling-vlan-islands">
+            VLAN {plan.vlan.vid}:{" "}
+            {plan.vlan.present.length === 0
+              ? "an keinem Access-Port bzw. SVI der gelesenen Switches"
+              : plan.vlan.islands.length > 1
+                ? `getrennt in ${plan.vlan.islands.length} Inseln – ${plan.vlan.islands.map((i) => i.join(", ")).join(" | ")}`
+                : `durchgehend (${plan.vlan.present.join(", ")})`}
+          </div>
+        )}
+        {plan === null ? (
+          <Loading />
+        ) : plan.nodes.length === 0 ? (
+          <Empty title="keine Geräte mit Verbindungen" />
+        ) : (
+          <div style={{ overflow: "auto", maxHeight: "70vh" }}>
+            <svg width={Math.max(plan.width, 400)} height={plan.height} id="cabling-plan-svg" role="img" aria-label="Plan der Verkabelung">
+              {plan.edges.map((e) => {
+                const a = byKey.get(e.a);
+                const b = byKey.get(e.b);
+                if (!a || !b) return null;
+                const label = `${a.name} ↔ ${b.name}`;
+                const off = dim(a.name) || dim(b.name);
+                const isFailed = failed?.edge === label;
+                const title = `${label}: ${e.links} Kabel${e.lags.length ? ` (${e.lags.join(", ")})` : ""}${e.vlan ? ` – ${VLAN_EDGE[e.vlan][1]}` : ""}${e.issues ? ` – ${e.issues} Abweichungen` : ""}`;
+                return (
+                  <g
+                    key={`${e.a}~${e.b}`}
+                    className="plan-edge clickable"
+                    data-edge={label}
+                    opacity={off ? 0.25 : 1}
+                    onClick={() => {
+                      if (e.links === 1) {
+                        simulate({ link: e.ids[0], edge: label });
+                      } else {
+                        setFail(null);
+                        setFailed({ edge: label });
+                      }
+                    }}
+                  >
+                    <title>{title}</title>
+                    <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={12} />
+                    <line
+                      x1={a.x}
+                      y1={a.y}
+                      x2={b.x}
+                      y2={b.y}
+                      stroke={isFailed ? "var(--crit)" : edgeColor(e)}
+                      strokeWidth={1 + Math.min(e.links, 4)}
+                      strokeDasharray={e.vlan === "no" || isFailed ? "6 4" : e.vlan === "unknown" ? "2 4" : undefined}
+                    />
+                    {e.links > 1 && (
+                      <text x={(a.x + b.x) / 2 + 6} y={(a.y + b.y) / 2 - 4} className="plan-edge-label" fontSize={11} fill="var(--muted)">
+                        {e.links}×
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+              {plan.nodes.map((n) => {
+                const off = dim(n.name);
+                const isFailed = failed?.device === n.name;
+                return (
+                  <g
+                    key={n.key}
+                    className="plan-node clickable"
+                    data-node={n.name}
+                    transform={`translate(${n.x - NODE_W / 2},${n.y - NODE_H / 2})`}
+                    opacity={off ? 0.3 : 1}
+                    onClick={() => simulate({ device: n.name })}
+                  >
+                    <title>{`${n.name} – ${KIND[n.kind] ?? n.kind}${n.source ? ` (${n.source})` : ""}`}</title>
+                    <rect
+                      width={NODE_W}
+                      height={NODE_H}
+                      rx={6}
+                      fill={n.switching ? "var(--surface-2)" : "var(--surface)"}
+                      stroke={isFailed ? "var(--crit)" : n.vlan_present ? "var(--good)" : n.switching ? "var(--accent)" : "var(--border-strong)"}
+                      strokeWidth={isFailed || n.vlan_present ? 3 : 1.5}
+                      strokeDasharray={n.read ? undefined : "4 3"}
+                    />
+                    <text x={NODE_W / 2} y={19} textAnchor="middle" fontSize={12} fontWeight={600} fill="var(--fg)">
+                      {n.name.length > 22 ? `${n.name.slice(0, 21)}…` : n.name}
+                    </text>
+                    <text x={NODE_W / 2} y={35} textAnchor="middle" fontSize={10} fill="var(--muted)">
+                      {isFailed ? "fällt aus" : (KIND[n.kind] ?? n.kind)}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+        )}
+        {failed?.edge && !fail && (
+          <p className="faint" id="cabling-failure-multi">
+            {failed.edge}: mehrere Kabel – fällt eines aus, bleiben die anderen.
+          </p>
+        )}
       </div>
     </div>
   );
