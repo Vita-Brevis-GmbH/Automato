@@ -7,6 +7,39 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.74.1 – 2026-10-26
+
+Korrekturen nach der Rückmeldung des Anwenders (Wartezeiten von Minuten beim Speichern,
+Vorschläge, Objekt-Filter, IPAM). Ohne Migration.
+
+- **Speichern ohne Warten:** Ändern, Anlegen, Löschen einer Applikation, Mitglieder, Vorschlag
+  übernehmen und Regel zuordnen speichern sofort und antworten; die Abweichungen Regel ↔ Weg
+  und die Findings der Kunden ziehen danach im Hintergrund nach (`store/app_refresh.py`,
+  eigene Session, mehrere Änderungen kurz nacheinander = ein Durchgang, je Mandant einer
+  zugleich). Statt der ganzen Kunden-Ableitung ordnet `customers.derive_findings` nur die
+  Findings neu zu (gleiches Ergebnis, getestet).
+- **Mitglieder:** die Liste im Drawer zeigt die neuen Mitglieder sofort („speichere…“ während
+  der Anfrage) – vorher wartete die Antwort auf die Neuberechnung und wirkte leer.
+- **Doku schneller:** das Routing liegt für viele Abfragen als Index im Speicher (je Kontext
+  die besten RIB-Routen nach Präfixlänge, Routen erst bei Bedarf geladen; ab 16 Abfragen je
+  Kontext); die Kunden-Ableitung liest Objekte und Findings einmal für alle Kunden und merkt
+  sich ausgewertete Adressen. Gemessen (Postgres, 620 EPGs, 2000 Contracts, 3000 VMs,
+  3000 Firewall-Regeln, 21 000 Routen, 20 Kunden): Kunden-Ableitung 15,5 s → 4,4 s, nur
+  Findings 1,0 s; Speichern einer Applikation vorher 13–14 s, jetzt ohne Warten auf die
+  Neuberechnung. Die Doku selbst braucht dort ≈ 1,5 s, die Verbindungen Ende zu Ende ≈ 3 s –
+  sie laden jetzt erst, wenn ihr Bereich offen ist. Messskript `scripts/bench_applications.py`.
+- **Vorschläge je Tenant:** gleiche Projektnummer in verschiedenen ACI-Tenants (z. B. `AP_001`)
+  ergibt getrennte Vorschläge („Projekt 001 · TE_a“); Server zur Nummer gehen zum einzigen
+  Tenant mit der Nummer, sonst in einen eigenen Vorschlag. Schlüssel `<Tenant>|<Nummer>`
+  (`key`, `tenant` in `GET /applications/suggestions`, Übernehmen mit dem Schlüssel; die
+  Nummer allein nur, wenn eindeutig).
+- **Objekte:** beim Wechsel des Reiters (z. B. Adressobjekte → Gruppen) fällt der Typ-Filter
+  sofort weg; ältere Antworten werden verworfen – die Liste zeigt nicht mehr „nichts“.
+- **IPAM-Container:** aus Infoblox auch `networkcontainer`/`ipv6networkcontainer` (Status
+  „container“, wie die Container-Prefixe in NetBox) – ein weiter unterteiltes Netz fehlt nicht
+  mehr im IPAM (falscher Befund `subnet_not_in_ipam`); der DDI-Spiegel nach NetBox legt sie als
+  Container an. Braucht den Agent dieser Version.
+
 ## 0.74.0 – 2026-10-26
 
 Netzwerkplan der Applikation kompakt (Rückmeldung des Anwenders: zu gross, zu viele Linien).

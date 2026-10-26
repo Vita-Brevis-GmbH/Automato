@@ -173,6 +173,45 @@ def test_vorschlag_uebernehmen_und_ergaenzen(client, session_factory):
     assert client.post(f"/applications/suggestions/999/accept?tenant_id={tid}").status_code == 404
 
 
+def test_vorschlaege_je_tenant_getrennt(client, session_factory):
+    """0.74.1 (Anwender): AP_002 in zwei Tenants hat ausser der Nummer nichts gemein - je
+    Tenant ein Vorschlag; Server ohne Tenant bei mehreren Tenants eine eigene Gruppe."""
+    tid, _ = _seed(client, session_factory)
+    other = {**ACI_RESULT, "epgs": [*ACI_RESULT["epgs"],
+                                    {"name": "EG_x", "dn": "uni/tn-TE_b/ap-AP_002/epg-EG_x",
+                                     "tenant": "TE_b", "ap": "AP_002"}]}  # fmt: skip
+    apic = next(x for x in client.get("/systems", params={"tenant_id": tid}).json()
+                if x["platform"] == "cisco_aci")  # fmt: skip
+    body = {"platform": "cisco_aci", "tenant_id": tid, "source_system_id": apic["id"]}
+    run_id = client.post("/jobs/collect", json=body).json()["run_id"]
+    r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=other)
+    assert r.json()["status"] == "completed", r.text
+    sug = client.get("/applications/suggestions", params={"tenant_id": tid}).json()
+    got = {s["key"]: (s["name"], sorted(m["ref"] for m in s["members"])) for s in sug}
+    assert got == {
+        "002": ("Projekt 002", ["H_app01-002-test1.example.ch"]),  # Server: kein Tenant
+        "TE_a|002": ("Projekt 002 · TE_a", ["TE_a/AP_002"]),
+        "TE_b|002": ("Projekt 002 · TE_b", ["TE_b/AP_002"]),
+        "TE_a|003": ("Projekt 003", ["H_dbs01-003-test1.example.ch", "TE_a/AP_003"]),
+    }
+    # die Nummer allein ist hier mehrdeutig; je Schluessel eine eigene Applikation
+    assert (
+        client.post(f"/applications/suggestions/002/accept?tenant_id={tid}", headers=OP).status_code
+        == 200
+    )  # fmt: skip (nur die Server-Gruppe)
+    r = client.post(f"/applications/suggestions/TE_b%7C002/accept?tenant_id={tid}", headers=OP)
+    assert r.status_code == 200, r.text
+    assert (r.json()["name"], r.json()["code"]) == ("Projekt 002 · TE_b", "002")
+    left = client.get("/applications/suggestions", params={"tenant_id": tid}).json()
+    assert [(s["key"], s["name"]) for s in left] == [("TE_a|002", "Projekt 002 · TE_a"),
+                                                     ("TE_a|003", "Projekt 003")]  # fmt: skip
+    # der Vorschlag ergaenzt nur die Applikation seines Tenants
+    assert all(s["application_id"] is None for s in left)
+    # Nummer allein eindeutig (nur ein Tenant): wie bisher
+    r = client.post(f"/applications/suggestions/003/accept?tenant_id={tid}", headers=OP)
+    assert r.status_code == 200 and r.json()["name"] == "Projekt 003"
+
+
 def test_vorschlag_name_aus_woerterbuch(client, session_factory):
     tid, _ = _seed(client, session_factory)
     s = session_factory()
@@ -276,6 +315,22 @@ def test_rechte_und_mandanten(client, session_factory):
     assert r.status_code == 200 and r.json()["applications"] == 1
 
 
+def test_alle_kandidaten_zuordenbar(client, session_factory):
+    """0.74.1 (Anwender: „nach Hinzufügen bleibt die Liste Mitglieder leer“): jeder Kandidat
+    der Auswahl laesst sich zuordnen und steht danach sofort in den Mitgliedern."""
+    tid, _ = _seed(client, session_factory)
+    app = client.post(f"/applications?tenant_id={tid}", json={"name": "Alle"}, headers=OP).json()
+    cands = client.get("/applications/candidates", params={"tenant_id": tid}).json()
+    assert {c["kind"] for c in cands} == {"ap", "epg", "host"}
+    body = {"members": [{"kind": c["kind"], "ref": c["ref"]} for c in cands]}
+    r = client.post(f"/applications/{app['id']}/members", json=body, headers=OP)
+    assert r.status_code == 200, r.text
+    got = {(m["kind"], m["ref"]) for m in r.json()["members"]}
+    assert got == {(c["kind"], c["ref"]) for c in cands}
+    again = client.get(f"/applications/{app['id']}").json()
+    assert len(again["members"]) == len(cands) and all(m["exists"] for m in again["members"])
+
+
 def test_epg_lage_mit_leaf_port_und_vlan(client, session_factory):
     tid, _ = _seed(client, session_factory)
     (row,) = client.get("/rules", params={"tenant_id": tid, "domain": "aci_contract"}).json()
@@ -286,3 +341,21 @@ def test_epg_lage_mit_leaf_port_und_vlan(client, session_factory):
     assert (port["device"], port["name"], port["neighbor"]) == ("leaf101", "eth1/10", "esx01")
     db = next(e["epg"] for e in detail["endpoints"] if e["role"] == "dst")
     assert db["ports"] == [] and db["vlans"] == []
+
+
+def test_nachziehen_im_hintergrund_zusammengefasst(session_factory):
+    """0.74.1: Befunde nach dem Speichern hinter der Antwort; eine noch nicht begonnene
+    Aktualisierung derselben Applikation wird nicht doppelt vorgemerkt."""
+    from app.store import app_refresh
+    from fastapi import BackgroundTasks
+
+    tasks = BackgroundTasks()
+    assert app_refresh.schedule(tasks, session_factory, 1, 7) is True
+    assert app_refresh.schedule(tasks, session_factory, 1, 7) is False
+    assert app_refresh.schedule(tasks, session_factory, 1, 8) is True
+    assert len(tasks.tasks) == 2 and app_refresh.pending(1, 7)
+    for t in tasks.tasks:
+        t.func(*t.args, **t.kwargs)  # ohne Applikationen: nichts zu tun, kein Fehler
+    assert not app_refresh.pending(1, 7)
+    assert app_refresh.schedule(tasks, session_factory, 1, 7) is True  # danach wieder
+    app_refresh.run(session_factory, 1, 7)

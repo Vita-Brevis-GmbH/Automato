@@ -264,31 +264,69 @@ def candidates(
     return out
 
 
+def _tenant_of(c: Candidate) -> str | None:
+    """ACI-Tenant eines Kandidaten (AP `Tenant/AP`), Server ohne Tenant."""
+    return c.ref.split("/", 1)[0] if c.kind == "ap" and "/" in c.ref else None
+
+
+def _app_tenants(app: Application) -> set[str]:
+    """ACI-Tenants der Mitglieder einer Applikation (AP `Tenant/AP`, EPG `uni/tn-<T>/…`)."""
+    out = set()
+    for m in app.members:
+        if m.kind == "ap" and "/" in m.ref:
+            out.add(m.ref.split("/", 1)[0])
+        elif m.kind == "epg" and m.ref.startswith("uni/tn-"):
+            out.add(m.ref[len("uni/tn-") :].split("/", 1)[0])
+    return out
+
+
 def suggestions(session: Session, tenant_id: int) -> list[dict]:
-    """Nicht zugeordnete APs und Server, gruppiert nach Projektnummer."""
-    groups: dict[str, list[Candidate]] = defaultdict(list)
+    """Nicht zugeordnete APs und Server, gruppiert nach Projektnummer - je ACI-Tenant getrennt
+    (0.74.1, Anwender: `AP_001` in verschiedenen Tenants hat ausser der Nummer nichts gemein).
+    Server ohne Tenant gehoeren zur Gruppe ihrer Nummer, wenn es genau eine gibt, sonst eine
+    eigene Gruppe. Schluessel `key` = `<Tenant>|<Nummer>` bzw. die Nummer."""
+    groups: dict[tuple[str | None, str], list[Candidate]] = defaultdict(list)
     for c in candidates(session, tenant_id):
         if c.kind in ("ap", "host") and c.project and not c.applications:
-            groups[c.project].append(c)
+            groups[(_tenant_of(c), c.project)].append(c)
     if not groups:
         return []
-    by_code = {
-        a.code: a
-        for a in session.scalars(
-            select(Application).where(Application.tenant_id == tenant_id).order_by(Application.id)
-        )
-        if a.code
-    }
+    tenants: dict[str, set[str]] = defaultdict(set)
+    for t, nr in groups:
+        if t is not None:
+            tenants[nr].add(t)
+    for t, nr in list(groups):
+        if t is None and len(tenants[nr]) == 1:
+            groups[(next(iter(tenants[nr])), nr)] += groups.pop((None, nr))
+    by_code: dict[str, list[Application]] = defaultdict(list)
+    for a in session.scalars(
+        select(Application).where(Application.tenant_id == tenant_id).order_by(Application.id)
+    ):
+        if a.code:
+            by_code[a.code].append(a)
     names = profile_store.entries_for_tenant(session, tenant_id, PROJECT_DICTIONARY)
     out = []
-    for nr in sorted(groups):
-        app = by_code.get(nr)
+    for t, nr in sorted(groups, key=lambda k: (k[1], k[0] or "")):
+        apps = by_code.get(nr, [])
+        # geteilt: die Nummer gibt es in mehreren Tenants - auch bei bestehenden Applikationen
+        known = tenants[nr].union(*(_app_tenants(a) for a in apps)) | ({t} if t else set())
+        shared = len(known) + (1 if (None, nr) in groups else 0) > 1
+        base = names.get(nr) or f"Projekt {nr}"
+        name = f"{base} · {t}" if shared and t else base
+        if shared:  # die Applikation dieses Tenants bzw. mit diesem Namen
+            app = next((a for a in apps if a.name == name), None) or next(
+                (a for a in apps if t and _app_tenants(a) == {t}), None
+            )
+        else:
+            app = apps[0] if apps else None
         out.append(
             {
+                "key": f"{t}|{nr}" if t else nr,
                 "code": nr,
-                "name": app.name if app else (names.get(nr) or f"Projekt {nr}"),
+                "tenant": t,
+                "name": app.name if app else name,
                 "application_id": app.id if app else None,
-                "members": groups[nr],
+                "members": groups[(t, nr)],
             }
         )
     return out
@@ -364,10 +402,16 @@ def accept_suggestion(
     session: Session, tenant_id: int, code: str, name: str | None = None
 ) -> tuple[Application, int, bool] | None:
     """Vorschlag uebernehmen: neue Applikation (Kuerzel = Projektnummer) bzw. Mitglieder der
-    bestehenden ergaenzen. Der Vorschlag wird serverseitig neu berechnet. None = keiner."""
-    sug = next((s for s in suggestions(session, tenant_id) if s["code"] == code), None)
+    bestehenden ergaenzen. `code` = Schluessel des Vorschlags (`<Tenant>|<Nummer>`) bzw. die
+    Nummer, wenn sie eindeutig ist. Der Vorschlag wird serverseitig neu berechnet. None = keiner."""
+    found = suggestions(session, tenant_id)
+    sug = next((s for s in found if s["key"] == code), None)
+    if sug is None:  # nur die Nummer: eindeutig, wenn sie in einem Tenant vorkommt
+        same = [s for s in found if s["code"] == code]
+        sug = same[0] if len(same) == 1 else None
     if sug is None:
         return None
+    code = sug["code"]
     created = sug["application_id"] is None
     if created:
         app_name = (name or sug["name"]).strip()

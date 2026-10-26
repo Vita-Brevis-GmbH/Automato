@@ -7,6 +7,8 @@ Umgebung: ein APIC mit TE_ka (EPG_web in AP_007, EPG_db in AP_900), TE_kb (EPG_a
 
 import copy
 
+from app.store import customers
+
 ADMIN = {"X-Dev-Roles": "admin"}
 OP = {"X-Dev-Roles": "operator"}
 TOKEN = {"X-Internal-Token": "dev-only-token"}
@@ -276,7 +278,7 @@ FWC = {
 }  # fmt: skip
 
 
-def test_ipam_merkmale_nat_und_findings(client):
+def test_ipam_merkmale_nat_und_findings(client, session_factory):
     """0.31.0: Netze aus dem IPAM ueber Tenant, VRF bzw. Netzansicht und Tag bzw. Attribut;
     NAT ueber die interne IP; Findings ueber ihr Subjekt."""
     tid = client.post("/tenants", json={"name": "Umgebung 3"}, headers=ADMIN).json()["id"]
@@ -311,6 +313,14 @@ def test_ipam_merkmale_nat_und_findings(client):
     findings = _members(client, c["id"], "finding")
     assert "rule_incomplete: c-leer (VDOM kunde-c)" in findings  # Regel des Kunden
     assert not any("10.83" in f for f in findings)
+    # 0.74.1: nur die Findings neu zuordnen ergibt dasselbe wie die ganze Ableitung
+    session = session_factory()
+    try:
+        assert customers.derive_findings(session, tid) == len(findings)
+        session.commit()
+    finally:
+        session.close()
+    assert _members(client, c["id"], "finding") == findings
     # ausschliessen ueber das IPAM-Merkmal
     out = preview(("ipam_tenant", "Kunde C"))
     body = {"tenant_id": tid, "selectors": [

@@ -173,7 +173,7 @@ steht die Tabelle in der Lauf-Meldung.
 
 | Quelle | gelesen | → Referenz-Eintrag |
 |---|---|---|
-| Infoblox WAPI (`/wapi/v2.x/…`, seitenweise `_paging`) | `network`, `ipv6network`, `range`, `record:host`, `record:a`, `record:aaaa`, `record:ptr`, `fixedaddress` (+ Extensible Attributes Site/VLAN) | `reference_record` (prefix, range, host, a/ptr, fixed_address; DNS-Name, Beschreibung, VLAN, Site) |
+| Infoblox WAPI (`/wapi/v2.x/…`, seitenweise `_paging`) | `network`, `ipv6network`, seit 0.74.1 `networkcontainer`, `ipv6networkcontainer` (Status `container`), `range`, `record:host`, `record:a`, `record:aaaa`, `record:ptr`, `fixedaddress` (+ Extensible Attributes Site/VLAN) | `reference_record` (prefix, range, host, a/ptr, fixed_address; DNS-Name, Beschreibung, VLAN, Site) |
 | NetBox REST (`/api/ipam/…`, seitenweise) | `prefixes`, `ip-addresses`, `ip-ranges`, `vlans` (+ Tenant, Scope/Site, Tags, Custom Fields, Link; seit 0.54.0 die Rolle des Prefixes als Merkmal `role`) | `reference_record` (prefix, ip_address, range, vlan) |
 
 Der Agent lädt den Stand in Teilen hoch (`POST /internal/collector-runs/{id}/references`); erst

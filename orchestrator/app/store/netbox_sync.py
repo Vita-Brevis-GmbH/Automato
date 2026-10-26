@@ -216,6 +216,10 @@ def _dns(value: str | None) -> str:
     return name if name and len(name) <= 255 and _DNS.match(name) else ""
 
 
+def _prefix_status(r) -> str:
+    return "container" if r.status == "container" else "active"
+
+
 def _cut(value: str | None, n: int) -> str:
     return (value or "")[:n]
 
@@ -654,7 +658,8 @@ def _mirror_wants(
                 "prefix",
                 value,
                 f"Netz {value}",
-                {"prefix": value, "status": "active", "description": desc},
+                # Network Container der DDI bleiben Container (0.74.1)
+                {"prefix": value, "status": _prefix_status(r), "description": desc},
                 {"vrf": None, "vlan": None, "tenant": tenant_ref},
             )
         )

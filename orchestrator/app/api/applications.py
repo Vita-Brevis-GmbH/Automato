@@ -8,10 +8,10 @@ import re
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit
 from app.api.appdoc import DocTableOut, SiteRef
@@ -20,10 +20,10 @@ from app.api.customer_filter import ids as view_ids
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.models import Application, Rule, Site, SourceSystem, Tenant
 from app.schemas.rules import RuleOut
-from app.store import app_paths, app_plan, sites, word_export
+from app.store import app_paths, app_plan, app_refresh, sites, word_export
 from app.store import applications as store
 
 router = APIRouter(prefix="/applications", tags=["applications"])
@@ -107,7 +107,9 @@ class CandidateOut(BaseModel):
 
 
 class SuggestionOut(BaseModel):
+    key: str  # <ACI-Tenant>|<Projektnummer> bzw. die Nummer (0.74.1)
     code: str  # Projektnummer
+    tenant: str | None = None  # ACI-Tenant der APs
     name: str
     application_id: int | None  # gesetzt: ergaenzt eine bestehende Applikation
     members: list[CandidateOut]
@@ -311,13 +313,12 @@ def _load(session: Session, principal: Principal, application_id: int) -> Applic
     return app
 
 
-def _refresh(session: Session, tenant_id: int, application_id: int) -> None:
+def _refresh(background: BackgroundTasks, factory: sessionmaker, tenant_id: int,
+             application_id: int) -> None:  # fmt: skip
     """Applikation geaendert: Abweichungen Regel <-> Weg neu (0.59.0) und - weil Befunde ueber
-    ihre Regel Kunden gehoeren - die Zugehoerigkeit der Kunden."""
-    from app.store import customers, reconcile
-
-    reconcile.refresh_app_findings(session, tenant_id, application_id)
-    customers.derive(session, tenant_id)
+    ihre Regel Kunden gehoeren - die Findings der Kunden; seit 0.74.1 hinter der Antwort
+    (`store/app_refresh.py`), das Speichern wartet nicht mehr darauf."""
+    app_refresh.schedule(background, factory, tenant_id, application_id)
 
 
 def _actor(principal: Principal) -> str:
@@ -351,10 +352,12 @@ def list_applications(
 
 @router.post("", response_model=ApplicationDetailOut, status_code=201)
 def create_application(
+    background: BackgroundTasks,
     body: ApplicationIn,
     tenant_id: int | None = None,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     tid = _require_tenant(principal, tenant_id)
     name = body.name.strip()
@@ -394,7 +397,7 @@ def create_application(
             "members": len(app.members),
         },
     )
-    _refresh(session, app.tenant_id, app.id)
+    _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)
 
 
@@ -435,7 +438,9 @@ def list_suggestions(
     tid = _require_tenant(principal, tenant_id)
     return [
         SuggestionOut(
+            key=s["key"],
             code=s["code"],
+            tenant=s["tenant"],
             name=s["name"],
             application_id=s["application_id"],
             members=[CandidateOut(**c.__dict__) for c in s["members"]],
@@ -446,11 +451,13 @@ def list_suggestions(
 
 @router.post("/suggestions/{code}/accept", response_model=ApplicationDetailOut)
 def accept_suggestion(
+    background: BackgroundTasks,
     code: str,
     body: AcceptIn | None = None,
     tenant_id: int | None = None,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     """Vorschlag uebernehmen (neue Applikation bzw. Mitglieder der bestehenden ergaenzen)."""
     tid = _require_tenant(principal, tenant_id)
@@ -473,7 +480,7 @@ def accept_suggestion(
         subject=str(app.id),
         detail=detail,
     )
-    _refresh(session, app.tenant_id, app.id)
+    _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)
 
 
@@ -499,10 +506,12 @@ def get_application(
 
 @router.patch("/{application_id}", response_model=ApplicationDetailOut)
 def update_application(
+    background: BackgroundTasks,
     application_id: int,
     body: ApplicationPatch,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     app = _load(session, principal, application_id)
     fields = body.model_fields_set
@@ -544,15 +553,17 @@ def update_application(
             "fields": sorted(fields),
         },
     )
-    _refresh(session, app.tenant_id, app.id)
+    _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)
 
 
 @router.delete("/{application_id}", status_code=204)
 def delete_application(
+    background: BackgroundTasks,
     application_id: int,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     app = _load(session, principal, application_id)
     detail = {
@@ -564,7 +575,7 @@ def delete_application(
     tid = app.tenant_id
     session.delete(app)
     session.flush()
-    _refresh(session, tid, application_id)  # ihre Befunde fallen weg
+    _refresh(background, factory, tid, application_id)  # ihre Befunde fallen weg
     audit.record(
         session,
         actor=_actor(principal),
@@ -577,10 +588,12 @@ def delete_application(
 
 @router.post("/{application_id}/members", response_model=ApplicationDetailOut)
 def add_members(
+    background: BackgroundTasks,
     application_id: int,
     body: MembersIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     app = _load(session, principal, application_id)
     try:
@@ -602,16 +615,18 @@ def add_members(
                 "count": added,
             },
         )
-    _refresh(session, app.tenant_id, app.id)
+    _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)
 
 
 @router.delete("/{application_id}/members/{member_id}", response_model=ApplicationDetailOut)
 def remove_member(
+    background: BackgroundTasks,
     application_id: int,
     member_id: int,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     app = _load(session, principal, application_id)
     member = next((m for m in app.members if m.id == member_id), None)
@@ -632,7 +647,7 @@ def remove_member(
             "ref": member.ref,
         },
     )
-    _refresh(session, app.tenant_id, app.id)
+    _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)
 
 
@@ -833,10 +848,12 @@ def show_rule(
 
 @router.post("/{application_id}/rules", response_model=ApplicationDetailOut)
 def assign_rule(
+    background: BackgroundTasks,
     application_id: int,
     body: RuleMemberIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     """Regel direkt zuordnen bzw. ausschliessen (0.60.0): Mitglied `rule` bzw. `norule` mit
     stabilem Verweis (Quellsystem, VDOM, Policy-ID bzw. DN) - die Gegenrichtung faellt weg."""
@@ -857,5 +874,5 @@ def assign_rule(
         subject=str(app.id),
         detail={"application_id": app.id, "tenant_id": app.tenant_id, "kind": kind, "ref": ref},
     )
-    _refresh(session, app.tenant_id, app.id)
+    _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)

@@ -4,8 +4,8 @@ Implementiert das SoTAdapter-Protokoll gegen die Infoblox WAPI.
 Abgefragt werden host records, networks und ranges; die Antworten werden auf
 das kanonische NetworkObject-Modell abgebildet.
 
-`export()` liest die DDI komplett (WAPI-Paging): Netze (v4/v6), Ranges, Host-, A/AAAA-,
-PTR-Records und DHCP-Reservierungen inkl. Extensible Attributes - als neutrale
+`export()` liest die DDI komplett (WAPI-Paging): Netze und Network Container (v4/v6), Ranges,
+Host-, A/AAAA-, PTR-Records und DHCP-Reservierungen inkl. Extensible Attributes - als neutrale
 `ReferenceRecord`s (Referenzquelle, ADR 0010). Der Client ist per `enforce_read_only` auf
 GET beschraenkt: aus Automato wird in die DDI nie geschrieben.
 """
@@ -91,6 +91,13 @@ class InfobloxAdapter:
         for obj in ("network", "ipv6network"):
             for rec in self._paged(obj, "comment,extattrs,network_view"):
                 yield self._record(ReferenceKind.PREFIX, rec, value=rec["network"])
+        # Network Container (0.74.1): Netze, die weiter unterteilt sind - ebenfalls Netze im
+        # IPAM, Status „container“ wie in NetBox (sonst fehlten sie im Abgleich)
+        for obj in ("networkcontainer", "ipv6networkcontainer"):
+            for rec in self._paged(obj, "comment,extattrs,network_view"):
+                yield self._record(
+                    ReferenceKind.PREFIX, rec, value=rec["network"], status="container"
+                )
         for rec in self._paged("range", "comment,extattrs,network_view,name"):
             start, end = rec.get("start_addr", ""), rec.get("end_addr", "")
             yield self._record(

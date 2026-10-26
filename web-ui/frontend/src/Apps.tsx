@@ -243,12 +243,12 @@ function Suggestions({
   const [busy, setBusy] = useState<string | null>(null);
   const [open, setOpen] = useState(true);
 
-  const accept = async (codes: string[]) => {
+  const accept = async (keys: string[]) => {
     onError(null);
     try {
-      for (const code of codes) {
-        setBusy(code);
-        await acceptAppSuggestion(tenantId, code);
+      for (const key of keys) {
+        setBusy(key);
+        await acceptAppSuggestion(tenantId, key);
       }
     } catch (e) {
       onError(e);
@@ -270,7 +270,7 @@ function Suggestions({
         <button
           className="btn btn-ghost btn-sm"
           disabled={busy != null}
-          onClick={() => accept(items.map((s) => s.code))}
+          onClick={() => accept(items.map((s) => s.key))}
         >
           Alle übernehmen
         </button>
@@ -289,8 +289,11 @@ function Suggestions({
               </thead>
               <tbody>
                 {items.map((s) => (
-                  <tr key={s.code}>
-                    <td className="mono">{s.code}</td>
+                  <tr key={s.key} data-key={s.key}>
+                    <td className="mono">
+                      {s.code}
+                      {s.tenant && <div className="faint">{s.tenant}</div>}
+                    </td>
                     <td>
                       {s.name}{" "}
                       {s.application_id != null && <span className="chip local">besteht</span>}
@@ -311,9 +314,9 @@ function Suggestions({
                       <button
                         className="btn btn-ghost btn-sm"
                         disabled={busy != null}
-                        onClick={() => accept([s.code])}
+                        onClick={() => accept([s.key])}
                       >
-                        {busy === s.code ? "…" : s.application_id != null ? "Ergänzen" : "Übernehmen"}
+                        {busy === s.key ? "…" : s.application_id != null ? "Ergänzen" : "Übernehmen"}
                       </button>
                     </td>
                   </tr>
@@ -323,7 +326,8 @@ function Suggestions({
           </div>
           <div className="card-foot">
             Gruppiert nach der 3-stelligen Projektnummer aus <code>AP_&lt;nr&gt;</code> und Servernamen{" "}
-            <code>H_&lt;funktion&gt;-&lt;nr&gt;-…</code> („000“ zählt nicht). Den Namen liefert das Wörterbuch{" "}
+            <code>H_&lt;funktion&gt;-&lt;nr&gt;-…</code> („000“ zählt nicht), je ACI-Tenant getrennt – gleiche Nummern in
+            verschiedenen Tenants sind verschiedene Vorschläge. Den Namen liefert das Wörterbuch{" "}
             <code>project</code> des Namensprofils, sonst „Projekt &lt;nr&gt;“.
           </div>
         </>
@@ -363,13 +367,17 @@ function AppDrawer({
       .catch(setErr);
   }, [id]);
 
+  const [saving, setSaving] = useState(false); // 0.74.1: Speichern sichtbar
   const update = async (p: Promise<ApplicationDetail>) => {
     setErr(null);
+    setSaving(true);
     try {
       setD(await p);
       onChanged();
     } catch (e) {
       setErr(e);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -432,9 +440,14 @@ function AppDrawer({
 
           <div className="sub-h" style={{ display: "flex", alignItems: "center" }}>
             Mitglieder ({d.members.length})
+            {saving && (
+              <span className="faint" id="app-members-saving" style={{ marginLeft: 8, fontWeight: 400 }}>
+                speichere…
+              </span>
+            )}
             <div style={{ flex: 1 }} />
             {me.isOperator && (
-              <button className="btn btn-ghost btn-sm" onClick={() => setPicking(true)}>
+              <button className="btn btn-ghost btn-sm" disabled={saving} onClick={() => setPicking(true)}>
                 <Icon name="plus" size={12} /> Mitglied
               </button>
             )}

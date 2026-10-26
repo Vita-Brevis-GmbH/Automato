@@ -173,14 +173,21 @@ test("Applikationen: Vorschläge aus der Namenskonvention unter der Liste (0.38.
   // Vorschlag gestellt (die Beispieldaten haben alle Projekte zugeordnet)
   await page.route("**/api/applications/suggestions*", (route) =>
     route.fulfill({
-      json: [{ code: "042", name: "Projekt 042", application_id: null,
-               members: [{ kind: "ap", ref: "TE/AP_042", label: "TE/AP_042", detail: null, project: "042", applications: [] }] }],
+      json: [
+        { key: "TE|042", code: "042", tenant: "TE", name: "Projekt 042 · TE", application_id: null,
+          members: [{ kind: "ap", ref: "TE/AP_042", label: "TE/AP_042", detail: null, project: "042", applications: [] }] },
+        { key: "TF|042", code: "042", tenant: "TF", name: "Projekt 042 · TF", application_id: null,
+          members: [{ kind: "ap", ref: "TF/AP_042", label: "TF/AP_042", detail: null, project: "042", applications: [] }] },
+      ],
     }),
   );
   await page.goto("/#apps");
   const list = page.locator(".card", { has: page.locator("h2", { hasText: /^Applikationen$/ }) });
   const suggestions = page.locator("#app-suggestions");
   await expect(suggestions).toContainText("Projekt 042");
+  // 0.74.1: gleiche Nummer in zwei Tenants = zwei Vorschläge
+  await expect(suggestions.locator("tbody tr")).toHaveCount(2);
+  await expect(suggestions.locator('tr[data-key="TF|042"]')).toContainText("TF");
   const [a, b] = [await list.boundingBox(), await suggestions.boundingBox()];
   expect(b!.y).toBeGreaterThan(a!.y + a!.height - 1);
 });

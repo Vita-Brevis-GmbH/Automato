@@ -86,6 +86,7 @@ MAX_BACKUP = 16  # Backup-Wege (vor dem Filter nach Laenge)
 INNER = 5  # genauere Routen innerhalb eines Netzes je Hop (Anzeige)
 REACHED = ("connected", "fabric", "exit", "external")  # Ende = Ziel erreicht bzw. nach aussen
 _CONNECTED = ("connected", "local")
+_RIB_AFTER = 16  # Abfragen je Kontext, ab denen die RIB als Index im Speicher liegt
 Key = tuple[int, str]  # (Quellsystem, Kontext: VDOM bzw. Tenant:VRF)
 __all__ = ["MGMT", "Graph", "trace"]
 
@@ -135,6 +136,38 @@ def context_label(kind: str, source: str, node: str, context: str, single: bool)
     return "vrf", f"{node} · VRF {context}"
 
 
+class _Rib:
+    """Routen nach Familie und Praefixlaenge: die Routen, die eine IP bzw. ein ganzes Netz
+    enthalten, per Nachschlagen je Laenge (hoechstens 33 bzw. 129) statt einer Bereichsabfrage.
+    Der Index haelt nur Kennung und Protokoll; die Routen selbst laedt der Graph bei Bedarf."""
+
+    def __init__(self, rows):
+        self.by: dict[tuple[int, int], dict[int, list[tuple[int, str]]]] = defaultdict(dict)
+        lengths: dict[int, set[int]] = defaultdict(set)
+        for rid, family, prefix_len, lo, protocol in rows:
+            try:
+                start = int(lo, 16)
+            except (TypeError, ValueError):
+                continue
+            self.by[(family, prefix_len)].setdefault(start, []).append((rid, protocol))
+            lengths[family].add(prefix_len)
+        self.lengths = {f: sorted(v) for f, v in lengths.items()}
+
+    def containing(self, ip, connected: bool = False) -> list[int]:
+        bits = 32 if ip.version == 4 else 128
+        start = int(ip.network_address) if is_net(ip) else int(ip)
+        longest = ip.prefixlen if is_net(ip) else bits
+        out: list[int] = []
+        for length in self.lengths.get(ip.version, []):
+            if length > longest:
+                break
+            mask = ((1 << length) - 1) << (bits - length) if length else 0
+            for rid, protocol in self.by[(ip.version, length)].get(start & mask, []):
+                if not connected or protocol in _CONNECTED:
+                    out.append(rid)
+        return out
+
+
 class Graph:
     """Knoten, Adressen der Knoten (Interfaces, L3Out-SVIs) und IPAM-Namen eines Mandanten."""
 
@@ -181,6 +214,9 @@ class Graph:
         self._vips: dict[Key, list[NatRule]] = {}
         self._vlinks: dict[int, dict[tuple[str, str], tuple[str, str]]] = {}
         self._leaks = None  # aci_shared.Leaks, erst bei Bedarf
+        self._ribs: dict[Key | None, _Rib] = {}  # beste RIB-Routen je Kontext (0.74.1)
+        self._rib_asked: Counter = Counter()  # Abfragen je Kontext bis zum Index
+        self._loaded: dict[int, TopoRoute] = {}  # Routen aus dem Index, je Kennung
         self.exits = list(
             session.scalars(
                 select(TopoExit).where(TopoExit.tenant_id == tenant_id).order_by(TopoExit.id)
@@ -264,7 +300,19 @@ class Graph:
     # -- Routen -------------------------------------------------------------------------
 
     def _routes(self, ip, key: Key | None = None, connected: bool = False) -> list[TopoRoute]:
-        """Beste Routen der RIB, die die IP bzw. das ganze Netz enthalten."""
+        """Beste Routen der RIB, die die IP bzw. das ganze Netz enthalten. Seit 0.74.1 aus einem
+        Index im Speicher je Kontext (bzw. die angeschlossenen Netze aller Kontexte) statt einer
+        Datenbankabfrage je Aufruf - die Kunden-Ableitung, die Relevanz und die Wege fragen das
+        Routing tausendfach (Anwender: Speichern und Doku brauchten Minuten)."""
+        if key is not None or connected:
+            rib = self._ribs.get(key)
+            if rib is None:
+                # erst ab einigen Abfragen lohnt das Laden des Index eines Kontexts
+                self._rib_asked[key] += 1
+                if self._rib_asked[key] > _RIB_AFTER:
+                    rib = self._ribs[key] = _Rib(self._rib_rows(key))
+            if rib is not None:
+                return self._route_rows(rib.containing(ip, connected))
         lo, hi = (ip_hex(v) for v in span(ip))
         stmt = select(TopoRoute).where(
             TopoRoute.tenant_id == self.tenant_id,
@@ -279,6 +327,31 @@ class Graph:
         if connected:
             stmt = stmt.where(TopoRoute.protocol.in_(_CONNECTED))
         return list(self.session.scalars(stmt))
+
+    def _rib_rows(self, key: Key | None):
+        """Kennung, Familie, Praefix und Protokoll der besten RIB-Routen eines Kontexts bzw. ohne
+        Kontext der angeschlossenen Netze aller Kontexte."""
+        stmt = select(
+            TopoRoute.id, TopoRoute.family, TopoRoute.prefix_len, TopoRoute.lo, TopoRoute.protocol
+        ).where(
+            TopoRoute.tenant_id == self.tenant_id,
+            TopoRoute.table == "rib",
+            TopoRoute.best.is_(True),
+        )
+        if key is None:
+            stmt = stmt.where(TopoRoute.protocol.in_(_CONNECTED))
+        else:
+            stmt = stmt.where(TopoRoute.source_system_id == key[0], TopoRoute.context == key[1])
+        return self.session.execute(stmt.order_by(TopoRoute.id)).all()
+
+    def _route_rows(self, ids: list[int]) -> list[TopoRoute]:
+        """Routen zu Kennungen aus dem Index; einmal geladene bleiben im Graph."""
+        missing = [i for i in ids if i not in self._loaded]
+        for i in range(0, len(missing), 500):
+            chunk = missing[i : i + 500]
+            for r in self.session.scalars(select(TopoRoute).where(TopoRoute.id.in_(chunk))):
+                self._loaded[r.id] = r
+        return [self._loaded[i] for i in ids if i in self._loaded]
 
     def route(self, key: Key, ip, table: Table = 0) -> dict | None:
         """Wirksame Route des Knotens in der VRF `table`: laengstes Praefix, kleinste Distanz;

@@ -664,23 +664,35 @@ export default function ConnectionsCard({
     setView(v);
     storeView(v);
   };
+  // 0.74.1: erst laden, wenn der Bereich offen ist – die Wege sind der teuerste Teil der Doku
+  const wanted = !fold || fold.open;
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const loadKey = `${appId}:${reload}`;
   useEffect(() => {
+    if (!wanted || loadedFor === loadKey) return;
     let current = true;
+    setLoadedFor(loadKey);
     setData(null);
     setError(null);
     onData?.(null);
+    let done = false;
     fetchAppConnections(appId)
       .then((d) => {
+        done = true;
         if (!current) return;
         setData(d);
         onData?.(d);
       })
-      .catch((e) => current && setError(e));
+      .catch((e) => {
+        done = true;
+        if (current) setError(e);
+      });
     return () => {
       current = false;
+      if (!done) setLoadedFor(null); // abgebrochen: beim nächsten Öffnen neu laden
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appId, reload]);
+  }, [appId, reload, wanted]);
   const needle = q.trim().toLowerCase();
   const rows = (data?.connections ?? []).filter((c) => {
     if (onlyIssues && !c.mismatch.length && !c.inconsistent && c.verdict === "allow" && c.reached) return false;

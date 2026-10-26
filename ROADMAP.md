@@ -375,11 +375,20 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.72.1** | Korrekturen: ACI-Filter nur mit Quellport = nur Antworten (gesperrt statt „möglich“), Doku je System fasst die Rückrichtung wie die Applikations-Doku zusammen, Leistung der Zonenmatrix gemessen |
 | **0.73.0** | Applikations-Doku übersichtlich: Bereiche zuklappen, Systeme kompakt mit Detail, Export und Druck mit wählbaren Abschnitten, Abhängigkeiten vorerst entfernt, Befund nur bei uneinheitlichen Wegen (ADR 0012/0021 Ergänzung 0.73.0) |
 | **0.74.0** | Netzwerkplan der Applikation kompakt: Rahmen je AP mit EPGs und ihren VMs, ACI als L3Out, Regeln mit Diensten als ausblendbare Ebene (auch im draw.io), Zoom und Verschieben (ADR 0021 Ergänzung 0.74.0) |
+| **0.74.1** | Korrekturen: Speichern einer Applikation ohne Warten (Befunde im Hintergrund), Routing als Index im Speicher, Vorschläge je ACI-Tenant, Typ-Filter der Objekte beim Reiterwechsel, Network Container aus Infoblox |
 
-### Nächste Arbeiten (Stand 0.74.0)
+### Nächste Arbeiten (Stand 0.74.1)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.74.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.74.1.
+
+**Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
+Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in
+0.74.1**; danach **0.75.0**: Kunde oben wählen filtert alles (eigenes plus geteiltes, markiert),
+Infos allgemein zuklappbar (Routing: „Gelesene Kontexte“ zu, Reiter ohne Scrollen sichtbar),
+Applikationen ohne VMs ausblenden bzw. löschen, Import der Stammdaten von Applikationen aus
+CSV (Ausnahme vom „kein CSV-Import“ nur dafür); danach **VMware NSX Advanced Load Balancer
+(Avi)** als lesende Quelle für die Doku (eigene ADR); dann weiter mit Schritt 5.
 
 **Dazwischen (Rückmeldung des Anwenders zur Applikations-Doku, 2026-10-26):** Übersicht mit
 zuklappbaren Bereichen, Systeme kompakt, Export mit Auswahl, Abhängigkeiten vorerst entfernt,

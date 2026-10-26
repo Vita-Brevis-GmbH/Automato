@@ -132,6 +132,13 @@ gehören zu mehreren Applikationen.
     diesem Kürzel, ergänzt der Vorschlag deren Mitglieder.
   - Der Vorschlag wird beim Übernehmen serverseitig neu berechnet; der Client schickt nur die
     Projektnummer.
+  - **Ergänzung 0.74.1 (Anwender: „alle AP_001 von allen Tenants, die haben ausser der Nummer
+    nichts gemeinsam“):** gruppiert wird nach **ACI-Tenant und Nummer**. Kommt eine Nummer in
+    mehreren Tenants vor, heisst der Vorschlag „<Name> · <Tenant>“; Server zur Nummer gehen zum
+    einzigen Tenant mit dieser Nummer, sonst in einen eigenen Vorschlag ohne Tenant. Schlüssel
+    `<Tenant>|<Nummer>` (`key`); die Nummer allein wird nur angenommen, wenn sie eindeutig ist.
+    Eine bestehende Applikation wird ergänzt, wenn ihr Name passt bzw. ihre APs im selben
+    Tenant liegen.
 - **Doku je Applikation:** die Tabellen 1–10 aller Systeme der Applikation (Server →
   Firewall-Tabellen, EPGs → ACI-Tabellen), gleiche Zeilen einmal. Regeln, Objekte und NAT
   werden je Mandant einmal geladen. Export als Markdown sowie als Druckansicht (PDF über den

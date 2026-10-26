@@ -704,7 +704,9 @@ export interface AppCandidate {
 }
 
 export interface AppSuggestion {
+  key: string; // 0.74.1: <ACI-Tenant>|<Projektnummer> bzw. die Nummer
   code: string;
+  tenant: string | null; // ACI-Tenant der APs (gleiche Nummer in mehreren Tenants = getrennt)
   name: string;
   application_id: number | null;
   members: AppCandidate[];

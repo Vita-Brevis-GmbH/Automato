@@ -376,6 +376,12 @@ test("Objekte: Standardobjekte zuunterst bzw. ausgeblendet, Typ-Filter für dyna
   await type.selectOption({ label: "dynamisch (SDN-Connector) (1)" });
   await expect(rows(page)).toHaveCount(1);
   await expect(rows(page).first()).toContainText("TE_web_epg");
+  // 0.74.1: Reiter wechseln setzt den Typ zurück – Gruppen zeigen ihre Objekte, nicht „leer“
+  const groups = page.waitForResponse((r) => r.url().includes("/objects") && r.url().includes("address_group"));
+  await page.click(".tabbar button:has-text('Gruppen')");
+  const res = await groups;
+  expect(res.url()).not.toContain("obj_type=");
+  await expect(rows(page).first()).toBeVisible();
 });
 
 test("Regeln: IPv4/IPv6-Paar steht zusammen, Namensprofil mit FT_ und ohne Projektnummern", async ({ page }) => {

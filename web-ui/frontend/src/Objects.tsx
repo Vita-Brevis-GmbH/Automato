@@ -110,6 +110,14 @@ export default function Objects({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.object_id]);
 
+  // Reiter wechseln (0.74.1): Typ-Filter und seine Werte sofort zurück – sonst lädt der neue
+  // Reiter zuerst mit dem Typ des alten (z. B. „ipmask“ bei Gruppen) und zeigt nichts
+  const pickTab = (t: Tab) => {
+    if (t === tab) return;
+    setObjType("");
+    setTypes({});
+    setTab(t);
+  };
   useEffect(() => setObjType(""), [tab]);
   useEffect(() => {
     if (!params.object_id) setSource("");
@@ -141,7 +149,7 @@ export default function Objects({
 
       <div className="tabbar sticky">
         {tabs.map((t) => (
-          <button key={t.key} className={tab === t.key ? "on" : ""} onClick={() => setTab(t.key)}>
+          <button key={t.key} className={tab === t.key ? "on" : ""} onClick={() => pickTab(t.key)}>
             {t.label}
           </button>
         ))}
@@ -352,6 +360,7 @@ function ObjectTable({
 
   useEffect(() => setOffset(0), [query, sourceId, issuesOnly, objType, hidePredefined, objectId]);
   useEffect(() => {
+    let current = true; // ältere Antworten verwerfen (schnelles Umschalten)
     setData(null);
     setError(null);
     fetchObjects(tenantId, {
@@ -366,13 +375,18 @@ function ObjectTable({
       offset,
     })
       .then((d) => {
+        if (!current) return;
         setData(d);
         if (d.types) onTypes(d.types);
       })
       .catch((e) => {
+        if (!current) return;
         setError(e);
         setData({ total: 0, rows: [] });
       });
+    return () => {
+      current = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, category, sourceId, query, issuesOnly, objType, hidePredefined, objectId, offset]);
   // VDOM „root“ nur bei Firewalls mit weiteren VDOMs (nur root = die Firewall, 0.17.0)
