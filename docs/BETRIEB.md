@@ -244,6 +244,22 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     - „N abgelehnte Vorschläge“ → **wieder vorschlagen** hebt das auf.
   - Filter „Verbund: abweichend / fehlt“; mit Filter „System“ erscheinen die Regeln dieser
     Firewall vollständig.
+  - **Policy-Routen, Routing und NAT (0.72.0):** Routing → Reiter **„Parallele Firewalls“**
+    zeigt je Verbund (führend = erste Firewall) für Policies, Objekte, Policy-Routen & SD-WAN,
+    Routen und NAT, wie viel gleich ist, abweicht bzw. auf einer Firewall fehlt; „Befunde“
+    öffnet die Findings dieser Art.
+    - *Policy-Routen/SD-WAN:* je VDOM über die Nummer (bzw. den Namen): Status, Bedingung,
+      Aktion, Gateway, Ausgang (SD-WAN mit Reihenfolge der Mitglieder), Zonen.
+    - *Routen:* je VDOM gegen die führende Firewall – wirksame Routen nach Protokoll und
+      Interface, statische Routen mit Distanz, Interface, Gateway und Status. **Next-Hops zählen
+      nicht** (jede Firewall hat eigene Router). Ein Befund je Firewall und VDOM; aufgeklappt
+      eine Tabelle der Präfixe (anders / fehlt hier / nur hier, mit beiden Werten). Ist eine
+      Tabelle auf einer Firewall nicht lesbar, wird sie nicht verglichen. BGP-Nachbarn werden
+      nicht verglichen.
+    - *NAT:* VIPs und IP-Pools je VDOM und Name (IPs, Ports, Typ, externes Interface, Real
+      Server, Einstellungen).
+    - Im Befund steht zuerst der Wert der Firewall des Befunds, dann der führenden; „Anzeigen“
+      öffnet die Routen des VDOMs, die Policy-Routen bzw. die NAT-Ansicht.
 - **Routing** (0.16.0, ADR 0019; bis 0.34.0 „Routing & Wege“): oben die gelesenen Kontexte mit
   Anzahl Routen und dem, was nicht lesbar war (dort ist die Aussage „unbekannt“). Bezeichnungen
   (0.17.0):
@@ -1133,6 +1149,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `POST /systems/{id}/check` | Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus (operator): Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint`; Agent-Systeme 409 (`run-agent.ps1 -Check`), 0.34.0 |
 | `GET /systems/labels?tenant_id=` | Bezeichnungen der Quellsysteme (`id`, `name`, `platform`, `vdoms`, `parallel_group`) ohne Konfiguration; Kunden-Benutzer nur die Systeme ihrer Regeln, NAT bzw. Objekte (0.33.0), seit 0.58.0 mit neutralen Namen („Firewall 1“, VDOM-Nummern) wie alle Antworten an Kunden-Benutzer |
+| `GET /systems/parallel?tenant_id=` | Verbünde paralleler Firewalls (0.72.0): Mitglieder (führend zuerst) und je Bereich `rules`, `objects`, `policy_routes`, `routes`, `nat` die Zahlen `same`/`differs`/`missing`; viewer, nicht Kunden-Benutzer |
 | `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `site_id`, `read_scope`, `ref_role`, `schedule` → `next_run_at`; Switches: `read_scope` = Adressen, `host_keys` (Adresse, Art, Fingerabdruck), `forget_host_keys` beim PATCH; `token` bzw. `username`/`password`, NetBox `write_token` nur schreibbar → `has_credentials`/`has_write_token`; Referenzquellen mit `reference_count`/`reference_at`) |
 | `GET /jobs` (`tenant_id`, `status` inkl. `open`, `source_system_id`, `platform`, `trigger`, `limit`, `offset`; Gesamtzahl im Header `X-Total-Count`), `GET /jobs/{id}`, `POST /jobs/collect`, `POST /jobs/collect-all`, `POST /jobs/{id}/cancel` | Läufe (Gerät mit Agent → immer `external`, `started_at` = abgeholt); `collect-all` = alle aktiven Quellsysteme des Mandanten (operator, Antwort je System `run_id` bzw. `skipped` mit `blocking_run_id`); `cancel` beendet einen offenen Lauf (operator) |
 | `GET/POST /agents`, `PATCH /agents/{id}`, `GET /agents/package` | Collector-Agenten (inkl. zugewiesener Geräte), Agent-Paket |

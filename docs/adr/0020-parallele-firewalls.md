@@ -3,7 +3,8 @@
 ## Status
 
 Angenommen (2026-10-22), umgesetzt in 0.18.0 (Alembic `0039`). Ergänzt ADR 0016
-(Regelindex) und ADR 0019 (Session-Sync-Paar als ein Hop folgt dort).
+(Regelindex) und ADR 0019 (Session-Sync-Paar als ein Hop folgt dort). Ergänzung 0.72.0:
+Policy-Routen, Routing und NAT im Verbund vergleichen (Abschnitt unten).
 
 ## Kontext
 
@@ -68,6 +69,44 @@ konfiguriert sind.
   Findings.
 - Anbindungen nach aussen (0.20.0): Verbund und Session-Sync-Partner fassen erkannte Router zu
   einer Anbindung für beide Firewalls zusammen (ADR 0019).
-- Offen:
-  - im Weg (ADR 0019) das Session-Sync-Paar als einen Hop zeigen;
-  - Abweichungen an Policy-Routen, Routing und NAT zwischen den Firewalls.
+- Im Weg (ADR 0019) ist der Verbund seit 0.29.0 ein Hop.
+
+## Ergänzung 0.72.0: Policy-Routen, Routing und NAT
+
+Umplanung des Anwenders (2026-10-26), Schritt 2: Abweichungen bei Policy-Routen, Routing und
+NAT zwischen den Firewalls eines Verbunds zeigen. Rein lesend, ohne Migration
+(`store/parallel_net.py`, Teil von `parallel.compare`); führend bleibt die Firewall mit dem
+kleinsten Namen.
+
+1. **Policy-Routen und SD-WAN-Regeln** je VDOM und Art über die Nummer (seq-num bzw. ID), sonst
+   den Namen. Verglichen: Status, Bedingung (Eingang, Quelle, Ziel, Protokoll, Ports,
+   Internet-Service), Aktion bzw. Modus, Gateway, Ausgang (bei SD-WAN mit der Reihenfolge der
+   Mitglieder), SD-WAN-Zonen. Befund `parallel_policy_route_mismatch` je Eintrag (abweichend
+   bzw. „fehlt auf …“), Gegenstand `node` `<Quellsystem>|<VDOM>|<Art>|<Nummer>`.
+2. **Routing** je VDOM gegen die führende Firewall:
+   - wirksame Tabelle: je Präfix (in seiner VRF bzw. Management) Protokoll und
+     Ausgangs-Interfaces; **Next-Hop-IPs nicht** – parallele Firewalls haben eigene Router bzw.
+     Adressen, verglichen wird die Wirkung (wohin der Verkehr geht);
+   - statische Routen: je Präfix die Einträge mit Distanz, Interface, Gateway, Status,
+     Blackhole (mehrere gleiche Präfixe als Menge);
+   - ein VDOM nur auf einer Firewall ist ein eigener Eintrag;
+   - nicht lesbare Tabellen (`topo_context.missing`) und Firewalls ohne gelesenes Routing
+     zählen nicht;
+   - **ein Befund je Firewall und VDOM** (`parallel_route_mismatch`, Gegenstand `node`
+     `<Quellsystem>|<VDOM>`) mit der Liste der Präfixe (höchstens 200, dazu die Zahl) – sonst
+     ergäben z. B. eine fehlende BGP-Sitzung Hunderte Befunde;
+   - BGP-Nachbarn und -Pfade werden nicht verglichen (je Firewall eigene Nachbarn; die Wirkung
+     steht in der Routing-Tabelle).
+3. **NAT:** VIPs und IP-Pools je VDOM, Art, Familie und Name: externe/interne IP und Ports,
+   Protokoll, Port-Weiterleitung, Typ, externes Interface, alle internen Ziele, Real Server
+   (Adresse, Port, Status, Gewicht) und Einstellungen (Methode, Persistenz, Health-Check,
+   Pool-Typ, Quellbereich). Befund `parallel_nat_mismatch` je VIP bzw. Pool, neuer Gegenstand
+   `nat` `<Quellsystem>|<VDOM>|<Art>|<Familie>|<Name>` (stabil über Läufe, die NAT-Zeilen werden
+   je Lauf ersetzt).
+4. Werte im Befund: zuerst die Firewall des Befunds, dann die führende.
+5. **Übersicht** `GET /systems/parallel` (viewer, nicht Kunden-Benutzer): je Verbund Mitglieder
+   und je Bereich (Policies, Objekte, Policy-Routen, Routen, NAT) gleich/abweichend/fehlt; UI
+   Routing → Reiter „Parallele Firewalls“ mit Link auf die Befunde. Die Befunde öffnen das
+   Routing (Routen des VDOMs bzw. Policy-Routen) bzw. die NAT-Ansicht.
+6. Kunden: die neuen Befunde gehören keinem Kunden (Infrastruktur), wie die übrigen
+   Topologie-Befunde.

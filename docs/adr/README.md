@@ -24,7 +24,7 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0017 | VMware vCenter lesen (nur lesende vSphere-Methoden), Portgruppe → EPG, VMs nach NetBox Virtualization |
 | 0018 | Umgebung und Kunden: einmal lesen, je Kunde ein Ausschnitt über Selektoren (Entwurf) |
 | 0019 | Topologie und Pfade: VDOM-Kontext, Routing/HA/L3Out lesen, Regel-Relevanz, Designer (Entwurf) |
-| 0020 | Parallele Firewalls (Verbund): Regeln zusammenfassen, Abweichungen als Findings |
+| 0020 | Parallele Firewalls (Verbund): Regeln zusammenfassen, Abweichungen als Findings; seit 0.72.0 auch Policy-Routen, Routing und NAT |
 | 0021 | Verbindungen Ende zu Ende in der Applikations-Doku: Weg je Verbindung, Regeln je Hop, Abgleich Regel ↔ Weg (Entwurf) |
 | 0022 | Aufbewahrung (Fristen für Läufe, Sync-Vorschauen, Audit) und getrennte DB-Rollen (Migration als Eigentümer, Betrieb ohne DDL) (Entwurf) |
 | 0023 | TLS intern mit eigener CA: Postgres/Redis nur TLS, Orchestrator und Web-UI per HTTPS, Gegenstellen gegen die CA geprüft (Entwurf) |

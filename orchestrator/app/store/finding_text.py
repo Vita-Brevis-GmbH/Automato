@@ -516,4 +516,62 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
             "Objekt angleichen - gleichnamige Objekte in Regeln paralleler Firewalls müssen "
             "dasselbe bedeuten.",
         )
+    if ftype in ("parallel_policy_route_mismatch", "parallel_nat_mismatch"):
+        return _parallel_item(ftype, d, on)
+    if ftype == "parallel_route_mismatch":
+        return _parallel_routes(d)
     return subject, ""
+
+
+_ROUTE_KIND = {"differs": "anders", "only_lead": "fehlt", "only_here": "nur hier"}
+
+
+def _parallel_item(ftype: str, d: dict, on: str) -> tuple[str, str]:
+    """Policy-Route/SD-WAN-Regel bzw. VIP/IP-Pool im Verbund (0.72.0)."""
+    if ftype == "parallel_nat_mismatch":
+        what = "IP-Pool" if d.get("nat_type") == "snat_pool" else "VIP"
+        what = f"{what} {_q(d.get('name'))}"
+        hint = (
+            "VIP bzw. IP-Pool angleichen - sonst wird je nach Firewall anders übersetzt bzw. "
+            "der Dienst ist nur über eine Firewall erreichbar."
+        )
+    else:
+        what = d.get("label") or "Policy-Route"
+        hint = (
+            "Policy-Route bzw. SD-WAN-Regel angleichen - sonst nimmt der Verkehr je nach Firewall "
+            "einen anderen Weg."
+        )
+    group = f"Verbund {d.get('group')}"
+    if d.get("missing_on"):
+        return f"{what}{on} fehlt auf {_list(d['missing_on'], 6)} ({group}).", hint
+    values = d.get("values") or {}
+    shown = "; ".join(f"{k}: {v[0]} ≠ {v[1]}" for k, v in list(values.items())[:4] if len(v) == 2)
+    return (
+        f"{what}{on} weicht von der parallelen Firewall {d.get('other')} ({group}) ab: "
+        f"{_list(d.get('fields'), 6)}.{f' {shown}.' if shown else ''}",
+        hint,
+    )
+
+
+def _parallel_routes(d: dict) -> tuple[str, str]:
+    """Routen eines VDOMs im Verbund (0.72.0): Praefixe mit Art der Abweichung."""
+    entries = d.get("entries") or []
+    if entries and entries[0].get("table") == "vdom":
+        here = entries[0].get("kind") == "only_here"
+        return (
+            f"VDOM {d.get('vdom')} gibt es nur auf "
+            f"{d.get('source') if here else d.get('other')} (Verbund {d.get('group')}) - "
+            "sein Routing ist nicht vergleichbar.",
+            "VDOM auf beiden Firewalls einrichten bzw. prüfen, ob der Verbund stimmt.",
+        )
+    items = [f"{e.get('prefix')} ({_ROUTE_KIND.get(e.get('kind'), e.get('kind'))})"
+             for e in entries]  # fmt: skip
+    count = d.get("count") or len(entries)
+    return (
+        f"Routing im VDOM {d.get('vdom')} auf {d.get('source')} weicht von der parallelen "
+        f"Firewall {d.get('other')} (Verbund {d.get('group')}) ab: {count} "
+        f"Präfix{'e' if count != 1 else ''} – {_list(items, 5)}.",
+        "Statische Routen bzw. das dynamische Routing angleichen - sonst hängt der Weg davon ab, "
+        "über welche Firewall der Verkehr läuft. Next-Hops zählen nicht (je Firewall eigene "
+        "Router).",
+    )

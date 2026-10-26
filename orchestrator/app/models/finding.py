@@ -42,6 +42,11 @@ class FindingType(enum.StrEnum):
     PARALLEL_RULE_MISMATCH = "parallel_rule_mismatch"  # gleiche Policy-ID, anderer Inhalt
     PARALLEL_RULE_MISSING = "parallel_rule_missing"  # Policy fehlt auf einer Firewall
     PARALLEL_OBJECT_MISMATCH = "parallel_object_mismatch"  # gleiches Objekt, andere Werte
+    # Verbund (0.72.0): Policy-Route/SD-WAN-Regel, Routen eines VDOMs bzw. VIP/IP-Pool anders
+    # oder fehlend auf einer parallelen Firewall
+    PARALLEL_POLICY_ROUTE_MISMATCH = "parallel_policy_route_mismatch"
+    PARALLEL_ROUTE_MISMATCH = "parallel_route_mismatch"
+    PARALLEL_NAT_MISMATCH = "parallel_nat_mismatch"
     # ACI (0.45.1): Consumer bzw. Provider ohne Gegenstelle im Scope des Contracts (AP, VRF,
     # Tenant) - der Contract verbindet sie nicht
     ACI_SCOPE_UNPAIRED = "aci_scope_unpaired"
@@ -106,6 +111,7 @@ class SubjectKind(enum.StrEnum):
     NODE = "node"  # Knoten der Topologie (`<Quellsystem>|<Kontext>`, 0.50.0)
     LINK = "link"  # Verbindung der Verkabelung (`<Geraet>|<Port>~<Geraet>|<Port>`, 0.62.0)
     # bzw. ein Port (`<Geraet>|<Port>`, 0.63.0), Geraet, Geraetepaar bzw. `vlan|<VLAN>` (0.64.0)
+    NAT = "nat"  # VIP bzw. IP-Pool (`<Quellsystem>|<VDOM>|<Art>|<Familie>|<Name>`, 0.72.0)
 
 
 class Finding(Base):

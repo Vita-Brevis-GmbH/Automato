@@ -77,18 +77,110 @@ const DETAIL_LABEL: Record<string, string | null> = {
   application_id: null,
   connections: null,
   count: "Verbindungen",
+  // Parallele Firewalls (0.18.0/0.72.0): Felder und Werte stehen im Satz, Routen als Tabelle
+  group: "Verbund",
+  other: "verglichen mit",
+  fields: "Felder",
+  missing_on: "fehlt auf",
+  other_rule_id: null,
+  object_id: null,
+  other_object_id: null,
+  nat_id: null,
+  other_nat_id: null,
+  nat_type: null,
+  vdom: "VDOM",
+  seq: null,
+  entries: null,
+  counts: null,
 };
+
+// Routing-Befund im Verbund (0.72.0): je Präfix, was auf der führenden bzw. dieser Firewall steht
+const ROUTE_KIND: Record<string, string> = {
+  differs: "anders",
+  only_lead: "fehlt hier",
+  only_here: "nur hier",
+};
+const ROUTE_TABLE: Record<string, string> = { rib: "wirksam", static: "statisch", vdom: "VDOM" };
+type RouteEntry = {
+  table: string;
+  prefix: string;
+  kind: string;
+  vrf?: string | number;
+  fields?: string[];
+  lead?: string;
+  here?: string;
+};
+
+function RouteEntries({ f }: { f: Finding }) {
+  const d = (f.detail ?? {}) as Record<string, unknown>;
+  const entries = (Array.isArray(d.entries) ? d.entries : []) as RouteEntry[];
+  if (!entries.length) return null;
+  const count = typeof d.count === "number" ? d.count : entries.length;
+  return (
+    <div className="scroll" style={{ maxHeight: 320, marginTop: 6 }}>
+      <table className="parallel-routes">
+        <thead>
+          <tr>
+            <th>Tabelle</th>
+            <th>Präfix</th>
+            <th>Abweichung</th>
+            <th>{String(d.other ?? "führend")}</th>
+            <th>{String(d.source ?? "diese Firewall")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((e, i) => (
+            <tr key={i}>
+              <td>{ROUTE_TABLE[e.table] ?? e.table}</td>
+              <td className="mono">
+                {e.prefix}
+                {e.vrf != null && <span className="faint"> · VRF {e.vrf}</span>}
+              </td>
+              <td>
+                <span className="chip warn">{ROUTE_KIND[e.kind] ?? e.kind}</span>
+                {e.fields?.length ? <span className="faint"> {e.fields.join(", ")}</span> : null}
+              </td>
+              <td className="mono">{e.lead ?? (e.kind === "only_here" ? "–" : "")}</td>
+              <td className="mono">{e.here ?? (e.kind === "only_lead" ? "–" : "")}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {count > entries.length && <div className="faint">… und {count - entries.length} weitere</div>}
+    </div>
+  );
+}
 
 const SIDE: Record<string, string> = { src: "Quelle / Consumer", dst: "Ziel / Provider" };
 const fmtValue = (k: string, v: unknown): string => {
   if (k === "missing" && Array.isArray(v)) return v.map((x) => SIDE[x] ?? x).join(", ");
   if (Array.isArray(v)) return v.join(k === "compared" ? " ≠ " : ", ");
+  // Abweichung im Verbund: {Feld: [hier, dort]}
+  if (k === "values" && v && typeof v === "object")
+    return Object.entries(v as Record<string, unknown>)
+      .map(([f, x]) => `${f}: ${Array.isArray(x) ? x.join(" ≠ ") : String(x)}`)
+      .join(" · ");
   if (k === "ipam_elsewhere" && v && typeof v === "object") {
     const o = v as Record<string, string>;
     return `${o.name} → ${o.value}`;
   }
   return typeof v === "object" ? JSON.stringify(v) : String(v);
 };
+
+// Weitere Ziele eines Befunds (0.72.0): Routen bzw. Policy-Routen im Routing, NAT
+function viewLinks(f: Finding): { label: string; view: View; params: ViewParams }[] {
+  const d = (f.detail ?? {}) as Record<string, unknown>;
+  const sid = f.source_system_id;
+  if (f.type === "parallel_route_mismatch" && sid != null && d.vdom)
+    return [{ label: `Routen ${String(d.source ?? "")} · ${String(d.vdom)}`, view: "routing",
+              params: { tab: "routes", context: `${sid}|${String(d.vdom)}` } }];
+  if (f.type === "parallel_policy_route_mismatch")
+    return [{ label: String(d.label ?? "Policy-Route"), view: "routing",
+              params: { tab: "policy", q: `${String(d.source ?? "")} ${String(d.name ?? d.seq ?? "")}`.trim() } }];
+  if (f.type === "parallel_nat_mismatch" && d.name)
+    return [{ label: String(d.name), view: "nat", params: { q: String(d.name) } }];
+  return [];
+}
 
 // Objekt-Namen eines Befunds, für die ein Link "Regeln mit diesem Objekt" sinnvoll ist
 function ruleLinks(f: Finding): { label: string; params: ViewParams }[] {
@@ -309,6 +401,7 @@ export default function Findings({
               <tbody>
                 {shown.map((f) => {
                   const links = onGo ? ruleLinks(f) : [];
+                  const others = onGo ? viewLinks(f) : [];
                   const sources = Array.isArray(f.detail?.sources) ? (f.detail!.sources as string[]).join(", ") : null;
                   return (
                     <Fragment key={f.id}>
@@ -357,6 +450,21 @@ export default function Findings({
                               <dt>erstmals gesehen</dt>
                               <dd className="mono">{fmtTime(f.first_seen)}</dd>
                             </dl>
+                            <RouteEntries f={f} />
+                            {others.length > 0 && (
+                              <div style={{ marginTop: 6 }}>
+                                <span className="faint">Anzeigen: </span>
+                                {others.map((l) => (
+                                  <button
+                                    key={l.label}
+                                    className="chip local linkchip"
+                                    onClick={() => onGo?.(l.view, l.params)}
+                                  >
+                                    {l.label}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                             {links.length > 0 && (
                               <div style={{ marginTop: 6 }}>
                                 <span className="faint">Regeln anzeigen: </span>

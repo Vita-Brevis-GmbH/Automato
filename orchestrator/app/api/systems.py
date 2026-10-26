@@ -736,6 +736,21 @@ def parallel_suggestions(
     return parallel.suggestions(session, tenant_id, include_rejected)
 
 
+@router.get("/parallel")
+def parallel_groups(
+    tenant_id: int,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    """Verbuende paralleler Firewalls mit dem Vergleich (0.72.0): je Bereich (Policies,
+    Objekte, Policy-Routen, Routen, NAT) gleich, abweichend und fehlend - die Abweichungen
+    stehen als Befunde unter Findings → Parallele Firewalls."""
+    from app.store import parallel
+
+    tenant_scope(principal, tenant_id)
+    return list(parallel.compare(session, tenant_id).groups.values())
+
+
 class ParallelRejectIn(BaseModel):
     tenant_id: int
     system_ids: list[int] = []  # diese Firewalls sind nicht parallel

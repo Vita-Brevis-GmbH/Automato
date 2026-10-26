@@ -606,7 +606,13 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
               />
             )}
             {current === "routing" && (
-              <Routing tenantId={tenantId} tenantLabel={tenantLabel} canEdit={me.isAdmin || me.isOperator} />
+              <Routing
+                key={JSON.stringify(params)}
+                tenantId={tenantId}
+                tenantLabel={tenantLabel}
+                canEdit={me.isAdmin || me.isOperator}
+                params={params}
+              />
             )}
             {current === "verkabelung" && <Cabling tenantId={tenantId} tenantLabel={tenantLabel} />}
             {current === "design" && (

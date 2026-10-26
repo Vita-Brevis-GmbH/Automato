@@ -15,12 +15,14 @@ import {
   fetchExitSuggestions,
   fetchHa,
   fetchL3Outs,
+  fetchParallelGroups,
   fetchPeers,
   fetchPolicyRoutes,
   fetchRoutes,
   fetchRoutingSummary,
   Labeled,
   NextHop,
+  ParallelGroup,
   PolicyHit,
   Resolved,
   RoutingNode,
@@ -41,11 +43,12 @@ import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 
 const PAGE = 200;
 
-type Tab = "routes" | "peers" | "ha" | "policy" | "l3out" | "exits" | "topology";
+type Tab = "routes" | "peers" | "ha" | "parallel" | "policy" | "l3out" | "exits" | "topology";
 const TABS: { key: Tab; label: string }[] = [
   { key: "routes", label: "Routen" },
   { key: "peers", label: "BGP-Nachbarn" },
   { key: "ha", label: "HA & Session-Sync" },
+  { key: "parallel", label: "Parallele Firewalls" },
   { key: "policy", label: "Policy-Routen & SD-WAN" },
   { key: "l3out", label: "L3Outs (ACI)" },
   { key: "exits", label: "Anbindungen" },
@@ -318,16 +321,18 @@ function RoutesTab({
   nodes,
   vrfs,
   mgmt,
+  initial = {},
 }: {
   tenantId: number;
   nodes: RoutingNode[];
   vrfs: number[];
   mgmt: boolean;
+  initial?: { q?: string; table?: string; context?: string }; // aus einem Link (Befund)
 }) {
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initial.q ?? "");
   const [ip, setIp] = useState("");
-  const [table, setTable] = useState("");
-  const [context, setContext] = useState("");
+  const [table, setTable] = useState(initial.table ?? "");
+  const [context, setContext] = useState(initial.context ?? "");
   const [vrf, setVrf] = useState("");
   const [offset, setOffset] = useState(0);
   const [page, setPage] = useState<{ rows: TopoRoute[]; total: number } | null>(null);
@@ -500,8 +505,8 @@ function useList<T>(load: () => Promise<T[]>, deps: unknown[]) {
 }
 
 // Filter der kleineren Listen im Browser: Freitext über alle Angaben, System, weitere Auswahl
-function useRowFilter<T>(rows: T[] | null, text: (r: T) => unknown[], system: (r: T) => string) {
-  const [q, setQ] = useState("");
+function useRowFilter<T>(rows: T[] | null, text: (r: T) => unknown[], system: (r: T) => string, initialQ = "") {
+  const [q, setQ] = useState(initialQ);
   const [sys, setSys] = useState("");
   const systems = [...new Set((rows ?? []).map(system))].sort();
   const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -690,13 +695,96 @@ function HaTab({ tenantId }: { tenantId: number }) {
   );
 }
 
-function PolicyTab({ tenantId }: { tenantId: number }) {
+// Parallele Firewalls (Verbund, ADR 0020; 0.72.0): je Verbund, was gleich ist und was abweicht –
+// Policies, Objekte, Policy-Routen, Routing (je VDOM gegen die führende Firewall) und NAT. Die
+// Abweichungen stehen als Befunde unter Findings → Parallele Firewalls.
+const PARALLEL_AREAS: { key: keyof ParallelGroup["stats"]; label: string; type: string }[] = [
+  { key: "rules", label: "Policies", type: "parallel_rule_mismatch" },
+  { key: "objects", label: "Objekte (gleichnamig)", type: "parallel_object_mismatch" },
+  { key: "policy_routes", label: "Policy-Routen & SD-WAN", type: "parallel_policy_route_mismatch" },
+  { key: "routes", label: "Routen (wirksam und statisch)", type: "parallel_route_mismatch" },
+  { key: "nat", label: "NAT (VIPs, IP-Pools)", type: "parallel_nat_mismatch" },
+];
+
+function ParallelTab({ tenantId }: { tenantId: number }) {
+  const { rows, error } = useList<ParallelGroup>(() => fetchParallelGroups(tenantId), [tenantId]);
+  return (
+    <>
+      <ErrorBox error={error} />
+      {rows === null ? (
+        <Loading />
+      ) : rows.length === 0 ? (
+        <Note>
+          Kein Verbund paralleler Firewalls. Ein Admin fasst Firewalls mit Session-Sync bzw. gleichen Policies in
+          „Regeln &amp; Contracts“ (Vorschlag) oder im Quellsystem zu einem Verbund zusammen.
+        </Note>
+      ) : (
+        rows.map((g) => (
+          <div key={g.group} className="card parallel-compare">
+            <div className="card-head">
+              <h2>Verbund „{g.group}“</h2>
+              <span className="faint">
+                {g.members.map((m) => m.name).join(" · ")} – führend {g.members[0]?.name}
+              </span>
+            </div>
+            <div className="card-body">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Bereich</th>
+                    <th className="num">gleich</th>
+                    <th className="num">abweichend</th>
+                    <th className="num">fehlt auf einer Firewall</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {PARALLEL_AREAS.map((a) => {
+                    const s = g.stats[a.key] ?? {};
+                    const bad = (s.differs ?? 0) + (s.missing ?? 0);
+                    return (
+                      <tr key={a.key}>
+                        <td>{a.label}</td>
+                        <td className="num">{s.same ?? <Dash />}</td>
+                        <td className="num">
+                          {s.differs ? <span className="chip warn">{s.differs}</span> : (s.differs ?? <Dash />)}
+                        </td>
+                        <td className="num">
+                          {s.missing ? <span className="chip warn">{s.missing}</span> : (s.missing ?? <Dash />)}
+                        </td>
+                        <td>
+                          {bad > 0 && (
+                            <a href={`#findings?type=${a.type}`} className="linkbtn">
+                              Befunde
+                            </a>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div className="faint" style={{ marginTop: 6 }}>
+                Routen je VDOM gegen die führende Firewall: wirksame Routen nach Protokoll und Interface (die Next-Hops
+                sind je Firewall eigene Router), statische Routen mit Distanz, Interface, Gateway und Status; nicht
+                lesbare Tabellen zählen nicht. BGP-Nachbarn werden nicht verglichen.
+              </div>
+            </div>
+          </div>
+        ))
+      )}
+    </>
+  );
+}
+
+function PolicyTab({ tenantId, initialQ = "" }: { tenantId: number; initialQ?: string }) {
   const { rows: all, error } = useList<TopoPolicyRoute>(() => fetchPolicyRoutes(tenantId), [tenantId]);
   const [kind, setKind] = useState("");
   const f = useRowFilter(
     all,
     (p) => [labelOf(p), p.name, p.seq, p.match, p.gateway, p.gateway_resolved, p.output_device, p.action],
     labelOf,
+    initialQ,
   );
   const rows =
     f.shown?.filter((p) => !kind || (kind === "off" ? !p.enabled : p.kind === kind && p.enabled)) ?? null;
@@ -1364,12 +1452,16 @@ export default function Routing({
   tenantId,
   tenantLabel,
   canEdit = false,
+  params = {},
 }: {
   tenantId: number | null;
   tenantLabel: string;
   canEdit?: boolean;
+  params?: Record<string, string>; // aus einem Link: tab, context, table, q
 }) {
-  const [tab, setTab] = useState<Tab>("routes");
+  const [tab, setTab] = useState<Tab>(
+    TABS.some((t) => t.key === params.tab) ? (params.tab as Tab) : "routes",
+  );
   const [draft, setDraft] = useState<ExitDraft | null>(null);
   const [summary, setSummary] = useState<RoutingSummary | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -1457,11 +1549,18 @@ export default function Routing({
         ))}
       </div>
       {tab === "routes" && (
-        <RoutesTab tenantId={tenantId} nodes={nodes} vrfs={summary?.vrfs ?? []} mgmt={!!summary?.mgmt_vrf} />
+        <RoutesTab
+          tenantId={tenantId}
+          nodes={nodes}
+          vrfs={summary?.vrfs ?? []}
+          mgmt={!!summary?.mgmt_vrf}
+          initial={params.tab === "routes" ? params : {}}
+        />
       )}
       {tab === "peers" && <PeersTab tenantId={tenantId} />}
       {tab === "ha" && <HaTab tenantId={tenantId} />}
-      {tab === "policy" && <PolicyTab tenantId={tenantId} />}
+      {tab === "parallel" && <ParallelTab tenantId={tenantId} />}
+      {tab === "policy" && <PolicyTab tenantId={tenantId} initialQ={params.tab === "policy" ? params.q : ""} />}
       {tab === "l3out" && <L3OutTab tenantId={tenantId} />}
       {tab === "topology" && <TopologyTab tenantId={tenantId} />}
       {tab === "exits" && (

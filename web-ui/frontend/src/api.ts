@@ -390,6 +390,21 @@ export const fetchParallelSuggestions = (tenantId: number, includeRejected = fal
   getJSON<ParallelSuggestion[]>(
     `/api/systems/parallel-suggestions${qs({ tenant_id: tenantId, include_rejected: includeRejected ? "true" : undefined })}`,
   );
+// Vergleich je Verbund (0.72.0): gleich/abweichend/fehlt je Bereich; führend = erstes Mitglied
+export type ParallelCounts = { same?: number; differs?: number; missing?: number };
+export type ParallelGroup = {
+  group: string;
+  members: { id: number; name: string }[];
+  stats: {
+    rules: ParallelCounts;
+    objects: ParallelCounts;
+    policy_routes: ParallelCounts;
+    routes: ParallelCounts;
+    nat: ParallelCounts;
+  };
+};
+export const fetchParallelGroups = (tenantId: number) =>
+  getJSON<ParallelGroup[]>(`/api/systems/parallel${qs({ tenant_id: tenantId })}`);
 // Nicht parallel: Vorschlag ablehnen bzw. Verbund auflösen (beides: nicht mehr vorschlagen)
 export const rejectParallel = (tenantId: number, sel: { system_ids?: number[]; group?: string }) =>
   sendJSON<{ source_ids: number[] }>("/api/systems/parallel-reject", "POST", { tenant_id: tenantId, ...sel });

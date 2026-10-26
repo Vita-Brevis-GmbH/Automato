@@ -162,7 +162,8 @@ def run(app) -> None:
     run_result(fw8, "fortigate", **{k: v for k, v in json.loads(raw8).items() if k != "status"})
 
     # FortiGate 9 und 10: Verbund „Süd“ (Session-Sync-Paar), beide am selben LAN und Servernetz -
-    # im Weg ein Hop mit beiden Firewalls (0.29.0)
+    # im Weg ein Hop mit beiden Firewalls (0.29.0); die Policy-Route 1 hat je Firewall ein anderes
+    # Gateway (Abweichung im Verbund, 0.72.0)
     south = []
     for name, own in (("fw-09", 2), ("fw-10", 3)):
         sid = system(name=name, platform="fortigate", base_url=f"https://{name}.example.ch")
@@ -179,7 +180,10 @@ def run(app) -> None:
             routing={"contexts": [{"node": name, "context": "root"}],
                      "routes": [{"node": name, "context": "root", "prefix": p,
                                  "protocol": "connected", "next_hops": [{"interface": i}]}
-                                for i, p, _ip in nets]},
+                                for i, p, _ip in nets],
+                     "policy_routes": [{"node": name, "context": "root", "seq": 1,
+                                        "gateway": f"10.89.0.{250 + own}", "output_device": ["srv"],
+                                        "match": {"dst": ["203.0.113.0/24"]}}]},
         )  # fmt: skip
     ok(
         c.post(

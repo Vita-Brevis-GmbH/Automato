@@ -7,7 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
-## 0.71.0 – 2026-10-26
+## 0.72.0 – 2026-10-26
+
+Parallele Firewalls: Abweichungen bei Policy-Routen, Routing und NAT (Umplanung des Anwenders,
+Schritt 2; ADR 0020 Ergänzung 0.72.0). Rein lesend, ohne Migration.
+
+- **Policy-Routen und SD-WAN-Regeln** im Verbund je VDOM über die Nummer bzw. den Namen
+  verglichen (Status, Bedingung, Aktion, Gateway, Ausgang mit Reihenfolge, SD-WAN-Zonen). Befund
+  „Parallele Policy-Route abweichend“ – abweichend bzw. fehlt auf einer Firewall.
+- **Routing** je VDOM gegen die führende Firewall: wirksame Routen nach Protokoll und Interface
+  (Next-Hops zählen nicht – je Firewall eigene Router), statische Routen mit Distanz, Interface,
+  Gateway, Status; VDOM nur auf einer Firewall. Ein Befund „Paralleles Routing abweichend“ je
+  Firewall und VDOM mit der Liste der Präfixe (Tabelle im Befund). Nicht lesbare Tabellen zählen
+  nicht.
+- **NAT:** VIPs und IP-Pools je VDOM und Name (IPs, Ports, Typ, externes Interface, Real Server,
+  Einstellungen). Befund „Paralleles NAT abweichend“.
+- **Übersicht** Routing → Reiter „Parallele Firewalls“: je Verbund gleich/abweichend/fehlt für
+  Policies, Objekte, Policy-Routen, Routen und NAT mit Link auf die Befunde
+  (`GET /systems/parallel`). Die Befunde öffnen die Routen des VDOMs, die Policy-Routen bzw. die
+  NAT-Ansicht; Werte im Befund zuerst die Firewall des Befunds, dann die führende.
+
 
 Export für Confluence (Umplanung des Anwenders, Schritt 1; ADR 0026). Kein Schreibweg:
 Automato liefert Dateien, der Import in Confluence geschieht von Hand. Ohne Migration.

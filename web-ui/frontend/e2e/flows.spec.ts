@@ -38,7 +38,11 @@ test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page })
 
 test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page }) => {
   await page.goto("/#findings");
-  await expect(page.locator(".fgroup")).toHaveCount(8);
+  await expect(page.locator(".fgroup")).toHaveCount(9);
+  // seit 0.72.0: Policy-Route im Verbund „Süd“ je Firewall mit anderem Gateway
+  await expect(page.locator(".fgroup", { hasText: "Parallele Firewalls" })).toContainText(
+    "Parallele Policy-Route abweichend",
+  );
   // seit 0.62.0: Verkabelung (Speed/Native VLAN zwischen den Switches der Beispieldaten)
   await expect(page.locator(".fgroup", { hasText: "Verkabelung" })).toContainText("Kabel: Speed abweichend");
   // seit 0.59.0: Abweichung Regel ↔ Weg der Applikation Webshop (CT_rt)
@@ -536,6 +540,25 @@ test("Parallele Firewalls: Verbund auflösen, Vorschlag abgelehnt und wieder vor
   await page.click("button:has-text('1 abgelehnter Vorschlag')");
   await page.click("button:has-text('wieder vorschlagen')");
   await expect(page.locator(".note", { hasText: "fw-06 und fw-07" })).toContainText("Ablehnen");
+});
+
+test("Parallele Firewalls: Policy-Routen im Verbund vergleichen, Befund öffnet das Routing (0.72.0)", async ({ page }) => {
+  await page.goto("/#routing");
+  await page.click(".tabbar button:has-text('Parallele Firewalls')");
+  const card = page.locator(".parallel-compare", { hasText: "Verbund „Süd“" });
+  await expect(card).toContainText("fw-09 · fw-10 – führend fw-09");
+  const pbr = card.locator("tr", { hasText: "Policy-Routen & SD-WAN" });
+  await expect(pbr.locator(".chip.warn")).toHaveText("1"); // Gateway je Firewall anders
+  await pbr.locator("a", { hasText: "Befunde" }).click();
+  await expect(page).toHaveURL(/#findings\?type=parallel_policy_route_mismatch/);
+  const row = page.locator("tbody tr.clickable", { hasText: "Policy-Route 1 auf fw-10" });
+  await expect(row).toContainText("Gateway: 10.89.0.253 ≠ 10.89.0.252");
+  await row.click();
+  await page.locator("button.linkchip", { hasText: "Policy-Route 1" }).click();
+  await expect(page).toHaveURL(/#routing/);
+  await expect(page.locator(".tabbar button.on")).toHaveText("Policy-Routen & SD-WAN");
+  await expect(page.locator(".card-body.viewport tbody tr")).toHaveCount(1);
+  await expect(page.locator(".card-body.viewport tbody tr")).toContainText("10.89.0.253");
 });
 
 test("Routing: erkannte Anbindung mit allen Routern übernehmen, Wege gleich lang", async ({ page }) => {

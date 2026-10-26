@@ -371,20 +371,21 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.69.1** | Korrekturen: ACI-Contracts zustandslos (Filter ohne Ports in beide Richtungen, mit Zielport nur Antworten) in Weg-Suche, Regel-Detail, Applikations-Doku, Verbindungen und Zonenmatrix; VLANs aus dem ACI (`vlanCktEp`, `pcAggrIf`) im Reiter VLANs (ADR 0019) |
 | **0.70.0** | Patchungen im Verkabelungsplan (Gerät bzw. Kabel wählen, Ports beider Seiten mit Konfiguration, Abweichungen, Endpunkten); Grundschema der Zonen in der Oberfläche bearbeiten (ADR 0025 Nr. 12, ADR 0024 Nr. 16) |
 | **0.71.0** | Export für Confluence: Applikations-Doku und Zonenplan als Word (.docx) plus draw.io-Plan in einem ZIP, Import von Hand, kein Schreibweg (ADR 0026) |
+| **0.72.0** | Parallele Firewalls: Policy-Routen/SD-WAN, Routing je VDOM und NAT im Verbund vergleichen, Befunde und Übersicht „Parallele Firewalls“ im Routing (ADR 0020 Ergänzung) |
 
-### Nächste Arbeiten (Stand 0.71.0)
+### Nächste Arbeiten (Stand 0.72.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.71.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.72.0.
 
 **Umplanung des Anwenders (2026-10-26) – Reihenfolge bis zum Abschluss des ersten Projekts:**
 
 | Schritt | Inhalt | Stand |
 |---|---|---|
 | 1 | **Export nach Confluence** – Entscheid des Anwenders: kein Schreibweg, Word (.docx) und draw.io zum Import von Hand, zuerst Applikations-Doku und Zonenplan (ADR 0026) | **umgesetzt in 0.71.0** |
-| 2 | **Parallele Firewalls:** Abweichungen bei Policy-Routen, Routing und NAT zwischen den Firewalls eines Verbunds (ADR 0020) | geplant |
+| 2 | **Parallele Firewalls:** Abweichungen bei Policy-Routen, Routing und NAT zwischen den Firewalls eines Verbunds (ADR 0020 Ergänzung 0.72.0) | **umgesetzt in 0.72.0** |
 | 3 | **Schwachstellen** aus der Übersicht 0.70.0: ACI-Filter nur mit Quellport (Urteil statt „möglich“), Rückrichtung in der Doku je System wie in der Applikations-Doku, Leistung der Zonenmatrix mit der Rückrichtung messen und zwischenspeichern | geplant |
-| 4 | **Lücken im Ablauf:** nächtlicher CI-Lauf auf dem aktuellen Stand (`main` nachführen), Überschriften der Roadmap | geplant |
+| 4 | **Lücken im Ablauf:** nächtlicher CI-Lauf auf dem aktuellen Stand (`main` nachführen), Überschriften der Roadmap | `main` = 0.70.0 (PR #1, 2026-10-26), wird je Version nachgeführt |
 | 5 | **Zonen komplett:** Zonen je Kunde im Grundschema, Befund „Zone ausserhalb des Schemas“, draw.io-Datei des Zonenplans zurück einlesen, Relevanz nach dem Weg in der Zonenmatrix, Übergänge über Routen ohne gemeinsames Netz, Absicht je Richtung im Plan, Zonen in den Verbindungen der Applikations-Doku (ADR 0024) | geplant |
 | 6 | **Daten verschärfen** (Inhalt mit dem Anwender festlegen) | danach |
 | 7 | **Erstes Projekt abschliessen:** Produktivschaltung des DC mit den R14-Massnahmen (ADR 0013, RISKS) | danach |
