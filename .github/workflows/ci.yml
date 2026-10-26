@@ -1,0 +1,221 @@
+# CI - selektiv pro Komponente (Vorgabe aus ADR 0001).
+# Secret-Scan laeuft immer; Python-/Frontend-/Docker-/E2E-Jobs nur bei Aenderungen im Pfad.
+# Naechtlich (schedule) und von Hand (workflow_dispatch) laufen alle Jobs.
+name: ci
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  pull_request:
+  schedule:
+    - cron: "17 2 * * *" # taeglich 02:17 UTC, alle Jobs
+  workflow_dispatch:
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # Bei schedule/workflow_dispatch alles pruefen, sonst nur geaenderte Komponenten
+      python: ${{ steps.filter.outputs.python == 'true' || steps.full.outputs.all == 'true' }}
+      frontend: ${{ steps.filter.outputs.frontend == 'true' || steps.full.outputs.all == 'true' }}
+      docker: ${{ steps.filter.outputs.docker == 'true' || steps.full.outputs.all == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: full
+        run: echo "all=${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}" >> "$GITHUB_OUTPUT"
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'orchestrator/**'
+              - 'collectors/**'
+              - 'sot-gateway/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'VERSION'
+              - 'scripts/**'
+              - 'deploy/collector-agent/**'
+              - 'deploy/tls/**'
+              - 'deploy/*.sh'
+              - 'docker-compose.yml'
+              - 'web-ui/frontend/package*.json'
+            frontend:
+              - 'web-ui/frontend/**'
+            docker:
+              - '**/Dockerfile'
+              - 'docker-compose.yml'
+              - '.env.example'
+              - 'deploy/**'
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret-Scan (gitleaks CLI)
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.18.4 \
+            detect --source /repo --no-banner --redact
+
+  python:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Sync workspace
+        run: uv sync --all-packages
+      - name: Version (VERSION = alle Pakete)
+        run: python3 scripts/version.py check
+      - name: Lint (ruff)
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      # Abdeckung: Untergrenze 90 % je Paket (Stand 0.8.0: 94/95/94 %) - faellt sie, fehlt ein Test
+      - name: Tests orchestrator (mit Abdeckung)
+        run: >-
+          uv run --package orchestrator pytest orchestrator/tests -q
+          --cov=app --cov-report=term:skip-covered --cov-fail-under=90
+      - name: Tests collectors (mit Abdeckung)
+        run: >-
+          uv run --package collectors pytest collectors/tests -q
+          --cov=collectors --cov-report=term:skip-covered --cov-fail-under=90
+      - name: Tests sot-gateway (mit Abdeckung)
+        run: >-
+          uv run --package sot-gateway pytest sot-gateway/tests -q
+          --cov=sot_gateway --cov-report=term:skip-covered --cov-fail-under=90
+      - name: Agent-Skripte (PowerShell-Syntax)
+        shell: pwsh
+        run: ./scripts/check_powershell.ps1
+
+  # Migrationen und Orchestrator-Tests gegen echtes Postgres (wie Dev/Prod); die Python-Jobs
+  # oben laufen schnell gegen SQLite.
+  postgres:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: automato
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: automato
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U automato"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      AUTOMATO_DATABASE_URL: postgresql+psycopg://automato:ci-only@localhost:5432/automato
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Sync workspace
+        run: uv sync --all-packages
+      - name: Migrationen hoch, ganz runter, wieder hoch
+        working-directory: orchestrator
+        run: |
+          uv run --package orchestrator alembic upgrade head
+          uv run --package orchestrator alembic downgrade base
+          uv run --package orchestrator alembic upgrade head
+      # Modell und Migrationen deckungsgleich? (vergessene Migration, falsches NOT NULL ...)
+      - name: Migrationen passen zum Modell (alembic check)
+        working-directory: orchestrator
+        run: uv run --package orchestrator alembic check
+      - name: Testdatenbank anlegen
+        run: >-
+          uv run --package orchestrator python -c "import sqlalchemy as sa;
+          e = sa.create_engine('$AUTOMATO_DATABASE_URL', isolation_level='AUTOCOMMIT');
+          e.connect().execute(sa.text('CREATE DATABASE automato_test'))"
+      - name: Tests orchestrator gegen Postgres
+        env:
+          AUTOMATO_TEST_DATABASE_URL: postgresql+psycopg://automato:ci-only@localhost:5432/automato_test
+        run: uv run --package orchestrator pytest orchestrator/tests -q
+      # TLS intern (0.49.0): Postgres und Redis aus docker-compose.yml mit eigener CA - nur
+      # verschluesselt mit Pruefung von CA und Name, Klartext und fremde CA abgewiesen
+      - name: TLS intern mit den echten Containern (Postgres, Redis)
+        run: |
+          uv run --package orchestrator automato tls-init --dir deploy/tls/pki
+          AUTOMATO_INTERNAL_TLS=on docker compose -p tlsci --profile core up -d --wait postgres redis
+          AUTOMATO_TEST_TLS_COMPOSE=tlsci uv run --package orchestrator pytest orchestrator/tests/test_tls_compose.py -q
+      - name: TLS-Container aufraeumen
+        if: always()
+        run: docker compose -p tlsci --profile core down -v || true
+
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-ui/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run lint
+      - run: npm run build
+
+  # Images bauen wie im Betrieb (Orchestrator inkl. Agent-Paket, Collector, Web-UI) und die
+  # Compose-Konfiguration aller Profile pruefen
+  docker:
+    needs: changes
+    if: >-
+      needs.changes.outputs.python == 'true' || needs.changes.outputs.frontend == 'true' ||
+      needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose-Konfiguration (alle Profile)
+        run: >-
+          docker compose --env-file .env.example --profile core --profile collectors
+          --profile proxy --profile agent-gateway --profile auth config --quiet
+      - name: Agent-Paket (Docker-Stage, Wheels vollstaendig)
+        run: docker build --target agent-package -f orchestrator/Dockerfile .
+      - name: Image Orchestrator
+        run: docker build -f orchestrator/Dockerfile -t automato-orchestrator:ci .
+      - name: Image Collector
+        run: docker build -f collectors/Dockerfile -t automato-collector:ci .
+      - name: Image Web-UI
+        run: docker build -t automato-web-ui:ci web-ui/frontend
+
+  # UI-Tests im Browser (Playwright): Orchestrator mit Beispieldaten + Vite, alle Ansichten und
+  # die Kernablaeufe (Suche, NAT-Links, Findings, Dienste, Standorte, Alle einlesen)
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-ui/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Sync workspace
+        working-directory: .
+        run: uv sync --all-packages
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Browser (Chromium)
+        run: npx playwright install --with-deps chromium
+      - name: UI-Tests
+        run: npm run e2e
+      - name: Bericht bei Fehler
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web-ui/frontend/playwright-report
+            web-ui/frontend/test-results
+          retention-days: 7

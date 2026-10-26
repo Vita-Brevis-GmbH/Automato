@@ -1,0 +1,48 @@
+[
+  {
+    "_hinweis": "Attribut-Importer: SAML-Assertion-Attribut 'tenant_ids' -> User-Attribut 'tenant_ids' (steuert das Mandanten-Scoping im Orchestrator). Mehrwertig. Platzhalter ersetzen, _hinweis vor Import entfernen.",
+    "name": "tenant_ids-importer",
+    "identityProviderAlias": "kunde-saml",
+    "identityProviderMapper": "saml-user-attribute-idp-mapper",
+    "config": {
+      "syncMode": "FORCE",
+      "attribute.name": "tenant_ids",
+      "attribute.friendly.name": "",
+      "attribute.name.format": "ATTRIBUTE_FORMAT_BASIC",
+      "user.attribute": "tenant_ids"
+    }
+  },
+  {
+    "_hinweis": "Default-Rolle fuer broker-angelegte Kunden-User: viewer (least privilege). operator/admin gezielt vergeben.",
+    "name": "default-viewer",
+    "identityProviderAlias": "kunde-saml",
+    "identityProviderMapper": "saml-role-idp-mapper",
+    "config": {
+      "syncMode": "INHERIT",
+      "attribute.name": "",
+      "attribute.value": "",
+      "role": "viewer"
+    }
+  },
+  {
+    "_hinweis": "Kunden-Benutzer (ADR 0018): die Kunden-IDs FEST je IdP hinterlegen, nie aus der Assertion uebernehmen - sonst koennte ein Kunden-IdP sich fremde Kunden geben. Mehrere Kunden kommagetrennt ('3,4'). Platzhalter ersetzen.",
+    "name": "customer_ids-fest",
+    "identityProviderAlias": "kunde-saml",
+    "identityProviderMapper": "hardcoded-attribute-idp-mapper",
+    "config": {
+      "syncMode": "FORCE",
+      "attribute": "customer_ids",
+      "attribute.value": "<kunden-ids>"
+    }
+  },
+  {
+    "_hinweis": "Rolle customer fuer alle Benutzer dieses Kunden-IdP: nur die Doku ihres Ausschnitts, nie Admin (auch wenn admin vergeben waere).",
+    "name": "rolle-customer",
+    "identityProviderAlias": "kunde-saml",
+    "identityProviderMapper": "oidc-hardcoded-role-idp-mapper",
+    "config": {
+      "syncMode": "FORCE",
+      "role": "customer"
+    }
+  }
+]

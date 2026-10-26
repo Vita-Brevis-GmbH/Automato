@@ -1,0 +1,168 @@
+"""Konfiguration - vollstaendig ueber Umgebungsvariablen (Praefix AUTOMATO_)."""
+
+from functools import lru_cache
+from typing import Literal
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Nur fuer lokale Entwicklung gueltiger Default; ausserhalb "dev" abgelehnt
+# (siehe check_security_config, ADR 0005).
+DEFAULT_INTERNAL_TOKEN = "dev-only-token"  # noqa: S105
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="AUTOMATO_", env_file=".env", extra="ignore")
+
+    environment: str = "dev"
+    database_url: str = "postgresql+psycopg://automato:automato@localhost:5432/automato"
+    redis_url: str = "redis://localhost:6379/0"
+    # Token, mit dem Collectors Ergebnisse an die interne API liefern.
+    # In jeder echten Umgebung ueber ENV setzen - der Default gilt nur lokal.
+    internal_api_token: str = DEFAULT_INTERNAL_TOKEN
+    # Erlaubte CORS-Origins fuers Web-UI; in Produktion explizit setzen.
+    cors_origins: list[str] = ["http://localhost:5173"]
+    # Die oeffentliche Read-API (/rules, /findings, /nat, /applications, …) ist noch
+    # NICHT authentifiziert (AuthN/RBAC = Folge-ADR, ADR 0005). Ausserhalb "dev" muss
+    # ein bewusstes Opt-in gesetzt werden, sonst faellt der Start fail-closed aus -
+    # verhindert versehentliche Exposition echter Kundendaten ohne RBAC.
+    allow_unauthenticated_read_api: bool = False
+
+    # AuthN/RBAC (E1, ADR 0007). dev: Standard-Admin-Principal (unveraendertes Verhalten),
+    # Override via X-Dev-Roles/X-Dev-Tenants fuer Tests/Demo. oidc: JWT gegen Keycloak
+    # (Issuer/JWKS/Audience, Rollen/Mandanten aus Claims) - Folgeschritt E1.1b.
+    auth_mode: str = "dev"  # dev | oidc
+    oidc_issuer: str = ""
+    oidc_audience: str = ""
+    oidc_jwks_url: str = ""
+    oidc_roles_claim: str = "realm_access.roles"  # Keycloak-Realm-Rollen
+    oidc_tenants_claim: str = "tenant_ids"
+    # Kunden-Benutzer (ADR 0018 Schritt 3): Attribut mit den Kunden-IDs; die Realm-Rolle
+    # `customer` markiert den Benutzer auch ohne Attribut (dann sieht er nichts)
+    oidc_customers_claim: str = "customer_ids"
+    oidc_web_client_id: str = "automato-web"  # public Client fuer das SPA (PKCE)
+    # Toleranz fuer Uhrenabweichung Keycloak <-> Orchestrator bei iat/nbf/exp (Sekunden).
+    # Ersetzt keine Zeitsynchronisation (NTP), faengt nur kleine Abweichungen ab.
+    oidc_clock_skew_seconds: int = 60
+    # Keycloak-Admin-Konsole fuer die Benutzerverwaltung (Link im UI), z. B.
+    # https://auth.int.example.ch/admin/master/console/#/automato-dev . Leer = aus dem
+    # Issuer abgeleitet (<origin>/admin/master/console/#/<realm>).
+    oidc_admin_console_url: str = ""
+
+    # Agent-Kanal nur ueber das mTLS-Agent-Gateway (deploy/agent-gateway): off = Agent-Token
+    # genuegt; require = Agent-Aufrufe muessen vom Gateway kommen (Gateway-Secret + Client-
+    # Zertifikat); bind = zusaetzlich CN des Zertifikats = Agent-Name. Der zentrale Worker
+    # (internes Token) spricht weiter direkt mit dem Orchestrator.
+    internal_mtls_mode: Literal["off", "require", "bind"] = "off"
+    agent_gateway_secret: str = ""  # Gateway setzt X-Gateway-Secret (auch Secret-Referenz)
+
+    # Signierte Agent-Updates (Ed25519): oeffentlicher Schluessel (Base64, 32 Byte) zum Pruefen
+    # der eingespielten Signatur; die Signatur liegt im Daten-Volume (siehe deploy/agent-signing).
+    agent_signing_pubkey: str = ""
+    agent_signature_file: str = "/var/lib/automato/agent-package.sig"
+
+    # Letzte Sicherung (schreibt deploy/backup/backup.sh ins Daten-Volume; System-Seite)
+    backup_status_file: str = "/var/lib/automato/last-backup.json"
+
+    # Zeitgesteuerte Laeufe je Quellsystem (Cron am Quellsystem). Aus = keine Hintergrund-
+    # Schleife (Tests, Werkzeuge); docker-compose schaltet ihn fuer den Orchestrator ein.
+    scheduler_enabled: bool = False
+    scheduler_interval_seconds: int = 30
+    scheduler_timezone: str = "Europe/Zurich"
+
+    # Haengende Laeufe beenden (Agent beendet, Ergebnis-Upload verloren): laufend ohne
+    # Ergebnis nach so vielen Minuten, wartend (nicht abgeholt) nach so vielen Stunden. Ein
+    # spaeter eintreffendes Ergebnis wird trotzdem eingespielt.
+    run_timeout_minutes: int = 120
+    run_queue_timeout_hours: int = 24
+    # NetBox-Sync: Vorschau bzw. Uebernahme ohne Lebenszeichen nach so vielen Minuten beenden
+    netbox_sync_timeout_minutes: int = 30
+
+    # Aufbewahrung (0.48.0, R14): beendete Laeufe, alte NetBox-Sync-Vorschauen und Audit-
+    # Eintraege nach so vielen Tagen loeschen (0 = nie); der Zeitplan raeumt taeglich auf
+    # (app.store.retention). Der aktuelle Stand bleibt immer.
+    retention_runs_days: int = 90
+    retention_sync_days: int = 90
+    retention_audit_days: int = 365
+    retention_l2_days: int = 30  # MAC-/ARP-Eintraege der Switches (0.63.0)
+
+    # Abweichung Regel <-> Weg der Applikationen (0.59.0): hoechstens so viele Sekunden je
+    # Neuberechnung nach einem Lauf; was nicht drankommt, behaelt seine Befunde und ist beim
+    # naechsten Mal zuerst dran (0 = ohne Grenze)
+    app_findings_seconds: int = 120
+
+    # Getrennte DB-Rollen (0.48.0, R14): die Migration (Eigentuemer der Tabellen) richtet mit
+    # `automato db-roles` diese Rolle ohne DDL ein; der Orchestrator verbindet sich dann mit
+    # ihr (docker-compose: Dienst migrate, AUTOMATO_DB_USER/AUTOMATO_DB_PASSWORD in .env).
+    db_app_role: str = ""
+    db_app_password: str = ""
+
+    # TLS intern (0.49.0, ADR 0023): Verbindungen zwischen den Containern verschluesselt und
+    # gegen die interne CA geprueft (app.tls); Zertifikate je Dienst in diesem Ordner
+    # (`deploy/aufbau.sh tls-intern`). Aus = wie bis 0.48 (Klartext im Compose-Netz).
+    internal_tls: bool = False
+    internal_tls_dir: str = "/etc/automato/tls"
+
+    # Agent-Paket fuer den Download im UI (Wheel + Windows-Skripte, ADR 0008); im Image von
+    # der Dockerfile-Stage "agent-package" befuellt.
+    agent_package_dir: str = "/workspace/agent-package"
+
+    # Schluessel fuer die Geraete-Zugangsdaten (ADR 0009). Gesetzt (auch als Secret-Referenz
+    # env:/file:/openbao:) hat Vorrang; sonst Schluesseldatei (beim ersten Start erzeugt, liegt
+    # in einem eigenen Volume - getrennt von der Datenbank).
+    credentials_key: str = ""
+    credentials_key_file: str = "/var/lib/automato/credentials.key"
+
+    # Audit-Log (E1.4): optionale At-Rest-Verschluesselung des (bereits per Allowlist
+    # gefilterten) detail-Payloads. Leer = Klartext (dev/Tests). In Produktion ueber
+    # den Secrets-/Vault-Provider (E1.5) setzen, nie im Repo.
+    audit_encryption_key: str = ""
+
+    # Secrets-Provider (E1.5, ADR 0007 D4). Secret-tragende Felder duerfen als Referenz
+    # "schema:locator" gesetzt werden und werden beim Start aufgeloest (app.secrets):
+    #   env:VARNAME            - Umgebungsvariable
+    #   file:NAME | file:/pfad - Datei (Docker-/K8s-Secret, SOPS/age-entschluesselt)
+    #   openbao:FELD | openbao:pfad#feld - OpenBao/Vault (KV v2)
+    #   literal:WERT           - Klartext mit ':' (Escape-Hatch)
+    # Klartext ohne bekanntes Schema bleibt unveraendert -> .env/dev wie bisher.
+    secrets_file_dir: str = "/run/secrets"
+    openbao_addr: str = ""
+    openbao_token: str = ""
+    openbao_kv_mount: str = "secret"
+    openbao_path: str = "automato"
+
+    # SoT-Zugaenge (lesend) - je Mandant wird der passende Adapter gebaut (ADR 0004).
+    # Model 2 (NetBox) zuerst; Infoblox (Model 1) in Phase 2.
+    netbox_url: str = ""
+    netbox_token: str = ""
+    netbox_verify_tls: bool = True
+    infoblox_url: str = ""
+    infoblox_username: str = ""
+    infoblox_password: str = ""
+    infoblox_verify_tls: bool = True
+
+
+def check_security_config(settings: "Settings") -> None:
+    """Fail-closed: verhindert unsichere Defaults ausserhalb der Entwicklung (ADR 0005)."""
+    if settings.internal_mtls_mode != "off" and len(settings.agent_gateway_secret) < 16:
+        raise RuntimeError(
+            "AUTOMATO_INTERNAL_MTLS_MODE ist aktiv, aber AUTOMATO_AGENT_GATEWAY_SECRET fehlt bzw. "
+            "ist kuerzer als 16 Zeichen (dasselbe Secret wie im Agent-Gateway setzen)."
+        )
+    if settings.environment != "dev" and settings.internal_api_token == DEFAULT_INTERNAL_TOKEN:
+        raise RuntimeError(
+            "AUTOMATO_INTERNAL_API_TOKEN nutzt den Entwicklungs-Default in einer "
+            f"'{settings.environment}'-Umgebung. Bitte ein echtes Token setzen "
+            "(z. B. openssl rand -hex 32)."
+        )
+    if settings.environment != "dev" and not settings.allow_unauthenticated_read_api:
+        raise RuntimeError(
+            "Die oeffentliche Read-API ist ohne AuthN/RBAC in einer "
+            f"'{settings.environment}'-Umgebung nicht freigegeben (ADR 0005). Entweder RBAC "
+            "umsetzen oder bewusst AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API=true setzen "
+            "(nur mit Netzsegmentierung/Reverse-Proxy-Auth davor)."
+        )
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

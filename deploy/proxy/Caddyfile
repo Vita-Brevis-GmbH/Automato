@@ -1,0 +1,41 @@
+# TLS-Reverse-Proxy vor der Automato-Web-UI (Profil "proxy" in docker-compose.yml).
+# AUTOMATO_UI_HOST (.env): IP oder Hostname, unter dem die UI erreichbar ist.
+# AUTOMATO_UI_TLS  (.env): "internal" (Default) = Caddy erzeugt selbst ein Zertifikat
+#   (eigene lokale CA; Dev/Lab, funktioniert auch fuer IP-Adressen) - oder
+#   "<crt> <key>" = Dateien aus /etc/caddy/pki (Fullchain + Key von der eigenen CA).
+# Details: deploy/proxy/README.md.
+{
+	# Browser senden beim Aufruf per IP keinen Servernamen (SNI); im Container sieht Caddy
+	# zudem eine andere lokale IP. Ohne Default-SNI schlaegt der TLS-Handshake dann fehl.
+	default_sni {$AUTOMATO_UI_HOST}
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$AUTOMATO_UI_HOST} {
+	encode zstd gzip
+
+	tls {$AUTOMATO_UI_TLS:internal} {
+		protocols tls1.3 tls1.3
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "SAMEORIGIN"
+		-Server
+	}
+
+	# Agent-/Ingest-API (/internal) nicht ueber die UI-Adresse ausliefern
+	# (ADR 0008: eigener Zugang, optional mTLS - collectors/EXTERNAL.md).
+	@internal path /api/internal /api/internal/*
+	respond @internal 404
+
+	# Web-UI (Vite); sie leitet /api/* selbst an den Orchestrator weiter. Mit TLS intern
+	# (0.49.0, AUTOMATO_INTERNAL_TLS=on) per HTTPS, Zertifikat gegen die interne CA geprueft.
+	reverse_proxy web-ui:5173 {
+		import /etc/caddy/automato-tls/upstream-{$AUTOMATO_INTERNAL_TLS:off}.caddy
+	}
+}

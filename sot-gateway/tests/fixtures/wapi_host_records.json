@@ -1,0 +1,11 @@
+[
+  {
+    "_ref": "record:host/ZG5zLmhvc3QkLl9kZWZhdWx0:web01.example.local/default",
+    "name": "web01.example.local",
+    "ipv4addrs": [{"ipv4addr": "10.1.2.3"}],
+    "extattrs": {
+      "Application": {"value": "Webshop"},
+      "Zone": {"value": "DC1-DMZ"}
+    }
+  }
+]

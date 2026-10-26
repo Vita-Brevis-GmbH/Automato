@@ -1,0 +1,43 @@
+[project]
+name = "automato"
+version = "0.70.0"
+description = "Automatisierungsplattform - Monorepo-Workspace (siehe README.md)"
+requires-python = ">=3.11"
+
+# Dev-Werkzeuge fuer CI + lokal (ruff-Version identisch zu .pre-commit-config.yaml,
+# damit Lint/Format in CI, pre-commit und lokal deckungsgleich sind). Wird von
+# `uv sync --all-packages` installiert (Default-Gruppe), daher findet `uv run ruff` es.
+[dependency-groups]
+dev = ["ruff==0.5.5"]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["orchestrator", "collectors", "sot-gateway"]
+
+[tool.uv.sources]
+sot-gateway = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["orchestrator/alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "S",    # bandit (Security)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101", "S105", "S106"]  # assert + Fake-Secrets in Tests sind erwuenscht
+"web-ui/frontend/e2e/**" = ["S101", "S105", "S106"]  # UI-Testdaten (Beispieldaten, kein Secret)
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI-Idiom: Depends()/Header() als Default-Argument ist gewollt
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Header"]

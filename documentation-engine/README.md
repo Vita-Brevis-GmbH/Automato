@@ -9,4 +9,5 @@ vergleicht ihn mit dem Soll-Zustand aus NetBox (Compliance-/Drift-Reports).
 - Generiert versionierte Doku (geplant: MkDocs Material)
 - Schreibt Compliance-Reports zurück in Richtung Source of Truth / Web UI
 
-Status: 🚧 noch nicht implementiert (siehe ROADMAP.md, Phase 1–2)
+Status: 🚧 noch nicht implementiert (Use-Case-Kandidat „Doku & Compliance" – Priorisierung
+in M1, siehe ROADMAP.md)

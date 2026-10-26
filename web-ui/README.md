@@ -3,7 +3,12 @@
 Bedienoberfläche der Plattform inkl. Wizards. Spricht ausschließlich mit dem Orchestrator –
 nie direkt mit Workern, Ansible oder Zielsystemen.
 
-## Geplanter Stack
-React/Vue-Frontend + schlankes Backend-for-Frontend (Auth-Proxy zum Orchestrator).
+## Stack
+React + Vite + TypeScript (`frontend/`, Entscheid: ADR 0003). Im Dev läuft der
+Zugriff auf den Orchestrator über den Vite-Proxy (`/api/*`); ein eigenes BFF
+(Auth-Proxy) folgt mit dem UI-Ausbau.
 
-Status: 🚧 noch nicht implementiert (siehe ROADMAP.md, Phase 5)
+Status: 🏗️ Skeleton vorhanden (Health-Anzeige, Regel-Tabellen-Platzhalter für
+UC1-Filter). Ausbau gemäss UC1 nach M5; Wizards siehe ROADMAP-Ausblick.
+
+Lokal: `cd frontend && npm install && npm run dev`

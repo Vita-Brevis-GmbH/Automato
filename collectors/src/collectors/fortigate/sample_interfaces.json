@@ -1,0 +1,70 @@
+[
+  {
+    "name": "port1",
+    "type": "physical",
+    "ip": "192.0.2.2 255.255.255.0",
+    "alias": "WAN",
+    "status": "up",
+    "role": "wan"
+  },
+  {
+    "name": "port2",
+    "type": "physical",
+    "ip": "10.10.20.1 255.255.255.0",
+    "alias": "DMZ",
+    "status": "up",
+    "role": "dmz",
+    "description": "DMZ-Segment"
+  },
+  {
+    "name": "port3",
+    "type": "physical",
+    "ip": "0.0.0.0 0.0.0.0",
+    "status": "up"
+  },
+  {
+    "name": "srv-vl10",
+    "type": "vlan",
+    "interface": "port3",
+    "vlanid": 10,
+    "ip": "10.10.10.1 255.255.255.0",
+    "alias": "Server",
+    "status": "up",
+    "ipv6": {
+      "ip6-address": "2001:db8:10::1/64"
+    }
+  },
+  {
+    "name": "mgmt-vl99",
+    "type": "vlan",
+    "interface": "port3",
+    "vlanid": 99,
+    "ip": "10.99.0.1 255.255.255.0",
+    "alias": "Management",
+    "status": "down"
+  },
+  {
+    "name": "agg1",
+    "type": "aggregate",
+    "member": [
+      {
+        "interface-name": "port4"
+      },
+      {
+        "interface-name": "port5"
+      }
+    ],
+    "ip": "0.0.0.0 0.0.0.0",
+    "status": "up"
+  },
+  {
+    "name": "port4",
+    "type": "physical",
+    "status": "up"
+  },
+  {
+    "name": "port5",
+    "type": "physical",
+    "status": "up"
+  }
+]

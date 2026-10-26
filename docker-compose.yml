@@ -1,22 +1,281 @@
-# Start-Setup (Phase 0/1). Wird schrittweise um die weiteren Services ergänzt.
-# Wachstumspfad: docker-compose -> Kubernetes ab Roadmap-Phase 7 (Multi-Worker-Skalierung).
-
-version: "3.9"
+# Grundaufbau (Meilenstein M6). Profile:
+#   core       -> postgres, redis, orchestrator, web-ui
+#   collectors -> Collector-Worker (FortiGate/ACI, liest Beispieldaten bis M7)
+# Start: docker compose --profile core --profile collectors up --build
+#
+# TLS intern (0.49.0, ADR 0023): AUTOMATO_INTERNAL_TLS=on (deploy/aufbau.sh tls-intern) - alle
+# Verbindungen zwischen den Containern verschluesselt und gegen die interne CA geprueft; die
+# Zertifikate liegen je Dienst unter deploy/tls/pki/<dienst> (gitignored), der CA-Schluessel in
+# deploy/tls/pki/ca und in keinem Container. Ohne Schalter wie bis 0.48 (Klartext im Netz).
+#
+# Infoblox DDI (M1-Entscheid) ist ein externes System (Test-/Kundeninstanz) und
+# laeuft nicht im Compose; Zugang wird ueber AUTOMATO_-Variablen konfiguriert.
+# Wachstumspfad: docker compose -> Kubernetes bei Multi-Worker-Skalierung.
 
 services:
-  netbox:
-    image: netboxcommunity/netbox:latest
-    # Platzhalter - vollständige NetBox-Config (Postgres, Redis) folgt in source-of-truth/
-    profiles: ["sot"]
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["core"]
+    # nach einem Neustart der VM bzw. von Docker wieder hochfahren (0.41.0)
+    restart: unless-stopped
+    # mit TLS intern ueber das Netz nur verschluesselt (hostssl), lokal wie bisher
+    entrypoint: ["automato-postgres-start"]
+    environment:
+      POSTGRES_DB: automato
+      POSTGRES_USER: automato
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-automato}
+      AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/tls/postgres-start.sh:/usr/local/bin/automato-postgres-start:ro
+      - ./deploy/tls/pg_hba-tls.conf:/etc/automato/pg_hba-tls.conf:ro
+      - ./deploy/tls/pki/postgres:/etc/automato/tls:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U automato -d automato"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["core"]
+    restart: unless-stopped
+    # mit TLS intern nur noch per TLS (kein Klartext-Port)
+    entrypoint: ["automato-redis-start"]
+    environment:
+      AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
+    volumes:
+      - ./deploy/tls/redis-start.sh:/usr/local/bin/automato-redis-start:ro
+      - ./deploy/tls/redis-ping.sh:/usr/local/bin/automato-redis-ping:ro
+      - ./deploy/tls/pki/redis:/etc/automato/tls:ro
+    healthcheck:
+      test: ["CMD", "automato-redis-ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Migration als Eigentuemer der Tabellen (0.48.0, getrennte DB-Rollen): laeuft bei jedem Start
+  # einmal (alembic upgrade head) und richtet danach die App-Rolle ohne DDL ein
+  # (`automato db-roles`, idempotent). Der Orchestrator startet erst, wenn sie fertig ist.
+  # App-Rolle einmal einrichten: deploy/aufbau.sh db-rollen (AUTOMATO_DB_USER/_PASSWORD in .env).
+  migrate:
+    build:
+      context: .
+      dockerfile: orchestrator/Dockerfile
+    profiles: ["core"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AUTOMATO_ENVIRONMENT: ${AUTOMATO_ENVIRONMENT:-dev}
+      AUTOMATO_DATABASE_URL: postgresql+psycopg://automato:${POSTGRES_PASSWORD:-automato}@postgres:5432/automato
+      AUTOMATO_DB_APP_ROLE: ${AUTOMATO_DB_USER:-}
+      AUTOMATO_DB_APP_PASSWORD: ${AUTOMATO_DB_PASSWORD:-}
+      AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
+    volumes:
+      - ./deploy/tls/pki/client:/etc/automato/tls:ro
+    command: ["sh", "-c", "alembic upgrade head && automato db-roles"]
 
   orchestrator:
-    build: ./orchestrator
+    build:
+      context: .
+      dockerfile: orchestrator/Dockerfile
     profiles: ["core"]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Migrationen macht der Dienst migrate; der Orchestrator selbst braucht kein DDL.
+    # app.serve: uvicorn, mit TLS intern per HTTPS (0.49.0)
+    command: ["python", "-m", "app.serve"]
+    environment:
+      AUTOMATO_ENVIRONMENT: ${AUTOMATO_ENVIRONMENT:-dev}
+      # mit eigener App-Rolle (0.48.0, deploy/aufbau.sh db-rollen), sonst wie bisher als Eigentuemer
+      AUTOMATO_DATABASE_URL: postgresql+psycopg://${AUTOMATO_DB_USER:-automato}:${AUTOMATO_DB_PASSWORD:-${POSTGRES_PASSWORD:-automato}}@postgres:5432/automato
+      AUTOMATO_REDIS_URL: redis://redis:6379/0
+      AUTOMATO_INTERNAL_API_TOKEN: ${AUTOMATO_INTERNAL_API_TOKEN:-dev-only-token}
+      AUTOMATO_CORS_ORIGINS: ${AUTOMATO_CORS_ORIGINS:-["http://localhost:5173"]}
+      # SoT-Zugang (lesend) fuer das Matching. NetBox laeuft als eigener Stack auf
+      # dem Host -> ueber host.docker.internal:<port> erreichbar (siehe lab/README.md).
+      AUTOMATO_NETBOX_URL: ${AUTOMATO_NETBOX_URL:-}
+      AUTOMATO_NETBOX_TOKEN: ${AUTOMATO_NETBOX_TOKEN:-}
+      AUTOMATO_NETBOX_VERIFY_TLS: ${AUTOMATO_NETBOX_VERIFY_TLS:-true}
+      # AuthN (E1, ADR 0007): dev = ohne Login (Standard-Admin), oidc = Keycloak-JWT.
+      # Ohne Angaben bleibt es bei dev; fuer oidc in .env setzen (deploy/keycloak/PROD-INSTALL.md).
+      AUTOMATO_AUTH_MODE: ${AUTOMATO_AUTH_MODE:-dev}
+      AUTOMATO_OIDC_ISSUER: ${AUTOMATO_OIDC_ISSUER:-}
+      AUTOMATO_OIDC_AUDIENCE: ${AUTOMATO_OIDC_AUDIENCE:-}
+      AUTOMATO_OIDC_JWKS_URL: ${AUTOMATO_OIDC_JWKS_URL:-}
+      AUTOMATO_OIDC_WEB_CLIENT_ID: ${AUTOMATO_OIDC_WEB_CLIENT_ID:-automato-web}
+      AUTOMATO_OIDC_ADMIN_CONSOLE_URL: ${AUTOMATO_OIDC_ADMIN_CONSOLE_URL:-}
+      AUTOMATO_OIDC_CLOCK_SKEW_SECONDS: ${AUTOMATO_OIDC_CLOCK_SKEW_SECONDS:-60}
+      # Schluessel der Geraete-Zugangsdaten (ADR 0009). Leer = Schluesseldatei im Volume
+      # orchestrator-data (beim ersten Start erzeugt, mitsichern!); produktiv besser als
+      # Secret-Referenz, z. B. openbao:automato/credentials#key (deploy/secrets/README.md).
+      AUTOMATO_CREDENTIALS_KEY: ${AUTOMATO_CREDENTIALS_KEY:-}
+      # Zeitgesteuerte Laeufe (Zeitplan am Quellsystem); ein Termin wird auch bei mehreren
+      # Orchestrator-Prozessen nur einmal ausgeloest.
+      AUTOMATO_SCHEDULER_ENABLED: ${AUTOMATO_SCHEDULER_ENABLED:-true}
+      AUTOMATO_SCHEDULER_TIMEZONE: ${AUTOMATO_SCHEDULER_TIMEZONE:-Europe/Zurich}
+      # haengende Laeufe beenden: laufend ohne Ergebnis (min) bzw. nicht abgeholt (h)
+      AUTOMATO_RUN_TIMEOUT_MINUTES: ${AUTOMATO_RUN_TIMEOUT_MINUTES:-120}
+      AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS: ${AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS:-24}
+      # NetBox-Sync ohne Lebenszeichen beenden (min)
+      AUTOMATO_NETBOX_SYNC_TIMEOUT_MINUTES: ${AUTOMATO_NETBOX_SYNC_TIMEOUT_MINUTES:-30}
+      # Aufbewahrung (0.48.0): Laeufe, NetBox-Sync-Vorschauen, Audit nach so vielen Tagen
+      # loeschen (0 = nie); der Zeitplan raeumt taeglich auf
+      AUTOMATO_RETENTION_RUNS_DAYS: ${AUTOMATO_RETENTION_RUNS_DAYS:-90}
+      AUTOMATO_RETENTION_SYNC_DAYS: ${AUTOMATO_RETENTION_SYNC_DAYS:-90}
+      AUTOMATO_RETENTION_AUDIT_DAYS: ${AUTOMATO_RETENTION_AUDIT_DAYS:-365}
+      # Abweichung Regel <-> Weg (0.59.0): Zeitbudget je Neuberechnung nach einem Lauf
+      AUTOMATO_APP_FINDINGS_SECONDS: ${AUTOMATO_APP_FINDINGS_SECONDS:-120}
+      # Agent-Kanal nur ueber das mTLS-Agent-Gateway (Profil agent-gateway): off | require | bind
+      AUTOMATO_INTERNAL_MTLS_MODE: ${AUTOMATO_INTERNAL_MTLS_MODE:-off}
+      AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}
+      # Signierte Agent-Updates (deploy/agent-signing): oeffentlicher Schluessel zum Pruefen
+      AUTOMATO_AGENT_SIGNING_PUBKEY: ${AUTOMATO_AGENT_SIGNING_PUBKEY:-}
+      # TLS intern (0.49.0): HTTPS, Datenbank verify-full, Redis rediss://
+      AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
+    volumes:
+      - orchestrator-data:/var/lib/automato
+      - ./deploy/tls/pki/orchestrator:/etc/automato/tls:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.serve", "--check"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-  documentation-engine:
-    build: ./documentation-engine
-    profiles: ["core"]
+  collector:
+    build:
+      context: .
+      dockerfile: collectors/Dockerfile
+    profiles: ["collectors"]
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      AUTOMATO_REDIS_URL: redis://redis:6379/0
+      AUTOMATO_ORCHESTRATOR_URL: http://orchestrator:8000
+      AUTOMATO_INTERNAL_API_TOKEN: ${AUTOMATO_INTERNAL_API_TOKEN:-dev-only-token}
+      # Zentraler Worker: Zugangsdaten kommen vom Quellsystem (Web-UI, ADR 0009). Die
+      # FORTIGATE-Variablen sind nur Rueckfall; leer + ohne Quellsystem-Token -> Beispieldaten.
+      # Die FortiGate-VM ist per LAN-IP direkt erreichbar (kein host.docker.internal noetig).
+      AUTOMATO_FORTIGATE_URL: ${AUTOMATO_FORTIGATE_URL:-}
+      AUTOMATO_FORTIGATE_TOKEN: ${AUTOMATO_FORTIGATE_TOKEN:-}
+      AUTOMATO_FORTIGATE_VERIFY_TLS: ${AUTOMATO_FORTIGATE_VERIFY_TLS:-true}
+      AUTOMATO_ACI_URL: ${AUTOMATO_ACI_URL:-}
+      AUTOMATO_ACI_USERNAME: ${AUTOMATO_ACI_USERNAME:-}
+      AUTOMATO_ACI_PASSWORD: ${AUTOMATO_ACI_PASSWORD:-}
+      AUTOMATO_ACI_VERIFY_TLS: ${AUTOMATO_ACI_VERIFY_TLS:-true}
+      AUTOMATO_ACI_TENANTS: ${AUTOMATO_ACI_TENANTS:-}
+      # TLS intern (0.49.0): Orchestrator per HTTPS, Redis per rediss://, gegen die interne CA
+      AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
+    volumes:
+      - ./deploy/tls/pki/client:/etc/automato/tls:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   web-ui:
-    build: ./web-ui
+    build:
+      context: web-ui/frontend
     profiles: ["core"]
+    restart: unless-stopped
+    environment:
+      ORCHESTRATOR_URL: http://orchestrator:8000
+      # TLS intern (0.49.0): Web-UI per HTTPS, Orchestrator per HTTPS gegen die interne CA
+      AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
+    volumes:
+      - ./deploy/tls/pki/web-ui:/etc/automato/tls:ro
+    ports:
+      - "5173:5173"
+    depends_on:
+      - orchestrator
+
+  # TLS-Reverse-Proxy vor der Web-UI (Profil "proxy", optional): https://<AUTOMATO_UI_HOST>
+  # (IP oder Name). Zertifikat: AUTOMATO_UI_TLS=internal (Default, selbst erzeugt) oder
+  # "<crt> <key>" aus deploy/proxy/pki/ (siehe deploy/proxy/README.md).
+  # Start: docker compose --profile core --profile proxy up -d
+  proxy:
+    image: caddy:2-alpine
+    profiles: ["proxy"]
+    restart: unless-stopped
+    environment:
+      AUTOMATO_UI_HOST: ${AUTOMATO_UI_HOST:-localhost}
+      AUTOMATO_UI_TLS: ${AUTOMATO_UI_TLS:-internal}
+      AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
+    ports:
+      - "443:443"
+    volumes:
+      - ./deploy/proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/proxy/pki:/etc/caddy/pki:ro
+      - ./deploy/tls/caddy:/etc/caddy/automato-tls:ro
+      - ./deploy/tls/pki/client:/etc/automato/tls:ro
+      - proxy-data:/data
+      - proxy-config:/config
+    depends_on:
+      - web-ui
+
+  # mTLS-Agent-Gateway (Produktions-Gate): Agenten sprechen nur hier mit dem Orchestrator
+  # (Client-Zertifikat der Agent-CA Pflicht). Zertifikate: deploy/agent-gateway/make-certs.sh.
+  # Orchestrator dazu: AUTOMATO_INTERNAL_MTLS_MODE=require|bind + gleiches Gateway-Secret;
+  # Port 8000 des Orchestrators dann nicht in die Agent-Netze freigeben.
+  agent-gateway:
+    image: caddy:2-alpine
+    profiles: ["agent-gateway"]
+    restart: unless-stopped
+    environment:
+      AUTOMATO_AGENT_GATEWAY_HOST: ${AUTOMATO_AGENT_GATEWAY_HOST:-localhost}
+      AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}
+      AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./deploy/agent-gateway/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/agent-gateway/pki:/etc/caddy/pki:ro
+      - ./deploy/tls/caddy:/etc/caddy/automato-tls:ro
+      - ./deploy/tls/pki/client:/etc/automato/tls:ro
+    depends_on:
+      - orchestrator
+
+  # AuthN/RBAC-IdP (E1, ADR 0007). Eigenes Profil "auth" -> beeinflusst core/collectors
+  # nicht. Importiert den Realm "automato" (Rollen viewer/operator/admin, Clients
+  # automato-web [PKCE]/automato-api, tenant_ids-Mapper, geseedter Admin mit OTP-Pflicht).
+  # Produktiv: eigener Container -> eigene VM, eigene URL, TLS/Proxy davor (siehe
+  # deploy/keycloak/README.md). Orchestrator koppeln via AUTOMATO_AUTH_MODE=oidc.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    profiles: ["auth"]
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm", "--http-port=8081"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Realm-Haertung (Brute-Force, Passwort-Policy, OTP, Security-Header) steckt im
+      # importierten Realm; Health-Endpoint fuers Monitoring aktiviert (Port 9000).
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      # Realm-Import (read-only) ...
+      - ./deploy/keycloak:/opt/keycloak/data/import:ro
+      # ... und persistente Daten (H2), damit lokal angelegte User/OTP einen Neustart
+      # ueberleben. Der Import-Bind liegt als Sub-Mount darueber.
+      - keycloak-data:/opt/keycloak/data
+    ports:
+      # Nur lokal; produktiv NICHT direkt veroeffentlichen (TLS/Proxy davor, s. Playbook).
+      - "127.0.0.1:8081:8081"
+
+volumes:
+  postgres-data:
+  orchestrator-data:
+  keycloak-data:
+  proxy-data:
+  proxy-config:

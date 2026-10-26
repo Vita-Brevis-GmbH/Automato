@@ -1,0 +1,6 @@
+[
+  {"name": "N_dmz-net", "type": "ipmask", "subnet": "10.10.20.0 255.255.255.0"},
+  {"name": "N_server-net", "type": "ipmask", "subnet": "10.10.10.0 255.255.255.0"},
+  {"name": "H_web01", "type": "ipmask", "subnet": "10.10.10.5 255.255.255.255"},
+  {"name": "H-EXT_partner-api", "type": "fqdn", "fqdn": "api.partner.example"}
+]

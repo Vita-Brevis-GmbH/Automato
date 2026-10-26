@@ -1,0 +1,56 @@
+# Verwaltet von Ansible. TLS-Terminierung + Reverse-Proxy vor Keycloak.
+# Drei Modi fuer das Zertifikat:
+#   - kc_tls_cert gesetzt -> eigenes (z. B. Wildcard-)Zertifikat, KEIN ACME.
+#   - kc_tls_internal=true -> Caddy-interne CA (Lab/ohne oeffentliches DNS).
+#   - sonst -> ACME/Let's Encrypt automatisch fuer kc_domain.
+
+{
+{% if kc_tls_cert is defined and kc_tls_cert | length > 0 %}
+    # Eigenes Zertifikat -> ACME abgeschaltet (keine email-Direktive noetig).
+{% else %}
+    email {{ kc_acme_email | default('admin@' + kc_domain.split('.')[1:] | join('.')) }}
+{%   if kc_tls_internal %}
+    # Lab/ohne oeffentliches DNS: Caddy nutzt seine interne CA (Self-Signed).
+    local_certs
+{%   endif %}
+{% endif %}
+    # Server-Version nicht preisgeben
+    servers {
+        protocols h1 h2
+    }
+}
+
+{{ kc_domain }} {
+    encode zstd gzip
+
+    # TLS 1.3 only (Haertung, wie Projekt Magister). Bei Altclients auf tls1.2 lockern:
+    #   tls { protocols tls1.2 tls1.3 }
+{% if kc_tls_cert is defined and kc_tls_cert | length > 0 %}
+    tls /etc/caddy/pki/{{ kc_domain }}.crt /etc/caddy/pki/{{ kc_domain }}.key {
+        protocols tls1.3 tls1.3
+    }
+{% else %}
+    tls {% if kc_tls_internal %}internal {% endif %}{
+        protocols tls1.3 tls1.3
+    }
+{% endif %}
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        X-Frame-Options "SAMEORIGIN"
+        -Server
+    }
+
+    # Keycloak spricht intern HTTP; X-Forwarded-* setzt Caddy automatisch.
+    reverse_proxy keycloak:8080
+
+    # Optional haerter: Admin-Konsole nur aus dem Management-Netz zulassen.
+    # @admin path /admin/*
+    # handle @admin {
+    #     @not_allowed not remote_ip 10.0.0.0/8 192.168.0.0/16
+    #     respond @not_allowed 403
+    #     reverse_proxy keycloak:8080
+    # }
+}

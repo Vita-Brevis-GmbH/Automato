@@ -1,0 +1,651 @@
+#!/usr/bin/env bash
+# Aufbau der Automato-VM pruefen - und jeweils pruefen, ob es geht (0.40.0, nach dem Muster
+# von Magisters plattform-aufbau.sh: jede Pruefung sagt, was fehlt und wie man es behebt).
+#
+#   deploy/aufbau.sh pruefen              Werkzeuge, Docker, Container, Health, Verbindungen
+#                                         aus dem Orchestrator-Container, ufw-Sperren
+#   deploy/aufbau.sh firewall             noetige ufw-Regeln zeigen (Container -> Docker-Host)
+#   deploy/aufbau.sh firewall --anwenden  ... und setzen (root), danach erneut pruefen
+#   deploy/aufbau.sh status               Container und Health kurz
+#   deploy/aufbau.sh netbox-start         lokale NetBox (netbox-docker) starten, Neustart-Regel
+#                                         setzen und warten, bis sie antwortet (0.41.0)
+#   deploy/aufbau.sh backup-schluessel    age-Schluessel fuer die Sicherung anlegen bzw. den
+#                                         vorhandenen nehmen und in .env eintragen (0.42.0)
+#   deploy/aufbau.sh docker-update        Docker (Engine, Compose, containerd) per apt auf den
+#                                         neusten Stand, danach die Container starten (0.43.0);
+#                                         bei jedem Update mit AUTOMATO_DOCKER_UPDATE=1 in .env
+#   deploy/aufbau.sh db-rollen [--neu]    getrennte DB-Rollen (0.48.0): App-Rolle ohne DDL mit
+#                                         Zufalls-Passwort in .env, Container neu starten; --neu
+#                                         = neues Passwort
+#   deploy/aufbau.sh tls-intern [--erneuern]  TLS intern (0.49.0): eigene CA und Zertifikate je
+#                                         Dienst (deploy/tls/pki), AUTOMATO_INTERNAL_TLS=on in
+#                                         .env, Container neu starten; --erneuern = Zertifikate
+#                                         neu ausstellen (CA bleibt)
+#
+# Die Verbindungen prueft der Orchestrator selbst (`automato check-connections`, wie System ->
+# Verbindungen im UI): Datenbank, Redis, Keycloak, jedes zentral gelesene Quellsystem - auf
+# genau dem Weg, den Einlesen und NetBox-Sync nehmen. Typischer Befund: ufw sperrt den Weg vom
+# Docker-Netz zu einem Dienst auf dem Host (z. B. NetBox auf :8080 ueber host.docker.internal).
+# Die Regel dafuer ist schmal: nur das Netz des Containers, nur die Gateway-Adresse, nur der Port.
+#
+# Seit 0.41.0 auch: startet Docker beim Booten, haben die Container eine Neustart-Regel (sonst
+# bleiben sie nach einem Neustart der VM aus), und - wenn es eine lokale NetBox gibt
+# (source-of-truth/netbox/netbox-docker bzw. AUTOMATO_NETBOX_DIR) - laufen ihre Container und
+# antwortet die Login-Seite. Befund 0.40.0: NetBox war nach einem Neustart aus, Automato nicht.
+#
+# Exit 0 = alles erreichbar, 1 = mindestens ein Fehler. Aendert nur `firewall --anwenden`,
+# `netbox-start`, `backup-schluessel`, `docker-update`, `db-rollen` und `tls-intern` etwas. Einstellungen auch aus .env
+# (deploy/env.sh).
+# Profile ueber AUTOMATO_COMPOSE_PROFILES (Standard "--profile core"), wie deploy/update.sh.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+. deploy/env.sh
+
+COMPOSE=${COMPOSE:-docker compose}
+read -r -a PROFILES <<<"${AUTOMATO_COMPOSE_PROFILES:---profile core}"
+HEALTH_URL=${AUTOMATO_HEALTH_URL:-$(standard_health_url)}
+NETBOX_DIR=${AUTOMATO_NETBOX_DIR:-source-of-truth/netbox/netbox-docker}
+NETBOX_COMPOSE=${NETBOX_COMPOSE:-docker compose}
+NETBOX_WAIT=${AUTOMATO_NETBOX_WAIT:-300} # Sekunden bis NetBox antwortet (erster Start dauert)
+TLS_WAIT=${AUTOMATO_TLS_WAIT:-90} # Sekunden bis der Orchestrator nach tls-intern antwortet
+
+FEHLER=0
+ok() { printf '  \033[32mOK\033[0m      %s\n' "$*"; }
+warn() { printf '  \033[33mWARNUNG\033[0m %s\n' "$*"; }
+fehler() { printf '  \033[31mFEHLER\033[0m  %s\n' "$*"; FEHLER=1; }
+info() { printf '          %s\n' "$*"; }
+titel() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+
+# --- Voraussetzungen -------------------------------------------------------------------
+werkzeuge() {
+  titel "Werkzeuge"
+  local w
+  for w in docker curl git python3; do
+    if command -v "$w" >/dev/null 2>&1; then ok "$w"; else fehler "$w fehlt"; fi
+  done
+  if docker compose version >/dev/null 2>&1; then ok "docker compose $(docker compose version --short 2>/dev/null)"
+  else fehler "docker compose v2 fehlt (Paket docker-compose-plugin)"; fi
+  if docker info >/dev/null 2>&1; then ok "Docker-Dienst antwortet (Engine $(docker version --format '{{.Server.Version}}' 2>/dev/null))"
+  else fehler "Docker-Dienst antwortet nicht (systemctl start docker; als root bzw. Gruppe docker)"; return; fi
+  [ -f .env ] && ok ".env vorhanden" || warn ".env fehlt – es gelten die Vorgaben aus docker-compose.yml"
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    if systemctl is-enabled --quiet docker 2>/dev/null; then ok "Docker startet beim Booten"
+    else warn "Docker startet nicht beim Booten: sudo systemctl enable docker containerd"; fi
+  fi
+}
+
+# --- Docker selbst aktuell halten (0.43.0) -------------------------------------------------
+# Pakete aus dem Docker-Repository (download.docker.com) bzw. von Ubuntu (docker.io …); es
+# zaehlen nur die installierten. Der Stand der Paketliste ist der vom letzten `apt-get update`.
+DOCKER_PAKETE="docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin \
+docker-ce-rootless-extras docker.io docker-compose-v2 docker-buildx containerd runc"
+APT_CACHE=${APT_CACHE:-apt-cache}
+APT_GET=${APT_GET:-apt-get}
+SUDO=${SUDO-sudo} # leer = ohne sudo
+
+docker_pakete() {  # je installiertem Paket: name|installiert|verfuegbar
+  command -v "$APT_CACHE" >/dev/null 2>&1 || return 0
+  # shellcheck disable=SC2086
+  LC_ALL=C "$APT_CACHE" policy $DOCKER_PAKETE 2>/dev/null | awk '
+    /^[^ ].*:$/ { p = substr($0, 1, length($0) - 1); i = ""; next }
+    /^  Installed:/ { i = $2; next }
+    /^  Candidate:/ { if (i != "" && i != "(none)") print p "|" i "|" $2 }' || true
+}
+
+docker_aus_snap() { command -v snap >/dev/null 2>&1 && snap list docker >/dev/null 2>&1; }
+
+paketliste_alt() {  # Datum der Paketliste, wenn sie aelter als 7 Tage ist
+  local f t
+  for f in /var/lib/apt/periodic/update-success-stamp /var/cache/apt/pkgcache.bin; do
+    [ -e "$f" ] || continue
+    t=$(stat -c %Y "$f" 2>/dev/null) || continue
+    if [ $(($(date +%s) - t)) -gt 604800 ]; then date -d "@$t" +%F; fi
+    return 0
+  done
+  return 0
+}
+
+docker_stand() {
+  titel "Docker aktuell?"
+  if docker_aus_snap; then
+    info "Docker aus snap – snap aktualisiert ihn selbst (snap refresh docker)"
+    return
+  fi
+  local zeilen
+  zeilen=$(docker_pakete)
+  if [ -z "$zeilen" ]; then
+    info "keine Docker-Pakete über apt gefunden – Docker von Hand aktuell halten"
+    return
+  fi
+  local p inst kand offen=""
+  while IFS='|' read -r p inst kand; do
+    if [ "$kand" = "(none)" ] || [ "$inst" = "$kand" ]; then
+      ok "$p $inst"
+    else
+      warn "$p $inst – verfügbar: $kand"
+      offen="$offen $p"
+    fi
+  done <<<"$zeilen"
+  if grep -q '^docker\.io|' <<<"$zeilen"; then
+    info "Ubuntu-Paket docker.io – neuere Versionen bringt das Docker-Repository (download.docker.com)"
+  fi
+  local alt
+  alt=$(paketliste_alt)
+  [ -z "$alt" ] || info "Paketliste vom $alt – sudo deploy/aufbau.sh docker-update holt sie neu"
+  if [ -n "$offen" ]; then
+    info "Aktualisieren: sudo deploy/aufbau.sh docker-update (der Docker-Dienst startet neu, die"
+    info "Container danach auch). Bei jedem Update mit: AUTOMATO_DOCKER_UPDATE=1 in .env"
+  fi
+}
+
+cmd_docker_update() {
+  titel "Docker aktualisieren"
+  if docker_aus_snap; then
+    info "Docker aus snap: sudo snap refresh docker"
+    return 0
+  fi
+  command -v "$APT_GET" >/dev/null 2>&1 || { fehler "apt-get fehlt – Docker von Hand aktualisieren"; return 1; }
+  local als_root=()
+  if [ "$(id -u)" -ne 0 ] && [ -n "$SUDO" ]; then als_root=("$SUDO"); fi
+  if ! "${als_root[@]}" "$APT_GET" update -qq >/dev/null; then
+    fehler "apt-get update fehlgeschlagen (Netz bzw. Paketquellen prüfen)"
+    return 1
+  fi
+  local pakete=() p inst kand
+  while IFS='|' read -r p inst kand; do
+    if [ -n "$p" ] && [ "$kand" != "(none)" ] && [ "$inst" != "$kand" ]; then pakete+=("$p"); fi
+  done < <(docker_pakete)
+  local vorher
+  vorher=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "?")
+  if [ "${#pakete[@]}" -eq 0 ]; then
+    ok "Docker $vorher ist aktuell"
+    return 0
+  fi
+  info "aktualisiere ${pakete[*]} – der Docker-Dienst startet neu, die Container danach auch"
+  # nur diese Pakete, eigene Konfiguration (/etc/docker/daemon.json) behalten
+  if ! "${als_root[@]}" env DEBIAN_FRONTEND=noninteractive "$APT_GET" install -y -qq \
+    --only-upgrade -o Dpkg::Options::=--force-confold "${pakete[@]}" >/dev/null; then
+    fehler "apt-get install fehlgeschlagen (Meldung oben)"
+    return 1
+  fi
+  local bis=$((SECONDS + 120))
+  until docker info >/dev/null 2>&1; do
+    if [ "$SECONDS" -ge "$bis" ]; then
+      fehler "Docker-Dienst antwortet nach dem Update nicht: systemctl status docker"
+      return 1
+    fi
+    sleep 2
+  done
+  ok "Docker $vorher → $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "?")"
+  # die Neustart-Regeln bringen die Container zurueck - sicherheitshalber starten
+  if $COMPOSE "${PROFILES[@]}" up -d >/dev/null 2>&1; then ok "Automato-Container laufen"
+  else warn "Automato-Container nicht gestartet: $COMPOSE ${PROFILES[*]} up -d"; fi
+  if [ -d "$NETBOX_DIR" ]; then
+    if dc_netbox up -d >/dev/null 2>&1; then ok "NetBox-Container laufen"
+    else warn "NetBox nicht gestartet: deploy/aufbau.sh netbox-start"; fi
+  fi
+}
+
+# Compose-Dateien lesbar? (Befund 0.42.0: die NetBox-Override-Datei lag im Automato-Ordner -
+# "service netbox has neither an image nor a build context", update.sh brach ab)
+konfiguration() {
+  titel "Compose-Konfiguration"
+  local meldung
+  if meldung=$($COMPOSE "${PROFILES[@]}" config --quiet 2>&1); then
+    ok "Automato-Projekt gültig$([ -f docker-compose.override.yml ] && echo " (mit docker-compose.override.yml)")"
+  else
+    fehler "Automato-Projekt ungültig: ${meldung:-docker compose config fehlgeschlagen}"
+    if [ -f docker-compose.override.yml ]; then
+      info "Prüfen: $(pwd)/docker-compose.override.yml (VM-spezifisch, gitignored) – steht dort"
+      info "ein fremder Dienst (z. B. netbox: aus $NETBOX_DIR), gehört die Datei dorthin."
+    fi
+  fi
+  [ -d "$NETBOX_DIR" ] || return 0
+  if meldung=$(dc_netbox config --quiet 2>&1); then
+    ok "NetBox-Projekt gültig ($NETBOX_DIR)"
+  else
+    fehler "NetBox-Projekt ungültig: ${meldung:-docker compose config fehlgeschlagen}"
+    info "Im Override nur Dienste aus: (cd $NETBOX_DIR && docker compose -f docker-compose.yml config --services)"
+  fi
+}
+
+# Neustart-Regel eines Containers (no | unless-stopped | always | on-failure; ? = unbekannt)
+regel_von() {
+  [ -n "${1:-}" ] || { echo "?"; return; }
+  docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$1" 2>/dev/null || echo "?"
+}
+
+container() {
+  titel "Container"
+  local zeilen
+  if ! zeilen=$($COMPOSE "${PROFILES[@]}" ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.Name}}|{{.ExitCode}}' 2>/dev/null); then
+    fehler "docker compose ps fehlgeschlagen – im Repo-Verzeichnis aufrufen"; return
+  fi
+  [ -n "$zeilen" ] || { fehler "keine Container – starten: $COMPOSE ${PROFILES[*]} up -d"; return; }
+  # Dienste der Profile, die update.sh baut und startet (0.42.2: der Collector lief, war aber
+  # nicht im Profil - er blieb auf altem Stand und ohne Neustart-Regel)
+  local aktiv
+  aktiv=" $($COMPOSE "${PROFILES[@]}" config --services 2>/dev/null | tr '\n' ' ') "
+  local dienst zustand gesund name code ohne="" fremd=""
+  while IFS='|' read -r dienst zustand gesund name code; do
+    [ -n "$dienst" ] || continue
+    if [ "$dienst" = "migrate" ]; then  # einmalig je Start (0.48.0): Migration + DB-Rollen
+      if [ "$zustand" = "exited" ] && [ "${code:-0}" = "0" ]; then ok "migrate (Migration fertig)"
+      elif [ "$zustand" = "running" ]; then ok "migrate (läuft gerade)"
+      else fehler "migrate: $zustand${code:+ (Exit $code)} – Logs: $COMPOSE logs --tail 50 migrate"; fi
+      continue
+    fi
+    if [ "$zustand" != "running" ]; then
+      fehler "$dienst: $zustand – Logs: $COMPOSE logs --tail 50 $dienst"
+    elif [ "$gesund" = "starting" ]; then
+      ok "$dienst (startet gerade)"
+    elif [ -n "$gesund" ] && [ "$gesund" != "healthy" ]; then
+      warn "$dienst: läuft, Health $gesund"
+    else
+      ok "$dienst${gesund:+ ($gesund)}"
+    fi
+    [ "$(regel_von "$name")" = "no" ] && ohne="$ohne $dienst"
+    [ "$aktiv" = "  " ] || [[ "$aktiv" == *" $dienst "* ]] || fremd="$fremd $dienst"
+  done <<<"$zeilen"
+  if [ -n "$fremd" ]; then
+    warn "läuft, ist aber nicht in den Profilen von deploy/update.sh:$fremd – bleibt auf altem Stand."
+    info "In .env ergänzen, z. B.: AUTOMATO_COMPOSE_PROFILES=--profile core --profile collectors --profile proxy"
+  fi
+  if [ -n "$ohne" ]; then
+    warn "ohne Neustart-Regel:$ohne – nach einem Neustart der VM bleiben sie aus."
+    info "docker-compose.yml setzt restart: unless-stopped (ab 0.41.0): $COMPOSE ${PROFILES[*]} up -d"
+  fi
+}
+
+# --- Lokale NetBox (netbox-docker auf derselben VM) ----------------------------------------
+dc_netbox() { (cd "$NETBOX_DIR" && $NETBOX_COMPOSE "$@"); }
+
+netbox_port() {  # Host-Port aus dem Override von setup.sh ("8080:8080"), sonst 8080
+  local p
+  p=$(grep -oE '[0-9]+:8080' "$NETBOX_DIR/docker-compose.override.yml" 2>/dev/null | head -1 | cut -d: -f1 || true)
+  echo "${p:-8080}"
+}
+
+netbox_antwortet() { curl -fsS -m 5 -o /dev/null "http://localhost:$(netbox_port)/login/" 2>/dev/null; }
+
+netbox_stack() {
+  [ -d "$NETBOX_DIR" ] || return 0  # keine lokale NetBox (z. B. eigene NetBox im Netz)
+  titel "NetBox auf dieser VM ($NETBOX_DIR)"
+  local zeilen
+  if ! zeilen=$(dc_netbox ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.Name}}' 2>&1); then
+    fehler "docker compose ps im NetBox-Ordner fehlgeschlagen: ${zeilen:-?}"
+    netbox_antwortet && info "NetBox antwortet trotzdem auf localhost:$(netbox_port) – Override korrigieren (oben)"
+    return
+  fi
+  [ -n "$zeilen" ] || { fehler "keine NetBox-Container – einrichten: source-of-truth/netbox/setup.sh"; return; }
+  local dienst zustand gesund name aus=0 ohne=""
+  while IFS='|' read -r dienst zustand gesund name; do
+    [ -n "$dienst" ] || continue
+    if [ "$zustand" != "running" ]; then
+      aus=1
+      case "$dienst" in
+        netbox-worker | netbox-housekeeping) warn "$dienst: $zustand (Hintergrunddienst, für Automato nicht nötig)" ;;
+        *) fehler "$dienst: $zustand" ;;
+      esac
+    elif [ -n "$gesund" ] && [ "$gesund" != "healthy" ]; then
+      warn "$dienst: läuft, Health $gesund (erster Start dauert bis 5 min)"
+    else
+      ok "$dienst${gesund:+ ($gesund)}"
+    fi
+    [ "$(regel_von "$name")" = "no" ] && ohne="$ohne $dienst"
+  done <<<"$zeilen"
+  if netbox_antwortet; then ok "Login-Seite antwortet (localhost:$(netbox_port))"
+  else fehler "NetBox antwortet auf localhost:$(netbox_port) nicht"; fi
+  [ -z "$ohne" ] || warn "ohne Neustart-Regel:$ohne – nach einem Neustart der VM bleibt NetBox aus"
+  if [ "$aus" -eq 1 ] || [ -n "$ohne" ]; then
+    info "Starten und Neustart-Regel setzen: deploy/aufbau.sh netbox-start"
+  fi
+}
+
+cmd_netbox_start() {
+  [ -d "$NETBOX_DIR" ] || { fehler "kein NetBox-Ordner $NETBOX_DIR (AUTOMATO_NETBOX_DIR setzen)"; return 1; }
+  titel "NetBox starten ($NETBOX_DIR)"
+  if ! dc_netbox up -d; then
+    fehler "docker compose up -d im NetBox-Ordner fehlgeschlagen (Meldung oben)"; return 1
+  fi
+  ok "Container gestartet"
+  local ids
+  ids=$(dc_netbox ps -aq 2>/dev/null || true)
+  # wirkt sofort und bleibt bis zum Neuerstellen der Container; dauerhaft im Override (setup.sh)
+  # shellcheck disable=SC2086
+  if [ -n "$ids" ] && docker update --restart unless-stopped $ids >/dev/null 2>&1; then
+    ok "Neustart-Regel unless-stopped gesetzt"
+  else
+    warn "Neustart-Regel nicht gesetzt (docker update) – von Hand: restart: unless-stopped je Dienst"
+  fi
+  if ! grep -q "restart:" "$NETBOX_DIR/docker-compose.override.yml" 2>/dev/null; then
+    info "Dauerhaft (auch nach einem Neuerstellen): restart: unless-stopped je Dienst in"
+    info "$NETBOX_DIR/docker-compose.override.yml eintragen – nur Dienste aus: (cd $NETBOX_DIR && docker compose config --services)"
+  fi
+  info "warte, bis NetBox antwortet (erster Start bis $((NETBOX_WAIT / 60)) min) …"
+  local bis=$((SECONDS + NETBOX_WAIT))
+  while :; do
+    if netbox_antwortet; then ok "NetBox antwortet (localhost:$(netbox_port))"; return 0; fi
+    [ "$SECONDS" -lt "$bis" ] || break
+    sleep 5
+  done
+  fehler "NetBox antwortet nicht – Logs: (cd $NETBOX_DIR && docker compose logs --tail 50 netbox)"
+  return 1
+}
+
+health() {
+  titel "Orchestrator"
+  local antwort
+  if antwort=$(health_curl -fsS -m 5 "$HEALTH_URL" 2>/dev/null) && grep -q '"status":"ok"' <<<"$antwort"; then
+    ok "$HEALTH_URL antwortet (Version $(cat VERSION 2>/dev/null || echo ?))"
+  else
+    fehler "$HEALTH_URL antwortet nicht mit ok – Logs: $COMPOSE logs --tail 50 orchestrator"
+  fi
+}
+
+# --- Verbindungen aus dem Container ------------------------------------------------------
+BERICHT=""
+verbindungen() {
+  titel "Verbindungen (aus dem Orchestrator-Container)"
+  if ! BERICHT=$($COMPOSE "${PROFILES[@]}" exec -T orchestrator automato check-connections --json 2>/dev/null); then
+    # Exit 1 heisst: es gibt einen Fehler - der Bericht steht trotzdem da
+    [ -n "$BERICHT" ] || { fehler "Prüfung im Container nicht möglich (läuft der Orchestrator?)"; return; }
+  fi
+  python3 - "$BERICHT" <<'PY' || FEHLER=1
+import json, sys
+farben = {"ok": "\033[32mOK\033[0m     ", "info": "\033[36mHINWEIS\033[0m", "warn": "\033[33mWARNUNG\033[0m",
+          "error": "\033[31mFEHLER\033[0m "}
+try:
+    daten = json.loads(sys.argv[1])
+except ValueError:
+    print("  \033[31mFEHLER\033[0m  Antwort der Prüfung nicht lesbar"); sys.exit(1)
+for i in daten["items"]:
+    ziel = f"  {i['target']}" if i.get("target") else ""
+    print(f"  {farben.get(i['status'], i['status'])} {i['name']}{ziel}")
+    if i["status"] in ("warn", "error"):
+        for s in i["steps"]:
+            print(f"          {'✓' if s['ok'] else '✗'} {s['step']}: {s['detail']}")
+        if i.get("hint"):
+            print(f"          → {i['hint']}")
+    elif i["status"] == "info" and i.get("hint"):
+        print(f"          {i['hint']}")
+sys.exit(1 if daten["status"] == "error" else 0)
+PY
+}
+
+# Regeln aus dem Bericht: je Ziel auf dem Docker-Host (from|to|port|kommentar|name)
+regeln() {
+  [ -n "$BERICHT" ] || return 0
+  python3 - "$BERICHT" <<'PY'
+import json, sys
+try:
+    daten = json.loads(sys.argv[1])
+except ValueError:
+    sys.exit(0)
+for i in daten["items"]:
+    u = i.get("ufw")
+    if u:
+        print(f"{u['from']}|{u['to']}|{u['port']}|{u.get('comment') or 'Automato'}|{i['name']}")
+PY
+}
+
+ufw_aktiv() {
+  command -v ufw >/dev/null 2>&1 || return 1
+  [ "$(id -u)" -eq 0 ] || return 2
+  ufw status 2>/dev/null | grep -q "^Status: active"
+}
+
+firewall_pruefen() {
+  titel "Host-Firewall (ufw)"
+  local rc=0
+  ufw_aktiv || rc=$?
+  case $rc in
+    1) ok "ufw nicht aktiv bzw. nicht installiert"; return ;;
+    2) warn "nicht als root – ufw nicht geprüft (sudo deploy/aufbau.sh pruefen)"; return ;;
+  esac
+  ok "ufw aktiv"
+  # Sperren aus den Docker-Netzen der letzten Stunde (Kernel-Log)
+  local log zeilen
+  log=$( (journalctl -k --since "-1 hour" 2>/dev/null || dmesg 2>/dev/null) | grep "UFW BLOCK" | grep -E "IN=(br-|docker)" || true)
+  zeilen=$(regeln)
+  if [ -n "$log" ]; then
+    # gesperrt und jetzt erreichbar: frueher, z. B. vor der Freigabe (0.42.2: nur Hinweis)
+    if [ -n "$zeilen" ]; then warn "ufw hat Verbindungen aus Docker-Netzen gesperrt (letzte Stunde):"
+    else info "frühere Sperren aus Docker-Netzen (letzte Stunde) – die Ziele antworten jetzt:"; fi
+    grep -oE "SRC=[^ ]+ DST=[^ ]+ .*DPT=[0-9]+" <<<"$log" | sed -E 's/ LEN.*PROTO=([A-Z]+).*DPT=/ \1 Port /' |
+      sort | uniq -c | sort -rn | head -5 | while read -r n zeile; do info "$n×  $zeile"; done || true
+  fi
+  if [ -z "$zeilen" ]; then
+    ok "keine Freigabe nötig (kein gesperrtes Ziel auf dem Docker-Host)"
+    return
+  fi
+  local von nach port kommentar name
+  while IFS='|' read -r von nach port kommentar name; do
+    warn "$name: Weg $von → $nach:$port gesperrt – Freigabe: deploy/aufbau.sh firewall --anwenden"
+  done <<<"$zeilen"
+}
+
+cmd_firewall() {
+  local anwenden=0
+  [ "${1:-}" = "--anwenden" ] && anwenden=1
+  verbindungen >/dev/null || true
+  titel "ufw-Regeln für Ziele auf dem Docker-Host"
+  if [ -z "$BERICHT" ]; then
+    fehler "Prüfung im Orchestrator-Container nicht möglich (läuft er? $COMPOSE ${PROFILES[*]} ps)"
+    return 1
+  fi
+  local zeilen
+  zeilen=$(regeln)
+  if [ -z "$zeilen" ]; then
+    ok "keine nötig – alle Ziele auf dem Docker-Host antworten (bzw. es gibt keine)"
+    return 0
+  fi
+  local von nach port kommentar name
+  while IFS='|' read -r von nach port kommentar name; do
+    local regel=(ufw allow proto tcp from "$von" to "$nach" port "$port" comment "$kommentar")
+    # zum Kopieren mit Anfuehrungszeichen (sonst leitet `->` die Ausgabe um)
+    local zeigen="ufw allow proto tcp from $von to $nach port $port comment '$kommentar'"
+    if [ "$anwenden" -eq 1 ]; then
+      [ "$(id -u)" -eq 0 ] || { fehler "nur als root: sudo deploy/aufbau.sh firewall --anwenden"; return 1; }
+      if "${regel[@]}" >/dev/null; then ok "$zeigen"; else fehler "$zeigen"; fi
+    else
+      info "sudo $zeigen"
+    fi
+  done <<<"$zeilen"
+  if [ "$anwenden" -eq 1 ]; then
+    FEHLER=0
+    verbindungen
+  else
+    info ""
+    info "Setzen: sudo deploy/aufbau.sh firewall --anwenden (nur Container-Netz, Gateway und Port)"
+  fi
+}
+
+# --- Sicherung (age-verschluesselt, deploy/backup) -------------------------------------
+BACKUP_DIR=${AUTOMATO_BACKUP_DIR:-/var/backups/automato}
+IDENTITY_STANDARD=${HOME:-/root}/automato-backup.agekey
+
+sicherung() {
+  titel "Sicherung"
+  if [ "${AUTOMATO_BACKUP_PLAIN:-}" = "1" ] && [ -z "${AUTOMATO_BACKUP_AGE_RECIPIENT:-}" ]; then
+    warn "Sicherung unverschlüsselt (AUTOMATO_BACKUP_PLAIN=1) – besser: deploy/aufbau.sh backup-schluessel"
+  elif [ -z "${AUTOMATO_BACKUP_AGE_RECIPIENT:-}" ]; then
+    fehler "kein age-Empfänger – deploy/update.sh bricht bei der Sicherung ab. Einrichten: deploy/aufbau.sh backup-schluessel"
+  else
+    ok "verschlüsselt für ${AUTOMATO_BACKUP_AGE_RECIPIENT:0:12}…"
+    command -v age >/dev/null 2>&1 || fehler "age fehlt (apt-get install -y age)"
+    if [ -n "${AUTOMATO_BACKUP_AGE_IDENTITY:-}" ] && [ -r "$AUTOMATO_BACKUP_AGE_IDENTITY" ]; then
+      ok "Identität für den Rückfall lesbar ($AUTOMATO_BACKUP_AGE_IDENTITY) – zusätzlich getrennt aufbewahren"
+    else
+      warn "keine lesbare Identität (AUTOMATO_BACKUP_AGE_IDENTITY) – deploy/update.sh --rollback kann nicht entschlüsseln"
+    fi
+  fi
+  local neu
+  neu=$(ls -t "$BACKUP_DIR"/automato-*.dump* 2>/dev/null | head -1 || true)
+  if [ -z "$neu" ]; then
+    warn "noch keine Sicherung in $BACKUP_DIR (täglich per cron: deploy/backup/README.md)"
+  else
+    local alter=$(( ($(date +%s) - $(stat -c %Y "$neu")) / 3600 ))
+    if [ "$alter" -gt 26 ]; then warn "letzte Sicherung vor ${alter} h: $(basename "$neu")"
+    else ok "letzte Sicherung vor ${alter} h: $(basename "$neu")"; fi
+  fi
+}
+
+cmd_backup_schluessel() {
+  titel "age-Schlüssel für die Sicherung"
+  command -v age-keygen >/dev/null 2>&1 || { fehler "age fehlt: apt-get install -y age"; return 1; }
+  local id="${AUTOMATO_BACKUP_AGE_IDENTITY:-$IDENTITY_STANDARD}"
+  if [ -f "$id" ]; then
+    ok "vorhandene Identität: $id"
+  else
+    (umask 077 && age-keygen -o "$id" >/dev/null 2>&1) || { fehler "age-keygen -o $id fehlgeschlagen"; return 1; }
+    chmod 600 "$id"
+    ok "neue Identität: $id (nur für $(id -un) lesbar)"
+  fi
+  local empfaenger
+  empfaenger=$(age-keygen -y "$id") || { fehler "$id ist keine age-Identität"; return 1; }
+  setze_env AUTOMATO_BACKUP_AGE_RECIPIENT "$empfaenger"
+  setze_env AUTOMATO_BACKUP_AGE_IDENTITY "$id"
+  ok "in $ENV_DATEI eingetragen: AUTOMATO_BACKUP_AGE_RECIPIENT, AUTOMATO_BACKUP_AGE_IDENTITY"
+  info "Die Identität $id zusätzlich getrennt von der VM aufbewahren (z. B. Passwort-Tresor) –"
+  info "ohne sie ist keine Sicherung lesbar. Danach: deploy/update.sh"
+}
+
+# --- Getrennte DB-Rollen (0.48.0) ----------------------------------------------------------
+db_rollen() {
+  titel "Datenbank-Rollen"
+  if [ -z "${AUTOMATO_DB_USER:-}" ] || [ "$AUTOMATO_DB_USER" = "automato" ]; then
+    warn "Orchestrator arbeitet als Eigentümer der Tabellen (darf Tabellen anlegen/löschen)"
+    info "Einrichten: deploy/aufbau.sh db-rollen – Migration als Eigentümer, Betrieb ohne DDL"
+  else
+    ok "Orchestrator als $AUTOMATO_DB_USER, Migration als automato (Dienst migrate)"
+    info "Rechte der Rolle prüft der Orchestrator selbst (Verbindungen → Datenbank, oben)"
+  fi
+}
+
+cmd_db_rollen() {
+  titel "Getrennte DB-Rollen"
+  local rolle="${AUTOMATO_DB_USER:-}" neu="${1:-}"
+  if [ -n "$rolle" ] && [ "$rolle" != "automato" ] && grep -qE '^AUTOMATO_DB_PASSWORD=.+' "$ENV_DATEI" 2>/dev/null &&
+    [ "$neu" != "--neu" ]; then
+    ok "App-Rolle $rolle ist in $ENV_DATEI eingetragen (neues Passwort: db-rollen --neu)"
+  else
+    rolle=${rolle:-automato_app}
+    [ "$rolle" != "automato" ] || rolle=automato_app
+    local passwort
+    passwort=$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    [ ${#passwort} -ge 32 ] || { fehler "kein Zufalls-Passwort erzeugt (openssl bzw. /dev/urandom)"; return 1; }
+    setze_env AUTOMATO_DB_USER "$rolle"
+    setze_env AUTOMATO_DB_PASSWORD "$passwort"
+    ok "in $ENV_DATEI eingetragen: AUTOMATO_DB_USER=$rolle, AUTOMATO_DB_PASSWORD (zufällig, 48 Zeichen)"
+    info "Die .env enthält Passwörter – nur für den Betreiber lesbar halten (chmod 600 $ENV_DATEI)"
+  fi
+  info "Container neu starten: migrate richtet die Rolle ein, der Orchestrator verbindet sich mit ihr"
+  if ! $COMPOSE "${PROFILES[@]}" up -d; then
+    fehler "Start fehlgeschlagen – Logs: $COMPOSE logs --tail 50 migrate orchestrator"; return 1
+  fi
+  $COMPOSE "${PROFILES[@]}" logs --no-log-prefix --tail 10 migrate 2>/dev/null | grep -E '^(OK|INFO|FEHLER)' || true
+  if health_curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1 || { sleep 5 && health_curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1; }; then
+    ok "Orchestrator antwortet"
+  else
+    warn "Orchestrator antwortet noch nicht – deploy/aufbau.sh status"
+  fi
+  info "Prüfen: System → Verbindungen (Datenbank: Rolle ohne DDL) bzw. deploy/aufbau.sh pruefen"
+}
+
+# --- TLS intern (0.49.0) ----------------------------------------------------------------
+tls_intern() {
+  titel "TLS intern"
+  if [ "${AUTOMATO_INTERNAL_TLS:-off}" != "on" ]; then
+    warn "Verbindungen zwischen den Containern unverschlüsselt (Datenbank, Redis, Orchestrator)"
+    info "Einschalten: deploy/aufbau.sh tls-intern – eigene CA, Postgres/Redis nur mit TLS, HTTPS intern"
+    return
+  fi
+  local crt="$TLS_PKI/orchestrator/server.crt"
+  [ -r "$crt" ] || { fehler "eingeschaltet, aber kein Zertifikat ($crt) – deploy/aufbau.sh tls-intern"; return; }
+  command -v openssl >/dev/null 2>&1 || { ok "eingeschaltet (Ablauf ungeprüft: openssl fehlt)"; return; }
+  local bis tage
+  bis=$(openssl x509 -enddate -noout -in "$crt" 2>/dev/null | cut -d= -f2)
+  tage=$(( ($(date -d "$bis" +%s 2>/dev/null || date +%s) - $(date +%s)) / 86400 ))
+  if [ "$tage" -lt 0 ]; then fehler "Zertifikate abgelaufen ($bis) – deploy/aufbau.sh tls-intern --erneuern"
+  elif [ "$tage" -lt 30 ]; then warn "Zertifikate laufen in $tage Tagen ab – deploy/aufbau.sh tls-intern --erneuern"
+  else ok "eingeschaltet, Zertifikate noch $tage Tage gültig (bis $bis)"; fi
+}
+
+cmd_tls_intern() {
+  titel "TLS intern (eigene CA)"
+  local erneuern=() namen=() n
+  [ "${1:-}" = "--erneuern" ] && erneuern=(--renew)
+  # Adressen der VM: Agenten direkt auf :8000 bzw. der Browser direkt auf :5173
+  namen+=("$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)")
+  for n in $(hostname -I 2>/dev/null || true) ${AUTOMATO_AGENT_GATEWAY_HOST:-} ${AUTOMATO_UI_HOST:-}; do namen+=("$n"); done
+  local args=()
+  for n in "${namen[@]}"; do [ -n "$n" ] && args+=(--name "$n"); done
+  mkdir -p "$TLS_PKI"
+  local ablage
+  ablage=$(cd "$TLS_PKI" && pwd)
+  # als root im Image des Orchestrators: Schluessel gehoeren dem Dienstbenutzer, die CA bleibt
+  # in pki/ca (in keinem Container)
+  if ! $COMPOSE "${PROFILES[@]}" run --rm --no-deps --user root -v "$ablage:/pki" migrate \
+    automato tls-init --dir /pki "${args[@]}" "${erneuern[@]}"; then
+    fehler "Zertifikate nicht ausgestellt – Image bauen ($COMPOSE build migrate), dann erneut"; return 1
+  fi
+  setze_env AUTOMATO_INTERNAL_TLS on
+  export AUTOMATO_INTERNAL_TLS=on
+  HEALTH_URL=${AUTOMATO_HEALTH_URL:-$(standard_health_url)}
+  ok "in $ENV_DATEI eingetragen: AUTOMATO_INTERNAL_TLS=on"
+  info "Container neu starten: Postgres und Redis nur noch mit TLS, Orchestrator und Web-UI per HTTPS"
+  if ! $COMPOSE "${PROFILES[@]}" up -d --force-recreate; then
+    fehler "Start fehlgeschlagen – Logs: $COMPOSE logs --tail 50 postgres redis migrate orchestrator"; return 1
+  fi
+  local bis=$((SECONDS + TLS_WAIT))
+  while [ "$SECONDS" -lt "$bis" ] && ! health_curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1; do
+    sleep 2
+  done
+  if health_curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1; then ok "Orchestrator antwortet per HTTPS ($HEALTH_URL)"
+  else warn "Orchestrator antwortet noch nicht – deploy/aufbau.sh status"; fi
+  info "Agenten direkt auf Port 8000: URL https://<VM>:8000 und AUTOMATO_ORCHESTRATOR_CA_BUNDLE ="
+  info "  $TLS_PKI/client/ca.crt auf die Station kopieren – über das Agent-Gateway ändert sich nichts."
+  info "Web-UI direkt auf :5173 jetzt per https (interne CA); über den Proxy (:443) wie bisher."
+}
+
+cmd_pruefen() {
+  werkzeuge
+  docker_stand
+  konfiguration
+  container
+  netbox_stack
+  health
+  verbindungen || true
+  firewall_pruefen
+  sicherung
+  db_rollen
+  tls_intern
+  echo
+  if [ "$FEHLER" -eq 0 ]; then
+    printf '\033[1mAufbau in Ordnung.\033[0m\n'
+  else
+    printf '\033[1mEs gibt Fehler (siehe oben).\033[0m Im UI: System → Verbindungen.\n'
+  fi
+  return "$FEHLER"
+}
+
+cmd_status() {
+  container
+  netbox_stack
+  health
+  return "$FEHLER"
+}
+
+case "${1:-pruefen}" in
+  pruefen | check) cmd_pruefen ;;
+  firewall) shift; cmd_firewall "${1:-}" ;;
+  status) cmd_status ;;
+  netbox-start) cmd_netbox_start ;;
+  backup-schluessel) cmd_backup_schluessel ;;
+  docker-update) cmd_docker_update ;;
+  db-rollen) shift; cmd_db_rollen "${1:-}" ;;
+  tls-intern) shift; cmd_tls_intern "${1:-}" ;;
+  -h | --help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' ;;
+  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start, backup-schluessel, docker-update, db-rollen [--neu], tls-intern [--erneuern])" >&2; exit 2 ;;
+esac

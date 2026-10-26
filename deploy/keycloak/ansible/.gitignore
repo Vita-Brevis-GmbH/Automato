@@ -1,0 +1,5 @@
+# Echte Inventare/Variablen/Secrets bleiben lokal - nur die *.example.* kommen ins Repo.
+inventory.ini
+group_vars/keycloak.yml
+group_vars/vault.yml
+*.retry

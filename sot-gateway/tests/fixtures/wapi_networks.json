@@ -1,0 +1,14 @@
+[
+  {
+    "_ref": "network/ZG5zLm5ldHdvcmskMTAuMS4wLjAvMTYvMA:10.1.0.0/16/default",
+    "network": "10.1.0.0/16",
+    "comment": "DC1 Gesamtnetz",
+    "extattrs": {}
+  },
+  {
+    "_ref": "network/ZG5zLm5ldHdvcmskMTAuMS4yLjAvMjQvMA:10.1.2.0/24/default",
+    "network": "10.1.2.0/24",
+    "comment": "DC1 DMZ",
+    "extattrs": {"Zone": {"value": "DC1-DMZ"}}
+  }
+]

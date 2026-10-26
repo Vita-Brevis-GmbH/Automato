@@ -1,0 +1,14 @@
+[
+  {
+    "dn": "uni/tn-prod/brc-web-to-db",
+    "name": "web-to-db",
+    "consumer_epgs": ["prod/web"],
+    "provider_epgs": ["prod/db"],
+    "subjects": [
+      {
+        "name": "mysql",
+        "filters": [{"protocol": "tcp", "dest_port": "3306"}]
+      }
+    ]
+  }
+]

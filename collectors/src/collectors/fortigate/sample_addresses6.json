@@ -1,0 +1,4 @@
+[
+  {"name": "H_adf04-001-ssgch.secn.ch", "type": "ipmask", "ip6": "2a07:c180:100:b032::1:26/128", "color": 13},
+  {"name": "N_share-000-v6", "type": "ipprefix", "ip6": "2a07:c180:100:a000::/56"}
+]

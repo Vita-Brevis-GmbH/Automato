@@ -1,0 +1,28 @@
+{
+  "_hinweis": "Vorlage fuer einen SAML-Identity-Provider-Broker je Kunde. Platzhalter <...> ersetzen, dann pro Kunde unter eigenem alias importieren (siehe README). Dieses Feld ignoriert Keycloak nicht sauber - vor dem Import entfernen.",
+  "alias": "kunde-saml",
+  "displayName": "Kunde (SAML)",
+  "providerId": "saml",
+  "enabled": true,
+  "trustEmail": false,
+  "storeToken": false,
+  "addReadTokenRoleOnCreate": false,
+  "firstBrokerLoginFlowAlias": "first broker login",
+  "config": {
+    "entityId": "https://auth.example.com/realms/automato",
+    "idpEntityId": "<IDP_ENTITY_ID>",
+    "singleSignOnServiceUrl": "<IDP_SSO_URL>",
+    "singleLogoutServiceUrl": "<IDP_SLO_URL>",
+    "nameIDPolicyFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+    "principalType": "SUBJECT",
+    "postBindingResponse": "true",
+    "postBindingAuthnRequest": "true",
+    "postBindingLogout": "true",
+    "wantAssertionsSigned": "true",
+    "wantAssertionsEncrypted": "false",
+    "validateSignature": "true",
+    "signingCertificate": "<BASE64_IDP_SIGNING_CERT>",
+    "allowCreate": "true",
+    "syncMode": "FORCE"
+  }
+}

@@ -55,12 +55,24 @@ Ein Worker-Typ pro Zielplattform (Fortigate, Cisco ACI, VMware, Proxmox, Windows
 - Besitzt nur die Credentials/Berechtigungen, die für seine Zielplattform nötig sind (Least Privilege)
 - Kommuniziert ausschließlich mit dem Orchestrator (Job annehmen, Ergebnis zurückmelden) – kein direkter Zugriff vom Web UI
 
-### Ansible
+### Automatisierung (Ansible, Terraform, …)
 Die eigentliche Automatisierungslogik, klar getrennt von Orchestrator und Workern.
-- Rollen/Playbooks je Plattform (z. B. `fortinet.fortios`, `cisco.aci`, `community.vmware`,
-  `community.general` für Proxmox, `ansible.windows`, `cisco.ios`/`cisco.nxos`)
-- Dynamisches Inventory aus NetBox (Source of Truth)
-- Wird von Workern aufgerufen, nicht direkt vom Orchestrator
+Ein Worker führt sie über eine **Runner-Abstraktion** aus – das Werkzeug ist pro
+Use Case wählbar, nicht global festgelegt:
+
+- **Ansible** (primär): Rollen/Playbooks je Plattform (z. B. `fortinet.fortios`,
+  `cisco.aci`, `community.vmware`, `community.general` für Proxmox,
+  `ansible.windows`, `cisco.ios`/`cisco.nxos`); Konfigurationsmanagement und
+  VM-Provisionierung inkl. Gastanpassung (cloud-init/sysprep)
+- **Terraform/OpenTofu** (optional, je Use Case): deklarative Provisionierung,
+  z. B. VMs aus Templates auf VMware/Proxmox. Offener ADR-Punkt vor dem ersten
+  schreibenden Use Case: State-Backend, Drift-Verhalten, Abgrenzung zu Ansible
+- **API-direkt**, wo ein Playbook/Modul Overkill wäre
+
+Gemeinsam für alle Schreibpfade: Jobs durchlaufen **Plan → Approve → Apply**
+(Vorschau via terraform plan bzw. Ansible check-mode, Freigabe, Ausführung),
+dynamisches Inventory kommt aus dem SoT (via SoT Gateway), aufgerufen wird
+immer vom Worker – nie direkt vom Orchestrator.
 
 ### Source of Truth (NetBox)
 - Definiert den Soll-Zustand (Geräte, IPAM, VLANs, VMs, Verkabelung, ...)
@@ -95,7 +107,7 @@ Die eigentliche Automatisierungslogik, klar getrennt von Orchestrator und Worker
 |---|---|---|
 | Orchestrator/API | Python, FastAPI | Async, gute Ansible-/NetBox-Anbindung, Typisierung |
 | Job Queue | Redis + Celery oder RQ | Bewährt, einfach zu betreiben |
-| Automatisierung | Ansible | Von dir vorgegeben, riesiges Vendor-Ökosystem |
+| Automatisierung | Ansible (+ Terraform/OpenTofu je Use Case) | Riesiges Vendor-Ökosystem; deklarative Provisionierung wo passend – Runner-Abstraktion im Worker |
 | Source of Truth | NetBox | Etablierter Standard, REST/GraphQL-API vorhanden |
 | Documentation Engine | Python + MkDocs (Material) | Doku als Code, versionierbar |
 | Web UI | React/Vue + schlankes BFF | Trennung Frontend/Backend |

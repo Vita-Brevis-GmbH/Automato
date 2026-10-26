@@ -1,0 +1,172 @@
+---
+# Keycloak-Produktion aufsetzen (E1, ADR 0007): dedizierter IdP auf eigener VM,
+# eigene URL, TLS davor, persistente DB, gehaertet. Bewusst klein gehalten:
+# Docker-Compose-Stack (Keycloak prod-mode + Postgres + Caddy/ACME) via Templates.
+#
+# Ausfuehren:
+#   ansible-playbook -i inventory.ini keycloak.yml --ask-vault-pass
+#
+# Secrets kommen aus Ansible Vault (group_vars/keycloak/vault.yml, verschluesselt);
+# nichts Geheimes landet im Repo (SECURITY.md #4, passt zum Secrets-Provider E1.5).
+
+- name: Keycloak (Produktion) bereitstellen
+  hosts: keycloak
+  become: true
+
+  vars:
+    kc_base_dir: /opt/automato-keycloak
+    kc_image: "quay.io/keycloak/keycloak:26.0"
+    kc_postgres_image: "postgres:16-alpine"
+    kc_caddy_image: "caddy:2-alpine"
+    # Diese MUESSEN gesetzt werden (inventory/group_vars); Secrets via Vault:
+    #   kc_domain                  z. B. auth.example.com (oeffentliche URL)
+    #   kc_acme_email              Kontakt fuer Let's Encrypt
+    #   kc_bootstrap_admin_user    temporaerer Master-Admin (Boot)
+    #   kc_bootstrap_admin_password (VAULT)
+    #   kc_db_password             (VAULT)
+    # Eigenes Zertifikat (z. B. Wildcard, KEIN ACME) - beide auf dem Control-Host:
+    #   kc_tls_cert   Pfad zur Zertifikatskette (Leaf + Intermediates, PEM)
+    #   kc_tls_key    Pfad zum privaten Schluessel (PEM, ohne Passphrase)
+    kc_tls_internal: false  # true = Caddy nutzt eigene CA (Lab/ohne oeffentliches DNS)
+
+  pre_tasks:
+    - name: Pflicht-Variablen pruefen (fail-closed)
+      ansible.builtin.assert:
+        that:
+          - kc_domain is defined and kc_domain | length > 0
+          - kc_bootstrap_admin_password is defined and kc_bootstrap_admin_password | length >= 12
+          - kc_db_password is defined and kc_db_password | length >= 16
+        fail_msg: >-
+          kc_domain, kc_bootstrap_admin_password (>=12) und kc_db_password (>=16) muessen
+          gesetzt sein (Secrets via Ansible Vault). Siehe group_vars/keycloak.example.yml.
+
+  tasks:
+    - name: Docker-Engine + Compose-Plugin installieren
+      ansible.builtin.package:
+        name:
+          - docker.io
+          - docker-compose-plugin
+        state: present
+      register: _docker_install
+      failed_when: false  # Distributionen mit anderen Paketnamen: Hinweis im README
+
+    - name: Docker-Dienst aktivieren/starten
+      ansible.builtin.service:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Projektverzeichnis anlegen
+      ansible.builtin.file:
+        path: "{{ kc_base_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Realm-Export ausliefern (Import beim ersten Start)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../realm-automato.json"
+        dest: "{{ kc_base_dir }}/import/realm-automato.json"
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Keycloak neu starten
+
+    - name: PKI-Verzeichnis anlegen (eigenes Zertifikat)
+      when: kc_tls_cert is defined and kc_tls_cert | length > 0
+      ansible.builtin.file:
+        path: "{{ kc_base_dir }}/pki"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Zertifikatskette ausliefern (Leaf + Intermediates)
+      when: kc_tls_cert is defined and kc_tls_cert | length > 0
+      ansible.builtin.copy:
+        src: "{{ kc_tls_cert }}"
+        dest: "{{ kc_base_dir }}/pki/{{ kc_domain }}.crt"
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Keycloak neu starten
+
+    - name: Privaten Schluessel ausliefern - streng 0600
+      when: kc_tls_cert is defined and kc_tls_cert | length > 0
+      ansible.builtin.copy:
+        src: "{{ kc_tls_key }}"
+        dest: "{{ kc_base_dir }}/pki/{{ kc_domain }}.key"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Keycloak neu starten
+
+    - name: Compose-Datei rendern
+      ansible.builtin.template:
+        src: docker-compose.yml.j2
+        dest: "{{ kc_base_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Keycloak neu starten
+
+    - name: .env (Secrets) rendern - streng 0600
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ kc_base_dir }}/.env"
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Keycloak neu starten
+
+    - name: Caddyfile (TLS/Reverse-Proxy, Security-Header) rendern
+      ansible.builtin.template:
+        src: Caddyfile.j2
+        dest: "{{ kc_base_dir }}/Caddyfile"
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Keycloak neu starten
+
+    - name: Firewall - nur SSH + HTTPS/HTTP (ACME) nach aussen
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: ["22", "80", "443"]
+      failed_when: false  # ufw optional; falls nicht vorhanden, Firewall extern regeln
+
+    - name: Firewall scharf schalten (default deny incoming)
+      community.general.ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+      failed_when: false
+
+    - name: Stack starten/aktualisieren
+      ansible.builtin.command:
+        cmd: docker compose up -d --remove-orphans
+        chdir: "{{ kc_base_dir }}"
+      register: _compose_up
+      changed_when: "'Started' in _compose_up.stderr or 'Created' in _compose_up.stderr"
+
+    - name: Auf Keycloak warten (oeffentliche OIDC-Discovery ueber Caddy/TLS)
+      # Health/Metrics liegen in KC 26 auf dem Management-Port 9000 (nicht oeffentlich);
+      # die Realm-Discovery ist ohnehin oeffentlich und signalisiert "Realm bereit".
+      ansible.builtin.uri:
+        url: "https://{{ kc_domain }}/realms/automato/.well-known/openid-configuration"
+        validate_certs: "{{ not kc_tls_internal }}"
+        status_code: 200
+      register: _kc_health
+      until: _kc_health.status == 200
+      retries: 30
+      delay: 10
+
+  handlers:
+    - name: Keycloak neu starten
+      ansible.builtin.command:
+        cmd: docker compose up -d --force-recreate
+        chdir: "{{ kc_base_dir }}"
+      changed_when: true

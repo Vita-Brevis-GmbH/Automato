@@ -1,0 +1,14 @@
+[
+  {
+    "name": "SG_web",
+    "member": [
+      {
+        "name": "HTTPS"
+      },
+      {
+        "name": "APP-8443"
+      }
+    ],
+    "comment": "Web-Dienste"
+  }
+]

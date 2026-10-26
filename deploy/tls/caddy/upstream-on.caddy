@@ -1,0 +1,4 @@
+# TLS intern (0.49.0, ADR 0023): Upstream per HTTPS, Zertifikat gegen die interne CA geprueft
+transport http {
+	tls_trust_pool file /etc/automato/tls/ca.crt
+}

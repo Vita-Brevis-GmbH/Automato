@@ -18,6 +18,20 @@
    Schreibender Zugriff läuft ausschließlich über Orchestrator → Worker → Ansible.
 8. **Signierte/validierte Jobs**: Jobs vom Orchestrator an Worker sollten authentifiziert/signiert sein,
    um Job-Spoofing zu verhindern.
+9. **Kunden-Benutzer fail-closed** (ADR 0018, 0.33.0): Kunden-Benutzer (Keycloak-Rolle `customer`
+   bzw. `customer_ids`) erreichen nur die Endpunkte einer Freigabeliste (`auth/customer_routes.py`,
+   neue Endpunkte sind automatisch gesperrt, ein Test prüft jeden Endpunkt). Jede freigegebene
+   Lese-API schränkt serverseitig auf den Ausschnitt ihrer Kunden ein, Details ausserhalb sind
+   nicht auffindbar (404), Kunden-Benutzer sind nie Admin und werden immer auditiert. Kunden-IDs
+   kommen bei SAML-Brokern fest aus der IdP-Konfiguration, nie aus der Assertion des Kunden.
+   Seit 0.53.0 auch über die **Zuordnung in Automato** (`customer_user`, nur Admin, auditiert):
+   sie schränkt immer ein (ein zugeordneter Benutzer ist Kunden-Benutzer, nie Admin), das eigene
+   Konto lässt sich nicht zuordnen, ist die Zuordnung nicht lesbar, gibt es keinen Zugriff (503).
+10. **Hochgeladene Zeichnungen** (Grundschema der Zonen, 0.55.0, ADR 0024 Nr. 11): nur Admin,
+    höchstens 2 MB; XML mit DTD bzw. Entitäten wird abgewiesen (kein XXE, keine „Billion
+    Laughs“), komprimierte draw.io-Seiten werden höchstens auf 10 MB entpackt, höchstens 300 Zonen
+    und 3000 Übergänge. Die Zeichnung wird nur gelesen und als Daten der Plattform gespeichert –
+    kein Code, kein Abruf externer Inhalte; Beschriftungen werden als Text (ohne HTML) übernommen.
 
 ## Offene Punkte für spätere ADRs
 - Wahl des Secrets-Backends (Ansible Vault vs. HashiCorp Vault) und Migrationszeitpunkt
