@@ -371,10 +371,30 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.69.1** | Korrekturen: ACI-Contracts zustandslos (Filter ohne Ports in beide Richtungen, mit Zielport nur Antworten) in Weg-Suche, Regel-Detail, Applikations-Doku, Verbindungen und Zonenmatrix; VLANs aus dem ACI (`vlanCktEp`, `pcAggrIf`) im Reiter VLANs (ADR 0019) |
 | **0.70.0** | Patchungen im Verkabelungsplan (Gerät bzw. Kabel wählen, Ports beider Seiten mit Konfiguration, Abweichungen, Endpunkten); Grundschema der Zonen in der Oberfläche bearbeiten (ADR 0025 Nr. 12, ADR 0024 Nr. 16) |
 
-### Nächste Arbeiten (Stand 0.65.0)
+### Nächste Arbeiten (Stand 0.70.0)
 
-**Abgenommen (Anwender, 2026-10-23):** alle Stände bis 0.43.0 gegen die echten Systeme. Pilot
-für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschiedene Fälle).
+**Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.70.0.
+
+**Umplanung des Anwenders (2026-10-26) – Reihenfolge bis zum Abschluss des ersten Projekts:**
+
+| Schritt | Inhalt | Stand |
+|---|---|---|
+| 1 | **Export nach Confluence** – neuer Schreibweg, eigene ADR (0026) und Freigabe: Doku und Pläne als Seiten unter einer festgelegten Elternseite, nur eigene Seiten, Vorschau → Übernehmen, Audit | als Erstes |
+| 2 | **Parallele Firewalls:** Abweichungen bei Policy-Routen, Routing und NAT zwischen den Firewalls eines Verbunds (ADR 0020) | geplant |
+| 3 | **Schwachstellen** aus der Übersicht 0.70.0: ACI-Filter nur mit Quellport (Urteil statt „möglich“), Rückrichtung in der Doku je System wie in der Applikations-Doku, Leistung der Zonenmatrix mit der Rückrichtung messen und zwischenspeichern | geplant |
+| 4 | **Lücken im Ablauf:** nächtlicher CI-Lauf auf dem aktuellen Stand (`main` nachführen), Überschriften der Roadmap | geplant |
+| 5 | **Zonen komplett:** Zonen je Kunde im Grundschema, Befund „Zone ausserhalb des Schemas“, draw.io-Datei des Zonenplans zurück einlesen, Relevanz nach dem Weg in der Zonenmatrix, Übergänge über Routen ohne gemeinsames Netz, Absicht je Richtung im Plan, Zonen in den Verbindungen der Applikations-Doku (ADR 0024) | geplant |
+| 6 | **Daten verschärfen** (Inhalt mit dem Anwender festlegen) | danach |
+| 7 | **Erstes Projekt abschliessen:** Produktivschaltung des DC mit den R14-Massnahmen (ADR 0013, RISKS) | danach |
+
+**Danach (Entscheid nach der Produktivschaltung des DC): Mehrmandanten wie Magister.** Im
+Cockpit (ADR 0014) Firmen anlegen und definieren; neben dem DC weitere Kunden, unabhängige
+Systeme und Lösungen mit anderen Topologien dokumentieren. Zu entscheiden: je Firma eigene
+NetBox und Datenbank oder alles am gleichen Ort (heute: eine Instanz je Umgebung, ADR 0018;
+Datenhaltung R14). Eigene ADR vor dem Umbau.
+
+**Frühere Reihenfolge (Stand 0.65.0):**
 
 **Entscheide des Anwenders (2026-10-23):**
 
@@ -466,7 +486,7 @@ für Zonen und Pläne ist die heutige, grössere Testumgebung (viele verschieden
 | ~~0.68.0~~ | Weitere Produkte: Catalyst 1300/9200L/3650/4500, Nexus 9000, Juniper MX – **umgesetzt in 0.68.0** (ADR 0025 Nr. 11; offen: Routing-Tabelle des MX für die Wege) |
 | ~~0.69.0~~ | Regeln je Kategorie der Applikations-Doku ausblenden mit Begründung und Audit – **umgesetzt in 0.69.0** (ADR 0012) |
 | ~~0.69.1/0.70.0~~ | ACI zustandslos, VLANs aus dem ACI, Patchungen im Plan, Grundschema in der Oberfläche bearbeiten – **umgesetzt** (Wünsche des Anwenders 2026-10-26) |
-| danach | Abnahme 0.43.1 ff. gegen die grössere Testumgebung (Pilot Zonen und Pläne); Kabel/Ports nach NetBox nur mit eigener Freigabe, SNMPv3 (siehe oben) |
+| danach | Abnahme 0.43.1 ff. gegen die grössere Testumgebung (Pilot Zonen und Pläne) – bis 0.68.0 erledigt (2026-10-26); Kabel/Ports nach NetBox nur mit eigener Freigabe, SNMPv3 (siehe oben) – nach der Umplanung vom 2026-10-26 hinter der Produktivschaltung |
 
 Frühere Reihenfolge (Stand 0.42.0, zum Nachlesen):
 
