@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.100.0 – 2026-10-27
+
+Switches & Router über SNMPv3 – zweiter, rein lesender Zugang neben SSH (Auftrag des Anwenders
+2026-10-27; ADR 0033).
+
+- **Zugang „SSH | SNMPv3“** am Quellsystem (`source_system.access`, Migration `0062`). Nur
+  SNMPv3 authPriv (Auth SHA/SHA-224/-256/-384/-512, Priv AES-128/-192/-256, Passwörter ≥ 8
+  Zeichen, optional Context; kein v1/v2c, keine Community, kein MD5/DES), Zugangsdaten
+  verschlüsselt, ausgegeben nur die Protokolle (`snmp`); Wechsel des Zugangs verwirft die
+  Zugangsdaten; Audit nur `credentials_set`/`access`.
+- **Collector `collectors/snmp/`** (pysnmp, BSD-2, neue Abhängigkeit im Lockfile): nur
+  GET/GETBULK auf eine Positivliste (`oids.py`, `ReadOnlyViolation` vor dem Senden, kein SET
+  importiert); SNMPv2-, ENTITY-, IF-, EtherLike-, IEEE8023-LAG-, BRIDGE-, Q-BRIDGE- bzw.
+  IEEE8021-Q-BRIDGE-, IP-, LLDP- und CISCO-CDP-MIB → dieselben DTOs wie per SSH (Verkabelung,
+  Endpunkte, L2-Sicht, NetBox-Sync unverändert); fehlende Tabellen als Hinweis, MAC-Tabelle
+  höchstens 50 000; offene Tasks von pysnmp beim Schliessen beendet.
+- Prüfen: `--check` = GET auf sysName je Gerät; „Prüfen“ im Orchestrator für `snmp://` nur
+  Namensauflösung mit Hinweis (UDP).
+- UI: Quellsystem-Dialog mit Zugang, SNMPv3-Benutzer, Auth-/Priv-Protokoll und -Passwort,
+  Context (`#ss-access`, `#ss-snmp…`); Chip „SNMPv3“ in der Liste; neue Laufmeldungen zweisprachig
+  (`run_text.PHRASES`).
+- **Korrigiert:** das Ziel des Agenten enthielt die festgehaltenen SSH-Host-Schlüssel nicht
+  (`known_hosts` fiel im Antwortschema weg) – Agent-Läufe prüften den Schlüssel nie; jetzt
+  mitgeliefert (nur Switches & Router).
+
 ## 0.99.0 – 2026-10-27
 
 Routing bis an die Firmengrenze (Auftrag des Anwenders 2026-10-27; ADR 0032).

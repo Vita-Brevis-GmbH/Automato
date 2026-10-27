@@ -1079,6 +1079,20 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
   );
 }
 
+// SNMPv3 (ADR 0033): nur authPriv – Auth HMAC-SHA bzw. SHA-2, Priv AES (Werte wie im Orchestrator)
+const SNMP_AUTH: [string, string][] = [
+  ["sha", "SHA-1"],
+  ["sha224", "SHA-224"],
+  ["sha256", "SHA-256"],
+  ["sha384", "SHA-384"],
+  ["sha512", "SHA-512"],
+];
+const SNMP_PRIV: [string, string][] = [
+  ["aes128", "AES-128"],
+  ["aes192", "AES-192"],
+  ["aes256", "AES-256"],
+];
+
 // Gerät anlegen/bearbeiten: Adresse, verwaltender Agent, read-only API-Token (nur schreibbar).
 function SystemDialog({
   tenant,
@@ -1132,6 +1146,17 @@ function SystemDialog({
   const userPass = isAci || isInfoblox || isVmware || isSwitch || isAvi;
   // Switches (0.62.0): Host-Schlüssel vergessen (beim nächsten Lauf neu lernen)
   const [forget, setForget] = useState<string[]>([]);
+  // Switches & Router (ADR 0033): Zugang SSH bzw. SNMPv3 (nur lesend, authPriv); Wechsel verwirft
+  // die hinterlegten Zugangsdaten
+  const [access, setAccess] = useState<"ssh" | "snmp">(system?.access === "snmp" ? "snmp" : "ssh");
+  const [authProtocol, setAuthProtocol] = useState(system?.snmp?.auth_protocol ?? "sha256");
+  const [privProtocol, setPrivProtocol] = useState(system?.snmp?.priv_protocol ?? "aes128");
+  const [authPassword, setAuthPassword] = useState("");
+  const [privPassword, setPrivPassword] = useState("");
+  const [snmpContext, setSnmpContext] = useState("");
+  const isSnmp = isSwitch && access === "snmp";
+  const accessChanged = system !== null && isSwitch && (system.access ?? "ssh") !== access;
+  const keptCreds = hasCreds && !accessChanged;
 
   useEffect(() => {
     fetchSites(tenant.id)
@@ -1157,15 +1182,25 @@ function SystemDialog({
       agent_id: agentId,
       verify_tls: verifyTls,
       ...(isAci || isSwitch || isAvi ? { read_scope: readScope.trim() } : {}),
+      ...(isSwitch ? { access } : {}),
       ...(isRef && refRole ? { ref_role: refRole } : {}),
       ...(isRef ? {} : { site_id: siteId }),
       schedule: schedule.trim(),
     };
     // Nur geänderte Felder senden; leer gelassen = unverändert, "" = entfernen
     const creds: SystemCredentials = {};
-    if (clearCreds) {
+    if (clearCreds && isSnmp) {
+      Object.assign(creds, { username: "", auth_password: "", priv_password: "", context: "" });
+    } else if (clearCreds) {
       if (userPass) Object.assign(creds, { username: "", password: "" });
       else creds.token = "";
+    } else if (isSnmp) {
+      // SNMPv3 (ADR 0033): leer gelassen = unverändert; Protokolle immer (ohne Passwörter wirkungslos)
+      if (username.trim()) creds.username = username.trim();
+      if (authPassword) creds.auth_password = authPassword;
+      if (privPassword) creds.priv_password = privPassword;
+      if (snmpContext.trim()) creds.context = snmpContext.trim();
+      Object.assign(creds, { auth_protocol: authProtocol, priv_protocol: privProtocol });
     } else if (userPass) {
       if (username.trim()) creds.username = username.trim();
       if (password) creds.password = password;
@@ -1181,7 +1216,7 @@ function SystemDialog({
         await createSystem({ tenant_id: tenant.id, platform, ...common, ...creds });
       } else {
         const group = platform === "fortigate" ? { parallel_group: parallelGroup.trim() } : {};
-        const keys = isSwitch && forget.length ? { forget_host_keys: forget } : {};
+        const keys = isSwitch && !isSnmp && forget.length ? { forget_host_keys: forget } : {};
         await patchSystem(system.id, { ...common, enabled, ...group, ...keys, ...creds });
       }
       await onSaved();
@@ -1238,8 +1273,8 @@ function SystemDialog({
             <option value="vmware">VMware vCenter</option>
             <option value="cisco_switch">
               {L(
-                "Switches & Router (SSH: Cisco Catalyst/Nexus, Juniper, Arista, Aruba CX)",
-                "Switches & routers (SSH: Cisco Catalyst/Nexus, Juniper, Arista, Aruba CX)",
+                "Switches & Router (SSH bzw. SNMPv3: Cisco Catalyst/Nexus, Juniper, Arista, Aruba CX)",
+                "Switches & routers (SSH or SNMPv3: Cisco Catalyst/Nexus, Juniper, Arista, Aruba CX)",
               )}
             </option>
             <option value="avi">VMware NSX ALB (Avi, Load Balancer)</option>
@@ -1287,15 +1322,99 @@ function SystemDialog({
         )}
         {isSwitch && (
           <div className="field">
+            <label htmlFor="ss-access">{L("Zugang", "Access")}</label>
+            <select
+              id="ss-access"
+              className="sel input"
+              value={access}
+              onChange={(e) => setAccess(e.target.value === "snmp" ? "snmp" : "ssh")}
+            >
+              <option value="ssh">{L("SSH – feste show-Befehle", "SSH – fixed show commands")}</option>
+              <option value="snmp">
+                {L("SNMPv3 – nur lesend (GET/GETBULK, authPriv)", "SNMPv3 – read-only (GET/GETBULK, authPriv)")}
+              </option>
+            </select>
+            <div className="hint">
+              {L(
+                "SNMPv3, wo kein SSH-Konto erlaubt ist: dieselben Daten (Ports, VLANs, Nachbarn, MAC-Tabelle, ARP) aus Standard-MIBs.",
+                "SNMPv3 where no SSH account is allowed: the same data (ports, VLANs, neighbors, MAC table, ARP) from standard MIBs.",
+              )}
+            </div>
+            {accessChanged && hasCreds && (
+              <Note warn>
+                {L(
+                  "Beim Wechsel des Zugangs werden die hinterlegten Zugangsdaten verworfen – unten die Zugangsdaten für den neuen Zugang eingeben.",
+                  "Changing the access discards the stored credentials – enter the credentials for the new access below.",
+                )}
+              </Note>
+            )}
+          </div>
+        )}
+        {isSwitch && (
+          <div className="field">
             <label htmlFor="ss-switches">{L("Switches und Router", "Switches and routers")}</label>
             <textarea
               id="ss-switches"
               className="input mono"
               rows={5}
               value={readScope}
-              placeholder={"10.0.0.11\nsw-acc-02.kunde.lan\n10.0.0.2:2222"}
+              placeholder={isSnmp ? "10.0.0.11\nsw-acc-02.kunde.lan\n10.0.0.2:1161" : "10.0.0.11\nsw-acc-02.kunde.lan\n10.0.0.2:2222"}
               onChange={(e) => setReadScope(e.target.value)}
             />
+            {isSnmp && (
+              <div className="hint" id="ss-snmp-mibs">
+                {L(
+                  <>
+                    Eine Adresse je Zeile (bzw. kommagetrennt), optional mit Port (Standard UDP 161). Alle Geräte teilen den
+                    SNMPv3-Benutzer unten; der Agent liest sie parallel und meldet, welche nicht antworteten. Gelesen werden
+                    nur Standard-MIBs:
+                  </>,
+                  <>
+                    One address per line (or comma-separated), optionally with port (default UDP 161). All devices share
+                    the SNMPv3 user below; the agent reads them in parallel and reports which did not answer. Only standard
+                    MIBs are read:
+                  </>,
+                )}
+                <ul className="ss-products">
+                  <li>
+                    {L(
+                      "SNMPv2-MIB (Name, Beschreibung, Hersteller), ENTITY-MIB (Modell, Seriennummer)",
+                      "SNMPv2-MIB (name, description, vendor), ENTITY-MIB (model, serial number)",
+                    )}
+                  </li>
+                  <li>
+                    {L(
+                      "IF-MIB (Ports, Status, Speed, Beschreibung), EtherLike-MIB (Duplex), IEEE8023-LAG-MIB (Port-Channel)",
+                      "IF-MIB (ports, status, speed, description), EtherLike-MIB (duplex), IEEE8023-LAG-MIB (port channel)",
+                    )}
+                  </li>
+                  <li>
+                    {L(
+                      "Q-BRIDGE-MIB bzw. IEEE8021-Q-BRIDGE-MIB (VLANs je Port), BRIDGE-MIB (MAC-Tabelle)",
+                      "Q-BRIDGE-MIB or IEEE8021-Q-BRIDGE-MIB (VLANs per port), BRIDGE-MIB (MAC table)",
+                    )}
+                  </li>
+                  <li>
+                    {L(
+                      "IP-MIB (ARP und IPv6-Nachbarn), LLDP-MIB und CISCO-CDP-MIB (Nachbarn)",
+                      "IP-MIB (ARP and IPv6 neighbors), LLDP-MIB and CISCO-CDP-MIB (neighbors)",
+                    )}
+                  </li>
+                </ul>
+                {L(
+                  <>
+                    Fehlt eine Tabelle (bzw. liegt sie nicht in der View des Benutzers), steht ein Hinweis im Lauf. Cisco IOS
+                    führt die VLANs je Port nur in eigenen MIBs – dort ist SSH genauer. Nicht gelesen: Spanning Tree, vPC,
+                    Routing.
+                  </>,
+                  <>
+                    If a table is missing (or not in the user's view), the run shows a note. Cisco IOS keeps the VLANs per
+                    port only in its own MIBs – SSH is more precise there. Not read: spanning tree, vPC, routing.
+                  </>,
+                )}
+              </div>
+            )}
+            {!isSnmp && (
             <div className="hint">
               {L(
                 <>
@@ -1343,9 +1462,10 @@ function SystemDialog({
                 </>,
               )}
             </div>
+            )}
           </div>
         )}
-        {system !== null && isSwitch && (system.host_keys ?? []).length > 0 && (
+        {system !== null && isSwitch && !isSnmp && (system.host_keys ?? []).length > 0 && (
           <div className="field" id="ss-hostkeys">
             <label>{L("SSH-Host-Schlüssel (beim ersten Lauf festgehalten)", "SSH host keys (pinned on the first run)")}</label>
             <table className="compact">
@@ -1647,6 +1767,101 @@ function SystemDialog({
               </div>
             </div>
           </>
+        ) : isSnmp ? (
+          <div id="ss-snmp">
+            <div className="field">
+              <label htmlFor="ss-snmp-user">{L("SNMPv3-Benutzer (nur Lese-View)", "SNMPv3 user (read view only)")}</label>
+              <CredentialInput
+                id="ss-snmp-user"
+                value={username}
+                maxLength={200}
+                disabled={clearCreds}
+                placeholder={keptCreds ? kept : L("z. B. ro-automato", "e.g. ro-automato")}
+                onChange={setUsername}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="ss-snmp-auth">{L("Auth-Protokoll", "Auth protocol")}</label>
+              <select
+                id="ss-snmp-auth"
+                className="sel input"
+                value={authProtocol}
+                disabled={clearCreds}
+                onChange={(e) => setAuthProtocol(e.target.value)}
+              >
+                {SNMP_AUTH.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="ss-snmp-authpass">{L("Auth-Passwort", "Auth password")}</label>
+              <SecretInput
+                id="ss-snmp-authpass"
+                value={authPassword}
+                disabled={clearCreds}
+                onChange={setAuthPassword}
+                placeholder={keptCreds ? kept : L("mindestens 8 Zeichen", "at least 8 characters")}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="ss-snmp-priv">{L("Priv-Protokoll (Verschlüsselung)", "Priv protocol (encryption)")}</label>
+              <select
+                id="ss-snmp-priv"
+                className="sel input"
+                value={privProtocol}
+                disabled={clearCreds}
+                onChange={(e) => setPrivProtocol(e.target.value)}
+              >
+                {SNMP_PRIV.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="ss-snmp-privpass">{L("Priv-Passwort", "Priv password")}</label>
+              <SecretInput
+                id="ss-snmp-privpass"
+                value={privPassword}
+                disabled={clearCreds}
+                onChange={setPrivPassword}
+                placeholder={keptCreds ? kept : L("mindestens 8 Zeichen", "at least 8 characters")}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="ss-snmp-context">{L("Context (optional)", "Context (optional)")}</label>
+              <CredentialInput
+                id="ss-snmp-context"
+                value={snmpContext}
+                maxLength={200}
+                disabled={clearCreds}
+                placeholder={
+                  keptCreds && system?.snmp?.has_context ? kept : L("leer = Standard-Context", "empty = default context")
+                }
+                onChange={setSnmpContext}
+              />
+              <div className="hint">
+                {L(
+                  <>
+                    Nur SNMPv3 mit <b>authPriv</b> (Authentisierung und Verschlüsselung) – kein SNMPv1/v2c, keine Community.
+                    Der Benutzer gehört auf dem Gerät in eine Gruppe nur mit Lese-View (keine Write-View). Automato sendet
+                    nur GET/GETBULK auf eine feste Liste von Tabellen; Schreiben (SET) gibt es im Collector nicht. Wird
+                    verschlüsselt gespeichert und nie wieder angezeigt.
+                  </>,
+                  <>
+                    Only SNMPv3 with <b>authPriv</b> (authentication and encryption) – no SNMPv1/v2c, no community. On the
+                    device the user belongs to a group with a read view only (no write view). Automato only sends
+                    GET/GETBULK on a fixed list of tables; writing (SET) does not exist in the collector. Stored encrypted
+                    and never shown again.
+                  </>,
+                )}
+              </div>
+            </div>
+          </div>
         ) : isSwitch ? (
           <>
             <div className="field">
@@ -1656,7 +1871,7 @@ function SystemDialog({
                 value={username}
                 maxLength={200}
                 disabled={clearCreds}
-                placeholder={hasCreds ? kept : L("z. B. ro-automato", "e.g. ro-automato")}
+                placeholder={keptCreds ? kept : L("z. B. ro-automato", "e.g. ro-automato")}
                 onChange={setUsername}
               />
             </div>
@@ -1667,7 +1882,7 @@ function SystemDialog({
                 value={password}
                 disabled={clearCreds}
                 onChange={setPassword}
-                placeholder={hasCreds ? kept : L("Passwort des SSH-Benutzers", "Password of the SSH user")}
+                placeholder={keptCreds ? kept : L("Passwort des SSH-Benutzers", "Password of the SSH user")}
               />
               <div className="hint">
                 {L(
@@ -1891,6 +2106,16 @@ function SystemTable({
             </td>
             <td>
               <span className="chip">{PLATFORM_LABEL[s.platform] ?? s.platform}</span>
+              {s.platform === "cisco_switch" && s.access === "snmp" && (
+                <div style={{ marginTop: 3 }}>
+                  <span
+                    className="chip info"
+                    title={L("Gelesen über SNMPv3 (authPriv, nur GET/GETBULK)", "Read via SNMPv3 (authPriv, GET/GETBULK only)")}
+                  >
+                    SNMPv3
+                  </span>
+                </div>
+              )}
               {s.ref_role && (
                 <div style={{ marginTop: 3 }}>
                   <span className={`chip ${s.ref_role === "primary" ? "local" : "info"}`}>

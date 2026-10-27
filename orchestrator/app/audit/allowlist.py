@@ -67,6 +67,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "ref_role",
             "site_id",
             "schedule",
+            "access",  # Switches & Router: Zugang ssh | snmp (ADR 0033)
         }
     ),
     "source.updated": frozenset(
@@ -81,6 +82,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "site_id",
             "schedule",
             "parallel_group",
+            "access",  # Wechsel des Zugangs (ADR 0033)
         }
     ),
     # Parallele Firewalls (0.18.0): Verbund gesetzt bzw. aufgeloest

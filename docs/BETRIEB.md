@@ -1333,7 +1333,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   (IOS/IOS-XE), Nexus 9000 (NX-OS), Catalyst 1200/1300 (Business-CLI, gelesen über eine
   begrenzte Sitzung, weil diese Geräte kein Exec annehmen) und Juniper MX/EX/QFX (Junos) – die
   Plattform erkennt der Collector je Gerät, „Verbindung prüfen“ nennt sie; die **SSH-Host-Schlüssel** hält der erste
-  Lauf je Adresse fest (Fingerabdruck im Dialog, „vergessen“ nach Tausch des Geräts), **NSX ALB (Avi)**
+  Lauf je Adresse fest (Fingerabdruck im Dialog, „vergessen“ nach Tausch des Geräts); seit 0.100.0
+  (ADR 0033) **Zugang SSH | SNMPv3** – bei SNMPv3 statt SSH-Benutzer/Passwort ein **SNMPv3-Benutzer**
+  (nur authPriv), **Auth-Protokoll** (SHA bzw. SHA-2, Vorgabe SHA-256) und **-Passwort**,
+  **Priv-Protokoll** (AES-128/-192/-256, Vorgabe AES-128) und **-Passwort** (je mindestens 8
+  Zeichen), optional **Context**; Adressen wie bei SSH (optional `:Port`, Standard UDP 161); ein
+  Wechsel des Zugangs verwirft die hinterlegten Zugangsdaten, **NSX ALB (Avi)**
   (seit 0.77.0, ADR 0027): Adresse des Controllers, **Avi-Benutzer/Passwort** eines Kontos in einer
   Rolle nur mit Leserechten (Virtual Service, VS VIP, Pool, Pool Group, VRF Context, Application
   Profile, Tenant) und **Avi-Tenants** (kommagetrennt, leer = alle, die das Konto sieht) –
@@ -1724,7 +1729,9 @@ an (`deploy/agent-gateway`, Port 8443).
   (Anmelden, Container-View, Eigenschaften abrufen; ADR 0017). Der Switch-Client (SSH) setzt je
   Befehl einen Exec-Aufruf ohne Shell und Terminal ab und lässt nur die festen `show`-Befehle
   des Lesevertrags zu (kein `show running-config`); er verlangt den beim ersten Lauf
-  festgehaltenen Host-Schlüssel, bevor er das Passwort sendet (ADR 0025, R22). Einziger Schreibweg ist der
+  festgehaltenen Host-Schlüssel, bevor er das Passwort sendet (ADR 0025, R22) – seit 0.100.0 auch
+  bei Läufen über den Agenten. Der SNMP-Client (SNMPv3 authPriv, ADR 0033) sendet nur GET/GETBULK
+  auf die Positivliste der Standard-MIBs; SET ist nicht eingebunden. Einziger Schreibweg ist der
   NetBox-Sync im Orchestrator mit dem Schreib-Token des NetBox-Quellsystems; er schreibt nur
   die synchronisierten Objekttypen (Tags, Tenants, Standort-Gruppen, Sites, Hersteller,
   Geräterollen/-typen, Geräte, Interfaces, Kabel (seit 0.93.0), VRFs, VLAN-Gruppen, VLANs, Prefixe, Ranges,
@@ -1820,6 +1827,17 @@ an (`deploy/agent-gateway`, Port 8443).
   `show ssh key`), dann im Quellsystem beim Switch „vergessen“ anhaken und speichern – der
   nächste Lauf lernt den neuen Schlüssel. Sonst: Adresse und Netz prüfen (anderes Gerät unter
   der Adresse?).
+- **Switch über SNMPv3: „ohne Antwort (Tabelle fehlt bzw. nicht in der View): …“** (ab 0.100.0) —
+  der SNMPv3-Benutzer sieht die Tabelle nicht: View des Benutzers auf dem Gerät erweitern (Gruppe
+  nur mit Read-View, ACL auf die Adresse des Agenten) bzw. das Gerät kennt die MIB nicht. Cisco
+  IOS/IOS-XE: VLANs je Port nur per SSH vollständig. „Anmeldung abgelehnt“ = Benutzer, Protokolle
+  bzw. Passwörter prüfen; „keine Antwort“ = UDP 161 vom Agenten zum Gerät freigeben. Auf der
+  Station prüft `.\run-agent.ps1 -Check` je Gerät ein GET auf sysName; „Prüfen“ im Web-UI löst
+  beim zentralen Worker nur den Namen auf (UDP ist ohne Anfrage nicht prüfbar). „pysnmp fehlt“ =
+  Installation des Agenten unvollständig (Selbst-Update abwarten bzw. Agent-Paket neu
+  installieren). Seit 0.100.0 gilt der festgehaltene SSH-Host-Schlüssel auch für Läufe über den
+  Agenten: meldet ein Switch danach „Host-Schlüssel hat sich geändert“, Gerät prüfen und den
+  Schlüssel im Quellsystem „vergessen“.
 - **„Wo hängt …“ findet eine VM nicht bzw. zeigt „zurzeit in keiner MAC-Tabelle“** (ab 0.63.0) —
   die MAC-Tabelle kennt nur Geräte, die in den letzten Minuten gesendet haben (Standard 300 s),
   und nur auf gelesenen Switches. Steht unter „früher“ ein Port, hing das Gerät dort beim

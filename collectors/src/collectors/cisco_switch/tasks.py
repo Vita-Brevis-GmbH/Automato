@@ -9,6 +9,9 @@ das Routing (`routing.COMMANDS`: RIB, BGP; nur L3-Geraete bekommen Kontexte, ein
 `ip routing` nur den ersten Befehl).
 Ein Switch, der nicht antwortet, fehlt im Ergebnis und steht in der Meldung; antwortet keiner,
 schlaegt der Lauf fehl. Ohne Zugangsdaten liest nur der zentrale Worker (Lab) die Beispieldaten.
+
+Zugang „SNMPv3“ (ADR 0033, `Target.access == "snmp"`): dieselben Geraete und dasselbe Ergebnis,
+gelesen mit SNMPv3 authPriv statt SSH (`collectors/snmp/`).
 """
 
 import json
@@ -59,6 +62,19 @@ def _no_credentials(target: Target | None) -> str:
     )
 
 
+def _snmp(target: Target | None) -> bool:
+    """Zugang SNMPv3 statt SSH (ADR 0033)."""
+    return target is not None and (target.access or "ssh") == "snmp"
+
+
+def _has_credentials(target: Target | None) -> bool:
+    if _snmp(target):
+        from collectors.snmp.tasks import has_credentials
+
+        return has_credentials(target)
+    return bool(target is not None and target.username and target.password)
+
+
 def read_switch(entry: str, target: Target) -> dict:
     """Ein Switch: Ausgaben aller Befehle; Befehle mit Fehlermeldung bleiben leer (`notes`)."""
     client = SwitchClient(entry, target.username or "", target.password or "",
@@ -99,13 +115,17 @@ def read_switch(entry: str, target: Target) -> dict:
 
 def gather(target: Target | None = None) -> dict:
     """Alle Switches des Quellsystems; `errors` je Adresse, die nicht gelesen wurde."""
-    if target is None or not (target.username and target.password):
+    if not _has_credentials(target):
         if get_settings().agent_token:
             raise RuntimeError(_no_credentials(target))
         return _sample()
     entries = hosts(target.read_scope)
     if not entries:
         raise RuntimeError(_no_hosts())
+    if _snmp(target):  # SNMPv3 (ADR 0033)
+        from collectors.snmp import tasks as snmp
+
+        return snmp.gather(target, entries)
     switches, errors = [], []
 
     @carry  # Threads: Meldungen in der Sprache des Aufrufers (im Lauf deutsch)
@@ -125,14 +145,19 @@ def gather(target: Target | None = None) -> dict:
 
 
 def check(target: Target | None = None) -> tuple[bool, str]:
-    """Anmeldung und `show version` je Switch (read-only, kein Ingest)."""
-    if target is None or not (target.username and target.password):
+    """Anmeldung und `show version` je Switch (read-only, kein Ingest); Zugang SNMPv3: ein GET
+    auf `sysName` je Geraet."""
+    if not _has_credentials(target):
         return False, _no_credentials(target) if target else L(
             "keine Switch-Creds", "no switch credentials"
         )
     entries = hosts(target.read_scope)
     if not entries:
         return False, _no_hosts()
+    if _snmp(target):
+        from collectors.snmp import tasks as snmp
+
+        return snmp.check(target, entries)
     ok, lines = True, []
     for entry in entries:
         client = SwitchClient(entry, target.username, target.password,
@@ -176,6 +201,9 @@ def collect_once(
         routed = routing.normalize(raw)  # ADR 0032: Router/L3-Switches (auch leer: ersetzt)
         notes = [f"{sw['host']}: {n}" for sw in switches for n in sw.get("notes") or []]
         kinds = sorted({PLATFORM_LABEL.get(sw.get("platform"), "?") for sw in switches})
+        if _snmp(target):  # Hersteller aus sysObjectID (ADR 0033)
+            vendors = sorted({sw["vendor"] for sw in switches if sw.get("vendor")})
+            kinds = [f"SNMPv3: {', '.join(vendors)}" if vendors else "SNMPv3"]
         message = [f"Switches: {len(switches)} gelesen ({', '.join(kinds)})"]
         if routing.summary(routed):
             message.append(routing.summary(routed))

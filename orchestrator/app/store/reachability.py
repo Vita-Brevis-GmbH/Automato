@@ -84,7 +84,7 @@ def check(
                 "No valid address stored on the source system.",
             ),
         )
-    port = parts.port or {"https": 443, "ssh": 22}.get(parts.scheme, 80)
+    port = parts.port or {"https": 443, "ssh": 22, "snmp": 161}.get(parts.scheme, 80)
     result = Result(True)
 
     try:
@@ -108,6 +108,16 @@ def check(
         )
         return result
     result.steps.append(Step("dns", True, f"{host} → {', '.join(addrs)}"))
+    if parts.scheme == "snmp":  # Switches & Router mit SNMPv3 (ADR 0033): UDP, keine TCP-Probe
+        result.hint = L(
+            f"SNMPv3 läuft über UDP {port} – ohne Anfrage mit dem SNMPv3-Benutzer lässt sich die "
+            "Erreichbarkeit nicht prüfen. Prüfung mit GET auf sysName: Lauf starten bzw. auf der "
+            "Station des Agenten .\\run-agent.ps1 -Check.",
+            f"SNMPv3 runs over UDP {port} – reachability cannot be checked without a request with "
+            "the SNMPv3 user. Check with a GET on sysName: start a run or, on the agent's station, "
+            ".\\run-agent.ps1 -Check.",
+        )
+        return result
 
     kind = None
     for addr in addrs[:2]:

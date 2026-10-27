@@ -13,6 +13,9 @@ alle ausser infra/mgmt), bei Cisco-Switches die Adressen der Switches (0.62.0, A
 Zeile bzw. kommagetrennt), beim NSX ALB die Avi-Tenants (0.77.0, ADR 0027; leer = alle
 sichtbaren). `ssh_host_keys` = beim ersten Lauf festgehaltene SSH-Host-Schluessel
 je Adresse (`<typ> <base64>`); ein anderer Schluessel bricht die Verbindung ab.
+`access` (Switches & Router, ADR 0033) = Zugang `ssh` (leer, Standard) bzw. `snmp` (SNMPv3
+authPriv, nur lesend); bei `snmp` enthalten die Zugangsdaten `username`, `auth_protocol`,
+`auth_password`, `priv_protocol`, `priv_password` und optional `context`.
 
 Referenzquellen (Infoblox, NetBox; ADR 0010): `ref_role` = primary | enrichment,
 `reference_run_id` = Lauf, dessen Eintraege (`reference_record`) der aktuelle Stand sind.
@@ -71,6 +74,8 @@ class SourceSystem(Base):
     verify_tls: Mapped[bool] = mapped_column(default=True, server_default=true())
     read_scope: Mapped[str] = mapped_column(Text, default="", server_default="")
     ssh_host_keys: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Switches & Router: Zugang ssh (None) | snmp (ADR 0033, Migration 0062)
+    access: Mapped[str | None] = mapped_column(String(16), nullable=True)
     ref_role: Mapped[str | None] = mapped_column(String(16), nullable=True)  # RefRole
     reference_run_id: Mapped[str | None] = mapped_column(
         ForeignKey(

@@ -37,7 +37,8 @@ from collectors.common.dto import (
 NTC_PLATFORM = {"ios": "cisco_ios", "nxos": "cisco_nxos", "aoscx": "aruba_aoscx"}
 # Bezeichnung je Plattform (Meldungen, Pruefung der Verbindung)
 PLATFORM_LABEL = {"ios": "IOS/IOS-XE", "nxos": "NX-OS", "cbs": "Catalyst 1200/1300 (Business-CLI)",
-                  "junos": "Junos", "eos": "Arista EOS", "aoscx": "Aruba CX (AOS-CX)"}  # fmt: skip
+                  "junos": "Junos", "eos": "Arista EOS", "aoscx": "Aruba CX (AOS-CX)",
+                  "snmp": "SNMPv3"}  # fmt: skip
 # Langform -> Kurzform (wie in `show interfaces status`); laengste zuerst
 _SHORT = (
     ("hundredgigabitethernet", "Hu"),
@@ -350,6 +351,10 @@ def switch_inventory(
         return arista.inventory(host, outputs, notes)
     if platform == "aoscx":  # 0.94.0
         return aruba.inventory(host, outputs, notes)
+    if platform == "snmp":  # Zugang SNMPv3 (ADR 0033): gelesene Tabellen statt Ausgaben
+        from collectors.snmp import normalize as snmp
+
+        return snmp.inventory(host, outputs, notes)
     cmds = COMMANDS[platform]
     p: dict[str, list[dict]] = {}
     for c in cmds:

@@ -411,11 +411,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.97.0** | L3Outs: Firewall führend – Firewall hinter jedem L3Out (abgeleitet bzw. von Hand), Zuordnung der Gegenstellen nach dem Routing der Firewall, Contracts zu externen EPGs nur als Hilfs-Contract an der Firewall-Regel, unspezifische Zugriffe nach L3Out geordnet (ADR 0034) |
 | **0.98.0** | Weg-Suche: Details am Weg im Seitenpanel bzw. neuen Tab, „mehr“ je Hop, Suche in der URL, Anbindung als Quelle bzw. Ziel (ADR 0019 Ergänzung 0.98.0) |
 | **0.99.0** | Routing bis an die Firmengrenze: Router und L3-Switches strikt lesend (RIB, BGP je VRF), als Knoten in Weg-Suche und Topologie, Firmengrenze bei eBGP zu fremdem AS, Anbindung bzw. Default-Route zum Provider (ADR 0032) |
+| **0.100.0** | Switches & Router über SNMPv3 (authPriv, nur GET/GETBULK auf die Positivliste der Standard-MIBs) als Alternative zu SSH; Host-Schlüssel auch bei Agent-Läufen geprüft (ADR 0033) |
 
-### Nächste Arbeiten (Stand 0.99.0)
+### Nächste Arbeiten (Stand 0.100.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.99.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.100.0.
 
 **Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
 
@@ -440,7 +441,7 @@ Verkabelung, Applikationen, Kunden, Routing“):**
 | Ablauf | `main` nachführen | **erledigt** (PR #2, `main` = 0.87.0) |
 | Schritt 6 | Daten verschärfen: Datenqualität der gelesenen Daten und des IPAM | **erste Fassung in 0.91.0** (ADR 0029, Inhalt zur Abstimmung) |
 | Sprache | ADR 0028 Schritt 4: Laufmeldungen, Collector/Agent, CLI | **umgesetzt in 0.90.0** |
-| Verkabelung | Kabel und Ports nach NetBox (Vorschau → Übernehmen), IPv6-Nachbarn, weitere Hersteller; SNMPv3 als Alternative zu SSH | Kabel/Ports nach NetBox **umgesetzt in 0.93.0** (ADR 0031); IPv6-Nachbarn, Arista EOS und Aruba CX **umgesetzt in 0.94.0** (ADR 0025 Nr. 13; ArubaOS-Switch/ProCurve bewusst nicht); SNMPv3 danach |
+| Verkabelung | Kabel und Ports nach NetBox (Vorschau → Übernehmen), IPv6-Nachbarn, weitere Hersteller; SNMPv3 als Alternative zu SSH | Kabel/Ports nach NetBox **umgesetzt in 0.93.0** (ADR 0031); IPv6-Nachbarn, Arista EOS und Aruba CX **umgesetzt in 0.94.0** (ADR 0025 Nr. 13; ArubaOS-Switch/ProCurve bewusst nicht); SNMPv3 **umgesetzt in 0.100.0** (ADR 0033) |
 | Applikationen | Abhängigkeiten wieder einblenden (Infrastruktur getrennt) | **umgesetzt in 0.88.0** |
 | Applikationen | Export nach NetBox (Tags) | **umgesetzt in 0.93.0** (ADR 0031) |
 | Kunden | feinere Rollen der Kunden-Benutzer | **umgesetzt in 0.89.0** |

@@ -397,6 +397,9 @@ export interface System {
   nat_count: number;
   vdoms?: string[]; // FortiGate: gelesene VDOMs – nur „root“ = die Firewall selbst
   parallel_group?: string | null; // Verbund paralleler Firewalls (Regeln zusammengefasst)
+  // Switches & Router (ADR 0033): Zugang ssh | snmp; bei SNMPv3 nur die Protokolle (nie Passwörter)
+  access?: "ssh" | "snmp" | null;
+  snmp?: { auth_protocol: string | null; priv_protocol: string | null; has_context: boolean } | null;
 }
 
 export interface ParallelSuggestion {
@@ -1365,6 +1368,12 @@ export type SystemCredentials = {
   username?: string;
   password?: string;
   write_token?: string;
+  // Switches & Router mit Zugang SNMPv3 (ADR 0033): nur authPriv, Benutzer in `username`
+  auth_protocol?: string;
+  auth_password?: string;
+  priv_protocol?: string;
+  priv_password?: string;
+  context?: string;
 };
 export const createSystem = (
   body: {
@@ -1378,6 +1387,7 @@ export const createSystem = (
     ref_role?: string | null;
     site_id?: number | null;
     schedule?: string | null;
+    access?: "ssh" | "snmp";
   } & SystemCredentials,
 ) => sendJSON<System>("/api/systems", "POST", body);
 export const patchSystem = (
@@ -1395,6 +1405,7 @@ export const patchSystem = (
     schedule?: string | null;
     parallel_group?: string | null;
     forget_host_keys?: string[];
+    access?: "ssh" | "snmp"; // Wechsel verwirft die bisherigen Zugangsdaten
   } & SystemCredentials,
 ) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");

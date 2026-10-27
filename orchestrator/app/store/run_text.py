@@ -79,6 +79,39 @@ PHRASES: tuple[tuple[str, str], ...] = (
      "privilege 1 or a view with the show commands, NX-OS role network-operator, Junos class "
      "read-only, Catalyst 1200/1300 level 1), login with password (keyboard-interactive or "
      "password) must be allowed"),
+    # Switches & Router ueber SNMPv3 (collectors/snmp/, diagnose.py; ADR 0033) - vor den kurzen
+    # Teilen („nicht erreichbar“, „Anmeldung abgelehnt (“, „: mehr als … Eintraege“)
+    ("SNMPv3-Benutzer im Web-UI pruefen (Benutzer, Auth-/Priv-Protokoll und Passwoerter wie auf "
+     "dem Geraet, nur authPriv mit SHA bzw. SHA-2 und AES); der Benutzer braucht eine Gruppe nur "
+     "mit Lese-View (keine Write-View), die Adresse des Agenten muss in der ACL des SNMP-Agenten "
+     "stehen",
+     "check the SNMPv3 user in the web UI (user, auth/priv protocol and passwords as on the "
+     "device, only authPriv with SHA or SHA-2 and AES); the user needs a group with a read view "
+     "only (no write view), the agent's address must be in the ACL of the SNMP agent"),
+    ("Anmeldung abgelehnt (SNMPv3: Benutzer, Passwoerter bzw. Protokolle passen nicht zum "
+     "Geraet)",
+     "Login rejected (SNMPv3: user, passwords or protocols do not match the device)"),
+    ("keine Antwort per SNMPv3 (UDP): Geraet nicht erreichbar, Weg bzw. ACL gesperrt oder SNMP "
+     "aus - manche Geraete antworten bei unbekanntem Benutzer bzw. falschem Passwort gar nicht",
+     "no response via SNMPv3 (UDP): device not reachable, path or ACL blocked or SNMP off - some "
+     "devices do not answer at all for an unknown user or a wrong password"),
+    ("SNMPv3 nur mit authPriv: Benutzer, Auth- und Priv-Passwort noetig",
+     "SNMPv3 only with authPriv: user, auth and priv password needed"),
+    ("SNMPv3: Auth-Protokoll „{p}“ nicht erlaubt (SHA, SHA-224, SHA-256, SHA-384, SHA-512)",
+     "SNMPv3: auth protocol “{p}” not allowed (SHA, SHA-224, SHA-256, SHA-384, SHA-512)"),
+    ("SNMPv3: Priv-Protokoll „{p}“ nicht erlaubt (AES-128, AES-192, AES-256)",
+     "SNMPv3: priv protocol “{p}” not allowed (AES-128, AES-192, AES-256)"),
+    ("SNMPv3: Auth- und Priv-Passwort mit mindestens 8 Zeichen",
+     "SNMPv3: auth and priv password with at least 8 characters"),
+    ("nur lesend: SNMP-Abfrage „{oid}“ nicht in der Positivliste",
+     "read-only: SNMP query “{oid}” not in the allow list"),
+    ("ohne Antwort (Tabelle fehlt bzw. nicht in der View): ",
+     "no response (table missing or not in the view): "),
+    ("MAC-Tabelle: mehr als {n} Eintraege, nur die ersten uebernommen",
+     "MAC table: more than {n} entries, only the first taken over"),
+    ("pysnmp fehlt - Agent neu installieren bzw. Selbst-Update abwarten",
+     "pysnmp missing - reinstall the agent or wait for the self-update"),
+    ("SNMP-Fehler: ", "SNMP error: "),
     ("im vCenter dem Konto die Rolle Read-only auf dem vCenter-Objekt (oberste Ebene des "
      "Inventars) zuweisen, mit 'An untergeordnete Objekte weitergeben' (Propagate to children) - "
      "oder unter Verwaltung > Zugriffssteuerung > Globale Berechtigungen, ebenfalls mit "

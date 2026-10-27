@@ -78,7 +78,7 @@ wheels = [
 
 [[package]]
 name = "automato"
-version = "0.99.0"
+version = "0.100.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -353,7 +353,7 @@ wheels = [
 
 [[package]]
 name = "collectors"
-version = "0.99.0"
+version = "0.100.0"
 source = { editable = "collectors" }
 dependencies = [
     { name = "celery", extra = ["redis"] },
@@ -363,6 +363,7 @@ dependencies = [
     { name = "paramiko" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pysnmp" },
     { name = "pyvmomi" },
     { name = "sot-gateway" },
     { name = "textfsm" },
@@ -383,6 +384,7 @@ requires-dist = [
     { name = "paramiko", specifier = ">=3.4" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
+    { name = "pysnmp", specifier = ">=7.1" },
     { name = "pyvmomi", specifier = ">=8.0" },
     { name = "sot-gateway", editable = "sot-gateway" },
     { name = "textfsm", specifier = ">=1.1.3" },
@@ -897,7 +899,7 @@ wheels = [
 
 [[package]]
 name = "orchestrator"
-version = "0.99.0"
+version = "0.100.0"
 source = { editable = "orchestrator" }
 dependencies = [
     { name = "alembic" },
@@ -1054,6 +1056,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/4e/2c/c1547871be3790676e8868b38655496422f94f0978dfb66b74bdba2f1676/psycopg_binary-3.3.4-cp314-cp314-musllinux_1_2_riscv64.whl", hash = "sha256:6b9016b1714da4dd5ecaaa75b82098aa5a0b87854ce9b092e21c27c4ae23e014", size = 3946204, upload-time = "2026-05-01T23:31:39.626Z" },
     { url = "https://files.pythonhosted.org/packages/c4/b1/f6670f00fa7ea601584623f6c11602ab92117d83eaff885e0210f6de7418/psycopg_binary-3.3.4-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:47c656a8a7ba6eb0cff1801a4caaa9c8bdc12d03080e273aff1c8ac39971a77e", size = 4255811, upload-time = "2026-05-01T23:31:44.986Z" },
     { url = "https://files.pythonhosted.org/packages/eb/e6/5fff07a70d1f945ed90ae131c3bd76cab32beff7c58c6db15ad5820b6d1f/psycopg_binary-3.3.4-cp314-cp314-win_amd64.whl", hash = "sha256:c37e024c07308cd06cf3ec51bfd0e7f6157585a4d84d1bce4a7f5f7913719bf8", size = 3666849, upload-time = "2026-05-01T23:31:51.165Z" },
+]
+
+[[package]]
+name = "pyasn1"
+version = "0.6.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/7e/3c0da41061a2021cac7cd524fd57092adbe5b515e8bf9005702e366802e2/pyasn1-0.6.5.tar.gz", hash = "sha256:6b11616a6bcf3a40e635f082bb232fa57b5e0dd7f517bd7ddd69ec3794508a47", size = 155152, upload-time = "2026-10-27T06:32:49.125Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/1f/3eefd5c84c35cae44549ce1c7f7e58f7945b34f5a6bce07a135438522073/pyasn1-0.6.5-py3-none-any.whl", hash = "sha256:4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587", size = 84807, upload-time = "2026-10-27T06:32:48.045Z" },
 ]
 
 [[package]]
@@ -1255,6 +1266,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pysnmp"
+version = "7.1.30"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyasn1" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/55/2a/ab68df5b1a2f673da731da7caf39c29d924735359e7d50eacb80d2d38e53/pysnmp-7.1.30.tar.gz", hash = "sha256:db72f439b066725d2586dff068478dc8e9b303a4dba3294462b0e76b3cb63bc2", size = 268625, upload-time = "2026-09-28T07:51:09.188Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/6e/5ba915d4aa285d7ca7c8c3db0dddb5d848e9f85e383de064122fb0702c7b/pysnmp-7.1.30-py3-none-any.whl", hash = "sha256:1f648b7e38fc400e63b493a45d06581d837d07cddd901e6dc9c45be03e9ed685", size = 355559, upload-time = "2026-09-28T07:51:07.606Z" },
+]
+
+[[package]]
 name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1416,7 +1439,7 @@ wheels = [
 
 [[package]]
 name = "sot-gateway"
-version = "0.99.0"
+version = "0.100.0"
 source = { editable = "sot-gateway" }
 dependencies = [
     { name = "httpx" },
