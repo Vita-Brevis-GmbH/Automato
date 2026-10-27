@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import L
 from app.jobs import celery_app
 from app.models import REFERENCE_PLATFORMS, CollectorRun, RunStatus, SourceSystem
 from app.schemas.jobs import (
@@ -95,13 +96,17 @@ def start_collect_all(
 
 def _message(run: CollectorRun) -> str | None:
     """Meldung des Laufs; ist sein Ergebnis angekommen, aber noch nicht eingespielt (0.80.1:
-    eines nach dem anderen), steht das statt „läuft“ da."""
+    eines nach dem anderen), steht das statt „läuft“ da. Nur Antwort (folgt der Sprache); die
+    gespeicherte Meldung `run.message` bleibt deutsch."""
     state = tenant_lock.state(run.id) if run.status in runs.OPEN else None
     if state == "active":
-        return "Ergebnis angekommen – wird eingespielt"
+        return L("Ergebnis angekommen – wird eingespielt", "Result arrived – being ingested")
     if state == "waiting":
         ahead = tenant_lock.waiting_before(run.id)
-        return f"Ergebnis angekommen – wartet aufs Einspielen ({ahead} davor)"
+        return L(
+            f"Ergebnis angekommen – wartet aufs Einspielen ({ahead} davor)",
+            f"Result arrived – waiting to be ingested ({ahead} ahead)",
+        )
     return run.message
 
 

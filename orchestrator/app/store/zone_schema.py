@@ -45,6 +45,7 @@ from urllib.parse import unquote
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.i18n import L, lang
 from app.models import DictionaryEntry, LogicalZone, NamingProfile, ZonePolicy
 from app.store import naming_profiles
 
@@ -57,6 +58,7 @@ ZONE_KINDS = ("dc", "edge", "transfer", "core", "distribution", "access", "exter
               "dmz", "management", "shared")  # fmt: skip
 KIND_ALIAS = {
     "dc": "dc", "datacenter": "dc", "rechenzentrum": "dc", "rz": "dc",
+    "data center": "dc", "data centre": "dc",  # Export auf Englisch (0.87.0)
     "edge": "edge", "perimeter": "edge",
     "core": "core", "kern": "core",
     "distribution": "distribution", "dist": "distribution", "verteilung": "distribution",
@@ -73,6 +75,10 @@ KIND_LABEL = {"dc": "Datacenter", "edge": "Edge", "transfer": "Transfer", "core"
               "distribution": "Distribution", "access": "Access", "external": "extern",
               "internal": "intern", "dmz": "DMZ", "management": "Management",
               "shared": "geteilt"}  # fmt: skip
+# Englisch (0.87.0, ADR 0028) - jeder Wert ist in `KIND_ALIAS` bzw. `INTENT_WORDS`, die
+# Zeichnung bleibt in beiden Sprachen einlesbar
+_KIND_LABEL_EN = {"dc": "Data center", "external": "external", "internal": "internal",
+                  "shared": "shared"}  # fmt: skip
 INTENTS = ("allow", "limited", "deny")
 INTENT_LABEL = {"allow": "erlaubt", "limited": "eingeschränkt", "deny": "gesperrt"}
 INTENT_WORDS = {
@@ -87,10 +93,48 @@ _TAG = re.compile(r"<[^>]+>")
 _BREAK = re.compile(r"<\s*(br|/div|/p|/li)\s*/?\s*>", re.IGNORECASE)
 _WORD = re.compile(r"[\wäöüÄÖÜ]+")
 _HEX = re.compile(r"^#?([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
+# Gruende (Art bzw. Absicht) bleiben deutsch gespeichert; die Anzeige uebersetzt (0.87.0)
+_REASON_EN = {
+    "Standard": "default",
+    "Vorlage": "template",
+    "von Hand": "manual",
+    "Beschriftung": "label",
+    "gestrichelt": "dashed",
+    "Linienfarbe": "line color",
+    "Zone in Automato": "zone in Automato",
+    "Absicht in Automato": "intent in Automato",
+    "Eigenschaft automato_kind": "property automato_kind",
+    "Eigenschaft automato_intent": "property automato_intent",
+    "Eigenschaft automato_services": "property automato_services",
+}
+_REASON_NAME = re.compile(r"^Name „(.*)“$")
+
+
+def kind_label(kind: str) -> str:
+    """Art fuer `automato_kind` in der Zeichnung (in beiden Sprachen wieder einlesbar)."""
+    return L(KIND_LABEL.get(kind, kind), _KIND_LABEL_EN.get(kind) or KIND_LABEL.get(kind, kind))
+
+
+def intent_label(intent: str) -> str:
+    return L(INTENT_LABEL.get(intent, intent), intent)  # englisch: allow, limited, deny
+
+
+def reason_text(reason: str | None) -> str | None:
+    """Grund (gespeichert deutsch) in der Sprache der Anfrage."""
+    if not reason or lang() != "en":
+        return reason
+    if reason in _REASON_EN:
+        return _REASON_EN[reason]
+    m = _REASON_NAME.match(reason)
+    return f"name “{m.group(1)}”" if m else reason
 
 
 class SchemaError(ValueError):
     """Zeichnung nicht lesbar - Meldung fuer den Anwender."""
+
+
+def too_large() -> str:
+    return L("Zeichnung zu gross (höchstens 2 MB)", "drawing too large (at most 2 MB)")
 
 
 def key_of(name: str | None, strip_digits: bool = False) -> str:
@@ -117,9 +161,11 @@ class SchemaZone:
     def key(self) -> str:
         return key_of(self.name)
 
-    def out(self) -> dict:
+    def out(self, raw: bool = False) -> dict:
+        """Fuer die Anzeige (Grund in der Sprache der Anfrage) bzw. mit `raw` zum Speichern."""
+        reason = self.kind_reason if raw else reason_text(self.kind_reason)
         return {"name": self.name, "key": self.key, "kind": self.kind,
-                "kind_reason": self.kind_reason, "code": self.code, "color": self.color,
+                "kind_reason": reason, "code": self.code, "color": self.color,
                 "match": self.match, "position": self.position, "group": self.group,
                 "description": self.description, "geometry": self.geometry,
                 "per_customer": self.per_customer}  # fmt: skip
@@ -139,8 +185,9 @@ class SchemaLink:
     note: str | None = None
     services: list[str] = field(default_factory=list)  # bei „eingeschraenkt“ (0.57.0)
 
-    def out(self) -> dict:
-        return {"src": self.src, "dst": self.dst, "intent": self.intent, "reason": self.reason,
+    def out(self, raw: bool = False) -> dict:
+        reason = self.reason if raw else reason_text(self.reason)
+        return {"src": self.src, "dst": self.dst, "intent": self.intent, "reason": reason,
                 "note": self.note, "services": self.services}  # fmt: skip
 
 
@@ -203,7 +250,8 @@ class Schema:
 def _guard(text: str) -> None:
     head = text[:4096].casefold()
     if "<!doctype" in head or "<!entity" in text.casefold():
-        raise SchemaError("DTD bzw. Entitäten sind nicht erlaubt")
+        raise SchemaError(L("DTD bzw. Entitäten sind nicht erlaubt",
+                            "DTD or entities are not allowed"))  # fmt: skip
 
 
 def _xml(text: str) -> ET.Element:
@@ -211,7 +259,7 @@ def _xml(text: str) -> ET.Element:
     try:
         return ET.fromstring(text)
     except ET.ParseError as exc:
-        raise SchemaError(f"kein gültiges XML ({exc})") from exc
+        raise SchemaError(L(f"kein gültiges XML ({exc})", f"not valid XML ({exc})")) from exc
 
 
 def _inflate(text: str) -> str:
@@ -221,9 +269,10 @@ def _inflate(text: str) -> str:
         d = zlib.decompressobj(-15)
         data = d.decompress(raw, MAX_XML)
     except (ValueError, zlib.error) as exc:
-        raise SchemaError("komprimierte Seite nicht lesbar") from exc
+        raise SchemaError(L("komprimierte Seite nicht lesbar",
+                            "compressed page not readable")) from exc  # fmt: skip
     if d.unconsumed_tail:
-        raise SchemaError("Zeichnung entpackt zu gross")
+        raise SchemaError(L("Zeichnung entpackt zu gross", "drawing too large when unpacked"))
     return unquote(data.decode("utf-8", errors="replace"))
 
 
@@ -231,24 +280,27 @@ def _model(root: ET.Element, out: Schema) -> ET.Element:
     if root.tag == "mxGraphModel":
         return root
     if root.tag != "mxfile":
-        raise SchemaError("keine draw.io-Zeichnung (mxfile bzw. mxGraphModel erwartet)")
+        raise SchemaError(L("keine draw.io-Zeichnung (mxfile bzw. mxGraphModel erwartet)",
+                            "not a draw.io drawing (mxfile or mxGraphModel expected)"))  # fmt: skip
     pages = root.findall("diagram")
     if not pages:
-        raise SchemaError("die Zeichnung hat keine Seite")
-    out.pages = [p.get("name") or f"Seite {i + 1}" for i, p in enumerate(pages)]
+        raise SchemaError(L("die Zeichnung hat keine Seite", "the drawing has no page"))
+    out.pages = [p.get("name") or L(f"Seite {i + 1}", f"Page {i + 1}") for i, p in enumerate(pages)]
     pick = next((p for p in pages if re.search(r"zone|schema", p.get("name") or "", re.I)),
                 pages[0])  # fmt: skip
-    out.page = pick.get("name") or "Seite 1"
+    out.page = pick.get("name") or L("Seite 1", "Page 1")
     model = pick.find("mxGraphModel")
     if model is None:
         text = (pick.text or "").strip()
         if not text:
-            raise SchemaError(f"Seite „{out.page}“ ist leer")
+            raise SchemaError(L(f"Seite „{out.page}“ ist leer", f"page “{out.page}” is empty"))
         model = _xml(_inflate(text))
         if model.tag != "mxGraphModel":
-            raise SchemaError(f"Seite „{out.page}“ ist keine draw.io-Seite")
+            raise SchemaError(L(f"Seite „{out.page}“ ist keine draw.io-Seite",
+                                f"page “{out.page}” is not a draw.io page"))  # fmt: skip
     if len(pages) > 1:
-        out.warnings.append(f"{len(pages)} Seiten - gelesen wird „{out.page}“")
+        out.warnings.append(L(f"{len(pages)} Seiten - gelesen wird „{out.page}“",
+                              f"{len(pages)} pages - “{out.page}” is read"))  # fmt: skip
     return model
 
 
@@ -295,7 +347,7 @@ def _geo(cell: ET.Element) -> list[float] | None:
 def _cells(model: ET.Element) -> dict[str, _Cell]:
     root = model.find("root")
     if root is None:
-        raise SchemaError("die Seite hat keinen Inhalt")
+        raise SchemaError(L("die Seite hat keinen Inhalt", "the page has no content"))
     out: dict[str, _Cell] = {}
     for el in root:
         if el.tag in ("object", "UserObject"):
@@ -313,7 +365,8 @@ def _cells(model: ET.Element) -> dict[str, _Cell]:
                          cell.get("vertex") == "1", cell.get("edge") == "1", cell.get("source"),
                          cell.get("target"), props, _geo(cell))  # fmt: skip
         if len(out) > 20 * (MAX_ZONES + MAX_LINKS):
-            raise SchemaError("zu viele Elemente in der Zeichnung")
+            raise SchemaError(L("zu viele Elemente in der Zeichnung",
+                                "too many elements in the drawing"))  # fmt: skip
     return out
 
 
@@ -381,7 +434,7 @@ def parse(content: str) -> Schema:
     from app.store.zone_detect import classify
 
     if len(content.encode("utf-8", errors="ignore")) > MAX_BYTES:
-        raise SchemaError("Zeichnung zu gross (höchstens 2 MB)")
+        raise SchemaError(too_large())
     out = Schema()
     cells = _cells(_model(_xml(content.lstrip("﻿").strip()), out))
     edges = {c.id for c in cells.values() if c.edge}
@@ -440,7 +493,12 @@ def parse(content: str) -> Schema:
         if raw_kind:
             kind = _kind_of(raw_kind)
             if kind is None:
-                out.warnings.append(f"Zone „{name}“: Art „{raw_kind}“ unbekannt - intern")
+                out.warnings.append(
+                    L(
+                        f"Zone „{name}“: Art „{raw_kind}“ unbekannt - intern",
+                        f"Zone “{name}”: kind “{raw_kind}” unknown - internal",
+                    )
+                )
             z.kind, z.kind_reason = kind or "internal", "Eigenschaft automato_kind"
         elif hit := classify(name, c.props.get("automato_code")):
             z.kind, z.kind_reason = hit[0], f"Name „{hit[1]}“"
@@ -449,11 +507,17 @@ def parse(content: str) -> Schema:
         z.match = _patterns(c.props.get("automato_match"))
         z.per_customer = per_customer(c.props.get("automato_customer"))
         if z.key in seen:
-            out.warnings.append(f"Zone „{name}“ doppelt - die erste gilt")
+            out.warnings.append(L(f"Zone „{name}“ doppelt - die erste gilt",
+                                  f"Zone “{name}” twice - the first one applies"))  # fmt: skip
             by_cell[cid] = seen[z.key]
             continue
         if len(seen) >= MAX_ZONES:
-            out.warnings.append(f"mehr als {MAX_ZONES} Zonen - der Rest fehlt")
+            out.warnings.append(
+                L(
+                    f"mehr als {MAX_ZONES} Zonen - der Rest fehlt",
+                    f"more than {MAX_ZONES} zones - the rest is missing",
+                )
+            )
             break
         z.position = (len(seen) + 1) * 10
         seen[z.key] = z
@@ -487,22 +551,36 @@ def parse(content: str) -> Schema:
         intent, reason, services, unknown = edge_intent(c, text)
         if unknown:
             raw = c.props.get("automato_intent", "").strip()
-            out.warnings.append(f"Übergang {a.name} → {b.name}: Absicht „{raw}“ unbekannt")
+            out.warnings.append(
+                L(
+                    f"Übergang {a.name} → {b.name}: Absicht „{raw}“ unbekannt",
+                    f"Transition {a.name} → {b.name}: intent “{raw}” unknown",
+                )
+            )
         for s, d in edge_pairs(c, a, b):
             k = (s.key, d.key)
             old = links.get(k)
             if old is not None and old.intent != intent:
-                out.warnings.append(f"Übergang {s.name} → {d.name} mehrfach mit anderer Absicht - "
-                                    "die strengere gilt")  # fmt: skip
+                out.warnings.append(L(
+                    f"Übergang {s.name} → {d.name} mehrfach mit anderer Absicht - die strengere "
+                    "gilt",
+                    f"Transition {s.name} → {d.name} several times with a different intent - the "
+                    "stricter one applies"))  # fmt: skip
                 if _RANK[intent] <= _RANK[old.intent]:
                     continue
             links[k] = SchemaLink(s.name, d.name, intent, reason, text[:500] or None,
                                   services if intent == "limited" else [])  # fmt: skip
     if loose:
-        out.warnings.append(f"{loose} Verbindung(en) nicht zwischen zwei Zonen - nicht gelesen")
+        out.warnings.append(
+            L(
+                f"{loose} Verbindung(en) nicht zwischen zwei Zonen - nicht gelesen",
+                f"{loose} connection(s) not between two zones - not read",
+            )
+        )
     out.links = list(links.values())[:MAX_LINKS]
     if not out.zones:
-        raise SchemaError("keine Zonen in der Zeichnung gefunden")
+        raise SchemaError(L("keine Zonen in der Zeichnung gefunden",
+                            "no zones found in the drawing"))  # fmt: skip
     return out
 
 
@@ -558,12 +636,14 @@ def save(session: Session, profile_id: int, schema: Schema, content: str, filena
                 kind=KIND_ZONE,
                 key=z.name,
                 value=z.kind,
-                extra={k: v for k, v in z.out().items() if k not in ("name", "key", "kind")},
+                extra={
+                    k: v for k, v in z.out(raw=True).items() if k not in ("name", "key", "kind")
+                },
             )
         )
     for x in schema.links:
         session.add(DictionaryEntry(profile_id=profile_id, kind=KIND_LINK, key=_link_key(x),
-                                    value=x.intent, extra=x.out()))  # fmt: skip
+                                    value=x.intent, extra=x.out(raw=True)))  # fmt: skip
     info = {
         "content": content,
         "uploaded_by": actor,
@@ -587,15 +667,21 @@ def edited(session: Session, profile_id: int, zones: list[dict], links: list[dic
     for i, z in enumerate(zones):
         name = " ".join(str(z.get("name") or "").split())
         if not name or not key_of(name):
-            raise SchemaError(f"Zone {i + 1}: Name fehlt")
+            raise SchemaError(L(f"Zone {i + 1}: Name fehlt", f"Zone {i + 1}: name missing"))
         if out.zone(name) is not None:
-            raise SchemaError(f"Zone „{name}“ doppelt")
+            raise SchemaError(L(f"Zone „{name}“ doppelt", f"Zone “{name}” appears twice"))
         kind = str(z.get("kind") or "internal")
         if kind not in ZONE_KINDS:
-            raise SchemaError(f"Zone „{name}“: unbekannte Art „{kind}“")
+            raise SchemaError(L(f"Zone „{name}“: unbekannte Art „{kind}“",
+                                f"Zone “{name}”: unknown kind “{kind}”"))  # fmt: skip
         color = None
         if (raw := str(z.get("color") or "").strip()) and (color := _color(raw)) is None:
-            raise SchemaError(f"Zone „{name}“: Farbe „{raw}“ ist kein Hex-Wert (#rrggbb)")
+            raise SchemaError(
+                L(
+                    f"Zone „{name}“: Farbe „{raw}“ ist kein Hex-Wert (#rrggbb)",
+                    f"Zone “{name}”: color “{raw}” is not a hex value (#rrggbb)",
+                )
+            )
         match = z.get("match") or []
         match = _patterns(", ".join(match) if isinstance(match, list) else str(match))
         prev = before.get(key_of(z.get("previous") or name))
@@ -618,21 +704,39 @@ def edited(session: Session, profile_id: int, zones: list[dict], links: list[dic
     for x in links:
         a, b = out.zone(str(x.get("src") or "")), out.zone(str(x.get("dst") or ""))
         if a is None or b is None:
-            raise SchemaError(f"Übergang {x.get('src')} → {x.get('dst')}: Zone fehlt im Schema")
+            src, dst = x.get("src"), x.get("dst")
+            raise SchemaError(
+                L(
+                    f"Übergang {src} → {dst}: Zone fehlt im Schema",
+                    f"Transition {src} → {dst}: zone missing in the schema",
+                )
+            )
         if a.key == b.key:
-            raise SchemaError(f"Übergang {a.name} → {b.name}: gleiche Zone")
+            raise SchemaError(L(f"Übergang {a.name} → {b.name}: gleiche Zone",
+                                f"Transition {a.name} → {b.name}: same zone"))  # fmt: skip
         if (a.key, b.key) in seen:
-            raise SchemaError(f"Übergang {a.name} → {b.name} doppelt")
+            raise SchemaError(L(f"Übergang {a.name} → {b.name} doppelt",
+                                f"Transition {a.name} → {b.name} appears twice"))  # fmt: skip
         seen.add((a.key, b.key))
         intent = str(x.get("intent") or "allow")
         if intent not in INTENTS:
-            raise SchemaError(f"Übergang {a.name} → {b.name}: unbekannte Absicht „{intent}“")
+            raise SchemaError(
+                L(
+                    f"Übergang {a.name} → {b.name}: unbekannte Absicht „{intent}“",
+                    f"Transition {a.name} → {b.name}: unknown intent “{intent}”",
+                )
+            )
         services = []
         for t in x.get("services") or []:
             t = " ".join(str(t).split())
             if t and t not in services:
                 if len(t) > 100:
-                    raise SchemaError(f"Übergang {a.name} → {b.name}: Dienst zu lang")
+                    raise SchemaError(
+                        L(
+                            f"Übergang {a.name} → {b.name}: Dienst zu lang",
+                            f"Transition {a.name} → {b.name}: service too long",
+                        )
+                    )
                 services.append(t)
         prev = old_links.get((a.key, b.key))
         same = prev is not None and (prev.intent, prev.services) == (intent, services)
@@ -641,7 +745,8 @@ def edited(session: Session, profile_id: int, zones: list[dict], links: list[dic
         out.links.append(SchemaLink(a.name, b.name, intent, prev.reason if same else "von Hand",
                                     note, allowed))  # fmt: skip
     if not out.zones:
-        raise SchemaError("mindestens eine Zone – sonst das Schema entfernen")
+        raise SchemaError(L("mindestens eine Zone – sonst das Schema entfernen",
+                            "at least one zone – otherwise remove the schema"))  # fmt: skip
     return out
 
 
@@ -652,12 +757,12 @@ def save_edit(session: Session, profile_id: int, schema: Schema, actor: str | No
         DictionaryEntry.profile_id == profile_id, DictionaryEntry.kind.in_((KIND_ZONE, KIND_LINK))
     ))  # fmt: skip
     for z in schema.zones:
-        extra = {k: v for k, v in z.out().items() if k not in ("name", "key", "kind")}
+        extra = {k: v for k, v in z.out(raw=True).items() if k not in ("name", "key", "kind")}
         session.add(DictionaryEntry(profile_id=profile_id, kind=KIND_ZONE, key=z.name,
                                     value=z.kind, extra=extra))  # fmt: skip
     for x in schema.links:
         session.add(DictionaryEntry(profile_id=profile_id, kind=KIND_LINK, key=_link_key(x),
-                                    value=x.intent, extra=x.out()))  # fmt: skip
+                                    value=x.intent, extra=x.out(raw=True)))  # fmt: skip
     m = meta(session, profile_id)
     stamp = {"edited_by": actor, "edited_at": datetime.now(UTC).isoformat()}
     if m is None:
@@ -834,11 +939,28 @@ def _esc(text: str) -> str:
     return html.escape(text or "", quote=False)
 
 
+def _legend() -> str:
+    return L(
+        "Jede Form = Zone (erste Zeile = Name). Eigenschaften (Daten bearbeiten): automato_kind "
+        "(intern, DMZ, extern, Management, geteilt, Transfer), automato_code, automato_match "
+        "(Muster, mit Komma getrennt), automato_customer (je Kunde = Vorlage für eine Zone je "
+        "Kunde).<br>Pfeil = Übergang; Beschriftung bzw. automato_intent: erlaubt, eingeschränkt, "
+        "gesperrt (gestrichelt = eingeschränkt, rot = gesperrt).",
+        "Each shape = zone (first line = name). Properties (Edit data): automato_kind (internal, "
+        "DMZ, external, management, shared, transfer), automato_code, automato_match (patterns, "
+        "separated by commas), automato_customer (per customer = template for one zone per "
+        "customer).<br>Arrow = transition; label or automato_intent: allow, limited, deny "
+        "(dashed = limited, red = deny).",
+    )
+
+
 def drawing(schema: Schema, title: str) -> str:
     """mxGraph-Datei (unkomprimiert) mit den Zonen als Formen samt Eigenschaften und den
     Uebergaengen als Pfeilen - in diagrams.net bearbeiten und wieder hochladen."""
     mxfile = ET.Element("mxfile", {"host": "Automato", "type": "device"})
-    diagram = ET.SubElement(mxfile, "diagram", {"id": "zonenschema", "name": "Zonenschema"})
+    diagram = ET.SubElement(
+        mxfile, "diagram", {"id": "zonenschema", "name": L("Zonenschema", "Zone schema")}
+    )
     model = ET.SubElement(diagram, "mxGraphModel", {
         "grid": "1", "gridSize": "10", "guides": "1", "tooltips": "1", "connect": "1",
         "arrows": "1", "fold": "1", "page": "1", "pageScale": "1", "pageWidth": "1400",
@@ -847,12 +969,7 @@ def drawing(schema: Schema, title: str) -> str:
     root = ET.SubElement(model, "root")
     ET.SubElement(root, "mxCell", {"id": "0"})
     ET.SubElement(root, "mxCell", {"id": "1", "parent": "0"})
-    legend = ("<b>" + _esc(title) + "</b><br>Jede Form = Zone (erste Zeile = Name). Eigenschaften "
-              "(Daten bearbeiten): automato_kind (intern, DMZ, extern, Management, geteilt, "
-              "Transfer), automato_code, automato_match (Muster, mit Komma getrennt), "
-              "automato_customer (je Kunde = Vorlage für eine Zone je Kunde).<br>Pfeil = "
-              "Übergang; Beschriftung bzw. automato_intent: erlaubt, eingeschränkt, gesperrt "
-              "(gestrichelt = eingeschränkt, rot = gesperrt).")  # fmt: skip
+    legend = f"<b>{_esc(title)}</b><br>{_legend()}"
     head = ET.SubElement(root, "mxCell", {
         "id": "legend", "value": legend, "vertex": "1", "parent": "1",
         "style": "text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=11;",
@@ -871,12 +988,12 @@ def drawing(schema: Schema, title: str) -> str:
         ids[z.key] = zid
         label = f"<b>{_esc(z.name)}</b>" + (f"<br>{_esc(z.description)}" if z.description else "")
         attrs = {
-            "id": zid, "label": label, "automato_kind": KIND_LABEL.get(z.kind, z.kind),
+            "id": zid, "label": label, "automato_kind": kind_label(z.kind),
             "automato_code": z.code or "", "automato_match": ", ".join(z.match),
             "automato_order": str(i + 1),
         }  # fmt: skip
         if z.per_customer:
-            attrs["automato_customer"] = "je Kunde"
+            attrs["automato_customer"] = L("je Kunde", "per customer")
         obj = ET.SubElement(root, "object", attrs)
         cell = ET.SubElement(obj, "mxCell", {
             "vertex": "1", "parent": "1",
@@ -892,7 +1009,7 @@ def drawing(schema: Schema, title: str) -> str:
         style = f"endArrow=classic;html=1;strokeColor={_LINE[x.intent]};strokeWidth=2;"
         if x.intent == "limited":
             style += "dashed=1;"
-        attrs = {"id": f"link-{i + 1}", "label": INTENT_LABEL[x.intent],
+        attrs = {"id": f"link-{i + 1}", "label": intent_label(x.intent),
                  "automato_intent": x.intent}  # fmt: skip
         if x.services:
             attrs["automato_services"] = ", ".join(x.services)

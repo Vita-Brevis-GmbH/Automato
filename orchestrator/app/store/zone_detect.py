@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import (
     Customer,
     LogicalZone,
@@ -58,6 +59,7 @@ from app.store.customers import Net, Selector
 from app.store.paths import Graph, Key
 
 SOURCES = ("aci", "node", "exit", "ipam", "schema")
+# Quellen fuer die Beschreibung einer uebernommenen Zone (gespeichert: deutsch)
 SOURCE_LABEL = {
     "aci": "ACI-Tenants",
     "node": "Firewall",
@@ -102,7 +104,16 @@ _NOISE = {"zone", "zn", "z", "vlan", "vl", "if", "intf", "iface"}
 _SPLIT = re.compile(r"[_\-|/.:\s]+")
 SAMPLES = 10
 REST = 200
-_EXIT = "Anbindung "  # Grund der Netze hinter einer Anbindung (`customers._label`)
+# Grund der Netze hinter einer Anbindung (`customers._label`) - in beiden Sprachen (0.87.0)
+_EXIT = ("Anbindung ", "Exit ")
+
+
+def _schema_reason(sz: "zone_schema.SchemaZone") -> str:
+    return L(f"Grundschema „{sz.name}“", f"Base schema “{sz.name}”")
+
+
+def _name_reason(word: str) -> str:
+    return L(f"Name „{word}“", f"name “{word}”")
 
 
 def _parts(name: str | None, strip_digits: bool = False) -> list[str]:
@@ -192,7 +203,7 @@ class _Found:
             c = self.by_key[key] = Candidate(key, name, source, customer_id=customer_id)
             if sz is not None:
                 c.schema, c.kind, c.code = sz, sz.kind, sz.code
-                c.reason = f"Grundschema „{sz.name}“"
+                c.reason = _schema_reason(sz)
         if source not in c.sources:
             c.sources.append(source)
         if c.schema is None and kind and c.kind == "internal":
@@ -220,17 +231,18 @@ def _from_aci(found: _Found, data: customers._Data, owners: dict[str, Customer])
         cust = owners.get(t.casefold())
         sel = [Selector("aci_tenant", t)]
         if cust is None:
-            found.put(key_of(base), base, "aci", "dc", "ACI-Tenant", sel,
+            found.put(key_of(base), base, "aci", "dc", L("ACI-Tenant", "ACI tenant"), sel,
                       f"Tenant {t}: {n} EPGs", sz=dc)  # fmt: skip
         else:
             name = f"{base} {cust.name}"
-            c = found.put(f"dc:{cust.id}", name, "aci", "dc", "ACI-Tenant des Kunden", sel,
+            why = L("ACI-Tenant des Kunden", "ACI tenant of the customer")
+            c = found.put(f"dc:{cust.id}", name, "aci", "dc", why, sel,
                           f"Tenant {t}: {n} EPGs", customer_id=cust.id)  # fmt: skip
             c.code = (
                 f"{dc.code if dc and dc.code else 'DC'}-{cust.code.upper()}" if cust.code else None
             )
             if dc is not None:
-                c.schema, c.kind, c.reason = dc, dc.kind, f"Grundschema „{dc.name}“"
+                c.schema, c.kind, c.reason = dc, dc.kind, _schema_reason(dc)
 
 
 def _internet_nodes(data: customers._Data, exits: list[TopoExit]) -> dict[Key, str]:
@@ -248,7 +260,8 @@ def _internet_nodes(data: customers._Data, exits: list[TopoExit]) -> dict[Key, s
             nets = [n for ip in ips or [] if (n := _iface_net(ip)) is not None]
             hit = any(h.version == n.version and h in n for h in hops for n in nets)
             if hit or (name or "").casefold() in ports:
-                out.setdefault((sid, vdom), f"Anbindung {e.name} über {name}")
+                out.setdefault((sid, vdom), L(f"Anbindung {e.name} über {name}",
+                                              f"Exit {e.name} via {name}"))  # fmt: skip
     return out
 
 
@@ -311,9 +324,11 @@ def _from_exits(found: _Found, exits: list[TopoExit], used: set[str]) -> None:
             sel += [Selector("prefix", p, None, True) for f in sorted(fams) for p in PRIVATE[f]]
         sz = public if e.kind == "internet" else None
         name = (sz.name if sz else "Internet") if e.kind == "internet" else e.name
-        found.put(key_of(name), name, "exit", "external", f"Anbindung ({e.kind})", sel,
-                  f"Anbindung {e.name}" + (f": {', '.join(map(str, nets[:3]))}" if nets else ""),
-                  (e.name,), sz=sz)  # fmt: skip
+        shown = f": {', '.join(map(str, nets[:3]))}" if nets else ""
+        found.put(key_of(name), name, "exit", "external",
+                  L(f"Anbindung ({e.kind})", f"Exit ({e.kind})"), sel,
+                  L(f"Anbindung {e.name}{shown}", f"Exit {e.name}{shown}"), (e.name,),
+                  sz=sz)  # fmt: skip
 
 
 def aci_names(data: customers._Data) -> set[str]:
@@ -339,9 +354,11 @@ def _from_ipam(found: _Found, data: customers._Data) -> None:
         if v.casefold() in aci or key_of(v) in aci:
             continue
         hit = classify(v)
-        kind, reason = (hit[0], f"Name „{hit[1]}“") if hit else (None, None)
+        kind, reason = (hit[0], _name_reason(hit[1])) if hit else (None, None)
         found.put(key_of(v), v, "ipam", kind, reason, [Selector("ipam_tag", f"{k}={v}")],
-                  f"IPAM {k}={v} ({n} Einträge)", (v,))  # fmt: skip
+                  L(f"IPAM {k}={v} ({n} Einträge)",
+                    f"IPAM {k}={v} ({n} {'entry' if n == 1 else 'entries'})"),
+                  (v,))  # fmt: skip
 
 
 def _from_schema_interfaces(found: _Found, schema: "zone_schema.Schema", data: customers._Data,
@@ -413,7 +430,9 @@ def _per_customer(found: _Found, data: customers._Data, session: Session,
             if c is None:
                 c = found.by_key[f"{sz.key}:{cid}"] = Candidate(
                     f"{sz.key}:{cid}", name, base.source, kind=sz.kind,
-                    reason=f"Grundschema „{sz.name}“ je Kunde", code=code, customer_id=cid,
+                    reason=L(f"Grundschema „{sz.name}“ je Kunde",
+                             f"Base schema “{sz.name}” per customer"),
+                    code=code, customer_id=cid,
                     schema=sz)  # fmt: skip
             for source in base.sources:
                 if source not in c.sources:
@@ -424,7 +443,8 @@ def _per_customer(found: _Found, data: customers._Data, session: Session,
                 if node is not None:
                     base.nodes.remove(node)
                     c.nodes.append(node)
-            c.note(f"je Kunde: {len(items)} Treffer von {cust.name}")
+            c.note(L(f"je Kunde: {len(items)} Treffer von {cust.name}",
+                     f"per customer: {len(items)} matches of {cust.name}"))  # fmt: skip
         if moved and not base.selectors and not base.nodes:
             del found.by_key[base.key]  # alles gehoert Kunden
 

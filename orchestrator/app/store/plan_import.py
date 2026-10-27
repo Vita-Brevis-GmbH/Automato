@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import LogicalZone, ZonePolicy
 from app.store import plan_export, plan_view, zone_schema, zone_services
 from app.store import zones as zone_store
@@ -74,7 +75,7 @@ def _first_line(label: str) -> str:
 def read(session: Session, tenant_id: int, content: str) -> Reading:
     """Datei lesen und mit dem Stand in Automato vergleichen (schreibt nichts)."""
     if len(content.encode("utf-8")) > zone_schema.MAX_BYTES:
-        raise SchemaError("Zeichnung zu gross (höchstens 2 MB)")
+        raise SchemaError(zone_schema.too_large())
     meta = zone_schema.Schema()
     model = zone_schema._model(zone_schema._xml(content), meta)
     cells = zone_schema._cells(model)
@@ -83,7 +84,8 @@ def read(session: Session, tenant_id: int, content: str) -> Reading:
     out = Reading(view=view if VIEW.match(view) else "all", page=meta.page,
                   warnings=list(meta.warnings))  # fmt: skip
     if not VIEW.match(view):
-        out.warnings.append(f"Ansicht „{view}“ unbekannt - Anordnung für alle Zonen")
+        out.warnings.append(L(f"Ansicht „{view}“ unbekannt - Anordnung für alle Zonen",
+                              f"View “{view}” unknown - arrangement for all zones"))  # fmt: skip
     dx, dy = _offset(title.props.get("automato_offset") if title else None)
     items = {z.id: z for z in zone_store.load(session, tenant_id)}
     shown = _current(session, tenant_id, out.view)
@@ -98,7 +100,9 @@ def read(session: Session, tenant_id: int, content: str) -> Reading:
         if m and "automato_zone" in c.props:
             z = items.get(int(m.group(1)))
             if z is None:
-                out.warnings.append(f"Zone „{c.props['automato_zone']}“ gibt es nicht mehr")
+                gone = c.props["automato_zone"]
+                out.warnings.append(L(f"Zone „{gone}“ gibt es nicht mehr",
+                                      f"Zone “{gone}” no longer exists"))  # fmt: skip
                 continue
             by_cell[c.id], key = z, str(z.id)
             seen.add(z.id)
@@ -106,10 +110,11 @@ def read(session: Session, tenant_id: int, content: str) -> Reading:
             exported = c.props["automato_zone"].strip()
             if name and name != exported:
                 if exported != z.name:
-                    out.warnings.append(
+                    out.warnings.append(L(
                         f"Zone „{exported}“ heisst in Automato inzwischen „{z.name}“ - Name "
-                        "aus der Zeichnung nicht übernommen"
-                    )
+                        "aus der Zeichnung nicht übernommen",
+                        f"Zone “{exported}” is now called “{z.name}” in Automato - name from "
+                        "the drawing not applied"))  # fmt: skip
                 elif name != z.name:
                     out.renames.append({"id": z.id, "from": z.name, "to": name[:200]})
         elif mc:
@@ -175,7 +180,8 @@ def _intents(session: Session, tenant_id: int, cells: dict, by_cell: dict,
         text = "\n".join([c.label, *labels.get(c.id, [])]).strip()
         intent, reason, services, unknown = zone_schema.edge_intent(c, text)
         if unknown:
-            out.warnings.append(f"{a.name} → {b.name}: Absicht „{raw}“ unbekannt")
+            out.warnings.append(L(f"{a.name} → {b.name}: Absicht „{raw}“ unbekannt",
+                                  f"{a.name} → {b.name}: intent “{raw}” unknown"))  # fmt: skip
             continue
         for s, d in zone_schema.edge_pairs(c, a, b):
             p = current.get((s.id, d.id))
@@ -188,7 +194,7 @@ def _intents(session: Session, tenant_id: int, cells: dict, by_cell: dict,
                 continue
             found[(s.id, d.id)] = {
                 "src_zone_id": s.id, "src": s.name, "dst_zone_id": d.id, "dst": d.name,
-                "intent": intent, "reason": reason, "services": services,
+                "intent": intent, "reason": zone_schema.reason_text(reason), "services": services,
                 "note": text[:500] or None, "current": p.intent if p else None,
                 "current_services": list(p.services or []) if p else [],
             }  # fmt: skip
@@ -212,7 +218,9 @@ def apply(session: Session, tenant_id: int, reading: Reading, actor: str | None,
                 continue
             other = taken.get(r["to"].casefold())
             if other is not None and other != z.id:
-                done["skipped"].append(f"Name „{r['to']}“ hat schon eine andere Zone")
+                to = r["to"]
+                done["skipped"].append(L(f"Name „{to}“ hat schon eine andere Zone",
+                                         f"Name “{to}” already used by another zone"))  # fmt: skip
                 continue
             taken.pop(z.name.casefold(), None)
             z.name, taken[r["to"].casefold()] = r["to"], z.id
@@ -237,6 +245,7 @@ def apply(session: Session, tenant_id: int, reading: Reading, actor: str | None,
                                dst_zone_id=x["dst_zone_id"])  # fmt: skip
                 session.add(p)
             p.intent, p.services = x["intent"], services
+            # gespeichert: deutsch (ADR 0028)
             p.note = f"Zonenplan (draw.io): {x['note']}" if x.get("note") else "Zonenplan (draw.io)"
             p.updated_by, p.updated_at = actor, now
             done["intents"].append({"src": x["src_zone_id"], "dst": x["dst_zone_id"],

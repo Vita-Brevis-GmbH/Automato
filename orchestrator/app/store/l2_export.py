@@ -1,10 +1,12 @@
 """Export des Plans der Verkabelung (0.65.0, ADR 0025 Nr. 10): SVG und draw.io - dieselbe Lage
 wie in der Ansicht (`l2_topo.L2.plan`), mit vPC-Paaren, Kabeln je Geraetepaar und, mit VLAN,
-dessen Zustand je Kante. draw.io mit `automato_*`-Eigenschaften, dort weiter bearbeitbar."""
+dessen Zustand je Kante. draw.io mit `automato_*`-Eigenschaften, dort weiter bearbeitbar.
+Beschriftungen in der Sprache der Anfrage (ADR 0028); `automato_kind` bleibt deutsch (Wert)."""
 
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
+from app.i18n import L
 from app.store.plan_export import _geometry, _html, _id, _n
 
 HEAD = 56
@@ -16,15 +18,31 @@ EDGE = {"yes": "#2e7d32", "no": "#c62828", "partial": "#ef6c00", "standby": "#7b
 KIND = {"switch": "Switch", "leaf": "ACI-Leaf", "spine": "ACI-Spine", "controller": "APIC",
         "firewall": "Firewall", "router": "Router", "esxi": "ESXi-Host",
         "unknown": "nicht gelesen"}  # fmt: skip
+# Anzeige auf Englisch (Paare: L() erst bei der Ausgabe auswerten)
+_KIND_EN = {"leaf": "ACI leaf", "spine": "ACI spine", "esxi": "ESXi host",
+            "unknown": "not read"}  # fmt: skip
+
+
+def _kind(kind: str) -> str:
+    de = KIND.get(kind, kind)
+    return L(de, _KIND_EN.get(kind, de))
 
 
 def _stamp(plan: dict, when: datetime | None) -> str:
-    parts = [f"Stand {when:%d.%m.%Y %H:%M}" if when else "Stand"]
-    parts.append(f"{sum(1 for n in plan['nodes'] if n['switching'])} weiterleitende Geräte")
-    parts.append(f"{sum(e['links'] for e in plan['edges'])} Kabel")
+    stand = L("Stand", "As of")
+    parts = [f"{stand} {when:%d.%m.%Y %H:%M}" if when else stand]
+    forwarding = sum(1 for n in plan["nodes"] if n["switching"])
+    parts.append(L(f"{forwarding} weiterleitende Geräte", f"{forwarding} forwarding devices"))
+    cables = sum(e["links"] for e in plan["edges"])
+    parts.append(L(f"{cables} Kabel", f"{cables} links"))
     if plan.get("vlan"):
         v = plan["vlan"]
-        state = "durchgehend" if len(v["islands"]) <= 1 else f"{len(v['islands'])} Inseln"
+        islands = len(v["islands"])
+        state = (
+            L("durchgehend", "continuous")
+            if islands <= 1
+            else L(f"{islands} Inseln", f"{islands} islands")
+        )
         parts.append(f"VLAN {v['vid']}: {state}")
     return " · ".join(parts)
 
@@ -45,7 +63,7 @@ def _edge_label(e: dict) -> str:
     bits = [f"{e['links']}×"] if e["links"] > 1 else []
     bits += e.get("lags") or []
     if e.get("stp"):
-        bits.append(f"STP blockiert {e['stp']}")
+        bits.append(L(f"STP blockiert {e['stp']}", f"STP blocked {e['stp']}"))
     return " ".join(bits)
 
 
@@ -76,7 +94,7 @@ def svg(plan: dict, title: str, when: datetime | None = None) -> str:
                                   "stroke": STROKE_SW, "stroke-dasharray": "4 3"})  # fmt: skip
         t = ET.SubElement(g, "text", {"x": _n(x0 + 6), "y": _n(y0 + 11), "font-size": "10",
                                       "fill": STROKE_SW})  # fmt: skip
-        t.text = f"vPC-Domäne {pr['domain']}"
+        t.text = L(f"vPC-Domäne {pr['domain']}", f"vPC domain {pr['domain']}")
     for e in plan["edges"]:
         a, b = pos.get(e["a"]), pos.get(e["b"])
         if not a or not b:
@@ -108,7 +126,7 @@ def svg(plan: dict, title: str, when: datetime | None = None) -> str:
         name.text = n["name"] if len(n["name"]) <= 22 else n["name"][:21] + "…"
         kind = ET.SubElement(g, "text", {"x": _n(n["x"]), "y": _n(y + 35), "font-size": "10",
                                          "text-anchor": "middle", "fill": MUTED})  # fmt: skip
-        kind.text = KIND.get(n["kind"], n["kind"])
+        kind.text = _kind(n["kind"])
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode")
 
 
@@ -116,7 +134,9 @@ def drawio(plan: dict, title: str, when: datetime | None = None) -> str:
     """mxGraph fuer diagrams.net/draw.io: Geraete als Formen, Kabel als Kanten mit Ports."""
     width = max(plan["width"], 400)
     mxfile = ET.Element("mxfile", {"host": "Automato", "type": "device"})
-    diagram = ET.SubElement(mxfile, "diagram", {"id": "verkabelung", "name": "Verkabelung"})
+    diagram = ET.SubElement(
+        mxfile, "diagram", {"id": "verkabelung", "name": L("Verkabelung", "Cabling")}
+    )
     model = ET.SubElement(diagram, "mxGraphModel", {
         "grid": "1", "gridSize": "10", "guides": "1", "tooltips": "1", "connect": "1",
         "arrows": "0", "fold": "1", "page": "1", "pageScale": "1", "pageWidth": _n(width),
@@ -139,7 +159,10 @@ def drawio(plan: dict, title: str, when: datetime | None = None) -> str:
         x0 = min(a["x"], b["x"]) - NODE_W / 2 - 8
         w = abs(a["x"] - b["x"]) + NODE_W + 16
         cell = ET.SubElement(root, "mxCell", {
-            "id": f"vpc-{i}", "value": f"vPC-Domäne {_html(str(pr['domain']))}", "vertex": "1",
+            "id": f"vpc-{i}",
+            "value": L(f"vPC-Domäne {_html(str(pr['domain']))}",
+                       f"vPC domain {_html(str(pr['domain']))}"),
+            "vertex": "1",
             "parent": "1",
             "style": f"rounded=1;dashed=1;fillColor=none;strokeColor={STROKE_SW};"
                      "verticalAlign=top;align=left;spacingLeft=6;fontSize=10;html=1;",
@@ -148,7 +171,7 @@ def drawio(plan: dict, title: str, when: datetime | None = None) -> str:
     for n in plan["nodes"]:
         obj = ET.SubElement(root, "UserObject", {
             "id": f"dev-{_id(n['key'])}",
-            "label": f"<b>{_html(n['name'])}</b><br>{_html(KIND.get(n['kind'], n['kind']))}",
+            "label": f"<b>{_html(n['name'])}</b><br>{_html(_kind(n['kind']))}",
             "automato_device": n["name"], "automato_kind": KIND.get(n["kind"], n["kind"]),
             "automato_source": n.get("source") or "",
         })  # fmt: skip

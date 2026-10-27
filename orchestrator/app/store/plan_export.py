@@ -18,23 +18,26 @@ import zlib
 from collections import defaultdict
 from datetime import datetime
 
+from app.i18n import L
 from app.store import zones as zone_store
 
+# Art der Zone (deutsch, englisch) - Texte folgen der Sprache der Anfrage (0.87.0, ADR 0028);
+# die englischen Arten der echten Zonen liest `zone_schema.parse` wieder ein (`KIND_ALIAS`)
 ZONE_KIND = {
-    "dc": "Datacenter",
-    "edge": "Edge",
-    "transfer": "Transfer",
-    "core": "Core",
-    "distribution": "Distribution",
-    "access": "Access",
-    "external": "extern",
-    "internal": "intern",
-    "dmz": "DMZ",
-    "management": "Management",
-    "shared": "geteilt",
-    "customer": "Kunde",
-    "none": "ohne Zone",
-    "outside": "ausserhalb",
+    "dc": ("Datacenter", "Data center"),
+    "edge": ("Edge", "Edge"),
+    "transfer": ("Transfer", "Transfer"),
+    "core": ("Core", "Core"),
+    "distribution": ("Distribution", "Distribution"),
+    "access": ("Access", "Access"),
+    "external": ("extern", "external"),
+    "internal": ("intern", "internal"),
+    "dmz": ("DMZ", "DMZ"),
+    "management": ("Management", "Management"),
+    "shared": ("geteilt", "shared"),
+    "customer": ("Kunde", "Customer"),
+    "none": ("ohne Zone", "no zone"),
+    "outside": ("ausserhalb", "outside"),
 }
 # Spalten des Zonenplans (0.56.0) von links nach rechts: DC, Edge, Transfer, Core,
 # Distribution, Access, Public
@@ -42,7 +45,8 @@ LAYER = zone_store.LAYER
 GAP, LINE_H, MAX_LINES = 150, 15, 6
 RIGHT_KINDS = {"external", "dmz", "shared"}
 NODE_KIND = {"vrf": "ACI-VRF", "vdom": "VDOM", "firewall": "Firewall"}
-INTENT = {"allow": "erlaubt", "limited": "eingeschränkt", "deny": "gesperrt"}
+INTENT = {"allow": ("erlaubt", "allow"), "limited": ("eingeschränkt", "limited"),
+          "deny": ("gesperrt", "deny")}  # fmt: skip
 
 W, ROW, ZW, NW = 980, 58, 230, 250
 BOX_H = ROW - 16
@@ -61,6 +65,26 @@ ARROW_LEN, ARROW_W = 10.0, 4.5
 
 def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
+
+
+def kind_label(kind: str | None, default=None):
+    """Art der Zone in der Sprache der Anfrage (unbekannt: `default`)."""
+    pair = ZONE_KIND.get(kind or "")
+    return L(*pair) if pair else default
+
+
+def intent_label(intent: str | None, default=None):
+    """Absicht in der Sprache der Anfrage (erlaubt/eingeschraenkt/gesperrt, allow/limited/deny)."""
+    pair = INTENT.get(intent or "")
+    return L(*pair) if pair else default
+
+
+def _zones(n: int) -> str:
+    return _plural(n, *L(("Zone", "Zonen"), ("zone", "zones")))
+
+
+def _nets(n: int) -> str:
+    return _plural(n, *L(("Netz", "Netze"), ("network", "networks")))
 
 
 def _rgb_of(color: str | None) -> list[int] | None:
@@ -110,21 +134,22 @@ def _box_lines(z: dict, nodes: dict[str, str], show_nodes: bool = True) -> list[
         return []
     labels = [nodes.get(n, n) for n in z.get("nodes") or []]
     if len(labels) > MAX_LINES:
-        return labels[: MAX_LINES - 1] + [f"… {len(labels) - MAX_LINES + 1} weitere"]
+        more = len(labels) - MAX_LINES + 1
+        return labels[: MAX_LINES - 1] + [L(f"… {more} weitere", f"… {more} more")]
     return labels
 
 
 def _sub(z: dict) -> str:
     kind = z.get("kind")
     if kind == "customer":
-        return f"Kunde · {_plural(len(z.get('members') or []), 'Zone', 'Zonen')}"
+        return f"{kind_label(kind)} · {_zones(len(z.get('members') or []))}"
     if kind == "none":
-        return _plural(len(z.get("nodes") or []), "Knoten", "Knoten")
+        return _plural(len(z.get("nodes") or []), *L(("Knoten", "Knoten"), ("node", "nodes")))
     if kind == "outside":
-        return "Router ohne gelesenes Gerät"
+        return L("Router ohne gelesenes Gerät", "Router without a read device")
     if z.get("partner"):  # Zone eines anderen Kunden, mit dem kommuniziert wird (0.66.0)
-        return f"{ZONE_KIND.get(kind, kind)} · Partner {z.get('customer') or ''}".rstrip()
-    return f"{ZONE_KIND.get(kind, kind)} · {_plural(z.get('nets') or 0, 'Netz', 'Netze')}"
+        return f"{kind_label(kind, kind)} · Partner {z.get('customer') or ''}".rstrip()
+    return f"{kind_label(kind, kind)} · {_nets(z.get('nets') or 0)}"
 
 
 def _layout2(plan: dict) -> dict:
@@ -224,7 +249,8 @@ def _layout2(plan: dict) -> dict:
     ] + [
         {   # Kommunikation (0.66.0): erlaubende Regeln je Zonenpaar, eigene Linie
             "id": f["id"], "a": f["a"], "b": f["b"],
-            "label": _plural(f["rules"], "Regel", "Regeln") if show_labels else "",
+            "label": _plural(f["rules"], *L(("Regel", "Regeln"), ("rule", "rules")))
+            if show_labels else "",
             "name": _flow_text(f, by_id), "count": f["rules"], "networks": [],
             "dashed": True, "contact": False, "flow": True,
         }
@@ -276,11 +302,11 @@ def _bezier(p0, c1, c2, p3, t: float) -> list[float]:
 
 def _direction_text(d: dict) -> str:
     """„eingeschränkt (https, ssh)“, bei einer Kunden-Gruppe mit „teils“."""
-    text = INTENT.get(d.get("intent"), d.get("intent") or "")
+    text = intent_label(d.get("intent"), d.get("intent") or "")
     if d.get("services"):
         text += f" ({', '.join(d['services'])})"
     if d.get("mixed"):
-        text += ", teils weniger streng"
+        text += L(", teils weniger streng", ", partly less strict")
     return text
 
 
@@ -300,7 +326,7 @@ def _intent_edge(t: dict, by_id: dict) -> dict:
 def _intent_label(i: dict) -> str:
     """Beschriftung einer Absicht ohne Uebergang: die Absicht, bei zwei verschiedenen beide."""
     ab, ba = i.get("intent_ab"), i.get("intent_ba")
-    words = [INTENT.get(d["intent"], d["intent"]) for d in (ab, ba) if d]
+    words = [intent_label(d["intent"], d["intent"]) for d in (ab, ba) if d]
     return words[0] if len(set(words)) == 1 else " / ".join(words)
 
 
@@ -333,7 +359,9 @@ def _flow_text(f: dict, by_id: dict) -> str:
     """Titel der Linie: „DC A → DC B: 5, DC B → DC A: 2 erlaubende Regeln“."""
     a = (by_id.get(f["a"]) or {}).get("name", f["a"])
     b = (by_id.get(f["b"]) or {}).get("name", f["b"])
-    return f"{a} → {b}: {f.get('ab', 0)}, {b} → {a}: {f.get('ba', 0)} erlaubende Regeln"
+    ab, ba = f.get("ab", 0), f.get("ba", 0)
+    return L(f"{a} → {b}: {ab}, {b} → {a}: {ba} erlaubende Regeln",
+             f"{a} → {b}: {ab}, {b} → {a}: {ba} allowing rules")  # fmt: skip
 
 
 def route(boxes: list[dict], edges: list[dict]) -> list[dict]:
@@ -408,8 +436,8 @@ def _layout1(plan: dict) -> dict:
             box = {
                 "id": z["id"], "x": x, "y": y(i, len(group)), "w": ZW, "h": BOX_H, "side": side,
                 "title": z["name"], "color": z.get("color"), "fill": _tint(z.get("color")),
-                "sub": f"{ZONE_KIND.get(z.get('kind'), z.get('kind'))} · "
-                       f"{_plural(z.get('nets') or 0, 'Netz', 'Netze')}",
+                "sub": f"{kind_label(z.get('kind'), z.get('kind'))} · "
+                       f"{_nets(z.get('nets') or 0)}",
                 "kind": z.get("kind"), "samples": z.get("samples") or [],
             }  # fmt: skip
             out_zones.append(box)
@@ -419,7 +447,7 @@ def _layout1(plan: dict) -> dict:
             "id": n["id"], "x": (W - NW) / 2, "y": y(i, len(nodes)), "w": NW, "h": BOX_H,
             "title": n["label"],
             "sub": f"{NODE_KIND.get(n.get('kind'), 'Firewall')} · "
-                   f"{_plural(n.get('zones') or 0, 'Zone', 'Zonen')}",
+                   f"{_zones(n.get('zones') or 0)}",
             "kind": n.get("kind"),
         }  # fmt: skip
         out_nodes.append(box)
@@ -442,7 +470,7 @@ def _layout1(plan: dict) -> dict:
 
 
 def _stamp(title: str, when: datetime | None, version: dict | None) -> str:
-    stand = f"Stand {when:%d.%m.%Y %H:%M}" if when else ""
+    stand = L(f"Stand {when:%d.%m.%Y %H:%M}", f"As of {when:%d/%m/%Y %H:%M}") if when else ""
     if version:
         label = f" – {version['label']}" if version.get("label") else ""
         return f"{title} · Version {version['number']}{label} · {stand}".rstrip(" ·")
@@ -452,10 +480,12 @@ def _stamp(title: str, when: datetime | None, version: dict | None) -> str:
 def _view_stamp(plan: dict, when: datetime | None, version: dict | None) -> str:
     """Stand bzw. Version, dazu der Filter der Ansicht (0.61.0) - der Export zeigt nur einen
     Ausschnitt."""
-    stamp = _stamp("Zonenplan", when, version)
+    stamp = _stamp(L("Zonenplan", "Zone plan"), when, version)
     f = plan.get("filter") or {}
     if f.get("active") and f.get("label"):
-        stamp += f" · {f['label']} ({f.get('zones', 0)} von {f.get('total', 0)} Zonen)"
+        shown, total = f.get("zones", 0), f.get("total", 0)
+        stamp += L(f" · {f['label']} ({shown} von {total} Zonen)",
+                   f" · {f['label']} ({shown} of {total} zones)")  # fmt: skip
     return stamp
 
 
@@ -561,9 +591,11 @@ def _edge_title(e: dict) -> str:
     if e.get("flow"):
         return e["name"]
     if e.get("intent"):
-        return f"Absicht {e.get('intent_text') or ''}"
-    text = f"{e['name'] or e['label'] or 'Kontakt'}: " + ", ".join(e["networks"])
-    return f"{text} – Absicht {e['intent_text']}" if e.get("intent_text") else text
+        return L(f"Absicht {e.get('intent_text') or ''}", f"Intent {e.get('intent_text') or ''}")
+    text = f"{e['name'] or e['label'] or L('Kontakt', 'Contact')}: " + ", ".join(e["networks"])
+    if not e.get("intent_text"):
+        return text
+    return L(f"{text} – Absicht {e['intent_text']}", f"{text} – intent {e['intent_text']}")
 
 
 def _svg_box(g, b: dict, fill: str, stroke: str, radius: int, anchor: str) -> None:
@@ -602,7 +634,8 @@ def drawio(plan: dict, title: str, when: datetime | None = None,
 
         return _drawio2(lay, title, stamp, plan_view.view_key(plan))
     mxfile = ET.Element("mxfile", {"host": "Automato", "type": "device"})
-    diagram = ET.SubElement(mxfile, "diagram", {"id": "zonenplan", "name": "Zonenplan"})
+    diagram = ET.SubElement(mxfile, "diagram", {"id": "zonenplan",
+                                                "name": L("Zonenplan", "Zone plan")})  # fmt: skip
     model = ET.SubElement(diagram, "mxGraphModel", {
         "grid": "1", "gridSize": "10", "guides": "1", "tooltips": "1", "connect": "1",
         "arrows": "0", "fold": "1", "page": "1", "pageScale": "1",
@@ -620,7 +653,7 @@ def drawio(plan: dict, title: str, when: datetime | None = None,
     for z in lay["zones"]:
         obj = ET.SubElement(root, "UserObject", {
             "id": f"zone-{z['id']}", "label": f"<b>{_html(z['title'])}</b><br>{_html(z['sub'])}",
-            "automato_zone": z["title"], "automato_kind": ZONE_KIND.get(z["kind"], z["kind"] or ""),
+            "automato_zone": z["title"], "automato_kind": kind_label(z["kind"], z["kind"] or ""),
             "automato_networks": ", ".join(z["samples"]),
             "tooltip": "\n".join(z["samples"]),
         })  # fmt: skip
@@ -665,7 +698,8 @@ def _drawio2(lay: dict, title: str, stamp: str, view: str | None = None) -> str:
     traegt der Titel Ansicht und Verschiebung (`automato_view`, `automato_offset`) - die Datei
     laesst sich als Zonenplan zurueck einlesen (`plan_import`)."""
     mxfile = ET.Element("mxfile", {"host": "Automato", "type": "device"})
-    diagram = ET.SubElement(mxfile, "diagram", {"id": "zonenplan", "name": "Zonenplan"})
+    diagram = ET.SubElement(mxfile, "diagram", {"id": "zonenplan",
+                                                "name": L("Zonenplan", "Zone plan")})  # fmt: skip
     model = ET.SubElement(diagram, "mxGraphModel", {
         "grid": "1", "gridSize": "10", "guides": "1", "tooltips": "1", "connect": "1",
         "arrows": "0", "fold": "1", "page": "1", "pageScale": "1",
@@ -690,7 +724,7 @@ def _drawio2(lay: dict, title: str, stamp: str, view: str | None = None) -> str:
         lines = "".join(f"<br>{_html(x)}" for x in z["lines"])
         attrs = {"id": f"zone-{_id(str(z['id']))}",
                  "label": f"<b>{_html(z['title'])}</b><br><i>{_html(z['sub'])}</i>{lines}",
-                 "automato_kind": ZONE_KIND.get(z["kind"], z["kind"] or "")}  # fmt: skip
+                 "automato_kind": kind_label(z["kind"], z["kind"] or "")}  # fmt: skip
         if z["pseudo"]:
             attrs["automato_ignore"] = "1"  # Hilfsform: kein Teil des Grundschemas
         else:
@@ -952,22 +986,27 @@ def pdf(plan: dict, matrix: dict | None, title: str, when: datetime | None = Non
         p.text(cx, n["y"] + HEAD + 32, n["sub"], 9, MUTED, anchor="middle", width=n["w"] - 16)
     if matrix:
         _matrix_page(doc, matrix, stamp)
-    _table_pages(doc, "Zonen an den Knoten", stamp, ["Zone", "Knoten", "über", "Interfaces",
-                 "Netze"], _attachment_rows(plan), [130, 170, 110, 150, 222])  # fmt: skip
+    _table_pages(doc, L("Zonen an den Knoten", "Zones at the nodes"), stamp,
+                 L(["Zone", "Knoten", "über", "Interfaces", "Netze"],
+                   ["Zone", "Node", "via", "Interfaces", "Networks"]),
+                 _attachment_rows(plan), [130, 170, 110, 150, 222])  # fmt: skip
     unzoned = plan.get("unzoned") or {}
     rows = [[u["network"], u.get("node") or "", u.get("where") or ""]
             for u in unzoned.get("items") or []]  # fmt: skip
     if rows:
         more = unzoned.get("total", 0) - len(rows)
-        _table_pages(
-            doc,
-            "Netze ohne Zone" + (f" (die ersten {len(rows)})" if more > 0 else ""),
-            stamp,
-            ["Netz", "Knoten", "Interface / Ort"],
-            rows,
-            [200, 250, 332],
-        )
+        first = L(f" (die ersten {len(rows)})", f" (the first {len(rows)})") if more > 0 else ""
+        _table_pages(doc, _unzoned_title() + first, stamp, _unzoned_header(), rows,
+                     [200, 250, 332])  # fmt: skip
     return doc.bytes()
+
+
+def _unzoned_title() -> str:
+    return L("Netze ohne Zone", "Networks without zone")
+
+
+def _unzoned_header() -> list[str]:
+    return L(["Netz", "Knoten", "Interface / Ort"], ["Network", "Node", "Interface / location"])
 
 
 def _pdf2(doc: "_Pdf", p: "_Page", plan: dict, lay: dict, matrix: dict | None,
@@ -990,13 +1029,15 @@ def _pdf2(doc: "_Pdf", p: "_Page", plan: dict, lay: dict, matrix: dict | None,
     if matrix:
         _matrix_page(doc, matrix, stamp)
     nodes = {n["id"]: n["label"] for n in plan.get("nodes") or []}
-    zone_rows = [[z["name"], ZONE_KIND.get(z.get("kind"), z.get("kind") or ""),
+    zone_rows = [[z["name"], kind_label(z.get("kind"), z.get("kind") or ""),
                   ", ".join(nodes.get(n, n) for n in z.get("nodes") or []) or "-",
                   ", ".join(z.get("samples") or []) + (f" ... ({z['nets']})"
                   if (z.get("nets") or 0) > len(z.get("samples") or []) else "")]
                  for z in plan.get("zones") or [] if isinstance(z["id"], int)]  # fmt: skip
-    _table_pages(doc, "Zonen", stamp, ["Zone", "Art", "Knoten", "Netze in der Zone"], zone_rows,
-                 [150, 90, 260, 282])  # fmt: skip
+    _table_pages(doc, L("Zonen", "Zones"), stamp,
+                 L(["Zone", "Art", "Knoten", "Netze in der Zone"],
+                   ["Zone", "Kind", "Nodes", "Networks in the zone"]),
+                 zone_rows, [150, 90, 260, 282])  # fmt: skip
     rows = []
     for t in plan.get("transitions") or []:
         for n in t.get("networks") or []:
@@ -1007,18 +1048,21 @@ def _pdf2(doc: "_Pdf", p: "_Page", plan: dict, lay: dict, matrix: dict | None,
             )
             routers = ", ".join((r.get("names") or [r["ip"]])[0] for r in n.get("routers") or [])
             rows.append([t["name"], n["network"], via, routers])
-    _table_pages(doc, "Übergänge", stamp, ["Übergang", "Netz", "über", "Router"], rows,
-                 [140, 130, 360, 152])  # fmt: skip
+    _table_pages(doc, L("Übergänge", "Transitions"), stamp,
+                 L(["Übergang", "Netz", "über", "Router"],
+                   ["Transition", "Network", "via", "Router"]),
+                 rows, [140, 130, 360, 152])  # fmt: skip
     rows = intent_rows(plan)
     if rows:
-        _table_pages(doc, "Absicht je Richtung", stamp,
-                     ["Von", "Nach", "Absicht", "Dienste", "Linie"], rows,
-                     [170, 170, 100, 222, 120])  # fmt: skip
+        _table_pages(doc, L("Absicht je Richtung", "Intent per direction"), stamp,
+                     L(["Von", "Nach", "Absicht", "Dienste", "Linie"],
+                       ["From", "To", "Intent", "Services", "Line"]),
+                     rows, [170, 170, 100, 222, 120])  # fmt: skip
     unzoned = plan.get("unzoned") or {}
     rest = [[u["network"], u.get("node") or "", u.get("where") or ""]
             for u in unzoned.get("items") or []]  # fmt: skip
     if rest:
-        _table_pages(doc, "Netze ohne Zone", stamp, ["Netz", "Knoten", "Interface / Ort"], rest,
+        _table_pages(doc, _unzoned_title(), stamp, _unzoned_header(), rest,
                      [200, 250, 332])  # fmt: skip
 
 
@@ -1029,18 +1073,21 @@ def intent_rows(plan: dict) -> list[list[str]]:
     rows = []
     lines = [*(plan.get("transitions") or []), *(plan.get("intents") or [])]
     for t in lines:
-        line = t.get("name") if not str(t["id"]).startswith("intent:") else "ohne Übergang"
+        line = t.get("name") if not str(t["id"]).startswith("intent:") else L(
+            "ohne Übergang", "without transition")  # fmt: skip
         for x, y, d in ((t["a"], t["b"], t.get("intent_ab")), (t["b"], t["a"], t.get("intent_ba"))):
             if not d:
                 continue
-            intent = INTENT.get(d["intent"], d["intent"]) + (" (teils)" if d.get("mixed") else "")
+            mixed = L(" (teils)", " (partly)") if d.get("mixed") else ""
+            intent = intent_label(d["intent"], d["intent"]) + mixed
             rows.append([names.get(x, str(x)), names.get(y, str(y)), intent,
                          ", ".join(d.get("services") or []) or "-", line or ""])  # fmt: skip
     rows.sort(key=lambda r: (r[0].casefold(), r[1].casefold()))
     return rows
 
 
-_VIA = {"interface": "Interface", "fabric": "Fabric", "exit": "Anbindung", "route": "Route"}
+_VIA = {"interface": ("Interface", "Interface"), "fabric": ("Fabric", "Fabric"),
+        "exit": ("Anbindung", "Exit"), "route": ("Route", "Route")}  # fmt: skip
 
 
 def _attachment_rows(plan: dict) -> list[list[str]]:
@@ -1051,13 +1098,14 @@ def _attachment_rows(plan: dict) -> list[list[str]]:
         nets = ", ".join(a.get("networks") or [])
         if (a.get("count") or 0) > len(a.get("networks") or []):
             nets += f" … ({a['count']})"
-        via = ", ".join(_VIA.get(v, v) for v in a.get("via") or [])
+        via = ", ".join(L(*_VIA[v]) if v in _VIA else v for v in a.get("via") or [])
         if a.get("default"):
             via += " (Default)"
         rows.append([zones.get(a["zone"], "?"), nodes.get(a["node"], a["node"]), via,
                      ", ".join(a.get("interfaces") or []), nets])  # fmt: skip
     seen = {a["zone"] for a in plan.get("attachments") or []}
-    rows += [[z["name"], "an keinem gelesenen Knoten", "", "", ""]
+    nowhere = L("an keinem gelesenen Knoten", "at no read node")
+    rows += [[z["name"], nowhere, "", "", ""]
              for z in plan.get("zones") or [] if z["id"] not in seen]  # fmt: skip
     return rows
 
@@ -1081,7 +1129,7 @@ def _table_pages(doc: _Pdf, heading: str, stamp: str, header: list[str], rows: l
                 p.text(x, y, cell, 8.5, width=w - 6)
                 x += w
         if not rows:
-            p.text(28, y + 16, "keine", 9, MUTED)
+            p.text(28, y + 16, L("keine", "none"), 9, MUTED)
 
 
 def _matrix_page(doc: _Pdf, matrix: dict, stamp: str) -> None:
@@ -1089,22 +1137,27 @@ def _matrix_page(doc: _Pdf, matrix: dict, stamp: str) -> None:
     axes = matrix.get("axes") or []
 
     def name(c) -> str:
-        return {"any": "any", "none": "ohne Zone"}.get(c, zones.get(c, {}).get("name", f"#{c}"))
+        return {"any": "any", "none": L("ohne Zone", "no zone")}.get(
+            c, zones.get(c, {}).get("name", f"#{c}"))  # fmt: skip
 
     cells = {(c["src"], c["dst"]): c for c in matrix.get("cells") or []}
     p = doc.page()
-    p.text(28, 34, "Zonenmatrix", 14, bold=True)
+    p.text(28, 34, L("Zonenmatrix", "Zone matrix"), 14, bold=True)
     s = matrix.get("summary") or {}
-    p.text(28, 50, f"{stamp} · {s.get('assigned', 0)} von {s.get('rules', 0)} Regeln zugeordnet "
-                   f"· {s.get('violations', 0)} gegen die Absicht", 9, MUTED)  # fmt: skip
+    n, total, bad = s.get("assigned", 0), s.get("rules", 0), s.get("violations", 0)
+    p.text(28, 50, L(f"{stamp} · {n} von {total} Regeln zugeordnet · {bad} gegen die Absicht",
+                     f"{stamp} · {n} of {total} rules assigned · {bad} against the intent"),
+           9, MUTED)  # fmt: skip
     p.text(
         28,
         64,
-        "Je Zelle erlaubende / sperrende Regeln; Hintergrund = Absicht (grün erlaubt, "
-        "gelb eingeschränkt, rot gesperrt), rot umrandet = gegen die Absicht",
+        L("Je Zelle erlaubende / sperrende Regeln; Hintergrund = Absicht (grün erlaubt, "
+          "gelb eingeschränkt, rot gesperrt), rot umrandet = gegen die Absicht",
+          "Per cell allowing / denying rules; background = intent (green allow, "
+          "yellow limited, red deny), red border = against the intent"),
         8,
         MUTED,
-    )
+    )  # fmt: skip
     label_w = 120.0
     col = max(26.0, min(70.0, (842 - 56 - label_w) / max(len(axes), 1)))
     size = 8 if col >= 40 else 6.5
@@ -1131,6 +1184,6 @@ def _matrix_page(doc: _Pdf, matrix: dict, stamp: str) -> None:
     for c in notes[:12]:
         if y > 580:
             break
-        p.text(28, y, f"{name(c['src'])} -> {name(c['dst'])}: {INTENT.get(c.get('intent'), '')} "
+        p.text(28, y, f"{name(c['src'])} -> {name(c['dst'])}: {intent_label(c.get('intent'), '')} "
                       f"– {c['note']}", 8, MUTED, width=786)  # fmt: skip
         y += 12

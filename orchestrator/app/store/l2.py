@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import ArpEntry, Epg, EpgEndpoint, MacEntry, SourceSystem, Vm, VmIp, VmNic
 from app.models.source_system import Platform
 from app.store import cabling as cab_store
@@ -344,7 +345,7 @@ def find_macs(session: Session, tenant_id: int, query: str, limit: int = 20) -> 
                    EpgEndpoint.mac.is_not(None))
         ):  # fmt: skip
             if (m := mac_key(raw)) is not None:
-                out.setdefault(m, f"ACI-Endpunkt {ip}")
+                out.setdefault(m, L(f"ACI-Endpunkt {ip}", f"ACI endpoint {ip}"))
     return {"kind": kind, "macs": dict(list(out.items())[:limit]), "ips": ips}
 
 
@@ -365,7 +366,8 @@ def _allowed(iface) -> set[int] | None:
 
 def checks(session: Session, tenant_id: int, loc: Locator | None = None, cab=None) -> list[dict]:
     """`uplink_vlan_missing` je Port eines gelesenen Switches, an dem VMs eines ESXi-Hosts
-    gesehen werden und VLANs ihres Clusters/vSwitches fehlen."""
+    gesehen werden und VLANs ihres Clusters/vSwitches fehlen (Text in der Sprache der Anfrage;
+    der Abgleich speichert deutsch)."""
     if not session.scalar(select(MacEntry.id).where(MacEntry.tenant_id == tenant_id).limit(1)):
         return []
     loc = loc or Locator(session, tenant_id, cab)
@@ -415,7 +417,8 @@ def checks(session: Session, tenant_id: int, loc: Locator | None = None, cab=Non
         vlans = sorted(missing)
         hosts = ", ".join(sorted(seen["hosts"])) or "?"
         shown = ", ".join(map(str, vlans[:12])) + (" …" if len(vlans) > 12 else "")
-        text = f"VLAN {shown} fehlt an {device} {port} – Uplink von {hosts}"
+        text = L(f"VLAN {shown} fehlt an {device} {port} – Uplink von {hosts}",
+                 f"VLAN {shown} missing on {device} {port} – uplink of {hosts}")  # fmt: skip
         out.append({
             "type": "uplink_vlan_missing", "severity": "warning",
             "subject": f"{cab_store.device_key(device)}|{cab_store.port_key(port)}",

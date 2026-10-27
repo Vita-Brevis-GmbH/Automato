@@ -34,6 +34,7 @@ from app.audit import reads
 from app.auth.deps import require_admin, require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import L
 from app.models import (
     INTENTS,
     ZONE_KINDS,
@@ -368,7 +369,7 @@ def _side_name(side, by_id: dict[int, LogicalZone]) -> str:
     if isinstance(side, int):
         z = by_id.get(side)
         return z.name if z else f"#{side}"
-    return store.PSEUDO.get(side, (side,))[0]
+    return store.pseudo_name(side)
 
 
 def _side(side, by_id: dict[int, LogicalZone]) -> dict:
@@ -465,6 +466,7 @@ def accept_suggestions(
                 n += 1
                 name = f"{s['name']} ({n})"
             position += 10
+            # Beschreibung wird gespeichert: deutsch (ADR 0028)
             sources = ", ".join(zone_detect.SOURCE_LABEL[x] for x in s["sources"])
             z = LogicalZone(tenant_id=tid, name=name[:200], kind=s["kind"], color=s["color"],
                             code=(s.get("code") or None) and s["code"][:50],
@@ -837,14 +839,15 @@ def export_plan(
         when, meta = datetime.now(UTC), None
         name = f"zonenplan-{when:%Y-%m-%d}"
     tenant = session.get(Tenant, tid)
-    title = f"Zonenplan {tenant.name}" if tenant else "Zonenplan"
+    title = L(f"Zonenplan {tenant.name}", f"Zone plan {tenant.name}") if tenant else L(
+        "Zonenplan", "Zone plan")  # fmt: skip
     view = (plan.get("view") or {}) if version_id is None else {}
     if view.get("customer"):
         title += f" – {view['customer']}"
     if principal.is_customer:  # Titel mit den eigenen Kunden, nicht der Umgebung
         names = sorted(n for cid, n in _customers(session, tid).items()
                        if cid in (principal.customer_ids or ()))  # fmt: skip
-        title = "Zonenplan " + (", ".join(names) or "Kunde")
+        title = L("Zonenplan ", "Zone plan ") + (", ".join(names) or L("Kunde", "Customer"))
         # ohne Geraetenamen (0.58.0) - die Middleware sieht die Datei nicht als JSON
         aliases = customer_alias.Aliases(session, [tid])
         plan, matrix = aliases.clean(plan), aliases.clean(matrix)
@@ -1112,7 +1115,7 @@ def zone_nets(
             for n in t.networks
         ]  # fmt: skip
         if view is not None and view.mask(other) == store.OTHER:  # Zone eines anderen Kunden
-            masked = {"name": "anderer Kunde", "code": None, "kind": "customer", "position": 0}
+            masked = {"name": store.other_name(), "code": None, "kind": "customer", "position": 0}
             transitions.append({"to": masked["name"], "to_id": store.OTHER,
                                 "name": store.transition_name(_side(z.id, by_id), masked),
                                 "networks": networks[:limit]})  # fmt: skip

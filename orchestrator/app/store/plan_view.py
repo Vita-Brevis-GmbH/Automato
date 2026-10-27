@@ -22,28 +22,30 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import ZonePlanArrangement
 
-# Ebenen = Spalten des Plans (`zones.LAYER`), je mit den Arten der Zonen darin
+# Ebenen = Spalten des Plans (`zones.LAYER`), je mit den Arten der Zonen darin; Namen (deutsch,
+# englisch) fuer den Kopf des Exports (0.87.0)
 LAYERS = {
-    "dc": ("DC", ("dc", "internal", "shared")),
-    "customer": ("Kunden", ("customer",)),
-    "edge": ("Edge", ("edge", "dmz", "management")),
-    "transfer": ("Transfer", ("transfer",)),
-    "core": ("Core", ("core",)),
-    "distribution": ("Distribution", ("distribution",)),
-    "access": ("Access", ("access",)),
-    "public": ("Public", ("external",)),
-    "none": ("Knoten ohne Zone", ("none",)),
-    "outside": ("ausserhalb", ("outside",)),
+    "dc": (("DC", "DC"), ("dc", "internal", "shared")),
+    "customer": (("Kunden", "customers"), ("customer",)),
+    "edge": (("Edge", "Edge"), ("edge", "dmz", "management")),
+    "transfer": (("Transfer", "Transfer"), ("transfer",)),
+    "core": (("Core", "Core"), ("core",)),
+    "distribution": (("Distribution", "Distribution"), ("distribution",)),
+    "access": (("Access", "Access"), ("access",)),
+    "public": (("Public", "Public"), ("external",)),
+    "none": (("Knoten ohne Zone", "nodes without zone"), ("none",)),
+    "outside": (("ausserhalb", "outside"), ("outside",)),
 }
 LAYER_OF = {kind: layer for layer, (_, kinds) in LAYERS.items() for kind in kinds}
 ELEMENTS = {
-    "nodes": "Knoten in den Zonen",
-    "labels": "Namen der Übergänge",
-    "contacts": "Kontakte zu Knoten ohne Zone",
-    "empty": "Zonen ohne Knoten und Übergang",
-    "intents": "Absichten",
+    "nodes": ("Knoten in den Zonen", "nodes in the zones"),
+    "labels": ("Namen der Übergänge", "names of the transitions"),
+    "contacts": ("Kontakte zu Knoten ohne Zone", "contacts to nodes without zone"),
+    "empty": ("Zonen ohne Knoten und Übergang", "zones without nodes and transition"),
+    "intents": ("Absichten", "intents"),
 }
 MAX_DEPTH = 3
 MAX_POSITIONS = 5000
@@ -180,18 +182,20 @@ def describe(f: Filter, by_id: dict | None = None) -> str:
     """Kurztext fuer Kopf von SVG und PDF: „Suche „dc“ · Fokus: DC Kunde A + Nachbarn · ohne
     Access, Namen der Übergänge“."""
     parts = []
-    near = {0: "", 1: " + Nachbarn"}.get(f.depth, f" + {f.depth} Schritte")
+    near = {0: "", 1: L(" + Nachbarn", " + neighbors")}.get(
+        f.depth, L(f" + {f.depth} Schritte", f" + {f.depth} steps"))  # fmt: skip
     if f.q:
-        parts.append(f"Suche „{f.q}“{near if not f.focus else ''}")
+        near_q = near if not f.focus else ""
+        parts.append(L(f"Suche „{f.q}“{near_q}", f"Search “{f.q}”{near_q}"))
     if f.focus:
-        names = [(by_id or {}).get(k, {}).get("name", k) for k in f.focus]
-        parts.append(f"Fokus: {', '.join(names)}{near}")
+        names = ", ".join((by_id or {}).get(k, {}).get("name", k) for k in f.focus)
+        parts.append(L(f"Fokus: {names}{near}", f"Focus: {names}{near}"))
     if f.flows:
-        parts.append("mit Kommunikation (Regeln)")
-    hidden = [LAYERS[x][0] for x in LAYERS if x in f.hide_layers]
-    hidden += [ELEMENTS[x] for x in ELEMENTS if x in f.hide]
+        parts.append(L("mit Kommunikation (Regeln)", "with communication (rules)"))
+    hidden = [L(*LAYERS[x][0]) for x in LAYERS if x in f.hide_layers]
+    hidden += [L(*ELEMENTS[x]) for x in ELEMENTS if x in f.hide]
     if hidden:
-        parts.append("ohne " + ", ".join(hidden))
+        parts.append(L("ohne ", "without ") + ", ".join(hidden))
     return " · ".join(parts)
 
 

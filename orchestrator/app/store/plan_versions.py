@@ -18,16 +18,22 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import __version__
+from app.i18n import L, german_only
 from app.models import Customer, SourceSystem, ZonePlanVersion
 from app.store import plan_view
 from app.store import zones as zone_store
 
 FORMAT = 2  # 0.56.0: Plan nach dem Zonenmodell (Knoten, Uebergaenge)
-_AXIS = {"any": "any", "none": "ohne Zone"}
 
 
+def _axis() -> dict[str, str]:
+    return {"any": "any", "none": L("ohne Zone", "no zone")}
+
+
+@german_only  # gespeichert bzw. mit dem gespeicherten Fingerabdruck verglichen (ADR 0028)
 def snapshot(session: Session, tenant_id: int) -> dict:
-    """Aktueller Stand: Zonen mit Selektoren (Quellsystem als Name), Plan, Matrix."""
+    """Aktueller Stand: Zonen mit Selektoren (Quellsystem als Name), Plan, Matrix - immer
+    deutsch (Namen der Hilfszonen gehen in Version und Fingerabdruck ein)."""
     items = zone_store.load(session, tenant_id)
     systems = dict(
         session.execute(
@@ -138,7 +144,7 @@ def fingerprint(data: dict) -> str:
 def _counts(data: dict) -> dict[str, tuple[int, int, int]]:
     """Regeln je Zelle (Namen): erlaubend, sperrend, gegen die Absicht."""
     m = data.get("matrix") or {}
-    names = {z["id"]: z["name"] for z in m.get("zones") or []} | _AXIS
+    names = {z["id"]: z["name"] for z in m.get("zones") or []} | _axis()
     return {
         f"{names.get(c['src'], c['src'])} → {names.get(c['dst'], c['dst'])}": (
             c.get("allow", 0), c.get("deny", 0), c.get("violations", 0))

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import InvInterface, ReferenceRecordRow, SourceSystem, TopoExit
 from app.store import customers, zone_schema, zones
 from app.store import epgs as epg_store
@@ -32,13 +33,13 @@ MAX = 40
 SAMPLES = 4
 # Rolle des FortiGate-Interfaces -> Art der Zone, zu der sie passt
 ROLE_KIND = {"dmz": "dmz", "wan": "external"}
-SOURCE_LABEL = {
-    "fw_zone": "Firewall-Zone",
-    "fw_interface": "Firewall-Interface",
-    "fw_vdom": "VDOM",
-    "ipam": "IPAM",
-    "aci": "ACI",
-    "exit": "Anbindung",
+SOURCE_LABEL = {  # (deutsch, englisch) - Anzeige in der Sprache der Anfrage (0.87.0)
+    "fw_zone": ("Firewall-Zone", "Firewall zone"),
+    "fw_interface": ("Firewall-Interface", "Firewall interface"),
+    "fw_vdom": ("VDOM", "VDOM"),
+    "ipam": ("IPAM", "IPAM"),
+    "aci": ("ACI", "ACI"),
+    "exit": ("Anbindung", "Exit"),
 }
 SOURCE_ORDER = tuple(SOURCE_LABEL)
 
@@ -74,26 +75,28 @@ class Matcher:
         if not t:
             return None
         if key_of(t) in self.keys or key_of(t, True) in self.keys:
-            return Match(100, f"gleicher Name „{t}“")
+            return Match(100, L(f"gleicher Name „{t}“", f"same name “{t}”"))
         parts = set(_parts(t)) | set(_parts(t, True))
         if self.code and self.code in parts:
-            return Match(80, f"Kurzname in „{t}“")
+            return Match(80, L(f"Kurzname in „{t}“", f"short name in “{t}”"))
         hits = [w for w in self.words if w in parts]
         if self.words and len(hits) == len(self.words) and max(map(len, hits)) >= 3:
-            return Match(60 + len(hits), f"Name in „{t}“")
+            return Match(60 + len(hits), L(f"Name in „{t}“", f"name in “{t}”"))
         low = t.casefold()
         for p in self.patterns:
             if fnmatch.fnmatchcase(low, p) or any(fnmatch.fnmatchcase(x, p) for x in parts):
-                return Match(50, f"Muster „{p}“ ({self.schema.name if self.schema else ''})")
+                zone = self.schema.name if self.schema else ""
+                return Match(50, L(f"Muster „{p}“ ({zone})", f"pattern “{p}” ({zone})"))
         long = [w for w in hits if len(w) >= 3]
         if long and len(hits) * 2 >= len(self.words):
-            return Match(20 + len(hits), f"„{', '.join(long)}“ in „{t}“")
+            words = ", ".join(long)
+            return Match(20 + len(hits), L(f"„{words}“ in „{t}“", f"“{words}” in “{t}”"))
         return None
 
     def role(self, role: str | None) -> Match | None:
         r = (role or "").casefold()
         if r and self.kind and ROLE_KIND.get(r) == self.kind:
-            return Match(40, f"Rolle {r}")
+            return Match(40, L(f"Rolle {r}", f"role {r}"))
         return None
 
 
@@ -165,24 +168,28 @@ def _ipam(session: Session, tenant_id: int, m: Matcher, put) -> None:
     for _kind, value, name, desc, vlan, vrf, tenant, tags, attrs in rows:
         if (hit := m.test(name, desc, vlan)) is not None:
             text = " · ".join(x for x in (name, desc, f"VLAN {vlan}" if vlan else None) if x)
-            put(Selector("prefix", value), "ipam", f"Netz {value} – {text}", hit)
+            put(Selector("prefix", value), "ipam",
+                L(f"Netz {value} – {text}", f"Network {value} – {text}"), hit)  # fmt: skip
         for k, v in (attrs or {}).items():
             if isinstance(v, str | int) and (hit := m.test(str(v))) is not None:
-                put(Selector("ipam_tag", f"{k}={v}"), "ipam", f"IPAM-Merkmal {k}={v}", hit)
+                put(Selector("ipam_tag", f"{k}={v}"), "ipam",
+                    L(f"IPAM-Merkmal {k}={v}", f"IPAM attribute {k}={v}"), hit)  # fmt: skip
         for tag in tags or []:
             if (hit := m.test(str(tag))) is not None:
-                put(Selector("ipam_tag", str(tag)), "ipam", f"IPAM-Tag {tag}", hit)
+                put(Selector("ipam_tag", str(tag)), "ipam", L(f"IPAM-Tag {tag}", f"IPAM tag {tag}"),
+                    hit)  # fmt: skip
         if tenant and (hit := m.test(tenant)) is not None:
-            put(Selector("ipam_tenant", tenant), "ipam", f"IPAM-Tenant {tenant}", hit)
+            put(Selector("ipam_tenant", tenant), "ipam",
+                L(f"IPAM-Tenant {tenant}", f"IPAM tenant {tenant}"), hit)  # fmt: skip
         if vrf and (hit := m.test(vrf)) is not None:
-            put(Selector("ipam_vrf", vrf), "ipam", f"IPAM-VRF {vrf}", hit)
+            put(Selector("ipam_vrf", vrf), "ipam", L(f"IPAM-VRF {vrf}", f"IPAM VRF {vrf}"), hit)
 
 
 def _aci(data: customers._Data, m: Matcher, put) -> None:
     for e in data.epgs:
         t = e.aci_tenant or ""
         if t and (hit := m.test(t)) is not None:
-            put(Selector("aci_tenant", t), "aci", f"ACI-Tenant {t}", hit)
+            put(Selector("aci_tenant", t), "aci", L(f"ACI-Tenant {t}", f"ACI tenant {t}"), hit)
         vrf = data.vrf.get(e.id)
         if vrf and (hit := m.test(vrf.split(":")[-1])) is not None:
             put(Selector("aci_vrf", vrf), "aci", f"ACI-VRF {vrf}", hit)
@@ -198,7 +205,8 @@ def _aci(data: customers._Data, m: Matcher, put) -> None:
 def _exits(session: Session, tenant_id: int, m: Matcher, put) -> None:
     for e in session.scalars(select(TopoExit).where(TopoExit.tenant_id == tenant_id)):
         if (hit := m.test(e.name)) is not None:
-            put(Selector("exit", e.name), "exit", f"Anbindung {e.name} ({e.kind})", hit)
+            put(Selector("exit", e.name), "exit",
+                L(f"Anbindung {e.name} ({e.kind})", f"Exit {e.name} ({e.kind})"), hit)  # fmt: skip
 
 
 def _net_key(n) -> tuple:
@@ -253,7 +261,7 @@ def suggest(session: Session, tenant_id: int, name: str, code: str | None = None
             "selector": {"kind": c.selector.kind, "value": c.selector.value,
                          "source_system_id": c.selector.source_system_id, "exclude": False},
             "source": c.source,
-            "source_label": SOURCE_LABEL[c.source],
+            "source_label": L(*SOURCE_LABEL[c.source]),
             "label": c.label,
             "reason": c.match.reason,
             "score": c.match.score,

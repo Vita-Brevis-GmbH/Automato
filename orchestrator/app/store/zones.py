@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import (
     Customer,
     LogicalZone,
@@ -244,7 +245,10 @@ def preview(session: Session, tenant_id: int, selectors: list[Selector],
     return {
         "counts": {"net": len(nets), "epg": len(epgs)},
         "samples": {
-            "net": [{"network": str(n), "via": why} for n, why in ordered[:SAMPLES]],
+            "net": [
+                {"network": str(n), "via": customers.show_reason(why)}
+                for n, why in ordered[:SAMPLES]
+            ],
             "epg": [epg_store.inventory_label(by_id[e]) for e in list(epgs)[:SAMPLES]],
         },
         "overlaps": clash[:SAMPLES],
@@ -700,10 +704,23 @@ def colors(session: Session, tenant_id: int, items: list[LogicalZone]) -> dict[i
 
 # -- Zonenplan (0.56.0) ------------------------------------------------------------------
 
-PSEUDO = {
-    "none": ("Knoten ohne Zone", "none"),
-    "outside": ("ausserhalb (nicht gelesen)", "outside"),
+# Hilfszonen des Plans -> Art; der Name folgt der Sprache (`pseudo_name`, 0.87.0)
+PSEUDO = {"none": "none", "outside": "outside"}
+_PSEUDO_NAME = {
+    "none": ("Knoten ohne Zone", "Nodes without zone"),
+    "outside": ("ausserhalb (nicht gelesen)", "outside (not read)"),
 }
+
+
+def pseudo_name(side) -> str:
+    """Anzeige einer Hilfszone („Knoten ohne Zone“, „ausserhalb“); sonst der Wert selbst."""
+    pair = _PSEUDO_NAME.get(side)
+    return L(*pair) if pair else str(side)
+
+
+def other_name() -> str:
+    """Zonen anderer Kunden in der Sicht eines Kunden-Benutzers (nur Anzeige)."""
+    return L("anderer Kunde", "other customer")
 
 
 # Ebenen von links nach rechts (Zonenplan, Namen der Uebergaenge): DC, Edge, Transfer, Core,
@@ -835,7 +852,8 @@ def plan(session: Session, tenant_id: int, customer_id=None, everything: bool = 
                  if str(x).startswith("customer:")}  # fmt: skip
     for cid in sorted(collapsed, key=lambda c: cust.get(c, "")):
         members = [zmap[zid].name for zid, gid in group.items() if gid == f"customer:{cid}"]
-        zones_out.append({"id": f"customer:{cid}", "name": cust.get(cid, f"Kunde #{cid}"),
+        name = cust[cid] if cid in cust else L(f"Kunde #{cid}", f"Customer #{cid}")
+        zones_out.append({"id": f"customer:{cid}", "name": name,
                           "code": None, "kind": "customer", "color": None, "customer_id": cid,
                           "customer": cust.get(cid), "collapsed": True, "members": members,
                           "nodes": [], "nets": 0, "epgs": 0, "internal": 0, "samples": [],
@@ -845,9 +863,9 @@ def plan(session: Session, tenant_id: int, customer_id=None, everything: bool = 
         unassigned = [n for n in unassigned if n in need]
     if unassigned:
         used.add("none")
-    for pseudo, (name, kind) in PSEUDO.items():
+    for pseudo, kind in PSEUDO.items():
         if pseudo in used:
-            zones_out.append({"id": pseudo, "name": name, "code": None, "kind": kind,
+            zones_out.append({"id": pseudo, "name": pseudo_name(pseudo), "code": None, "kind": kind,
                               "color": None, "customer_id": None, "customer": None,
                               "nodes": unassigned if pseudo == "none" else [], "nets": 0,
                               "epgs": 0, "internal": 0, "samples": [], "position": 0})  # fmt: skip
@@ -1107,7 +1125,7 @@ def restrict_plan(full: dict, view: CustomerView) -> dict:
         elif z["id"] == "outside":
             zones.append(z)
     if rename:
-        zones.append({"id": "other", "name": "anderer Kunde", "code": None, "kind": "customer",
+        zones.append({"id": "other", "name": other_name(), "code": None, "kind": "customer",
                       "color": None, "customer_id": None, "customer": None, "collapsed": True,
                       "members": [], "nodes": [], "nets": 0, "epgs": 0, "internal": 0,
                       "samples": [], "position": 0})  # fmt: skip

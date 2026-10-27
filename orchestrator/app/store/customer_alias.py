@@ -18,7 +18,8 @@ Bezeichnungen:
   x“, Knoten-IDs „3|x“) dieselben Ersetzungen - ganze Woerter, laengste zuerst.
 
 Die Nummern sind stabil, solange keine Quellsysteme geloescht werden. Betreuer sehen weiter die
-echten Namen. Nur lesend.
+echten Namen. Nur lesend. Die neutralen Bezeichnungen folgen der Sprache der Anfrage (ADR 0028) -
+nur Anzeige, nirgends verglichen.
 """
 
 import re
@@ -28,6 +29,7 @@ from collections.abc import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import InvDevice, InvInterface, Rule, SourceSystem, TopoContext
 
 HIDDEN = frozenset({"host", "cluster", "datacenter", "switch", "neighbor"})  # Felder -> leer
@@ -87,21 +89,22 @@ class Aliases:
             .where(InvDevice.tenant_id.in_(tenant_ids))
         ):  # fmt: skip
             if name and name not in self.names:
-                self.names[name] = self.systems.get(sid, "Gerät") if role == "firewall" else (
-                    _ROLE.get(role or "", "Gerät"))  # fmt: skip
+                device = L("Gerät", "Device")
+                self.names[name] = self.systems.get(sid, device) if role == "firewall" else (
+                    _ROLE.get(role or "", device))  # fmt: skip
         for (neighbor,) in session.execute(
             select(InvInterface.neighbor)
             .where(InvInterface.tenant_id.in_(tenant_ids), InvInterface.neighbor.is_not(None))
             .distinct()
         ):
             if neighbor and neighbor not in self.names:
-                self.names[neighbor] = "Nachbar"
+                self.names[neighbor] = L("Nachbar", "Neighbor")
         others = sorted(v for v in vdoms if v and v != "root")
         self.vdoms: dict[str, str] = {v: str(n) for n, v in enumerate(others, start=1)}
         if "root" in vdoms:
             self.vdoms["root"] = "root"
         for n, group in enumerate(sorted(groups), start=1):
-            self.names.setdefault(group, f"Verbund {n}")
+            self.names.setdefault(group, L(f"Verbund {n}", f"Parallel group {n}"))
         self._pattern: re.Pattern | None = None
         self._vdom_pattern: re.Pattern | None = None
         self._compiled = False

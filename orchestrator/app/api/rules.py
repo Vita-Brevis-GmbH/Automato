@@ -27,6 +27,7 @@ from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import L
 from app.models import (
     ObjectClass,
     Rule,
@@ -264,11 +265,18 @@ def get_rule(
     )
 
 
+# (deutsch, englisch) - erst bei der Ausgabe gewaehlt (ADR 0028)
 _SCOPE_WHAT = {
-    "application-profile": "nur EPGs im selben AP",
-    "context": "nur EPGs derselben VRF",
-    "tenant": "nur EPGs im selben Tenant (auch über mehrere VRFs)",
-    "global": "alle verbundenen EPGs, auch über Tenants",
+    "application-profile": ("nur EPGs im selben AP", "only EPGs in the same AP"),
+    "context": ("nur EPGs derselben VRF", "only EPGs of the same VRF"),
+    "tenant": (
+        "nur EPGs im selben Tenant (auch über mehrere VRFs)",
+        "only EPGs in the same tenant (also across several VRFs)",
+    ),
+    "global": (
+        "alle verbundenen EPGs, auch über Tenants",
+        "all connected EPGs, also across tenants",
+    ),
 }
 
 
@@ -289,14 +297,20 @@ def _scope_info(session: Session, r, epgs: dict) -> dict | None:
     for c, p in pairs:
         partners[c.id] += 1
         partners[p.id] += 1
-    label = aci_relevance.SCOPE_LABEL.get(scope, scope) if scope else "unbekannt"
-    what = _SCOPE_WHAT.get(
-        scope or "", "alle verbundenen EPGs (Scope nicht gelesen – neu einlesen)"
+    label = aci_relevance.SCOPE_LABEL.get(scope, scope) if scope else L("unbekannt", "unknown")
+    what = L(
+        *_SCOPE_WHAT.get(
+            scope or "",
+            (
+                "alle verbundenen EPGs (Scope nicht gelesen – neu einlesen)",
+                "all connected EPGs (scope not read – collect again)",
+            ),
+        )
     )
     return {
         "scope": scope,
         "label": label,
-        "text": f"Scope {label}: verbindet {what}",
+        "text": L(f"Scope {label}: verbindet {what}", f"Scope {label}: connects {what}"),
         "pairs": len(pairs),
         "unpaired": len(unpaired),
         "partners": partners,

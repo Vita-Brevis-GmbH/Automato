@@ -7,6 +7,32 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.87.0 – 2026-10-27
+
+Texte vom Server und Exporte auf Deutsch und Englisch (ADR 0028 Schritte 2 und 3; Anwender: „es
+schadet auch nicht, wenn die Doku auch in beiden Sprachen möglich ist“).
+
+- **Sprache je Anfrage** im Orchestrator (`app/i18n.py`): `?lang=` bzw. `Accept-Language`, ohne
+  Anfrage Deutsch. Folgen der Sprache: Befundtexte und Hinweise, Weg-Suche (Start, Ende,
+  Hinweise, Backup-Gründe, Urteile der Policies/Contracts, Relevanz, Scope, Leak, Zonen im Weg),
+  Applikations-Doku (Titel der Kategorien, Spaltenköpfe, Bezüge, Verbindungen, Netzwerkplan),
+  Zonen (Vorschläge, Gründe, Filter, Hilfszonen), Betriebszustand, Verbindungsprüfung,
+  Verkabelung, Vorschau des NetBox-Syncs, Gründe der Kunden-Zuordnung, Fehlermeldungen der API.
+- **Exporte** Word, PDF, SVG und draw.io (Applikation, Netzwerkplan, Zonenplan, Verkabelung) in
+  der **Sprache der Datei**: eigene Wahl im Export-Dialog bzw. an den Export-Knöpfen, gemerkt im
+  Browser, Vorgabe = Sprache der Oberfläche; Dateinamen der Applikation/Verkabelung folgen.
+  Der Zonenplan aus draw.io wird in beiden Sprachen wieder eingelesen.
+- **Gespeichertes bleibt deutsch**: Abgleich, Befunde, Einspielen, Regelindex, Kunden-Zuordnung,
+  Versionen des Zonenplans und alles, was nach NetBox geschrieben wird, laufen immer deutsch –
+  unabhängig von der Sprache, in der sie ausgelöst werden (NetBox: Vorschau und Übernahme mit
+  gleichem Fingerabdruck). Gespeicherte Hinweise/Gründe werden bei der Anzeige übersetzt.
+- Logik hängt nicht mehr an Texten: implizit gesperrt im Netzwerkplan (`implicit`), Leak im Weg
+  (`kind`), Rückrichtung/beide Richtungen in beiden Fassungen, Timeout der Verbindungsprüfung
+  (`failure`), Spalten der Kategorien als Schlüssel mit Anzeige `labels`.
+- Noch deutsch: Meldungen der Läufe, Collector/Agent, CLI und Logs (Schritt 4).
+- Tests: `test_i18n.py`, `test_i18n_findings.py`, `test_i18n_paths.py`, `test_i18n_apps.py`,
+  `test_i18n_zones.py`, `test_i18n_ops.py`; UI: Befundtext auf Englisch, Sprache der Datei.
+
 ## 0.86.0 – 2026-10-27
 
 Oberfläche auf Deutsch und Englisch umschaltbar (Anwender: „alle Texte umschalten von Deutsch auf

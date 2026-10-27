@@ -48,7 +48,7 @@ from functools import cached_property, lru_cache
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.i18n import german_only
+from app.i18n import L, german_only, lang
 from app.models import (
     Customer,
     CustomerMember,
@@ -145,6 +145,8 @@ IPAM_KINDS = ("ipam_tenant", "ipam_vrf", "ipam_tag")
 
 
 def _label(s: Selector) -> str:
+    """Grund der Zuordnung - bleibt deutsch: gespeichert (`customer_member.via`) und in
+    `zone_detect` verglichen (`Anbindung …`); die Anzeige uebersetzt `show_reason`."""
     names = {
         "aci_tenant": "Tenant",
         "aci_vrf": "VRF",
@@ -162,6 +164,43 @@ def _label(s: Selector) -> str:
         "exit": "Anbindung",
     }
     return f"{names.get(s.kind, s.kind)} {s.value}"
+
+
+# Anzeige der Gruende in der Sprache der Anfrage (ADR 0028): feste Gruende und Gruende
+# „<Art> <Wert>“; was hier nicht steht (EPG, Zone, VDOM, Tenant …), heisst in beiden gleich
+_REASON_EN = {
+    "Netz des Kunden": "Customer network",
+    "IP im Netz des Kunden": "IP in a customer network",
+    "interne IP im Netz": "internal IP in the network",
+    "externe IP im Netz": "external IP in the network",
+    "Regel des Kunden": "Customer rule",
+    "Objekt des Kunden": "Customer object",
+    "Kürzel im Namen": "Code in the name",
+    "VM des Kunden": "Customer VM",
+    "Portgruppe im Tenant des Kunden": "Port group in the customer's tenant",
+    "Subnetz des Kunden": "Customer subnet",
+}
+_REASON_PREFIX_EN = (
+    ("IPAM-VRF/Netzansicht ", "IPAM VRF/network view "),
+    ("IPAM-Merkmal ", "IPAM tag/attribute "),
+    ("IPAM-Tenant ", "IPAM tenant "),
+    ("Portgruppe ", "Port group "),
+    ("Anbindung ", "Exit "),
+    ("Kürzel ", "Code "),
+    ("Netz ", "Network "),
+)
+
+
+def show_reason(why: str | None) -> str | None:
+    """Gespeicherter (deutscher) Grund der Zuordnung fuer die Anzeige."""
+    if not why or lang() != "en":
+        return why
+    if why in _REASON_EN:
+        return _REASON_EN[why]
+    for de, en in _REASON_PREFIX_EN:
+        if why.startswith(de):
+            return en + why[len(de) :]
+    return why
 
 
 class _Data:
@@ -908,7 +947,7 @@ def suggestions(session: Session, tenant_id: int) -> list[dict]:
         if shared and any(c.shared for c in customers):
             continue
         out.append({
-            "name": "Geteilt" if shared else t,
+            "name": L("Geteilt", "Shared") if shared else t,
             "code": None if shared else code_of(t),
             "shared": shared,
             "epgs": n,

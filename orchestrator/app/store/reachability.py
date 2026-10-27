@@ -20,6 +20,8 @@ import httpx
 from sot_gateway.adapters.netbox import auth_header
 from sot_gateway.readonly import enforce_read_only
 
+from app.i18n import L
+
 CONNECT_TIMEOUT = 5.0
 
 
@@ -35,6 +37,8 @@ class Result:
     ok: bool
     steps: list[Step] = field(default_factory=list)
     hint: str | None = None
+    # Art des Fehlers (dns | timeout | refused | error | http) - Merkmal statt Text der Schritte
+    failure: str | None = None
 
     def out(self) -> dict:
         return {"ok": self.ok, "hint": self.hint, "steps": [asdict(s) for s in self.steps]}
@@ -49,11 +53,15 @@ def _tcp(addr: str, port: int) -> tuple[bool, str, str | None]:
     start = time.monotonic()
     try:
         with socket.create_connection((addr, port), timeout=CONNECT_TIMEOUT):
-            return True, f"{addr}:{port} verbunden ({_ms(start)})", None
+            return True, L(f"{addr}:{port} verbunden ({_ms(start)})",
+                           f"{addr}:{port} connected ({_ms(start)})"), None  # fmt: skip
     except TimeoutError:
-        return False, f"{addr}:{port} keine Antwort nach {CONNECT_TIMEOUT:.0f} s", "timeout"
+        wait = f"{CONNECT_TIMEOUT:.0f} s"
+        return False, L(f"{addr}:{port} keine Antwort nach {wait}",
+                        f"{addr}:{port} no response after {wait}"), "timeout"  # fmt: skip
     except ConnectionRefusedError:
-        return False, f"{addr}:{port} Verbindung abgelehnt", "refused"
+        return False, L(f"{addr}:{port} Verbindung abgelehnt",
+                        f"{addr}:{port} connection refused"), "refused"  # fmt: skip
     except OSError as exc:
         return False, f"{addr}:{port} {type(exc).__name__}: {exc.strerror or exc}", "error"
 
@@ -69,7 +77,13 @@ def check(
     parts = urlsplit(base_url or "")
     host = parts.hostname
     if not host:
-        return Result(False, hint="Keine gültige Adresse am Quellsystem hinterlegt.")
+        return Result(
+            False,
+            hint=L(
+                "Keine gültige Adresse am Quellsystem hinterlegt.",
+                "No valid address stored on the source system.",
+            ),
+        )
     port = parts.port or {"https": 443, "ssh": 22}.get(parts.scheme, 80)
     result = Result(True)
 
@@ -77,12 +91,20 @@ def check(
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
         addrs = list(dict.fromkeys(str(i[4][0]) for i in infos))
     except socket.gaierror as exc:
-        result.ok = False
-        result.steps.append(Step("dns", False, f"{host} nicht auflösbar ({exc.strerror or exc})"))
-        result.hint = (
+        result.ok, result.failure = False, "dns"
+        why = exc.strerror or exc
+        result.steps.append(
+            Step(
+                "dns", False, L(f"{host} nicht auflösbar ({why})", f"{host} not resolvable ({why})")
+            )
+        )
+        result.hint = L(
             "Der Name ist im Container unbekannt. Für host.docker.internal braucht der Container "
             "`extra_hosts: host.docker.internal:host-gateway` (docker-compose.yml) und muss danach "
-            "neu erstellt werden (`docker compose up -d --force-recreate`)."
+            "neu erstellt werden (`docker compose up -d --force-recreate`).",
+            "The name is unknown in the container. For host.docker.internal the container needs "
+            "`extra_hosts: host.docker.internal:host-gateway` (docker-compose.yml) and must then "
+            "be recreated (`docker compose up -d --force-recreate`).",
         )
         return result
     result.steps.append(Step("dns", True, f"{host} → {', '.join(addrs)}"))
@@ -94,20 +116,33 @@ def check(
         if ok:
             break
     else:
-        result.ok = False
+        result.ok, result.failure = False, kind
         result.hint = {
-            "timeout": (
+            "timeout": L(
                 f"Keine Antwort von Port {port}: Läuft das Ziel? Läuft es, sperrt der Weg – eine "
                 "Firewall auf dem Docker-Host (ufw/firewalld) oder die Trennung der Docker-Netze. "
                 "Bei NetBox auf demselben Host: Automato an das Docker-Netz von NetBox "
                 "anschliessen und `http://netbox:8080` als Adresse verwenden (docs/BETRIEB.md, "
-                "Fehlerbilder)."
+                "Fehlerbilder).",
+                f"No response from port {port}: is the target running? If it is, the path is "
+                "blocked – a firewall on the Docker host (ufw/firewalld) or the separation of the "
+                "Docker networks. With NetBox on the same host: connect Automato to the Docker "
+                "network of NetBox and use `http://netbox:8080` as the address (docs/BETRIEB.md, "
+                "troubleshooting).",
             ),
-            "refused": (
+            "refused": L(
                 f"Auf Port {port} läuft nichts: Port des Ziels prüfen (bei NetBox `NETBOX_PORT`, "
-                "`docker ps`) bzw. ob der Dienst gestartet ist."
+                "`docker ps`) bzw. ob der Dienst gestartet ist.",
+                f"Nothing is listening on port {port}: check the port of the target (for NetBox "
+                "`NETBOX_PORT`, `docker ps`) and whether the service is started.",
             ),
-        }.get(kind or "", "Verbindung fehlgeschlagen - Netzwerk des Containers prüfen.")
+        }.get(
+            kind or "",
+            L(
+                "Verbindung fehlgeschlagen - Netzwerk des Containers prüfen.",
+                "Connection failed - check the network of the container.",
+            ),
+        )
         return result
 
     if platform != "netbox":
@@ -125,10 +160,12 @@ def check(
         with client:
             response = client.get(f"{base_url.rstrip('/')}/api/status/")
     except httpx.HTTPError as exc:
-        result.ok = False
+        result.ok, result.failure = False, "http"
         result.steps.append(Step("http", False, f"/api/status/: {type(exc).__name__}"))
-        result.hint = (
-            "TCP geht, HTTP nicht: Schema (http/https) und TLS-Prüfung am Quellsystem prüfen."
+        result.hint = L(
+            "TCP geht, HTTP nicht: Schema (http/https) und TLS-Prüfung am Quellsystem prüfen.",
+            "TCP works, HTTP does not: check scheme (http/https) and TLS verification on the "
+            "source system.",
         )
         return result
     if response.status_code == 200:
@@ -139,11 +176,17 @@ def check(
         text = f"NetBox {version}" if version else "HTTP 200"
         result.steps.append(Step("http", True, f"/api/status/: {text} ({_ms(start)})"))
         return result
-    result.ok = False
+    result.ok, result.failure = False, "http"
     result.steps.append(Step("http", False, f"/api/status/: HTTP {response.status_code}"))
     result.hint = (
-        "NetBox lehnt das Lese-Token ab – Token am Quellsystem neu hinterlegen."
+        L(
+            "NetBox lehnt das Lese-Token ab – Token am Quellsystem neu hinterlegen.",
+            "NetBox rejects the read token – store the token on the source system again.",
+        )
         if response.status_code in (401, 403)
-        else "NetBox antwortet mit einem Fehler – Logs des NetBox-Containers prüfen."
+        else L(
+            "NetBox antwortet mit einem Fehler – Logs des NetBox-Containers prüfen.",
+            "NetBox responds with an error – check the logs of the NetBox container.",
+        )
     )
     return result

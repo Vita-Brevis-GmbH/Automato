@@ -26,6 +26,7 @@ from app.auth.deps import require_admin, require_operator, require_viewer, tenan
 from app.auth.principal import Principal
 from app.config import get_settings
 from app.db import get_session
+from app.i18n import L
 from app.models import (
     REFERENCE_PLATFORMS,
     Agent,
@@ -790,7 +791,12 @@ def _reject_ids(session: Session, body: ParallelRejectIn) -> list[int]:
         )
     )
     if known != ids or len(ids) < 2:
-        raise HTTPException(status_code=422, detail="mindestens zwei Firewalls des Mandanten")
+        raise HTTPException(
+            status_code=422,
+            detail=L(
+                "mindestens zwei Firewalls des Mandanten", "at least two firewalls of the tenant"
+            ),
+        )
     return sorted(ids)
 
 

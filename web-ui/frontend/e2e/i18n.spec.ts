@@ -48,3 +48,24 @@ for (const [key, title] of VIEWS) {
     await page.waitForLoadState("networkidle");
   });
 }
+
+// 0.87.0: Texte vom Server folgen der Sprache (Accept-Language), die Logik bleibt gleich
+test("Englisch: Befundtext vom Server", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("automato_lang", "en"));
+  await page.goto("/#findings");
+  await page.click(".fline:has-text('Not in IPAM')");
+  const row = page.locator("tbody tr").filter({ hasText: "172.16.5.9" });
+  await expect(row).toContainText("The IPAM knows the server db01.example.ch as 10.30.0.9");
+});
+
+test("Englisch: Sprache der Datei im Export-Dialog gemerkt", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("automato_lang", "en"));
+  await page.goto("/#design");
+  await page.click(".tabbar button:has-text('Zone plan')");
+  const select = page.locator(".plan-export .export-lang-select");
+  await expect(select).toHaveValue("en");
+  await select.selectOption("de");
+  await page.reload();
+  await page.click(".tabbar button:has-text('Zone plan')");
+  await expect(page.locator(".plan-export .export-lang-select")).toHaveValue("de");
+});

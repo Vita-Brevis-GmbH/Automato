@@ -142,6 +142,25 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Patchungen | Patching |
 | Uplink / Anschluss | Uplink / access port |
 
+## Texte vom Server (seit 0.87.0)
+
+| Deutsch | Englisch |
+|---|---|
+| Startpunkt, weiter über | start point, onward via |
+| Ziel erreicht, Weg endet | Destination reached, Path ends |
+| implizit gesperrt | implicitly denied |
+| nicht prüfbar | not verifiable |
+| Rückrichtung, beide Richtungen | reverse direction, both directions |
+| nur Antworten | replies only |
+| ohne Zone, ohne EPG | no zone, without EPG |
+| Art (der Zone), Kurzname | Kind, Short name |
+| Knoten | Node |
+| Stand (Datum) | As of |
+| Anmeldung | Sign-in |
+| Lebenszeichen | sign of life |
+| Kategorie: Zugriff aus dem Internet | Internet access |
+| Schutzmechanismen | Protection |
+
 ## Allgemeine Knöpfe und Meldungen
 
 | Deutsch | Englisch |

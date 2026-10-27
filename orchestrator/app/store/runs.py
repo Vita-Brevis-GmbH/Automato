@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app import audit, credentials
 from app.config import get_settings
+from app.i18n import L
 from app.models import REFERENCE_PLATFORMS, Agent, CollectorRun, RunStatus, SourceSystem
 from app.store import tenant_lock
 
@@ -105,7 +106,8 @@ def _aware(value: datetime | None) -> datetime | None:
 
 
 def describe(session: Session, run: CollectorRun) -> str:
-    """Warum ein Quellsystem uebersprungen wird: Zustand, seit wann, wer liest."""
+    """Warum ein Quellsystem uebersprungen wird: Zustand, seit wann, wer liest (nur Antwort,
+    nicht gespeichert - folgt der Sprache)."""
     zone = ZoneInfo(get_settings().scheduler_timezone)
     since = _aware(run.started_at if run.status is RunStatus.RUNNING else None) or _aware(
         run.queued_at
@@ -113,14 +115,25 @@ def describe(session: Session, run: CollectorRun) -> str:
     when = since.astimezone(zone).strftime("%d.%m. %H:%M") if since else "?"
     agent = session.get(Agent, run.agent_id) if run.agent_id else None
     if run.status is RunStatus.RUNNING:
-        who = f"Agent „{agent.name}“" if agent else "zentraler Worker"
-        return f"Lauf läuft seit {when} ({who})"
+        who = (
+            L(f"Agent „{agent.name}“", f"agent “{agent.name}”")
+            if agent
+            else L("zentraler Worker", "central worker")
+        )
+        return L(f"Lauf läuft seit {when} ({who})", f"Run running since {when} ({who})")
     if run.execution == "external":
         src = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
         assigned = session.get(Agent, src.agent_id) if src is not None and src.agent_id else None
-        who = f"Agent „{assigned.name}“" if assigned else "einen Agenten"
-        return f"Lauf wartet seit {when} auf {who}"
-    return f"Lauf wartet seit {when} auf den zentralen Worker"
+        who = (
+            L(f"Agent „{assigned.name}“", f"agent “{assigned.name}”")
+            if assigned
+            else L("einen Agenten", "an agent")
+        )
+        return L(f"Lauf wartet seit {when} auf {who}", f"Run waiting since {when} for {who}")
+    return L(
+        f"Lauf wartet seit {when} auf den zentralen Worker",
+        f"Run waiting since {when} for the central worker",
+    )
 
 
 def expire_stale(session: Session, now: datetime | None = None) -> int:
@@ -192,7 +205,8 @@ def _lock_open(session: Session, run_id: str) -> CollectorRun | None:
 
 
 def cancel(session: Session, run: CollectorRun, actor: str) -> None:
-    """Offenen Lauf von Hand beenden (z. B. haengt nach einem Neustart des Agenten)."""
+    """Offenen Lauf von Hand beenden (z. B. haengt nach einem Neustart des Agenten). Die
+    Meldung wird gespeichert und bleibt deutsch (ADR 0028)."""
     who = actor.removeprefix("user:")
     _finish(session, run, f"abgebrochen von {who}", actor=actor)
 

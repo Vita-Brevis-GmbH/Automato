@@ -94,12 +94,23 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
 
 **Sprache** (seit 0.86.0): Benutzermenü → **Sprache** *Deutsch* | *English*. Die Wahl gilt je
 Browser (`localStorage automato_lang`), das Umschalten lädt die Seite neu; Standard ist Deutsch.
-Umgestellt sind alle Texte der Oberfläche (Navigation, Ansichten, Knöpfe, Dialoge, Hinweise,
-Markdown-Export und Druck aus der Oberfläche). **Noch deutsch** bleiben in diesem Schritt die
-Texte, die der Orchestrator liefert: Befundtexte und Hinweise, Gründe im Weg („implizit
-gesperrt“), Meldungen von Läufen und Fehlermeldungen der API, Spaltenköpfe der Kategorien und
-die Exporte als Word/PDF/draw.io – sie folgen schrittweise (die Oberfläche schickt die Sprache
-bereits als `Accept-Language` mit). Begriffe in beiden Sprachen: `docs/GLOSSAR.md`.
+Umgestellt sind alle Texte der Oberfläche und seit 0.87.0 auch die **Texte vom Orchestrator**:
+Befundtexte und Hinweise, Gründe und Urteile im Weg, Relevanz, Spaltenköpfe und Titel der
+Kategorien, Verbindungen und Netzwerkplan, Zonen-Vorschläge, Betriebszustand, Verbindungsprüfung,
+Vorschau des NetBox-Syncs, Fehlermeldungen der API. Die Oberfläche schickt die Sprache bei jedem
+Aufruf als `Accept-Language` mit.
+- **Sprache der Datei** (Word, PDF, draw.io, SVG): eigene Wahl im Export-Dialog der
+  Applikations-Doku und an den Export-Knöpfen (Zonenplan, Netzwerkplan, Verkabelung), gemerkt im
+  Browser (`automato_export_lang`), Vorgabe = Sprache der Oberfläche – so entsteht z. B. eine
+  englische Doku aus der deutschen Oberfläche. Markdown und Druck folgen der Oberfläche. Für
+  Aufrufe von Hand: `?lang=en` an der Export-Adresse.
+- **Bleibt deutsch:** was gespeichert wird – Meldungen der Läufe, gespeicherte Teile eines
+  Befunds (z. B. Gründe der Verbindungen in einem englischen Satz), Gründe der Kunden-Zuordnung
+  in der Datenbank (angezeigt übersetzt), Audit, alles, was der NetBox-Sync nach NetBox schreibt
+  (Beschreibungen, Tags), Versionen des Zonenplans; dazu Meldungen von Collector/Agent, CLI und
+  Logs (folgen später). Der Abgleich, das Einspielen und die Befunde laufen immer deutsch, egal
+  in welcher Sprache sie ausgelöst werden.
+- Begriffe in beiden Sprachen: `docs/GLOSSAR.md`; Fachbegriffe bleiben englisch.
 
 **Dokumentation**
 - **Übersicht:** KPIs (Regeln, NAT/VIPs, offene Findings, Abdeckung gegen die SoT),

@@ -24,6 +24,7 @@ from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.config import Settings, get_settings
 from app.db import get_session
+from app.i18n import L
 from app.models import Agent, SourceSystem
 from app.store import agent_package, connections, db_roles, health, retention
 
@@ -259,7 +260,13 @@ def retention_purge(
     """Jetzt aufraeumen: loescht, was ueber der Frist ist (aktueller Stand bleibt); auditiert."""
     policy = retention.Policy.of(settings)
     if not policy.active:
-        raise HTTPException(409, "keine Fristen gesetzt (AUTOMATO_RETENTION_*_DAYS = 0)")
+        raise HTTPException(
+            409,
+            L(
+                "keine Fristen gesetzt (AUTOMATO_RETENTION_*_DAYS = 0)",
+                "no retention periods set (AUTOMATO_RETENTION_*_DAYS = 0)",
+            ),
+        )
     counts = retention.purge(session, policy, actor=f"user:{principal.subject}")
     session.commit()
     return {"deleted": counts, **retention.status(session, settings)}

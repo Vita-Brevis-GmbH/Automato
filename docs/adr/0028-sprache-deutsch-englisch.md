@@ -2,8 +2,8 @@
 
 ## Status
 
-Angenommen (2026-10-27), Schritt 1 umgesetzt in 0.86.0. Frage des Anwenders vom 2026-10-27
-(„alle Texte umschalten von Deutsch auf English und zurück – ist dies ein grosser Aufwand?“),
+Angenommen (2026-10-27), Schritt 1 umgesetzt in 0.86.0, Schritte 2 und 3 in 0.87.0. Frage des
+Anwenders vom 2026-10-27 („alle Texte umschalten von Deutsch auf English und zurück – ist dies ein grosser Aufwand?“),
 Entscheid: ja, zuerst die Oberfläche, die Doku soll auch in beiden Sprachen möglich sein; alle
 Benutzer können umschalten; Fachbegriffe bleiben englisch („das würde verwirren“).
 
@@ -45,15 +45,33 @@ deutsche Texte; Kunden-Benutzer sehen dieselbe Oberfläche (ADR 0018).
 | Schritt | Inhalt | Stand |
 |---|---|---|
 | 1 | Oberfläche: alle Ansichten, Dialoge, Hinweise, Markdown-Export und Druck aus der Oberfläche; Sprachwahl; Glossar; UI-Tests auf Englisch | **0.86.0** |
-| 2 | Server: Befundtexte/Hinweise, Gründe und Urteile im Weg, Spaltenköpfe und Titel der Applikations-Doku, Fehlermeldungen; Logik, die an Texten hängt, auf Schlüssel umstellen | offen |
-| 3 | Exporte Word/PDF/draw.io/SVG in beiden Sprachen mit Sprachwahl im Export-Dialog | offen |
+| 2 | Server: Befundtexte/Hinweise, Gründe und Urteile im Weg, Spaltenköpfe und Titel der Applikations-Doku, Fehlermeldungen; Logik, die an Texten hängt, auf Schlüssel umstellen | **0.87.0** |
+| 3 | Exporte Word/PDF/draw.io/SVG in beiden Sprachen mit Sprachwahl im Export-Dialog | **0.87.0** |
 | 4 | Meldungen von Collector/Agent und CLI (`automato …`), Betriebsdoku auf Wunsch | offen |
 
 ## Folgen
 
 - Jede neue Oberflächen-Zeichenkette entsteht als `L("…", "…")`; die UI-Tests prüfen weiter
   Deutsch, `e2e/i18n.spec.ts` lädt jede Ansicht auf Englisch (Titel = Eintrag der Navigation).
-- Bis Schritt 2 mischt die englische Oberfläche englische Rahmen mit deutschen Texten vom
-  Server (Befunde, Gründe) – dokumentiert in `docs/BETRIEB.md`.
+- Seit 0.87.0 kommen auch die Texte vom Server in der Sprache der Anfrage; deutsch bleiben nur
+  gespeicherte Teile (z. B. Gründe in einem Befund-Detail, Laufmeldungen) – `docs/BETRIEB.md`.
 - Freie Vorbelegungen (z. B. Beschreibung einer Zone aus dem Grundschema) werden in der
   gewählten Sprache gespeichert; sie bleiben frei änderbarer Text.
+
+## Umsetzung Schritt 2/3 (0.87.0)
+
+- `orchestrator/app/i18n.py`: `L(de, en)` zur Laufzeit (nie auf Modulebene – feste Tabellen als
+  Paare), `lang()`, `use()`, `term()`; ASGI-Middleware setzt die Sprache je Anfrage als
+  ContextVar (gilt auch im Threadpool der sync-Endpunkte; neue Threads beginnen deutsch, die
+  Verbindungsprüfung gibt sie ausdrücklich weiter).
+- **Gespeichertes bleibt deutsch:** `@german_only` an den Einstiegen, die Texte speichern
+  (`reconcile.reconcile_tenant`, `refresh_zone_findings`, `refresh_app_findings`,
+  `customers.derive`/`derive_findings`, `ingest.persist_result`, `rule_index.rebuild`,
+  `plan_versions.snapshot`, `netbox_sync.compute_job`/`apply_job`, Grundschema-Befunde). Gespeicherte
+  deutsche Gründe/Hinweise werden bei der Anzeige übersetzt (`customers.show_reason`,
+  `netbox_sync.show_*`, `SchemaZone.out()` mit `raw=True` zum Speichern).
+- **Werte bleiben Schlüssel:** Spalten der Kategorien (`columns`, Anzeige `labels`), Zellwerte
+  („Allow“), `area` des Betriebszustands, `direkt`, Urteile/Arten. Logik an Texten auf Merkmale
+  umgestellt (`implicit`, `leak.kind`, `failure`, Marken der Rückrichtung in beiden Fassungen).
+- **Exporte:** die Oberfläche hängt `?lang=` der gewählten Sprache der Datei an (geht vor
+  `Accept-Language`); Rundlauf Zonenplan draw.io → Import in allen Kombinationen geprüft.

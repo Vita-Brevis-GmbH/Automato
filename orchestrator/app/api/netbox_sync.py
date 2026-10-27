@@ -37,6 +37,7 @@ from app.auth.deps import require_admin, tenant_scope
 from app.auth.principal import Principal
 from app.config import get_settings
 from app.db import get_session, get_session_factory
+from app.i18n import german_only, lang
 from app.jobs import celery_app
 from app.models import CollectorRun, Platform, SourceSystem, SyncPlan, SyncStatus, Tenant
 from app.store import netbox_sync
@@ -125,8 +126,8 @@ def _out(plan: SyncPlan, target: SourceSystem) -> PlanOut:
         options=plan.options or {},
         summary=plan.summary,
         totals=_totals(plan.summary),
-        warnings=plan.warnings or [],
-        message=plan.message,
+        warnings=[netbox_sync.show_warning(w) for w in plan.warnings or []],
+        message=show_message(plan.message),
         result=plan.result,
         created_by=plan.created_by,
         created_at=plan.created_at,
@@ -156,6 +157,57 @@ def _plan(session: Session, principal: Principal, plan_id: int) -> tuple[SyncPla
 
 RUNNING = (SyncStatus.PLANNING.value, SyncStatus.APPLYING.value)
 PARTIAL = " - NetBox kann einen Teilstand haben; neue Vorschau erstellen, sie setzt dort an"
+PARTIAL_EN = " - NetBox may be partially updated; create a new preview, it continues from there"
+
+# Meldungen am Plan sind gespeichert und bleiben deutsch; die Anzeige uebersetzt die bekannten
+# Formen (ADR 0028) - die erste passende gilt, `{error}` mit `ERRORS_EN`
+MESSAGES_EN = (
+    ("abgebrochen von {who}", "cancelled by {who}"),
+    ("Übernahme abgebrochen: kein Lebenszeichen seit {minutes} min",
+     "Apply aborted: no sign of life for {minutes} min"),
+    ("Vorschau abgebrochen: kein Lebenszeichen seit {minutes} min",
+     "Preview aborted: no sign of life for {minutes} min"),
+    ("Übernahme abgebrochen: Orchestrator wurde neu gestartet",
+     "Apply aborted: orchestrator was restarted"),
+    ("Vorschau abgebrochen: Orchestrator wurde neu gestartet",
+     "Preview aborted: orchestrator was restarted"),
+    ("Übernommen – NetBox wird neu eingelesen.", "Applied – NetBox is being collected again."),
+    ("Seit der Vorschau hat sich NetBox oder Automato geändert – nichts geschrieben, bitte"
+     " neue Vorschau erstellen.",
+     "NetBox or Automato changed since the preview – nothing written, please create a new"
+     " preview."),
+    ("Vorschau fehlgeschlagen: {error}", "Preview failed: {error}"),
+    ("Übernahme abgebrochen: {error}", "Apply aborted: {error}"),
+    ("schreibt: {kind}", "writing: {kind}"),
+)  # fmt: skip
+ERRORS_EN = (
+    ("NetBox nicht erreichbar", "NetBox not reachable"),
+    (" – keine Antwort: NetBox aus oder der Weg vom Orchestrator gesperrt (Quellsystem → Prüfen)",
+     " – no response: NetBox off or the path from the orchestrator blocked (source system → "
+     "Check)"),
+    (" – Verbindung abgelehnt bzw. Name unbekannt (Quellsystem → Prüfen)",
+     " – connection refused or name unknown (source system → Check)"),
+)  # fmt: skip
+
+
+def _shown_part(name: str, value: str) -> str:
+    if name == "error":
+        for de, en in ERRORS_EN:
+            value = value.replace(de, en)
+    elif name == "kind":
+        key = next((k.name for k in netbox_sync.KINDS if k.label == value), None)
+        return netbox_sync.kind_label(key) if key else value
+    return value
+
+
+def show_message(message: str | None) -> str | None:
+    """Gespeicherte Meldung des Plans in der Sprache der Anfrage."""
+    if not message or lang() != "en":
+        return message
+    partial = message.endswith(PARTIAL)
+    text = message[: -len(PARTIAL)] if partial else message
+    text = netbox_sync.shown(text, MESSAGES_EN, _shown_part) or text
+    return text + (PARTIAL_EN if partial else "")
 
 
 def _stop(plan: SyncPlan, message: str) -> None:
@@ -346,8 +398,17 @@ def plan_items(
         rows = [i for i in rows if i["kind"] == kind]
     if q:
         ql = q.strip().lower()
-        rows = [i for i in rows if ql in i["label"].lower() or ql in i["key"].lower()]
-    return {"total": len(rows), "rows": rows[max(offset, 0) : max(offset, 0) + min(limit, 2000)]}
+        rows = [
+            i
+            for i in rows
+            if ql in i["label"].lower()
+            or ql in i["key"].lower()
+            or ql in netbox_sync.show_label(i["label"]).lower()
+        ]
+    page = rows[max(offset, 0) : max(offset, 0) + min(limit, 2000)]
+    # Bezeichnung gespeichert (deutsch) - Anzeige in der Sprache der Anfrage (ADR 0028)
+    page = [{**i, "label": netbox_sync.show_label(i["label"])} for i in page]
+    return {"total": len(rows), "rows": page}
 
 
 @router.post("/plans/{plan_id}/apply", response_model=PlanOut, status_code=202)
@@ -410,8 +471,11 @@ def _load(session: Session, plan_id: int):
     return plan, target, tenant
 
 
+@german_only  # Plan, Hinweise und Meldungen werden gespeichert (ADR 0028)
 def compute_job(factory: sessionmaker, plan_id: int) -> None:
-    """Vorschau berechnen: Soll aus Automato, Ist aus NetBox (nur lesen)."""
+    """Vorschau berechnen: Soll aus Automato, Ist aus NetBox (nur lesen). Immer deutsch: die
+    Hintergrundaufgabe laeuft sonst in der Sprache der Anfrage, und was nach NetBox geht, muss
+    zur Uebernahme passen (Fingerabdruck)."""
     session = factory()
     try:
         plan, target, tenant = _load(session, plan_id)
@@ -468,6 +532,7 @@ def compute_job(factory: sessionmaker, plan_id: int) -> None:
         session.close()
 
 
+@german_only  # schreibt nach NetBox und speichert Meldungen (ADR 0028)
 def apply_job(factory: sessionmaker, plan_id: int) -> None:
     """Uebernehmen: Plan neu berechnen, Fingerabdruck pruefen, schreiben, NetBox neu lesen."""
     session = factory()

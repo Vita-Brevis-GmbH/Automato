@@ -17,6 +17,10 @@ Einziger Schreibweg der Plattform. Ablauf:
    ist). Loeschen nur mit `allow_delete`, sonst als *veraltet* angezeigt.
 4. **Uebernahme** (`apply`): Plan neu berechnen, Fingerabdruck muss zur Vorschau passen,
    dann Bulk-Schreiben in Abhaengigkeitsreihenfolge; Loeschen in umgekehrter Reihenfolge.
+
+Sprache (ADR 0028): Der Plan wird immer deutsch berechnet - was nach NetBox geht, Bezeichnungen,
+Hinweise und Meldungen sind am Plan gespeichert. Die Anzeige uebersetzt bekannte Formen erst bei
+der Ausgabe (`kind_label`, `show_label`, `show_warning`, `shown`).
 """
 
 import hashlib
@@ -25,11 +29,13 @@ import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.i18n import L, lang
 from app.models import (
     Epg,
     InvDevice,
@@ -1342,3 +1348,105 @@ def apply(writer, plan: Plan, progress=None) -> dict[str, dict[str, int]]:
 
 def _self_ref(kind: Kind, ref: Ref | list[Ref] | None) -> bool:
     return isinstance(ref, tuple) and ref[0] == kind.name
+
+
+# -- Anzeige in der Sprache der Anfrage (ADR 0028) -----------------------------------------
+# Gespeichert (am Plan) und nach NetBox geschrieben wird deutsch; uebersetzt wird nur die Anzeige.
+
+KIND_EN = {
+    "site_group": "Site group",
+    "site": "Site",
+    "manufacturer": "Manufacturer",
+    "device_role": "Device role",
+    "device_type": "Device type",
+    "cluster_type": "Cluster type",
+    "cluster_group": "Cluster group",
+    "vlan_group": "VLAN group",
+    "prefix": "Network",
+    "device": "Device",
+    "vm_interface": "VM interface",
+    "ip_address": "IP address",
+}
+_SITE_KIND_EN = {"virtuell": "virtual", "physisch": "physical"}
+
+# Hinweise der Vorschau (`Wants.warnings`): deutsche Form wie in `build_wants` -> englisch
+WARNINGS_EN = (
+    (
+        "{src}: kein Standort gesetzt – {n} Geräte und ihre Ports werden nicht übernommen "
+        "(Standort am Quellsystem wählen).",
+        "{src}: no site set – {n} devices and their ports are not applied "
+        "(choose a site on the source system).",
+    ),
+    (
+        "Gerät {name} kommt mehrfach vor – {src} übersprungen.",
+        "Device {name} occurs more than once – {src} skipped.",
+    ),
+    (
+        "DDI-Spiegel: kein anderes führendes IPAM – diese NetBox ist selbst führend oder es ist "
+        "kein IPAM eingelesen.",
+        "DDI mirror: no other leading IPAM – this NetBox is leading itself or no IPAM has been "
+        "collected.",
+    ),
+    (
+        "VM {name} ({src}): ohne Cluster und Host – nicht übernommen.",
+        "VM {name} ({src}): without cluster and host – not applied.",
+    ),
+    (
+        "VM {name} kommt mehrfach vor – {src} übersprungen.",
+        "VM {name} occurs more than once – {src} skipped.",
+    ),
+)
+
+
+def kind_label(name: str) -> str:
+    """Art fuer die Anzeige (`Kind.label` bleibt deutsch)."""
+    kind = KIND.get(name)
+    de = kind.label if kind else name
+    return L(de, KIND_EN.get(name, de))
+
+
+def _label_prefixes() -> list[tuple[str, str]]:
+    pairs = [(f"{k.label} ", f"{KIND_EN[k.name]} ") for k in KINDS if k.name in KIND_EN]
+    return sorted(pairs, key=lambda p: -len(p[0]))
+
+
+def show_label(label: str) -> str:
+    """Gespeicherte Bezeichnung einer Aktion (`Geraet fw-01`) fuer die Anzeige: die Art vorne
+    und beim Standort die Art hinten; Namen bleiben, wie sie in NetBox stehen."""
+    if lang() != "en" or not label:
+        return label
+    for de, en in _label_prefixes():
+        if label.startswith(de):
+            label = en + label[len(de) :]
+            break
+    if label.startswith("Site "):
+        for de, en in _SITE_KIND_EN.items():
+            if label.endswith(f" ({de})"):
+                return label[: -len(de) - 1] + en + ")"
+    return label
+
+
+@lru_cache(maxsize=128)
+def _template(de: str) -> re.Pattern:
+    parts = re.split(r"\{(\w+)\}", de)
+    return re.compile(
+        "".join(re.escape(x) if i % 2 == 0 else f"(?P<{x}>.+?)" for i, x in enumerate(parts))
+    )
+
+
+def shown(text: str | None, table, values=None) -> str | None:
+    """Gespeicherter deutscher Text -> Anzeige in der Sprache der Anfrage: die erste passende
+    deutsche Form der Tabelle (`{name}` = beliebiger Teil) wird zur englischen; unbekannte Texte
+    bleiben. `values(name, wert)` uebersetzt einzelne Teile."""
+    if not text or lang() != "en":
+        return text
+    for de, en in table:
+        m = _template(de).fullmatch(text)
+        if m:
+            parts = {k: values(k, v) if values else v for k, v in m.groupdict().items()}
+            return en.format(**parts)
+    return text
+
+
+def show_warning(text: str) -> str:
+    return shown(text, WARNINGS_EN) or text

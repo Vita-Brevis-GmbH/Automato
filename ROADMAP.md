@@ -397,17 +397,16 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.84.0** | Applikations-Doku: Kategorien-Tabellen neu – Source/Destination in Verkehrsrichtung mit Name und IP, Kategorie 2 mit VIP (Firewall), Load Balancer und Server, NAT-Spalte, leere Spalten ausgeblendet |
 | **0.85.0** | Netzwerkplan der Applikation: Load Balancer als Knoten in der EPG seiner VIP, verbunden mit den EPGs der Server; VIP der Firewall am Knoten (ADR 0021 Ergänzung 0.85.0) |
 | **0.86.0** | Oberfläche auf Deutsch und Englisch umschaltbar (Benutzermenü, je Browser, alle Rollen), Glossar; Texte vom Server und Exporte folgen (ADR 0028 Schritt 1) |
+| **0.87.0** | Texte vom Server und Exporte (Word/PDF/SVG/draw.io) auf Deutsch und Englisch, Sprache der Datei wählbar; Gespeichertes bleibt deutsch (ADR 0028 Schritte 2/3) |
 
-### Nächste Arbeiten (Stand 0.86.0)
+### Nächste Arbeiten (Stand 0.87.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.86.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.87.0.
 
 **Deutsch/Englisch (Anwender 2026-10-27, ADR 0028):** Schritt 1 Oberfläche – **umgesetzt in
-0.86.0**; Schritt 2 Texte vom Server (Befunde, Gründe/Urteile im Weg, Spaltenköpfe der
-Applikations-Doku, API-Fehler; an Texten hängende Logik auf Schlüssel umstellen), Schritt 3
-Exporte Word/PDF/draw.io mit Sprachwahl im Export-Dialog, Schritt 4 Collector/Agent/CLI – offen,
-nach der Befundliste des Anwenders zu 0.85.0.
+0.86.0**; Schritt 2 Texte vom Server und Schritt 3 Exporte mit Sprache der Datei – **umgesetzt in
+0.87.0**; Schritt 4 Meldungen der Läufe, Collector/Agent und CLI – offen.
 
 **Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
 Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in

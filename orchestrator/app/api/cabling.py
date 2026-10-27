@@ -35,6 +35,7 @@ from app.audit import reads
 from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import L
 from app.models import InvVlan, MacEntry, SourceSystem, Tenant
 from app.models.source_system import Platform
 from app.store import cabling as store
@@ -574,15 +575,20 @@ def failure(
     devices = [d for d in device or [] if d.strip()]
     links = [lk for lk in link or [] if lk.strip()]
     if not devices and not links:
-        raise HTTPException(status_code=422, detail="device oder link angeben")
+        raise HTTPException(
+            status_code=422, detail=L("device oder link angeben", "specify device or link")
+        )
     if len(devices) + len(links) > 50 or any(len(x) > 1000 for x in devices + links):
-        raise HTTPException(status_code=422, detail="zu viele bzw. zu lange Angaben")
+        raise HTTPException(
+            status_code=422,
+            detail=L("zu viele bzw. zu lange Angaben", "too many or too long values"),
+        )
     tid = _tenant(session, principal, tenant_id)
     topo = l2_topo.L2(session, tid)
     if any(store.device_key(d) not in topo.devices for d in devices):
-        raise HTTPException(status_code=404, detail="Gerät unbekannt")
+        raise HTTPException(status_code=404, detail=L("Gerät unbekannt", "Unknown device"))
     if any(lk not in topo.cab.links for lk in links):
-        raise HTTPException(status_code=404, detail="Kabel unbekannt")
+        raise HTTPException(status_code=404, detail=L("Kabel unbekannt", "Unknown link"))
     return topo.failure(devices=devices, links=links)
 
 
@@ -603,12 +609,14 @@ def export_plan(
     tid = _tenant(session, principal, tenant_id)
     plan = _plan(session, tid, ends, vlan, _infra(session, principal, tid, customer_id))
     tenant = session.get(Tenant, tid)
-    title = f"Verkabelung {tenant.name}" if tenant else "Verkabelung"
+    word = L("Verkabelung", "Cabling")
+    title = f"{word} {tenant.name}" if tenant else word
     if vlan:
         title += f" – VLAN {vlan}"
     when = datetime.now(UTC)
     body = (l2_export.svg if format == "svg" else l2_export.drawio)(plan, title, when)
     media, ext = _EXPORT[format]
-    name = f"verkabelung-{when:%Y-%m-%d}{f'-vlan{vlan}' if vlan else ''}.{ext}"
+    stem = L("verkabelung", "cabling")
+    name = f"{stem}-{when:%Y-%m-%d}{f'-vlan{vlan}' if vlan else ''}.{ext}"
     return Response(content=body, media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
