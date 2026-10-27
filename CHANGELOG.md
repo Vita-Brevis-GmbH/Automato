@@ -32,6 +32,8 @@ ADR 0027). Ohne Migration.
   den Verbindungen der Applikations-Doku.
 - **Oberfläche:** Plattform „NSX ALB (Avi)“ im Quellsystem-Dialog (Benutzer/Passwort,
   Avi-Tenants), Spalte Quelle bei den publizierten Diensten, „LB“ in der Weg-Suche.
+- CI: UI-Tests fest auf `ubuntu-24.04` (Playwright 1.56 installiert Chromium nicht auf
+  `ubuntu-latest` = Ubuntu 26.04).
 - ADR 0027, Lesevertrag Abschnitt 6, BETRIEB, TESTS.
 
 ## 0.76.1 – 2026-10-26
