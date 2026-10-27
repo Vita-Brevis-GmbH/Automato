@@ -381,11 +381,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.76.1** | Korrektur: externe Netze und Hosts (öffentlich, ausserhalb der Interface-/BD-Netze der gelesenen Geräte) ohne Befund „nicht im IPAM“; im WAN-Interface-Netz bleibt der Befund (ADR 0010 Ergänzung 0.76.1) |
 | **0.77.0** | VMware NSX Advanced Load Balancer (Avi) lesend: Virtual Services, VIPs, Pools als publizierte Dienste, NAT-Einstellungen, Weg-Suche über den Load Balancer bis zum Server (ADR 0027) |
 | **0.78.0** | Zonen komplett, Teil 1: Zonen und Absicht je Verbindung der Applikations-Doku, Absicht je Richtung im Zonenplan (Pfeile, Linie ohne Übergang, Export), Befund „Zone ausserhalb des Schemas“ (ADR 0024 Nr. 17) |
+| **0.78.1** | Korrektur: Agent bekam während des Einspielens eines Laufs keine Antwort (ReadTimeout) – Agent-Zeile nicht mehr gesperrt |
 
-### Nächste Arbeiten (Stand 0.78.0)
+### Nächste Arbeiten (Stand 0.78.1)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.78.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.78.1.
 
 **Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
 Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in

@@ -1540,6 +1540,29 @@ an (`deploy/agent-gateway`, Port 8443).
   (`Test-NetConnection host.docker.internal -Port 8080`). Beim Orchestrator die Last prüfen
   (`docker stats`) und „Alle einlesen“ nicht doppelt starten.
 
+- **Agent: „Update-Pruefung nicht moeglich: nicht erreichbar …/internal/agent/update:
+  ReadTimeout“, „Orchestrator-Aufruf fehlgeschlagen: …/next-run: ReadTimeout“ bzw.
+  „RemoteProtocolError: Server disconnected without sending a response“** (Befund 0.78.0) —
+  der Orchestrator nimmt die Verbindung an, antwortet aber nicht (kein Netz- oder
+  Firewall-Problem: das wäre `ConnectTimeout`/`ConnectError`).
+  - **Ursache bis 0.78.0:** während ein Lauf eingespielt wurde, hielt der Upload die Zeile des
+    Agenten gesperrt (Lebenszeichen); jede weitere Anfrage desselben Agenten (Update-Prüfung,
+    nächster Lauf, Ziele, `-Check`) wartete bis zum Ende des Einspielens und lief nach 30 s in
+    den Timeout – und belegte bis dahin eine Verbindung der Datenbank, sodass bei vielen
+    Wiederholungen auch die Oberfläche hängen konnte. Seit 0.78.1 wartet keine Anfrage mehr auf
+    die Zeile (das Lebenszeichen fällt dann einmal aus); der Upload schreibt sie nicht mehr.
+    Behoben im Orchestrator – `deploy/update.sh`, der Agent muss nichts tun.
+  - „Server disconnected …“ heisst meist: der Orchestrator-Container startet gerade neu (Docker
+    nimmt die Verbindung an und schliesst sie). Prüfen auf dem Server:
+    `docker compose ps orchestrator` (Status, Neustarts), `docker compose logs --tail 200
+    orchestrator`, `docker stats --no-stream` (Speicher), `curl -sS -m 5
+    http://127.0.0.1:8000/health` (mit TLS intern `https://` und `--cacert`).
+  - Wartende Anfragen in Postgres: `docker compose exec postgres psql -U automato -d automato
+    -c "select pid, state, wait_event_type, now() - xact_start as dauer, left(query, 70) from
+    pg_stat_activity where datname = 'automato' order by xact_start"` – viele Zeilen
+    `UPDATE agent …` mit `Lock` bestätigen die Ursache; sie lösen sich, sobald das Einspielen
+    fertig ist (bzw. nach dem Update auf 0.78.1).
+
 - **NetBox-Sync steht seit Langem auf „wird übernommen“** (bis 0.11.3) — die Übernahme läuft
   im Orchestrator-Prozess; ein Neustart (z. B. `deploy/update.sh`) beendete sie, der Plan blieb
   stehen und sperrte jeden weiteren Sync. Seit 0.11.4 werden solche Pläne beim Start beendet,

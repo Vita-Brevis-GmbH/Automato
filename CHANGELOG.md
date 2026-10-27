@@ -7,6 +7,22 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.78.1 – 2026-10-27
+
+Korrektur nach Rückmeldung des Anwenders: der Agent bekam vom Orchestrator keine Antwort
+(„ReadTimeout“ bei Update-Prüfung, nächstem Lauf und Zielen bzw. „Server disconnected without
+sending a response“). Ohne Migration; der Agent muss nichts tun.
+
+- **Ursache:** Beim Ergebnis-Upload schrieb der Orchestrator das Lebenszeichen des Agenten in
+  derselben Transaktion wie das Einspielen – die Zeile des Agenten blieb gesperrt, bis das
+  (bei grossen Läufen minutenlange) Einspielen fertig war. Jede weitere Anfrage desselben
+  Agenten wartete darauf, lief nach 30 s in den Timeout und belegte so lange eine Verbindung
+  der Datenbank.
+- **Behoben:** Der Upload schreibt die Agent-Zeile nicht mehr; das Lebenszeichen (mit Version
+  und Update-Hinweis) wird nur gesetzt, wenn die Zeile frei ist (`SKIP LOCKED`), sonst beim
+  nächsten Aufruf (`store/agents.touch`).
+- BETRIEB: Fehlerbild und Prüfschritte auf dem Server; TESTS.
+
 ## 0.78.0 – 2026-10-27
 
 Zonen komplett, Teil 1 (ROADMAP Schritt 5, offene Punkte aus ADR 0024). Ohne Migration.

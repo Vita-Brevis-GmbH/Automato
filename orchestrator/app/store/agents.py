@@ -37,12 +37,26 @@ def list_agents(session: Session) -> list[Agent]:
 
 
 def agent_by_token(session: Session, token: str) -> Agent | None:
-    agent = session.scalars(
+    """Agent zum Token - ohne zu schreiben (seit 0.78.1, siehe `touch`)."""
+    return session.scalars(
         select(Agent).where(Agent.token_hash == hash_token(token), Agent.enabled)
     ).first()
-    if agent is not None:
-        agent.last_seen = datetime.now(UTC)
-    return agent
+
+
+def touch(session: Session, agent: Agent) -> bool:
+    """Lebenszeichen setzen, ohne zu warten (0.78.1, Rueckmeldung des Anwenders: ReadTimeout des
+    Agenten). Ist die Zeile des Agenten gerade gesperrt, bleibt sie, wie sie ist (`SKIP LOCKED`):
+    sonst wartete jede Anfrage des Agenten auf das Ende der anderen Transaktion - frueher hielt
+    das Einspielen eines grossen Laufs die Zeile bis zum Schluss und Update-Pruefung, naechster
+    Lauf und Ziele liefen in den Timeout (und belegten Verbindungen der Datenbank).
+    -> True, wenn geschrieben werden darf (Version, Update-Hinweis)."""
+    row = session.execute(
+        select(Agent.id).where(Agent.id == agent.id).with_for_update(skip_locked=True)
+    ).first()
+    if row is None:
+        return False
+    agent.last_seen = datetime.now(UTC)
+    return True
 
 
 def claim_next_run(

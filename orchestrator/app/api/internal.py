@@ -104,6 +104,8 @@ def _authorized_run(
     if _internal_ok(internal):
         actor = None
     elif agent_token:
+        # ohne Lebenszeichen (0.78.1): das Einspielen haelt die Transaktion lange offen - eine
+        # geschriebene Agent-Zeile sperrte bis dahin jede andere Anfrage des Agenten
         agent = agent_store.agent_by_token(session, agent_token)
         if agent is None:
             raise HTTPException(status_code=401, detail="invalid agent token")

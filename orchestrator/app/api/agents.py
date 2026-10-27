@@ -283,6 +283,8 @@ def require_agent(
     if agent is None:
         raise HTTPException(status_code=401, detail="invalid agent token")
     mtls.enforce(channel, agent.name)  # Produktion: nur ueber das mTLS-Agent-Gateway
+    if not store.touch(session, agent):  # Zeile gesperrt: Stand beim naechsten Aufruf (0.78.1)
+        return agent
     if x_agent_version:
         agent.version = x_agent_version.strip()[:64]
     if x_agent_update is not None:  # Ergebnis der Update-Pruefung (ab Agent 0.11.4)
