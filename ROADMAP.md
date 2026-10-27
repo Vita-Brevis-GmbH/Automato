@@ -388,11 +388,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.78.5** | Korrekturen nach dem Test des NSX ALB: Spalte „Einträge“ in den Läufen, Zusammenfassung des Avi-Laufs, „Letzte Läufe“ ohne Stau (kein HTTP 500 beim Einspielen) |
 | **0.79.0** | VIP der FortiGate vor dem NSX ALB: Regeln, Applikations-Doku, publizierte Dienste und Weg-Suche verketten öffentliche IP → VIP → Virtual Service → Server (ADR 0027 Ergänzung) |
 | **0.79.1** | Korrekturen: Verbindungen zu einem Netz in die genauer gerouteten Teile aufgeteilt (nicht alles über 0/0); Contract mit EPG als Consumer und Provider als Befund und richtig in der Applikations-Doku |
+| **0.80.0** | Verbindungen Ende zu Ende filtern nach Urteil (erlaubt, gesperrt, abhängig, offen), Regeln (erlaubend/sperrend), Regel auf dem Weg, Richtung und Hinweisen |
 
-### Nächste Arbeiten (Stand 0.79.1)
+### Nächste Arbeiten (Stand 0.80.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.79.1.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.80.0.
 
 **Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
 Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in

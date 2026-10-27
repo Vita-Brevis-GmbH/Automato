@@ -7,6 +7,20 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.80.0 – 2026-10-27
+
+Filter in den Verbindungen Ende zu Ende (Wunsch des Anwenders). Ohne Migration, nur Oberfläche.
+
+- **Filter nach Art:** unter der Suche je Gruppe Knöpfe mit der Zahl der Treffer – *Urteil*
+  (erlaubt, gesperrt, abhängig, offen = nicht prüfbar bzw. Weg endet vor dem Ziel), *Regeln*
+  (erlaubende, sperrende Regeln der Doku), *Regel auf dem Weg* (entscheidet, möglich, greift
+  nicht, nicht auf dem Weg, nicht prüfbar), *Richtung* (eingehend, ausgehend), *Hinweise*
+  (Abweichungen, Wege uneinheitlich, gegen die Zonen-Absicht). In einer Gruppe gilt „oder“,
+  zwischen den Gruppen „und“; die Zahl am Knopf rechnet mit den übrigen Filtern. Nur Arten,
+  die es in der Applikation gibt; „N von M“ und „Filter zurücksetzen“. Gilt auch im Plan
+  (hervorgehoben bzw. ausgegraut wie bei der Suche). „nur Abweichungen und Gesperrte“ bleibt.
+- BETRIEB, TESTS.
+
 ## 0.79.1 – 2026-10-27
 
 Korrekturen nach Rückmeldung des Anwenders. Ohne Migration.

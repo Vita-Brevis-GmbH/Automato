@@ -778,6 +778,15 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       dem Weg* (ihr Gerät liegt nicht auf dem Weg), *nicht prüfbar* (kein Weg bekannt).
     - **Abweichung:** Eine Regel erlaubt, aber der Weg sperrt, sie liegt nicht auf dem Weg bzw.
       greift dort nicht. Abweichungen stehen zuerst; „nur Abweichungen und Gesperrte“ filtert.
+    - **Filter nach Art (0.80.0):** unter der Suche je Gruppe Knöpfe mit Zahl – *Urteil*
+      (erlaubt, gesperrt, abhängig, offen = nicht prüfbar bzw. der Weg endet vor dem Ziel),
+      *Regeln* (erlaubende bzw. sperrende Regeln der Doku), *Regel auf dem Weg* (entscheidet,
+      möglich, greift nicht, nicht auf dem Weg, nicht prüfbar), *Richtung*, *Hinweise*
+      (Abweichungen, Wege uneinheitlich, gegen die Zonen-Absicht). In einer Gruppe „oder“,
+      zwischen den Gruppen „und“ (z. B. „gesperrt“ + „Abweichungen“ = erlaubende Regel, deren
+      Weg sperrt); die Zahl am Knopf gilt mit den übrigen Filtern. Es erscheinen nur Arten, die
+      es in der Applikation gibt; „N von M“ zeigt, wie viele Verbindungen übrig sind, „Filter
+      zurücksetzen“ hebt alle auf. Der Plan zeigt nur die gefilterten Verbindungen hervor.
     - **Wege uneinheitlich (0.73.0):** Ist eine Verbindung über einen Weg offen und über einen
       anderen gesperrt (aktive Wege bzw. ECMP, Backup-Wege gleicher Länge, die Firewalls eines
       Verbunds), steht in der Zeile „Wege uneinheitlich“; das Detail zeigt je Weg (aktiv bzw.

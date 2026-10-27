@@ -33,6 +33,107 @@ const STATE: Record<AppConnState["state"], [string, string]> = {
   unknown: ["na", "nicht prüfbar"],
 };
 
+// Filter nach Art (0.80.0, Anwender): Urteil des Wegs, Aktion der Regeln, Regel auf dem Weg,
+// Richtung, Hinweise – in einer Gruppe „oder“, zwischen den Gruppen „und“, leere Gruppe = alle
+type Facet = { key: string; label: string; title: string; test: (c: AppConnection) => boolean };
+const state = (s: AppConnState["state"]) => (c: AppConnection) => c.rules.some((r) => r.state === s);
+const FACETS: { key: string; label: string; items: Facet[] }[] = [
+  {
+    key: "verdict",
+    label: "Urteil",
+    items: [
+      { key: "allow", label: "erlaubt", title: "der Weg erlaubt die Verbindung bis zum Ziel", test: (c) => c.verdict === "allow" && c.reached },
+      { key: "deny", label: "gesperrt", title: "eine Policy bzw. ein Contract auf dem Weg sperrt", test: (c) => c.verdict === "deny" },
+      { key: "depends", label: "abhängig", title: "je nach Weg bzw. Policy, die nicht sicher prüfbar ist", test: (c) => c.verdict === "depends" },
+      {
+        key: "open",
+        label: "offen",
+        title: "nicht prüfbar bzw. der Weg endet vor dem Ziel",
+        test: (c) => c.verdict === "unknown" || (c.verdict === "allow" && !c.reached),
+      },
+    ],
+  },
+  {
+    key: "action",
+    label: "Regeln",
+    items: [
+      { key: "allow", label: "erlaubende", title: "aus einer erlaubenden Regel bzw. einem Contract der Doku", test: (c) => c.rules.some((r) => r.action === "allow") },
+      { key: "deny", label: "sperrende", title: "aus einer sperrenden Regel der Doku", test: (c) => c.rules.some((r) => r.action === "deny") },
+    ],
+  },
+  {
+    key: "state",
+    label: "Regel auf dem Weg",
+    items: (Object.keys(STATE) as AppConnState["state"][]).map((s) => ({
+      key: s,
+      label: STATE[s][1],
+      title: "Abgleich einer Regel der Doku mit dem Weg",
+      test: state(s),
+    })),
+  },
+  {
+    key: "direction",
+    label: "Richtung",
+    items: [
+      { key: "in", label: "eingehend", title: "zur Applikation", test: (c) => c.direction === "in" },
+      { key: "out", label: "ausgehend", title: "von der Applikation", test: (c) => c.direction === "out" },
+    ],
+  },
+  {
+    key: "flag",
+    label: "Hinweise",
+    items: [
+      { key: "mismatch", label: "Abweichungen", title: "Regel erlaubt, der Weg sperrt bzw. ihr Gerät liegt nicht auf dem Weg", test: (c) => c.mismatch.length > 0 },
+      { key: "inconsistent", label: "Wege uneinheitlich", title: "je nach Weg erlaubt bzw. gesperrt", test: (c) => c.inconsistent },
+      { key: "zones", label: "gegen die Zonen-Absicht", title: "der Weg erlaubt, was die Absicht zwischen den Zonen sperrt", test: (c) => !!c.zones?.violation },
+    ],
+  },
+];
+type Picked = Record<string, string[]>;
+
+function inGroup(c: AppConnection, g: (typeof FACETS)[number], picked: Picked): boolean {
+  const sel = picked[g.key];
+  return !sel?.length || g.items.some((f) => sel.includes(f.key) && f.test(c));
+}
+
+function Facets({ conns, base, picked, onPick }: { conns: AppConnection[]; base: AppConnection[]; picked: Picked; onPick: (p: Picked) => void }) {
+  const any = Object.values(picked).some((v) => v.length);
+  return (
+    <div className="conn-facets" id="app-conn-filter">
+      {FACETS.map((g) => {
+        const sel = picked[g.key] ?? [];
+        // nur Arten, die es in der Applikation gibt; Zahl = Treffer mit den übrigen Filtern
+        const items = g.items.filter((f) => sel.includes(f.key) || conns.some(f.test));
+        if (!items.length) return null;
+        const others = base.filter((c) => FACETS.every((o) => o === g || inGroup(c, o, picked)));
+        return (
+          <span key={g.key} className="facet-group">
+            <span className="facet-label">{g.label}</span>
+            <span className="seg">
+              {items.map((f) => (
+                <button
+                  key={f.key}
+                  id={`conn-filter-${g.key}-${f.key}`}
+                  className={sel.includes(f.key) ? "on" : ""}
+                  title={f.title}
+                  onClick={() => onPick({ ...picked, [g.key]: sel.includes(f.key) ? sel.filter((k) => k !== f.key) : [...sel, f.key] })}
+                >
+                  {f.label} <span className="facet-count">{others.filter(f.test).length}</span>
+                </button>
+              ))}
+            </span>
+          </span>
+        );
+      })}
+      {any && (
+        <button className="linkbtn" id="conn-filter-reset" onClick={() => onPick({})}>
+          Filter zurücksetzen
+        </button>
+      )}
+    </div>
+  );
+}
+
 function SideLabel({ s }: { s: AppConnSide }) {
   const many = s.systems.length + s.more;
   return (
@@ -693,6 +794,8 @@ export default function ConnectionsCard({
   const [open, setOpen] = useState<string | null>(null);
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [q, setQ] = useState("");
+  const [picked, setPicked] = useState<Picked>({});
+  useEffect(() => setPicked({}), [appId]);
   const [view, setView] = useState<"table" | "plan">(loadView);
   const pickView = (v: "table" | "plan") => {
     setView(v);
@@ -728,7 +831,7 @@ export default function ConnectionsCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId, reload, wanted]);
   const needle = q.trim().toLowerCase();
-  const rows = (data?.connections ?? []).filter((c) => {
+  const base = (data?.connections ?? []).filter((c) => {
     if (onlyIssues && !c.mismatch.length && !c.inconsistent && c.verdict === "allow" && c.reached) return false;
     if (!needle) return true;
     const text = [c.src.label, c.src.ip, c.dst.label, c.dst.ip, c.service, ...c.hops.map((h) => h.label), ...c.rules.map((r) => r.label)]
@@ -736,6 +839,7 @@ export default function ConnectionsCard({
       .toLowerCase();
     return text.includes(needle);
   });
+  const rows = base.filter((c) => FACETS.every((g) => inGroup(c, g, picked)));
   const s = data?.summary;
   return (
     <div className="card" id="app-connections" style={{ marginTop: 14 }}>
@@ -796,7 +900,13 @@ export default function ConnectionsCard({
             </span>
             <input placeholder="System, Gegenstelle, Firewall, Regel…" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
+          {data && rows.length !== data.connections.length && (
+            <span className="count" id="conn-filter-count">
+              {rows.length} von {data.connections.length}
+            </span>
+          )}
         </div>
+        {data && data.connections.length > 0 && <Facets conns={data.connections} base={base} picked={picked} onPick={setPicked} />}
       </div>
       <ErrorBox error={error} prefix="Verbindungen laden" />
       {data?.notes.map((n) => (

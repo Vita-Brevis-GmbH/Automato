@@ -251,6 +251,42 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   await expect(finding).toContainText("über fw-09 erlaubt; über fw-10 gesperrt");
 });
 
+test("Applikation: Verbindungen nach Urteil, Regeln und Hinweisen filtern (0.80.0)", async ({ page }) => {
+  await open(page);
+  const card = page.locator("#app-connections");
+  const rows = card.locator("tbody tr.clickable");
+  await expect(rows).toHaveCount(6);
+  const filter = card.locator("#app-conn-filter");
+  await expect(filter).toContainText("Urteil");
+  await expect(filter).toContainText("Regel auf dem Weg");
+  // gesperrt: nur die gesperrten Verbindungen, Zahl am Knopf = Zeilen
+  const deny = filter.locator("#conn-filter-verdict-deny");
+  const n = Number(await deny.locator(".facet-count").innerText());
+  expect(n).toBeGreaterThan(0);
+  await deny.click();
+  await expect(deny).toHaveClass(/on/);
+  await expect(rows).toHaveCount(n);
+  for (const r of await rows.all()) await expect(r.locator("td").nth(5)).toContainText("gesperrt");
+  await expect(card.locator("#conn-filter-count")).toHaveText(`${n} von 6`);
+  // zwischen den Gruppen „und“: gesperrt und Abweichung = CT_rt
+  await filter.locator("#conn-filter-flag-mismatch").click();
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("EN_rt");
+  // in der Gruppe „oder“: gesperrt oder abhängig
+  await filter.locator("#conn-filter-flag-mismatch").click();
+  const depends = filter.locator("#conn-filter-verdict-depends");
+  const m = (await depends.count()) ? Number(await depends.locator(".facet-count").innerText()) : 0;
+  if (m) await depends.click();
+  await expect(rows).toHaveCount(n + m);
+  await card.locator("#conn-filter-reset").click();
+  await expect(rows).toHaveCount(6);
+  // Regel auf dem Weg: „greift nicht“ (der Contract der Doku entscheidet nicht)
+  await filter.locator("#conn-filter-state-other").click();
+  await expect(rows.filter({ hasText: "EN_rt" })).toHaveCount(1);
+  await card.locator("#conn-filter-reset").click();
+  await expect(card.locator("#conn-filter-count")).toHaveCount(0);
+});
+
 test("Applikation: Wege uneinheitlich, Bereiche zuklappen, Export mit Auswahl (0.73.0)", async ({ page }) => {
   await page.goto("/#apps");
   await rows(page).filter({ hasText: "Portal Süd" }).click();
