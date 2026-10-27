@@ -7,6 +7,30 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.93.0 – 2026-10-27
+
+NetBox-Sync: Verkabelung und Applikationen (ADR 0031; Freigabe des Anwenders 2026-10-27
+„Verkabelung, Applikationen … Go“ für Kabel/Ports und Export der Applikationen nach NetBox –
+weiterhin nur NetBox wird geschrieben, Vorschau → Übernehmen).
+
+- Zwei neue Abschnitte im NetBox-Sync, **standardmässig aus** (ohne Angabe gelten Netzinventar,
+  DDI-Spiegel, Virtualisierung).
+- **Verkabelung:** Switches & Router mit Ports (Typ aus Name/Speed/Medium, Beschreibung,
+  aktiviert, Port-Channel) wie im Netzinventar; ohne Standort bzw. gelesenes Modell nichts raten,
+  sondern Hinweis. Modus/VLANs nur mit eindeutig vorhandenen VLANs (VLAN-Gruppe des
+  Quellsystems, Standort, global), sonst weggelassen mit Hinweis je Gerät. Kabel (`dcim/cables`)
+  nur für beidseitig gemeldete Verbindungen zwischen Ports, die in NetBox sind bzw. im Sync
+  angelegt werden; einseitige/nicht gelesene Verbindungen als Hinweis, belegter Port =
+  Konflikt, umgesteckter Port mit „Löschen zulassen“ in einem Durchgang.
+- **Applikationen:** je Applikation ein Tag `automato-app-<Mandant>-<Kürzel bzw. Name>` an den VMs
+  und IP-Adressen ihrer Systeme; nur an Objekten mit Tag `automato`, fremde Tags bleiben, von
+  Hand gepflegte Objekte als Konflikt; nicht mehr passende Applikations-Tags werden entfernt.
+  Keine Custom Fields.
+- Objekte eines nicht gewählten Abschnitts sind nicht mehr „veraltet“ (auch nicht mit „Löschen
+  zulassen“).
+- Audit `netbox_sync.planned`/`applied` mit den gewählten Abschnitten; Sync-Benutzer braucht
+  zusätzlich `dcim.cable` (`sync-user.sh` erneut ausführen).
+
 ## 0.92.0 – 2026-10-27
 
 Verlauf des Routings (ADR 0030; Anwender: „Routing: Verlauf der Routen“, bisher Momentaufnahme).

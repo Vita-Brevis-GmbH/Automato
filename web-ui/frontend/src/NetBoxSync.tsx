@@ -1,7 +1,8 @@
 // NetBox-Sync (ADR 0010): einziger Schreibweg der Plattform. Vorschau berechnen (liest NetBox nur),
 // prüfen, per Klick übernehmen (admin). Automato ändert/löscht nur Objekte mit Tag „automato“;
-// von Hand gepflegte Objekte bleiben unverändert (Konflikt wird angezeigt).
-import { useCallback, useEffect, useState } from "react";
+// von Hand gepflegte Objekte bleiben unverändert (Konflikt wird angezeigt). Verkabelung und
+// Applikationen (ADR 0031) sind neue Abschnitte, standardmässig aus.
+import { ReactNode, useCallback, useEffect, useState } from "react";
 import {
   applySyncPlan,
   cancelSyncPlan,
@@ -13,6 +14,7 @@ import {
   Paged,
   SyncItem,
   SyncPlan,
+  SyncSection,
   SyncTarget,
 } from "./api";
 import type { View } from "./App";
@@ -38,9 +40,12 @@ const KIND_LABEL: Record<string, string> = {
   ip_range: "Range",
   device: L("Gerät", "Device"),
   interface: "Port",
+  cable: L("Kabel", "Cable"),
   virtual_machine: "VM",
   vm_interface: L("VM-Interface", "VM interface"),
   ip_address: L("IP-Adresse", "IP address"),
+  app_tag_vm: L("Applikations-Tag an VM", "Application tag on VM"),
+  app_tag_ip: L("Applikations-Tag an IP-Adresse", "Application tag on IP address"),
 };
 const ACTION: Record<string, [string, string]> = {
   create: ["ok", L("anlegen", "create")],
@@ -59,7 +64,9 @@ const STATUS: Record<string, [string, string]> = {
   failed: ["crit", L("fehlgeschlagen", "failed")],
   superseded: ["na", L("ersetzt", "superseded")],
 };
-const SECTIONS: { key: string; label: string; hint: string }[] = [
+const DEFAULT_SECTIONS: SyncSection[] = ["inventory", "mirror", "virtualization"];
+// `more`: Erklärung, sobald der Abschnitt gewählt ist (neue Abschnitte, standardmässig aus)
+const SECTIONS: { key: SyncSection; label: string; hint: string; more?: ReactNode }[] = [
   {
     key: "inventory",
     label: L("Netzinventar", "Network inventory"),
@@ -82,6 +89,62 @@ const SECTIONS: { key: string; label: string; hint: string }[] = [
     hint: L(
       "VMs aus dem vCenter mit Cluster (Datacenter als Gruppe), VM-Interfaces (MAC, Portgruppe, VLAN, EPG) und IPs – ohne Vorlagen",
       "VMs from the vCenter with cluster (datacenter as group), VM interfaces (MAC, port group, VLAN, EPG) and IPs – without templates",
+    ),
+  },
+  {
+    key: "cabling",
+    label: L("Verkabelung", "Cabling"),
+    hint: L(
+      "gelesene Switches und Router mit Ports und die Kabel zwischen zwei Ports, die beide Seiten per CDP/LLDP melden",
+      "collected switches and routers with ports and the cables between two ports that both sides report via CDP/LLDP",
+    ),
+    more: L(
+      <>
+        Geräte wie im Netzinventar (Standort des Quellsystems, Rolle, Hersteller); ohne Standort oder gelesenes Modell
+        wird nichts geraten – Hinweis in der Vorschau. Ports mit Name, Typ (soweit aus Name, Speed und Medium
+        ableitbar), Beschreibung, aktiviert und Port-Channel. <b>Modus und VLANs</b> nur, wenn alle VLANs des Ports in
+        NetBox eindeutig vorhanden sind (VLAN-Gruppe des Quellsystems, am Standort oder global) – sonst bleiben sie
+        weg und der Hinweis nennt die VLANs; Automato legt dafür keine VLANs an. <b>Kabel</b> nur zwischen zwei
+        gelesenen Ports, die es in NetBox gibt oder die der Sync anlegt (Ports der ACI-Leafs: Abschnitt
+        Netzinventar mitwählen); einseitige Verbindungen und Gegenstellen ohne CDP/LLDP nur als Hinweis. Ein
+        umgesteckter Port: mit „Löschen zulassen“ wird das alte Kabel zuerst entfernt.
+      </>,
+      <>
+        Devices as in the network inventory (site of the source system, role, manufacturer); without site or
+        collected model nothing is guessed – hint in the preview. Ports with name, type (as far as derivable from name,
+        speed and medium), description, enabled and port channel. <b>Mode and VLANs</b> only if all VLANs of the port
+        exist uniquely in NetBox (VLAN group of the source system, at the site or global) – otherwise they are left
+        out and the hint names the VLANs; Automato does not create VLANs for this. <b>Cables</b> only between two
+        collected ports that exist in NetBox or are created by the sync (ports of the ACI leafs: also choose the
+        network inventory section); links reported by one side and peers without CDP/LLDP only as a hint. A re-patched
+        port: with “Allow deletion” the old cable is removed first.
+      </>,
+    ),
+  },
+  {
+    key: "applications",
+    label: L("Applikationen", "Applications"),
+    hint: L(
+      "je Applikation ein Tag automato-app-… an den VMs und IP-Adressen ihrer Systeme",
+      "one tag automato-app-… per application on the VMs and IP addresses of its systems",
+    ),
+    more: L(
+      <>
+        Tag-Name = Applikation, Beschreibung = Kürzel, Zweck und Kritikalität (Farbe nach Kritikalität); keine Custom
+        Fields. Systeme wie in der Applikations-Doku (VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern). Tags
+        nur an Objekten mit Tag <code>automato</code>, die es in NetBox gibt oder die der Sync anlegt (Abschnitte
+        Virtualisierung bzw. DDI-Spiegel); an von Hand gepflegten Objekten ist eine Abweichung ein Konflikt. Gehört
+        ein Objekt nicht mehr dazu, wird nur der Applikations-Tag entfernt – andere Tags bleiben. Tags gelöschter
+        Applikationen sind veraltet und werden nur mit „Löschen zulassen“ entfernt.
+      </>,
+      <>
+        Tag name = application, description = code, purpose and criticality (color by criticality); no custom fields.
+        Systems as in the application documentation (VMs at the port groups of its EPGs or behind its servers). Tags
+        only on objects with the tag <code>automato</code> that exist in NetBox or are created by the sync (sections
+        virtualization or DDI mirror); on objects maintained by hand a difference is a conflict. If an object no
+        longer belongs to it, only the application tag is removed – other tags stay. Tags of deleted applications are
+        obsolete and are only removed with “Allow deletion”.
+      </>,
     ),
   },
 ];
@@ -110,7 +173,7 @@ export default function NetBoxSync({
 }) {
   const [targets, setTargets] = useState<SyncTarget[] | null>(null);
   const [targetId, setTargetId] = useState<number | null>(null);
-  const [sections, setSections] = useState<string[]>(["inventory", "mirror", "virtualization"]);
+  const [sections, setSections] = useState<SyncSection[]>(DEFAULT_SECTIONS);
   const [allowDelete, setAllowDelete] = useState(false);
   const [plans, setPlans] = useState<SyncPlan[]>([]);
   const [plan, setPlan] = useState<SyncPlan | null>(null);
@@ -214,14 +277,14 @@ export default function NetBoxSync({
       <PageHead title="NetBox-Sync">
         {L(
           <>
-            Inventar und DDI-Daten von „{tenantLabel}“ in NetBox ablegen. Einziger Schreibweg von Automato: erst Vorschau,
-            dann Übernahme per Klick. Geändert oder gelöscht werden nur Objekte mit Tag <code>automato</code>; von Hand
-            gepflegte Objekte bleiben, wie sie sind.
+            Inventar, DDI-Daten, VMs, Verkabelung und Applikationen von „{tenantLabel}“ in NetBox ablegen. Einziger
+            Schreibweg von Automato: erst Vorschau, dann Übernahme per Klick. Geändert oder gelöscht werden nur Objekte
+            mit Tag <code>automato</code>; von Hand gepflegte Objekte bleiben, wie sie sind.
           </>,
           <>
-            Store inventory and DDI data of “{tenantLabel}” in NetBox. The only write path of Automato: preview first,
-            then apply with a click. Only objects with the tag <code>automato</code> are changed or deleted; objects
-            maintained by hand stay as they are.
+            Store inventory, DDI data, VMs, cabling and applications of “{tenantLabel}” in NetBox. The only write path of
+            Automato: preview first, then apply with a click. Only objects with the tag <code>automato</code> are changed
+            or deleted; objects maintained by hand stay as they are.
           </>,
         )}
       </PageHead>
@@ -291,6 +354,7 @@ export default function NetBoxSync({
                   <label className="check">
                     <input
                       type="checkbox"
+                      id={`sync-section-${s.key}`}
                       checked={sections.includes(s.key)}
                       onChange={(e) =>
                         setSections((cur) => (e.target.checked ? [...cur, s.key] : cur.filter((x) => x !== s.key)))
@@ -298,8 +362,16 @@ export default function NetBoxSync({
                     />
                     <span>
                       <b>{s.label}</b> – {s.hint}
+                      {s.more && !sections.includes(s.key) && (
+                        <span className="faint">{L(" (standardmässig aus)", " (off by default)")}</span>
+                      )}
                     </span>
                   </label>
+                  {s.more && sections.includes(s.key) && (
+                    <div id={`sync-section-${s.key}-more`}>
+                      <Note>{s.more}</Note>
+                    </div>
+                  )}
                 </div>
               ))}
               <div className="field">

@@ -1047,6 +1047,8 @@ export interface IpamCompare extends Paged<IpamRow> {
 }
 
 // NetBox-Sync (ADR 0010): Vorschau -> Übernahme per Klick (admin)
+// Abschnitte; Verkabelung und Applikationen (ADR 0031) nur ausdrücklich gewählt
+export type SyncSection = "inventory" | "mirror" | "virtualization" | "cabling" | "applications";
 export interface SyncTarget {
   id: number;
   name: string;
@@ -1060,11 +1062,12 @@ export interface SyncChange {
   new: unknown;
 }
 export interface SyncItem {
+  // tag | … | interface | cable | … | ip_address | app_tag_vm | app_tag_ip (Tags am Ziel, ADR 0031)
   kind: string;
   key: string;
   label: string;
   action: string; // create | update | conflict | delete | obsolete
-  id?: number;
+  id?: number | null; // null: Ziel wird im selben Sync angelegt (Applikations-Tags)
   manual?: boolean;
   changes?: SyncChange[];
   fields?: Record<string, unknown>;
@@ -1076,7 +1079,7 @@ export interface SyncPlan {
   target: string;
   target_url: string;
   status: string; // planning | ready | applying | applied | failed | superseded
-  options: { sections?: string[]; allow_delete?: boolean };
+  options: { sections?: SyncSection[]; allow_delete?: boolean };
   summary: Record<string, Record<string, number>> | null;
   totals: Record<string, number>;
   warnings: string[];
@@ -2088,7 +2091,7 @@ export const fetchSyncPlan = (id: number) => getJSON<SyncPlan>(`/api/netbox-sync
 export const createSyncPlan = (body: {
   tenant_id: number;
   source_system_id: number;
-  sections: string[];
+  sections: SyncSection[];
   allow_delete: boolean;
 }) => sendJSON<SyncPlan>("/api/netbox-sync/plans", "POST", body);
 export const fetchSyncItems = (

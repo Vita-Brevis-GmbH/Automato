@@ -485,6 +485,49 @@ class VmCounter:
         return len(vms)
 
 
+def systems_by_application(
+    session: Session, tenant_id: int, apps: list[Application]
+) -> dict[int, tuple[set[str], set[str]]]:
+    """VM-Namen und IP-Adressen der Systeme je Applikation (NetBox-Sync, ADR 0031) - wie die
+    Doku (`build_doc`): VMs an den Portgruppen ihrer EPGs und hinter ihren Servern (gleiche
+    IP), dazu Server ohne VM; IPs = Adressen dieser VMs (NICs) und Server. Ohne Vorlagen."""
+    res = Resolver(session, tenant_id)
+    groups = virtual.PortgroupIndex.load(session, tenant_id)
+    names: dict[int, str] = {}
+    vm_ips: dict[int, set[str]] = defaultdict(set)
+    by_epg: dict[int, set[int]] = defaultdict(set)
+    for vid, name, sid, nic in session.execute(
+        select(Vm.id, Vm.name, Vm.source_system_id, VmNic)
+        .join(VmNic, VmNic.vm_id == Vm.id)
+        .where(Vm.tenant_id == tenant_id, Vm.template.is_(False))
+    ):
+        names[vid] = name
+        vm_ips[vid] |= set(nic.ips or [])
+        pg = groups.of(sid, nic)
+        if pg is not None and pg.epg_id is not None:
+            by_epg[pg.epg_id].add(vid)
+    by_ip: dict[str, set[int]] = defaultdict(set)
+    for ip, vid in session.execute(
+        select(VmIp.ip, Vm.id)
+        .join(Vm, Vm.id == VmIp.vm_id)
+        .where(VmIp.tenant_id == tenant_id, Vm.template.is_(False))
+    ):
+        by_ip[ip].add(vid)
+    out: dict[int, tuple[set[str], set[str]]] = {}
+    for app in apps:
+        hosts, epgs = _systems(session, app, res)
+        vms: set[int] = set()
+        for e in epgs:
+            vms |= by_epg.get(e.id, set())
+        ips = {ip for h in hosts if (ip := _ip(h.value))}
+        for ip in ips:
+            vms |= by_ip.get(ip, set())
+        for vid in vms:
+            ips |= vm_ips.get(vid, set())
+        out[app.id] = ({names[v] for v in vms if v in names}, ips)
+    return out
+
+
 def _systems(session: Session, app: Application, resolver: Resolver | None = None):
     res = resolver or Resolver(session, app.tenant_id)
     hosts: dict[int, NetworkObject] = {}

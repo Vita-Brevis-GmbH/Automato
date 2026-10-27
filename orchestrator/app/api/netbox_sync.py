@@ -1,7 +1,10 @@
 """NetBox-Sync: Vorschau und Uebernahme per Klick (ADR 0010) - nur `admin`.
 
 - `GET  /netbox-sync/targets`           NetBox-Quellsysteme des Mandanten (Schreib-Token?)
-- `POST /netbox-sync/plans`             Vorschau berechnen (liest NetBox nur), im Hintergrund
+- `POST /netbox-sync/plans`             Vorschau berechnen (liest NetBox nur), im Hintergrund;
+                                        `sections` aus `netbox_sync.SECTIONS`, ohne Angabe
+                                        `DEFAULT_SECTIONS` (Verkabelung und Applikationen nur
+                                        ausdruecklich, ADR 0031)
 - `GET  /netbox-sync/plans`             letzte Vorschauen des Mandanten
 - `GET  /netbox-sync/plans/{id}`        Status, Kennzahlen, Hinweise, Ergebnis
 - `GET  /netbox-sync/plans/{id}/items`  Aktionen (Filter Art/Aktion/Suche, blaetterbar)
@@ -70,7 +73,8 @@ class TargetOut(BaseModel):
 class PlanIn(BaseModel):
     tenant_id: int
     source_system_id: int
-    sections: list[str] = Field(default_factory=lambda: list(netbox_sync.SECTIONS))
+    # ohne Angabe die bisherigen Abschnitte; `cabling`/`applications` nur ausdruecklich (ADR 0031)
+    sections: list[str] = Field(default_factory=lambda: list(netbox_sync.DEFAULT_SECTIONS))
     allow_delete: bool = False
 
 
@@ -520,6 +524,7 @@ def compute_job(factory: sessionmaker, plan_id: int) -> None:
                 "plan_id": plan.id,
                 "tenant_id": plan.tenant_id,
                 "source_system_id": plan.source_system_id,
+                "sections": list(plan.options.get("sections") or []),
                 **{a: totals[a] for a in ("create", "update", "delete", "conflict")},
             },
         )
@@ -644,6 +649,7 @@ def _audit_applied(session: Session, plan: SyncPlan, done: dict | None, status: 
             "tenant_id": plan.tenant_id,
             "source_system_id": plan.source_system_id,
             "status": status,
+            "sections": list((plan.options or {}).get("sections") or []),
             **totals,
         },
     )

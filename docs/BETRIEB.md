@@ -1426,7 +1426,19 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   unverändert; fehlt nur die Zuordnung zur VM, steht das als Konflikt da. Ohne den Abschnitt
   *Virtualisierung* bleiben VMs in NetBox unangetastet. Für diesen Abschnitt braucht der
   Sync-Benutzer die Rechte auf `virtualization.*` – `source-of-truth/netbox/sync-user.sh`
-  nach dem Update erneut ausführen (idempotent). **Vorschau
+  nach dem Update erneut ausführen (idempotent). Seit 0.93.0 zwei weitere Abschnitte (ADR 0031,
+  nur ausdrücklich gewählt, Vorgabe aus): *Verkabelung* – gelesene Switches & Router mit Ports
+  und Kabeln zwischen zwei Ports, die beide Seiten per CDP/LLDP melden; Modus/VLANs nur, wenn die
+  VLANs in NetBox eindeutig vorhanden sind (sonst Hinweis, Automato legt dafür keine VLANs an);
+  Kabel zu ACI-Leafs brauchen deren Ports (Abschnitt Netzinventar mitwählen); ohne Standort bzw.
+  Modell kein Gerät (Hinweis); belegter Port = Konflikt, umgesteckter Port mit „Löschen
+  zulassen“ in einem Durchgang. *Applikationen* – je Applikation ein Tag `automato-app-…` an VMs
+  und IP-Adressen ihrer Systeme (nur Objekte mit Tag `automato`, die es in NetBox gibt bzw. die
+  der Sync anlegt – Virtualisierung/DDI-Spiegel mitwählen); fremde Tags bleiben, von Hand
+  gepflegte Objekte sind ein Konflikt, Tags gelöschter Applikationen nur mit „Löschen
+  zulassen“ entfernt. Objekte eines nicht gewählten Abschnitts bleiben unangetastet (auch nicht
+  „veraltet“). Für Kabel braucht der Sync-Benutzer `dcim.cable` – `sync-user.sh` erneut
+  ausführen. **Vorschau
   erstellen** liest NetBox nur und zeigt je Art: anlegen / ändern / unverändert / Konflikt
   (von Hand gepflegtes Objekt weicht ab – bleibt unverändert) / löschen / veraltet, mit
   Aktionsliste. **Übernehmen** (Bestätigung) berechnet neu, schreibt nur bei unveränderter
@@ -1622,7 +1634,7 @@ an (`deploy/agent-gateway`, Port 8443).
   festgehaltenen Host-Schlüssel, bevor er das Passwort sendet (ADR 0025, R22). Einziger Schreibweg ist der
   NetBox-Sync im Orchestrator mit dem Schreib-Token des NetBox-Quellsystems; er schreibt nur
   die synchronisierten Objekttypen (Tags, Tenants, Standort-Gruppen, Sites, Hersteller,
-  Geräterollen/-typen, Geräte, Interfaces, VRFs, VLAN-Gruppen, VLANs, Prefixe, Ranges,
+  Geräterollen/-typen, Geräte, Interfaces, Kabel (seit 0.93.0), VRFs, VLAN-Gruppen, VLANs, Prefixe, Ranges,
   IP-Adressen, Cluster-Typen/-Gruppen, Cluster, VMs, VM-Interfaces) und nur an diese NetBox.
   Das Schreib-Token in NetBox auf genau diese Objekttypen begrenzen (`sync-user.sh`).
 

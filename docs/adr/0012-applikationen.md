@@ -213,5 +213,6 @@ gehören zu mehreren Applikationen.
   erscheint als „nicht mehr gelesen“. Der Vorschlag bietet das umbenannte Objekt wieder an.
 - Regeln direkt zuordnen bzw. ausschliessen und Abhängigkeiten zwischen Applikationen seit
   0.60.0 (Ergänzung oben; Abhängigkeiten seit 0.73.0 vorerst nicht angezeigt, seit 0.88.0
-  wieder mit Infrastruktur getrennt). Noch offen: ein Export nach NetBox (Tag/Custom Field, nur mit
-  eigener Freigabe gemäss ADR 0010).
+  wieder mit Infrastruktur getrennt). Export nach NetBox seit 0.93.0 als Abschnitt
+  *Applikationen* des NetBox-Syncs (Freigabe 2026-10-27, **ADR 0031**): je Applikation ein Tag
+  `automato-app-…` an den VMs und IP-Adressen ihrer Systeme, ohne Custom Fields.
