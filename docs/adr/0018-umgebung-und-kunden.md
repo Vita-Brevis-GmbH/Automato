@@ -3,7 +3,8 @@
 ## Status
 
 **Entwurf** (2026-10-22) – zur Durchsicht durch den Anwender; Schritte 1–3 umgesetzt in 0.30.0–0.33.0, Schritt 4 in 0.53.0 und 0.58.0, der Kunden-Filter für alle Ansichten in 0.76.0
-(siehe „Umsetzung“). Präzisiert ADR 0004
+(siehe „Umsetzung“), feinere Rollen der Kunden-Benutzer als Ergänzung (2026-10-27, siehe
+„Ergänzung: Feinere Rollen der Kunden-Benutzer“). Präzisiert ADR 0004
 (Ergänzung E1, Ebene über dem Mandanten) und ADR 0007 (Rechte); betrifft R13 und R14.
 
 Grundsatzentscheide des Anwenders (2026-10-22):
@@ -234,4 +235,88 @@ Grundsatzentscheide des Anwenders (2026-10-22):
        Befunde in der Applikations-Doku des Kunden ohne Angaben zu fremden Regeln (wie in der
        Findings-Liste). Grenze: Namen der Infrastruktur in Namen von Regeln, Objekten und VMs
        bzw. in Kommentaren bleiben.
-     - Noch offen: feinere Rollen.
+     - Noch offen: feinere Rollen (siehe Ergänzung unten).
+
+## Ergänzung: Feinere Rollen der Kunden-Benutzer (2026-10-27)
+
+### Kontext
+
+Bis hier kennen Kunden-Benutzer zwei Rollen: `viewer` liest die Doku des eigenen Kunden,
+`operator` triagiert zusätzlich seine Findings (Rollennamen der Betreuer, im Code über
+`require_role` geprüft). Kunden sollen ihre Applikationen selbst pflegen und die Benutzer ihres
+Kunden selbst zuordnen können – ohne je Rechte auf die Umgebung zu bekommen. Die Trennung
+Anmeldung (Keycloak) / Zuordnung (Automato) aus Schritt 4 ist die Grundlage.
+
+### Entscheidung
+
+1. **Capabilities statt Rollennamen.** Eine Kunden-Rolle löst sich über eine zentrale Tabelle
+   (`auth/capabilities.py`, `ROLE_CAPABILITIES`; Muster wie Magister, eigener Code) in Rechte auf;
+   jede Rolle schliesst die vorherige ein:
+
+   | Kunden-Rolle | Capabilities | darf zusätzlich |
+   |---|---|---|
+   | `viewer` | `doc.read` | die Doku des eigenen Kunden lesen (wie bisher) |
+   | `triage` | + `findings.triage` | eigene Findings quittieren bzw. kommentieren |
+   | `editor` | + `applications.edit` | eigene Applikationen pflegen: Stammdaten, Regeln zuordnen bzw. ausschliessen (und rückgängig), Regeln je Kategorie ausblenden mit Begründung – nur Applikationen ganz beim Kunden |
+   | `customer_admin` | + `customer_users.manage` | Kunden-Benutzer des eigenen Kunden zuordnen, ändern, entfernen |
+
+2. **Abbildung der bestehenden Werte, ohne Rechte zu erweitern:** `viewer` bleibt `viewer`;
+   `operator` (gespeichert seit 0.53.0) gilt als `triage` – gleiches Recht, der Wert bleibt
+   gültig und wird nicht umgeschrieben. Im Token: Realm-Rolle `customer` bzw. `viewer` = `viewer`,
+   `operator` = `triage` (wie bisher). Der Kunden-Admin heisst bewusst **`customer_admin`**, nicht
+   `admin`: `admin` bleibt dem globalen Admin vorbehalten (Zuordnung: 422; Claim: unbekannt).
+3. **Je Kunde.** Die Rolle gilt je Kunde (`Principal.customer_roles`); wer für Kunde A Editor und
+   für Kunde B Viewer ist, pflegt nur Applikationen von A und triagiert nur bei Kunden mit
+   `triage`. Die Prüfung geht immer gegen den Kunden des Objekts.
+4. **Fail-closed.** Unbekannte Rolle = `viewer`; ein Kunde ohne Rolle (z. B. nur Realm-Rolle
+   `admin` mit `customer_ids`) gibt keine Rechte. Kunden-Benutzer sind nie globaler Admin bzw.
+   Operator: `require_role` prüft für sie nicht die Rolle, sondern die Capability aus der
+   Freigabeliste – und ein schreibender Endpunkt (Rolle über viewer) öffnet sich nie mit
+   `doc.read`, auch nicht durch einen falschen Eintrag in der Liste.
+5. **Durchsetzung serverseitig.** Die Freigabeliste `auth/customer_routes.py` nennt je Methode
+   und Pfad die Capability (`CUSTOMER_ROUTE_CAPABILITIES`); der Kunden-Benutzer braucht sie für
+   mindestens einen Kunden, der Endpunkt prüft das Objekt:
+   - Triage (`PATCH /findings/{id}`): Finding im Ausschnitt eines Kunden mit `triage` – ausserhalb
+     des Ausschnitts 404, im Ausschnitt eines Kunden ohne `triage` 403.
+   - Applikationen (`PATCH /applications/{id}`, `POST …/rules`, `DELETE …/members/{id}` nur für
+     Regel-Mitglieder, `POST …/hidden`, `DELETE …/hidden/{id}`): nicht im Ausschnitt 404, nicht
+     **ganz beim Kunden** 403. Ganz beim Kunden (`customer_scope.Ownership`) heisst: jede EPG
+     ihrer APs bzw. EPGs und jedes Server-Objekt gehört den Kunden mit `applications.edit` –
+     nicht nur dem geteilten Teil –, ebenso jede direkt zugeordnete bzw. ausgeschlossene Regel;
+     mindestens ein gelesenes Mitglied trägt sie. Regeln zuordnen, ausschliessen und ausblenden nur
+     mit Regeln des eigenen Ausschnitts (sonst 404). Anlegen, Löschen, CSV-Import, Vorschläge und
+     die Mitglieder AP/EPG/Server bleiben Betreuern (die Kandidaten zeigen die ganze Umgebung).
+   - Kunden-Benutzer (`/customer-users`, Kunden-Admin): nur die Zuordnungen der eigenen Kunden
+     (fremde 404), höchstens die eigene Rolle (403), nie die eigene Zuordnung (409), nie globale
+     Rollen (422). Wer eine Betreuer-Zuordnung angelegt hat, sieht der Kunden-Admin nicht.
+6. **Zuordnungen eines Kunden-Admins wirken nie auf Betreuer** (`customer_user.origin` =
+   `customer`, Migration 0059): sie gelten nur für Kunden-Benutzer und Benutzer ohne
+   Betreuer-Rolle. Sonst könnte ein Kunden-Admin einen Betreuer durch eine Zuordnung zum
+   Kunden-Benutzer machen und aussperren. Zuordnungen der Betreuer wirken wie bisher.
+7. **Keycloak.** Die Rolle kommt aus der Zuordnung in Automato (`customer_user.role`); optional
+   der Claim `customer_role` (Mapper `customer_role` in `realm-automato.json`, Einstellung
+   `AUTOMATO_OIDC_CUSTOMER_ROLE_CLAIM`) für alle Kunden aus `customer_ids`, bei SAML-Brokern fest
+   je IdP (`saml-mappers.example.json`), nie aus der Assertion. Claim und Zuordnung zusammen: je
+   Kunde die **höhere** der beiden Rollen. Die Attribute dürfen Benutzer nicht selbst ändern
+   (Keycloak *User profile*).
+8. **Audit** wie bisher; Handlungen von Kunden-Benutzern (Triage, Pflege der Applikation,
+   Zuordnungen) tragen ihre Kunden-Rollen je Kunde (`customer_roles`), Zuordnungen dazu die
+   Herkunft (`origin`) und beim Ändern die vorige Rolle (`previous_role`).
+9. **Oberfläche.** `GET /auth/me` liefert `capabilities`, `customer_role` (höchste),
+   `customer_roles` (je Kunde) und die eigenen Kennungen; Applikationen tragen `editable` (für
+   Kunden-Benutzer). Die Oberfläche blendet danach ein und aus: Bearbeiten, Regeln
+   zuordnen/ausschliessen und Ausblenden je Kategorie bei pflegbaren Applikationen, Triage,
+   Seite „Kunden-Benutzer“ für Kunden-Admins (Administration, nur die eigenen Kunden). Die
+   Rollenwahl unter Administration → Kunden → Kunden-Benutzer erklärt jede Rolle.
+
+### Konsequenzen und Grenzen
+
+- Kein bestehendes Recht wird erweitert; bestehende Zuordnungen und Tokens wirken unverändert.
+- Applikationen mit geteilten Mitgliedern (z. B. einer EPG in `common`) bzw. mit Regeln anderer
+  Kunden pflegen weiter die Betreuer.
+- Umbenennen einer Applikation auf einen vergebenen Namen ergibt 409 – der Kunden-Editor erfährt
+  so, dass der Name im Mandanten vergeben ist (kein Inhalt).
+- Die Kunden-Rolle aus dem Claim gilt für alle Kunden des Claims; feiner je Kunde über die
+  Zuordnung in Automato.
+- dev-Modus: `X-Dev-Customer-Role` bzw. `localStorage automato_dev_customer` =
+  `<Mandant>:<Kunden>:<Rolle>`; mit `X-Dev-User` die Rollen aus der Zuordnung.

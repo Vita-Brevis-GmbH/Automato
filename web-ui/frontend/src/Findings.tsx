@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { fetchFindings, fetchFindingSummary, fetchSystems, Finding, FindingSummary, patchFinding, System } from "./api";
 import type { View, ViewParams } from "./App";
-import type { Me } from "./auth";
+import { customerCan, type Me } from "./auth";
 import { FINDING_GROUPS, FINDING_HINT, FINDING_LABEL, findingLabel } from "./refs";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
 import { L } from "./i18n";
@@ -459,7 +459,8 @@ export default function Findings({
                         </td>
                         <td className="mono">{fmtTime(f.last_seen)}</td>
                         <td onClick={(e) => e.stopPropagation()}>
-                          {me.isOperator ? (
+                          {/* Triage: Operator bzw. Kunden-Benutzer mit der Kunden-Rolle triage (feinere Rollen) */}
+                          {(me.isCustomer ? customerCan(me, "findings.triage") : me.isOperator) ? (
                             <select className="sel" value={f.status} onChange={(e) => triage(f.id, e.target.value)}>
                               {Object.entries(STATUS_LABEL).map(([k, v]) => (
                                 <option key={k} value={k}>

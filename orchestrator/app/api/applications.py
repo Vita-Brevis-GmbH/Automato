@@ -2,6 +2,12 @@
 
 Lesen = `viewer`, Schreiben = `operator`, alles mandantsgescoped und auditiert. Die
 publizierten Dienste (VIPs) liegen unter /published-services.
+
+Kunden-Benutzer mit der Kunden-Rolle `editor` (feinere Rollen, ADR 0018 Ergaenzung) pflegen
+Applikationen, die ganz zu ihren Kunden gehoeren (`customer_scope.Ownership`): Stammdaten,
+Regeln zuordnen bzw. ausschliessen (und rueckgaengig) und Regeln je Kategorie ausblenden - nur
+mit Regeln ihres Ausschnitts. Anlegen, Loeschen, Import, Vorschlaege und die Mitglieder AP, EPG
+und Server bleiben den Betreuern.
 """
 
 import re
@@ -15,9 +21,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit
 from app.api.appdoc import DocTableOut, SiteRef
-from app.api.customer_filter import customer_view, own_view
+from app.api.customer_filter import actor, customer_view, own_view, ownership
 from app.api.customer_filter import ids as view_ids
 from app.audit import reads
+from app.auth import capabilities as caps
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session, get_session_factory
@@ -93,6 +100,9 @@ class ApplicationOut(BaseModel):
     member_count: int
     system_count: int
     vm_count: int = 0  # VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern (0.75.0)
+    # Feinere Rollen (ADR 0018): darf der Kunden-Benutzer sie pflegen (Kunden-Rolle editor und
+    # ganz in seinem Ausschnitt)? Betreuer: None - fuer sie gilt die Rolle
+    editable: bool | None = None
 
 
 class ApplicationDetailOut(ApplicationOut):
@@ -287,7 +297,8 @@ def _out(session: Session, app: Application, resolver: store.Resolver,
     )
 
 
-def _detail(session: Session, app: Application) -> ApplicationDetailOut:
+def _detail(session: Session, app: Application, editable: bool | None = None
+            ) -> ApplicationDetailOut:  # fmt: skip
     res = store.Resolver(session, app.tenant_id)
     members = [
         MemberOut(
@@ -301,7 +312,8 @@ def _detail(session: Session, app: Application) -> ApplicationDetailOut:
         )
         for m, r, systems in store.resolved_members(session, app, res)
     ]
-    return ApplicationDetailOut(**_out(session, app, res).model_dump(), members=members)
+    out = _out(session, app, res).model_dump() | {"editable": editable}
+    return ApplicationDetailOut(**out, members=members)
 
 
 def _require_tenant(principal: Principal, tenant_id: int | None) -> int:
@@ -348,6 +360,7 @@ def list_applications(
     reads.maybe_audit_read(session, principal, tenant_id, "applications")
     view = customer_view(session, principal, tenant_id, customer_id)
     mine = view.applications(session) if view else None
+    owner = _owner(session, principal, tenant_id)
     resolvers: dict[int, store.Resolver] = {}
     counters: dict[int, store.VmCounter] = {}
     out = []
@@ -356,7 +369,10 @@ def list_applications(
             continue
         res = resolvers.setdefault(app.tenant_id, store.Resolver(session, app.tenant_id))
         vms = counters.setdefault(app.tenant_id, store.VmCounter(session, app.tenant_id))
-        out.append(_out(session, app, res, vms))
+        row = _out(session, app, res, vms)
+        if principal.is_customer:  # feinere Rollen: darf er sie pflegen?
+            row.editable = owner is not None and owner.application(app, res)
+        out.append(row)
     return out
 
 
@@ -596,6 +612,45 @@ def _visible(session: Session, principal: Principal, app: Application):
     return view
 
 
+def _owner(session: Session, principal: Principal, tenant_id: int | None):
+    """Kunden-Benutzer (feinere Rollen): was ganz seinen Kunden mit `applications.edit` gehoert
+    (None = keiner); Betreuer: None."""
+    if not principal.is_customer or tenant_id is None:
+        return None
+    return ownership(session, principal, tenant_id, caps.APPS_EDIT)
+
+
+def _editable(session: Session, principal: Principal, app: Application) -> bool | None:
+    if not principal.is_customer:
+        return None
+    owner = _owner(session, principal, app.tenant_id)
+    return owner is not None and owner.application(app, store.Resolver(session, app.tenant_id))
+
+
+def _maintain(session: Session, principal: Principal, app: Application):
+    """Pflege durch einen Kunden-Benutzer: Applikation in seinem Ausschnitt (sonst 404) und ganz
+    bei seinen Kunden mit `applications.edit` (sonst 403). Betreuer: None (die Rolle genuegt)."""
+    if not principal.is_customer:
+        return None
+    _visible(session, principal, app)
+    owner = _owner(session, principal, app.tenant_id)
+    if owner is None or not owner.application(app, store.Resolver(session, app.tenant_id)):
+        raise HTTPException(
+            status_code=403,
+            detail=L(
+                "Applikation liegt nicht ganz beim Kunden – Pflege durch den Betreuer",
+                "application not entirely within the customer – maintained by staff",
+            ),
+        )
+    return owner
+
+
+def _own_rule(owner, rule_id: int | None) -> None:
+    """Kunden-Benutzer: nur Regeln seines Ausschnitts (sonst nicht auffindbar)."""
+    if owner is not None and rule_id not in owner.rules:
+        raise HTTPException(status_code=404, detail="rule not found")
+
+
 @router.get("/{application_id}", response_model=ApplicationDetailOut)
 def get_application(
     application_id: int,
@@ -605,7 +660,7 @@ def get_application(
     app = _load(session, principal, application_id)
     _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    return _detail(session, app)
+    return _detail(session, app, _editable(session, principal, app))
 
 
 @router.patch("/{application_id}", response_model=ApplicationDetailOut)
@@ -618,6 +673,7 @@ def update_application(
     factory: sessionmaker = Depends(get_session_factory),
 ):
     app = _load(session, principal, application_id)
+    owner = _maintain(session, principal, app)  # Kunden-Benutzer: nur eigene (editor)
     fields = body.model_fields_set
     if "name" in fields and body.name is not None:
         name = body.name.strip()
@@ -655,10 +711,11 @@ def update_application(
             "purpose": app.purpose,
             "site_id": app.site_id,
             "fields": sorted(fields),
+            **actor(principal),
         },
     )
     _refresh(background, factory, app.tenant_id, app.id)
-    return _detail(session, app)
+    return _detail(session, app, True if owner is not None else None)
 
 
 @router.delete("/{application_id}", status_code=204)
@@ -733,9 +790,21 @@ def remove_member(
     factory: sessionmaker = Depends(get_session_factory),
 ):
     app = _load(session, principal, application_id)
+    owner = _maintain(session, principal, app)  # Kunden-Benutzer: nur eigene (editor)
     member = next((m for m in app.members if m.id == member_id), None)
     if member is None:
         raise HTTPException(status_code=404, detail="member not found")
+    if owner is not None:  # Kunden-Benutzer: nur Regeln (zuordnen/ausschliessen rueckgaengig)
+        if member.kind not in store.RULE_KINDS:
+            raise HTTPException(
+                status_code=403,
+                detail=L(
+                    "AP, EPG und Server pflegt der Betreuer",
+                    "AP, EPG and servers are maintained by staff",
+                ),
+            )
+        rule = store.Resolver(session, app.tenant_id).rule(member.ref)
+        _own_rule(owner, rule.id if rule else None)
     app.members.remove(member)
     store.touch(app)
     session.flush()
@@ -749,10 +818,11 @@ def remove_member(
             "tenant_id": app.tenant_id,
             "kind": member.kind,
             "ref": member.ref,
+            **actor(principal),
         },
     )
     _refresh(background, factory, app.tenant_id, app.id)
-    return _detail(session, app)
+    return _detail(session, app, True if owner is not None else None)
 
 
 @router.get("/{application_id}/connections")
@@ -877,6 +947,7 @@ def application_doc(
     app = _load(session, principal, application_id)
     view = _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
+    editable = _editable(session, principal, app)
     doc = store.build_doc(session, app, view_ids(session, view, "rule"))
     visible = None
     if view is not None:  # Kunden-Benutzer: nur Applikationen in ihrem Ausschnitt
@@ -885,9 +956,9 @@ def application_doc(
         visible = {a.id for a in session.scalars(stmt) if mine(a)}
     if dependencies:
         doc["dependencies"] = store.dependencies(session, app, doc, visible)
-    return ApplicationDocOut(
-        application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
-    )
+    out = _out(session, app, store.Resolver(session, app.tenant_id))
+    out.editable = editable
+    return ApplicationDocOut(application=out, **doc)
 
 
 @router.post("/{application_id}/hidden", status_code=201)
@@ -900,14 +971,19 @@ def hide_rules(
     """Regel in einer Kategorie (bzw. in allen) der Doku ausblenden - mit Begruendung, im Audit
     (0.69.0). Die Regel bleibt sonst in der Doku; der Verweis haelt ueber neue Laeufe."""
     app = _load(session, principal, application_id)
+    owner = _maintain(session, principal, app)  # Kunden-Benutzer: nur eigene (editor)
     reason = body.reason.strip()
     if len(reason) < 5:
         raise HTTPException(status_code=422, detail=L("Begründung zu kurz", "reason too short"))
-    out = []
+    rules = []
     for rule_id in dict.fromkeys(body.rule_ids):
         rule = session.get(Rule, rule_id)
         if rule is None or rule.tenant_id != app.tenant_id:
             raise HTTPException(status_code=404, detail="rule not found")
+        _own_rule(owner, rule.id)
+        rules.append(rule)
+    out = []
+    for rule in rules:
         hide = store.hide_rule(session, app, rule, body.category, reason, _actor(principal))
         audit.record(
             session,
@@ -920,6 +996,7 @@ def hide_rules(
                 "rule_ref": hide.rule_ref,
                 "category": hide.category,
                 "reason": reason[:500],
+                **actor(principal),
             },  # fmt: skip
         )
         out.append(store.hide_out(hide))
@@ -935,9 +1012,14 @@ def show_rule(
 ) -> Response:
     """Ausgeblendete Regel wieder einblenden (0.69.0), im Audit mit der alten Begruendung."""
     app = _load(session, principal, application_id)
+    owner = _maintain(session, principal, app)  # Kunden-Benutzer: nur eigene (editor)
     hide = next((h for h in app.hides if h.id == hide_id), None)
     if hide is None:
         raise HTTPException(status_code=404, detail="hide not found")
+    if owner is not None:  # Kunden-Benutzer: nur Regeln seines Ausschnitts
+        rule = store.Resolver(session, app.tenant_id).rule(hide.rule_ref)
+        if rule is None or rule.id not in owner.rules:
+            raise HTTPException(status_code=404, detail="hide not found")
     app.hides.remove(hide)
     session.flush()
     audit.record(
@@ -951,6 +1033,7 @@ def show_rule(
             "rule_ref": hide.rule_ref,
             "category": hide.category,
             "reason": hide.reason[:500],
+            **actor(principal),
         },  # fmt: skip
     )
     return Response(status_code=204)
@@ -968,9 +1051,11 @@ def assign_rule(
     """Regel direkt zuordnen bzw. ausschliessen (0.60.0): Mitglied `rule` bzw. `norule` mit
     stabilem Verweis (Quellsystem, VDOM, Policy-ID bzw. DN) - die Gegenrichtung faellt weg."""
     app = _load(session, principal, application_id)
+    owner = _maintain(session, principal, app)  # Kunden-Benutzer: nur eigene (editor)
     rule = session.get(Rule, body.rule_id)
     if rule is None or rule.tenant_id != app.tenant_id:
         raise HTTPException(status_code=404, detail="rule not found")
+    _own_rule(owner, rule.id)
     ref = store.rule_ref(rule)
     kind = "norule" if body.exclude else "rule"
     for m in [m for m in app.members if m.ref == ref and m.kind in store.RULE_KINDS]:
@@ -982,7 +1067,13 @@ def assign_rule(
         actor=_actor(principal),
         action="application.member_added",
         subject=str(app.id),
-        detail={"application_id": app.id, "tenant_id": app.tenant_id, "kind": kind, "ref": ref},
+        detail={
+            "application_id": app.id,
+            "tenant_id": app.tenant_id,
+            "kind": kind,
+            "ref": ref,
+            **actor(principal),
+        },  # fmt: skip
     )
     _refresh(background, factory, app.tenant_id, app.id)
-    return _detail(session, app)
+    return _detail(session, app, True if owner is not None else None)

@@ -2,8 +2,9 @@
 
 Macht Datenqualitaets-/Reconciliation-Befunde sichtbar und **triagierbar**: Status
 (open→acknowledged/resolved/ignored) + Notiz. Lesen = `viewer`, Triage = `operator`;
-beides mandantsgescoped, Triage auditiert. Die schreibende Bereinigung am Zielsystem
-(DDI/Regel) folgt mit dem Schreibpfad (ADR 0002).
+beides mandantsgescoped, Triage auditiert. Kunden-Benutzer triagieren mit der Kunden-Rolle
+`triage` (bzw. hoeher) nur die Findings dieser Kunden (feinere Rollen, ADR 0018). Die
+schreibende Bereinigung am Zielsystem (DDI/Regel) folgt mit dem Schreibpfad (ADR 0002).
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -11,8 +12,16 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.api.customer_filter import customer_view, finding_detail, own_view, visible
+from app.api.customer_filter import (
+    actor,
+    capability_view,
+    customer_view,
+    finding_detail,
+    own_view,
+    visible,
+)
 from app.audit import reads
+from app.auth import capabilities as caps
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
@@ -110,6 +119,10 @@ def triage_finding(
         raise HTTPException(status_code=404, detail="finding not found")
     tenant_scope(principal, f.tenant_id)  # Mandanten-Zugriff erzwingen (403 bei fremd)
     visible(session, own_view(session, principal, f.tenant_id), "finding", f.id)  # ADR 0018
+    if principal.is_customer:  # feinere Rollen: Triage nur fuer Kunden mit dieser Rolle
+        view = capability_view(session, principal, f.tenant_id, caps.TRIAGE)
+        if view is None or not view.contains(session, "finding", f.id):
+            raise HTTPException(status_code=403, detail="insufficient role")
 
     data = body.model_dump(exclude_unset=True)
     if "status" in data and data["status"] is not None:
@@ -124,6 +137,6 @@ def triage_finding(
         actor=f"user:{principal.subject}",
         action="finding.triaged",
         subject=str(f.id),
-        detail={"finding_id": f.id, "status": f.status.value},
+        detail={"finding_id": f.id, "status": f.status.value, **actor(principal)},
     )
     return _finding_out(f, principal)

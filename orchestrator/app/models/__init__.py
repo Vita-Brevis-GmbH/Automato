@@ -18,6 +18,7 @@ from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.collector_run import CollectorRun, RunStatus
 from app.models.customer import (
+    CUSTOMER_USER_ORIGINS,
     CUSTOMER_USER_ROLES,
     Customer,
     CustomerMember,
@@ -198,5 +199,6 @@ __all__ = [
     "CustomerMember",
     "CustomerSelector",
     "CustomerUser",
+    "CUSTOMER_USER_ORIGINS",
     "CUSTOMER_USER_ROLES",
 ]

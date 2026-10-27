@@ -704,6 +704,8 @@ export interface Application {
   member_count: number;
   system_count: number;
   vm_count: number; // 0.75.0: VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern
+  // feinere Rollen: Kunden-Benutzer darf sie pflegen (editor, ganz im Ausschnitt); Betreuer: null
+  editable?: boolean | null;
 }
 
 export interface AppMember {
@@ -3203,18 +3205,29 @@ export interface ServerMe {
   is_admin: boolean;
   is_customer: boolean;
   customer_source: "claim" | "automato" | "claim+automato" | null;
-  customers: { id: number; name: string }[];
+  customers: { id: number; name: string; role?: string | null }[];
+  // feinere Rollen (ADR 0018 Ergänzung): höchste Kunden-Rolle, je Kunde, Capabilities
+  customer_role?: CustomerRole | null;
+  customer_roles?: Record<string, CustomerRole>;
+  capabilities?: Capability[];
+  logins?: string[]; // eigene Kennungen (sub, Benutzername, E-Mail – klein)
 }
 export const fetchServerMe = () => getJSON<ServerMe>("/api/auth/me");
 
-// Zuordnung Benutzer → Kunde (0.53.0, nur Admin)
+// Feinere Rollen der Kunden-Benutzer (ADR 0018 Ergänzung): Rolle je Kunde → Capabilities;
+// „operator“ = Altbestand aus 0.53.0 (gilt als triage)
+export type CustomerRole = "viewer" | "triage" | "editor" | "customer_admin";
+export type Capability = "doc.read" | "findings.triage" | "applications.edit" | "customer_users.manage";
+
+// Zuordnung Benutzer → Kunde (0.53.0, Admin; seit den feineren Rollen auch der Kunden-Admin)
 export interface CustomerUserRow {
   id: number;
   tenant_id: number;
   customer_id: number;
   customer: string | null;
   login: string;
-  role: "viewer" | "operator";
+  role: CustomerRole | "operator";
+  origin?: "staff" | "customer"; // angelegt vom Betreuer bzw. vom Kunden-Admin
   note: string | null;
   created_by: string | null;
   created_at: string;

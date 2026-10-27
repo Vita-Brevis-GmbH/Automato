@@ -33,7 +33,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     ),
     "dictionary_entry.upserted": frozenset({"profile_id", "kind", "key"}),
     "dictionary_entry.deleted": frozenset({"entry_id"}),
-    "finding.triaged": frozenset({"finding_id", "status"}),
+    "finding.triaged": frozenset({"finding_id", "status", "customer_roles"}),
     "tenant.created": frozenset({"tenant_id", "name", "code"}),
     "tenant.updated": frozenset({"tenant_id", "code", "audit_reads", "naming_profile_id"}),
     "tenant.deleted": frozenset(
@@ -110,7 +110,8 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "site.updated": frozenset({"tenant_id", "site_id", "fields"}),
     "site.deleted": frozenset({"tenant_id", "site_id"}),
     "system.site_assigned": frozenset({"tenant_id", "site_id"}),
-    # Applikationen (ADR 0012): Stammdaten-Felder, Mitglieder nur als Art/Verweis
+    # Applikationen (ADR 0012): Stammdaten-Felder, Mitglieder nur als Art/Verweis; handelt ein
+    # Kunden-Benutzer (feinere Rollen), seine Kunden-Rollen je Kunde (`customer_roles`)
     "application.created": frozenset(
         {"application_id", "tenant_id", "name", "code", "members", "suggestion"}
     ),
@@ -124,6 +125,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "purpose",
             "site_id",
             "fields",
+            "customer_roles",
         }
     ),
     "application.deleted": frozenset({"application_id", "tenant_id", "name", "members"}),
@@ -132,24 +134,33 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         {"tenant_id", "created", "updated", "errors", "application_ids"}
     ),
     "application.member_added": frozenset(
-        {"application_id", "tenant_id", "kind", "ref", "count", "suggestion"}
+        {"application_id", "tenant_id", "kind", "ref", "count", "suggestion", "customer_roles"}
     ),
-    "application.member_removed": frozenset({"application_id", "tenant_id", "kind", "ref"}),
+    "application.member_removed": frozenset(
+        {"application_id", "tenant_id", "kind", "ref", "customer_roles"}
+    ),
     # 0.69.0: Regel in den Kategorien der Doku aus-/eingeblendet, mit Begruendung
     "application.rule_hidden": frozenset(
-        {"application_id", "tenant_id", "rule_ref", "category", "reason"}
+        {"application_id", "tenant_id", "rule_ref", "category", "reason", "customer_roles"}
     ),
     "application.rule_shown": frozenset(
-        {"application_id", "tenant_id", "rule_ref", "category", "reason"}
+        {"application_id", "tenant_id", "rule_ref", "category", "reason", "customer_roles"}
     ),
     # Kunden als Ausschnitt der Umgebung (ADR 0018): Name und Anzahl der Selektoren
     "customer.created": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.updated": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.deleted": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
-    # Zuordnung Benutzer -> Kunde in Automato (0.53.0, ADR 0018 Schritt 4)
-    "customer_user.assigned": frozenset({"tenant_id", "customer_id", "login", "role"}),
-    "customer_user.changed": frozenset({"tenant_id", "customer_id", "login", "role"}),
-    "customer_user.removed": frozenset({"tenant_id", "customer_id", "login", "role"}),
+    # Zuordnung Benutzer -> Kunde in Automato (0.53.0, ADR 0018 Schritt 4); seit den feineren
+    # Rollen mit Herkunft (Betreuer bzw. Kunden-Admin) und den Kunden-Rollen des Handelnden
+    "customer_user.assigned": frozenset(
+        {"tenant_id", "customer_id", "login", "role", "origin", "customer_roles"}
+    ),
+    "customer_user.changed": frozenset(
+        {"tenant_id", "customer_id", "login", "role", "previous_role", "origin", "customer_roles"}
+    ),
+    "customer_user.removed": frozenset(
+        {"tenant_id", "customer_id", "login", "role", "origin", "customer_roles"}
+    ),
     # Logische Zonen und Absicht je Zonenpaar (0.51.0, ADR 0024)
     "zone.created": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),
     "zone.updated": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),

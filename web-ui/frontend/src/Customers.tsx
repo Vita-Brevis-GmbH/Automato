@@ -29,6 +29,7 @@ import {
 } from "./api";
 import { Dash, Empty, ErrorBox, fmtTime, Loading, Modal, Note, PageHead } from "./ui";
 import { L } from "./i18n";
+import { CUSTOMER_ROLES, customerRoleHint, customerRoleLabel, customerRoleRank, type Me } from "./auth";
 
 export const SELECTOR_LABEL: Record<SelectorKind, string> = {
   aci_tenant: L("ACI-Tenant", "ACI tenant"),
@@ -677,13 +678,80 @@ function CustomerEditor({
   );
 }
 
-// Zuordnung Benutzer → Kunde in Automato (0.53.0, nur Admin): Keycloak meldet, wer jemand ist;
-// hier steht, welchen Kunden er sieht. Eine Zuordnung schränkt immer ein (nie Admin).
-function CustomerUsers({ tenantId, customers }: { tenantId: number; customers: Customer[] }) {
+// Kunden-Admin (feinere Rollen, ADR 0018 Ergänzung): schlanke Seite mit den Kunden-Benutzern der
+// eigenen Kunden – der Orchestrator lässt nur diese Kunden, höchstens die eigene Rolle und nie das
+// eigene Konto zu
+export function OwnCustomerUsers({ me, tenantId }: { me: Me; tenantId: number | null }) {
+  const own = me.customers.filter((c) => me.customerRoles[String(c.id)] === "customer_admin");
+  return (
+    <>
+      <PageHead title={L("Kunden-Benutzer", "Customer users")}>
+        {L(
+          <>
+            Wer die Doku Ihres Kunden sieht und was er darf. Die Anmeldung läuft über Keycloak; hier ordnen Sie
+            Benutzername bzw. E-Mail Ihrem Kunden zu und wählen die Rolle. Ihr eigenes Konto ändern Sie hier nicht.
+          </>,
+          <>
+            Who sees the documentation of your customer and what they may do. Sign-in runs via Keycloak; here you
+            assign username or email to your customer and choose the role. You do not change your own account here.
+          </>,
+        )}
+      </PageHead>
+      {tenantId == null ? (
+        <Note>{L("Bitte oben eine Umgebung (Mandant) wählen.", "Please select an environment (tenant) above.")}</Note>
+      ) : (
+        <CustomerUsers tenantId={tenantId} customers={own} me={me} />
+      )}
+    </>
+  );
+}
+
+// Rollen mit Erklärung (feinere Rollen) – für die Auswahl und die Legende
+function RoleLegend() {
+  return (
+    <dl className="kv tight" id="customer-role-legend" style={{ margin: "8px 0 12px" }}>
+      {CUSTOMER_ROLES.map((r) => (
+        <Fragment key={r}>
+          <dt>{customerRoleLabel(r)}</dt>
+          <dd className="faint">{customerRoleHint(r)}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
+}
+
+function RoleOptions({ max, current }: { max: number; current?: string }) {
+  return (
+    <>
+      {current === "operator" && (
+        <option value="operator" title={customerRoleHint("operator")}>
+          {L("Triage (operator, bisher)", "Triage (operator, legacy)")}
+        </option>
+      )}
+      {CUSTOMER_ROLES.filter((r) => customerRoleRank(r) <= max).map((r) => (
+        <option key={r} value={r} title={customerRoleHint(r)}>
+          {customerRoleLabel(r)}
+        </option>
+      ))}
+    </>
+  );
+}
+
+// Zuordnung Benutzer → Kunde in Automato (0.53.0, Admin): Keycloak meldet, wer jemand ist;
+// hier steht, welchen Kunden er sieht und mit welcher Kunden-Rolle (feinere Rollen). Eine
+// Zuordnung schränkt immer ein (nie Admin). Mit `me` als Kunden-Admin: nur seine Kunden, höchstens
+// seine Rolle, das eigene Konto nicht.
+function CustomerUsers({ tenantId, customers, me }: { tenantId: number; customers: { id: number; name: string }[]; me?: Me }) {
   const [rows, setRows] = useState<CustomerUserRow[] | null>(null);
   const [login, setLogin] = useState("");
-  const [customerId, setCustomerId] = useState<number | "">("");
+  const [customerId, setCustomerId] = useState<number | "">(me && customers.length === 1 ? customers[0].id : "");
   const [role, setRole] = useState("viewer");
+  const selfAdmin = !!me;
+  // höchste vergebbare Rolle: Betreuer alle, Kunden-Admin höchstens die eigene je Kunde
+  const maxRank = (cid: number | "") =>
+    !me ? CUSTOMER_ROLES.length - 1 : cid === "" ? -1 : customerRoleRank(me.customerRoles[String(cid)]);
+  const isOwn = (r: CustomerUserRow) =>
+    !!me && (me.logins.includes(r.login) || r.login === me.username.trim().toLowerCase());
   const [note, setNote] = useState("");
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -736,23 +804,41 @@ function CustomerUsers({ tenantId, customers }: { tenantId: number; customers: C
       <div className="card-head">
         <h2>{L("Kunden-Benutzer", "Customer users")}</h2>
         <span className="faint">
-          {L(
-            <>
-              Anmeldung in Keycloak, Zuordnung hier: Benutzername bzw. E-Mail → Kunde. Ein zugeordneter Benutzer sieht nur
-              die Doku seines Kunden (nie Admin). Alternativ das Attribut customer_ids in Keycloak.
-            </>,
-            <>
-              Login in Keycloak, assignment here: username or email → customer. An assigned user only sees the
-              documentation of their customer (never admin). Alternatively the attribute customer_ids in Keycloak.
-            </>,
-          )}
+          {selfAdmin
+            ? L(
+                "Benutzername bzw. E-Mail → Ihr Kunde, mit Rolle. Wirkt ab der nächsten Anfrage des Benutzers.",
+                "Username or email → your customer, with role. Takes effect from the user's next request.",
+              )
+            : L(
+                <>
+                  Anmeldung in Keycloak, Zuordnung hier: Benutzername bzw. E-Mail → Kunde, mit Kunden-Rolle. Ein zugeordneter
+                  Benutzer sieht nur die Doku seines Kunden (nie Admin); ein Kunden-Admin ordnet die Benutzer seines Kunden
+                  selbst zu. Alternativ die Attribute customer_ids und customer_role in Keycloak (die höhere Rolle gilt).
+                </>,
+                <>
+                  Login in Keycloak, assignment here: username or email → customer, with customer role. An assigned user only
+                  sees the documentation of their customer (never admin); a customer admin assigns the users of their
+                  customer themselves. Alternatively the attributes customer_ids and customer_role in Keycloak (the higher
+                  role applies).
+                </>,
+              )}
         </span>
       </div>
       <div className="card-body">
         <ErrorBox error={err} onClose={() => setErr(null)} />
+        <RoleLegend />
         <div className="zone-intent" id="customer-user-add">
           <input className="input mono" aria-label={L("Benutzer", "User")} placeholder={L("Benutzername bzw. E-Mail", "Username or email")} value={login} onChange={(e) => setLogin(e.target.value)} />
-          <select className="sel" aria-label={L("Kunde", "Customer")} value={customerId} onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : "")}>
+          <select
+            className="sel"
+            aria-label={L("Kunde", "Customer")}
+            value={customerId}
+            onChange={(e) => {
+              const next = e.target.value ? Number(e.target.value) : "";
+              setCustomerId(next);
+              if (customerRoleRank(role) > maxRank(next)) setRole("viewer");
+            }}
+          >
             <option value="">{L("– Kunde –", "– Customer –")}</option>
             {customers.map((c) => (
               <option key={c.id} value={c.id}>
@@ -761,8 +847,7 @@ function CustomerUsers({ tenantId, customers }: { tenantId: number; customers: C
             ))}
           </select>
           <select className="sel" aria-label={L("Rolle", "Role")} value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="viewer">{L("lesen", "read")}</option>
-            <option value="operator">{L("lesen + eigene Findings triagieren", "read + triage own findings")}</option>
+            <RoleOptions max={selfAdmin ? Math.max(maxRank(customerId), 0) : CUSTOMER_ROLES.length - 1} />
           </select>
           <input className="input" aria-label={L("Notiz", "Note")} placeholder={L("Notiz (optional)", "Note (optional)")} value={note} onChange={(e) => setNote(e.target.value)} />
           <button className="btn btn-sm btn-primary" disabled={busy || !login.trim() || customerId === ""} onClick={add}>
@@ -788,22 +873,39 @@ function CustomerUsers({ tenantId, customers }: { tenantId: number; customers: C
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td className="mono">{r.login}</td>
+                  <td className="mono">
+                    {r.login}
+                    {isOwn(r) && <span className="chip na">{L("Sie", "you")}</span>}
+                  </td>
                   <td>{r.customer ?? "?"}</td>
                   <td>
-                    <select className="sel" aria-label={L("Rolle ändern", "Change role")} value={r.role} onChange={(e) => change(r, e.target.value)}>
-                      <option value="viewer">{L("lesen", "read")}</option>
-                      <option value="operator">{L("lesen + Triage", "read + triage")}</option>
+                    <select
+                      className="sel"
+                      aria-label={L("Rolle ändern", "Change role")}
+                      value={r.role}
+                      disabled={isOwn(r) || customerRoleRank(r.role) > maxRank(r.customer_id)}
+                      title={customerRoleHint(r.role)}
+                      onChange={(e) => change(r, e.target.value)}
+                    >
+                      <RoleOptions max={Math.max(maxRank(r.customer_id), customerRoleRank(r.role))} current={r.role} />
                     </select>
                   </td>
                   <td className="faint">{r.note ?? ""}</td>
                   <td className="faint nowrap">
-                    {fmtTime(r.created_at)} · {r.created_by ?? "?"}
+                    {fmtTime(r.created_at)} ·{" "}
+                    {r.created_by ?? (r.origin === "staff" ? L("Betreuer", "staff") : "?")}
+                    {!selfAdmin && r.origin === "customer" && (
+                      <span className="chip info" title={L("vom Kunden-Admin angelegt – wirkt nie auf Betreuer", "created by the customer admin – never applies to staff")}>
+                        {L("Kunden-Admin", "customer admin")}
+                      </span>
+                    )}
                   </td>
                   <td>
-                    <button className="btn btn-sm btn-ghost" onClick={() => remove(r)}>
-                      {L("Entfernen", "Remove")}
-                    </button>
+                    {!isOwn(r) && (
+                      <button className="btn btn-sm btn-ghost" onClick={() => remove(r)}>
+                        {L("Entfernen", "Remove")}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

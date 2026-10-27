@@ -1,4 +1,4 @@
-import type { ServerMe } from "./api";
+import type { Capability, CustomerRole, ServerMe } from "./api";
 // OIDC-Login fürs Web-UI (E1.3b, ADR 0007) via oidc-client-ts gegen Keycloak.
 // Authorization Code + PKCE. Der UserManager ist die einzige Quelle für das Token:
 // abgelaufene Tokens werden still per Refresh-Token erneuert, sonst geht es zurück
@@ -144,6 +144,13 @@ export interface Me {
   customerIds: number[] | null;
   isCustomer: boolean;
   dev: boolean;
+  // feinere Rollen (ADR 0018 Ergänzung): Capabilities laut Orchestrator, Kunden-Rolle je Kunde
+  // und die Kunden mit Namen – die Oberfläche blendet danach ein und aus, prüfen tut der Server
+  capabilities: Capability[];
+  customerRole: CustomerRole | null;
+  customerRoles: Record<string, CustomerRole>;
+  customers: { id: number; name: string }[];
+  logins: string[]; // eigene Kennungen laut Orchestrator (eigene Zuordnung erkennen)
 }
 
 export const DEV_ME: Me = {
@@ -156,22 +163,69 @@ export const DEV_ME: Me = {
   customerIds: null,
   isCustomer: false,
   dev: true,
+  capabilities: [],
+  customerRole: null,
+  customerRoles: {},
+  customers: [],
+  logins: [],
 };
 
-// dev-Modus: Kunden-Benutzer vorführen bzw. testen (`automato_dev_customer` = "<Mandant>:<Kunden>",
-// z. B. "1:2,3"). Schränkt nur ein – der Orchestrator prüft serverseitig (X-Dev-Customers).
+// Darf der Kunden-Benutzer das (für mindestens einen seiner Kunden)? Betreuer: immer false –
+// für sie gelten die Rollen (isOperator/isAdmin)
+export function customerCan(me: Me, cap: Capability): boolean {
+  return me.isCustomer && me.capabilities.includes(cap);
+}
+
+// Kunden-Rollen aufsteigend mit Erklärung (Auswahl bei den Kunden-Benutzern)
+export const CUSTOMER_ROLES: CustomerRole[] = ["viewer", "triage", "editor", "customer_admin"];
+export const customerRoleRank = (role: string | null | undefined): number =>
+  CUSTOMER_ROLES.indexOf((role === "operator" ? "triage" : role) as CustomerRole);
+export function customerRoleLabel(role: string | null | undefined): string {
+  switch (role === "operator" ? "triage" : role) {
+    case "triage":
+      return L("Triage", "Triage");
+    case "editor":
+      return L("Editor", "Editor");
+    case "customer_admin":
+      return L("Kunden-Admin", "Customer admin");
+    default:
+      return L("Lesen", "Read");
+  }
+}
+export function customerRoleHint(role: string | null | undefined): string {
+  switch (role === "operator" ? "triage" : role) {
+    case "triage":
+      return L("lesen + eigene Findings quittieren und kommentieren", "read + acknowledge and comment on own findings");
+    case "editor":
+      return L(
+        "wie Triage + eigene Applikationen pflegen: Stammdaten, Regeln zuordnen/ausschliessen, Regeln je Kategorie ausblenden (nur Applikationen ganz beim Kunden)",
+        "like triage + maintain own applications: master data, assign/exclude rules, hide rules per category (only applications entirely within the customer)",
+      );
+    case "customer_admin":
+      return L(
+        "wie Editor + Kunden-Benutzer des eigenen Kunden zuordnen (nie sich selbst, höchstens die eigene Rolle)",
+        "like editor + assign customer users of the own customer (never oneself, at most the own role)",
+      );
+    default:
+      return L("die Doku des Kunden lesen", "read the customer's documentation");
+  }
+}
+
+// dev-Modus: Kunden-Benutzer vorführen bzw. testen (`automato_dev_customer` =
+// "<Mandant>:<Kunden>[:<Kunden-Rolle>]", z. B. "1:2,3" bzw. "1:2:editor"). Schränkt nur ein – der
+// Orchestrator prüft serverseitig (X-Dev-Customers, X-Dev-Customer-Role).
 const DEV_CUSTOMER = "automato_dev_customer";
 
-function devCustomer(): { tenant: number; customers: number[] } | null {
+function devCustomer(): { tenant: number; customers: number[]; role: string } | null {
   let raw: string | null = null;
   try {
     raw = localStorage.getItem(DEV_CUSTOMER);
   } catch {
     /* localStorage nicht verfügbar */
   }
-  const m = raw?.match(/^(\d+):([\d,]*)$/);
+  const m = raw?.match(/^(\d+):([\d,]*)(?::([a-z_]+))?$/);
   if (!m) return null;
-  return { tenant: Number(m[1]), customers: m[2].split(",").filter(Boolean).map(Number) };
+  return { tenant: Number(m[1]), customers: m[2].split(",").filter(Boolean).map(Number), role: m[3] ?? "viewer" };
 }
 
 // dev-Modus: angemeldeter Benutzer ohne Rollen vorführen (`automato_dev_user` = Kennung, 0.53.0) –
@@ -209,7 +263,12 @@ export function devHeaders(): Record<string, string> {
   if (user) return { "X-Dev-User": user };
   const c = devCustomer();
   if (!c) return {};
-  return { "X-Dev-Roles": "viewer", "X-Dev-Tenants": String(c.tenant), "X-Dev-Customers": c.customers.join(",") };
+  return {
+    "X-Dev-Roles": "viewer",
+    "X-Dev-Tenants": String(c.tenant),
+    "X-Dev-Customers": c.customers.join(","),
+    "X-Dev-Customer-Role": c.role,
+  };
 }
 
 // IDs aus einem Claim: Zahl, Liste bzw. Text, auch kommagetrennt ("3,4") – wie auth/oidc.py
@@ -260,6 +319,12 @@ export function meFromUser(user: User): Me {
     customerIds: isCustomer ? numbers(claims["customer_ids"]) : null,
     isCustomer,
     dev: false,
+    // Capabilities und Kunden-Rollen kennt erst der Orchestrator (withServer)
+    capabilities: [],
+    customerRole: null,
+    customerRoles: {},
+    customers: [],
+    logins: [],
   };
 }
 
@@ -275,11 +340,20 @@ export function withServer(me: Me, s: ServerMe): Me {
     isOperator: s.is_admin || roles.includes("operator"),
     customerIds: s.customer_ids,
     isCustomer: s.is_customer,
+    capabilities: s.capabilities ?? [],
+    customerRole: s.customer_role ?? null,
+    customerRoles: s.customer_roles ?? {},
+    customers: s.customers.map((c) => ({ id: c.id, name: c.name })),
+    logins: s.logins ?? [],
   };
 }
 
 export function roleLabel(me: Me): string {
-  if (me.isCustomer) return me.roles.includes("operator") ? L("Kunde · Operator", "Customer · operator") : L("Kunde", "Customer");
+  if (me.isCustomer) {
+    // feinere Rollen: höchste Kunden-Rolle (viewer = nur „Kunde“ wie bisher)
+    const role = me.customerRole ?? (me.roles.includes("operator") ? "triage" : "viewer");
+    return role === "viewer" ? L("Kunde", "Customer") : `${L("Kunde", "Customer")} · ${customerRoleLabel(role)}`;
+  }
   if (me.isAdmin) return L("Globaler Admin", "Global admin");
   if (me.roles.includes("operator")) return "Operator";
   if (me.roles.includes("viewer")) return "Viewer";

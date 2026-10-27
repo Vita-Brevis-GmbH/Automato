@@ -35,6 +35,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.auth.capabilities import CUSTOMER_ROLES, LEGACY_ROLES
 from app.models.base import Base
 
 SELECTOR_KINDS = (
@@ -122,7 +123,12 @@ class CustomerMember(Base):
     via: Mapped[str | None] = mapped_column(String(200), nullable=True)  # warum (Selektor)
 
 
-CUSTOMER_USER_ROLES = ("viewer", "operator")  # lesen bzw. dazu eigene Findings triagieren
+# Kunden-Rollen (feinere Rollen, ADR 0018 Ergaenzung; `auth/capabilities.py`): viewer liest,
+# triage quittiert dazu eigene Findings, editor pflegt eigene Applikationen, customer_admin
+# ordnet die Kunden-Benutzer des eigenen Kunden zu - dazu `operator` aus 0.53.0 (= triage)
+CUSTOMER_USER_ROLES = CUSTOMER_ROLES + tuple(LEGACY_ROLES)
+# wer die Zuordnung angelegt hat: staff (Betreuer) | customer (Kunden-Admin)
+CUSTOMER_USER_ORIGINS = ("staff", "customer")
 
 
 class CustomerUser(Base):
@@ -133,6 +139,10 @@ class CustomerUser(Base):
     Zuordnung macht den Benutzer immer zum Kunden-Benutzer (nie Admin, nur die freigegebenen
     Endpunkte) - sie schraenkt ein, nie aus. Der Claim `customer_ids` bleibt als Alternative;
     beides zusammen ergibt die Vereinigung. Automato schreibt nicht nach Keycloak.
+
+    Feinere Rollen (Migration 0059): `role` je Kunde (viewer, triage, editor, customer_admin;
+    `operator` aus 0.53.0 = triage), `origin` = wer sie angelegt hat - Zuordnungen eines
+    Kunden-Admins wirken nie auf Betreuer (`auth/assignments.py`).
     """
 
     __tablename__ = "customer_user"
@@ -145,6 +155,9 @@ class CustomerUser(Base):
     )
     login: Mapped[str] = mapped_column(String(200), index=True)
     role: Mapped[str] = mapped_column(String(16), default="viewer")  # siehe CUSTOMER_USER_ROLES
+    origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="staff", server_default="staff"
+    )  # siehe CUSTOMER_USER_ORIGINS
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
