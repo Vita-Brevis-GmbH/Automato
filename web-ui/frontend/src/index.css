@@ -398,6 +398,7 @@ td.zcell .z-allow { color: var(--good); font-weight: 600; }
 td.zcell .z-deny { color: var(--crit); font-weight: 600; margin-left: 6px; }
 td.zcell .z-svc { color: var(--muted); font-size: 10.5px; font-family: var(--font-mono); margin-top: 2px; }
 td.zcell .z-viol { color: var(--crit); font-size: 10.5px; font-family: var(--font-ui); font-weight: 600; margin-top: 2px; }
+td.zcell .z-off { color: var(--faint); font-size: 10.5px; font-family: var(--font-ui); margin-top: 2px; }
 .zone-legend { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .zone-intent { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 .zone-intent .input { flex: 1; min-width: 220px; }

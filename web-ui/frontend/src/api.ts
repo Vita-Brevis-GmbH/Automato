@@ -2726,6 +2726,7 @@ export interface ZoneMatrix {
     allow: number;
     deny: number;
     violations: number;
+    impossible?: number; // nach dem Weg nicht möglich (0.81.0)
     intent: ZoneIntent | null;
     note: string | null;
     services?: string[]; // Absicht je Dienst (0.57.0): erlaubte Dienste bei „eingeschränkt“
@@ -2739,7 +2740,7 @@ export interface ZoneMatrix {
     updated_by: string | null;
     updated_at: string;
   }[];
-  summary: { zones: number; rules: number; assigned: number; without: number; violations: number };
+  summary: { zones: number; rules: number; assigned: number; without: number; violations: number; off_path?: number };
 }
 export interface ZoneCellRule {
   id: number;
@@ -2753,12 +2754,20 @@ export interface ZoneCellRule {
   tenant: string | null;
   violation: boolean;
   outside?: string[]; // Dienste ausserhalb der Absicht „eingeschränkt“ (0.57.0)
+  impossible?: string | null; // warum nach dem Weg nicht möglich (0.81.0)
+}
+export interface ZoneCellRules {
+  total: number;
+  violations: number;
+  impossible?: number;
+  items: ZoneCellRule[];
 }
 // Netz eines Übergangs (0.56.0): Beine der Knoten (Interface bzw. L3Out) und Router ohne gelesenes Gerät
 export interface TransitionNet {
   network: string;
   legs: { node: string; label: string; interface: string | null; address: string; l3out: boolean }[];
   routers: { ip: string; names: string[] }[];
+  routes?: { zone: number; prefixes: string[] }[]; // Zone nur hinter dem Router (0.81.0)
 }
 export type PlanZoneId = number | string; // Zone, "customer:<id>", "none", "outside", "other"
 export interface PlanZone {
@@ -3050,9 +3059,9 @@ export const applySchemaIntents = (tenantId: number, pairs?: [number, number][],
 export const dismissZoneSuggestions = (tenantId: number, keys: string[], undo = false) =>
   sendJSON<{ keys: string[] }>(`/api/zones/suggestions/dismiss${undo ? "/undo" : ""}`, "POST", { tenant_id: tenantId, keys });
 export const fetchZoneMatrix = (tenantId: number) => getJSON<ZoneMatrix>(`/api/zones/matrix${cq({ tenant_id: tenantId })}`);
-export const fetchZoneCellRules = (tenantId: number, src: ZoneCell, dst: ZoneCell, offset = 0) =>
-  getJSON<{ total: number; violations: number; items: ZoneCellRule[] }>(
-    `/api/zones/matrix/rules${cq({ tenant_id: tenantId, src: String(src), dst: String(dst), offset, limit: 100 })}`,
+export const fetchZoneCellRules = (tenantId: number, src: ZoneCell, dst: ZoneCell, offset = 0, impossible = false) =>
+  getJSON<ZoneCellRules>(
+    `/api/zones/matrix/rules${cq({ tenant_id: tenantId, src: String(src), dst: String(dst), offset, limit: 100, impossible: impossible ? "true" : undefined })}`,
   );
 export const setZonePolicy = (tenantId: number, src: number, dst: number, intent: ZoneIntent | null, note: string | null, services?: string[]) =>
   sendJSON<{ src: number; dst: number; intent: ZoneIntent | null; note: string | null; services: string[] }>("/api/zones/policy", "PUT", {

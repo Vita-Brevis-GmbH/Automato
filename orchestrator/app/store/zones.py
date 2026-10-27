@@ -51,6 +51,7 @@ UNZONED = 200  # Netze ohne Zone in der Anzeige
 BITS = {4: 32, 6: 128}
 Cell = int | str  # Zone (id), ANY oder NONE
 OTHER = "other"  # Zonen anderer Kunden in der Sicht eines Kunden-Benutzers (0.53.0)
+MAX_ACI_CHECKS = 2000  # Adressen je Matrix, die fuer Contracts nach dem Weg geprueft werden
 
 
 @dataclass
@@ -135,6 +136,17 @@ def _blocks(family: int, lo: int, hi: int) -> list[tuple[int, int]]:
     ]
 
 
+def _gap(lo: int, hi: int, spans: list[tuple[int, int]]) -> int:
+    """Erste Adresse in lo..hi ausserhalb der Netze `spans` (der Rest ausserhalb der
+    Zonen-Netze darin)."""
+    pos = lo
+    for s_lo, s_hi in sorted(spans):
+        if s_lo > pos:
+            break
+        pos = max(pos, s_hi + 1)
+    return pos
+
+
 def _fills(lo: int, hi: int, spans: list[tuple[int, int]]) -> bool:
     """Decken die Netze den Bereich lo..hi ganz ab?"""
     pos = lo
@@ -169,6 +181,7 @@ class ZoneIndex:
         self.starts = {f: [s[0] for s in self.spans[f]] for f in (4, 6)}
         self.shared = {net: ids for net, ids in owners.items() if len(ids) > 1}
         self._cache: dict[tuple[int, int, int], frozenset] = {}
+        self._first: dict[tuple[int, int, int], dict] = {}
 
     def covering(self, family: int, lo: int, hi: int) -> list[int]:
         """Zone(n) des laengsten Zonen-Netzes, das lo..hi ganz enthaelt."""
@@ -184,7 +197,15 @@ class ZoneIndex:
     def zones_of(self, family: int, lo: int, hi: int) -> frozenset:
         key = (family, lo, hi)
         if key not in self._cache:
-            out: set = set()
+            self._cache[key] = frozenset(self.first_of(family, lo, hi))
+        return self._cache[key]
+
+    def first_of(self, family: int, lo: int, hi: int) -> dict:
+        """Zonen des Bereichs mit der ersten Adresse darin, die zur Zone gehoert (0.81.0: fuer
+        die Pruefung nach dem Weg)."""
+        key = (family, lo, hi)
+        if key not in self._first:
+            out: dict = {}
             spans, starts = self.spans[family], self.starts[family]
             for b_lo, b_hi in _blocks(family, lo, hi):
                 inner = []
@@ -193,12 +214,14 @@ class ZoneIndex:
                     s_lo, s_hi, zid = spans[i]
                     if s_hi <= b_hi and (s_lo, s_hi) != (b_lo, b_hi):
                         inner.append((s_lo, s_hi))
-                        out.add(zid)
+                        out.setdefault(zid, s_lo)
                     i += 1
                 if not _fills(b_lo, b_hi, inner):  # Rest: Zone darum herum bzw. keine
-                    out.update(self.covering(family, b_lo, b_hi) or [NONE])
-            self._cache[key] = frozenset(out)
-        return self._cache[key]
+                    first = _gap(b_lo, b_hi, inner)
+                    for zid in self.covering(family, b_lo, b_hi) or [NONE]:
+                        out.setdefault(zid, first)
+            self._first[key] = out
+        return self._first[key]
 
     def of_net(self, net: Net) -> frozenset:
         return self.zones_of(net.version, int(net.network_address), int(net.broadcast_address))
@@ -251,18 +274,42 @@ class Assignment:
     back: dict[int, list[str]] = field(default_factory=dict)
     # Contracts, die Consumer -> Provider nur Antworten zulassen (0.72.1): nur zurueck
     replies: set[int] = field(default_factory=set)
+    # nach dem Weg (0.81.0): erste Adresse je Regel, Seite und Zone; Zonen einer Seite, die
+    # das Routing ausschliesst (mit Begruendung), und die Zonen vor dieser Pruefung
+    first: dict[tuple[int, str], dict] = field(default_factory=lambda: defaultdict(dict))
+    dropped: dict[int, dict[tuple[str, Cell], str]] = field(default_factory=dict)
+    src_all: dict[int, set] = field(default_factory=dict)
+    dst_all: dict[int, set] = field(default_factory=dict)
 
-    def _both(self, rid: int) -> list[tuple[Cell, Cell]]:
-        return [(s, d) for s in self.src.get(rid, ()) for d in self.dst.get(rid, ())]
+    def _both(self, rid: int, every: bool = False) -> list[tuple[Cell, Cell]]:
+        src, dst = (self.src_all, self.dst_all) if every else (self.src, self.dst)
+        return [(s, d) for s in src.get(rid, ()) for d in dst.get(rid, ())]
 
-    def forward(self, rid: int) -> list[tuple[Cell, Cell]]:
-        return [] if rid in self.replies else self._both(rid)
+    def forward(self, rid: int, every: bool = False) -> list[tuple[Cell, Cell]]:
+        return [] if rid in self.replies else self._both(rid, every)
 
-    def pairs(self, rid: int) -> list[tuple[Cell, Cell]]:
-        out = self.forward(rid)
+    def pairs(self, rid: int, every: bool = False) -> list[tuple[Cell, Cell]]:
+        """Paare Quell-/Zielzone der Regel; `every` auch die, die das Routing ausschliesst."""
+        out = self.forward(rid, every)
         if rid in self.back:  # Rueckrichtung: Zone des Providers -> Zone des Consumers
-            out += [(d, s) for s, d in self._both(rid) if (d, s) not in out]
+            out += [(d, s) for s, d in self._both(rid, every) if (d, s) not in out]
         return out
+
+    def impossible(self, rid: int) -> list[tuple[Cell, Cell]]:
+        """Paare, die nur das Routing ausschliesst (0.81.0)."""
+        if rid not in self.dropped:
+            return []
+        now = set(self.pairs(rid))
+        return [p for p in self.pairs(rid, every=True) if p not in now]
+
+    def why(self, rid: int, pair: tuple[Cell, Cell]) -> str:
+        """Begruendung, warum das Paar nach dem Weg nicht moeglich ist."""
+        reasons = self.dropped.get(rid, {})
+        for side, zone in (("src", pair[0]), ("dst", pair[1]), ("dst", pair[0]),
+                           ("src", pair[1])):  # fmt: skip
+            if (side, zone) in reasons:
+                return reasons[(side, zone)]
+        return ""
 
     def outside(self, rid: int, pair: tuple) -> list[str] | None:
         """Dienste der Regel ausserhalb der Absicht „eingeschraenkt“ des Paars (None = keine
@@ -290,8 +337,10 @@ class Assignment:
 
 
 def assign(session: Session, tenant_id: int, items: list[LogicalZone] | None = None,
-           source_system_id: int | None = None,
-           nets: list[ZoneNets] | None = None) -> Assignment:  # fmt: skip
+           source_system_id: int | None = None, nets: list[ZoneNets] | None = None,
+           routed: bool = True) -> Assignment:  # fmt: skip
+    """Regeln auf die Zonen abbilden; `routed` (0.81.0): nur Zonen, die die Regel nach dem
+    Routing ihres Geraets erreichen kann (`_route_check`)."""
     items = load(session, tenant_id) if items is None else items
     nets = derive(session, tenant_id, items) if nets is None else nets
     a = Assignment(items, nets, ZoneIndex(nets), {})
@@ -321,8 +370,20 @@ def assign(session: Session, tenant_id: int, items: list[LogicalZone] | None = N
     ):
         if rid not in a.rules:
             continue
-        zones = {ANY} if is_any else a.index.zones_of(fam, int(lo, 16), int(hi, 16))
+        if is_any:
+            zones = {ANY}
+        else:
+            found = a.index.first_of(fam, int(lo, 16), int(hi, 16))
+            zones = set(found)
+            mine = a.first[(rid, role)]
+            make = ipaddress.IPv4Address if fam == 4 else ipaddress.IPv6Address
+            for zid, first in found.items():
+                mine.setdefault(zid, make(first))
         (a.src if role == "src" else a.dst)[rid].update(zones)
+    a.src_all = {rid: set(z) for rid, z in a.src.items()}
+    a.dst_all = {rid: set(z) for rid, z in a.dst.items()}
+    if routed:
+        _route_check(session, tenant_id, a)
     back, replies = aci_direction.directions(session, tenant_id)
     a.back = {rid: b for rid, b in back.items() if rid in a.rules}
     a.replies = {rid for rid in replies if rid in a.rules}
@@ -338,6 +399,63 @@ def assign(session: Session, tenant_id: int, items: list[LogicalZone] | None = N
         ]  # fmt: skip
         a.rule_services = zone_services.rule_services(session, ids)
     return a
+
+
+def _route_check(session: Session, tenant_id: int, a: Assignment) -> None:
+    """Zonen je Regel nach dem Weg (0.81.0, ADR 0019 Punkt 6 wie in der Doku): eine Zone auf
+    einer Seite faellt weg, wenn das Routing des Geraets ihre erste Adresse im Bereich der
+    Regel nicht ueber Ein- bzw. Ausgang der Regel fuehrt (Firewall, `relevance.check`) bzw.
+    der Contract sie nicht erfassen kann (externe EPG, Scope - `relevance._aci_for_ip`).
+    Unbekannt (Routing nicht gelesen, Policy-Route, …) bleibt drin."""
+    from app.models import Rule as RuleRow
+    from app.models import RuleDomain, Zone
+    from app.store import relevance
+
+    rel = relevance.Relevance(session, tenant_id)
+    fw = [rid for rid, (_a, domain, _s) in a.rules.items() if domain == RuleDomain.FIREWALL.value]
+    aci = [rid for rid, (_a, domain, _s) in a.rules.items()
+           if domain == RuleDomain.ACI_CONTRACT.value]  # fmt: skip
+    rows = {}
+    for i in range(0, len(fw), 1000):
+        for r in session.execute(
+            select(RuleRow.id, RuleRow.source_system_id, RuleRow.vdom, RuleRow.raw,
+                   RuleRow.src_zone_id, RuleRow.dst_zone_id)
+            .where(RuleRow.id.in_(fw[i : i + 1000]))
+        ):  # fmt: skip
+            rows[r.id] = r
+    stmt = select(Zone.id, Zone.name).where(Zone.tenant_id == tenant_id)
+    names = dict(session.execute(stmt).all())
+
+    def drop(rid: int, side: str, zone: Cell, text: str) -> None:
+        sides = a.src if side == "src" else a.dst
+        sides[rid].discard(zone)
+        a.dropped.setdefault(rid, {})[(side, zone)] = text
+
+    for rid, r in rows.items():
+        for side in ("src", "dst"):
+            fw_zone = names.get(r.src_zone_id if side == "src" else r.dst_zone_id)
+            for zone, ip in list(a.first.get((rid, side), {}).items()):
+                if zone == ANY or zone not in (a.src if side == "src" else a.dst).get(rid, ()):
+                    continue
+                x = rel.check(r, side, [str(ip)], fw_zone)
+                if x["state"] == relevance.IMPOSSIBLE:
+                    drop(rid, side, zone, x["text"])
+    # Contracts: je Adresse einmal fuer alle Contracts, die sie erfassen
+    users: dict = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
+    for rid in aci:
+        for side in ("src", "dst"):
+            for zone, ip in a.first.get((rid, side), {}).items():
+                if zone != ANY:
+                    users[ip][rid][side].add(zone)
+    for n, (ip, by_rule) in enumerate(users.items()):
+        if n >= MAX_ACI_CHECKS:
+            break  # sehr viele Adressen: der Rest bleibt ungeprueft (moeglich)
+        sides = {rid: set(s) for rid, s in by_rule.items()}
+        for rid, x in relevance._aci_for_ip(session, tenant_id, sides, ip, rel).items():
+            for side, state in (x.get("sides") or {}).items():
+                if state == relevance.IMPOSSIBLE:
+                    for zone in by_rule[rid].get(side, ()):
+                        drop(rid, side, zone, x["text"])
 
 
 def zone_out(z: LogicalZone, nets: ZoneNets | None = None, color: dict | None = None) -> dict:
@@ -376,18 +494,28 @@ def matrix(session: Session, tenant_id: int, source_system_id: int | None = None
     a = assign(session, tenant_id, source_system_id=source_system_id)
     view = customer_view(a.zones, customer_ids) if customer_ids is not None else None
     cells: dict[tuple[Cell, Cell], Counter] = defaultdict(Counter)
-    without = assigned = violating = 0
+    without = assigned = violating = off_path = 0
     for rid, (action, _domain, _sid) in a.rules.items():
         pairs = a.pairs(rid)
+        # nach dem Weg nicht moeglich (0.81.0): gezaehlt, aber nicht in den Regeln der Zelle
+        blocked = a.impossible(rid)
+        if view is not None:
+            blocked = view.pairs(blocked)
+        for pair in blocked:
+            cells[pair]["impossible"] += 1
         if view is not None:
             bad = view.pairs(a.denied(rid))
             pairs = view.pairs(pairs)
             if not pairs:
+                off_path += bool(blocked)
                 continue  # beruehrt keine Zone des Kunden
         else:
             bad = set(a.denied(rid))
             if not pairs:
-                without += 1  # Quelle bzw. Ziel ohne IP-Bereich (z. B. FQDN, ungeloeste Gruppe)
+                if blocked:
+                    off_path += 1  # alle Paare schliesst das Routing aus
+                else:
+                    without += 1  # Quelle bzw. Ziel ohne IP-Bereich (z. B. FQDN, Gruppe)
                 continue
         assigned += 1
         violating += bool(bad)
@@ -413,7 +541,8 @@ def matrix(session: Session, tenant_id: int, source_system_id: int | None = None
         p = intents.get((s, d)) if isinstance(s, int) and isinstance(d, int) else None
         out.append({
             "src": s, "dst": d, "allow": c["allow"], "deny": c["deny"],
-            "violations": c["violations"], "intent": p.intent if p else None,
+            "violations": c["violations"], "impossible": c["impossible"],
+            "intent": p.intent if p else None,
             "note": p.note if p else None, "services": list(p.services or []) if p else [],
         })  # fmt: skip
     by_id = {n.id: n for n in a.nets}
@@ -431,6 +560,7 @@ def matrix(session: Session, tenant_id: int, source_system_id: int | None = None
             "assigned": assigned,
             "without": without,
             "violations": violating,
+            "off_path": off_path,  # 0.81.0: Regeln, deren Zonen das Routing alle ausschliesst
         },
     }
 
@@ -444,17 +574,22 @@ def parse_cell(value: str) -> Cell:
 
 def cell_rules(session: Session, tenant_id: int, src: Cell, dst: Cell, limit: int = 100,
                offset: int = 0, source_system_id: int | None = None,
-               customer_ids=None) -> dict:  # fmt: skip
+               customer_ids=None, impossible: bool = False) -> dict:  # fmt: skip
     """Regeln einer Zelle der Matrix (Quellzone -> Zielzone), Verstoesse zuerst. Fuer
-    Kunden-Benutzer nur Zellen mit einer eigenen Zone (`anderer Kunde` = OTHER)."""
+    Kunden-Benutzer nur Zellen mit einer eigenen Zone (`anderer Kunde` = OTHER). Mit
+    `impossible` (0.81.0) die Regeln, die das Routing fuer diese Zelle ausschliesst."""
     a = assign(session, tenant_id, source_system_id=source_system_id)
-    if customer_ids is not None:
-        view = customer_view(a.zones, customer_ids)
-        ids = [rid for rid in a.rules if (src, dst) in view.pairs(a.pairs(rid))]
-        bad = {rid for rid in ids if (src, dst) in view.pairs(a.denied(rid))}
+    view = customer_view(a.zones, customer_ids) if customer_ids is not None else None
+
+    def of(pairs) -> set:
+        return view.pairs(pairs) if view is not None else set(pairs)
+
+    blocked = [rid for rid in a.rules if (src, dst) in of(a.impossible(rid))]
+    if impossible:
+        ids, bad = blocked, set()
     else:
-        ids = [rid for rid in a.rules if (src, dst) in a.pairs(rid)]
-        bad = {rid for rid in ids if (src, dst) in set(a.denied(rid))}
+        ids = [rid for rid in a.rules if (src, dst) in of(a.pairs(rid))]
+        bad = {rid for rid in ids if (src, dst) in of(a.denied(rid))}
     pair = (src, dst) if isinstance(src, int) and isinstance(dst, int) else None
     names = dict(
         session.execute(
@@ -482,8 +617,11 @@ def cell_rules(session: Session, tenant_id: int, src: Cell, dst: Cell, limit: in
             "violation": rid in bad,
             # Dienste ausserhalb der Absicht „eingeschraenkt“ (0.57.0)
             "outside": (a.outside(rid, pair) or []) if rid in bad and pair else [],
+            # nach dem Weg nicht moeglich (0.81.0)
+            "impossible": a.why(rid, (src, dst)) if impossible else None,
         })  # fmt: skip
-    return {"total": len(ids), "violations": len(bad), "items": items}
+    return {"total": len(ids), "violations": len(bad), "impossible": len(blocked),
+            "items": items}  # fmt: skip
 
 
 # -- Befunde ----------------------------------------------------------------------------

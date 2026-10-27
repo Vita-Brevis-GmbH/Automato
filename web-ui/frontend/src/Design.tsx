@@ -56,7 +56,7 @@ import {
   TopoExit,
   updateZone,
   ZoneCell,
-  ZoneCellRule,
+  ZoneCellRules,
   ZoneIn,
   ZoneIntent,
   ZoneKind,
@@ -990,11 +990,17 @@ function ZoneNets({ zoneId }: { zoneId: number }) {
   );
 }
 
-function legsText(n: { legs: { label: string; interface: string | null; l3out: boolean }[]; routers: { ip: string; names: string[] }[] }): string {
+function legsText(n: {
+  legs: { label: string; interface: string | null; l3out: boolean }[];
+  routers: { ip: string; names: string[] }[];
+  routes?: { zone: number; prefixes: string[] }[];
+}): string {
   const legs = n.legs.map((l) => `${l.label} (${l.l3out ? "L3Out" : "Interface"} ${l.interface ?? "?"})`);
   const legsUnique = [...new Set(legs)];
   const routers = n.routers.map((r) => `Router ${r.names[0] ?? r.ip}`);
-  return [...legsUnique, ...routers].join(", ");
+  // Zone nur hinter dem Router (0.81.0): die Routen dorthin
+  const routes = (n.routes ?? []).map((r) => `Route ${r.prefixes.join(", ")}`);
+  return [...legsUnique, ...routers, ...routes].join(", ");
 }
 
 const EMPTY_SELECTOR: ZoneSelector = { kind: "prefix", value: "", source_system_id: null, exclude: false };
@@ -1402,7 +1408,8 @@ function MatrixTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
           <h2>Zonenmatrix</h2>
           <span className="faint" id="zone-matrix-summary">
             {s.assigned} von {s.rules} Regeln zugeordnet
-            {s.without ? ` · ${s.without} ohne IP-Bereich (z. B. FQDN)` : ""} ·{" "}
+            {s.without ? ` · ${s.without} ohne IP-Bereich (z. B. FQDN)` : ""}
+            {s.off_path ? ` · ${s.off_path} nach dem Routing nicht möglich` : ""} ·{" "}
             <span className={s.violations ? "crit" : ""}>
               {s.violations} {s.violations === 1 ? "Regel" : "Regeln"} gegen die Absicht
             </span>
@@ -1447,6 +1454,11 @@ function MatrixTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                         )}
                         {c?.services?.length ? <div className="z-svc">nur {c.services.join(", ")}</div> : null}
                         {c?.violations ? <div className="z-viol">{c.violations} gegen Absicht</div> : null}
+                        {c?.impossible ? (
+                          <div className="z-off" title="Regeln, die das Routing ihres Geräts für diese Zonen ausschliesst – nicht gezählt">
+                            {c.impossible} nicht möglich
+                          </div>
+                        ) : null}
                       </td>
                     );
                   })}
@@ -1499,7 +1511,8 @@ function CellDetail({
   canEdit: boolean;
   onChanged: () => void;
 }) {
-  const [rules, setRules] = useState<{ total: number; violations: number; items: ZoneCellRule[] } | null>(null);
+  const [rules, setRules] = useState<ZoneCellRules | null>(null);
+  const [offPath, setOffPath] = useState(false); // 0.81.0: die nach dem Weg unmöglichen Regeln
   const [intent, setIntent] = useState<ZoneIntent | "">(cell?.intent ?? "");
   const [note, setNote] = useState(cell?.note ?? "");
   const [services, setServices] = useState((cell?.services ?? []).join(", "));
@@ -1509,13 +1522,14 @@ function CellDetail({
   const stamp = `${cell?.intent ?? ""}|${(cell?.services ?? []).join(",")}|${cell?.violations ?? 0}`;
   useEffect(() => {
     let current = true;
-    fetchZoneCellRules(tenantId, src, dst)
+    fetchZoneCellRules(tenantId, src, dst, 0, offPath)
       .then((r) => current && setRules(r))
       .catch((e) => current && setErr(e));
     return () => {
       current = false;
     };
-  }, [tenantId, src, dst, stamp]);
+  }, [tenantId, src, dst, stamp, offPath]);
+  useEffect(() => setOffPath(false), [src, dst]);
   const zonePair = typeof src === "number" && typeof dst === "number";
   const save = async () => {
     if (!zonePair) return;
@@ -1569,6 +1583,21 @@ function CellDetail({
             </button>
           </div>
         )}
+        {((rules?.impossible ?? 0) > 0 || offPath) && (
+          <div className="seg" id="zone-cell-mode" style={{ marginBottom: 8 }}>
+            <button className={offPath ? "" : "on"} onClick={() => setOffPath(false)}>
+              Regeln der Zelle
+            </button>
+            <button
+              className={offPath ? "on" : ""}
+              id="zone-cell-impossible"
+              title="Regeln, deren Gerät diese Zonen nach dem Routing nicht über Ein- bzw. Ausgang der Regel erreicht"
+              onClick={() => setOffPath(true)}
+            >
+              nach dem Weg nicht möglich {rules?.impossible ?? ""}
+            </button>
+          </div>
+        )}
         {rules == null ? (
           <Loading />
         ) : rules.items.length === 0 ? (
@@ -1600,6 +1629,7 @@ function CellDetail({
                   <td>
                     {r.violation && <span className="chip crit">gegen Absicht</span>}
                     {r.outside && r.outside.length > 0 && <div className="faint">Dienste ausserhalb: {r.outside.join(", ")}</div>}
+                    {r.impossible && <div className="faint zone-off-why">{r.impossible}</div>}
                   </td>
                 </tr>
               ))}

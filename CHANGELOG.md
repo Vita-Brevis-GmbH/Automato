@@ -7,6 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.81.0 – 2026-10-27
+
+Zonen komplett, Teil 2 (ROADMAP Schritt 5, ADR 0024 Nr. 18). Ohne Migration.
+
+- **Zonenmatrix nach dem Weg:** eine Regel zählt für ein Zonenpaar nur, wenn ihr Gerät die
+  Zonen nach dem Routing erreichen kann – wie in der Doku. Je Regel, Seite und Zone wird die
+  erste Adresse der Zone im Bereich der Regel geprüft: FortiGate-Policy über Ein- bzw. Ausgang
+  (`relevance.check`), ACI-Contract über externe EPG und Scope. Ausgeschlossene Paare stehen in
+  der Zelle als „N nicht möglich“, nicht als erlaubend/sperrend und nicht als Verstoss gegen die
+  Absicht – auch nicht im Befund „Zone: gegen die Absicht“, in der Kommunikation im Zonenplan
+  und in der Sicht der Kunden. Die Zelle zeigt sie auf Wunsch mit Begründung
+  (`GET /zones/matrix/rules?impossible=true`, Umschalter „nach dem Weg nicht möglich“); oben
+  die Zahl der Regeln, die das Routing ganz ausschliesst. Unbekannt (Routing nicht gelesen,
+  Policy-Route, SD-WAN) zählt weiter.
+- **Zone nur hinter einem Router:** liegt ein Netz einer Zone an keinem gelesenen Gerät, routet
+  aber eine Firewall bzw. VRF es (nicht über 0.0.0.0/0) über einen Router ohne gelesenes Gerät,
+  ist das Netz dieses Routers der Übergang zur Zone – mit der Route am Übergang (`routes`, im
+  Plan „Route 10.88.0.0/16“). Bisher stand dort nur „ausserhalb“, die Zone hing ohne Übergang.
+- ADR 0024 Nr. 18, BETRIEB, TESTS.
+
 ## 0.80.1 – 2026-10-27
 
 Korrektur nach dem Test des Anwenders: Läufe stabil beim Einlesen aller Geräte. Ohne Migration.

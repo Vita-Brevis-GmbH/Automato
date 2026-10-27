@@ -958,7 +958,8 @@ test("Netzwerkdesign: Zonen, Zonenmatrix mit Absicht und Zonenplan", async ({ pa
   await page.click(".modal button:has-text('Speichern')");
   await expect(list.filter({ hasText: name })).toHaveCount(1);
 
-  // Zonenmatrix: LAN -> DMZ gesperrt, zwei erlaubende Policies dagegen
+  // Zonenmatrix: LAN -> DMZ gesperrt, eine erlaubende Policy dagegen (lan-to-dmz-falsch ist
+  // seit 0.81.0 nach dem Weg nicht möglich: Ausgang internet, die DMZ liegt an dmz)
   await page.click(".tabbar button:has-text('Zonenmatrix')");
   await expect(page.locator("#zone-matrix-summary")).toContainText("gegen die Absicht");
   const viol = page.locator("td.zcell.viol");
@@ -968,6 +969,13 @@ test("Netzwerkdesign: Zonen, Zonenmatrix mit Absicht und Zonenplan", async ({ pa
   await expect(cell.locator("h2")).toHaveText("LAN → DMZ");
   await expect(cell.locator("#zone-cell-rules")).toContainText("lan-to-dmz-web");
   await expect(cell.locator("#zone-cell-rules .chip.crit").first()).toBeVisible();
+  await expect(viol).toContainText("1 nicht möglich");
+  await expect(cell.locator("#zone-cell-rules")).not.toContainText("lan-to-dmz-falsch");
+  await cell.locator("#zone-cell-impossible").click();
+  await expect(cell.locator("#zone-cell-rules")).toContainText("lan-to-dmz-falsch");
+  await expect(cell.locator("#zone-cell-rules .zone-off-why")).toContainText("fw-08");
+  await cell.locator("#zone-cell-mode button", { hasText: "Regeln der Zelle" }).click();
+  await expect(cell.locator("#zone-cell-rules")).toContainText("lan-to-dmz-web");
   // Absicht „eingeschränkt“: kein Verstoss mehr - danach zurück auf „gesperrt“
   await cell.locator("select[aria-label='Absicht']").selectOption("limited");
   await cell.locator("button:has-text('Absicht speichern')").click();
@@ -1012,14 +1020,14 @@ test("Zonen: Vorschläge beim Erfassen und Kommunikation im Zonenplan (0.66.0)",
   await expect(fwZone).toHaveCount(0); // übernommen: kein Vorschlag mehr
   await page.click(".modal button:has-text('Abbrechen')");
 
-  // Zonenplan: Kommunikation LAN -> DMZ (zwei erlaubende Policies), nur auf Wunsch
+  // Zonenplan: Kommunikation LAN -> DMZ (eine erlaubende Policy nach dem Weg), nur auf Wunsch
   await page.click(".tabbar button:has-text('Zonenplan')");
   await expect(page.locator("#zone-plan .zp-zone2").first()).toBeVisible();
   await expect(page.locator("#zone-plan .zp-edge.flow")).toHaveCount(0);
   await page.locator("#zone-plan-flows input").check();
-  const flow = page.locator("#zone-plan .zp-edge.flow").filter({ has: page.locator("title", { hasText: "LAN → DMZ: 2" }) });
+  const flow = page.locator("#zone-plan .zp-edge.flow").filter({ has: page.locator("title", { hasText: "LAN → DMZ: 1" }) });
   await expect(flow).toHaveCount(1);
-  await expect(flow).toContainText("2 Regeln");
+  await expect(flow).toContainText("1 Regel");
   // keine Linie zu „Knoten ohne Zone“ (Adressen ohne Zone sind keine Zone)
   await expect(page.locator("#zone-plan .zp-edge.flow title", { hasText: "Knoten ohne Zone" })).toHaveCount(0);
   await page.locator("#zone-plan-flows input").uncheck();

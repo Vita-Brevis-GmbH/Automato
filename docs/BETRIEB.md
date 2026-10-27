@@ -936,6 +936,11 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       der Übergang.
     - Zonen ohne eigene Netze sind normal – z. B. Edge Internet: ein Bein zur L3Out des DC, eines
       in Public.
+    - **Zone nur hinter einem Router** (0.81.0): liegt ein Netz einer Zone (z. B. ein Standort
+      10.88.0.0/16) an keinem gelesenen Gerät, routet aber eine Firewall bzw. VRF es über einen
+      Router ohne gelesenes Gerät, ist das Netz dieses Routers der Übergang zur Zone. Der
+      Übergang nennt die Route („Route 10.88.0.0/16“). Die Default-Route zählt nicht – ohne
+      genauere Route bleibt es beim Übergang nach „ausserhalb“.
     - Namen der Übergänge aus den Kurznamen, nach Ebene geordnet (DC vor Edge vor Public).
     - **Farben** kommen aus dem Grundschema bzw. der eingebauten Vorlage und sind überall gleich;
       im Editor ist die Farbe dann fest (ändern im Grundschema der Namensprofile). Nur Zonen ohne
@@ -1005,6 +1010,15 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     z. B. nur FQDN, zählt nicht).
     - Klick auf eine Zelle: die Regeln (Link zur Regel) und – als Operator – die **Absicht**
       für das Zonenpaar: erlaubt, eingeschränkt, gesperrt, mit Notiz.
+    - **Nach dem Weg** (0.81.0): eine Regel zählt für ein Zonenpaar nur, wenn ihr Gerät die
+      Zonen erreichen kann – wie in der Doku. Eine FortiGate-Policy mit Eingang `srv` kann ein
+      LAN, das die Firewall über `lan` erreicht, nicht als Quelle sehen; ein Contract nur die
+      Adressen, die seine externe EPG bzw. sein Scope erfasst. Solche Paare stehen in der Zelle
+      als „N nicht möglich“, nicht als erlaubend bzw. sperrend und nicht als Verstoss gegen die
+      Absicht (auch kein Befund). Die Zelle zeigt sie mit „nach dem Weg nicht möglich“ samt
+      Begründung; oben steht, wie viele Regeln das Routing ganz ausschliesst. Ohne gelesenes
+      Routing bzw. mit Policy-Route oder SD-WAN zählt die Regel weiter (nicht sicher
+      ausgeschlossen).
     - **Absicht je Dienst** (0.57.0): bei „eingeschränkt“ die erlaubten **Dienste** (Feld
       „Dienste“, durch Komma getrennt): `tcp/443`, `udp/53`, `tcp/8000-8080`, `tcp` (alle
       Ports), `icmp`, `any` bzw. der Name eines Service-Objekts oder ACI-Filters (`FT_https`).

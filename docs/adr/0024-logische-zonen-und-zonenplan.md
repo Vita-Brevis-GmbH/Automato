@@ -326,6 +326,25 @@ Entscheide des Anwenders (2026-10-23):
       (`Schema.match`: Name, Kurzname, Muster). Neu berechnet mit den übrigen Zonen-Befunden
       und nach Hochladen, Bearbeiten und Löschen des Grundschemas für alle Mandanten des
       Profils. Ohne Grundschema kein Befund.
+18. **Zonen komplett, Teil 2 (0.81.0):** ROADMAP Schritt 5, zwei weitere offene Punkte.
+    - **Relevanz nach dem Weg in der Zonenmatrix** (ADR 0019 Punkt 6, wie in der Doku): je
+      Regel, Seite und Zone die erste Adresse der Zone im Bereich der Regel
+      (`ZoneIndex.first_of`). Eine FortiGate-Policy erreicht die Zone nur, wenn das Routing
+      ihres VDOMs die Adresse über Ein- bzw. Ausgang der Policy führt
+      (`relevance.Relevance.check`); ein Contract nur, wenn er die Adresse erfassen kann
+      (externe EPG, Scope – `relevance._aci_for_ip`, höchstens 2000 Adressen je Berechnung).
+      Unbekannt (Routing nicht gelesen, Policy-Route, SD-WAN) bleibt drin. Ausgeschlossene
+      Paare zählen in der Zelle als „nicht möglich“ (`impossible`), nicht als erlaubend bzw.
+      sperrend und nicht als Verstoss gegen die Absicht – auch nicht im Befund
+      `zone_policy_violation`, im Zonenplan (Kommunikation) und in der Sicht der Kunden. Die
+      Zelle zeigt die Regeln auf Wunsch mit Begründung (`GET /zones/matrix/rules?impossible=true`);
+      `summary.off_path` = Regeln, deren Zonen das Routing alle ausschliesst.
+    - **Zone nur hinter einem Router:** liegt ein Netz einer Zone an keinem gelesenen Knoten,
+      routet aber ein Knoten es (nicht über 0.0.0.0/0) über einen Router ohne gelesenes Gerät,
+      ist das Netz dieses Routers der Übergang zur Zone – wie bei einer Anbindung
+      (`zone_struct._routed`, höchstens 200 Netze je Zone). Der Übergang nennt die Routen
+      (`networks[].routes`: Zone, Präfixe). Ohne solche Route bleibt es beim Übergang nach
+      „ausserhalb“.
 
 ## Folgen
 
@@ -338,7 +357,7 @@ Entscheide des Anwenders (2026-10-23):
 - Export für Confluence seit 0.71.0 als Word + draw.io zum Import von Hand (ADR 0026, kein
   Schreibweg).
 - Offen (ROADMAP Schritt 5, weitere Teile): Zonen je Kunde im Grundschema (Vorlage „je
-  Kunde“), draw.io-Datei des Zonenplans zurück einlesen (Korrekturen im Designer), Relevanz
-  nach Pfad für die Matrix (ADR 0019), Übergänge über Routen ohne gemeinsames Netz (Zonen nur
-  hinter einem Router) im Plan. Erledigt in 0.78.0 (Nr. 17): Befund „Zone ausserhalb des
-  Schemas“, Absicht je Dienst und Richtung im Zonenplan, Zonen in den Verbindungen.
+  Kunde“), draw.io-Datei des Zonenplans zurück einlesen (Korrekturen im Designer). Erledigt in
+  0.78.0 (Nr. 17): Befund „Zone ausserhalb des Schemas“, Absicht je Dienst und Richtung im
+  Zonenplan, Zonen in den Verbindungen; in 0.81.0 (Nr. 18): Relevanz nach dem Weg in der
+  Matrix, Übergänge zu Zonen nur hinter einem Router.

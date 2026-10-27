@@ -585,10 +585,12 @@ def matrix_rules(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     customer_id: int | None = None,
+    impossible: bool = False,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """Regeln einer Zelle (Quellzone -> Zielzone; Zone-ID, `any` bzw. `none`)."""
+    """Regeln einer Zelle (Quellzone -> Zielzone; Zone-ID, `any` bzw. `none`); mit
+    `impossible` die Regeln, die das Routing fuer die Zelle ausschliesst (0.81.0)."""
     tid = _tenant(session, principal, tenant_id)
     scope = _filter_scope(session, principal, tid, customer_id)
     try:
@@ -597,7 +599,7 @@ def matrix_rules(
         raise HTTPException(status_code=422, detail="src/dst: zone id, any, none or other") from exc
     return store.cell_rules(session, tid, *cells, limit=limit, offset=offset,
                             source_system_id=source_system_id,
-                            customer_ids=scope)  # fmt: skip
+                            customer_ids=scope, impossible=impossible)  # fmt: skip
 
 
 @router.put("/policy")
