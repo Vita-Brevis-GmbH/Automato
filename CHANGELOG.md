@@ -7,6 +7,21 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.78.4 – 2026-10-27
+
+Korrektur nach Rückmeldung des Anwenders: die Weg-Suche zeigte bei einer Sperre zuoberst
+(„Default Block Darknet“) nur diese Policy, nicht die übrigen Regeln. Ohne Migration.
+
+- **Policies dahinter:** je Firewall bzw. VDOM unter „dahinter, nicht erreicht“ bis zu fünf
+  weitere passende Policies nach der entscheidenden (`rules.after`). Sperrt die erste und
+  erlaubt eine dahinter, nennt das Urteil sie („gesperrt durch Policy 9 „Default Block …“ –
+  dahinter würde Policy 1 „…“ erlauben (nicht erreicht)“). Das Urteil selbst bleibt: die erste
+  sicher passende Policy entscheidet, wie auf der FortiGate.
+- **Über welches Objekt:** je Policy Quelle und Ziel mit dem passenden Objekt („Quelle any,
+  Ziel G_darknet“) – so ist sichtbar, warum eine Sperre greift.
+- Applikations-Doku, Verbindungen und Abgleich rechnen wie bisher ohne die Policies dahinter.
+- BETRIEB, TESTS.
+
 ## 0.78.3 – 2026-10-27
 
 Korrektur nach Rückmeldung des Anwenders beim Test des NSX ALB (Avi): „Verbindung prüfen“

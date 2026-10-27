@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import {
   fetchRoutingSummary,
+  HopRule,
   HopRules,
   L2Location,
   L2Segment,
@@ -89,8 +90,39 @@ export function Verdict({ v, title }: { v: string; title?: string }) {
   );
 }
 
+// Quelle/Ziel einer FortiGate-Policy: über welches Objekt sie passen (0.78.4)
+function matchedVia(p: HopRule): string {
+  if (p.kind) return p.src && p.src !== "direkt" ? ` · über ${p.src}` : "";
+  const parts = [p.src && `Quelle ${p.src}`, p.dst && `Ziel ${p.dst}`].filter(Boolean);
+  return parts.length ? ` · ${parts.join(", ")}` : "";
+}
+
+function HopRuleLine({ p }: { p: HopRule }) {
+  return (
+    <span className={p.decides ? undefined : "faint"}>
+      <a href={`#regeln?rule=${p.rule_id}`} title="Regel öffnen">
+        {p.label ?? `Policy ${p.external_id}`}
+      </a>
+      {!p.label && p.name ? ` „${p.name}“` : ""} · {p.action === "allow" ? "erlauben" : "sperren"}
+      {matchedVia(p)}
+      {p.services.length ? ` · ${p.services.join(", ")}` : ""}
+      {p.unsure.length ? ` · möglich (${p.unsure.join(", ")})` : ""}
+      {p.note ? <span className="aci-note"> · greift nicht: {p.note}</span> : null}
+      {p.reverse && (
+        <>
+          {" "}
+          <span className="chip warn aci-reverse" title="ACI ist zustandslos: Filter ohne Ports gelten auch vom Provider zum Consumer">
+            ↩ Rückrichtung
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
+
 // Regeln eines Hops: FortiGate die entscheidende Policy und die möglichen davor (mit dem, was
-// nicht prüfbar ist); ACI-VRF (0.35.0) die Zuordnung von Quelle und Ziel und die Contracts
+// nicht prüfbar ist), seit 0.78.4 auch die passenden dahinter (nicht erreicht); ACI-VRF (0.35.0)
+// die Zuordnung von Quelle und Ziel und die Contracts
 function HopRulesCell({ r }: { r?: HopRules }) {
   if (!r) return <Dash />;
   return (
@@ -103,26 +135,19 @@ function HopRulesCell({ r }: { r?: HopRules }) {
       )}
       <div className="objs" style={{ marginTop: 2 }}>
         {r.rules.map((p) => (
-          <span key={p.rule_id} className={p.decides ? undefined : "faint"}>
-            <a href={`#regeln?rule=${p.rule_id}`} title="Regel öffnen">
-              {p.label ?? `Policy ${p.external_id}`}
-            </a>
-            {!p.label && p.name ? ` „${p.name}“` : ""} · {p.action === "allow" ? "erlauben" : "sperren"}
-            {p.kind && p.src && p.src !== "direkt" ? ` · über ${p.src}` : ""}
-            {p.services.length ? ` · ${p.services.join(", ")}` : ""}
-            {p.unsure.length ? ` · möglich (${p.unsure.join(", ")})` : ""}
-            {p.note ? <span className="aci-note"> · greift nicht: {p.note}</span> : null}
-            {p.reverse && (
-              <>
-                {" "}
-                <span className="chip warn aci-reverse" title="ACI ist zustandslos: Filter ohne Ports gelten auch vom Provider zum Consumer">
-                  ↩ Rückrichtung
-                </span>
-              </>
-            )}
-          </span>
+          <HopRuleLine key={p.rule_id} p={p} />
         ))}
       </div>
+      {r.after && r.after.length > 0 && (
+        <div className="hop-after" title="Diese Policies passen auch, liegen aber hinter der entscheidenden – die Firewall erreicht sie für diesen Verkehr nicht">
+          <div className="faint">dahinter, nicht erreicht:</div>
+          <div className="objs">
+            {r.after.map((p) => (
+              <HopRuleLine key={p.rule_id} p={p} />
+            ))}
+          </div>
+        </div>
+      )}
       {r.rules.length === 0 && <div className="faint">{r.text}</div>}
     </div>
   );

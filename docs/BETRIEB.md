@@ -358,6 +358,13 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       - „möglich (…)“ nennt, was sich nicht prüfen lässt: Eingang/Quelle bei gewähltem Start,
         FQDN/ISDB, Benutzer/Gruppen, Zeitplan, Dienst. Kann eine solche Policy vor der
         entscheidenden greifen, ist der Hop „abhängig“.
+      - Seit 0.78.4 steht je Policy, **über welches Objekt** Quelle und Ziel passen
+        („Quelle any, Ziel G_darknet“), und unter **„dahinter, nicht erreicht“** bis zu fünf
+        weitere passende Policies nach der entscheidenden – z. B. hinter einer Sperre
+        zuoberst („Default Block …“). Steht dahinter eine erlaubende, nennt das Urteil sie
+        („gesperrt durch Policy 9 … – dahinter würde Policy 20 … erlauben (nicht erreicht)“).
+        Sperrt die Policy zuoberst unerwartet, zeigt „über …“ das Objekt, das passt: im
+        Objekt prüfen, ob es das Ziel wirklich enthält.
       - Dienste stehen mit dem Objektnamen (`FT_https`, `HTTPS`) wie in Regel-Liste,
         Regel-Detail und Applikations-Doku (0.35.0); die Werte (`tcp/443`) zeigt das Detail.
       - Je Weg steht das Gesamturteil („gesperrt an fw-x“, „erlaubt (2 Firewalls, 1 ACI-VRF)“).

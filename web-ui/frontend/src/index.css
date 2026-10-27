@@ -257,6 +257,8 @@ td.actions { text-align: right; white-space: nowrap; }
 td.nowrap, span.nowrap { white-space: nowrap; }
 .objs { display: flex; flex-direction: column; gap: 1px; }
 .objs .mono { font-size: 12px; white-space: nowrap; }
+/* Weg-Suche (0.78.4): passende Policies hinter der entscheidenden */
+.hop-after { margin-top: 4px; padding-left: 6px; border-left: 2px solid var(--border); }
 
 /* Badges / Chips */
 .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: 20px;

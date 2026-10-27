@@ -78,7 +78,7 @@ wheels = [
 
 [[package]]
 name = "automato"
-version = "0.78.3"
+version = "0.78.4"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -353,7 +353,7 @@ wheels = [
 
 [[package]]
 name = "collectors"
-version = "0.78.3"
+version = "0.78.4"
 source = { editable = "collectors" }
 dependencies = [
     { name = "celery", extra = ["redis"] },
@@ -897,7 +897,7 @@ wheels = [
 
 [[package]]
 name = "orchestrator"
-version = "0.78.3"
+version = "0.78.4"
 source = { editable = "orchestrator" }
 dependencies = [
     { name = "alembic" },
@@ -1416,7 +1416,7 @@ wheels = [
 
 [[package]]
 name = "sot-gateway"
-version = "0.78.3"
+version = "0.78.4"
 source = { editable = "sot-gateway" }
 dependencies = [
     { name = "httpx" },

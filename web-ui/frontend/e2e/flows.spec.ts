@@ -862,7 +862,22 @@ test("Weg-Suche: Netz als Ganzes – Regel erfasst nur einen Teil, Teile anders 
   await page.click("button:has-text('Weg suchen')");
   const card = page.locator(".card[id^='trace-']").first();
   await expect(card).toContainText("Regeln: abhängig an fw-08");
-  await expect(card.locator("tbody")).toContainText("„lan-to-dmz-web“ · erlauben · tcp/443 · möglich (Ziel nur teilweise)");
+  await expect(card.locator("tbody")).toContainText(
+    "„lan-to-dmz-web“ · erlauben · Quelle 10.10.0.0/24, Ziel 10.30.0.10 (Teil) · tcp/443 · möglich (Ziel nur teilweise)",
+  );
+  // Host: Policy 1 entscheidet, die passende Sperre dahinter steht als „nicht erreicht“ (0.78.4)
+  await src.fill("10.10.0.5");
+  await src.press("Escape");
+  await dst.fill("10.30.0.10");
+  await dst.press("Escape");
+  await page.click("button:has-text('Weg suchen')");
+  const hostCard = page.locator(".card[id^='trace-']", { hasText: "Regeln: erlaubt" }).first();
+  await expect(hostCard.locator(".hop-after")).toContainText("dahinter, nicht erreicht:");
+  await expect(hostCard.locator(".hop-after")).toContainText("„lan-to-dmz-deny“ · sperren · Quelle any, Ziel any");
+  await src.fill("10.10.0.0/25");
+  await src.press("Escape");
+  await dst.fill("10.30.0.0/24");
+  await dst.press("Escape");
   // Ziel /23: Route, die das ganze Netz enthält (Default), der /24-Teil ist angeschlossen
   await dst.fill("10.30.0.0/23");
   await page.click("button:has-text('Weg suchen')");

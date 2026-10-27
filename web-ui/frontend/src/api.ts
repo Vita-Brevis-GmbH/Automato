@@ -2204,12 +2204,14 @@ export interface HopRule {
   kind?: "contract" | "taboo" | "preferred_group";
   reverse?: boolean; // ACI (0.69.1): passt in der Rückrichtung (Provider → Consumer, zustandslos)
   note?: string; // ACI (0.72.1): greift nicht, z. B. nur Antworten (Filter nur mit Quellport)
+  after?: boolean; // 0.78.4: passt, liegt aber hinter der entscheidenden Policy
 }
 export type PolicyVerdict = "allow" | "deny" | "implicit_deny" | "depends" | "unknown";
 export interface HopRules {
   verdict: PolicyVerdict;
   text: string;
   rules: HopRule[];
+  after?: HopRule[]; // Weg-Suche (0.78.4): passende Policies dahinter, nicht erreicht
   src_epg?: string; // ACI-VRF-Hop (0.35.0): Zuordnung der Quelle bzw. des Ziels
   dst_epg?: string;
 }

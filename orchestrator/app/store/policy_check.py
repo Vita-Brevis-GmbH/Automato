@@ -54,6 +54,7 @@ from app.store.topology import endpoint, is_net, span
 FIREWALL_KINDS = ("firewall", "vdom")
 ACI_KINDS = ("vrf",)
 SHOWN = 12  # moegliche Policies je Hop in der Anzeige
+AFTER = 5  # Weg-Suche (0.78.4): passende Policies hinter der entscheidenden
 _OPEN = ("", "always")  # Zeitplan ohne Einschraenkung
 
 
@@ -337,15 +338,17 @@ class Checker:
 
     # -- Pruefen -----------------------------------------------------------------
 
-    def check(self, sid: int, vdom: str, ingress: dict | None, egress: dict | None,
-              src, dst, service: tuple[str, int | None] | None) -> dict:  # fmt: skip
+    def check(self, sid: int, vdom: str, ingress: dict | None, egress: dict | None, src, dst,
+              service: tuple[str, int | None] | None, after: int = 0) -> dict:  # fmt: skip
         """Urteil je Hop: allow | deny | implicit_deny | depends | unknown, mit der
-        entscheidenden Policy und den moeglichen davor."""
+        entscheidenden Policy und den moeglichen davor; mit `after` bis zu so viele passende
+        Policies dahinter (`after`, greifen nicht mehr - z. B. hinter einer Sperre zuoberst)."""
         policies = self.policies(sid, vdom)
         if not policies:
             return {"verdict": "unknown", "text": "keine Policies gelesen", "rules": []}
         known = self.known(sid)
         shown: list[dict] = []
+        later: list[dict] = []
         decisive = None
         for p in policies:
             if not p.enabled:
@@ -381,14 +384,27 @@ class Checker:
                 "decides": not unsure,
                 "snat": p.snat6 if getattr(src, "version", 4) == 6 else p.snat,
             }
+            if decisive is not None:  # dahinter (0.78.4): passt, wird aber nicht erreicht
+                later.append(entry | {"decides": False, "after": True})
+                if len(later) >= after:
+                    break
+                continue
             if unsure:
                 if len(shown) < SHOWN:
                     shown.append(entry)
                 continue
             shown.append(entry)
             decisive = entry
-            break
-        return _verdict(decisive, shown)
+            if not after:
+                break
+        result = _verdict(decisive, shown)
+        if later:
+            result["after"] = later
+            # Sperre zuoberst (z. B. „Default Block …“): die erlaubende dahinter nennen
+            allow = next((e for e in later if e["action"] == "allow"), None)
+            if decisive["action"] == "deny" and allow is not None:
+                result["text"] += f" – dahinter würde {_label(allow)} erlauben (nicht erreicht)"
+        return result
 
 
 def _family_of(n: NatRule) -> int:
@@ -525,10 +541,11 @@ class Checks:
     checker: Checker
     aci: object | None = None
     cache: dict[tuple, dict] = field(default_factory=dict)
+    after: int = 0  # passende Policies hinter der entscheidenden (nur die Weg-Suche zeigt sie)
 
     @classmethod
-    def load(cls, session: Session, tenant_id: int) -> "Checks":
-        return cls(Checker(session, tenant_id))
+    def load(cls, session: Session, tenant_id: int, after: int = 0) -> "Checks":
+        return cls(Checker(session, tenant_id), after=after)
 
 
 def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, service,
@@ -536,10 +553,11 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
     """Je Weg und FortiGate- bzw. ACI-VRF-Hop das Urteil (`hop.rules`), dazu je Weg das
     Gesamturteil (`path.policy`): gesperrt am ersten sperrenden Hop, sonst abhaengig bzw.
     erlaubt. NAT: Ziel je Hop aus dem Weg (`hop.dst` nach einer VIP davor), interner Port bei
-    Port-Weiterleitung, Quelle nach SNAT (`hop.snat`) fuer die Hops danach."""
+    Port-Weiterleitung, Quelle nach SNAT (`hop.snat`) fuer die Hops danach. Ohne `checks`
+    (Weg-Suche) auch die passenden Policies hinter der entscheidenden (`rules.after`)."""
     from app.store.aci_check import AciChecker  # zirkulaer: aci_relevance -> paths
 
-    checks = checks or Checks.load(session, tenant_id)
+    checks = checks or Checks.load(session, tenant_id, after=AFTER)
     checker, cache = checks.checker, checks.cache
     for path in paths:
         verdicts = []
@@ -570,7 +588,8 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
                      egress.get("interface"), egress.get("zone"))  # fmt: skip
             key = (sid, vdom, *ports, cur_src, hop_dst, cur_svc)
             if key not in cache:
-                cache[key] = checker.check(sid, vdom, ingress, egress, cur_src, hop_dst, cur_svc)
+                cache[key] = checker.check(sid, vdom, ingress, egress, cur_src, hop_dst, cur_svc,
+                                           checks.after)  # fmt: skip
             result = hop["rules"] = cache[key]
             verdicts.append((hop["label"], result["verdict"], kind))
             decisive = next((r for r in result["rules"] if r["decides"]), None)
