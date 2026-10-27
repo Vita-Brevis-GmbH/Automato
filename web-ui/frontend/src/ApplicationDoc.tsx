@@ -559,6 +559,19 @@ export default function ApplicationDocView({
               {L(`${s.impossible} routingtechnisch unmögliche ausgelassen`, `${s.impossible} impossible by routing omitted`)}
             </span>
           ) : null}
+          {s.helpers ? (
+            <span
+              className="faint"
+              id="app-helpers"
+              style={{ fontSize: 12 }}
+              title={(doc.helpers ?? []).map((h) => `${h.name} (${h.l3outs.join(", ")})`).join("\n")}
+            >
+              {L(
+                ` · ${s.helpers} Hilfs-Contracts über L3Outs – an den Firewall-Regeln vermerkt`,
+                ` · ${s.helpers} helper contracts via L3Outs – noted on the firewall rules`,
+              )}
+            </span>
+          ) : null}
           {filtered && (
             <button className="btn btn-ghost btn-sm no-print" onClick={() => setF(NO_FILTER)}>
               {L("Filter zurücksetzen", "Reset filter")}
@@ -995,6 +1008,8 @@ function RuleRow({
   const tables = [...new Set(hits.map((h) => h.table))].filter((t) => t > 0).sort((x, y) => x - y);
   const aci = r.domain === "aci_contract";
   const impossible = hits.filter((h) => h.relevance === "impossible");
+  const notes = [...new Set(hits.map((h) => h.l3out_note ?? "").filter(Boolean))];
+  const helpers = [...new Set(hits.flatMap((h) => (h.helpers ?? []).map((x) => `${x.names.join(", ")} (${x.l3out})`)))];
   return (
     <tr className="clickable" onClick={onOpen}>
       <td className="mono">{r.id}</td>
@@ -1031,6 +1046,19 @@ function RuleRow({
             <span className="chip crit" title={[...new Set(impossible.map((h) => h.relevance_text))].join("\n")}>
               {impossible.length === hits.length ? L("nicht möglich", "not possible") : L("teils nicht möglich", "partly not possible")}
             </span>
+          </div>
+        )}
+        {/* ADR 0034: Contract zur externen EPG ohne Firewall dahinter bzw. Hilfs-Contracts der Firewall-Regel */}
+        {notes.length > 0 && (
+          <div>
+            <span className="chip warn" title={notes.join("\n")}>
+              {L("ohne Firewall", "no firewall")}
+            </span>
+          </div>
+        )}
+        {helpers.length > 0 && (
+          <div className="faint" style={{ fontSize: 12 }}>
+            {L("Hilfs-Contract", "Helper contract")}: {helpers.join(", ")}
           </div>
         )}
       </td>

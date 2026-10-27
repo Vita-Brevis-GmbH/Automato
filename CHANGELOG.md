@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.97.0 – 2026-10-27
+
+L3Outs: Firewall führend (Befunde des Anwenders aus dem Test 2026-10-27; ADR 0034).
+
+- **Firewall hinter jedem L3Out:** abgeleitet aus dem Transfernetz bzw. BGP-Peer/statischem
+  Next-Hop, von Hand bestätigen, ändern, „keine“ oder zurücksetzen (Routing → L3Outs (ACI),
+  Spalte „Firewall dahinter“; `GET /routing/l3outs` mit `behind`,
+  `GET /routing/l3outs/firewall-choices`, `PUT/DELETE /routing/l3outs/firewall` Operator, Audit
+  `routing.l3out_firewall.set`/`.removed`; Migration `0061` `l3out_firewall`).
+- **Über welchen L3Out eine Gegenstelle kommt, entscheidet das Routing der Firewalls dahinter**
+  (`aci_relevance._by_firewall`: genaueste Route nach aussen, zurück ins ACI = nicht über diesen
+  L3Out), mit Begründung „über L3O_inet: fw-01 routet … über wan1“; Rückfall auf das ACI
+  (längstes Subnetz) ohne Firewall bzw. ohne Aussage – in Doku, Weg-Suche, Verbindungen,
+  Regel-Liste nach IP, Zonen und Kunden.
+- **Applikations-Doku:** Contracts zu externen EPGs mit Firewall dahinter nur als Hilfs-Contract
+  an der Firewall-Regel (neue Spalte „L3Out“: „L3O_inet · Contract CT_inet“), nicht mehr in
+  „Regeln & Contracts“, im Export und in den Kennzahlen; enger als die Firewall „– es fehlt …“
+  mit Befund `app_contract_narrower`; ohne Firewall dahinter sichtbar mit Hinweis.
+- **Unspezifische Zugriffe je Kategorie nach dem L3Out geordnet**, über den sie hereinkommen
+  (Zwischenüberschrift „über L3O_x“, Spalte in Markdown/Word).
+- Verbindungen Ende zu Ende: Hilfs-Contract keine eigene Verbindung, prüft im ACI-Hop mit.
+
 ## 0.96.0 – 2026-10-27
 
 NAT / VIPs: Kette über den Load Balancer, Namenskonvention für VIPs und IP-Pools (Befunde des

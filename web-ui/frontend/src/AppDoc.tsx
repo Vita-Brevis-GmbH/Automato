@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { Fragment, ReactNode, useEffect, useMemo, useState } from "react";
 import {
   AppDocSystem,
   assignSystemSite,
@@ -378,6 +378,17 @@ export interface HideControls {
 
 const dateText = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString(locale) : "");
 
+// ADR 0034: unspezifische Zugriffe (Subnetz, any, vzAny, Preferred Group) stehen je L3Out, über den
+// sie hereinkommen (der Server sortiert) – Zwischenüberschrift „über L3O_inet“, wo der L3Out wechselt
+const UNSPECIFIC = ["subnet", "any", "vzany", "pref_group"];
+function l3outGroup(rows: DocRow[], i: number): string | null {
+  const broad = (r: DocRow) => UNSPECIFIC.includes(String(r._scope ?? ""));
+  if (!broad(rows[i]) || !rows.some((r) => broad(r) && r._l3out_in)) return null;
+  const name = rows[i]._l3out_in ? String(rows[i]._l3out_in) : "";
+  if (i > 0 && broad(rows[i - 1]) && String(rows[i - 1]._l3out_in ?? "") === name) return null;
+  return name ? L(`über ${name}`, `via ${name}`) : L("ohne L3Out", "without L3Out");
+}
+
 export function DocTableView({
   table,
   onRule,
@@ -429,8 +440,16 @@ export function DocTableView({
               </tr>
             </thead>
             <tbody>
-              {table.rows.map((row, i) => (
-                <tr key={i}>
+              {table.rows.map((row, i) => {
+                const group = l3outGroup(table.rows, i);
+                return (
+                <Fragment key={i}>
+                {group && (
+                  <tr className="doc-l3out">
+                    <td colSpan={table.columns.length + (editable ? 1 : 0)}>{group}</td>
+                  </tr>
+                )}
+                <tr>
                   {table.columns.map((c) => (
                     <td key={c} className={c === "TCP/UDP" ? "mono" : ""}>
                       {c === "Aktion" && row[c] ? (
@@ -457,7 +476,9 @@ export function DocTableView({
                     </td>
                   )}
                 </tr>
-              ))}
+                </Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}

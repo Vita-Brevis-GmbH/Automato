@@ -14,8 +14,11 @@ import {
   Redundancy,
   fetchExits,
   fetchExitSuggestions,
+  fetchFirewallChoices,
   fetchHa,
   fetchL3Outs,
+  FirewallChoice,
+  L3OutBehind,
   fetchParallelGroups,
   fetchPeers,
   fetchPolicyRoutes,
@@ -41,6 +44,8 @@ import {
   TopoExitIn,
   TopoRoute,
   TracePort,
+  removeL3OutFirewall,
+  setL3OutFirewall,
   updateExit,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
@@ -994,11 +999,19 @@ function PolicyTab({ tenantId, initialQ = "" }: { tenantId: number; initialQ?: s
   );
 }
 
-function L3OutTab({ tenantId }: { tenantId: number }) {
-  const { rows: all, error } = useList<TopoL3Out>(() => fetchL3Outs(tenantId), [tenantId]);
+function L3OutTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }) {
+  const [tick, setTick] = useState(0); // neu laden nach einer Zuordnung von Hand (ADR 0034)
+  const { rows: all, error } = useList<TopoL3Out>(() => fetchL3Outs(tenantId), [tenantId, tick]);
+  const [choices, setChoices] = useState<FirewallChoice[] | null>(null);
+  useEffect(() => {
+    if (!canEdit) return;
+    fetchFirewallChoices(tenantId)
+      .then(setChoices)
+      .catch(() => setChoices([]));
+  }, [tenantId, canEdit]);
   const f = useRowFilter(
     all,
-    (o) => [o.name, o.aci_tenant, o.vrf, o.ext_epgs, o.nodes, o.paths, o.peers],
+    (o) => [o.name, o.aci_tenant, o.vrf, o.ext_epgs, o.nodes, o.paths, o.peers, o.behind?.firewalls],
     (o) => `Tenant ${o.aci_tenant}`,
   );
   const rows = f.shown;
@@ -1006,9 +1019,23 @@ function L3OutTab({ tenantId }: { tenantId: number }) {
     <>
       <RowFilter
         f={f}
-        placeholder={L("L3Out, VRF, Leaf, Interface, Peer, Route…", "L3Out, VRF, leaf, interface, peer, route…")}
+        placeholder={L("L3Out, VRF, Leaf, Interface, Peer, Route, Firewall…", "L3Out, VRF, leaf, interface, peer, route, firewall…")}
         total={all && rows ? { shown: rows.length, all: all.length } : null}
       />
+      <Note>
+        {L(
+          <>
+            <b>Firewall dahinter</b> (ADR 0034): hinter einem L3Out regelt die Firewall den Verkehr – ihr Routing entscheidet,
+            über welchen L3Out eine Gegenstelle kommt, und ein Contract zur externen EPG ist nur ein Hilfs-Contract an ihren
+            Regeln. Abgeleitet aus dem Transfernetz bzw. BGP-Peer; von Hand bestätigen, ändern oder „keine“.
+          </>,
+          <>
+            <b>Firewall behind</b> (ADR 0034): behind an L3Out the firewall controls the traffic – its routing decides via
+            which L3Out a peer comes, and a contract to the external EPG is only a helper contract on its rules. Derived from
+            the transfer network or BGP peer; confirm, change or set “none” by hand.
+          </>,
+        )}
+      </Note>
       <List error={error} rows={rows} empty={L("Keine L3Outs gelesen.", "No L3Outs read.")}>
         <thead>
           <tr>
@@ -1017,11 +1044,12 @@ function L3OutTab({ tenantId }: { tenantId: number }) {
             <th>{L("Border-Leafs", "Border leafs")}</th>
             <th>Interfaces / SVIs</th>
             <th>{L("BGP-Peers", "BGP peers")}</th>
+            <th>{L("Firewall dahinter", "Firewall behind")}</th>
           </tr>
         </thead>
         <tbody>
           {(rows ?? []).map((o) => (
-            <tr key={o.id}>
+            <tr key={o.id} data-l3out={o.name}>
               <td>
                 <b>{o.name}</b>
                 <div className="faint">
@@ -1085,11 +1113,167 @@ function L3OutTab({ tenantId }: { tenantId: number }) {
                   ))}
                 </div>
               </td>
+              <td>
+                <L3OutFirewall
+                  tenantId={tenantId}
+                  l3out={o}
+                  canEdit={canEdit}
+                  choices={choices ?? []}
+                  onChanged={() => setTick((t) => t + 1)}
+                />
+              </td>
             </tr>
           ))}
         </tbody>
       </List>
     </>
+  );
+}
+
+const ORIGIN_LABEL: Record<L3OutBehind["origin"], [string, string, string]> = {
+  derived: ["info", L("abgeleitet", "derived"), L("aus Transfernetz bzw. BGP-Peer abgeleitet", "derived from the transfer network or BGP peer")],
+  confirmed: ["ok", L("bestätigt", "confirmed"), L("von Hand bestätigt", "confirmed by hand")],
+  manual: ["warn", L("von Hand", "by hand"), L("von Hand gewählt", "chosen by hand")],
+  none: ["na", L("keine", "none"), L("von Hand: keine Firewall – der Contract regelt allein", "by hand: no firewall – the contract alone controls access")],
+};
+
+// Firewall hinter einem L3Out (ADR 0034): Anzeige mit Herkunft, für Operatoren bestätigen, ändern,
+// „keine“ und zurücksetzen (wieder abgeleitet)
+function L3OutFirewall({
+  tenantId,
+  l3out,
+  canEdit,
+  choices,
+  onChanged,
+}: {
+  tenantId: number;
+  l3out: TopoL3Out;
+  canEdit: boolean;
+  choices: FirewallChoice[];
+  onChanged: () => void;
+}) {
+  const b = l3out.behind;
+  const [edit, setEdit] = useState(false);
+  const [fw, setFw] = useState("");
+  const [iface, setIface] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  if (!b) return <Dash />;
+  const [chip, label, title] = ORIGIN_LABEL[b.origin];
+  const chosen = choices.find((c) => `${c.source_system_id}|${c.vdom}` === fw);
+  const run = async (body: { confirm?: boolean; none?: boolean; firewalls?: { source_system_id: number; vdom: string; interface?: string | null }[] }) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await setL3OutFirewall({ tenant_id: tenantId, source_system_id: l3out.source_system_id, dn: l3out.dn, ...body });
+      setEdit(false);
+      onChanged();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const reset = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await removeL3OutFirewall(tenantId, l3out.source_system_id, l3out.dn);
+      onChanged();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="objs l3out-fw">
+      {b.firewalls.length ? (
+        b.firewalls.map((x) => (
+          <span key={`${x.node}|${x.interface ?? ""}`} className="mono">
+            <b>{x.label}</b>
+            {x.interface && <span className="faint"> · {x.interface}</span>}
+            {x.zone && <span className="chip" style={{ marginLeft: 4 }}>{x.zone}</span>}
+          </span>
+        ))
+      ) : (
+        <span className="faint">
+          {b.origin === "none" ? L("keine Firewall", "no firewall") : L("nicht erkannt", "not detected")}
+        </span>
+      )}
+      <span>
+        <span className={`chip ${chip}`} title={title}>
+          {label}
+        </span>
+        {b.updated_by && b.origin !== "derived" && <span className="faint"> · {b.updated_by}</span>}
+      </span>
+      {canEdit && !edit && (
+        <span className="no-print">
+          {b.origin === "derived" && b.derived.length > 0 && (
+            <button className="linkbtn" disabled={busy} onClick={() => run({ confirm: true })}>
+              {L("bestätigen", "confirm")}
+            </button>
+          )}{" "}
+          <button className="linkbtn" disabled={busy} onClick={() => setEdit(true)}>
+            {L("ändern", "change")}
+          </button>{" "}
+          {b.origin !== "derived" && (
+            <button className="linkbtn" disabled={busy} onClick={reset} title={L("wieder abgeleitet", "derived again")}>
+              {L("zurücksetzen", "reset")}
+            </button>
+          )}
+        </span>
+      )}
+      {canEdit && edit && (
+        <span className="l3out-fw-edit no-print">
+          <select
+            className="sel"
+            aria-label={L("Firewall", "Firewall")}
+            value={fw}
+            onChange={(e) => {
+              setFw(e.target.value);
+              setIface("");
+            }}
+          >
+            <option value="">{L("Firewall wählen…", "Choose firewall…")}</option>
+            {choices.map((c) => (
+              <option key={`${c.source_system_id}|${c.vdom}`} value={`${c.source_system_id}|${c.vdom}`}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="sel"
+            aria-label={L("Interface zum L3Out", "Interface to the L3Out")}
+            value={iface}
+            disabled={!chosen}
+            onChange={(e) => setIface(e.target.value)}
+          >
+            <option value="">{L("Interface: –", "Interface: –")}</option>
+            {(chosen?.interfaces ?? []).map((i) => (
+              <option key={i.name} value={i.name}>
+                {i.name}
+                {i.zone ? ` (${i.zone})` : ""}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn btn-sm"
+            disabled={busy || !chosen}
+            onClick={() => chosen && run({ firewalls: [{ source_system_id: chosen.source_system_id, vdom: chosen.vdom, interface: iface || null }] })}
+          >
+            {L("Speichern", "Save")}
+          </button>
+          <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run({ none: true })}>
+            {L("keine Firewall", "no firewall")}
+          </button>
+          <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setEdit(false)}>
+            {L("Abbrechen", "Cancel")}
+          </button>
+        </span>
+      )}
+      <ErrorBox error={err} onClose={() => setErr(null)} />
+    </div>
   );
 }
 
@@ -2145,7 +2329,7 @@ export default function Routing({
       {tab === "ha" && <HaTab tenantId={tenantId} />}
       {tab === "parallel" && <ParallelTab tenantId={tenantId} />}
       {tab === "policy" && <PolicyTab tenantId={tenantId} initialQ={params.tab === "policy" ? params.q : ""} />}
-      {tab === "l3out" && <L3OutTab tenantId={tenantId} />}
+      {tab === "l3out" && <L3OutTab tenantId={tenantId} canEdit={canEdit} />}
       {tab === "topology" && <TopologyTab tenantId={tenantId} />}
       {tab === "exits" && (
         <ExitsTab

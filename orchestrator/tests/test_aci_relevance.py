@@ -147,7 +147,13 @@ def test_regel_liste_contracts_fuer_eine_ip(client):
     r = client.get("/rules", params=params)
     rel = {x["name"]: x["relevance"] for x in r.json()}
     assert set(rel) == {"CT_srv", "CT_rt"}
-    assert rel["CT_srv"] == {"state": "possible", "text": "", "sides": {"src": "possible"}}
+    # Firewall fuehrend (ADR 0034): fw-01 steht hinter L3O_fw (Transfernetz) und hat die IP
+    # angeschlossen - mit Begruendung
+    assert rel["CT_srv"] == {
+        "state": "possible",
+        "text": "über L3O_fw: fw-01 · VDOM root routet 10.20.0.0/24 über srv",
+        "sides": {"src": "possible"},
+    }
     assert rel["CT_rt"]["state"] == "impossible" and "nur das Routing" in rel["CT_rt"]["text"]
     assert r.headers["X-Impossible-Count"] == "1"
     hidden = client.get("/rules", params={**params, "routable": True}).json()

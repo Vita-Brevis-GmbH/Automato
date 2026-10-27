@@ -251,6 +251,9 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 tbody tr.selected { background: var(--accent-weak); }
 table.compact td { padding-top: 5px; padding-bottom: 5px; } /* Ports: eine Zeile je Port */
 table.doc-rows td { white-space: pre-line; } /* Kategorien (0.84.0): ein Eintrag je Zeile */
+/* ADR 0034: unspezifische Zugriffe je L3Out, über den sie hereinkommen */
+table.doc-rows tr.doc-l3out td { background: var(--surface-2); font-weight: 600; font-size: 12px; color: var(--muted); }
+.l3out-fw-edit { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
 .expandable { margin-top: 2px; }
 .expandable .linkbtn { font-size: 12px; }
 .expandable-list { margin-top: 2px; font-size: 12px; white-space: normal; overflow-wrap: anywhere; }

@@ -872,6 +872,14 @@ export interface AppDocHit {
   // Routing (0.24.0): kann die Regel Verkehr zum bzw. vom System sehen; impossible mit Grund
   relevance?: "possible" | "impossible" | "unknown";
   relevance_text?: string;
+  // L3Outs (ADR 0034): L3Out des Zugriffs; Contract zu externen EPGs mit Firewall dahinter =
+  // Hilfs-Contract (helper, an den Firewall-Regeln helper_for); an der Firewall-Regel ihre
+  // Hilfs-Contracts je L3Out; Hinweis am Contract ohne Firewall dahinter
+  l3out?: string | null;
+  helper?: boolean;
+  helper_for?: number[];
+  helpers?: { l3out: string; rule_ids: number[]; names: string[]; missing: string[] }[];
+  l3out_note?: string;
 }
 export interface AppDocFinding {
   id: number;
@@ -903,6 +911,7 @@ export interface ApplicationDoc {
     assigned?: number; // direkt zugeordnete Regeln (0.60.0)
     excluded?: number; // ausgeschlossene Regeln (0.60.0)
     hidden?: number; // in den Kategorien ausgeblendete Zeilen (0.69.0)
+    helpers?: number; // Hilfs-Contracts über L3Outs, an den Firewall-Regeln (ADR 0034)
   };
   systems: AppDocSystem2[];
   epgs: AppDocEpg[];
@@ -914,6 +923,8 @@ export interface ApplicationDoc {
   rule_members?: { member_id: number; kind: "rule" | "norule"; label: string; rule_id: number }[];
   dependencies?: { uses: AppDependency[]; used_by: AppDependency[] };
   hides?: DocHide[]; // 0.69.0
+  // ADR 0034: Hilfs-Contracts über L3Outs (nicht in rules) mit den Firewall-Regeln, an denen sie stehen
+  helpers?: { rule_id: number; name: string; l3outs: string[]; firewall_rules: number[]; systems: string[] }[];
 }
 export interface AppDependency {
   application_id: number;
@@ -2541,6 +2552,43 @@ export interface TopoL3Out {
     | null;
   peers: ({ ip: string; asn?: number | null; path?: string; node?: string | null } & Resolved)[] | null;
   ext_epgs: string[] | null;
+  source_system_id: number;
+  behind?: L3OutBehind | null; // Firewall dahinter (ADR 0034)
+}
+
+// Firewall hinter einem L3Out (ADR 0034): abgeleitet aus dem Topologie-Modell bzw. von Hand
+export type L3OutOrigin = "derived" | "confirmed" | "manual" | "none";
+export interface L3OutFirewallRef {
+  source_system_id: number;
+  vdom: string;
+  interface: string | null;
+  zone: string | null;
+  node: string;
+  label: string;
+  source: string | null;
+  read: boolean;
+}
+export interface L3OutBehind {
+  origin: L3OutOrigin;
+  firewalls: L3OutFirewallRef[];
+  derived: L3OutFirewallRef[];
+  updated_by: string | null;
+  updated_at: string | null;
+}
+export interface FirewallChoice {
+  source_system_id: number;
+  vdom: string;
+  label: string;
+  source: string;
+  interfaces: { name: string; zone: string | null; ips: string[] }[];
+}
+export interface L3OutFirewallIn {
+  tenant_id: number;
+  source_system_id: number; // APIC
+  dn: string;
+  confirm?: boolean;
+  none?: boolean;
+  firewalls?: { source_system_id: number; vdom: string; interface?: string | null }[];
 }
 
 export const fetchRoutingSummary = (tenantId: number) =>
@@ -2574,6 +2622,15 @@ export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha$
 export const fetchPolicyRoutes = (tenantId: number) =>
   getJSON<TopoPolicyRoute[]>(`/api/routing/policy-routes${cq({ tenant_id: tenantId })}`);
 export const fetchL3Outs = (tenantId: number) => getJSON<TopoL3Out[]>(`/api/routing/l3outs${cq({ tenant_id: tenantId })}`);
+export const fetchFirewallChoices = (tenantId: number) =>
+  getJSON<FirewallChoice[]>(`/api/routing/l3outs/firewall-choices${qs({ tenant_id: tenantId })}`);
+export const setL3OutFirewall = (body: L3OutFirewallIn) =>
+  sendJSON<{ dn: string; behind: L3OutBehind | null }>("/api/routing/l3outs/firewall", "PUT", body);
+export const removeL3OutFirewall = (tenantId: number, sourceId: number, dn: string) =>
+  sendJSON<{ dn: string; removed: number; behind: L3OutBehind | null }>(
+    `/api/routing/l3outs/firewall${qs({ tenant_id: tenantId, source_system_id: sourceId, dn })}`,
+    "DELETE",
+  );
 
 // Anbindungen nach aussen (0.18.0, von Hand): Internet, MPLS, WAN, Partner – der Weg endet dort
 // bzw. geht nach den manuellen Routen bei einem gelesenen Knoten weiter

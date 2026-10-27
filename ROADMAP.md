@@ -408,11 +408,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.94.1** | Korrektur: unerwartete Fehler mit Referenz in Antwort und Protokoll (Fehlersuche HTTP 500 der Applikations-Doku) |
 | **0.95.0** | Applikations-Doku: Klick auf eine EPG öffnet ihr Detail (statt Sprung zu den Regeln), Objekt-Detail in der Doku, Namen der Gegenstellen als Einstellung des Admins (ADR 0012 Ergänzung 0.95.0) |
 | **0.96.0** | NAT / VIPs: Kette VIP der Firewall → Load Balancer → Server (Liste, Detail, Suche, CSV-Export), VIP-Gruppen der FortiGate, Namenskonvention für VIPs/Virtual Server/IP-Pools (ADR 0027/0016 Ergänzung 0.96.0) |
+| **0.97.0** | L3Outs: Firewall führend – Firewall hinter jedem L3Out (abgeleitet bzw. von Hand), Zuordnung der Gegenstellen nach dem Routing der Firewall, Contracts zu externen EPGs nur als Hilfs-Contract an der Firewall-Regel, unspezifische Zugriffe nach L3Out geordnet (ADR 0034) |
 
-### Nächste Arbeiten (Stand 0.96.0)
+### Nächste Arbeiten (Stand 0.97.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.96.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.97.0.
 
 **Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
 
@@ -420,10 +421,10 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 |---|---|
 | HTTP 500 beim Laden der Doku einer Applikation | 0.94.1: Fehler mit Referenz im Protokoll; Ursache mit dem Protokoll des Anwenders beheben |
 | Klick auf ein Element der Applikation → Detail wie in „Objekte & Inventar“ statt Sprung zu den Regeln | **umgesetzt in 0.95.0** (EPG-Detail, Objekt-Detail in der Doku) |
-| L3Outs: nicht das ACI-Routing (zu offen), die Firewalls entscheiden; Zuordnung L3Out → Firewall | in Arbeit (ADR 0034) |
-| Contracts über L3Outs nur als Hilfs-Contract, nicht separat listen | in Arbeit (ADR 0034) |
+| L3Outs: nicht das ACI-Routing (zu offen), die Firewalls entscheiden; Zuordnung L3Out → Firewall | **umgesetzt in 0.97.0** (ADR 0034: Firewall dahinter abgeleitet bzw. von Hand, Routing der Firewall entscheidet) |
+| Contracts über L3Outs nur als Hilfs-Contract, nicht separat listen | **umgesetzt in 0.97.0** (Spalte „L3Out“ an der Firewall-Regel) |
 | Doku nach Kategorien: Namen von Systemen ausserhalb des Tenants – Einstellung des Global-Admins | **umgesetzt in 0.95.0** (Mandant „Namen der Gegenstellen“, nie für Kunden-Benutzer) |
-| Unspezifische Zugriffe nach dem L3Out ordnen, über den sie hereinkommen | in Arbeit (ADR 0034) |
+| Unspezifische Zugriffe nach dem L3Out ordnen, über den sie hereinkommen | **umgesetzt in 0.97.0** |
 | NAT / VIPs: VIP der Internet-Firewall mit dem VIP des Load Balancers verknüpfen (externe IP → Server) | **umgesetzt in 0.96.0** (Kette in Liste/Detail/Suche, CSV-Export, VIP-Gruppen) |
 | Weg-Suche: mehr Infos am Pfad ohne die Suche zu verlassen (Detail, neuer Tab) | in Arbeit |
 | Weg-Suche von bzw. zu einer Anbindung | in Arbeit |

@@ -94,6 +94,12 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     # erkannte Anbindungen ausblenden bzw. wieder anzeigen (0.21.0): nur die Router-IPs
     "routing.exit.dismissed": frozenset({"tenant_id", "ips"}),
     "routing.exit.undismissed": frozenset({"tenant_id", "ips"}),
+    # Firewall hinter einem L3Out von Hand (ADR 0034): L3Out, Herkunft, Firewalls (ID, VDOM,
+    # Interface)
+    "routing.l3out_firewall.set": frozenset(
+        {"tenant_id", "source_system_id", "dn", "l3out", "origin", "firewalls"}
+    ),
+    "routing.l3out_firewall.removed": frozenset({"tenant_id", "source_system_id", "dn", "l3out"}),
     "reconcile.run": frozenset({"tenant_id", "findings"}),
     # NetBox-Sync (ADR 0010): nur Anzahlen und die gewaehlten Abschnitte (ADR 0031), keine Inhalte
     "netbox_sync.planned": frozenset(

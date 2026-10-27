@@ -87,6 +87,7 @@ from app.models.sync_plan import SyncPlan, SyncStatus
 from app.models.tenant import DnsType, IpamType, Tenant
 from app.models.topology import (
     TOPOLOGY_MODELS,
+    L3OutFirewall,
     TopoChange,
     TopoContext,
     TopoExit,
@@ -138,6 +139,7 @@ __all__ = [
     "InvVlan",
     "InvVrf",
     "IpamType",
+    "L3OutFirewall",
     "MacEntry",
     "MatchStatus",
     "NamingProfile",

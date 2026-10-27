@@ -121,6 +121,9 @@ Begründung und Audit):**
   Applikation (eingehend), nicht ihre Zugriffe auf andere Systeme bzw. Adressen ohne
   Zonensignal (z. B. „any → Tool“, „Server → Monitoring“); als Treffer bleiben sie.
 - Gleich in der Doku je System, im Export (Markdown, Word) und im Druck.
+- **Weiter in ADR 0034:** mit einer Firewall hinter dem L3Out ist der Contract nur ein
+  Hilfs-Contract an der Firewall-Regel (Spalte „L3Out“), nicht mehr in „Regeln & Contracts“; der
+  Befund bleibt. Die Prüfung je Kategorie gilt noch, wenn der L3Out nicht gelesen ist.
 
 **Ergänzung 0.84.0 (Anwender: „heute steht alles in Server Name“ – VIPs, Load Balancer und der
 Weg zum Server in die Spalten verteilen):**

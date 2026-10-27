@@ -520,6 +520,14 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)** (VRF, Border-Leafs mit
     Namen, Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und Adressen, BGP-Peers
     mit Namen).
+    - **Firewall dahinter (0.97.0, ADR 0034):** Spalte „Firewall dahinter“ je L3Out – die
+      Firewall (VDOM, Interface, Zone) mit Herkunft abgeleitet / bestätigt / von Hand / keine;
+      abgeleitet aus dem Transfernetz (SVI im Netz eines Firewall-Interfaces) bzw. BGP-Peer oder
+      statischem Next-Hop auf eine Firewall-Adresse. Operator: „bestätigen“, „ändern“ (Firewall
+      und Interface wählen bzw. „keine Firewall“), „zurücksetzen“ (wieder abgeleitet). „Nicht
+      erkannt“ = kein Firewall-Interface im Transfernetz bzw. als Peer – von Hand zuordnen,
+      sonst gilt für diesen L3Out weiter das ACI. Befunde der Applikationen und Zonen sowie die
+      Kunden ziehen danach von selbst nach.
   - **Namen aus dem IPAM:** DNS-Name bzw. Name der IP aus DDI/NetBox. Ohne Eintrag zur IP
     erscheint blass das kleinste IPAM-Netz mit Beschreibung. Für Transfernetze lohnt sich
     deshalb eine Beschreibung im IPAM (z. B. „Transfer ISP B“).
@@ -729,6 +737,16 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       weniger als die Firewall-Regeln, es fehlt tcp/8443“ und ist ein Befund (Findings →
       Applikationen, „Contract enger als Firewall“; auch in der Applikations-Doku). Nur-ACI-
       Mandanten ohne Firewall sehen die Contracts wie bisher.
+    - **Hilfs-Contracts (0.97.0, ADR 0034):** steht hinter dem L3Out eine Firewall, ist ein
+      Contract zur externen EPG nur noch ein Hilfs-Contract: keine eigene Zeile in den
+      Kategorien, in „Regeln & Contracts“, im Export und in den Kennzahlen, sondern an der
+      Firewall-Regel in der Spalte **L3Out** („L3O_inet · Contract CT_inet“, enger als die
+      Firewall „– es fehlt tcp/8443“ mit dem Befund). Ohne Firewall dahinter bleibt der Contract
+      sichtbar mit „L3O_vpn (ohne Firewall)“. In den Verbindungen Ende zu Ende ist er keine
+      eigene Verbindung, prüft aber im ACI-Hop mit.
+    - **Nach L3Out geordnet (0.97.0):** je Kategorie zuerst die spezifischen Zugriffe, dann die
+      unspezifischen je L3Out, über den sie hereinkommen (Zwischenüberschrift „über L3O_x“, in
+      Markdown/Word die Spalte L3Out).
     - **Kategorie 10 (0.78.2):** nur Zugriffe auf die Applikation, nicht ihre Zugriffe auf
       andere Systeme bzw. Adressen ohne Zonensignal. Alle Regeln stehen weiter unter
       „Regeln & Contracts“.
@@ -780,6 +798,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   - **ACI-Contracts über externe EPGs (0.28.0):** Ein System ausserhalb des Fabrics (z. B.
     hinter der Firewall) bekommt die Contracts der externen EPG, der das ACI seine IP
     zuordnet. Bezug: „externe EPG L3O_fw|EN_srv (10.20.0.0/24)“.
+    - Seit 0.97.0 (ADR 0034) entscheiden die **Firewalls hinter den L3Outs:** es gilt der
+      L3Out, dessen Firewall die IP am genauesten nach aussen routet; leitet sie die IP zurück
+      ins ACI, kommt sie nicht über diesen L3Out (Grund z. B. „über L3O_inet: fw-inet routet
+      192.168.50.0/24 über dmz“). So gehört eine DMZ hinter der Internet-Firewall zum L3O_inet,
+      auch wenn L3O_bit 192.168.0.0/16 importiert. Ohne Firewall bzw. ohne Aussage gilt das ACI:
     - Es zählt das längste Subnetz mit Scope `import-security` in der VRF – über alle
       L3Outs. Contracts weniger genauer externer EPGs (z. B. 0.0.0.0/0) stehen unter
       „Routingtechnisch nicht möglich“ mit Begründung, ebenso Subnetze, die nur das Routing
