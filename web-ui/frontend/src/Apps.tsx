@@ -33,14 +33,21 @@ import type { Me } from "./auth";
 import { Dash, Drawer, Empty, ErrorBox, Icon, Loading, Modal, Note } from "./ui";
 import AppImport from "./AppImport";
 import { readStored, writeJson } from "./fold";
+import { L } from "./i18n";
 
 const CRIT: Record<Criticality, [string, string]> = {
-  low: ["", "niedrig"],
-  medium: ["info", "mittel"],
-  high: ["warn", "hoch"],
-  critical: ["crit", "kritisch"],
+  low: ["", L("niedrig", "low")],
+  medium: ["info", L("mittel", "medium")],
+  high: ["warn", L("hoch", "high")],
+  critical: ["crit", L("kritisch", "critical")],
 };
-const KIND: Record<MemberKind, string> = { ap: "AP", epg: "EPG", host: "Server", rule: "Regel", norule: "ohne Regel" };
+const KIND: Record<MemberKind, string> = {
+  ap: "AP",
+  epg: "EPG",
+  host: "Server",
+  rule: L("Regel", "Rule"),
+  norule: L("ohne Regel", "excluded rule"),
+};
 const PREVIEW = 6;
 const HIDE_KEY = "automato_apps_hide_empty"; // 0.75.0: ohne VMs ausblenden (je Browser)
 
@@ -105,7 +112,9 @@ export default function Apps({
   if (tenantId == null)
     return (
       <div className="card">
-        <Empty title="Mandant wählen">Applikationen gehören zu einem Mandanten – oben einen wählen.</Empty>
+        <Empty title={L("Mandant wählen", "Select tenant")}>
+          {L("Applikationen gehören zu einem Mandanten – oben einen wählen.", "Applications belong to a tenant – select one above.")}
+        </Empty>
       </div>
     );
   const changed = () => {
@@ -162,7 +171,7 @@ export default function Apps({
         {overlays}
       </>
     );
-  if (apps === null) return <Loading>Lade Applikationen…</Loading>;
+  if (apps === null) return <Loading>{L("Lade Applikationen…", "Loading applications…")}</Loading>;
 
   // 0.75.0: Applikationen ohne VMs ausblenden bzw. auswählen und löschen
   const empty = apps.filter((a) => a.vm_count === 0);
@@ -195,7 +204,7 @@ export default function Apps({
       <ErrorBox error={err} onClose={() => setErr(null)} />
       <div className="card">
         <div className="card-head">
-          <h2>Applikationen</h2>
+          <h2>{L("Applikationen", "Applications")}</h2>
           <span className="mono faint" style={{ fontSize: 12 }}>
             {shown.length === apps.length ? apps.length : `${shown.length} / ${apps.length}`}
           </span>
@@ -203,10 +212,13 @@ export default function Apps({
             <button
               className={`toggle${hideEmpty ? " on" : ""}`}
               id="apps-hide-empty"
-              title="Applikationen ohne VMs (an den Portgruppen ihrer EPGs bzw. hinter ihren Servern) ausblenden"
+              title={L(
+                "Applikationen ohne VMs (an den Portgruppen ihrer EPGs bzw. hinter ihren Servern) ausblenden",
+                "Hide applications without VMs (on the port groups of their EPGs or behind their servers)",
+              )}
               onClick={toggleHide}
             >
-              ohne VMs ausblenden ({empty.length})
+              {L("ohne VMs ausblenden", "hide without VMs")} ({empty.length})
             </button>
           )}
           <div className="spacer" />
@@ -216,31 +228,37 @@ export default function Apps({
               id="apps-select-empty"
               onClick={() => setChosen(new Set(empty.map((a) => a.id)))}
             >
-              ohne VMs auswählen
+              {L("ohne VMs auswählen", "select without VMs")}
             </button>
           )}
           {me.isOperator && chosen.size > 0 && (
             <button className="btn btn-danger btn-sm" id="apps-delete" onClick={() => setConfirmBulk(true)}>
-              {chosen.size} löschen
+              {L(`${chosen.size} löschen`, `Delete ${chosen.size}`)}
             </button>
           )}
           {me.isOperator && (
             <button className="btn btn-ghost btn-sm" id="app-import" onClick={() => setImporting(true)}>
-              CSV importieren
+              {L("CSV importieren", "Import CSV")}
             </button>
           )}
           {me.isOperator && (
             <button className="btn btn-primary btn-sm" onClick={() => setEditing("new")}>
-              <Icon name="plus" size={13} /> Applikation
+              <Icon name="plus" size={13} /> {L("Applikation", "Application")}
             </button>
           )}
         </div>
         <div className="card-body scroll">
           {apps.length === 0 ? (
-            <Empty title="Noch keine Applikationen">
+            <Empty title={L("Noch keine Applikationen", "No applications yet")}>
               {suggestions.length > 0
-                ? "Vorschläge aus der Namenskonvention (unten) übernehmen oder eine Applikation von Hand anlegen."
-                : "Eine Applikation fasst Application Profiles, EPGs und Server zusammen."}
+                ? L(
+                    "Vorschläge aus der Namenskonvention (unten) übernehmen oder eine Applikation von Hand anlegen.",
+                    "Apply suggestions from the naming convention (below) or create an application manually.",
+                  )
+                : L(
+                    "Eine Applikation fasst Application Profiles, EPGs und Server zusammen.",
+                    "An application groups Application Profiles, EPGs and servers.",
+                  )}
             </Empty>
           ) : (
             <table id="apps-list">
@@ -248,19 +266,27 @@ export default function Apps({
                 <tr>
                   {me.isOperator && <th style={{ width: 28 }} />}
                   <th>Name</th>
-                  <th>Zweck</th>
-                  <th>Kürzel</th>
-                  <th>Kritikalität</th>
-                  <th>Verantwortlich</th>
-                  <th>Standort</th>
-                  <th className="num">Mitglieder</th>
-                  <th className="num">Systeme</th>
-                  <th className="num" title="VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern">VMs</th>
+                  <th>{L("Zweck", "Purpose")}</th>
+                  <th>{L("Kürzel", "Code")}</th>
+                  <th>{L("Kritikalität", "Criticality")}</th>
+                  <th>{L("Verantwortlich", "Owner")}</th>
+                  <th>{L("Standort", "Site")}</th>
+                  <th className="num">{L("Mitglieder", "Members")}</th>
+                  <th className="num">{L("Systeme", "Systems")}</th>
+                  <th
+                    className="num"
+                    title={L(
+                      "VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern",
+                      "VMs on the port groups of their EPGs or behind their servers",
+                    )}
+                  >
+                    VMs
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {shown.map((a) => (
-                  <tr key={a.id} className="clickable" title="Doku öffnen" data-id={a.id} onClick={() => onOpen(a.id)}>
+                  <tr key={a.id} className="clickable" title={L("Doku öffnen", "Open documentation")} data-id={a.id} onClick={() => onOpen(a.id)}>
                     {me.isOperator && (
                       <td
                         onClick={(e) => {
@@ -268,7 +294,7 @@ export default function Apps({
                           pick(a.id);
                         }}
                       >
-                        <input type="checkbox" checked={chosen.has(a.id)} readOnly aria-label={`${a.name} auswählen`} />
+                        <input type="checkbox" checked={chosen.has(a.id)} readOnly aria-label={L(`${a.name} auswählen`, `Select ${a.name}`)} />
                       </td>
                     )}
                     <td>
@@ -288,7 +314,7 @@ export default function Apps({
                     <td>{a.site ? siteLabel(a.site) : <Dash />}</td>
                     <td className="num">{a.member_count}</td>
                     <td className="num">{a.system_count}</td>
-                    <td className="num">{a.vm_count > 0 ? a.vm_count : <span className="chip na">keine</span>}</td>
+                    <td className="num">{a.vm_count > 0 ? a.vm_count : <span className="chip na">{L("keine", "none")}</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -314,22 +340,30 @@ export default function Apps({
       )}
       {confirmBulk && (
         <Modal
-          title="Applikationen löschen"
+          title={L("Applikationen löschen", "Delete applications")}
           onClose={() => setConfirmBulk(false)}
           footer={
             <>
               <button className="btn btn-ghost" onClick={() => setConfirmBulk(false)}>
-                Abbrechen
+                {L("Abbrechen", "Cancel")}
               </button>
               <button className="btn btn-danger" id="apps-delete-confirm" onClick={removeChosen}>
-                {chosen.size} löschen
+                {L(`${chosen.size} löschen`, `Delete ${chosen.size}`)}
               </button>
             </>
           }
         >
           <p>
-            {chosen.size} Applikation{chosen.size === 1 ? "" : "en"} mit ihren Mitgliedern löschen? Gelesene Daten (Regeln,
-            EPGs, Server) bleiben unverändert.
+            {L(
+              <>
+                {chosen.size} Applikation{chosen.size === 1 ? "" : "en"} mit ihren Mitgliedern löschen? Gelesene Daten (Regeln,
+                EPGs, Server) bleiben unverändert.
+              </>,
+              <>
+                Delete {chosen.size} application{chosen.size === 1 ? "" : "s"} with their members? Collected data (rules,
+                EPGs, servers) remains unchanged.
+              </>,
+            )}
           </p>
           <div className="objs">
             {apps
@@ -378,18 +412,18 @@ function Suggestions({
   return (
     <div className="card" id="app-suggestions" style={{ marginTop: 14 }}>
       <div className="card-head">
-        <h2>Vorschläge aus der Namenskonvention</h2>
+        <h2>{L("Vorschläge aus der Namenskonvention", "Suggestions from the naming convention")}</h2>
         <span className="chip info">{items.length}</span>
         <div className="spacer" />
         <button className="btn btn-ghost btn-sm" onClick={() => setOpen((v) => !v)}>
-          {open ? "ausblenden" : "anzeigen"}
+          {open ? L("ausblenden", "hide") : L("anzeigen", "show")}
         </button>
         <button
           className="btn btn-ghost btn-sm"
           disabled={busy != null}
           onClick={() => accept(items.map((s) => s.key))}
         >
-          Alle übernehmen
+          {L("Alle übernehmen", "Apply all")}
         </button>
       </div>
       {open && (
@@ -398,9 +432,9 @@ function Suggestions({
             <table>
               <thead>
                 <tr>
-                  <th>Projekt</th>
-                  <th>Applikation</th>
-                  <th>Noch nicht zugeordnet</th>
+                  <th>{L("Projekt", "Project")}</th>
+                  <th>{L("Applikation", "Application")}</th>
+                  <th>{L("Noch nicht zugeordnet", "Not yet assigned")}</th>
                   <th />
                 </tr>
               </thead>
@@ -413,7 +447,7 @@ function Suggestions({
                     </td>
                     <td>
                       {s.name}{" "}
-                      {s.application_id != null && <span className="chip local">besteht</span>}
+                      {s.application_id != null && <span className="chip local">{L("besteht", "exists")}</span>}
                     </td>
                     <td>
                       <div className="objs">
@@ -423,7 +457,7 @@ function Suggestions({
                           </span>
                         ))}
                         {s.members.length > PREVIEW && (
-                          <span className="faint">+ {s.members.length - PREVIEW} weitere</span>
+                          <span className="faint">{L(`+ ${s.members.length - PREVIEW} weitere`, `+ ${s.members.length - PREVIEW} more`)}</span>
                         )}
                       </div>
                     </td>
@@ -433,7 +467,7 @@ function Suggestions({
                         disabled={busy != null}
                         onClick={() => accept([s.key])}
                       >
-                        {busy === s.key ? "…" : s.application_id != null ? "Ergänzen" : "Übernehmen"}
+                        {busy === s.key ? "…" : s.application_id != null ? L("Ergänzen", "Add to") : L("Übernehmen", "Apply")}
                       </button>
                     </td>
                   </tr>
@@ -442,10 +476,20 @@ function Suggestions({
             </table>
           </div>
           <div className="card-foot">
-            Gruppiert nach der 3-stelligen Projektnummer aus <code>AP_&lt;nr&gt;</code> und Servernamen{" "}
-            <code>H_&lt;funktion&gt;-&lt;nr&gt;-…</code> („000“ zählt nicht), je ACI-Tenant getrennt – gleiche Nummern in
-            verschiedenen Tenants sind verschiedene Vorschläge. Den Namen liefert das Wörterbuch{" "}
-            <code>project</code> des Namensprofils, sonst „Projekt &lt;nr&gt;“.
+            {L(
+              <>
+                Gruppiert nach der 3-stelligen Projektnummer aus <code>AP_&lt;nr&gt;</code> und Servernamen{" "}
+                <code>H_&lt;funktion&gt;-&lt;nr&gt;-…</code> („000“ zählt nicht), je ACI-Tenant getrennt – gleiche Nummern in
+                verschiedenen Tenants sind verschiedene Vorschläge. Den Namen liefert das Wörterbuch{" "}
+                <code>project</code> des Namensprofils, sonst „Projekt &lt;nr&gt;“.
+              </>,
+              <>
+                Grouped by the 3-digit project number from <code>AP_&lt;nr&gt;</code> and server names{" "}
+                <code>H_&lt;function&gt;-&lt;nr&gt;-…</code> (“000” does not count), separately per ACI tenant – equal
+                numbers in different tenants are different suggestions. The name comes from the dictionary{" "}
+                <code>project</code> of the naming profile, otherwise “Project &lt;nr&gt;”.
+              </>,
+            )}
           </div>
         </>
       )}
@@ -509,7 +553,11 @@ function AppDrawer({
   };
 
   return (
-    <Drawer title={d?.name ?? "Applikation"} sub={d?.code ? `Kürzel ${d.code}` : "Applikation"} onClose={onClose}>
+    <Drawer
+      title={d?.name ?? L("Applikation", "Application")}
+      sub={d?.code ? L(`Kürzel ${d.code}`, `Code ${d.code}`) : L("Applikation", "Application")}
+      onClose={onClose}
+    >
       <ErrorBox error={err} onClose={() => setErr(null)} />
       {!d ? (
         <Loading />
@@ -518,59 +566,64 @@ function AppDrawer({
           <div className="chips" style={{ marginBottom: 12 }}>
             {onDoc && (
               <button className="btn btn-primary btn-sm" onClick={onDoc}>
-                <Icon name="apps" size={13} /> Doku
+                <Icon name="apps" size={13} /> {L("Doku", "Documentation")}
               </button>
             )}
             {me.isOperator && (
               <>
                 <button className="btn btn-ghost btn-sm" onClick={() => onEdit(d)}>
-                  Bearbeiten
+                  {L("Bearbeiten", "Edit")}
                 </button>
                 <button className="btn btn-danger btn-sm" onClick={() => setConfirmDelete(true)}>
-                  Löschen
+                  {L("Löschen", "Delete")}
                 </button>
               </>
             )}
           </div>
           <dl className="kv">
-            <dt>Externer Name</dt>
+            <dt>{L("Externer Name", "External name")}</dt>
             <dd>{d.external_name ?? <Dash />}</dd>
-            <dt>Interner Name</dt>
+            <dt>{L("Interner Name", "Internal name")}</dt>
             <dd className="mono">{d.internal_name ?? <Dash />}</dd>
-            <dt>Zweck</dt>
+            <dt>{L("Zweck", "Purpose")}</dt>
             <dd>
               <PurposeChip value={d.purpose} />
             </dd>
-            <dt>Kritikalität</dt>
+            <dt>{L("Kritikalität", "Criticality")}</dt>
             <dd>
               <CritChip value={d.criticality} />
             </dd>
-            <dt>Verantwortlich</dt>
+            <dt>{L("Verantwortlich", "Owner")}</dt>
             <dd>{d.owner ?? <Dash />}</dd>
-            <dt>Standort</dt>
+            <dt>{L("Standort", "Site")}</dt>
             <dd>{d.site ? siteLabel(d.site) : <Dash />}</dd>
-            <dt>Beschreibung</dt>
+            <dt>{L("Beschreibung", "Description")}</dt>
             <dd style={{ whiteSpace: "pre-wrap" }}>{d.description || <Dash />}</dd>
-            <dt>Systeme</dt>
+            <dt>{L("Systeme", "Systems")}</dt>
             <dd>{d.system_count}</dd>
           </dl>
 
           <div className="sub-h" style={{ display: "flex", alignItems: "center" }}>
-            Mitglieder ({d.members.length})
+            {L("Mitglieder", "Members")} ({d.members.length})
             {saving && (
               <span className="faint" id="app-members-saving" style={{ marginLeft: 8, fontWeight: 400 }}>
-                speichere…
+                {L("speichere…", "saving…")}
               </span>
             )}
             <div style={{ flex: 1 }} />
             {me.isOperator && (
               <button className="btn btn-ghost btn-sm" disabled={saving} onClick={() => setPicking(true)}>
-                <Icon name="plus" size={12} /> Mitglied
+                <Icon name="plus" size={12} /> {L("Mitglied", "Member")}
               </button>
             )}
           </div>
           {d.members.length === 0 ? (
-            <div className="faint">Noch keine Mitglieder – Application Profile, EPG oder Server hinzufügen.</div>
+            <div className="faint">
+              {L(
+                "Noch keine Mitglieder – Application Profile, EPG oder Server hinzufügen.",
+                "No members yet – add an Application Profile, EPG or server.",
+              )}
+            </div>
           ) : (
             <table>
               <tbody>
@@ -583,10 +636,13 @@ function AppDrawer({
                       <span className="mono" style={{ marginRight: 6 }}>
                         {m.label}
                       </span>
-                      {!m.exists && <span className="chip warn">nicht mehr gelesen</span>}
+                      {!m.exists && <span className="chip warn">{L("nicht mehr gelesen", "no longer read")}</span>}
                       {m.origin === "suggestion" && (
-                        <span className="chip na" title="aus dem Projektnummer-Vorschlag übernommen">
-                          Vorschlag
+                        <span
+                          className="chip na"
+                          title={L("aus dem Projektnummer-Vorschlag übernommen", "applied from the project number suggestion")}
+                        >
+                          {L("Vorschlag", "Suggestion")}
                         </span>
                       )}
                       {m.kind === "ap" && m.systems.length > 0 && (
@@ -597,7 +653,7 @@ function AppDrawer({
                       {me.isOperator && (
                         <button
                           className="linkbtn danger"
-                          title="Mitglied entfernen"
+                          title={L("Mitglied entfernen", "Remove member")}
                           onClick={() => update(removeAppMember(d.id, m.id))}
                         >
                           ✕
@@ -624,22 +680,30 @@ function AppDrawer({
       )}
       {confirmDelete && d && (
         <Modal
-          title="Applikation löschen"
+          title={L("Applikation löschen", "Delete application")}
           onClose={() => setConfirmDelete(false)}
           footer={
             <>
               <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}>
-                Abbrechen
+                {L("Abbrechen", "Cancel")}
               </button>
               <button className="btn btn-danger" onClick={remove}>
-                Löschen
+                {L("Löschen", "Delete")}
               </button>
             </>
           }
         >
           <p>
-            „{d.name}“ mit {d.members.length} Mitglied{d.members.length === 1 ? "" : "ern"} löschen? Gelesene Daten
-            (Regeln, EPGs, Server) bleiben unverändert.
+            {L(
+              <>
+                „{d.name}“ mit {d.members.length} Mitglied{d.members.length === 1 ? "" : "ern"} löschen? Gelesene Daten
+                (Regeln, EPGs, Server) bleiben unverändert.
+              </>,
+              <>
+                Delete “{d.name}” with {d.members.length} member{d.members.length === 1 ? "" : "s"}? Collected data
+                (rules, EPGs, servers) remains unchanged.
+              </>,
+            )}
           </p>
         </Modal>
       )}
@@ -690,19 +754,19 @@ function MemberPicker({
 
   return (
     <Modal
-      title={`Mitglieder für „${app.name}“`}
+      title={L(`Mitglieder für „${app.name}“`, `Members for “${app.name}”`)}
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button
             className="btn btn-primary"
             disabled={chosen.length === 0}
             onClick={() => onAdd(chosen.map((c) => ({ kind: c.kind, ref: c.ref })))}
           >
-            {chosen.length} hinzufügen
+            {L(`${chosen.length} hinzufügen`, `Add ${chosen.length}`)}
           </button>
         </>
       }
@@ -710,7 +774,7 @@ function MemberPicker({
       <ErrorBox error={err} />
       <div className="filterbar">
         <select className="sel" value={kind} onChange={(e) => setKind(e.target.value as MemberKind | "")}>
-          <option value="">Alle Arten</option>
+          <option value="">{L("Alle Arten", "All types")}</option>
           <option value="ap">Application Profiles</option>
           <option value="epg">EPGs</option>
           <option value="host">Server</option>
@@ -719,14 +783,14 @@ function MemberPicker({
           <span className="ico">
             <Icon name="search" size={14} />
           </span>
-          <input placeholder="Name, IP, Tenant …" value={q} autoFocus onChange={(e) => setQ(e.target.value)} />
+          <input placeholder={L("Name, IP, Tenant …", "Name, IP, tenant …")} value={q} autoFocus onChange={(e) => setQ(e.target.value)} />
         </div>
         <span className="count">{rows ? `${Math.min(rows.length, total)} / ${total}` : "…"}</span>
       </div>
       {rows === null ? (
         <Loading />
       ) : rows.length === 0 ? (
-        <div className="faint">Nichts gefunden.</div>
+        <div className="faint">{L("Nichts gefunden.", "Nothing found.")}</div>
       ) : (
         <div style={{ maxHeight: 360, overflowY: "auto" }}>
           <table>
@@ -748,8 +812,11 @@ function MemberPicker({
                     <td className="mono faint">{c.project ?? ""}</td>
                     <td>
                       {c.applications.length > 0 && !already && (
-                        <span className="chip na" title="steht schon in einer anderen Applikation">
-                          zugeordnet
+                        <span
+                          className="chip na"
+                          title={L("steht schon in einer anderen Applikation", "already in another application")}
+                        >
+                          {L("zugeordnet", "assigned")}
                         </span>
                       )}
                     </td>
@@ -760,7 +827,9 @@ function MemberPicker({
           </table>
         </div>
       )}
-      {total > (rows?.length ?? 0) && <Note>Suche eingrenzen – es werden die ersten 100 Treffer gezeigt.</Note>}
+      {total > (rows?.length ?? 0) && (
+        <Note>{L("Suche eingrenzen – es werden die ersten 100 Treffer gezeigt.", "Narrow the search – the first 100 matches are shown.")}</Note>
+      )}
     </Modal>
   );
 }
@@ -816,15 +885,15 @@ function AppForm({
 
   return (
     <Modal
-      title={app ? `Applikation „${app.name}“` : "Neue Applikation"}
+      title={app ? L(`Applikation „${app.name}“`, `Application “${app.name}”`) : L("Neue Applikation", "New application")}
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button className="btn btn-primary" onClick={() => submit()} disabled={busy || !name.trim()}>
-            {busy ? "Speichere…" : app ? "Speichern" : "Anlegen"}
+            {busy ? L("Speichere…", "Saving…") : app ? L("Speichern", "Save") : L("Anlegen", "Create")}
           </button>
         </>
       }
@@ -844,14 +913,14 @@ function AppForm({
             />
           </div>
           <div className="field">
-            <label htmlFor="ap-purpose">Verwendungszweck</label>
+            <label htmlFor="ap-purpose">{L("Verwendungszweck", "Purpose")}</label>
             <select
               id="ap-purpose"
               className="sel input"
               value={purpose}
               onChange={(e) => setPurpose(e.target.value as Purpose | "")}
             >
-              <option value="">– keiner –</option>
+              <option value="">{L("– keiner –", "– none –")}</option>
               {(Object.keys(PURPOSE) as Purpose[]).map((k) => (
                 <option key={k} value={k}>
                   {PURPOSE[k][1]}
@@ -860,58 +929,58 @@ function AppForm({
             </select>
           </div>
           <div className="field">
-            <label htmlFor="ap-ext">Externer Name</label>
+            <label htmlFor="ap-ext">{L("Externer Name", "External name")}</label>
             <input
               id="ap-ext"
               className="input"
               value={externalName}
               maxLength={200}
-              placeholder="Name gegen aussen (Fachbereich, Kunde)"
+              placeholder={L("Name gegen aussen (Fachbereich, Kunde)", "Name toward the outside (business unit, customer)")}
               onChange={(e) => setExternalName(e.target.value)}
             />
           </div>
           <div className="field">
-            <label htmlFor="ap-int">Interner Name</label>
+            <label htmlFor="ap-int">{L("Interner Name", "Internal name")}</label>
             <input
               id="ap-int"
               className="input mono"
               value={internalName}
               maxLength={200}
-              placeholder="Name im Betrieb"
+              placeholder={L("Name im Betrieb", "Name in operations")}
               onChange={(e) => setInternalName(e.target.value)}
             />
           </div>
           <div className="field">
-            <label htmlFor="ap-code">Kürzel / Projektnummer</label>
+            <label htmlFor="ap-code">{L("Kürzel / Projektnummer", "Code / project number")}</label>
             <input
               id="ap-code"
               className="input mono"
               value={code}
               maxLength={50}
-              placeholder="z. B. 002"
+              placeholder={L("z. B. 002", "e.g. 002")}
               onChange={(e) => setCode(e.target.value)}
             />
           </div>
           <div className="field">
-            <label htmlFor="ap-owner">Verantwortlich</label>
+            <label htmlFor="ap-owner">{L("Verantwortlich", "Owner")}</label>
             <input
               id="ap-owner"
               className="input"
               value={owner}
               maxLength={200}
-              placeholder="Team oder Person"
+              placeholder={L("Team oder Person", "Team or person")}
               onChange={(e) => setOwner(e.target.value)}
             />
           </div>
           <div className="field">
-            <label htmlFor="ap-crit">Kritikalität</label>
+            <label htmlFor="ap-crit">{L("Kritikalität", "Criticality")}</label>
             <select
               id="ap-crit"
               className="sel input"
               value={crit}
               onChange={(e) => setCrit(e.target.value as Criticality | "")}
             >
-              <option value="">– keine –</option>
+              <option value="">{L("– keine –", "– none –")}</option>
               {(Object.keys(CRIT) as Criticality[]).map((k) => (
                 <option key={k} value={k}>
                   {CRIT[k][1]}
@@ -920,20 +989,20 @@ function AppForm({
             </select>
           </div>
           <div className="field">
-            <label htmlFor="ap-site">Standort</label>
+            <label htmlFor="ap-site">{L("Standort", "Site")}</label>
             <select
               id="ap-site"
               className="sel input"
               value={siteId}
               onChange={(e) => setSiteId(e.target.value ? Number(e.target.value) : "")}
             >
-              <option value="">– keiner –</option>
+              <option value="">{L("– keiner –", "– none –")}</option>
               <SiteOptions sites={sites} />
             </select>
           </div>
         </div>
         <div className="field">
-          <label htmlFor="ap-desc">Beschreibung</label>
+          <label htmlFor="ap-desc">{L("Beschreibung", "Description")}</label>
           <textarea
             id="ap-desc"
             className="input"
@@ -943,7 +1012,12 @@ function AppForm({
           />
         </div>
         {!app && (
-          <div className="hint faint">Mitglieder (APs, EPGs, Server) nach dem Anlegen im Detail hinzufügen.</div>
+          <div className="hint faint">
+            {L(
+              "Mitglieder (APs, EPGs, Server) nach dem Anlegen im Detail hinzufügen.",
+              "Add members (APs, EPGs, servers) in the detail view after creating.",
+            )}
+          </div>
         )}
         <button type="submit" hidden />
       </form>

@@ -4,23 +4,24 @@
 import { useState } from "react";
 import { AppImportPlan, AppImportRow, fetchAppImportTemplate, importApps } from "./api";
 import { download, ErrorBox, Modal, Note } from "./ui";
+import { L } from "./i18n";
 
 const ACTION: Record<AppImportRow["action"], [string, string]> = {
-  create: ["ok", "neu"],
-  update: ["info", "ändern"],
-  unchanged: ["na", "unverändert"],
-  error: ["crit", "Fehler"],
+  create: ["ok", L("neu", "new")],
+  update: ["info", L("ändern", "change")],
+  unchanged: ["na", L("unverändert", "unchanged")],
+  error: ["crit", L("Fehler", "Error")],
 };
 const FIELD: Record<string, string> = {
   name: "Name",
-  external_name: "Externer Name",
-  internal_name: "Interner Name",
-  purpose: "Zweck",
-  code: "Kürzel",
-  owner: "Verantwortlich",
-  criticality: "Kritikalität",
-  site: "Standort",
-  description: "Beschreibung",
+  external_name: L("Externer Name", "External name"),
+  internal_name: L("Interner Name", "Internal name"),
+  purpose: L("Zweck", "Purpose"),
+  code: L("Kürzel", "Code"),
+  owner: L("Verantwortlich", "Owner"),
+  criticality: L("Kritikalität", "Criticality"),
+  site: L("Standort", "Site"),
+  description: L("Beschreibung", "Description"),
 };
 
 // Excel speichert CSV oft als Windows-1252: erst UTF-8 streng, sonst Windows-1252
@@ -35,7 +36,12 @@ async function readText(file: File): Promise<string> {
 
 const LABEL: Record<string, Record<string, string>> = {
   purpose: { dev: "Dev", test: "Test", prod: "Prod" },
-  criticality: { low: "niedrig", medium: "mittel", high: "hoch", critical: "kritisch" },
+  criticality: {
+    low: L("niedrig", "low"),
+    medium: L("mittel", "medium"),
+    high: L("hoch", "high"),
+    critical: L("kritisch", "critical"),
+  },
 };
 
 function value(field: string, v: unknown): string {
@@ -97,26 +103,34 @@ export default function AppImport({
 
   return (
     <Modal
-      title="Applikationen aus CSV importieren"
+      title={L("Applikationen aus CSV importieren", "Import applications from CSV")}
       wide
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button className="btn btn-primary" id="app-import-apply" disabled={busy || todo === 0} onClick={apply}>
-            {todo} übernehmen
+            {L(`${todo} übernehmen`, `Apply ${todo}`)}
           </button>
         </>
       }
     >
       <ErrorBox error={err} />
       <p className="faint" style={{ marginTop: 0 }}>
-        Je Zeile eine Applikation mit ihren Stammdaten – Name (Pflicht), externer und interner Name, Zweck (dev/test/prod
-        bzw. Entwicklung/Test/Produktion), Kürzel, Verantwortlich, Kritikalität (niedrig/mittel/hoch/kritisch),
-        Standort (Code) und Beschreibung. Trennzeichen „;“ oder „,“. Gibt es den Namen schon, ändern ausgefüllte Zellen
-        die Applikation, leere lassen den Wert. Die Mitglieder ordnest du danach zu.
+        {L(
+          "Je Zeile eine Applikation mit ihren Stammdaten – Name (Pflicht), externer und interner Name, " +
+            "Zweck (dev/test/prod bzw. Entwicklung/Test/Produktion), Kürzel, Verantwortlich, " +
+            "Kritikalität (niedrig/mittel/hoch/kritisch), Standort (Code) und Beschreibung. " +
+            "Trennzeichen „;“ oder „,“. Gibt es den Namen schon, ändern ausgefüllte Zellen die Applikation, " +
+            "leere lassen den Wert. Die Mitglieder ordnest du danach zu.",
+          "One application per row with its master data – name (required), external and internal name, " +
+            "purpose (dev/test/prod or development/test/production), code, owner, " +
+            "criticality (low/medium/high/critical), site (code) and description. " +
+            "Separator “;” or “,”. If the name already exists, filled cells change the application, " +
+            "empty cells keep the value. You assign the members afterwards.",
+        )}
       </p>
       <div className="filterbar" style={{ marginBottom: 10 }}>
         <input
@@ -126,21 +140,33 @@ export default function AppImport({
           onChange={(e) => choose(e.target.files?.[0])}
         />
         <button className="btn btn-ghost btn-sm" id="app-import-template" onClick={template}>
-          Vorlage herunterladen
+          {L("Vorlage herunterladen", "Download template")}
         </button>
         {fileName && <span className="faint">{fileName}</span>}
       </div>
-      {busy && !plan && <Note>Prüfe die Datei…</Note>}
+      {busy && !plan && <Note>{L("Prüfe die Datei…", "Checking the file…")}</Note>}
       {plan && (
         <>
           <div className="chips" id="app-import-counts" style={{ marginBottom: 8 }}>
-            <span className="chip ok">{plan.counts.create} neu</span>
-            <span className="chip info">{plan.counts.update} ändern</span>
-            <span className="chip na">{plan.counts.unchanged} unverändert</span>
-            {plan.counts.error > 0 && <span className="chip crit">{plan.counts.error} mit Fehler (werden ausgelassen)</span>}
+            <span className="chip ok">{L(`${plan.counts.create} neu`, `${plan.counts.create} new`)}</span>
+            <span className="chip info">{L(`${plan.counts.update} ändern`, `${plan.counts.update} change`)}</span>
+            <span className="chip na">
+              {L(`${plan.counts.unchanged} unverändert`, `${plan.counts.unchanged} unchanged`)}
+            </span>
+            {plan.counts.error > 0 && (
+              <span className="chip crit">
+                {L(
+                  `${plan.counts.error} mit Fehler (werden ausgelassen)`,
+                  `${plan.counts.error} with errors (will be skipped)`,
+                )}
+              </span>
+            )}
             {plan.ignored.length > 0 && (
-              <span className="chip warn" title="Spalten ohne Bedeutung für Applikationen">
-                ignoriert: {plan.ignored.join(", ")}
+              <span
+                className="chip warn"
+                title={L("Spalten ohne Bedeutung für Applikationen", "Columns without meaning for applications")}
+              >
+                {L("ignoriert", "ignored")}: {plan.ignored.join(", ")}
               </span>
             )}
           </div>
@@ -148,10 +174,10 @@ export default function AppImport({
             <table className="compact" id="app-import-rows">
               <thead>
                 <tr>
-                  <th className="num">Zeile</th>
+                  <th className="num">{L("Zeile", "Row")}</th>
                   <th>Name</th>
-                  <th>Aktion</th>
-                  <th>Werte bzw. Fehler</th>
+                  <th>{L("Aktion", "Action")}</th>
+                  <th>{L("Werte bzw. Fehler", "Values or errors")}</th>
                 </tr>
               </thead>
               <tbody>

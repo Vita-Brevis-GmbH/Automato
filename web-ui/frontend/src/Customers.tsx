@@ -28,9 +28,10 @@ import {
   updateCustomer,
 } from "./api";
 import { Dash, Empty, ErrorBox, fmtTime, Loading, Modal, Note, PageHead } from "./ui";
+import { L } from "./i18n";
 
 export const SELECTOR_LABEL: Record<SelectorKind, string> = {
-  aci_tenant: "ACI-Tenant",
+  aci_tenant: L("ACI-Tenant", "ACI tenant"),
   aci_vrf: "VRF",
   aci_ap: "Application Profile",
   aci_epg: "EPG",
@@ -38,33 +39,33 @@ export const SELECTOR_LABEL: Record<SelectorKind, string> = {
   fw_vdom: "VDOM",
   fw_zone: "Zone",
   fw_interface: "Interface",
-  prefix: "Netz",
-  code: "Kürzel",
-  ipam_tenant: "IPAM-Tenant",
-  ipam_vrf: "IPAM-VRF/Netzansicht",
-  ipam_tag: "IPAM-Tag/Attribut",
+  prefix: L("Netz", "Network"),
+  code: L("Kürzel", "Code"),
+  ipam_tenant: L("IPAM-Tenant", "IPAM tenant"),
+  ipam_vrf: L("IPAM-VRF/Netzansicht", "IPAM VRF/network view"),
+  ipam_tag: L("IPAM-Tag/Attribut", "IPAM tag/attribute"),
 };
 const PLACEHOLDER: Record<SelectorKind, string> = {
   aci_tenant: "TE_ka",
-  aci_vrf: "TE_ka:VRF_ka bzw. VRF_ka",
+  aci_vrf: L("TE_ka:VRF_ka bzw. VRF_ka", "TE_ka:VRF_ka or VRF_ka"),
   aci_ap: "TE_ka/AP_007",
-  aci_epg: "TE_ka/AP_007/EPG_web bzw. DN",
+  aci_epg: L("TE_ka/AP_007/EPG_web bzw. DN", "TE_ka/AP_007/EPG_web or DN"),
   aci_bd: "TE_ka/BD_web",
-  fw_vdom: "kunde-a",
-  fw_zone: "kunde-a-lan",
+  fw_vdom: L("kunde-a", "customer-a"),
+  fw_zone: L("kunde-a-lan", "customer-a-lan"),
   fw_interface: "port5",
   prefix: "10.20.0.0/16",
   code: "ka",
-  ipam_tenant: "Kunde A (NetBox-Tenant)",
-  ipam_vrf: "VRF_ka bzw. Netzansicht",
-  ipam_tag: "kunde-a bzw. Kunde=A",
+  ipam_tenant: L("Kunde A (NetBox-Tenant)", "Customer A (NetBox tenant)"),
+  ipam_vrf: L("VRF_ka bzw. Netzansicht", "VRF_ka or network view"),
+  ipam_tag: L("kunde-a bzw. Kunde=A", "customer-a or Customer=A"),
 };
 const FW_KINDS: SelectorKind[] = ["fw_vdom", "fw_zone", "fw_interface"];
 const KINDS: [CustomerMemberKind, string][] = [
   ["epg", "EPGs"],
-  ["net", "Netze"],
-  ["object", "Objekte"],
-  ["rule", "Regeln"],
+  ["net", L("Netze", "Networks")],
+  ["object", L("Objekte", "Objects")],
+  ["rule", L("Regeln", "Rules")],
   ["vm", "VMs"],
   ["nat", "NAT"],
   ["finding", "Findings"],
@@ -72,7 +73,7 @@ const KINDS: [CustomerMemberKind, string][] = [
 
 function selectorText(s: CustomerSelector, systems: System[]): string {
   const where = s.source_system_id ? ` (${systems.find((x) => x.id === s.source_system_id)?.name ?? "?"})` : "";
-  return `${s.exclude ? "ohne " : ""}${SELECTOR_LABEL[s.kind] ?? s.kind} ${s.value}${where}`;
+  return `${s.exclude ? L("ohne ", "without ") : ""}${SELECTOR_LABEL[s.kind] ?? s.kind} ${s.value}${where}`;
 }
 
 export default function Customers({
@@ -118,7 +119,7 @@ export default function Customers({
         .catch(() => setSystems([]));
   }, [tenantId, load]);
 
-  if (tenantId == null) return <Note>Bitte oben eine Umgebung (Mandant) wählen.</Note>;
+  if (tenantId == null) return <Note>{L("Bitte oben eine Umgebung (Mandant) wählen.", "Please select an environment (tenant) above.")}</Note>;
 
   const accept = async (s: CustomerSuggestion) => {
     try {
@@ -129,7 +130,15 @@ export default function Customers({
     }
   };
   const remove = async (c: Customer) => {
-    if (!window.confirm(`Kunde „${c.name}“ löschen? Nur der Ausschnitt fällt weg, die gelesenen Daten bleiben.`)) return;
+    if (
+      !window.confirm(
+        L(
+          `Kunde „${c.name}“ löschen? Nur der Ausschnitt fällt weg, die gelesenen Daten bleiben.`,
+          `Delete customer “${c.name}”? Only the scope is removed, the collected data remains.`,
+        ),
+      )
+    )
+      return;
     try {
       await deleteCustomer(c.id);
       changed();
@@ -141,19 +150,29 @@ export default function Customers({
   return (
     <>
       <PageHead
-        title="Kunden"
+        title={L("Kunden", "Customers")}
         actions={
           canEdit && (
             <button className="btn btn-primary btn-sm" onClick={() => setEditing("new")}>
-              + Kunde
+              {L("+ Kunde", "+ Customer")}
             </button>
           )
         }
       >
-        Ein Kunde ist ein Ausschnitt der Umgebung, beschrieben durch Selektoren: ACI-Tenant, VRF, AP, EPG, Bridge
-        Domain, VDOM, Zone, Interface, Netz, Kürzel oder ein Merkmal aus dem IPAM (Tenant, VRF bzw. Netzansicht,
-        Tag bzw. Attribut) – ein- bzw. ausschliessend – und seit 0.53.0 durch seine logischen Zonen (Netzwerkdesign).
-        Was dazugehört, leitet Automato nach jedem Lauf neu ab; neue EPGs oder Netze gehören ohne Pflege dazu.
+        {L(
+          <>
+            Ein Kunde ist ein Ausschnitt der Umgebung, beschrieben durch Selektoren: ACI-Tenant, VRF, AP, EPG, Bridge
+            Domain, VDOM, Zone, Interface, Netz, Kürzel oder ein Merkmal aus dem IPAM (Tenant, VRF bzw. Netzansicht,
+            Tag bzw. Attribut) – ein- bzw. ausschliessend – und seit 0.53.0 durch seine logischen Zonen (Netzwerkdesign).
+            Was dazugehört, leitet Automato nach jedem Lauf neu ab; neue EPGs oder Netze gehören ohne Pflege dazu.
+          </>,
+          <>
+            A customer is a scope of the environment, described by selectors: ACI tenant, VRF, AP, EPG, Bridge Domain,
+            VDOM, zone, interface, network, code or an attribute from the IPAM (tenant, VRF or network view, tag or
+            attribute) – including or excluding – and since 0.53.0 by its logical zones (network design). Automato
+            derives what belongs to it after every run; new EPGs or networks belong to it without maintenance.
+          </>,
+        )}
       </PageHead>
       <ErrorBox error={err} onClose={() => setErr(null)} />
 
@@ -162,21 +181,23 @@ export default function Customers({
           {rows == null ? (
             <Loading />
           ) : rows.length === 0 ? (
-            <Empty title="Noch keine Kunden">Vorschläge unten übernehmen oder einen Kunden anlegen.</Empty>
+            <Empty title={L("Noch keine Kunden", "No customers yet")}>
+              {L("Vorschläge unten übernehmen oder einen Kunden anlegen.", "Apply suggestions below or create a customer.")}
+            </Empty>
           ) : (
             <table>
               <thead>
                 <tr>
-                  <th>Kunde</th>
-                  <th>Kürzel</th>
-                  <th>Selektoren</th>
-                  <th>Zonen</th>
+                  <th>{L("Kunde", "Customer")}</th>
+                  <th>{L("Kürzel", "Code")}</th>
+                  <th>{L("Selektoren", "Selectors")}</th>
+                  <th>{L("Zonen", "Zones")}</th>
                   {KINDS.map(([k, label]) => (
                     <th key={k} className="num">
                       {label}
                     </th>
                   ))}
-                  <th>Abgeleitet</th>
+                  <th>{L("Abgeleitet", "Derived")}</th>
                   <th />
                 </tr>
               </thead>
@@ -187,8 +208,8 @@ export default function Customers({
                       <td>
                         <b>{c.name}</b>{" "}
                         {c.shared && (
-                          <span className="chip info" title="gilt für alle Kunden">
-                            geteilt
+                          <span className="chip info" title={L("gilt für alle Kunden", "applies to all customers")}>
+                            {L("geteilt", "shared")}
                           </span>
                         )}
                         {c.description && <div className="faint">{c.description}</div>}
@@ -226,10 +247,10 @@ export default function Customers({
                         {canEdit && (
                           <>
                             <button className="btn btn-sm" onClick={() => setEditing(c)}>
-                              Bearbeiten
+                              {L("Bearbeiten", "Edit")}
                             </button>{" "}
                             <button className="btn btn-sm btn-ghost" onClick={() => remove(c)}>
-                              Löschen
+                              {L("Löschen", "Delete")}
                             </button>
                           </>
                         )}
@@ -253,16 +274,21 @@ export default function Customers({
       {suggestions.length > 0 && (
         <div className="card" id="customer-suggestions">
           <div className="card-head">
-            <h2>Vorschläge</h2>
-            <span className="faint">je ACI-Tenant ohne Kunden ein Kunde, das Kürzel aus TE_&lt;kürzel&gt;; common als geteilter Teil</span>
+            <h2>{L("Vorschläge", "Suggestions")}</h2>
+            <span className="faint">
+              {L(
+                <>je ACI-Tenant ohne Kunden ein Kunde, das Kürzel aus TE_&lt;kürzel&gt;; common als geteilter Teil</>,
+                <>one customer per ACI tenant without a customer, the code from TE_&lt;code&gt;; common as shared part</>,
+              )}
+            </span>
           </div>
           <div className="card-body scroll">
             <table className="compact">
               <thead>
                 <tr>
-                  <th>Kunde</th>
-                  <th>Kürzel</th>
-                  <th>Selektor</th>
+                  <th>{L("Kunde", "Customer")}</th>
+                  <th>{L("Kürzel", "Code")}</th>
+                  <th>{L("Selektor", "Selector")}</th>
                   <th className="num">EPGs</th>
                   <th />
                 </tr>
@@ -271,7 +297,7 @@ export default function Customers({
                 {suggestions.map((s) => (
                   <tr key={s.name}>
                     <td>
-                      <b>{s.name}</b> {s.shared && <span className="chip info">geteilt</span>}
+                      <b>{s.name}</b> {s.shared && <span className="chip info">{L("geteilt", "shared")}</span>}
                     </td>
                     <td className="mono">{s.code ?? <Dash />}</td>
                     <td>{s.selectors.map((x) => selectorText(x, systems)).join(", ")}</td>
@@ -280,10 +306,10 @@ export default function Customers({
                       {canEdit && (
                         <>
                           <button className="btn btn-sm" onClick={() => accept(s)}>
-                            Übernehmen
+                            {L("Übernehmen", "Apply")}
                           </button>{" "}
                           <button className="btn btn-sm btn-ghost" onClick={() => setEditing(s)}>
-                            Anpassen…
+                            {L("Anpassen…", "Adjust…")}
                           </button>
                         </>
                       )}
@@ -299,8 +325,8 @@ export default function Customers({
       {unassigned && (
         <div className="card" id="customer-unassigned">
           <div className="card-head">
-            <h2>Keinem Kunden zugeordnet</h2>
-            <span className="faint">auch keinem geteilten Teil</span>
+            <h2>{L("Keinem Kunden zugeordnet", "Not assigned to any customer")}</h2>
+            <span className="faint">{L("auch keinem geteilten Teil", "nor to any shared part")}</span>
           </div>
           <div className="card-body">
             <table className="compact">
@@ -308,7 +334,7 @@ export default function Customers({
                 {(
                   [
                     ["epg", "EPGs"],
-                    ["rule", "Regeln"],
+                    ["rule", L("Regeln", "Rules")],
                     ["vm", "VMs"],
                   ] as const
                 ).map(([k, label]) => (
@@ -393,7 +419,7 @@ function Members({ customer }: { customer: Customer }) {
       {items == null ? (
         <Loading />
       ) : items.length === 0 ? (
-        <span className="faint">keine</span>
+        <span className="faint">{L("keine", "none")}</span>
       ) : (
         <table className="compact">
           <tbody>
@@ -409,7 +435,7 @@ function Members({ customer }: { customer: Customer }) {
           </tbody>
         </table>
       )}
-      {items && items.length >= 100 && <div className="faint">die ersten 100</div>}
+      {items && items.length >= 100 && <div className="faint">{L("die ersten 100", "the first 100")}</div>}
     </div>
   );
 }
@@ -484,15 +510,15 @@ function CustomerEditor({
   return (
     <Modal
       wide
-      title={existing ? `Kunde „${existing.name}“` : "Neuer Kunde"}
+      title={existing ? L(`Kunde „${existing.name}“`, `Customer “${existing.name}”`) : L("Neuer Kunde", "New customer")}
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button className="btn btn-primary" onClick={save} disabled={busy || !name.trim()}>
-            {busy ? "Speichere…" : "Speichern"}
+            {busy ? L("Speichere…", "Saving…") : L("Speichern", "Save")}
           </button>
         </>
       }
@@ -500,23 +526,31 @@ function CustomerEditor({
       <ErrorBox error={err} />
       <div className="field">
         <label htmlFor="cu-name">Name</label>
-        <input id="cu-name" className="input" value={name} maxLength={200} placeholder="z. B. Kunde A" onChange={(e) => setName(e.target.value)} />
+        <input id="cu-name" className="input" value={name} maxLength={200} placeholder={L("z. B. Kunde A", "e.g. Customer A")} onChange={(e) => setName(e.target.value)} />
       </div>
       <div className="field">
-        <label htmlFor="cu-code">Kürzel (optional)</label>
-        <input id="cu-code" className="input mono" value={code} maxLength={50} placeholder="z. B. ka" onChange={(e) => setCode(e.target.value)} />
-        <div className="hint">Aus der Namenskonvention (TE_&lt;kürzel&gt;); als Selektor „Kürzel“ ordnet es alles mit diesem Kürzel zu.</div>
+        <label htmlFor="cu-code">{L("Kürzel (optional)", "Code (optional)")}</label>
+        <input id="cu-code" className="input mono" value={code} maxLength={50} placeholder={L("z. B. ka", "e.g. ka")} onChange={(e) => setCode(e.target.value)} />
+        <div className="hint">
+          {L(
+            <>Aus der Namenskonvention (TE_&lt;kürzel&gt;); als Selektor „Kürzel“ ordnet es alles mit diesem Kürzel zu.</>,
+            <>From the naming convention (TE_&lt;code&gt;); as selector “Code” it assigns everything with this code.</>,
+          )}
+        </div>
       </div>
       <div className="field">
-        <label htmlFor="cu-desc">Beschreibung (optional)</label>
+        <label htmlFor="cu-desc">{L("Beschreibung (optional)", "Description (optional)")}</label>
         <input id="cu-desc" className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
       </div>
       <label className="check">
-        <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} /> Geteilter Teil der Umgebung (gilt für alle Kunden,
-        z. B. Tenant common)
+        <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} />{" "}
+        {L(
+          "Geteilter Teil der Umgebung (gilt für alle Kunden, z. B. Tenant common)",
+          "Shared part of the environment (applies to all customers, e.g. tenant common)",
+        )}
       </label>
 
-      <h3 style={{ marginTop: 12 }}>Selektoren</h3>
+      <h3 style={{ marginTop: 12 }}>{L("Selektoren", "Selectors")}</h3>
       <table className="compact form-table" id="customer-selectors">
         <colgroup>
           <col style={{ width: "24%" }} />
@@ -527,10 +561,10 @@ function CustomerEditor({
         </colgroup>
         <thead>
           <tr>
-            <th>Art</th>
-            <th>Wert</th>
-            <th>Quellsystem</th>
-            <th title="ausschliessen">aus­schl.</th>
+            <th>{L("Art", "Type")}</th>
+            <th>{L("Wert", "Value")}</th>
+            <th>{L("Quellsystem", "Source system")}</th>
+            <th title={L("ausschliessen", "exclude")}>{L("aus­schl.", "excl.")}</th>
             <th />
           </tr>
         </thead>
@@ -538,7 +572,7 @@ function CustomerEditor({
           {selectors.map((s, i) => (
             <tr key={i}>
               <td>
-                <select className="sel" aria-label="Art" value={s.kind} onChange={(e) => set(i, { kind: e.target.value as SelectorKind })}>
+                <select className="sel" aria-label={L("Art", "Type")} value={s.kind} onChange={(e) => set(i, { kind: e.target.value as SelectorKind })}>
                   {(Object.keys(SELECTOR_LABEL) as SelectorKind[]).map((k) => (
                     <option key={k} value={k}>
                       {SELECTOR_LABEL[k]}
@@ -549,7 +583,7 @@ function CustomerEditor({
               <td>
                 <input
                   className="input mono"
-                  aria-label="Wert"
+                  aria-label={L("Wert", "Value")}
                   value={s.value}
                   placeholder={s.kind === "code" && code ? code : PLACEHOLDER[s.kind]}
                   onChange={(e) => set(i, { value: e.target.value })}
@@ -559,11 +593,11 @@ function CustomerEditor({
                 {FW_KINDS.includes(s.kind) ? (
                   <select
                     className="sel"
-                    aria-label="Quellsystem"
+                    aria-label={L("Quellsystem", "Source system")}
                     value={s.source_system_id ?? ""}
                     onChange={(e) => set(i, { source_system_id: e.target.value ? Number(e.target.value) : null })}
                   >
-                    <option value="">alle Firewalls</option>
+                    <option value="">{L("alle Firewalls", "all firewalls")}</option>
                     {firewalls.map((f) => (
                       <option key={f.id} value={f.id}>
                         {f.name}
@@ -575,11 +609,11 @@ function CustomerEditor({
                 )}
               </td>
               <td>
-                <input type="checkbox" aria-label="ausschliessen" checked={s.exclude} onChange={(e) => set(i, { exclude: e.target.checked })} />
+                <input type="checkbox" aria-label={L("ausschliessen", "exclude")} checked={s.exclude} onChange={(e) => set(i, { exclude: e.target.checked })} />
               </td>
               <td>
                 <button className="btn btn-sm btn-ghost" onClick={() => setSelectors((xs) => xs.filter((_, j) => j !== i))}>
-                  Entfernen
+                  {L("Entfernen", "Remove")}
                 </button>
               </td>
             </tr>
@@ -587,10 +621,10 @@ function CustomerEditor({
         </tbody>
       </table>
       <button className="btn btn-sm" onClick={() => setSelectors((xs) => [...xs, { ...EMPTY_SELECTOR }])}>
-        + Selektor
+        {L("+ Selektor", "+ Selector")}
       </button>
 
-      <h3 style={{ marginTop: 12 }}>Vorschau</h3>
+      <h3 style={{ marginTop: 12 }}>{L("Vorschau", "Preview")}</h3>
       {preview == null ? (
         <Loading />
       ) : (
@@ -613,11 +647,19 @@ function CustomerEditor({
             ))}
             {(preview.off_path?.count ?? 0) > 0 && (
               <tr id="customer-preview-offpath">
-                <td>nicht auf dem Weg</td>
+                <td>{L("nicht auf dem Weg", "not on the path")}</td>
                 <td className="num">{preview.off_path!.count}</td>
                 <td className="faint">
-                  Regeln über ein Netz des Kunden, die der Verkehr nach dem Routing nicht erreicht (Firewall: Ein- bzw.
-                  Ausgang der Regel, ACI: Zuordnung in der VRF) – zählen nicht:{" "}
+                  {L(
+                    <>
+                      Regeln über ein Netz des Kunden, die der Verkehr nach dem Routing nicht erreicht (Firewall: Ein- bzw.
+                      Ausgang der Regel, ACI: Zuordnung in der VRF) – zählen nicht:{" "}
+                    </>,
+                    <>
+                      Rules via a network of the customer that traffic does not reach after routing (firewall: incoming
+                      or outgoing interface of the rule, ACI: assignment in the VRF) – not counted:{" "}
+                    </>,
+                  )}
                   {preview.off_path!.samples.map((x, i) => (
                     <Fragment key={x.id}>
                       {i > 0 && ", "}
@@ -673,7 +715,15 @@ function CustomerUsers({ tenantId, customers }: { tenantId: number; customers: C
     }
   };
   const remove = async (r: CustomerUserRow) => {
-    if (!window.confirm(`Zuordnung von „${r.login}“ zu „${r.customer ?? "?"}“ entfernen? Der Benutzer sieht den Kunden ab der nächsten Anfrage nicht mehr.`)) return;
+    if (
+      !window.confirm(
+        L(
+          `Zuordnung von „${r.login}“ zu „${r.customer ?? "?"}“ entfernen? Der Benutzer sieht den Kunden ab der nächsten Anfrage nicht mehr.`,
+          `Remove assignment of “${r.login}” to “${r.customer ?? "?"}”? The user no longer sees the customer from the next request on.`,
+        ),
+      )
+    )
+      return;
     try {
       await deleteCustomerUser(r.id);
       load();
@@ -684,46 +734,54 @@ function CustomerUsers({ tenantId, customers }: { tenantId: number; customers: C
   return (
     <div className="card" id="customer-users">
       <div className="card-head">
-        <h2>Kunden-Benutzer</h2>
+        <h2>{L("Kunden-Benutzer", "Customer users")}</h2>
         <span className="faint">
-          Anmeldung in Keycloak, Zuordnung hier: Benutzername bzw. E-Mail → Kunde. Ein zugeordneter Benutzer sieht nur
-          die Doku seines Kunden (nie Admin). Alternativ das Attribut customer_ids in Keycloak.
+          {L(
+            <>
+              Anmeldung in Keycloak, Zuordnung hier: Benutzername bzw. E-Mail → Kunde. Ein zugeordneter Benutzer sieht nur
+              die Doku seines Kunden (nie Admin). Alternativ das Attribut customer_ids in Keycloak.
+            </>,
+            <>
+              Login in Keycloak, assignment here: username or email → customer. An assigned user only sees the
+              documentation of their customer (never admin). Alternatively the attribute customer_ids in Keycloak.
+            </>,
+          )}
         </span>
       </div>
       <div className="card-body">
         <ErrorBox error={err} onClose={() => setErr(null)} />
         <div className="zone-intent" id="customer-user-add">
-          <input className="input mono" aria-label="Benutzer" placeholder="Benutzername bzw. E-Mail" value={login} onChange={(e) => setLogin(e.target.value)} />
-          <select className="sel" aria-label="Kunde" value={customerId} onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : "")}>
-            <option value="">– Kunde –</option>
+          <input className="input mono" aria-label={L("Benutzer", "User")} placeholder={L("Benutzername bzw. E-Mail", "Username or email")} value={login} onChange={(e) => setLogin(e.target.value)} />
+          <select className="sel" aria-label={L("Kunde", "Customer")} value={customerId} onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : "")}>
+            <option value="">{L("– Kunde –", "– Customer –")}</option>
             {customers.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
           </select>
-          <select className="sel" aria-label="Rolle" value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="viewer">lesen</option>
-            <option value="operator">lesen + eigene Findings triagieren</option>
+          <select className="sel" aria-label={L("Rolle", "Role")} value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="viewer">{L("lesen", "read")}</option>
+            <option value="operator">{L("lesen + eigene Findings triagieren", "read + triage own findings")}</option>
           </select>
-          <input className="input" aria-label="Notiz" placeholder="Notiz (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
+          <input className="input" aria-label={L("Notiz", "Note")} placeholder={L("Notiz (optional)", "Note (optional)")} value={note} onChange={(e) => setNote(e.target.value)} />
           <button className="btn btn-sm btn-primary" disabled={busy || !login.trim() || customerId === ""} onClick={add}>
-            Zuordnen
+            {L("Zuordnen", "Assign")}
           </button>
         </div>
         {rows == null ? (
           <Loading />
         ) : rows.length === 0 ? (
-          <span className="faint">noch keine Zuordnungen</span>
+          <span className="faint">{L("noch keine Zuordnungen", "no assignments yet")}</span>
         ) : (
           <table className="compact" id="customer-user-list">
             <thead>
               <tr>
-                <th>Benutzer</th>
-                <th>Kunde</th>
-                <th>Rolle</th>
-                <th>Notiz</th>
-                <th>Angelegt</th>
+                <th>{L("Benutzer", "User")}</th>
+                <th>{L("Kunde", "Customer")}</th>
+                <th>{L("Rolle", "Role")}</th>
+                <th>{L("Notiz", "Note")}</th>
+                <th>{L("Angelegt", "Created")}</th>
                 <th />
               </tr>
             </thead>
@@ -733,9 +791,9 @@ function CustomerUsers({ tenantId, customers }: { tenantId: number; customers: C
                   <td className="mono">{r.login}</td>
                   <td>{r.customer ?? "?"}</td>
                   <td>
-                    <select className="sel" aria-label="Rolle ändern" value={r.role} onChange={(e) => change(r, e.target.value)}>
-                      <option value="viewer">lesen</option>
-                      <option value="operator">lesen + Triage</option>
+                    <select className="sel" aria-label={L("Rolle ändern", "Change role")} value={r.role} onChange={(e) => change(r, e.target.value)}>
+                      <option value="viewer">{L("lesen", "read")}</option>
+                      <option value="operator">{L("lesen + Triage", "read + triage")}</option>
                     </select>
                   </td>
                   <td className="faint">{r.note ?? ""}</td>
@@ -744,7 +802,7 @@ function CustomerUsers({ tenantId, customers }: { tenantId: number; customers: C
                   </td>
                   <td>
                     <button className="btn btn-sm btn-ghost" onClick={() => remove(r)}>
-                      Entfernen
+                      {L("Entfernen", "Remove")}
                     </button>
                   </td>
                 </tr>
