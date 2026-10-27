@@ -93,12 +93,30 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "routing.exit.dismissed": frozenset({"tenant_id", "ips"}),
     "routing.exit.undismissed": frozenset({"tenant_id", "ips"}),
     "reconcile.run": frozenset({"tenant_id", "findings"}),
-    # NetBox-Sync (ADR 0010): nur Anzahlen, keine Inhalte
+    # NetBox-Sync (ADR 0010): nur Anzahlen und die gewaehlten Abschnitte (ADR 0031), keine Inhalte
     "netbox_sync.planned": frozenset(
-        {"plan_id", "tenant_id", "source_system_id", "create", "update", "delete", "conflict"}
+        {
+            "plan_id",
+            "tenant_id",
+            "source_system_id",
+            "sections",
+            "create",
+            "update",
+            "delete",
+            "conflict",
+        }
     ),
     "netbox_sync.applied": frozenset(
-        {"plan_id", "tenant_id", "source_system_id", "status", "create", "update", "delete"}
+        {
+            "plan_id",
+            "tenant_id",
+            "source_system_id",
+            "status",
+            "sections",
+            "create",
+            "update",
+            "delete",
+        }
     ),
     "netbox_sync.cancelled": frozenset({"plan_id", "tenant_id"}),
     "rule_pair.decided": frozenset({"source_system_id", "vdom", "decision"}),

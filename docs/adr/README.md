@@ -33,3 +33,4 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0026 | Export für Confluence: Word (.docx) und draw.io zum Import von Hand – kein Schreibweg |
 | 0027 | VMware NSX Advanced Load Balancer (Avi) als lesende Quelle: Virtual Services als NAT/Load Balancer, Weg über VIP zu den Servern |
 | 0028 | Sprache der Oberfläche und der Doku: Deutsch und Englisch (Text neben Text, Sprache je Browser, Server über `Accept-Language`, Fachbegriffe englisch) |
+| 0031 | Verkabelung und Applikationen nach NetBox: zwei Abschnitte im NetBox-Sync (Switches/Router mit Ports und beidseitig gemeldeten Kabeln, Modus/VLANs nur mit vorhandenen VLANs; Applikations-Tags `automato-app-…` an VMs und IP-Adressen) |

@@ -9,8 +9,14 @@ Einziger Schreibweg der Plattform. Ablauf:
    - DDI-Spiegel (Abschnitt `mirror`): Netze, Ranges und IPs mit DNS-Name aus dem
      fuehrenden IPAM (z. B. Infoblox), wenn die Ziel-NetBox nicht selbst fuehrend ist;
    - Virtualisierung (Abschnitt `virtualization`, ADR 0017): VMs aus dem vCenter mit Cluster,
-     Cluster-Gruppe (Datacenter), VM-Interfaces und ihren IPs.
-2. **Ist** (`read_state`): NetBox lesen (nur GET).
+     Cluster-Gruppe (Datacenter), VM-Interfaces und ihren IPs;
+   - Verkabelung (Abschnitt `cabling`, ADR 0031): gelesene Switches/Router mit Ports und Kabel
+     zwischen zwei Ports, die beide Seiten per CDP/LLDP melden;
+   - Applikationen (Abschnitt `applications`, ADR 0031): je Applikation ein Tag mit Praefix
+     `automato-app-` an den VMs und IP-Adressen ihrer Systeme.
+   Die beiden letzten nur, wenn ausdruecklich gewaehlt (`DEFAULT_SECTIONS`).
+2. **Ist** (`read_state`): NetBox lesen (nur GET); danach `resolve_after_read` (VLANs der
+   Switch-Ports, Kabel und Tags nur an Objekten, die es in NetBox gibt bzw. die der Sync anlegt).
 3. **Vorschau** (`diff`): je Objekt anlegen | aendern | unveraendert | Konflikt | loeschen.
    Geaendert/geloescht wird nur, was das Tag `automato` traegt; von Hand gepflegte Objekte
    werden hoechstens referenziert - weichen sie ab, ist das ein *Konflikt* (bleibt, wie es
@@ -37,6 +43,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.i18n import L, lang
 from app.models import (
+    Application,
     Epg,
     InvDevice,
     InvInterface,
@@ -49,14 +56,21 @@ from app.models import (
     Tenant,
     Vm,
 )
+from app.store import cabling as cabling_store
 from app.store import references
 from app.store import sites as site_store
 from app.store import virtual as virtual_store
 from app.store.epgs import inventory_label
 
 TAG = "automato"
-SECTIONS = ("inventory", "mirror", "virtualization")
+SECTIONS = ("inventory", "mirror", "virtualization", "cabling", "applications")
+# ohne Angabe die bisherigen Abschnitte; Verkabelung/Applikationen nur ausdruecklich (ADR 0031)
+DEFAULT_SECTIONS = ("inventory", "mirror", "virtualization")
 INVENTORY_PLATFORMS = (Platform.FORTIGATE, Platform.CISCO_ACI)
+CABLING_PLATFORMS = (Platform.CISCO_SWITCH,)  # Switches & Router (ADR 0025)
+# Applikations-Tags (ADR 0031): `automato-app-<Mandant>-<Kuerzel bzw. Name>`; das Praefix gehoert
+# Automato - nur solche Tags setzt bzw. entfernt der Sync, fremde Tags bleiben
+APP_TAG_PREFIX = "automato-app-"
 WRITE_ACTIONS = ("create", "update", "delete")
 ACTIONS = ("create", "update", "unchanged", "conflict", "delete", "obsolete")
 
@@ -67,14 +81,15 @@ class Kind:
     endpoint: str
     label: str
     managed: tuple[str, ...]  # Felder, die der Sync aktuell haelt (Aenderung/Konflikt)
-    scope: str = ""  # "" = nie loeschen | tenant | group | device | vm
+    scope: str = ""  # "" = nie loeschen | tenant | group | device | vm | app (eigene App-Tags)
     # nur an eigenen Objekten (Tag automato) gehalten; an von Hand gepflegten kein Konflikt
     owned: tuple[str, ...] = ()
 
 
-# Reihenfolge = Abhaengigkeiten (Anlegen vorwaerts, Loeschen rueckwaerts)
+# Reihenfolge = Abhaengigkeiten (Anlegen vorwaerts, Loeschen rueckwaerts). Tags tragen selbst
+# keinen Tag: eigen sind die Applikations-Tags des Mandanten (Praefix, `read_state`).
 KINDS = (
-    Kind("tag", "extras/tags", "Tag", ()),
+    Kind("tag", "extras/tags", "Tag", (), "app", owned=("name", "color", "description")),
     Kind("tenant", "tenancy/tenants", "Tenant", ("name",)),
     Kind("site_group", "dcim/site-groups", "Standort-Gruppe", ("name", "description")),
     Kind("site", "dcim/sites", "Standort", ("name",), owned=("group", "comments")),
@@ -131,6 +146,8 @@ KINDS = (
         ),
         "device",
     ),
+    # Kabel zwischen zwei Ports (Abschnitt Verkabelung, ADR 0031); Schluessel = beide Enden
+    Kind("cable", "dcim/cables", "Kabel", ("status",), "tenant", owned=("tenant", "description")),
     Kind(
         "virtual_machine",
         "virtualization/virtual-machines",
@@ -154,12 +171,18 @@ KINDS = (
         ("address", "tenant", "dns_name", "description", "status", "assigned_object_id"),
         "tenant",
     ),
+    # Applikations-Tags an bestehenden bzw. im selben Sync angelegten Objekten (ADR 0031): kein
+    # eigenes NetBox-Objekt, sondern die Tags des Ziels (PATCH) - zuletzt, wenn alles angelegt ist
+    Kind("app_tag_vm", "virtualization/virtual-machines", "Applikations-Tag an VM", ("tags",)),
+    Kind("app_tag_ip", "ipam/ip-addresses", "Applikations-Tag an IP-Adresse", ("tags",)),
 )
 KIND = {k.name: k for k in KINDS}
 # nur gelesen/geloescht, wenn der Abschnitt gewaehlt ist (sonst waeren alle VMs "veraltet")
 VIRTUAL_KINDS = frozenset(
     {"cluster_type", "cluster_group", "cluster", "virtual_machine", "vm_interface"}
 )
+ASSIGN = {"app_tag_vm": "virtual_machine", "app_tag_ip": "ip_address"}  # Zuordnung -> Ziel-Art
+TERMINATIONS = ("a_terminations", "b_terminations")  # Enden eines Kabels (je ein Port)
 
 Ref = tuple[str, str]  # (Art, Schluessel)
 
@@ -245,9 +268,26 @@ def _join(*parts: str | None) -> str:
 
 
 @dataclass
+class PortVlans:
+    """VLANs eines Switch-Ports (Verkabelung): aufgeloest erst nach dem Lesen von NetBox -
+    Modus und VLANs nur, wenn die noetigen VLANs dort eindeutig vorhanden sind (ADR 0031)."""
+
+    key: str  # Want-Schluessel des Ports (`<Geraet>/<Port>`)
+    device: str
+    site: str  # Slug des Standorts des Geraets
+    group: str  # VLAN-Gruppe des Quellsystems (Slug) - zuerst gesucht
+    mode: str  # access | tagged | tagged-all
+    untagged: int | None  # Access-VLAN (Pflicht) bzw. Native VLAN (nur wenn vorhanden)
+    required: list[int] = field(default_factory=list)  # Trunk: erlaubte VLANs des Switches
+    optional: list[int] = field(default_factory=list)  # Trunk: VLAN 1 (nur wenn vorhanden)
+
+
+@dataclass
 class Wants:
     items: dict[tuple[str, str], Want] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    ports: list[PortVlans] = field(default_factory=list)  # Verkabelung: VLANs nach dem Lesen
+    cable_ends: set[str] = field(default_factory=set)  # Geraete an Kabeln: Ports in NetBox lesen
 
     def add(self, want: Want) -> Want:
         return self.items.setdefault((want.kind, want.key), want)
@@ -321,6 +361,10 @@ def build_wants(
         _mirror_wants(session, w, tenant, target, tenant_ref)
     if "virtualization" in sections:
         _virtualization_wants(session, w, tenant, tenant_ref)
+    if "cabling" in sections:
+        _cabling_wants(session, w, tenant, sites, tenant_ref)
+    if "applications" in sections:
+        _application_wants(session, w, tenant)
     return w
 
 
@@ -377,6 +421,94 @@ def _site_want(w: Wants, tenant: Tenant, s: Site, index: site_store.SiteIndex) -
     )
 
 
+def _default_site(sites: dict[int, Site]) -> Site | None:
+    """Standort ohne Angabe am Quellsystem: der einzige physische, sonst der einzige ueberhaupt."""
+    physical = [s for s in sites.values() if s.kind == "physical"]
+    if len(physical) == 1:
+        return physical[0]
+    return next(iter(sites.values())) if len(sites) == 1 else None
+
+
+def _rows(session: Session, model, source: SourceSystem) -> list:
+    return list(
+        session.scalars(select(model).where(model.source_system_id == source.id).order_by(model.id))
+    )
+
+
+def _no_site_warning(w: Wants, src: SourceSystem, n: int) -> None:
+    w.warnings.append(
+        f"{src.name}: kein Standort gesetzt – {n} Geräte und ihre Ports werden"
+        " nicht übernommen (Standort am Quellsystem wählen)."
+    )
+
+
+def _device_want(
+    w: Wants, d: InvDevice, src: SourceSystem, site: Site, manufacturer: str, model: str,
+    tenant_ref: Ref,
+) -> None:  # fmt: skip
+    """Geraet mit Hersteller, Rolle und Geraetetyp - gleich fuer Netzinventar und Verkabelung.
+    Der Kommentar „Automato: gelesen aus <Quellsystem>“ zeigt den Abschnitt (`_device_section`)."""
+    role = slugify(d.role or "device")
+    w.add(
+        Want(
+            "manufacturer",
+            slugify(manufacturer),
+            f"Hersteller {manufacturer}",
+            {"name": manufacturer, "slug": slugify(manufacturer)},
+        )
+    )
+    w.add(
+        Want(
+            "device_role",
+            role,
+            f"Geräterolle {d.role}",
+            {
+                "name": _cut((d.role or "device").capitalize(), 100),
+                "slug": role,
+                "color": "607d8b",
+            },
+        )
+    )
+    w.add(
+        Want(
+            "device_type",
+            model.lower(),
+            f"Gerätetyp {model}",
+            {"model": _cut(model, 100), "slug": slugify(model)},
+            {"manufacturer": ("manufacturer", slugify(manufacturer))},
+        )
+    )
+    comments = "\n".join(
+        x
+        for x in (
+            f"Automato: gelesen aus {src.name}",
+            f"Version {d.version}" if d.version else None,
+            f"Node {d.node_id}" if d.node_id else None,
+            f"Mgmt-IP {d.mgmt_ip}" if d.mgmt_ip else None,
+        )
+        if x
+    )
+    w.add(
+        Want(
+            "device",
+            d.name,
+            f"Gerät {d.name}",
+            {
+                "name": _cut(d.name, 64),
+                "serial": _cut(d.serial, 50),
+                "status": "active",
+                "comments": comments,
+            },
+            {
+                "device_type": ("device_type", model.lower()),
+                "role": ("device_role", role),
+                "site": ("site", slugify(site.code)),
+                "tenant": tenant_ref,
+            },
+        )
+    )
+
+
 def _inventory_wants(
     session: Session, w: Wants, tenant: Tenant, sites: dict[int, Site], tenant_ref: Ref
 ) -> None:
@@ -390,20 +522,10 @@ def _inventory_wants(
             .order_by(SourceSystem.id)
         )
     )
-    # Ohne Standort am Quellsystem: der einzige physische Standort, sonst der einzige ueberhaupt
-    physical = [s for s in sites.values() if s.kind == "physical"]
-    only_site = (
-        physical[0]
-        if len(physical) == 1
-        else (next(iter(sites.values())) if len(sites) == 1 else None)
-    )
+    only_site = _default_site(sites)
 
     def rows(model, source):
-        return list(
-            session.scalars(
-                select(model).where(model.source_system_id == source.id).order_by(model.id)
-            )
-        )
+        return _rows(session, model, source)
 
     for src in sources:
         gslug = group_slug(tenant, src)
@@ -485,76 +607,15 @@ def _inventory_wants(
         site = sites.get(src.site_id) if src.site_id else only_site
         devices = rows(InvDevice, src)
         if devices and site is None:
-            w.warnings.append(
-                f"{src.name}: kein Standort gesetzt – {len(devices)} Geräte und ihre Ports werden"
-                " nicht übernommen (Standort am Quellsystem wählen)."
-            )
+            _no_site_warning(w, src, len(devices))
             continue
         manufacturer = _MANUFACTURER.get(src.platform, "Unbekannt")
         for d in devices:
             if w.has("device", d.name):
                 w.warnings.append(f"Gerät {d.name} kommt mehrfach vor – {src.name} übersprungen.")
                 continue
-            role = slugify(d.role or "device")
             model = d.model or f"{manufacturer} {d.role or 'device'}"
-            w.add(
-                Want(
-                    "manufacturer",
-                    slugify(manufacturer),
-                    f"Hersteller {manufacturer}",
-                    {"name": manufacturer, "slug": slugify(manufacturer)},
-                )
-            )
-            w.add(
-                Want(
-                    "device_role",
-                    role,
-                    f"Geräterolle {d.role}",
-                    {
-                        "name": _cut((d.role or "device").capitalize(), 100),
-                        "slug": role,
-                        "color": "607d8b",
-                    },
-                )
-            )
-            w.add(
-                Want(
-                    "device_type",
-                    model.lower(),
-                    f"Gerätetyp {model}",
-                    {"model": _cut(model, 100), "slug": slugify(model)},
-                    {"manufacturer": ("manufacturer", slugify(manufacturer))},
-                )
-            )
-            comments = "\n".join(
-                x
-                for x in (
-                    f"Automato: gelesen aus {src.name}",
-                    f"Version {d.version}" if d.version else None,
-                    f"Node {d.node_id}" if d.node_id else None,
-                    f"Mgmt-IP {d.mgmt_ip}" if d.mgmt_ip else None,
-                )
-                if x
-            )
-            w.add(
-                Want(
-                    "device",
-                    d.name,
-                    f"Gerät {d.name}",
-                    {
-                        "name": _cut(d.name, 64),
-                        "serial": _cut(d.serial, 50),
-                        "status": "active",
-                        "comments": comments,
-                    },
-                    {
-                        "device_type": ("device_type", model.lower()),
-                        "role": ("device_role", role),
-                        "site": ("site", slugify(site.code)),
-                        "tenant": tenant_ref,
-                    },
-                )
-            )
+            _device_want(w, d, src, site, manufacturer, model, tenant_ref)
         names = {d.name for d in devices}
         ifaces = [i for i in rows(InvInterface, src) if i.device in names]
         by_device: dict[str, set[str]] = defaultdict(set)
@@ -910,6 +971,307 @@ def _plen(index, ip: str) -> int:
     return 128 if ":" in ip else 32
 
 
+# -- Verkabelung (ADR 0031) ----------------------------------------------------------
+# Gelesene Switches/Router (`cisco_switch`) mit ihren Ports und die Kabel der Verkabelung
+# (`store/cabling.py`) zwischen zwei Ports, die beide Seiten per CDP/LLDP melden. Standort,
+# Rolle und Hersteller wie im Netzinventar; ohne Standort bzw. Modell nichts raten (Hinweis).
+
+_JUNIPER = re.compile(r"^(mx|ex|qfx|srx|acx|ptx)\d", re.I)  # Modelle der Junos-Geraete
+# Kurzform des Portnamens (`cabling.port_key`) -> Mbit/s; NX-OS `eth` und Junos `et-` nach Speed
+_NAME_SPEED = {"fa": 100, "gi": 1000, "tw": 2500, "fi": 5000, "te": 10000, "twe": 25000,
+               "fo": 40000, "hu": 100000, "ge-": 1000, "xe-": 10000}  # fmt: skip
+_COPPER_TYPE = {100: "100base-tx", 1000: "1000base-t", 2500: "2.5gbase-t", 5000: "5gbase-t",
+                10000: "10gbase-t"}  # fmt: skip
+_OPTIC_TYPE = {1000: "1000base-x-sfp", 10000: "10gbase-x-sfpp", 25000: "25gbase-x-sfp28",
+               40000: "40gbase-x-qsfpp", 100000: "100gbase-x-qsfp28"}  # fmt: skip
+_COPPER = re.compile(r"base-?t\b|basetx|rj-?45|10/100", re.I)
+_OPTIC = re.compile(r"sfp|fiber|base-?[slz]x|base-?[slez]r|base-?x\b", re.I)
+_ALL_VLANS = frozenset(range(1, 4095))
+NOT_CONNECTABLE = ("virtual", "lag", "bridge")  # NetBox: an solchen Ports kein Kabel
+
+
+def switch_manufacturer(model: str) -> str:
+    """Hersteller aus dem gelesenen Modell: Junos-Geraete (MX, EX, QFX …) sonst Cisco."""
+    return "Juniper" if _JUNIPER.match(model.strip()) else "Cisco"
+
+
+def port_type(i: InvInterface) -> str:
+    """NetBox-Typ eines Ports, soweit ableitbar: Port-Channel `lag`, SVI/Loopback/Unit
+    `virtual`; physisch nach Speed (Name bzw. gelesener Speed) und Medium (Kupfer/optisch,
+    `attrs.media`), sonst `other`."""
+    if i.kind == "lag":
+        return "lag"
+    if i.kind != "physical":
+        return "virtual"
+    m = re.match(r"[a-z]+-?", cabling_store.port_key(i.name))
+    speed = _NAME_SPEED.get(m.group(0)) if m else None
+    speed = speed or cabling_store.speed_mbps(i.speed)
+    if speed is None:
+        return "other"
+    media = str((i.attrs or {}).get("media") or "")
+    if _COPPER.search(media) and speed in _COPPER_TYPE:
+        return _COPPER_TYPE[speed]
+    if _OPTIC.search(media) and speed in _OPTIC_TYPE:
+        return _OPTIC_TYPE[speed]
+    # ohne Angabe zum Medium: bis 5G Kupfer (RJ45), darueber optisch (SFP+/SFP28/QSFP)
+    if speed <= 5000:
+        return _COPPER_TYPE.get(speed, "other")
+    return _OPTIC_TYPE.get(speed, "other")
+
+
+def _port_vlans(
+    i: InvInterface, key: str, site: str, group: str, switch_vlans: set[int]
+) -> PortVlans | None:
+    """Was ein Port an VLANs braucht: Access -> Access-VLAN; Trunk mit allen VLANs ->
+    `tagged-all` (Native VLAN, wenn vorhanden); Trunk mit Liste -> die erlaubten VLANs, die es
+    auf den Switches des Quellsystems gibt (ohne Native VLAN und VLAN 1 - diese nur, wenn
+    vorhanden). None = Modus unbekannt."""
+    if i.mode == "access":
+        if i.untagged_vlan is None:
+            return None
+        return PortVlans(key, i.device, site, group, "access", i.untagged_vlan)
+    if i.mode != "tagged":
+        return None
+    allowed = cabling_store.vlan_set(i.trunk_vlans) if i.trunk_vlans else set(i.tagged_vlans or [])
+    if allowed is None:
+        return None
+    native = i.native_vlan if i.native_vlan is not None else i.untagged_vlan
+    if allowed >= _ALL_VLANS:
+        return PortVlans(key, i.device, site, group, "tagged-all", native)
+    relevant = (allowed & switch_vlans if switch_vlans else allowed) - {native}
+    return PortVlans(key, i.device, site, group, "tagged", native,
+                     sorted(relevant - {1}), [1] if 1 in relevant else [])  # fmt: skip
+
+
+def _examples(labels: list[str], n: int = 3) -> str:
+    return ", ".join(labels[:n]) + (" …" if len(labels) > n else "")
+
+
+def _cabling_wants(
+    session: Session, w: Wants, tenant: Tenant, sites: dict[int, Site], tenant_ref: Ref
+) -> None:
+    sources = list(
+        session.scalars(
+            select(SourceSystem)
+            .where(
+                SourceSystem.tenant_id == tenant.id,
+                SourceSystem.platform.in_(CABLING_PLATFORMS),
+            )
+            .order_by(SourceSystem.id)
+        )
+    )
+    only_site = _default_site(sites)
+    for src in sources:
+        site = sites.get(src.site_id) if src.site_id else only_site
+        devices = _rows(session, InvDevice, src)
+        if devices and site is None:
+            _no_site_warning(w, src, len(devices))
+            continue
+        names: set[str] = set()
+        for d in devices:
+            if w.has("device", d.name):
+                w.warnings.append(f"Gerät {d.name} kommt mehrfach vor – {src.name} übersprungen.")
+                continue
+            if not (d.model or "").strip():
+                w.warnings.append(
+                    f"Gerät {d.name} ({src.name}): Modell nicht gelesen – ohne Gerätetyp mit Ports"
+                    " und Kabeln nicht übernommen."
+                )
+                continue
+            model = d.model.strip()
+            _device_want(w, d, src, site, switch_manufacturer(model), model, tenant_ref)
+            names.add(d.name)
+        gslug = group_slug(tenant, src)
+        switch_vlans = {v.vid for v in _rows(session, InvVlan, src)}
+        ifaces = [i for i in _rows(session, InvInterface, src) if i.device in names]
+        by_device: dict[str, set[str]] = defaultdict(set)
+        for i in ifaces:
+            by_device[i.device].add(i.name)
+        for i in ifaces:
+            key = f"{i.device}/{i.name}"
+            if w.has("interface", key):
+                continue
+            w.add(
+                Want(
+                    "interface",
+                    key,
+                    f"Port {key}",
+                    {
+                        "name": _cut(i.name, 64),
+                        "type": port_type(i),
+                        "enabled": i.enabled is not False,
+                        "description": _cut(i.description, 200),
+                    },
+                    {
+                        "device": ("device", i.device),
+                        "lag": ("interface", f"{i.device}/{i.lag}")
+                        if i.lag and i.lag in by_device[i.device] and i.lag != i.name
+                        else None,
+                        "parent": ("interface", f"{i.device}/{i.parent}")
+                        if i.parent and i.parent in by_device[i.device] and i.parent != i.name
+                        else None,
+                    },
+                )
+            )
+            need = _port_vlans(i, key, slugify(site.code), gslug, switch_vlans)
+            if need is not None:
+                w.ports.append(need)
+    _cable_wants(session, w, tenant, tenant_ref)
+
+
+def _cable_wants(session: Session, w: Wants, tenant: Tenant, tenant_ref: Ref) -> None:
+    """Kabel aus der Verkabelung: nur beidseitig gemeldete Verbindungen zwischen zwei
+    physischen Ports gelesener Geraete (auch ACI-Leafs). Einseitige und nicht gelesene
+    Gegenstellen nur als Hinweis; ob beide Ports in NetBox sind, prueft `resolve_after_read`."""
+    cab = cabling_store.build(session, tenant.id)
+    one_sided: list[str] = []
+    unread = 0
+    multi: list[str] = []
+    used: set[str] = set()
+    for link in sorted(cab.links.values(), key=lambda x: x.id):
+        state = link.state
+        a_end, b_end = link.a, link.b
+        text = f"{a_end.device.name} {a_end.port or '?'} ↔ {b_end.device.name} {b_end.port or '?'}"
+        if state == "one_sided":
+            one_sided.append(text)
+            continue
+        if state != "both":
+            unread += 1
+            continue
+        a, b = link.a.iface, link.b.iface
+        if a is None or b is None or a.kind != "physical" or b.kind != "physical":
+            continue  # Port nicht gelesen bzw. kein physischer Port (kein Kabel moeglich)
+        ka, kb = sorted((f"{a.device}/{a.name}", f"{b.device}/{b.name}"))
+        if ka in used or kb in used:
+            multi.append(text)
+            continue
+        used |= {ka, kb}
+        protocols = ", ".join(p.upper() for p in sorted(link.protocols))
+        w.add(
+            Want(
+                "cable",
+                f"{ka}~{kb}",
+                f"Kabel {ka} ↔ {kb}",
+                {
+                    "status": "connected",
+                    "description": _cut(f"Automato: {protocols} beidseitig", 200),
+                },
+                {
+                    "a_terminations": [("interface", ka)],
+                    "b_terminations": [("interface", kb)],
+                    "tenant": tenant_ref,
+                },
+            )
+        )
+        w.cable_ends |= {a.device, b.device}
+    if one_sided:
+        w.warnings.append(
+            f"Verkabelung: {len(one_sided)} einseitig gemeldete Verbindungen nicht als Kabel"
+            f" übernommen (z. B. {_examples(one_sided)})."
+        )
+    if unread:
+        w.warnings.append(
+            f"Verkabelung: {unread} Verbindungen zu Geräten ohne CDP/LLDP-Daten (z. B. Firewall,"
+            " ESXi-Host) nicht als Kabel übernommen."
+        )
+    if multi:
+        w.warnings.append(
+            f"Verkabelung: {len(multi)} Verbindungen an Ports mit mehreren Nachbarn nicht als"
+            f" Kabel übernommen (z. B. {_examples(multi)})."
+        )
+
+
+# -- Applikationen (ADR 0031) ------------------------------------------------------------
+# Je Applikation ein Tag `automato-app-<Mandant>-<Kuerzel bzw. Name>` (Name = Applikation,
+# Beschreibung = Kuerzel/Zweck/Kritikalitaet) an den VMs und IP-Adressen ihrer Systeme - wie
+# die Doku (`applications.systems_by_application`). Keine Custom Fields.
+
+_APP_PURPOSE = {"dev": "Dev", "test": "Test", "prod": "Prod"}
+_APP_CRITICALITY = {"low": "niedrig", "medium": "mittel", "high": "hoch", "critical": "kritisch"}
+_APP_COLOR = {"low": "9e9e9e", "medium": "2196f3", "high": "ff9800", "critical": "f44336"}
+
+
+def app_tag_prefix(tslug: str) -> str:
+    return f"{APP_TAG_PREFIX}{tslug}-"
+
+
+def app_tag_owner(slug: str, tslugs) -> str | None:
+    """Mandant eines Applikations-Tags: der laengste Mandanten-Slug, dessen Praefix passt
+    (`automato-app-kunde-a-b-…` gehoert zu `kunde-a-b`, nicht zu `kunde-a`)."""
+    hits = [t for t in tslugs if slug.startswith(app_tag_prefix(t))]
+    return max(hits, key=len) if hits else None
+
+
+def app_tag_slugs(tslug: str, apps: list[Application]) -> dict[int, str]:
+    """Slug je Applikation: Kuerzel, sonst Name; teilen sich mehrere denselben, behaelt die
+    aelteste ihn und die uebrigen bekommen den Namen (bzw. die ID) dazu - stabil, solange
+    Kuerzel und Name bleiben."""
+    prefix = app_tag_prefix(tslug)
+    room = max(100 - len(prefix), 8)
+    out: dict[int, str] = {}
+    taken: set[str] = set()
+    for app in sorted(apps, key=lambda a: a.id):
+        base = slugify(app.code or app.name)[:room]
+        for cand in (base, f"{base}-{slugify(app.name)}"[:room], f"{base}-{app.id}"[-room:]):
+            if cand not in taken:
+                break
+        taken.add(cand)
+        out[app.id] = f"{prefix}{cand}"
+    return out
+
+
+def _app_description(app: Application) -> str:
+    return _join(
+        "Automato: Applikation",
+        f"Kürzel {app.code}" if app.code else None,
+        f"Zweck {_APP_PURPOSE.get(app.purpose, app.purpose)}" if app.purpose else None,
+        f"Kritikalität {_APP_CRITICALITY.get(app.criticality, app.criticality)}"
+        if app.criticality
+        else None,
+    )
+
+
+def _application_wants(session: Session, w: Wants, tenant: Tenant) -> None:
+    from app.store import applications as app_store  # erst hier: vermeidet Import-Kreise
+
+    apps = list(
+        session.scalars(
+            select(Application).where(Application.tenant_id == tenant.id).order_by(Application.id)
+        )
+    )
+    if not apps:
+        return
+    slugs = app_tag_slugs(tenant_slug(tenant), apps)
+    systems = app_store.systems_by_application(session, tenant.id, apps)
+    tags: dict[str, dict[str, set[str]]] = {"app_tag_vm": defaultdict(set),
+                                            "app_tag_ip": defaultdict(set)}  # fmt: skip
+    for app in apps:
+        slug = slugs[app.id]
+        w.add(
+            Want(
+                "tag",
+                slug,
+                f"Tag {app.name} ({slug})",
+                {
+                    "name": _cut(app.name, 100),
+                    "slug": slug,
+                    "color": _APP_COLOR.get(app.criticality or "", "607d8b"),
+                    "description": _cut(_app_description(app), 200),
+                },
+            )
+        )
+        vms, ips = systems.get(app.id, (set(), set()))
+        for vm in vms:
+            tags["app_tag_vm"][vm].add(slug)
+        for value in ips:
+            ip = _ip(value)
+            if ip:
+                tags["app_tag_ip"][ip].add(slug)
+    for kind, by_key in tags.items():
+        for key, wanted in sorted(by_key.items()):
+            w.add(Want(kind, key, f"{KIND[kind].label} {key}", {"tags": sorted(wanted)}))
+
+
 # -- Ist --------------------------------------------------------------------------
 
 
@@ -948,19 +1310,51 @@ def _key_of(kind: str, obj: dict) -> str | None:
         return f"{vm.get('name')}/{obj.get('name')}" if vm.get("name") else None
     if kind == "ip_address":
         return _ip(obj.get("address"))
+    if kind == "cable":
+        return _cable_key(obj)
     return None
+
+
+def _cable_key(obj: dict) -> str | None:
+    """`<Geraet>/<Port>~<Geraet>/<Port>` (sortiert) fuer Kabel mit je einem Port an beiden
+    Enden; andere Kabel (Patchpanel, Circuit, mehrere Enden) bleiben ausserhalb des Syncs."""
+    ends = []
+    for side in TERMINATIONS:
+        terms = obj.get(side) or []
+        if len(terms) != 1 or terms[0].get("object_type") != "dcim.interface":
+            return None
+        port = terms[0].get("object") or {}
+        device = (port.get("device") or {}).get("name")
+        if not device or not port.get("name"):
+            return None
+        ends.append(f"{device}/{port['name']}")
+    return "~".join(sorted(ends))
 
 
 def _tagged(obj: dict) -> bool:
     return any((t or {}).get("slug") == TAG for t in obj.get("tags") or [])
 
 
+def _tag_slugs(obj: dict) -> set[str]:
+    return {(t or {}).get("slug") for t in obj.get("tags") or []} - {None}
+
+
 def read_state(
-    writer, wants: Wants, tslug: str, gprefix: str, sections: list[str] | None = None
+    writer,
+    wants: Wants,
+    tslug: str,
+    gprefix: str,
+    sections: list[str] | None = None,
+    tenants: list[str] | None = None,
 ) -> State:
-    """NetBox-Ist fuer die Arten des Syncs (nur GET)."""
+    """NetBox-Ist fuer die Arten des Syncs (nur GET). `tenants` = Slugs aller Mandanten
+    (Besitz der Applikations-Tags, `app_tag_owner`)."""
     state: State = {k.name: {} for k in KINDS}
-    virtual = sections is None or "virtualization" in sections
+    state["vlan_ref"] = {}  # Verkabelung: alle VLANs in NetBox (nur zum Referenzieren)
+    chosen = set(SECTIONS if sections is None else sections)
+    virtual = "virtualization" in chosen
+    apps = "applications" in chosen
+    cabling = "cabling" in chosen
 
     def put(kind: str, objs: list[dict]) -> None:
         for obj in objs:
@@ -969,11 +1363,17 @@ def read_state(
                 state[kind][key] = Have(obj["id"], key, obj, _tagged(obj))
 
     for k in KINDS:
-        if k.name in ("vlan", "interface", "vm_interface"):
+        if k.name in ("vlan", "interface", "vm_interface", "cable") or k.name in ASSIGN:
             continue
-        if k.name in VIRTUAL_KINDS and not virtual:
+        # VMs auch fuer die Applikations-Tags - geloescht bzw. veraltet nur mit `virtualization`
+        if k.name in VIRTUAL_KINDS and not virtual and not (apps and k.name == "virtual_machine"):
             continue
-        put(k.name, writer.read(k.endpoint, {"slug": TAG} if k.name == "tag" else {}))
+        # alle Tags nur mit den Applikationen (Namen muessen in NetBox eindeutig sein)
+        params = {"slug": TAG} if k.name == "tag" and not apps else {}
+        put(k.name, writer.read(k.endpoint, params))
+    owners = tenants or [tslug]
+    for slug, have in state["tag"].items():  # eigen = Applikations-Tag dieses Mandanten
+        have.tagged = slug.startswith(APP_TAG_PREFIX) and app_tag_owner(slug, owners) == tslug
 
     our_tenant = state["tenant"].get(tslug)
     groups = [
@@ -981,23 +1381,223 @@ def read_state(
         for key, h in state["vlan_group"].items()
         if wants.has("vlan_group", key) or (h.tagged and key.startswith(gprefix))
     ]
-    for chunk in _chunks(groups, 50):
-        put("vlan", writer.read("ipam/vlans", {"group_id": chunk}))
+    if cabling:  # alle VLANs: die Ports der Switches nehmen vorhandene VLANs (ADR 0031)
+        everything = writer.read("ipam/vlans", {})
+        ours = set(groups)
+        put("vlan", [o for o in everything if (o.get("group") or {}).get("id") in ours])
+        for o in everything:
+            key = _vlan_ref_key(o)
+            state["vlan_ref"].setdefault(key, Have(o["id"], key, o, _tagged(o)))
+    else:
+        for chunk in _chunks(groups, 50):
+            put("vlan", writer.read("ipam/vlans", {"group_id": chunk}))
     devices = [
         h.id
         for key, h in state["device"].items()
-        if wants.has("device", key) or (h.tagged and _tenant_id(h.obj) == _id(our_tenant))
+        if wants.has("device", key)
+        or (h.tagged and _tenant_id(h.obj) == _id(our_tenant))
+        or key in wants.cable_ends  # Kabel auch an von Hand gepflegten Geraeten (nur Verweis)
     ]
     for chunk in _chunks(devices, 50):
         put("interface", writer.read("dcim/interfaces", {"device_id": chunk}))
-    vms = [
-        h.id
-        for key, h in state["virtual_machine"].items()
-        if wants.has("virtual_machine", key) or (h.tagged and _tenant_id(h.obj) == _id(our_tenant))
-    ]
-    for chunk in _chunks(vms, 50):
-        put("vm_interface", writer.read("virtualization/interfaces", {"virtual_machine_id": chunk}))
+    if cabling:
+        for chunk in _chunks(devices, 50):
+            put("cable", writer.read("dcim/cables", {"device_id": chunk}))
+    if virtual:
+        vms = [
+            h.id
+            for key, h in state["virtual_machine"].items()
+            if wants.has("virtual_machine", key)
+            or (h.tagged and _tenant_id(h.obj) == _id(our_tenant))
+        ]
+        for chunk in _chunks(vms, 50):
+            put(
+                "vm_interface",
+                writer.read("virtualization/interfaces", {"virtual_machine_id": chunk}),
+            )
     return state
+
+
+def _vlan_ref_key(obj: dict) -> str:
+    """Lesbarer Schluessel eines VLANs in NetBox: `<Gruppe bzw. Standort>/<VID> #<ID>`."""
+    where = (obj.get("group") or {}).get("slug") or (obj.get("site") or {}).get("slug") or "global"
+    return f"{where}/{obj.get('vid')} #{obj.get('id')}"
+
+
+# -- Nach dem Lesen (ADR 0031) ----------------------------------------------------------
+
+
+def resolve_after_read(wants: Wants, state: State) -> None:
+    """Was erst mit dem Ist von NetBox feststeht: VLANs der Switch-Ports (nur vorhandene,
+    eindeutige), Kabel nur zwischen Ports, die es in NetBox gibt bzw. die der Sync anlegt, und
+    Applikations-Tags nur an solchen VMs/IPs - der Rest als Hinweis."""
+    _resolve_port_vlans(wants, state)
+    _drop_cables_without_ports(wants, state)
+    _drop_tags_without_target(wants, state)
+
+
+def _vlan_candidates(wants: Wants, state: State) -> dict[int, list[tuple]]:
+    """VID -> (Gruppe, Standort, Geltungsbereich der Gruppe, Verweis) aller VLANs in NetBox
+    und der im selben Sync angelegten (Netzinventar: VLAN-Gruppen ohne Geltungsbereich)."""
+    out: dict[int, list[tuple]] = defaultdict(list)
+    known: set[str] = set()
+    for key, have in state["vlan_ref"].items():
+        o = have.obj
+        group = (o.get("group") or {}).get("slug")
+        site = (o.get("site") or {}).get("slug")
+        scope = None
+        if group and group in state["vlan_group"]:
+            g = state["vlan_group"][group].obj
+            scope = (g.get("scope_type"), g.get("scope_id")) if g.get("scope_type") else None
+        gkey = f"{group}/{o.get('vid')}" if group else None
+        if gkey and (wants.has("vlan", gkey) or gkey in state["vlan"]):
+            ref: Ref = ("vlan", gkey)
+            known.add(gkey)
+        else:
+            ref = ("vlan_ref", key)
+        out[o.get("vid")].append((group, site, scope, ref))
+    for want in wants.items.values():
+        if want.kind == "vlan" and want.key not in known:
+            group = want.refs.get("group")
+            out[want.fields["vid"]].append((group[1] if group else None, None, None,
+                                           ("vlan", want.key)))  # fmt: skip
+    return out
+
+
+def _vlan_level(cand: tuple, port: PortVlans, site_id: int | None) -> int | None:
+    """0 = VLAN-Gruppe des Quellsystems, 1 = am Standort des Geraets (VLAN bzw. Gruppe mit
+    diesem Standort), 2 = global (ohne Standort, Gruppe ohne Geltungsbereich); None = an
+    diesem Geraet nicht verwendbar."""
+    group, site, scope, _ref = cand
+    if group and group == port.group:  # Gruppe des Quellsystems - ohne bzw. mit diesem Standort
+        return 0 if not scope or scope == ("dcim.site", site_id) else None
+    if site:
+        return 1 if site == port.site else None
+    if scope:
+        return 1 if scope == ("dcim.site", site_id) and site_id is not None else None
+    return 2
+
+
+def _pick_vlan(cands: dict, vid: int, port: PortVlans, site_id: int | None) -> Ref | str:
+    """Verweis auf das VLAN bzw. `missing` / `ambiguous` (mehrere auf der besten Ebene)."""
+    levels: dict[int, list[Ref]] = defaultdict(list)
+    for cand in cands.get(vid, []):
+        level = _vlan_level(cand, port, site_id)
+        if level is not None and cand[3] not in levels[level]:
+            levels[level].append(cand[3])
+    if not levels:
+        return "missing"
+    refs = levels[min(levels)]
+    return refs[0] if len(refs) == 1 else "ambiguous"
+
+
+def _vid_text(vids: set[int]) -> str:
+    ordered, parts, i = sorted(vids), [], 0
+    while i < len(ordered):
+        j = i
+        while j + 1 < len(ordered) and ordered[j + 1] == ordered[j] + 1:
+            j += 1
+        parts.append(str(ordered[i]) if i == j else f"{ordered[i]}-{ordered[j]}")
+        i = j + 1
+    return ", ".join(parts[:12]) + (" …" if len(parts) > 12 else "")
+
+
+def _resolve_port_vlans(wants: Wants, state: State) -> None:
+    """Modus und VLANs der Switch-Ports: nur wenn alle noetigen VLANs in NetBox eindeutig
+    vorhanden sind (bzw. im selben Sync angelegt werden) - sonst bleiben Modus und VLANs am
+    Port, wie sie sind, und der Hinweis nennt die VLANs je Geraet."""
+    if not wants.ports:
+        return
+    cands = _vlan_candidates(wants, state)
+    stats: dict[str, dict] = defaultdict(lambda: {"missing": set(), "ambiguous": set(),
+                                                  "n_missing": 0, "n_ambiguous": 0})  # fmt: skip
+    for port in wants.ports:
+        want = wants.get("interface", port.key)
+        if want is None:
+            continue
+        site = state["site"].get(port.site)
+        site_id = site.id if site else None
+        need = ([port.untagged] if port.mode == "access" else []) + port.required
+        found: dict[int, Ref] = {}
+        missing, ambiguous = set(), set()
+        for vid in need:
+            ref = _pick_vlan(cands, vid, port, site_id)
+            if ref == "missing":
+                missing.add(vid)
+            elif ref == "ambiguous":
+                ambiguous.add(vid)
+            else:
+                found[vid] = ref
+        if missing or ambiguous:
+            s = stats[port.device]
+            s["missing"] |= missing
+            s["ambiguous"] |= ambiguous
+            s["n_missing"] += bool(missing)
+            s["n_ambiguous"] += bool(ambiguous)
+            continue
+
+        def optional(vid: int | None, _p=port, _s=site_id) -> Ref | None:
+            ref = _pick_vlan(cands, vid, _p, _s) if vid is not None else None
+            return ref if isinstance(ref, tuple) else None
+
+        want.fields["mode"] = port.mode
+        untagged = found.get(port.untagged) if port.mode == "access" else optional(port.untagged)
+        want.refs["untagged_vlan"] = untagged  # None: nicht anfassen (Native VLAN fehlt)
+        tagged = [found[v] for v in port.required]
+        tagged += [r for v in port.optional if (r := optional(v))]
+        want.refs["tagged_vlans"] = tagged if port.mode == "tagged" else []
+    for device, s in sorted(stats.items()):
+        if s["missing"]:
+            wants.warnings.append(
+                f"{device}: Modus/VLANs an {s['n_missing']} Ports weggelassen – VLAN"
+                f" {_vid_text(s['missing'])} nicht in NetBox."
+            )
+        if s["ambiguous"]:
+            wants.warnings.append(
+                f"{device}: Modus/VLANs an {s['n_ambiguous']} Ports weggelassen – VLAN"
+                f" {_vid_text(s['ambiguous'])} in NetBox nicht eindeutig."
+            )
+
+
+def _port_available(key: str, wants: Wants, state: State) -> bool:
+    if wants.has("interface", key):
+        return True
+    have = state["interface"].get(key)
+    return have is not None and _norm(have.obj.get("type")) not in NOT_CONNECTABLE
+
+
+def _drop_cables_without_ports(wants: Wants, state: State) -> None:
+    dropped: list[str] = []
+    for (kind, key), want in list(wants.items.items()):
+        if kind != "cable":
+            continue
+        ends = [t[1] for side in TERMINATIONS for t in want.refs[side]]
+        if not all(_port_available(e, wants, state) for e in ends):
+            del wants.items[(kind, key)]
+            dropped.append(want.label.removeprefix("Kabel "))
+    if dropped:
+        wants.warnings.append(
+            f"Verkabelung: {len(dropped)} Kabel nicht übernommen – Port nicht in NetBox (Gerät"
+            " ohne Standort bzw. Modell oder Abschnitt Netzinventar nicht gewählt), z. B."
+            f" {_examples(dropped)}."
+        )
+
+
+def _drop_tags_without_target(wants: Wants, state: State) -> None:
+    missing: dict[str, list[str]] = defaultdict(list)
+    for kind, key in list(wants.items):
+        target = ASSIGN.get(kind)
+        if target is None or key in state[target] or wants.has(target, key):
+            continue
+        del wants.items[(kind, key)]
+        missing[kind].append(key)
+    if missing:
+        vms, ips = missing.get("app_tag_vm", []), missing.get("app_tag_ip", [])
+        wants.warnings.append(
+            f"Applikationen: {len(vms)} VMs und {len(ips)} IP-Adressen nicht in NetBox – ohne"
+            " Applikations-Tag (Abschnitte Virtualisierung bzw. DDI-Spiegel synchronisieren),"
+            f" z. B. {_examples(vms + ips)}."
+        )
 
 
 def _chunks(items: list, size: int) -> list[list]:
@@ -1016,12 +1616,14 @@ def _tenant_id(obj: dict) -> int | None:
 # -- Eindeutige Namen ---------------------------------------------------------------
 
 
-def unique_names(wants: Wants, state: State) -> None:
+def unique_names(wants: Wants, state: State, tenant_name: str = "") -> None:
     """NetBox verlangt eindeutige Namen - VLANs je VLAN-Gruppe, Sites global (Dev-Befund:
     HTTP 500 "ipam_vlan_unique_group_name", weil mehrere VLANs einer ACI-EPG denselben Namen
     tragen). Doppelte Namen und Namen, die in NetBox ein anderes Objekt traegt, bekommen den
     Schluessel angehaengt: "EG_web (110)", "Zürich (zrh)". Konvergiert: faellt die Dublette
-    weg, bekommt das Objekt beim naechsten Sync wieder den schlichten Namen."""
+    weg, bekommt das Objekt beim naechsten Sync wieder den schlichten Namen. Applikations-Tags
+    (global eindeutig, ADR 0031): "Webshop", sonst "Webshop (Kunde A)", sonst mit Slug."""
+    _unique_tag_names(wants, state, tenant_name)
     by_group: dict[str, list[Want]] = defaultdict(list)
     for want in wants.items.values():
         group = want.refs.get("group") if want.kind == "vlan" else None
@@ -1038,6 +1640,31 @@ def unique_names(wants: Wants, state: State) -> None:
     for key, have in state["site"].items():
         taken_sites[str(have.obj.get("name") or "").lower()].add(key)
     _suffix_duplicates(sites, "slug", taken_sites, 100)
+
+
+def _unique_tag_names(wants: Wants, state: State, tenant_name: str) -> None:
+    tags = sorted(
+        (w for w in wants.items.values() if w.kind == "tag" and w.key.startswith(APP_TAG_PREFIX)),
+        key=lambda w: w.key,
+    )
+    if not tags:
+        return
+    used: dict[str, set[str]] = defaultdict(set)  # Name (klein) -> Slugs, die ihn tragen
+    for slug, have in state["tag"].items():
+        used[str(have.obj.get("name") or "").lower()].add(slug)
+    wanted = {w.key for w in tags}
+    for slug in wanted:  # die eigenen geben ihren Namen frei - er wird neu vergeben
+        for names in used.values():
+            names.discard(slug)
+    for w in tags:
+        name = str(w.fields["name"])
+        options = (name, f"{name} ({tenant_name})" if tenant_name else name, f"{name} ({w.key})")
+        for option in options:
+            option = _cut(option, 100)
+            if not used.get(option.lower()):
+                break
+        w.fields["name"] = option
+        used[option.lower()].add(w.key)
 
 
 def _suffix_duplicates(wants: list[Want], ident: str, taken: dict[str, set], limit: int) -> None:
@@ -1144,28 +1771,87 @@ def _same_type(f: str, want: Want, have: Have) -> bool:
 _PARENT = {"device": "device", "vm": "virtual_machine"}  # Scope -> Art des Elternobjekts
 
 
-def _in_scope(kind: Kind, have: Have, state: State, tslug: str, gprefix: str) -> bool:
+def _in_scope(
+    kind: Kind, have: Have, state: State, tslug: str, gprefix: str,
+    foreign: frozenset[str] = frozenset(),
+) -> bool:  # fmt: skip
+    """Darf der Sync das Objekt loeschen bzw. als veraltet fuehren? `foreign` = Geraete eines
+    nicht gewaehlten Abschnitts (Netzinventar bzw. Verkabelung) - sie und ihre Ports bleiben."""
     if not have.tagged or not kind.scope:
         return False
     our = _id(state["tenant"].get(tslug))
+    if kind.scope == "app":  # eigener Applikations-Tag (Besitz in `read_state`)
+        return True
     if kind.scope == "tenant":
+        if kind.name == "device" and have.key in foreign:
+            return False
         return our is not None and _tenant_id(have.obj) == our
     if kind.scope == "group":
         return have.key.startswith(gprefix)
     if kind.scope in _PARENT:
         parent = _PARENT[kind.scope]
         name = (have.obj.get(parent) or {}).get("name")
+        if parent == "device" and name in foreign:
+            return False
         owner = state[parent].get(name) if name else None
         return owner is not None and owner.tagged and _tenant_id(owner.obj) == our
     return False
 
 
-def diff(wants: Wants, state: State, tslug: str, gprefix: str, allow_delete: bool) -> list[dict]:
+_FROM_SOURCE = re.compile(r"^Automato: gelesen aus (.+?)\s*$", re.M)
+
+
+def _device_section(obj: dict, platforms: dict[str, Platform]) -> str:
+    """Abschnitt eines von Automato angelegten Geraets - aus dem Kommentar „Automato: gelesen
+    aus <Quellsystem>“: Switches & Router -> `cabling`, sonst (auch unbekannt) `inventory`."""
+    m = _FROM_SOURCE.search(obj.get("comments") or "")
+    platform = platforms.get(m.group(1)) if m else None
+    return "cabling" if platform in CABLING_PLATFORMS else "inventory"
+
+
+def diff(
+    wants: Wants,
+    state: State,
+    tslug: str,
+    gprefix: str,
+    allow_delete: bool,
+    sections: list[str] | None = None,
+    platforms: dict[str, Platform] | None = None,
+) -> list[dict]:
+    """Vorschau. `sections` = gewaehlte Abschnitte (None = alle): Objekte der anderen werden
+    weder geloescht noch als veraltet gefuehrt; `platforms` = Plattform je Quellsystem-Name."""
+    chosen = set(SECTIONS if sections is None else sections)
+    foreign = frozenset(
+        key
+        for key, have in state["device"].items()
+        if have.tagged and _device_section(have.obj, platforms or {}) not in chosen
+    )
+    wanted_cables = wants.keys_of("cable")
+    removed_cables = {  # werden vor dem Anlegen der neuen Kabel geloescht (`apply`)
+        have.id
+        for key, have in state["cable"].items()
+        if allow_delete
+        and key not in wanted_cables
+        and _in_scope(KIND["cable"], have, state, tslug, gprefix, foreign)
+    }
     items: list[dict] = []
     for want in wants.ordered():
+        if want.kind in ASSIGN:
+            continue  # Tags an VMs/IPs: `_assignments`
         have = state[want.kind].get(want.key)
         if have is None:
+            busy = _occupied(want, state, removed_cables) if want.kind == "cable" else []
+            if busy:  # Port traegt schon ein anderes Kabel: nichts anlegen
+                items.append(_item(want.kind, want.key, want.label, "conflict", manual=True,
+                                   changes=busy))  # fmt: skip
+                continue
             items.append(_item(want.kind, want.key, want.label, "create", fields=_preview(want)))
+            continue
+        if want.kind == "tag" and want.key.startswith(APP_TAG_PREFIX) and not have.tagged:
+            # gleicher Slug gehoert einem anderen Mandanten - nicht anfassen, nicht zuordnen
+            change = {"field": "name", "old": have.obj.get("name"), "new": want.fields.get("name")}
+            items.append(_item(want.kind, want.key, want.label, "conflict", id=have.id,
+                               manual=True, changes=[change]))  # fmt: skip
             continue
         changes = _changes(want, have, state, wants)
         if not changes:
@@ -1184,9 +1870,11 @@ def diff(wants: Wants, state: State, tslug: str, gprefix: str, allow_delete: boo
             )
         )
     for kind in KINDS:
+        if kind.name in ASSIGN or (kind.name in VIRTUAL_KINDS and "virtualization" not in chosen):
+            continue  # VMs ohne den Abschnitt nur fuer die Applikations-Tags gelesen
         wanted = wants.keys_of(kind.name)
         for key, have in sorted(state[kind.name].items()):
-            if key in wanted or not _in_scope(kind, have, state, tslug, gprefix):
+            if key in wanted or not _in_scope(kind, have, state, tslug, gprefix, foreign):
                 continue
             items.append(
                 _item(
@@ -1197,6 +1885,69 @@ def diff(wants: Wants, state: State, tslug: str, gprefix: str, allow_delete: boo
                     id=have.id,
                 )
             )
+    if "applications" in chosen:
+        gone = {(i["kind"], i["key"]) for i in items if i["action"] == "delete"}
+        items += _assignments(wants, state, gone)
+    return items
+
+
+def _occupied(want: Want, state: State, removed: set[int]) -> list[dict]:
+    """Enden eines neuen Kabels, die in NetBox schon ein (anderes, bleibendes) Kabel tragen."""
+    out = []
+    for side in TERMINATIONS:
+        for ref in want.refs.get(side) or []:
+            have = state["interface"].get(ref[1])
+            cable = _ref_id(have.obj.get("cable")) if have else None
+            if cable is not None and cable not in removed:
+                out.append({"field": ref[1], "old": f"#{cable}", "new": want.key})
+    return out
+
+
+def _ref_id(value: Any) -> int | None:
+    if isinstance(value, dict):
+        value = value.get("id")
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _mine(wants: Wants, state: State) -> set[str]:
+    """Applikations-Tags dieses Mandanten: in NetBox eigene und neu angelegte."""
+    owned = {slug for slug, have in state["tag"].items() if have.tagged}
+    new = {
+        w.key
+        for w in wants.items.values()
+        if w.kind == "tag" and w.key.startswith(APP_TAG_PREFIX) and w.key not in state["tag"]
+    }
+    return owned | new
+
+
+def _assignments(wants: Wants, state: State, gone: set[tuple[str, str]]) -> list[dict]:
+    """Applikations-Tags an VMs und IP-Adressen: eigene Tags setzen bzw. entfernen, fremde
+    bleiben. Nur an Objekten mit Tag `automato`; an von Hand gepflegten ist eine Abweichung ein
+    Konflikt (bleibt, wie es ist). Objekte, die der Sync loescht, bekommen nichts."""
+    mine = _mine(wants, state)
+    items: list[dict] = []
+    for kind, target in ASSIGN.items():
+        label = KIND[kind].label
+        wanted = sorted((w for w in wants.items.values() if w.kind == kind), key=lambda w: w.key)
+        rows = [(w.key, sorted(set(w.fields["tags"]) & mine)) for w in wanted]
+        seen = {key for key, _ in rows}
+        rows += [(key, []) for key in sorted(state[target]) if key not in seen]
+        for key, desired in rows:
+            if (target, key) in gone:
+                continue
+            have = state[target].get(key)
+            current = sorted(_tag_slugs(have.obj) & mine) if have else []
+            if current == desired:
+                if have is not None and desired:
+                    items.append(_item(kind, key, f"{label} {key}", "unchanged", id=have.id))
+                continue
+            change = [{"field": "tags", "old": current, "new": desired}]
+            if have is not None and not have.tagged:
+                items.append(_item(kind, key, f"{label} {key}", "conflict", id=have.id,
+                                   manual=True, changes=change))  # fmt: skip
+                continue
+            items.append(_item(kind, key, f"{label} {key}", "update",
+                               id=have.id if have else None, changes=change))  # fmt: skip
     return items
 
 
@@ -1256,9 +2007,18 @@ def compute(
     wants = build_wants(session, tenant, target, sections)
     tslug = tenant_slug(tenant)
     gprefix = f"{tslug}-"
-    state = read_state(writer, wants, tslug, gprefix, sections)
-    unique_names(wants, state)
-    items = diff(wants, state, tslug, gprefix, allow_delete)
+    tenants = [tenant_slug(t) for t in session.scalars(select(Tenant))]
+    state = read_state(writer, wants, tslug, gprefix, sections, tenants)
+    resolve_after_read(wants, state)
+    unique_names(wants, state, tenant.name)
+    platforms = dict(
+        session.execute(
+            select(SourceSystem.name, SourceSystem.platform).where(
+                SourceSystem.tenant_id == tenant.id
+            )
+        ).all()
+    )
+    items = diff(wants, state, tslug, gprefix, allow_delete, sections, platforms)
     return Plan(wants, state, items, fingerprint(items))
 
 
@@ -1289,6 +2049,19 @@ def apply(writer, plan: Plan, progress=None) -> dict[str, dict[str, int]]:
         actions = by_kind.get(kind.name, {})
         if progress is not None and actions:
             progress(kind.name)
+        if kind.name in ASSIGN:  # Applikations-Tags: Tags des Ziels setzen (fremde bleiben)
+            mine = _mine(plan.wants, plan.state)
+            patches = [_tag_patch(plan, kind.name, i, ids, mine) for i in actions.get("update", [])]
+            patches = [p for p in patches if p is not None]
+            if patches:
+                writer.update(kind.endpoint, patches)
+                done[kind.name]["update"] += len(patches)
+            continue
+        if kind.name == "cable":  # erst weg, dann neu: ein umgesteckter Port ist wieder frei
+            dels = [i["id"] for i in actions.get("delete", [])]
+            if dels:
+                writer.delete(kind.endpoint, dels)
+                done[kind.name]["delete"] += len(dels)
         creates = [plan.wants.get(kind.name, i["key"]) for i in actions.get("create", [])]
         creates = [c for c in creates if c is not None]
         if creates:
@@ -1300,7 +2073,7 @@ def apply(writer, plan: Plan, progress=None) -> dict[str, dict[str, int]]:
                         continue  # nach dem Anlegen nachziehen (LAG/Parent)
                     v = value(ref)
                     if v not in (None, []):
-                        body[f] = v
+                        body[f] = _terminations(v) if f in TERMINATIONS else v
                 if "assigned_object_type" in body and "assigned_object_id" not in body:
                     body.pop("assigned_object_type")
                 if kind.name != "tag":
@@ -1337,6 +2110,8 @@ def apply(writer, plan: Plan, progress=None) -> dict[str, dict[str, int]]:
             writer.update(kind.endpoint, updates)
             done[kind.name]["update"] += len(updates)
     for kind in reversed(KINDS):
+        if kind.name == "cable":
+            continue  # schon vor dem Anlegen
         dels = [i["id"] for i in by_kind.get(kind.name, {}).get("delete", [])]
         if dels and progress is not None:
             progress(kind.name)
@@ -1348,6 +2123,23 @@ def apply(writer, plan: Plan, progress=None) -> dict[str, dict[str, int]]:
 
 def _self_ref(kind: Kind, ref: Ref | list[Ref] | None) -> bool:
     return isinstance(ref, tuple) and ref[0] == kind.name
+
+
+def _terminations(ids: list[int]) -> list[dict]:
+    return [{"object_type": "dcim.interface", "object_id": i} for i in ids]
+
+
+def _tag_patch(plan: Plan, kind: str, item: dict, ids: dict, mine: set[str]) -> dict | None:
+    """PATCH der Tags eines Ziels: alle fremden Tags (auch `automato`) bleiben, die eigenen
+    Applikations-Tags werden zu denen der Vorschau. Neu angelegte Ziele tragen `automato`."""
+    target = ASSIGN[kind]
+    tid = ids.get((target, item["key"]))
+    if tid is None:
+        return None
+    have = plan.state[target].get(item["key"])
+    keep = _tag_slugs(have.obj) - mine if have is not None else {TAG}
+    desired = set(item["changes"][0]["new"]) if item.get("changes") else set()
+    return {"id": tid, "tags": [{"slug": s} for s in sorted(keep | desired)]}
 
 
 # -- Anzeige in der Sprache der Anfrage (ADR 0028) -----------------------------------------
@@ -1364,8 +2156,11 @@ KIND_EN = {
     "vlan_group": "VLAN group",
     "prefix": "Network",
     "device": "Device",
+    "cable": "Cable",
     "vm_interface": "VM interface",
     "ip_address": "IP address",
+    "app_tag_vm": "Application tag on VM",
+    "app_tag_ip": "Application tag on IP address",
 }
 _SITE_KIND_EN = {"virtuell": "virtual", "physisch": "physical"}
 
@@ -1394,6 +2189,50 @@ WARNINGS_EN = (
     (
         "VM {name} kommt mehrfach vor – {src} übersprungen.",
         "VM {name} occurs more than once – {src} skipped.",
+    ),
+    # Verkabelung und Applikationen (ADR 0031)
+    (
+        "Gerät {name} ({src}): Modell nicht gelesen – ohne Gerätetyp mit Ports und Kabeln nicht "
+        "übernommen.",
+        "Device {name} ({src}): model not read – without device type not applied, nor its ports "
+        "and cables.",
+    ),
+    (
+        "{device}: Modus/VLANs an {n} Ports weggelassen – VLAN {vids} nicht in NetBox.",
+        "{device}: mode/VLANs left out on {n} ports – VLAN {vids} not in NetBox.",
+    ),
+    (
+        "{device}: Modus/VLANs an {n} Ports weggelassen – VLAN {vids} in NetBox nicht eindeutig.",
+        "{device}: mode/VLANs left out on {n} ports – VLAN {vids} not unique in NetBox.",
+    ),
+    (
+        "Verkabelung: {n} einseitig gemeldete Verbindungen nicht als Kabel übernommen "
+        "(z. B. {examples}).",
+        "Cabling: {n} links reported by one side only not applied as cables (e.g. {examples}).",
+    ),
+    (
+        "Verkabelung: {n} Verbindungen zu Geräten ohne CDP/LLDP-Daten (z. B. Firewall, ESXi-Host) "
+        "nicht als Kabel übernommen.",
+        "Cabling: {n} links to devices without CDP/LLDP data (e.g. firewall, ESXi host) not "
+        "applied as cables.",
+    ),
+    (
+        "Verkabelung: {n} Verbindungen an Ports mit mehreren Nachbarn nicht als Kabel übernommen "
+        "(z. B. {examples}).",
+        "Cabling: {n} links on ports with several neighbors not applied as cables "
+        "(e.g. {examples}).",
+    ),
+    (
+        "Verkabelung: {n} Kabel nicht übernommen – Port nicht in NetBox (Gerät ohne Standort bzw. "
+        "Modell oder Abschnitt Netzinventar nicht gewählt), z. B. {examples}.",
+        "Cabling: {n} cables not applied – port not in NetBox (device without site or model, or "
+        "section network inventory not chosen), e.g. {examples}.",
+    ),
+    (
+        "Applikationen: {vms} VMs und {ips} IP-Adressen nicht in NetBox – ohne Applikations-Tag "
+        "(Abschnitte Virtualisierung bzw. DDI-Spiegel synchronisieren), z. B. {examples}.",
+        "Applications: {vms} VMs and {ips} IP addresses not in NetBox – without application tag "
+        "(synchronize the sections virtualization or DDI mirror), e.g. {examples}.",
     ),
 )
 

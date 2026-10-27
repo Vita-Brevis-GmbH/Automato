@@ -213,9 +213,10 @@ Secrets, Open Source bevorzugt.
 - MAC- und IP-Adressen sind Betriebsdaten über Geräte und (indirekt) Personen (Clients). Sie
   werden nur für die Verkabelung genutzt, nicht an Kunden-Benutzer gegeben und nach der Frist
   gelöscht (R14, R22).
-- Nach NetBox wird noch nichts geschrieben. Kabel und Ports nach NetBox (`dcim/cables`,
-  `dcim/interfaces`) folgen bei Bedarf als weiterer Abschnitt des NetBox-Syncs mit eigener
-  Freigabe – nie auf die Switches.
+- ~~Nach NetBox wird noch nichts geschrieben.~~ Kabel und Ports nach NetBox (`dcim/cables`,
+  `dcim/interfaces`) als Abschnitt *Verkabelung* des NetBox-Syncs – Freigabe des Anwenders
+  2026-10-27, **ADR 0031** (nur beidseitig gemeldete Kabel, Modus/VLANs nur mit vorhandenen
+  VLANs) – nie auf die Switches.
 - Offen bzw. später:
   - **SNMPv3** (nur lesend, `authPriv`) als Alternative, wo SSH nicht erlaubt ist.
   - ~~MAC-Adress-Tabelle und ARP~~ – umgesetzt in 0.63.0 (Nr. 8). Offen: IPv6-Nachbarn
