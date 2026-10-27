@@ -154,6 +154,12 @@ a { color: var(--accent); }
 .menu button, .menu a { display: block; width: 100%; text-align: left; background: none; border: none; padding: 8px 10px;
   border-radius: 6px; color: var(--fg); font-size: 13px; cursor: pointer; text-decoration: none; }
 .menu button:hover, .menu a:hover { background: var(--surface-2); }
+/* Sprache der Oberfläche (0.86.0) */
+.menu .menu-lang { display: flex; align-items: center; gap: 4px; padding: 4px 10px 8px; border-bottom: 1px solid var(--border);
+  margin-bottom: 4px; font-size: 12px; color: var(--muted); }
+.menu .menu-lang span { margin-right: auto; }
+.menu .menu-lang button { display: inline-block; width: auto; padding: 3px 8px; font-size: 12px; border: 1px solid var(--border); }
+.menu .menu-lang button.active { background: var(--accent); border-color: var(--accent); color: #fff; opacity: 1; cursor: default; }
 /* Vorschläge unter einem Eingabefeld (Weg-Suche: Namen aus IPAM, Objekten, VMs, Netze) */
 .menu.suggest { left: 0; right: auto; top: calc(100% + 4px); min-width: 100%; width: max-content; max-width: min(560px, 90vw);
   max-height: 420px; overflow: auto; }

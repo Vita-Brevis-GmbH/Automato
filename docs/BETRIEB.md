@@ -92,6 +92,15 @@ Hell/Dunkel und Benutzermenü (Rolle, Mandanten, Mein Konto, Abmelden). Im OIDC-
 wird das Token still erneuert; läuft die Keycloak-Sitzung ab, folgt die Anmeldung erneut.
 Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigung“).
 
+**Sprache** (seit 0.86.0): Benutzermenü → **Sprache** *Deutsch* | *English*. Die Wahl gilt je
+Browser (`localStorage automato_lang`), das Umschalten lädt die Seite neu; Standard ist Deutsch.
+Umgestellt sind alle Texte der Oberfläche (Navigation, Ansichten, Knöpfe, Dialoge, Hinweise,
+Markdown-Export und Druck aus der Oberfläche). **Noch deutsch** bleiben in diesem Schritt die
+Texte, die der Orchestrator liefert: Befundtexte und Hinweise, Gründe im Weg („implizit
+gesperrt“), Meldungen von Läufen und Fehlermeldungen der API, Spaltenköpfe der Kategorien und
+die Exporte als Word/PDF/draw.io – sie folgen schrittweise (die Oberfläche schickt die Sprache
+bereits als `Accept-Language` mit). Begriffe in beiden Sprachen: `docs/GLOSSAR.md`.
+
 **Dokumentation**
 - **Übersicht:** KPIs (Regeln, NAT/VIPs, offene Findings, Abdeckung gegen die SoT),
   **Letzte Läufe** und **Jetzt einlesen** (Operator): Mandant + Quellsystem wählen,

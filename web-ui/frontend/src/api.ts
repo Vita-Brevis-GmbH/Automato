@@ -1,6 +1,7 @@
 // Schlanker API-Client. Das UI spricht ausschliesslich mit dem Orchestrator
 // (ARCHITECTURE.md) - im Dev ueber den Vite-Proxy unter /api.
 import * as auth from "./auth";
+import { L, lang } from "./i18n";
 
 export interface HealthStatus {
   status: string;
@@ -1112,10 +1113,18 @@ export class ApiError extends Error {
 // Verständliche Meldung für die Anzeige im UI.
 export function describeError(e: unknown): string {
   if (e instanceof ApiError) {
-    if (e.status === 401) return "Nicht angemeldet oder Sitzung abgelaufen – bitte neu anmelden.";
-    if (e.status === 403) return `Keine Berechtigung (${e.detail || "Rolle/Mandant fehlt"}).`;
-    if (e.status === 409) return `Existiert bereits (${e.detail}).`;
-    if (e.status === 422) return `Ungültige Eingabe (${e.detail}).`;
+    if (e.status === 401)
+      return L(
+        "Nicht angemeldet oder Sitzung abgelaufen – bitte neu anmelden.",
+        "Not signed in or session expired – please sign in again.",
+      );
+    if (e.status === 403)
+      return L(
+        `Keine Berechtigung (${e.detail || "Rolle/Mandant fehlt"}).`,
+        `Not permitted (${e.detail || "role/tenant missing"}).`,
+      );
+    if (e.status === 409) return L(`Existiert bereits (${e.detail}).`, `Already exists (${e.detail}).`);
+    if (e.status === 422) return L(`Ungültige Eingabe (${e.detail}).`, `Invalid input (${e.detail}).`);
     return e.message;
   }
   return e instanceof Error ? e.message : String(e);
@@ -1147,14 +1156,21 @@ async function authHeaders(): Promise<Record<string, string>> {
 
 // Fetch mit Token und einheitlicher Fehlerbehandlung; liefert die rohe Antwort.
 async function fetchChecked(url: string, init: RequestInit = {}): Promise<Response> {
-  const headers = { ...(await authHeaders()), ...(init.headers as Record<string, string>) };
+  // Sprache der Oberfläche (0.86.0): Texte des Servers folgen schrittweise
+  const headers = {
+    "Accept-Language": lang,
+    ...(await authHeaders()),
+    ...(init.headers as Record<string, string>),
+  };
   const response = await fetch(url, { ...init, headers });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const detail = detailText(body);
     if (response.status === 401 && auth.isOidc()) {
       // Token abgelehnt -> neu anmelden (mit Schleifenschutz, siehe auth.relogin)
-      void auth.relogin(`Der Orchestrator lehnt das Anmelde-Token ab: ${detail || "HTTP 401"}`);
+      void auth.relogin(
+        `${L("Der Orchestrator lehnt das Anmelde-Token ab", "The orchestrator rejects the sign-in token")}: ${detail || "HTTP 401"}`,
+      );
     }
     throw new ApiError(response.status, detail);
   }

@@ -36,6 +36,7 @@ import RulesTable from "./RulesTable";
 import Runs from "./Runs";
 import System from "./System";
 import Tenants from "./Tenants";
+import { L, lang, setLang } from "./i18n";
 import { ErrorBox, Icon, Note } from "./ui";
 import Users from "./Users";
 
@@ -70,23 +71,23 @@ interface NavEntry {
 }
 
 const NAV: NavEntry[] = [
-  { key: "uebersicht", label: "Übersicht", icon: "overview", section: "doc", customer: true },
-  { key: "regeln", label: "Regeln & Contracts", icon: "rules", section: "doc", customer: true },
-  { key: "objekte", label: "Objekte & Inventar", icon: "objects", section: "doc", customer: true },
+  { key: "uebersicht", label: L("Übersicht", "Overview"), icon: "overview", section: "doc", customer: true },
+  { key: "regeln", label: L("Regeln & Contracts", "Rules & contracts"), icon: "rules", section: "doc", customer: true },
+  { key: "objekte", label: L("Objekte & Inventar", "Objects & inventory"), icon: "objects", section: "doc", customer: true },
   { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc", customer: true },
-  { key: "wege", label: "Weg-Suche", icon: "path", section: "doc" },
+  { key: "wege", label: L("Weg-Suche", "Path search"), icon: "path", section: "doc" },
   { key: "routing", label: "Routing", icon: "route", section: "doc" },
-  { key: "verkabelung", label: "Verkabelung", icon: "cable", section: "doc" },
-  { key: "apps", label: "Applikationen", icon: "apps", section: "doc", customer: true },
+  { key: "verkabelung", label: L("Verkabelung", "Cabling"), icon: "cable", section: "doc" },
+  { key: "apps", label: L("Applikationen", "Applications"), icon: "apps", section: "doc", customer: true },
   { key: "findings", label: "Findings", icon: "findings", section: "doc", customer: true },
-  { key: "abgleich", label: "Abgleich", icon: "reconcile", section: "doc" },
-  { key: "design", label: "Netzwerkdesign", icon: "design", section: "doc", customer: true },
-  { key: "users", label: "Benutzer & Rollen", icon: "users", section: "admin" },
-  { key: "tenants", label: "Mandanten & Standorte", icon: "tenants", section: "admin" },
-  { key: "kunden", label: "Kunden", icon: "customers", section: "admin" },
-  { key: "dict", label: "Namensprofile", icon: "dict", section: "admin" },
-  { key: "agents", label: "Collector-Agenten", icon: "agents", section: "admin", adminOnly: true },
-  { key: "laeufe", label: "Läufe", icon: "play", section: "admin" },
+  { key: "abgleich", label: L("Abgleich", "Reconciliation"), icon: "reconcile", section: "doc" },
+  { key: "design", label: L("Netzwerkdesign", "Network design"), icon: "design", section: "doc", customer: true },
+  { key: "users", label: L("Benutzer & Rollen", "Users & roles"), icon: "users", section: "admin" },
+  { key: "tenants", label: L("Mandanten & Standorte", "Tenants & sites"), icon: "tenants", section: "admin" },
+  { key: "kunden", label: L("Kunden", "Customers"), icon: "customers", section: "admin" },
+  { key: "dict", label: L("Namensprofile", "Naming profiles"), icon: "dict", section: "admin" },
+  { key: "agents", label: L("Collector-Agenten", "Collector agents"), icon: "agents", section: "admin", adminOnly: true },
+  { key: "laeufe", label: L("Läufe", "Runs"), icon: "play", section: "admin" },
   { key: "netbox", label: "NetBox-Sync", icon: "upload", section: "admin", adminOnly: true },
   { key: "system", label: "System", icon: "server", section: "admin", adminOnly: true },
 ];
@@ -209,20 +210,29 @@ export default function App() {
   if (problem) {
     return (
       <Splash>
-        <ErrorBox error={problem} prefix="Anmeldung nicht möglich" />
+        <ErrorBox error={problem} prefix={L("Anmeldung nicht möglich", "Sign-in not possible")} />
         <Note>
-          Häufige Ursachen: im Keycloak-Realm fehlt der Audience-Mapper <code>automato-api</code>,{" "}
-          <code>AUTOMATO_OIDC_ISSUER</code>/<code>AUTOMATO_OIDC_JWKS_URL</code> passen nicht zum Realm,
-          der Orchestrator erreicht Keycloak nicht, oder die Uhrzeit der VMs weicht ab (NTP).
-          Details:{" "}
+          {L(
+            <>
+              Häufige Ursachen: im Keycloak-Realm fehlt der Audience-Mapper <code>automato-api</code>,{" "}
+              <code>AUTOMATO_OIDC_ISSUER</code>/<code>AUTOMATO_OIDC_JWKS_URL</code> passen nicht zum Realm,
+              der Orchestrator erreicht Keycloak nicht, oder die Uhrzeit der VMs weicht ab (NTP).
+              Details:{" "}
+            </>,
+            <>
+              Common causes: the Keycloak realm lacks the audience mapper <code>automato-api</code>,{" "}
+              <code>AUTOMATO_OIDC_ISSUER</code>/<code>AUTOMATO_OIDC_JWKS_URL</code> do not match the realm,
+              the orchestrator cannot reach Keycloak, or the clocks of the VMs differ (NTP). Details:{" "}
+            </>,
+          )}
           <code>docker compose logs orchestrator | grep OIDC</code>
         </Note>
         <div style={{ display: "flex", gap: 9 }}>
           <button className="btn btn-primary" onClick={() => auth.login()}>
-            Erneut anmelden
+            {L("Erneut anmelden", "Sign in again")}
           </button>
           <button className="btn btn-ghost" onClick={() => auth.logout()}>
-            Abmelden
+            {L("Abmelden", "Sign out")}
           </button>
         </div>
       </Splash>
@@ -231,19 +241,21 @@ export default function App() {
   if (boot.state === "loading" || boot.state === "redirect") {
     return (
       <Splash>
-        {boot.state === "loading" ? "Verbindung wird aufgebaut…" : "Weiterleitung zur Anmeldung…"}
+        {boot.state === "loading"
+          ? L("Verbindung wird aufgebaut…", "Connecting…")
+          : L("Weiterleitung zur Anmeldung…", "Redirecting to sign-in…")}
       </Splash>
     );
   }
   if (boot.state === "error") {
     return (
       <Splash>
-        <ErrorBox error={boot.error} prefix="Anmeldung fehlgeschlagen" />
+        <ErrorBox error={boot.error} prefix={L("Anmeldung fehlgeschlagen", "Sign-in failed")} />
         <button
           className="btn btn-primary btn-block"
           onClick={() => (boot.oidc ? auth.login() : window.location.reload())}
         >
-          {boot.oidc ? "Erneut anmelden" : "Neu laden"}
+          {boot.oidc ? L("Erneut anmelden", "Sign in again") : L("Neu laden", "Reload")}
         </button>
       </Splash>
     );
@@ -259,11 +271,15 @@ function Splash({ children }: { children: React.ReactNode }) {
           <div className="brand-mark">A</div>
           <div className="brand-name">Automato</div>
         </div>
-        <p className="splash-sub">Automatisierungs- und Dokumentationsplattform.</p>
+        <p className="splash-sub">
+          {L("Automatisierungs- und Dokumentationsplattform.", "Automation and documentation platform.")}
+        </p>
         {children}
         <div className="splash-foot">
           <Icon name="lock" size={13} />
-          {window.location.protocol === "https:" ? "Verbindung über HTTPS" : "Verbindung ohne HTTPS"}
+          {window.location.protocol === "https:"
+            ? L("Verbindung über HTTPS", "Connection via HTTPS")
+            : L("Verbindung ohne HTTPS", "Connection without HTTPS")}
         </div>
       </div>
     </section>
@@ -397,7 +413,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   }, [loadStats]);
 
   const tenant = tenants?.find((t) => t.id === tenantId) ?? null;
-  const tenantLabel = tenant ? tenant.name : "Alle Mandanten";
+  const tenantLabel = tenant ? tenant.name : L("Alle Mandanten", "All tenants");
   const openFindings = stats.findings?.open;
   const badges: Partial<Record<View, { n: number | undefined; warn?: boolean }>> = {
     regeln: { n: stats.rules?.total },
@@ -441,30 +457,33 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
 
       <header className="topbar">
         <label className="mandant">
-          <span className="label">Mandant</span>
+          <span className="label">{L("Mandant", "Tenant")}</span>
           <select
             value={tenantId ?? ""}
             onChange={(e) => setTenantId(e.target.value ? Number(e.target.value) : null)}
             disabled={tenants === null || (!me.isAdmin && (tenants?.length ?? 0) <= 1)}
           >
-            {me.isAdmin && <option value="">Alle Mandanten</option>}
+            {me.isAdmin && <option value="">{L("Alle Mandanten", "All tenants")}</option>}
             {tenants?.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.code ? `${t.name} · ${t.code}` : t.name}
               </option>
             ))}
-            {noTenant && <option value="">kein Mandant zugeordnet</option>}
+            {noTenant && <option value="">{L("kein Mandant zugeordnet", "no tenant assigned")}</option>}
           </select>
         </label>
         {customers.length > (me.isCustomer ? 1 : 0) && (
-          <label className="mandant" title="Ausschnitt eines Kunden samt geteiltem Teil (ADR 0018)">
-            <span className="label">Kunde</span>
+          <label
+            className="mandant"
+            title={L("Ausschnitt eines Kunden samt geteiltem Teil (ADR 0018)", "Scope of a customer including the shared part (ADR 0018)")}
+          >
+            <span className="label">{L("Kunde", "Customer")}</span>
             <select
-              aria-label="Kunde"
+              aria-label={L("Kunde", "Customer")}
               value={customerId ?? ""}
               onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : null)}
             >
-              <option value="">alle</option>
+              <option value="">{L("alle", "all")}</option>
               {customers.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.code ? `${c.name} · ${c.code}` : c.name}
@@ -476,12 +495,12 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
         <div className="spacer" />
         <span
           className={`https ${https ? "ok" : "bad"}`}
-          title={https ? "Verbindung verschlüsselt" : "Unverschlüsselte Verbindung"}
+          title={https ? L("Verbindung verschlüsselt", "Connection encrypted") : L("Unverschlüsselte Verbindung", "Unencrypted connection")}
         >
           <Icon name="lock" size={14} />
           <span>{https ? "HTTPS" : "HTTP"}</span>
         </span>
-        <button className="iconbtn" onClick={toggleTheme} title="Hell/Dunkel wechseln">
+        <button className="iconbtn" onClick={toggleTheme} title={L("Hell/Dunkel wechseln", "Toggle light/dark")}>
           <Icon name="sun" />
         </button>
         <div className="usermenu">
@@ -499,41 +518,67 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
       </header>
 
       <nav className="nav">
-        <div className="nav-sec">Dokumentation</div>
+        <div className="nav-sec">{L("Dokumentation", "Documentation")}</div>
         {renderNav("doc")}
-        {!me.isCustomer && <div className="nav-sec">Administration</div>}
+        {!me.isCustomer && <div className="nav-sec">{L("Administration", "Administration")}</div>}
         {renderNav("admin")}
         <div className="nav-foot">
           <span className={`dot ${health?.status === "ok" ? "g" : "r"}`} />
           {health
             ? `API ${health.status} · DB ${health.db}${health.version ? ` · v${health.version}` : ""}`
-            : "API nicht erreichbar"}
+            : L("API nicht erreichbar", "API not reachable")}
         </div>
       </nav>
 
       <main className="main" key={`${tenantId ?? "alle"}-${customerId ?? "alle"}`}>
-        {tenantsErr ? <ErrorBox error={tenantsErr} prefix="Mandanten laden" /> : null}
+        {tenantsErr ? <ErrorBox error={tenantsErr} prefix={L("Mandanten laden", "Loading tenants")} /> : null}
         {customerId != null && !me.isCustomer && docView && (
           // 0.76.0: der Kunde oben filtert alle Ansichten; Geteiltes ist markiert
           <div className="customer-scope" id="customer-scope">
-            Ausschnitt <b>{customers.find((c) => c.id === customerId)?.name ?? "Kunde"}</b> – alle Ansichten zeigen nur, was
-            zu diesem Kunden gehört; <span className="chip na">geteilt</span> = gemeinsamer Teil der Umgebung (z. B. Tenant
-            common, VDOM bzw. Firewall für mehrere Kunden).
+            {L(
+              <>
+                Ausschnitt <b>{customers.find((c) => c.id === customerId)?.name ?? "Kunde"}</b> – alle Ansichten zeigen nur, was
+                zu diesem Kunden gehört; <span className="chip na">geteilt</span> = gemeinsamer Teil der Umgebung (z. B. Tenant
+                common, VDOM bzw. Firewall für mehrere Kunden).
+              </>,
+              <>
+                Scope <b>{customers.find((c) => c.id === customerId)?.name ?? "Customer"}</b> – all views show only what
+                belongs to this customer; <span className="chip na">shared</span> = common part of the environment (e.g.
+                tenant common, VDOM or firewall for several customers).
+              </>,
+            )}
             <button className="linkbtn" onClick={() => setCustomerId(null)}>
-              alle Kunden
+              {L("alle Kunden", "all customers")}
             </button>
           </div>
         )}
         {noTenant && docView ? (
           <Note warn>
-            Ihrem Konto ist noch kein Mandant zugeordnet. Bitte den Administrator, in Keycloak das
-            Attribut <code>tenant_ids</code> zu setzen, und danach neu anmelden.
+            {L(
+              <>
+                Ihrem Konto ist noch kein Mandant zugeordnet. Bitte den Administrator, in Keycloak das
+                Attribut <code>tenant_ids</code> zu setzen, und danach neu anmelden.
+              </>,
+              <>
+                No tenant is assigned to your account yet. Ask the administrator to set the attribute{" "}
+                <code>tenant_ids</code> in Keycloak, then sign in again.
+              </>,
+            )}
           </Note>
         ) : me.isCustomer && !me.customerIds?.length ? (
           <Note warn>
-            Ihrem Konto ist noch kein Kunde zugeordnet. Bitte den Betreuer, Sie in Automato (Administration →
-            Kunden → Kunden-Benutzer) einem Kunden zuzuordnen – oder in Keycloak das Attribut <code>customer_ids</code>{" "}
-            zu setzen und danach neu anmelden.
+            {L(
+              <>
+                Ihrem Konto ist noch kein Kunde zugeordnet. Bitte den Betreuer, Sie in Automato (Administration →
+                Kunden → Kunden-Benutzer) einem Kunden zuzuordnen – oder in Keycloak das Attribut <code>customer_ids</code>{" "}
+                zu setzen und danach neu anmelden.
+              </>,
+              <>
+                No customer is assigned to your account yet. Ask your contact to assign you to a customer in Automato
+                (Administration → Customers → Customer users) – or to set the attribute <code>customer_ids</code> in
+                Keycloak, then sign in again.
+              </>,
+            )}
           </Note>
         ) : (
           <>
@@ -689,13 +734,26 @@ function UserMenu({
     };
   }, [onClose]);
 
-  const scope = me.tenantIds === null ? "alle Mandanten" : tenants.map((t) => t.name).join(", ") || "keine";
+  const scope =
+    me.tenantIds === null ? L("alle Mandanten", "all tenants") : tenants.map((t) => t.name).join(", ") || L("keine", "none");
   return (
     <div className="menu" ref={ref}>
       <div className="menu-head">
         <b>{me.name}</b>
         {me.username} · {auth.roleLabel(me)}
-        <div>Mandanten: {scope}</div>
+        <div>
+          {L("Mandanten", "Tenants")}: {scope}
+        </div>
+      </div>
+      {/* Sprache der Oberfläche (0.86.0) – Umschalten lädt die Seite neu */}
+      <div className="menu-lang" id="lang-switch">
+        <span>{L("Sprache", "Language")}</span>
+        <button className={lang === "de" ? "active" : ""} disabled={lang === "de"} onClick={() => setLang("de")}>
+          Deutsch
+        </button>
+        <button className={lang === "en" ? "active" : ""} disabled={lang === "en"} onClick={() => setLang("en")}>
+          English
+        </button>
       </div>
       {!me.isCustomer && (
         <button
@@ -704,19 +762,22 @@ function UserMenu({
             onClose();
           }}
         >
-          Benutzer &amp; Rollen
+          {L("Benutzer & Rollen", "Users & roles")}
         </button>
       )}
       {cfg.auth_mode === "oidc" ? (
         <>
           <a href={`${cfg.issuer}/account`} target="_blank" rel="noreferrer">
-            Mein Konto (Passwort, OTP)
+            {L("Mein Konto (Passwort, OTP)", "My account (password, OTP)")}
           </a>
-          <button onClick={() => auth.logout()}>Abmelden</button>
+          <button onClick={() => auth.logout()}>{L("Abmelden", "Sign out")}</button>
         </>
       ) : (
         <div className="menu-head" style={{ border: "none", margin: 0 }}>
-          Entwicklungsmodus (auth_mode=dev) – keine Anmeldung aktiv.
+          {L(
+            "Entwicklungsmodus (auth_mode=dev) – keine Anmeldung aktiv.",
+            "Development mode (auth_mode=dev) – no sign-in active.",
+          )}
         </div>
       )}
     </div>
