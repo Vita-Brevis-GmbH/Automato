@@ -86,6 +86,7 @@ from app.models.sync_plan import SyncPlan, SyncStatus
 from app.models.tenant import DnsType, IpamType, Tenant
 from app.models.topology import (
     TOPOLOGY_MODELS,
+    TopoChange,
     TopoContext,
     TopoExit,
     TopoExitDismissal,
@@ -172,6 +173,7 @@ __all__ = [
     "ParallelRejection",
     "SubjectKind",
     "Tenant",
+    "TopoChange",
     "TopoContext",
     "TopoExit",
     "TopoExitDismissal",

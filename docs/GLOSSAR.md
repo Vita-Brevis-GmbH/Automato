@@ -83,7 +83,11 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | implizit gesperrt | implicitly denied |
 | aktiv / Backup | active / backup |
 | Kontext (VDOM/VRF) | Context |
-| nicht lesbar | not readable |
+| nicht lesbar / wieder lesbar | not readable / readable again |
+| Verlauf (des Routings) | History (routing history) |
+| Ausgangsstand | Baseline |
+| hinzugefügt / entfernt / geändert | added / removed / changed |
+| Vermerk, Obergrenze (je Lauf) | Note, limit (per run) |
 | Anbindung (nach aussen) | Exit |
 | erkannte Anbindung | Detected exit |
 | ausblenden / einblenden | hide / show |

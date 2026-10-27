@@ -677,3 +677,9 @@ tbody tr.group-row td {
   background: var(--accent-weak); border-radius: 8px; padding: 6px 10px; margin-bottom: 12px; }
 .customer-scope b { color: var(--fg); }
 .chip.shared-chip { margin-left: 6px; font-size: 10.5px; }
+
+/* Verlauf des Routings (ADR 0030) */
+.routing-changes td { vertical-align: top; }
+.routing-changes .change-summary { white-space: normal; min-width: 240px; max-width: 520px; font-size: 12.5px; }
+.routing-changes tr.change-detail > td { background: var(--surface-2); padding-top: 4px; padding-bottom: 8px; }
+.routing-changes tr.change-detail table td.mono { white-space: normal; word-break: break-word; }

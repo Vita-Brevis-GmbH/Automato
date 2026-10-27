@@ -73,7 +73,8 @@ Rahmen laut Anwender (2026-10-22):
      und zählen als ein Hop. Weichen die Regeln der beiden voneinander ab, entsteht ein
      Befund.
    - **Routen** werden je Lauf gespeichert (Knoten, Präfix, Next-Hops mit IP und Interface,
-     Protokoll); der Verlauf ist begrenzt.
+     Protokoll); der Verlauf ist begrenzt – die Änderungen von Lauf zu Lauf hält seit ADR 0030
+     `topo_change` fest (Frist 180 Tage).
 5. **Pfade:**
    - Start ist der Knoten, an dem das Quellnetz angeschlossen ist. Von dort geht es Hop für
      Hop per längstem Präfix in der Routing-Tabelle des Knotens; der Next-Hop führt über die
@@ -158,7 +159,8 @@ Rahmen laut Anwender (2026-10-22):
 - Mehr gelesene Daten (Routing, Peers) machen die Datenbank sensibler (R14). Dem begegnen
   wir mit einer Instanz je Umgebung (ADR 0018) und den Massnahmen in RISKS.
 - **Grenzen:**
-  - Dynamische Routen sind eine Momentaufnahme des Laufs.
+  - Dynamische Routen sind eine Momentaufnahme des Laufs; was sich zwischen zwei Läufen
+    geändert hat, zeigt der Verlauf (ADR 0030).
   - Failover-Wege, die gerade nicht aktiv sind, kennt nur die BGP-Tabelle; fehlt sie,
     ergänzt der Designer.
   - Asymmetrisches Routing, Policy-Routing und SD-WAN gelten nur, soweit sie gelesen
@@ -186,8 +188,9 @@ Rahmen laut Anwender (2026-10-22):
    - Je Kontext (VDOM bzw. VRF auf dem Leaf) wird festgehalten, was nicht lesbar war; die
      Aussage ist dort „unbekannt“.
    - Speicher: `topo_context`, `topo_route` (mit Bereich für das längste Präfix), `topo_peer`,
-     `topo_ha`, `topo_policy_route`, `topo_l3out` – je Lauf ersetzt. Ein Verlauf der Routen
-     (Punkt 4) folgt bei Bedarf.
+     `topo_ha`, `topo_policy_route`, `topo_l3out` – je Lauf ersetzt. Der Verlauf (Punkt 4) ist
+     mit **ADR 0030** umgesetzt: vor dem Ersetzen gehen die Änderungen gegenüber dem alten Stand
+     nach `topo_change` (Routing → Verlauf, `GET /routing/changes`).
    - Ansicht „Routing & Wege“ (seit 0.35.0 „Routing“ und „Weg-Suche“) mit „Weg für IP“: je
      Kontext die wirksame Route und die
      Policy-Routen bzw. SD-WAN-Regeln, die vorgehen. Das ist noch kein Pfad über mehrere Hops

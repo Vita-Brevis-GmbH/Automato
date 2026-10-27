@@ -1,7 +1,8 @@
 // Routing (ADR 0019): gelesene Routing-Tabellen je Firewall bzw. FortiGate-VDOM und je
 // ACI-VRF auf den Border-Leafs, BGP-Pfade (auch Backup), Nachbarn, HA/Session-Sync,
 // Policy-Routen/SD-WAN, L3Outs und Anbindungen; IPs mit Namen aus dem IPAM. Die Weg-Suche
-// ist seit 0.35.0 eine eigene Ansicht (`Paths.tsx`).
+// ist seit 0.35.0 eine eigene Ansicht (`Paths.tsx`). Reiter „Verlauf“ (ADR 0030): Änderungen
+// am Routing von Lauf zu Lauf.
 import { useEffect, useRef, useState } from "react";
 import {
   ContextKind,
@@ -19,9 +20,11 @@ import {
   fetchPeers,
   fetchPolicyRoutes,
   fetchRoutes,
+  fetchRoutingChanges,
   fetchRoutingSummary,
   Labeled,
   NextHop,
+  Page,
   ParallelGroup,
   PolicyHit,
   Resolved,
@@ -31,6 +34,9 @@ import {
   TopoL3Out,
   TopoPeer,
   TopoPolicyRoute,
+  TopoChange,
+  TopoChangeKind,
+  TopoChangeType,
   TopoExit,
   TopoExitIn,
   TopoRoute,
@@ -40,14 +46,15 @@ import {
 import { Pager, useDebounced } from "./Objects";
 import TopologyTab from "./Topology";
 import { FoldTitle, useFolds } from "./fold";
-import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead, SharedChip } from "./ui";
+import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Note, PageHead, SharedChip } from "./ui";
 import { L } from "./i18n";
 
 const PAGE = 200;
 
-type Tab = "routes" | "peers" | "ha" | "parallel" | "policy" | "l3out" | "exits" | "topology";
+type Tab = "routes" | "changes" | "peers" | "ha" | "parallel" | "policy" | "l3out" | "exits" | "topology";
 const TABS: { key: Tab; label: string }[] = [
   { key: "routes", label: L("Routen", "Routes") },
+  { key: "changes", label: L("Verlauf", "History") },
   { key: "peers", label: L("BGP-Nachbarn", "BGP neighbors") },
   { key: "ha", label: L("HA & Session-Sync", "HA & session sync") },
   { key: "parallel", label: L("Parallele Firewalls", "Parallel firewalls") },
@@ -167,10 +174,11 @@ export function matchText(match: Record<string, unknown> | null | undefined): st
 
 // 0.75.0 (Anwender: man muss scrollen, um die Reiter zu sehen): standardmässig zugeklappt,
 // zugeklappt bleiben Zahlen und nicht lesbare Kontexte sichtbar
-function ContextCard({ summary }: { summary: RoutingSummary }) {
+function ContextCard({ summary, onHistory }: { summary: RoutingSummary; onHistory: () => void }) {
   const { fold } = useFolds(FOLD_KEY);
   const f = fold("contexts", false);
   const unread = summary.contexts.filter((c) => c.missing?.length).length;
+  const changes = summary.changes_7d ?? 0;
   return (
     <div className="card" id="routing-contexts">
       <div className="card-head">
@@ -195,6 +203,19 @@ function ContextCard({ summary }: { summary: RoutingSummary }) {
           >
             {unread} {L("mit nicht Lesbarem", "with unreadable parts")}
           </span>
+        )}
+        {changes > 0 && (
+          <button
+            className="chip info linkchip"
+            id="routing-changes-7d"
+            title={L(
+              "Änderungen am Routing (Routen, BGP-Nachbarn, HA …) in den letzten 7 Tagen – Verlauf öffnen",
+              "Routing changes (routes, BGP neighbors, HA …) in the last 7 days – open the history",
+            )}
+            onClick={onHistory}
+          >
+            {L(`${changes} Routing-Änderungen (7 Tage)`, `${changes} routing changes (7 days)`)}
+          </button>
         )}
       </div>
       {f.open && (
@@ -400,12 +421,14 @@ function RoutesTab({
   vrfs,
   mgmt,
   initial = {},
+  onHistory,
 }: {
   tenantId: number;
   nodes: RoutingNode[];
   vrfs: number[];
   mgmt: boolean;
   initial?: { q?: string; table?: string; context?: string }; // aus einem Link (Befund)
+  onHistory: (q: string, context: string) => void; // Verlauf einer Route öffnen (ADR 0030)
 }) {
   const [q, setQ] = useState(initial.q ?? "");
   const [ip, setIp] = useState("");
@@ -538,6 +561,20 @@ function RoutesTab({
                       <td>{where(r)}</td>
                       <td className="mono">
                         <b>{r.prefix}</b>
+                        {r.changed_at && (
+                          <div>
+                            <button
+                              className="chip info linkchip"
+                              title={L(
+                                "letzte Änderung laut Verlauf (neu bzw. geändert) – Verlauf dieser Route öffnen",
+                                "last change according to the history (new or changed) – open the history of this route",
+                              )}
+                              onClick={() => onHistory(r.prefix, `${r.source_system_id}|${r.context}`)}
+                            >
+                              {L("geändert", "changed")} {fmtTime(r.changed_at)}
+                            </button>
+                          </div>
+                        )}
                       </td>
                       <td>{vrfOf === 0 ? <span className="faint">0</span> : <VrfChip vrf={vrfOf} />}</td>
                       <td>
@@ -1630,6 +1667,341 @@ function ExitsTab({
   );
 }
 
+// -- Verlauf des Routings (ADR 0030) ---------------------------------------------------------
+
+const CHANGE_KIND: Record<TopoChangeKind, string> = {
+  route: "Route",
+  bgp_peer: L("BGP-Nachbar", "BGP neighbor"),
+  ha: "HA",
+  policy_route: L("Policy-Route/SD-WAN", "Policy route/SD-WAN"),
+  context: L("Kontext", "Context"),
+  l3out: "L3Out",
+};
+
+const CHANGE_TYPE: Record<TopoChangeType, [string, string, string]> = {
+  added: ["ok", L("hinzugefügt", "added"), L("neu gegenüber dem vorigen Lauf", "new compared with the previous run")],
+  removed: ["crit", L("entfernt", "removed"), L("im vorigen Lauf noch da", "still present in the previous run")],
+  changed: ["warn", L("geändert", "changed"), L("verglichene Felder anders als im vorigen Lauf", "compared fields differ from the previous run")],
+  baseline: ["info", L("Ausgangsstand", "Baseline"), L("erster Lauf des Quellsystems – der Verlauf beginnt hier", "first run of the source system – the history starts here")],
+  unreadable: [
+    "warn",
+    L("nicht lesbar", "not readable"),
+    L(
+      "Teile des Kontexts nicht lesbar – dort nicht verglichen, nichts als entfernt gezählt",
+      "Parts of the context not readable – not compared there, nothing counted as removed",
+    ),
+  ],
+  truncated: [
+    "info",
+    L("Obergrenze", "Limit reached"),
+    L("mehr Änderungen in diesem Lauf als einzeln gespeichert werden", "more changes in this run than are stored individually"),
+  ],
+};
+
+const CHANGE_TABLE: Record<string, string> = {
+  rib: L("wirksam", "effective"),
+  bgp: L("BGP-Pfad", "BGP path"),
+  static: L("statisch", "static"),
+  policy: L("Policy-Route", "Policy route"),
+  sdwan: "SD-WAN",
+};
+
+// Datum (Eingabe, Ortszeit) -> Beginn des Tages bzw. des Folgetags als ISO-Zeitpunkt
+function dayStart(value: string, plus = 0): string | undefined {
+  if (!value) return undefined;
+  const d = new Date(`${value}T00:00`);
+  if (Number.isNaN(d.getTime())) return undefined;
+  d.setDate(d.getDate() + plus);
+  return d.toISOString();
+}
+
+function RunLink({ c }: { c: TopoChange }) {
+  if (!c.collector_run_id) return <Dash />;
+  const short = `#${c.collector_run_id.slice(0, 8)}`;
+  if (!c.run_exists)
+    return (
+      <span
+        className="faint"
+        title={L("Lauf nicht mehr gespeichert (Aufbewahrung)", "Run no longer stored (retention)")}
+      >
+        {short}
+      </span>
+    );
+  return (
+    <a
+      href={`#laeufe?source_system_id=${c.source_system_id}&run=${encodeURIComponent(c.collector_run_id)}`}
+      title={L("Lauf in der Ansicht Läufe zeigen", "Show the run in the runs view")}
+    >
+      {short}
+    </a>
+  );
+}
+
+function ChangeRows({ c, open, onToggle }: { c: TopoChange; open: boolean; onToggle: () => void }) {
+  const [cls, label, title] = CHANGE_TYPE[c.change] ?? ["", c.change, ""];
+  return (
+    <>
+      <tr className={open ? "selected" : undefined}>
+        <td>
+          {c.fields.length > 0 && (
+            <button
+              className="linkbtn"
+              aria-expanded={open}
+              title={L("Felder vorher/nachher", "Fields before/after")}
+              onClick={onToggle}
+            >
+              {open ? "▾" : "▸"}
+            </button>
+          )}
+        </td>
+        <td className="mono">{fmtTime(c.at)}</td>
+        <td>
+          <b>{c.label}</b>
+          <SharedChip shared={c.shared} />
+          {!c.label.startsWith(c.source) && <div className="faint">{c.source}</div>}
+        </td>
+        <td>
+          <span className="chip">{CHANGE_KIND[c.kind] ?? c.kind}</span>
+          {c.table && <span className="chip">{CHANGE_TABLE[c.table] ?? c.table}</span>}
+        </td>
+        <td className="mono">{c.key || <Dash />}</td>
+        <td>
+          <span className={`chip ${cls}`} title={title}>
+            {label}
+          </span>
+        </td>
+        <td className="change-summary">{c.summary}</td>
+        <td className="mono">
+          <RunLink c={c} />
+        </td>
+      </tr>
+      {open && (
+        <tr className="change-detail">
+          <td />
+          <td colSpan={7}>
+            <table className="compact">
+              <thead>
+                <tr>
+                  <th>{L("Feld", "Field")}</th>
+                  <th>{L("vorher", "before")}</th>
+                  <th>{L("nachher", "after")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {c.fields.map((f) => (
+                  <tr key={f.field}>
+                    <td>{f.label}</td>
+                    <td className="mono">{f.before ?? <Dash />}</td>
+                    <td className="mono">{f.after ?? <Dash />}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+// Verlauf: neuster Lauf zuerst, darin Kontexte, HA, Nachbarn, Policy-Routen, L3Outs, Routen
+function ChangesTab({
+  tenantId,
+  nodes,
+  initial = {},
+}: {
+  tenantId: number;
+  nodes: RoutingNode[];
+  initial?: { q?: string; context?: string }; // aus einer Route bzw. einem Link
+}) {
+  const [q, setQ] = useState(initial.q ?? "");
+  const [source, setSource] = useState(initial.context ? initial.context.split("|")[0] : "");
+  const [context, setContext] = useState(initial.context ?? "");
+  const [kind, setKind] = useState("");
+  const [change, setChange] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState<Page<TopoChange> | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const query = useDebounced(q);
+  const filtered = !!(query || source || context || kind || change || from || to);
+  const sources = [...new Map(nodes.map((n) => [n.source_system_id, n.source])).entries()].sort((a, b) =>
+    a[1].localeCompare(b[1], undefined, { numeric: true }),
+  );
+  const contexts = nodes.filter((n) => !source || String(n.source_system_id) === source);
+
+  useEffect(() => setOffset(0), [query, source, context, kind, change, from, to]);
+  useEffect(() => {
+    setPage(null);
+    setError(null);
+    let current = true; // nur die Antwort zur letzten Anfrage
+    // Kontext = Knoten „<Quellsystem>|<VDOM bzw. Tenant:VRF>“ (ACI: alle Border-Leafs)
+    const [sid, ...rest] = context ? context.split("|") : [source];
+    fetchRoutingChanges({
+      tenantId,
+      sourceId: sid ? Number(sid) : null,
+      context: context ? rest.join("|") : undefined,
+      kind,
+      change,
+      q: query,
+      since: dayStart(from),
+      until: dayStart(to, 1),
+      limit: PAGE,
+      offset,
+    })
+      .then((p) => current && setPage(p))
+      .catch((e) => {
+        if (!current) return;
+        setError(e);
+        setPage({ rows: [], total: 0 });
+      });
+    return () => {
+      current = false;
+    };
+  }, [tenantId, query, source, context, kind, change, from, to, offset]);
+
+  const toggle = (id: number) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  return (
+    <>
+      <div className="filterbar" id="routing-changes-filter">
+        <div className="search">
+          <span className="ico">
+            <Icon name="search" />
+          </span>
+          <input
+            placeholder={L("Präfix, Next-Hop, Nachbar…", "Prefix, next-hop, neighbor…")}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+        <select
+          className="sel"
+          aria-label={L("Quellsystem", "Source system")}
+          value={source}
+          onChange={(e) => {
+            setSource(e.target.value);
+            setContext("");
+          }}
+        >
+          <option value="">{L("Quellsystem: alle", "Source system: all")}</option>
+          {sources.map(([id, name]) => (
+            <option key={id} value={String(id)}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <select className="sel" aria-label={L("Kontext", "Context")} value={context} onChange={(e) => setContext(e.target.value)}>
+          <option value="">{L("Kontext: alle", "Context: all")}</option>
+          {contexts.map((n) => (
+            <option key={n.key} value={n.key}>
+              {n.label}
+            </option>
+          ))}
+        </select>
+        <select className="sel" aria-label={L("Art", "Kind")} value={kind} onChange={(e) => setKind(e.target.value)}>
+          <option value="">{L("Art: alle", "Kind: all")}</option>
+          {(Object.keys(CHANGE_KIND) as TopoChangeKind[]).map((k) => (
+            <option key={k} value={k}>
+              {CHANGE_KIND[k]}
+            </option>
+          ))}
+        </select>
+        <select className="sel" aria-label={L("Änderung", "Change")} value={change} onChange={(e) => setChange(e.target.value)}>
+          <option value="">{L("Änderung: alle", "Change: all")}</option>
+          <option value="added">{L("hinzugefügt", "added")}</option>
+          <option value="removed">{L("entfernt", "removed")}</option>
+          <option value="changed">{L("geändert", "changed")}</option>
+          <option value="note">{L("Vermerke (Ausgangsstand, nicht lesbar, Obergrenze)", "Notes (baseline, not readable, limit)")}</option>
+        </select>
+        <input
+          type="date"
+          className="input input-inline"
+          aria-label={L("von (Datum)", "from (date)")}
+          title={L("ab diesem Tag", "from this day")}
+          value={from}
+          max={to || undefined}
+          onChange={(e) => setFrom(e.target.value)}
+        />
+        <span className="faint">–</span>
+        <input
+          type="date"
+          className="input input-inline"
+          aria-label={L("bis (Datum)", "to (date)")}
+          title={L("bis und mit diesem Tag", "up to and including this day")}
+          value={to}
+          min={from || undefined}
+          onChange={(e) => setTo(e.target.value)}
+        />
+        {page && <span className="count">{L(`${page.total} Einträge`, `${page.total} entries`)}</span>}
+      </div>
+      <ErrorBox error={error} prefix={L("Verlauf laden", "Load history")} />
+      <div className="card" id="routing-changes">
+        <div className="card-body scroll viewport">
+          {page === null ? (
+            <Loading />
+          ) : page.rows.length === 0 ? (
+            filtered ? (
+              <Empty title={L("Keine Änderungen", "No changes")}>{L("Filter anpassen.", "Adjust the filter.")}</Empty>
+            ) : (
+              <Empty title={L("Noch kein Verlauf", "No history yet")}>
+                {L(
+                  "Verlauf beginnt mit dem nächsten Lauf: ab dann vergleicht jeder Lauf einer FortiGate bzw. eines APIC das Routing mit dem vorigen Stand.",
+                  "The history starts with the next run: from then on every run of a FortiGate or an APIC compares the routing with the previous state.",
+                )}
+              </Empty>
+            )
+          ) : (
+            <table className="compact routing-changes">
+              <thead>
+                <tr>
+                  <th />
+                  <th>{L("Zeit", "Time")}</th>
+                  <th>{L("Gerät · Kontext", "Device · context")}</th>
+                  <th>{L("Art", "Kind")}</th>
+                  <th>{L("Schlüssel", "Key")}</th>
+                  <th>{L("Änderung", "Change")}</th>
+                  <th>{L("Vorher → nachher", "Before → after")}</th>
+                  <th>{L("Lauf", "Run")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {page.rows.map((c) => (
+                  <ChangeRows key={c.id} c={c} open={open.has(c.id)} onToggle={() => toggle(c.id)} />
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        {page && page.total > 0 && <Pager total={page.total} offset={offset} onOffset={setOffset} pageSize={PAGE} />}
+      </div>
+      <div className="faint" style={{ marginTop: 8 }}>
+        {L(
+          <>
+            Je Lauf verglichen mit dem vorigen Stand: Next-Hops, Interface, Protokoll, Distanz/Metrik, aktiv/Backup,
+            BGP-Zustand und AS, HA-Mitglieder, Policy-Routen und L3Outs. Reihenfolge und Zähler zählen nicht; ein nicht lesbarer
+            Kontext ist ein Vermerk statt vieler „entfernt“. Frist: <code>AUTOMATO_RETENTION_TOPO_CHANGES_DAYS</code> (180
+            Tage).
+          </>,
+          <>
+            Each run is compared with the previous state: next-hops, interface, protocol, distance/metric, active/backup, BGP
+            state and AS, HA members, policy routes and L3Outs. Order and counters do not count; a context that is not readable
+            is one note instead of many “removed”. Retention: <code>AUTOMATO_RETENTION_TOPO_CHANGES_DAYS</code> (180 days).
+          </>,
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function Routing({
   tenantId,
   tenantLabel,
@@ -1647,6 +2019,14 @@ export default function Routing({
   const [draft, setDraft] = useState<ExitDraft | null>(null);
   const [summary, setSummary] = useState<RoutingSummary | null>(null);
   const [error, setError] = useState<unknown>(null);
+  // Verlauf mit Filter öffnen (aus einer Route bzw. einem Link #routing?tab=changes&q=…)
+  const [history, setHistory] = useState<{ q?: string; context?: string }>(
+    params.tab === "changes" ? { q: params.q, context: params.context } : {},
+  );
+  const openHistory = (q = "", context = "") => {
+    setHistory({ q, context });
+    setTab("changes");
+  };
 
   useEffect(() => {
     if (tenantId === null) return;
@@ -1739,7 +2119,7 @@ export default function Routing({
           )}
         </Note>
       ) : (
-        <ContextCard summary={summary} />
+        <ContextCard summary={summary} onHistory={() => openHistory()} />
       )}
       <div className="tabbar sticky">
         {TABS.map((t) => (
@@ -1755,7 +2135,11 @@ export default function Routing({
           vrfs={summary?.vrfs ?? []}
           mgmt={!!summary?.mgmt_vrf}
           initial={params.tab === "routes" ? params : {}}
+          onHistory={openHistory}
         />
+      )}
+      {tab === "changes" && (
+        <ChangesTab key={JSON.stringify(history)} tenantId={tenantId} nodes={nodes} initial={history} />
       )}
       {tab === "peers" && <PeersTab tenantId={tenantId} />}
       {tab === "ha" && <HaTab tenantId={tenantId} />}

@@ -33,3 +33,4 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0026 | Export für Confluence: Word (.docx) und draw.io zum Import von Hand – kein Schreibweg |
 | 0027 | VMware NSX Advanced Load Balancer (Avi) als lesende Quelle: Virtual Services als NAT/Load Balancer, Weg über VIP zu den Servern |
 | 0028 | Sprache der Oberfläche und der Doku: Deutsch und Englisch (Text neben Text, Sprache je Browser, Server über `Accept-Language`, Fachbegriffe englisch) |
+| 0030 | Verlauf des Routings: Änderungen an Routen, BGP-Nachbarn, HA, Policy-Routen, Kontexten und L3Outs von Lauf zu Lauf (Positivliste der Felder, Ausgangsstand, nicht lesbar ohne Flut, Obergrenze, Frist 180 Tage) (Entwurf) |

@@ -1,8 +1,9 @@
 """Routing, BGP, HA und L3Out je Quellsystem (ADR 0019 Stufe 2) - Grundlage fuer Pfade.
 
-Wie das Netzinventar je Lauf des Quellsystems ersetzt (aktueller Stand, ein Verlauf folgt bei
-Bedarf). Ein Routing-Kontext ist ein FortiGate-VDOM bzw. eine ACI-VRF auf einem Border-Leaf
-(`topo_context`, mit dem, was nicht lesbar war - die Aussage ist dann „unbekannt“).
+Wie das Netzinventar je Lauf des Quellsystems ersetzt (aktueller Stand; die Aenderungen von Lauf
+zu Lauf haelt `topo_change` fest, ADR 0030). Ein Routing-Kontext ist ein FortiGate-VDOM bzw. eine
+ACI-VRF auf einem Border-Leaf (`topo_context`, mit dem, was nicht lesbar war - die Aussage ist
+dann „unbekannt“).
 
 - `topo_route`: wirksame Routing-Tabelle (`rib`, ECMP = mehrere Next-Hops), alle BGP-Pfade
   (`bgp`, auch nicht beste) und konfigurierte statische Routen (`static`, auch inaktive). Der
@@ -130,6 +131,44 @@ class TopoL3Out(_TopoRow, Base):
 
 
 TOPOLOGY_MODELS = (TopoContext, TopoRoute, TopoPeer, TopoHa, TopoPolicyRoute, TopoL3Out)
+
+
+class TopoChange(Base):
+    """Verlauf des Routings (ADR 0030): was sich zwischen zwei Laeufen eines Quellsystems an
+    Routen, BGP-Nachbarn, HA, Policy-Routen, Kontexten und L3Outs geaendert hat - beim Einspielen
+    aus dem Vergleich alter gegen neuer Stand, bevor `topology.replace` ersetzt. Nicht je Lauf
+    ersetzt, sondern gesammelt bis zur Frist `retention_topo_changes_days` (`store/retention`).
+
+    `change`: added | removed | changed; Vermerke: baseline (erster Lauf = Ausgangsstand),
+    unreadable (Kontext nicht lesbar - Entfernungen nicht erfasst), truncated (Obergrenze je Lauf
+    erreicht, Rest gezaehlt). `before`/`after` nur mit den verglichenen Feldern. Der Lauf steht
+    als Kennung ohne Fremdschluessel da - Laeufe haben eine kuerzere Frist."""
+
+    __tablename__ = "topo_change"
+    __table_args__ = (
+        Index("ix_topo_change_tenant_at", "tenant_id", "at"),
+        Index("ix_topo_change_route", "source_system_id", "kind", "prefix"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
+    source_system_id: Mapped[int] = mapped_column(ForeignKey("source_system.id"), index=True)
+    collector_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # route | bgp_peer | ha | policy_route | context | l3out
+    kind: Mapped[str] = mapped_column(String(16))
+    node: Mapped[str | None] = mapped_column(String(200), nullable=True)  # Firewall bzw. Leaf
+    context: Mapped[str | None] = mapped_column(String(200), nullable=True)  # VDOM bzw. VRF
+    # rib | bgp | static (Routen) bzw. policy | sdwan (Policy-Routen)
+    table: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    key: Mapped[str] = mapped_column(String(400))  # z. B. Praefix (+ VRF, Nachbar, seq)
+    prefix: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    family: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    lo: Mapped[str | None] = mapped_column(IP_HEX, nullable=True)  # Bereich (Kunden-Filter)
+    hi: Mapped[str | None] = mapped_column(IP_HEX, nullable=True)
+    change: Mapped[str] = mapped_column(String(12))
+    before: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    after: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
 
 
 class TopoExit(Base):

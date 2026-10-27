@@ -142,6 +142,21 @@ def run(app) -> None:
     ]
     inventory = {"devices": [{"name": "fw-05", "role": "firewall"}], "interfaces": ports}
     routing = json.loads(json.dumps(rt.FW["routing"]).replace('"fw-01"', '"fw-05"'))
+    # Verlauf des Routings (ADR 0030): ein Lauf davor mit anderem Stand - Default nur ueber
+    # wan1, BGP-Nachbar Idle, dazu 10.98.0.0/16; der Lauf danach ist der Stand der Tests
+    before = json.loads(json.dumps(routing))
+    default = next(
+        r
+        for r in before["routes"]
+        if r["context"] == "root" and r["prefix"] == "0.0.0.0/0" and r["table"] == "rib"
+    )
+    default["next_hops"] = default["next_hops"][:1]
+    before["peers"][0]["state"] = "Idle"
+    before["routes"].append({"node": "fw-05", "context": "root", "prefix": "10.98.0.0/16",
+                             "table": "static", "protocol": "static", "distance": 10,
+                             "next_hops": [{"ip": "10.20.0.254", "interface": "srv"}],
+                             "attrs": {"seq-num": 9}})  # fmt: skip
+    run_result(fw5, "fortigate", inventory=inventory, routing=before)
     run_result(
         fw5, "fortigate", rules=vd.RESULT["rules"], objects=vd.RESULT["objects"],
         nat_rules=vd.RESULT["nat_rules"], inventory=inventory, routing=routing,

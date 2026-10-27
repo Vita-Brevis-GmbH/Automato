@@ -1,6 +1,7 @@
 """Routing, BGP, HA und L3Out speichern und abfragen (ADR 0019 Stufe 2).
 
-`replace` ersetzt je Lauf den Stand des Quellsystems. `lookup` sucht je Routing-Kontext die
+`replace` ersetzt je Lauf den Stand des Quellsystems (die Aenderungen gegenueber dem alten Stand
+gehen vorher in den Verlauf, `topo_changes`, ADR 0030). `lookup` sucht je Routing-Kontext die
 wirksame Route fuer eine IP (laengstes Praefix der RIB) und die Policy-Routen bzw. SD-WAN-Regeln,
 die fuer sie vorgehen koennen - die Grundlage fuer die Pfade (Stufe 3).
 """
@@ -107,11 +108,24 @@ def route_range(prefix: str) -> tuple[int, int, str, str, str] | None:
 
 
 def replace(session: Session, run, inv: RoutingInventory) -> None:
-    """Routing-Stand des Quellsystems ersetzen (wie das Netzinventar)."""
+    """Routing-Stand des Quellsystems ersetzen (wie das Netzinventar); vorher die Aenderungen
+    gegenueber dem alten Stand in den Verlauf (ADR 0030)."""
     if run.source_system_id is None or run.tenant_id is None:
         return
+    from app.store import topo_changes  # spaet: topo_changes nutzt dieses Modul
+
+    rows = _rows(run, inv)
+    topo_changes.record(session, run, rows)
     for model in TOPOLOGY_MODELS:
         session.execute(delete(model).where(model.source_system_id == run.source_system_id))
+    for model, values in rows.items():
+        if values:
+            session.execute(insert(model), values)
+    session.flush()
+
+
+def _rows(run, inv: RoutingInventory) -> dict:
+    """Zeilen je Tabelle (`topo_*`) des neuen Stands."""
     base = {"tenant_id": run.tenant_id, "source_system_id": run.source_system_id}
     contexts = [
         {**base, "node": c.node, "context": c.context, "kind": c.kind, "missing": c.missing or None}
@@ -179,17 +193,14 @@ def replace(session: Session, run, inv: RoutingInventory) -> None:
         }
         for o in inv.l3outs
     ]
-    for model, rows in (
-        (TopoContext, contexts),
-        (TopoRoute, routes),
-        (TopoPeer, peers),
-        (TopoHa, ha),
-        (TopoPolicyRoute, policy),
-        (TopoL3Out, l3outs),
-    ):
-        if rows:
-            session.execute(insert(model), rows)
-    session.flush()
+    return {
+        TopoContext: contexts,
+        TopoRoute: routes,
+        TopoPeer: peers,
+        TopoHa: ha,
+        TopoPolicyRoute: policy,
+        TopoL3Out: l3outs,
+    }
 
 
 class Interfaces:

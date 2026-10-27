@@ -4,7 +4,11 @@
                                  mit Anzahl Routen und dem, was nicht lesbar war; dazu die
                                  Knoten fuer den Startpunkt der Weg-Suche
 - `GET /routing/routes`          Routen seitenweise (RIB, BGP-Pfade, statische); `ip` = Routen,
-                                 die die IP enthalten, laengstes Praefix zuerst
+                                 die die IP enthalten, laengstes Praefix zuerst; je Route die
+                                 letzte Aenderung aus dem Verlauf (`changed_at`, ADR 0030)
+- `GET /routing/changes`         Verlauf des Routings (ADR 0030): Aenderungen je Lauf an Routen,
+                                 BGP-Nachbarn, HA, Policy-Routen, Kontexten und L3Outs,
+                                 seitenweise, neuste zuerst; nicht fuer Kunden-Benutzer
 - `GET /routing/lookup?ip=`      je Kontext die wirksame Route und vorgehende Policy-Routen
                                  (auch fuer ein Netz: Route, die es ganz enthaelt)
 - `GET /routing/trace?dst=&src=&start=&service=`  Weg Hop fuer Hop von der Quelle bzw. dem
@@ -29,8 +33,8 @@ Bezeichnung eines Kontexts: eine FortiGate nur mit `root` heisst wie die Firewal
 """
 
 import ipaddress
-from collections import defaultdict
-from datetime import UTC, datetime
+from collections import Counter, defaultdict
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -46,8 +50,10 @@ from app.auth.principal import Principal
 from app.db import get_session
 from app.i18n import L
 from app.models import (
+    CollectorRun,
     SourceSystem,
     Tenant,
+    TopoChange,
     TopoContext,
     TopoExit,
     TopoHa,
@@ -63,6 +69,7 @@ from app.store import (
     paths,
     policy_check,
     resolve,
+    topo_changes,
     topology,
     zone_path,
 )
@@ -100,6 +107,37 @@ def _route_filter(infra: customer_infra.Infra):
         and_(
             _contexts(infra, TopoRoute, SHARED),
             infra.overlap_clause(TopoRoute.family, TopoRoute.lo, TopoRoute.hi),
+        ),
+    )
+
+
+def _change_filter(infra: customer_infra.Infra):
+    """Verlauf im Ausschnitt (ADR 0030), wie die Listen: Routen wie `_route_filter`, Nachbarn,
+    Policy-Routen, Kontexte und L3Outs in seinen Kontexten, HA an seinen Firewalls, Vermerke des
+    ganzen Quellsystems (Ausgangsstand, Obergrenze) bei seinen Firewalls bzw. APICs."""
+    systems = sorted({sid for sid, _ in infra.contexts})
+    nodes = [
+        and_(TopoChange.source_system_id == sid, TopoChange.node == node)
+        for sid, node in infra.nodes
+    ]
+    routes = or_(
+        _contexts(infra, TopoChange, OWN),
+        and_(
+            _contexts(infra, TopoChange, SHARED),
+            infra.overlap_clause(TopoChange.family, TopoChange.lo, TopoChange.hi),
+        ),
+    )
+    return or_(
+        and_(TopoChange.kind == "route", routes),
+        and_(
+            TopoChange.kind.in_(("bgp_peer", "policy_route", "context", "l3out")),
+            _contexts(infra, TopoChange, OWN, SHARED),
+        ),
+        and_(TopoChange.kind == "ha", or_(*nodes) if nodes else false()),
+        and_(
+            TopoChange.kind == "context",
+            TopoChange.context.is_(None),
+            TopoChange.source_system_id.in_(systems) if systems else false(),
         ),
     )
 
@@ -245,6 +283,14 @@ def summary(
         .where(TopoRoute.tenant_id == tid, TopoRoute.attrs["mgmt"].as_boolean().is_(True))
         .limit(1)
     )
+    # Verlauf (ADR 0030): Aenderungen der letzten 7 Tage (ohne Vermerke)
+    recent = select(func.count(TopoChange.id)).where(
+        TopoChange.tenant_id == tid,
+        TopoChange.at >= datetime.now(UTC) - timedelta(days=7),
+        TopoChange.change.in_(topo_changes.CHANGES),
+    )
+    if infra is not None:
+        recent = recent.where(_change_filter(infra))
     return {
         "contexts": rows,
         "nodes": nodes,
@@ -252,6 +298,7 @@ def summary(
         "l3outs": l3,
         "vrfs": sorted(vrfs),
         "mgmt_vrf": mgmt is not None,
+        "changes_7d": session.scalar(recent) or 0,
     }
 
 
@@ -336,13 +383,166 @@ def routes(
     names = _names(session, tid)
     graph = paths.Graph(session, tid)
     ifaces = topology.Interfaces(session, {r.source_system_id for r in page})
+    changed = topo_changes.last_changed(session, page)  # geaendert seit (ADR 0030)
     out = []
     for r in page:
         row = _row(r, names, graph, next_hops=_hops(graph, ifaces, r.source_system_id, r.next_hops))
+        row["changed_at"] = changed.get(r.id)
         if infra is not None:
             row["shared"] = infra.context_mark(r.source_system_id, r.context) == SHARED
         out.append(row)
     return out
+
+
+# -- Verlauf des Routings (ADR 0030) -------------------------------------------------------
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    """Zeitpunkt in UTC (ohne Zeitzone angegeben = UTC) - gespeichert ist UTC."""
+    if value is None:
+        return None
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _change_labels(session: Session, tid: int, names: dict[int, str]) -> dict[tuple, tuple]:
+    """(Quellsystem, Knoten, Kontext) -> (Art, Bezeichnung) der gelesenen Kontexte."""
+    rows = list(
+        session.execute(
+            select(TopoContext.source_system_id, TopoContext.node, TopoContext.context,
+                   TopoContext.kind).where(TopoContext.tenant_id == tid)
+        )
+    )  # fmt: skip
+    vdoms = Counter(sid for sid, _, _, kind in rows if kind == "vdom")
+    return {
+        (sid, node, ctx): paths.context_label(
+            kind, names.get(sid, f"#{sid}"), node, ctx, vdoms[sid] == 1
+        )
+        for sid, node, ctx, kind in rows
+    }
+
+
+def _change_where(c: TopoChange, source: str, labels: dict) -> tuple[str, str]:
+    """Bezeichnung wie im Routing; ein Kontext, der nicht mehr gelesen wird, bzw. ein L3Out mit
+    seiner VRF, HA mit der Firewall, Vermerke mit dem Quellsystem."""
+    if c.node and c.context:
+        return labels.get((c.source_system_id, c.node, c.context), ("", f"{c.node} · {c.context}"))
+    if c.context:
+        return "vrf", f"{source} · VRF {c.context}"
+    if c.node:
+        return "firewall", c.node
+    return "", source
+
+
+@router.get("/changes")
+def changes(
+    response: Response,
+    tenant_id: int | None = None,
+    source_system_id: int | None = None,
+    context: str | None = Query(None, max_length=200, description="VDOM bzw. Tenant:VRF"),
+    kind: str | None = Query(None, pattern="^(route|bgp_peer|ha|policy_route|context|l3out)$"),
+    change: str | None = Query(
+        None,
+        pattern="^(added|removed|changed|baseline|unreadable|truncated|note)$",
+        description="note = alle Vermerke (Ausgangsstand, nicht lesbar, Obergrenze)",
+    ),
+    q: str | None = Query(None, max_length=200, description="Praefix, Next-Hop, Nachbar, Name"),
+    since: datetime | None = None,  # ab diesem Zeitpunkt (ISO 8601, ohne Zeitzone = UTC)
+    until: datetime | None = None,  # vor diesem Zeitpunkt
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    customer_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    """Verlauf des Routings seitenweise (Gesamtzahl im Header `X-Total-Count`), neuste zuerst
+    und je Lauf Wichtiges zuerst; je Eintrag die verglichenen Felder vorher/nachher als Text
+    (`fields`) und ein Kurztext (`summary`) in der Sprache der Anfrage. Mit Kunde (0.76.0) nur
+    sein Ausschnitt; Kunden-Benutzer erreichen den Verlauf nicht (Freigabeliste)."""
+    tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
+    stmt = select(TopoChange).where(TopoChange.tenant_id == tid)
+    if infra is not None:
+        stmt = stmt.where(_change_filter(infra))
+    for column, value in (
+        (TopoChange.source_system_id, source_system_id),
+        (TopoChange.context, context),
+        (TopoChange.kind, kind),
+    ):
+        if value not in (None, ""):
+            stmt = stmt.where(column == value)
+    if change == "note":
+        stmt = stmt.where(TopoChange.change.in_(topo_changes.NOTES))
+    elif change:
+        stmt = stmt.where(TopoChange.change == change)
+    if (start := _utc(since)) is not None:
+        stmt = stmt.where(TopoChange.at >= start)
+    if (end := _utc(until)) is not None:
+        stmt = stmt.where(TopoChange.at < end)
+    for token in (q or "").lower().split():
+        like = f"%{token}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(TopoChange.key).like(like),
+                func.lower(TopoChange.node).like(like),
+                func.lower(TopoChange.context).like(like),
+                func.lower(cast(TopoChange.before, String)).like(like),
+                func.lower(cast(TopoChange.after, String)).like(like),
+            )
+        )
+    total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    response.headers["X-Total-Count"] = str(total)
+    page = list(
+        session.scalars(
+            stmt.order_by(TopoChange.at.desc(), TopoChange.id).offset(offset).limit(limit)
+        )
+    )
+    names = _names(session, tid)
+    labels = _change_labels(session, tid, names)
+    run_ids = {c.collector_run_id for c in page if c.collector_run_id}
+    runs = (
+        set(session.scalars(select(CollectorRun.id).where(CollectorRun.id.in_(run_ids))))
+        if run_ids
+        else set()
+    )
+    out = []
+    for c in page:
+        source = names.get(c.source_system_id, f"#{c.source_system_id}")
+        display, label = _change_where(c, source, labels)
+        fields = topo_changes.fields(c)
+        row = {
+            "id": c.id,
+            "at": topo_changes.aware(c.at),
+            "source_system_id": c.source_system_id,
+            "source": source,
+            "collector_run_id": c.collector_run_id,
+            "run_exists": c.collector_run_id in runs,  # Laeufe haben eine kuerzere Frist
+            "kind": c.kind,
+            "node": c.node,
+            "context": c.context,
+            "display": display,
+            "label": label,
+            "table": c.table,
+            "key": c.key,
+            "prefix": c.prefix,
+            "change": c.change,
+            "before": c.before,
+            "after": c.after,
+            "fields": fields,
+            "summary": topo_changes.summary(c, fields),
+        }
+        if infra is not None:
+            row["shared"] = _change_mark(infra, c) == SHARED
+        out.append(row)
+    return out
+
+
+def _change_mark(infra: customer_infra.Infra, c: TopoChange) -> str | None:
+    """Eigen bzw. geteilt: HA nach der Firewall, Vermerke des ganzen Quellsystems geteilt."""
+    if c.kind == "ha":
+        return infra.nodes.get((c.source_system_id, c.node or ""))
+    if c.context is None:
+        return SHARED
+    return infra.context_mark(c.source_system_id, c.context)
 
 
 @router.get("/lookup")
