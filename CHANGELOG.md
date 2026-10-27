@@ -7,6 +7,16 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.94.1 – 2026-10-27
+
+Korrektur nach dem Test des Anwenders („Load documentation: HTTP 500 beim Laden der Applikation“).
+
+- **Unerwartete Fehler mit Referenz:** statt nur „HTTP 500“ zeigt die Oberfläche „Interner
+  Fehler – Referenz …“; der Orchestrator schreibt die Ursache mit derselben Referenz und dem
+  Traceback ins Protokoll (keine Details in der Antwort). So lässt sich der Fehler bei der Doku
+  einer Applikation mit echten Daten finden – mit den Beispieldaten tritt er nicht auf (alle
+  Applikationen auf Deutsch und Englisch geprüft).
+
 ## 0.94.0 – 2026-10-27
 
 Switches: IPv6-Nachbarn, Arista EOS und Aruba CX (ADR 0025 Nr. 13; Anwender: „Verkabelung“ –

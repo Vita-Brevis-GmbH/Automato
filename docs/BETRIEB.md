@@ -1648,6 +1648,11 @@ an (`deploy/agent-gateway`, Port 8443).
 
 ## 6. Fehlerbehebung
 
+- **„Interner Fehler – Referenz 1a2b3c4d …“ (HTTP 500, seit 0.94.1)** — der Orchestrator hat
+  einen unerwarteten Fehler; die Antwort nennt nur die Referenz, die Ursache steht im
+  Protokoll: `docker compose logs orchestrator 2>&1 | grep -A40 1a2b3c4d` (Zeile „Interner
+  Fehler 1a2b3c4d bei GET /…“ mit Traceback). Die Ausgabe an den Entwickler geben – sie
+  enthält keine Zugangsdaten, kann aber Namen und IPs der Umgebung zeigen.
 - **„Anmeldung nicht möglich: Der Orchestrator lehnt das Anmelde-Token ab …“** (UI) —
   der Orchestrator nennt den Grund und loggt ihn (`docker compose logs orchestrator |
   grep OIDC`): `token audience invalid` → im Realm fehlt der Audience-Mapper

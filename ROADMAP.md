@@ -405,11 +405,27 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.92.0** | Verlauf des Routings: Änderungen an Routen, BGP-Nachbarn, HA, Policy-Routen, Kontexten und L3Outs von Lauf zu Lauf, Reiter „Verlauf“, Frist 180 Tage (ADR 0030) |
 | **0.93.0** | NetBox-Sync: Abschnitte Verkabelung (Ports, beidseitige Kabel, Modus/VLANs nur mit vorhandenen VLANs) und Applikationen (Tags an VMs und IPs), standardmässig aus (ADR 0031) |
 | **0.94.0** | Switches: IPv6-Nachbarn (NDP) in Endpunkten und „Wo hängt …“, Arista EOS und HPE Aruba CX lesend; ArubaOS-Switch/ProCurve erkannt, nicht gelesen (ADR 0025 Nr. 13) |
+| **0.94.1** | Korrektur: unerwartete Fehler mit Referenz in Antwort und Protokoll (Fehlersuche HTTP 500 der Applikations-Doku) |
 
-### Nächste Arbeiten (Stand 0.94.0)
+### Nächste Arbeiten (Stand 0.94.1)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.94.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.94.1.
+
+**Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
+
+| Befund | Stand |
+|---|---|
+| HTTP 500 beim Laden der Doku einer Applikation | 0.94.1: Fehler mit Referenz im Protokoll; Ursache mit dem Protokoll des Anwenders beheben |
+| Klick auf ein Element der Applikation → Detail wie in „Objekte & Inventar“ statt Sprung zu den Regeln | in Arbeit |
+| L3Outs: nicht das ACI-Routing (zu offen), die Firewalls entscheiden; Zuordnung L3Out → Firewall | in Arbeit (ADR 0034) |
+| Contracts über L3Outs nur als Hilfs-Contract, nicht separat listen | in Arbeit (ADR 0034) |
+| Doku nach Kategorien: Namen von Systemen ausserhalb des Tenants – Einstellung des Global-Admins | in Arbeit |
+| Unspezifische Zugriffe nach dem L3Out ordnen, über den sie hereinkommen | in Arbeit (ADR 0034) |
+| NAT / VIPs: VIP der Internet-Firewall mit dem VIP des Load Balancers verknüpfen (externe IP → Server) | in Arbeit |
+| Weg-Suche: mehr Infos am Pfad ohne die Suche zu verlassen (Detail, neuer Tab) | in Arbeit |
+| Weg-Suche von bzw. zu einer Anbindung | in Arbeit |
+| NAT / VIPs: Namen gegen die Namenskonvention prüfen | in Arbeit |
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4
 Verkabelung, Applikationen, Kunden, Routing“):**

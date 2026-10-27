@@ -1,9 +1,11 @@
 import logging
+import secrets
 from contextlib import asynccontextmanager
 
 from anyio import to_thread
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app import __version__, scheduler
 from app.api import (
@@ -66,6 +68,19 @@ def _lifespan(settings: Settings):
     return lifespan
 
 
+async def _internal_error(request: Request, exc: Exception) -> JSONResponse:
+    """Unerwarteter Fehler (0.94.1, Dev-Befund „HTTP 500 beim Laden der Doku“): ins Protokoll mit
+    einer kurzen Referenz, die Antwort nennt nur die Referenz - nie Details oder Daten. Mit der
+    Referenz findet der Betrieb die Ursache (`docker compose logs orchestrator | grep <ref>`)."""
+    ref = secrets.token_hex(4)
+    log.error("Interner Fehler %s bei %s %s", ref, request.method, request.url.path,
+              exc_info=exc)  # fmt: skip
+    # beide Sprachen: die Sprache der Anfrage gilt hier ausserhalb der Middleware nicht mehr
+    detail = (f"Interner Fehler – Referenz {ref} im Protokoll des Orchestrators / "
+              f"internal error – reference {ref} in the orchestrator log")  # fmt: skip
+    return JSONResponse(status_code=500, content={"detail": detail, "ref": ref})
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     # Secret-Referenzen (env:/file:/openbao:) aufloesen, bevor die Werte geprueft/genutzt
@@ -74,6 +89,7 @@ def create_app() -> FastAPI:
     check_security_config(settings)  # Fail-closed bei unsicheren Defaults (ADR 0005)
 
     app = FastAPI(title="Automato Orchestrator", version=__version__, lifespan=_lifespan(settings))
+    app.add_exception_handler(Exception, _internal_error)
 
     # CORS aus Konfiguration; Default nur localhost (Dev), Produktion explizit setzen
     app.add_middleware(
