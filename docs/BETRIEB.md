@@ -112,8 +112,15 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   seitenweise mit Gesamtzahl, neueste
   zuerst. Filter Status (**offen** = wartet oder läuft, wartet, läuft, fehlgeschlagen,
   erfolgreich), Quellsystem, Plattform, Auslöser (von Hand, Zeitplan). Je Lauf Ausführung
-  (Agent/zentral, Zeitplan), Regeln, Status mit Meldung, angelegt/begonnen, beendet mit Dauer;
-  offene Läufe **Abbrechen** (Operator). Offene Läufe auf der Seite aktualisieren sich alle 10 s.
+  (Agent/zentral, Zeitplan), **Einträge** (seit 0.78.5; Regeln, ohne Regeln die publizierten
+  Dienste des NSX ALB, VMs des vCenters bzw. Geräte der Switches; beim IPAM die Datensätze),
+  Status mit Meldung, angelegt/begonnen, beendet mit Dauer; offene Läufe **Abbrechen**
+  (Operator). Offene Läufe auf der Seite aktualisieren sich alle 10 s. Beim NSX ALB steht seit
+  0.78.5 auch bei Erfolg eine Zusammenfassung: Version, gelesene Avi-Tenants, Anzahl Virtual
+  Services, VS VIPs, Pools, Pool Groups und Einträge (VIP × Port), dazu, was nicht lesbar war –
+  zum Vergleich mit dem Controller. „Letzte Läufe“ in der Übersicht fragt seit 0.78.5 nie
+  doppelt nach (nicht, solange die vorige Abfrage läuft) und behält die Liste bei einem
+  Fehler beim Nachladen.
 - **Firewall-Regeln:** Quelle/Ziel/Dienste mit den **Objektnamen wie auf der Firewall**;
   NAT-Kennzeichen je Regel (**SNAT** mit Pool bzw. Interface-IP, **VIP**; Klick → NAT-Detail).
   Quelle/Ziel umfassen auch Internet Services (ISDB), Benutzergruppen und ZTNA-Tags;
@@ -1546,6 +1553,13 @@ an (`deploy/agent-gateway`, Port 8443).
   (Feld **Avi-Tenants** im Quellsystem prüfen, Gross-/Kleinschreibung), oder ein Proxy
   dazwischen. Von Hand prüfen: im Browser am Controller angemeldet
   `https://<controller>/api/virtualservice?page_size=1` öffnen.
+- **„Läufe laden: HTTP 500“ in „Letzte Läufe“ während ein Lauf eingespielt wird** (bis
+  0.78.4) — beim Einspielen eines grossen Laufs ist der Orchestrator ausgelastet. Die Übersicht
+  fragte alle 5 s nach, auch wenn die vorige Abfrage noch lief; die Abfragen stauten sich bzw.
+  warteten auf den gesperrten Lauf. Seit 0.78.5 fragt die Übersicht erst nach, wenn die vorige
+  Antwort da ist, und die Liste überspringt einen gerade gesperrten Lauf (`SKIP LOCKED`).
+  Bleibt der Fehler: `docker compose logs orchestrator | grep -B2 -A30 Traceback` – die
+  letzte Zeile nennt die Ursache.
 - **„Alle einlesen“ überspringt ein System, obwohl nichts läuft** (bis 0.11.2) — ein früherer
   Lauf wurde abgeholt, aber nie abgeschlossen (Agent beendet, Upload verloren), und steht
   ausserhalb der letzten acht Läufe noch auf „läuft“ (seit 0.13.0 zeigt die Übersicht alle

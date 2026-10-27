@@ -182,6 +182,18 @@ def _finish_reference_run(session: Session, run, result: CollectorResult, actor)
     return ResultAck(run_id=run.id, status=run.status.value, message=run.message)
 
 
+def _entry_count(result: CollectorResult) -> int:
+    """Eintraege des Laufs (Spalte „Einträge“): Regeln bzw. - ohne Regeln - die
+    publizierten Dienste (NSX ALB, 0.78.5), VMs (vCenter) oder Geraete (Switches)."""
+    if result.rules:
+        return len(result.rules)
+    if result.nat_rules:
+        return len(result.nat_rules)
+    if result.virtual is not None and result.virtual.vms:
+        return len(result.virtual.vms)
+    return len(result.inventory.devices) if result.inventory is not None else 0
+
+
 @router.post("/collector-runs/{run_id}/result", response_model=ResultAck)
 def submit_result(
     run_id: str,
@@ -203,7 +215,7 @@ def submit_result(
 
     run.status = RunStatus.COMPLETED if result.status == "completed" else RunStatus.FAILED
     run.finished_at = datetime.now(UTC)
-    run.rule_count = len(result.rules)
+    run.rule_count = _entry_count(result)
     run.message = result.message
 
     persisted = False

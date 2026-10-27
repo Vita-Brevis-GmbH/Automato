@@ -8,6 +8,8 @@ import { PLATFORM_LABEL } from "./refs";
 import { Empty, ErrorBox, fmtTime, Loading, PageHead, RunStatusChip } from "./ui";
 
 const PAGE = 50;
+// Meldung auch bei Erfolg zeigen: Zusammenfassung des Laufs (IPAM, NSX ALB seit 0.78.5)
+const SUMMARY_PLATFORMS = new Set(["infoblox", "netbox", "avi"]);
 
 function duration(r: Run): string {
   const start = r.started_at ?? r.queued_at;
@@ -38,7 +40,9 @@ export function RunsTable({
           <th>System</th>
           {detailed && <th>Plattform</th>}
           <th>Ausführung</th>
-          <th className="num">Regeln</th>
+          <th className="num" title="Regeln bzw. publizierte Dienste (NSX ALB), VMs (vCenter), Geräte (Switches), Einträge (IPAM)">
+            Einträge
+          </th>
           <th>Status</th>
           <th>{detailed ? "Angelegt / begonnen" : "Zeit"}</th>
           {detailed && <th>Beendet</th>}
@@ -65,7 +69,7 @@ export function RunsTable({
               <td className="num">{r.rule_count ?? "–"}</td>
               <td>
                 <RunStatusChip status={r.status} />
-                {r.message && (r.status === "failed" || r.platform === "infoblox" || r.platform === "netbox") && (
+                {r.message && (r.status === "failed" || SUMMARY_PLATFORMS.has(r.platform)) && (
                   <div className={r.status === "failed" ? "run-msg err" : "run-msg"} title={r.message}>
                     {r.message}
                   </div>

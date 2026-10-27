@@ -143,6 +143,10 @@ def test_lauf_und_pruefung(monkeypatch):
     monkeypatch.setattr(avi_tasks, "confirmed", lambda result, response: result)
     result = avi_tasks.collect_once("run-1")  # zentral ohne Zugangsdaten: Beispieldaten
     assert result.status == "completed" and len(result.nat_rules) == 3
+    # 0.78.5: Zusammenfassung zum Vergleich mit dem Controller
+    assert result.message.startswith("Avi ") and "Tenants admin" in result.message
+    assert "Virtual Services" in result.message
+    assert result.message.endswith("3 Einträge (VIP × Port)")
     ok, text = avi_tasks.check(Target(name="avi", platform="avi"))
     assert not ok and "keine Zugangsdaten" in text
 

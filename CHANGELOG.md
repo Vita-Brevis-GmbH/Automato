@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.78.5 – 2026-10-27
+
+Korrekturen nach dem Test des NSX ALB (Avi 32.1.2): der Lauf kam durch, „Letzte Läufe“ meldete
+dabei HTTP 500 und danach „0“ beim Lauf. Ohne Migration.
+
+- **Spalte „Einträge“** statt „Regeln“ in den Läufen: Regeln bzw. – ohne Regeln – die
+  publizierten Dienste (NSX ALB), VMs (vCenter) oder Geräte (Switches); beim IPAM wie bisher
+  die Datensätze. Bisher stand beim NSX ALB immer 0.
+- **Zusammenfassung des NSX-ALB-Laufs** auch bei Erfolg: Version, gelesene Avi-Tenants, Anzahl
+  Virtual Services, VS VIPs, Pools, Pool Groups und Einträge (VIP × Port), dazu, was nicht
+  lesbar war – zum Vergleich mit dem Controller (in den Läufen sichtbar).
+- **„Letzte Läufe“ ohne Stau:** die Übersicht fragt erst wieder nach, wenn die vorige Antwort
+  da ist, und behält die Liste bei einem Fehler beim Nachladen. Die Liste beendet einen
+  überfälligen Lauf nur, wenn er nicht gerade gesperrt ist (`SKIP LOCKED`) – sie wartet nicht
+  auf ein laufendes Einspielen und überschreibt keinen Lauf, dessen Ergebnis gerade ankommt.
+- BETRIEB (Läufe, Fehlerbehebung), TESTS.
+
 ## 0.78.4 – 2026-10-27
 
 Korrektur nach Rückmeldung des Anwenders: die Weg-Suche zeigte bei einer Sperre zuoberst

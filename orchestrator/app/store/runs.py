@@ -143,9 +143,25 @@ def expire_stale(session: Session, now: datetime | None = None) -> int:
                 f"abgebrochen: nach {settings.run_queue_timeout_hours} h nicht abgeholt - "
                 "Agent offline bzw. kein zentraler Worker"
             )
+        if _lock_open(session, run.id) is None:
+            continue  # Ergebnis wird gerade eingespielt bzw. eine andere Abfrage beendet ihn
         _finish(session, run, reason, actor="system:timeout", now=now)
         expired += 1
     return expired
+
+
+def _lock_open(session: Session, run_id: str) -> CollectorRun | None:
+    """Offenen Lauf sperren - gesperrte ueberspringen (SKIP LOCKED, 0.78.5): die Liste der
+    Laeufe wartet nicht auf ein laufendes Einspielen bzw. eine zweite Abfrage der Liste und
+    beendet keinen Lauf, dessen Ergebnis gerade ankommt (Befund: Fehler 500 in „Letzte
+    Läufe“ waehrend des Einspielens)."""
+    query = (
+        select(CollectorRun)
+        .where(CollectorRun.id == run_id, CollectorRun.status.in_(OPEN))
+        .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
+    )
+    return session.scalars(query).first()
 
 
 def cancel(session: Session, run: CollectorRun, actor: str) -> None:

@@ -48,6 +48,8 @@ def _deliver(client, tid, sid, platform, result):
     run_id = client.post("/jobs/collect", json=run).json()["run_id"]
     r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
     assert r.status_code == 200 and r.json()["status"] == "completed", r.text
+    if platform == "avi":  # 0.78.5: Spalte „Einträge“ = publizierte Dienste, nicht 0
+        assert client.get(f"/jobs/{run_id}").json()["rule_count"] == len(result["nat_rules"])
 
 
 def _seed(client) -> tuple[int, int]:

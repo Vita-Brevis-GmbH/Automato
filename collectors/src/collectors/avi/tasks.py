@@ -48,6 +48,24 @@ def gather(target: Target | None = None) -> dict:
     return _sample()
 
 
+def summary(data: dict, entries: int) -> str:
+    """Meldung des Laufs (0.78.5): was gelesen wurde - zum Vergleich mit dem Controller - und
+    was nicht lesbar war."""
+    tenants = data.get("tenants") or {}
+    count = {k: sum(len((t or {}).get(k) or []) for t in tenants.values())
+             for k in ("virtualservice", "pool", "poolgroup", "vsvip")}  # fmt: skip
+    names = ", ".join(sorted(tenants)[:10]) + (" …" if len(tenants) > 10 else "")
+    text = (
+        f"Avi {data.get('version') or '?'} · Tenants {names or '–'} · "
+        f"{count['virtualservice']} Virtual Services, {count['vsvip']} VS VIPs, "
+        f"{count['pool']} Pools, {count['poolgroup']} Pool Groups · {entries} Einträge (VIP × Port)"
+    )
+    missing = data.get("missing") or []
+    if missing:
+        text += f" · nicht lesbar: {'; '.join(missing[:20])}"
+    return text
+
+
 def check(target: Target | None = None) -> tuple[bool, str]:
     """Anmeldung und Leserecht pruefen (read-only, kein Ingest)."""
     client = _client(target)
@@ -67,11 +85,9 @@ def collect_once(
     """Eine Erfassung ohne Celery (Worker *und* externer Standalone-Collector)."""
     try:
         data = gather(target)
-        missing = data.get("missing") or []
+        nat_rules = normalize(data)
         result = CollectorResult(
-            status="completed",
-            nat_rules=normalize(data),
-            message=f"nicht lesbar: {'; '.join(missing[:20])}" if missing else None,
+            status="completed", nat_rules=nat_rules, message=summary(data, len(nat_rules))
         )
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(status="failed", message=diagnose.device_error(exc, "avi"))

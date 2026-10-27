@@ -1,5 +1,6 @@
 """Alle Quellsysteme eines Mandanten auf einmal einlesen (Dev-Befund: nicht jedes einzeln)."""
 
+from app.models import RunStatus
 from test_reference_sources import ADMIN, _agent, _ddi, _system, _tenant
 
 
@@ -155,3 +156,46 @@ def test_alle_laeufe_seitenweise_mit_filter(client):
     one = client.get("/jobs", params={"tenant_id": tid, "source_system_id": fws[0]["id"]}).json()
     assert [r["id"] for r in one] == [ids[0]] and one[0]["status"] == "completed"
     assert client.get("/jobs", params={"tenant_id": tid, "trigger": "schedule"}).json() == []
+
+
+def test_liste_wartet_nicht_auf_einen_gesperrten_lauf(client, session_factory):
+    """0.78.5 (Befund: Fehler 500 in „Letzte Läufe“ waehrend ein Lauf eingespielt wurde): die
+    Liste beendet einen ueberfaelligen Lauf nur, wenn er nicht gerade gesperrt ist (Ergebnis
+    kommt an) - sie wartet nicht darauf und ueberschreibt ihn nicht."""
+    import os
+    import threading
+    from datetime import UTC, datetime, timedelta
+
+    from app.models import CollectorRun
+    from sqlalchemy import select
+
+    tid = _tenant(client)
+    fw = _system(client, tid, name="fw-01", platform="fortigate", base_url="https://fw")
+    body = {"platform": "fortigate", "tenant_id": tid, "source_system_id": fw["id"]}
+    run_id = client.post("/jobs/collect", json=body).json()["run_id"]
+    _set(session_factory, run_id, status=RunStatus.RUNNING,
+         started_at=datetime.now(UTC) - timedelta(minutes=121))  # fmt: skip
+    if not os.environ.get("AUTOMATO_TEST_DATABASE_URL", "").startswith("postgresql"):
+        # SQLite sperrt keine Zeilen: wie bisher beendet
+        listed = {r["id"]: r for r in client.get("/jobs", params={"tenant_id": tid}).json()}
+        assert listed[run_id]["status"] == "failed"
+        return
+    holder = session_factory()  # wie das Einspielen: Zeile des Laufs gesperrt
+    holder.scalars(select(CollectorRun).where(CollectorRun.id == run_id).with_for_update()).one()
+    out: dict = {}
+
+    def listing() -> None:
+        out["runs"] = client.get("/jobs", params={"tenant_id": tid}).json()
+
+    worker = threading.Thread(target=listing)
+    worker.start()
+    worker.join(timeout=20)
+    try:
+        assert not worker.is_alive(), "Liste wartet auf den gesperrten Lauf"
+        assert {r["id"]: r["status"] for r in out["runs"]}[run_id] == "running"
+    finally:
+        holder.rollback()
+        holder.close()
+        worker.join(timeout=30)
+    listed = {r["id"]: r for r in client.get("/jobs", params={"tenant_id": tid}).json()}
+    assert listed[run_id]["status"] == "failed"  # wieder frei: nach der Frist beendet

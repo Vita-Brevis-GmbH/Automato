@@ -48,30 +48,41 @@ export default function Overview({
       .catch(() => setHealth(null));
   }, [tenantId, runs, customer]);
 
-  // offene Läufe (wartet/läuft) vollständig, dazu die letzten – neueste zuerst
-  const loadRuns = useCallback(() => {
-    if (customer) {
-      setRuns([]);
-      return;
-    }
-    Promise.all([
-      fetchRunsPage({ tenantId, status: "open", limit: 100 }),
-      fetchRunsPage({ tenantId, limit: RECENT }),
-    ])
-      .then(([open, recent]) => {
-        const seen = new Set(open.runs.map((r) => r.id));
-        const merged = [...open.runs, ...recent.runs.filter((r) => !seen.has(r.id))];
-        merged.sort((a, b) => (b.queued_at ?? "").localeCompare(a.queued_at ?? ""));
-        setRuns(merged);
-        setRunsTotal(recent.total);
-        setOpenTotal(open.total);
-        setRunsErr(null);
-      })
-      .catch((e) => {
+  // offene Läufe (wartet/läuft) vollständig, dazu die letzten – neueste zuerst. 0.78.5: nie
+  // zwei Abfragen gleichzeitig (der Orchestrator ist beim Einspielen grosser Läufe langsam –
+  // sich stauende Abfragen belegten die Verbindungen), beim Nachladen bleibt die Liste stehen
+  const inFlight = useRef(false);
+  const loadRuns = useCallback(
+    (poll = false) => {
+      if (customer) {
         setRuns([]);
-        setRunsErr(e);
-      });
-  }, [tenantId, customer]);
+        return;
+      }
+      if (inFlight.current) return;
+      inFlight.current = true;
+      Promise.all([
+        fetchRunsPage({ tenantId, status: "open", limit: 100 }),
+        fetchRunsPage({ tenantId, limit: RECENT }),
+      ])
+        .then(([open, recent]) => {
+          const seen = new Set(open.runs.map((r) => r.id));
+          const merged = [...open.runs, ...recent.runs.filter((r) => !seen.has(r.id))];
+          merged.sort((a, b) => (b.queued_at ?? "").localeCompare(a.queued_at ?? ""));
+          setRuns(merged);
+          setRunsTotal(recent.total);
+          setOpenTotal(open.total);
+          setRunsErr(null);
+        })
+        .catch((e) => {
+          if (!poll) setRuns([]);
+          setRunsErr(e);
+        })
+        .finally(() => {
+          inFlight.current = false;
+        });
+    },
+    [tenantId, customer],
+  );
 
   useEffect(() => {
     setRuns(null);
@@ -86,7 +97,7 @@ export default function Overview({
   useEffect(() => {
     if (!pending) return;
     const t = setInterval(() => {
-      loadRuns();
+      loadRuns(true);
     }, 5000);
     return () => clearInterval(t);
   }, [pending, loadRuns]);
@@ -196,7 +207,7 @@ export default function Overview({
                 </span>
               )}
               <div className="spacer" />
-              <button className="btn btn-ghost btn-sm" onClick={loadRuns}>
+              <button className="btn btn-ghost btn-sm" onClick={() => loadRuns()}>
                 Aktualisieren
               </button>
               {me.isOperator && (
@@ -223,7 +234,7 @@ export default function Overview({
                   runs={runs}
                   systemName={systemName}
                   canCancel={me.isOperator}
-                  onCancel={(id) => cancelRun(id).then(loadRuns, setRunsErr)}
+                  onCancel={(id) => cancelRun(id).then(() => loadRuns(), setRunsErr)}
                 />
               )}
             </div>
@@ -284,7 +295,7 @@ export default function Overview({
           tenantLabel={tenantLabel}
           systems={systems}
           onClose={() => setCollectAllOpen(false)}
-          onStarted={loadRuns}
+          onStarted={() => loadRuns()}
         />
       )}
       {collectOpen && (
