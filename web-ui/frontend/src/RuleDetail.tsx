@@ -106,6 +106,16 @@ function NatList({ items, onOpen }: { items: NatBrief[]; onOpen?: (name: string)
                     {n.protocol ? `/${n.protocol}` : ""}
                   </span>
                   {n.mapped_dns.length > 0 && <div className="faint">{n.mapped_dns.join(", ")}</div>}
+                  {(n.balancers ?? []).map((lb) => (
+                    <div key={lb.id} className="nat-balancer" title="Ziel der VIP ist ein Virtual Service des NSX ALB – weiter zu dessen Servern">
+                      <span className="chip info">NSX ALB</span> <span className="mono">{lb.name}</span>
+                      {lb.ext_ip ? <span className="mono faint"> {lb.ext_ip}{lb.ext_port ? `:${lb.ext_port}` : ""}</span> : null}
+                      {lb.pool ? <span className="faint"> · Pool {lb.pool}</span> : null}
+                      {lb.servers && lb.servers.length > 0 && (
+                        <div className="mono faint">→ {lb.servers.slice(0, 6).join(", ")}{lb.servers.length > 6 ? ` … (+${lb.servers.length - 6})` : ""}</div>
+                      )}
+                    </div>
+                  ))}
                 </>
               ) : (
                 <span className="faint">{n.nat_type === "snat_pool" ? "ausgehende Quell-IP" : "–"}</span>

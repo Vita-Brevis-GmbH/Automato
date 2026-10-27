@@ -31,6 +31,12 @@ function toMarkdown(d: PublishedServiceDetail): string {
     `- **Internes Ziel:** ${target(d)}`,
     ...(d.source ? [`- **Quelle:** ${d.source} (${PLATFORM_LABEL[d.platform ?? ""] ?? d.platform})`] : []),
     ...(pool(d) ? [`- **Pool:** ${pool(d)}`] : []),
+    ...(d.balancers ?? []).map(
+      (lb) =>
+        `- **Load Balancer:** NSX ALB ${lb.name} ${lb.ext_ip ?? ""}${lb.ext_port ? `:${lb.ext_port}` : ""}` +
+        `${lb.pool ? ` (Pool ${lb.pool})` : ""}${lb.servers?.length ? ` → ${lb.servers.join(", ")}` : ""}`,
+    ),
+    ...(d.fronted_by ?? []).map((f) => `- **Über VIP:** ${f.name} ${f.ext_ip ?? ""}${f.ext_port ? `:${f.ext_port}` : ""}`),
     `- **Port-Forward:** ${d.portforward ? "an" : "aus"}`,
     "",
     `## Regeln (${d.rules.length})`,
@@ -88,6 +94,41 @@ function AppDrawer({
               <>
                 <dt>Pool</dt>
                 <dd>{pool(d)}</dd>
+              </>
+            )}
+            {(d.balancers ?? []).length > 0 && (
+              <>
+                <dt>Load Balancer</dt>
+                <dd className="vip-balancers">
+                  {(d.balancers ?? []).map((lb) => (
+                    <div key={lb.id}>
+                      <span className="chip info">NSX ALB</span> <b>{lb.name}</b>{" "}
+                      <span className="mono">
+                        {lb.ext_ip}
+                        {lb.ext_port ? `:${lb.ext_port}` : ""}
+                      </span>
+                      {lb.pool && <span className="faint"> · Pool {lb.pool}</span>}
+                      {lb.servers && lb.servers.length > 0 && <div className="mono faint">→ {lb.servers.join(", ")}</div>}
+                    </div>
+                  ))}
+                </dd>
+              </>
+            )}
+            {(d.fronted_by ?? []).length > 0 && (
+              <>
+                <dt>Über VIP</dt>
+                <dd className="vip-fronted">
+                  {(d.fronted_by ?? []).map((f) => (
+                    <div key={f.name}>
+                      <b>{f.name}</b>{" "}
+                      <span className="mono">
+                        {f.ext_ip}
+                        {f.ext_port ? `:${f.ext_port}` : ""}
+                      </span>
+                      {f.source && <span className="faint"> · {f.source}</span>}
+                    </div>
+                  ))}
+                </dd>
               </>
             )}
             <dt>Port-Forward</dt>
@@ -194,6 +235,16 @@ export default function PublishedServices({ tenantId }: { tenantId: number | nul
                     <td className="mono">
                       {target(a)}
                       {pool(a) && <div className="faint">{pool(a)}</div>}
+                      {(a.balancers ?? []).map((lb) => (
+                        <div key={lb.id} className="faint vip-chain" title="Ziel ist ein Virtual Service des NSX ALB">
+                          → NSX ALB {lb.name} · {(lb.servers ?? []).length} Server
+                        </div>
+                      ))}
+                      {(a.fronted_by ?? []).length > 0 && (
+                        <div className="faint vip-chain" title="Die FortiGate veröffentlicht diesen Virtual Service über ihre VIP">
+                          über {(a.fronted_by ?? []).map((f) => `${f.name} (${f.ext_ip ?? "?"})`).join(", ")}
+                        </div>
+                      )}
                     </td>
                     <td>
                       {a.source ?? <Dash />}

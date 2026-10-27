@@ -153,6 +153,9 @@ class _Builder:
         self.ctx = references.context(session, tenant_id)
         self.vms = virtual.Lookup(session, tenant_id)  # VM-Namen der IPs (vCenter, ADR 0017)
         self._dns: dict[str, list[str]] = {}
+        # Virtual Services des NSX ALB je VIP-Adresse (0.79.0): Ziel = VIP des Load Balancers
+        # (direkt bzw. hinter einer VIP der FortiGate) -> auch seine Server sind Ziel der Regel
+        self.balancers = nat_store.Balancers.load(session, tenant_id)
 
     def dns(self, value: str) -> list[str]:
         if value not in self._dns:
@@ -189,6 +192,17 @@ class _Builder:
             if parsed is not None:
                 ranges.setdefault((role, *parsed), via)
 
+        chained: set[str] = set()  # VIPs des Load Balancers hinter einer VIP der FortiGate
+
+        def balanced(lb: NatRule, via: str) -> None:
+            """Server eines Virtual Service (NSX ALB) als Ziel der Regel, mit dem Weg dorthin."""
+            attrs = lb.attrs or {}
+            parts.extend([lb.name, lb.ext_ip, attrs.get("pool"), attrs.get("pool_group")])
+            names.add(lb.name.lower())
+            for ip in nat_store.internal_ips(lb):
+                values.append(ip)
+                add_range("dst", ip, via)
+
         for ref in rule.refs:
             kind = "svc" if ref.role is RefRole.SERVICE else "addr"
             obj = self.directory.by_id.get(ref.device_object_id) if ref.device_object_id else None
@@ -221,6 +235,9 @@ class _Builder:
                         values += [v for v in (nat.ext_ip, *internal) if v]
                         for ip in internal:  # DNAT-Ziel: der Server bzw. die Real Server
                             add_range("dst", ip, o.name)
+                        for lb in self.balancers.behind(nat):  # VIP -> Load Balancer (0.79.0)
+                            chained.add(nat_store.host_ip(lb.ext_ip) or "")
+                            balanced(lb, f"{o.name}{nat_store.CHAIN}{lb.name}")
         for pool in rule_view.snat_pools(rule) or []:
             names.add(pool.lower())
             nat_names.add(pool.lower())
@@ -255,6 +272,16 @@ class _Builder:
                 for ip in self.epg_values.get(epg.id, []):
                     values.append(ip)
                     add_range(role, ip, label)
+        # Ziel direkt die VIP eines Load Balancers (Host im Endpunkt, 0.79.0): alle Virtual
+        # Services dieser Adresse
+        for (role, fam, lo, hi, is_any), via in list(ranges.items()):
+            if role != "dst" or is_any or lo != hi or not self.balancers.by_ip:
+                continue
+            ip = (ipaddress.IPv4Address if fam == 4 else ipaddress.IPv6Address)(int(lo, 16))
+            if ip.compressed in chained:
+                continue
+            for lb in self.balancers.at(ip.compressed):
+                balanced(lb, f"{via or ip.compressed}{nat_store.CHAIN}{lb.name}")
         for v in dict.fromkeys(values):
             parts += self.dns(v)
             parts += self.vms.names(v)

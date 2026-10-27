@@ -507,8 +507,17 @@ test("Publizierte Dienste: Virtual Service des NSX ALB mit Quelle und Pool (0.77
   await expect(row).toContainText("pool-shop · 1 Server");
   await expect(row).toContainText("avi-01");
   await expect(row).toContainText("NSX ALB");
+  // 0.79.0: die VIP der FortiGate davor und umgekehrt der Virtual Service hinter ihr
+  await expect(row.locator(".vip-chain")).toContainText("über V-EXT_lb.example.ch (203.0.113.30)");
+  const front = page.locator("tr", { hasText: "V-EXT_lb.example.ch" }).first();
+  await expect(front.locator(".vip-chain")).toContainText("→ NSX ALB vs-shop · 1 Server");
   await row.click();
   const drawer = page.locator(".drawer");
   await expect(drawer).toContainText("Quelle");
   await expect(drawer).toContainText("NSX ALB (Avi)");
+  await expect(drawer.locator(".vip-fronted")).toContainText("V-EXT_lb.example.ch");
+  await page.locator(".drawer button[aria-label='Schliessen']").first().click();
+  await front.click();
+  await expect(page.locator(".drawer .vip-balancers")).toContainText("vs-shop");
+  await expect(page.locator(".drawer .vip-balancers")).toContainText("10.10.10.5:8443");
 });

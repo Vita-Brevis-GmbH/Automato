@@ -93,7 +93,12 @@ def run(app) -> None:
     objects = {o["name"]: o for o in sn.OBJECTS + fe.OBJECTS + st.OBJECTS}
     rules = sn.RULES + [{**r, "external_id": f"1{r['external_id']}"} for r in fe.RULES]
     fw = system(name="fwc11-000-infrz", platform="fortigate", base_url="https://fw-01.example.ch")
-    run_result(fw, "fortigate", rules=rules, objects=list(objects.values()), nat_rules=sn.NAT)
+    # 0.79.0: VIP der FortiGate vor dem Virtual Service vs-shop des NSX ALB (10.10.10.80)
+    lb_vip = {"source_platform": "fortigate", "external_id": "V-EXT_lb.example.ch",
+              "name": "V-EXT_lb.example.ch", "ext_ip": "203.0.113.30", "mapped_ip": "10.10.10.80",
+              "raw": {"extintf": "any"}}  # fmt: skip
+    run_result(fw, "fortigate", rules=rules, objects=list(objects.values()),
+               nat_rules=[*sn.NAT, lb_vip])  # fmt: skip
 
     # FortiGate 2: Dienste mit Attributen, Internet Service, negiertes Ziel; dazu eine
     # dynamische Adresse aus dem SDN-Connector (ACI über FortiManager, 0.36.0)

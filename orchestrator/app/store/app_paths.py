@@ -51,6 +51,7 @@ from app.models import (
 )
 from app.store import aci_direction, appdoc, paths, policy_check
 from app.store import epgs as epg_store
+from app.store import nat as nat_store
 from app.store.topology import endpoint, is_net, within
 
 MAX_TRACES = 120  # Wege je Applikation
@@ -244,6 +245,9 @@ def _candidates(
             if key not in counters:
                 counters[key] = _fw_counter(ranges.get((rule.id, _other(h["side"])), []))
             own_ips = _own_ips(system, h.get("value"))
+            entry = _entry(data, rule, h)  # ueber VIP bzw. Load Balancer (0.79.0)
+            if entry is not None:
+                own_ips = [entry]
         if not counters[key]:
             skipped.add(rule.name or f"#{rule.external_id}")
             continue
@@ -292,6 +296,25 @@ def _candidates(
         names = ", ".join(sorted(skipped)[:5]) + (" …" if len(skipped) > 5 else "")
         notes.append(f"ohne prüfbare Gegenstelle (FQDN, ISDB, any): {names}")
     return merged, notes
+
+
+def _entry(data: appdoc.TenantData, rule: Rule, h: dict) -> str | None:
+    """Ziel der Verbindung, wenn die Regel das System ueber einen Load Balancer erreicht
+    (0.79.0, Treffer „V-EXT_x → vs-web“): die externe IP der VIP der FortiGate davor bzw. die
+    VIP des Virtual Service - der Weg geht dann ueber DNAT und Load Balancer zum Server."""
+    text = str(h.get("object") or "")
+    if h.get("side") != "dst" or nat_store.CHAIN not in text:
+        return None
+    front, _, lb_name = text.partition(nat_store.CHAIN)
+    vip = data.nat_by_name.get((rule.source_system_id, rule.vdom, front.strip().lower()))
+    if vip is not None and not nat_store.is_balancer(vip) and vip.ext_ip:
+        return nat_store.host_ip(vip.ext_ip.split("-")[0])
+    value = str(h.get("value") or "")
+    for n in data.nats:
+        if nat_store.is_balancer(n) and n.name == lb_name.strip():
+            if value in nat_store.internal_ips(n):
+                return nat_store.host_ip(n.ext_ip)
+    return None
 
 
 def _merge(m: _Conn, c: _Conn) -> None:

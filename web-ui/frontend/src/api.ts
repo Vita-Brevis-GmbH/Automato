@@ -88,6 +88,19 @@ export interface NatBrief {
   external_name: string | null;
   ext_dns: string[];
   mapped_dns: string[];
+  balancers?: BalancerBrief[]; // 0.79.0: Virtual Services des NSX ALB hinter der VIP
+}
+
+// Virtual Service des NSX ALB kompakt (0.79.0): hinter einer VIP der FortiGate
+export interface BalancerBrief {
+  id: number;
+  name: string;
+  source?: string;
+  ext_ip?: string;
+  ext_port?: string;
+  pool?: string;
+  tenant?: string;
+  servers?: string[]; // ip bzw. ip:port
 }
 
 export interface AciContract {
@@ -589,6 +602,8 @@ export interface PublishedService {
   platform?: string | null; // fortigate | avi (0.77.0, ADR 0027)
   servers?: number; // Server des Pools bzw. Real Server
   pool?: string | null; // NSX ALB: Pool bzw. Pool Group
+  balancers?: BalancerBrief[]; // 0.79.0: VIP der FortiGate -> Virtual Services des NSX ALB
+  fronted_by?: { name: string; ext_ip: string | null; ext_port: string | null; source?: string | null }[]; // VIPs davor
 }
 
 export interface AppRule {
@@ -2113,7 +2128,8 @@ export interface TraceHop extends RoutingNode {
   rules?: HopRules; // FortiGate-Hop: passende Policies und Urteil (0.22.0)
   dst?: string; // Ziel an diesem Hop nach NAT auf einem Hop davor (0.23.0)
   // VIP (DNAT) an diesem Hop: ab hier zur internen IP (Virtual Server: alle Real Server)
-  nat?: { name: string; id: number; ext: string | null; to: string[]; type: string | null; ports: (string | null)[] | null };
+  // balancer (0.79.0): Ziel der VIP ist dieser Virtual Service des NSX ALB
+  nat?: { name: string; id: number; ext: string | null; to: string[]; type: string | null; ports: (string | null)[] | null; balancer?: string };
   // NSX ALB (0.77.0, ADR 0027): VIP hier angeschlossen, der Weg geht vom Load Balancer zum Server
   lb?: {
     name: string;

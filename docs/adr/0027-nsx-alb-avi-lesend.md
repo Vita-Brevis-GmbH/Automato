@@ -74,3 +74,27 @@ produktiv, nur Read-only-Konten.
 - Neue Abhängigkeit: keine (httpx wie beim APIC).
 - Offen: Adressen der Service Engines lesen (`serviceengine`, Daten-NICs) für die genaue
   Quelle nach dem SNAT; Content Switching (HTTP-Policies, DataScripts) auswerten; GSLB.
+
+## Ergänzung 0.79.0 – VIP der FortiGate vor dem Load Balancer
+
+Rückmeldung des Anwenders: zeigt das Ziel einer VIP (DNAT) der FortiGate auf die VIP eines
+Virtual Service, gehören beide zusammen – öffentliche IP → VIP der FortiGate → Virtual
+Service → Server des Pools. Entscheid (ohne Migration, abgeleitet beim Lesen):
+
+1. **Verknüpfung** (`store/nat.Balancers`): interne IP der FortiGate-VIP = VIP-Adresse eines
+   Virtual Service; bei Port-Weiterleitung nur der Virtual Service mit dem weitergeleiteten
+   Port, sonst alle Ports dieser Adresse. Ebenso eine Regel, deren Ziel direkt die VIP des
+   Load Balancers ist (Host im Endpunkt).
+2. **Regelindex:** die Server hinter dem Load Balancer sind Ziel der Regel – mit dem Weg im
+   Bezug („V-EXT_x → vs-web“). Damit findet die Suche die Regel über den Server, Virtual
+   Service bzw. Pool, und Doku, Relevanz, Kunden und Zonen sehen sie. Nach jedem Lauf des
+   NSX ALB wird der Index des ganzen Mandanten neu aufgebaut.
+3. **Relevanz:** für ein Ziel über den Load Balancer zählt die Route zur VIP des Load
+   Balancers, nicht die zum Server dahinter.
+4. **Anzeige:** Regel-Detail (VIP mit Virtual Service, Pool, Servern), publizierte Dienste
+   (VIP der FortiGate → Virtual Service; Virtual Service „über VIP …“, die Regeln der VIP davor
+   zählen mit), Applikations-Doku Kategorie 2 mit Spalte „Load Balancer“, Verbindungen Ende zu
+   Ende mit der öffentlichen IP als Ziel (Weg über DNAT und Load Balancer).
+5. **Weg-Suche:** am DNAT-Hop „NSX ALB vs-…“; liegt die VIP des Load Balancers hinter einem
+   Router ohne gelesenes Gerät, geht der Weg trotzdem vom Load Balancer zum Server weiter.
+

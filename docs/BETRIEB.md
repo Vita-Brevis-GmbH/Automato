@@ -426,6 +426,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
         liest Automato nicht, die VIP steht für ihr Netz – bzw. der Client, wenn das Application
         Profile die Client-IP erhält; Port ist der Port des Servers. Der Dienst (`tcp/443`) wählt
         den Virtual Service mit diesem Port, ohne Dienst gilt der erste.
+      - **VIP der FortiGate vor dem Load Balancer (seit 0.79.0):** Zeigt eine VIP der FortiGate
+        auf die VIP eines Virtual Service, steht am DNAT-Hop „NSX ALB vs-…“ und der Weg geht von
+        der öffentlichen IP über die FortiGate und den Load Balancer zum Server. Das gilt auch,
+        wenn die VIP des Load Balancers hinter einem Router ohne gelesenes Gerät liegt.
       - SNAT der erlaubenden Policy steht als „SNAT → IP (Pool …)“. Diese Quelle gilt für die
         Firewalls danach. Seit 0.47.0 genauer:
         - *IP-Pool:* `overload`, `one-to-one` und `port-block-allocation` – die Quelle danach
@@ -626,7 +630,11 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     APIC); ein IPv4/IPv6-Paar (gleich bzw. bestätigt) steht als eine Zeile; Klick auf die
     Regel öffnet sie im Detail. NAT nur aus der Regel selbst: Internet-Zugriff mit ihrem SNAT
     (Pool bzw. „Interface-IP“), Zugriff aus dem Internet mit ihrer VIP; sperrende Regeln ohne
-    NAT.
+    NAT. Seit 0.79.0 auch über den **NSX ALB**: zeigt die VIP der FortiGate auf einen Virtual
+    Service, dessen Server zur Applikation gehören, steht die Regel in Kategorie 2 mit der
+    öffentlichen IP und in der Spalte **Load Balancer** (Virtual Service, VIP:Port, Pool); die
+    Verbindungen Ende zu Ende gehen von der Quelle zur öffentlichen IP über DNAT und Load
+    Balancer zum Server.
     - **Richtung L3Out (0.78.2):** die Firewall ist führend – ein Contract zu einer externen
       EPG (L3Out) steht nicht separat da, solange er die Dienste der Firewall-Regeln in
       derselben Kategorie und Richtung abdeckt. Öffnet er weniger, steht er da mit „öffnet
@@ -641,7 +649,11 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   Regeln; seit 0.77.0 auch die **Virtual Services des NSX ALB** – je VIP und Port mit Quelle,
   Pool und Zahl der Server, Regeln über die VIP-Adresse; im NAT als Virtual Server mit den
   Servern des Pools und Avi-Tenant, Pool, Methode, Health-Monitor, Zustand und „Quelle zum
-  Server“ – Service Engine (SNAT) bzw. Client-IP). Die Doku erfasst **alle** Regeln eines Systems. Der **Bezug** (in den Regeln der
+  Server“ – Service Engine (SNAT) bzw. Client-IP; seit 0.79.0 die **Kette**: bei der VIP der
+  FortiGate „→ NSX ALB vs-… · n Server“ mit Virtual Service, Pool und Servern im Detail, beim
+  Virtual Service „über V-EXT_… (öffentliche IP)“ – die Regeln der VIP davor zählen mit; das
+  Regel-Detail zeigt bei der VIP ebenso den Virtual Service mit Pool und Servern, und die
+  Suche in den Regeln findet die Regel auch über den Server, Virtual Service oder Pool). Die Doku erfasst **alle** Regeln eines Systems. Der **Bezug** (in den Regeln der
   Applikation und in der Erklärung, nicht mehr als Spalte der Kategorien) sagt, wie die Regel
   greift:
   - direkt,

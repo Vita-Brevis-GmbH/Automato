@@ -41,6 +41,7 @@ from app.models import (
     Zone,
 )
 from app.store import aci_relevance
+from app.store import nat as nat_store
 from app.store.paths import Graph, Key, _exit_label
 from app.store.topology import Table, ip_hex, table_of
 
@@ -84,6 +85,25 @@ class Relevance:
         self._zones: dict[int, dict[str, list[str]]] = {}
         self._rib: dict[Key, list[tuple[str, int, set[str]]]] = {}
         self._behind: dict[tuple, dict | None] = {}
+        self._balancers: nat_store.Balancers | None = None
+        self._balanced: set[int] | None = None
+
+    def through_balancer(self, rule, values: list[str]) -> list[str]:
+        """0.79.0: erreicht die Regel ein Ziel ueber einen Load Balancer (NSX ALB; VIP der
+        FortiGate bzw. Ziel = VIP des Load Balancers), zaehlt die Route zu dessen VIP - nicht
+        die zum Server dahinter."""
+        if self._balanced is None:
+            stmt = select(RuleIpRange.rule_id).where(
+                RuleIpRange.tenant_id == self.tenant_id,
+                RuleIpRange.role == "dst",
+                RuleIpRange.via.contains(nat_store.CHAIN.strip()),
+            )
+            self._balanced = set(self.session.scalars(stmt.distinct()))
+        if rule.id not in self._balanced:
+            return []
+        if self._balancers is None:
+            self._balancers = nat_store.Balancers.load(self.session, self.tenant_id)
+        return self._balancers.vips_for(values)
 
     @property
     def graph(self) -> Graph:
@@ -193,6 +213,8 @@ class Relevance:
         `zone` = Zone der Regel auf dieser Seite, falls die Rohdaten keine Interfaces nennen."""
         raw = rule.raw if isinstance(rule.raw, dict) else {}
         names = _names(raw, "srcintf" if side == "src" else "dstintf") or ([zone] if zone else [])
+        if side == "dst":
+            values = [*values, *self.through_balancer(rule, values)]
         results = [self._one(rule, side, names, v) for v in dict.fromkeys(values)]
         results = [r for r in results if r is not None]
         if not results:

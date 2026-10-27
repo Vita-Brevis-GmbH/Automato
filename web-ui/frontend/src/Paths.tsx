@@ -540,6 +540,12 @@ function TraceCard({
                             {h.nat.ext} → {h.nat.to.join(", ")}
                           </span>
                           {h.nat.ports && <span className="faint"> · Port {h.nat.ports.join(" → ")}</span>}
+                          {h.nat.balancer && (
+                            <span className="faint nat-balancer" title="Ziel der VIP ist ein Virtual Service des NSX ALB">
+                              {" "}
+                              · NSX ALB {h.nat.balancer}
+                            </span>
+                          )}
                           {h.nat.to.length > 1 && <div className="faint">Weg über den ersten Real Server</div>}
                         </div>
                       )}

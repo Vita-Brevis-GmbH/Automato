@@ -152,7 +152,9 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     # Regelindex des Quellsystems (Abgleich kann Werte aus dem IPAM ergaenzen) - nach einem
     # vCenter-Lauf der des ganzen Mandanten (VM-Namen im Suchtext)
     reconcile.reconcile_tenant(session, run.tenant_id)
-    if result.virtual is not None:
+    # vCenter: VM-Namen im Suchtext; NSX ALB (0.79.0): Server hinter den VIPs als Ziel der
+    # Firewall-Regeln - beides der Index des ganzen Mandanten
+    if result.virtual is not None or str(getattr(run.platform, "value", run.platform)) == "avi":
         rule_index.rebuild(session, run.tenant_id)
     else:
         rule_index.rebuild(

@@ -603,7 +603,7 @@ class Graph:
             extintf = str((n.raw or {}).get("extintf") or "any")
             if extintf != "any" and ports and extintf not in ports:
                 continue
-            return {
+            out = {
                 "name": n.name,
                 "id": n.id,
                 "ext": n.ext_ip,
@@ -611,6 +611,15 @@ class Graph:
                 "type": n.vip_type,
                 "ports": [n.ext_port, n.mapped_port] if n.portforward else None,
             }
+            # Ziel der VIP ist ein Virtual Service des NSX ALB (0.79.0): im Hop nennen
+            port = n.mapped_port if n.portforward else None
+            try:
+                lb = self.balancer(ipaddress.ip_address(to[0]), ("tcp", _first_port(port)))
+            except ValueError:
+                lb = None
+            if lb is not None:
+                out["balancer"] = lb["name"]
+            return out
         return None
 
     def balancer(self, ip, service: tuple[str, int | None] | None) -> dict | None:
@@ -885,6 +894,10 @@ def trace(
                 text = _exit_text(ex, cur, ip, g.names(ip))
                 _record(target, hops, branch, "exit", text, deviation)
                 continue
+            # VIP eines Load Balancers hinter einem Router ohne gelesenes Geraet (0.79.0): weiter
+            # vom Load Balancer zum Server, am selben Knoten
+            if behind(hops, branch, key, nh.get("interface"), table, deviation, cur):
+                continue
             known = g.names(ip) or ([egress["network"]] if egress.get("network") else [])
             name = f" ({', '.join(known)})" if known else ""
             if not ip:
@@ -1069,6 +1082,11 @@ def _bounds(text: str | None):
 def _after_balancer(hops: list[dict]) -> int:
     """Index nach dem letzten Hop mit Load Balancer (0 ohne): dort beginnt ein neuer Abschnitt."""
     return max((i + 1 for i, h in enumerate(hops) if h.get("lb")), default=0)
+
+
+def _first_port(text: str | None) -> int | None:
+    span = _port_span(text)
+    return span[0] if span else None
 
 
 def _port_span(text: str | None) -> tuple[int, int] | None:

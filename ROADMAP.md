@@ -386,11 +386,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.78.3** | Korrektur NSX ALB: HTTP 400 mit Begründung des Controllers, Rückfall ohne `X-Avi-Version`, Prüfung mit dem gewählten Avi-Tenant |
 | **0.78.4** | Korrektur Weg-Suche: passende Policies hinter der entscheidenden (z. B. hinter „Default Block …“ zuoberst) und Objekt, über das Quelle/Ziel passen |
 | **0.78.5** | Korrekturen nach dem Test des NSX ALB: Spalte „Einträge“ in den Läufen, Zusammenfassung des Avi-Laufs, „Letzte Läufe“ ohne Stau (kein HTTP 500 beim Einspielen) |
+| **0.79.0** | VIP der FortiGate vor dem NSX ALB: Regeln, Applikations-Doku, publizierte Dienste und Weg-Suche verketten öffentliche IP → VIP → Virtual Service → Server (ADR 0027 Ergänzung) |
 
-### Nächste Arbeiten (Stand 0.78.5)
+### Nächste Arbeiten (Stand 0.79.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.78.5.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.79.0.
 
 **Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
 Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in

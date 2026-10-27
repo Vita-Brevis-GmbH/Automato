@@ -5,7 +5,7 @@ import ipaddress
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import DeviceObject, NatRule, ObjectCategory
+from app.models import DeviceObject, NatRule, ObjectCategory, SourceSystem
 
 # Praefixe, hinter denen die Konvention den externen Namen fuehrt (V-EXT_<fqdn>, IPP_<fqdn>)
 _NAME_PREFIXES = ("V-EXT_", "VIP_", "IPP_")
@@ -162,6 +162,121 @@ def internal_ips(nat: NatRule) -> list[str]:
     return list(dict.fromkeys(ips))
 
 
+def is_balancer(nat: NatRule) -> bool:
+    """Virtual Service des NSX ALB (ADR 0027) - kein Eintrag einer Firewall."""
+    return (nat.attrs or {}).get("platform") == "avi"
+
+
+def _ports(text: str | None) -> tuple[int, int] | None:
+    lo, _, hi = str(text or "").partition("-")
+    try:
+        return (int(lo), int(hi or lo)) if lo.strip() else None
+    except ValueError:
+        return None
+
+
+def host_ip(text: str | None) -> str | None:
+    """Einzelne Adresse (`10.0.0.1`, `10.0.0.1/32`) normiert, sonst None."""
+    value = str(text or "").strip().removesuffix("/32").removesuffix("/128")
+    try:
+        return ipaddress.ip_address(value).compressed
+    except ValueError:
+        return None
+
+
+class Balancers:
+    """Virtual Services des NSX ALB je VIP-Adresse (0.79.0): zeigt eine VIP der FortiGate (bzw.
+    eine Regel) auf die VIP eines Load Balancers, geht es weiter zu dessen Servern -
+    öffentliche IP → VIP der FortiGate → Virtual Service → Server des Pools."""
+
+    def __init__(self, rows: list[NatRule]) -> None:
+        self.by_ip: dict[str, list[NatRule]] = {}
+        for n in rows:
+            ip = host_ip(n.ext_ip) if is_balancer(n) else None
+            if ip:
+                self.by_ip.setdefault(ip, []).append(n)
+
+    @classmethod
+    def load(cls, session: Session, tenant_id: int) -> "Balancers":
+        stmt = select(NatRule).where(NatRule.tenant_id == tenant_id, NatRule.nat_type == "dnat_vip")
+        return cls(list(session.scalars(stmt.order_by(NatRule.name, NatRule.id))))
+
+    def at(self, ip: str | None, port: str | None = None) -> list[NatRule]:
+        """Virtual Services mit dieser VIP-Adresse; mit Port nur die, deren Port ihn umfasst."""
+        found = self.by_ip.get(host_ip(ip) or "", [])
+        want = _ports(port)
+        if want is None:
+            return list(found)
+        out = []
+        for n in found:
+            have = _ports(n.ext_port)
+            if have is None or have[0] <= want[1] and want[0] <= have[1]:
+                out.append(n)
+        return out
+
+    def behind(self, nat: NatRule) -> list[NatRule]:
+        """Virtual Services hinter einer VIP der FortiGate: ihr internes Ziel ist die VIP des
+        Load Balancers - bei Port-Weiterleitung nur der weitergeleitete Port."""
+        if is_balancer(nat):
+            return []
+        port = nat.mapped_port if nat.portforward else None
+        out: list[NatRule] = []
+        for ip in internal_ips(nat):
+            out += [n for n in self.at(ip, port) if n not in out]
+        return out
+
+    def servers(self, nat: NatRule) -> list[str]:
+        """Server-IPs der Virtual Services hinter einer VIP der FortiGate."""
+        return list(dict.fromkeys(ip for lb in self.behind(nat) for ip in internal_ips(lb)))
+
+    def vips_for(self, values: list[str]) -> list[str]:
+        """VIP-Adressen der Virtual Services, deren Server in den Werten liegen (IP bzw.
+        Netz) - fuer die Route zum Load Balancer statt zum Server."""
+        nets = []
+        for v in values:
+            try:
+                nets.append(ipaddress.ip_network(str(v).strip(), strict=False))
+            except ValueError:
+                continue
+        out: list[str] = []
+        for ip, lbs in self.by_ip.items():
+            servers = {s for lb in lbs for s in internal_ips(lb)}
+            for s in servers:
+                try:
+                    addr = ipaddress.ip_address(s)
+                except ValueError:
+                    continue
+                if any(addr.version == n.version and addr in n for n in nets):
+                    out.append(ip)
+                    break
+        return out
+
+
+# Weg ueber einen Load Balancer im `via` eines Regel-Bereichs („V-EXT_x → vs-web“, 0.79.0)
+CHAIN = " → "
+
+
+def balancer_brief(lb: NatRule, source: str | None = None) -> dict:
+    """Virtual Service kompakt fuer Regel-Detail und publizierte Dienste."""
+    attrs = lb.attrs or {}
+    servers = [
+        f"{t['ip']}:{t['port']}" if t.get("port") else t["ip"]
+        for t in lb.targets or []
+        if isinstance(t, dict) and t.get("ip")
+    ]
+    out = {
+        "id": lb.id,
+        "name": lb.name,
+        "source": source,
+        "ext_ip": lb.ext_ip,
+        "ext_port": lb.ext_port,
+        "pool": attrs.get("pool") or attrs.get("pool_group"),
+        "tenant": attrs.get("tenant"),
+        "servers": servers,
+    }
+    return {k: v for k, v in out.items() if v not in (None, "")}
+
+
 # (Quellsystem, VDOM, Objektname) eines Firewall-Adressobjekts
 Server = tuple[int, str | None, str]
 
@@ -245,6 +360,9 @@ def briefs(
         if n.name.lower() in wanted and n.vdom == vdom
     ]
     ctx = references.context(session, tenant_id)
+    lbs = Balancers.load(session, tenant_id)  # 0.79.0: VIP -> Virtual Service des NSX ALB
+    stmt = select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == tenant_id)
+    names_of = dict(session.execute(stmt).tuples().all())
     return [
         {
             "id": n.id,
@@ -258,6 +376,9 @@ def briefs(
             "external_name": external_name(n),
             "ext_dns": references.dns_names(ctx, n.ext_ip),
             "mapped_dns": references.dns_names(ctx, n.mapped_ip),
+            "balancers": [
+                balancer_brief(lb, names_of.get(lb.source_system_id)) for lb in lbs.behind(n)
+            ],
         }
         for n in sorted(rows, key=lambda x: (x.nat_type, x.name))
     ]

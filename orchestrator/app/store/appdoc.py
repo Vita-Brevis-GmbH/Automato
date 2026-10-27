@@ -125,6 +125,7 @@ TABLE_COLUMNS: dict[int, list[str]] = {
         "VIP IP Adresse",
         "Externer DNS Name",
         "Externe IP Adressen",
+        "Load Balancer",
         ACTION,
         "Schutzmechanismen",
         DEVICE,
@@ -411,6 +412,23 @@ class TenantData:
     def nats(self) -> list[NatRule]:
         stmt = select(NatRule).where(NatRule.tenant_id == self.tenant_id)
         return list(self.session.scalars(stmt))
+
+    @cached_property
+    def balancers(self) -> nat_store.Balancers:
+        """Virtual Services des NSX ALB je VIP-Adresse (0.79.0)."""
+        return nat_store.Balancers(self.nats)
+
+    def balancer_text(self, vips: list[NatRule]) -> str:
+        """Load Balancer hinter den VIPs der Regel: „vs-web 10.30.0.50:443 (Pool p)“."""
+        out = []
+        for vip in vips:
+            for lb in self.balancers.behind(vip):
+                pool = (lb.attrs or {}).get("pool") or (lb.attrs or {}).get("pool_group")
+                port = f":{lb.ext_port}" if lb.ext_port else ""
+                text = f"{lb.name} {lb.ext_ip}{port}" + (f" (Pool {pool})" if pool else "")
+                if text not in out:
+                    out.append(text)
+        return ", ".join(out)
 
     @cached_property
     def nat_by_name(self) -> dict[tuple[int, str | None, str], NatRule]:
@@ -909,6 +927,7 @@ def _fw_rows(
                 "VIP IP Adresse": ext,
                 "Externer DNS Name": dns,
                 "Externe IP Adressen": ", ".join(n.ext_ip for n in rule_dnat if n.ext_ip),
+                "Load Balancer": data.balancer_text(rule_dnat),  # 0.79.0: NSX ALB hinter der VIP
                 "Schutzmechanismen": protections,
                 **common,
             }
@@ -930,9 +949,13 @@ def _fw_rows(
 
 
 def _nat_context(data: TenantData, ips: set[str]) -> list[NatRule]:
-    """VIPs mit einem der IPs als internem Ziel (auch Real Server)."""
+    """VIPs mit einem der IPs als internem Ziel (auch Real Server) - seit 0.79.0 auch die VIPs
+    der FortiGate, deren Ziel ein Virtual Service des NSX ALB mit diesen Servern ist."""
     return [
-        n for n in data.nats if n.nat_type == "dnat_vip" and ips & set(nat_store.internal_ips(n))
+        n
+        for n in data.nats
+        if n.nat_type == "dnat_vip"
+        and ips & {*nat_store.internal_ips(n), *data.balancers.servers(n)}
     ]
 
 

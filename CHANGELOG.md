@@ -7,6 +7,29 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.79.0 – 2026-10-27
+
+VIP der FortiGate vor dem NSX ALB (Rückmeldung des Anwenders): zeigt das Ziel einer VIP der
+FortiGate auf die VIP eines Virtual Service, gehören beide zusammen – öffentliche IP → VIP der
+FortiGate → Virtual Service → Server des Pools. ADR 0027 Ergänzung 0.79.0, ohne Migration.
+
+- **Firewall-Regeln:** die Server hinter dem Load Balancer sind Ziel der Regel (Bezug
+  „V-EXT_x → vs-web“) – die Suche findet die Regel über den Server, Virtual Service oder Pool;
+  das Regel-Detail zeigt bei der VIP den Virtual Service mit VIP:Port, Pool und Servern. Gilt
+  auch für Regeln, deren Ziel direkt die VIP des Load Balancers ist. Port-Weiterleitung wählt
+  den Virtual Service mit dem weitergeleiteten Port.
+- **Applikations-Doku:** Regeln über VIP und Load Balancer stehen in Kategorie 2 (Zugriff aus
+  dem Internet) mit der öffentlichen IP und der neuen Spalte **Load Balancer**; die Relevanz
+  prüft die Route zur VIP des Load Balancers, nicht zum Server dahinter. **Verbindungen Ende zu
+  Ende** gehen zur öffentlichen IP und über DNAT und Load Balancer zum Server.
+- **Publizierte Dienste:** VIP der FortiGate „→ NSX ALB vs-… · n Server“, Virtual Service „über
+  V-EXT_… (IP)“, im Detail beide Seiten (auch im Markdown-Export); die Regeln der VIP davor
+  zählen beim Virtual Service mit.
+- **Weg-Suche:** am DNAT-Hop „NSX ALB vs-…“; liegt die VIP des Load Balancers hinter einem
+  Router ohne gelesenes Gerät, geht der Weg trotzdem vom Load Balancer zum Server weiter.
+- Nach einem Lauf des NSX ALB wird der Regelindex des ganzen Mandanten neu aufgebaut.
+- ADR 0027 Ergänzung, BETRIEB, TESTS.
+
 ## 0.78.5 – 2026-10-27
 
 Korrekturen nach dem Test des NSX ALB (Avi 32.1.2): der Lauf kam durch, „Letzte Läufe“ meldete
