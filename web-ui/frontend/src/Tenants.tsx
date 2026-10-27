@@ -1223,7 +1223,7 @@ function SystemDialog({
             <label htmlFor="ss-role">{L("Rolle", "Role")}</label>
             <select id="ss-role" className="sel input" value={refRole} onChange={(e) => setRefRole(e.target.value)}>
               {system === null && (
-                <option value="">{L("automatisch (DDI führend, sonst NetBox)", "automatic (DDI leading, otherwise NetBox)")}</option>
+                <option value="">{L("automatisch (DDI führend, sonst NetBox)", "automatic (DDI primary, otherwise NetBox)")}</option>
               )}
               <option value="primary">
                 {REF_ROLE_LABEL.primary}{" "}

@@ -396,11 +396,18 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.83.1** | Korrektur ACI: VM über die Portgruppe im Fabric (keine Contracts der externen EPG 0.0.0.0/0), VRF der BDs aus `common`, Contracts externer EPGs nach dem L3Out |
 | **0.84.0** | Applikations-Doku: Kategorien-Tabellen neu – Source/Destination in Verkehrsrichtung mit Name und IP, Kategorie 2 mit VIP (Firewall), Load Balancer und Server, NAT-Spalte, leere Spalten ausgeblendet |
 | **0.85.0** | Netzwerkplan der Applikation: Load Balancer als Knoten in der EPG seiner VIP, verbunden mit den EPGs der Server; VIP der Firewall am Knoten (ADR 0021 Ergänzung 0.85.0) |
+| **0.86.0** | Oberfläche auf Deutsch und Englisch umschaltbar (Benutzermenü, je Browser, alle Rollen), Glossar; Texte vom Server und Exporte folgen (ADR 0028 Schritt 1) |
 
-### Nächste Arbeiten (Stand 0.85.0)
+### Nächste Arbeiten (Stand 0.86.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.85.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.86.0.
+
+**Deutsch/Englisch (Anwender 2026-10-27, ADR 0028):** Schritt 1 Oberfläche – **umgesetzt in
+0.86.0**; Schritt 2 Texte vom Server (Befunde, Gründe/Urteile im Weg, Spaltenköpfe der
+Applikations-Doku, API-Fehler; an Texten hängende Logik auf Schlüssel umstellen), Schritt 3
+Exporte Word/PDF/draw.io mit Sprachwahl im Export-Dialog, Schritt 4 Collector/Agent/CLI – offen,
+nach der Befundliste des Anwenders zu 0.85.0.
 
 **Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
 Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in

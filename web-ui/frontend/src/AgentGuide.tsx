@@ -522,7 +522,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
                 <td>
                   {L(
                     "Selbstsigniertes Geräte-Zertifikat: beim Quellsystem „TLS-Zertifikat prüfen“ ausschalten (nur Lab).",
-                    "Self-signed device certificate: switch off “Verify TLS certificate” at the source system (lab only).",
+                    "Self-signed device certificate: switch off “Verify the device's TLS certificate” at the source system (lab only).",
                   )}
                 </td>
               </tr>

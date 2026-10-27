@@ -31,3 +31,5 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0024 | Logische Zonen in Automato (Selektoren, längstes Präfix), Zonenmatrix mit Absicht je Paar, Zonenplan an Firewalls/VRFs, Export draw.io/SVG/PDF und Versionen (Entwurf) |
 | 0025 | Cisco-Switches strikt lesend über SSH (Exec je Befehl, Positivliste, Host-Schlüssel festhalten) und Verkabelung aus CDP/LLDP mit Befunden (Entwurf) |
 | 0026 | Export für Confluence: Word (.docx) und draw.io zum Import von Hand – kein Schreibweg |
+| 0027 | VMware NSX Advanced Load Balancer (Avi) als lesende Quelle: Virtual Services als NAT/Load Balancer, Weg über VIP zu den Servern |
+| 0028 | Sprache der Oberfläche und der Doku: Deutsch und Englisch (Text neben Text, Sprache je Browser, Server über `Accept-Language`, Fachbegriffe englisch) |

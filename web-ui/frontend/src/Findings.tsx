@@ -129,7 +129,7 @@ function RouteEntries({ f }: { f: Finding }) {
             <th>{L("Tabelle", "Table")}</th>
             <th>{L("Präfix", "Prefix")}</th>
             <th>{L("Abweichung", "Deviation")}</th>
-            <th>{String(d.other ?? L("führend", "lead"))}</th>
+            <th>{String(d.other ?? L("führend", "leading"))}</th>
             <th>{String(d.source ?? L("diese Firewall", "this firewall"))}</th>
           </tr>
         </thead>

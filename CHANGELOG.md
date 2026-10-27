@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.86.0 – 2026-10-27
+
+Oberfläche auf Deutsch und Englisch umschaltbar (Anwender: „alle Texte umschalten von Deutsch auf
+English und zurück“; Englisch für die Weboberfläche, die Doku soll auch in beiden Sprachen
+möglich sein; alle Benutzer; Fachbegriffe bleiben englisch – ADR 0028, Schritt 1).
+
+- **Benutzermenü → Sprache** *Deutsch* | *English*, gemerkt je Browser (`automato_lang`),
+  Standard Deutsch, für alle Rollen inkl. Kunden-Benutzer; Umschalten lädt die Seite neu,
+  `<html lang>` und Datum/Zeit (`de-CH` bzw. `en-GB`) folgen.
+- **Alle Ansichten** zweisprachig: Navigation, Kopfzeile, Anmeldung, Seitentitel, Reiter,
+  Spalten, Filter, Knöpfe, Dialoge, Hinweise, Tooltips, Bestätigungen, Fehlermeldungen der
+  Oberfläche, Markdown-Export und Druck aus der Oberfläche (Applikations-Doku, Verbindungen,
+  publizierte Dienste). Der deutsche Text ist unverändert.
+- **Noch deutsch** (folgt in Schritt 2/3): Texte vom Orchestrator – Befundtexte und Hinweise,
+  Gründe und Hinweise im Weg, Meldungen von Läufen, Fehlermeldungen der API, Spaltenköpfe und
+  Titel der Kategorien, Beschriftungen in Plänen sowie die Exporte Word/PDF/draw.io/SVG. Die
+  Oberfläche schickt die Sprache bereits als `Accept-Language` mit.
+- **Glossar** `docs/GLOSSAR.md` mit allen Begriffen in beiden Sprachen; Fachbegriffe (Policy,
+  Contract, EPG, L3Out, VDOM, VIP, Load Balancer, Source/Destination …) bleiben englisch.
+- Tests: `e2e/i18n.spec.ts` – Sprache wählen, gemerkt, zurück; jede Ansicht auf Englisch ohne
+  Fehler, Titel = Eintrag der Navigation.
+
 ## 0.85.0 – 2026-10-27
 
 Netzwerkplan der Applikation: VIP und Load Balancer (Anwender: „die EPG VIP mit dem Loadbalancer

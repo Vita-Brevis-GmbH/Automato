@@ -968,7 +968,7 @@ function InventoryTable({
                 <th>{L("Kontext", "Context")}</th>
                 <th>VRF</th>
                 <th>VLAN</th>
-                <th>{L("IPAM (führend)", "IPAM (leading)")}</th>
+                <th>{L("IPAM (führend)", "IPAM (primary)")}</th>
                 <th>{L("Anreicherung", "Enrichment")}</th>
                 <th>{L("Quelle", "Source")}</th>
               </tr>
@@ -1586,7 +1586,7 @@ function PortgroupDrawer({ id, onClose, onGo }: { id: number; onClose: () => voi
                               {ip.in_ipam === false && (
                                 <span
                                   className="chip warn"
-                                  title={L("IP nicht im führenden IPAM erfasst", "IP not recorded in the leading IPAM")}
+                                  title={L("IP nicht im führenden IPAM erfasst", "IP not recorded in the primary IPAM")}
                                 >
                                   {L("nicht im IPAM", "not in IPAM")}
                                 </span>
