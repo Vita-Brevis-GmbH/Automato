@@ -28,8 +28,10 @@ test("SNAT-Pool: Regel → NAT-Detail → zurück zu den Regeln", async ({ page 
 test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page }) => {
   await page.goto("/#nat");
   await search(page).fill("web01.example.ch");
-  await expect(rows(page)).toHaveCount(1);
-  await rows(page).first().click();
+  // seit 0.77.0 auch der Virtual Service des NSX ALB vor web01 (vs-shop)
+  await expect(rows(page)).toHaveCount(2);
+  await expect(rows(page).filter({ hasText: "vs-shop" })).toHaveCount(1);
+  await rows(page).filter({ hasText: "V-EXT_www.example.ch" }).click();
   const drawer = page.locator(".drawer");
   await expect(drawer).toContainText("www.example.ch");
   await expect(drawer).toContainText("web01.example.ch");
