@@ -4,7 +4,7 @@
 // oder Name/FQDN (IPAM, Objekte der Firewalls, VMs), der Dienst als tcp/443 oder Objektname.
 // Seit 0.57.0 die logischen Zonen je Hop, die Übergänge dazwischen und die Absicht zwischen
 // Quell- und Zielzone (auch je Dienst) mit Urteil.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   fetchRoutingSummary,
   HopRule,
@@ -783,6 +783,7 @@ function EndpointInput({
   const [type, setType] = useState<HitType>("");
   const [open, setOpen] = useState(false);
   const [more, setMore] = useState(false);
+  const blur = useRef<number | undefined>(undefined);
   const q = useDebounced(value.text, 300);
   useEffect(() => {
     const t = q.trim();
@@ -800,6 +801,7 @@ function EndpointInput({
   }, [q, tenantId, value.hit, type]);
   useEffect(() => {
     if (forceOpen?.hits.length) {
+      window.clearTimeout(blur.current); // Klick auf „Weg suchen“ schliesst die Auswahl nicht
       setType("");
       setRes(forceOpen);
       setOpen(true);
@@ -849,8 +851,13 @@ function EndpointInput({
           onChange({ text: e.target.value, hit: null });
           setOpen(true);
         }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onFocus={() => {
+          window.clearTimeout(blur.current);
+          setOpen(true);
+        }}
+        onBlur={() => {
+          blur.current = window.setTimeout(() => setOpen(false), 150);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             setOpen(false);

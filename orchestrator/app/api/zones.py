@@ -49,6 +49,7 @@ from app.models import (
 from app.store import (
     customer_alias,
     plan_export,
+    plan_import,
     plan_versions,
     plan_view,
     reconcile,
@@ -106,6 +107,18 @@ class VersionIn(BaseModel):
     tenant_id: int
     label: str = Field(min_length=1, max_length=200)
     note: str | None = Field(default=None, max_length=4000)
+
+
+class PlanImportIn(BaseModel):
+    """draw.io-Datei des Zonenplans zurueck einlesen (0.83.0): welche Teile uebernommen
+    werden."""
+
+    tenant_id: int
+    content: str = Field(min_length=1, max_length=2_000_000)
+    positions: bool = True
+    renames: bool = True
+    intents: bool = True
+    new_zones: bool = False
 
 
 class ArrangementIn(BaseModel):
@@ -698,6 +711,59 @@ def save_arrangement(
         detail={"tenant_id": tid, "view": body.view, "zones": len(positions)},
     )
     return plan_view.arrangement_out(row, body.view)
+
+
+def _plan_reading(session: Session, tid: int, content: str) -> "plan_import.Reading":
+    try:
+        return plan_import.read(session, tid, content)
+    except plan_import.SchemaError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/plan/import/preview")
+def plan_import_preview(
+    body: PlanImportIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Zonenplan aus draw.io (0.83.0, Operator): was die Datei gegenueber Automato aendert -
+    Lage, Namen, Absichten, neue Formen (schreibt nichts)."""
+    tid = tenant_scope(principal, body.tenant_id)
+    return _plan_reading(session, tid, body.content).out()
+
+
+@router.post("/plan/import")
+def plan_import_apply(
+    body: PlanImportIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Zonenplan aus draw.io uebernehmen (0.83.0, Operator): je Teil auf Wunsch; Audit
+    `zone_plan.imported`."""
+    tid = tenant_scope(principal, body.tenant_id)
+    reading = _plan_reading(session, tid, body.content)
+    try:
+        done = plan_import.apply(session, tid, reading, principal.subject, body.positions,
+                                 body.renames, body.intents, body.new_zones)  # fmt: skip
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="zone_plan.imported",
+        subject=reading.view,
+        detail={
+            "tenant_id": tid,
+            "view": reading.view,
+            "positions": done["positions"],
+            "renames": [[r["from"], r["to"]] for r in done["renames"]],
+            "intents": done["intents"],
+            "new_zones": done["new_zones"],
+        },  # fmt: skip
+    )
+    if done["intents"] or done["renames"] or done["new_zones"]:
+        reconcile.refresh_zone_findings(session, tid)  # Absichten, Zonen ausserhalb des Schemas
+    return {"view": reading.view, **done}
 
 
 @router.delete("/plan/arrangement", status_code=204)

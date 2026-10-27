@@ -358,6 +358,19 @@ Entscheide des Anwenders (2026-10-23):
     (Zonen verschiedener Kunden bekommen keine Absicht aus dem Schema). Die Zeichnung trägt
     `automato_customer` hin und zurück.
 
+20. **Zonen komplett, Teil 4 (0.83.0): Zonenplan aus draw.io zurück einlesen** (Korrekturen im
+    Designer, `store/plan_import.py`). Der Export trägt am Titel die Ansicht und die
+    Verschiebung (`automato_view`, `automato_offset`), jede Zone ihre ID in der Form
+    (`zone-<id>` bzw. `zone-customer-<id>`). Gelesen wird nur Eindeutiges, übernommen erst nach
+    der Vorschau und je Teil auf Wunsch (Operator, `POST /zones/plan/import[/preview]`):
+    Lage = Anordnung der Ansicht (`plan_view.save`); erste Zeile der Beschriftung = neuer Name,
+    ausser die Zone wurde seit dem Export in Automato umbenannt (dann gilt Automato) bzw. der
+    Name ist vergeben; neue Pfeile zwischen Zonen bzw. Linien mit `automato_intent` = Absicht
+    (Auswertung wie im Grundschema, `zone_schema.edge_intent`/`edge_pairs`; die Linien des
+    Exports selbst nicht); neue Formen ohne `automato_*` = Zonen ohne Selektoren (nur auf
+    Wunsch). Gelöschte Formen löschen nichts. Sicherheit wie beim Grundschema (2 MB, keine
+    DTD/Entitäten); nur Daten der Plattform, kein Schreibweg zu Quellsystemen.
+
 ## Folgen
 
 - Die Firewall-Zonen (`zone`, gelesen) bleiben, was sie sind; eine logische Zone kann sie als
@@ -368,8 +381,8 @@ Entscheide des Anwenders (2026-10-23):
   bisher (Matrix und Plan sind leer, keine Befunde).
 - Export für Confluence seit 0.71.0 als Word + draw.io zum Import von Hand (ADR 0026, kein
   Schreibweg).
-- Offen (ROADMAP Schritt 5, letzter Teil): draw.io-Datei des Zonenplans zurück einlesen
-  (Korrekturen im Designer). Erledigt in 0.82.0 (Nr. 19): Zonen je Kunde im Grundschema; in
+- ROADMAP Schritt 5 ist mit 0.83.0 abgeschlossen (Nr. 20: draw.io-Datei des Zonenplans zurück
+  einlesen). Erledigt in 0.82.0 (Nr. 19): Zonen je Kunde im Grundschema; in
   0.78.0 (Nr. 17): Befund „Zone ausserhalb des Schemas“, Absicht je Dienst und Richtung im
   Zonenplan, Zonen in den Verbindungen; in 0.81.0 (Nr. 18): Relevanz nach dem Weg in der
   Matrix, Übergänge zu Zonen nur hinter einem Router.

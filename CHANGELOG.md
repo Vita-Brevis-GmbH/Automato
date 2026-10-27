@@ -7,6 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.83.0 – 2026-10-27
+
+Zonen komplett, Teil 4 (ROADMAP Schritt 5 abgeschlossen, ADR 0024 Nr. 20): Zonenplan aus
+draw.io zurück einlesen. Ohne Migration.
+
+- **draw.io einlesen…** im Zonenplan (Operator): den exportierten Plan nach dem Bearbeiten
+  zurück nach Automato – Vorschau, dann je Teil übernehmen: **Lage** (Anordnung der Ansicht,
+  aus der der Export stammt), **Namen** (erste Zeile der Beschriftung), **Absichten** (neue
+  Pfeile bzw. Linien mit `automato_intent`, Auswertung wie im Grundschema), **neue Formen** als
+  Zonen ohne Selektoren (nur auf Wunsch). Gelöschte Formen löschen nichts; eine seit dem Export
+  in Automato umbenannte Zone behält ihren Namen (Hinweis). `POST /zones/plan/import[/preview]`,
+  Audit `zone_plan.imported`.
+- Export: Titel mit Ansicht und Verschiebung (`automato_view`, `automato_offset`), damit die
+  Lage genau zurückkommt.
+- Grundschema: Absicht und Richtung einer Linie als gemeinsame Auswertung
+  (`zone_schema.edge_intent`/`edge_pairs`), unverändert im Ergebnis.
+- Korrektur Weg-Suche: bei einem mehrdeutigen Namen schloss sich die Auswahl nach „Weg suchen“
+  manchmal gleich wieder (Fokus-Verlust des Felds); sie bleibt jetzt offen.
+- ADR 0024 Nr. 20, BETRIEB, TESTS.
+
 ## 0.82.0 – 2026-10-27
 
 Zonen komplett, Teil 3 (ROADMAP Schritt 5, ADR 0024 Nr. 19): Zonen je Kunde im Grundschema.

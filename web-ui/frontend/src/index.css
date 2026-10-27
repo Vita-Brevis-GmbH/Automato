@@ -441,6 +441,8 @@ svg.zone-plan.dragging text { user-select: none; }
 .zone-fixed-color { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; min-height: 32px; }
 /* Export und Versionen (0.52.0) */
 .plan-export { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.plan-import { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.plan-import-list { margin: 4px 0 10px 22px; padding: 0; font-size: 12.5px; }
 .plan-version { display: flex; flex-direction: column; gap: 12px; padding: 4px 0 8px; }
 .plan-version-head { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .plan-version-head .sel { width: auto; display: inline-block; }

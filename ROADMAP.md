@@ -392,11 +392,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.80.1** | Korrektur Läufe: Ergebnisse nacheinander einspielen, Sperre des Mandanten, Wiederholung bei Deadlock, Liste der Läufe ohne HTTP 500 |
 | **0.81.0** | Zonen komplett Teil 2: Zonenmatrix nach dem Weg („nicht möglich“ statt Verstoss), Übergang zu Zonen nur hinter einem Router (ADR 0024 Nr. 18) |
 | **0.82.0** | Zonen komplett Teil 3: Zonen je Kunde im Grundschema (Vorlage „je Kunde“, ADR 0024 Nr. 19) |
+| **0.83.0** | Zonen komplett Teil 4: Zonenplan aus draw.io zurück einlesen (Lage, Namen, Absichten, neue Formen; ADR 0024 Nr. 20) – Schritt 5 abgeschlossen |
 
-### Nächste Arbeiten (Stand 0.82.0)
+### Nächste Arbeiten (Stand 0.83.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.82.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.83.0.
 
 **Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
 Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in
@@ -423,7 +424,7 @@ bleibt) – **umgesetzt in 0.74.0**; weiter mit Schritt 5.
 | 2 | **Parallele Firewalls:** Abweichungen bei Policy-Routen, Routing und NAT zwischen den Firewalls eines Verbunds (ADR 0020 Ergänzung 0.72.0) | **umgesetzt in 0.72.0** |
 | 3 | **Schwachstellen** aus der Übersicht 0.70.0: ACI-Filter nur mit Quellport (Urteil statt „möglich“), Rückrichtung in der Doku je System wie in der Applikations-Doku, Leistung der Zonenmatrix mit der Rückrichtung messen (20 000 Contracts ≈ 1,2 s, linear – kein Zwischenspeicher nötig) | **umgesetzt in 0.72.1** |
 | 4 | **Lücken im Ablauf:** nächtlicher CI-Lauf auf dem aktuellen Stand (`main` nachführen), Überschriften der Roadmap | `main` = 0.70.0 (PR #1, 2026-10-26); weiter nachführen per PR auf Wunsch des Anwenders |
-| 5 | **Zonen komplett:** Zonen je Kunde im Grundschema, Befund „Zone ausserhalb des Schemas“, draw.io-Datei des Zonenplans zurück einlesen, Relevanz nach dem Weg in der Zonenmatrix, Übergänge über Routen ohne gemeinsames Netz, Absicht je Richtung im Plan, Zonen in den Verbindungen der Applikations-Doku (ADR 0024) | Teil 1 **umgesetzt in 0.78.0** (Zonen in den Verbindungen, Absicht je Richtung im Plan, Befund „Zone ausserhalb des Schemas“); Teil 2 **umgesetzt in 0.81.0** (Relevanz nach dem Weg in der Matrix, Übergänge zu Zonen nur hinter einem Router); Teil 3 **umgesetzt in 0.82.0** (Zonen je Kunde im Grundschema); offen: draw.io zurück einlesen |
+| 5 | **Zonen komplett:** Zonen je Kunde im Grundschema, Befund „Zone ausserhalb des Schemas“, draw.io-Datei des Zonenplans zurück einlesen, Relevanz nach dem Weg in der Zonenmatrix, Übergänge über Routen ohne gemeinsames Netz, Absicht je Richtung im Plan, Zonen in den Verbindungen der Applikations-Doku (ADR 0024) | Teil 1 **umgesetzt in 0.78.0** (Zonen in den Verbindungen, Absicht je Richtung im Plan, Befund „Zone ausserhalb des Schemas“); Teil 2 **umgesetzt in 0.81.0** (Relevanz nach dem Weg in der Matrix, Übergänge zu Zonen nur hinter einem Router); Teil 3 **umgesetzt in 0.82.0** (Zonen je Kunde im Grundschema); Teil 4 **umgesetzt in 0.83.0** (Zonenplan aus draw.io zurück einlesen) – **abgeschlossen** |
 | 6 | **Daten verschärfen** (Inhalt mit dem Anwender festlegen) | danach |
 | 7 | **Erstes Projekt abschliessen:** Produktivschaltung des DC mit den R14-Massnahmen (ADR 0013, RISKS) | danach |
 

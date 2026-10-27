@@ -3106,6 +3106,42 @@ export const fetchZonePlan = (tenantId: number, view?: PlanView) => getJSON<Zone
 // Anordnung (0.61.0, Operator): Position je Zone in der Ansicht `overview`, `all` bzw. `customer:<id>`
 export const savePlanArrangement = (tenantId: number, view: string, positions: Record<string, [number, number]>) =>
   sendJSON<NonNullable<ZonePlan["arrangement"]>>("/api/zones/plan/arrangement", "PUT", { tenant_id: tenantId, view, positions });
+// Zonenplan aus draw.io zurück einlesen (0.83.0, Operator): Vorschau, dann Teile übernehmen
+export interface PlanImportPreview {
+  view: string;
+  page: string | null;
+  positions: number;
+  moved: string[];
+  renames: { id: number; from: string; to: string }[];
+  intents: {
+    src_zone_id: number;
+    src: string;
+    dst_zone_id: number;
+    dst: string;
+    intent: ZoneIntent;
+    reason: string;
+    services: string[];
+    note: string | null;
+    current: ZoneIntent | null;
+  }[];
+  new_zones: { name: string; kind: ZoneKind; code: string | null }[];
+  missing: string[];
+  warnings: string[];
+}
+export interface PlanImportParts {
+  positions: boolean;
+  renames: boolean;
+  intents: boolean;
+  new_zones: boolean;
+}
+export const previewPlanImport = (tenantId: number, content: string) =>
+  sendJSON<PlanImportPreview>("/api/zones/plan/import/preview", "POST", { tenant_id: tenantId, content });
+export const applyPlanImport = (tenantId: number, content: string, parts: PlanImportParts) =>
+  sendJSON<{ view: string; positions: number; renames: unknown[]; intents: unknown[]; new_zones: string[]; skipped: string[] }>(
+    "/api/zones/plan/import",
+    "POST",
+    { tenant_id: tenantId, content, ...parts },
+  );
 export const resetPlanArrangement = (tenantId: number, view: string) =>
   sendJSON<void>(`/api/zones/plan/arrangement${qs({ tenant_id: tenantId, view })}`, "DELETE");
 export const fetchPlanVersions = (tenantId: number) =>

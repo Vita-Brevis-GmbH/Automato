@@ -598,7 +598,9 @@ def drawio(plan: dict, title: str, when: datetime | None = None,
     lay = layout(plan)
     stamp = _view_stamp(plan, when, version)
     if lay.get("format") == 2:
-        return _drawio2(lay, title, stamp)
+        from app.store import plan_view  # Ansicht fuer das Zurueckeinlesen (0.83.0)
+
+        return _drawio2(lay, title, stamp, plan_view.view_key(plan))
     mxfile = ET.Element("mxfile", {"host": "Automato", "type": "device"})
     diagram = ET.SubElement(mxfile, "diagram", {"id": "zonenplan", "name": "Zonenplan"})
     model = ET.SubElement(diagram, "mxGraphModel", {
@@ -657,9 +659,11 @@ def drawio(plan: dict, title: str, when: datetime | None = None,
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(mxfile, encoding="unicode")
 
 
-def _drawio2(lay: dict, title: str, stamp: str) -> str:
+def _drawio2(lay: dict, title: str, stamp: str, view: str | None = None) -> str:
     """draw.io des Zonenmodells: Zonen (mit Knoten) und Uebergaenge als Kanten mit den Netzen;
-    als Grundschema wieder einlesbar (Zonen ja, Uebergaenge und Hilfsformen nicht)."""
+    als Grundschema wieder einlesbar (Zonen ja, Uebergaenge und Hilfsformen nicht). Seit 0.83.0
+    traegt der Titel Ansicht und Verschiebung (`automato_view`, `automato_offset`) - die Datei
+    laesst sich als Zonenplan zurueck einlesen (`plan_import`)."""
     mxfile = ET.Element("mxfile", {"host": "Automato", "type": "device"})
     diagram = ET.SubElement(mxfile, "diagram", {"id": "zonenplan", "name": "Zonenplan"})
     model = ET.SubElement(diagram, "mxGraphModel", {
@@ -671,9 +675,15 @@ def _drawio2(lay: dict, title: str, stamp: str) -> str:
     root = ET.SubElement(model, "root")
     ET.SubElement(root, "mxCell", {"id": "0"})
     ET.SubElement(root, "mxCell", {"id": "1", "parent": "0"})
-    head = ET.SubElement(root, "mxCell", {
-        "id": "title", "value": f"<b>{_html(title)}</b><br>{_html(stamp)}", "vertex": "1",
-        "parent": "1", "style": "text;html=1;align=left;verticalAlign=top;fontSize=14;",
+    offset = lay.get("offset") or [0.0, 0.0]
+    head_obj = ET.SubElement(root, "UserObject", {
+        "id": "title", "label": f"<b>{_html(title)}</b><br>{_html(stamp)}",
+        "automato_view": view or "",
+        "automato_offset": f"{_n(offset[0])},{_n(offset[1])}",
+    })  # fmt: skip
+    head = ET.SubElement(head_obj, "mxCell", {
+        "vertex": "1", "parent": "1",
+        "style": "text;html=1;align=left;verticalAlign=top;fontSize=14;",
     })  # fmt: skip
     _geometry(head, 16, 8, 600, 40)
     for z in lay["zones"]:

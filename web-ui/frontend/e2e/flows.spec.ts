@@ -1052,6 +1052,36 @@ test("Zonen: Vorschläge beim Erfassen und Kommunikation im Zonenplan (0.66.0)",
   expect(problems).toEqual([]);
 });
 
+test("Zonenplan aus draw.io zurück einlesen: Vorschau und Namen übernehmen (0.83.0)", async ({ page, problems }) => {
+  const exp = await page.request.get("/api/zones/plan/export?tenant_id=1&format=drawio");
+  expect(exp.status()).toBe(200);
+  // in draw.io umbenannt: DMZ → DMZ Web, dazu eine neue Form
+  const text = (await exp.text())
+    .replace("&lt;b&gt;DMZ&lt;/b&gt;", "&lt;b&gt;DMZ Web&lt;/b&gt;")
+    .replace("</root>", '<mxCell id="neu" value="Labor" vertex="1" parent="1" style="rounded=1;"><mxGeometry x="1" y="1" width="80" height="30" as="geometry"/></mxCell></root>');
+  await page.goto("/#design");
+  await page.click(".tabbar button:has-text('Zonenplan')");
+  await expect(page.locator("#zone-plan .zp-zone2").first()).toBeVisible();
+  await page.locator("#zone-plan-import-file").setInputFiles({ name: "zonenplan.drawio", mimeType: "application/xml", buffer: Buffer.from(text) });
+  const preview = page.locator("#zone-plan-import-preview");
+  await expect(preview.locator("#zone-plan-import-rename-list")).toContainText("DMZ → DMZ Web");
+  await expect(preview.locator("#zone-plan-import-new-list")).toContainText("Labor");
+  await expect(page.locator("#zone-plan-import-new_zones")).not.toBeChecked();
+  // nur den Namen übernehmen (Lage bleibt)
+  await page.locator("#zone-plan-import-positions").uncheck();
+  await page.click("#zone-plan-import-apply");
+  await expect(page.locator("#zone-plan-import-done")).toContainText("1 umbenannt");
+  await expect(page.locator("#zone-plan .zp-zone2", { hasText: "DMZ Web" })).toHaveCount(1);
+  // zurück (die übrigen Tests kennen die Zone als DMZ)
+  const zones = (await (await page.request.get("/api/zones?tenant_id=1")).json()) as LogicalZoneRow[];
+  const dmz = zones.find((z) => z.name === "DMZ Web")!;
+  const put = await page.request.put(`/api/zones/${dmz.id}`, {
+    data: { tenant_id: 1, name: "DMZ", kind: dmz.kind, color: dmz.color, position: dmz.position, customer_id: dmz.customer_id, selectors: dmz.selectors },
+  });
+  expect(put.status()).toBe(200);
+  expect(problems).toEqual([]);
+});
+
 test("Weg-Suche: Zonen je Hop und Absicht zwischen Quell- und Zielzone", async ({ page, problems }) => {
   await page.goto("/#wege");
   await page.getByPlaceholder("Quelle: IP, Netz oder Name").fill("10.10.0.5");

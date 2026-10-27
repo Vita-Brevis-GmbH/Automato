@@ -46,6 +46,10 @@ import {
   previewZone,
   assistZone,
   type ZoneAssistItem,
+  applyPlanImport,
+  PlanImportParts,
+  PlanImportPreview,
+  previewPlanImport,
   resetPlanArrangement,
   savePlanArrangement,
   savePlanVersion,
@@ -1823,6 +1827,7 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
               </select>
             )}
             <ExportButtons tenantId={tenantId} view={planView} />
+            {canArrange && <PlanImport tenantId={tenantId} onDone={() => setTick((t) => t + 1)} />}
           </span>
         </div>
         <div className="card-body scroll">
@@ -2517,6 +2522,142 @@ function ExportButtons({ tenantId, versionId, view }: { tenantId: number; versio
       >
         {busy === "zip" ? "…" : "Für Confluence (Word + draw.io)"}
       </button>
+    </span>
+  );
+}
+
+// Zonenplan aus draw.io zurück einlesen (0.83.0, Operator): Datei wählen, Vorschau, Teile übernehmen
+const PLAN_MAX_BYTES = 2_000_000;
+
+function PlanImport({ tenantId, onDone }: { tenantId: number; onDone: () => void }) {
+  const file = useRef<HTMLInputElement>(null);
+  const [upload, setUpload] = useState<{ content: string; name: string; preview: PlanImportPreview } | null>(null);
+  const [parts, setParts] = useState<PlanImportParts>({ positions: true, renames: true, intents: true, new_zones: false });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const pick = async (f: File | undefined) => {
+    if (!f) return;
+    setErr(null);
+    setDone(null);
+    try {
+      if (f.size > PLAN_MAX_BYTES) throw new Error("Zeichnung zu gross (höchstens 2 MB)");
+      const content = await f.text();
+      setUpload({ content, name: f.name, preview: await previewPlanImport(tenantId, content) });
+      setParts({ positions: true, renames: true, intents: true, new_zones: false });
+    } catch (e) {
+      setErr(e);
+    } finally {
+      if (file.current) file.current.value = "";
+    }
+  };
+  const apply = async () => {
+    if (!upload) return;
+    setBusy(true);
+    try {
+      const r = await applyPlanImport(tenantId, upload.content, parts);
+      const said = [
+        r.positions ? `${r.positions} Zonen angeordnet` : "",
+        r.renames.length ? `${r.renames.length} umbenannt` : "",
+        r.intents.length ? `${r.intents.length} Absichten` : "",
+        r.new_zones.length ? `${r.new_zones.length} neue Zonen` : "",
+        ...r.skipped,
+      ].filter(Boolean);
+      setDone(said.join(" · ") || "nichts geändert");
+      setUpload(null);
+      onDone();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const p = upload?.preview;
+  const check = (k: keyof PlanImportParts, label: string, n: number) => (
+    <label className="check">
+      <input type="checkbox" id={`zone-plan-import-${k}`} checked={parts[k]} disabled={!n} onChange={(e) => setParts({ ...parts, [k]: e.target.checked })} />{" "}
+      {label}
+    </label>
+  );
+  return (
+    <span className="plan-import">
+      <input ref={file} type="file" accept=".drawio,.xml" id="zone-plan-import-file" style={{ display: "none" }} onChange={(e) => pick(e.target.files?.[0])} />
+      <button
+        className="btn btn-sm"
+        id="zone-plan-import"
+        title="Den exportierten Plan nach dem Bearbeiten in draw.io zurück einlesen: Lage, Namen, neue Pfeile als Absicht"
+        onClick={() => file.current?.click()}
+      >
+        draw.io einlesen…
+      </button>
+      {done && (
+        <span className="faint" id="zone-plan-import-done">
+          {done}
+        </span>
+      )}
+      <ErrorBox error={err} onClose={() => setErr(null)} />
+      {p && upload && (
+        <Modal
+          wide
+          title={`Zonenplan aus draw.io: ${upload.name}`}
+          onClose={() => setUpload(null)}
+          footer={
+            <>
+              <button className="btn btn-ghost" onClick={() => setUpload(null)}>
+                Abbrechen
+              </button>
+              <button className="btn btn-primary" id="zone-plan-import-apply" onClick={apply} disabled={busy}>
+                Übernehmen
+              </button>
+            </>
+          }
+        >
+          <div id="zone-plan-import-preview">
+            <p className="faint" style={{ marginTop: 0 }}>
+              Ansicht {p.view === "all" ? "alle Zonen" : p.view === "overview" ? "Übersicht" : p.view}
+              {p.page ? ` · Seite „${p.page}“` : ""}. Gelöschte Formen löschen keine Zone; die Linien des Exports sind keine neue Absicht –
+              dafür einen neuen Pfeil ziehen bzw. an der Linie die Eigenschaft <span className="mono">automato_intent</span> setzen.
+            </p>
+            {check("positions", `Lage: ${p.positions} Zonen (${p.moved.length} verschoben) als Anordnung dieser Ansicht`, p.positions)}
+            {check("renames", `Namen: ${p.renames.length}`, p.renames.length)}
+            {p.renames.length > 0 && (
+              <ul className="plan-import-list" id="zone-plan-import-rename-list">
+                {p.renames.map((r) => (
+                  <li key={r.id}>
+                    {r.from} → <b>{r.to}</b>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {check("intents", `Absichten: ${p.intents.length}`, p.intents.length)}
+            {p.intents.length > 0 && (
+              <ul className="plan-import-list" id="zone-plan-import-intent-list">
+                {p.intents.map((x) => (
+                  <li key={`${x.src_zone_id}>${x.dst_zone_id}`}>
+                    {x.src} → {x.dst}: <span className={`chip ${INTENT[x.intent][0]}`}>{INTENT[x.intent][1]}</span>
+                    {x.services.length > 0 && <span className="faint"> nur {x.services.join(", ")}</span>}
+                    <span className="faint"> ({x.reason}{x.current ? `, bisher ${INTENT[x.current][1]}` : ", neu"})</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {check("new_zones", `Neue Formen als Zonen anlegen (ohne Selektoren): ${p.new_zones.length}`, p.new_zones.length)}
+            {p.new_zones.length > 0 && (
+              <ul className="plan-import-list" id="zone-plan-import-new-list">
+                {p.new_zones.map((n) => (
+                  <li key={n.name}>
+                    {n.name} <span className="faint">({ZONE_KIND[n.kind] ?? n.kind})</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {p.missing.length > 0 && <p className="faint">Nicht in der Zeichnung (bleiben): {p.missing.join(", ")}</p>}
+            {p.warnings.map((w) => (
+              <Note key={w}>{w}</Note>
+            ))}
+          </div>
+        </Modal>
+      )}
     </span>
   );
 }

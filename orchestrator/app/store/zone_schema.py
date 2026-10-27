@@ -484,30 +484,11 @@ def parse(content: str) -> Schema:
         if a is b:
             continue
         text = "\n".join([c.label, *labels.get(c.id, [])]).strip()
-        raw = c.props.get("automato_intent", "").strip()
-        if raw:
-            intent = raw.casefold() if raw.casefold() in INTENTS else _label_intent(raw)
-            reason = "Eigenschaft automato_intent"
-            if intent is None:
-                out.warnings.append(f"Übergang {a.name} → {b.name}: Absicht „{raw}“ unbekannt")
-        else:
-            intent, reason = _label_intent(text), "Beschriftung"
-        if intent is None and c.style.get("dashed") == "1":
-            intent, reason = "limited", "gestrichelt"
-        if intent is None and (hue := _hue_intent(c.style.get("strokeColor"))):
-            intent, reason = hue, "Linienfarbe"
-        if intent is None:
-            intent, reason = "allow", "Standard"
-        raw_services = re.split(r"[,;\n]", c.props.get("automato_services", ""))
-        services = [x.strip()[:100] for x in raw_services if x.strip()][:50]
-        if services and intent == "allow" and reason == "Standard":
-            intent, reason = "limited", "Eigenschaft automato_services"
-        start = c.style.get("startArrow", "none") not in ("none", "")
-        end = c.style.get("endArrow", "classic") not in ("none", "")
-        pairs = (
-            [(a, b)] if end and not start else [(b, a)] if start and not end else [(a, b), (b, a)]
-        )
-        for s, d in pairs:
+        intent, reason, services, unknown = edge_intent(c, text)
+        if unknown:
+            raw = c.props.get("automato_intent", "").strip()
+            out.warnings.append(f"Übergang {a.name} → {b.name}: Absicht „{raw}“ unbekannt")
+        for s, d in edge_pairs(c, a, b):
             k = (s.key, d.key)
             old = links.get(k)
             if old is not None and old.intent != intent:
@@ -523,6 +504,39 @@ def parse(content: str) -> Schema:
     if not out.zones:
         raise SchemaError("keine Zonen in der Zeichnung gefunden")
     return out
+
+
+def edge_intent(c: _Cell, text: str) -> tuple[str, str, list[str], bool]:
+    """Absicht einer Linie: `automato_intent`, Beschriftung, gestrichelt, Linienfarbe, sonst
+    erlaubt; Dienste aus `automato_services` (machen „erlaubt“ zu „eingeschraenkt“).
+    -> (Absicht, Grund, Dienste, Eigenschaft unbekannt). Auch fuer den Zonenplan (0.83.0)."""
+    raw = c.props.get("automato_intent", "").strip()
+    unknown = False
+    if raw:
+        intent = raw.casefold() if raw.casefold() in INTENTS else _label_intent(raw)
+        reason = "Eigenschaft automato_intent"
+        unknown = intent is None
+    else:
+        intent, reason = _label_intent(text), "Beschriftung"
+    if intent is None and c.style.get("dashed") == "1":
+        intent, reason = "limited", "gestrichelt"
+    if intent is None and (hue := _hue_intent(c.style.get("strokeColor"))):
+        intent, reason = hue, "Linienfarbe"
+    if intent is None:
+        intent, reason = "allow", "Standard"
+    raw_services = re.split(r"[,;\n]", c.props.get("automato_services", ""))
+    services = [x.strip()[:100] for x in raw_services if x.strip()][:50]
+    if services and intent == "allow" and reason == "Standard":
+        intent, reason = "limited", "Eigenschaft automato_services"
+    return intent, reason, services if intent == "limited" else [], unknown
+
+
+def edge_pairs(c: _Cell, a, b) -> list[tuple]:
+    """Richtung einer Linie: Pfeil am Ziel = a -> b, am Anfang = b -> a, ohne bzw. mit beiden
+    in beide Richtungen."""
+    start = c.style.get("startArrow", "none") not in ("none", "")
+    end = c.style.get("endArrow", "classic") not in ("none", "")
+    return [(a, b)] if end and not start else [(b, a)] if start and not end else [(a, b), (b, a)]
 
 
 # -- Speichern und Laden --------------------------------------------------------------------
