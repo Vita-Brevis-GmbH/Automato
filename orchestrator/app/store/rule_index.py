@@ -23,6 +23,7 @@ from functools import lru_cache
 from sqlalchemy import delete, exists, func, insert, or_, select
 from sqlalchemy.orm import Session
 
+from app.i18n import german_only
 from app.models import (
     EndpointKind,
     EpgEndpoint,
@@ -351,6 +352,7 @@ def _pair_info(rule: Rule, position: int) -> rule_pairs.PairInfo | None:
     )
 
 
+@german_only  # speichert Suchtext und Listenzeile: immer deutsch (ADR 0028)
 def rebuild(
     session: Session,
     tenant_id: int | None,

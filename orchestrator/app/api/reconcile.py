@@ -17,6 +17,7 @@ from app.api.customer_filter import customer_view
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import german
 from app.models import Finding, FindingStatus, SourceSystem
 from app.store import customer_infra, customers, reconcile, references, rule_index
 
@@ -112,10 +113,11 @@ def run_reconcile(
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     tid = _tenant(principal, tenant_id)
-    counts = reconcile.reconcile_tenant(session, tid)
-    rule_index.rebuild(session, tid)  # Werte/DNS-Namen aus dem IPAM im Suchtext
-    reconcile.refresh_app_findings(session, tid)  # Regel <-> Weg (0.59.0), mit dem Index
-    customers.derive(session, tid)  # Findings gehoeren Kunden ueber ihr Subjekt (ADR 0018)
+    with german():  # speichert Befunde und Suchtext: immer deutsch (ADR 0028)
+        counts = reconcile.reconcile_tenant(session, tid)
+        rule_index.rebuild(session, tid)  # Werte/DNS-Namen aus dem IPAM im Suchtext
+        reconcile.refresh_app_findings(session, tid)  # Regel <-> Weg (0.59.0), mit dem Index
+        customers.derive(session, tid)  # Findings gehoeren Kunden ueber ihr Subjekt (ADR 0018)
     audit.record(
         session,
         actor=f"user:{principal.subject}",
