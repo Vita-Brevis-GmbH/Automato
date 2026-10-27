@@ -15,9 +15,11 @@
                                  Startpunkt, je FortiGate-Hop die passenden Policies (0.22.0),
                                  je ACI-VRF-Hop die Contracts (0.35.0); Dienst auch als
                                  Service-Objekt bzw. ACI-Filter (`FT_https`); Quelle und Ziel
-                                 auch als Netz (0.39.0)
-- `GET /routing/resolve?q=&type=`  Name bzw. FQDN -> Hosts und Netze (IPAM, Objekte, VMs,
-                                 Inventar) fuer die Weg-Suche, seitenweise (`limit`, `offset`)
+                                 auch als Netz (0.39.0) bzw. als Anbindung (`src_exit=`,
+                                 `dst_exit=`, ADR 0019 Ergaenzung)
+- `GET /routing/resolve?q=&type=`  Name bzw. FQDN -> Hosts, Netze und Anbindungen (IPAM,
+                                 Objekte, VMs, Inventar, `topo_exit` bzw. erkannt) fuer die
+                                 Weg-Suche, seitenweise (`limit`, `offset`)
 - `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs` - Nachbarn mit Namen aus dem IPAM
 - `GET/POST/PUT/DELETE /routing/exits` - Anbindungen nach aussen (Internet, MPLS, WAN),
                                  von Hand erfasst (operator), an denen ein Weg endet bzw.
@@ -64,6 +66,7 @@ from app.models import (
 )
 from app.store import (
     customer_infra,
+    exit_ends,
     exits,
     l2_topo,
     paths,
@@ -580,33 +583,69 @@ def lookup(
     return out
 
 
+EXIT_REF = r"^(exit|router):[^@\s]+(@\d+)?$"
+
+
 @router.get("/trace")
 def trace(
-    dst: str,
+    dst: str | None = None,
     src: str | None = None,
     start: str | None = Query(None, description="Startpunkt: <Quellsystem>|<Kontext>"),
     slack: int = Query(1, ge=0, le=3, description="Backup-Wege mit hoechstens so vielen Hops mehr"),
     service: str | None = Query(
         None, max_length=200, description="Dienst, z. B. tcp/443, bzw. Service-Objekt FT_https"
     ),
+    src_exit: str | None = Query(
+        None,
+        max_length=100,
+        pattern=EXIT_REF,
+        description="Anbindung als Quelle: exit:<id> bzw. router:<IP>, optional @<Quellsystem>",
+    ),
+    dst_exit: str | None = Query(
+        None, max_length=100, pattern=EXIT_REF, description="Anbindung als Ziel (wie src_exit)"
+    ),
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Weg zum Ziel Hop fuer Hop - ab der Quelle (dort angeschlossen) bzw. dem Startpunkt;
-    Quelle und Ziel als IP bzw. Netz (das Netz als Ganzes, 0.39.0)."""
+    Quelle und Ziel als IP bzw. Netz (das Netz als Ganzes, 0.39.0) bzw. als Anbindung (ADR 0019
+    Ergaenzung): als Quelle Start an ihren Firewalls mit ihrem Eingang, Adresse aus ihren Netzen
+    (`src` waehlt ein anderes), als Ziel ihre Netze und je Weg, ob er ueber sie hinausgeht."""
     tid = _tenant(session, principal, tenant_id)
-    _endpoint(dst, "dst")
+    if not dst and not dst_exit:
+        raise HTTPException(status_code=422, detail=L("dst oder dst_exit angeben",
+                                                      "specify dst or dst_exit"))  # fmt: skip
+    if dst:
+        _endpoint(dst, "dst")
     if src:
         _endpoint(src, "src")
-    if not src and not start:
+    if not src and not start and not src_exit:  # src_exit: Anbindung als Quelle
         raise HTTPException(status_code=422, detail=L("src oder start angeben",
                                                       "specify src or start"))  # fmt: skip
     wanted, note = _service(session, tid, service)
     graph = paths.Graph(session, tid)
-    result = paths.trace(session, tid, dst, src, start, slack, wanted, graph=graph)
+    ends: dict[str, exit_ends.End] = {}
+    shown: dict[str, dict] = {}
+    entries = None
+    if src_exit:
+        end = ends["src"] = _exit_end(graph, src_exit, "src_exit")
+        family = topology.endpoint(dst).version if dst else None
+        src, how = (src, "given") if src else end.address(graph, family)
+        entries = end.entries(graph)
+        start = None  # der Start ergibt sich aus der Anbindung
+        shown["src"] = end.out(graph, src, how)
+    if dst_exit:
+        end = ends["dst"] = _exit_end(graph, dst_exit, "dst_exit")
+        family = topology.endpoint(src).version if src else None
+        dst, how = (dst, "given") if dst else end.address(graph, family)
+        shown["dst"] = end.out(graph, dst, how)
+    result = paths.trace(session, tid, dst, src, start, slack, wanted, graph=graph,
+                         entries=entries)  # fmt: skip
     if note:
         result["notes"].insert(0, note)
+    if ends:
+        _exit_notes(result, ends, shown)
     if service and wanted is not None and result["service"] != service.strip().lower():
         result["service_name"] = service.strip()
     # Zonen je Hop, Uebergaenge und Absicht Quell-/Zielzone (0.57.0)
@@ -614,6 +653,40 @@ def trace(
     # L2 zwischen den Hops, Anschluss von Quelle und Ziel (0.64.0)
     l2_topo.annotate(session, tid, result, src, dst)
     return result
+
+
+def _exit_end(graph: paths.Graph, ref: str, what: str) -> exit_ends.End:
+    end = exit_ends.find(graph, ref)
+    if end is None:
+        detail = L(f"{what}: Anbindung „{ref}“ unbekannt – neu suchen",
+                   f"{what}: exit “{ref}” unknown – search again")  # fmt: skip
+        raise HTTPException(status_code=422, detail=detail)
+    return end
+
+
+def _exit_notes(result: dict, ends: dict[str, exit_ends.End], shown: dict[str, dict]) -> None:
+    """Anbindung als Quelle bzw. Ziel im Ergebnis (`exits`): ohne gelesene Firewall bzw. ohne
+    Weg ueber die Anbindung ein Hinweis; als Ziel je Weg `via_exit`."""
+    result["exits"] = shown
+    src, dst = ends.get("src"), ends.get("dst")
+    if src is not None and not result["start"]:
+        result["notes"].insert(0, L(
+            f"{src.label}: keine gelesene Firewall mit dieser Anbindung – kein Start",
+            f"{src.label}: no firewall read with this exit – no start",
+        ))  # fmt: skip
+    if src is not None and len(result["start"]) > 1:  # je Firewall der Anbindung ein Weg
+        for path in result["paths"]:
+            if path["hops"]:
+                path["exit_start"] = path["hops"][0]["label"]
+    if dst is None:
+        return
+    for path in result["paths"]:
+        path["via_exit"] = dst.reaches(path)
+    if result["paths"] and not any(p["via_exit"] for p in result["paths"]):
+        result["notes"].append(L(
+            f"Kein Weg führt über {dst.label} – das Routing nimmt einen anderen Weg",
+            f"No path leads via {dst.label} – the routing takes another path",
+        ))  # fmt: skip
 
 
 def _service(session: Session, tid: int, text: str | None) -> tuple[tuple | None, str | None]:
@@ -654,7 +727,7 @@ def _service(session: Session, tid: int, text: str | None) -> tuple[tuple | None
 def resolve_name(
     q: str = Query(..., min_length=1, max_length=200, description="Name, FQDN, IP bzw. Netz"),
     tenant_id: int | None = None,
-    only: str | None = Query(None, alias="type", pattern="^(host|net)$"),
+    only: str | None = Query(None, alias="type", pattern="^(host|net|exit)$"),
     limit: int = Query(resolve.LIMIT, ge=1, le=500),
     offset: int = Query(0, ge=0),
     customer_id: int | None = None,
@@ -662,14 +735,22 @@ def resolve_name(
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Hosts und Netze zu einem Namen bzw. FQDN aus IPAM, Firewall-Objekten, VMs und dem
-    Inventar (Weg-Suche): seitenweise mit Gesamtzahl und Anzahl je Art; mit Kunde (0.76.0)
-    nur in seinen Netzen (geteilte markiert), eine eingegebene IP ohne fremden Namen."""
+    Inventar (Weg-Suche), dazu Anbindungen als Quelle bzw. Ziel (ADR 0019 Ergaenzung):
+    seitenweise mit Gesamtzahl und Anzahl je Art; mit Kunde (0.76.0) nur in seinen Netzen
+    (geteilte markiert), eine eingegebene IP ohne fremden Namen, Anbindungen an seinen
+    Firewalls."""
     tid = _tenant(session, principal, tenant_id)
     infra = _infra(session, principal, tid, customer_id)
     keep = None
     if infra is not None:
 
         def keep(hit: dict) -> bool:
+            if hit.get("type") == "exit":  # wie die Liste der Anbindungen
+                mark = _exit_mark(infra, hit.get("source_system_ids"), hit.get("prefixes"))
+                if mark is None:
+                    return False
+                hit["shared"] = mark == SHARED
+                return True
             mark = infra.net_mark(hit.get("ip"))
             if mark is None:
                 if hit.get("kind") != "ip":

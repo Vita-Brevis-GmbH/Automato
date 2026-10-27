@@ -4,11 +4,20 @@
 // oder Name/FQDN (IPAM, Objekte der Firewalls, VMs), der Dienst als tcp/443 oder Objektname.
 // Seit 0.57.0 die logischen Zonen je Hop, die Übergänge dazwischen und die Absicht zwischen
 // Quell- und Zielzone (auch je Dienst) mit Urteil.
-import { useEffect, useRef, useState } from "react";
+// ADR 0019 Ergänzung (Test des Anwenders 2026-10-27): Eingaben und Ergebnis bleiben in der URL
+// (#wege?src=…&dst=…&service=…, Zurück stellt die Suche wieder her), Details am Weg im Seitenpanel
+// statt eines Sprungs in eine andere Ansicht, je Link „↗“ in einem neuen Tab, je Hop „mehr“; dazu
+// Anbindungen als Quelle bzw. Ziel (Eingang der Anbindung, ihre Netze bzw. Internet).
+import { createContext, Fragment, ReactNode, useContext, useEffect, useRef, useState } from "react";
 import {
+  ExitKind,
+  fetchInventory,
+  fetchObjects,
+  fetchRoutes,
   fetchRoutingSummary,
   HopRule,
   HopRules,
+  InvInterface,
   L2Location,
   L2Segment,
   lookupRoute,
@@ -18,18 +27,112 @@ import {
   RouteLookup,
   RoutingNode,
   snatText,
+  TopoRoute,
+  TraceExitEnd,
+  TraceHop,
   TracePath,
+  TracePort,
   TraceResult,
   traceRoute,
   TraceZone,
   TraceZoneStep,
 } from "./api";
-import type { ViewParams } from "./App";
-import { useDebounced } from "./Objects";
-import { Capture, CAPTURE_KEY, Hops, matchText, Missing, policyText, Port, VrfChip, where } from "./Routing";
-import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
+import type { View, ViewParams } from "./App";
+import { NatDrawer } from "./Nat";
+import { ObjectDrawer, useDebounced } from "./Objects";
+import RuleDetailDrawer from "./RuleDetail";
+import { Capture, CAPTURE_KEY, Hops, matchText, Missing, Names, policyText, VrfChip, where } from "./Routing";
+import { Dash, Drawer, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 import { FoldTitle, useFolds } from "./fold";
 import { L } from "./i18n";
+
+// -- Details am Weg (ADR 0019 Ergänzung) -------------------------------------------------------
+// Ein Klick öffnet das Detail im Seitenpanel – die Weg-Suche bleibt stehen; Ctrl-/Cmd-/Mittelklick
+// bzw. „↗“ öffnet dieselbe Ansicht in einem neuen Tab (gleiche Hash-URL).
+type DetailRef =
+  | { kind: "rule"; id: number }
+  | { kind: "nat"; id: number }
+  | { kind: "object"; name: string; sid: number }
+  | { kind: "route"; hop: TraceHop }
+  | { kind: "node"; hop: TraceHop };
+const DetailCtx = createContext<(d: DetailRef) => void>(() => undefined);
+
+const hashOf = (view: string, params: Record<string, string> = {}) => {
+  const q = new URLSearchParams(params).toString();
+  return `#${view}${q ? `?${q}` : ""}`;
+};
+const ruleHref = (id: number) => hashOf("regeln", { rule: String(id) });
+const natHref = (name: string) => hashOf("nat", { q: name });
+const objectHref = (name: string) => hashOf("objekte", { q: name });
+const portHref = (name: string) => hashOf("objekte", { tab: "ports", q: name });
+const routesHref = (h: TraceHop, q?: string) => hashOf("routing", { tab: "routes", context: h.key, ...(q ? { q } : {}) });
+const EXITS_HREF = hashOf("routing", { tab: "exits" });
+// andere Ansicht in einem neuen Tab (aus den Details heraus), die Weg-Suche bleibt
+const openTab = (v: View, p: ViewParams = {}) => window.open(hashOf(v, p), "_blank", "noopener");
+
+const EXIT_KIND: Record<ExitKind, string> = {
+  internet: "Internet",
+  mpls: "MPLS",
+  wan: "WAN",
+  partner: "Partner",
+  other: L("Anbindung", "Exit"),
+};
+
+export function NewTab({ href }: { href: string }) {
+  return (
+    <a
+      className="newtab"
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={L("in neuem Tab öffnen", "open in new tab")}
+      aria-label={L("in neuem Tab öffnen", "open in new tab")}
+    >
+      ↗
+    </a>
+  );
+}
+
+// Link am Weg: Klick = Detail im Seitenpanel, Ctrl-/Cmd-/Shift-/Mittelklick wie im Browser (neuer Tab)
+function Opener({
+  href,
+  detail,
+  title,
+  className,
+  children,
+}: {
+  href: string;
+  detail: DetailRef;
+  title?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const open = useContext(DetailCtx);
+  return (
+    <>
+      <a
+        href={href}
+        className={className}
+        title={title ?? L("Details im Seitenpanel – Ctrl-Klick: neuer Tab", "Details in the side panel – Ctrl-click: new tab")}
+        onClick={(e) => {
+          if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+          e.preventDefault();
+          open(detail);
+        }}
+      >
+        {children}
+      </a>
+      <NewTab href={href} />
+    </>
+  );
+}
+
+// Quelle/Ziel einer Policy über ein Objekt (nicht any, negiert, Netz, direkt): als Objekt öffnen
+const PLAIN = new Set(["any", "all", "negiert", "negated", "netz", "network", "direkt", "direct"]);
+function objectName(via: string | null): string | null {
+  const name = (via ?? "").replace(/ \((Teil|part)\)$/, "").trim();
+  return name && !PLAIN.has(name.toLowerCase()) ? name : null;
+}
 
 const END: Record<TracePath["end"]["kind"], [string, string]> = {
   connected: ["ok", L("Ziel erreicht", "Destination reached")],
@@ -74,6 +177,18 @@ function PathKind({ path, activeCount }: { path: TracePath; activeCount: number 
         )}
       >
         {L("redundant · Verbund", "redundant · parallel group")} {path.parallel.join(", ")}
+      </span>
+    );
+  if (path.exit_start && activeCount > 1)
+    return (
+      <span
+        className="chip info"
+        title={L(
+          "Anbindung an mehreren Firewalls: je Firewall ein Weg",
+          "Exit at several firewalls: one path per firewall",
+        )}
+      >
+        {L("Variante ab", "Variant from")} {path.exit_start}
       </span>
     );
   return activeCount > 1 ? (
@@ -121,9 +236,13 @@ function matchedVia(p: HopRule): string {
 function HopRuleLine({ p }: { p: HopRule }) {
   return (
     <span className={p.decides ? undefined : "faint"}>
-      <a href={`#regeln?rule=${p.rule_id}`} title={L("Regel öffnen", "Open rule")}>
+      <Opener
+        href={ruleHref(p.rule_id)}
+        detail={{ kind: "rule", id: p.rule_id }}
+        title={L("Regel im Seitenpanel öffnen – Ctrl-Klick: neuer Tab", "Open rule in the side panel – Ctrl-click: new tab")}
+      >
         {p.label ?? `Policy ${p.external_id}`}
-      </a>
+      </Opener>
       {!p.label && p.name ? ` „${p.name}“` : ""} · {p.action === "allow" ? L("erlauben", "accept") : L("sperren", "deny")}
       {matchedVia(p)}
       {p.services.length ? ` · ${p.services.join(", ")}` : ""}
@@ -504,6 +623,658 @@ function L2Ends({ trace }: { trace: TraceResult }) {
   );
 }
 
+// Ein- bzw. Ausgang eines Hops: Interface (Detail im Seitenpanel), Zone, Next-Hop, Anbindung
+function HopPort({ p, hop }: { p: TracePort | undefined; hop: TraceHop }) {
+  if (!p?.interface && !p?.next_hop && !p?.zone) return null;
+  return (
+    <div>
+      {p.interface && (
+        <Opener
+          href={portHref(p.interface)}
+          detail={{ kind: "node", hop }}
+          className="mono hop-port"
+          title={L("Interface im Seitenpanel – Ctrl-Klick: Ports in neuem Tab", "Interface in the side panel – Ctrl-click: ports in a new tab")}
+        >
+          {p.interface}
+        </Opener>
+      )}
+      {p.zone && (
+        <span className="chip" style={{ marginLeft: 4 }}>
+          {p.zone}
+        </span>
+      )}
+      {p.next_hop && (
+        <span className="mono">
+          {" "}
+          → {p.next_hop}
+          <Names r={p} />
+        </span>
+      )}
+      {p.exit && (
+        <>
+          <span
+            className="chip info"
+            style={{ marginLeft: 4 }}
+            title={L("Anbindung nach aussen (von Hand erfasst)", "Exit to the outside (captured manually)")}
+          >
+            {EXIT_KIND[p.exit.kind as ExitKind] ?? L("Anbindung", "Exit")} {p.exit.name}
+          </span>
+          <NewTab href={EXITS_HREF} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function portText(p?: TracePort | null): string {
+  const parts = [p?.interface, p?.zone && L(`Zone ${p.zone}`, `zone ${p.zone}`)].filter(Boolean);
+  return parts.join(" · ") || "–";
+}
+
+// Entscheidende Regel mit Interfaces, Quelle, Ziel und Dienst; Objekte im Seitenpanel
+function RuleFacts({ p, r, sid }: { p: HopRule; r: HopRules; sid: number }) {
+  const side = (via: string | null) => {
+    if (!via) return <span className="faint">?</span>;
+    const name = p.kind ? null : objectName(via);
+    return name ? (
+      <Opener href={objectHref(name)} detail={{ kind: "object", name, sid }} className="mono">
+        {via}
+      </Opener>
+    ) : (
+      <span className="mono">{via}</span>
+    );
+  };
+  return (
+    <div className="rule-facts">
+      <Opener href={ruleHref(p.rule_id)} detail={{ kind: "rule", id: p.rule_id }}>
+        {p.label ?? `Policy ${p.external_id}`}
+      </Opener>
+      {!p.label && p.name ? ` „${p.name}“` : ""} · {p.action === "allow" ? L("erlauben", "accept") : L("sperren", "deny")}
+      {p.kind ? (
+        (r.src_epg || r.dst_epg) && (
+          <div>
+            EPG: {r.src_epg || "?"} → {r.dst_epg || "?"}
+          </div>
+        )
+      ) : (
+        <div>
+          Interfaces: <span className="mono">{p.srcintf.join(", ") || "?"}</span> →{" "}
+          <span className="mono">{p.dstintf.join(", ") || "?"}</span>
+        </div>
+      )}
+      <div>
+        {L("Quelle", "Source")}: {side(p.src)} · {L("Ziel", "Destination")}: {side(p.dst)}
+      </div>
+      <div>
+        {L("Dienst", "Service")}: {p.services.join(", ") || "–"}
+      </div>
+      {p.unsure.length > 0 && (
+        <div className="faint">
+          {L("nicht prüfbar", "not verifiable")}: {p.unsure.join(", ")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Ein Hop ausführlich (Anwender: „mehr Infos am Pfad“): Knoten, Ein-/Ausgang mit Zone, Route mit
+// Next-Hops, die entscheidende Regel mit Quelle/Ziel/Dienst und NAT – je Firewall eines Verbunds
+function HopFacts({ h, zone, title }: { h: TraceHop; zone?: TraceZone | null; title?: string }) {
+  const decisive = h.rules?.rules.find((x) => x.decides);
+  const r = h.route;
+  const kind = h.kind === "vrf" ? "ACI-VRF" : h.kind === "vdom" ? "VDOM" : "Firewall";
+  return (
+    <div className="hop-facts">
+      {title && <div className="hop-facts-title">{title}</div>}
+      <dl className="kv tight">
+        <dt>{L("Knoten", "Node")}</dt>
+        <dd>
+          {kind} · {h.source}
+          {h.group ? L(` · Verbund ${h.group}`, ` · parallel group ${h.group}`) : ""}
+          {h.kind === "vrf" && h.members.length ? ` · ${h.members.join(", ")}` : ""} <VrfChip vrf={h.vrf} />
+          <Missing items={h.missing} />
+        </dd>
+        <dt>{L("Eingang", "Incoming")}</dt>
+        <dd>
+          {portText(h.ingress)} <span className="faint">· {h.via}</span>
+        </dd>
+        <dt>{L("Ausgang", "Outgoing")}</dt>
+        <dd>
+          {portText(h.egress)}
+          {h.egress?.next_hop && (
+            <span className="mono">
+              {" "}
+              → {h.egress.next_hop}
+              <Names r={h.egress} />
+            </span>
+          )}
+          {h.egress?.exit && ` · ${EXIT_KIND[h.egress.exit.kind as ExitKind] ?? ""} ${h.egress.exit.name}`}
+        </dd>
+        {zone && (
+          <>
+            <dt>{L("Zone", "Zone")}</dt>
+            <dd>
+              <ZoneChip z={zone} /> <NewTab href={hashOf("design")} />
+            </dd>
+          </>
+        )}
+        <dt>Route</dt>
+        <dd>
+          {h.policy ? (
+            <>
+              {policyText(h.policy)} {L("geht der Routing-Tabelle vor", "takes precedence over the routing table")}:{" "}
+              <span className="mono">{[h.policy.gateway, ...h.policy.output_device].filter(Boolean).join(" · ") || "–"}</span>
+            </>
+          ) : r ? (
+            <>
+              <Opener href={routesHref(h, r.prefix)} detail={{ kind: "route", hop: h }} className="mono">
+                {r.prefix}
+              </Opener>{" "}
+              <span className="faint">
+                {[r.protocol, r.distance != null && L(`Distanz ${r.distance}`, `Distance ${r.distance}`)].filter(Boolean).join(" · ")}
+              </span>
+              <Hops hops={r.next_hops} />
+            </>
+          ) : (
+            <span className="faint">{L("keine Route", "no route")}</span>
+          )}
+          {h.backup && (
+            <div className="faint">
+              Backup {h.backup.prefix}: {h.backup.reason}
+            </div>
+          )}
+        </dd>
+        {h.rules && (
+          <>
+            <dt>{L("Regel", "Rule")}</dt>
+            <dd>
+              {decisive ? <RuleFacts p={decisive} r={h.rules} sid={h.source_system_id} /> : null}
+              <div className="faint">{h.rules.text}</div>
+            </dd>
+          </>
+        )}
+        {h.nat && (
+          <>
+            <dt>DNAT</dt>
+            <dd>
+              <Opener href={natHref(h.nat.name)} detail={{ kind: "nat", id: h.nat.id }} className="mono">
+                {h.nat.name}
+              </Opener>{" "}
+              <span className="mono">
+                {h.nat.ext} → {h.nat.to.join(", ")}
+              </span>
+              {h.nat.ports && <span className="faint"> · Port {h.nat.ports.join(" → ")}</span>}
+            </dd>
+          </>
+        )}
+        {h.snat && (
+          <>
+            <dt>SNAT</dt>
+            <dd>
+              <span className="mono">{h.snat.to ?? "?"}</span> <span className="faint">({snatText(h.snat)})</span>
+            </dd>
+          </>
+        )}
+        {h.lb && (
+          <>
+            <dt>Load Balancer</dt>
+            <dd>
+              <Opener href={natHref(h.lb.name)} detail={{ kind: "nat", id: h.lb.id }} className="mono">
+                {h.lb.name}
+              </Opener>{" "}
+              <span className="mono">
+                {h.lb.ext}
+                {h.lb.port ? `:${h.lb.port}` : ""} → {(h.lb.to ?? []).slice(0, 3).join(", ")}
+              </span>
+            </dd>
+          </>
+        )}
+        {h.dst && (
+          <>
+            <dt>{L("Ziel hier", "Destination here")}</dt>
+            <dd className="mono">{h.dst}</dd>
+          </>
+        )}
+        {h.l2 && (
+          <>
+            <dt>L2</dt>
+            <dd>
+              {h.l2.text}
+              {h.l2.vlan ? ` · VLAN ${h.l2.vlan}` : ""} <NewTab href={hashOf("verkabelung")} />
+            </dd>
+          </>
+        )}
+      </dl>
+    </div>
+  );
+}
+
+function HopMore({ hop }: { hop: TraceHop }) {
+  const parts = hop.parts ?? [hop];
+  return (
+    <div className="hop-more-body">
+      {parts.map((h, k) => (
+        <HopFacts key={k} h={h} zone={hop.zone} title={parts.length > 1 ? h.label : undefined} />
+      ))}
+    </div>
+  );
+}
+
+const ROUTE_TABLE: Record<string, [string, string]> = {
+  rib: ["ok", L("wirksam", "effective")],
+  bgp: ["info", L("BGP-Pfad", "BGP path")],
+  static: ["", L("statisch", "static")],
+};
+
+// Route eines Hops im Seitenpanel: die wirksame mit Next-Hops und alle Routen zum Ziel in diesem
+// Kontext (RIB, BGP-Pfade, statische) – Backup-Wege und schwebende Routen auf einen Blick
+function RouteDrawer({ hop, tenantId, dst, onClose }: { hop: TraceHop; tenantId: number; dst?: string; onClose: () => void }) {
+  const ip = (hop.nat?.to[0] ?? hop.dst ?? dst ?? "").split("/")[0];
+  const [rows, setRows] = useState<TopoRoute[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  useEffect(() => {
+    setRows(null);
+    if (!ip) {
+      setRows([]);
+      return;
+    }
+    let alive = true;
+    fetchRoutes({ tenantId, sourceId: hop.source_system_id, context: hop.context, ip, limit: 50 })
+      .then((p) => alive && setRows(p.rows))
+      .catch((e) => {
+        if (!alive) return;
+        setError(e);
+        setRows([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [tenantId, hop.source_system_id, hop.context, ip]);
+  const r = hop.route;
+  const possible = (hop.policy_routes ?? []).filter((p) => !p.certain);
+  return (
+    <Drawer title={r ? `Route ${r.prefix}` : "Route"} sub={`${hop.label} · ${L("Ziel", "Destination")} ${ip || "?"}`} onClose={onClose}>
+      <dl className="kv" id="route-drawer">
+        <dt>{L("Wirksam", "Effective")}</dt>
+        <dd>
+          {r ? (
+            <>
+              <b className="mono">{r.prefix}</b>{" "}
+              <span className="faint">
+                {[r.protocol, r.distance != null && L(`Distanz ${r.distance}`, `Distance ${r.distance}`)].filter(Boolean).join(" · ")}
+              </span>
+            </>
+          ) : (
+            <span className="faint">{L("keine Route", "no route")}</span>
+          )}
+        </dd>
+        <dt>Next-Hops</dt>
+        <dd>
+          <Hops hops={r?.next_hops} />
+        </dd>
+        {hop.kind === "vrf" && r?.members.length ? (
+          <>
+            <dt>Border-Leafs</dt>
+            <dd>{r.members.join(", ")}</dd>
+          </>
+        ) : null}
+        {hop.policy && (
+          <>
+            <dt>{L("Geht vor", "Takes precedence")}</dt>
+            <dd>
+              {policyText(hop.policy)}{" "}
+              <span className="mono">{[hop.policy.gateway, ...hop.policy.output_device].filter(Boolean).join(" · ")}</span>
+            </dd>
+          </>
+        )}
+        {possible.length > 0 && (
+          <>
+            <dt>{L("Möglich", "Possible")}</dt>
+            <dd>
+              {possible.map((p) => (
+                <div key={`${p.kind}-${p.seq}`} title={matchText(p.match)}>
+                  {policyText(p)} <span className="faint">{L("(Ziel über Objekte)", "(destination via objects)")}</span>
+                </div>
+              ))}
+            </dd>
+          </>
+        )}
+        {hop.backup && (
+          <>
+            <dt>Backup</dt>
+            <dd>
+              <span className="mono">{hop.backup.prefix}</span> <span className="faint">{hop.backup.reason}</span>
+            </dd>
+          </>
+        )}
+        {r?.inner && r.inner.length > 0 && (
+          <>
+            <dt>{L("Teile anders", "Parts differ")}</dt>
+            <dd>{r.inner.map((x) => `${x.prefix} ${L("über", "via")} ${x.via}`).join(", ")}</dd>
+          </>
+        )}
+      </dl>
+      <div className="drawer-h">{L("Routen zum Ziel in diesem Kontext", "Routes to the destination in this context")}</div>
+      <ErrorBox error={error} />
+      {rows === null ? (
+        <Loading />
+      ) : rows.length === 0 ? (
+        <span className="faint">–</span>
+      ) : (
+        <table className="compact" id="route-drawer-routes">
+          <thead>
+            <tr>
+              <th>{L("Tabelle", "Table")}</th>
+              <th>{L("Präfix", "Prefix")}</th>
+              <th>{L("Protokoll", "Protocol")}</th>
+              <th>Next-Hop</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((x) => {
+              const [cls, label] = ROUTE_TABLE[x.table] ?? ["", x.table];
+              return (
+                <tr key={x.id}>
+                  <td>
+                    <span className={`chip ${cls}`}>{label}</span>
+                    {!x.best && <div className="faint">{x.table === "static" ? L("aus", "off") : "Backup"}</div>}
+                  </td>
+                  <td className="mono">{x.prefix}</td>
+                  <td>
+                    {x.protocol}
+                    {x.distance != null && <div className="faint">{L(`Distanz ${x.distance}`, `Distance ${x.distance}`)}</div>}
+                  </td>
+                  <td>
+                    <Hops hops={x.next_hops} />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      <div style={{ marginTop: 12 }}>
+        <a href={routesHref(hop, r?.prefix)} target="_blank" rel="noopener noreferrer">
+          {L("Im Routing öffnen ↗", "Open in routing ↗")}
+        </a>
+      </div>
+    </Drawer>
+  );
+}
+
+// Knoten im Seitenpanel: Quellsystem, Kontext, Ein- und Ausgang mit den Interfaces aus dem Inventar
+function NodeDrawer({ hop, tenantId, onClose }: { hop: TraceHop; tenantId: number; onClose: () => void }) {
+  const parts = hop.parts ?? [hop];
+  const wanted = [
+    ...new Set(
+      parts.flatMap((h) =>
+        [h.ingress?.interface, h.egress?.interface].filter((x): x is string => !!x).map((name) => `${h.source_system_id}|${name}`),
+      ),
+    ),
+  ];
+  const [ifaces, setIfaces] = useState<Record<string, InvInterface | null>>({});
+  const key = wanted.join(",");
+  useEffect(() => {
+    let alive = true;
+    for (const w of wanted) {
+      const [sid, ...rest] = w.split("|");
+      const name = rest.join("|");
+      fetchInventory("interfaces", tenantId, { source_system_id: Number(sid), q: name })
+        .then((list) => alive && setIfaces((m) => ({ ...m, [w]: list.find((i) => i.name === name) ?? null })))
+        .catch(() => alive && setIfaces((m) => ({ ...m, [w]: null })));
+    }
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, key]);
+  const iface = (h: TraceHop, p?: TracePort) => {
+    if (!p?.interface && !p?.zone) return <Dash />;
+    const i = p?.interface ? ifaces[`${h.source_system_id}|${p.interface}`] : null;
+    return (
+      <>
+        {p?.interface && <span className="mono">{p.interface}</span>}
+        {p?.zone && (
+          <span className="chip" style={{ marginLeft: 4 }}>
+            {p.zone}
+          </span>
+        )}
+        {p?.interface && <NewTab href={portHref(p.interface)} />}
+        {i && (
+          <div className="faint">
+            {[
+              i.kind,
+              i.ips?.join(", "),
+              i.vdom && `VDOM ${i.vdom}`,
+              i.untagged_vlan != null && `VLAN ${i.untagged_vlan}`,
+              i.tagged_vlans?.length ? `VLANs ${i.tagged_vlans.join(", ")}` : null,
+              i.description,
+              i.enabled === false && L("abgeschaltet", "disabled"),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </div>
+        )}
+      </>
+    );
+  };
+  return (
+    <Drawer title={hop.label} sub={hop.parts ? L("Verbund", "Parallel group") : hop.source} onClose={onClose}>
+      {parts.map((h, k) => (
+        <dl className="kv" key={k} id={k === 0 ? "node-drawer" : undefined}>
+          {parts.length > 1 && (
+            <>
+              <dt>Firewall</dt>
+              <dd>
+                <b>{h.label}</b>
+              </dd>
+            </>
+          )}
+          <dt>{L("Quellsystem", "Source system")}</dt>
+          <dd>
+            {h.source} <span className="faint">· {h.kind === "vrf" ? `VRF ${h.context}` : `VDOM ${h.context}`}</span>
+            {h.group && <span className="faint">{L(` · Verbund ${h.group}`, ` · parallel group ${h.group}`)}</span>}
+          </dd>
+          {h.members.length > 0 && (
+            <>
+              <dt>{h.kind === "vrf" ? "Border-Leafs" : L("Geräte", "Devices")}</dt>
+              <dd>{h.members.join(", ")}</dd>
+            </>
+          )}
+          {h.missing.length > 0 && (
+            <>
+              <dt>{L("Nicht lesbar", "Not readable")}</dt>
+              <dd>
+                <Missing items={h.missing} />
+              </dd>
+            </>
+          )}
+          <dt>{L("Eingang", "Incoming")}</dt>
+          <dd>
+            {iface(h, h.ingress)}
+            <div className="faint">{h.via}</div>
+          </dd>
+          <dt>{L("Ausgang", "Outgoing")}</dt>
+          <dd>
+            {iface(h, h.egress)}
+            {h.egress?.next_hop && (
+              <div className="mono">
+                → {h.egress.next_hop}
+                <Names r={h.egress} />
+              </div>
+            )}
+          </dd>
+        </dl>
+      ))}
+      <a href={routesHref(hop)} target="_blank" rel="noopener noreferrer">
+        {L("Routen dieses Knotens im Routing ↗", "Routes of this node in routing ↗")}
+      </a>
+    </Drawer>
+  );
+}
+
+// Objekt der Policy nach Namen (Quelle/Ziel auf dem Weg): das Objekt-Detail wie in „Objekte“
+function ObjectByName({ name, sid, tenantId, onClose }: { name: string; sid: number; tenantId: number; onClose: () => void }) {
+  const [id, setId] = useState<number | null | undefined>(undefined);
+  useEffect(() => {
+    setId(undefined);
+    fetchObjects(tenantId, { q: name, source_system_id: sid, limit: 20 })
+      .then((p) => setId(p.rows.find((o) => o.name === name)?.id ?? null))
+      .catch(() => setId(null));
+  }, [tenantId, name, sid]);
+  if (id) return <ObjectDrawer id={id} onClose={onClose} onGo={openTab} />;
+  return (
+    <Drawer title={name} sub={L("Objekt", "Object")} onClose={onClose}>
+      {id === undefined ? (
+        <Loading />
+      ) : (
+        <Note>
+          {L("Objekt nicht gefunden – ", "Object not found – ")}
+          <a href={objectHref(name)} target="_blank" rel="noopener noreferrer">
+            {L("in Objekte suchen ↗", "search in objects ↗")}
+          </a>
+        </Note>
+      )}
+    </Drawer>
+  );
+}
+
+function PathDetailDrawer({
+  d,
+  tenantId,
+  systemName,
+  dst,
+  onClose,
+  onOpen,
+}: {
+  d: DetailRef;
+  tenantId: number;
+  systemName: (id: number) => string;
+  dst?: string;
+  onClose: () => void;
+  onOpen: (d: DetailRef) => void;
+}) {
+  switch (d.kind) {
+    case "rule":
+      return (
+        <RuleDetailDrawer ruleId={d.id} systemName={systemName} onClose={onClose} onGo={openTab} onRule={(id) => onOpen({ kind: "rule", id })} />
+      );
+    case "nat":
+      return <NatDrawer key={d.id} id={d.id} onClose={onClose} onGo={openTab} />;
+    case "object":
+      return <ObjectByName name={d.name} sid={d.sid} tenantId={tenantId} onClose={onClose} />;
+    case "route":
+      return <RouteDrawer hop={d.hop} tenantId={tenantId} dst={dst} onClose={onClose} />;
+    case "node":
+      return <NodeDrawer hop={d.hop} tenantId={tenantId} onClose={onClose} />;
+  }
+}
+
+// Anbindung als Quelle bzw. Ziel (ADR 0019 Ergänzung): Firewalls mit Ein- bzw. Ausgang, Netze und die
+// geprüfte Adresse; ein anderes Netz bzw. eine Firewall wählen sucht gleich neu
+function ExitEndCard({
+  side,
+  end,
+  onPick,
+}: {
+  side: "src" | "dst";
+  end: TraceExitEnd;
+  onPick: (p: { net: string; fw: number | null }) => void;
+}) {
+  const internet = end.address_kind === "internet" || end.address_kind === "unknown";
+  const chosen = end.address_kind === "given" ? (end.address ?? "") : "";
+  const options = [...end.nets, ...(end.internet && !end.nets.includes(end.internet) ? [end.internet] : [])];
+  return (
+    <div className="card exit-end" id={`trace-exit-${side}`}>
+      <div className="card-head">
+        <h2>
+          {side === "src" ? L("Quelle: Anbindung", "Source: exit") : L("Ziel: Anbindung", "Destination: exit")} {end.label}
+        </h2>
+        <span className="chip info">{EXIT_KIND[end.kind] ?? end.kind}</span>
+        <span className="faint">{end.manual ? L("von Hand erfasst", "captured manually") : L("erkannt", "detected")}</span>
+        <NewTab href={EXITS_HREF} />
+      </div>
+      <div className="card-body pad">
+        <dl className="kv tight">
+          <dt>Firewalls</dt>
+          <dd>
+            {end.firewalls.length
+              ? end.firewalls.map((f) => `${f.label}${f.interface || f.zone ? ` (${[f.interface, f.zone].filter(Boolean).join(", ")})` : ""}`).join(" · ")
+              : L("keine gelesene Firewall", "no firewall read")}
+          </dd>
+          <dt>{L("Geprüft mit", "Checked with")}</dt>
+          <dd>
+            <span className="mono">{end.address ?? "–"}</span>{" "}
+            {internet ? (
+              <span
+                className="chip"
+                title={L(
+                  "Öffentliche Test-Adresse aus dem Dokumentationsbereich (RFC 5737/3849), an keinem gelesenen Gerät angeschlossen",
+                  "Public test address from the documentation range (RFC 5737/3849), connected to no device read",
+                )}
+              >
+                {end.address_kind === "unknown"
+                  ? L("keine Netze bekannt – beliebige Adresse", "no networks known – any address")
+                  : L("beliebige Adresse im Internet", "any address on the Internet")}
+              </span>
+            ) : end.address_kind === "given" ? (
+              <span className="faint">{L("gewählt", "chosen")}</span>
+            ) : (
+              <span className="faint">{L("Netz der Anbindung, als Ganzes", "network of the exit, as a whole")}</span>
+            )}
+          </dd>
+          <dt>{L("Netze", "Networks")}</dt>
+          <dd>
+            {[end.default ? L("Default-Route", "default route") : "", ...end.nets].filter(Boolean).join(", ") || "–"}
+            {end.nets_total > end.nets.length ? ` (+${end.nets_total - end.nets.length})` : ""}
+            {end.given && <span className="faint"> · {L("von Hand", "manual")}</span>}
+          </dd>
+          {end.routers.length > 0 && (
+            <>
+              <dt>Router</dt>
+              <dd className="mono">{end.routers.join(", ")}</dd>
+            </>
+          )}
+        </dl>
+        <div className="filterbar" style={{ marginTop: 6 }}>
+          {options.length > 1 || (options.length === 1 && options[0] !== end.address) ? (
+            <select
+              className="sel"
+              id={`trace-exit-${side}-net`}
+              value={chosen}
+              onChange={(e) => onPick({ net: e.target.value, fw: end.system })}
+              title={L("Mit einem anderen Netz der Anbindung prüfen", "Check with another network of the exit")}
+            >
+              <option value="">{L("Netz: automatisch", "Network: automatic")}</option>
+              {options.map((n) => (
+                <option key={n} value={n}>
+                  {n === end.internet ? L(`${n} (beliebige Adresse im Internet)`, `${n} (any address on the Internet)`) : n}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          {end.choices.length > 1 && (
+            <select
+              className="sel"
+              id={`trace-exit-${side}-fw`}
+              value={end.system ?? ""}
+              onChange={(e) => onPick({ net: chosen, fw: e.target.value ? Number(e.target.value) : null })}
+              title={L("Anbindung an mehreren Firewalls: alle bzw. eine davon", "Exit at several firewalls: all or one of them")}
+            >
+              <option value="">{L(`alle ${end.choices.length} Firewalls`, `all ${end.choices.length} firewalls`)}</option>
+              {end.choices.map((c) => (
+                <option key={c.source_system_id} value={c.source_system_id}>
+                  {c.source}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Ein Weg Hop für Hop: Knoten, Eingang, Entscheidung (Policy-Route bzw. Route), Ausgang
 function TraceCard({
   path,
@@ -523,6 +1294,15 @@ function TraceCard({
   const out = last?.egress;
   // Weg endet an einem Next-Hop ohne gelesenes Gerät: als Anbindung erfassen (Internet, MPLS, …)
   const capturable = onCapture && out?.next_hop && (path.end.kind === "unknown" || path.end.kind === "external");
+  // je Hop „mehr“ (ADR 0019 Ergänzung): aufgeklappte Hops
+  const [more, setMore] = useState<Set<number>>(() => new Set());
+  const toggle = (i: number) =>
+    setMore((s) => {
+      const next = new Set(s);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
   return (
     <div className="card" id={`trace-${index}`}>
       <div className="card-head">
@@ -538,6 +1318,24 @@ function TraceCard({
             {L("redundant · Verbund", "redundant · parallel group")} {path.parallel.join(", ")}
           </span>
         ) : null}
+        {path.exit_start && (
+          <span className="chip info" title={L("Start an dieser Firewall der Anbindung", "Start at this firewall of the exit")}>
+            {L("ab", "from")} {path.exit_start}
+          </span>
+        )}
+        {path.via_exit != null &&
+          (path.via_exit ? (
+            <span className="chip ok via-exit" title={L("Der Weg geht über die gewählte Anbindung hinaus", "The path leaves via the chosen exit")}>
+              {L("über die Anbindung", "via the exit")}
+            </span>
+          ) : (
+            <span
+              className="chip warn via-exit"
+              title={L("Das Routing führt das Ziel nicht über die gewählte Anbindung", "The routing does not take the destination via the chosen exit")}
+            >
+              {L("nicht über die Anbindung", "not via the exit")}
+            </span>
+          ))}
         {compare && path.extra != null && <Length extra={path.extra} />}
         {path.zones && path.zones.length > 0 && <ZoneChain steps={path.zones} />}
         {path.policy && (
@@ -586,13 +1384,30 @@ function TraceCard({
             {path.hops.map((hop, i) => {
               // Verbund als ein Hop (0.29.0): eine Zeile je Firewall bzw. Variante
               const parts = hop.parts ?? [hop];
-              return parts.map((h, k) => {
+              const isOpen = more.has(i);
+              return (
+                <Fragment key={i}>
+                {parts.map((h, k) => {
                 const possible = (h.policy_routes ?? []).filter((p) => !p.certain);
                 return (
-                  <tr key={`${i}-${k}`}>
+                  <tr key={`${i}-${k}`} className={isOpen ? "hop-open" : undefined}>
                     {k === 0 && (
                       <td className="num" rowSpan={parts.length}>
                         {i + 1}
+                        <div>
+                          <button
+                            type="button"
+                            className="linkbtn hop-more-toggle"
+                            aria-expanded={isOpen}
+                            title={L(
+                              "Mehr zu diesem Hop: Ein-/Ausgang mit Zone, Route, entscheidende Regel mit Quelle/Ziel/Dienst, NAT",
+                              "More on this hop: incoming/outgoing with zone, route, deciding rule with source/destination/service, NAT",
+                            )}
+                            onClick={() => toggle(i)}
+                          >
+                            {isOpen ? L("weniger", "less") : L("mehr", "more")}
+                          </button>
+                        </div>
                       </td>
                     )}
                     <td>
@@ -609,7 +1424,18 @@ function TraceCard({
                           </span>
                         </div>
                       )}
-                      <b>{h.label}</b> {h.kind === "firewall" && <span className="chip">Firewall</span>}
+                      <Opener
+                        href={routesHref(h)}
+                        detail={{ kind: "node", hop: h }}
+                        className="hop-node"
+                        title={L(
+                          "Knoten mit Ein- und Ausgang im Seitenpanel – Ctrl-Klick: Routing in neuem Tab",
+                          "Node with incoming and outgoing interface in the side panel – Ctrl-click: routing in a new tab",
+                        )}
+                      >
+                        <b>{h.label}</b>
+                      </Opener>{" "}
+                      {h.kind === "firewall" && <span className="chip">Firewall</span>}
                       <VrfChip vrf={h.vrf} />
                       {k === 0 && hop.zone && (
                         <div>
@@ -627,7 +1453,7 @@ function TraceCard({
                       </div>
                       <Missing items={h.missing} />
                     </td>
-                    <td>{h.ingress?.interface ? <Port p={h.ingress} /> : <Dash />}</td>
+                    <td>{h.ingress?.interface || h.ingress?.zone ? <HopPort p={h.ingress} hop={h} /> : <Dash />}</td>
                     <td>
                       {h.leak && (
                         <div style={{ marginBottom: 4 }} className="hop-leak">
@@ -652,8 +1478,11 @@ function TraceCard({
                               "VIP (DNAT): from here the path continues to the internal IP",
                             )}
                           >
-                            DNAT {h.nat.name}
+                            DNAT
                           </span>{" "}
+                          <Opener href={natHref(h.nat.name)} detail={{ kind: "nat", id: h.nat.id }} className="mono">
+                            {h.nat.name}
+                          </Opener>{" "}
                           <span className="mono">
                             {h.nat.ext} → {h.nat.to.join(", ")}
                           </span>
@@ -684,8 +1513,11 @@ function TraceCard({
                               "NSX ALB: the VIP is attached here, the path continues from the load balancer to the server",
                             )}
                           >
-                            Load Balancer {h.lb.name}
+                            Load Balancer
                           </span>{" "}
+                          <Opener href={natHref(h.lb.name)} detail={{ kind: "nat", id: h.lb.id }} className="mono">
+                            {h.lb.name}
+                          </Opener>{" "}
                           <span className="mono">
                             {h.lb.ext}
                             {h.lb.port ? `:${h.lb.port}` : ""} → {(h.lb.to ?? []).slice(0, 3).join(", ")}
@@ -736,7 +1568,17 @@ function TraceCard({
                         </>
                       ) : h.route ? (
                         <>
-                          <b className="mono">{h.route.prefix}</b>
+                          <Opener
+                            href={routesHref(h, h.route.prefix)}
+                            detail={{ kind: "route", hop: h }}
+                            className="hop-route"
+                            title={L(
+                              "Route mit Next-Hops und allen Routen zum Ziel im Seitenpanel – Ctrl-Klick: Routing in neuem Tab",
+                              "Route with next-hops and all routes to the destination in the side panel – Ctrl-click: routing in a new tab",
+                            )}
+                          >
+                            <b className="mono">{h.route.prefix}</b>
+                          </Opener>
                           <div className="faint">
                             {[h.route.protocol, h.route.distance != null && L(`Distanz ${h.route.distance}`, `Distance ${h.route.distance}`)]
                               .filter(Boolean)
@@ -774,7 +1616,7 @@ function TraceCard({
                       )}
                     </td>
                     <td>
-                      {h.egress ? <Port p={h.egress} /> : <Dash />}
+                      {h.egress ? <HopPort p={h.egress} hop={h} /> : <Dash />}
                       {h.l2 && <L2Line seg={h.l2} />}
                     </td>
                     <td>
@@ -794,7 +1636,17 @@ function TraceCard({
                     </td>
                   </tr>
                 );
-              });
+                })}
+                {isOpen && (
+                  <tr className="hop-more">
+                    <td />
+                    <td colSpan={5}>
+                      <HopMore hop={hop} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
+              );
             })}
           </tbody>
         </table>
@@ -877,9 +1729,31 @@ function LookupTable({ rows }: { rows: RouteLookup[] }) {
   );
 }
 
-// Quelle bzw. Ziel: IP, Netz oder Name; `hit` = gewählter Treffer der Namenssuche
-type Endpoint = { text: string; hit: NameHit | null };
+// Quelle bzw. Ziel: IP, Netz, Name oder Anbindung; `hit` = gewählter Treffer der Namenssuche, bei
+// einer Anbindung `over` = ein anderes ihrer Netze und `fw` = nur diese Firewall (ADR 0019 Ergänzung)
+type Endpoint = { text: string; hit: NameHit | null; over?: string; fw?: number | null };
 const endpointOf = (text?: string): Endpoint => ({ text: text ?? "", hit: null });
+
+// Eingabe aus der URL (#wege?src=…&src_name=…&src_exit=…) wie gewählt wiederherstellen
+function endpointFrom(p: ViewParams | undefined, side: "src" | "dst"): Endpoint {
+  const value = p?.[side] ?? "";
+  const name = p?.[`${side}_name`];
+  const exit = p?.[`${side}_exit`];
+  if (exit) {
+    const [ref, fw] = exit.split("@");
+    const hit: NameHit = { ip: value, name: name ?? ref, kind: "exit", type: "exit", net: null, source: null, detail: null, exit: ref };
+    return { text: name ?? ref, hit, over: value || undefined, fw: fw ? Number(fw) : null };
+  }
+  if (value && name && name !== value) {
+    const net = isNet(value);
+    return {
+      text: name,
+      hit: { ip: value, name, kind: net ? "net" : "ip", type: net ? "net" : "host", net: net ? value : null, source: null, detail: null },
+    };
+  }
+  return endpointOf(value);
+}
+const exitRef = (ep: Endpoint) => (ep.hit?.exit ? `${ep.hit.exit}${ep.fw ? `@${ep.fw}` : ""}` : undefined);
 
 const HIT_KIND: Record<NameHit["kind"], string> = {
   ip: "IP",
@@ -888,9 +1762,10 @@ const HIT_KIND: Record<NameHit["kind"], string> = {
   vm: "VM",
   net: L("Netz", "Network"),
   subnet: L("Inventar", "Inventory"),
+  exit: L("Anbindung", "Exit"),
 };
 const PAGE = 50;
-type HitType = "" | "host" | "net";
+type HitType = "" | "host" | "net" | "exit";
 
 const isIp = (v: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(v.trim()) || /^[0-9a-f]*:[0-9a-f:.]+$/i.test(v.trim());
 // Netz direkt (10.10.0.0/23): geht als Ganzes in die Weg-Suche (0.39.0)
@@ -898,21 +1773,27 @@ const isNet = (v: string) => {
   const [ip, len, ...rest] = v.trim().split("/");
   return rest.length === 0 && !!len && /^\d{1,3}$/.test(len) && isIp(ip);
 };
-const hitKey = (h: NameHit) => (h.type === "net" ? `net:${h.net}` : h.ip);
+const hitKey = (h: NameHit) => (h.type === "exit" ? `exit:${h.exit}` : h.type === "net" ? `net:${h.net}` : h.ip);
 
-// Treffer der Namenssuche: Name, IP bzw. Netz und woher
+// Treffer der Namenssuche: Name, IP bzw. Netz und woher; Anbindung mit Firewalls und Netzen
 function HitRow({ h, onPick }: { h: NameHit; onPick: (h: NameHit) => void }) {
   return (
     <button
       type="button"
       role="option"
       aria-selected={false}
+      className={h.type === "exit" ? "hit-exit" : undefined}
       onMouseDown={(e) => {
         e.preventDefault();
         onPick(h);
       }}
     >
-      <b>{h.name ?? h.net ?? h.ip}</b> <span className="mono">{h.type === "net" ? h.net : h.ip}</span>
+      <b>{h.name ?? h.net ?? h.ip}</b>{" "}
+      {h.type === "exit" ? (
+        h.exit_kind && <span className="chip info">{EXIT_KIND[h.exit_kind] ?? h.exit_kind}</span>
+      ) : (
+        <span className="mono">{h.type === "net" ? h.net : h.ip}</span>
+      )}
       <div className="faint">
         {HIT_KIND[h.kind]}
         {h.source ? ` · ${h.source}` : ""}
@@ -986,10 +1867,13 @@ function EndpointInput({
     onChange({ text: h.name ?? h.net ?? h.ip, hit: h });
     setOpen(false);
   };
-  const all = (res?.counts.host ?? 0) + (res?.counts.net ?? 0);
+  const all = (res?.counts.host ?? 0) + (res?.counts.net ?? 0) + (res?.counts.exit ?? 0);
   const shown = open && res && all > 0;
   const hosts = res?.hits.filter((h) => h.type === "host") ?? [];
   const nets = res?.hits.filter((h) => h.type === "net") ?? [];
+  const exits = res?.hits.filter((h) => h.type === "exit") ?? [];
+  // Überschriften je Art nur, wenn mehrere Arten zu sehen sind
+  const groups = [hosts, nets, exits].filter((g) => g.length > 0).length > 1 && type === "";
   const seg = (t: HitType, label: string, n: number) => (
     <button
       type="button"
@@ -1031,8 +1915,19 @@ function EndpointInput({
         }}
       />
       {value.hit && (
-        <div className="faint mono" style={{ fontSize: 11.5, marginTop: 2 }} title={value.hit.name ?? ""}>
-          {value.hit.type === "net" ? L(`= Netz ${value.hit.net}`, `= network ${value.hit.net}`) : `= ${value.hit.ip}`}
+        <div className="faint mono endpoint-hit" style={{ fontSize: 11.5, marginTop: 2 }} title={value.hit.name ?? ""}>
+          {value.hit.type === "exit"
+            ? L("= Anbindung", "= exit") +
+              (value.over
+                ? L(` · Netz ${value.over}`, ` · network ${value.over}`)
+                : value.hit.internet
+                  ? L(" · beliebige Adresse im Internet", " · any address on the Internet")
+                  : value.hit.ip
+                    ? ` · ${value.hit.ip}`
+                    : "")
+            : value.hit.type === "net"
+              ? L(`= Netz ${value.hit.net}`, `= network ${value.hit.net}`)
+              : `= ${value.hit.ip}`}
         </div>
       )}
       {shown && (
@@ -1042,18 +1937,23 @@ function EndpointInput({
               {seg("", L("Alle", "All"), all)}
               {seg("host", "Hosts", res.counts.host)}
               {seg("net", L("Netze", "Networks"), res.counts.net)}
+              {(res.counts.exit ?? 0) > 0 && seg("exit", L("Anbindungen", "Exits"), res.counts.exit ?? 0)}
             </div>
             <span className="faint">
               {res.hits.length} {L("von", "of")} {res.total}
               {res.capped ? L(" – mehr gelesen als gezeigt, genauer suchen", " – more read than shown, refine the search") : ""}
             </span>
           </div>
-          {hosts.length > 0 && type === "" && nets.length > 0 && <div className="suggest-group">Hosts</div>}
+          {hosts.length > 0 && groups && <div className="suggest-group">Hosts</div>}
           {hosts.map((h) => (
             <HitRow key={hitKey(h)} h={h} onPick={pick} />
           ))}
-          {nets.length > 0 && type === "" && hosts.length > 0 && <div className="suggest-group">{L("Netze", "Networks")}</div>}
+          {nets.length > 0 && groups && <div className="suggest-group">{L("Netze", "Networks")}</div>}
           {nets.map((h) => (
+            <HitRow key={hitKey(h)} h={h} onPick={pick} />
+          ))}
+          {exits.length > 0 && groups && <div className="suggest-group">{L("Anbindungen", "Exits")}</div>}
+          {exits.map((h) => (
             <HitRow key={hitKey(h)} h={h} onPick={pick} />
           ))}
           {res.hits.length < res.total && (
@@ -1078,24 +1978,30 @@ function EndpointInput({
 }
 
 // Name -> IP bzw. Netz: direkt, gewählter Treffer, sonst genau ein Treffer; mehrere: Auswahl.
-// Ein Netz geht als Ganzes in die Weg-Suche (0.39.0, `net` für die Anzeige).
+// Ein Netz geht als Ganzes in die Weg-Suche (0.39.0, `net` für die Anzeige). Eine Anbindung geht als
+// Referenz (`exit`) in die Weg-Suche, `ip` nur, wenn ein anderes ihrer Netze gewählt ist; `addr` =
+// ihre Adresse aus der Namenssuche (ohne Quelle: Route je Kontext).
+type Resolved = { ip: string; net?: string | null; exit?: string; addr?: string };
 async function toIp(
   tenantId: number,
   ep: Endpoint,
   what: string,
   set: (v: Endpoint) => void,
   choose: (res: NameResult) => void,
-): Promise<{ ip: string; net?: string | null }> {
+): Promise<Resolved> {
   const text = ep.text.trim();
   if (!text) return { ip: "" };
+  if (ep.hit?.type === "exit") return { ip: ep.over ?? "", exit: exitRef(ep), addr: ep.hit.ip };
   if (isIp(text)) return { ip: text };
   if (isNet(text)) return { ip: text, net: text };
   if (ep.hit) return { ip: ep.hit.ip, net: ep.hit.net };
   const res = await resolveName(tenantId, text, { limit: PAGE });
   const keys = new Set(res.hits.map(hitKey));
   if (keys.size === 1 && res.total === 1) {
-    set({ text, hit: res.hits[0] });
-    return { ip: res.hits[0].ip, net: res.hits[0].net };
+    const hit = res.hits[0];
+    set({ text, hit });
+    if (hit.type === "exit") return { ip: "", exit: hit.exit, addr: hit.ip };
+    return { ip: hit.ip, net: hit.net };
   }
   if (!res.hits.length)
     throw new Error(
@@ -1113,6 +2019,28 @@ async function toIp(
   );
 }
 
+// Gefragt: IP bzw. Netz, Name der Eingabe, Anbindung (Referenz)
+type Asked = { ip: string; name?: string; net?: string | null; exit?: string };
+
+// URL der Suche (ADR 0019 Ergänzung): zuerst src, dst, service (wie die Links aus der Applikations-Doku),
+// dann Start, Backup-Wege, die Namen der Eingaben und die Anbindungen
+function searchUrl(src: Asked, dst: Asked, service: string, start: string, slack: string): string {
+  const p = new URLSearchParams();
+  const put = (k: string, v?: string | null) => {
+    if (v) p.set(k, v);
+  };
+  put("src", src.ip);
+  put("dst", dst.ip);
+  put("service", service.trim());
+  put("start", start);
+  if (slack !== "1") p.set("slack", slack === "" ? "off" : slack);
+  put("src_name", src.name);
+  put("dst_name", dst.name);
+  put("src_exit", src.exit);
+  put("dst_exit", dst.exit);
+  return hashOf("wege", Object.fromEntries(p.entries()));
+}
+
 // Weg-Suche: Quelle (IP bzw. Name) und/oder Startpunkt, dazu das Ziel. Ohne beides: je Kontext
 // die Route zum Ziel.
 function PathSearch({
@@ -1126,18 +2054,24 @@ function PathSearch({
   onCapture?: (c: Capture) => void;
   initial?: ViewParams; // aus einem Link (#wege?src=…&dst=…&service=…), z. B. Applikations-Doku
 }) {
-  const [src, setSrc] = useState<Endpoint>(endpointOf(initial?.src));
+  const [src, setSrc] = useState<Endpoint>(() => endpointFrom(initial, "src"));
   const [start, setStart] = useState(initial?.start ?? "");
-  const [dst, setDst] = useState<Endpoint>(endpointOf(initial?.dst));
+  const [dst, setDst] = useState<Endpoint>(() => endpointFrom(initial, "dst"));
   const [choices, setChoices] = useState<{ src?: NameResult; dst?: NameResult }>({});
   const [trace, setTrace] = useState<TraceResult | null>(null);
-  type Asked = { ip: string; name?: string; net?: string | null };
   const [asked, setAsked] = useState<{ src: Asked; dst: Asked } | null>(null);
-  const [slack, setSlack] = useState("1"); // Backup-Wege: Hops mehr als der kürzeste aktive; "" = keine
-  const [service, setService] = useState(initial?.service ?? ""); // tcp/443, udp/53 bzw. Service-Objekt/ACI-Filter
+  // Backup-Wege: Hops mehr als der kürzeste aktive; "" = keine (in der URL „off“)
+  const [slack, setSlack] = useState(
+    initial?.slack === "off" ? "" : ["0", "1", "2"].includes(initial?.slack ?? "") ? initial!.slack : "1",
+  );
+  // tcp/443, udp/53 bzw. Service-Objekt/ACI-Filter (in Links auch `svc`)
+  const [service, setService] = useState(initial?.service ?? initial?.svc ?? "");
   const [rows, setRows] = useState<RouteLookup[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // Details am Weg im Seitenpanel (ADR 0019 Ergänzung)
+  const [detail, setDetail] = useState<DetailRef | null>(null);
+  const systemName = (id: number) => nodes.find((n) => n.source_system_id === id)?.source ?? `#${id}`;
   const srcNow = src;
   const dstNow = dst;
   const startNow = start;
@@ -1145,29 +2079,44 @@ function PathSearch({
   const run = async (over?: { src: Endpoint; dst: Endpoint; start: string }) => {
     const src = over?.src ?? srcNow;
     const dst = over?.dst ?? dstNow;
-    const start = over ? over.start : startNow;
     if (!dst.text.trim()) return;
     setBusy(true);
     setError(null);
     setTrace(null);
     setRows(null);
     setChoices({});
+    setDetail(null);
     try {
       const [s, d] = await Promise.all([
         toIp(tenantId, src, L("Quelle", "Source"), setSrc, (h) => setChoices((c) => ({ ...c, src: h }))),
         toIp(tenantId, dst, L("Ziel", "Destination"), setDst, (h) => setChoices((c) => ({ ...c, dst: h }))),
       ]);
-      const named = (ep: Endpoint, r: { ip: string; net?: string | null }): Asked => {
+      // eine Anbindung als Quelle bestimmt den Start selbst
+      const start = s.exit ? "" : over ? over.start : startNow;
+      const named = (ep: Endpoint, r: Resolved): Asked => {
         const t = ep.text.trim();
-        return { ...r, name: t && t !== r.ip && t !== r.net ? t : undefined };
+        return { ip: r.ip, net: r.net, exit: r.exit, name: t && t !== r.ip && t !== r.net ? t : undefined };
       };
-      setAsked({ src: named(src, s), dst: named(dst, d) });
-      if (s.ip || start) {
+      const a = { src: named(src, s), dst: named(dst, d) };
+      setAsked(a);
+      // Eingaben in der URL (#wege?src=…&dst=…&service=…): Zurück bzw. ein neuer Tab stellt die Suche wieder her
+      window.history.replaceState(null, "", searchUrl(a.src, a.dst, service, start, slack));
+      if (s.ip || start || s.exit) {
         setTrace(
-          await traceRoute(tenantId, { dst: d.ip, src: s.ip, start, service, slack: slack === "" ? 0 : Number(slack) }),
+          await traceRoute(tenantId, {
+            dst: d.ip,
+            src: s.ip,
+            start,
+            service,
+            slack: slack === "" ? 0 : Number(slack),
+            srcExit: s.exit,
+            dstExit: d.exit,
+          }),
         );
+      } else if (d.ip || d.addr) {
+        setRows(await lookupRoute(tenantId, d.ip || d.addr!));
       } else {
-        setRows(await lookupRoute(tenantId, d.ip));
+        throw new Error(L("Quelle oder Start angeben", "Specify a source or a start point"));
       }
     } catch (e) {
       setError(e);
@@ -1185,12 +2134,27 @@ function PathSearch({
     setChoices({});
     if ((trace || rows) && next.dst.text.trim()) void run(next);
   };
-  // Link mit Ziel: gleich suchen (einmal beim Öffnen)
+  // Anbindung: ein anderes ihrer Netze bzw. eine ihrer Firewalls wählen und gleich neu suchen
+  const pickExit = (side: "src" | "dst") => (p: { net: string; fw: number | null }) => {
+    const ep = side === "src" ? srcNow : dstNow;
+    const next = { ...ep, over: p.net || undefined, fw: p.fw };
+    if (side === "src") setSrc(next);
+    else setDst(next);
+    void run({ src: side === "src" ? next : srcNow, dst: side === "dst" ? next : dstNow, start: startNow });
+  };
+  // Link mit Ziel (auch Zurück zu einer Suche): gleich suchen (einmal beim Öffnen)
   useEffect(() => {
-    if (initial?.dst) void run();
+    if (initial?.dst || initial?.dst_exit) void run();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const label = (a: Asked) =>
-    a.net ? `${a.name ? `${a.name} = ` : ""}${L("Netz", "network")} ${a.net}` : a.name ? `${a.name} (${a.ip})` : a.ip;
+  const label = (a: Asked, end?: TraceExitEnd) =>
+    end
+      ? `${end.label} (${end.address ?? "?"}${end.address_kind === "internet" ? L(" – beliebige Adresse im Internet", " – any address on the Internet") : ""})`
+      : a.net
+        ? `${a.name ? `${a.name} = ` : ""}${L("Netz", "network")} ${a.net}`
+        : a.name
+          ? `${a.name} (${a.ip})`
+          : a.ip;
+  const srcIsExit = src.hit?.type === "exit";
   return (
     <>
       <div className="filterbar" style={{ alignItems: "flex-start" }}>
@@ -1202,21 +2166,26 @@ function PathSearch({
           icon="search"
           placeholder={L("Quelle: IP, Netz oder Name", "Source: IP, network or name")}
           title={L(
-            "Quelle als IP, Netz bzw. Name/FQDN (IPAM, Objekte der Firewalls, VMs, Subnetze): der Weg beginnt dort, wo sie angeschlossen ist (bzw. am Startpunkt); ein Netz gilt als Ganzes",
-            "Source as IP, network or name/FQDN (IPAM, firewall objects, VMs, subnets): the path starts where it is connected (or at the starting point); a network counts as a whole",
+            "Quelle als IP, Netz bzw. Name/FQDN (IPAM, Objekte der Firewalls, VMs, Subnetze): der Weg beginnt dort, wo sie angeschlossen ist (bzw. am Startpunkt); ein Netz gilt als Ganzes. Auch eine Anbindung („Internet“, „Anbindung“, Interface oder Firewall): Start an ihrer Firewall mit ihrem Eingang, Quelle = ihr Netz bzw. eine beliebige Adresse im Internet",
+            "Source as IP, network or name/FQDN (IPAM, firewall objects, VMs, subnets): the path starts where it is connected (or at the starting point); a network counts as a whole. Also an exit (“Internet”, “exit”, interface or firewall): start at its firewall with its incoming interface, source = its network or any address on the Internet",
           )}
           forceOpen={choices.src}
         />
         <select
           className="sel"
-          value={start}
+          value={srcIsExit ? "" : start}
           onChange={(e) => setStart(e.target.value)}
-          title={L(
-            "Startpunkt: Firewall, VDOM bzw. ACI-VRF – ohne Wahl ergibt er sich aus der Quelle",
-            "Starting point: firewall, VDOM or ACI VRF – if none is chosen, it follows from the source",
-          )}
+          disabled={srcIsExit}
+          title={
+            srcIsExit
+              ? L("Quelle ist eine Anbindung: der Weg beginnt an ihren Firewalls", "Source is an exit: the path starts at its firewalls")
+              : L(
+                  "Startpunkt: Firewall, VDOM bzw. ACI-VRF – ohne Wahl ergibt er sich aus der Quelle",
+                  "Starting point: firewall, VDOM or ACI VRF – if none is chosen, it follows from the source",
+                )
+          }
         >
-          <option value="">{L("Start: aus der Quelle", "Start: from the source")}</option>
+          <option value="">{srcIsExit ? L("Start: an der Anbindung", "Start: at the exit") : L("Start: aus der Quelle", "Start: from the source")}</option>
           {nodes.map((n) => (
             <option key={n.key} value={n.key}>
               {n.label}
@@ -1245,8 +2214,8 @@ function PathSearch({
           icon="route"
           placeholder={L("Ziel: IP, Netz oder Name, z. B. web01", "Destination: IP, network or name, e.g. web01")}
           title={L(
-            "Ziel als IP, Netz bzw. Name/FQDN; ein Netz gilt als Ganzes (Route und Regeln für das ganze Netz)",
-            "Destination as IP, network or name/FQDN; a network counts as a whole (route and rules for the entire network)",
+            "Ziel als IP, Netz bzw. Name/FQDN; ein Netz gilt als Ganzes (Route und Regeln für das ganze Netz). Auch eine Anbindung: Ziel = ihr Netz bzw. eine beliebige Adresse im Internet, je Weg, ob er über sie hinausgeht",
+            "Destination as IP, network or name/FQDN; a network counts as a whole (route and rules for the entire network). Also an exit: destination = its network or any address on the Internet, per path whether it leaves via the exit",
           )}
           forceOpen={choices.dst}
         />
@@ -1299,13 +2268,16 @@ function PathSearch({
         )}
       </div>
       <ErrorBox error={error} prefix={L("Weg suchen", "Search path")} />
+      <DetailCtx.Provider value={setDetail}>
       {trace && (
         <>
-          <div className="faint" style={{ margin: "0 0 8px" }}>
+          <div className="faint" style={{ margin: "0 0 8px" }} id="trace-asked">
             {asked && (
               <>
-                {asked.src.ip ? L(`Quelle ${label(asked.src)} → `, `Source ${label(asked.src)} → `) : ""}
-                {L("Ziel", "Destination")} {label(asked.dst)}
+                {asked.src.ip || trace.exits?.src
+                  ? L(`Quelle ${label(asked.src, trace.exits?.src)} → `, `Source ${label(asked.src, trace.exits?.src)} → `)
+                  : ""}
+                {L("Ziel", "Destination")} {label(asked.dst, trace.exits?.dst)}
                 {trace.service
                   ? ` · ${L("Dienst", "Service")} ${trace.service_name ? `${trace.service_name} = ` : ""}${trace.service}`
                   : ""}
@@ -1331,6 +2303,8 @@ function PathSearch({
             const shown = slack === "" ? trace.paths.filter((p) => p.kind !== "backup") : trace.paths;
             return (
               <>
+                {trace.exits?.src && <ExitEndCard side="src" end={trace.exits.src} onPick={pickExit("src")} />}
+                {trace.exits?.dst && <ExitEndCard side="dst" end={trace.exits.dst} onPick={pickExit("dst")} />}
                 <ZoneIntentCard trace={trace} />
                 <L2Ends trace={trace} />
                 {shown.length > 1 && <PathOverview trace={{ ...trace, paths: shown }} />}
@@ -1349,7 +2323,18 @@ function PathSearch({
           })()}
         </>
       )}
+      </DetailCtx.Provider>
       {rows && <LookupTable rows={rows} />}
+      {detail && (
+        <PathDetailDrawer
+          d={detail}
+          tenantId={tenantId}
+          systemName={systemName}
+          dst={asked?.dst.ip || trace?.exits?.dst?.address || undefined}
+          onClose={() => setDetail(null)}
+          onOpen={setDetail}
+        />
+      )}
     </>
   );
 }
@@ -1401,12 +2386,16 @@ export default function Paths({
           <>
             Weg einer Verbindung in „{tenantLabel}“ Hop für Hop – über Firewalls (Policies, NAT) und ACI (Contracts zwischen
             den EPGs), mit aktiven und Backup-Wegen. Für Fehlersuche und Kontrolle von Arbeiten; rein lesend, Stand des letzten
-            Laufs. Quelle und Ziel als IP, Netz oder Name aus IPAM, Firewall-Objekten, VMs und Subnetzen.
+            Laufs. Quelle und Ziel als IP, Netz oder Name aus IPAM, Firewall-Objekten, VMs und Subnetzen – oder als
+            Anbindung (Internet, MPLS …). Details am Weg öffnen im Seitenpanel, „↗“ bzw. Ctrl-Klick in einem neuen Tab; die
+            Suche steht in der Adresse und bleibt beim Zurückgehen erhalten.
           </>,
           <>
             Path of a connection in “{tenantLabel}” hop by hop – through firewalls (policies, NAT) and ACI (contracts between
             the EPGs), with active and backup paths. For troubleshooting and checking work; read-only, state of the last run.
-            Source and destination as IP, network or name from IPAM, firewall objects, VMs and subnets.
+            Source and destination as IP, network or name from IPAM, firewall objects, VMs and subnets – or as an exit
+            (Internet, MPLS …). Details on the path open in the side panel, “↗” or Ctrl-click in a new tab; the search is kept
+            in the address and restored when going back.
           </>,
         )}
       </PageHead>

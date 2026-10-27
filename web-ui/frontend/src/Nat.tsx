@@ -180,7 +180,8 @@ function IpamBlock({ title, infos }: { title: string; infos: IpInfo[] }) {
   );
 }
 
-function NatDrawer({
+// NAT-Detail (auch in der Weg-Suche, ADR 0019 Ergänzung)
+export function NatDrawer({
   id,
   onClose,
   onGo,

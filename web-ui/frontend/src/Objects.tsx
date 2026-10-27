@@ -705,7 +705,8 @@ function EntryTable({ entries }: { entries: Record<string, string>[] }) {
 }
 
 // Objekt-Detail wie in der NAT-Sicht: Attribute, Werte, Mitglieder, Befunde und die Regeln
-function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; onGo?: Go }) {
+// (auch in der Weg-Suche, ADR 0019 Ergänzung)
+export function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; onGo?: Go }) {
   const vdomShown = useVdomShown();
   const [d, setD] = useState<ObjectDetail | null>(null);
   const [err, setErr] = useState<unknown>(null);

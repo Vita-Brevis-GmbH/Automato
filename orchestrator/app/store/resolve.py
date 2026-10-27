@@ -20,9 +20,16 @@ wird in dem, was gelesen ist - nur lesend, je Mandant:
 Ein Netz geht als Ganzes in die Weg-Suche (`ip` = das Netz, 0.39.0): Route, die es ganz
 enthaelt, Policies und Contracts, die es ganz erfassen (`store/paths.py`, `policy_check`).
 
+**Anbindungen** (ADR 0019 Ergaenzung, Test des Anwenders 2026-10-27)
+9. **Anbindungen nach aussen** als Quelle bzw. Ziel (`type` `exit`, `exit` = Referenz fuer
+   `src_exit`/`dst_exit` der Weg-Suche, `store/exit_ends.py`): von Hand erfasste ueber Name,
+   Art, Interface/Zone bzw. Firewall; erkannte, wenn die Eingabe eine Art („Internet“,
+   „Anbindung“ …), eine Firewall, ein Interface oder eine Zone nennt (das Erkennen liest das
+   ganze Routing - nicht bei jedem Namen). Nicht fuer Adressen.
+
 Treffer zuerst exakt, dann am Anfang, dann irgendwo im Namen; je IP bzw. Netz einmal. Die
-Antwort ist seitenweise mit Gesamtzahl und Anzahl je Art (Hosts, Netze); je Quelle hoechstens
-`CAP` Eintraege (`capped`: genauer suchen).
+Antwort ist seitenweise mit Gesamtzahl und Anzahl je Art (Hosts, Netze, Anbindungen); je Quelle
+hoechstens `CAP` Eintraege (`capped`: genauer suchen).
 
 Dienste (0.35.0): `FT_https` bzw. `Tenant/FT_https` -> die Dienste des Service-Objekts bzw.
 ACI-Filters (`tcp/443`), Gruppen aufgeloest.
@@ -41,15 +48,16 @@ from app.models import (
     InvSubnet,
     ReferenceRecordRow,
     SourceSystem,
+    TopoExit,
     Vm,
     VmIp,
 )
 from app.models.device_object import ObjectCategory
-from app.store import references
+from app.store import exit_ends, references
 
 LIMIT = 50
 CAP = 2000  # je Quelle
-TYPES = ("host", "net")
+TYPES = ("host", "net", "exit")
 _ADDRESSISH = re.compile(r"^[0-9a-f.:]+(/\d{1,3})?$")
 
 
@@ -112,8 +120,9 @@ def resolve(
     only: str | None = None,
     keep=None,
 ) -> dict:
-    """Treffer fuer `query`: {hits, total, counts {host, net}, capped}; je Treffer {ip, name,
-    kind (ip|ipam|object|vm|net|subnet), type (host|net), net, source, detail, also}. `keep`
+    """Treffer fuer `query`: {hits, total, counts {host, net, exit}, capped}; je Treffer {ip,
+    name, kind (ip|ipam|object|vm|net|subnet|exit), type (host|net|exit), net, source, detail,
+    also}, Anbindungen dazu mit `exit` (Referenz), `exit_kind`, `source_system_ids`. `keep`
     (0.76.0, Kunde gewaehlt): Treffer -> behalten?, darf ihn ergaenzen (z. B. `shared`)."""
     q = (query or "").strip().lower()
     if not _ADDRESSISH.match(q):  # FQDN mit Punkt am Ende; `10.20.1.` bleibt (nicht 10.20.100)
@@ -148,6 +157,8 @@ def _collect(session: Session, tenant_id: int, q: str) -> tuple[list[dict], bool
     found = _Found()
     _hosts(session, tenant_id, runs, names, q, found)
     _nets(session, tenant_id, runs, names, q, found)
+    if not (_ADDRESSISH.match(q) and any(c in q for c in "0123456789.:")):
+        _exits(session, tenant_id, names, q, found)
     return found.merged(), found.capped
 
 
@@ -170,7 +181,13 @@ class _Found:
     def merged(self) -> list[dict]:
         out: dict[str, dict] = {}
         for *_order, hit in sorted(self.rows, key=lambda h: (h[0], h[1], _key_name(h[2]))):
-            key = f"net:{hit['net']}" if hit["type"] == "net" else hit["ip"]
+            key = (
+                f"exit:{hit['exit']}"
+                if hit["type"] == "exit"
+                else f"net:{hit['net']}"
+                if hit["type"] == "net"
+                else hit["ip"]
+            )
             if key in out:
                 first = out[key]
                 also = first.setdefault("also", [])
@@ -332,6 +349,77 @@ def _nets(session, tenant_id, runs, names, q, found: _Found) -> None:
             hit = _net_hit(net, name, "subnet", names.get(s.source_system_id), detail)
             rank = min(_rank(x, q) for x in (name, s.epg or "", s.bd or "", s.context_name))
             found.add(rank, 3, hit)
+
+
+def _exits(session, tenant_id, names, q, found: _Found) -> None:
+    """Anbindungen (ADR 0019 Ergaenzung): von Hand erfasste immer, erkannte nur, wenn die Eingabe
+    eine Art, Firewall, ein Interface bzw. eine Zone nennt (`exit_ends.wants_detected`)."""
+    rows = list(
+        session.scalars(
+            select(TopoExit)
+            .where(TopoExit.tenant_id == tenant_id)
+            .order_by(TopoExit.name, TopoExit.id)
+        )
+    )
+    g = None
+    if exit_ends.wants_detected(session, tenant_id, q):
+        from app.store.paths import Graph  # spaet: paths laedt viel (Policies, NAT)
+
+        g = Graph(session, tenant_id)
+        ends = exit_ends.build(g)
+    else:
+        ends = [exit_ends.from_row(e) for e in rows]
+    by_id = {e.id: e for e in rows}
+    for end in ends:
+        if end.sides:
+            sids = sorted({s.key[0] for s in end.sides})
+            where = [f"{names.get(s.key[0], '?')} {s.port}" if s.port else names.get(s.key[0], "?")
+                     for s in end.sides]  # fmt: skip
+        else:  # ohne Knoten: wie eingetragen (leer = jede Firewall)
+            row = by_id.get(end.exit_id)
+            sids = sorted(row.source_system_ids or []) if row is not None else []
+            ports = ", ".join(sorted(end.ports))
+            where = [names.get(s, f"#{s}") for s in sids] or [L("alle Firewalls", "all firewalls")]
+            where = [f"{w} {ports}" if ports else w for w in where]
+        text = exit_ends.text_of(end, [names.get(s, "") for s in sids])
+        if not all(word in text for word in q.split()):
+            continue
+        hit = _exit_hit(end, g, sids, list(dict.fromkeys(where)))
+        low = end.label.lower()
+        rank = _rank(end.label, q) if q in low else (1 if q in end.name.lower() else 2)
+        found.add(rank, 4, hit)
+
+
+def _exit_hit(end, g, sids: list[int], where: list[str]) -> dict:
+    """Treffer einer Anbindung: `ip` = Adresse fuer die Weg-Suche (erstes Netz bzw. beliebige
+    Adresse im Internet; ohne Erkennen nur eingetragene Netze), `exit` = Referenz."""
+    address, how = end.address(g) if g is not None else ((end.nets or [""])[0], "net")
+    if not address and (end.default or end.kind == "internet"):
+        how = "internet"
+    nets = (
+        L("beliebige Adresse im Internet", "any address on the Internet")
+        if how == "internet"
+        else L(f"{len(end.nets)} Netze", f"{len(end.nets)} networks")
+        if len(end.nets) > 1
+        else end.nets[0]
+        if end.nets
+        else L("Netze aus dem Routing", "networks from the routing")
+    )
+    origin = L("von Hand", "manual") if end.manual else L("erkannt", "detected")
+    return {
+        "ip": address,
+        "name": end.label,
+        "kind": "exit",
+        "type": "exit",
+        "net": address if _net(address) is not None else None,
+        "source": ", ".join(where),
+        "detail": _join(nets, origin),
+        "exit": end.ref,
+        "exit_kind": end.kind,
+        "internet": how == "internet",
+        "source_system_ids": sids,
+        "prefixes": end.nets if end.given else [],
+    }
 
 
 def _literal_net(session, tenant_id, runs, names, net) -> list[dict]:

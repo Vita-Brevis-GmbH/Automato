@@ -371,3 +371,62 @@ Rahmen laut Anwender (2026-10-22):
    - Später: Aussenrouter selbst lesen (nur lesend).
 5. **Zeichnung** (optional).
 6. **Später:** Switches und weitere Geräte, Verkabelung (L1/L2-Sicht, siehe Punkt 9).
+
+## Ergänzung 2026-10-27 – Weg-Suche: Details am Weg, Anbindung als Quelle bzw. Ziel
+
+Zwei Befunde des Anwenders aus dem Test (2026-10-27): „Bei der Weg-Suche braucht es bei dem Pfad
+etwas mehr Infos, ohne dass ich das Menü verlassen muss“ und „man könnte die Suche auch von einer
+Anbindung aus testen – das Tool weiss ja, welche Netzwerke man von dort lernt“.
+
+1. **Die Weg-Suche bleibt stehen** (`web-ui/frontend/src/Paths.tsx`):
+   - Eingaben stehen in der URL (`#wege?src=…&dst=…&service=…&start=…&slack=…`, dazu
+     `src_name`/`dst_name` für einen gewählten Namen und `src_exit`/`dst_exit` für eine
+     Anbindung); die Suche schreibt sie mit `history.replaceState`. Zurück aus einer anderen
+     Ansicht, ein neuer Tab bzw. Neuladen stellt die Eingaben wieder her und rechnet das Ergebnis
+     neu (Stand der Daten jetzt). `src`, `dst`, `service` stehen zuerst – wie die Links aus der
+     Applikations-Doku.
+   - Ein Klick auf einen Link am Weg öffnet das **Detail im Seitenpanel**: Policy bzw. Contract
+     (`RuleDetailDrawer`), VIP/Virtual Service (`NatDrawer`), Objekt der Policy (`ObjectDrawer`),
+     Route (wirksame Route mit Next-Hops, Policy-Routen, Backup, dazu alle Routen zum Ziel in
+     diesem Kontext: RIB, BGP-Pfade, statische), Knoten bzw. Interface (Quellsystem, Kontext,
+     Mitglieder, Ein- und Ausgang mit den Angaben aus dem Inventar). Links aus dem Detail heraus
+     öffnen einen neuen Tab.
+   - Jeder Link hat daneben **„↗“** (`target="_blank"`, dieselbe Hash-URL); Ctrl-/Cmd-/Shift- bzw.
+     Mittelklick auf den Link wirkt wie im Browser (neuer Tab bzw. Fenster).
+   - Je Hop **„mehr“**: Knoten (Art, Quellsystem, Verbund, VRF, nicht Lesbares), Ein- und
+     Ausgang mit Zone, Route mit Next-Hops bzw. Policy-Route und Backup, die entscheidende Regel
+     mit Interfaces, Quelle, Ziel (Objekte öffnen) und Dienst sowie dem, was nicht prüfbar ist,
+     NAT/SNAT/Load Balancer, Zone und L2 – je Firewall eines Verbunds.
+2. **Anbindung als Quelle bzw. Ziel** (`store/exit_ends.py`, `GET /routing/trace?src_exit=
+   &dst_exit=`, Namenssuche `GET /routing/resolve` mit `type` `exit`):
+   - Anbindungen sind von Hand erfasste (`topo_exit`, Referenz `exit:<id>`) und erkannte
+     (`store/exits.py`, Referenz `router:<IP>` = ein Router des Vorschlags; wie die Vorschläge
+     ohne ganz abgedeckte bzw. ausgeblendete). `@<Quellsystem>` an der Referenz wählt eine
+     Firewall.
+   - **Firewalls der Anbindung:** je gelesenem Knoten Interface und Zone zu ihren Routern
+     (zugeordnet wie im Weg: Next-Hop, sonst Interface/Zone), sonst Interface bzw. Zone der
+     Anbindung aus dem Inventar (Zone ohne Interface: Eingang = Zone).
+   - **Netze der Anbindung:** von Hand eingetragen, sonst die Präfixe, die die Firewalls über
+     ihre Router lernen (aktive Routen, sonst Backup). Geprüft wird das erste Netz **als Ganzes**
+     (0.39.0); bei Default-Route bzw. Art Internet eine **beliebige Adresse im Internet** – eine
+     öffentliche Test-Adresse aus dem Dokumentationsbereich (RFC 5737: 198.51.100.10,
+     192.0.2.10, 203.0.113.10; RFC 3849 für IPv6), die an keinem gelesenen Gerät angeschlossen
+     ist und in keinem EPG-/BD-Subnetz liegt. Die Familie folgt der Gegenseite. Ein anderes
+     Netz der Anbindung wählt `src` bzw. `dst` (`address_kind` `given`).
+   - **Als Quelle:** der Weg beginnt an den Firewalls der Anbindung mit ihrem Eingang
+     (`paths.trace(entries=)` – die einzige Änderung im Weg selbst); so prüfen die Policies den
+     Eingang (z. B. `wan1`), eine VIP ihr `extintf`. Mehrere Firewalls = je ein Start bzw. Weg
+     (`path.exit_start`), im Verbund ein Hop mit den Firewalls darin (0.29.0).
+   - **Als Ziel:** der Weg folgt dem Routing; je Weg `via_exit`, ob er über die Anbindung
+     hinausgeht (Anbindung am Ausgang, Router der Anbindung als Next-Hop bzw. ihr Interface am
+     letzten Hop), sonst ein Hinweis „Kein Weg führt über …“.
+   - Antwort `exits.src`/`exits.dst`: Bezeichnung, Firewalls mit Interface/Zone, Router, Netze,
+     geprüfte Adresse und Art (`net`, `internet`, `unknown`, `given`), die Firewalls zur Auswahl
+     (`choices`) und die Test-Adresse (`internet`). Die Oberfläche zeigt sie als Karte mit
+     Auswahl eines anderen Netzes bzw. einer Firewall.
+   - **Namenssuche:** von Hand erfasste Anbindungen über Name, Art, Interface/Zone bzw.
+     Firewall; erkannte nur, wenn die Eingabe eine Art („Internet“, „MPLS“, „Anbindung“ …),
+     eine Firewall, ein Interface oder eine Zone nennt – das Erkennen liest das ganze Routing
+     und läuft nicht bei jedem Namen. Adressen suchen keine Anbindungen. Mit Kunde oben (0.76.0)
+     nur Anbindungen an seinen Firewalls (wie die Liste der Anbindungen).
+   - Nur lesend; die Weg-Suche bleibt für Kunden-Benutzer nicht freigegeben.
