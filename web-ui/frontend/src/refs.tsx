@@ -1,135 +1,229 @@
 // Darstellung von Firewall-Objekten mit Referenzdaten aus dem IPAM (DDI/NetBox), ADR 0010.
 import { ReactNode, useEffect, useState } from "react";
 import { fetchSystems, RefInfo, RefValue, Rule, RuleRef, VmInfo } from "./api";
+import { L } from "./i18n";
 import { Dash, Icon, MatchBadge } from "./ui";
 
 export const PLATFORM_LABEL: Record<string, string> = {
   fortigate: "FortiGate",
   cisco_aci: "Cisco ACI",
   vmware: "VMware vCenter",
-  cisco_switch: "Switches & Router",
+  cisco_switch: L("Switches & Router", "Switches & routers"),
   avi: "NSX ALB (Avi)",
   infoblox: "Infoblox DDI",
   netbox: "NetBox",
 };
 export const REFERENCE_PLATFORMS = ["infoblox", "netbox"];
 export const REF_ROLE_LABEL: Record<string, string> = {
-  primary: "IPAM führend",
-  enrichment: "Anreicherung",
+  primary: L("IPAM führend", "Primary IPAM"),
+  enrichment: L("Anreicherung", "Enrichment"),
 };
 
 // Befund-Typen (Findings) mit verständlicher Bezeichnung
 export const FINDING_LABEL: Record<string, string> = {
-  unmatched_object: "Nicht im IPAM",
-  invalid_name: "Name verletzt Konvention",
-  ambiguous_ip: "IP mehrdeutig",
-  duplicate_value: "Doppelter Wert",
-  name_type_mismatch: "Präfix passt nicht zum Typ",
-  epg_no_endpoints: "EPG ohne Endpunkte",
-  name_mismatch: "Name ≠ DNS-Name",
-  unused_object: "Unbenutztes Objekt",
-  subnet_not_in_ipam: "Subnetz fehlt im IPAM",
-  vlan_mismatch: "VLAN weicht ab",
-  service_mismatch: "Service ≠ Name",
-  predefined_service_used: "Standardobjekt verwendet",
-  rule_incomplete: "Regel nicht wirksam",
-  vm_not_in_ipam: "VM-IP nicht im IPAM",
-  portgroup_no_epg: "Portgruppe ohne EPG",
-  portgroup_name_mismatch: "Portgruppe: Name ≠ EPG",
-  mapped_not_in_ipam: "Ziel nicht im IPAM",
-  parallel_rule_mismatch: "Parallele Regel abweichend",
-  parallel_rule_missing: "Regel fehlt parallel",
-  parallel_object_mismatch: "Paralleles Objekt abweichend",
-  parallel_policy_route_mismatch: "Parallele Policy-Route abweichend",
-  parallel_route_mismatch: "Paralleles Routing abweichend",
-  parallel_nat_mismatch: "Paralleles NAT abweichend",
-  aci_scope_unpaired: "Contract: ohne Gegenstelle im Scope",
-  aci_contract_both_sides: "Contract: EPG Consumer und Provider",
-  epg_assignment_conflict: "EPG: gelernt ≠ konfiguriert",
-  snat_pool_missing: "SNAT-Pool fehlt",
-  topo_duplicate_ip: "IP doppelt im Netz",
-  topo_mask_mismatch: "Netzmaske abweichend",
-  topo_route_loop: "Routing-Schleife",
-  topo_static_unused: "Statische Route ohne Wirkung",
-  topo_bgp_down: "BGP nicht aufgebaut",
-  zone_policy_violation: "Zone: gegen die Absicht",
-  zone_overlap: "Netz in mehreren Zonen",
-  zone_outside_schema: "Zone ausserhalb des Schemas",
-  app_connection_mismatch: "Applikation: Wege uneinheitlich",
-  app_contract_narrower: "Applikation: Contract enger als Firewall",
-  link_speed_mismatch: "Kabel: Speed abweichend",
-  link_duplex_mismatch: "Kabel: Duplex abweichend",
-  link_vlan_mismatch: "Kabel: VLANs abweichend",
-  link_lag_mismatch: "Kabel: Port-Channel einseitig",
-  link_one_sided: "Kabel: nur eine Seite meldet",
-  uplink_vlan_missing: "VLAN fehlt am ESXi-Uplink",
-  l2_single_link: "L2: nur ein Kabel",
-  l2_single_switch: "L2: alle Kabel am selben Switch",
-  l2_single_point: "L2: Switch als einzelner Ausfallpunkt",
-  lag_degraded: "Port-Channel unvollständig",
-  vlan_split: "VLAN getrennt",
-  vpc_mismatch: "vPC-Paar uneinheitlich",
+  unmatched_object: L("Nicht im IPAM", "Not in IPAM"),
+  invalid_name: L("Name verletzt Konvention", "Name violates convention"),
+  ambiguous_ip: L("IP mehrdeutig", "Ambiguous IP"),
+  duplicate_value: L("Doppelter Wert", "Duplicate value"),
+  name_type_mismatch: L("Präfix passt nicht zum Typ", "Prefix does not match type"),
+  epg_no_endpoints: L("EPG ohne Endpunkte", "EPG without endpoints"),
+  name_mismatch: L("Name ≠ DNS-Name", "Name ≠ DNS name"),
+  unused_object: L("Unbenutztes Objekt", "Unused object"),
+  subnet_not_in_ipam: L("Subnetz fehlt im IPAM", "Subnet missing in IPAM"),
+  vlan_mismatch: L("VLAN weicht ab", "VLAN differs"),
+  service_mismatch: L("Service ≠ Name", "Service ≠ name"),
+  predefined_service_used: L("Standardobjekt verwendet", "Predefined object used"),
+  rule_incomplete: L("Regel nicht wirksam", "Rule not effective"),
+  vm_not_in_ipam: L("VM-IP nicht im IPAM", "VM IP not in IPAM"),
+  portgroup_no_epg: L("Portgruppe ohne EPG", "Port group without EPG"),
+  portgroup_name_mismatch: L("Portgruppe: Name ≠ EPG", "Port group: name ≠ EPG"),
+  mapped_not_in_ipam: L("Ziel nicht im IPAM", "Target not in IPAM"),
+  parallel_rule_mismatch: L("Parallele Regel abweichend", "Parallel rule differs"),
+  parallel_rule_missing: L("Regel fehlt parallel", "Rule missing on parallel firewall"),
+  parallel_object_mismatch: L("Paralleles Objekt abweichend", "Parallel object differs"),
+  parallel_policy_route_mismatch: L("Parallele Policy-Route abweichend", "Parallel policy route differs"),
+  parallel_route_mismatch: L("Paralleles Routing abweichend", "Parallel routing differs"),
+  parallel_nat_mismatch: L("Paralleles NAT abweichend", "Parallel NAT differs"),
+  aci_scope_unpaired: L("Contract: ohne Gegenstelle im Scope", "Contract: no peer in scope"),
+  aci_contract_both_sides: L("Contract: EPG Consumer und Provider", "Contract: EPG consumer and provider"),
+  epg_assignment_conflict: L("EPG: gelernt ≠ konfiguriert", "EPG: learned ≠ configured"),
+  snat_pool_missing: L("SNAT-Pool fehlt", "SNAT pool missing"),
+  topo_duplicate_ip: L("IP doppelt im Netz", "Duplicate IP in network"),
+  topo_mask_mismatch: L("Netzmaske abweichend", "Netmask differs"),
+  topo_route_loop: L("Routing-Schleife", "Routing loop"),
+  topo_static_unused: L("Statische Route ohne Wirkung", "Static route without effect"),
+  topo_bgp_down: L("BGP nicht aufgebaut", "BGP not established"),
+  zone_policy_violation: L("Zone: gegen die Absicht", "Zone: against the intent"),
+  zone_overlap: L("Netz in mehreren Zonen", "Network in several zones"),
+  zone_outside_schema: L("Zone ausserhalb des Schemas", "Zone outside the schema"),
+  app_connection_mismatch: L("Applikation: Wege uneinheitlich", "Application: inconsistent paths"),
+  app_contract_narrower: L("Applikation: Contract enger als Firewall", "Application: contract narrower than firewall"),
+  link_speed_mismatch: L("Kabel: Speed abweichend", "Link: speed differs"),
+  link_duplex_mismatch: L("Kabel: Duplex abweichend", "Link: duplex differs"),
+  link_vlan_mismatch: L("Kabel: VLANs abweichend", "Link: VLANs differ"),
+  link_lag_mismatch: L("Kabel: Port-Channel einseitig", "Link: Port-Channel one-sided"),
+  link_one_sided: L("Kabel: nur eine Seite meldet", "Link: only one side reports"),
+  uplink_vlan_missing: L("VLAN fehlt am ESXi-Uplink", "VLAN missing on ESXi uplink"),
+  l2_single_link: L("L2: nur ein Kabel", "L2: single cable"),
+  l2_single_switch: L("L2: alle Kabel am selben Switch", "L2: all cables on the same switch"),
+  l2_single_point: L("L2: Switch als einzelner Ausfallpunkt", "L2: switch as single point of failure"),
+  lag_degraded: L("Port-Channel unvollständig", "Port-Channel incomplete"),
+  vlan_split: L("VLAN getrennt", "VLAN split"),
+  vpc_mismatch: L("vPC-Paar uneinheitlich", "vPC pair inconsistent"),
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
 // Was der Befund-Typ prüft (Kurzbeschreibung für Kacheln und Tooltips)
 export const FINDING_HINT: Record<string, string> = {
-  unmatched_object: "Firewall-Objekt ohne Eintrag im IPAM",
-  name_mismatch: "Objektname passt nicht zum DNS-Namen im IPAM",
-  subnet_not_in_ipam: "Subnetz der Firewall/ACI fehlt im IPAM",
-  vlan_mismatch: "VLAN im Netz weicht vom IPAM ab",
-  invalid_name: "Name verletzt die Namenskonvention",
-  name_type_mismatch: "Präfix passt nicht zum Objekttyp",
-  duplicate_value: "gleicher Wert in mehreren Objekten",
-  ambiguous_ip: "IP in mehreren Objekten",
-  unused_object: "in keiner Regel oder Gruppe verwendet",
-  epg_no_endpoints: "EPG ohne gelernte Endpunkte",
-  service_mismatch: "Protokoll/Port passt nicht zum Service-Namen",
-  predefined_service_used: "Standard-Service des Herstellers (z. B. HTTPS, ALL) in einer erlaubenden Regel – nicht nach Konvention",
-  rule_incomplete: "Regel/Contract ohne Quelle bzw. Ziel",
-  vm_not_in_ipam: "IP einer VM (vCenter) fehlt im IPAM",
-  portgroup_no_epg: "Portgruppe nach ACI-Schema ohne eingelesene EPG",
-  portgroup_name_mismatch: "Portgruppe nur über das VLAN einer anders benannten EPG zugeordnet",
-  parallel_rule_mismatch: "gleiche Policy auf der parallelen Firewall anders konfiguriert",
-  parallel_rule_missing: "Policy fehlt auf einer parallelen Firewall",
-  parallel_object_mismatch: "gleichnamiges Objekt auf der parallelen Firewall anders definiert",
-  parallel_policy_route_mismatch: "Policy-Route bzw. SD-WAN-Regel auf der parallelen Firewall anders oder fehlt",
-  parallel_route_mismatch: "Routen eines VDOMs auf der parallelen Firewall anders (Protokoll, Interface, statische Routen) oder fehlen",
-  parallel_nat_mismatch: "VIP bzw. IP-Pool auf der parallelen Firewall anders oder fehlt",
-  aci_scope_unpaired: "Consumer bzw. Provider, die der Scope des Contracts (AP, VRF, Tenant) mit keiner Gegenstelle verbindet",
-  aci_contract_both_sides: "EPG ist Consumer und Provider desselben Contracts – er gilt in beide Richtungen, gegenüber sich selbst nicht",
-  epg_assignment_conflict: "IP im ACI in einer anderen EPG gelernt als konfiguriert (Portgruppe der VM bzw. statischer Endpunkt)",
-  snat_pool_missing: "Policy übersetzt die Quelle auf einen IP-Pool, den die Firewall nicht hat",
-  topo_duplicate_ip: "dieselbe IP auf zwei Geräten im selben Netz",
-  topo_mask_mismatch: "Gegenstellen im selben Netz mit verschiedener Netzmaske",
-  topo_route_loop: "zwei gelesene Knoten leiten ein Netz gegenseitig zueinander",
-  topo_static_unused: "eingeschaltete statische Route, die nicht in der Routing-Tabelle steht",
-  topo_bgp_down: "BGP-Sitzung eines gelesenen Knotens nicht aufgebaut",
-  zone_policy_violation: "erlaubende Regel zwischen Zonen, die laut Zonenmatrix gesperrt sind",
-  zone_overlap: "dasselbe Netz in mehreren logischen Zonen",
-  zone_outside_schema: "logische Zone, die zu keiner Zone des Grundschemas im Namensprofil passt",
-  app_connection_mismatch: "Verbindung einer Applikation, die über einen Weg offen und über einen anderen gesperrt ist (aktiv, ECMP, Backup, Firewalls im Verbund)",
-  app_contract_narrower: "Contract Richtung L3Out, der weniger öffnet als die Firewall-Regeln der Applikation (die Firewall ist führend)",
-  link_speed_mismatch: "zwei verbundene Switch-Ports mit verschiedener Geschwindigkeit",
-  link_duplex_mismatch: "zwei verbundene Switch-Ports mit verschiedenem Duplex",
-  link_vlan_mismatch: "Modus, Access- bzw. Native VLAN oder erlaubte VLANs der beiden Ports verschieden",
-  link_lag_mismatch: "Port in einem Port-Channel, der Port gegenüber nicht",
-  link_one_sided: "Verbindung, die nur einer von zwei gelesenen Switches per CDP/LLDP meldet",
-  uplink_vlan_missing: "Port, an dem VMs eines ESXi-Hosts gesehen werden, lässt ein VLAN ihres Clusters/vSwitches nicht durch",
-  l2_single_link: "Switch bzw. ESXi-Host hängt mit einem einzigen Kabel an den weiterleitenden Geräten",
-  l2_single_switch: "alle Kabel eines Switches bzw. ESXi-Hosts enden am selben Switch – keine Redundanz gegen dessen Ausfall",
-  l2_single_point: "fällt dieser Switch aus, zerfällt das Netz in getrennte Teile",
-  lag_degraded: "Port-Channel, von dem nicht alle Mitglieder verbunden sind",
-  vlan_split: "VLAN wird an Access-Ports bzw. als SVI auf mehreren Switches genutzt, die Trunks dazwischen lassen es nicht durch",
-  vpc_mismatch: "vPC nur auf einem Peer, down bzw. inkonsistent – oder der Peer des vPC-Paars ist nicht verbunden",
+  unmatched_object: L("Firewall-Objekt ohne Eintrag im IPAM", "Firewall object without an entry in the IPAM"),
+  name_mismatch: L("Objektname passt nicht zum DNS-Namen im IPAM", "Object name does not match the DNS name in the IPAM"),
+  subnet_not_in_ipam: L("Subnetz der Firewall/ACI fehlt im IPAM", "Subnet of the firewall/ACI missing in the IPAM"),
+  vlan_mismatch: L("VLAN im Netz weicht vom IPAM ab", "VLAN in the network differs from the IPAM"),
+  invalid_name: L("Name verletzt die Namenskonvention", "Name violates the naming convention"),
+  name_type_mismatch: L("Präfix passt nicht zum Objekttyp", "Prefix does not match the object type"),
+  duplicate_value: L("gleicher Wert in mehreren Objekten", "same value in several objects"),
+  ambiguous_ip: L("IP in mehreren Objekten", "IP in several objects"),
+  unused_object: L("in keiner Regel oder Gruppe verwendet", "not used in any rule or group"),
+  epg_no_endpoints: L("EPG ohne gelernte Endpunkte", "EPG without learned endpoints"),
+  service_mismatch: L("Protokoll/Port passt nicht zum Service-Namen", "Protocol/port does not match the service name"),
+  predefined_service_used: L(
+    "Standard-Service des Herstellers (z. B. HTTPS, ALL) in einer erlaubenden Regel – nicht nach Konvention",
+    "Predefined service of the vendor (e.g. HTTPS, ALL) in an accepting rule – not according to convention",
+  ),
+  rule_incomplete: L("Regel/Contract ohne Quelle bzw. Ziel", "Rule/contract without source or destination"),
+  vm_not_in_ipam: L("IP einer VM (vCenter) fehlt im IPAM", "IP of a VM (vCenter) missing in the IPAM"),
+  portgroup_no_epg: L(
+    "Portgruppe nach ACI-Schema ohne eingelesene EPG",
+    "Port group following the ACI schema without a collected EPG",
+  ),
+  portgroup_name_mismatch: L(
+    "Portgruppe nur über das VLAN einer anders benannten EPG zugeordnet",
+    "Port group assigned only via the VLAN of a differently named EPG",
+  ),
+  parallel_rule_mismatch: L(
+    "gleiche Policy auf der parallelen Firewall anders konfiguriert",
+    "same policy configured differently on the parallel firewall",
+  ),
+  parallel_rule_missing: L("Policy fehlt auf einer parallelen Firewall", "Policy missing on a parallel firewall"),
+  parallel_object_mismatch: L(
+    "gleichnamiges Objekt auf der parallelen Firewall anders definiert",
+    "object of the same name defined differently on the parallel firewall",
+  ),
+  parallel_policy_route_mismatch: L(
+    "Policy-Route bzw. SD-WAN-Regel auf der parallelen Firewall anders oder fehlt",
+    "Policy route or SD-WAN rule differs or is missing on the parallel firewall",
+  ),
+  parallel_route_mismatch: L(
+    "Routen eines VDOMs auf der parallelen Firewall anders (Protokoll, Interface, statische Routen) oder fehlen",
+    "Routes of a VDOM differ on the parallel firewall (protocol, interface, static routes) or are missing",
+  ),
+  parallel_nat_mismatch: L(
+    "VIP bzw. IP-Pool auf der parallelen Firewall anders oder fehlt",
+    "VIP or IP-Pool differs or is missing on the parallel firewall",
+  ),
+  aci_scope_unpaired: L(
+    "Consumer bzw. Provider, die der Scope des Contracts (AP, VRF, Tenant) mit keiner Gegenstelle verbindet",
+    "Consumers or providers that the scope of the contract (AP, VRF, tenant) connects to no peer",
+  ),
+  aci_contract_both_sides: L(
+    "EPG ist Consumer und Provider desselben Contracts – er gilt in beide Richtungen, gegenüber sich selbst nicht",
+    "EPG is consumer and provider of the same contract – it applies in both directions, but not towards itself",
+  ),
+  epg_assignment_conflict: L(
+    "IP im ACI in einer anderen EPG gelernt als konfiguriert (Portgruppe der VM bzw. statischer Endpunkt)",
+    "IP learned in the ACI in a different EPG than configured (port group of the VM or static endpoint)",
+  ),
+  snat_pool_missing: L(
+    "Policy übersetzt die Quelle auf einen IP-Pool, den die Firewall nicht hat",
+    "Policy translates the source to an IP-Pool the firewall does not have",
+  ),
+  topo_duplicate_ip: L("dieselbe IP auf zwei Geräten im selben Netz", "the same IP on two devices in the same network"),
+  topo_mask_mismatch: L(
+    "Gegenstellen im selben Netz mit verschiedener Netzmaske",
+    "peers in the same network with different netmasks",
+  ),
+  topo_route_loop: L(
+    "zwei gelesene Knoten leiten ein Netz gegenseitig zueinander",
+    "two read nodes route a network to each other",
+  ),
+  topo_static_unused: L(
+    "eingeschaltete statische Route, die nicht in der Routing-Tabelle steht",
+    "enabled static route that is not in the routing table",
+  ),
+  topo_bgp_down: L("BGP-Sitzung eines gelesenen Knotens nicht aufgebaut", "BGP session of a read node not established"),
+  zone_policy_violation: L(
+    "erlaubende Regel zwischen Zonen, die laut Zonenmatrix gesperrt sind",
+    "accepting rule between zones that are blocked according to the zone matrix",
+  ),
+  zone_overlap: L("dasselbe Netz in mehreren logischen Zonen", "the same network in several logical zones"),
+  zone_outside_schema: L(
+    "logische Zone, die zu keiner Zone des Grundschemas im Namensprofil passt",
+    "logical zone that matches no zone of the base schema in the naming profile",
+  ),
+  app_connection_mismatch: L(
+    "Verbindung einer Applikation, die über einen Weg offen und über einen anderen gesperrt ist (aktiv, ECMP, Backup, Firewalls im Verbund)",
+    "Connection of an application that is open via one path and blocked via another (active, ECMP, backup, firewalls in a parallel group)",
+  ),
+  app_contract_narrower: L(
+    "Contract Richtung L3Out, der weniger öffnet als die Firewall-Regeln der Applikation (die Firewall ist führend)",
+    "Contract towards the L3Out that opens less than the firewall rules of the application (the firewall is leading)",
+  ),
+  link_speed_mismatch: L(
+    "zwei verbundene Switch-Ports mit verschiedener Geschwindigkeit",
+    "two connected switch ports with different speeds",
+  ),
+  link_duplex_mismatch: L(
+    "zwei verbundene Switch-Ports mit verschiedenem Duplex",
+    "two connected switch ports with different duplex",
+  ),
+  link_vlan_mismatch: L(
+    "Modus, Access- bzw. Native VLAN oder erlaubte VLANs der beiden Ports verschieden",
+    "Mode, access or native VLAN or allowed VLANs of the two ports differ",
+  ),
+  link_lag_mismatch: L(
+    "Port in einem Port-Channel, der Port gegenüber nicht",
+    "Port in a Port-Channel, the opposite port is not",
+  ),
+  link_one_sided: L(
+    "Verbindung, die nur einer von zwei gelesenen Switches per CDP/LLDP meldet",
+    "Link that only one of two read switches reports via CDP/LLDP",
+  ),
+  uplink_vlan_missing: L(
+    "Port, an dem VMs eines ESXi-Hosts gesehen werden, lässt ein VLAN ihres Clusters/vSwitches nicht durch",
+    "Port on which VMs of an ESXi host are seen does not pass a VLAN of their cluster/vSwitch",
+  ),
+  l2_single_link: L(
+    "Switch bzw. ESXi-Host hängt mit einem einzigen Kabel an den weiterleitenden Geräten",
+    "Switch or ESXi host is connected to the forwarding devices with a single cable",
+  ),
+  l2_single_switch: L(
+    "alle Kabel eines Switches bzw. ESXi-Hosts enden am selben Switch – keine Redundanz gegen dessen Ausfall",
+    "all cables of a switch or ESXi host end on the same switch – no redundancy against its failure",
+  ),
+  l2_single_point: L(
+    "fällt dieser Switch aus, zerfällt das Netz in getrennte Teile",
+    "if this switch fails, the network breaks into separate parts",
+  ),
+  lag_degraded: L(
+    "Port-Channel, von dem nicht alle Mitglieder verbunden sind",
+    "Port-Channel of which not all members are connected",
+  ),
+  vlan_split: L(
+    "VLAN wird an Access-Ports bzw. als SVI auf mehreren Switches genutzt, die Trunks dazwischen lassen es nicht durch",
+    "VLAN is used on access ports or as SVI on several switches, the trunks in between do not pass it",
+  ),
+  vpc_mismatch: L(
+    "vPC nur auf einem Peer, down bzw. inkonsistent – oder der Peer des vPC-Paars ist nicht verbunden",
+    "vPC only on one peer, down or inconsistent – or the peer of the vPC pair is not connected",
+  ),
 };
 
 // Kategorien der Übersicht (Findings-Seite)
 export const FINDING_GROUPS: { key: string; label: string; help: string; types: string[] }[] = [
   {
     key: "ipam",
-    label: "IPAM-Abgleich",
-    help: "Firewall/ACI gegen DDI bzw. NetBox",
+    label: L("IPAM-Abgleich", "IPAM reconciliation"),
+    help: L("Firewall/ACI gegen DDI bzw. NetBox", "Firewall/ACI against DDI or NetBox"),
     types: [
       "unmatched_object",
       "name_mismatch",
@@ -141,20 +235,29 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
   },
   {
     key: "naming",
-    label: "Namenskonvention",
-    help: "Präfixe laut Namensprofil, Services nach FT_-Schema",
+    label: L("Namenskonvention", "Naming convention"),
+    help: L(
+      "Präfixe laut Namensprofil, Services nach FT_-Schema",
+      "Prefixes per naming profile, services following the FT_ schema",
+    ),
     types: ["invalid_name", "name_type_mismatch", "service_mismatch", "predefined_service_used"],
   },
   {
     key: "rules",
-    label: "Regeln",
-    help: "ohne Quelle/Ziel bzw. ohne Consumer/Provider, Contract-Scope ohne Gegenstelle",
+    label: L("Regeln", "Rules"),
+    help: L(
+      "ohne Quelle/Ziel bzw. ohne Consumer/Provider, Contract-Scope ohne Gegenstelle",
+      "without source/destination or without consumer/provider, contract scope without peer",
+    ),
     types: ["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing"],
   },
   {
     key: "parallel",
-    label: "Parallele Firewalls",
-    help: "Regeln, Objekte, Policy-Routen, Routing und NAT im Verbund nicht gleich",
+    label: L("Parallele Firewalls", "Parallel firewalls"),
+    help: L(
+      "Regeln, Objekte, Policy-Routen, Routing und NAT im Verbund nicht gleich",
+      "Rules, objects, policy routes, routing and NAT not identical in the parallel group",
+    ),
     types: [
       "parallel_rule_mismatch",
       "parallel_rule_missing",
@@ -166,60 +269,75 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
   },
   {
     key: "cleanup",
-    label: "Bereinigung",
-    help: "Doppelte und unbenutzte Objekte",
+    label: L("Bereinigung", "Cleanup"),
+    help: L("Doppelte und unbenutzte Objekte", "Duplicate and unused objects"),
     types: ["duplicate_value", "unused_object"],
   },
   {
     key: "topology",
-    label: "Topologie",
-    help: "Plausibilität von Netzen und Routing: doppelte IPs, Masken, Schleifen, Routen ohne Wirkung, BGP",
+    label: L("Topologie", "Topology"),
+    help: L(
+      "Plausibilität von Netzen und Routing: doppelte IPs, Masken, Schleifen, Routen ohne Wirkung, BGP",
+      "Plausibility of networks and routing: duplicate IPs, masks, loops, routes without effect, BGP",
+    ),
     types: ["topo_duplicate_ip", "topo_mask_mismatch", "topo_route_loop", "topo_static_unused", "topo_bgp_down"],
   },
   {
     key: "cabling",
-    label: "Verkabelung",
-    help: "Verbindungen zwischen Switches: Speed, Duplex, VLANs, Port-Channel, einseitig gemeldet",
+    label: L("Verkabelung", "Cabling"),
+    help: L(
+      "Verbindungen zwischen Switches: Speed, Duplex, VLANs, Port-Channel, einseitig gemeldet",
+      "Links between switches: speed, duplex, VLANs, Port-Channel, reported one-sided",
+    ),
     types: ["link_speed_mismatch", "link_duplex_mismatch", "link_vlan_mismatch", "link_lag_mismatch", "link_one_sided", "uplink_vlan_missing", "l2_single_link", "l2_single_switch", "l2_single_point", "lag_degraded", "vlan_split", "vpc_mismatch"],
   },
   {
     key: "zones",
-    label: "Zonen",
-    help: "Regeln gegen die Absicht der Zonenmatrix, Netze in mehreren logischen Zonen, Zonen ausserhalb des Grundschemas",
+    label: L("Zonen", "Zones"),
+    help: L(
+      "Regeln gegen die Absicht der Zonenmatrix, Netze in mehreren logischen Zonen, Zonen ausserhalb des Grundschemas",
+      "Rules against the intent of the zone matrix, networks in several logical zones, zones outside the base schema",
+    ),
     types: ["zone_policy_violation", "zone_overlap", "zone_outside_schema"],
   },
   {
     key: "apps",
-    label: "Applikationen",
-    help: "Verbindungen Ende zu Ende: über einen Weg offen, über einen anderen gesperrt",
+    label: L("Applikationen", "Applications"),
+    help: L(
+      "Verbindungen Ende zu Ende: über einen Weg offen, über einen anderen gesperrt",
+      "End-to-end connections: open via one path, blocked via another",
+    ),
     types: ["app_connection_mismatch", "app_contract_narrower"],
   },
   {
     key: "aci",
     label: "ACI / VMware",
-    help: "EPGs ohne Endpunkte, Portgruppen ohne EPG, gelernt ≠ konfiguriert",
+    help: L(
+      "EPGs ohne Endpunkte, Portgruppen ohne EPG, gelernt ≠ konfiguriert",
+      "EPGs without endpoints, port groups without EPG, learned ≠ configured",
+    ),
     types: ["epg_no_endpoints", "portgroup_no_epg", "portgroup_name_mismatch", "epg_assignment_conflict"],
   },
 ];
 
 export const CATEGORY_LABEL: Record<string, string> = {
-  address: "Adresse",
-  address_group: "Adressgruppe",
+  address: L("Adresse", "Address"),
+  address_group: L("Adressgruppe", "Address group"),
   vip: "VIP",
   ippool: "IP-Pool",
   service: "Service",
-  service_group: "Servicegruppe",
-  vip_target: "VIP-Ziel",
+  service_group: L("Servicegruppe", "Service group"),
+  vip_target: L("VIP-Ziel", "VIP target"),
 };
 
 const KIND_LABEL: Record<string, string> = {
-  prefix: "Netz",
+  prefix: L("Netz", "Network"),
   range: "Range",
-  ip_address: "IP-Adresse",
+  ip_address: L("IP-Adresse", "IP address"),
   host: "Host",
-  a_record: "A-Record",
+  a_record: L("A-Record", "A record"),
   ptr_record: "PTR",
-  fixed_address: "DHCP fix",
+  fixed_address: L("DHCP fix", "DHCP fixed"),
   vlan: "VLAN",
 };
 
@@ -264,9 +382,15 @@ export function enrichmentExtra(enr: RefInfo, ref: RefInfo | null): string {
 }
 
 export function SourceLink({ r }: { r: RefInfo }) {
-  const label = r.source ?? "Quelle";
+  const label = r.source ?? L("Quelle", "Source");
   return r.url ? (
-    <a className="chip info" href={r.url} target="_blank" rel="noreferrer" title="In der Quelle öffnen">
+    <a
+      className="chip info"
+      href={r.url}
+      target="_blank"
+      rel="noreferrer"
+      title={L("In der Quelle öffnen", "Open in source")}
+    >
       {label} <Icon name="external" size={11} />
     </a>
   ) : (
@@ -304,11 +428,11 @@ export function ValueLine({ v, compact }: { v: RefValue; compact?: boolean }) {
 export function VmChip({ vm }: { vm: VmInfo }) {
   const title = [
     `VM ${vm.name}`,
-    vm.power_state === "poweredOff" ? "ausgeschaltet" : null,
+    vm.power_state === "poweredOff" ? L("ausgeschaltet", "powered off") : null,
     vm.cluster ? `Cluster ${vm.cluster}` : null,
-    vm.portgroup ? `Portgruppe ${vm.portgroup}${vm.vlan != null ? ` (VLAN ${vm.vlan})` : ""}` : null,
+    vm.portgroup ? `${L("Portgruppe", "Port group")} ${vm.portgroup}${vm.vlan != null ? ` (VLAN ${vm.vlan})` : ""}` : null,
     vm.epg ? `EPG ${vm.epg}` : null,
-    vm.others?.length ? `gleiche IP auch an: ${vm.others.join(", ")}` : null,
+    vm.others?.length ? L(`gleiche IP auch an: ${vm.others.join(", ")}`, `same IP also on: ${vm.others.join(", ")}`) : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -321,9 +445,9 @@ export function VmChip({ vm }: { vm: VmInfo }) {
 }
 
 const POWER_STATE: Record<string, [string, string]> = {
-  poweredOn: ["ok", "an"],
-  poweredOff: ["na", "aus"],
-  suspended: ["warn", "pausiert"],
+  poweredOn: ["ok", L("an", "on")],
+  poweredOff: ["na", L("aus", "off")],
+  suspended: ["warn", L("pausiert", "suspended")],
 };
 
 // VM im Detail (vCenter, 0.14.0): Status, Gast-OS, Netzwerk (NIC, Portgruppe → EPG), Lage und
@@ -336,35 +460,47 @@ export function VmCard({ vm, role }: { vm: VmInfo; role?: string }) {
     vm.disk_gb != null ? `${Math.round(vm.disk_gb)} GB Disk` : null,
   ].filter(Boolean);
   const rows: [string, ReactNode][] = [
-    ["Gast-OS", vm.guest_os],
+    [L("Gast-OS", "Guest OS"), vm.guest_os],
     ["Hostname", vm.hostname],
     ["IPs", vm.ips?.length ? vm.ips.join(", ") : null],
     [
-      "Netzwerkkarte",
-      vm.nic ? `${vm.nic}${vm.mac ? ` · ${vm.mac}` : ""}${vm.connected === false ? " · getrennt" : ""}` : null,
+      L("Netzwerkkarte", "Network adapter"),
+      vm.nic
+        ? `${vm.nic}${vm.mac ? ` · ${vm.mac}` : ""}${vm.connected === false ? L(" · getrennt", " · disconnected") : ""}`
+        : null,
     ],
-    ["Portgruppe", vm.portgroup ? `${vm.portgroup}${vm.vlan != null ? ` (VLAN ${vm.vlan})` : ""}` : null],
+    [L("Portgruppe", "Port group"), vm.portgroup ? `${vm.portgroup}${vm.vlan != null ? ` (VLAN ${vm.vlan})` : ""}` : null],
     [
       "EPG",
       vm.epg ? (
         <>
           <span className="mono">{vm.epg}</span>
-          {vm.epg_match && <span className="faint"> · über {vm.epg_match === "vlan" ? "das VLAN" : "den Namen"}</span>}
+          {vm.epg_match && (
+            <span className="faint">
+              {L(
+                <> · über {vm.epg_match === "vlan" ? "das VLAN" : "den Namen"}</>,
+                <> · via {vm.epg_match === "vlan" ? "the VLAN" : "the name"}</>,
+              )}
+            </span>
+          )}
         </>
       ) : null,
     ],
     ["Cluster / Host", [vm.cluster, vm.host].filter(Boolean).join(" · ") || null],
     ["Datacenter", vm.datacenter],
-    ["Ressourcen", res.length ? res.join(" · ") : null],
-    ["Notiz", vm.notes],
-    ["Gleiche IP", vm.others?.length ? `auch an ${vm.others.join(", ")}` : null],
+    [L("Ressourcen", "Resources"), res.length ? res.join(" · ") : null],
+    [L("Notiz", "Note"), vm.notes],
+    [
+      L("Gleiche IP", "Same IP"),
+      vm.others?.length ? L(`auch an ${vm.others.join(", ")}`, `also on ${vm.others.join(", ")}`) : null,
+    ],
   ];
   return (
     <div className="refblock">
       <div className="refline">
         <span className="chip info">VM</span> <b className="mono">{vm.name}</b>
         <span className={`chip ${tone}`}>{state}</span>
-        {vm.template && <span className="chip">Vorlage</span>}
+        {vm.template && <span className="chip">{L("Vorlage", "Template")}</span>}
         {role && <span className="faint">{role}</span>}
       </div>
       <dl className="kv tight">
@@ -396,17 +532,17 @@ export function VmSection({ items }: { items: { vm: VmInfo; role?: string }[] })
 // Vollständige Referenzdaten (Detailansicht)
 export function RefInfoBlock({ title, r }: { title: string; r: RefInfo }) {
   const rows: [string, ReactNode][] = [
-    ["Quelle", <SourceLink r={r} key="s" />],
-    ["Art", KIND_LABEL[r.kind] ?? r.kind],
-    ["DNS-Name", r.dns_name],
+    [L("Quelle", "Source"), <SourceLink r={r} key="s" />],
+    [L("Art", "Type"), KIND_LABEL[r.kind] ?? r.kind],
+    [L("DNS-Name", "DNS name"), r.dns_name],
     ["Name", r.name],
-    ["Netz", r.prefix],
+    [L("Netz", "Network"), r.prefix],
     ["VLAN", r.vlan != null ? `${r.vlan}${r.vlan_name ? ` (${r.vlan_name})` : ""}` : null],
     ["VRF", r.vrf],
-    ["Standort", r.site],
+    [L("Standort", "Site"), r.site],
     ["Tenant", r.tenant],
     ["Status", r.status],
-    ["Beschreibung", r.description],
+    [L("Beschreibung", "Description"), r.description],
   ];
   return (
     <div className="refblock">
@@ -455,8 +591,8 @@ export function ValueList({ values, service }: { values: RefValue[]; service?: b
             <summary>
               <ValueLine v={v} />
             </summary>
-            {v.reference && <RefInfoBlock title="Referenz (führend)" r={v.reference} />}
-            {v.enrichment && <RefInfoBlock title="Anreicherung" r={v.enrichment} />}
+            {v.reference && <RefInfoBlock title={L("Referenz (führend)", "Reference (primary)")} r={v.reference} />}
+            {v.enrichment && <RefInfoBlock title={L("Anreicherung", "Enrichment")} r={v.enrichment} />}
           </details>
         ) : (
           <ValueLine key={i} v={v} />
@@ -471,7 +607,11 @@ export function ValueList({ values, service }: { values: RefValue[]; service?: b
 function ObjLink({ name, onObject }: { name: string; onObject?: (name: string) => void }) {
   if (!onObject) return <span className="mono">{name}</span>;
   return (
-    <button className="linkbtn mono objlink" title="Alle Regeln mit diesem Objekt" onClick={() => onObject(name)}>
+    <button
+      className="linkbtn mono objlink"
+      title={L("Alle Regeln mit diesem Objekt", "All rules with this object")}
+      onClick={() => onObject(name)}
+    >
       {name}
     </button>
   );
@@ -487,7 +627,13 @@ export function RefCard({ r, onObject }: { r: RuleRef; onObject?: (name: string)
           <ObjLink name={r.name} onObject={linkable} />
         </b>
         {r.family === "v6" && (
-          <span className="chip" title="IPv6-Objekt (address6/addrgrp6) – eigenes Objekt neben einem gleichnamigen IPv4-Objekt">
+          <span
+            className="chip"
+            title={L(
+              "IPv6-Objekt (address6/addrgrp6) – eigenes Objekt neben einem gleichnamigen IPv4-Objekt",
+              "IPv6 object (address6/addrgrp6) – separate object next to an IPv4 object of the same name",
+            )}
+          >
             IPv6
           </span>
         )}
@@ -497,7 +643,7 @@ export function RefCard({ r, onObject }: { r: RuleRef; onObject?: (name: string)
             {r.obj_type ? ` · ${r.obj_type}` : ""}
           </span>
         ) : (
-          <span className="faint">eingebaut</span>
+          <span className="faint">{L("eingebaut", "built-in")}</span>
         )}
         {!service && r.match_status && <MatchBadge status={r.match_status} />}
       </div>
@@ -508,7 +654,7 @@ export function RefCard({ r, onObject }: { r: RuleRef; onObject?: (name: string)
           {r.members.map((m) => (
             <div key={m.name} className="member">
               <ObjLink name={m.name} onObject={!service && m.category ? onObject : undefined} />
-              {m.category ? null : <span className="faint"> (nicht gelesen)</span>}
+              {m.category ? null : <span className="faint">{L(" (nicht gelesen)", " (not read)")}</span>}
               <ValueList values={m.values} service={service} />
             </div>
           ))}
@@ -524,21 +670,40 @@ export function SideMarks({ r, side }: { r: Rule; side: "src" | "dst" | "service
   const missing = side !== "service" && r.missing?.includes(side);
   const negated = r.negate?.includes(side);
   if (!missing && !negated) return null;
-  const label = aci ? (side === "src" ? "kein Consumer" : "kein Provider") : side === "src" ? "keine Quelle" : "kein Ziel";
+  const label = aci
+    ? side === "src"
+      ? L("kein Consumer", "no consumer")
+      : L("kein Provider", "no provider")
+    : side === "src"
+      ? L("keine Quelle", "no source")
+      : L("kein Ziel", "no destination");
   return (
     <span className="chips" style={{ marginBottom: 2 }}>
       {missing && (
         <span
           className="chip warn"
-          title={aci ? "Contract wird nicht konsumiert bzw. bereitgestellt – nicht wirksam" : "keine lesbare Angabe – Policy prüfen"}
+          title={
+            aci
+              ? L(
+                  "Contract wird nicht konsumiert bzw. bereitgestellt – nicht wirksam",
+                  "Contract is not consumed or provided – not effective",
+                )
+              : L("keine lesbare Angabe – Policy prüfen", "no readable value – check the policy")
+          }
         >
           {label}
-          {aci ? " · nicht wirksam" : ""}
+          {aci ? L(" · nicht wirksam", " · not effective") : ""}
         </span>
       )}
       {negated && (
-        <span className="chip crit" title="negiert: die Regel gilt für alles AUSSER den genannten Objekten">
-          nicht (negiert)
+        <span
+          className="chip crit"
+          title={L(
+            "negiert: die Regel gilt für alles AUSSER den genannten Objekten",
+            "negated: the rule applies to everything EXCEPT the listed objects",
+          )}
+        >
+          {L("nicht (negiert)", "not (negated)")}
         </span>
       )}
     </span>
@@ -585,39 +750,58 @@ export function useVdomShown(): (sourceSystemId: number | null | undefined, vdom
 export function VdomChip({ vdom, always }: { vdom?: string | null; always?: boolean }) {
   if (!vdom || (vdom === "root" && !always)) return null;
   return (
-    <span className="chip" title="FortiGate-VDOM – Policy-IDs und Objektnamen gelten je VDOM">
+    <span
+      className="chip"
+      title={L(
+        "FortiGate-VDOM – Policy-IDs und Objektnamen gelten je VDOM",
+        "FortiGate VDOM – policy IDs and object names apply per VDOM",
+      )}
+    >
       VDOM {vdom}
     </span>
   );
 }
 const DIFF_LABEL: Record<string, string> = {
-  src: "Quelle",
-  dst: "Ziel",
-  service: "Dienste",
+  src: L("Quelle", "Source"),
+  dst: L("Ziel", "Destination"),
+  service: L("Dienste", "Services"),
   name: "Name",
-  zone: "Interfaces/Zonen",
-  action: "Aktion",
+  zone: L("Interfaces/Zonen", "Interfaces/zones"),
+  action: L("Aktion", "Action"),
 };
 
 // Adressfamilie und IPv4/IPv6-Gegenstück (FortiGate führt beide als eigene Policies)
 export function FamilyMarks({ r, onPair }: { r: Rule; onPair?: (id: number) => void }) {
   if (!r.family && !r.pair) return null;
   const p = r.pair;
-  const other = p ? FAMILY_LABEL[p.family ?? ""] ?? "Gegenstück" : "";
-  const diff = p?.diff.length ? `abweichend: ${p.diff.map((d) => DIFF_LABEL[d] ?? d).join(", ")}` : "";
+  const other = p ? FAMILY_LABEL[p.family ?? ""] ?? L("Gegenstück", "Counterpart") : "";
+  const diffs = p?.diff.map((d) => DIFF_LABEL[d] ?? d).join(", ");
+  const diff = p?.diff.length ? L(`abweichend: ${diffs}`, `differs: ${diffs}`) : "";
   const title = p
-    ? `${other}-Gegenstück „${p.name}“ (#${p.rule_id}) – ` +
+    ? L(
+        `${other}-Gegenstück „${p.name}“ (#${p.rule_id}) – `,
+        `${other} counterpart “${p.name}” (#${p.rule_id}) – `,
+      ) +
       (p.match === "same"
-        ? "deckt dasselbe ab (gleiche Objektnamen, Dienste und Interfaces)"
+        ? L(
+            "deckt dasselbe ab (gleiche Objektnamen, Dienste und Interfaces)",
+            "covers the same (same object names, services and interfaces)",
+          )
         : p.match === "confirmed"
-          ? `von Hand als Paar bestätigt${diff ? `, ${diff}` : ""}`
-          : `ähnlich, ${diff}`) +
-      ". Eigene Regel wie auf der FortiGate – nur zur Orientierung verbunden."
+          ? L(
+              `von Hand als Paar bestätigt${diff ? `, ${diff}` : ""}`,
+              `confirmed as a pair by hand${diff ? `, ${diff}` : ""}`,
+            )
+          : L(`ähnlich, ${diff}`, `similar, ${diff}`)) +
+      L(
+        ". Eigene Regel wie auf der FortiGate – nur zur Orientierung verbunden.",
+        ". Separate rule as on the FortiGate – linked for orientation only.",
+      )
     : "";
   return (
     <div className="chips" style={{ marginTop: 3 }}>
       {r.family && (
-        <span className="chip" title="Adressfamilie der Policy">
+        <span className="chip" title={L("Adressfamilie der Policy", "Address family of the policy")}>
           {FAMILY_LABEL[r.family] ?? r.family}
         </span>
       )}
@@ -631,7 +815,11 @@ export function FamilyMarks({ r, onPair }: { r: Rule; onPair?: (id: number) => v
           }}
         >
           ↔ {other} #{p.rule_id}
-          {p.match === "similar" ? " ähnlich" : p.match === "confirmed" ? " ✓ bestätigt" : ""}
+          {p.match === "similar"
+            ? L(" ähnlich", " similar")
+            : p.match === "confirmed"
+              ? L(" ✓ bestätigt", " ✓ confirmed")
+              : ""}
         </button>
       )}
     </div>

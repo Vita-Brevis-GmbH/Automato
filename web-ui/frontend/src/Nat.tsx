@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { fetchNat, fetchNatDetail, IpInfo, Nat, NatDetail, NatTarget } from "./api";
 import type { View, ViewParams } from "./App";
+import { L } from "./i18n";
 import { IssueChips, useVdomShown, VdomChip, VmSection } from "./refs";
 import { ActionBadge, Dash, Drawer, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
@@ -11,7 +12,7 @@ const PAGE = 500; // Einträge je Seite
 
 const NAT_TYPE: Record<string, [string, string]> = {
   dnat_vip: ["local", "VIP / DNAT"],
-  snat_pool: ["info", "SNAT-Pool"],
+  snat_pool: ["info", L("SNAT-Pool", "SNAT pool")],
 };
 const SLB = "server-load-balance"; // FortiGate Virtual Server (Lastverteilung)
 const typeLabel = (n: Nat): [string, string] =>
@@ -19,22 +20,22 @@ const typeLabel = (n: Nat): [string, string] =>
 
 // Einstellungen eines Virtual Servers wie auf der FortiGate
 const SLB_LABEL: Record<string, string> = {
-  "server-type": "Server-Typ",
-  "ldb-method": "Lastverteilung",
-  persistence: "Persistenz",
-  "http-ip-header": "Client-IP im Header",
-  "http-multiplex": "HTTP-Multiplexing",
-  "http-host": "HTTP-Host",
-  "max-embryonic-connections": "Max. halboffene Verbindungen",
-  "ssl-mode": "SSL-Modus",
+  "server-type": L("Server-Typ", "Server type"),
+  "ldb-method": L("Lastverteilung", "Load balancing"),
+  persistence: L("Persistenz", "Persistence"),
+  "http-ip-header": L("Client-IP im Header", "Client IP in header"),
+  "http-multiplex": L("HTTP-Multiplexing", "HTTP multiplexing"),
+  "http-host": L("HTTP-Host", "HTTP host"),
+  "max-embryonic-connections": L("Max. halboffene Verbindungen", "Max. half-open connections"),
+  "ssl-mode": L("SSL-Modus", "SSL mode"),
   "ssl-min-version": "SSL min.",
   "ssl-max-version": "SSL max.",
-  "ssl-certificate": "Zertifikat",
+  "ssl-certificate": L("Zertifikat", "Certificate"),
 };
 const STATUS: Record<string, [string, string]> = {
-  active: ["ok", "aktiv"],
+  active: ["ok", L("aktiv", "active")],
   standby: ["info", "Standby"],
-  disable: ["na", "aus"],
+  disable: ["na", L("aus", "off")],
 };
 
 function attrText(v: unknown): string {
@@ -44,14 +45,19 @@ function attrText(v: unknown): string {
 // Health-Checks: Name und was geprüft wird (Typ, Port, Intervall)
 function Monitors({ items }: { items: unknown }) {
   const list = Array.isArray(items) ? (items as Record<string, unknown>[]) : [];
-  if (!list.length) return <span className="faint">keiner</span>;
+  if (!list.length) return <span className="faint">{L("keiner", "none")}</span>;
   return (
     <>
       {list.map((m) => (
         <div key={String(m.name)}>
           <span className="mono">{String(m.name)}</span>
           <span className="faint">
-            {[m.type, m.port ? `Port ${m.port}` : null, m.interval ? `alle ${m.interval} s` : null, m["http-get"]]
+            {[
+              m.type,
+              m.port ? `Port ${m.port}` : null,
+              m.interval ? L(`alle ${m.interval} s`, `every ${m.interval} s`) : null,
+              m["http-get"],
+            ]
               .filter(Boolean)
               .map((x) => ` · ${x}`)
               .join("")}
@@ -70,9 +76,9 @@ function Targets({ items, onGo }: { items: NatTarget[]; onGo?: (v: View, p?: Vie
         <tr>
           <th>Real Server</th>
           <th>Status</th>
-          <th className="num">Gewicht</th>
-          <th>Objekt / DNS</th>
-          <th>Health-Check</th>
+          <th className="num">{L("Gewicht", "Weight")}</th>
+          <th>{L("Objekt / DNS", "Object / DNS")}</th>
+          <th>{L("Health-Check", "Health check")}</th>
         </tr>
       </thead>
       <tbody>
@@ -101,7 +107,11 @@ function Targets({ items, onGo }: { items: NatTarget[]; onGo?: (v: View, p?: Vie
                 {!t.servers.length && !t.dns.length && <Dash />}
               </td>
               <td className="faint">
-                {t.monitor.length ? t.monitor.join(", ") : t.healthcheck === "vip" ? "wie Virtual Server" : t.healthcheck ?? "–"}
+                {t.monitor.length
+                  ? t.monitor.join(", ")
+                  : t.healthcheck === "vip"
+                    ? L("wie Virtual Server", "as Virtual Server")
+                    : (t.healthcheck ?? "–")}
                 {t.max_connections ? ` · max. ${t.max_connections}` : ""}
               </td>
             </tr>
@@ -125,7 +135,9 @@ function Lines({ items }: { items: string[] }) {
       {items.slice(0, 4).map((x) => (
         <div key={x}>{x}</div>
       ))}
-      {items.length > 4 && <div className="faint">+{items.length - 4} weitere</div>}
+      {items.length > 4 && (
+        <div className="faint">{L(`+${items.length - 4} weitere`, `+${items.length - 4} more`)}</div>
+      )}
     </>
   );
 }
@@ -141,15 +153,19 @@ function IpamBlock({ title, infos }: { title: string; infos: IpInfo[] }) {
       <dt>{title}</dt>
       <dd>
         {infos.length === 0 ? (
-          <span className="faint">kein Eintrag im IPAM</span>
+          <span className="faint">{L("kein Eintrag im IPAM", "no entry in the IPAM")}</span>
         ) : (
           infos.map((i) => (
             <div key={i.source} style={{ marginBottom: 4 }}>
               <span className="chip">{i.source}</span>{" "}
-              {i.dns_names.length ? <span className="mono">{i.dns_names.join(", ")}</span> : <span className="faint">ohne DNS-Namen</span>}
+              {i.dns_names.length ? (
+                <span className="mono">{i.dns_names.join(", ")}</span>
+              ) : (
+                <span className="faint">{L("ohne DNS-Namen", "no DNS name")}</span>
+              )}
               {i.prefix && (
                 <div className="faint">
-                  Netz {i.prefix.value}
+                  {L("Netz", "Network")} {i.prefix.value}
                   {[i.prefix.description, i.prefix.vlan != null ? `VLAN ${i.prefix.vlan}` : null, i.prefix.site, i.prefix.vrf]
                     .filter(Boolean)
                     .map((x) => ` · ${x}`)
@@ -193,21 +209,24 @@ function NatDrawer({
       {d && (
         <>
           <dl className="kv">
-            <dt>Prüfung</dt>
+            <dt>{L("Prüfung", "Check")}</dt>
             <dd>
               <IssueChips issues={d.issues ?? []} />
               {d.object_id != null && onGo && (
                 <button
                   className="linkbtn"
                   style={{ marginLeft: 6 }}
-                  title="VIP- bzw. Pool-Objekt in Objekte & Inventar öffnen"
+                  title={L(
+                    "VIP- bzw. Pool-Objekt in Objekte & Inventar öffnen",
+                    "Open VIP or pool object in Objects & inventory",
+                  )}
                   onClick={() => onGo("objekte", { object_id: String(d.object_id) })}
                 >
-                  Objekt öffnen
+                  {L("Objekt öffnen", "Open object")}
                 </button>
               )}
             </dd>
-            <dt>{pool ? "Quell-IP(s)" : "Extern"}</dt>
+            <dt>{pool ? L("Quell-IP(s)", "Source IP(s)") : L("Extern", "External")}</dt>
             <dd className="mono">{addr(d.ext_ip, d.ext_port) ?? <Dash />}</dd>
             {slb && (
               <>
@@ -217,7 +236,7 @@ function NatDrawer({
                     <dd className="mono">{attrText(v)}</dd>
                   </span>
                 ))}
-                <dt>Health-Check</dt>
+                <dt>{L("Health-Check", "Health check")}</dt>
                 <dd>
                   <Monitors items={d.attrs?.monitor} />
                 </dd>
@@ -225,27 +244,33 @@ function NatDrawer({
             )}
             {!pool && !slb && (
               <>
-                <dt>Intern</dt>
+                <dt>{L("Intern", "Internal")}</dt>
                 <dd className="mono">{addr(d.mapped_ip, d.mapped_port, d.protocol) ?? <Dash />}</dd>
                 <dt>Port-Forward</dt>
-                <dd>{d.portforward ? <span className="chip ok">an</span> : "aus"}</dd>
+                <dd>{d.portforward ? <span className="chip ok">{L("an", "on")}</span> : L("aus", "off")}</dd>
                 <dt>Server</dt>
                 <dd>
                   {(d.servers?.length ? d.servers : d.server ? [d.server] : []).map((name) => (
                     <div key={name}>
-                      <button className="linkbtn mono objlink" title="Regeln mit diesem Objekt" onClick={() => onGo?.("regeln", { object: name })}>
+                      <button
+                        className="linkbtn mono objlink"
+                        title={L("Regeln mit diesem Objekt", "Rules with this object")}
+                        onClick={() => onGo?.("regeln", { object: name })}
+                      >
                         {name}
                       </button>
                     </div>
                   ))}
                   {!d.server && <Dash />}
-                  {(d.servers?.length ?? 0) > 1 && <div className="faint">IP in mehreren Objekten definiert</div>}
+                  {(d.servers?.length ?? 0) > 1 && (
+                    <div className="faint">{L("IP in mehreren Objekten definiert", "IP defined in several objects")}</div>
+                  )}
                 </dd>
               </>
             )}
             {d.external_name && (
               <>
-                <dt>Externer Name</dt>
+                <dt>{L("Externer Name", "External name")}</dt>
                 <dd className="mono">{d.external_name}</dd>
               </>
             )}
@@ -257,7 +282,7 @@ function NatDrawer({
             )}
             {d.comment && (
               <>
-                <dt>Kommentar</dt>
+                <dt>{L("Kommentar", "Comment")}</dt>
                 <dd>{d.comment}</dd>
               </>
             )}
@@ -267,8 +292,11 @@ function NatDrawer({
                 <dd className="mono">{v}</dd>
               </span>
             ))}
-            <IpamBlock title={pool ? "IPAM (Quell-IP)" : "IPAM extern"} infos={d.ext_info} />
-            {!pool && !slb && <IpamBlock title="IPAM intern" infos={d.mapped_info} />}
+            <IpamBlock
+              title={pool ? L("IPAM (Quell-IP)", "IPAM (source IP)") : L("IPAM extern", "IPAM external")}
+              infos={d.ext_info}
+            />
+            {!pool && !slb && <IpamBlock title={L("IPAM intern", "IPAM internal")} infos={d.mapped_info} />}
           </dl>
 
           {slb && (
@@ -278,28 +306,35 @@ function NatDrawer({
             </>
           )}
 
-          <VmSection items={(d.vms ?? []).map((vm) => ({ vm, role: `Ziel ${vm.for_ip ?? ""}` }))} />
+          <VmSection
+            items={(d.vms ?? []).map((vm) => ({
+              vm,
+              role: L(`Ziel ${vm.for_ip ?? ""}`, `Destination ${vm.for_ip ?? ""}`),
+            }))}
+          />
 
           <div className="sub-h" style={{ display: "flex", alignItems: "center" }}>
-            Firewall-Regeln ({d.rules.length})
+            {L(<>Firewall-Regeln ({d.rules.length})</>, <>Firewall rules ({d.rules.length})</>)}
             <div style={{ flex: 1 }} />
             {d.rules.length > 0 && (
               <button className="btn btn-ghost btn-sm" onClick={() => onGo?.("regeln", { nat: d.name })}>
-                In Regeln anzeigen
+                {L("In Regeln anzeigen", "Show in rules")}
               </button>
             )}
           </div>
           {d.rules.length === 0 ? (
-            <div className="faint">Keine Firewall-Regel verwendet diesen Eintrag.</div>
+            <div className="faint">
+              {L("Keine Firewall-Regel verwendet diesen Eintrag.", "No firewall rule uses this entry.")}
+            </div>
           ) : (
             <table>
               <thead>
                 <tr>
-                  <th>Regel</th>
-                  <th>Aktion</th>
-                  <th>Quelle</th>
-                  <th>Ziel</th>
-                  <th>Dienste</th>
+                  <th>{L("Regel", "Rule")}</th>
+                  <th>{L("Aktion", "Action")}</th>
+                  <th>{L("Quelle", "Source")}</th>
+                  <th>{L("Ziel", "Destination")}</th>
+                  <th>{L("Dienste", "Services")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -386,10 +421,19 @@ export default function NatTable({
   return (
     <>
       <PageHead title="NAT / VIPs">
-        Virtuelle IPs (externe Adresse → internes Ziel, inkl. Port-Forward), Virtual Server (Lastverteilung auf Real
-        Server) und SNAT-IP-Pools für „{tenantLabel}“ –
-        mit DNS-Namen aus dem IPAM, den Firewall-Regeln, die sie nutzen, und der Prüfung (Namenskonvention, unbenutzt,
-        internes Ziel im IPAM).
+        {L(
+          <>
+            Virtuelle IPs (externe Adresse → internes Ziel, inkl. Port-Forward), Virtual Server (Lastverteilung auf Real
+            Server) und SNAT-IP-Pools für „{tenantLabel}“ –
+            mit DNS-Namen aus dem IPAM, den Firewall-Regeln, die sie nutzen, und der Prüfung (Namenskonvention, unbenutzt,
+            internes Ziel im IPAM).
+          </>,
+          <>
+            Virtual IPs (external address → internal destination, incl. port forward), Virtual Server (load balancing to
+            real servers) and SNAT IP pools for “{tenantLabel}” – with DNS names from the IPAM, the firewall rules that
+            use them, and the check (naming convention, unused, internal destination in the IPAM).
+          </>,
+        )}
       </PageHead>
       <div className="filterbar">
         <div className="search">
@@ -397,49 +441,69 @@ export default function NatTable({
             <Icon name="search" />
           </span>
           <input
-            placeholder="Suche: Name, IP (auch im Pool-Bereich), Port, DNS-Name, Server, Interface, Kommentar…"
+            placeholder={L(
+              "Suche: Name, IP (auch im Pool-Bereich), Port, DNS-Name, Server, Interface, Kommentar…",
+              "Search: name, IP (also within the pool range), port, DNS name, server, interface, comment…",
+            )}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
         <select className="sel" value={type} onChange={(e) => setType(e.target.value)}>
-          <option value="">Typ: alle</option>
-          <option value="dnat_vip">VIP / DNAT (inkl. Virtual Server)</option>
-          <option value="snat_pool">SNAT-Pool</option>
+          <option value="">{L("Typ: alle", "Type: all")}</option>
+          <option value="dnat_vip">{L("VIP / DNAT (inkl. Virtual Server)", "VIP / DNAT (incl. Virtual Server)")}</option>
+          <option value="snat_pool">{L("SNAT-Pool", "SNAT pool")}</option>
         </select>
         <button
           className={`toggle ${issuesOnly ? "on" : ""}`}
-          title="Nur Einträge mit Befund: Namenskonvention, unbenutzt, Wert bzw. internes Ziel nicht im IPAM"
+          title={L(
+            "Nur Einträge mit Befund: Namenskonvention, unbenutzt, Wert bzw. internes Ziel nicht im IPAM",
+            "Only entries with a finding: naming convention, unused, value or internal destination not in the IPAM",
+          )}
           onClick={() => setIssuesOnly((v) => !v)}
         >
           <span className="dot y" />
-          nur Abweichungen
+          {L("nur Abweichungen", "only deviations")}
         </button>
         <span className="count">
-          {total} Einträge{total > loaded ? ` · ${loaded} geladen` : ""}
+          {L(
+            <>
+              {total} Einträge{total > loaded ? ` · ${loaded} geladen` : ""}
+            </>,
+            <>
+              {total} entries{total > loaded ? ` · ${loaded} loaded` : ""}
+            </>,
+          )}
         </span>
       </div>
-      <ErrorBox error={error} prefix="NAT laden" />
+      <ErrorBox error={error} prefix={L("NAT laden", "Load NAT")} />
       <div className="card">
         <div className="card-body scroll viewport">
           {nat === null ? (
-            <Loading>Lade VIPs…</Loading>
+            <Loading>{L("Lade VIPs…", "Loading VIPs…")}</Loading>
           ) : shown.length === 0 ? (
-            <Empty title={q || issuesOnly ? "Keine Treffer" : "Keine NAT-Einträge"}>
-              {q || issuesOnly ? "Suche bzw. Filter anpassen." : "Es wurden (noch) keine VIPs oder SNAT-Pools erfasst."}
+            <Empty
+              title={q || issuesOnly ? L("Keine Treffer", "No matches") : L("Keine NAT-Einträge", "No NAT entries")}
+            >
+              {q || issuesOnly
+                ? L("Suche bzw. Filter anpassen.", "Adjust the search or filter.")
+                : L(
+                    "Es wurden (noch) keine VIPs oder SNAT-Pools erfasst.",
+                    "No VIPs or SNAT pools have been collected (yet).",
+                  )}
             </Empty>
           ) : (
             <table>
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Typ</th>
-                  <th>Extern</th>
-                  <th>→ Intern</th>
+                  <th>{L("Typ", "Type")}</th>
+                  <th>{L("Extern", "External")}</th>
+                  <th>{L("→ Intern", "→ Internal")}</th>
                   <th>Server</th>
                   <th>Interface</th>
-                  <th className="num">Regeln</th>
-                  <th>Prüfung</th>
+                  <th className="num">{L("Regeln", "Rules")}</th>
+                  <th>{L("Prüfung", "Check")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -472,7 +536,11 @@ export default function NatTable({
                                 {t.status && t.status !== "active" ? <span className="faint"> ({STATUS[t.status]?.[1] ?? t.status})</span> : null}
                               </div>
                             ))}
-                            {targets.length > 4 && <span className="faint">+{targets.length - 4} weitere</span>}
+                            {targets.length > 4 && (
+                              <span className="faint">
+                                {L(`+${targets.length - 4} weitere`, `+${targets.length - 4} more`)}
+                              </span>
+                            )}
                             <div className="faint">
                               {[n.protocol, n.attrs?.["ldb-method"]].filter(Boolean).join(" · ")}
                             </div>
@@ -483,7 +551,9 @@ export default function NatTable({
                             <Names items={n.mapped_dns} />
                           </>
                         ) : (
-                          <span className="faint">{n.nat_type === "snat_pool" ? "ausgehende Quell-IP" : "–"}</span>
+                          <span className="faint">
+                            {n.nat_type === "snat_pool" ? L("ausgehende Quell-IP", "outgoing source IP") : "–"}
+                          </span>
                         )}
                       </td>
                       <td className="mono">
@@ -496,7 +566,7 @@ export default function NatTable({
                         {n.rule_count > 0 ? (
                           <button
                             className="chip local linkchip"
-                            title="Regeln mit diesem Eintrag anzeigen"
+                            title={L("Regeln mit diesem Eintrag anzeigen", "Show rules with this entry")}
                             onClick={(e) => {
                               e.stopPropagation();
                               onGo?.("regeln", { nat: n.name });
@@ -505,7 +575,10 @@ export default function NatTable({
                             {n.rule_count}
                           </button>
                         ) : (
-                          <span className="chip na" title="von keiner Firewall-Regel verwendet">
+                          <span
+                            className="chip na"
+                            title={L("von keiner Firewall-Regel verwendet", "not used by any firewall rule")}
+                          >
                             0
                           </span>
                         )}
@@ -522,9 +595,11 @@ export default function NatTable({
         </div>
         {nat !== null && total > loaded && (
           <div className="card-foot">
-            {loaded} von {total} geladen –{" "}
+            {L(<>{loaded} von {total} geladen –</>, <>{loaded} of {total} loaded –</>)}{" "}
             <button className="btn btn-ghost btn-sm" onClick={loadMore} disabled={more}>
-              {more ? "Lade…" : `weitere ${Math.min(PAGE, total - loaded)} laden`}
+              {more
+                ? L("Lade…", "Loading…")
+                : L(`weitere ${Math.min(PAGE, total - loaded)} laden`, `load ${Math.min(PAGE, total - loaded)} more`)}
             </button>
           </div>
         )}
