@@ -161,6 +161,12 @@ PHRASES: tuple[tuple[str, str], ...] = (
     (": Ausgabe nicht auswertbar (", ": output could not be parsed ("),
     ("MAC-Tabelle: {n} Eintraege ueber {m} nicht uebernommen",
      "MAC table: {n} entries above {m} not taken over"),
+    # Routing der Router und L3-Switches (cisco_switch/routing.py, ADR 0032)
+    (" · Routing: {n} L3-Geraete, {m} Kontexte, {routes} Routen",
+     " · Routing: {n} L3 devices, {m} contexts, {routes} routes"),
+    (" gekuerzt - {n} von {m} Routen ueber {limit} nicht uebernommen",
+     " truncated - {n} of {m} routes above {limit} not taken over"),
+    ("Ausgabe zu gross - gekuerzt ausgewertet", "output too large - evaluated truncated"),
     ("ArubaOS-Switch/ProCurve wird nicht gelesen (kein Exec, Sitzung nur mit Tastendruck und "
      "Bildschirmsteuerung) - unterstuetzt ist Aruba CX (AOS-CX)",
      "ArubaOS-Switch/ProCurve is not read (no exec, session only with key press and screen "

@@ -53,6 +53,16 @@ KNOWN = [
      "Switches: 2 read (IOS/IOS-XE, NX-OS) · not read: 10.0.0.3: not reachable: connection to "
      "port 22 refused (SSH off or path blocked) · Notes: 10.0.0.1: MAC table: 120 entries "
      "above 50000 not taken over"),
+    # Router und L3-Switches (ADR 0032): Routing mit Obergrenze und fehlenden Rechten
+    ("Switches: 2 gelesen (IOS/IOS-XE) · Routing: 1 L3-Geraete, 2 Kontexte, 27 Routen · "
+     "Hinweise: 10.0.0.1: Routing: show bgp ipv4 unicast: Authorization failed.; 10.0.0.1: "
+     "Routing: rt-edge-01: Routing-Tabelle IPv4 gekuerzt - 33 von 20033 Routen ueber 20000 "
+     "nicht uebernommen; 10.0.0.1: Routing: show ip route: Ausgabe zu gross - gekuerzt "
+     "ausgewertet",
+     "Switches: 2 read (IOS/IOS-XE) · Routing: 1 L3 devices, 2 contexts, 27 routes · Notes: "
+     "10.0.0.1: Routing: show bgp ipv4 unicast: Authorization failed.; 10.0.0.1: Routing: "
+     "rt-edge-01: routing table IPv4 truncated - 33 of 20033 routes above 20000 not taken over; "
+     "10.0.0.1: Routing: show ip route: output too large - evaluated truncated"),
     ("VDOM nicht lesbar: dmz (HTTP 403) - das Profil braucht Lesezugriff auf alle VDOMs; "
      "gelesen: root · Routing nicht lesbar: Routing-Tabelle IPv4 (HTTP 403); HA ha (HTTP 403)",
      "VDOM not readable: dmz (HTTP 403) - the profile needs read access to all VDOMs; read: "

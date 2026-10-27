@@ -3,7 +3,8 @@
 // Contracts zwischen den EPGs (Fehlersuche, Kontrolle von Arbeiten). Quelle und Ziel als IP
 // oder Name/FQDN (IPAM, Objekte der Firewalls, VMs), der Dienst als tcp/443 oder Objektname.
 // Seit 0.57.0 die logischen Zonen je Hop, die Übergänge dazwischen und die Absicht zwischen
-// Quell- und Zielzone (auch je Dienst) mit Urteil.
+// Quell- und Zielzone (auch je Dienst) mit Urteil. Seit ADR 0032 auch durch gelesene Router bis
+// an die Firmengrenze (am letzten Hop: eBGP zu fremdem AS, Anbindung, Default-Route zum Provider).
 import { useEffect, useRef, useState } from "react";
 import {
   fetchRoutingSummary,
@@ -41,6 +42,18 @@ const END: Record<TracePath["end"]["kind"], [string, string]> = {
   loop: ["crit", L("Schleife", "Loop")],
   max_hops: ["warn", L("abgebrochen", "aborted")],
 };
+
+// Firmengrenze (ADR 0032): hier verlässt der Weg die Firma – Grund und AS am Chip
+function BoundaryChip({ b, id }: { b: TracePath["boundary"]; id?: string }) {
+  if (!b) return null;
+  return (
+    <span className="chip boundary trace-boundary" id={id} title={b.text}>
+      {L("Firmengrenze", "Company boundary")}
+      {b.as ? ` · AS ${b.as}` : ""}
+      {b.private_as ? L(" (privat)", " (private)") : ""}
+    </span>
+  );
+}
 
 // Titel eines Wegs: aktive Wege „Weg 1 von 2“, Backup-Wege „Backup-Weg 1“
 function pathTitle(paths: TracePath[], p: TracePath): string {
@@ -430,6 +443,7 @@ function PathOverview({ trace }: { trace: TraceResult }) {
                   )}
                   <td>
                     <span className={`chip ${cls}`}>{label}</span>
+                    <BoundaryChip b={p.boundary} />
                   </td>
                 </tr>
               );
@@ -528,6 +542,7 @@ function TraceCard({
       <div className="card-head">
         <h2>{title}</h2>
         <span className={`chip ${cls}`}>{label}</span>
+        <BoundaryChip b={path.boundary} id={`path-boundary-${index}`} />
         {path.kind === "backup" && path.deviation && (
           <span className="chip warn" title={L("Weg, wenn der aktive Next-Hop ausfällt", "Path if the active next-hop fails")}>
             {L("Backup ab", "Backup from")} {path.deviation.label}: {path.deviation.reason}
@@ -610,6 +625,12 @@ function TraceCard({
                         </div>
                       )}
                       <b>{h.label}</b> {h.kind === "firewall" && <span className="chip">Firewall</span>}
+                      {h.kind === "l3" && <span className="chip">Router</span>}
+                      {h.boundary && k === 0 && (
+                        <span className="chip boundary" title={path.boundary?.text}>
+                          {L("Firmengrenze", "Company boundary")}
+                        </span>
+                      )}
                       <VrfChip vrf={h.vrf} />
                       {k === 0 && hop.zone && (
                         <div>
@@ -775,6 +796,9 @@ function TraceCard({
                     </td>
                     <td>
                       {h.egress ? <Port p={h.egress} /> : <Dash />}
+                      {h.boundary && path.boundary && (
+                        <div className="faint trace-boundary-text">{path.boundary.text}</div>
+                      )}
                       {h.l2 && <L2Line seg={h.l2} />}
                     </td>
                     <td>

@@ -52,7 +52,7 @@ class TopoContext(_TopoRow, Base):
 
     node: Mapped[str] = mapped_column(String(200))  # Firewall bzw. Border-Leaf
     context: Mapped[str] = mapped_column(String(200))  # VDOM bzw. Tenant:VRF
-    kind: Mapped[str] = mapped_column(String(8))  # vdom | vrf
+    kind: Mapped[str] = mapped_column(String(8))  # vdom | vrf | l3 (Router, ADR 0032)
     missing: Mapped[list | None] = mapped_column(JSON, nullable=True)  # nicht lesbar
 
 

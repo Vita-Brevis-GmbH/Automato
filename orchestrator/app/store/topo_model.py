@@ -4,12 +4,18 @@ Grundlage fuer Zonen und Zonenplan (0.51.0, `store/zones.py`), Export (0.52.0) u
 
 Knoten (`kind`):
 - gelesene Routing-Instanzen wie im Weg (`paths.Graph`): `firewall` (FortiGate nur mit root),
-  `vdom`, `vrf` (Rand einer ACI-VRF, alle Border-Leafs) - mit Mitgliedern, HA, Verbund und dem,
+  `vdom`, `vrf` (Rand einer ACI-VRF, alle Border-Leafs), seit ADR 0032 `l3` (Router bzw.
+  L3-Switch je VRF, Adressen aus den `local`-Routen) - mit Mitgliedern, HA, Verbund und dem,
   was nicht lesbar war;
 - `segment`: Netz, an dem mehr als zwei gelesene Knoten haengen;
 - `exit`: Anbindung nach aussen (von Hand, `topo_exit`);
 - `router`: Gegenstelle ohne gelesenes Geraet und ohne Anbindung (Next-Hop bzw. BGP-Nachbar,
   `exits.detect`) - beim ACI nur an den L3Outs, nicht die Adressen im Fabric (TEP).
+
+**Firmengrenze** (ADR 0032, `store/boundary.py`): eine Kante nach aussen (`uplink`) mit eBGP zu
+einem fremden AS, zu einer Anbindung Internet/MPLS/Partner bzw. mit der Default-Route Richtung
+Provider traegt `boundary` (Grund, AS); der Router bzw. die Anbindung aussen `boundary` (Gruende,
+AS), der gelesene Knoten innen `at_boundary` (Grenzknoten); `summary.boundary` zaehlt beide.
 
 Kanten (`kind`, je mit Herkunft `origin`: derived | manual | confirmed):
 - `transfer`: gemeinsames Netz zweier Knoten (Interface-IPs bzw. L3Out-SVIs, ohne Management),
@@ -41,7 +47,7 @@ from sqlalchemy.orm import Session
 
 from app.models import InvInterface, TopoHa, TopoL3Out, TopoPeer, TopoRoute
 from app.store import exits as exit_store
-from app.store.paths import _CONNECTED, Graph, Key, _vdom_links, exit_kind
+from app.store.paths import _CONNECTED, L3, Graph, Key, _vdom_links, exit_kind
 from app.store.topology import MGMT, table_of
 
 MAX_LOOP_CHECKS = 3000  # Routen ueber gelesene Nachbarn, die auf Schleifen geprueft werden
@@ -142,6 +148,8 @@ class Model:
         self.l3out_peers: dict[Key, set[str]] = defaultdict(set)
         # alle Netze (auch mit nur einem Knoten): Netz -> Adressen (Zonenstruktur, 0.56.0)
         self.components: list[tuple[str, list[Addr]]] = []
+        # Firmengrenze (ADR 0032): (Kante, innen, aussen, Grund) - markiert nach den Anbindungen
+        self._boundaries: list[tuple[Edge, str, str, dict]] = []
 
     # -- Aufbau ---------------------------------------------------------------------------
 
@@ -155,6 +163,8 @@ class Model:
         self._uplinks()
         self._manual_exits()
         self._redundancy()
+        for edge, inside, outside, info in self._boundaries:
+            self._mark_boundary(edge, inside, outside, info)
         return self
 
     def _edge(self, kind: str, a: str, b: str, network: str | None = None, **kw) -> Edge:
@@ -181,8 +191,10 @@ class Model:
 
     def _addresses(self) -> None:
         single: dict[int, list[str]] = defaultdict(list)
-        for key in self.g.nodes:
-            single[key[0]].append(key[1])
+        for key, n in self.g.nodes.items():
+            if n.kind != L3:  # Router: Adressen aus den Routen (`_router_addresses`)
+                single[key[0]].append(key[1])
+        self._router_addresses()
         sources = set(single)
         if not sources:
             return
@@ -212,6 +224,37 @@ class Model:
             for peer in o.peers or []:
                 if peer.get("ip"):
                     self.l3out_peers[key].add(str(peer["ip"]).split("/")[0])
+
+    def _router_addresses(self) -> None:
+        """Router und L3-Switches (ADR 0032): eigene Adresse (`local`) mit der Laenge des
+        angeschlossenen Netzes am selben Interface (sonst des laengsten, das sie enthaelt)."""
+        routers = {k[0] for k, n in self.g.nodes.items() if n.kind == L3}
+        if not routers:
+            return
+        nets: dict[Key, list[tuple[str | None, object]]] = defaultdict(list)
+        for sid, context, prefix, hops in self.session.execute(
+            select(TopoRoute.source_system_id, TopoRoute.context, TopoRoute.prefix,
+                   TopoRoute.next_hops)
+            .where(TopoRoute.tenant_id == self.tenant_id, TopoRoute.table == "rib",
+                   TopoRoute.protocol == "connected", TopoRoute.source_system_id.in_(routers))
+        ):  # fmt: skip
+            try:
+                net = ipaddress.ip_network(prefix, strict=False)
+            except ValueError:
+                continue
+            iface = next((h.get("interface") for h in hops or [] if h.get("interface")), None)
+            nets[(sid, context)].append((iface, net))
+        for key, ip_text, iface, virtual in self.g.router_addresses():
+            if virtual:  # HSRP/VRRP bzw. VARP: auch beim Partner, keine doppelte IP
+                continue
+            ip = ipaddress.ip_address(ip_text)
+            mine = [n for i, n in nets.get(key, []) if ip in n]
+            same = [n for i, n in nets.get(key, []) if i == iface and ip in n]
+            if iface:
+                self.ports[key].add(iface)
+            if same or mine:
+                net = max(same or mine, key=lambda n: n.prefixlen)
+                self._add(key, iface, None, f"{ip}/{net.prefixlen}")
 
     def _add(self, key: Key, interface, zone, text: str) -> Addr | None:
         if "/" not in text:
@@ -435,10 +478,13 @@ class Model:
 
     def _uplinks(self) -> None:
         dismissed = exit_store.dismissed(self.session, self.tenant_id)
+        judge = self.g.boundary()
         for ip, uses in exit_store.detect(self.g).items():
             for key, u in uses.items():
                 if not self._allowed(key, ip):
                     continue
+                default = any(p.endswith("/0") for p in u.active)
+                edge_info = judge.judge(key, ip, u.interface, u.zone, u.exit, default)
                 if u.exit is not None:
                     target = f"exit:{u.exit.id}"
                 else:
@@ -457,9 +503,25 @@ class Model:
                 edge.attrs.setdefault("routers", []).append({
                     "ip": ip, "status": u.status, "interface": u.interface, "zone": u.zone,
                     "remote_as": u.remote_as, "state": u.state, "active": len(u.active),
-                    "backup": len(u.backup), "default": any(p.endswith("/0") for p in u.active),
+                    "backup": len(u.backup), "default": default,
                 })  # fmt: skip
                 edge.attrs["status"] = _best_status(edge.attrs.get("status"), u.status)
+                if edge_info is not None:
+                    self._boundaries.append((edge, node_id(key), target, edge_info))
+
+    def _mark_boundary(self, edge: Edge, inside: str, outside: str, info: dict) -> None:
+        """Firmengrenze (ADR 0032) an der Kante, am Knoten aussen und am gelesenen innen."""
+        mark = {k: info[k] for k in ("reason", "as", "private_as") if info.get(k) is not None}
+        edge.attrs.setdefault("boundary", mark)
+        node = self.nodes.get(outside)
+        if node is not None:
+            seen = node.setdefault("boundary", {"reasons": [], "as": []})
+            if info["reason"] not in seen["reasons"]:
+                seen["reasons"].append(info["reason"])
+            if info.get("as") is not None and info["as"] not in seen["as"]:
+                seen["as"].append(info["as"])
+        if inside in self.nodes:
+            self.nodes[inside]["at_boundary"] = True
 
     def _manual_exits(self) -> None:
         for e in self.g.exits:
@@ -480,6 +542,9 @@ class Model:
                 if hit and ("uplink", node_id(key), nid, None) not in self.edges:
                     edge = self._edge("uplink", node_id(key), nid, origin="manual")
                     edge.attrs["ports"] = hit
+                    info = self.g.boundary().judge(key, None, hit[0], None, e)
+                    if info is not None:
+                        self._boundaries.append((edge, node_id(key), nid, info))
             for r in e.routes or []:
                 target = str(r.get("target") or "")
                 if target in self.nodes:
@@ -533,12 +598,17 @@ class Model:
                 "nodes": dict(Counter(n["kind"] for n in nodes)),
                 "edges": dict(Counter(e["kind"] for e in edges)),
                 "issues": dict(Counter(i["type"] for i in self.issues)),
+                # Firmengrenze (ADR 0032): Knoten aussen bzw. gelesene Grenzknoten innen
+                "boundary": {
+                    "outside": sum(1 for n in nodes if n.get("boundary")),
+                    "inside": sum(1 for n in nodes if n.get("at_boundary")),
+                },
             },
         }
 
 
 _STATUS = {"active": 0, "backup": 1, "neighbor": 2}
-_KIND_ORDER = {"firewall": 0, "vdom": 0, "vrf": 1, "segment": 2, "exit": 3, "router": 4}
+_KIND_ORDER = {"firewall": 0, "vdom": 0, L3: 1, "vrf": 1, "segment": 2, "exit": 3, "router": 4}
 
 
 def _best_status(old: str | None, new: str) -> str:

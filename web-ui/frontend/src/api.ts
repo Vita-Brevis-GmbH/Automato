@@ -2115,7 +2115,8 @@ export interface NextHop extends Resolved {
 }
 // Bezeichnung eines Kontexts: FortiGate nur mit root = die Firewall, sonst „fw · VDOM x“,
 // ACI „leaf · VRF Tenant:VRF“
-export type ContextKind = "firewall" | "vdom" | "vrf";
+// l3 = Router bzw. L3-Switch je VRF (Switches & Router, ADR 0032)
+export type ContextKind = "firewall" | "vdom" | "vrf" | "l3";
 export interface Labeled {
   source_system_id: number;
   source: string | null;
@@ -2297,6 +2298,7 @@ export interface TraceHop extends RoutingNode {
   leak?: { vrf: string; where: string; text: string; kind?: "leak" | "shared" };
   // Verbund als ein Hop (0.29.0): je Firewall bzw. Variante (andere Interfaces) ein Eintrag
   parts?: TraceHop[];
+  boundary?: BoundaryReason; // Firmengrenze am Ausgang dieses Hops (ADR 0032)
   zone?: TraceZone | null; // logische Zone des Knotens (0.57.0)
   l2?: L2Segment; // L2 bis zum nächsten Hop bzw. zum Anschluss des Ziels (0.64.0)
 }
@@ -2367,8 +2369,25 @@ export interface HopRules {
   src_epg?: string; // ACI-VRF-Hop (0.35.0): Zuordnung der Quelle bzw. des Ziels
   dst_epg?: string;
 }
+// Firmengrenze (ADR 0032): eBGP zu fremdem AS, Anbindung Internet/MPLS/Partner bzw.
+// Default-Route Richtung Provider - am Ausgang des letzten Hops
+export type BoundaryReason = "ebgp" | "exit" | "default";
+export interface TraceBoundary {
+  reason: BoundaryReason;
+  text: string; // vom Server in der Sprache der Anfrage
+  key: string;
+  label: string;
+  interface?: string;
+  zone?: string;
+  next_hop?: string;
+  as?: number;
+  private_as?: boolean;
+  state?: string | null;
+  exit?: { id: number; name: string; kind: string };
+}
 export interface TracePath {
   kind?: "active" | "backup"; // aktiv (inkl. ECMP) bzw. Backup-Weg (eine Abweichung)
+  boundary?: TraceBoundary; // Weg verlässt hier die Firma (ADR 0032)
   deviation?: { hop: number; label: string; reason: string }; // Backup: wo und warum
   parallel?: string[]; // redundant über diese Verbünde paralleler Firewalls
   extra?: number | null; // Hops mehr als der kürzeste Weg mit Ziel (0 = gleich lang; null = ohne Ziel)
@@ -2694,7 +2713,8 @@ export function snatText(s: NonNullable<TraceHop["snat"]>): string {
 
 // Topologie-Modell (0.50.0, ADR 0019): Knoten und Kanten der Umgebung mit Herkunft und den
 // Plausibilitäts-Befunden
-export type TopoNodeKind = "firewall" | "vdom" | "vrf" | "segment" | "exit" | "router";
+// l3 = gelesener Router bzw. L3-Switch (ADR 0032); router = Gegenstelle ohne gelesenes Gerät
+export type TopoNodeKind = "firewall" | "vdom" | "vrf" | "l3" | "segment" | "exit" | "router";
 export type TopoOrigin = "derived" | "manual" | "confirmed";
 export interface TopoNode {
   id: string;
@@ -2714,6 +2734,10 @@ export interface TopoNode {
   remote_as?: number | null;
   names?: string[];
   dismissed?: boolean;
+  // Firmengrenze (ADR 0032): Knoten aussen (Router bzw. Anbindung) mit Gründen und AS,
+  // gelesener Grenzknoten innen
+  boundary?: { reasons: BoundaryReason[]; as: number[] };
+  at_boundary?: boolean;
   degree: number;
   issues: number;
 }
@@ -2754,6 +2778,7 @@ export interface TopoEdge {
   group?: string;
   peer?: string;
   to?: Record<string, number>;
+  boundary?: { reason: BoundaryReason; as?: number; private_as?: boolean }; // ADR 0032
 }
 export interface TopoIssue {
   type: string;
@@ -2765,7 +2790,12 @@ export interface TopologyModel {
   nodes: TopoNode[];
   edges: TopoEdge[];
   issues: TopoIssue[];
-  summary: { nodes: Record<string, number>; edges: Record<string, number>; issues: Record<string, number> };
+  summary: {
+    nodes: Record<string, number>;
+    edges: Record<string, number>;
+    issues: Record<string, number>;
+    boundary?: { outside: number; inside: number }; // Firmengrenze (ADR 0032)
+  };
 }
 export const fetchTopology = (tenantId: number, node?: string) =>
   getJSON<TopologyModel>(`/api/topology${cq({ tenant_id: tenantId, node })}`);

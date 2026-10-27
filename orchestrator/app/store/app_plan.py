@@ -51,7 +51,7 @@ NO_EPG = "ohne EPG"
 
 KIND = {"system": "System der Applikation", "firewall": "Firewall", "vdom": "VDOM",
         "vrf": "ACI-VRF", "l3out": "L3Out", "object": "Gegenstelle", "epg": "EPG",
-        "external": "externe EPG", "lb": "Load Balancer"}  # fmt: skip
+        "external": "externe EPG", "lb": "Load Balancer", "l3": "Router"}  # fmt: skip
 VERDICT = {"allow": "erlaubt", "deny": "gesperrt", "depends": "abhängig", "unknown": "unbekannt",
            "blocked": "vorher gesperrt"}  # fmt: skip
 # Anzeige auf Englisch (0.87.0, ADR 0028); die Schluessel bleiben

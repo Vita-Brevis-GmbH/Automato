@@ -74,6 +74,7 @@ const KIND_LABEL: Record<ContextKind, string> = {
   firewall: "Firewall",
   vdom: "VDOM",
   vrf: L("VRF (Border-Leaf)", "VRF (border leaf)"),
+  l3: L("Router/L3-Switch", "Router/L3 switch"), // ADR 0032
 };
 
 // Name(n) einer IP aus dem IPAM; ohne Namen das Netz (Beschreibung) – blass
@@ -144,10 +145,11 @@ export function Missing({ items }: { items: string[] | null | undefined }) {
 }
 
 // System · Kontext: „fw-01 · VDOM root“, eine Firewall nur mit root heisst wie die Firewall,
-// ACI „leaf-101 · VRF T:V“ (darunter der APIC); Hostname, wenn er vom Quellsystem abweicht
+// ACI „leaf-101 · VRF T:V“ (darunter der APIC); Router „rt-01“ bzw. „rt-01 · VRF x“ (darunter
+// die Quelle Switches & Router, ADR 0032); Hostname, wenn er vom Quellsystem abweicht
 export function where(x: Labeled) {
   const label = x.label || `${x.source ?? x.node} · ${x.context}`;
-  const sub = x.display === "vrf" ? x.source : x.node !== x.source ? x.node : null;
+  const sub = x.display === "vrf" || x.display === "l3" ? x.source : x.node !== x.source ? x.node : null;
   return (
     <>
       <b>{label}</b>

@@ -15,7 +15,8 @@
   Reihenfolge der SD-WAN-Ausgaenge bleibt (Vorrang). Zeitstempel und Zaehler zaehlen nie - der
   Collector liest keine, und neue Felder kommen erst mit der Positivliste dazu.
 - **Erster Lauf** eines Quellsystems (kein Stand, kein Verlauf): nur ein Vermerk
-  „Ausgangsstand“ mit den Zahlen.
+  „Ausgangsstand“ mit den Zahlen - nicht, solange es gar kein Routing hat (Switches ohne
+  L3-Geraet, ADR 0032: der Collector schickt dann einen leeren Stand).
 - **Nicht lesbar** (`topo_context.missing`): Tabellen, die in einem der beiden Laeufe nicht
   lesbar waren, werden nicht einzeln verglichen - statt einer Flut „entfernt“ (bzw. danach
   „hinzugefuegt“) ein Vermerk am Kontext mit der Anzahl. Ein neuer bzw. nicht mehr gelesener
@@ -482,7 +483,10 @@ def record(session: Session, run, rows: dict) -> int:
         and session.scalar(select(TopoChange.id).where(TopoChange.source_system_id == sid).limit(1))
         is None
     )
-    entries = limit(diff(old, from_rows(rows), first=first))
+    new = from_rows(rows)
+    if first and new.empty:  # noch kein Routing (z. B. nur L2-Switches): kein Ausgangsstand
+        return 0
+    entries = limit(diff(old, new, first=first))
     if entries:
         base = {
             "tenant_id": run.tenant_id,

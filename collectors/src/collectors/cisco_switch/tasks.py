@@ -4,7 +4,9 @@ Ein Quellsystem ist eine Gruppe von Switches bzw. Routern mit gemeinsamem Read-o
 Adressen stehen im Lesebereich (`read_scope`, eine je Zeile bzw. kommagetrennt, `host[:port]`).
 Je Geraet `show version` (erkennt IOS/IOS-XE, NX-OS, seit 0.68.0 Junos und die Business-CLI der
 Catalyst 1200/1300 - diese ueber die begrenzte Sitzung -, seit 0.94.0 Arista EOS und Aruba CX),
-danach die festen Befehle der Plattform (seit 0.94.0 auch die IPv6-Nachbarn).
+danach die festen Befehle der Plattform (seit 0.94.0 auch die IPv6-Nachbarn) und - ADR 0032 -
+das Routing (`routing.COMMANDS`: RIB, BGP; nur L3-Geraete bekommen Kontexte, ein Switch ohne
+`ip routing` nur den ersten Befehl).
 Ein Switch, der nicht antwortet, fehlt im Ergebnis und steht in der Meldung; antwortet keiner,
 schlaegt der Lauf fehl. Ohne Zugangsdaten liest nur der zentrale Worker (Lab) die Beispieldaten.
 """
@@ -15,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from importlib import resources
 
 from collectors.celery_app import app
+from collectors.cisco_switch import routing
 from collectors.cisco_switch.client import COMMANDS, SwitchClient, fingerprint
 from collectors.cisco_switch.normalize import (
     PLATFORM_LABEL,
@@ -78,8 +81,20 @@ def read_switch(entry: str, target: Target) -> dict:
             if error and not quiet(platform, cmd, error):
                 notes.append(f"{cmd}: {error}")
             outputs[cmd] = text
+        # Routing (ADR 0032): Fehler wertet `routing.device` aus (nicht lesbar bzw. Funktion aus)
+        routing_errors: dict[str, str] = {}
+        for i, cmd in enumerate(routing.COMMANDS.get(platform, ())):
+            try:
+                outputs[cmd] = client.run(cmd)
+            except Exception as exc:  # noqa: BLE001 - Teil „nicht lesbar“, die anderen weiter
+                routing_errors[cmd] = type(exc).__name__
+                continue
+            if i == 0 and routing.not_routing(outputs[cmd]):
+                break  # Switch ohne Routing: die weiteren Routing-Befehle sparen
+    cut = sorted(set(getattr(client, "cut", ())) & routing.ALL)
     return {"host": entry, "platform": platform, "outputs": outputs, "notes": notes,
-            "host_key": client.host_key, "mode": mode}  # fmt: skip
+            "host_key": client.host_key, "mode": mode, "routing_errors": routing_errors,
+            "routing_cut": cut}  # fmt: skip
 
 
 def gather(target: Target | None = None) -> dict:
@@ -158,9 +173,12 @@ def collect_once(
         if not switches:
             raise RuntimeError("; ".join(errors) or "kein Switch gelesen")
         inventory = normalize(raw)  # ergaenzt Hinweise je Switch (z. B. MAC-Tabelle gekappt)
+        routed = routing.normalize(raw)  # ADR 0032: Router/L3-Switches (auch leer: ersetzt)
         notes = [f"{sw['host']}: {n}" for sw in switches for n in sw.get("notes") or []]
         kinds = sorted({PLATFORM_LABEL.get(sw.get("platform"), "?") for sw in switches})
         message = [f"Switches: {len(switches)} gelesen ({', '.join(kinds)})"]
+        if routing.summary(routed):
+            message.append(routing.summary(routed))
         if errors:
             message.append(f"nicht gelesen: {'; '.join(errors)}")
         if notes:
@@ -168,6 +186,7 @@ def collect_once(
         result = CollectorResult(
             status="completed",
             inventory=inventory,
+            routing=routed,
             host_keys={sw["host"]: sw["host_key"] for sw in switches if sw.get("host_key")},
             message=" · ".join(message),
         )

@@ -367,7 +367,7 @@ class NormalizedRoutingContext(BaseModel):
 
     node: str
     context: str
-    kind: str = "vdom"  # vdom | vrf
+    kind: str = "vdom"  # vdom | vrf | l3 (Router bzw. L3-Switch je VRF, ADR 0032)
     missing: list[str] = Field(default_factory=list)
 
 
