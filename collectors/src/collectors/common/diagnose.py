@@ -78,6 +78,11 @@ def device_error(
         and exc.response.status_code in (401, 403)
         and not _from_orchestrator(exc)  # z. B. Teil-Upload abgelehnt: kein Geraete-Login
     ):
+        # andere Ablehnung des Geraets (z. B. HTTP 400, 0.78.3): mit seiner Begruendung
+        if isinstance(exc, httpx.HTTPStatusError) and not _from_orchestrator(exc):
+            text = _device_text(exc.response)
+            if text:
+                return f"{base}. Geraet meldet: {text}"
         return base
     parts = [f"Anmeldung abgelehnt ({base})"]
     text = _device_text(exc.response)
@@ -162,7 +167,9 @@ def _device_text(response: httpx.Response) -> str:
         imdata = body.get("imdata")
         if isinstance(imdata, list) and imdata and isinstance(imdata[0], dict):
             text = ((imdata[0].get("error") or {}).get("attributes") or {}).get("text") or ""
-        text = text or body.get("text") or body.get("Error") or body.get("detail") or ""
+        error = body.get("error")  # NSX ALB (Avi): {"error": "..."}
+        text = (text or body.get("text") or body.get("Error") or body.get("detail")
+                or (error if isinstance(error, str) else "") or "")  # fmt: skip
         text = str(text)
     elif body is None:
         text = _TAGS.sub(" ", response.text or "")

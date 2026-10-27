@@ -55,7 +55,7 @@ def check(target: Target | None = None) -> tuple[bool, str]:
         return False, _no_credentials(target) if target else "keine Avi-Creds"
     try:
         with client:
-            count = client.ping()
+            count = client.ping(target.read_scope if target else "")
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, diagnose.device_error(exc, "avi", target, local=True)
     return True, f"erreichbar: Avi {client.version}, {count} Virtual Services sichtbar"

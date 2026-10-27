@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.78.3 – 2026-10-27
+
+Korrektur nach Rückmeldung des Anwenders beim Test des NSX ALB (Avi): „Verbindung prüfen“
+meldete nur „HTTP 400 …/api/virtualservice“, der Lauf „nicht lesbar: : virtualservice (HTTP
+400); …“ für alle Objekte – ohne Grund. Ohne Migration.
+
+- **Begründung des Controllers** in der Prüfung („Geraet meldet: …“) und je fehlendem Objekt im
+  Lauf („Standard-Tenant: virtualservice (HTTP 400: …)“); ohne gewählten Tenant steht
+  „Standard-Tenant“ statt eines leeren Namens.
+- **API-Version:** lehnt der Controller die Abfrage mit `X-Avi-Version` ab (HTTP 400), liest
+  Automato einmal ohne sie und bleibt dabei, wenn das klappt (Prüftext „(ohne X-Avi-Version)“).
+  Die Version kommt aus `/api/initial-data` – ein kurzer Versuch vor, sonst nach der Anmeldung,
+  ohne Wiederholungen (die den Lauf aufhalten konnten).
+- **Verbindung prüfen** liest den ersten gewählten Avi-Tenant (bisher immer den Standard-Tenant
+  des Kontos).
+- BETRIEB (Fehlerbehebung NSX ALB), TESTS.
+
 ## 0.78.2 – 2026-10-27
 
 Korrekturen nach Rückmeldung des Anwenders: Kategorien der Applikations-Doku und Agent nach

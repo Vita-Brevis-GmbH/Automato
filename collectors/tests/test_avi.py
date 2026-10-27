@@ -77,7 +77,7 @@ def test_gewaehlter_tenant_teilfehler_und_schreibschutz():
         with pytest.raises(ReadOnlyViolation):
             client.put("https://avi/api/pool/pool-web", json={})
     assert set(data["tenants"]) == {"admin"}
-    assert data["missing"] == ["admin: poolgroup (HTTP 403)"]
+    assert data["missing"] == ["admin: poolgroup (HTTP 403: no access)"]  # mit Begruendung
     assert not any(p == "/api/tenant" for _, p, _, _ in calls)
 
 
@@ -145,3 +145,79 @@ def test_lauf_und_pruefung(monkeypatch):
     assert result.status == "completed" and len(result.nat_rules) == 3
     ok, text = avi_tasks.check(Target(name="avi", platform="avi"))
     assert not ok and "keine Zugangsdaten" in text
+
+
+def _rejecting(calls: list, *, version_ok: bool) -> httpx.Client:
+    """Controller, der jede Abfrage mit X-Avi-Version ablehnt (HTTP 400 mit Begruendung) - bzw.
+    auch ohne (`version_ok=False`: der Grund ist ein anderer)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        calls.append((path, request.headers.get("X-Avi-Version"),
+                      request.headers.get("X-Avi-Tenant")))  # fmt: skip
+        if path == "/api/initial-data":
+            return httpx.Response(200, json={"version": {"Version": "31.1.1"}})
+        if path in ("/login", "/logout"):
+            return httpx.Response(200, headers=[("set-cookie", "csrftoken=c1; Path=/")], json={})
+        if request.headers.get("X-Avi-Version") or not version_ok:
+            return httpx.Response(400, json={"error": "Ungueltige Anfrage (Test)"})
+        if path == "/api/tenant":
+            return httpx.Response(200, json={"results": [{"name": "kunde-a"}]})
+        return httpx.Response(200, json={"count": 0, "results": []})
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_http_400_version_ohne_header_und_begruendung():
+    """Befund 0.78.2 (HTTP 400 auf jede Abfrage): lehnt der Controller die API-Version ab, liest
+    der Client ohne `X-Avi-Version` weiter; sonst steht die Begruendung in der Meldung."""
+    calls: list = []
+    with AviClient("https://avi", "ro", AVI_PW, client=_rejecting(calls, version_ok=True)) as avi:
+        data = avi.gather()
+    assert data["missing"] == [] and set(data["tenants"]) == {"kunde-a"}
+    assert avi.version == "31.1.1 (ohne X-Avi-Version)"
+    # einmal mit, dann nur noch ohne Version
+    assert [v for p, v, _ in calls if p.startswith("/api/") and p != "/api/initial-data"][:3] == [
+        "31.1.1", None, None]  # fmt: skip
+
+    calls = []
+    with AviClient("https://avi", "ro", AVI_PW, client=_rejecting(calls, version_ok=False)) as avi:
+        data = avi.gather()
+    assert data["tenants"] == {"admin": data["tenants"]["admin"]}  # Tenant-Liste nicht lesbar
+    assert data["missing"][0] == (
+        "Standard-Tenant: virtualservice (HTTP 400: Ungueltige Anfrage (Test))"
+    )
+
+
+def test_pruefung_mit_gewaehltem_tenant_und_begruendung(monkeypatch):
+    calls: list = []
+    client = _rejecting(calls, version_ok=False)
+    monkeypatch.setattr(avi_tasks, "AviClient", lambda *a, **k: AviClient(*a, **k, client=client))
+    target = Target(source_system_id=1, name="lb-01", platform="avi", base_url="https://avi",
+                    username="ro", password=AVI_PW, read_scope="kunde-a")  # fmt: skip
+    ok, text = avi_tasks.check(target)
+    assert not ok and "HTTP 400" in text and "Geraet meldet: Ungueltige Anfrage (Test)" in text
+    assert ("/api/virtualservice", None, "kunde-a") in calls  # erster gewaehlter Tenant
+
+
+def test_version_erst_nach_der_anmeldung():
+    """`/api/initial-data` ohne Anmeldung gesperrt: die Version kommt nach dem Login (ein
+    Versuch je Seite, keine Wiederholungen)."""
+    calls: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path, logged_in = request.url.path, "csrftoken=c1" in (request.headers.get("cookie") or "")
+        calls.append(path)
+        if path == "/api/initial-data":
+            if not logged_in:
+                return httpx.Response(401, json={"error": "Authentication credentials missing"})
+            return httpx.Response(200, json={"version": {"Version": "30.2.1"}})
+        if path in ("/login", "/logout"):
+            return httpx.Response(200, headers=[("set-cookie", "csrftoken=c1; Path=/")], json={})
+        assert request.headers.get("X-Avi-Version") == "30.2.1"
+        return httpx.Response(200, json={"count": 0, "results": []})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with AviClient("https://avi", "ro", AVI_PW, client=client) as avi:
+        assert avi.ping() == 0 and avi.version == "30.2.1"
+    assert calls[:3] == ["/api/initial-data", "/login", "/api/initial-data"]

@@ -1074,7 +1074,8 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   (seit 0.77.0, ADR 0027): Adresse des Controllers, **Avi-Benutzer/Passwort** eines Kontos in einer
   Rolle nur mit Leserechten (Virtual Service, VS VIP, Pool, Pool Group, VRF Context, Application
   Profile, Tenant) und **Avi-Tenants** (kommagetrennt, leer = alle, die das Konto sieht) –
-  Automato meldet sich an und ab und liest sonst nur, NetBox: **Lese-Token** + optional **Schreib-Token** (nur
+  Automato meldet sich an und ab und liest sonst nur; „Verbindung prüfen“ liest die Virtual
+  Services des ersten gewählten Avi-Tenants (seit 0.78.3), NetBox: **Lese-Token** + optional **Schreib-Token** (nur
   NetBox-Sync, geht nie an einen Agenten) – nur schreibbar, verschlüsselt gespeichert, Anzeige
   nur „hinterlegt"; bei Infoblox/NetBox die **Rolle** *IPAM führend* oder *Anreicherung*
   (genau ein führendes IPAM je Mandant); TLS-Prüfung, aktiv; **Zeitplan** (stündlich,
@@ -1528,6 +1529,16 @@ an (`deploy/agent-gateway`, Port 8443).
   Konto ein Befehl („% Invalid input“, „% Permission denied“), die Parser-View bzw. Rolle um
   den Befehl ergänzen; `automato-collector --check` meldet je Switch Erreichbarkeit, Plattform
   und Fingerabdruck.
+- **NSX ALB „HTTP 400 https://…/api/virtualservice“ bzw. Lauf „nicht lesbar: …: virtualservice
+  (HTTP 400)“** (bis 0.78.2 ohne Grund) — der Controller lehnt die Abfrage ab. Seit 0.78.3 steht
+  seine Begründung dabei („Geraet meldet: …“ bzw. „(HTTP 400: …)“). Lehnt er nur die
+  API-Version ab (`X-Avi-Version`), liest Automato ohne sie weiter; die Prüfung nennt dann
+  „Avi <Version> (ohne X-Avi-Version)“. Die Version liest Automato einmal kurz aus
+  `/api/initial-data` (ohne Anmeldung, sonst danach) – keine Wiederholungen mehr, die den Lauf
+  aufhalten. Weitere Gründe: ein Avi-Tenant, den es nicht gibt bzw. den das Konto nicht sieht
+  (Feld **Avi-Tenants** im Quellsystem prüfen, Gross-/Kleinschreibung), oder ein Proxy
+  dazwischen. Von Hand prüfen: im Browser am Controller angemeldet
+  `https://<controller>/api/virtualservice?page_size=1` öffnen.
 - **„Alle einlesen“ überspringt ein System, obwohl nichts läuft** (bis 0.11.2) — ein früherer
   Lauf wurde abgeholt, aber nie abgeschlossen (Agent beendet, Upload verloren), und steht
   ausserhalb der letzten acht Läufe noch auf „läuft“ (seit 0.13.0 zeigt die Übersicht alle
