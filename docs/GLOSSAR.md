@@ -150,6 +150,8 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Ausfall | Failure |
 | Patchungen | Patching |
 | Uplink / Anschluss | Uplink / access port |
+| IPv6-Nachbarn (NDP) | IPv6 neighbors (NDP) |
+| Link-local (IPv6) | link-local |
 
 ## Texte vom Server (seit 0.87.0)
 

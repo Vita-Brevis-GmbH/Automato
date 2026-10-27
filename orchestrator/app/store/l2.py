@@ -14,7 +14,10 @@ einer). Steht die MAC nur auf Uplinks, haengt das Geraet hinter einem Geraet ohn
 Automato (ACI, Switch ohne Zugang) - gezeigt wird die Gegenstelle.
 
 **Wer ist das**: VM-NIC aus dem vCenter (MAC), IPs aus ARP, VMware Tools und ACI-Endpunkten,
-Namen aus dem IPAM.
+Namen aus dem IPAM. Seit 0.94.0 auch IPv6-Adressen aus den IPv6-Nachbarn (NDP, in `arp_entry` wie
+ARP); Link-local-Adressen (`fe80::/10`) stehen getrennt (`link_local`) und zaehlen nicht als
+Identitaet (keine IPAM-Namen, kein Kunden-Ausschnitt) - sie gelten nur am Link. Gesucht werden
+kann auch nach ihnen („Wo haengt fe80::…“).
 
 **Befund** `uplink_vlan_missing` (`checks`): Die Ports, an denen VMs eines ESXi-Hosts gesehen
 werden, sind seine Uplinks fuer diesen vSwitch/DVS. Jedes VLAN, das VMs des Clusters auf diesem
@@ -51,10 +54,20 @@ def mac_key(value: str | None) -> str | None:
 
 
 def _ip(value: str | None) -> str | None:
+    """IP ohne Laenge und ohne IPv6-Zone (`fe80::1%Vlan10` -> `fe80::1`)."""
     try:
-        return str(ipaddress.ip_address((value or "").split("/", 1)[0].strip()))
+        text = (value or "").split("/", 1)[0].split("%", 1)[0].strip()
+        return str(ipaddress.ip_address(text))
     except ValueError:
         return None
+
+
+def link_local(ip: str | None) -> bool:
+    """IPv6-Link-local (`fe80::/10`, 0.94.0) - gilt nur am Link, keine Identitaet."""
+    try:
+        return ipaddress.ip_address(ip or "").is_link_local and ":" in (ip or "")
+    except ValueError:
+        return False
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -132,13 +145,23 @@ def _current(model, tenant_id: int, *conds):
 class Identity:
     """Was hinter einer MAC steckt."""
 
-    ips: list[str] = field(default_factory=list)
+    ips: list[str] = field(default_factory=list)  # IPv4 und IPv6 (global/ULA)
     names: list[str] = field(default_factory=list)  # IPAM-Namen der IPs
     vm: dict | None = None  # {id, name, nic, portgroup, vlan, switch, host, cluster}
     epgs: list[str] = field(default_factory=list)
+    link_local: list[str] = field(default_factory=list)  # IPv6 fe80::/10 (0.94.0), getrennt
+
+    def add_ip(self, ip: str | None) -> None:
+        """IP ergaenzen - Link-local getrennt (nicht als Identitaet)."""
+        if not ip:
+            return
+        target = self.link_local if link_local(ip) else self.ips
+        if ip not in target:
+            target.append(ip)
 
     def out(self) -> dict:
-        return {"ips": self.ips, "names": self.names, "vm": self.vm, "epgs": self.epgs}
+        return {"ips": self.ips, "names": self.names, "vm": self.vm, "epgs": self.epgs,
+                "link_local": self.link_local}  # fmt: skip
 
 
 class Locator:
@@ -213,12 +236,9 @@ class Locator:
                         "vlan": nic.vlan, "switch": nic.switch, "host": vm.host,
                         "cluster": vm.cluster, "power_state": vm.power_state}  # fmt: skip
             for ip in nic.ips or []:
-                if (addr := _ip(ip)) and addr not in ident.ips:
-                    ident.ips.append(addr)
+                ident.add_ip(_ip(ip))
         for a in self.session.scalars(_current(ArpEntry, self.tenant_id)):
-            ident = ids[a.mac]
-            if a.ip not in ident.ips:
-                ident.ips.append(a.ip)
+            ids[a.mac].add_ip(_ip(a.ip))  # ARP und IPv6-Nachbarn (0.94.0)
         endpoints = self.session.execute(
             select(EpgEndpoint.mac, EpgEndpoint.ip, Epg.name)
             .join(Epg, Epg.id == EpgEndpoint.epg_id)
@@ -229,8 +249,7 @@ class Locator:
             if mac is None:
                 continue
             ident = ids[mac]
-            if (addr := _ip(ip)) and addr not in ident.ips:
-                ident.ips.append(addr)
+            ident.add_ip(_ip(ip))
             if epg and epg not in ident.epgs:
                 ident.epgs.append(epg)
         return ids
@@ -298,8 +317,8 @@ def _sorted(rows: list[MacEntry]) -> list[MacEntry]:
 
 
 def find_macs(session: Session, tenant_id: int, query: str, limit: int = 20) -> dict:
-    """MACs zu einer Suche: MAC direkt, IP (ARP, VM, ACI-Endpunkt, sonst IPAM-Name -> IP) bzw.
-    Name (VM, IPAM-Name). Ergebnis {kind, macs: {mac: Grund}, ips}."""
+    """MACs zu einer Suche: MAC direkt, IP (ARP bzw. IPv6-Nachbarn, VM, ACI-Endpunkt, sonst
+    IPAM-Name -> IP) bzw. Name (VM, IPAM-Name). Ergebnis {kind, macs: {mac: Grund}, ips}."""
     from app.store import resolve
 
     q = (query or "").strip()
@@ -331,7 +350,7 @@ def find_macs(session: Session, tenant_id: int, query: str, limit: int = 20) -> 
             select(ArpEntry.mac).where(ArpEntry.tenant_id == tenant_id, ArpEntry.ip == ip)
             .order_by(ArpEntry.last_seen.desc()).limit(5)
         ):  # fmt: skip
-            out.setdefault(m, f"ARP {ip}")
+            out.setdefault(m, f"{'NDP' if ':' in ip else 'ARP'} {ip}")  # IPv6 seit 0.94.0
         for raw, name in session.execute(
             select(VmNic.mac, Vm.name).join(VmIp, VmIp.nic_id == VmNic.id)
             .join(Vm, Vm.id == VmNic.vm_id)

@@ -61,6 +61,16 @@ PHRASES: tuple[tuple[str, str], ...] = (
      "include the agent machine"),
     ("Lese-Token im Web-UI neu setzen (NetBox v2-Token: nbt_<Schluessel>.<Token>)",
      "set the read token again in the web UI (NetBox v2 token: nbt_<key>.<token>)"),
+    # seit 0.94.0 mit Arista/AOS-CX; die fruehere Fassung bleibt fuer gespeicherte Meldungen
+    ("SSH-Benutzer/-Passwort im Web-UI neu setzen; das Konto braucht nur Leserechte (IOS "
+     "privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle network-operator, Junos-"
+     "Klasse read-only, Catalyst 1200/1300 Stufe 1, Arista-Rolle network-operator, AOS-CX-"
+     "Gruppe operators), Anmeldung mit Passwort "
+     "(keyboard-interactive bzw. password) muss erlaubt sein",
+     "set the SSH user/password again in the web UI; the account only needs read rights (IOS "
+     "privilege 1 or a view with the show commands, NX-OS role network-operator, Junos class "
+     "read-only, Catalyst 1200/1300 level 1, Arista role network-operator, AOS-CX group "
+     "operators), login with password (keyboard-interactive or password) must be allowed"),
     ("SSH-Benutzer/-Passwort im Web-UI neu setzen; das Konto braucht nur Leserechte (IOS "
      "privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle network-operator, Junos-"
      "Klasse read-only, Catalyst 1200/1300 Stufe 1), Anmeldung mit Passwort "
@@ -151,6 +161,10 @@ PHRASES: tuple[tuple[str, str], ...] = (
     (": Ausgabe nicht auswertbar (", ": output could not be parsed ("),
     ("MAC-Tabelle: {n} Eintraege ueber {m} nicht uebernommen",
      "MAC table: {n} entries above {m} not taken over"),
+    ("ArubaOS-Switch/ProCurve wird nicht gelesen (kein Exec, Sitzung nur mit Tastendruck und "
+     "Bildschirmsteuerung) - unterstuetzt ist Aruba CX (AOS-CX)",
+     "ArubaOS-Switch/ProCurve is not read (no exec, session only with key press and screen "
+     "control) - supported is Aruba CX (AOS-CX)"),
     ("Host-Schluessel hat sich geaendert ({stored} gespeichert, {shown} vorgewiesen) - Geraet "
      "pruefen und im Web-UI den Schluessel neu lernen lassen",
      "host key has changed ({stored} stored, {shown} presented) - check the device and let the "

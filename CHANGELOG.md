@@ -7,6 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.94.0 – 2026-10-27
+
+Switches: IPv6-Nachbarn, Arista EOS und Aruba CX (ADR 0025 Nr. 13; Anwender: „Verkabelung“ –
+IPv6-Nachbarn, weitere Hersteller). Weiterhin strikt lesend (Positivliste der show-Befehle).
+
+- **IPv6-Nachbarn (NDP)** wie ARP: IOS/IOS-XE `show ipv6 neighbors`, NX-OS `show ipv6 neighbor
+  vrf all` (eigene Auswertung), Junos JSON, Catalyst 1200/1300 `show ipv6 neighbors all`; nur
+  Unicast mit MAC, ohne Zone; fehlt der Befehl (alte Software), bleibt der Teil ohne Hinweis
+  leer.
+- Gespeichert in `arp_entry` ohne Migration; Endpunkte und „Wo hängt …“ (Grund „NDP <IP>“) sowie
+  der L2-Anschluss in der Weg-Suche auch über IPv6; Link-local getrennt (`link_local`), nicht als
+  Identität.
+- **Neu: Arista EOS** (nur `show … | json`, Rolle `network-operator`) und **HPE Aruba CX/AOS-CX**
+  (ntc-Vorlagen `aruba_aoscx`, Gruppe `operators`; erlaubte VLANs/LAG-Mitglieder über die Grenze
+  der Vorlage hinaus).
+- ArubaOS-Switch/ProCurve wird erkannt und nicht gelesen (Abbruch vor dem ersten Senden; Meldung
+  zweisprachig).
+- Oberfläche: Hersteller und Konto-Rollen im Quellsystem-Dialog, IPv6/Link-local in den
+  Endpunkten.
+
 ## 0.93.0 – 2026-10-27
 
 NetBox-Sync: Verkabelung und Applikationen (ADR 0031; Freigabe des Anwenders 2026-10-27

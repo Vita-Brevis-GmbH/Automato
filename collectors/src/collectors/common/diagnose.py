@@ -68,12 +68,13 @@ _HINTS = {
     "cisco_switch": (
         "SSH-Benutzer/-Passwort im Web-UI neu setzen; das Konto braucht nur Leserechte (IOS "
         "privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle network-operator, Junos-"
-        "Klasse read-only, Catalyst 1200/1300 Stufe 1), Anmeldung mit Passwort "
+        "Klasse read-only, Catalyst 1200/1300 Stufe 1, Arista-Rolle network-operator, AOS-CX-"
+        "Gruppe operators), Anmeldung mit Passwort "
         "(keyboard-interactive bzw. password) muss erlaubt sein",
         "set the SSH user/password again in the web UI; the account only needs read rights (IOS "
         "privilege 1 or a view with the show commands, NX-OS role network-operator, Junos class "
-        "read-only, Catalyst 1200/1300 level 1), login with password (keyboard-interactive or "
-        "password) must be allowed",
+        "read-only, Catalyst 1200/1300 level 1, Arista role network-operator, AOS-CX group "
+        "operators), login with password (keyboard-interactive or password) must be allowed",
     ),
 }
 # vCenter: Rolle Read-only reicht (System.View/System.Read) - fehlt sie, ist sie meist am
@@ -152,7 +153,7 @@ def _ssh_error(exc: Exception, platform: str, target: Target | None, local: bool
         if local and target is not None:
             parts.extend(_credential_notes(platform, target))
         return ". ".join([*parts, f"{_note()}: {_hint('cisco_switch')}"])
-    if name == "HostKeyChanged":
+    if name in ("HostKeyChanged", "UnsupportedDevice"):
         return str(exc)
     if name == "SessionLoginFailed":  # Catalyst 1200/1300: Anmeldung in der Sitzung (0.68.0)
         return (

@@ -404,11 +404,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.91.0** | Datenqualität (Schritt 6, erste Fassung): Reiter mit Ampel je Bereich, Ursache und Link, Gesamtnote, Befunde „Stand veraltet“ und „nur teilweise gelesen“, Relevanz-Ursachen als Stichprobe (ADR 0029) |
 | **0.92.0** | Verlauf des Routings: Änderungen an Routen, BGP-Nachbarn, HA, Policy-Routen, Kontexten und L3Outs von Lauf zu Lauf, Reiter „Verlauf“, Frist 180 Tage (ADR 0030) |
 | **0.93.0** | NetBox-Sync: Abschnitte Verkabelung (Ports, beidseitige Kabel, Modus/VLANs nur mit vorhandenen VLANs) und Applikationen (Tags an VMs und IPs), standardmässig aus (ADR 0031) |
+| **0.94.0** | Switches: IPv6-Nachbarn (NDP) in Endpunkten und „Wo hängt …“, Arista EOS und HPE Aruba CX lesend; ArubaOS-Switch/ProCurve erkannt, nicht gelesen (ADR 0025 Nr. 13) |
 
-### Nächste Arbeiten (Stand 0.93.0)
+### Nächste Arbeiten (Stand 0.94.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.93.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.94.0.
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4
 Verkabelung, Applikationen, Kunden, Routing“):**
@@ -418,7 +419,7 @@ Verkabelung, Applikationen, Kunden, Routing“):**
 | Ablauf | `main` nachführen | **erledigt** (PR #2, `main` = 0.87.0) |
 | Schritt 6 | Daten verschärfen: Datenqualität der gelesenen Daten und des IPAM | **erste Fassung in 0.91.0** (ADR 0029, Inhalt zur Abstimmung) |
 | Sprache | ADR 0028 Schritt 4: Laufmeldungen, Collector/Agent, CLI | **umgesetzt in 0.90.0** |
-| Verkabelung | Kabel und Ports nach NetBox (Vorschau → Übernehmen), IPv6-Nachbarn, weitere Hersteller; SNMPv3 als Alternative zu SSH | Kabel/Ports nach NetBox **umgesetzt in 0.93.0** (ADR 0031); IPv6-Nachbarn/Hersteller in Arbeit; SNMPv3 danach |
+| Verkabelung | Kabel und Ports nach NetBox (Vorschau → Übernehmen), IPv6-Nachbarn, weitere Hersteller; SNMPv3 als Alternative zu SSH | Kabel/Ports nach NetBox **umgesetzt in 0.93.0** (ADR 0031); IPv6-Nachbarn, Arista EOS und Aruba CX **umgesetzt in 0.94.0** (ADR 0025 Nr. 13; ArubaOS-Switch/ProCurve bewusst nicht); SNMPv3 danach |
 | Applikationen | Abhängigkeiten wieder einblenden (Infrastruktur getrennt) | **umgesetzt in 0.88.0** |
 | Applikationen | Export nach NetBox (Tags) | **umgesetzt in 0.93.0** (ADR 0031) |
 | Kunden | feinere Rollen der Kunden-Benutzer | **umgesetzt in 0.89.0** |

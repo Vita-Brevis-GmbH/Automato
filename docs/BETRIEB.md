@@ -555,7 +555,15 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
 - **Verkabelung** (0.62.0, ADR 0025): welches Gerät an welchem Port welches anderen hängt –
   abgeleitet aus CDP/LLDP aller gelesenen Geräte (Switches & Router, ACI-Leafs), nichts von Hand.
   Seit 0.68.0 auch Catalyst 1200/1300 und Juniper MX/EX/QFX; ein MX steht als **Router** da
-  (in der L2-Sicht ein Endgerät, kein Switch), seine Interface-Netze im Inventar.
+  (in der L2-Sicht ein Endgerät, kein Switch), seine Interface-Netze im Inventar. Seit 0.94.0
+  auch **Arista EOS** (Konto mit Rolle `network-operator`) und **HPE Aruba CX/AOS-CX** (Konto
+  in der Gruppe `operators`) – einfach die Adressen im Quellsystem eintragen, die Plattform
+  erkennt Automato an `show version`. ArubaOS-Switch/ProCurve wird nicht gelesen; der Lauf
+  meldet „ArubaOS-Switch/ProCurve wird nicht gelesen“. Endpunkte zeigen neben IPv4 auch
+  **IPv6-Adressen** aus den IPv6-Nachbarn (NDP) der Switches; Link-local-Adressen stehen
+  getrennt („link-local …“) und zählen nicht als Identität. „Wo hängt …“ findet Geräte auch über
+  eine IPv6- bzw. Link-local-Adresse. Ältere Software ohne den IPv6-Befehl: kein Hinweis, der
+  Teil bleibt leer.
   Oben die Kennzahlen (gelesene Geräte, Switches, Verbindungen je Zustand, Abweichungen,
   Gegenstellen ohne CDP/LLDP, seit 0.63.0 Endpunkte), darunter die Reiter:
   - **Plan** (0.64.0, ADR 0025 Nr. 9): die L2-Sicht als Zeichnung – oben der Kern (Spines bzw.

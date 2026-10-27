@@ -184,7 +184,8 @@ class NormalizedMac(BaseModel):
 
 
 class NormalizedArp(BaseModel):
-    """ARP-Eintrag eines Switches mit L3-Interface (0.63.0): IP -> MAC."""
+    """ARP-Eintrag eines Switches mit L3-Interface (0.63.0): IP -> MAC; seit 0.94.0 auch
+    IPv6-Nachbarn (NDP) mit IPv6-Adresse ohne Zone (Link-local bleibt, `cisco_switch/nd.py`)."""
 
     device: str
     ip: str

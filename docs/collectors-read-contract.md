@@ -1,4 +1,4 @@
-# Collector-Lesevertrag — FortiGate, Cisco ACI, VMware, Cisco-Switches & NSX ALB (read-only)
+# Collector-Lesevertrag — FortiGate, Cisco ACI, VMware, Switches & Router, NSX ALB (read-only)
 
 > Was die Collectors **rein lesend** erfassen (Felder/Relationen) und wie es auf das
 > Datenmodell (ADR 0004 + Ergänzung) abgebildet wird. Abgeleitet aus realen Samples einer Referenzumgebung
@@ -199,7 +199,7 @@ zu – geprüft wird der WSDL-Name, jeder andere Aufruf bricht vor dem Senden ab
 Nicht gelesen: Zugangsdaten, Gast-Inhalte, Leistungsdaten, Snapshots, Ereignisse.
 Portgruppe → EPG ordnet der Orchestrator zu (Name `Tenant|AP|EPG`, sonst eindeutiges VLAN).
 
-## 5. Cisco-Switches (SSH, `show`-Befehle; read-only, ADR 0025)
+## 5. Switches & Router (SSH, `show`-Befehle; read-only, ADR 0025)
 
 Ein Quellsystem `cisco_switch` ist eine Gruppe von Switches (Adressen im Lesebereich, eine je
 Zeile, `host` bzw. `host:port`) mit einem Konto, das nur lesen darf: IOS/IOS-XE
@@ -224,6 +224,7 @@ wird beim ersten Lauf festgehalten und danach verlangt (ADR 0025 Nr. 3).
 | `show spanning-tree` (seit 0.65.0) | je VLAN Port, Rolle, Zustand (auf NX-OS ohne passende Vorlage mit der IOS-Vorlage) | `inv_interface.attrs.stp_blocked` (VLANs mit `BLK` bzw. Alternate/Backup), `attrs.stp_root` (Root-Port), als Bereiche |
 | `show mac address-table` (seit 0.63.0) | MAC, VLAN, Port, Art (dynamic/static); nur Unicast an einzelnen Ports, nicht CPU/Supervisor/Router/vPC-Peer-Link; höchstens 50 000 je Switch | `mac_entry` (gesammelt, `first_seen`/`last_seen`) |
 | `show ip arp` · `show ip arp detail vrf all` (seit 0.63.0) | IP, MAC, L3-Interface, VRF (NX-OS); ohne die eigenen Adressen des Switches | `arp_entry` (gesammelt) |
+| `show ipv6 neighbors` · `show ipv6 neighbor vrf all` (seit 0.94.0) | IPv6-Nachbarn (NDP): IPv6-Adresse ohne Zone, MAC, L3-Interface, VRF (NX-OS, eigene Auswertung); nur Unicast mit MAC, unvollständige Einträge fallen weg; fehlt der Befehl, bleibt der Teil ohne Hinweis leer | `arp_entry` (gesammelt wie ARP); Link-local (`fe80::/10`) bleibt, zählt aber nicht als Identität |
 
 **Seit 0.68.0 weitere Produkte** (ADR 0025 Nr. 11), Plattform nach `show version`:
 
@@ -231,17 +232,21 @@ wird beim ersten Lauf festgehalten und danach verlangt (ADR 0025 Nr. 3).
 |---|---|---|---|
 | IOS/IOS-XE | Catalyst 9200L, 9300, 3650, 4500 | wie oben | privilege 1 bzw. Parser-View |
 | NX-OS | Nexus 9000 | wie oben | `network-operator` |
-| Business-CLI | Catalyst 1200/1300 (CBS) | `show version`, `show system`, `show inventory`, `show interfaces status`, `show interfaces description`, `show vlan`, `show interfaces port-channel`, `show lldp neighbors`, `show mac address-table`, `show arp` – über die **begrenzte Sitzung** (kein Exec): Anmeldung in der Sitzung, nur diese Befehle und `terminal datadump` (Seitenumbruch der Sitzung aus) | Stufe 1 (nur lesen) |
-| Junos | Juniper MX (Router), EX, QFX | `show version`; mit `\| display json \| no-more`: `show chassis hardware`, `show interfaces`, `show lldp neighbors`, `show vlans`, `show arp no-resolve`, `show ethernet-switching table`, `show bridge mac-table` | Klasse `read-only` |
+| Business-CLI | Catalyst 1200/1300 (CBS) | `show version`, `show system`, `show inventory`, `show interfaces status`, `show interfaces description`, `show vlan`, `show interfaces port-channel`, `show lldp neighbors`, `show mac address-table`, `show arp`, seit 0.94.0 `show ipv6 neighbors all` – über die **begrenzte Sitzung** (kein Exec): Anmeldung in der Sitzung, nur diese Befehle und `terminal datadump` (Seitenumbruch der Sitzung aus) | Stufe 1 (nur lesen) |
+| Junos | Juniper MX (Router), EX, QFX | `show version`; mit `\| display json \| no-more`: `show chassis hardware`, `show interfaces`, `show lldp neighbors`, `show vlans`, `show arp no-resolve`, `show ethernet-switching table`, `show bridge mac-table`, seit 0.94.0 `show ipv6 neighbors` | Klasse `read-only` |
+| Arista EOS (seit 0.94.0) | Arista 7000er-Serie | `show version` (Text, erkennt die Plattform); mit `\| json`: `show version`, `show hostname`, `show interfaces status`, `show interfaces description`, `show interfaces switchport`, `show vlan`, `show port-channel`, `show lldp neighbors detail`, `show mac address-table`, `show ip arp vrf all`, `show ipv6 neighbors vrf all` | Rolle `network-operator` |
+| AOS-CX (seit 0.94.0) | HPE Aruba CX 6000/8000 | `show version`, `show system`, `show interface`, `show vlan`, `show lldp neighbor-info detail`, `show mac-address-table`, `show arp all-vrfs`, `show ipv6 neighbors all-vrfs` (ntc-Vorlagen `aruba_aoscx`, IPv6-Nachbarn selbst ausgewertet); ohne Exec über die begrenzte Sitzung mit `no page` | Gruppe `operators` |
 
 Gelesen werden dieselben Inhalte wie oben (Gerät, Ports mit Zustand/Speed/Duplex/VLANs/LAG,
-Nachbarn, MAC, ARP); bei Junos zusätzlich die Adressen der Interfaces (`inv_interface.ips`) und
-ihre Netze (`inv_subnet`, Kontext Interface). Nicht gelesen: Konfiguration, Routing-Tabelle,
-Zähler.
+Nachbarn, MAC, ARP, seit 0.94.0 IPv6-Nachbarn); bei Junos zusätzlich die Adressen der Interfaces
+(`inv_interface.ips`) und ihre Netze (`inv_subnet`, Kontext Interface). Nicht gelesen:
+Konfiguration, Routing-Tabelle, Zähler, MLAG der Arista. **ArubaOS-Switch/ProCurve** liest
+Automato nicht (kein Exec, Sitzung nur mit Tastendruck und Bildschirmsteuerung): der Collector
+erkennt das Banner „Press any key to continue“ und bricht ab, bevor er etwas sendet.
 
 Meldet ein Befehl einen Fehler (z. B. LLDP ausgeschaltet) oder fehlt eine Vorlage, bleibt der
 Teil leer und steht als Hinweis in der Meldung des Laufs. Nicht gelesen: Konfiguration,
-Zugangsdaten, Logs, Zähler, IPv6-Nachbarn. MAC- und ARP-Einträge werden gesammelt und nach
+Zugangsdaten, Logs, Zähler. MAC-, ARP- und IPv6-Nachbar-Einträge werden gesammelt und nach
 `AUTOMATO_RETENTION_L2_DAYS` (30) Tagen ohne neue Sichtung gelöscht. Die Verkabelung leitet der Orchestrator
 aus den Nachbarn aller Quellen ab (Switches, ACI-Leafs über `lldpAdjEp`/`cdpAdjEp`).
 

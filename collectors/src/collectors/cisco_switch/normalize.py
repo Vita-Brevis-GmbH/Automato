@@ -12,6 +12,9 @@ Seit 0.68.0 weitere Plattformen nach `show version`: Cisco Business-CLI (Catalys
 `cbs.py`) und Juniper Junos (MX, EX, QFX; `junos.py`); IOS/IOS-XE deckt Catalyst 9200L, 3650,
 4500 und 9300 ab, NX-OS die Nexus 9000.
 
+Seit 0.94.0 IPv6-Nachbarn (NDP, `nd.py`) wie ARP und weitere Hersteller: Arista EOS (JSON,
+`arista.py`) und HPE Aruba CX (AOS-CX, `aruba.py`).
+
 Seit 0.65.0 Spanning Tree (je Port die VLANs, in denen er blockiert bzw. Root-Port ist, in
 `attrs.stp_blocked`/`stp_root`) und `show vpc` selbst ausgewertet: Domaene, Rolle, Peer- und
 Keepalive-Status am Peer-Link (`attrs.vpc_peer_link`), je vPC Status und Konsistenz.
@@ -20,6 +23,7 @@ Keepalive-Status am Peer-Link (`attrs.vpc_peer_link`), je vPC Status und Konsist
 import ipaddress
 import re
 
+from collectors.cisco_switch import nd
 from collectors.common.dto import (
     NetworkInventory,
     NormalizedArp,
@@ -30,10 +34,10 @@ from collectors.common.dto import (
     NormalizedVlan,
 )
 
-NTC_PLATFORM = {"ios": "cisco_ios", "nxos": "cisco_nxos"}
+NTC_PLATFORM = {"ios": "cisco_ios", "nxos": "cisco_nxos", "aoscx": "aruba_aoscx"}
 # Bezeichnung je Plattform (Meldungen, Pruefung der Verbindung)
 PLATFORM_LABEL = {"ios": "IOS/IOS-XE", "nxos": "NX-OS", "cbs": "Catalyst 1200/1300 (Business-CLI)",
-                  "junos": "Junos"}  # fmt: skip
+                  "junos": "Junos", "eos": "Arista EOS", "aoscx": "Aruba CX (AOS-CX)"}  # fmt: skip
 # Langform -> Kurzform (wie in `show interfaces status`); laengste zuerst
 _SHORT = (
     ("hundredgigabitethernet", "Hu"),
@@ -125,7 +129,8 @@ def cli_error(text: str) -> str | None:
     enabled`) - None, wenn die Ausgabe brauchbar ist."""
     first = next((line.strip() for line in text.splitlines() if line.strip()), "")
     low = first.lower()
-    if first.startswith("%") or "invalid command" in low or "not enabled" in low:
+    failed = first.startswith("%") or "invalid command" in low or "not enabled" in low
+    if failed or low.startswith("invalid input"):  # AOS-CX ohne „%“ (0.94.0)
         return first.lstrip("% ").strip()
     if low.startswith("error:") or low.startswith("syntax error"):  # Junos (0.68.0)
         return first.split(":", 1)[-1].strip() if low.startswith("error:") else first
@@ -134,13 +139,15 @@ def cli_error(text: str) -> str | None:
 
 def quiet(platform: str, command: str, error: str) -> bool:
     """Fehlermeldung ohne Hinweis im Lauf: Funktion aus (LLDP), Befehl gibt es auf der Plattform
-    nicht (Junos: MX ohne ELS bzw. EX ohne Bridge-Domains)."""
+    nicht (Junos: MX ohne ELS bzw. EX ohne Bridge-Domains; IPv6-Nachbarn auf alter Software bzw.
+    ohne IPv6, 0.94.0)."""
     from collectors.cisco_switch import junos
 
     low = error.lower()
     return (
         "not enabled" in low
         or "not running" in low
+        or command in nd.COMMANDS
         or (platform == "junos" and command in junos.OPTIONAL)
     )
 
@@ -217,11 +224,16 @@ def _stp(rows: list[dict]) -> dict[str, dict[str, set[int]]]:
 
 
 def detect_platform(version_text: str) -> str:
-    """Plattform aus `show version`: NX-OS, Junos, Business-CLI (Catalyst 1200/1300), sonst IOS."""
+    """Plattform aus `show version`: NX-OS, Junos, Arista EOS, Aruba CX, Business-CLI (Catalyst
+    1200/1300), sonst IOS."""
     if re.search(r"NX-OS|Nexus", version_text):
         return "nxos"
     if re.search(r"^(Junos:|JUNOS )", version_text, re.M):
         return "junos"
+    if re.search(r"^Arista\b|^Software image version:|Arista Networks EOS", version_text, re.M):
+        return "eos"  # 0.94.0
+    if re.search(r"\bA(?:ruba)?OS-CX\b", version_text):
+        return "aoscx"  # 0.94.0
     if re.search(r"^\s*(Active-image:|SW version\s)|Catalyst 1[23]00|\bC1[23]00-|\bCBS\d{3}",
                  version_text, re.M):  # fmt: skip
         return "cbs"
@@ -302,20 +314,47 @@ def _l2(name: str, p: dict[str, list[dict]], arp_cmd: str):
     return macs[:MAX_MACS], arps, over
 
 
+def neighbors6(platform: str, name: str, outputs: dict[str, str]) -> list[NormalizedArp]:
+    """IPv6-Nachbarn (0.94.0) von IOS/IOS-XE (ntc-Vorlage, sonst eigene Auswertung) bzw. NX-OS
+    (eigene Auswertung, die Vorlagen kennen den Befehl nicht)."""
+    cmd = nd.NXOS if platform == "nxos" else nd.IOS
+    text = outputs.get(cmd, "")
+    if not text.strip() or cli_error(text):
+        return []
+    if platform == "nxos":
+        rows = nd.nxos(text)
+    else:
+        try:
+            rows = [{"address": r.get("address"), "mac": r.get("mac_address"),
+                     "interface": r.get("interface"), "state": r.get("type")}
+                    for r in parse(platform, cmd, text)]  # fmt: skip
+        except Exception:  # noqa: BLE001 - Vorlage passt nicht: gleiche Spalten selbst lesen
+            rows = nd.table(text)
+    for r in rows:
+        r["interface"] = short_name(r.get("interface")) or None
+    return nd.entries(name, rows)
+
+
 def switch_inventory(
     host: str, platform: str, outputs: dict[str, str], notes: list[str] | None = None
 ) -> NetworkInventory:
     """Ein Switch: Ausgaben der Befehle (`COMMANDS`) -> Netzinventar; Hinweise nach `notes`."""
-    from collectors.cisco_switch import cbs, junos
+    from collectors.cisco_switch import arista, aruba, cbs, junos
     from collectors.cisco_switch.client import COMMANDS
 
     if platform == "cbs":
         return cbs.inventory(host, outputs, notes)
     if platform == "junos":
         return junos.inventory(host, outputs, notes)
+    if platform == "eos":  # 0.94.0
+        return arista.inventory(host, outputs, notes)
+    if platform == "aoscx":  # 0.94.0
+        return aruba.inventory(host, outputs, notes)
     cmds = COMMANDS[platform]
     p: dict[str, list[dict]] = {}
     for c in cmds:
+        if c in nd.COMMANDS:  # IPv6-Nachbarn: eigene Auswertung unten (0.94.0)
+            continue
         try:
             p[c] = parse(platform, c, outputs.get(c, ""))
         except Exception as exc:  # noqa: BLE001 - Vorlage passt nicht: Teil leer, Hinweis im Lauf
@@ -424,6 +463,7 @@ def switch_inventory(
             continue
         vlans.append(NormalizedVlan(vid=vid, name=(r.get("vlan_name") or str(vid)).strip()))
     macs, arps, over = _l2(name, p, next(c for c in cmds if c.startswith("show ip arp")))
+    arps += neighbors6(platform, name, outputs)
     if over and notes is not None:
         notes.append(f"MAC-Tabelle: {over} Eintraege ueber {MAX_MACS} nicht uebernommen")
     return NetworkInventory(devices=[device], interfaces=interfaces, vlans=vlans,

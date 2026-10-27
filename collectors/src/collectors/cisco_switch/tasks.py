@@ -3,7 +3,8 @@
 Ein Quellsystem ist eine Gruppe von Switches bzw. Routern mit gemeinsamem Read-only-Konto: die
 Adressen stehen im Lesebereich (`read_scope`, eine je Zeile bzw. kommagetrennt, `host[:port]`).
 Je Geraet `show version` (erkennt IOS/IOS-XE, NX-OS, seit 0.68.0 Junos und die Business-CLI der
-Catalyst 1200/1300 - diese ueber die begrenzte Sitzung), danach die festen Befehle der Plattform.
+Catalyst 1200/1300 - diese ueber die begrenzte Sitzung -, seit 0.94.0 Arista EOS und Aruba CX),
+danach die festen Befehle der Plattform (seit 0.94.0 auch die IPv6-Nachbarn).
 Ein Switch, der nicht antwortet, fehlt im Ergebnis und steht in der Meldung; antwortet keiner,
 schlaegt der Lauf fehl. Ohne Zugangsdaten liest nur der zentrale Worker (Lab) die Beispieldaten.
 """

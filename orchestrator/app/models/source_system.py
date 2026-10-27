@@ -37,7 +37,8 @@ class Platform(enum.StrEnum):
     NETBOX = "netbox"  # Referenzquelle / Anreicherung, ADR 0010
     VMWARE = "vmware"  # vCenter: VMs, Portgruppen (ADR 0017)
     # Switches und Router per SSH (ADR 0025): Cisco IOS/IOS-XE/NX-OS, seit 0.68.0 auch Business-CLI
-    # (Catalyst 1200/1300) und Juniper Junos (MX, EX, QFX); Gruppe von Geraeten
+    # (Catalyst 1200/1300) und Juniper Junos (MX, EX, QFX), seit 0.94.0 Arista EOS und Aruba CX
+    # (AOS-CX); Gruppe von Geraeten
     CISCO_SWITCH = "cisco_switch"
     AVI = "avi"  # VMware NSX Advanced Load Balancer: Virtual Services, VIPs, Pools (ADR 0027)
 
