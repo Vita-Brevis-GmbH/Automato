@@ -41,37 +41,47 @@ import { Pager, useDebounced } from "./Objects";
 import TopologyTab from "./Topology";
 import { FoldTitle, useFolds } from "./fold";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead, SharedChip } from "./ui";
+import { L } from "./i18n";
 
 const PAGE = 200;
 
 type Tab = "routes" | "peers" | "ha" | "parallel" | "policy" | "l3out" | "exits" | "topology";
 const TABS: { key: Tab; label: string }[] = [
-  { key: "routes", label: "Routen" },
-  { key: "peers", label: "BGP-Nachbarn" },
-  { key: "ha", label: "HA & Session-Sync" },
-  { key: "parallel", label: "Parallele Firewalls" },
-  { key: "policy", label: "Policy-Routen & SD-WAN" },
+  { key: "routes", label: L("Routen", "Routes") },
+  { key: "peers", label: L("BGP-Nachbarn", "BGP neighbors") },
+  { key: "ha", label: L("HA & Session-Sync", "HA & session sync") },
+  { key: "parallel", label: L("Parallele Firewalls", "Parallel firewalls") },
+  { key: "policy", label: L("Policy-Routen & SD-WAN", "Policy routes & SD-WAN") },
   { key: "l3out", label: "L3Outs (ACI)" },
-  { key: "exits", label: "Anbindungen" },
-  { key: "topology", label: "Topologie" },
+  { key: "exits", label: L("Anbindungen", "Exits") },
+  { key: "topology", label: L("Topologie", "Topology") },
 ];
 
 const TABLE_LABEL: Record<string, [string, string]> = {
-  rib: ["ok", "wirksam"],
-  bgp: ["info", "BGP-Pfad"],
-  static: ["", "statisch"],
+  rib: ["ok", L("wirksam", "effective")],
+  bgp: ["info", L("BGP-Pfad", "BGP path")],
+  static: ["", L("statisch", "static")],
 };
 
 const KIND_LABEL: Record<ContextKind, string> = {
   firewall: "Firewall",
   vdom: "VDOM",
-  vrf: "VRF (Border-Leaf)",
+  vrf: L("VRF (Border-Leaf)", "VRF (border leaf)"),
 };
 
 // Name(n) einer IP aus dem IPAM; ohne Namen das Netz (Beschreibung) – blass
 export function Names({ r }: { r: Resolved | null | undefined }) {
   if (r?.names?.length) return <b> {r.names.join(", ")}</b>;
-  if (r?.network) return <span className="faint" title="kein Name zur IP im IPAM – Netz aus dem IPAM"> {r.network}</span>;
+  if (r?.network)
+    return (
+      <span
+        className="faint"
+        title={L("kein Name zur IP im IPAM – Netz aus dem IPAM", "no name for the IP in the IPAM – network from the IPAM")}
+      >
+        {" "}
+        {r.network}
+      </span>
+    );
   return null;
 }
 
@@ -82,7 +92,7 @@ export function Hops({ hops }: { hops: NextHop[] | null | undefined }) {
     <div className="objs">
       {hops.map((h, i) => (
         <span key={i} className="mono">
-          {h.ip ?? "direkt"}
+          {h.ip ?? L("direkt", "direct")}
           <Names r={h} />
           {h.interface ? <span className="faint"> via {h.interface}</span> : null}
           {h.zone ? <span className="chip" style={{ marginLeft: 4 }}>{h.zone}</span> : null}
@@ -92,7 +102,10 @@ export function Hops({ hops }: { hops: NextHop[] | null | undefined }) {
         <span
           className="chip info"
           style={{ alignSelf: "flex-start" }}
-          title="Equal-Cost-Multipath: der Verkehr verteilt sich auf alle Next-Hops"
+          title={L(
+            "Equal-Cost-Multipath: der Verkehr verteilt sich auf alle Next-Hops",
+            "Equal-cost multipath: traffic is spread across all next-hops",
+          )}
         >
           ECMP ×{hops.length}
         </span>
@@ -108,7 +121,14 @@ export function Missing({ items }: { items: string[] | null | undefined }) {
   return (
     <div className="chips">
       {items.map((m) => (
-        <span key={m} className="chip warn" title="nicht lesbar – die Aussage für diesen Kontext ist „unbekannt“">
+        <span
+          key={m}
+          className="chip warn"
+          title={L(
+            "nicht lesbar – die Aussage für diesen Kontext ist „unbekannt“",
+            "not readable – the result for this context is “unknown”",
+          )}
+        >
           {m}
         </span>
       ))}
@@ -134,15 +154,15 @@ export function matchText(match: Record<string, unknown> | null | undefined): st
   const m = match ?? {};
   const parts: string[] = [];
   const list = (k: string) => (Array.isArray(m[k]) ? (m[k] as unknown[]).map(String) : []);
-  if (list("input_device").length) parts.push(`von ${list("input_device").join(", ")}`);
+  if (list("input_device").length) parts.push(L(`von ${list("input_device").join(", ")}`, `from ${list("input_device").join(", ")}`));
   const src = [...list("src"), ...list("srcaddr")];
   const dst = [...list("dst"), ...list("dstaddr")];
-  if (src.length) parts.push(`Quelle ${src.join(", ")}`);
-  if (dst.length) parts.push(`Ziel ${dst.join(", ")}`);
-  if (m.protocol) parts.push(`Protokoll ${String(m.protocol)}`);
+  if (src.length) parts.push(L(`Quelle ${src.join(", ")}`, `Source ${src.join(", ")}`));
+  if (dst.length) parts.push(L(`Ziel ${dst.join(", ")}`, `Destination ${dst.join(", ")}`));
+  if (m.protocol) parts.push(L(`Protokoll ${String(m.protocol)}`, `Protocol ${String(m.protocol)}`));
   if (list("ports").length) parts.push(`Port ${list("ports").join("-")}`);
-  if (list("service").length) parts.push(`Dienst ${list("service").join(", ")}`);
-  return parts.join(" · ") || "alles";
+  if (list("service").length) parts.push(L(`Dienst ${list("service").join(", ")}`, `Service ${list("service").join(", ")}`));
+  return parts.join(" · ") || L("alles", "everything");
 }
 
 // 0.75.0 (Anwender: man muss scrollen, um die Reiter zu sehen): standardmässig zugeklappt,
@@ -154,13 +174,26 @@ function ContextCard({ summary }: { summary: RoutingSummary }) {
   return (
     <div className="card" id="routing-contexts">
       <div className="card-head">
-        <FoldTitle fold={f}>Gelesene Kontexte</FoldTitle>
+        <FoldTitle fold={f}>{L("Gelesene Kontexte", "Contexts read")}</FoldTitle>
         <span className="faint">
-          {summary.contexts.length} Kontexte · {summary.ha} HA-Cluster · {summary.l3outs} L3Outs
+          {L(
+            <>
+              {summary.contexts.length} Kontexte · {summary.ha} HA-Cluster · {summary.l3outs} L3Outs
+            </>,
+            <>
+              {summary.contexts.length} contexts · {summary.ha} HA clusters · {summary.l3outs} L3Outs
+            </>,
+          )}
         </span>
         {unread > 0 && (
-          <span className="chip warn" title="Teile des Routings nicht lesbar – die Aussage dort ist „unbekannt“">
-            {unread} mit nicht Lesbarem
+          <span
+            className="chip warn"
+            title={L(
+              "Teile des Routings nicht lesbar – die Aussage dort ist „unbekannt“",
+              "Parts of the routing not readable – the result there is “unknown”",
+            )}
+          >
+            {unread} {L("mit nicht Lesbarem", "with unreadable parts")}
           </span>
         )}
       </div>
@@ -169,14 +202,14 @@ function ContextCard({ summary }: { summary: RoutingSummary }) {
         <table className="compact">
           <thead>
             <tr>
-              <th>System · Kontext</th>
-              <th>Art</th>
-              <th className="num">wirksam</th>
-              <th className="num">BGP-Pfade</th>
-              <th className="num">statisch</th>
-              <th className="num">BGP-Nachbarn</th>
+              <th>{L("System · Kontext", "System · context")}</th>
+              <th>{L("Art", "Type")}</th>
+              <th className="num">{L("wirksam", "effective")}</th>
+              <th className="num">{L("BGP-Pfade", "BGP paths")}</th>
+              <th className="num">{L("statisch", "static")}</th>
+              <th className="num">{L("BGP-Nachbarn", "BGP neighbors")}</th>
               <th className="num">Policy/SD-WAN</th>
-              <th>Nicht lesbar</th>
+              <th>{L("Nicht lesbar", "Not readable")}</th>
             </tr>
           </thead>
           <tbody>
@@ -206,14 +239,22 @@ function ContextCard({ summary }: { summary: RoutingSummary }) {
 export function VrfChip({ vrf }: { vrf?: number | string | null }) {
   if (vrf == null || vrf === 0) return null;
   return (
-    <span className="chip warn" title="eigene Routing-Tabelle im VDOM – nicht die Standard-VRF 0">
+    <span
+      className="chip warn"
+      title={L(
+        "eigene Routing-Tabelle im VDOM – nicht die Standard-VRF 0",
+        "separate routing table in the VDOM – not the default VRF 0",
+      )}
+    >
       {vrf === "mgmt" ? "Management" : `VRF ${vrf}`}
     </span>
   );
 }
 
 export function policyText(p: PolicyHit) {
-  return p.kind === "sdwan" ? `SD-WAN ${p.name ?? `#${p.seq}`}` : `Policy-Route #${p.seq ?? "?"}`;
+  return p.kind === "sdwan"
+    ? `SD-WAN ${p.name ?? `#${p.seq}`}`
+    : L(`Policy-Route #${p.seq ?? "?"}`, `Policy route #${p.seq ?? "?"}`);
 }
 
 const EXIT_KIND: Record<TopoExit["kind"], string> = {
@@ -221,7 +262,7 @@ const EXIT_KIND: Record<TopoExit["kind"], string> = {
   mpls: "MPLS",
   wan: "WAN",
   partner: "Partner",
-  other: "Anbindung",
+  other: L("Anbindung", "Exit"),
 };
 
 export function Port({ p }: { p: TracePort | undefined }) {
@@ -238,8 +279,12 @@ export function Port({ p }: { p: TracePort | undefined }) {
         </span>
       )}
       {p.exit && (
-        <span className="chip info" style={{ marginLeft: 4 }} title="Anbindung nach aussen (von Hand erfasst)">
-          {EXIT_KIND[p.exit.kind as TopoExit["kind"]] ?? "Anbindung"} {p.exit.name}
+        <span
+          className="chip info"
+          style={{ marginLeft: 4 }}
+          title={L("Anbindung nach aussen (von Hand erfasst)", "Exit to the outside (captured manually)")}
+        >
+          {EXIT_KIND[p.exit.kind as TopoExit["kind"]] ?? L("Anbindung", "Exit")} {p.exit.name}
         </span>
       )}
     </div>
@@ -276,9 +321,24 @@ function exitDraft(e: TopoExit): ExitDraft {
 }
 
 const ROUTER_STATUS: Record<ExitRouter["status"], [string, string, string]> = {
-  active: ["ok", "aktiv", "Präfixe in der Routing-Tabelle über diesen Router"],
-  backup: ["warn", "Backup", "nur als BGP-Pfad bzw. statische Route (übernimmt bei Ausfall)"],
-  neighbor: ["", "BGP-Nachbar", "BGP-Sitzung ohne Routen über diesen Router"],
+  active: [
+    "ok",
+    L("aktiv", "active"),
+    L("Präfixe in der Routing-Tabelle über diesen Router", "Prefixes in the routing table via this router"),
+  ],
+  backup: [
+    "warn",
+    L("Backup", "backup"),
+    L(
+      "nur als BGP-Pfad bzw. statische Route (übernimmt bei Ausfall)",
+      "only as BGP path or static route (takes over on failure)",
+    ),
+  ],
+  neighbor: [
+    "",
+    L("BGP-Nachbar", "BGP neighbor"),
+    L("BGP-Sitzung ohne Routen über diesen Router", "BGP session without routes via this router"),
+  ],
 };
 
 // Ein erkannter Router: IP mit Namen, Zustand, BGP (AS, Sitzung), Default-Route, Firewalls
@@ -291,7 +351,7 @@ function RouterCell({ r }: { r: ExitRouter }) {
       <span className="mono">{r.ip}</span>
       <Names r={r} /> <span className={`chip ${cls}`} title={title}>{label}</span>
       {r.remote_as != null && (
-        <span className={`chip ${down ? "crit" : ""}`} style={{ marginLeft: 4 }} title={`BGP-Sitzung: ${r.state ?? "?"}`}>
+        <span className={`chip ${down ? "crit" : ""}`} style={{ marginLeft: 4 }} title={L(`BGP-Sitzung: ${r.state ?? "?"}`, `BGP session: ${r.state ?? "?"}`)}>
           AS {r.remote_as}
           {down ? ` · ${r.state}` : ""}
         </span>
@@ -301,7 +361,9 @@ function RouterCell({ r }: { r: ExitRouter }) {
           Default
         </span>
       )}
-      {r.uses.length > 1 && <span className="faint"> · {r.uses.length} Firewalls</span>}
+      {r.uses.length > 1 && (
+        <span className="faint">{L(` · ${r.uses.length} Firewalls`, ` · ${r.uses.length} firewalls`)}</span>
+      )}
     </span>
   );
 }
@@ -309,11 +371,11 @@ function RouterCell({ r }: { r: ExitRouter }) {
 // Redundanz in Worten: „4 Router · 2 aktiv (ECMP ×2) · 2 Backup · 2 Firewalls“
 function redundancy(r: Redundancy): string {
   return [
-    `${r.routers} Router`,
-    r.active && `${r.active} aktiv${r.ecmp > 1 ? ` (ECMP ×${r.ecmp})` : ""}`,
-    r.backup && `${r.backup} Backup`,
-    r.neighbor && `${r.neighbor} nur BGP-Nachbar`,
-    r.firewalls > 1 && `${r.firewalls} Firewalls`,
+    L(`${r.routers} Router`, `${r.routers} routers`),
+    r.active && L(`${r.active} aktiv`, `${r.active} active`) + (r.ecmp > 1 ? ` (ECMP ×${r.ecmp})` : ""),
+    r.backup && L(`${r.backup} Backup`, `${r.backup} backup`),
+    r.neighbor && L(`${r.neighbor} nur BGP-Nachbar`, `${r.neighbor} BGP neighbor only`),
+    r.firewalls > 1 && L(`${r.firewalls} Firewalls`, `${r.firewalls} firewalls`),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -394,27 +456,34 @@ function RoutesTab({
           <span className="ico">
             <Icon name="search" />
           </span>
-          <input placeholder="Präfix, Next-Hop, Interface, Protokoll…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input
+            placeholder={L("Präfix, Next-Hop, Interface, Protokoll…", "Prefix, next-hop, interface, protocol…")}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
         </div>
         <div className="search" style={{ flex: "0 1 210px" }}>
           <span className="ico">
             <Icon name="route" />
           </span>
           <input
-            placeholder="enthält IP…"
-            title="Routen, deren Präfix die IP enthält – längstes Präfix zuerst"
+            placeholder={L("enthält IP…", "contains IP…")}
+            title={L(
+              "Routen, deren Präfix die IP enthält – längstes Präfix zuerst",
+              "Routes whose prefix contains the IP – longest prefix first",
+            )}
             value={ip}
             onChange={(e) => setIp(e.target.value)}
           />
         </div>
         <select className="sel" value={table} onChange={(e) => setTable(e.target.value)}>
-          <option value="">Tabelle: alle</option>
-          <option value="rib">wirksam (RIB)</option>
-          <option value="bgp">BGP-Pfade</option>
-          <option value="static">statische Routen</option>
+          <option value="">{L("Tabelle: alle", "Table: all")}</option>
+          <option value="rib">{L("wirksam (RIB)", "effective (RIB)")}</option>
+          <option value="bgp">{L("BGP-Pfade", "BGP paths")}</option>
+          <option value="static">{L("statische Routen", "static routes")}</option>
         </select>
         <select className="sel" value={context} onChange={(e) => setContext(e.target.value)}>
-          <option value="">Kontext: alle</option>
+          <option value="">{L("Kontext: alle", "Context: all")}</option>
           {nodes.map((n) => (
             <option key={n.key} value={n.key}>
               {n.label}
@@ -423,36 +492,38 @@ function RoutesTab({
         </select>
         {(vrfs.some((v) => v !== 0) || mgmt) && (
           <select className="sel" aria-label="VRF" value={vrf} onChange={(e) => setVrf(e.target.value)}>
-            <option value="">VRF: alle</option>
+            <option value="">{L("VRF: alle", "VRF: all")}</option>
             {vrfs.map((v) => (
               <option key={v} value={String(v)}>
-                {v === 0 ? "VRF 0 (Standard)" : `VRF ${v}`}
+                {v === 0 ? L("VRF 0 (Standard)", "VRF 0 (default)") : `VRF ${v}`}
               </option>
             ))}
             {mgmt && <option value="mgmt">Management</option>}
           </select>
         )}
       </div>
-      <ErrorBox error={error} prefix="Routen laden" />
+      <ErrorBox error={error} prefix={L("Routen laden", "Load routes")} />
       <div className="card">
         <div className="card-body scroll viewport">
           {page === null ? (
             <Loading />
           ) : page.rows.length === 0 ? (
-            <Empty title="Keine Routen">Filter anpassen bzw. Quellsysteme neu einlesen.</Empty>
+            <Empty title={L("Keine Routen", "No routes")}>
+              {L("Filter anpassen bzw. Quellsysteme neu einlesen.", "Adjust the filter or collect the source systems again.")}
+            </Empty>
           ) : (
             <table className="compact">
               <thead>
                 <tr>
-                  <th>System · Kontext</th>
-                  <th>Präfix</th>
+                  <th>{L("System · Kontext", "System · context")}</th>
+                  <th>{L("Präfix", "Prefix")}</th>
                   <th>VRF</th>
-                  <th>Tabelle</th>
-                  <th>Protokoll</th>
-                  <th className="num">Distanz</th>
-                  <th className="num">Metrik</th>
+                  <th>{L("Tabelle", "Table")}</th>
+                  <th>{L("Protokoll", "Protocol")}</th>
+                  <th className="num">{L("Distanz", "Distance")}</th>
+                  <th className="num">{L("Metrik", "Metric")}</th>
                   <th>Next-Hop</th>
-                  <th>Weitere Angaben</th>
+                  <th>{L("Weitere Angaben", "Further details")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -474,9 +545,19 @@ function RoutesTab({
                         {r.table !== "rib" && (
                           <span
                             className={`chip ${r.best ? "ok" : ""}`}
-                            title={r.table === "bgp" ? "bester Pfad bzw. Backup-Weg" : "aktiv bzw. deaktiviert"}
+                            title={
+                              r.table === "bgp"
+                                ? L("bester Pfad bzw. Backup-Weg", "best path or backup path")
+                                : L("aktiv bzw. deaktiviert", "active or disabled")
+                            }
                           >
-                            {r.table === "bgp" ? (r.best ? "bester" : "Backup") : r.best ? "aktiv" : "inaktiv"}
+                            {r.table === "bgp"
+                              ? r.best
+                                ? L("bester", "best")
+                                : L("Backup", "backup")
+                              : r.best
+                                ? L("aktiv", "active")
+                                : L("inaktiv", "inactive")}
                           </span>
                         )}
                       </td>
@@ -556,7 +637,7 @@ function RowFilter({
       </div>
       {f.systems.length > 1 && (
         <select className="sel" aria-label="System" value={f.sys} onChange={(e) => f.setSys(e.target.value)}>
-          <option value="">System: alle</option>
+          <option value="">{L("System: alle", "System: all")}</option>
           {f.systems.map((s) => (
             <option key={s} value={s}>
               {s}
@@ -567,7 +648,7 @@ function RowFilter({
       {children}
       {total && (
         <span className="count">
-          {total.shown === total.all ? total.all : `${total.shown} von ${total.all}`}
+          {total.shown === total.all ? total.all : L(`${total.shown} von ${total.all}`, `${total.shown} of ${total.all}`)}
         </span>
       )}
     </div>
@@ -590,24 +671,24 @@ function PeersTab({ tenantId }: { tenantId: number }) {
     <>
       <RowFilter
         f={f}
-        placeholder="Nachbar, Name, AS, Zustand…"
+        placeholder={L("Nachbar, Name, AS, Zustand…", "Neighbor, name, AS, state…")}
         total={all && rows ? { shown: rows.length, all: all.length } : null}
       >
-        <select className="sel" aria-label="Zustand" value={state} onChange={(e) => setState(e.target.value)}>
-          <option value="">Zustand: alle</option>
-          <option value="up">aufgebaut (Established)</option>
-          <option value="down">nicht aufgebaut</option>
+        <select className="sel" aria-label={L("Zustand", "State")} value={state} onChange={(e) => setState(e.target.value)}>
+          <option value="">{L("Zustand: alle", "State: all")}</option>
+          <option value="up">{L("aufgebaut (Established)", "up (Established)")}</option>
+          <option value="down">{L("nicht aufgebaut", "not established")}</option>
         </select>
       </RowFilter>
-      <List error={error} rows={rows} empty="Keine BGP-Nachbarn gelesen.">
+      <List error={error} rows={rows} empty={L("Keine BGP-Nachbarn gelesen.", "No BGP neighbors read.")}>
         <thead>
           <tr>
-            <th>System · Kontext</th>
-            <th>Nachbar</th>
-            <th>Gelesen als</th>
-            <th>Lokal</th>
+            <th>{L("System · Kontext", "System · context")}</th>
+            <th>{L("Nachbar", "Neighbor")}</th>
+            <th>{L("Gelesen als", "Read as")}</th>
+            <th>{L("Lokal", "Local")}</th>
             <th className="num">AS</th>
-            <th>Zustand</th>
+            <th>{L("Zustand", "State")}</th>
           </tr>
         </thead>
         <tbody>
@@ -646,17 +727,17 @@ function HaTab({ tenantId }: { tenantId: number }) {
     <>
       <RowFilter
         f={f}
-        placeholder="System, Gruppe, Mitglied, Session-Sync-Partner…"
+        placeholder={L("System, Gruppe, Mitglied, Session-Sync-Partner…", "System, group, member, session sync partner…")}
         total={all && rows ? { shown: rows.length, all: all.length } : null}
       />
-      <List error={error} rows={rows} empty="Keine HA-Cluster gelesen.">
+      <List error={error} rows={rows} empty={L("Keine HA-Cluster gelesen.", "No HA clusters read.")}>
         <thead>
           <tr>
             <th>System</th>
-            <th>Modus</th>
-            <th>Gruppe</th>
-            <th>Mitglieder</th>
-            <th>Session-Sync (FGSP)</th>
+            <th>{L("Modus", "Mode")}</th>
+            <th>{L("Gruppe", "Group")}</th>
+            <th>{L("Mitglieder", "Members")}</th>
+            <th>{L("Session-Sync (FGSP)", "Session sync (FGSP)")}</th>
           </tr>
         </thead>
         <tbody>
@@ -680,7 +761,9 @@ function HaTab({ tenantId }: { tenantId: number }) {
                     <span key={i}>
                       <b>{m.hostname ?? m.serial ?? "?"}</b>{" "}
                       {m.role && <span className={`chip ${m.role === "primary" ? "ok" : ""}`}>{m.role}</span>}
-                      {m.priority != null && <span className="faint"> Prio {m.priority}</span>}
+                      {m.priority != null && (
+                        <span className="faint">{L(` Prio ${m.priority}`, ` Priority ${m.priority}`)}</span>
+                      )}
                     </span>
                   ))}
                 </div>
@@ -716,10 +799,14 @@ function HaTab({ tenantId }: { tenantId: number }) {
 // Abweichungen stehen als Befunde unter Findings → Parallele Firewalls.
 const PARALLEL_AREAS: { key: keyof ParallelGroup["stats"]; label: string; type: string }[] = [
   { key: "rules", label: "Policies", type: "parallel_rule_mismatch" },
-  { key: "objects", label: "Objekte (gleichnamig)", type: "parallel_object_mismatch" },
-  { key: "policy_routes", label: "Policy-Routen & SD-WAN", type: "parallel_policy_route_mismatch" },
-  { key: "routes", label: "Routen (wirksam und statisch)", type: "parallel_route_mismatch" },
-  { key: "nat", label: "NAT (VIPs, IP-Pools)", type: "parallel_nat_mismatch" },
+  { key: "objects", label: L("Objekte (gleichnamig)", "Objects (same name)"), type: "parallel_object_mismatch" },
+  {
+    key: "policy_routes",
+    label: L("Policy-Routen & SD-WAN", "Policy routes & SD-WAN"),
+    type: "parallel_policy_route_mismatch",
+  },
+  { key: "routes", label: L("Routen (wirksam und statisch)", "Routes (effective and static)"), type: "parallel_route_mismatch" },
+  { key: "nat", label: L("NAT (VIPs, IP-Pools)", "NAT (VIPs, IP pools)"), type: "parallel_nat_mismatch" },
 ];
 
 function ParallelTab({ tenantId }: { tenantId: number }) {
@@ -731,26 +818,34 @@ function ParallelTab({ tenantId }: { tenantId: number }) {
         <Loading />
       ) : rows.length === 0 ? (
         <Note>
-          Kein Verbund paralleler Firewalls. Ein Admin fasst Firewalls mit Session-Sync bzw. gleichen Policies in
-          „Regeln &amp; Contracts“ (Vorschlag) oder im Quellsystem zu einem Verbund zusammen.
+          {L(
+            <>
+              Kein Verbund paralleler Firewalls. Ein Admin fasst Firewalls mit Session-Sync bzw. gleichen Policies in
+              „Regeln &amp; Contracts“ (Vorschlag) oder im Quellsystem zu einem Verbund zusammen.
+            </>,
+            <>
+              No parallel group of firewalls. An admin combines firewalls with session sync or identical policies into a
+              parallel group in “Rules &amp; contracts” (suggestion) or in the source system.
+            </>,
+          )}
         </Note>
       ) : (
         rows.map((g) => (
           <div key={g.group} className="card parallel-compare">
             <div className="card-head">
-              <h2>Verbund „{g.group}“</h2>
+              <h2>{L(<>Verbund „{g.group}“</>, <>Parallel group “{g.group}”</>)}</h2>
               <span className="faint">
-                {g.members.map((m) => m.name).join(" · ")} – führend {g.members[0]?.name}
+                {g.members.map((m) => m.name).join(" · ")} – {L("führend", "leading")} {g.members[0]?.name}
               </span>
             </div>
             <div className="card-body">
               <table>
                 <thead>
                   <tr>
-                    <th>Bereich</th>
-                    <th className="num">gleich</th>
-                    <th className="num">abweichend</th>
-                    <th className="num">fehlt auf einer Firewall</th>
+                    <th>{L("Bereich", "Area")}</th>
+                    <th className="num">{L("gleich", "same")}</th>
+                    <th className="num">{L("abweichend", "different")}</th>
+                    <th className="num">{L("fehlt auf einer Firewall", "missing on one firewall")}</th>
                     <th />
                   </tr>
                 </thead>
@@ -771,7 +866,7 @@ function ParallelTab({ tenantId }: { tenantId: number }) {
                         <td>
                           {bad > 0 && (
                             <a href={`#findings?type=${a.type}`} className="linkbtn">
-                              Befunde
+                              {L("Befunde", "Findings")}
                             </a>
                           )}
                         </td>
@@ -781,9 +876,18 @@ function ParallelTab({ tenantId }: { tenantId: number }) {
                 </tbody>
               </table>
               <div className="faint" style={{ marginTop: 6 }}>
-                Routen je VDOM gegen die führende Firewall: wirksame Routen nach Protokoll und Interface (die Next-Hops
-                sind je Firewall eigene Router), statische Routen mit Distanz, Interface, Gateway und Status; nicht
-                lesbare Tabellen zählen nicht. BGP-Nachbarn werden nicht verglichen.
+                {L(
+                  <>
+                    Routen je VDOM gegen die führende Firewall: wirksame Routen nach Protokoll und Interface (die Next-Hops
+                    sind je Firewall eigene Router), statische Routen mit Distanz, Interface, Gateway und Status; nicht
+                    lesbare Tabellen zählen nicht. BGP-Nachbarn werden nicht verglichen.
+                  </>,
+                  <>
+                    Routes per VDOM against the leading firewall: effective routes by protocol and interface (the next-hops
+                    are separate routers per firewall), static routes with distance, interface, gateway and status;
+                    unreadable tables do not count. BGP neighbors are not compared.
+                  </>,
+                )}
               </div>
             </div>
           </div>
@@ -808,23 +912,27 @@ function PolicyTab({ tenantId, initialQ = "" }: { tenantId: number; initialQ?: s
     <>
       <RowFilter
         f={f}
-        placeholder="Name, Quelle, Ziel, Gateway, Interface…"
+        placeholder={L("Name, Quelle, Ziel, Gateway, Interface…", "Name, source, destination, gateway, interface…")}
         total={all && rows ? { shown: rows.length, all: all.length } : null}
       >
-        <select className="sel" aria-label="Art" value={kind} onChange={(e) => setKind(e.target.value)}>
-          <option value="">Art: alle</option>
-          <option value="policy">Policy-Routen (aktiv)</option>
-          <option value="sdwan">SD-WAN (aktiv)</option>
-          <option value="off">ausgeschaltet</option>
+        <select className="sel" aria-label={L("Art", "Type")} value={kind} onChange={(e) => setKind(e.target.value)}>
+          <option value="">{L("Art: alle", "Type: all")}</option>
+          <option value="policy">{L("Policy-Routen (aktiv)", "Policy routes (active)")}</option>
+          <option value="sdwan">{L("SD-WAN (aktiv)", "SD-WAN (active)")}</option>
+          <option value="off">{L("ausgeschaltet", "disabled")}</option>
         </select>
       </RowFilter>
-      <List error={error} rows={rows} empty="Keine Policy-Routen oder SD-WAN-Regeln gelesen.">
+      <List
+        error={error}
+        rows={rows}
+        empty={L("Keine Policy-Routen oder SD-WAN-Regeln gelesen.", "No policy routes or SD-WAN rules read.")}
+      >
         <thead>
           <tr>
-            <th>System · Kontext</th>
-            <th>Art</th>
-            <th>Bedingung</th>
-            <th>Weg</th>
+            <th>{L("System · Kontext", "System · context")}</th>
+            <th>{L("Art", "Type")}</th>
+            <th>{L("Bedingung", "Condition")}</th>
+            <th>{L("Weg", "Path")}</th>
           </tr>
         </thead>
         <tbody>
@@ -832,9 +940,9 @@ function PolicyTab({ tenantId, initialQ = "" }: { tenantId: number; initialQ?: s
             <tr key={p.id} className={p.enabled ? "" : "faint"}>
               <td>{where(p)}</td>
               <td>
-                <span className="chip">{p.kind === "sdwan" ? "SD-WAN" : "Policy-Route"}</span>{" "}
+                <span className="chip">{p.kind === "sdwan" ? "SD-WAN" : L("Policy-Route", "Policy route")}</span>{" "}
                 <span className="mono">#{p.seq ?? "?"}</span> {p.name && <b>{p.name}</b>}
-                {!p.enabled && <span className="chip">aus</span>}
+                {!p.enabled && <span className="chip">{L("aus", "off")}</span>}
               </td>
               <td>{matchText(p.match)}</td>
               <td className="mono">
@@ -861,17 +969,17 @@ function L3OutTab({ tenantId }: { tenantId: number }) {
     <>
       <RowFilter
         f={f}
-        placeholder="L3Out, VRF, Leaf, Interface, Peer, Route…"
+        placeholder={L("L3Out, VRF, Leaf, Interface, Peer, Route…", "L3Out, VRF, leaf, interface, peer, route…")}
         total={all && rows ? { shown: rows.length, all: all.length } : null}
       />
-      <List error={error} rows={rows} empty="Keine L3Outs gelesen.">
+      <List error={error} rows={rows} empty={L("Keine L3Outs gelesen.", "No L3Outs read.")}>
         <thead>
           <tr>
             <th>L3Out</th>
             <th>VRF</th>
-            <th>Border-Leafs</th>
+            <th>{L("Border-Leafs", "Border leafs")}</th>
             <th>Interfaces / SVIs</th>
-            <th>BGP-Peers</th>
+            <th>{L("BGP-Peers", "BGP peers")}</th>
           </tr>
         </thead>
         <tbody>
@@ -891,7 +999,9 @@ function L3OutTab({ tenantId }: { tenantId: number }) {
                     <span key={`${n.pod}-${n.node}`} className="mono">
                       <b>{n.name ?? `node-${n.node}`}</b>
                       {n.name && <span className="faint"> (node-{n.node})</span>}
-                      {n.router_id && <span className="faint"> · Router-ID {n.router_id}</span>}
+                      {n.router_id && (
+                        <span className="faint">{L(` · Router-ID ${n.router_id}`, ` · Router ID ${n.router_id}`)}</span>
+                      )}
                       {n.static_routes?.map((r) => (
                         <span key={r.prefix} className="faint">
                           {" "}
@@ -1054,14 +1164,24 @@ function ExitForm({
   return (
     <div className="card" id="exit-form" ref={card} style={{ scrollMarginTop: 72 }}>
       <div className="card-head">
-        <h2>{draft.id ? `Anbindung „${draft.name}“` : "Neue Anbindung"}</h2>
+        <h2>
+          {draft.id ? L(`Anbindung „${draft.name}“`, `Exit “${draft.name}”`) : L("Neue Anbindung", "New exit")}
+        </h2>
         <span className="faint">
-          Ein Weg, der über diesen Next-Hop bzw. dieses Interface geht und dort kein gelesenes Gerät findet, endet hier
-          – oder geht nach den manuellen Routen weiter.
+          {L(
+            <>
+              Ein Weg, der über diesen Next-Hop bzw. dieses Interface geht und dort kein gelesenes Gerät findet, endet hier
+              – oder geht nach den manuellen Routen weiter.
+            </>,
+            <>
+              A path that goes via this next-hop or this interface and finds no device read there ends here – or continues
+              along the manual routes.
+            </>,
+          )}
         </span>
       </div>
       <div className="card-body" style={{ padding: 16 }}>
-        <ErrorBox error={error} prefix="Anbindung speichern" />
+        <ErrorBox error={error} prefix={L("Anbindung speichern", "Save exit")} />
         <div className="form-grid">
           <div className="field">
             <label htmlFor="ex-name">Name</label>
@@ -1069,13 +1189,13 @@ function ExitForm({
               id="ex-name"
               ref={nameInput}
               className="input"
-              placeholder="z. B. Internet Provider A"
+              placeholder={L("z. B. Internet Provider A", "e.g. Internet Provider A")}
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
           </div>
           <div className="field">
-            <label htmlFor="ex-kind">Art</label>
+            <label htmlFor="ex-kind">{L("Art", "Type")}</label>
             <select id="ex-kind" className="sel input" value={kind} onChange={(e) => setKind(e.target.value as TopoExit["kind"])}>
               {Object.entries(EXIT_KIND).map(([k, v]) => (
                 <option key={k} value={k}>
@@ -1085,26 +1205,29 @@ function ExitForm({
             </select>
           </div>
           <div className="field">
-            <label htmlFor="ex-ifaces">Interfaces bzw. Zonen</label>
+            <label htmlFor="ex-ifaces">{L("Interfaces bzw. Zonen", "Interfaces or zones")}</label>
             <input id="ex-ifaces" className="input" placeholder="wan1, internet" value={ifaces} onChange={(e) => setIfaces(e.target.value)} />
           </div>
           <div className="field">
-            <label htmlFor="ex-hops">Next-Hops (Gegenstelle)</label>
+            <label htmlFor="ex-hops">{L("Next-Hops (Gegenstelle)", "Next-hops (peer)")}</label>
             <input id="ex-hops" className="input" placeholder="198.51.100.1" value={hops} onChange={(e) => setHops(e.target.value)} />
           </div>
           <div className="field">
-            <label htmlFor="ex-nets">Netze dahinter</label>
+            <label htmlFor="ex-nets">{L("Netze dahinter", "Networks behind")}</label>
             <input
               id="ex-nets"
               className="input"
-              placeholder="leer = alles, was dorthin geroutet wird"
+              placeholder={L("leer = alles, was dorthin geroutet wird", "empty = everything routed there")}
               value={prefixes}
               onChange={(e) => setPrefixes(e.target.value)}
             />
           </div>
         </div>
         <div className="field" id="ex-fws">
-          <label>Firewalls bzw. ACI {sids.length ? "" : <span className="faint">– keine gewählt = alle</span>}</label>
+          <label>
+            {L("Firewalls bzw. ACI", "Firewalls or ACI")}{" "}
+            {sids.length ? "" : <span className="faint">{L("– keine gewählt = alle", "– none selected = all")}</span>}
+          </label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px" }}>
             {firewalls.map(([id, label]) => (
               <label key={id} className="check">
@@ -1121,25 +1244,30 @@ function ExitForm({
         {routers.length > 0 && (
           <div className="field" id="ex-routers">
             <label>
-              Erkannte Router{" "}
-              <span className="faint">– {redundancy(combined(related, routers))}; ankreuzen = als Next-Hop eintragen</span>
+              {L("Erkannte Router", "Detected routers")}{" "}
+              <span className="faint">
+                – {redundancy(combined(related, routers))}
+                {L("; ankreuzen = als Next-Hop eintragen", "; check = enter as next-hop")}
+              </span>
             </label>
             {routers.map((r) => (
               <label key={r.ip} className="check">
                 <input type="checkbox" checked={hopList.includes(r.ip)} onChange={() => toggle(r.ip)} />
                 <RouterCell r={r} />
-                {r.exit && !hopList.includes(r.ip) && <span className="faint">(über {r.exit.name})</span>}
+                {r.exit && !hopList.includes(r.ip) && (
+                  <span className="faint">{L(`(über ${r.exit.name})`, `(via ${r.exit.name})`)}</span>
+                )}
               </label>
             ))}
             {routers.some((r) => !hopList.includes(r.ip)) && (
               <button className="btn btn-sm" style={{ marginTop: 6 }} onClick={takeAll}>
-                alle Router übernehmen
+                {L("alle Router übernehmen", "add all routers")}
               </button>
             )}
           </div>
         )}
         <div className="field">
-          <label>Manuelle Routen (z. B. MPLS zu einem anderen Standort)</label>
+          <label>{L("Manuelle Routen (z. B. MPLS zu einem anderen Standort)", "Manual routes (e.g. MPLS to another site)")}</label>
           {routes.map((r, i) => (
             <div key={i} className="filterbar" style={{ margin: "0 0 6px" }}>
               <input
@@ -1149,13 +1277,13 @@ function ExitForm({
                 value={r.prefix}
                 onChange={(e) => setRoutes(routes.map((x, j) => (j === i ? { ...x, prefix: e.target.value } : x)))}
               />
-              <span className="faint">weiter bei</span>
+              <span className="faint">{L("weiter bei", "continue at")}</span>
               <select
                 className="sel"
                 value={r.target}
                 onChange={(e) => setRoutes(routes.map((x, j) => (j === i ? { ...x, target: e.target.value } : x)))}
               >
-                <option value="">Knoten wählen…</option>
+                <option value="">{L("Knoten wählen…", "Select node…")}</option>
                 {nodes.map((n) => (
                   <option key={n.key} value={n.key}>
                     {n.label}
@@ -1163,24 +1291,24 @@ function ExitForm({
                 ))}
               </select>
               <button className="linkbtn" onClick={() => setRoutes(routes.filter((_, j) => j !== i))}>
-                entfernen
+                {L("entfernen", "remove")}
               </button>
             </div>
           ))}
           <button className="btn btn-sm" onClick={() => setRoutes([...routes, { prefix: "", target: "" }])}>
-            Route hinzufügen
+            {L("Route hinzufügen", "Add route")}
           </button>
         </div>
         <div className="field">
-          <label htmlFor="ex-desc">Beschreibung</label>
+          <label htmlFor="ex-desc">{L("Beschreibung", "Description")}</label>
           <input id="ex-desc" className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-primary btn-sm" disabled={busy || !name.trim()} onClick={save}>
-            {busy ? "Speichere…" : "Speichern"}
+            {busy ? L("Speichere…", "Saving…") : L("Speichern", "Save")}
           </button>
           <button className="btn btn-sm" onClick={onCancel}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
         </div>
       </div>
@@ -1209,31 +1337,44 @@ function SuggestedExits({
   return (
     <div className="card" id="exit-suggestions">
       <div className="card-head">
-        <h2>Erkannte Anbindungen</h2>
+        <h2>{L("Erkannte Anbindungen", "Detected exits")}</h2>
         <span className="faint">
-          Router ohne gelesenes Gerät aus Routing-Tabelle, BGP-Pfaden, statischen Routen und BGP-Nachbarn – zusammengefasst
-          über gemeinsame Router, Interface bzw. Zone und BGP-AS, je Firewall bzw. Verbund und Session-Sync-Partner.
+          {L(
+            <>
+              Router ohne gelesenes Gerät aus Routing-Tabelle, BGP-Pfaden, statischen Routen und BGP-Nachbarn – zusammengefasst
+              über gemeinsame Router, Interface bzw. Zone und BGP-AS, je Firewall bzw. Verbund und Session-Sync-Partner.
+            </>,
+            <>
+              Routers without a device read, from routing table, BGP paths, static routes and BGP neighbors – combined by
+              shared routers, interface or zone and BGP AS, per firewall or parallel group and session sync partner.
+            </>,
+          )}
         </span>
         {hidden.length > 0 && (
           <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setShowHidden(!showHidden)}>
             {showHidden
-              ? "Ausgeblendete verbergen"
-              : `${hidden.length} ausgeblendete${hidden.length > 1 ? "" : "r"} Vorschlag${hidden.length > 1 ? "e" : ""}`}
+              ? L("Ausgeblendete verbergen", "Hide hidden suggestions")
+              : L(
+                  `${hidden.length} ausgeblendete${hidden.length > 1 ? "" : "r"} Vorschlag${hidden.length > 1 ? "e" : ""}`,
+                  `${hidden.length} hidden suggestion${hidden.length > 1 ? "s" : ""}`,
+                )}
           </button>
         )}
       </div>
       <div className="card-body scroll">
         {shown.length === 0 ? (
-          <Empty title="Keine offenen Vorschläge">Alle erkannten Router sind erfasst oder ausgeblendet.</Empty>
+          <Empty title={L("Keine offenen Vorschläge", "No open suggestions")}>
+            {L("Alle erkannten Router sind erfasst oder ausgeblendet.", "All detected routers are captured or hidden.")}
+          </Empty>
         ) : (
           <table className="compact">
             <thead>
               <tr>
-                <th>Vorschlag</th>
+                <th>{L("Vorschlag", "Suggestion")}</th>
                 <th>Firewalls</th>
-                <th>Interfaces / Zonen</th>
+                <th>{L("Interfaces / Zonen", "Interfaces / zones")}</th>
                 <th>Router</th>
-                <th>Redundanz</th>
+                <th>{L("Redundanz", "Redundancy")}</th>
                 {canEdit && <th />}
               </tr>
             </thead>
@@ -1244,10 +1385,14 @@ function SuggestedExits({
                     <span className="chip info">{EXIT_KIND[s.kind] ?? s.kind}</span> <b>{s.name}</b>
                     {s.dismissed && (
                       <span className="chip" style={{ marginLeft: 4 }}>
-                        ausgeblendet
+                        {L("ausgeblendet", "hidden")}
                       </span>
                     )}
-                    {s.exits.length > 0 && <div className="faint">teilweise in {s.exits.map((e) => e.name).join(", ")}</div>}
+                    {s.exits.length > 0 && (
+                      <div className="faint">
+                        {L("teilweise in", "partly in")} {s.exits.map((e) => e.name).join(", ")}
+                      </div>
+                    )}
                   </td>
                   <td>{s.sources.join(", ")}</td>
                   <td className="mono">{s.interfaces.join(", ") || "–"}</td>
@@ -1256,7 +1401,7 @@ function SuggestedExits({
                       {s.next_hops.map((h) => (
                         <span key={h.ip} className="nowrap">
                           <RouterCell r={h} />
-                          {h.covered && <span className="faint"> · erfasst</span>}
+                          {h.covered && <span className="faint">{L(" · erfasst", " · captured")}</span>}
                         </span>
                       ))}
                     </div>
@@ -1267,22 +1412,25 @@ function SuggestedExits({
                       {s.dismissed ? (
                         <button
                           className="linkbtn"
-                          title="wieder als Anbindung vorschlagen"
+                          title={L("wieder als Anbindung vorschlagen", "suggest as exit again")}
                           onClick={() => onDismiss(s, true)}
                         >
-                          wieder anzeigen
+                          {L("wieder anzeigen", "show again")}
                         </button>
                       ) : (
                         <>
                           <button className="linkbtn" onClick={() => onTake(s)}>
-                            {s.exits.length ? "ergänzen" : "übernehmen"}
+                            {s.exits.length ? L("ergänzen", "extend") : L("übernehmen", "apply")}
                           </button>{" "}
                           <button
                             className="linkbtn"
-                            title="keine Anbindung – nicht mehr vorschlagen (bis ein neuer Router dazukommt)"
+                            title={L(
+                              "keine Anbindung – nicht mehr vorschlagen (bis ein neuer Router dazukommt)",
+                              "not an exit – stop suggesting (until a new router appears)",
+                            )}
                             onClick={() => onDismiss(s, false)}
                           >
-                            ausblenden
+                            {L("ausblenden", "hide")}
                           </button>
                         </>
                       )}
@@ -1340,7 +1488,7 @@ function ExitsTab({
     setReload((n) => n + 1);
   };
   const remove = (e: TopoExit) => {
-    if (!window.confirm(`Anbindung „${e.name}“ löschen?`)) return;
+    if (!window.confirm(L(`Anbindung „${e.name}“ löschen?`, `Delete exit “${e.name}”?`))) return;
     deleteExit(e.id)
       .then(() => setReload((n) => n + 1))
       .catch(setErr);
@@ -1349,16 +1497,24 @@ function ExitsTab({
     <>
       <div className="filterbar">
         <span className="faint">
-          Von Hand erfasst: wo Wege nach aussen gehen (Internet, MPLS, WAN, Partner). Ohne Anbindung endet ein Weg am
-          ersten Next-Hop, der keinem gelesenen Gerät gehört.
+          {L(
+            <>
+              Von Hand erfasst: wo Wege nach aussen gehen (Internet, MPLS, WAN, Partner). Ohne Anbindung endet ein Weg am
+              ersten Next-Hop, der keinem gelesenen Gerät gehört.
+            </>,
+            <>
+              Captured manually: where paths go to the outside (Internet, MPLS, WAN, partner). Without an exit, a path ends
+              at the first next-hop that belongs to no device read.
+            </>,
+          )}
         </span>
         {canEdit && editing === null && (
           <button className="btn btn-primary btn-sm" style={{ marginLeft: "auto" }} onClick={() => edit({})}>
-            Neue Anbindung
+            {L("Neue Anbindung", "New exit")}
           </button>
         )}
       </div>
-      <ErrorBox error={err} prefix="Anbindung ändern" />
+      <ErrorBox error={err} prefix={L("Anbindung ändern", "Change exit")} />
       {editing !== null && (
         <ExitForm
           key={opened}
@@ -1369,16 +1525,16 @@ function ExitsTab({
           onCancel={done}
         />
       )}
-      <List error={error} rows={rows} empty="Noch keine Anbindungen erfasst.">
+      <List error={error} rows={rows} empty={L("Noch keine Anbindungen erfasst.", "No exits captured yet.")}>
         <thead>
           <tr>
-            <th>Anbindung</th>
+            <th>{L("Anbindung", "Exit")}</th>
             <th>Firewalls</th>
-            <th>Interfaces / Zonen</th>
+            <th>{L("Interfaces / Zonen", "Interfaces / zones")}</th>
             <th>Next-Hops</th>
-            <th>Erkannte Router · Redundanz</th>
-            <th>Netze dahinter</th>
-            <th>Manuelle Routen</th>
+            <th>{L("Erkannte Router · Redundanz", "Detected routers · redundancy")}</th>
+            <th>{L("Netze dahinter", "Networks behind")}</th>
+            <th>{L("Manuelle Routen", "Manual routes")}</th>
             {canEdit && <th />}
           </tr>
         </thead>
@@ -1391,7 +1547,7 @@ function ExitsTab({
                   <span className="chip info">{EXIT_KIND[e.kind] ?? e.kind}</span> <b>{e.name}</b>
                   {e.description && <div className="faint">{e.description}</div>}
                 </td>
-                <td>{e.sources.length ? e.sources.join(", ") : <span className="faint">alle</span>}</td>
+                <td>{e.sources.length ? e.sources.join(", ") : <span className="faint">{L("alle", "all")}</span>}</td>
                 <td className="mono">{e.interfaces.join(", ") || "–"}</td>
                 <td className="mono">{e.next_hops.join(", ") || "–"}</td>
                 <td>
@@ -1402,17 +1558,27 @@ function ExitsTab({
                         {st.routers.map((r) => (
                           <span key={r.ip} className="nowrap">
                             <RouterCell r={r} />
-                            {!r.listed && <span className="chip warn" style={{ marginLeft: 4 }}>nicht eingetragen</span>}
+                            {!r.listed && (
+                              <span className="chip warn" style={{ marginLeft: 4 }}>
+                                {L("nicht eingetragen", "not entered")}
+                              </span>
+                            )}
                           </span>
                         ))}
                       </div>
                     </>
                   ) : (
-                    <span className="faint">keiner erkannt</span>
+                    <span className="faint">{L("keiner erkannt", "none detected")}</span>
                   )}
                   {st?.unseen.length ? (
-                    <div className="faint" title="eingetragen, aber in keiner Route und keinem BGP-Nachbarn">
-                      nicht erkannt: {st.unseen.join(", ")}
+                    <div
+                      className="faint"
+                      title={L(
+                        "eingetragen, aber in keiner Route und keinem BGP-Nachbarn",
+                        "entered, but in no route and no BGP neighbor",
+                      )}
+                    >
+                      {L("nicht erkannt:", "not detected:")} {st.unseen.join(", ")}
                     </div>
                   ) : null}
                   {canEdit && st?.missing.length ? (
@@ -1420,11 +1586,11 @@ function ExitsTab({
                       className="linkbtn"
                       onClick={() => edit({ ...exitDraft(e), next_hops: union(e.next_hops, st.missing) })}
                     >
-                      {st.missing.length} erkannte Router übernehmen
+                      {L(`${st.missing.length} erkannte Router übernehmen`, `Add ${st.missing.length} detected routers`)}
                     </button>
                   ) : null}
                 </td>
-                <td className="mono">{e.prefixes.join(", ") || <span className="faint">alles</span>}</td>
+                <td className="mono">{e.prefixes.join(", ") || <span className="faint">{L("alles", "everything")}</span>}</td>
                 <td>
                   {e.routes.length ? (
                     <div className="objs">
@@ -1441,10 +1607,10 @@ function ExitsTab({
                 {canEdit && (
                   <td className="actions">
                     <button className="linkbtn" onClick={() => edit(exitDraft(e))}>
-                      ändern
+                      {L("ändern", "edit")}
                     </button>{" "}
                     <button className="linkbtn" onClick={() => remove(e)}>
-                      löschen
+                      {L("löschen", "delete")}
                     </button>
                   </td>
                 )}
@@ -1533,7 +1699,7 @@ export default function Routing({
     return (
       <>
         <PageHead title="Routing" />
-        <Note>Bitte oben einen Mandanten wählen.</Note>
+        <Note>{L("Bitte oben einen Mandanten wählen.", "Please select a tenant at the top.")}</Note>
       </>
     );
   }
@@ -1541,18 +1707,36 @@ export default function Routing({
   return (
     <>
       <PageHead title="Routing">
-        Routing-Tabellen von „{tenantLabel}“ je Firewall bzw. FortiGate-VDOM und je ACI-VRF auf den Border-Leafs,
-        dazu BGP-Pfade (auch Backup-Wege), Nachbarn, HA und Session-Sync, Policy-Routen, L3Outs und Anbindungen nach
-        aussen – rein lesend, Stand des letzten Laufs; IPs mit Namen aus dem IPAM. Den Weg einer Verbindung zeigt die{" "}
-        <a href="#wege">Weg-Suche</a>.
+        {L(
+          <>
+            Routing-Tabellen von „{tenantLabel}“ je Firewall bzw. FortiGate-VDOM und je ACI-VRF auf den Border-Leafs,
+            dazu BGP-Pfade (auch Backup-Wege), Nachbarn, HA und Session-Sync, Policy-Routen, L3Outs und Anbindungen nach
+            aussen – rein lesend, Stand des letzten Laufs; IPs mit Namen aus dem IPAM. Den Weg einer Verbindung zeigt die{" "}
+            <a href="#wege">Weg-Suche</a>.
+          </>,
+          <>
+            Routing tables of “{tenantLabel}” per firewall or FortiGate VDOM and per ACI VRF on the border leafs, plus BGP
+            paths (including backup paths), neighbors, HA and session sync, policy routes, L3Outs and exits to the outside –
+            read-only, state of the last run; IPs with names from the IPAM. The path of a connection is shown by the{" "}
+            <a href="#wege">path search</a>.
+          </>,
+        )}
       </PageHead>
-      <ErrorBox error={error} prefix="Routing laden" />
+      <ErrorBox error={error} prefix={L("Routing laden", "Load routing")} />
       {summary === null ? (
         <Loading />
       ) : summary.contexts.length === 0 && summary.l3outs === 0 && summary.ha === 0 ? (
         <Note>
-          Noch keine Routing-Daten. Ab 0.16.0 liest jeder Lauf einer FortiGate bzw. eines APIC das Routing mit –
-          Quellsysteme neu einlesen.
+          {L(
+            <>
+              Noch keine Routing-Daten. Ab 0.16.0 liest jeder Lauf einer FortiGate bzw. eines APIC das Routing mit –
+              Quellsysteme neu einlesen.
+            </>,
+            <>
+              No routing data yet. Since 0.16.0 every run of a FortiGate or an APIC also reads the routing – collect the
+              source systems again.
+            </>,
+          )}
         </Note>
       ) : (
         <ContextCard summary={summary} />

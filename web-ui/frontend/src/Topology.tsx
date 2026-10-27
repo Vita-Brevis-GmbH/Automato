@@ -6,35 +6,36 @@ import { Fragment, useEffect, useState } from "react";
 import { fetchTopology, TopoEdge, TopologyModel, TopoNode } from "./api";
 import { findingLabel } from "./refs";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note } from "./ui";
+import { L } from "./i18n";
 
 export const NODE_KIND: Record<string, string> = {
   firewall: "Firewall",
   vdom: "VDOM",
-  vrf: "ACI-VRF",
+  vrf: L("ACI-VRF", "ACI VRF"),
   segment: "Segment",
-  exit: "Anbindung",
+  exit: L("Anbindung", "Exit"),
   router: "Router",
 };
 const EDGE_KIND: Record<string, string> = {
-  transfer: "Transfernetz",
-  member: "am Segment",
-  vdom_link: "Inter-VDOM-Link",
-  route: "Route ohne gemeinsames Netz",
+  transfer: L("Transfernetz", "Transfer network"),
+  member: L("am Segment", "on segment"),
+  vdom_link: L("Inter-VDOM-Link", "Inter-VDOM link"),
+  route: L("Route ohne gemeinsames Netz", "Route without shared network"),
   bgp: "BGP",
-  uplink: "nach aussen",
-  exit_route: "manuelle Route",
-  parallel: "Verbund",
-  sync: "Session-Sync",
+  uplink: L("nach aussen", "to the outside"),
+  exit_route: L("manuelle Route", "manual route"),
+  parallel: L("Verbund", "Parallel group"),
+  sync: L("Session-Sync", "Session sync"),
 };
 const ORIGIN: Record<string, [string, string]> = {
-  derived: ["na", "abgeleitet"],
-  manual: ["info", "von Hand"],
-  confirmed: ["ok", "bestätigt"],
+  derived: ["na", L("abgeleitet", "derived")],
+  manual: ["info", L("von Hand", "manual")],
+  confirmed: ["ok", L("bestätigt", "confirmed")],
 };
 const STATUS: Record<string, [string, string]> = {
-  active: ["ok", "aktiv"],
-  backup: ["info", "Backup"],
-  neighbor: ["na", "nur Nachbar"],
+  active: ["ok", L("aktiv", "active")],
+  backup: ["info", L("Backup", "backup")],
+  neighbor: ["na", L("nur Nachbar", "neighbor only")],
 };
 
 // Routen über die Kante aus Sicht des Knotens: hinaus (→) bzw. herein (←), dazu Backup-Wege
@@ -47,11 +48,11 @@ function Routes({ e, me }: { e: TopoEdge; me: string }) {
   if (!a && !b && !bk) return <Dash />;
   const samples = e.routes.samples[out] ?? [];
   return (
-    <span title={samples.length ? `z. B. ${samples.join(", ")}` : undefined}>
+    <span title={samples.length ? L(`z. B. ${samples.join(", ")}`, `e.g. ${samples.join(", ")}`) : undefined}>
       {a ? `→ ${a}` : ""}
       {a && b ? " · " : ""}
       {b ? `← ${b}` : ""}
-      {bk ? <span className="faint"> (+{bk} Backup)</span> : null}
+      {bk ? <span className="faint">{L(` (+${bk} Backup)`, ` (+${bk} backup)`)}</span> : null}
     </span>
   );
 }
@@ -78,7 +79,7 @@ function EdgeDetail({ e, me }: { e: TopoEdge; me: string }) {
     parts.push(
       <span key={`r-${r.ip}`}>
         <span className="mono">{r.ip}</span> <span className={`chip ${STATUS[r.status]?.[0] ?? ""}`}>{STATUS[r.status]?.[1] ?? r.status}</span>
-        {r.default ? " Default-Route" : ""}
+        {r.default ? L(" Default-Route", " default route") : ""}
         {r.remote_as ? ` · AS ${r.remote_as}` : ""}
         {r.interface ? ` · ${r.interface}` : ""}
         {r.zone && r.zone !== r.interface ? ` (${r.zone})` : ""}
@@ -90,15 +91,15 @@ function EdgeDetail({ e, me }: { e: TopoEdge; me: string }) {
         {l.a} ↔ {l.b}
       </span>,
     );
-  if (e.ports?.length) parts.push(<span key="ports">Interface/Zone {e.ports.join(", ")}</span>);
+  if (e.ports?.length) parts.push(<span key="ports">{L("Interface/Zone", "Interface/zone")} {e.ports.join(", ")}</span>);
   if (e.prefixes?.length) parts.push(<span key="pfx" className="mono">{e.prefixes.join(", ")}</span>);
-  if (e.next_hops?.length) parts.push(<span key="nh" className="mono">über {e.next_hops.join(", ")}</span>);
-  if (e.group) parts.push(<span key="grp">Verbund {e.group}</span>);
+  if (e.next_hops?.length) parts.push(<span key="nh" className="mono">{L("über", "via")} {e.next_hops.join(", ")}</span>);
+  if (e.group) parts.push(<span key="grp">{L("Verbund", "Parallel group")} {e.group}</span>);
   if (e.peer) parts.push(<span key="peer" className="mono">Peer {e.peer}</span>);
   if (e.to)
     parts.push(
       <span key="to">
-        weiter zu{" "}
+        {L("weiter zu", "continues to")}{" "}
         {Object.entries(e.to)
           .map(([k, n]) => `${k} (${n})`)
           .join(", ")}
@@ -118,16 +119,16 @@ function EdgeDetail({ e, me }: { e: TopoEdge; me: string }) {
 function NodeEdges({ node, model }: { node: TopoNode; model: TopologyModel }) {
   const byId = new Map(model.nodes.map((n) => [n.id, n]));
   const edges = model.edges.filter((e) => e.a === node.id || e.b === node.id);
-  if (!edges.length) return <div className="faint">Keine Verbindungen gelesen.</div>;
+  if (!edges.length) return <div className="faint">{L("Keine Verbindungen gelesen.", "No connections read.")}</div>;
   return (
     <table className="topo-edges">
       <thead>
         <tr>
-          <th>Verbindung</th>
-          <th>Gegenstelle</th>
-          <th>Netz</th>
-          <th>Routen</th>
-          <th>Herkunft</th>
+          <th>{L("Verbindung", "Connection")}</th>
+          <th>{L("Gegenstelle", "Peer")}</th>
+          <th>{L("Netz", "Network")}</th>
+          <th>{L("Routen", "Routes")}</th>
+          <th>{L("Herkunft", "Origin")}</th>
           <th>Details</th>
         </tr>
       </thead>
@@ -166,13 +167,13 @@ function NodeEdges({ node, model }: { node: TopoNode; model: TopologyModel }) {
 
 function Members({ n }: { n: TopoNode }) {
   const bits: string[] = [];
-  if (n.kind === "vrf" && n.members?.length) bits.push(`Border-Leafs ${n.members.join(", ")}`);
+  if (n.kind === "vrf" && n.members?.length) bits.push(L(`Border-Leafs ${n.members.join(", ")}`, `Border leafs ${n.members.join(", ")}`));
   if (n.kind === "segment" && n.members?.length) bits.push(n.members.join(", "));
   if (n.ha?.mode && n.ha.mode !== "standalone")
     bits.push(`HA ${n.ha.mode}${n.ha.members.length ? `: ${n.ha.members.join(", ")}` : ""}`);
-  if (n.group) bits.push(`Verbund ${n.group}`);
+  if (n.group) bits.push(L(`Verbund ${n.group}`, `Parallel group ${n.group}`));
   if (n.kind === "router") bits.push([n.ip, n.remote_as ? `AS ${n.remote_as}` : ""].filter(Boolean).join(" · "));
-  if (n.kind === "exit" && n.prefixes?.length) bits.push(`Netze ${n.prefixes.join(", ")}`);
+  if (n.kind === "exit" && n.prefixes?.length) bits.push(L(`Netze ${n.prefixes.join(", ")}`, `Networks ${n.prefixes.join(", ")}`));
   return bits.length ? <span className="faint">{bits.join(" · ")}</span> : <Dash />;
 }
 
@@ -192,10 +193,17 @@ export default function TopologyTab({ tenantId }: { tenantId: number }) {
       current = false;
     };
   }, [tenantId]);
-  if (error) return <ErrorBox error={error} prefix="Topologie laden" />;
+  if (error) return <ErrorBox error={error} prefix={L("Topologie laden", "Load topology")} />;
   if (!model) return <Loading />;
   if (!model.nodes.length)
-    return <Note>Noch keine Topologie – Routing und Inventar der Firewalls bzw. des APIC einlesen.</Note>;
+    return (
+      <Note>
+        {L(
+          "Noch keine Topologie – Routing und Inventar der Firewalls bzw. des APIC einlesen.",
+          "No topology yet – collect routing and inventory of the firewalls or the APIC.",
+        )}
+      </Note>
+    );
   const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
   const nodes = model.nodes.filter((n) => {
     if (kind && (kind === "firewall" ? !["firewall", "vdom"].includes(n.kind) : n.kind !== kind)) return false;
@@ -208,15 +216,32 @@ export default function TopologyTab({ tenantId }: { tenantId: number }) {
     <>
       <div className="card" id="topology-summary" style={{ marginBottom: 12 }}>
         <div className="card-body pad">
-          <span className="chip">{count("firewall") + count("vdom")} Firewalls/VDOMs</span>{" "}
-          <span className="chip">{count("vrf")} ACI-VRFs</span> <span className="chip">{count("segment")} Segmente</span>{" "}
-          <span className="chip">{count("exit")} Anbindungen</span> <span className="chip">{count("router")} Router</span>{" "}
-          <span className="faint">· {model.edges.length} Verbindungen</span>
+          <span className="chip">
+            {count("firewall") + count("vdom")} {L("Firewalls/VDOMs", "firewalls/VDOMs")}
+          </span>{" "}
+          <span className="chip">
+            {count("vrf")} {L("ACI-VRFs", "ACI VRFs")}
+          </span>{" "}
+          <span className="chip">
+            {count("segment")} {L("Segmente", "segments")}
+          </span>{" "}
+          <span className="chip">
+            {count("exit")} {L("Anbindungen", "exits")}
+          </span>{" "}
+          <span className="chip">
+            {count("router")} {L("Router", "routers")}
+          </span>{" "}
+          <span className="faint">
+            · {model.edges.length} {L("Verbindungen", "connections")}
+          </span>
           {model.issues.length ? (
             <span>
               {" · "}
               <a href="#findings">
-                {model.issues.length} Befund{model.issues.length === 1 ? "" : "e"} zur Plausibilität
+                {L(
+                  `${model.issues.length} Befund${model.issues.length === 1 ? "" : "e"} zur Plausibilität`,
+                  `${model.issues.length} plausibility finding${model.issues.length === 1 ? "" : "s"}`,
+                )}
               </a>
               :{" "}
               {Object.entries(s.issues)
@@ -224,7 +249,7 @@ export default function TopologyTab({ tenantId }: { tenantId: number }) {
                 .join(", ")}
             </span>
           ) : (
-            <span className="faint"> · keine Befunde zur Plausibilität</span>
+            <span className="faint">{L(" · keine Befunde zur Plausibilität", " · no plausibility findings")}</span>
           )}
         </div>
       </div>
@@ -233,31 +258,35 @@ export default function TopologyTab({ tenantId }: { tenantId: number }) {
           <span className="ico">
             <Icon name="search" />
           </span>
-          <input placeholder="Knoten, Leaf, IP, Netz…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input placeholder={L("Knoten, Leaf, IP, Netz…", "Node, leaf, IP, network…")} value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        <select className="sel" aria-label="Art" value={kind} onChange={(e) => setKind(e.target.value)}>
-          <option value="">Art: alle</option>
+        <select className="sel" aria-label={L("Art", "Type")} value={kind} onChange={(e) => setKind(e.target.value)}>
+          <option value="">{L("Art: alle", "Type: all")}</option>
           <option value="firewall">Firewalls/VDOMs</option>
-          <option value="vrf">ACI-VRFs</option>
-          <option value="segment">Segmente</option>
-          <option value="exit">Anbindungen</option>
-          <option value="router">Router</option>
+          <option value="vrf">{L("ACI-VRFs", "ACI VRFs")}</option>
+          <option value="segment">{L("Segmente", "Segments")}</option>
+          <option value="exit">{L("Anbindungen", "Exits")}</option>
+          <option value="router">{L("Router", "Routers")}</option>
         </select>
-        <span className="count">{nodes.length === model.nodes.length ? nodes.length : `${nodes.length} von ${model.nodes.length}`}</span>
+        <span className="count">
+          {nodes.length === model.nodes.length
+            ? nodes.length
+            : L(`${nodes.length} von ${model.nodes.length}`, `${nodes.length} of ${model.nodes.length}`)}
+        </span>
       </div>
       <div className="card">
         <div className="card-body scroll viewport">
           {nodes.length === 0 ? (
-            <Empty title="Kein Knoten passt zum Filter." />
+            <Empty title={L("Kein Knoten passt zum Filter.", "No node matches the filter.")} />
           ) : (
             <table id="topology-nodes">
               <thead>
                 <tr>
-                  <th>Knoten</th>
-                  <th>Art</th>
-                  <th>Mitglieder · HA · Verbund</th>
-                  <th className="num">Verbindungen</th>
-                  <th className="num">Befunde</th>
+                  <th>{L("Knoten", "Node")}</th>
+                  <th>{L("Art", "Type")}</th>
+                  <th>{L("Mitglieder · HA · Verbund", "Members · HA · parallel group")}</th>
+                  <th className="num">{L("Verbindungen", "Connections")}</th>
+                  <th className="num">{L("Befunde", "Findings")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -266,7 +295,7 @@ export default function TopologyTab({ tenantId }: { tenantId: number }) {
                     <tr className="clickable" onClick={() => setOpen(open === n.id ? null : n.id)}>
                       <td>
                         <b>{n.label}</b>
-                        {n.missing?.length ? <div className="faint">nicht lesbar: {n.missing.join(", ")}</div> : null}
+                        {n.missing?.length ? <div className="faint">{L("nicht lesbar:", "not readable:")} {n.missing.join(", ")}</div> : null}
                       </td>
                       <td className="nowrap">
                         {NODE_KIND[n.kind] ?? n.kind}
