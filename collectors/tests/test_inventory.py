@@ -97,6 +97,33 @@ def test_aci_inventar_aus_tenant_und_fabric():
     assert epg.epg == "EG_web" and epg.aci_tenant == "TE_share"
 
 
+def test_aci_bd_mit_vrf_aus_common():
+    """0.83.1: die VRF einer BD aus `common` heisst `common:<VRF>` (tDn bzw. wie der APIC) -
+    vorher stand der Tenant der BD da und die Subnetze passten nicht zur VRF des Routings."""
+
+    def mo(cls, name=None, kids=(), **attrs):
+        a = {"name": name, **attrs} if name else attrs
+        return {cls: {"attributes": a, "children": list(kids)}}
+
+    export = {"imdata": [
+        mo("fvTenant", "common", [mo("fvCtx", "VRF_shared")]),
+        mo("fvTenant", "TE_a", [
+            mo("fvCtx", "VRF_own"),
+            mo("fvBD", "BD_tdn", [mo("fvRsCtx", tnFvCtxName="VRF_shared",
+                                     tDn="uni/tn-common/ctx-VRF_shared"),
+                                  mo("fvSubnet", ip="10.1.0.1/24")]),
+            mo("fvBD", "BD_name", [mo("fvRsCtx", tnFvCtxName="VRF_shared"),
+                                   mo("fvSubnet", ip="10.2.0.1/24")]),
+            mo("fvBD", "BD_own", [mo("fvRsCtx", tnFvCtxName="VRF_own"),
+                                  mo("fvSubnet", ip="10.3.0.1/24")]),
+        ]),
+    ]}  # fmt: skip
+    inv = parse_inventory(export, None)
+    vrf = {s.bd: s.vrf for s in inv.subnets if s.context == "bd"}
+    assert vrf == {"BD_tdn": "common:VRF_shared", "BD_name": "common:VRF_shared",
+                   "BD_own": "TE_a:VRF_own"}  # fmt: skip
+
+
 def test_aci_ohne_fabric_daten():
     inv = parse_inventory(fetch_mo_export(), None)
     assert inv.devices == [] and {i.name for i in inv.interfaces} == {"VPC_srv01", "eth1/20"}

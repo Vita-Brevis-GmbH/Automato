@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.83.1 – 2026-10-27
+
+Korrekturen nach dem Test des Anwenders (ACI): „In den Kategorien steht vorne 20× L3O_vpn,
+hinten Contracts, die nichts mit der EPG zu tun haben“ und gestrichelte Wege im Netzwerkplan.
+
+- **VM über die Portgruppe im Fabric:** Eine IP, die die Portgruppe einer VM bzw. ein
+  statischer Endpunkt einer EPG zuordnet, liegt im Fabric – auch in einer BD ohne Subnetz
+  (Gateway auf der Firewall, das ACI lernt dort keine IPs). Vorher ordnete Automato sie der
+  externen EPG mit 0.0.0.0/0 zu (z. B. L3O_vpn), und alle deren Contracts mit anderen EPGs
+  standen in der Doku der Applikation. Gilt für Doku je System, Applikations-Doku,
+  Regel-Liste und Weg-Suche (`aci_relevance.Classifier._fabric` mit `epg_locate`).
+- **VRF der Bridge Domains aus `common`:** Der Collector schrieb für eine BD die VRF immer im
+  Tenant der BD (`TE_a:VRF1`), auch wenn sie in `common` liegt. Jetzt aus dem aufgelösten Ziel
+  der Beziehung (`fvRsCtx.tDn`), sonst wie der APIC (eigener Tenant, dann `common`). Für schon
+  eingelesene Läufe gilt `common:<VRF>`, wenn es die VRF dort gibt – die Wege dieser Systeme
+  beginnen wieder in der VRF (vorher „kein gelesenes Gerät hat … angeschlossen“, gestrichelte
+  Linie, Start auf dem Gerät der Regel).
+- **System ausserhalb des Fabrics:** Contracts über seine externe EPG stehen in der Kategorie
+  seines L3Outs (z. B. 5 „Zugriff L3O_vpn“), sonst in 9 – nicht mehr in 7/8 („ACI intern“).
+- BETRIEB: wann eine Linie im Netzwerkplan gestrichelt ist und warum ein Weg über L3Out, VRF
+  oder direkt zur Firewall läuft.
+
 ## 0.83.0 – 2026-10-27
 
 Zonen komplett, Teil 4 (ROADMAP Schritt 5 abgeschlossen, ADR 0024 Nr. 20): Zonenplan aus

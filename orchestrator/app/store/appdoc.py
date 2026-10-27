@@ -662,6 +662,17 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                         counterpart_external=False,
                         is_dnat_target=False,
                     )
+                elif epg.kind == "external":
+                    # System ausserhalb des Fabrics (0.83.1): der Zugriff kommt ueber seinen
+                    # L3Out - nie „ACI intern“ (7/8); nach der Art des L3Outs, sonst Zugriff auf
+                    # die EPGs eines Security Tenants (9)
+                    idx = categorize(
+                        direction=direction,
+                        counterpart_zone=epg.l3out,
+                        counterpart_external=False,
+                        is_dnat_target=False,
+                    )
+                    idx = 9 if idx == 10 else idx
                 else:
                     idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
                 services = ", ".join(back if reverse else rule_view.service_labels(r))
@@ -1182,7 +1193,9 @@ def vm_rows(
         epg = data.epgs_by_id[i]
         out += _aci_rows(data, epg, name, via=f"EPG {epg_store.inventory_label(epg)}")
     vrfs = {vrf_key(data, data.epgs_by_id[i]) for i in ids}
-    return mark_categories(data, out + _ext_rows(data, ips, name, vrfs))
+    # eine IP an einer NIC mit EPG (Portgruppe) liegt im Fabric - keine externe EPG (0.83.1)
+    outside = [ip for ip in ips if ip not in mapped]
+    return mark_categories(data, out + _ext_rows(data, outside, name, vrfs))
 
 
 def host_epgs(

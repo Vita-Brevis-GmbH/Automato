@@ -72,6 +72,7 @@ from app.store import references
 from app.store.topology import (
     MGMT,
     Table,
+    aci_vrf,
     endpoint,
     ip_hex,
     is_net,
@@ -513,14 +514,14 @@ class Graph:
             InvSubnet.tenant_id == self.tenant_id, InvSubnet.context.in_(("bd", "epg"))
         )
         if key is not None:
-            stmt = stmt.where(InvSubnet.source_system_id == key[0], InvSubnet.vrf == key[1])
+            stmt = stmt.where(InvSubnet.source_system_id == key[0])
         for s in self.session.scalars(stmt):
             try:
                 net = ipaddress.ip_network(s.prefix, strict=False)
             except ValueError:
                 continue
-            nkey = (s.source_system_id, s.vrf or "")
-            if not within(ip, net) or nkey not in self.nodes:
+            nkey = (s.source_system_id, aci_vrf(s.vrf, s.source_system_id, self.nodes))
+            if not within(ip, net) or nkey not in self.nodes or key not in (None, nkey):
                 continue
             where = (
                 f"EPG {s.aci_tenant}|{s.ap}|{s.epg}"

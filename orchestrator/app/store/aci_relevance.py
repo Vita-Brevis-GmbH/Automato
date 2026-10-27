@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 from app.models import Epg, EpgEndpoint, EpgSubnet, InvSubnet, InvVrf, TopoContext, TopoL3Out
 from app.store import epgs as epg_store
 from app.store.paths import Graph
-from app.store.topology import overlaps, within
+from app.store.topology import aci_vrf, is_net, overlaps, within
 
 POSSIBLE, IMPOSSIBLE, UNKNOWN = "possible", "impossible", "unknown"
 RANK = {POSSIBLE: 0, UNKNOWN: 1, IMPOSSIBLE: 2}
@@ -78,6 +78,13 @@ class Classifier:
                 self._graph_of() if self._graph_of else Graph(self.session, self.tenant_id)
             )
         return self._graph
+
+    @cached_property
+    def locator(self):
+        """EPG einer IP nach der Konfiguration (statischer Endpunkt, Portgruppe der VM)."""
+        from app.store import epg_locate  # spaet: epg_locate importiert dieses Modul
+
+        return epg_locate.Locator(self.session, self.tenant_id, self)
 
     @cached_property
     def _l3outs(self) -> list[TopoL3Out]:
@@ -282,12 +289,18 @@ class Classifier:
         return UNKNOWN, f"{also}; die VRF {vrf} leitet {ip} über {via}"
 
     def _fabric(self, sid: int | None, vrf: str | None, ip) -> str | None:
-        """Ort im Fabric der VRF (EPG bzw. BD), wenn ein BD-/EPG-Subnetz die IP enthaelt."""
+        """Ort im Fabric der VRF (EPG bzw. BD), wenn ein BD-/EPG-Subnetz die IP enthaelt, die
+        Portgruppe ihrer VM bzw. ein statischer Endpunkt sie einer EPG zuordnet (0.83.1: BD ohne
+        Subnetz, Gateway auf der Firewall - das ACI lernt dort keine IPs) oder ein gelernter
+        Endpunkt sie hat."""
         if not vrf:
             return None
         for s in self._fabric_subnets.get((sid, vrf), []):
             if within(ip, s[0]):
                 return s[1]
+        if not is_net(ip):
+            for epg, how in self.locator.configured(str(ip), sid, vrf):
+                return f"{how}, EPG {epg_store.inventory_label(epg).replace('/', '|')}"
         for epg in self.session.scalars(
             select(Epg)
             .join(EpgEndpoint, EpgEndpoint.epg_id == Epg.id)
@@ -302,6 +315,7 @@ class Classifier:
         """(APIC, VRF) -> BD-/EPG-Subnetze mit Ort (Inventar und EPGs der Contracts); laengste
         zuerst."""
         out: dict[tuple[int | None, str], list[tuple[Net, str]]] = defaultdict(list)
+        known = {(sid, v) for sid, names in self._vrfs.items() for v in names}
         for s in self.session.scalars(
             select(InvSubnet).where(
                 InvSubnet.tenant_id == self.tenant_id, InvSubnet.context.in_(("bd", "epg"))
@@ -315,7 +329,8 @@ class Classifier:
                 if s.epg and s.ap
                 else f"BD {s.aci_tenant}|{s.bd or s.context_name}"
             )
-            out[(s.source_system_id, s.vrf)].append((net, f"{where} {s.prefix}"))
+            vrf = aci_vrf(s.vrf, s.source_system_id, known)  # VRF aus common (0.83.1)
+            out[(s.source_system_id, vrf)].append((net, f"{where} {s.prefix}"))
         epgs = {
             e.id: e
             for e in self.session.scalars(

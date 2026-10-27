@@ -827,6 +827,23 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       Interfaces (z. B. `port3`, `vlan5`). Farbe nach dem Urteil, gestrichelt = Weg nicht
       bekannt; Knoten mit Rahmen in der Farbe ihres Urteils. Linien über mehrere Spalten laufen
       an den Knoten vorbei.
+      - **Wann gestrichelt?** (a) Das erste Stück von der Applikation aus: kein gelesenes Gerät
+        hat das Netz des Systems angeschlossen (kein Interface der Firewall, kein BD-Subnetz im
+        ACI). Der Weg beginnt dann ersatzweise auf dem Gerät der Regel – bei einem Contract in
+        der ACI-VRF der EPG, bei einer Firewall-Policy direkt auf der Firewall. Darum gehen
+        solche Linien teils „über das ACI VRF“, teils direkt zur Firewall. (b) Das letzte Stück
+        zur Gegenstelle: der Weg endet vorher (keine Route, Router ohne gelesenes Gerät).
+        (c) Gar kein Weg gefunden.
+      - **Über L3Out, VRF oder direkt?** Steht das Gateway eines Netzes im ACI (BD mit
+        Subnetz), beginnt der Weg in der VRF und verlässt das Fabric über den L3Out zur
+        Firewall – der Knoten heisst dann wie der L3Out. Ist die Firewall das Gateway (BD ohne
+        Subnetz, das ACI nur als Layer 2), beginnt der Weg auf der Firewall: die Linie geht von
+        der EPG direkt zur Firewall, das Fabric liegt nur als Layer 2 dazwischen. Ein Knoten
+        „ACI-VRF“ statt L3Out heisst: der Weg bleibt im Fabric bzw. kein L3Out passt zum
+        Next-Hop.
+      - Seit 0.83.1 zählen BD-Subnetze, deren VRF in `common` liegt, für die VRF aus `common`
+        (vorher stand der Tenant der BD da – die Wege dieser Systeme begannen nicht im Fabric
+        und waren gestrichelt).
       - Suche und „nur Abweichungen und Gesperrte“ heben die passenden Verbindungen hervor,
         ebenso ein Klick auf einen Knoten bzw. eine Linie (Liste darunter, „Details“ öffnet die
         Verbindung in der Tabelle; erneuter Klick hebt die Auswahl auf).
