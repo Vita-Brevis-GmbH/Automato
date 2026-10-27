@@ -5,7 +5,9 @@ hat) oder der Rand einer ACI-VRF - alle Border-Leafs der VRF zusammen, vier Anbi
 ein Knoten und nicht vier Wege.
 
 - **Start:** der gewaehlte Startpunkt bzw. der Knoten, an dem die Quelle angeschlossen ist
-  (angeschlossenes Netz in der RIB, sonst EPG-/BD-Subnetz einer gelesenen ACI-VRF).
+  (angeschlossenes Netz in der RIB, sonst EPG-/BD-Subnetz einer gelesenen ACI-VRF); eine
+  Anbindung als Quelle beginnt an ihren Firewalls mit ihrem Eingang (`entries`,
+  `store/exit_ends.py`).
 - **Je Hop:** eine Policy-Route bzw. SD-WAN-Regel, die sicher passt, geht vor; sonst das
   laengste Praefix der RIB (ECMP verzweigt) - in der VRF des Eingangs (FortiGate; ohne
   Eingang die Standard-VRF 0, nie die Management-Tabelle).
@@ -738,6 +740,7 @@ def trace(
     graph: "Graph | None" = None,
     checks=None,
     backups: bool = True,
+    entries: list[tuple[Key, str | None, str | None, str]] | None = None,
 ) -> dict:
     """Weg von der Quelle (bzw. dem Startpunkt) zum Ziel: je Pfad die Hops mit Ein- und
     Ausgang (Interface, Zone), Route bzw. Policy-Route und Next-Hop, dazu das Ende - die
@@ -745,7 +748,9 @@ def trace(
     passenden Policies (Dienst optional, z. B. `("tcp", 443)`).
 
     Viele Wege eines Mandanten (Verbindungen der Applikations-Doku, 0.45.0): `graph` und
-    `checks` (`policy_check.Checks`) einmal laden; `backups=False` nur die aktiven Wege."""
+    `checks` (`policy_check.Checks`) einmal laden; `backups=False` nur die aktiven Wege.
+    `entries` (Anbindung als Quelle, `store/exit_ends.py`): Starts mit Eingang und Zone der
+    Anbindung - (Knoten, Interface, Zone, wie erreicht)."""
     from app.store import policy_check  # Regeln je Hop - spaet importiert (Regelindex)
 
     dst = endpoint(dst_text)  # IP bzw. Netz (0.39.0: das Netz als Ganzes)
@@ -753,8 +758,12 @@ def trace(
     g = graph or Graph(session, tenant_id)
     notes: list[str] = []
     starts: list[tuple[Key, str | None, str]] = []
+    entry_zones: dict[tuple[Key, str | None], str] = {}
     chosen = parse_key(start)
-    if start and chosen not in g.nodes:
+    if entries is not None:  # Anbindung als Quelle: Eingang wie von aussen (z. B. wan1)
+        starts = [(k, iface, via) for k, iface, _zone, via in entries if k in g.nodes]
+        entry_zones = {(k, iface): zone for k, iface, zone, _via in entries if zone}
+    elif start and chosen not in g.nodes:
         notes.append(
             L(
                 "Startpunkt unbekannt – neu einlesen bzw. einen anderen wählen",
@@ -822,6 +831,8 @@ def trace(
 
         node = g.nodes[key]
         hop = {**node.out(), "via": via, "ingress": _port(g, key, ingress)}
+        if not hops and (key, ingress) in entry_zones:  # Anbindung: Zone ohne Interface
+            hop["ingress"].setdefault("zone", entry_zones[(key, ingress)])
         if table != 0:
             hop["vrf"] = table
         leg = hops[_after_balancer(hops) :]  # nach einem Load Balancer: neuer Abschnitt

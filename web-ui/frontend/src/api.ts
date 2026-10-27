@@ -2438,7 +2438,31 @@ export interface HopRules {
   src_epg?: string; // ACI-VRF-Hop (0.35.0): Zuordnung der Quelle bzw. des Ziels
   dst_epg?: string;
 }
+// Anbindung als Quelle bzw. Ziel der Weg-Suche (ADR 0019 Ergänzung): Firewalls mit Eingang bzw.
+// Ausgang, Netze und die geprüfte Adresse (erstes Netz bzw. beliebige Adresse im Internet)
+export interface TraceExitEnd {
+  ref: string; // exit:<id> bzw. router:<IP>, ggf. @<Quellsystem>
+  exit_id: number | null;
+  kind: ExitKind;
+  name: string;
+  label: string; // „Internet ISP-A“
+  manual: boolean; // von Hand erfasst (sonst erkannt)
+  address: string | null; // geprüfte Adresse: IP bzw. Netz
+  address_kind: "net" | "internet" | "unknown" | "given" | null; // given = gewählt (src/dst)
+  nets: string[]; // Netze der Anbindung (die ersten), ohne Default-Route
+  nets_total: number;
+  default: boolean; // Default-Route über die Anbindung
+  given: boolean; // Netze von Hand eingetragen
+  routers: string[];
+  firewalls: { key: string; source_system_id: number; source: string; label: string; interface: string | null; zone: string | null; routers: string[] }[];
+  systems: number[];
+  system: number | null; // gewählte Firewall (@<Quellsystem>)
+  choices: { source_system_id: number; source: string }[]; // alle Firewalls der Anbindung (Auswahl)
+  internet: string | null; // beliebige Adresse im Internet (Test-Adresse) zur Auswahl
+}
 export interface TracePath {
+  via_exit?: boolean; // Ziel ist eine Anbindung: der Weg geht über sie hinaus
+  exit_start?: string; // Quelle ist eine Anbindung an mehreren Firewalls: Start dieses Wegs
   kind?: "active" | "backup"; // aktiv (inkl. ECMP) bzw. Backup-Weg (eine Abweichung)
   deviation?: { hop: number; label: string; reason: string }; // Backup: wo und warum
   parallel?: string[]; // redundant über diese Verbünde paralleler Firewalls
@@ -2463,30 +2487,37 @@ export interface TraceResult {
   // Zonen (0.57.0): Quell- und Zielzone, Absicht zwischen ihnen mit Urteil; null = keine Zonen
   zones?: { src: TraceZone[]; dst: TraceZone[]; intents: TraceZoneIntent[] } | null;
   l2?: { src?: L2Location[]; dst?: L2Location[] }; // Anschluss von Quelle/Ziel (0.64.0)
+  exits?: { src?: TraceExitEnd; dst?: TraceExitEnd }; // Anbindung als Quelle bzw. Ziel
 }
 
 // Name bzw. FQDN -> IP für die Weg-Suche (0.35.0): IPAM, Objekte der Firewalls, VMs; seit
-// 0.38.0 auch Netze (IPAM, Netz-Objekte, Subnetze des Inventars), seitenweise
+// 0.38.0 auch Netze (IPAM, Netz-Objekte, Subnetze des Inventars), seitenweise; dazu
+// Anbindungen als Quelle bzw. Ziel (ADR 0019 Ergänzung, `exit` = Referenz für die Weg-Suche)
 export interface NameHit {
-  ip: string; // Eingabe für die Weg-Suche: IP bzw. bei Netzen das Netz (0.39.0)
+  ip: string; // Eingabe für die Weg-Suche: IP bzw. bei Netzen das Netz (0.39.0); Anbindung: geprüfte Adresse
   name: string | null;
-  kind: "ip" | "ipam" | "object" | "vm" | "net" | "subnet";
-  type: "host" | "net";
+  kind: "ip" | "ipam" | "object" | "vm" | "net" | "subnet" | "exit";
+  type: "host" | "net" | "exit";
   net: string | null; // Netz (CIDR) bei type "net"
   source: string | null;
   detail: string | null;
   also?: string[]; // weitere Namen derselben IP bzw. desselben Netzes
+  exit?: string; // Anbindung: Referenz exit:<id> bzw. router:<IP>
+  exit_kind?: ExitKind;
+  internet?: boolean; // Anbindung: beliebige Adresse im Internet
+  source_system_ids?: number[];
+  shared?: boolean;
 }
 export interface NameResult {
   hits: NameHit[];
   total: number; // mit dem Art-Filter
-  counts: { host: number; net: number };
+  counts: { host: number; net: number; exit?: number };
   capped: boolean; // je Quelle mehr Treffer, als gelesen: genauer suchen
 }
 export const resolveName = (
   tenantId: number,
   q: string,
-  opts: { type?: "host" | "net" | ""; limit?: number; offset?: number } = {},
+  opts: { type?: "host" | "net" | "exit" | ""; limit?: number; offset?: number } = {},
 ) =>
   getJSON<NameResult>(
     `/api/routing/resolve${cq({ tenant_id: tenantId, q: q.trim(), type: opts.type || undefined, limit: opts.limit, offset: opts.offset })}`,
@@ -2610,12 +2641,14 @@ export const fetchRoutes = (opts: {
 export const lookupRoute = (tenantId: number, ip: string) =>
   getJSON<RouteLookup[]>(`/api/routing/lookup${cq({ tenant_id: tenantId, ip: ip.trim() })}`);
 // Weg Hop für Hop: ab der Quelle (dort angeschlossen) bzw. dem Startpunkt (RoutingNode.key)
+// Anbindung als Quelle bzw. Ziel: src_exit/dst_exit (Referenz aus der Namenssuche); src/dst
+// wählen dann ein anderes Netz der Anbindung
 export const traceRoute = (
   tenantId: number,
-  opts: { dst: string; src?: string; start?: string; slack?: number; service?: string },
+  opts: { dst: string; src?: string; start?: string; slack?: number; service?: string; srcExit?: string; dstExit?: string },
 ) =>
   getJSON<TraceResult>(
-    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim(), src: opts.src?.trim() || undefined, start: opts.start || undefined, slack: opts.slack, service: opts.service?.trim() || undefined })}`,
+    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim() || undefined, src: opts.src?.trim() || undefined, start: opts.start || undefined, slack: opts.slack, service: opts.service?.trim() || undefined, src_exit: opts.srcExit || undefined, dst_exit: opts.dstExit || undefined })}`,
   );
 export const fetchPeers = (tenantId: number) => getJSON<TopoPeer[]>(`/api/routing/peers${cq({ tenant_id: tenantId })}`);
 export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha${cq({ tenant_id: tenantId })}`);

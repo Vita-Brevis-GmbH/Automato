@@ -280,6 +280,19 @@ td.nowrap, span.nowrap { white-space: nowrap; }
 .objs .mono { font-size: 12px; white-space: nowrap; }
 /* Weg-Suche (0.78.4): passende Policies hinter der entscheidenden */
 .hop-after { margin-top: 4px; padding-left: 6px; border-left: 2px solid var(--border); }
+/* Weg-Suche (ADR 0019 Ergänzung): Link in neuem Tab, je Hop „mehr“, Details im Seitenpanel */
+.newtab { margin-left: 3px; font-size: 11px; color: var(--faint); text-decoration: none; opacity: .75; }
+.newtab:hover { color: var(--accent); opacity: 1; }
+.hop-more-toggle { font-size: 11px; padding: 0 2px; margin-top: 2px; }
+tr.hop-open > td { border-bottom-color: transparent; }
+tr.hop-more > td { background: var(--surface-2); padding-top: 6px; padding-bottom: 8px; }
+.hop-more-body { display: flex; flex-wrap: wrap; gap: 6px 28px; }
+.hop-facts { flex: 1 1 360px; min-width: 0; }
+.hop-facts-title { font-weight: 600; font-size: 12px; margin-bottom: 2px; }
+.hop-facts .kv.tight { grid-template-columns: 110px 1fr; margin: 0; }
+.rule-facts > div { margin-top: 1px; }
+.drawer-h { font-size: 12px; font-weight: 600; color: var(--muted); margin: 4px 0 8px; letter-spacing: .02em; }
+.exit-end .filterbar { margin-bottom: 0; }
 
 /* Badges / Chips */
 .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: 20px;

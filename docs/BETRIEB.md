@@ -353,6 +353,25 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     VDOM, ACI-VRF), dazu das **Ziel** – für Fehlersuche und die Kontrolle von Arbeiten.
     - **⇄ Richtung tauschen** (0.65.1): Quelle und Ziel tauschen (der Start ergibt sich wieder aus
       der neuen Quelle); war schon gesucht, zeigt die Weg-Suche gleich den Rückweg.
+    - **Details am Weg (0.98.0):** ein Klick auf Policy, Contract, Route, Knoten, Interface, VIP
+      bzw. Virtual Service oder Objekt am Weg öffnet das Detail rechts im Seitenpanel, die
+      Weg-Suche bleibt stehen; „↗“ bzw. Ctrl-/Mittelklick öffnet die Ansicht in einem neuen Tab.
+      „mehr“ in der Spalte # klappt je Hop Ein-/Ausgang mit Zone, Route mit Next-Hops,
+      entscheidende Regel (Interfaces, Quelle, Ziel, Dienst), NAT/SNAT, Load Balancer, Zone und L2
+      auf – je Firewall eines Verbunds. Die Suche steht in der Adresse (`#wege?src=…&dst=…&
+      service=…`): Zurück aus einer anderen Ansicht, Neuladen oder ein weitergegebener Link
+      zeigen sie wieder (neu berechnet).
+    - **Anbindung als Quelle bzw. Ziel (0.98.0):** im Feld z. B. „Internet“, „Anbindung“, den
+      Namen eines Interfaces bzw. einer Firewall tippen und den Treffer unter „Anbindungen“
+      wählen (von Hand erfasste immer, erkannte bei Art, Firewall, Interface bzw. Zone; mit Kunde
+      oben nur an seinen Firewalls). Als Quelle beginnt der Weg an der Firewall der Anbindung
+      mit ihrem Eingang (z. B. wan1) – so zeigt die Weg-Suche, welche Policy Verkehr von dort
+      erlaubt. Geprüft wird das erste Netz der Anbindung als Ganzes bzw. bei Internet eine
+      beliebige Adresse (Test-Adresse aus dem Dokumentationsbereich, „beliebige Adresse im
+      Internet“). Die Karte der Anbindung zeigt Firewalls, Netze und Router; dort ein anderes
+      Netz bzw. eine der Firewalls wählen (mehrere Firewalls = je ein Weg, Verbund als ein Hop).
+      Als Ziel zeigt jeder Weg, ob er über die Anbindung hinausgeht („über die Anbindung“ bzw.
+      Hinweis); das Routing lenkt die Anbindung nicht um.
     - **Quelle und Ziel als Name** (0.35.0): IP, Netz oder Name bzw. FQDN. Ab zwei Zeichen
       schlägt das Feld Treffer vor – DNS-Namen aus dem IPAM (auch nur das erste Label,
       `web01`), Adressobjekte der Firewalls (auch ohne Präfix, `web01` findet `H_web01`;

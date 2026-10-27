@@ -705,7 +705,8 @@ function EntryTable({ entries }: { entries: Record<string, string>[] }) {
 }
 
 // Objekt-Detail wie in der NAT-Sicht: Attribute, Werte, Mitglieder, Befunde und die Regeln; seit
-// 0.95.0 auch aus der Applikations-Doku (`extra`: Knöpfe über dem Detail)
+// 0.95.0 auch aus der Applikations-Doku (`extra`: Knöpfe über dem Detail) und in der Weg-Suche
+// (ADR 0019 Ergänzung)
 export function ObjectDrawer({ id, onClose, onGo, extra }: { id: number; onClose: () => void; onGo?: Go; extra?: ReactNode }) {
   const vdomShown = useVdomShown();
   const [d, setD] = useState<ObjectDetail | null>(null);

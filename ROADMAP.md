@@ -409,11 +409,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.95.0** | Applikations-Doku: Klick auf eine EPG öffnet ihr Detail (statt Sprung zu den Regeln), Objekt-Detail in der Doku, Namen der Gegenstellen als Einstellung des Admins (ADR 0012 Ergänzung 0.95.0) |
 | **0.96.0** | NAT / VIPs: Kette VIP der Firewall → Load Balancer → Server (Liste, Detail, Suche, CSV-Export), VIP-Gruppen der FortiGate, Namenskonvention für VIPs/Virtual Server/IP-Pools (ADR 0027/0016 Ergänzung 0.96.0) |
 | **0.97.0** | L3Outs: Firewall führend – Firewall hinter jedem L3Out (abgeleitet bzw. von Hand), Zuordnung der Gegenstellen nach dem Routing der Firewall, Contracts zu externen EPGs nur als Hilfs-Contract an der Firewall-Regel, unspezifische Zugriffe nach L3Out geordnet (ADR 0034) |
+| **0.98.0** | Weg-Suche: Details am Weg im Seitenpanel bzw. neuen Tab, „mehr“ je Hop, Suche in der URL, Anbindung als Quelle bzw. Ziel (ADR 0019 Ergänzung 0.98.0) |
 
-### Nächste Arbeiten (Stand 0.97.0)
+### Nächste Arbeiten (Stand 0.98.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.97.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.98.0.
 
 **Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
 
@@ -426,8 +427,8 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | Doku nach Kategorien: Namen von Systemen ausserhalb des Tenants – Einstellung des Global-Admins | **umgesetzt in 0.95.0** (Mandant „Namen der Gegenstellen“, nie für Kunden-Benutzer) |
 | Unspezifische Zugriffe nach dem L3Out ordnen, über den sie hereinkommen | **umgesetzt in 0.97.0** |
 | NAT / VIPs: VIP der Internet-Firewall mit dem VIP des Load Balancers verknüpfen (externe IP → Server) | **umgesetzt in 0.96.0** (Kette in Liste/Detail/Suche, CSV-Export, VIP-Gruppen) |
-| Weg-Suche: mehr Infos am Pfad ohne die Suche zu verlassen (Detail, neuer Tab) | in Arbeit |
-| Weg-Suche von bzw. zu einer Anbindung | in Arbeit |
+| Weg-Suche: mehr Infos am Pfad ohne die Suche zu verlassen (Detail, neuer Tab) | **umgesetzt in 0.98.0** (Seitenpanel, „↗“ neuer Tab, „mehr“ je Hop, Suche in der URL) |
+| Weg-Suche von bzw. zu einer Anbindung | **umgesetzt in 0.98.0** (`src_exit`/`dst_exit`, Start mit dem Eingang der Firewall) |
 | NAT / VIPs: Namen gegen die Namenskonvention prüfen | **umgesetzt in 0.96.0** (Präfix je Typ VIP/Virtual Server/IP-Pool) |
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4

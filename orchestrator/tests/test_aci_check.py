@@ -232,7 +232,7 @@ def test_suche_nach_netzen(client):
     assert (net["type"], net["kind"], net["name"], net["net"], net["ip"]) == (
         "net", "object", "N_server", "10.20.0.0/24", "10.20.0.0/24",
     )  # fmt: skip
-    assert out["counts"] == {"host": 0, "net": 1} and out["total"] == 1
+    assert out["counts"] == {"host": 0, "net": 1, "exit": 0} and out["total"] == 1
 
     # ACI-EPG über Tenant/AP/EPG
     (epg,) = _find(client, tid, "EPG_db")["hits"]
@@ -251,7 +251,7 @@ def test_suche_nach_netzen(client):
 
     # Anfang einer Adresse: Hosts und Netze, getrennt filterbar
     out = _find(client, tid, "10.20.0.")
-    assert out["counts"] == {"host": 2, "net": 1}  # app01 (mit H_app01), H_legacy01
+    assert out["counts"] == {"host": 2, "net": 1, "exit": 0}  # app01 (mit H_app01), H_legacy01
     nets = _find(client, tid, "10.20.0.", type="net")
     assert [h["net"] for h in nets["hits"]] == ["10.20.0.0/24"] and nets["total"] == 1
 

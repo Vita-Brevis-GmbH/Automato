@@ -7,6 +7,32 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.98.0 – 2026-10-27
+
+Weg-Suche: Details am Weg und Anbindungen als Quelle bzw. Ziel (Befunde des Anwenders aus dem
+Test 2026-10-27; ADR 0019 Ergänzung 0.98.0).
+
+- **Suche in der URL** (`#wege?src=…&dst=…&service=…`, dazu `start`, `slack`,
+  `src_name`/`dst_name`, `src_exit`/`dst_exit`): Zurück, Neuladen bzw. ein neuer Tab stellen die
+  Suche wieder her und rechnen neu; Links aus der Applikations-Doku unverändert (`svc` als Alias).
+- **Details am Weg im Seitenpanel** statt eines Sprungs: Policy/Contract (`RuleDetailDrawer`),
+  VIP/Virtual Service (`NatDrawer`), Objekt der Policy (`ObjectDrawer`), Route (wirksam mit
+  Next-Hops, Policy-Routen, Backup, alle Routen zum Ziel im Kontext), Knoten/Interface mit
+  Inventar; jeder Link mit „↗“ (neuer Tab), Ctrl-/Mittelklick wie im Browser.
+- **Je Hop „mehr“:** Ein-/Ausgang mit Zone, Route, entscheidende Regel mit
+  Interfaces/Quelle/Ziel/Dienst, NAT/SNAT/Load Balancer, Zone, L2 – je Firewall eines Verbunds.
+- **Anbindungen in der Namenssuche** (`GET /routing/resolve`, Art `exit`, Gruppe „Anbindungen“):
+  von Hand erfasste immer, erkannte bei Art, Firewall, Interface bzw. Zone; mit Kunde oben nur
+  an seinen Firewalls.
+- **Anbindung als Quelle** (`GET /routing/trace?src_exit=`, `store/exit_ends.py`): Start an
+  ihren Firewalls mit ihrem Eingang (Policies mit Eingang z. B. wan1 entscheiden); Quelle =
+  erstes Netz der Anbindung als Ganzes, bei Default-Route/Internet eine Test-Adresse aus dem
+  Dokumentationsbereich („beliebige Adresse im Internet“); `paths.trace` mit `entries`.
+- **Anbindung als Ziel** (`dst_exit=`): Ziel aus ihren Netzen, je Weg „über die Anbindung“
+  (`via_exit`) bzw. ein Hinweis.
+- Mehrere Firewalls einer Anbindung: je ein Weg („Variante ab …“), im Verbund ein Hop; Firewall
+  (`@<Quellsystem>`) und anderes Netz in der Karte der Anbindung wählbar.
+
 ## 0.97.0 – 2026-10-27
 
 L3Outs: Firewall führend (Befunde des Anwenders aus dem Test 2026-10-27; ADR 0034).
