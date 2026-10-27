@@ -23,6 +23,7 @@ import {
   System,
   VmRow,
 } from "./api";
+import { L } from "./i18n";
 import {
   CATEGORY_LABEL,
   FAMILY_LABEL,
@@ -52,16 +53,16 @@ type Tab =
   | "portgroups";
 
 const TABS: { key: Tab; label: string; category?: string }[] = [
-  { key: "addr", label: "Adressobjekte", category: "address,vip,vip_target,ippool" },
-  { key: "groups", label: "Gruppen", category: "address_group,service_group" },
+  { key: "addr", label: L("Adressobjekte", "Address objects"), category: "address,vip,vip_target,ippool" },
+  { key: "groups", label: L("Gruppen", "Groups"), category: "address_group,service_group" },
   { key: "services", label: "Services", category: "service" },
-  { key: "subnets", label: "Subnetze" },
+  { key: "subnets", label: L("Subnetze", "Subnets") },
   { key: "vlans", label: "VLANs" },
   { key: "ports", label: "Ports" },
-  { key: "devices", label: "Geräte" },
+  { key: "devices", label: L("Geräte", "Devices") },
   { key: "vrfs", label: "VRFs" },
   { key: "vms", label: "VMs" },
-  { key: "portgroups", label: "Portgruppen" },
+  { key: "portgroups", label: L("Portgruppen", "Port groups") },
 ];
 
 const INVENTORY_TABS: Tab[] = ["subnets", "vlans", "ports", "devices", "vrfs"];
@@ -130,8 +131,13 @@ export default function Objects({
   if (tenantId === null) {
     return (
       <>
-        <PageHead title="Objekte & Inventar" />
-        <Note>Bitte oben einen Mandanten wählen – Objekte und Inventar werden je Mandant angezeigt.</Note>
+        <PageHead title={L("Objekte & Inventar", "Objects & inventory")} />
+        <Note>
+          {L(
+            "Bitte oben einen Mandanten wählen – Objekte und Inventar werden je Mandant angezeigt.",
+            "Please select a tenant at the top – objects and inventory are shown per tenant.",
+          )}
+        </Note>
       </>
     );
   }
@@ -142,9 +148,17 @@ export default function Objects({
 
   return (
     <>
-      <PageHead title="Objekte & Inventar">
-        Firewall-Objekte von „{tenantLabel}“ so, wie sie auf dem Gerät stehen, mit Referenzdaten aus dem IPAM
-        (DDI/NetBox) – dazu das Netzinventar aus FortiGate und APIC. Rein lesend.
+      <PageHead title={L("Objekte & Inventar", "Objects & inventory")}>
+        {L(
+          <>
+            Firewall-Objekte von „{tenantLabel}“ so, wie sie auf dem Gerät stehen, mit Referenzdaten aus dem IPAM
+            (DDI/NetBox) – dazu das Netzinventar aus FortiGate und APIC. Rein lesend.
+          </>,
+          <>
+            Firewall objects of “{tenantLabel}” as they are on the device, with reference data from the IPAM
+            (DDI/NetBox) – plus the network inventory from FortiGate and APIC. Read-only.
+          </>,
+        )}
       </PageHead>
 
       <div className="tabbar sticky">
@@ -161,7 +175,9 @@ export default function Objects({
             <Icon name="search" />
           </span>
           <input
-            placeholder={current.category ? "Name, Wert oder Kommentar…" : "Suche…"}
+            placeholder={
+              current.category ? L("Name, Wert oder Kommentar…", "Name, value or comment…") : L("Suche…", "Search…")
+            }
             value={q}
             onChange={(e) => {
               setQ(e.target.value);
@@ -170,7 +186,7 @@ export default function Objects({
           />
         </div>
         <select className="sel" value={source} onChange={(e) => setSource(e.target.value)}>
-          <option value="">Quelle: alle</option>
+          <option value="">{L("Quelle: alle", "Source: all")}</option>
           {systems.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -178,9 +194,17 @@ export default function Objects({
           ))}
         </select>
         {pinned && current.category && (
-          <span className="chip info" title="Liste auf das geöffnete Objekt gefiltert">
-            nur „{pinned.name}“
-            <button className="linkbtn" style={{ marginLeft: 6 }} aria-label="Filter aufheben" onClick={() => setPinned(null)}>
+          <span
+            className="chip info"
+            title={L("Liste auf das geöffnete Objekt gefiltert", "List filtered to the opened object")}
+          >
+            {L(<>nur „{pinned.name}“</>, <>only “{pinned.name}”</>)}
+            <button
+              className="linkbtn"
+              style={{ marginLeft: 6 }}
+              aria-label={L("Filter aufheben", "Clear filter")}
+              onClick={() => setPinned(null)}
+            >
               ✕
             </button>
           </span>
@@ -190,9 +214,12 @@ export default function Objects({
             className="sel"
             value={objType}
             onChange={(e) => setObjType(e.target.value)}
-            title="Typ des Objekts wie auf dem Gerät – z. B. dynamische Objekte aus SDN-Connectoren (FortiManager/ACI)"
+            title={L(
+              "Typ des Objekts wie auf dem Gerät – z. B. dynamische Objekte aus SDN-Connectoren (FortiManager/ACI)",
+              "Object type as on the device – e.g. dynamic objects from SDN connectors (FortiManager/ACI)",
+            )}
           >
-            <option value="">Typ: alle</option>
+            <option value="">{L("Typ: alle", "Type: all")}</option>
             {Object.entries(types)
               .sort(([a], [b]) => typeLabel(a).localeCompare(typeLabel(b)))
               .map(([t, n]) => (
@@ -205,16 +232,19 @@ export default function Objects({
         {canFilterIssues && (
           <button className={`toggle ${issuesOnly ? "on" : ""}`} onClick={() => setIssuesOnly((v) => !v)}>
             <span className="dot y" />
-            nur Abweichungen
+            {L("nur Abweichungen", "deviations only")}
           </button>
         )}
         {(tab === "services" || tab === "groups") && (
           <button
             className={`toggle ${hidePredefined ? "on" : ""}`}
             onClick={() => setHidePredefined((v) => !v)}
-            title="Standardobjekte des Herstellers (FortiOS-Services wie HTTPS/ALL, ACI-Filter in common) – nicht nach Konvention benannt, nicht verwenden; sonst zuunterst"
+            title={L(
+              "Standardobjekte des Herstellers (FortiOS-Services wie HTTPS/ALL, ACI-Filter in common) – nicht nach Konvention benannt, nicht verwenden; sonst zuunterst",
+              "Predefined objects of the vendor (FortiOS services such as HTTPS/ALL, ACI filters in common) – not named by convention, do not use; otherwise at the bottom",
+            )}
           >
-            Standardobjekte ausblenden
+            {L("Standardobjekte ausblenden", "Hide predefined objects")}
           </button>
         )}
       </div>
@@ -265,17 +295,17 @@ function tabOf(category: string): Tab | null {
 
 // Typ eines Objekts wie auf dem Gerät, lesbar (FortiGate `type`, ACI-Filter)
 const TYPE_LABEL: Record<string, string> = {
-  "": "ohne Typ",
-  ipmask: "IP / Netz",
-  iprange: "Bereich",
+  "": L("ohne Typ", "no type"),
+  ipmask: L("IP / Netz", "IP / network"),
+  iprange: L("Bereich", "Range"),
   fqdn: "FQDN",
   "wildcard-fqdn": "Wildcard-FQDN",
   geography: "Geo",
-  dynamic: "dynamisch (SDN-Connector)",
+  dynamic: L("dynamisch (SDN-Connector)", "dynamic (SDN connector)"),
   mac: "MAC",
-  "interface-subnet": "Interface-Subnetz",
-  vzFilter: "ACI-Filter",
-  "static-nat": "VIP (statisch)",
+  "interface-subnet": L("Interface-Subnetz", "Interface subnet"),
+  vzFilter: L("ACI-Filter", "ACI filter"),
+  "static-nat": L("VIP (statisch)", "VIP (static)"),
   "server-load-balance": "Virtual Server",
 };
 export const typeLabel = (t: string | null | undefined) => TYPE_LABEL[t ?? ""] ?? t ?? "";
@@ -298,19 +328,19 @@ export function Pager({
   onOffset: (o: number) => void;
   pageSize?: number;
 }) {
-  if (total <= pageSize) return <div className="pager">{total} Einträge</div>;
+  if (total <= pageSize) return <div className="pager">{L(<>{total} Einträge</>, <>{total} entries</>)}</div>;
   return (
     <div className="pager">
-      {offset + 1}–{Math.min(offset + pageSize, total)} von {total}
+      {offset + 1}–{Math.min(offset + pageSize, total)} {L("von", "of")} {total}
       <button className="btn btn-ghost btn-sm" disabled={offset === 0} onClick={() => onOffset(offset - pageSize)}>
-        Zurück
+        {L("Zurück", "Back")}
       </button>
       <button
         className="btn btn-ghost btn-sm"
         disabled={offset + pageSize >= total}
         onClick={() => onOffset(offset + pageSize)}
       >
-        Weiter
+        {L("Weiter", "Next")}
       </button>
     </div>
   );
@@ -394,29 +424,40 @@ function ObjectTable({
 
   return (
     <>
-      <ErrorBox error={error} prefix="Objekte laden" />
+      <ErrorBox error={error} prefix={L("Objekte laden", "Loading objects")} />
       <div className="card">
         <div className="card-body scroll">
           {data === null ? (
-            <Loading>Lade Objekte…</Loading>
+            <Loading>{L("Lade Objekte…", "Loading objects…")}</Loading>
           ) : data.rows.length === 0 ? (
-            <Empty title={query || issuesOnly ? "Keine Treffer" : "Noch keine Objekte"}>
+            <Empty
+              title={query || issuesOnly ? L("Keine Treffer", "No matches") : L("Noch keine Objekte", "No objects yet")}
+            >
               {query || issuesOnly
-                ? "Filter oder Suche anpassen."
-                : "Objekte erscheinen nach dem ersten Lauf einer Firewall (FortiGate)."}
+                ? L("Filter oder Suche anpassen.", "Adjust the filter or search.")
+                : L(
+                    "Objekte erscheinen nach dem ersten Lauf einer Firewall (FortiGate).",
+                    "Objects appear after the first run of a firewall (FortiGate).",
+                  )}
             </Empty>
           ) : (
             <table>
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Art</th>
-                  <th>{group ? "Mitglieder" : service ? "Protokoll / Ports" : "Werte / Referenz"}</th>
-                  {service && <th>Attribute</th>}
-                  {!group && <th>In Gruppe</th>}
-                  <th className="num">Regeln</th>
-                  <th>Quelle</th>
-                  <th>Befunde</th>
+                  <th>{L("Art", "Kind")}</th>
+                  <th>
+                    {group
+                      ? L("Mitglieder", "Members")
+                      : service
+                        ? L("Protokoll / Ports", "Protocol / ports")
+                        : L("Werte / Referenz", "Values / reference")}
+                  </th>
+                  {service && <th>{L("Attribute", "Attributes")}</th>}
+                  {!group && <th>{L("In Gruppe", "In group")}</th>}
+                  <th className="num">{L("Regeln", "Rules")}</th>
+                  <th>{L("Quelle", "Source")}</th>
+                  <th>{L("Befunde", "Findings")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -425,10 +466,13 @@ function ObjectTable({
                   {o.predefined && !data.rows[i - 1]?.predefined && (
                     <tr className="group-row">
                       <td colSpan={8}>
-                        <b>Standardobjekte des Herstellers</b>
+                        <b>{L("Standardobjekte des Herstellers", "Predefined objects of the vendor")}</b>
                         <span className="faint">
                           {" "}
-                          – FortiOS-Services bzw. ACI-Filter in common: nicht nach Konvention benannt, nicht verwenden
+                          {L(
+                            "– FortiOS-Services bzw. ACI-Filter in common: nicht nach Konvention benannt, nicht verwenden",
+                            "– FortiOS services or ACI filters in common: not named by convention, do not use",
+                          )}
                           {data.predefined ? ` (${data.predefined})` : ""}
                         </span>
                       </td>
@@ -438,7 +482,14 @@ function ObjectTable({
                     <td>
                       <b className="mono">{o.name}</b>
                       {o.family && !service && (
-                        <span className="chip" style={{ marginLeft: 6 }} title="Adressfamilie (FortiGate führt IPv4 und IPv6 getrennt)">
+                        <span
+                          className="chip"
+                          style={{ marginLeft: 6 }}
+                          title={L(
+                            "Adressfamilie (FortiGate führt IPv4 und IPv6 getrennt)",
+                            "Address family (FortiGate keeps IPv4 and IPv6 separate)",
+                          )}
+                        >
                           {FAMILY_LABEL[o.family] ?? o.family}
                         </span>
                       )}
@@ -457,7 +508,7 @@ function ObjectTable({
                             onGo("nat", { q: o.name });
                           }}
                         >
-                          in NAT / VIPs öffnen
+                          {L("in NAT / VIPs öffnen", "open in NAT / VIPs")}
                         </button>
                       )}
                       {/* VIP-Ziele (0.12.0): internes Ziel einer VIP bzw. Adressobjekt hinter einer VIP */}
@@ -466,13 +517,16 @@ function ObjectTable({
                         <div key={vip}>
                           <button
                             className="chip linkchip local"
-                            title="Ziel dieser VIP – die Regeln der VIP zählen mit; Klick öffnet NAT / VIPs"
+                            title={L(
+                              "Ziel dieser VIP – die Regeln der VIP zählen mit; Klick öffnet NAT / VIPs",
+                              "Target of this VIP – the rules of the VIP are counted; click opens NAT / VIPs",
+                            )}
                             onClick={(e) => {
                               e.stopPropagation();
                               onGo?.("nat", { q: vip });
                             }}
                           >
-                            Ziel von VIP {vip}
+                            {L(<>Ziel von VIP {vip}</>, <>Target of VIP {vip}</>)}
                           </button>
                         </div>
                       ))}
@@ -499,7 +553,10 @@ function ObjectTable({
                       {onGo && o.used_in_rules > 0 ? (
                         <button
                           className="chip local linkchip"
-                          title="Regeln mit diesem Objekt anzeigen (direkt und über Gruppen)"
+                          title={L(
+                            "Regeln mit diesem Objekt anzeigen (direkt und über Gruppen)",
+                            "Show rules with this object (directly and via groups)",
+                          )}
                           onClick={(e) => {
                             e.stopPropagation();
                             onGo("regeln", objectLink(o));
@@ -521,8 +578,14 @@ function ObjectTable({
                     </td>
                     <td>
                       {o.predefined && !o.issues.length ? (
-                        <span className="chip na" title="Standardobjekt des Herstellers – nicht nach der Namenskonvention benannt; nicht verwenden">
-                          Standard
+                        <span
+                          className="chip na"
+                          title={L(
+                            "Standardobjekt des Herstellers – nicht nach der Namenskonvention benannt; nicht verwenden",
+                            "Predefined object of the vendor – not named by the naming convention; do not use",
+                          )}
+                        >
+                          {L("Standard", "Predefined")}
                         </span>
                       ) : (
                         <IssueChips issues={o.issues} />
@@ -544,24 +607,24 @@ function ObjectTable({
 
 // Service-Attribute (FortiGate) bzw. ACI-Filter mit Klartext-Bezeichnung
 const ATTR_LABEL: Record<string, string> = {
-  protocol: "Protokoll",
-  "protocol-number": "IP-Protokoll",
-  icmptype: "ICMP-Typ",
-  icmpcode: "ICMP-Code",
-  "tcp-portrange": "TCP-Ports",
-  "udp-portrange": "UDP-Ports",
-  "sctp-portrange": "SCTP-Ports",
-  category: "Kategorie",
-  iprange: "nur Ziel-IP",
-  fqdn: "nur Ziel-FQDN",
+  protocol: L("Protokoll", "Protocol"),
+  "protocol-number": L("IP-Protokoll", "IP protocol"),
+  icmptype: L("ICMP-Typ", "ICMP type"),
+  icmpcode: L("ICMP-Code", "ICMP code"),
+  "tcp-portrange": L("TCP-Ports", "TCP ports"),
+  "udp-portrange": L("UDP-Ports", "UDP ports"),
+  "sctp-portrange": L("SCTP-Ports", "SCTP ports"),
+  category: L("Kategorie", "Category"),
+  iprange: L("nur Ziel-IP", "destination IP only"),
+  fqdn: L("nur Ziel-FQDN", "destination FQDN only"),
   "session-ttl": "Session-TTL (s)",
   "tcp-halfclose-timer": "TCP-Halfclose (s)",
   "tcp-halfopen-timer": "TCP-Halfopen (s)",
   "tcp-timewait-timer": "TCP-Timewait (s)",
   "tcp-rst-timer": "TCP-RST (s)",
   "udp-idle-timer": "UDP-Idle (s)",
-  "check-reset-range": "Reset-Prüfung",
-  helper: "Protokoll-Helper",
+  "check-reset-range": L("Reset-Prüfung", "Reset check"),
+  helper: L("Protokoll-Helper", "Protocol helper"),
   proxy: "Proxy",
   "app-service-type": "App-Service",
   tenant: "ACI-Tenant",
@@ -575,7 +638,7 @@ function fmtPorts(v: unknown): string {
     .filter(Boolean)
     .map((p) => {
       const [dst, src] = p.split(":");
-      return src ? `${dst} (Quellport ${src})` : dst;
+      return src ? L(`${dst} (Quellport ${src})`, `${dst} (source port ${src})`) : dst;
     })
     .join(", ");
 }
@@ -592,10 +655,10 @@ function AttrSummary({ attrs }: { attrs?: Record<string, unknown> }) {
   for (const k of ["tcp-portrange", "udp-portrange", "sctp-portrange"])
     if (a[k] && String(a[k]).includes(":")) bits.push(`${ATTR_LABEL[k]} ${fmtPorts(a[k])}`);
   if (a.icmptype !== undefined) bits.push(`ICMP ${a.icmptype}${a.icmpcode !== undefined ? `/${a.icmpcode}` : ""}`);
-  if (a["protocol-number"]) bits.push(`IP-Protokoll ${a["protocol-number"]}`);
-  if (a.iprange) bits.push(`nur Ziel ${a.iprange}`);
-  if (a.fqdn) bits.push(`nur Ziel ${a.fqdn}`);
-  if (Array.isArray(a.entries)) bits.push(`${a.entries.length} Einträge`);
+  if (a["protocol-number"]) bits.push(L(`IP-Protokoll ${a["protocol-number"]}`, `IP protocol ${a["protocol-number"]}`));
+  if (a.iprange) bits.push(L(`nur Ziel ${a.iprange}`, `destination only ${a.iprange}`));
+  if (a.fqdn) bits.push(L(`nur Ziel ${a.fqdn}`, `destination only ${a.fqdn}`));
+  if (Array.isArray(a.entries)) bits.push(L(`${a.entries.length} Einträge`, `${a.entries.length} entries`));
   if (a.proxy) bits.push("Proxy");
   return bits.length ? <span className="faint">{bits.join(" · ")}</span> : <Dash />;
 }
@@ -607,12 +670,12 @@ function EntryTable({ entries }: { entries: Record<string, string>[] }) {
     <table>
       <thead>
         <tr>
-          <th>Eintrag</th>
+          <th>{L("Eintrag", "Entry")}</th>
           <th>Ether</th>
-          <th>Protokoll</th>
-          <th>Zielport</th>
-          <th>Quellport</th>
-          <th>weitere</th>
+          <th>{L("Protokoll", "Protocol")}</th>
+          <th>{L("Zielport", "Destination port")}</th>
+          <th>{L("Quellport", "Source port")}</th>
+          <th>{L("weitere", "other")}</th>
         </tr>
       </thead>
       <tbody>
@@ -629,7 +692,7 @@ function EntryTable({ entries }: { entries: Record<string, string>[] }) {
                 e.tcpRules ? `TCP ${e.tcpRules}` : null,
                 e.icmpv4T ? `ICMP ${e.icmpv4T}` : null,
                 e.icmpv6T ? `ICMPv6 ${e.icmpv6T}` : null,
-                e.applyToFrag === "yes" ? "Fragmente" : null,
+                e.applyToFrag === "yes" ? L("Fragmente", "fragments") : null,
               ]
                 .filter(Boolean)
                 .join(" · ") || "–"}
@@ -655,7 +718,7 @@ function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; 
   const entries = Array.isArray(d?.attrs?.entries) ? (d!.attrs!.entries as Record<string, string>[]) : [];
   return (
     <Drawer
-      title={d?.name ?? "Objekt"}
+      title={d?.name ?? L("Objekt", "Object")}
       sub={
         d
           ? `${CATEGORY_LABEL[d.category] ?? d.category}${d.obj_type ? ` · ${d.obj_type}` : ""} · ${d.source ?? ""}` +
@@ -671,13 +734,13 @@ function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; 
           <dl className="kv">
             {d.comment && (
               <>
-                <dt>Kommentar</dt>
+                <dt>{L("Kommentar", "Comment")}</dt>
                 <dd>{d.comment}</dd>
               </>
             )}
             {!d.members.length && (
               <>
-                <dt>{service ? "Protokoll / Ports" : "Werte"}</dt>
+                <dt>{service ? L("Protokoll / Ports", "Protocol / ports") : L("Werte", "Values")}</dt>
                 <dd>
                   <ValueList values={d.values} service={service} />
                 </dd>
@@ -703,15 +766,15 @@ function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; 
             )}
             {d.site && (
               <>
-                <dt>Standort</dt>
+                <dt>{L("Standort", "Site")}</dt>
                 <dd>
                   <SiteChip site={d.site} from="name" />
                 </dd>
               </>
             )}
-            <dt>In Gruppe</dt>
+            <dt>{L("In Gruppe", "In group")}</dt>
             <dd>{d.member_of.length ? <Members names={d.member_of} /> : <Dash />}</dd>
-            <dt>Befunde</dt>
+            <dt>{L("Befunde", "Findings")}</dt>
             <dd>
               <IssueChips issues={d.issues} />
             </dd>
@@ -721,14 +784,18 @@ function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; 
 
           {entries.length > 0 && (
             <>
-              <div className="sub-h">Filter-Einträge ({entries.length})</div>
+              <div className="sub-h">
+                {L(<>Filter-Einträge ({entries.length})</>, <>Filter entries ({entries.length})</>)}
+              </div>
               <EntryTable entries={entries} />
             </>
           )}
 
           {d.members_detail.length > 0 && (
             <>
-              <div className="sub-h">Mitglieder ({d.members_detail.length})</div>
+              <div className="sub-h">
+                {L(<>Mitglieder ({d.members_detail.length})</>, <>Members ({d.members_detail.length})</>)}
+              </div>
               <table>
                 <tbody>
                   {d.members_detail.map((m) => (
@@ -738,7 +805,7 @@ function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; 
                         {m.comment && <div className="faint">{m.comment}</div>}
                       </td>
                       <td className="faint">
-                        {m.category ? (CATEGORY_LABEL[m.category] ?? m.category) : "nicht gelesen"}
+                        {m.category ? (CATEGORY_LABEL[m.category] ?? m.category) : L("nicht gelesen", "not read")}
                         {m.family ? ` · ${FAMILY_LABEL[m.family] ?? m.family}` : ""}
                       </td>
                       <td className="mono">{m.values.join(", ") || "–"}</td>
@@ -750,25 +817,30 @@ function ObjectDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; 
           )}
 
           <div className="sub-h" style={{ display: "flex", alignItems: "center" }}>
-            Firewall-Regeln ({d.rule_count})
+            {L(<>Firewall-Regeln ({d.rule_count})</>, <>Firewall rules ({d.rule_count})</>)}
             <div style={{ flex: 1 }} />
             {d.rule_count > 0 && onGo && (
               <button className="btn btn-ghost btn-sm" onClick={() => onGo("regeln", objectLink(d))}>
-                In Regeln anzeigen
+                {L("In Regeln anzeigen", "Show in rules")}
               </button>
             )}
           </div>
           {d.rules.length === 0 ? (
-            <div className="faint">Keine Regel verwendet dieses Objekt (auch nicht über eine Gruppe).</div>
+            <div className="faint">
+              {L(
+                "Keine Regel verwendet dieses Objekt (auch nicht über eine Gruppe).",
+                "No rule uses this object (not even via a group).",
+              )}
+            </div>
           ) : (
             <table>
               <thead>
                 <tr>
-                  <th>Regel</th>
-                  <th>Aktion</th>
-                  <th>Quelle</th>
-                  <th>Ziel</th>
-                  <th>Dienste</th>
+                  <th>{L("Regel", "Rule")}</th>
+                  <th>{L("Aktion", "Action")}</th>
+                  <th>{L("Quelle", "Source")}</th>
+                  <th>{L("Ziel", "Destination")}</th>
+                  <th>{L("Dienste", "Services")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -805,7 +877,11 @@ function Members({ names }: { names: string[] }) {
           {n}
         </span>
       ))}
-      {names.length > shown.length && <span className="faint">+{names.length - shown.length} weitere</span>}
+      {names.length > shown.length && (
+        <span className="faint">
+          {L(<>+{names.length - shown.length} weitere</>, <>+{names.length - shown.length} more</>)}
+        </span>
+      )}
     </div>
   );
 }
@@ -813,8 +889,8 @@ function Members({ names }: { names: string[] }) {
 const cell = (v: ReactNode) => (v === null || v === undefined || v === "" ? <Dash /> : v);
 
 function IpamCell({ info, vlan }: { info: PrefixInfo | null; vlan?: number | null }) {
-  if (!info) return <span className="faint">keine Quelle</span>;
-  if (!info.found) return <span className="chip crit">fehlt in {info.source}</span>;
+  if (!info) return <span className="faint">{L("keine Quelle", "no source")}</span>;
+  if (!info.found) return <span className="chip crit">{L(<>fehlt in {info.source}</>, <>missing in {info.source}</>)}</span>;
   const vlanDiff = vlan != null && info.vlan != null && vlan !== info.vlan;
   return (
     <div className="refline">
@@ -887,14 +963,14 @@ function InventoryTable({
           <table>
             <thead>
               <tr>
-                <th>Subnetz</th>
+                <th>{L("Subnetz", "Subnet")}</th>
                 <th>Gateway</th>
-                <th>Kontext</th>
+                <th>{L("Kontext", "Context")}</th>
                 <th>VRF</th>
                 <th>VLAN</th>
-                <th>IPAM (führend)</th>
-                <th>Anreicherung</th>
-                <th>Quelle</th>
+                <th>{L("IPAM (führend)", "IPAM (leading)")}</th>
+                <th>{L("Anreicherung", "Enrichment")}</th>
+                <th>{L("Quelle", "Source")}</th>
               </tr>
             </thead>
             <tbody>
@@ -907,10 +983,13 @@ function InventoryTable({
                       <div>
                         <button
                           className="linkbtn"
-                          title="Firewall-Regeln und Contracts, deren Quelle oder Ziel sich mit dem Subnetz überschneidet"
+                          title={L(
+                            "Firewall-Regeln und Contracts, deren Quelle oder Ziel sich mit dem Subnetz überschneidet",
+                            "Firewall rules and contracts whose source or destination overlaps with the subnet",
+                          )}
                           onClick={() => onGo("regeln", { net: s.prefix })}
                         >
-                          Regeln im Subnetz
+                          {L("Regeln im Subnetz", "Rules in the subnet")}
                         </button>
                       </div>
                     )}
@@ -953,10 +1032,10 @@ function InventoryTable({
               <tr>
                 <th className="num">VLAN</th>
                 <th>Name</th>
-                <th>Gruppe</th>
+                <th>{L("Gruppe", "Group")}</th>
                 <th>EPGs</th>
-                <th>Beschreibung</th>
-                <th>Quelle</th>
+                <th>{L("Beschreibung", "Description")}</th>
+                <th>{L("Quelle", "Source")}</th>
               </tr>
             </thead>
             <tbody>
@@ -988,14 +1067,14 @@ function InventoryTable({
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Rolle</th>
-                <th>Modell</th>
-                <th>Seriennummer</th>
+                <th>{L("Rolle", "Role")}</th>
+                <th>{L("Modell", "Model")}</th>
+                <th>{L("Seriennummer", "Serial number")}</th>
                 <th>Node</th>
-                <th>Mgmt-IP</th>
+                <th>{L("Mgmt-IP", "Mgmt IP")}</th>
                 <th>Version</th>
-                <th>Standort</th>
-                <th>Quelle</th>
+                <th>{L("Standort", "Site")}</th>
+                <th>{L("Quelle", "Source")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1026,7 +1105,7 @@ function InventoryTable({
             <thead>
               <tr>
                 <th>VRF</th>
-                <th>Quelle</th>
+                <th>{L("Quelle", "Source")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1049,16 +1128,21 @@ function InventoryTable({
 
   return (
     <>
-      <ErrorBox error={error} prefix="Inventar laden" />
+      <ErrorBox error={error} prefix={L("Inventar laden", "Loading inventory")} />
       <div className="card">
         <div className="card-body scroll">
           {rows === null ? (
-            <Loading>Lade Inventar…</Loading>
+            <Loading>{L("Lade Inventar…", "Loading inventory…")}</Loading>
           ) : page.length === 0 ? (
-            <Empty title={query || issuesOnly ? "Keine Treffer" : "Noch kein Inventar"}>
+            <Empty
+              title={query || issuesOnly ? L("Keine Treffer", "No matches") : L("Noch kein Inventar", "No inventory yet")}
+            >
               {query || issuesOnly
-                ? "Filter oder Suche anpassen."
-                : "Das Netzinventar erscheint nach dem ersten Lauf einer FortiGate oder eines APIC."}
+                ? L("Filter oder Suche anpassen.", "Adjust the filter or search.")
+                : L(
+                    "Das Netzinventar erscheint nach dem ersten Lauf einer FortiGate oder eines APIC.",
+                    "The network inventory appears after the first run of a FortiGate or an APIC.",
+                  )}
             </Empty>
           ) : (
             table
@@ -1071,9 +1155,9 @@ function InventoryTable({
 }
 
 const POWER: Record<string, [string, string]> = {
-  poweredOn: ["ok", "an"],
-  poweredOff: ["na", "aus"],
-  suspended: ["warn", "pausiert"],
+  poweredOn: ["ok", L("an", "on")],
+  poweredOff: ["na", L("aus", "off")],
+  suspended: ["warn", L("pausiert", "suspended")],
 };
 
 // VMs aus dem vCenter (ADR 0017): NICs mit Portgruppe → EPG, IPs mit IPAM-Abgleich
@@ -1100,14 +1184,19 @@ function VmTable({ tenantId, sourceId, q, onGo }: { tenantId: number; sourceId: 
   }, [tenantId, sourceId, query, offset]);
   return (
     <>
-      <ErrorBox error={error} prefix="VMs laden" />
+      <ErrorBox error={error} prefix={L("VMs laden", "Loading VMs")} />
       <div className="card">
         <div className="card-body scroll">
           {data === null ? (
-            <Loading>Lade VMs…</Loading>
+            <Loading>{L("Lade VMs…", "Loading VMs…")}</Loading>
           ) : data.rows.length === 0 ? (
-            <Empty title={query ? "Keine Treffer" : "Noch keine VMs"}>
-              {query ? "Suche anpassen." : "VMs erscheinen nach dem ersten Lauf eines vCenter-Quellsystems (VMware)."}
+            <Empty title={query ? L("Keine Treffer", "No matches") : L("Noch keine VMs", "No VMs yet")}>
+              {query
+                ? L("Suche anpassen.", "Adjust the search.")
+                : L(
+                    "VMs erscheinen nach dem ersten Lauf eines vCenter-Quellsystems (VMware).",
+                    "VMs appear after the first run of a vCenter source system (VMware).",
+                  )}
             </Empty>
           ) : (
             <table>
@@ -1115,10 +1204,10 @@ function VmTable({ tenantId, sourceId, q, onGo }: { tenantId: number; sourceId: 
                 <tr>
                   <th>VM</th>
                   <th>Status</th>
-                  <th>Netzwerk (Portgruppe → EPG, IPs)</th>
+                  <th>{L("Netzwerk (Portgruppe → EPG, IPs)", "Network (port group → EPG, IPs)")}</th>
                   <th>Cluster / Host</th>
-                  <th>Ressourcen</th>
-                  <th>Quelle</th>
+                  <th>{L("Ressourcen", "Resources")}</th>
+                  <th>{L("Quelle", "Source")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1128,13 +1217,24 @@ function VmTable({ tenantId, sourceId, q, onGo }: { tenantId: number; sourceId: 
                     <tr key={v.id}>
                       <td>
                         <b className="mono">{v.name}</b>
-                        {v.template && <span className="chip" style={{ marginLeft: 6 }}>Vorlage</span>}
+                        {v.template && (
+                          <span className="chip" style={{ marginLeft: 6 }}>
+                            {L("Vorlage", "Template")}
+                          </span>
+                        )}
                         {v.hostname && <div className="faint mono">{v.hostname}</div>}
                         {v.guest_os && <div className="faint">{v.guest_os}</div>}
                         {v.annotation && <div className="faint">{v.annotation}</div>}
                         {onGo && (
-                          <button className="linkbtn" title="Regeln, deren Quelle oder Ziel eine IP der VM enthält" onClick={() => onGo("regeln", { q: v.name })}>
-                            Regeln der VM
+                          <button
+                            className="linkbtn"
+                            title={L(
+                              "Regeln, deren Quelle oder Ziel eine IP der VM enthält",
+                              "Rules whose source or destination contains an IP of the VM",
+                            )}
+                            onClick={() => onGo("regeln", { q: v.name })}
+                          >
+                            {L("Regeln der VM", "Rules of the VM")}
                           </button>
                         )}
                       </td>
@@ -1148,17 +1248,27 @@ function VmTable({ tenantId, sourceId, q, onGo }: { tenantId: number; sourceId: 
                             <span className="mono">{n.portgroup ?? n.name}</span>
                             {n.vlan != null && <span className="faint"> · VLAN {n.vlan}</span>}
                             {n.epg && (
-                              <span className="chip local" style={{ marginLeft: 6 }} title={n.epg_match === "vlan" ? "über das VLAN zugeordnet" : "über den Portgruppen-Namen zugeordnet"}>
+                              <span
+                                className="chip local"
+                                style={{ marginLeft: 6 }}
+                                title={
+                                  n.epg_match === "vlan"
+                                    ? L("über das VLAN zugeordnet", "assigned via the VLAN")
+                                    : L("über den Portgruppen-Namen zugeordnet", "assigned via the port group name")
+                                }
+                              >
                                 EPG {n.epg}
                               </span>
                             )}
-                            {n.connected === false && <span className="chip na">getrennt</span>}
+                            {n.connected === false && <span className="chip na">{L("getrennt", "disconnected")}</span>}
                             <div>
                               {n.ips.map((ip) => (
                                 <span key={ip.ip} className="refline">
                                   <span className="mono">{ip.ip}</span>
                                   {ip.dns.length > 0 && <span className="faint"> {ip.dns.join(", ")}</span>}
-                                  {ip.in_ipam === false && <span className="chip warn">nicht im IPAM</span>}
+                                  {ip.in_ipam === false && (
+                                    <span className="chip warn">{L("nicht im IPAM", "not in IPAM")}</span>
+                                  )}
                                 </span>
                               ))}
                             </div>
@@ -1216,39 +1326,53 @@ function PortgroupTable({ tenantId, q, onGo }: { tenantId: number; q: string; on
   }, [tenantId, query]);
   return (
     <>
-      <ErrorBox error={error} prefix="Portgruppen laden" />
+      <ErrorBox error={error} prefix={L("Portgruppen laden", "Loading port groups")} />
       <div className="card">
         <div className="card-body scroll">
           {rows === null ? (
-            <Loading>Lade Portgruppen…</Loading>
+            <Loading>{L("Lade Portgruppen…", "Loading port groups…")}</Loading>
           ) : rows.length === 0 ? (
-            <Empty title={query ? "Keine Treffer" : "Noch keine Portgruppen"}>
-              {query ? "Suche anpassen." : "Portgruppen erscheinen nach dem ersten Lauf eines vCenter-Quellsystems."}
+            <Empty title={query ? L("Keine Treffer", "No matches") : L("Noch keine Portgruppen", "No port groups yet")}>
+              {query
+                ? L("Suche anpassen.", "Adjust the search.")
+                : L(
+                    "Portgruppen erscheinen nach dem ersten Lauf eines vCenter-Quellsystems.",
+                    "Port groups appear after the first run of a vCenter source system.",
+                  )}
             </Empty>
           ) : (
             <table>
               <thead>
                 <tr>
-                  <th>Portgruppe</th>
+                  <th>{L("Portgruppe", "Port group")}</th>
                   <th>Switch</th>
                   <th>VLAN</th>
                   <th className="num">VMs</th>
                   <th>EPG</th>
-                  <th>Quelle</th>
+                  <th>{L("Quelle", "Source")}</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((p) => (
-                  <tr key={p.id} className="clickable" title="Details: EPG, Subnetze, VMs" onClick={() => setSelected(p.id)}>
+                  <tr
+                    key={p.id}
+                    className="clickable"
+                    title={L("Details: EPG, Subnetze, VMs", "Details: EPG, subnets, VMs")}
+                    onClick={() => setSelected(p.id)}
+                  >
                     <td className="nowrap">
-                      <b className="mono">{p.name}</b> <span className="faint">{p.kind === "dvs" ? "verteilt" : "Standard"}</span>
+                      <b className="mono">{p.name}</b>{" "}
+                      <span className="faint">{p.kind === "dvs" ? L("verteilt", "distributed") : L("Standard", "standard")}</span>
                     </td>
                     <td className="mono">{p.switch ?? <Dash />}</td>
                     <td className="mono">{p.vlan ?? p.vlan_ranges ?? <Dash />}</td>
                     <td className="num">{p.vm_count}</td>
                     <td className="nowrap">
                       {p.epg ? (
-                        <span className="chip local" title={p.epg_match === "vlan" ? "über das VLAN" : "über den Namen"}>
+                        <span
+                          className="chip local"
+                          title={p.epg_match === "vlan" ? L("über das VLAN", "via the VLAN") : L("über den Namen", "via the name")}
+                        >
                           {p.epg}
                         </span>
                       ) : (
@@ -1262,7 +1386,9 @@ function PortgroupTable({ tenantId, q, onGo }: { tenantId: number; q: string; on
             </table>
           )}
         </div>
-        {rows && rows.length > 0 && <div className="pager">{rows.length} Portgruppen</div>}
+        {rows && rows.length > 0 && (
+          <div className="pager">{L(<>{rows.length} Portgruppen</>, <>{rows.length} port groups</>)}</div>
+        )}
       </div>
       {selected !== null && <PortgroupDrawer id={selected} onClose={() => setSelected(null)} onGo={onGo} />}
     </>
@@ -1270,9 +1396,9 @@ function PortgroupTable({ tenantId, q, onGo }: { tenantId: number; q: string; on
 }
 
 const SUBNET_SOURCE_HINT: Record<string, string> = {
-  "ACI-EPG": "Subnetz an der EPG",
-  "ACI-BD": "Subnetz der Bridge Domain der EPG",
-  "ACI-L3Out": "Subnetz der externen EPG",
+  "ACI-EPG": L("Subnetz an der EPG", "Subnet on the EPG"),
+  "ACI-BD": L("Subnetz der Bridge Domain der EPG", "Subnet of the bridge domain of the EPG"),
+  "ACI-L3Out": L("Subnetz der externen EPG", "Subnet of the external EPG"),
 };
 
 function PortgroupDrawer({ id, onClose, onGo }: { id: number; onClose: () => void; onGo?: Go }) {
@@ -1285,8 +1411,20 @@ function PortgroupDrawer({ id, onClose, onGo }: { id: number; onClose: () => voi
   }, [id]);
   return (
     <Drawer
-      title={d?.name ?? "Portgruppe"}
-      sub={d ? [d.kind === "dvs" ? "verteilte Portgruppe" : "Standard-Portgruppe (Host)", d.switch, d.source].filter(Boolean).join(" · ") : undefined}
+      title={d?.name ?? L("Portgruppe", "Port group")}
+      sub={
+        d
+          ? [
+              d.kind === "dvs"
+                ? L("verteilte Portgruppe", "distributed port group")
+                : L("Standard-Portgruppe (Host)", "standard port group (host)"),
+              d.switch,
+              d.source,
+            ]
+              .filter(Boolean)
+              .join(" · ")
+          : undefined
+      }
       onClose={onClose}
     >
       <ErrorBox error={err} />
@@ -1301,7 +1439,11 @@ function PortgroupDrawer({ id, onClose, onGo }: { id: number; onClose: () => voi
               {d.epg ? (
                 <>
                   <span className="chip local">{d.epg.label}</span>{" "}
-                  <span className="faint">{d.epg_match === "vlan" ? "über das VLAN zugeordnet" : "über den Namen zugeordnet"}</span>
+                  <span className="faint">
+                    {d.epg_match === "vlan"
+                      ? L("über das VLAN zugeordnet", "assigned via the VLAN")
+                      : L("über den Namen zugeordnet", "assigned via the name")}
+                  </span>
                   <div className="faint mono">
                     {[d.epg.tenant && `Tenant ${d.epg.tenant}`, d.epg.ap && `AP ${d.epg.ap}`, d.epg.bd && `BD ${d.epg.bd}`, d.epg.vrf && `VRF ${d.epg.vrf}`]
                       .filter(Boolean)
@@ -1310,25 +1452,38 @@ function PortgroupDrawer({ id, onClose, onGo }: { id: number; onClose: () => voi
                   {d.epg.dn && <div className="faint mono">{d.epg.dn}</div>}
                 </>
               ) : (
-                <span className="faint">keine EPG zugeordnet (Name nicht Tenant|AP|EPG, VLAN nicht eindeutig)</span>
+                <span className="faint">
+                  {L(
+                    "keine EPG zugeordnet (Name nicht Tenant|AP|EPG, VLAN nicht eindeutig)",
+                    "no EPG assigned (name not Tenant|AP|EPG, VLAN not unique)",
+                  )}
+                </span>
               )}
             </dd>
             <dt>VMs</dt>
             <dd>{d.vms.length}</dd>
           </dl>
 
-          <div className="sub-h">Subnetze ({d.subnets.length})</div>
+          <div className="sub-h">{L(<>Subnetze ({d.subnets.length})</>, <>Subnets ({d.subnets.length})</>)}</div>
           {d.subnets.length === 0 ? (
             <div className="faint">
-              Kein Subnetz bekannt – weder an der EPG/BD noch im Netzinventar (gleiches VLAN) noch im IPAM für die IPs der VMs.
+              {L(
+                <>
+                  Kein Subnetz bekannt – weder an der EPG/BD noch im Netzinventar (gleiches VLAN) noch im IPAM für die IPs der VMs.
+                </>,
+                <>
+                  No subnet known – neither on the EPG/BD nor in the network inventory (same VLAN) nor in the IPAM for the
+                  IPs of the VMs.
+                </>,
+              )}
             </div>
           ) : (
             <table>
               <thead>
                 <tr>
-                  <th>Subnetz</th>
+                  <th>{L("Subnetz", "Subnet")}</th>
                   <th>Gateway / VRF</th>
-                  <th>Quelle</th>
+                  <th>{L("Quelle", "Source")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1341,10 +1496,13 @@ function PortgroupDrawer({ id, onClose, onGo }: { id: number; onClose: () => voi
                         <div>
                           <button
                             className="linkbtn"
-                            title="Firewall-Regeln und Contracts, deren Quelle oder Ziel sich mit dem Subnetz überschneidet"
+                            title={L(
+                              "Firewall-Regeln und Contracts, deren Quelle oder Ziel sich mit dem Subnetz überschneidet",
+                              "Firewall rules and contracts whose source or destination overlaps with the subnet",
+                            )}
                             onClick={() => onGo("regeln", { net: s.prefix })}
                           >
-                            Regeln im Subnetz
+                            {L("Regeln im Subnetz", "Rules in the subnet")}
                           </button>
                         </div>
                       )}
@@ -1356,7 +1514,22 @@ function PortgroupDrawer({ id, onClose, onGo }: { id: number; onClose: () => voi
                     <td>
                       <div className="objs">
                         {s.sources.map((src) => (
-                          <span key={src} className="chip" title={SUBNET_SOURCE_HINT[src] ?? (src.startsWith("VLAN ") ? "gleiches VLAN im Netzinventar – VLAN-Nummern gelten je Gerät/Domäne" : "Netz im IPAM, das die IP einer VM enthält")}>
+                          <span
+                            key={src}
+                            className="chip"
+                            title={
+                              SUBNET_SOURCE_HINT[src] ??
+                              (src.startsWith("VLAN ")
+                                ? L(
+                                    "gleiches VLAN im Netzinventar – VLAN-Nummern gelten je Gerät/Domäne",
+                                    "same VLAN in the network inventory – VLAN numbers apply per device/domain",
+                                  )
+                                : L(
+                                    "Netz im IPAM, das die IP einer VM enthält",
+                                    "Network in the IPAM that contains the IP of a VM",
+                                  ))
+                            }
+                          >
                             {src}
                           </span>
                         ))}
@@ -1370,7 +1543,12 @@ function PortgroupDrawer({ id, onClose, onGo }: { id: number; onClose: () => voi
 
           <div className="sub-h">VMs ({d.vms.length})</div>
           {d.vms.length === 0 ? (
-            <div className="faint">Keine VM mit einer Netzwerkkarte an dieser Portgruppe.</div>
+            <div className="faint">
+              {L(
+                "Keine VM mit einer Netzwerkkarte an dieser Portgruppe.",
+                "No VM with a network adapter on this port group.",
+              )}
+            </div>
           ) : (
             <table>
               <thead>
@@ -1390,12 +1568,12 @@ function PortgroupDrawer({ id, onClose, onGo }: { id: number; onClose: () => voi
                         <b className="mono">{v.name}</b>
                         <div>
                           <span className={`chip ${tone}`}>{label}</span>
-                          {v.template && <span className="chip">Vorlage</span>}
+                          {v.template && <span className="chip">{L("Vorlage", "Template")}</span>}
                         </div>
                       </td>
                       <td className="mono">
                         {v.nic}
-                        {v.connected === false && <span className="chip na">getrennt</span>}
+                        {v.connected === false && <span className="chip na">{L("getrennt", "disconnected")}</span>}
                         {v.mac && <div className="faint">{v.mac}</div>}
                       </td>
                       <td className="mono">
@@ -1406,8 +1584,11 @@ function PortgroupDrawer({ id, onClose, onGo }: { id: number; onClose: () => voi
                             <div key={ip.ip}>
                               {ip.ip}
                               {ip.in_ipam === false && (
-                                <span className="chip warn" title="IP nicht im führenden IPAM erfasst">
-                                  nicht im IPAM
+                                <span
+                                  className="chip warn"
+                                  title={L("IP nicht im führenden IPAM erfasst", "IP not recorded in the leading IPAM")}
+                                >
+                                  {L("nicht im IPAM", "not in IPAM")}
                                 </span>
                               )}
                               {ip.dns.length > 0 && <div className="faint">{ip.dns.join(", ")}</div>}
@@ -1489,8 +1670,9 @@ const isSubinterface = (i: InvInterface) =>
 function VlanCell({ i }: { i: InvInterface }) {
   if (isSubinterface(i)) {
     return (
-      <span title={`Subinterface – sendet getaggt über ${i.parent}`}>
-        VLAN {i.tagged_vlans![0]} <span className="faint">getaggt über {i.parent}</span>
+      <span title={L(`Subinterface – sendet getaggt über ${i.parent}`, `Subinterface – sends tagged via ${i.parent}`)}>
+        VLAN {i.tagged_vlans![0]}{" "}
+        <span className="faint">{L(<>getaggt über {i.parent}</>, <>tagged via {i.parent}</>)}</span>
       </span>
     );
   }
@@ -1531,10 +1713,18 @@ function PortDrawer({
     <Drawer title={`${i.device} · ${i.name}`} sub={[i.kind, i.mode, i.source].filter(Boolean).join(" · ")} onClose={onClose}>
       <dl className="kv">
         <dt>Status</dt>
-        <dd>{i.enabled === false ? <span className="chip na">deaktiviert</span> : i.enabled ? "aktiv" : <Dash />}</dd>
+        <dd>
+          {i.enabled === false ? (
+            <span className="chip na">{L("deaktiviert", "disabled")}</span>
+          ) : i.enabled ? (
+            L("aktiv", "active")
+          ) : (
+            <Dash />
+          )}
+        </dd>
         {i.description && (
           <>
-            <dt>Beschreibung</dt>
+            <dt>{L("Beschreibung", "Description")}</dt>
             <dd>{i.description}</dd>
           </>
         )}
@@ -1549,7 +1739,7 @@ function PortDrawer({
         )}
         {children.length > 0 && (
           <>
-            <dt>{children.some((c) => c.parent === i.name) ? "Subinterfaces" : "Mitglieder"}</dt>
+            <dt>{children.some((c) => c.parent === i.name) ? "Subinterfaces" : L("Mitglieder", "Members")}</dt>
             <dd>
               <div className="objs">{children.map(link)}</div>
             </dd>
@@ -1560,7 +1750,11 @@ function PortDrawer({
         <dt>VLANs tagged{tagged.length > 1 ? ` (${tagged.length})` : ""}</dt>
         <dd className="mono">
           {tagged.length ? vlanRanges(tagged).join(", ") : <Dash />}
-          {isSubinterface(i) && <div className="faint">Subinterface – sendet getaggt über {i.parent}</div>}
+          {isSubinterface(i) && (
+            <div className="faint">
+              {L(<>Subinterface – sendet getaggt über {i.parent}</>, <>Subinterface – sends tagged via {i.parent}</>)}
+            </div>
+          )}
         </dd>
         <dt>IPs</dt>
         <dd className="mono">{i.ips?.length ? i.ips.map((ip) => <div key={ip}>{ip}</div>) : <Dash />}</dd>
@@ -1580,13 +1774,13 @@ function PortDrawer({
         )}
         {i.policy_group && (
           <>
-            <dt>Policy-Gruppe</dt>
+            <dt>{L("Policy-Gruppe", "Policy group")}</dt>
             <dd className="mono">{i.policy_group}</dd>
           </>
         )}
-        <dt>Nachbar</dt>
+        <dt>{L("Nachbar", "Neighbor")}</dt>
         <dd className="mono">{cell([i.neighbor, i.neighbor_port].filter(Boolean).join(" : "))}</dd>
-        <dt>Quelle</dt>
+        <dt>{L("Quelle", "Source")}</dt>
         <dd>{cell(i.source)}</dd>
       </dl>
       <div className="sub-h">EPGs ({i.epgs?.length ?? 0})</div>
@@ -1599,7 +1793,7 @@ function PortDrawer({
           ))}
         </div>
       ) : (
-        <div className="faint">Keine EPG an diesem Port.</div>
+        <div className="faint">{L("Keine EPG an diesem Port.", "No EPG on this port.")}</div>
       )}
     </Drawer>
   );
@@ -1639,10 +1833,10 @@ function PortsByDevice({ ports, expanded }: { ports: InvInterface[]; expanded: b
         <thead>
           <tr>
             <th>Port</th>
-            <th>Typ / Modus</th>
+            <th>{L("Typ / Modus", "Type / mode")}</th>
             <th>VLANs</th>
             <th>IPs</th>
-            <th>Nachbar</th>
+            <th>{L("Nachbar", "Neighbor")}</th>
             <th>EPGs</th>
           </tr>
         </thead>
@@ -1668,7 +1862,7 @@ function PortsByDevice({ ports, expanded }: { ports: InvInterface[]; expanded: b
                     <td className="mono nowrap" style={{ paddingLeft: 12 + depth * 18 }}>
                       {depth > 0 && <span className="faint">└ </span>}
                       <b>{i.name}</b>
-                      {i.enabled === false && <span className="chip na">aus</span>}
+                      {i.enabled === false && <span className="chip na">{L("aus", "off")}</span>}
                       {i.lag && depth > 0 && i.lag !== i.parent && <span className="chip">LAG {i.lag}</span>}
                     </td>
                     <td className="nowrap">
