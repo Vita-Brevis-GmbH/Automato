@@ -1349,6 +1349,7 @@ test("Grundschema in der Oberfläche bearbeiten: Namen, Art, Absicht, neue Zone 
   const fresh = editor.locator("#zone-schema-edit-zones tbody tr").last();
   await fresh.getByLabel("Name der Zone").fill("Backup");
   await fresh.getByLabel("Art").selectOption("management");
+  await fresh.getByLabel("je Kunde").check(); // Vorlage je Kunde (0.82.0)
   // doppelter Name sperrt das Speichern
   await fresh.getByLabel("Name der Zone").fill("dmz");
   await expect(editor.locator("#zone-schema-edit-save")).toBeDisabled();
@@ -1360,6 +1361,7 @@ test("Grundschema in der Oberfläche bearbeiten: Namen, Art, Absicht, neue Zone 
   const rows = card.locator("#zone-schema-zones tbody tr");
   await expect(rows).toHaveCount(6);
   await expect(rows.first()).toContainText("Backup");
+  await expect(rows.first().locator(".schema-per-customer")).toHaveText("je Kunde");
   await expect(card.locator("#zone-schema-zones")).toContainText("Partner extern");
   await expect(card.locator("#zone-schema-links tbody tr", { hasText: "DMZ" }).filter({ hasText: "LAN" })).toContainText("nur tcp/443");
   await expect(card.locator("#zone-schema-edited")).toContainText("in der Oberfläche bearbeitet");
@@ -1368,6 +1370,7 @@ test("Grundschema in der Oberfläche bearbeiten: Namen, Art, Absicht, neue Zone 
   const text = readFileSync((await file.path())!, "utf-8");
   expect(text).toContain("Partner extern");
   expect(text).toContain("Backup");
+  expect(text).toContain('automato_customer="je Kunde"');
   expect((await page.request.delete(`/api/naming-profiles/${pid}/zone-schema`)).status()).toBe(204);
   expect(problems).toEqual([]);
 });

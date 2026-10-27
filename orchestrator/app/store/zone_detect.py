@@ -20,6 +20,11 @@ des Anwenders: Zonen umfassen **Knoten**, Netze zwischen Knoten verschiedener Zo
 5. **Firewall-Zonen und Interfaces**, deren Name auf ein Muster des Grundschemas bzw. der
    Vorlage passt (z. B. `transit` -> Edge Transfer, `mgmt` -> Edge Management).
 
+6. **Vorlage je Kunde** (0.82.0): eine Zone des Grundschemas mit `automato_customer` = „je
+   Kunde“ wird je Kunde vorgeschlagen - „<Zone> <Kunde>“ mit Kurzname „<Kurzname>-<Kuerzel>“
+   und den Treffern (Interfaces, Firewall-Zonen, IPAM-Merkmale, Firewalls), die ganz in den
+   Netzen bzw. VDOMs genau eines Kunden liegen. Treffer keines Kunden bleiben in der Zone selbst.
+
 Transfernetze werden nicht mehr vorgeschlagen - sie liegen in der Zone ihrer Firewalls bzw. sind
 Uebergaenge. Gleicher normalisierter Name = ein Vorschlag; Name, Art und Farbe aus der passenden
 Zone des Grundschemas (sonst der Vorlage). Gibt es die Zone schon, ergaenzt der Vorschlag ihre
@@ -357,6 +362,73 @@ def _from_schema_interfaces(found: _Found, schema: "zone_schema.Schema", data: c
                       sz=sz)  # fmt: skip
 
 
+def _per_customer(found: _Found, data: customers._Data, session: Session,
+                  tenant_id: int) -> None:  # fmt: skip
+    """Vorlagen je Kunde (0.82.0): Selektoren bzw. Firewalls, die ganz einem Kunden gehoeren,
+    in einen eigenen Vorschlag des Kunden verschieben."""
+    templates = [c for c in found.by_key.values() if c.schema is not None
+                 and c.schema.per_customer and c.customer_id is None]  # fmt: skip
+    if not templates:
+        return
+    owners = [cust for cust in session.scalars(
+        select(Customer).where(Customer.tenant_id == tenant_id).order_by(Customer.name)
+    ) if not cust.shared]  # fmt: skip
+    if not owners:
+        return
+    ranges, vdoms = {}, {}
+    for cust in owners:
+        sel = [Selector(s.kind, s.value, s.source_system_id, s.exclude) for s in cust.selectors]
+        ranges[cust.id] = customers._Ranges(customers.nets_of(data, sel)[1])
+        vdoms[cust.id] = {(s.source_system_id, s.value.strip().casefold())
+                          for s in sel if s.kind == "fw_vdom" and not s.exclude}  # fmt: skip
+    by_id = {cust.id: cust for cust in owners}
+
+    def owner_of_nets(s: Selector) -> int | None:
+        nets = list(customers.nets_of(data, [s])[1])
+        if not nets:
+            return None
+        hits = [cid for cid, r in ranges.items()
+                if all(r.covers(n.version, int(n.network_address), int(n.broadcast_address))
+                       for n in nets)]  # fmt: skip
+        return hits[0] if len(hits) == 1 else None
+
+    def owner_of_node(key: Key) -> int | None:
+        hits = [cid for cid, v in vdoms.items()
+                if (key[0], key[1].casefold()) in v or (None, key[1].casefold()) in v]  # fmt: skip
+        return hits[0] if len(hits) == 1 else None
+
+    for base in templates:
+        sz = base.schema
+        moved: dict[int, list] = defaultdict(list)
+        for s in list(base.selectors):
+            node = next((k for k in base.nodes if s.kind == "fw_vdom" and k == (s.source_system_id,
+                         s.value)), None)  # fmt: skip
+            cid = owner_of_node(node) if node is not None else owner_of_nets(s)
+            if cid is not None:
+                moved[cid].append((s, node))
+        for cid, items in moved.items():
+            cust = by_id[cid]
+            name, code = sz.for_customer(cust.name, cust.code)
+            c = found.by_key.get(f"{sz.key}:{cid}")
+            if c is None:
+                c = found.by_key[f"{sz.key}:{cid}"] = Candidate(
+                    f"{sz.key}:{cid}", name, base.source, kind=sz.kind,
+                    reason=f"Grundschema „{sz.name}“ je Kunde", code=code, customer_id=cid,
+                    schema=sz)  # fmt: skip
+            for source in base.sources:
+                if source not in c.sources:
+                    c.sources.append(source)
+            for s, node in items:
+                base.selectors.remove(s)
+                c.add(s)
+                if node is not None:
+                    base.nodes.remove(node)
+                    c.nodes.append(node)
+            c.note(f"je Kunde: {len(items)} Treffer von {cust.name}")
+        if moved and not base.selectors and not base.nodes:
+            del found.by_key[base.key]  # alles gehoert Kunden
+
+
 # -- Auswertung ---------------------------------------------------------------------------
 
 
@@ -427,6 +499,7 @@ def suggest(session: Session, tenant_id: int, include_dismissed: bool = False) -
     _from_exits(found, exits, used)
     _from_ipam(found, data)
     _from_schema_interfaces(found, found.schema, data, g)
+    _per_customer(found, data, session, tenant_id)  # Vorlagen je Kunde (0.82.0)
 
     # Netze je Vorschlag (ohne die Knoten-Selektoren); ein Netz, das genau so schon in einer
     # Zone bzw. einem frueheren Vorschlag liegt, schliesst der Vorschlag aus
@@ -540,10 +613,25 @@ def _covered(ranges: customers._Ranges, network: str) -> bool:
 
 
 def _mapped(
-    schema: "zone_schema.Schema", items: list[LogicalZone]
+    schema: "zone_schema.Schema", items: list[LogicalZone], owners: dict | None = None
 ) -> dict[int, "zone_schema.SchemaZone"]:
-    """Bestehende Zonen -> Zone des Grundschemas (Name, Kurzname bzw. Erkennungsmuster)."""
-    return {z.id: sz for z in items if (sz := schema.match(z.name, z.code)) is not None}
+    """Bestehende Zonen -> Zone des Grundschemas (Name, Kurzname bzw. Erkennungsmuster); Zonen
+    eines Kunden auch ueber die Vorlage je Kunde ohne Name bzw. Kuerzel des Kunden (0.82.0)."""
+    out = {}
+    for z in items:
+        sz = None
+        if z.customer_id is not None and owners and z.customer_id in owners:
+            sz = schema.of_customer_zone(z.name, z.code, *owners[z.customer_id])
+        sz = sz or schema.match(z.name, z.code)
+        if sz is not None:
+            out[z.id] = sz
+    return out
+
+
+def _customer_names(session: Session, tenant_id: int) -> dict[int, tuple[str, str | None]]:
+    return {cid: (name, code) for cid, name, code in session.execute(
+        select(Customer.id, Customer.name, Customer.code).where(Customer.tenant_id == tenant_id)
+    )}  # fmt: skip
 
 
 def outside_schema(session: Session, tenant_id: int) -> tuple[str | None, list[LogicalZone]]:
@@ -553,7 +641,7 @@ def outside_schema(session: Session, tenant_id: int) -> tuple[str | None, list[L
     if schema is None or profile is None or not schema.zones:
         return None, []
     items = zones.load(session, tenant_id)
-    mapped = _mapped(schema, items)
+    mapped = _mapped(schema, items, _customer_names(session, tenant_id))
     name = profile.name if profile.customer == profile.name else (
         f"{profile.customer} · {profile.name}")  # fmt: skip
     return name, [z for z in items if z.id not in mapped]
@@ -569,8 +657,9 @@ def schema_intents(session: Session, tenant_id: int, schema: "zone_schema.Schema
         return []
     items = zones.load(session, tenant_id) if items is None else items
     names = {z.id: z.name for z in items}
+    owner = {z.id: z.customer_id for z in items}
     by_schema: dict[str, list[int]] = defaultdict(list)
-    for zid, sz in _mapped(schema, items).items():
+    for zid, sz in _mapped(schema, items, _customer_names(session, tenant_id)).items():
         by_schema[sz.key].append(zid)
     current = {
         (p.src_zone_id, p.dst_zone_id): p
@@ -588,6 +677,8 @@ def schema_intents(session: Session, tenant_id: int, schema: "zone_schema.Schema
                 )
                 if s == d or same:
                     continue
+                if owner[s] and owner[d] and owner[s] != owner[d]:
+                    continue  # Vorlagen je Kunde: die Absicht gilt im selben Kunden (0.82.0)
                 out.append({"src_zone_id": s, "src": names[s], "dst_zone_id": d, "dst": names[d],
                             "intent": link.intent, "current": p.intent if p else None,
                             "services": link.services,
@@ -604,7 +695,7 @@ def _schema_status(session: Session, tenant_id: int, schema: "zone_schema.Schema
     Vorschlag), Zonen ausserhalb des Schemas, Absichten aus dem Schema."""
     if schema is None or profile is None:
         return None
-    mapped = _mapped(schema, items)
+    mapped = _mapped(schema, items, _customer_names(session, tenant_id))
     have = {sz.key for sz in mapped.values()}
     return {
         "profile_id": profile.id,

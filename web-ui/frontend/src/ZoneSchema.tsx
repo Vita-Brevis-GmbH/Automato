@@ -172,7 +172,8 @@ export default function ZoneSchemaCard({
           Die möglichen Zonen als Zeichnung (draw.io / diagrams.net): jede Form ist eine Zone (erste Zeile = Name), jeder Pfeil ein
           Übergang mit Absicht (Beschriftung erlaubt, eingeschränkt, gesperrt; gestrichelt = eingeschränkt, rot = gesperrt). Unter
           „Daten bearbeiten“: <span className="mono">automato_kind</span> (intern, DMZ, extern, Management, geteilt, Transfer),{" "}
-          <span className="mono">automato_code</span> (Kurzname) und <span className="mono">automato_match</span> (Erkennungsmuster,
+          <span className="mono">automato_code</span> (Kurzname), <span className="mono">automato_customer</span> („je Kunde“ = Vorlage für
+          eine Zone je Kunde) und <span className="mono">automato_match</span> (Erkennungsmuster,
           z. B. <span className="mono">dmz*, srv*</span>). Die Zonen-Vorschläge im Netzwerkdesign übernehmen Name, Art und Farbe aus
           dem Schema; die Übergänge lassen sich als Absichten in die Zonenmatrix übernehmen. Ohne Schema arbeitet alles wie bisher.
         </p>
@@ -329,6 +330,11 @@ function SchemaView({ schema }: { schema: ZoneSchemaData }) {
             <tr key={z.key}>
               <td>
                 <span className="zone-swatch" style={{ background: z.color ?? KIND_COLOR[z.kind] }} /> <b>{z.name}</b>
+                {z.per_customer && (
+                  <span className="chip info schema-per-customer" title="Vorlage: je Kunde eine eigene Zone „Name Kunde“ (automato_customer)">
+                    je Kunde
+                  </span>
+                )}
                 {z.description && <div className="faint">{z.description}</div>}
               </td>
               <td>
@@ -481,6 +487,7 @@ function toDraft(schema: ZoneSchemaData): Draft {
     description: z.description,
     geometry: z.geometry,
     previous: z.name,
+    per_customer: !!z.per_customer,
   }));
   const byName = new Map(zones.map((z) => [z.name, z.uid]));
   const links = schema.links
@@ -542,7 +549,19 @@ function SchemaEditor({ draft, onChange, onSave, onCancel, busy }: {
       ...draft,
       zones: [
         ...draft.zones,
-        { uid: uid(), name: "", kind: "internal", code: null, color: null, match: "", group: null, description: null, geometry: null, previous: null },
+        {
+          uid: uid(),
+          name: "",
+          kind: "internal",
+          code: null,
+          color: null,
+          match: "",
+          group: null,
+          description: null,
+          geometry: null,
+          previous: null,
+          per_customer: false,
+        },
       ],
     });
   const setLink = (i: number, patch: Partial<DraftLink>) =>
@@ -634,6 +653,9 @@ function SchemaEditor({ draft, onChange, onSave, onCancel, busy }: {
               </td>
               <td>
                 <input className="input" style={{ width: 110 }} aria-label="Gruppe" value={z.group ?? ""} onChange={(e) => setZone(i, { group: e.target.value })} />
+                <label className="check" title="Vorlage: je Kunde eine eigene Zone „Name Kunde“ vorschlagen (0.82.0)">
+                  <input type="checkbox" aria-label="je Kunde" checked={!!z.per_customer} onChange={(e) => setZone(i, { per_customer: e.target.checked })} /> je Kunde
+                </label>
               </td>
               <td>
                 <input className="input" aria-label="Beschreibung" value={z.description ?? ""} onChange={(e) => setZone(i, { description: e.target.value })} />

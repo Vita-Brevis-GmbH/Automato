@@ -1232,6 +1232,14 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       Unter „Daten bearbeiten“ (Rechtsklick → Edit Data): `automato_kind` (intern, DMZ, extern,
       Management, geteilt, Transfer), `automato_code` (Kurzname), `automato_match`
       (Erkennungsmuster, mit Komma getrennt, z. B. `dmz*, *-web`), `automato_order`.
+    - **Vorlage je Kunde** (seit 0.82.0): `automato_customer` = „je Kunde“ (bzw. ja, 1) – im
+      Editor das Häkchen „je Kunde“. Vorgeschlagen wird dann je Kunde eine eigene Zone
+      „<Zone> <Kunde>“ mit Kurzname „<Kurzname>-<Kürzel>“ (z. B. „Office Kunde B“, „OACC-KB“)
+      und den Treffern, die ganz in den Netzen bzw. VDOMs genau dieses Kunden liegen
+      (Interfaces, Firewall-Zonen, IPAM-Merkmale, Firewalls); Treffer keines Kunden bleiben in
+      der Zone selbst. Zonen eines Kunden passen ohne Name bzw. Kürzel des Kunden auf die
+      Vorlage (kein Hinweis „ausserhalb des Schemas“); die Absichten der Vorlage gelten nur
+      zwischen Zonen desselben Kunden (bzw. mit geteilten Zonen).
     - Pfeil = Übergang: Beschriftung „erlaubt“, „eingeschränkt“ bzw. „gesperrt“ (oder
       `automato_intent`), sonst gestrichelt = eingeschränkt, rote Linie = gesperrt, sonst
       erlaubt; Linie ohne bzw. mit zwei Pfeilen gilt in beide Richtungen.

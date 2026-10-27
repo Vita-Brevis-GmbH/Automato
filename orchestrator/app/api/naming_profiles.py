@@ -194,6 +194,7 @@ class SchemaZoneIn(BaseModel):
     description: str | None = Field(default=None, max_length=1000)
     geometry: list[float] | None = Field(default=None, max_length=4)
     previous: str | None = Field(default=None, max_length=200)  # bisheriger Name (Umbenennen)
+    per_customer: bool = False  # Vorlage je Kunde (0.82.0)
 
 
 class SchemaLinkIn(BaseModel):

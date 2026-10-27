@@ -346,6 +346,18 @@ Entscheide des Anwenders (2026-10-23):
       (`networks[].routes`: Zone, Präfixe). Ohne solche Route bleibt es beim Übergang nach
       „ausserhalb“.
 
+19. **Zonen komplett, Teil 3 (0.82.0): Zonen je Kunde im Grundschema.** Eine Zone des
+    Grundschemas mit `automato_customer` = „je Kunde“ (Editor: „je Kunde“, `per_customer`) ist
+    eine **Vorlage**: die Vorschläge (`zone_detect._per_customer`) verschieben Treffer, die ganz
+    in den Netzen (`customers.nets_of` der Kunden-Selektoren) bzw. VDOMs (`fw_vdom`) genau eines
+    Kunden liegen, in einen eigenen Vorschlag „<Zone> <Kunde>“ mit Kurzname
+    „<Kurzname>-<KÜRZEL>“ und dem Kunden; die übrigen bleiben in der Zone selbst (ohne Treffer
+    entfällt sie). Zonen eines Kunden passen auf die Vorlage, wenn Name bzw. Kürzel des Kunden
+    wegfallen (`Schema.of_customer_zone`) – für „Zone ausserhalb des Schemas“, die Karte
+    Grundschema und die Absichten. Absichten einer Vorlage gelten nur innerhalb eines Kunden
+    (Zonen verschiedener Kunden bekommen keine Absicht aus dem Schema). Die Zeichnung trägt
+    `automato_customer` hin und zurück.
+
 ## Folgen
 
 - Die Firewall-Zonen (`zone`, gelesen) bleiben, was sie sind; eine logische Zone kann sie als
@@ -356,8 +368,8 @@ Entscheide des Anwenders (2026-10-23):
   bisher (Matrix und Plan sind leer, keine Befunde).
 - Export für Confluence seit 0.71.0 als Word + draw.io zum Import von Hand (ADR 0026, kein
   Schreibweg).
-- Offen (ROADMAP Schritt 5, weitere Teile): Zonen je Kunde im Grundschema (Vorlage „je
-  Kunde“), draw.io-Datei des Zonenplans zurück einlesen (Korrekturen im Designer). Erledigt in
+- Offen (ROADMAP Schritt 5, letzter Teil): draw.io-Datei des Zonenplans zurück einlesen
+  (Korrekturen im Designer). Erledigt in 0.82.0 (Nr. 19): Zonen je Kunde im Grundschema; in
   0.78.0 (Nr. 17): Befund „Zone ausserhalb des Schemas“, Absicht je Dienst und Richtung im
   Zonenplan, Zonen in den Verbindungen; in 0.81.0 (Nr. 18): Relevanz nach dem Weg in der
   Matrix, Übergänge zu Zonen nur hinter einem Router.

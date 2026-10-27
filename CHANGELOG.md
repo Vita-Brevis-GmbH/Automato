@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.82.0 – 2026-10-27
+
+Zonen komplett, Teil 3 (ROADMAP Schritt 5, ADR 0024 Nr. 19): Zonen je Kunde im Grundschema.
+Ohne Migration.
+
+- **Vorlage je Kunde:** eine Zone des Grundschemas mit `automato_customer` = „je Kunde“ (im
+  Editor das Häkchen „je Kunde“) wird je Kunde vorgeschlagen – „<Zone> <Kunde>“ mit Kurzname
+  „<Kurzname>-<Kürzel>“ und den Treffern, die ganz in den Netzen bzw. VDOMs genau dieses Kunden
+  liegen (Interfaces, Firewall-Zonen, IPAM-Merkmale, Firewalls). Treffer keines Kunden bleiben
+  in der Zone selbst.
+- Zonen eines Kunden passen ohne Name bzw. Kürzel des Kunden auf die Vorlage: kein Hinweis
+  „Zone ausserhalb des Schemas“, Zuordnung in der Karte Grundschema. Die Absichten der Vorlage
+  gelten nur zwischen Zonen desselben Kunden.
+- Zeichnung (Vorlage, Download nach dem Bearbeiten) mit `automato_customer`; Anzeige „je Kunde“
+  in der Liste des Grundschemas.
+- ADR 0024 Nr. 19, BETRIEB, TESTS.
+
 ## 0.81.0 – 2026-10-27
 
 Zonen komplett, Teil 2 (ROADMAP Schritt 5, ADR 0024 Nr. 18). Ohne Migration.

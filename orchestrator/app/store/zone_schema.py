@@ -18,7 +18,9 @@ die Seite mit „Zone“ oder „Schema“ im Namen):
   Management, geteilt, Transfer), `automato_code` (Kurzname), `automato_match`
   (Erkennungsmuster, mit Komma getrennt, `*`/`?`), `automato_order` (Reihenfolge, sonst von
   oben nach unten, links nach rechts). Ohne Art: aus dem Namen, sonst intern. Farbe =
-  Fuellfarbe.
+  Fuellfarbe. Seit 0.82.0 `automato_customer` = „je Kunde“: die Zone ist eine **Vorlage je
+  Kunde** - vorgeschlagen wird je Kunde eine eigene Zone „<Name> <Kunde>“ (Kurzname
+  „<Kurzname>-<Kuerzel>“) mit seinen Treffern.
 - jede Verbindung zwischen zwei Zonen ist ein Uebergang (seit 0.57.0 bei „eingeschraenkt“ mit den
   erlaubten Diensten aus `automato_services`). Absicht aus `automato_intent`, sonst
   aus der Beschriftung (erlaubt, eingeschraenkt, gesperrt), sonst gestrichelt = eingeschraenkt,
@@ -109,6 +111,7 @@ class SchemaZone:
     group: str | None = None
     description: str | None = None
     geometry: list[float] | None = None  # x, y, Breite, Hoehe (Vorschau)
+    per_customer: bool = False  # Vorlage je Kunde (0.82.0)
 
     @property
     def key(self) -> str:
@@ -118,7 +121,13 @@ class SchemaZone:
         return {"name": self.name, "key": self.key, "kind": self.kind,
                 "kind_reason": self.kind_reason, "code": self.code, "color": self.color,
                 "match": self.match, "position": self.position, "group": self.group,
-                "description": self.description, "geometry": self.geometry}  # fmt: skip
+                "description": self.description, "geometry": self.geometry,
+                "per_customer": self.per_customer}  # fmt: skip
+
+    def for_customer(self, name: str, code: str | None) -> tuple[str, str | None]:
+        """Name und Kurzname der Zone eines Kunden aus der Vorlage je Kunde."""
+        own_code = f"{self.code}-{code.upper()}" if self.code and code else None
+        return f"{self.name} {name}", own_code
 
 
 @dataclass
@@ -149,6 +158,23 @@ class Schema:
 
     def of_kind(self, kind: str) -> SchemaZone | None:
         return next((z for z in self.zones if z.kind == kind), None)
+
+    def of_customer_zone(self, name: str | None, code: str | None, customer_name: str | None,
+                         customer_code: str | None) -> SchemaZone | None:  # fmt: skip
+        """Zone eines Kunden: passt sie auf eine Vorlage je Kunde, wenn Name bzw. Kuerzel des
+        Kunden wegfallen („Office Kunde A“ -> „Office“, „OACC-KUA“ -> „OACC“)? (0.82.0)"""
+        names = []
+        for value, part, sep in ((name, customer_name, " "), (code, customer_code, "-")):
+            if not value or not part:
+                continue
+            v, p = value.strip(), part.strip()
+            for cut in (f"{sep}{p}", f"{p}{sep}", f" {p}", f"{p} "):
+                if v.casefold().endswith(cut.casefold()) and len(v) > len(cut):
+                    names.append(v[: -len(cut)])
+                elif v.casefold().startswith(cut.casefold()) and len(v) > len(cut):
+                    names.append(v[len(cut) :])
+        hit = self.match(*names) if names else None
+        return hit if hit is not None and hit.per_customer else None
 
     def match(self, *names: str | None) -> SchemaZone | None:
         """Schema-Zone zu Namen: gleicher Name bzw. Kurzname (normalisiert), sonst das erste
@@ -330,6 +356,17 @@ def _kind_of(value: str) -> str | None:
     return KIND_ALIAS.get(value.strip().casefold())
 
 
+CUSTOMER_WORDS = ("je kunde", "jekunde", "je_kunde", "kunde", "customer", "per customer",
+                  "1", "ja", "yes", "true", "x")  # fmt: skip
+
+
+def per_customer(value) -> bool:
+    """Eigenschaft `automato_customer` (0.82.0): „je Kunde“, ja, 1 …"""
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().casefold() in CUSTOMER_WORDS
+
+
 def _patterns(value: str | None) -> list[str]:
     out = []
     for p in re.split(r"[,;\n]+", value or ""):
@@ -410,6 +447,7 @@ def parse(content: str) -> Schema:
         z.code = (c.props.get("automato_code") or "").strip()[:50] or None
         z.color = _color(c.style.get("fillColor"))
         z.match = _patterns(c.props.get("automato_match"))
+        z.per_customer = per_customer(c.props.get("automato_customer"))
         if z.key in seen:
             out.warnings.append(f"Zone „{name}“ doppelt - die erste gilt")
             by_cell[cid] = seen[z.key]
@@ -559,6 +597,7 @@ def edited(session: Session, profile_id: int, zones: list[dict], links: list[dic
             position=(i + 1) * 10, group=(str(z.get("group") or "").strip() or None),
             description=(str(z.get("description") or "").strip() or None),
             geometry=geometry if geometry is not None else (prev.geometry if prev else None),
+            per_customer=per_customer(z.get("per_customer")),
         ))  # fmt: skip
     old_links = {(key_of(x.src), key_of(x.dst)): x for x in (old.links if old else [])}
     seen: set[tuple[str, str]] = set()
@@ -648,6 +687,7 @@ def load(session: Session, profile_id: int | None) -> Schema | None:
             code=x.get("code"), color=x.get("color"), match=list(x.get("match") or []),
             position=int(x.get("position") or 0), group=x.get("group"),
             description=x.get("description"), geometry=x.get("geometry"),
+            per_customer=bool(x.get("per_customer")),
         ))  # fmt: skip
     out.zones.sort(key=lambda z: (z.position, z.name.casefold()))
     for r in rows:
@@ -693,8 +733,9 @@ def diff(old: Schema | None, new: Schema) -> dict:
     for k in before.keys() & after.keys():
         a, b = before[k], after[k]
         what = [
-            f for f in ("kind", "code", "color", "match", "group") if getattr(a, f) != getattr(b, f)
-        ]
+            f for f in ("kind", "code", "color", "match", "group", "per_customer")
+            if getattr(a, f) != getattr(b, f)
+        ]  # fmt: skip
         if what:
             changed.append({"name": b.name, "fields": what})
     lb = {(key_of(x.src), key_of(x.dst)): x for x in (old.links if old else [])}
@@ -794,7 +835,8 @@ def drawing(schema: Schema, title: str) -> str:
     ET.SubElement(root, "mxCell", {"id": "1", "parent": "0"})
     legend = ("<b>" + _esc(title) + "</b><br>Jede Form = Zone (erste Zeile = Name). Eigenschaften "
               "(Daten bearbeiten): automato_kind (intern, DMZ, extern, Management, geteilt, "
-              "Transfer), automato_code, automato_match (Muster, mit Komma getrennt).<br>Pfeil = "
+              "Transfer), automato_code, automato_match (Muster, mit Komma getrennt), "
+              "automato_customer (je Kunde = Vorlage für eine Zone je Kunde).<br>Pfeil = "
               "Übergang; Beschriftung bzw. automato_intent: erlaubt, eingeschränkt, gesperrt "
               "(gestrichelt = eingeschränkt, rot = gesperrt).")  # fmt: skip
     head = ET.SubElement(root, "mxCell", {
@@ -814,11 +856,14 @@ def drawing(schema: Schema, title: str) -> str:
         zid = f"zone-{i + 1}"
         ids[z.key] = zid
         label = f"<b>{_esc(z.name)}</b>" + (f"<br>{_esc(z.description)}" if z.description else "")
-        obj = ET.SubElement(root, "object", {
+        attrs = {
             "id": zid, "label": label, "automato_kind": KIND_LABEL.get(z.kind, z.kind),
             "automato_code": z.code or "", "automato_match": ", ".join(z.match),
             "automato_order": str(i + 1),
-        })  # fmt: skip
+        }  # fmt: skip
+        if z.per_customer:
+            attrs["automato_customer"] = "je Kunde"
+        obj = ET.SubElement(root, "object", attrs)
         cell = ET.SubElement(obj, "mxCell", {
             "vertex": "1", "parent": "1",
             "style": f"rounded=1;whiteSpace=wrap;html=1;fillColor={z.color or '#dae8fc'};"

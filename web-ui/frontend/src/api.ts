@@ -1418,6 +1418,7 @@ export interface SchemaZone {
   group: string | null;
   description: string | null;
   geometry: [number, number, number, number] | null;
+  per_customer?: boolean; // Vorlage je Kunde (0.82.0, `automato_customer`)
 }
 export interface SchemaLink {
   src: string;
@@ -1469,6 +1470,7 @@ export interface SchemaZoneEdit {
   description: string | null;
   geometry: [number, number, number, number] | null;
   previous: string | null; // bisheriger Name (Umbenennen)
+  per_customer?: boolean; // Vorlage je Kunde (0.82.0)
 }
 export interface SchemaLinkEdit {
   src: string;
