@@ -7,6 +7,30 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.78.0 – 2026-10-27
+
+Zonen komplett, Teil 1 (ROADMAP Schritt 5, offene Punkte aus ADR 0024). Ohne Migration.
+
+- **Zonen in den Verbindungen** der Applikations-Doku: je Verbindung die Zone von Quelle und
+  Ziel, die Kette der Zonen auf dem Weg (mit Übergängen) und die Absicht zwischen Quell- und
+  Zielzone samt Urteil – wie in der Weg-Suche (`zone_path.ZoneContext`: Zonen, Zonenmodell und
+  Absichten einmal je Applikation geladen). Kennzahl und Chip „gegen Zonen-Absicht“, Spalte
+  „Zonen“ im Markdown-/Druck-Export und im Word-Export. Die Befunde „Abweichung Regel ↔ Weg“
+  rechnen ohne Zonen (schneller).
+- **Absicht je Richtung im Zonenplan:** an jedem Übergang je Richtung ein Pfeil am Ziel in der
+  Farbe der Absicht (grün erlaubt, orange eingeschränkt, rot gesperrt), Titel mit Diensten
+  („Public → Edge Internet: eingeschränkt (tcp/443)“); Absichten zwischen Zonen ohne Übergang
+  als eigene, farbig gestrichelte Linie. In der Übersicht gilt je Kunde die strengste Absicht
+  seiner Zonen („teils weniger streng“). Kunden-Benutzer sehen die Absichten ihrer Zonen ohne
+  Notiz. Ausblendbar unter Elemente „Absichten“. Tabelle der Übergänge mit Spalte Absicht,
+  Karte „Absichten ohne Übergang“; Export SVG/PDF (Pfeile, Tabelle „Absicht je Richtung“),
+  draw.io (Pfeile an den Kanten, `automato_intents`) und Word.
+- **Befund „Zone ausserhalb des Schemas“** (`zone_outside_schema`, Hinweis): eine logische Zone,
+  die zu keiner Zone des Grundschemas im Namensprofil passt (Name, Kurzname, Muster); neu nach
+  dem Speichern einer Zone und nach Hochladen/Bearbeiten/Löschen des Grundschemas. Ohne
+  Grundschema kein Befund.
+- ADR 0024 Nr. 17, BETRIEB, TESTS.
+
 ## 0.77.0 – 2026-10-27
 
 VMware NSX Advanced Load Balancer (Avi) als lesende Quelle für die Doku (Frage des Anwenders,

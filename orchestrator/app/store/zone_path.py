@@ -35,45 +35,63 @@ def _zones_of(index: zone_store.ZoneIndex, text: str | None) -> list[int]:
     return sorted(z for z in index.zones_of(x.version, lo, hi) if isinstance(z, int))
 
 
+class ZoneContext:
+    """Zonen, Zonenmodell und Absichten eines Mandanten - einmal geladen, fuer viele Wege
+    (Weg-Suche bzw. alle Verbindungen einer Applikation, 0.78.0)."""
+
+    def __init__(self, session: Session, tenant_id: int, graph=None) -> None:
+        self.session, self.tenant_id = session, tenant_id
+        self.items = zone_store.load(session, tenant_id)
+        self.info: dict[int, dict] = {}
+        if not self.items:
+            return
+        data = customers._Data(session, tenant_id)
+        self.st = zone_struct.build(session, tenant_id, self.items, data, graph)
+        nets = zone_store.derive(session, tenant_id, self.items, data, self.st)
+        self.index = zone_store.ZoneIndex(nets)
+        color = zone_store.colors(session, tenant_id, self.items)
+        self.info = {
+            z.id: {"id": z.id, "name": z.name, "code": z.code, "kind": z.kind,
+                   "position": z.position, "color": color.get(z.id, {}).get("color")}
+            for z in self.items
+        }  # fmt: skip
+        self.policies = {
+            (p.src_zone_id, p.dst_zone_id): p
+            for p in session.scalars(select(ZonePolicy).where(ZonePolicy.tenant_id == tenant_id))
+        }
+
+    def annotate(self, result: dict, src: str | None, dst: str,
+                 service: tuple[str, int | None] | None,
+                 service_name: str | None = None) -> None:  # fmt: skip
+        """Zonen je Weg und Hop (`path.zones`, `hop.zone`) und die Absicht (`result.zones`)."""
+        if not self.items:
+            result["zones"] = None
+            return
+        info = self.info
+        src_ids, dst_ids = _zones_of(self.index, src), _zones_of(self.index, dst)
+        for path in result.get("paths") or []:
+            chain: list[dict] = []
+            if len(src_ids) == 1:
+                _add(chain, info.get(src_ids[0]), "src")
+            for hop in path.get("hops") or []:
+                zid = self.st.node_zone.get((hop.get("source_system_id"), hop.get("context")))
+                hop["zone"] = info.get(zid) if zid is not None else None
+                _add(chain, hop["zone"], "hop", hop.get("label"))
+            if len(dst_ids) == 1:
+                _add(chain, info.get(dst_ids[0]), "dst")
+            path["zones"] = [{k: v for k, v in e.items() if k != "position"} for e in chain]
+        result["zones"] = {
+            "src": [info[z] for z in src_ids],
+            "dst": [info[z] for z in dst_ids],
+            "intents": _intents(self, src_ids, dst_ids, result, service, service_name),
+        }
+
+
 def annotate(session: Session, tenant_id: int, result: dict, src: str | None, dst: str,
              service: tuple[str, int | None] | None, service_name: str | None = None,
              graph=None) -> None:  # fmt: skip
     """Zonen je Weg und Hop (`path.zones`, `hop.zone`) und die Absicht (`result.zones`)."""
-    items = zone_store.load(session, tenant_id)
-    if not items:
-        result["zones"] = None
-        return
-    data = customers._Data(session, tenant_id)
-    st = zone_struct.build(session, tenant_id, items, data, graph)
-    nets = zone_store.derive(session, tenant_id, items, data, st)
-    index = zone_store.ZoneIndex(nets)
-    color = zone_store.colors(session, tenant_id, items)
-    info = {
-        z.id: {"id": z.id, "name": z.name, "code": z.code, "kind": z.kind,
-               "position": z.position, "color": color.get(z.id, {}).get("color")}
-        for z in items
-    }  # fmt: skip
-    src_ids, dst_ids = _zones_of(index, src), _zones_of(index, dst)
-
-    for path in result.get("paths") or []:
-        chain: list[dict] = []
-        if len(src_ids) == 1:
-            _add(chain, info.get(src_ids[0]), "src")
-        for hop in path.get("hops") or []:
-            zid = st.node_zone.get((hop.get("source_system_id"), hop.get("context")))
-            hop["zone"] = info.get(zid) if zid is not None else None
-            _add(chain, hop["zone"], "hop", hop.get("label"))
-        if len(dst_ids) == 1:
-            _add(chain, info.get(dst_ids[0]), "dst")
-        path["zones"] = [{k: v for k, v in e.items() if k != "position"} for e in chain]
-
-    result["zones"] = {
-        "src": [info[z] for z in src_ids],
-        "dst": [info[z] for z in dst_ids],
-        "intents": _intents(
-            session, tenant_id, src_ids, dst_ids, info, result, service, service_name
-        ),
-    }
+    ZoneContext(session, tenant_id, graph).annotate(result, src, dst, service, service_name)
 
 
 _NONE = {"id": None, "name": "ohne Zone", "code": None, "kind": "none", "position": 0,
@@ -94,12 +112,9 @@ def _add(chain: list[dict], z: dict | None, role: str, label: str | None = None)
     chain.append(entry)
 
 
-def _intents(session: Session, tenant_id: int, src_ids: list[int], dst_ids: list[int],
-             info: dict, result: dict, service, service_name) -> list[dict]:  # fmt: skip
-    intents = {
-        (p.src_zone_id, p.dst_zone_id): p
-        for p in session.scalars(select(ZonePolicy).where(ZonePolicy.tenant_id == tenant_id))
-    }
+def _intents(ctx: ZoneContext, src_ids: list[int], dst_ids: list[int], result: dict, service,
+             service_name) -> list[dict]:  # fmt: skip
+    session, tenant_id, info, intents = ctx.session, ctx.tenant_id, ctx.info, ctx.policies
     verdicts = [(p.get("policy") or {}).get("verdict") for p in result.get("paths") or []
                 if p.get("kind") == "active"]  # fmt: skip
     allowed = "allow" in verdicts

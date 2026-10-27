@@ -597,6 +597,9 @@ tbody tr.group-row td {
 /* Zonenplan: Kommunikation (Regeln) zwischen Zonen (0.66.0) */
 .zp-edge.flow polyline { stroke: #2563eb; }
 .zp-edge.flow text { fill: #2563eb; }
+.zp-edge.intent polyline { stroke-width: 1.2; }
+.intent-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
+.plan-directions { display: flex; flex-direction: column; gap: 2px; }
 .zp-zone2.partner rect { stroke-dasharray: 4 3; }
 /* Zonen-Editor: Vorschläge beim Erfassen (0.66.0) */
 .warn-text { color: var(--warn); }

@@ -123,7 +123,8 @@ def test_eine_zeile_je_verbindung_ueber_aci_und_zwei_firewalls(client):
         "Policy 12 „web-lan-8080“ erlaubt – der Weg ist gesperrt an apic-01 · VRF TE:VRF1"
     )
     assert out["summary"] == {"total": 2, "allow": 1, "blocked": 1, "open": 0, "mismatch": 2,
-                              "inconsistent": 0}  # fmt: skip
+                              "inconsistent": 0, "zone_violations": 0}  # fmt: skip
+    assert https["zones"] is None  # ohne logische Zonen
     # Abweichungen zuerst, gesperrte vor erlaubten
     assert out["connections"][0]["service"] == "tcp/8080"
 
@@ -233,3 +234,29 @@ def test_zeitbudget_der_neuberechnung(client, session_factory):
     issues, failed = reconcile._app_issues(s, tid, apps, budget=None)
     assert len(issues) == 1 and failed == set()
     s.close()
+
+
+def test_zonen_in_den_verbindungen(client):
+    """0.78.0 (ADR 0024): je Verbindung die Zonen von Quelle und Ziel, die Kette des Wegs und die
+    Absicht mit Urteil - Absicht „gesperrt“, der Weg erlaubt = gegen die Absicht."""
+    tid = _seed(client)
+
+    def zone(name, net):
+        body = {"tenant_id": tid, "name": name, "selectors": [{"kind": "prefix", "value": net}]}
+        r = client.post("/zones", json=body, headers=OP)
+        assert r.status_code == 201, r.text
+        return r.json()["id"]
+
+    web, lan = zone("Web", "10.50.1.0/24"), zone("LAN", "10.60.0.0/24")
+    body = {"tenant_id": tid, "src_zone_id": web, "dst_zone_id": lan, "intent": "deny"}
+    assert client.put("/zones/policy", json=body, headers=OP).status_code == 200
+    out = _connections(client, tid)
+    https = next(c for c in out["connections"] if c["service"] == "tcp/443")
+    zones = https["zones"]
+    assert (zones["src"], zones["dst"]) == (["Web"], ["LAN"])
+    assert zones["chain"][0]["name"] == "Web" and zones["chain"][-1]["name"] == "LAN"
+    (intent,) = zones["intents"]
+    assert (intent["intent"], intent["verdict"]) == ("deny", "violation")
+    assert zones["violation"] and out["summary"]["zone_violations"] == 1
+    blocked = next(c for c in out["connections"] if c["service"] == "tcp/8080")
+    assert not blocked["zones"]["violation"]  # gesperrt wie beabsichtigt

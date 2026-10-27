@@ -137,13 +137,18 @@ def test_export_pdf(client):
     assert data.startswith(b"%PDF-1.4") and data.rstrip().endswith(b"%%EOF")
     objs = _pdf_objects(data)
     pages = [b for b in objs.values() if b"/Type /Page " in b]
-    assert len(pages) == 5  # Plan, Matrix, Zonen, Uebergaenge, Netze ohne Zone
+    # Plan, Matrix, Zonen, Uebergaenge, Absicht je Richtung (0.78.0), Netze ohne Zone
+    assert len(pages) == 6
     assert b"/MediaBox [0 0 842.00 595.00]" in pages[1]
+    plan_page = zlib.decompress(objs[int(pages[0].split(b"/Contents ")[1].split()[0])]
+                                .split(b"stream\n")[1].split(b"\nendstream")[0])  # fmt: skip
+    assert b" h f Q" in plan_page  # Pfeil der Absicht (Public -> Server, ohne Uebergang)
     text = _pdf_text(objs)
     for part in ("Zonenplan Kunde A", "Edge Internet", "fw-01 · VDOM root", "Zonenmatrix",
                  "Netze in der Zone", "Übergänge", "DC-EINET", "10.255.0.0/29",
                  "isp-a-gw.example.ch", "Netze ohne Zone", "10.255.1.0/30", "1 / 0",
-                 "Public -> Server: gesperrt – nur über Reverse Proxy"):  # fmt: skip
+                 "Public -> Server: gesperrt – nur über Reverse Proxy",
+                 "Absicht je Richtung", "ohne Übergang"):  # fmt: skip
         assert part in text, part
 
 

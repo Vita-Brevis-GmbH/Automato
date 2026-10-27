@@ -753,6 +753,12 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       Verbindung den Weg mit den entscheidenden Regeln und die Abweichung ausgeschrieben.
     - Liegt die Quelle an keinem gelesenen Gerät (Internet, Partner), beginnt der Weg auf dem
       Gerät der Regel. „In der Weg-Suche öffnen“ zeigt den ganzen Weg mit allen Varianten.
+    - **Zonen (0.78.0):** mit logischen Zonen steht unter dem Weg „Zonen: Server → Edge
+      Internet → Public“ (die Zonen auf dem Weg, sonst die von Quelle und Ziel) und die Absicht
+      zwischen Quell- und Zielzone als Chip (grün = passt, rot = gegen die Absicht, orange =
+      abhängig bzw. nicht umgesetzt). Erlaubt der Weg, was die Absicht sperrt bzw. nicht
+      vorsieht, steht in der Zeile „gegen Zonen-Absicht“ und im Kopf der Karte „N gegen
+      Zonen-Absicht“. Der Export hat die Spalte „Zonen“.
     - **Netzwerkplan (0.67.0, kompakt seit 0.74.0):** Umschalter **Tabelle | Plan** im Kopf der
       Karte (bleibt gewählt). Links die Applikation: je Application Profile ein Rahmen
       (Tenant/AP) mit einem Kasten je EPG und ihren VMs bzw. Servern (höchstens sechs, sonst
@@ -938,7 +944,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       Grundschema“). Darunter die Karte **Grundschema**: Zonen des Schemas ohne Zone und ohne
       Vorschlag (**anlegen…** öffnet den Editor), die **Absichten** des Schemas, die in der
       Zonenmatrix fehlen bzw. abweichen (**Fehlende Absichten übernehmen**, abweichende einzeln
-      **Ersetzen**; Operator), und die Zonen ausserhalb des Schemas.
+      **Ersetzen**; Operator), und die Zonen ausserhalb des Schemas. Seit 0.78.0 ist jede
+      solche Zone auch ein Hinweis unter Findings → Zonen („Zone ausserhalb des Schemas“):
+      umbenennen bzw. das Grundschema ergänzen – der Hinweis fällt beim Speichern weg.
   - **Zonenmatrix:** Zeilen = Quellzone, Spalten = Zielzone, dazu „any“ und „ohne Zone“. Je
     Zelle ✓ erlaubende und ✕ sperrende Regeln (Firewall-Policies und ACI-Contracts, ohne
     Zwillinge paralleler Firewalls); oben, wie viele Regeln zugeordnet sind (ohne IP-Bereich,
@@ -989,14 +997,24 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
         Plan eines Kunden stehen die Zonen der anderen Kunden, mit denen er kommuniziert, einzeln
         da („Partner“, ohne ihre Knoten). Der Browser merkt sich den Schalter; der Export zeigt
         die Linien mit.
+      - **Absicht je Richtung** (0.78.0): an jedem Übergang zeigt je Richtung ein Pfeil am Ziel
+        die Absicht aus der Zonenmatrix – grün erlaubt, orange eingeschränkt, rot gesperrt;
+        kein Pfeil = keine Absicht. Der Titel der Linie nennt Richtung und Dienste („Public →
+        Edge Internet: eingeschränkt (tcp/443)“). Haben zwei Zonen eine Absicht, aber keinen
+        Übergang (z. B. LAN → DMZ über die Firewall dazwischen), steht dafür eine eigene, farbig
+        gestrichelte Linie; die Karte „Absichten ohne Übergang“ listet sie, die Tabelle der
+        Übergänge hat die Spalte „Absicht“. In der Übersicht gilt je Kunde die strengste Absicht
+        seiner Zonen („teils weniger streng“, wenn sie verschieden sind). Ausblenden unter
+        Elemente → „Absichten“. Kunden-Benutzer sehen die Absichten ihrer Zonen ohne Notiz.
     - Darunter die **Übergänge** mit Netz und den Beinen (Knoten mit Interface bzw. L3Out, Router),
       die Knoten ohne Zone an Netzen einer Zone (Kontakt, kein Übergang), Knoten in mehreren Zonen
       und die **Netze ohne Zone**.
     - **Export** (0.52.0, Knöpfe oben rechts) in der gewählten Ansicht: **draw.io** (in
       diagrams.net weiter bearbeitbar, Zonen mit Knoten und Übergänge mit Netzen als
       Eigenschaften; als Grundschema wieder einlesbar), **SVG** (Wiki, Präsentation), **PDF**
-      (Plan, Zonenmatrix, Zonen mit Knoten und Netzen, Übergänge, Netze ohne Zone). Dateiname
-      `zonenplan-<Datum>` bzw. `zonenplan-v<Nummer>`.
+      (Plan, Zonenmatrix, Zonen mit Knoten und Netzen, Übergänge, seit 0.78.0 „Absicht je
+      Richtung“, Netze ohne Zone). Dateiname `zonenplan-<Datum>` bzw. `zonenplan-v<Nummer>`.
+      Die Pfeile der Absicht stehen in allen Formaten (draw.io: Pfeile an den Kanten).
       - Seit 0.71.0 auch **Word** (Zonen, Übergänge, Zonenmatrix als Tabelle der Paare mit
         Absicht, Diensten und Notiz, Netze ohne Zone) und **Für Confluence (Word + draw.io)**
         = ZIP mit der Word-Datei und der Zeichnung, beides wie die Ansicht gefiltert bzw. von

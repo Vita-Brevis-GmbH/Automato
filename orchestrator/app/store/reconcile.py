@@ -329,7 +329,8 @@ def _cabling_issues(session: Session, tenant_id: int) -> list[Issue]:
     return out
 
 
-ZONE_TYPES = frozenset({FindingType.ZONE_POLICY_VIOLATION, FindingType.ZONE_OVERLAP})
+ZONE_TYPES = frozenset({FindingType.ZONE_POLICY_VIOLATION, FindingType.ZONE_OVERLAP,
+                        FindingType.ZONE_OUTSIDE_SCHEMA})  # fmt: skip
 
 
 def _zone_issues(session: Session, tenant_id: int) -> list[Issue]:
@@ -379,6 +380,21 @@ def _zone_issues(session: Session, tenant_id: int) -> list[Issue]:
                 },
             )
         )
+    out += _schema_issues(session, tenant_id)
+    return out
+
+
+def _schema_issues(session: Session, tenant_id: int) -> list[Issue]:
+    """Zonen ausserhalb des Grundschemas im Namensprofil (0.78.0): Hinweis je Zone."""
+    from app.store import zone_detect
+
+    profile, outside = zone_detect.outside_schema(session, tenant_id)
+    out = []
+    for z in outside:
+        detail = {"zone_id": z.id, "name": z.name, "code": z.code, "kind": z.kind,
+                  "profile": profile}  # fmt: skip
+        out.append(Issue(FindingType.ZONE_OUTSIDE_SCHEMA, SubjectKind.ZONE, z.name, None,
+                         Severity.INFO, detail=detail))  # fmt: skip
     return out
 
 
@@ -430,7 +446,8 @@ def _app_issues(session: Session, tenant_id: int, apps: list,
             break
         try:
             with session.begin_nested():
-                result = app_paths.build(session, app, graph=graph, checks=checks)
+                result = app_paths.build(session, app, graph=graph, checks=checks,
+                                         zones=False)  # fmt: skip
         except Exception:  # noqa: BLE001 - eine Applikation darf den Lauf nicht scheitern lassen
             logging.getLogger(__name__).exception("Verbindungen von Applikation %s", app.id)
             failed.add(app.id)

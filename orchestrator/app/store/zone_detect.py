@@ -546,6 +546,19 @@ def _mapped(
     return {z.id: sz for z in items if (sz := schema.match(z.name, z.code)) is not None}
 
 
+def outside_schema(session: Session, tenant_id: int) -> tuple[str | None, list[LogicalZone]]:
+    """Zonen ausserhalb des Grundschemas (0.78.0): (Namensprofil, Zonen ohne passende
+    Schema-Zone); ohne Grundschema keine."""
+    schema, profile = zone_schema.for_tenant(session, tenant_id)
+    if schema is None or profile is None or not schema.zones:
+        return None, []
+    items = zones.load(session, tenant_id)
+    mapped = _mapped(schema, items)
+    name = profile.name if profile.customer == profile.name else (
+        f"{profile.customer} · {profile.name}")  # fmt: skip
+    return name, [z for z in items if z.id not in mapped]
+
+
 def schema_intents(session: Session, tenant_id: int, schema: "zone_schema.Schema | None" = None,
                    items: list[LogicalZone] | None = None) -> list[dict]:  # fmt: skip
     """Absichten, die das Grundschema fuer die bestehenden Zonen vorgibt und die in Automato

@@ -303,6 +303,29 @@ Entscheide des Anwenders (2026-10-23):
     Stand (`edited_at`) – ein neues Hochladen beginnt wieder mit der Zeichnung. Audit
     `zone_schema.edited` mit neuen, entfernten und geänderten Zonen. Zonen und Absichten im
     Netzwerkdesign bleiben unverändert; die Vorschläge folgen dem neuen Schema.
+17. **Zonen komplett, Teil 1 (0.78.0):** ROADMAP Schritt 5, drei der offenen Punkte.
+    - **Zonen in den Verbindungen** der Applikations-Doku (ADR 0021): je Verbindung Zone von
+      Quelle und Ziel, Kette der Zonen auf dem ersten Weg mit Übergängen und die Absicht mit
+      Urteil wie in der Weg-Suche (Nr. 13); Zonen, Zonenmodell und Absichten werden je
+      Applikation einmal geladen (`zone_path.ZoneContext`). Eine Kette nur aus „ohne Zone“
+      entfällt. Die Befunde „Abweichung Regel ↔ Weg“ brauchen die Zonen nicht.
+    - **Absicht je Richtung im Plan:** je Linie `intent_ab` (von a nach b) und `intent_ba` mit
+      Absicht, Diensten, Zahl der Zonenpaare und `mixed`; gezeichnet als Pfeilspitze am Ziel in
+      der Farbe der Absicht (wie im Grundschema: grün, orange, rot). In einer zusammengefassten
+      Gruppe (Kunde in der Übersicht, „anderer Kunde“) gilt die strengste Absicht, `mixed` sagt,
+      dass sie verschieden sind; Dienste = alle der eingeschränkten. Zonenpaare mit Absicht ohne
+      Übergang (z. B. LAN → DMZ über die Firewall-Zone dazwischen) bekommen eine eigene,
+      farbig gestrichelte Linie (`intents`), die nichts an der Auswahl der Zonen ändert. Im Plan
+      eines Kunden nur Absichten mit einer eigenen Zone; Kunden-Benutzer ohne Notiz (sie kann
+      andere Kunden nennen). Element „Absichten“ blendet beides aus. Export: SVG/PDF mit den
+      Pfeilen und der Tabelle „Absicht je Richtung“, draw.io mit Pfeilen an den Kanten
+      (`startArrow`/`endArrow`, Eigenschaft `automato_intents`; als Grundschema wieder
+      eingelesen bleiben die Linien des Plans weiterhin keine Absichten), Word mit der Tabelle.
+    - **Befund „Zone ausserhalb des Schemas“** (`zone_outside_schema`, Hinweis, Gegenstand
+      `zone`): eine logische Zone, die zu keiner Zone des Grundschemas des Namensprofils passt
+      (`Schema.match`: Name, Kurzname, Muster). Neu berechnet mit den übrigen Zonen-Befunden
+      und nach Hochladen, Bearbeiten und Löschen des Grundschemas für alle Mandanten des
+      Profils. Ohne Grundschema kein Befund.
 
 ## Folgen
 
@@ -314,8 +337,8 @@ Entscheide des Anwenders (2026-10-23):
   bisher (Matrix und Plan sind leer, keine Befunde).
 - Export für Confluence seit 0.71.0 als Word + draw.io zum Import von Hand (ADR 0026, kein
   Schreibweg).
-- Offen: Zonen je Kunde im Grundschema (Vorlage „je Kunde“), Befund „Zone ausserhalb des
-  Schemas“, draw.io-Datei zurück einlesen (Korrekturen
-  im Designer), Relevanz nach Pfad für die Matrix (ADR 0019), Übergänge über Routen ohne
-  gemeinsames Netz (Zonen nur hinter einem Router) im Plan, Absicht je Dienst und Richtung im
-  Zonenplan, Zonen in den Verbindungen der Applikations-Doku.
+- Offen (ROADMAP Schritt 5, weitere Teile): Zonen je Kunde im Grundschema (Vorlage „je
+  Kunde“), draw.io-Datei des Zonenplans zurück einlesen (Korrekturen im Designer), Relevanz
+  nach Pfad für die Matrix (ADR 0019), Übergänge über Routen ohne gemeinsames Netz (Zonen nur
+  hinter einem Router) im Plan. Erledigt in 0.78.0 (Nr. 17): Befund „Zone ausserhalb des
+  Schemas“, Absicht je Dienst und Richtung im Zonenplan, Zonen in den Verbindungen.

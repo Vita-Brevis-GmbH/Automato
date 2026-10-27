@@ -169,6 +169,14 @@ def _zone_overlap(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _zone_outside_schema(subject: str, d: dict) -> tuple[str, str]:
+    return (
+        f"Die Zone {subject} passt zu keiner Zone des Grundschemas „{d.get('profile')}“.",
+        "Zone umbenennen bzw. Kurzname setzen, das Grundschema um die Zone ergänzen "
+        "(Namensprofil) oder den Befund quittieren, wenn sie bewusst ausserhalb steht.",
+    )
+
+
 _STATE = {"off_path": "nicht auf dem Weg", "other": "greift auf dem Weg nicht",
           "decides": "entscheidet", "possible": "möglich", "unknown": "nicht prüfbar"}  # fmt: skip
 
@@ -279,6 +287,7 @@ _TOPO_TEXT = {
     "topo_bgp_down": _bgp,
     "zone_policy_violation": _zone_violation,
     "zone_overlap": _zone_overlap,
+    "zone_outside_schema": _zone_outside_schema,
     "app_connection_mismatch": _app_mismatch,
     "link_speed_mismatch": _link,
     "link_duplex_mismatch": _link,

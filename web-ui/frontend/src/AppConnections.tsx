@@ -12,6 +12,7 @@ import {
   AppConnHop,
   AppConnSide,
   AppConnState,
+  AppConnZones,
   AppPlan,
   AppPlanVerdict,
   exportAppPlan,
@@ -73,6 +74,15 @@ const sideText = (s: AppConnSide) => {
 
 const mdCell = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
+// Zonen einer Verbindung als Text (0.78.0): „Web → LAN · Absicht gesperrt: gegen die Absicht …“
+export function zonesText(z: AppConnZones | null | undefined): string {
+  if (!z) return "";
+  const names = z.chain.length ? z.chain.map((e) => e.name) : [...z.src, ...z.dst];
+  const way = [...new Set(names)].join(" → ");
+  const intents = z.intents.map((i) => i.text).join("; ");
+  return [way, intents].filter(Boolean).join(" · ");
+}
+
 // Verbindungen Ende zu Ende als Markdown (Export der Applikations-Doku, 0.59.0)
 export function connectionsMarkdown(data: AppConnections): string[] {
   const s = data.summary;
@@ -83,12 +93,12 @@ export function connectionsMarkdown(data: AppConnections): string[] {
   );
   data.notes.forEach((n) => lines.push(`> ${n}`, ""));
   if (!data.connections.length) return [...lines, "Keine prüfbaren Verbindungen.", ""];
-  lines.push("| Richtung | Quelle | Ziel | Dienst | Weg (entscheidende Regel) | Urteil | Abweichung |", "| --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("| Richtung | Quelle | Ziel | Dienst | Weg (entscheidende Regel) | Urteil | Zonen | Abweichung |", "| --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const c of data.connections) {
     const way = c.hops.map(hopText).join(" → ") + (!c.reached && c.end ? ` – ${c.end.text}` : "");
     const verdict = c.text || (VERDICT[c.verdict]?.[1] ?? c.verdict);
     lines.push(
-      `| ${c.direction === "in" ? "eingehend" : "ausgehend"} | ${mdCell(sideText(c.src))} | ${mdCell(sideText(c.dst))} | ${c.service ?? "alle"} | ${mdCell(way || "–")} | ${mdCell(verdict)} | ${mdCell([...(c.inconsistent ? [variantsText(c)] : []), ...c.mismatch].join("; "))} |`,
+      `| ${c.direction === "in" ? "eingehend" : "ausgehend"} | ${mdCell(sideText(c.src))} | ${mdCell(sideText(c.dst))} | ${c.service ?? "alle"} | ${mdCell(way || "–")} | ${mdCell(verdict)} | ${mdCell(zonesText(c.zones) || "–")} | ${mdCell([...(c.inconsistent ? [variantsText(c)] : []), ...c.mismatch].join("; "))} |`,
     );
   }
   lines.push("");
@@ -133,6 +143,29 @@ function Variants({ c }: { c: AppConnection }) {
 }
 
 // Weg als Folge der Knoten, je Knoten nach seinem Urteil eingefärbt
+const INTENT_CHIP: Record<string, string> = { ok: "ok", violation: "crit", warn: "warn", info: "na" };
+
+// Zonen der Verbindung unter dem Weg (0.78.0): Kette mit Farben, Absicht mit Urteil
+function ZoneLine({ z }: { z: AppConnZones }) {
+  const names = z.chain.length ? z.chain : [...z.src, ...z.dst].map((name) => ({ name, color: null }));
+  return (
+    <div className="faint conn-zones" style={{ marginTop: 2 }}>
+      Zonen:{" "}
+      {names.map((e, i) => (
+        <span key={i}>
+          {i > 0 && " → "}
+          <span style={e.color ? { borderBottom: `2px solid ${e.color}` } : undefined}>{e.name}</span>
+        </span>
+      ))}
+      {z.intents.map((it, i) => (
+        <span key={`i${i}`} className={`chip ${INTENT_CHIP[it.verdict] ?? "na"}`} style={{ marginLeft: 6 }} title={it.text}>
+          Absicht {it.intent === "deny" ? "gesperrt" : it.intent === "limited" ? "eingeschränkt" : "erlaubt"}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function HopChain({ hops }: { hops: AppConnHop[] }) {
   if (!hops.length) return <Dash />;
   return (
@@ -724,6 +757,11 @@ export default function ConnectionsCard({
                 {s.inconsistent} Wege uneinheitlich
               </span>
             )}
+            {(s.zone_violations ?? 0) > 0 && (
+              <span className="chip crit" id="conn-zone-violations" title="der Weg erlaubt, was die Absicht zwischen den Zonen sperrt bzw. nicht vorsieht">
+                {s.zone_violations} gegen die Zonen-Absicht
+              </span>
+            )}
           </span>
         )}
         <div className="spacer" />
@@ -820,6 +858,7 @@ export default function ConnectionsCard({
                       <HopChain hops={c.hops} />
                       {!c.reached && c.end && <div className="faint">{c.end.text}</div>}
                       {c.hops.length > 0 && <div className="print-only faint">{c.hops.map(hopText).join(" → ")}</div>}
+                      {c.zones && <ZoneLine z={c.zones} />}
                     </td>
                     <td>
                       <Verdict v={c.verdict} title={c.text} />
@@ -838,6 +877,11 @@ export default function ConnectionsCard({
                         </span>
                       )}
                       {c.mismatch.length > 0 && <div className="print-only conn-why">{c.mismatch.join("; ")}</div>}
+                      {c.zones?.violation && (
+                        <span className="chip crit" title={c.zones.intents.map((i) => i.text).join("\n")}>
+                          gegen Zonen-Absicht
+                        </span>
+                      )}
                     </td>
                   </tr>
                   {open === c.key && (

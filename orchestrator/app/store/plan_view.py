@@ -43,6 +43,7 @@ ELEMENTS = {
     "labels": "Namen der Übergänge",
     "contacts": "Kontakte zu Knoten ohne Zone",
     "empty": "Zonen ohne Knoten und Übergang",
+    "intents": "Absichten",
 }
 MAX_DEPTH = 3
 MAX_POSITIONS = 5000
@@ -100,10 +101,15 @@ def apply(plan: dict, f: Filter, devices: bool = True) -> dict:
         for z in zones
     ]
     display = {"nodes": "nodes" not in f.hide, "labels": "labels" not in f.hide,
-               "flows": f.flows}  # fmt: skip
+               "flows": f.flows, "intents": "intents" not in f.hide}  # fmt: skip
     out = {**plan, "zone_choices": choices, "display": display}
     if not f.flows:
         out["flows"] = []
+    if "intents" in f.hide:  # 0.78.0: ohne Absicht je Richtung
+        out["intents"] = []
+        out["transitions"] = [
+            {**t, "intent_ab": None, "intent_ba": None} for t in plan.get("transitions") or []
+        ]  # fmt: skip
     real = sum(1 for z in zones if isinstance(z["id"], int))
     if not f.active:
         out["filter"] = {"active": False, "zones": real, "total": real, "hidden": 0}
@@ -111,7 +117,7 @@ def apply(plan: dict, f: Filter, devices: bool = True) -> dict:
     by_id = {str(z["id"]): z for z in zones}
     labels = {n["id"]: n["label"] for n in plan.get("nodes") or []}
     edges = [
-        t for t in plan.get("transitions") or []
+        t for t in out.get("transitions") or []
         if not (t.get("contact") and "contacts" in f.hide)
     ]  # fmt: skip
     keep = {k for k, z in by_id.items() if _layer(z) not in f.hide_layers}
@@ -150,8 +156,9 @@ def apply(plan: dict, f: Filter, devices: bool = True) -> dict:
         keep = (keep & shown) | seeds
     edges = [t for t in edges if str(t["a"]) in keep and str(t["b"]) in keep]
     flows = [x for x in out.get("flows") or [] if str(x["a"]) in keep and str(x["b"]) in keep]
+    intents = [x for x in out.get("intents") or [] if str(x["a"]) in keep and str(x["b"]) in keep]
     if "empty" in f.hide:
-        linked = {str(x) for t in [*edges, *flows] for x in (t["a"], t["b"])}
+        linked = {str(x) for t in [*edges, *flows, *intents] for x in (t["a"], t["b"])}
         keep = {k for k in keep if by_id[k].get("nodes") or k in linked or k in seeds}
     kept = [z for z in zones if str(z["id"]) in keep]
     node_ids = {n for z in kept for n in z.get("nodes") or []}
@@ -160,6 +167,7 @@ def apply(plan: dict, f: Filter, devices: bool = True) -> dict:
         "zones": kept,
         "transitions": edges,
         "flows": [x for x in flows if str(x["a"]) in keep and str(x["b"]) in keep],
+        "intents": [x for x in intents if str(x["a"]) in keep and str(x["b"]) in keep],
         "nodes": [n for n in plan.get("nodes") or [] if n["id"] in node_ids],
         "filter": {"active": True, "zones": shown_real, "total": real,
                    "hidden": len(zones) - len(kept), "matches": len(seeds),

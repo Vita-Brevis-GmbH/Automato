@@ -53,6 +53,7 @@ export const FINDING_LABEL: Record<string, string> = {
   topo_bgp_down: "BGP nicht aufgebaut",
   zone_policy_violation: "Zone: gegen die Absicht",
   zone_overlap: "Netz in mehreren Zonen",
+  zone_outside_schema: "Zone ausserhalb des Schemas",
   app_connection_mismatch: "Applikation: Wege uneinheitlich",
   link_speed_mismatch: "Kabel: Speed abweichend",
   link_duplex_mismatch: "Kabel: Duplex abweichend",
@@ -103,6 +104,7 @@ export const FINDING_HINT: Record<string, string> = {
   topo_bgp_down: "BGP-Sitzung eines gelesenen Knotens nicht aufgebaut",
   zone_policy_violation: "erlaubende Regel zwischen Zonen, die laut Zonenmatrix gesperrt sind",
   zone_overlap: "dasselbe Netz in mehreren logischen Zonen",
+  zone_outside_schema: "logische Zone, die zu keiner Zone des Grundschemas im Namensprofil passt",
   app_connection_mismatch: "Verbindung einer Applikation, die über einen Weg offen und über einen anderen gesperrt ist (aktiv, ECMP, Backup, Firewalls im Verbund)",
   link_speed_mismatch: "zwei verbundene Switch-Ports mit verschiedener Geschwindigkeit",
   link_duplex_mismatch: "zwei verbundene Switch-Ports mit verschiedenem Duplex",
@@ -179,8 +181,8 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
   {
     key: "zones",
     label: "Zonen",
-    help: "Regeln gegen die Absicht der Zonenmatrix, Netze in mehreren logischen Zonen",
-    types: ["zone_policy_violation", "zone_overlap"],
+    help: "Regeln gegen die Absicht der Zonenmatrix, Netze in mehreren logischen Zonen, Zonen ausserhalb des Grundschemas",
+    types: ["zone_policy_violation", "zone_overlap", "zone_outside_schema"],
   },
   {
     key: "apps",

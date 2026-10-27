@@ -33,6 +33,7 @@ import {
   LogicalZone,
   PlanBox,
   PlanDiff,
+  PlanDirection,
   PlanEdge,
   PlanFilter,
   PlanFormat,
@@ -41,6 +42,7 @@ import {
   PlanVersion,
   PlanVersionFull,
   PlanView,
+  PlanZoneId,
   previewZone,
   assistZone,
   type ZoneAssistItem,
@@ -1630,6 +1632,7 @@ const PLAN_ELEMENTS: [string, string][] = [
   ["labels", "Namen der Übergänge"],
   ["contacts", "Kontakte zu Knoten ohne Zone"],
   ["empty", "Zonen ohne Knoten und Übergang"],
+  ["intents", "Absichten (Pfeile je Richtung)"],
 ];
 const PLAN_HIDDEN_KEY = "automato_plan_hidden";
 type PlanHidden = { layers: string[]; hide: string[] };
@@ -1924,6 +1927,17 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
           ) : (
             f?.active && <Note>Keine Zone passt zum Filter.</Note>
           )}
+          {(plan.layout?.edges ?? []).some((e) => e.ab || e.ba) && (
+            <p className="faint zone-legend" id="zone-plan-intents">
+              Pfeil = Absicht in diese Richtung:{" "}
+              {(Object.keys(INTENT) as ZoneIntent[]).map((k) => (
+                <span key={k} className="nowrap">
+                  <span className="intent-swatch" style={{ background: INTENT_COLOR[k] }} /> {INTENT[k][1]}{" "}
+                </span>
+              ))}
+              · farbig gestrichelt = Absicht zwischen Zonen ohne Übergang · ohne Pfeil = keine Absicht (in der Zonenmatrix setzen)
+            </p>
+          )}
         </div>
       </div>
 
@@ -1940,6 +1954,35 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
           )}
         </div>
       </div>
+
+      {(plan.intents ?? []).length > 0 && (
+        <div className="card" id="zone-plan-intent-lines">
+          <div className="card-head">
+            <h2>Absichten ohne Übergang</h2>
+            <span className="faint">Zonen ohne gemeinsames Netz – die Absicht gilt trotzdem (Regeln über mehrere Übergänge)</span>
+          </div>
+          <div className="card-body scroll">
+            <table className="compact">
+              <thead>
+                <tr>
+                  <th>Zonen</th>
+                  <th>Absicht je Richtung</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(plan.intents ?? []).map((i) => (
+                  <tr key={i.id} data-intent-line={i.id}>
+                    <td className="nowrap">{`${zoneName.get(String(i.a)) ?? i.a} ↔ ${zoneName.get(String(i.b)) ?? i.b}`}</td>
+                    <td>
+                      <DirectionChips a={i.a} b={i.b} ab={i.intent_ab} ba={i.intent_ba} zoneName={zoneName} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {contacts.length > 0 && (
         <div className="card" id="zone-contacts">
@@ -1992,13 +2035,37 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
   );
 }
 
+// 0.78.0: Absicht je Richtung als Chips („Office → DC gesperrt“)
+function DirectionChips({ a, b, ab, ba, zoneName }: { a: PlanZoneId; b: PlanZoneId; ab?: PlanDirection | null; ba?: PlanDirection | null; zoneName: Map<string, string> }) {
+  const items = [
+    [a, b, ab],
+    [b, a, ba],
+  ] as const;
+  const shown = items.filter(([, , d]) => d);
+  if (!shown.length) return <span className="faint">–</span>;
+  return (
+    <span className="plan-directions">
+      {shown.map(([x, y, d]) => (
+        <span key={`${x}>${y}`} className="nowrap" data-direction={`${x}>${y}`} title={d?.note ?? undefined}>
+          {zoneName.get(String(x)) ?? x} → {zoneName.get(String(y)) ?? y}{" "}
+          <span className={`chip ${INTENT[d!.intent][0]}`}>{INTENT[d!.intent][1]}</span>
+          {d!.services.length > 0 && <span className="faint mono"> {d!.services.join(", ")}</span>}
+          {d!.mixed && <span className="faint"> (teils weniger streng)</span>}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function TransitionTable({ transitions, zoneName, id }: { transitions: PlanTransition[]; zoneName: Map<string, string>; id?: string }) {
+  const intents = transitions.some((t) => t.intent_ab || t.intent_ba);
   return (
     <table className="compact" id={id}>
       <thead>
         <tr>
           <th>Übergang</th>
           <th>Zonen</th>
+          {intents && <th>Absicht</th>}
           <th>Netz</th>
           <th>über</th>
         </tr>
@@ -2015,6 +2082,7 @@ function TransitionTable({ transitions, zoneName, id }: { transitions: PlanTrans
                 )}
               </td>
               <td className="nowrap">{i === 0 && `${zoneName.get(String(t.a)) ?? t.a} ↔ ${zoneName.get(String(t.b)) ?? t.b}`}</td>
+              {intents && <td>{i === 0 && <DirectionChips a={t.a} b={t.b} ab={t.intent_ab} ba={t.intent_ba} zoneName={zoneName} />}</td>}
               <td className="mono">{n ? n.network : <span className="faint">{t.count ? `${t.count} Netze` : "–"}</span>}</td>
               <td className="faint">{n ? legsText(n) : ""}</td>
             </tr>
@@ -2160,6 +2228,55 @@ export function routeEdges(boxes: PlanBox[], edges: PlanEdge[]): PlanEdge[] {
   });
 }
 
+// 0.78.0: Farben der Absicht – wie im Export und im Grundschema
+const INTENT_COLOR: Record<ZoneIntent, string> = { allow: "#2d7d46", limited: "#d79b00", deny: "#b85450" };
+const INTENT_RANK: Record<ZoneIntent, number> = { allow: 1, limited: 2, deny: 3 };
+const ARROW_LEN = 10;
+const ARROW_W = 4.5;
+
+// Pfeilspitzen der Absicht je Richtung (gleich wie `plan_export.arrows`): `ab` am Ende (Zone b),
+// `ba` am Anfang, entlang des letzten bzw. ersten Stücks der Linie
+export function intentArrows(e: PlanEdge): { dir: "ab" | "ba"; intent: ZoneIntent; points: [number, number][] }[] {
+  const pts = e.points ?? [];
+  if (pts.length < 2) return [];
+  const out: { dir: "ab" | "ba"; intent: ZoneIntent; points: [number, number][] }[] = [];
+  for (const [dir, tip, back] of [
+    ["ab", pts[pts.length - 1], pts[pts.length - 2]],
+    ["ba", pts[0], pts[1]],
+  ] as const) {
+    const intent = e[dir];
+    if (!intent) continue;
+    const dx = tip[0] - back[0];
+    const dy = tip[1] - back[1];
+    const n = Math.hypot(dx, dy) || 1;
+    const [ux, uy] = [dx / n, dy / n];
+    const [bx, by] = [tip[0] - ux * ARROW_LEN, tip[1] - uy * ARROW_LEN];
+    out.push({
+      dir,
+      intent,
+      points: [
+        [tip[0], tip[1]],
+        [bx - uy * ARROW_W, by + ux * ARROW_W],
+        [bx + uy * ARROW_W, by - ux * ARROW_W],
+      ],
+    });
+  }
+  return out;
+}
+
+function edgeStroke(e: PlanEdge): string | undefined {
+  if (!e.intent) return undefined;
+  const worst = [e.ab, e.ba].filter((x): x is ZoneIntent => !!x).sort((x, y) => INTENT_RANK[y] - INTENT_RANK[x])[0];
+  return worst ? INTENT_COLOR[worst] : undefined;
+}
+
+function edgeTitle(e: PlanEdge): string {
+  if (e.flow) return e.name ?? "";
+  if (e.intent) return `Absicht ${e.intent_text ?? ""}`;
+  const text = `${e.name || e.label || "Kontakt"}: ${(e.networks ?? []).join(", ")}`;
+  return e.intent_text ? `${text} – Absicht ${e.intent_text}` : text;
+}
+
 function PlanDrawing2({
   layout,
   id,
@@ -2264,12 +2381,26 @@ function PlanDrawing2({
       onPointerCancel={cancel}
     >
       {edges.map((e) => (
-        <g key={e.id} className={`zp-edge ${e.contact ? "contact" : ""} ${e.flow ? "flow" : ""}`} data-flow={e.flow ? `${e.a}~${e.b}` : undefined}>
-          <polyline points={(e.points ?? []).map(([x, y]) => `${x},${y}`).join(" ")} strokeDasharray={e.flow ? "2 4" : e.dashed ? "5 4" : undefined}>
-            <title>{e.flow ? e.name : `${e.name || e.label || "Kontakt"}: ${(e.networks ?? []).join(", ")}`}</title>
+        <g
+          key={e.id}
+          className={`zp-edge ${e.contact ? "contact" : ""} ${e.flow ? "flow" : ""} ${e.intent ? "intent" : ""}`}
+          data-flow={e.flow ? `${e.a}~${e.b}` : undefined}
+          data-intent={e.ab || e.ba ? `${e.ab ?? ""}|${e.ba ?? ""}` : undefined}
+        >
+          <polyline
+            points={(e.points ?? []).map(([x, y]) => `${x},${y}`).join(" ")}
+            strokeDasharray={e.flow ? "2 4" : e.intent ? "6 3" : e.dashed ? "5 4" : undefined}
+            style={e.intent ? { stroke: edgeStroke(e) } : undefined}
+          >
+            <title>{edgeTitle(e)}</title>
           </polyline>
+          {intentArrows(e).map((a) => (
+            <polygon key={a.dir} className="zp-arrow" data-dir={a.dir} points={a.points.map(([x, y]) => `${x},${y}`).join(" ")} fill={INTENT_COLOR[a.intent]}>
+              <title>{edgeTitle(e)}</title>
+            </polygon>
+          ))}
           {e.label && (
-            <text x={e.lx} y={e.ly} textAnchor={e.anchor ?? ((e.points ?? []).length > 2 ? "start" : "middle")}>
+            <text x={e.lx} y={e.ly} textAnchor={e.anchor ?? ((e.points ?? []).length > 2 ? "start" : "middle")} style={e.intent ? { fill: edgeStroke(e) } : undefined}>
               {e.label}
             </text>
           )}

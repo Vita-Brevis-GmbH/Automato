@@ -65,6 +65,9 @@ class FindingType(enum.StrEnum):
     # „gesperrt“ bzw. dasselbe Praefix in zwei Zonen
     ZONE_POLICY_VIOLATION = "zone_policy_violation"
     ZONE_OVERLAP = "zone_overlap"
+    # Grundschema (0.78.0, ADR 0024): logische Zone, die zu keiner Zone des Grundschemas im
+    # Namensprofil passt (Name, Kurzname bzw. Erkennungsmuster)
+    ZONE_OUTSIDE_SCHEMA = "zone_outside_schema"
     # Verbindungen Ende zu Ende (0.59.0, ADR 0021): erlaubende Regel einer Applikation, deren
     # Verbindung der Weg sperrt, die nicht auf dem Weg liegt bzw. dort nicht greift
     APP_CONNECTION_MISMATCH = "app_connection_mismatch"
@@ -112,6 +115,7 @@ class SubjectKind(enum.StrEnum):
     LINK = "link"  # Verbindung der Verkabelung (`<Geraet>|<Port>~<Geraet>|<Port>`, 0.62.0)
     # bzw. ein Port (`<Geraet>|<Port>`, 0.63.0), Geraet, Geraetepaar bzw. `vlan|<VLAN>` (0.64.0)
     NAT = "nat"  # VIP bzw. IP-Pool (`<Quellsystem>|<VDOM>|<Art>|<Familie>|<Name>`, 0.72.0)
+    ZONE = "zone"  # logische Zone (Name, 0.78.0)
 
 
 class Finding(Base):

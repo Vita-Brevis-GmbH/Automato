@@ -288,6 +288,18 @@ def preview_zone_schema(
             "diff": zone_schema.diff(zone_schema.load(session, profile_id), schema)}  # fmt: skip
 
 
+def _refresh_schema_findings(session: Session, profile_id: int) -> None:
+    """Befund „Zone ausserhalb des Schemas“ (0.78.0) der Mandanten mit diesem Profil neu."""
+    from sqlalchemy import select
+
+    from app.store import reconcile
+
+    session.flush()
+    for tid in session.scalars(select(Tenant.id)):
+        if store.profile_id_for_tenant(session, tid) == profile_id:
+            reconcile.refresh_zone_findings(session, tid)
+
+
 @router.put("/{profile_id}/zone-schema")
 def save_zone_schema(
     profile_id: int,
@@ -306,6 +318,7 @@ def save_zone_schema(
         subject=str(profile_id),
         detail={"profile_id": profile_id, "zones": len(schema.zones), "links": len(schema.links)},
     )
+    _refresh_schema_findings(session, profile_id)
     return _schema_out(session, profile_id)
 
 
@@ -342,6 +355,7 @@ def edit_zone_schema(
             + len(change["links"]["changed"]),
         },
     )  # fmt: skip
+    _refresh_schema_findings(session, profile_id)
     return _schema_out(session, profile_id)
 
 
@@ -361,6 +375,7 @@ def delete_zone_schema(
             subject=str(profile_id),
             detail={"profile_id": profile_id},
         )
+        _refresh_schema_findings(session, profile_id)
 
 
 @router.get("/{profile_id}/zone-schema/drawing")

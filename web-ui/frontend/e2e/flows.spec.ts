@@ -1009,6 +1009,23 @@ test("Zonen: Vorschläge beim Erfassen und Kommunikation im Zonenplan (0.66.0)",
   await expect(page.locator("#zone-plan .zp-edge.flow title", { hasText: "Knoten ohne Zone" })).toHaveCount(0);
   await page.locator("#zone-plan-flows input").uncheck();
   await expect(page.locator("#zone-plan .zp-edge.flow")).toHaveCount(0);
+
+  // Absicht je Richtung (0.78.0): LAN -> DMZ gesperrt, zwischen den Zonen kein Übergang = eigene,
+  // farbig gestrichelte Linie mit einem roten Pfeil zur DMZ
+  const line = page.locator("#zone-plan .zp-edge.intent");
+  await expect(line).toHaveCount(1);
+  await expect(line.locator("polygon.zp-arrow")).toHaveCount(1);
+  await expect(line.locator("polygon.zp-arrow")).toHaveAttribute("fill", "#b85450");
+  await expect(line.locator("polyline title")).toContainText("LAN → DMZ: gesperrt");
+  await expect(page.locator("#zone-plan-intents")).toContainText("Pfeil = Absicht in diese Richtung");
+  await expect(page.locator("#zone-plan-intent-lines tbody tr")).toContainText("LAN → DMZ gesperrt");
+  // ausblenden über die Elemente
+  await page.click("#zone-plan-layers summary");
+  await page.locator("#zone-plan-layers label", { hasText: "Absichten" }).locator("input").uncheck();
+  await expect(page.locator("#zone-plan .zp-edge.intent")).toHaveCount(0);
+  await expect(page.locator("#zone-plan polygon.zp-arrow")).toHaveCount(0);
+  await page.locator("#zone-plan-layers label", { hasText: "Absichten" }).locator("input").check();
+  await expect(page.locator("#zone-plan .zp-edge.intent")).toHaveCount(1);
   expect(problems).toEqual([]);
 });
 

@@ -21,6 +21,7 @@ import zipfile
 from datetime import datetime
 
 from app import __version__
+from app.store import plan_export
 from app.store.docx_writer import Document
 
 PURPOSE = {"dev": "Dev", "test": "Test", "prod": "Prod"}
@@ -239,14 +240,25 @@ def _connections(out: Document, data: dict) -> None:
                      + (" (Rückrichtung)" if c.get("reverse") else ""),
                      _side(c["src"]), _side(c["dst"]), c.get("service") or "alle", way or "–",
                      c.get("text") or VERDICT.get(c.get("verdict"), c.get("verdict") or ""),
+                     _zones(c.get("zones")) or "–",
                      "; ".join((["Wege uneinheitlich"] if c.get("inconsistent") else [])
                                + (c.get("mismatch") or []))])  # fmt: skip
     if rows:
         out.table(["Richtung", "Quelle", "Ziel", "Dienst", "Weg (entscheidende Regel)", "Urteil",
-                   "Abweichung"], _capped(out, rows, "Verbindungen"),
-                  [1.3, 2.6, 2.6, 1, 4, 1.8, 2.4])  # fmt: skip
+                   "Zonen", "Abweichung"], _capped(out, rows, "Verbindungen"),
+                  [1.2, 2.3, 2.3, 0.9, 3.6, 1.6, 2.2, 2.1])  # fmt: skip
+
     else:
         out.note("keine prüfbaren Verbindungen")
+
+
+def _zones(z: dict | None) -> str:
+    """Zonen einer Verbindung (0.78.0): Kette des Wegs und die Absichten mit Urteil."""
+    if not z:
+        return ""
+    names = [e["name"] for e in z.get("chain") or []] or [*z.get("src", []), *z.get("dst", [])]
+    way = " → ".join(dict.fromkeys(names))
+    return " · ".join(x for x in (way, "; ".join(i["text"] for i in z.get("intents") or [])) if x)
 
 
 def _tables(out: Document, tables: list[dict], rows_too: bool = True,
@@ -348,6 +360,11 @@ def zone_plan(plan: dict, matrix: dict | None, title: str, when: datetime,
         out.heading("Übergänge", 1)
         out.table(["Übergang", "Netz", "über", "Router"], _capped(out, rows, "Übergänge"),
                   [2.6, 1.8, 5, 2.4])  # fmt: skip
+    rows = plan_export.intent_rows(plan)  # 0.78.0
+    if rows:
+        out.heading("Absicht je Richtung", 1)
+        out.table(["Von", "Nach", "Absicht", "Dienste", "Linie"],
+                  _capped(out, rows, "Absichten"), [2.6, 2.6, 1.6, 3.4, 1.8])  # fmt: skip
 
     if matrix:
         _matrix(out, matrix)

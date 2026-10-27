@@ -214,12 +214,15 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   await expect(card.locator("tbody tr.clickable")).toHaveCount(6);
   await card.locator("tbody tr.clickable").filter({ hasText: "H_db01" }).click();
   await expect(card.locator(".conn-rules")).toContainText("nicht prüfbar");
+  // Zonen je Verbindung (0.78.0): das Ziel liegt in der Zone Internet
+  await expect(card.locator("tbody tr.clickable").filter({ hasText: "H_db01" }).locator(".conn-zones")).toContainText("Zonen: Internet");
   // Export (Markdown) mit den Verbindungen und dem Weg je Hop (0.59.0) – seit 0.73.0 im Dialog
   await page.locator("#app-doc-export").click();
   const [file] = await Promise.all([page.waitForEvent("download"), page.locator("#app-export-md").click()]);
   const text = readFileSync((await file.path())!, "utf-8");
   expect(text).toContain("## Verbindungen Ende zu Ende");
-  expect(text).toContain("| Richtung | Quelle | Ziel | Dienst | Weg (entscheidende Regel) | Urteil | Abweichung |");
+  expect(text).toContain("| Richtung | Quelle | Ziel | Dienst | Weg (entscheidende Regel) | Urteil | Zonen | Abweichung |");
+  expect(text).toMatch(/H_db01.*\| Internet \|/); // Zone des Ziels (0.78.0)
   expect(text).toMatch(/EN_rt.*apic-01 · VRF TE:VRF1.*Contract CT_rt:SJ_1 erlaubt – der Weg ist gesperrt/);
   // Für Confluence (0.71.0): ZIP mit Word und dem Netzwerkplan als draw.io
   await page.locator("#app-doc-export").click();

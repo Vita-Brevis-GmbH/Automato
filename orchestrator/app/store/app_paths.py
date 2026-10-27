@@ -86,10 +86,15 @@ class _Conn:
 
 def build(session: Session, app: Application, doc: dict | None = None,
           graph: paths.Graph | None = None,
-          checks: policy_check.Checks | None = None) -> dict:  # fmt: skip
+          checks: policy_check.Checks | None = None, zones: bool = True) -> dict:  # fmt: skip
     """Verbindungen der Applikation mit Weg, Urteil je Hop und Abgleich mit den Regeln. Graph
-    und Policies lassen sich fuer mehrere Applikationen teilen (Befunde, 0.59.0)."""
-    from app.store import applications  # spaet: applications nutzt appdoc wie dieses Modul
+    und Policies lassen sich fuer mehrere Applikationen teilen (Befunde, 0.59.0); `zones`:
+    logische Zonen je Verbindung und Hop mit der Absicht (0.78.0, ADR 0024) - die Befunde
+    brauchen sie nicht."""
+    from app.store import (
+        applications,  # spaet: applications nutzt appdoc wie dieses Modul
+        zone_path,  # spaet: Zonen nutzen Kunden, diese die Applikationen
+    )
 
     tid = app.tenant_id
     doc = doc or applications.build_doc(session, app)
@@ -107,8 +112,9 @@ def build(session: Session, app: Application, doc: dict | None = None,
     out: list[dict] = []
     cut = len(conns) > MAX_TRACES
     l3 = L3Outs(session, {k[0] for k in graph.nodes})
+    zctx = zone_path.ZoneContext(session, tid, graph) if zones else None
     for c in list(conns.values())[:MAX_TRACES]:
-        out.append(_connection(session, tid, graph, checks, data, rules, c, l3))
+        out.append(_connection(session, tid, graph, checks, data, rules, c, l3, zctx))
     if cut:
         notes.append(f"{len(conns)} Verbindungen – nur die ersten {MAX_TRACES} geprüft")
     order = {"deny": 0, "depends": 1, "unknown": 2, "allow": 3}
@@ -125,6 +131,8 @@ def build(session: Session, app: Application, doc: dict | None = None,
             ),  # fmt: skip
             "mismatch": sum(1 for c in out if c["mismatch"]),
             "inconsistent": sum(1 for c in out if c["inconsistent"]),
+            # gegen die Absicht der Zonen (0.78.0)
+            "zone_violations": sum(1 for c in out if (c.get("zones") or {}).get("violation")),
         },
         "members": members(doc),
     }
@@ -554,6 +562,7 @@ def _connection(
     rules: dict[int, Rule],
     c: _Conn,
     l3: "L3Outs | None" = None,
+    zctx=None,
 ) -> dict:
     # mit Backup-Wegen gleicher Laenge (slack 0): uneinheitliche Wege (0.73.0)
     res = paths.trace(session, tid, c.dst.ip, c.src.ip, None, 0, c.service, graph=graph,
@@ -567,6 +576,8 @@ def _connection(
                 if res["paths"]:
                     start = graph.nodes[paths.parse_key(key)].label
                     break
+    if zctx is not None:  # Zonen je Hop und Absicht zwischen Quell- und Zielzone (0.78.0)
+        zctx.annotate(res, c.src.ip, c.dst.ip, c.service)
     active = [p for p in res["paths"] if p.get("kind") != "backup"]
     first = active[0] if active else None
     hops = [_hop(h, l3) for h in first["hops"]] if first else []
@@ -596,6 +607,33 @@ def _connection(
         "variants": variants if len(variants) > 1 else [],
         "inconsistent": inconsistent(variants),
         "notes": res["notes"],
+        "zones": _zones_out(res.get("zones"), first),
+    }
+
+
+def _zones_out(zones: dict | None, first: dict | None) -> dict | None:
+    """Zonen einer Verbindung kompakt: Quelle/Ziel, Kette des Wegs mit Uebergaengen, Absichten
+    mit Urteil; `violation` = mindestens eine Absicht verletzt."""
+    if not zones:
+        return None
+    steps = (first or {}).get("zones") or []
+    # nur „ohne Zone“ sagt nichts: dann ohne Kette (Quelle/Ziel reichen)
+    chain = [
+        {k: e.get(k) for k in ("name", "code", "color", "transition", "role")}
+        for e in steps
+    ] if any(e.get("id") is not None for e in steps) else []  # fmt: skip
+    intents = [
+        {k: i.get(k) for k in ("src_name", "dst_name", "intent", "services", "verdict", "text")}
+        for i in zones.get("intents") or []
+    ]
+    if not chain and not intents and not zones.get("src") and not zones.get("dst"):
+        return None
+    return {
+        "src": [z["name"] for z in zones.get("src") or []],
+        "dst": [z["name"] for z in zones.get("dst") or []],
+        "chain": chain,
+        "intents": intents,
+        "violation": any(i["verdict"] == "violation" for i in intents),
     }
 
 
@@ -719,6 +757,7 @@ def _hop(h: dict, l3: L3Outs | None = None) -> dict:
         "context": h["context"],
         "verdict": _hop_verdict(checks),
         "checks": checks,
+        **({"zone": h["zone"]["name"]} if h.get("zone") else {}),
         # NSX ALB (0.77.0): an diesem Hop vom Load Balancer weiter zum Server
         **({"lb": h["lb"]} if h.get("lb") else {}),
     }

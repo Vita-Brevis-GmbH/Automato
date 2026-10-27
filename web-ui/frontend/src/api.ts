@@ -1745,6 +1745,22 @@ export interface AppConnection {
   variants: { kind: "active" | "backup"; via: string; verdict: string; text: string; reason: string | null }[];
   inconsistent: boolean;
   notes: string[];
+  // logische Zonen (0.78.0, ADR 0024): Quelle/Ziel, Kette des Wegs, Absichten mit Urteil
+  zones?: AppConnZones | null;
+}
+export interface AppConnZones {
+  src: string[];
+  dst: string[];
+  chain: { name: string; code: string | null; color: string | null; transition?: string | null; role: string }[];
+  intents: {
+    src_name: string;
+    dst_name: string;
+    intent: "allow" | "limited" | "deny";
+    services: string[];
+    verdict: "ok" | "violation" | "warn" | "info";
+    text: string;
+  }[];
+  violation: boolean;
 }
 // Netzwerkplan je Applikation (0.67.0): Systeme → Knoten der Wege → Gegenstellen; je Linie die
 // Dienste je Richtung (von der Applikation aus) und an den Enden die Interfaces
@@ -1814,7 +1830,7 @@ export interface AppPlan {
 export interface AppConnections {
   connections: AppConnection[];
   notes: string[];
-  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number };
+  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number };
   plan?: AppPlan;
 }
 export const fetchAppConnections = (id: number) =>
@@ -2744,6 +2760,17 @@ export interface PlanTransition {
   count: number;
   l3out: boolean;
   contact: boolean; // Knoten ohne Zone an einem Netz der Zone (kein Übergang)
+  intent_ab?: PlanDirection | null; // 0.78.0: Absicht von a nach b
+  intent_ba?: PlanDirection | null;
+}
+// Absicht einer Richtung im Zonenplan (0.78.0): bei einem Kunden als Gruppe die strengste seiner
+// Zonen (`mixed` = verschiedene), Dienste der eingeschränkten
+export interface PlanDirection {
+  intent: ZoneIntent;
+  services: string[];
+  pairs: number;
+  mixed: boolean;
+  note: string | null;
 }
 // Zonenplan: seit 0.56.0 Format 2 (Zonen mit Knoten, Übergänge, Ansicht je Kunde); Versionen bis
 // 0.55.0 im Format 1 (Zonen an den Knoten)
@@ -2756,6 +2783,8 @@ export interface ZonePlan {
   transitions?: PlanTransition[];
   // 0.66.0: erlaubende Regeln je Zonenpaar (`ab` von a nach b, `ba` zurück)
   flows?: { id: string; a: PlanZoneId; b: PlanZoneId; rules: number; ab: number; ba: number }[];
+  // 0.78.0: Absichten zwischen Zonen ohne Übergang (eigene Linie)
+  intents?: { id: string; a: PlanZoneId; b: PlanZoneId; intent_ab: PlanDirection | null; intent_ba: PlanDirection | null }[];
   conflicts?: { node: string; label: string; zones: string[] }[];
   attachments?: {
     zone: number;
@@ -2828,6 +2857,11 @@ export interface PlanEdge {
   networks?: string[];
   contact?: boolean;
   name?: string; // 0.61.0: Name des Übergangs auch bei ausgeblendeter Beschriftung
+  // 0.78.0: Absicht je Richtung (Pfeil am Ziel), Text für den Titel, Linie nur für die Absicht
+  ab?: ZoneIntent | null;
+  ba?: ZoneIntent | null;
+  intent_text?: string;
+  intent?: boolean;
 }
 export interface PlanLayout {
   format?: number;

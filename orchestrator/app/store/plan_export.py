@@ -54,6 +54,9 @@ FG, MUTED, LINE, NODE_FILL, NODE_STROKE, ZONE_STROKE = (
 )  # fmt: skip
 DEFAULT_ZONE = "#e5e9f0"
 FLOW = "#2563eb"  # Kommunikation (Regeln) zwischen Zonen (0.66.0)
+# Absicht je Richtung (0.78.0): Pfeilspitze am Ziel in der Farbe der Absicht (wie im Grundschema)
+INTENT_COLOR = {"allow": "#2d7d46", "limited": "#d79b00", "deny": "#b85450"}
+ARROW_LEN, ARROW_W = 10.0, 4.5
 
 
 def _plural(n: int, one: str, many: str) -> str:
@@ -207,9 +210,17 @@ def _layout2(plan: dict) -> dict:
             "name": t["name"], "count": t.get("count") or 0,
             "networks": [x["network"] for x in t.get("networks") or []],
             "dashed": "outside" in (t["a"], t["b"]) or "none" in (t["a"], t["b"]),
-            "contact": bool(t.get("contact")),
+            "contact": bool(t.get("contact")), **_intent_edge(t, by_id),
         }
         for t in plan.get("transitions") or []
+    ] + [
+        {   # Absicht ohne Uebergang (0.78.0): duenne Linie mit den Pfeilen je Richtung
+            "id": i["id"], "a": i["a"], "b": i["b"],
+            "label": _intent_label(i) if show_labels else "", "name": "", "count": 0,
+            "networks": [], "dashed": True, "contact": False, "intent": True,
+            **_intent_edge(i, by_id),
+        }
+        for i in plan.get("intents") or []
     ] + [
         {   # Kommunikation (0.66.0): erlaubende Regeln je Zonenpaar, eigene Linie
             "id": f["id"], "a": f["a"], "b": f["b"],
@@ -261,6 +272,61 @@ def _bezier(p0, c1, c2, p3, t: float) -> list[float]:
         round(u**3 * p0[i] + 3 * u * u * t * c1[i] + 3 * u * t * t * c2[i] + t**3 * p3[i], 1)
         for i in (0, 1)
     ]
+
+
+def _direction_text(d: dict) -> str:
+    """„eingeschränkt (https, ssh)“, bei einer Kunden-Gruppe mit „teils“."""
+    text = INTENT.get(d.get("intent"), d.get("intent") or "")
+    if d.get("services"):
+        text += f" ({', '.join(d['services'])})"
+    if d.get("mixed"):
+        text += ", teils weniger streng"
+    return text
+
+
+def _intent_edge(t: dict, by_id: dict) -> dict:
+    """Absicht je Richtung einer Linie (0.78.0): `ab`/`ba` = Absicht, `intent_text` fuer Titel
+    und Tabellen („DC → DMZ: eingeschränkt (https) · DMZ → DC: gesperrt“)."""
+    ab, ba = t.get("intent_ab"), t.get("intent_ba")
+    if not ab and not ba:
+        return {"ab": None, "ba": None, "intent_text": ""}
+    a = (by_id.get(t["a"]) or {}).get("name", str(t["a"]))
+    b = (by_id.get(t["b"]) or {}).get("name", str(t["b"]))
+    parts = [f"{x} → {y}: {_direction_text(d)}" for x, y, d in ((a, b, ab), (b, a, ba)) if d]
+    return {"ab": (ab or {}).get("intent"), "ba": (ba or {}).get("intent"),
+            "intent_text": " · ".join(parts)}  # fmt: skip
+
+
+def _intent_label(i: dict) -> str:
+    """Beschriftung einer Absicht ohne Uebergang: die Absicht, bei zwei verschiedenen beide."""
+    ab, ba = i.get("intent_ab"), i.get("intent_ba")
+    words = [INTENT.get(d["intent"], d["intent"]) for d in (ab, ba) if d]
+    return words[0] if len(set(words)) == 1 else " / ".join(words)
+
+
+def arrows(e: dict) -> list[dict]:
+    """Pfeilspitzen der Absicht je Richtung (0.78.0): `ab` am Ende (Zone b), `ba` am Anfang;
+    Dreieck (Spitze, zwei Ecken) entlang des letzten bzw. ersten Stuecks der Linie. Die
+    Oberflaeche rechnet gleich (`intentArrows` in `Design.tsx`)."""
+    pts = e.get("points") or []
+    out = []
+    if len(pts) < 2:
+        return out
+    for key, tip, back in (("ab", pts[-1], pts[-2]), ("ba", pts[0], pts[1])):
+        intent = e.get(key)
+        if not intent:
+            continue
+        dx, dy = tip[0] - back[0], tip[1] - back[1]
+        n = (dx * dx + dy * dy) ** 0.5 or 1.0
+        ux, uy = dx / n, dy / n
+        bx, by = tip[0] - ux * ARROW_LEN, tip[1] - uy * ARROW_LEN
+        out.append({
+            "dir": key, "intent": intent, "color": INTENT_COLOR.get(intent, LINE),
+            "points": [[round(tip[0], 1), round(tip[1], 1)],
+                       [round(bx - uy * ARROW_W, 1), round(by + ux * ARROW_W, 1)],
+                       [round(bx + uy * ARROW_W, 1), round(by - ux * ARROW_W, 1)]],
+        })  # fmt: skip
+    return out
 
 
 def _flow_text(f: dict, by_id: dict) -> str:
@@ -450,16 +516,19 @@ def _text(g, x: float, y: float, text: str, size: str, color: str = FG, weight: 
 def _svg2(g, lay: dict) -> None:
     """Zonenmodell (0.56.0): Uebergaenge als Linien, Zonen mit ihren Knoten."""
     for e in lay["edges"]:
-        flow = bool(e.get("flow"))
+        flow, color = bool(e.get("flow")), _edge_color(e)
         attrs = {"points": " ".join(f"{_n(x)},{_n(y)}" for x, y in e["points"]), "fill": "none",
-                 "stroke": FLOW if flow else LINE, "stroke-width": "1.6"}  # fmt: skip
+                 "stroke": color, "stroke-width": "1.2" if e.get("intent") else "1.6"}  # fmt: skip
         if e["dashed"]:
-            attrs["stroke-dasharray"] = "2 4" if flow else "5 4"
+            attrs["stroke-dasharray"] = _dash(e)
         line = ET.SubElement(g, "polyline", attrs)
-        ET.SubElement(line, "title").text = (
-            e["name"] if flow else f"{e['label']}: " + ", ".join(e["networks"])
-        )
-        _text(g, e["lx"], e["ly"], e["label"], "10.5", FLOW if flow else MUTED,
+        ET.SubElement(line, "title").text = _edge_title(e)
+        for arrow in arrows(e):
+            ET.SubElement(g, "polygon", {
+                "points": " ".join(f"{_n(x)},{_n(y)}" for x, y in arrow["points"]),
+                "fill": arrow["color"],
+            })  # fmt: skip
+        _text(g, e["lx"], e["ly"], e["label"], "10.5", color if flow or e.get("intent") else MUTED,
               anchor=e.get("anchor", "middle"), mono=True)  # fmt: skip
     for z in lay["zones"]:
         attrs = {"x": _n(z["x"]), "y": _n(z["y"]), "width": _n(z["w"]), "height": _n(z["h"]),
@@ -472,6 +541,29 @@ def _svg2(g, lay: dict) -> None:
         _text(g, z["x"] + 12, z["y"] + 33, z["sub"], "10.5", MUTED)
         for k, line in enumerate(z["lines"]):
             _text(g, z["x"] + 12, z["y"] + 52 + k * LINE_H, line, "10.5", FG)
+
+
+def _edge_color(e: dict) -> str:
+    if e.get("flow"):
+        return FLOW
+    if e.get("intent"):  # Absicht ohne Uebergang: Farbe der strengeren Richtung
+        worst = max((x for x in (e.get("ab"), e.get("ba")) if x),
+                    key=lambda i: zone_store.INTENT_RANK.get(i, 0), default=None)  # fmt: skip
+        return INTENT_COLOR.get(worst or "", LINE)
+    return LINE
+
+
+def _dash(e: dict) -> str:
+    return "2 4" if e.get("flow") else "6 3" if e.get("intent") else "5 4"
+
+
+def _edge_title(e: dict) -> str:
+    if e.get("flow"):
+        return e["name"]
+    if e.get("intent"):
+        return f"Absicht {e.get('intent_text') or ''}"
+    text = f"{e['name'] or e['label'] or 'Kontakt'}: " + ", ".join(e["networks"])
+    return f"{text} – Absicht {e['intent_text']}" if e.get("intent_text") else text
 
 
 def _svg_box(g, b: dict, fill: str, stroke: str, radius: int, anchor: str) -> None:
@@ -606,10 +698,16 @@ def _drawio2(lay: dict, title: str, stamp: str) -> str:
         _geometry(cell, z["x"], z["y"] + HEAD, z["w"], z["h"])
     boxes = {z["id"]: z for z in lay["zones"]}
     for e in lay["edges"]:
-        color = FLOW if e.get("flow") else LINE
-        style = f"endArrow=none;html=1;strokeColor={color};fontSize=10;fontFamily=Courier New;"
+        color = _edge_color(e)
+        # Absicht je Richtung (0.78.0): Pfeil am Ziel (b) bzw. am Anfang (a)
+        end = "block;endFill=1" if e.get("ab") else "none"
+        start = "block;startFill=1" if e.get("ba") else "none"
+        style = (f"endArrow={end};startArrow={start};html=1;strokeColor={color};fontSize=10;"
+                 "fontFamily=Courier New;")  # fmt: skip
         if e.get("flow"):
             style += f"fontColor={FLOW};dashPattern=2 4;"
+        elif e.get("intent"):
+            style += f"fontColor={color};dashPattern=6 3;"
         a, b = boxes.get(e["a"]), boxes.get(e["b"])
         if a is not None and b is not None:  # 0.65.1: weich an den Seiten wie in der Ansicht
             style += (
@@ -622,9 +720,11 @@ def _drawio2(lay: dict, title: str, stamp: str) -> str:
             style += "dashed=1;"
         obj = ET.SubElement(root, "UserObject", {
             "id": f"transition-{_id(e['id'])}", "label": _html(e["label"]),
-            "automato_transition": "" if e["contact"] or e.get("flow") else e["name"],
+            "automato_transition": "" if e["contact"] or e.get("flow") or e.get("intent")
+            else e["name"],
             "automato_rules": str(e["count"]) if e.get("flow") else "",
             "automato_networks": ", ".join(e["networks"]),
+            "automato_intents": e.get("intent_text") or "",
         })  # fmt: skip
         cell = ET.SubElement(obj, "mxCell", {
             "edge": "1", "parent": "1", "style": style,
@@ -733,6 +833,14 @@ class _Page:
         path = " ".join(f"{x:.2f} {self._y(y):.2f} l" for x, y in rest)
         self.ops.append(f"q {_rgb(color)} RG {width:.2f} w {dash}{x0:.2f} {self._y(y0):.2f} m "
                         f"{path} S Q")  # fmt: skip
+
+    def polygon(self, points, fill) -> None:
+        """Gefuellte Flaeche (Pfeilspitze, 0.78.0)."""
+        if len(points) < 3:
+            return
+        (x0, y0), rest = points[0], points[1:]
+        path = " ".join(f"{x:.2f} {self._y(y):.2f} l" for x, y in rest)
+        self.ops.append(f"q {_rgb(fill)} rg {x0:.2f} {self._y(y0):.2f} m {path} h f Q")
 
     def text(self, x, y, text, size=10.0, color=FG, bold=False, anchor="start",
              width: float | None = None) -> None:  # fmt: skip
@@ -856,9 +964,12 @@ def _pdf2(doc: "_Pdf", p: "_Page", plan: dict, lay: dict, matrix: dict | None,
           stamp: str) -> None:  # fmt: skip
     """PDF des Zonenmodells: Plan, Matrix, Zonen mit Knoten, Uebergaenge mit Netzen."""
     for e in lay["edges"]:
-        color = FLOW if e.get("flow") else LINE
+        color = _edge_color(e)
         p.polyline([(x, y + HEAD) for x, y in e["points"]], color, 1.4, e["dashed"])
-        p.text(e["lx"], e["ly"] + HEAD, e["label"], 9, FLOW if e.get("flow") else MUTED,
+        for arrow in arrows(e):
+            p.polygon([(x, y + HEAD) for x, y in arrow["points"]], arrow["color"])
+        p.text(e["lx"], e["ly"] + HEAD, e["label"], 9,
+               color if e.get("flow") or e.get("intent") else MUTED,
                anchor=e.get("anchor", "middle"))  # fmt: skip
     for z in lay["zones"]:
         p.rect(z["x"], z["y"] + HEAD, z["w"], z["h"], z["fill"], _stroke(z.get("color")), 8)
@@ -888,12 +999,35 @@ def _pdf2(doc: "_Pdf", p: "_Page", plan: dict, lay: dict, matrix: dict | None,
             rows.append([t["name"], n["network"], via, routers])
     _table_pages(doc, "Übergänge", stamp, ["Übergang", "Netz", "über", "Router"], rows,
                  [140, 130, 360, 152])  # fmt: skip
+    rows = intent_rows(plan)
+    if rows:
+        _table_pages(doc, "Absicht je Richtung", stamp,
+                     ["Von", "Nach", "Absicht", "Dienste", "Linie"], rows,
+                     [170, 170, 100, 222, 120])  # fmt: skip
     unzoned = plan.get("unzoned") or {}
     rest = [[u["network"], u.get("node") or "", u.get("where") or ""]
             for u in unzoned.get("items") or []]  # fmt: skip
     if rest:
         _table_pages(doc, "Netze ohne Zone", stamp, ["Netz", "Knoten", "Interface / Ort"], rest,
                      [200, 250, 332])  # fmt: skip
+
+
+def intent_rows(plan: dict) -> list[list[str]]:
+    """Absicht je Richtung (0.78.0) als Tabelle: Von, Nach, Absicht, Dienste, Linie (Name des
+    Uebergangs bzw. „ohne Übergang“) - fuer PDF und Word."""
+    names = {z["id"]: z["name"] for z in plan.get("zones") or []}
+    rows = []
+    lines = [*(plan.get("transitions") or []), *(plan.get("intents") or [])]
+    for t in lines:
+        line = t.get("name") if not str(t["id"]).startswith("intent:") else "ohne Übergang"
+        for x, y, d in ((t["a"], t["b"], t.get("intent_ab")), (t["b"], t["a"], t.get("intent_ba"))):
+            if not d:
+                continue
+            intent = INTENT.get(d["intent"], d["intent"]) + (" (teils)" if d.get("mixed") else "")
+            rows.append([names.get(x, str(x)), names.get(y, str(y)), intent,
+                         ", ".join(d.get("services") or []) or "-", line or ""])  # fmt: skip
+    rows.sort(key=lambda r: (r[0].casefold(), r[1].casefold()))
+    return rows
 
 
 _VIA = {"interface": "Interface", "fabric": "Fabric", "exit": "Anbindung", "route": "Route"}

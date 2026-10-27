@@ -680,6 +680,8 @@ def plan(session: Session, tenant_id: int, customer_id=None, everything: bool = 
             m = merged.setdefault(k, {"a": k[0], "b": k[1], "networks": [], "contact": True})
             m["networks"] += [n for n in infos if n not in m["networks"]]
     flow_m = _flows(a, group, own if mode == "customer" else None) if flows and a else {}
+    policies = session.scalars(select(ZonePolicy).where(ZonePolicy.tenant_id == tenant_id))
+    dirs = _directions(policies, group, own if mode == "customer" else None)
     used = {x for k in merged for x in k} | {x for k in flow_m for x in k}
 
     zones_out: list[dict] = []
@@ -722,8 +724,16 @@ def plan(session: Session, tenant_id: int, customer_id=None, everything: bool = 
             "networks": nets[:zone_struct.SAMPLES], "count": len(nets),
             "l3out": any(leg["l3out"] for n in nets for leg in n["legs"]),
             "contact": bool(m.get("contact")),
+            "intent_ab": (dirs.get((a, b)) or {}).get("ab"),
+            "intent_ba": (dirs.get((a, b)) or {}).get("ba"),
         })  # fmt: skip
     trans_out.sort(key=lambda t: (t["contact"], t["name"].casefold()))
+    # Absichten zwischen Zonen ohne Uebergang (0.78.0): eigene Linie
+    intents_out = [
+        {"id": f"intent:{x}~{y}", "a": x, "b": y, "intent_ab": d["ab"], "intent_ba": d["ba"]}
+        for (x, y), d in dirs.items()
+        if (x, y) not in merged and x in by_id and y in by_id
+    ]  # fmt: skip
     flows_out = [
         {"id": f"flow:{x}~{y}", "a": x, "b": y, "rules": len(f["rules"]), "ab": len(f["ab"]),
          "ba": len(f["ba"])}
@@ -757,6 +767,7 @@ def plan(session: Session, tenant_id: int, customer_id=None, everything: bool = 
         "nodes": nodes_out,
         "transitions": trans_out,
         "flows": flows_out,
+        "intents": intents_out,
         "conflicts": st.conflicts,
         "unzoned": {"total": len(unzoned), "items": unzoned[:UNZONED]},
         "summary": {
@@ -783,6 +794,66 @@ def _needed_net(net: dict, sides: tuple, node_zone: dict, need: set) -> bool:
         if at and not any(n in need for n in at):
             return False
     return True
+
+
+INTENT_RANK = {"allow": 1, "limited": 2, "deny": 3}
+
+
+def _pair_key(x, y) -> tuple:
+    """Schluessel eines Zonenpaars der Ansicht (Zonen vor Gruppen bzw. Hilfszonen)."""
+    return tuple(sorted((x, y), key=lambda v: (isinstance(v, str), str(v))))
+
+
+def _directions(policies, group: dict, own: set | None = None) -> dict[tuple, dict]:
+    """Absicht je Richtung (0.78.0) je Paar der Gruppen der Ansicht: `ab` von a nach b, `ba`
+    zurueck. In einer zusammengefassten Gruppe (Kunde) gilt die strengste Absicht ihrer Zonen,
+    `mixed` sagt, dass sie verschieden sind; Dienste = alle der eingeschraenkten. Mit `own` nur
+    Paare mit einer eigenen Zone."""
+    acc: dict[tuple, dict[str, list]] = {}
+    for p in policies:
+        gs, gd = group.get(p.src_zone_id), group.get(p.dst_zone_id)
+        if gs is None or gd is None or gs == gd:
+            continue
+        if own is not None and p.src_zone_id not in own and p.dst_zone_id not in own:
+            continue
+        k = _pair_key(gs, gd)
+        acc.setdefault(k, {"ab": [], "ba": []})["ab" if gs == k[0] else "ba"].append(p)
+    return {
+        k: {d: _direction(ps) for d, ps in v.items()}
+        for k, v in acc.items()
+    }  # fmt: skip
+
+
+def _direction(ps: list) -> dict | None:
+    if not ps:
+        return None
+    intent = max((p.intent for p in ps), key=lambda i: INTENT_RANK.get(i, 0))
+    services = sorted({s for p in ps if p.intent == "limited" for s in p.services or []},
+                      key=str.casefold)  # fmt: skip
+    notes = sorted({p.note for p in ps if p.note})
+    return {"intent": intent, "services": services, "pairs": len(ps),
+            "mixed": len({p.intent for p in ps}) > 1,
+            "note": notes[0] if len(ps) == 1 and notes else None}  # fmt: skip
+
+
+def _no_note(x: dict | None) -> dict | None:
+    """Absicht ohne Notiz (Kunden-Benutzer: die Notiz kann andere Kunden nennen)."""
+    return {**x, "note": None} if x else None
+
+
+def merge_direction(x: dict | None, y: dict | None) -> dict | None:
+    """Zwei Absichten einer Richtung zusammenfassen (strengere gilt, z. B. „anderer Kunde“)."""
+    if x is None or y is None:
+        return x or y
+    intent = max(x["intent"], y["intent"], key=lambda i: INTENT_RANK.get(i, 0))
+    services = sorted({*x["services"], *y["services"]}, key=str.casefold)
+    return {
+        "intent": intent,
+        "services": services,
+        "pairs": x["pairs"] + y["pairs"],
+        "mixed": x["mixed"] or y["mixed"] or x["intent"] != y["intent"],
+        "note": None,
+    }
 
 
 def _flows(a: "Assignment", group: dict, own: set | None) -> dict[tuple, dict]:
@@ -914,9 +985,15 @@ def restrict_plan(full: dict, view: CustomerView) -> dict:
                  "legs": [leg for leg in n["legs"] if leg["node"] in own_nodes]}
                 for n in t["networks"]] if mine else []  # fmt: skip
         k = (a, b)
-        x = trans.setdefault(k, {**t, "id": f"{a}~{b}", "a": a, "b": b, "networks": [],
-                                 "name": transition_name(by_id[a], by_id[b]),
-                                 "count": 0})  # fmt: skip
+        x = trans.get(k)
+        if x is None:
+            x = trans[k] = {**t, "id": f"{a}~{b}", "a": a, "b": b, "networks": [],
+                            "name": transition_name(by_id[a], by_id[b]), "count": 0,
+                            "intent_ab": _no_note(t.get("intent_ab")),
+                            "intent_ba": _no_note(t.get("intent_ba"))}  # fmt: skip
+        else:  # mehrere Kunden als „anderer Kunde“: die strengere Absicht gilt
+            for d in ("intent_ab", "intent_ba"):
+                x[d] = merge_direction(x.get(d), t.get(d))
         x["networks"] += nets
         x["count"] += t["count"] if mine else 0
     # Kommunikation (0.66.0): nur Paare mit einer eigenen Zone, andere Kunden als „anderer Kunde“
@@ -929,6 +1006,20 @@ def restrict_plan(full: dict, view: CustomerView) -> dict:
                                       "ab": 0, "ba": 0})  # fmt: skip
         for k in ("rules", "ab", "ba"):
             x[k] += f[k]
+    # Absichten ohne Uebergang (0.78.0): nur Paare mit einer eigenen Zone
+    intents: dict[tuple, dict] = {}
+    for i in full.get("intents") or []:
+        a, b = rename.get(i["a"], i["a"]), rename.get(i["b"], i["b"])
+        if a not in ids or b not in ids or a == b or not ({a, b} & own) or (a, b) in trans:
+            continue
+        x = intents.get((a, b))
+        if x is None:
+            intents[(a, b)] = {"id": f"intent:{a}~{b}", "a": a, "b": b,
+                               "intent_ab": _no_note(i.get("intent_ab")),
+                               "intent_ba": _no_note(i.get("intent_ba"))}  # fmt: skip
+        else:
+            for d in ("intent_ab", "intent_ba"):
+                x[d] = merge_direction(x.get(d), i.get(d))
     # geteilte Zonen nur mit einem Uebergang im Ausschnitt (sonst erreicht ueber Knoten ohne
     # Zone, die er nicht sieht); andere Kunden auch ueber Regeln
     linked = {x for t in trans.values() for x in (t["a"], t["b"])} | own | {"other"}
@@ -943,6 +1034,7 @@ def restrict_plan(full: dict, view: CustomerView) -> dict:
         "nodes": nodes,
         "transitions": list(trans.values()),
         "flows": list(flows.values()),
+        "intents": [i for i in intents.values() if i["a"] in linked and i["b"] in linked],
         "conflicts": [],
         "unzoned": {"total": 0, "items": []},
         "summary": {
