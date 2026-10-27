@@ -48,8 +48,92 @@ test("Applikation: Doku mit Übersicht, VMs und EPGs mit ganzem ACI-Pfad", async
   await expect(page.locator("#app-rules select").first()).toHaveValue(/^vm:/);
   await vm.click();
   await web01.locator("button:has-text('fw-03')").click();
+  // 0.95.0: das Objekt im Detail in der Doku, „In Objekte & Inventar öffnen“ führt dorthin
+  await expect(page.locator(".drawer h2")).toHaveText("H_web01");
+  await expect(page).toHaveURL(/#apps\?app=\d+/);
+  await page.locator("#app-object-open").click();
   await expect(page).toHaveURL(/#objekte\?object_id=\d+/);
   await expect(page.locator(".drawer h2")).toHaveText("H_web01");
+});
+
+test("Applikation: Klick auf eine EPG öffnet ihr Detail statt zu den Regeln zu springen (0.95.0)", async ({ page }) => {
+  await open(page);
+  await page.locator("#app-epgs tbody tr", { hasText: "TE/AP/EG_db" }).click();
+  const detail = page.locator("#app-epg-detail");
+  await expect(page.locator(".drawer h2")).toHaveText("TE/AP/EG_db");
+  // Lage wie im Regel-Detail: Tenant, VRF, VMs, Leaf-Ports
+  await expect(detail.locator(".refcard")).toContainText("VRF1");
+  await expect(detail.locator(".refcard")).toContainText("web01-007-ka");
+  await expect(detail.locator(".refcard")).toContainText("leaf-101 eth1/1");
+  await expect(detail).toContainText("AP TE/AP"); // gehört dazu über
+  // die Regeln filtert erst der Knopf
+  const epgFilter = page.locator("#app-rules select").nth(1);
+  await expect(epgFilter).toHaveValue("");
+  await detail.locator("#app-epg-rules").click();
+  await expect(page.locator(".drawer")).toHaveCount(0);
+  await expect(epgFilter).toHaveValue(/^epg:/);
+  // aus dem Detail des Systems zur EPG, von dort nach Objekte & Inventar (Portgruppen der EPG)
+  await page.locator("#app-systems tbody tr", { hasText: "web01-007-ka" }).click();
+  await page.locator("#app-system-detail .app-system-epg", { hasText: "TE/AP/EG_db" }).click();
+  await expect(page.locator(".drawer h2")).toHaveText("TE/AP/EG_db");
+  await page.locator("#app-epg-objects").click();
+  await expect(page).toHaveURL(/#objekte\?/);
+  await expect(page.locator(".tabbar button.on")).toHaveText("Portgruppen");
+  await expect(rows(page).filter({ hasText: "TE|AP|EG_db" })).toHaveCount(1);
+});
+
+test("Applikation: Namen der Gegenstellen in den Kategorien – Einstellung des Admins, nicht für Kunden-Benutzer (0.95.0)", async ({ page, browser }) => {
+  const dmz = (p: import("@playwright/test").Page) => p.locator("#app-categories tbody tr", { hasText: "dmz-to-web" }).first();
+  // Kategorien aufklappen - der Zustand bleibt im Browser gespeichert, also nur wenn zu
+  const categories = async (p: import("@playwright/test").Page) => {
+    await expect(p.locator("#app-categories > .card")).toBeVisible();
+    if ((await p.locator("#app-categories .stack").count()) === 0) await p.locator("#app-categories h2.fold-title").first().click();
+    await expect(p.locator("#app-categories .stack")).toHaveCount(1);
+  };
+  await open(page);
+  await categories(page);
+  await expect(dmz(page)).toContainText("10.10.20.0/24"); // Standard: nur die Adresse
+  await expect(dmz(page)).not.toContainText("N_dmz-net");
+  // Kunde mit dem AP und dem Servernetz des Webshops (Regel dmz-to-web gehört dazu)
+  const created = await page.request.post("/api/customers", {
+    data: {
+      tenant_id: 1,
+      name: `Kunde Namen ${test.info().retry}`,
+      selectors: [
+        { kind: "aci_ap", value: "TE/AP" },
+        { kind: "prefix", value: "10.10.10.0/24" },
+      ],
+    },
+  });
+  expect(created.status()).toBe(201);
+  const customer = (await created.json()) as { id: number };
+  try {
+    await page.goto("/#tenants");
+    const settings = page.locator(".card", { has: page.locator("#ts-foreign-names") });
+    await settings.locator("#ts-foreign-names input").check();
+    await settings.getByRole("button", { name: "Speichern" }).click();
+    await expect(page.locator(".site-card.selected")).toContainText("Namen in der Doku");
+    // Betreuer: Name aus dem Firewall-Objekt der Regel, dazu die Adresse
+    await open(page);
+    await categories(page);
+    await expect(dmz(page)).toContainText("N_dmz-net (10.10.20.0/24)");
+    // Kunden-Benutzer: weiter nur die Adresse
+    const ctx = await browser.newContext({ baseURL: "http://localhost:5173" });
+    const user = await ctx.newPage();
+    await user.addInitScript((id) => {
+      localStorage.setItem("automato_dev_customer", `1:${id}`);
+      localStorage.setItem("automato_tenant", "1");
+    }, customer.id);
+    await user.goto("/#apps");
+    await user.locator("tbody tr", { hasText: "Webshop" }).click();
+    await categories(user);
+    await expect(dmz(user)).toContainText("10.10.20.0/24");
+    await expect(dmz(user)).not.toContainText("N_dmz-net");
+    await ctx.close();
+  } finally {
+    await page.request.patch("/api/tenants/1", { data: { appdoc_foreign_names: false } });
+    await page.request.delete(`/api/customers/${customer.id}`);
+  }
 });
 
 test("Applikation: Regeln filtern (System, Richtung, Bezug) und Erklärung im Detail", async ({ page }) => {

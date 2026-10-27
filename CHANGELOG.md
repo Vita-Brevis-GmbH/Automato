@@ -7,6 +7,24 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.95.0 – 2026-10-27
+
+Applikations-Doku: Detail statt Sprung, Namen der Gegenstellen (Befunde des Anwenders aus dem
+Test 2026-10-27; ADR 0012 Ergänzung 0.95.0).
+
+- **Klick auf eine EPG** (Karte „EPGs im ACI“ bzw. im Detail eines Systems) öffnet ihr Detail wie
+  im Regel-Detail (Tenant, AP, BD, VRF, Subnetze mit IPAM, Endpunkte, VMs, Leaf-Ports) statt zu
+  den Regeln zu springen; im Detail „Regeln dieser EPG zeigen“ und „In Objekte & Inventar
+  öffnen“ (`GET /applications/{id}/epgs/{epg_id}`, nur EPGs der Applikation, Kunden-Benutzer nur
+  im Ausschnitt).
+- **Firewall-Objekte** im Detail eines Systems öffnen das Objekt-Detail von „Objekte & Inventar“
+  in der Doku (mit Knopf dorthin); die Kennzahlen filtern weiter.
+- **Namen der Gegenstellen:** neue Einstellung am Mandanten `appdoc_foreign_names` (Migration
+  `0060`, Standard aus, nur Admin, Audit `tenant.updated`) – Gegenstellen, von denen die
+  Firewall-Regel nur die Adresse kennt, zeigen in den Kategorien (Ansicht, Markdown, Word, Doku
+  je System) den Namen aus IPAM, VM, EPG bzw. Firewall-Objekt (`store/peer_names.py`).
+  Kunden-Benutzer sehen unabhängig davon nur die Adressen.
+
 ## 0.94.1 – 2026-10-27
 
 Korrektur nach dem Test des Anwenders („Load documentation: HTTP 500 beim Laden der Applikation“).

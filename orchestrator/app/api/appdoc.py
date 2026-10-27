@@ -17,6 +17,7 @@ from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.store import appdoc as store
+from app.store import peer_names
 
 router = APIRouter(prefix="/appdoc", tags=["appdoc"])
 
@@ -125,6 +126,16 @@ def system_doc(
         for t in doc["tables"]:
             t["rows"] = [r for r in t["rows"] if r.get(store.RULE) in own]
         doc["impossible"] = [x for x in doc["impossible"] if x["rule_id"] in own]
+    return _with_names(session, principal, tenant_id, doc)
+
+
+def _with_names(session: Session, principal: Principal, tenant_id: int | None, doc: dict) -> dict:
+    """Gegenstellen nur mit Adresse samt Namen (0.95.0) - Einstellung des Mandanten, nie fuer
+    Kunden-Benutzer."""
+    rows = [r for t in doc["tables"] for r in t["rows"]]
+    tid = tenant_id if tenant_id is not None else peer_names.tenant_of(session, rows)
+    if peer_names.enabled(session, tid, principal.is_customer):
+        peer_names.apply(session, tid, rows)
     return doc
 
 
@@ -150,4 +161,5 @@ def assign_system_site(
         subject=system,
         detail={"tenant_id": obj.tenant_id, "site_id": body.site_id},
     )
-    return store.build_doc(session, system, tenant_id)
+    doc = store.build_doc(session, system, tenant_id)
+    return _with_names(session, principal, obj.tenant_id, doc)

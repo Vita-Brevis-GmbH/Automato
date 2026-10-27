@@ -989,6 +989,16 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       `GET /applications/{id}/export?format=zip|docx&sections=…` (Komma-Liste `overview`,
       `systems`, `epgs`, `connections`, `plan`, `rules`, `dependencies`, `findings`,
       `categories`, `hidden`; leer = alle).
+  - **Detail statt Sprung (0.95.0):** Klick auf eine EPG (Karte „EPGs im ACI“ bzw. im Detail
+    eines Systems) öffnet ihr Detail – Lage im ACI, Subnetze mit IPAM, Endpunkte, VMs,
+    Leaf-Ports. „Regeln dieser EPG zeigen“ filtert die Regeln wie bisher; „In Objekte & Inventar
+    öffnen“ zeigt ihre Portgruppen bzw. Subnetze. Firewall-Objekte im Detail eines Systems öffnen
+    sich ebenfalls in der Doku. Die Kennzahlen oben filtern weiter.
+  - **Namen der Gegenstellen (0.95.0):** Administration → Mandanten & Standorte → Mandant →
+    „Applikations-Doku: Namen der Gegenstellen zeigen“ (nur Admin, im Audit). Danach nennen die
+    Kategorien, Markdown und Word bei Gegenstellen, von denen die Firewall-Regel nur die Adresse
+    kennt, den Namen (IPAM, VM, EPG bzw. Firewall-Objekt): „db01.example.ch (10.30.0.5)“. Gilt nur
+    für Betreuer – Kunden-Benutzer sehen weiter nur die Adressen.
   - **Abhängigkeiten (0.60.0, seit 0.88.0 wieder):** Bereich „Abhängigkeiten“ (zugeklappt,
     lädt beim Aufklappen) mit „nutzt“ und „wird genutzt von“ je Applikation und den Regeln.
     Abgeleitet aus den erlaubenden Regeln mit spezifischem Treffer, deren Gegenseite EPGs,

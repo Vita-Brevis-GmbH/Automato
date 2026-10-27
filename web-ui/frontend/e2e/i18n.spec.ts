@@ -69,3 +69,16 @@ test("Englisch: Sprache der Datei im Export-Dialog gemerkt", async ({ page }) =>
   await page.click(".tabbar button:has-text('Zone plan')");
   await expect(page.locator(".plan-export .export-lang-select")).toHaveValue("de");
 });
+
+// 0.95.0: Detail einer EPG in der Applikations-Doku und Einstellung „Namen der Gegenstellen“
+test("Englisch: EPG-Detail der Applikation und Namen der Gegenstellen am Mandanten", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("automato_lang", "en"));
+  await page.goto("/#tenants");
+  await expect(page.locator("#ts-foreign-names")).toContainText("Application documentation: show the names of peers");
+  await page.goto("/#apps");
+  await page.locator("tbody tr", { hasText: "Webshop" }).click();
+  await page.locator("#app-epgs tbody tr", { hasText: "TE/AP/EG_db" }).click();
+  await expect(page.locator(".drawer .sub")).toHaveText("EPG of the application");
+  await expect(page.locator("#app-epg-rules")).toHaveText("Show rules of this EPG");
+  await expect(page.locator("#app-epg-objects")).toHaveText("Open in Objects & inventory");
+});

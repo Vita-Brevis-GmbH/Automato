@@ -452,6 +452,8 @@ export interface Tenant {
   ipam_type: string;
   dns_type: string;
   naming_profile_id: number | null;
+  // Applikations-Doku (0.95.0): Gegenstellen nur mit Adresse für Betreuer mit Namen zeigen (Admin)
+  appdoc_foreign_names?: boolean;
 }
 
 // Standorte (ADR 0015): virtuell = Nummer der Namenskonvention (000, 001), physisch = Ort-Code
@@ -1241,7 +1243,7 @@ export const createTenant = (body: { name: string; code?: string | null }) =>
   sendJSON<Tenant>("/api/tenants", "POST", body);
 export const patchTenant = (
   tenantId: number,
-  body: { code?: string | null; audit_reads?: boolean; naming_profile_id?: number | null },
+  body: { code?: string | null; audit_reads?: boolean; naming_profile_id?: number | null; appdoc_foreign_names?: boolean },
 ) => sendJSON<Tenant>(`/api/tenants/${tenantId}`, "PATCH", body);
 export const fetchSites = (tenantId: number) => getJSON<Site[]>(`/api/tenants/${tenantId}/sites`);
 export const createSite = (
@@ -1728,6 +1730,8 @@ export const acceptAppSuggestion = (tenantId: number, code: string, name?: strin
     name ? { name } : undefined,
   );
 export const fetchAppDoc = (id: number) => getJSON<ApplicationDoc>(`/api/applications/${id}/doc`);
+// EPG der Applikation im Detail (0.95.0): Lage wie im Regel-Detail (Tenant, AP, BD, VRF, Subnetze, …)
+export const fetchAppEpg = (id: number, epgId: number) => getJSON<EpgLocation>(`/api/applications/${id}/epgs/${epgId}`);
 // Abhängigkeiten zu anderen Applikationen (0.88.0 wieder in der Doku): erst beim Aufklappen
 export const fetchAppDependencies = (id: number) => getJSON<AppDependencies>(`/api/applications/${id}/dependencies`);
 
