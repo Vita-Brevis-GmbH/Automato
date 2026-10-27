@@ -26,12 +26,14 @@ export function RunsTable({
   canCancel,
   onCancel,
   detailed = false,
+  selected,
 }: {
   runs: Run[];
   systemName: (id: number | null) => string;
   canCancel: boolean;
   onCancel: (id: string) => void;
   detailed?: boolean;
+  selected?: string; // hervorgehoben (Link aus dem Verlauf des Routings)
 }) {
   return (
     <table>
@@ -59,7 +61,7 @@ export function RunsTable({
         {runs.map((r) => {
           const open = r.status === "queued" || r.status === "running";
           return (
-            <tr key={r.id} title={r.message ?? undefined}>
+            <tr key={r.id} title={r.message ?? undefined} className={r.id === selected ? "selected" : undefined}>
               <td className="mono">#{r.id.slice(0, 8)}</td>
               <td>{systemName(r.source_system_id)}</td>
               {detailed && <td className="faint">{PLATFORM_LABEL[r.platform] ?? r.platform}</td>}
@@ -134,10 +136,10 @@ export default function Runs({
   me: Me;
   tenantId: number | null;
   tenantLabel: string;
-  params?: Record<string, string>; // Link: system= filtert auf ein Quellsystem (Datenqualität)
+  params?: Record<string, string>; // aus einem Link: system= bzw. source_system_id (Datenqualität, Verlauf), run (hervorheben)
 }) {
   const [status, setStatus] = useState("");
-  const [systemId, setSystemId] = useState(params.system ?? "");
+  const [systemId, setSystemId] = useState(params.system ?? params.source_system_id ?? "");
   const [platform, setPlatform] = useState("");
   const [trigger, setTrigger] = useState("");
   const [offset, setOffset] = useState(0);
@@ -257,6 +259,7 @@ export default function Runs({
               canCancel={me.isOperator}
               onCancel={(id) => cancelRun(id).then(load, setError)}
               detailed
+              selected={params.run}
             />
           )}
         </div>

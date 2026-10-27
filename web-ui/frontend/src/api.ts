@@ -1944,9 +1944,10 @@ export interface RetentionCounts {
   sync_plans: number;
   audit: number;
   l2?: number; // MAC-/ARP-Einträge der Switches (0.63.0)
+  topo_changes?: number; // Verlauf des Routings (ADR 0030)
 }
 export interface RetentionStatus {
-  policy: { runs_days: number; sync_days: number; audit_days: number; l2_days?: number };
+  policy: { runs_days: number; sync_days: number; audit_days: number; l2_days?: number; topo_changes_days?: number };
   active: boolean;
   scheduled: boolean;
   due: RetentionCounts;
@@ -2146,6 +2147,7 @@ export interface RoutingSummary {
   l3outs: number;
   vrfs?: number[]; // VRFs der Routen (FortiGate 7.x, 0 = Standard)
   mgmt_vrf?: boolean; // Routen in der Management-Tabelle vorhanden
+  changes_7d?: number; // Verlauf (ADR 0030): Änderungen der letzten 7 Tage
 }
 export interface TopoRoute extends Labeled {
   id: number;
@@ -2159,7 +2161,55 @@ export interface TopoRoute extends Labeled {
   metric: number | null;
   next_hops: NextHop[];
   attrs: Record<string, unknown> | null;
+  changed_at?: string | null; // letzte Änderung laut Verlauf (neu bzw. geändert, ADR 0030)
 }
+// Verlauf des Routings (ADR 0030): Änderungen von Lauf zu Lauf je Quellsystem
+export type TopoChangeKind = "route" | "bgp_peer" | "ha" | "policy_route" | "context" | "l3out";
+// added/removed/changed; Vermerke: Ausgangsstand, nicht lesbar, Obergrenze je Lauf
+export type TopoChangeType = "added" | "removed" | "changed" | "baseline" | "unreadable" | "truncated";
+export interface TopoChangeField {
+  field: string; // Schlüssel (next_hops, state …)
+  label: string; // Bezeichnung in der Sprache der Anfrage
+  before: string | null;
+  after: string | null;
+}
+export interface TopoChange {
+  id: number;
+  at: string;
+  source_system_id: number;
+  source: string;
+  collector_run_id: string | null;
+  run_exists: boolean; // Läufe haben eine kürzere Frist als der Verlauf
+  kind: TopoChangeKind;
+  node: string | null;
+  context: string | null;
+  display: ContextKind | "";
+  label: string;
+  table: string | null; // rib | bgp | static | policy | sdwan
+  key: string;
+  prefix: string | null;
+  change: TopoChangeType;
+  before: unknown;
+  after: unknown;
+  fields: TopoChangeField[];
+  summary: string; // „vorher → nachher“ bzw. der Vermerk (vom Server, Sprache der Anfrage)
+  shared?: boolean;
+}
+export const fetchRoutingChanges = (opts: {
+  tenantId: number;
+  sourceId?: number | null;
+  context?: string;
+  kind?: string;
+  change?: string; // auch "note" = alle Vermerke
+  q?: string;
+  since?: string; // ISO 8601
+  until?: string;
+  limit?: number;
+  offset?: number;
+}) =>
+  getPage<TopoChange>(
+    `/api/routing/changes${cq({ tenant_id: opts.tenantId, source_system_id: opts.sourceId, context: opts.context || undefined, kind: opts.kind || undefined, change: opts.change || undefined, q: opts.q?.trim() || undefined, since: opts.since || undefined, until: opts.until || undefined, limit: opts.limit, offset: opts.offset })}`,
+  );
 export interface PolicyHit {
   kind: "policy" | "sdwan";
   seq: number | null;

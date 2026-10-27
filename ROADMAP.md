@@ -402,11 +402,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.89.0** | Feinere Rollen der Kunden-Benutzer: Lesen, Triage, Editor (eigene Applikationen pflegen), Kunden-Admin (eigene Kunden-Benutzer zuordnen), Rolle je Kunde, Claim `customer_role` (ADR 0018 Ergänzung) |
 | **0.90.0** | Läufe, Agent-Konsole und CLI auf Deutsch und Englisch: Laufmeldungen deutsch gespeichert und beim Abruf übersetzt, `AUTOMATO_LANG`, `automato --lang` (ADR 0028 Schritt 4) |
 | **0.91.0** | Datenqualität (Schritt 6, erste Fassung): Reiter mit Ampel je Bereich, Ursache und Link, Gesamtnote, Befunde „Stand veraltet“ und „nur teilweise gelesen“, Relevanz-Ursachen als Stichprobe (ADR 0029) |
+| **0.92.0** | Verlauf des Routings: Änderungen an Routen, BGP-Nachbarn, HA, Policy-Routen, Kontexten und L3Outs von Lauf zu Lauf, Reiter „Verlauf“, Frist 180 Tage (ADR 0030) |
 
-### Nächste Arbeiten (Stand 0.91.0)
+### Nächste Arbeiten (Stand 0.92.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.91.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.92.0.
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4
 Verkabelung, Applikationen, Kunden, Routing“):**
@@ -420,7 +421,7 @@ Verkabelung, Applikationen, Kunden, Routing“):**
 | Applikationen | Abhängigkeiten wieder einblenden (Infrastruktur getrennt) | **umgesetzt in 0.88.0** |
 | Applikationen | Export nach NetBox (Tags) | in Arbeit |
 | Kunden | feinere Rollen der Kunden-Benutzer | **umgesetzt in 0.89.0** |
-| Routing | Verlauf der Routen; Systeme bis an die Firmengrenze (Aussenrouter lesen) | Verlauf in Arbeit, Firmengrenze danach |
+| Routing | Verlauf der Routen; Systeme bis an die Firmengrenze (Aussenrouter lesen) | Verlauf **umgesetzt in 0.92.0** (ADR 0030); Firmengrenze danach |
 
 **Deutsch/Englisch (Anwender 2026-10-27, ADR 0028):** Schritt 1 Oberfläche – **umgesetzt in
 0.86.0**; Schritt 2 Texte vom Server und Schritt 3 Exporte mit Sprache der Datei – **umgesetzt in
@@ -472,7 +473,8 @@ des Anwenders in der ADR.
 **Entscheide des Anwenders (2026-10-23):**
 
 - **Bewusst später:**
-  - Routing bleibt eine Momentaufnahme; Verlauf und Pflege der BGP-Umgebung viel später.
+  - Routing bleibt eine Momentaufnahme; Verlauf und Pflege der BGP-Umgebung viel später
+    (Verlauf auf Wunsch des Anwenders 2026-10-27 umgesetzt in 0.92.0, ADR 0030).
   - Aussenrouter bzw. Systeme bis an die Grenzen der Firmen später, absichtlich noch nicht.
   - Mehrfachausfälle und Redundanz erst nach Zonen und Design, mit Switching und Verkabelung.
 - **Verkehr zwischen VRFs:** über die Firewall; Klarheit bringen Zonen und das Regelwerk der

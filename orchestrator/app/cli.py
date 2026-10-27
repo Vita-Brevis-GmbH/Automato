@@ -352,15 +352,18 @@ def _cmd_purge(session: Session, args: argparse.Namespace) -> int:
         with german():  # Audit `retention.purged` (gespeichert)
             counts = retention.purge(session, policy, actor="cli:purge")
         session.commit()
-    spans = f"{policy.runs_days}/{policy.sync_days}/{policy.audit_days}/{policy.l2_days}"
+    spans = (f"{policy.runs_days}/{policy.sync_days}/{policy.audit_days}/{policy.l2_days}/"
+             f"{policy.topo_changes_days}")  # fmt: skip
     c = counts
     print(
         L(f"{'faellig' if args.dry_run else 'geloescht'}: {c['runs']} Laeufe, "
           f"{c['sync_plans']} NetBox-Sync-Vorschauen, {c['audit']} Audit-Eintraege, "
-          f"{c['l2']} MAC-/ARP-Eintraege (Fristen {spans} Tage, 0 = nie)",
+          f"{c['l2']} MAC-/ARP-Eintraege, {c['topo_changes']} Routing-Aenderungen "
+          f"(Fristen {spans} Tage, 0 = nie)",
           f"{'due' if args.dry_run else 'deleted'}: {c['runs']} runs, "
           f"{c['sync_plans']} NetBox sync previews, {c['audit']} audit entries, "
-          f"{c['l2']} MAC/ARP entries (retention {spans} days, 0 = never)")
+          f"{c['l2']} MAC/ARP entries, {c['topo_changes']} routing changes "
+          f"(retention {spans} days, 0 = never)")
     )  # fmt: skip
     return 0
 

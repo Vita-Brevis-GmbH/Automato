@@ -69,7 +69,8 @@ aktive Quellsystem des Mandanten einen Lauf an (Referenzquellen zuerst).
 einmal am Tag – beendete Läufe nach `AUTOMATO_RETENTION_RUNS_DAYS` (90), NetBox-Sync-Vorschauen
 nach `AUTOMATO_RETENTION_SYNC_DAYS` (90), Audit-Einträge nach `AUTOMATO_RETENTION_AUDIT_DAYS`
 (365), seit 0.63.0 MAC-/ARP-Einträge der Switches, die so lange kein Lauf mehr gesehen hat, nach
-`AUTOMATO_RETENTION_L2_DAYS` (30); `0` = nie. Es bleiben immer: Läufe, auf die der aktuelle Stand zeigt (Regeln, Objekte,
+`AUTOMATO_RETENTION_L2_DAYS` (30), seit 0.92.0 der Verlauf des Routings nach
+`AUTOMATO_RETENTION_TOPO_CHANGES_DAYS` (180); `0` = nie. Es bleiben immer: Läufe, auf die der aktuelle Stand zeigt (Regeln, Objekte,
 NAT, VMs, Referenzstand), je Quellsystem der neuste und der neuste erfolgreiche Lauf, offene
 Läufe und die neuste Vorschau je NetBox (übernommene Syncs stehen mit ihren Zahlen weiter im
 Audit). System → **Aufbewahrung** zeigt Fristen, was fällig ist und wann zuletzt aufgeräumt
@@ -309,6 +310,19 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       Server, Einstellungen).
     - Im Befund steht zuerst der Wert der Firewall des Befunds, dann der führenden; „Anzeigen“
       öffnet die Routen des VDOMs, die Policy-Routen bzw. die NAT-Ansicht.
+- **Verlauf des Routings** (0.92.0, ADR 0030, Routing → Reiter „Verlauf“): Jeder Lauf einer
+  FortiGate bzw. eines APIC vergleicht das Routing mit dem vorigen Stand und hält die Änderungen
+  fest – Routen, BGP-Nachbarn, HA, Policy-Routen/SD-WAN, Kontexte, L3Outs. Der erste Lauf je
+  Quellsystem ist der „Ausgangsstand“; bei bestehenden Installationen beginnt der Verlauf mit dem
+  nächsten Lauf. Filter: Quellsystem, Kontext, Art, Änderung (hinzugefügt/entfernt/geändert/
+  Vermerke), Zeitraum, Suche nach Präfix, Next-Hop oder Nachbar; „▸“ zeigt die Felder
+  vorher/nachher, „#Lauf“ öffnet den Lauf in der Ansicht Läufe. Ist ein Teil nicht lesbar (z. B.
+  HTTP 403), steht ein Vermerk „nicht lesbar“ mit der Anzahl nicht verglichener Einträge – nichts
+  zählt als entfernt; beim nächsten lesbaren Lauf „wieder lesbar“. An einer Route zeigt
+  „geändert <Zeit>“ die letzte Änderung (Klick öffnet ihren Verlauf); „Routing-Änderungen
+  (7 Tage)“ in „Gelesene Kontexte“. Frist `AUTOMATO_RETENTION_TOPO_CHANGES_DAYS` (180 Tage,
+  `0` = nie); Läufe haben eine kürzere Frist (90 Tage) – ältere Einträge zeigen nur noch die
+  Kennung des Laufs. Nicht für Kunden-Benutzer; ein oben gewählter Kunde zeigt seinen Ausschnitt.
 - **Routing** (0.16.0, ADR 0019; bis 0.34.0 „Routing & Wege“): oben die gelesenen Kontexte mit
   Anzahl Routen und dem, was nicht lesbar war (dort ist die Aussage „unbekannt“) – seit 0.75.0
   zugeklappt (Klick auf den Titel; die Zahl der Kontexte mit nicht Lesbarem bleibt sichtbar),

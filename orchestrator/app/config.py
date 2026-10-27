@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     retention_sync_days: int = 90
     retention_audit_days: int = 365
     retention_l2_days: int = 30  # MAC-/ARP-Eintraege der Switches (0.63.0)
+    retention_topo_changes_days: int = 180  # Verlauf des Routings (ADR 0030)
 
     # Abweichung Regel <-> Weg der Applikationen (0.59.0): hoechstens so viele Sekunden je
     # Neuberechnung nach einem Lauf; was nicht drankommt, behaelt seine Befunde und ist beim

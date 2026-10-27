@@ -699,3 +699,8 @@ tbody tr.group-row td {
 .linkbtn.dq-link { color: var(--accent); font-size: 12.5px; }
 @media (max-width: 1100px) { .kpis.five { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 900px) { .kpis.five { grid-template-columns: repeat(2, 1fr); } }
+/* Verlauf des Routings (ADR 0030) */
+.routing-changes td { vertical-align: top; }
+.routing-changes .change-summary { white-space: normal; min-width: 240px; max-width: 520px; font-size: 12.5px; }
+.routing-changes tr.change-detail > td { background: var(--surface-2); padding-top: 4px; padding-bottom: 8px; }
+.routing-changes tr.change-detail table td.mono { white-space: normal; word-break: break-word; }

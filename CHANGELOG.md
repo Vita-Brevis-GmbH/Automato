@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.92.0 – 2026-10-27
+
+Verlauf des Routings (ADR 0030; Anwender: „Routing: Verlauf der Routen“, bisher Momentaufnahme).
+
+- **Änderungen von Lauf zu Lauf** je Quellsystem (`topo_change`, Migration `0059`,
+  `store/topo_changes.py`): Routen (RIB, BGP-Pfade, statische), BGP-Nachbarn, HA,
+  Policy-Routen/SD-WAN, Kontexte und L3Outs – je Eintrag hinzugefügt, entfernt oder geändert,
+  vorher/nachher nur mit den verglichenen Feldern (Next-Hops, Protokoll, Distanz/Metrik,
+  aktiv/Backup, BGP-Zustand, AS, AS-Pfad …); Reihenfolge und Zähler zählen nicht.
+- **Vermerke statt Fluten:** erster Lauf = „Ausgangsstand“; nicht lesbarer Kontext ohne Flut
+  „entfernt“ bzw. danach „hinzugefügt“; neuer bzw. nicht mehr gelesener Kontext und
+  Gerätename-Wechsel (HA) als ein Eintrag; höchstens 5000 Einträge je Lauf, der Rest als
+  Sammel-Eintrag.
+- **Aufbewahrung** `AUTOMATO_RETENTION_TOPO_CHANGES_DAYS` (180 Tage, `0` = nie), auf der
+  System-Seite und in `automato purge`.
+- **API** `GET /routing/changes` (Filter Quellsystem, Kontext, Art, Änderung, Suche, Zeitraum;
+  seitenweise; Texte in der Sprache der Anfrage; Kunde oben = sein Ausschnitt; nicht für
+  Kunden-Benutzer), dazu `changed_at` an den Routen und `changes_7d`.
+- **UI:** Routing → Reiter **Verlauf** mit Detail je Feld und Link zum Lauf (Läufe mit gewähltem
+  Quellsystem, Lauf hervorgehoben); Chip „geändert“ an den Routen; „Routing-Änderungen (7 Tage)“
+  in „Gelesene Kontexte“.
+
 ## 0.91.0 – 2026-10-27
 
 Datenqualität (Roadmap Schritt 6 „Daten verschärfen“, erste Fassung, ADR 0029 – Inhalt von uns
