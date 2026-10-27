@@ -395,11 +395,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.83.0** | Zonen komplett Teil 4: Zonenplan aus draw.io zurück einlesen (Lage, Namen, Absichten, neue Formen; ADR 0024 Nr. 20) – Schritt 5 abgeschlossen |
 | **0.83.1** | Korrektur ACI: VM über die Portgruppe im Fabric (keine Contracts der externen EPG 0.0.0.0/0), VRF der BDs aus `common`, Contracts externer EPGs nach dem L3Out |
 | **0.84.0** | Applikations-Doku: Kategorien-Tabellen neu – Source/Destination in Verkehrsrichtung mit Name und IP, Kategorie 2 mit VIP (Firewall), Load Balancer und Server, NAT-Spalte, leere Spalten ausgeblendet |
+| **0.85.0** | Netzwerkplan der Applikation: Load Balancer als Knoten in der EPG seiner VIP, verbunden mit den EPGs der Server; VIP der Firewall am Knoten (ADR 0021 Ergänzung 0.85.0) |
 
-### Nächste Arbeiten (Stand 0.84.0)
+### Nächste Arbeiten (Stand 0.85.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.84.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.85.0.
 
 **Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
 Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in

@@ -171,3 +171,12 @@ def test_verbindung_ende_zu_ende_ueber_vip_und_load_balancer(client):
     assert check["rules"][0]["name"] == "inet-to-shop" and check["rules"][0]["decides"]
     assert back["checks"][0]["rules"][0]["name"] == "se-to-web"
     assert conn["verdict"] == "allow" and not conn["mismatch"], conn["text"]
+    # Netzwerkplan (0.85.0): Load Balancer als eigener Knoten nach der FortiGate, der zweite
+    # Durchgang durch dieselbe Firewall gehoert zum Load Balancer (Policy se-to-web im Kasten)
+    plan = client.get(f"/applications/{app['id']}/connections").json()["plan"]
+    nodes = {n["id"]: n for n in plan["nodes"]}
+    lbn = nodes[f"lb:{VIP}"]
+    assert lbn["kind"] == "lb" and lbn["lines"][0].startswith(f"vs-web {VIP}:443")
+    assert any("se-to-web" in line for line in lbn["rule_lines"])
+    fw = next(n for n in plan["nodes"] if n["kind"] == "firewall")
+    assert f"VIP V-EXT_shop → {VIP}" in fw["lines"]

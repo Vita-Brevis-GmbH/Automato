@@ -245,3 +245,47 @@ def test_kompakt_nach_ap_und_epg():
     assert "• web01" in svg and "+2 weitere" in svg and "TE/AP_web" in svg
     assert "Contract CT_ext · tcp/443" in svg
     assert "Contract CT_ext" not in app_plan.svg(plan, "Plan", rules=False)
+
+
+def test_load_balancer_in_der_epg_seiner_vip():
+    """0.85.0 (Anwender): Internet → FortiGate (VIP) → L3Out → Load Balancer in der EPG seiner
+    VIP → EPG der Server. Der Weg geht nach dem Load Balancer in derselben VRF weiter - kein
+    zweiter VRF-Knoten; der Contract VIP-EPG → Server-EPG steht im Kasten des Load Balancers."""
+    members = {
+        "epgs": [{"key": "epg:1", "label": "TE/AP_web/EPG_web", "name": "EPG_web",
+                  "tenant": "TE", "ap": "AP_web", "vrf": "VRF1"}],
+        "systems": [{"key": "vm:1", "name": "web01", "kind": "vm", "ips": ["10.1.0.11"],
+                     "epgs": ["TE/AP_web/EPG_web"]}],
+    }  # fmt: skip
+    own = {**_side("203.0.113.10", "web01", "system"), "keys": ["vm:1"]}
+    inet = _side("198.51.100.0/24", "Partner")
+    fw = _hop("1|root", "fw-edge", "wan", "to-aci")
+    fw["checks"][0]["nat"] = {"name": "V-EXT_shop", "to": ["10.30.0.50"], "balancer": "vs-web"}
+    fw["checks"][0]["rules"] = [{"name": "inet-to-shop", "external_id": "30", "kind": "policy",
+                                 "action": "allow", "services": ["tcp/443"], "decides": True,
+                                 "rule_id": 3}]  # fmt: skip
+    lb = {"name": "vs-web", "ext": "10.30.0.50", "port": "443", "pool": "pool-web",
+          "to": ["10.1.0.11"], "epg": "TE/AP_lb/EPG_vip"}  # fmt: skip
+    at = {**_hop("4|TE:VRF1", "apic · VRF TE:VRF1", "eth1/1", None), "kind": "vrf", "lb": lb}
+    then = {**_hop("4|TE:VRF1", "apic · VRF TE:VRF1", None, None), "kind": "vrf"}
+    then["checks"][0]["rules"] = [{"name": "CT_vip_web", "label": "Contract CT_vip_web",
+                                   "kind": "contract", "action": "allow",
+                                   "services": ["tcp/8080"], "decides": True,
+                                   "rule_id": 7}]  # fmt: skip
+    conn = _conn("shop", "in", inet, own, [fw, at, then], service="tcp/443")
+    plan = app_plan.build([conn], members=members)
+    nodes = {n["id"]: n for n in plan["nodes"]}
+    lbn = nodes["lb:TE/AP_lb/EPG_vip"]
+    assert (lbn["kind"], lbn["title"]) == ("lb", "EPG_vip")
+    assert lbn["sub"] == "Load Balancer · VIP 10.30.0.50:443"
+    assert lbn["lines"] == ["vs-web 10.30.0.50:443 · Pool pool-web"]
+    assert lbn["rule_lines"] == ["apic · VRF TE:VRF1: Contract CT_vip_web · tcp/8080"]
+    # die VRF nur einmal: Internet → FortiGate → VRF (Eingang) → Load Balancer → EPG der Server
+    assert [n["id"] for n in plan["nodes"] if n["id"].startswith("hop:4")] == ["hop:4|TE:VRF1"]
+    pairs = {(e["a"], e["b"]) for e in plan["edges"]}
+    assert ("epg:TE/AP_web/EPG_web", "lb:TE/AP_lb/EPG_vip") in pairs
+    assert ("lb:TE/AP_lb/EPG_vip", "hop:4|TE:VRF1") in pairs
+    # VIP der Firewall als Zeile am Knoten
+    assert nodes["hop:1|root"]["lines"] == ["VIP V-EXT_shop → 10.30.0.50"]
+    assert lbn["verdict"] == "allow"
+    assert 'automato_kind="Load Balancer"' in app_plan.drawio(plan, "Plan")

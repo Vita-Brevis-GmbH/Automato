@@ -852,6 +852,15 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
         der EPG direkt zur Firewall, das Fabric liegt nur als Layer 2 dazwischen. Ein Knoten
         „ACI-VRF“ statt L3Out heisst: der Weg bleibt im Fabric bzw. kein L3Out passt zum
         Next-Hop.
+      - **Load Balancer (0.85.0):** führt ein Weg über einen Virtual Service des NSX ALB,
+        steht nach dem Knoten, an dem seine VIP liegt, ein eigener Kasten – benannt nach der
+        EPG der VIP (im ACI) bzw. dem Load Balancer (VIP an einer Firewall), darunter je
+        Virtual Service eine Zeile (`vs-web 10.30.0.50:443 · Pool pool-web`) – und von dort die
+        Linie zur EPG der Server. Geht der Weg danach am selben Knoten weiter (dieselbe VRF bzw.
+        Firewall), steht dieser nicht ein zweites Mal da; die Regel dort (Contract VIP-EPG →
+        Server-EPG bzw. die Policy der Service Engine) steht im Kasten „Regeln“ des Load
+        Balancers mit dem Gerät davor. An der Firewall mit der VIP (DNAT) steht die Zeile „VIP
+        V-EXT_shop → 10.30.0.50“.
       - Seit 0.83.1 zählen BD-Subnetze, deren VRF in `common` liegt, für die VRF aus `common`
         (vorher stand der Tenant der BD da – die Wege dieser Systeme begannen nicht im Fabric
         und waren gestrichelt).

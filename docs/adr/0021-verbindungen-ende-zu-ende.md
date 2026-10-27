@@ -193,3 +193,20 @@ draw.io), der Export nach draw.io bleibt.
   (`groups`), schmalere Spalten. Oberfläche mit Zoom, Verschieben und den Ebenen „Regeln“ bzw.
   „Dienste und Interfaces“ (Browser).
 
+
+## Ergänzung 0.85.0 — VIP und Load Balancer im Netzwerkplan
+
+Rückmeldung des Anwenders: „die EPG VIP mit dem Loadbalancer auch einzeichnen und entsprechend
+verbinden mit den Ziel-EPGs“.
+
+- Ein Weg über einen Virtual Service des NSX ALB (ADR 0027) bekommt nach dem Hop, an dem dessen
+  VIP liegt, einen eigenen Knoten **Load Balancer**. Im ACI heisst er wie die EPG der VIP
+  (`epg_locate`: statischer Endpunkt, Portgruppe, gelernt, Subnetz), an einer Firewall wie der
+  Load Balancer; die Virtual Services stehen als Zeilen darin. Von dort führt die Linie zur EPG
+  der Server.
+- Geht der Weg nach dem Load Balancer am selben Knoten weiter (dieselbe VRF bzw. Firewall),
+  steht dieser nicht ein zweites Mal im Plan; die Regeln dieses Abschnitts (Contract VIP-EPG →
+  Server-EPG, Policy der Service Engine) stehen im Regel-Kasten des Load Balancers mit dem
+  Gerät.
+- Die VIP der Firewall (DNAT) steht als Zeile am Knoten der Firewall. Oberfläche, SVG und
+  draw.io zeichnen dasselbe (`app_plan._steps`/`_lb_step`, `app_paths._balancer`).

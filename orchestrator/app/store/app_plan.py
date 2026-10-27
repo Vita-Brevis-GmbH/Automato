@@ -15,6 +15,12 @@
   VRF. Unter jedem Knoten des Wegs ein kleiner Kasten mit den entscheidenden Policies bzw.
   Contracts und ihren Diensten - eine eigene **Ebene „Regeln“** (Oberflaeche ausblendbar,
   draw.io eigene Ebene, SVG/draw.io mit `rules=False` ohne).
+- **Load Balancer (0.85.0, Anwender):** nach dem Hop, an dem die VIP eines Virtual Service
+  liegt, ein eigener Knoten - benannt nach der EPG der VIP (bzw. dem Load Balancer, wenn sie an
+  einer Firewall liegt), mit den Virtual Services als Zeilen - und von dort die Linie zu den
+  EPGs der Server. Geht der Weg danach am selben Knoten weiter (VRF bzw. Firewall), steht dieser
+  nicht ein zweites Mal da; seine Regeln (z. B. Contract VIP-EPG → Server-EPG) stehen im Kasten
+  des Load Balancers mit dem Gerät davor. VIPs der Firewall (DNAT) als Zeilen am Knoten.
 - **Layout:** Spalten nach der Entfernung von der Applikation, Reihen nach den Nachbarn links
   (Baryzentrum), die Applikation nach AP und EPG; Linien weich wie im Zonenplan.
 
@@ -44,7 +50,7 @@ NO_EPG = "ohne EPG"
 
 KIND = {"system": "System der Applikation", "firewall": "Firewall", "vdom": "VDOM",
         "vrf": "ACI-VRF", "l3out": "L3Out", "object": "Gegenstelle", "epg": "EPG",
-        "external": "externe EPG"}  # fmt: skip
+        "external": "externe EPG", "lb": "Load Balancer"}  # fmt: skip
 VERDICT = {"allow": "erlaubt", "deny": "gesperrt", "depends": "abhängig", "unknown": "unbekannt",
            "blocked": "vorher gesperrt"}  # fmt: skip
 BLOCK = ("deny", "implicit_deny")
@@ -116,13 +122,19 @@ def _chain(c: dict, place: _Place | None = None) -> list[dict]:
     own, peer = (c["src"], c["dst"]) if out else (c["dst"], c["src"])
     oid, epg = place.own(own)
     chain = [{"id": oid, "role": "own", "side": own, "epg": epg, "left": [], "right": []}]
-    hops = c["hops"] if out else list(reversed(c["hops"]))
-    for i, h in enumerate(hops):
+    steps = _steps(c["hops"])  # in Verkehrsrichtung, mit den Load Balancern (0.85.0)
+    steps = steps if out else list(reversed(steps))
+    last = max((i for i, s in enumerate(steps) if "lb" not in s), default=-1)
+    for i, s in enumerate(steps):
+        if "lb" in s:
+            chain.append(_lb_step(s))
+            continue
+        h = s["hop"]
         left, right = _facing(h, c["direction"])
         x = {"id": f"hop:{h['key']}", "role": "hop", "hop": h, "left": left, "right": right}
         if h["kind"] == "vrf":
             names = _l3outs(h, c["direction"])
-            if not names and i == len(hops) - 1 and peer.get("l3out"):
+            if not names and i == last and peer.get("l3out"):
                 names = [peer["l3out"]]
             if names:
                 x["l3out"] = " / ".join(names)
@@ -131,6 +143,32 @@ def _chain(c: dict, place: _Place | None = None) -> list[dict]:
     chain.append({"id": f"peer:{peer['ip']}", "role": "peer", "side": peer, "left": [],
                   "right": []})  # fmt: skip
     return chain
+
+
+def _steps(hops: list[dict]) -> list[dict]:
+    """Hops in Verkehrsrichtung; nach einem Hop mit Load Balancer dessen Knoten. Geht der Weg
+    danach am selben Knoten weiter, gehoert dieser Hop zum Load Balancer (seine Regeln)."""
+    out: list[dict] = []
+    i = 0
+    while i < len(hops):
+        h = hops[i]
+        out.append({"hop": h})
+        if h.get("lb"):
+            nxt = hops[i + 1] if i + 1 < len(hops) else None
+            same = nxt is not None and nxt["key"] == h["key"]
+            out.append({"lb": h["lb"], "at": h, "then": nxt if same else None})
+            i += 1 if same else 0
+        i += 1
+    return out
+
+
+def _lb_step(s: dict) -> dict:
+    """Knoten des Load Balancers: je EPG der VIP (bzw. VIP an der Firewall) einer."""
+    lb = s["lb"]
+    where = lb.get("epg") or lb.get("ext") or lb["name"]
+    then = s["then"] or {"verdict": None, "checks": [], "label": s["at"]["label"]}
+    return {"id": f"lb:{where}", "role": "hop", "kind": "lb", "lb": lb, "hop": then,
+            "at": s["at"], "left": [], "right": []}  # fmt: skip
 
 
 def _open_segments(c: dict, n: int) -> set[int]:
@@ -251,6 +289,12 @@ def _node(x: dict, place: _Place) -> dict:
             "lines": [], "more": 0, "rules": [], "group": None}  # fmt: skip
     if x["role"] == "hop":
         h = x["hop"]
+        if x.get("kind") == "lb":
+            lb = x["lb"]
+            label = lb.get("epg") or lb["name"]
+            return base | {"kind": "lb", "label": label, "short": label.split("/")[-1],
+                           "vips": [], "where": lb.get("interface"),
+                           "via": x["at"]["label"]}  # fmt: skip
         if x.get("l3out"):
             return base | {"kind": "l3out", "label": x["l3out"], "via": h["label"]}
         return base | {"kind": h["kind"], "label": h["label"]}
@@ -277,13 +321,37 @@ def _rule_text(r: dict) -> str:
     return r.get("label") or name or f"Policy {ext}"
 
 
-def _add_rules(node: dict, h: dict) -> None:
+def _add_balancer(node: dict, lb: dict) -> None:
+    """Virtual Service als Zeile im Knoten des Load Balancers: „vs-web :443 · Pool pool-web“."""
+    port = f":{lb['port']}" if lb.get("port") else ""
+    pool = f" · Pool {lb['pool']}" if lb.get("pool") else ""
+    line = f"{lb['name']} {lb.get('ext') or ''}{port}{pool}".replace("  ", " ")
+    if line not in node["lines"]:
+        node["lines"].append(line)
+    vip = f"{lb.get('ext')}{port}" if lb.get("ext") else ""
+    if vip and vip not in node["vips"]:
+        node["vips"].append(vip)
+
+
+def _add_nat(node: dict, h: dict) -> None:
+    """VIP der Firewall (DNAT) als Zeile am Knoten (0.85.0): „VIP V-EXT_shop → 10.30.0.50“."""
+    for k in h.get("checks") or []:
+        nat = k.get("nat") or {}
+        if not nat.get("name"):
+            continue
+        to = ", ".join(nat.get("to") or [])
+        line = f"VIP {nat['name']}" + (f" → {to}" if to else "")
+        if line not in node["lines"]:
+            node["lines"].append(line)
+
+
+def _add_rules(node: dict, h: dict, on_device: str | None = None) -> None:
     """Regeln des Kastens (0.74.0): je Hop die entscheidenden Policies bzw. Contracts mit ihren
     Diensten; ohne entscheidende Regel und gesperrt „implizit gesperrt“. Im Verbund mit der
-    Firewall."""
+    Firewall, am Load Balancer mit dem Gerät, auf dem die Regel steht (0.85.0)."""
     checks = h.get("checks") or []
     for k in checks:
-        on = k["label"] if len(checks) > 1 else None
+        on = k["label"] if len(checks) > 1 or on_device else None
         deciding = [r for r in k.get("rules") or [] if r.get("decides")]
         if not deciding and k.get("verdict") in BLOCK:
             deciding = [{"name": "implizit gesperrt", "action": "deny", "services": []}]
@@ -303,9 +371,13 @@ def _add(node: dict, x: dict, c: dict, reached: bool) -> None:
     if c["key"] not in node["conns"]:
         node["conns"].append(c["key"])
     if x["role"] == "hop":
+        if x.get("kind") == "lb":
+            _add_balancer(node, x["lb"])
+        else:
+            _add_nat(node, x["hop"])
         if reached:
             node["hops"].append(x["hop"].get("verdict"))
-            _add_rules(node, x["hop"])
+            _add_rules(node, x["hop"], x["hop"].get("label") if x.get("kind") == "lb" else None)
         return
     s = x["side"]
     if s["ip"] not in node["ips"]:
@@ -329,6 +401,10 @@ def _edge_out(e: dict) -> dict:
 
 
 def _sub(n: dict) -> str:
+    if n["kind"] == "lb":
+        vips = n.get("vips") or []
+        text = "Load Balancer" + (f" · VIP {vips[0]}" if vips else "")
+        return text + (f" +{len(vips) - 1}" if len(vips) > 1 else "")
     if n["kind"] == "l3out":
         return f"L3Out · {VERDICT[n['verdict']]}"
     if n["role"] == "hop":
@@ -375,6 +451,8 @@ def _layout(nodes: list[dict], edges: list[dict]) -> dict:
     for n in nodes:
         if n["role"] == "hop":  # ohne erreichende Verbindung: vorher gesperrt
             n["verdict"] = _verdict(n["hops"]) if n["hops"] else "blocked"
+            if n["kind"] == "lb" and set(n["hops"]) <= {None}:
+                n["verdict"] = "unknown" if n["hops"] else "blocked"  # ohne Regel danach
         else:
             n["verdict"] = None
         _sizes(n)

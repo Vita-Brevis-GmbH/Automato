@@ -7,6 +7,21 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.85.0 – 2026-10-27
+
+Netzwerkplan der Applikation: VIP und Load Balancer (Anwender: „die EPG VIP mit dem Loadbalancer
+auch einzeichnen und entsprechend verbinden mit den Ziel-EPGs“; ADR 0021 Ergänzung 0.85.0).
+
+- **Load Balancer als Knoten** nach dem Hop, an dem seine VIP liegt: im ACI benannt nach der
+  EPG der VIP (statischer Endpunkt, Portgruppe, gelernt bzw. Subnetz), sonst nach dem Load
+  Balancer; je Virtual Service eine Zeile, Untertitel „Load Balancer · VIP …“. Von dort die
+  Linie zur EPG der Server.
+- Geht der Weg nach dem Load Balancer am selben Knoten weiter, steht dieser nicht doppelt da;
+  seine Regeln (Contract VIP-EPG → Server-EPG, Policy der Service Engine) im Kasten des Load
+  Balancers mit dem Gerät.
+- **VIP der Firewall** (DNAT) als Zeile am Knoten der Firewall.
+- Gleich in Oberfläche, SVG und draw.io (`automato_kind` „Load Balancer“).
+
 ## 0.84.0 – 2026-10-27
 
 Applikations-Doku: Kategorien-Tabellen neu (Anwender: „heute steht alles in Server Name“ – VIPs,

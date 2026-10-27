@@ -1799,7 +1799,7 @@ export type AppPlanVerdict = "allow" | "deny" | "depends" | "unknown" | "blocked
 export interface AppPlanNode {
   id: string;
   role: "own" | "hop" | "peer";
-  kind: string; // system | firewall | vdom | vrf | object | epg | external
+  kind: string; // system | firewall | vdom | vrf | l3out | lb | object | epg | external
   label: string;
   title: string;
   sub: string;
@@ -1816,7 +1816,8 @@ export interface AppPlanNode {
   group?: string | null;
   lines?: string[];
   more?: number;
-  via?: string; // L3Out: ACI-VRF des Wegs
+  via?: string; // L3Out: ACI-VRF des Wegs; Load Balancer: Knoten, an dem seine VIP liegt
+  vips?: string[]; // Load Balancer (0.85.0): VIPs mit Port; Zeilen = Virtual Services
   rules?: { name: string; on: string | null; action: string; services: string[]; rule_id: number | null }[];
   rule_lines?: string[];
   rules_box?: { x: number; y: number; w: number; h: number } | null;

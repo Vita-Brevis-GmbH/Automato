@@ -49,7 +49,7 @@ from app.models import (
     RuleIpRange,
     TopoL3Out,
 )
-from app.store import aci_direction, appdoc, paths, policy_check
+from app.store import aci_direction, appdoc, epg_locate, paths, policy_check
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store.topology import endpoint, is_net, within
@@ -114,6 +114,7 @@ def build(session: Session, app: Application, doc: dict | None = None,
     out: list[dict] = []
     cut = len(conns) > MAX_TRACES
     l3 = L3Outs(session, {k[0] for k in graph.nodes})
+    l3.locator = epg_locate.Locator(session, tid, data.aci, data.epgs_by_id)
     zctx = zone_path.ZoneContext(session, tid, graph) if zones else None
     for c in list(conns.values())[:MAX_TRACES]:
         conn = _connection(session, tid, graph, checks, data, rules, c, l3, zctx)
@@ -179,6 +180,7 @@ class L3Outs:
 
     def __init__(self, session: Session, sources: set[int]):
         self.by_vrf: dict[tuple[int, str], list[tuple[str, list, set[str], set[str]]]] = {}
+        self.locator = None  # EPG der VIP eines Load Balancers im Fabric (0.85.0)
         if not sources:
             return
         for o in session.scalars(select(TopoL3Out).where(TopoL3Out.source_system_id.in_(sources))):
@@ -812,9 +814,25 @@ def _hop(h: dict, l3: L3Outs | None = None) -> dict:
         "verdict": _hop_verdict(checks),
         "checks": checks,
         **({"zone": h["zone"]["name"]} if h.get("zone") else {}),
-        # NSX ALB (0.77.0): an diesem Hop vom Load Balancer weiter zum Server
-        **({"lb": h["lb"]} if h.get("lb") else {}),
+        # NSX ALB (0.77.0): an diesem Hop vom Load Balancer weiter zum Server; seit 0.85.0 mit
+        # der EPG bzw. dem Interface, an dem seine VIP liegt (Netzwerkplan)
+        **({"lb": _balancer(h, checks, l3)} if h.get("lb") else {}),
     }
+
+
+def _balancer(h: dict, checks: list[dict], l3: "L3Outs | None") -> dict:
+    """Load Balancer am Hop mit dem Ort seiner VIP: im ACI die EPG (statischer Endpunkt,
+    Portgruppe, gelernt, Subnetz), sonst das Interface der Firewall zur VIP."""
+    lb = dict(h["lb"])
+    ip = nat_store.host_ip(lb.get("ext"))
+    loc = l3.locator if l3 is not None else None
+    if h["kind"] == "vrf" and loc is not None and ip:
+        epgs, _how = loc.locate(ip, h["source_system_id"], h["context"])
+        if epgs:
+            lb["epg"] = epg_store.inventory_label(epgs[0])
+    elif checks and checks[0].get("egress"):
+        lb["interface"] = checks[0]["egress"]
+    return lb
 
 
 def _hop_verdict(checks: list[dict]) -> str | None:
