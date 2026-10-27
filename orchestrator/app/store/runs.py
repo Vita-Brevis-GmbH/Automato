@@ -6,6 +6,9 @@ ein Geraet mit Agent wird immer extern gelesen (ADR 0009). Auditiert `collector_
 Haengende Laeufe (Agent beendet, Ergebnis-Upload verloren, nie abgeholt) blockierten bis
 0.11.2 "Alle einlesen" und den Zeitplan fuer immer (Dev-Befund): `expire_stale` beendet sie
 nach einer Frist, `cancel` von Hand; `blocking` nennt Lauf, Zustand und seit wann.
+
+Meldungen der Laeufe werden deutsch gespeichert; `show_message` uebersetzt sie beim Abruf
+(0.90.0, ADR 0028 Schritt 4).
 """
 
 import logging
@@ -21,7 +24,7 @@ from app import audit, credentials
 from app.config import get_settings
 from app.i18n import L
 from app.models import REFERENCE_PLATFORMS, Agent, CollectorRun, RunStatus, SourceSystem
-from app.store import tenant_lock
+from app.store import run_text, tenant_lock
 
 log = logging.getLogger(__name__)
 
@@ -45,18 +48,27 @@ def queue_collect(
     if source_system_id is not None:
         src = session.get(SourceSystem, source_system_id)
         if src is None:
-            raise RunRejected("source system not found")
+            raise RunRejected(L("Quellsystem nicht gefunden", "source system not found"))
         if src.tenant_id is None or src.tenant_id != tenant_id:
-            raise RunRejected("source system belongs to another tenant")
+            raise RunRejected(L("Quellsystem gehört zu einem anderen Mandanten",
+                                "source system belongs to another tenant"))  # fmt: skip
         if src.platform.value != platform:
-            raise RunRejected("platform does not match source system")
+            raise RunRejected(L("Plattform passt nicht zum Quellsystem",
+                                "platform does not match source system"))  # fmt: skip
         if src.platform in REFERENCE_PLATFORMS and not credentials.complete(
             src.platform.value, src.credentials
         ):
             # Referenzquellen haben keine Beispieldaten - ohne Lese-Zugang scheitert der Lauf
-            # sicher; das NetBox-Schreib-Token wird bewusst nie zum Lesen verwendet
-            missing = "read token" if src.platform.value == "netbox" else "username/password"
-            raise RunRejected(f"{src.platform.value} source '{src.name}' has no {missing}")
+            # sicher; das NetBox-Schreib-Token wird bewusst nie zum Lesen verwendet. Nur
+            # Antwort bzw. Log (Grund in „Alle einlesen“), nicht gespeichert
+            kind, name = src.platform.value, src.name
+            raise RunRejected(
+                L(f"{kind}-Quelle „{name}“ hat kein Lese-Token („API-Token (lesen)“)",
+                  f"{kind} source '{name}' has no read token ('API token (read)')")
+                if kind == "netbox"
+                else L(f"{kind}-Quelle „{name}“ hat keinen Benutzer/kein Passwort",
+                       f"{kind} source '{name}' has no username/password")
+            )  # fmt: skip
         if src.agent_id is not None:
             execution = "external"  # Geraet wird von seinem Agenten gelesen (ADR 0009)
     run = CollectorRun(
@@ -204,9 +216,16 @@ def _lock_open(session: Session, run_id: str) -> CollectorRun | None:
     return session.scalars(query).first()
 
 
+def show_message(message: str | None) -> str | None:
+    """Gespeicherte (deutsche) Meldung eines Laufs bzw. Grund der Update-Pruefung eines Agenten
+    in der Sprache der Anfrage (0.90.0, ADR 0028 Schritt 4): bekannte Teile aus
+    `store/run_text.py`, Unbekanntes (Texte der Geraete, Ausnahmen) unveraendert."""
+    return run_text.show(message)
+
+
 def cancel(session: Session, run: CollectorRun, actor: str) -> None:
     """Offenen Lauf von Hand beenden (z. B. haengt nach einem Neustart des Agenten). Die
-    Meldung wird gespeichert und bleibt deutsch (ADR 0028)."""
+    Meldung wird gespeichert und bleibt deutsch, die Anzeige uebersetzt (`show_message`)."""
     who = actor.removeprefix("user:")
     _finish(session, run, f"abgebrochen von {who}", actor=actor)
 

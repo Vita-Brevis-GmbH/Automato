@@ -224,7 +224,7 @@ def test_netbox_nur_mit_schreib_token_kann_nicht_eingelesen_werden(client):
     assert nb["has_credentials"] is False and nb["has_write_token"] is True
     body = {"platform": "netbox", "tenant_id": tid, "source_system_id": nb["id"]}
     r = client.post("/jobs/collect", json=body)
-    assert r.status_code == 422 and "read token" in r.json()["detail"]
+    assert r.status_code == 422 and "kein Lese-Token" in r.json()["detail"]
     # mit Lese-Token geht es
     client.patch(f"/systems/{nb['id']}", json={"token": "nb-lesen"}, headers=ADMIN)
     assert client.post("/jobs/collect", json=body).status_code == 202

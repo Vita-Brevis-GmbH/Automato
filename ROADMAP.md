@@ -400,11 +400,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.87.0** | Texte vom Server und Exporte (Word/PDF/SVG/draw.io) auf Deutsch und Englisch, Sprache der Datei wählbar; Gespeichertes bleibt deutsch (ADR 0028 Schritte 2/3) |
 | **0.88.0** | Abhängigkeiten zwischen Applikationen wieder in der Doku: Infrastruktur (Monitoring, Backup, DNS …) kennzeichnen und getrennt zeigen, Bereich lädt erst beim Aufklappen, Export-Abschnitt (ADR 0012 Ergänzung 0.88.0) |
 | **0.89.0** | Feinere Rollen der Kunden-Benutzer: Lesen, Triage, Editor (eigene Applikationen pflegen), Kunden-Admin (eigene Kunden-Benutzer zuordnen), Rolle je Kunde, Claim `customer_role` (ADR 0018 Ergänzung) |
+| **0.90.0** | Läufe, Agent-Konsole und CLI auf Deutsch und Englisch: Laufmeldungen deutsch gespeichert und beim Abruf übersetzt, `AUTOMATO_LANG`, `automato --lang` (ADR 0028 Schritt 4) |
 
-### Nächste Arbeiten (Stand 0.89.0)
+### Nächste Arbeiten (Stand 0.90.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.89.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.90.0.
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4
 Verkabelung, Applikationen, Kunden, Routing“):**
@@ -413,7 +414,7 @@ Verkabelung, Applikationen, Kunden, Routing“):**
 |---|---|---|
 | Ablauf | `main` nachführen | **erledigt** (PR #2, `main` = 0.87.0) |
 | Schritt 6 | Daten verschärfen: Datenqualität der gelesenen Daten und des IPAM | in Arbeit |
-| Sprache | ADR 0028 Schritt 4: Laufmeldungen, Collector/Agent, CLI | in Arbeit |
+| Sprache | ADR 0028 Schritt 4: Laufmeldungen, Collector/Agent, CLI | **umgesetzt in 0.90.0** |
 | Verkabelung | Kabel und Ports nach NetBox (Vorschau → Übernehmen), IPv6-Nachbarn, weitere Hersteller; SNMPv3 als Alternative zu SSH | in Arbeit (SNMPv3 danach) |
 | Applikationen | Abhängigkeiten wieder einblenden (Infrastruktur getrennt) | **umgesetzt in 0.88.0** |
 | Applikationen | Export nach NetBox (Tags) | in Arbeit |
@@ -422,7 +423,7 @@ Verkabelung, Applikationen, Kunden, Routing“):**
 
 **Deutsch/Englisch (Anwender 2026-10-27, ADR 0028):** Schritt 1 Oberfläche – **umgesetzt in
 0.86.0**; Schritt 2 Texte vom Server und Schritt 3 Exporte mit Sprache der Datei – **umgesetzt in
-0.87.0**; Schritt 4 Meldungen der Läufe, Collector/Agent und CLI – offen.
+0.87.0**; Schritt 4 Meldungen der Läufe, Collector/Agent und CLI – **umgesetzt in 0.90.0**.
 
 **Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
 Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in

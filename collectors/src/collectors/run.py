@@ -22,6 +22,10 @@ Aufruf:
   automato-collector --platform fortigate --run-id <RUN_ID>   (zentral/alt, internes Token)
 
 Exit 0 = Ergebnis completed bzw. alle Checks OK, 1 = failed, 2 = Check-Fehler.
+
+Sprache der Konsole (0.90.0, ADR 0028 Schritt 4): `AUTOMATO_LANG=en` in agent.env bzw. der
+Umgebung, Standard Deutsch. Was an den Orchestrator geht, bleibt deutsch; die Meldung eines Laufs
+zeigt die Konsole in der Uebersetzung aus der Quittung des Orchestrators (`shown`).
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ import httpx
 # Selbst-Update zuerst und ohne weitere Abhaengigkeiten laden: so kann sich auch eine
 # unvollstaendige Installation (z. B. fehlendes sot_gateway) selbst reparieren (ADR 0011).
 from collectors.common import agentlog, http, selfupdate
+from collectors.common.i18n import L, both
 from collectors.config import get_settings
 
 try:
@@ -81,51 +86,67 @@ except ImportError as _exc:  # unvollstaendige Installation
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="automato-collector",
-        description="Externer Standalone-Collector (eine Erfassung, read-only).",
-    )
+        description=L("Externer Standalone-Collector (eine Erfassung, read-only).",
+                      "External standalone collector (one collection, read-only)."),
+    )  # fmt: skip
     parser.add_argument(
-        "--platform", choices=sorted(RUNNERS), help="Plattform (nur fuer --run-id Pflicht)"
+        "--platform", choices=sorted(RUNNERS),
+        help=L("Plattform (nur fuer --run-id Pflicht)", "platform (required only for --run-id)"),
+    )  # fmt: skip
+    parser.add_argument(
+        "--run-id",
+        help=L(
+            "RUN_ID eines externen Laufs (ohne --poll Pflicht)",
+            "RUN_ID of an external run (required without --poll)",
+        ),
     )
-    parser.add_argument("--run-id", help="RUN_ID eines externen Laufs (ohne --poll Pflicht)")
     parser.add_argument(
         "--poll",
         action="store_true",
-        help="naechsten externen Lauf aus der Agent-Queue holen (Agent-Token noetig)",
-    )
+        help=L("naechsten externen Lauf aus der Agent-Queue holen (Agent-Token noetig)",
+               "fetch the next external run from the agent queue (agent token needed)"),
+    )  # fmt: skip
     parser.add_argument(
         "--watch",
         type=int,
         default=0,
-        metavar="SEKUNDEN",
-        help="mit --poll: wach bleiben und alle N Sekunden nach neuen Laeufen fragen",
-    )
+        metavar=L("SEKUNDEN", "SECONDS"),
+        help=L("mit --poll: wach bleiben und alle N Sekunden nach neuen Laeufen fragen",
+               "with --poll: stay awake and ask for new runs every N seconds"),
+    )  # fmt: skip
     parser.add_argument(
         "--for",
         dest="duration",
         type=float,
         default=14,
-        metavar="MINUTEN",
-        help="mit --watch: nach so vielen Minuten beenden (Standard 14)",
-    )
+        metavar=L("MINUTEN", "MINUTES"),
+        help=L("mit --watch: nach so vielen Minuten beenden (Standard 14)",
+               "with --watch: exit after this many minutes (default 14)"),
+    )  # fmt: skip
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Erreichbarkeit/Auth der zugewiesenen Geraete pruefen (read-only, kein Ingest)",
-    )
+        help=L("Erreichbarkeit/Auth der zugewiesenen Geraete pruefen (read-only, kein Ingest)",
+               "check reachability/auth of the assigned devices (read-only, no ingest)"),
+    )  # fmt: skip
     parser.add_argument(
         "--strict",
         action="store_true",
-        help=(
+        help=L(
             "mit --check: pruefen, ob die FortiGate ein ungueltiges Token ablehnt (R16); "
-            "zaehlt dort als fehlgeschlagene Anmeldung"
+            "zaehlt dort als fehlgeschlagene Anmeldung",
+            "with --check: check whether the FortiGate rejects an invalid token (R16); counts "
+            "there as a failed login",
         ),
     )
     parser.add_argument(
         "--no-update",
         action="store_true",
-        help="Selbst-Update (ADR 0011) fuer diesen Aufruf auslassen",
-    )
-    parser.add_argument("--version", action="store_true", help="Agent-Version anzeigen")
+        help=L("Selbst-Update (ADR 0011) fuer diesen Aufruf auslassen",
+               "skip the self-update (ADR 0011) for this call"),
+    )  # fmt: skip
+    parser.add_argument("--version", action="store_true",
+                        help=L("Agent-Version anzeigen", "show the agent version"))  # fmt: skip
     raw = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(raw)
     if args.version:
@@ -140,23 +161,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             return updated
     if _BROKEN is not None:
         print(
-            f"Agent-Installation unvollstaendig ({_BROKEN}) - Agent-Paket im Web-UI laden und"
-            " install.ps1 erneut ausfuehren",
+            L(f"Agent-Installation unvollstaendig ({_BROKEN}) - Agent-Paket im Web-UI laden und"
+              " install.ps1 erneut ausfuehren",
+              f"Agent installation incomplete ({_BROKEN}) - download the agent package in the web"
+              " UI and run install.ps1 again"),
             file=sys.stderr,
-        )
+        )  # fmt: skip
         return 1
     try:
         return _run(parser, args)
     except httpx.HTTPError as exc:
         # Verbindungs-/HTTP-Fehler zum Orchestrator: klare Meldung statt Traceback
-        print(f"Orchestrator-Aufruf fehlgeschlagen: {_describe(exc)}", file=sys.stderr)
+        print(_call_failed(exc), file=sys.stderr)
         return 1
+
+
+def _call_failed(exc: httpx.HTTPError) -> str:
+    what = L("Orchestrator-Aufruf fehlgeschlagen", "Orchestrator call failed")
+    return f"{what}: {_describe(exc)}"
 
 
 def _describe(exc: httpx.HTTPError) -> str:
     text = http.describe_error(exc)
     if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500:
-        text += " (Details: docker compose logs orchestrator)"
+        text += L(" (Details: docker compose logs orchestrator)",
+                  " (details: docker compose logs orchestrator)")  # fmt: skip
     return text
 
 
@@ -178,13 +207,14 @@ def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.check:
         return _check(args.platform, strict=args.strict)
     if args.strict:
-        parser.error("--strict nur zusammen mit --check")
+        parser.error(L("--strict nur zusammen mit --check", "--strict only together with --check"))
     if args.watch and not args.poll:
-        parser.error("--watch nur zusammen mit --poll")
+        parser.error(L("--watch nur zusammen mit --poll", "--watch only together with --poll"))
 
     if not args.poll:
         if not (args.platform and args.run_id):
-            parser.error("--platform und --run-id erforderlich (oder --poll)")
+            parser.error(L("--platform und --run-id erforderlich (oder --poll)",
+                           "--platform and --run-id required (or --poll)"))  # fmt: skip
         return 0 if _execute(args.platform, args.run_id, None, via_agent=False) else 1
 
     if args.watch:
@@ -192,8 +222,12 @@ def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return _watch(args.platform, args.watch, args.duration, update=update)
     ok, done = _poll_once(args.platform)
     if done == 0:
-        print("keine offenen Laeufe")
+        print(_no_runs())
     return 0 if ok else 1
+
+
+def _no_runs() -> str:
+    return L("keine offenen Laeufe", "no open runs")
 
 
 MIN_WATCH_SECONDS = 5
@@ -230,7 +264,8 @@ def _watch(
     deadline = clock() + minutes * 60
     ok, total, errors = True, 0, 0
     checked = clock()
-    print(f"Agent wartet auf Laeufe (alle {every} s, {minutes:g} min)")
+    print(L(f"Agent wartet auf Laeufe (alle {every} s, {minutes:g} min)",
+            f"Agent waiting for runs (every {every} s, {minutes:g} min)"))  # fmt: skip
     while True:
         # neue Version uebernimmt die restliche Wachzeit (Dev-Befund 0.11.4: bisher pruefte
         # der Agent nur beim Start und lief im Wach-Modus mit der alten Version); haelt der
@@ -251,26 +286,39 @@ def _watch(
         except httpx.HTTPError as exc:
             errors += 1
             if errors == 1:  # nicht alle paar Sekunden dieselbe Meldung
-                print(f"Orchestrator-Aufruf fehlgeschlagen: {_describe(exc)}", file=sys.stderr)
+                print(_call_failed(exc), file=sys.stderr)
         if clock() + every > deadline:
             break
         sleep(every)
-    print(f"{total} Lauf/Laeufe ausgefuehrt" if total else "keine offenen Laeufe")
+    print(L(f"{total} Lauf/Laeufe ausgefuehrt", f"{total} run(s) executed") if total
+          else _no_runs())  # fmt: skip
     return 0 if ok and errors == 0 else 1
 
 
 def _unsupported(platform: str) -> str:
-    return (
+    return L(
         f"Plattform '{platform}' wird von diesem Agenten nicht unterstuetzt - Agent-Paket im"
-        " Web-UI (Collector-Agenten) neu herunterladen und install.ps1 erneut ausfuehren"
+        " Web-UI (Collector-Agenten) neu herunterladen und install.ps1 erneut ausfuehren",
+        f"platform '{platform}' is not supported by this agent - download the agent package"
+        " again in the web UI (Collector agents) and run install.ps1 again",
     )
+
+
+def _failed(run_id: str, make: Callable[[], str], via_agent: bool) -> CollectorResult:
+    """Lauf mit eigener Meldung beenden: deutsch an den Orchestrator, Konsole in
+    `AUTOMATO_LANG` (sofern die Quittung keine Uebersetzung bringt)."""
+    message, shown = both(make)
+    result = CollectorResult(status="failed", message=message)
+    result = confirmed(result, submit_result(run_id, result, via_agent=via_agent))
+    if result.shown is None and result.message == message:
+        result = result.model_copy(update={"shown": shown})
+    return result
 
 
 def _execute(platform: str, run_id: str, target: Target | None, via_agent: bool) -> bool:
     runner = RUNNERS.get(platform)
     if runner is None:  # aelterer Agent als der Orchestrator: Lauf sauber als failed melden
-        result = CollectorResult(status="failed", message=_unsupported(platform))
-        result = confirmed(result, submit_result(run_id, result, via_agent=via_agent))
+        result = _failed(run_id, lambda: _unsupported(platform), via_agent)
     else:
         try:
             result = runner(run_id, target, via_agent=via_agent)
@@ -278,17 +326,18 @@ def _execute(platform: str, run_id: str, target: Target | None, via_agent: bool)
             # Ergebnis nicht abgeliefert (z. B. zu gross, Zeitueberschreitung): den Lauf mit
             # kurzer Meldung beenden statt ihn offen zu lassen - ein offener Lauf blockierte
             # "Alle einlesen" und den Zeitplan (Dev-Befund 0.11.3)
-            result = CollectorResult(
-                status="failed", message=f"Ergebnis-Upload fehlgeschlagen: {_describe(exc)}"
-            )
+            def upload_failed(e: httpx.HTTPError = exc) -> str:
+                what = L("Ergebnis-Upload fehlgeschlagen", "Result upload failed")
+                return f"{what}: {_describe(e)}"
+
             try:
-                result = confirmed(result, submit_result(run_id, result, via_agent=via_agent))
+                result = _failed(run_id, upload_failed, via_agent)
             except httpx.HTTPError:
                 raise exc from None  # Orchestrator ganz weg: der erste Fehler sagt mehr
     label = f" ({target.name})" if target and target.name else ""
     print(f"{platform} run {run_id}{label}: {result.status}")
-    if result.message:
-        print(result.message, file=sys.stderr)
+    if result.message:  # in der Sprache der Konsole, sofern der Orchestrator sie uebersetzt
+        print(result.shown or result.message, file=sys.stderr)
     return result.status == "completed"
 
 
@@ -298,13 +347,17 @@ def _strict(platform: str, target: Target | None, label: str) -> bool:
     if checker is None:
         return True
     ok, msg = checker(target)
-    print(f"{label} strict: {'OK' if ok else 'FEHLER'} - {msg}")
+    print(f"{label} strict: {_verdict(ok)} - {msg}")
     return ok
+
+
+def _verdict(ok: bool) -> str:
+    return "OK" if ok else L("FEHLER", "ERROR")
 
 
 def _check(platform: str | None, strict: bool = False) -> int:
     """Agent: alle zugewiesenen Geraete pruefen; ohne Agent-Token: lokale Konfiguration."""
-    print(f"Agent-Version: {selfupdate.current_label()}")
+    print(f"{L('Agent-Version', 'Agent version')}: {selfupdate.current_label()}")
     if get_settings().agent_token:
         devices = [t for t in agent_api.targets() if not platform or t.platform == platform]
         if devices:
@@ -313,16 +366,26 @@ def _check(platform: str | None, strict: bool = False) -> int:
                 checker = CHECKERS.get(t.platform)
                 ok, msg = checker(t) if checker else (False, _unsupported(t.platform))
                 label = f"{t.name} ({t.platform})"
-                print(f"{label} check: {'OK' if ok else 'FEHLER'} - {msg}")
+                print(f"{label} check: {_verdict(ok)} - {msg}")
                 if ok and strict:
                     ok = _strict(t.platform, t, label)
                 failed += 0 if ok else 1
             return 0 if failed == 0 else 2
-        print("diesem Agenten sind keine Geraete zugewiesen (Web-UI: Mandanten & Standorte ->")
-        print("Quellsystem -> Agent); pruefe lokale Konfiguration")
+        print(
+            L(
+                "diesem Agenten sind keine Geraete zugewiesen (Web-UI: Mandanten & Standorte ->",
+                "no devices are assigned to this agent (web UI: Tenants & sites ->",
+            )
+        )
+        print(
+            L(
+                "Quellsystem -> Agent); pruefe lokale Konfiguration",
+                "source system -> agent); checking the local configuration",
+            )
+        )
     plat = platform or "fortigate"
     ok, msg = CHECKERS[plat](None)
-    print(f"{plat} check: {'OK' if ok else 'FEHLER'} - {msg}")
+    print(f"{plat} check: {_verdict(ok)} - {msg}")
     if ok and strict:
         ok = _strict(plat, None, plat)
     return 0 if ok else 2

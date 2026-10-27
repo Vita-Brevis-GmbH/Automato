@@ -34,7 +34,7 @@ from app.auth.principal import Principal
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.models import Agent, RunStatus, SourceSystem, Tenant
-from app.store import agent_package
+from app.store import agent_package, runs
 from app.store import agents as store
 
 log = logging.getLogger(__name__)
@@ -144,7 +144,7 @@ def _out(a: Agent, systems: list | None = None, current: str | None = None) -> A
         version=a.version,
         auto_update=a.auto_update,
         update_available=(a.version != current) if a.version and current else None,
-        update_note=a.update_note,
+        update_note=runs.show_message(a.update_note),  # gespeichert deutsch (ADR 0028)
         systems=[
             AgentSystem(
                 id=s.id,

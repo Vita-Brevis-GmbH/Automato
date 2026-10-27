@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 
 from sot_gateway.readonly import ReadOnlyViolation
 
+from collectors.common.i18n import L
+
 # Lesende vSphere-Methoden (SOAP-/WSDL-Name - eindeutig; der Python-Name nicht: "Destroy" ist
 # sowohl View.DestroyView als auch ManagedEntity.Destroy_Task); alles andere wird blockiert
 READ_METHODS = frozenset(
@@ -68,7 +70,12 @@ def guard(stub) -> None:
     def read_only(mo, info, args, *rest, **kw):
         method = getattr(info, "wsdlName", None) or info.name
         if method not in READ_METHODS:
-            raise ReadOnlyViolation(f"nur lesend: vSphere-Methode {method} blockiert")
+            raise ReadOnlyViolation(
+                L(
+                    f"nur lesend: vSphere-Methode {method} blockiert",
+                    f"read-only: vSphere method {method} blocked",
+                )
+            )
         return invoke(mo, info, args, *rest, **kw)
 
     stub.InvokeMethod = read_only
@@ -198,7 +205,10 @@ class VCenterClient:
             from pyVim.connect import SmartConnect
         except ImportError as exc:  # pragma: no cover - Installation ohne pyvmomi
             raise RuntimeError(
-                "pyvmomi fehlt - Agent neu installieren bzw. Selbst-Update abwarten"
+                L(
+                    "pyvmomi fehlt - Agent neu installieren bzw. Selbst-Update abwarten",
+                    "pyvmomi missing - reinstall the agent or wait for the self-update",
+                )
             ) from exc
         context = ssl.create_default_context()
         if not self.verify_tls:

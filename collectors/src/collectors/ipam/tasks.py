@@ -13,6 +13,7 @@ from collectors.celery_app import app
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, ReferenceBatch, Target
+from collectors.common.i18n import L, german_only
 from collectors.common.upload import confirmed, submit_references, submit_result
 
 CHUNK = 2000
@@ -20,14 +21,21 @@ PLATFORMS = ("infoblox", "netbox")
 
 
 def _no_credentials(target: Target | None) -> str:
-    name = f"„{target.name}“" if target is not None and target.name else "die Referenzquelle"
-    return f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen"
+    name = _label(target)
+    return L(
+        f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen",
+        f"no credentials for {name} - store them at the source system in the web UI",
+    )
 
 
 def _adapter(platform: str, target: Target | None):
     if target is None or not target.base_url:
+        name = _label(target)
         raise RuntimeError(
-            f"keine Adresse fuer {_label(target)} - im Web-UI beim Quellsystem hinterlegen"
+            L(
+                f"keine Adresse fuer {name} - im Web-UI beim Quellsystem hinterlegen",
+                f"no address for {name} - store it at the source system in the web UI",
+            )
         )
     if platform == "infoblox":
         if not (target.username and target.password):
@@ -36,17 +44,25 @@ def _adapter(platform: str, target: Target | None):
             target.base_url, target.username, target.password, verify_tls=target.verify_tls
         )
     if not target.token:
+        name = _label(target)
         raise RuntimeError(
-            f"kein Lese-Token fuer {_label(target)} - im Web-UI beim Quellsystem unter"
-            " 'API-Token (lesen)' hinterlegen (das Schreib-Token wird nie zum Lesen verwendet)"
+            L(
+                f"kein Lese-Token fuer {name} - im Web-UI beim Quellsystem unter 'API-Token "
+                "(lesen)' hinterlegen (das Schreib-Token wird nie zum Lesen verwendet)",
+                f"no read token for {name} - store it at the source system in the web UI under "
+                "'API token (read)' (the write token is never used for reading)",
+            )
         )
     return NetBoxAdapter(target.base_url, target.token, verify_tls=target.verify_tls)
 
 
 def _label(target: Target | None) -> str:
-    return f"„{target.name}“" if target is not None and target.name else "die Referenzquelle"
+    if target is not None and target.name:
+        return L(f"„{target.name}“", f"“{target.name}”")
+    return L("die Referenzquelle", "the reference source")
 
 
+@german_only  # Ergebnis und Meldung speichert der Orchestrator - deutsch (ADR 0028)
 def collect_references(
     platform: str, run_id: str, target: Target | None = None, via_agent: bool = False
 ) -> CollectorResult:
@@ -80,7 +96,10 @@ def check(platform: str, target: Target | None = None) -> tuple[bool, str]:
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, diagnose.device_error(exc, platform, target, local=True)
     product = "NetBox" if platform == "netbox" else "WAPI"
-    return True, f"erreichbar: {target.base_url} ({product} {version})"
+    return True, L(
+        f"erreichbar: {target.base_url} ({product} {version})",
+        f"reachable: {target.base_url} ({product} {version})",
+    )
 
 
 def collect_infoblox(run_id: str, target: Target | None = None, via_agent: bool = False):

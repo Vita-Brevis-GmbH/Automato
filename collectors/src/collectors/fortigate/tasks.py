@@ -17,6 +17,7 @@ from collectors.celery_app import app
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, Target
+from collectors.common.i18n import L, german_only
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
 from collectors.fortigate import normalize as norm
@@ -39,8 +40,15 @@ def _credentials(target: Target | None) -> tuple[str, str, bool] | None:
 
 
 def _no_credentials(target: Target | None) -> str:
-    name = f"„{target.name}“" if target is not None and target.name else "das Geraet"
-    return f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen"
+    name = (
+        L(f"„{target.name}“", f"“{target.name}”")
+        if target is not None and target.name
+        else L("das Geraet", "the device")
+    )
+    return L(
+        f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen",
+        f"no credentials for {name} - store them at the source system in the web UI",
+    )
 
 
 def gather(target: Target | None = None) -> dict:
@@ -73,13 +81,17 @@ def check(target: Target | None = None) -> tuple[bool, str]:
     """Erreichbarkeit/Auth des Zielsystems pruefen (read-only, kein Ingest)."""
     creds = _credentials(target)
     if creds is None:
-        return False, _no_credentials(target) if target else "keine FortiGate-Creds"
+        return False, _no_credentials(target) if target else _no_creds()
     url, token, verify = creds
     try:
         FortiGateClient(url, token, verify_tls=verify).ping()
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, diagnose.device_error(exc, "fortigate", target, local=True)
-    return True, f"erreichbar: {url}"
+    return True, L(f"erreichbar: {url}", f"reachable: {url}")
+
+
+def _no_creds() -> str:
+    return L("keine FortiGate-Creds", "no FortiGate credentials")
 
 
 # Bewusst ungueltig: darf von keiner FortiGate akzeptiert werden (R16)
@@ -94,19 +106,23 @@ def strict_check(target: Target | None = None) -> tuple[bool, str]:
     fehlgeschlagene Anmeldung (Sperre nach admin-lockout-threshold, FortiOS-Standard 3)."""
     creds = _credentials(target)
     if creds is None:
-        return False, _no_credentials(target) if target else "keine FortiGate-Creds"
+        return False, _no_credentials(target) if target else _no_creds()
     url, _token, verify = creds
     try:
         FortiGateClient(url, _INVALID_TOKEN, verify_tls=verify).ping()
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (401, 403):
-            return True, "ungueltiges Token wird abgelehnt"
-        return False, f"nicht pruefbar: HTTP {exc.response.status_code}"
+            return True, L("ungueltiges Token wird abgelehnt", "invalid token is rejected")
+        code = exc.response.status_code
+        return False, L(f"nicht pruefbar: HTTP {code}", f"not checkable: HTTP {code}")
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
-        return False, f"nicht pruefbar: {type(exc).__name__}: {exc}"
-    return False, (
+        why = f"{type(exc).__name__}: {exc}"
+        return False, L(f"nicht pruefbar: {why}", f"not checkable: {why}")
+    return False, L(
         "FortiGate liefert Daten auch mit UNGUELTIGEM Token (nur Trusted Hosts) - REST-API-"
-        "Admin mit echtem Token-Zwang einrichten (Risiko R16)"
+        "Admin mit echtem Token-Zwang einrichten (Risiko R16)",
+        "FortiGate returns data even with an INVALID token (trusted hosts only) - set up the "
+        "REST API admin with a real token requirement (risk R16)",
     )
 
 
@@ -145,7 +161,8 @@ def _normalize_vdom(d: dict) -> tuple[list, list, list]:
 
 def _vdom_message(d: dict) -> str | None:
     """VDOMs des Laufs fuer die Lauf-Meldung; nicht lesbare zuerst (Profil pruefen), dazu
-    Routing-Tabellen ohne Leserecht (ADR 0019 Stufe 2)."""
+    Routing-Tabellen ohne Leserecht (ADR 0019 Stufe 2). Deutsch - der Orchestrator speichert
+    die Meldung und uebersetzt beim Abruf (ADR 0028)."""
     read = [str(v.get("vdom") or "Standard") for v in d.get("vdoms") or []]
     skipped = [f"{s['vdom']} ({s['error']})" for s in d.get("skipped") or []]
     parts = []
@@ -167,6 +184,7 @@ def _vdom_message(d: dict) -> str | None:
     return " · ".join(parts) or None
 
 
+@german_only  # Ergebnis und Meldung speichert der Orchestrator - deutsch (ADR 0028)
 def collect_once(
     run_id: str, target: Target | None = None, via_agent: bool = False
 ) -> CollectorResult:

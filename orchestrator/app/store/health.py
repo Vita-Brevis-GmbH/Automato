@@ -27,7 +27,7 @@ from app.models import (
     SyncPlan,
     SyncStatus,
 )
-from app.store import db_roles, retention
+from app.store import db_roles, retention, runs
 
 AGENT_OFFLINE = timedelta(minutes=30)  # Wach-Modus fragt alle 20 s, Neustart alle 15 min
 SOURCE_STALE = timedelta(days=7)
@@ -358,7 +358,7 @@ def _agents(session: Session, tenant_id: int | None, now: datetime) -> list[Chec
                         f"Agent „{agent.name}“ aktualisiert nicht",
                         f"Agent “{agent.name}” does not update",
                     ),
-                    agent.update_note,
+                    runs.show_message(agent.update_note),  # gespeichert deutsch (ADR 0028)
                     "agenten",
                     seen,
                 )  # fmt: skip
@@ -417,7 +417,7 @@ def _sources(session: Session, tenant_id: int | None, now: datetime) -> list[Che
                     "Quellsysteme",
                     "error",
                     L(f"{src.name}: letzter Lauf fehlgeschlagen", f"{src.name}: last run failed"),
-                    (last.message or "")[:300] or None,
+                    (runs.show_message(last.message) or "")[:300] or None,
                     "uebersicht",
                     _aware(last.finished_at),
                 )

@@ -97,7 +97,7 @@ def start_collect_all(
 def _message(run: CollectorRun) -> str | None:
     """Meldung des Laufs; ist sein Ergebnis angekommen, aber noch nicht eingespielt (0.80.1:
     eines nach dem anderen), steht das statt „läuft“ da. Nur Antwort (folgt der Sprache); die
-    gespeicherte Meldung `run.message` bleibt deutsch."""
+    gespeicherte Meldung `run.message` bleibt deutsch und wird beim Abruf uebersetzt (0.90.0)."""
     state = tenant_lock.state(run.id) if run.status in runs.OPEN else None
     if state == "active":
         return L("Ergebnis angekommen – wird eingespielt", "Result arrived – being ingested")
@@ -107,7 +107,7 @@ def _message(run: CollectorRun) -> str | None:
             f"Ergebnis angekommen – wartet aufs Einspielen ({ahead} davor)",
             f"Result arrived – waiting to be ingested ({ahead} ahead)",
         )
-    return run.message
+    return runs.show_message(run.message)
 
 
 def _run_out(run: CollectorRun) -> CollectorRunOut:

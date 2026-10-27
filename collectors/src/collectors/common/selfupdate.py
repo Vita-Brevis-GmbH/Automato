@@ -34,10 +34,11 @@ import sysconfig
 import tempfile
 import time
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from collectors.common import http
+from collectors.common.i18n import Failure, L, both, language_header
 from collectors.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -63,6 +64,20 @@ def _set_note(text: str) -> None:
     _note = text
 
 
+def _report(make, suffix: tuple[str, str] | None = None) -> None:
+    """Grund der Update-Pruefung: deutsch an den Orchestrator (Agentenliste, uebersetzt beim
+    Abruf), auf der Konsole in `AUTOMATO_LANG` (ADR 0028 Schritt 4)."""
+    note, shown = both(make)
+    _set_note(note)
+    print(shown + (L(*suffix) if suffix else ""), file=sys.stderr)
+
+
+_KEEP_OLD = (
+    " - laufe mit der bisherigen Version weiter",
+    " - continuing with the previous version",
+)
+
+
 def install_dir() -> Path | None:
     """Installationsordner (`<dir>\\venv` + `<dir>\\run-agent.ps1`), sonst None."""
     prefix = Path(sys.prefix)
@@ -86,7 +101,7 @@ def installed_version() -> str:
 def describe(version: str) -> str:
     """`0.2.0+ab12cd34` -> `0.2.0 (Build ab12cd34)`; aeltere Kennungen unveraendert."""
     release, sep, build = version.partition("+")
-    return f"{release} (Build {build})" if sep else (version or "unbekannt")
+    return f"{release} (Build {build})" if sep else (version or L("unbekannt", "unknown"))
 
 
 def current_label() -> str:
@@ -97,8 +112,9 @@ def current_label() -> str:
 
 
 def agent_headers() -> dict[str, str]:
-    """Agent-Token + gemeldete Version (fuer jeden Aufruf an `/internal`)."""
-    headers = {"X-Agent-Token": get_settings().agent_token}
+    """Agent-Token + gemeldete Version (fuer jeden Aufruf an `/internal`) und die Sprache der
+    Konsole - der Orchestrator speichert trotzdem deutsch (ADR 0028 Schritt 4)."""
+    headers = {"X-Agent-Token": get_settings().agent_token, **language_header()}
     version = installed_version()
     if version:
         headers["X-Agent-Version"] = version
@@ -116,7 +132,7 @@ def maybe_update(argv: Sequence[str], force: bool = False) -> int | None:
     base = install_dir()
     if not settings.agent_token or base is None:
         return None
-    if not settings.agent_auto_update:
+    if not settings.agent_auto_update:  # nur an den Orchestrator: deutsch
         _set_note("Selbst-Update auf der Station abgeschaltet (AUTOMATO_AGENT_AUTO_UPDATE=false)")
         return None
     try:
@@ -124,32 +140,37 @@ def maybe_update(argv: Sequence[str], force: bool = False) -> int | None:
             f"{settings.orchestrator_url}/internal/agent/update", None, agent_headers()
         ).json()
     except Exception as exc:  # noqa: BLE001 - Update ist optional, der Lauf geht vor
-        _set_note(f"Update-Pruefung nicht moeglich: {http.describe_error(exc)}")
-        print(_note, file=sys.stderr)
+        _report(lambda e=exc: L("Update-Pruefung nicht moeglich: ", "Update check not possible: ")
+                + http.describe_error(e))  # fmt: skip
         return None
     version = info.get("version")
     if not info.get("enabled") or not version or (version == installed_version() and not force):
         _set_note("")
         return None
     if settings.agent_signing_pubkey and not signature_ok(settings.agent_signing_pubkey, info):
-        _set_note(
+        _report(lambda: L(
             f"Update {describe(version)} nicht installiert: Signatur fehlt oder passt nicht "
-            "zum hinterlegten Schluessel (Paket signieren, deploy/agent-signing)"
-        )
-        print(f"{_note} - laufe mit der bisherigen Version weiter", file=sys.stderr)
+            "zum hinterlegten Schluessel (Paket signieren, deploy/agent-signing)",
+            f"Update {describe(version)} not installed: signature missing or does not match "
+            "the stored key (sign the package, deploy/agent-signing)",
+        ), _KEEP_OLD)  # fmt: skip
         return None
     if version == installed_version():
-        print(f"Agent-Installation unvollstaendig - installiere {describe(version)} neu")
+        print(L(f"Agent-Installation unvollstaendig - installiere {describe(version)} neu",
+                f"Agent installation incomplete - reinstalling {describe(version)}"))  # fmt: skip
     else:
-        print(f"Aktualisiere Agent: {describe(installed_version())} -> {describe(version)}")
+        old, new = describe(installed_version()), describe(version)
+        print(L(f"Aktualisiere Agent: {old} -> {new}", f"Updating agent: {old} -> {new}"))
     try:
         install(info, base)
-    except Exception as exc:  # noqa: BLE001
-        _set_note(f"Selbst-Update fehlgeschlagen: {http.describe_error(exc)}")
-        print(f"{_note} - laufe mit der bisherigen Version weiter", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - Text erst bei der Ausgabe (`Failure`)
+        _report(lambda e=exc: L("Selbst-Update fehlgeschlagen: ", "Self-update failed: ")
+                + http.describe_error(e), _KEEP_OLD)  # fmt: skip
         return None
     _set_note("")
-    print(f"Agent ist jetzt {describe(version)} - fuehre den Aufruf mit der neuen Version aus")
+    new = describe(version)
+    print(L(f"Agent ist jetzt {new} - fuehre den Aufruf mit der neuen Version aus",
+            f"Agent is now {new} - running the call with the new version"))  # fmt: skip
     cmd = [sys.executable, "-m", "collectors.run", *argv, "--no-update"]
     return subprocess.run(cmd, check=False).returncode  # noqa: S603 - eigener Interpreter
 
@@ -194,15 +215,17 @@ def _lock(base: Path) -> Path:
             except FileNotFoundError:
                 continue  # gerade freigegeben
             if age < LOCK_STALE:
-                raise RuntimeError(
-                    "ein anderer Agent-Prozess installiert gerade ein Update (update.lock)"
-                ) from None
+                raise Failure(lambda: L(
+                    "ein anderer Agent-Prozess installiert gerade ein Update (update.lock)",
+                    "another agent process is installing an update right now (update.lock)",
+                )) from None  # fmt: skip
             lock.unlink(missing_ok=True)
             continue
         os.write(fd, str(os.getpid()).encode())
         os.close(fd)
         return lock
-    raise RuntimeError("Update-Sperre (update.lock) nicht moeglich")
+    raise Failure(lambda: L("Update-Sperre (update.lock) nicht moeglich",
+                            "update lock (update.lock) not possible"))  # fmt: skip
 
 
 def _site_packages() -> Path:
@@ -227,17 +250,21 @@ def _missing_files(wheels: list[str]) -> list[str]:
     return missing
 
 
-def _restore(base: Path) -> str:
-    """Zuletzt gute Pakete wieder installieren (Rueckfall); Ergebnis fuer die Meldung."""
+def _restore(base: Path) -> Callable[[], str]:
+    """Zuletzt gute Pakete wieder installieren (Rueckfall); Ergebnis fuer die Meldung - als
+    Text in der Sprache der Ausgabe (einmal installiert, zweimal ausgegeben)."""
     wheels = sorted(str(p) for p in (base / PACKAGES_DIR).glob("*.whl"))
     if not wheels:
-        return "keine zuletzt guten Pakete fuer den Rueckfall - install.ps1 erneut ausfuehren"
+        return lambda: L(
+            "keine zuletzt guten Pakete fuer den Rueckfall - install.ps1 erneut ausfuehren",
+            "no last good packages for the fallback - run install.ps1 again",
+        )
     try:
         _pip([sys.executable, "-m", "pip", "--disable-pip-version-check", "install",
               "--no-deps", "--force-reinstall", *wheels], "Rueckfall")  # fmt: skip
     except Exception as exc:  # noqa: BLE001 - Meldung reicht, Ursache steht davor
-        return f"Rueckfall fehlgeschlagen: {exc}"
-    return "zuletzt gute Pakete wieder installiert"
+        return lambda e=exc: L(f"Rueckfall fehlgeschlagen: {e}", f"fallback failed: {e}")
+    return lambda: L("zuletzt gute Pakete wieder installiert", "last good packages reinstalled")
 
 
 def _keep(base: Path, wheels: list[str]) -> None:
@@ -260,38 +287,56 @@ def install(info: dict, base: Path) -> None:
         for f in info.get("files", []):
             name = str(f["name"])
             if Path(name).name != name or name.startswith("."):
-                raise RuntimeError(f"ungueltiger Dateiname im Manifest: {name!r}")
+                raise Failure(
+                    lambda name=name: L(
+                        f"ungueltiger Dateiname im Manifest: {name!r}",
+                        f"invalid file name in the manifest: {name!r}",
+                    )
+                )
             data = http.get_json(
                 f"{settings.orchestrator_url}/internal/agent/update/files/{name}",
                 None,
                 agent_headers(),
             ).content
             if hashlib.sha256(data).hexdigest() != f["sha256"]:
-                raise RuntimeError(f"Pruefsumme von {name} stimmt nicht - Update verworfen")
+                raise Failure(lambda name=name: L(
+                    f"Pruefsumme von {name} stimmt nicht - Update verworfen",
+                    f"checksum of {name} does not match - update discarded",
+                ))  # fmt: skip
             (staging / name).write_bytes(data)
         wheels = sorted(str(p) for p in staging.glob("*.whl"))
         main_wheel = next((w for w in wheels if Path(w).name.startswith("collectors-")), None)
         if main_wheel is None:
-            raise RuntimeError("collectors-Wheel fehlt im Manifest")
+            raise Failure(lambda: L("collectors-Wheel fehlt im Manifest",
+                                    "collectors wheel missing in the manifest"))  # fmt: skip
         pip = [sys.executable, "-m", "pip", "--disable-pip-version-check", "install"]
         try:
             _pip([*pip, "--no-deps", "--force-reinstall", *wheels])
             _pip([*pip, "--find-links", str(staging), main_wheel])  # neue Abhaengigkeiten
             missing = _missing_files(wheels)
             if missing:  # z. B. zweiter Prozess oder Virenschutz: einmal wiederholen
-                print(f"nach der Installation fehlt {missing[0]} - installiere erneut")
+                print(
+                    L(
+                        f"nach der Installation fehlt {missing[0]} - installiere erneut",
+                        f"{missing[0]} missing after the installation - reinstalling",
+                    )
+                )
                 _pip([*pip, "--no-deps", "--force-reinstall", *wheels])
                 missing = _missing_files(wheels)
             if missing:
-                raise RuntimeError(
-                    f"nach der Installation fehlen {len(missing)} Datei(en), z. B. {missing[0]}"
-                    " - Virenschutz (Schutzverlauf) bzw. einen zweiten Agent-Prozess pruefen"
-                )
+                count, first = len(missing), missing[0]
+                raise Failure(lambda: L(
+                    f"nach der Installation fehlen {count} Datei(en), z. B. {first} - "
+                    "Virenschutz (Schutzverlauf) bzw. einen zweiten Agent-Prozess pruefen",
+                    f"after the installation {count} file(s) are missing, e.g. {first} - check "
+                    "the antivirus (protection history) or a second agent process",
+                ))  # fmt: skip
             # Startpruefung: neue Version muss importierbar sein (sonst Version nicht
             # uebernehmen, der naechste Lauf versucht es erneut)
             _pip([sys.executable, "-c", "import collectors.run, sot_gateway"], "Startpruefung")
         except Exception as exc:
-            raise RuntimeError(f"{exc} ({_restore(base)})") from exc
+            restored = _restore(base)
+            raise Failure(lambda e=exc: f"{e} ({restored()})") from exc
         _keep(base, wheels)
         wrapper = staging / WRAPPER
         if wrapper.is_file():
@@ -306,10 +351,14 @@ def install(info: dict, base: Path) -> None:
         lock.unlink(missing_ok=True)
 
 
+_WHAT_EN = {"Rueckfall": "fallback", "Startpruefung": "start check"}
+
+
 def _pip(cmd: list[str], what: str = "pip") -> None:
     done = subprocess.run(  # noqa: S603 - fester Befehl, eigener Interpreter
         cmd, capture_output=True, text=True, timeout=PIP_TIMEOUT, check=False
     )
     if done.returncode != 0:
-        tail = (done.stderr or done.stdout or "").strip().splitlines()[-3:]
-        raise RuntimeError(f"{what} fehlgeschlagen: {' | '.join(tail)}")
+        tail = " | ".join((done.stderr or done.stdout or "").strip().splitlines()[-3:])
+        raise Failure(lambda: L(f"{what} fehlgeschlagen: {tail}",
+                                f"{_WHAT_EN.get(what, what)} failed: {tail}"))  # fmt: skip

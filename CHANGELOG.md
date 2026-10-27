@@ -7,6 +7,24 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.90.0 – 2026-10-27
+
+Läufe, Agent und CLI auf Deutsch und Englisch (ADR 0028 Schritt 4; Anwender: „3 Sprache“).
+
+- **Meldungen der Läufe** und der Grund der Update-Prüfung eines Agenten bleiben deutsch
+  gespeichert und erscheinen in der Sprache der Anfrage: Läufe-Liste, „Letzte Läufe“,
+  Betriebszustand, Agentenliste, `automato status` (`store/run_text.py`, `runs.show_message`;
+  bekannte Teile, auch in zusammengesetzten Meldungen, Unbekanntes bleibt).
+- „Alle einlesen“: Gründe für übersprungene Quellsysteme zweisprachig (vorher nur englisch).
+- **Agent-Konsole:** `AUTOMATO_LANG=en` in der `agent.env` stellt `-Check`, `-Once`/Wach-Modus,
+  Selbst-Update, Hilfe und Log auf Englisch um (`collectors/common/i18n.py`); was an Automato
+  geht, bleibt deutsch, die Konsole zeigt die Meldung des Laufs in der Übersetzung des
+  Orchestrators (Quittung `shown`).
+- **CLI:** `automato --lang en …` bzw. `AUTOMATO_LANG=en` (Standard Deutsch); speichernde Befehle
+  bleiben deutsch.
+- Collector-Agenten → Einrichtung: Meldungen des Agenten in der Fehlertabelle deutsch und
+  englisch; die erzeugte `agent.env` enthält `AUTOMATO_LANG=en` bei englischer Oberfläche.
+
 ## 0.89.0 – 2026-10-27
 
 Feinere Rollen der Kunden-Benutzer (Anwender: „Kunden: feinere Rollen“; ADR 0018 Ergänzung).

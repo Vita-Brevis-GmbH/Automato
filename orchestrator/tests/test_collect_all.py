@@ -31,7 +31,7 @@ def test_alle_einlesen(client):
     assert list(items) == ["ddi-01", "nb", "fw-01"]  # Referenzquellen zuerst, deaktivierte nicht
     assert items["ddi-01"]["execution"] == "external"  # Agent zugewiesen
     assert items["fw-01"]["run_id"] and items["fw-01"]["execution"] == "inprocess"
-    assert items["nb"]["run_id"] is None and "read token" in items["nb"]["skipped"]
+    assert items["nb"]["run_id"] is None and "kein Lese-Token" in items["nb"]["skipped"]
     assert body["queued"] == 2
     assert (
         items["fw-01"]["source_system_id"] == fw["id"]

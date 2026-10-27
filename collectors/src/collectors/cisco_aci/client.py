@@ -13,6 +13,8 @@ import httpx
 from sot_gateway.readonly import enforce_read_only
 from sot_gateway.readonly import get as read_get
 
+from collectors.common.i18n import L
+
 # Fabric-interne Tenants: ohne ausdrückliche Auswahl nicht lesen (keine Kunden-Contracts)
 SYSTEM_TENANTS = frozenset({"infra", "mgmt"})
 
@@ -70,7 +72,12 @@ class ApicClient:
         imdata = response.json().get("imdata") or [{}]
         token = (imdata[0].get("aaaLogin") or {}).get("attributes", {}).get("token")
         if not token:
-            raise RuntimeError("APIC-Login ohne Token (Benutzer/Passwort pruefen)")
+            raise RuntimeError(
+                L(
+                    "APIC-Login ohne Token (Benutzer/Passwort pruefen)",
+                    "APIC login without token (check user/password)",
+                )
+            )
         self._client.cookies.set("APIC-cookie", token)
         self._logged_in = True
 
@@ -113,7 +120,10 @@ class ApicClient:
         if wanted:
             missing = [t for t in wanted if t not in available]
             if missing:
-                raise RuntimeError(f"ACI-Tenant nicht gefunden: {', '.join(missing)}")
+                names = ", ".join(missing)
+                raise RuntimeError(
+                    L(f"ACI-Tenant nicht gefunden: {names}", f"ACI tenant not found: {names}")
+                )
             names = wanted
         else:
             names = [t for t in available if t not in SYSTEM_TENANTS]

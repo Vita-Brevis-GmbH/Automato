@@ -14,12 +14,17 @@ Im Orchestrator-Container (Beispiele):
   automato db-roles       # App-Rolle ohne DDL einrichten (Dienst migrate, nach alembic)
   automato purge [--dry-run]   # alte Laeufe/Syncs/Audit nach Frist loeschen (0.48.0)
   automato tls-init --dir /pki [--name <vm>] [--renew]   # interne CA + Zertifikate (0.49.0)
+
+Sprache der Ausgaben (0.90.0, ADR 0028 Schritt 4): `--lang de|en` (vor oder nach dem Befehl)
+bzw. Umgebungsvariable `AUTOMATO_LANG`, Standard Deutsch. Was gespeichert wird (Laeufe, Audit),
+bleibt deutsch (`@german_only`); `status` zeigt die gespeicherte Meldung uebersetzt.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -29,11 +34,17 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.config import get_settings
 from app.db import get_sessionmaker
+from app.i18n import LANGS, L, german, german_only, use
 from app.jobs import celery_app
 from app.models import CollectorRun, DnsType, IpamType, Platform, SourceSystem, Tenant
-from app.store import agent_package
+from app.store import agent_package, runs
 
 
+def _error(de: str, en: str) -> None:
+    print(f"{L('FEHLER', 'ERROR')}: {L(de, en)}", file=sys.stderr)
+
+
+@german_only
 def ensure_tenant(
     session: Session, name: str, ipam: str, dns: str, code: str | None = None
 ) -> Tenant:
@@ -47,6 +58,7 @@ def ensure_tenant(
     return tenant
 
 
+@german_only
 def ensure_source(
     session: Session, tenant: Tenant, name: str, platform: str, base_url: str
 ) -> SourceSystem:
@@ -63,6 +75,7 @@ def ensure_source(
     return src
 
 
+@german_only
 def queue_collect(
     session: Session,
     platform: str,
@@ -124,12 +137,17 @@ def _cmd_ensure_tenant(session: Session, args: argparse.Namespace) -> int:
 def _cmd_ensure_source(session: Session, args: argparse.Namespace) -> int:
     tenant = _find_tenant(session, args.tenant)
     if tenant is None:
-        print("FEHLER: Mandant nicht gefunden (erst 'ensure-tenant')", file=sys.stderr)
+        _no_tenant()
         return 2
     src = ensure_source(session, tenant, args.name, args.platform, args.base_url)
     session.commit()
     print(f"source id={src.id} tenant={tenant.id} name={src.name} platform={src.platform}")
     return 0
+
+
+def _no_tenant() -> None:
+    _error("Mandant nicht gefunden (erst 'ensure-tenant')",
+           "tenant not found (run 'ensure-tenant' first)")  # fmt: skip
 
 
 def _cmd_collect(session: Session, args: argparse.Namespace) -> int:
@@ -144,29 +162,33 @@ def _cmd_collect(session: Session, args: argparse.Namespace) -> int:
         else (_find_source(session, args.source, tenant))
     )
     if (args.tenant or args.tenant_id) and tenant is None:
-        print("FEHLER: Mandant nicht gefunden (erst 'ensure-tenant')", file=sys.stderr)
+        _no_tenant()
         return 2
     if (args.source or args.source_system_id) and source is None:
-        print("FEHLER: Quellsystem nicht gefunden (erst 'ensure-source')", file=sys.stderr)
+        _error("Quellsystem nicht gefunden (erst 'ensure-source')",
+               "source system not found (run 'ensure-source' first)")  # fmt: skip
         return 2
     if source is not None and tenant is not None and source.tenant_id != tenant.id:
-        print("FEHLER: Quellsystem gehoert zu einem anderen Mandanten", file=sys.stderr)
+        _error("Quellsystem gehoert zu einem anderen Mandanten",
+               "source system belongs to another tenant")  # fmt: skip
         return 2
     run = queue_collect(session, args.platform, tenant, source, args.execution)
     print(f"run_id={run.id} status={run.status} -> 'automato status --run-id {run.id}'")
     if args.execution == "external":
-        print("Externer Lauf: wartet auf einen Agenten ('automato-collector --poll').")
+        print(L("Externer Lauf: wartet auf einen Agenten ('automato-collector --poll').",
+                "External run: waiting for an agent ('automato-collector --poll')."))  # fmt: skip
     return 0
 
 
 def _cmd_status(session: Session, args: argparse.Namespace) -> int:
     run = session.get(CollectorRun, args.run_id)
     if run is None:
-        print("FEHLER: Run nicht gefunden", file=sys.stderr)
+        _error("Run nicht gefunden", "run not found")
         return 2
+    message = runs.show_message(run.message)  # gespeichert deutsch, Anzeige in --lang
     print(
         f"run_id={run.id} status={run.status} rules={run.rule_count} "
-        f"tenant={run.tenant_id} source={run.source_system_id} message={run.message or '-'}"
+        f"tenant={run.tenant_id} source={run.source_system_id} message={message or '-'}"
     )
     return 0
 
@@ -178,9 +200,11 @@ def _cmd_lab(session: Session, args: argparse.Namespace) -> int:
     session.flush()
     run = queue_collect(session, "fortigate", tenant, source)
     print(
-        f"Lab-Lauf gestartet: tenant={tenant.id} source={source.id} run_id={run.id}\n"
-        f"Status abfragen: automato status --run-id {run.id}"
-    )
+        L(f"Lab-Lauf gestartet: tenant={tenant.id} source={source.id} run_id={run.id}\n"
+          f"Status abfragen: automato status --run-id {run.id}",
+          f"Lab run started: tenant={tenant.id} source={source.id} run_id={run.id}\n"
+          f"Query the status: automato status --run-id {run.id}")
+    )  # fmt: skip
     return 0
 
 
@@ -188,15 +212,21 @@ def _cmd_pkg_manifest(_session: Session, args: argparse.Namespace) -> int:
     """Nachricht zum Signieren des aktuellen Agent-Pakets (offline: scripts/agent_signing.py)."""
     info = agent_package.manifest(get_settings().agent_package_dir)
     if info is None:
-        print("FEHLER: kein Agent-Paket im Orchestrator (agent_package_dir)", file=sys.stderr)
+        _no_package()
         return 2
     data = agent_package.signed_message(info)
     if args.out:
         Path(args.out).write_bytes(data)
-        print(f"Nachricht fuer {info['version']} -> {args.out}")
+        version = info["version"]
+        print(L(f"Nachricht fuer {version} -> {args.out}", f"Message for {version} -> {args.out}"))
     else:
         sys.stdout.write(data.decode())
     return 0
+
+
+def _no_package() -> None:
+    _error("kein Agent-Paket im Orchestrator (agent_package_dir)",
+           "no agent package in the orchestrator (agent_package_dir)")  # fmt: skip
 
 
 def _cmd_pkg_install_signature(_session: Session, args: argparse.Namespace) -> int:
@@ -204,34 +234,47 @@ def _cmd_pkg_install_signature(_session: Session, args: argparse.Namespace) -> i
     settings = get_settings()
     info = agent_package.manifest(settings.agent_package_dir)
     if info is None:
-        print("FEHLER: kein Agent-Paket im Orchestrator (agent_package_dir)", file=sys.stderr)
+        _no_package()
         return 2
     try:
         sig = json.loads(Path(args.file).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        print(f"FEHLER: Signaturdatei nicht lesbar: {exc}", file=sys.stderr)
+        _error(f"Signaturdatei nicht lesbar: {exc}", f"signature file not readable: {exc}")
         return 2
-    if sig.get("version") != info["version"]:
-        print(
-            f"FEHLER: Signatur gilt fuer {sig.get('version')}, Paket ist {info['version']}",
-            file=sys.stderr,
-        )
+    version, signed = info["version"], sig.get("version")
+    if signed != version:
+        _error(f"Signatur gilt fuer {signed}, Paket ist {version}",
+               f"signature is for {signed}, package is {version}")  # fmt: skip
         return 2
     if settings.agent_signing_pubkey:
         if not agent_package.verify(settings.agent_signing_pubkey, info, sig.get("signature", "")):
-            print("FEHLER: Signatur passt nicht zum hinterlegten Schluessel", file=sys.stderr)
+            _error("Signatur passt nicht zum hinterlegten Schluessel",
+                   "signature does not match the stored key")  # fmt: skip
             return 2
-        print("Signatur geprueft (AUTOMATO_AGENT_SIGNING_PUBKEY)")
+        print(L("Signatur geprueft (AUTOMATO_AGENT_SIGNING_PUBKEY)",
+                "Signature verified (AUTOMATO_AGENT_SIGNING_PUBKEY)"))  # fmt: skip
     else:
-        print("Hinweis: AUTOMATO_AGENT_SIGNING_PUBKEY fehlt - Signatur nicht geprueft")
+        print(
+            L(
+                "Hinweis: AUTOMATO_AGENT_SIGNING_PUBKEY fehlt - Signatur nicht geprueft",
+                "Note: AUTOMATO_AGENT_SIGNING_PUBKEY missing - signature not verified",
+            )
+        )
     target = Path(settings.agent_signature_file)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps({"version": info["version"], "signature": sig["signature"]}))
-    print(f"Signatur fuer {info['version']} eingespielt -> {target}")
+    target.write_text(json.dumps({"version": version, "signature": sig["signature"]}))
+    print(L(f"Signatur fuer {version} eingespielt -> {target}",
+            f"Signature for {version} installed -> {target}"))  # fmt: skip
     return 0
 
 
-MARK = {"ok": "OK    ", "info": "INFO  ", "warn": "WARN  ", "error": "FEHLER"}
+# Marke je Zustand, 6 Zeichen breit (deutsch, englisch)
+MARK = {"ok": ("OK", "OK"), "info": ("INFO", "INFO"), "warn": ("WARN", "WARN"),
+        "error": ("FEHLER", "ERROR")}  # fmt: skip
+
+
+def _mark(status: str) -> str:
+    return f"{L(*MARK[status]):<6}"
 
 
 def _cmd_check_connections(session: Session, args: argparse.Namespace) -> int:
@@ -244,7 +287,7 @@ def _cmd_check_connections(session: Session, args: argparse.Namespace) -> int:
     else:
         for item in result["items"]:
             target = f"  {item['target']}" if item["target"] else ""
-            print(f"{MARK[item['status']]} {item['name']}{target}")
+            print(f"{_mark(item['status'])} {item['name']}{target}")
             for step in item["steps"]:
                 print(f"         {'✓' if step['ok'] else '✗'} {step['step']}: {step['detail']}")
             if item["hint"] and item["status"] != "ok":
@@ -262,8 +305,18 @@ def _cmd_db_roles(_session: Session, args: argparse.Namespace) -> int:
     settings = get_settings()
     role = args.role or settings.db_app_role
     if not role:
-        print("INFO   keine App-Rolle gesetzt (AUTOMATO_DB_USER in .env) - der Orchestrator")
-        print("       arbeitet als Eigentuemer der Tabellen; einrichten:")
+        print(
+            L(
+                "INFO   keine App-Rolle gesetzt (AUTOMATO_DB_USER in .env) - der Orchestrator",
+                "INFO   no app role set (AUTOMATO_DB_USER in .env) - the orchestrator",
+            )
+        )
+        print(
+            L(
+                "       arbeitet als Eigentuemer der Tabellen; einrichten:",
+                "       works as owner of the tables; to set up:",
+            )
+        )
         print("       deploy/aufbau.sh db-rollen")
         return 0
     from app import tls
@@ -273,12 +326,13 @@ def _cmd_db_roles(_session: Session, args: argparse.Namespace) -> int:
         with engine.begin() as conn:
             owner = conn.exec_driver_sql("SELECT current_user").scalar()
             if role == owner:
-                print(f"INFO   App-Rolle = Eigentuemer ({owner}) - keine getrennte Rolle")
+                print(L(f"INFO   App-Rolle = Eigentuemer ({owner}) - keine getrennte Rolle",
+                        f"INFO   app role = owner ({owner}) - no separate role"))  # fmt: skip
                 return 0
             password = resolve(settings.db_app_password, settings)
             steps = db_roles.ensure_app_role(conn, role, password)
     except db_roles.RoleError as exc:
-        print(f"FEHLER {exc}")
+        print(f"{_mark('error')} {exc}")
         return 1
     finally:
         engine.dispose()
@@ -295,15 +349,19 @@ def _cmd_purge(session: Session, args: argparse.Namespace) -> int:
     if args.dry_run:
         counts = retention.due(session, policy)
     else:
-        counts = retention.purge(session, policy, actor="cli:purge")
+        with german():  # Audit `retention.purged` (gespeichert)
+            counts = retention.purge(session, policy, actor="cli:purge")
         session.commit()
-    days = (f"Fristen {policy.runs_days}/{policy.sync_days}/{policy.audit_days}/"
-            f"{policy.l2_days} Tage, 0 = nie")  # fmt: skip
-    verb = "faellig" if args.dry_run else "geloescht"
+    spans = f"{policy.runs_days}/{policy.sync_days}/{policy.audit_days}/{policy.l2_days}"
+    c = counts
     print(
-        f"{verb}: {counts['runs']} Laeufe, {counts['sync_plans']} NetBox-Sync-Vorschauen, "
-        f"{counts['audit']} Audit-Eintraege, {counts['l2']} MAC-/ARP-Eintraege ({days})"
-    )
+        L(f"{'faellig' if args.dry_run else 'geloescht'}: {c['runs']} Laeufe, "
+          f"{c['sync_plans']} NetBox-Sync-Vorschauen, {c['audit']} Audit-Eintraege, "
+          f"{c['l2']} MAC-/ARP-Eintraege (Fristen {spans} Tage, 0 = nie)",
+          f"{'due' if args.dry_run else 'deleted'}: {c['runs']} runs, "
+          f"{c['sync_plans']} NetBox sync previews, {c['audit']} audit entries, "
+          f"{c['l2']} MAC/ARP entries (retention {spans} days, 0 = never)")
+    )  # fmt: skip
     return 0
 
 
@@ -316,86 +374,161 @@ def _cmd_tls_init(_session: Session, args: argparse.Namespace) -> int:
     return 0
 
 
+def _lang_option() -> argparse.ArgumentParser:
+    """`--lang` vor oder nach dem Befehl (ohne Vorgabe: `AUTOMATO_LANG`, sonst Deutsch)."""
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--lang", choices=LANGS, default=argparse.SUPPRESS,
+        help=L("Sprache der Ausgaben (Standard: AUTOMATO_LANG, sonst de)",
+               "language of the output (default: AUTOMATO_LANG, else de)"),
+    )  # fmt: skip
+    return common
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="automato", description="Automato-Auslöser (CLI)")
+    common = _lang_option()
+    parser = argparse.ArgumentParser(
+        prog="automato", description=L("Automato-Auslöser (CLI)", "Automato trigger (CLI)"),
+        parents=[common],
+    )  # fmt: skip
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("ensure-tenant", help="Mandant idempotent anlegen")
+    def command(name: str, de: str, en: str, parent=sub) -> argparse.ArgumentParser:
+        return parent.add_parser(name, help=L(de, en), parents=[common])
+
+    p = command("ensure-tenant", "Mandant idempotent anlegen", "create a tenant idempotently")
     p.add_argument("--name", required=True)
-    p.add_argument("--code", default=None, help="GG-Kuerzel (optional)")
+    p.add_argument("--code", default=None, help=L("GG-Kuerzel (optional)", "GG code (optional)"))
     p.add_argument("--ipam", choices=[e.value for e in IpamType], default="netbox")
     p.add_argument("--dns", choices=[e.value for e in DnsType], default="active_directory")
     p.set_defaults(func=_cmd_ensure_tenant)
 
-    p = sub.add_parser("ensure-source", help="Quellsystem eines Mandanten idempotent anlegen")
-    p.add_argument("--tenant", required=True, help="Mandantenname")
+    p = command("ensure-source", "Quellsystem eines Mandanten idempotent anlegen",
+                "create a source system of a tenant idempotently")  # fmt: skip
+    p.add_argument("--tenant", required=True, help=L("Mandantenname", "tenant name"))
     p.add_argument("--name", required=True)
     p.add_argument("--platform", choices=[e.value for e in Platform], default="fortigate")
     p.add_argument("--base-url", default="")
     p.set_defaults(func=_cmd_ensure_source)
 
-    p = sub.add_parser("collect", help="Collect-Lauf in die Queue stellen")
+    p = command("collect", "Collect-Lauf in die Queue stellen", "queue a collect run")
     p.add_argument("--platform", choices=[e.value for e in Platform], default="fortigate")
-    p.add_argument("--tenant", help="Mandantenname (alternativ --tenant-id)")
+    p.add_argument("--tenant", help=L("Mandantenname (alternativ --tenant-id)",
+                                      "tenant name (or --tenant-id)"))  # fmt: skip
     p.add_argument("--tenant-id", type=int)
-    p.add_argument("--source", help="Quellsystemname (alternativ --source-system-id)")
+    p.add_argument("--source", help=L("Quellsystemname (alternativ --source-system-id)",
+                                      "source system name (or --source-system-id)"))  # fmt: skip
     p.add_argument("--source-system-id", type=int)
     p.add_argument(
         "--execution",
         choices=["inprocess", "external"],
         default="inprocess",
-        help="inprocess = zentraler Worker (Default), external = Agent holt den Lauf (ADR 0008)",
-    )
+        help=L("inprocess = zentraler Worker (Default), external = Agent holt den Lauf (ADR 0008)",
+               "inprocess = central worker (default), external = an agent fetches the run "
+               "(ADR 0008)"),
+    )  # fmt: skip
     p.set_defaults(func=_cmd_collect)
 
-    p = sub.add_parser("status", help="Status eines Laufs anzeigen")
+    p = command("status", "Status eines Laufs anzeigen", "show the status of a run")
     p.add_argument("--run-id", required=True)
     p.set_defaults(func=_cmd_status)
 
-    p = sub.add_parser("agent-package", help="Agent-Paket signieren (Ed25519, offline)")
+    p = command("agent-package", "Agent-Paket signieren (Ed25519, offline)",
+                "sign the agent package (Ed25519, offline)")  # fmt: skip
     pkg = p.add_subparsers(dest="pkg_command", required=True)
-    q = pkg.add_parser("manifest", help="Nachricht zum Signieren ausgeben")
-    q.add_argument("--out", help="in Datei schreiben statt auf stdout")
+    q = command("manifest", "Nachricht zum Signieren ausgeben", "print the message to sign", pkg)
+    q.add_argument("--out", help=L("in Datei schreiben statt auf stdout",
+                                   "write to a file instead of stdout"))  # fmt: skip
     q.set_defaults(func=_cmd_pkg_manifest)
-    q = pkg.add_parser("install-signature", help="offline erstellte Signatur einspielen")
-    q.add_argument("file", help="Signaturdatei (JSON von scripts/agent_signing.py sign)")
+    q = command("install-signature", "offline erstellte Signatur einspielen",
+                "install a signature created offline", pkg)  # fmt: skip
+    q.add_argument(
+        "file",
+        help=L(
+            "Signaturdatei (JSON von scripts/agent_signing.py sign)",
+            "signature file (JSON from scripts/agent_signing.py sign)",
+        ),
+    )
     q.set_defaults(func=_cmd_pkg_install_signature)
 
-    p = sub.add_parser("lab", help="Model-2-Happy-Path (NetBox+FortiGate) in einem Schritt")
+    p = command("lab", "Model-2-Happy-Path (NetBox+FortiGate) in einem Schritt",
+                "model 2 happy path (NetBox+FortiGate) in one step")  # fmt: skip
     p.add_argument("--tenant", default="lab")
     p.add_argument("--source", default="fw-01")
-    p.add_argument("--base-url", default="", help="FortiGate-URL (Doku; Creds liest der Collector)")
+    p.add_argument(
+        "--base-url",
+        default="",
+        help=L(
+            "FortiGate-URL (Doku; Creds liest der Collector)",
+            "FortiGate URL (documentation; the collector reads the credentials)",
+        ),
+    )
     p.set_defaults(func=_cmd_lab)
 
-    p = sub.add_parser("check-connections", help="Verbindungen aus dem Container pruefen")
-    p.add_argument("--json", action="store_true", help="Ergebnis als JSON (deploy/aufbau.sh)")
+    p = command("check-connections", "Verbindungen aus dem Container pruefen",
+                "check the connections from the container")  # fmt: skip
+    p.add_argument("--json", action="store_true",
+                   help=L("Ergebnis als JSON (deploy/aufbau.sh)",
+                          "result as JSON (deploy/aufbau.sh)"))  # fmt: skip
     p.set_defaults(func=_cmd_check_connections)
 
-    p = sub.add_parser("db-roles", help="App-Rolle ohne DDL einrichten (als Eigentuemer)")
-    p.add_argument("--role", help="Rollenname (Standard AUTOMATO_DB_APP_ROLE)")
+    p = command("db-roles", "App-Rolle ohne DDL einrichten (als Eigentuemer)",
+                "set up the app role without DDL (as owner)")  # fmt: skip
+    p.add_argument("--role", help=L("Rollenname (Standard AUTOMATO_DB_APP_ROLE)",
+                                    "role name (default AUTOMATO_DB_APP_ROLE)"))  # fmt: skip
     p.set_defaults(func=_cmd_db_roles)
 
-    p = sub.add_parser("tls-init", help="interne CA und Server-Zertifikate anlegen/erneuern")
-    p.add_argument("--dir", required=True, help="Ablage (deploy/tls/pki im Container)")
+    p = command("tls-init", "interne CA und Server-Zertifikate anlegen/erneuern",
+                "create/renew the internal CA and server certificates")  # fmt: skip
+    p.add_argument(
+        "--dir",
+        required=True,
+        help=L(
+            "Ablage (deploy/tls/pki im Container)", "location (deploy/tls/pki in the container)"
+        ),
+    )
     p.add_argument("--name", action="append", default=[],
-                   help="weitere Namen/IPs fuer Orchestrator und Web-UI (VM)")  # fmt: skip
-    p.add_argument("--renew", action="store_true", help="Server-Zertifikate neu ausstellen")
+                   help=L("weitere Namen/IPs fuer Orchestrator und Web-UI (VM)",
+                          "further names/IPs for orchestrator and web UI (VM)"))  # fmt: skip
+    p.add_argument(
+        "--renew",
+        action="store_true",
+        help=L("Server-Zertifikate neu ausstellen", "reissue the server certificates"),
+    )
     p.set_defaults(func=_cmd_tls_init)
 
-    p = sub.add_parser("purge", help="alte Laeufe, Sync-Vorschauen und Audit nach Frist loeschen")
-    p.add_argument("--dry-run", action="store_true", help="nur zaehlen, nichts loeschen")
+    p = command("purge", "alte Laeufe, Sync-Vorschauen und Audit nach Frist loeschen",
+                "delete old runs, sync previews and audit after the retention period")  # fmt: skip
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=L("nur zaehlen, nichts loeschen", "only count, delete nothing"),
+    )
     p.set_defaults(func=_cmd_purge)
 
     return parser
 
 
+def language(argv: list[str] | None) -> str:
+    """Sprache des Aufrufs: `--lang` (irgendwo), sonst `AUTOMATO_LANG`, sonst Deutsch."""
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--lang", default=None)
+    known, _ = pre.parse_known_args(argv)
+    for code in (known.lang, os.environ.get("AUTOMATO_LANG")):
+        code = (code or "").strip().lower().split("-")[0]
+        if code in LANGS:
+            return code
+    return "de"
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    session = get_sessionmaker()()
-    try:
-        return args.func(session, args)
-    finally:
-        session.close()
+    with use(language(argv)):
+        args = build_parser().parse_args(argv)
+        session = get_sessionmaker()()
+        try:
+            return args.func(session, args)
+        finally:
+            session.close()
 
 
 if __name__ == "__main__":

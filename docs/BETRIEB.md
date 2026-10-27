@@ -104,12 +104,19 @@ Aufruf als `Accept-Language` mit.
   Browser (`automato_export_lang`), Vorgabe = Sprache der Oberfläche – so entsteht z. B. eine
   englische Doku aus der deutschen Oberfläche. Markdown und Druck folgen der Oberfläche. Für
   Aufrufe von Hand: `?lang=en` an der Export-Adresse.
-- **Bleibt deutsch:** was gespeichert wird – Meldungen der Läufe, gespeicherte Teile eines
+- **Bleibt deutsch gespeichert:** Meldungen der Läufe (seit 0.90.0 beim Abruf übersetzt: Läufe,
+  „Letzte Läufe“, Betriebszustand, Agentenliste, `automato status`), gespeicherte Teile eines
   Befunds (z. B. Gründe der Verbindungen in einem englischen Satz), Gründe der Kunden-Zuordnung
   in der Datenbank (angezeigt übersetzt), Audit, alles, was der NetBox-Sync nach NetBox schreibt
-  (Beschreibungen, Tags), Versionen des Zonenplans; dazu Meldungen von Collector/Agent, CLI und
-  Logs (folgen später). Der Abgleich, das Einspielen und die Befunde laufen immer deutsch, egal
-  in welcher Sprache sie ausgelöst werden.
+  (Beschreibungen, Tags), Versionen des Zonenplans, Server-Logs. Der Abgleich, das Einspielen und
+  die Befunde laufen immer deutsch, egal in welcher Sprache sie ausgelöst werden. Neue
+  gespeicherte Meldungen, die noch nicht in `orchestrator/app/store/run_text.py` stehen,
+  erscheinen auch auf Englisch deutsch.
+- **Agent und CLI (0.90.0):** Konsole und Log des Agenten folgen `AUTOMATO_LANG` in
+  `C:\Automato\collector\agent.env` (`de` Standard, `en`; die Einrichtung der Oberfläche setzt
+  `en` bei englischer Oberfläche). Was der Agent meldet, speichert Automato deutsch und zeigt es
+  in der gewählten Sprache. CLI im Container: `docker compose exec orchestrator automato --lang en
+  status --run-id <id>` (oder `AUTOMATO_LANG=en`); speichernde Befehle laufen deutsch.
 - Begriffe in beiden Sprachen: `docs/GLOSSAR.md`; Fachbegriffe bleiben englisch.
 
 **Dokumentation**

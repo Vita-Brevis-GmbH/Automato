@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
+from collectors.common.i18n import L
+
 KEEP_DAYS = 14
 
 
@@ -66,7 +68,7 @@ def setup(base: Path | None, now: float | None = None) -> Path | None:
     except OSError:
         return None  # kein Schreibrecht: ohne Datei weiterlaufen
     sys.stdout = _Tee(sys.stdout, log, "INFO ")
-    sys.stderr = _Tee(sys.stderr, log, "FEHLER")
+    sys.stderr = _Tee(sys.stderr, log, L("FEHLER", "ERROR"))  # AUTOMATO_LANG (0.90.0)
     return path
 
 

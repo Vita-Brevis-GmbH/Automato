@@ -396,7 +396,10 @@ class CollectorResult(BaseModel):
     # Referenzquellen (Infoblox/NetBox): Eintraege kommen in Teilen ueber .../references,
     # hier nur die Gesamtzahl zur Kontrolle (ADR 0010)
     reference_count: int | None = None
-    message: str | None = None
+    message: str | None = None  # deutsch - der Orchestrator speichert sie (ADR 0028)
+    # Meldung fuer die Konsole des Agenten in `AUTOMATO_LANG` (0.90.0): die Uebersetzung aus
+    # der Quittung des Orchestrators; geht nicht mit dem Ergebnis an den Orchestrator
+    shown: str | None = Field(default=None, exclude=True)
     # Switches (0.62.0): beim ersten Kontakt uebernommene SSH-Host-Schluessel je Adresse
     # (`<typ> <base64>`), der Orchestrator haelt sie fest
     host_keys: dict[str, str] = Field(default_factory=dict)

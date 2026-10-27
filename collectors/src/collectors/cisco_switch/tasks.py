@@ -25,6 +25,7 @@ from collectors.cisco_switch.normalize import (
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, Target
+from collectors.common.i18n import L, carry, german_only
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
 
@@ -43,8 +44,15 @@ def _sample() -> dict:
 
 
 def _no_credentials(target: Target | None) -> str:
-    name = f"„{target.name}“" if target is not None and target.name else "die Switches"
-    return f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen"
+    name = (
+        L(f"„{target.name}“", f"“{target.name}”")
+        if target is not None and target.name
+        else L("die Switches", "the switches")
+    )
+    return L(
+        f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen",
+        f"no credentials for {name} - store them at the source system in the web UI",
+    )
 
 
 def read_switch(entry: str, target: Target) -> dict:
@@ -81,9 +89,10 @@ def gather(target: Target | None = None) -> dict:
         return _sample()
     entries = hosts(target.read_scope)
     if not entries:
-        raise RuntimeError("keine Switch-Adressen im Quellsystem (Lesebereich) hinterlegt")
+        raise RuntimeError(_no_hosts())
     switches, errors = [], []
 
+    @carry  # Threads: Meldungen in der Sprache des Aufrufers (im Lauf deutsch)
     def one(entry: str):
         try:
             return read_switch(entry, target), None
@@ -102,10 +111,12 @@ def gather(target: Target | None = None) -> dict:
 def check(target: Target | None = None) -> tuple[bool, str]:
     """Anmeldung und `show version` je Switch (read-only, kein Ingest)."""
     if target is None or not (target.username and target.password):
-        return False, _no_credentials(target) if target else "keine Switch-Creds"
+        return False, _no_credentials(target) if target else L(
+            "keine Switch-Creds", "no switch credentials"
+        )
     entries = hosts(target.read_scope)
     if not entries:
-        return False, "keine Switch-Adressen im Quellsystem (Lesebereich) hinterlegt"
+        return False, _no_hosts()
     ok, lines = True, []
     for entry in entries:
         client = SwitchClient(entry, target.username, target.password,
@@ -120,12 +131,21 @@ def check(target: Target | None = None) -> tuple[bool, str]:
             continue
         kind = PLATFORM_LABEL[detect_platform(version)]
         if mode == "shell":
-            kind += ", Sitzung"
-        lines.append(f"{entry}: erreichbar ({kind}, Host-Schluessel "
-                     f"{fingerprint(client.host_key or '')})")  # fmt: skip
+            kind += L(", Sitzung", ", session")
+        key = fingerprint(client.host_key or "")
+        lines.append(L(f"{entry}: erreichbar ({kind}, Host-Schluessel {key})",
+                       f"{entry}: reachable ({kind}, host key {key})"))  # fmt: skip
     return ok, "; ".join(lines)
 
 
+def _no_hosts() -> str:
+    return L(
+        "keine Switch-Adressen im Quellsystem (Lesebereich) hinterlegt",
+        "no switch addresses stored in the source system (read scope)",
+    )
+
+
+@german_only  # Ergebnis und Meldung speichert der Orchestrator - deutsch (ADR 0028)
 def collect_once(
     run_id: str, target: Target | None = None, via_agent: bool = False
 ) -> CollectorResult:
