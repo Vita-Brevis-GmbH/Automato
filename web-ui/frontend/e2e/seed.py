@@ -21,6 +21,7 @@ import test_ip_family as ipf  # noqa: E402
 import test_parallel as par  # noqa: E402
 import test_paths as tp  # noqa: E402
 import test_policy_check as pc  # noqa: E402
+import test_router_boundary as rb  # noqa: E402
 import test_routing as rt  # noqa: E402
 import test_search_nat as sn  # noqa: E402
 import test_services as sv  # noqa: E402
@@ -424,3 +425,21 @@ def run(app) -> None:
     policy = {"tenant_id": tid, "src_zone_id": lan, "dst_zone_id": dmz, "intent": "deny",
               "note": "nur über den Proxy"}  # fmt: skip
     ok(c.put("/zones/policy", json=policy))
+
+    # Routing bis an die Firmengrenze (ADR 0032) in einer eigenen Umgebung (ID 2), damit die
+    # Zahlen der übrigen Tests bleiben: fw-01 -> Core-Router -> Aussenrouter mit eBGP zu zwei
+    # Providern (Quelle „Router Zürich“, Switches & Router; Daten aus test_router_boundary)
+    rtid = ok(c.post("/tenants", json={"name": "Umgebung Router", "code": "UR"}), 201)["id"]
+    for name, platform, result, extra in (
+        ("fw-01", "fortigate", rb.FW, {"base_url": "https://fw-01.example.ch"}),
+        ("Router Zürich", "cisco_switch", rb.ROUTERS,
+         {"read_scope": "10.255.0.1\n10.255.0.2", "username": "ro", "password": "x"}),
+    ):  # fmt: skip
+        sid = ok(c.post("/systems", json={"tenant_id": rtid, "name": name, "platform": platform,
+                                          **extra}), 201)["id"]  # fmt: skip
+        body = {"platform": platform, "tenant_id": rtid, "source_system_id": sid}
+        run_id = ok(c.post("/jobs/collect", json=body), 202)["run_id"]
+        res = {k: v for k, v in result.items() if k != "status"}
+        r = ok(c.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN,
+                      json={"status": "completed", **res}))  # fmt: skip
+        assert r["status"] == "completed", r

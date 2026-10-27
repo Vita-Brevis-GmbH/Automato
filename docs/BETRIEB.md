@@ -592,6 +592,26 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     - Nicht für Kunden-Benutzer (zeigt die ganze Umgebung). Zeichnung und Export folgen
       (0.52.0), Korrekturen im Designer später. Die logischen Zonen hängt der Zonenplan an
       diese Knoten (Netzwerkdesign, 0.51.0).
+  - **Routing bis an die Firmengrenze** (0.99.0, ADR 0032): Router, Core- und WAN-Router als
+    Quellsystem „Switches & Router“ erfassen (Adressen im Lesebereich, Read-only-Konto wie bei
+    den Switches – NX-OS `network-operator`, Junos `read-only`, Arista `network-operator`, IOS
+    privilege 1 bzw. Parser-View mit den Routing-Befehlen des Lesevertrags). Gelesen werden nur
+    `show`-Befehle der Positivliste: RIB je VRF (IPv4/IPv6), BGP-Nachbarn und -Pfade.
+    - Der Lauf meldet „Routing: n L3-Geräte, m Kontexte, k Routen“; fehlende Rechte bzw.
+      gekürzte Tabellen (Obergrenze 20 000 Routen je Kontext, Tabelle und Familie – Default-Route
+      und private Netze bleiben zuerst) stehen als Hinweis und im Routing unter „nicht lesbar“.
+    - Routing → Kontexte zeigt die Router als „Router/L3-Switch“ (je Gerät und VRF,
+      Management-VRFs fallen weg); die Weg-Suche geht durch sie hindurch bis zur
+      **Firmengrenze**: eBGP zu einem fremden AS, eine Anbindung der Art Internet, MPLS bzw.
+      Partner oder eine Default-Route über eine öffentliche Adresse bzw. ein WAN-Interface –
+      Chip „Firmengrenze · AS …“ am Weg und am letzten Hop.
+    - Routing → Topologie: Knotenart „Router (gelesen)“, Filter „Firmengrenze“ zeigt Grenzknoten
+      und Provider. Partner- bzw. MPLS-Übergänge ohne BGP als Anbindung der Art Partner/MPLS
+      erfassen, damit sie als Grenze gelten. Erkannte Anbindungen gibt es nur noch für nicht
+      gelesene Router.
+    - Kunde oben: Router-Kontexte sind geteilt und gehören zum Ausschnitt, wenn sie ein Netz des
+      Kunden routen; Kunden-Benutzer sehen in der Doku „Router“. Der Verlauf des Routings nimmt
+      die Router mit.
 - **Verkabelung** (0.62.0, ADR 0025): welches Gerät an welchem Port welches anderen hängt –
   abgeleitet aus CDP/LLDP aller gelesenen Geräte (Switches & Router, ACI-Leafs), nichts von Hand.
   Seit 0.68.0 auch Catalyst 1200/1300 und Juniper MX/EX/QFX; ein MX steht als **Router** da

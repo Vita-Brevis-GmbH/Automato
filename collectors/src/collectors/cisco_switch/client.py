@@ -9,6 +9,9 @@ Senden ab (`ReadOnlyViolation`). Das Konto braucht nur Leserechte (IOS privilege
 View, NX-OS-Rolle `network-operator`, Junos-Klasse `read-only`, Catalyst 1300 Stufe 1, Arista-
 Rolle `network-operator`, AOS-CX-Gruppe `operators`). Seit 0.94.0 je Plattform auch die
 IPv6-Nachbarn (NDP); fehlt der Befehl (alte Software), bleibt der Teil ohne Hinweis leer.
+Seit ADR 0032 auch das Routing der Router und L3-Switches (`routing.COMMANDS`, nur `show`): RIB,
+BGP-Nachbarn und -Pfade - mit laengerer Wartezeit; eine zu grosse Text-Ausgabe (Internet-Fullfeed)
+wird bei `MAX_OUTPUT` abgeschnitten und gekuerzt ausgewertet (`cut`) statt verworfen.
 
 Geraete ohne Exec (Catalyst 1200/1300 und andere mit Business-CLI) liest seit 0.68.0 eine
 **begrenzte Sitzung** (`_Shell`): Terminal mit Prompt, Anmeldung in der Sitzung („User Name:“),
@@ -30,6 +33,7 @@ import time
 import paramiko
 from sot_gateway.readonly import ReadOnlyViolation
 
+from collectors.cisco_switch import routing
 from collectors.common.i18n import L
 
 # Feste Befehle je Plattform - nur lesend; `show version` erkennt die Plattform
@@ -116,7 +120,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show ipv6 neighbors all-vrfs",
     ),
 }
-ALLOWED = frozenset(c for cmds in COMMANDS.values() for c in cmds)
+ALLOWED = frozenset(c for cmds in COMMANDS.values() for c in cmds) | routing.ALL
 # nur in der begrenzten Sitzung: Seitenumbruch fuer diese Sitzung aus (keine Konfiguration)
 SESSION: dict[str, str] = {"cbs": "terminal datadump", "ios": "terminal length 0",
                            "nxos": "terminal length 0", "eos": "terminal length 0",
@@ -124,6 +128,7 @@ SESSION: dict[str, str] = {"cbs": "terminal datadump", "ios": "terminal length 0
 MAX_OUTPUT = 32 * 1024 * 1024  # je Befehl
 COMMAND_TIMEOUT = 120.0  # Sekunden je Befehl
 PROBE_TIMEOUT = 20.0  # erster Exec-Aufruf: antwortet er nicht, die begrenzte Sitzung versuchen
+ROUTING_TIMEOUT = 300.0  # Routing-Befehle (ADR 0032): grosse Tabellen brauchen laenger
 
 
 class HostKeyChanged(Exception):
@@ -184,6 +189,7 @@ class SwitchClient:
         self.timeout = timeout
         self._ssh: paramiko.SSHClient | None = None
         self._shell: _Shell | None = None  # begrenzte Sitzung statt Exec (Catalyst 1300)
+        self.cut: set[str] = set()  # Routing-Ausgaben, die bei MAX_OUTPUT abgeschnitten wurden
 
     @property
     def mode(self) -> str:
@@ -269,6 +275,8 @@ class SwitchClient:
             raise ReadOnlyViolation(_blocked(command))
         if self._shell is not None:
             return self._shell.run(command)
+        if command in routing.ALL:
+            timeout = max(timeout, ROUTING_TIMEOUT)
         for attempt in (1, 2):
             transport = self._ssh.get_transport() if self._ssh is not None else None
             if transport is None or not transport.is_active():
@@ -306,6 +314,10 @@ class SwitchClient:
                     break
                 size += len(data)
                 if size > MAX_OUTPUT:
+                    if command in routing.PARTIAL:  # Text: bis hier auswerten (ADR 0032)
+                        self.cut.add(command)
+                        text = b"".join(out).decode("utf-8", errors="replace")
+                        return text[: text.rfind("\n") + 1]
                     raise RuntimeError(
                         L(f"„{command}“: Ausgabe zu gross", f"“{command}”: output too large")
                     )

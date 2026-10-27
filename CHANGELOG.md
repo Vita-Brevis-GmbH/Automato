@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.99.0 – 2026-10-27
+
+Routing bis an die Firmengrenze (Auftrag des Anwenders 2026-10-27; ADR 0032).
+
+- **Switches & Router lesen das Routing der Router und L3-Switches** – nur `show` in der
+  Positivliste (`cisco_switch/routing.py`): IOS/IOS-XE (`show ip route` inkl. `vrf *`,
+  `show ipv6 route`, `show ip bgp summary`, `show bgp ipv4 unicast`), NX-OS
+  (`show ip/ipv6 route vrf all`, `show ip bgp summary vrf all`), Junos (`show route`,
+  `show bgp neighbor` als JSON), Arista EOS (RIB, BGP, Interface-Adressen als JSON).
+- Je Gerät und VRF ein **Routing-Kontext** (Art `l3`, „rt-01“ bzw. „rt-01 · VRF x“) mit Routen,
+  BGP-Pfaden und BGP-Nachbarn (AS, Zustand, lokales AS, ibgp/ebgp); Management-VRFs fallen weg;
+  fehlende Rechte = „nicht lesbar“ statt Fehler; Obergrenze 20 000 Routen je
+  Kontext/Tabelle/Familie (Fullfeed), zu grosse Ausgaben gekürzt; L2-Switches ohne Routing
+  ohne Kontext.
+- **Weg-Suche und Topologie laufen durch gelesene Router** (`paths.Graph`: Next-Hop-Besitzer über
+  die eigenen Adressen, HSRP/VRRP/VARP virtuell ohne Befund „doppelte IP“); erkannte
+  Anbindungen nur noch für nicht gelesene Router.
+- **Firmengrenze** (`store/boundary.py`): eBGP zu fremdem AS, Anbindung Internet/MPLS/Partner
+  bzw. Default-Route zum Provider – in der Weg-Suche am Weg und am letzten Hop
+  (`path.boundary`/`hop.boundary`, „Firmengrenze · AS …“), in der Topologie Grenzknoten und
+  Gegenstellen hervorgehoben (`boundary`, `at_boundary`, `summary.boundary`, Filter
+  „Firmengrenze“ bzw. „Router (gelesen)“).
+- Kunde oben: Router-Kontexte geteilt, wenn sie ein Netz des Kunden routen; Kunden-Doku nennt
+  sie „Router“; der Verlauf des Routings nimmt sie mit (kein Ausgangsstand ohne Routing).
+
 ## 0.98.0 – 2026-10-27
 
 Weg-Suche: Details am Weg und Anbindungen als Quelle bzw. Ziel (Befunde des Anwenders aus dem

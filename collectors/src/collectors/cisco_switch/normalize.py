@@ -522,6 +522,8 @@ def normalize(raw: dict) -> NetworkInventory:
     for sw in raw.get("switches") or []:
         part = switch_inventory(sw["host"], sw["platform"], sw.get("outputs") or {},
                                 sw.setdefault("notes", []))  # fmt: skip
+        if part.devices:  # Name fuer die Routing-Kontexte (routing.normalize, ADR 0032)
+            sw["name"] = part.devices[0].name
         inv.devices += part.devices
         inv.interfaces += part.interfaces
         inv.neighbors += part.neighbors

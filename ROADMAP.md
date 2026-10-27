@@ -410,11 +410,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.96.0** | NAT / VIPs: Kette VIP der Firewall → Load Balancer → Server (Liste, Detail, Suche, CSV-Export), VIP-Gruppen der FortiGate, Namenskonvention für VIPs/Virtual Server/IP-Pools (ADR 0027/0016 Ergänzung 0.96.0) |
 | **0.97.0** | L3Outs: Firewall führend – Firewall hinter jedem L3Out (abgeleitet bzw. von Hand), Zuordnung der Gegenstellen nach dem Routing der Firewall, Contracts zu externen EPGs nur als Hilfs-Contract an der Firewall-Regel, unspezifische Zugriffe nach L3Out geordnet (ADR 0034) |
 | **0.98.0** | Weg-Suche: Details am Weg im Seitenpanel bzw. neuen Tab, „mehr“ je Hop, Suche in der URL, Anbindung als Quelle bzw. Ziel (ADR 0019 Ergänzung 0.98.0) |
+| **0.99.0** | Routing bis an die Firmengrenze: Router und L3-Switches strikt lesend (RIB, BGP je VRF), als Knoten in Weg-Suche und Topologie, Firmengrenze bei eBGP zu fremdem AS, Anbindung bzw. Default-Route zum Provider (ADR 0032) |
 
-### Nächste Arbeiten (Stand 0.98.0)
+### Nächste Arbeiten (Stand 0.99.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.98.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.99.0.
 
 **Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
 
@@ -443,7 +444,7 @@ Verkabelung, Applikationen, Kunden, Routing“):**
 | Applikationen | Abhängigkeiten wieder einblenden (Infrastruktur getrennt) | **umgesetzt in 0.88.0** |
 | Applikationen | Export nach NetBox (Tags) | **umgesetzt in 0.93.0** (ADR 0031) |
 | Kunden | feinere Rollen der Kunden-Benutzer | **umgesetzt in 0.89.0** |
-| Routing | Verlauf der Routen; Systeme bis an die Firmengrenze (Aussenrouter lesen) | Verlauf **umgesetzt in 0.92.0** (ADR 0030); Firmengrenze danach |
+| Routing | Verlauf der Routen; Systeme bis an die Firmengrenze (Aussenrouter lesen) | Verlauf **umgesetzt in 0.92.0** (ADR 0030); Firmengrenze **umgesetzt in 0.99.0** (ADR 0032) |
 
 **Deutsch/Englisch (Anwender 2026-10-27, ADR 0028):** Schritt 1 Oberfläche – **umgesetzt in
 0.86.0**; Schritt 2 Texte vom Server und Schritt 3 Exporte mit Sprache der Datei – **umgesetzt in

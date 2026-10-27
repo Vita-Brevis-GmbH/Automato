@@ -1,9 +1,11 @@
 // Topologie (0.50.0, ADR 0019): das Modell der Umgebung als Liste - Knoten (Firewall/VDOM,
-// ACI-VRF, Segment, Anbindung, Router) mit ihren Kanten (Transfernetz, Inter-VDOM-Link, BGP,
-// Anbindung, Verbund …), Herkunft (abgeleitet, von Hand, bestätigt) und den Befunden der
-// Plausibilität. Zeichnung und Export folgen (0.52.0); rein lesend.
+// ACI-VRF, gelesener Router, Segment, Anbindung, Router ohne Gerät) mit ihren Kanten
+// (Transfernetz, Inter-VDOM-Link, BGP, Anbindung, Verbund …), Herkunft (abgeleitet, von Hand,
+// bestätigt) und den Befunden der Plausibilität. Seit ADR 0032 die Firmengrenze: Gegenstellen
+// aussen (eBGP zu fremdem AS, Internet/MPLS/Partner, Default-Route zum Provider) und die
+// gelesenen Grenzknoten innen. Zeichnung und Export folgen (0.52.0); rein lesend.
 import { Fragment, useEffect, useState } from "react";
-import { fetchTopology, TopoEdge, TopologyModel, TopoNode } from "./api";
+import { BoundaryReason, fetchTopology, TopoEdge, TopologyModel, TopoNode } from "./api";
 import { findingLabel } from "./refs";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note } from "./ui";
 import { L } from "./i18n";
@@ -14,8 +16,44 @@ export const NODE_KIND: Record<string, string> = {
   vrf: L("ACI-VRF", "ACI VRF"),
   segment: "Segment",
   exit: L("Anbindung", "Exit"),
+  l3: L("Router (gelesen)", "Router (read)"), // Router bzw. L3-Switch, ADR 0032
   router: "Router",
 };
+// Grund der Firmengrenze (ADR 0032)
+export const BOUNDARY: Record<BoundaryReason, string> = {
+  ebgp: L("eBGP zu fremdem AS", "eBGP to a foreign AS"),
+  exit: L("Anbindung Internet/MPLS/Partner", "Internet/MPLS/partner exit"),
+  default: L("Default-Route zum Provider", "Default route to the provider"),
+};
+
+function BoundaryChip({ n }: { n: TopoNode }) {
+  if (n.boundary)
+    return (
+      <span
+        className="chip boundary"
+        title={L(
+          "Firmengrenze: hier verlässt der Weg die Firma – " + n.boundary.reasons.map((r) => BOUNDARY[r]).join(", "),
+          "Company boundary: here the path leaves the company – " + n.boundary.reasons.map((r) => BOUNDARY[r]).join(", "),
+        )}
+      >
+        {L("Firmengrenze", "Company boundary")}
+        {n.boundary.as.length ? ` · AS ${n.boundary.as.join(", ")}` : ""}
+      </span>
+    );
+  if (n.at_boundary)
+    return (
+      <span
+        className="chip boundary"
+        title={L(
+          "gelesener Knoten an der Firmengrenze – dahinter liegt ein Provider bzw. Partner",
+          "read node at the company boundary – a provider or partner lies behind it",
+        )}
+      >
+        {L("Grenzknoten", "Boundary node")}
+      </span>
+    );
+  return null;
+}
 const EDGE_KIND: Record<string, string> = {
   transfer: L("Transfernetz", "Transfer network"),
   member: L("am Segment", "on segment"),
@@ -96,6 +134,13 @@ function EdgeDetail({ e, me }: { e: TopoEdge; me: string }) {
   if (e.next_hops?.length) parts.push(<span key="nh" className="mono">{L("über", "via")} {e.next_hops.join(", ")}</span>);
   if (e.group) parts.push(<span key="grp">{L("Verbund", "Parallel group")} {e.group}</span>);
   if (e.peer) parts.push(<span key="peer" className="mono">Peer {e.peer}</span>);
+  if (e.boundary)
+    parts.push(
+      <span key="boundary" className="chip boundary" title={BOUNDARY[e.boundary.reason]}>
+        {L("Firmengrenze", "Company boundary")}
+        {e.boundary.as ? ` · AS ${e.boundary.as}` : ""}
+      </span>,
+    );
   if (e.to)
     parts.push(
       <span key="to">
@@ -168,6 +213,7 @@ function NodeEdges({ node, model }: { node: TopoNode; model: TopologyModel }) {
 function Members({ n }: { n: TopoNode }) {
   const bits: string[] = [];
   if (n.kind === "vrf" && n.members?.length) bits.push(L(`Border-Leafs ${n.members.join(", ")}`, `Border leafs ${n.members.join(", ")}`));
+  if (n.kind === "l3" && n.source) bits.push(n.source); // Quelle Switches & Router
   if (n.kind === "segment" && n.members?.length) bits.push(n.members.join(", "));
   if (n.ha?.mode && n.ha.mode !== "standalone")
     bits.push(`HA ${n.ha.mode}${n.ha.members.length ? `: ${n.ha.members.join(", ")}` : ""}`);
@@ -206,7 +252,9 @@ export default function TopologyTab({ tenantId }: { tenantId: number }) {
     );
   const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
   const nodes = model.nodes.filter((n) => {
-    if (kind && (kind === "firewall" ? !["firewall", "vdom"].includes(n.kind) : n.kind !== kind)) return false;
+    if (kind === "boundary") {
+      if (!n.boundary && !n.at_boundary) return false;
+    } else if (kind && (kind === "firewall" ? !["firewall", "vdom"].includes(n.kind) : n.kind !== kind)) return false;
     const hay = JSON.stringify([n.label, n.members, n.ip, n.network, n.ha?.members]).toLowerCase();
     return tokens.every((t) => hay.includes(t));
   });
@@ -222,6 +270,13 @@ export default function TopologyTab({ tenantId }: { tenantId: number }) {
           <span className="chip">
             {count("vrf")} {L("ACI-VRFs", "ACI VRFs")}
           </span>{" "}
+          {count("l3") > 0 && (
+            <>
+              <span className="chip">
+                {count("l3")} {L("Router/L3-Switches gelesen", "routers/L3 switches read")}
+              </span>{" "}
+            </>
+          )}
           <span className="chip">
             {count("segment")} {L("Segmente", "segments")}
           </span>{" "}
@@ -231,6 +286,23 @@ export default function TopologyTab({ tenantId }: { tenantId: number }) {
           <span className="chip">
             {count("router")} {L("Router", "routers")}
           </span>{" "}
+          {s.boundary && (s.boundary.outside > 0 || s.boundary.inside > 0) && (
+            <>
+              <span
+                className="chip boundary"
+                id="topology-boundary"
+                title={L(
+                  "Firmengrenze: Gegenstellen aussen (eBGP zu fremdem AS, Internet/MPLS/Partner, Default-Route zum Provider) und gelesene Grenzknoten innen",
+                  "Company boundary: peers outside (eBGP to a foreign AS, internet/MPLS/partner, default route to the provider) and read boundary nodes inside",
+                )}
+              >
+                {L(
+                  `Firmengrenze: ${s.boundary.outside} aussen · ${s.boundary.inside} Grenzknoten`,
+                  `Company boundary: ${s.boundary.outside} outside · ${s.boundary.inside} boundary nodes`,
+                )}
+              </span>{" "}
+            </>
+          )}
           <span className="faint">
             · {model.edges.length} {L("Verbindungen", "connections")}
           </span>
@@ -264,9 +336,11 @@ export default function TopologyTab({ tenantId }: { tenantId: number }) {
           <option value="">{L("Art: alle", "Type: all")}</option>
           <option value="firewall">Firewalls/VDOMs</option>
           <option value="vrf">{L("ACI-VRFs", "ACI VRFs")}</option>
+          <option value="l3">{L("Router (gelesen)", "Routers (read)")}</option>
           <option value="segment">{L("Segmente", "Segments")}</option>
           <option value="exit">{L("Anbindungen", "Exits")}</option>
           <option value="router">{L("Router", "Routers")}</option>
+          <option value="boundary">{L("Firmengrenze", "Company boundary")}</option>
         </select>
         <span className="count">
           {nodes.length === model.nodes.length
@@ -292,9 +366,12 @@ export default function TopologyTab({ tenantId }: { tenantId: number }) {
               <tbody>
                 {nodes.map((n) => (
                   <Fragment key={n.id}>
-                    <tr className="clickable" onClick={() => setOpen(open === n.id ? null : n.id)}>
+                    <tr
+                      className={`clickable${n.boundary || n.at_boundary ? " topo-boundary" : ""}`}
+                      onClick={() => setOpen(open === n.id ? null : n.id)}
+                    >
                       <td>
-                        <b>{n.label}</b>
+                        <b>{n.label}</b> <BoundaryChip n={n} />
                         {n.missing?.length ? <div className="faint">{L("nicht lesbar:", "not readable:")} {n.missing.join(", ")}</div> : null}
                       </td>
                       <td className="nowrap">

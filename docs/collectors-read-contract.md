@@ -241,7 +241,32 @@ wird beim ersten Lauf festgehalten und danach verlangt (ADR 0025 Nr. 3).
 Gelesen werden dieselben Inhalte wie oben (Gerät, Ports mit Zustand/Speed/Duplex/VLANs/LAG,
 Nachbarn, MAC, ARP, seit 0.94.0 IPv6-Nachbarn); bei Junos zusätzlich die Adressen der Interfaces
 (`inv_interface.ips`) und ihre Netze (`inv_subnet`, Kontext Interface). Nicht gelesen:
-Konfiguration, Routing-Tabelle, Zähler, MLAG der Arista. **ArubaOS-Switch/ProCurve** liest
+Konfiguration, Zähler, MLAG der Arista.
+
+**Routing der Router und L3-Switches** (ADR 0032, `cisco_switch/routing.py`): je Gerät nach den
+Befehlen oben die Routing-Befehle seiner Plattform – ebenfalls nur `show` in der Positivliste,
+keine Konfiguration (keine Passwörter, keine BGP-Schlüssel, keine Route-Maps).
+
+| Plattform | Befehle | gelesen | → Automato |
+|---|---|---|---|
+| IOS/IOS-XE | `show ip route`, `show ip route vrf *`, `show ipv6 route` | RIB je VRF: Präfix, Protokoll (Code), Distanz/Metrik, Next-Hops (IP, Interface; ECMP), Typ (z. B. OSPF E2) | `topo_route` (`table` rib) |
+| IOS/IOS-XE | `show ip bgp summary`, `show bgp ipv4 unicast` | BGP-Nachbarn (IP, AS, Zustand, lokales AS, Typ intern/extern, Admin-Status) und alle gültigen Pfade (bester/Backup, Next-Hop, AS-Pfad, Local Preference, Weight, Origin) der globalen Tabelle | `topo_peer`, `topo_route` (`table` bgp) |
+| NX-OS | `show ip route vrf all`, `show ipv6 route vrf all`, `show ip bgp summary vrf all` | RIB je VRF (nur beste Next-Hops `*via`; HSRP/VRRP = eigene Adresse, VRF des Next-Hops), BGP-Nachbarn je VRF | `topo_route`, `topo_peer` |
+| Junos | `show route \| display json \| no-more`, `show bgp neighbor \| display json \| no-more` | `inet.0`/`inet6.0` und `<Instanz>.inet(6).0`: aktiver Eintrag = RIB, alle BGP-Einträge (auch inaktive) und statische (auch schwebende); Nachbarn mit AS beider Seiten, Typ, Zustand, Instanz – nur diese Felder | `topo_route` (rib/bgp/static), `topo_peer` |
+| Arista EOS | `show ip route vrf all \| json`, `show ipv6 route vrf all \| json`, `show ip bgp summary vrf all \| json`, `show ip interface \| json` | RIB je VRF, BGP-Nachbarn je VRF; Interface-Adressen (primär, sekundär, VARP) als eigene Adressen | `topo_route` (Adressen als `local`), `topo_peer` |
+
+Je Gerät und VRF ein Routing-Kontext (`topo_context`, Art `l3`, Name = Gerät bzw. `Gerät:VRF`);
+Management-VRFs, Link-local und Multicast fallen weg. Nur Geräte mit Routen bzw. BGP-Nachbarn
+bekommen Kontexte; ein Switch ohne `ip routing` antwortet „Default gateway is …“ und bekommt nach
+dem ersten Routing-Befehl keine weiteren. Fehlen Rechte bzw. bricht ein Befehl ab, steht der Teil
+unter `missing` („Routing-Tabelle IPv4“, „BGP-Nachbarn“, „BGP-Pfade IPv4“ …) und als Hinweis im
+Lauf; gibt es den Befehl bzw. die Funktion nicht, bleibt der Teil leer. Obergrenze 20 000 Routen
+je Kontext, Tabelle und Familie (alle ausser BGP und die Default-Route zuerst, dann private vor
+öffentlichen BGP-Routen); Text-Ausgaben über 32 MB werden gekürzt ausgewertet, der Teil gilt dann
+als nicht (ganz) lesbar. Das Konto braucht dieselben Leserechte wie oben (NX-OS
+`network-operator`, Junos `read-only`, Arista `network-operator`; bei IOS mit Parser-View die
+Routing-Befehle in die View aufnehmen) – fehlt ein Recht, ist der Teil „nicht lesbar“, der Lauf
+läuft weiter. Nicht gelesen: ACLs, Policy-Routen (PBR), HSRP/VRRP der IOS-Geräte, NAT, SNMP. **ArubaOS-Switch/ProCurve** liest
 Automato nicht (kein Exec, Sitzung nur mit Tastendruck und Bildschirmsteuerung): der Collector
 erkennt das Banner „Press any key to continue“ und bricht ab, bevor er etwas sendet.
 

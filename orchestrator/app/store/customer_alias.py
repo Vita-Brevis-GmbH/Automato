@@ -10,7 +10,8 @@ Bezeichnungen:
 - VDOMs „VDOM 1“, „VDOM 2“ … nach Namen ueber alle Firewalls (gleicher Name = gleiche Nummer),
   `root` bleibt; Verbund paralleler Firewalls „Verbund 1“ …
 - Geraete aus dem Inventar (Hostname der Firewall, Leafs, Spines, Controller) und Gegenstellen
-  aus LLDP/CDP: „Firewall …“ bzw. „Leaf“, „Spine“, „Controller“, „Nachbar“.
+  aus LLDP/CDP: „Firewall …“ bzw. „Leaf“, „Spine“, „Controller“, „Nachbar“; Router bzw.
+  L3-Switches mit Routing (ADR 0032): „Router“.
 - Felder `vdom`/`vdoms` (bzw. Schluessel von `by_vdom`) neutral; ESXi-Host, Cluster, Datacenter,
   verteilter Switch und LLDP-Nachbar (`host`, `cluster`, `datacenter`, `switch`, `neighbor`)
   leer.
@@ -83,7 +84,7 @@ class Aliases:
             if kind == "vdom":
                 vdoms.add(context)
             elif node and node not in self.names:
-                self.names[node] = "Leaf"
+                self.names[node] = "Router" if kind == "l3" else "Leaf"
         for sid, name, role in session.execute(
             select(InvDevice.source_system_id, InvDevice.name, InvDevice.role)
             .where(InvDevice.tenant_id.in_(tenant_ids))

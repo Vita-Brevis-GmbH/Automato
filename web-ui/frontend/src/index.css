@@ -304,6 +304,9 @@ tr.hop-more > td { background: var(--surface-2); padding-top: 6px; padding-botto
 .chip.info { color: var(--info); background: var(--info-weak); border-color: transparent; }
 .chip.na { color: var(--muted); }
 .chip.local { color: var(--accent); background: var(--accent-weak); border-color: transparent; }
+/* Firmengrenze (ADR 0032): Weg bzw. Knoten am Ausgang der Firma */
+.chip.boundary { color: var(--accent); background: transparent; border: 1px dashed var(--accent); }
+tr.topo-boundary > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .chip.saml { color: #6d5bd0; background: color-mix(in srgb, #6d5bd0 16%, transparent); border-color: transparent; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chips .chip + .chip { margin-left: 0; }

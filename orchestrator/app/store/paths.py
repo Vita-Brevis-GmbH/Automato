@@ -2,7 +2,8 @@
 
 Knoten sind Routing-Instanzen: ein FortiGate-VDOM (bzw. die Firewall, wenn sie nur `root`
 hat) oder der Rand einer ACI-VRF - alle Border-Leafs der VRF zusammen, vier Anbindungen sind
-ein Knoten und nicht vier Wege.
+ein Knoten und nicht vier Wege. Seit ADR 0032 auch Router und L3-Switches (Switches & Router,
+Art `l3`): je Geraet und VRF ein Knoten; ihre Adressen kommen aus den `local`-Routen.
 
 - **Start:** der gewaehlte Startpunkt bzw. der Knoten, an dem die Quelle angeschlossen ist
   (angeschlossenes Netz in der RIB, sonst EPG-/BD-Subnetz einer gelesenen ACI-VRF); eine
@@ -24,6 +25,10 @@ ein Knoten und nicht vier Wege.
 - **Ende:** Ziel angeschlossen, Anbindung, Default-Route ohne gelesenen Nachbarn
   („extern“), Next-Hop ohne gelesenes Geraet, keine Route, Schleife oder Hop-Grenze -
   Next-Hops mit dem Namen aus dem IPAM.
+- **Firmengrenze** (ADR 0032, `store/boundary.py`): endet der Weg an einem nicht gelesenen
+  Next-Hop mit eBGP zu einem fremden AS, an einer Anbindung Internet/MPLS/Partner bzw. mit der
+  Default-Route Richtung Provider, steht das am Weg (`path.boundary`: Grund, AS, Knoten,
+  Interface) und am letzten Hop (`hop.boundary`).
 - **Redundante Wege** (0.19.0): neben den aktiven Wegen (ECMP verzweigt, parallele Firewalls
   eines Verbunds) die Backup-Wege - je Weg eine Abweichung an einem Hop ueber einen
   BGP-Pfad bzw. eine statische Route fuer dasselbe Praefix mit anderem Next-Hop (schwebende
@@ -139,11 +144,22 @@ class Node:
         }
 
 
+L3 = "l3"  # Router bzw. L3-Switch (ADR 0032), Kontext je Geraet und VRF
+
+
+def router_vrf(node: str, context: str) -> str | None:
+    """VRF eines Router-Kontexts: `rt-01` = Standard-VRF (None), `rt-01:KUNDE` = KUNDE."""
+    return context[len(node) + 1 :] if context.startswith(f"{node}:") else None
+
+
 def context_label(kind: str, source: str, node: str, context: str, single: bool) -> tuple[str, str]:
     """(Art, Bezeichnung) eines gelesenen Kontexts: FortiGate nur mit `root` = die Firewall,
-    sonst „fw · VDOM x“; ACI je Leaf „leaf-101 · VRF T:V“."""
+    sonst „fw · VDOM x“; ACI je Leaf „leaf-101 · VRF T:V“; Router „rt-01“ bzw. „rt-01 · VRF x“."""
     if kind == "vdom":
         return ("firewall", source) if single else ("vdom", f"{source} · VDOM {context}")
+    if kind == L3:
+        vrf = router_vrf(node, context)
+        return L3, f"{node} · VRF {vrf}" if vrf else node
     return "vrf", f"{node} · VRF {context}"
 
 
@@ -227,6 +243,7 @@ class Graph:
         self._vlinks: dict[int, dict[tuple[str, str], tuple[str, str]]] = {}
         self._leaks = None  # aci_shared.Leaks, erst bei Bedarf
         self._ribs: dict[Key | None, _Rib] = {}  # beste RIB-Routen je Kontext (0.74.1)
+        self._boundary = None  # boundary.Boundary, erst bei Bedarf (ADR 0032)
         self._rib_asked: Counter = Counter()  # Abfragen je Kontext bis zum Index
         self._loaded: dict[int, TopoRoute] = {}  # Routen aus dem Index, je Kennung
         self.exits = list(
@@ -266,14 +283,16 @@ class Graph:
     # -- Adressen der Knoten ------------------------------------------------------------
 
     def owners(self) -> dict[str, list[tuple[Key, str | None, str | None]]]:
-        """IP -> (Knoten, Interface, Zone): FortiGate-Interfaces und L3Out-SVIs/-Interfaces."""
+        """IP -> (Knoten, Interface, Zone): FortiGate-Interfaces, L3Out-SVIs/-Interfaces und die
+        eigenen Adressen der Router (`local`-Routen, ADR 0032)."""
         if self._owners is not None:
             return self._owners
         out: dict[str, list[tuple[Key, str | None, str | None]]] = defaultdict(list)
         sources = {k[0] for k in self.nodes}
         single = defaultdict(list)
-        for key in self.nodes:
-            single[key[0]].append(key[1])
+        for key, n in self.nodes.items():
+            if n.kind != L3:  # Router: Adressen aus den Routen (unten), nicht dem Inventar
+                single[key[0]].append(key[1])
         if sources:
             for i in self.session.scalars(
                 select(InvInterface).where(InvInterface.source_system_id.in_(sources))
@@ -281,6 +300,8 @@ class Graph:
                 if i.zone:
                     self._zones[(i.source_system_id, i.name)] = i.zone
                 ctxs = single[i.source_system_id]
+                if not ctxs:
+                    continue
                 context = i.vdom or (ctxs[0] if len(ctxs) == 1 else None)
                 key = (i.source_system_id, context or "")
                 if key not in self.nodes:
@@ -298,8 +319,42 @@ class Graph:
                         ip = str(entry.get("ip") or "").split("/")[0]
                         if ip:
                             out[ip].append((key, path.get("interface"), None))
+            for key, ip, iface, _virtual in self.router_addresses():
+                out[ip].append((key, iface, None))
         self._owners = out
         return out
+
+    def router_addresses(self) -> list[tuple[Key, str, str | None, bool]]:
+        """Eigene Adressen der Router bzw. L3-Switches (ADR 0032): Host-Routen `local` der RIB
+        (bei Arista aus `show ip interface`), je Kontext mit Interface; `virtual` = Gateway-
+        Adresse (HSRP/VRRP, VARP), die auch der Partner hat."""
+        routers = {k[0] for k, n in self.nodes.items() if n.kind == L3}
+        if not routers:
+            return []
+        out = []
+        for sid, context, prefix, hops, attrs in self.session.execute(
+            select(TopoRoute.source_system_id, TopoRoute.context, TopoRoute.prefix,
+                   TopoRoute.next_hops, TopoRoute.attrs)
+            .where(TopoRoute.tenant_id == self.tenant_id, TopoRoute.table == "rib",
+                   TopoRoute.protocol == "local", TopoRoute.prefix_len.in_((32, 128)),
+                   TopoRoute.source_system_id.in_(routers))
+            .order_by(TopoRoute.id)
+        ):  # fmt: skip
+            key = (sid, context)
+            node = self.nodes.get(key)
+            if node is None or node.kind != L3:
+                continue
+            iface = next((h.get("interface") for h in hops or [] if h.get("interface")), None)
+            out.append((key, str(prefix).split("/")[0], iface, bool((attrs or {}).get("virtual"))))
+        return out
+
+    def boundary(self):
+        """Firmengrenze (ADR 0032, `store/boundary.py`) - einmal je Graph geladen."""
+        if self._boundary is None:
+            from app.store.boundary import Boundary
+
+            self._boundary = Boundary(self)
+        return self._boundary
 
     def owner_label(self, ip: str | None) -> str | None:
         found = self.owners().get(ip or "", [])
@@ -949,7 +1004,8 @@ def trace(
                     queue.append(([*hops, branch], target_key, None, via_exit, 0, deviation, cur))
                     continue
                 text = _exit_text(ex, cur, ip, g.names(ip))
-                _record(target, hops, branch, "exit", text, deviation)
+                edge = g.boundary().judge(key, ip, nh.get("interface"), egress.get("zone"), ex)
+                _record(target, hops, branch, "exit", text, deviation, edge)
                 continue
             # VIP eines Load Balancers hinter einem Router ohne gelesenes Geraet (0.79.0): weiter
             # vom Load Balancer zum Server, am selben Knoten
@@ -977,7 +1033,10 @@ def trace(
                         f"Next-hop {ip}{name} does not belong to any device read",
                     ),
                 )
-            _record(target, hops, branch, kind, text, deviation)
+            # Firmengrenze (ADR 0032): eBGP zu fremdem AS bzw. Default-Route Richtung Provider
+            edge = g.boundary().judge(key, ip, nh.get("interface"), egress.get("zone"),
+                                      default=kind == "external") if ip else None  # fmt: skip
+            _record(target, hops, branch, kind, text, deviation, edge)
     if cut:
         notes.append(L(f"mehr als {MAX_PATHS} Wege – gekürzt",
                        f"more than {MAX_PATHS} paths – truncated"))  # fmt: skip
@@ -1258,9 +1317,16 @@ def _end(hops: list, hop: dict, kind: str, text: str) -> dict:
     return {"hops": [*hops, hop], "end": {"kind": kind, "text": text}}
 
 
-def _record(out: list, hops: list, hop: dict, kind: str, text: str, deviation) -> None:
-    """Weg mit seinem Ende ablegen; Backup-Wege mit der Abweichung (Hop, Grund)."""
-    out.append({**_end(hops, hop, kind, text), **({"deviation": deviation} if deviation else {})})
+def _record(out: list, hops: list, hop: dict, kind: str, text: str, deviation,
+            boundary: dict | None = None) -> None:  # fmt: skip
+    """Weg mit seinem Ende ablegen; Backup-Wege mit der Abweichung (Hop, Grund); an der
+    Firmengrenze (ADR 0032) der Grund am Weg und am letzten Hop."""
+    if boundary:
+        hop["boundary"] = boundary["reason"]
+    path = {**_end(hops, hop, kind, text), **({"deviation": deviation} if deviation else {})}
+    if boundary:
+        path["boundary"] = boundary
+    out.append(path)
 
 
 def _unique(paths: list[dict]) -> list[dict]:

@@ -44,7 +44,7 @@ ZONE_KIND = {
 LAYER = zone_store.LAYER
 GAP, LINE_H, MAX_LINES = 150, 15, 6
 RIGHT_KINDS = {"external", "dmz", "shared"}
-NODE_KIND = {"vrf": "ACI-VRF", "vdom": "VDOM", "firewall": "Firewall"}
+NODE_KIND = {"vrf": "ACI-VRF", "vdom": "VDOM", "firewall": "Firewall", "l3": "Router"}
 INTENT = {"allow": ("erlaubt", "allow"), "limited": ("eingeschränkt", "limited"),
           "deny": ("gesperrt", "deny")}  # fmt: skip
 
