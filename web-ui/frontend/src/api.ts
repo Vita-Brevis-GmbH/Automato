@@ -1,7 +1,7 @@
 // Schlanker API-Client. Das UI spricht ausschliesslich mit dem Orchestrator
 // (ARCHITECTURE.md) - im Dev ueber den Vite-Proxy unter /api.
 import * as auth from "./auth";
-import { L, lang } from "./i18n";
+import { exportLang, L, lang } from "./i18n";
 
 export interface HealthStatus {
   status: string;
@@ -634,6 +634,8 @@ export interface DocTable {
   enforcement: string;
   // sichtbare Spalten (0.84.0: leere NAT-/VIP-/Load-Balancer-Spalten fehlen)
   columns: string[];
+  // 0.87.0: Anzeige der Spalten in der Sprache der Anfrage (parallel zu columns; columns = Schlüssel)
+  labels?: string[];
   // Spalten als Text (mehrere Einträge mit Zeilenumbruch); dazu _rule (Regel-ID), _dir (in |
   // out), _scope (Art des Bezugs), _rules (Applikations-Doku: Regeln der Zeile, bei einem
   // IPv4/IPv6-Paar beide), _systems (unspezifische Regel, 0.37.0: Systeme der Applikation, die
@@ -1500,8 +1502,12 @@ export interface SchemaLinkEdit {
 }
 export const editZoneSchema = (profileId: number, body: { zones: SchemaZoneEdit[]; links: SchemaLinkEdit[] }) =>
   sendJSON<ZoneSchemaState>(`/api/naming-profiles/${profileId}/zone-schema`, "PATCH", body);
+// Datei vom Server in der Sprache der Exporte (0.87.0: `?lang=` geht vor Accept-Language)
+function withLang(url: string): string {
+  return `${url}${url.includes("?") ? "&" : "?"}lang=${exportLang()}`;
+}
 async function fileOf(url: string, fallback: string): Promise<{ blob: Blob; filename: string }> {
-  const response = await fetchChecked(url);
+  const response = await fetchChecked(withLang(url));
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? fallback };
 }
@@ -1888,7 +1894,7 @@ export async function exportAppPlan(id: number, format: "svg" | "drawio", keys?:
   const params = new URLSearchParams({ format });
   (keys ?? []).forEach((k) => params.append("key", k));
   if (!rules) params.set("rules", "false");
-  const response = await fetchChecked(`/api/applications/${id}/connections/plan/export?${params.toString()}`);
+  const response = await fetchChecked(withLang(`/api/applications/${id}/connections/plan/export?${params.toString()}`));
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `netzwerkplan.${format}` };
 }
@@ -2183,7 +2189,8 @@ export interface TraceHop extends RoutingNode {
     to: string | null;
   };
   // ACI (0.44.0): Ziel in einer anderen VRF, in diese geleakt (Shared Service bzw. Route-Leaking)
-  leak?: { vrf: string; where: string; text: string };
+  // 0.87.0: kind statt des (übersetzten) Texts
+  leak?: { vrf: string; where: string; text: string; kind?: "leak" | "shared" };
   // Verbund als ein Hop (0.29.0): je Firewall bzw. Variante (andere Interfaces) ein Eintrag
   parts?: TraceHop[];
   zone?: TraceZone | null; // logische Zone des Knotens (0.57.0)
@@ -3179,7 +3186,9 @@ export async function exportZonePlan(
   versionId?: number,
   view?: PlanView,
 ): Promise<{ blob: Blob; filename: string }> {
-  const response = await fetchChecked(`/api/zones/plan/export${planQs(tenantId, versionId ? undefined : view, { format, version_id: versionId })}`);
+  const response = await fetchChecked(
+    withLang(`/api/zones/plan/export${planQs(tenantId, versionId ? undefined : view, { format, version_id: versionId })}`),
+  );
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `zonenplan.${format}` };
 }
@@ -3461,7 +3470,9 @@ export async function exportL2Plan(
   f: { ends?: boolean; vlan?: number | null } = {},
 ): Promise<{ blob: Blob; filename: string }> {
   const response = await fetchChecked(
-    `/api/cabling/plan/export${cq({ tenant_id: tenantId, format, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`,
+    withLang(
+      `/api/cabling/plan/export${cq({ tenant_id: tenantId, format, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`,
+    ),
   );
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `verkabelung.${format}` };

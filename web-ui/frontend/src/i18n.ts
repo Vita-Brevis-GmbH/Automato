@@ -40,3 +40,25 @@ export function setLang(next: Lang): void {
 
 /** Gebietsschema für Datum und Zahlen. */
 export const locale = lang === "en" ? "en-GB" : "de-CH";
+
+// Sprache der Dateien vom Server (0.87.0: Word, PDF, draw.io, SVG) - eigene Wahl im Export-Dialog,
+// Standard = Sprache der Oberfläche; so entsteht z. B. eine englische Doku aus der deutschen Oberfläche
+const EXPORT_KEY = "automato_export_lang";
+
+export function exportLang(): Lang {
+  try {
+    const v = localStorage.getItem(EXPORT_KEY);
+    if (v === "de" || v === "en") return v;
+  } catch {
+    /* localStorage nicht verfügbar */
+  }
+  return lang;
+}
+
+export function setExportLang(next: Lang): void {
+  try {
+    localStorage.setItem(EXPORT_KEY, next);
+  } catch {
+    /* localStorage nicht verfügbar */
+  }
+}

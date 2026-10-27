@@ -1,7 +1,7 @@
 // Gemeinsame Darstellungs-Bausteine: Icons, Chips/Badges, Seitenkopf, Fehler, Modal.
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { describeError } from "./api";
-import { L, locale } from "./i18n";
+import { exportLang, L, Lang, locale, setExportLang } from "./i18n";
 
 const ICONS: Record<string, ReactNode> = {
   overview: (
@@ -211,6 +211,35 @@ export function PageHead({
       </div>
       {actions && <div className="actions">{actions}</div>}
     </div>
+  );
+}
+
+// Sprache der Dateien vom Server (0.87.0, ADR 0028): Word, PDF, draw.io, SVG – unabhängig von der
+// Oberfläche, gemerkt im Browser; Markdown und Druck folgen der Oberfläche
+export function ExportLangSelect() {
+  const [value, setValue] = useState<Lang>(exportLang);
+  return (
+    <label
+      className="export-lang"
+      title={L(
+        "Sprache der Dateien (Word, PDF, draw.io, SVG) – Markdown und Druck folgen der Oberfläche",
+        "Language of the files (Word, PDF, draw.io, SVG) – Markdown and print follow the interface",
+      )}
+    >
+      <span>{L("Sprache der Datei", "File language")}</span>
+      <select
+        className="export-lang-select"
+        value={value}
+        onChange={(e) => {
+          const next = e.target.value as Lang;
+          setExportLang(next);
+          setValue(next);
+        }}
+      >
+        <option value="de">Deutsch</option>
+        <option value="en">English</option>
+      </select>
+    </label>
   );
 }
 

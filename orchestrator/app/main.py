@@ -35,6 +35,7 @@ from app.api import (
 )
 from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
+from app.i18n import middleware as i18n_middleware
 from app.secrets import resolve_settings
 from app.store import customer_alias
 
@@ -84,6 +85,9 @@ def create_app() -> FastAPI:
 
     # Antworten an Kunden-Benutzer ohne Geraetenamen (0.58.0, ADR 0018 Schritt 4)
     app.middleware("http")(customer_alias.middleware)
+    # Sprache je Anfrage aus ?lang= bzw. Accept-Language (0.87.0, ADR 0028) - zuletzt
+    # hinzugefuegt = aussen, gilt also auch in den uebrigen Middlewares
+    app.add_middleware(i18n_middleware)
 
     app.include_router(health.router)
     app.include_router(auth_config.router)

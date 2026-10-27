@@ -21,7 +21,7 @@ import {
 } from "./api";
 import { Fold, FoldTitle } from "./fold";
 import { Verdict, VERDICT } from "./Paths";
-import { Dash, download, Empty, ErrorBox, Icon, Loading, Note } from "./ui";
+import { Dash, download, Empty, ErrorBox, ExportLangSelect, Icon, Loading, Note } from "./ui";
 import { L } from "./i18n";
 
 type Go = (v: View, p?: ViewParams) => void;
@@ -707,6 +707,7 @@ function PlanView({
               {busy === f ? "…" : label}
             </button>
           ))}
+          <ExportLangSelect />
         </span>
       </div>
       <div className="app-plan-tools">

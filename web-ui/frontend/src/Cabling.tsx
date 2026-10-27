@@ -32,7 +32,7 @@ import {
   locateEndpoint,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
-import { Dash, download, Empty, ErrorBox, fmtTime, Loading, Note, PageHead, SharedChip } from "./ui";
+import { Dash, download, Empty, ErrorBox, ExportLangSelect, fmtTime, Loading, Note, PageHead, SharedChip } from "./ui";
 import { L } from "./i18n";
 
 const PAGE = 200;
@@ -924,6 +924,7 @@ function PlanTab({ tenantId, onEndpoints }: { tenantId: number; onEndpoints?: (d
                 {busy === f ? "…" : label}
               </button>
             ))}
+            <ExportLangSelect />
           </span>
         </span>
       </div>

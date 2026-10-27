@@ -422,8 +422,8 @@ export function DocTableView({
           <table className="doc-rows">
             <thead>
               <tr>
-                {table.columns.map((c) => (
-                  <th key={c}>{c}</th>
+                {table.columns.map((c, i) => (
+                  <th key={c}>{colLabel(table, c, i)}</th>
                 ))}
                 {editable && <th className="no-print" />}
               </tr>
@@ -543,12 +543,15 @@ const mdCell = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, "<br>");
 
 // Tabellen 1–10 als Markdown (leere Kategorien entfallen) samt Fusszeile; 0.73.0: Kategorien
 // bzw. ausgeblendete Regeln nach Auswahl im Export-Dialog
+// Spaltenkopf in der Sprache der Anfrage (0.87.0: `labels` vom Server, `columns` bleiben Schlüssel)
+export const colLabel = (t: DocTable, column: string, i: number): string => t.labels?.[i] ?? column;
+
 export function tablesMarkdown(tables: DocTable[], rows = true, hiddenToo = true): string[] {
   const lines: string[] = [];
   for (const t of rows ? tables : []) {
     if (t.rows.length === 0) continue;
     lines.push(`## ${t.index}. ${t.title}`, "");
-    lines.push(`| ${t.columns.join(" | ")} |`);
+    lines.push(`| ${t.columns.map((c, i) => colLabel(t, c, i)).join(" | ")} |`);
     lines.push(`| ${t.columns.map(() => "---").join(" | ")} |`);
     for (const row of t.rows) {
       lines.push(`| ${t.columns.map((c) => mdCell(String(row[c] ?? ""))).join(" | ")} |`);

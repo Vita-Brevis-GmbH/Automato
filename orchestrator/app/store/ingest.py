@@ -27,6 +27,7 @@ from sqlalchemy import delete, select, true
 from sqlalchemy.orm import Session
 
 from app import audit, naming
+from app.i18n import german_only
 from app.models import (
     INVENTORY_MODELS,
     SERVICE_CATEGORIES,
@@ -100,6 +101,7 @@ _PROTO_BY_NAME = {
 }
 
 
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
 def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     """Schreibt `result` in den Store. `run` muss tenant_id + source_system_id tragen."""
     # zuerst den Mandanten sperren (0.80.1): danach wird sein ganzer abgeleiteter Zustand neu

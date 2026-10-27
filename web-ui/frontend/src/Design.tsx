@@ -78,7 +78,7 @@ import {
   ZoneSummary,
 } from "./api";
 import { SELECTOR_LABEL } from "./Customers";
-import { Dash, download, Empty, ErrorBox, fmtTime, Loading, Modal, Note, PageHead, SharedChip } from "./ui";
+import { Dash, download, Empty, ErrorBox, ExportLangSelect, fmtTime, Loading, Modal, Note, PageHead, SharedChip } from "./ui";
 import { L } from "./i18n";
 
 // Reihenfolge = Ebenen des Zonenmodells (0.56.0) von links nach rechts im Plan, danach die bisherigen Arten
@@ -2864,6 +2864,7 @@ function ExportButtons({ tenantId, versionId, view }: { tenantId: number; versio
       >
         {busy === "zip" ? "…" : L("Für Confluence (Word + draw.io)", "For Confluence (Word + draw.io)")}
       </button>
+      <ExportLangSelect />
     </span>
   );
 }

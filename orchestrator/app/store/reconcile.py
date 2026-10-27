@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import naming
+from app.i18n import german_only
 from app.models import (
     DeviceObject,
     Epg,
@@ -64,6 +65,7 @@ class Issue:
         return (self.type, self.subject_kind, self.subject_id[:300], self.source_system_id)
 
 
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
 def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     """Alle Befunde des Mandanten neu berechnen; Rueckgabe: Anzahl je Befund-Typ."""
     if tenant_id is None:
@@ -400,6 +402,7 @@ def _schema_issues(session: Session, tenant_id: int) -> list[Issue]:
     return out
 
 
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
 def refresh_zone_findings(session: Session, tenant_id: int) -> int:
     """Nur die Zonen-Befunde neu berechnen (nach dem Speichern einer Zone bzw. Absicht) - ohne
     den ganzen Abgleich; Triage-Status bleibt wie sonst erhalten."""
@@ -536,6 +539,7 @@ def _narrower_issues(app, narrower: list[dict], rules: dict, names: dict) -> lis
     return out
 
 
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
 def refresh_app_findings(session: Session, tenant_id: int | None,
                          application_id: int | None = None) -> int:  # fmt: skip
     """Abweichungen Regel <-> Weg neu berechnen: alle Applikationen des Mandanten (nach einem

@@ -36,7 +36,7 @@ import { findingLabel, serviceNames, useVdomShown } from "./refs";
 import RuleDetailDrawer from "./RuleDetail";
 import { NameCell } from "./RulesTable";
 import { siteLabel } from "./sites";
-import { ActionBadge, Dash, download, Drawer, Empty, ErrorBox, Expandable, Icon, Loading, Modal } from "./ui";
+import { ActionBadge, Dash, download, Drawer, Empty, ErrorBox, Expandable, ExportLangSelect, Icon, Loading, Modal } from "./ui";
 import { L } from "./i18n";
 
 type Go = (v: View, p?: ViewParams) => void;
@@ -1884,6 +1884,11 @@ function ExportDialog({
     >
       <div id="app-export-dialog">
         <ErrorBox error={err} prefix="Export" />
+        {!customer && (
+          <div style={{ marginBottom: 8 }}>
+            <ExportLangSelect />
+          </div>
+        )}
         <p className="faint" style={{ marginTop: 0, fontSize: 12 }}>
           {L(
             "Abschnitte für Export und Druck – der Kopf mit dem Steckbrief steht immer da. Die Auswahl bleibt in diesem Browser.",

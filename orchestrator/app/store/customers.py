@@ -48,6 +48,7 @@ from functools import cached_property, lru_cache
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.i18n import german_only
 from app.models import (
     Customer,
     CustomerMember,
@@ -689,6 +690,7 @@ def selectors_of(c: Customer) -> list[Selector]:
     return [Selector(s.kind, s.value, s.source_system_id, s.exclude) for s in c.selectors]
 
 
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
 def derive(session: Session, tenant_id: int, customer_id: int | None = None) -> int:
     """Zugehoerigkeit der Kunden des Mandanten (bzw. eines Kunden) neu ableiten; Anzahl der
     Eintraege."""
@@ -723,6 +725,7 @@ def derive(session: Session, tenant_id: int, customer_id: int | None = None) -> 
     return total
 
 
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
 def derive_findings(session: Session, tenant_id: int) -> int:
     """Nur die Findings der Kunden neu zuordnen (0.74.1) - nach dem Aendern einer Applikation
     aendern sich nur ihre Befunde (Abweichung Regel <-> Weg), die Kunden ueber ihre Regel

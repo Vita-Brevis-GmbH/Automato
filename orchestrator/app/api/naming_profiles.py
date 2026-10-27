@@ -16,6 +16,7 @@ from app import audit
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import german_only
 from app.models import DictionaryEntry, Tenant
 from app.schemas.naming_profile import (
     DictionaryCopyIn,
@@ -289,6 +290,7 @@ def preview_zone_schema(
             "diff": zone_schema.diff(zone_schema.load(session, profile_id), schema)}  # fmt: skip
 
 
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
 def _refresh_schema_findings(session: Session, profile_id: int) -> None:
     """Befund „Zone ausserhalb des Schemas“ (0.78.0) der Mandanten mit diesem Profil neu."""
     from sqlalchemy import select

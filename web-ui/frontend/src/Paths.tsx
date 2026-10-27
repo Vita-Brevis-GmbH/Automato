@@ -638,7 +638,7 @@ function TraceCard({
                               "Destination in another VRF – the fabric leaks it into this VRF",
                             )}
                           >
-                            {h.leak.text.startsWith("Route-Leaking") ? "Route-Leaking" : "Shared Service"}
+                            {(h.leak.kind ? h.leak.kind === "leak" : h.leak.text.startsWith("Route-Leaking")) ? "Route-Leaking" : "Shared Service"}
                           </span>{" "}
                           <span className="mono">VRF {h.leak.vrf}</span> <span className="faint">{h.leak.where}</span>
                         </div>
