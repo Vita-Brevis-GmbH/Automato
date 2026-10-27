@@ -32,30 +32,40 @@ Ableitung der Kategorie je Regel/Contract:
 **Model 2 (FortiGate + NetBox):** Tabellen 1–6, 9, 10 werden befüllt; die ACI-internen
 Tabellen 7/8 bleiben leer und erscheinen erst mit **Model 1** (ACI).
 
-## Spalten je Tabelle
+## Spalten je Tabelle (seit 0.84.0)
+
+Quelle und Ziel stehen in **Verkehrsrichtung** (Anwender 2026-10-27: „heute steht alles in Server
+Name“): eingehend ist die Gegenstelle die Source und das System der Applikation die Destination,
+ausgehend umgekehrt. Beide mit Name und IP; mehrere Einträge einer Zelle je auf einer Zeile.
+Optionale Spalten (NAT, Externer DNS Name, VIP, Load Balancer, Schutzmechanismen) fallen weg, wenn
+sie in keiner Zeile der Kategorie einen Wert haben.
 
 **Tabelle 1 — Internet Zugriff (Über eine Firewall):**
-`Server Name` · `TCP/UDP` · `Target Systems` · `Schutzmechanismen` · `NAT Externe IPv4` ·
-`Description`
+`Source` · `Destination` · `TCP/UDP` · `NAT Externe IPv4` · `Aktion` · `Schutzmechanismen` ·
+`Gerät` · `Description`
 
-**Tabelle 2 — Zugriff aus dem Internet (Über eine Firewall):**
-`Source` · `TCP/UDP` · `Server Name` · `VIP IP Adresse` · `Externer DNS Name` ·
-`Externe IP Adressen` · `Schutzmechanismen` · `Description`
+**Tabelle 2 — Zugriff aus dem Internet (Über eine Firewall):** die Kette öffentliche IP → VIP der
+Firewall → Load Balancer → Server in eigenen Spalten:
+`Source` · `Externer DNS Name` · `VIP (Firewall)` · `Load Balancer` · `Destination` · `TCP/UDP` ·
+`Aktion` · `Schutzmechanismen` · `Gerät` · `Description`
 
 **Tabellen 3–10 (gleiche Struktur):**
-`Server Name` · `TCP/UDP` · `Target Systems` · `Schutzmechanismen` · `Description`
+`Source` · `Destination` · `TCP/UDP` · `NAT` · `Aktion` · `Schutzmechanismen` · `Gerät` ·
+`Description`
 
 ## Spalten → Datenquelle
 
 | Spalte | Quelle |
 |---|---|
-| Server Name | Host-Objekt des Systems dieser Applikation (`H_<fqdn>`); immer die App-Seite |
-| Source / Target Systems | Gegenstelle der Regel (`network_object`/`H-EXT_`/anderer `TE_`) |
+| Source / Destination | je nach Richtung das System der Applikation (VM- bzw. Host-Name mit IP, bei der Kette mit dem Port im Pool, EPG mit ganzem ACI-Pfad; unspezifische Regel: ihr Objekt, die Systeme auf Knopfdruck) bzw. die Gegenstelle der Regel mit Name und Wert (`N_partner (192.0.2.0/24)`, `H-EXT_api (203.0.113.9)`, EPG/externe EPG, `any → Netze hinter …`) |
 | TCP/UDP | Service/Port der Regel (`service_object`, aus `FT_`-Filter) |
+| Externer DNS Name | DNS-Name der öffentlichen IP aus dem IPAM, sonst aus dem Namen der VIP (`V-EXT_<fqdn>`) |
+| VIP (Firewall) | VIP der Regel: `V-EXT_shop: 203.0.113.10 → 10.30.0.50` (mit Ports bei Port-Weiterleitung) |
+| Load Balancer | Virtual Service des NSX ALB hinter der VIP, nur mit einem Port der Regel: `vs-web · 10.30.0.50:443 · Pool pool-web` |
+| NAT Externe IPv4 / NAT | Source-NAT der Regel (Pool-Adresse bzw. Interface-IP) |
+| Aktion · Gerät | Allow/Deny; Firewall (mit VDOM) bzw. APIC |
 | Schutzmechanismen | FortiGate-UTM-Profile der Policy (`WEB_`/`APP_`/`IPS_`/`WAF_`/`SSL_`); ACI: Service-Graph/PBR |
-| NAT Externe IPv4 | Source-NAT IP-Pool (`IPP_`, `nat_rule.snat_pool`) |
-| VIP IP / Externer DNS Name / Externe IP | Destination-NAT (`V-EXT_`, `nat_rule.dnat_vip`): mapped-IP, FQDN aus `V-EXT_`-Name, ext-IP |
-| Description | Regel-/Policy-Kommentar |
+| Description | Name der Regel bzw. des Contracts (Link zur Regel) |
 
 ## Neue Collector-/Modell-Felder (daraus folgend)
 

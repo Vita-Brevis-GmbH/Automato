@@ -47,8 +47,8 @@ def test_consumer_und_provider_zugleich(client):
     rows = [r for t in doc["tables"] for r in t["rows"] if r["Description"].startswith("CT_peer")]
     assert rows, [t["index"] for t in doc["tables"]]
     for r in rows:  # nie die eigene EPG als Gegenstelle
-        own = r["Server Name"].split("/")[-1].split()[0]
-        assert own not in (r.get("Target Systems") or ""), r
+        own = r["_app"].split("/")[-1].split()[0]
+        assert own not in (r.get("_peer") or ""), r
     peer = {x["id"] for x in doc["rules"] if (x.get("name") or "").startswith("CT_peer")}
     hits = [h for h in doc["hits"] if h["rule_id"] in peer]
     assert hits and all("Consumer und Provider" in h["via"] for h in hits)

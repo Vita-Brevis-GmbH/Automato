@@ -66,9 +66,9 @@ def test_gegenstelle_any_ist_was_hinter_dem_interface_liegt(client):
 
     found = rows()
     _, deny = found[("lan-to-dmz-deny", "dst")]
-    assert deny["Target Systems"] == "all → Netze hinter lan: 10.10.0.0/24"
+    assert deny["Source"] == "all → Netze hinter lan: 10.10.0.0/24"
     idx, inet = found[("inet-to-web", "dst")]
-    assert (idx, inet["Target Systems"]) == (10, "all → extern (Default-Route über internet)")
+    assert (idx, inet["Source"]) == (10, "all → extern (Default-Route über internet)")
 
     # Anbindung Internet an der Zone: die Gegenstelle ist das Internet (Kategorie 2)
     nodes = client.get("/routing/summary", params={"tenant_id": tid}).json()["nodes"]

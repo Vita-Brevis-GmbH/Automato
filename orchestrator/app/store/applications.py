@@ -59,6 +59,7 @@ from app.store import (
     virtual,
 )
 from app.store import naming_profiles as profile_store
+from app.store import nat as nat_store
 from app.store import rules as rules_store
 from app.store.epgs import inventory_label
 
@@ -1028,8 +1029,9 @@ def _hits_and_tables(
     """Treffer je (Regel, System, Seite) und die 10 Kategorien-Tabellen.
 
     In den Tabellen steht eine Regel je Seite und Objekt der Regel nur einmal: erfasst ein Netz
-    bzw. any mehrere Systeme, nennt der Server Name das Objekt wie in der Regel statt einer
-    Zeile je System (0.14.1). Seit 0.37.0 (Anwender) steht bei unspezifischen Regeln (any,
+    bzw. any mehrere Systeme, nennt die Seite der Applikation (`appdoc.APP`, je nach Richtung in
+    Source bzw. Destination) das Objekt wie in der Regel statt einer Zeile je System (0.14.1).
+    Seit 0.37.0 (Anwender) steht bei unspezifischen Regeln (any,
     Netz, vzAny, Preferred Group) - typisch Zugriffe ins bzw. aus dem Internet oder MPLS - nur
     die Regel mit ihrem Objekt (`any`, `N_srv16 (10.20.0.0/16)`); welche Systeme der
     Applikation sie nutzen koennen, steht in `_systems` (Anzeige auf Knopfdruck). Spezifische
@@ -1050,10 +1052,10 @@ def _hits_and_tables(
                 gkey = (idx, None, len(groups))
             group = groups.setdefault(gkey, {"row": row, "systems": [], "rules": {}})
             if rid is not None:
-                group["rules"].setdefault(rid, row.get("Description") or "")
+                group["rules"].setdefault(rid, row.get(appdoc.DESCRIPTION) or "")
             if row.get(appdoc.REVERSE) and group["row"] is not row:
                 group["both"] = True  # ACI (0.69.1): Rueckrichtung in derselben Kategorie
-            name = row.get("Server Name")
+            name = row.get(appdoc.APP)
             if name and name not in group["systems"]:
                 group["systems"].append(name)
         if rid is None:
@@ -1074,8 +1076,8 @@ def _hits_and_tables(
                 "value": row.get(appdoc.OBJECT_VALUE) or "",
                 "via": row.get(appdoc.VIA) or "",
                 "scope": row.get(appdoc.SCOPE) or "specific",
-                "counterpart": row.get("Target Systems") or row.get("Source") or "",
-                "services": row.get("TCP/UDP") or "",
+                "counterpart": (row.get(appdoc.PEER) or "").replace("\n", ", "),
+                "services": row.get(appdoc.SERVICE) or "",
                 # ACI: die EPG, ueber die der Contract fuer das System gilt (Filter, 0.42.3)
                 "epg": row.get(appdoc.EPG),
                 # ACI (0.43.2): DNs des eigenen Endpunkts und der Gegenstellen im Scope - die
@@ -1093,23 +1095,28 @@ def _hits_and_tables(
         row = dict(group["row"])
         row.pop(appdoc.PARTIES, None)  # nur fuer die Treffer
         if group.get("both") and not row.get(appdoc.REVERSE):
-            row["TCP/UDP"] = f"{row.get('TCP/UDP') or ''} (↔ beide Richtungen)".strip()
+            row[appdoc.SERVICE] = f"{row.get(appdoc.SERVICE) or ''} (↔ beide Richtungen)".strip()
         if row.get(appdoc.REL) == "impossible":
             continue  # Export/Druck: nur, was das Routing zulaesst
         row["_rules"] = list(group["rules"])
         names = list(dict.fromkeys(n for n in group["rules"].values() if n))
         if len(group["rules"]) > 1:  # IPv4/IPv6-Paar
-            row["Description"] = " / ".join(names) + " (IPv4 + IPv6)"
+            row[appdoc.DESCRIPTION] = " / ".join(names) + " (IPv4 + IPv6)"
         systems = group["systems"]
         broad = row.get(appdoc.SCOPE) in appdoc.UNSPECIFIC
         if len(systems) > 1 or broad:
             label = _object_label(row)
             inside = [x for x in systems if x not in label]
             if broad:  # nur die Regel; die Systeme auf Knopfdruck
-                row["Server Name"] = label
+                row[appdoc.APP] = label
                 row["_systems"] = inside
-            else:
-                row["Server Name"] = f"{label}: {', '.join(inside)}" if inside else label
+            elif nat_store.CHAIN in str(row.get(appdoc.OBJECT) or ""):
+                # ueber VIP und Load Balancer (0.84.0): VIP und Load Balancer stehen in eigenen
+                # Spalten, hier nur die Server mit Name und IP
+                row[appdoc.APP] = appdoc.lines(systems)
+            else:  # Gruppe bzw. Netz mit mehreren Systemen: das Objekt, darunter die Systeme
+                row[appdoc.APP] = appdoc.lines([f"{label}:", *inside]) if inside else label
+        appdoc.place(row)
         visible = (idx, tuple(row.get(c) for c in appdoc.TABLE_COLUMNS[idx]))
         if visible in seen_rows:  # gleiche Zeile (z. B. VM und ihre EPG): Systeme zusammen
             first = seen_rows[visible]
@@ -1119,6 +1126,8 @@ def _hits_and_tables(
             continue
         seen_rows[visible] = row
         tables[idx]["rows"].append(row)
+    for t in tables.values():  # leere optionale Spalten (NAT, VIP, Load Balancer …) aus
+        t["columns"] = appdoc.visible_columns(t["index"], t["rows"])
     return hits, [tables[i] for i, _, _ in appdoc.TABLES]
 
 

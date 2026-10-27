@@ -286,7 +286,7 @@ def _tables(out: Document, tables: list[dict], rows_too: bool = True,
         for t, row in hidden:
             hides = row.get("_hides") or []
             rows.append([f"{t['index']}. {t['title']}", str(row.get("Description") or ""),
-                         str(row.get("Server Name") or row.get("Source") or ""),
+                         str(row.get("_app") or "").replace("\n", ", "),
                          "; ".join(h.get("reason") or "" for h in hides),
                          ", ".join(dict.fromkeys(h.get("by") or "" for h in hides)),
                          (hides[0].get("at") or "")[:10] if hides else ""])  # fmt: skip

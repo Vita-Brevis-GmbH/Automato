@@ -616,7 +616,7 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Preferred Group – typisch Zugriffe ins bzw. aus dem Internet oder MPLS) zeigen seit 0.37.0
     nur die Regel mit ihrem Objekt (`any`, `N_srv16 10.20.0.0/16`); welche Systeme der
     Applikation sie nutzen können, klappt **„▸ N Systeme“** auf. Gilt für beide Richtungen und
-    ebenso in der Doku nach Kategorien („Server Name“ = Objekt der Regel) und im Export (statt
+    ebenso in der Doku nach Kategorien (Source bzw. Destination = Objekt der Regel) und im Export (statt
     der Liste die Anzahl). Filter System/VM, EPG, **Richtung aus Sicht des Systems** (eingehend = Ziel
     bzw. Provider, ausgehend = Quelle bzw. Consumer), Art, Bezug, Suche. Klick → Detail mit
     **„Warum diese Regel für die Applikation gilt“** (je System Rolle, Richtung, Bezug,
@@ -635,6 +635,17 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     öffentlichen IP und in der Spalte **Load Balancer** (Virtual Service, VIP:Port, Pool); die
     Verbindungen Ende zu Ende gehen von der Quelle zur öffentlichen IP über DNAT und Load
     Balancer zum Server.
+    - **Spalten (0.84.0):** **Source** und **Destination** in Verkehrsrichtung – eingehend steht
+      die Gegenstelle in Source und das System der Applikation in Destination, ausgehend
+      umgekehrt –, beide mit Name und IP (`web01 (10.20.0.10)`, `N_partner (192.0.2.0/24)`,
+      `any → extern (Default-Route über internet)`); mehrere Einträge je auf einer Zeile. In
+      Kategorie 2 „Zugriff aus dem Internet“ die Kette in eigenen Spalten: **Externer DNS
+      Name**, **VIP (Firewall)** (`V-EXT_shop: 203.0.113.10 → 10.30.0.50`), **Load Balancer**
+      (`vs-web · 10.30.0.50:443 · Pool pool-web`, nur die Ports der Regel) und **Destination** =
+      Server mit dem Port im Pool (`web01 (10.10.0.20:8080)`). Sonst NAT in der Spalte **NAT**
+      (`SNAT 198.51.100.7`), in Kategorie 1 **NAT Externe IPv4**. Spalten ohne Wert in einer
+      Kategorie (NAT, DNS, VIP, Load Balancer, Schutzmechanismen) fallen weg – in der Ansicht, im
+      Export (Markdown, Word) und im Druck.
     - **Richtung L3Out (0.78.2):** die Firewall ist führend – ein Contract zu einer externen
       EPG (L3Out) steht nicht separat da, solange er die Dienste der Firewall-Regeln in
       derselben Kategorie und Richtung abdeckt. Öffnet er weniger, steht er da mit „öffnet

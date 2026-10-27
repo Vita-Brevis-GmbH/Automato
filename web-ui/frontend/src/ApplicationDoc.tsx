@@ -1664,7 +1664,7 @@ function HideDialog({
         <ErrorBox error={err} prefix="Ausblenden" />
         <p style={{ marginTop: 0 }}>
           <b>{String(row.Description ?? "Regel")}</b>
-          <span className="faint"> · {String(row["Server Name"] ?? row.Source ?? "")}</span>
+          <span className="faint"> · {String(row._app ?? "").replace(/\n/g, ", ")}</span>
         </p>
         <p className="faint" style={{ fontSize: 12 }}>
           Die Regel fällt aus der Kategorie (Ansicht, Export, Druck) und steht dort unter „ausgeblendet“ mit der Begründung.

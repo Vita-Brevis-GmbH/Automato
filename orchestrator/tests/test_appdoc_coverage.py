@@ -124,11 +124,11 @@ def test_epg_doku_mit_vzany_esg_und_firewall(client):
     assert rows["CT_direct:SJ"][0]["Bezug"] == "direkt"
     assert rows["CT_vz:SJ"][0]["Bezug"] == "vzAny VRF1"
     assert rows["CT_esg:SJ"][0]["Bezug"] == "ESG ES_web"
-    assert rows["CT_esg:SJ"][0]["Target Systems"] == "TE/AP_001/EG_db"
+    assert rows["CT_esg:SJ"][0]["_peer"] == "TE/AP_001/EG_db"
     # Firewall-Regeln, die das EPG-Subnetz bzw. den Server darin erfassen
     assert {"direct-in", "net-in"} <= set(rows) and "other" not in rows
     assert "any-out" not in rows  # ausgehend in Kategorie 10: nicht mehr (0.78.2)
-    assert rows["net-in"][0]["Server Name"] == "TE/AP_001/EG_app"  # ganzer ACI-Pfad (0.14.0)
+    assert rows["net-in"][0]["Destination"] == "TE/AP_001/EG_app"  # ganzer ACI-Pfad (0.14.0)
     # Art des Bezugs (0.14.0): EPG selbst bzw. Host im Subnetz = spezifisch, sonst Netz/any/vzAny
     assert rows["CT_direct:SJ"][0]["_scope"] == rows["CT_esg:SJ"][0]["_scope"] == "specific"
     assert rows["CT_vz:SJ"][0]["_scope"] == "vzany"

@@ -241,6 +241,7 @@ tbody tr.clickable { cursor: pointer; }
 tbody tr.clickable:hover { background: var(--surface-2); }
 tbody tr.selected { background: var(--accent-weak); }
 table.compact td { padding-top: 5px; padding-bottom: 5px; } /* Ports: eine Zeile je Port */
+table.doc-rows td { white-space: pre-line; } /* Kategorien (0.84.0): ein Eintrag je Zeile */
 .expandable { margin-top: 2px; }
 .expandable .linkbtn { font-size: 12px; }
 .expandable-list { margin-top: 2px; font-size: 12px; white-space: normal; overflow-wrap: anywhere; }

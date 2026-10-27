@@ -270,8 +270,8 @@ def test_applikation_manuell_pflegen_und_doku(client, session_factory):
     # Firewall-Regel des Servers zu 10.0.3.5 (ausgehend, ohne Zone): seit 0.78.2 nicht in
     # Kategorie 10 - nur Zugriffe auf die Applikation; als Treffer bleibt sie
     assert rows[10] == []
-    assert any(h["counterpart"] == "10.0.3.5" and h["table"] == 10 for h in doc["hits"])
-    assert rows[7][0]["Target Systems"] == "TE_a/AP_002/EG_internal01"  # ganzer ACI-Pfad
+    assert any("10.0.3.5" in h["counterpart"] and h["table"] == 10 for h in doc["hits"])
+    assert rows[7][0]["_peer"] == "TE_a/AP_002/EG_internal01"  # ganzer ACI-Pfad
     assert doc["summary"]["specific"] == 2 and doc["summary"]["unspecific"] == 0
 
     aid = app["id"]

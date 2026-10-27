@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.84.0 – 2026-10-27
+
+Applikations-Doku: Kategorien-Tabellen neu (Anwender: „heute steht alles in Server Name“ – VIPs,
+Load Balancer und der Weg zum Server in die Spalten verteilen; ADR 0012 Ergänzung 0.84.0).
+
+- **Source** und **Destination** in Verkehrsrichtung statt „Server Name“/„Target Systems“:
+  eingehend Gegenstelle → System der Applikation, ausgehend umgekehrt; beide mit **Name und IP**
+  (`web01 (10.20.0.10)`, `N_partner (192.0.2.0/24)`), mehrere Einträge je auf einer Zeile.
+- **Zugriff aus dem Internet (2):** Externer DNS Name · **VIP (Firewall)**
+  (`V-EXT_shop: 203.0.113.10 → 10.30.0.50`) · **Load Balancer** (`vs-web · 10.30.0.50:443 ·
+  Pool pool-web`, nur die Ports der Regel) · **Destination** = Server mit dem Port im Pool.
+- **NAT** als Spalte in den übrigen Kategorien (`SNAT 198.51.100.7`); Spalten ohne Wert (NAT,
+  DNS, VIP, Load Balancer, Schutzmechanismen) fallen je Kategorie weg – Ansicht, Markdown, Word
+  und Druck.
+- Markdown mit Zeilenumbrüchen in den Zellen (`<br>`), Word mit Umbruch.
+- Spezifikation `uc1-applikations-doku-spec.md`, ADR 0012, BETRIEB, TESTS.
+
 ## 0.83.1 – 2026-10-27
 
 Korrekturen nach dem Test des Anwenders (ACI): „In den Kategorien steht vorne 20× L3O_vpn,

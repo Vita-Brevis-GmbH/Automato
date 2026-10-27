@@ -631,10 +631,13 @@ export interface DocTable {
   index: number;
   title: string;
   enforcement: string;
+  // sichtbare Spalten (0.84.0: leere NAT-/VIP-/Load-Balancer-Spalten fehlen)
   columns: string[];
-  // Spalten als Text; dazu _rule (Regel-ID), _dir (in | out), _scope (Art des Bezugs),
-  // _rules (Applikations-Doku: Regeln der Zeile, bei einem IPv4/IPv6-Paar beide), _systems
-  // (unspezifische Regel, 0.37.0: Systeme der Applikation, die sie nutzen können)
+  // Spalten als Text (mehrere Einträge mit Zeilenumbruch); dazu _rule (Regel-ID), _dir (in |
+  // out), _scope (Art des Bezugs), _rules (Applikations-Doku: Regeln der Zeile, bei einem
+  // IPv4/IPv6-Paar beide), _systems (unspezifische Regel, 0.37.0: Systeme der Applikation, die
+  // sie nutzen können), _app/_peer (Seite der Applikation bzw. Gegenstelle) und _app_col
+  // (Source bzw. Destination - dort steht die Applikation)
   rows: Record<string, string | number | number[] | string[] | null>[];
   // 0.69.0 (Applikations-Doku): ausgeblendete Zeilen mit _hides (Begründung, wer, wann)
   hidden?: (Record<string, string | number | number[] | string[] | null> & { _hides?: DocHide[] })[];

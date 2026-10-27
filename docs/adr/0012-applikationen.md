@@ -109,6 +109,19 @@ Begründung und Audit):**
   Zonensignal (z. B. „any → Tool“, „Server → Monitoring“); als Treffer bleiben sie.
 - Gleich in der Doku je System, im Export (Markdown, Word) und im Druck.
 
+**Ergänzung 0.84.0 (Anwender: „heute steht alles in Server Name“ – VIPs, Load Balancer und der
+Weg zum Server in die Spalten verteilen):**
+- **Source und Destination in Verkehrsrichtung** statt „Server Name“ und „Target Systems“:
+  eingehend Gegenstelle → System, ausgehend System → Gegenstelle; beide mit Name und IP, mehrere
+  Einträge je auf einer Zeile. Die Seite der Applikation trägt die Zeile intern weiter
+  (`_app`/`_peer`, `_app_col`), Treffer und Ausblenden bleiben gleich.
+- **Kategorie 2** mit der Kette in eigenen Spalten: Externer DNS Name, VIP (Firewall), Load
+  Balancer (nur Virtual Services mit einem Port der Regel), Destination = Server mit dem Port im
+  Pool. „Externe IP Adressen“ entfällt (steht in der VIP).
+- **NAT** als eigene Spalte in den übrigen Kategorien (SNAT der Regel); optionale Spalten ohne
+  Wert fallen je Kategorie weg (Ansicht, Markdown, Word, Druck). Die Spezifikation
+  `docs/usecases/uc1-applikations-doku-spec.md` beschreibt die Spalten.
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:

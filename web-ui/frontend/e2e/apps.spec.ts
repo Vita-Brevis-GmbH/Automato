@@ -142,6 +142,10 @@ test("Applikation: Doku nach Kategorien mit Aktion, Gerät und Link zur Regel", 
   await expect(tables.first().locator("thead")).toContainText("Aktion");
   await expect(tables.first().locator("thead")).toContainText("Gerät");
   await expect(tables.first().locator("thead")).not.toContainText("Bezug");
+  // 0.84.0: Quelle und Ziel in Verkehrsrichtung statt „Server Name“
+  await expect(tables.first().locator("thead")).toContainText("Source");
+  await expect(tables.first().locator("thead")).toContainText("Destination");
+  await expect(page.locator("#app-categories thead").first()).not.toContainText("Server Name");
   await expect(page.locator(".stack .chip.accept").first()).toHaveText("Allow");
   // unspezifische Regel (any, Netz): nur das Objekt der Regel, die Systeme auf Knopfdruck
   const broad = page.locator(".stack .card tbody tr", { has: page.locator(".expandable") }).first();

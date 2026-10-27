@@ -85,11 +85,21 @@ def test_applikations_doku_ueber_den_load_balancer(client):
     rows = {r["Description"]: r for t in doc["tables"] if t["index"] == 2 for r in t["rows"]}
     assert "inet-to-shop" in rows, [t["index"] for t in doc["tables"]]
     row = rows["inet-to-shop"]
-    assert row["VIP IP Adresse"] == PUBLIC
-    lb = row["Load Balancer"]
-    assert lb.startswith(f"vs-web {VIP}") and "Pool pool-web" in lb
+    # Kette in eigenen Spalten (0.84.0): VIP der FortiGate, Load Balancer (nur der Port der
+    # Regel, 443 - nicht 80), Server mit dem Port im Pool
+    assert row["VIP (Firewall)"] == f"V-EXT_shop: {PUBLIC} → {VIP}"
+    assert row["Load Balancer"] == f"vs-web · {VIP}:443 · Pool pool-web"
+    assert row["Destination"] == "10.10.0.20:8080"
+    assert row["Source"] == "all → extern (Default-Route über internet)"
     (table,) = (t for t in doc["tables"] if t["index"] == 2)
-    assert "Load Balancer" in table["columns"]
+    assert table["columns"][:6] == [
+        "Source",
+        "Externer DNS Name",
+        "VIP (Firewall)",
+        "Load Balancer",
+        "Destination",
+        "TCP/UDP",
+    ]
 
 
 def test_weg_von_aussen_ueber_vip_und_load_balancer(client):

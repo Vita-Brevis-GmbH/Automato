@@ -206,7 +206,9 @@ def test_build_doc_kategorisiert_und_fuellt_spalten(session_factory):
     # Tabelle 1: ausgehend ins Internet, Schutzmechanismen aus protections
     t1 = _rows(doc, 1)
     assert len(t1) == 1
-    assert t1[0]["Target Systems"] == "203.0.113.9"
+    # Quelle und Ziel mit Name und IP (0.84.0)
+    assert t1[0]["Source"] == "H_app01.kunde.ch (10.0.0.5)"
+    assert t1[0]["Destination"] == "H-EXT_api.partner.com (203.0.113.9)"
     assert "WF_default" in t1[0]["Schutzmechanismen"]
     # SNAT nur aus der Regel: ihr Pool, nicht alle Pools des Mandanten (Dev-Befund 0.33.0)
     assert t1[0]["NAT Externe IPv4"] == "198.51.100.7"
@@ -216,12 +218,18 @@ def test_build_doc_kategorisiert_und_fuellt_spalten(session_factory):
     # Tabelle 2: eingehend via DNAT; VIP-IP + externer DNS-Name aus V-EXT_-Objekt
     t2 = {r["Description"]: r for r in _rows(doc, 2)}
     assert set(t2) == {"in-dnat", "in-deny"}
-    assert t2["in-dnat"]["VIP IP Adresse"] == "203.0.113.5"
+    assert t2["in-dnat"]["VIP (Firewall)"] == "V-EXT_app01.kunde.ch: 203.0.113.5 → 10.0.0.5"
     assert t2["in-dnat"]["Externer DNS Name"] == "app01.kunde.ch"
-    assert t2["in-dnat"]["Server Name"] == "H_app01.kunde.ch"
+    assert t2["in-dnat"]["Destination"] == "H_app01.kunde.ch (10.0.0.5)"
+    assert t2["in-dnat"]["Source"] == "H-EXT_api.partner.com (203.0.113.9)"
+    t2_cols = next(t["columns"] for t in doc["tables"] if t["index"] == 2)
+    assert t2_cols[:5] == ["Source", "Externer DNS Name", "VIP (Firewall)", "Destination",
+                          "TCP/UDP"]  # fmt: skip
+    assert "Load Balancer" not in t2_cols  # ohne NSX ALB: leere Spalte ausgeblendet
     # sperrende Regel: Deny, ohne VIP
     deny = t2["in-deny"]
-    assert (deny["Aktion"], deny["VIP IP Adresse"], deny["Externe IP Adressen"]) == ("Deny", "", "")
+    assert deny["Aktion"] == "Deny" and not deny.get("VIP (Firewall)")
+    assert not deny.get("Load Balancer")
 
     # Tabelle 10 (seit 0.78.2 nur Zugriffe auf das System): der Zugriff des Systems auf die DB
     # ohne Zonensignal steht nicht mehr da
@@ -356,6 +364,6 @@ def test_epg_als_system_tabellen_789(session_factory, client):
     def rows_of(i):
         return next(t["rows"] for t in doc["tables"] if t["index"] == i)
 
-    assert [r["Target Systems"] for r in rows_of(7)] == ["AP_001/EG_b"]  # ganzer ACI-Pfad (0.14.0)
-    assert [r["Target Systems"] for r in rows_of(8)] == ["AP_002/EG_c"]
-    assert [r["Target Systems"] for r in rows_of(9)] == ["EG_ext"]
+    assert [r["Destination"] for r in rows_of(7)] == ["AP_001/EG_b"]  # ganzer ACI-Pfad (0.14.0)
+    assert [r["Destination"] for r in rows_of(8)] == ["AP_002/EG_c"]
+    assert [r["Destination"] for r in rows_of(9)] == ["EG_ext"]

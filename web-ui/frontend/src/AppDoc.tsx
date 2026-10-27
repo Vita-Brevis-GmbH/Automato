@@ -277,7 +277,9 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
   );
 }
 
-// Zelle der Kategorien; „Description“ öffnet die Regel (bei einem Paar je Familie ein Link)
+// Zelle der Kategorien; „Description“ öffnet die Regel (bei einem Paar je Familie ein Link). Seit
+// 0.84.0 steht die Seite der Applikation je nach Richtung in Source bzw. Destination (`_app_col`);
+// mehrere Einträge einer Zelle je auf einer Zeile
 function DocCell({
   row,
   column,
@@ -290,7 +292,7 @@ function DocCell({
   const value = row[column];
   const text = Array.isArray(value) ? value.join(", ") : value;
   const systems = Array.isArray(row._systems) ? (row._systems as string[]) : [];
-  if (column === "Server Name" && systems.length)
+  if (column === row._app_col && systems.length)
     return (
       <>
         {text || <span className="faint">–</span>}
@@ -386,8 +388,8 @@ export function DocTableView({
             <tbody>
               {table.rows.map((row, i) => (
                 <tr key={i}>
-                  {table.columns.map((c, ci) => (
-                    <td key={c} className={ci === 1 ? "mono" : ""}>
+                  {table.columns.map((c) => (
+                    <td key={c} className={c === "TCP/UDP" ? "mono" : ""}>
                       {c === "Aktion" && row[c] ? (
                         <span className={`chip ${row[c] === "Allow" ? "accept" : "deny"}`}>{String(row[c])}</span>
                       ) : (
@@ -435,7 +437,7 @@ export function DocTableView({
                   return (
                     <tr key={i}>
                       <td>{String(row.Description ?? "")}</td>
-                      <td>{String(row["Server Name"] ?? row.Source ?? "")}</td>
+                      <td>{String(row._app ?? "")}</td>
                       <td>
                         {hs.map((h) => (
                           <div key={h.id}>
@@ -479,7 +481,7 @@ function toMarkdown(doc: SystemDoc): string {
   return lines.concat(tablesMarkdown(doc.tables)).join("\n");
 }
 
-const mdCell = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
+const mdCell = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, "<br>");
 
 // Tabellen 1–10 als Markdown (leere Kategorien entfallen) samt Fusszeile; 0.73.0: Kategorien
 // bzw. ausgeblendete Regeln nach Auswahl im Export-Dialog
@@ -502,7 +504,7 @@ export function tablesMarkdown(tables: DocTable[], rows = true, hiddenToo = true
     for (const { t, row } of hidden) {
       const hs = row._hides ?? [];
       lines.push(
-        `| ${t.index}. ${mdCell(t.title)} | ${mdCell(String(row.Description ?? ""))} | ${mdCell(String(row["Server Name"] ?? row.Source ?? ""))} | ${mdCell(hs.map((h) => h.reason).join("; "))} | ${mdCell([...new Set(hs.map((h) => h.by))].join(", "))} | ${dateText(hs[0]?.at)} |`,
+        `| ${t.index}. ${mdCell(t.title)} | ${mdCell(String(row.Description ?? ""))} | ${mdCell(String(row._app ?? ""))} | ${mdCell(hs.map((h) => h.reason).join("; "))} | ${mdCell([...new Set(hs.map((h) => h.by))].join(", "))} | ${dateText(hs[0]?.at)} |`,
       );
     }
     lines.push("");
