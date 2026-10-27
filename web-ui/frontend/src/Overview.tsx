@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cancelRun, fetchOpsHealth, fetchRunsPage, fetchSystems, OpsHealth, Run, System, Tenant } from "./api";
 import { HealthChip, HealthTable } from "./Health";
-import type { Stats, View } from "./App";
+import type { Stats, View, ViewParams } from "./App";
 import type { Me } from "./auth";
 import CollectDialog, { CollectAllDialog } from "./CollectDialog";
+import { DataQualityTile } from "./DataQuality";
 import { RunsTable } from "./Runs";
 import { ErrorBox, Icon, Loading, PageHead } from "./ui";
 import { FoldTitle, useFolds } from "./fold";
@@ -27,7 +28,7 @@ export default function Overview({
   tenantLabel: string;
   tenants: Tenant[];
   stats: Stats;
-  onGo: (v: View) => void;
+  onGo: (v: View, p?: ViewParams) => void;
   onReload: () => void;
 }) {
   const [runs, setRuns] = useState<Run[] | null>(null);
@@ -42,6 +43,7 @@ export default function Overview({
   const [collectAllOpen, setCollectAllOpen] = useState(false);
   const [health, setHealth] = useState<OpsHealth | null>(null);
   const customer = me.isCustomer; // Kunden-Benutzer: nur die Doku, kein Betrieb (ADR 0018)
+  const quality = !customer && tenantId !== null; // Datenqualität (ADR 0029) je Mandant, nicht für Kunden-Benutzer
   useEffect(() => {
     if (customer) return;
     fetchOpsHealth(tenantId)
@@ -165,7 +167,7 @@ export default function Overview({
         </div>
       )}
 
-      <div className="kpis">
+      <div className={`kpis${quality ? " five" : ""}`}>
         <button className="kpi" onClick={() => onGo("regeln")}>
           <div className="k-label">{L("Regeln & Contracts", "Rules & contracts")}</div>
           <div className="k-val">{val(rulesCount)}</div>
@@ -205,6 +207,10 @@ export default function Overview({
               : L("Endpunkte gegen die SoT", "Endpoints against the SoT")}
           </div>
         </div>
+        {quality && tenantId !== null && (
+          // nach einem Lauf (Zähler neu) auch die Gesamtnote neu
+          <DataQualityTile key={`${tenantId}-${stats.findings?.total}`} tenantId={tenantId} onGo={onGo} />
+        )}
       </div>
 
       <div className="two-col">

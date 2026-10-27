@@ -7,7 +7,8 @@ Wartet oder laeuft fuer das Quellsystem schon ein Lauf (z. B. Agent offline), fa
 Termin aus. Der Lauf selbst entsteht wie bei "Jetzt einlesen" (`store.runs`).
 
 Seit 0.48.0 raeumt dieselbe Schleife einmal am Tag auf (`store.retention.maybe_purge`): alte
-Laeufe, NetBox-Sync-Vorschauen und Audit-Eintraege nach ihrer Frist.
+Laeufe, NetBox-Sync-Vorschauen und Audit-Eintraege nach ihrer Frist. Stuendlich rechnet sie die
+Befunde der Quellsysteme nach (`store.data_quality.maybe_refresh`, ADR 0029).
 """
 
 import logging
@@ -22,7 +23,7 @@ from app import schedule
 from app.config import get_settings
 from app.jobs import celery_app
 from app.models import SourceSystem
-from app.store import retention, runs
+from app.store import data_quality, retention, runs
 
 log = logging.getLogger(__name__)
 ACTOR = "system:scheduler"
@@ -141,6 +142,10 @@ def start(factory: sessionmaker, tz: str, interval: int) -> threading.Event:
                     log.info("Aufbewahrung: geloescht %s", counts)
             except Exception:
                 log.exception("Aufraeumen nach Frist fehlgeschlagen")
+            try:  # Datenqualitaet (ADR 0029): veraltete Quellsysteme auch ohne Lauf als Befund
+                data_quality.maybe_refresh(factory, get_settings())
+            except Exception:
+                log.exception("Befunde der Quellsysteme nicht nachgerechnet")
 
     threading.Thread(target=loop, name="automato-scheduler", daemon=True).start()
     log.info("Zeitplan aktiv (alle %s s, Zeitzone %s)", interval, tz)

@@ -548,6 +548,8 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
         return _IPAM_TEXT[ftype](subject, d, on)
     if ftype in _PARALLEL_TEXT:
         return _PARALLEL_TEXT[ftype](subject, d, on)
+    if ftype in _SOURCE_TEXT:
+        return _SOURCE_TEXT[ftype](subject, d)
     return subject, ""
 
 
@@ -1183,4 +1185,118 @@ _PARALLEL_TEXT = {
     ),
     "parallel_nat_mismatch": lambda s, d, on: _parallel_item("parallel_nat_mismatch", d, on),
     "parallel_route_mismatch": lambda s, d, on: _parallel_routes(d),
+}
+
+
+# -- Datenqualitaet (ADR 0029) ------------------------------------------------------------
+
+_PLATFORM = {
+    "fortigate": ("FortiGate", "FortiGate"),
+    "cisco_aci": ("Cisco ACI", "Cisco ACI"),
+    "vmware": ("VMware vCenter", "VMware vCenter"),
+    "cisco_switch": ("Switches & Router", "Switches & routers"),
+    "avi": ("NSX ALB (Avi)", "NSX ALB (Avi)"),
+    "infoblox": ("Infoblox DDI", "Infoblox DDI"),
+    "netbox": ("NetBox", "NetBox"),
+}
+
+_PARTIAL_HINT = {  # Art des Teilfehlers -> was pruefen
+    "unreached": (
+        "Erreichbarkeit der Geräte prüfen (Adresse, SSH, Zugangsdaten, Host-Schlüssel)",
+        "Check the reachability of the devices (address, SSH, credentials, host key)",
+    ),
+    "unreadable": (
+        "Leserechte des Kontos prüfen (Profil mit Lesezugriff auf alle VDOMs, Routing und BGP "
+        "bzw. die Objekte am Controller)",
+        "Check the read permissions of the account (profile with read access to all VDOMs, "
+        "routing and BGP or the objects on the controller)",
+    ),
+    "contexts": (
+        "Leserechte für Routing und BGP prüfen (FortiGate-Profil je VDOM, Border-Leafs am APIC)",
+        "Check the read permissions for routing and BGP (FortiGate profile per VDOM, border "
+        "leafs on the APIC)",
+    ),
+    "notes": (
+        "Befehle ohne auswertbare Ausgabe: Plattform bzw. Version des Geräts prüfen",
+        "Commands without parsable output: check the platform or version of the device",
+    ),
+}
+
+
+def _source_who(subject: str, d: dict) -> str:
+    what = _pick(_PLATFORM, d.get("platform"))
+    return f"{_q(subject)} ({what})" if what else _q(subject)
+
+
+def _source_stale(subject: str, d: dict) -> tuple[str, str]:
+    """Stand eines Quellsystems veraltet: letzter erfolgreicher Lauf aelter als die Grenze."""
+    who, limit, sched = _source_who(subject, d), d.get("limit_days"), d.get("schedule")
+    rule = L(f"Grenze {limit} Tage", f"limit {limit} days")
+    if sched:
+        rule += L(f", Zeitplan {sched}", f", schedule {sched}")
+    if d.get("never"):
+        msg = L(
+            f"Quellsystem {who} wurde noch nie erfolgreich eingelesen ({rule}) – Doku, Weg-Suche "
+            "und Zonen kennen seine Daten nicht.",
+            f"Source system {who} has never been collected successfully ({rule}) – "
+            "documentation, path search and zones do not know its data.",
+        )
+    else:
+        age = d.get("age_days")
+        msg = L(
+            f"Quellsystem {who} wurde zuletzt vor {age} Tagen erfolgreich eingelesen ({rule}) – "
+            "Doku, Weg-Suche und Zonen zeigen einen alten Stand.",
+            f"Source system {who} was last collected successfully {age} days ago ({rule}) – "
+            "documentation, path search and zones show outdated data.",
+        )
+    if d.get("last_failed"):
+        why = (d.get("last_message") or "").rstrip(".")
+        msg += L(f" Letzter Lauf fehlgeschlagen{': ' + why if why else ''}.",
+                 f" Last run failed{': ' + why if why else ''}.")  # fmt: skip
+    return msg, L(
+        "Neu einlesen bzw. die Ursache des Fehlschlags beheben (Läufe, Betriebszustand); für "
+        "regelmässiges Einlesen einen Zeitplan am Quellsystem setzen. Ein bewusst nicht mehr "
+        "gelesenes Quellsystem ausschalten. Grenze: AUTOMATO_STALE_DAYS.",
+        "Collect again or fix the cause of the failure (runs, health); set a schedule on the "
+        "source system for regular collection. Switch off a source system that is intentionally "
+        "no longer read. Limit: AUTOMATO_STALE_DAYS.",
+    )
+
+
+def _source_partial(subject: str, d: dict) -> tuple[str, str]:
+    """Letzter Lauf nur teilweise: Teilfehler aus der Laufmeldung (Text wie gespeichert) und
+    Routing-Kontexte „nicht lesbar“."""
+    parts = d.get("parts") or []
+    items = [str(p["text"]) for p in parts if p.get("text")]
+    contexts = d.get("contexts") or []
+    if contexts:
+        n = d.get("context_count") or len(contexts)
+        shown_ctx = [
+            f"{c.get('node')} · {c.get('context')} ({'; '.join(c.get('missing') or [])})"
+            for c in contexts
+        ]
+        listed = _list(shown_ctx, 3)
+        items.append(L(f"Routing nicht lesbar in {n} Kontext{'en' if n != 1 else ''}: {listed}",
+                       f"routing not readable in {n} context{'s' if n != 1 else ''}: "
+                       f"{listed}"))  # fmt: skip
+    shown = "; ".join(items) or "–"
+    kinds = [p.get("kind") for p in parts] + (["contexts"] if contexts else [])
+    checks = [L(*_PARTIAL_HINT[k]) for k in dict.fromkeys(kinds) if k in _PARTIAL_HINT]
+    return (
+        L(
+            f"Der letzte Lauf von {_q(subject)} hat nur einen Teil gelesen: {shown}.",
+            f"The last run of {_q(subject)} only collected part of the data: {shown}.",
+        ),
+        "; ".join(checks)
+        + L(
+            " – und neu einlesen. Bis dahin fehlen diese Daten in Weg-Suche, Doku und Zonen.",
+            " – and collect again. Until then this data is missing in path search, "
+            "documentation and zones.",
+        ),
+    )
+
+
+_SOURCE_TEXT = {
+    "source_stale": _source_stale,
+    "source_partial": _source_partial,
 }

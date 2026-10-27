@@ -93,6 +93,20 @@ const DETAIL_LABEL: Record<string, string | null> = {
   seq: null,
   entries: null,
   counts: null,
+  // Datenqualität (ADR 0029): Teilfehler und Kontexte stehen im Satz
+  platform: null,
+  last_success: L("zuletzt erfolgreich", "last successful"),
+  never: null,
+  age_days: L("Alter (Tage)", "Age (days)"),
+  limit_days: L("Grenze (Tage)", "Limit (days)"),
+  schedule: L("Zeitplan", "Schedule"),
+  last_failed: null,
+  last_message: L("letzte Meldung", "last message"),
+  run_id: null,
+  finished_at: L("Lauf beendet", "Run finished"),
+  parts: null,
+  contexts: null,
+  context_count: null,
 };
 
 // Routing-Befund im Verbund (0.72.0): je Präfix, was auf der führenden bzw. dieser Firewall steht
@@ -192,6 +206,18 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
               params: { tab: "policy", q: `${String(d.source ?? "")} ${String(d.name ?? d.seq ?? "")}`.trim() } }];
   if (f.type === "parallel_nat_mismatch" && d.name)
     return [{ label: String(d.name), view: "nat", params: { q: String(d.name) } }];
+  // Datenqualität (ADR 0029): Läufe des Quellsystems, nicht lesbarer Routing-Kontext
+  if ((f.type === "source_stale" || f.type === "source_partial") && sid != null) {
+    const out: { label: string; view: View; params: ViewParams }[] = [
+      { label: L(`Läufe von ${f.subject_id}`, `Runs of ${f.subject_id}`), view: "laeufe",
+        params: { system: String(sid) } },
+    ];
+    const ctx = (Array.isArray(d.contexts) ? d.contexts : []) as { context?: string }[];
+    if (ctx[0]?.context)
+      out.push({ label: `Routing ${ctx[0].context}`, view: "routing",
+                 params: { tab: "routes", context: `${sid}|${ctx[0].context}` } });
+    return out;
+  }
   return [];
 }
 

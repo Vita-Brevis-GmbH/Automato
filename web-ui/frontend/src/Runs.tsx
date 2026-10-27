@@ -125,9 +125,19 @@ export function RunsTable({
   );
 }
 
-export default function Runs({ me, tenantId, tenantLabel }: { me: Me; tenantId: number | null; tenantLabel: string }) {
+export default function Runs({
+  me,
+  tenantId,
+  tenantLabel,
+  params = {},
+}: {
+  me: Me;
+  tenantId: number | null;
+  tenantLabel: string;
+  params?: Record<string, string>; // Link: system= filtert auf ein Quellsystem (Datenqualität)
+}) {
   const [status, setStatus] = useState("");
-  const [systemId, setSystemId] = useState("");
+  const [systemId, setSystemId] = useState(params.system ?? "");
   const [platform, setPlatform] = useState("");
   const [trigger, setTrigger] = useState("");
   const [offset, setOffset] = useState(0);

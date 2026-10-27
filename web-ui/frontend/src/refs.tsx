@@ -70,6 +70,8 @@ export const FINDING_LABEL: Record<string, string> = {
   lag_degraded: L("Port-Channel unvollständig", "Port-Channel incomplete"),
   vlan_split: L("VLAN getrennt", "VLAN split"),
   vpc_mismatch: L("vPC-Paar uneinheitlich", "vPC pair inconsistent"),
+  source_stale: L("Quellsystem: Stand veraltet", "Source system: data outdated"),
+  source_partial: L("Quellsystem: nur teilweise gelesen", "Source system: only partially collected"),
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -216,6 +218,14 @@ export const FINDING_HINT: Record<string, string> = {
     "vPC nur auf einem Peer, down bzw. inkonsistent – oder der Peer des vPC-Paars ist nicht verbunden",
     "vPC only on one peer, down or inconsistent – or the peer of the vPC pair is not connected",
   ),
+  source_stale: L(
+    "letzter erfolgreicher Lauf älter als die Grenze (AUTOMATO_STALE_DAYS, Zeitplan beachtet) – Doku und Weg-Suche zeigen einen alten Stand",
+    "last successful run older than the limit (AUTOMATO_STALE_DAYS, schedule considered) – documentation and path search show outdated data",
+  ),
+  source_partial: L(
+    "letzter Lauf mit Teilfehlern: Geräte nicht erreicht, nicht lesbar bzw. Routing-Kontexte unvollständig",
+    "last run with partial errors: devices not reached, not readable or routing contexts incomplete",
+  ),
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -317,6 +327,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "EPGs without endpoints, port groups without EPG, learned ≠ configured",
     ),
     types: ["epg_no_endpoints", "portgroup_no_epg", "portgroup_name_mismatch", "epg_assignment_conflict"],
+  },
+  {
+    key: "data",
+    label: L("Datenqualität", "Data quality"),
+    help: L(
+      "Stand der Quellsysteme: veraltet bzw. nur teilweise gelesen – Abgleich → Datenqualität zeigt alles",
+      "State of the source systems: outdated or only partially collected – Reconciliation → Data quality shows everything",
+    ),
+    types: ["source_stale", "source_partial"],
   },
 ];
 

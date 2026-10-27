@@ -27,10 +27,9 @@ from app.models import (
     SyncPlan,
     SyncStatus,
 )
-from app.store import db_roles, retention
+from app.store import data_quality, db_roles, retention
 
 AGENT_OFFLINE = timedelta(minutes=30)  # Wach-Modus fragt alle 20 s, Neustart alle 15 min
-SOURCE_STALE = timedelta(days=7)
 CENTRAL_WAIT = timedelta(minutes=10)
 BACKUP_MAX_AGE = timedelta(hours=26)
 SYNC_RECENT = timedelta(hours=24)
@@ -76,7 +75,7 @@ def checks(
     out = [_database(database_ok), _db_role(session), _internal_tls(session, settings, now)]
     out += [_scheduler(session, settings, now), _central(session, now)]
     out += _agents(session, tenant_id, now)
-    out += _sources(session, tenant_id, now)
+    out += _sources(session, settings, tenant_id, now)
     out += _netbox_sync(session, tenant_id, now)
     out.append(_backup(settings, now))
     out.append(_retention(session, settings, now))
@@ -380,7 +379,11 @@ def _agents(session: Session, tenant_id: int | None, now: datetime) -> list[Chec
     return out
 
 
-def _sources(session: Session, tenant_id: int | None, now: datetime) -> list[Check]:
+def _sources(
+    session: Session, settings: Settings, tenant_id: int | None, now: datetime
+) -> list[Check]:
+    """Je Quellsystem: nie eingelesen, letzter Lauf fehlgeschlagen bzw. Stand veraltet - die
+    Grenze wie beim Befund `source_stale` (`data_quality.stale_limit`, ADR 0029)."""
     stmt = select(SourceSystem).where(SourceSystem.enabled.is_(True))
     if tenant_id is not None:
         stmt = stmt.where(SourceSystem.tenant_id == tenant_id)
@@ -422,7 +425,7 @@ def _sources(session: Session, tenant_id: int | None, now: datetime) -> list[Che
                     _aware(last.finished_at),
                 )
             )
-        elif good is not None and now - good > SOURCE_STALE:
+        elif good is not None and _stale(src, settings, now, good):
             out.append(
                 Check(
                     key,
@@ -449,6 +452,11 @@ def _sources(session: Session, tenant_id: int | None, now: datetime) -> list[Che
                 )  # fmt: skip
             )
     return out
+
+
+def _stale(src: SourceSystem, settings: Settings, now: datetime, good: datetime) -> bool:
+    limit, _period = data_quality.stale_limit(src, settings, now)
+    return limit is not None and now - good > limit
 
 
 def _netbox_sync(session: Session, tenant_id: int | None, now: datetime) -> list[Check]:

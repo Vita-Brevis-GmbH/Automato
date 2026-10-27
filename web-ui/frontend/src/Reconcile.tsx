@@ -1,8 +1,11 @@
 // Abgleich (ADR 0010): Befunde je Typ, Referenzquellen des Mandanten und Vergleich des führenden
 // IPAM (z. B. Infoblox DDI) mit der Anreicherung (NetBox). Gegenüber den Quellsystemen rein lesend.
+// Reiter „Datenqualität“ (ADR 0029): wo Ergebnisse unsicher sind, mit Ursache und Link (#abgleich?tab=datenqualitaet).
 import { useCallback, useEffect, useState } from "react";
 import { fetchIpamCompare, fetchReconcileSummary, IpamCompare, RefBrief, ReconcileSummary, runReconcile } from "./api";
+import type { View, ViewParams } from "./App";
 import type { Me } from "./auth";
+import { DataQualityPanel } from "./DataQuality";
 import { FINDING_HINT, FINDING_LABEL, PLATFORM_LABEL, REF_ROLE_LABEL } from "./refs";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 import { L } from "./i18n";
@@ -24,16 +27,23 @@ const TYPES = [
 ];
 
 
+type Tab = "befunde" | "datenqualitaet";
+const tabOf = (p: ViewParams): Tab => (p.tab === "datenqualitaet" ? "datenqualitaet" : "befunde");
+
 export default function Reconcile({
   me,
   tenantId,
   tenantLabel,
+  params = {},
+  onGo,
   onOpenFindings,
   onChanged,
 }: {
   me: Me;
   tenantId: number | null;
   tenantLabel: string;
+  params?: ViewParams; // tab=datenqualitaet (Kachel der Übersicht)
+  onGo?: (v: View, p?: ViewParams) => void; // Links der Datenqualität in die Ansichten
   onOpenFindings: (type: string) => void;
   onChanged: () => void;
 }) {
@@ -41,6 +51,12 @@ export default function Reconcile({
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [stamp, setStamp] = useState(0);
+  const [tab, setTab] = useState<Tab>(() => tabOf(params));
+  useEffect(() => setTab(params.tab === "datenqualitaet" ? "datenqualitaet" : "befunde"), [params.tab]);
+  const choose = (t: Tab) => {
+    setTab(t);
+    onGo?.("abgleich", t === "befunde" ? {} : { tab: t });
+  };
 
   const load = useCallback(() => {
     if (tenantId === null) return;
@@ -108,8 +124,22 @@ export default function Reconcile({
         )}
       </PageHead>
       <ErrorBox error={error} prefix={L("Abgleich", "Reconciliation")} onClose={() => setError(null)} />
+      <div className="tabbar">
+        <button className={tab === "befunde" ? "on" : ""} onClick={() => choose("befunde")}>
+          {L("Befunde & IPAM", "Findings & IPAM")}
+        </button>
+        <button
+          id="data-quality-tab"
+          className={tab === "datenqualitaet" ? "on" : ""}
+          onClick={() => choose("datenqualitaet")}
+        >
+          {L("Datenqualität", "Data quality")}
+        </button>
+      </div>
 
-      {summary === null ? (
+      {tab === "datenqualitaet" ? (
+        <DataQualityPanel tenantId={tenantId} stamp={stamp} onGo={onGo} />
+      ) : summary === null ? (
         !error && <Loading />
       ) : (
         <>
