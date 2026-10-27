@@ -443,6 +443,12 @@ Systeme und Lösungen mit anderen Topologien dokumentieren. Zu entscheiden: je F
 NetBox und Datenbank oder alles am gleichen Ort (heute: eine Instanz je Umgebung, ADR 0018;
 Datenhaltung R14). Eigene ADR vor dem Umbau.
 
+**Cockpit für alle Werkzeuge (Plan 2026-10-27, ADR 0014 Entwurf v2, noch nichts umgesetzt):**
+das Cockpit von Magister herauslösen und für Automato, Magister, NetBox und Keycloak ausbauen –
+Inventar und Status (P1), Zugänge über Keycloak mit App-Starter (P2), Updates über einen
+Host-Agenten (P3), Ausrollen neuer Instanzen auf vorbereiteten VMs (P4); acht offene Entscheide
+des Anwenders in der ADR.
+
 **Frühere Reihenfolge (Stand 0.65.0):**
 
 **Entscheide des Anwenders (2026-10-23):**
