@@ -7,6 +7,29 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.80.1 – 2026-10-27
+
+Korrektur nach dem Test des Anwenders: Läufe stabil beim Einlesen aller Geräte. Ohne Migration.
+
+- **„Einspielen fehlgeschlagen: DeadlockDetected … relation rule_index“:** mehrere Ergebnisse
+  kamen zugleich an, jedes schrieb danach den ganzen Zustand des Mandanten neu (Findings,
+  Regelindex, Zwillinge paralleler Firewalls, Applikations-Befunde, Kunden) – zwei davon
+  sperrten sich gegenseitig. Jetzt werden Ergebnisse **nacheinander** eingespielt
+  (`store/tenant_lock.slot`); was den Zustand des Mandanten schreibt (Einspielen,
+  Referenzlauf, „Abgleich“, Paare, Applikationen/Kunden nachziehen), sperrt den Mandanten in
+  Postgres bis zum Ende der Transaktion (`pg_advisory_xact_lock`). Bleibt ein Deadlock bzw.
+  Serialisierungsfehler, wird das Einspielen bis zu dreimal wiederholt.
+- **HTTP 500 beim Aktualisieren der Läufe:** wartende Uploads hielten je eine Verbindung zur
+  Datenbank, bis die Liste keine mehr bekam. Ein wartendes Ergebnis gibt seine Verbindung jetzt
+  zurück; ein schon abgeschlossener Lauf wird ohne Warten quittiert. Die Liste beendet hängende
+  Läufe im Savepoint und nur in einer Abfrage zugleich – ein Fehler dabei macht keinen 500 mehr.
+  Mehr Verbindungen und Threads: `AUTOMATO_DB_POOL_SIZE` (10), `AUTOMATO_DB_MAX_OVERFLOW` (20),
+  `AUTOMATO_API_THREADS` (80).
+- **Läufe:** ein angekommenes, noch nicht eingespieltes Ergebnis steht als „Ergebnis
+  angekommen – wartet aufs Einspielen (n davor)“ bzw. „… wird eingespielt“ am Lauf und wird
+  nicht als hängend beendet.
+- BETRIEB, TESTS, `.env.example`.
+
 ## 0.80.0 – 2026-10-27
 
 Filter in den Verbindungen Ende zu Ende (Wunsch des Anwenders). Ohne Migration, nur Oberfläche.

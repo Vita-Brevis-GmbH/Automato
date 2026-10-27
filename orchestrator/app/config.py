@@ -15,6 +15,11 @@ class Settings(BaseSettings):
 
     environment: str = "dev"
     database_url: str = "postgresql+psycopg://automato:automato@localhost:5432/automato"
+    # Verbindungen zur Datenbank und Threads fuer Anfragen (0.80.1): das Einspielen haelt eine
+    # Verbindung lange, die Liste der Laeufe bekam sonst keine mehr (HTTP 500)
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    api_threads: int = 80
     redis_url: str = "redis://localhost:6379/0"
     # Token, mit dem Collectors Ergebnisse an die interne API liefern.
     # In jeder echten Umgebung ueber ENV setzen - der Default gilt nur lokal.

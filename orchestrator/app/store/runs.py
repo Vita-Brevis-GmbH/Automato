@@ -8,15 +8,21 @@ Haengende Laeufe (Agent beendet, Ergebnis-Upload verloren, nie abgeholt) blockie
 nach einer Frist, `cancel` von Hand; `blocking` nennt Lauf, Zustand und seit wann.
 """
 
+import logging
+import threading
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import audit, credentials
 from app.config import get_settings
 from app.models import REFERENCE_PLATFORMS, Agent, CollectorRun, RunStatus, SourceSystem
+from app.store import tenant_lock
+
+log = logging.getLogger(__name__)
 
 OPEN = (RunStatus.QUEUED, RunStatus.RUNNING)
 
@@ -143,11 +149,32 @@ def expire_stale(session: Session, now: datetime | None = None) -> int:
                 f"abgebrochen: nach {settings.run_queue_timeout_hours} h nicht abgeholt - "
                 "Agent offline bzw. kein zentraler Worker"
             )
+        if tenant_lock.state(run.id) is not None:
+            continue  # Ergebnis angekommen: wartet aufs Einspielen bzw. wird eingespielt
         if _lock_open(session, run.id) is None:
             continue  # Ergebnis wird gerade eingespielt bzw. eine andere Abfrage beendet ihn
         _finish(session, run, reason, actor="system:timeout", now=now)
         expired += 1
     return expired
+
+
+_expiring = threading.Lock()
+
+
+def expire_quietly(session: Session) -> int:
+    """`expire_stale` fuer Lese-Abfragen (Liste der Laeufe, 0.80.1): eine Abfrage zugleich,
+    im Savepoint - ein Fehler beim Beenden haengender Laeufe macht die Liste nicht zu einem
+    HTTP 500 (Befund des Anwenders beim Aktualisieren der letzten Laeufe)."""
+    if not _expiring.acquire(blocking=False):
+        return 0  # die andere Abfrage beendet sie
+    try:
+        with session.begin_nested():
+            return expire_stale(session)
+    except SQLAlchemyError:
+        log.warning("Haengende Laeufe nicht beendet", exc_info=True)
+        return 0
+    finally:
+        _expiring.release()
 
 
 def _lock_open(session: Session, run_id: str) -> CollectorRun | None:

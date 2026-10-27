@@ -43,7 +43,7 @@ from app.schemas.rules import (
     RuleOut,
     RuleSummaryOut,
 )
-from app.store import aci_direction, aci_relevance, relevance, rule_index, virtual
+from app.store import aci_direction, aci_relevance, relevance, rule_index, tenant_lock, virtual
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import objects as objects_store
@@ -390,6 +390,7 @@ def decide_pair(
             detail="pair = one IPv4 and one IPv6 rule of the same firewall and VDOM",
         )
     v4, v6 = (a, b) if a.ip_family == "v4" else (b, a)
+    tenant_lock.hold(session, a.tenant_id)  # schreibt den Regelindex (0.80.1)
     # eine Entscheidung ohne VDOM (vor 0.15.0) wird zu einer im VDOM des Paares
     decision = session.scalars(
         select(RulePairDecision)
@@ -452,6 +453,7 @@ def reset_pair(
         raise HTTPException(status_code=404, detail="decision not found")
     tenant_scope(principal, d.tenant_id)
     sid, tid = d.source_system_id, d.tenant_id
+    tenant_lock.hold(session, tid)
     session.delete(d)
     audit.record(
         session,

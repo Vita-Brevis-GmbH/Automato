@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
+from anyio import to_thread
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -44,6 +45,8 @@ def _lifespan(settings: Settings):
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         stop = None
+        # Threads fuer Anfragen (0.80.1): wartende Ergebnisse belegen je einen
+        to_thread.current_default_thread_limiter().total_tokens = max(40, settings.api_threads)
         try:  # mit dem alten Prozess gestorbene NetBox-Syncs beenden (Dev-Befund 0.11.4)
             netbox_sync.abort_interrupted(get_sessionmaker())
         except Exception:  # noqa: BLE001 - z. B. Datenbank noch nicht migriert: Start geht vor

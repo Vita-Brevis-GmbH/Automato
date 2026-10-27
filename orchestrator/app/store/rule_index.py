@@ -45,7 +45,7 @@ from app.schemas.rules import AciContractOut, RuleNatOut, RuleOut, RulePairOut
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import objects as objects_store
-from app.store import parallel, references, rule_pairs, rule_view, virtual
+from app.store import parallel, references, rule_pairs, rule_view, tenant_lock, virtual
 from app.store import rules as rules_store
 
 # -- IP-Bereiche --------------------------------------------------------------
@@ -361,6 +361,7 @@ def rebuild(
     `rules` = gerade eingelesene Regeln des Quellsystems (spart das erneute Laden)."""
     if tenant_id is None:
         return 0
+    tenant_lock.hold(session, tenant_id)  # ein Schreiber je Mandant (0.80.1, Deadlock)
     session.flush()
     if source_system_id is not None:
         sources = select(SourceSystem.id).where(SourceSystem.id == source_system_id)

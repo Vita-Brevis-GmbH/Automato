@@ -46,7 +46,7 @@ from app.models import (
     Vm,
     VmIp,
 )
-from app.store import external, parallel, virtual
+from app.store import external, parallel, tenant_lock, virtual
 from app.store import naming_profiles as profile_store
 
 
@@ -68,6 +68,7 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     """Alle Befunde des Mandanten neu berechnen; Rueckgabe: Anzahl je Befund-Typ."""
     if tenant_id is None:
         return {}
+    tenant_lock.hold(session, tenant_id)  # ein Schreiber je Mandant (0.80.1)
     session.flush()
     from app.store import references  # Referenz-Ebene (IPAM), spaet importiert
 
@@ -402,6 +403,7 @@ def _schema_issues(session: Session, tenant_id: int) -> list[Issue]:
 def refresh_zone_findings(session: Session, tenant_id: int) -> int:
     """Nur die Zonen-Befunde neu berechnen (nach dem Speichern einer Zone bzw. Absicht) - ohne
     den ganzen Abgleich; Triage-Status bleibt wie sonst erhalten."""
+    tenant_lock.hold(session, tenant_id)
     issues = _zone_issues(session, tenant_id)
     _sync_findings(session, tenant_id, issues, types=ZONE_TYPES)
     return len(issues)
@@ -1097,6 +1099,7 @@ def _sync_findings(session: Session, tenant_id: int, issues: list[Issue],
                    types: frozenset | None = None, keep=None) -> None:  # fmt: skip
     """Gespeicherte Befunde auf `issues` bringen; mit `types` nur Befunde dieser Typen, `keep`
     (Befund -> bool) laesst gespeicherte Befunde ausserhalb des Abgleichs unberuehrt."""
+    tenant_lock.hold(session, tenant_id)
     now = datetime.now(UTC)
     wanted = {i.key: i for i in issues}
     existing: dict[tuple, Finding] = {}

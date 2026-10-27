@@ -69,7 +69,8 @@ export function RunsTable({
               <td className="num">{r.rule_count ?? "–"}</td>
               <td>
                 <RunStatusChip status={r.status} />
-                {r.message && (r.status === "failed" || SUMMARY_PLATFORMS.has(r.platform)) && (
+                {/* offen: „Ergebnis angekommen – wartet aufs Einspielen“ (0.80.1) */}
+                {r.message && (r.status === "failed" || open || SUMMARY_PLATFORMS.has(r.platform)) && (
                   <div className={r.status === "failed" ? "run-msg err" : "run-msg"} title={r.message}>
                     {r.message}
                   </div>

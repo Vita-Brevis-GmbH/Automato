@@ -71,7 +71,7 @@ from app.models import (
     VmNic,
     Zone,
 )
-from app.store import aci_relevance, virtual
+from app.store import aci_relevance, tenant_lock, virtual
 from app.store import epgs as epg_store
 from app.store.topology import ip_hex
 
@@ -692,6 +692,7 @@ def selectors_of(c: Customer) -> list[Selector]:
 def derive(session: Session, tenant_id: int, customer_id: int | None = None) -> int:
     """Zugehoerigkeit der Kunden des Mandanten (bzw. eines Kunden) neu ableiten; Anzahl der
     Eintraege."""
+    tenant_lock.hold(session, tenant_id)  # ein Schreiber je Mandant (0.80.1)
     stmt = select(Customer).where(Customer.tenant_id == tenant_id)
     if customer_id is not None:
         stmt = stmt.where(Customer.id == customer_id)
@@ -727,6 +728,7 @@ def derive_findings(session: Session, tenant_id: int) -> int:
     aendern sich nur ihre Befunde (Abweichung Regel <-> Weg), die Kunden ueber ihre Regel
     gehoeren. Die uebrige gespeicherte Zugehoerigkeit bleibt; statt der ganzen Ableitung
     (Sekunden bis Minuten bei grossen Umgebungen) genuegt ein Durchgang ueber die Findings."""
+    tenant_lock.hold(session, tenant_id)
     customers = list(session.scalars(select(Customer).where(Customer.tenant_id == tenant_id)))
     if not customers:
         return 0

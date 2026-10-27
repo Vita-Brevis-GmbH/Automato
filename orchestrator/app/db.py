@@ -13,9 +13,15 @@ from app.config import get_settings
 @lru_cache
 def get_engine():
     settings = get_settings()
+    pool = {}
+    if settings.database_url.startswith("postgresql"):  # SQLite (Tests) ohne Pool-Groesse
+        pool = {"pool_size": settings.db_pool_size, "max_overflow": settings.db_max_overflow}
     # TLS intern (0.49.0): verify-full gegen die interne CA
     return create_engine(
-        settings.database_url, pool_pre_ping=True, connect_args=tls.db_connect_args(settings)
+        settings.database_url,
+        pool_pre_ping=True,
+        connect_args=tls.db_connect_args(settings),
+        **pool,
     )
 
 

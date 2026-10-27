@@ -1589,6 +1589,28 @@ an (`deploy/agent-gateway`, Port 8443).
   Antwort da ist, und die Liste überspringt einen gerade gesperrten Lauf (`SKIP LOCKED`).
   Bleibt der Fehler: `docker compose logs orchestrator | grep -B2 -A30 Traceback` – die
   letzte Zeile nennt die Ursache.
+- **„Einspielen fehlgeschlagen: DeadlockDetected … relation "rule_index"“ bzw. weiter HTTP 500
+  beim Aktualisieren der Läufe** (bis 0.80.0) — beim Einlesen aller Geräte kamen mehrere
+  Ergebnisse zugleich an. Jedes schrieb danach den ganzen Zustand des Mandanten neu (Findings,
+  Regelindex, Zwillinge paralleler Firewalls, Applikations-Befunde, Kunden); zwei davon
+  sperrten sich gegenseitig, und jedes wartende Einspielen hielt eine Verbindung zur
+  Datenbank, bis für die Liste der Läufe keine mehr frei war. Seit 0.80.1:
+  - Ergebnisse werden **nacheinander** eingespielt. Ein wartendes Ergebnis belegt keine
+    Verbindung; der Lauf zeigt „Ergebnis angekommen – wartet aufs Einspielen (n davor)“ bzw.
+    „… wird eingespielt“ und wird nicht als hängend beendet. Ein schon abgeschlossener Lauf
+    (zweiter Upload des Agenten) wird ohne Warten quittiert. Der Agent wartet je Versuch bis zu
+    10 Minuten auf die Quittung und versucht es viermal – bei vielen grossen Läufen zugleich
+    kann ein Lauf darum länger „läuft“ zeigen.
+  - Alles, was den Zustand des Mandanten neu schreibt (Einspielen, Referenzlauf, „Abgleich“,
+    Paare bestätigen, Applikationen und Kunden nachziehen), sperrt den Mandanten in Postgres bis
+    zum Ende der Transaktion (`pg_advisory_xact_lock`) – auch über mehrere Prozesse.
+  - Bleibt ein Deadlock bzw. Serialisierungsfehler, wird das Einspielen bis zu dreimal
+    wiederholt (Warnung im Log „… – neuer Versuch“).
+  - Die Liste der Läufe beendet hängende Läufe im Savepoint und nur in einer Abfrage zugleich;
+    scheitert das, bleibt die Liste trotzdem lesbar.
+  - Mehr Verbindungen und Threads: `AUTOMATO_DB_POOL_SIZE` (10) und `AUTOMATO_DB_MAX_OVERFLOW`
+    (20) in der `.env`, `AUTOMATO_API_THREADS` (80). Die Summe muss unter `max_connections` von
+    Postgres bleiben (Standard 100, mit Celery-Worker und NetBox).
 - **„Alle einlesen“ überspringt ein System, obwohl nichts läuft** (bis 0.11.2) — ein früherer
   Lauf wurde abgeholt, aber nie abgeschlossen (Agent beendet, Upload verloren), und steht
   ausserhalb der letzten acht Läufe noch auf „läuft“ (seit 0.13.0 zeigt die Übersicht alle

@@ -17,7 +17,7 @@ from app.schemas.jobs import (
     CollectJobResponse,
     CollectorRunOut,
 )
-from app.store import runs
+from app.store import runs, tenant_lock
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -93,6 +93,18 @@ def start_collect_all(
     return CollectAllResponse(queued=sum(1 for i in items if i.run_id), items=items)
 
 
+def _message(run: CollectorRun) -> str | None:
+    """Meldung des Laufs; ist sein Ergebnis angekommen, aber noch nicht eingespielt (0.80.1:
+    eines nach dem anderen), steht das statt „läuft“ da."""
+    state = tenant_lock.state(run.id) if run.status in runs.OPEN else None
+    if state == "active":
+        return "Ergebnis angekommen – wird eingespielt"
+    if state == "waiting":
+        ahead = tenant_lock.waiting_before(run.id)
+        return f"Ergebnis angekommen – wartet aufs Einspielen ({ahead} davor)"
+    return run.message
+
+
 def _run_out(run: CollectorRun) -> CollectorRunOut:
     return CollectorRunOut(
         id=run.id,
@@ -101,7 +113,7 @@ def _run_out(run: CollectorRun) -> CollectorRunOut:
         tenant_id=run.tenant_id,
         source_system_id=run.source_system_id,
         rule_count=run.rule_count,
-        message=run.message,
+        message=_message(run),
         execution=run.execution,
         trigger=run.trigger,
         queued_at=run.queued_at,
@@ -128,7 +140,7 @@ def list_runs(
     """Laeufe seitenweise (neueste zuerst), Gesamtzahl im Header `X-Total-Count`. Nicht-Admin
     sieht nur Laeufe seiner Mandanten. Filter Status (auch `open`), Quellsystem, Plattform,
     Ausloeser (0.13.0: alle Laeufe, nicht nur die letzten)."""
-    runs.expire_stale(session)  # haengende Laeufe nicht als "laeuft" anzeigen
+    runs.expire_quietly(session)  # haengende Laeufe nicht als "laeuft" anzeigen
     conds = []
     if tenant_id is not None:
         tenant_scope(principal, tenant_id)  # fremder Mandant -> 403
