@@ -553,6 +553,53 @@ export interface Nat {
   targets?: NatTarget[]; // Virtual Server: Real Server
   attrs?: Record<string, unknown>; // Virtual Server: Server-Typ, Methode, Persistenz, Health-Checks
   issues?: string[]; // Korrektheitsprüfung (0.14.0): Befunde des VIP-/Pool-Objekts, Ziel ohne IPAM
+  source?: string | null; // Quellsystem (Firewall bzw. Load Balancer)
+  // 0.96.0: Kette über den Load Balancer, VIPs davor, Ziel-Server (direkt bzw. über LB), VIP-Gruppen
+  chain?: NatChain[];
+  fronted_by?: NatFront[];
+  dest_servers?: NatServer[];
+  groups?: string[];
+}
+
+// Ziel-Server eines VIP (0.96.0): direkt bzw. über einen Load Balancer (`via`)
+export interface NatServer {
+  ip: string | null;
+  port: string | null;
+  status: string | null;
+  via: string | null; // Virtual Service des NSX ALB
+  names: string[]; // Firewall-Objekte mit dieser IP
+  dns: string[];
+}
+
+// Kette einer VIP der Firewall (0.96.0): extern → VIP des Load Balancers → Virtual Service → Pool → Server
+export interface NatChain {
+  ext_ip: string | null;
+  ext_port: string | null;
+  vip_ip: string | null;
+  vip_port: string | null;
+  via: "ip" | "fqdn" | string;
+  balancer_id: number;
+  balancer: string;
+  source: string | null;
+  source_system_id: number | null;
+  pool: string | null;
+  tenant: string | null;
+  vrf: string | null;
+  floating: boolean;
+  down: boolean;
+  servers: NatServer[];
+}
+
+// VIP einer Firewall vor einem Virtual Service (0.96.0)
+export interface NatFront {
+  id: number;
+  name: string;
+  source: string | null;
+  source_system_id: number;
+  vdom: string | null;
+  ext_ip: string | null;
+  ext_port: string | null;
+  via: string;
 }
 
 // Real Server eines Virtual Servers (FortiGate server-load-balance)
@@ -1627,6 +1674,15 @@ export const fetchNat = (opts: {
     `/api/nat${cq({ tenant_id: opts.tenantId, nat_type: opts.natType, q: opts.q?.trim(), issues_only: opts.issuesOnly ? "true" : undefined, limit: opts.limit, offset: opts.offset })}`,
   );
 export const fetchNatDetail = (id: number) => getJSON<NatDetail>(`/api/nat/${id}`);
+// Export der Liste (0.96.0): alle Einträge mit den Filtern der Ansicht, seitenweise geladen
+export async function fetchAllNat(opts: { tenantId?: number | null; natType?: string; q?: string; issuesOnly?: boolean }) {
+  const rows: Nat[] = [];
+  for (;;) {
+    const page = await fetchNat({ ...opts, limit: 5000, offset: rows.length });
+    rows.push(...page.rows);
+    if (!page.rows.length || rows.length >= page.total) return rows;
+  }
+}
 export const fetchFindings = (opts: {
   tenantId?: number | null;
   status?: string;

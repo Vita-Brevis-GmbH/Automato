@@ -139,6 +139,8 @@ def _normalize_vdom(d: dict) -> tuple[list, list, list]:
         d.get("service_groups", []),
         d.get("policies6", []),
         d.get("vips6", []),
+        d.get("vipgrps", []),
+        d.get("vipgrps6", []),
     )
     nat_rules = norm.normalize_nat(
         d["vips"], d.get("vips6", []), d.get("ldb_monitors", [])
@@ -153,6 +155,9 @@ def _normalize_vdom(d: dict) -> tuple[list, list, list]:
         d["services"],
         d.get("service_groups", []),
         d.get("vips6", []),
+        d.get("vipgrps", []),
+        d.get("vipgrps6", []),
+        d.get("ippools6", []),
     )
     for item in (*rules, *nat_rules, *objects):
         item.vdom = d.get("vdom")

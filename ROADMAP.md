@@ -407,11 +407,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.94.0** | Switches: IPv6-Nachbarn (NDP) in Endpunkten und „Wo hängt …“, Arista EOS und HPE Aruba CX lesend; ArubaOS-Switch/ProCurve erkannt, nicht gelesen (ADR 0025 Nr. 13) |
 | **0.94.1** | Korrektur: unerwartete Fehler mit Referenz in Antwort und Protokoll (Fehlersuche HTTP 500 der Applikations-Doku) |
 | **0.95.0** | Applikations-Doku: Klick auf eine EPG öffnet ihr Detail (statt Sprung zu den Regeln), Objekt-Detail in der Doku, Namen der Gegenstellen als Einstellung des Admins (ADR 0012 Ergänzung 0.95.0) |
+| **0.96.0** | NAT / VIPs: Kette VIP der Firewall → Load Balancer → Server (Liste, Detail, Suche, CSV-Export), VIP-Gruppen der FortiGate, Namenskonvention für VIPs/Virtual Server/IP-Pools (ADR 0027/0016 Ergänzung 0.96.0) |
 
-### Nächste Arbeiten (Stand 0.95.0)
+### Nächste Arbeiten (Stand 0.96.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.95.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.96.0.
 
 **Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
 
@@ -423,10 +424,10 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | Contracts über L3Outs nur als Hilfs-Contract, nicht separat listen | in Arbeit (ADR 0034) |
 | Doku nach Kategorien: Namen von Systemen ausserhalb des Tenants – Einstellung des Global-Admins | **umgesetzt in 0.95.0** (Mandant „Namen der Gegenstellen“, nie für Kunden-Benutzer) |
 | Unspezifische Zugriffe nach dem L3Out ordnen, über den sie hereinkommen | in Arbeit (ADR 0034) |
-| NAT / VIPs: VIP der Internet-Firewall mit dem VIP des Load Balancers verknüpfen (externe IP → Server) | in Arbeit |
+| NAT / VIPs: VIP der Internet-Firewall mit dem VIP des Load Balancers verknüpfen (externe IP → Server) | **umgesetzt in 0.96.0** (Kette in Liste/Detail/Suche, CSV-Export, VIP-Gruppen) |
 | Weg-Suche: mehr Infos am Pfad ohne die Suche zu verlassen (Detail, neuer Tab) | in Arbeit |
 | Weg-Suche von bzw. zu einer Anbindung | in Arbeit |
-| NAT / VIPs: Namen gegen die Namenskonvention prüfen | in Arbeit |
+| NAT / VIPs: Namen gegen die Namenskonvention prüfen | **umgesetzt in 0.96.0** (Präfix je Typ VIP/Virtual Server/IP-Pool) |
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4
 Verkabelung, Applikationen, Kunden, Routing“):**

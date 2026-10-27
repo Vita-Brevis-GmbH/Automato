@@ -38,7 +38,8 @@ const OBJECT_CLASSES: Record<string, string> = {
   transfer: L("Transfernetz", "Transfer network"),
   vip: "VIP",
   vip_dnat: "VIP / DNAT",
-  snat_pool: "SNAT IP-Pool",
+  virtual_server: "Virtual Server",
+  snat_pool: L("SNAT IP-Pool", "SNAT IP pool"),
   range: L("Adressbereich", "Address range"),
   service: L("Service / ACI-Filter", "Service / ACI filter"),
 };
@@ -49,8 +50,8 @@ const KINDS: Record<string, KindMeta> = {
     cols: ["Prefix", L("Objekttyp", "Object type")],
     add: "Prefix",
     note: L(
-      "Wird beim Einlesen ausgewertet (längstes Prefix gewinnt). Typ „Service / ACI-Filter“ (FT_) gilt für die Namensprüfung der Services und Filter. Leer = eingebaute Standard-Konvention.",
-      "Evaluated during collection (longest prefix wins). Type “Service / ACI filter” (FT_) applies to the name check of services and filters. Empty = built-in default convention.",
+      "Wird beim Einlesen ausgewertet (längstes Prefix gewinnt). Typ „Service / ACI-Filter“ (FT_) gilt für die Namensprüfung der Services und Filter, „VIP“ bzw. „VIP / DNAT“ (V-EXT_, VIP_) für VIPs, „Virtual Server“ für Virtual Server (ohne Eintrag wie VIPs) und „SNAT IP-Pool“ (IPP_) für IP-Pools – ohne Prefix eines Typs keine Prüfung dieser Namen. Leer = eingebaute Standard-Konvention.",
+      "Evaluated during collection (longest prefix wins). Type “Service / ACI filter” (FT_) applies to the name check of services and filters, “VIP” or “VIP / DNAT” (V-EXT_, VIP_) to VIPs, “Virtual Server” to virtual servers (without an entry like VIPs) and “SNAT IP pool” (IPP_) to IP pools – without a prefix of a type, these names are not checked. Empty = built-in default convention.",
     ),
     values: OBJECT_CLASSES,
   },

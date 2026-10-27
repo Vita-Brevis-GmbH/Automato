@@ -176,6 +176,14 @@ Haupt-URL). `V-EXT_<fqdn>`, z. B. `V-EXT_www.example.ch`.
 - Pro Server: `IPP_<fqdn>` (z. B. `IPP_dcs01-001-res01.example.ch`).
 - Pro Tenant (gemeinsam): `IPP_<tenant>-<standort>-<zweck>` (z. B. `IPP_casch-000-inet01`).
 
+**Prüfung (seit 0.96.0):** VIPs (`vip`/`vip6`) müssen mit einem Präfix vom Typ „VIP“ bzw.
+„VIP / DNAT“ beginnen (Standard `V-EXT_`, `VIP_`), Virtual Server mit einem vom Typ „Virtual
+Server“ (ohne solchen Eintrag wie VIPs), IP-Pools (`ippool`/`ippool6`) mit einem vom Typ „SNAT
+IP-Pool“ (Standard `IPP_`) – sonst Befund „Name verletzt die Namenskonvention“. Ein Adress-Präfix
+(z. B. `H_`) an einer VIP genügt nicht mehr. Hat das eigene Namensprofil Präfixe, aber keines
+dieses Typs, werden diese Namen nicht geprüft. Namen des NSX ALB (Virtual Services) prüft
+Automato nicht.
+
 ### Schutzmechanismen (UTM-Profile an der Regel)
 - Web Filter `WEB_<systemtyp>-<zweck>` — `WEB_Server-default`, `WEB_Server-open`
 - Application Control `APP_<systemtyp>-<zweck>` — `APP_server-default`

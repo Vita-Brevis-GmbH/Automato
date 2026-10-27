@@ -98,3 +98,52 @@ Service → Server des Pools. Entscheid (ohne Migration, abgeleitet beim Lesen):
 5. **Weg-Suche:** am DNAT-Hop „NSX ALB vs-…“; liegt die VIP des Load Balancers hinter einem
    Router ohne gelesenes Gerät, geht der Weg trotzdem vom Load Balancer zum Server weiter.
 
+
+## Ergänzung 0.96.0 – Kette in NAT / VIPs
+
+Rückmeldung des Anwenders (Test 2026-10-27): „Bei den NAT / VIPs sind die zusammengehörenden
+VIPs der Internet Firewall und die des Loadbalancers noch nicht miteinander verknüpft … Ziel
+muss sein, dass ich sehe, welche externe IP zu welchen Servern geht, egal ob es noch durch
+einen Loadbalancer führt.“
+
+Ursachen: Die Ansicht NAT / VIPs zeigte die Verknüpfung aus 0.79.0 gar nicht (nur Regel-Detail,
+publizierte Dienste, Weg-Suche). Die Verknüpfung selbst griff nur bei genau einer internen IP:
+Bereiche in `mappedip` (1:1), mehrere Werte in `mappedip` (gespeichert war nur der erste),
+Port-Weiterleitung mit Port-Bereichen, Virtual Server der FortiGate mit der VIP des Load
+Balancers als Real Server und FQDN-VIPs fielen durch. Policies auf eine **VIP-Gruppe**
+(`firewall/vipgrp`) kannten die VIPs der Gruppe nicht – der Collector las die Gruppen nicht.
+
+Entscheid (ohne Migration, abgeleitet beim Lesen):
+
+1. **Verknüpfung robust** (`store/nat.Balancers.links`): interne Adressen der VIP aus allen
+   Werten von `mappedip` (Rohdaten), Bereiche als Bereich (eine VIP des Load Balancers im
+   Bereich trifft; die externe Adresse dazu an derselben Stelle des externen Bereichs, wenn
+   beide gleich gross sind), IPv6 normiert. Port-Weiterleitung: Virtual Services, deren Port im
+   weitergeleiteten Bereich liegt; der externe Port mit demselben Versatz. Virtual Server der
+   FortiGate: Real Server mit ihrem Port. FQDN-VIP: `mapped-addr` → FQDN des Adressobjekts =
+   FQDN des Virtual Service (`vsvip.dns_info`). Umgekehrt `fronts` = die VIPs davor. Regelindex,
+   Doku, publizierte Dienste und Relevanz nutzen dieselbe Verknüpfung.
+2. **NAT / VIPs** (`GET /nat`, `GET /nat/{id}`): je VIP der Firewall `chain` = externe IP:Port
+   → interne IP (VIP des Load Balancers) → Virtual Service (Quelle, Avi-Tenant, VRF, Floating
+   IP, Zustand) → Pool → Server (IP:Port, Status, Firewall-Objekt, DNS-Name); am Virtual Service
+   `fronted_by` = VIPs davor mit der externen IP; `dest_servers` = **Ziel-Server** jeder VIP
+   (über den Load Balancer, sonst Real Server bzw. zugeordnete IP); `groups` = VIP-Gruppen. Die
+   Regeln am Virtual Service sind die der VIPs davor bzw. mit seiner VIP als Ziel (Regelindex
+   `nat` führt den Virtual Service, Filter `nat=` in der Regel-Liste).
+3. **Suche** über die ganze Kette: externe IP (auch im Bereich) findet VIP und Virtual Service,
+   Server-IP, Firewall-Objekt bzw. DNS-Name des Servers findet die VIP der Firewall davor,
+   Virtual Service, Pool und VIP-Gruppe ebenso. Für Kunden-Benutzer nur VIPs davor aus ihrem
+   Ausschnitt.
+4. **Oberfläche:** Spalte „Ziel-Server“ (ersetzt „Server“) mit „über vs-…“, unter dem internen
+   Ziel „→ vs-… (Load Balancer)“, am Virtual Service „davor 203.0.113.10:443 · V-EXT_…“; im
+   Detail „Kette über den Load Balancer“ bzw. „Davor: VIPs der Firewall“ mit Sprung zwischen
+   den Einträgen. **Export (CSV)** der Liste mit Suche und Filter, je Weg externe IP → Ziel-Server
+   eine Zeile (Trennzeichen `;`, UTF-8 mit BOM, Spalten in der Sprache der Oberfläche).
+5. **VIP-Gruppen** (Collector, nur lesend, optional wie `vip6`): `firewall/vipgrp` und
+   `firewall/vipgrp6` → Adressgruppe vom Typ `vipgrp`; Policies auf die Gruppe lösen wie
+   Adressgruppen in ihre VIPs auf. Ältere Agenten liefern sie nicht – dann bleibt es wie bisher.
+
+Folgen: wirkt für Regel-Zahlen, Filter `nat=` und Suche der Regeln nach dem nächsten Einlesen
+(der Regelindex wird je Lauf neu aufgebaut); die Kette in NAT / VIPs sofort. Nur im selben
+Mandanten. Bewusst nicht: FQDN-VIP über die DNS-Auflösung im IPAM, gleiche VIP in mehreren
+Avi-VRFs unterscheiden (beide werden gezeigt, mit VRF), Content Switching.

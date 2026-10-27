@@ -28,9 +28,11 @@ test("SNAT-Pool: Regel → NAT-Detail → zurück zu den Regeln", async ({ page 
 test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page }) => {
   await page.goto("/#nat");
   await search(page).fill("web01.example.ch");
-  // seit 0.77.0 auch der Virtual Service des NSX ALB vor web01 (vs-shop)
-  await expect(rows(page)).toHaveCount(2);
-  await expect(rows(page).filter({ hasText: "vs-shop" })).toHaveCount(1);
+  // seit 0.77.0 auch der Virtual Service des NSX ALB vor web01 (vs-shop), seit 0.96.0 die VIP
+  // der Firewall davor (Kette V-EXT_lb.example.ch → vs-shop → web01)
+  await expect(rows(page)).toHaveCount(3);
+  await expect(page.locator("tr[data-nat='vs-shop']")).toHaveCount(1);
+  await expect(page.locator("tr[data-nat='V-EXT_lb.example.ch']")).toHaveCount(1);
   await rows(page).filter({ hasText: "V-EXT_www.example.ch" }).click();
   const drawer = page.locator(".drawer");
   await expect(drawer).toContainText("www.example.ch");
@@ -146,6 +148,43 @@ test("IPv4/IPv6: gleichnamige Objekte getrennt mit eigener Regel-Zahl", async ({
   await expect(page).toHaveURL(/#regeln\?.*object_id=/);
   await expect(rows(page)).toHaveCount(3);
   await expect(page.locator(".filterbar")).toContainText("Objekt H_web01 (IPv6)");
+});
+
+test("NAT / VIPs: Kette VIP der Firewall → Load Balancer → Server, Suche und Export (0.96.0)", async ({ page }) => {
+  await page.goto("/#nat");
+  // externe IP: die VIP der Firewall und der Virtual Service dahinter
+  await search(page).fill("203.0.113.30");
+  const front = page.locator("tr[data-nat='V-EXT_lb.example.ch']");
+  const lb = page.locator("tr[data-nat='vs-shop']");
+  await expect(rows(page)).toHaveCount(2);
+  await expect(front.locator(".nat-chain")).toContainText("→ vs-shop :443 (avi-01)");
+  await expect(front.locator(".nat-dest")).toContainText("10.10.10.5:8443");
+  await expect(front.locator(".nat-via")).toContainText("über vs-shop");
+  await expect(lb.locator(".nat-front")).toContainText("davor 203.0.113.30:443 · V-EXT_lb.example.ch");
+  // Detail: ganze Kette, Sprung zum Virtual Service und zurück zur VIP davor
+  await front.click();
+  const drawer = page.locator(".drawer");
+  const chain = drawer.locator("#nat-chain");
+  await expect(chain).toContainText("203.0.113.30:443");
+  await expect(chain).toContainText("10.10.10.80:443");
+  await expect(chain).toContainText("pool-shop");
+  await expect(chain).toContainText("10.10.10.5:8443");
+  await expect(drawer.locator("#nat-dest")).toContainText("über vs-shop");
+  await chain.locator("button", { hasText: "vs-shop" }).click();
+  await expect(drawer.locator("h2")).toHaveText("vs-shop");
+  await expect(drawer.locator("#nat-fronted")).toContainText("203.0.113.30:443");
+  await drawer.locator("#nat-fronted button", { hasText: "V-EXT_lb.example.ch" }).click();
+  await expect(drawer.locator("h2")).toHaveText("V-EXT_lb.example.ch");
+  await page.locator(".drawer button[aria-label='Schliessen']").first().click();
+  // Server hinter dem Load Balancer findet die Kette
+  await search(page).fill("10.10.10.5");
+  await expect(front).toHaveCount(1);
+  // Export: je Weg eine Zeile externe IP → Ziel-Server
+  const [file] = await Promise.all([page.waitForEvent("download"), page.locator("#nat-export").click()]);
+  expect(file.suggestedFilename()).toBe("nat-vips.csv");
+  const text = readFileSync((await file.path())!, "utf-8");
+  expect(text).toContain("Name;Typ;Quellsystem;VDOM;Extern;Intern;Load Balancer;Pool;Ziel-Server;");
+  expect(text).toMatch(/V-EXT_lb\.example\.ch;[^\n]*203\.0\.113\.30:443;10\.10\.10\.80:443;vs-shop \(avi-01\);pool-shop;10\.10\.10\.5:8443/);
 });
 
 test("Virtual Server: Real Server mit Status und Health-Check", async ({ page }) => {

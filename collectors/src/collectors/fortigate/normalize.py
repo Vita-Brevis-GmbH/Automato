@@ -233,9 +233,14 @@ def normalize(
     service_groups: list[dict] | None = None,
     policies6: list[dict] | None = None,
     vips6: list[dict] | None = None,
+    vipgrps: list[dict] | None = None,
+    vipgrps6: list[dict] | None = None,
 ) -> list[NormalizedRule]:
-    """Policies (IPv4/Dual-Stack in firewall/policy) und - FortiOS 6.x - firewall/policy6."""
-    maps = address_maps(addresses, groups, addresses6, groups6)
+    """Policies (IPv4/Dual-Stack in firewall/policy) und - FortiOS 6.x - firewall/policy6.
+    VIP-Gruppen (0.96.0) loesen wie Adressgruppen in ihre VIPs auf."""
+    maps = address_maps(
+        addresses, [*groups, *(vipgrps or [])], addresses6, [*(groups6 or []), *(vipgrps6 or [])]
+    )
     smap = build_service_map(services, service_groups)
     vipmaps = (build_vip_map(vips), build_vip_map(vips6))
     rules = [_normalize_policy(p, maps, smap, vipmaps) for p in policies]
@@ -400,6 +405,7 @@ def _names_of(value) -> list[str]:
 
 
 SLB = "server-load-balance"
+VIP_GROUP = "vipgrp"  # VIP-Gruppe als Adressgruppe mit diesem Typ (0.96.0)
 # Virtual Server: Einstellungen wie auf der FortiGate (Zertifikat nur mit Namen, nie Schluessel)
 _SLB_ATTRS = (
     "server-type",
@@ -563,9 +569,14 @@ def build_device_objects(
     services: list[dict] | None = None,
     service_groups: list[dict] | None = None,
     vips6: list[dict] | None = None,
+    vipgrps: list[dict] | None = None,
+    vipgrps6: list[dict] | None = None,
+    ippools6: list[dict] | None = None,
 ) -> list[NormalizedObject]:
     """Alle Firewall-Objekte so, wie sie auf dem Geraet stehen (Inventar, ADR 0010). IPv4- und
-    IPv6-Objekte loesen je in ihrer Familie auf (gleiche Namen = verschiedene Objekte)."""
+    IPv6-Objekte loesen je in ihrer Familie auf (gleiche Namen = verschiedene Objekte). Seit
+    0.96.0 VIP-Gruppen (Adressgruppe vom Typ `vipgrp`, Werte = externe IPs der VIPs) und
+    IPv6-IP-Pools (Namenskonvention)."""
     amap4, amap6 = address_maps(addresses, groups, addresses6, groups6)
     maps = {"v4": amap4, "v6": amap6}
     vipmap = build_vip_map(vips)
@@ -622,19 +633,36 @@ def build_device_objects(
                     attrs={"server-type": v["server-type"]} if v.get("server-type") else {},
                 )
             )
-    for p in ippools or []:
-        start, end = str(p.get("startip") or ""), str(p.get("endip") or "")
-        rng = f"{start}-{end}" if end and end != start else start
-        out.append(
-            NormalizedObject(
-                name=p["name"],
-                category="ippool",
-                obj_type=p.get("type"),
-                values=[rng] if rng else [],
-                comment=p.get("comments") or p.get("comment") or None,
-                family="v4",
+    for family, items in (("v4", vipgrps or []), ("v6", vipgrps6 or [])):
+        for g in items:
+            members = [m["name"] for m in g.get("member", []) if m.get("name")]
+            out.append(
+                NormalizedObject(
+                    name=g["name"],
+                    category="address_group",
+                    obj_type=VIP_GROUP,
+                    color=_as_color(g.get("color")),
+                    members=members,
+                    values=_dedup([vipmaps[family][m] for m in members if vipmaps[family].get(m)]),
+                    comment=g.get("comments") or g.get("comment") or None,
+                    interface=str(g.get("interface") or "") or None,
+                    family=family,
+                )
             )
-        )
+    for family, pools in (("v4", ippools or []), ("v6", ippools6 or [])):
+        for p in pools:
+            start, end = str(p.get("startip") or ""), str(p.get("endip") or "")
+            rng = f"{start}-{end}" if end and end != start else start
+            out.append(
+                NormalizedObject(
+                    name=p["name"],
+                    category="ippool",
+                    obj_type=p.get("type"),
+                    values=[rng] if rng else [],
+                    comment=p.get("comments") or p.get("comment") or None,
+                    family=family,
+                )
+            )
     smap = build_service_map(services or [], service_groups)
     for svc in services or []:
         out.append(

@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.96.0 – 2026-10-27
+
+NAT / VIPs: Kette über den Load Balancer, Namenskonvention für VIPs und IP-Pools (Befunde des
+Anwenders aus dem Test 2026-10-27; ADR 0027 und ADR 0016 Ergänzung 0.96.0).
+
+- **Kette in NAT / VIPs:** je VIP der Firewall externe IP:Port → VIP des Load Balancers →
+  Virtual Service → Pool → Server (`chain`); am Virtual Service die VIPs davor (`fronted_by`,
+  Kunden-Benutzer nur aus ihrem Ausschnitt); Spalte „Ziel-Server“ für alle VIPs (direkt bzw.
+  „über vs-…“, `dest_servers`), VIP-Gruppen je VIP (`groups`); im Detail „Kette über den Load
+  Balancer“ bzw. „Davor: VIPs der Firewall“ mit Sprung zwischen den Einträgen.
+- **Verknüpfung robuster** (`store/nat.Balancers.links`/`fronts`): auch Bereiche und mehrere
+  Werte in `mappedip` (1:1), Port-Weiterleitung mit Port-Bereichen, Virtual Server der FortiGate
+  mit der VIP des Load Balancers als Real Server und FQDN-VIPs – nur im selben Mandanten;
+  Regel-Detail, publizierte Dienste, Applikations-Doku, Relevanz und Regelindex nutzen sie mit
+  (Regeln am Virtual Service, Filter `nat=<Virtual Service>`).
+- **Suche** über die ganze Kette (externe IP auch im Bereich, Server-IP/-Objekt/-DNS-Name,
+  Virtual Service, Pool, VIP-Gruppe); **Export (CSV)** der Liste, je Weg eine Zeile.
+- **Collector:** VIP-Gruppen der FortiGate (`firewall/vipgrp`/`vipgrp6`, optional, nur lesend)
+  als Adressgruppe vom Typ `vipgrp` – Policies auf eine VIP-Gruppe kennen jetzt ihre VIPs;
+  IPv6-IP-Pools auch als Objekte (für die Namensprüfung).
+- **Namenskonvention:** VIPs, Virtual Server und IP-Pools mit dem Präfix ihres Typs (VIP bzw.
+  VIP / DNAT, neu „Virtual Server“ – ohne Eintrag gelten die VIP-Präfixe –, SNAT IP-Pool); ein
+  Adress-Präfix genügt nicht mehr; ohne gepflegtes Präfix des Typs kein Befund; NSX ALB nicht
+  geprüft; Befund `invalid_name` zweisprachig mit Link nach NAT / VIPs.
+
 ## 0.95.0 – 2026-10-27
 
 Applikations-Doku: Detail statt Sprung, Namen der Gegenstellen (Befunde des Anwenders aus dem

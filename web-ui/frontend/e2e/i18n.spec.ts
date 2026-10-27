@@ -82,3 +82,16 @@ test("Englisch: EPG-Detail der Applikation und Namen der Gegenstellen am Mandant
   await expect(page.locator("#app-epg-rules")).toHaveText("Show rules of this EPG");
   await expect(page.locator("#app-epg-objects")).toHaveText("Open in Objects & inventory");
 });
+
+// 0.96.0: Kette VIP der Firewall → Load Balancer → Server in NAT / VIPs auf Englisch
+test("Englisch: NAT-Kette über den Load Balancer", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("automato_lang", "en"));
+  await page.goto("/#nat");
+  await page.locator(".filterbar .search input").fill("203.0.113.30");
+  const front = page.locator("tr[data-nat='V-EXT_lb.example.ch']");
+  await expect(front.locator(".nat-via")).toContainText("via vs-shop");
+  await expect(page.locator("tr[data-nat='vs-shop'] .nat-front")).toContainText("in front 203.0.113.30:443");
+  await expect(page.locator("thead")).toContainText("Destination servers");
+  await front.click();
+  await expect(page.locator(".drawer")).toContainText("Chain via the load balancer (1)");
+});

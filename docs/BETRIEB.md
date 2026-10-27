@@ -279,6 +279,19 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Pool-Bereich), Port, DNS-Name, Server, Interface, Kommentar. Klick → Detail mit
   Einstellungen, IPAM-Sicht (Netz, VLAN, Standort) und den Firewall-Regeln, die den Eintrag
   nutzen.
+  - **Kette über den Load Balancer (0.96.0):** Zeigt eine VIP der Firewall auf eine VIP des
+    NSX ALB, steht unter dem internen Ziel „→ vs-… (Load Balancer)“, in „Ziel-Server“ die Server
+    mit „über vs-…“; am Virtual Service „davor <externe IP> · <VIP>“. Im Detail „Kette über den
+    Load Balancer“ bzw. „Davor: VIPs der Firewall“ – ein Klick auf den Namen öffnet den anderen
+    Eintrag. Die Suche findet die Kette auch über Server-IP, externe IP, Virtual Service, Pool
+    und VIP-Gruppe. „Export (CSV)“ speichert die Liste mit Suche und Filter, je Weg eine Zeile
+    (`;`, UTF-8). Regel-Zahlen am Virtual Service und VIP-Gruppen wirken nach dem nächsten
+    Einlesen der Firewall bzw. des NSX ALB (VIP-Gruppen mit dem Agenten ab 0.96.0).
+  - **Namen der VIPs und IP-Pools (0.96.0):** der Abgleich prüft sie gegen die Präfixe ihres
+    Typs (Namensprofile → Objekt-Präfixe → Typ „VIP“, „VIP / DNAT“, neu „Virtual Server“,
+    „SNAT IP-Pool“); ein Adress-Präfix wie `H_` genügt an einer VIP nicht. Hat das Profil kein
+    Präfix eines Typs, werden diese Namen nicht geprüft; NSX-ALB-Namen nie. Nach einer Änderung
+    im Profil „Abgleich“ ausführen.
 - **Parallele Firewalls (Verbund, 0.18.0, ADR 0020):** Firewalls mit denselben Regeln (z. B.
   zwei Cluster mit Session-Sync) bilden einen Verbund.
   - Gleiche Policies erscheinen in Regeln, Suche und Applikations-Doku nur einmal (führend: die

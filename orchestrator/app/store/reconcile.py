@@ -805,6 +805,7 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
     used = _used_object_ids(session, tenant_id, objects)
     allowed = _predefined_in_allow(session, tenant_id, objects)
     services = _ServiceConvention(session, tenant_id)
+    nat_names = _NatConvention(session, tenant_id)
     out: list[Issue] = []
     by_value: dict[tuple[int, str | None, str], list[str]] = defaultdict(list)
 
@@ -815,13 +816,14 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
             **({"vdom": o.vdom} if o.vdom else {}),
         }
         detail = {**base, "category": o.category.value, "name": o.name}
-        # Konvention gilt fuer Adressen und VIPs (fuer Gruppen kennt sie kein Praefix)
+        # Konvention gilt fuer Adressen (fuer Gruppen kennt sie kein Praefix); VIPs und IP-Pools
+        # seit 0.96.0 mit den Praefixen ihres Typs
         if o.category in _CONVENTION_CATEGORIES:
             parsed = naming.parse_object_name(o.name, prefixes)
             if parsed.object_class is ObjectClass.UNKNOWN and o.obj_type not in _NO_CONVENTION:
                 known = {"prefixes": _prefix_names(prefixes)}
                 out.append(_issue(FindingType.INVALID_NAME, o, {**detail, **known}))
-            elif o.category is ObjectCategory.ADDRESS:
+            else:
                 shape = _value_shape(o)
                 if (parsed.object_class, shape) in _SHAPE_MISMATCH:
                     out.append(
@@ -831,6 +833,8 @@ def _device_object_issues(session: Session, tenant_id: int, prefixes) -> list[Is
                             {**detail, "expected": parsed.object_class.value, "value": _first(o)},
                         )
                     )
+        elif o.category in _NAT_CATEGORIES:
+            out += nat_names.issues(o, detail)
         predefined = _predefined_service(o)
         if o.category is ObjectCategory.SERVICE and not predefined:
             out += _service_issues(o, detail, services)
@@ -926,7 +930,40 @@ def _service_issues(o: DeviceObject, detail: dict, conv: _ServiceConvention) -> 
     ]
 
 
-_CONVENTION_CATEGORIES = (ObjectCategory.ADDRESS, ObjectCategory.VIP)
+class _NatConvention:
+    """Namen der VIPs und IP-Pools (0.96.0): Praefixe ihres Typs im Woerterbuch `object_prefix`
+    - VIP bzw. VIP / DNAT (V-EXT_, VIP_), Virtual Server (eigener Typ, sonst wie VIPs), SNAT
+    IP-Pool (IPP_). Ohne Adress-Praefixe im Profil gilt die Standard-Konvention; ohne Praefix
+    des Typs im Profil kein Befund. Der NSX ALB hat keine Objekte auf der Firewall - seine Namen
+    prueft Automato nicht (eigene Konvention)."""
+
+    def __init__(self, session: Session, tenant_id: int):
+        entries = profile_store.entries_for_tenant(session, tenant_id, "object_prefix")
+        self.vip = naming.typed_prefixes(entries, naming.VIP_VALUES)
+        self.virtual_server = naming.typed_prefixes(entries, (naming.VIRTUAL_SERVER_VALUE,))
+        self.ippool = naming.typed_prefixes(entries, naming.IPPOOL_VALUES)
+
+    def expected(self, o: DeviceObject) -> tuple[tuple[str, ...], str]:
+        """(Praefixe, Typ der Konvention) fuer das Objekt."""
+        if o.category is ObjectCategory.IPPOOL:
+            return self.ippool, "snat_pool"
+        if o.obj_type == _SLB and self.virtual_server:
+            return self.virtual_server, naming.VIRTUAL_SERVER_VALUE
+        return self.vip, "vip"
+
+    def issues(self, o: DeviceObject, detail: dict) -> list[Issue]:
+        prefixes, kind = self.expected(o)
+        if not prefixes or o.name.startswith(prefixes):
+            return []
+        known = {"prefixes": list(prefixes), "convention": kind}
+        if o.obj_type == _SLB:
+            known["virtual_server"] = True
+        return [_issue(FindingType.INVALID_NAME, o, {**detail, **known})]
+
+
+_SLB = "server-load-balance"  # FortiGate Virtual Server
+_CONVENTION_CATEGORIES = (ObjectCategory.ADDRESS,)
+_NAT_CATEGORIES = (ObjectCategory.VIP, ObjectCategory.IPPOOL)
 # FortiGate-Typen ohne Namenskonvention (Geo-/MAC-/dynamische Objekte, FQDN-Wildcards)
 _NO_CONVENTION = {"geography", "mac", "dynamic", "wildcard-fqdn"}
 _SHAPE_MISMATCH = {(ObjectClass.HOST, "network"), (ObjectClass.NETWORK, "host")}
@@ -950,7 +987,12 @@ def subject(o: DeviceObject) -> str:
     return name + vdom_suffix(o.vdom)
 
 
-_FAMILY_CATEGORIES = (ObjectCategory.ADDRESS, ObjectCategory.ADDRESS_GROUP, ObjectCategory.VIP)
+_FAMILY_CATEGORIES = (
+    ObjectCategory.ADDRESS,
+    ObjectCategory.ADDRESS_GROUP,
+    ObjectCategory.VIP,
+    ObjectCategory.IPPOOL,  # 0.96.0: IPv6-IP-Pools (ippool6) duerfen gleich heissen
+)
 
 
 def _issue(ftype: FindingType, o: DeviceObject, detail: dict, sev=Severity.WARNING) -> Issue:
