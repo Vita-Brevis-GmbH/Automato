@@ -873,7 +873,11 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     impossible = {h["rule_id"] for h in hits} - {h["rule_id"] for h in possible}
     possible += [_assigned_hit(rid, m) for rid, m in assigned.items() if rid not in excluded]
     hits = possible
-    rule_ids = {h["rule_id"] for h in hits}
+    # L3Outs (ADR 0034): Contracts zu externen EPGs mit Firewall dahinter sind Hilfs-Contracts -
+    # an der Firewall-Regel vermerkt, nicht als eigene Regel (Treffer bleiben, `helper`)
+    helper_ids = _helper_ids(hits)
+    helpers = _helpers_out(hits, helper_ids, systems, epg_out, rows)
+    rule_ids = {h["rule_id"] for h in hits} - helper_ids
     ordered = (
         list(
             session.scalars(
@@ -886,11 +890,13 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     rules = rule_index.outs(session, rule_index.load_rules(session, ordered))
     best: dict[int, str] = {}
     for h in possible:
+        if h["rule_id"] in helper_ids:
+            continue
         cur = best.get(h["rule_id"])
         if cur is None or _SCOPE_RANK.get(h["scope"], 9) < _SCOPE_RANK.get(cur, 9):
             best[h["rule_id"]] = h["scope"]
     for item in systems + epg_out:
-        mine = {h["rule_id"] for h in possible if h["system"] == item["key"]}
+        mine = {h["rule_id"] for h in possible if h["system"] == item["key"]} - helper_ids
         spec = {
             h["rule_id"]
             for h in possible
@@ -904,8 +910,8 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     rule_epgs: dict[int, set[str]] = defaultdict(set)
     for h in possible:
         rule_epgs[h["rule_id"]] |= set(epgs_of.get(h["system"], []))
-    findings = _app_findings(session, tid, systems, epg_out, set(ordered), rule_epgs,
-                             restricted=restricted, app_id=app.id)  # fmt: skip
+    findings = _app_findings(session, tid, systems, epg_out, set(ordered) | helper_ids,
+                             rule_epgs, restricted=restricted, app_id=app.id)  # fmt: skip
     hidden, hides = _apply_hides(session, app, tables, restricted)  # 0.69.0
     tenant = session.get(Tenant, tid)
     return {
@@ -925,6 +931,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             "unspecific": sum(by_scope.values()),
             "by_scope": by_scope,
             "findings": len(findings),
+            "helpers": len(helpers),  # Hilfs-Contracts ueber L3Outs (ADR 0034)
         },
         "systems": systems,
         "epgs": epg_out,
@@ -933,6 +940,8 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         "findings": findings,
         "tables": tables,
         "narrower": narrower,
+        # Hilfs-Contracts ueber L3Outs mit den Firewall-Regeln, an denen sie stehen (ADR 0034)
+        "helpers": helpers,
         # zugeordnete bzw. ausgeschlossene Regeln mit dem Mitglied (zum Rueckgaengigmachen)
         "rule_members": [
             {"member_id": m.id, "kind": m.kind, "label": label, "rule_id": rid}
@@ -1050,6 +1059,39 @@ def _pairs(session: Session, rule_ids: set) -> dict[int, int]:
     return out
 
 
+def _helper_ids(hits: list[dict]) -> set[int]:
+    """Contracts, deren Treffer alle Hilfs-Contracts sind (ADR 0034)."""
+    by_rule: dict[int, list[bool]] = defaultdict(list)
+    for h in hits:
+        by_rule[h["rule_id"]].append(bool(h.get("helper")))
+    return {rid for rid, flags in by_rule.items() if flags and all(flags)}
+
+
+def _helpers_out(hits: list[dict], ids: set[int], systems: list[dict], epgs: list[dict],
+                 rows: list[tuple[str, int, dict]]) -> list[dict]:  # fmt: skip
+    """Hilfs-Contracts der Applikation: je Contract die L3Outs, die Firewall-Regeln, an denen er
+    steht, und die Systeme (ADR 0034)."""
+    names = {x["key"]: x["name"] for x in systems} | {e["key"]: e["label"] for e in epgs}
+    labels = {r.get(appdoc.RULE): r.get(appdoc.DESCRIPTION) for _k, _i, r in rows}
+    out: dict[int, dict] = {}
+    for h in hits:
+        if h["rule_id"] not in ids:
+            continue
+        entry = out.setdefault(h["rule_id"], {"rule_id": h["rule_id"],
+                                              "name": labels.get(h["rule_id"]) or "",
+                                              "l3outs": [], "firewall_rules": [],
+                                              "systems": []})  # fmt: skip
+        if h.get("l3out") and h["l3out"] not in entry["l3outs"]:
+            entry["l3outs"].append(h["l3out"])
+        for rid in h.get("helper_for") or []:
+            if rid not in entry["firewall_rules"]:
+                entry["firewall_rules"].append(rid)
+        system = names.get(h["system"], h["system"])
+        if system not in entry["systems"]:
+            entry["systems"].append(system)
+    return sorted(out.values(), key=lambda x: x["name"].lower())
+
+
 def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict],
               epgs: list[dict]) -> list[dict]:  # fmt: skip
     """L3Out-Contracts, die weniger oeffnen als die Firewall-Regeln (0.78.2, `appdoc.NARROW`):
@@ -1145,12 +1187,29 @@ def _hits_and_tables(
                 "relevance_text": row.get(appdoc.REL_TEXT) or "",
                 # ACI ist zustandslos (0.69.1): Treffer der Rueckrichtung (Provider -> Consumer)
                 "reverse": bool(row.get(appdoc.REVERSE)),
+                # L3Outs (ADR 0034): ueber welchen L3Out der Zugriff kommt; Contract zu externen
+                # EPGs mit Firewall dahinter = Hilfs-Contract (keine eigene Regel der Doku), an
+                # der Firewall-Regel seine Hilfs-Contracts; Hinweis ohne Firewall dahinter
+                "l3out": row.get(appdoc.L3OUT_IN),
+                "helper": bool(row.get(appdoc.HELPER)),
+                "helper_for": list((row.get(appdoc.HELPER) or {}).get("for") or []),
+                "helpers": [
+                    {
+                        "l3out": x["l3out"],
+                        "rule_ids": [c["rule_id"] for c in x["contracts"]],
+                        "names": [c["name"] for c in x["contracts"]],
+                        "missing": x["missing"],
+                    }
+                    for x in row.get(appdoc.HELPERS) or []
+                ],  # fmt: skip
+                "l3out_note": row.get(appdoc.L3OUT_NOTE) or "",
             }
         )
     seen_rows: dict[tuple, dict] = {}
     for (idx, *_), group in groups.items():
         row = dict(group["row"])
-        row.pop(appdoc.PARTIES, None)  # nur fuer die Treffer
+        for key in appdoc.INTERNAL:  # nur fuer die Treffer
+            row.pop(key, None)
         if group.get("both") and not row.get(appdoc.REVERSE):
             row[appdoc.SERVICE] = f"{row.get(appdoc.SERVICE) or ''} {appdoc.both_mark()}".strip()
         if row.get(appdoc.REL) == "impossible":
@@ -1184,6 +1243,7 @@ def _hits_and_tables(
         seen_rows[visible] = row
         tables[idx]["rows"].append(row)
     for t in tables.values():  # leere optionale Spalten (NAT, VIP, Load Balancer …) aus
+        t["rows"] = appdoc.by_l3out(t["rows"])  # unspezifische nach L3Out (ADR 0034)
         t["columns"] = appdoc.visible_columns(t["index"], t["rows"])
         t["labels"] = appdoc.column_labels(t["columns"])  # Anzeige (0.87.0, ADR 0028)
     return hits, [tables[i] for i, _, _ in appdoc.TABLES]

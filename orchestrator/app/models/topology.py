@@ -15,7 +15,8 @@ dann „unbekannt“).
 
 Von Hand gepflegt (0.18.0, nicht je Lauf ersetzt): `topo_exit` - Anbindungen nach aussen
 (Internet, MPLS, WAN, Partner), an denen ein Weg endet bzw. weitergeht; `topo_exit_dismissal`
-(0.21.0) - erkannte Router, die nicht mehr als Anbindung vorgeschlagen werden.
+(0.21.0) - erkannte Router, die nicht mehr als Anbindung vorgeschlagen werden; `l3out_firewall`
+(ADR 0034) - die Firewall hinter einem L3Out, bestaetigt bzw. von Hand gewaehlt.
 """
 
 from datetime import UTC, datetime
@@ -210,5 +211,35 @@ class TopoExitDismissal(Base):
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
     ip: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class L3OutFirewall(Base):
+    """Firewall hinter einem ACI-L3Out, von Hand gepflegt (ADR 0034): bestaetigt bzw. gewaehlt
+    (`origin` confirmed | manual) - je Firewall eine Zeile (Quellsystem, VDOM, Interface zum
+    L3Out) - oder ausdruecklich keine (`origin` none, ohne Firewall). Ohne Zeile gilt die
+    Ableitung aus dem Topologie-Modell (`store/l3out_firewall.py`). Der L3Out steht ueber APIC
+    und DN da (`topo_l3out` wird je Lauf ersetzt); nicht je Lauf ersetzt."""
+
+    __tablename__ = "l3out_firewall"
+    __table_args__ = (Index("ix_l3out_firewall_l3out", "aci_source_system_id", "l3out_dn"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
+    aci_source_system_id: Mapped[int] = mapped_column(
+        ForeignKey("source_system.id", ondelete="CASCADE")
+    )
+    l3out_dn: Mapped[str] = mapped_column(String(400))
+    l3out_name: Mapped[str] = mapped_column(String(200))
+    # None = ausdruecklich keine Firewall dahinter (`origin` none)
+    firewall_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_system.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    vdom: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    interface: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    origin: Mapped[str] = mapped_column(String(12))  # confirmed | manual | none
+    updated_by: Mapped[str] = mapped_column(String(200))
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

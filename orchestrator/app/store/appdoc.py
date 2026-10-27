@@ -12,6 +12,7 @@ werden zugeordnet, der Rest landet in Tabelle 10 (unspezifisch). Rein lesend/pur
 """
 
 import ipaddress
+from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
 
@@ -120,6 +121,16 @@ REVERSE = "_reverse"
 # in Kategorie 10 („Unspezifische Zugriffe auf die Applikation“: nur eingehend)
 L3OUT, NARROW, FW_RULES, CAT_HIDDEN = "_l3out", "_narrow", "_fw_rules", "_cat_hidden"
 UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
+# L3Outs: die Firewall entscheidet (ADR 0034, Anwender 2026-10-27). Ein Contract zu externen EPGs
+# mit einer Firewall hinter dem L3Out ist nur ein Hilfs-Contract (`HELPER`: L3Outs und die
+# Firewall-Regeln, an denen er steht) - keine eigene Zeile, an der Firewall-Regel vermerkt
+# (`HELPERS`). Spalte `L3OUT_COL`: ueber welchen L3Out der Zugriff ins Fabric kommt (mit den
+# Hilfs-Contracts), `L3OUT_IN` = sein Name (Sortierung der unspezifischen Zugriffe),
+# `L3OUT_NOTE` = Hinweis am Contract ohne Firewall dahinter, `L3OUT_ALONE` = L3Out gelesen, aber
+# ohne Firewall: der Contract regelt allein und steht in den Kategorien
+L3OUT_COL, L3OUT_IN, HELPER, HELPERS = "L3Out", "_l3out_in", "_helper", "_helpers"
+L3OUT_NOTE, L3OUT_ALONE = "_l3out_note", "_l3out_alone"
+INTERNAL = (PARTIES, HELPER, HELPERS, L3OUT_ALONE)  # nur intern bzw. fuer die Treffer
 
 # Spalten seit 0.84.0 (Anwender: „heute steht alles in Server Name“): Quelle und Ziel in
 # Verkehrsrichtung, je mit Name und IP; die Seite der Applikation (`APP`) bzw. die Gegenstelle
@@ -132,10 +143,10 @@ DNS_NAME, VIP_FW, BALANCER = "Externer DNS Name", "VIP (Firewall)", "Load Balanc
 PROTECTION, DESCRIPTION = "Schutzmechanismen", "Description"
 APP, PEER, APP_COL = "_app", "_peer", "_app_col"
 # ohne Wert in allen Zeilen einer Kategorie: Spalte ausgeblendet (`visible_columns`)
-OPTIONAL = (NAT, DNS_NAME, VIP_FW, BALANCER, PROTECTION)
-_COMMON = [SOURCE, DESTINATION, SERVICE, NAT, ACTION, PROTECTION, DEVICE, DESCRIPTION]
+OPTIONAL = (NAT, DNS_NAME, VIP_FW, BALANCER, PROTECTION, L3OUT_COL)
+_COMMON = [SOURCE, DESTINATION, SERVICE, NAT, ACTION, PROTECTION, DEVICE, L3OUT_COL, DESCRIPTION]
 TABLE_COLUMNS: dict[int, list[str]] = {
-    1: [SOURCE, DESTINATION, SERVICE, SNAT_IP, ACTION, PROTECTION, DEVICE, DESCRIPTION],
+    1: [SOURCE, DESTINATION, SERVICE, SNAT_IP, ACTION, PROTECTION, DEVICE, L3OUT_COL, DESCRIPTION],
     2: [
         SOURCE,
         DNS_NAME,
@@ -146,6 +157,7 @@ TABLE_COLUMNS: dict[int, list[str]] = {
         ACTION,
         PROTECTION,
         DEVICE,
+        L3OUT_COL,
         DESCRIPTION,
     ],  # fmt: skip
 }
@@ -407,7 +419,8 @@ def _envelope(
     if not full:
         for rows in rows_by_table.values():
             for row in rows:
-                row.pop(PARTIES, None)  # nur fuer die Treffer der Applikations-Doku
+                for key in INTERNAL:  # nur fuer die Treffer der Applikations-Doku
+                    row.pop(key, None)
         for i in rows_by_table:
             keep = []
             for row in rows_by_table[i]:
@@ -425,7 +438,7 @@ def _envelope(
                             "text": row.get(REL_TEXT) or "",
                         }  # fmt: skip
                     )
-            rows_by_table[i] = _merge_reverse(keep)
+            rows_by_table[i] = by_l3out(_merge_reverse(keep))
     for rows in rows_by_table.values():
         for row in rows:
             place(row)
@@ -640,6 +653,10 @@ class TenantData:
     def epgs_by_id(self) -> dict[int, Epg]:
         stmt = select(Epg).where(Epg.tenant_id == self.tenant_id)
         return {e.id: e for e in self.session.scalars(stmt)}
+
+    @cached_property
+    def epgs_by_dn(self) -> dict[str, Epg]:
+        return {e.dn: e for e in self.epgs_by_id.values() if e.dn}
 
     @cached_property
     def relevance(self) -> relevance_store.Relevance:
@@ -879,24 +896,38 @@ def _replies_only(rule: Rule | None) -> bool:
     return aci_direction.replies_only(rule.raw, [s.canonical_name for s in rule.services])
 
 
-def mark_categories(data: TenantData, items: list[tuple[int, dict]]) -> list[tuple[int, dict]]:
+def mark_categories(data: TenantData, items: list[tuple[int, dict]],
+                    vrfs: set | None = None) -> list[tuple[int, dict]]:  # fmt: skip
     """Kategorien eines Systems bereinigen (0.78.2, Anwender) - die Zeilen bleiben, nur
     `CAT_HIDDEN` bzw. `NARROW` kommen dazu:
 
     - Kategorie 10 zeigt nur Zugriffe auf die Applikation (eingehend), nicht ihre Zugriffe auf
       andere Systeme.
-    - Contracts Richtung L3Out (Gegenstelle nur externe EPGs): die Firewall ist fuehrend. Je
-      Kategorie und Richtung deckt der Contract die Dienste der erlaubenden Firewall-Regeln ab
-      -> nicht in den Kategorien; oeffnet er weniger, steht er da, mit den fehlenden Diensten
-      (Befund `app_contract_narrower`). Ohne Firewall-Regeln dort oeffnet die Firewall nichts,
-      der Contract steht nicht da; ohne Firewall im Mandanten bleibt alles wie bisher."""
-    groups: dict[tuple, dict[str, list]] = {}
+    - Contracts Richtung L3Out (Gegenstelle nur externe EPGs) mit einer Firewall hinter dem
+      L3Out (ADR 0034, `_mark_l3outs`): nur Hilfs-Contracts - nie eine eigene Zeile, vermerkt an
+      den Firewall-Regeln dieser Firewall (Spalte L3Out); oeffnen sie weniger, steht das dort
+      (Befund `app_contract_narrower`). `vrfs` = VRFs des Systems (Spalte L3Out der
+      Firewall-Regeln).
+    - L3Out gelesen, aber keine Firewall dahinter (nicht abgeleitet bzw. „keine“): der Contract
+      regelt allein - er steht in den Kategorien, mit Hinweis.
+    - L3Out nicht gelesen (Firewall unbekannt) wie 0.78.2, mit Hinweis: die Firewall ist
+      fuehrend - je Kategorie und Richtung deckt der Contract die Dienste der erlaubenden
+      Firewall-Regeln ab -> nicht in den Kategorien; oeffnet er weniger, steht er da, mit den
+      fehlenden Diensten (Befund `app_contract_narrower`). Ohne Firewall-Regeln dort oeffnet die
+      Firewall nichts, der Contract steht nicht da; ohne Firewall im Mandanten bleibt alles wie
+      bisher."""
     for idx, row in items:
         if idx == 10 and row.get(DIRECTION) == "out":
             row[CAT_HIDDEN] = True
+    if not data.has_firewall:
+        return items
+    _mark_l3outs(data, items, vrfs)
+    groups: dict[tuple, dict[str, list]] = {}
+    for idx, row in items:
+        if idx == 10 and row.get(DIRECTION) == "out":
             continue
-        if row.get(REL) == relevance_store.IMPOSSIBLE:
-            continue
+        if row.get(REL) == relevance_store.IMPOSSIBLE or row.get(HELPER) or row.get(L3OUT_ALONE):
+            continue  # Hilfs-Contract bzw. Contract ohne Firewall dahinter (ADR 0034)
         rule = data.rule(row.get(RULE))
         if rule is None:
             continue
@@ -905,8 +936,6 @@ def mark_categories(data: TenantData, items: list[tuple[int, dict]]) -> list[tup
             g["aci"].append(row)
         elif rule.domain is RuleDomain.FIREWALL and rule.action is RuleAction.ALLOW:
             g["fw"].append(row)
-    if not data.has_firewall:
-        return items
     for g in groups.values():
         allow = [r for r in g["aci"] if data.rule(r[RULE]).action is RuleAction.ALLOW]
         if not allow:
@@ -924,11 +953,164 @@ def mark_categories(data: TenantData, items: list[tuple[int, dict]]) -> list[tup
                 r[CAT_HIDDEN] = True
                 continue
             r[NARROW], r[FW_RULES] = missing, fw_ids
-            shown = ", ".join(missing[:5]) + (f" (+{len(missing) - 5})" if len(missing) > 5 else "")
+            shown = _missing_text(missing)
             r[DESCRIPTION] = f"{r.get(DESCRIPTION) or ''} – " + L(
                 f"öffnet weniger als die Firewall-Regeln, es fehlt {shown}",
                 f"opens less than the firewall rules, missing {shown}")  # fmt: skip
     return items
+
+
+def _missing_text(missing: list[str]) -> str:
+    return ", ".join(missing[:5]) + (f" (+{len(missing) - 5})" if len(missing) > 5 else "")
+
+
+def _row_l3outs(data: TenantData, row: dict) -> list[tuple[str, object]]:
+    """L3Outs der externen EPGs eines Contracts (Gegenstellen im Scope): (Name, L3Out mit der
+    Firewall dahinter bzw. None, wenn er nicht gelesen ist)."""
+    out: dict[str, object] = {}
+    for dn in (row.get(PARTIES) or {}).get("counter") or []:
+        e = data.epgs_by_dn.get(dn)
+        if e is None or e.kind != "external" or not e.l3out:
+            continue
+        if out.get(e.l3out) is None:
+            out[e.l3out] = data.aci.behind.of(e.source_system_id, e.aci_tenant, e.l3out)
+    return list(out.items())
+
+
+def _fabric_ports(data: TenantData, rule: Rule, direction: str | None) -> list[str]:
+    """Interfaces bzw. Zonen einer Firewall-Regel zum Fabric: ausgehend (System = Quelle) ihr
+    Eingang, eingehend ihr Ausgang."""
+    raw = rule.raw if isinstance(rule.raw, dict) else {}
+    key = "srcintf" if direction == "out" else "dstintf"
+    names = [str(e["name"]) for e in raw.get(key) or [] if isinstance(e, dict) and e.get("name")]
+    zone = data.zones.get(rule.src_zone_id if direction == "out" else rule.dst_zone_id)
+    return names or ([zone] if zone else [])
+
+
+def _mark_l3outs(data: TenantData, items: list[tuple[int, dict]], vrfs: set | None) -> None:
+    """L3Outs: die Firewall entscheidet (ADR 0034, Anwender: „Contracts über L3Os immer nur als
+    Hilfs-Contract anschauen … die L3O-Contracts zum External EPG haben immer eine Firewall
+    hintendran, welche den Traffic regelt“).
+
+    - Erlaubender Contract zu externen EPGs, hinter deren L3Outs eine Firewall steht
+      (`l3out_firewall`): `HELPER` und `CAT_HIDDEN` - keine eigene Zeile. Er steht an den
+      erlaubenden Firewall-Regeln dieser Firewall in derselben Richtung (`HELPERS`, Spalte L3Out
+      „L3O_inet · Contract CT_inet“). Fehlen ihm Dienste einer dieser Regeln, sperrt er real:
+      das steht an der Regel („es fehlt …“), am Contract `NARROW` (Befund).
+    - Ohne Firewall hinter einem seiner L3Outs: `L3OUT_NOTE` (Hinweis); gelesen ohne Firewall
+      `L3OUT_ALONE` (steht in den Kategorien), nicht gelesen wie 0.78.2.
+    - Firewall-Regeln einer Firewall hinter einem L3Out der VRFs des Systems: Spalte L3Out mit
+      dessen Namen (`L3OUT_IN` fuer die Sortierung)."""
+    behind = data.aci.behind
+    helpers: dict[tuple, list[dict]] = defaultdict(list)  # (Richtung, L3Out) -> Contracts
+    l3outs: dict[int, object] = {}
+    for _idx, row in items:
+        if not row.get(L3OUT) or row.get(REL) == relevance_store.IMPOSSIBLE:
+            continue
+        rule = data.rule(row.get(RULE))
+        outs = _row_l3outs(data, row) if rule is not None else []
+        if not outs:
+            continue
+        names = [name for name, _o in outs]
+        row[L3OUT_IN] = names[0]
+        unread = [name for name, o in outs if o is None]
+        alone = [name for name, o in outs if o is not None and not o.firewalls]
+        if unread or alone:
+            # gelesen ohne Firewall: der Contract regelt allein - er steht in den Kategorien;
+            # L3Out nicht gelesen: Firewall unbekannt, weiter wie 0.78.2
+            notes = []
+            if alone:
+                listed = ", ".join(alone)
+                notes.append(L(f"keine Firewall hinter {listed} – der Contract regelt allein",
+                               f"no firewall behind {listed} – the contract alone controls "
+                               "access"))  # fmt: skip
+            if unread:
+                listed = ", ".join(unread)
+                notes.append(L(f"Firewall hinter {listed} nicht bekannt (L3Out nicht gelesen)",
+                               f"firewall behind {listed} not known (L3Out not read)"))  # fmt: skip
+            row[L3OUT_NOTE] = "; ".join(notes)
+            row[L3OUT_ALONE] = not unread
+            mark = L("ohne Firewall", "no firewall")
+            row[L3OUT_COL] = lines(f"{n} ({mark})" if n in alone else n for n in names)
+            continue
+        row[L3OUT_COL] = lines(names)
+        if rule.action is not RuleAction.ALLOW:
+            continue  # sperrende Contracts (Taboo) bleiben stehen
+        row[CAT_HIDDEN] = True
+        row[HELPER] = {"l3outs": names, "for": []}
+        for _name, o in outs:
+            l3outs[id(o)] = o
+            helpers[(row.get(DIRECTION), id(o))].append(row)
+    attached: dict[tuple, list[dict]] = defaultdict(list)  # (Richtung, L3Out) -> Firewall-Regeln
+    for _idx, row in items:
+        rule = data.rule(row.get(RULE))
+        if (not vrfs or rule is None or rule.domain is not RuleDomain.FIREWALL
+                or row.get(REL) == relevance_store.IMPOSSIBLE):  # fmt: skip
+            continue
+        direction = row.get(DIRECTION)
+        outs = behind.for_rule(rule.source_system_id, rule.vdom, vrfs,
+                               _fabric_ports(data, rule, direction))  # fmt: skip
+        if not outs:
+            continue
+        row[L3OUT_IN], row[L3OUT_COL] = outs[0].name, lines(o.name for o in outs)
+        if rule.action is RuleAction.ALLOW:
+            for o in outs:
+                l3outs.setdefault(id(o), o)
+                attached[(direction, id(o))].append(row)
+    for (direction, oid), contracts in helpers.items():
+        fw_rows = attached.get((direction, oid), [])
+        if not fw_rows:
+            continue  # die Firewall oeffnet hier nichts (0.78.2): nur Treffer
+        name = l3outs[oid].name
+        opened = _contract_allowed(data, contracts)
+        services = data.services({r[RULE] for r in fw_rows})
+        listed: dict[int, dict] = {}
+        for c in contracts:
+            rule = data.rule(c[RULE])
+            listed.setdefault(rule.id, {"rule_id": rule.id,
+                                        "name": rule.name or f"#{rule.external_id}"})  # fmt: skip
+        missing: list[str] = []
+        narrow: list[int] = []
+        for fw in fw_rows:
+            miss = services.outside(fw[RULE], opened) or []
+            fw.setdefault(HELPERS, []).append(
+                {"l3out": name, "contracts": list(listed.values()), "missing": miss}
+            )
+            if miss:
+                missing += miss
+                narrow.append(fw[RULE])
+        for c in contracts:
+            c[HELPER]["for"] = list(dict.fromkeys([*c[HELPER]["for"], *(r[RULE] for r in fw_rows)]))
+            if missing:
+                c[NARROW] = list(dict.fromkeys([*(c.get(NARROW) or []), *missing]))
+                c[FW_RULES] = list(dict.fromkeys([*(c.get(FW_RULES) or []), *narrow]))
+    for _idx, row in items:  # Spalte L3Out der Firewall-Regeln mit den Hilfs-Contracts
+        if row.get(HELPERS):
+            shown = {h["l3out"]: h for h in row[HELPERS]}
+            names = str(row.get(L3OUT_COL) or "").split("\n")
+            row[L3OUT_COL] = lines(_helper_text(shown[n]) if n in shown else n for n in names)
+
+
+def _helper_text(h: dict) -> str:
+    """„L3O_inet · Contract CT_inet:SJ“, mit fehlenden Diensten „ – es fehlt tcp/8443“."""
+    names = ", ".join(c["name"] for c in h["contracts"])
+    text = f"{h['l3out']} · Contract {names}"
+    if h["missing"]:
+        shown = _missing_text(h["missing"])
+        text += L(f" – es fehlt {shown}", f" – missing {shown}")
+    return text
+
+
+def by_l3out(rows: list[dict]) -> list[dict]:
+    """Unspezifische Zugriffe nach dem L3Out, ueber den sie hereinkommen (ADR 0034, Anwender):
+    die spezifischen wie bisher zuerst, danach die unspezifischen je L3Out (ohne L3Out
+    zuletzt) - nur, wenn eine unspezifische einen L3Out hat."""
+    broad = [r for r in rows if r.get(SCOPE) in UNSPECIFIC]
+    if not any(r.get(L3OUT_IN) for r in broad):
+        return rows
+    specific = [r for r in rows if r.get(SCOPE) not in UNSPECIFIC]
+    broad.sort(key=lambda r: (not r.get(L3OUT_IN), str(r.get(L3OUT_IN) or "").lower()))
+    return specific + broad
 
 
 def vrf_key(data: TenantData, epg: Epg) -> tuple[int | None, str | None]:
@@ -1228,7 +1410,7 @@ def epg_doc(session: Session, epg: Epg, data: TenantData | None = None, full: bo
     own, shared = _epg_values(session, data, epg)
     items = _aci_rows(data, epg, name)
     items += _covered_rows(session, data, own, name, overlap=True, contained=shared, show_ips=False)
-    for idx, row in mark_categories(data, items):
+    for idx, row in mark_categories(data, items, {vrf_key(data, epg)}):
         rows_by_table[idx].append(row)
     host = session.get(NetworkObject, epg.network_object_id) if epg.network_object_id else None
     return _envelope(
@@ -1307,7 +1489,7 @@ def host_doc(
     # ausserhalb des Fabrics: ueber die externe EPG, der das ACI die IP zuordnet (0.28.0)
     vrfs = {vrf_key(data, e) for e in epgs}
     items += _ext_rows(data, [ip] if ip else [], system_name, vrfs)
-    for idx, row in mark_categories(data, items):
+    for idx, row in mark_categories(data, items, vrfs):
         rows_by_table[idx].append(row)
     info = vms.info(ip)
     return _envelope(
@@ -1367,7 +1549,7 @@ def vm_rows(
     vrfs = {vrf_key(data, data.epgs_by_id[i]) for i in ids}
     # eine IP an einer NIC mit EPG (Portgruppe) liegt im Fabric - keine externe EPG (0.83.1)
     outside = [ip for ip in ips if ip not in mapped]
-    return mark_categories(data, out + _ext_rows(data, outside, name, vrfs))
+    return mark_categories(data, out + _ext_rows(data, outside, name, vrfs), vrfs)
 
 
 def host_epgs(

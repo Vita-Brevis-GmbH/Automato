@@ -26,6 +26,7 @@ from app.models import (
     EpgEndpoint,
     EpgSubnet,
     Finding,
+    L3OutFirewall,
     LogicalZone,
     LogicalZoneSelector,
     NatRule,
@@ -126,6 +127,13 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
     for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS, *L2_MODELS, TopoChange):
         session.execute(delete(model).where(model.source_system_id == source.id))
     _drop_from_exits(session, source)
+    # Firewall hinter einem L3Out von Hand (ADR 0034): als APIC bzw. als Firewall
+    session.execute(
+        delete(L3OutFirewall).where(
+            (L3OutFirewall.aci_source_system_id == source.id)
+            | (L3OutFirewall.firewall_id == source.id)
+        )
+    )
     session.execute(
         delete(ParallelRejection).where(
             (ParallelRejection.system_a_id == source.id)
@@ -189,7 +197,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     counts["findings"] = _count(session, delete(Finding).where(Finding.tenant_id == tid))
     session.execute(delete(DeviceObject).where(DeviceObject.tenant_id == tid))
     for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS, *L2_MODELS, TopoChange, TopoExit,
-                  TopoExitDismissal, ParallelRejection):  # fmt: skip
+                  TopoExitDismissal, ParallelRejection, L3OutFirewall):  # fmt: skip
         session.execute(delete(model).where(model.tenant_id == tid))
     counts["vms"] = _delete_vms(session, Vm.tenant_id == tid)
     session.execute(delete(Portgroup).where(Portgroup.tenant_id == tid))

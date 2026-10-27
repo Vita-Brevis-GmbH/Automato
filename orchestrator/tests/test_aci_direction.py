@@ -119,10 +119,11 @@ def test_doku_und_verbindungen_in_beide_richtungen(client):
     # aus dem Internet zum Provider - und zurueck: EPG_web baut ins Internet auf (ip/any)
     assert sorted(hits) == [("CT_world", "in", False), ("CT_world", "out", True)]
     tables = {t["index"]: t["rows"] for t in doc["tables"]}
-    # Kategorien Richtung L3Out (0.78.2): die Firewall ist fuehrend - fw-01 hat keine Regel aus
-    # dem bzw. ins Internet fuer EPG_web, der Contract steht dort nicht separat (Treffer oben)
-    world = [r for i in (1, 2) for r in tables[i] if r["Description"].startswith("CT_world")]
-    assert world == []
+    # Kategorien Richtung L3Out (ADR 0034): hinter L3O_inet steht keine Firewall (Peer ohne
+    # gelesenes Geraet) - der Contract regelt allein und steht da, mit Hinweis
+    world = {i: r for i in (1, 2) for r in tables[i] if r["Description"].startswith("CT_world")}
+    assert set(world) == {1, 2} and world[1]["TCP/UDP"] == "ip/any (Rückrichtung)"
+    assert {r["L3Out"] for r in world.values()} == {"L3O_inet (ohne Firewall)"}
     # innerhalb des Tenants: eine Zeile, beide Richtungen vermerkt
     (open_row,) = (r for t in doc["tables"] for r in t["rows"]
                    if r["Description"].startswith("CT_open"))  # fmt: skip
@@ -238,5 +239,6 @@ def test_doku_je_system_rueckrichtung_wie_applikation(client):
     rows = [r for t in doc["tables"] for r in t["rows"] if r["Description"].startswith("CT_open")]
     assert len(rows) == 1 and rows[0]["TCP/UDP"].endswith("(↔ beide Richtungen)")
     world = [r for t in doc["tables"] for r in t["rows"] if r["Description"].startswith("CT_world")]
-    # Richtung L3Out (0.78.2): ohne Firewall-Regel dorthin steht der Contract nicht da
-    assert world == []
+    # Richtung L3Out (ADR 0034): ohne Firewall hinter L3O_inet steht der Contract da (beide
+    # Richtungen in verschiedenen Kategorien) - wie in der Applikations-Doku
+    assert len(world) == 2 and {r["L3Out"] for r in world} == {"L3O_inet (ohne Firewall)"}

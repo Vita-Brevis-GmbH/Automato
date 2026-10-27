@@ -210,6 +210,15 @@ class DocHitOut(BaseModel):
     # ACI ist zustandslos (0.69.1): Treffer der Rueckrichtung (Provider -> Consumer, Filter
     # ohne Ports); `side` bleibt die Seite des Contracts, `direction` ist umgekehrt
     reverse: bool = False
+    # L3Outs (ADR 0034): L3Out des Zugriffs; Contract zu externen EPGs mit Firewall dahinter =
+    # Hilfs-Contract (`helper`, an den Firewall-Regeln `helper_for`); an der Firewall-Regel ihre
+    # Hilfs-Contracts je L3Out (`helpers`: l3out, rule_ids, names, missing); Hinweis am Contract
+    # ohne Firewall dahinter (`l3out_note`)
+    l3out: str | None = None
+    helper: bool = False
+    helper_for: list[int] = []
+    helpers: list[dict] = []
+    l3out_note: str = ""
 
 
 class DocSummaryOut(BaseModel):
@@ -227,6 +236,7 @@ class DocSummaryOut(BaseModel):
     assigned: int = 0  # direkt zugeordnete Regeln (0.60.0)
     excluded: int = 0  # ausgeschlossene Regeln (0.60.0)
     hidden: int = 0  # in den Kategorien ausgeblendete Zeilen (0.69.0)
+    helpers: int = 0  # Hilfs-Contracts ueber L3Outs, an den Firewall-Regeln (ADR 0034)
 
 
 class DocFindingOut(BaseModel):
@@ -259,6 +269,8 @@ class ApplicationDocOut(BaseModel):
     hides: list[dict] = []
     # 0.78.2: Contracts Richtung L3Out, die weniger oeffnen als die Firewall-Regeln
     narrower: list[dict] = []
+    # ADR 0034: Hilfs-Contracts ueber L3Outs (nicht in `rules`) mit ihren Firewall-Regeln
+    helpers: list[dict] = []
 
 
 class RuleMemberIn(BaseModel):

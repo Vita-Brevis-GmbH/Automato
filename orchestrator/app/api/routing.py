@@ -18,7 +18,11 @@
                                  auch als Netz (0.39.0)
 - `GET /routing/resolve?q=&type=`  Name bzw. FQDN -> Hosts und Netze (IPAM, Objekte, VMs,
                                  Inventar) fuer die Weg-Suche, seitenweise (`limit`, `offset`)
-- `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs` - Nachbarn mit Namen aus dem IPAM
+- `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs` - Nachbarn mit Namen aus dem IPAM;
+                                 je L3Out die Firewall dahinter (`behind`, ADR 0034)
+- `GET /routing/l3outs/firewall-choices`  Firewalls (VDOMs) mit ihren Interfaces zur Auswahl
+- `PUT/DELETE /routing/l3outs/firewall`   Firewall hinter einem L3Out von Hand: bestaetigen,
+                                 waehlen, keine bzw. wieder abgeleitet (operator, ADR 0034)
 - `GET/POST/PUT/DELETE /routing/exits` - Anbindungen nach aussen (Internet, MPLS, WAN),
                                  von Hand erfasst (operator), an denen ein Weg endet bzw.
                                  nach manuellen Routen weitergeht (0.18.0); fuer eine oder
@@ -37,17 +41,17 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import String, and_, cast, false, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit
 from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import (
     CollectorRun,
@@ -63,9 +67,11 @@ from app.models import (
     TopoRoute,
 )
 from app.store import (
+    app_refresh,
     customer_infra,
     exits,
     l2_topo,
+    l3out_firewall,
     paths,
     policy_check,
     resolve,
@@ -792,12 +798,17 @@ def l3outs(
     graph = paths.Graph(session, tid)
     rows = _list(session, tid, TopoL3Out, None, order)
     leafs = paths.device_names(session, {o.source_system_id for o in rows})
+    # Firewall dahinter (ADR 0034): abgeleitet bzw. von Hand
+    behind = {(o.source_system_id, o.dn): o
+              for o in l3out_firewall.Behind(session, tid, graph).l3outs}  # fmt: skip
     out = []
     for o in rows:
         row = _row(o, names)
         sid = o.source_system_id
         if not _in_view(infra, row, infra.context_mark(sid, o.vrf) if infra else None):
             continue
+        found = behind.get((sid, o.dn))
+        row["behind"] = found.out(graph) if found else None
         row["nodes"] = [
             {
                 **n,
@@ -822,6 +833,146 @@ def l3outs(
         ]
         out.append(row)
     return out
+
+
+# -- Firewall hinter einem L3Out (ADR 0034) -------------------------------------------------
+
+
+class FirewallRef(BaseModel):
+    source_system_id: int
+    vdom: str = Field(min_length=1, max_length=100)  # Kontext wie im Weg (root bei nur root)
+    interface: str | None = Field(default=None, max_length=200)  # Interface zum L3Out
+
+
+class L3OutFirewallIn(BaseModel):
+    tenant_id: int
+    source_system_id: int  # APIC
+    dn: str = Field(min_length=1, max_length=400)  # DN des L3Outs
+    # confirm: die abgeleitete Zuordnung bestaetigen; none: ausdruecklich keine Firewall;
+    # sonst die gewaehlten Firewalls
+    confirm: bool = False
+    none: bool = False
+    firewalls: list[FirewallRef] = Field(default_factory=list, max_length=16)
+
+
+def _l3out(session: Session, principal: Principal, tenant_id: int, aci_id: int, dn: str):
+    tenant_scope(principal, tenant_id)
+    found = l3out_firewall.find(session, tenant_id, aci_id, dn)
+    if found is None:
+        raise HTTPException(status_code=404, detail="l3out not found")
+    return found
+
+
+def _audit_l3out(session: Session, principal: Principal, action: str, o: TopoL3Out,
+                 tenant_id: int, **extra) -> None:  # fmt: skip
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action=f"routing.l3out_firewall.{action}",
+        subject=o.dn,
+        detail={
+            "tenant_id": tenant_id,
+            "source_system_id": o.source_system_id,
+            "dn": o.dn,
+            "l3out": o.name,
+            **extra,
+        },  # fmt: skip
+    )
+
+
+def _behind_out(session: Session, tid: int, o: TopoL3Out) -> dict | None:
+    graph = paths.Graph(session, tid)
+    found = l3out_firewall.Behind(session, tid, graph).of(o.source_system_id, o.aci_tenant, o.name)
+    return found.out(graph) if found else None
+
+
+@router.get("/l3outs/firewall-choices")
+def l3out_firewall_choices(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    """Gelesene Firewalls bzw. VDOMs mit ihren Interfaces (ohne Management) - zur Auswahl der
+    Firewall hinter einem L3Out (ADR 0034)."""
+    tid = _tenant(session, principal, tenant_id)
+    return l3out_firewall.choices(session, tid)
+
+
+@router.put("/l3outs/firewall")
+def set_l3out_firewall(
+    body: L3OutFirewallIn,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Firewall hinter einem L3Out von Hand (Operator, ADR 0034): die abgeleitete bestaetigen,
+    eine bzw. mehrere waehlen (VDOM, Interface zum L3Out) oder ausdruecklich keine. Nur Daten
+    der Plattform; Befunde der Applikationen und Zonen sowie die Kunden ziehen danach nach."""
+    o = _l3out(session, principal, body.tenant_id, body.source_system_id, body.dn)
+    graph = paths.Graph(session, body.tenant_id)
+    behind = l3out_firewall.Behind(session, body.tenant_id, graph)
+    current = behind.of(o.source_system_id, o.aci_tenant, o.name)
+    derived = current.derived if current else []
+    if body.confirm:
+        if not derived:
+            detail = L("keine abgeleitete Firewall zum Bestätigen",
+                       "no derived firewall to confirm")  # fmt: skip
+            raise HTTPException(status_code=422, detail=detail)
+        chosen, origin = list(derived), l3out_firewall.CONFIRMED
+    elif body.none:
+        chosen, origin = [], l3out_firewall.NONE
+    else:
+        if not body.firewalls:
+            detail = L("Firewall wählen, bestätigen oder „keine“",
+                       "choose or confirm a firewall, or “none”")  # fmt: skip
+            raise HTTPException(status_code=422, detail=detail)
+        choices = {(c["source_system_id"], c["vdom"]): c
+                   for c in l3out_firewall.choices(session, body.tenant_id, graph)}  # fmt: skip
+        chosen = []
+        for f in body.firewalls:
+            c = choices.get((f.source_system_id, f.vdom))
+            if c is None:
+                detail = L(f"keine gelesene Firewall {f.source_system_id}|{f.vdom}",
+                           f"no firewall read {f.source_system_id}|{f.vdom}")  # fmt: skip
+                raise HTTPException(status_code=422, detail=detail)
+            iface = (f.interface or "").strip() or None
+            known = {i["name"]: i for i in c["interfaces"]}
+            if iface is not None and iface not in known:
+                detail = L(f"Interface {iface} gibt es auf {c['label']} nicht",
+                           f"interface {iface} does not exist on {c['label']}")  # fmt: skip
+                raise HTTPException(status_code=422, detail=detail)
+            zone = known[iface]["zone"] if iface else None
+            ref = l3out_firewall.FwRef(f.source_system_id, f.vdom, iface, zone)
+            if not any(ref.same(x) for x in chosen):
+                chosen.append(ref)
+        same = len(chosen) == len(derived) and all(any(c.same(d) for d in derived) for c in chosen)
+        origin = l3out_firewall.CONFIRMED if same else l3out_firewall.MANUAL
+    l3out_firewall.assign(session, body.tenant_id, o, chosen, origin, f"user:{principal.subject}")
+    _audit_l3out(session, principal, "set", o, body.tenant_id, origin=origin,
+                 firewalls=[{"source_system_id": f.source_system_id, "vdom": f.context,
+                             "interface": f.interface} for f in chosen])  # fmt: skip
+    app_refresh.schedule_tenant(background, factory, body.tenant_id)
+    return {"dn": o.dn, "behind": _behind_out(session, body.tenant_id, o)}
+
+
+@router.delete("/l3outs/firewall")
+def remove_l3out_firewall(
+    background: BackgroundTasks,
+    tenant_id: int,
+    source_system_id: int,
+    dn: str = Query(..., min_length=1, max_length=400),
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Zuordnung von Hand entfernen (Operator): es gilt wieder die Ableitung."""
+    o = _l3out(session, principal, tenant_id, source_system_id, dn)
+    removed = l3out_firewall.clear(session, o.source_system_id, o.dn)
+    if removed:
+        _audit_l3out(session, principal, "removed", o, tenant_id)
+        app_refresh.schedule_tenant(background, factory, tenant_id)
+    return {"dn": o.dn, "removed": removed, "behind": _behind_out(session, tenant_id, o)}
 
 
 # -- Anbindungen nach aussen (0.18.0, von Hand erfasst) ------------------------------------

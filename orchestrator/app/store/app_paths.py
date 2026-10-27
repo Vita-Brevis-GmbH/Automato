@@ -24,6 +24,9 @@ mit ihrem Weg; je Hop die Policy bzw. der Contract, der entscheidet, mit den Obj
   je Firewall eines Verbunds (`variants`). Offen ueber einen Weg und gesperrt ueber einen
   anderen (`inconsistent`) ist der Befund „Applikation: Wege uneinheitlich“; durchgehend
   gesperrt ist gewollt und kein Befund mehr.
+- **Hilfs-Contracts (ADR 0034):** ein Contract zu externen EPGs mit einer Firewall hinter dem
+  L3Out ist keine eigene Verbindung; er prueft im ACI-Hop der Verbindung der Firewall-Regel mit
+  und steht bei ihren Regeln, wenn er ihren Dienst oeffnet.
 - **Fuer den Netzwerkplan (0.74.0):** je ACI-Hop der L3Out des Ein- bzw. Ausgangs nach dem
   Routing (`l3out_in`/`l3out_out`: Next-Hop im Netz bzw. Peer eines L3Out-Pfads, Interface des
   Pfads), dazu die L3Outs der externen EPGs der Pruefung (`l3outs`), und der Aufbau der
@@ -249,6 +252,8 @@ def _candidates(
         rule = rules[h["rule_id"]]
         if h["relevance"] == "impossible" or h["scope"] in _SKIP:
             continue
+        if h.get("helper"):
+            continue  # Hilfs-Contract ueber einen L3Out (ADR 0034): nur Teil des ACI-Hops
         system = systems[h["system"]]
         if rule.domain == RuleDomain.ACI_CONTRACT and not h.get("reverse"):
             names = [x.canonical_name for x in rule.services]
@@ -286,6 +291,13 @@ def _candidates(
                 else:
                     _add_system(conn.dst if h["direction"] == "in" else conn.src, system)
                 conn.rules.setdefault(rule.id)
+                # Hilfs-Contracts der Firewall-Regel (ADR 0034) mit diesem Dienst: pruefen mit,
+                # wie bisher der Contract zum Netz der externen EPG
+                for x in h.get("helpers") or []:
+                    for helper in x.get("rule_ids") or []:
+                        offered = _services(rules[helper]) if helper in rules else []
+                        if None in offered or svc in offered:
+                            conn.rules.setdefault(helper)
                 start = _start(data, rule, h, by_label)
                 if start and start not in conn.starts:
                     conn.starts.append(start)

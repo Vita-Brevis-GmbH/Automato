@@ -37,6 +37,39 @@ def schedule(background: BackgroundTasks, factory: sessionmaker[Session], tenant
     return True
 
 
+def schedule_tenant(background: BackgroundTasks, factory: sessionmaker[Session],
+                    tenant_id: int) -> bool:  # fmt: skip
+    """Alles nachziehen, was vom Weg ueber die L3Outs abhaengt (ADR 0034: Firewall hinter einem
+    L3Out von Hand gepflegt) - Befunde der Applikationen und Zonen, Zugehoerigkeit der Kunden;
+    wie oben hinter der Antwort. Schluessel (Mandant, 0) = alle Applikationen."""
+    key = (tenant_id, 0)
+    with _lock:
+        if key in _pending:
+            return False
+        _pending.add(key)
+    background.add_task(run_tenant, factory, tenant_id)
+    return True
+
+
+def run_tenant(factory: sessionmaker[Session], tenant_id: int) -> None:
+    from app.store import customers, reconcile  # spaet: reconcile -> app_paths -> applications
+
+    with _tenant_locks[tenant_id]:
+        with _lock:
+            _pending.discard((tenant_id, 0))
+        session = factory()
+        try:
+            reconcile.refresh_app_findings(session, tenant_id)
+            reconcile.refresh_zone_findings(session, tenant_id)
+            customers.derive(session, tenant_id)
+            session.commit()
+        except Exception:
+            session.rollback()
+            log.exception("Mandant %s: Befunde nach L3Out-Zuordnung fehlgeschlagen", tenant_id)
+        finally:
+            session.close()
+
+
 def pending(tenant_id: int, application_id: int) -> bool:
     with _lock:
         return (tenant_id, application_id) in _pending
