@@ -15,6 +15,8 @@ import zipfile
 from datetime import UTC, datetime
 from xml.sax.saxutils import escape
 
+from app.i18n import L
+
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 # Zeichen, die XML 1.0 nicht erlaubt (Steuerzeichen aus Beschreibungen der Geraete)
@@ -155,7 +157,8 @@ class Document:
             z.writestr("_rels/.rels", _RELS)
             z.writestr("word/_rels/document.xml.rels", _DOC_RELS)
             z.writestr("word/document.xml", document)
-            z.writestr("word/styles.xml", _STYLES)
+            # Sprache des Textes (Rechtschreibung in Word) wie die Anfrage (0.87.0, ADR 0028)
+            z.writestr("word/styles.xml", _STYLES.replace(_LANG, L(_LANG, 'w:val="en-US"')))
             z.writestr("docProps/core.xml", core)
             z.writestr("docProps/app.xml", _APP)
         return buf.getvalue()
@@ -207,6 +210,7 @@ def _heading_style(sid: str, name: str, level: int, size: int, before: int) -> s
             f'<w:szCs w:val="{size}"/></w:rPr></w:style>')  # fmt: skip
 
 
+_LANG = 'w:val="de-CH"'  # Sprache im Standard-Stil
 _STYLES = (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     f'<w:styles xmlns:w="{_W}">'

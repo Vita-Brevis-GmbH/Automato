@@ -21,6 +21,7 @@ from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session, get_session_factory
+from app.i18n import L
 from app.models import Application, Rule, Site, SourceSystem, Tenant
 from app.schemas.rules import RuleOut
 from app.store import app_import, app_paths, app_plan, app_refresh, sites, word_export
@@ -306,7 +307,9 @@ def _detail(session: Session, app: Application) -> ApplicationDetailOut:
 def _require_tenant(principal: Principal, tenant_id: int | None) -> int:
     tid = tenant_scope(principal, tenant_id)
     if tid is None:
-        raise HTTPException(status_code=422, detail="tenant_id erforderlich")
+        raise HTTPException(
+            status_code=422, detail=L("tenant_id erforderlich", "tenant_id required")
+        )
     return tid
 
 
@@ -419,11 +422,12 @@ class DeleteManyIn(BaseModel):
 @router.get("/import/template")
 def import_template(principal: Principal = Depends(require_operator)):
     """Vorlage fuer den CSV-Import (0.75.0): Kopfzeile und ein Beispiel, Trennzeichen `;`."""
-    body = "\ufeff" + app_import.TEMPLATE  # BOM: Excel erkennt UTF-8
+    body = "\ufeff" + app_import.template()  # BOM: Excel erkennt UTF-8
+    name = L("applikationen-vorlage.csv", "applications-template.csv")
     return Response(
         content=body.encode("utf-8"),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="applikationen-vorlage.csv"'},
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )
 
 
@@ -784,17 +788,19 @@ def export_connections_plan(
     `key` nur die Verbindungen des Filters, mit `rules=false` ohne die Ebene „Regeln“ (0.74.0).
     Nicht fuer Kunden-Benutzer (Freigabeliste)."""
     if key and len(key) > app_paths.MAX_TRACES:
-        raise HTTPException(status_code=422, detail="zu viele Verbindungen")
+        raise HTTPException(
+            status_code=422, detail=L("zu viele Verbindungen", "too many connections")
+        )
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
     built = app_paths.build(session, app)
     plan = app_plan.build(built["connections"], set(key) if key else None, built["members"])
     when = datetime.now(UTC)
-    title = f"Netzwerkplan {app.name}"
+    title = f"{L('Netzwerkplan', 'Network diagram')} {app.name}"
     body = (app_plan.svg if format == "svg" else app_plan.drawio)(plan, title, when, rules)
     media, ext = _EXPORT[format]
     slug = re.sub(r"[^A-Za-z0-9_-]+", "-", app.name).strip("-").lower() or "applikation"
-    name = f"netzwerkplan-{slug}-{when:%Y-%m-%d}.{ext}"
+    name = f"{L('netzwerkplan', 'network-diagram')}-{slug}-{when:%Y-%m-%d}.{ext}"
     return Response(content=body, media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
 
@@ -816,7 +822,9 @@ def export_application(
     if sections:
         want = {s.strip() for s in sections.split(",") if s.strip()}
         if not want or not want <= set(word_export.SECTIONS):
-            raise HTTPException(status_code=422, detail="unbekannter Abschnitt")
+            raise HTTPException(
+                status_code=422, detail=L("unbekannter Abschnitt", "unknown section")
+            )
     with_plan = want is None or "plan" in want
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
@@ -831,8 +839,9 @@ def export_application(
     sources = dict(session.execute(
         select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == app.tenant_id)
     ).all())  # fmt: skip
-    base = f"applikation-{word_export.slug(app.name, 'applikation')}-{when:%Y-%m-%d}"
-    plan_file = f"{base}-netzwerkplan.drawio"
+    base = (f"{L('applikation', 'application')}-{word_export.slug(app.name, 'applikation')}"
+            f"-{when:%Y-%m-%d}")  # fmt: skip
+    plan_file = f"{base}-{L('netzwerkplan', 'network-diagram')}.drawio"
     body = word_export.application(out, conns, sources, when, tenant.name if tenant else None,
                                    plan_file if format == "zip" and with_plan else None,
                                    want)  # fmt: skip
@@ -843,7 +852,8 @@ def export_application(
         if with_plan and conns is not None:
             plan = app_plan.drawio(app_plan.build(conns["connections"],
                                                   members=conns["members"]),
-                                   f"Netzwerkplan {app.name}", when)  # fmt: skip
+                                   f"{L('Netzwerkplan', 'Network diagram')} {app.name}",
+                                   when)  # fmt: skip
             files.append((plan_file, plan))
         body = word_export.bundle(files)
         media, name = "application/zip", f"{base}.zip"
@@ -892,7 +902,7 @@ def hide_rules(
     app = _load(session, principal, application_id)
     reason = body.reason.strip()
     if len(reason) < 5:
-        raise HTTPException(status_code=422, detail="Begründung zu kurz")
+        raise HTTPException(status_code=422, detail=L("Begründung zu kurz", "reason too short"))
     out = []
     for rule_id in dict.fromkeys(body.rule_ids):
         rule = session.get(Rule, rule_id)

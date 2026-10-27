@@ -18,6 +18,7 @@ from functools import cached_property
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import (
     Epg,
     EpgEndpoint,
@@ -65,6 +66,26 @@ TABLES: list[tuple[int, str, str]] = [
     (9, "Zugriff zu anderen Security Tenants", "firewall"),
     (10, "Unspezifische Zugriffe auf die Applikation", "firewall"),
 ]
+# Titel auf Englisch (0.87.0, ADR 0028): `TABLES` bleibt deutsch, gewaehlt wird bei der Ausgabe
+_TITLES_EN = {
+    1: "Internet access",
+    2: "Access from the Internet",
+    3: "Access to the corporate network",
+    4: "Access from the corporate network",
+    5: "Access L3O_vpn",
+    6: "Access L3O_sra (remote access)",
+    7: "Access within the application profile",
+    8: "Access within the security tenant",
+    9: "Access to other security tenants",
+    10: "Unspecific access to the application",
+}
+
+
+def table_title(index: int) -> str:
+    """Titel einer Kategorie in der Sprache der Anfrage."""
+    de = next((t for i, t, _ in TABLES if i == index), "")
+    return L(de, _TITLES_EN.get(index, de))
+
 
 # "Bezug": wie die Regel das System erfasst - direkt, ueber ein Netz/einen Bereich bzw. eine
 # Gruppe (Objektname), any, vzAny der VRF, ESG oder die EPG des Servers (Dev-Befund 0.10.0).
@@ -131,6 +152,40 @@ TABLE_COLUMNS: dict[int, list[str]] = {
 for _i in (3, 4, 5, 6, 7, 8, 9, 10):
     TABLE_COLUMNS[_i] = _COMMON
 MAX_IPS = 3  # IPs je System in einer Zelle
+# Anzeige der Spalten auf Englisch (0.87.0, ADR 0028): die Spaltennamen bleiben Schluessel der
+# Zeilen (Python und Oberflaeche vergleichen sie), uebersetzt wird nur `labels` je Tabelle
+_COLUMN_EN = {
+    SNAT_IP: "NAT external IPv4",
+    DNS_NAME: "External DNS name",
+    ACTION: "Action",
+    PROTECTION: "Protection",
+    DEVICE: "Device",
+}
+
+
+def column_labels(columns: list[str]) -> list[str]:
+    """Anzeige der Spalten (parallel zu `columns`) in der Sprache der Anfrage."""
+    return [L(c, _COLUMN_EN.get(c, c)) for c in columns]
+
+
+# Marker im Dienst-Text (ACI zustandslos, 0.69.1) - beide Sprachen, damit die Auswertung
+# (`app_paths._named`, `_merge_reverse`) jede Fassung erkennt
+REVERSE_MARKS = ("(Rückrichtung)", "(reverse direction)")
+BOTH_MARKS = ("beide Richtungen", "both directions")
+
+
+def reverse_mark() -> str:
+    """Zusatz am Dienst einer Zeile der Rueckrichtung."""
+    return L("(Rückrichtung)", "(reverse direction)")
+
+
+def both_mark() -> str:
+    """Zusatz am Dienst, wenn beide Richtungen in derselben Kategorie stehen."""
+    return L("(↔ beide Richtungen)", "(↔ both directions)")
+
+
+def has_both(text: str | None) -> bool:
+    return any(m in (text or "") for m in BOTH_MARKS)
 
 
 def place(row: dict) -> dict:
@@ -328,8 +383,8 @@ def _merge_reverse(rows: list[dict]) -> list[dict]:
     for row in rows:
         twin = forward.get((row.get(RULE), row.get(SIDE), row.get(OBJECT)))
         if row.get(REVERSE) and twin is not None:
-            if "beide Richtungen" not in (twin.get(SERVICE) or ""):
-                twin[SERVICE] = f"{twin.get(SERVICE) or ''} (↔ beide Richtungen)".strip()
+            if not has_both(twin.get(SERVICE)):
+                twin[SERVICE] = f"{twin.get(SERVICE) or ''} {both_mark()}".strip()
             continue
         out.append(row)
     return out
@@ -374,16 +429,12 @@ def _envelope(
     for rows in rows_by_table.values():
         for row in rows:
             place(row)
-    tables = [
-        {
-            "index": i,
-            "title": title,
-            "enforcement": enf,
-            "columns": visible_columns(i, rows_by_table[i]),
-            "rows": rows_by_table[i],
-        }
-        for i, title, enf in TABLES
-    ]
+    tables = []
+    for i, _title, enf in TABLES:
+        columns = visible_columns(i, rows_by_table[i])
+        tables.append({"index": i, "title": table_title(i), "enforcement": enf,
+                       "columns": columns, "labels": column_labels(columns),
+                       "rows": rows_by_table[i]})  # fmt: skip
     tenant = session.get(Tenant, tenant_id)
     site = session.get(Site, site_id) if site_id else None
     return {
@@ -521,7 +572,7 @@ class TenantData:
                     for n, p in zip(found, pools, strict=True)
                 )
                 if pools
-                else "Interface-IP"
+                else L("Interface-IP", "interface IP")
             )
         return [v for v in vips if v is not None], snat
 
@@ -706,10 +757,11 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
             same_tenant = all(c.aci_tenant == epg.aci_tenant for c in cp_epgs)
             external = [c for c in cp_epgs if c.kind == "external"]
             only_external = bool(external) and len(external) == len(cp_epgs)
-            how = sides[side]
-            text = how if via is None else (via if how == "direkt" else f"{how} · {via}")
+            how = sides[side]  # Schluessel: direkt | vzAny <VRF> | ESG <Name>
+            shown = L("direkt", "direct") if how == "direkt" else how
+            text = shown if via is None else (via if how == "direkt" else f"{how} · {via}")
             if mutual:
-                text += " · Consumer und Provider"
+                text += L(" · Consumer und Provider", " · Consumer and Provider")
             obj = f"EPG {epg_store.inventory_label(epg)}" if how == "direkt" else how
             targets = lines(cp_names)
             forward = "in" if side == "dst" else "out"
@@ -746,19 +798,21 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                     idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
                 services = ", ".join(back if reverse else rule_view.service_labels(r))
                 if only and not reverse:
-                    services = "nur Antworten (Filter nur mit Quellport)"
+                    services = L("nur Antworten (Filter nur mit Quellport)",
+                                 "replies only (filter with source port only)")  # fmt: skip
+                back_text = L("Rückrichtung", "reverse direction")
                 out.append(
                     (
                         idx,
                         {
                             APP: app_label(system_name, ips),
                             PEER: targets,
-                            SERVICE: services + (" (Rückrichtung)" if reverse else ""),
+                            SERVICE: services + (f" {reverse_mark()}" if reverse else ""),
                             ACTION: action_label(r),
                             PROTECTION: ", ".join(r.protections) if r.protections else "",
                             DEVICE: data.device(r),
                             DESCRIPTION: r.name or f"#{r.external_id}",
-                            VIA: f"{text} · Rückrichtung" if reverse else text,
+                            VIA: f"{text} · {back_text}" if reverse else text,
                             RULE: r.id,
                             DIRECTION: direction,
                             SCOPE: _aci_scope(r, how),
@@ -792,8 +846,9 @@ def _contract_allowed(data: TenantData, rows: list[dict]):
     from app.store import zone_services
 
     out = zone_services.Allowed([])
-    forward = {r[RULE] for r in rows if not r.get(REVERSE) and "nur Antworten" not in
-               (r.get(SERVICE) or "")}  # fmt: skip
+    # „nur Antworten“ aus der Regel selbst (0.87.0: nicht mehr aus dem Text der Zeile)
+    forward = {r[RULE] for r in rows
+               if not r.get(REVERSE) and not _replies_only(data.rule(r[RULE]))}  # fmt: skip
     services = data.services(forward)
     for rid in forward:
         for proto, lo, hi, name in services.by_rule.get(rid, []):
@@ -815,6 +870,13 @@ def _contract_allowed(data: TenantData, rows: list[dict]):
             elif (parsed := zone_services.parse(str(text))) is not None:
                 out.items.append(parsed)
     return out
+
+
+def _replies_only(rule: Rule | None) -> bool:
+    """Contract, der Consumer -> Provider nur Antworten erlaubt (Filter nur mit Quellport)."""
+    if rule is None:
+        return False
+    return aci_direction.replies_only(rule.raw, [s.canonical_name for s in rule.services])
 
 
 def mark_categories(data: TenantData, items: list[tuple[int, dict]]) -> list[tuple[int, dict]]:
@@ -863,8 +925,9 @@ def mark_categories(data: TenantData, items: list[tuple[int, dict]]) -> list[tup
                 continue
             r[NARROW], r[FW_RULES] = missing, fw_ids
             shown = ", ".join(missing[:5]) + (f" (+{len(missing) - 5})" if len(missing) > 5 else "")
-            r[DESCRIPTION] = (f"{r.get(DESCRIPTION) or ''} – öffnet weniger als die "
-                                f"Firewall-Regeln, es fehlt {shown}")  # fmt: skip
+            r[DESCRIPTION] = f"{r.get(DESCRIPTION) or ''} – " + L(
+                f"öffnet weniger als die Firewall-Regeln, es fehlt {shown}",
+                f"opens less than the firewall rules, missing {shown}")  # fmt: skip
     return items
 
 
@@ -926,12 +989,13 @@ def _ext_rows(data: TenantData, ips: list[str], system_name: str, vrfs: set | No
         length = net.prefixlen
         scope = "any" if length == 0 else "specific" if length == net.max_prefixlen else "subnet"
         label = aci_relevance.ext_label(epg)
-        for idx, row in _aci_rows(data, epg, system_name, via=f"externe EPG {label} ({net})",
+        ext = L("externe EPG", "external EPG")
+        for idx, row in _aci_rows(data, epg, system_name, via=f"{ext} {label} ({net})",
                                   ips=ips):  # fmt: skip
             if row[SCOPE] == "specific":
                 row[SCOPE] = scope
-            if row[OBJECT].startswith("EPG "):
-                row[OBJECT] = f"externe EPG {label}"
+            if row[OBJECT].startswith("EPG "):  # „EPG …“ in beiden Sprachen
+                row[OBJECT] = f"{ext} {label}"
             row |= {OBJECT_VALUE: str(net), REL: state, REL_TEXT: text}
             out.append((idx, row))
     return out
@@ -1112,14 +1176,15 @@ def _covered_rows(
         sides: dict[str, tuple[str, str, str, str]] = {}
         c = cover.get(r.id)
         if is_direct is not None:
+            direct = L("direkt", "direct")  # Bezug (Anzeige)
             for e in r.endpoints:
                 role = e.role.value
                 if is_direct(e) and role not in sides:
                     o = data.objs.get(e.network_object_id) if e.network_object_id else None
                     if c is not None and role in c.sides:  # Objektname wie auf der Firewall
-                        sides[role] = ("direkt", "specific", c.via(role), c.value(role))
+                        sides[role] = (direct, "specific", c.via(role), c.value(role))
                     else:
-                        sides[role] = ("direkt", "specific", o.name if o else "", _label(o, None))
+                        sides[role] = (direct, "specific", o.name if o else "", _label(o, None))
         for role in c.sides if c else ():
             sides.setdefault(role, (c.via(role), c.scope(role), c.via(role), c.value(role)))
         if any(side[1] != "any" for side in sides.values()):

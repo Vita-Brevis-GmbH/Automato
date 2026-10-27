@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import Application, Site
 from app.store import applications as store
 
@@ -59,6 +60,16 @@ TEMPLATE = (
     "Beschreibung\r\n"
     "Webshop;Webshop Kunden;webshop-prod;prod;042;Team Web;hoch;;Bestellungen und Kasse\r\n"
 )
+# Vorlage auf Englisch (0.87.0, ADR 0028) - die Kopfzeilen erkennt `COLUMNS` ebenso
+TEMPLATE_EN = (
+    "Name;External name;Internal name;Purpose;Code;Owner;Criticality;Site;Description\r\n"
+    "Webshop;Webshop customers;webshop-prod;prod;042;Team Web;high;;Orders and checkout\r\n"
+)
+
+
+def template() -> str:
+    """Vorlage in der Sprache der Anfrage."""
+    return L(TEMPLATE, TEMPLATE_EN)
 
 
 def _key(text: str) -> str:
@@ -124,7 +135,7 @@ def _read(text: str) -> tuple[dict[str, str], list[str], list[tuple[int, dict[st
     try:
         header = next(reader)
     except StopIteration:
-        raise ValueError("leere Datei") from None
+        raise ValueError(L("leere Datei", "empty file")) from None
     columns: dict[str, str] = {}
     ignored: list[str] = []
     index: dict[int, str] = {}
@@ -137,13 +148,17 @@ def _read(text: str) -> tuple[dict[str, str], list[str], list[tuple[int, dict[st
         index[i] = f
         columns[h.strip()] = f
     if "name" not in index.values():
-        raise ValueError("Spalte „Name“ fehlt in der Kopfzeile")
+        raise ValueError(
+            L("Spalte „Name“ fehlt in der Kopfzeile", "column “Name” is missing in the header")
+        )
     rows: list[tuple[int, dict[str, str]]] = []
     for cells in reader:
         if not any(c.strip() for c in cells):
             continue
         if len(rows) >= MAX_ROWS:
-            raise ValueError(f"zu viele Zeilen (höchstens {MAX_ROWS})")
+            raise ValueError(
+                L(f"zu viele Zeilen (höchstens {MAX_ROWS})", f"too many rows (at most {MAX_ROWS})")
+            )
         values = {f: (cells[i].strip() if i < len(cells) else "") for i, f in index.items()}
         rows.append((reader.line_num, values))
     return columns, ignored, rows
@@ -173,13 +188,17 @@ def plan(session: Session, tenant_id: int, text: str) -> Plan:
         rows.append(row)
         name = values.get("name", "")
         if not name:
-            row.errors.append("Name fehlt")
+            row.errors.append(L("Name fehlt", "name missing"))
         elif name.casefold() in seen:
-            row.errors.append("Name kommt in der Datei mehrfach vor")
+            row.errors.append(
+                L("Name kommt in der Datei mehrfach vor", "name occurs more than once in the file")
+            )
         seen.add(name.casefold())
         for f, limit in LIMITS.items():
             if len(values.get(f, "")) > limit:
-                row.errors.append(f"{f}: höchstens {limit} Zeichen")
+                row.errors.append(
+                    L(f"{f}: höchstens {limit} Zeichen", f"{f}: at most {limit} characters")
+                )
         resolved: dict = {}
         for f in ("external_name", "internal_name", "code", "owner", "description"):
             if values.get(f):
@@ -187,20 +206,28 @@ def plan(session: Session, tenant_id: int, text: str) -> Plan:
         if values.get("purpose"):
             p = PURPOSE.get(_key(values["purpose"]))
             if p is None:
-                row.errors.append(f"Zweck „{values['purpose']}“ unbekannt (dev, test, prod)")
+                row.errors.append(
+                    L(
+                        f"Zweck „{values['purpose']}“ unbekannt (dev, test, prod)",
+                        f"purpose “{values['purpose']}” unknown (dev, test, prod)",
+                    )
+                )
             resolved["purpose"] = p
         if values.get("criticality"):
             c = CRITICALITY.get(_key(values["criticality"]))
             if c is None:
-                row.errors.append(
+                row.errors.append(L(
                     f"Kritikalität „{values['criticality']}“ unbekannt (niedrig, mittel, hoch, "
-                    "kritisch)"
-                )
+                    "kritisch)",
+                    f"criticality “{values['criticality']}” unknown (low, medium, high, critical)",
+                ))  # fmt: skip
             resolved["criticality"] = c
         if values.get("site"):
             site = sites.get(_key(values["site"]))
             if site is None:
-                row.errors.append(f"Standort „{values['site']}“ unbekannt")
+                row.errors.append(
+                    L(f"Standort „{values['site']}“ unbekannt", f"site “{values['site']}” unknown")
+                )
             resolved["site_id"] = site.id if site else None
         row.resolved = resolved
         if row.errors:

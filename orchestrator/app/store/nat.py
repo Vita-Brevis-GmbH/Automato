@@ -5,6 +5,7 @@ import ipaddress
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import DeviceObject, NatRule, ObjectCategory, SourceSystem
 
 # Praefixe, hinter denen die Konvention den externen Namen fuehrt (V-EXT_<fqdn>, IPP_<fqdn>)
@@ -118,24 +119,41 @@ _AVI_SETTINGS = {
     "fqdn": "FQDN",
 }
 _AVI_VALUES = {"service_engine": "Service Engine (SNAT)", "client": "Client-IP bleibt"}
+# Beschriftungen auf Englisch (0.87.0, ADR 0028) - die Schluessel der Ausgabe sind Anzeige
+_LABEL_EN = {
+    "Typ": "Type", "ARP-Antwort": "ARP reply", "Quell-Filter": "Source filter",
+    "SNAT mit VIP-IP": "SNAT with VIP IP", "Start-IP": "Start IP", "End-IP": "End IP",
+    "Quelle von": "Source from", "Quelle bis": "Source to", "Jeder Host": "Any host",
+    "Methode": "Method", "Health-Monitor": "Health monitor",
+    "Quelle zum Server": "Source to server",
+    "Zustand": "State", "Richtlinien": "Policies", "Aktiv": "Enabled",
+    "Client-IP bleibt": "client IP preserved",
+}  # fmt: skip
+
+
+def _en(de: str) -> str:
+    return L(de, _LABEL_EN.get(de, de))
 
 
 def settings(nat: NatRule) -> dict[str, str]:
     attrs = nat.attrs if isinstance(nat.attrs, dict) else {}
     if attrs.get("platform") == "avi":
         out = {
-            label: _AVI_VALUES.get(str(attrs[key]), raw_text(attrs[key]))
+            _en(label): (_en(_AVI_VALUES[str(attrs[key])]) if str(attrs[key]) in _AVI_VALUES
+                         else raw_text(attrs[key]))
             for key, label in _AVI_SETTINGS.items()
             if attrs.get(key) not in (None, "", [])
-        }
+        }  # fmt: skip
         if attrs.get("content_switching"):
-            out["Richtlinien"] = "weitere Pools über HTTP-Richtlinien möglich (nicht ausgewertet)"
+            out[_en("Richtlinien")] = L(
+                "weitere Pools über HTTP-Richtlinien möglich (nicht ausgewertet)",
+                "more pools possible via HTTP policies (not evaluated)")  # fmt: skip
         if attrs.get("enabled") is False:
-            out["Aktiv"] = "nein"
+            out[_en("Aktiv")] = L("nein", "no")
         return out
     raw = nat.raw if isinstance(nat.raw, dict) else {}
     return {
-        label: raw_text(raw[key])
+        _en(label): raw_text(raw[key])
         for key, label in _SETTINGS.items()
         if raw.get(key) not in (None, "", [], "0.0.0.0")  # noqa: S104 - Anzeigewert
     }

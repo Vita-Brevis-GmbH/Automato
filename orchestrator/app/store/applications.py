@@ -23,6 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import naming
+from app.i18n import L, german
 from app.models import (
     Application,
     ApplicationMember,
@@ -119,7 +120,8 @@ def _rule_label(rule: Rule, source: str | None) -> str:
     if rule.domain == RuleDomain.ACI_CONTRACT:
         name = f"Contract {rule.name or rule.external_id}"
     else:
-        name = f"Policy {rule.external_id}" + (f" „{rule.name}“" if rule.name else "")
+        quoted = L(f" „{rule.name}“", f" “{rule.name}”") if rule.name else ""
+        name = f"Policy {rule.external_id}" + quoted
     vdom = rule.vdom if rule.domain == RuleDomain.FIREWALL and rule.vdom != "root" else None
     where = (source or f"#{rule.source_system_id}") + (f" · VDOM {vdom}" if vdom else "")
     return f"{name} ({where})"
@@ -170,7 +172,7 @@ class Resolver:
         if kind in RULE_KINDS:
             rule = self.rule(ref)
             if rule is None:
-                return Resolved(label=f"Regel {ref.split('|')[-1]}", exists=False)
+                return Resolved(label=f"{L('Regel', 'Rule')} {ref.split('|')[-1]}", exists=False)
             return Resolved(label=_rule_label(rule, self.sources.get(rule.source_system_id)),
                             exists=True, rules=[rule])  # fmt: skip
         return Resolved(label=ref, exists=False)
@@ -496,6 +498,14 @@ def _systems(session: Session, app: Application, resolver: Resolver | None = Non
 
 KIND_LABEL = {"ap": "AP", "epg": "EPG", "host": "Server", "rule": "Regel",
               "norule": "ohne Regel"}  # fmt: skip
+_KIND_LABEL_EN = {"rule": "Rule", "norule": "excluded rule"}  # Anzeige Englisch (ADR 0028)
+
+
+def kind_label(kind: str) -> str:
+    de = KIND_LABEL.get(kind, kind)
+    return L(de, _KIND_LABEL_EN.get(kind, de))
+
+
 # Reihenfolge der Bezugsarten: eine Regel zaehlt mit ihrem engsten Bezug; direkt zugeordnet
 # (0.60.0) vor allem
 _SCOPE_RANK = {"assigned": -1, "specific": 0, "subnet": 1, "vzany": 2, "pref_group": 3, "any": 4}
@@ -508,7 +518,7 @@ def _origins(session: Session, app: Application, res: Resolver):
     epgs: dict[int, tuple[Epg, str]] = {}
     for m in app.members:
         r = res.resolve(m.kind, m.ref)
-        why = f"{KIND_LABEL.get(m.kind, m.kind)} {r.label}"
+        why = f"{kind_label(m.kind)} {r.label}"
         for h in r.hosts:
             hosts.setdefault(h.id, (h, why))
         for e in r.epgs:
@@ -545,7 +555,8 @@ def _app_vms(
             e = entry(vm)
             e["epg_ids"].add(pg.epg_id)
             label = inventory_label(epgs[pg.epg_id][0])
-            e["why"].append(f"Portgruppe {pg.name} → EPG {label} ({epgs[pg.epg_id][1]})")
+            e["why"].append(f"{L('Portgruppe', 'Port group')} {pg.name} → EPG {label} "
+                            f"({epgs[pg.epg_id][1]})")  # fmt: skip
     by_ip = {_ip(h.value): (h, why) for h, why in hosts.values() if h.value}
     if by_ip:
         rows = session.execute(
@@ -569,9 +580,11 @@ def _project_hint(vm_name: str, portgroup: str | None, epg: Epg) -> str | None:
     ap_nr = _AP_NR.match(epg.ap or "")
     if vm_nr is None or ap_nr is None or vm_nr[1] == ap_nr[1]:
         return None
-    return (
+    return L(
         f"Name nennt Projekt {vm_nr[1]}, die Portgruppe {portgroup} gehört zur EPG "
-        f"{inventory_label(epg)} (Projekt {ap_nr[1]})"
+        f"{inventory_label(epg)} (Projekt {ap_nr[1]})",
+        f"Name refers to project {vm_nr[1]}, the port group {portgroup} belongs to the EPG "
+        f"{inventory_label(epg)} (project {ap_nr[1]})",
     )
 
 
@@ -900,8 +913,9 @@ def hide_rule(session: Session, app: Application, rule: Rule, category: int | No
     hide = next((h for h in app.hides if h.rule_ref == ref and h.category == category), None)
     source = session.get(SourceSystem, rule.source_system_id)
     if hide is None:
-        hide = ApplicationRuleHide(rule_ref=ref, category=category, reason=reason,
-                                   label=_rule_label(rule, source.name if source else None),
+        with german():  # gespeichert: immer deutsch (ADR 0028)
+            label = _rule_label(rule, source.name if source else None)
+        hide = ApplicationRuleHide(rule_ref=ref, category=category, reason=reason, label=label,
                                    created_by=actor)  # fmt: skip
         app.hides.append(hide)
     else:
@@ -961,11 +975,11 @@ def _rule_members(app: Application, res: Resolver, allowed: set[int] | None):
 
 def _assigned_hit(rule_id: int, member: tuple) -> dict:
     """Treffer einer direkt zugeordneten Regel - gilt fuer die ganze Applikation."""
+    via = L("direkt zugeordnet", "assigned directly")
     return {"rule_id": rule_id, "system": "app", "table": 0, "direction": "assigned",
-            "side": "app", "object": "", "value": "", "via": "direkt zugeordnet",
-            "scope": "assigned", "counterpart": "", "services": "", "epg": None,
-            "parties": None, "relevance": "possible", "relevance_text": "",
-            "member_id": member[0].id}  # fmt: skip
+            "side": "app", "object": "", "value": "", "via": via, "scope": "assigned",
+            "counterpart": "", "services": "", "epg": None, "parties": None,
+            "relevance": "possible", "relevance_text": "", "member_id": member[0].id}  # fmt: skip
 
 
 def _object_label(row: dict) -> str:
@@ -998,7 +1012,7 @@ def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict],
     """L3Out-Contracts, die weniger oeffnen als die Firewall-Regeln (0.78.2, `appdoc.NARROW`):
     je Contract die Systeme mit Kategorie, Richtung, fehlenden Diensten und Firewall-Regeln."""
     names = {x["key"]: x["name"] for x in systems} | {e["key"]: e["label"] for e in epgs}
-    titles = {i: t for i, t, _ in appdoc.TABLES}
+    titles = {i: appdoc.table_title(i) for i, _t, _ in appdoc.TABLES}
     out: dict[int, dict] = {}
     for key, idx, row in rows:
         if not row.get(appdoc.NARROW) or row.get(appdoc.REL) == "impossible":
@@ -1017,7 +1031,7 @@ def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict],
                 entry["firewall_rules"].append(x)
         cat = f"{idx} {titles.get(idx, '')}".strip()
         if row.get(appdoc.DIRECTION) == "out":
-            cat += " (ausgehend)"
+            cat += L(" (ausgehend)", " (outbound)")
         if cat not in entry["categories"]:
             entry["categories"].append(cat)
     return list(out.values())
@@ -1095,7 +1109,7 @@ def _hits_and_tables(
         row = dict(group["row"])
         row.pop(appdoc.PARTIES, None)  # nur fuer die Treffer
         if group.get("both") and not row.get(appdoc.REVERSE):
-            row[appdoc.SERVICE] = f"{row.get(appdoc.SERVICE) or ''} (↔ beide Richtungen)".strip()
+            row[appdoc.SERVICE] = f"{row.get(appdoc.SERVICE) or ''} {appdoc.both_mark()}".strip()
         if row.get(appdoc.REL) == "impossible":
             continue  # Export/Druck: nur, was das Routing zulaesst
         row["_rules"] = list(group["rules"])
@@ -1128,6 +1142,7 @@ def _hits_and_tables(
         tables[idx]["rows"].append(row)
     for t in tables.values():  # leere optionale Spalten (NAT, VIP, Load Balancer …) aus
         t["columns"] = appdoc.visible_columns(t["index"], t["rows"])
+        t["labels"] = appdoc.column_labels(t["columns"])  # Anzeige (0.87.0, ADR 0028)
     return hits, [tables[i] for i, _, _ in appdoc.TABLES]
 
 
@@ -1203,12 +1218,13 @@ def _app_findings(
 
 
 def _table_meta(t: tuple[int, str, str]) -> dict:
-    index, title, enforcement = t
+    index, _title, enforcement = t
     return {
         "index": index,
-        "title": title,
+        "title": appdoc.table_title(index),
         "enforcement": enforcement,
         "columns": appdoc.TABLE_COLUMNS[index],
+        "labels": appdoc.column_labels(appdoc.TABLE_COLUMNS[index]),
     }
 
 

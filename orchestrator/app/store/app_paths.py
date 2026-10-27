@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.i18n import L
 from app.models import (
     Application,
     Epg,
@@ -129,7 +130,12 @@ def build(session: Session, app: Application, doc: dict | None = None,
             child["part_of"] = conn["key"]
             out.append(child)
     if cut:
-        notes.append(f"{len(conns)} Verbindungen – nur die ersten {MAX_TRACES} geprüft")
+        notes.append(
+            L(
+                f"{len(conns)} Verbindungen – nur die ersten {MAX_TRACES} geprüft",
+                f"{len(conns)} connections – only the first {MAX_TRACES} checked",
+            )
+        )
     order = {"deny": 0, "depends": 1, "unknown": 2, "allow": 3}
     out.sort(key=lambda c: (not c["mismatch"], order.get(c["verdict"], 2)))
     return {
@@ -307,7 +313,12 @@ def _candidates(
     notes = []
     if skipped:
         names = ", ".join(sorted(skipped)[:5]) + (" …" if len(skipped) > 5 else "")
-        notes.append(f"ohne prüfbare Gegenstelle (FQDN, ISDB, any): {names}")
+        notes.append(
+            L(
+                f"ohne prüfbare Gegenstelle (FQDN, ISDB, any): {names}",
+                f"without a checkable peer (FQDN, ISDB, any): {names}",
+            )
+        )
     return merged, notes
 
 
@@ -470,7 +481,8 @@ def _fw_counter(ranges: list[tuple]) -> list[_Side]:
             text = str(first) if net.num_addresses == 1 else str(net)
             label = via or text
         else:
-            text, label = str(first), f"{via or first} ({first}–{last}, geprüft mit {first})"
+            checked = L("geprüft mit", "checked with")
+            text, label = str(first), f"{via or first} ({first}–{last}, {checked} {first})"
         if text in seen:
             continue
         seen.add(text)
@@ -504,7 +516,7 @@ def _aci_counter(session: Session, data: appdoc.TenantData, h: dict) -> list[_Si
                     out.append(
                         _Side(
                             str(net),
-                            f"externe EPG {e.l3out}|{e.name} ({net})",
+                            f"{L('externe EPG', 'external EPG')} {e.l3out}|{e.name} ({net})",
                             "external",
                             l3out=e.l3out,
                         )  # fmt: skip
@@ -555,9 +567,13 @@ def _services(rule: Rule) -> list[tuple[str, int | None] | None]:
 
 
 def _named(text: str) -> list[tuple[str, int | None] | None]:
-    """Dienste der Rueckrichtung (`ip/any`, `tcp/any`, `icmp/any` … aus dem Treffer, 0.69.1)."""
+    """Dienste der Rueckrichtung (`ip/any`, `tcp/any`, `icmp/any` … aus dem Treffer, 0.69.1);
+    der Zusatz „(Rueckrichtung)“ in jeder Sprache (`appdoc.REVERSE_MARKS`)."""
     out: list = []
-    for name in (text or "").replace("(Rückrichtung)", "").split(","):
+    text = text or ""
+    for mark in appdoc.REVERSE_MARKS:
+        text = text.replace(mark, "")
+    for name in text.split(","):
         proto, _, port = name.strip().lower().partition("/")
         if proto in ("tcp", "udp"):
             svc = (proto, int(port)) if port.isdigit() else (proto, None)
@@ -709,14 +725,19 @@ def _side_out(s: _Side, graph: paths.Graph) -> dict:
 
 def _verdict(active: list[dict], notes: list[str]) -> tuple[str, str]:
     if not active:
-        return "unknown", "; ".join(notes) or "kein Weg gefunden"
+        return "unknown", "; ".join(notes) or L("kein Weg gefunden", "no path found")
     policies = [p.get("policy") for p in active]
     verdicts = {x["verdict"] if x else "unknown" for x in policies}
     if len(verdicts) == 1:
         one = policies[0]
-        return (one["verdict"], one["text"]) if one else ("unknown", "keine Regeln auf dem Weg")
+        if one:
+            return one["verdict"], one["text"]
+        return "unknown", L("keine Regeln auf dem Weg", "no rules on the path")
     if "allow" in verdicts and verdicts & {"deny"}:
-        return "depends", "je nach Weg (ECMP) erlaubt bzw. gesperrt"
+        return "depends", L(
+            "je nach Weg (ECMP) erlaubt bzw. gesperrt",
+            "allowed or blocked depending on the path (ECMP)",
+        )
     return "depends", "; ".join(dict.fromkeys(x["text"] for x in policies if x))
 
 
@@ -735,7 +756,10 @@ def path_variants(found: list[dict]) -> list[dict]:
                 x = part if h is split else h
                 if x.get("rules"):
                     seq.append((x["label"], x["rules"]["verdict"], x["kind"]))
-            overall = policy_check._overall(seq) or {"verdict": "unknown", "text": "keine Regeln"}
+            overall = policy_check._overall(seq) or {
+                "verdict": "unknown",
+                "text": L("keine Regeln", "no rules"),
+            }
             via = " → ".join(label for label, _v, _k in seq) or "–"
             out.append({"kind": kind, "via": via, "verdict": overall["verdict"],
                         "text": overall["text"], "reason": reason})  # fmt: skip
@@ -846,7 +870,8 @@ def _hop_verdict(checks: list[dict]) -> str | None:
 
 def _rule_label(rule: Rule) -> str:
     if rule.domain == RuleDomain.FIREWALL:
-        return f"Policy {rule.external_id}" + (f" „{rule.name}“" if rule.name else "")
+        quoted = L(f" „{rule.name}“", f" “{rule.name}”") if rule.name else ""
+        return f"Policy {rule.external_id}" + quoted
     raw = rule.raw if isinstance(rule.raw, dict) else {}
     if raw.get("kind") == "taboo":
         return f"Taboo {rule.name}"
@@ -861,7 +886,8 @@ def _state(rule: Rule, active: list[dict], data: appdoc.TenantData) -> dict:
     base = {"rule_id": rule.id, "label": label, "action": rule.action.value,
             "device": data.device(rule)}  # fmt: skip
     if not active:
-        return base | {"state": "unknown", "text": "Weg nicht bekannt – nicht prüfbar"}
+        text = L("Weg nicht bekannt – nicht prüfbar", "path not known – not checkable")
+        return base | {"state": "unknown", "text": text}
     found = None
     nodes: list[dict] = []
     for path in active:
@@ -878,21 +904,27 @@ def _state(rule: Rule, active: list[dict], data: appdoc.TenantData) -> dict:
                         found = found if found and found["decides"] else e
     if found is not None:
         state = "decides" if found["decides"] else "possible"
-        text = (
-            "entscheidet auf dem Weg"
-            if state == "decides"
-            else ("auf dem Weg nur möglich – " + ", ".join(found.get("unsure") or []))
-        )
+        if state == "decides":
+            text = L("entscheidet auf dem Weg", "decides on the path")
+        else:
+            text = L("auf dem Weg nur möglich – ", "only possible on the path – ") + ", ".join(
+                found.get("unsure") or [])  # fmt: skip
         return base | {"state": state, "text": text}
     if not nodes:
-        text = f"{base['device']} liegt nicht auf dem Weg dieser Verbindung"
+        text = L(f"{base['device']} liegt nicht auf dem Weg dieser Verbindung",
+                 f"{base['device']} is not on the path of this connection")  # fmt: skip
         return base | {"state": "off_path", "text": text}
     r = nodes[0].get("rules") or {}
     deciding = next((e for e in r.get("rules") or [] if e.get("decides")), None)
     if deciding is not None:
-        text = f"vorher entscheidet {policy_check._label(deciding)}"
+        label = policy_check._label(deciding)
+        text = L(f"vorher entscheidet {label}", f"{label} decides earlier")
     else:
-        text = f"passt auf dem Weg nicht ({r.get('text') or 'Ein-/Ausgang, Quelle, Ziel, Dienst'})"
+        why = r.get("text") or L(
+            "Ein-/Ausgang, Quelle, Ziel, Dienst",
+            "incoming/outgoing interface, source, destination, service",
+        )
+        text = L(f"passt auf dem Weg nicht ({why})", f"does not match on the path ({why})")
     return base | {"state": "other", "text": text}
 
 
@@ -915,12 +947,17 @@ def _mismatch(states: list[dict], verdict: str, text: str, reached: bool) -> lis
     allowing = [s for s in states if s["action"] == "allow"]
     if allowing and verdict == "deny":
         who = ", ".join(s["label"] for s in allowing[:3])
-        out.append(f"{who} erlaubt – der Weg ist {text}")
+        out.append(L(f"{who} erlaubt – der Weg ist {text}", f"{who} allows – the path is {text}"))
     for s in allowing:
         if s["state"] == "off_path":
             out.append(f"{s['label']}: {s['text']}")
         elif s["state"] == "other" and verdict != "allow":
             out.append(f"{s['label']}: {s['text']}")
     if allowing and verdict == "allow" and not reached:
-        out.append("erlaubt, aber der Weg endet vor dem Ziel")
+        out.append(
+            L(
+                "erlaubt, aber der Weg endet vor dem Ziel",
+                "allowed, but the path ends before the destination",
+            )
+        )
     return out

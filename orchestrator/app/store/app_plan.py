@@ -33,6 +33,7 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from datetime import datetime
 
+from app.i18n import L
 from app.store.plan_export import CURVE_STEPS, _bezier, _geometry, _html, _id, _n, _rel, _text
 
 NODE_W, NODE_H = 190, 44
@@ -53,6 +54,12 @@ KIND = {"system": "System der Applikation", "firewall": "Firewall", "vdom": "VDO
         "external": "externe EPG", "lb": "Load Balancer"}  # fmt: skip
 VERDICT = {"allow": "erlaubt", "deny": "gesperrt", "depends": "abhängig", "unknown": "unbekannt",
            "blocked": "vorher gesperrt"}  # fmt: skip
+# Anzeige auf Englisch (0.87.0, ADR 0028); die Schluessel bleiben
+_KIND_EN = {"system": "Application system", "vrf": "ACI VRF", "object": "Peer",
+            "external": "external EPG"}  # fmt: skip
+_VERDICT_EN = {"allow": "allowed", "deny": "blocked", "depends": "depends", "unknown": "unknown",
+               "blocked": "blocked earlier"}  # fmt: skip
+IMPLICIT = "implizit gesperrt"  # Anzeige ohne entscheidende Regel (Merkmal `implicit`)
 BLOCK = ("deny", "implicit_deny")
 FG, MUTED, LINE = "#171b22", "#5a6475", "#8a93a3"
 COLOR = {"allow": "#2e7d32", "deny": "#c62828", "depends": "#ef6c00", "unknown": LINE,
@@ -61,6 +68,22 @@ FILL = {"own": "#e8f0fe", "hop": "#eef1f6", "peer": "#ffffff"}
 STROKE = {"own": "#2563eb", "hop": "#0e7c86", "peer": LINE}
 GROUP_FILL, GROUP_STROKE = "#f7f9fc", "#9aa5b8"
 RULE_FILL, RULE_STROKE = "#fffbea", "#d6b656"
+
+
+def kind_text(kind: str) -> str:
+    """Art eines Knotens in der Sprache der Anfrage."""
+    de = KIND.get(kind, kind)
+    return L(de, _KIND_EN.get(kind, de))
+
+
+def verdict_text(verdict: str) -> str:
+    """Urteil in der Sprache der Anfrage."""
+    return L(VERDICT[verdict], _VERDICT_EN[verdict])
+
+
+def _implicit(r: dict) -> bool:
+    """Ohne entscheidende Regel gesperrt (`_add_rules`, 0.87.0: Merkmal statt Name)."""
+    return bool(r.get("implicit"))
 
 
 def _verdict(values) -> str:
@@ -248,7 +271,7 @@ def build(connections: list[dict], keys: set[str] | None = None,
             _add(node, x, c, reached)
             if x["role"] == "hop":
                 col[x["id"]] = max(col.get(x["id"], 0), i)
-        svc = c["service"] or "alle"
+        svc = c["service"] or L("alle", "all")
         for i in range(len(chain) - 1):
             a, b = chain[i], chain[i + 1]
             pair = (a["id"], b["id"])
@@ -354,13 +377,17 @@ def _add_rules(node: dict, h: dict, on_device: str | None = None) -> None:
         on = k["label"] if len(checks) > 1 or on_device else None
         deciding = [r for r in k.get("rules") or [] if r.get("decides")]
         if not deciding and k.get("verdict") in BLOCK:
-            deciding = [{"name": "implizit gesperrt", "action": "deny", "services": []}]
+            deciding = [{"name": L(IMPLICIT, "implicitly denied"), "implicit": True,
+                         "action": "deny", "services": []}]  # fmt: skip
         for r in deciding:
-            text = _rule_text(r) if r.get("name") != "implizit gesperrt" else r["name"]
+            implicit = _implicit(r)
+            text = r["name"] if implicit else _rule_text(r)
             entry = next((x for x in node["rules"] if (x["name"], x["on"]) == (text, on)), None)
             if entry is None:
                 entry = {"name": text, "on": on, "action": r.get("action") or "allow",
                          "services": [], "rule_id": r.get("rule_id")}  # fmt: skip
+                if implicit:
+                    entry["implicit"] = True
                 node["rules"].append(entry)
             for svc in r.get("services") or []:
                 if svc not in entry["services"]:
@@ -406,15 +433,15 @@ def _sub(n: dict) -> str:
         text = "Load Balancer" + (f" · VIP {vips[0]}" if vips else "")
         return text + (f" +{len(vips) - 1}" if len(vips) > 1 else "")
     if n["kind"] == "l3out":
-        return f"L3Out · {VERDICT[n['verdict']]}"
+        return f"L3Out · {verdict_text(n['verdict'])}"
     if n["role"] == "hop":
-        return f"{KIND.get(n['kind'], n['kind'])} · {VERDICT[n['verdict']]}"
+        return f"{kind_text(n['kind'])} · {verdict_text(n['verdict'])}"
     ips = n["ips"]
     text = ips[0] + (f" +{len(ips) - 1}" if len(ips) > 1 else "")
     if n["kind"] == "epg":
         return " · ".join(v for v in (f"VRF {n['vrf']}" if n.get("vrf") else "", text) if v)
     if n["role"] == "own" and len(n["systems"]) > 1:
-        text += f" · {len(n['systems'])} Systeme"
+        text += L(f" · {len(n['systems'])} Systeme", f" · {len(n['systems'])} systems")
     elif n.get("name"):
         text += f" · {n['name']}"
     return text
@@ -422,14 +449,16 @@ def _sub(n: dict) -> str:
 
 def _rule_lines(n: dict) -> list[str]:
     lines = []
-    shown = sorted(n["rules"], key=lambda r: r["name"] == "implizit gesperrt")  # erlaubende zuerst
+    shown = sorted(n["rules"], key=_implicit)  # erlaubende zuerst
     for r in shown[:MAX_RULES]:
         svc = _services(r["services"]) if r["services"] else ""
         on = f"{r['on']}: " if r["on"] else ""
         mark = "✕ " if r["action"] in BLOCK else ""
         lines.append(f"{mark}{on}{r['name']}" + (f" · {svc}" if svc else ""))
     if len(n["rules"]) > MAX_RULES:
-        lines.append(f"+{len(n['rules']) - MAX_RULES} weitere")
+        lines.append(
+            L(f"+{len(n['rules']) - MAX_RULES} weitere", f"+{len(n['rules']) - MAX_RULES} more")
+        )
     return lines
 
 
@@ -508,8 +537,9 @@ def _layout(nodes: list[dict], edges: list[dict]) -> dict:
     width = max([width] + [x + 60 for e in routed for x, _ in e["points"]])
     columns = []
     for ci, c in enumerate(order):  # Kopf je Spalte (der Weg nur ueber der ersten)
-        title = ("Applikation" if c == 0 else "Gegenstellen" if ci == len(order) - 1
-                 else "Weg" if ci == 1 else "")  # fmt: skip
+        title = (L("Applikation", "Application") if c == 0
+                 else L("Gegenstellen", "Peers") if ci == len(order) - 1
+                 else L("Weg", "Path") if ci == 1 else "")  # fmt: skip
         columns.append({"x": X0 + ci * (NODE_W + COL_GAP), "title": title})
     return {"width": width, "height": TOP + tall + 24, "nodes": boxes, "edges": routed,
             "columns": columns, "groups": _groups(nodes)}  # fmt: skip
@@ -526,7 +556,8 @@ def _groups(nodes: list[dict]) -> list[dict]:
         members = by[title]
         top = min(n["y"] for n in members)
         bottom = max(n["y"] + n["stack"] for n in members)
-        out.append({"title": title, "x": members[0]["x"] - GROUP_PAD,
+        shown = L(NO_EPG, "without EPG") if title == NO_EPG else title  # NO_EPG bleibt Schluessel
+        out.append({"title": shown, "x": members[0]["x"] - GROUP_PAD,
                     "y": top - GROUP_HEAD - GROUP_PAD, "w": NODE_W + 2 * GROUP_PAD,
                     "h": bottom - top + GROUP_HEAD + 2 * GROUP_PAD,
                     "nodes": [n["id"] for n in members]})  # fmt: skip
@@ -663,11 +694,14 @@ def _port_label(x: float, y: float, side: str, text: str) -> dict | None:
 
 def _stamp(plan: dict, when: datetime | None) -> str:
     s = plan["summary"]
-    parts = [f"Stand {when:%d.%m.%Y %H:%M}" if when else "Stand"]
-    count = f"{s['connections']} Verbindungen"
+    if when:
+        parts = [L(f"Stand {when:%d.%m.%Y %H:%M}", f"As of {when:%d/%m/%Y %H:%M}")]
+    else:
+        parts = [L("Stand", "As of")]
+    count = L(f"{s['connections']} Verbindungen", f"{s['connections']} connections")
     if s["connections"] != s["total"]:
-        count += f" (von {s['total']}, gefiltert)"
-    parts += [count, f"{s['nodes']} Knoten"]
+        count += L(f" (von {s['total']}, gefiltert)", f" (of {s['total']}, filtered)")
+    parts += [count, L(f"{s['nodes']} Knoten", f"{s['nodes']} nodes")]
     return " · ".join(parts)
 
 
@@ -701,7 +735,7 @@ def svg(plan: dict, title: str, when: datetime | None = None, rules: bool = True
         if e["dashed"]:
             attrs["stroke-dasharray"] = "5 4"
         line = ET.SubElement(g, "polyline", attrs)
-        ET.SubElement(line, "title").text = f"{e['label']} – {VERDICT[e['verdict']]}"
+        ET.SubElement(line, "title").text = f"{e['label']} – {verdict_text(e['verdict'])}"
         _text(g, e["lx"], e["ly"], e["label"], "10.5", COLOR[e["verdict"]],
               anchor=e["anchor"], mono=True)  # fmt: skip
         for p in (e["port_a"], e["port_b"]):
@@ -736,7 +770,7 @@ def svg(plan: dict, title: str, when: datetime | None = None, rules: bool = True
 
 def _vm_lines(n: dict) -> list[str]:
     return [f"• {v}" for v in n.get("lines") or []] + (
-        [f"+{n['more']} weitere"] if n.get("more") else []
+        [L(f"+{n['more']} weitere", f"+{n['more']} more")] if n.get("more") else []
     )
 
 
@@ -749,7 +783,9 @@ def drawio(plan: dict, title: str, when: datetime | None = None, rules: bool = T
     Systemen, Urteil), Linien als Kanten mit den Diensten und den Interfaces an den Enden; die
     Regel-Kaesten auf der eigenen Ebene „Regeln“ (0.74.0)."""
     mxfile = ET.Element("mxfile", {"host": "Automato", "type": "device"})
-    diagram = ET.SubElement(mxfile, "diagram", {"id": "applikation", "name": "Applikation"})
+    diagram = ET.SubElement(
+        mxfile, "diagram", {"id": "applikation", "name": L("Applikation", "Application")}
+    )
     model = ET.SubElement(diagram, "mxGraphModel", {
         "grid": "1", "gridSize": "10", "guides": "1", "tooltips": "1", "connect": "1",
         "arrows": "0", "fold": "1", "page": "1", "pageScale": "1",
@@ -780,9 +816,9 @@ def drawio(plan: dict, title: str, when: datetime | None = None, rules: bool = T
         obj = ET.SubElement(root, "UserObject", {
             "id": f"n-{_id(n['id'])}",
             "label": f"<b>{_html(n['title'])}</b><br>{_html(n['sub'])}{vms}",
-            "automato_kind": KIND.get(n["kind"], n["kind"]),
+            "automato_kind": kind_text(n["kind"]),
             "automato_ips": ", ".join(n["ips"]), "automato_systems": ", ".join(n["systems"]),
-            "automato_verdict": VERDICT[n["verdict"]] if n["verdict"] else "",
+            "automato_verdict": verdict_text(n["verdict"]) if n["verdict"] else "",
             "tooltip": ", ".join(n["systems"] or n["ips"]),
         })  # fmt: skip
         style = ("rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;spacingLeft=8;"
@@ -811,7 +847,7 @@ def drawio(plan: dict, title: str, when: datetime | None = None, rules: bool = T
             "automato_services_in": ", ".join(e["back"]),
             "automato_ports_a": ", ".join(e["ports_a"]),
             "automato_ports_b": ", ".join(e["ports_b"]),
-            "automato_verdict": VERDICT[e["verdict"]],
+            "automato_verdict": verdict_text(e["verdict"]),
             "automato_connections": str(len(e["conns"])),
         })  # fmt: skip
         cell = ET.SubElement(obj, "mxCell", {
@@ -837,7 +873,8 @@ def drawio(plan: dict, title: str, when: datetime | None = None, rules: bool = T
                                                      "as": "geometry"})  # fmt: skip
             ET.SubElement(at, "mxPoint", {"y": "-8", "as": "offset"})
     if rules:  # eigene Ebene „Regeln“ - in draw.io ein- und ausblendbar
-        ET.SubElement(root, "mxCell", {"id": "regeln", "value": "Regeln", "parent": "0"})
+        ET.SubElement(root, "mxCell", {"id": "regeln", "value": L("Regeln", "Rules"),
+                                       "parent": "0"})  # fmt: skip
         for n in plan["nodes"]:
             b = n.get("rules_box")
             if not b:
