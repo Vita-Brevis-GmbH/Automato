@@ -174,3 +174,44 @@ def test_agent_paket_download_nur_admin(client, tmp_path):
     )
     assert client.get("/agents/package", headers={"X-Dev-Roles": "admin"}).status_code == 404
     del client.app.dependency_overrides[get_settings]
+
+
+def test_agent_paket_mit_ca_bei_tls_intern(client, tmp_path):
+    """0.78.2 (Befund: Agent auf http:// nach TLS intern): mit TLS intern liegt die CA (nur das
+    oeffentliche Zertifikat) im Paket und als Download; die Einrichtung erfaehrt es ueber info."""
+    import io
+    import zipfile
+
+    from app.config import Settings, get_settings
+
+    (tmp_path / "collectors-0.1.0-py3-none-any.whl").write_bytes(b"wheel")
+    tls_dir = tmp_path / "tls"
+    tls_dir.mkdir()
+    (tls_dir / "ca.crt").write_text("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n")
+    (tls_dir / "server.key").write_text("geheim")  # darf nie mit
+    admin = {"X-Dev-Roles": "admin"}
+
+    def settings(**extra):
+        client.app.dependency_overrides[get_settings] = lambda: Settings(
+            agent_package_dir=str(tmp_path), internal_tls_dir=str(tls_dir), **extra
+        )
+
+    settings()  # ohne TLS intern: keine CA
+    assert client.get("/agents/package/info", headers=admin).json() == {
+        "internal_tls": False, "ca": False, "ca_name": "automato-ca.crt"}  # fmt: skip
+    assert client.get("/agents/package/ca", headers=admin).status_code == 404
+    names = zipfile.ZipFile(io.BytesIO(client.get("/agents/package", headers=admin).content))
+    assert not any(n.endswith(".crt") for n in names.namelist())
+
+    settings(internal_tls=True)
+    assert (
+        client.get("/agents/package/info", headers={"X-Dev-Roles": "operator"}).status_code == 403
+    )
+    assert client.get("/agents/package/info", headers=admin).json()["ca"] is True
+    r = client.get("/agents/package/ca", headers=admin)
+    assert r.status_code == 200 and r.text.startswith("-----BEGIN CERTIFICATE-----")
+    assert 'filename="automato-ca.crt"' in r.headers["content-disposition"]
+    z = zipfile.ZipFile(io.BytesIO(client.get("/agents/package", headers=admin).content))
+    assert z.read("automato-collector-agent/automato-ca.crt").startswith(b"-----BEGIN")
+    assert not any(n.endswith(".key") for n in z.namelist())  # nur das Zertifikat
+    del client.app.dependency_overrides[get_settings]

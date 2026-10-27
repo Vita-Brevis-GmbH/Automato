@@ -243,6 +243,8 @@ class ApplicationDocOut(BaseModel):
     dependencies: dict = {}
     # 0.69.0: ausgeblendete Regeln je Kategorie (`active` = steht in einer Kategorie)
     hides: list[dict] = []
+    # 0.78.2: Contracts Richtung L3Out, die weniger oeffnen als die Firewall-Regeln
+    narrower: list[dict] = []
 
 
 class RuleMemberIn(BaseModel):

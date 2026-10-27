@@ -90,6 +90,13 @@ PARTIES = "_parties"
 # ACI ist zustandslos (0.69.1): Zeile der Rueckrichtung (Provider -> Consumer) mit den Diensten,
 # die der Provider aufbauen kann (`aci_direction`); die Seite (`SIDE`) bleibt die des Contracts
 REVERSE = "_reverse"
+# Kategorien Richtung L3Out (0.78.2, Anwender): die Firewall ist fuehrend - ein Contract zu
+# externen EPGs (`L3OUT` = deren Labels) steht nur in den Kategorien, wenn er weniger oeffnet als
+# die Firewall-Regeln derselben Kategorie und Richtung (`NARROW` = fehlende Dienste,
+# `FW_RULES` = die Firewall-Regeln), sonst nicht (`CAT_HIDDEN`; Treffer, Regeln & Contracts und
+# Verbindungen behalten ihn). `CAT_HIDDEN` auch fuer Zugriffe der Applikation auf andere Systeme
+# in Kategorie 10 („Unspezifische Zugriffe auf die Applikation“: nur eingehend)
+L3OUT, NARROW, FW_RULES, CAT_HIDDEN = "_l3out", "_narrow", "_fw_rules", "_cat_hidden"
 UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
 _COMMON = [
     "Server Name",
@@ -308,7 +315,8 @@ def _envelope(
             keep = []
             for row in rows_by_table[i]:
                 if row.get(REL) != relevance_store.IMPOSSIBLE:
-                    keep.append(row)
+                    if not row.get(CAT_HIDDEN):  # Kategorien bereinigt (0.78.2)
+                        keep.append(row)
                 elif not any(
                     (x["rule_id"], x["side"]) == (row.get(RULE), row.get(SIDE)) for x in impossible
                 ):
@@ -464,6 +472,32 @@ class TenantData:
     @cached_property
     def dns(self):
         return references.context(self.session, self.tenant_id)
+
+    def rule(self, rule_id: int | None) -> Rule | None:
+        """Schon geladene Regel (Zeilen der Doku)."""
+        return self._rules.get(rule_id) if rule_id is not None else None
+
+    @cached_property
+    def has_firewall(self) -> bool:
+        """Liest der Mandant Firewall-Regeln? Ohne Firewall bleiben die L3Out-Contracts."""
+        return self.session.scalar(select(Rule.id).where(
+            Rule.tenant_id == self.tenant_id, Rule.domain == RuleDomain.FIREWALL).limit(1)
+        ) is not None  # fmt: skip
+
+    def services(self, ids: set[int]):
+        """Dienste je Regel (`zone_services.RuleServices`), einmal geladen."""
+        from app.store import zone_services  # spaet: zone_services -> resolve -> ...
+
+        if not hasattr(self, "_services"):
+            self._services = zone_services.RuleServices({}, set())
+            self._services_loaded: set[int] = set()
+        todo = set(ids) - self._services_loaded
+        if todo:
+            more = zone_services.rule_services(self.session, todo)
+            self._services.by_rule.update(more.by_rule)
+            self._services.negated |= more.negated
+            self._services_loaded |= todo
+        return self._services
 
     @cached_property
     def epgs_by_id(self) -> dict[int, Epg]:
@@ -635,10 +669,98 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                             },
                             **({REVERSE: back} if reverse else {}),
                             **({REL: rel, REL_TEXT: rel_text} if rel else {}),
+                            **(
+                                {L3OUT: [aci_relevance.ext_label(c) for c in external]}
+                                if only_external
+                                else {}
+                            ),  # fmt: skip
                         },
                     )
                 )
     return out
+
+
+def _contract_allowed(data: TenantData, rows: list[dict]):
+    """Was die erlaubenden L3Out-Contracts einer Kategorie und Richtung oeffnen
+    (`zone_services.Allowed`): vorwaerts ihre Dienste, in der Rueckrichtung die Dienste, die
+    der Provider aufbauen kann; Contracts „nur Antworten“ oeffnen vorwaerts nichts."""
+    from app.store import zone_services
+
+    out = zone_services.Allowed([])
+    forward = {r[RULE] for r in rows if not r.get(REVERSE) and "nur Antworten" not in
+               (r.get("TCP/UDP") or "")}  # fmt: skip
+    services = data.services(forward)
+    for rid in forward:
+        for proto, lo, hi, name in services.by_rule.get(rid, []):
+            out.names.add((name or "").strip().lower())
+            if proto in ("tcp", "udp"):
+                out.items.append((proto, lo or zone_services.ALL_PORTS[0],
+                                  hi or lo or zone_services.ALL_PORTS[1]))  # fmt: skip
+            elif proto in ("icmp", "icmpv6"):
+                out.items.append(("icmp", None, None))
+            elif proto == "ip" and lo is None:  # ACI-Filter ohne Protokoll: alles
+                out.items.append(("any", None, None))
+    for r in rows:
+        for text in r.get(REVERSE) or []:
+            proto, _, port = str(text).lower().partition("/")
+            if proto in ("ip", "all", "unspecified", "any"):
+                out.items.append(("any", None, None))
+            elif proto in ("tcp", "udp") and port in ("", "any"):
+                out.items.append((proto, *zone_services.ALL_PORTS))
+            elif (parsed := zone_services.parse(str(text))) is not None:
+                out.items.append(parsed)
+    return out
+
+
+def mark_categories(data: TenantData, items: list[tuple[int, dict]]) -> list[tuple[int, dict]]:
+    """Kategorien eines Systems bereinigen (0.78.2, Anwender) - die Zeilen bleiben, nur
+    `CAT_HIDDEN` bzw. `NARROW` kommen dazu:
+
+    - Kategorie 10 zeigt nur Zugriffe auf die Applikation (eingehend), nicht ihre Zugriffe auf
+      andere Systeme.
+    - Contracts Richtung L3Out (Gegenstelle nur externe EPGs): die Firewall ist fuehrend. Je
+      Kategorie und Richtung deckt der Contract die Dienste der erlaubenden Firewall-Regeln ab
+      -> nicht in den Kategorien; oeffnet er weniger, steht er da, mit den fehlenden Diensten
+      (Befund `app_contract_narrower`). Ohne Firewall-Regeln dort oeffnet die Firewall nichts,
+      der Contract steht nicht da; ohne Firewall im Mandanten bleibt alles wie bisher."""
+    groups: dict[tuple, dict[str, list]] = {}
+    for idx, row in items:
+        if idx == 10 and row.get(DIRECTION) == "out":
+            row[CAT_HIDDEN] = True
+            continue
+        if row.get(REL) == relevance_store.IMPOSSIBLE:
+            continue
+        rule = data.rule(row.get(RULE))
+        if rule is None:
+            continue
+        g = groups.setdefault((idx, row.get(DIRECTION)), {"fw": [], "aci": []})
+        if row.get(L3OUT):
+            g["aci"].append(row)
+        elif rule.domain is RuleDomain.FIREWALL and rule.action is RuleAction.ALLOW:
+            g["fw"].append(row)
+    if not data.has_firewall:
+        return items
+    for g in groups.values():
+        allow = [r for r in g["aci"] if data.rule(r[RULE]).action is RuleAction.ALLOW]
+        if not allow:
+            continue  # sperrende Contracts (Taboo) bleiben stehen
+        fw_ids = list(dict.fromkeys(r[RULE] for r in g["fw"]))
+        missing: list[str] = []
+        if fw_ids:
+            opened = _contract_allowed(data, allow)
+            services = data.services(set(fw_ids))
+            for rid in fw_ids:
+                missing += services.outside(rid, opened) or []
+        missing = list(dict.fromkeys(missing))
+        for r in allow:
+            if not missing:
+                r[CAT_HIDDEN] = True
+                continue
+            r[NARROW], r[FW_RULES] = missing, fw_ids
+            shown = ", ".join(missing[:5]) + (f" (+{len(missing) - 5})" if len(missing) > 5 else "")
+            r["Description"] = (f"{r.get('Description') or ''} – öffnet weniger als die "
+                                f"Firewall-Regeln, es fehlt {shown}")  # fmt: skip
+    return items
 
 
 def vrf_key(data: TenantData, epg: Epg) -> tuple[int | None, str | None]:
@@ -891,10 +1013,10 @@ def epg_doc(session: Session, epg: Epg, data: TenantData | None = None, full: bo
     data = data or TenantData(session, epg.tenant_id)
     name = epg_store.inventory_label(epg)
     rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
-    for idx, row in _aci_rows(data, epg, name):
-        rows_by_table[idx].append(row)
     own, shared = _epg_values(session, data, epg)
-    for idx, row in _covered_rows(session, data, own, name, overlap=True, contained=shared):
+    items = _aci_rows(data, epg, name)
+    items += _covered_rows(session, data, own, name, overlap=True, contained=shared)
+    for idx, row in mark_categories(data, items):
         rows_by_table[idx].append(row)
     host = session.get(NetworkObject, epg.network_object_id) if epg.network_object_id else None
     return _envelope(
@@ -952,7 +1074,7 @@ def host_doc(
 
     rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
     direct = data.rule_ids(RuleDomain.FIREWALL, network_object_id=sys_obj.id)
-    for idx, row in _covered_rows(
+    items = _covered_rows(
         session,
         data,
         [sys_ip] if sys_ip else [],
@@ -960,19 +1082,18 @@ def host_doc(
         overlap=False,
         direct_ids=direct,
         is_direct=lambda e: e.network_object_id == sys_obj.id,
-    ):
-        rows_by_table[idx].append(row)
+    )
     ip = sys_ip.split("/")[0] if sys_ip else None
     vms = virtual.Lookup(session, tenant_id, {ip} if ip else set())
     # ACI: die EPG(s), in denen der Server steht (Portgruppe der VM, gelernter Endpunkt,
     # verknuepft)
     epgs = host_epgs(session, data, sys_obj, vms.epg_ids(ip), prefer)
     for epg in epgs:
-        for idx, row in _aci_rows(data, epg, system_name, via=f"EPG {epg_store.label(epg)}"):
-            rows_by_table[idx].append(row)
+        items += _aci_rows(data, epg, system_name, via=f"EPG {epg_store.label(epg)}")
     # ausserhalb des Fabrics: ueber die externe EPG, der das ACI die IP zuordnet (0.28.0)
     vrfs = {vrf_key(data, e) for e in epgs}
-    for idx, row in _ext_rows(data, [ip] if ip else [], system_name, vrfs):
+    items += _ext_rows(data, [ip] if ip else [], system_name, vrfs)
+    for idx, row in mark_categories(data, items):
         rows_by_table[idx].append(row)
     info = vms.info(ip)
     return _envelope(
@@ -1030,7 +1151,7 @@ def vm_rows(
         epg = data.epgs_by_id[i]
         out += _aci_rows(data, epg, name, via=f"EPG {epg_store.inventory_label(epg)}")
     vrfs = {vrf_key(data, data.epgs_by_id[i]) for i in ids}
-    return out + _ext_rows(data, ips, name, vrfs)
+    return mark_categories(data, out + _ext_rows(data, ips, name, vrfs))
 
 
 def host_epgs(

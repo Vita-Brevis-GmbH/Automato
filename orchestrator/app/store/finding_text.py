@@ -189,6 +189,28 @@ def _variant(v: dict) -> str:
     return f"{backup}über {v.get('via')} {_VERDICT.get(v.get('verdict'), v.get('verdict'))}"
 
 
+def _app_narrower(subject: str, d: dict) -> tuple[str, str]:
+    """Contract Richtung L3Out enger als die Firewall-Regeln (0.78.2)."""
+    name = d.get("name") or subject
+    tenant = f" ({d['tenant']})" if d.get("tenant") else ""
+    missing = d.get("missing") or []
+    shown = ", ".join(missing[:5]) + (f" (+{len(missing) - 5})" if len(missing) > 5 else "")
+    fws = [f"{_q(f.get('name'))}" + (f" auf {f['source']}" if f.get("source") else "")
+           for f in d.get("firewall_rules") or []]  # fmt: skip
+    via = f" ({', '.join(fws[:3])}{' …' if len(fws) > 3 else ''})" if fws else ""
+    systems = d.get("systems") or []
+    who = f" für {', '.join(systems[:3])}{' …' if len(systems) > 3 else ''}" if systems else ""
+    cats = "; ".join(d.get("categories") or [])
+    return (
+        f"Contract {_q(name)}{tenant} der Applikation {_q(d.get('application'))} öffnet{who} "
+        f"weniger als die Firewall-Regeln{via}: es fehlt {shown or '–'}"
+        f"{f' – Kategorie {cats}' if cats else ''}.",
+        "Die Firewall ist führend: was sie erlaubt, sperrt der Contract zum L3Out im ACI. Den "
+        "Contract um die fehlenden Dienste ergänzen bzw. die Firewall-Regel einschränken "
+        "(Applikations-Doku, Kategorien; „Verbindungen Ende zu Ende“ zeigt den Weg).",
+    )
+
+
 def _app_mismatch(subject: str, d: dict) -> tuple[str, str]:
     """Wege uneinheitlich (0.73.0, ADR 0021): Verbindungen einer Applikation, die über einen
     Weg offen und über einen anderen gesperrt sind. Befunde bis 0.72 (Regel <-> Weg) ohne
@@ -289,6 +311,7 @@ _TOPO_TEXT = {
     "zone_overlap": _zone_overlap,
     "zone_outside_schema": _zone_outside_schema,
     "app_connection_mismatch": _app_mismatch,
+    "app_contract_narrower": _app_narrower,
     "link_speed_mismatch": _link,
     "link_duplex_mismatch": _link,
     "link_vlan_mismatch": _link,

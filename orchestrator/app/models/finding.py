@@ -71,6 +71,8 @@ class FindingType(enum.StrEnum):
     # Verbindungen Ende zu Ende (0.59.0, ADR 0021): erlaubende Regel einer Applikation, deren
     # Verbindung der Weg sperrt, die nicht auf dem Weg liegt bzw. dort nicht greift
     APP_CONNECTION_MISMATCH = "app_connection_mismatch"
+    # 0.78.2: Contract Richtung L3Out oeffnet weniger als die Firewall-Regeln (fuehrend)
+    APP_CONTRACT_NARROWER = "app_contract_narrower"
     # Verkabelung (0.62.0, ADR 0025, `store/cabling`): Verbindung zwischen zwei gelesenen
     # Switches mit abweichender Konfiguration bzw. nur von einer Seite gemeldet
     LINK_SPEED_MISMATCH = "link_speed_mismatch"

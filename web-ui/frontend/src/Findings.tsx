@@ -192,7 +192,7 @@ function ruleLinks(f: Finding): { label: string; params: ViewParams }[] {
     return [{ label: f.subject_id, params: { q: String(d.value ?? f.subject_id) } }];
   }
   if (f.type === "duplicate_value") return names("names").map((n) => ({ label: n, params: { object: n } }));
-  if (["rule_incomplete", "aci_scope_unpaired", "snat_pool_missing", "app_connection_mismatch"].includes(f.type) && d.rule_id != null)
+  if (["rule_incomplete", "aci_scope_unpaired", "snat_pool_missing", "app_connection_mismatch", "app_contract_narrower"].includes(f.type) && d.rule_id != null)
     return [{ label: String(d.name ?? f.subject_id), params: { rule: String(d.rule_id) } }];
   if (f.subject_kind === "device_object" && f.type !== "unused_object")
     return [{ label: f.subject_id, params: { object: f.subject_id } }];

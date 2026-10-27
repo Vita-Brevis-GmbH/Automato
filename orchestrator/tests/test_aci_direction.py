@@ -119,10 +119,10 @@ def test_doku_und_verbindungen_in_beide_richtungen(client):
     # aus dem Internet zum Provider - und zurueck: EPG_web baut ins Internet auf (ip/any)
     assert sorted(hits) == [("CT_world", "in", False), ("CT_world", "out", True)]
     tables = {t["index"]: t["rows"] for t in doc["tables"]}
-    inbound = [r for r in tables[2] if r["Description"].startswith("CT_world")]
-    outbound = [r for r in tables[1] if r["Description"].startswith("CT_world")]
-    assert inbound and inbound[0]["Source"]  # Gegenstelle auch in der Spalte Source
-    assert outbound and outbound[0]["TCP/UDP"] == "ip/any (Rückrichtung)"
+    # Kategorien Richtung L3Out (0.78.2): die Firewall ist fuehrend - fw-01 hat keine Regel aus
+    # dem bzw. ins Internet fuer EPG_web, der Contract steht dort nicht separat (Treffer oben)
+    world = [r for i in (1, 2) for r in tables[i] if r["Description"].startswith("CT_world")]
+    assert world == []
     # innerhalb des Tenants: eine Zeile, beide Richtungen vermerkt
     (open_row,) = (r for t in doc["tables"] for r in t["rows"]
                    if r["Description"].startswith("CT_open"))  # fmt: skip
@@ -238,5 +238,5 @@ def test_doku_je_system_rueckrichtung_wie_applikation(client):
     rows = [r for t in doc["tables"] for r in t["rows"] if r["Description"].startswith("CT_open")]
     assert len(rows) == 1 and rows[0]["TCP/UDP"].endswith("(↔ beide Richtungen)")
     world = [r for t in doc["tables"] for r in t["rows"] if r["Description"].startswith("CT_world")]
-    # andere Kategorie (aus dem Internet / ins Internet): eigene Zeile der Rueckrichtung
-    assert sorted(r["TCP/UDP"] for r in world) == ["ip/any", "ip/any (Rückrichtung)"]
+    # Richtung L3Out (0.78.2): ohne Firewall-Regel dorthin steht der Contract nicht da
+    assert world == []

@@ -223,8 +223,9 @@ def test_build_doc_kategorisiert_und_fuellt_spalten(session_factory):
     deny = t2["in-deny"]
     assert (deny["Aktion"], deny["VIP IP Adresse"], deny["Externe IP Adressen"]) == ("Deny", "", "")
 
-    # Tabelle 10: interner Zugriff ohne Zonensignal -> unspezifisch
-    assert len(_rows(doc, 10)) == 1
+    # Tabelle 10 (seit 0.78.2 nur Zugriffe auf das System): der Zugriff des Systems auf die DB
+    # ohne Zonensignal steht nicht mehr da
+    assert _rows(doc, 10) == []
     # ACI-interne Tabellen bleiben in Model 2 leer
     assert _rows(doc, 7) == [] and _rows(doc, 8) == []
 

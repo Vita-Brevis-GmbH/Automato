@@ -406,7 +406,7 @@ def refresh_zone_findings(session: Session, tenant_id: int) -> int:
     return len(issues)
 
 
-APP_TYPES = frozenset({FindingType.APP_CONNECTION_MISMATCH})
+APP_TYPES = frozenset({FindingType.APP_CONNECTION_MISMATCH, FindingType.APP_CONTRACT_NARROWER})
 APP_CONNECTIONS = 10  # Verbindungen je Befund im Detail
 APP_VARIANTS = 6  # Wege je Verbindung im Detail (0.73.0)
 
@@ -466,8 +466,12 @@ def _app_issues(session: Session, tenant_id: int, apps: list,
                     "service": c["service"], "verdict": c["verdict"],
                     "state": st["state"], "path": c["text"], "variants": variants,
                 })  # fmt: skip
+        narrower = result.get("narrower") or []
+        wanted = set(per_rule) | {n["rule_id"] for n in narrower}
+        wanted |= {x for n in narrower for x in n["firewall_rules"]}
         rules = {r.id: r for r in session.scalars(select(Rule).where(
-            Rule.id.in_(list(per_rule))))} if per_rule else {}  # fmt: skip
+            Rule.id.in_(list(wanted))))} if wanted else {}  # fmt: skip
+        out += _narrower_issues(app, narrower, rules, names)
         for rid, conns in per_rule.items():
             r = rules.get(rid)
             if r is None:
@@ -490,6 +494,43 @@ def _app_issues(session: Session, tenant_id: int, apps: list,
                 },
             ))  # fmt: skip
     return out, failed
+
+
+def _narrower_issues(app, narrower: list[dict], rules: dict, names: dict) -> list[Issue]:
+    """Contract Richtung L3Out enger als die Firewall-Regeln (0.78.2, Anwender: die Firewall
+    ist fuehrend) - je Contract und Applikation ein Befund mit Systemen, Kategorien, fehlenden
+    Diensten und den Firewall-Regeln."""
+    out = []
+    for n in narrower:
+        r = rules.get(n["rule_id"])
+        if r is None:
+            continue
+        raw = r.raw if isinstance(r.raw, dict) else {}
+        label = r.name or f"#{r.external_id}"
+        subject = f"{raw.get('tenant')}/{label}" if raw.get("tenant") else label
+        fws = []
+        for rid in n["firewall_rules"][:APP_CONNECTIONS]:
+            fw = rules.get(rid)
+            if fw is not None:
+                fws.append(
+                    {
+                        "rule_id": fw.id,
+                        "name": (fw.name or f"#{fw.external_id}") + vdom_suffix(fw.vdom),
+                        "source": names.get(fw.source_system_id),
+                    }
+                )
+        detail = {
+            "rule_id": r.id, "external_id": r.external_id, "domain": r.domain.value,
+            "name": label, "tenant": raw.get("tenant"), "source_system_id": r.source_system_id,
+            "source": names.get(r.source_system_id), "application_id": app.id,
+            "application": app.name, "systems": n["systems"][:APP_CONNECTIONS],
+            "categories": n["categories"], "missing": n["missing"][:50],
+            "firewall_rules": fws,
+        }  # fmt: skip
+        out.append(Issue(FindingType.APP_CONTRACT_NARROWER, SubjectKind.RULE,
+                         f"{subject} · Applikation {app.name}", r.source_system_id,
+                         Severity.WARNING, detail=detail))  # fmt: skip
+    return out
 
 
 def refresh_app_findings(session: Session, tenant_id: int | None,

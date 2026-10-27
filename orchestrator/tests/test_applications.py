@@ -267,7 +267,10 @@ def test_applikation_manuell_pflegen_und_doku(client, session_factory):
     ]
     rows = {t["index"]: t["rows"] for t in doc["tables"]}
     assert [r["Description"] for r in rows[7]] == ["CT_db:SJ_sql"]  # innerhalb des AP
-    assert [r["Target Systems"] for r in rows[10]] == ["10.0.3.5"]  # Firewall-Regel
+    # Firewall-Regel des Servers zu 10.0.3.5 (ausgehend, ohne Zone): seit 0.78.2 nicht in
+    # Kategorie 10 - nur Zugriffe auf die Applikation; als Treffer bleibt sie
+    assert rows[10] == []
+    assert any(h["counterpart"] == "10.0.3.5" and h["table"] == 10 for h in doc["hits"])
     assert rows[7][0]["Target Systems"] == "TE_a/AP_002/EG_internal01"  # ganzer ACI-Pfad
     assert doc["summary"]["specific"] == 2 and doc["summary"]["unspecific"] == 0
 

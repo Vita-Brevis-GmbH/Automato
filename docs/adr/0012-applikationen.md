@@ -92,6 +92,23 @@ Begründung und Audit):**
   `findings`, `categories`, `hidden`; `GET /applications/{id}/export?sections=…`, der
   Steckbrief steht immer da). Reine Darstellung, keine Änderung an den Daten.
 
+**Ergänzung 0.78.2 (Anwender: Kategorien Richtung L3Out und Kategorie 10):**
+- **Die Firewall ist führend:** Ein Contract, dessen Gegenstelle nur externe EPGs (L3Out) sind,
+  steht nicht separat in den Kategorien (1–6, 9, 10 nach der L3Out-Zone), solange er die
+  Dienste der erlaubenden Firewall-Regeln derselben Kategorie und Richtung des Systems abdeckt
+  (`appdoc.mark_categories`, Vergleich wie bei der Absicht je Dienst: `zone_services`).
+  Gibt es dort keine Firewall-Regel, öffnet die Firewall nichts – der Contract steht ebenfalls
+  nicht da. Öffnet er weniger (Dienste der Firewall fehlen, „nur Antworten“), steht er da mit
+  „öffnet weniger als die Firewall-Regeln, es fehlt …“ und ist ein Befund
+  `app_contract_narrower` (Warnung, je Contract und Applikation, mit Systemen, Kategorien,
+  fehlenden Diensten und den Firewall-Regeln; neu mit den übrigen Befunden der Applikationen).
+  Sperrende Contracts (Taboo) bleiben stehen. Ohne Firewall im Mandanten (nur ACI) bleibt alles
+  wie bisher. Treffer, Regeln & Contracts und Verbindungen behalten den Contract.
+- **Kategorie 10 „Unspezifische Zugriffe auf die Applikation“** zeigt nur Zugriffe auf die
+  Applikation (eingehend), nicht ihre Zugriffe auf andere Systeme bzw. Adressen ohne
+  Zonensignal (z. B. „any → Tool“, „Server → Monitoring“); als Treffer bleiben sie.
+- Gleich in der Doku je System, im Export (Markdown, Word) und im Druck.
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:

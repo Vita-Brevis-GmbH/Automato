@@ -1359,6 +1359,14 @@ export const setAgentAutoUpdate = (id: number, autoUpdate: boolean) =>
 // Agent-Paket (ZIP: collectors-Wheel + install.ps1/run-agent.ps1, ohne Zugangsdaten)
 export const downloadAgentPackage = async (): Promise<Blob> =>
   (await fetchChecked("/api/agents/package")).blob();
+// 0.78.2: TLS intern an? Dann spricht der Orchestrator auf :8000 HTTPS mit der internen CA
+export interface AgentPackageInfo {
+  internal_tls: boolean;
+  ca: boolean;
+  ca_name: string;
+}
+export const fetchAgentPackageInfo = () => getJSON<AgentPackageInfo>("/api/agents/package/info");
+export const downloadAgentCa = async (): Promise<Blob> => (await fetchChecked("/api/agents/package/ca")).blob();
 
 // Namensprofile & Wörterbücher
 export const fetchNamingProfiles = () => getJSON<NamingProfile[]>("/api/naming-profiles");

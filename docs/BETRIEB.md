@@ -613,6 +613,15 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     Regel öffnet sie im Detail. NAT nur aus der Regel selbst: Internet-Zugriff mit ihrem SNAT
     (Pool bzw. „Interface-IP“), Zugriff aus dem Internet mit ihrer VIP; sperrende Regeln ohne
     NAT.
+    - **Richtung L3Out (0.78.2):** die Firewall ist führend – ein Contract zu einer externen
+      EPG (L3Out) steht nicht separat da, solange er die Dienste der Firewall-Regeln in
+      derselben Kategorie und Richtung abdeckt. Öffnet er weniger, steht er da mit „öffnet
+      weniger als die Firewall-Regeln, es fehlt tcp/8443“ und ist ein Befund (Findings →
+      Applikationen, „Contract enger als Firewall“; auch in der Applikations-Doku). Nur-ACI-
+      Mandanten ohne Firewall sehen die Contracts wie bisher.
+    - **Kategorie 10 (0.78.2):** nur Zugriffe auf die Applikation, nicht ihre Zugriffe auf
+      andere Systeme bzw. Adressen ohne Zonensignal. Alle Regeln stehen weiter unter
+      „Regeln & Contracts“.
   Dazu
   *Doku je System* (10 Kategorien, Standort verorten) und *Publizierte Dienste* (VIPs mit
   Regeln; seit 0.77.0 auch die **Virtual Services des NSX ALB** – je VIP und Port mit Quelle,
@@ -1552,8 +1561,17 @@ an (`deploy/agent-gateway`, Port 8443).
     Wiederholungen auch die Oberfläche hängen konnte. Seit 0.78.1 wartet keine Anfrage mehr auf
     die Zeile (das Lebenszeichen fällt dann einmal aus); der Upload schreibt sie nicht mehr.
     Behoben im Orchestrator – `deploy/update.sh`, der Agent muss nichts tun.
-  - „Server disconnected …“ heisst meist: der Orchestrator-Container startet gerade neu (Docker
-    nimmt die Verbindung an und schliesst sie). Prüfen auf dem Server:
+  - **„Server disconnected without sending a response“ bei einer `http://`-Adresse** (Befund
+    0.78.1): meist ist **TLS intern** eingeschaltet (`AUTOMATO_INTERNAL_TLS=on`) – der
+    Orchestrator spricht auf Port 8000 nur noch HTTPS und beendet eine Klartext-Anfrage ohne
+    Antwort. In `C:\Automato\collector\agent.env` `AUTOMATO_ORCHESTRATOR_URL=https://<VM>:8000`
+    setzen und `AUTOMATO_ORCHESTRATOR_CA_BUNDLE=C:\Automato\collector\automato-ca.crt`
+    ergänzen; die CA (nur das öffentliche Zertifikat) gibt es im Web-UI unter Collector-Agenten
+    → Einrichtung („CA-Zertifikat“) bzw. auf dem Server unter `deploy/tls/pki/client/ca.crt`.
+    Seit 0.78.2 nennt der Agent das in der Meldung, das Agent-Paket bringt die CA mit und
+    `install.ps1` stellt die Adresse selbst um. Danach `run-agent.ps1 -Check`.
+  - Sonst heisst „Server disconnected …“ meist: der Orchestrator-Container startet gerade neu
+    (Docker nimmt die Verbindung an und schliesst sie). Prüfen auf dem Server:
     `docker compose ps orchestrator` (Status, Neustarts), `docker compose logs --tail 200
     orchestrator`, `docker stats --no-stream` (Speicher), `curl -sS -m 5
     http://127.0.0.1:8000/health` (mit TLS intern `https://` und `--cacert`).

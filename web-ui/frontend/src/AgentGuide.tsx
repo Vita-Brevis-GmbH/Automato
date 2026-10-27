@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Agent, AgentCreated, downloadAgentPackage } from "./api";
+import { useEffect, useState } from "react";
+import { Agent, AgentCreated, AgentPackageInfo, downloadAgentCa, downloadAgentPackage, fetchAgentPackageInfo } from "./api";
 import { download, ErrorBox, Icon, Note, SecretInput } from "./ui";
 
 // Einrichtung des Collector-Agenten (ADR 0008/0009) Schritt für Schritt - inkl. agent.env-Generator.
@@ -31,7 +31,12 @@ function Cmd({ children }: { children: string }) {
   );
 }
 
-export function buildAgentEnv(v: { orchestratorUrl: string; agentToken: string }): string {
+// Direkt auf Port 8000 mit TLS intern (0.78.2): https:// und die CA aus dem Agent-Paket
+const CA_PATH = `${INSTALL_DIR}\\automato-ca.crt`;
+const directTls = (url: string) => /^https:\/\/[^/\s]+:8000\/?$/.test(url.trim());
+
+export function buildAgentEnv(v: { orchestratorUrl: string; agentToken: string; ca?: boolean }): string {
+  const withCa = !!v.ca && directTls(v.orchestratorUrl);
   return [
     "# Automato Collector-Agent - erzeugt im Web-UI (Collector-Agenten -> Einrichtung).",
     "# Enthaelt das Agent-Token: nur auf der Agent-Station ablegen, nicht weitergeben.",
@@ -42,7 +47,9 @@ export function buildAgentEnv(v: { orchestratorUrl: string; agentToken: string }
     `AUTOMATO_AGENT_TOKEN=${v.agentToken.trim() || "<AGENT_TOKEN>"}`,
     "",
     "# --- TLS zum Orchestrator (produktiv) - nur einkommentieren, wenn die Dateien existieren ---",
-    "# AUTOMATO_ORCHESTRATOR_CA_BUNDLE=C:\\Automato\\pki\\orch-ca.pem",
+    withCa
+      ? `AUTOMATO_ORCHESTRATOR_CA_BUNDLE=${CA_PATH}`
+      : "# AUTOMATO_ORCHESTRATOR_CA_BUNDLE=C:\\Automato\\pki\\orch-ca.pem",
     "# AUTOMATO_CLIENT_CERT=C:\\Automato\\pki\\agent.crt",
     "# AUTOMATO_CLIENT_KEY=C:\\Automato\\pki\\agent.key",
     "",
@@ -63,7 +70,17 @@ export default function AgentGuide({
   onGoTenants: () => void;
 }) {
   const [orchestratorUrl, setOrchestratorUrl] = useState(`http://${window.location.hostname}:8000`);
+  const [info, setInfo] = useState<AgentPackageInfo | null>(null);
   const [agentToken, setAgentToken] = useState("");
+  // TLS intern (0.78.2): Port 8000 spricht nur HTTPS - die Vorgabe der Adresse folgt
+  useEffect(() => {
+    fetchAgentPackageInfo()
+      .then((i) => {
+        setInfo(i);
+        if (i.internal_tls) setOrchestratorUrl((u) => u.replace(/^http:\/\//, "https://"));
+      })
+      .catch(() => setInfo(null));
+  }, []);
   const [pkgBusy, setPkgBusy] = useState(false);
   const [pkgErr, setPkgErr] = useState<unknown>(null);
   let target = `${window.location.hostname} -Port 8000`;
@@ -76,7 +93,15 @@ export default function AgentGuide({
 
   // Token des soeben angelegten Agenten übernehmen (nur solange es angezeigt wird)
   const token = agentToken || created?.token || "";
-  const env = buildAgentEnv({ orchestratorUrl, agentToken: token });
+  const env = buildAgentEnv({ orchestratorUrl, agentToken: token, ca: !!info?.ca });
+  const plainToTls = !!info?.internal_tls && /^http:\/\//.test(orchestratorUrl.trim());
+  const getCa = async () => {
+    try {
+      download(info?.ca_name ?? "automato-ca.crt", await downloadAgentCa());
+    } catch (e) {
+      setPkgErr(e);
+    }
+  };
 
   // Zugewiesene Geräte: des soeben angelegten Agenten, sonst aller Agenten
   const relevant = created ? agents.filter((a) => a.id === created.id) : agents;
@@ -191,6 +216,27 @@ export default function AgentGuide({
               />
             </div>
           </div>
+          {info?.internal_tls && (
+            <Note>
+              <span id="ag-tls">
+                TLS intern ist eingeschaltet: direkt auf Port 8000 nur mit <code>https://</code> und der CA{" "}
+                <code>{info.ca_name}</code> (liegt im Agent-Paket, <code>install.ps1</code> legt sie nach{" "}
+                <code>{CA_PATH}</code>). Bestehende Agenten: in <code>{INSTALL_DIR}\agent.env</code> die Adresse auf{" "}
+                <code>https://</code> ändern, <code>AUTOMATO_ORCHESTRATOR_CA_BUNDLE={CA_PATH}</code> ergänzen und die CA dorthin kopieren.{" "}
+                {info.ca && (
+                  <button className="btn btn-ghost btn-sm" id="ag-ca" onClick={getCa}>
+                    <Icon name="download" size={14} /> CA-Zertifikat
+                  </button>
+                )}
+              </span>
+            </Note>
+          )}
+          {plainToTls && (
+            <Note warn>
+              Mit <code>http://</code> beendet der Orchestrator die Verbindung ohne Antwort („Server disconnected without sending a
+              response“).
+            </Note>
+          )}
           <div className="cmd">
             <pre>{mask(env)}</pre>
           </div>

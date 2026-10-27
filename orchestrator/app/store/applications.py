@@ -808,6 +808,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     twins = parallel.twin_ids(session, {row.get(appdoc.RULE) for _, _, row in rows})
     rows = [r for r in rows if r[2].get(appdoc.RULE) not in twins]
     hits, tables = _hits_and_tables(rows, _pairs(session, {r[2].get(appdoc.RULE) for r in rows}))
+    narrower = _narrower(rows, systems, epg_out)  # 0.78.2: Contracts enger als die Firewall
     # Routingtechnisch unmoegliche Treffer gehoeren nicht in die Applikations-Doku (Dev-Befund
     # 0.33.0, z. B. intern -> Internet ueber any im Ziel: die Antwort braucht keine Regel, ein
     # Zugriff von dort braeuchte eine eigene) - nicht einblendbar, nur gezaehlt
@@ -874,6 +875,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         "rules": rules,
         "findings": findings,
         "tables": tables,
+        "narrower": narrower,
         # zugeordnete bzw. ausgeschlossene Regeln mit dem Mitglied (zum Rueckgaengigmachen)
         "rule_members": [
             {"member_id": m.id, "kind": m.kind, "label": label, "rule_id": rid}
@@ -990,6 +992,36 @@ def _pairs(session: Session, rule_ids: set) -> dict[int, int]:
     return out
 
 
+def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict],
+              epgs: list[dict]) -> list[dict]:  # fmt: skip
+    """L3Out-Contracts, die weniger oeffnen als die Firewall-Regeln (0.78.2, `appdoc.NARROW`):
+    je Contract die Systeme mit Kategorie, Richtung, fehlenden Diensten und Firewall-Regeln."""
+    names = {x["key"]: x["name"] for x in systems} | {e["key"]: e["label"] for e in epgs}
+    titles = {i: t for i, t, _ in appdoc.TABLES}
+    out: dict[int, dict] = {}
+    for key, idx, row in rows:
+        if not row.get(appdoc.NARROW) or row.get(appdoc.REL) == "impossible":
+            continue
+        rid = row[appdoc.RULE]
+        entry = out.setdefault(rid, {"rule_id": rid, "systems": [], "missing": [],
+                                     "firewall_rules": [], "categories": []})  # fmt: skip
+        system = names.get(key, key)
+        if system not in entry["systems"]:
+            entry["systems"].append(system)
+        for x in row[appdoc.NARROW]:
+            if x not in entry["missing"]:
+                entry["missing"].append(x)
+        for x in row.get(appdoc.FW_RULES) or []:
+            if x not in entry["firewall_rules"]:
+                entry["firewall_rules"].append(x)
+        cat = f"{idx} {titles.get(idx, '')}".strip()
+        if row.get(appdoc.DIRECTION) == "out":
+            cat += " (ausgehend)"
+        if cat not in entry["categories"]:
+            entry["categories"].append(cat)
+    return list(out.values())
+
+
 def _hits_and_tables(
     rows: list[tuple[str, int, dict]], pairs: dict[int, int] | None = None
 ) -> tuple[list[dict], list[dict]]:
@@ -1010,17 +1042,20 @@ def _hits_and_tables(
     hits: list[dict] = []
     for key, idx, row in rows:
         rid = row.get(appdoc.RULE)
-        gkey = (idx, pairs.get(rid, rid), row.get(appdoc.SIDE), row.get(appdoc.OBJECT))
-        if rid is None:
-            gkey = (idx, None, len(groups))
-        group = groups.setdefault(gkey, {"row": row, "systems": [], "rules": {}})
-        if rid is not None:
-            group["rules"].setdefault(rid, row.get("Description") or "")
-        if row.get(appdoc.REVERSE) and group["row"] is not row:
-            group["both"] = True  # ACI (0.69.1): Rueckrichtung in derselben Kategorie
-        name = row.get("Server Name")
-        if name and name not in group["systems"]:
-            group["systems"].append(name)
+        # 0.78.2: Contracts Richtung L3Out ohne Einschraenkung und Zugriffe auf andere Systeme
+        # in Kategorie 10 stehen nicht in den Kategorien - Treffer bleiben
+        if not row.get(appdoc.CAT_HIDDEN):
+            gkey = (idx, pairs.get(rid, rid), row.get(appdoc.SIDE), row.get(appdoc.OBJECT))
+            if rid is None:
+                gkey = (idx, None, len(groups))
+            group = groups.setdefault(gkey, {"row": row, "systems": [], "rules": {}})
+            if rid is not None:
+                group["rules"].setdefault(rid, row.get("Description") or "")
+            if row.get(appdoc.REVERSE) and group["row"] is not row:
+                group["both"] = True  # ACI (0.69.1): Rueckrichtung in derselben Kategorie
+            name = row.get("Server Name")
+            if name and name not in group["systems"]:
+                group["systems"].append(name)
         if rid is None:
             continue
         hit = (rid, key, row.get(appdoc.DIRECTION), row.get(appdoc.VIA))
@@ -1126,8 +1161,9 @@ def _app_findings(
         .order_by(Finding.type, Finding.subject_id)
     ):
         detail = f.detail if isinstance(f.detail, dict) else {}
-        if f.type is FindingType.APP_CONNECTION_MISMATCH and detail.get("application_id") != app_id:
-            continue  # Abweichung Regel <-> Weg einer anderen Applikation (0.59.0)
+        if (f.type in (FindingType.APP_CONNECTION_MISMATCH, FindingType.APP_CONTRACT_NARROWER)
+                and detail.get("application_id") != app_id):  # fmt: skip
+            continue  # Befund einer anderen Applikation (0.59.0, 0.78.2)
         rule_id = detail.get("rule_id") if f.subject_kind == SubjectKind.RULE else None
         if (f.subject_kind, f.subject_id) not in wanted and rule_id not in rule_ids:
             continue

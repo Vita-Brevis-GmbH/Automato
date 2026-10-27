@@ -7,6 +7,32 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.78.2 – 2026-10-27
+
+Korrekturen nach Rückmeldung des Anwenders: Kategorien der Applikations-Doku und Agent nach
+TLS intern. Ohne Migration.
+
+- **Kategorien Richtung L3Out – die Firewall ist führend:** Contracts zu externen EPGs (L3Out)
+  stehen nicht mehr separat in den Kategorien, solange sie die Dienste der Firewall-Regeln
+  derselben Kategorie und Richtung abdecken (bzw. die Firewall dort nichts öffnet). Öffnet ein
+  Contract weniger, steht er da mit den fehlenden Diensten („öffnet weniger als die
+  Firewall-Regeln, es fehlt tcp/8443“) und ist ein **Befund** „Applikation: Contract enger als
+  Firewall“ (`app_contract_narrower`, Warnung, je Contract und Applikation). Sperrende Contracts
+  bleiben stehen; ohne Firewall im Mandanten bleibt alles wie bisher.
+- **Kategorie 10 „Unspezifische Zugriffe auf die Applikation“:** nur noch Zugriffe auf die
+  Applikation (eingehend), nicht ihre Zugriffe auf andere Systeme bzw. Adressen.
+- Treffer, „Regeln & Contracts“ und „Verbindungen Ende zu Ende“ bleiben vollständig; gleich in
+  der Doku je System, im Export und im Druck.
+- **Agent nach TLS intern** (Befund des Anwenders: „RemoteProtocolError: Server disconnected
+  without sending a response“ auf `http://…:8000`): seit TLS intern spricht der Orchestrator
+  auf Port 8000 nur HTTPS. Der Agent nennt bei diesem Fehler die Lösung (`https://` und
+  `AUTOMATO_ORCHESTRATOR_CA_BUNDLE`); das Agent-Paket enthält mit TLS intern die CA
+  (`automato-ca.crt`, nur das öffentliche Zertifikat), `install.ps1` legt sie ab, stellt eine
+  `http://…:8000`-Adresse auf `https://` um und ergänzt die CA-Zeile. Die Einrichtung im Web-UI
+  schlägt `https://` vor, schreibt die CA-Zeile in die `agent.env` und bietet die CA zum
+  Herunterladen (`GET /agents/package/info`, `GET /agents/package/ca`, Admin).
+- ADR 0012 Ergänzung 0.78.2, BETRIEB, Agent-README, TESTS.
+
 ## 0.78.1 – 2026-10-27
 
 Korrektur nach Rückmeldung des Anwenders: der Agent bekam vom Orchestrator keine Antwort

@@ -135,6 +135,8 @@ def build(session: Session, app: Application, doc: dict | None = None,
             "zone_violations": sum(1 for c in out if (c.get("zones") or {}).get("violation")),
         },
         "members": members(doc),
+        # 0.78.2: L3Out-Contracts, die weniger oeffnen als die Firewall (Befund)
+        "narrower": doc.get("narrower") or [],
     }
 
 

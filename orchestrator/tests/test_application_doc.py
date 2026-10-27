@@ -166,7 +166,9 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
     # die EPG mit den IPs ihrer VMs (Portgruppe, 0.43.1): EPG_db01 ueber db01 im /16
     everyone = ["db01-007-ka", "web01-007-ka", "TE_ka/AP_007/EG_web01", "TE_ka/AP_007/EPG_db01"]
     assert rows["net-in"] == [("N_srv16 (10.20.0.0/16)", everyone)]
-    assert rows["any-out"] == [("any", [*everyone[:2], "TE_ka/AP_007/EG_backup", *everyone[2:]])]
+    # Zugriff der Applikation ueber any auf ein anderes Netz (Kategorie 10, ausgehend): seit
+    # 0.78.2 nicht in den Kategorien, als Treffer weiter da
+    assert "any-out" not in rows
     # spezifisch: das Objekt mit seinen Systemen, ganzer ACI-Pfad
     assert ("EPG TE_ka/AP_007/EG_web01: web01-007-ka", None) in rows["CT_app:SJ"]
 

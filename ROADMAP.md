@@ -382,11 +382,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.77.0** | VMware NSX Advanced Load Balancer (Avi) lesend: Virtual Services, VIPs, Pools als publizierte Dienste, NAT-Einstellungen, Weg-Suche über den Load Balancer bis zum Server (ADR 0027) |
 | **0.78.0** | Zonen komplett, Teil 1: Zonen und Absicht je Verbindung der Applikations-Doku, Absicht je Richtung im Zonenplan (Pfeile, Linie ohne Übergang, Export), Befund „Zone ausserhalb des Schemas“ (ADR 0024 Nr. 17) |
 | **0.78.1** | Korrektur: Agent bekam während des Einspielens eines Laufs keine Antwort (ReadTimeout) – Agent-Zeile nicht mehr gesperrt |
+| **0.78.2** | Korrekturen Applikations-Doku: Contracts Richtung L3Out nur, wenn sie weniger öffnen als die Firewall-Regeln (Befund), Kategorie 10 nur Zugriffe auf die Applikation (ADR 0012 Ergänzung 0.78.2) |
 
-### Nächste Arbeiten (Stand 0.78.1)
+### Nächste Arbeiten (Stand 0.78.2)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.78.1.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.78.2.
 
 **Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
 Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in
