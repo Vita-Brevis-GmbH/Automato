@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
+from anyio import to_thread
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -34,6 +35,7 @@ from app.api import (
 )
 from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
+from app.i18n import middleware as i18n_middleware
 from app.secrets import resolve_settings
 from app.store import customer_alias
 
@@ -44,6 +46,8 @@ def _lifespan(settings: Settings):
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         stop = None
+        # Threads fuer Anfragen (0.80.1): wartende Ergebnisse belegen je einen
+        to_thread.current_default_thread_limiter().total_tokens = max(40, settings.api_threads)
         try:  # mit dem alten Prozess gestorbene NetBox-Syncs beenden (Dev-Befund 0.11.4)
             netbox_sync.abort_interrupted(get_sessionmaker())
         except Exception:  # noqa: BLE001 - z. B. Datenbank noch nicht migriert: Start geht vor
@@ -81,6 +85,9 @@ def create_app() -> FastAPI:
 
     # Antworten an Kunden-Benutzer ohne Geraetenamen (0.58.0, ADR 0018 Schritt 4)
     app.middleware("http")(customer_alias.middleware)
+    # Sprache je Anfrage aus ?lang= bzw. Accept-Language (0.87.0, ADR 0028) - zuletzt
+    # hinzugefuegt = aussen, gilt also auch in den uebrigen Middlewares
+    app.add_middleware(i18n_middleware)
 
     app.include_router(health.router)
     app.include_router(auth_config.router)

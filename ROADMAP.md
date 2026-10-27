@@ -370,21 +370,70 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.69.0** | Applikations-Doku: Regeln je Kategorie ausblenden mit Pflicht-Begründung, Liste „ausgeblendet“ mit wer/wann, Export-Abschnitt, Audit (ADR 0012 Ergänzung 0.69.0) |
 | **0.69.1** | Korrekturen: ACI-Contracts zustandslos (Filter ohne Ports in beide Richtungen, mit Zielport nur Antworten) in Weg-Suche, Regel-Detail, Applikations-Doku, Verbindungen und Zonenmatrix; VLANs aus dem ACI (`vlanCktEp`, `pcAggrIf`) im Reiter VLANs (ADR 0019) |
 | **0.70.0** | Patchungen im Verkabelungsplan (Gerät bzw. Kabel wählen, Ports beider Seiten mit Konfiguration, Abweichungen, Endpunkten); Grundschema der Zonen in der Oberfläche bearbeiten (ADR 0025 Nr. 12, ADR 0024 Nr. 16) |
+| **0.71.0** | Export für Confluence: Applikations-Doku und Zonenplan als Word (.docx) plus draw.io-Plan in einem ZIP, Import von Hand, kein Schreibweg (ADR 0026) |
+| **0.72.0** | Parallele Firewalls: Policy-Routen/SD-WAN, Routing je VDOM und NAT im Verbund vergleichen, Befunde und Übersicht „Parallele Firewalls“ im Routing (ADR 0020 Ergänzung) |
+| **0.72.1** | Korrekturen: ACI-Filter nur mit Quellport = nur Antworten (gesperrt statt „möglich“), Doku je System fasst die Rückrichtung wie die Applikations-Doku zusammen, Leistung der Zonenmatrix gemessen |
+| **0.73.0** | Applikations-Doku übersichtlich: Bereiche zuklappen, Systeme kompakt mit Detail, Export und Druck mit wählbaren Abschnitten, Abhängigkeiten vorerst entfernt, Befund nur bei uneinheitlichen Wegen (ADR 0012/0021 Ergänzung 0.73.0) |
+| **0.74.0** | Netzwerkplan der Applikation kompakt: Rahmen je AP mit EPGs und ihren VMs, ACI als L3Out, Regeln mit Diensten als ausblendbare Ebene (auch im draw.io), Zoom und Verschieben (ADR 0021 Ergänzung 0.74.0) |
+| **0.74.1** | Korrekturen: Speichern einer Applikation ohne Warten (Befunde im Hintergrund), Routing als Index im Speicher, Vorschläge je ACI-Tenant, Typ-Filter der Objekte beim Reiterwechsel, Network Container aus Infoblox |
+| **0.75.0** | Stammdaten der Applikationen aus CSV (Vorschau, Ausnahme vom „kein CSV-Import“), Applikationen ohne VMs ausblenden bzw. mehrere löschen, Routing-Kontexte zugeklappt, Erklärung je Seite einzeilig (ADR 0012 Ergänzung 0.75.0) |
+| **0.76.0** | Kunde oben wählen filtert alle Ansichten (Routing, Topologie, Weg-Suche, Inventar, Verkabelung, Abgleich, Zonen, parallele Firewalls, publizierte Dienste), Geteiltes markiert (ADR 0018 Ergänzung 0.76.0) |
+| **0.76.1** | Korrektur: externe Netze und Hosts (öffentlich, ausserhalb der Interface-/BD-Netze der gelesenen Geräte) ohne Befund „nicht im IPAM“; im WAN-Interface-Netz bleibt der Befund (ADR 0010 Ergänzung 0.76.1) |
+| **0.77.0** | VMware NSX Advanced Load Balancer (Avi) lesend: Virtual Services, VIPs, Pools als publizierte Dienste, NAT-Einstellungen, Weg-Suche über den Load Balancer bis zum Server (ADR 0027) |
+| **0.78.0** | Zonen komplett, Teil 1: Zonen und Absicht je Verbindung der Applikations-Doku, Absicht je Richtung im Zonenplan (Pfeile, Linie ohne Übergang, Export), Befund „Zone ausserhalb des Schemas“ (ADR 0024 Nr. 17) |
+| **0.78.1** | Korrektur: Agent bekam während des Einspielens eines Laufs keine Antwort (ReadTimeout) – Agent-Zeile nicht mehr gesperrt |
+| **0.78.2** | Korrekturen Applikations-Doku: Contracts Richtung L3Out nur, wenn sie weniger öffnen als die Firewall-Regeln (Befund), Kategorie 10 nur Zugriffe auf die Applikation (ADR 0012 Ergänzung 0.78.2) |
+| **0.78.3** | Korrektur NSX ALB: HTTP 400 mit Begründung des Controllers, Rückfall ohne `X-Avi-Version`, Prüfung mit dem gewählten Avi-Tenant |
+| **0.78.4** | Korrektur Weg-Suche: passende Policies hinter der entscheidenden (z. B. hinter „Default Block …“ zuoberst) und Objekt, über das Quelle/Ziel passen |
+| **0.78.5** | Korrekturen nach dem Test des NSX ALB: Spalte „Einträge“ in den Läufen, Zusammenfassung des Avi-Laufs, „Letzte Läufe“ ohne Stau (kein HTTP 500 beim Einspielen) |
+| **0.79.0** | VIP der FortiGate vor dem NSX ALB: Regeln, Applikations-Doku, publizierte Dienste und Weg-Suche verketten öffentliche IP → VIP → Virtual Service → Server (ADR 0027 Ergänzung) |
+| **0.79.1** | Korrekturen: Verbindungen zu einem Netz in die genauer gerouteten Teile aufgeteilt (nicht alles über 0/0); Contract mit EPG als Consumer und Provider als Befund und richtig in der Applikations-Doku |
+| **0.80.0** | Verbindungen Ende zu Ende filtern nach Urteil (erlaubt, gesperrt, abhängig, offen), Regeln (erlaubend/sperrend), Regel auf dem Weg, Richtung und Hinweisen |
+| **0.80.1** | Korrektur Läufe: Ergebnisse nacheinander einspielen, Sperre des Mandanten, Wiederholung bei Deadlock, Liste der Läufe ohne HTTP 500 |
+| **0.81.0** | Zonen komplett Teil 2: Zonenmatrix nach dem Weg („nicht möglich“ statt Verstoss), Übergang zu Zonen nur hinter einem Router (ADR 0024 Nr. 18) |
+| **0.82.0** | Zonen komplett Teil 3: Zonen je Kunde im Grundschema (Vorlage „je Kunde“, ADR 0024 Nr. 19) |
+| **0.83.0** | Zonen komplett Teil 4: Zonenplan aus draw.io zurück einlesen (Lage, Namen, Absichten, neue Formen; ADR 0024 Nr. 20) – Schritt 5 abgeschlossen |
+| **0.83.1** | Korrektur ACI: VM über die Portgruppe im Fabric (keine Contracts der externen EPG 0.0.0.0/0), VRF der BDs aus `common`, Contracts externer EPGs nach dem L3Out |
+| **0.84.0** | Applikations-Doku: Kategorien-Tabellen neu – Source/Destination in Verkehrsrichtung mit Name und IP, Kategorie 2 mit VIP (Firewall), Load Balancer und Server, NAT-Spalte, leere Spalten ausgeblendet |
+| **0.85.0** | Netzwerkplan der Applikation: Load Balancer als Knoten in der EPG seiner VIP, verbunden mit den EPGs der Server; VIP der Firewall am Knoten (ADR 0021 Ergänzung 0.85.0) |
+| **0.86.0** | Oberfläche auf Deutsch und Englisch umschaltbar (Benutzermenü, je Browser, alle Rollen), Glossar; Texte vom Server und Exporte folgen (ADR 0028 Schritt 1) |
+| **0.87.0** | Texte vom Server und Exporte (Word/PDF/SVG/draw.io) auf Deutsch und Englisch, Sprache der Datei wählbar; Gespeichertes bleibt deutsch (ADR 0028 Schritte 2/3) |
 
-### Nächste Arbeiten (Stand 0.70.0)
+### Nächste Arbeiten (Stand 0.87.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.70.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.87.0.
+
+**Deutsch/Englisch (Anwender 2026-10-27, ADR 0028):** Schritt 1 Oberfläche – **umgesetzt in
+0.86.0**; Schritt 2 Texte vom Server und Schritt 3 Exporte mit Sprache der Datei – **umgesetzt in
+0.87.0**; Schritt 4 Meldungen der Läufe, Collector/Agent und CLI – offen.
+
+**Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
+Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in
+0.74.1**; Import der Stammdaten von Applikationen aus CSV (Ausnahme vom „kein CSV-Import“ nur
+dafür), Applikationen ohne VMs ausblenden bzw. löschen, Infos zuklappbar (Routing: „Gelesene
+Kontexte“ zu, Reiter ohne Scrollen sichtbar) – **umgesetzt in 0.75.0**; Kunde oben wählen
+filtert alles (eigenes plus geteiltes, markiert) – **umgesetzt in 0.76.0**; externe Netze/Hosts
+ohne IPAM-Befund (ausser im WAN-Interface-Netz) – **umgesetzt in 0.76.1**; **VMware NSX
+Advanced Load Balancer (Avi)** als lesende Quelle für die Doku – **umgesetzt in 0.77.0** (ADR
+0027; offen: Adressen der Service Engines, Content Switching, GSLB); weiter mit Schritt 5.
+
+**Dazwischen (Rückmeldung des Anwenders zur Applikations-Doku, 2026-10-26):** Übersicht mit
+zuklappbaren Bereichen, Systeme kompakt, Export mit Auswahl, Abhängigkeiten vorerst entfernt,
+Befund nur bei uneinheitlichen Wegen – **umgesetzt in 0.73.0**; der Netzwerkplan der
+Applikation kompakt (VMs in der EPG, Rahmen um AP und EPGs, aktive L3Outs, Firewalls und Ziele,
+Regeln und Filter als ausblendbare Ebene, Zoom und Scrollen; eigener Plan, Export draw.io
+bleibt) – **umgesetzt in 0.74.0**; weiter mit Schritt 5.
 
 **Umplanung des Anwenders (2026-10-26) – Reihenfolge bis zum Abschluss des ersten Projekts:**
 
 | Schritt | Inhalt | Stand |
 |---|---|---|
-| 1 | **Export nach Confluence** – neuer Schreibweg, eigene ADR (0026) und Freigabe: Doku und Pläne als Seiten unter einer festgelegten Elternseite, nur eigene Seiten, Vorschau → Übernehmen, Audit | als Erstes |
-| 2 | **Parallele Firewalls:** Abweichungen bei Policy-Routen, Routing und NAT zwischen den Firewalls eines Verbunds (ADR 0020) | geplant |
-| 3 | **Schwachstellen** aus der Übersicht 0.70.0: ACI-Filter nur mit Quellport (Urteil statt „möglich“), Rückrichtung in der Doku je System wie in der Applikations-Doku, Leistung der Zonenmatrix mit der Rückrichtung messen und zwischenspeichern | geplant |
-| 4 | **Lücken im Ablauf:** nächtlicher CI-Lauf auf dem aktuellen Stand (`main` nachführen), Überschriften der Roadmap | geplant |
-| 5 | **Zonen komplett:** Zonen je Kunde im Grundschema, Befund „Zone ausserhalb des Schemas“, draw.io-Datei des Zonenplans zurück einlesen, Relevanz nach dem Weg in der Zonenmatrix, Übergänge über Routen ohne gemeinsames Netz, Absicht je Richtung im Plan, Zonen in den Verbindungen der Applikations-Doku (ADR 0024) | geplant |
+| 1 | **Export nach Confluence** – Entscheid des Anwenders: kein Schreibweg, Word (.docx) und draw.io zum Import von Hand, zuerst Applikations-Doku und Zonenplan (ADR 0026) | **umgesetzt in 0.71.0** |
+| 2 | **Parallele Firewalls:** Abweichungen bei Policy-Routen, Routing und NAT zwischen den Firewalls eines Verbunds (ADR 0020 Ergänzung 0.72.0) | **umgesetzt in 0.72.0** |
+| 3 | **Schwachstellen** aus der Übersicht 0.70.0: ACI-Filter nur mit Quellport (Urteil statt „möglich“), Rückrichtung in der Doku je System wie in der Applikations-Doku, Leistung der Zonenmatrix mit der Rückrichtung messen (20 000 Contracts ≈ 1,2 s, linear – kein Zwischenspeicher nötig) | **umgesetzt in 0.72.1** |
+| 4 | **Lücken im Ablauf:** nächtlicher CI-Lauf auf dem aktuellen Stand (`main` nachführen), Überschriften der Roadmap | `main` = 0.70.0 (PR #1, 2026-10-26); weiter nachführen per PR auf Wunsch des Anwenders |
+| 5 | **Zonen komplett:** Zonen je Kunde im Grundschema, Befund „Zone ausserhalb des Schemas“, draw.io-Datei des Zonenplans zurück einlesen, Relevanz nach dem Weg in der Zonenmatrix, Übergänge über Routen ohne gemeinsames Netz, Absicht je Richtung im Plan, Zonen in den Verbindungen der Applikations-Doku (ADR 0024) | Teil 1 **umgesetzt in 0.78.0** (Zonen in den Verbindungen, Absicht je Richtung im Plan, Befund „Zone ausserhalb des Schemas“); Teil 2 **umgesetzt in 0.81.0** (Relevanz nach dem Weg in der Matrix, Übergänge zu Zonen nur hinter einem Router); Teil 3 **umgesetzt in 0.82.0** (Zonen je Kunde im Grundschema); Teil 4 **umgesetzt in 0.83.0** (Zonenplan aus draw.io zurück einlesen) – **abgeschlossen** |
 | 6 | **Daten verschärfen** (Inhalt mit dem Anwender festlegen) | danach |
 | 7 | **Erstes Projekt abschliessen:** Produktivschaltung des DC mit den R14-Massnahmen (ADR 0013, RISKS) | danach |
 
@@ -393,6 +442,12 @@ Cockpit (ADR 0014) Firmen anlegen und definieren; neben dem DC weitere Kunden, u
 Systeme und Lösungen mit anderen Topologien dokumentieren. Zu entscheiden: je Firma eigene
 NetBox und Datenbank oder alles am gleichen Ort (heute: eine Instanz je Umgebung, ADR 0018;
 Datenhaltung R14). Eigene ADR vor dem Umbau.
+
+**Cockpit für alle Werkzeuge (Plan 2026-10-27, ADR 0014 Entwurf v2, noch nichts umgesetzt):**
+das Cockpit von Magister herauslösen und für Automato, Magister, NetBox und Keycloak ausbauen –
+Inventar und Status (P1), Zugänge über Keycloak mit App-Starter (P2), Updates über einen
+Host-Agenten (P3), Ausrollen neuer Instanzen auf vorbereiteten VMs (P4); acht offene Entscheide
+des Anwenders in der ADR.
 
 **Frühere Reihenfolge (Stand 0.65.0):**
 
@@ -410,8 +465,8 @@ Datenhaltung R14). Eigene ADR vor dem Umbau.
 - **R12:** Die Zuordnung der VMs (IPs über Portgruppen und deren EPGs) geht vor gelernten
   Endpunkten – konfigurierte Vorgaben statt vom ACI Gelerntes (erster Teil in 0.43.1).
 - **Logische Zonen** werden in Automato gepflegt.
-- **Plan:** im Tool finden und exportieren (draw.io, SVG, PDF); später direkt nach Confluence
-  (neuer Schreibweg, eigene Freigabe).
+- **Plan:** im Tool finden und exportieren (draw.io, SVG, PDF); für Confluence seit 0.71.0
+  Word + draw.io zum Import von Hand (ADR 0026, Entscheid 2026-10-26: kein Schreibweg).
 - **Vor dem Produktivbetrieb jetzt:** TLS intern, getrennte DB-Rollen, Fristen für das Löschen
   alter Läufe. UI-Einschränkung, OTP, echte API-Tokens und Verschlüsselung später bzw. mit
   anderen Mitteln.
@@ -468,7 +523,7 @@ Datenhaltung R14). Eigene ADR vor dem Umbau.
 | ~~0.49.0~~ | Betrieb: TLS intern (interne CA) – **umgesetzt in 0.49.0** (ADR 0023) |
 | ~~0.50.0~~ | Topologie-Modell (`GET /topology`) und Plausibilitäts-Befunde – **umgesetzt in 0.50.0** |
 | ~~0.51.0~~ | Logische Zonen und Zonenplan im Tool, Zonenmatrix – **umgesetzt in 0.51.0** (ADR 0024; offen: Zonen je Hop in der Weg-Suche, Absicht je Dienst) |
-| ~~0.52.0~~ | Export (draw.io, SVG, PDF) und Versionen des Plans – **umgesetzt in 0.52.0** (offen: nach Confluence mit eigener Freigabe, draw.io zurück einlesen) |
+| ~~0.52.0~~ | Export (draw.io, SVG, PDF) und Versionen des Plans – **umgesetzt in 0.52.0** (Confluence: Word + draw.io in 0.71.0; offen: draw.io zurück einlesen) |
 | ~~0.53.0~~ | Kunden auf Zonen, Kunden-Benutzer in der Oberfläche – **umgesetzt in 0.53.0** (ADR 0018 Schritt 4; offen: Regeln nach dem Weg, Doku des Kunden ohne Gerätenamen, feinere Rollen) |
 | ~~0.54.0~~ | Zonen automatisch erkennen und vorschlagen – **umgesetzt in 0.54.0** (ADR 0024 Nr. 10) |
 | ~~0.55.0~~ | Grundschema der Zonen in der Namenskonvention (draw.io) – **umgesetzt in 0.55.0** (ADR 0024 Nr. 11; offen: Zonen je Kunde im Schema, Befund „ausserhalb des Schemas“) |

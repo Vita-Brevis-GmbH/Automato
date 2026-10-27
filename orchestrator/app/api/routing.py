@@ -35,14 +35,16 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import String, and_, cast, false, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import L
 from app.models import (
     SourceSystem,
     Tenant,
@@ -54,7 +56,17 @@ from app.models import (
     TopoPolicyRoute,
     TopoRoute,
 )
-from app.store import exits, l2_topo, paths, policy_check, resolve, topology, zone_path
+from app.store import (
+    customer_infra,
+    exits,
+    l2_topo,
+    paths,
+    policy_check,
+    resolve,
+    topology,
+    zone_path,
+)
+from app.store.customer_infra import OWN, SHARED
 
 router = APIRouter(prefix="/routing", tags=["routing"])
 
@@ -65,6 +77,41 @@ def _tenant(session: Session, principal: Principal, tenant_id: int | None) -> in
         raise HTTPException(status_code=422, detail="tenant_id required")
     reads.maybe_audit_read(session, principal, tid, "routing")
     return tid
+
+
+def _infra(session: Session, principal: Principal, tid: int,
+           customer_id: int | None) -> customer_infra.Infra | None:  # fmt: skip
+    """Kunde oben gewaehlt (0.76.0): sein Ausschnitt der Infrastruktur, sonst None."""
+    return customer_infra.of(session, customer_view(session, principal, tid, customer_id))
+
+
+def _contexts(infra: customer_infra.Infra, model, *marks: str):
+    keys = [k for k, m in infra.contexts.items() if m in marks]
+    if not keys:
+        return false()
+    return or_(*(and_(model.source_system_id == sid, model.context == ctx) for sid, ctx in keys))
+
+
+def _route_filter(infra: customer_infra.Infra):
+    """Routen im Ausschnitt: alle in eigenen Kontexten, in geteilten nur die, die ein Netz des
+    Kunden enthalten oder darin liegen (auch die Default-Route)."""
+    return or_(
+        _contexts(infra, TopoRoute, OWN),
+        and_(
+            _contexts(infra, TopoRoute, SHARED),
+            infra.overlap_clause(TopoRoute.family, TopoRoute.lo, TopoRoute.hi),
+        ),
+    )
+
+
+def _in_view(infra, row: dict, mark: str | None) -> bool:
+    """Zeile im Ausschnitt? Markiert geteilte (`shared`)."""
+    if infra is None:
+        return True
+    if mark is None:
+        return False
+    row["shared"] = mark == SHARED
+    return True
 
 
 def _names(session: Session, tid: int) -> dict[int, str]:
@@ -94,7 +141,8 @@ def _ip(value: str, what: str):
     try:
         return ipaddress.ip_address(value.strip())
     except ValueError:
-        raise HTTPException(status_code=422, detail=f"{what}: keine gueltige IP") from None
+        detail = L(f"{what}: keine gueltige IP", f"{what}: not a valid IP")
+        raise HTTPException(status_code=422, detail=detail) from None
 
 
 def _endpoint(value: str, what: str):
@@ -102,23 +150,26 @@ def _endpoint(value: str, what: str):
     try:
         return topology.endpoint(value)
     except ValueError:
-        raise HTTPException(
-            status_code=422, detail=f"{what}: keine gueltige IP bzw. kein gueltiges Netz"
-        ) from None
+        detail = L(f"{what}: keine gueltige IP bzw. kein gueltiges Netz",
+                   f"{what}: not a valid IP or network")  # fmt: skip
+        raise HTTPException(status_code=422, detail=detail) from None
 
 
 @router.get("/summary")
 def summary(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """Gelesene Kontexte je Quellsystem mit Anzahl Routen (je Tabelle), Nachbarn und Regeln."""
+    """Gelesene Kontexte je Quellsystem mit Anzahl Routen (je Tabelle), Nachbarn und Regeln;
+    mit Kunde (0.76.0) nur seine Kontexte, geteilte markiert."""
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     names = _names(session, tid)
     graph = paths.Graph(session, tid)
     counts: dict[tuple, dict[str, int]] = defaultdict(dict)
-    for sid, node, ctx, table, n in session.execute(
+    route_stmt = (
         select(
             TopoRoute.source_system_id,
             TopoRoute.node,
@@ -128,7 +179,10 @@ def summary(
         )
         .where(TopoRoute.tenant_id == tid)
         .group_by(TopoRoute.source_system_id, TopoRoute.node, TopoRoute.context, TopoRoute.table)
-    ):
+    )
+    if infra is not None:
+        route_stmt = route_stmt.where(_route_filter(infra))
+    for sid, node, ctx, table, n in session.execute(route_stmt):
         counts[(sid, node, ctx)][table] = n
     for model, key in ((TopoPeer, "peers"), (TopoPolicyRoute, "policy_routes")):
         for sid, node, ctx, n in session.execute(
@@ -143,12 +197,42 @@ def summary(
         .order_by(TopoContext.source_system_id, TopoContext.node, TopoContext.context)
     )
     rows = [
-        _row(c, names, graph, counts=counts.get((c.source_system_id, c.node, c.context), {}))
+        row
         for c in contexts
+        if _in_view(
+            infra,
+            row := _row(
+                c, names, graph, counts=counts.get((c.source_system_id, c.node, c.context), {})
+            ),
+            infra.context_mark(c.source_system_id, c.context) if infra else None,
+        )
     ]
-    ha = session.scalar(select(func.count(TopoHa.id)).where(TopoHa.tenant_id == tid)) or 0
-    l3 = session.scalar(select(func.count(TopoL3Out.id)).where(TopoL3Out.tenant_id == tid)) or 0
-    nodes = sorted((n.out() for n in graph.nodes.values()), key=lambda n: n["label"].lower())
+    if infra is None:
+        ha = session.scalar(select(func.count(TopoHa.id)).where(TopoHa.tenant_id == tid)) or 0
+        l3 = session.scalar(select(func.count(TopoL3Out.id)).where(TopoL3Out.tenant_id == tid)) or 0
+    else:
+        ha = sum(
+            1
+            for sid, node in session.execute(
+                select(TopoHa.source_system_id, TopoHa.node).where(TopoHa.tenant_id == tid)
+            )
+            if (sid, node) in infra.nodes
+        )
+        l3 = sum(
+            1
+            for sid, vrf in session.execute(
+                select(TopoL3Out.source_system_id, TopoL3Out.vrf).where(TopoL3Out.tenant_id == tid)
+            )
+            if infra.context_mark(sid, vrf)
+        )
+    nodes = sorted(
+        (
+            n.out()
+            for n in graph.nodes.values()
+            if infra is None or infra.context_mark(n.source_system_id, n.context)
+        ),
+        key=lambda n: n["label"].lower(),
+    )
     # VRFs der Routen (FortiGate 7.x: eigene Tabellen im VDOM) fuer den Filter
     vrfs = {
         v or 0
@@ -187,12 +271,17 @@ def routes(
     q: str | None = Query(None, description="Praefix, Next-Hop, Interface, Protokoll"),
     limit: int = Query(200, ge=1, le=2000),
     offset: int = Query(0, ge=0),
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
-    """Routen seitenweise (Gesamtzahl im Header `X-Total-Count`)."""
+    """Routen seitenweise (Gesamtzahl im Header `X-Total-Count`); mit Kunde (0.76.0) nur in
+    seinen Kontexten, in geteilten nur die zu seinen Netzen."""
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     stmt = select(TopoRoute).where(TopoRoute.tenant_id == tid)
+    if infra is not None:
+        stmt = stmt.where(_route_filter(infra))
     for column, value in (
         (TopoRoute.source_system_id, source_system_id),
         (TopoRoute.node, node),
@@ -224,7 +313,8 @@ def routes(
     if ip:
         rng = topology.route_range(ip.split("/")[0])
         if rng is None:
-            raise HTTPException(status_code=422, detail="ip: keine gueltige IP")
+            detail = L("ip: keine gueltige IP", "ip: not a valid IP")
+            raise HTTPException(status_code=422, detail=detail)
         family, _, lo, _, _ = rng
         stmt = stmt.where(TopoRoute.family == family, TopoRoute.lo <= lo, TopoRoute.hi >= lo)
         order = [TopoRoute.prefix_len.desc(), *order]
@@ -246,10 +336,13 @@ def routes(
     names = _names(session, tid)
     graph = paths.Graph(session, tid)
     ifaces = topology.Interfaces(session, {r.source_system_id for r in page})
-    return [
-        _row(r, names, graph, next_hops=_hops(graph, ifaces, r.source_system_id, r.next_hops))
-        for r in page
-    ]
+    out = []
+    for r in page:
+        row = _row(r, names, graph, next_hops=_hops(graph, ifaces, r.source_system_id, r.next_hops))
+        if infra is not None:
+            row["shared"] = infra.context_mark(r.source_system_id, r.context) == SHARED
+        out.append(row)
+    return out
 
 
 @router.get("/lookup")
@@ -257,17 +350,24 @@ def lookup(
     ip: str,
     tenant_id: int | None = None,
     source_system_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     """Je Kontext die wirksame Route fuer `ip` (bzw. ein ganzes Netz) und Policy-Routen, die
-    vorgehen (koennen)."""
+    vorgehen (koennen); mit Kunde (0.76.0) nur seine Kontexte, geteilte nur fuer seine Netze."""
     tid = _tenant(session, principal, tenant_id)
     _endpoint(ip, "ip")
+    infra = _infra(session, principal, tid, customer_id)
     names = _names(session, tid)
     graph = paths.Graph(session, tid)
     out = []
     for row in topology.lookup(session, tid, ip, source_system_id):
+        if infra is not None:
+            mark = infra.context_mark(row["source_system_id"], row["context"])
+            if mark is None or (mark == SHARED and not infra.overlaps(ip)):
+                continue
+            row["shared"] = mark == SHARED
         display, label = graph.label(row["source_system_id"], row["node"], row["context"])
         if row["route"]:
             row["route"]["next_hops"] = [
@@ -300,7 +400,8 @@ def trace(
     if src:
         _endpoint(src, "src")
     if not src and not start:
-        raise HTTPException(status_code=422, detail="src oder start angeben")
+        raise HTTPException(status_code=422, detail=L("src oder start angeben",
+                                                      "specify src or start"))  # fmt: skip
     wanted, note = _service(session, tid, service)
     graph = paths.Graph(session, tid)
     result = paths.trace(session, tid, dst, src, start, slack, wanted, graph=graph)
@@ -323,7 +424,9 @@ def _service(session: Session, tid: int, text: str | None) -> tuple[tuple | None
     except ValueError as exc:
         values = resolve.service_values(session, tid, text or "")
         if values is None:
-            detail = f"{exc}; kein Service-Objekt bzw. ACI-Filter „{(text or '').strip()}“"
+            name = (text or "").strip()
+            detail = L(f"{exc}; kein Service-Objekt bzw. ACI-Filter „{name}“",
+                       f"{exc}; no service object or ACI filter “{name}”")  # fmt: skip
             raise HTTPException(status_code=422, detail=detail) from None
     usable = []
     for v in values:
@@ -334,11 +437,16 @@ def _service(session: Session, tid: int, text: str | None) -> tuple[tuple | None
             continue
     name = (text or "").strip()
     if not usable:
-        shown = ", ".join(values) or "keine Dienste"
-        return None, f"{name} ({shown}) ist nicht als Port prüfbar – ohne Dienst geprüft"
+        shown = ", ".join(values) or L("keine Dienste", "no services")
+        return None, L(
+            f"{name} ({shown}) ist nicht als Port prüfbar – ohne Dienst geprüft",
+            f"{name} ({shown}) cannot be checked as a port – checked without service",
+        )
     if len(usable) > 1:
         rest = ", ".join(v for v, _ in usable[1:])
-        return usable[0][1], f"{name}: geprüft {usable[0][0]} – weitere Dienste: {rest}"
+        first = usable[0][0]
+        return usable[0][1], L(f"{name}: geprüft {first} – weitere Dienste: {rest}",
+                               f"{name}: checked {first} – more services: {rest}")  # fmt: skip
     return usable[0][1], None
 
 
@@ -349,13 +457,29 @@ def resolve_name(
     only: str | None = Query(None, alias="type", pattern="^(host|net)$"),
     limit: int = Query(resolve.LIMIT, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Hosts und Netze zu einem Namen bzw. FQDN aus IPAM, Firewall-Objekten, VMs und dem
-    Inventar (Weg-Suche): seitenweise mit Gesamtzahl und Anzahl je Art."""
+    Inventar (Weg-Suche): seitenweise mit Gesamtzahl und Anzahl je Art; mit Kunde (0.76.0)
+    nur in seinen Netzen (geteilte markiert), eine eingegebene IP ohne fremden Namen."""
     tid = _tenant(session, principal, tenant_id)
-    return resolve.resolve(session, tid, q, limit, offset, only)
+    infra = _infra(session, principal, tid, customer_id)
+    keep = None
+    if infra is not None:
+
+        def keep(hit: dict) -> bool:
+            mark = infra.net_mark(hit.get("ip"))
+            if mark is None:
+                if hit.get("kind") != "ip":
+                    return False
+                hit.update(name=None, also=None)  # eingegebene IP bleibt, ohne fremden Namen
+                return True
+            hit["shared"] = mark == SHARED
+            return True
+
+    return resolve.resolve(session, tid, q, limit, offset, only, keep)
 
 
 def _list(session: Session, tid: int, model, source_system_id: int | None, order) -> list:
@@ -369,39 +493,52 @@ def _list(session: Session, tid: int, model, source_system_id: int | None, order
 def peers(
     tenant_id: int | None = None,
     source_system_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     """BGP-Nachbarn mit Namen aus dem IPAM und - falls gelesen - dem Knoten dahinter."""
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     order = (TopoPeer.source_system_id, TopoPeer.node, TopoPeer.context, TopoPeer.peer_ip)
     names = _names(session, tid)
     graph = paths.Graph(session, tid)
     return [
-        _row(
-            p,
-            names,
-            graph,
-            peer=graph.resolve(p.peer_ip),
-            peer_node=graph.owner_label(p.peer_ip),
-        )
+        row
         for p in _list(session, tid, TopoPeer, source_system_id, order)
+        if _in_view(
+            infra,
+            row := _row(
+                p,
+                names,
+                graph,
+                peer=graph.resolve(p.peer_ip),
+                peer_node=graph.owner_label(p.peer_ip),
+            ),  # fmt: skip
+            infra.context_mark(p.source_system_id, p.context) if infra else None,
+        )
     ]
 
 
 @router.get("/ha")
 def ha(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     names = _names(session, tid)
     graph = paths.Graph(session, tid)
     rows = _list(session, tid, TopoHa, None, (TopoHa.source_system_id, TopoHa.node))
     out = []
     for h in rows:
         row = _row(h, names)
+        if not _in_view(
+            infra, row, infra.nodes.get((h.source_system_id, h.node)) if infra else None
+        ):
+            continue
         row["sync_peers"] = [
             {**p, **graph.resolve(p.get("peerip")), "node": graph.owner_label(p.get("peerip"))}
             for p in h.sync_peers or []
@@ -414,10 +551,12 @@ def ha(
 def policy_routes(
     tenant_id: int | None = None,
     source_system_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     order = (
         TopoPolicyRoute.source_system_id,
         TopoPolicyRoute.node,
@@ -428,19 +567,26 @@ def policy_routes(
     names = _names(session, tid)
     graph = paths.Graph(session, tid)
     return [
-        _row(p, names, graph, gateway_resolved=graph.resolve(p.gateway))
+        row
         for p in _list(session, tid, TopoPolicyRoute, source_system_id, order)
+        if _in_view(
+            infra,
+            row := _row(p, names, graph, gateway_resolved=graph.resolve(p.gateway)),
+            infra.context_mark(p.source_system_id, p.context) if infra else None,
+        )
     ]
 
 
 @router.get("/l3outs")
 def l3outs(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     """L3Outs mit Border-Leafs (Namen aus dem Inventar), Peers und Next-Hops mit IPAM-Namen."""
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     order = (TopoL3Out.source_system_id, TopoL3Out.aci_tenant, TopoL3Out.name)
     names = _names(session, tid)
     graph = paths.Graph(session, tid)
@@ -450,6 +596,8 @@ def l3outs(
     for o in rows:
         row = _row(o, names)
         sid = o.source_system_id
+        if not _in_view(infra, row, infra.context_mark(sid, o.vrf) if infra else None):
+            continue
         row["nodes"] = [
             {
                 **n,
@@ -502,7 +650,8 @@ def _net(value: str, what: str) -> str:
     try:
         return str(ipaddress.ip_network(value.strip(), strict=False))
     except ValueError:
-        raise HTTPException(status_code=422, detail=f"{what}: kein gueltiges Netz") from None
+        detail = L(f"{what}: kein gueltiges Netz", f"{what}: not a valid network")
+        raise HTTPException(status_code=422, detail=detail) from None
 
 
 def _clean(session: Session, body: ExitIn) -> dict:
@@ -521,11 +670,14 @@ def _clean(session: Session, body: ExitIn) -> dict:
     hops = [str(_ip(h, "next_hops")) for h in body.next_hops if h.strip()]
     ifaces = [i.strip() for i in body.interfaces if i.strip()]
     if not hops and not ifaces:
-        raise HTTPException(status_code=422, detail="Next-Hop oder Interface/Zone angeben")
+        detail = L("Next-Hop oder Interface/Zone angeben", "specify a next-hop or interface/zone")
+        raise HTTPException(status_code=422, detail=detail)
     routes = []
     for r in body.routes:
         if paths.parse_key(r.target) is None:
-            raise HTTPException(status_code=422, detail="routes.target: <Quellsystem>|<Kontext>")
+            detail = L("routes.target: <Quellsystem>|<Kontext>",
+                       "routes.target: <source system>|<context>")  # fmt: skip
+            raise HTTPException(status_code=422, detail=detail)
         routes.append({"prefix": _net(r.prefix, "routes.prefix"), "target": r.target})
     return {
         "name": body.name.strip(),
@@ -568,20 +720,40 @@ def _audit_exit(session: Session, principal: Principal, action: str, e: TopoExit
     )
 
 
+def _exit_mark(infra: customer_infra.Infra, sids: list[int] | None, prefixes) -> str | None:
+    """Anbindung im Ausschnitt (0.76.0): an einer Firewall mit Kontext des Kunden bzw. an jeder;
+    eigen nur, wenn alle Netze dahinter Netze des Kunden sind - sonst geteilt."""
+    fws = {sid for sid, _ in infra.contexts}
+    if sids and not set(sids) & fws:
+        return None
+    marks = [infra.net_mark(p) for p in prefixes or []]
+    return OWN if marks and all(m == OWN for m in marks) else SHARED
+
+
 @router.get("/exits")
 def list_exits(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     """Anbindungen mit den erkannten Routern, die sie abdecken (`status`)."""
     tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
     names = _names(session, tid)
     found = exits.status(session, tid)
     rows = session.scalars(
         select(TopoExit).where(TopoExit.tenant_id == tid).order_by(TopoExit.name, TopoExit.id)
     )
-    return [_exit_out(e, names, found.get(e.id)) for e in rows]
+    return [
+        row
+        for e in rows
+        if _in_view(
+            infra,
+            row := _exit_out(e, names, found.get(e.id)),
+            _exit_mark(infra, e.source_system_ids, e.prefixes) if infra else None,
+        )
+    ]
 
 
 @router.get("/exits/suggestions")
@@ -589,13 +761,24 @@ def exit_suggestions(
     tenant_id: int | None = None,
     covered: bool = Query(False, description="auch schon ganz abgedeckte"),
     dismissed: bool = Query(False, description="auch ausgeblendete"),
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     """Erkannte Anbindungen: Router (Next-Hops, BGP-Nachbarn) ohne gelesenes Geraet, je
     Firewall bzw. Verbund zusammengefasst, mit aktiv/Backup/BGP-Zustand - nur gelesene Daten."""
     tid = _tenant(session, principal, tenant_id)
-    return exits.suggestions(session, tid, include_covered=covered, include_dismissed=dismissed)
+    infra = _infra(session, principal, tid, customer_id)
+    rows = exits.suggestions(session, tid, include_covered=covered, include_dismissed=dismissed)
+    if infra is None:
+        return rows
+    fws = {sid for sid, _ in infra.contexts}
+    out = []
+    for r in rows:
+        if set(r.get("source_system_ids") or []) & fws:
+            r["shared"] = True  # Router der Umgebung, nicht des Kunden allein
+            out.append(r)
+    return out
 
 
 class DismissIn(BaseModel):

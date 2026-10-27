@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 
 from app import credentials, tls
 from app.config import Settings
+from app.i18n import L, lang, use
 from app.models import Agent, SourceSystem
 from app.store import db_roles, reachability
 
@@ -74,8 +75,14 @@ def run(
         items.append((oidc_check or _oidc)(settings))
     sources, agents = _sources(session, tenant_ids)
     check = source_check or _source
+    code = lang()  # Threads beginnen ohne Sprache der Anfrage
+
+    def one(s: dict) -> Item:
+        with use(code):
+            return check(s, network)
+
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        items += list(pool.map(lambda s: check(s, network), sources))
+        items += list(pool.map(one, sources))
     items += agents
     worst = max((ORDER[i.status] for i in items), default=0)
     return {
@@ -95,9 +102,11 @@ def _database(session: Session) -> Item:
     try:
         session.execute(text("SELECT 1"))
     except Exception as exc:  # noqa: BLE001 - jede Ursache ist ein Befund
-        return Item("database", "Plattform", "Datenbank", None, "error",
+        return Item("database", _platform(), L("Datenbank", "Database"), None, "error",
                     [_step("sql", False, type(exc).__name__)],
-                    "Container „postgres“ prüfen (docker compose ps, logs postgres).")  # fmt: skip
+                    L("Container „postgres“ prüfen (docker compose ps, logs postgres).",
+                      "Check container “postgres” (docker compose ps, logs postgres)."),
+                    )  # fmt: skip
     steps = [_step("sql", True, f"SELECT 1 ({_ms(start)})")]
     try:
         role = db_roles.describe(session)
@@ -106,16 +115,24 @@ def _database(session: Session) -> Item:
         session.rollback()
         role = secure = None
     if secure is not None and secure[0]:
-        steps.append(_step("tls", True, f"verschlüsselt ({secure[1]})"))
+        steps.append(_step("tls", True, L(f"verschlüsselt ({secure[1]})",
+                                          f"encrypted ({secure[1]})")))  # fmt: skip
     if role is None or role["separated"]:
         if role:
-            steps.append(_step("rolle", True, f"{role['role']} ohne DDL"))
-        return Item("database", "Plattform", "Datenbank", None, "ok", steps)
-    what = "Superuser" if role["superuser"] else "Eigentümer der Tabellen bzw. mit CREATE"
+            steps.append(_step("rolle", True, L(f"{role['role']} ohne DDL",
+                                                f"{role['role']} without DDL")))  # fmt: skip
+        return Item("database", _platform(), L("Datenbank", "Database"), None, "ok", steps)
+    what = (
+        "Superuser"
+        if role["superuser"]
+        else L("Eigentümer der Tabellen bzw. mit CREATE", "owner of the tables or with CREATE")
+    )
     steps.append(_step("rolle", False, f"{role['role']} ({what})"))
-    return Item("database", "Plattform", "Datenbank", None, "warn", steps,
-                "Getrennte Rollen einrichten: deploy/aufbau.sh db-rollen – Migration als "
-                "Eigentümer, Orchestrator ohne DDL.")  # fmt: skip
+    return Item("database", _platform(), L("Datenbank", "Database"), None, "warn", steps,
+                L("Getrennte Rollen einrichten: deploy/aufbau.sh db-rollen – Migration als "
+                  "Eigentümer, Orchestrator ohne DDL.",
+                  "Set up separate roles: deploy/aufbau.sh db-rollen – migration as owner, "
+                  "orchestrator without DDL."))  # fmt: skip
 
 
 def _db_tls(session: Session) -> tuple[bool, str | None] | None:
@@ -133,50 +150,58 @@ def _redis(url: str, cafile: str | None = None) -> Item:
     start = time.monotonic()
     try:
         with socket.create_connection((host, port), timeout=TIMEOUT) as raw:
-            steps.append(_step("tcp", True, f"{target} verbunden ({_ms(start)})"))
+            steps.append(_step("tcp", True, L(f"{target} verbunden ({_ms(start)})",
+                                              f"{target} connected ({_ms(start)})")))  # fmt: skip
             sock = raw
             if parts.scheme == "rediss":
                 sock = ssl.create_default_context(cafile=cafile).wrap_socket(
                     raw, server_hostname=host
                 )
-                steps.append(_step("tls", True, f"{sock.version()}, Zertifikat geprüft"))
+                checked = L(f"{sock.version()}, Zertifikat geprüft",
+                            f"{sock.version()}, certificate verified")  # fmt: skip
+                steps.append(_step("tls", True, checked))
             sock.settimeout(TIMEOUT)
             sock.sendall(b"PING\r\n")
             answer = sock.recv(64).decode(errors="replace").strip()
     except ssl.SSLError as exc:
         steps.append(_step("tls", False, getattr(exc, "verify_message", None) or exc.reason
                            or type(exc).__name__))  # fmt: skip
-        return Item("redis", "Plattform", "Redis (Warteschlange zum zentralen Worker)", target,
-                    "error", steps,
-                    "TLS zu Redis scheitert – Zertifikate der internen CA prüfen: "
-                    "deploy/aufbau.sh tls-intern")  # fmt: skip
+        return Item("redis", _platform(), _redis_name(), target, "error", steps,
+                    L("TLS zu Redis scheitert – Zertifikate der internen CA prüfen: "
+                      "deploy/aufbau.sh tls-intern",
+                      "TLS to Redis fails – check the certificates of the internal CA: "
+                      "deploy/aufbau.sh tls-intern"))  # fmt: skip
     except OSError as exc:
         steps.append(_step("tcp", False, f"{target} {type(exc).__name__}"))
-        return Item("redis", "Plattform", "Redis (Warteschlange zum zentralen Worker)", target,
-                    "error", steps,
-                    "Container „redis“ prüfen – ohne Redis holt der zentrale Worker keine "
-                    "Läufe ab.")  # fmt: skip
+        return Item("redis", _platform(), _redis_name(), target, "error", steps,
+                    L("Container „redis“ prüfen – ohne Redis holt der zentrale Worker keine "
+                      "Läufe ab.",
+                      "Check container “redis” – without Redis the central worker does not pick "
+                      "up runs."))  # fmt: skip
     ok = answer.startswith("+PONG") or "NOAUTH" in answer
-    steps.append(_step("ping", ok, answer[:40] or "keine Antwort"))
-    return Item("redis", "Plattform", "Redis (Warteschlange zum zentralen Worker)", target,
-                "ok" if ok else "warn", steps,
-                None if ok else "Redis antwortet unerwartet – Logs prüfen.")  # fmt: skip
+    steps.append(_step("ping", ok, answer[:40] or L("keine Antwort", "no response")))
+    return Item("redis", _platform(), _redis_name(), target, "ok" if ok else "warn", steps,
+                None if ok else L("Redis antwortet unerwartet – Logs prüfen.",
+                                  "Redis responds unexpectedly – check the logs."))  # fmt: skip
 
 
 def _oidc(settings: Settings) -> Item:
     """Keycloak: JWKS des Issuers (ohne sie lehnt der Orchestrator jede Anmeldung ab)."""
     url = settings.oidc_jwks_url
     if not url:
-        return Item("oidc", "Anmeldung", "Keycloak (JWKS)", None, "error", [],
-                    "AUTOMATO_OIDC_JWKS_URL ist nicht gesetzt.")  # fmt: skip
+        return Item("oidc", _login(), "Keycloak (JWKS)", None, "error", [],
+                    L("AUTOMATO_OIDC_JWKS_URL ist nicht gesetzt.",
+                      "AUTOMATO_OIDC_JWKS_URL is not set."))  # fmt: skip
     start = time.monotonic()
     try:
         r = httpx.get(url, timeout=httpx.Timeout(5.0, connect=TIMEOUT))
     except httpx.HTTPError as exc:
-        return Item("oidc", "Anmeldung", "Keycloak (JWKS)", url, "error",
+        return Item("oidc", _login(), "Keycloak (JWKS)", url, "error",
                     [_step("http", False, type(exc).__name__)],
-                    "Der Orchestrator erreicht Keycloak nicht – Name/extra_hosts, Firewall bzw. "
-                    "Zertifikat prüfen (deploy/keycloak/PROD-INSTALL.md).")  # fmt: skip
+                    L("Der Orchestrator erreicht Keycloak nicht – Name/extra_hosts, Firewall bzw. "
+                      "Zertifikat prüfen (deploy/keycloak/PROD-INSTALL.md).",
+                      "The orchestrator does not reach Keycloak – check name/extra_hosts, "
+                      "firewall or certificate (deploy/keycloak/PROD-INSTALL.md)."))  # fmt: skip
     keys = 0
     if r.status_code == 200:
         try:
@@ -184,10 +209,12 @@ def _oidc(settings: Settings) -> Item:
         except ValueError:
             keys = 0
     ok = r.status_code == 200 and keys > 0
-    detail = f"HTTP {r.status_code}, {keys} Schlüssel ({_ms(start)})"
-    return Item("oidc", "Anmeldung", "Keycloak (JWKS)", url, "ok" if ok else "error",
+    detail = L(f"HTTP {r.status_code}, {keys} Schlüssel ({_ms(start)})",
+               f"HTTP {r.status_code}, {keys} keys ({_ms(start)})")  # fmt: skip
+    return Item("oidc", _login(), "Keycloak (JWKS)", url, "ok" if ok else "error",
                 [_step("http", ok, detail)],
-                None if ok else "JWKS-Adresse bzw. Realm prüfen.")  # fmt: skip
+                None if ok else L("JWKS-Adresse bzw. Realm prüfen.",
+                                  "Check the JWKS address or realm."))  # fmt: skip
 
 
 # -- Quellsysteme -------------------------------------------------------------------------
@@ -217,14 +244,19 @@ def _sources(session: Session, tenant_ids: set[int] | None) -> tuple[list[dict],
     items = [
         Item(
             f"agent:{aid}",
-            "Agenten",
-            f"Agent „{agents.get(aid, aid)}“",
+            L("Agenten", "Agents"),
+            L(f"Agent „{agents.get(aid, aid)}“", f"Agent “{agents.get(aid, aid)}”"),
             None,
             "info",
             [],
-            f"{len(names)} Quellsysteme ({', '.join(names[:5])}"
-            f"{' …' if len(names) > 5 else ''}) liest der Agent – Prüfung auf der Station: "
-            ".\\run-agent.ps1 -Check",
+            L(
+                f"{len(names)} Quellsysteme ({', '.join(names[:5])}"
+                f"{' …' if len(names) > 5 else ''}) liest der Agent – Prüfung auf der Station: "
+                ".\\run-agent.ps1 -Check",
+                f"{len(names)} source systems ({', '.join(names[:5])}"
+                f"{' …' if len(names) > 5 else ''}) are read by the agent – check on the "
+                "station: .\\run-agent.ps1 -Check",
+            ),
         )  # fmt: skip
         for aid, names in by_agent.items()
     ]
@@ -235,20 +267,27 @@ def _source(s: dict, network) -> Item:
     result = reachability.check(s["url"], s["platform"], token=s["token"],
                                 verify_tls=s["verify_tls"])  # fmt: skip
     steps = [asdict(st) for st in result.steps]
-    item = Item(f"source:{s['id']}", "Quellsysteme", f"{s['name']} ({s['platform']})", s["url"],
+    item = Item(f"source:{s['id']}", L("Quellsysteme", "Source systems"),
+                f"{s['name']} ({s['platform']})", s["url"],
                 "ok" if result.ok else "error", steps, result.hint)  # fmt: skip
     if result.ok and s["platform"] == "netbox":
         steps.append(_step("sync", s["write_token"],
-                           "Schreib-Token für den NetBox-Sync hinterlegt" if s["write_token"]
-                           else "kein Schreib-Token – NetBox-Sync nicht möglich"))  # fmt: skip
-    timeout = any(st["step"] == "tcp" and "keine Antwort" in st["detail"] for st in steps)
+                           L("Schreib-Token für den NetBox-Sync hinterlegt",
+                             "Write token for the NetBox sync stored") if s["write_token"]
+                           else L("kein Schreib-Token – NetBox-Sync nicht möglich",
+                                  "no write token – NetBox sync not possible")))  # fmt: skip
+    # Merkmal der Pruefung statt Text des Schritts (der folgt der Sprache, ADR 0028)
+    timeout = getattr(result, "failure", None) == "timeout"
     if not result.ok and timeout:
         item.ufw = _ufw_rule(s, steps, network)
         if item.ufw:
-            item.hint = (
+            item.hint = L(
                 "Keine Antwort vom Docker-Host: meist sperrt die Host-Firewall (ufw) den Weg vom "
                 f"Container-Netz {item.ufw['from']}. Freigeben (nur dieser Port): "
-                f"{item.ufw['command']} – oder `deploy/aufbau.sh firewall --anwenden`."
+                f"{item.ufw['command']} – oder `deploy/aufbau.sh firewall --anwenden`.",
+                "No response from the Docker host: usually the host firewall (ufw) blocks the "
+                f"path from the container network {item.ufw['from']}. Allow (only this port): "
+                f"{item.ufw['command']} – or `deploy/aufbau.sh firewall --anwenden`.",
             )
     return item
 
@@ -311,6 +350,18 @@ def own_gateway() -> str | None:
         if dest == 0 and gw:
             return str(ipaddress.IPv4Address(gw))
     return None
+
+
+def _platform() -> str:
+    return L("Plattform", "Platform")
+
+
+def _login() -> str:
+    return L("Anmeldung", "Sign-in")
+
+
+def _redis_name() -> str:
+    return L("Redis (Warteschlange zum zentralen Worker)", "Redis (queue to the central worker)")
 
 
 def _step(step: str, ok: bool, detail: str) -> dict:

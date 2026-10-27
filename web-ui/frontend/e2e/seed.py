@@ -93,7 +93,12 @@ def run(app) -> None:
     objects = {o["name"]: o for o in sn.OBJECTS + fe.OBJECTS + st.OBJECTS}
     rules = sn.RULES + [{**r, "external_id": f"1{r['external_id']}"} for r in fe.RULES]
     fw = system(name="fwc11-000-infrz", platform="fortigate", base_url="https://fw-01.example.ch")
-    run_result(fw, "fortigate", rules=rules, objects=list(objects.values()), nat_rules=sn.NAT)
+    # 0.79.0: VIP der FortiGate vor dem Virtual Service vs-shop des NSX ALB (10.10.10.80)
+    lb_vip = {"source_platform": "fortigate", "external_id": "V-EXT_lb.example.ch",
+              "name": "V-EXT_lb.example.ch", "ext_ip": "203.0.113.30", "mapped_ip": "10.10.10.80",
+              "raw": {"extintf": "any"}}  # fmt: skip
+    run_result(fw, "fortigate", rules=rules, objects=list(objects.values()),
+               nat_rules=[*sn.NAT, lb_vip])  # fmt: skip
 
     # FortiGate 2: Dienste mit Attributen, Internet Service, negiertes Ziel; dazu eine
     # dynamische Adresse aus dem SDN-Connector (ACI über FortiManager, 0.36.0)
@@ -162,9 +167,17 @@ def run(app) -> None:
     run_result(fw8, "fortigate", **{k: v for k, v in json.loads(raw8).items() if k != "status"})
 
     # FortiGate 9 und 10: Verbund „Süd“ (Session-Sync-Paar), beide am selben LAN und Servernetz -
-    # im Weg ein Hop mit beiden Firewalls (0.29.0)
+    # im Weg ein Hop mit beiden Firewalls (0.29.0); die Policy-Route 1 hat je Firewall ein anderes
+    # Gateway (Abweichung im Verbund, 0.72.0); Policy 5 zum Portal erlaubt fw-09, fw-10 sperrt -
+    # Wege uneinheitlich (0.73.0, Befund der Applikation „Portal Süd“)
     south = []
     for name, own in (("fw-09", 2), ("fw-10", 3)):
+        portal = {"source_platform": "fortigate", "external_id": "5", "name": "portal-https",
+                  "action": "allow" if own == 2 else "deny", "sources": ["10.88.0.6"],
+                  "destinations": ["10.89.0.8"], "services": ["tcp/443"], "vdom": "root",
+                  "family": "v4",
+                  "raw": {"policyid": 5, "srcintf": [{"name": "lan"}],
+                          "dstintf": [{"name": "srv"}], "status": "enable"}}  # fmt: skip
         sid = system(name=name, platform="fortigate", base_url=f"https://{name}.example.ch")
         south.append(sid)
         nets = (
@@ -172,14 +185,17 @@ def run(app) -> None:
             ("srv", "10.89.0.0/24", f"10.89.0.{own}/24"),
         )
         run_result(
-            sid, "fortigate",
+            sid, "fortigate", rules=[portal],
             inventory={"devices": [{"name": name, "role": "firewall"}],
                        "interfaces": [{"device": name, "name": i, "ips": [ip], "vdom": "root"}
                                       for i, _p, ip in nets]},
             routing={"contexts": [{"node": name, "context": "root"}],
                      "routes": [{"node": name, "context": "root", "prefix": p,
                                  "protocol": "connected", "next_hops": [{"interface": i}]}
-                                for i, p, _ip in nets]},
+                                for i, p, _ip in nets],
+                     "policy_routes": [{"node": name, "context": "root", "seq": 1,
+                                        "gateway": f"10.89.0.{250 + own}", "output_device": ["srv"],
+                                        "match": {"dst": ["203.0.113.0/24"]}}]},
         )  # fmt: skip
     ok(
         c.post(
@@ -266,6 +282,21 @@ def run(app) -> None:
     groups = [{"name": "TE|AP|EG_db", "vlan": 1107, "vm_count": 1}]  # fmt: skip
     run_result(vc, "vmware", virtual={"vms": [vm], "portgroups": groups})
 
+    # NSX ALB (0.77.0, ADR 0027): Virtual Service vs-shop mit der VIP 10.10.10.80 auf web01
+    avi = system(name="avi-01", platform="avi", base_url="https://avi.example.ch", username="ro",
+                 password="e2e", read_scope="admin")  # fmt: skip
+    avi_vs = {
+        "source_platform": "avi", "external_id": "admin|vs-shop|10.10.10.80|443",
+        "name": "vs-shop", "ext_ip": "10.10.10.80", "ext_port": "443",
+        "mapped_ip": "10.10.10.5", "mapped_port": "8443", "protocol": "tcp",
+        "portforward": True, "vip_type": "server-load-balance", "family": "v4",
+        "targets": [{"ip": "10.10.10.5", "port": 8443, "status": "active", "pool": "pool-shop"}],
+        "attrs": {"platform": "avi", "tenant": "admin", "pool": "pool-shop",
+                  "lb_algorithm": "LB_ALGORITHM_ROUND_ROBIN", "snat": "service_engine",
+                  "oper_status": "OPER_UP"},
+    }  # fmt: skip
+    run_result(avi, "avi", nat_rules=[avi_vs])
+
     # Switches (0.62.0, ADR 0025): zwei Cisco-Switches per SSH; Gi1/0/48 <-> Eth1/2 mit
     # abweichendem Speed und Native VLAN, Uplink zu fw-08 (dmz), ESXi-Host, ein Port zu leaf-101
     sw = system(name="Switches Zürich", platform="cisco_switch", read_scope="10.0.0.11\n10.0.0.2",
@@ -347,6 +378,8 @@ def run(app) -> None:
         "members": [{"kind": "ap", "ref": "TE/AP"}],
     }
     ok(c.post(f"/applications?tenant_id={tid}", json=app), 201)
+    portal = {"name": "Portal Süd", "members": [{"kind": "host", "ref": "10.89.0.8"}]}
+    ok(c.post(f"/applications?tenant_id={tid}", json=portal), 201)
 
     # Logische Zonen (0.51.0): LAN, DMZ und Internet an fw-08; LAN -> DMZ gesperrt - die zwei
     # erlaubenden Policies dorthin sind Verstoesse (Befund); Internet ohne die privaten Netze

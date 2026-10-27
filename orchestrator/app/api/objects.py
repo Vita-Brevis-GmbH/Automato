@@ -36,9 +36,9 @@ from app.models import (
     InvVrf,
     SourceSystem,
 )
+from app.store import customer_infra, references, rule_index, sites
 from app.store import naming_profiles as profile_store
 from app.store import objects as objects_store
-from app.store import references, rule_index, sites
 
 router = APIRouter(tags=["objects"])
 
@@ -309,10 +309,13 @@ def list_inventory(
     tenant_id: int | None = None,
     source_system_id: int | None = None,
     q: str | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     tid = _tenant(principal, tenant_id)
+    # Kunde oben gewaehlt (0.76.0): nur sein Ausschnitt, geteilte Zeilen markiert (`shared`)
+    infra = customer_infra.of(session, customer_view(session, principal, tid, customer_id))
     model = _KINDS[kind]
     stmt = select(model).where(model.tenant_id == tid)
     if source_system_id is not None:
@@ -329,8 +332,13 @@ def list_inventory(
     )
     rows = []
     for r in session.scalars(stmt):
+        mark = _inventory_mark(infra, kind, r) if infra is not None else None
+        if infra is not None and mark is None:
+            continue
         row = {c.name: getattr(r, c.name) for c in model.__table__.columns}
         row["source"] = names.get(r.source_system_id)
+        if infra is not None:
+            row["shared"] = mark == customer_infra.SHARED
         if kind == "devices":
             # Standort aus dem Geraete-/Cluster-Namen, sonst der des Quellsystems (ADR 0015)
             row["site"] = site_index.from_name(r.name, prefixes)
@@ -350,6 +358,24 @@ def list_inventory(
         ql = q.strip().lower()
         rows = [r for r in rows if any(ql in str(v).lower() for v in r.values() if v is not None)]
     return rows
+
+
+def _inventory_mark(infra: customer_infra.Infra, kind: str, r) -> str | None:
+    """Inventar im Ausschnitt eines Kunden: Geraete an seinen Ports bzw. Kontexten, Ports mit
+    seinen EPGs/VLANs/Netzen, VLANs seiner EPGs bzw. Netze, Subnetze in seinen Netzen, VRFs."""
+    if kind == "devices":
+        return infra.device_mark(r.source_system_id, r.name)
+    if kind == "interfaces":
+        return infra.ports.get((r.source_system_id, r.device, r.name))
+    if kind == "vlans":
+        return customer_infra._mark(
+            *(infra.epg_paths.get(p) for p in r.epgs or []), infra.vlans.get(r.vid)
+        )
+    if kind == "subnets":
+        return infra.net_mark(r.prefix)
+    if kind == "vrfs":
+        return infra.context_mark(r.source_system_id, r.name)
+    return None
 
 
 def _prefix_info(index, prefix: str) -> dict | None:

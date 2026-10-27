@@ -69,7 +69,7 @@ class NormalizedEpg(BaseModel):
 class NormalizedNat(BaseModel):
     """NAT: VIP/DNAT (extip -> mappedip) oder SNAT-IP-Pool (externe Quell-IP)."""
 
-    source_platform: Literal["fortigate", "cisco_aci"]
+    source_platform: Literal["fortigate", "cisco_aci", "avi"]  # avi: NSX ALB (ADR 0027)
     external_id: str
     name: str = ""
     nat_type: Literal["dnat_vip", "snat_pool"] = "dnat_vip"

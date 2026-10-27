@@ -28,7 +28,7 @@ from app.models import (
 )
 
 # Angaben in Findings, die Regeln ausserhalb des Ausschnitts nennen koennten (Kunden-Sicht)
-FINDING_DETAIL_HIDDEN = ("rule_names", "rules", "firewall_objects")
+FINDING_DETAIL_HIDDEN = ("rule_names", "rules", "firewall_objects", "firewall_rules")
 
 # Arten nur aus den eigenen Kunden (ohne geteilten Teil)
 OWN_KINDS = frozenset({"rule", "nat", "finding", "vm"})

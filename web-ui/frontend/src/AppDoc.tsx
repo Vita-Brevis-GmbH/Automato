@@ -15,7 +15,9 @@ import type { View, ViewParams } from "./App";
 import Apps from "./Apps";
 import type { Me } from "./auth";
 import PublishedServices from "./PublishedServices";
+import { Fold, FoldTitle } from "./fold";
 import { download, Empty, ErrorBox, Expandable, Icon, Loading, PageHead } from "./ui";
+import { L, locale } from "./i18n";
 
 type Mode = "apps" | "doc" | "vips";
 
@@ -37,18 +39,33 @@ export default function AppDoc({
   const appId = params.app ? Number(params.app) : null;
   const intro: Record<Mode, ReactNode> = {
     apps: (
-      <>
-        Eine <b>Applikation</b> fasst Application Profiles, EPGs und Server zusammen. Ein Klick öffnet ihre Doku:
-        VMs, EPGs und alle Regeln mit Richtung und Bezug.
-      </>
+      L(
+        <>
+          Eine <b>Applikation</b> fasst Application Profiles, EPGs und Server zusammen. Ein Klick öffnet ihre Doku:
+          VMs, EPGs und alle Regeln mit Richtung und Bezug.
+        </>,
+        <>
+          An <b>application</b> groups application profiles, EPGs and servers. A click opens its documentation:
+          VMs, EPGs and all rules with direction and reference.
+        </>,
+      )
     ),
     doc: (
-      <>
-        Mittelpunkt ist das <b>System</b> (Container/VM/Server); seine Zugriffe sind nach Art gruppiert. „ACI“ =
-        erscheint erst mit Cisco ACI (Model 1).
-      </>
+      L(
+        <>
+          Mittelpunkt ist das <b>System</b> (Container/VM/Server); seine Zugriffe sind nach Art gruppiert. „ACI“ =
+          erscheint erst mit Cisco ACI (Model 1).
+        </>,
+        <>
+          The focus is the <b>system</b> (container/VM/server); its accesses are grouped by kind. “ACI” = only
+          appears with Cisco ACI (Model 1).
+        </>,
+      )
     ),
-    vips: "Über VIPs publizierte Dienste mit den zugehörigen Firewall-Regeln.",
+    vips: L(
+      "Über VIPs publizierte Dienste mit den zugehörigen Firewall-Regeln.",
+      "Services published via VIPs with the related firewall rules.",
+    ),
   };
   const tab = (m: Mode, label: string) => (
     <button
@@ -64,12 +81,12 @@ export default function AppDoc({
   return (
     <>
       <PageHead
-        title="Applikationen"
+        title={L("Applikationen", "Applications")}
         actions={
           <div className="seg no-print">
-            {tab("apps", "Applikationen")}
-            {tab("doc", "Doku je System")}
-            {tab("vips", "Publizierte Dienste")}
+            {tab("apps", L("Applikationen", "Applications"))}
+            {tab("doc", L("Doku je System", "Documentation per system"))}
+            {tab("vips", L("Publizierte Dienste", "Published services"))}
           </div>
         }
       >
@@ -146,7 +163,7 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
     }
   };
 
-  if (systems === null) return <Loading>Lade Systeme…</Loading>;
+  if (systems === null) return <Loading>{L("Lade Systeme…", "Loading systems…")}</Loading>;
 
   const tables = doc ? doc.tables.filter((t) => showEmpty || t.rows.length > 0) : [];
 
@@ -155,8 +172,11 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
       <ErrorBox error={err} onClose={() => setErr(null)} />
       {systems.length === 0 ? (
         <div className="card">
-          <Empty title="Keine Systeme">
-            Systeme (Host-Objekte bzw. EPGs in Regeln) erscheinen nach dem ersten Lauf für diesen Mandanten.
+          <Empty title={L("Keine Systeme", "No systems")}>
+            {L(
+              "Systeme (Host-Objekte bzw. EPGs in Regeln) erscheinen nach dem ersten Lauf für diesen Mandanten.",
+              "Systems (host objects or EPGs in rules) appear after the first run for this tenant.",
+            )}
           </Empty>
         </div>
       ) : (
@@ -166,7 +186,8 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
               {systems.map((s) => (
                 <option key={s.name} value={s.name}>
                   System: {s.name}
-                  {s.ip && s.ip !== s.name ? ` (${s.ip})` : ""} · {s.rule_count} Regeln{s.kind === "epg" ? " · EPG" : ""}
+                  {s.ip && s.ip !== s.name ? ` (${s.ip})` : ""} · {s.rule_count} {L("Regeln", "rules")}
+                  {s.kind === "epg" ? " · EPG" : ""}
                 </option>
               ))}
             </select>
@@ -177,23 +198,25 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
                 disabled={tenantId == null || !me.isOperator}
                 title={
                   tenantId == null
-                    ? "Zum Verorten oben einen Mandanten wählen"
+                    ? L("Zum Verorten oben einen Mandanten wählen", "Select a tenant above to assign a site")
                     : !me.isOperator
-                      ? "Verorten erfordert die Rolle Operator"
-                      : "Standort des Systems"
+                      ? L("Verorten erfordert die Rolle Operator", "Assigning a site requires the operator role")
+                      : L("Standort des Systems", "Site of the system")
                 }
                 onChange={(e) => assign(e.target.value ? Number(e.target.value) : null)}
               >
-                <option value="">Standort: – keiner –</option>
+                <option value="">{L("Standort: – keiner –", "Site: – none –")}</option>
                 {tenantId == null && doc.site ? (
-                  <option value={doc.site.id}>Standort: {siteLabel(doc.site)}</option>
+                  <option value={doc.site.id}>
+                    {L("Standort", "Site")}: {siteLabel(doc.site)}
+                  </option>
                 ) : (
                   <SiteOptions sites={sites} />
                 )}
               </select>
             )}
             <button className={`toggle ${showEmpty ? "on" : ""}`} onClick={() => setShowEmpty((v) => !v)}>
-              leere Kategorien zeigen
+              {L("leere Kategorien zeigen", "show empty categories")}
             </button>
             <div className="grow" />
             <button
@@ -208,21 +231,32 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
           {doc && (
             <div className="chips" style={{ marginBottom: 14 }}>
               {doc.system_ip && <span className="chip">IP {doc.system_ip}</span>}
-              {doc.tenant_code && <span className="chip local">GG {doc.tenant_code}</span>}
+              {doc.tenant_code && <span className="chip local">{L("GG", "GC")} {doc.tenant_code}</span>}
               {selKind === "epg" ? (
                 <span className="chip warn">EPG (ACI)</span>
               ) : doc.site ? (
-                <span className="chip" title={doc.site.kind === "physical" ? "physischer Standort" : "virtueller Standort"}>
-                  Standort {siteLabel(doc.site)}
+                <span
+                  className="chip"
+                  title={
+                    doc.site.kind === "physical"
+                      ? L("physischer Standort", "physical site")
+                      : L("virtueller Standort", "virtual site")
+                  }
+                >
+                  {L("Standort", "Site")} {siteLabel(doc.site)}
                 </span>
               ) : (
-                <span className="chip na">ohne Standort</span>
+                <span className="chip na">{L("ohne Standort", "no site")}</span>
               )}
               {(doc.vms ?? []).slice(0, MAX_VMS).map((v) => (
                 <span
                   key={`${v.name}-${v.portgroup}`}
                   className={`chip ${v.power_state === "poweredOn" ? "ok" : "na"}`}
-                  title={[v.portgroup && `Portgruppe ${v.portgroup}`, v.epg && `EPG ${v.epg}`, ...(v.ips ?? [])]
+                  title={[
+                    v.portgroup && L(`Portgruppe ${v.portgroup}`, `Port group ${v.portgroup}`),
+                    v.epg && `EPG ${v.epg}`,
+                    ...(v.ips ?? []),
+                  ]
                     .filter(Boolean)
                     .join(" · ")}
                 >
@@ -236,17 +270,22 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
           {doc?.impossible?.length ? (
             <details className="card" style={{ marginBottom: 14 }} id="doc-impossible">
               <summary className="card-head" style={{ cursor: "pointer" }}>
-                <h2>Routingtechnisch nicht möglich</h2>
+                <h2>{L("Routingtechnisch nicht möglich", "Not possible by routing")}</h2>
                 <span className="faint">
-                  {doc.impossible.length} Treffer (Regel als Quelle bzw. Ziel) erfassen das System, die Firewall leitet es
-                  aber über ein anderes Interface – nicht in den Kategorien
+                  {L(
+                    `${doc.impossible.length} Treffer (Regel als Quelle bzw. Ziel) erfassen das System, die Firewall leitet es aber über ein anderes Interface – nicht in den Kategorien`,
+                    `${doc.impossible.length} matches (rule as source or destination) cover the system, but the firewall routes it via a different interface – not in the categories`,
+                  )}
                 </span>
               </summary>
               <div className="card-body pad">
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {doc.impossible.map((x) => (
                     <li key={`${x.rule_id}-${x.side}`}>
-                      <b>{x.description}</b> <span className="faint">als {x.side === "src" ? "Quelle" : "Ziel"}:</span>{" "}
+                      <b>{x.description}</b>{" "}
+                      <span className="faint">
+                        {x.side === "src" ? L("als Quelle:", "as source:") : L("als Ziel:", "as destination:")}
+                      </span>{" "}
                       {x.text}
                     </li>
                   ))}
@@ -259,8 +298,8 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
             <Loading />
           ) : tables.length === 0 ? (
             <div className="card">
-              <Empty title="Noch keine Zugriffe kategorisiert">
-                Für dieses System gibt es keine zugeordneten Regeln.
+              <Empty title={L("Noch keine Zugriffe kategorisiert", "No accesses categorized yet")}>
+                {L("Für dieses System gibt es keine zugeordneten Regeln.", "There are no assigned rules for this system.")}
               </Empty>
             </div>
           ) : (
@@ -276,7 +315,9 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
   );
 }
 
-// Zelle der Kategorien; „Description“ öffnet die Regel (bei einem Paar je Familie ein Link)
+// Zelle der Kategorien; „Description“ öffnet die Regel (bei einem Paar je Familie ein Link). Seit
+// 0.84.0 steht die Seite der Applikation je nach Richtung in Source bzw. Destination (`_app_col`);
+// mehrere Einträge einer Zelle je auf einer Zeile
 function DocCell({
   row,
   column,
@@ -289,11 +330,11 @@ function DocCell({
   const value = row[column];
   const text = Array.isArray(value) ? value.join(", ") : value;
   const systems = Array.isArray(row._systems) ? (row._systems as string[]) : [];
-  if (column === "Server Name" && systems.length)
+  if (column === row._app_col && systems.length)
     return (
       <>
         {text || <span className="faint">–</span>}
-        <Expandable items={systems} noun={["System", "Systeme"]} />
+        <Expandable items={systems} noun={L(["System", "Systeme"], ["system", "systems"])} />
       </>
     );
   if (column !== "Description" || !onRule) return <>{text || <span className="faint">–</span>}</>;
@@ -305,7 +346,7 @@ function DocCell({
   if (!ids.length) return <>{text || <span className="faint">–</span>}</>;
   return (
     <>
-      <button className="linkbtn" title="Regel im Detail" onClick={() => onRule(ids[0])}>
+      <button className="linkbtn" title={L("Regel im Detail", "Rule in detail")} onClick={() => onRule(ids[0])}>
         {text || `#${ids[0]}`}
       </button>
       {ids.length > 1 && (
@@ -335,43 +376,54 @@ export interface HideControls {
   onShow: (hides: DocHide[]) => void;
 }
 
-const dateText = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("de-CH") : "");
+const dateText = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString(locale) : "");
 
 export function DocTableView({
   table,
   onRule,
   hide,
+  fold,
+  hiddenOpen,
 }: {
   table: DocTable;
   onRule?: (id: number) => void;
   hide?: HideControls;
+  fold?: Fold; // 0.73.0: Kategorie zuklappbar (Applikations-Doku)
+  hiddenOpen?: boolean; // Druck: ausgeblendete Regeln aufgeklappt
 }) {
   const aci = table.enforcement === "aci";
   const hidden = table.hidden ?? [];
   const editable = !!hide?.canEdit;
+  const open = fold?.open ?? true;
   return (
     <div className="card">
       <div className="card-head">
-        <h2>
+        <FoldTitle fold={fold}>
           {table.index}. {table.title}
-        </h2>
-        <span className="chip">{aci ? "ACI intern" : "Über eine Firewall"}</span>
+        </FoldTitle>
+        <span className="chip">
+          {aci ? L("ACI intern", "ACI internal") : L("Über eine Firewall", "Via a firewall")}
+        </span>
         {aci && <span className="chip warn">ACI · Model 1</span>}
         <div className="spacer" />
         <span className="mono faint" style={{ fontSize: 12 }}>
-          {table.rows.length} Regel{table.rows.length === 1 ? "" : "n"}
-          {hidden.length > 0 ? ` · ${hidden.length} ausgeblendet` : ""}
+          {L(
+            `${table.rows.length} Regel${table.rows.length === 1 ? "" : "n"}`,
+            `${table.rows.length} rule${table.rows.length === 1 ? "" : "s"}`,
+          )}
+          {hidden.length > 0 ? L(` · ${hidden.length} ausgeblendet`, ` · ${hidden.length} hidden`) : ""}
         </span>
       </div>
+      {open && (
       <div className="card-body scroll">
         {table.rows.length === 0 ? (
-          <div className="loading">Keine Einträge.</div>
+          <div className="loading doc-rows">{L("Keine Einträge.", "No entries.")}</div>
         ) : (
-          <table>
+          <table className="doc-rows">
             <thead>
               <tr>
-                {table.columns.map((c) => (
-                  <th key={c}>{c}</th>
+                {table.columns.map((c, i) => (
+                  <th key={c}>{colLabel(table, c, i)}</th>
                 ))}
                 {editable && <th className="no-print" />}
               </tr>
@@ -379,8 +431,8 @@ export function DocTableView({
             <tbody>
               {table.rows.map((row, i) => (
                 <tr key={i}>
-                  {table.columns.map((c, ci) => (
-                    <td key={c} className={ci === 1 ? "mono" : ""}>
+                  {table.columns.map((c) => (
+                    <td key={c} className={c === "TCP/UDP" ? "mono" : ""}>
                       {c === "Aktion" && row[c] ? (
                         <span className={`chip ${row[c] === "Allow" ? "accept" : "deny"}`}>{String(row[c])}</span>
                       ) : (
@@ -393,10 +445,13 @@ export function DocTableView({
                       {Array.isArray(row._rules) && row._rules.length > 0 && (
                         <button
                           className="linkbtn doc-hide-btn"
-                          title="In dieser Kategorie ausblenden – nicht relevant für die Applikation (mit Begründung)"
+                          title={L(
+                            "In dieser Kategorie ausblenden – nicht relevant für die Applikation (mit Begründung)",
+                            "Hide in this category – not relevant for the application (with reason)",
+                          )}
                           onClick={() => hide!.onHide(row)}
                         >
-                          ausblenden
+                          {L("ausblenden", "hide")}
                         </button>
                       )}
                     </td>
@@ -407,18 +462,25 @@ export function DocTableView({
           </table>
         )}
         {hidden.length > 0 && (
-          <details className="doc-hidden" id={`doc-hidden-${table.index}`}>
+          <details className="doc-hidden" id={`doc-hidden-${table.index}`} open={hiddenOpen || undefined}>
             <summary>
-              {hidden.length} ausgeblendet <span className="faint">– nicht relevant für die Applikation, mit Begründung</span>
+              {L(
+                <>
+                  {hidden.length} ausgeblendet <span className="faint">– nicht relevant für die Applikation, mit Begründung</span>
+                </>,
+                <>
+                  {hidden.length} hidden <span className="faint">– not relevant for the application, with reason</span>
+                </>,
+              )}
             </summary>
             <table className="compact">
               <thead>
                 <tr>
-                  <th>Regel</th>
-                  <th>System bzw. Objekt</th>
-                  <th>Begründung</th>
-                  <th>von</th>
-                  <th>am</th>
+                  <th>{L("Regel", "Rule")}</th>
+                  <th>{L("System bzw. Objekt", "System or object")}</th>
+                  <th>{L("Begründung", "Reason")}</th>
+                  <th>{L("von", "by")}</th>
+                  <th>{L("am", "on")}</th>
                   {editable && <th className="no-print" />}
                 </tr>
               </thead>
@@ -428,12 +490,14 @@ export function DocTableView({
                   return (
                     <tr key={i}>
                       <td>{String(row.Description ?? "")}</td>
-                      <td>{String(row["Server Name"] ?? row.Source ?? "")}</td>
+                      <td>{String(row._app ?? "")}</td>
                       <td>
                         {hs.map((h) => (
                           <div key={h.id}>
                             {h.reason}
-                            {h.category == null && <span className="faint"> (in allen Kategorien)</span>}
+                            {h.category == null && (
+                              <span className="faint">{L(" (in allen Kategorien)", " (in all categories)")}</span>
+                            )}
                           </div>
                         ))}
                       </td>
@@ -442,7 +506,7 @@ export function DocTableView({
                       {editable && (
                         <td className="no-print">
                           <button className="linkbtn" onClick={() => hide!.onShow(hs)}>
-                            einblenden
+                            {L("einblenden", "show")}
                           </button>
                         </td>
                       )}
@@ -454,6 +518,7 @@ export function DocTableView({
           </details>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -461,25 +526,32 @@ export function DocTableView({
 const MAX_VMS = 8; // Kopf der Doku: weitere VMs nur als Anzahl
 
 function toMarkdown(doc: SystemDoc): string {
-  const lines: string[] = [`# Applikations-Doku – ${doc.system}`, ""];
+  const lines: string[] = [
+    L(`# Applikations-Doku – ${doc.system}`, `# Application documentation – ${doc.system}`),
+    "",
+  ];
   const meta: string[] = [];
   if (doc.system_ip) meta.push(`IP: ${doc.system_ip}`);
-  if (doc.tenant_code) meta.push(`GG: ${doc.tenant_code}`);
-  if (doc.site) meta.push(`Standort: ${siteLabel(doc.site)}`);
+  if (doc.tenant_code) meta.push(L(`GG: ${doc.tenant_code}`, `GC: ${doc.tenant_code}`));
+  if (doc.site) meta.push(L(`Standort: ${siteLabel(doc.site)}`, `Site: ${siteLabel(doc.site)}`));
   if (doc.vms?.length) meta.push(`VM: ${[...new Set(doc.vms.map((v) => v.name))].join(", ")}`);
   if (meta.length) lines.push(meta.join(" · "), "");
   return lines.concat(tablesMarkdown(doc.tables)).join("\n");
 }
 
-const mdCell = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
+const mdCell = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, "<br>");
 
-// Tabellen 1–10 als Markdown (leere Kategorien entfallen) samt Fusszeile.
-export function tablesMarkdown(tables: DocTable[]): string[] {
+// Tabellen 1–10 als Markdown (leere Kategorien entfallen) samt Fusszeile; 0.73.0: Kategorien
+// bzw. ausgeblendete Regeln nach Auswahl im Export-Dialog
+// Spaltenkopf in der Sprache der Anfrage (0.87.0: `labels` vom Server, `columns` bleiben Schlüssel)
+export const colLabel = (t: DocTable, column: string, i: number): string => t.labels?.[i] ?? column;
+
+export function tablesMarkdown(tables: DocTable[], rows = true, hiddenToo = true): string[] {
   const lines: string[] = [];
-  for (const t of tables) {
+  for (const t of rows ? tables : []) {
     if (t.rows.length === 0) continue;
     lines.push(`## ${t.index}. ${t.title}`, "");
-    lines.push(`| ${t.columns.join(" | ")} |`);
+    lines.push(`| ${t.columns.map((c, i) => colLabel(t, c, i)).join(" | ")} |`);
     lines.push(`| ${t.columns.map(() => "---").join(" | ")} |`);
     for (const row of t.rows) {
       lines.push(`| ${t.columns.map((c) => mdCell(String(row[c] ?? ""))).join(" | ")} |`);
@@ -487,17 +559,31 @@ export function tablesMarkdown(tables: DocTable[]): string[] {
     lines.push("");
   }
   // 0.69.0: ausgeblendete Regeln mit Begründung (Nachweis, warum sie in den Kategorien fehlen)
-  const hidden = tables.flatMap((t) => (t.hidden ?? []).map((row) => ({ t, row })));
+  const hidden = hiddenToo ? tables.flatMap((t) => (t.hidden ?? []).map((row) => ({ t, row }))) : [];
   if (hidden.length) {
-    lines.push("## Ausgeblendete Regeln", "", "| Kategorie | Regel | System bzw. Objekt | Begründung | von | am |", "| --- | --- | --- | --- | --- | --- |");
+    lines.push(
+      L("## Ausgeblendete Regeln", "## Hidden rules"),
+      "",
+      L(
+        "| Kategorie | Regel | System bzw. Objekt | Begründung | von | am |",
+        "| Category | Rule | System or object | Reason | by | on |",
+      ),
+      "| --- | --- | --- | --- | --- | --- |",
+    );
     for (const { t, row } of hidden) {
       const hs = row._hides ?? [];
       lines.push(
-        `| ${t.index}. ${mdCell(t.title)} | ${mdCell(String(row.Description ?? ""))} | ${mdCell(String(row["Server Name"] ?? row.Source ?? ""))} | ${mdCell(hs.map((h) => h.reason).join("; "))} | ${mdCell([...new Set(hs.map((h) => h.by))].join(", "))} | ${dateText(hs[0]?.at)} |`,
+        `| ${t.index}. ${mdCell(t.title)} | ${mdCell(String(row.Description ?? ""))} | ${mdCell(String(row._app ?? ""))} | ${mdCell(hs.map((h) => h.reason).join("; "))} | ${mdCell([...new Set(hs.map((h) => h.by))].join(", "))} | ${dateText(hs[0]?.at)} |`,
       );
     }
     lines.push("");
   }
-  lines.push(`_Erzeugt von Automato – ${new Date().toISOString().slice(0, 10)}_`, "");
+  lines.push(
+    L(
+      `_Erzeugt von Automato – ${new Date().toISOString().slice(0, 10)}_`,
+      `_Generated by Automato – ${new Date().toISOString().slice(0, 10)}_`,
+    ),
+    "",
+  );
   return lines;
 }

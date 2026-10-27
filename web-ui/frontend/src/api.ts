@@ -1,6 +1,7 @@
 // Schlanker API-Client. Das UI spricht ausschliesslich mit dem Orchestrator
 // (ARCHITECTURE.md) - im Dev ueber den Vite-Proxy unter /api.
 import * as auth from "./auth";
+import { exportLang, L, lang } from "./i18n";
 
 export interface HealthStatus {
   status: string;
@@ -88,6 +89,19 @@ export interface NatBrief {
   external_name: string | null;
   ext_dns: string[];
   mapped_dns: string[];
+  balancers?: BalancerBrief[]; // 0.79.0: Virtual Services des NSX ALB hinter der VIP
+}
+
+// Virtual Service des NSX ALB kompakt (0.79.0): hinter einer VIP der FortiGate
+export interface BalancerBrief {
+  id: number;
+  name: string;
+  source?: string;
+  ext_ip?: string;
+  ext_port?: string;
+  pool?: string;
+  tenant?: string;
+  servers?: string[]; // ip bzw. ip:port
 }
 
 export interface AciContract {
@@ -333,7 +347,13 @@ export interface RuleDetail extends Rule {
   // ACI (0.45.1): was der Scope verbindet (AP, VRF, Tenant, global)
   aci_scope?: { scope: string | null; label: string; text: string; pairs: number; unpaired: number } | null;
   // ACI ist zustandslos (0.69.1): Dienste, die der Provider zum Consumer aufbauen kann
-  aci_direction?: { reverse: string[]; both: boolean; text: string; derived: boolean } | null;
+  aci_direction?: {
+    reverse: string[];
+    both: boolean;
+    text: string;
+    derived: boolean;
+    replies_only?: boolean; // 0.72.1: Consumer → Provider nur Antworten (Filter nur mit Quellport)
+  } | null;
 }
 
 export interface Finding {
@@ -390,6 +410,21 @@ export const fetchParallelSuggestions = (tenantId: number, includeRejected = fal
   getJSON<ParallelSuggestion[]>(
     `/api/systems/parallel-suggestions${qs({ tenant_id: tenantId, include_rejected: includeRejected ? "true" : undefined })}`,
   );
+// Vergleich je Verbund (0.72.0): gleich/abweichend/fehlt je Bereich; führend = erstes Mitglied
+export type ParallelCounts = { same?: number; differs?: number; missing?: number };
+export type ParallelGroup = {
+  group: string;
+  members: { id: number; name: string }[];
+  stats: {
+    rules: ParallelCounts;
+    objects: ParallelCounts;
+    policy_routes: ParallelCounts;
+    routes: ParallelCounts;
+    nat: ParallelCounts;
+  };
+};
+export const fetchParallelGroups = (tenantId: number) =>
+  getJSON<ParallelGroup[]>(`/api/systems/parallel${cq({ tenant_id: tenantId })}`);
 // Nicht parallel: Vorschlag ablehnen bzw. Verbund auflösen (beides: nicht mehr vorschlagen)
 export const rejectParallel = (tenantId: number, sel: { system_ids?: number[]; group?: string }) =>
   sendJSON<{ source_ids: number[] }>("/api/systems/parallel-reject", "POST", { tenant_id: tenantId, ...sel });
@@ -564,6 +599,12 @@ export interface PublishedService {
   protocol: string | null;
   portforward: boolean;
   rule_count: number;
+  source?: string | null; // Quellsystem (FortiGate bzw. NSX ALB)
+  platform?: string | null; // fortigate | avi (0.77.0, ADR 0027)
+  servers?: number; // Server des Pools bzw. Real Server
+  pool?: string | null; // NSX ALB: Pool bzw. Pool Group
+  balancers?: BalancerBrief[]; // 0.79.0: VIP der FortiGate -> Virtual Services des NSX ALB
+  fronted_by?: { name: string; ext_ip: string | null; ext_port: string | null; source?: string | null }[]; // VIPs davor
 }
 
 export interface AppRule {
@@ -591,10 +632,15 @@ export interface DocTable {
   index: number;
   title: string;
   enforcement: string;
+  // sichtbare Spalten (0.84.0: leere NAT-/VIP-/Load-Balancer-Spalten fehlen)
   columns: string[];
-  // Spalten als Text; dazu _rule (Regel-ID), _dir (in | out), _scope (Art des Bezugs),
-  // _rules (Applikations-Doku: Regeln der Zeile, bei einem IPv4/IPv6-Paar beide), _systems
-  // (unspezifische Regel, 0.37.0: Systeme der Applikation, die sie nutzen können)
+  // 0.87.0: Anzeige der Spalten in der Sprache der Anfrage (parallel zu columns; columns = Schlüssel)
+  labels?: string[];
+  // Spalten als Text (mehrere Einträge mit Zeilenumbruch); dazu _rule (Regel-ID), _dir (in |
+  // out), _scope (Art des Bezugs), _rules (Applikations-Doku: Regeln der Zeile, bei einem
+  // IPv4/IPv6-Paar beide), _systems (unspezifische Regel, 0.37.0: Systeme der Applikation, die
+  // sie nutzen können), _app/_peer (Seite der Applikation bzw. Gegenstelle) und _app_col
+  // (Source bzw. Destination - dort steht die Applikation)
   rows: Record<string, string | number | number[] | string[] | null>[];
   // 0.69.0 (Applikations-Doku): ausgeblendete Zeilen mit _hides (Begründung, wer, wann)
   hidden?: (Record<string, string | number | number[] | string[] | null> & { _hides?: DocHide[] })[];
@@ -657,6 +703,7 @@ export interface Application {
   description: string | null;
   member_count: number;
   system_count: number;
+  vm_count: number; // 0.75.0: VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern
 }
 
 export interface AppMember {
@@ -683,7 +730,9 @@ export interface AppCandidate {
 }
 
 export interface AppSuggestion {
+  key: string; // 0.74.1: <ACI-Tenant>|<Projektnummer> bzw. die Nummer
   code: string;
+  tenant: string | null; // ACI-Tenant der APs (gleiche Nummer in mehreren Tenants = getrennt)
   name: string;
   application_id: number | null;
   members: AppCandidate[];
@@ -872,6 +921,7 @@ interface InvBase {
   id: number;
   source_system_id: number;
   source: string | null;
+  shared?: boolean; // 0.76.0: Kunde gewählt, geteilter Teil der Umgebung
 }
 export interface InvDevice extends InvBase {
   name: string;
@@ -1065,10 +1115,18 @@ export class ApiError extends Error {
 // Verständliche Meldung für die Anzeige im UI.
 export function describeError(e: unknown): string {
   if (e instanceof ApiError) {
-    if (e.status === 401) return "Nicht angemeldet oder Sitzung abgelaufen – bitte neu anmelden.";
-    if (e.status === 403) return `Keine Berechtigung (${e.detail || "Rolle/Mandant fehlt"}).`;
-    if (e.status === 409) return `Existiert bereits (${e.detail}).`;
-    if (e.status === 422) return `Ungültige Eingabe (${e.detail}).`;
+    if (e.status === 401)
+      return L(
+        "Nicht angemeldet oder Sitzung abgelaufen – bitte neu anmelden.",
+        "Not signed in or session expired – please sign in again.",
+      );
+    if (e.status === 403)
+      return L(
+        `Keine Berechtigung (${e.detail || "Rolle/Mandant fehlt"}).`,
+        `Not permitted (${e.detail || "role/tenant missing"}).`,
+      );
+    if (e.status === 409) return L(`Existiert bereits (${e.detail}).`, `Already exists (${e.detail}).`);
+    if (e.status === 422) return L(`Ungültige Eingabe (${e.detail}).`, `Invalid input (${e.detail}).`);
     return e.message;
   }
   return e instanceof Error ? e.message : String(e);
@@ -1100,14 +1158,21 @@ async function authHeaders(): Promise<Record<string, string>> {
 
 // Fetch mit Token und einheitlicher Fehlerbehandlung; liefert die rohe Antwort.
 async function fetchChecked(url: string, init: RequestInit = {}): Promise<Response> {
-  const headers = { ...(await authHeaders()), ...(init.headers as Record<string, string>) };
+  // Sprache der Oberfläche (0.86.0): Texte des Servers folgen schrittweise
+  const headers = {
+    "Accept-Language": lang,
+    ...(await authHeaders()),
+    ...(init.headers as Record<string, string>),
+  };
   const response = await fetch(url, { ...init, headers });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const detail = detailText(body);
     if (response.status === 401 && auth.isOidc()) {
       // Token abgelehnt -> neu anmelden (mit Schleifenschutz, siehe auth.relogin)
-      void auth.relogin(`Der Orchestrator lehnt das Anmelde-Token ab: ${detail || "HTTP 401"}`);
+      void auth.relogin(
+        `${L("Der Orchestrator lehnt das Anmelde-Token ab", "The orchestrator rejects the sign-in token")}: ${detail || "HTTP 401"}`,
+      );
     }
     throw new ApiError(response.status, detail);
   }
@@ -1330,6 +1395,14 @@ export const setAgentAutoUpdate = (id: number, autoUpdate: boolean) =>
 // Agent-Paket (ZIP: collectors-Wheel + install.ps1/run-agent.ps1, ohne Zugangsdaten)
 export const downloadAgentPackage = async (): Promise<Blob> =>
   (await fetchChecked("/api/agents/package")).blob();
+// 0.78.2: TLS intern an? Dann spricht der Orchestrator auf :8000 HTTPS mit der internen CA
+export interface AgentPackageInfo {
+  internal_tls: boolean;
+  ca: boolean;
+  ca_name: string;
+}
+export const fetchAgentPackageInfo = () => getJSON<AgentPackageInfo>("/api/agents/package/info");
+export const downloadAgentCa = async (): Promise<Blob> => (await fetchChecked("/api/agents/package/ca")).blob();
 
 // Namensprofile & Wörterbücher
 export const fetchNamingProfiles = () => getJSON<NamingProfile[]>("/api/naming-profiles");
@@ -1366,6 +1439,7 @@ export interface SchemaZone {
   group: string | null;
   description: string | null;
   geometry: [number, number, number, number] | null;
+  per_customer?: boolean; // Vorlage je Kunde (0.82.0, `automato_customer`)
 }
 export interface SchemaLink {
   src: string;
@@ -1417,6 +1491,7 @@ export interface SchemaZoneEdit {
   description: string | null;
   geometry: [number, number, number, number] | null;
   previous: string | null; // bisheriger Name (Umbenennen)
+  per_customer?: boolean; // Vorlage je Kunde (0.82.0)
 }
 export interface SchemaLinkEdit {
   src: string;
@@ -1427,11 +1502,22 @@ export interface SchemaLinkEdit {
 }
 export const editZoneSchema = (profileId: number, body: { zones: SchemaZoneEdit[]; links: SchemaLinkEdit[] }) =>
   sendJSON<ZoneSchemaState>(`/api/naming-profiles/${profileId}/zone-schema`, "PATCH", body);
+// Datei vom Server in der Sprache der Exporte (0.87.0: `?lang=` geht vor Accept-Language)
+function withLang(url: string): string {
+  return `${url}${url.includes("?") ? "&" : "?"}lang=${exportLang()}`;
+}
 async function fileOf(url: string, fallback: string): Promise<{ blob: Blob; filename: string }> {
-  const response = await fetchChecked(url);
+  const response = await fetchChecked(withLang(url));
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? fallback };
 }
+// Export für Confluence (0.71.0): Applikations-Doku als Word bzw. Word + Netzwerkplan (draw.io) im ZIP
+// 0.73.0: `sections` = gewählte Abschnitte (leer = alle)
+export const exportApplication = (id: number, format: "docx" | "zip", sections?: string[]) =>
+  fileOf(
+    `/api/applications/${id}/export${qs({ format, sections: sections?.length ? sections.join(",") : undefined })}`,
+    `applikation.${format}`,
+  );
 export const zoneSchemaDrawing = (profileId: number) => fileOf(`/api/naming-profiles/${profileId}/zone-schema/drawing`, "zonenschema.drawio");
 // Vorlage: ohne Mandant Beispiel-Zonen, mit Mandant dessen Zonen und Absichten als Ausgangspunkt
 export const zoneSchemaTemplate = (tenantId?: number) =>
@@ -1555,7 +1641,7 @@ export const fetchFindingSummary = (tenantId?: number | null, type?: string, q?:
 export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
   sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);
 export const fetchPublishedServices = (tenantId?: number | null) =>
-  getJSON<PublishedService[]>(`/api/published-services${qs({ tenant_id: tenantId })}`);
+  getJSON<PublishedService[]>(`/api/published-services${cq({ tenant_id: tenantId })}`);
 export const fetchPublishedService = (name: string, tenantId?: number | null) =>
   getJSON<PublishedServiceDetail>(
     `/api/published-services/${encodeURIComponent(name)}${qs({ tenant_id: tenantId })}`,
@@ -1582,6 +1668,26 @@ export const createApp = (
 export const patchApp = (id: number, body: ApplicationInput) =>
   sendJSON<ApplicationDetail>(`/api/applications/${id}`, "PATCH", body);
 export const deleteApp = (id: number) => sendJSON<void>(`/api/applications/${id}`, "DELETE");
+// 0.75.0: mehrere löschen (z. B. ohne VMs), Stammdaten aus CSV mit Vorschau
+export const deleteApps = (tenantId: number, ids: number[]) =>
+  sendJSON<{ deleted: number }>(`/api/applications/delete${qs({ tenant_id: tenantId })}`, "POST", { ids });
+export interface AppImportRow {
+  line: number;
+  name: string | null;
+  action: "create" | "update" | "unchanged" | "error";
+  errors: string[];
+  changes: Record<string, [unknown, unknown]>;
+  application_id: number | null;
+}
+export interface AppImportPlan {
+  columns: Record<string, string>; // Kopfzeile -> Feld
+  ignored: string[];
+  counts: Record<AppImportRow["action"], number>;
+  rows: AppImportRow[];
+}
+export const importApps = (tenantId: number, csv: string, apply: boolean) =>
+  sendJSON<AppImportPlan>(`/api/applications/import${qs({ tenant_id: tenantId, apply: apply ? "true" : undefined })}`, "POST", { csv });
+export const fetchAppImportTemplate = async (): Promise<Blob> => (await fetchChecked("/api/applications/import/template")).blob();
 export const addAppMembers = (id: number, members: { kind: MemberKind; ref: string }[]) =>
   sendJSON<ApplicationDetail>(`/api/applications/${id}/members`, "POST", { members });
 export const removeAppMember = (id: number, memberId: number) =>
@@ -1621,6 +1727,7 @@ export interface AppConnSide {
   systems: string[];
   more: number;
   keys: string[]; // Systeme der Applikation (Doku-Schlüssel)
+  l3out?: string | null; // externe EPG: ihr L3Out (0.74.0)
 }
 export interface AppConnRule {
   rule_id: number | null;
@@ -1635,6 +1742,7 @@ export interface AppConnRule {
   unsure: string[];
   decides: boolean;
   reverse?: boolean; // ACI (0.69.1): Contract in der Rückrichtung (zustandslos)
+  note?: string; // ACI (0.72.1): greift nicht, z. B. nur Antworten (Filter nur mit Quellport)
 }
 export interface AppConnCheck {
   label: string; // Firewall bzw. VRF (im Verbund je Firewall)
@@ -1657,6 +1765,7 @@ export interface AppConnHop {
   context: string;
   verdict: string | null;
   checks: AppConnCheck[];
+  lb?: TraceHop["lb"]; // NSX ALB: vom Load Balancer weiter zum Server (0.77.0)
 }
 export interface AppConnState {
   rule_id: number;
@@ -1682,7 +1791,29 @@ export interface AppConnection {
   hops: AppConnHop[];
   rules: AppConnState[];
   mismatch: string[];
+  // Wege uneinheitlich (0.73.0): Urteil je Weg (aktiv, ECMP, Backup) bzw. Firewall im Verbund
+  variants: { kind: "active" | "backup"; via: string; verdict: string; text: string; reason: string | null }[];
+  inconsistent: boolean;
   notes: string[];
+  // logische Zonen (0.78.0, ADR 0024): Quelle/Ziel, Kette des Wegs, Absichten mit Urteil
+  zones?: AppConnZones | null;
+  // Netz als Ziel (0.79.1): genauer geroutete Teile (eigene Verbindungen) bzw. Teil von
+  parts?: string[];
+  part_of?: string;
+}
+export interface AppConnZones {
+  src: string[];
+  dst: string[];
+  chain: { name: string; code: string | null; color: string | null; transition?: string | null; role: string }[];
+  intents: {
+    src_name: string;
+    dst_name: string;
+    intent: "allow" | "limited" | "deny";
+    services: string[];
+    verdict: "ok" | "violation" | "warn" | "info";
+    text: string;
+  }[];
+  violation: boolean;
 }
 // Netzwerkplan je Applikation (0.67.0): Systeme → Knoten der Wege → Gegenstellen; je Linie die
 // Dienste je Richtung (von der Applikation aus) und an den Enden die Interfaces
@@ -1690,7 +1821,7 @@ export type AppPlanVerdict = "allow" | "deny" | "depends" | "unknown" | "blocked
 export interface AppPlanNode {
   id: string;
   role: "own" | "hop" | "peer";
-  kind: string; // system | firewall | vdom | vrf | object | epg | external
+  kind: string; // system | firewall | vdom | vrf | l3out | lb | object | epg | external
   label: string;
   title: string;
   sub: string;
@@ -1703,6 +1834,15 @@ export interface AppPlanNode {
   y: number;
   w: number;
   h: number;
+  // kompakt (0.74.0): EPG mit ihren VMs im Rahmen des APs, ACI als L3Out, Regeln je Knoten
+  group?: string | null;
+  lines?: string[];
+  more?: number;
+  via?: string; // L3Out: ACI-VRF des Wegs; Load Balancer: Knoten, an dem seine VIP liegt
+  vips?: string[]; // Load Balancer (0.85.0): VIPs mit Port; Zeilen = Virtual Services
+  rules?: { name: string; on: string | null; action: string; services: string[]; rule_id: number | null }[];
+  rule_lines?: string[];
+  rules_box?: { x: number; y: number; w: number; h: number } | null;
 }
 export interface AppPlanPort {
   x: number;
@@ -1738,20 +1878,23 @@ export interface AppPlan {
   nodes: AppPlanNode[];
   edges: AppPlanEdge[];
   columns: { x: number; title: string }[];
+  groups?: { title: string; x: number; y: number; w: number; h: number; nodes: string[] }[]; // Rahmen je AP (0.74.0)
   summary: { connections: number; total: number; nodes: number; edges: number };
 }
 export interface AppConnections {
   connections: AppConnection[];
   notes: string[];
-  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number };
+  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number };
   plan?: AppPlan;
 }
 export const fetchAppConnections = (id: number) =>
   getJSON<AppConnections>(`/api/applications/${id}/connections`);
-export async function exportAppPlan(id: number, format: "svg" | "drawio", keys?: string[]): Promise<{ blob: Blob; filename: string }> {
+// 0.74.0: `rules` = Ebene „Regeln“ mit exportieren
+export async function exportAppPlan(id: number, format: "svg" | "drawio", keys?: string[], rules = true): Promise<{ blob: Blob; filename: string }> {
   const params = new URLSearchParams({ format });
   (keys ?? []).forEach((k) => params.append("key", k));
-  const response = await fetchChecked(`/api/applications/${id}/connections/plan/export?${params.toString()}`);
+  if (!rules) params.set("rules", "false");
+  const response = await fetchChecked(withLang(`/api/applications/${id}/connections/plan/export?${params.toString()}`));
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `netzwerkplan.${format}` };
 }
@@ -1869,15 +2012,15 @@ export const fetchInventory = <K extends keyof Inventory>(
   tenantId: number,
   params: { source_system_id?: number | null; q?: string } = {},
 ) =>
-  getJSON<Inventory[K][]>(`/api/inventory/${kind}${qs({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
+  getJSON<Inventory[K][]>(`/api/inventory/${kind}${cq({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
 
 // Abgleich
 export const fetchReconcileSummary = (tenantId: number) =>
-  getJSON<ReconcileSummary>(`/api/reconcile/summary${qs({ tenant_id: tenantId })}`);
+  getJSON<ReconcileSummary>(`/api/reconcile/summary${cq({ tenant_id: tenantId })}`);
 export const fetchIpamCompare = (
   tenantId: number,
   params: { status?: string; q?: string; limit?: number; offset?: number } = {},
-) => getJSON<IpamCompare>(`/api/reconcile/ipam${qs({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
+) => getJSON<IpamCompare>(`/api/reconcile/ipam${cq({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
 export const runReconcile = (tenantId: number) =>
   sendJSON<{ tenant_id: number; findings: Record<string, number> }>(
     `/api/reconcile${qs({ tenant_id: tenantId })}`,
@@ -1925,6 +2068,7 @@ export interface Labeled {
   context: string; // VDOM bzw. Tenant:VRF
   display?: ContextKind | "";
   label?: string;
+  shared?: boolean; // 0.76.0: Kunde gewählt, Kontext gehört zum geteilten Teil
 }
 export interface RoutingContext extends Labeled {
   id: number;
@@ -2015,7 +2159,23 @@ export interface TraceHop extends RoutingNode {
   rules?: HopRules; // FortiGate-Hop: passende Policies und Urteil (0.22.0)
   dst?: string; // Ziel an diesem Hop nach NAT auf einem Hop davor (0.23.0)
   // VIP (DNAT) an diesem Hop: ab hier zur internen IP (Virtual Server: alle Real Server)
-  nat?: { name: string; id: number; ext: string | null; to: string[]; type: string | null; ports: (string | null)[] | null };
+  // balancer (0.79.0): Ziel der VIP ist dieser Virtual Service des NSX ALB
+  nat?: { name: string; id: number; ext: string | null; to: string[]; type: string | null; ports: (string | null)[] | null; balancer?: string };
+  // NSX ALB (0.77.0, ADR 0027): VIP hier angeschlossen, der Weg geht vom Load Balancer zum Server
+  lb?: {
+    name: string;
+    id: number;
+    source?: string;
+    ext: string;
+    port?: string;
+    to?: string[];
+    server_port?: number | string;
+    servers?: number;
+    pool?: string;
+    tenant?: string;
+    snat?: string; // service_engine | client
+    down?: boolean;
+  };
   // SNAT der erlaubenden Policy (0.47.0: VIP mit nat-source-vip, Pool mit Typ und Bereich)
   snat?: {
     pool?: string;
@@ -2029,7 +2189,8 @@ export interface TraceHop extends RoutingNode {
     to: string | null;
   };
   // ACI (0.44.0): Ziel in einer anderen VRF, in diese geleakt (Shared Service bzw. Route-Leaking)
-  leak?: { vrf: string; where: string; text: string };
+  // 0.87.0: kind statt des (übersetzten) Texts
+  leak?: { vrf: string; where: string; text: string; kind?: "leak" | "shared" };
   // Verbund als ein Hop (0.29.0): je Firewall bzw. Variante (andere Interfaces) ein Eintrag
   parts?: TraceHop[];
   zone?: TraceZone | null; // logische Zone des Knotens (0.57.0)
@@ -2090,12 +2251,15 @@ export interface HopRule {
   label?: string; // ACI (0.35.0): „Contract CT_x“, „Taboo TB_x“, „Preferred Group VRF“
   kind?: "contract" | "taboo" | "preferred_group";
   reverse?: boolean; // ACI (0.69.1): passt in der Rückrichtung (Provider → Consumer, zustandslos)
+  note?: string; // ACI (0.72.1): greift nicht, z. B. nur Antworten (Filter nur mit Quellport)
+  after?: boolean; // 0.78.4: passt, liegt aber hinter der entscheidenden Policy
 }
 export type PolicyVerdict = "allow" | "deny" | "implicit_deny" | "depends" | "unknown";
 export interface HopRules {
   verdict: PolicyVerdict;
   text: string;
   rules: HopRule[];
+  after?: HopRule[]; // Weg-Suche (0.78.4): passende Policies dahinter, nicht erreicht
   src_epg?: string; // ACI-VRF-Hop (0.35.0): Zuordnung der Quelle bzw. des Ziels
   dst_epg?: string;
 }
@@ -2150,7 +2314,7 @@ export const resolveName = (
   opts: { type?: "host" | "net" | ""; limit?: number; offset?: number } = {},
 ) =>
   getJSON<NameResult>(
-    `/api/routing/resolve${qs({ tenant_id: tenantId, q: q.trim(), type: opts.type || undefined, limit: opts.limit, offset: opts.offset })}`,
+    `/api/routing/resolve${cq({ tenant_id: tenantId, q: q.trim(), type: opts.type || undefined, limit: opts.limit, offset: opts.offset })}`,
   );
 export interface TopoPeer extends Labeled {
   id: number;
@@ -2216,7 +2380,7 @@ export interface TopoL3Out {
 }
 
 export const fetchRoutingSummary = (tenantId: number) =>
-  getJSON<RoutingSummary>(`/api/routing/summary${qs({ tenant_id: tenantId })}`);
+  getJSON<RoutingSummary>(`/api/routing/summary${cq({ tenant_id: tenantId })}`);
 export const fetchRoutes = (opts: {
   tenantId: number;
   sourceId?: number | null;
@@ -2229,10 +2393,10 @@ export const fetchRoutes = (opts: {
   offset?: number;
 }) =>
   getPage<TopoRoute>(
-    `/api/routing/routes${qs({ tenant_id: opts.tenantId, source_system_id: opts.sourceId, context: opts.context || undefined, table: opts.table || undefined, vrf: opts.vrf || undefined, ip: opts.ip?.trim() || undefined, q: opts.q?.trim() || undefined, limit: opts.limit, offset: opts.offset })}`,
+    `/api/routing/routes${cq({ tenant_id: opts.tenantId, source_system_id: opts.sourceId, context: opts.context || undefined, table: opts.table || undefined, vrf: opts.vrf || undefined, ip: opts.ip?.trim() || undefined, q: opts.q?.trim() || undefined, limit: opts.limit, offset: opts.offset })}`,
   );
 export const lookupRoute = (tenantId: number, ip: string) =>
-  getJSON<RouteLookup[]>(`/api/routing/lookup${qs({ tenant_id: tenantId, ip: ip.trim() })}`);
+  getJSON<RouteLookup[]>(`/api/routing/lookup${cq({ tenant_id: tenantId, ip: ip.trim() })}`);
 // Weg Hop für Hop: ab der Quelle (dort angeschlossen) bzw. dem Startpunkt (RoutingNode.key)
 export const traceRoute = (
   tenantId: number,
@@ -2241,11 +2405,11 @@ export const traceRoute = (
   getJSON<TraceResult>(
     `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim(), src: opts.src?.trim() || undefined, start: opts.start || undefined, slack: opts.slack, service: opts.service?.trim() || undefined })}`,
   );
-export const fetchPeers = (tenantId: number) => getJSON<TopoPeer[]>(`/api/routing/peers${qs({ tenant_id: tenantId })}`);
-export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha${qs({ tenant_id: tenantId })}`);
+export const fetchPeers = (tenantId: number) => getJSON<TopoPeer[]>(`/api/routing/peers${cq({ tenant_id: tenantId })}`);
+export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha${cq({ tenant_id: tenantId })}`);
 export const fetchPolicyRoutes = (tenantId: number) =>
-  getJSON<TopoPolicyRoute[]>(`/api/routing/policy-routes${qs({ tenant_id: tenantId })}`);
-export const fetchL3Outs = (tenantId: number) => getJSON<TopoL3Out[]>(`/api/routing/l3outs${qs({ tenant_id: tenantId })}`);
+  getJSON<TopoPolicyRoute[]>(`/api/routing/policy-routes${cq({ tenant_id: tenantId })}`);
+export const fetchL3Outs = (tenantId: number) => getJSON<TopoL3Out[]>(`/api/routing/l3outs${cq({ tenant_id: tenantId })}`);
 
 // Anbindungen nach aussen (0.18.0, von Hand): Internet, MPLS, WAN, Partner – der Weg endet dort
 // bzw. geht nach den manuellen Routen bei einem gelesenen Knoten weiter
@@ -2328,11 +2492,11 @@ export interface TopoExit {
   };
 }
 export type TopoExitIn = Omit<TopoExit, "id" | "sources" | "updated_at" | "status">;
-export const fetchExits = (tenantId: number) => getJSON<TopoExit[]>(`/api/routing/exits${qs({ tenant_id: tenantId })}`);
+export const fetchExits = (tenantId: number) => getJSON<TopoExit[]>(`/api/routing/exits${cq({ tenant_id: tenantId })}`);
 // erkannte Anbindungen; `covered` = auch die schon ganz erfassten, `dismissed` = auch ausgeblendete
 export const fetchExitSuggestions = (tenantId: number, opts: { covered?: boolean; dismissed?: boolean } = {}) =>
   getJSON<ExitSuggestion[]>(
-    `/api/routing/exits/suggestions${qs({ tenant_id: tenantId, covered: opts.covered ? "true" : undefined, dismissed: opts.dismissed ? "true" : undefined })}`,
+    `/api/routing/exits/suggestions${cq({ tenant_id: tenantId, covered: opts.covered ? "true" : undefined, dismissed: opts.dismissed ? "true" : undefined })}`,
   );
 // erkannte Router nicht mehr vorschlagen bzw. wieder vorschlagen (Operator, 0.21.0)
 export const dismissExits = (tenantId: number, ips: string[], undo = false) =>
@@ -2500,7 +2664,7 @@ export interface TopologyModel {
   summary: { nodes: Record<string, number>; edges: Record<string, number>; issues: Record<string, number> };
 }
 export const fetchTopology = (tenantId: number, node?: string) =>
-  getJSON<TopologyModel>(`/api/topology${qs({ tenant_id: tenantId, node })}`);
+  getJSON<TopologyModel>(`/api/topology${cq({ tenant_id: tenantId, node })}`);
 
 // Logische Zonen (0.51.0, ADR 0024): in Automato gepflegt, Selektoren wie beim Kunden und dazu
 // `exit` (Netze hinter einer Anbindung); Zonenmatrix mit Absicht je Paar, Zonenplan
@@ -2533,6 +2697,7 @@ export interface LogicalZone {
   id: number;
   tenant_id: number;
   name: string;
+  shared?: boolean; // 0.76.0: Kunde gewählt, Zone eines anderen bzw. geteilten Kunden
   code: string | null;
   kind: ZoneKind;
   color: string | null;
@@ -2590,6 +2755,7 @@ export interface ZoneMatrix {
     allow: number;
     deny: number;
     violations: number;
+    impossible?: number; // nach dem Weg nicht möglich (0.81.0)
     intent: ZoneIntent | null;
     note: string | null;
     services?: string[]; // Absicht je Dienst (0.57.0): erlaubte Dienste bei „eingeschränkt“
@@ -2603,7 +2769,7 @@ export interface ZoneMatrix {
     updated_by: string | null;
     updated_at: string;
   }[];
-  summary: { zones: number; rules: number; assigned: number; without: number; violations: number };
+  summary: { zones: number; rules: number; assigned: number; without: number; violations: number; off_path?: number };
 }
 export interface ZoneCellRule {
   id: number;
@@ -2617,12 +2783,20 @@ export interface ZoneCellRule {
   tenant: string | null;
   violation: boolean;
   outside?: string[]; // Dienste ausserhalb der Absicht „eingeschränkt“ (0.57.0)
+  impossible?: string | null; // warum nach dem Weg nicht möglich (0.81.0)
+}
+export interface ZoneCellRules {
+  total: number;
+  violations: number;
+  impossible?: number;
+  items: ZoneCellRule[];
 }
 // Netz eines Übergangs (0.56.0): Beine der Knoten (Interface bzw. L3Out) und Router ohne gelesenes Gerät
 export interface TransitionNet {
   network: string;
   legs: { node: string; label: string; interface: string | null; address: string; l3out: boolean }[];
   routers: { ip: string; names: string[] }[];
+  routes?: { zone: number; prefixes: string[] }[]; // Zone nur hinter dem Router (0.81.0)
 }
 export type PlanZoneId = number | string; // Zone, "customer:<id>", "none", "outside", "other"
 export interface PlanZone {
@@ -2653,6 +2827,17 @@ export interface PlanTransition {
   count: number;
   l3out: boolean;
   contact: boolean; // Knoten ohne Zone an einem Netz der Zone (kein Übergang)
+  intent_ab?: PlanDirection | null; // 0.78.0: Absicht von a nach b
+  intent_ba?: PlanDirection | null;
+}
+// Absicht einer Richtung im Zonenplan (0.78.0): bei einem Kunden als Gruppe die strengste seiner
+// Zonen (`mixed` = verschiedene), Dienste der eingeschränkten
+export interface PlanDirection {
+  intent: ZoneIntent;
+  services: string[];
+  pairs: number;
+  mixed: boolean;
+  note: string | null;
 }
 // Zonenplan: seit 0.56.0 Format 2 (Zonen mit Knoten, Übergänge, Ansicht je Kunde); Versionen bis
 // 0.55.0 im Format 1 (Zonen an den Knoten)
@@ -2665,6 +2850,8 @@ export interface ZonePlan {
   transitions?: PlanTransition[];
   // 0.66.0: erlaubende Regeln je Zonenpaar (`ab` von a nach b, `ba` zurück)
   flows?: { id: string; a: PlanZoneId; b: PlanZoneId; rules: number; ab: number; ba: number }[];
+  // 0.78.0: Absichten zwischen Zonen ohne Übergang (eigene Linie)
+  intents?: { id: string; a: PlanZoneId; b: PlanZoneId; intent_ab: PlanDirection | null; intent_ba: PlanDirection | null }[];
   conflicts?: { node: string; label: string; zones: string[] }[];
   attachments?: {
     zone: number;
@@ -2737,6 +2924,11 @@ export interface PlanEdge {
   networks?: string[];
   contact?: boolean;
   name?: string; // 0.61.0: Name des Übergangs auch bei ausgeblendeter Beschriftung
+  // 0.78.0: Absicht je Richtung (Pfeil am Ziel), Text für den Titel, Linie nur für die Absicht
+  ab?: ZoneIntent | null;
+  ba?: ZoneIntent | null;
+  intent_text?: string;
+  intent?: boolean;
 }
 export interface PlanLayout {
   format?: number;
@@ -2777,8 +2969,8 @@ export interface PlanDiff {
   unzoned: { added: string[]; removed: string[] };
   matrix: { cell: string; old: [number, number, number]; new: [number, number, number] }[];
 }
-export type PlanFormat = "svg" | "drawio" | "pdf";
-export const fetchZones = (tenantId: number) => getJSON<LogicalZone[]>(`/api/zones${qs({ tenant_id: tenantId })}`);
+export type PlanFormat = "drawio" | "svg" | "pdf" | "docx" | "zip"; // docx/zip: Word (+ draw.io) für Confluence (0.71.0)
+export const fetchZones = (tenantId: number) => getJSON<LogicalZone[]>(`/api/zones${cq({ tenant_id: tenantId })}`);
 export const createZone = (body: ZoneIn) => sendJSON<LogicalZone>("/api/zones", "POST", body);
 export const updateZone = (id: number, body: ZoneIn) => sendJSON<LogicalZone>(`/api/zones/${id}`, "PUT", body);
 export const deleteZone = (id: number) => sendJSON<void>(`/api/zones/${id}`, "DELETE");
@@ -2895,10 +3087,10 @@ export const applySchemaIntents = (tenantId: number, pairs?: [number, number][],
   });
 export const dismissZoneSuggestions = (tenantId: number, keys: string[], undo = false) =>
   sendJSON<{ keys: string[] }>(`/api/zones/suggestions/dismiss${undo ? "/undo" : ""}`, "POST", { tenant_id: tenantId, keys });
-export const fetchZoneMatrix = (tenantId: number) => getJSON<ZoneMatrix>(`/api/zones/matrix${qs({ tenant_id: tenantId })}`);
-export const fetchZoneCellRules = (tenantId: number, src: ZoneCell, dst: ZoneCell, offset = 0) =>
-  getJSON<{ total: number; violations: number; items: ZoneCellRule[] }>(
-    `/api/zones/matrix/rules${qs({ tenant_id: tenantId, src: String(src), dst: String(dst), offset, limit: 100 })}`,
+export const fetchZoneMatrix = (tenantId: number) => getJSON<ZoneMatrix>(`/api/zones/matrix${cq({ tenant_id: tenantId })}`);
+export const fetchZoneCellRules = (tenantId: number, src: ZoneCell, dst: ZoneCell, offset = 0, impossible = false) =>
+  getJSON<ZoneCellRules>(
+    `/api/zones/matrix/rules${cq({ tenant_id: tenantId, src: String(src), dst: String(dst), offset, limit: 100, impossible: impossible ? "true" : undefined })}`,
   );
 export const setZonePolicy = (tenantId: number, src: number, dst: number, intent: ZoneIntent | null, note: string | null, services?: string[]) =>
   sendJSON<{ src: number; dst: number; intent: ZoneIntent | null; note: string | null; services: string[] }>("/api/zones/policy", "PUT", {
@@ -2941,6 +3133,42 @@ export const fetchZonePlan = (tenantId: number, view?: PlanView) => getJSON<Zone
 // Anordnung (0.61.0, Operator): Position je Zone in der Ansicht `overview`, `all` bzw. `customer:<id>`
 export const savePlanArrangement = (tenantId: number, view: string, positions: Record<string, [number, number]>) =>
   sendJSON<NonNullable<ZonePlan["arrangement"]>>("/api/zones/plan/arrangement", "PUT", { tenant_id: tenantId, view, positions });
+// Zonenplan aus draw.io zurück einlesen (0.83.0, Operator): Vorschau, dann Teile übernehmen
+export interface PlanImportPreview {
+  view: string;
+  page: string | null;
+  positions: number;
+  moved: string[];
+  renames: { id: number; from: string; to: string }[];
+  intents: {
+    src_zone_id: number;
+    src: string;
+    dst_zone_id: number;
+    dst: string;
+    intent: ZoneIntent;
+    reason: string;
+    services: string[];
+    note: string | null;
+    current: ZoneIntent | null;
+  }[];
+  new_zones: { name: string; kind: ZoneKind; code: string | null }[];
+  missing: string[];
+  warnings: string[];
+}
+export interface PlanImportParts {
+  positions: boolean;
+  renames: boolean;
+  intents: boolean;
+  new_zones: boolean;
+}
+export const previewPlanImport = (tenantId: number, content: string) =>
+  sendJSON<PlanImportPreview>("/api/zones/plan/import/preview", "POST", { tenant_id: tenantId, content });
+export const applyPlanImport = (tenantId: number, content: string, parts: PlanImportParts) =>
+  sendJSON<{ view: string; positions: number; renames: unknown[]; intents: unknown[]; new_zones: string[]; skipped: string[] }>(
+    "/api/zones/plan/import",
+    "POST",
+    { tenant_id: tenantId, content, ...parts },
+  );
 export const resetPlanArrangement = (tenantId: number, view: string) =>
   sendJSON<void>(`/api/zones/plan/arrangement${qs({ tenant_id: tenantId, view })}`, "DELETE");
 export const fetchPlanVersions = (tenantId: number) =>
@@ -2958,7 +3186,9 @@ export async function exportZonePlan(
   versionId?: number,
   view?: PlanView,
 ): Promise<{ blob: Blob; filename: string }> {
-  const response = await fetchChecked(`/api/zones/plan/export${planQs(tenantId, versionId ? undefined : view, { format, version_id: versionId })}`);
+  const response = await fetchChecked(
+    withLang(`/api/zones/plan/export${planQs(tenantId, versionId ? undefined : view, { format, version_id: versionId })}`),
+  );
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `zonenplan.${format}` };
 }
@@ -3001,6 +3231,7 @@ export type LinkState = "both" | "one_sided" | "unread";
 export interface CablingDevice {
   key: string;
   name: string;
+  shared?: boolean; // 0.76.0: Kunde gewählt, geteilter Teil der Umgebung
   kind: string; // switch | leaf | spine | firewall | esxi | unknown
   read: boolean;
   source: string | null;
@@ -3084,13 +3315,13 @@ export interface CablingVlan {
   devices: { device: string; access: number; trunks: number }[];
 }
 export const fetchCablingDevices = (tenantId: number) =>
-  getJSON<{ summary: CablingSummary; items: CablingDevice[] }>(`/api/cabling/devices${qs({ tenant_id: tenantId })}`);
+  getJSON<{ summary: CablingSummary; items: CablingDevice[] }>(`/api/cabling/devices${cq({ tenant_id: tenantId })}`);
 export const fetchCablingLinks = (
   tenantId: number,
   f: { device?: string; state?: LinkState | ""; q?: string; issues?: boolean; offset?: number; limit?: number } = {},
 ) =>
   getJSON<{ total: number; items: CablingLink[] }>(
-    `/api/cabling/links${qs({ tenant_id: tenantId, device: f.device, state: f.state || undefined, q: f.q, issues: f.issues ? "true" : undefined, offset: f.offset, limit: f.limit })}`,
+    `/api/cabling/links${cq({ tenant_id: tenantId, device: f.device, state: f.state || undefined, q: f.q, issues: f.issues ? "true" : undefined, offset: f.offset, limit: f.limit })}`,
   );
 // Patchungen eines Geräts im Plan (0.70.0): je Kabel beide Enden mit Konfiguration
 export interface CablingPatchEnd extends CablingEnd {
@@ -3120,15 +3351,15 @@ export interface CablingPatches {
   items: CablingPatch[];
 }
 export const fetchCablingPatches = (tenantId: number, device: string, peer?: string | null) =>
-  getJSON<CablingPatches>(`/api/cabling/patches${qs({ tenant_id: tenantId, device, peer: peer ?? undefined })}`);
+  getJSON<CablingPatches>(`/api/cabling/patches${cq({ tenant_id: tenantId, device, peer: peer ?? undefined })}`);
 export const fetchCablingPorts = (
   tenantId: number,
   f: { device?: string; status?: string; vlan?: number | null; q?: string; offset?: number; limit?: number } = {},
 ) =>
   getJSON<{ total: number; items: CablingPort[] }>(
-    `/api/cabling/ports${qs({ tenant_id: tenantId, device: f.device, status: f.status || undefined, vlan: f.vlan ?? undefined, q: f.q, offset: f.offset, limit: f.limit })}`,
+    `/api/cabling/ports${cq({ tenant_id: tenantId, device: f.device, status: f.status || undefined, vlan: f.vlan ?? undefined, q: f.q, offset: f.offset, limit: f.limit })}`,
   );
-export const fetchCablingVlans = (tenantId: number) => getJSON<CablingVlan[]>(`/api/cabling/vlans${qs({ tenant_id: tenantId })}`);
+export const fetchCablingVlans = (tenantId: number) => getJSON<CablingVlan[]>(`/api/cabling/vlans${cq({ tenant_id: tenantId })}`);
 
 // Endpunkte (0.63.0): MAC-Tabelle und ARP der Switches
 export interface EndpointVm {
@@ -3177,7 +3408,7 @@ export const fetchCablingEndpoints = (
   f: { device?: string; port?: string; vlan?: number | null; q?: string; uplinks?: boolean; offset?: number; limit?: number } = {},
 ) =>
   getJSON<{ total: number; summary: { macs: number; ports: number; vms: number; with_ip: number }; items: CablingEndpoint[] }>(
-    `/api/cabling/endpoints${qs({ tenant_id: tenantId, device: f.device, port: f.port, vlan: f.vlan ?? undefined, q: f.q, uplinks: f.uplinks ? "true" : undefined, offset: f.offset, limit: f.limit })}`,
+    `/api/cabling/endpoints${cq({ tenant_id: tenantId, device: f.device, port: f.port, vlan: f.vlan ?? undefined, q: f.q, uplinks: f.uplinks ? "true" : undefined, offset: f.offset, limit: f.limit })}`,
   );
 // L2-Sicht (0.64.0): Plan der Verkabelung und Ausfall
 export interface L2PlanNode {
@@ -3224,7 +3455,7 @@ export interface L2Failure {
   cut_off_keys: string[];
 }
 export const fetchL2Plan = (tenantId: number, f: { ends?: boolean; vlan?: number | null } = {}) =>
-  getJSON<L2Plan>(`/api/cabling/plan${qs({ tenant_id: tenantId, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`);
+  getJSON<L2Plan>(`/api/cabling/plan${cq({ tenant_id: tenantId, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`);
 // Ausfall: mehrere Geräte bzw. Kabel gleichzeitig (0.65.0) - Parameter je Wert wiederholt
 export const fetchL2Failure = (tenantId: number, f: { devices?: string[]; links?: string[] }) => {
   const p = new URLSearchParams({ tenant_id: String(tenantId) });
@@ -3239,12 +3470,14 @@ export async function exportL2Plan(
   f: { ends?: boolean; vlan?: number | null } = {},
 ): Promise<{ blob: Blob; filename: string }> {
   const response = await fetchChecked(
-    `/api/cabling/plan/export${qs({ tenant_id: tenantId, format, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`,
+    withLang(
+      `/api/cabling/plan/export${cq({ tenant_id: tenantId, format, ends: f.ends === false ? "false" : undefined, vlan: f.vlan ?? undefined })}`,
+    ),
   );
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `verkabelung.${format}` };
 }
 export const locateEndpoint = (tenantId: number, q: string) =>
   getJSON<{ query: string; kind: string | null; ips: string[]; items: EndpointLocation[] }>(
-    `/api/cabling/locate${qs({ tenant_id: tenantId, q })}`,
+    `/api/cabling/locate${cq({ tenant_id: tenantId, q })}`,
   );

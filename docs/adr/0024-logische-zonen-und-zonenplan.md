@@ -303,6 +303,73 @@ Entscheide des Anwenders (2026-10-23):
     Stand (`edited_at`) – ein neues Hochladen beginnt wieder mit der Zeichnung. Audit
     `zone_schema.edited` mit neuen, entfernten und geänderten Zonen. Zonen und Absichten im
     Netzwerkdesign bleiben unverändert; die Vorschläge folgen dem neuen Schema.
+17. **Zonen komplett, Teil 1 (0.78.0):** ROADMAP Schritt 5, drei der offenen Punkte.
+    - **Zonen in den Verbindungen** der Applikations-Doku (ADR 0021): je Verbindung Zone von
+      Quelle und Ziel, Kette der Zonen auf dem ersten Weg mit Übergängen und die Absicht mit
+      Urteil wie in der Weg-Suche (Nr. 13); Zonen, Zonenmodell und Absichten werden je
+      Applikation einmal geladen (`zone_path.ZoneContext`). Eine Kette nur aus „ohne Zone“
+      entfällt. Die Befunde „Abweichung Regel ↔ Weg“ brauchen die Zonen nicht.
+    - **Absicht je Richtung im Plan:** je Linie `intent_ab` (von a nach b) und `intent_ba` mit
+      Absicht, Diensten, Zahl der Zonenpaare und `mixed`; gezeichnet als Pfeilspitze am Ziel in
+      der Farbe der Absicht (wie im Grundschema: grün, orange, rot). In einer zusammengefassten
+      Gruppe (Kunde in der Übersicht, „anderer Kunde“) gilt die strengste Absicht, `mixed` sagt,
+      dass sie verschieden sind; Dienste = alle der eingeschränkten. Zonenpaare mit Absicht ohne
+      Übergang (z. B. LAN → DMZ über die Firewall-Zone dazwischen) bekommen eine eigene,
+      farbig gestrichelte Linie (`intents`), die nichts an der Auswahl der Zonen ändert. Im Plan
+      eines Kunden nur Absichten mit einer eigenen Zone; Kunden-Benutzer ohne Notiz (sie kann
+      andere Kunden nennen). Element „Absichten“ blendet beides aus. Export: SVG/PDF mit den
+      Pfeilen und der Tabelle „Absicht je Richtung“, draw.io mit Pfeilen an den Kanten
+      (`startArrow`/`endArrow`, Eigenschaft `automato_intents`; als Grundschema wieder
+      eingelesen bleiben die Linien des Plans weiterhin keine Absichten), Word mit der Tabelle.
+    - **Befund „Zone ausserhalb des Schemas“** (`zone_outside_schema`, Hinweis, Gegenstand
+      `zone`): eine logische Zone, die zu keiner Zone des Grundschemas des Namensprofils passt
+      (`Schema.match`: Name, Kurzname, Muster). Neu berechnet mit den übrigen Zonen-Befunden
+      und nach Hochladen, Bearbeiten und Löschen des Grundschemas für alle Mandanten des
+      Profils. Ohne Grundschema kein Befund.
+18. **Zonen komplett, Teil 2 (0.81.0):** ROADMAP Schritt 5, zwei weitere offene Punkte.
+    - **Relevanz nach dem Weg in der Zonenmatrix** (ADR 0019 Punkt 6, wie in der Doku): je
+      Regel, Seite und Zone die erste Adresse der Zone im Bereich der Regel
+      (`ZoneIndex.first_of`). Eine FortiGate-Policy erreicht die Zone nur, wenn das Routing
+      ihres VDOMs die Adresse über Ein- bzw. Ausgang der Policy führt
+      (`relevance.Relevance.check`); ein Contract nur, wenn er die Adresse erfassen kann
+      (externe EPG, Scope – `relevance._aci_for_ip`, höchstens 2000 Adressen je Berechnung).
+      Unbekannt (Routing nicht gelesen, Policy-Route, SD-WAN) bleibt drin. Ausgeschlossene
+      Paare zählen in der Zelle als „nicht möglich“ (`impossible`), nicht als erlaubend bzw.
+      sperrend und nicht als Verstoss gegen die Absicht – auch nicht im Befund
+      `zone_policy_violation`, im Zonenplan (Kommunikation) und in der Sicht der Kunden. Die
+      Zelle zeigt die Regeln auf Wunsch mit Begründung (`GET /zones/matrix/rules?impossible=true`);
+      `summary.off_path` = Regeln, deren Zonen das Routing alle ausschliesst.
+    - **Zone nur hinter einem Router:** liegt ein Netz einer Zone an keinem gelesenen Knoten,
+      routet aber ein Knoten es (nicht über 0.0.0.0/0) über einen Router ohne gelesenes Gerät,
+      ist das Netz dieses Routers der Übergang zur Zone – wie bei einer Anbindung
+      (`zone_struct._routed`, höchstens 200 Netze je Zone). Der Übergang nennt die Routen
+      (`networks[].routes`: Zone, Präfixe). Ohne solche Route bleibt es beim Übergang nach
+      „ausserhalb“.
+
+19. **Zonen komplett, Teil 3 (0.82.0): Zonen je Kunde im Grundschema.** Eine Zone des
+    Grundschemas mit `automato_customer` = „je Kunde“ (Editor: „je Kunde“, `per_customer`) ist
+    eine **Vorlage**: die Vorschläge (`zone_detect._per_customer`) verschieben Treffer, die ganz
+    in den Netzen (`customers.nets_of` der Kunden-Selektoren) bzw. VDOMs (`fw_vdom`) genau eines
+    Kunden liegen, in einen eigenen Vorschlag „<Zone> <Kunde>“ mit Kurzname
+    „<Kurzname>-<KÜRZEL>“ und dem Kunden; die übrigen bleiben in der Zone selbst (ohne Treffer
+    entfällt sie). Zonen eines Kunden passen auf die Vorlage, wenn Name bzw. Kürzel des Kunden
+    wegfallen (`Schema.of_customer_zone`) – für „Zone ausserhalb des Schemas“, die Karte
+    Grundschema und die Absichten. Absichten einer Vorlage gelten nur innerhalb eines Kunden
+    (Zonen verschiedener Kunden bekommen keine Absicht aus dem Schema). Die Zeichnung trägt
+    `automato_customer` hin und zurück.
+
+20. **Zonen komplett, Teil 4 (0.83.0): Zonenplan aus draw.io zurück einlesen** (Korrekturen im
+    Designer, `store/plan_import.py`). Der Export trägt am Titel die Ansicht und die
+    Verschiebung (`automato_view`, `automato_offset`), jede Zone ihre ID in der Form
+    (`zone-<id>` bzw. `zone-customer-<id>`). Gelesen wird nur Eindeutiges, übernommen erst nach
+    der Vorschau und je Teil auf Wunsch (Operator, `POST /zones/plan/import[/preview]`):
+    Lage = Anordnung der Ansicht (`plan_view.save`); erste Zeile der Beschriftung = neuer Name,
+    ausser die Zone wurde seit dem Export in Automato umbenannt (dann gilt Automato) bzw. der
+    Name ist vergeben; neue Pfeile zwischen Zonen bzw. Linien mit `automato_intent` = Absicht
+    (Auswertung wie im Grundschema, `zone_schema.edge_intent`/`edge_pairs`; die Linien des
+    Exports selbst nicht); neue Formen ohne `automato_*` = Zonen ohne Selektoren (nur auf
+    Wunsch). Gelöschte Formen löschen nichts. Sicherheit wie beim Grundschema (2 MB, keine
+    DTD/Entitäten); nur Daten der Plattform, kein Schreibweg zu Quellsystemen.
 
 ## Folgen
 
@@ -312,8 +379,10 @@ Entscheide des Anwenders (2026-10-23):
   Zone fällt ihre Absicht weg; beim Löschen eines Quellsystems seine Selektoren.
 - Zonen sind nicht funktionsrelevant für den Rest: ohne Zonen arbeitet die Plattform wie
   bisher (Matrix und Plan sind leer, keine Befunde).
-- Offen: Zonen je Kunde im Grundschema (Vorlage „je Kunde“), Befund „Zone ausserhalb des
-  Schemas“, Export nach Confluence (eigene Freigabe), draw.io-Datei zurück einlesen (Korrekturen
-  im Designer), Relevanz nach Pfad für die Matrix (ADR 0019), Übergänge über Routen ohne
-  gemeinsames Netz (Zonen nur hinter einem Router) im Plan, Absicht je Dienst und Richtung im
-  Zonenplan, Zonen in den Verbindungen der Applikations-Doku.
+- Export für Confluence seit 0.71.0 als Word + draw.io zum Import von Hand (ADR 0026, kein
+  Schreibweg).
+- ROADMAP Schritt 5 ist mit 0.83.0 abgeschlossen (Nr. 20: draw.io-Datei des Zonenplans zurück
+  einlesen). Erledigt in 0.82.0 (Nr. 19): Zonen je Kunde im Grundschema; in
+  0.78.0 (Nr. 17): Befund „Zone ausserhalb des Schemas“, Absicht je Dienst und Richtung im
+  Zonenplan, Zonen in den Verbindungen; in 0.81.0 (Nr. 18): Relevanz nach dem Weg in der
+  Matrix, Übergänge zu Zonen nur hinter einem Router.

@@ -38,6 +38,7 @@ from functools import cached_property
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import (
     Epg,
     EpgEndpoint,
@@ -76,6 +77,8 @@ class _Contract:
     names: list[str] = field(default_factory=list)  # Filter mit Namen (FT_https)
     # Dienste, die der Provider zum Consumer aufbauen kann (ACI zustandslos, 0.69.1)
     reverse: list[str] = field(default_factory=list)
+    # Consumer -> Provider nur Antworten (Filter nur mit Quellport, 0.72.1)
+    replies_only: bool = False
     raw: dict = field(default_factory=dict, repr=False)
 
 
@@ -98,6 +101,7 @@ class AciChecker:
         self.cls = classifier or aci_relevance.Classifier(session, tenant_id)
         self._contracts: dict[int, list[_Contract]] = {}
         self._servers: dict[str, set[int]] = {}
+        self._unknown: set[str] = set()  # Texte „im Fabric, EPG nicht bekannt“ (Merkmal)
 
     # -- Laden -------------------------------------------------------------------
 
@@ -181,6 +185,7 @@ class AciChecker:
             for c in out.values():
                 if c.allow and c.kind == "contract":
                     c.reverse = aci_direction.reverse_of(c.raw, c.services)
+                    c.replies_only = aci_direction.replies_only(c.raw, c.services)
         # Taboos zuerst (sperren vor allen anderen), dann nach Name
         self._contracts[sid] = sorted(out.values(), key=lambda c: (c.allow, c.name.lower()))
         return self._contracts[sid]
@@ -190,7 +195,7 @@ class AciChecker:
     def members(self, sid: int, vrf: str, ip) -> tuple[list[Member], str]:
         """EPG(s) der IP in der VRF und eine Beschreibung; leer = keine EPG erfasst sie."""
         if ip is None:
-            return [], "Quelle unbekannt"
+            return [], L("Quelle unbekannt", "source unknown")
         inside = self._inside(sid, vrf, ip)
         if inside is not None:
             return inside
@@ -202,19 +207,23 @@ class AciChecker:
             if rel is None or rel[0] == aci_relevance.IMPOSSIBLE:
                 continue
             net = self.cls.subnet_for(epg, ip)
-            label = f"externe EPG {aci_relevance.ext_label(epg)}" + (f" ({net})" if net else "")
+            name = aci_relevance.ext_label(epg)
+            label = L(f"externe EPG {name}", f"external EPG {name}") + (f" ({net})" if net else "")
             found.append(Member(epg, rel[0] == aci_relevance.POSSIBLE, label))
         if not found and is_net(ip):  # Netz (0.39.0): externe EPGs, die nur einen Teil erfassen
             found = self._partial_external(sid, vrf, ip)
         if not found:
-            return [], f"keine EPG bzw. externe EPG erfasst {ip} in VRF {vrf}"
-        return found, " bzw. ".join(m.text for m in found)
+            return [], L(f"keine EPG bzw. externe EPG erfasst {ip} in VRF {vrf}",
+                         f"no EPG or external EPG covers {ip} in VRF {vrf}")  # fmt: skip
+        return found, _either(m.text for m in found)
 
     def _partial_external(self, sid: int, vrf: str, net) -> list[Member]:
         out: dict[int, Member] = {}
         for epg, n in self.cls.overlapping(sid, vrf, net):
             if epg.id not in out:
-                label = f"externe EPG {aci_relevance.ext_label(epg)} ({n}, nur Teil von {net})"
+                name = aci_relevance.ext_label(epg)
+                label = L(f"externe EPG {name} ({n}, nur Teil von {net})",
+                          f"external EPG {name} ({n}, only part of {net})")  # fmt: skip
                 out[epg.id] = Member(epg, False, label)
         return list(out.values())
 
@@ -227,7 +236,7 @@ class AciChecker:
             sure = len(conf) == 1
             members = [Member(e, sure, f"EPG {epg_store.inventory_label(e)} ({why})")
                        for e, why in conf]  # fmt: skip
-            return members, " bzw. ".join(m.text for m in members)
+            return members, _either(m.text for m in members)
         own = [
             self.epgs[i]
             for i in self.session.scalars(
@@ -246,7 +255,7 @@ class AciChecker:
                and self.cls.vrf_of(e) == vrf]  # fmt: skip
         if own:
             members = [Member(e, True, f"EPG {epg_store.inventory_label(e)}") for e in own]
-            return members, " bzw. ".join(m.text for m in members)
+            return members, _either(m.text for m in members)
         nets = [(n, origin, i) for n, origin, i in self._subnets.get((sid, vrf), [])
                 if within(ip, n)]  # fmt: skip
         if nets:
@@ -259,13 +268,17 @@ class AciChecker:
                 Member(self.epgs[i], sure, f"EPG {epg_store.inventory_label(self.epgs[i])}")
                 for i in ids
             ]
-            text = " bzw. ".join(m.text for m in members)
+            text = _either(m.text for m in members)
             if not sure:
-                text = f"im Bridge-Domain-Subnetz {pool[0][0]}: {text}"
+                text = L(f"im Bridge-Domain-Subnetz {pool[0][0]}: {text}",
+                         f"in bridge domain subnet {pool[0][0]}: {text}")  # fmt: skip
             return members, text
         where = self.cls._fabric(sid, vrf, ip)  # Inventar: BD-Subnetz ohne bekannte EPG
         if where:
-            return [], f"im Fabric ({where}), EPG nicht bekannt"
+            text = L(f"im Fabric ({where}), EPG nicht bekannt",
+                     f"in the fabric ({where}), EPG not known")  # fmt: skip
+            self._unknown.add(text)  # Merkmal fuer `check` (nicht am Text der Sprache pruefen)
+            return [], text
         if is_net(ip):  # Netz (0.39.0), das EPG-Subnetze nur teilweise enthaelt
             parts = [i for n, _o, i in self._subnets.get((sid, vrf), []) if overlaps(ip, n)]
             if parts:
@@ -273,7 +286,9 @@ class AciChecker:
                     Member(self.epgs[i], False, f"EPG {epg_store.inventory_label(self.epgs[i])}")
                     for i in dict.fromkeys(parts)
                 ]
-                return members, f"Teile von {ip}: " + " bzw. ".join(m.text for m in members)
+                return members, L(f"Teile von {ip}: ", f"Parts of {ip}: ") + _either(
+                    m.text for m in members
+                )
         return None
 
     def _server_ids(self, ip: str) -> set[int]:
@@ -307,16 +322,21 @@ class AciChecker:
         (Shared Service, Route-Leaking - `aci_shared`, 0.44.0)."""
         srcs, src_text = self.members(sid, vrf, src)
         dsts, dst_text = self.members(sid, dst_vrf or vrf, dst)
-        base = {"src_epg": src_text, "dst_epg": dst_text}
+        # L3Outs der externen EPGs (0.74.0, Netzwerkplan der Applikation)
+        l3outs = sorted({m.epg.l3out for m in (srcs or []) + (dsts or [])
+                         if m.epg.kind == "external" and m.epg.l3out})  # fmt: skip
+        base = {"src_epg": src_text, "dst_epg": dst_text, "l3outs": l3outs}
         if src is None:
-            return base | {"verdict": "unknown", "rules": [],
-                           "text": "Quelle unbekannt – Contracts nicht prüfbar"}  # fmt: skip
+            text = L("Quelle unbekannt – Contracts nicht prüfbar",
+                     "source unknown – contracts not verifiable")  # fmt: skip
+            return base | {"verdict": "unknown", "rules": [], "text": text}
         if not srcs or not dsts:
             missing = src_text if not srcs else dst_text
-            if "nicht bekannt" in missing:
+            if missing in self._unknown:  # im Fabric, EPG nicht bekannt
                 return base | {"verdict": "unknown", "rules": [], "text": missing}
-            return base | {"verdict": "implicit_deny", "rules": [],
-                           "text": f"{missing} – das Fabric verwirft den Verkehr"}  # fmt: skip
+            text = L(f"{missing} – das Fabric verwirft den Verkehr",
+                     f"{missing} – the fabric drops the traffic")  # fmt: skip
+            return base | {"verdict": "implicit_deny", "rules": [], "text": text}
         results = [self._pair(sid, vrf, s, d, service, dst_vrf) for s in srcs for d in dsts]
         verdicts = {r["verdict"] for r in results}
         rules: list[dict] = []
@@ -327,16 +347,20 @@ class AciChecker:
         if len(verdicts) == 1:
             one = results[0]
             unsure = len(results) == 1 and not all(m.sure for m in srcs + dsts)
-            text = one["text"] + (" (Zuordnung nicht sicher)" if unsure else "")
+            text = one["text"] + (
+                L(" (Zuordnung nicht sicher)", " (assignment not certain)") if unsure else ""
+            )
             return base | {"verdict": one["verdict"], "rules": rules, "text": text}
-        text = "abhängig von der EPG – je nach Zuordnung erlaubt bzw. gesperrt"
+        text = L("abhängig von der EPG – je nach Zuordnung erlaubt bzw. gesperrt",
+                 "depends on the EPG – allowed or blocked depending on the assignment")  # fmt: skip
         return base | {"verdict": "depends", "rules": rules, "text": text}
 
     def _pair(self, sid: int, vrf: str, s: Member, d: Member, service,
               dst_vrf: str | None = None) -> dict:  # fmt: skip
         if s.epg.id == d.epg.id:
-            return {"verdict": "allow", "rules": [],
-                    "text": f"gleiche EPG ({s.text}) – ohne Contract erlaubt"}  # fmt: skip
+            text = L(f"gleiche EPG ({s.text}) – ohne Contract erlaubt",
+                     f"same EPG ({s.text}) – allowed without contract")  # fmt: skip
+            return {"verdict": "allow", "rules": [], "text": text}
         ps, pd = self.proxies(s.epg, vrf), self.proxies(d.epg, dst_vrf or vrf)
         shown: list[dict] = []
         decisive = None
@@ -344,7 +368,7 @@ class AciChecker:
             hit = self._match(c, ps, pd, s, d, service)
             if hit is None:
                 continue
-            ok, back, consumer, provider = hit
+            ok, back, consumer, provider, note = hit
             if back:  # Rueckrichtung: die Quelle ist Provider, das Ziel Consumer
                 via_src, via_dst = ps[min(provider)], pd[min(consumer)]
             else:
@@ -362,11 +386,13 @@ class AciChecker:
                 "srcintf": [],
                 "dstintf": [],
                 "services": (c.reverse if back else (c.names or c.services))[:4],
-                "unsure": [] if ok else ["Dienst"],
+                "unsure": [] if ok else [L("Dienst", "Service")],
                 "decides": bool(ok),
                 "snat": None,
                 "reverse": back,
             }
+            if note:  # greift nicht: nur Antworten (0.72.1) - zur Erklaerung, entscheidet nicht
+                entry |= {"note": note, "unsure": [], "services": c.names[:4]}
             if not ok:
                 if len(shown) < SHOWN:
                     shown.append(entry)
@@ -379,8 +405,10 @@ class AciChecker:
     def _match(self, c: _Contract, ps: dict, pd: dict, s: Member, d: Member, service):
         """(Urteil Dienst, Rueckrichtung, Consumer, Provider) bzw. None: Consumer -> Provider
         nach den Filtern, sonst zurueck (ACI zustandslos) mit den Diensten, die der Provider
-        aufbauen kann - die sichere Richtung gewinnt."""
+        aufbauen kann - die sichere Richtung gewinnt. Oeffnet der Contract Consumer -> Provider
+        nur Antworten (0.72.1), greift er dort nicht - mit Hinweis, wenn sonst nichts passt."""
         best = None
+        note = None
         for back in (False, True):
             if back and not c.reverse:
                 break
@@ -391,14 +419,17 @@ class AciChecker:
             a, b = (d, s) if back else (s, d)
             if not self.cls.scope_allows(c.scope, a.epg, b.epg):
                 continue  # Scope (AP, VRF, Tenant) - auch bei Contracts aus common (0.43.1)
+            if not back and c.replies_only:
+                note = (False, False, consumer, provider, aci_direction.replies())
+                continue
             ok = service_ok(c.reverse if back else c.services, service)
             if ok is False:
                 continue
             if best is None or (ok and not best[0]):
-                best = (ok, back, consumer, provider)
+                best = (ok, back, consumer, provider, None)
             if ok:
                 break
-        return best
+        return best or note
 
 
 def _label(c: _Contract) -> str:
@@ -410,22 +441,39 @@ def _label(c: _Contract) -> str:
 
 
 def _verdict(decisive: dict | None, shown: list[dict], s: Member, d: Member) -> dict:
-    before = [e for e in shown if not e["decides"]]
+    # Contracts, die nur Antworten zulassen (`note`), greifen nicht - kein „moeglich“
+    before = [e for e in shown if not e["decides"] and not e.get("note")]
     if decisive is not None:
         other = [e for e in before if e["action"] != decisive["action"]]
         if other:
-            text = f"{other[0]['label']} kann sperren (Dienst nicht angegeben)"
+            label = other[0]["label"]
+            text = L(f"{label} kann sperren (Dienst nicht angegeben)",
+                     f"{label} can block (service not specified)")  # fmt: skip
             return {"verdict": "depends", "rules": shown, "text": text}
-        verb = "erlaubt" if decisive["action"] == "allow" else "gesperrt"
-        text = f"{verb} durch {decisive['label']}"
+        label = decisive["label"]
+        if decisive["action"] == "allow":
+            text = L(f"erlaubt durch {label}", f"allowed by {label}")
+        else:
+            text = L(f"gesperrt durch {label}", f"blocked by {label}")
         if decisive.get("reverse"):
-            text += f" in der Rückrichtung ({aci_direction.TEXT})"
+            text += L(f" in der Rückrichtung ({aci_direction.text()})",
+                      f" in the reverse direction ({aci_direction.text()})")  # fmt: skip
         return {"verdict": decisive["action"], "rules": shown, "text": text}
     if before:
-        text = "nur mögliche Contracts (Dienst nicht angegeben), sonst gesperrt"
+        text = L("nur mögliche Contracts (Dienst nicht angegeben), sonst gesperrt",
+                 "only possible contracts (service not specified), otherwise blocked")  # fmt: skip
         return {"verdict": "depends", "rules": shown, "text": text}
-    text = f"kein Contract von {s.text} zu {d.text} – im ACI gesperrt"
-    return {"verdict": "implicit_deny", "rules": [], "text": text}
+    text = L(f"kein Contract von {s.text} zu {d.text} – im ACI gesperrt",
+             f"no contract from {s.text} to {d.text} – blocked in the ACI")  # fmt: skip
+    notes = [e for e in shown if e.get("note")]
+    if notes:
+        text += f" ({notes[0]['label']}: {notes[0]['note']})"
+    return {"verdict": "implicit_deny", "rules": notes, "text": text}
+
+
+def _either(texts) -> str:
+    """Mehrere Zuordnungen: „EPG A bzw. EPG B“."""
+    return L(" bzw. ", " or ").join(texts)
 
 
 def service_ok(names: list[str], want: tuple[str, int | None] | None) -> bool | None:

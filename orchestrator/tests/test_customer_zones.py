@@ -417,3 +417,92 @@ def test_zuordnung_und_claim_zusammen():
     # Betreuer ohne Kennung (dev-Standard): keine Abfrage
     assert assignments.lookup(None, ()) == []
     assert VIEW  # gleiche Kopfzeilen wie in test_zones
+
+
+def test_absicht_je_richtung_im_zonenplan(client):
+    """0.78.0 (ADR 0024): je Linie des Plans die Absicht je Richtung (Pfeil am Ziel in der Farbe
+    der Absicht) - am Uebergang bzw. als eigene Linie ohne Uebergang; in der Uebersicht gilt je
+    Kunde die strengste Absicht seiner Zonen; Kunden-Benutzer ohne Notiz; ausblendbar; Export."""
+    from app.store import plan_export
+
+    tid, ids = _seed(client)
+    z = _model(client, tid, ids)
+    dc, einet, office, srv, pub = (z[k]["id"] for k in ("dc", "einet", "office", "server",
+                                                         "public"))  # fmt: skip
+
+    def intent(src, dst, value, services=None, note=None):
+        body = {"tenant_id": tid, "src_zone_id": src, "dst_zone_id": dst, "intent": value,
+                "note": note, **({"services": services} if services else {})}  # fmt: skip
+        r = client.put("/zones/policy", json=body, headers=OP)
+        assert r.status_code == 200, r.text
+
+    def get(headers=None, **params):
+        r = client.get("/zones/plan", params={"tenant_id": tid, **params}, headers=headers or {})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def way(line, src, dst):  # Absicht von src nach dst an einer Linie
+        return line["intent_ab"] if (line["a"], line["b"]) == (src, dst) else line["intent_ba"]
+
+    intent(pub, einet, "limited", ["tcp/443"], note="nur Web")
+    intent(einet, pub, "allow")
+    intent(office, dc, "deny", note="Kunde B nie")  # ohne Uebergang dazwischen
+    plan = get(all="true")
+    trans = {t["name"]: t for t in plan["transitions"]}
+    t = trans["EINET-PUB"]
+    assert way(t, pub, einet) == {"intent": "limited", "services": ["tcp/443"], "pairs": 1,
+                                  "mixed": False, "note": "nur Web"}  # fmt: skip
+    assert way(t, einet, pub)["intent"] == "allow"
+    assert trans["DC-EINET"]["intent_ab"] is None and trans["DC-EINET"]["intent_ba"] is None
+    (line,) = plan["intents"]
+    assert {line["a"], line["b"]} == {office, dc} and way(line, office, dc)["intent"] == "deny"
+    assert way(line, dc, office) is None
+    # Layout: Pfeile je Richtung in der Farbe der Absicht, Absicht ohne Uebergang gestrichelt
+    edges = {e["id"]: e for e in plan["layout"]["edges"]}
+    e = edges[t["id"]]
+    assert "Public → Edge Internet: eingeschränkt (tcp/443)" in e["intent_text"]
+    assert {a["color"] for a in plan_export.arrows(e)} == {"#d79b00", "#2d7d46"}
+    e = edges[line["id"]]
+    assert e["intent"] and e["dashed"] and e["label"] == "gesperrt"
+    (arrow,) = plan_export.arrows(e)
+    assert arrow["color"] == "#b85450" and len(arrow["points"]) == 3
+    # ausgeblendet
+    hidden = get(all="true", hide="intents")
+    assert hidden["intents"] == [] and hidden["display"]["intents"] is False
+    assert all(x["intent_ab"] is None and x["intent_ba"] is None for x in hidden["transitions"])
+    # Uebersicht: Office und Server gehoeren Kunde A - Kunde A -> DC gesperrt bzw. erlaubt =
+    # strengste gilt, „teils weniger streng“
+    a = _customer(client, tid, "Kunde A")
+    for key in ("server", "office"):
+        zone = z[key]
+        body = {"tenant_id": tid, "name": zone["name"], "kind": zone["kind"],
+                "code": zone["code"], "customer_id": a["id"],
+                "selectors": zone["selectors"]}  # fmt: skip
+        assert client.put(f"/zones/{zone['id']}", json=body, headers=OP).status_code == 200
+    intent(srv, dc, "allow")
+    over = get()
+    group = f"customer:{a['id']}"
+    (line,) = (x for x in over["intents"] if {x["a"], x["b"]} == {group, dc})
+    d = way(line, group, dc)
+    assert (d["intent"], d["pairs"], d["mixed"], d["note"]) == ("deny", 2, True, None)
+    assert "teils weniger streng" in {x["id"]: x for x in over["layout"]["edges"]}[line["id"]][
+        "intent_text"]  # fmt: skip
+    # Kunden-Benutzer: Absichten seiner Zonen, ohne Notiz
+    user = get(_as(tid, a["id"]))
+    assert "Kunde B nie" not in str(user) and "nur Web" not in str(user)
+    lines = {(x["a"], x["b"]): x for x in user["intents"]}
+    assert way(lines[tuple(sorted((office, dc)))], office, dc)["intent"] == "deny"
+    pub_line = next(x for x in user["transitions"] if x["name"] == "EINET-PUB")
+    assert pub_line["intent_ab"] is None and pub_line["intent_ba"] is None  # ohne eigene Zone
+    # Export: Pfeile im SVG, Tabelle im PDF
+    svg = client.get("/zones/plan/export", params={"tenant_id": tid, "format": "svg",
+                                                   "all": "true"}).text  # fmt: skip
+    root = ET.fromstring(svg)
+    fills = {p.get("fill") for p in root.iter(f"{SVG}polygon")}
+    assert {"#d79b00", "#2d7d46", "#b85450"} <= fills
+    rows = plan_export.intent_rows(get(all="true"))
+    assert ["Office", "DC", "gesperrt", "-", "ohne Übergang"] in rows
+    assert ["Public", "Edge Internet", "eingeschränkt", "tcp/443", "EINET-PUB"] in rows
+    drawio = client.get("/zones/plan/export", params={"tenant_id": tid, "format": "drawio",
+                                                      "all": "true"}).text  # fmt: skip
+    assert "startArrow=block" in drawio and "automato_intents" in drawio

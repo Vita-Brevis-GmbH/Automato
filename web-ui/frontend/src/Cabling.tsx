@@ -32,32 +32,44 @@ import {
   locateEndpoint,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
-import { Dash, download, Empty, ErrorBox, fmtTime, Loading, Note, PageHead } from "./ui";
+import { Dash, download, Empty, ErrorBox, ExportLangSelect, fmtTime, Loading, Note, PageHead, SharedChip } from "./ui";
+import { L } from "./i18n";
 
 const PAGE = 200;
 type Tab = "plan" | "links" | "devices" | "ports" | "endpoints" | "vlans";
 const TABS: { key: Tab; label: string }[] = [
-  { key: "links", label: "Verbindungen" },
+  { key: "links", label: L("Verbindungen", "Links") },
   { key: "plan", label: "Plan" },
-  { key: "devices", label: "Geräte" },
+  { key: "devices", label: L("Geräte", "Devices") },
   { key: "ports", label: "Ports" },
-  { key: "endpoints", label: "Endpunkte" },
+  { key: "endpoints", label: L("Endpunkte", "Endpoints") },
   { key: "vlans", label: "VLANs" },
 ];
 const STATE: Record<LinkState, [string, string, string]> = {
-  both: ["ok", "beidseitig", "beide Geräte melden die Verbindung per CDP/LLDP"],
-  one_sided: ["warn", "einseitig", "das Gerät gegenüber wird gelesen, meldet die Verbindung aber nicht"],
-  unread: ["na", "Gegenstelle ohne CDP/LLDP", "vom Gerät gegenüber liegen keine Nachbar-Daten vor (nicht gelesen, Firewall, Server)"],
+  both: ["ok", L("beidseitig", "two-sided"), L("beide Geräte melden die Verbindung per CDP/LLDP", "both devices report the link via CDP/LLDP")],
+  one_sided: [
+    "warn",
+    L("einseitig", "one-sided"),
+    L("das Gerät gegenüber wird gelesen, meldet die Verbindung aber nicht", "the device opposite is read but does not report the link"),
+  ],
+  unread: [
+    "na",
+    L("Gegenstelle ohne CDP/LLDP", "Peer without CDP/LLDP"),
+    L(
+      "vom Gerät gegenüber liegen keine Nachbar-Daten vor (nicht gelesen, Firewall, Server)",
+      "no neighbor data from the device opposite (not read, firewall, server)",
+    ),
+  ],
 };
 const KIND: Record<string, string> = {
   switch: "Switch",
-  leaf: "ACI-Leaf",
-  spine: "ACI-Spine",
+  leaf: L("ACI-Leaf", "ACI leaf"),
+  spine: L("ACI-Spine", "ACI spine"),
   controller: "APIC",
   firewall: "Firewall",
   router: "Router",
-  esxi: "ESXi-Host",
-  unknown: "nicht gelesen",
+  esxi: L("ESXi-Host", "ESXi host"),
+  unknown: L("nicht gelesen", "not read"),
 };
 
 function StateChip({ state }: { state: LinkState }) {
@@ -74,7 +86,7 @@ function portText(e: CablingEnd | CablingPort): string {
   const speed = [e.speed, e.duplex].filter(Boolean).join("/");
   if (speed) parts.push(speed);
   if (e.mode === "access") parts.push(`Access ${e.vlan ?? "?"}`);
-  if (e.mode === "tagged") parts.push(`Trunk ${e.trunk_vlans ?? "?"}${e.native_vlan ? ` (nativ ${e.native_vlan})` : ""}`);
+  if (e.mode === "tagged") parts.push(`Trunk ${e.trunk_vlans ?? "?"}${e.native_vlan ? L(` (nativ ${e.native_vlan})`, ` (native ${e.native_vlan})`) : ""}`);
   if (e.lag) parts.push(e.lag + (e.vpc ? ` vPC ${e.vpc}` : ""));
   return parts.join(" · ");
 }
@@ -101,26 +113,53 @@ export default function Cabling({ tenantId, tenantLabel }: { tenantId: number | 
   };
   return (
     <>
-      <PageHead title="Verkabelung">
-        Verbindungen zwischen Geräten aus CDP/LLDP von {tenantLabel}: Switches und Router (Cisco IOS/IOS-XE, NX-OS, Catalyst 1200/1300, Juniper Junos – per SSH gelesen),
-        ACI-Leafs und weitere Geräte. Beidseitig = beide Seiten melden die Verbindung; Abweichungen (Speed, Duplex, VLANs,
-        Port-Channel) zwischen zwei gelesenen Switches sind Befunde. Rein lesend.
+      <PageHead title={L("Verkabelung", "Cabling")}>
+        {L(
+          <>
+            Verbindungen zwischen Geräten aus CDP/LLDP von {tenantLabel}: Switches und Router (Cisco IOS/IOS-XE, NX-OS, Catalyst 1200/1300, Juniper Junos – per SSH gelesen),
+            ACI-Leafs und weitere Geräte. Beidseitig = beide Seiten melden die Verbindung; Abweichungen (Speed, Duplex, VLANs,
+            Port-Channel) zwischen zwei gelesenen Switches sind Befunde. Rein lesend.
+          </>,
+          <>
+            Links between devices from CDP/LLDP of {tenantLabel}: switches and routers (Cisco IOS/IOS-XE, NX-OS, Catalyst 1200/1300, Juniper Junos – read via SSH),
+            ACI leafs and other devices. Two-sided = both sides report the link; deviations (speed, duplex, VLANs,
+            Port-Channel) between two read switches are findings. Read-only.
+          </>,
+        )}
       </PageHead>
       <ErrorBox error={err} onClose={() => setErr(null)} />
       {data === null ? (
         <Loading />
       ) : s && s.links === 0 && s.switches === 0 ? (
         <Note>
-          Noch keine Verkabelung. Unter „Mandanten &amp; Standorte“ ein Quellsystem „Switches &amp; Router“ mit den Adressen der
-          Switches und einem Konto nur mit Leserechten anlegen und einlesen; ACI-Leafs bringen ihre LLDP-Nachbarn mit.
+          {L(
+            <>
+              Noch keine Verkabelung. Unter „Mandanten &amp; Standorte“ ein Quellsystem „Switches &amp; Router“ mit den Adressen der
+              Switches und einem Konto nur mit Leserechten anlegen und einlesen; ACI-Leafs bringen ihre LLDP-Nachbarn mit.
+            </>,
+            <>
+              No cabling yet. Under “Tenants &amp; sites” create a source system “Switches &amp; routers” with the addresses of the
+              switches and a read-only account, then collect; ACI leafs bring their LLDP neighbors along.
+            </>,
+          )}
         </Note>
       ) : (
         s && (
           <p className="faint" id="cabling-summary">
-            {s.switches} Switches · {s.devices} gelesene Geräte · {s.links} Verbindungen ({s.states.both} beidseitig,{" "}
-            {s.states.one_sided} einseitig, {s.states.unread} Gegenstelle ohne CDP/LLDP) ·{" "}
-            <span className={s.issues ? "crit" : ""}>{s.issues} Abweichungen</span>
-            {s.endpoints ? <> · {s.endpoints} Endpunkte (MACs an den Ports)</> : null}
+            {L(
+              <>
+                {s.switches} Switches · {s.devices} gelesene Geräte · {s.links} Verbindungen ({s.states.both} beidseitig,{" "}
+                {s.states.one_sided} einseitig, {s.states.unread} Gegenstelle ohne CDP/LLDP) ·{" "}
+                <span className={s.issues ? "crit" : ""}>{s.issues} Abweichungen</span>
+                {s.endpoints ? <> · {s.endpoints} Endpunkte (MACs an den Ports)</> : null}
+              </>,
+              <>
+                {s.switches} switches · {s.devices} read devices · {s.links} links ({s.states.both} two-sided,{" "}
+                {s.states.one_sided} one-sided, {s.states.unread} peer without CDP/LLDP) ·{" "}
+                <span className={s.issues ? "crit" : ""}>{s.issues} deviations</span>
+                {s.endpoints ? <> · {s.endpoints} endpoints (MACs on the ports)</> : null}
+              </>,
+            )}
           </p>
         )
       )}
@@ -154,14 +193,14 @@ function DeviceSelect({ devices, value, onChange, readOnly = false }: {
   readOnly?: boolean;
 }) {
   return (
-    <select className="sel" aria-label="Gerät" value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">alle Geräte</option>
+    <select className="sel" aria-label={L("Gerät", "Device")} value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">{L("alle Geräte", "all devices")}</option>
       {devices
         .filter((d) => !readOnly || d.kind === "switch")
         .map((d) => (
           <option key={d.key} value={d.key}>
             {d.name}
-            {d.read ? "" : " (nicht gelesen)"}
+            {d.read ? "" : L(" (nicht gelesen)", " (not read)")}
           </option>
         ))}
     </select>
@@ -194,11 +233,11 @@ function LinksTab({ tenantId, devices, device, onDevice }: {
   return (
     <div className="card" id="cabling-links">
       <div className="card-head">
-        <h2>Verbindungen</h2>
+        <h2>{L("Verbindungen", "Links")}</h2>
         <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <DeviceSelect devices={devices} value={device} onChange={onDevice} />
-          <select className="sel" aria-label="Zustand" value={state} onChange={(e) => setState(e.target.value as LinkState | "")}>
-            <option value="">alle Zustände</option>
+          <select className="sel" aria-label={L("Zustand", "State")} value={state} onChange={(e) => setState(e.target.value as LinkState | "")}>
+            <option value="">{L("alle Zustände", "all states")}</option>
             {(Object.keys(STATE) as LinkState[]).map((k) => (
               <option key={k} value={k}>
                 {STATE[k][1]}
@@ -206,9 +245,10 @@ function LinksTab({ tenantId, devices, device, onDevice }: {
             ))}
           </select>
           <label className="check">
-            <input type="checkbox" checked={issues} onChange={(e) => setIssues(e.target.checked)} /> nur Abweichungen
+            <input type="checkbox" checked={issues} onChange={(e) => setIssues(e.target.checked)} />{" "}
+            {L("nur Abweichungen", "deviations only")}
           </label>
-          <input className="input" type="search" aria-label="Suchen" placeholder="Gerät, Port, Beschreibung" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className="input" type="search" aria-label={L("Suchen", "Search")} placeholder={L("Gerät, Port, Beschreibung", "Device, port, description")} value={q} onChange={(e) => setQ(e.target.value)} />
         </span>
       </div>
       <div className="card-body scroll">
@@ -216,18 +256,18 @@ function LinksTab({ tenantId, devices, device, onDevice }: {
         {data === null ? (
           <Loading />
         ) : data.items.length === 0 ? (
-          <Empty title="keine Verbindungen" />
+          <Empty title={L("keine Verbindungen", "no links")} />
         ) : (
           <table className="compact">
             <thead>
               <tr>
-                <th>Gerät</th>
+                <th>{L("Gerät", "Device")}</th>
                 <th>Port</th>
                 <th />
-                <th>Gegenstelle</th>
+                <th>{L("Gegenstelle", "Peer")}</th>
                 <th>Port</th>
-                <th>Zustand</th>
-                <th>Abweichung / Konfiguration</th>
+                <th>{L("Zustand", "State")}</th>
+                <th>{L("Abweichung / Konfiguration", "Deviation / configuration")}</th>
               </tr>
             </thead>
             <tbody>
@@ -271,20 +311,20 @@ function LinksTab({ tenantId, devices, device, onDevice }: {
 }
 
 function DevicesTab({ items, onOpen }: { items: CablingDevice[]; onOpen: (key: string, tab: Tab) => void }) {
-  if (items.length === 0) return <Empty title="keine Geräte" />;
+  if (items.length === 0) return <Empty title={L("keine Geräte", "no devices")} />;
   return (
     <div className="card" id="cabling-devices">
       <div className="card-body scroll">
         <table className="compact">
           <thead>
             <tr>
-              <th>Gerät</th>
-              <th>Art</th>
-              <th>Quelle</th>
-              <th>Modell / Version</th>
+              <th>{L("Gerät", "Device")}</th>
+              <th>{L("Art", "Type")}</th>
+              <th>{L("Quelle", "Source")}</th>
+              <th>{L("Modell / Version", "Model / version")}</th>
               <th>Ports</th>
-              <th>Verbindungen</th>
-              <th>Abweichungen</th>
+              <th>{L("Verbindungen", "Links")}</th>
+              <th>{L("Abweichungen", "Deviations")}</th>
             </tr>
           </thead>
           <tbody>
@@ -292,16 +332,17 @@ function DevicesTab({ items, onOpen }: { items: CablingDevice[]; onOpen: (key: s
               <tr key={d.key} className="clickable" onClick={() => onOpen(d.key, d.kind === "switch" ? "ports" : "links")}>
                 <td className="nowrap">
                   <b>{d.name}</b> {d.mgmt_ip && <span className="faint mono">{d.mgmt_ip}</span>}
+                  <SharedChip shared={d.shared} />
                 </td>
                 <td>{KIND[d.kind] ?? d.kind}</td>
-                <td className="faint">{d.source ?? (d.read ? "" : "nur von Nachbarn gemeldet")}</td>
+                <td className="faint">{d.source ?? (d.read ? "" : L("nur von Nachbarn gemeldet", "reported by neighbors only"))}</td>
                 <td>
                   {d.model ?? <Dash />} {d.version && <span className="faint">· {d.version}</span>}
                 </td>
-                <td>{d.read && d.ports ? `${d.connected} von ${d.ports} verbunden` : <Dash />}</td>
+                <td>{d.read && d.ports ? L(`${d.connected} von ${d.ports} verbunden`, `${d.connected} of ${d.ports} connected`) : <Dash />}</td>
                 <td>
                   {d.links}
-                  {d.one_sided ? <span className="faint"> ({d.one_sided} einseitig)</span> : ""}
+                  {d.one_sided ? <span className="faint">{L(` (${d.one_sided} einseitig)`, ` (${d.one_sided} one-sided)`)}</span> : ""}
                 </td>
                 <td className={d.issues ? "crit" : "faint"}>{d.issues || "–"}</td>
               </tr>
@@ -342,17 +383,17 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
   return (
     <div className="card" id="cabling-ports">
       <div className="card-head">
-        <h2>Ports der Switches</h2>
+        <h2>{L("Ports der Switches", "Ports of the switches")}</h2>
         <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <DeviceSelect devices={devices} value={device} onChange={onDevice} readOnly />
           <select className="sel" aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">alle Status</option>
-            <option value="up">verbunden</option>
-            <option value="down">nicht verbunden</option>
-            <option value="disabled">abgeschaltet</option>
+            <option value="">{L("alle Status", "all statuses")}</option>
+            <option value="up">{L("verbunden", "connected")}</option>
+            <option value="down">{L("nicht verbunden", "not connected")}</option>
+            <option value="disabled">{L("abgeschaltet", "disabled")}</option>
           </select>
           <input className="input" style={{ width: 90 }} aria-label="VLAN" placeholder="VLAN" value={vlan} onChange={(e) => setVlan(e.target.value)} />
-          <input className="input" type="search" aria-label="Suchen" placeholder="Port, Beschreibung, Nachbar" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className="input" type="search" aria-label={L("Suchen", "Search")} placeholder={L("Port, Beschreibung, Nachbar", "Port, description, neighbor")} value={q} onChange={(e) => setQ(e.target.value)} />
         </span>
       </div>
       <div className="card-body scroll">
@@ -360,7 +401,7 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
         {data === null ? (
           <Loading />
         ) : data.items.length === 0 ? (
-          <Empty title="keine Ports" />
+          <Empty title={L("keine Ports", "no ports")} />
         ) : (
           <table className="compact">
             <thead>
@@ -368,10 +409,10 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
                 <th>Switch</th>
                 <th>Port</th>
                 <th>Status</th>
-                <th>Konfiguration</th>
-                <th>Beschreibung</th>
-                <th>Gegenstelle</th>
-                <th title="MACs am Port (ohne Uplinks)">Endpunkte</th>
+                <th>{L("Konfiguration", "Configuration")}</th>
+                <th>{L("Beschreibung", "Description")}</th>
+                <th>{L("Gegenstelle", "Peer")}</th>
+                <th title={L("MACs am Port (ohne Uplinks)", "MACs on the port (without uplinks)")}>{L("Endpunkte", "Endpoints")}</th>
               </tr>
             </thead>
             <tbody>
@@ -381,18 +422,25 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
                   <td className="mono nowrap">{p.name}</td>
                   <td className="nowrap">
                     <span className={`chip ${p.status === "connected" || p.status === "up" ? "ok" : p.enabled === false ? "na" : ""}`}>
-                      {p.enabled === false ? "abgeschaltet" : (p.status ?? "?")}
+                      {p.enabled === false ? L("abgeschaltet", "disabled") : (p.status ?? "?")}
                     </span>
                   </td>
                   <td className="faint">
                     {portText(p) || <Dash />}
-                    {p.vpc_peer_link && <div className="port-l2">vPC-Peer-Link (Domäne {p.vpc_peer_link})</div>}
-                    {p.stp_blocked && (
-                      <div className="port-l2 warn" title="Spanning Tree blockiert diese VLANs am Port (Reserve)">
-                        STP blockiert VLAN {p.stp_blocked}
+                    {p.vpc_peer_link && (
+                      <div className="port-l2">
+                        {L(<>vPC-Peer-Link (Domäne {p.vpc_peer_link})</>, <>vPC peer link (domain {p.vpc_peer_link})</>)}
                       </div>
                     )}
-                    {p.stp_root && <div className="port-l2">Root-Port VLAN {p.stp_root}</div>}
+                    {p.stp_blocked && (
+                      <div
+                        className="port-l2 warn"
+                        title={L("Spanning Tree blockiert diese VLANs am Port (Reserve)", "Spanning Tree blocks these VLANs on the port (standby)")}
+                      >
+                        {L(<>STP blockiert VLAN {p.stp_blocked}</>, <>STP blocks VLAN {p.stp_blocked}</>)}
+                      </div>
+                    )}
+                    {p.stp_root && <div className="port-l2">{L(<>Root-Port VLAN {p.stp_root}</>, <>Root port VLAN {p.stp_root}</>)}</div>}
                   </td>
                   <td>{p.description ?? <Dash />}</td>
                   <td>
@@ -412,7 +460,7 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
                   </td>
                   <td>
                     {p.endpoints ? (
-                      <button className="chip linkchip" onClick={() => onEndpoints(p.device, p.name)} title="Endpunkte am Port">
+                      <button className="chip linkchip" onClick={() => onEndpoints(p.device, p.name)} title={L("Endpunkte am Port", "Endpoints on the port")}>
                         {p.endpoints}
                       </button>
                     ) : (
@@ -438,14 +486,14 @@ function Who({ e }: { e: { vm: CablingEndpoint["vm"]; names: string[]; ips: stri
         <>
           <b>{e.vm.name}</b>{" "}
           <span className="faint">
-            VM{e.vm.host ? ` auf ${e.vm.host}` : ""}
+            VM{e.vm.host ? L(` auf ${e.vm.host}`, ` on ${e.vm.host}`) : ""}
             {e.vm.portgroup ? ` · ${e.vm.portgroup}` : ""}
           </span>
         </>
       ) : e.names.length ? (
         <b>{e.names.join(", ")}</b>
       ) : (
-        <span className="faint">unbekannt</span>
+        <span className="faint">{L("unbekannt", "unknown")}</span>
       )}
       {e.ips.length > 0 && <span className="mono faint"> · {e.ips.join(", ")}</span>}
       {e.epgs.length > 0 && <span className="faint"> · EPG {e.epgs.join(", ")}</span>}
@@ -454,7 +502,7 @@ function Who({ e }: { e: { vm: CablingEndpoint["vm"]; names: string[]; ips: stri
 }
 
 function at(e: CablingEndpoint): string {
-  const via = e.via ? ` · über ${e.via.device}${e.via.port ? ` (${e.via.port})` : ""}${KIND[e.via.kind] && !e.via.read ? ` – ${KIND[e.via.kind]}` : ""}` : "";
+  const via = e.via ? ` · ${L("über", "via")} ${e.via.device}${e.via.port ? ` (${e.via.port})` : ""}${KIND[e.via.kind] && !e.via.read ? ` – ${KIND[e.via.kind]}` : ""}` : "";
   return `${e.device} ${e.port}${e.vlan ? ` · VLAN ${e.vlan}` : ""}${via}`;
 }
 
@@ -476,11 +524,11 @@ function Locate({ tenantId }: { tenantId: number }) {
   return (
     <div className="card" id="cabling-locate">
       <div className="card-head">
-        <h2>Wo hängt …</h2>
+        <h2>{L("Wo hängt …", "Where is … connected?")}</h2>
         <form onSubmit={run} style={{ marginLeft: "auto", display: "inline-flex", gap: 8 }}>
-          <input className="input" type="search" aria-label="Wo hängt" placeholder="MAC, IP oder Name (VM, DNS)" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 280 }} />
+          <input className="input" type="search" aria-label={L("Wo hängt", "Where is connected")} placeholder={L("MAC, IP oder Name (VM, DNS)", "MAC, IP or name (VM, DNS)")} value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 280 }} />
           <button className="btn btn-sm" type="submit" disabled={busy || q.trim().length < 2}>
-            {busy ? "Suche…" : "Suchen"}
+            {busy ? L("Suche…", "Searching…") : L("Suchen", "Search")}
           </button>
         </form>
       </div>
@@ -488,11 +536,19 @@ function Locate({ tenantId }: { tenantId: number }) {
         <ErrorBox error={err} onClose={() => setErr(null)} />
         {res === null ? (
           <span className="faint">
-            Sucht die MAC über das vCenter (VM), ARP der Switches, ACI-Endpunkte bzw. das IPAM und zeigt den Port, an dem sie
-            gelernt ist – nicht die Uplinks zwischen den Switches.
+            {L(
+              <>
+                Sucht die MAC über das vCenter (VM), ARP der Switches, ACI-Endpunkte bzw. das IPAM und zeigt den Port, an dem sie
+                gelernt ist – nicht die Uplinks zwischen den Switches.
+              </>,
+              <>
+                Searches the MAC via the vCenter (VM), ARP of the switches, ACI endpoints or the IPAM and shows the port where it
+                is learned – not the uplinks between the switches.
+              </>,
+            )}
           </span>
         ) : res.items.length === 0 ? (
-          <Empty title={`keine MAC zu „${res.query}“ in den MAC-Tabellen`} />
+          <Empty title={L(`keine MAC zu „${res.query}“ in den MAC-Tabellen`, `no MAC for “${res.query}” in the MAC tables`)} />
         ) : (
           res.items.map((it) => (
             <div key={it.mac} className="locate-hit" data-mac={it.mac} style={{ marginBottom: 12 }}>
@@ -501,24 +557,24 @@ function Locate({ tenantId }: { tenantId: number }) {
               </div>
               {it.locations.map((l) => (
                 <div key={`${l.device}|${l.port}|${l.vlan}`} className="locate-at">
-                  ▸ <b>{at(l)}</b> <span className="faint">· zuletzt {fmtTime(l.last_seen)}</span>
+                  ▸ <b>{at(l)}</b> <span className="faint">{L(<>· zuletzt {fmtTime(l.last_seen)}</>, <>· last seen {fmtTime(l.last_seen)}</>)}</span>
                   {l.port_description && <span className="faint"> · „{l.port_description}“</span>}
                 </div>
               ))}
               {it.locations.length === 0 && it.behind.length > 0 && (
                 <div className="locate-behind faint">
-                  nur auf Uplinks gesehen – dahinter:{" "}
+                  {L("nur auf Uplinks gesehen – dahinter:", "seen on uplinks only – behind:")}{" "}
                   {it.behind.map((l) => (
                     <span key={`${l.device}|${l.port}`}>
-                      {l.via ? `${l.via.device} (${KIND[l.via.kind] ?? l.via.kind})` : "?"} an {l.device} {l.port}{" "}
+                      {l.via ? `${l.via.device} (${KIND[l.via.kind] ?? l.via.kind})` : "?"} {L("an", "on")} {l.device} {l.port}{" "}
                     </span>
                   ))}
                 </div>
               )}
-              {it.locations.length === 0 && it.behind.length === 0 && <div className="faint">zurzeit in keiner MAC-Tabelle</div>}
+              {it.locations.length === 0 && it.behind.length === 0 && <div className="faint">{L("zurzeit in keiner MAC-Tabelle", "currently in no MAC table")}</div>}
               {it.earlier.length > 0 && (
                 <div className="locate-earlier faint">
-                  früher: {it.earlier.map((l) => `${l.device} ${l.port} (${fmtTime(l.last_seen)})`).join(", ")}
+                  {L("früher:", "earlier:")} {it.earlier.map((l) => `${l.device} ${l.port} (${fmtTime(l.last_seen)})`).join(", ")}
                 </div>
               )}
             </div>
@@ -560,11 +616,11 @@ function EndpointsTab({ tenantId, devices, at: port, onClearAt }: {
       <Locate tenantId={tenantId} />
       <div className="card" id="cabling-endpoints">
         <div className="card-head">
-          <h2>Endpunkte an den Ports</h2>
+          <h2>{L("Endpunkte an den Ports", "Endpoints on the ports")}</h2>
           {port && (
             <span className="chip" id="cabling-endpoints-port">
               {port.device} {port.port}{" "}
-              <button className="linkchip" style={{ border: 0, background: "none", padding: 0 }} onClick={onClearAt} aria-label="Port-Filter entfernen">
+              <button className="linkchip" style={{ border: 0, background: "none", padding: 0 }} onClick={onClearAt} aria-label={L("Port-Filter entfernen", "Remove port filter")}>
                 ✕
               </button>
             </span>
@@ -572,7 +628,7 @@ function EndpointsTab({ tenantId, devices, at: port, onClearAt }: {
           <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             {!port && <DeviceSelect devices={devices} value={device} onChange={setDevice} readOnly />}
             <input className="input" style={{ width: 90 }} aria-label="VLAN" placeholder="VLAN" value={vlan} onChange={(e) => setVlan(e.target.value)} />
-            <input className="input" type="search" aria-label="Suchen" placeholder="MAC, VM, IP, Port" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input className="input" type="search" aria-label={L("Suchen", "Search")} placeholder="MAC, VM, IP, Port" value={q} onChange={(e) => setQ(e.target.value)} />
           </span>
         </div>
         <div className="card-body scroll">
@@ -580,11 +636,18 @@ function EndpointsTab({ tenantId, devices, at: port, onClearAt }: {
           {data === null ? (
             <Loading />
           ) : data.items.length === 0 ? (
-            <Empty title="keine Endpunkte" />
+            <Empty title={L("keine Endpunkte", "no endpoints")} />
           ) : (
             <>
               <p className="faint" id="cabling-endpoints-summary">
-                {data.summary.macs} MACs an {data.summary.ports} Ports · {data.summary.vms} VMs · {data.summary.with_ip} mit IP
+                {L(
+                  <>
+                    {data.summary.macs} MACs an {data.summary.ports} Ports · {data.summary.vms} VMs · {data.summary.with_ip} mit IP
+                  </>,
+                  <>
+                    {data.summary.macs} MACs on {data.summary.ports} ports · {data.summary.vms} VMs · {data.summary.with_ip} with IP
+                  </>,
+                )}
               </p>
               <table className="compact">
                 <thead>
@@ -593,9 +656,9 @@ function EndpointsTab({ tenantId, devices, at: port, onClearAt }: {
                     <th>Port</th>
                     <th>VLAN</th>
                     <th>MAC</th>
-                    <th>Gerät</th>
-                    <th>über</th>
-                    <th>zuletzt</th>
+                    <th>{L("Gerät", "Device")}</th>
+                    <th>{L("über", "via")}</th>
+                    <th>{L("zuletzt", "last seen")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -633,7 +696,7 @@ function VlansTab({ tenantId }: { tenantId: number }) {
   }, [tenantId]);
   if (err) return <ErrorBox error={err} onClose={() => setErr(null)} />;
   if (items === null) return <Loading />;
-  if (items.length === 0) return <Empty title="keine VLANs auf den Switches bzw. im ACI" />;
+  if (items.length === 0) return <Empty title={L("keine VLANs auf den Switches bzw. im ACI", "no VLANs on the switches or in the ACI")} />;
   return (
     <div className="card" id="cabling-vlans">
       <div className="card-body scroll">
@@ -643,7 +706,7 @@ function VlansTab({ tenantId }: { tenantId: number }) {
               <th>VLAN</th>
               <th>Name</th>
               <th>EPGs (ACI)</th>
-              <th>Geräte (Access-Ports · Trunks)</th>
+              <th>{L("Geräte (Access-Ports · Trunks)", "Devices (access ports · trunks)")}</th>
             </tr>
           </thead>
           <tbody>
@@ -652,7 +715,7 @@ function VlansTab({ tenantId }: { tenantId: number }) {
                 <td className="mono">
                   {v.vid}
                   {(v.sources ?? []).map((s) => (
-                    <span key={s} className="chip" style={{ marginLeft: 4 }} title={s === "aci" ? "aus dem APIC" : "von den Switches"}>
+                    <span key={s} className="chip" style={{ marginLeft: 4 }} title={s === "aci" ? L("aus dem APIC", "from the APIC") : L("von den Switches", "from the switches")}>
                       {s === "aci" ? "ACI" : "Switch"}
                     </span>
                   ))}
@@ -661,7 +724,7 @@ function VlansTab({ tenantId }: { tenantId: number }) {
                 <td className="mono">{v.epgs?.length ? v.epgs.join(", ") : <Dash />}</td>
                 <td>
                   {v.devices.length === 0 ? (
-                    <span className="faint">an keinem Port</span>
+                    <span className="faint">{L("an keinem Port", "on no port")}</span>
                   ) : (
                     v.devices.map((d) => (
                       <span key={d.device} className="chip" style={{ marginRight: 4 }}>
@@ -686,11 +749,11 @@ function VlansTab({ tenantId }: { tenantId: number }) {
 const NODE_W = 160;
 const NODE_H = 44;
 const VLAN_EDGE: Record<string, [string, string]> = {
-  yes: ["var(--good)", "lässt das VLAN durch"],
-  no: ["var(--crit)", "sperrt das VLAN"],
-  partial: ["var(--warn)", "nur ein Teil der Kabel lässt das VLAN durch"],
-  standby: ["#7b1fa2", "Spanning Tree blockiert das VLAN hier – Reserve"],
-  unknown: ["var(--faint)", "Konfiguration unbekannt"],
+  yes: ["var(--good)", L("lässt das VLAN durch", "passes the VLAN")],
+  no: ["var(--crit)", L("sperrt das VLAN", "blocks the VLAN")],
+  partial: ["var(--warn)", L("nur ein Teil der Kabel lässt das VLAN durch", "only some of the cables pass the VLAN")],
+  standby: ["#7b1fa2", L("Spanning Tree blockiert das VLAN hier – Reserve", "Spanning Tree blocks the VLAN here – standby")],
+  unknown: ["var(--faint)", L("Konfiguration unbekannt", "configuration unknown")],
 };
 
 function edgeColor(e: L2PlanEdge): string {
@@ -716,21 +779,31 @@ function failText(s: FailSel): ReactNode {
     ...s.devices.map((d) => <b key={`d:${d}`}>{d}</b>),
     ...s.edges.map((e) => (
       <span key={`e:${e.label}`}>
-        das Kabel{e.ids.length > 1 ? ` (alle ${e.ids.length})` : ""} <b>{e.label}</b>
+        {L(
+          <>
+            das Kabel{e.ids.length > 1 ? ` (alle ${e.ids.length})` : ""} <b>{e.label}</b>
+          </>,
+          <>
+            the cable{e.ids.length > 1 ? `s (all ${e.ids.length})` : ""} <b>{e.label}</b>
+          </>,
+        )}
       </span>
     )),
   ];
-  return (
+  const list = (and: string) =>
+    items.map((x, i) => (
+      <span key={i}>
+        {i > 0 && (i === items.length - 1 ? and : ", ")}
+        {x}
+      </span>
+    ));
+  return L(
     <>
       {items.length > 1 ? "Fallen " : "Fällt "}
-      {items.map((x, i) => (
-        <span key={i}>
-          {i > 0 && (i === items.length - 1 ? " und " : ", ")}
-          {x}
-        </span>
-      ))}{" "}
+      {list(" und ")}{" "}
       aus
-    </>
+    </>,
+    <>Failure of {list(" and ")}</>,
   );
 }
 
@@ -822,21 +895,21 @@ function PlanTab({ tenantId, onEndpoints }: { tenantId: number; onEndpoints?: (d
         <h2>Plan</h2>
         <span style={{ marginLeft: "auto", display: "inline-flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <label className="check">
-            <input type="checkbox" checked={ends} onChange={(e) => setEnds(e.target.checked)} /> Endgeräte
+            <input type="checkbox" checked={ends} onChange={(e) => setEnds(e.target.checked)} /> {L("Endgeräte", "End devices")}
           </label>
-          <input className="input" style={{ width: 110 }} aria-label="VLAN hervorheben" placeholder="VLAN" value={vlan} onChange={(e) => setVlan(e.target.value)} />
-          <span className="faint">Klick:</span>
-          <span className="seg" id="cabling-plan-mode" role="group" aria-label="Klick zeigt">
+          <input className="input" style={{ width: 110 }} aria-label={L("VLAN hervorheben", "Highlight VLAN")} placeholder="VLAN" value={vlan} onChange={(e) => setVlan(e.target.value)} />
+          <span className="faint">{L("Klick:", "Click:")}</span>
+          <span className="seg" id="cabling-plan-mode" role="group" aria-label={L("Klick zeigt", "Click shows")}>
             <button className={mode === "patch" ? "on" : ""} aria-pressed={mode === "patch"} onClick={() => switchMode("patch")}>
-              Patchungen
+              {L("Patchungen", "Patching")}
             </button>
             <button className={mode === "fail" ? "on" : ""} aria-pressed={mode === "fail"} onClick={() => switchMode("fail")}>
-              Ausfall
+              {L("Ausfall", "Failure")}
             </button>
           </span>
           {fail && (
             <button className="btn btn-sm btn-ghost" onClick={reset}>
-              Ausfall zurücksetzen
+              {L("Ausfall zurücksetzen", "Reset failure")}
             </button>
           )}
           <span className="plan-export" id="cabling-plan-export">
@@ -851,35 +924,55 @@ function PlanTab({ tenantId, onEndpoints }: { tenantId: number; onEndpoints?: (d
                 {busy === f ? "…" : label}
               </button>
             ))}
+            <ExportLangSelect />
           </span>
         </span>
       </div>
       <div className="card-body pad">
         <ErrorBox error={err} onClose={() => setErr(null)} />
         <p className="faint" style={{ marginTop: 0 }}>
-          Kern oben (meistvernetzte Switches bzw. Spines), darunter je Abstand die weiteren Switches, Endgeräte unter ihrem
-          obersten Nachbarn; vPC-Paare nebeneinander im Rahmen, von Spanning Tree blockierte Kabel gestrichelt.{" "}
-          {mode === "patch" ? (
+          {L(
             <>
-              Klick auf ein Gerät zeigt darunter seine <b>Patchungen</b> (Ports beider Seiten mit Konfiguration), Klick auf ein Kabel nur die
-              Kabel zwischen den beiden Geräten. Umschalten auf „Ausfall“, um Ausfälle zu simulieren.
-            </>
-          ) : (
+              Kern oben (meistvernetzte Switches bzw. Spines), darunter je Abstand die weiteren Switches, Endgeräte unter ihrem
+              obersten Nachbarn; vPC-Paare nebeneinander im Rahmen, von Spanning Tree blockierte Kabel gestrichelt.{" "}
+            </>,
             <>
-              Klick auf ein Gerät bzw. ein Kabel simuliert dessen Ausfall, <b>Shift-Klick</b> nimmt weitere hinzu (mehrere gleichzeitig,
-              bei mehreren Kabeln zwischen zwei Geräten alle).
-            </>
+              Core at the top (most connected switches or spines), below by distance the other switches, end devices below their
+              topmost neighbor; vPC pairs side by side in a frame, cables blocked by Spanning Tree dashed.{" "}
+            </>,
           )}
+          {mode === "patch"
+            ? L(
+                <>
+                  Klick auf ein Gerät zeigt darunter seine <b>Patchungen</b> (Ports beider Seiten mit Konfiguration), Klick auf ein Kabel nur die
+                  Kabel zwischen den beiden Geräten. Umschalten auf „Ausfall“, um Ausfälle zu simulieren.
+                </>,
+                <>
+                  Click on a device shows its <b>patching</b> below (ports of both sides with configuration), click on a cable only the
+                  cables between the two devices. Switch to “Failure” to simulate failures.
+                </>,
+              )
+            : L(
+                <>
+                  Klick auf ein Gerät bzw. ein Kabel simuliert dessen Ausfall, <b>Shift-Klick</b> nimmt weitere hinzu (mehrere gleichzeitig,
+                  bei mehreren Kabeln zwischen zwei Geräten alle).
+                </>,
+                <>
+                  Click on a device or a cable simulates its failure, <b>Shift-click</b> adds more (several at once, with
+                  several cables between two devices all of them).
+                </>,
+              )}
         </p>
         {fail && (
           <div className="note" id="cabling-failure">
             {failText(sel)}
             {fail.cut_off.length === 0 ? (
-              <>: nichts getrennt – es gibt einen anderen Weg.</>
+              L(<>: nichts getrennt – es gibt einen anderen Weg.</>, <>: nothing cut off – there is another path.</>)
             ) : (
               <>
-                , ist getrennt: {fail.cut_off.map((p) => p.join(", ")).join(" | ")}
-                {fail.parts.length > 2 && <span className="faint"> ({fail.parts.length} Teile)</span>}
+                {L(", ist getrennt: ", " cuts off: ")}
+                {fail.cut_off.map((p) => p.join(", ")).join(" | ")}
+                {fail.parts.length > 2 && <span className="faint">{L(` (${fail.parts.length} Teile)`, ` (${fail.parts.length} parts)`)}</span>}
               </>
             )}
           </div>
@@ -888,19 +981,22 @@ function PlanTab({ tenantId, onEndpoints }: { tenantId: number; onEndpoints?: (d
           <div className={`note ${plan.vlan.islands.length > 1 ? "warn" : ""}`} id="cabling-vlan-islands">
             VLAN {plan.vlan.vid}:{" "}
             {plan.vlan.present.length === 0
-              ? "an keinem Access-Port bzw. SVI der gelesenen Switches"
+              ? L("an keinem Access-Port bzw. SVI der gelesenen Switches", "on no access port or SVI of the read switches")
               : plan.vlan.islands.length > 1
-                ? `getrennt in ${plan.vlan.islands.length} Inseln – ${plan.vlan.islands.map((i) => i.join(", ")).join(" | ")}`
-                : `durchgehend (${plan.vlan.present.join(", ")})`}
+                ? L(
+                    `getrennt in ${plan.vlan.islands.length} Inseln – ${plan.vlan.islands.map((i) => i.join(", ")).join(" | ")}`,
+                    `split into ${plan.vlan.islands.length} islands – ${plan.vlan.islands.map((i) => i.join(", ")).join(" | ")}`,
+                  )
+                : L(`durchgehend (${plan.vlan.present.join(", ")})`, `continuous (${plan.vlan.present.join(", ")})`)}
           </div>
         )}
         {plan === null ? (
           <Loading />
         ) : plan.nodes.length === 0 ? (
-          <Empty title="keine Geräte mit Verbindungen" />
+          <Empty title={L("keine Geräte mit Verbindungen", "no devices with links")} />
         ) : (
           <div style={{ overflow: "auto", maxHeight: "70vh" }}>
-            <svg width={Math.max(plan.width, 400)} height={plan.height} id="cabling-plan-svg" role="img" aria-label="Plan der Verkabelung">
+            <svg width={Math.max(plan.width, 400)} height={plan.height} id="cabling-plan-svg" role="img" aria-label={L("Plan der Verkabelung", "Cabling plan")}>
               {plan.pairs.map((pr) => {
                 const a = byKey.get(pr.a);
                 const b = byKey.get(pr.b);
@@ -909,7 +1005,12 @@ function PlanTab({ tenantId, onEndpoints }: { tenantId: number; onEndpoints?: (d
                 const y0 = Math.min(a.y, b.y) - NODE_H / 2 - 16;
                 return (
                   <g key={`${pr.a}~${pr.b}`} className="plan-vpc" data-vpc={pr.domain}>
-                    <title>{`vPC-Paar ${a.name} + ${b.name} (Domäne ${pr.domain}) – zusammen ein logischer Switch`}</title>
+                    <title>
+                      {L(
+                        `vPC-Paar ${a.name} + ${b.name} (Domäne ${pr.domain}) – zusammen ein logischer Switch`,
+                        `vPC pair ${a.name} + ${b.name} (domain ${pr.domain}) – together one logical switch`,
+                      )}
+                    </title>
                     <rect
                       x={x0}
                       y={y0}
@@ -921,7 +1022,7 @@ function PlanTab({ tenantId, onEndpoints }: { tenantId: number; onEndpoints?: (d
                       strokeDasharray="4 3"
                     />
                     <text x={x0 + 6} y={y0 + 11} fontSize={10} fill="var(--accent)">
-                      vPC-Domäne {pr.domain}
+                      {L(<>vPC-Domäne {pr.domain}</>, <>vPC domain {pr.domain}</>)}
                     </text>
                   </g>
                 );
@@ -935,9 +1036,9 @@ function PlanTab({ tenantId, onEndpoints }: { tenantId: number; onEndpoints?: (d
                 const off = dim(a.name) || dim(b.name) || (pick !== null && !isPicked);
                 const isFailed = failedEdges.has(label);
                 const title =
-                  `${label}: ${e.links} Kabel${e.lags.length ? ` (${e.lags.join(", ")})` : ""}` +
-                  `${e.vlan ? ` – ${VLAN_EDGE[e.vlan][1]}` : ""}${e.stp ? ` – Spanning Tree blockiert VLAN ${e.stp}` : ""}` +
-                  `${e.issues ? ` – ${e.issues} Abweichungen` : ""}`;
+                  `${label}: ${e.links} ${L("Kabel", e.links === 1 ? "cable" : "cables")}${e.lags.length ? ` (${e.lags.join(", ")})` : ""}` +
+                  `${e.vlan ? ` – ${VLAN_EDGE[e.vlan][1]}` : ""}${e.stp ? L(` – Spanning Tree blockiert VLAN ${e.stp}`, ` – Spanning Tree blocks VLAN ${e.stp}`) : ""}` +
+                  `${e.issues ? L(` – ${e.issues} Abweichungen`, ` – ${e.issues} deviations`) : ""}`;
                 return (
                   <g
                     key={`${e.a}~${e.b}`}
@@ -995,7 +1096,7 @@ function PlanTab({ tenantId, onEndpoints }: { tenantId: number; onEndpoints?: (d
                       {n.name.length > 22 ? `${n.name.slice(0, 21)}…` : n.name}
                     </text>
                     <text x={NODE_W / 2} y={35} textAnchor="middle" fontSize={10} fill="var(--muted)">
-                      {isFailed ? "fällt aus" : (KIND[n.kind] ?? n.kind)}
+                      {isFailed ? L("fällt aus", "fails") : (KIND[n.kind] ?? n.kind)}
                     </text>
                   </g>
                 );
@@ -1005,7 +1106,11 @@ function PlanTab({ tenantId, onEndpoints }: { tenantId: number; onEndpoints?: (d
         )}
         {multi && !fail && (
           <p className="faint" id="cabling-failure-multi">
-            {multi}: mehrere Kabel – fällt eines aus, bleiben die anderen (Shift-Klick: alle fallen aus).
+            {multi}:{" "}
+            {L(
+              "mehrere Kabel – fällt eines aus, bleiben die anderen (Shift-Klick: alle fallen aus).",
+              "several cables – if one fails, the others remain (Shift-click: all fail).",
+            )}
           </p>
         )}
         {pick && (
@@ -1027,9 +1132,9 @@ function PlanTab({ tenantId, onEndpoints }: { tenantId: number; onEndpoints?: (d
 // je Ende Port, Beschreibung und Konfiguration; Port-Channel als Gruppe, Abweichungen darunter
 function endText(e: CablingPatchEnd): string {
   const parts = [portText(e)];
-  if (e.status) parts.push(e.enabled === false ? "deaktiviert" : e.status);
+  if (e.status) parts.push(e.enabled === false ? L("deaktiviert", "disabled") : e.status);
   if (e.media) parts.push(e.media);
-  if (e.stp_blocked) parts.push(`STP blockiert ${e.stp_blocked}`);
+  if (e.stp_blocked) parts.push(L(`STP blockiert ${e.stp_blocked}`, `STP blocks ${e.stp_blocked}`));
   if (e.epgs?.length) parts.push(`EPG ${e.epgs.slice(0, 3).join(", ")}${e.epgs.length > 3 ? ` +${e.epgs.length - 3}` : ""}`);
   return parts.filter(Boolean).join(" · ");
 }
@@ -1077,7 +1182,7 @@ function PatchPanel({ tenantId, device, peer, onPick, onClose, onEndpoints }: {
     <div className="patch-panel" id="cabling-patches" data-device={device}>
       <div className="patch-head">
         <h3>
-          Patchungen <span className="mono">{device}</span>
+          {L("Patchungen", "Patching")} <span className="mono">{device}</span>
           {peer && (
             <>
               {" "}
@@ -1091,17 +1196,17 @@ function PatchPanel({ tenantId, device, peer, onPick, onClose, onEndpoints }: {
             {d.model ? ` · ${d.model}` : ""}
             {d.mgmt_ip ? ` · ${d.mgmt_ip}` : ""}
             {d.source ? ` · ${d.source}` : ""}
-            {data && ` · ${data.total} Kabel`}
-            {data && data.issues > 0 && <span className="crit"> · {data.issues} mit Abweichung</span>}
+            {data && L(` · ${data.total} Kabel`, ` · ${data.total} ${data.total === 1 ? "cable" : "cables"}`)}
+            {data && data.issues > 0 && <span className="crit">{L(` · ${data.issues} mit Abweichung`, ` · ${data.issues} with deviation`)}</span>}
           </span>
         )}
         <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
           {peer && (
             <button className="btn btn-sm btn-ghost" onClick={() => onPick(device)}>
-              alle Kabel von {device}
+              {L(<>alle Kabel von {device}</>, <>all cables of {device}</>)}
             </button>
           )}
-          <button className="btn btn-sm btn-ghost" aria-label="Patchungen schliessen" onClick={onClose}>
+          <button className="btn btn-sm btn-ghost" aria-label={L("Patchungen schliessen", "Close patching")} onClick={onClose}>
             ✕
           </button>
         </span>
@@ -1110,20 +1215,26 @@ function PatchPanel({ tenantId, device, peer, onPick, onClose, onEndpoints }: {
       {data === null ? (
         !err && <Loading />
       ) : data.items.length === 0 ? (
-        <Empty title={d?.read ? "keine Kabel aus CDP/LLDP" : "Gerät nicht gelesen – keine Ports bekannt"} />
+        <Empty
+          title={
+            d?.read
+              ? L("keine Kabel aus CDP/LLDP", "no cables from CDP/LLDP")
+              : L("Gerät nicht gelesen – keine Ports bekannt", "device not read – no ports known")
+          }
+        />
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table className="compact patch-table">
             <thead>
               <tr>
                 <th>Port</th>
-                <th>Konfiguration</th>
+                <th>{L("Konfiguration", "Configuration")}</th>
                 <th />
-                <th>Gegenstelle</th>
+                <th>{L("Gegenstelle", "Peer")}</th>
                 <th>Port</th>
-                <th>Konfiguration</th>
-                <th>Zustand</th>
-                <th title="MACs am eigenen Port (ohne Uplinks)">Endpunkte</th>
+                <th>{L("Konfiguration", "Configuration")}</th>
+                <th>{L("Zustand", "State")}</th>
+                <th title={L("MACs am eigenen Port (ohne Uplinks)", "MACs on the own port (without uplinks)")}>{L("Endpunkte", "Endpoints")}</th>
               </tr>
             </thead>
             <tbody>{rows}</tbody>
@@ -1149,7 +1260,7 @@ function PatchRow({ l, onPick, onEndpoints }: {
         <td className="faint">{endText(l.a) || <Dash />}</td>
         <td className="faint">↔</td>
         <td className="nowrap">
-          <button className="linkbtn patch-link" title="Patchungen dieses Geräts" onClick={() => onPick(l.b.device)}>
+          <button className="linkbtn patch-link" title={L("Patchungen dieses Geräts", "Patching of this device")} onClick={() => onPick(l.b.device)}>
             <b>{l.b.device}</b>
           </button>
           {!l.b.read && <span className="faint"> ({KIND[l.b.kind] ?? l.b.kind})</span>}
@@ -1159,13 +1270,13 @@ function PatchRow({ l, onPick, onEndpoints }: {
           {l.b.port ?? <Dash />}
           {l.b.description && <div className="faint patch-descr">{l.b.description}</div>}
         </td>
-        <td className="faint">{l.b.read ? endText(l.b) || <Dash /> : <span>nicht gelesen</span>}</td>
+        <td className="faint">{l.b.read ? endText(l.b) || <Dash /> : <span>{L("nicht gelesen", "not read")}</span>}</td>
         <td className="nowrap">
           <StateChip state={l.state} /> <span className="faint">{l.protocols.join("/").toUpperCase()}</span>
         </td>
         <td className="nowrap">
           {l.a.endpoints > 0 && l.a.port && onEndpoints ? (
-            <button className="linkbtn patch-link patch-endpoints" title="Endpunkte an diesem Port" onClick={() => onEndpoints(l.a.device, l.a.port!)}>
+            <button className="linkbtn patch-link patch-endpoints" title={L("Endpunkte an diesem Port", "Endpoints on this port")} onClick={() => onEndpoints(l.a.device, l.a.port!)}>
               {l.a.endpoints}
             </button>
           ) : (

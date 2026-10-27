@@ -43,11 +43,12 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from functools import cached_property
+from functools import cached_property, lru_cache
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.i18n import L, german_only, lang
 from app.models import (
     Customer,
     CustomerMember,
@@ -71,7 +72,7 @@ from app.models import (
     VmNic,
     Zone,
 )
-from app.store import aci_relevance, virtual
+from app.store import aci_relevance, tenant_lock, virtual
 from app.store import epgs as epg_store
 from app.store.topology import ip_hex
 
@@ -96,8 +97,10 @@ def _net(value: str | None) -> Net | None:
         return None
 
 
+@lru_cache(maxsize=1 << 16)
 def _bounds(value: str | None) -> tuple[int, int, int] | None:
-    """(Familie, erste, letzte) Adresse eines Werts: IP, Netz oder Bereich a-b."""
+    """(Familie, erste, letzte) Adresse eines Werts: IP, Netz oder Bereich a-b. Zwischengespeichert:
+    die Ableitung fragt dieselben Werte je Kunde erneut (0.74.1)."""
     text = (value or "").strip()
     try:
         if "-" in text:
@@ -142,6 +145,8 @@ IPAM_KINDS = ("ipam_tenant", "ipam_vrf", "ipam_tag")
 
 
 def _label(s: Selector) -> str:
+    """Grund der Zuordnung - bleibt deutsch: gespeichert (`customer_member.via`) und in
+    `zone_detect` verglichen (`Anbindung …`); die Anzeige uebersetzt `show_reason`."""
     names = {
         "aci_tenant": "Tenant",
         "aci_vrf": "VRF",
@@ -159,6 +164,43 @@ def _label(s: Selector) -> str:
         "exit": "Anbindung",
     }
     return f"{names.get(s.kind, s.kind)} {s.value}"
+
+
+# Anzeige der Gruende in der Sprache der Anfrage (ADR 0028): feste Gruende und Gruende
+# „<Art> <Wert>“; was hier nicht steht (EPG, Zone, VDOM, Tenant …), heisst in beiden gleich
+_REASON_EN = {
+    "Netz des Kunden": "Customer network",
+    "IP im Netz des Kunden": "IP in a customer network",
+    "interne IP im Netz": "internal IP in the network",
+    "externe IP im Netz": "external IP in the network",
+    "Regel des Kunden": "Customer rule",
+    "Objekt des Kunden": "Customer object",
+    "Kürzel im Namen": "Code in the name",
+    "VM des Kunden": "Customer VM",
+    "Portgruppe im Tenant des Kunden": "Port group in the customer's tenant",
+    "Subnetz des Kunden": "Customer subnet",
+}
+_REASON_PREFIX_EN = (
+    ("IPAM-VRF/Netzansicht ", "IPAM VRF/network view "),
+    ("IPAM-Merkmal ", "IPAM tag/attribute "),
+    ("IPAM-Tenant ", "IPAM tenant "),
+    ("Portgruppe ", "Port group "),
+    ("Anbindung ", "Exit "),
+    ("Kürzel ", "Code "),
+    ("Netz ", "Network "),
+)
+
+
+def show_reason(why: str | None) -> str | None:
+    """Gespeicherter (deutscher) Grund der Zuordnung fuer die Anzeige."""
+    if not why or lang() != "en":
+        return why
+    if why in _REASON_EN:
+        return _REASON_EN[why]
+    for de, en in _REASON_PREFIX_EN:
+        if why.startswith(de):
+            return en + why[len(de) :]
+    return why
 
 
 class _Data:
@@ -196,6 +238,23 @@ class _Data:
             session.execute(select(Zone.id, Zone.name).where(Zone.tenant_id == tenant_id)).all()
         )
         self._rules: dict[int, object] = {}  # Regeln fuer die Pruefung nach dem Weg
+
+    @cached_property
+    def objects(self) -> list[tuple[int, set[str], tuple[int, int, int] | None]]:
+        """Werte-Objekte (Kennung, Namensteile, Bereich) - einmal fuer alle Kunden (0.74.1)."""
+        return [
+            (oid, tokens(name), _bounds(value))
+            for oid, name, value in self.session.execute(
+                select(NetworkObject.id, NetworkObject.name, NetworkObject.value).where(
+                    NetworkObject.tenant_id == self.tenant_id
+                )
+            )
+        ]
+
+    @cached_property
+    def finding_rows(self) -> list:
+        """Findings des Mandanten - einmal fuer alle Kunden (0.74.1)."""
+        return _finding_rows(self.session, self.tenant_id)
 
     # -- Weg (0.58.0) --------------------------------------------------------------------
 
@@ -527,15 +586,9 @@ def evaluate(session: Session, tenant_id: int, selectors: list[Selector],
     codes_out = {s.value.strip().casefold() for s in exclude if s.kind == "code"}
 
     # Werte-Objekte: ganz in einem Netz des Kunden bzw. mit dem Kuerzel im Namen
-    for oid, name, value in session.execute(
-        select(NetworkObject.id, NetworkObject.name, NetworkObject.value).where(
-            NetworkObject.tenant_id == tenant_id
-        )
-    ):
-        names = tokens(name)
+    for oid, names, b in data.objects:
         if names & codes_out:
             continue
-        b = _bounds(value)
         if b is not None and ranges.covers(*b):
             scope.object[oid] = "Netz des Kunden"
         elif names & codes_in:
@@ -611,15 +664,26 @@ def evaluate(session: Session, tenant_id: int, selectors: list[Selector],
             if b is not None and ranges.covers(*b):
                 scope.nat.setdefault(nid, why)
                 break
-    _findings(session, tenant_id, scope, ranges, codes_in, data)
+    tenants = {(e.aci_tenant or "").casefold() for e in data.epgs if e.id in scope.epg}
+    _findings(session, tenant_id, scope, ranges, codes_in, tenants, data.finding_rows)
     return scope
 
 
 _SUFFIX = re.compile(r" \((IPv6|VDOM [^)]*)\)")
 
 
+def _finding_rows(session: Session, tenant_id: int) -> list:
+    return list(
+        session.execute(
+            select(Finding.id, Finding.subject_kind, Finding.subject_id, Finding.detail).where(
+                Finding.tenant_id == tenant_id
+            )
+        )
+    )
+
+
 def _findings(session: Session, tenant_id: int, scope: Scope, ranges: "_Ranges",
-              codes: set[str], data: _Data) -> None:  # fmt: skip
+              codes: set[str], tenants: set[str], rows: list | None = None) -> None:  # fmt: skip
     """Findings ueber ihr Subjekt (0.31.0): Regel, Werte- bzw. Firewall-Objekt, VM,
     Portgruppe (Tenant der EPG im Namen) bzw. Subnetz des Kunden."""
     objects = set(
@@ -630,12 +694,9 @@ def _findings(session: Session, tenant_id: int, scope: Scope, ranges: "_Ranges",
         if scope.vm
         else set()
     )
-    tenants = {(e.aci_tenant or "").casefold() for e in data.epgs if e.id in scope.epg}
-    for fid, kind, subject, detail in session.execute(
-        select(Finding.id, Finding.subject_kind, Finding.subject_id, Finding.detail).where(
-            Finding.tenant_id == tenant_id
-        )
-    ):
+    if rows is None:
+        rows = _finding_rows(session, tenant_id)
+    for fid, kind, subject, detail in rows:
         detail = detail if isinstance(detail, dict) else {}
         why = None
         if kind is SubjectKind.RULE:
@@ -668,9 +729,11 @@ def selectors_of(c: Customer) -> list[Selector]:
     return [Selector(s.kind, s.value, s.source_system_id, s.exclude) for s in c.selectors]
 
 
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
 def derive(session: Session, tenant_id: int, customer_id: int | None = None) -> int:
     """Zugehoerigkeit der Kunden des Mandanten (bzw. eines Kunden) neu ableiten; Anzahl der
     Eintraege."""
+    tenant_lock.hold(session, tenant_id)  # ein Schreiber je Mandant (0.80.1)
     stmt = select(Customer).where(Customer.tenant_id == tenant_id)
     if customer_id is not None:
         stmt = stmt.where(Customer.id == customer_id)
@@ -697,6 +760,61 @@ def derive(session: Session, tenant_id: int, customer_id: int | None = None) -> 
             session.execute(CustomerMember.__table__.insert(), rows)
         c.derived_at = now
         total += len(rows)
+    session.flush()
+    return total
+
+
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
+def derive_findings(session: Session, tenant_id: int) -> int:
+    """Nur die Findings der Kunden neu zuordnen (0.74.1) - nach dem Aendern einer Applikation
+    aendern sich nur ihre Befunde (Abweichung Regel <-> Weg), die Kunden ueber ihre Regel
+    gehoeren. Die uebrige gespeicherte Zugehoerigkeit bleibt; statt der ganzen Ableitung
+    (Sekunden bis Minuten bei grossen Umgebungen) genuegt ein Durchgang ueber die Findings."""
+    tenant_lock.hold(session, tenant_id)
+    customers = list(session.scalars(select(Customer).where(Customer.tenant_id == tenant_id)))
+    if not customers:
+        return 0
+    session.flush()
+    rows = _finding_rows(session, tenant_id)
+    members: dict[int, list[CustomerMember]] = defaultdict(list)
+    for m in session.scalars(
+        select(CustomerMember).where(
+            CustomerMember.customer_id.in_([c.id for c in customers]),
+            CustomerMember.kind != "finding",
+        )
+    ):
+        members[m.customer_id].append(m)
+    total = 0
+    for c in customers:
+        scope = Scope()
+        for m in members[c.id]:
+            if m.kind == "net" and m.value:
+                scope.net[m.value] = m.via or ""
+            elif m.ref_id is not None and m.kind in ("epg", "object", "rule", "vm"):
+                getattr(scope, m.kind)[m.ref_id] = m.via or ""
+        nets = [n for n in (_net(v) for v in scope.net) if n is not None]
+        codes = {
+            s.value.strip().casefold() for s in c.selectors if s.kind == "code" and not s.exclude
+        }
+        tenants = (
+            {
+                (t or "").casefold()
+                for t in session.scalars(select(Epg.aci_tenant).where(Epg.id.in_(list(scope.epg))))
+            }
+            if scope.epg
+            else set()
+        )
+        _findings(session, tenant_id, scope, _Ranges(nets), codes, tenants, rows)
+        session.execute(
+            delete(CustomerMember).where(
+                CustomerMember.customer_id == c.id, CustomerMember.kind == "finding"
+            )
+        )
+        base = {"tenant_id": tenant_id, "customer_id": c.id, "kind": "finding", "value": None}
+        new = [{**base, "ref_id": fid, "via": why[:200]} for fid, why in scope.finding.items()]
+        if new:
+            session.execute(CustomerMember.__table__.insert(), new)
+        total += len(new)
     session.flush()
     return total
 
@@ -829,7 +947,7 @@ def suggestions(session: Session, tenant_id: int) -> list[dict]:
         if shared and any(c.shared for c in customers):
             continue
         out.append({
-            "name": "Geteilt" if shared else t,
+            "name": L("Geteilt", "Shared") if shared else t,
             "code": None if shared else code_of(t),
             "shared": shared,
             "epgs": n,

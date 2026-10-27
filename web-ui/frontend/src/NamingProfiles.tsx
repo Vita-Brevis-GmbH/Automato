@@ -13,6 +13,7 @@ import {
   upsertEntry,
 } from "./api";
 import type { Me } from "./auth";
+import { L } from "./i18n";
 import { Empty, ErrorBox, Loading, Modal, Note, PageHead } from "./ui";
 import ZoneSchemaCard from "./ZoneSchema";
 
@@ -30,43 +31,64 @@ interface KindMeta {
 }
 
 const OBJECT_CLASSES: Record<string, string> = {
-  host: "Host (intern)",
-  host_external: "Host extern (expected_external)",
-  network: "Netzwerk",
-  network_external: "Netzwerk extern",
-  transfer: "Transfernetz",
+  host: L("Host (intern)", "Host (internal)"),
+  host_external: L("Host extern (expected_external)", "Host external (expected_external)"),
+  network: L("Netzwerk", "Network"),
+  network_external: L("Netzwerk extern", "Network external"),
+  transfer: L("Transfernetz", "Transfer network"),
   vip: "VIP",
   vip_dnat: "VIP / DNAT",
   snat_pool: "SNAT IP-Pool",
-  range: "Adressbereich",
-  service: "Service / ACI-Filter",
+  range: L("Adressbereich", "Address range"),
+  service: L("Service / ACI-Filter", "Service / ACI filter"),
 };
 
 const KINDS: Record<string, KindMeta> = {
   object_prefix: {
-    title: "Objekt-Prefixe → Typ",
-    cols: ["Prefix", "Objekttyp"],
+    title: L("Objekt-Prefixe → Typ", "Object prefixes → type"),
+    cols: ["Prefix", L("Objekttyp", "Object type")],
     add: "Prefix",
-    note:
+    note: L(
       "Wird beim Einlesen ausgewertet (längstes Prefix gewinnt). Typ „Service / ACI-Filter“ (FT_) gilt für die Namensprüfung der Services und Filter. Leer = eingebaute Standard-Konvention.",
+      "Evaluated during collection (longest prefix wins). Type “Service / ACI filter” (FT_) applies to the name check of services and filters. Empty = built-in default convention.",
+    ),
     values: OBJECT_CLASSES,
   },
-  utm_prefix: { title: "UTM-Schutzprofil-Prefixe", cols: ["Prefix", "Mechanismus"], add: "Prefix" },
-  color_code: { title: "FortiGate-Farbcodes", cols: ["Code", "Klasse"], add: "Farbe" },
-  l3out: { title: "L3Out-Zonen (ACI)", cols: ["L3Out", "Bedeutung"], add: "L3Out" },
-  gg_code: { title: "Gruppengesellschaften (Kap. 3.1)", cols: ["Kürzel", "Tenant-Nr."], add: "GG" },
-  function_code: { title: "Funktions-/Gerätecodes", cols: ["Code", "Bedeutung"], add: "Code" },
+  utm_prefix: {
+    title: L("UTM-Schutzprofil-Prefixe", "UTM security profile prefixes"),
+    cols: ["Prefix", L("Mechanismus", "Mechanism")],
+    add: "Prefix",
+  },
+  color_code: {
+    title: L("FortiGate-Farbcodes", "FortiGate color codes"),
+    cols: ["Code", L("Klasse", "Class")],
+    add: L("Farbe", "Color"),
+  },
+  l3out: { title: L("L3Out-Zonen (ACI)", "L3Out zones (ACI)"), cols: ["L3Out", L("Bedeutung", "Meaning")], add: "L3Out" },
+  gg_code: {
+    title: L("Gruppengesellschaften (Kap. 3.1)", "Group companies (ch. 3.1)"),
+    cols: [L("Kürzel", "Code"), L("Tenant-Nr.", "Tenant no.")],
+    add: "GG",
+  },
+  function_code: {
+    title: L("Funktions-/Gerätecodes", "Function/device codes"),
+    cols: ["Code", L("Bedeutung", "Meaning")],
+    add: "Code",
+  },
   site_code: {
-    title: "Standort-Codes (3-stellig)",
-    cols: ["Code", "Standort"],
-    add: "Standort",
-    note: "DC-/Standort-Kennung im Namen (z. B. 000).",
+    title: L("Standort-Codes (3-stellig)", "Site codes (3 digits)"),
+    cols: ["Code", L("Standort", "Site")],
+    add: L("Standort", "Site"),
+    note: L("DC-/Standort-Kennung im Namen (z. B. 000).", "DC/site identifier in the name (e.g. 000)."),
   },
   service: {
-    title: "Standard-Services (FT_)",
+    title: L("Standard-Services (FT_)", "Standard services (FT_)"),
     cols: ["Name", "Port"],
     add: "Service",
-    note: "Sprechende Namen mit Soll-Port (z. B. FT_https = tcp/443); sonst gilt das Schema FT_<proto><port>.",
+    note: L(
+      "Sprechende Namen mit Soll-Port (z. B. FT_https = tcp/443); sonst gilt das Schema FT_<proto><port>.",
+      "Descriptive names with expected port (e.g. FT_https = tcp/443); otherwise the schema FT_<proto><port> applies.",
+    ),
   },
 };
 
@@ -77,7 +99,7 @@ const HIDDEN_KINDS = ["project_code", "zone_schema", "zone_schema_link", "zone_s
 const KIND_ORDER = Object.keys(KINDS);
 
 function metaFor(kind: string): KindMeta {
-  return KINDS[kind] ?? { title: kind, cols: ["Schlüssel", "Wert"], add: "Eintrag" };
+  return KINDS[kind] ?? { title: kind, cols: [L("Schlüssel", "Key"), L("Wert", "Value")], add: L("Eintrag", "Entry") };
 }
 
 export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenant[] }) {
@@ -138,11 +160,21 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
 
   return (
     <>
-      <PageHead title="Namensprofile & Wörterbücher">
-        Pro Kunde pflegbar und <b>erweiterbar ohne Deployment</b>. Treibt Parser/Matching (Prefix → Typ,
-        Farbcode, Codes). <b>Offen für neue Namenskonventionsvorgaben</b> – zusätzliche Wörterbuch-Arten lassen
-        sich jederzeit anlegen. Das Profil <b>„default“</b> ist der Standard und gilt für alle Mandanten
-        ohne eigenes Profil.
+      <PageHead title={L("Namensprofile & Wörterbücher", "Naming profiles & dictionaries")}>
+        {L(
+          <>
+            Pro Kunde pflegbar und <b>erweiterbar ohne Deployment</b>. Treibt Parser/Matching (Prefix → Typ,
+            Farbcode, Codes). <b>Offen für neue Namenskonventionsvorgaben</b> – zusätzliche Wörterbuch-Arten lassen
+            sich jederzeit anlegen. Das Profil <b>„default“</b> ist der Standard und gilt für alle Mandanten
+            ohne eigenes Profil.
+          </>,
+          <>
+            Maintainable per customer and <b>extensible without deployment</b>. Drives parser/matching (prefix → type,
+            color code, codes). <b>Open for new naming convention rules</b> – additional dictionary types can be
+            created at any time. The profile <b>“default”</b> is the default and applies to all tenants without
+            their own profile.
+          </>,
+        )}
       </PageHead>
 
       <div className="filterbar">
@@ -152,21 +184,21 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
           onChange={(e) => setProfileId(e.target.value ? Number(e.target.value) : null)}
           disabled={!profiles?.length}
         >
-          {!profiles?.length && <option value="">Noch kein Profil</option>}
+          {!profiles?.length && <option value="">{L("Noch kein Profil", "No profile yet")}</option>}
           {profiles?.map((p) => (
             <option key={p.id} value={p.id}>
-              Profil: {profileLabel(p)}
-              {isDefaultProfile(p) ? " (Standard)" : ""}
+              {L("Profil:", "Profile:")} {profileLabel(p)}
+              {isDefaultProfile(p) ? L(" (Standard)", " (default)") : ""}
             </option>
           ))}
         </select>
         {me.isAdmin && (
           <>
             <button className="btn btn-ghost btn-sm" onClick={() => setNewProfile(true)}>
-              + Neues Profil
+              {L("+ Neues Profil", "+ New profile")}
             </button>
             <button className="btn btn-ghost btn-sm" onClick={() => setNewKind(true)} disabled={!profile}>
-              + Neue Namenskonvention
+              {L("+ Neue Namenskonvention", "+ New naming convention")}
             </button>
           </>
         )}
@@ -174,10 +206,19 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
         {profile && (
           <span className="faint" style={{ fontSize: 12.5 }}>
             {usedBy.length
-              ? `Gilt für: ${usedBy.map((t) => t.name).join(", ")}`
+              ? L(
+                  `Gilt für: ${usedBy.map((t) => t.name).join(", ")}`,
+                  `Applies to: ${usedBy.map((t) => t.name).join(", ")}`,
+                )
               : isDefault
-                ? "Standard für alle Mandanten ohne eigenes Profil"
-                : "Noch keinem Mandanten zugeordnet (unter „Mandanten & Standorte“)"}
+                ? L(
+                    "Standard für alle Mandanten ohne eigenes Profil",
+                    "Default for all tenants without their own profile",
+                  )
+                : L(
+                    "Noch keinem Mandanten zugeordnet (unter „Mandanten & Standorte“)",
+                    "Not yet assigned to any tenant (under “Tenants & sites”)",
+                  )}
           </span>
         )}
       </div>
@@ -189,17 +230,25 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
       ) : profiles.length === 0 ? (
         <div className="card">
           <Empty
-            title="Noch kein Namensprofil"
+            title={L("Noch kein Namensprofil", "No naming profile yet")}
             action={
               me.isAdmin && (
                 <button className="btn btn-primary btn-sm" onClick={() => setNewProfile(true)}>
-                  + Neues Profil
+                  {L("+ Neues Profil", "+ New profile")}
                 </button>
               )
             }
           >
-            Ein Profil bündelt die Wörterbücher eines Kunden. Optional mit den Werten des Standardprofils
-            „default“ vorbefüllen.
+            {L(
+              <>
+                Ein Profil bündelt die Wörterbücher eines Kunden. Optional mit den Werten des Standardprofils
+                „default“ vorbefüllen.
+              </>,
+              <>
+                A profile bundles the dictionaries of a customer. Optionally prefill it with the values of the default
+                profile “default”.
+              </>,
+            )}
           </Empty>
         </div>
       ) : entries === null ? (
@@ -306,7 +355,8 @@ function DictCard({
   };
 
   const remove = async (e: DictionaryEntry) => {
-    if (!window.confirm(`Eintrag „${e.key}“ aus „${meta.title}“ löschen?`)) return;
+    const question = L(`Eintrag „${e.key}“ aus „${meta.title}“ löschen?`, `Delete entry “${e.key}” from “${meta.title}”?`);
+    if (!window.confirm(question)) return;
     try {
       await deleteEntry(e.id);
       onChanged();
@@ -346,15 +396,15 @@ function DictCard({
               {valueInput}
             </div>
             <button className="btn btn-primary btn-sm" type="submit">
-              Speichern
+              {L("Speichern", "Save")}
             </button>
             <button className="btn btn-ghost btn-sm" type="button" onClick={cancel}>
-              Abbrechen
+              {L("Abbrechen", "Cancel")}
             </button>
           </form>
         )}
         {entries.length === 0 && !adding ? (
-          <div className="loading">Noch keine Einträge.</div>
+          <div className="loading">{L("Noch keine Einträge.", "No entries yet.")}</div>
         ) : entries.length > 0 ? (
           <table>
             <thead>
@@ -381,10 +431,10 @@ function DictCard({
                         </div>
                         <div className="field">{valueInput}</div>
                         <button className="btn btn-primary btn-sm" type="submit">
-                          Speichern
+                          {L("Speichern", "Save")}
                         </button>
                         <button className="btn btn-ghost btn-sm" type="button" onClick={cancel}>
-                          Abbrechen
+                          {L("Abbrechen", "Cancel")}
                         </button>
                       </form>
                     </td>
@@ -396,17 +446,17 @@ function DictCard({
                       {meta.values?.[e.value ?? ""] ?? e.value ?? <span className="faint">–</span>}
                       {meta.values && e.value && !meta.values[e.value] && (
                         <span className="chip warn" style={{ marginLeft: 6 }}>
-                          unbekannter Typ
+                          {L("unbekannter Typ", "unknown type")}
                         </span>
                       )}
                     </td>
                     <td className="actions">
                       {editable && (
                         <>
-                          <button className="linkbtn" title="Bearbeiten" onClick={() => startEdit(e)}>
+                          <button className="linkbtn" title={L("Bearbeiten", "Edit")} onClick={() => startEdit(e)}>
                             ✎
                           </button>
-                          <button className="linkbtn danger" title="Löschen" onClick={() => remove(e)}>
+                          <button className="linkbtn danger" title={L("Löschen", "Delete")} onClick={() => remove(e)}>
                             ✕
                           </button>
                         </>
@@ -487,22 +537,22 @@ function NewProfileDialog({
   const ok = customer.trim() && name.trim();
   return (
     <Modal
-      title="Neues Namensprofil"
+      title={L("Neues Namensprofil", "New naming profile")}
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button className="btn btn-primary" onClick={submit} disabled={busy || !ok}>
-            {busy ? "Lege an…" : "Anlegen"}
+            {busy ? L("Lege an…", "Creating…") : L("Anlegen", "Create")}
           </button>
         </>
       }
     >
       <ErrorBox error={err} />
       <div className="field">
-        <label htmlFor="np-template">Vorlage</label>
+        <label htmlFor="np-template">{L("Vorlage", "Template")}</label>
         <select
           id="np-template"
           className="sel input"
@@ -511,34 +561,46 @@ function NewProfileDialog({
         >
           {profiles.map((p) => (
             <option key={p.id} value={`copy:${p.id}`}>
-              Kopie von „{profileLabel(p)}“{isDefaultProfile(p) ? " (Standard)" : ""}
+              {L(
+                <>
+                  Kopie von „{profileLabel(p)}“{isDefaultProfile(p) ? " (Standard)" : ""}
+                </>,
+                <>
+                  Copy of “{profileLabel(p)}”{isDefaultProfile(p) ? " (default)" : ""}
+                </>,
+              )}
             </option>
           ))}
-          {!profiles.some(isDefaultProfile) && <option value="defaults">Eingebaute Standardwerte</option>}
-          <option value="empty">Leer beginnen</option>
+          {!profiles.some(isDefaultProfile) && (
+            <option value="defaults">{L("Eingebaute Standardwerte", "Built-in default values")}</option>
+          )}
+          <option value="empty">{L("Leer beginnen", "Start empty")}</option>
         </select>
         <div className="hint">
-          Alle Wörterbücher der Vorlage werden übernommen und sind danach unabhängig änderbar.
+          {L(
+            "Alle Wörterbücher der Vorlage werden übernommen und sind danach unabhängig änderbar.",
+            "All dictionaries of the template are copied and can be changed independently afterwards.",
+          )}
         </div>
       </div>
       <div className="field">
-        <label htmlFor="np-customer">Kunde / Umgebung</label>
+        <label htmlFor="np-customer">{L("Kunde / Umgebung", "Customer / environment")}</label>
         <input
           id="np-customer"
           className="input"
           value={customer}
           autoFocus
-          placeholder="z. B. Kunde A"
+          placeholder={L("z. B. Kunde A", "e.g. Customer A")}
           onChange={(e) => setCustomer(e.target.value)}
         />
       </div>
       <div className="field">
-        <label htmlFor="np-name">Profilname</label>
+        <label htmlFor="np-name">{L("Profilname", "Profile name")}</label>
         <input
           id="np-name"
           className="input"
           value={name}
-          placeholder="z. B. Standard"
+          placeholder={L("z. B. Standard", "e.g. Default")}
           onChange={(e) => setName(e.target.value)}
         />
       </div>
@@ -598,37 +660,45 @@ function NewKindDialog({
 
   return (
     <Modal
-      title="Neue Namenskonvention"
+      title={L("Neue Namenskonvention", "New naming convention")}
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button className="btn btn-primary" onClick={submit} disabled={!clean || dup || busy}>
-            {busy ? "Kopiere…" : srcKind ? "Anlegen & Einträge kopieren" : "Anlegen"}
+            {busy
+              ? L("Kopiere…", "Copying…")
+              : srcKind
+                ? L("Anlegen & Einträge kopieren", "Create & copy entries")
+                : L("Anlegen", "Create")}
           </button>
         </>
       }
     >
       <ErrorBox error={err} />
       <div className="field">
-        <label htmlFor="nk-kind">Art (technischer Schlüssel)</label>
+        <label htmlFor="nk-kind">{L("Art (technischer Schlüssel)", "Type (technical key)")}</label>
         <input
           id="nk-kind"
           className="input mono"
           value={kind}
           autoFocus
-          placeholder="z. B. vm_prefix"
+          placeholder={L("z. B. vm_prefix", "e.g. vm_prefix")}
           onChange={(e) => setKind(e.target.value)}
         />
         <div className="hint">
-          {dup ? "Diese Art gibt es bereits." : clean ? `Wird angelegt als „${clean}“.` : "Kleinbuchstaben, Ziffern, _"}
+          {dup
+            ? L("Diese Art gibt es bereits.", "This type already exists.")
+            : clean
+              ? L(`Wird angelegt als „${clean}“.`, `Will be created as “${clean}”.`)
+              : L("Kleinbuchstaben, Ziffern, _", "Lowercase letters, digits, _")}
         </div>
       </div>
       <div className="form-grid">
         <div className="field">
-          <label htmlFor="nk-src-profile">Einträge kopieren aus Profil</label>
+          <label htmlFor="nk-src-profile">{L("Einträge kopieren aus Profil", "Copy entries from profile")}</label>
           <select
             id="nk-src-profile"
             className="sel input"
@@ -643,14 +713,14 @@ function NewKindDialog({
           </select>
         </div>
         <div className="field">
-          <label htmlFor="nk-src-kind">Namenskonvention</label>
+          <label htmlFor="nk-src-kind">{L("Namenskonvention", "Naming convention")}</label>
           <select
             id="nk-src-kind"
             className="sel input"
             value={srcKind}
             onChange={(e) => setSrcKind(e.target.value)}
           >
-            <option value="">– leer beginnen –</option>
+            <option value="">{L("– leer beginnen –", "– start empty –")}</option>
             {srcKinds.map(([k, n]) => (
               <option key={k} value={k}>
                 {metaFor(k).title} ({n})
@@ -661,8 +731,14 @@ function NewKindDialog({
       </div>
       <Note>
         {srcKind
-          ? "Die Einträge werden als Ausgangspunkt kopiert und sind danach unabhängig änderbar."
-          : "Die neue Art erscheint als eigene Karte; sie wird gespeichert, sobald der erste Eintrag hinzugefügt ist."}
+          ? L(
+              "Die Einträge werden als Ausgangspunkt kopiert und sind danach unabhängig änderbar.",
+              "The entries are copied as a starting point and can be changed independently afterwards.",
+            )
+          : L(
+              "Die neue Art erscheint als eigene Karte; sie wird gespeichert, sobald der erste Eintrag hinzugefügt ist.",
+              "The new type appears as its own card; it is saved as soon as the first entry has been added.",
+            )}
       </Note>
     </Modal>
   );

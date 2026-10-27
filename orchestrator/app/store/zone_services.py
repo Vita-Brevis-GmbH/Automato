@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import Proto, Rule, ServiceObject
 from app.models.rule import rule_service
 from app.store import resolve
@@ -65,11 +66,14 @@ def normalize(session: Session, tenant_id: int, values: list[str] | None) -> lis
         if not v or v.casefold() in (x.casefold() for x in out):
             continue
         if parse(v) is None and resolve.service_values(session, tenant_id, v) is None:
-            raise ValueError(f"Dienst „{v}“: tcp/443, udp/53, tcp/8000-8080, icmp, any bzw. "
-                             "der Name eines Service-Objekts")  # fmt: skip
+            raise ValueError(L(f"Dienst „{v}“: tcp/443, udp/53, tcp/8000-8080, icmp, any bzw. "
+                               "der Name eines Service-Objekts",
+                               f"Service “{v}”: tcp/443, udp/53, tcp/8000-8080, icmp, any or "
+                               "the name of a service object"))  # fmt: skip
         out.append(v[:100])
     if len(out) > MAX:
-        raise ValueError(f"höchstens {MAX} Dienste je Zonenpaar")
+        raise ValueError(L(f"höchstens {MAX} Dienste je Zonenpaar",
+                           f"at most {MAX} services per zone pair"))  # fmt: skip
     return out or None
 
 
@@ -125,7 +129,9 @@ class RuleServices:
         if not services:
             return None
         if rid in self.negated:
-            return [] if allow.anything else ["alle ausser " + ", ".join(s[3] for s in services)]
+            if allow.anything:
+                return []
+            return [L("alle ausser ", "all except ") + ", ".join(s[3] for s in services)]
         out = []
         for proto, lo, hi, name in services:
             if name.strip().lower() in ("all", "any"):

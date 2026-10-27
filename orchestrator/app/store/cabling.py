@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import InvDevice, InvInterface, InvNeighbor, SourceSystem
 from app.models.source_system import Platform
 
@@ -313,7 +314,8 @@ class Cabling:
             issues.append({"type": "link_vlan_mismatch", "text": vlan})
         if bool(a.lag) != bool(b.lag) and a.kind == "physical" and b.kind == "physical":
             side = link.a if a.lag else link.b
-            text = f"Port-Channel nur auf {side.device.name} ({side.iface.lag})"
+            text = L(f"Port-Channel nur auf {side.device.name} ({side.iface.lag})",
+                     f"Port-Channel only on {side.device.name} ({side.iface.lag})")  # fmt: skip
             issues.append({"type": "link_lag_mismatch", "text": text})
         return issues
 
@@ -323,10 +325,12 @@ class Cabling:
             return None
         if a.mode != b.mode:
             mode = {"access": "Access", "tagged": "Trunk"}
-            return f"Modus {mode.get(a.mode, a.mode)} ↔ {mode.get(b.mode, b.mode)}"
+            pair = f"{mode.get(a.mode, a.mode)} ↔ {mode.get(b.mode, b.mode)}"
+            return L(f"Modus {pair}", f"Mode {pair}")
         if a.mode == "access":
             if a.untagged_vlan and b.untagged_vlan and a.untagged_vlan != b.untagged_vlan:
-                return f"Access-VLAN {a.untagged_vlan} ↔ {b.untagged_vlan}"
+                pair = f"{a.untagged_vlan} ↔ {b.untagged_vlan}"
+                return L(f"Access-VLAN {pair}", f"Access VLAN {pair}")
             return None
         parts = []
         if a.native_vlan and b.native_vlan and a.native_vlan != b.native_vlan:
@@ -334,9 +338,11 @@ class Cabling:
         va, vb = vlan_set(a.trunk_vlans), vlan_set(b.trunk_vlans)
         if va is not None and vb is not None and va != vb:
             if va - vb:
-                parts.append(f"nur auf {a.device}: {_ranges(va - vb)}")
+                parts.append(L(f"nur auf {a.device}: {_ranges(va - vb)}",
+                               f"only on {a.device}: {_ranges(va - vb)}"))  # fmt: skip
             if vb - va:
-                parts.append(f"nur auf {b.device}: {_ranges(vb - va)}")
+                parts.append(L(f"nur auf {b.device}: {_ranges(vb - va)}",
+                               f"only on {b.device}: {_ranges(vb - va)}"))  # fmt: skip
         return "; ".join(parts) or None
 
 
@@ -354,7 +360,8 @@ _FINDINGS = {
 
 def checks(session: Session, tenant_id: int, cab: Cabling | None = None) -> list[dict]:
     """Befunde der Verkabelung: Abweichungen zwischen zwei gelesenen Switches und Verbindungen,
-    die nur eine von zwei gelesenen Seiten meldet. Je Verbindung und Art ein Eintrag."""
+    die nur eine von zwei gelesenen Seiten meldet. Je Verbindung und Art ein Eintrag. Texte in
+    der Sprache der Anfrage - der Abgleich (speichert) laeuft immer deutsch (ADR 0028)."""
     cab = cab or build(session, tenant_id)
     out: list[dict] = []
     for link in cab.links.values():
@@ -367,6 +374,8 @@ def checks(session: Session, tenant_id: int, cab: Cabling | None = None) -> list
                         "text": issue["text"]})  # fmt: skip
         if link.state == "one_sided":
             silent = link.b if link.a.device.key in link.reported_by else link.a
-            text = f"{silent.device.name} meldet die Verbindung nicht (CDP/LLDP aus?)"
+            name = silent.device.name
+            text = L(f"{name} meldet die Verbindung nicht (CDP/LLDP aus?)",
+                     f"{name} does not report the link (CDP/LLDP off?)")  # fmt: skip
             out.append({**base, "type": "link_one_sided", "severity": "info", "text": text})
     return out

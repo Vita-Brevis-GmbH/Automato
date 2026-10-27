@@ -16,63 +16,73 @@ import {
   SyncTarget,
 } from "./api";
 import type { View } from "./App";
+import { L } from "./i18n";
 import { REF_ROLE_LABEL } from "./refs";
 import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead } from "./ui";
 
 const KIND_LABEL: Record<string, string> = {
   tag: "Tag",
   tenant: "Tenant",
-  site_group: "Standort-Gruppe",
-  site: "Standort",
-  manufacturer: "Hersteller",
-  device_role: "Geräterolle",
-  device_type: "Gerätetyp",
-  cluster_type: "Cluster-Typ",
-  cluster_group: "Cluster-Gruppe",
+  site_group: L("Standort-Gruppe", "Site group"),
+  site: L("Standort", "Site"),
+  manufacturer: L("Hersteller", "Manufacturer"),
+  device_role: L("Geräterolle", "Device role"),
+  device_type: L("Gerätetyp", "Device type"),
+  cluster_type: L("Cluster-Typ", "Cluster type"),
+  cluster_group: L("Cluster-Gruppe", "Cluster group"),
   cluster: "Cluster",
   vrf: "VRF",
-  vlan_group: "VLAN-Gruppe",
+  vlan_group: L("VLAN-Gruppe", "VLAN group"),
   vlan: "VLAN",
-  prefix: "Netz",
+  prefix: L("Netz", "Network"),
   ip_range: "Range",
-  device: "Gerät",
+  device: L("Gerät", "Device"),
   interface: "Port",
   virtual_machine: "VM",
-  vm_interface: "VM-Interface",
-  ip_address: "IP-Adresse",
+  vm_interface: L("VM-Interface", "VM interface"),
+  ip_address: L("IP-Adresse", "IP address"),
 };
 const ACTION: Record<string, [string, string]> = {
-  create: ["ok", "anlegen"],
-  update: ["info", "ändern"],
-  unchanged: ["na", "unverändert"],
-  conflict: ["warn", "Konflikt (manuell)"],
-  delete: ["crit", "löschen"],
-  obsolete: ["na", "veraltet"],
+  create: ["ok", L("anlegen", "create")],
+  update: ["info", L("ändern", "update")],
+  unchanged: ["na", L("unverändert", "unchanged")],
+  conflict: ["warn", L("Konflikt (manuell)", "Conflict (manual)")],
+  delete: ["crit", L("löschen", "delete")],
+  obsolete: ["na", L("veraltet", "obsolete")],
 };
 const COLUMNS = ["create", "update", "unchanged", "conflict", "delete", "obsolete"];
 const STATUS: Record<string, [string, string]> = {
-  planning: ["info", "Vorschau läuft…"],
-  ready: ["ok", "Vorschau bereit"],
-  applying: ["info", "wird übernommen…"],
-  applied: ["ok", "übernommen"],
-  failed: ["crit", "fehlgeschlagen"],
-  superseded: ["na", "ersetzt"],
+  planning: ["info", L("Vorschau läuft…", "Preview running…")],
+  ready: ["ok", L("Vorschau bereit", "Preview ready")],
+  applying: ["info", L("wird übernommen…", "Applying…")],
+  applied: ["ok", L("übernommen", "applied")],
+  failed: ["crit", L("fehlgeschlagen", "failed")],
+  superseded: ["na", L("ersetzt", "superseded")],
 };
 const SECTIONS: { key: string; label: string; hint: string }[] = [
   {
     key: "inventory",
-    label: "Netzinventar",
-    hint: "Geräte mit Ports (Modus, VLANs, LAG), VLANs je Quellsystem, reale Subnetze inkl. ACI BD/EPG, VRFs",
+    label: L("Netzinventar", "Network inventory"),
+    hint: L(
+      "Geräte mit Ports (Modus, VLANs, LAG), VLANs je Quellsystem, reale Subnetze inkl. ACI BD/EPG, VRFs",
+      "Devices with ports (mode, VLANs, LAG), VLANs per source system, real subnets incl. ACI BD/EPG, VRFs",
+    ),
   },
   {
     key: "mirror",
-    label: "DDI-Spiegel",
-    hint: "Netze, Ranges und IPs mit DNS-Namen aus dem führenden IPAM (wenn diese NetBox nicht führend ist)",
+    label: L("DDI-Spiegel", "DDI mirror"),
+    hint: L(
+      "Netze, Ranges und IPs mit DNS-Namen aus dem führenden IPAM (wenn diese NetBox nicht führend ist)",
+      "Networks, ranges and IPs with DNS names from the primary IPAM (if this NetBox is not primary)",
+    ),
   },
   {
     key: "virtualization",
-    label: "Virtualisierung",
-    hint: "VMs aus dem vCenter mit Cluster (Datacenter als Gruppe), VM-Interfaces (MAC, Portgruppe, VLAN, EPG) und IPs – ohne Vorlagen",
+    label: L("Virtualisierung", "Virtualization"),
+    hint: L(
+      "VMs aus dem vCenter mit Cluster (Datacenter als Gruppe), VM-Interfaces (MAC, Portgruppe, VLAN, EPG) und IPs – ohne Vorlagen",
+      "VMs from the vCenter with cluster (datacenter as group), VM interfaces (MAC, port group, VLAN, EPG) and IPs – without templates",
+    ),
   },
 ];
 const PAGE = 200;
@@ -157,7 +167,12 @@ export default function NetBoxSync({
     return (
       <>
         <PageHead title="NetBox-Sync" />
-        <Note>Bitte oben einen Mandanten wählen – der Sync schreibt die Daten eines Mandanten in seine NetBox.</Note>
+        <Note>
+          {L(
+            "Bitte oben einen Mandanten wählen – der Sync schreibt die Daten eines Mandanten in seine NetBox.",
+            "Please choose a tenant above – the sync writes the data of a tenant to its NetBox.",
+          )}
+        </Note>
       </>
     );
   }
@@ -197,31 +212,51 @@ export default function NetBoxSync({
   return (
     <>
       <PageHead title="NetBox-Sync">
-        Inventar und DDI-Daten von „{tenantLabel}“ in NetBox ablegen. Einziger Schreibweg von Automato: erst Vorschau,
-        dann Übernahme per Klick. Geändert oder gelöscht werden nur Objekte mit Tag <code>automato</code>; von Hand
-        gepflegte Objekte bleiben, wie sie sind.
+        {L(
+          <>
+            Inventar und DDI-Daten von „{tenantLabel}“ in NetBox ablegen. Einziger Schreibweg von Automato: erst Vorschau,
+            dann Übernahme per Klick. Geändert oder gelöscht werden nur Objekte mit Tag <code>automato</code>; von Hand
+            gepflegte Objekte bleiben, wie sie sind.
+          </>,
+          <>
+            Store inventory and DDI data of “{tenantLabel}” in NetBox. The only write path of Automato: preview first,
+            then apply with a click. Only objects with the tag <code>automato</code> are changed or deleted; objects
+            maintained by hand stay as they are.
+          </>,
+        )}
       </PageHead>
       <ErrorBox error={error} prefix="NetBox-Sync" onClose={() => setError(null)} />
 
       <div className="card">
         <div className="card-head">
-          <h2>Ziel und Umfang</h2>
+          <h2>{L("Ziel und Umfang", "Target and scope")}</h2>
         </div>
         <div className="card-body pad">
           {targets === null ? (
             <Loading />
           ) : targets.length === 0 ? (
             <Note warn>
-              Für diesen Mandanten ist keine NetBox erfasst. Unter{" "}
-              <button className="linkbtn" onClick={() => onGo("tenants")}>
-                Mandanten &amp; Standorte
-              </button>{" "}
-              ein Quellsystem „NetBox“ mit Lese- und Schreib-Token anlegen.
+              {L(
+                <>
+                  Für diesen Mandanten ist keine NetBox erfasst. Unter{" "}
+                  <button className="linkbtn" onClick={() => onGo("tenants")}>
+                    Mandanten &amp; Standorte
+                  </button>{" "}
+                  ein Quellsystem „NetBox“ mit Lese- und Schreib-Token anlegen.
+                </>,
+                <>
+                  No NetBox is registered for this tenant. Under{" "}
+                  <button className="linkbtn" onClick={() => onGo("tenants")}>
+                    Tenants &amp; sites
+                  </button>{" "}
+                  create a source system “NetBox” with read and write token.
+                </>,
+              )}
             </Note>
           ) : (
             <>
               <div className="field">
-                <label htmlFor="sync-target">Ziel-NetBox</label>
+                <label htmlFor="sync-target">{L("Ziel-NetBox", "Target NetBox")}</label>
                 <select
                   id="sync-target"
                   className="sel input"
@@ -230,16 +265,24 @@ export default function NetBoxSync({
                 >
                   {targets.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.name} – {t.base_url || "ohne Adresse"}
+                      {t.name} – {t.base_url || L("ohne Adresse", "no address")}
                       {t.ref_role ? ` (${REF_ROLE_LABEL[t.ref_role] ?? t.ref_role})` : ""}
-                      {t.has_write_token ? "" : " – kein Schreib-Token"}
+                      {t.has_write_token ? "" : L(" – kein Schreib-Token", " – no write token")}
                     </option>
                   ))}
                 </select>
                 {target && !target.has_write_token && (
                   <Note warn>
-                    Für diese NetBox ist kein Schreib-Token hinterlegt. Im Quellsystem unter „Schreib-Token (optional,
-                    nur NetBox-Sync)“ ein Token mit Schreibrecht auf die synchronisierten Objekttypen eintragen.
+                    {L(
+                      <>
+                        Für diese NetBox ist kein Schreib-Token hinterlegt. Im Quellsystem unter „Schreib-Token (optional,
+                        nur NetBox-Sync)“ ein Token mit Schreibrecht auf die synchronisierten Objekttypen eintragen.
+                      </>,
+                      <>
+                        No write token is stored for this NetBox. In the source system, under “Write token (optional,
+                        NetBox sync only)”, enter a token with write permission on the synchronized object types.
+                      </>,
+                    )}
                   </Note>
                 )}
               </div>
@@ -263,8 +306,16 @@ export default function NetBoxSync({
                 <label className="check">
                   <input type="checkbox" checked={allowDelete} onChange={(e) => setAllowDelete(e.target.checked)} />
                   <span>
-                    <b>Löschen zulassen</b> – von Automato angelegte Objekte entfernen, die in der Quelle nicht mehr
-                    vorkommen (sonst nur als „veraltet“ angezeigt)
+                    {L(
+                      <>
+                        <b>Löschen zulassen</b> – von Automato angelegte Objekte entfernen, die in der Quelle nicht mehr
+                        vorkommen (sonst nur als „veraltet“ angezeigt)
+                      </>,
+                      <>
+                        <b>Allow deletion</b> – remove objects created by Automato that no longer occur in the source
+                        (otherwise only shown as “obsolete”)
+                      </>,
+                    )}
                   </span>
                 </label>
               </div>
@@ -273,10 +324,14 @@ export default function NetBoxSync({
                 disabled={busy || running || !target?.has_write_token || !sections.length}
                 onClick={preview}
               >
-                <Icon name="search" size={14} /> {busy ? "Starte…" : "Vorschau erstellen"}
+                <Icon name="search" size={14} />{" "}
+                {busy ? L("Starte…", "Starting…") : L("Vorschau erstellen", "Create preview")}
               </button>
               <span className="faint" style={{ marginLeft: 10, fontSize: 12 }}>
-                liest NetBox nur – geschrieben wird erst nach „Übernehmen“
+                {L(
+                  "liest NetBox nur – geschrieben wird erst nach „Übernehmen“",
+                  "only reads NetBox – writing happens only after “Apply”",
+                )}
               </span>
             </>
           )}
@@ -294,21 +349,21 @@ export default function NetBoxSync({
       {plans.length > 0 && (
         <div className="card">
           <div className="card-head">
-            <h2>Verlauf</h2>
+            <h2>{L("Verlauf", "History")}</h2>
           </div>
           <div className="card-body scroll">
             <table>
               <thead>
                 <tr>
                   <th>#</th>
-                  <th>Erstellt</th>
-                  <th>Ziel</th>
+                  <th>{L("Erstellt", "Created")}</th>
+                  <th>{L("Ziel", "Target")}</th>
                   <th>Status</th>
-                  <th className="num">anlegen</th>
-                  <th className="num">ändern</th>
-                  <th className="num">löschen</th>
-                  <th className="num">Konflikte</th>
-                  <th>Übernommen</th>
+                  <th className="num">{L("anlegen", "create")}</th>
+                  <th className="num">{L("ändern", "update")}</th>
+                  <th className="num">{L("löschen", "delete")}</th>
+                  <th className="num">{L("Konflikte", "Conflicts")}</th>
+                  <th>{L("Übernommen", "Applied")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -345,29 +400,50 @@ export default function NetBoxSync({
 
       {confirm && plan && (
         <Modal
-          title="In NetBox übernehmen?"
+          title={L("In NetBox übernehmen?", "Apply to NetBox?")}
           onClose={() => setConfirm(false)}
           footer={
             <>
               <button className="btn btn-ghost" onClick={() => setConfirm(false)}>
-                Abbrechen
+                {L("Abbrechen", "Cancel")}
               </button>
               <button className="btn btn-primary" onClick={apply}>
-                Übernehmen
+                {L("Übernehmen", "Apply")}
               </button>
             </>
           }
         >
           <p>
-            In <b>{plan.target}</b> (<span className="mono">{plan.target_url}</span>) werden <b>{plan.totals.create}</b>{" "}
-            Objekte angelegt, <b>{plan.totals.update}</b> geändert und <b>{plan.totals.delete}</b> gelöscht.
+            {L(
+              <>
+                In <b>{plan.target}</b> (<span className="mono">{plan.target_url}</span>) werden <b>{plan.totals.create}</b>{" "}
+                Objekte angelegt, <b>{plan.totals.update}</b> geändert und <b>{plan.totals.delete}</b> gelöscht.
+              </>,
+              <>
+                In <b>{plan.target}</b> (<span className="mono">{plan.target_url}</span>), <b>{plan.totals.create}</b>{" "}
+                objects will be created, <b>{plan.totals.update}</b> updated and <b>{plan.totals.delete}</b> deleted.
+              </>,
+            )}
           </p>
           {plan.totals.conflict > 0 && (
-            <Note>{plan.totals.conflict} von Hand gepflegte Objekte weichen ab und bleiben unverändert.</Note>
+            <Note>
+              {L(
+                <>{plan.totals.conflict} von Hand gepflegte Objekte weichen ab und bleiben unverändert.</>,
+                <>{plan.totals.conflict} objects maintained by hand differ and stay unchanged.</>,
+              )}
+            </Note>
           )}
           <Note>
-            Vor dem Schreiben berechnet Automato die Vorschau neu. Hat sich NetBox oder Automato seitdem geändert, wird
-            nichts geschrieben. Danach wird NetBox neu eingelesen; die Aktion wird im Audit-Log festgehalten.
+            {L(
+              <>
+                Vor dem Schreiben berechnet Automato die Vorschau neu. Hat sich NetBox oder Automato seitdem geändert, wird
+                nichts geschrieben. Danach wird NetBox neu eingelesen; die Aktion wird im Audit-Log festgehalten.
+              </>,
+              <>
+                Before writing, Automato recalculates the preview. If NetBox or Automato has changed since, nothing is
+                written. Afterwards NetBox is collected again; the action is recorded in the audit log.
+              </>,
+            )}
           </Note>
         </Modal>
       )}
@@ -388,27 +464,30 @@ function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => 
     <div className="card">
       <div className="card-head">
         <h2>
-          Vorschau #{plan.id} · {plan.target}
+          {L(<>Vorschau #{plan.id} · {plan.target}</>, <>Preview #{plan.id} · {plan.target}</>)}
         </h2>
         <Chip map={STATUS} value={plan.status} />
         <span className="faint" style={{ fontSize: 12 }}>
           {fmtTime(plan.created_at)} · {plan.created_by} ·{" "}
           {(plan.options.sections ?? []).map((s) => SECTIONS.find((x) => x.key === s)?.label ?? s).join(" + ")}
-          {plan.options.allow_delete ? " · Löschen zugelassen" : ""}
+          {plan.options.allow_delete ? L(" · Löschen zugelassen", " · deletion allowed") : ""}
         </span>
         <div className="spacer" />
         {plan.status === "ready" && (
           <button className="btn btn-primary" disabled={!plan.can_apply} onClick={onApply}>
-            <Icon name="play" size={14} /> Übernehmen
+            <Icon name="play" size={14} /> {L("Übernehmen", "Apply")}
           </button>
         )}
         {running && (
           <button
             className="btn btn-ghost btn-sm"
-            title="Beenden – z. B. hängt der Plan nach einem Neustart des Orchestrators. Die Übernahme hört vor der nächsten Objektart auf; bereits Geschriebenes bleibt."
+            title={L(
+              "Beenden – z. B. hängt der Plan nach einem Neustart des Orchestrators. Die Übernahme hört vor der nächsten Objektart auf; bereits Geschriebenes bleibt.",
+              "Stop – e.g. the plan hangs after a restart of the orchestrator. Applying stops before the next object type; what has already been written stays.",
+            )}
             onClick={onCancel}
           >
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
         )}
       </div>
@@ -416,7 +495,9 @@ function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => 
         <div className="card-body pad">
           {running && (
             <Loading>
-              {plan.status === "planning" ? "Lese NetBox und berechne die Vorschau…" : "Schreibe nach NetBox…"}
+              {plan.status === "planning"
+                ? L("Lese NetBox und berechne die Vorschau…", "Reading NetBox and calculating the preview…")
+                : L("Schreibe nach NetBox…", "Writing to NetBox…")}
             </Loading>
           )}
           {plan.message && <Note warn={plan.status === "failed"}>{plan.message}</Note>}
@@ -428,8 +509,14 @@ function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => 
           {plan.status === "ready" && !plan.can_apply && (
             <Note>
               {plan.totals.create + plan.totals.update + plan.totals.delete === 0
-                ? "NetBox ist auf dem Stand von Automato – nichts zu schreiben."
-                : "Vorschau ist älter als 60 Minuten – bitte neu erstellen."}
+                ? L(
+                    "NetBox ist auf dem Stand von Automato – nichts zu schreiben.",
+                    "NetBox is up to date with Automato – nothing to write.",
+                  )
+                : L(
+                    "Vorschau ist älter als 60 Minuten – bitte neu erstellen.",
+                    "Preview is older than 60 minutes – please create it again.",
+                  )}
             </Note>
           )}
           {plan.result && (
@@ -450,7 +537,7 @@ function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => 
           <table>
             <thead>
               <tr>
-                <th>Art</th>
+                <th>{L("Art", "Type")}</th>
                 {COLUMNS.map((c) => (
                   <th key={c} className="num">
                     {ACTION[c][1]}
@@ -504,12 +591,12 @@ function Items({ plan, kinds }: { plan: SyncPlan; kinds: string[] }) {
   }, [plan.id, action, kind, query, offset]);
 
   const filters: [string, string][] = [
-    ["create,update,conflict,delete", "alle Änderungen"],
-    ["create", "anlegen"],
-    ["update", "ändern"],
-    ["conflict", "Konflikte"],
-    ["delete", "löschen"],
-    ["obsolete", "veraltet"],
+    ["create,update,conflict,delete", L("alle Änderungen", "all changes")],
+    ["create", L("anlegen", "create")],
+    ["update", L("ändern", "update")],
+    ["conflict", L("Konflikte", "Conflicts")],
+    ["delete", L("löschen", "delete")],
+    ["obsolete", L("veraltet", "obsolete")],
   ];
   return (
     <>
@@ -522,7 +609,7 @@ function Items({ plan, kinds }: { plan: SyncPlan; kinds: string[] }) {
           ))}
         </div>
         <select className="sel" value={kind} onChange={(e) => setKind(e.target.value)}>
-          <option value="">Art: alle</option>
+          <option value="">{L("Art: alle", "Type: all")}</option>
           {kinds.map((k) => (
             <option key={k} value={k}>
               {KIND_LABEL[k]}
@@ -533,7 +620,11 @@ function Items({ plan, kinds }: { plan: SyncPlan; kinds: string[] }) {
           <span className="ico">
             <Icon name="search" />
           </span>
-          <input placeholder="Objekt suchen…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input
+            placeholder={L("Objekt suchen…", "Search object…")}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
         </div>
       </div>
       <ErrorBox error={error} />
@@ -541,14 +632,16 @@ function Items({ plan, kinds }: { plan: SyncPlan; kinds: string[] }) {
         {data === null ? (
           <Loading />
         ) : data.rows.length === 0 ? (
-          <Empty title="Keine Einträge">Für diesen Filter gibt es nichts zu tun.</Empty>
+          <Empty title={L("Keine Einträge", "No entries")}>
+            {L("Für diesen Filter gibt es nichts zu tun.", "There is nothing to do for this filter.")}
+          </Empty>
         ) : (
           <table>
             <thead>
               <tr>
-                <th>Aktion</th>
-                <th>Art</th>
-                <th>Objekt</th>
+                <th>{L("Aktion", "Action")}</th>
+                <th>{L("Art", "Type")}</th>
+                <th>{L("Objekt", "Object")}</th>
                 <th>Details</th>
               </tr>
             </thead>
@@ -584,16 +677,23 @@ function Items({ plan, kinds }: { plan: SyncPlan; kinds: string[] }) {
       </div>
       {data && data.total > PAGE && (
         <div className="pager">
-          {offset + 1}–{Math.min(offset + PAGE, data.total)} von {data.total}
+          {L(
+            <>
+              {offset + 1}–{Math.min(offset + PAGE, data.total)} von {data.total}
+            </>,
+            <>
+              {offset + 1}–{Math.min(offset + PAGE, data.total)} of {data.total}
+            </>,
+          )}
           <button className="btn btn-ghost btn-sm" disabled={offset === 0} onClick={() => setOffset(offset - PAGE)}>
-            Zurück
+            {L("Zurück", "Back")}
           </button>
           <button
             className="btn btn-ghost btn-sm"
             disabled={offset + PAGE >= data.total}
             onClick={() => setOffset(offset + PAGE)}
           >
-            Weiter
+            {L("Weiter", "Next")}
           </button>
         </div>
       )}

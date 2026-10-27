@@ -37,7 +37,14 @@ def describe_error(exc: Exception) -> str:
             "ConnectError": " - Verbindung abgelehnt bzw. Name unbekannt",
         }.get(type(exc).__name__, "")
         return f"nicht erreichbar{url}: {type(exc).__name__} {exc}".rstrip() + hint
-    return f"{type(exc).__name__}: {exc}{url}"
+    hint = ""
+    if isinstance(exc, httpx.RemoteProtocolError) and url.strip().startswith("http://"):
+        # 0.78.2 (Befund des Anwenders): seit TLS intern spricht der Orchestrator auf :8000 nur
+        # HTTPS - eine Klartext-Anfrage beendet er ohne Antwort
+        hint = (" - spricht der Orchestrator HTTPS (TLS intern)? In agent.env "
+                "AUTOMATO_ORCHESTRATOR_URL=https://… und AUTOMATO_ORCHESTRATOR_CA_BUNDLE=<Pfad zu "
+                "automato-ca.crt> setzen (Web-UI: Collector-Agenten → Einrichtung)")  # fmt: skip
+    return f"{type(exc).__name__}: {exc}{url}{hint}"
 
 
 def client_kwargs(settings: Settings) -> dict[str, Any]:

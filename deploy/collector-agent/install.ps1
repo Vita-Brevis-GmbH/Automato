@@ -117,6 +117,32 @@ elseif (-not (Test-Path $envFile)) {
     Write-Host "Bitte $envFile mit echten Werten fuellen (Agent-Token, Ziel-Creds, TLS)."
 }
 
+# TLS intern (0.78.2): das Paket bringt die CA des Orchestrators mit (nur das Zertifikat). Wer
+# direkt auf Port 8000 zugreift, braucht https:// und diese CA - sonst beendet der Orchestrator
+# die Verbindung ohne Antwort ("Server disconnected").
+$caNext = Join-Path $PSScriptRoot "automato-ca.crt"
+if ((Test-Path $caNext) -and (Test-Path $envFile)) {
+    $caFile = Join-Path $InstallDir "automato-ca.crt"
+    Copy-Item $caNext $caFile -Force
+    $lines = @(Get-Content $envFile)
+    $changed = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*AUTOMATO_ORCHESTRATOR_URL\s*=\s*http://([^/\s]+:8000)\s*$') {
+            $lines[$i] = "AUTOMATO_ORCHESTRATOR_URL=https://$($Matches[1])"
+            Write-Host "agent.env: Orchestrator-URL auf https://$($Matches[1]) umgestellt (TLS intern)."
+            $changed = $true
+        }
+    }
+    $direct = $lines | Where-Object { $_ -match '^\s*AUTOMATO_ORCHESTRATOR_URL\s*=\s*https://[^/\s]+:8000\s*$' }
+    $hasCa = $lines | Where-Object { $_ -match '^\s*AUTOMATO_ORCHESTRATOR_CA_BUNDLE\s*=' }
+    if ($direct -and -not $hasCa) {
+        $lines += "AUTOMATO_ORCHESTRATOR_CA_BUNDLE=$caFile"
+        Write-Host "agent.env: AUTOMATO_ORCHESTRATOR_CA_BUNDLE=$caFile ergaenzt."
+        $changed = $true
+    }
+    if ($changed) { Set-Content -Path $envFile -Value $lines -Encoding ASCII }
+}
+
 # Geplante Aufgabe (SYSTEM, Start alle N Minuten). Der Agent bleibt dazwischen wach und fragt
 # alle $WatchSeconds s nach Laeufen; er endet 1 min vor dem naechsten Start. Laeuft er noch
 # (langer Lauf), wird der naechste Start ausgelassen (IgnoreNew) - nie zwei Agenten parallel.

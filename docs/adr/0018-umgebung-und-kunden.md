@@ -2,7 +2,7 @@
 
 ## Status
 
-**Entwurf** (2026-10-22) – zur Durchsicht durch den Anwender; Schritte 1–3 umgesetzt in 0.30.0–0.33.0, Schritt 4 in 0.53.0 und 0.58.0
+**Entwurf** (2026-10-22) – zur Durchsicht durch den Anwender; Schritte 1–3 umgesetzt in 0.30.0–0.33.0, Schritt 4 in 0.53.0 und 0.58.0, der Kunden-Filter für alle Ansichten in 0.76.0
 (siehe „Umsetzung“). Präzisiert ADR 0004
 (Ergänzung E1, Ebene über dem Mandanten) und ADR 0007 (Rechte); betrifft R13 und R14.
 
@@ -138,6 +138,28 @@ Grundsatzentscheide des Anwenders (2026-10-22):
    **Präzisiert in 0.33.0:** Der geteilte Teil gibt Zusammenhang – seine EPGs, Netze und
    Objekte zählen für alle Kunden. Regeln, NAT, Findings und VMs zählen nur aus den eigenen
    Kunden (eine Regel von Kunde B zum geteilten DNS betrifft Kunde A nicht, Nr. 8).
+   **Ergänzung 0.76.0 (Anwender: „oben den Kunden wählen, und alles filtert nach dem Kunden –
+   keine zusätzlichen Infos“; Entscheid: eigenes plus geteiltes, das geteilte markiert):** der
+   Umschalter gilt jetzt auch für Routing (Kontexte, Routen, Nachbarn, HA, Policy-Routen,
+   L3Outs, Anbindungen, parallele Firewalls), Topologie, Weg-Suche (Namen), Inventar (Subnetze,
+   VLANs, Ports, Geräte, VRFs), Verkabelung (Geräte, Kabel, Ports, VLANs, Endpunkte, Plan),
+   Abgleich, publizierte Dienste und Zonen (Liste, Matrix). `store/customer_infra.py` bestimmt
+   den Ausschnitt auf der Infrastruktur:
+   - **Kontexte:** VDOMs der VDOM-Selektoren und der Regeln, VRFs der EPGs. *Eigen* nur über
+     einen VDOM-Selektor des Kunden bzw. im eigenen ACI-Tenant und ohne Regeln/EPGs anderer
+     Kunden, sonst *geteilt*. In geteilten Kontexten zeigt das Routing nur Routen, die ein Netz
+     des Kunden enthalten oder darin liegen (Default-Route eingeschlossen) – keine Routen
+     anderer Kunden.
+   - **Netze, EPGs, VLANs, Ports, Geräte:** Netze und EPGs aus der Zugehörigkeit; VLANs der
+     EPGs, der Netze und der Portgruppen; Ports mit seinen EPGs, in seinen VDOMs, mit IPs in
+     seinen Netzen bzw. seinen VLANs; Geräte an diesen Ports, Knoten seiner Kontexte und
+     ESXi-Hosts seiner VMs; Kabel mit einem solchen Ende; Endpunkte = NICs seiner VMs bzw. IPs in
+     seinen Netzen.
+   - Geteilte Elemente tragen `shared: true` („geteilt“ in der Oberfläche); oben steht, dass
+     ein Ausschnitt gezeigt wird („alle Kunden“ hebt ihn auf).
+   - Unverändert ohne Kunden: Betrieb (Läufe, Betriebszustand, Quellsysteme) und die Weg-Suche
+     selbst (ein eingegebener Weg wird ganz geprüft; nur die Namenssuche ist eingeschränkt).
+     Kunden-Benutzer erreichen diese Ansichten weiterhin nicht (Freigabeliste).
 3. Kunden-Benutzer: `customer_ids` in Keycloak, serverseitige Einschränkung aller Lese-APIs,
    Tests je Endpunkt. **Umgesetzt in 0.33.0:**
    - Erkennung: Realm-Rolle `customer` bzw. Kunden im Claim `customer_ids` (leerer Claim

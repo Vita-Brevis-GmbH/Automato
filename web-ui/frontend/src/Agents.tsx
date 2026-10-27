@@ -3,6 +3,7 @@ import { Agent, AgentCreated, createAgent, fetchAgents, setAgentAutoUpdate, setA
 import AgentGuide from "./AgentGuide";
 import type { View } from "./App";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead } from "./ui";
+import { L } from "./i18n";
 
 // Agent-Verwaltung (ADR 0008/0009): externe Collector-Agenten anlegen/deaktivieren, Heartbeat
 // (last_seen) und zugewiesene Geräte sehen. Geräte + Zugangsdaten werden beim Mandanten
@@ -10,11 +11,11 @@ import { Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead } from "
 const ONLINE_MS = 15 * 60 * 1000;
 
 function onlineState(a: Agent): [string, string, string] {
-  if (!a.enabled) return ["na", "n", "deaktiviert"];
-  if (!a.last_seen) return ["warn", "y", "noch nie verbunden"];
+  if (!a.enabled) return ["na", "n", L("deaktiviert", "disabled")];
+  if (!a.last_seen) return ["warn", "y", L("noch nie verbunden", "never connected")];
   return Date.now() - new Date(a.last_seen).getTime() < ONLINE_MS
     ? ["ok", "g", "online"]
-    : ["warn", "y", "keine Meldung"];
+    : ["warn", "y", L("keine Meldung", "no report")];
 }
 
 export default function Agents({
@@ -45,10 +46,19 @@ export default function Agents({
   }, []);
 
   const tenantName = (id: number | null) =>
-    id == null ? "alle Mandanten" : (tenants.find((t) => t.id === id)?.name ?? `#${id}`);
+    id == null ? L("alle Mandanten", "all tenants") : (tenants.find((t) => t.id === id)?.name ?? `#${id}`);
 
   const toggle = async (a: Agent) => {
-    if (a.enabled && !window.confirm(`Agent „${a.name}“ deaktivieren? Sein Token wird sofort abgelehnt.`)) return;
+    if (
+      a.enabled &&
+      !window.confirm(
+        L(
+          `Agent „${a.name}“ deaktivieren? Sein Token wird sofort abgelehnt.`,
+          `Disable agent “${a.name}”? Its token will be rejected immediately.`,
+        ),
+      )
+    )
+      return;
     setErr(null);
     try {
       await setAgentEnabled(a.id, !a.enabled);
@@ -81,28 +91,37 @@ export default function Agents({
   return (
     <>
       <PageHead
-        title="Collector-Agenten"
+        title={L("Collector-Agenten", "Collector agents")}
         actions={
           <button className="btn btn-primary btn-sm" onClick={() => setNewOpen(true)}>
             + Agent
           </button>
         }
       >
-        Agenten laufen nahe an den Geräten im Kundennetz (z. B. Windows) und sprechen nur ausgehend HTTPS mit
-        dem Orchestrator. Welche Geräte ein Agent liest, legst du beim Mandanten unter Quellsysteme fest
-        („Verwaltet von“) – die Zugangsdaten bekommt er von dort pro Lauf.
+        {L(
+          "Agenten laufen nahe an den Geräten im Kundennetz (z. B. Windows) und sprechen nur ausgehend HTTPS mit dem Orchestrator. Welche Geräte ein Agent liest, legst du beim Mandanten unter Quellsysteme fest („Verwaltet von“) – die Zugangsdaten bekommt er von dort pro Lauf.",
+          "Agents run close to the devices in the customer network (e.g. Windows) and talk to the orchestrator only via outbound HTTPS. Which devices an agent reads is set on the tenant under Source systems (“Managed by”) – it receives the credentials from there for each run.",
+        )}
       </PageHead>
 
       <ErrorBox error={err} onClose={() => setErr(null)} />
 
       {created && (
         <div className="secret">
-          <b>Agent-Token für „{created.name}“ – wird nur jetzt angezeigt.</b> Ist unten in der Einrichtung
-          bereits in die <code>agent.env</code> übernommen (Schritt 3) – oder hier kopieren.
+          {L(
+            <>
+              <b>Agent-Token für „{created.name}“ – wird nur jetzt angezeigt.</b> Ist unten in der Einrichtung
+              bereits in die <code>agent.env</code> übernommen (Schritt 3) – oder hier kopieren.
+            </>,
+            <>
+              <b>Agent token for “{created.name}” – shown only now.</b> Already entered into <code>agent.env</code>{" "}
+              in the setup below (step 3) – or copy it here.
+            </>,
+          )}
           <code className="token">{created.token}</code>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-ghost btn-sm" onClick={copy}>
-              {copied ? "Kopiert ✓" : "In Zwischenablage kopieren"}
+              {copied ? L("Kopiert ✓", "Copied ✓") : L("In Zwischenablage kopieren", "Copy to clipboard")}
             </button>
             <button
               className="btn btn-primary btn-sm"
@@ -111,7 +130,7 @@ export default function Agents({
                 setCopied(false);
               }}
             >
-              Gespeichert – ausblenden
+              {L("Gespeichert – ausblenden", "Saved – hide")}
             </button>
           </div>
         </div>
@@ -119,10 +138,10 @@ export default function Agents({
 
       <div className="card">
         <div className="card-head">
-          <h2>Registrierte Agenten</h2>
+          <h2>{L("Registrierte Agenten", "Registered agents")}</h2>
           <div className="spacer" />
           <button className="btn btn-ghost btn-sm" onClick={load}>
-            Aktualisieren
+            {L("Aktualisieren", "Refresh")}
           </button>
         </div>
         <div className="card-body scroll">
@@ -130,25 +149,35 @@ export default function Agents({
             <Loading />
           ) : agents.length === 0 ? (
             <Empty
-              title="Noch keine Agenten"
+              title={L("Noch keine Agenten", "No agents yet")}
               action={
                 <button className="btn btn-primary btn-sm" onClick={() => setNewOpen(true)}>
-                  + Agent anlegen
+                  {L("+ Agent anlegen", "+ Create agent")}
                 </button>
               }
             >
-              Die Einrichtung ist unten Schritt für Schritt beschrieben.
+              {L(
+                "Die Einrichtung ist unten Schritt für Schritt beschrieben.",
+                "The setup is described step by step below.",
+              )}
             </Empty>
           ) : (
             <table>
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Mandant</th>
-                  <th>Geräte</th>
+                  <th>{L("Mandant", "Tenant")}</th>
+                  <th>{L("Geräte", "Devices")}</th>
                   <th>Status</th>
-                  <th>Zuletzt gesehen</th>
-                  <th title="Paket-Version des Agenten; mit Auto-Update aktualisiert er sich selbst">Version</th>
+                  <th>{L("Zuletzt gesehen", "Last seen")}</th>
+                  <th
+                    title={L(
+                      "Paket-Version des Agenten; mit Auto-Update aktualisiert er sich selbst",
+                      "Package version of the agent; with auto-update it updates itself",
+                    )}
+                  >
+                    Version
+                  </th>
                   <th></th>
                 </tr>
               </thead>
@@ -163,16 +192,20 @@ export default function Agents({
                       <td>{tenantName(a.tenant_id)}</td>
                       <td>
                         {a.systems.length === 0 ? (
-                          <span className="faint">keine zugewiesen</span>
+                          <span className="faint">{L("keine zugewiesen", "none assigned")}</span>
                         ) : (
                           a.systems.map((d) => (
                             <span
                               key={d.id}
                               className={`chip ${d.has_credentials ? "" : "warn"}`}
-                              title={d.has_credentials ? "Zugangsdaten hinterlegt" : "keine Zugangsdaten hinterlegt"}
+                              title={
+                                d.has_credentials
+                                  ? L("Zugangsdaten hinterlegt", "Credentials stored")
+                                  : L("keine Zugangsdaten hinterlegt", "no credentials stored")
+                              }
                             >
                               {d.name}
-                              {d.has_credentials ? "" : " · ohne Token"}
+                              {d.has_credentials ? "" : L(" · ohne Token", " · without token")}
                             </span>
                           ))
                         )}
@@ -199,14 +232,22 @@ export default function Agents({
                             className={`chip ${a.auto_update ? "info" : "warn"}`}
                             title={
                               a.auto_update
-                                ? "Neue Version verfügbar – der Agent aktualisiert sich beim nächsten Aufruf selbst"
-                                : "Neue Version verfügbar – Auto-Update aus: Paket manuell installieren"
+                                ? L(
+                                    "Neue Version verfügbar – der Agent aktualisiert sich beim nächsten Aufruf selbst",
+                                    "New version available – the agent updates itself on its next call",
+                                  )
+                                : L(
+                                    "Neue Version verfügbar – Auto-Update aus: Paket manuell installieren",
+                                    "New version available – auto-update off: install the package manually",
+                                  )
                             }
                           >
-                            {a.auto_update ? "Update beim nächsten Lauf" : "veraltet"}
+                            {a.auto_update
+                              ? L("Update beim nächsten Lauf", "Update on next run")
+                              : L("veraltet", "outdated")}
                           </span>
                         )}
-                        {a.update_available === false && <span className="chip ok">aktuell</span>}
+                        {a.update_available === false && <span className="chip ok">{L("aktuell", "up to date")}</span>}
                         {a.update_note && (
                           <div className="run-msg err" title={a.update_note}>
                             {a.update_note}
@@ -219,7 +260,7 @@ export default function Agents({
                       </td>
                       <td className="actions">
                         <button className={`btn btn-sm ${a.enabled ? "btn-danger" : "btn-ghost"}`} onClick={() => toggle(a)}>
-                          {a.enabled ? "Deaktivieren" : "Aktivieren"}
+                          {a.enabled ? L("Deaktivieren", "Disable") : L("Aktivieren", "Enable")}
                         </button>
                       </td>
                     </tr>
@@ -285,15 +326,15 @@ function NewAgentDialog({
 
   return (
     <Modal
-      title="Neuer Collector-Agent"
+      title={L("Neuer Collector-Agent", "New collector agent")}
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button className="btn btn-primary" onClick={submit} disabled={busy || !name.trim()}>
-            {busy ? "Lege an…" : "Anlegen & Token erzeugen"}
+            {busy ? L("Lege an…", "Creating…") : L("Anlegen & Token erzeugen", "Create & generate token")}
           </button>
         </>
       }
@@ -306,13 +347,13 @@ function NewAgentDialog({
           className="input"
           value={name}
           autoFocus
-          placeholder="z. B. agent-win-01"
+          placeholder={L("z. B. agent-win-01", "e.g. agent-win-01")}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
         />
       </div>
       <div className="field">
-        <label htmlFor="na-tenant">Mandant</label>
+        <label htmlFor="na-tenant">{L("Mandant", "Tenant")}</label>
         <select
           id="na-tenant"
           className="sel input"
@@ -324,15 +365,22 @@ function NewAgentDialog({
               {t.name}
             </option>
           ))}
-          <option value="">alle Mandanten</option>
+          <option value="">{L("alle Mandanten", "all tenants")}</option>
         </select>
         <div className="hint">
-          Der Agent kann Geräte dieses Mandanten verwalten. Zuweisung danach beim Mandanten unter Quellsysteme.
+          {L(
+            "Der Agent kann Geräte dieses Mandanten verwalten. Zuweisung danach beim Mandanten unter Quellsysteme.",
+            "The agent can manage devices of this tenant. Assign them afterwards on the tenant under Source systems.",
+          )}
         </div>
       </div>
       <Note>
         <span>
-          <Icon name="lock" size={13} /> Das Token wird nur einmal angezeigt; gespeichert wird nur ein Hash.
+          <Icon name="lock" size={13} />{" "}
+          {L(
+            "Das Token wird nur einmal angezeigt; gespeichert wird nur ein Hash.",
+            "The token is shown only once; only a hash is stored.",
+          )}
         </span>
       </Note>
     </Modal>

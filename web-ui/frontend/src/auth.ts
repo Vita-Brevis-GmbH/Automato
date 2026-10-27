@@ -6,6 +6,7 @@ import type { ServerMe } from "./api";
 // Im dev-Modus (auth_mode != "oidc") ist kein Manager aktiv und es gibt kein Token.
 import { User, UserManager, WebStorageStateStore } from "oidc-client-ts";
 import type { AuthConfig } from "./api";
+import { L } from "./i18n";
 
 const redirect = window.location.origin + window.location.pathname;
 let manager: UserManager | null = null;
@@ -91,7 +92,10 @@ export async function ensureSession(): Promise<User | null> {
     if (renewed && !renewed.expired) return renewed;
   }
   await relogin(
-    user ? `Token-Erneuerung bei Keycloak fehlgeschlagen${renewError ? `: ${renewError}` : ""}` : "",
+    user
+      ? L("Token-Erneuerung bei Keycloak fehlgeschlagen", "Token renewal at Keycloak failed") +
+          (renewError ? `: ${renewError}` : "")
+      : "",
   );
   return null;
 }
@@ -106,7 +110,9 @@ export async function accessToken(): Promise<string | null> {
 export async function relogin(reason: string): Promise<void> {
   const last = Number(session(LOGIN_AT) ?? 0);
   if (last && Date.now() - last < LOOP_WINDOW_MS) {
-    problemHandler?.(reason || "Anmeldung wird vom Orchestrator nicht akzeptiert.");
+    problemHandler?.(
+      reason || L("Anmeldung wird vom Orchestrator nicht akzeptiert.", "Sign-in is not accepted by the orchestrator."),
+    );
     return;
   }
   await login();
@@ -141,7 +147,7 @@ export interface Me {
 }
 
 export const DEV_ME: Me = {
-  name: "Entwicklung",
+  name: L("Entwicklung", "Development"),
   username: "dev",
   roles: ["admin"],
   tenantIds: null,
@@ -187,7 +193,7 @@ export function devMe(): Me {
   if (!c) return DEV_ME;
   return {
     ...DEV_ME,
-    name: "Kunde (Vorführung)",
+    name: L("Kunde (Vorführung)", "Customer (demo)"),
     roles: ["viewer"],
     tenantIds: [c.tenant],
     isAdmin: false,
@@ -273,9 +279,9 @@ export function withServer(me: Me, s: ServerMe): Me {
 }
 
 export function roleLabel(me: Me): string {
-  if (me.isCustomer) return me.roles.includes("operator") ? "Kunde · Operator" : "Kunde";
-  if (me.isAdmin) return "Globaler Admin";
+  if (me.isCustomer) return me.roles.includes("operator") ? L("Kunde · Operator", "Customer · operator") : L("Kunde", "Customer");
+  if (me.isAdmin) return L("Globaler Admin", "Global admin");
   if (me.roles.includes("operator")) return "Operator";
   if (me.roles.includes("viewer")) return "Viewer";
-  return "ohne Rolle";
+  return L("ohne Rolle", "no role");
 }

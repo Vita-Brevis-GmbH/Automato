@@ -19,6 +19,14 @@ class PublishedServiceOut(BaseModel):
     protocol: str | None = None
     portforward: bool = False
     rule_count: int = 0
+    source: str | None = None  # Quellsystem (FortiGate bzw. NSX ALB)
+    platform: str | None = None  # fortigate | avi (0.77.0, ADR 0027)
+    servers: int = 0  # Server des Pools bzw. Real Server
+    pool: str | None = None  # NSX ALB: Pool bzw. Pool Group
+    # 0.79.0: VIP der FortiGate -> Virtual Services des NSX ALB dahinter (Name, VIP, Pool,
+    # Server) bzw. beim Virtual Service die VIPs der FortiGate davor (Name, externe IP)
+    balancers: list[dict] = []
+    fronted_by: list[dict] = []
 
 
 class PublishedServiceDetailOut(PublishedServiceOut):

@@ -142,3 +142,71 @@ an den Verbindungen die Ports.
 - **Nicht** Teil dieser Stufe: physische Ports der Switches (L2-Abschnitte stehen in der
   Weg-Suche, ADR 0025), Export nach NetBox.
 
+## Ergänzung 0.73.0 — Befund nur bei uneinheitlichen Wegen
+
+Rückmeldung des Anwenders (2026-10-26): Verbindungen, die der Weg sperrt bzw. deren Regel nicht
+auf dem Weg liegt, haben einen Grund und sind kein Befund; gefunden werden soll, wenn eine
+Verbindung über einen Weg offen und über einen anderen gesperrt ist.
+
+- **Wege je Verbindung** (`app_paths.path_variants`): die Weg-Suche liefert neben den aktiven
+  Wegen (ECMP) die Backup-Wege gleicher Länge (`slack` 0); je Weg das Urteil aus den Hops mit
+  Regeln. Ein Verbund ist ein Hop mit einer Zeile je Firewall (`hop.parts`); urteilen seine
+  Firewalls verschieden, zählt je Firewall ein eigener Weg („fw-r → fw-p1“, „fw-r → fw-p2“).
+  `variants` (aktiv bzw. Backup, über, Urteil, Text, Grund der Abweichung) nur bei mehr als
+  einem Weg.
+- **Uneinheitlich** (`inconsistent`): mindestens ein Weg erlaubt und mindestens einer sperrt.
+  „Abhängig“ bzw. „unbekannt“ allein reichen nicht. Zusammenfassung `inconsistent`; Oberfläche
+  „Wege uneinheitlich“ in Kopf, Zeile und Detail (Urteil je Weg), Markdown und Word in der
+  Spalte Abweichung.
+- **Befund `app_connection_mismatch`** (Bezeichnung „Applikation: Wege uneinheitlich“) nur noch
+  für uneinheitliche Verbindungen einer erlaubenden Regel; im Detail je Verbindung die Wege
+  (höchstens 6). Die bisherige Abweichung (Weg sperrt, Regel nicht auf dem Weg bzw. greift dort
+  nicht) bleibt in der Karte, ist aber kein Befund mehr. Typ, Gegenstand, Zeitpunkte und
+  Zeitbudget wie in 0.59.0; ohne Migration (abgeleiteter Zustand, bestehende Befunde fallen beim
+  nächsten Abgleich weg).
+
+## Ergänzung 0.74.0 — Netzwerkplan kompakt
+
+Rückmeldung des Anwenders (2026-10-26): der Plan ist zu gross und hat zu viele Linien; die VMs in
+der EPG zeigen, Rahmen um das Application Profile, Verbindungen zu den aktiven L3Outs, die
+angebundenen Firewalls und Ziele, je Knoten eine kleine Box mit Regel und Filter in einer
+ausblendbaren Ebene, Zoom/Scrollen. Entscheid: eigener Plan in Automato (keine Einbettung von
+draw.io), der Export nach draw.io bleibt.
+
+- **Aufbau statt Systeme:** `app_paths.members` (EPGs mit Tenant/AP und VRF, Systeme mit ihren
+  EPGs) geht an `app_plan.build`. Eigene Knoten sind EPGs (`epg:<Tenant/AP/EPG>`) mit ihren VMs
+  bzw. Servern als Zeilen (höchstens 6) im Rahmen ihres APs; ein System gehört zu seiner ersten
+  EPG der Applikation. Systeme ohne EPG stehen einzeln im Rahmen „ohne EPG“; ohne `members`
+  (reine Tests) wie bisher je System.
+- **L3Out:** `app_paths.L3Outs` liest die L3Outs der ACI-Quellsysteme je VRF (Netze und
+  Interfaces der Pfade, Peers) und bestimmt je ACI-Hop den L3Out des Ein- und Ausgangs
+  (`l3out_in`/`l3out_out`); `aci_check` nennt die L3Outs der externen EPGs (`l3outs`). Der Plan
+  nimmt den zur Gegenstelle hin (ausgehend Ausgang, eingehend Eingang), sonst den der Prüfung,
+  sonst – Hop direkt vor einer externen EPG – deren L3Out; Knoten `l3o:<Hop>|<L3Out>`, sonst die
+  VRF.
+- **Ebene „Regeln“:** je Knoten des Wegs die entscheidenden Policies bzw. Contracts der
+  erreichenden Verbindungen mit ihren Diensten (`rules`, `rule_lines`, höchstens 5), ohne
+  entscheidende Regel und gesperrt „implizit gesperrt“, im Verbund mit der Firewall. Der Kasten
+  steht unter dem Knoten (`rules_box`) und nimmt in der Spalte Platz; im draw.io eine eigene
+  Ebene (`mxCell` „Regeln“ mit `parent="0"`), im SVG eine Gruppe; `rules=false` lässt sie weg.
+- **Layout:** die Applikation nach AP und EPG (nicht nach dem Baryzentrum), Rahmen je AP
+  (`groups`), schmalere Spalten. Oberfläche mit Zoom, Verschieben und den Ebenen „Regeln“ bzw.
+  „Dienste und Interfaces“ (Browser).
+
+
+## Ergänzung 0.85.0 — VIP und Load Balancer im Netzwerkplan
+
+Rückmeldung des Anwenders: „die EPG VIP mit dem Loadbalancer auch einzeichnen und entsprechend
+verbinden mit den Ziel-EPGs“.
+
+- Ein Weg über einen Virtual Service des NSX ALB (ADR 0027) bekommt nach dem Hop, an dem dessen
+  VIP liegt, einen eigenen Knoten **Load Balancer**. Im ACI heisst er wie die EPG der VIP
+  (`epg_locate`: statischer Endpunkt, Portgruppe, gelernt, Subnetz), an einer Firewall wie der
+  Load Balancer; die Virtual Services stehen als Zeilen darin. Von dort führt die Linie zur EPG
+  der Server.
+- Geht der Weg nach dem Load Balancer am selben Knoten weiter (dieselbe VRF bzw. Firewall),
+  steht dieser nicht ein zweites Mal im Plan; die Regeln dieses Abschnitts (Contract VIP-EPG →
+  Server-EPG, Policy der Service Engine) stehen im Regel-Kasten des Load Balancers mit dem
+  Gerät.
+- Die VIP der Firewall (DNAT) steht als Zeile am Knoten der Firewall. Oberfläche, SVG und
+  draw.io zeichnen dasselbe (`app_plan._steps`/`_lb_step`, `app_paths._balancer`).

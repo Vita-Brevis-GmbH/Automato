@@ -103,3 +103,23 @@ ohne Anreicherung.
 - Das Agent-Paket enthält zusätzlich das `sot-gateway`-Wheel (Infoblox-/NetBox-Leser).
 - Phase B (Bereinigen auf Firewall/DDI) und Phase C (Regeln schreiben) brauchen eigene
   ADRs und eine ausdrückliche Freigabe; bis dahin bleibt der Schreibweg auf NetBox begrenzt.
+
+## Ergänzung 0.76.1 – externe Adressen ohne IPAM-Befund
+
+Rückmeldung des Anwenders (2026-10-26): externe Subnetze und Host-Adressen gehören nicht in die
+Befunde – ausser das externe Netz ist das gemanagte Interface-Netz am WAN-Anschluss der
+Firewalls.
+
+- **Extern** ist ein Wert (IP, Netz, Bereich), dessen Adressen alle öffentlich sind
+  (`ipaddress.is_global`: nicht RFC 1918, nicht CGNAT 100.64/10, nicht Dokumentations-,
+  Link-Local- oder Loopback-Bereiche) und der **kein gemanagtes Netz überlappt**. Gemanagt sind
+  die Netze der gelesenen Geräte (`inv_subnet`: Interface-Netze der FortiGates inkl. WAN,
+  ACI-BD/-EPG-Subnetze, Interfaces der Router) – sie sind konfiguriert, also unsere.
+- Externe Werte-Objekte ohne IPAM-Treffer erhalten den bestehenden Status `expected_external`
+  (wie `H-EXT_`, FQDN, ISDB) und erzeugen keinen Befund `unmatched_object`. Anders als diese
+  wird der Status nach jedem Abgleich neu berechnet (`store/external.apply` nach
+  `references.rematch`): steht die Adresse später im IPAM, ist sie gefunden; liegt sie in einem
+  neuen Interface-Netz, ist sie wieder ein Befund.
+- Unverändert: „Subnetz fehlt im IPAM“ für Interface-/BD-Netze (auch öffentliche WAN-Netze),
+  VIPs (publizierte eigene Adressen), private Adressen, Objekte ohne Wert, Namenskonvention.
+

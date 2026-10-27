@@ -85,6 +85,17 @@ def overlaps(x, net) -> bool:
     return int(net.network_address) <= hi and lo <= int(net.broadcast_address)
 
 
+def aci_vrf(vrf: str | None, sid: int | None, known) -> str:
+    """VRF `Tenant:VRF` eines BD-Subnetzes im Inventar: bis 0.83.0 schrieb der Collector den
+    Tenant der BD auch fuer eine VRF aus `common` - gibt es (APIC, `Tenant:VRF`) nicht, aber
+    (APIC, `common:VRF`), gilt diese (`known`: Schluessel (APIC, VRF), z. B. Knoten des Wegs)."""
+    vrf = vrf or ""
+    if (sid, vrf) in known or ":" not in vrf:
+        return vrf
+    common = f"common:{vrf.split(':', 1)[1]}"
+    return common if (sid, common) in known else vrf
+
+
 def route_range(prefix: str) -> tuple[int, int, str, str, str] | None:
     """(Familie, Laenge, von, bis, CIDR) eines Praefixes; ungueltig -> None."""
     try:

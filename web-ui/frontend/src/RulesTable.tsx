@@ -17,6 +17,7 @@ import {
   unrejectParallel,
 } from "./api";
 import type { View, ViewParams } from "./App";
+import { L } from "./i18n";
 import RuleDetailDrawer from "./RuleDetail";
 import { FAMILY_LABEL, FamilyMarks, serviceNames, SideMarks, useVdomShown, VdomChip } from "./refs";
 import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
@@ -37,7 +38,9 @@ function ObjCell({ items }: { items: string[] }) {
           {s}
         </span>
       ))}
-      {items.length > shown.length && <span className="faint">+{items.length - shown.length} weitere</span>}
+      {items.length > shown.length && (
+        <span className="faint">{L(`+${items.length - shown.length} weitere`, `+${items.length - shown.length} more`)}</span>
+      )}
     </div>
   );
 }
@@ -56,20 +59,33 @@ export function NatChips({ r, onGo }: { r: Rule; onGo?: (v: View, p?: ViewParams
   return (
     <div className="chips" style={{ marginTop: 3 }}>
       {r.nat.vips.map((v) => (
-        <button key={v} className="chip local linkchip" title="DNAT (VIP) – in NAT / VIPs öffnen" onClick={open(v)}>
+        <button
+          key={v}
+          className="chip local linkchip"
+          title={L("DNAT (VIP) – in NAT / VIPs öffnen", "DNAT (VIP) – open in NAT / VIPs")}
+          onClick={open(v)}
+        >
           VIP {v}
         </button>
       ))}
       {r.nat.snat &&
         (r.nat.pools.length ? (
           r.nat.pools.map((pool) => (
-            <button key={pool} className="chip info linkchip" title="Source-NAT-Pool – in NAT / VIPs öffnen" onClick={open(pool)}>
+            <button
+              key={pool}
+              className="chip info linkchip"
+              title={L("Source-NAT-Pool – in NAT / VIPs öffnen", "Source NAT pool – open in NAT / VIPs")}
+              onClick={open(pool)}
+            >
               SNAT {pool}
             </button>
           ))
         ) : (
-          <span className="chip info" title="Source-NAT auf die IP des ausgehenden Interfaces">
-            SNAT Interface-IP
+          <span
+            className="chip info"
+            title={L("Source-NAT auf die IP des ausgehenden Interfaces", "Source NAT to the IP of the outgoing interface")}
+          >
+            {L("SNAT Interface-IP", "SNAT interface IP")}
           </span>
         ))}
     </div>
@@ -90,19 +106,31 @@ export function NameCell({
     const pref = r.aci.kind === "preferred_group";
     return (
       <>
-        <span className="chip local" title="Cisco-ACI-Contract">
+        <span className="chip local" title={L("Cisco-ACI-Contract", "Cisco ACI contract")}>
           ACI
         </span>{" "}
         {r.aci.kind === "taboo" && (
           <>
-            <span className="chip crit" title="Taboo-Contract: verbietet den Verkehr zu den geschützten EPGs">
+            <span
+              className="chip crit"
+              title={L(
+                "Taboo-Contract: verbietet den Verkehr zu den geschützten EPGs",
+                "Taboo contract: denies traffic to the protected EPGs",
+              )}
+            >
               Taboo
             </span>{" "}
           </>
         )}
         {r.aci.kind === "preferred_group" && (
           <>
-            <span className="chip info" title="Preferred Group: Mitglieder der VRF sprechen frei miteinander">
+            <span
+              className="chip info"
+              title={L(
+                "Preferred Group: Mitglieder der VRF sprechen frei miteinander",
+                "Preferred Group: members of the VRF communicate freely with each other",
+              )}
+            >
               Preferred Group
             </span>{" "}
           </>
@@ -133,22 +161,43 @@ export function ParallelChips({ r }: { r: Rule }) {
   return (
     <div className="chips" style={{ marginTop: 2 }}>
       {(p.same ?? []).map((n) => (
-        <span key={n} className="chip ok" title={`gleiche Policy auf ${n} (Verbund ${p.group}) – zusammengefasst`}>
+        <span
+          key={n}
+          className="chip ok"
+          title={L(
+            `gleiche Policy auf ${n} (Verbund ${p.group}) – zusammengefasst`,
+            `same policy on ${n} (parallel group ${p.group}) – merged`,
+          )}
+        >
           + {n}
         </span>
       ))}
       {(p.differs ?? []).map((n) => (
-        <span key={n} className="chip warn" title={`auf ${n} anders konfiguriert – siehe Findings`}>
+        <span
+          key={n}
+          className="chip warn"
+          title={L(`auf ${n} anders konfiguriert – siehe Findings`, `configured differently on ${n} – see findings`)}
+        >
           ≠ {n}
         </span>
       ))}
       {(p.missing ?? []).map((n) => (
-        <span key={n} className="chip warn" title={`fehlt auf ${n} (Verbund ${p.group})`}>
-          fehlt auf {n}
+        <span
+          key={n}
+          className="chip warn"
+          title={L(`fehlt auf ${n} (Verbund ${p.group})`, `missing on ${n} (parallel group ${p.group})`)}
+        >
+          {L(`fehlt auf ${n}`, `missing on ${n}`)}
         </span>
       ))}
       {p.lead && (
-        <span className="chip warn" title={`weicht von ${p.lead} ab: ${(p.fields ?? []).join(", ")}`}>
+        <span
+          className="chip warn"
+          title={L(
+            `weicht von ${p.lead} ab: ${(p.fields ?? []).join(", ")}`,
+            `differs from ${p.lead}: ${(p.fields ?? []).join(", ")}`,
+          )}
+        >
           ≠ {p.lead}: {(p.fields ?? []).join(", ")}
         </span>
       )}
@@ -184,11 +233,19 @@ function ParallelHint({ tenantId, isAdmin, onDone }: { tenantId: number; isAdmin
   };
   return (
     <>
-      <ErrorBox error={error} prefix="Verbund" />
+      <ErrorBox error={error} prefix={L("Verbund", "Parallel group")} />
       {open.map((s) => (
         <Note key={s.system_ids.join("-")}>
-          <b>{s.names.join(" und ")}</b> sehen parallel aus ({s.reasons.join(", ")}) – ihre Regeln stehen doppelt
-          in der Liste.{" "}
+          {L(
+            <>
+              <b>{s.names.join(" und ")}</b> sehen parallel aus ({s.reasons.join(", ")}) – ihre Regeln stehen doppelt
+              in der Liste.
+            </>,
+            <>
+              <b>{s.names.join(" and ")}</b> look parallel ({s.reasons.join(", ")}) – their rules appear twice in the
+              list.
+            </>,
+          )}{" "}
           {isAdmin ? (
             <>
               <button
@@ -196,37 +253,49 @@ function ParallelHint({ tenantId, isAdmin, onDone }: { tenantId: number; isAdmin
                 disabled={busy}
                 onClick={() => act(setParallelGroup(tenantId, s.group, s.system_ids), true)}
               >
-                Als Verbund „{s.group}“ zusammenfassen
+                {L(<>Als Verbund „{s.group}“ zusammenfassen</>, <>Merge as parallel group “{s.group}”</>)}
               </button>{" "}
               <button
                 className="btn btn-sm"
                 disabled={busy}
-                title="nicht parallel – wird nicht mehr vorgeschlagen"
+                title={L("nicht parallel – wird nicht mehr vorgeschlagen", "not parallel – no longer suggested")}
                 onClick={() => act(rejectParallel(tenantId, { system_ids: s.system_ids }), false)}
               >
-                Ablehnen
+                {L("Ablehnen", "Reject")}
               </button>
             </>
           ) : (
-            <span className="faint">Ein Admin kann sie als Verbund zusammenfassen oder ablehnen.</span>
+            <span className="faint">
+              {L(
+                "Ein Admin kann sie als Verbund zusammenfassen oder ablehnen.",
+                "An admin can merge them as a parallel group or reject them.",
+              )}
+            </span>
           )}
         </Note>
       ))}
       {isAdmin && rejected.length > 0 && (
         <div className="faint" style={{ margin: "0 0 10px" }}>
           <button className="linkbtn" onClick={() => setShowRejected((v) => !v)}>
-            {rejected.length} abgelehnte{rejected.length === 1 ? "r" : ""} Vorschlag{rejected.length === 1 ? "" : "e"}
+            {L(
+              <>
+                {rejected.length} abgelehnte{rejected.length === 1 ? "r" : ""} Vorschlag{rejected.length === 1 ? "" : "e"}
+              </>,
+              <>
+                {rejected.length} rejected suggestion{rejected.length === 1 ? "" : "s"}
+              </>,
+            )}
           </button>
           {showRejected &&
             rejected.map((s) => (
               <div key={s.system_ids.join("-")} style={{ marginTop: 4 }}>
-                {s.names.join(" und ")} – nicht parallel{" "}
+                {L(<>{s.names.join(" und ")} – nicht parallel</>, <>{s.names.join(" and ")} – not parallel</>)}{" "}
                 <button
                   className="linkbtn"
                   disabled={busy}
                   onClick={() => act(unrejectParallel(tenantId, s.system_ids), false)}
                 >
-                  wieder vorschlagen
+                  {L("wieder vorschlagen", "suggest again")}
                 </button>
               </div>
             ))}
@@ -401,15 +470,28 @@ export default function RulesTable({
   });
   const loaded = rules?.length ?? 0;
   // ACI: Quelle = Consumer-EPGs, Ziel = Provider-EPGs
-  const srcHead = domain === "aci_contract" ? "Consumer" : domain === "firewall" ? "Quelle" : "Quelle / Consumer";
-  const dstHead = domain === "aci_contract" ? "Provider" : domain === "firewall" ? "Ziel" : "Ziel / Provider";
+  const srcHead =
+    domain === "aci_contract"
+      ? "Consumer"
+      : domain === "firewall"
+        ? L("Quelle", "Source")
+        : L("Quelle / Consumer", "Source / consumer");
+  const dstHead =
+    domain === "aci_contract"
+      ? "Provider"
+      : domain === "firewall"
+        ? L("Ziel", "Destination")
+        : L("Ziel / Provider", "Destination / provider");
 
   return (
     <>
-      <PageHead title="Regeln & Contracts">
+      <PageHead title={L("Regeln & Contracts", "Rules & contracts")}>
         {rules === null
-          ? "Lade…"
-          : `${total} Einträge für „${tenantLabel}“ – Firewall-Policies und ACI-Contracts, read-only eingelesen und gegen die Source of Truth aufgelöst.`}
+          ? L("Lade…", "Loading…")
+          : L(
+              `${total} Einträge für „${tenantLabel}“ – Firewall-Policies und ACI-Contracts, read-only eingelesen und gegen die Source of Truth aufgelöst.`,
+              `${total} entries for “${tenantLabel}” – firewall policies and ACI contracts, collected read-only and resolved against the source of truth.`,
+            )}
       </PageHead>
       {tenantId !== null && !customer && (
         <ParallelHint
@@ -430,16 +512,25 @@ export default function RulesTable({
             <Icon name="search" />
           </span>
           <input
-            placeholder="Suche: Objekt, IP, DNS-Name, NAT, Zone…"
-            title="Sucht in allem: Regel, Objekte und Gruppenmitglieder, IP (auch im Netz), Netz/CIDR (Regeln, die sich mit dem Netz überschneiden), DNS-Name aus dem IPAM, Service, Zone, EPG, NAT, Kommentar. Mehrere Wörter = alle müssen vorkommen."
+            placeholder={L("Suche: Objekt, IP, DNS-Name, NAT, Zone…", "Search: object, IP, DNS name, NAT, zone…")}
+            title={L(
+              "Sucht in allem: Regel, Objekte und Gruppenmitglieder, IP (auch im Netz), Netz/CIDR (Regeln, die sich mit dem Netz überschneiden), DNS-Name aus dem IPAM, Service, Zone, EPG, NAT, Kommentar. Mehrere Wörter = alle müssen vorkommen.",
+              "Searches everything: rule, objects and group members, IP (also within a network), network/CIDR (rules that overlap the network), DNS name from the IPAM, service, zone, EPG, NAT, comment. Several words = all must occur.",
+            )}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
         {net && (
-          <span className="chip local" title="Regeln, deren Quelle oder Ziel sich mit dem Subnetz überschneidet (auch über Gruppen)">
-            Subnetz {net}
-            <button className="linkbtn" title="Filter entfernen" onClick={() => onGo?.("regeln")}>
+          <span
+            className="chip local"
+            title={L(
+              "Regeln, deren Quelle oder Ziel sich mit dem Subnetz überschneidet (auch über Gruppen)",
+              "Rules whose source or destination overlaps the subnet (also via groups)",
+            )}
+          >
+            {L("Subnetz", "Subnet")} {net}
+            <button className="linkbtn" title={L("Filter entfernen", "Remove filter")} onClick={() => onGo?.("regeln")}>
               ✕
             </button>
           </span>
@@ -447,17 +538,27 @@ export default function RulesTable({
         {net && (
           <button
             className={`toggle ${netAny ? "on" : ""}`}
-            title="Regeln mit any als Quelle bzw. Ziel einbeziehen"
+            title={L("Regeln mit any als Quelle bzw. Ziel einbeziehen", "Include rules with any as source or destination")}
             onClick={() => setNetAny((v) => !v)}
           >
             <span className="dot" />
-            inkl. any
+            {L("inkl. any", "incl. any")}
           </button>
         )}
         {(object || nat) && (
-          <span className="chip local" title="aus einem Link – Regeln, die dieses Objekt bzw. diesen NAT-Eintrag verwenden">
-            {object ? `Objekt ${object}${params.family ? ` (${FAMILY_LABEL[params.family] ?? params.family})` : ""}` : `NAT ${nat}`}
-            <button className="linkbtn" title="Filter entfernen" onClick={() => onGo?.("regeln")}>
+          <span
+            className="chip local"
+            title={L(
+              "aus einem Link – Regeln, die dieses Objekt bzw. diesen NAT-Eintrag verwenden",
+              "from a link – rules that use this object or this NAT entry",
+            )}
+          >
+            {object
+              ? `${L("Objekt", "Object")} ${object}${
+                  params.family ? ` (${FAMILY_LABEL[params.family] ?? params.family})` : ""
+                }`
+              : `NAT ${nat}`}
+            <button className="linkbtn" title={L("Filter entfernen", "Remove filter")} onClick={() => onGo?.("regeln")}>
               ✕
             </button>
           </span>
@@ -470,12 +571,12 @@ export default function RulesTable({
             setSystem("");
           }}
         >
-          <option value="">Art: alle</option>
-          <option value="firewall">Firewall-Regeln</option>
-          <option value="aci_contract">ACI-Contracts</option>
+          <option value="">{L("Art: alle", "Type: all")}</option>
+          <option value="firewall">{L("Firewall-Regeln", "Firewall rules")}</option>
+          <option value="aci_contract">{L("ACI-Contracts", "ACI contracts")}</option>
         </select>
         <select className="sel" value={system} onChange={(e) => setSystem(e.target.value)}>
-          <option value="">System: alle</option>
+          <option value="">{L("System: alle", "System: all")}</option>
           {ruleSystems.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -483,7 +584,7 @@ export default function RulesTable({
           ))}
         </select>
         <select className="sel" value={srcZone} onChange={(e) => setSrcZone(e.target.value)}>
-          <option value="">Quell-Zone: alle</option>
+          <option value="">{L("Quell-Zone: alle", "Source zone: all")}</option>
           {srcZones.map((z) => (
             <option key={z} value={z}>
               {z}
@@ -491,7 +592,7 @@ export default function RulesTable({
           ))}
         </select>
         <select className="sel" value={dstZone} onChange={(e) => setDstZone(e.target.value)}>
-          <option value="">Ziel-Zone: alle</option>
+          <option value="">{L("Ziel-Zone: alle", "Destination zone: all")}</option>
           {dstZones.map((z) => (
             <option key={z} value={z}>
               {z}
@@ -499,22 +600,32 @@ export default function RulesTable({
           ))}
         </select>
         <select className="sel" value={action} onChange={(e) => setAction(e.target.value)}>
-          <option value="">Aktion: alle</option>
+          <option value="">{L("Aktion: alle", "Action: all")}</option>
           {actions.map((a) => (
             <option key={a} value={a}>
               {a}
             </option>
           ))}
         </select>
-        <select className="sel" value={family} onChange={(e) => setFamily(e.target.value)} title="Adressfamilie der Policy">
-          <option value="">Familie: alle</option>
+        <select
+          className="sel"
+          value={family}
+          onChange={(e) => setFamily(e.target.value)}
+          title={L("Adressfamilie der Policy", "Address family of the policy")}
+        >
+          <option value="">{L("Familie: alle", "Family: all")}</option>
           <option value="v4">IPv4</option>
           <option value="v6">IPv6</option>
           <option value="dual">IPv4+IPv6</option>
         </select>
         {multiVdom && (
-          <select className="sel" value={vdom} onChange={(e) => setVdom(e.target.value)} title="FortiGate-VDOM der Policy">
-            <option value="">VDOM: alle</option>
+          <select
+            className="sel"
+            value={vdom}
+            onChange={(e) => setVdom(e.target.value)}
+            title={L("FortiGate-VDOM der Policy", "FortiGate VDOM of the policy")}
+          >
+            <option value="">{L("VDOM: alle", "VDOM: all")}</option>
             {vdoms.map(([v, n]) => (
               <option key={v} value={v}>
                 {v} ({n})
@@ -526,57 +637,80 @@ export default function RulesTable({
           className="sel"
           value={pair}
           onChange={(e) => setPair(e.target.value)}
-          title="IPv4/IPv6-Paare: „ähnlich“ = vorgeschlagen, noch nicht bestätigt"
+          title={L(
+            "IPv4/IPv6-Paare: „ähnlich“ = vorgeschlagen, noch nicht bestätigt",
+            "IPv4/IPv6 pairs: “similar” = suggested, not yet confirmed",
+          )}
         >
-          <option value="">Paar: alle</option>
-          <option value="similar">ähnlich (offen)</option>
-          <option value="confirmed">bestätigt</option>
-          <option value="same">gleich</option>
-          <option value="any">mit Paar</option>
-          <option value="none">ohne Paar</option>
+          <option value="">{L("Paar: alle", "Pair: all")}</option>
+          <option value="similar">{L("ähnlich (offen)", "similar (open)")}</option>
+          <option value="confirmed">{L("bestätigt", "confirmed")}</option>
+          <option value="same">{L("gleich", "identical")}</option>
+          <option value="any">{L("mit Paar", "with pair")}</option>
+          <option value="none">{L("ohne Paar", "without pair")}</option>
         </select>
         {hasGroups && (
           <select
             className="sel"
             value={parallel}
             onChange={(e) => setParallel(e.target.value)}
-            title="Parallele Firewalls (Verbund): gleiche Policies sind zusammengefasst"
+            title={L(
+              "Parallele Firewalls (Verbund): gleiche Policies sind zusammengefasst",
+              "Parallel firewalls (parallel group): identical policies are merged",
+            )}
           >
-            <option value="">Verbund: alle</option>
-            <option value="differs">abweichend</option>
-            <option value="missing">fehlt auf einer Firewall</option>
+            <option value="">{L("Verbund: alle", "Parallel group: all")}</option>
+            <option value="differs">{L("abweichend", "differing")}</option>
+            <option value="missing">{L("fehlt auf einer Firewall", "missing on one firewall")}</option>
           </select>
         )}
         <button className={`toggle ${onlyFindings ? "on" : ""}`} onClick={() => setOnlyFindings((v) => !v)}>
           <span className="dot y" />
-          nur mit Findings
+          {L("nur mit Findings", "only with findings")}
         </button>
         {impossible !== null && (impossible > 0 || routable) && (
           <button
             className={`toggle ${routable ? "on" : ""}`}
             onClick={() => setRoutable((v) => !v)}
-            title="Regeln, die die gesuchte IP nach dem Routing ihrer Firewall nicht sehen können (Ein- bzw. Ausgang passt nicht)"
+            title={L(
+              "Regeln, die die gesuchte IP nach dem Routing ihrer Firewall nicht sehen können (Ein- bzw. Ausgang passt nicht)",
+              "Rules that cannot see the searched IP according to the routing of their firewall (incoming or outgoing interface does not match)",
+            )}
           >
             <span className="dot" />
-            {impossible} routingtechnisch unmögliche ausblenden
+            {L(
+              <>{impossible} routingtechnisch unmögliche ausblenden</>,
+              <>Hide {impossible} impossible by routing</>,
+            )}
           </button>
         )}
         <span className="count">
-          {filtered.length} Treffer{total > loaded ? ` · ${loaded} von ${total} geladen` : ""}
+          {L(
+            <>
+              {filtered.length} Treffer{total > loaded ? ` · ${loaded} von ${total} geladen` : ""}
+            </>,
+            <>
+              {filtered.length} match{filtered.length === 1 ? "" : "es"}
+              {total > loaded ? ` · ${loaded} of ${total} loaded` : ""}
+            </>,
+          )}
         </span>
       </div>
 
-      <ErrorBox error={error} prefix="Regeln laden" />
+      <ErrorBox error={error} prefix={L("Regeln laden", "Load rules")} />
 
       <div className="card">
         <div className="card-body scroll viewport">
           {rules === null ? (
-            <Loading>Lade Regeln…</Loading>
+            <Loading>{L("Lade Regeln…", "Loading rules…")}</Loading>
           ) : filtered.length === 0 ? (
-            <Empty title={rules.length ? "Keine Treffer" : "Noch keine Regeln"}>
+            <Empty title={rules.length ? L("Keine Treffer", "No matches") : L("Noch keine Regeln", "No rules yet")}>
               {rules.length
-                ? "Filter oder Suche anpassen."
-                : "Sobald ein Quellsystem eingelesen wurde, erscheinen hier die Regeln und Contracts."}
+                ? L("Filter oder Suche anpassen.", "Adjust the filter or search.")
+                : L(
+                    "Sobald ein Quellsystem eingelesen wurde, erscheinen hier die Regeln und Contracts.",
+                    "Once a source system has been collected, its rules and contracts appear here.",
+                  )}
             </Empty>
           ) : (
             <table>
@@ -584,14 +718,14 @@ export default function RulesTable({
                 <tr>
                   <th>#</th>
                   <th>Name</th>
-                  <th>Aktion</th>
+                  <th>{L("Aktion", "Action")}</th>
                   <th>System</th>
-                  <th>Quell-Zone</th>
-                  <th>Ziel-Zone</th>
+                  <th>{L("Quell-Zone", "Source zone")}</th>
+                  <th>{L("Ziel-Zone", "Destination zone")}</th>
                   <th>{srcHead}</th>
                   <th>{dstHead}</th>
-                  <th>Dienste</th>
-                  <th title="nicht aufgelöste Objekte"></th>
+                  <th>{L("Dienste", "Services")}</th>
+                  <th title={L("nicht aufgelöste Objekte", "unresolved objects")}></th>
                 </tr>
               </thead>
               <tbody>
@@ -612,15 +746,32 @@ export default function RulesTable({
                     onClick={() => setSelected(r.id)}
                     onMouseEnter={() => setPairHover(r.pair?.rule_id ?? null)}
                     onMouseLeave={() => setPairHover(null)}
-                    title={head || tail ? (r.pair?.match === "similar" ? "Paar-Vorschlag IPv4/IPv6 (ähnlich)" : "IPv4/IPv6-Paar") : undefined}
+                    title={
+                      head || tail
+                        ? r.pair?.match === "similar"
+                          ? L("Paar-Vorschlag IPv4/IPv6 (ähnlich)", "Suggested IPv4/IPv6 pair (similar)")
+                          : L("IPv4/IPv6-Paar", "IPv4/IPv6 pair")
+                        : undefined
+                    }
                   >
                     <td className="mono">
-                      {tail ? <span className="faint" title="Gegenstück der Regel darüber">↳ </span> : null}
+                      {tail ? (
+                        <span className="faint" title={L("Gegenstück der Regel darüber", "Counterpart of the rule above")}>
+                          ↳{" "}
+                        </span>
+                      ) : null}
                       {r.id}
                       {head && (
                         <div>
-                          <span className="pair-tag" title={r.pair?.match === "similar" ? "Paar-Vorschlag (ähnlich)" : "IPv4/IPv6-Paar"}>
-                            {r.pair?.match === "similar" ? "Paar?" : "Paar"}
+                          <span
+                            className="pair-tag"
+                            title={
+                              r.pair?.match === "similar"
+                                ? L("Paar-Vorschlag (ähnlich)", "Suggested pair (similar)")
+                                : L("IPv4/IPv6-Paar", "IPv4/IPv6 pair")
+                            }
+                          >
+                            {r.pair?.match === "similar" ? L("Paar?", "Pair?") : L("Paar", "Pair")}
                           </span>
                         </div>
                       )}
@@ -642,7 +793,7 @@ export default function RulesTable({
                       {r.relevance?.state === "impossible" && (
                         <div>
                           <span className="chip crit" title={r.relevance.text}>
-                            für {q.trim()} nicht möglich
+                            {L(<>für {q.trim()} nicht möglich</>, <>not possible for {q.trim()}</>)}
                           </span>
                         </div>
                       )}
@@ -667,7 +818,7 @@ export default function RulesTable({
                     </td>
                     <td>
                       {r.num_unmatched > 0 ? (
-                        <span className="chip warn" title="nicht aufgelöste Objekte">
+                        <span className="chip warn" title={L("nicht aufgelöste Objekte", "unresolved objects")}>
                           {r.num_unmatched}
                         </span>
                       ) : (
@@ -683,9 +834,14 @@ export default function RulesTable({
         </div>
         {rules !== null && total > loaded && (
           <div className="card-foot">
-            {loaded} von {total} geladen – Suche, Art oder System eingrenzen oder{" "}
+            {L(
+              <>{loaded} von {total} geladen – Suche, Art oder System eingrenzen oder</>,
+              <>{loaded} of {total} loaded – narrow down search, type or system, or</>,
+            )}{" "}
             <button className="btn btn-ghost btn-sm" onClick={loadMore} disabled={more}>
-              {more ? "Lade…" : `weitere ${Math.min(PAGE, total - loaded)} laden`}
+              {more
+                ? L("Lade…", "Loading…")
+                : L(`weitere ${Math.min(PAGE, total - loaded)} laden`, `load ${Math.min(PAGE, total - loaded)} more`)}
             </button>
           </div>
         )}
@@ -729,9 +885,14 @@ function AssignToApp({ tenantId, ruleId, onGo }: { tenantId: number; ruleId: num
   };
   return (
     <div id="rule-assign-app" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-      <span className="faint">Applikation:</span>
-      <select className="sel" aria-label="Applikation" value={app} onChange={(e) => setApp(e.target.value)}>
-        <option value="">wählen…</option>
+      <span className="faint">{L("Applikation:", "Application:")}</span>
+      <select
+        className="sel"
+        aria-label={L("Applikation", "Application")}
+        value={app}
+        onChange={(e) => setApp(e.target.value)}
+      >
+        <option value="">{L("wählen…", "choose…")}</option>
         {apps.map((a) => (
           <option key={a.id} value={a.id}>
             {a.name}
@@ -739,14 +900,14 @@ function AssignToApp({ tenantId, ruleId, onGo }: { tenantId: number; ruleId: num
         ))}
       </select>
       <button className="btn btn-ghost btn-sm" disabled={!app} onClick={assign}>
-        Zuordnen
+        {L("Zuordnen", "Assign")}
       </button>
       {done && (
         <button className="linkbtn objlink" onClick={() => onGo?.("apps", { app: String(done.id) })}>
-          zugeordnet zu {done.name} – Doku öffnen
+          {L(<>zugeordnet zu {done.name} – Doku öffnen</>, <>assigned to {done.name} – open documentation</>)}
         </button>
       )}
-      <ErrorBox error={error} onClose={() => setError(null)} prefix="Zuordnen" />
+      <ErrorBox error={error} onClose={() => setError(null)} prefix={L("Zuordnen", "Assign")} />
     </div>
   );
 }

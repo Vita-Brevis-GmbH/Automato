@@ -135,6 +135,16 @@ def _wapi_handler(request: httpx.Request) -> httpx.Response:
         )
     if obj == "ipv6network":
         return httpx.Response(400, json={"Error": "not licensed"})  # nicht verfuegbar -> skip
+    if obj == "networkcontainer":  # 0.74.1: weiter unterteilte Netze
+        return httpx.Response(
+            200,
+            json={
+                "result": [
+                    {"network": "10.20.0.0/16", "network_view": "default", "comment": "RZ",
+                     "_ref": "networkcontainer/h"}
+                ]
+            },
+        )  # fmt: skip
     if obj == "range":
         return httpx.Response(
             200,
@@ -206,3 +216,6 @@ def test_infoblox_export_komplett_mit_paging():
     assert by_value[(ReferenceKind.PTR_RECORD, "10.20.0.5")].dns_name == "web01.example.ch"
     assert by_value[(ReferenceKind.FIXED_ADDRESS, "10.20.0.7")].name == "printer"
     assert (ReferenceKind.RANGE, "10.20.0.100-10.20.0.150") in by_value
+    container = by_value[(ReferenceKind.PREFIX, "10.20.0.0/16")]  # Network Container (0.74.1)
+    assert (container.status, container.description) == ("container", "RZ")
+    assert net.status is None

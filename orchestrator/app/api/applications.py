@@ -8,10 +8,10 @@ import re
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit
 from app.api.appdoc import DocTableOut, SiteRef
@@ -20,10 +20,11 @@ from app.api.customer_filter import ids as view_ids
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
-from app.db import get_session
-from app.models import Application, Rule, Site
+from app.db import get_session, get_session_factory
+from app.i18n import L
+from app.models import Application, Rule, Site, SourceSystem, Tenant
 from app.schemas.rules import RuleOut
-from app.store import app_paths, app_plan, sites
+from app.store import app_import, app_paths, app_plan, app_refresh, sites, word_export
 from app.store import applications as store
 
 router = APIRouter(prefix="/applications", tags=["applications"])
@@ -91,6 +92,7 @@ class ApplicationOut(BaseModel):
     description: str | None
     member_count: int
     system_count: int
+    vm_count: int = 0  # VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern (0.75.0)
 
 
 class ApplicationDetailOut(ApplicationOut):
@@ -107,7 +109,9 @@ class CandidateOut(BaseModel):
 
 
 class SuggestionOut(BaseModel):
+    key: str  # <ACI-Tenant>|<Projektnummer> bzw. die Nummer (0.74.1)
     code: str  # Projektnummer
+    tenant: str | None = None  # ACI-Tenant der APs
     name: str
     application_id: int | None  # gesetzt: ergaenzt eine bestehende Applikation
     members: list[CandidateOut]
@@ -240,6 +244,8 @@ class ApplicationDocOut(BaseModel):
     dependencies: dict = {}
     # 0.69.0: ausgeblendete Regeln je Kategorie (`active` = steht in einer Kategorie)
     hides: list[dict] = []
+    # 0.78.2: Contracts Richtung L3Out, die weniger oeffnen als die Firewall-Regeln
+    narrower: list[dict] = []
 
 
 class RuleMemberIn(BaseModel):
@@ -261,7 +267,8 @@ def _site(session: Session, site_id: int | None) -> SiteRef | None:
     return SiteRef(**ref) if ref else None
 
 
-def _out(session: Session, app: Application, resolver: store.Resolver) -> ApplicationOut:
+def _out(session: Session, app: Application, resolver: store.Resolver,
+         vms: store.VmCounter | None = None) -> ApplicationOut:  # fmt: skip
     return ApplicationOut(
         id=app.id,
         tenant_id=app.tenant_id,
@@ -276,6 +283,7 @@ def _out(session: Session, app: Application, resolver: store.Resolver) -> Applic
         description=app.description,
         member_count=len(app.members),
         system_count=store.system_count(session, app, resolver),
+        vm_count=(vms or store.VmCounter(session, app.tenant_id)).count(app, resolver),
     )
 
 
@@ -299,7 +307,9 @@ def _detail(session: Session, app: Application) -> ApplicationDetailOut:
 def _require_tenant(principal: Principal, tenant_id: int | None) -> int:
     tid = tenant_scope(principal, tenant_id)
     if tid is None:
-        raise HTTPException(status_code=422, detail="tenant_id erforderlich")
+        raise HTTPException(
+            status_code=422, detail=L("tenant_id erforderlich", "tenant_id required")
+        )
     return tid
 
 
@@ -311,13 +321,12 @@ def _load(session: Session, principal: Principal, application_id: int) -> Applic
     return app
 
 
-def _refresh(session: Session, tenant_id: int, application_id: int) -> None:
+def _refresh(background: BackgroundTasks, factory: sessionmaker, tenant_id: int,
+             application_id: int) -> None:  # fmt: skip
     """Applikation geaendert: Abweichungen Regel <-> Weg neu (0.59.0) und - weil Befunde ueber
-    ihre Regel Kunden gehoeren - die Zugehoerigkeit der Kunden."""
-    from app.store import customers, reconcile
-
-    reconcile.refresh_app_findings(session, tenant_id, application_id)
-    customers.derive(session, tenant_id)
+    ihre Regel Kunden gehoeren - die Findings der Kunden; seit 0.74.1 hinter der Antwort
+    (`store/app_refresh.py`), das Speichern wartet nicht mehr darauf."""
+    app_refresh.schedule(background, factory, tenant_id, application_id)
 
 
 def _actor(principal: Principal) -> str:
@@ -340,21 +349,25 @@ def list_applications(
     view = customer_view(session, principal, tenant_id, customer_id)
     mine = view.applications(session) if view else None
     resolvers: dict[int, store.Resolver] = {}
+    counters: dict[int, store.VmCounter] = {}
     out = []
     for app in store.list_applications(session, tenant_id):
         if mine is not None and not mine(app):
             continue
         res = resolvers.setdefault(app.tenant_id, store.Resolver(session, app.tenant_id))
-        out.append(_out(session, app, res))
+        vms = counters.setdefault(app.tenant_id, store.VmCounter(session, app.tenant_id))
+        out.append(_out(session, app, res, vms))
     return out
 
 
 @router.post("", response_model=ApplicationDetailOut, status_code=201)
 def create_application(
+    background: BackgroundTasks,
     body: ApplicationIn,
     tenant_id: int | None = None,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     tid = _require_tenant(principal, tenant_id)
     name = body.name.strip()
@@ -394,8 +407,102 @@ def create_application(
             "members": len(app.members),
         },
     )
-    _refresh(session, app.tenant_id, app.id)
+    _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)
+
+
+class ImportIn(BaseModel):
+    csv: str = Field(min_length=1, max_length=app_import.MAX_BYTES)
+
+
+class DeleteManyIn(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=2000)
+
+
+@router.get("/import/template")
+def import_template(principal: Principal = Depends(require_operator)):
+    """Vorlage fuer den CSV-Import (0.75.0): Kopfzeile und ein Beispiel, Trennzeichen `;`."""
+    body = "\ufeff" + app_import.template()  # BOM: Excel erkennt UTF-8
+    name = L("applikationen-vorlage.csv", "applications-template.csv")
+    return Response(
+        content=body.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.post("/import")
+def import_applications(
+    body: ImportIn,
+    tenant_id: int | None = None,
+    apply: bool = False,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Stammdaten aus CSV (0.75.0, Ausnahme vom „kein CSV-Import“ nur dafuer): ohne `apply`
+    die Vorschau je Zeile, mit `apply=true` werden die Zeilen ohne Fehler uebernommen. Die
+    Mitglieder folgen in der Oberflaeche."""
+    tid = _require_tenant(principal, tenant_id)
+    try:
+        if not apply:
+            return app_import.plan(session, tid, body.csv).out()
+        result, touched = app_import.apply(session, tid, body.csv)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    counts = result.counts()
+    audit.record(
+        session,
+        actor=_actor(principal),
+        action="application.imported",
+        subject=str(tid),
+        detail={
+            "tenant_id": tid,
+            "created": counts["create"],
+            "updated": counts["update"],
+            "errors": counts["error"],
+            "application_ids": touched[:500],
+        },
+    )
+    return result.out()
+
+
+@router.post("/delete")
+def delete_applications(
+    body: DeleteManyIn,
+    background: BackgroundTasks,
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+):
+    """Mehrere Applikationen loeschen (0.75.0, z. B. ohne VMs und ohne Funktion). Gelesene Daten
+    bleiben; ihre Befunde fallen im Hintergrund weg."""
+    tid = _require_tenant(principal, tenant_id)
+    apps = list(
+        session.scalars(
+            select(Application).where(
+                Application.tenant_id == tid, Application.id.in_(set(body.ids))
+            )
+        )
+    )
+    for app in apps:
+        audit.record(
+            session,
+            actor=_actor(principal),
+            action="application.deleted",
+            subject=str(app.id),
+            detail={
+                "application_id": app.id,
+                "tenant_id": tid,
+                "name": app.name,
+                "members": len(app.members),
+            },
+        )
+        session.delete(app)
+    session.flush()
+    for app in apps:
+        _refresh(background, factory, tid, app.id)
+    return {"deleted": len(apps)}
 
 
 @router.get("/candidates", response_model=list[CandidateOut])
@@ -435,7 +542,9 @@ def list_suggestions(
     tid = _require_tenant(principal, tenant_id)
     return [
         SuggestionOut(
+            key=s["key"],
             code=s["code"],
+            tenant=s["tenant"],
             name=s["name"],
             application_id=s["application_id"],
             members=[CandidateOut(**c.__dict__) for c in s["members"]],
@@ -446,11 +555,13 @@ def list_suggestions(
 
 @router.post("/suggestions/{code}/accept", response_model=ApplicationDetailOut)
 def accept_suggestion(
+    background: BackgroundTasks,
     code: str,
     body: AcceptIn | None = None,
     tenant_id: int | None = None,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     """Vorschlag uebernehmen (neue Applikation bzw. Mitglieder der bestehenden ergaenzen)."""
     tid = _require_tenant(principal, tenant_id)
@@ -473,7 +584,7 @@ def accept_suggestion(
         subject=str(app.id),
         detail=detail,
     )
-    _refresh(session, app.tenant_id, app.id)
+    _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)
 
 
@@ -499,10 +610,12 @@ def get_application(
 
 @router.patch("/{application_id}", response_model=ApplicationDetailOut)
 def update_application(
+    background: BackgroundTasks,
     application_id: int,
     body: ApplicationPatch,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     app = _load(session, principal, application_id)
     fields = body.model_fields_set
@@ -544,15 +657,17 @@ def update_application(
             "fields": sorted(fields),
         },
     )
-    _refresh(session, app.tenant_id, app.id)
+    _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)
 
 
 @router.delete("/{application_id}", status_code=204)
 def delete_application(
+    background: BackgroundTasks,
     application_id: int,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     app = _load(session, principal, application_id)
     detail = {
@@ -564,7 +679,7 @@ def delete_application(
     tid = app.tenant_id
     session.delete(app)
     session.flush()
-    _refresh(session, tid, application_id)  # ihre Befunde fallen weg
+    _refresh(background, factory, tid, application_id)  # ihre Befunde fallen weg
     audit.record(
         session,
         actor=_actor(principal),
@@ -577,10 +692,12 @@ def delete_application(
 
 @router.post("/{application_id}/members", response_model=ApplicationDetailOut)
 def add_members(
+    background: BackgroundTasks,
     application_id: int,
     body: MembersIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     app = _load(session, principal, application_id)
     try:
@@ -602,16 +719,18 @@ def add_members(
                 "count": added,
             },
         )
-    _refresh(session, app.tenant_id, app.id)
+    _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)
 
 
 @router.delete("/{application_id}/members/{member_id}", response_model=ApplicationDetailOut)
 def remove_member(
+    background: BackgroundTasks,
     application_id: int,
     member_id: int,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     app = _load(session, principal, application_id)
     member = next((m for m in app.members if m.id == member_id), None)
@@ -632,7 +751,7 @@ def remove_member(
             "ref": member.ref,
         },
     )
-    _refresh(session, app.tenant_id, app.id)
+    _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)
 
 
@@ -648,7 +767,8 @@ def application_connections(
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
     out = app_paths.build(session, app)
-    out["plan"] = app_plan.build(out["connections"])  # Netzwerkplan (0.67.0)
+    # Netzwerkplan (0.67.0), kompakt nach AP/EPG (0.74.0)
+    out["plan"] = app_plan.build(out["connections"], members=out["members"])
     return out
 
 
@@ -660,34 +780,100 @@ def export_connections_plan(
     application_id: int,
     format: str = Query("svg", pattern="^(svg|drawio)$"),  # noqa: A002 - Name der Abfrage
     key: Annotated[list[str] | None, Query(description="nur diese Verbindungen")] = None,
+    rules: bool = True,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> Response:
     """Netzwerkplan der Applikation (0.67.0) als SVG bzw. draw.io - wie in der Ansicht; mit
-    `key` nur die Verbindungen des Filters. Nicht fuer Kunden-Benutzer (Freigabeliste)."""
+    `key` nur die Verbindungen des Filters, mit `rules=false` ohne die Ebene „Regeln“ (0.74.0).
+    Nicht fuer Kunden-Benutzer (Freigabeliste)."""
     if key and len(key) > app_paths.MAX_TRACES:
-        raise HTTPException(status_code=422, detail="zu viele Verbindungen")
+        raise HTTPException(
+            status_code=422, detail=L("zu viele Verbindungen", "too many connections")
+        )
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    conns = app_paths.build(session, app)["connections"]
-    plan = app_plan.build(conns, set(key) if key else None)
+    built = app_paths.build(session, app)
+    plan = app_plan.build(built["connections"], set(key) if key else None, built["members"])
     when = datetime.now(UTC)
-    title = f"Netzwerkplan {app.name}"
-    body = (app_plan.svg if format == "svg" else app_plan.drawio)(plan, title, when)
+    title = f"{L('Netzwerkplan', 'Network diagram')} {app.name}"
+    body = (app_plan.svg if format == "svg" else app_plan.drawio)(plan, title, when, rules)
     media, ext = _EXPORT[format]
     slug = re.sub(r"[^A-Za-z0-9_-]+", "-", app.name).strip("-").lower() or "applikation"
-    name = f"netzwerkplan-{slug}-{when:%Y-%m-%d}.{ext}"
+    name = f"{L('netzwerkplan', 'network-diagram')}-{slug}-{when:%Y-%m-%d}.{ext}"
     return Response(content=body, media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+
+
+@router.get("/{application_id}/export")
+def export_application(
+    application_id: int,
+    format: str = Query("zip", pattern="^(docx|zip)$"),  # noqa: A002 - Name der Abfrage
+    sections: str | None = Query(None, max_length=200),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> Response:
+    """Export fuer Confluence (0.71.0, ADR 0026): die Applikations-Doku als Word (`docx`) bzw.
+    als ZIP mit Word und dem Netzwerkplan als draw.io (`zip`) - zum Verbessern in Word/draw.io
+    und Import von Hand. Seit 0.73.0 `sections` (Komma-Liste aus `word_export.SECTIONS`, leer =
+    alle) wie im Export-Dialog; den Plan legt das ZIP nur mit `plan` bei. Nicht fuer
+    Kunden-Benutzer (Verbindungen zeigen die Infrastruktur)."""
+    want = None
+    if sections:
+        want = {s.strip() for s in sections.split(",") if s.strip()}
+        if not want or not want <= set(word_export.SECTIONS):
+            raise HTTPException(
+                status_code=422, detail=L("unbekannter Abschnitt", "unknown section")
+            )
+    with_plan = want is None or "plan" in want
+    app = _load(session, principal, application_id)
+    reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
+    doc = store.build_doc(session, app, None)
+    out = ApplicationDocOut(
+        application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
+    ).model_dump(mode="json")
+    needs_paths = want is None or bool(want & {"connections", "plan"})
+    conns = app_paths.build(session, app) if needs_paths else None
+    when = datetime.now(UTC)
+    tenant = session.get(Tenant, app.tenant_id)
+    sources = dict(session.execute(
+        select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == app.tenant_id)
+    ).all())  # fmt: skip
+    base = (f"{L('applikation', 'application')}-{word_export.slug(app.name, 'applikation')}"
+            f"-{when:%Y-%m-%d}")  # fmt: skip
+    plan_file = f"{base}-{L('netzwerkplan', 'network-diagram')}.drawio"
+    body = word_export.application(out, conns, sources, when, tenant.name if tenant else None,
+                                   plan_file if format == "zip" and with_plan else None,
+                                   want)  # fmt: skip
+    if format == "docx":
+        media, name = _DOCX, f"{base}.docx"
+    else:
+        files = [(f"{base}.docx", body)]
+        if with_plan and conns is not None:
+            plan = app_plan.drawio(app_plan.build(conns["connections"],
+                                                  members=conns["members"]),
+                                   f"{L('Netzwerkplan', 'Network diagram')} {app.name}",
+                                   when)  # fmt: skip
+            files.append((plan_file, plan))
+        body = word_export.bundle(files)
+        media, name = "application/zip", f"{base}.zip"
+    return Response(content=body, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+
+
+_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 @router.get("/{application_id}/doc", response_model=ApplicationDocOut)
 def application_doc(
     application_id: int,
+    dependencies: bool = False,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ):
-    """Applikations-Doku ueber alle Systeme der Applikation (Tabellen 1–10)."""
+    """Applikations-Doku ueber alle Systeme der Applikation (Tabellen 1–10). Abhaengigkeiten zu
+    anderen Applikationen (0.60.0) seit 0.73.0 nur mit `dependencies=true` - in der Oberflaeche
+    vorerst entfernt (Anwender: Monitoring u. a. sind keine fachlichen Abhaengigkeiten)."""
     app = _load(session, principal, application_id)
     view = _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
@@ -697,7 +883,8 @@ def application_doc(
         mine = view.applications(session)
         stmt = select(Application).where(Application.tenant_id == app.tenant_id)
         visible = {a.id for a in session.scalars(stmt) if mine(a)}
-    doc["dependencies"] = store.dependencies(session, app, doc, visible)
+    if dependencies:
+        doc["dependencies"] = store.dependencies(session, app, doc, visible)
     return ApplicationDocOut(
         application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
     )
@@ -715,7 +902,7 @@ def hide_rules(
     app = _load(session, principal, application_id)
     reason = body.reason.strip()
     if len(reason) < 5:
-        raise HTTPException(status_code=422, detail="Begründung zu kurz")
+        raise HTTPException(status_code=422, detail=L("Begründung zu kurz", "reason too short"))
     out = []
     for rule_id in dict.fromkeys(body.rule_ids):
         rule = session.get(Rule, rule_id)
@@ -771,10 +958,12 @@ def show_rule(
 
 @router.post("/{application_id}/rules", response_model=ApplicationDetailOut)
 def assign_rule(
+    background: BackgroundTasks,
     application_id: int,
     body: RuleMemberIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     """Regel direkt zuordnen bzw. ausschliessen (0.60.0): Mitglied `rule` bzw. `norule` mit
     stabilem Verweis (Quellsystem, VDOM, Policy-ID bzw. DN) - die Gegenrichtung faellt weg."""
@@ -795,5 +984,5 @@ def assign_rule(
         subject=str(app.id),
         detail={"application_id": app.id, "tenant_id": app.tenant_id, "kind": kind, "ref": ref},
     )
-    _refresh(session, app.tenant_id, app.id)
+    _refresh(background, factory, app.tenant_id, app.id)
     return _detail(session, app)

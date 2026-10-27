@@ -43,8 +43,10 @@ jobs:
               - 'deploy/*.sh'
               - 'docker-compose.yml'
               - 'web-ui/frontend/package*.json'
+              - '.github/workflows/**'
             frontend:
               - 'web-ui/frontend/**'
+              - '.github/workflows/**'
             docker:
               - '**/Dockerfile'
               - 'docker-compose.yml'
@@ -192,7 +194,9 @@ jobs:
   e2e:
     needs: changes
     if: needs.changes.outputs.python == 'true' || needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
+    # fest auf 24.04: Playwright 1.56 installiert Chromium (--with-deps) nicht auf ubuntu-latest
+    # = 26.04 (CI-Lauf 0.77.0)
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: web-ui/frontend

@@ -162,13 +162,17 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
     rows = {r["Description"]: [] for t in doc["tables"] for r in t["rows"]}
     for t in doc["tables"]:
         for r in t["rows"]:
-            rows[r["Description"]].append((r["Server Name"], r.get("_systems")))
+            rows[r["Description"]].append((r["_app"], r.get("_systems")))
     # die EPG mit den IPs ihrer VMs (Portgruppe, 0.43.1): EPG_db01 ueber db01 im /16
-    everyone = ["db01-007-ka", "web01-007-ka", "TE_ka/AP_007/EG_web01", "TE_ka/AP_007/EPG_db01"]
+    # Systeme mit Name und IP (0.84.0)
+    everyone = ["db01-007-ka (10.20.1.7)", "web01-007-ka (10.20.0.5)", "TE_ka/AP_007/EG_web01",
+                "TE_ka/AP_007/EPG_db01"]  # fmt: skip
     assert rows["net-in"] == [("N_srv16 (10.20.0.0/16)", everyone)]
-    assert rows["any-out"] == [("any", [*everyone[:2], "TE_ka/AP_007/EG_backup", *everyone[2:]])]
+    # Zugriff der Applikation ueber any auf ein anderes Netz (Kategorie 10, ausgehend): seit
+    # 0.78.2 nicht in den Kategorien, als Treffer weiter da
+    assert "any-out" not in rows
     # spezifisch: das Objekt mit seinen Systemen, ganzer ACI-Pfad
-    assert ("EPG TE_ka/AP_007/EG_web01: web01-007-ka", None) in rows["CT_app:SJ"]
+    assert ("EPG TE_ka/AP_007/EG_web01:\nweb01-007-ka (10.20.0.5)", None) in rows["CT_app:SJ"]
 
 
 def test_befund_einer_regel_mit_den_epgs_ihrer_treffer(client):
@@ -378,7 +382,7 @@ def test_kategorien_paar_ipv4_ipv6_als_eine_zeile():
     from app.store.applications import _hits_and_tables
 
     def row(rid, name, system, obj="H_web01"):
-        return {"Server Name": system, "TCP/UDP": "tcp/443", "Target Systems": "any",
+        return {appdoc.APP: system, "TCP/UDP": "tcp/443", appdoc.PEER: "any",
                 "Aktion": "Allow", "Schutzmechanismen": "", "Gerät": "fw-01",
                 "Description": name, appdoc.RULE: rid, appdoc.DIRECTION: "in",
                 appdoc.SIDE: "dst", appdoc.OBJECT: obj, appdoc.SCOPE: "specific"}  # fmt: skip

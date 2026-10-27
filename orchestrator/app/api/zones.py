@@ -29,10 +29,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_admin, require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import L
 from app.models import (
     INTENTS,
     ZONE_KINDS,
@@ -48,9 +50,11 @@ from app.models import (
 from app.store import (
     customer_alias,
     plan_export,
+    plan_import,
     plan_versions,
     plan_view,
     reconcile,
+    word_export,
     zone_assist,
     zone_detect,
     zone_services,
@@ -106,6 +110,18 @@ class VersionIn(BaseModel):
     note: str | None = Field(default=None, max_length=4000)
 
 
+class PlanImportIn(BaseModel):
+    """draw.io-Datei des Zonenplans zurueck einlesen (0.83.0): welche Teile uebernommen
+    werden."""
+
+    tenant_id: int
+    content: str = Field(min_length=1, max_length=2_000_000)
+    positions: bool = True
+    renames: bool = True
+    intents: bool = True
+    new_zones: bool = False
+
+
 class ArrangementIn(BaseModel):
     """Anordnung des Zonenplans (0.61.0): Position je Zone (`{"<id>": [x, y]}`) in der Ansicht
     `overview`, `all` bzw. `customer:<id>`; gesetzte Zonen ersetzen ihre Position."""
@@ -141,6 +157,16 @@ class PolicyIn(BaseModel):
 def _scope(principal: Principal) -> tuple[int, ...] | None:
     """Kunden eines Kunden-Benutzers (Sicht nur auf seine Zonen, 0.53.0); None = Betreuer."""
     return tuple(principal.customer_ids or ()) if principal.is_customer else None
+
+
+def _filter_scope(session: Session, principal: Principal, tid: int,
+                  customer_id: int | None) -> tuple[int, ...] | None:  # fmt: skip
+    """Sicht fuer Matrix und Liste: Kunden-Benutzer wie bisher, Betreuer mit oben gewaehltem
+    Kunden (0.76.0) dessen Sicht - die Gegenseite fremder Kunden als „anderer Kunde“."""
+    if principal.is_customer or customer_id is None:
+        return _scope(principal)
+    customer_view(session, principal, tid, customer_id)  # 404 bei fremdem Kunden
+    return (customer_id,)
 
 
 def _plan_filter(
@@ -291,13 +317,21 @@ def _apply(session: Session, z: LogicalZone, body: ZoneIn, sel: list[store.Selec
 @router.get("")
 def list_zones(
     tenant_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
-    """Zonen der Umgebung in ihrer Reihenfolge, mit Selektoren und Anzahl Netze/EPGs."""
+    """Zonen der Umgebung in ihrer Reihenfolge, mit Selektoren und Anzahl Netze/EPGs; mit
+    Kunde (0.76.0) seine Zonen und die geteilten an seinen Knoten (`shared`)."""
     tid = _tenant(session, principal, tenant_id)
     items = store.load(session, tid)
     color = store.colors(session, tid, items)
+    chosen: tuple[set[int], set[int]] | None = None  # (sichtbar, eigen) bei gewaehltem Kunden
+    if not principal.is_customer and customer_id is not None:
+        scope = _filter_scope(session, principal, tid, customer_id)
+        plan = store.plan_with_layout(session, tid, scope)
+        cview = store.customer_view(items, scope)
+        chosen = ({z["id"] for z in plan["zones"]} | cview.own, set(cview.own))
     if principal.is_customer:  # eigene Zonen und die geteilten, an denen er haengt (Plan)
         plan = store.plan_with_layout(session, tid, _scope(principal))
         view = store.customer_view(items, _scope(principal))
@@ -314,7 +348,11 @@ def list_zones(
     by_id = {z.id: z for z in items}
     out = []
     for z in items:
+        if chosen is not None and z.id not in chosen[0]:
+            continue
         row = _out(z, nets.get(z.id), names, color.get(z.id))
+        if chosen is not None:
+            row["shared"] = z.id not in chosen[1]
         row["nodes"] = [st.graph.nodes[k].label for k in zone_nodes.get(z.id, [])]
         row["transitions"] = [
             {"to": _side_name(t.b if t.a == z.id else t.a, by_id),
@@ -331,7 +369,7 @@ def _side_name(side, by_id: dict[int, LogicalZone]) -> str:
     if isinstance(side, int):
         z = by_id.get(side)
         return z.name if z else f"#{side}"
-    return store.PSEUDO.get(side, (side,))[0]
+    return store.pseudo_name(side)
 
 
 def _side(side, by_id: dict[int, LogicalZone]) -> dict:
@@ -428,6 +466,7 @@ def accept_suggestions(
                 n += 1
                 name = f"{s['name']} ({n})"
             position += 10
+            # Beschreibung wird gespeichert: deutsch (ADR 0028)
             sources = ", ".join(zone_detect.SOURCE_LABEL[x] for x in s["sources"])
             z = LogicalZone(tenant_id=tid, name=name[:200], kind=s["kind"], color=s["color"],
                             code=(s.get("code") or None) and s["code"][:50],
@@ -541,13 +580,15 @@ def apply_schema_intents(
 def matrix(
     tenant_id: int | None = None,
     source_system_id: int | None = None,
+    customer_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Zonenmatrix: je Paar Quell-/Zielzone die Regeln (erlaubend, sperrend), Absicht und
     Verstoesse; dazu `any` und `none` (Adressen ohne Zone)."""
     tid = _tenant(session, principal, tenant_id)
-    return store.matrix(session, tid, source_system_id, customer_ids=_scope(principal))
+    scope = _filter_scope(session, principal, tid, customer_id)
+    return store.matrix(session, tid, source_system_id, customer_ids=scope)
 
 
 @router.get("/matrix/rules")
@@ -558,18 +599,22 @@ def matrix_rules(
     source_system_id: int | None = None,
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    customer_id: int | None = None,
+    impossible: bool = False,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """Regeln einer Zelle (Quellzone -> Zielzone; Zone-ID, `any` bzw. `none`)."""
+    """Regeln einer Zelle (Quellzone -> Zielzone; Zone-ID, `any` bzw. `none`); mit
+    `impossible` die Regeln, die das Routing fuer die Zelle ausschliesst (0.81.0)."""
     tid = _tenant(session, principal, tenant_id)
+    scope = _filter_scope(session, principal, tid, customer_id)
     try:
         cells = store.parse_cell(src), store.parse_cell(dst)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="src/dst: zone id, any, none or other") from exc
     return store.cell_rules(session, tid, *cells, limit=limit, offset=offset,
                             source_system_id=source_system_id,
-                            customer_ids=_scope(principal))  # fmt: skip
+                            customer_ids=scope, impossible=impossible)  # fmt: skip
 
 
 @router.put("/policy")
@@ -670,6 +715,59 @@ def save_arrangement(
     return plan_view.arrangement_out(row, body.view)
 
 
+def _plan_reading(session: Session, tid: int, content: str) -> "plan_import.Reading":
+    try:
+        return plan_import.read(session, tid, content)
+    except plan_import.SchemaError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/plan/import/preview")
+def plan_import_preview(
+    body: PlanImportIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Zonenplan aus draw.io (0.83.0, Operator): was die Datei gegenueber Automato aendert -
+    Lage, Namen, Absichten, neue Formen (schreibt nichts)."""
+    tid = tenant_scope(principal, body.tenant_id)
+    return _plan_reading(session, tid, body.content).out()
+
+
+@router.post("/plan/import")
+def plan_import_apply(
+    body: PlanImportIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Zonenplan aus draw.io uebernehmen (0.83.0, Operator): je Teil auf Wunsch; Audit
+    `zone_plan.imported`."""
+    tid = tenant_scope(principal, body.tenant_id)
+    reading = _plan_reading(session, tid, body.content)
+    try:
+        done = plan_import.apply(session, tid, reading, principal.subject, body.positions,
+                                 body.renames, body.intents, body.new_zones)  # fmt: skip
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="zone_plan.imported",
+        subject=reading.view,
+        detail={
+            "tenant_id": tid,
+            "view": reading.view,
+            "positions": done["positions"],
+            "renames": [[r["from"], r["to"]] for r in done["renames"]],
+            "intents": done["intents"],
+            "new_zones": done["new_zones"],
+        },  # fmt: skip
+    )
+    if done["intents"] or done["renames"] or done["new_zones"]:
+        reconcile.refresh_zone_findings(session, tid)  # Absichten, Zonen ausserhalb des Schemas
+    return {"view": reading.view, **done}
+
+
 @router.delete("/plan/arrangement", status_code=204)
 def reset_arrangement(
     tenant_id: int,
@@ -693,6 +791,9 @@ _FORMATS = {
     "svg": ("image/svg+xml", "svg"),
     "drawio": ("application/vnd.jgraph.mxfile", "drawio"),
     "pdf": ("application/pdf", "pdf"),
+    # Export fuer Confluence (0.71.0, ADR 0026): Word bzw. Word + draw.io im ZIP
+    "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
+    "zip": ("application/zip", "zip"),
 }
 
 
@@ -706,7 +807,7 @@ def _version(session: Session, principal: Principal, version_id: int) -> ZonePla
 
 @router.get("/plan/export")
 def export_plan(
-    format: str = Query("svg", pattern="^(svg|drawio|pdf)$"),  # noqa: A002 - Name der API
+    format: str = Query("svg", pattern="^(svg|drawio|pdf|docx|zip)$"),  # noqa: A002 - Name der API
     tenant_id: int | None = None,
     version_id: int | None = None,
     customer_id: int | None = None,
@@ -715,7 +816,8 @@ def export_plan(
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> Response:
-    """Zonenplan als Datei: draw.io (bearbeitbar), SVG oder PDF (mit Matrix und Tabellen) -
+    """Zonenplan als Datei: draw.io (bearbeitbar), SVG oder PDF (mit Matrix und Tabellen), seit
+    0.71.0 Word (`docx`) bzw. Word + draw.io im ZIP (`zip`) fuer den Import in Confluence -
     aktueller Stand (wie in der Ansicht gefiltert und angeordnet) bzw. eine gespeicherte
     Version."""
     if version_id is not None:
@@ -732,19 +834,20 @@ def export_plan(
         plan = store.plan_with_layout(session, tid, _scope(principal), customer_id, everything,
                                       view_filter)  # fmt: skip
         matrix = None
-        if format == "pdf":
+        if format in ("pdf", "docx", "zip"):
             matrix = store.matrix(session, tid, customer_ids=_scope(principal))
         when, meta = datetime.now(UTC), None
         name = f"zonenplan-{when:%Y-%m-%d}"
     tenant = session.get(Tenant, tid)
-    title = f"Zonenplan {tenant.name}" if tenant else "Zonenplan"
+    title = L(f"Zonenplan {tenant.name}", f"Zone plan {tenant.name}") if tenant else L(
+        "Zonenplan", "Zone plan")  # fmt: skip
     view = (plan.get("view") or {}) if version_id is None else {}
     if view.get("customer"):
         title += f" – {view['customer']}"
     if principal.is_customer:  # Titel mit den eigenen Kunden, nicht der Umgebung
         names = sorted(n for cid, n in _customers(session, tid).items()
                        if cid in (principal.customer_ids or ()))  # fmt: skip
-        title = "Zonenplan " + (", ".join(names) or "Kunde")
+        title = L("Zonenplan ", "Zone plan ") + (", ".join(names) or L("Kunde", "Customer"))
         # ohne Geraetenamen (0.58.0) - die Middleware sieht die Datei nicht als JSON
         aliases = customer_alias.Aliases(session, [tid])
         plan, matrix = aliases.clean(plan), aliases.clean(matrix)
@@ -753,6 +856,14 @@ def export_plan(
         body: bytes | str = plan_export.svg(plan, title, when, meta)
     elif format == "drawio":
         body = plan_export.drawio(plan, title, when, meta)
+    elif format in ("docx", "zip"):
+        tenant_label = None if principal.is_customer or tenant is None else tenant.name
+        drawio_name = f"{name}.drawio"
+        body = word_export.zone_plan(plan, matrix, title, when, tenant_label,
+                                     drawio_name if format == "zip" else None, meta)  # fmt: skip
+        if format == "zip":
+            drawing = plan_export.drawio(plan, title, when, meta)
+            body = word_export.bundle([(f"{name}.docx", body), (drawio_name, drawing)])
     else:
         body = plan_export.pdf(plan, matrix, title, when, meta)
     return Response(
@@ -1004,7 +1115,7 @@ def zone_nets(
             for n in t.networks
         ]  # fmt: skip
         if view is not None and view.mask(other) == store.OTHER:  # Zone eines anderen Kunden
-            masked = {"name": "anderer Kunde", "code": None, "kind": "customer", "position": 0}
+            masked = {"name": store.other_name(), "code": None, "kind": "customer", "position": 0}
             transitions.append({"to": masked["name"], "to_id": store.OTHER,
                                 "name": store.transition_name(_side(z.id, by_id), masked),
                                 "networks": networks[:limit]})  # fmt: skip

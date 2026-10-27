@@ -29,10 +29,11 @@ from functools import cached_property
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import Epg, EpgEndpoint, EpgSubnet, InvSubnet, InvVrf, TopoContext, TopoL3Out
 from app.store import epgs as epg_store
 from app.store.paths import Graph
-from app.store.topology import overlaps, within
+from app.store.topology import aci_vrf, is_net, overlaps, within
 
 POSSIBLE, IMPOSSIBLE, UNKNOWN = "possible", "impossible", "unknown"
 RANK = {POSSIBLE: 0, UNKNOWN: 1, IMPOSSIBLE: 2}
@@ -78,6 +79,13 @@ class Classifier:
                 self._graph_of() if self._graph_of else Graph(self.session, self.tenant_id)
             )
         return self._graph
+
+    @cached_property
+    def locator(self):
+        """EPG einer IP nach der Konfiguration (statischer Endpunkt, Portgruppe der VM)."""
+        from app.store import epg_locate  # spaet: epg_locate importiert dieses Modul
+
+        return epg_locate.Locator(self.session, self.tenant_id, self)
 
     @cached_property
     def _l3outs(self) -> list[TopoL3Out]:
@@ -156,21 +164,29 @@ class Classifier:
         same_vrf = self._same_vrf(own, other)
         if scope == "application-profile":
             if "vzany" in (own.kind, other.kind):
-                return None if same_vrf is not False else (
-                    f"Scope AP: vzAny gilt nur in seiner VRF ({a} – {b})")  # fmt: skip
+                return None if same_vrf is not False else L(
+                    f"Scope AP: vzAny gilt nur in seiner VRF ({a} – {b})",
+                    f"Scope AP: vzAny applies only in its VRF ({a} – {b})")  # fmt: skip
             if own.ap is not None and (own.aci_tenant, own.ap) == (other.aci_tenant, other.ap):
                 return None
-            return f"Scope AP: {a} und {b} liegen nicht im selben AP"
+            return L(f"Scope AP: {a} und {b} liegen nicht im selben AP",
+                     f"Scope AP: {a} and {b} are not in the same AP")  # fmt: skip
         regular = own.kind in ("epg", "esg") and other.kind in ("epg", "esg")
         if scope == "tenant" and (regular or "common" not in {own.aci_tenant, other.aci_tenant}):
             if own.aci_tenant == other.aci_tenant:
                 return None
-            return (f"Scope Tenant: {a} (Tenant {own.aci_tenant}) und {b} (Tenant "
-                    f"{other.aci_tenant}) liegen in verschiedenen Tenants")  # fmt: skip
+            ta, tb = own.aci_tenant, other.aci_tenant
+            return L(f"Scope Tenant: {a} (Tenant {ta}) und {b} (Tenant {tb}) liegen in "
+                     "verschiedenen Tenants",
+                     f"Scope Tenant: {a} (Tenant {ta}) and {b} (Tenant {tb}) are in different "
+                     "tenants")  # fmt: skip
         if same_vrf is not False:
             return None
-        return (f"Scope {SCOPE_LABEL.get(scope, scope)}: {a} (VRF {self.vrf_of(own)}) und {b} "
-                f"(VRF {self.vrf_of(other)}) liegen in verschiedenen VRFs")  # fmt: skip
+        name, va, vb = SCOPE_LABEL.get(scope, scope), self.vrf_of(own), self.vrf_of(other)
+        return L(
+            f"Scope {name}: {a} (VRF {va}) und {b} (VRF {vb}) liegen in verschiedenen VRFs",
+            f"Scope {name}: {a} (VRF {va}) and {b} (VRF {vb}) are in different VRFs",
+        )
 
     def scope_pairs(
         self, scope: str | None, consumers: list[Epg], providers: list[Epg]
@@ -246,15 +262,19 @@ class Classifier:
         mine = [n for n, s in own if classifies(s)]
         if not mine:
             net, scope = own[0]
-            return IMPOSSIBLE, (
+            return IMPOSSIBLE, L(
                 f"Subnetz {net} der externen EPG {label} steuert nur das Routing (Scope {scope}) "
-                "– es ordnet keinen Verkehr zu"
+                "– es ordnet keinen Verkehr zu",
+                f"Subnet {net} of external EPG {label} only controls routing (scope {scope}) "
+                "– it does not classify traffic",
             )
         inside = self._fabric(epg.source_system_id, vrf, ip)
         if inside:
-            return IMPOSSIBLE, (
+            return IMPOSSIBLE, L(
                 f"{ip} liegt in VRF {vrf} im Fabric ({inside}) – Verkehr kommt aus der EPG, nicht "
-                f"über {epg.l3out or 'einen L3Out'}"
+                f"über {epg.l3out or 'einen L3Out'}",
+                f"{ip} is in the fabric of VRF {vrf} ({inside}) – traffic comes from the EPG, not "
+                f"via {epg.l3out or 'an L3Out'}",
             )
         best = max(n.prefixlen for n in mine)
         cover = [(e, n) for e, n, s in rows if classifies(s) and within(ip, n)]
@@ -264,9 +284,11 @@ class Classifier:
             winners = ", ".join(
                 f"{ext_label(e)} ({n})" for e, n in cover if n.prefixlen == top and e.id != epg.id
             )
-            return IMPOSSIBLE, (
+            return IMPOSSIBLE, L(
                 f"{ip} gehört in VRF {vrf} zur externen EPG {winners} – genauer als {mine_net} "
-                f"von {label}"
+                f"von {label}",
+                f"{ip} belongs to external EPG {winners} in VRF {vrf} – more specific than "
+                f"{mine_net} of {label}",
             )
         others = sorted({ext_label(e) for e, n in cover if n.prefixlen == top and e.id != epg.id})
         if not others:
@@ -275,26 +297,36 @@ class Classifier:
         routed = self.routed_l3outs(epg.source_system_id, vrf, ip)
         if routed and epg.l3out in routed:
             return POSSIBLE, ""
-        also = f"{mine_net} auch bei {', '.join(others)}"
+        listed = ", ".join(others)
+        also = L(f"{mine_net} auch bei {listed}", f"{mine_net} also at {listed}")
         if routed is None:
-            return UNKNOWN, f"{also} – Route der VRF {vrf} zu {ip} nicht bekannt"
-        via = ", ".join(routed) if routed else "keinen gelesenen L3Out"
-        return UNKNOWN, f"{also}; die VRF {vrf} leitet {ip} über {via}"
+            return UNKNOWN, L(f"{also} – Route der VRF {vrf} zu {ip} nicht bekannt",
+                              f"{also} – route of VRF {vrf} to {ip} not known")  # fmt: skip
+        via = ", ".join(routed) if routed else L("keinen gelesenen L3Out", "no L3Out read")
+        return UNKNOWN, L(f"{also}; die VRF {vrf} leitet {ip} über {via}",
+                          f"{also}; VRF {vrf} routes {ip} via {via}")  # fmt: skip
 
     def _fabric(self, sid: int | None, vrf: str | None, ip) -> str | None:
-        """Ort im Fabric der VRF (EPG bzw. BD), wenn ein BD-/EPG-Subnetz die IP enthaelt."""
+        """Ort im Fabric der VRF (EPG bzw. BD), wenn ein BD-/EPG-Subnetz die IP enthaelt, die
+        Portgruppe ihrer VM bzw. ein statischer Endpunkt sie einer EPG zuordnet (0.83.1: BD ohne
+        Subnetz, Gateway auf der Firewall - das ACI lernt dort keine IPs) oder ein gelernter
+        Endpunkt sie hat."""
         if not vrf:
             return None
         for s in self._fabric_subnets.get((sid, vrf), []):
             if within(ip, s[0]):
                 return s[1]
+        if not is_net(ip):
+            for epg, how in self.locator.configured(str(ip), sid, vrf):
+                return f"{how}, EPG {epg_store.inventory_label(epg).replace('/', '|')}"
         for epg in self.session.scalars(
             select(Epg)
             .join(EpgEndpoint, EpgEndpoint.epg_id == Epg.id)
             .where(Epg.tenant_id == self.tenant_id, Epg.kind == "epg", EpgEndpoint.ip == str(ip))
         ):
             if epg.source_system_id == sid and self.vrf_of(epg) == vrf:
-                return f"Endpunkt der EPG {epg_store.inventory_label(epg).replace('/', '|')}"
+                name = epg_store.inventory_label(epg).replace("/", "|")
+                return L(f"Endpunkt der EPG {name}", f"endpoint of EPG {name}")
         return None
 
     @cached_property
@@ -302,6 +334,7 @@ class Classifier:
         """(APIC, VRF) -> BD-/EPG-Subnetze mit Ort (Inventar und EPGs der Contracts); laengste
         zuerst."""
         out: dict[tuple[int | None, str], list[tuple[Net, str]]] = defaultdict(list)
+        known = {(sid, v) for sid, names in self._vrfs.items() for v in names}
         for s in self.session.scalars(
             select(InvSubnet).where(
                 InvSubnet.tenant_id == self.tenant_id, InvSubnet.context.in_(("bd", "epg"))
@@ -315,7 +348,8 @@ class Classifier:
                 if s.epg and s.ap
                 else f"BD {s.aci_tenant}|{s.bd or s.context_name}"
             )
-            out[(s.source_system_id, s.vrf)].append((net, f"{where} {s.prefix}"))
+            vrf = aci_vrf(s.vrf, s.source_system_id, known)  # VRF aus common (0.83.1)
+            out[(s.source_system_id, vrf)].append((net, f"{where} {s.prefix}"))
         epgs = {
             e.id: e
             for e in self.session.scalars(

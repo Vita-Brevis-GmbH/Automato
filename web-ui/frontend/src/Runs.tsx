@@ -6,8 +6,11 @@ import { cancelRun, fetchRunsPage, fetchSystems, Run, System } from "./api";
 import type { Me } from "./auth";
 import { PLATFORM_LABEL } from "./refs";
 import { Empty, ErrorBox, fmtTime, Loading, PageHead, RunStatusChip } from "./ui";
+import { L } from "./i18n";
 
 const PAGE = 50;
+// Meldung auch bei Erfolg zeigen: Zusammenfassung des Laufs (IPAM, NSX ALB seit 0.78.5)
+const SUMMARY_PLATFORMS = new Set(["infoblox", "netbox", "avi"]);
 
 function duration(r: Run): string {
   const start = r.started_at ?? r.queued_at;
@@ -34,14 +37,22 @@ export function RunsTable({
     <table>
       <thead>
         <tr>
-          <th>Lauf</th>
+          <th>{L("Lauf", "Run")}</th>
           <th>System</th>
-          {detailed && <th>Plattform</th>}
-          <th>Ausführung</th>
-          <th className="num">Regeln</th>
+          {detailed && <th>{L("Plattform", "Platform")}</th>}
+          <th>{L("Ausführung", "Execution")}</th>
+          <th
+            className="num"
+            title={L(
+              "Regeln bzw. publizierte Dienste (NSX ALB), VMs (vCenter), Geräte (Switches), Einträge (IPAM)",
+              "Rules or published services (NSX ALB), VMs (vCenter), devices (switches), entries (IPAM)",
+            )}
+          >
+            {L("Einträge", "Entries")}
+          </th>
           <th>Status</th>
-          <th>{detailed ? "Angelegt / begonnen" : "Zeit"}</th>
-          {detailed && <th>Beendet</th>}
+          <th>{detailed ? L("Angelegt / begonnen", "Created / started") : L("Zeit", "Time")}</th>
+          {detailed && <th>{L("Beendet", "Finished")}</th>}
         </tr>
       </thead>
       <tbody>
@@ -54,18 +65,22 @@ export function RunsTable({
               {detailed && <td className="faint">{PLATFORM_LABEL[r.platform] ?? r.platform}</td>}
               <td>
                 <span className={`chip ${r.execution === "external" ? "local" : ""}`}>
-                  {r.execution === "external" ? "Agent" : "zentral"}
+                  {r.execution === "external" ? "Agent" : L("zentral", "central")}
                 </span>
                 {r.trigger === "schedule" && (
-                  <span className="chip info" title="vom Zeitplan des Quellsystems angelegt">
-                    Zeitplan
+                  <span
+                    className="chip info"
+                    title={L("vom Zeitplan des Quellsystems angelegt", "created by the source system's schedule")}
+                  >
+                    {L("Zeitplan", "Schedule")}
                   </span>
                 )}
               </td>
               <td className="num">{r.rule_count ?? "–"}</td>
               <td>
                 <RunStatusChip status={r.status} />
-                {r.message && (r.status === "failed" || r.platform === "infoblox" || r.platform === "netbox") && (
+                {/* offen: „Ergebnis angekommen – wartet aufs Einspielen“ (0.80.1) */}
+                {r.message && (r.status === "failed" || open || SUMMARY_PLATFORMS.has(r.platform)) && (
                   <div className={r.status === "failed" ? "run-msg err" : "run-msg"} title={r.message}>
                     {r.message}
                   </div>
@@ -75,7 +90,9 @@ export function RunsTable({
                 {detailed ? (
                   <>
                     {fmtTime(r.queued_at)}
-                    {r.started_at && <div className="faint">begonnen {fmtTime(r.started_at)}</div>}
+                    {r.started_at && <div className="faint">
+                        {L("begonnen", "started")} {fmtTime(r.started_at)}
+                      </div>}
                   </>
                 ) : (
                   fmtTime(r.finished_at ?? r.started_at ?? r.queued_at)
@@ -84,10 +101,13 @@ export function RunsTable({
                   <button
                     className="linkbtn"
                     style={{ marginLeft: 6 }}
-                    title="Lauf beenden (z. B. hängt er nach einem Neustart des Agenten). Liefert der Agent doch noch ab, wird das Ergebnis eingespielt."
+                    title={L(
+                      "Lauf beenden (z. B. hängt er nach einem Neustart des Agenten). Liefert der Agent doch noch ab, wird das Ergebnis eingespielt.",
+                      "End the run (e.g. if it hangs after an agent restart). If the agent still delivers, the result is ingested.",
+                    )}
                     onClick={() => onCancel(r.id)}
                   >
-                    Abbrechen
+                    {L("Abbrechen", "Cancel")}
                   </button>
                 )}
               </td>
@@ -162,21 +182,29 @@ export default function Runs({ me, tenantId, tenantLabel }: { me: Me; tenantId: 
 
   return (
     <>
-      <PageHead title="Läufe">
-        Alle Collector-Läufe von „{tenantLabel}“, neueste zuerst
-        {openCount ? ` · ${openCount} offen (wartet oder läuft)` : ""}.
+      <PageHead title={L("Läufe", "Runs")}>
+        {L(
+          <>
+            Alle Collector-Läufe von „{tenantLabel}“, neueste zuerst
+            {openCount ? ` · ${openCount} offen (wartet oder läuft)` : ""}.
+          </>,
+          <>
+            All collector runs of “{tenantLabel}”, newest first
+            {openCount ? ` · ${openCount} open (waiting or running)` : ""}.
+          </>,
+        )}
       </PageHead>
       <div className="filterbar">
         <select className="sel" value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="">Status: alle</option>
-          <option value="open">offen (wartet oder läuft)</option>
-          <option value="queued">wartet</option>
-          <option value="running">läuft</option>
-          <option value="failed">fehlgeschlagen</option>
-          <option value="completed">erfolgreich</option>
+          <option value="">{L("Status: alle", "Status: all")}</option>
+          <option value="open">{L("offen (wartet oder läuft)", "open (waiting or running)")}</option>
+          <option value="queued">{L("wartet", "waiting")}</option>
+          <option value="running">{L("läuft", "running")}</option>
+          <option value="failed">{L("fehlgeschlagen", "failed")}</option>
+          <option value="completed">{L("erfolgreich", "successful")}</option>
         </select>
         <select className="sel" value={systemId} onChange={(e) => setSystemId(e.target.value)}>
-          <option value="">Quellsystem: alle</option>
+          <option value="">{L("Quellsystem: alle", "Source system: all")}</option>
           {[...systems]
             .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
             .map((s) => (
@@ -186,7 +214,7 @@ export default function Runs({ me, tenantId, tenantLabel }: { me: Me; tenantId: 
             ))}
         </select>
         <select className="sel" value={platform} onChange={(e) => setPlatform(e.target.value)}>
-          <option value="">Plattform: alle</option>
+          <option value="">{L("Plattform: alle", "Platform: all")}</option>
           {platforms.map((p) => (
             <option key={p} value={p}>
               {PLATFORM_LABEL[p] ?? p}
@@ -194,22 +222,24 @@ export default function Runs({ me, tenantId, tenantLabel }: { me: Me; tenantId: 
           ))}
         </select>
         <select className="sel" value={trigger} onChange={(e) => setTrigger(e.target.value)}>
-          <option value="">Auslöser: alle</option>
-          <option value="manual">von Hand</option>
-          <option value="schedule">Zeitplan</option>
+          <option value="">{L("Auslöser: alle", "Trigger: all")}</option>
+          <option value="manual">{L("von Hand", "manual")}</option>
+          <option value="schedule">{L("Zeitplan", "Schedule")}</option>
         </select>
         <button className="btn btn-ghost btn-sm" onClick={load}>
-          Aktualisieren
+          {L("Aktualisieren", "Refresh")}
         </button>
-        {page && <span className="count">{total} Läufe</span>}
+        {page && <span className="count">{L(`${total} Läufe`, `${total} runs`)}</span>}
       </div>
-      <ErrorBox error={error} prefix="Läufe laden" />
+      <ErrorBox error={error} prefix={L("Läufe laden", "Loading runs")} />
       <div className="card">
         <div className="card-body scroll">
           {page === null ? (
             <Loading />
           ) : page.runs.length === 0 ? (
-            <Empty title="Keine Läufe">Filter anpassen oder ein Quellsystem einlesen.</Empty>
+            <Empty title={L("Keine Läufe", "No runs")}>
+              {L("Filter anpassen oder ein Quellsystem einlesen.", "Adjust the filter or collect a source system.")}
+            </Empty>
           ) : (
             <RunsTable
               runs={page.runs}
@@ -222,12 +252,12 @@ export default function Runs({ me, tenantId, tenantLabel }: { me: Me; tenantId: 
         </div>
         {total > PAGE && (
           <div className="pager">
-            {offset + 1}–{Math.min(offset + PAGE, total)} von {total}
+            {offset + 1}–{Math.min(offset + PAGE, total)} {L("von", "of")} {total}
             <button className="btn btn-ghost btn-sm" disabled={offset === 0} onClick={() => setOffset(offset - PAGE)}>
-              Zurück
+              {L("Zurück", "Back")}
             </button>
             <button className="btn btn-ghost btn-sm" disabled={offset + PAGE >= total} onClick={() => setOffset(offset + PAGE)}>
-              Weiter
+              {L("Weiter", "Next")}
             </button>
           </div>
         )}

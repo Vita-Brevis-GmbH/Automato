@@ -6,89 +6,194 @@ import type { View, ViewParams } from "./App";
 import type { Me } from "./auth";
 import { FINDING_GROUPS, FINDING_HINT, FINDING_LABEL, findingLabel } from "./refs";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
+import { L } from "./i18n";
 
 const PAGE = 500; // Findings je Seite
 
 const STATUS_LABEL: Record<string, string> = {
-  open: "offen",
-  acknowledged: "bestätigt",
-  resolved: "erledigt",
-  ignored: "ignoriert",
+  open: L("offen", "open"),
+  acknowledged: L("bestätigt", "acknowledged"),
+  resolved: L("erledigt", "resolved"),
+  ignored: L("ignoriert", "ignored"),
 };
 
 // Lesbare Bezeichnungen der Detail-Felder; technische Felder (Quelle steht in eigener Spalte) aus
 const DETAIL_LABEL: Record<string, string | null> = {
   source_system_id: null,
   source: null,
-  value: "Wert",
-  values: "Werte",
-  dns_name: "DNS-Name im IPAM",
-  reference: "Referenz",
+  value: L("Wert", "Value"),
+  values: L("Werte", "Values"),
+  dns_name: L("DNS-Name im IPAM", "DNS name in IPAM"),
+  reference: L("Referenz", "Reference"),
   vlan: "VLAN",
-  ipam_vlan: "VLAN im IPAM",
-  context: "Kontext",
-  context_name: "an",
+  ipam_vlan: L("VLAN im IPAM", "VLAN in IPAM"),
+  context: L("Kontext", "Context"),
+  context_name: L("an", "on"),
   epg: "EPG",
-  objects: "Objekte",
-  expected: "erwartet",
-  category: "Art",
+  objects: L("Objekte", "Objects"),
+  expected: L("erwartet", "expected"),
+  category: L("Art", "Type"),
   name: null, // = Objekt-Spalte
-  names: "Objekte",
-  object_class: "Klasse",
-  hint: "Hinweis",
+  names: L("Objekte", "Objects"),
+  object_class: L("Klasse", "Class"),
+  hint: L("Hinweis", "Note"),
   prefix: null, // = Objekt-Spalte
   gateway: "Gateway",
   vrf: "VRF",
   sources: "Firewall",
-  firewall_objects: "Firewall-Objekte",
-  rules: "Regeln",
-  rule_names: "z. B.",
-  server_name: "Name im IPAM gesucht",
-  ipam_elsewhere: "IPAM kennt den Server unter",
-  ipam_candidates: "Kandidaten im IPAM",
+  firewall_objects: L("Firewall-Objekte", "Firewall objects"),
+  rules: L("Regeln", "Rules"),
+  rule_names: L("z. B.", "e.g."),
+  server_name: L("Name im IPAM gesucht", "Name searched in IPAM"),
+  ipam_elsewhere: L("IPAM kennt den Server unter", "IPAM knows the server as"),
+  ipam_candidates: L("Kandidaten im IPAM", "Candidates in IPAM"),
   no_reference: null,
-  prefixes: "bekannte Präfixe",
-  compared: "verglichen",
-  missing: "fehlt",
+  prefixes: L("bekannte Präfixe", "known prefixes"),
+  compared: L("verglichen", "compared"),
+  missing: L("fehlt", "missing"),
   domain: null,
   rule_id: null,
   external_id: "ID",
-  tenant: "ACI-Tenant",
-  rule: "Prüfung",
+  tenant: L("ACI-Tenant", "ACI tenant"),
+  rule: L("Prüfung", "Check"),
   // Topologie (0.50.0): Knoten stehen im Satz, die Adressen sind lesbar
   nodes: null,
   node: null,
   label: null,
   labels: null,
-  network: "Netz",
+  network: L("Netz", "Network"),
   next_hops: "Next-Hop",
-  distance: "Distanz",
-  back: "Rückweg über",
-  peer: "Nachbar",
-  peer_names: "Name im IPAM",
+  distance: L("Distanz", "Distance"),
+  back: L("Rückweg über", "Return path via"),
+  peer: L("Nachbar", "Neighbor"),
+  peer_names: L("Name im IPAM", "Name in IPAM"),
   remote_as: "AS",
-  state: "Zustand",
+  state: L("Zustand", "State"),
   // Zonen (0.51.0): Paare und Absicht stehen im Satz
   pairs: null,
   notes: null,
-  zones: "Zonen",
-  // Abweichung Regel ↔ Weg (0.59.0): Verbindungen stehen im Satz
-  application: "Applikation",
+  zones: L("Zonen", "Zones"),
+  // Wege uneinheitlich (0.73.0, vorher Regel ↔ Weg): Verbindungen stehen im Satz
+  application: L("Applikation", "Application"),
   application_id: null,
   connections: null,
-  count: "Verbindungen",
+  count: L("Verbindungen", "Connections"),
+  // Parallele Firewalls (0.18.0/0.72.0): Felder und Werte stehen im Satz, Routen als Tabelle
+  group: L("Verbund", "Parallel group"),
+  other: L("verglichen mit", "compared with"),
+  fields: L("Felder", "Fields"),
+  missing_on: L("fehlt auf", "missing on"),
+  other_rule_id: null,
+  object_id: null,
+  other_object_id: null,
+  nat_id: null,
+  other_nat_id: null,
+  nat_type: null,
+  vdom: "VDOM",
+  seq: null,
+  entries: null,
+  counts: null,
 };
 
-const SIDE: Record<string, string> = { src: "Quelle / Consumer", dst: "Ziel / Provider" };
+// Routing-Befund im Verbund (0.72.0): je Präfix, was auf der führenden bzw. dieser Firewall steht
+const ROUTE_KIND: Record<string, string> = {
+  differs: L("anders", "different"),
+  only_lead: L("fehlt hier", "missing here"),
+  only_here: L("nur hier", "only here"),
+};
+const ROUTE_TABLE: Record<string, string> = {
+  rib: L("wirksam", "effective"),
+  static: L("statisch", "static"),
+  vdom: "VDOM",
+};
+type RouteEntry = {
+  table: string;
+  prefix: string;
+  kind: string;
+  vrf?: string | number;
+  fields?: string[];
+  lead?: string;
+  here?: string;
+};
+
+function RouteEntries({ f }: { f: Finding }) {
+  const d = (f.detail ?? {}) as Record<string, unknown>;
+  const entries = (Array.isArray(d.entries) ? d.entries : []) as RouteEntry[];
+  if (!entries.length) return null;
+  const count = typeof d.count === "number" ? d.count : entries.length;
+  return (
+    <div className="scroll" style={{ maxHeight: 320, marginTop: 6 }}>
+      <table className="parallel-routes">
+        <thead>
+          <tr>
+            <th>{L("Tabelle", "Table")}</th>
+            <th>{L("Präfix", "Prefix")}</th>
+            <th>{L("Abweichung", "Deviation")}</th>
+            <th>{String(d.other ?? L("führend", "leading"))}</th>
+            <th>{String(d.source ?? L("diese Firewall", "this firewall"))}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((e, i) => (
+            <tr key={i}>
+              <td>{ROUTE_TABLE[e.table] ?? e.table}</td>
+              <td className="mono">
+                {e.prefix}
+                {e.vrf != null && <span className="faint"> · VRF {e.vrf}</span>}
+              </td>
+              <td>
+                <span className="chip warn">{ROUTE_KIND[e.kind] ?? e.kind}</span>
+                {e.fields?.length ? <span className="faint"> {e.fields.join(", ")}</span> : null}
+              </td>
+              <td className="mono">{e.lead ?? (e.kind === "only_here" ? "–" : "")}</td>
+              <td className="mono">{e.here ?? (e.kind === "only_lead" ? "–" : "")}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {count > entries.length && (
+        <div className="faint">
+          {L(<>… und {count - entries.length} weitere</>, <>… and {count - entries.length} more</>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const SIDE: Record<string, string> = {
+  src: L("Quelle / Consumer", "Source / Consumer"),
+  dst: L("Ziel / Provider", "Destination / Provider"),
+};
 const fmtValue = (k: string, v: unknown): string => {
   if (k === "missing" && Array.isArray(v)) return v.map((x) => SIDE[x] ?? x).join(", ");
   if (Array.isArray(v)) return v.join(k === "compared" ? " ≠ " : ", ");
+  // Abweichung im Verbund: {Feld: [hier, dort]}
+  if (k === "values" && v && typeof v === "object")
+    return Object.entries(v as Record<string, unknown>)
+      .map(([f, x]) => `${f}: ${Array.isArray(x) ? x.join(" ≠ ") : String(x)}`)
+      .join(" · ");
   if (k === "ipam_elsewhere" && v && typeof v === "object") {
     const o = v as Record<string, string>;
     return `${o.name} → ${o.value}`;
   }
   return typeof v === "object" ? JSON.stringify(v) : String(v);
 };
+
+// Weitere Ziele eines Befunds (0.72.0): Routen bzw. Policy-Routen im Routing, NAT
+function viewLinks(f: Finding): { label: string; view: View; params: ViewParams }[] {
+  const d = (f.detail ?? {}) as Record<string, unknown>;
+  const sid = f.source_system_id;
+  if (f.type === "parallel_route_mismatch" && sid != null && d.vdom)
+    return [{ label: L(`Routen ${String(d.source ?? "")} · ${String(d.vdom)}`,
+                       `Routes ${String(d.source ?? "")} · ${String(d.vdom)}`), view: "routing",
+              params: { tab: "routes", context: `${sid}|${String(d.vdom)}` } }];
+  if (f.type === "parallel_policy_route_mismatch")
+    return [{ label: String(d.label ?? L("Policy-Route", "Policy route")), view: "routing",
+              params: { tab: "policy", q: `${String(d.source ?? "")} ${String(d.name ?? d.seq ?? "")}`.trim() } }];
+  if (f.type === "parallel_nat_mismatch" && d.name)
+    return [{ label: String(d.name), view: "nat", params: { q: String(d.name) } }];
+  return [];
+}
 
 // Objekt-Namen eines Befunds, für die ein Link "Regeln mit diesem Objekt" sinnvoll ist
 function ruleLinks(f: Finding): { label: string; params: ViewParams }[] {
@@ -100,7 +205,7 @@ function ruleLinks(f: Finding): { label: string; params: ViewParams }[] {
     return [{ label: f.subject_id, params: { q: String(d.value ?? f.subject_id) } }];
   }
   if (f.type === "duplicate_value") return names("names").map((n) => ({ label: n, params: { object: n } }));
-  if (["rule_incomplete", "aci_scope_unpaired", "snat_pool_missing", "app_connection_mismatch"].includes(f.type) && d.rule_id != null)
+  if (["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing", "app_connection_mismatch", "app_contract_narrower"].includes(f.type) && d.rule_id != null)
     return [{ label: String(d.name ?? f.subject_id), params: { rule: String(d.rule_id) } }];
   if (f.subject_kind === "device_object" && f.type !== "unused_object")
     return [{ label: f.subject_id, params: { object: f.subject_id } }];
@@ -215,9 +320,18 @@ export default function Findings({
   return (
     <>
       <PageHead title="Findings">
-        Datenqualität für „{tenantLabel}“: Abgleich der Firewall-/ACI-Daten mit dem IPAM (DDI/NetBox) und der
-        Namenskonvention. Wird nach jedem Lauf neu berechnet; Triage (Status setzen) erfordert die Rolle Operator
-        und bleibt erhalten.
+        {L(
+          <>
+            Datenqualität für „{tenantLabel}“: Abgleich der Firewall-/ACI-Daten mit dem IPAM (DDI/NetBox) und der
+            Namenskonvention. Wird nach jedem Lauf neu berechnet; Triage (Status setzen) erfordert die Rolle Operator
+            und bleibt erhalten.
+          </>,
+          <>
+            Data quality for “{tenantLabel}”: reconciliation of the firewall/ACI data with the IPAM (DDI/NetBox) and the
+            naming convention. Recalculated after every run; triage (setting the status) requires the operator role
+            and is kept.
+          </>,
+        )}
       </PageHead>
       {summary && Object.keys(summary.by_type).length > 0 && (
         <div className="fgroups">
@@ -229,7 +343,7 @@ export default function Findings({
               <div key={g.key} className="card fgroup">
                 <div className="fgroup-head">
                   <b>{g.label}</b>
-                  <span className={`chip ${openN ? "warn" : "ok"}`}>{openN} offen</span>
+                  <span className={`chip ${openN ? "warn" : "ok"}`}>{L(<>{openN} offen</>, <>{openN} open</>)}</span>
                 </div>
                 <div className="faint" style={{ fontSize: 12, marginBottom: 4 }}>
                   {g.help}
@@ -240,7 +354,7 @@ export default function Findings({
                     <button
                       key={t}
                       className={`fline ${type === t ? "on" : ""}`}
-                      title={`${FINDING_HINT[t] ?? t} – Klick filtert`}
+                      title={L(`${FINDING_HINT[t] ?? t} – Klick filtert`, `${FINDING_HINT[t] ?? t} – click to filter`)}
                       onClick={() => setType(type === t ? "" : t)}
                     >
                       <span>{findingLabel(t)}</span>
@@ -260,12 +374,12 @@ export default function Findings({
         <div className="seg">
           {["open", "acknowledged", "resolved", "ignored", ""].map((s) => (
             <button key={s || "all"} className={status === s ? "on" : ""} onClick={() => setStatus(s)}>
-              {s ? STATUS_LABEL[s] : "alle"} ({s ? (counts[s] ?? 0) : (summary?.total ?? 0)})
+              {s ? STATUS_LABEL[s] : L("alle", "all")} ({s ? (counts[s] ?? 0) : (summary?.total ?? 0)})
             </button>
           ))}
         </div>
         <select className="sel" value={type} onChange={(e) => setType(e.target.value)}>
-          <option value="">Typ: alle</option>
+          <option value="">{L("Typ: alle", "Type: all")}</option>
           {types.map((t) => (
             <option key={t} value={t}>
               {FINDING_LABEL[t] ?? t}
@@ -276,39 +390,55 @@ export default function Findings({
           <span className="ico">
             <Icon name="search" />
           </span>
-          <input placeholder="Objekt oder Detail…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input placeholder={L("Objekt oder Detail…", "Object or detail…")} value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <span className="count">
-          {total} Treffer{total > loaded ? ` · ${loaded} geladen` : ""}
+          {L(
+            <>
+              {total} Treffer{total > loaded ? ` · ${loaded} geladen` : ""}
+            </>,
+            <>
+              {total} match{total === 1 ? "" : "es"}
+              {total > loaded ? ` · ${loaded} loaded` : ""}
+            </>,
+          )}
         </span>
       </div>
       <ErrorBox error={error} prefix="Findings" onClose={() => setError(null)} />
       <div className="card">
         <div className="card-body scroll">
           {findings === null ? (
-            <Loading>Lade Findings…</Loading>
+            <Loading>{L("Lade Findings…", "Loading findings…")}</Loading>
           ) : shown.length === 0 ? (
-            <Empty title={status === "open" ? "Keine offenen Findings 🎉" : "Keine Einträge"}>
+            <Empty
+              title={
+                status === "open" ? L("Keine offenen Findings 🎉", "No open findings 🎉") : L("Keine Einträge", "No entries")
+              }
+            >
               {status === "open"
-                ? "Alle Endpunkte wurden gegen die Source of Truth aufgelöst oder als extern bestätigt."
-                : "Für diesen Status gibt es keine Findings."}
+                ? L(
+                    "Alle Endpunkte wurden gegen die Source of Truth aufgelöst oder als extern bestätigt.",
+                    "All endpoints were resolved against the source of truth or acknowledged as external.",
+                  )
+                : L("Für diesen Status gibt es keine Findings.", "There are no findings for this status.")}
             </Empty>
           ) : (
             <table>
               <thead>
                 <tr>
-                  <th>Schwere</th>
-                  <th>Typ</th>
-                  <th>Objekt</th>
-                  <th>Befund</th>
-                  <th>Quelle</th>
-                  <th>Zuletzt gesehen</th>
+                  <th>{L("Schwere", "Severity")}</th>
+                  <th>{L("Typ", "Type")}</th>
+                  <th>{L("Objekt", "Object")}</th>
+                  <th>{L("Befund", "Finding")}</th>
+                  <th>{L("Quelle", "Source")}</th>
+                  <th>{L("Zuletzt gesehen", "Last seen")}</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
                 {shown.map((f) => {
                   const links = onGo ? ruleLinks(f) : [];
+                  const others = onGo ? viewLinks(f) : [];
                   const sources = Array.isArray(f.detail?.sources) ? (f.detail!.sources as string[]).join(", ") : null;
                   return (
                     <Fragment key={f.id}>
@@ -354,12 +484,27 @@ export default function Findings({
                                     <dd className="mono">{fmtValue(k, v)}</dd>
                                   </Fragment>
                                 ))}
-                              <dt>erstmals gesehen</dt>
+                              <dt>{L("erstmals gesehen", "first seen")}</dt>
                               <dd className="mono">{fmtTime(f.first_seen)}</dd>
                             </dl>
+                            <RouteEntries f={f} />
+                            {others.length > 0 && (
+                              <div style={{ marginTop: 6 }}>
+                                <span className="faint">{L("Anzeigen: ", "Show: ")}</span>
+                                {others.map((l) => (
+                                  <button
+                                    key={l.label}
+                                    className="chip local linkchip"
+                                    onClick={() => onGo?.(l.view, l.params)}
+                                  >
+                                    {l.label}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                             {links.length > 0 && (
                               <div style={{ marginTop: 6 }}>
-                                <span className="faint">Regeln anzeigen: </span>
+                                <span className="faint">{L("Regeln anzeigen: ", "Show rules: ")}</span>
                                 {links.map((l) => (
                                   <button
                                     key={l.label}
@@ -383,9 +528,18 @@ export default function Findings({
         </div>
         {findings !== null && total > loaded && (
           <div className="card-foot">
-            {loaded} von {total} geladen – Typ oder Suche eingrenzen oder{" "}
+            {L(
+              <>
+                {loaded} von {total} geladen – Typ oder Suche eingrenzen oder{" "}
+              </>,
+              <>
+                {loaded} of {total} loaded – narrow down type or search, or{" "}
+              </>,
+            )}
             <button className="btn btn-ghost btn-sm" onClick={loadMore} disabled={more}>
-              {more ? "Lade…" : `weitere ${Math.min(PAGE, total - loaded)} laden`}
+              {more
+                ? L("Lade…", "Loading…")
+                : L(`weitere ${Math.min(PAGE, total - loaded)} laden`, `load ${Math.min(PAGE, total - loaded)} more`)}
             </button>
           </div>
         )}

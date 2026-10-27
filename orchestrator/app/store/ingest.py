@@ -27,6 +27,7 @@ from sqlalchemy import delete, select, true
 from sqlalchemy.orm import Session
 
 from app import audit, naming
+from app.i18n import german_only
 from app.models import (
     INVENTORY_MODELS,
     SERVICE_CATEGORIES,
@@ -69,7 +70,7 @@ from app.schemas.collector import (
     NormalizedObject,
     NormalizedRule,
 )
-from app.store import customers, l2, reconcile, rule_index, topology, virtual
+from app.store import customers, l2, reconcile, rule_index, tenant_lock, topology, virtual
 from app.store import naming_profiles as profile_store
 from app.store import rules as rules_store
 
@@ -100,8 +101,12 @@ _PROTO_BY_NAME = {
 }
 
 
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
 def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     """Schreibt `result` in den Store. `run` muss tenant_id + source_system_id tragen."""
+    # zuerst den Mandanten sperren (0.80.1): danach wird sein ganzer abgeleiteter Zustand neu
+    # geschrieben - zwei Laeufe zugleich sperrten sich sonst gegenseitig (Deadlock)
+    tenant_lock.hold(session, run.tenant_id)
     # Regeln und NAT des Quellsystems ersetzen (aktueller Stand) - per SQL, ohne jede Regel
     # mit ihren Kindern einzeln zu laden
     rules_store.delete_rules(session, Rule.source_system_id == run.source_system_id)
@@ -152,7 +157,9 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     # Regelindex des Quellsystems (Abgleich kann Werte aus dem IPAM ergaenzen) - nach einem
     # vCenter-Lauf der des ganzen Mandanten (VM-Namen im Suchtext)
     reconcile.reconcile_tenant(session, run.tenant_id)
-    if result.virtual is not None:
+    # vCenter: VM-Namen im Suchtext; NSX ALB (0.79.0): Server hinter den VIPs als Ziel der
+    # Firewall-Regeln - beides der Index des ganzen Mandanten
+    if result.virtual is not None or str(getattr(run.platform, "value", run.platform)) == "avi":
         rule_index.rebuild(session, run.tenant_id)
     else:
         rule_index.rebuild(

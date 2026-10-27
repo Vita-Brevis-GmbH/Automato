@@ -20,6 +20,14 @@ mit ihrem Weg; je Hop die Policy bzw. der Contract, der entscheidet, mit den Obj
   Geraet gar nicht auf dem Weg liegt. Erlaubt eine Regel und sperrt der Weg (bzw. liegt sie
   nicht auf dem Weg), ist die Verbindung als Abweichung markiert - der Fall „Regel zeigt
   Zugriff, Weg-Suche sperrt“ (Befund 0.43.2).
+- **Wege uneinheitlich (0.73.0, Anwender):** je Verbindung alle Wege - aktiv, ECMP, Backup und
+  je Firewall eines Verbunds (`variants`). Offen ueber einen Weg und gesperrt ueber einen
+  anderen (`inconsistent`) ist der Befund „Applikation: Wege uneinheitlich“; durchgehend
+  gesperrt ist gewollt und kein Befund mehr.
+- **Fuer den Netzwerkplan (0.74.0):** je ACI-Hop der L3Out des Ein- bzw. Ausgangs nach dem
+  Routing (`l3out_in`/`l3out_out`: Next-Hop im Netz bzw. Peer eines L3Out-Pfads, Interface des
+  Pfads), dazu die L3Outs der externen EPGs der Pruefung (`l3outs`), und der Aufbau der
+  Applikation (`members`: EPGs mit Tenant/AP, Systeme mit ihren EPGs).
 
 Nur lesend; Stand der letzten Laeufe. Nicht fuer Kunden-Benutzer: der Weg zeigt die
 Infrastruktur (ADR 0018).
@@ -31,13 +39,25 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Application, Epg, EpgEndpoint, EpgSubnet, Rule, RuleDomain, RuleIpRange
-from app.store import appdoc, paths, policy_check
+from app.i18n import L
+from app.models import (
+    Application,
+    Epg,
+    EpgEndpoint,
+    EpgSubnet,
+    Rule,
+    RuleDomain,
+    RuleIpRange,
+    TopoL3Out,
+)
+from app.store import aci_direction, appdoc, epg_locate, paths, policy_check
 from app.store import epgs as epg_store
+from app.store import nat as nat_store
 from app.store.topology import endpoint, is_net, within
 
 MAX_TRACES = 120  # Wege je Applikation
 MAX_COUNTER = 6  # Gegenstellen je Regel und Seite
+MAX_PARTS = 8  # genauer geroutete Teile eines Netzes als eigene Verbindungen (0.79.1)
 MAX_SERVICES = 3  # Dienste je Regel
 MAX_SYSTEMS = 12  # genannte Systeme je Seite
 _SKIP = ("any", "vzany", "pref_group")  # unspezifisch: Regel ohne Verbindung
@@ -51,6 +71,7 @@ class _Side:
     kind: str  # system | object | epg | external
     systems: list[str] = field(default_factory=list)
     keys: list[str] = field(default_factory=list)  # Systeme der Applikation (Doku-Schluessel)
+    l3out: str | None = None  # externe EPG: ihr L3Out (Netzwerkplan, 0.74.0)
 
 
 @dataclass
@@ -68,10 +89,15 @@ class _Conn:
 
 def build(session: Session, app: Application, doc: dict | None = None,
           graph: paths.Graph | None = None,
-          checks: policy_check.Checks | None = None) -> dict:  # fmt: skip
+          checks: policy_check.Checks | None = None, zones: bool = True) -> dict:  # fmt: skip
     """Verbindungen der Applikation mit Weg, Urteil je Hop und Abgleich mit den Regeln. Graph
-    und Policies lassen sich fuer mehrere Applikationen teilen (Befunde, 0.59.0)."""
-    from app.store import applications  # spaet: applications nutzt appdoc wie dieses Modul
+    und Policies lassen sich fuer mehrere Applikationen teilen (Befunde, 0.59.0); `zones`:
+    logische Zonen je Verbindung und Hop mit der Absicht (0.78.0, ADR 0024) - die Befunde
+    brauchen sie nicht."""
+    from app.store import (
+        applications,  # spaet: applications nutzt appdoc wie dieses Modul
+        zone_path,  # spaet: Zonen nutzen Kunden, diese die Applikationen
+    )
 
     tid = app.tenant_id
     doc = doc or applications.build_doc(session, app)
@@ -88,10 +114,28 @@ def build(session: Session, app: Application, doc: dict | None = None,
     checks = checks or policy_check.Checks.load(session, tid)
     out: list[dict] = []
     cut = len(conns) > MAX_TRACES
+    l3 = L3Outs(session, {k[0] for k in graph.nodes})
+    l3.locator = epg_locate.Locator(session, tid, data.aci, data.epgs_by_id)
+    zctx = zone_path.ZoneContext(session, tid, graph) if zones else None
     for c in list(conns.values())[:MAX_TRACES]:
-        out.append(_connection(session, tid, graph, checks, data, rules, c))
+        conn = _connection(session, tid, graph, checks, data, rules, c, l3, zctx)
+        out.append(conn)
+        # Netz als Ziel (0.79.1, Anwender): genauer geroutete Teile (z. B. ueber einen anderen
+        # L3Out als die 0/0-Route, die das ganze Netz enthaelt) als eigene Verbindungen
+        for prefix in conn["parts"][:MAX_PARTS]:
+            part = _Conn(_copy(c.src), _copy(c.dst), c.service, c.direction, dict(c.rules),
+                         list(c.starts), c.reverse)  # fmt: skip
+            part.dst.ip, part.dst.label = prefix, f"{c.dst.label} › {prefix}"
+            child = _connection(session, tid, graph, checks, data, rules, part, l3, zctx)
+            child["part_of"] = conn["key"]
+            out.append(child)
     if cut:
-        notes.append(f"{len(conns)} Verbindungen – nur die ersten {MAX_TRACES} geprüft")
+        notes.append(
+            L(
+                f"{len(conns)} Verbindungen – nur die ersten {MAX_TRACES} geprüft",
+                f"{len(conns)} connections – only the first {MAX_TRACES} checked",
+            )
+        )
     order = {"deny": 0, "depends": 1, "unknown": 2, "allow": 3}
     out.sort(key=lambda c: (not c["mismatch"], order.get(c["verdict"], 2)))
     return {
@@ -105,8 +149,76 @@ def build(session: Session, app: Application, doc: dict | None = None,
                 1 for c in out if c["verdict"] in ("depends", "unknown") or not c["reached"]
             ),  # fmt: skip
             "mismatch": sum(1 for c in out if c["mismatch"]),
+            "inconsistent": sum(1 for c in out if c["inconsistent"]),
+            # gegen die Absicht der Zonen (0.78.0)
+            "zone_violations": sum(1 for c in out if (c.get("zones") or {}).get("violation")),
         },
+        "members": members(doc),
+        # 0.78.2: L3Out-Contracts, die weniger oeffnen als die Firewall (Befund)
+        "narrower": doc.get("narrower") or [],
     }
+
+
+def members(doc: dict) -> dict:
+    """Aufbau der Applikation fuer den Netzwerkplan (0.74.0): EPGs mit Tenant/AP und VRF,
+    Systeme mit ihren EPGs."""
+    return {
+        "epgs": [
+            {k: e.get(k) for k in ("key", "label", "name", "tenant", "ap", "vrf")}
+            for e in doc["epgs"]
+        ],  # fmt: skip
+        "systems": [
+            {
+                "key": x["key"],
+                "name": x["name"],
+                "kind": x["kind"],
+                "ips": x["ips"][:4],
+                "epgs": x["epgs"],
+            }
+            for x in doc["systems"]
+        ],  # fmt: skip
+    }
+
+
+class L3Outs:
+    """L3Outs der ACI-Quellsysteme je VRF mit den Netzen und Interfaces ihrer Pfade und den
+    Peers - welcher L3Out einen Hop verlaesst bzw. betritt (0.74.0)."""
+
+    def __init__(self, session: Session, sources: set[int]):
+        self.by_vrf: dict[tuple[int, str], list[tuple[str, list, set[str], set[str]]]] = {}
+        self.locator = None  # EPG der VIP eines Load Balancers im Fabric (0.85.0)
+        if not sources:
+            return
+        for o in session.scalars(select(TopoL3Out).where(TopoL3Out.source_system_id.in_(sources))):
+            nets, ifaces = [], set()
+            for p in o.paths or []:
+                if p.get("interface"):
+                    ifaces.add(p["interface"])
+                for e in p.get("ips") or []:
+                    try:
+                        nets.append(ipaddress.ip_interface(str(e.get("ip") or "")).network)
+                    except ValueError:
+                        continue
+            peers = {str(p.get("ip")) for p in o.peers or [] if p.get("ip")}
+            entry = (o.name, nets, ifaces, peers)
+            self.by_vrf.setdefault((o.source_system_id, o.vrf or ""), []).append(entry)
+
+    def match(self, sid: int, vrf: str, port: dict | None) -> str | None:
+        if not port:
+            return None
+        hop, iface = port.get("next_hop"), port.get("interface")
+        try:
+            ip = ipaddress.ip_address(hop) if hop else None
+        except ValueError:
+            ip = None
+        for name, nets, ifaces, peers in self.by_vrf.get((sid, vrf), []):
+            if hop and hop in peers:
+                return name
+            if ip is not None and any(ip.version == n.version and ip in n for n in nets):
+                return name
+            if iface and iface in ifaces:
+                return name
+        return None
 
 
 # -- Verbindungen aus den Treffern ------------------------------------------------------
@@ -138,6 +250,10 @@ def _candidates(
         if h["relevance"] == "impossible" or h["scope"] in _SKIP:
             continue
         system = systems[h["system"]]
+        if rule.domain == RuleDomain.ACI_CONTRACT and not h.get("reverse"):
+            names = [x.canonical_name for x in rule.services]
+            if aci_direction.replies_only(rule.raw, names):
+                continue  # Consumer -> Provider nur Antworten (0.72.1): keine Verbindung
         if rule.domain == RuleDomain.ACI_CONTRACT:
             key = f"aci:{rule.id}:{h['side']}:{h.get('epg') or h['system']}"
             if key not in counters:
@@ -148,6 +264,9 @@ def _candidates(
             if key not in counters:
                 counters[key] = _fw_counter(ranges.get((rule.id, _other(h["side"])), []))
             own_ips = _own_ips(system, h.get("value"))
+            entry = _entry(data, rule, h)  # ueber VIP bzw. Load Balancer (0.79.0)
+            if entry is not None:
+                own_ips = [entry]
         if not counters[key]:
             skipped.add(rule.name or f"#{rule.external_id}")
             continue
@@ -194,8 +313,32 @@ def _candidates(
     notes = []
     if skipped:
         names = ", ".join(sorted(skipped)[:5]) + (" …" if len(skipped) > 5 else "")
-        notes.append(f"ohne prüfbare Gegenstelle (FQDN, ISDB, any): {names}")
+        notes.append(
+            L(
+                f"ohne prüfbare Gegenstelle (FQDN, ISDB, any): {names}",
+                f"without a checkable peer (FQDN, ISDB, any): {names}",
+            )
+        )
     return merged, notes
+
+
+def _entry(data: appdoc.TenantData, rule: Rule, h: dict) -> str | None:
+    """Ziel der Verbindung, wenn die Regel das System ueber einen Load Balancer erreicht
+    (0.79.0, Treffer „V-EXT_x → vs-web“): die externe IP der VIP der FortiGate davor bzw. die
+    VIP des Virtual Service - der Weg geht dann ueber DNAT und Load Balancer zum Server."""
+    text = str(h.get("object") or "")
+    if h.get("side") != "dst" or nat_store.CHAIN not in text:
+        return None
+    front, _, lb_name = text.partition(nat_store.CHAIN)
+    vip = data.nat_by_name.get((rule.source_system_id, rule.vdom, front.strip().lower()))
+    if vip is not None and not nat_store.is_balancer(vip) and vip.ext_ip:
+        return nat_store.host_ip(vip.ext_ip.split("-")[0])
+    value = str(h.get("value") or "")
+    for n in data.nats:
+        if nat_store.is_balancer(n) and n.name == lb_name.strip():
+            if value in nat_store.internal_ips(n):
+                return nat_store.host_ip(n.ext_ip)
+    return None
 
 
 def _merge(m: _Conn, c: _Conn) -> None:
@@ -255,7 +398,7 @@ def _group_key(rule: Rule, h: dict, cp: _Side, svc) -> tuple:
 
 
 def _copy(s: _Side) -> _Side:
-    return _Side(s.ip, s.label, s.kind, list(s.systems), list(s.keys))
+    return _Side(s.ip, s.label, s.kind, list(s.systems), list(s.keys), s.l3out)
 
 
 def _add_system(side: _Side, system: dict) -> None:
@@ -338,7 +481,8 @@ def _fw_counter(ranges: list[tuple]) -> list[_Side]:
             text = str(first) if net.num_addresses == 1 else str(net)
             label = via or text
         else:
-            text, label = str(first), f"{via or first} ({first}–{last}, geprüft mit {first})"
+            checked = L("geprüft mit", "checked with")
+            text, label = str(first), f"{via or first} ({first}–{last}, {checked} {first})"
         if text in seen:
             continue
         seen.add(text)
@@ -370,7 +514,12 @@ def _aci_counter(session: Session, data: appdoc.TenantData, h: dict) -> list[_Si
             for net in _subnets(session, e.id)[:3]:
                 if net.prefixlen:
                     out.append(
-                        _Side(str(net), f"externe EPG {e.l3out}|{e.name} ({net})", "external")
+                        _Side(
+                            str(net),
+                            f"{L('externe EPG', 'external EPG')} {e.l3out}|{e.name} ({net})",
+                            "external",
+                            l3out=e.l3out,
+                        )  # fmt: skip
                     )
             continue
         names = [v["name"] for v in vms.get(e.id, []) if v["ips"]]
@@ -418,9 +567,13 @@ def _services(rule: Rule) -> list[tuple[str, int | None] | None]:
 
 
 def _named(text: str) -> list[tuple[str, int | None] | None]:
-    """Dienste der Rueckrichtung (`ip/any`, `tcp/any`, `icmp/any` … aus dem Treffer, 0.69.1)."""
+    """Dienste der Rueckrichtung (`ip/any`, `tcp/any`, `icmp/any` … aus dem Treffer, 0.69.1);
+    der Zusatz „(Rueckrichtung)“ in jeder Sprache (`appdoc.REVERSE_MARKS`)."""
     out: list = []
-    for name in (text or "").replace("(Rückrichtung)", "").split(","):
+    text = text or ""
+    for mark in appdoc.REVERSE_MARKS:
+        text = text.replace(mark, "")
+    for name in text.split(","):
         proto, _, port = name.strip().lower().partition("/")
         if proto in ("tcp", "udp"):
             svc = (proto, int(port)) if port.isdigit() else (proto, None)
@@ -462,25 +615,32 @@ def _connection(
     data: appdoc.TenantData,
     rules: dict[int, Rule],
     c: _Conn,
+    l3: "L3Outs | None" = None,
+    zctx=None,
 ) -> dict:
+    # mit Backup-Wegen gleicher Laenge (slack 0): uneinheitliche Wege (0.73.0)
     res = paths.trace(session, tid, c.dst.ip, c.src.ip, None, 0, c.service, graph=graph,
-                      checks=checks, backups=False)  # fmt: skip
+                      checks=checks)  # fmt: skip
     start = None
     if not res["paths"]:
         for key in c.starts:
             if paths.parse_key(key) in graph.nodes:
                 res = paths.trace(session, tid, c.dst.ip, c.src.ip, key, 0, c.service,
-                                  graph=graph, checks=checks, backups=False)  # fmt: skip
+                                  graph=graph, checks=checks)  # fmt: skip
                 if res["paths"]:
                     start = graph.nodes[paths.parse_key(key)].label
                     break
+    if zctx is not None:  # Zonen je Hop und Absicht zwischen Quell- und Zielzone (0.78.0)
+        zctx.annotate(res, c.src.ip, c.dst.ip, c.service)
     active = [p for p in res["paths"] if p.get("kind") != "backup"]
     first = active[0] if active else None
-    hops = [_hop(h) for h in first["hops"]] if first else []
+    hops = [_hop(h, l3) for h in first["hops"]] if first else []
     verdict, text = _verdict(active, res["notes"])
     reached = bool(active) and all(p["end"]["kind"] in paths.REACHED for p in active)
     states = [_state(rules[rid], active, data) for rid in c.rules if rid in rules]
     mismatch = _mismatch(states, verdict, text, reached)
+    variants = path_variants(res["paths"])
+    parts = _net_parts(c, first)
     return {
         "key": f"{c.src.ip}>{c.dst.ip}>{_service_text(c.service) or 'alle'}",
         "direction": c.direction,
@@ -498,7 +658,54 @@ def _connection(
         "hops": hops,
         "rules": states,
         "mismatch": mismatch,
+        # Wege uneinheitlich (0.73.0): je Weg bzw. Firewall im Verbund das Urteil
+        "variants": variants if len(variants) > 1 else [],
+        "inconsistent": inconsistent(variants),
         "notes": res["notes"],
+        "zones": _zones_out(res.get("zones"), first),
+        # Teile des Ziel-Netzes, die genauer anders geroutet werden (eigene Verbindungen)
+        "parts": parts,
+    }
+
+
+def _net_parts(c: _Conn, first: dict | None) -> list[str]:
+    """Genauer geroutete Teile des Ziels, wenn es ein Netz ist: die Route, die das ganze Netz
+    enthaelt (z. B. 0.0.0.0/0), gilt fuer sie nicht (0.79.1)."""
+    if first is None or c.dst.kind != "object" or not is_net(endpoint(c.dst.ip)):
+        return []  # nur Netze der Firewall-Regeln (EPG-Subnetze nicht in Host-Routen zerlegen)
+    out: list[str] = []
+    for h in first["hops"]:
+        for r in (h.get("route") or {}).get("inner") or []:
+            net = endpoint(r["prefix"])
+            host = net.prefixlen == (32 if net.version == 4 else 128)
+            if not host and r["prefix"] not in out and r["prefix"] != c.dst.ip:
+                out.append(r["prefix"])
+    return out
+
+
+def _zones_out(zones: dict | None, first: dict | None) -> dict | None:
+    """Zonen einer Verbindung kompakt: Quelle/Ziel, Kette des Wegs mit Uebergaengen, Absichten
+    mit Urteil; `violation` = mindestens eine Absicht verletzt."""
+    if not zones:
+        return None
+    steps = (first or {}).get("zones") or []
+    # nur „ohne Zone“ sagt nichts: dann ohne Kette (Quelle/Ziel reichen)
+    chain = [
+        {k: e.get(k) for k in ("name", "code", "color", "transition", "role")}
+        for e in steps
+    ] if any(e.get("id") is not None for e in steps) else []  # fmt: skip
+    intents = [
+        {k: i.get(k) for k in ("src_name", "dst_name", "intent", "services", "verdict", "text")}
+        for i in zones.get("intents") or []
+    ]
+    if not chain and not intents and not zones.get("src") and not zones.get("dst"):
+        return None
+    return {
+        "src": [z["name"] for z in zones.get("src") or []],
+        "dst": [z["name"] for z in zones.get("dst") or []],
+        "chain": chain,
+        "intents": intents,
+        "violation": any(i["verdict"] == "violation" for i in intents),
     }
 
 
@@ -512,34 +719,80 @@ def _side_out(s: _Side, graph: paths.Graph) -> dict:
         "systems": s.systems[:MAX_SYSTEMS],
         "more": max(0, len(s.systems) - MAX_SYSTEMS),
         "keys": s.keys,
+        "l3out": s.l3out,
     }
 
 
 def _verdict(active: list[dict], notes: list[str]) -> tuple[str, str]:
     if not active:
-        return "unknown", "; ".join(notes) or "kein Weg gefunden"
+        return "unknown", "; ".join(notes) or L("kein Weg gefunden", "no path found")
     policies = [p.get("policy") for p in active]
     verdicts = {x["verdict"] if x else "unknown" for x in policies}
     if len(verdicts) == 1:
         one = policies[0]
-        return (one["verdict"], one["text"]) if one else ("unknown", "keine Regeln auf dem Weg")
+        if one:
+            return one["verdict"], one["text"]
+        return "unknown", L("keine Regeln auf dem Weg", "no rules on the path")
     if "allow" in verdicts and verdicts & {"deny"}:
-        return "depends", "je nach Weg (ECMP) erlaubt bzw. gesperrt"
+        return "depends", L(
+            "je nach Weg (ECMP) erlaubt bzw. gesperrt",
+            "allowed or blocked depending on the path (ECMP)",
+        )
     return "depends", "; ".join(dict.fromkeys(x["text"] for x in policies if x))
+
+
+def path_variants(found: list[dict]) -> list[dict]:
+    """Urteil je Weg (aktiv, ECMP, Backup) und - wenn die Firewalls eines Verbunds verschieden
+    urteilen - je Firewall: [{kind, via, verdict, text, reason}] (0.73.0)."""
+    out: list[dict] = []
+    for p in found:
+        kind = "backup" if p.get("kind") == "backup" else "active"
+        reason = (p.get("deviation") or {}).get("reason")
+        checked = [h for h in p["hops"] if h.get("rules")]
+        split = next((h for h in checked if len({_part_verdict(x) for x in _parts(h)}) > 1), None)
+        for part in _parts(split) if split else [None]:
+            seq = []
+            for h in checked:
+                x = part if h is split else h
+                if x.get("rules"):
+                    seq.append((x["label"], x["rules"]["verdict"], x["kind"]))
+            overall = policy_check._overall(seq) or {
+                "verdict": "unknown",
+                "text": L("keine Regeln", "no rules"),
+            }
+            via = " → ".join(label for label, _v, _k in seq) or "–"
+            out.append({"kind": kind, "via": via, "verdict": overall["verdict"],
+                        "text": overall["text"], "reason": reason})  # fmt: skip
+    return out
+
+
+def _part_verdict(x: dict) -> str | None:
+    return (x.get("rules") or {}).get("verdict")
+
+
+def inconsistent(variants: list[dict]) -> bool:
+    """Offen ueber einen Weg, gesperrt ueber einen anderen (0.73.0)."""
+    verdicts = {v["verdict"] for v in variants}
+    return "allow" in verdicts and bool(verdicts & set(_BLOCK))
 
 
 def _parts(h: dict) -> list[dict]:
     return h.get("parts") or [h]
 
 
-def _hop(h: dict) -> dict:
+def _hop(h: dict, l3: L3Outs | None = None) -> dict:
     """Hop fuer die Anzeige: je Firewall (bzw. Variante im Verbund) das Urteil mit der
-    entscheidenden Policy bzw. dem Contract und den Objekten (Quelle, Ziel, Dienste)."""
+    entscheidenden Policy bzw. dem Contract und den Objekten (Quelle, Ziel, Dienste); im ACI
+    die genutzten L3Outs (Routing vor den externen EPGs der Pruefung, 0.74.0)."""
     checks = []
     for p in _parts(h):
         r = p.get("rules")
         if not r:
             continue
+        # ACI: L3Out des Ein- bzw. Ausgangs nach dem Routing (0.74.0)
+        vrf = h["kind"] == "vrf" and l3 is not None
+        l3_in = l3.match(h["source_system_id"], h["context"], p.get("ingress")) if vrf else None
+        l3_out = l3.match(h["source_system_id"], h["context"], p.get("egress")) if vrf else None
         checks.append(
             {
                 "label": p["label"],
@@ -571,6 +824,9 @@ def _hop(h: dict) -> dict:
                 "nat": p.get("nat"),
                 "snat": p.get("snat"),
                 "leak": p.get("leak"),
+                "l3out_in": l3_in,
+                "l3out_out": l3_out,
+                "l3outs": list(r.get("l3outs") or []),  # der externen EPGs der Pruefung
             }
         )
     return {
@@ -581,7 +837,26 @@ def _hop(h: dict) -> dict:
         "context": h["context"],
         "verdict": _hop_verdict(checks),
         "checks": checks,
+        **({"zone": h["zone"]["name"]} if h.get("zone") else {}),
+        # NSX ALB (0.77.0): an diesem Hop vom Load Balancer weiter zum Server; seit 0.85.0 mit
+        # der EPG bzw. dem Interface, an dem seine VIP liegt (Netzwerkplan)
+        **({"lb": _balancer(h, checks, l3)} if h.get("lb") else {}),
     }
+
+
+def _balancer(h: dict, checks: list[dict], l3: "L3Outs | None") -> dict:
+    """Load Balancer am Hop mit dem Ort seiner VIP: im ACI die EPG (statischer Endpunkt,
+    Portgruppe, gelernt, Subnetz), sonst das Interface der Firewall zur VIP."""
+    lb = dict(h["lb"])
+    ip = nat_store.host_ip(lb.get("ext"))
+    loc = l3.locator if l3 is not None else None
+    if h["kind"] == "vrf" and loc is not None and ip:
+        epgs, _how = loc.locate(ip, h["source_system_id"], h["context"])
+        if epgs:
+            lb["epg"] = epg_store.inventory_label(epgs[0])
+    elif checks and checks[0].get("egress"):
+        lb["interface"] = checks[0]["egress"]
+    return lb
 
 
 def _hop_verdict(checks: list[dict]) -> str | None:
@@ -595,7 +870,8 @@ def _hop_verdict(checks: list[dict]) -> str | None:
 
 def _rule_label(rule: Rule) -> str:
     if rule.domain == RuleDomain.FIREWALL:
-        return f"Policy {rule.external_id}" + (f" „{rule.name}“" if rule.name else "")
+        quoted = L(f" „{rule.name}“", f" “{rule.name}”") if rule.name else ""
+        return f"Policy {rule.external_id}" + quoted
     raw = rule.raw if isinstance(rule.raw, dict) else {}
     if raw.get("kind") == "taboo":
         return f"Taboo {rule.name}"
@@ -610,7 +886,8 @@ def _state(rule: Rule, active: list[dict], data: appdoc.TenantData) -> dict:
     base = {"rule_id": rule.id, "label": label, "action": rule.action.value,
             "device": data.device(rule)}  # fmt: skip
     if not active:
-        return base | {"state": "unknown", "text": "Weg nicht bekannt – nicht prüfbar"}
+        text = L("Weg nicht bekannt – nicht prüfbar", "path not known – not checkable")
+        return base | {"state": "unknown", "text": text}
     found = None
     nodes: list[dict] = []
     for path in active:
@@ -627,28 +904,35 @@ def _state(rule: Rule, active: list[dict], data: appdoc.TenantData) -> dict:
                         found = found if found and found["decides"] else e
     if found is not None:
         state = "decides" if found["decides"] else "possible"
-        text = (
-            "entscheidet auf dem Weg"
-            if state == "decides"
-            else ("auf dem Weg nur möglich – " + ", ".join(found.get("unsure") or []))
-        )
+        if state == "decides":
+            text = L("entscheidet auf dem Weg", "decides on the path")
+        else:
+            text = L("auf dem Weg nur möglich – ", "only possible on the path – ") + ", ".join(
+                found.get("unsure") or [])  # fmt: skip
         return base | {"state": state, "text": text}
     if not nodes:
-        text = f"{base['device']} liegt nicht auf dem Weg dieser Verbindung"
+        text = L(f"{base['device']} liegt nicht auf dem Weg dieser Verbindung",
+                 f"{base['device']} is not on the path of this connection")  # fmt: skip
         return base | {"state": "off_path", "text": text}
     r = nodes[0].get("rules") or {}
     deciding = next((e for e in r.get("rules") or [] if e.get("decides")), None)
     if deciding is not None:
-        text = f"vorher entscheidet {policy_check._label(deciding)}"
+        label = policy_check._label(deciding)
+        text = L(f"vorher entscheidet {label}", f"{label} decides earlier")
     else:
-        text = f"passt auf dem Weg nicht ({r.get('text') or 'Ein-/Ausgang, Quelle, Ziel, Dienst'})"
+        why = r.get("text") or L(
+            "Ein-/Ausgang, Quelle, Ziel, Dienst",
+            "incoming/outgoing interface, source, destination, service",
+        )
+        text = L(f"passt auf dem Weg nicht ({why})", f"does not match on the path ({why})")
     return base | {"state": "other", "text": text}
 
 
 def deviates(state: dict, verdict: str, reached: bool) -> bool:
-    """Weicht diese Regel der Verbindung vom Weg ab (Befund, 0.59.0)? Eine erlaubende Regel,
-    deren Weg sperrt, die nicht auf dem Weg liegt, dort nicht greift (Weg nicht erlaubt) bzw.
-    deren erlaubter Weg vor dem Ziel endet - wie `_mismatch`."""
+    """Weicht diese Regel der Verbindung vom Weg ab (Anzeige „Abweichung“, 0.59.0)? Eine
+    erlaubende Regel, deren Weg sperrt, die nicht auf dem Weg liegt, dort nicht greift (Weg
+    nicht erlaubt) bzw. deren erlaubter Weg vor dem Ziel endet - wie `_mismatch`. Der Befund
+    seit 0.73.0: nur uneinheitliche Wege (`inconsistent`)."""
     if state["action"] != "allow":
         return False
     return (verdict == "deny" or state["state"] == "off_path"
@@ -663,12 +947,17 @@ def _mismatch(states: list[dict], verdict: str, text: str, reached: bool) -> lis
     allowing = [s for s in states if s["action"] == "allow"]
     if allowing and verdict == "deny":
         who = ", ".join(s["label"] for s in allowing[:3])
-        out.append(f"{who} erlaubt – der Weg ist {text}")
+        out.append(L(f"{who} erlaubt – der Weg ist {text}", f"{who} allows – the path is {text}"))
     for s in allowing:
         if s["state"] == "off_path":
             out.append(f"{s['label']}: {s['text']}")
         elif s["state"] == "other" and verdict != "allow":
             out.append(f"{s['label']}: {s['text']}")
     if allowing and verdict == "allow" and not reached:
-        out.append("erlaubt, aber der Weg endet vor dem Ziel")
+        out.append(
+            L(
+                "erlaubt, aber der Weg endet vor dem Ziel",
+                "allowed, but the path ends before the destination",
+            )
+        )
     return out

@@ -21,11 +21,12 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit, credentials, schedule, scheduler
-from app.api.customer_filter import own_view
+from app.api.customer_filter import customer_view, own_view
 from app.auth.deps import require_admin, require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.config import get_settings
 from app.db import get_session
+from app.i18n import L
 from app.models import (
     REFERENCE_PLATFORMS,
     Agent,
@@ -313,6 +314,8 @@ def _apply_credentials(src: SourceSystem, changes: dict[str, str]) -> bool:
 
 
 _ACI_NAME = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+# Avi-Tenant (NSX ALB, ADR 0027): Name wie im Controller, auch mit Leerzeichen
+_AVI_NAME = re.compile(r"^[A-Za-z0-9_.:@ -]{1,128}$")
 
 
 def _schedule(value: str | None) -> str | None:
@@ -377,15 +380,20 @@ def _switch_base_url(read_scope: str) -> str:
 
 
 def _read_scope(platform: Platform, value: str) -> str:
-    """Lesebereich normalisieren: ACI-Tenant-Namen, kommagetrennt (Cisco ACI) bzw. die
-    Adressen der Switches (Cisco-Switches)."""
+    """Lesebereich normalisieren: ACI- bzw. Avi-Tenant-Namen, kommagetrennt (Cisco ACI, NSX
+    ALB) bzw. die Adressen der Switches (Cisco-Switches)."""
     if platform == Platform.CISCO_SWITCH:
         return _switch_hosts(value)
     names = [x.strip() for x in value.split(",") if x.strip()]
     if not names:
         return ""
+    if platform == Platform.AVI:
+        bad = [n for n in names if not _AVI_NAME.match(n)]
+        if bad:
+            raise HTTPException(status_code=422, detail=f"invalid Avi tenant name: {bad[0]}")
+        return ",".join(dict.fromkeys(names))
     if platform != Platform.CISCO_ACI:
-        detail = "read_scope only supported for cisco_aci/cisco_switch"
+        detail = "read_scope only supported for cisco_aci/cisco_switch/avi"
         raise HTTPException(status_code=422, detail=detail)
     bad = [n for n in names if not _ACI_NAME.match(n)]
     if bad:
@@ -736,6 +744,28 @@ def parallel_suggestions(
     return parallel.suggestions(session, tenant_id, include_rejected)
 
 
+@router.get("/parallel")
+def parallel_groups(
+    tenant_id: int,
+    customer_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    """Verbuende paralleler Firewalls mit dem Vergleich (0.72.0): je Bereich (Policies,
+    Objekte, Policy-Routen, Routen, NAT) gleich, abweichend und fehlend - die Abweichungen
+    stehen als Befunde unter Findings → Parallele Firewalls. Mit Kunde (0.76.0) nur Verbuende
+    mit seinen Kontexten (als geteilt markiert: der Vergleich gilt fuer die ganze Firewall)."""
+    from app.store import customer_infra, parallel
+
+    tenant_scope(principal, tenant_id)
+    groups = list(parallel.compare(session, tenant_id).groups.values())
+    infra = customer_infra.of(session, customer_view(session, principal, tenant_id, customer_id))
+    if infra is None:
+        return groups
+    fws = {sid for sid, _ in infra.contexts}
+    return [{**g, "shared": True} for g in groups if {m["id"] for m in g["members"]} & fws]
+
+
 class ParallelRejectIn(BaseModel):
     tenant_id: int
     system_ids: list[int] = []  # diese Firewalls sind nicht parallel
@@ -761,7 +791,12 @@ def _reject_ids(session: Session, body: ParallelRejectIn) -> list[int]:
         )
     )
     if known != ids or len(ids) < 2:
-        raise HTTPException(status_code=422, detail="mindestens zwei Firewalls des Mandanten")
+        raise HTTPException(
+            status_code=422,
+            detail=L(
+                "mindestens zwei Firewalls des Mandanten", "at least two firewalls of the tenant"
+            ),
+        )
     return sorted(ids)
 
 

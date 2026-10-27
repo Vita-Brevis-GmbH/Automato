@@ -54,11 +54,13 @@ from dataclasses import dataclass, field
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import (
     InvDevice,
     InvInterface,
     InvSubnet,
     NatRule,
+    Platform,
     SourceSystem,
     TopoContext,
     TopoExit,
@@ -71,6 +73,7 @@ from app.store import references
 from app.store.topology import (
     MGMT,
     Table,
+    aci_vrf,
     endpoint,
     ip_hex,
     is_net,
@@ -86,6 +89,7 @@ MAX_BACKUP = 16  # Backup-Wege (vor dem Filter nach Laenge)
 INNER = 5  # genauere Routen innerhalb eines Netzes je Hop (Anzeige)
 REACHED = ("connected", "fabric", "exit", "external")  # Ende = Ziel erreicht bzw. nach aussen
 _CONNECTED = ("connected", "local")
+_RIB_AFTER = 16  # Abfragen je Kontext, ab denen die RIB als Index im Speicher liegt
 Key = tuple[int, str]  # (Quellsystem, Kontext: VDOM bzw. Tenant:VRF)
 __all__ = ["MGMT", "Graph", "trace"]
 
@@ -96,6 +100,12 @@ EXIT_LABELS = {
     "partner": "Partner",
     "other": "Anbindung",
 }
+_EXIT_LABELS_EN = {**EXIT_LABELS, "other": "Exit"}
+
+
+def exit_kind(kind: str | None, default: str | None = None) -> str | None:
+    """Art einer Anbindung in der Sprache der Anfrage („Internet“, „MPLS“ … „Anbindung“)."""
+    return L(EXIT_LABELS, _EXIT_LABELS_EN).get(kind or "", default)
 
 
 @dataclass
@@ -133,6 +143,38 @@ def context_label(kind: str, source: str, node: str, context: str, single: bool)
     if kind == "vdom":
         return ("firewall", source) if single else ("vdom", f"{source} · VDOM {context}")
     return "vrf", f"{node} · VRF {context}"
+
+
+class _Rib:
+    """Routen nach Familie und Praefixlaenge: die Routen, die eine IP bzw. ein ganzes Netz
+    enthalten, per Nachschlagen je Laenge (hoechstens 33 bzw. 129) statt einer Bereichsabfrage.
+    Der Index haelt nur Kennung und Protokoll; die Routen selbst laedt der Graph bei Bedarf."""
+
+    def __init__(self, rows):
+        self.by: dict[tuple[int, int], dict[int, list[tuple[int, str]]]] = defaultdict(dict)
+        lengths: dict[int, set[int]] = defaultdict(set)
+        for rid, family, prefix_len, lo, protocol in rows:
+            try:
+                start = int(lo, 16)
+            except (TypeError, ValueError):
+                continue
+            self.by[(family, prefix_len)].setdefault(start, []).append((rid, protocol))
+            lengths[family].add(prefix_len)
+        self.lengths = {f: sorted(v) for f, v in lengths.items()}
+
+    def containing(self, ip, connected: bool = False) -> list[int]:
+        bits = 32 if ip.version == 4 else 128
+        start = int(ip.network_address) if is_net(ip) else int(ip)
+        longest = ip.prefixlen if is_net(ip) else bits
+        out: list[int] = []
+        for length in self.lengths.get(ip.version, []):
+            if length > longest:
+                break
+            mask = ((1 << length) - 1) << (bits - length) if length else 0
+            for rid, protocol in self.by[(ip.version, length)].get(start & mask, []):
+                if not connected or protocol in _CONNECTED:
+                    out.append(rid)
+        return out
 
 
 class Graph:
@@ -179,8 +221,12 @@ class Graph:
         self._zones: dict[tuple[int, str], str] = {}
         self._tables: dict[Key, dict[str, Table]] = {}
         self._vips: dict[Key, list[NatRule]] = {}
+        self._lbs: list[tuple[NatRule, str]] | None = None  # NSX ALB (ADR 0027), bei Bedarf
         self._vlinks: dict[int, dict[tuple[str, str], tuple[str, str]]] = {}
         self._leaks = None  # aci_shared.Leaks, erst bei Bedarf
+        self._ribs: dict[Key | None, _Rib] = {}  # beste RIB-Routen je Kontext (0.74.1)
+        self._rib_asked: Counter = Counter()  # Abfragen je Kontext bis zum Index
+        self._loaded: dict[int, TopoRoute] = {}  # Routen aus dem Index, je Kennung
         self.exits = list(
             session.scalars(
                 select(TopoExit).where(TopoExit.tenant_id == tenant_id).order_by(TopoExit.id)
@@ -264,7 +310,19 @@ class Graph:
     # -- Routen -------------------------------------------------------------------------
 
     def _routes(self, ip, key: Key | None = None, connected: bool = False) -> list[TopoRoute]:
-        """Beste Routen der RIB, die die IP bzw. das ganze Netz enthalten."""
+        """Beste Routen der RIB, die die IP bzw. das ganze Netz enthalten. Seit 0.74.1 aus einem
+        Index im Speicher je Kontext (bzw. die angeschlossenen Netze aller Kontexte) statt einer
+        Datenbankabfrage je Aufruf - die Kunden-Ableitung, die Relevanz und die Wege fragen das
+        Routing tausendfach (Anwender: Speichern und Doku brauchten Minuten)."""
+        if key is not None or connected:
+            rib = self._ribs.get(key)
+            if rib is None:
+                # erst ab einigen Abfragen lohnt das Laden des Index eines Kontexts
+                self._rib_asked[key] += 1
+                if self._rib_asked[key] > _RIB_AFTER:
+                    rib = self._ribs[key] = _Rib(self._rib_rows(key))
+            if rib is not None:
+                return self._route_rows(rib.containing(ip, connected))
         lo, hi = (ip_hex(v) for v in span(ip))
         stmt = select(TopoRoute).where(
             TopoRoute.tenant_id == self.tenant_id,
@@ -279,6 +337,31 @@ class Graph:
         if connected:
             stmt = stmt.where(TopoRoute.protocol.in_(_CONNECTED))
         return list(self.session.scalars(stmt))
+
+    def _rib_rows(self, key: Key | None):
+        """Kennung, Familie, Praefix und Protokoll der besten RIB-Routen eines Kontexts bzw. ohne
+        Kontext der angeschlossenen Netze aller Kontexte."""
+        stmt = select(
+            TopoRoute.id, TopoRoute.family, TopoRoute.prefix_len, TopoRoute.lo, TopoRoute.protocol
+        ).where(
+            TopoRoute.tenant_id == self.tenant_id,
+            TopoRoute.table == "rib",
+            TopoRoute.best.is_(True),
+        )
+        if key is None:
+            stmt = stmt.where(TopoRoute.protocol.in_(_CONNECTED))
+        else:
+            stmt = stmt.where(TopoRoute.source_system_id == key[0], TopoRoute.context == key[1])
+        return self.session.execute(stmt.order_by(TopoRoute.id)).all()
+
+    def _route_rows(self, ids: list[int]) -> list[TopoRoute]:
+        """Routen zu Kennungen aus dem Index; einmal geladene bleiben im Graph."""
+        missing = [i for i in ids if i not in self._loaded]
+        for i in range(0, len(missing), 500):
+            chunk = missing[i : i + 500]
+            for r in self.session.scalars(select(TopoRoute).where(TopoRoute.id.in_(chunk))):
+                self._loaded[r.id] = r
+        return [self._loaded[i] for i in ids if i in self._loaded]
 
     def route(self, key: Key, ip, table: Table = 0) -> dict | None:
         """Wirksame Route des Knotens in der VRF `table`: laengstes Praefix, kleinste Distanz;
@@ -385,11 +468,17 @@ class Graph:
                     continue
                 attrs = r.attrs or {}
                 if r.table == "bgp":
-                    path = f" (AS-Pfad {attrs['as_path']})" if attrs.get("as_path") else ""
-                    reason = f"BGP-Backup{path}"
+                    path = (
+                        L(f" (AS-Pfad {attrs['as_path']})", f" (AS path {attrs['as_path']})")
+                        if attrs.get("as_path")
+                        else ""
+                    )
+                    reason = L(f"BGP-Backup{path}", f"BGP backup{path}")
                 else:
-                    reason = "statische Backup-Route" + (
-                        f" (Distanz {r.distance})" if r.distance is not None else ""
+                    reason = L("statische Backup-Route", "static backup route") + (
+                        L(f" (Distanz {r.distance})", f" (distance {r.distance})")
+                        if r.distance is not None
+                        else ""
                     )
                 hop = dict(h)
                 if not hop.get("interface"):  # BGP-Pfade ohne Interface: das Netz des Next-Hops
@@ -438,14 +527,14 @@ class Graph:
             InvSubnet.tenant_id == self.tenant_id, InvSubnet.context.in_(("bd", "epg"))
         )
         if key is not None:
-            stmt = stmt.where(InvSubnet.source_system_id == key[0], InvSubnet.vrf == key[1])
+            stmt = stmt.where(InvSubnet.source_system_id == key[0])
         for s in self.session.scalars(stmt):
             try:
                 net = ipaddress.ip_network(s.prefix, strict=False)
             except ValueError:
                 continue
-            nkey = (s.source_system_id, s.vrf or "")
-            if not within(ip, net) or nkey not in self.nodes:
+            nkey = (s.source_system_id, aci_vrf(s.vrf, s.source_system_id, self.nodes))
+            if not within(ip, net) or nkey not in self.nodes or key not in (None, nkey):
                 continue
             where = (
                 f"EPG {s.aci_tenant}|{s.ap}|{s.epg}"
@@ -457,9 +546,10 @@ class Graph:
                 best[nkey] = (net.prefixlen, text)
         return [(k, v[1]) for k, v in best.items()]
 
-    def leaked(self, key: Key, ip) -> tuple[str, str, str] | None:
+    def leaked(self, key: Key, ip) -> tuple[str, str, str, str] | None:
         """Ziel in einer anderen ACI-VRF desselben APIC, die es in diese VRF leakt (Shared
-        Service, Route-Leaking; 0.44.0) -> (VRF dort, Ort `EPG Tenant|AP|EPG`, Grund)."""
+        Service, Route-Leaking; 0.44.0) -> (VRF dort, Ort `EPG Tenant|AP|EPG`, Grund, Art
+        `shared` | `leak`)."""
         from app.store import aci_relevance, aci_shared  # spaet: aci_relevance -> paths
         from app.store.epgs import inventory_label
 
@@ -469,8 +559,8 @@ class Graph:
         found = self._leaks.into(key[0], key[1], ip)
         if found is None:
             return None
-        epg, vrf, why = found
-        return vrf, f"EPG {inventory_label(epg).replace('/', '|')}", why
+        epg, vrf, why, kind = found
+        return vrf, f"EPG {inventory_label(epg).replace('/', '|')}", why, kind
 
     def exit_for(
         self, key: Key, interface: str | None, zone: str | None, ip: str | None
@@ -528,7 +618,7 @@ class Graph:
             extintf = str((n.raw or {}).get("extintf") or "any")
             if extintf != "any" and ports and extintf not in ports:
                 continue
-            return {
+            out = {
                 "name": n.name,
                 "id": n.id,
                 "ext": n.ext_ip,
@@ -536,6 +626,63 @@ class Graph:
                 "type": n.vip_type,
                 "ports": [n.ext_port, n.mapped_port] if n.portforward else None,
             }
+            # Ziel der VIP ist ein Virtual Service des NSX ALB (0.79.0): im Hop nennen
+            port = n.mapped_port if n.portforward else None
+            try:
+                lb = self.balancer(ipaddress.ip_address(to[0]), ("tcp", _first_port(port)))
+            except ValueError:
+                lb = None
+            if lb is not None:
+                out["balancer"] = lb["name"]
+            return out
+        return None
+
+    def balancer(self, ip, service: tuple[str, int | None] | None) -> dict | None:
+        """Virtual Service eines Load Balancers (NSX ALB, ADR 0027) mit dieser VIP: Port des
+        Dienstes passt (ohne Dienst der erste) -> Server des Pools (aktive zuerst)."""
+        if is_net(ip):
+            return None
+        if self._lbs is None:
+            self._lbs = list(
+                self.session.execute(
+                    select(NatRule, SourceSystem.name)
+                    .join(SourceSystem, SourceSystem.id == NatRule.source_system_id)
+                    .where(
+                        NatRule.tenant_id == self.tenant_id,
+                        NatRule.nat_type == "dnat_vip",
+                        SourceSystem.platform == Platform.AVI,
+                    )
+                    .order_by(NatRule.name, NatRule.id)
+                ).tuples()
+            )
+        port = service[1] if service else None
+        for n, source in self._lbs:
+            ext = _bounds(n.ext_ip)
+            if ext is None or ext[0] != ext[1] or ext[0] != ip:
+                continue
+            ports = _port_span(n.ext_port)
+            if port is not None and ports is not None and not ports[0] <= port <= ports[1]:
+                continue
+            attrs = n.attrs or {}
+            servers = [t for t in n.targets or [] if t.get("ip")]
+            ready = [t for t in servers if t.get("status", "active") == "active"] or servers
+            out = {
+                "name": n.name,
+                "id": n.id,
+                "source_system_id": n.source_system_id,
+                "source": source,
+                "ext": n.ext_ip,
+                "port": n.ext_port,
+                "to": [t["ip"] for t in ready],
+                "server_port": ready[0].get("port") if ready else None,
+                "servers": len(servers),
+                "pool": attrs.get("pool") or attrs.get("pool_group"),
+                "tenant": attrs.get("tenant"),
+                # Quelle danach: Service Engine (SNAT) bzw. der Client (preserve_client_ip)
+                "snat": attrs.get("snat") or "service_engine",
+                "down": attrs.get("oper_status") == "OPER_DOWN" or attrs.get("enabled") is False,
+            }
+            return {k: v for k, v in out.items() if v not in (None, "", False)}
         return None
 
     def policies(self, key: Key, src, dst, ingress: str | None) -> list[dict]:
@@ -608,24 +755,60 @@ def trace(
     starts: list[tuple[Key, str | None, str]] = []
     chosen = parse_key(start)
     if start and chosen not in g.nodes:
-        notes.append("Startpunkt unbekannt – neu einlesen bzw. einen anderen wählen")
+        notes.append(
+            L(
+                "Startpunkt unbekannt – neu einlesen bzw. einen anderen wählen",
+                "Start point unknown – collect again or choose another one",
+            )
+        )
     elif chosen is not None:
         # Eingang (und damit VRF) am Startpunkt: das angeschlossene Netz der Quelle, falls bekannt
         found = g.connected_nodes(src) if src else []
         iface = next((i for k, i, _ in found if k == chosen), None)
-        starts = [(chosen, iface, "gewählt")]
+        starts = [(chosen, iface, L("gewählt", "selected"))]
     elif src is not None:
-        starts = [(k, iface, "Quelle angeschlossen") for k, iface, _ in g.connected_nodes(src)]
+        how = L("Quelle angeschlossen", "Source connected")
+        starts = [(k, iface, how) for k, iface, _ in g.connected_nodes(src)]
         if not starts:
-            starts = [(k, None, f"Quelle im Fabric: {text}") for k, text in g.fabric(src)]
+            starts = [(k, None, L(f"Quelle im Fabric: {text}", f"Source in fabric: {text}"))
+                      for k, text in g.fabric(src)]  # fmt: skip
         if not starts:
-            whole = " (das ganze Netz)" if is_net(src) else ""
+            whole = L(" (das ganze Netz)", " (the whole network)") if is_net(src) else ""
             notes.append(
-                f"Kein gelesenes Gerät hat {src}{whole} angeschlossen – Startpunkt wählen bzw. das "
-                "Gerät mit diesem Netz einlesen."
+                L(
+                    f"Kein gelesenes Gerät hat {src}{whole} angeschlossen – Startpunkt wählen bzw. "
+                    "das Gerät mit diesem Netz einlesen.",
+                    f"No device read has {src}{whole} connected – choose a start point or collect "
+                    "the device with this network.",
+                )
             )
     paths: list[dict] = []
     backups_found: list[dict] = []
+
+    def behind(hops, hop, key, iface, table, dev, cur) -> bool:
+        """VIP eines Load Balancers hier angeschlossen (NSX ALB, ADR 0027): der Weg geht am
+        selben Knoten vom Netz der VIP zum Server des Pools weiter (einmal je Weg)."""
+        if any(h.get("lb") for h in hops):
+            return False
+        lb = g.balancer(cur, service)
+        if lb is None:
+            return False
+        hop["lb"] = lb
+        if not lb.get("to"):
+            text = L(
+                f"Load Balancer {lb['name']}: kein Server mit IP im Pool",
+                f"Load Balancer {lb['name']}: no server with an IP in the pool",
+            )
+            _record(paths if dev is None else backups_found, hops, hop, "unknown", text, dev)
+            return True
+        name = f"Load Balancer {lb['name']} ({lb.get('source', 'NSX ALB')})"
+        via = L(f"über {name}", f"via {name}")
+        server = ipaddress.ip_address(lb["to"][0])
+        (active if dev is None else backup).append(
+            ([*hops, hop], key, iface, via, table, dev, server)
+        )
+        return True
+
     # (Hops, Knoten, Eingang, wie erreicht, VRF, Abweichung, Ziel nach NAT) - aktive zuerst
     active = [([], key, iface, via, g.table(key, iface), None, dst) for key, iface, via in starts]
     backup: list[tuple] = []
@@ -641,11 +824,16 @@ def trace(
         hop = {**node.out(), "via": via, "ingress": _port(g, key, ingress)}
         if table != 0:
             hop["vrf"] = table
-        if any((h["key"], h.get("vrf", 0)) == (node.key, table) for h in hops):
-            _record(out, hops, hop, "loop", f"Schleife: {node.label} ist schon auf dem Weg", dev)
+        leg = hops[_after_balancer(hops) :]  # nach einem Load Balancer: neuer Abschnitt
+        if any((h["key"], h.get("vrf", 0)) == (node.key, table) for h in leg):
+            text = L(f"Schleife: {node.label} ist schon auf dem Weg",
+                     f"Loop: {node.label} is already on the path")  # fmt: skip
+            _record(out, hops, hop, "loop", text, dev)
             continue
         if len(hops) >= MAX_HOPS:
-            _record(out, hops, hop, "max_hops", f"mehr als {MAX_HOPS} Hops – abgebrochen", dev)
+            text = L(f"mehr als {MAX_HOPS} Hops – abgebrochen",
+                     f"more than {MAX_HOPS} hops – aborted")  # fmt: skip
+            _record(out, hops, hop, "max_hops", text, dev)
             continue
         if cur != dst:
             hop["dst"] = str(cur)  # Ziel nach NAT auf einem Hop davor
@@ -675,20 +863,30 @@ def trace(
             devices = follow["output_device"] or [None]
             next_hops = [{"ip": follow["gateway"], "interface": devices[0]}]
         elif inside:
-            _record(out, hops, hop, "fabric", f"Ziel im Fabric: {inside[0][1]}", dev)
+            if behind(hops, hop, key, None, table, dev, cur):
+                continue
+            text = L(f"Ziel im Fabric: {inside[0][1]}", f"Destination in fabric: {inside[0][1]}")
+            _record(out, hops, hop, "fabric", text, dev)
             continue
         elif node.kind == "vrf" and (leak := g.leaked(key, cur)) is not None:
             # Ziel in einer anderen VRF, ins Fabric dieser VRF geleakt (0.44.0): im Fabric,
             # ohne L3Out - der Contract zwischen den VRFs entscheidet (aci_check)
-            vrf, where, why = leak
-            hop["leak"] = {"vrf": vrf, "where": where, "text": why}
-            text = f"Ziel im Fabric der VRF {vrf}: {where} – {why}"
+            vrf, where, why, leak_kind = leak
+            # `kind` (shared | leak): die Oberflaeche unterscheidet danach, nicht am Text
+            hop["leak"] = {"vrf": vrf, "where": where, "text": why, "kind": leak_kind}
+            text = L(f"Ziel im Fabric der VRF {vrf}: {where} – {why}",
+                     f"Destination in the fabric of VRF {vrf}: {where} – {why}")  # fmt: skip
             _record(out, hops, hop, "fabric", text, dev)
             continue
         elif route is None:
-            text = "keine Route zum Ziel" + (f" (VRF {table})" if table != 0 else "")
+            text = L("keine Route zum Ziel", "no route to the destination") + (
+                f" (VRF {table})" if table != 0 else ""
+            )
             if node.missing:
-                text = "keine Route bekannt – Routing-Tabelle nicht (ganz) lesbar"
+                text = L(
+                    "keine Route bekannt – Routing-Tabelle nicht (ganz) lesbar",
+                    "no route known – routing table not (fully) readable",
+                )
             _record(out, hops, hop, "no_route", text, dev)
             continue
         elif not on_link and (
@@ -696,8 +894,12 @@ def trace(
         ):
             iface = next((h.get("interface") for h in route["next_hops"]), None)
             hop["egress"] = _port(g, key, iface)
+            if behind(hops, hop, key, iface, table, dev, cur):
+                continue
             where = f" ({iface})" if iface else ""
-            _record(out, hops, hop, "connected", f"Ziel angeschlossen an {node.label}{where}", dev)
+            text = L(f"Ziel angeschlossen an {node.label}{where}",
+                     f"Destination connected to {node.label}{where}")  # fmt: skip
+            _record(out, hops, hop, "connected", text, dev)
             continue
         else:
             next_hops = route["next_hops"]
@@ -718,7 +920,8 @@ def trace(
             nxt = _neighbors(g, key, ip)
             peer = None if nxt else g.vdom_peer(key, nh.get("interface"))
             if peer is not None:  # Inter-VDOM-Link ohne (gelesene) Next-Hop-IP
-                nxt = [(peer[0], peer[1], f"VDOM-Link {nh.get('interface')} ↔ {peer[1]}")]
+                link = f"{nh.get('interface')} ↔ {peer[1]}"
+                nxt = [(peer[0], peer[1], L(f"VDOM-Link {link}", f"VDOM link {link}"))]
             for nkey, niface, how in nxt:
                 queue.append(
                     ([*hops, branch], nkey, niface, how, g.table(nkey, niface), deviation, cur)
@@ -730,31 +933,55 @@ def trace(
                 egress["exit"] = {"id": ex.id, "name": ex.name, "kind": ex.kind}
                 target_key = _exit_target(ex, cur)
                 if target_key is not None and target_key in g.nodes:
-                    via_exit = f"über {_exit_label(ex)} (manuelle Route)"
+                    via_exit = L(f"über {_exit_label(ex)} (manuelle Route)",
+                                 f"via {_exit_label(ex)} (manual route)")  # fmt: skip
                     queue.append(([*hops, branch], target_key, None, via_exit, 0, deviation, cur))
                     continue
                 text = _exit_text(ex, cur, ip, g.names(ip))
                 _record(target, hops, branch, "exit", text, deviation)
                 continue
+            # VIP eines Load Balancers hinter einem Router ohne gelesenes Geraet (0.79.0): weiter
+            # vom Load Balancer zum Server, am selben Knoten
+            if behind(hops, branch, key, nh.get("interface"), table, deviation, cur):
+                continue
             known = g.names(ip) or ([egress["network"]] if egress.get("network") else [])
             name = f" ({', '.join(known)})" if known else ""
             if not ip:
-                kind, text = "unknown", f"weiter über {nh.get('interface') or '?'} ohne Next-Hop"
+                iface = nh.get("interface") or "?"
+                kind, text = "unknown", L(f"weiter über {iface} ohne Next-Hop",
+                                          f"onward via {iface} without next-hop")  # fmt: skip
             elif route is not None and route["prefix_len"] == 0 and follow is None:
-                kind, text = "external", f"weiter nach extern über {ip}{name} – Default-Route"
+                kind, text = (
+                    "external",
+                    L(
+                        f"weiter nach extern über {ip}{name} – Default-Route",
+                        f"onward to external via {ip}{name} – default route",
+                    ),
+                )
             else:
-                kind, text = "unknown", f"Next-Hop {ip}{name} gehört keinem gelesenen Gerät"
+                kind, text = (
+                    "unknown",
+                    L(
+                        f"Next-Hop {ip}{name} gehört keinem gelesenen Gerät",
+                        f"Next-hop {ip}{name} does not belong to any device read",
+                    ),
+                )
             _record(target, hops, branch, kind, text, deviation)
     if cut:
-        notes.append(f"mehr als {MAX_PATHS} Wege – gekürzt")
+        notes.append(L(f"mehr als {MAX_PATHS} Wege – gekürzt",
+                       f"more than {MAX_PATHS} paths – truncated"))  # fmt: skip
     primary = _unique(paths)
     for p in primary:
         p["kind"] = "active"
     shown, hidden = _backups(primary, _unique(backups_found), slack)
     if hidden:
         notes.append(
-            f"{hidden} weitere Backup-Wege ausgeblendet (mehr als {slack} Hop länger bzw. "
-            "ohne Ziel)"
+            L(
+                f"{hidden} weitere Backup-Wege ausgeblendet (mehr als {slack} Hop länger bzw. "
+                "ohne Ziel)",
+                f"{hidden} more backup paths hidden (more than {slack} hop longer or without "
+                "destination)",
+            )
         )
     _mark_length(primary + shown)
     notes += _inner_notes(primary + shown, dst)
@@ -776,10 +1003,14 @@ def _inner_notes(paths: list[dict], dst) -> list[str]:
         for h in p["hops"]:
             route = h.get("route") or {}
             if route.get("inner") and h["label"] not in out:
-                parts = ", ".join(f"{r['prefix']} über {r['via']}" for r in route["inner"])
+                via = L("über", "via")
+                parts = ", ".join(f"{r['prefix']} {via} {r['via']}" for r in route["inner"])
                 more = route["inner_total"] - len(route["inner"])
                 parts += f" (+{more})" if more > 0 else ""
-                out[h["label"]] = f"Teile von {dst} werden an {h['label']} anders geroutet: {parts}"
+                out[h["label"]] = L(
+                    f"Teile von {dst} werden an {h['label']} anders geroutet: {parts}",
+                    f"Parts of {dst} are routed differently at {h['label']}: {parts}",
+                )
     return list(out.values())
 
 
@@ -843,7 +1074,8 @@ def _merged(same: list[dict]) -> dict:
             hop = {**hop, "parts": variants}
             if len({v["key"] for v in variants}) > 1:
                 vdom = f" · VDOM {hop['context']}" if hop["kind"] == "vdom" else ""
-                hop["label"] = f"Verbund {hop['group']}{vdom}"
+                hop["label"] = L(f"Verbund {hop['group']}{vdom}",
+                                 f"Parallel group {hop['group']}{vdom}")  # fmt: skip
         hops.append(hop)
     merged = {**first, "hops": hops}
     merged["parallel"] = sorted({h["group"] for h in hops if h.get("parts") and h.get("group")})
@@ -867,7 +1099,9 @@ def _merged(same: list[dict]) -> dict:
             text = "; ".join(
                 f"{w}: {x['text'] if x else '–'}" for w, x in zip(who, policies, strict=True)
             )
-            merged["policy"] = {"verdict": "depends", "text": f"im Verbund verschieden – {text}"}
+            text = L(f"im Verbund verschieden – {text}",
+                     f"different within the parallel group – {text}")  # fmt: skip
+            merged["policy"] = {"verdict": "depends", "text": text}
     return merged
 
 
@@ -917,6 +1151,25 @@ def _bounds(text: str | None):
     return (lo, hi) if lo.version == hi.version else None
 
 
+def _after_balancer(hops: list[dict]) -> int:
+    """Index nach dem letzten Hop mit Load Balancer (0 ohne): dort beginnt ein neuer Abschnitt."""
+    return max((i + 1 for i, h in enumerate(hops) if h.get("lb")), default=0)
+
+
+def _first_port(text: str | None) -> int | None:
+    span = _port_span(text)
+    return span[0] if span else None
+
+
+def _port_span(text: str | None) -> tuple[int, int] | None:
+    """`443` bzw. `8000-8010` -> (von, bis); leer bzw. unlesbar = jeder Port."""
+    lo, _, hi = (text or "").partition("-")
+    try:
+        return (int(lo), int(hi or lo)) if lo.strip() else None
+    except ValueError:
+        return None
+
+
 def _vip_target(n: NatRule, ip) -> list[str]:
     """Interne IP(s) einer VIP fuer das Ziel: Bereich auf Bereich mit demselben Abstand, sonst
     die zugeordnete IP bzw. alle Real Server; leer, wenn das Ziel nicht die externe IP ist."""
@@ -947,17 +1200,18 @@ def _exit_target(ex: TopoExit, dst) -> Key | None:
 
 def _exit_label(ex: TopoExit) -> str:
     """„MPLS Kunde A“ - die Art nur, wenn der Name sie nicht schon nennt."""
-    label = EXIT_LABELS.get(ex.kind, "Anbindung")
+    label = exit_kind(ex.kind, L("Anbindung", "Exit"))
     return ex.name if ex.name.lower().startswith(label.lower()) else f"{label} {ex.name}"
 
 
 def _exit_text(ex: TopoExit, dst, ip: str | None, names: list[str]) -> str:
-    text = f"weiter über {_exit_label(ex)}"
+    text = L(f"weiter über {_exit_label(ex)}", f"onward via {_exit_label(ex)}")
     if names:
         text += f" ({', '.join(names)})"
     routers = ex.next_hops or []
     if ip in routers and len(routers) > 1:
-        text += f" – Router {routers.index(ip) + 1} von {len(routers)}"
+        n, total = routers.index(ip) + 1, len(routers)
+        text += L(f" – Router {n} von {total}", f" – router {n} of {total}")
     nets = []
     for p in ex.prefixes or []:
         try:
@@ -965,7 +1219,8 @@ def _exit_text(ex: TopoExit, dst, ip: str | None, names: list[str]) -> str:
         except ValueError:
             continue
     if nets and not any(within(dst, n) for n in nets):
-        text += " – Ziel liegt nicht in den Netzen der Anbindung"
+        text += L(" – Ziel liegt nicht in den Netzen der Anbindung",
+                  " – destination is not in the networks of the exit")  # fmt: skip
     return text
 
 
@@ -981,9 +1236,10 @@ def _neighbors(g: Graph, key: Key, ip: str | None) -> list[tuple[Key, str | None
     """Knoten hinter dem Next-Hop: dem die Adresse gehoert (Interface, L3Out-SVI). Ein
     gemeinsames Transfernetz allein reicht nicht - dort haengt meist ein Aussenrouter."""
     exact: list[tuple[Key, str | None, str]] = []
+    how = L("Adresse des Nachbarn", "Neighbor address")
     for nkey, iface, _zone in g.owners().get(ip or "", []):
         if nkey != key and all(nkey != e[0] for e in exact):
-            exact.append((nkey, iface, "Adresse des Nachbarn"))
+            exact.append((nkey, iface, how))
     return exact
 
 

@@ -92,7 +92,7 @@ def test_contracts_ueber_die_externe_epg_mit_dem_laengsten_subnetz(client):
     # hinter der Firewall im Servernetz: EN_srv (/24) ist genauer als 0.0.0.0/0
     shown, gone = _doc(client, tid, "10.20.0.5")
     srv = shown["CT_srv"]
-    assert (srv["_side"], srv["_dir"], srv["Target Systems"]) == ("src", "out", "TE/AP1/EPG_web")
+    assert (srv["_side"], srv["_dir"], srv["Destination"]) == ("src", "out", "TE/AP1/EPG_web")
     assert srv["Bezug"] == "externe EPG L3O_fw|EN_srv (10.20.0.0/24)"
     assert (srv["_obj"], srv["_val"], srv["_scope"]) == (
         "externe EPG L3O_fw|EN_srv",

@@ -26,6 +26,7 @@ import {
   Tenant,
 } from "./api";
 import type { Me } from "./auth";
+import { L } from "./i18n";
 import { PLATFORM_LABEL, REF_ROLE_LABEL, REFERENCE_PLATFORMS } from "./refs";
 import { ScheduleField, scheduleLabel } from "./Schedule";
 import { SITE_KIND_GROUP, SITE_KIND_LABEL, SiteChip, SiteOptions } from "./sites";
@@ -58,7 +59,7 @@ export default function Tenants({
 
   const selected = tenants?.find((t) => t.id === tenantId) ?? null;
   const profileName = (id: number | null) => {
-    if (id == null) return "default (Standard)";
+    if (id == null) return L("default (Standard)", "default");
     const p = profiles.find((x) => x.id === id);
     return p ? profileLabel(p) : `#${id}`;
   };
@@ -66,22 +67,30 @@ export default function Tenants({
   return (
     <>
       <PageHead
-        title="Mandanten & Standorte"
+        title={L("Mandanten & Standorte", "Tenants & sites")}
         actions={
           me.isAdmin && (
             <button className="btn btn-primary btn-sm" onClick={() => setNewOpen(true)}>
-              + Mandant
+              {L("+ Mandant", "+ Tenant")}
             </button>
           )
         }
       >
-        Ein Mandant ist eine Gruppengesellschaft (GG) mit Kürzel und einem oder mehreren Standorten.
-        Mandanten wählen: Klick auf die Zeile (gilt auch für den Mandanten-Schalter oben).
+        {L(
+          <>
+            Ein Mandant ist eine Gruppengesellschaft (GG) mit Kürzel und einem oder mehreren Standorten.
+            Mandanten wählen: Klick auf die Zeile (gilt auch für den Mandanten-Schalter oben).
+          </>,
+          <>
+            A tenant is a group company (GC) with a code and one or more sites. Select a tenant: click the row
+            (also applies to the tenant switcher at the top).
+          </>,
+        )}
       </PageHead>
 
       <div className="card">
         <div className="card-head">
-          <h2>Mandanten</h2>
+          <h2>{L("Mandanten", "Tenants")}</h2>
           <div className="spacer" />
           <span className="faint mono" style={{ fontSize: 12 }}>
             {tenants?.length ?? 0}
@@ -92,16 +101,16 @@ export default function Tenants({
             <Loading />
           ) : tenants.length === 0 ? (
             <Empty
-              title="Noch keine Mandanten"
+              title={L("Noch keine Mandanten", "No tenants yet")}
               action={
                 me.isAdmin && (
                   <button className="btn btn-primary btn-sm" onClick={() => setNewOpen(true)}>
-                    + Mandant anlegen
+                    {L("+ Mandant anlegen", "+ Create tenant")}
                   </button>
                 )
               }
             >
-              Lege die erste Gruppengesellschaft an.
+              {L("Lege die erste Gruppengesellschaft an.", "Create the first group company.")}
             </Empty>
           ) : (
             tenants.map((t) => (
@@ -116,15 +125,16 @@ export default function Tenants({
                 <span>
                   <span className="s-name">
                     {t.name}
-                    {t.code && <span className="chip local">GG {t.code}</span>}
+                    {t.code && <span className="chip local">{L("GG", "GC")} {t.code}</span>}
                   </span>
                   <span className="s-meta mono" style={{ display: "block" }}>
-                    ID {t.id} · SoT: {t.ipam_type} · DNS: {t.dns_type} · Profil: {profileName(t.naming_profile_id)}
+                    ID {t.id} · SoT: {t.ipam_type} · DNS: {t.dns_type} · {L("Profil", "Profile")}:{" "}
+                    {profileName(t.naming_profile_id)}
                   </span>
                 </span>
                 <span className="s-right">
-                  {t.audit_reads && <span className="chip info">Lese-Audit</span>}
-                  {t.id === tenantId && <span className="chip ok">gewählt</span>}
+                  {t.audit_reads && <span className="chip info">{L("Lese-Audit", "Read audit")}</span>}
+                  {t.id === tenantId && <span className="chip ok">{L("gewählt", "selected")}</span>}
                 </span>
               </button>
             ))
@@ -155,7 +165,12 @@ export default function Tenants({
       )}
       {!selected && tenants && tenants.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          <Note>Einen Mandanten anklicken, um Kürzel, Namensprofil, Standorte und Quellsysteme zu pflegen.</Note>
+          <Note>
+            {L(
+              "Einen Mandanten anklicken, um Kürzel, Namensprofil, Standorte und Quellsysteme zu pflegen.",
+              "Click a tenant to maintain its code, naming profile, sites and source systems.",
+            )}
+          </Note>
         </div>
       )}
       {me.isAdmin && tenants && tenants.length > 0 && (
@@ -197,15 +212,15 @@ function NewTenantDialog({ onClose, onCreated }: { onClose: () => void; onCreate
 
   return (
     <Modal
-      title="Neuer Mandant"
+      title={L("Neuer Mandant", "New tenant")}
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button className="btn btn-primary" onClick={() => submit()} disabled={busy || !name.trim()}>
-            {busy ? "Lege an…" : "Anlegen"}
+            {busy ? L("Lege an…", "Creating…") : L("Anlegen", "Create")}
           </button>
         </>
       }
@@ -213,28 +228,33 @@ function NewTenantDialog({ onClose, onCreated }: { onClose: () => void; onCreate
       <form onSubmit={submit}>
         <ErrorBox error={err} />
         <div className="field">
-          <label htmlFor="nt-name">Name (Gruppengesellschaft)</label>
+          <label htmlFor="nt-name">{L("Name (Gruppengesellschaft)", "Name (group company)")}</label>
           <input
             id="nt-name"
             className="input"
             value={name}
             autoFocus
             maxLength={200}
-            placeholder="z. B. Kunde A AG"
+            placeholder={L("z. B. Kunde A AG", "e.g. Customer A Ltd")}
             onChange={(e) => setName(e.target.value)}
           />
         </div>
         <div className="field">
-          <label htmlFor="nt-code">Kürzel (optional)</label>
+          <label htmlFor="nt-code">{L("Kürzel (optional)", "Code (optional)")}</label>
           <input
             id="nt-code"
             className="input mono"
             value={code}
             maxLength={20}
-            placeholder="z. B. ssgch"
+            placeholder={L("z. B. ssgch", "e.g. ssgch")}
             onChange={(e) => setCode(e.target.value)}
           />
-          <div className="hint">Kennung der GG bei VMs/Objekten. Keine Funktionsrelevanz, jederzeit änderbar.</div>
+          <div className="hint">
+            {L(
+              "Kennung der GG bei VMs/Objekten. Keine Funktionsrelevanz, jederzeit änderbar.",
+              "Identifier of the GC on VMs/objects. No functional relevance, can be changed at any time.",
+            )}
+          </div>
         </div>
         <button type="submit" hidden />
       </form>
@@ -297,19 +317,19 @@ function TenantSettings({
       <div className="card-body pad">
         <ErrorBox error={err} />
         <div className="field">
-          <label htmlFor="ts-code">Kürzel (GG)</label>
+          <label htmlFor="ts-code">{L("Kürzel (GG)", "Code (GC)")}</label>
           <input
             id="ts-code"
             className="input mono"
             value={code}
             maxLength={20}
             disabled={ro}
-            placeholder="z. B. ssgch"
+            placeholder={L("z. B. ssgch", "e.g. ssgch")}
             onChange={(e) => setCode(e.target.value)}
           />
         </div>
         <div className="field">
-          <label htmlFor="ts-profile">Namensprofil</label>
+          <label htmlFor="ts-profile">{L("Namensprofil", "Naming profile")}</label>
           <select
             id="ts-profile"
             className="sel input"
@@ -317,14 +337,19 @@ function TenantSettings({
             disabled={ro}
             onChange={(e) => setProfileId(e.target.value ? Number(e.target.value) : null)}
           >
-            <option value="">Standard (Profil „default“)</option>
+            <option value="">{L("Standard (Profil „default“)", "Default (profile “default”)")}</option>
             {profiles.map((p) => (
               <option key={p.id} value={p.id}>
                 {profileLabel(p)}
               </option>
             ))}
           </select>
-          <div className="hint">Steuert die Präfix-Erkennung beim Einlesen. Ohne Auswahl gilt das Standardprofil „default“.</div>
+          <div className="hint">
+            {L(
+              "Steuert die Präfix-Erkennung beim Einlesen. Ohne Auswahl gilt das Standardprofil „default“.",
+              "Controls prefix detection during collection. Without a selection, the default profile “default” applies.",
+            )}
+          </div>
         </div>
         <div className="field">
           <label className="check">
@@ -334,24 +359,34 @@ function TenantSettings({
               disabled={ro}
               onChange={(e) => setAuditReads(e.target.checked)}
             />
-            Lesezugriffe dieses Mandanten im Audit-Log protokollieren
+            {L(
+              "Lesezugriffe dieses Mandanten im Audit-Log protokollieren",
+              "Record read access of this tenant in the audit log",
+            )}
           </label>
         </div>
         <div className="field">
-          <span className="label">Benutzer-Zuordnung</span>
+          <span className="label">{L("Benutzer-Zuordnung", "User assignment")}</span>
           <div className="hint" style={{ marginTop: 0 }}>
-            In Keycloak beim Benutzer das Attribut <code>tenant_ids</code> = <code>{tenant.id}</code> setzen.
+            {L(
+              <>
+                In Keycloak beim Benutzer das Attribut <code>tenant_ids</code> = <code>{tenant.id}</code> setzen.
+              </>,
+              <>
+                In Keycloak, set the user attribute <code>tenant_ids</code> = <code>{tenant.id}</code>.
+              </>,
+            )}
           </div>
         </div>
         {!ro && (
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             <button className="btn btn-primary btn-sm" onClick={save} disabled={busy || !dirty}>
-              {busy ? "Speichere…" : "Speichern"}
+              {busy ? L("Speichere…", "Saving…") : L("Speichern", "Save")}
             </button>
-            {saved && !dirty && <span className="chip ok">gespeichert</span>}
+            {saved && !dirty && <span className="chip ok">{L("gespeichert", "saved")}</span>}
             <div style={{ flex: 1 }} />
             <button className="btn btn-danger btn-sm" onClick={() => setDeleteOpen(true)}>
-              Mandant löschen
+              {L("Mandant löschen", "Delete tenant")}
             </button>
           </div>
         )}
@@ -371,24 +406,24 @@ function TenantSettings({
 }
 
 const COUNT_LABEL: Record<string, string> = {
-  rules: "Regeln",
-  nat_rules: "NAT-Einträge",
-  findings: "Findings",
-  references: "Referenzeinträge (IPAM)",
+  rules: L("Regeln", "rules"),
+  nat_rules: L("NAT-Einträge", "NAT entries"),
+  findings: L("Findings", "findings"),
+  references: L("Referenzeinträge (IPAM)", "reference entries (IPAM)"),
   epgs: "EPGs",
-  objects: "Adressobjekte",
-  zones: "Zonen",
-  sites: "Standorte",
-  source_systems: "Quellsysteme",
-  runs: "Läufe",
-  agents: "Collector-Agenten",
+  objects: L("Adressobjekte", "address objects"),
+  zones: L("Zonen", "zones"),
+  sites: L("Standorte", "sites"),
+  source_systems: L("Quellsysteme", "source systems"),
+  runs: L("Läufe", "runs"),
+  agents: L("Collector-Agenten", "collector agents"),
 };
 
 function countsText(counts: DeleteCounts): string {
   const parts = Object.entries(counts)
     .filter(([k, n]) => k !== "id" && n > 0)
     .map(([k, n]) => `${n} ${COUNT_LABEL[k] ?? k}`);
-  return parts.length ? parts.join(", ") : "keine weiteren Daten";
+  return parts.length ? parts.join(", ") : L("keine weiteren Daten", "no further data");
 }
 
 function DeleteTenantDialog({
@@ -419,20 +454,35 @@ function DeleteTenantDialog({
   if (done) {
     return (
       <Modal
-        title="Mandant gelöscht"
+        title={L("Mandant gelöscht", "Tenant deleted")}
         onClose={onDeleted}
         footer={
           <button className="btn btn-primary" onClick={onDeleted}>
-            Schliessen
+            {L("Schliessen", "Close")}
           </button>
         }
       >
         <p>
-          „{tenant.name}“ wurde gelöscht, mit: {countsText(done)}.
+          {L(
+            <>
+              „{tenant.name}“ wurde gelöscht, mit: {countsText(done)}.
+            </>,
+            <>
+              “{tenant.name}” was deleted, with: {countsText(done)}.
+            </>,
+          )}
         </p>
         <Note>
-          In Keycloak bei betroffenen Benutzern die Mandanten-ID <code>{tenant.id}</code> aus dem Attribut{" "}
-          <code>tenant_ids</code> entfernen.
+          {L(
+            <>
+              In Keycloak bei betroffenen Benutzern die Mandanten-ID <code>{tenant.id}</code> aus dem Attribut{" "}
+              <code>tenant_ids</code> entfernen.
+            </>,
+            <>
+              In Keycloak, remove the tenant ID <code>{tenant.id}</code> from the attribute{" "}
+              <code>tenant_ids</code> of the affected users.
+            </>,
+          )}
         </Note>
       </Modal>
     );
@@ -440,31 +490,42 @@ function DeleteTenantDialog({
 
   return (
     <Modal
-      title="Mandant löschen"
+      title={L("Mandant löschen", "Delete tenant")}
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button
             className="btn btn-danger"
             onClick={submit}
             disabled={busy || typed.trim() !== tenant.name}
           >
-            {busy ? "Lösche…" : "Endgültig löschen"}
+            {busy ? L("Lösche…", "Deleting…") : L("Endgültig löschen", "Delete permanently")}
           </button>
         </>
       }
     >
       <ErrorBox error={err} />
       <Note warn>
-        Löscht <b>„{tenant.name}“</b> mit <b>allen</b> Daten: Quellsysteme mit ihren Regeln und NAT-Einträgen,
-        Adressobjekte, Zonen, EPGs, Findings, Standorte, Läufe und die Collector-Agenten dieses Mandanten. Das
-        lässt sich nicht rückgängig machen; das Audit-Log bleibt erhalten.
+        {L(
+          <>
+            Löscht <b>„{tenant.name}“</b> mit <b>allen</b> Daten: Quellsysteme mit ihren Regeln und NAT-Einträgen,
+            Adressobjekte, Zonen, EPGs, Findings, Standorte, Läufe und die Collector-Agenten dieses Mandanten. Das
+            lässt sich nicht rückgängig machen; das Audit-Log bleibt erhalten.
+          </>,
+          <>
+            Deletes <b>“{tenant.name}”</b> with <b>all</b> data: source systems with their rules and NAT entries,
+            address objects, zones, EPGs, findings, sites, runs and the collector agents of this tenant. This cannot
+            be undone; the audit log is retained.
+          </>,
+        )}
       </Note>
       <div className="field">
-        <label htmlFor="dt-confirm">Zur Bestätigung den Namen des Mandanten eingeben</label>
+        <label htmlFor="dt-confirm">
+          {L("Zur Bestätigung den Namen des Mandanten eingeben", "Enter the tenant name to confirm")}
+        </label>
         <input
           id="dt-confirm"
           className="input"
@@ -545,7 +606,7 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
   };
 
   const remove = async (s: Site) => {
-    if (!window.confirm(`Standort ${s.code} „${s.name}“ löschen?`)) return;
+    if (!window.confirm(L(`Standort ${s.code} „${s.name}“ löschen?`, `Delete site ${s.code} “${s.name}”?`))) return;
     setErr(null);
     try {
       await deleteSite(tenant.id, s.id);
@@ -565,8 +626,14 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
         {list.length === 0 ? (
           <div className="faint" style={{ padding: "4px 16px 8px" }}>
             {k === "virtual"
-              ? "Keine – virtuelle Standorte sind dreistellige Nummern (z. B. 000 = Stretched DC)."
-              : "Keine – physische Standorte sind Ort-Codes (z. B. chzrh1)."}
+              ? L(
+                  "Keine – virtuelle Standorte sind dreistellige Nummern (z. B. 000 = Stretched DC).",
+                  "None – virtual sites are three-digit numbers (e.g. 000 = stretched DC).",
+                )
+              : L(
+                  "Keine – physische Standorte sind Ort-Codes (z. B. chzrh1).",
+                  "None – physical sites are location codes (e.g. chzrh1).",
+                )}
           </div>
         ) : (
           list.map((s) => (
@@ -585,11 +652,17 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
                 <span className="s-meta" style={{ display: "block" }}>
                   {k === "virtual"
                     ? s.physical_site_ids.length
-                      ? `läuft an: ${s.physical_site_ids.map(codeOf).join(", ")}`
-                      : "keinem physischen Standort zugeordnet"
+                      ? L(
+                          `läuft an: ${s.physical_site_ids.map(codeOf).join(", ")}`,
+                          `runs at: ${s.physical_site_ids.map(codeOf).join(", ")}`,
+                        )
+                      : L("keinem physischen Standort zugeordnet", "not assigned to a physical site")
                     : s.virtual_site_ids.length
-                      ? `virtuelle Standorte hier: ${s.virtual_site_ids.map(codeOf).join(", ")}`
-                      : "kein virtueller Standort zugeordnet"}
+                      ? L(
+                          `virtuelle Standorte hier: ${s.virtual_site_ids.map(codeOf).join(", ")}`,
+                          `virtual sites here: ${s.virtual_site_ids.map(codeOf).join(", ")}`,
+                        )
+                      : L("kein virtueller Standort zugeordnet", "no virtual site assigned")}
                 </span>
                 {linking === s.id && (
                   <LinkPicker
@@ -604,10 +677,10 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
                 <span className="s-right">
                   {k === "virtual" && physicalSites.length > 0 && linking !== s.id && (
                     <button className="btn btn-ghost btn-sm" onClick={() => setLinking(s.id)}>
-                      Zuordnen
+                      {L("Zuordnen", "Assign")}
                     </button>
                   )}
-                  <button className="linkbtn danger" title="Löschen" onClick={() => remove(s)}>
+                  <button className="linkbtn danger" title={L("Löschen", "Delete")} onClick={() => remove(s)}>
                     ✕
                   </button>
                 </span>
@@ -622,11 +695,11 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
   return (
     <div className="card">
       <div className="card-head">
-        <h2>Standorte</h2>
+        <h2>{L("Standorte", "Sites")}</h2>
         <div className="spacer" />
         {me.isAdmin && !adding && (
           <button className="btn btn-ghost btn-sm" onClick={() => setAdding(true)}>
-            + Standort
+            {L("+ Standort", "+ Site")}
           </button>
         )}
       </div>
@@ -639,7 +712,7 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
         {adding && (
           <form className="inline-form" onSubmit={add}>
             <div className="field narrow">
-              <label htmlFor="st-kind">Art</label>
+              <label htmlFor="st-kind">{L("Art", "Kind")}</label>
               <select
                 id="st-kind"
                 className="sel input"
@@ -649,8 +722,8 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
                   setCode("");
                 }}
               >
-                <option value="virtual">virtuell</option>
-                <option value="physical">physisch</option>
+                <option value="virtual">{L("virtuell", "virtual")}</option>
+                <option value="physical">{L("physisch", "physical")}</option>
               </select>
             </div>
             <div className="field narrow">
@@ -665,8 +738,11 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
                 maxLength={kind === "virtual" ? 3 : 16}
                 title={
                   kind === "virtual"
-                    ? "dreistellige Nummer, z. B. 000 (Stretched DC)"
-                    : "Ort-Code, beginnt mit einem Buchstaben, z. B. chzrh1"
+                    ? L("dreistellige Nummer, z. B. 000 (Stretched DC)", "three-digit number, e.g. 000 (stretched DC)")
+                    : L(
+                        "Ort-Code, beginnt mit einem Buchstaben, z. B. chzrh1",
+                        "location code, starts with a letter, e.g. chzrh1",
+                      )
                 }
                 placeholder={kind === "virtual" ? "000" : "chzrh1"}
                 onChange={(e) => setCode(e.target.value)}
@@ -679,23 +755,25 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
                 className="input"
                 value={name}
                 required
-                placeholder={kind === "virtual" ? "z. B. Stretched DC" : "z. B. Zürich RZ1"}
+                placeholder={
+                  kind === "virtual" ? L("z. B. Stretched DC", "e.g. Stretched DC") : L("z. B. Zürich RZ1", "e.g. Zurich DC1")
+                }
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
             <div className="field">
-              <label htmlFor="st-desc">Beschreibung</label>
+              <label htmlFor="st-desc">{L("Beschreibung", "Description")}</label>
               <input
                 id="st-desc"
                 className="input"
                 value={description}
-                placeholder="optional"
+                placeholder={L("optional", "optional")}
                 onChange={(e) => setDescription(e.target.value)}
               />
             </div>
             {kind === "virtual" && physicalSites.length > 0 && (
               <div className="field">
-                <span className="label">läuft an</span>
+                <span className="label">{L("läuft an", "runs at")}</span>
                 <span className="chips">
                   {physicalSites.map((p) => (
                     <label key={p.id} className="chip" style={{ cursor: "pointer" }}>
@@ -713,19 +791,27 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
               </div>
             )}
             <button className="btn btn-primary btn-sm" type="submit">
-              Hinzufügen
+              {L("Hinzufügen", "Add")}
             </button>
             <button className="btn btn-ghost btn-sm" type="button" onClick={() => setAdding(false)}>
-              Abbrechen
+              {L("Abbrechen", "Cancel")}
             </button>
           </form>
         )}
         {sites === null ? (
           <Loading />
         ) : sites.length === 0 && !adding ? (
-          <Empty title="Noch keine Standorte">
-            Virtuelle Standorte sind dreistellige Nummern (000, 001 …), physische Standorte Ort-Codes (z. B.
-            chzrh1). Ein virtueller Standort kann an mehreren physischen laufen.
+          <Empty title={L("Noch keine Standorte", "No sites yet")}>
+            {L(
+              <>
+                Virtuelle Standorte sind dreistellige Nummern (000, 001 …), physische Standorte Ort-Codes (z. B.
+                chzrh1). Ein virtueller Standort kann an mehreren physischen laufen.
+              </>,
+              <>
+                Virtual sites are three-digit numbers (000, 001 …), physical sites are location codes (e.g. chzrh1). A
+                virtual site can run at several physical sites.
+              </>,
+            )}
           </Empty>
         ) : (
           <>
@@ -764,10 +850,10 @@ function LinkPicker({
         </label>
       ))}
       <button className="btn btn-primary btn-sm" type="button" onClick={() => onSave(ids)}>
-        Speichern
+        {L("Speichern", "Save")}
       </button>
       <button className="btn btn-ghost btn-sm" type="button" onClick={onCancel}>
-        Abbrechen
+        {L("Abbrechen", "Cancel")}
       </button>
     </span>
   );
@@ -812,14 +898,17 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
   return (
     <div className="card">
       <div className="card-head">
-        <h2>Quellsysteme von „{tenant.name}“</h2>
+        <h2>{L(<>Quellsysteme von „{tenant.name}“</>, <>Source systems of “{tenant.name}”</>)}</h2>
         <span className="faint" style={{ fontSize: 12 }}>
-          Firewalls, Controller und Referenzquellen (IPAM), aus denen gelesen wird
+          {L(
+            "Firewalls, Controller und Referenzquellen (IPAM), aus denen gelesen wird",
+            "Firewalls, controllers and reference sources (IPAM) that are read",
+          )}
         </span>
         <div className="spacer" />
         {me.isAdmin && (
           <button className="btn btn-ghost btn-sm" onClick={() => setEditing("new")}>
-            + Quellsystem
+            {L("+ Quellsystem", "+ Source system")}
           </button>
         )}
       </div>
@@ -829,24 +918,26 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
             <ErrorBox error={err} onClose={() => setErr(null)} />
           </div>
         ) : null}
-        {check === "busy" && <Note>Verbindung wird geprüft…</Note>}
+        {check === "busy" && <Note>{L("Verbindung wird geprüft…", "Checking connection…")}</Note>}
         {check && check !== "busy" && (
           <div style={{ padding: "10px 16px 0" }} id="system-check">
             <Note warn={!check.ok}>
               <b>
-                {check.name}: {check.ok ? "erreichbar" : "nicht erreichbar"}
+                {check.name}: {check.ok ? L("erreichbar", "reachable") : L("nicht erreichbar", "not reachable")}
               </b>{" "}
-              (geprüft vom Orchestrator)
+              {L("(geprüft vom Orchestrator)", "(checked by the orchestrator)")}
               <ul style={{ margin: "4px 0" }}>
                 {check.steps.map((st, i) => (
                   <li key={i}>
-                    {st.ok ? "✓" : "✗"} {{ dns: "Name", tcp: "Verbindung", http: "NetBox-API" }[st.step]}: {st.detail}
+                    {st.ok ? "✓" : "✗"}{" "}
+                    {{ dns: "Name", tcp: L("Verbindung", "Connection"), http: "NetBox-API" }[st.step]}:{" "}
+                    {st.detail}
                   </li>
                 ))}
               </ul>
               {check.hint && <div>{check.hint}</div>}
               <button className="linkbtn" onClick={() => setCheck(null)}>
-                schliessen
+                {L("schliessen", "close")}
               </button>
             </Note>
           </div>
@@ -854,10 +945,18 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
         {systems === null ? (
           <Loading />
         ) : systems.length === 0 ? (
-          <Empty title="Noch keine Quellsysteme">
-            Gerät (FortiGate, APIC) oder Referenzquelle (Infoblox DDI, NetBox) mit Adresse und read-only
-            Zugangsdaten anlegen und einem Collector-Agenten zuweisen, dann unter „Übersicht → Jetzt einlesen“ einen
-            Lauf starten.
+          <Empty title={L("Noch keine Quellsysteme", "No source systems yet")}>
+            {L(
+              <>
+                Gerät (FortiGate, APIC) oder Referenzquelle (Infoblox DDI, NetBox) mit Adresse und read-only
+                Zugangsdaten anlegen und einem Collector-Agenten zuweisen, dann unter „Übersicht → Jetzt einlesen“ einen
+                Lauf starten.
+              </>,
+              <>
+                Create a device (FortiGate, APIC) or reference source (Infoblox DDI, NetBox) with address and read-only
+                credentials, assign it to a collector agent, then start a run under “Overview → Collect now”.
+              </>,
+            )}
           </Empty>
         ) : (
           <SystemTable
@@ -871,16 +970,19 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
                         <button
                           className="btn btn-ghost btn-sm"
                           disabled={check === "busy"}
-                          title="Erreichbarkeit vom Orchestrator aus prüfen (Name, Verbindung, bei NetBox die API)"
+                          title={L(
+                            "Erreichbarkeit vom Orchestrator aus prüfen (Name, Verbindung, bei NetBox die API)",
+                            "Check reachability from the orchestrator (name, connection, for NetBox the API)",
+                          )}
                           onClick={() => runCheck(s)}
                         >
-                          Prüfen
+                          {L("Prüfen", "Check")}
                         </button>
                       )}
                       <button className="btn btn-ghost btn-sm" onClick={() => setEditing(s)}>
-                        Bearbeiten
+                        {L("Bearbeiten", "Edit")}
                       </button>
-                      <button className="linkbtn danger" title="Löschen" onClick={() => setToDelete(s)}>
+                      <button className="linkbtn danger" title={L("Löschen", "Delete")} onClick={() => setToDelete(s)}>
                         ✕
                       </button>
                     </>
@@ -891,10 +993,21 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
         )}
       </div>
       <div className="card-foot">
-        <Icon name="lock" size={12} /> Zugangsdaten (Tokens, Benutzer/Passwort) werden verschlüsselt im Orchestrator
-        gespeichert, nie wieder angezeigt und nur dem zugewiesenen Agenten für dessen Läufe übergeben (ADR 0009). Alle
-        Quellsysteme werden nur gelesen; einzige Ausnahme ist das optionale NetBox-Schreib-Token für den NetBox-Sync – es
-        bleibt im Orchestrator und geht nie an einen Agenten (ADR 0010).
+        <Icon name="lock" size={12} />{" "}
+        {L(
+          <>
+            Zugangsdaten (Tokens, Benutzer/Passwort) werden verschlüsselt im Orchestrator
+            gespeichert, nie wieder angezeigt und nur dem zugewiesenen Agenten für dessen Läufe übergeben (ADR 0009). Alle
+            Quellsysteme werden nur gelesen; einzige Ausnahme ist das optionale NetBox-Schreib-Token für den NetBox-Sync – es
+            bleibt im Orchestrator und geht nie an einen Agenten (ADR 0010).
+          </>,
+          <>
+            Credentials (tokens, user/password) are stored encrypted in the orchestrator, never shown again and only
+            handed to the assigned agent for its runs (ADR 0009). All source systems are only read; the only
+            exception is the optional NetBox write token for the NetBox sync – it stays in the orchestrator and never
+            goes to an agent (ADR 0010).
+          </>,
+        )}
       </div>
       {editing && (
         <SystemDialog
@@ -971,8 +1084,9 @@ function SystemDialog({
   const isNetbox = platform === "netbox";
   const isVmware = platform === "vmware";
   const isSwitch = platform === "cisco_switch";
+  const isAvi = platform === "avi";
   const isRef = REFERENCE_PLATFORMS.includes(platform);
-  const userPass = isAci || isInfoblox || isVmware || isSwitch;
+  const userPass = isAci || isInfoblox || isVmware || isSwitch || isAvi;
   // Switches (0.62.0): Host-Schlüssel vergessen (beim nächsten Lauf neu lernen)
   const [forget, setForget] = useState<string[]>([]);
 
@@ -981,7 +1095,7 @@ function SystemDialog({
       .then(setSites)
       .catch(() => setSites([]));
   }, [tenant.id]);
-  const kept = "hinterlegt – leer lassen = unverändert";
+  const kept = L("hinterlegt – leer lassen = unverändert", "stored – leave empty = unchanged");
   // Zuweisung bleibt sichtbar, auch wenn der Agent nicht (mehr) in der Liste steht
   const options =
     agentId != null && !agents.some((a) => a.id === agentId)
@@ -999,7 +1113,7 @@ function SystemDialog({
       base_url: baseUrl.trim(),
       agent_id: agentId,
       verify_tls: verifyTls,
-      ...(isAci || isSwitch ? { read_scope: readScope.trim() } : {}),
+      ...(isAci || isSwitch || isAvi ? { read_scope: readScope.trim() } : {}),
       ...(isRef && refRole ? { ref_role: refRole } : {}),
       ...(isRef ? {} : { site_id: siteId }),
       schedule: schedule.trim(),
@@ -1036,15 +1150,19 @@ function SystemDialog({
 
   return (
     <Modal
-      title={system ? `Quellsystem „${system.name}“` : "Neues Quellsystem"}
+      title={
+        system
+          ? L(`Quellsystem „${system.name}“`, `Source system “${system.name}”`)
+          : L("Neues Quellsystem", "New source system")
+      }
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button className="btn btn-primary" onClick={() => submit()} disabled={busy || !name.trim()}>
-            {busy ? "Speichere…" : system ? "Speichern" : "Anlegen"}
+            {busy ? L("Speichere…", "Saving…") : system ? L("Speichern", "Save") : L("Anlegen", "Create")}
           </button>
         </>
       }
@@ -1059,12 +1177,12 @@ function SystemDialog({
             value={name}
             autoFocus
             maxLength={200}
-            placeholder="z. B. fw-01"
+            placeholder={L("z. B. fw-01", "e.g. fw-01")}
             onChange={(e) => setName(e.target.value)}
           />
         </div>
         <div className="field">
-          <label htmlFor="ss-platform">Plattform</label>
+          <label htmlFor="ss-platform">{L("Plattform", "Platform")}</label>
           <select
             id="ss-platform"
             className="sel input"
@@ -1075,31 +1193,58 @@ function SystemDialog({
             <option value="fortigate">FortiGate</option>
             <option value="cisco_aci">Cisco ACI</option>
             <option value="vmware">VMware vCenter</option>
-            <option value="cisco_switch">Switches &amp; Router (SSH: Cisco Catalyst/Nexus, Juniper)</option>
-            <option value="infoblox">Infoblox DDI (Referenzquelle)</option>
-            <option value="netbox">NetBox (Referenzquelle)</option>
+            <option value="cisco_switch">
+              {L(
+                "Switches & Router (SSH: Cisco Catalyst/Nexus, Juniper)",
+                "Switches & routers (SSH: Cisco Catalyst/Nexus, Juniper)",
+              )}
+            </option>
+            <option value="avi">VMware NSX ALB (Avi, Load Balancer)</option>
+            <option value="infoblox">{L("Infoblox DDI (Referenzquelle)", "Infoblox DDI (reference source)")}</option>
+            <option value="netbox">{L("NetBox (Referenzquelle)", "NetBox (reference source)")}</option>
           </select>
           {isRef && (
             <div className="hint">
-              Referenzquelle für den Abgleich: wird komplett gelesen (Netze, Ranges, IPs, DNS-Einträge, VLANs) und
-              mit den Firewall-/ACI-Daten verglichen.
+              {L(
+                <>
+                  Referenzquelle für den Abgleich: wird komplett gelesen (Netze, Ranges, IPs, DNS-Einträge, VLANs) und
+                  mit den Firewall-/ACI-Daten verglichen.
+                </>,
+                <>
+                  Reference source for the reconciliation: read completely (networks, ranges, IPs, DNS records, VLANs)
+                  and compared with the firewall/ACI data.
+                </>,
+              )}
             </div>
           )}
         </div>
         {isRef && (
           <div className="field">
-            <label htmlFor="ss-role">Rolle</label>
+            <label htmlFor="ss-role">{L("Rolle", "Role")}</label>
             <select id="ss-role" className="sel input" value={refRole} onChange={(e) => setRefRole(e.target.value)}>
-              {system === null && <option value="">automatisch (DDI führend, sonst NetBox)</option>}
-              <option value="primary">{REF_ROLE_LABEL.primary} – Quelle der Wahrheit für Netze, IPs, DNS</option>
-              <option value="enrichment">{REF_ROLE_LABEL.enrichment} – zusätzliche Daten (Standort, Tenant, Links)</option>
+              {system === null && (
+                <option value="">{L("automatisch (DDI führend, sonst NetBox)", "automatic (DDI primary, otherwise NetBox)")}</option>
+              )}
+              <option value="primary">
+                {REF_ROLE_LABEL.primary}{" "}
+                {L("– Quelle der Wahrheit für Netze, IPs, DNS", "– source of truth for networks, IPs, DNS")}
+              </option>
+              <option value="enrichment">
+                {REF_ROLE_LABEL.enrichment}{" "}
+                {L("– zusätzliche Daten (Standort, Tenant, Links)", "– additional data (site, tenant, links)")}
+              </option>
             </select>
-            <div className="hint">Je Mandant gibt es genau ein führendes IPAM; ein neues führendes stuft das bisherige zur Anreicherung herab.</div>
+            <div className="hint">
+              {L(
+                "Je Mandant gibt es genau ein führendes IPAM; ein neues führendes stuft das bisherige zur Anreicherung herab.",
+                "Each tenant has exactly one leading IPAM; a new leading one demotes the previous one to enrichment.",
+              )}
+            </div>
           </div>
         )}
         {isSwitch && (
           <div className="field">
-            <label htmlFor="ss-switches">Switches und Router</label>
+            <label htmlFor="ss-switches">{L("Switches und Router", "Switches and routers")}</label>
             <textarea
               id="ss-switches"
               className="input mono"
@@ -1109,21 +1254,40 @@ function SystemDialog({
               onChange={(e) => setReadScope(e.target.value)}
             />
             <div className="hint">
-              Eine Adresse je Zeile (bzw. kommagetrennt), optional mit SSH-Port. Alle Geräte teilen das Konto unten; der
-              Agent liest sie parallel und meldet, welche nicht erreichbar waren. Die Plattform erkennt Automato an{" "}
-              <code>show version</code>:
+              {L(
+                <>
+                  Eine Adresse je Zeile (bzw. kommagetrennt), optional mit SSH-Port. Alle Geräte teilen das Konto unten; der
+                  Agent liest sie parallel und meldet, welche nicht erreichbar waren. Die Plattform erkennt Automato an{" "}
+                  <code>show version</code>:
+                </>,
+                <>
+                  One address per line (or comma-separated), optionally with SSH port. All devices share the account
+                  below; the agent reads them in parallel and reports which were not reachable. Automato detects the
+                  platform from <code>show version</code>:
+                </>,
+              )}
               <ul className="ss-products" id="ss-switch-products">
                 <li>Cisco Catalyst 9200L, 9300, 3650, 4500 – IOS/IOS-XE</li>
-                <li>Cisco Nexus 9000 – NX-OS (mit vPC)</li>
-                <li>Cisco Catalyst 1200/1300 – Business-CLI, über eine begrenzte Sitzung (kein Exec)</li>
-                <li>Juniper MX (Router), EX/QFX – Junos, strukturierte Ausgabe (JSON)</li>
+                <li>{L("Cisco Nexus 9000 – NX-OS (mit vPC)", "Cisco Nexus 9000 – NX-OS (with vPC)")}</li>
+                <li>
+                  {L(
+                    "Cisco Catalyst 1200/1300 – Business-CLI, über eine begrenzte Sitzung (kein Exec)",
+                    "Cisco Catalyst 1200/1300 – business CLI, via a restricted session (no exec)",
+                  )}
+                </li>
+                <li>
+                  {L(
+                    "Juniper MX (Router), EX/QFX – Junos, strukturierte Ausgabe (JSON)",
+                    "Juniper MX (router), EX/QFX – Junos, structured output (JSON)",
+                  )}
+                </li>
               </ul>
             </div>
           </div>
         )}
         {system !== null && isSwitch && (system.host_keys ?? []).length > 0 && (
           <div className="field" id="ss-hostkeys">
-            <label>SSH-Host-Schlüssel (beim ersten Lauf festgehalten)</label>
+            <label>{L("SSH-Host-Schlüssel (beim ersten Lauf festgehalten)", "SSH host keys (pinned on the first run)")}</label>
             <table className="compact">
               <tbody>
                 {(system.host_keys ?? []).map((k) => (
@@ -1137,7 +1301,7 @@ function SystemDialog({
                           checked={forget.includes(k.host)}
                           onChange={(e) => setForget((f) => (e.target.checked ? [...f, k.host] : f.filter((h) => h !== k.host)))}
                         />
-                        vergessen
+                        {L("vergessen", "forget")}
                       </label>
                     </td>
                   </tr>
@@ -1145,14 +1309,22 @@ function SystemDialog({
               </tbody>
             </table>
             <div className="hint">
-              Weist ein Switch einen anderen Schlüssel vor, bricht die Verbindung vor der Anmeldung ab. Nach einem
-              geplanten Wechsel (neues Gerät, neuer Schlüssel) hier „vergessen“ – der nächste Lauf lernt ihn neu.
+              {L(
+                <>
+                  Weist ein Switch einen anderen Schlüssel vor, bricht die Verbindung vor der Anmeldung ab. Nach einem
+                  geplanten Wechsel (neues Gerät, neuer Schlüssel) hier „vergessen“ – der nächste Lauf lernt ihn neu.
+                </>,
+                <>
+                  If a switch presents a different key, the connection is aborted before login. After a planned change
+                  (new device, new key) “forget” it here – the next run learns it again.
+                </>,
+              )}
             </div>
           </div>
         )}
         {!isSwitch && (
         <div className="field">
-          <label htmlFor="ss-url">Adresse</label>
+          <label htmlFor="ss-url">{L("Adresse", "Address")}</label>
           <input
             id="ss-url"
             className="input mono"
@@ -1163,6 +1335,8 @@ function SystemDialog({
                 ? "https://apic-01.kunde.lan"
                 : isVmware
                   ? "https://vcenter.kunde.lan"
+                  : isAvi
+                  ? "https://avi-controller.kunde.lan"
                   : isInfoblox
                   ? "https://ddi.kunde.lan"
                   : isNetbox
@@ -1171,12 +1345,17 @@ function SystemDialog({
             }
             onChange={(e) => setBaseUrl(e.target.value)}
           />
-          <div className="hint">So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).</div>
+          <div className="hint">
+            {L(
+              "So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).",
+              "As the agent reaches the device (seen from the agent host).",
+            )}
+          </div>
         </div>
         )}
         {!isRef && (
           <div className="field">
-            <label htmlFor="ss-site">Standort</label>
+            <label htmlFor="ss-site">{L("Standort", "Site")}</label>
             <select
               id="ss-site"
               className="sel input"
@@ -1184,17 +1363,30 @@ function SystemDialog({
               onChange={(e) => setSiteId(e.target.value ? Number(e.target.value) : null)}
             >
               <option value="">
-                {fallbackSite ? `nicht gesetzt (einziger Standort ${fallbackSite.code} wird genutzt)` : "nicht gesetzt"}
+                {fallbackSite
+                  ? L(
+                      `nicht gesetzt (einziger Standort ${fallbackSite.code} wird genutzt)`,
+                      `not set (only site ${fallbackSite.code} is used)`,
+                    )
+                  : L("nicht gesetzt", "not set")}
               </option>
               <SiteOptions sites={sites} />
             </select>
             <div className="hint">
-              Dort legt der NetBox-Sync das Gerät mit seinen Ports an – meist der physische Standort, bei einem
-              Stretched-Cluster der virtuelle (z. B. 000).
+              {L(
+                <>
+                  Dort legt der NetBox-Sync das Gerät mit seinen Ports an – meist der physische Standort, bei einem
+                  Stretched-Cluster der virtuelle (z. B. 000).
+                </>,
+                <>
+                  The NetBox sync creates the device with its ports there – usually the physical site, for a stretched
+                  cluster the virtual one (e.g. 000).
+                </>,
+              )}
               {system?.site_hint && siteId == null && (
                 <>
                   {" "}
-                  Aus dem Namen: <SiteChip site={system.site_hint} from="name" />
+                  {L("Aus dem Namen:", "From the name:")} <SiteChip site={system.site_hint} from="name" />
                   {system.site_hint.known && system.site_hint.id != null && (
                     <button
                       type="button"
@@ -1202,7 +1394,7 @@ function SystemDialog({
                       onClick={() => setSiteId(system.site_hint!.id ?? null)}
                       style={{ marginLeft: 6 }}
                     >
-                      übernehmen
+                      {L("übernehmen", "apply")}
                     </button>
                   )}
                 </>
@@ -1213,104 +1405,146 @@ function SystemDialog({
         <ScheduleField value={schedule} onChange={setSchedule} />
         {system !== null && platform === "fortigate" && (
           <div className="field">
-            <label htmlFor="ss-parallel">Verbund (parallele Firewalls)</label>
+            <label htmlFor="ss-parallel">{L("Verbund (parallele Firewalls)", "Parallel group (parallel firewalls)")}</label>
             <input
               id="ss-parallel"
               className="input"
-              placeholder="z. B. Cluster Nord – leer = keiner"
+              placeholder={L("z. B. Cluster Nord – leer = keiner", "e.g. Cluster North – empty = none")}
               value={parallelGroup}
               onChange={(e) => setParallelGroup(e.target.value)}
             />
             <div className="hint">
-              Firewalls mit demselben Verbund tragen dieselben Regeln (z. B. zwei Cluster mit Session-Sync): gleiche
-              Policies erscheinen einmal, Abweichungen als Findings.
+              {L(
+                <>
+                  Firewalls mit demselben Verbund tragen dieselben Regeln (z. B. zwei Cluster mit Session-Sync): gleiche
+                  Policies erscheinen einmal, Abweichungen als Findings.
+                </>,
+                <>
+                  Firewalls in the same parallel group carry the same rules (e.g. two clusters with session sync):
+                  identical policies appear once, deviations as findings.
+                </>,
+              )}
             </div>
           </div>
         )}
         <div className="field">
-          <label htmlFor="ss-agent">Verwaltet von</label>
+          <label htmlFor="ss-agent">{L("Verwaltet von", "Managed by")}</label>
           <select
             id="ss-agent"
             className="sel input"
             value={agentId ?? ""}
             onChange={(e) => setAgentId(e.target.value ? Number(e.target.value) : null)}
           >
-            <option value="">kein Agent – zentraler Worker</option>
+            <option value="">{L("kein Agent – zentraler Worker", "no agent – central worker")}</option>
             {options.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
-                {a.tenant_id == null ? " (alle Mandanten)" : ""}
-                {a.enabled ? "" : " – deaktiviert"}
+                {a.tenant_id == null ? L(" (alle Mandanten)", " (all tenants)") : ""}
+                {a.enabled ? "" : L(" – deaktiviert", " – disabled")}
               </option>
             ))}
           </select>
           <div className="hint">
             {agents.length === 0
-              ? "Noch kein Agent für diesen Mandanten – unter „Collector-Agenten“ anlegen."
-              : "Der Agent holt die Läufe dieses Geräts ab und bekommt dafür die Zugangsdaten. Jederzeit einem anderen Agenten zuweisbar."}
+              ? L(
+                  "Noch kein Agent für diesen Mandanten – unter „Collector-Agenten“ anlegen.",
+                  "No agent for this tenant yet – create one under “Collector agents”.",
+                )
+              : L(
+                  "Der Agent holt die Läufe dieses Geräts ab und bekommt dafür die Zugangsdaten. Jederzeit einem anderen Agenten zuweisbar.",
+                  "The agent picks up the runs of this device and receives the credentials for them. Can be assigned to another agent at any time.",
+                )}
           </div>
           {selected && !selected.enabled && (
-            <Note warn>Dieser Agent ist deaktiviert – Läufe des Geräts werden nicht abgeholt.</Note>
+            <Note warn>
+              {L(
+                "Dieser Agent ist deaktiviert – Läufe des Geräts werden nicht abgeholt.",
+                "This agent is disabled – runs of the device are not picked up.",
+              )}
+            </Note>
           )}
         </div>
         {isInfoblox ? (
           <>
             <div className="field">
-              <label htmlFor="ss-user">Infoblox-Benutzer (read-only)</label>
+              <label htmlFor="ss-user">{L("Infoblox-Benutzer (read-only)", "Infoblox user (read-only)")}</label>
               <CredentialInput
                 id="ss-user"
                 value={username}
                 maxLength={200}
                 disabled={clearCreds}
-                placeholder={hasCreds ? kept : "z. B. ro-automato"}
+                placeholder={hasCreds ? kept : L("z. B. ro-automato", "e.g. ro-automato")}
                 onChange={setUsername}
               />
             </div>
             <div className="field">
-              <label htmlFor="ss-password">Passwort</label>
+              <label htmlFor="ss-password">{L("Passwort", "Password")}</label>
               <SecretInput
                 id="ss-password"
                 value={password}
                 disabled={clearCreds}
                 onChange={setPassword}
-                placeholder={hasCreds ? kept : "Passwort des Infoblox-Benutzers"}
+                placeholder={hasCreds ? kept : L("Passwort des Infoblox-Benutzers", "Password of the Infoblox user")}
               />
               <div className="hint">
-                WAPI-Benutzer einer Admin-Gruppe mit API-Zugriff und nur Lese-Rechten (DNS, IPAM, DHCP). Automato liest
-                ausschliesslich (nur GET) – Schreibzugriffe sind im Code gesperrt.
+                {L(
+                  <>
+                    WAPI-Benutzer einer Admin-Gruppe mit API-Zugriff und nur Lese-Rechten (DNS, IPAM, DHCP). Automato liest
+                    ausschliesslich (nur GET) – Schreibzugriffe sind im Code gesperrt.
+                  </>,
+                  <>
+                    WAPI user of an admin group with API access and read-only permissions (DNS, IPAM, DHCP). Automato
+                    only reads (GET only) – write access is blocked in the code.
+                  </>,
+                )}
               </div>
             </div>
           </>
         ) : isNetbox ? (
           <>
             <div className="field">
-              <label htmlFor="ss-token">API-Token (lesen)</label>
+              <label htmlFor="ss-token">{L("API-Token (lesen)", "API token (read)")}</label>
               <SecretInput
                 id="ss-token"
                 value={token}
                 disabled={clearCreds}
                 onChange={setToken}
-                placeholder={hasCreds ? kept : "NetBox-Token ohne Schreibrecht"}
+                placeholder={hasCreds ? kept : L("NetBox-Token ohne Schreibrecht", "NetBox token without write permission")}
               />
-              <div className="hint">Für das Einlesen (Agent/Worker). NetBox: Token mit „Write enabled“ aus.</div>
+              <div className="hint">
+                {L(
+                  "Für das Einlesen (Agent/Worker). NetBox: Token mit „Write enabled“ aus.",
+                  "For collecting (agent/worker). NetBox: token with “Write enabled” off.",
+                )}
+              </div>
             </div>
             <div className="field">
-              <label htmlFor="ss-wtoken">Schreib-Token (optional, nur NetBox-Sync)</label>
+              <label htmlFor="ss-wtoken">
+                {L("Schreib-Token (optional, nur NetBox-Sync)", "Write token (optional, NetBox sync only)")}
+              </label>
               <SecretInput
                 id="ss-wtoken"
                 value={writeToken}
                 disabled={clearCreds || clearWrite}
                 onChange={setWriteToken}
-                placeholder={hasWrite ? kept : "leer = NetBox wird nur gelesen"}
+                placeholder={hasWrite ? kept : L("leer = NetBox wird nur gelesen", "empty = NetBox is only read")}
               />
               <div className="hint">
-                Nur für den NetBox-Sync (Vorschau → Übernehmen durch einen Admin). Bleibt im Orchestrator und wird nie
-                an einen Agenten übergeben.
+                {L(
+                  <>
+                    Nur für den NetBox-Sync (Vorschau → Übernehmen durch einen Admin). Bleibt im Orchestrator und wird nie
+                    an einen Agenten übergeben.
+                  </>,
+                  <>
+                    Only for the NetBox sync (preview → apply by an admin). Stays in the orchestrator and is never handed
+                    to an agent.
+                  </>,
+                )}
               </div>
               {hasWrite && (
                 <label className="check">
                   <input type="checkbox" checked={clearWrite} onChange={(e) => setClearWrite(e.target.checked)} />
-                  Schreib-Token entfernen
+                  {L("Schreib-Token entfernen", "Remove write token")}
                 </label>
               )}
             </div>
@@ -1318,88 +1552,171 @@ function SystemDialog({
         ) : isVmware ? (
           <>
             <div className="field">
-              <label htmlFor="ss-user">vCenter-Benutzer (Read-only)</label>
+              <label htmlFor="ss-user">{L("vCenter-Benutzer (Read-only)", "vCenter user (read-only)")}</label>
               <CredentialInput
                 id="ss-user"
                 value={username}
                 maxLength={200}
                 disabled={clearCreds}
-                placeholder={hasCreds ? kept : "z. B. ro-automato@vsphere.local"}
+                placeholder={hasCreds ? kept : L("z. B. ro-automato@vsphere.local", "e.g. ro-automato@vsphere.local")}
                 onChange={setUsername}
               />
             </div>
             <div className="field">
-              <label htmlFor="ss-password">vCenter-Passwort</label>
+              <label htmlFor="ss-password">{L("vCenter-Passwort", "vCenter password")}</label>
               <SecretInput
                 id="ss-password"
                 value={password}
                 disabled={clearCreds}
                 onChange={setPassword}
-                placeholder={hasCreds ? kept : "Passwort des vCenter-Benutzers"}
+                placeholder={hasCreds ? kept : L("Passwort des vCenter-Benutzers", "Password of the vCenter user")}
               />
               <div className="hint">
-                Konto mit der Rolle <b>Read-only</b> auf dem vCenter-Objekt (oberste Ebene) mit „An untergeordnete Objekte
-                weitergeben“ – oder als globale Berechtigung, ebenfalls mit Weitergabe. Automato liest VMs, Hosts, Cluster
-                und Portgruppen; schreibende vSphere-Aufrufe sind im Code gesperrt. Wird verschlüsselt gespeichert.
+                {L(
+                  <>
+                    Konto mit der Rolle <b>Read-only</b> auf dem vCenter-Objekt (oberste Ebene) mit „An untergeordnete Objekte
+                    weitergeben“ – oder als globale Berechtigung, ebenfalls mit Weitergabe. Automato liest VMs, Hosts, Cluster
+                    und Portgruppen; schreibende vSphere-Aufrufe sind im Code gesperrt. Wird verschlüsselt gespeichert.
+                  </>,
+                  <>
+                    Account with the role <b>Read-only</b> on the vCenter object (top level) with “Propagate to
+                    children” – or as a global permission, also with propagation. Automato reads VMs, hosts, clusters
+                    and port groups; writing vSphere calls are blocked in the code. Stored encrypted.
+                  </>,
+                )}
               </div>
             </div>
           </>
         ) : isSwitch ? (
           <>
             <div className="field">
-              <label htmlFor="ss-user">SSH-Benutzer (nur Leserechte)</label>
+              <label htmlFor="ss-user">{L("SSH-Benutzer (nur Leserechte)", "SSH user (read-only permissions)")}</label>
               <CredentialInput
                 id="ss-user"
                 value={username}
                 maxLength={200}
                 disabled={clearCreds}
-                placeholder={hasCreds ? kept : "z. B. ro-automato"}
+                placeholder={hasCreds ? kept : L("z. B. ro-automato", "e.g. ro-automato")}
                 onChange={setUsername}
               />
             </div>
             <div className="field">
-              <label htmlFor="ss-password">SSH-Passwort</label>
+              <label htmlFor="ss-password">{L("SSH-Passwort", "SSH password")}</label>
               <SecretInput
                 id="ss-password"
                 value={password}
                 disabled={clearCreds}
                 onChange={setPassword}
-                placeholder={hasCreds ? kept : "Passwort des SSH-Benutzers"}
+                placeholder={hasCreds ? kept : L("Passwort des SSH-Benutzers", "Password of the SSH user")}
               />
               <div className="hint">
-                Konto nur mit Leserechten (IOS/IOS-XE privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle{" "}
-                <code>network-operator</code>, Junos-Klasse <code>read-only</code>, Catalyst 1200/1300 Stufe 1). Automato
-                führt nur feste <code>show</code>-Befehle aus (je Befehl ein SSH-Aufruf, kein Konfigurationsmodus); nur der
-                Catalyst 1200/1300 wird über eine Sitzung gelesen, in der ausschliesslich dieselben Befehle und das
-                Abschalten des Seitenumbruchs für die Sitzung gesendet werden. Wird verschlüsselt gespeichert.
+                {L(
+                  <>
+                    Konto nur mit Leserechten (IOS/IOS-XE privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle{" "}
+                    <code>network-operator</code>, Junos-Klasse <code>read-only</code>, Catalyst 1200/1300 Stufe 1). Automato
+                    führt nur feste <code>show</code>-Befehle aus (je Befehl ein SSH-Aufruf, kein Konfigurationsmodus); nur der
+                    Catalyst 1200/1300 wird über eine Sitzung gelesen, in der ausschliesslich dieselben Befehle und das
+                    Abschalten des Seitenumbruchs für die Sitzung gesendet werden. Wird verschlüsselt gespeichert.
+                  </>,
+                  <>
+                    Account with read-only permissions only (IOS/IOS-XE privilege 1 or a view with the show commands,
+                    NX-OS role <code>network-operator</code>, Junos class <code>read-only</code>, Catalyst 1200/1300
+                    level 1). Automato only runs fixed <code>show</code> commands (one SSH call per command, no
+                    configuration mode); only the Catalyst 1200/1300 is read via a session in which only the same
+                    commands and disabling paging for the session are sent. Stored encrypted.
+                  </>,
+                )}
+              </div>
+            </div>
+          </>
+        ) : isAvi ? (
+          <>
+            <div className="field">
+              <label htmlFor="ss-user">{L("Avi-Benutzer (nur Leserechte)", "Avi user (read-only permissions)")}</label>
+              <CredentialInput
+                id="ss-user"
+                value={username}
+                maxLength={200}
+                disabled={clearCreds}
+                placeholder={hasCreds ? kept : L("z. B. ro-automato", "e.g. ro-automato")}
+                onChange={setUsername}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="ss-password">{L("Avi-Passwort", "Avi password")}</label>
+              <SecretInput
+                id="ss-password"
+                value={password}
+                disabled={clearCreds}
+                onChange={setPassword}
+                placeholder={hasCreds ? kept : L("Passwort des Avi-Benutzers", "Password of the Avi user")}
+              />
+              <div className="hint">
+                {L(
+                  <>
+                    Konto mit einer eigenen Rolle nur mit Leserechten (Virtual Service, VS VIP, Pool, Pool Group, VRF Context,
+                    Application Profile, Tenant). Automato meldet sich an und ab und liest sonst nur (GET); Zertifikate,
+                    Schlüssel und Benutzer liest es nicht. Wird verschlüsselt gespeichert und nie wieder angezeigt.
+                  </>,
+                  <>
+                    Account with a custom role with read-only permissions only (Virtual Service, VS VIP, Pool, Pool
+                    Group, VRF Context, Application Profile, Tenant). Automato logs in and out and otherwise only reads
+                    (GET); it does not read certificates, keys or users. Stored encrypted and never shown again.
+                  </>,
+                )}
+              </div>
+            </div>
+            <div className="field">
+              <label htmlFor="ss-scope">Avi-Tenants</label>
+              <input
+                id="ss-scope"
+                className="input mono"
+                value={readScope}
+                maxLength={500}
+                placeholder={L("z. B. admin, kunde-a", "e.g. admin, customer-a")}
+                onChange={(e) => setReadScope(e.target.value)}
+              />
+              <div className="hint">
+                {L(
+                  "Kommagetrennt. Leer = alle Tenants, die das Konto sieht.",
+                  "Comma-separated. Empty = all tenants the account can see.",
+                )}
               </div>
             </div>
           </>
         ) : isAci ? (
           <>
             <div className="field">
-              <label htmlFor="ss-user">APIC-Benutzer (read-only)</label>
+              <label htmlFor="ss-user">{L("APIC-Benutzer (read-only)", "APIC user (read-only)")}</label>
               <CredentialInput
                 id="ss-user"
                 value={username}
                 maxLength={200}
                 disabled={clearCreds}
-                placeholder={hasCreds ? kept : "z. B. ro-automato"}
+                placeholder={hasCreds ? kept : L("z. B. ro-automato", "e.g. ro-automato")}
                 onChange={setUsername}
               />
             </div>
             <div className="field">
-              <label htmlFor="ss-password">APIC-Passwort</label>
+              <label htmlFor="ss-password">{L("APIC-Passwort", "APIC password")}</label>
               <SecretInput
                 id="ss-password"
                 value={password}
                 disabled={clearCreds}
                 onChange={setPassword}
-                placeholder={hasCreds ? kept : "Passwort des APIC-Benutzers"}
+                placeholder={hasCreds ? kept : L("Passwort des APIC-Benutzers", "Password of the APIC user")}
               />
               <div className="hint">
-                Lokaler APIC-Benutzer mit Nur-Lese-Rolle (z. B. read-all, Security-Domain all); Remote-Benutzer als{" "}
-                <code>apic#Domäne\Benutzer</code>. Wird verschlüsselt gespeichert und nie wieder angezeigt.
+                {L(
+                  <>
+                    Lokaler APIC-Benutzer mit Nur-Lese-Rolle (z. B. read-all, Security-Domain all); Remote-Benutzer als{" "}
+                    <code>apic#Domäne\Benutzer</code>. Wird verschlüsselt gespeichert und nie wieder angezeigt.
+                  </>,
+                  <>
+                    Local APIC user with a read-only role (e.g. read-all, security domain all); remote users as{" "}
+                    <code>apic#domain\user</code>. Stored encrypted and never shown again.
+                  </>,
+                )}
               </div>
             </div>
             <div className="field">
@@ -1409,25 +1726,38 @@ function SystemDialog({
                 className="input mono"
                 value={readScope}
                 maxLength={500}
-                placeholder="z. B. TE_share, TE_app"
+                placeholder={L("z. B. TE_share, TE_app", "e.g. TE_share, TE_app")}
                 onChange={(e) => setReadScope(e.target.value)}
               />
-              <div className="hint">Kommagetrennt. Leer = alle Tenants ausser infra und mgmt.</div>
+              <div className="hint">
+                {L(
+                  "Kommagetrennt. Leer = alle Tenants ausser infra und mgmt.",
+                  "Comma-separated. Empty = all tenants except infra and mgmt.",
+                )}
+              </div>
             </div>
           </>
         ) : (
           <div className="field">
-            <label htmlFor="ss-token">API-Token (read-only)</label>
+            <label htmlFor="ss-token">{L("API-Token (read-only)", "API token (read-only)")}</label>
             <SecretInput
               id="ss-token"
               value={token}
               disabled={clearCreds}
               onChange={setToken}
-              placeholder={hasCreds ? kept : "REST-API-Token der FortiGate"}
+              placeholder={hasCreds ? kept : L("REST-API-Token der FortiGate", "REST API token of the FortiGate")}
             />
             <div className="hint">
-              FortiGate: System → Administratoren → REST API Admin mit Nur-Lese-Profil; Trusted Hosts = Agent-Rechner.
-              Wird verschlüsselt gespeichert und nie wieder angezeigt.
+              {L(
+                <>
+                  FortiGate: System → Administratoren → REST API Admin mit Nur-Lese-Profil; Trusted Hosts = Agent-Rechner.
+                  Wird verschlüsselt gespeichert und nie wieder angezeigt.
+                </>,
+                <>
+                  FortiGate: System → Administrators → REST API Admin with read-only profile; trusted hosts = agent
+                  host. Stored encrypted and never shown again.
+                </>,
+              )}
             </div>
           </div>
         )}
@@ -1435,21 +1765,29 @@ function SystemDialog({
           <div className="field">
             <label className="check">
               <input type="checkbox" checked={clearCreds} onChange={(e) => setClearCreds(e.target.checked)} />
-              {isNetbox ? "Alle hinterlegten Tokens entfernen" : "Hinterlegte Zugangsdaten entfernen"}
+              {isNetbox
+                ? L("Alle hinterlegten Tokens entfernen", "Remove all stored tokens")
+                : L("Hinterlegte Zugangsdaten entfernen", "Remove stored credentials")}
             </label>
           </div>
         )}
         <div className="field">
           <label className="check">
             <input type="checkbox" checked={verifyTls} onChange={(e) => setVerifyTls(e.target.checked)} />
-            TLS-Zertifikat des Geräts prüfen (nur im Lab mit selbstsigniertem Zertifikat ausschalten)
+            {L(
+              "TLS-Zertifikat des Geräts prüfen (nur im Lab mit selbstsigniertem Zertifikat ausschalten)",
+              "Verify the device's TLS certificate (only turn off in the lab with a self-signed certificate)",
+            )}
           </label>
         </div>
         {system && (
           <div className="field">
             <label className="check">
               <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-              Aktiv – inaktive Geräte werden nicht eingelesen und nicht geprüft
+              {L(
+                "Aktiv – inaktive Geräte werden nicht eingelesen und nicht geprüft",
+                "Active – inactive devices are not collected and not checked",
+              )}
             </label>
           </div>
         )}
@@ -1473,11 +1811,11 @@ function SystemTable({
       <thead>
         <tr>
           <th>Name</th>
-          <th>Plattform</th>
-          <th>Adresse</th>
-          <th>Verwaltet von</th>
-          <th>Zugangsdaten</th>
-          <th>Daten</th>
+          <th>{L("Plattform", "Platform")}</th>
+          <th>{L("Adresse", "Address")}</th>
+          <th>{L("Verwaltet von", "Managed by")}</th>
+          <th>{L("Zugangsdaten", "Credentials")}</th>
+          <th>{L("Daten", "Data")}</th>
           <th>Status</th>
           {actions && <th></th>}
         </tr>
@@ -1506,7 +1844,7 @@ function SystemTable({
                 </div>
               ) : (
                 s.read_scope && (
-                  <div className="faint" style={{ fontSize: 11 }} title="gelesene ACI-Tenants">
+                  <div className="faint" style={{ fontSize: 11 }} title={L("gelesene ACI-Tenants", "ACI tenants read")}>
                     Tenants: {s.read_scope}
                   </div>
                 )
@@ -1518,31 +1856,43 @@ function SystemTable({
                   <Icon name="agents" size={12} /> {agentName(s.agent_id)}
                 </span>
               ) : (
-                <span className="faint">zentraler Worker</span>
+                <span className="faint">{L("zentraler Worker", "central worker")}</span>
               )}
             </td>
             <td className="nowrap">
               {s.has_credentials ? (
                 <span className="chip ok">
-                  <Icon name="lock" size={12} /> hinterlegt
+                  <Icon name="lock" size={12} /> {L("hinterlegt", "stored")}
                 </span>
               ) : s.has_write_token ? (
-                <span className="chip warn" title="Zum Einlesen wird das Lese-Token gebraucht">
-                  Lese-Token fehlt
+                <span
+                  className="chip warn"
+                  title={L("Zum Einlesen wird das Lese-Token gebraucht", "The read token is needed for collecting")}
+                >
+                  {L("Lese-Token fehlt", "Read token missing")}
                 </span>
               ) : (
                 <span className={`chip ${s.agent_id != null || REFERENCE_PLATFORMS.includes(s.platform) ? "warn" : "na"}`}>
-                  fehlen
+                  {L("fehlen", "missing")}
                 </span>
               )}
               {s.has_write_token && (
-                <span className="chip local" title="Schreib-Token für den NetBox-Sync (bleibt im Orchestrator)">
-                  Schreib-Token
+                <span
+                  className="chip local"
+                  title={L(
+                    "Schreib-Token für den NetBox-Sync (bleibt im Orchestrator)",
+                    "Write token for the NetBox sync (stays in the orchestrator)",
+                  )}
+                >
+                  {L("Schreib-Token", "Write token")}
                 </span>
               )}
               {!s.verify_tls && (
-                <span className="chip warn" title="TLS-Zertifikat des Geräts wird nicht geprüft">
-                  TLS aus
+                <span
+                  className="chip warn"
+                  title={L("TLS-Zertifikat des Geräts wird nicht geprüft", "The device's TLS certificate is not verified")}
+                >
+                  {L("TLS aus", "TLS off")}
                 </span>
               )}
             </td>
@@ -1550,31 +1900,44 @@ function SystemTable({
               {REFERENCE_PLATFORMS.includes(s.platform) ? (
                 s.reference_at ? (
                   <>
-                    <span className="mono">{s.reference_count}</span> Einträge
+                    <span className="mono">{s.reference_count}</span> {L("Einträge", "entries")}
                     <div className="faint" style={{ fontSize: 11 }}>
-                      Stand {fmtTime(s.reference_at)}
+                      {L("Stand", "As of")} {fmtTime(s.reference_at)}
                     </div>
                   </>
                 ) : (
-                  <span className="faint">noch nicht eingelesen</span>
+                  <span className="faint">{L("noch nicht eingelesen", "not collected yet")}</span>
                 )
               ) : (
                 <>
-                  <span className="mono">{s.rule_count}</span> Regeln · <span className="mono">{s.nat_count}</span> NAT
+                  <span className="mono">{s.rule_count}</span> {L("Regeln", "rules")} ·{" "}
+                  <span className="mono">{s.nat_count}</span> NAT
                 </>
               )}
             </td>
             <td className="nowrap">
-              {s.enabled ? <span className="chip ok">aktiv</span> : <span className="chip na">inaktiv</span>}
+              {s.enabled ? (
+                <span className="chip ok">{L("aktiv", "active")}</span>
+              ) : (
+                <span className="chip na">{L("inaktiv", "inactive")}</span>
+              )}
               {s.parallel_group && (
-                <div className="faint" style={{ fontSize: 11, marginTop: 3 }} title="Verbund paralleler Firewalls">
-                  Verbund {s.parallel_group}
+                <div
+                  className="faint"
+                  style={{ fontSize: 11, marginTop: 3 }}
+                  title={L("Verbund paralleler Firewalls", "Parallel group of parallel firewalls")}
+                >
+                  {L("Verbund", "Parallel group")} {s.parallel_group}
                 </div>
               )}
               {s.schedule && (
-                <div className="faint" style={{ fontSize: 11, marginTop: 3 }} title={`Zeitplan: ${s.schedule}`}>
+                <div
+                  className="faint"
+                  style={{ fontSize: 11, marginTop: 3 }}
+                  title={L(`Zeitplan: ${s.schedule}`, `Schedule: ${s.schedule}`)}
+                >
                   {scheduleLabel(s.schedule)}
-                  {s.next_run_at && ` · nächster ${fmtTime(s.next_run_at)}`}
+                  {s.next_run_at && L(` · nächster ${fmtTime(s.next_run_at)}`, ` · next ${fmtTime(s.next_run_at)}`)}
                 </div>
               )}
             </td>
@@ -1614,40 +1977,63 @@ function DeleteSystemDialog({
   const isRef = REFERENCE_PLATFORMS.includes(system.platform);
   return (
     <Modal
-      title="Quellsystem löschen"
+      title={L("Quellsystem löschen", "Delete source system")}
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button className="btn btn-danger" onClick={submit} disabled={busy}>
-            {busy ? "Lösche…" : "Löschen"}
+            {busy ? L("Lösche…", "Deleting…") : L("Löschen", "Delete")}
           </button>
         </>
       }
     >
       <ErrorBox error={err} />
       <p>
-        Quellsystem <b>„{system.name}“</b> löschen?
+        {L(
+          <>
+            Quellsystem <b>„{system.name}“</b> löschen?
+          </>,
+          <>
+            Delete source system <b>“{system.name}”</b>?
+          </>,
+        )}
       </p>
       {isRef ? (
         system.reference_count > 0 ? (
           <Note warn>
-            Mit gelöscht wird der eingelesene Stand (<b>{system.reference_count} Einträge</b>); der Abgleich wird ohne
-            diese Quelle neu berechnet. In der Quelle selbst wird nichts geändert.
+            {L(
+              <>
+                Mit gelöscht wird der eingelesene Stand (<b>{system.reference_count} Einträge</b>); der Abgleich wird ohne
+                diese Quelle neu berechnet. In der Quelle selbst wird nichts geändert.
+              </>,
+              <>
+                The collected data is deleted as well (<b>{system.reference_count} entries</b>); the reconciliation is
+                recalculated without this source. Nothing is changed in the source itself.
+              </>,
+            )}
           </Note>
         ) : (
-          <Note>Aus dieser Quelle wurden noch keine Daten gelesen.</Note>
+          <Note>{L("Aus dieser Quelle wurden noch keine Daten gelesen.", "No data has been read from this source yet.")}</Note>
         )
       ) : data > 0 ? (
         <Note warn>
-          Mit gelöscht werden die daraus gelesenen <b>{system.rule_count} Regeln</b> und{" "}
-          <b>{system.nat_count} NAT-Einträge</b> samt ihrer Findings. Bisherige Läufe bleiben als Historie
-          erhalten.
+          {L(
+            <>
+              Mit gelöscht werden die daraus gelesenen <b>{system.rule_count} Regeln</b> und{" "}
+              <b>{system.nat_count} NAT-Einträge</b> samt ihrer Findings. Bisherige Läufe bleiben als Historie
+              erhalten.
+            </>,
+            <>
+              The <b>{system.rule_count} rules</b> and <b>{system.nat_count} NAT entries</b> read from it are deleted
+              as well, including their findings. Previous runs are kept as history.
+            </>,
+          )}
         </Note>
       ) : (
-        <Note>Aus diesem System wurden noch keine Daten gelesen.</Note>
+        <Note>{L("Aus diesem System wurden noch keine Daten gelesen.", "No data has been read from this system yet.")}</Note>
       )}
     </Modal>
   );
@@ -1687,15 +2073,23 @@ function UnassignedSystems({ tenants, onAssigned }: { tenants: Tenant[]; onAssig
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <div className="card-head">
-        <h2>Nicht zugeordnete Quellsysteme</h2>
+        <h2>{L("Nicht zugeordnete Quellsysteme", "Unassigned source systems")}</h2>
         <span className="chip warn">{systems.length}</span>
       </div>
       <div className="card-body">
         <div style={{ padding: "10px 16px 0" }}>
           <ErrorBox error={err} onClose={() => setErr(null)} />
           <Note warn>
-            Diese Quellsysteme stammen aus der Zeit vor der Mandanten-Zuordnung. Bitte einem Mandanten zuordnen
-            (oder löschen) – erst dann lassen sie sich wieder einlesen.
+            {L(
+              <>
+                Diese Quellsysteme stammen aus der Zeit vor der Mandanten-Zuordnung. Bitte einem Mandanten zuordnen
+                (oder löschen) – erst dann lassen sie sich wieder einlesen.
+              </>,
+              <>
+                These source systems date from before tenant assignment. Please assign them to a tenant (or delete
+                them) – only then can they be collected again.
+              </>,
+            )}
           </Note>
         </div>
         <SystemTable
@@ -1714,9 +2108,9 @@ function UnassignedSystems({ tenants, onAssigned }: { tenants: Tenant[]; onAssig
                 ))}
               </select>{" "}
               <button className="btn btn-ghost btn-sm" onClick={() => assign(s)}>
-                Zuordnen
+                {L("Zuordnen", "Assign")}
               </button>
-              <button className="linkbtn danger" title="Löschen" onClick={() => setToDelete(s)}>
+              <button className="linkbtn danger" title={L("Löschen", "Delete")} onClick={() => setToDelete(s)}>
                 ✕
               </button>
             </>

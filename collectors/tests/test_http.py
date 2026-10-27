@@ -126,3 +126,28 @@ def test_describe_error_nennt_den_grund_beim_verbindungsaufbau():
     assert text.endswith(
         "ConnectTimeout timed out - keine Antwort: Ziel aus oder Weg gesperrt (Firewall/Netz)"
     )
+
+
+def test_describe_error_klartext_an_https_orchestrator():
+    """Befund 0.78.1: seit TLS intern beendet der Orchestrator auf :8000 eine Klartext-Anfrage
+    ohne Antwort - die Meldung nennt https:// und die CA; bei https:// kein solcher Hinweis."""
+    import httpx
+
+    from collectors.common.http import describe_error
+
+    def drop(request):
+        raise httpx.RemoteProtocolError("Server disconnected without sending a response.",
+                                        request=request)  # fmt: skip
+
+    client = httpx.Client(transport=httpx.MockTransport(drop))
+    texts = []
+    for url in ("http://172.25.12.12:8000/internal/agent/update",
+                "https://172.25.12.12:8000/internal/agent/update"):  # fmt: skip
+        try:
+            client.get(url)
+        except httpx.HTTPError as exc:
+            texts.append(describe_error(exc))
+    plain, tls = texts
+    assert plain.startswith("RemoteProtocolError: Server disconnected")
+    assert "AUTOMATO_ORCHESTRATOR_URL=https://" in plain and "automato-ca.crt" in plain
+    assert "TLS intern" not in tls

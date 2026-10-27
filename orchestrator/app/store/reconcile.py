@@ -6,7 +6,8 @@ Bestehende Befunde behalten Triage-Status und Notiz; Befunde, die nicht mehr zut
 fallen weg. Nur lesend gegenueber allen Quellsystemen.
 
 Pruefungen (Inventar ↔ Konvention):
-- unmatched_object      Regel-Endpunkt ohne Treffer im IPAM
+- unmatched_object      Regel-Endpunkt ohne Treffer im IPAM (nicht: oeffentliche Adressen
+                        ausserhalb gemanagter Netze, `store/external`)
 - invalid_name          Objektname passt zu keinem Praefix der Namenskonvention
 - name_type_mismatch    Praefix sagt Host, Wert ist ein Netz (oder umgekehrt)
 - duplicate_value       gleicher Wert in mehreren Adressobjekten derselben Firewall
@@ -23,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import naming
+from app.i18n import german_only
 from app.models import (
     DeviceObject,
     Epg,
@@ -45,8 +47,8 @@ from app.models import (
     Vm,
     VmIp,
 )
+from app.store import external, parallel, tenant_lock, virtual
 from app.store import naming_profiles as profile_store
-from app.store import parallel, virtual
 
 
 @dataclass(frozen=True)
@@ -63,21 +65,25 @@ class Issue:
         return (self.type, self.subject_kind, self.subject_id[:300], self.source_system_id)
 
 
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
 def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     """Alle Befunde des Mandanten neu berechnen; Rueckgabe: Anzahl je Befund-Typ."""
     if tenant_id is None:
         return {}
+    tenant_lock.hold(session, tenant_id)  # ein Schreiber je Mandant (0.80.1)
     session.flush()
     from app.store import references  # Referenz-Ebene (IPAM), spaet importiert
 
     ctx = references.context(session, tenant_id)
     prefixes = profile_store.prefixes_for_tenant(session, tenant_id)
     references.rematch(session, tenant_id, ctx, prefixes)  # zuerst: Werte gegen den Stand
+    external.apply(session, tenant_id)  # öffentlich ausserhalb gemanagter Netze: kein Befund
     virtual.map_epgs(session, tenant_id)  # Portgruppen -> EPGs (EPGs aendern sich je APIC-Lauf)
     issues: list[Issue] = []
     issues += _rule_endpoint_issues(session, tenant_id, ctx, prefixes)
     issues += _rule_incomplete_issues(session, tenant_id)
     issues += _aci_scope_issues(session, tenant_id)
+    issues += _aci_both_sides_issues(session, tenant_id)
     issues += _epg_conflict_issues(session, tenant_id)
     issues += _snat_pool_issues(session, tenant_id)
     issues += _topology_issues(session, tenant_id)
@@ -327,7 +333,8 @@ def _cabling_issues(session: Session, tenant_id: int) -> list[Issue]:
     return out
 
 
-ZONE_TYPES = frozenset({FindingType.ZONE_POLICY_VIOLATION, FindingType.ZONE_OVERLAP})
+ZONE_TYPES = frozenset({FindingType.ZONE_POLICY_VIOLATION, FindingType.ZONE_OVERLAP,
+                        FindingType.ZONE_OUTSIDE_SCHEMA})  # fmt: skip
 
 
 def _zone_issues(session: Session, tenant_id: int) -> list[Issue]:
@@ -377,19 +384,37 @@ def _zone_issues(session: Session, tenant_id: int) -> list[Issue]:
                 },
             )
         )
+    out += _schema_issues(session, tenant_id)
     return out
 
 
+def _schema_issues(session: Session, tenant_id: int) -> list[Issue]:
+    """Zonen ausserhalb des Grundschemas im Namensprofil (0.78.0): Hinweis je Zone."""
+    from app.store import zone_detect
+
+    profile, outside = zone_detect.outside_schema(session, tenant_id)
+    out = []
+    for z in outside:
+        detail = {"zone_id": z.id, "name": z.name, "code": z.code, "kind": z.kind,
+                  "profile": profile}  # fmt: skip
+        out.append(Issue(FindingType.ZONE_OUTSIDE_SCHEMA, SubjectKind.ZONE, z.name, None,
+                         Severity.INFO, detail=detail))  # fmt: skip
+    return out
+
+
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
 def refresh_zone_findings(session: Session, tenant_id: int) -> int:
     """Nur die Zonen-Befunde neu berechnen (nach dem Speichern einer Zone bzw. Absicht) - ohne
     den ganzen Abgleich; Triage-Status bleibt wie sonst erhalten."""
+    tenant_lock.hold(session, tenant_id)
     issues = _zone_issues(session, tenant_id)
     _sync_findings(session, tenant_id, issues, types=ZONE_TYPES)
     return len(issues)
 
 
-APP_TYPES = frozenset({FindingType.APP_CONNECTION_MISMATCH})
+APP_TYPES = frozenset({FindingType.APP_CONNECTION_MISMATCH, FindingType.APP_CONTRACT_NARROWER})
 APP_CONNECTIONS = 10  # Verbindungen je Befund im Detail
+APP_VARIANTS = 6  # Wege je Verbindung im Detail (0.73.0)
 
 
 _app_next: dict[int, int] = {}  # je Mandant: hier beginnt die naechste Neuberechnung
@@ -397,10 +422,12 @@ _app_next: dict[int, int] = {}  # je Mandant: hier beginnt die naechste Neuberec
 
 def _app_issues(session: Session, tenant_id: int, apps: list,
                 budget: float | None = None) -> tuple[list[Issue], set[int]]:  # fmt: skip
-    """Abweichung Regel <-> Weg (0.59.0, ADR 0021): je erlaubender Regel und Applikation ein
-    Befund mit den Verbindungen, die der Weg nicht oeffnet (`app_paths`). Graph und Policies
-    einmal fuer alle Applikationen; nach `budget` Sekunden ist Schluss. -> (Befunde,
-    Applikationen ohne Ergebnis - Fehler bzw. Zeitbudget; deren Befunde bleiben)."""
+    """Wege uneinheitlich (0.73.0, ADR 0021; bis 0.72 „Regel <-> Weg“): je erlaubender Regel und
+    Applikation ein Befund mit den Verbindungen, die ueber einen Weg offen und ueber einen
+    anderen gesperrt sind (aktiv, ECMP, Backup, Firewalls im Verbund - `app_paths`). Durchgehend
+    gesperrte Verbindungen sind gewollt und kein Befund (Anwender). Graph und Policies einmal
+    fuer alle Applikationen; nach `budget` Sekunden ist Schluss. -> (Befunde, Applikationen ohne
+    Ergebnis - Fehler bzw. Zeitbudget; deren Befunde bleiben)."""
     import logging
     import time
 
@@ -425,24 +452,32 @@ def _app_issues(session: Session, tenant_id: int, apps: list,
             break
         try:
             with session.begin_nested():
-                result = app_paths.build(session, app, graph=graph, checks=checks)
+                result = app_paths.build(session, app, graph=graph, checks=checks,
+                                         zones=False)  # fmt: skip
         except Exception:  # noqa: BLE001 - eine Applikation darf den Lauf nicht scheitern lassen
             logging.getLogger(__name__).exception("Verbindungen von Applikation %s", app.id)
             failed.add(app.id)
             continue
         per_rule: dict[int, list[dict]] = defaultdict(list)
         for c in result["connections"]:
+            if not c["inconsistent"]:
+                continue
+            variants = [{k: v.get(k) for k in ("kind", "via", "verdict", "text", "reason")}
+                        for v in c["variants"][:APP_VARIANTS]]  # fmt: skip
             for st in c["rules"]:
-                if not app_paths.deviates(st, c["verdict"], c["reached"]):
+                if st["action"] != "allow":
                     continue
                 per_rule[st["rule_id"]].append({
                     "src": c["src"]["label"], "dst": c["dst"]["label"],
                     "service": c["service"], "verdict": c["verdict"],
-                    "reached": c["reached"], "state": st["state"], "why": st["text"],
-                    "path": c["text"],
+                    "state": st["state"], "path": c["text"], "variants": variants,
                 })  # fmt: skip
+        narrower = result.get("narrower") or []
+        wanted = set(per_rule) | {n["rule_id"] for n in narrower}
+        wanted |= {x for n in narrower for x in n["firewall_rules"]}
         rules = {r.id: r for r in session.scalars(select(Rule).where(
-            Rule.id.in_(list(per_rule))))} if per_rule else {}  # fmt: skip
+            Rule.id.in_(list(wanted))))} if wanted else {}  # fmt: skip
+        out += _narrower_issues(app, narrower, rules, names)
         for rid, conns in per_rule.items():
             r = rules.get(rid)
             if r is None:
@@ -467,6 +502,44 @@ def _app_issues(session: Session, tenant_id: int, apps: list,
     return out, failed
 
 
+def _narrower_issues(app, narrower: list[dict], rules: dict, names: dict) -> list[Issue]:
+    """Contract Richtung L3Out enger als die Firewall-Regeln (0.78.2, Anwender: die Firewall
+    ist fuehrend) - je Contract und Applikation ein Befund mit Systemen, Kategorien, fehlenden
+    Diensten und den Firewall-Regeln."""
+    out = []
+    for n in narrower:
+        r = rules.get(n["rule_id"])
+        if r is None:
+            continue
+        raw = r.raw if isinstance(r.raw, dict) else {}
+        label = r.name or f"#{r.external_id}"
+        subject = f"{raw.get('tenant')}/{label}" if raw.get("tenant") else label
+        fws = []
+        for rid in n["firewall_rules"][:APP_CONNECTIONS]:
+            fw = rules.get(rid)
+            if fw is not None:
+                fws.append(
+                    {
+                        "rule_id": fw.id,
+                        "name": (fw.name or f"#{fw.external_id}") + vdom_suffix(fw.vdom),
+                        "source": names.get(fw.source_system_id),
+                    }
+                )
+        detail = {
+            "rule_id": r.id, "external_id": r.external_id, "domain": r.domain.value,
+            "name": label, "tenant": raw.get("tenant"), "source_system_id": r.source_system_id,
+            "source": names.get(r.source_system_id), "application_id": app.id,
+            "application": app.name, "systems": n["systems"][:APP_CONNECTIONS],
+            "categories": n["categories"], "missing": n["missing"][:50],
+            "firewall_rules": fws,
+        }  # fmt: skip
+        out.append(Issue(FindingType.APP_CONTRACT_NARROWER, SubjectKind.RULE,
+                         f"{subject} · Applikation {app.name}", r.source_system_id,
+                         Severity.WARNING, detail=detail))  # fmt: skip
+    return out
+
+
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
 def refresh_app_findings(session: Session, tenant_id: int | None,
                          application_id: int | None = None) -> int:  # fmt: skip
     """Abweichungen Regel <-> Weg neu berechnen: alle Applikationen des Mandanten (nach einem
@@ -593,6 +666,68 @@ def _aci_scope_issues(session: Session, tenant_id: int) -> list[Issue]:
                     "reason": reason,
                     "source": names.get(r.source_system_id),
                     "tenant": raw.get("tenant"),
+                },
+            )
+        )
+    return out
+
+
+def _aci_both_sides_issues(session: Session, tenant_id: int) -> list[Issue]:
+    """EPG als Consumer und Provider desselben Contracts (0.79.1, Anwender): der Contract gilt
+    zwischen allen EPGs, die ihn so tragen, in beide Richtungen; gegenueber sich selbst wirkt
+    er nicht (Verkehr in der EPG ist ohnehin erlaubt). Ein Befund je Contract (alle Subjects)."""
+    from app.store import epgs as epg_store
+
+    epgs = {e.id: e for e in session.scalars(select(Epg).where(Epg.tenant_id == tenant_id))}
+    sides: dict[int, dict[str, set[int]]] = defaultdict(lambda: {"src": set(), "dst": set()})
+    for rule_id, role, epg_id in session.execute(
+        select(RuleEndpoint.rule_id, RuleEndpoint.role, RuleEndpoint.epg_id)
+        .join(Rule, Rule.id == RuleEndpoint.rule_id)
+        .where(
+            Rule.tenant_id == tenant_id,
+            Rule.domain == RuleDomain.ACI_CONTRACT,
+            RuleEndpoint.epg_id.is_not(None),
+        )
+    ):
+        sides[rule_id][role.value].add(epg_id)
+    both = {rid: s["src"] & s["dst"] for rid, s in sides.items() if s["src"] & s["dst"]}
+    if not both:
+        return []
+    names = _source_names(session, tenant_id)
+    contracts: dict[tuple, dict] = {}
+    for r in session.scalars(select(Rule).where(Rule.id.in_(list(both))).order_by(Rule.id)):
+        raw = r.raw if isinstance(r.raw, dict) else {}
+        if raw.get("kind") in ("taboo", "preferred_group"):
+            continue
+        name = (r.name or f"#{r.external_id}").split(":", 1)[0]  # Contract ohne Subject
+        key = (r.source_system_id, raw.get("dn") or name)
+        entry = contracts.setdefault(key, {"rule": r, "name": name, "tenant": raw.get("tenant"),
+                                           "epgs": [], "subjects": []})  # fmt: skip
+        entry["subjects"].append(r.name or f"#{r.external_id}")
+        for eid in sorted(both[r.id]):
+            e = epgs.get(eid)
+            if e is not None and e not in entry["epgs"]:
+                entry["epgs"].append(e)
+    out: list[Issue] = []
+    for (sid, _dn), c in contracts.items():
+        if not c["epgs"]:
+            continue
+        labels = [epg_store.inventory_label(e) for e in c["epgs"]]
+        out.append(
+            Issue(
+                FindingType.ACI_CONTRACT_BOTH_SIDES,
+                SubjectKind.RULE,
+                f"{c['tenant']}/{c['name']}" if c["tenant"] else c["name"],
+                sid,
+                Severity.WARNING,
+                detail={
+                    "rule_id": c["rule"].id,
+                    "name": c["name"],
+                    "subjects": c["subjects"][:5],
+                    "count": len(labels),
+                    "epgs": labels[:10],
+                    "tenant": c["tenant"],
+                    "source": names.get(sid),
                 },
             )
         )
@@ -968,6 +1103,7 @@ def _sync_findings(session: Session, tenant_id: int, issues: list[Issue],
                    types: frozenset | None = None, keep=None) -> None:  # fmt: skip
     """Gespeicherte Befunde auf `issues` bringen; mit `types` nur Befunde dieser Typen, `keep`
     (Befund -> bool) laesst gespeicherte Befunde ausserhalb des Abgleichs unberuehrt."""
+    tenant_lock.hold(session, tenant_id)
     now = datetime.now(UTC)
     wanted = {i.key: i for i in issues}
     existing: dict[tuple, Finding] = {}

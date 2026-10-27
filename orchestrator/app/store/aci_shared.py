@@ -22,6 +22,7 @@ from functools import cached_property
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import Epg, EpgSubnet, InvVrf, Rule, RuleDomain, RuleEndpoint
 from app.store import aci_relevance
 from app.store import epgs as epg_store
@@ -117,25 +118,37 @@ class Leaks:
 
     # -- Fragen --------------------------------------------------------------------
 
-    def _leaked(self, owner: Epg, net, scope, into: tuple[int | None, str]) -> str | None:
-        """Grund, warum das Subnetz der EPG in die VRF `into` geleakt ist - sonst None."""
+    def _leak(self, owner: Epg, net, scope, into: tuple[int | None, str]) -> tuple[str, str] | None:
+        """(Art `shared` | `leak`, Grund), warum das Subnetz der EPG in die VRF `into` geleakt
+        ist - sonst None. Die Art fuer die Oberflaeche (nicht am Text unterscheiden)."""
         label = epg_store.inventory_label(owner)
         if shared(scope):
             for pid in self.partners.get(owner.id, ()):
                 partner = self.epgs.get(pid)
                 if partner is not None and self.vrf(partner) == into:
-                    return (f"Shared Service: {net} von {label} geteilt, Contract mit "
-                            f"{epg_store.inventory_label(partner)}")  # fmt: skip
+                    other = epg_store.inventory_label(partner)
+                    return "shared", L(
+                        f"Shared Service: {net} von {label} geteilt, Contract mit {other}",
+                        f"Shared Service: {net} shared by {label}, contract with {other}",
+                    )
         sid, own_vrf = self.vrf(owner)
         for leak_net, to, prefix in self.explicit.get((sid, own_vrf or ""), []):
             if into[1] in to and within(net, leak_net):
-                return f"Route-Leaking {prefix} von VRF {own_vrf} nach {into[1]}"
+                return "leak", L(
+                    f"Route-Leaking {prefix} von VRF {own_vrf} nach {into[1]}",
+                    f"Route-Leaking {prefix} from VRF {own_vrf} to {into[1]}",
+                )
         return None
 
-    def into(self, sid: int, vrf: str, ip) -> tuple[Epg, str, str] | None:
+    def _leaked(self, owner: Epg, net, scope, into: tuple[int | None, str]) -> str | None:
+        """Grund, warum das Subnetz der EPG in die VRF `into` geleakt ist - sonst None."""
+        found = self._leak(owner, net, scope, into)
+        return found[1] if found else None
+
+    def into(self, sid: int, vrf: str, ip) -> tuple[Epg, str, str, str] | None:
         """Ist die IP (im Fabric einer anderen VRF des APIC) in die VRF geleakt? ->
-        (EPG dort, ihre VRF, Grund) mit dem laengsten Subnetz."""
-        best: tuple[int, Epg, str, str] | None = None
+        (EPG dort, ihre VRF, Grund, Art `shared` | `leak`) mit dem laengsten Subnetz."""
+        best: tuple[int, Epg, str, str, str] | None = None
         for epg_id, nets in self.subnets.items():
             owner = self.epgs[epg_id]
             other = self.vrf(owner)
@@ -144,9 +157,9 @@ class Leaks:
             for net, scope in nets:
                 if not within(ip, net) or (best is not None and net.prefixlen <= best[0]):
                     continue
-                why = self._leaked(owner, net, scope, (sid, vrf))
-                if why is not None:
-                    best = (net.prefixlen, owner, other[1], why)
+                found = self._leak(owner, net, scope, (sid, vrf))
+                if found is not None:
+                    best = (net.prefixlen, owner, other[1], found[1], found[0])
         return None if best is None else best[1:]
 
     def between(self, a: Epg, b: Epg) -> tuple[str, str]:
@@ -163,13 +176,20 @@ class Leaks:
         if not nets_a or not nets_b or all(s is None for _n, s in nets_a + nets_b):
             # Altbestand ohne Scope der Subnetze bzw. EPG ohne Subnetz: nicht entscheidbar
             if not self.explicit:
-                return UNKNOWN, (f"VRF {va[1]} ↔ {vb[1]}: Scope der Subnetze nicht bekannt – "
-                                 "neu einlesen")  # fmt: skip
+                return UNKNOWN, L(
+                    f"VRF {va[1]} ↔ {vb[1]}: Scope der Subnetze nicht bekannt – neu einlesen",
+                    f"VRF {va[1]} ↔ {vb[1]}: scope of the subnets not known – collect again",
+                )
         if to_a or to_b:
-            return UNKNOWN, (f"VRF {va[1]} ↔ {vb[1]}: nur in eine Richtung geleakt "
-                             f"({to_a or to_b})")  # fmt: skip
-        return IMPOSSIBLE, (
+            return UNKNOWN, L(
+                f"VRF {va[1]} ↔ {vb[1]}: nur in eine Richtung geleakt ({to_a or to_b})",
+                f"VRF {va[1]} ↔ {vb[1]}: leaked in one direction only ({to_a or to_b})",
+            )
+        return IMPOSSIBLE, L(
             f"Contract zwischen VRF {va[1]} und VRF {vb[1]} – kein geteiltes Subnetz "
             "(Scope shared) und kein Route-Leaking: im Fabric kein Weg. Verkehr geht über das "
-            "Routing der VRF (L3Out, Firewall) – siehe Weg-Suche"
+            "Routing der VRF (L3Out, Firewall) – siehe Weg-Suche",
+            f"Contract between VRF {va[1]} and VRF {vb[1]} – no shared subnet (scope shared) "
+            "and no Route-Leaking: no path in the fabric. Traffic goes via the routing of the "
+            "VRF (L3Out, firewall) – see path search",
         )

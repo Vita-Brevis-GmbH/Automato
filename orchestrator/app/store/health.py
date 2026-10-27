@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app import scheduler, tls
 from app.config import Settings
+from app.i18n import L
 from app.models import (
     Agent,
     CollectorRun,
@@ -55,13 +56,13 @@ def _aware(value: datetime | None) -> datetime | None:
 
 def _ago(value: datetime | None, now: datetime) -> str:
     if value is None:
-        return "nie"
+        return L("nie", "never")
     minutes = int((now - value).total_seconds() // 60)
     if minutes < 60:
-        return f"vor {minutes} min"
+        return L(f"vor {minutes} min", f"{minutes} min ago")
     if minutes < 48 * 60:
-        return f"vor {minutes // 60} h"
-    return f"vor {minutes // (24 * 60)} Tagen"
+        return L(f"vor {minutes // 60} h", f"{minutes // 60} h ago")
+    return L(f"vor {minutes // (24 * 60)} Tagen", f"{minutes // (24 * 60)} days ago")
 
 
 def checks(
@@ -93,13 +94,24 @@ def summary(items: list[Check]) -> dict:
 
 def _database(ok: bool) -> Check:
     if ok:
-        return Check("database", "Plattform", "ok", "Datenbank erreichbar, Migrationen aktuell")
+        return Check(
+            "database",
+            "Plattform",
+            "ok",
+            L(
+                "Datenbank erreichbar, Migrationen aktuell",
+                "Database reachable, migrations current",
+            ),
+        )
     return Check(
         "database",
         "Plattform",
         "error",
-        "Datenbank-Migrationen nicht aktuell",
-        "Orchestrator neu starten (führt `alembic upgrade head` aus) bzw. deploy/update.sh",
+        L("Datenbank-Migrationen nicht aktuell", "Database migrations not current"),
+        L(
+            "Orchestrator neu starten (führt `alembic upgrade head` aus) bzw. deploy/update.sh",
+            "Restart the orchestrator (runs `alembic upgrade head`) or deploy/update.sh",
+        ),
         "system",
     )
 
@@ -114,15 +126,34 @@ def _db_role(session: Session) -> Check | None:
     if role is None:
         return None  # nicht PostgreSQL (Tests)
     if role["separated"]:
-        return Check("db_role", "Plattform", "ok", f"Datenbank-Rolle {role['role']} ohne DDL")
-    what = "Superuser" if role["superuser"] else "Eigentümer der Tabellen bzw. mit CREATE"
+        return Check(
+            "db_role",
+            "Plattform",
+            "ok",
+            L(
+                f"Datenbank-Rolle {role['role']} ohne DDL",
+                f"Database role {role['role']} without DDL",
+            ),
+        )
+    what = (
+        "Superuser"
+        if role["superuser"]
+        else L("Eigentümer der Tabellen bzw. mit CREATE", "owner of the tables or with CREATE")
+    )
     return Check(
         "db_role",
         "Plattform",
         "warn",
-        f"Orchestrator arbeitet als {role['role']} ({what})",
-        "getrennte Rollen einrichten: deploy/aufbau.sh db-rollen (Migration als Eigentümer, "
-        "Betrieb ohne DDL)",
+        L(
+            f"Orchestrator arbeitet als {role['role']} ({what})",
+            f"Orchestrator runs as {role['role']} ({what})",
+        ),
+        L(
+            "getrennte Rollen einrichten: deploy/aufbau.sh db-rollen (Migration als Eigentümer, "
+            "Betrieb ohne DDL)",
+            "set up separate roles: deploy/aufbau.sh db-rollen (migration as owner, "
+            "operation without DDL)",
+        ),
         "system",
     )
 
@@ -139,26 +170,36 @@ def _internal_tls(session: Session, settings: Settings, now: datetime) -> Check 
     hint = "deploy/aufbau.sh tls-intern"
     if not settings.internal_tls:
         return Check("internal_tls", "Plattform", "warn",
-                     "Verbindungen zwischen den Containern unverschlüsselt",
-                     f"TLS intern mit eigener CA einschalten: {hint}", "system")  # fmt: skip
+                     L("Verbindungen zwischen den Containern unverschlüsselt",
+                       "Connections between the containers unencrypted"),
+                     L(f"TLS intern mit eigener CA einschalten: {hint}",
+                       f"enable internal TLS with an own CA: {hint}"), "system")  # fmt: skip
     info = tls.cert_info(tls.server_files(settings)[0])
     if info is None:
-        return Check("internal_tls", "Plattform", "error", "TLS intern: Zertifikat fehlt",
-                     f"Zertifikate ausstellen: {hint}", "system")  # fmt: skip
+        return Check("internal_tls", "Plattform", "error",
+                     L("TLS intern: Zertifikat fehlt", "Internal TLS: certificate missing"),
+                     L(f"Zertifikate ausstellen: {hint}", f"issue certificates: {hint}"),
+                     "system")  # fmt: skip
     if not secure[0]:
-        return Check("internal_tls", "Plattform", "error", "Datenbank-Verbindung ohne TLS",
-                     "AUTOMATO_INTERNAL_TLS im Orchestrator prüfen", "system")  # fmt: skip
+        return Check("internal_tls", "Plattform", "error",
+                     L("Datenbank-Verbindung ohne TLS", "Database connection without TLS"),
+                     L("AUTOMATO_INTERNAL_TLS im Orchestrator prüfen",
+                       "check AUTOMATO_INTERNAL_TLS in the orchestrator"), "system")  # fmt: skip
     left = info.days_left(now)
     until = f"{info.not_after:%d.%m.%Y}"
+    renew = L(f"neu ausstellen: {hint} --erneuern", f"reissue: {hint} --erneuern")
     if left < 0:
-        return Check("internal_tls", "Plattform", "error", f"Zertifikat abgelaufen ({until})",
-                     f"neu ausstellen: {hint} --erneuern", "system")  # fmt: skip
+        return Check("internal_tls", "Plattform", "error",
+                     L(f"Zertifikat abgelaufen ({until})", f"Certificate expired ({until})"),
+                     renew, "system")  # fmt: skip
     if left < CERT_WARN_DAYS:
         return Check("internal_tls", "Plattform", "warn",
-                     f"Zertifikat läuft in {left} Tagen ab ({until})",
-                     f"neu ausstellen: {hint} --erneuern", "system")  # fmt: skip
+                     L(f"Zertifikat läuft in {left} Tagen ab ({until})",
+                       f"Certificate expires in {left} days ({until})"),
+                     renew, "system")  # fmt: skip
     return Check("internal_tls", "Plattform", "ok",
-                 f"TLS intern aktiv ({secure[1]}, Zertifikat bis {until})")  # fmt: skip
+                 L(f"TLS intern aktiv ({secure[1]}, Zertifikat bis {until})",
+                   f"Internal TLS active ({secure[1]}, certificate until {until})"))  # fmt: skip
 
 
 def _retention(session: Session, settings: Settings, now: datetime) -> Check | None:
@@ -167,20 +208,34 @@ def _retention(session: Session, settings: Settings, now: datetime) -> Check | N
     if not policy.active:
         if settings.environment == "dev":
             return None
-        return Check("retention", "Plattform", "warn", "Keine Aufbewahrungsfristen gesetzt",
-                     "AUTOMATO_RETENTION_RUNS_DAYS usw. > 0 (R14)", "system")  # fmt: skip
+        return Check("retention", "Plattform", "warn",
+                     L("Keine Aufbewahrungsfristen gesetzt", "No retention periods set"),
+                     L("AUTOMATO_RETENTION_RUNS_DAYS usw. > 0 (R14)",
+                       "AUTOMATO_RETENTION_RUNS_DAYS etc. > 0 (R14)"), "system")  # fmt: skip
     last = retention.last_purge(session)
     at = last["at"] if last else None
     if (at is None or now - at > PURGE_LATE) and retention.overdue(session, policy, now):
         detail = (
-            "Zeitplan aus – System → Aufbewahrung „Jetzt aufräumen“ bzw. automato purge"
+            L(
+                "Zeitplan aus – System → Aufbewahrung „Jetzt aufräumen“ bzw. automato purge",
+                "Schedule off – System → Retention “Purge now” or automato purge",
+            )
             if not settings.scheduler_enabled
-            else f"Zeitplan räumt täglich auf, zuletzt {_ago(at, now)} – Log des Orchestrators"
+            else L(
+                f"Zeitplan räumt täglich auf, zuletzt {_ago(at, now)} – Log des Orchestrators",
+                f"Schedule purges daily, last {_ago(at, now)} – orchestrator log",
+            )
         )
-        return Check("retention", "Plattform", "warn", "Alte Läufe über der Frist", detail,
-                     "system", at)  # fmt: skip
-    title = f"zuletzt aufgeräumt {_ago(at, now)}" if at else "nichts fällig"
-    return Check("retention", "Plattform", "ok", f"Aufbewahrung: {title}", since=at)
+        return Check("retention", "Plattform", "warn",
+                     L("Alte Läufe über der Frist", "Old runs past the retention period"),
+                     detail, "system", at)  # fmt: skip
+    title = (
+        L(f"zuletzt aufgeräumt {_ago(at, now)}", f"last purged {_ago(at, now)}")
+        if at
+        else L("nichts fällig", "nothing due")
+    )
+    return Check("retention", "Plattform", "ok", L(f"Aufbewahrung: {title}", f"Retention: {title}"),
+                 since=at)  # fmt: skip
 
 
 def _scheduler(session: Session, settings: Settings, now: datetime) -> Check | None:
@@ -196,8 +251,12 @@ def _scheduler(session: Session, settings: Settings, now: datetime) -> Check | N
             "scheduler",
             "Plattform",
             "warn",
-            f"Zeitplan ausgeschaltet – {len(scheduled)} Quellsysteme mit Zeitplan laufen nicht",
-            "AUTOMATO_SCHEDULER_ENABLED=true setzen",
+            L(
+                f"Zeitplan ausgeschaltet – {len(scheduled)} Quellsysteme mit Zeitplan laufen nicht",
+                f"Schedule switched off – {len(scheduled)} source systems with a schedule "
+                "do not run",
+            ),
+            L("AUTOMATO_SCHEDULER_ENABLED=true setzen", "set AUTOMATO_SCHEDULER_ENABLED=true"),
             "system",
         )
     last = scheduler.last_tick()
@@ -207,12 +266,21 @@ def _scheduler(session: Session, settings: Settings, now: datetime) -> Check | N
             "scheduler",
             "Plattform",
             "error",
-            "Zeitplan läuft nicht",
-            f"letzter Durchgang {_ago(last, now)} – Orchestrator-Log prüfen",
+            L("Zeitplan läuft nicht", "Schedule not running"),
+            L(
+                f"letzter Durchgang {_ago(last, now)} – Orchestrator-Log prüfen",
+                f"last pass {_ago(last, now)} – check the orchestrator log",
+            ),
             "system",
             last,
         )
-    return Check("scheduler", "Plattform", "ok", f"Zeitplan aktiv ({_ago(last, now)})", since=last)
+    return Check(
+        "scheduler",
+        "Plattform",
+        "ok",
+        L(f"Zeitplan aktiv ({_ago(last, now)})", f"Schedule active ({_ago(last, now)})"),
+        since=last,
+    )
 
 
 def _central(session: Session, now: datetime) -> Check | None:
@@ -232,9 +300,16 @@ def _central(session: Session, now: datetime) -> Check | None:
         "worker",
         "Plattform",
         "error",
-        f"Zentraler Worker holt keine Läufe ab ({len(waiting)} warten)",
-        f"ältester wartet seit {_ago(_aware(waiting[0].queued_at), now)} – Container "
-        "„collector“ (Celery) und Redis prüfen",
+        L(
+            f"Zentraler Worker holt keine Läufe ab ({len(waiting)} warten)",
+            f"Central worker does not pick up runs ({len(waiting)} waiting)",
+        ),
+        L(
+            f"ältester wartet seit {_ago(_aware(waiting[0].queued_at), now)} – Container "
+            "„collector“ (Celery) und Redis prüfen",
+            f"oldest waiting since {_ago(_aware(waiting[0].queued_at), now)} – check container "
+            "“collector” (Celery) and Redis",
+        ),
         "uebersicht",
         _aware(waiting[0].queued_at),
     )
@@ -259,9 +334,16 @@ def _agents(session: Session, tenant_id: int | None, now: datetime) -> list[Chec
                     key,
                     "Agenten",
                     "error",
-                    f"Agent „{agent.name}“ meldet sich nicht",
-                    f"zuletzt {_ago(seen, now)}; {len(assigned)} Geräte werden nicht gelesen – "
-                    "geplante Aufgabe auf der Station prüfen (logs\\agent-*.log)",
+                    L(
+                        f"Agent „{agent.name}“ meldet sich nicht",
+                        f"Agent “{agent.name}” does not report",
+                    ),
+                    L(
+                        f"zuletzt {_ago(seen, now)}; {len(assigned)} Geräte werden nicht gelesen "
+                        "– geplante Aufgabe auf der Station prüfen (logs\\agent-*.log)",
+                        f"last {_ago(seen, now)}; {len(assigned)} devices are not read – "
+                        "check the scheduled task on the station (logs\\agent-*.log)",
+                    ),
                     "agenten",
                     seen,
                 )
@@ -272,7 +354,10 @@ def _agents(session: Session, tenant_id: int | None, now: datetime) -> list[Chec
                     key,
                     "Agenten",
                     "warn",
-                    f"Agent „{agent.name}“ aktualisiert nicht",
+                    L(
+                        f"Agent „{agent.name}“ aktualisiert nicht",
+                        f"Agent “{agent.name}” does not update",
+                    ),
                     agent.update_note,
                     "agenten",
                     seen,
@@ -284,7 +369,10 @@ def _agents(session: Session, tenant_id: int | None, now: datetime) -> list[Chec
                     key,
                     "Agenten",
                     "ok",
-                    f"Agent „{agent.name}“ aktiv ({_ago(seen, now)})",
+                    L(
+                        f"Agent „{agent.name}“ aktiv ({_ago(seen, now)})",
+                        f"Agent “{agent.name}” active ({_ago(seen, now)})",
+                    ),
                     view="agenten",
                     since=seen,
                 )  # fmt: skip
@@ -319,7 +407,8 @@ def _sources(session: Session, tenant_id: int | None, now: datetime) -> list[Che
         good = _aware(good)
         key = f"source:{src.id}"
         if last is None:
-            out.append(Check(key, "Quellsysteme", "warn", f"{src.name}: noch nie eingelesen",
+            out.append(Check(key, "Quellsysteme", "warn",
+                             L(f"{src.name}: noch nie eingelesen", f"{src.name}: never collected"),
                              view="uebersicht"))  # fmt: skip
         elif last.status is RunStatus.FAILED:
             out.append(
@@ -327,7 +416,7 @@ def _sources(session: Session, tenant_id: int | None, now: datetime) -> list[Che
                     key,
                     "Quellsysteme",
                     "error",
-                    f"{src.name}: letzter Lauf fehlgeschlagen",
+                    L(f"{src.name}: letzter Lauf fehlgeschlagen", f"{src.name}: last run failed"),
                     (last.message or "")[:300] or None,
                     "uebersicht",
                     _aware(last.finished_at),
@@ -339,8 +428,8 @@ def _sources(session: Session, tenant_id: int | None, now: datetime) -> list[Che
                     key,
                     "Quellsysteme",
                     "warn",
-                    f"{src.name}: Stand veraltet",
-                    f"zuletzt eingelesen {_ago(good, now)}",
+                    L(f"{src.name}: Stand veraltet", f"{src.name}: data outdated"),
+                    L(f"zuletzt eingelesen {_ago(good, now)}", f"last collected {_ago(good, now)}"),
                     "uebersicht",
                     good,
                 )  # fmt: skip
@@ -351,7 +440,10 @@ def _sources(session: Session, tenant_id: int | None, now: datetime) -> list[Che
                     key,
                     "Quellsysteme",
                     "ok",
-                    f"{src.name}: eingelesen {_ago(good, now)}",
+                    L(
+                        f"{src.name}: eingelesen {_ago(good, now)}",
+                        f"{src.name}: collected {_ago(good, now)}",
+                    ),
                     view="uebersicht",
                     since=good,
                 )  # fmt: skip
@@ -375,7 +467,7 @@ def _netbox_sync(session: Session, tenant_id: int | None, now: datetime) -> list
                     f"sync:{plan.source_system_id}",
                     "NetBox-Sync",
                     "warn",
-                    f"NetBox-Sync #{plan.id} fehlgeschlagen",
+                    L(f"NetBox-Sync #{plan.id} fehlgeschlagen", f"NetBox sync #{plan.id} failed"),
                     (plan.message or "")[:300] or None,
                     "netbox-sync",
                     when,
@@ -391,10 +483,14 @@ def _backup(settings: Settings, now: datetime) -> Check | None:
     except (OSError, ValueError, TypeError):
         if settings.environment == "dev":
             return None
-        return Check("backup", "Sicherung", "warn", "Keine Sicherung bekannt",
-                     "deploy/backup/backup.sh täglich ausführen", "system")  # fmt: skip
+        return Check("backup", "Sicherung", "warn", L("Keine Sicherung bekannt", "No backup known"),
+                     L("deploy/backup/backup.sh täglich ausführen",
+                       "run deploy/backup/backup.sh daily"), "system")  # fmt: skip
     at = _aware(at)
     if now - at > BACKUP_MAX_AGE:
-        return Check("backup", "Sicherung", "warn", "Letzte Sicherung zu alt",
-                     f"zuletzt {_ago(at, now)}", "system", at)  # fmt: skip
-    return Check("backup", "Sicherung", "ok", f"Sicherung {_ago(at, now)}", since=at)
+        return Check("backup", "Sicherung", "warn",
+                     L("Letzte Sicherung zu alt", "Last backup too old"),
+                     L(f"zuletzt {_ago(at, now)}", f"last {_ago(at, now)}"), "system",
+                     at)  # fmt: skip
+    return Check("backup", "Sicherung", "ok",
+                 L(f"Sicherung {_ago(at, now)}", f"Backup {_ago(at, now)}"), since=at)  # fmt: skip

@@ -33,6 +33,7 @@ import {
   LogicalZone,
   PlanBox,
   PlanDiff,
+  PlanDirection,
   PlanEdge,
   PlanFilter,
   PlanFormat,
@@ -41,9 +42,14 @@ import {
   PlanVersion,
   PlanVersionFull,
   PlanView,
+  PlanZoneId,
   previewZone,
   assistZone,
   type ZoneAssistItem,
+  applyPlanImport,
+  PlanImportParts,
+  PlanImportPreview,
+  previewPlanImport,
   resetPlanArrangement,
   savePlanArrangement,
   savePlanVersion,
@@ -54,7 +60,7 @@ import {
   TopoExit,
   updateZone,
   ZoneCell,
-  ZoneCellRule,
+  ZoneCellRules,
   ZoneIn,
   ZoneIntent,
   ZoneKind,
@@ -72,34 +78,35 @@ import {
   ZoneSummary,
 } from "./api";
 import { SELECTOR_LABEL } from "./Customers";
-import { Dash, download, Empty, ErrorBox, fmtTime, Loading, Modal, Note, PageHead } from "./ui";
+import { Dash, download, Empty, ErrorBox, ExportLangSelect, fmtTime, Loading, Modal, Note, PageHead, SharedChip } from "./ui";
+import { L } from "./i18n";
 
 // Reihenfolge = Ebenen des Zonenmodells (0.56.0) von links nach rechts im Plan, danach die bisherigen Arten
 export const ZONE_KIND: Record<ZoneKind, string> = {
-  dc: "Datacenter",
+  dc: L("Datacenter", "Data center"),
   edge: "Edge",
   transfer: "Transfer",
   core: "Core",
   distribution: "Distribution",
   access: "Access",
-  external: "Public / extern",
-  internal: "intern",
+  external: L("Public / extern", "Public / external"),
+  internal: L("intern", "internal"),
   dmz: "DMZ",
   management: "Management",
-  shared: "geteilt",
+  shared: L("geteilt", "shared"),
 };
 const COLOR_SOURCE: Record<ZoneColorSource, string> = {
-  schema: "aus dem Grundschema",
-  template: "aus der Vorlage",
-  zone: "an der Zone gesetzt",
-  kind: "Farbe der Art",
+  schema: L("aus dem Grundschema", "from the base schema"),
+  template: L("aus der Vorlage", "from the template"),
+  zone: L("an der Zone gesetzt", "set on the zone"),
+  kind: L("Farbe der Art", "color of the kind"),
 };
 const INTENT: Record<ZoneIntent, [string, string]> = {
-  allow: ["ok", "erlaubt"],
-  limited: ["warn", "eingeschränkt"],
-  deny: ["crit", "gesperrt"],
+  allow: ["ok", L("erlaubt", "allow")],
+  limited: ["warn", L("eingeschränkt", "limited")],
+  deny: ["crit", L("gesperrt", "deny")],
 };
-const ZONE_SELECTOR_LABEL: Record<ZoneSelectorKind, string> = { ...SELECTOR_LABEL, exit: "Anbindung" };
+const ZONE_SELECTOR_LABEL: Record<ZoneSelectorKind, string> = { ...SELECTOR_LABEL, exit: L("Anbindung", "Exit") };
 const PLACEHOLDER: Partial<Record<ZoneSelectorKind, string>> = {
   aci_tenant: "TE_ka",
   aci_epg: "TE_ka/AP_007/EPG_web",
@@ -112,11 +119,11 @@ const FW_KINDS: ZoneSelectorKind[] = ["fw_vdom", "fw_zone", "fw_interface"];
 const NODE_KIND: Record<string, string> = { firewall: "Firewall", vdom: "VDOM", vrf: "ACI-VRF" };
 
 const SOURCE: Record<ZoneSuggestionSource, string> = {
-  aci: "ACI-Tenants",
+  aci: L("ACI-Tenants", "ACI tenants"),
   node: "Firewall",
-  exit: "Anbindung",
+  exit: L("Anbindung", "Exit"),
   ipam: "IPAM",
-  schema: "Grundschema",
+  schema: L("Grundschema", "Base schema"),
 };
 
 type Tab = "zones" | "suggestions" | "matrix" | "plan" | "versions";
@@ -137,35 +144,49 @@ export default function Design({
   const [tab, setTab] = useState<Tab>("zones");
   return (
     <>
-      <PageHead title="Netzwerkdesign">
-        {isCustomer ? (
-          <>
-            Ihre logischen Zonen, die Zonenmatrix mit den Regeln Ihrer Zonen (Zonen anderer Kunden als „anderer
-            Kunde“) und Ihr Zonenplan mit den geteilten Elementen, an denen Ihre Zonen hängen – exportierbar als draw.io,
-            SVG und PDF.
-          </>
-        ) : (
-          <>
-            Logische Zonen von „{tenantLabel}“ – in Automato gepflegt, nach Ebenen: Datacenter (ACI-Tenants), Edge, Transfer,
-            Core, Distribution, Access und Public. Eine Zone umfasst Knoten (Firewall bzw. VDOM, ACI-VRF) und Netze; zwischen
-            den Zonen liegen Übergänge (L3Outs, Interfaces). Die Zonenmatrix zeigt je Paar Quell- und Zielzone die Regeln
-            und die Absicht, der Zonenplan die Zonen mit ihren Übergängen – je Kunde, exportierbar als draw.io, SVG und PDF,
-            mit Versionen zum Vergleichen. Rein lesend gegenüber den Geräten.
-          </>
-        )}
+      <PageHead title={L("Netzwerkdesign", "Network design")}>
+        {isCustomer
+          ? L(
+              <>
+                Ihre logischen Zonen, die Zonenmatrix mit den Regeln Ihrer Zonen (Zonen anderer Kunden als „anderer
+                Kunde“) und Ihr Zonenplan mit den geteilten Elementen, an denen Ihre Zonen hängen – exportierbar als draw.io,
+                SVG und PDF.
+              </>,
+              <>
+                Your logical zones, the zone matrix with the rules of your zones (zones of other customers as “other
+                customer”) and your zone plan with the shared elements your zones are attached to – exportable as draw.io,
+                SVG and PDF.
+              </>,
+            )
+          : L(
+              <>
+                Logische Zonen von „{tenantLabel}“ – in Automato gepflegt, nach Ebenen: Datacenter (ACI-Tenants), Edge, Transfer,
+                Core, Distribution, Access und Public. Eine Zone umfasst Knoten (Firewall bzw. VDOM, ACI-VRF) und Netze; zwischen
+                den Zonen liegen Übergänge (L3Outs, Interfaces). Die Zonenmatrix zeigt je Paar Quell- und Zielzone die Regeln
+                und die Absicht, der Zonenplan die Zonen mit ihren Übergängen – je Kunde, exportierbar als draw.io, SVG und PDF,
+                mit Versionen zum Vergleichen. Rein lesend gegenüber den Geräten.
+              </>,
+              <>
+                Logical zones of “{tenantLabel}” – maintained in Automato, by layer: data center (ACI tenants), edge, transfer,
+                core, distribution, access and public. A zone comprises nodes (firewall or VDOM, ACI VRF) and networks; between
+                the zones lie transitions (L3Outs, interfaces). The zone matrix shows the rules and the intent for each pair of
+                source and destination zone, the zone plan the zones with their transitions – per customer, exportable as draw.io,
+                SVG and PDF, with versions to compare. Strictly read-only towards the devices.
+              </>,
+            )}
       </PageHead>
       {tenantId === null ? (
-        <Note>Bitte oben einen Mandanten wählen.</Note>
+        <Note>{L("Bitte oben einen Mandanten wählen.", "Please select a tenant at the top.")}</Note>
       ) : (
         <>
           <div className="tabbar sticky">
             {(
               [
-                ["zones", "Zonen"],
-                ["suggestions", "Vorschläge"],
-                ["matrix", "Zonenmatrix"],
-                ["plan", "Zonenplan"],
-                ["versions", "Versionen"],
+                ["zones", L("Zonen", "Zones")],
+                ["suggestions", L("Vorschläge", "Suggestions")],
+                ["matrix", L("Zonenmatrix", "Zone matrix")],
+                ["plan", L("Zonenplan", "Zone plan")],
+                ["versions", L("Versionen", "Versions")],
               ] as const
             )
               .filter(([k]) => !isCustomer || (k !== "versions" && k !== "suggestions"))
@@ -192,12 +213,16 @@ function Swatch({ color, title }: { color: string | null; title?: string }) {
 
 function colorTitle(z: { color_source?: ZoneColorSource; schema?: string | null }): string | undefined {
   if (!z.color_source) return undefined;
-  return `Farbe ${COLOR_SOURCE[z.color_source]}${z.schema && z.color_source !== "zone" && z.color_source !== "kind" ? ` („${z.schema}“)` : ""}`;
+  const schema = z.schema && z.color_source !== "zone" && z.color_source !== "kind";
+  return L(
+    `Farbe ${COLOR_SOURCE[z.color_source]}${schema ? ` („${z.schema}“)` : ""}`,
+    `Color: ${COLOR_SOURCE[z.color_source]}${schema ? ` (“${z.schema}”)` : ""}`,
+  );
 }
 
 function selectorText(s: ZoneSelector, systems: System[]): string {
   const where = s.source_system_id ? ` (${systems.find((x) => x.id === s.source_system_id)?.name ?? "?"})` : "";
-  return `${s.exclude ? "ohne " : ""}${ZONE_SELECTOR_LABEL[s.kind] ?? s.kind} ${s.value}${where}`;
+  return `${s.exclude ? L("ohne ", "without ") : ""}${ZONE_SELECTOR_LABEL[s.kind] ?? s.kind} ${s.value}${where}`;
 }
 
 // -- Zonen ---------------------------------------------------------------------------------
@@ -225,7 +250,15 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
   }, [tenantId, load, isCustomer]);
 
   const remove = async (z: LogicalZone) => {
-    if (!window.confirm(`Zone „${z.name}“ löschen? Ihre Absicht in der Zonenmatrix fällt mit weg.`)) return;
+    if (
+      !window.confirm(
+        L(
+          `Zone „${z.name}“ löschen? Ihre Absicht in der Zonenmatrix fällt mit weg.`,
+          `Delete zone “${z.name}”? Its intent in the zone matrix is removed as well.`,
+        ),
+      )
+    )
+      return;
     try {
       await deleteZone(z.id);
       load();
@@ -239,10 +272,18 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
       <ErrorBox error={err} onClose={() => setErr(null)} />
       <div className="card">
         <div className="card-head">
-          <h2>Zonen</h2>
+          <h2>{L("Zonen", "Zones")}</h2>
           <span className="faint">
-            Knoten über VDOM bzw. ACI-Tenant/VRF, Netze über die übrigen Selektoren (längstes Präfix); Netze zwischen Knoten
-            verschiedener Zonen sind Übergänge
+            {L(
+              <>
+                Knoten über VDOM bzw. ACI-Tenant/VRF, Netze über die übrigen Selektoren (längstes Präfix); Netze zwischen Knoten
+                verschiedener Zonen sind Übergänge
+              </>,
+              <>
+                Nodes via VDOM or ACI tenant/VRF, networks via the other selectors (longest prefix); networks between nodes
+                of different zones are transitions
+              </>,
+            )}
           </span>
           {canEdit && (
             <button className="btn btn-primary btn-sm" style={{ marginLeft: "auto" }} onClick={() => setEditing("new")}>
@@ -254,20 +295,28 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
           {rows == null ? (
             <Loading />
           ) : rows.length === 0 ? (
-            <Empty title="Noch keine Zonen">
-              Zonen anlegen bzw. im Reiter „Vorschläge“ übernehmen: z. B. „DC“ über die ACI-Tenants, „Edge Internet“ über
-              die VDOMs der Internet-Firewalls, „Public“ über die Anbindung.
+            <Empty title={L("Noch keine Zonen", "No zones yet")}>
+              {L(
+                <>
+                  Zonen anlegen bzw. im Reiter „Vorschläge“ übernehmen: z. B. „DC“ über die ACI-Tenants, „Edge Internet“ über
+                  die VDOMs der Internet-Firewalls, „Public“ über die Anbindung.
+                </>,
+                <>
+                  Create zones or apply them in the “Suggestions” tab: e.g. “DC” via the ACI tenants, “Edge Internet” via
+                  the VDOMs of the internet firewalls, “Public” via the exit.
+                </>,
+              )}
             </Empty>
           ) : (
             <table id="zone-list">
               <thead>
                 <tr>
                   <th>Zone</th>
-                  <th>Art</th>
-                  <th>Kunde</th>
-                  {!isCustomer && <th>Selektoren</th>}
-                  <th>Knoten · Übergänge</th>
-                  <th className="num">Netze</th>
+                  <th>{L("Art", "Kind")}</th>
+                  <th>{L("Kunde", "Customer")}</th>
+                  {!isCustomer && <th>{L("Selektoren", "Selectors")}</th>}
+                  <th>{L("Knoten · Übergänge", "Nodes · transitions")}</th>
+                  <th className="num">{L("Netze", "Networks")}</th>
                   <th className="num">EPGs</th>
                   <th />
                 </tr>
@@ -280,12 +329,13 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
                       onClick={() => z.own !== false && setOpen(open === z.id ? null : z.id)}
                     >
                       <td>
-                        <Swatch color={z.color} title={colorTitle(z)} /> <b>{z.name}</b>{" "}
+                        <Swatch color={z.color} title={colorTitle(z)} /> <b>{z.name}</b>
+                        <SharedChip shared={z.shared} />{" "}
                         {z.code && <span className="mono faint">{z.code}</span>}
                         {z.description && <div className="faint">{z.description}</div>}
                       </td>
                       <td>{ZONE_KIND[z.kind] ?? z.kind}</td>
-                      <td>{z.customer ?? <span className="faint">geteilt</span>}</td>
+                      <td>{z.customer ?? <span className="faint">{L("geteilt", "shared")}</span>}</td>
                       {!isCustomer && (
                         <td>
                           <div className="objs">
@@ -306,7 +356,11 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
                             {(z.transitions ?? []).length > 0 && (
                               <div className="objs">
                                 {(z.transitions ?? []).map((t) => (
-                                  <span key={String(t.to_id)} className="chip" title={`Übergang zu ${t.to} · ${t.count} Netz(e)`}>
+                                  <span
+                                    key={String(t.to_id)}
+                                    className="chip"
+                                    title={L(`Übergang zu ${t.to} · ${t.count} Netz(e)`, `Transition to ${t.to} · ${t.count} network(s)`)}
+                                  >
                                     {t.name}
                                   </span>
                                 ))}
@@ -321,10 +375,10 @@ function ZonesTab({ tenantId, canEdit, isCustomer }: { tenantId: number; canEdit
                         {canEdit && (
                           <>
                             <button className="btn btn-sm" onClick={() => setEditing(z)}>
-                              Bearbeiten
+                              {L("Bearbeiten", "Edit")}
                             </button>{" "}
                             <button className="btn btn-sm btn-ghost" onClick={() => remove(z)}>
-                              Löschen
+                              {L("Löschen", "Delete")}
                             </button>
                           </>
                         )}
@@ -419,7 +473,12 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
     setErr(null);
     try {
       const r = await acceptZoneSuggestions(tenantId, keys);
-      setDone(`${r.created.length} Zone(n) angelegt, ${r.updated.length} ergänzt` + (r.missing.length ? ` – ${r.missing.length} nicht mehr vorgeschlagen` : ""));
+      setDone(
+        L(
+          `${r.created.length} Zone(n) angelegt, ${r.updated.length} ergänzt` + (r.missing.length ? ` – ${r.missing.length} nicht mehr vorgeschlagen` : ""),
+          `${r.created.length} zone(s) created, ${r.updated.length} extended` + (r.missing.length ? ` – ${r.missing.length} no longer suggested` : ""),
+        ),
+      );
       setPicked(new Set());
       load();
     } catch (e) {
@@ -432,7 +491,7 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
     setErr(null);
     try {
       const r = await applySchemaIntents(tenantId, pairs, overwrite);
-      setDone(`${r.changed.length} Absicht(en) aus dem Grundschema gesetzt`);
+      setDone(L(`${r.changed.length} Absicht(en) aus dem Grundschema gesetzt`, `${r.changed.length} intent(s) set from the base schema`));
       load();
     } catch (e) {
       setErr(e);
@@ -452,7 +511,12 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
     setErr(null);
     try {
       const r = await dismissZoneSuggestions(tenantId, [...picked]);
-      setDone(`${r.keys.length} Vorschlag/Vorschläge ausgeblendet – mit „ausgeblendete zeigen“ wieder vorschlagen`);
+      setDone(
+        L(
+          `${r.keys.length} Vorschlag/Vorschläge ausgeblendet – mit „ausgeblendete zeigen“ wieder vorschlagen`,
+          `${r.keys.length} suggestion(s) hidden – suggest again with “show hidden”`,
+        ),
+      );
       setPicked(new Set());
       load();
     } catch (e) {
@@ -476,28 +540,38 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
       )}
       <div className="card">
         <div className="card-head">
-          <h2>Vorschläge</h2>
+          <h2>{L("Vorschläge", "Suggestions")}</h2>
           {data && (
             <span className="faint" id="zone-suggestions-summary">
-              {data.summary.create} neu, {data.summary.extend} ergänzen eine Zone · {data.summary.nodes} Knoten ohne Zone ·{" "}
-              {data.summary.rest} Netze ohne Zone und Vorschlag
-              {data.summary.template && " · nach der eingebauten Vorlage"}
+              {L(
+                <>
+                  {data.summary.create} neu, {data.summary.extend} ergänzen eine Zone · {data.summary.nodes} Knoten ohne Zone ·{" "}
+                  {data.summary.rest} Netze ohne Zone und Vorschlag
+                </>,
+                <>
+                  {data.summary.create} new, {data.summary.extend} extend a zone · {data.summary.nodes} nodes without zone ·{" "}
+                  {data.summary.rest} networks without zone and suggestion
+                </>,
+              )}
+              {data.summary.template && L(" · nach der eingebauten Vorlage", " · following the built-in template")}
             </span>
           )}
           {data?.schema && (
             <label className="check" style={{ marginLeft: "auto" }}>
-              <input type="checkbox" checked={onlySchema} onChange={(e) => setOnlySchema(e.target.checked)} /> nur aus dem Grundschema
+              <input type="checkbox" checked={onlySchema} onChange={(e) => setOnlySchema(e.target.checked)} />{" "}
+              {L("nur aus dem Grundschema", "only from the base schema")}
             </label>
           )}
           <label className="check" style={data?.schema ? undefined : { marginLeft: "auto" }}>
-            <input type="checkbox" checked={showDismissed} onChange={(e) => setShowDismissed(e.target.checked)} /> ausgeblendete zeigen
+            <input type="checkbox" checked={showDismissed} onChange={(e) => setShowDismissed(e.target.checked)} />{" "}
+            {L("ausgeblendete zeigen", "show hidden")}
             {data && data.summary.dismissed > 0 && ` (${data.summary.dismissed})`}
           </label>
           <div className="search" style={{ flex: "0 1 200px" }}>
             <input
               type="search"
-              aria-label="Vorschläge filtern"
-              placeholder="Filtern, z. B. SZ_"
+              aria-label={L("Vorschläge filtern", "Filter suggestions")}
+              placeholder={L("Filtern, z. B. SZ_", "Filter, e.g. SZ_")}
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
@@ -508,9 +582,12 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
               className="btn btn-sm"
               disabled={busy || picked.size === 0}
               onClick={() => void dismissPicked()}
-              title="Gewählte Vorschläge ausblenden (bleiben ausgeblendet, bis sie wieder vorgeschlagen werden)"
+              title={L(
+                "Gewählte Vorschläge ausblenden (bleiben ausgeblendet, bis sie wieder vorgeschlagen werden)",
+                "Hide the selected suggestions (they stay hidden until they are suggested again)",
+              )}
             >
-              Ausgewählte ausblenden ({picked.size})
+              {L(`Ausgewählte ausblenden (${picked.size})`, `Hide selected (${picked.size})`)}
             </button>
           )}
           {canEdit && (
@@ -520,25 +597,39 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
               disabled={busy || picked.size === 0}
               onClick={() => accept([...picked])}
             >
-              {busy ? "Übernehme…" : `Ausgewählte übernehmen (${picked.size})`}
+              {busy ? L("Übernehme…", "Applying…") : L(`Ausgewählte übernehmen (${picked.size})`, `Apply selected (${picked.size})`)}
             </button>
           )}
         </div>
         <div className="card-body scroll">
           <p className="faint" style={{ margin: "4px 16px 10px" }}>
-            Nach dem Zonenmodell: die ACI-Tenants sind das Datacenter (je Kunde eine Zone), Firewalls kommen in die Zone des
-            Grundschemas bzw. der Vorlage, deren Name oder Muster passt (Firewalls mit einem Bein an der Internet-Anbindung in
-            Edge Internet), die Anbindungen in Public, dazu Firewall-Zonen und Interfaces nach den Mustern und Zone bzw. Rolle im
-            IPAM (ohne Werte, die ein Objekt im ACI nennen, z. B. ESGs). Netze zwischen Knoten verschiedener Zonen werden
-            Übergänge. Unerwünschte Vorschläge filtern, wählen und gesammelt ausblenden. Übernehmen legt eine normale Zone mit Selektoren
-            an bzw. ergänzt die bestehende; Knoten ohne Treffer stehen darunter zum Zuordnen.
+            {L(
+              <>
+                Nach dem Zonenmodell: die ACI-Tenants sind das Datacenter (je Kunde eine Zone), Firewalls kommen in die Zone des
+                Grundschemas bzw. der Vorlage, deren Name oder Muster passt (Firewalls mit einem Bein an der Internet-Anbindung in
+                Edge Internet), die Anbindungen in Public, dazu Firewall-Zonen und Interfaces nach den Mustern und Zone bzw. Rolle im
+                IPAM (ohne Werte, die ein Objekt im ACI nennen, z. B. ESGs). Netze zwischen Knoten verschiedener Zonen werden
+                Übergänge. Unerwünschte Vorschläge filtern, wählen und gesammelt ausblenden. Übernehmen legt eine normale Zone mit Selektoren
+                an bzw. ergänzt die bestehende; Knoten ohne Treffer stehen darunter zum Zuordnen.
+              </>,
+              <>
+                Following the zone model: the ACI tenants are the data center (one zone per customer), firewalls go into the zone of
+                the base schema or the template whose name or pattern matches (firewalls with a leg on the internet exit into
+                Edge Internet), the exits into Public, plus firewall zones and interfaces by the patterns and zone or role in
+                IPAM (without values that name an object in the ACI, e.g. ESGs). Networks between nodes of different zones become
+                transitions. Filter unwanted suggestions, select them and hide them together. Applying creates a normal zone with selectors
+                or extends the existing one; nodes without a match are listed below for assignment.
+              </>,
+            )}
           </p>
           {data == null ? (
             <Loading />
           ) : data.items.length === 0 ? (
-            <Empty title="Keine Vorschläge">Alles Gelesene liegt in einer Zone oder ist ausgeblendet.</Empty>
+            <Empty title={L("Keine Vorschläge", "No suggestions")}>
+              {L("Alles Gelesene liegt in einer Zone oder ist ausgeblendet.", "Everything collected lies in a zone or is hidden.")}
+            </Empty>
           ) : shown.length === 0 ? (
-            <Empty title="Kein Vorschlag passt zum Filter" />
+            <Empty title={L("Kein Vorschlag passt zum Filter", "No suggestion matches the filter")} />
           ) : (
             <table id="zone-suggestions">
               <thead>
@@ -547,18 +638,18 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
                     <th>
                       <input
                         type="checkbox"
-                        aria-label="alle wählen"
+                        aria-label={L("alle wählen", "select all")}
                         checked={open.length > 0 && open.every((s) => picked.has(s.key))}
                         onChange={(e) => setPicked(e.target.checked ? new Set(open.map((s) => s.key)) : new Set())}
                       />
                     </th>
                   )}
                   <th>Zone</th>
-                  <th>Art</th>
-                  <th>Kunde</th>
-                  <th>Erkannt aus</th>
-                  <th>Selektoren</th>
-                  <th className="num">Netze</th>
+                  <th>{L("Art", "Kind")}</th>
+                  <th>{L("Kunde", "Customer")}</th>
+                  <th>{L("Erkannt aus", "Detected from")}</th>
+                  <th>{L("Selektoren", "Selectors")}</th>
+                  <th className="num">{L("Netze", "Networks")}</th>
                   <th />
                 </tr>
               </thead>
@@ -567,20 +658,31 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
                   <tr key={s.key} className={s.dismissed ? "muted" : ""} data-key={s.key}>
                     {canEdit && (
                       <td>
-                        {!s.dismissed && <input type="checkbox" aria-label={`${s.name} wählen`} checked={picked.has(s.key)} onChange={() => toggle(s.key)} />}
+                        {!s.dismissed && (
+                          <input
+                            type="checkbox"
+                            aria-label={L(`${s.name} wählen`, `Select ${s.name}`)}
+                            checked={picked.has(s.key)}
+                            onChange={() => toggle(s.key)}
+                          />
+                        )}
                       </td>
                     )}
                     <td>
                       <Swatch color={s.color} /> <b>{s.name}</b>{" "}
-                      {s.action === "extend" ? <span className="chip">ergänzt Zone</span> : <span className="chip ok">neu</span>}
-                      {s.dismissed && <span className="chip warn">ausgeblendet</span>}
+                      {s.action === "extend" ? (
+                        <span className="chip">{L("ergänzt Zone", "extends zone")}</span>
+                      ) : (
+                        <span className="chip ok">{L("neu", "new")}</span>
+                      )}
+                      {s.dismissed && <span className="chip warn">{L("ausgeblendet", "hidden")}</span>}
                       {data.schema &&
                         (s.schema ? (
-                          <span className="chip local" title={`Zone „${s.schema}“ im Grundschema`}>
+                          <span className="chip local" title={L(`Zone „${s.schema}“ im Grundschema`, `Zone “${s.schema}” in the base schema`)}>
                             Schema
                           </span>
                         ) : (
-                          <span className="chip warn">nicht im Schema</span>
+                          <span className="chip warn">{L("nicht im Schema", "not in the schema")}</span>
                         ))}
                       {s.code && <span className="mono faint"> {s.code}</span>}
                     </td>
@@ -588,13 +690,15 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
                       {ZONE_KIND[s.kind] ?? s.kind}
                       {s.kind_reason && <div className="faint">{s.kind_reason}</div>}
                     </td>
-                    <td>{s.customer ?? <span className="faint">geteilt</span>}</td>
+                    <td>{s.customer ?? <span className="faint">{L("geteilt", "shared")}</span>}</td>
                     <td>
                       <div className="faint">{s.sources.map((x) => SOURCE[x] ?? x).join(", ")}</div>
                       {s.evidence.slice(0, 3).map((e) => (
                         <div key={e}>{e}</div>
                       ))}
-                      {s.evidence_total > 3 && <div className="faint">… {s.evidence_total - 3} weitere</div>}
+                      {s.evidence_total > 3 && (
+                        <div className="faint">{L(`… ${s.evidence_total - 3} weitere`, `… ${s.evidence_total - 3} more`)}</div>
+                      )}
                     </td>
                     <td>
                       <div className="objs">
@@ -604,7 +708,7 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
                           </span>
                         ))}
                       </div>
-                      {s.nodes.length > 0 && <div className="faint">Knoten: {s.nodes.join(", ")}</div>}
+                      {s.nodes.length > 0 && <div className="faint">{L(`Knoten: ${s.nodes.join(", ")}`, `Nodes: ${s.nodes.join(", ")}`)}</div>}
                     </td>
                     <td className="num nowrap" title={s.samples.join("\n")}>
                       {s.counts.nets}
@@ -614,13 +718,13 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
                       {canEdit && !s.dismissed && (
                         <>
                           <button className="btn btn-sm" onClick={() => setEditing(s)}>
-                            Übernehmen…
+                            {L("Übernehmen…", "Apply…")}
                           </button>{" "}
                         </>
                       )}
                       {canEdit && (
                         <button className="btn btn-sm btn-ghost" onClick={() => dismiss(s)}>
-                          {s.dismissed ? "Wieder vorschlagen" : "Ausblenden"}
+                          {s.dismissed ? L("Wieder vorschlagen", "Suggest again") : L("Ausblenden", "Hide")}
                         </button>
                       )}
                     </td>
@@ -643,16 +747,21 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
       {data && data.rest.total > 0 && (
         <div className="card">
           <div className="card-head">
-            <h2>Nicht erkannt</h2>
-            <span className="faint">Gelesene Netze ohne Zone und ohne Vorschlag – von Hand einer Zone zuordnen</span>
+            <h2>{L("Nicht erkannt", "Not detected")}</h2>
+            <span className="faint">
+              {L(
+                "Gelesene Netze ohne Zone und ohne Vorschlag – von Hand einer Zone zuordnen",
+                "Collected networks without zone and without suggestion – assign them to a zone by hand",
+              )}
+            </span>
           </div>
           <div className="card-body scroll">
             <table id="zone-suggestions-rest" className="compact">
               <thead>
                 <tr>
-                  <th>Netz</th>
-                  <th>Knoten</th>
-                  <th>Wo</th>
+                  <th>{L("Netz", "Network")}</th>
+                  <th>{L("Knoten", "Node")}</th>
+                  <th>{L("Wo", "Where")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -666,7 +775,7 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
                 {data.rest.total > data.rest.items.length && (
                   <tr>
                     <td colSpan={3} className="faint">
-                      … {data.rest.total - data.rest.items.length} weitere
+                      {L(`… ${data.rest.total - data.rest.items.length} weitere`, `… ${data.rest.total - data.rest.items.length} more`)}
                     </td>
                   </tr>
                 )}
@@ -690,7 +799,7 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
             color: fromSchema.color,
             customer_id: null,
             position: 0,
-            description: fromSchema.description ?? "aus dem Grundschema",
+            description: fromSchema.description ?? L("aus dem Grundschema", "from the base schema"),
             selectors: [],
           }}
           onClose={() => setFromSchema(null)}
@@ -718,7 +827,10 @@ function SuggestionsTab({ tenantId, canEdit }: { tenantId: number; canEdit: bool
                   color: editing.color,
                   customer_id: editing.customer_id,
                   position: 0,
-                  description: `Vorschlag aus ${editing.sources.map((x) => SOURCE[x] ?? x).join(", ")}`,
+                  description: L(
+                    `Vorschlag aus ${editing.sources.map((x) => SOURCE[x] ?? x).join(", ")}`,
+                    `Suggestion from ${editing.sources.map((x) => SOURCE[x] ?? x).join(", ")}`,
+                  ),
                   selectors: editing.selectors,
                 }
           }
@@ -765,16 +877,21 @@ function NodesCard({
   return (
     <div className="card" id="zone-suggestions-nodes">
       <div className="card-head">
-        <h2>Knoten ohne Zone</h2>
-        <span className="faint">Firewalls bzw. VDOMs ohne passende Zone – einer Zone zuordnen (Selektor VDOM)</span>
+        <h2>{L("Knoten ohne Zone", "Nodes without zone")}</h2>
+        <span className="faint">
+          {L(
+            "Firewalls bzw. VDOMs ohne passende Zone – einer Zone zuordnen (Selektor VDOM)",
+            "Firewalls or VDOMs without a matching zone – assign them to a zone (selector VDOM)",
+          )}
+        </span>
       </div>
       <div className="card-body scroll">
         <table className="compact">
           <thead>
             <tr>
-              <th>Knoten</th>
-              <th>Art</th>
-              <th>Hinweis</th>
+              <th>{L("Knoten", "Node")}</th>
+              <th>{L("Art", "Kind")}</th>
+              <th>{L("Hinweis", "Note")}</th>
               {canEdit && <th>Zone</th>}
             </tr>
           </thead>
@@ -783,19 +900,24 @@ function NodesCard({
               <tr key={n.id} data-node={n.id}>
                 <td>
                   <b>{n.label}</b>
-                  {n.group && <span className="faint"> · Verbund {n.group}</span>}
+                  {n.group && <span className="faint">{L(` · Verbund ${n.group}`, ` · parallel group ${n.group}`)}</span>}
                 </td>
                 <td>{NODE_KIND[n.kind] ?? n.kind}</td>
-                <td className="faint">{n.hint ?? (n.kind_hint ? `Name deutet auf ${ZONE_KIND[n.kind_hint] ?? n.kind_hint}` : "–")}</td>
+                <td className="faint">
+                  {n.hint ??
+                    (n.kind_hint
+                      ? L(`Name deutet auf ${ZONE_KIND[n.kind_hint] ?? n.kind_hint}`, `Name points to ${ZONE_KIND[n.kind_hint] ?? n.kind_hint}`)
+                      : "–")}
+                </td>
                 {canEdit && (
                   <td className="nowrap">
                     <select
                       className="sel"
-                      aria-label={`Zone für ${n.label}`}
+                      aria-label={L(`Zone für ${n.label}`, `Zone for ${n.label}`)}
                       value={target[n.id] ?? ""}
                       onChange={(e) => setTarget((t) => ({ ...t, [n.id]: Number(e.target.value) }))}
                     >
-                      <option value="">– Zone wählen –</option>
+                      <option value="">{L("– Zone wählen –", "– Select zone –")}</option>
                       {zones.map((z) => (
                         <option key={z.id} value={z.id}>
                           {z.name}
@@ -803,7 +925,7 @@ function NodesCard({
                       ))}
                     </select>{" "}
                     <button className="btn btn-sm" disabled={!target[n.id] || busy === n.id} onClick={() => assign(n)}>
-                      Zuordnen
+                      {L("Zuordnen", "Assign")}
                     </button>
                   </td>
                 )}
@@ -832,25 +954,33 @@ function SchemaStatus({
   return (
     <div className="card" id="zone-schema-status">
       <div className="card-head">
-        <h2>Grundschema</h2>
+        <h2>{L("Grundschema", "Base schema")}</h2>
         <span className="faint">
-          „{status.profile}“: {status.zones} Zonen, {status.links} Übergänge –{" "}
-          <a href="#dict">in den Namensprofilen pflegen</a>
+          {L(
+            <>
+              „{status.profile}“: {status.zones} Zonen, {status.links} Übergänge –{" "}
+              <a href="#dict">in den Namensprofilen pflegen</a>
+            </>,
+            <>
+              “{status.profile}”: {status.zones} zones, {status.links} transitions –{" "}
+              <a href="#dict">maintain in the naming profiles</a>
+            </>,
+          )}
         </span>
       </div>
       <div className="card-body pad">
         <div className="field">
-          <label>Fehlen (im Schema, ohne Zone und ohne Vorschlag)</label>
+          <label>{L("Fehlen (im Schema, ohne Zone und ohne Vorschlag)", "Missing (in the schema, without zone and without suggestion)")}</label>
           {status.missing.length === 0 ? (
-            <span className="faint">keine</span>
+            <span className="faint">{L("keine", "none")}</span>
           ) : (
             <div className="objs" id="zone-schema-missing">
               {status.missing.map((z) => (
                 <span key={z.key} className="chip">
                   <Swatch color={z.color} /> {z.name} <span className="faint">{ZONE_KIND[z.kind]}</span>
                   {canEdit && (
-                    <button className="linkbtn" title="Zone anlegen" onClick={() => onCreate(z)}>
-                      anlegen…
+                    <button className="linkbtn" title={L("Zone anlegen", "Create zone")} onClick={() => onCreate(z)}>
+                      {L("anlegen…", "create…")}
                     </button>
                   )}
                 </span>
@@ -859,9 +989,14 @@ function SchemaStatus({
           )}
         </div>
         <div className="field" style={{ marginTop: 10 }}>
-          <label>Absichten aus dem Schema, die in der Zonenmatrix fehlen bzw. abweichen</label>
+          <label>
+            {L(
+              "Absichten aus dem Schema, die in der Zonenmatrix fehlen bzw. abweichen",
+              "Intents from the schema that are missing from or differ in the zone matrix",
+            )}
+          </label>
           {status.intents.length === 0 ? (
-            <span className="faint">keine – die Zonenmatrix entspricht dem Schema</span>
+            <span className="faint">{L("keine – die Zonenmatrix entspricht dem Schema", "none – the zone matrix matches the schema")}</span>
           ) : (
             <>
               <table className="compact" id="zone-schema-intents">
@@ -878,13 +1013,15 @@ function SchemaStatus({
                       </td>
                       <td>
                         <span className={`chip ${INTENT[x.intent][0]}`}>{INTENT[x.intent][1]}</span>
-                        {x.services && x.services.length > 0 && <div className="faint">nur {x.services.join(", ")}</div>}
+                        {x.services && x.services.length > 0 && (
+                          <div className="faint">{L(`nur ${x.services.join(", ")}`, `only ${x.services.join(", ")}`)}</div>
+                        )}
                       </td>
-                      <td className="faint">{x.current ? `in Automato: ${INTENT[x.current][1]}` : "fehlt"}</td>
+                      <td className="faint">{x.current ? `in Automato: ${INTENT[x.current][1]}` : L("fehlt", "missing")}</td>
                       <td className="nowrap">
                         {canEdit && x.current && (
                           <button className="btn btn-sm btn-ghost" onClick={() => onApply([[x.src_zone_id, x.dst_zone_id]], true)}>
-                            Ersetzen
+                            {L("Ersetzen", "Replace")}
                           </button>
                         )}
                       </td>
@@ -894,7 +1031,7 @@ function SchemaStatus({
               </table>
               {canEdit && missing.length > 0 && (
                 <button className="btn btn-sm btn-primary" id="zone-schema-apply" style={{ marginTop: 8 }} onClick={() => onApply()}>
-                  Fehlende Absichten übernehmen ({missing.length})
+                  {L(`Fehlende Absichten übernehmen (${missing.length})`, `Apply missing intents (${missing.length})`)}
                 </button>
               )}
             </>
@@ -902,7 +1039,7 @@ function SchemaStatus({
         </div>
         {status.outside.length > 0 && (
           <div className="field" style={{ marginTop: 10 }}>
-            <label>Zonen ausserhalb des Schemas</label>
+            <label>{L("Zonen ausserhalb des Schemas", "Zones outside the schema")}</label>
             <div className="objs">
               {status.outside.map((z) => (
                 <span key={z.id} className="chip warn">
@@ -934,14 +1071,19 @@ function ZoneNets({ zoneId }: { zoneId: number }) {
     <div className="zone-detail">
       {(data.nodes ?? []).length > 0 && (
         <div className="field">
-          <label>Knoten</label>
+          <label>{L("Knoten", "Nodes")}</label>
           <div>{(data.nodes ?? []).join(", ")}</div>
         </div>
       )}
       <div className="field">
-        <label>Netze in der Zone</label>
+        <label>{L("Netze in der Zone", "Networks in the zone")}</label>
         {data.items.length === 0 ? (
-          <span className="faint">keine – die Zone ist ein reiner Übergang (normal z. B. für eine Internet-Firewall)</span>
+          <span className="faint">
+            {L(
+              "keine – die Zone ist ein reiner Übergang (normal z. B. für eine Internet-Firewall)",
+              "none – the zone is a pure transition (normal e.g. for an internet firewall)",
+            )}
+          </span>
         ) : (
           <table className="compact zone-nets">
             <tbody>
@@ -956,7 +1098,7 @@ function ZoneNets({ zoneId }: { zoneId: number }) {
               {data.total > data.items.length && (
                 <tr>
                   <td colSpan={2} className="faint">
-                    … {data.total - data.items.length} weitere
+                    {L(`… ${data.total - data.items.length} weitere`, `… ${data.total - data.items.length} more`)}
                   </td>
                 </tr>
               )}
@@ -966,7 +1108,7 @@ function ZoneNets({ zoneId }: { zoneId: number }) {
       </div>
       {transitions.length > 0 && (
         <div className="field">
-          <label>Übergänge zu anderen Zonen</label>
+          <label>{L("Übergänge zu anderen Zonen", "Transitions to other zones")}</label>
           <table className="compact zone-transitions">
             <tbody>
               {transitions.flatMap((t) =>
@@ -987,11 +1129,17 @@ function ZoneNets({ zoneId }: { zoneId: number }) {
   );
 }
 
-function legsText(n: { legs: { label: string; interface: string | null; l3out: boolean }[]; routers: { ip: string; names: string[] }[] }): string {
+function legsText(n: {
+  legs: { label: string; interface: string | null; l3out: boolean }[];
+  routers: { ip: string; names: string[] }[];
+  routes?: { zone: number; prefixes: string[] }[];
+}): string {
   const legs = n.legs.map((l) => `${l.label} (${l.l3out ? "L3Out" : "Interface"} ${l.interface ?? "?"})`);
   const legsUnique = [...new Set(legs)];
   const routers = n.routers.map((r) => `Router ${r.names[0] ?? r.ip}`);
-  return [...legsUnique, ...routers].join(", ");
+  // Zone nur hinter dem Router (0.81.0): die Routen dorthin
+  const routes = (n.routes ?? []).map((r) => `Route ${r.prefixes.join(", ")}`);
+  return [...legsUnique, ...routers, ...routes].join(", ");
 }
 
 const EMPTY_SELECTOR: ZoneSelector = { kind: "prefix", value: "", source_system_id: null, exclude: false };
@@ -1093,15 +1241,21 @@ function ZoneEditor({
   return (
     <Modal
       wide
-      title={initial ? `Zone „${initial.name}“` : draft ? `Vorschlag „${draft.name}“ übernehmen` : "Neue Zone"}
+      title={
+        initial
+          ? L(`Zone „${initial.name}“`, `Zone “${initial.name}”`)
+          : draft
+            ? L(`Vorschlag „${draft.name}“ übernehmen`, `Apply suggestion “${draft.name}”`)
+            : L("Neue Zone", "New zone")
+      }
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button className="btn btn-primary" onClick={save} disabled={busy || !name.trim()}>
-            {busy ? "Speichere…" : "Speichern"}
+            {busy ? L("Speichere…", "Saving…") : L("Speichern", "Save")}
           </button>
         </>
       }
@@ -1110,14 +1264,28 @@ function ZoneEditor({
       <div className="zone-form">
         <div className="field">
           <label htmlFor="zo-name">Name</label>
-          <input id="zo-name" className="input" value={name} maxLength={200} placeholder="z. B. DMZ" onChange={(e) => setName(e.target.value)} />
+          <input
+            id="zo-name"
+            className="input"
+            value={name}
+            maxLength={200}
+            placeholder={L("z. B. DMZ", "e.g. DMZ")}
+            onChange={(e) => setName(e.target.value)}
+          />
         </div>
         <div className="field">
-          <label htmlFor="zo-code">Kurzname (optional)</label>
-          <input id="zo-code" className="input mono" value={code} maxLength={50} placeholder="z. B. DMZ1" onChange={(e) => setCode(e.target.value)} />
+          <label htmlFor="zo-code">{L("Kurzname (optional)", "Short name (optional)")}</label>
+          <input
+            id="zo-code"
+            className="input mono"
+            value={code}
+            maxLength={50}
+            placeholder={L("z. B. DMZ1", "e.g. DMZ1")}
+            onChange={(e) => setCode(e.target.value)}
+          />
         </div>
         <div className="field">
-          <label htmlFor="zo-kind">Art</label>
+          <label htmlFor="zo-kind">{L("Art", "Kind")}</label>
           <select id="zo-kind" className="sel" value={kind} onChange={(e) => setKind(e.target.value as ZoneKind)}>
             {(Object.keys(ZONE_KIND) as ZoneKind[]).map((k) => (
               <option key={k} value={k}>
@@ -1127,14 +1295,14 @@ function ZoneEditor({
           </select>
         </div>
         <div className="field">
-          <label htmlFor="zo-customer">Kunde</label>
+          <label htmlFor="zo-customer">{L("Kunde", "Customer")}</label>
           <select
             id="zo-customer"
             className="sel"
             value={customerId ?? ""}
             onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : null)}
           >
-            <option value="">keiner (geteilt bzw. Infrastruktur)</option>
+            <option value="">{L("keiner (geteilt bzw. Infrastruktur)", "none (shared or infrastructure)")}</option>
             {customers.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -1143,29 +1311,29 @@ function ZoneEditor({
           </select>
         </div>
         <div className="field">
-          <label htmlFor="zo-color">Farbe</label>
+          <label htmlFor="zo-color">{L("Farbe", "Color")}</label>
           {fixedColor ? (
             <div id="zo-color" className="zone-fixed-color">
               <Swatch color={fixedColor.color} /> {COLOR_SOURCE[fixedColor.color_source as ZoneColorSource]}
-              {fixedColor.schema && <> („{fixedColor.schema}“)</>}
-              <div className="hint">überall gleich – im Grundschema der Namensprofile ändern</div>
+              {fixedColor.schema && L(<> („{fixedColor.schema}“)</>, <> (“{fixedColor.schema}”)</>)}
+              <div className="hint">{L("überall gleich – im Grundschema der Namensprofile ändern", "the same everywhere – change it in the base schema of the naming profiles")}</div>
             </div>
           ) : (
             <input id="zo-color" type="color" className="input" value={color} onChange={(e) => setColor(e.target.value)} />
           )}
         </div>
         <div className="field">
-          <label htmlFor="zo-pos">Reihenfolge</label>
+          <label htmlFor="zo-pos">{L("Reihenfolge", "Order")}</label>
           <input id="zo-pos" type="number" min={0} className="input" value={position} onChange={(e) => setPosition(Number(e.target.value) || 0)} />
-          <div className="hint">0 = ans Ende</div>
+          <div className="hint">{L("0 = ans Ende", "0 = at the end")}</div>
         </div>
       </div>
       <div className="field">
-        <label htmlFor="zo-desc">Beschreibung (optional)</label>
+        <label htmlFor="zo-desc">{L("Beschreibung (optional)", "Description (optional)")}</label>
         <input id="zo-desc" className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
       </div>
 
-      <h3 style={{ marginTop: 12 }}>Selektoren</h3>
+      <h3 style={{ marginTop: 12 }}>{L("Selektoren", "Selectors")}</h3>
       <table className="compact form-table" id="zone-selectors">
         <colgroup>
           <col style={{ width: "24%" }} />
@@ -1176,10 +1344,10 @@ function ZoneEditor({
         </colgroup>
         <thead>
           <tr>
-            <th>Art</th>
-            <th>Wert</th>
-            <th>Quellsystem</th>
-            <th title="ausschliessen">aus­schl.</th>
+            <th>{L("Art", "Kind")}</th>
+            <th>{L("Wert", "Value")}</th>
+            <th>{L("Quellsystem", "Source system")}</th>
+            <th title={L("ausschliessen", "exclude")}>{L("aus­schl.", "excl.")}</th>
             <th />
           </tr>
         </thead>
@@ -1187,7 +1355,7 @@ function ZoneEditor({
           {selectors.map((s, i) => (
             <tr key={i}>
               <td>
-                <select className="sel" aria-label="Art" value={s.kind} onChange={(e) => set(i, { kind: e.target.value as ZoneSelectorKind })}>
+                <select className="sel" aria-label={L("Art", "Kind")} value={s.kind} onChange={(e) => set(i, { kind: e.target.value as ZoneSelectorKind })}>
                   {(Object.keys(ZONE_SELECTOR_LABEL) as ZoneSelectorKind[]).map((k) => (
                     <option key={k} value={k}>
                       {ZONE_SELECTOR_LABEL[k]}
@@ -1197,18 +1365,18 @@ function ZoneEditor({
               </td>
               <td>
                 {s.kind === "exit" && exits.length > 0 ? (
-                  <select className="sel" aria-label="Wert" value={s.value} onChange={(e) => set(i, { value: e.target.value })}>
-                    <option value="">– Anbindung wählen –</option>
+                  <select className="sel" aria-label={L("Wert", "Value")} value={s.value} onChange={(e) => set(i, { value: e.target.value })}>
+                    <option value="">{L("– Anbindung wählen –", "– Select exit –")}</option>
                     {exits.map((x) => (
                       <option key={x.id} value={x.name}>
-                        {x.name} {x.prefixes?.length ? `(${x.prefixes.join(", ")})` : "(ohne Netze)"}
+                        {x.name} {x.prefixes?.length ? `(${x.prefixes.join(", ")})` : L("(ohne Netze)", "(no networks)")}
                       </option>
                     ))}
                   </select>
                 ) : (
                   <input
                     className="input mono"
-                    aria-label="Wert"
+                    aria-label={L("Wert", "Value")}
                     value={s.value}
                     placeholder={PLACEHOLDER[s.kind] ?? ""}
                     onChange={(e) => set(i, { value: e.target.value })}
@@ -1219,11 +1387,11 @@ function ZoneEditor({
                 {FW_KINDS.includes(s.kind) ? (
                   <select
                     className="sel"
-                    aria-label="Quellsystem"
+                    aria-label={L("Quellsystem", "Source system")}
                     value={s.source_system_id ?? ""}
                     onChange={(e) => set(i, { source_system_id: e.target.value ? Number(e.target.value) : null })}
                   >
-                    <option value="">alle Firewalls</option>
+                    <option value="">{L("alle Firewalls", "all firewalls")}</option>
                     {firewalls.map((f) => (
                       <option key={f.id} value={f.id}>
                         {f.name}
@@ -1235,11 +1403,16 @@ function ZoneEditor({
                 )}
               </td>
               <td>
-                <input type="checkbox" aria-label="ausschliessen" checked={s.exclude} onChange={(e) => set(i, { exclude: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  aria-label={L("ausschliessen", "exclude")}
+                  checked={s.exclude}
+                  onChange={(e) => set(i, { exclude: e.target.checked })}
+                />
               </td>
               <td>
                 <button className="btn btn-sm btn-ghost" onClick={() => setSelectors((xs) => xs.filter((_, j) => j !== i))}>
-                  Entfernen
+                  {L("Entfernen", "Remove")}
                 </button>
               </td>
             </tr>
@@ -1247,30 +1420,50 @@ function ZoneEditor({
         </tbody>
       </table>
       <button className="btn btn-sm" onClick={() => setSelectors((xs) => [...xs, { ...EMPTY_SELECTOR }])}>
-        + Selektor
+        {L("+ Selektor", "+ Selector")}
       </button>
 
       {assist && assist.items.length > 0 && (
         <div id="zone-assist" className="zone-assist">
           <h3 style={{ marginTop: 12 }}>
-            Vorschläge zu „{name.trim() || code.trim()}“{" "}
+            {L(
+              <>Vorschläge zu „{name.trim() || code.trim()}“</>,
+              <>Suggestions for “{name.trim() || code.trim()}”</>,
+            )}{" "}
             <span className="faint">
-              {assist.items.length}
-              {assist.total > assist.items.length ? ` von ${assist.total}` : ""} Treffer
-              {assist.schema ? ` · Grundschema „${assist.schema}“` : ""}
+              {L(
+                <>
+                  {assist.items.length}
+                  {assist.total > assist.items.length ? ` von ${assist.total}` : ""} Treffer
+                  {assist.schema ? ` · Grundschema „${assist.schema}“` : ""}
+                </>,
+                <>
+                  {assist.items.length}
+                  {assist.total > assist.items.length ? ` of ${assist.total}` : ""} matches
+                  {assist.schema ? ` · base schema “${assist.schema}”` : ""}
+                </>,
+              )}
             </span>
           </h3>
           <p className="faint" style={{ margin: "0 0 6px" }}>
-            Firewall-Zonen, Interfaces und VDOMs, Netze und Merkmale im IPAM, ACI-Objekte und Anbindungen, deren Name zur
-            Zone passt (gleicher Name bzw. Kurzname, alle Wörter, Muster des Grundschemas, Rolle des Interfaces zur Art).
+            {L(
+              <>
+                Firewall-Zonen, Interfaces und VDOMs, Netze und Merkmale im IPAM, ACI-Objekte und Anbindungen, deren Name zur
+                Zone passt (gleicher Name bzw. Kurzname, alle Wörter, Muster des Grundschemas, Rolle des Interfaces zur Art).
+              </>,
+              <>
+                Firewall zones, interfaces and VDOMs, networks and attributes in IPAM, ACI objects and exits whose name matches the
+                zone (same name or short name, all words, patterns of the base schema, role of the interface for the kind).
+              </>,
+            )}
           </p>
           <table className="compact" id="zone-assist-items">
             <thead>
               <tr>
-                <th>Treffer</th>
-                <th>Selektor</th>
-                <th className="num">Netze</th>
-                <th>Hinweis</th>
+                <th>{L("Treffer", "Match")}</th>
+                <th>{L("Selektor", "Selector")}</th>
+                <th className="num">{L("Netze", "Networks")}</th>
+                <th>{L("Hinweis", "Note")}</th>
                 <th />
               </tr>
             </thead>
@@ -1292,10 +1485,10 @@ function ZoneEditor({
                   </td>
                   <td>
                     {a.covered ? (
-                      <span className="faint">schon erfasst</span>
+                      <span className="faint">{L("schon erfasst", "already covered")}</span>
                     ) : a.conflicts.length > 0 ? (
                       <span className="warn-text">
-                        in Zone {a.conflicts.map((c) => `${c.zone} (${c.network})`).join(", ")}
+                        {L("in Zone", "in zone")} {a.conflicts.map((c) => `${c.zone} (${c.network})`).join(", ")}
                         {a.conflicts_total > a.conflicts.length ? " …" : ""}
                       </span>
                     ) : (
@@ -1307,7 +1500,7 @@ function ZoneEditor({
                   </td>
                   <td className="nowrap">
                     <button className="btn btn-sm" onClick={() => take([a.selector])}>
-                      + Übernehmen
+                      {L("+ Übernehmen", "+ Apply")}
                     </button>
                   </td>
                 </tr>
@@ -1316,13 +1509,13 @@ function ZoneEditor({
           </table>
           {takeable.length > 1 && (
             <button className="btn btn-sm" id="zone-assist-all" onClick={() => take(takeable.map((a) => a.selector))}>
-              Alle ohne Überschneidung übernehmen ({takeable.length})
+              {L(`Alle ohne Überschneidung übernehmen (${takeable.length})`, `Apply all without overlap (${takeable.length})`)}
             </button>
           )}
         </div>
       )}
 
-      <h3 style={{ marginTop: 12 }}>Vorschau</h3>
+      <h3 style={{ marginTop: 12 }}>{L("Vorschau", "Preview")}</h3>
       {preview == null ? (
         <Loading />
       ) : (
@@ -1335,7 +1528,7 @@ function ZoneEditor({
             </colgroup>
             <tbody>
               <tr>
-                <td>Netze</td>
+                <td>{L("Netze", "Networks")}</td>
                 <td className="num">{preview.counts.net}</td>
                 <td className="faint">
                   {preview.samples.net.map((n) => `${n.network} (${n.via})`).join(", ")}
@@ -1354,8 +1547,16 @@ function ZoneEditor({
           </table>
           {preview.overlaps.length > 0 && (
             <Note warn>
-              Gleiches Netz schon in einer anderen Zone: {preview.overlaps.map((o) => `${o.network} (${o.zone})`).join(", ")}
-              {preview.overlaps_total > preview.overlaps.length ? " …" : ""} – das wird ein Befund „Netz in mehreren Zonen“.
+              {L(
+                <>
+                  Gleiches Netz schon in einer anderen Zone: {preview.overlaps.map((o) => `${o.network} (${o.zone})`).join(", ")}
+                  {preview.overlaps_total > preview.overlaps.length ? " …" : ""} – das wird ein Befund „Netz in mehreren Zonen“.
+                </>,
+                <>
+                  Same network already in another zone: {preview.overlaps.map((o) => `${o.network} (${o.zone})`).join(", ")}
+                  {preview.overlaps_total > preview.overlaps.length ? " …" : ""} – this becomes a finding “network in several zones”.
+                </>,
+              )}
             </Note>
           )}
         </div>
@@ -1368,8 +1569,8 @@ function ZoneEditor({
 
 function cellLabel(c: ZoneCell, zones: Map<number, ZoneSummary>): string {
   if (c === "any") return "any";
-  if (c === "none") return "ohne Zone";
-  if (c === "other") return "anderer Kunde";
+  if (c === "none") return L("ohne Zone", "no zone");
+  if (c === "other") return L("anderer Kunde", "other customer");
   return zones.get(c)?.name ?? `#${c}`;
 }
 
@@ -1390,26 +1591,39 @@ function MatrixTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
 
   if (err) return <ErrorBox error={err} onClose={() => setErr(null)} />;
   if (m == null) return <Loading />;
-  if (m.zones.length === 0) return <Note>Noch keine Zonen – zuerst im Reiter „Zonen“ anlegen.</Note>;
+  if (m.zones.length === 0) return <Note>{L("Noch keine Zonen – zuerst im Reiter „Zonen“ anlegen.", "No zones yet – create them first in the “Zones” tab.")}</Note>;
   const s = m.summary;
   return (
     <>
       <div className="card">
         <div className="card-head">
-          <h2>Zonenmatrix</h2>
+          <h2>{L("Zonenmatrix", "Zone matrix")}</h2>
           <span className="faint" id="zone-matrix-summary">
-            {s.assigned} von {s.rules} Regeln zugeordnet
-            {s.without ? ` · ${s.without} ohne IP-Bereich (z. B. FQDN)` : ""} ·{" "}
-            <span className={s.violations ? "crit" : ""}>
-              {s.violations} {s.violations === 1 ? "Regel" : "Regeln"} gegen die Absicht
-            </span>
+            {L(
+              <>
+                {s.assigned} von {s.rules} Regeln zugeordnet
+                {s.without ? ` · ${s.without} ohne IP-Bereich (z. B. FQDN)` : ""}
+                {s.off_path ? ` · ${s.off_path} nach dem Routing nicht möglich` : ""} ·{" "}
+                <span className={s.violations ? "crit" : ""}>
+                  {s.violations} {s.violations === 1 ? "Regel" : "Regeln"} gegen die Absicht
+                </span>
+              </>,
+              <>
+                {s.assigned} of {s.rules} rules assigned
+                {s.without ? ` · ${s.without} without IP range (e.g. FQDN)` : ""}
+                {s.off_path ? ` · ${s.off_path} not possible according to the routing` : ""} ·{" "}
+                <span className={s.violations ? "crit" : ""}>
+                  {s.violations} {s.violations === 1 ? "rule" : "rules"} against the intent
+                </span>
+              </>,
+            )}
           </span>
         </div>
         <div className="card-body scroll">
           <table className="zone-matrix" id="zone-matrix">
             <thead>
               <tr>
-                <th className="corner">Quelle ↓ · Ziel →</th>
+                <th className="corner">{L("Quelle ↓ · Ziel →", "Source ↓ · destination →")}</th>
                 {m.axes.map((d) => (
                   <th key={String(d)} className="axis">
                     {typeof d === "number" && <Swatch color={zones.get(d)?.color ?? null} />} {cellLabel(d, zones)}
@@ -1431,7 +1645,11 @@ function MatrixTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                       <td
                         key={String(dst)}
                         className={`zcell ${intent ? `i-${intent}` : ""} ${c?.violations ? "viol" : ""} ${on ? "on" : ""}`}
-                        title={[c?.services?.length ? `nur ${c.services.join(", ")}` : "", c?.note ?? ""].filter(Boolean).join(" · ") || undefined}
+                        title={
+                          [c?.services?.length ? L(`nur ${c.services.join(", ")}`, `only ${c.services.join(", ")}`) : "", c?.note ?? ""]
+                            .filter(Boolean)
+                            .join(" · ") || undefined
+                        }
                         onClick={() => setSel({ src, dst })}
                       >
                         {c && (c.allow || c.deny) ? (
@@ -1442,8 +1660,19 @@ function MatrixTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                         ) : (
                           <span className="faint">·</span>
                         )}
-                        {c?.services?.length ? <div className="z-svc">nur {c.services.join(", ")}</div> : null}
-                        {c?.violations ? <div className="z-viol">{c.violations} gegen Absicht</div> : null}
+                        {c?.services?.length ? <div className="z-svc">{L(`nur ${c.services.join(", ")}`, `only ${c.services.join(", ")}`)}</div> : null}
+                        {c?.violations ? <div className="z-viol">{L(`${c.violations} gegen Absicht`, `${c.violations} against intent`)}</div> : null}
+                        {c?.impossible ? (
+                          <div
+                            className="z-off"
+                            title={L(
+                              "Regeln, die das Routing ihres Geräts für diese Zonen ausschliesst – nicht gezählt",
+                              "Rules that the routing of their device rules out for these zones – not counted",
+                            )}
+                          >
+                            {L(`${c.impossible} nicht möglich`, `${c.impossible} not possible`)}
+                          </div>
+                        ) : null}
                       </td>
                     );
                   })}
@@ -1452,14 +1681,22 @@ function MatrixTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
             </tbody>
           </table>
           <div className="faint zone-legend">
-            ✓ erlaubende, ✕ sperrende Regeln · Hintergrund = Absicht:{" "}
+            {L("✓ erlaubende, ✕ sperrende Regeln · Hintergrund = Absicht:", "✓ allowing, ✕ denying rules · background = intent:")}{" "}
             {(Object.keys(INTENT) as ZoneIntent[]).map((k) => (
               <span key={k} className={`chip ${INTENT[k][0]}`}>
                 {INTENT[k][1]}
               </span>
             ))}{" "}
-            · eingeschränkt mit Diensten: andere Dienste sind gegen die Absicht · „any“ und „ohne Zone“ zählen nicht
-            als Verstoss
+            {L(
+              <>
+                · eingeschränkt mit Diensten: andere Dienste sind gegen die Absicht · „any“ und „ohne Zone“ zählen nicht
+                als Verstoss
+              </>,
+              <>
+                · limited with services: other services are against the intent · “any” and “no zone” do not count
+                as a violation
+              </>,
+            )}
           </div>
         </div>
       </div>
@@ -1496,7 +1733,8 @@ function CellDetail({
   canEdit: boolean;
   onChanged: () => void;
 }) {
-  const [rules, setRules] = useState<{ total: number; violations: number; items: ZoneCellRule[] } | null>(null);
+  const [rules, setRules] = useState<ZoneCellRules | null>(null);
+  const [offPath, setOffPath] = useState(false); // 0.81.0: die nach dem Weg unmöglichen Regeln
   const [intent, setIntent] = useState<ZoneIntent | "">(cell?.intent ?? "");
   const [note, setNote] = useState(cell?.note ?? "");
   const [services, setServices] = useState((cell?.services ?? []).join(", "));
@@ -1506,13 +1744,14 @@ function CellDetail({
   const stamp = `${cell?.intent ?? ""}|${(cell?.services ?? []).join(",")}|${cell?.violations ?? 0}`;
   useEffect(() => {
     let current = true;
-    fetchZoneCellRules(tenantId, src, dst)
+    fetchZoneCellRules(tenantId, src, dst, 0, offPath)
       .then((r) => current && setRules(r))
       .catch((e) => current && setErr(e));
     return () => {
       current = false;
     };
-  }, [tenantId, src, dst, stamp]);
+  }, [tenantId, src, dst, stamp, offPath]);
+  useEffect(() => setOffPath(false), [src, dst]);
   const zonePair = typeof src === "number" && typeof dst === "number";
   const save = async () => {
     if (!zonePair) return;
@@ -1536,15 +1775,17 @@ function CellDetail({
         <h2>
           {cellLabel(src, zones)} → {cellLabel(dst, zones)}
         </h2>
-        {cell?.intent && <span className={`chip ${INTENT[cell.intent][0]}`}>Absicht: {INTENT[cell.intent][1]}</span>}
-        {cell?.services?.length ? <span className="faint">nur {cell.services.join(", ")}</span> : null}
+        {cell?.intent && (
+          <span className={`chip ${INTENT[cell.intent][0]}`}>{L(`Absicht: ${INTENT[cell.intent][1]}`, `Intent: ${INTENT[cell.intent][1]}`)}</span>
+        )}
+        {cell?.services?.length ? <span className="faint">{L(`nur ${cell.services.join(", ")}`, `only ${cell.services.join(", ")}`)}</span> : null}
       </div>
       <div className="card-body">
         <ErrorBox error={err} onClose={() => setErr(null)} />
         {zonePair && canEdit && (
           <div className="zone-intent">
-            <select className="sel" aria-label="Absicht" value={intent} onChange={(e) => setIntent(e.target.value as ZoneIntent | "")}>
-              <option value="">keine Absicht</option>
+            <select className="sel" aria-label={L("Absicht", "Intent")} value={intent} onChange={(e) => setIntent(e.target.value as ZoneIntent | "")}>
+              <option value="">{L("keine Absicht", "no intent")}</option>
               {(Object.keys(INTENT) as ZoneIntent[]).map((k) => (
                 <option key={k} value={k}>
                   {INTENT[k][1]}
@@ -1554,29 +1795,53 @@ function CellDetail({
             {intent === "limited" && (
               <input
                 className="input mono"
-                aria-label="Dienste"
-                placeholder="erlaubte Dienste, z. B. tcp/443, udp/53, FT_https"
+                aria-label={L("Dienste", "Services")}
+                placeholder={L("erlaubte Dienste, z. B. tcp/443, udp/53, FT_https", "allowed services, e.g. tcp/443, udp/53, FT_https")}
                 value={services}
                 onChange={(e) => setServices(e.target.value)}
               />
             )}
-            <input className="input" aria-label="Notiz" placeholder="Notiz, z. B. nur über Reverse Proxy" value={note} onChange={(e) => setNote(e.target.value)} />
+            <input
+              className="input"
+              aria-label={L("Notiz", "Note")}
+              placeholder={L("Notiz, z. B. nur über Reverse Proxy", "Note, e.g. only via reverse proxy")}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
             <button className="btn btn-sm btn-primary" onClick={save} disabled={busy}>
-              Absicht speichern
+              {L("Absicht speichern", "Save intent")}
+            </button>
+          </div>
+        )}
+        {((rules?.impossible ?? 0) > 0 || offPath) && (
+          <div className="seg" id="zone-cell-mode" style={{ marginBottom: 8 }}>
+            <button className={offPath ? "" : "on"} onClick={() => setOffPath(false)}>
+              {L("Regeln der Zelle", "Rules of the cell")}
+            </button>
+            <button
+              className={offPath ? "on" : ""}
+              id="zone-cell-impossible"
+              title={L(
+                "Regeln, deren Gerät diese Zonen nach dem Routing nicht über Ein- bzw. Ausgang der Regel erreicht",
+                "Rules whose device does not reach these zones via the incoming or outgoing interface of the rule according to the routing",
+              )}
+              onClick={() => setOffPath(true)}
+            >
+              {L("nach dem Weg nicht möglich", "not possible according to the path")} {rules?.impossible ?? ""}
             </button>
           </div>
         )}
         {rules == null ? (
           <Loading />
         ) : rules.items.length === 0 ? (
-          <span className="faint">keine Regeln</span>
+          <span className="faint">{L("keine Regeln", "no rules")}</span>
         ) : (
           <table className="compact" id="zone-cell-rules">
             <thead>
               <tr>
-                <th>Regel</th>
-                <th>Aktion</th>
-                <th>Gerät</th>
+                <th>{L("Regel", "Rule")}</th>
+                <th>{L("Aktion", "Action")}</th>
+                <th>{L("Gerät", "Device")}</th>
                 <th />
               </tr>
             </thead>
@@ -1588,22 +1853,31 @@ function CellDetail({
                     {r.tenant && <span className="faint"> · {r.tenant}</span>}
                   </td>
                   <td>
-                    <span className={`chip ${r.action === "allow" ? "accept" : "deny"}`}>{r.action === "allow" ? "erlaubt" : "gesperrt"}</span>
+                    <span className={`chip ${r.action === "allow" ? "accept" : "deny"}`}>
+                      {r.action === "allow" ? L("erlaubt", "accept") : L("gesperrt", "deny")}
+                    </span>
                   </td>
                   <td>
                     {r.source ?? "?"}
                     {r.vdom && r.vdom !== "root" ? ` · VDOM ${r.vdom}` : ""}
                   </td>
                   <td>
-                    {r.violation && <span className="chip crit">gegen Absicht</span>}
-                    {r.outside && r.outside.length > 0 && <div className="faint">Dienste ausserhalb: {r.outside.join(", ")}</div>}
+                    {r.violation && <span className="chip crit">{L("gegen Absicht", "against intent")}</span>}
+                    {r.outside && r.outside.length > 0 && (
+                      <div className="faint">{L(`Dienste ausserhalb: ${r.outside.join(", ")}`, `Services outside: ${r.outside.join(", ")}`)}</div>
+                    )}
+                    {r.impossible && <div className="faint zone-off-why">{r.impossible}</div>}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
-        {rules && rules.total > rules.items.length && <div className="faint">die ersten {rules.items.length} von {rules.total}</div>}
+        {rules && rules.total > rules.items.length && (
+          <div className="faint">
+            {L(`die ersten ${rules.items.length} von ${rules.total}`, `the first ${rules.items.length} of ${rules.total}`)}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1614,21 +1888,22 @@ function CellDetail({
 // Ebenen (Spalten) und Elemente des Zonenplans (0.61.0, `store/plan_view`) – ausblenden je Betrachter
 const PLAN_LAYERS: [string, string][] = [
   ["dc", "DC"],
-  ["customer", "Kunden"],
+  ["customer", L("Kunden", "Customers")],
   ["edge", "Edge"],
   ["transfer", "Transfer"],
   ["core", "Core"],
   ["distribution", "Distribution"],
   ["access", "Access"],
   ["public", "Public"],
-  ["none", "Knoten ohne Zone"],
-  ["outside", "ausserhalb"],
+  ["none", L("Knoten ohne Zone", "Nodes without zone")],
+  ["outside", L("ausserhalb", "outside")],
 ];
 const PLAN_ELEMENTS: [string, string][] = [
-  ["nodes", "Knoten in den Zonen"],
-  ["labels", "Namen der Übergänge"],
-  ["contacts", "Kontakte zu Knoten ohne Zone"],
-  ["empty", "Zonen ohne Knoten und Übergang"],
+  ["nodes", L("Knoten in den Zonen", "Nodes in the zones")],
+  ["labels", L("Namen der Übergänge", "Names of the transitions")],
+  ["contacts", L("Kontakte zu Knoten ohne Zone", "Contacts to nodes without zone")],
+  ["empty", L("Zonen ohne Knoten und Übergang", "Zones without nodes and transition")],
+  ["intents", L("Absichten (Pfeile je Richtung)", "Intents (arrows per direction)")],
 ];
 const PLAN_HIDDEN_KEY = "automato_plan_hidden";
 type PlanHidden = { layers: string[]; hide: string[] };
@@ -1716,7 +1991,8 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
   if (plan == null) return <Loading />;
   const own = plan.view?.mode === "customer";
   const f = plan.filter;
-  if (plan.zones.length === 0 && !own && !f?.active) return <Note>Noch keine Zonen – zuerst im Reiter „Zonen“ anlegen.</Note>;
+  if (plan.zones.length === 0 && !own && !f?.active)
+    return <Note>{L("Noch keine Zonen – zuerst im Reiter „Zonen“ anlegen.", "No zones yet – create them first in the “Zones” tab.")}</Note>;
   const s = plan.summary;
   const hiddenNodes = plan.zones.reduce((n, z) => n + Math.max(0, (z.nodes_total ?? 0) - (z.nodes?.length ?? 0)), 0);
   const zoneName = new Map(plan.zones.map((z) => [String(z.id), z.name]));
@@ -1740,7 +2016,16 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
     }
   };
   const resetArrangement = async () => {
-    if (!arrangeView || !window.confirm("Anordnung dieser Ansicht zurücksetzen? Die Zonen stehen wieder nach Ebenen.")) return;
+    if (
+      !arrangeView ||
+      !window.confirm(
+        L(
+          "Anordnung dieser Ansicht zurücksetzen? Die Zonen stehen wieder nach Ebenen.",
+          "Reset the arrangement of this view? The zones are placed by layer again.",
+        ),
+      )
+    )
+      return;
     setBusy(true);
     try {
       await resetPlanArrangement(tenantId, arrangeView);
@@ -1755,20 +2040,31 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
     <>
       <div className="card">
         <div className="card-head">
-          <h2>Zonenplan</h2>
+          <h2>{L("Zonenplan", "Zone plan")}</h2>
           <span className="faint" id="zone-plan-summary">
-            {s.zones} Zonen · {s.nodes} Knoten · {s.transitions ?? 0} Übergänge
-            {s.collapsed ? ` · ${s.collapsed} ${s.collapsed === 1 ? "Kunde" : "Kunden"} zusammengefasst` : ""}
-            {s.unassigned ? ` · ${s.unassigned} Knoten ohne Zone` : ""}
-            {s.without_node ? ` · ${s.without_node} Zonen ohne Knoten und Netze` : ""}
-            {s.unzoned ? ` · ${s.unzoned} Netze ohne Zone` : ""}
+            {L(
+              <>
+                {s.zones} Zonen · {s.nodes} Knoten · {s.transitions ?? 0} Übergänge
+                {s.collapsed ? ` · ${s.collapsed} ${s.collapsed === 1 ? "Kunde" : "Kunden"} zusammengefasst` : ""}
+                {s.unassigned ? ` · ${s.unassigned} Knoten ohne Zone` : ""}
+                {s.without_node ? ` · ${s.without_node} Zonen ohne Knoten und Netze` : ""}
+                {s.unzoned ? ` · ${s.unzoned} Netze ohne Zone` : ""}
+              </>,
+              <>
+                {s.zones} zones · {s.nodes} nodes · {s.transitions ?? 0} transitions
+                {s.collapsed ? ` · ${s.collapsed} ${s.collapsed === 1 ? "customer" : "customers"} collapsed` : ""}
+                {s.unassigned ? ` · ${s.unassigned} nodes without zone` : ""}
+                {s.without_node ? ` · ${s.without_node} zones without nodes and networks` : ""}
+                {s.unzoned ? ` · ${s.unzoned} networks without zone` : ""}
+              </>,
+            )}
           </span>
           <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             {!isCustomer && customers.length > 0 && (
               <select
                 className="sel"
                 id="zone-plan-view"
-                aria-label="Ansicht"
+                aria-label={L("Ansicht", "View")}
                 value={view}
                 onChange={(e) => {
                   setView(e.target.value);
@@ -1776,19 +2072,25 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
                   setPlan(null);
                 }}
               >
-                <option value="">Übersicht – Kunden je als eine Zone</option>
+                <option value="">{L("Übersicht – Kunden je als eine Zone", "Overview – customers each as one zone")}</option>
                 {customers.map((c) => (
                   <option key={c.id} value={c.id}>
-                    Kunde {c.name}
+                    {L(`Kunde ${c.name}`, `Customer ${c.name}`)}
                   </option>
                 ))}
                 {own && plan.view?.customer_id != null && !customers.some((c) => c.id === plan.view?.customer_id) && (
-                  <option value={plan.view.customer_id}>Kunde {plan.view.customer ?? plan.view.customer_id} (ohne Zonen)</option>
+                  <option value={plan.view.customer_id}>
+                    {L(
+                      `Kunde ${plan.view.customer ?? plan.view.customer_id} (ohne Zonen)`,
+                      `Customer ${plan.view.customer ?? plan.view.customer_id} (no zones)`,
+                    )}
+                  </option>
                 )}
-                <option value="all">alle Zonen einzeln</option>
+                <option value="all">{L("alle Zonen einzeln", "all zones individually")}</option>
               </select>
             )}
             <ExportButtons tenantId={tenantId} view={planView} />
+            {canArrange && <PlanImport tenantId={tenantId} onDone={() => setTick((t) => t + 1)} />}
           </span>
         </div>
         <div className="card-body scroll">
@@ -1796,18 +2098,18 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
             <input
               className="input"
               type="search"
-              aria-label="Im Plan suchen"
-              placeholder="Suchen: Zone, Kunde, Firewall/VRF, Übergang, Netz"
+              aria-label={L("Im Plan suchen", "Search in the plan")}
+              placeholder={L("Suchen: Zone, Kunde, Firewall/VRF, Übergang, Netz", "Search: zone, customer, firewall/VRF, transition, network")}
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
             <select
               className="sel"
-              aria-label="Fokus auf Zone"
+              aria-label={L("Fokus auf Zone", "Focus on zone")}
               value=""
               onChange={(e) => e.target.value && setFocus((list) => [...list, e.target.value])}
             >
-              <option value="">Fokus auf Zone …</option>
+              <option value="">{L("Fokus auf Zone …", "Focus on zone …")}</option>
               {(plan.zone_choices ?? [])
                 .filter((c) => !focus.includes(c.id))
                 .map((c) => (
@@ -1817,18 +2119,20 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
                 ))}
             </select>
             {narrowed && (
-              <select className="sel" aria-label="Nachbarn" value={depth} onChange={(e) => setDepth(Number(e.target.value))}>
-                <option value={0}>nur die Treffer</option>
-                <option value={1}>+ direkte Nachbarn</option>
-                <option value={2}>+ 2 Übergänge weit</option>
-                <option value={3}>+ 3 Übergänge weit</option>
+              <select className="sel" aria-label={L("Nachbarn", "Neighbors")} value={depth} onChange={(e) => setDepth(Number(e.target.value))}>
+                <option value={0}>{L("nur die Treffer", "only the matches")}</option>
+                <option value={1}>{L("+ direkte Nachbarn", "+ direct neighbors")}</option>
+                <option value={2}>{L("+ 2 Übergänge weit", "+ 2 transitions away")}</option>
+                <option value={3}>{L("+ 3 Übergänge weit", "+ 3 transitions away")}</option>
               </select>
             )}
             <details className="plan-layers" id="zone-plan-layers">
-              <summary className="btn btn-sm">Ebenen{hiddenCount ? ` (${hiddenCount} ausgeblendet)` : ""}</summary>
+              <summary className="btn btn-sm">
+                {L(`Ebenen${hiddenCount ? ` (${hiddenCount} ausgeblendet)` : ""}`, `Layers${hiddenCount ? ` (${hiddenCount} hidden)` : ""}`)}
+              </summary>
               <div className="plan-layers-body">
                 <div>
-                  <div className="faint">Spalten</div>
+                  <div className="faint">{L("Spalten", "Columns")}</div>
                   {PLAN_LAYERS.map(([k, label]) => (
                     <label key={k} className="check">
                       <input type="checkbox" checked={!hidden.layers.includes(k)} onChange={() => toggle("layers", k)} /> {label}
@@ -1836,7 +2140,7 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
                   ))}
                 </div>
                 <div>
-                  <div className="faint">Elemente</div>
+                  <div className="faint">{L("Elemente", "Elements")}</div>
                   {PLAN_ELEMENTS.map(([k, label]) => (
                     <label key={k} className="check">
                       <input type="checkbox" checked={!hidden.hide.includes(k)} onChange={() => toggle("hide", k)} /> {label}
@@ -1848,7 +2152,10 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
             <label
               className="check"
               id="zone-plan-flows"
-              title="Erlaubende Regeln je Zonenpaar als eigene (blaue, gepunktete) Linie – auch zwischen Zonen ohne Übergang; mit Fokus bzw. Suche kommen die Zonen dazu, mit denen die Treffer kommunizieren; im Plan eines Kunden die anderen Kunden einzeln"
+              title={L(
+                "Erlaubende Regeln je Zonenpaar als eigene (blaue, gepunktete) Linie – auch zwischen Zonen ohne Übergang; mit Fokus bzw. Suche kommen die Zonen dazu, mit denen die Treffer kommunizieren; im Plan eines Kunden die anderen Kunden einzeln",
+                "Allowing rules per zone pair as a separate (blue, dotted) line – also between zones without a transition; with focus or search the zones the matches communicate with are added; in the plan of a customer the other customers individually",
+              )}
             >
               <input
                 type="checkbox"
@@ -1858,21 +2165,25 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
                   storePlanFlows(e.target.checked);
                 }}
               />{" "}
-              Kommunikation (Regeln)
+              {L("Kommunikation (Regeln)", "Communication (rules)")}
             </label>
             {(f?.active || q) && (
               <button className="btn btn-sm" onClick={clearFilter}>
-                Filter zurücksetzen
+                {L("Filter zurücksetzen", "Reset filter")}
               </button>
             )}
           </div>
           {focus.length > 0 && (
             <div className="plan-focus" id="zone-plan-focus">
-              <span className="faint">Fokus:</span>
+              <span className="faint">{L("Fokus:", "Focus:")}</span>
               {focus.map((id) => (
                 <span key={id} className="chip">
                   {choiceName.get(id) ?? id}{" "}
-                  <button className="linkbtn" aria-label={`Fokus ${choiceName.get(id) ?? id} entfernen`} onClick={() => setFocus((list) => list.filter((x) => x !== id))}>
+                  <button
+                    className="linkbtn"
+                    aria-label={L(`Fokus ${choiceName.get(id) ?? id} entfernen`, `Remove focus ${choiceName.get(id) ?? id}`)}
+                    onClick={() => setFocus((list) => list.filter((x) => x !== id))}
+                  >
                     ×
                   </button>
                 </span>
@@ -1881,34 +2192,66 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
           )}
           {f?.active && (
             <p className="faint" id="zone-plan-filtered" style={{ margin: "0 0 6px" }}>
-              {f.zones} von {f.total} Zonen gezeigt{f.label ? ` · ${f.label}` : ""}
-              {narrowed && f.matches === 0 ? " · kein Treffer" : ""} – der Export zeigt dasselbe.
+              {L(
+                <>
+                  {f.zones} von {f.total} Zonen gezeigt{f.label ? ` · ${f.label}` : ""}
+                  {narrowed && f.matches === 0 ? " · kein Treffer" : ""} – der Export zeigt dasselbe.
+                </>,
+                <>
+                  {f.zones} of {f.total} zones shown{f.label ? ` · ${f.label}` : ""}
+                  {narrowed && f.matches === 0 ? " · no match" : ""} – the export shows the same.
+                </>,
+              )}
             </p>
           )}
           {own && (
             <p className="faint" style={{ margin: "4px 0 8px" }} id="zone-plan-customer">
-              Zonen von {plan.view?.customer ?? "Kunde"}, die genutzten Zugänge zu anderen Kunden (je als eine Zone, mit
-              „Kommunikation“ die Zonen der Partner einzeln) und von
-              den geteilten Zonen nur die Firewalls/VRFs, die der Kunde braucht – an seinen Netzen und auf den Wegen zu den
-              Zonen seiner Regeln
-              {hiddenNodes > 0 ? ` (${hiddenNodes} weitere Knoten ausgeblendet – „alle Zonen einzeln“ zeigt sie)` : ""}.
-              {plan.zones.length === 0 && !f?.active && " Dem Kunden sind keine Zonen zugeordnet."}
+              {L(
+                <>
+                  Zonen von {plan.view?.customer ?? "Kunde"}, die genutzten Zugänge zu anderen Kunden (je als eine Zone, mit
+                  „Kommunikation“ die Zonen der Partner einzeln) und von
+                  den geteilten Zonen nur die Firewalls/VRFs, die der Kunde braucht – an seinen Netzen und auf den Wegen zu den
+                  Zonen seiner Regeln
+                  {hiddenNodes > 0 ? ` (${hiddenNodes} weitere Knoten ausgeblendet – „alle Zonen einzeln“ zeigt sie)` : ""}.
+                  {plan.zones.length === 0 && !f?.active && " Dem Kunden sind keine Zonen zugeordnet."}
+                </>,
+                <>
+                  Zones of {plan.view?.customer ?? "customer"}, the used accesses to other customers (each as one zone, with
+                  “Communication” the zones of the partners individually) and of
+                  the shared zones only the firewalls/VRFs the customer needs – at its networks and on the paths to the
+                  zones of its rules
+                  {hiddenNodes > 0 ? ` (${hiddenNodes} more nodes hidden – “all zones individually” shows them)` : ""}.
+                  {plan.zones.length === 0 && !f?.active && " No zones are assigned to the customer."}
+                </>,
+              )}
             </p>
           )}
           <p className="faint plan-arrange" id="zone-plan-arrange">
             {canArrange && arrangeView
-              ? "Zonen lassen sich ziehen – die Anordnung gilt für diese Ansicht, Export und neue Versionen folgen."
-              : "Zonen lassen sich ziehen (nur hier, nicht gespeichert)."}{" "}
-            Doppelklick auf eine Zone setzt den Fokus.
+              ? L(
+                  "Zonen lassen sich ziehen – die Anordnung gilt für diese Ansicht, Export und neue Versionen folgen.",
+                  "Zones can be dragged – the arrangement applies to this view, export and new versions follow.",
+                )
+              : L("Zonen lassen sich ziehen (nur hier, nicht gespeichert).", "Zones can be dragged (only here, not saved).")}{" "}
+            {L("Doppelklick auf eine Zone setzt den Fokus.", "Double-click on a zone sets the focus.")}
             {plan.arrangement?.saved && (
               <>
                 {" "}
-                Anordnung gespeichert ({plan.arrangement.count} Zonen
-                {plan.arrangement.updated_by ? `, ${plan.arrangement.updated_by}` : ""}
-                {plan.arrangement.updated_at ? `, ${fmtTime(plan.arrangement.updated_at)}` : ""}).{" "}
+                {L(
+                  <>
+                    Anordnung gespeichert ({plan.arrangement.count} Zonen
+                    {plan.arrangement.updated_by ? `, ${plan.arrangement.updated_by}` : ""}
+                    {plan.arrangement.updated_at ? `, ${fmtTime(plan.arrangement.updated_at)}` : ""}).
+                  </>,
+                  <>
+                    Arrangement saved ({plan.arrangement.count} zones
+                    {plan.arrangement.updated_by ? `, ${plan.arrangement.updated_by}` : ""}
+                    {plan.arrangement.updated_at ? `, ${fmtTime(plan.arrangement.updated_at)}` : ""}).
+                  </>,
+                )}{" "}
                 {canArrange && (
                   <button className="btn btn-sm" disabled={busy} onClick={resetArrangement}>
-                    Anordnung zurücksetzen
+                    {L("Anordnung zurücksetzen", "Reset arrangement")}
                   </button>
                 )}
               </>
@@ -1921,30 +2264,93 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
               onFocus={(id) => setFocus((list) => (list.includes(id) ? list : [...list, id]))}
             />
           ) : (
-            f?.active && <Note>Keine Zone passt zum Filter.</Note>
+            f?.active && <Note>{L("Keine Zone passt zum Filter.", "No zone matches the filter.")}</Note>
+          )}
+          {(plan.layout?.edges ?? []).some((e) => e.ab || e.ba) && (
+            <p className="faint zone-legend" id="zone-plan-intents">
+              {L("Pfeil = Absicht in diese Richtung:", "Arrow = intent in this direction:")}{" "}
+              {(Object.keys(INTENT) as ZoneIntent[]).map((k) => (
+                <span key={k} className="nowrap">
+                  <span className="intent-swatch" style={{ background: INTENT_COLOR[k] }} /> {INTENT[k][1]}{" "}
+                </span>
+              ))}
+              {L(
+                "· farbig gestrichelt = Absicht zwischen Zonen ohne Übergang · ohne Pfeil = keine Absicht (in der Zonenmatrix setzen)",
+                "· colored dashed = intent between zones without a transition · no arrow = no intent (set it in the zone matrix)",
+              )}
+            </p>
           )}
         </div>
       </div>
 
       <div className="card">
         <div className="card-head">
-          <h2>Übergänge</h2>
-          <span className="faint">Netze zwischen Knoten verschiedener Zonen – L3Outs im ACI, Interfaces der Firewalls, Border-Router</span>
+          <h2>{L("Übergänge", "Transitions")}</h2>
+          <span className="faint">
+            {L(
+              "Netze zwischen Knoten verschiedener Zonen – L3Outs im ACI, Interfaces der Firewalls, Border-Router",
+              "Networks between nodes of different zones – L3Outs in the ACI, interfaces of the firewalls, border routers",
+            )}
+          </span>
         </div>
         <div className="card-body scroll">
           {transitions.length === 0 ? (
-            <span className="faint">keine Übergänge – Knoten über VDOM bzw. ACI-Tenant/VRF den Zonen zuordnen</span>
+            <span className="faint">
+              {L(
+                "keine Übergänge – Knoten über VDOM bzw. ACI-Tenant/VRF den Zonen zuordnen",
+                "no transitions – assign nodes to the zones via VDOM or ACI tenant/VRF",
+              )}
+            </span>
           ) : (
             <TransitionTable transitions={transitions} zoneName={zoneName} id="zone-transitions" />
           )}
         </div>
       </div>
 
+      {(plan.intents ?? []).length > 0 && (
+        <div className="card" id="zone-plan-intent-lines">
+          <div className="card-head">
+            <h2>{L("Absichten ohne Übergang", "Intents without transition")}</h2>
+            <span className="faint">
+              {L(
+                "Zonen ohne gemeinsames Netz – die Absicht gilt trotzdem (Regeln über mehrere Übergänge)",
+                "Zones without a common network – the intent applies anyway (rules across several transitions)",
+              )}
+            </span>
+          </div>
+          <div className="card-body scroll">
+            <table className="compact">
+              <thead>
+                <tr>
+                  <th>{L("Zonen", "Zones")}</th>
+                  <th>{L("Absicht je Richtung", "Intent per direction")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(plan.intents ?? []).map((i) => (
+                  <tr key={i.id} data-intent-line={i.id}>
+                    <td className="nowrap">{`${zoneName.get(String(i.a)) ?? i.a} ↔ ${zoneName.get(String(i.b)) ?? i.b}`}</td>
+                    <td>
+                      <DirectionChips a={i.a} b={i.b} ab={i.intent_ab} ba={i.intent_ba} zoneName={zoneName} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {contacts.length > 0 && (
         <div className="card" id="zone-contacts">
           <div className="card-head">
-            <h2>Knoten ohne Zone an Netzen einer Zone</h2>
-            <span className="faint">kein Übergang – das Netz bleibt in seiner Zone; den Knoten einer Zone zuordnen</span>
+            <h2>{L("Knoten ohne Zone an Netzen einer Zone", "Nodes without zone at networks of a zone")}</h2>
+            <span className="faint">
+              {L(
+                "kein Übergang – das Netz bleibt in seiner Zone; den Knoten einer Zone zuordnen",
+                "no transition – the network stays in its zone; assign the node to a zone",
+              )}
+            </span>
           </div>
           <div className="card-body scroll">
             <TransitionTable transitions={contacts} zoneName={zoneName} />
@@ -1954,7 +2360,10 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
 
       {(plan.conflicts ?? []).length > 0 && (
         <Note warn>
-          Knoten in mehreren Zonen (es gilt die erste in der Reihenfolge):{" "}
+          {L(
+            "Knoten in mehreren Zonen (es gilt die erste in der Reihenfolge):",
+            "Nodes in several zones (the first one in the order applies):",
+          )}{" "}
           {(plan.conflicts ?? []).map((c) => `${c.label} (${c.zones.join(", ")})`).join("; ")}
         </Note>
       )}
@@ -1962,12 +2371,19 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
       {!isCustomer && (
         <div className="card" id="zone-unzoned">
           <div className="card-head">
-            <h2>Netze ohne Zone</h2>
-            <span className="faint">an Interfaces und L3Outs gelesen, an Knoten ohne Zone und keiner Zone zugeordnet</span>
+            <h2>{L("Netze ohne Zone", "Networks without zone")}</h2>
+            <span className="faint">
+              {L(
+                "an Interfaces und L3Outs gelesen, an Knoten ohne Zone und keiner Zone zugeordnet",
+                "collected at interfaces and L3Outs, at nodes without zone and assigned to no zone",
+              )}
+            </span>
           </div>
           <div className="card-body scroll">
             {plan.unzoned.total === 0 ? (
-              <span className="faint">alle gelesenen Netze gehören zu einer Zone bzw. einem Übergang</span>
+              <span className="faint">
+                {L("alle gelesenen Netze gehören zu einer Zone bzw. einem Übergang", "all collected networks belong to a zone or a transition")}
+              </span>
             ) : (
               <table className="compact">
                 <tbody>
@@ -1982,7 +2398,9 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
               </table>
             )}
             {plan.unzoned.total > plan.unzoned.items.length && (
-              <div className="faint">die ersten {plan.unzoned.items.length} von {plan.unzoned.total}</div>
+              <div className="faint">
+                {L(`die ersten ${plan.unzoned.items.length} von ${plan.unzoned.total}`, `the first ${plan.unzoned.items.length} of ${plan.unzoned.total}`)}
+              </div>
             )}
           </div>
         </div>
@@ -1991,15 +2409,39 @@ function PlanTab({ tenantId, isCustomer = false, canArrange = false }: { tenantI
   );
 }
 
+// 0.78.0: Absicht je Richtung als Chips („Office → DC gesperrt“)
+function DirectionChips({ a, b, ab, ba, zoneName }: { a: PlanZoneId; b: PlanZoneId; ab?: PlanDirection | null; ba?: PlanDirection | null; zoneName: Map<string, string> }) {
+  const items = [
+    [a, b, ab],
+    [b, a, ba],
+  ] as const;
+  const shown = items.filter(([, , d]) => d);
+  if (!shown.length) return <span className="faint">–</span>;
+  return (
+    <span className="plan-directions">
+      {shown.map(([x, y, d]) => (
+        <span key={`${x}>${y}`} className="nowrap" data-direction={`${x}>${y}`} title={d?.note ?? undefined}>
+          {zoneName.get(String(x)) ?? x} → {zoneName.get(String(y)) ?? y}{" "}
+          <span className={`chip ${INTENT[d!.intent][0]}`}>{INTENT[d!.intent][1]}</span>
+          {d!.services.length > 0 && <span className="faint mono"> {d!.services.join(", ")}</span>}
+          {d!.mixed && <span className="faint">{L(" (teils weniger streng)", " (partly less strict)")}</span>}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function TransitionTable({ transitions, zoneName, id }: { transitions: PlanTransition[]; zoneName: Map<string, string>; id?: string }) {
+  const intents = transitions.some((t) => t.intent_ab || t.intent_ba);
   return (
     <table className="compact" id={id}>
       <thead>
         <tr>
-          <th>Übergang</th>
-          <th>Zonen</th>
-          <th>Netz</th>
-          <th>über</th>
+          <th>{L("Übergang", "Transition")}</th>
+          <th>{L("Zonen", "Zones")}</th>
+          {intents && <th>{L("Absicht", "Intent")}</th>}
+          <th>{L("Netz", "Network")}</th>
+          <th>{L("über", "via")}</th>
         </tr>
       </thead>
       <tbody>
@@ -2014,7 +2456,8 @@ function TransitionTable({ transitions, zoneName, id }: { transitions: PlanTrans
                 )}
               </td>
               <td className="nowrap">{i === 0 && `${zoneName.get(String(t.a)) ?? t.a} ↔ ${zoneName.get(String(t.b)) ?? t.b}`}</td>
-              <td className="mono">{n ? n.network : <span className="faint">{t.count ? `${t.count} Netze` : "–"}</span>}</td>
+              {intents && <td>{i === 0 && <DirectionChips a={t.a} b={t.b} ab={t.intent_ab} ba={t.intent_ba} zoneName={zoneName} />}</td>}
+              <td className="mono">{n ? n.network : <span className="faint">{t.count ? L(`${t.count} Netze`, `${t.count} networks`) : "–"}</span>}</td>
               <td className="faint">{n ? legsText(n) : ""}</td>
             </tr>
           )),
@@ -2042,7 +2485,7 @@ export function PlanDrawing({
 }) {
   if (layout.format === 2) return <PlanDrawing2 layout={layout} id={id} onArrange={onArrange} onFocus={onFocus} />;
   return (
-    <svg className="zone-plan" id={id} viewBox={`0 0 ${layout.width} ${layout.height}`} width="100%" role="img" aria-label="Zonenplan">
+    <svg className="zone-plan" id={id} viewBox={`0 0 ${layout.width} ${layout.height}`} width="100%" role="img" aria-label={L("Zonenplan", "Zone plan")}>
       {layout.edges.map((e) => (
         <g key={`${e.zone}-${e.node}`} className="zp-edge">
           <line x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} strokeDasharray={e.dashed ? "5 4" : undefined} />
@@ -2159,6 +2602,55 @@ export function routeEdges(boxes: PlanBox[], edges: PlanEdge[]): PlanEdge[] {
   });
 }
 
+// 0.78.0: Farben der Absicht – wie im Export und im Grundschema
+const INTENT_COLOR: Record<ZoneIntent, string> = { allow: "#2d7d46", limited: "#d79b00", deny: "#b85450" };
+const INTENT_RANK: Record<ZoneIntent, number> = { allow: 1, limited: 2, deny: 3 };
+const ARROW_LEN = 10;
+const ARROW_W = 4.5;
+
+// Pfeilspitzen der Absicht je Richtung (gleich wie `plan_export.arrows`): `ab` am Ende (Zone b),
+// `ba` am Anfang, entlang des letzten bzw. ersten Stücks der Linie
+export function intentArrows(e: PlanEdge): { dir: "ab" | "ba"; intent: ZoneIntent; points: [number, number][] }[] {
+  const pts = e.points ?? [];
+  if (pts.length < 2) return [];
+  const out: { dir: "ab" | "ba"; intent: ZoneIntent; points: [number, number][] }[] = [];
+  for (const [dir, tip, back] of [
+    ["ab", pts[pts.length - 1], pts[pts.length - 2]],
+    ["ba", pts[0], pts[1]],
+  ] as const) {
+    const intent = e[dir];
+    if (!intent) continue;
+    const dx = tip[0] - back[0];
+    const dy = tip[1] - back[1];
+    const n = Math.hypot(dx, dy) || 1;
+    const [ux, uy] = [dx / n, dy / n];
+    const [bx, by] = [tip[0] - ux * ARROW_LEN, tip[1] - uy * ARROW_LEN];
+    out.push({
+      dir,
+      intent,
+      points: [
+        [tip[0], tip[1]],
+        [bx - uy * ARROW_W, by + ux * ARROW_W],
+        [bx + uy * ARROW_W, by - ux * ARROW_W],
+      ],
+    });
+  }
+  return out;
+}
+
+function edgeStroke(e: PlanEdge): string | undefined {
+  if (!e.intent) return undefined;
+  const worst = [e.ab, e.ba].filter((x): x is ZoneIntent => !!x).sort((x, y) => INTENT_RANK[y] - INTENT_RANK[x])[0];
+  return worst ? INTENT_COLOR[worst] : undefined;
+}
+
+function edgeTitle(e: PlanEdge): string {
+  if (e.flow) return e.name ?? "";
+  if (e.intent) return L(`Absicht ${e.intent_text ?? ""}`, `Intent ${e.intent_text ?? ""}`);
+  const text = `${e.name || e.label || L("Kontakt", "Contact")}: ${(e.networks ?? []).join(", ")}`;
+  return e.intent_text ? L(`${text} – Absicht ${e.intent_text}`, `${text} – intent ${e.intent_text}`) : text;
+}
+
 function PlanDrawing2({
   layout,
   id,
@@ -2257,18 +2749,32 @@ function PlanDrawing2({
       viewBox={view}
       width="100%"
       role="img"
-      aria-label="Zonenplan"
+      aria-label={L("Zonenplan", "Zone plan")}
       onPointerMove={move}
       onPointerUp={up}
       onPointerCancel={cancel}
     >
       {edges.map((e) => (
-        <g key={e.id} className={`zp-edge ${e.contact ? "contact" : ""} ${e.flow ? "flow" : ""}`} data-flow={e.flow ? `${e.a}~${e.b}` : undefined}>
-          <polyline points={(e.points ?? []).map(([x, y]) => `${x},${y}`).join(" ")} strokeDasharray={e.flow ? "2 4" : e.dashed ? "5 4" : undefined}>
-            <title>{e.flow ? e.name : `${e.name || e.label || "Kontakt"}: ${(e.networks ?? []).join(", ")}`}</title>
+        <g
+          key={e.id}
+          className={`zp-edge ${e.contact ? "contact" : ""} ${e.flow ? "flow" : ""} ${e.intent ? "intent" : ""}`}
+          data-flow={e.flow ? `${e.a}~${e.b}` : undefined}
+          data-intent={e.ab || e.ba ? `${e.ab ?? ""}|${e.ba ?? ""}` : undefined}
+        >
+          <polyline
+            points={(e.points ?? []).map(([x, y]) => `${x},${y}`).join(" ")}
+            strokeDasharray={e.flow ? "2 4" : e.intent ? "6 3" : e.dashed ? "5 4" : undefined}
+            style={e.intent ? { stroke: edgeStroke(e) } : undefined}
+          >
+            <title>{edgeTitle(e)}</title>
           </polyline>
+          {intentArrows(e).map((a) => (
+            <polygon key={a.dir} className="zp-arrow" data-dir={a.dir} points={a.points.map(([x, y]) => `${x},${y}`).join(" ")} fill={INTENT_COLOR[a.intent]}>
+              <title>{edgeTitle(e)}</title>
+            </polygon>
+          ))}
           {e.label && (
-            <text x={e.lx} y={e.ly} textAnchor={e.anchor ?? ((e.points ?? []).length > 2 ? "start" : "middle")}>
+            <text x={e.lx} y={e.ly} textAnchor={e.anchor ?? ((e.points ?? []).length > 2 ? "start" : "middle")} style={e.intent ? { fill: edgeStroke(e) } : undefined}>
               {e.label}
             </text>
           )}
@@ -2284,7 +2790,7 @@ function PlanDrawing2({
           onPointerDown={(e) => down(e, z)}
           onDoubleClick={() => onFocus?.(String(z.id))}
         >
-          <title>{`${z.title} – ziehen zum Anordnen, Doppelklick = Fokus`}</title>
+          <title>{L(`${z.title} – ziehen zum Anordnen, Doppelklick = Fokus`, `${z.title} – drag to arrange, double-click = focus`)}</title>
           <rect x={z.x} y={z.y} width={z.w} height={z.h} rx={8} style={zoneStyle(z.color)} />
           <text x={z.x + 12} y={z.y + 18} className="zp-title">
             {z.title}
@@ -2339,12 +2845,191 @@ function ExportButtons({ tenantId, versionId, view }: { tenantId: number; versio
           ["drawio", "draw.io"],
           ["svg", "SVG"],
           ["pdf", "PDF"],
+          ["docx", "Word"],
         ] as const
       ).map(([f, label]) => (
         <button key={f} className="btn btn-sm" disabled={busy !== null} onClick={() => run(f)}>
           {busy === f ? "…" : label}
         </button>
       ))}
+      <button
+        className="btn btn-sm"
+        id="zone-plan-confluence"
+        disabled={busy !== null}
+        title={L(
+          "Word mit Zonen, Übergängen und Matrix plus der Plan als draw.io – zum Verbessern und Importieren in Confluence",
+          "Word with zones, transitions and matrix plus the plan as draw.io – to refine and import into Confluence",
+        )}
+        onClick={() => run("zip")}
+      >
+        {busy === "zip" ? "…" : L("Für Confluence (Word + draw.io)", "For Confluence (Word + draw.io)")}
+      </button>
+      <ExportLangSelect />
+    </span>
+  );
+}
+
+// Zonenplan aus draw.io zurück einlesen (0.83.0, Operator): Datei wählen, Vorschau, Teile übernehmen
+const PLAN_MAX_BYTES = 2_000_000;
+
+function PlanImport({ tenantId, onDone }: { tenantId: number; onDone: () => void }) {
+  const file = useRef<HTMLInputElement>(null);
+  const [upload, setUpload] = useState<{ content: string; name: string; preview: PlanImportPreview } | null>(null);
+  const [parts, setParts] = useState<PlanImportParts>({ positions: true, renames: true, intents: true, new_zones: false });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const pick = async (f: File | undefined) => {
+    if (!f) return;
+    setErr(null);
+    setDone(null);
+    try {
+      if (f.size > PLAN_MAX_BYTES) throw new Error(L("Zeichnung zu gross (höchstens 2 MB)", "Drawing too large (at most 2 MB)"));
+      const content = await f.text();
+      setUpload({ content, name: f.name, preview: await previewPlanImport(tenantId, content) });
+      setParts({ positions: true, renames: true, intents: true, new_zones: false });
+    } catch (e) {
+      setErr(e);
+    } finally {
+      if (file.current) file.current.value = "";
+    }
+  };
+  const apply = async () => {
+    if (!upload) return;
+    setBusy(true);
+    try {
+      const r = await applyPlanImport(tenantId, upload.content, parts);
+      const said = [
+        r.positions ? L(`${r.positions} Zonen angeordnet`, `${r.positions} zones arranged`) : "",
+        r.renames.length ? L(`${r.renames.length} umbenannt`, `${r.renames.length} renamed`) : "",
+        r.intents.length ? L(`${r.intents.length} Absichten`, `${r.intents.length} intents`) : "",
+        r.new_zones.length ? L(`${r.new_zones.length} neue Zonen`, `${r.new_zones.length} new zones`) : "",
+        ...r.skipped,
+      ].filter(Boolean);
+      setDone(said.join(" · ") || L("nichts geändert", "nothing changed"));
+      setUpload(null);
+      onDone();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const p = upload?.preview;
+  const check = (k: keyof PlanImportParts, label: string, n: number) => (
+    <label className="check">
+      <input type="checkbox" id={`zone-plan-import-${k}`} checked={parts[k]} disabled={!n} onChange={(e) => setParts({ ...parts, [k]: e.target.checked })} />{" "}
+      {label}
+    </label>
+  );
+  return (
+    <span className="plan-import">
+      <input ref={file} type="file" accept=".drawio,.xml" id="zone-plan-import-file" style={{ display: "none" }} onChange={(e) => pick(e.target.files?.[0])} />
+      <button
+        className="btn btn-sm"
+        id="zone-plan-import"
+        title={L(
+          "Den exportierten Plan nach dem Bearbeiten in draw.io zurück einlesen: Lage, Namen, neue Pfeile als Absicht",
+          "Read the exported plan back after editing it in draw.io: position, names, new arrows as intent",
+        )}
+        onClick={() => file.current?.click()}
+      >
+        {L("draw.io einlesen…", "Import draw.io…")}
+      </button>
+      {done && (
+        <span className="faint" id="zone-plan-import-done">
+          {done}
+        </span>
+      )}
+      <ErrorBox error={err} onClose={() => setErr(null)} />
+      {p && upload && (
+        <Modal
+          wide
+          title={L(`Zonenplan aus draw.io: ${upload.name}`, `Zone plan from draw.io: ${upload.name}`)}
+          onClose={() => setUpload(null)}
+          footer={
+            <>
+              <button className="btn btn-ghost" onClick={() => setUpload(null)}>
+                {L("Abbrechen", "Cancel")}
+              </button>
+              <button className="btn btn-primary" id="zone-plan-import-apply" onClick={apply} disabled={busy}>
+                {L("Übernehmen", "Apply")}
+              </button>
+            </>
+          }
+        >
+          <div id="zone-plan-import-preview">
+            <p className="faint" style={{ marginTop: 0 }}>
+              {L(
+                <>
+                  Ansicht {p.view === "all" ? "alle Zonen" : p.view === "overview" ? "Übersicht" : p.view}
+                  {p.page ? ` · Seite „${p.page}“` : ""}. Gelöschte Formen löschen keine Zone; die Linien des Exports sind keine neue Absicht –
+                  dafür einen neuen Pfeil ziehen bzw. an der Linie die Eigenschaft <span className="mono">automato_intent</span> setzen.
+                </>,
+                <>
+                  View {p.view === "all" ? "all zones" : p.view === "overview" ? "overview" : p.view}
+                  {p.page ? ` · page “${p.page}”` : ""}. Deleted shapes do not delete a zone; the lines of the export are not a new intent –
+                  for that draw a new arrow or set the property <span className="mono">automato_intent</span> on the line.
+                </>,
+              )}
+            </p>
+            {check(
+              "positions",
+              L(
+                `Lage: ${p.positions} Zonen (${p.moved.length} verschoben) als Anordnung dieser Ansicht`,
+                `Position: ${p.positions} zones (${p.moved.length} moved) as arrangement of this view`,
+              ),
+              p.positions,
+            )}
+            {check("renames", L(`Namen: ${p.renames.length}`, `Names: ${p.renames.length}`), p.renames.length)}
+            {p.renames.length > 0 && (
+              <ul className="plan-import-list" id="zone-plan-import-rename-list">
+                {p.renames.map((r) => (
+                  <li key={r.id}>
+                    {r.from} → <b>{r.to}</b>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {check("intents", L(`Absichten: ${p.intents.length}`, `Intents: ${p.intents.length}`), p.intents.length)}
+            {p.intents.length > 0 && (
+              <ul className="plan-import-list" id="zone-plan-import-intent-list">
+                {p.intents.map((x) => (
+                  <li key={`${x.src_zone_id}>${x.dst_zone_id}`}>
+                    {x.src} → {x.dst}: <span className={`chip ${INTENT[x.intent][0]}`}>{INTENT[x.intent][1]}</span>
+                    {x.services.length > 0 && <span className="faint">{L(` nur ${x.services.join(", ")}`, ` only ${x.services.join(", ")}`)}</span>}
+                    <span className="faint">
+                      {" "}
+                      ({x.reason}
+                      {x.current ? L(`, bisher ${INTENT[x.current][1]}`, `, previously ${INTENT[x.current][1]}`) : L(", neu", ", new")})
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {check(
+              "new_zones",
+              L(`Neue Formen als Zonen anlegen (ohne Selektoren): ${p.new_zones.length}`, `Create new shapes as zones (without selectors): ${p.new_zones.length}`),
+              p.new_zones.length,
+            )}
+            {p.new_zones.length > 0 && (
+              <ul className="plan-import-list" id="zone-plan-import-new-list">
+                {p.new_zones.map((n) => (
+                  <li key={n.name}>
+                    {n.name} <span className="faint">({ZONE_KIND[n.kind] ?? n.kind})</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {p.missing.length > 0 && (
+              <p className="faint">{L(`Nicht in der Zeichnung (bleiben): ${p.missing.join(", ")}`, `Not in the drawing (kept): ${p.missing.join(", ")}`)}</p>
+            )}
+            {p.warnings.map((w) => (
+              <Note key={w}>{w}</Note>
+            ))}
+          </div>
+        </Modal>
+      )}
     </span>
   );
 }
@@ -2382,7 +3067,15 @@ function VersionsTab({ tenantId, canEdit, isAdmin }: { tenantId: number; canEdit
     }
   };
   const remove = async (v: PlanVersion) => {
-    if (!window.confirm(`Version ${v.number} „${v.label}“ löschen? Der gespeicherte Stand fällt weg, die Nummer bleibt vergeben.`)) return;
+    if (
+      !window.confirm(
+        L(
+          `Version ${v.number} „${v.label}“ löschen? Der gespeicherte Stand fällt weg, die Nummer bleibt vergeben.`,
+          `Delete version ${v.number} “${v.label}”? The saved state is removed, the number stays taken.`,
+        ),
+      )
+    )
+      return;
     try {
       await deletePlanVersion(v.id);
       if (open === v.id) setOpen(null);
@@ -2399,39 +3092,60 @@ function VersionsTab({ tenantId, canEdit, isAdmin }: { tenantId: number; canEdit
       <ErrorBox error={err} onClose={() => setErr(null)} />
       <div className="card">
         <div className="card-head">
-          <h2>Versionen des Zonenplans</h2>
+          <h2>{L("Versionen des Zonenplans", "Versions of the zone plan")}</h2>
           <span className="faint" id="plan-version-state">
             {latest == null
-              ? "noch keine Version gespeichert"
+              ? L("noch keine Version gespeichert", "no version saved yet")
               : unchanged
-                ? `aktueller Stand = Version ${unchanged.number}`
-                : `geändert seit Version ${latest.number}`}
+                ? L(`aktueller Stand = Version ${unchanged.number}`, `current state = version ${unchanged.number}`)
+                : L(`geändert seit Version ${latest.number}`, `changed since version ${latest.number}`)}
           </span>
         </div>
         <div className="card-body">
           {canEdit && (
             <div className="zone-intent" id="plan-version-save">
-              <input className="input" aria-label="Bezeichnung" placeholder="Bezeichnung, z. B. Stand nach Umbau DMZ" value={label} maxLength={200} onChange={(e) => setLabel(e.target.value)} />
-              <input className="input" aria-label="Notiz" placeholder="Notiz (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
+              <input
+                className="input"
+                aria-label={L("Bezeichnung", "Label")}
+                placeholder={L("Bezeichnung, z. B. Stand nach Umbau DMZ", "Label, e.g. state after DMZ rebuild")}
+                value={label}
+                maxLength={200}
+                onChange={(e) => setLabel(e.target.value)}
+              />
+              <input
+                className="input"
+                aria-label={L("Notiz", "Note")}
+                placeholder={L("Notiz (optional)", "Note (optional)")}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
               <button className="btn btn-sm btn-primary" disabled={busy || !label.trim()} onClick={save}>
-                {busy ? "Speichere…" : "Version speichern"}
+                {busy ? L("Speichere…", "Saving…") : L("Version speichern", "Save version")}
               </button>
             </div>
           )}
           {list.items.length === 0 ? (
-            <Empty title="Noch keine Versionen">
-              Eine Version hält Zonen, Plan, Matrix und Absichten so fest, wie sie jetzt abgeleitet sind – zum Nachlesen,
-              Vergleichen und Exportieren.
+            <Empty title={L("Noch keine Versionen", "No versions yet")}>
+              {L(
+                <>
+                  Eine Version hält Zonen, Plan, Matrix und Absichten so fest, wie sie jetzt abgeleitet sind – zum Nachlesen,
+                  Vergleichen und Exportieren.
+                </>,
+                <>
+                  A version records zones, plan, matrix and intents as they are derived now – to look up,
+                  compare and export.
+                </>,
+              )}
             </Empty>
           ) : (
             <table className="compact" id="plan-versions">
               <thead>
                 <tr>
-                  <th className="num">Nr.</th>
-                  <th>Bezeichnung</th>
-                  <th>Gespeichert</th>
-                  <th className="num">Zonen</th>
-                  <th className="num">Knoten</th>
+                  <th className="num">{L("Nr.", "No.")}</th>
+                  <th>{L("Bezeichnung", "Label")}</th>
+                  <th>{L("Gespeichert", "Saved")}</th>
+                  <th className="num">{L("Zonen", "Zones")}</th>
+                  <th className="num">{L("Knoten", "Nodes")}</th>
                   <th />
                 </tr>
               </thead>
@@ -2441,7 +3155,7 @@ function VersionsTab({ tenantId, canEdit, isAdmin }: { tenantId: number; canEdit
                     <tr className="clickable" onClick={() => setOpen(open === v.id ? null : v.id)}>
                       <td className="num">{v.number}</td>
                       <td>
-                        <b>{v.label}</b> {v.fingerprint === list.current_fingerprint && <span className="chip ok">= aktuell</span>}
+                        <b>{v.label}</b> {v.fingerprint === list.current_fingerprint && <span className="chip ok">{L("= aktuell", "= current")}</span>}
                         {v.note && <div className="faint">{v.note}</div>}
                       </td>
                       <td className="faint nowrap">
@@ -2452,7 +3166,7 @@ function VersionsTab({ tenantId, canEdit, isAdmin }: { tenantId: number; canEdit
                       <td className="nowrap" onClick={(e) => e.stopPropagation()}>
                         {isAdmin && (
                           <button className="btn btn-sm btn-ghost" onClick={() => remove(v)}>
-                            Löschen
+                            {L("Löschen", "Delete")}
                           </button>
                         )}
                       </td>
@@ -2504,9 +3218,9 @@ function VersionDetail({ tenantId, version, others }: { tenantId: number; versio
       <ErrorBox error={err} onClose={() => setErr(null)} />
       <div className="plan-version-head">
         <span>
-          Vergleich von Version {version.number} mit{" "}
-          <select className="sel" aria-label="Vergleich mit" value={to} onChange={(e) => setTo(e.target.value ? Number(e.target.value) : "")}>
-            <option value="">dem aktuellen Stand</option>
+          {L(`Vergleich von Version ${version.number} mit`, `Comparison of version ${version.number} with`)}{" "}
+          <select className="sel" aria-label={L("Vergleich mit", "Compare with")} value={to} onChange={(e) => setTo(e.target.value ? Number(e.target.value) : "")}>
+            <option value="">{L("dem aktuellen Stand", "the current state")}</option>
             {others.map((o) => (
               <option key={o.id} value={o.id}>
                 Version {o.number} – {o.label}
@@ -2528,31 +3242,51 @@ function VersionDetail({ tenantId, version, others }: { tenantId: number; versio
 
 function DiffView({ diff }: { diff: PlanDiff }) {
   const rows: [string, string, string][] = [];
-  for (const z of diff.zones.added) rows.push(["Zone", z, "neu"]);
-  for (const z of diff.zones.removed) rows.push(["Zone", z, "entfernt"]);
+  const added = L("neu", "new");
+  const removed = L("entfernt", "removed");
+  const intentWord = L("Absicht", "Intent");
+  const unzonedWord = L("Netz ohne Zone", "Network without zone");
+  for (const z of diff.zones.added) rows.push(["Zone", z, added]);
+  for (const z of diff.zones.removed) rows.push(["Zone", z, removed]);
   for (const c of diff.zones.changed) {
     const what: string[] = [];
-    if (c.old.kind !== c.new.kind) what.push(`Art ${ZONE_KIND[c.old.kind as ZoneKind] ?? c.old.kind} → ${ZONE_KIND[c.new.kind as ZoneKind] ?? c.new.kind}`);
-    if (c.old.customer !== c.new.customer) what.push(`Kunde ${c.old.customer ?? "–"} → ${c.new.customer ?? "–"}`);
-    if (c.old.color !== c.new.color) what.push("Farbe");
-    if (JSON.stringify(c.old.selectors) !== JSON.stringify(c.new.selectors)) what.push("Selektoren");
-    rows.push(["Zone", c.key, `geändert: ${what.join(", ")}`]);
+    if (c.old.kind !== c.new.kind)
+      what.push(
+        L(
+          `Art ${ZONE_KIND[c.old.kind as ZoneKind] ?? c.old.kind} → ${ZONE_KIND[c.new.kind as ZoneKind] ?? c.new.kind}`,
+          `Kind ${ZONE_KIND[c.old.kind as ZoneKind] ?? c.old.kind} → ${ZONE_KIND[c.new.kind as ZoneKind] ?? c.new.kind}`,
+        ),
+      );
+    if (c.old.customer !== c.new.customer)
+      what.push(L(`Kunde ${c.old.customer ?? "–"} → ${c.new.customer ?? "–"}`, `Customer ${c.old.customer ?? "–"} → ${c.new.customer ?? "–"}`));
+    if (c.old.color !== c.new.color) what.push(L("Farbe", "Color"));
+    if (JSON.stringify(c.old.selectors) !== JSON.stringify(c.new.selectors)) what.push(L("Selektoren", "Selectors"));
+    rows.push(["Zone", c.key, L(`geändert: ${what.join(", ")}`, `changed: ${what.join(", ")}`)]);
   }
-  for (const k of diff.intents.added) rows.push(["Absicht", k, "neu"]);
-  for (const k of diff.intents.removed) rows.push(["Absicht", k, "entfernt"]);
-  for (const c of diff.intents.changed) rows.push(["Absicht", c.key, `${INTENT[c.old.intent]?.[1] ?? c.old.intent} → ${INTENT[c.new.intent]?.[1] ?? c.new.intent}`]);
+  for (const k of diff.intents.added) rows.push([intentWord, k, added]);
+  for (const k of diff.intents.removed) rows.push([intentWord, k, removed]);
+  for (const c of diff.intents.changed) rows.push([intentWord, c.key, `${INTENT[c.old.intent]?.[1] ?? c.old.intent} → ${INTENT[c.new.intent]?.[1] ?? c.new.intent}`]);
   // seit 0.56.0: „Zone @ Knoten“ = Knoten der Zone, „A ↔ B“ = Übergang mit seinen Netzen
-  const part = (k: string) => (k.includes(" ↔ ") ? "Übergang" : "Zone am Knoten");
-  for (const k of diff.attachments.added) rows.push([part(k), k, "neu"]);
-  for (const k of diff.attachments.removed) rows.push([part(k), k, "entfernt"]);
+  const part = (k: string) => (k.includes(" ↔ ") ? L("Übergang", "Transition") : L("Zone am Knoten", "Zone at node"));
+  for (const k of diff.attachments.added) rows.push([part(k), k, added]);
+  for (const k of diff.attachments.removed) rows.push([part(k), k, removed]);
   for (const c of diff.attachments.changed)
-    rows.push([part(c.key), c.key, `${c.key.includes(" ↔ ") ? "Netze" : "Interfaces"} ${c.old.interfaces.join(", ") || "–"} → ${c.new.interfaces.join(", ") || "–"}`]);
-  for (const n of diff.unzoned.added) rows.push(["Netz ohne Zone", n, "neu"]);
-  for (const n of diff.unzoned.removed) rows.push(["Netz ohne Zone", n, "jetzt in einer Zone bzw. weg"]);
+    rows.push([
+      part(c.key),
+      c.key,
+      `${c.key.includes(" ↔ ") ? L("Netze", "Networks") : "Interfaces"} ${c.old.interfaces.join(", ") || "–"} → ${c.new.interfaces.join(", ") || "–"}`,
+    ]);
+  for (const n of diff.unzoned.added) rows.push([unzonedWord, n, added]);
+  for (const n of diff.unzoned.removed) rows.push([unzonedWord, n, L("jetzt in einer Zone bzw. weg", "now in a zone or gone")]);
   return (
     <div id="plan-diff">
       {diff.same ? (
-        <div className="faint">Design unverändert (Zonen, Absichten, Knoten der Zonen, Übergänge, Netze ohne Zone).</div>
+        <div className="faint">
+          {L(
+            "Design unverändert (Zonen, Absichten, Knoten der Zonen, Übergänge, Netze ohne Zone).",
+            "Design unchanged (zones, intents, nodes of the zones, transitions, networks without zone).",
+          )}
+        </div>
       ) : (
         <table className="compact">
           <tbody>
@@ -2568,13 +3302,15 @@ function DiffView({ diff }: { diff: PlanDiff }) {
       )}
       {diff.matrix.length > 0 && (
         <details className="plan-diff-matrix">
-          <summary>{diff.matrix.length} Zellen der Matrix mit anderen Regel-Zahlen</summary>
+          <summary>
+            {L(`${diff.matrix.length} Zellen der Matrix mit anderen Regel-Zahlen`, `${diff.matrix.length} cells of the matrix with different rule counts`)}
+          </summary>
           <table className="compact">
             <thead>
               <tr>
-                <th>Zelle</th>
-                <th>vorher (erlaubend / sperrend / gegen Absicht)</th>
-                <th>nachher</th>
+                <th>{L("Zelle", "Cell")}</th>
+                <th>{L("vorher (erlaubend / sperrend / gegen Absicht)", "before (allowing / denying / against intent)")}</th>
+                <th>{L("nachher", "after")}</th>
               </tr>
             </thead>
             <tbody>

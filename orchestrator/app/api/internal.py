@@ -8,6 +8,7 @@ Regeln in den Rule & Service Store persistiert und gegen den SoT gematcht (M7).
 
 import hmac
 import logging
+import time
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -23,7 +24,7 @@ from app.models import REFERENCE_PLATFORMS, CollectorRun, RunStatus, SourceSyste
 from app.schemas.collector import CollectorResult, ReferenceBatch
 from app.sot import build_adapter
 from app.store import agents as agent_store
-from app.store import customers, ingest, reconcile, references, rule_index
+from app.store import customers, ingest, reconcile, references, rule_index, tenant_lock
 
 log = logging.getLogger(__name__)
 
@@ -104,6 +105,8 @@ def _authorized_run(
     if _internal_ok(internal):
         actor = None
     elif agent_token:
+        # ohne Lebenszeichen (0.78.1): das Einspielen haelt die Transaktion lange offen - eine
+        # geschriebene Agent-Zeile sperrte bis dahin jede andere Anfrage des Agenten
         agent = agent_store.agent_by_token(session, agent_token)
         if agent is None:
             raise HTTPException(status_code=401, detail="invalid agent token")
@@ -153,19 +156,22 @@ def _finish_reference_run(session: Session, run, result: CollectorResult, actor)
         )
         run.message = result.message
     if result.status == "completed" and source is not None and run.tenant_id:
-        try:
-            with session.begin_nested():
-                run.rule_count = references.finalize_run(session, run, source)
-                reconcile.reconcile_tenant(session, run.tenant_id)
-                # Suchtext der Regeln enthaelt DNS-Namen aus dem IPAM -> Index neu
-                rule_index.rebuild(session, run.tenant_id)
-                reconcile.refresh_app_findings(session, run.tenant_id)  # Regel <-> Weg
-                customers.derive(session, run.tenant_id)  # Kunden (ADR 0018)
+
+        def finalize() -> None:
+            tenant_lock.hold(session, run.tenant_id)  # vor allen Zeilen (0.80.1)
+            run.rule_count = references.finalize_run(session, run, source)
+            reconcile.reconcile_tenant(session, run.tenant_id)
+            # Suchtext der Regeln enthaelt DNS-Namen aus dem IPAM -> Index neu
+            rule_index.rebuild(session, run.tenant_id)
+            reconcile.refresh_app_findings(session, run.tenant_id)  # Regel <-> Weg
+            customers.derive(session, run.tenant_id)  # Kunden (ADR 0018)
+
+        error = _attempt(run, finalize, session)
+        if error is None:
             run.status = RunStatus.COMPLETED
-        except Exception as exc:  # noqa: BLE001 - wie beim Ingest: Lauf failed statt 500
-            log.exception("Referenzstand von Lauf %s nicht uebernommen", run.id)
+        else:  # wie beim Ingest: Lauf failed statt 500
             run.status = RunStatus.FAILED
-            run.message = f"Einspielen fehlgeschlagen: {_reason(exc)}"
+            run.message = f"Einspielen fehlgeschlagen: {error}"
     else:
         references.discard_run(session, run)  # Teil-Uploads eines gescheiterten Laufs verwerfen
         run.status = RunStatus.FAILED
@@ -180,6 +186,37 @@ def _finish_reference_run(session: Session, run, result: CollectorResult, actor)
     return ResultAck(run_id=run.id, status=run.status.value, message=run.message)
 
 
+def _attempt(run, work, session: Session) -> str | None:
+    """`work` im Savepoint ausfuehren; bei Deadlock bzw. Serialisierungsfehler bis zu
+    `tenant_lock.ATTEMPTS`-mal (0.80.1). Rueckgabe: Grund des Fehlschlags bzw. None. Ein Fehler
+    verwirft nur das Einspielen - Status, Meldung und Audit des Laufs bleiben speicherbar."""
+    for attempt in range(1, tenant_lock.ATTEMPTS + 1):
+        try:
+            with session.begin_nested():
+                work()
+            return None
+        except Exception as exc:  # noqa: BLE001 - Fehler sichtbar machen, Lieferung annehmen
+            if tenant_lock.transient(exc) and attempt < tenant_lock.ATTEMPTS:
+                log.warning("Lauf %s: %s - neuer Versuch", run.id, _reason(exc))
+                time.sleep(attempt)
+                continue
+            log.exception("Einspielen von Lauf %s fehlgeschlagen", run.id)
+            return _reason(exc)
+    return None  # pragma: no cover
+
+
+def _entry_count(result: CollectorResult) -> int:
+    """Eintraege des Laufs (Spalte „Einträge“): Regeln bzw. - ohne Regeln - die
+    publizierten Dienste (NSX ALB, 0.78.5), VMs (vCenter) oder Geraete (Switches)."""
+    if result.rules:
+        return len(result.rules)
+    if result.nat_rules:
+        return len(result.nat_rules)
+    if result.virtual is not None and result.virtual.vms:
+        return len(result.virtual.vms)
+    return len(result.inventory.devices) if result.inventory is not None else 0
+
+
 @router.post("/collector-runs/{run_id}/result", response_model=ResultAck)
 def submit_result(
     run_id: str,
@@ -190,7 +227,28 @@ def submit_result(
     session: Session = Depends(get_session, scope="function"),
 ) -> ResultAck:
     """Ergebnis abliefern: zentraler Worker mit internem Token, Agent mit seinem eigenen
-    Token - dann nur fuer einen Lauf, den genau dieser Agent abgeholt hat (ADR 0009)."""
+    Token - dann nur fuer einen Lauf, den genau dieser Agent abgeholt hat (ADR 0009).
+
+    Seit 0.80.1 nacheinander (`tenant_lock.slot`): wer wartet, gibt seine Verbindung vorher
+    zurueck; ein schon abgeschlossener Lauf wird ohne Warten quittiert."""
+    run, actor = _authorized_run(session, run_id, x_internal_token, x_agent_token, channel)
+    if _settled(run, result):
+        return ResultAck(run_id=run.id, status=run.status.value, message=run.message)
+    session.rollback()  # Verbindung zurueck in den Pool, solange das Ergebnis wartet
+    with tenant_lock.slot(run_id):
+        ack = _submit(session, run_id, result, x_internal_token, x_agent_token, channel)
+        session.commit()  # vor dem naechsten Einspielen
+    return ack
+
+
+def _submit(
+    session: Session,
+    run_id: str,
+    result: CollectorResult,
+    x_internal_token: str | None,
+    x_agent_token: str | None,
+    channel: mtls.Channel,
+) -> ResultAck:
     run, actor = _authorized_run(
         session, run_id, x_internal_token, x_agent_token, channel, lock=True
     )
@@ -201,7 +259,7 @@ def submit_result(
 
     run.status = RunStatus.COMPLETED if result.status == "completed" else RunStatus.FAILED
     run.finished_at = datetime.now(UTC)
-    run.rule_count = len(result.rules)
+    run.rule_count = _entry_count(result)
     run.message = result.message
 
     persisted = False
@@ -212,15 +270,19 @@ def submit_result(
             sot = references.snapshot_sot(session, tenant.id) or build_adapter(
                 tenant, get_settings()
             )
-            # Savepoint: ein Fehler beim Einspielen verwirft nur den Ingest - Lauf-Status,
-            # Meldung und Audit lassen sich danach trotzdem speichern (kein 500)
-            with session.begin_nested():
-                ingest.persist_result(session, run, result, sot)
-            persisted = True
         except Exception as exc:  # noqa: BLE001 - Ingest-Fehler sichtbar machen, Lieferung annehmen
             log.exception("Einspielen von Lauf %s fehlgeschlagen", run.id)
+            sot, error = None, _reason(exc)
+        else:
+            # Savepoint: ein Fehler beim Einspielen verwirft nur den Ingest - Lauf-Status,
+            # Meldung und Audit lassen sich danach trotzdem speichern (kein 500)
+            error = _attempt(run, lambda: ingest.persist_result(session, run, result, sot),
+                             session)  # fmt: skip
+        if error is None:
+            persisted = True
+        else:
             run.status = RunStatus.FAILED
-            run.message = f"Einspielen fehlgeschlagen: {_reason(exc)}"
+            run.message = f"Einspielen fehlgeschlagen: {error}"
 
     audit.record(
         session,

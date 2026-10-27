@@ -227,6 +227,7 @@ def _result(client, ids, key, platform, result) -> None:
 DDI = [
     {"kind": "prefix", "value": "10.10.10.0/24", "description": "Server"},
     {"kind": "prefix", "value": "10.10.20.0/24", "description": "DMZ"},
+    {"kind": "prefix", "value": "10.10.0.0/16", "description": "RZ", "status": "container"},
     {"kind": "range", "value": "10.10.10.100-10.10.10.150", "description": "DHCP"},
     {"kind": "host", "value": "10.10.10.5", "dns_name": "app01.example.ch"},
     {"kind": "host", "value": "10.10.10.1", "dns_name": "fw-01-srv.example.ch"},
@@ -333,6 +334,8 @@ def test_vorschau_uebernahme_und_konflikt(client, netbox):
     assert aci_net["vrf"]["name"] == "TE:VRF" and aci_net["vlan"]["vid"] == 110
     assert "BD BD_app" in aci_net["description"]
     assert netbox.find("ipam/prefixes", prefix="10.10.10.0/24")["description"].startswith("Server")
+    # Network Container der DDI bleibt Container (0.74.1)
+    assert netbox.find("ipam/prefixes", prefix="10.10.0.0/16")["status"]["value"] == "container"
     assert netbox.find("ipam/ip-ranges", description="DHCP · Spiegel ddi")["start_address"] == (
         "10.10.10.100/24"
     )

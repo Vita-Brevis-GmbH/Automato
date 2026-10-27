@@ -15,6 +15,7 @@ gleiche Regeln, `suggestions`).
 - **Fehlt:** die Policy fehlt auf einer Firewall des Verbunds - Befund `parallel_rule_missing`.
 - **Objekte:** gleichnamige Adress-/Service-Objekte mit anderen Werten bzw. Mitgliedern -
   Befund `parallel_object_mismatch` (die Regeln sind dann trotz gleicher Namen nicht gleich).
+- **Policy-Routen, Routing und NAT** (0.72.0): `store/parallel_net.py`.
 
 Rein lesend; abgeleiteter Zustand, nach jedem Lauf und jeder Aenderung des Verbunds neu.
 """
@@ -25,6 +26,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import null, select, update
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import (
     DeviceObject,
     FindingType,
@@ -118,6 +120,8 @@ class Comparison:
     twins: dict[int, int] = field(default_factory=dict)  # Regel -> fuehrende Regel
     info: dict[int, dict] = field(default_factory=dict)
     issues: list = field(default_factory=list)
+    # je Verbund: Mitglieder (fuehrend zuerst) und gleich/abweichend/fehlt je Bereich (0.72.0)
+    groups: dict[str, dict] = field(default_factory=dict)
 
 
 def groups(session: Session, tenant_id: int) -> dict[str, list[SourceSystem]]:
@@ -145,6 +149,7 @@ def _key_maps(rules: list[Rule]) -> tuple[dict, dict]:
 
 def compare(session: Session, tenant_id: int | None) -> Comparison:
     """Regeln und Objekte aller Verbuende des Mandanten vergleichen."""
+    from app.store import parallel_net
     from app.store.reconcile import Issue  # Befund-Typ des Abgleichs (spaet importiert)
 
     result = Comparison()
@@ -161,6 +166,7 @@ def compare(session: Session, tenant_id: int | None) -> Comparison:
         ):
             rules[r.source_system_id].append(r)
         maps = {sid: _key_maps(rules[sid]) for sid in ids}
+        stats = {"rules": {"same": 0, "differs": 0, "missing": 0}}
         claimed: set[int] = set()  # schon einer fuehrenden Regel zugeordnet
         for pos, sid in enumerate(ids):
             for lead in rules[sid]:
@@ -181,8 +187,10 @@ def compare(session: Session, tenant_id: int | None) -> Comparison:
                     if not fields:
                         result.twins[twin.id] = lead.id
                         same.append(names[other])
+                        stats["rules"]["same"] += 1
                         continue
                     differs.append(names[other])
+                    stats["rules"]["differs"] += 1
                     result.info[twin.id] = {"group": group, "lead": names[sid],
                                             "lead_rule_id": lead.id, "fields": fields}  # fmt: skip
                     result.issues.append(_mismatch(Issue, group, lead, twin, names, fields))
@@ -191,8 +199,18 @@ def compare(session: Session, tenant_id: int | None) -> Comparison:
                 result.info[lead.id] = {"group": group, "same": same, "differs": differs,
                                         "missing": missing}  # fmt: skip
                 if missing:
+                    stats["rules"]["missing"] += 1
                     result.issues.append(_missing(Issue, group, lead, names, missing))
-        result.issues += _object_issues(session, Issue, group, ids, names)
+        objects = _object_issues(session, Issue, group, ids, names)
+        stats["objects"] = {"differs": len(objects)}
+        result.issues += objects
+        net_issues, net_stats = parallel_net.compare(session, Issue, group, ids, names)
+        result.issues += net_issues
+        result.groups[group] = {
+            "group": group,
+            "members": [{"id": m.id, "name": m.name} for m in members],
+            "stats": {**stats, **net_stats},
+        }
     return result
 
 
@@ -413,14 +431,15 @@ def suggestions(session: Session, tenant_id: int, include_rejected: bool = False
     if len(systems) < 2:
         return []
     reasons: dict[tuple[int, int], list[str]] = defaultdict(list)
+    sync = L("Session-Sync (FGSP)", "Session sync (FGSP)")
     owners = paths.Graph(session, tenant_id).owners()
     for h in session.scalars(select(TopoHa).where(TopoHa.tenant_id == tenant_id)):
         for peer in h.sync_peers or []:
             for (sid, _ctx), _iface, _zone in owners.get(str(peer.get("peerip") or ""), []):
                 if sid != h.source_system_id and sid in systems:
                     pair = tuple(sorted((h.source_system_id, sid)))
-                    if "Session-Sync (FGSP)" not in reasons[pair]:
-                        reasons[pair].append("Session-Sync (FGSP)")
+                    if sync not in reasons[pair]:
+                        reasons[pair].append(sync)
     sigs: dict[int, dict[tuple, dict]] = defaultdict(dict)
     for r in session.scalars(
         select(Rule).where(Rule.source_system_id.in_(systems), Rule.domain == RuleDomain.FIREWALL)
@@ -433,7 +452,8 @@ def suggestions(session: Session, tenant_id: int, include_rejected: bool = False
             same = sum(1 for k in common if sigs[a][k] == sigs[b][k])
             smaller = min(len(sigs[a]), len(sigs[b]))
             if smaller and same >= 3 and same * 2 >= smaller:
-                reasons[(a, b)].append(f"{same} von {smaller} Policies gleich")
+                reasons[(a, b)].append(L(f"{same} von {smaller} Policies gleich",
+                                         f"{same} of {smaller} policies identical"))  # fmt: skip
     no = rejected(session, tenant_id)
     if include_rejected:
         for pair in no:

@@ -9,6 +9,7 @@ from app.auth import roles as R
 from app.auth.principal import Principal
 from app.config import get_settings
 from app.db import get_session_factory
+from app.i18n import L
 
 log = logging.getLogger(__name__)
 
@@ -106,4 +107,9 @@ def tenant_scope(principal: Principal, requested: int | None) -> int | None:
         return allowed[0]
     if not allowed:
         raise HTTPException(status_code=403, detail="no tenant assigned")
-    raise HTTPException(status_code=400, detail="tenant_id erforderlich (mehrere Mandanten)")
+    raise HTTPException(
+        status_code=400,
+        detail=L(
+            "tenant_id erforderlich (mehrere Mandanten)", "tenant_id required (several tenants)"
+        ),
+    )

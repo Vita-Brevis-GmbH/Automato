@@ -16,6 +16,7 @@ from app import audit
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import L, german, german_only, lang
 from app.models import DictionaryEntry, Tenant
 from app.schemas.naming_profile import (
     DictionaryCopyIn,
@@ -194,6 +195,7 @@ class SchemaZoneIn(BaseModel):
     description: str | None = Field(default=None, max_length=1000)
     geometry: list[float] | None = Field(default=None, max_length=4)
     previous: str | None = Field(default=None, max_length=200)  # bisheriger Name (Umbenennen)
+    per_customer: bool = False  # Vorlage je Kunde (0.82.0)
 
 
 class SchemaLinkIn(BaseModel):
@@ -238,6 +240,10 @@ def _schema_out(session: Session, profile_id: int) -> dict:
     }  # fmt: skip
 
 
+def _schema_title(name: str) -> str:
+    return L(f"Zonenschema {name}", f"Zone schema {name}")
+
+
 def _file(content: str, name: str) -> Response:
     return Response(content=content, media_type="application/vnd.jgraph.mxfile",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
@@ -252,14 +258,15 @@ def zone_schema_template(
     """Vorlage als draw.io: Beispiel-Zonen mit Eigenschaften und Uebergaengen - bzw. mit
     `tenant_id` die logischen Zonen und Absichten dieses Mandanten als Ausgangspunkt."""
     if tenant_id is None:
-        return _file(zone_schema.drawing(zone_schema.default_schema(), "Zonenschema (Vorlage)"),
+        title = L("Zonenschema (Vorlage)", "Zone schema (template)")
+        return _file(zone_schema.drawing(zone_schema.default_schema(), title),
                      "zonenschema-vorlage.drawio")  # fmt: skip
     tid = tenant_scope(principal, tenant_id)
     tenant = session.get(Tenant, tid)
     if tenant is None:
         raise HTTPException(status_code=404, detail="tenant not found")
     schema = zone_schema.from_zones(session, tid)
-    return _file(zone_schema.drawing(schema, f"Zonenschema {tenant.name}"),
+    return _file(zone_schema.drawing(schema, _schema_title(tenant.name)),
                  "zonenschema-aus-zonen.drawio")  # fmt: skip
 
 
@@ -288,6 +295,19 @@ def preview_zone_schema(
             "diff": zone_schema.diff(zone_schema.load(session, profile_id), schema)}  # fmt: skip
 
 
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
+def _refresh_schema_findings(session: Session, profile_id: int) -> None:
+    """Befund „Zone ausserhalb des Schemas“ (0.78.0) der Mandanten mit diesem Profil neu."""
+    from sqlalchemy import select
+
+    from app.store import reconcile
+
+    session.flush()
+    for tid in session.scalars(select(Tenant.id)):
+        if store.profile_id_for_tenant(session, tid) == profile_id:
+            reconcile.refresh_zone_findings(session, tid)
+
+
 @router.put("/{profile_id}/zone-schema")
 def save_zone_schema(
     profile_id: int,
@@ -297,7 +317,10 @@ def save_zone_schema(
 ) -> dict:
     """Zeichnung als Grundschema des Profils speichern (Admin) - ersetzt das bisherige."""
     _profile(session, profile_id)
-    schema = _parse(body)
+    schema = _parse(body)  # Fehler in der Sprache der Anfrage
+    if lang() != "de":
+        with german():  # gespeichert werden die Hinweise deutsch (ADR 0028)
+            schema = zone_schema.parse(body.content)
     zone_schema.save(session, profile_id, schema, body.content, body.filename, principal.subject)
     audit.record(
         session,
@@ -306,6 +329,7 @@ def save_zone_schema(
         subject=str(profile_id),
         detail={"profile_id": profile_id, "zones": len(schema.zones), "links": len(schema.links)},
     )
+    _refresh_schema_findings(session, profile_id)
     return _schema_out(session, profile_id)
 
 
@@ -342,6 +366,7 @@ def edit_zone_schema(
             + len(change["links"]["changed"]),
         },
     )  # fmt: skip
+    _refresh_schema_findings(session, profile_id)
     return _schema_out(session, profile_id)
 
 
@@ -361,6 +386,7 @@ def delete_zone_schema(
             subject=str(profile_id),
             detail={"profile_id": profile_id},
         )
+        _refresh_schema_findings(session, profile_id)
 
 
 @router.get("/{profile_id}/zone-schema/drawing")
@@ -377,7 +403,7 @@ def zone_schema_drawing(
         schema = zone_schema.load(session, profile_id)
         if schema is None:
             raise HTTPException(status_code=404, detail="no zone schema")
-        return _file(zone_schema.drawing(schema, f"Zonenschema {p.name}"), "zonenschema.drawio")
+        return _file(zone_schema.drawing(schema, _schema_title(p.name)), "zonenschema.drawio")
     name = (m.value or "zonenschema.drawio").replace('"', "").replace("\n", " ")
     return _file(
         m.extra["content"], name if name.endswith((".drawio", ".xml")) else f"{name}.drawio"

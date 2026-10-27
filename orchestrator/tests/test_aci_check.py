@@ -101,6 +101,7 @@ def test_contracts_je_vrf_hop(client):
         "– im ACI gesperrt",
         "src_epg": "externe EPG L3O_fw|EN_srv (10.20.0.0/24)",
         "dst_epg": "EPG TE/AP1/EPG_web",
+        "l3outs": ["L3O_fw"],  # L3Out der externen EPG (Netzwerkplan, 0.74.0)
     }
     assert policy["verdict"] == "deny"
 

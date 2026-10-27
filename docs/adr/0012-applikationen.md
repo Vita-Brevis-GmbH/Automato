@@ -79,6 +79,49 @@ Begründung und Audit):**
   `application.rule_shown` mit Regel-Verweis, Kategorie und Begründung. Kunden-Benutzer sehen
   die ausgeblendeten Zeilen ihrer Regeln, ändern aber nichts (Freigabeliste).
 
+**Ergänzung 0.73.0 (Anwender: mehr Übersicht in der Applikations-Doku):**
+- **Abhängigkeiten vorerst entfernt:** Die Ableitung aus spezifischen Regeln zeigte z. B. einen
+  Monitoring-Contract als Abhängigkeit – technisch eine Verbindung, fachlich keine Aussage über
+  die Produktion. Bis eine bessere Bewertung nötig wird (z. B. Art der Gegenstelle, Dienste,
+  von Hand bestätigt), keine Karte und kein Export; `GET /applications/{id}/doc` rechnet sie
+  nur noch mit `dependencies=true` (spart die Zeit), die Ableitung `applications.dependencies`
+  bleibt für einen späteren Ausbau.
+- **Übersicht:** Bereiche der Doku zuklappbar (Zustand im Browser), Systeme kompakt mit Detail
+  auf Klick. Export (Markdown, Word bzw. Word + draw.io) und Druck mit wählbaren Abschnitten
+  (`word_export.SECTIONS`: `overview`, `systems`, `epgs`, `connections`, `plan`, `rules`,
+  `findings`, `categories`, `hidden`; `GET /applications/{id}/export?sections=…`, der
+  Steckbrief steht immer da). Reine Darstellung, keine Änderung an den Daten.
+
+**Ergänzung 0.78.2 (Anwender: Kategorien Richtung L3Out und Kategorie 10):**
+- **Die Firewall ist führend:** Ein Contract, dessen Gegenstelle nur externe EPGs (L3Out) sind,
+  steht nicht separat in den Kategorien (1–6, 9, 10 nach der L3Out-Zone), solange er die
+  Dienste der erlaubenden Firewall-Regeln derselben Kategorie und Richtung des Systems abdeckt
+  (`appdoc.mark_categories`, Vergleich wie bei der Absicht je Dienst: `zone_services`).
+  Gibt es dort keine Firewall-Regel, öffnet die Firewall nichts – der Contract steht ebenfalls
+  nicht da. Öffnet er weniger (Dienste der Firewall fehlen, „nur Antworten“), steht er da mit
+  „öffnet weniger als die Firewall-Regeln, es fehlt …“ und ist ein Befund
+  `app_contract_narrower` (Warnung, je Contract und Applikation, mit Systemen, Kategorien,
+  fehlenden Diensten und den Firewall-Regeln; neu mit den übrigen Befunden der Applikationen).
+  Sperrende Contracts (Taboo) bleiben stehen. Ohne Firewall im Mandanten (nur ACI) bleibt alles
+  wie bisher. Treffer, Regeln & Contracts und Verbindungen behalten den Contract.
+- **Kategorie 10 „Unspezifische Zugriffe auf die Applikation“** zeigt nur Zugriffe auf die
+  Applikation (eingehend), nicht ihre Zugriffe auf andere Systeme bzw. Adressen ohne
+  Zonensignal (z. B. „any → Tool“, „Server → Monitoring“); als Treffer bleiben sie.
+- Gleich in der Doku je System, im Export (Markdown, Word) und im Druck.
+
+**Ergänzung 0.84.0 (Anwender: „heute steht alles in Server Name“ – VIPs, Load Balancer und der
+Weg zum Server in die Spalten verteilen):**
+- **Source und Destination in Verkehrsrichtung** statt „Server Name“ und „Target Systems“:
+  eingehend Gegenstelle → System, ausgehend System → Gegenstelle; beide mit Name und IP, mehrere
+  Einträge je auf einer Zeile. Die Seite der Applikation trägt die Zeile intern weiter
+  (`_app`/`_peer`, `_app_col`), Treffer und Ausblenden bleiben gleich.
+- **Kategorie 2** mit der Kette in eigenen Spalten: Externer DNS Name, VIP (Firewall), Load
+  Balancer (nur Virtual Services mit einem Port der Regel), Destination = Server mit dem Port im
+  Pool. „Externe IP Adressen“ entfällt (steht in der VIP).
+- **NAT** als eigene Spalte in den übrigen Kategorien (SNAT der Regel); optionale Spalten ohne
+  Wert fallen je Kategorie weg (Ansicht, Markdown, Word, Druck). Die Spezifikation
+  `docs/usecases/uc1-applikations-doku-spec.md` beschreibt die Spalten.
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:
@@ -119,6 +162,23 @@ gehören zu mehreren Applikationen.
     diesem Kürzel, ergänzt der Vorschlag deren Mitglieder.
   - Der Vorschlag wird beim Übernehmen serverseitig neu berechnet; der Client schickt nur die
     Projektnummer.
+  - **Ergänzung 0.74.1 (Anwender: „alle AP_001 von allen Tenants, die haben ausser der Nummer
+    nichts gemeinsam“):** gruppiert wird nach **ACI-Tenant und Nummer**. Kommt eine Nummer in
+    mehreren Tenants vor, heisst der Vorschlag „<Name> · <Tenant>“; Server zur Nummer gehen zum
+    einzigen Tenant mit dieser Nummer, sonst in einen eigenen Vorschlag ohne Tenant. Schlüssel
+    `<Tenant>|<Nummer>` (`key`); die Nummer allein wird nur angenommen, wenn sie eindeutig ist.
+    Eine bestehende Applikation wird ergänzt, wenn ihr Name passt bzw. ihre APs im selben
+    Tenant liegen.
+- **Ergänzung 0.75.0 – Stammdaten aus CSV** (Entscheid des Anwenders 2026-10-26, einzige
+  Ausnahme vom Grundsatz „kein CSV-Import“): Name, externer/interner Name, Zweck, Kürzel,
+  Verantwortlich, Kritikalität, Standort und Beschreibung aus einer CSV-Datei
+  (`POST /applications/import`, ohne `apply` Vorschau, mit `apply=true` übernehmen; Vorlage
+  `GET /applications/import/template`; `store/app_import.py`). Kopfzeile deutsch oder englisch,
+  Werte auch deutsch (Produktion, hoch); gleicher Name (ohne Gross-/Kleinschreibung) ändert die
+  bestehende Applikation nur in ausgefüllten Zellen; fehlerhafte Zeilen werden ausgelassen.
+  Mitglieder bleiben in der Oberfläche – die Stammdaten haben keine Funktionsrelevanz. Dazu
+  `vm_count` je Applikation in der Liste und `POST /applications/delete` (mehrere löschen,
+  Audit je Applikation).
 - **Doku je Applikation:** die Tabellen 1–10 aller Systeme der Applikation (Server →
   Firewall-Tabellen, EPGs → ACI-Tabellen), gleiche Zeilen einmal. Regeln, Objekte und NAT
   werden je Mandant einmal geladen. Export als Markdown sowie als Druckansicht (PDF über den
@@ -139,5 +199,5 @@ gehören zu mehreren Applikationen.
 - Benennt jemand ein AP, eine EPG oder einen Server um, verliert das Mitglied den Bezug und
   erscheint als „nicht mehr gelesen“. Der Vorschlag bietet das umbenannte Objekt wieder an.
 - Regeln direkt zuordnen bzw. ausschliessen und Abhängigkeiten zwischen Applikationen seit
-  0.60.0 (Ergänzung oben). Noch offen: ein Export nach NetBox (Tag/Custom Field, nur mit
+  0.60.0 (Ergänzung oben; Abhängigkeiten seit 0.73.0 vorerst nicht angezeigt). Noch offen: ein Export nach NetBox (Tag/Custom Field, nur mit
   eigener Freigabe gemäss ADR 0010).

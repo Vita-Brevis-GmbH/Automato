@@ -336,6 +336,6 @@ def members(
         }
     return [
         {"id": r.ref_id, "name": r.value if kind == "net" else names.get(r.ref_id, "?"),
-         "via": r.via}
+         "via": store.show_reason(r.via)}
         for r in rows
     ]  # fmt: skip

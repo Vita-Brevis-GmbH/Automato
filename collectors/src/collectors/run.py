@@ -39,6 +39,7 @@ from collectors.common import agentlog, http, selfupdate
 from collectors.config import get_settings
 
 try:
+    from collectors.avi import tasks as _avi
     from collectors.cisco_aci.tasks import check as _aci_check
     from collectors.cisco_aci.tasks import collect_once as _aci_collect
     from collectors.cisco_switch import tasks as _switch
@@ -58,6 +59,7 @@ try:
         "netbox": _ipam.collect_netbox,
         "vmware": _vmware.collect_once,
         "cisco_switch": _switch.collect_once,
+        "avi": _avi.collect_once,
     }
     CHECKERS: dict[str, Callable[..., tuple[bool, str]]] = {
         "fortigate": _fgt_check,
@@ -66,6 +68,7 @@ try:
         "netbox": _ipam.check_netbox,
         "vmware": _vmware.check,
         "cisco_switch": _switch.check,
+        "avi": _avi.check,
     }
     # --check --strict: Negativtest je Plattform (nur wo sinnvoll und vertretbar)
     STRICT_CHECKERS: dict[str, Callable[..., tuple[bool, str]]] = {"fortigate": _fgt_strict}

@@ -334,3 +334,33 @@ def test_schema_in_der_oberflaeche_bearbeiten(client, session_factory):
 
 def srv_reason(schema: dict) -> str:
     return next(z["kind_reason"] for z in schema["zones"] if z["name"] == "Server")
+
+
+def test_befund_zone_ausserhalb_des_schemas(client):
+    """0.78.0 (ADR 0024): eine logische Zone, die zu keiner Zone des Grundschemas passt, ist ein
+    Hinweis; passt sie (wieder), fällt er weg. Ohne Grundschema kein Befund."""
+    tid, _ids = _setup(client)
+    lab = _zone(client, tid, "Labor Spezial", [_sel("prefix", "10.99.0.0/24")])
+    _zone(client, tid, "Server Zone", [_sel("prefix", "10.98.0.0/24")])
+
+    def outside():
+        rows = client.get("/findings", params={"tenant_id": tid, "type": "zone_outside_schema"})
+        return {f["subject_id"]: f for f in rows.json()}
+
+    assert outside() == {}  # ohne Grundschema
+    pid = client.post("/naming-profiles", json={"customer": "Kunde A", "name": "Zonen"},
+                      headers=ADMIN).json()["id"]  # fmt: skip
+    assert client.patch(f"/tenants/{tid}", json={"naming_profile_id": pid},
+                        headers=ADMIN).status_code == 200  # fmt: skip
+    r = client.put(f"/naming-profiles/{pid}/zone-schema", json={"content": SCHEMA}, headers=ADMIN)
+    assert r.status_code == 200, r.text
+    found = outside()
+    assert set(found) == {"Labor Spezial"}  # „Server Zone“ steht im Schema
+    f = found["Labor Spezial"]
+    assert f["severity"] == "info" and f["detail"]["profile"].endswith("Zonen")
+    assert "Grundschemas" in f["message"]
+    # umbenannt in eine Zone des Schemas: kein Befund mehr
+    body = {"tenant_id": tid, "name": "Labor", "selectors": [_sel("prefix", "10.99.0.0/24")]}
+    r = client.put(f"/zones/{lab['id']}", json=body, headers=OP)
+    assert r.status_code == 200, r.text
+    assert outside() == {}

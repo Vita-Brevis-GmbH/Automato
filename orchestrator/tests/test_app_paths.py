@@ -122,7 +122,9 @@ def test_eine_zeile_je_verbindung_ueber_aci_und_zwei_firewalls(client):
     assert alt["mismatch"][0] == (
         "Policy 12 „web-lan-8080“ erlaubt – der Weg ist gesperrt an apic-01 · VRF TE:VRF1"
     )
-    assert out["summary"] == {"total": 2, "allow": 1, "blocked": 1, "open": 0, "mismatch": 2}
+    assert out["summary"] == {"total": 2, "allow": 1, "blocked": 1, "open": 0, "mismatch": 2,
+                              "inconsistent": 0, "zone_violations": 0}  # fmt: skip
+    assert https["zones"] is None  # ohne logische Zonen
     # Abweichungen zuerst, gesperrte vor erlaubten
     assert out["connections"][0]["service"] == "tcp/8080"
 
@@ -144,44 +146,71 @@ def _mismatches(client, tid) -> dict[str, dict]:
     return {f["subject_id"]: f for f in r.json()}
 
 
-def test_abweichung_regel_weg_als_befund(client):
-    """0.59.0 (ADR 0021): je erlaubender Regel und Applikation ein Befund, wenn ihre Verbindung
-    der Weg sperrt bzw. sie nicht auf dem Weg liegt - nach dem Anlegen bzw. Aendern der
-    Applikation und nach jedem Lauf; Triage bleibt beim Abgleich erhalten."""
+def test_durchgehend_gesperrt_ist_kein_befund(client):
+    """0.73.0 (Anwender): eine Verbindung, die der Weg durchgehend sperrt bzw. deren Regel nicht
+    auf dem Weg liegt, hat einen Grund - in den Verbindungen „Abweichung“, aber kein Befund."""
     tid = _seed(client)
-    assert _mismatches(client, tid) == {}  # ohne Applikation keine
-    body = {"name": "Web", "members": [{"kind": "epg", "ref": ar.WEB}]}
-    app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).json()
-    found = _mismatches(client, tid)
-    assert set(found) == {"web-lan-alt · Applikation Web", "web-lan-8080 · Applikation Web"}
-    alt = found["web-lan-alt · Applikation Web"]
-    assert alt["detail"]["application_id"] == app["id"] and alt["detail"]["count"] == 1
-    assert alt["message"].startswith("Regel „web-lan-alt“ auf fw-03 erlaubt für die Applikation")
-    assert "fw-03 liegt nicht auf dem Weg dieser Verbindung" in alt["message"]
-    blocked = found["web-lan-8080 · Applikation Web"]["message"]
-    assert "10.60.0.5 tcp/8080 (gesperrt an apic-01 · VRF TE:VRF1)" in blocked
-    # in der Doku der Applikation bei den Befunden
-    doc = client.get(f"/applications/{app['id']}/doc").json()
-    assert {f["type"] for f in doc["findings"]} >= {"app_connection_mismatch"}
+    out = _connections(client, tid)
+    assert {c["service"]: c["inconsistent"] for c in out["connections"]} == {
+        "tcp/443": False,
+        "tcp/8080": False,
+    }
+    assert out["summary"]["inconsistent"] == 0 and out["summary"]["mismatch"] == 2
+    assert _mismatches(client, tid) == {}
 
-    # Triage bleibt beim Abgleich (Befunde werden nicht neu angelegt)
-    fid = alt["id"]
-    r = client.patch(f"/findings/{fid}", json={"status": "acknowledged"}, headers=OP)
-    assert r.status_code == 200, r.text
-    assert client.post("/reconcile", params={"tenant_id": tid}, headers=OP).status_code == 200
-    again = _mismatches(client, tid)["web-lan-alt · Applikation Web"]
-    assert again["id"] == fid and again["status"] == "acknowledged"
-    # neuer Lauf von fw-03 ohne die Regel: der Befund faellt weg
-    sid = next(s["id"] for s in client.get("/systems", params={"tenant_id": tid}).json()
-               if s["name"] == "fw-03")  # fmt: skip
-    tp._deliver(client, tid, sid, "fortigate", {**FW3, "rules": []})
-    assert set(_mismatches(client, tid)) == {"web-lan-8080 · Applikation Web"}
 
-    # Name geaendert: Befund mit neuem Namen; geloescht: Befunde weg
-    r = client.patch(f"/applications/{app['id']}", json={"name": "Webshop"}, headers=OP)
-    assert r.status_code == 200, r.text
-    assert set(_mismatches(client, tid)) == {"web-lan-8080 · Applikation Webshop"}
-    assert client.delete(f"/applications/{app['id']}", headers=OP).status_code == 204
+# Verbund (0.73.0): fw-r leitet 10.88.0.0/16 per ECMP an fw-p1 und fw-p2; fw-r erlaubt den
+# Server 10.10.0.5 zu 10.88.0.7 tcp/443, fw-p1 laesst alles durch, fw-p2 sperrt alles
+SRV_A, SRV_B = "10.10.0.5", "10.88.0.7"
+FWR = {**tp.FWR, "rules": [_fw("5", "srv-https", SRV_A, SRV_B, 443, "lan", "to-par",
+                                (None, None))]}  # fmt: skip
+P1 = tp._par("fw-p1", "10.66.0.2/29", allow=True)
+P2 = copy.deepcopy(P1)
+P2["inventory"] = tp._par("fw-p2", "10.66.0.3/29")["inventory"]
+P2["routing"] = tp._par("fw-p2", "10.66.0.3/29")["routing"]
+P2["rules"][0] |= {"name": "alles-zu", "action": "deny"}
+
+
+def _seed_verbund(client) -> tuple[int, dict, int]:
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=tp.ADMIN).json()["id"]
+    ids = {}
+    for name, result in (("fw-r", FWR), ("fw-p1", P1), ("fw-p2", P2)):
+        ids[name] = tp._system(client, tid, name, "fortigate")
+        tp._deliver(client, tid, ids[name], "fortigate", result)
+    body = {"name": "Srv", "members": [{"kind": "host", "ref": SRV_A}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP)
+    assert app.status_code == 201, app.text
+    return tid, ids, app.json()["id"]
+
+
+def test_wege_uneinheitlich_als_befund(client):
+    """0.73.0: offen ueber einen Weg, gesperrt ueber einen anderen - ECMP bzw. die Firewalls
+    eines Verbunds urteilen verschieden; Befund an der erlaubenden Regel der Applikation."""
+    tid, ids, aid = _seed_verbund(client)
+    (conn,) = client.get(f"/applications/{aid}/connections").json()["connections"]
+    assert (conn["src"]["ip"], conn["dst"]["ip"], conn["service"]) == (SRV_A, SRV_B, "tcp/443")
+    assert conn["inconsistent"] is True
+    ways = {(v["kind"], v["via"], v["verdict"]) for v in conn["variants"]}
+    assert ways == {("active", "fw-r → fw-p1", "allow"), ("active", "fw-r → fw-p2", "deny")}
+    (f,) = _mismatches(client, tid).values()
+    assert f["subject_id"] == "srv-https · Applikation Srv"
+    assert "je nach Weg offen bzw. gesperrt" in f["message"]
+    assert "über fw-r → fw-p1 erlaubt" in f["message"]
+    assert "über fw-r → fw-p2 gesperrt" in f["message"]
+
+    # Verbund: ein Weg, die Firewalls darin urteilen verschieden - weiter uneinheitlich
+    body = {"tenant_id": tid, "group": "Nord", "system_ids": [ids["fw-p1"], ids["fw-p2"]]}
+    assert client.post("/systems/parallel-group", json=body, headers=tp.ADMIN).status_code == 200
+    (conn,) = client.get(f"/applications/{aid}/connections").json()["connections"]
+    assert conn["paths"] == 1 and conn["inconsistent"] is True
+    assert {v["via"] for v in conn["variants"]} == {"fw-r → fw-p1", "fw-r → fw-p2"}
+    assert len(_mismatches(client, tid)) == 1
+
+    # fw-p2 angeglichen: einheitlich erlaubt, der Befund faellt weg
+    same = tp._par("fw-p2", "10.66.0.3/29", allow=True)
+    tp._deliver(client, tid, ids["fw-p2"], "fortigate", same)
+    (conn,) = client.get(f"/applications/{aid}/connections").json()["connections"]
+    assert conn["inconsistent"] is False and conn["verdict"] == "allow"
     assert _mismatches(client, tid) == {}
 
 
@@ -191,20 +220,43 @@ def test_zeitbudget_der_neuberechnung(client, session_factory):
     from app.models import Application
     from app.store import reconcile
 
-    tid = _seed(client)
-    body = {"name": "Web", "members": [{"kind": "epg", "ref": ar.WEB}]}
-    app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).json()
-    before = _mismatches(client, tid)
-    assert len(before) == 2
+    tid, _ids, aid = _seed_verbund(client)
+    assert len(_mismatches(client, tid)) == 1
     s = session_factory()
     apps = list(s.query(Application).filter(Application.tenant_id == tid))
     issues, failed = reconcile._app_issues(s, tid, apps, budget=1e-9)
-    assert issues == [] and failed == {app["id"]}
-    assert reconcile._app_next.pop(tid) == app["id"]
+    assert issues == [] and failed == {aid}
+    assert reconcile._app_next.pop(tid) == aid
     s.close()
     # ohne Grenze wieder alle
     s = session_factory()
     apps = list(s.query(Application).filter(Application.tenant_id == tid))
     issues, failed = reconcile._app_issues(s, tid, apps, budget=None)
-    assert len(issues) == 2 and failed == set()
+    assert len(issues) == 1 and failed == set()
     s.close()
+
+
+def test_zonen_in_den_verbindungen(client):
+    """0.78.0 (ADR 0024): je Verbindung die Zonen von Quelle und Ziel, die Kette des Wegs und die
+    Absicht mit Urteil - Absicht „gesperrt“, der Weg erlaubt = gegen die Absicht."""
+    tid = _seed(client)
+
+    def zone(name, net):
+        body = {"tenant_id": tid, "name": name, "selectors": [{"kind": "prefix", "value": net}]}
+        r = client.post("/zones", json=body, headers=OP)
+        assert r.status_code == 201, r.text
+        return r.json()["id"]
+
+    web, lan = zone("Web", "10.50.1.0/24"), zone("LAN", "10.60.0.0/24")
+    body = {"tenant_id": tid, "src_zone_id": web, "dst_zone_id": lan, "intent": "deny"}
+    assert client.put("/zones/policy", json=body, headers=OP).status_code == 200
+    out = _connections(client, tid)
+    https = next(c for c in out["connections"] if c["service"] == "tcp/443")
+    zones = https["zones"]
+    assert (zones["src"], zones["dst"]) == (["Web"], ["LAN"])
+    assert zones["chain"][0]["name"] == "Web" and zones["chain"][-1]["name"] == "LAN"
+    (intent,) = zones["intents"]
+    assert (intent["intent"], intent["verdict"]) == ("deny", "violation")
+    assert zones["violation"] and out["summary"]["zone_violations"] == 1
+    blocked = next(c for c in out["connections"] if c["service"] == "tcp/8080")
+    assert not blocked["zones"]["violation"]  # gesperrt wie beabsichtigt

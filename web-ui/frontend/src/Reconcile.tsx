@@ -5,6 +5,7 @@ import { fetchIpamCompare, fetchReconcileSummary, IpamCompare, RefBrief, Reconci
 import type { Me } from "./auth";
 import { FINDING_HINT, FINDING_LABEL, PLATFORM_LABEL, REF_ROLE_LABEL } from "./refs";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
+import { L } from "./i18n";
 
 const PAGE = 200;
 
@@ -55,8 +56,13 @@ export default function Reconcile({
   if (tenantId === null) {
     return (
       <>
-        <PageHead title="Abgleich" />
-        <Note>Bitte oben einen Mandanten wählen – der Abgleich wird je Mandant berechnet.</Note>
+        <PageHead title={L("Abgleich", "Reconciliation")} />
+        <Note>
+          {L(
+            "Bitte oben einen Mandanten wählen – der Abgleich wird je Mandant berechnet.",
+            "Please select a tenant above – the reconciliation is calculated per tenant.",
+          )}
+        </Note>
       </>
     );
   }
@@ -80,19 +86,28 @@ export default function Reconcile({
   return (
     <>
       <PageHead
-        title="Abgleich"
+        title={L("Abgleich", "Reconciliation")}
         actions={
           me.isOperator && (
             <button className="btn btn-primary" onClick={rerun} disabled={busy}>
-              <Icon name="play" size={14} /> {busy ? "Gleiche ab…" : "Jetzt abgleichen"}
+              <Icon name="play" size={14} />{" "}
+              {busy ? L("Gleiche ab…", "Reconciling…") : L("Jetzt abgleichen", "Reconcile now")}
             </button>
           )
         }
       >
-        Firewall- und ACI-Daten von „{tenantLabel}“ gegen das IPAM (Infoblox DDI / NetBox) und die Namenskonvention.
-        Läuft automatisch nach jedem Einlesen; die Quellsysteme werden dabei nur gelesen.
+        {L(
+          <>
+            Firewall- und ACI-Daten von „{tenantLabel}“ gegen das IPAM (Infoblox DDI / NetBox) und die Namenskonvention.
+            Läuft automatisch nach jedem Einlesen; die Quellsysteme werden dabei nur gelesen.
+          </>,
+          <>
+            Firewall and ACI data of “{tenantLabel}” against the IPAM (Infoblox DDI / NetBox) and the naming convention.
+            Runs automatically after every collection; the source systems are only read.
+          </>,
+        )}
       </PageHead>
-      <ErrorBox error={error} prefix="Abgleich" onClose={() => setError(null)} />
+      <ErrorBox error={error} prefix={L("Abgleich", "Reconciliation")} onClose={() => setError(null)} />
 
       {summary === null ? (
         !error && <Loading />
@@ -100,18 +115,30 @@ export default function Reconcile({
         <>
           <div className="card">
             <div className="card-head">
-              <h2>Referenzquellen</h2>
+              <h2>{L("Referenzquellen", "Reference sources")}</h2>
               <span className="faint" style={{ fontSize: 12 }}>
-                verwaltet unter „Mandanten &amp; Standorte → Quellsysteme“
+                {L(
+                  "verwaltet unter „Mandanten & Standorte → Quellsysteme“",
+                  "managed under “Tenants & sites → Source systems”",
+                )}
               </span>
             </div>
             <div className="card-body">
               {sources.length === 0 ? (
                 <div style={{ padding: "12px 16px" }}>
                   <Note warn>
-                    Noch keine Referenzquelle. Unter „Mandanten &amp; Standorte“ ein Quellsystem <b>Infoblox DDI</b>{" "}
-                    (führend) und/oder <b>NetBox</b> (Anreicherung) anlegen und einlesen – erst dann können
-                    Firewall-Objekte gegen das IPAM geprüft werden.
+                    {L(
+                      <>
+                        Noch keine Referenzquelle. Unter „Mandanten &amp; Standorte“ ein Quellsystem <b>Infoblox DDI</b>{" "}
+                        (führend) und/oder <b>NetBox</b> (Anreicherung) anlegen und einlesen – erst dann können
+                        Firewall-Objekte gegen das IPAM geprüft werden.
+                      </>,
+                      <>
+                        No reference source yet. Under “Tenants &amp; sites”, create and collect a source system{" "}
+                        <b>Infoblox DDI</b> (primary) and/or <b>NetBox</b> (enrichment) – only then can firewall objects
+                        be checked against the IPAM.
+                      </>,
+                    )}
                   </Note>
                 </div>
               ) : (
@@ -132,9 +159,9 @@ export default function Reconcile({
                         </td>
                         <td>
                           {s.has_reference ? (
-                            <span className="chip ok">eingelesen</span>
+                            <span className="chip ok">{L("eingelesen", "collected")}</span>
                           ) : (
-                            <span className="chip warn">noch nicht eingelesen</span>
+                            <span className="chip warn">{L("noch nicht eingelesen", "not collected yet")}</span>
                           )}
                         </td>
                       </tr>
@@ -146,17 +173,24 @@ export default function Reconcile({
           </div>
 
           <div className="sub-h" style={{ marginTop: 22 }}>
-            Befunde
+            {L("Befunde", "Findings")}
           </div>
           <div className="kpis wrap">
             {TYPES.map((t) => {
               const f = summary.findings[t];
               return (
-                <button key={t} className="kpi" onClick={() => onOpenFindings(t)} title="In Findings öffnen">
+                <button
+                  key={t}
+                  className="kpi"
+                  onClick={() => onOpenFindings(t)}
+                  title={L("In Findings öffnen", "Open in findings")}
+                >
                   <div className="k-label">{FINDING_LABEL[t] ?? t}</div>
                   <div className={`k-val sm ${!f || f.open === 0 ? "ok" : "warn"}`}>{f ? f.open : 0}</div>
                   <div className="k-sub">
-                    {f && f.total > f.open ? `${f.total - f.open} triagiert · ` : ""}
+                    {f && f.total > f.open
+                      ? L(`${f.total - f.open} triagiert · `, `${f.total - f.open} triaged · `)
+                      : ""}
                     {FINDING_HINT[t]}
                   </div>
                 </button>
@@ -172,7 +206,7 @@ export default function Reconcile({
 }
 
 function Brief({ r }: { r: RefBrief | null }) {
-  if (!r) return <span className="faint">fehlt</span>;
+  if (!r) return <span className="faint">{L("fehlt", "missing")}</span>;
   return (
     <div className="refline">
       {r.dns_name ? <span className="mono">{r.dns_name}</span> : null}
@@ -180,7 +214,7 @@ function Brief({ r }: { r: RefBrief | null }) {
       {r.site && <span className="faint">{r.site}</span>}
       {r.description && <span className="faint">{r.description}</span>}
       {r.url && (
-        <a href={r.url} target="_blank" rel="noreferrer" title="In der Quelle öffnen">
+        <a href={r.url} target="_blank" rel="noreferrer" title={L("In der Quelle öffnen", "Open in the source")}>
           <Icon name="external" size={12} />
         </a>
       )}
@@ -216,32 +250,44 @@ function IpamTable({ tenantId, summary }: { tenantId: number; summary: Reconcile
     };
   }, [tenantId, ipam.available, status, query, offset]);
 
-  const p = ipam.primary?.name ?? "führend";
-  const e = ipam.enrichment?.name ?? "Anreicherung";
+  const p = ipam.primary?.name ?? L("führend", "primary");
+  const e = ipam.enrichment?.name ?? L("Anreicherung", "enrichment");
   const label: Record<string, string> = {
-    missing: `fehlt in ${e}`,
-    different: "abweichend",
-    only_enrichment: `nur in ${e}`,
+    missing: L(`fehlt in ${e}`, `missing in ${e}`),
+    different: L("abweichend", "different"),
+    only_enrichment: L(`nur in ${e}`, `only in ${e}`),
   };
   const cls: Record<string, string> = { missing: "warn", different: "crit", only_enrichment: "info" };
-  const kind: Record<string, string> = { prefix: "Netz", range: "Range", ip: "IP" };
+  const kind: Record<string, string> = { prefix: L("Netz", "Network"), range: "Range", ip: "IP" };
   const s = ipam.summary ?? {};
 
   return (
     <div className="card" style={{ marginTop: 8 }}>
       <div className="card-head">
         <h2>
-          Vergleich {p} ↔ {e}
+          {L(
+            <>
+              Vergleich {p} ↔ {e}
+            </>,
+            <>
+              Comparison {p} ↔ {e}
+            </>,
+          )}
         </h2>
         <span className="faint" style={{ fontSize: 12 }}>
-          Netze, Ranges und IPs mit DNS-Name – {p} ist führend
+          {L(
+            <>Netze, Ranges und IPs mit DNS-Name – {p} ist führend</>,
+            <>Networks, ranges and IPs with DNS name – {p} is primary</>,
+          )}
         </span>
       </div>
       {!ipam.available ? (
         <div className="card-body pad">
           <Note>
-            Für den Vergleich braucht der Mandant ein führendes IPAM (z. B. Infoblox DDI) und eine Anreicherung
-            (NetBox), beide eingelesen. Fehlende Einträge übernimmt später der NetBox-Sync (Vorschau + Übernehmen).
+            {L(
+              "Für den Vergleich braucht der Mandant ein führendes IPAM (z. B. Infoblox DDI) und eine Anreicherung (NetBox), beide eingelesen. Fehlende Einträge übernimmt später der NetBox-Sync (Vorschau + Übernehmen).",
+              "The comparison needs a primary IPAM (e.g. Infoblox DDI) and an enrichment (NetBox) for the tenant, both collected. Missing entries are applied later by the NetBox sync (Preview + Apply).",
+            )}
           </Note>
         </div>
       ) : (
@@ -250,36 +296,46 @@ function IpamTable({ tenantId, summary }: { tenantId: number; summary: Reconcile
             <div className="seg">
               {["", "missing", "different", "only_enrichment"].map((k) => (
                 <button key={k || "all"} className={status === k ? "on" : ""} onClick={() => setStatus(k)}>
-                  {k ? label[k] : "alle Abweichungen"} (
+                  {k ? label[k] : L("alle Abweichungen", "all deviations")} (
                   {k ? (s[k] ?? 0) : (s.missing ?? 0) + (s.different ?? 0) + (s.only_enrichment ?? 0)})
                 </button>
               ))}
             </div>
             <span className="faint" style={{ fontSize: 12.5 }}>
-              {s.equal ?? 0} übereinstimmend
+              {L(`${s.equal ?? 0} übereinstimmend`, `${s.equal ?? 0} matching`)}
             </span>
             <div className="search">
               <span className="ico">
                 <Icon name="search" />
               </span>
-              <input placeholder="IP, Netz oder DNS-Name…" value={q} onChange={(ev) => setQ(ev.target.value)} />
+              <input
+                placeholder={L("IP, Netz oder DNS-Name…", "IP, network or DNS name…")}
+                value={q}
+                onChange={(ev) => setQ(ev.target.value)}
+              />
             </div>
           </div>
-          <ErrorBox error={error} prefix="Vergleich" />
+          <ErrorBox error={error} prefix={L("Vergleich", "Comparison")} />
           <div className="card-body scroll">
             {data === null ? (
               !error && <Loading />
             ) : data.rows.length === 0 ? (
-              <Empty title={query || status ? "Keine Treffer" : "Keine Abweichungen 🎉"}>
-                {query || status ? "Filter oder Suche anpassen." : `${p} und ${e} stimmen überein.`}
+              <Empty
+                title={
+                  query || status ? L("Keine Treffer", "No matches") : L("Keine Abweichungen 🎉", "No deviations 🎉")
+                }
+              >
+                {query || status
+                  ? L("Filter oder Suche anpassen.", "Adjust the filter or search.")
+                  : L(`${p} und ${e} stimmen überein.`, `${p} and ${e} match.`)}
               </Empty>
             ) : (
               <table>
                 <thead>
                   <tr>
                     <th>Status</th>
-                    <th>Art</th>
-                    <th>Wert</th>
+                    <th>{L("Art", "Type")}</th>
+                    <th>{L("Wert", "Value")}</th>
                     <th>{p}</th>
                     <th>{e}</th>
                   </tr>
@@ -308,16 +364,16 @@ function IpamTable({ tenantId, summary }: { tenantId: number; summary: Reconcile
           </div>
           {data && data.total > PAGE && (
             <div className="pager">
-              {offset + 1}–{Math.min(offset + PAGE, data.total)} von {data.total}
+              {offset + 1}–{Math.min(offset + PAGE, data.total)} {L("von", "of")} {data.total}
               <button className="btn btn-ghost btn-sm" disabled={offset === 0} onClick={() => setOffset(offset - PAGE)}>
-                Zurück
+                {L("Zurück", "Back")}
               </button>
               <button
                 className="btn btn-ghost btn-sm"
                 disabled={offset + PAGE >= data.total}
                 onClick={() => setOffset(offset + PAGE)}
               >
-                Weiter
+                {L("Weiter", "Next")}
               </button>
             </div>
           )}

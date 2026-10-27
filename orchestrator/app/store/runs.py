@@ -8,15 +8,22 @@ Haengende Laeufe (Agent beendet, Ergebnis-Upload verloren, nie abgeholt) blockie
 nach einer Frist, `cancel` von Hand; `blocking` nennt Lauf, Zustand und seit wann.
 """
 
+import logging
+import threading
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import audit, credentials
 from app.config import get_settings
+from app.i18n import L
 from app.models import REFERENCE_PLATFORMS, Agent, CollectorRun, RunStatus, SourceSystem
+from app.store import tenant_lock
+
+log = logging.getLogger(__name__)
 
 OPEN = (RunStatus.QUEUED, RunStatus.RUNNING)
 
@@ -99,7 +106,8 @@ def _aware(value: datetime | None) -> datetime | None:
 
 
 def describe(session: Session, run: CollectorRun) -> str:
-    """Warum ein Quellsystem uebersprungen wird: Zustand, seit wann, wer liest."""
+    """Warum ein Quellsystem uebersprungen wird: Zustand, seit wann, wer liest (nur Antwort,
+    nicht gespeichert - folgt der Sprache)."""
     zone = ZoneInfo(get_settings().scheduler_timezone)
     since = _aware(run.started_at if run.status is RunStatus.RUNNING else None) or _aware(
         run.queued_at
@@ -107,14 +115,25 @@ def describe(session: Session, run: CollectorRun) -> str:
     when = since.astimezone(zone).strftime("%d.%m. %H:%M") if since else "?"
     agent = session.get(Agent, run.agent_id) if run.agent_id else None
     if run.status is RunStatus.RUNNING:
-        who = f"Agent „{agent.name}“" if agent else "zentraler Worker"
-        return f"Lauf läuft seit {when} ({who})"
+        who = (
+            L(f"Agent „{agent.name}“", f"agent “{agent.name}”")
+            if agent
+            else L("zentraler Worker", "central worker")
+        )
+        return L(f"Lauf läuft seit {when} ({who})", f"Run running since {when} ({who})")
     if run.execution == "external":
         src = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
         assigned = session.get(Agent, src.agent_id) if src is not None and src.agent_id else None
-        who = f"Agent „{assigned.name}“" if assigned else "einen Agenten"
-        return f"Lauf wartet seit {when} auf {who}"
-    return f"Lauf wartet seit {when} auf den zentralen Worker"
+        who = (
+            L(f"Agent „{assigned.name}“", f"agent “{assigned.name}”")
+            if assigned
+            else L("einen Agenten", "an agent")
+        )
+        return L(f"Lauf wartet seit {when} auf {who}", f"Run waiting since {when} for {who}")
+    return L(
+        f"Lauf wartet seit {when} auf den zentralen Worker",
+        f"Run waiting since {when} for the central worker",
+    )
 
 
 def expire_stale(session: Session, now: datetime | None = None) -> int:
@@ -143,13 +162,51 @@ def expire_stale(session: Session, now: datetime | None = None) -> int:
                 f"abgebrochen: nach {settings.run_queue_timeout_hours} h nicht abgeholt - "
                 "Agent offline bzw. kein zentraler Worker"
             )
+        if tenant_lock.state(run.id) is not None:
+            continue  # Ergebnis angekommen: wartet aufs Einspielen bzw. wird eingespielt
+        if _lock_open(session, run.id) is None:
+            continue  # Ergebnis wird gerade eingespielt bzw. eine andere Abfrage beendet ihn
         _finish(session, run, reason, actor="system:timeout", now=now)
         expired += 1
     return expired
 
 
+_expiring = threading.Lock()
+
+
+def expire_quietly(session: Session) -> int:
+    """`expire_stale` fuer Lese-Abfragen (Liste der Laeufe, 0.80.1): eine Abfrage zugleich,
+    im Savepoint - ein Fehler beim Beenden haengender Laeufe macht die Liste nicht zu einem
+    HTTP 500 (Befund des Anwenders beim Aktualisieren der letzten Laeufe)."""
+    if not _expiring.acquire(blocking=False):
+        return 0  # die andere Abfrage beendet sie
+    try:
+        with session.begin_nested():
+            return expire_stale(session)
+    except SQLAlchemyError:
+        log.warning("Haengende Laeufe nicht beendet", exc_info=True)
+        return 0
+    finally:
+        _expiring.release()
+
+
+def _lock_open(session: Session, run_id: str) -> CollectorRun | None:
+    """Offenen Lauf sperren - gesperrte ueberspringen (SKIP LOCKED, 0.78.5): die Liste der
+    Laeufe wartet nicht auf ein laufendes Einspielen bzw. eine zweite Abfrage der Liste und
+    beendet keinen Lauf, dessen Ergebnis gerade ankommt (Befund: Fehler 500 in „Letzte
+    Läufe“ waehrend des Einspielens)."""
+    query = (
+        select(CollectorRun)
+        .where(CollectorRun.id == run_id, CollectorRun.status.in_(OPEN))
+        .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
+    )
+    return session.scalars(query).first()
+
+
 def cancel(session: Session, run: CollectorRun, actor: str) -> None:
-    """Offenen Lauf von Hand beenden (z. B. haengt nach einem Neustart des Agenten)."""
+    """Offenen Lauf von Hand beenden (z. B. haengt nach einem Neustart des Agenten). Die
+    Meldung wird gespeichert und bleibt deutsch (ADR 0028)."""
     who = actor.removeprefix("user:")
     _finish(session, run, f"abgebrochen von {who}", actor=actor)
 

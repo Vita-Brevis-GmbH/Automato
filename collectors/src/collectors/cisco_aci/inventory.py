@@ -92,11 +92,11 @@ class _Tenants:
             elif cls == "fvCtx" and t:
                 self.vrfs.append(f"{t}:{name}")
             elif cls == "fvBD" and t:
-                ctx = next(
-                    (_attrs(c["fvRsCtx"]).get("tnFvCtxName") for c in kids if "fvRsCtx" in c), None
-                )
+                rel = next((_attrs(c["fvRsCtx"]) for c in kids if "fvRsCtx" in c), {})
                 self.bds[(t, name)] = {
-                    "vrf": f"{t}:{ctx}" if ctx else None,
+                    "ctx": rel.get("tnFvCtxName") or None,
+                    "ctx_tenant": _ctx_tenant(rel.get("tDn")),
+                    "vrf": None,  # nach dem Lesen aller Tenants (`resolve`)
                     "subnets": [_attrs(c["fvSubnet"]).get("ip") for c in kids if "fvSubnet" in c],
                     "descr": attrs.get("descr") or None,
                 }
@@ -134,6 +134,29 @@ class _Tenants:
                 )
             for child in kids:
                 self.walk(child, t, a, dn)
+
+    def resolve(self) -> None:
+        """VRF je BD (0.83.1): das aufgeloeste Ziel der Beziehung (`tDn`), sonst wie der APIC -
+        im eigenen Tenant, dann in `common`. Vorher stand immer der eigene Tenant da, auch fuer
+        eine VRF aus `common`; dann passten die BD-Subnetze nicht zur VRF des Routings (Weg ohne
+        Start im Fabric, Systeme der EPG als ausserhalb des Fabrics gezaehlt)."""
+        known = set(self.vrfs)
+        for (t, _bd), info in self.bds.items():
+            ctx = info["ctx"]
+            if not ctx:
+                continue
+            tenant = info["ctx_tenant"]
+            if tenant is None:
+                tenant = t if f"{t}:{ctx}" in known or not known else "common"
+            info["vrf"] = f"{tenant}:{ctx}"
+
+
+def _ctx_tenant(dn: str | None) -> str | None:
+    """Tenant der VRF aus `uni/tn-common/ctx-VRF1` (fvRsCtx.tDn)."""
+    dn = dn or ""
+    if dn.startswith("uni/tn-") and "/ctx-" in dn:
+        return dn[len("uni/tn-") :].split("/", 1)[0]
+    return None
 
 
 def _nodes(fabric: dict, cls: str) -> list[tuple[dict, list[dict]]]:
@@ -249,6 +272,7 @@ def parse_inventory(tenant_export: Any, fabric: dict | None) -> NetworkInventory
     tenants = _Tenants()
     for root in _roots(tenant_export):
         tenants.walk(root)
+    tenants.resolve()
 
     # Geraete
     node_names: dict[str, str] = {}

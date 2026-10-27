@@ -28,8 +28,10 @@ test("SNAT-Pool: Regel → NAT-Detail → zurück zu den Regeln", async ({ page 
 test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page }) => {
   await page.goto("/#nat");
   await search(page).fill("web01.example.ch");
-  await expect(rows(page)).toHaveCount(1);
-  await rows(page).first().click();
+  // seit 0.77.0 auch der Virtual Service des NSX ALB vor web01 (vs-shop)
+  await expect(rows(page)).toHaveCount(2);
+  await expect(rows(page).filter({ hasText: "vs-shop" })).toHaveCount(1);
+  await rows(page).filter({ hasText: "V-EXT_www.example.ch" }).click();
   const drawer = page.locator(".drawer");
   await expect(drawer).toContainText("www.example.ch");
   await expect(drawer).toContainText("web01.example.ch");
@@ -38,11 +40,15 @@ test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page })
 
 test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page }) => {
   await page.goto("/#findings");
-  await expect(page.locator(".fgroup")).toHaveCount(8);
+  await expect(page.locator(".fgroup")).toHaveCount(9);
+  // seit 0.72.0: Policy-Route im Verbund „Süd“ je Firewall mit anderem Gateway
+  await expect(page.locator(".fgroup", { hasText: "Parallele Firewalls" })).toContainText(
+    "Parallele Policy-Route abweichend",
+  );
   // seit 0.62.0: Verkabelung (Speed/Native VLAN zwischen den Switches der Beispieldaten)
   await expect(page.locator(".fgroup", { hasText: "Verkabelung" })).toContainText("Kabel: Speed abweichend");
-  // seit 0.59.0: Abweichung Regel ↔ Weg der Applikation Webshop (CT_rt)
-  await expect(page.locator(".fgroup", { hasText: "Applikationen" })).toContainText("Applikation: Regel ↔ Weg");
+  // seit 0.73.0: Wege uneinheitlich bei der Applikation Portal Süd (Verbund Süd: fw-09 erlaubt, fw-10 sperrt)
+  await expect(page.locator(".fgroup", { hasText: "Applikationen" })).toContainText("Applikation: Wege uneinheitlich");
   // seit 0.50.0: Plausibilität der Topologie (statische Route ohne Wirkung in den Beispieldaten)
   await expect(page.locator(".fgroup", { hasText: "Topologie" })).toContainText("Statische Route ohne Wirkung");
   // seit 0.51.0: Regeln gegen die Absicht der Zonenmatrix (LAN -> DMZ gesperrt)
@@ -372,6 +378,12 @@ test("Objekte: Standardobjekte zuunterst bzw. ausgeblendet, Typ-Filter für dyna
   await type.selectOption({ label: "dynamisch (SDN-Connector) (1)" });
   await expect(rows(page)).toHaveCount(1);
   await expect(rows(page).first()).toContainText("TE_web_epg");
+  // 0.74.1: Reiter wechseln setzt den Typ zurück – Gruppen zeigen ihre Objekte, nicht „leer“
+  const groups = page.waitForResponse((r) => r.url().includes("/objects") && r.url().includes("address_group"));
+  await page.click(".tabbar button:has-text('Gruppen')");
+  const res = await groups;
+  expect(res.url()).not.toContain("obj_type=");
+  await expect(rows(page).first()).toBeVisible();
 });
 
 test("Regeln: IPv4/IPv6-Paar steht zusammen, Namensprofil mit FT_ und ohne Projektnummern", async ({ page }) => {
@@ -430,6 +442,11 @@ test("VDOMs: Filter, Kennzeichnung und Detail je VDOM", async ({ page }) => {
 test("Weg-Suche und Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", async ({ page }) => {
   await page.goto("/#routing");
   const ctx = page.locator(".card", { hasText: "Gelesene Kontexte" });
+  // 0.75.0: zugeklappt, die Reiter ohne Scrollen sichtbar; nicht Lesbares bleibt als Zahl
+  await expect(ctx.locator("table")).toHaveCount(0);
+  await expect(ctx).toContainText("mit nicht Lesbarem");
+  await expect(page.locator(".tabbar")).toBeInViewport();
+  await ctx.locator(".fold-title").click();
   await expect(ctx).toContainText("leaf-101 · VRF TE:VRF1");
   await expect(ctx).toContainText("fw-05 · VDOM root");
   await expect(ctx.locator("tbody tr").filter({ hasText: "fw-04" })).toContainText("Firewall"); // nur root
@@ -527,7 +544,11 @@ test("Parallele Firewalls: Verbund auflösen, Vorschlag abgelehnt und wieder vor
   await search(page).fill("par-");
   await expect(rows(page)).toHaveCount(6); // aus dem Test davor zusammengefasst
   await rows(page).filter({ hasText: "par-web" }).click();
-  await page.locator(".drawer button", { hasText: "Verbund auflösen" }).click();
+  // erst nach der Antwort neu laden – sonst holt die Seite die Vorschläge vor der Ablehnung
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/systems/parallel-reject") && r.ok()),
+    page.locator(".drawer button", { hasText: "Verbund auflösen" }).click(),
+  ]);
   await page.locator(".drawer button.close").click();
   await page.reload();
   await search(page).fill("par-");
@@ -536,6 +557,25 @@ test("Parallele Firewalls: Verbund auflösen, Vorschlag abgelehnt und wieder vor
   await page.click("button:has-text('1 abgelehnter Vorschlag')");
   await page.click("button:has-text('wieder vorschlagen')");
   await expect(page.locator(".note", { hasText: "fw-06 und fw-07" })).toContainText("Ablehnen");
+});
+
+test("Parallele Firewalls: Policy-Routen im Verbund vergleichen, Befund öffnet das Routing (0.72.0)", async ({ page }) => {
+  await page.goto("/#routing");
+  await page.click(".tabbar button:has-text('Parallele Firewalls')");
+  const card = page.locator(".parallel-compare", { hasText: "Verbund „Süd“" });
+  await expect(card).toContainText("fw-09 · fw-10 – führend fw-09");
+  const pbr = card.locator("tr", { hasText: "Policy-Routen & SD-WAN" });
+  await expect(pbr.locator(".chip.warn")).toHaveText("1"); // Gateway je Firewall anders
+  await pbr.locator("a", { hasText: "Befunde" }).click();
+  await expect(page).toHaveURL(/#findings\?type=parallel_policy_route_mismatch/);
+  const row = page.locator("tbody tr.clickable", { hasText: "Policy-Route 1 auf fw-10" });
+  await expect(row).toContainText("Gateway: 10.89.0.253 ≠ 10.89.0.252");
+  await row.click();
+  await page.locator("button.linkchip", { hasText: "Policy-Route 1" }).click();
+  await expect(page).toHaveURL(/#routing/);
+  await expect(page.locator(".tabbar button.on")).toHaveText("Policy-Routen & SD-WAN");
+  await expect(page.locator(".card-body.viewport tbody tr")).toHaveCount(1);
+  await expect(page.locator(".card-body.viewport tbody tr")).toContainText("10.89.0.253");
 });
 
 test("Routing: erkannte Anbindung mit allen Routern übernehmen, Wege gleich lang", async ({ page }) => {
@@ -660,7 +700,22 @@ test("Kunden-Filter: Umschalter zeigt nur den Ausschnitt des Kunden", async ({ p
   await expect(rows(page).filter({ hasText: "CT_rt" })).toHaveCount(1);
   await page.goto("/#findings"); // bleibt gewählt (je Umgebung gemerkt)
   await expect(page.getByLabel("Kunde", { exact: true })).toHaveValue(/\d+/);
-  await page.getByLabel("Kunde", { exact: true }).selectOption("");
+  // 0.76.0: auch Routing, Inventar und Verkabelung nur im Ausschnitt, mit Hinweis oben
+  await page.goto("/#routing");
+  await expect(page.locator("#customer-scope")).toContainText("Ausschnitt TE");
+  const ctx = page.locator("#routing-contexts");
+  await expect(ctx).toContainText("1 Kontexte");
+  await ctx.locator(".fold-title").click();
+  await expect(ctx.locator("tbody tr")).toHaveCount(1);
+  await expect(ctx).toContainText("leaf-101 · VRF TE:VRF1");
+  await expect(ctx).not.toContainText("fw-05");
+  await page.goto("/#verkabelung");
+  await expect(page.locator("main.main")).toContainText("leaf-101");
+  await expect(page.locator("main.main")).not.toContainText("fw-05");
+  await page.goto("/#routing");
+  await page.locator("#customer-scope button", { hasText: "alle Kunden" }).click();
+  await expect(page.locator("#customer-scope")).toHaveCount(0);
+  await expect(page.locator("#routing-contexts")).toContainText("9 Kontexte");
   await page.goto("/#regeln");
   await expect(rows(page)).not.toHaveCount(2);
 });
@@ -807,7 +862,22 @@ test("Weg-Suche: Netz als Ganzes – Regel erfasst nur einen Teil, Teile anders 
   await page.click("button:has-text('Weg suchen')");
   const card = page.locator(".card[id^='trace-']").first();
   await expect(card).toContainText("Regeln: abhängig an fw-08");
-  await expect(card.locator("tbody")).toContainText("„lan-to-dmz-web“ · erlauben · tcp/443 · möglich (Ziel nur teilweise)");
+  await expect(card.locator("tbody")).toContainText(
+    "„lan-to-dmz-web“ · erlauben · Quelle 10.10.0.0/24, Ziel 10.30.0.10 (Teil) · tcp/443 · möglich (Ziel nur teilweise)",
+  );
+  // Host: Policy 1 entscheidet, die passende Sperre dahinter steht als „nicht erreicht“ (0.78.4)
+  await src.fill("10.10.0.5");
+  await src.press("Escape");
+  await dst.fill("10.30.0.10");
+  await dst.press("Escape");
+  await page.click("button:has-text('Weg suchen')");
+  const hostCard = page.locator(".card[id^='trace-']", { hasText: "Regeln: erlaubt" }).first();
+  await expect(hostCard.locator(".hop-after")).toContainText("dahinter, nicht erreicht:");
+  await expect(hostCard.locator(".hop-after")).toContainText("„lan-to-dmz-deny“ · sperren · Quelle any, Ziel any");
+  await src.fill("10.10.0.0/25");
+  await src.press("Escape");
+  await dst.fill("10.30.0.0/24");
+  await dst.press("Escape");
   // Ziel /23: Route, die das ganze Netz enthält (Default), der /24-Teil ist angeschlossen
   await dst.fill("10.30.0.0/23");
   await page.click("button:has-text('Weg suchen')");
@@ -888,7 +958,8 @@ test("Netzwerkdesign: Zonen, Zonenmatrix mit Absicht und Zonenplan", async ({ pa
   await page.click(".modal button:has-text('Speichern')");
   await expect(list.filter({ hasText: name })).toHaveCount(1);
 
-  // Zonenmatrix: LAN -> DMZ gesperrt, zwei erlaubende Policies dagegen
+  // Zonenmatrix: LAN -> DMZ gesperrt, eine erlaubende Policy dagegen (lan-to-dmz-falsch ist
+  // seit 0.81.0 nach dem Weg nicht möglich: Ausgang internet, die DMZ liegt an dmz)
   await page.click(".tabbar button:has-text('Zonenmatrix')");
   await expect(page.locator("#zone-matrix-summary")).toContainText("gegen die Absicht");
   const viol = page.locator("td.zcell.viol");
@@ -898,6 +969,13 @@ test("Netzwerkdesign: Zonen, Zonenmatrix mit Absicht und Zonenplan", async ({ pa
   await expect(cell.locator("h2")).toHaveText("LAN → DMZ");
   await expect(cell.locator("#zone-cell-rules")).toContainText("lan-to-dmz-web");
   await expect(cell.locator("#zone-cell-rules .chip.crit").first()).toBeVisible();
+  await expect(viol).toContainText("1 nicht möglich");
+  await expect(cell.locator("#zone-cell-rules")).not.toContainText("lan-to-dmz-falsch");
+  await cell.locator("#zone-cell-impossible").click();
+  await expect(cell.locator("#zone-cell-rules")).toContainText("lan-to-dmz-falsch");
+  await expect(cell.locator("#zone-cell-rules .zone-off-why")).toContainText("fw-08");
+  await cell.locator("#zone-cell-mode button", { hasText: "Regeln der Zelle" }).click();
+  await expect(cell.locator("#zone-cell-rules")).toContainText("lan-to-dmz-web");
   // Absicht „eingeschränkt“: kein Verstoss mehr - danach zurück auf „gesperrt“
   await cell.locator("select[aria-label='Absicht']").selectOption("limited");
   await cell.locator("button:has-text('Absicht speichern')").click();
@@ -942,18 +1020,65 @@ test("Zonen: Vorschläge beim Erfassen und Kommunikation im Zonenplan (0.66.0)",
   await expect(fwZone).toHaveCount(0); // übernommen: kein Vorschlag mehr
   await page.click(".modal button:has-text('Abbrechen')");
 
-  // Zonenplan: Kommunikation LAN -> DMZ (zwei erlaubende Policies), nur auf Wunsch
+  // Zonenplan: Kommunikation LAN -> DMZ (eine erlaubende Policy nach dem Weg), nur auf Wunsch
   await page.click(".tabbar button:has-text('Zonenplan')");
   await expect(page.locator("#zone-plan .zp-zone2").first()).toBeVisible();
   await expect(page.locator("#zone-plan .zp-edge.flow")).toHaveCount(0);
   await page.locator("#zone-plan-flows input").check();
-  const flow = page.locator("#zone-plan .zp-edge.flow").filter({ has: page.locator("title", { hasText: "LAN → DMZ: 2" }) });
+  const flow = page.locator("#zone-plan .zp-edge.flow").filter({ has: page.locator("title", { hasText: "LAN → DMZ: 1" }) });
   await expect(flow).toHaveCount(1);
-  await expect(flow).toContainText("2 Regeln");
+  await expect(flow).toContainText("1 Regel");
   // keine Linie zu „Knoten ohne Zone“ (Adressen ohne Zone sind keine Zone)
   await expect(page.locator("#zone-plan .zp-edge.flow title", { hasText: "Knoten ohne Zone" })).toHaveCount(0);
   await page.locator("#zone-plan-flows input").uncheck();
   await expect(page.locator("#zone-plan .zp-edge.flow")).toHaveCount(0);
+
+  // Absicht je Richtung (0.78.0): LAN -> DMZ gesperrt, zwischen den Zonen kein Übergang = eigene,
+  // farbig gestrichelte Linie mit einem roten Pfeil zur DMZ
+  const line = page.locator("#zone-plan .zp-edge.intent");
+  await expect(line).toHaveCount(1);
+  await expect(line.locator("polygon.zp-arrow")).toHaveCount(1);
+  await expect(line.locator("polygon.zp-arrow")).toHaveAttribute("fill", "#b85450");
+  await expect(line.locator("polyline title")).toContainText("LAN → DMZ: gesperrt");
+  await expect(page.locator("#zone-plan-intents")).toContainText("Pfeil = Absicht in diese Richtung");
+  await expect(page.locator("#zone-plan-intent-lines tbody tr")).toContainText("LAN → DMZ gesperrt");
+  // ausblenden über die Elemente
+  await page.click("#zone-plan-layers summary");
+  await page.locator("#zone-plan-layers label", { hasText: "Absichten" }).locator("input").uncheck();
+  await expect(page.locator("#zone-plan .zp-edge.intent")).toHaveCount(0);
+  await expect(page.locator("#zone-plan polygon.zp-arrow")).toHaveCount(0);
+  await page.locator("#zone-plan-layers label", { hasText: "Absichten" }).locator("input").check();
+  await expect(page.locator("#zone-plan .zp-edge.intent")).toHaveCount(1);
+  expect(problems).toEqual([]);
+});
+
+test("Zonenplan aus draw.io zurück einlesen: Vorschau und Namen übernehmen (0.83.0)", async ({ page, problems }) => {
+  const exp = await page.request.get("/api/zones/plan/export?tenant_id=1&format=drawio");
+  expect(exp.status()).toBe(200);
+  // in draw.io umbenannt: DMZ → DMZ Web, dazu eine neue Form
+  const text = (await exp.text())
+    .replace("&lt;b&gt;DMZ&lt;/b&gt;", "&lt;b&gt;DMZ Web&lt;/b&gt;")
+    .replace("</root>", '<mxCell id="neu" value="Labor" vertex="1" parent="1" style="rounded=1;"><mxGeometry x="1" y="1" width="80" height="30" as="geometry"/></mxCell></root>');
+  await page.goto("/#design");
+  await page.click(".tabbar button:has-text('Zonenplan')");
+  await expect(page.locator("#zone-plan .zp-zone2").first()).toBeVisible();
+  await page.locator("#zone-plan-import-file").setInputFiles({ name: "zonenplan.drawio", mimeType: "application/xml", buffer: Buffer.from(text) });
+  const preview = page.locator("#zone-plan-import-preview");
+  await expect(preview.locator("#zone-plan-import-rename-list")).toContainText("DMZ → DMZ Web");
+  await expect(preview.locator("#zone-plan-import-new-list")).toContainText("Labor");
+  await expect(page.locator("#zone-plan-import-new_zones")).not.toBeChecked();
+  // nur den Namen übernehmen (Lage bleibt)
+  await page.locator("#zone-plan-import-positions").uncheck();
+  await page.click("#zone-plan-import-apply");
+  await expect(page.locator("#zone-plan-import-done")).toContainText("1 umbenannt");
+  await expect(page.locator("#zone-plan .zp-zone2", { hasText: "DMZ Web" })).toHaveCount(1);
+  // zurück (die übrigen Tests kennen die Zone als DMZ)
+  const zones = (await (await page.request.get("/api/zones?tenant_id=1")).json()) as LogicalZoneRow[];
+  const dmz = zones.find((z) => z.name === "DMZ Web")!;
+  const put = await page.request.put(`/api/zones/${dmz.id}`, {
+    data: { tenant_id: 1, name: "DMZ", kind: dmz.kind, color: dmz.color, position: dmz.position, customer_id: dmz.customer_id, selectors: dmz.selectors },
+  });
+  expect(put.status()).toBe(200);
   expect(problems).toEqual([]);
 });
 
@@ -1048,10 +1173,15 @@ test("Netzwerkdesign: Export (draw.io, SVG, PDF) und Versionen des Zonenplans", 
     ["draw.io", "drawio"],
     ["SVG", "svg"],
     ["PDF", "pdf"],
+    ["Word", "docx"], // 0.71.0
   ]) {
     const [file] = await Promise.all([page.waitForEvent("download"), page.locator(".plan-export button", { hasText: label }).first().click()]);
     expect(file.suggestedFilename()).toMatch(new RegExp(`^zonenplan-\\d{4}-\\d\\d-\\d\\d\\.${ext}$`));
   }
+  // Für Confluence: Word + draw.io im ZIP
+  const [zip] = await Promise.all([page.waitForEvent("download"), page.locator("#zone-plan-confluence").first().click()]);
+  expect(zip.suggestedFilename()).toMatch(/^zonenplan-\d{4}-\d\d-\d\d\.zip$/);
+  expect(readFileSync((await zip.path())!).toString("latin1")).toMatch(/zonenplan-.*\.drawio/);
 
   // Version speichern: gleich wie der aktuelle Stand, Detail mit Zeichnung und Export
   await page.click(".tabbar button:has-text('Versionen')");
@@ -1249,6 +1379,7 @@ test("Grundschema in der Oberfläche bearbeiten: Namen, Art, Absicht, neue Zone 
   const fresh = editor.locator("#zone-schema-edit-zones tbody tr").last();
   await fresh.getByLabel("Name der Zone").fill("Backup");
   await fresh.getByLabel("Art").selectOption("management");
+  await fresh.getByLabel("je Kunde").check(); // Vorlage je Kunde (0.82.0)
   // doppelter Name sperrt das Speichern
   await fresh.getByLabel("Name der Zone").fill("dmz");
   await expect(editor.locator("#zone-schema-edit-save")).toBeDisabled();
@@ -1260,6 +1391,7 @@ test("Grundschema in der Oberfläche bearbeiten: Namen, Art, Absicht, neue Zone 
   const rows = card.locator("#zone-schema-zones tbody tr");
   await expect(rows).toHaveCount(6);
   await expect(rows.first()).toContainText("Backup");
+  await expect(rows.first().locator(".schema-per-customer")).toHaveText("je Kunde");
   await expect(card.locator("#zone-schema-zones")).toContainText("Partner extern");
   await expect(card.locator("#zone-schema-links tbody tr", { hasText: "DMZ" }).filter({ hasText: "LAN" })).toContainText("nur tcp/443");
   await expect(card.locator("#zone-schema-edited")).toContainText("in der Oberfläche bearbeitet");
@@ -1268,6 +1400,7 @@ test("Grundschema in der Oberfläche bearbeiten: Namen, Art, Absicht, neue Zone 
   const text = readFileSync((await file.path())!, "utf-8");
   expect(text).toContain("Partner extern");
   expect(text).toContain("Backup");
+  expect(text).toContain('automato_customer="je Kunde"');
   expect((await page.request.delete(`/api/naming-profiles/${pid}/zone-schema`)).status()).toBe(204);
   expect(problems).toEqual([]);
 });

@@ -21,6 +21,7 @@ from jwt import PyJWKClient
 from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 
 from app.auth.principal import Principal
+from app.i18n import L
 
 CUSTOMER_ROLE = "customer"  # Realm-Rolle der Kunden-Benutzer (ADR 0018)
 
@@ -126,9 +127,10 @@ def _seconds_from_now(token: str, claim: str) -> int | None:
     return int(value - time.time()) if isinstance(value, int | float) else None
 
 
-def _reject(status: int, detail: str, exc: Exception) -> HTTPException:
+def _reject(status: int, detail: str, exc: Exception, en: str | None = None) -> HTTPException:
+    """Abgelehnt: Log immer deutsch, Antwort in der Sprache der Anfrage (`en`, ADR 0028)."""
     log.warning("OIDC-Token abgelehnt: %s (%s: %s)", detail, type(exc).__name__, exc)
-    return HTTPException(status_code=status, detail=detail)
+    return HTTPException(status_code=status, detail=L(detail, en or detail))
 
 
 def principal_from_bearer(authorization: str | None, settings) -> Principal:
@@ -138,32 +140,53 @@ def principal_from_bearer(authorization: str | None, settings) -> Principal:
     try:
         claims = verify_token(token, settings)
     except PyJWKClientConnectionError as exc:
+        url = settings.oidc_jwks_url
         raise _reject(
-            503, f"JWKS vom Orchestrator nicht erreichbar: {settings.oidc_jwks_url}", exc
+            503,
+            f"JWKS vom Orchestrator nicht erreichbar: {url}",
+            exc,
+            f"JWKS not reachable from the orchestrator: {url}",
         ) from exc
     except PyJWKClientError as exc:
         raise _reject(
-            401, "Signaturschlüssel nicht in der JWKS (Realm/JWKS-URL passt nicht)", exc
+            401,
+            "Signaturschlüssel nicht in der JWKS (Realm/JWKS-URL passt nicht)",
+            exc,
+            "Signing key not in the JWKS (realm/JWKS URL does not match)",
         ) from exc
     except jwt.ExpiredSignatureError as exc:
         ago = _seconds_from_now(token, "exp")
         since = f" (seit {-ago} s)" if ago is not None else ""
-        raise _reject(401, f"token expired{since}", exc) from exc
+        since_en = f" ({-ago} s ago)" if ago is not None else ""
+        raise _reject(401, f"token expired{since}", exc, f"token expired{since_en}") from exc
     except jwt.ImmatureSignatureError as exc:
         ahead = _seconds_from_now(token, "iat")
         skew = f"ca. {ahead} s " if ahead is not None else ""
+        skew_en = f"approx. {ahead} s " if ahead is not None else ""
         raise _reject(
             401,
             f"token not yet valid: die Uhr des Orchestrators geht {skew}nach gegenüber "
             "Keycloak - Zeitsynchronisation (NTP) beider VMs prüfen",
             exc,
+            f"token not yet valid: the orchestrator's clock is {skew_en}behind "
+            "Keycloak - check time synchronization (NTP) of both VMs",
         ) from exc
     except jwt.InvalidAudienceError as exc:
+        audience = settings.oidc_audience
         raise _reject(
-            401, f"token audience invalid (erwartet: {settings.oidc_audience})", exc
+            401,
+            f"token audience invalid (erwartet: {audience})",
+            exc,
+            f"token audience invalid (expected: {audience})",
         ) from exc
     except jwt.InvalidIssuerError as exc:
-        raise _reject(401, f"token issuer invalid (erwartet: {settings.oidc_issuer})", exc) from exc
+        issuer = settings.oidc_issuer
+        raise _reject(
+            401,
+            f"token issuer invalid (erwartet: {issuer})",
+            exc,
+            f"token issuer invalid (expected: {issuer})",
+        ) from exc
     except jwt.InvalidTokenError as exc:
         raise _reject(401, f"invalid token ({type(exc).__name__})", exc) from exc
     return claims_to_principal(claims, settings)

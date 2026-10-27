@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, credentials
+from app import audit, credentials, tls
 from app.auth import mtls
 from app.auth.deps import require_admin
 from app.auth.principal import Principal
@@ -167,6 +167,44 @@ _PACKAGE_FILES = (
 )
 
 
+CA_NAME = "automato-ca.crt"  # interne CA (TLS intern, 0.49.0) fuer Agenten direkt auf :8000
+
+
+def _ca_pem(settings: Settings) -> bytes | None:
+    """Oeffentliches Zertifikat der internen CA (kein Geheimnis) - nur mit TLS intern."""
+    if not settings.internal_tls:
+        return None
+    path = Path(tls.ca_file(settings))
+    return path.read_bytes() if path.is_file() else None
+
+
+class PackageInfoOut(BaseModel):
+    internal_tls: bool  # Orchestrator spricht auf :8000 HTTPS mit der internen CA
+    ca: bool  # CA-Zertifikat verfuegbar (im Paket und als Download)
+    ca_name: str = CA_NAME
+
+
+@router.get("/package/info", response_model=PackageInfoOut)
+def package_info(
+    _: Principal = Depends(require_admin), settings: Settings = Depends(get_settings)
+) -> PackageInfoOut:
+    """Fuer die Einrichtung (0.78.2): TLS intern an? Dann https:// und die CA in agent.env."""
+    return PackageInfoOut(internal_tls=settings.internal_tls, ca=_ca_pem(settings) is not None)
+
+
+@router.get("/package/ca")
+def download_ca(
+    _: Principal = Depends(require_admin), settings: Settings = Depends(get_settings)
+) -> Response:
+    """CA-Zertifikat der internen CA (0.78.2) - fuer Agenten, die direkt auf :8000 zugreifen."""
+    pem = _ca_pem(settings)
+    if pem is None:
+        raise HTTPException(status_code=404, detail="internal TLS is off")
+    disposition = f'attachment; filename="{CA_NAME}"'
+    return Response(content=pem, media_type="application/x-pem-file",
+                    headers={"Content-Disposition": disposition})  # fmt: skip
+
+
 @router.get("/package")
 def download_package(
     _: Principal = Depends(require_admin),
@@ -190,6 +228,8 @@ def download_package(
         info = agent_package.manifest(settings.agent_package_dir)
         if info:  # install.ps1 legt sie ab -> kein unnoetiges Update direkt nach der Installation
             zf.writestr("automato-collector-agent/agent-version.txt", info["version"])
+        if (pem := _ca_pem(settings)) is not None:  # TLS intern: install.ps1 legt sie ab (0.78.2)
+            zf.writestr(f"automato-collector-agent/{CA_NAME}", pem)
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",
@@ -283,6 +323,8 @@ def require_agent(
     if agent is None:
         raise HTTPException(status_code=401, detail="invalid agent token")
     mtls.enforce(channel, agent.name)  # Produktion: nur ueber das mTLS-Agent-Gateway
+    if not store.touch(session, agent):  # Zeile gesperrt: Stand beim naechsten Aufruf (0.78.1)
+        return agent
     if x_agent_version:
         agent.version = x_agent_version.strip()[:64]
     if x_agent_update is not None:  # Ergebnis der Update-Pruefung (ab Agent 0.11.4)

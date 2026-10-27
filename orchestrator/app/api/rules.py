@@ -27,6 +27,7 @@ from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import L
 from app.models import (
     ObjectClass,
     Rule,
@@ -43,7 +44,7 @@ from app.schemas.rules import (
     RuleOut,
     RuleSummaryOut,
 )
-from app.store import aci_direction, aci_relevance, relevance, rule_index, virtual
+from app.store import aci_direction, aci_relevance, relevance, rule_index, tenant_lock, virtual
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store import objects as objects_store
@@ -264,11 +265,18 @@ def get_rule(
     )
 
 
+# (deutsch, englisch) - erst bei der Ausgabe gewaehlt (ADR 0028)
 _SCOPE_WHAT = {
-    "application-profile": "nur EPGs im selben AP",
-    "context": "nur EPGs derselben VRF",
-    "tenant": "nur EPGs im selben Tenant (auch über mehrere VRFs)",
-    "global": "alle verbundenen EPGs, auch über Tenants",
+    "application-profile": ("nur EPGs im selben AP", "only EPGs in the same AP"),
+    "context": ("nur EPGs derselben VRF", "only EPGs of the same VRF"),
+    "tenant": (
+        "nur EPGs im selben Tenant (auch über mehrere VRFs)",
+        "only EPGs in the same tenant (also across several VRFs)",
+    ),
+    "global": (
+        "alle verbundenen EPGs, auch über Tenants",
+        "all connected EPGs, also across tenants",
+    ),
 }
 
 
@@ -289,14 +297,20 @@ def _scope_info(session: Session, r, epgs: dict) -> dict | None:
     for c, p in pairs:
         partners[c.id] += 1
         partners[p.id] += 1
-    label = aci_relevance.SCOPE_LABEL.get(scope, scope) if scope else "unbekannt"
-    what = _SCOPE_WHAT.get(
-        scope or "", "alle verbundenen EPGs (Scope nicht gelesen – neu einlesen)"
+    label = aci_relevance.SCOPE_LABEL.get(scope, scope) if scope else L("unbekannt", "unknown")
+    what = L(
+        *_SCOPE_WHAT.get(
+            scope or "",
+            (
+                "alle verbundenen EPGs (Scope nicht gelesen – neu einlesen)",
+                "all connected EPGs (scope not read – collect again)",
+            ),
+        )
     )
     return {
         "scope": scope,
         "label": label,
-        "text": f"Scope {label}: verbindet {what}",
+        "text": L(f"Scope {label}: verbindet {what}", f"Scope {label}: connects {what}"),
         "pairs": len(pairs),
         "unpaired": len(unpaired),
         "partners": partners,
@@ -390,6 +404,7 @@ def decide_pair(
             detail="pair = one IPv4 and one IPv6 rule of the same firewall and VDOM",
         )
     v4, v6 = (a, b) if a.ip_family == "v4" else (b, a)
+    tenant_lock.hold(session, a.tenant_id)  # schreibt den Regelindex (0.80.1)
     # eine Entscheidung ohne VDOM (vor 0.15.0) wird zu einer im VDOM des Paares
     decision = session.scalars(
         select(RulePairDecision)
@@ -452,6 +467,7 @@ def reset_pair(
         raise HTTPException(status_code=404, detail="decision not found")
     tenant_scope(principal, d.tenant_id)
     sid, tid = d.source_system_id, d.tenant_id
+    tenant_lock.hold(session, tid)
     session.delete(d)
     audit.record(
         session,

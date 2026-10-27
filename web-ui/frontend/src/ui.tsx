@@ -1,6 +1,7 @@
 // Gemeinsame Darstellungs-Bausteine: Icons, Chips/Badges, Seitenkopf, Fehler, Modal.
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { describeError } from "./api";
+import { exportLang, L, Lang, locale, setExportLang } from "./i18n";
 
 const ICONS: Record<string, ReactNode> = {
   overview: (
@@ -149,6 +150,15 @@ export function Icon({ name, size = 16, className }: { name: string; size?: numb
   );
 }
 
+const HELP_KEY = "automato_page_help";
+function readHelp(): boolean {
+  try {
+    return localStorage.getItem(HELP_KEY) === "open";
+  } catch {
+    return false;
+  }
+}
+
 export function PageHead({
   title,
   children,
@@ -170,14 +180,82 @@ export function PageHead({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  // Erklärung unter dem Titel (0.75.0, Anwender: zu viel Info): eine Zeile, Klick klappt auf
+  // bzw. zu – gilt für alle Seiten und bleibt im Browser
+  const [help, setHelp] = useState(() => readHelp());
+  const toggle = (e: React.MouseEvent) => {
+    if ((e.target as Element).closest("a")) return; // Links bleiben Links
+    const next = !help;
+    try {
+      localStorage.setItem(HELP_KEY, next ? "open" : "closed");
+    } catch {
+      /* localStorage nicht verfügbar */
+    }
+    setHelp(next);
+  };
   return (
     <div className="page-head" ref={ref}>
       <div>
         <h1>{title}</h1>
-        {children && <p>{children}</p>}
+        {children && (
+          <p
+            className={`page-help${help ? " open" : ""}`}
+            title={
+              help ? L("Erklärung zuklappen", "Collapse explanation") : L("Erklärung aufklappen", "Expand explanation")
+            }
+            onClick={toggle}
+          >
+            {children}
+          </p>
+        )}
       </div>
       {actions && <div className="actions">{actions}</div>}
     </div>
+  );
+}
+
+// Sprache der Dateien vom Server (0.87.0, ADR 0028): Word, PDF, draw.io, SVG – unabhängig von der
+// Oberfläche, gemerkt im Browser; Markdown und Druck folgen der Oberfläche
+export function ExportLangSelect() {
+  const [value, setValue] = useState<Lang>(exportLang);
+  return (
+    <label
+      className="export-lang"
+      title={L(
+        "Sprache der Dateien (Word, PDF, draw.io, SVG) – Markdown und Druck folgen der Oberfläche",
+        "Language of the files (Word, PDF, draw.io, SVG) – Markdown and print follow the interface",
+      )}
+    >
+      <span>{L("Sprache der Datei", "File language")}</span>
+      <select
+        className="export-lang-select"
+        value={value}
+        onChange={(e) => {
+          const next = e.target.value as Lang;
+          setExportLang(next);
+          setValue(next);
+        }}
+      >
+        <option value="de">Deutsch</option>
+        <option value="en">English</option>
+      </select>
+    </label>
+  );
+}
+
+// Kunde oben gewählt (0.76.0): Element gehört zum geteilten Teil der Umgebung
+export function SharedChip({ shared }: { shared?: boolean }) {
+  if (!shared) return null;
+  return (
+    <span
+      className="chip na shared-chip"
+      title={L(
+        "geteilter Teil der Umgebung – gehört nicht dem gewählten Kunden allein (z. B. Tenant common, VDOM für mehrere Kunden)",
+        "shared part of the environment – does not belong to the selected customer alone (e.g. tenant common, VDOM for several customers)",
+      )}
+    >
+      {L("geteilt", "shared")}
+    </span>
   );
 }
 
@@ -214,7 +292,7 @@ export function ErrorBox({
         {text}
       </div>
       {onClose && (
-        <button className="linkbtn x" onClick={onClose} aria-label="Schliessen">
+        <button className="linkbtn x" onClick={onClose} aria-label={L("Schliessen", "Close")}>
           ✕
         </button>
       )}
@@ -296,13 +374,13 @@ export function SecretInput({
         {...NO_FILL}
       />
       <button className="btn btn-ghost btn-sm" type="button" onClick={() => setShow((s) => !s)}>
-        {show ? "Verbergen" : "Zeigen"}
+        {show ? L("Verbergen", "Hide") : L("Zeigen", "Show")}
       </button>
     </div>
   );
 }
 
-export function Loading({ children = "Lade…" }: { children?: ReactNode }) {
+export function Loading({ children = L("Lade…", "Loading…") }: { children?: ReactNode }) {
   return <div className="loading">{children}</div>;
 }
 
@@ -370,7 +448,7 @@ export function Modal({
       <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true">
         <div className="modal-head">
           <h2>{title}</h2>
-          <button className="iconbtn" onClick={onClose} aria-label="Schliessen">
+          <button className="iconbtn" onClick={onClose} aria-label={L("Schliessen", "Close")}>
             <Icon name="close" />
           </button>
         </div>
@@ -406,7 +484,7 @@ export function Drawer({
             <h2>{title}</h2>
             {sub && <div className="sub">{sub}</div>}
           </div>
-          <button className="iconbtn close" onClick={onClose} aria-label="Schliessen">
+          <button className="iconbtn close" onClick={onClose} aria-label={L("Schliessen", "Close")}>
             <Icon name="close" />
           </button>
         </div>
@@ -419,11 +497,11 @@ export function Drawer({
 // --- Chips für Status/Aktion/Schwere ---
 
 const MATCH: Record<string, [string, string]> = {
-  matched: ["ok", "gematcht"],
-  unmatched: ["crit", "nicht aufgelöst"],
-  expected_external: ["ext", "extern bestätigt"],
+  matched: ["ok", L("gematcht", "matched")],
+  unmatched: ["crit", L("nicht aufgelöst", "unresolved")],
+  expected_external: ["ext", L("extern (ohne IPAM)", "external (no IPAM)")],
   not_applicable: ["na", "n/a"],
-  ambiguous: ["warn", "mehrdeutig"],
+  ambiguous: ["warn", L("mehrdeutig", "ambiguous")],
 };
 
 const SEVERITY: Record<string, string> = { error: "crit", warning: "warn", info: "info" };
@@ -444,10 +522,10 @@ export function SeverityBadge({ severity }: { severity: string }) {
 }
 
 const RUN_STATUS: Record<string, [string, string, string]> = {
-  queued: ["na", "n", "wartet"],
-  running: ["info", "y", "läuft"],
+  queued: ["na", "n", L("wartet", "waiting")],
+  running: ["info", "y", L("läuft", "running")],
   completed: ["ok", "g", "OK"],
-  failed: ["crit", "r", "Fehler"],
+  failed: ["crit", "r", L("Fehler", "failed")],
 };
 
 export function RunStatusChip({ status }: { status: string }) {
@@ -469,12 +547,12 @@ export function fmtTime(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const now = new Date();
-  const time = d.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
-  if (d.toDateString() === now.toDateString()) return `heute ${time}`;
+  const time = d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return L(`heute ${time}`, `today ${time}`);
   const y = new Date(now);
   y.setDate(now.getDate() - 1);
-  if (d.toDateString() === y.toDateString()) return `gestern ${time}`;
-  return `${d.toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit", year: "2-digit" })} ${time}`;
+  if (d.toDateString() === y.toDateString()) return L(`gestern ${time}`, `yesterday ${time}`);
+  return `${d.toLocaleDateString(locale, { day: "2-digit", month: "2-digit", year: "2-digit" })} ${time}`;
 }
 
 export function download(filename: string, content: string | Blob, type = "text/markdown") {

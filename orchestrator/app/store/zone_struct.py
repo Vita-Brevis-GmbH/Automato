@@ -29,6 +29,10 @@ Transfernetz gehoert zur Zone.
   - Ohne jede Zone: Netz ohne Zone.
   - Knoten ohne Zone an einem Netz einer Zone sind kein Uebergang (das Netz bleibt in der Zone),
     der Plan zeigt sie als Kontakt (`contacts`), damit sichtbar ist, wo sie hingehoeren.
+  - **Zone nur hinter einem Router** (0.81.0): liegt ein Netz einer Zone an keinem Knoten, aber
+    ein Knoten routet es (nicht ueber die Default-Route) ueber einen Router ohne gelesenes
+    Geraet, ist das Netz dieses Routers der Uebergang zur Zone - wie bei einer Anbindung.
+    Der Uebergang nennt die Routen (`routes`).
 - Netze eines Uebergangs gehoeren keiner Zone („Netze in der Zone sind nur die, die keine
   Uebergaenge sind“). Zonen ohne eigenes Netz sind normal (z. B. Edge Internet: ein Bein im DC,
   eines in Public).
@@ -36,6 +40,7 @@ Transfernetz gehoert zur Zone.
 Nur lesend.
 """
 
+import bisect
 import ipaddress
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -54,6 +59,7 @@ NONE = "none"  # Knoten ohne Zone
 OUTSIDE = "outside"  # Router ohne gelesenes Geraet, Zone dahinter unbekannt
 Side = int | str
 SAMPLES = 12
+ROUTED_NETS = 200  # Netze je Zone, deren Routen ueber Router ohne Geraet gesucht werden
 
 
 def node_id(key: Key) -> str:
@@ -232,6 +238,10 @@ def build(session: Session, tenant_id: int, items: list[LogicalZone],
                 if hit or port:
                     behind[i].add(zid)
 
+    routed = _routed(g, items, placed, st.node_zone, m, comp_at, routers)
+    for i, zones in routed.items():
+        behind[i] |= set(zones)
+
     for i, (text, addrs) in enumerate(m.components):
         net = min((a.net for a in addrs), key=lambda n: n.prefixlen)
         keys = sorted({a.key for a in addrs})
@@ -247,6 +257,9 @@ def build(session: Session, tenant_id: int, items: list[LogicalZone],
         info = {"network": text, "legs": legs,
                 "routers": [{"ip": ip, "names": names}
                             for ip, names in sorted(routers.get(i, {}).items())]}  # fmt: skip
+        if routed.get(i):  # Zonen nur hinter dem Router: die Routen dorthin (0.81.0)
+            info["routes"] = [{"zone": zid, "prefixes": sorted(p, key=_prefix_order)}
+                              for zid, p in sorted(routed[i].items())]  # fmt: skip
         st.segments.append(({x["node"] for x in legs}, assigned | explicit))
         pairs: set[tuple[Side, Side]] = set()
         if explicit:
@@ -285,6 +298,72 @@ def build(session: Session, tenant_id: int, items: list[LogicalZone],
             t = st.transitions.setdefault(key, Transition(*key))
             t.networks.append(info)
     return st
+
+
+def _routed(
+    g: Graph,
+    items: list[LogicalZone],
+    placed: dict[int, dict[Net, str]],
+    node_zone: dict[Key, int],
+    m,
+    comp_at,
+    routers,
+) -> dict[int, dict[int, set[str]]]:
+    """Zonen nur hinter einem Router (0.81.0): Netz i -> Zone -> Praefixe der Routen. Netze der
+    Zone, die an keinem Knoten liegen; Route des Knotens (nicht 0.0.0.0/0) mit einem Next-Hop
+    auf einem Router ohne gelesenes Geraet im Netz i."""
+    attached = _Spans(a.net for _t, addrs in m.components for a in addrs)
+    out: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for z in items:
+        nets = [n for n in placed.get(z.id, {})
+                if n.prefixlen and not attached.overlaps(n)][:ROUTED_NETS]  # fmt: skip
+        if not nets:
+            continue
+        for key in g.nodes:
+            if node_zone.get(key) == z.id:
+                continue
+            for net in nets:
+                route = g.route(key, net.network_address)
+                if route is None or not route["prefix_len"]:
+                    continue  # ohne Route bzw. nur ueber die Default-Route
+                for hop in route["next_hops"] or []:
+                    ip = hop.get("ip")
+                    i = comp_at(key, ip) if ip else None
+                    if i is not None and ip in routers.get(i, {}):
+                        out[i][z.id].add(route["prefix"])
+    return out
+
+
+class _Spans:
+    """Netze als sortierte Bereiche je Familie - ueberschneidet sich ein Netz mit einem davon?"""
+
+    def __init__(self, nets):
+        spans: dict[int, list[tuple[int, int]]] = {4: [], 6: []}
+        for n in nets:
+            spans[n.version].append((int(n.network_address), int(n.broadcast_address)))
+        self.spans = {f: sorted(s) for f, s in spans.items()}
+        self.starts = {f: [s[0] for s in v] for f, v in self.spans.items()}
+        # groesstes Ende bis zu jeder Stelle (Bereiche koennen einander enthalten)
+        self.reach = {}
+        for f, v in self.spans.items():
+            top, acc = -1, []
+            for _lo, hi in v:
+                top = max(top, hi)
+                acc.append(top)
+            self.reach[f] = acc
+
+    def overlaps(self, net: Net) -> bool:
+        lo, hi = int(net.network_address), int(net.broadcast_address)
+        i = bisect.bisect_right(self.starts[net.version], hi)  # Bereiche, die vor hi beginnen
+        return i > 0 and self.reach[net.version][i - 1] >= lo
+
+
+def _prefix_order(p: str) -> tuple:
+    try:
+        n = ipaddress.ip_network(p, strict=False)
+    except ValueError:
+        return (9, 0, p)
+    return (n.version, int(n.network_address), n.prefixlen)
 
 
 def needed(st: Structure, own: set[int], targets: set[int]) -> tuple[set[str], set[int]]:

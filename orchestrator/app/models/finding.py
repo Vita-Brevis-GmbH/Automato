@@ -42,9 +42,17 @@ class FindingType(enum.StrEnum):
     PARALLEL_RULE_MISMATCH = "parallel_rule_mismatch"  # gleiche Policy-ID, anderer Inhalt
     PARALLEL_RULE_MISSING = "parallel_rule_missing"  # Policy fehlt auf einer Firewall
     PARALLEL_OBJECT_MISMATCH = "parallel_object_mismatch"  # gleiches Objekt, andere Werte
+    # Verbund (0.72.0): Policy-Route/SD-WAN-Regel, Routen eines VDOMs bzw. VIP/IP-Pool anders
+    # oder fehlend auf einer parallelen Firewall
+    PARALLEL_POLICY_ROUTE_MISMATCH = "parallel_policy_route_mismatch"
+    PARALLEL_ROUTE_MISMATCH = "parallel_route_mismatch"
+    PARALLEL_NAT_MISMATCH = "parallel_nat_mismatch"
     # ACI (0.45.1): Consumer bzw. Provider ohne Gegenstelle im Scope des Contracts (AP, VRF,
     # Tenant) - der Contract verbindet sie nicht
     ACI_SCOPE_UNPAIRED = "aci_scope_unpaired"
+    # ACI (0.79.1): EPG ist Consumer und Provider desselben Contracts - er gilt zwischen solchen
+    # EPGs in beide Richtungen, gegenueber sich selbst wirkt er nicht
+    ACI_CONTRACT_BOTH_SIDES = "aci_contract_both_sides"
     # Konfiguration vor Gelerntem (0.46.0): das ACI hat eine IP in einer anderen EPG gelernt als
     # konfiguriert (Portgruppe der VM bzw. statischer Endpunkt, gleiche VRF)
     EPG_ASSIGNMENT_CONFLICT = "epg_assignment_conflict"
@@ -60,9 +68,14 @@ class FindingType(enum.StrEnum):
     # „gesperrt“ bzw. dasselbe Praefix in zwei Zonen
     ZONE_POLICY_VIOLATION = "zone_policy_violation"
     ZONE_OVERLAP = "zone_overlap"
+    # Grundschema (0.78.0, ADR 0024): logische Zone, die zu keiner Zone des Grundschemas im
+    # Namensprofil passt (Name, Kurzname bzw. Erkennungsmuster)
+    ZONE_OUTSIDE_SCHEMA = "zone_outside_schema"
     # Verbindungen Ende zu Ende (0.59.0, ADR 0021): erlaubende Regel einer Applikation, deren
     # Verbindung der Weg sperrt, die nicht auf dem Weg liegt bzw. dort nicht greift
     APP_CONNECTION_MISMATCH = "app_connection_mismatch"
+    # 0.78.2: Contract Richtung L3Out oeffnet weniger als die Firewall-Regeln (fuehrend)
+    APP_CONTRACT_NARROWER = "app_contract_narrower"
     # Verkabelung (0.62.0, ADR 0025, `store/cabling`): Verbindung zwischen zwei gelesenen
     # Switches mit abweichender Konfiguration bzw. nur von einer Seite gemeldet
     LINK_SPEED_MISMATCH = "link_speed_mismatch"
@@ -106,6 +119,8 @@ class SubjectKind(enum.StrEnum):
     NODE = "node"  # Knoten der Topologie (`<Quellsystem>|<Kontext>`, 0.50.0)
     LINK = "link"  # Verbindung der Verkabelung (`<Geraet>|<Port>~<Geraet>|<Port>`, 0.62.0)
     # bzw. ein Port (`<Geraet>|<Port>`, 0.63.0), Geraet, Geraetepaar bzw. `vlan|<VLAN>` (0.64.0)
+    NAT = "nat"  # VIP bzw. IP-Pool (`<Quellsystem>|<VDOM>|<Art>|<Familie>|<Name>`, 0.72.0)
+    ZONE = "zone"  # logische Zone (Name, 0.78.0)
 
 
 class Finding(Base):

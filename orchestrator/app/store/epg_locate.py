@@ -22,13 +22,21 @@ from functools import cached_property
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import Epg, EpgEndpoint, EpgSubnet, Vm, VmNic
 from app.store import epgs as epg_store
 
 STATIC, VM, LEARNED, SUBNET = "static", "vm", "learned", "subnet"
 LABEL = {STATIC: "statischer Endpunkt", VM: "Portgruppe der VM", LEARNED: "gelernter Endpunkt",
          SUBNET: "Subnetz"}  # fmt: skip
+_LABEL_EN = {STATIC: "static endpoint", VM: "port group of the VM", LEARNED: "learned endpoint",
+             SUBNET: "subnet"}  # fmt: skip
 CONFIG = (STATIC, VM)
+
+
+def label(stage: str) -> str:
+    """Bezeichnung einer Stufe in der Sprache der Anfrage (`LABEL` bleibt deutsch)."""
+    return L(LABEL, _LABEL_EN)[stage]
 
 
 class Locator:
@@ -116,11 +124,11 @@ class Locator:
 
     def configured(self, ip: str, sid: int | None, vrf: str | None) -> list[tuple[Epg, str]]:
         """Konfigurierte EPG(s) der IP in der VRF: statischer Endpunkt, sonst Portgruppe."""
-        static = [(self.epgs[i], LABEL[STATIC]) for i, o in self._endpoints.get(ip, [])
+        static = [(self.epgs[i], label(STATIC)) for i, o in self._endpoints.get(ip, [])
                   if o == STATIC and self._where(i) == (sid, vrf)]  # fmt: skip
         if static:
             return _unique(static)
-        vms = [(self.epgs[i], f"{LABEL[VM]} {name}") for i, name in self._vms.get(ip, [])
+        vms = [(self.epgs[i], f"{label(VM)} {name}") for i, name in self._vms.get(ip, [])
                if self._where(i) == (sid, vrf)]  # fmt: skip
         return _unique(vms)
 
@@ -135,7 +143,7 @@ class Locator:
             return [e for e, _w in conf], conf[0][1]
         learned = self.learned(ip, sid, vrf)
         if learned:
-            return learned, LABEL[LEARNED]
+            return learned, label(LEARNED)
         try:
             addr = ipaddress.ip_address(ip)
         except ValueError:
@@ -146,7 +154,7 @@ class Locator:
         pool = [x for x in nets if x[1] in ("epg", "esg")] or nets
         best = max(x[0].prefixlen for x in pool)
         ids = list(dict.fromkeys(i for n, _o, i in pool if n.prefixlen == best))
-        return [self.epgs[i] for i in ids], LABEL[SUBNET]
+        return [self.epgs[i] for i in ids], label(SUBNET)
 
     def vrfs(self) -> set[tuple[int | None, str | None]]:
         return {w for i in self.epgs if (w := self._where(i)) is not None}

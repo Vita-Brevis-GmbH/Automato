@@ -276,8 +276,12 @@ class L2:
             level[k] = (min(ups) + 1) if ups else 0
         return level
 
-    def plan(self, ends: bool = True, vlan: int | None = None) -> dict:
+    def plan(self, ends: bool = True, vlan: int | None = None,
+             only: set[str] | None = None) -> dict:  # fmt: skip
+        """`only` (0.76.0, Kunde gewaehlt): nur diese Geraete (Schluessel), Lage neu berechnet."""
         keys = self.nodes(ends)
+        if only is not None:
+            keys = [k for k in keys if k in only]
         level = self.layers(keys)
         rows: dict[int, list[str]] = defaultdict(list)
         for k in keys:

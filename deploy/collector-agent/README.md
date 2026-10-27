@@ -75,6 +75,15 @@ kopieren (`install.ps1` installiert das sot-gateway-Wheel aus dem Ordner mit), d
 # danach C:\Automato\collector\agent.env mit echten Werten fuellen (Orchestrator, Agent-Token, TLS)
 ```
 
+**TLS intern (0.78.2):** Ist auf dem Server `AUTOMATO_INTERNAL_TLS=on`, spricht der
+Orchestrator auf Port 8000 nur noch HTTPS. Der Agent braucht dann
+`AUTOMATO_ORCHESTRATOR_URL=https://<host>:8000` und `AUTOMATO_ORCHESTRATOR_CA_BUNDLE` mit der
+internen CA (`automato-ca.crt`, nur das öffentliche Zertifikat). Das Paket aus dem Web-UI bringt
+die CA mit; `install.ps1` legt sie nach `C:\Automato\collector\automato-ca.crt`, stellt eine
+`http://…:8000`-Adresse in der `agent.env` auf `https://` um und ergänzt die CA-Zeile. Mit
+`http://` beendet der Orchestrator die Verbindung ohne Antwort („RemoteProtocolError: Server
+disconnected without sending a response“). Über das Agent-Gateway (`:8443`) ändert sich nichts.
+
 `install.ps1` legt ein venv an, installiert das Wheel (bringt `automato-collector` mit),
 kopiert `run-agent.ps1` + `agent.env` und registriert die Aufgabe **Automato Collector
 Agent** (SYSTEM, Start alle N Minuten → `automato-collector --poll --watch 20 --for N-1`).

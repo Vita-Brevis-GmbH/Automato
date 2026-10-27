@@ -11,6 +11,8 @@ Eine Firewall mit LAN, DMZ und Internet, Policies in dieser Reihenfolge:
 7. lan -> internet das DMZ-Netz (tcp/22) - falscher Ausgang, kann nie greifen
 """
 
+from ipaddress import ip_address
+
 ADMIN = {"X-Dev-Roles": "admin"}
 TOKEN = {"X-Internal-Token": "dev-only-token"}
 
@@ -258,3 +260,50 @@ def test_nat_auf_dem_weg(client):
     paths = client.get("/routing/trace", params=other).json()["paths"]
     assert paths and all("nat" not in p["hops"][0] for p in paths)
     assert paths[0]["hops"][0]["ingress"]["interface"] == "to-i"
+
+
+def test_sperre_zuoberst_zeigt_die_policies_dahinter(client, session_factory):
+    """0.78.4 (Rueckmeldung des Anwenders): eine Sperre zuoberst („Default Block …“) entscheidet
+    - die Weg-Suche zeigt trotzdem die passenden Policies dahinter (nicht erreicht) und nennt
+    die erlaubende; die Applikations-Doku rechnet ohne sie."""
+    from app.store import policy_check
+
+    fw = {**FW, "rules": [
+        _policy(9, "Default Block Darknet", "lan", "dmz", ["all"], ["10.30.0.0/24"],
+                ["tcp/443", "tcp/445"], "deny"),
+        *FW["rules"],
+    ]}  # fmt: skip
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    body = {"tenant_id": tid, "name": "fw-r", "platform": "fortigate", "base_url": "https://x"}
+    sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+    run = {"platform": "fortigate", "tenant_id": tid, "source_system_id": sid}
+    run_id = client.post("/jobs/collect", json=run).json()["run_id"]
+    r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=fw)
+    assert r.status_code == 200 and r.json()["status"] == "completed", r.text
+
+    rules, policy = _hop(client, tid, src="10.10.0.5", dst="10.30.0.10", service="tcp/443")
+    assert rules["verdict"] == "deny" and policy["verdict"] == "deny"
+    (first,) = rules["rules"]
+    assert (first["external_id"], first["decides"], first["dst"]) == ("9", True, "10.30.0.0/24")
+    # dahinter: Policy 1 erlaubt, Policy 2 sperrt - nicht erreicht
+    assert [(e["external_id"], e["action"], e["after"], e["decides"]) for e in rules["after"]] == [
+        ("1", "allow", True, False), ("2", "deny", True, False)]  # fmt: skip
+    assert rules["text"] == (
+        "gesperrt durch Policy 9 „Default Block Darknet“ – dahinter würde Policy 1 "
+        "„lan-to-dmz-web“ erlauben (nicht erreicht)"
+    )
+    # anderer Dienst: die Sperre passt nicht, Policy 2 entscheidet wie bisher
+    rules, _ = _hop(client, tid, src="10.10.0.5", dst="10.30.0.10", service="tcp/22")
+    assert [e["external_id"] for e in rules["rules"]] == ["2"] and "after" not in rules
+
+    # ohne die Weg-Suche (Applikations-Doku, Abgleich): keine Policies dahinter
+    with session_factory() as session:
+        checks = policy_check.Checks.load(session, tid)
+        assert checks.after == 0
+        hop = {"ingress": {"interface": "lan", "zone": "lan"},
+               "egress": {"interface": "dmz", "zone": "dmz"}}  # fmt: skip
+        result = checks.checker.check(sid, "root", hop["ingress"], hop["egress"],
+                                      ip_address("10.10.0.5"), ip_address("10.30.0.10"),
+                                      ("tcp", 443))  # fmt: skip
+        assert result["verdict"] == "deny" and "after" not in result
+        assert result["text"] == "gesperrt durch Policy 9 „Default Block Darknet“"
