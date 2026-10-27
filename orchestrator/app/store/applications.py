@@ -54,6 +54,7 @@ from app.store import (
     customer_scope,
     finding_text,
     parallel,
+    peer_names,
     references,
     rule_index,
     sites,
@@ -528,6 +529,11 @@ def systems_by_application(
     return out
 
 
+def app_systems(session: Session, app: Application, resolver: Resolver | None = None):
+    """Server (Host-Objekte) und EPGs der Applikation aus ihren Mitgliedern."""
+    return _systems(session, app, resolver)
+
+
 def _systems(session: Session, app: Application, resolver: Resolver | None = None):
     res = resolver or Resolver(session, app.tenant_id)
     hosts: dict[int, NetworkObject] = {}
@@ -682,7 +688,8 @@ def _hosts_with_ips(session: Session, tenant_id: int, ips: list[str]) -> list[Ne
     )
 
 
-def build_doc(session: Session, app: Application, rule_ids: set[int] | None = None) -> dict:
+def build_doc(session: Session, app: Application, rule_ids: set[int] | None = None,
+              names: bool = False) -> dict:  # fmt: skip
     """Applikations-Doku (Dev-Befund 0.14.0): die Doku steht im Mittelpunkt.
 
     - `systems`: alle VMs der Applikation (Portgruppen ihrer EPGs, VMs hinter ihren Servern)
@@ -695,7 +702,9 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     - `rules`: die Regeln wie in der Regel-Ansicht (Aktion, Quelle, Ziel, Dienste, NAT);
     - `summary`: Kennzahlen (VMs, Systeme, EPGs, Regeln spezifisch/unspezifisch);
     - `findings`: offene Befunde zu Regeln, Servern, VMs, Portgruppen und Subnetzen;
-    - `tables`: die 10 Kategorien fuer Export und Druck (gleiche Zeilen einmal).
+    - `tables`: die 10 Kategorien fuer Export und Druck (gleiche Zeilen einmal); mit `names`
+      (Einstellung des Mandanten, nur Betreuer - 0.95.0) Gegenstellen nur mit Adresse samt Namen
+      (`peer_names`).
     """
     tid = app.tenant_id
     restricted = rule_ids is not None  # Kunden-Benutzer: nur ihre Regeln (ADR 0018)
@@ -864,6 +873,8 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     # parallele Firewalls (0.18.0): gleiche Policies nur einmal - die der fuehrenden Firewall
     twins = parallel.twin_ids(session, {row.get(appdoc.RULE) for _, _, row in rows})
     rows = [r for r in rows if r[2].get(appdoc.RULE) not in twins]
+    if names and not restricted:  # Namen der Gegenstellen (0.95.0) - nie fuer Kunden-Benutzer
+        peer_names.apply(session, tid, [row for _, _, row in rows])
     hits, tables = _hits_and_tables(rows, _pairs(session, {r[2].get(appdoc.RULE) for r in rows}))
     narrower = _narrower(rows, systems, epg_out)  # 0.78.2: Contracts enger als die Firewall
     # Routingtechnisch unmoegliche Treffer gehoeren nicht in die Applikations-Doku (Dev-Befund

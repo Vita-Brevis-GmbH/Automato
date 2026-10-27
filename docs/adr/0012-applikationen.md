@@ -135,6 +135,31 @@ Weg zum Server in die Spalten verteilen):**
   Wert fallen je Kategorie weg (Ansicht, Markdown, Word, Druck). Die Spezifikation
   `docs/usecases/uc1-applikations-doku-spec.md` beschreibt die Spalten.
 
+**Ergänzung 0.95.0 (Test des Anwenders 2026-10-27: „Detailseite statt zu den Regeln springen“ und
+„Namen von Systemen ausserhalb des Tenants“):**
+- **Klick auf ein Element öffnet sein Detail** wie in „Objekte & Inventar“, statt die Regeln zu
+  filtern und hinunterzuscrollen: eine **EPG** (Karte „EPGs im ACI“ bzw. die EPG im Detail eines
+  Systems) zeigt ihre Lage wie im Regel-Detail – Tenant, AP, BD, VRF, Subnetze mit IPAM,
+  Endpunkte, VMs, Leaf-Ports und VLANs (`epgs.details`, neu `GET /applications/{id}/epgs/{epg_id}`,
+  nur EPGs der Applikation; Kunden-Benutzer nur in ihrem Ausschnitt, Gerätenamen neutral). Im
+  Detail „Regeln dieser EPG zeigen“ (das bisherige Filtern) und „In Objekte & Inventar öffnen“
+  (Portgruppen der EPG, ohne VMs ihre Subnetze im Netzinventar). Ein **Firewall-Objekt** im
+  Detail eines Systems öffnet das Objekt-Detail von „Objekte & Inventar“ in der Doku (mit Knopf
+  dorthin). Systeme öffnen ihr Detail wie seit 0.73.0; die Kennzahlen oben filtern weiter.
+- **Namen der Gegenstellen** (`tenant.appdoc_foreign_names`, Migration `0062`, Standard aus):
+  Der FortiGate-Collector löst Objektnamen zu Adressen auf – in den Kategorien stand bei
+  Gegenstellen ausserhalb der Applikation (anderer Tenant, anderes Netz, extern) deshalb oft nur
+  die IP bzw. das Netz. Mit der Einstellung nennt die Doku nach Kategorien (Ansicht, Markdown,
+  Word, Druck, Doku je System) den Namen dazu: „db01.example.ch (10.30.0.5)“. Der Name kommt in
+  dieser Reihenfolge aus dem IPAM (DNS-Name bzw. Netz mit Name/Beschreibung), der VM, der EPG
+  (Endpunkt bzw. Subnetz, nur eindeutig) oder dem Firewall-Objekt, über das die Regel die
+  Adresse nennt (`store/peer_names.py`). Gegenstellen mit eigenem Namen bleiben, wie sie sind.
+- **Nur der Admin** stellt es ein (Mandant → „Applikations-Doku: Namen der Gegenstellen zeigen“,
+  `PATCH /tenants/{id}`, Audit `tenant.updated` mit dem Feld). Es gilt **nur für Betreuer**:
+  Kunden-Benutzer sehen unabhängig davon weiter nur die Adressen (fail-closed in der API, dazu
+  die neutralen Bezeichnungen `customer_alias`). Reine Anzeige – nichts wird gespeichert,
+  verglichen oder für Befunde, Verbindungen und Abhängigkeiten verwendet.
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:

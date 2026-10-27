@@ -35,7 +35,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "dictionary_entry.deleted": frozenset({"entry_id"}),
     "finding.triaged": frozenset({"finding_id", "status", "customer_roles"}),
     "tenant.created": frozenset({"tenant_id", "name", "code"}),
-    "tenant.updated": frozenset({"tenant_id", "code", "audit_reads", "naming_profile_id"}),
+    "tenant.updated": frozenset(
+        {"tenant_id", "code", "audit_reads", "naming_profile_id", "appdoc_foreign_names"}
+    ),
     "tenant.deleted": frozenset(
         {
             "tenant_id",

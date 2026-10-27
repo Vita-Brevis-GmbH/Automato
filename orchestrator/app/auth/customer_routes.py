@@ -46,6 +46,8 @@ CUSTOMER_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     ("GET", "/applications/{application_id}"): READ,
     ("GET", "/applications/{application_id}/doc"): READ,
     ("GET", "/applications/{application_id}/dependencies"): READ,  # 0.88.0
+    # 0.95.0: EPG der Applikation im Detail (nur EPGs ihres Ausschnitts)
+    ("GET", "/applications/{application_id}/epgs/{epg_id}"): READ,
     # 0.53.0: wer bin ich; die eigenen Zonen, Matrix und Plan (ohne fremde Kunden, ohne
     # Netze ohne Zone; Gegenseite fremder Kunden als „anderer Kunde“)
     ("GET", "/auth/me"): READ,

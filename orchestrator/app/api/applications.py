@@ -23,6 +23,7 @@ from app import audit
 from app.api.appdoc import DocTableOut, SiteRef
 from app.api.customer_filter import actor, customer_view, own_view, ownership
 from app.api.customer_filter import ids as view_ids
+from app.api.customer_filter import visible as in_view
 from app.audit import reads
 from app.auth import capabilities as caps
 from app.auth.deps import require_operator, require_viewer, tenant_scope
@@ -31,8 +32,9 @@ from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import Application, Rule, Site, SourceSystem, Tenant
 from app.schemas.rules import RuleOut
-from app.store import app_import, app_paths, app_plan, app_refresh, sites, word_export
+from app.store import app_import, app_paths, app_plan, app_refresh, peer_names, sites, word_export
 from app.store import applications as store
+from app.store import epgs as epg_store
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -906,7 +908,8 @@ def export_application(
     with_plan = want is None or "plan" in want
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    doc = store.build_doc(session, app, None)
+    names = peer_names.enabled(session, app.tenant_id, principal.is_customer)  # 0.95.0
+    doc = store.build_doc(session, app, None, names=names)
     if want is None or "dependencies" in want:  # 0.88.0
         doc["dependencies"] = store.dependencies(session, app, doc)
     out = ApplicationDocOut(
@@ -953,12 +956,14 @@ def application_doc(
 ):
     """Applikations-Doku ueber alle Systeme der Applikation (Tabellen 1–10). Abhaengigkeiten zu
     anderen Applikationen (0.60.0) seit 0.73.0 nur mit `dependencies=true`; die Oberflaeche holt
-    sie seit 0.88.0 einzeln ueber `GET …/dependencies`."""
+    sie seit 0.88.0 einzeln ueber `GET …/dependencies`. Gegenstellen nur mit Adresse nennen
+    seit 0.95.0 ihren Namen, wenn der Mandant es vorsieht - nie fuer Kunden-Benutzer."""
     app = _load(session, principal, application_id)
     view = _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
     editable = _editable(session, principal, app)
-    doc = store.build_doc(session, app, view_ids(session, view, "rule"))
+    names = peer_names.enabled(session, app.tenant_id, principal.is_customer)
+    doc = store.build_doc(session, app, view_ids(session, view, "rule"), names=names)
     if dependencies:
         visible = _visible_apps(session, principal, app)
         doc["dependencies"] = store.dependencies(session, app, doc, visible)
@@ -975,6 +980,29 @@ def _visible_apps(session: Session, principal: Principal, app: Application) -> s
     mine = view.applications(session)
     stmt = select(Application).where(Application.tenant_id == app.tenant_id)
     return {a.id for a in session.scalars(stmt) if mine(a)}
+
+
+@router.get("/{application_id}/epgs/{epg_id}")
+def application_epg(
+    application_id: int,
+    epg_id: int,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """EPG der Applikations-Doku im Detail (0.95.0, Anwender: „Detailseite statt zu den Regeln
+    springen“): die Lage wie im Regel-Detail (`epgs.details` - Tenant, AP, BD, VRF, Subnetze mit
+    IPAM, Endpunkte, VMs, Leaf-Ports und VLANs). Nur EPGs der Applikation; Kunden-Benutzer nur
+    in ihrem Ausschnitt (sonst 404), Geraetenamen neutral wie ueberall (`customer_alias`)."""
+    app = _load(session, principal, application_id)
+    view = _visible(session, principal, app)
+    reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
+    _hosts, epgs = store.app_systems(session, app)
+    epg = next((e for e in epgs if e.id == epg_id), None)
+    if epg is None:
+        raise HTTPException(status_code=404, detail="epg not found")
+    if view is not None:
+        in_view(session, view, "epg", epg.id)
+    return epg_store.details(session, app.tenant_id, [epg])[epg.id]
 
 
 @router.get("/{application_id}/dependencies")

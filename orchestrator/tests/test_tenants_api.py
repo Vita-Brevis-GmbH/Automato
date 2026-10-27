@@ -127,6 +127,7 @@ def test_schreibpfade_werden_auditiert(session_factory, client):
         "code": "ssgch",
         "audit_reads": False,
         "naming_profile_id": None,
+        "appdoc_foreign_names": False,  # 0.95.0
     }
 
 

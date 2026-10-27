@@ -5,7 +5,9 @@
 // warum die Regel für die Applikation gilt; Links in Regeln, Objekte und Findings. Seit 0.73.0
 // (Anwender: Übersicht) Bereiche zuklappbar, Systeme kompakt mit Detail auf Klick, Export und
 // Druck mit wählbaren Abschnitten; Abhängigkeiten zu anderen Applikationen seit 0.88.0 wieder
-// (auf Klick geladen, Infrastruktur wie Monitoring/Backup getrennt von den fachlichen).
+// (auf Klick geladen, Infrastruktur wie Monitoring/Backup getrennt von den fachlichen). Seit 0.95.0
+// (Anwender: „Detailseite statt zu den Regeln springen“) öffnet ein Klick auf eine EPG bzw. ein
+// Firewall-Objekt ein Detail wie in „Objekte & Inventar“, die Regeln zeigt ein Knopf darin.
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import {
   AppDocEpg,
@@ -19,10 +21,12 @@ import {
   assignAppRule,
   DocScope,
   DocTable,
+  EpgLocation,
   exportApplication,
   fetchAppConnections,
   fetchAppDependencies,
   fetchAppDoc,
+  fetchAppEpg,
   fetchSystems,
   hideAppRules,
   Purpose,
@@ -35,7 +39,9 @@ import type { View, ViewParams } from "./App";
 import ConnectionsCard, { connectionsMarkdown } from "./AppConnections";
 import { DocRow, DocTableView, tablesMarkdown } from "./AppDoc";
 import type { Me } from "./auth";
+import { EpgCard } from "./EpgCard";
 import { Fold, FoldTitle, readStored, useFolds, writeJson } from "./fold";
+import { ObjectDrawer } from "./Objects";
 import { findingLabel, serviceNames, useVdomShown } from "./refs";
 import RuleDetailDrawer from "./RuleDetail";
 import { NameCell } from "./RulesTable";
@@ -209,6 +215,8 @@ export default function ApplicationDocView({
   const [printing, setPrinting] = useState<Set<string> | null>(null); // Druck: gewählte Abschnitte offen
   const [exportOpen, setExportOpen] = useState(false);
   const [systemKey, setSystemKey] = useState<string | null>(null); // Detail eines Systems (0.73.0)
+  const [epgKey, setEpgKey] = useState<string | null>(null); // Detail einer EPG (0.95.0)
+  const [objectId, setObjectId] = useState<number | null>(null); // Firewall-Objekt (0.95.0)
   const [conns, setConns] = useState<AppConnections | null>(null); // für den Export (0.59.0)
   const [deps, setDeps] = useState<AppDependencies | null>(null); // für den Export (0.88.0)
   const [tick, setTick] = useState(0); // Regel zugeordnet bzw. ausgeschlossen (0.60.0)
@@ -504,14 +512,7 @@ export default function ApplicationDocView({
         <SystemsCard items={doc.systems} fold={fold("systems")} onOpen={setSystemKey} />
       </div>
       <div className={off("epgs").trim()}>
-        <EpgsCard
-          items={doc.epgs}
-          fold={fold("epgs")}
-          onPick={(key) => {
-            setF({ ...NO_FILTER, epg: key });
-            scrollToRules();
-          }}
-        />
+        <EpgsCard items={doc.epgs} fold={fold("epgs")} onPick={setEpgKey} />
       </div>
 
       {/* Verbindungen Ende zu Ende (0.45.0) – zeigt die Infrastruktur, nicht für Kunden-Benutzer */}
@@ -786,6 +787,49 @@ export default function ApplicationDocView({
             setF({ ...NO_FILTER, system: key });
             scrollToRules();
           }}
+          epgKey={(label) => doc.epgs.find((e) => e.label === label)?.key}
+          onEpg={(key) => {
+            setSystemKey(null);
+            setEpgKey(key);
+          }}
+          onObject={(oid) => {
+            setSystemKey(null);
+            setObjectId(oid);
+          }}
+        />
+      )}
+      {epgKey && (
+        <EpgDrawer
+          appId={id}
+          e={doc.epgs.find((e) => e.key === epgKey)}
+          customer={me.isCustomer}
+          onGo={onGo}
+          onClose={() => setEpgKey(null)}
+          onRules={(key) => {
+            setEpgKey(null);
+            setF({ ...NO_FILTER, epg: key });
+            scrollToRules();
+          }}
+        />
+      )}
+      {objectId != null && (
+        <ObjectDrawer
+          id={objectId}
+          onClose={() => setObjectId(null)}
+          onGo={onGo}
+          extra={
+            onGo && (
+              <div className="chips" style={{ marginBottom: 10 }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  id="app-object-open"
+                  onClick={() => onGo("objekte", { object_id: String(objectId) })}
+                >
+                  {L("In Objekte & Inventar öffnen", "Open in Objects & inventory")}
+                </button>
+              </div>
+            )
+          }
         />
       )}
 
@@ -1244,12 +1288,18 @@ function SystemDrawer({
   onGo,
   onClose,
   onRules,
+  epgKey,
+  onEpg,
+  onObject,
 }: {
   x: AppDocSystem2 | undefined;
   sourceName: (id: number) => string;
   onGo?: Go;
   onClose: () => void;
   onRules: (key: string) => void;
+  epgKey: (label: string) => string | undefined; // EPG der Applikation (Detail, 0.95.0)
+  onEpg: (key: string) => void;
+  onObject: (id: number) => void; // Firewall-Objekt im Detail (0.95.0)
 }) {
   if (!x) return null;
   const [tone, state] = POWER[x.power_state ?? ""] ?? ["na", x.power_state ?? ""];
@@ -1294,7 +1344,27 @@ function SystemDrawer({
           {row("IPs", x.ips.length ? <span className="mono">{x.ips.join(", ")}</span> : <Dash />)}
           {row("DNS", x.dns.length ? <span className="mono">{x.dns.join(", ")}</span> : <Dash />)}
           {x.servers.length > 0 && row("Server (IPAM)", <span className="mono">{x.servers.join(", ")}</span>)}
-          {row("EPG", x.epgs.length ? x.epgs.map((e) => <div key={e} className="mono">{e}</div>) : <Dash />)}
+          {row(
+            "EPG",
+            x.epgs.length ? (
+              x.epgs.map((e) => {
+                const key = epgKey(e);
+                return (
+                  <div key={e} className="mono">
+                    {key ? (
+                      <button className="linkbtn mono app-system-epg" title={L("Detail der EPG", "Detail of the EPG")} onClick={() => onEpg(key)}>
+                        {e}
+                      </button>
+                    ) : (
+                      e
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              <Dash />
+            ),
+          )}
           {row(
             L("Portgruppe", "Port group"),
             x.nics?.some((n) => n.portgroup) ? (
@@ -1353,10 +1423,10 @@ function SystemDrawer({
                   )}
                   <div
                     className="chips"
-                    title={L("auf diesen Firewalls erfasst – Klick öffnet das Objekt", "defined on these firewalls – click opens the object")}
+                    title={L("auf diesen Firewalls erfasst – Klick zeigt das Objekt", "defined on these firewalls – click shows the object")}
                   >
                     {o.where.map((w) => (
-                      <button key={w.id} className="chip linkchip" onClick={() => onGo?.("objekte", { object_id: String(w.id) })}>
+                      <button key={w.id} className="chip linkchip" onClick={() => onObject(w.id)}>
                         {sourceName(w.source_system_id)}
                         {w.vdom && w.vdom !== "root" ? ` · VDOM ${w.vdom}` : ""}
                       </button>
@@ -1398,8 +1468,8 @@ function EpgsCard({ items, fold, onPick }: { items: AppDocEpg[]; fold: Fold; onP
         </span>
         <span className="faint" style={{ fontSize: 12 }}>
           {L(
-            "ganzer Pfad Tenant/AP/EPG – Klick zeigt die Regeln der EPG und ihrer Systeme",
-            "full path tenant/AP/EPG – click shows the rules of the EPG and its systems",
+            "ganzer Pfad Tenant/AP/EPG – Klick zeigt das Detail der EPG",
+            "full path tenant/AP/EPG – click shows the detail of the EPG",
           )}
         </span>
       </div>
@@ -1429,8 +1499,8 @@ function EpgsCard({ items, fold, onPick }: { items: AppDocEpg[]; fold: Fold; onP
               {items.map((e) => (
                 <tr
                   key={e.key}
-                  className="clickable"
-                  title={L("Regeln dieser EPG zeigen", "Show rules of this EPG")}
+                  className="clickable app-epg"
+                  title={L("Detail der EPG", "Detail of the EPG")}
                   onClick={() => onPick(e.key)}
                 >
                   <td>
@@ -1472,6 +1542,90 @@ function EpgsCard({ items, fold, onPick }: { items: AppDocEpg[]; fold: Fold; onP
       </div>
       )}
     </div>
+  );
+}
+
+// Detail einer EPG (0.95.0, Anwender: „Detailseite vom Element gemäss Objekte und Inventar statt zu
+// den Regeln springen“): die Lage wie im Regel-Detail (`EpgCard`: Tenant, AP, BD, VRF, Subnetze mit
+// IPAM, Endpunkte, VMs, Leaf-Ports) und die Angaben der Doku; die Regeln zeigt ein Knopf
+function EpgDrawer({
+  appId,
+  e,
+  customer,
+  onGo,
+  onClose,
+  onRules,
+}: {
+  appId: number;
+  e: AppDocEpg | undefined;
+  customer: boolean;
+  onGo?: Go;
+  onClose: () => void;
+  onRules: (key: string) => void;
+}) {
+  const [loc, setLoc] = useState<EpgLocation | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const epgId = e?.id;
+  useEffect(() => {
+    if (epgId == null) return;
+    setLoc(null);
+    setErr(null);
+    fetchAppEpg(appId, epgId).then(setLoc).catch(setErr);
+  }, [appId, epgId]);
+  if (!e) return null;
+  // Objekte & Inventar: die Portgruppen der EPG (mit ihren VMs), ohne VMs ihre Subnetze im
+  // Netzinventar (Kunden-Benutzer haben kein Netzinventar)
+  const inventory = e.vm_count > 0 || customer ? { tab: "portgroups", q: e.label } : { tab: "subnets", q: e.name };
+  return (
+    <Drawer title={e.label} sub={L("EPG der Applikation", "EPG of the application")} onClose={onClose}>
+      <div id="app-epg-detail">
+        <div className="chips" style={{ marginBottom: 10 }}>
+          <span className="chip local">EPG</span>
+          {e.pref_group && (
+            <span className="chip info" title={L("Mitglied der Preferred Group seiner VRF", "Member of the Preferred Group of its VRF")}>
+              Preferred Group
+            </span>
+          )}
+          <span className="chip ok" title={L("spezifische Regeln", "specific rules")}>
+            {L(`${e.rules.specific} spezifisch`, `${e.rules.specific} specific`)}
+          </span>
+          <span
+            className={`chip ${e.rules.unspecific ? "warn" : "na"}`}
+            title={L("unspezifische Regeln (Subnetz, any, vzAny)", "unspecific rules (subnet, any, vzAny)")}
+          >
+            {L(`${e.rules.unspecific} unspezifisch`, `${e.rules.unspecific} unspecific`)}
+          </span>
+        </div>
+        <dl className="kv">
+          <dt>{L("gehört dazu über", "belongs via")}</dt>
+          <dd>{e.member}</dd>
+          <dt>VMs</dt>
+          <dd>{e.vm_count}</dd>
+        </dl>
+        <div className="chips" style={{ margin: "10px 0" }}>
+          <button className="btn btn-sm" id="app-epg-rules" onClick={() => onRules(e.key)}>
+            {L("Regeln dieser EPG zeigen", "Show rules of this EPG")}
+          </button>
+          {onGo && (
+            <button
+              className="btn btn-ghost btn-sm"
+              id="app-epg-objects"
+              title={
+                inventory.tab === "portgroups"
+                  ? L("Portgruppen der EPG mit ihren VMs", "Port groups of the EPG with their VMs")
+                  : L("Subnetze der EPG im Netzinventar", "Subnets of the EPG in the network inventory")
+              }
+              onClick={() => onGo("objekte", inventory)}
+            >
+              {L("In Objekte & Inventar öffnen", "Open in Objects & inventory")}
+            </button>
+          )}
+        </div>
+        <ErrorBox error={err} prefix={L("EPG laden", "Load EPG")} />
+        {!loc && !err && <Loading />}
+        {loc && <EpgCard epg={loc} />}
+      </div>
+    </Drawer>
   );
 }
 

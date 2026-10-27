@@ -134,6 +134,17 @@ export default function Tenants({
                 </span>
                 <span className="s-right">
                   {t.audit_reads && <span className="chip info">{L("Lese-Audit", "Read audit")}</span>}
+                  {t.appdoc_foreign_names && (
+                    <span
+                      className="chip info"
+                      title={L(
+                        "Applikations-Doku: Gegenstellen mit Namen (nur Betreuer)",
+                        "Application documentation: peers with names (staff only)",
+                      )}
+                    >
+                      {L("Namen in der Doku", "Names in docs")}
+                    </span>
+                  )}
                   {t.id === tenantId && <span className="chip ok">{L("gewählt", "selected")}</span>}
                 </span>
               </button>
@@ -279,6 +290,8 @@ function TenantSettings({
   const [code, setCode] = useState(tenant.code ?? "");
   const [profileId, setProfileId] = useState<number | null>(tenant.naming_profile_id);
   const [auditReads, setAuditReads] = useState(tenant.audit_reads);
+  // 0.95.0: Namen der Gegenstellen in der Applikations-Doku (nur Betreuer, setzt der Admin)
+  const [foreignNames, setForeignNames] = useState(!!tenant.appdoc_foreign_names);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
@@ -286,7 +299,8 @@ function TenantSettings({
   const dirty =
     (code.trim() || null) !== tenant.code ||
     profileId !== tenant.naming_profile_id ||
-    auditReads !== tenant.audit_reads;
+    auditReads !== tenant.audit_reads ||
+    foreignNames !== !!tenant.appdoc_foreign_names;
 
   const save = async () => {
     setBusy(true);
@@ -297,6 +311,7 @@ function TenantSettings({
         code: code.trim() || null,
         naming_profile_id: profileId,
         audit_reads: auditReads,
+        appdoc_foreign_names: foreignNames,
       });
       await onSaved();
       setSaved(true);
@@ -364,6 +379,34 @@ function TenantSettings({
               "Record read access of this tenant in the audit log",
             )}
           </label>
+        </div>
+        <div className="field" id="ts-foreign-names">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={foreignNames}
+              disabled={ro}
+              onChange={(e) => setForeignNames(e.target.checked)}
+            />
+            {L(
+              "Applikations-Doku: Namen der Gegenstellen zeigen",
+              "Application documentation: show the names of peers",
+            )}
+          </label>
+          <div className="hint">
+            {L(
+              <>
+                Kennt eine Firewall-Regel von einer Gegenstelle (z. B. einem System ausserhalb des Tenants) nur die
+                Adresse, nennt die Doku nach Kategorien – auch Markdown und Word – den Namen dazu: aus dem IPAM, der VM,
+                der EPG bzw. dem Firewall-Objekt. Nur für Betreuer; Kunden-Benutzer sehen weiter nur die Adressen.
+              </>,
+              <>
+                If a firewall rule only knows the address of a peer (e.g. a system outside the tenant), the
+                documentation by category – also Markdown and Word – adds its name: from the IPAM, the VM, the EPG or
+                the firewall object. Only for staff; customer users keep seeing only the addresses.
+              </>,
+            )}
+          </div>
         </div>
         <div className="field">
           <span className="label">{L("Benutzer-Zuordnung", "User assignment")}</span>

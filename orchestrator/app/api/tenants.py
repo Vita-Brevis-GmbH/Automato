@@ -43,6 +43,8 @@ class TenantOut(BaseModel):
     ipam_type: str
     dns_type: str
     naming_profile_id: int | None = None  # None = Standardprofil „default"
+    # Applikations-Doku (0.95.0): Gegenstellen nur mit Adresse fuer Betreuer mit Namen zeigen
+    appdoc_foreign_names: bool = False
 
 
 class TenantIn(BaseModel):
@@ -57,6 +59,8 @@ class TenantPatch(BaseModel):
     audit_reads: bool | None = None
     # Namensprofil zuordnen (null = zurueck zum Standardprofil „default")
     naming_profile_id: int | None = None
+    # Namen der Gegenstellen in der Applikations-Doku (0.95.0) - nur der Admin (Endpunkt)
+    appdoc_foreign_names: bool | None = None
 
 
 class SiteIn(BaseModel):
@@ -93,6 +97,7 @@ def _tenant_out(t: Tenant) -> TenantOut:
         ipam_type=t.ipam_type.value,
         dns_type=t.dns_type.value,
         naming_profile_id=t.naming_profile_id,
+        appdoc_foreign_names=bool(t.appdoc_foreign_names),
     )
 
 
@@ -186,6 +191,8 @@ def update_tenant(
         tenant.code = data["code"]
     if "audit_reads" in data and data["audit_reads"] is not None:
         tenant.audit_reads = data["audit_reads"]
+    if data.get("appdoc_foreign_names") is not None:
+        tenant.appdoc_foreign_names = data["appdoc_foreign_names"]
     if "naming_profile_id" in data:
         pid = data["naming_profile_id"]
         if pid is not None and session.get(NamingProfile, pid) is None:
@@ -201,6 +208,7 @@ def update_tenant(
             "code": tenant.code,
             "audit_reads": tenant.audit_reads,
             "naming_profile_id": tenant.naming_profile_id,
+            "appdoc_foreign_names": tenant.appdoc_foreign_names,
         },
     )
     return _tenant_out(tenant)
