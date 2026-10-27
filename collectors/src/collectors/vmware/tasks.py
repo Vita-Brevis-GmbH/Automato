@@ -12,6 +12,7 @@ from collectors.celery_app import app
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, Target
+from collectors.common.i18n import L, german_only
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
 from collectors.vmware.client import VCenterClient
@@ -33,8 +34,15 @@ def _client(target: Target | None) -> VCenterClient | None:
 
 
 def _no_credentials(target: Target | None) -> str:
-    name = f"„{target.name}“" if target is not None and target.name else "das vCenter"
-    return f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen"
+    name = (
+        L(f"„{target.name}“", f"“{target.name}”")
+        if target is not None and target.name
+        else L("das vCenter", "the vCenter")
+    )
+    return L(
+        f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen",
+        f"no credentials for {name} - store them at the source system in the web UI",
+    )
 
 
 def gather(target: Target | None = None) -> dict:
@@ -52,7 +60,9 @@ def check(target: Target | None = None) -> tuple[bool, str]:
     """Anmeldung und Leserecht im Inventar pruefen (read-only, kein Ingest)."""
     client = _client(target)
     if client is None:
-        return False, _no_credentials(target) if target else "keine vCenter-Creds"
+        return False, _no_credentials(target) if target else L(
+            "keine vCenter-Creds", "no vCenter credentials"
+        )
     try:
         with client:
             now = client.ping()
@@ -60,13 +70,19 @@ def check(target: Target | None = None) -> tuple[bool, str]:
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, diagnose.device_error(exc, "vmware", target, local=True)
     if not vms:
-        return False, (
+        return False, L(
             f"angemeldet an {client.host}, aber keine VM sichtbar - die Rolle Read-only des "
-            "Kontos reicht nicht bis zu den VMs (an untergeordnete Objekte weitergeben?)"
+            "Kontos reicht nicht bis zu den VMs (an untergeordnete Objekte weitergeben?)",
+            f"logged in to {client.host}, but no VM visible - the account's role Read-only does "
+            "not reach the VMs (propagate to child objects?)",
         )
-    return True, f"erreichbar: {client.host} (Zeit {now}), {vms} VMs sichtbar"
+    return True, L(
+        f"erreichbar: {client.host} (Zeit {now}), {vms} VMs sichtbar",
+        f"reachable: {client.host} (time {now}), {vms} VMs visible",
+    )
 
 
+@german_only  # Ergebnis und Meldung speichert der Orchestrator - deutsch (ADR 0028)
 def collect_once(
     run_id: str, target: Target | None = None, via_agent: bool = False
 ) -> CollectorResult:

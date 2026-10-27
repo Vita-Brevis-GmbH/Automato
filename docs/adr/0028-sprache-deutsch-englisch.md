@@ -2,7 +2,8 @@
 
 ## Status
 
-Angenommen (2026-10-27), Schritt 1 umgesetzt in 0.86.0, Schritte 2 und 3 in 0.87.0. Frage des
+Angenommen (2026-10-27), Schritt 1 umgesetzt in 0.86.0, Schritte 2 und 3 in 0.87.0, Schritt 4 in
+0.88.0. Frage des
 Anwenders vom 2026-10-27 („alle Texte umschalten von Deutsch auf English und zurück – ist dies ein grosser Aufwand?“),
 Entscheid: ja, zuerst die Oberfläche, die Doku soll auch in beiden Sprachen möglich sein; alle
 Benutzer können umschalten; Fachbegriffe bleiben englisch („das würde verwirren“).
@@ -47,14 +48,15 @@ deutsche Texte; Kunden-Benutzer sehen dieselbe Oberfläche (ADR 0018).
 | 1 | Oberfläche: alle Ansichten, Dialoge, Hinweise, Markdown-Export und Druck aus der Oberfläche; Sprachwahl; Glossar; UI-Tests auf Englisch | **0.86.0** |
 | 2 | Server: Befundtexte/Hinweise, Gründe und Urteile im Weg, Spaltenköpfe und Titel der Applikations-Doku, Fehlermeldungen; Logik, die an Texten hängt, auf Schlüssel umstellen | **0.87.0** |
 | 3 | Exporte Word/PDF/draw.io/SVG in beiden Sprachen mit Sprachwahl im Export-Dialog | **0.87.0** |
-| 4 | Meldungen von Collector/Agent und CLI (`automato …`), Betriebsdoku auf Wunsch | offen |
+| 4 | Meldungen der Läufe (beim Abruf übersetzt), Konsole von Collector/Agent (`AUTOMATO_LANG`) und CLI (`automato --lang …`); Betriebsdoku auf Wunsch | **0.88.0** (Betriebsdoku offen) |
 
 ## Folgen
 
 - Jede neue Oberflächen-Zeichenkette entsteht als `L("…", "…")`; die UI-Tests prüfen weiter
   Deutsch, `e2e/i18n.spec.ts` lädt jede Ansicht auf Englisch (Titel = Eintrag der Navigation).
 - Seit 0.87.0 kommen auch die Texte vom Server in der Sprache der Anfrage; deutsch bleiben nur
-  gespeicherte Teile (z. B. Gründe in einem Befund-Detail, Laufmeldungen) – `docs/BETRIEB.md`.
+  gespeicherte Teile (z. B. Gründe in einem Befund-Detail) – `docs/BETRIEB.md`. Seit 0.88.0
+  werden auch die gespeicherten Meldungen der Läufe beim Abruf übersetzt (Schritt 4).
 - Freie Vorbelegungen (z. B. Beschreibung einer Zone aus dem Grundschema) werden in der
   gewählten Sprache gespeichert; sie bleiben frei änderbarer Text.
 
@@ -75,3 +77,47 @@ deutsche Texte; Kunden-Benutzer sehen dieselbe Oberfläche (ADR 0018).
   umgestellt (`implicit`, `leak.kind`, `failure`, Marken der Rückrichtung in beiden Fassungen).
 - **Exporte:** die Oberfläche hängt `?lang=` der gewählten Sprache der Datei an (geht vor
   `Accept-Language`); Rundlauf Zonenplan draw.io → Import in allen Kombinationen geprüft.
+
+## Umsetzung Schritt 4 (0.88.0)
+
+- **Meldungen der Läufe beim Abruf übersetzt:** gespeichert bleibt deutsch – die Meldung eines
+  Laufs (`collector_run.message`, vom Orchestrator: Abbruch von Hand, Ablauf ohne Ergebnis bzw.
+  nicht abgeholt, „Einspielen fehlgeschlagen“, Teil-Upload unvollständig, Zugangsdaten nicht
+  lesbar; vom Collector/Agenten: Zusammenfassungen, Fehler, Teilfehler je Switch, Hinweise je
+  Plattform) und der Grund der Update-Prüfung eines Agenten (`agent.update_note`, ASCII).
+  `store/runs.show_message` übersetzt beim Abruf mit der Tabelle `store/run_text.PHRASES`:
+  bekannte *Teile* (deutsche Form mit Platzhaltern → englische), an jeder Stelle der Meldung,
+  genauere vor allgemeinen – zusammengesetzte Meldungen („ · “, „; “, „. “) werden so Teil für
+  Teil übersetzt, Unbekanntes (Texte der Geräte, Ausnahmen, Namen) bleibt; Nicht-ASCII passt auch
+  als „?“ (ASCII-Grund). Angewendet in der Liste der Läufe und „Letzte Läufe“ (`GET /jobs`,
+  `/jobs/{id}`, Abbrechen), im Betriebszustand (letzter Lauf, Agent aktualisiert nicht), in der
+  Agentenliste (`update_note`), in `automato status` und in der Quittung an den Agenten. Die
+  Werte, die die Oberfläche vergleicht (`status`, `platform`, `trigger`), bleiben unverändert.
+- **Gründe in „Alle einlesen“** (`runs.RunRejected`, nur Antwort/Log) jetzt zweisprachig mit
+  `L()` (vorher nur englisch), z. B. „netbox-Quelle „nb“ hat kein Lese-Token“.
+- **Konsole des Agenten** (`collectors/common/i18n.py`, Muster wie `app/i18n.py`: `L`, `use`,
+  `german`, `german_only`, dazu `carry` für Threads, `both` für deutsch + Konsole, `Failure` =
+  Fehler, dessen Text erst bei der Ausgabe entsteht): Sprache aus `AUTOMATO_LANG` (agent.env bzw.
+  Umgebung), Standard Deutsch. Zweisprachig sind Hilfe, `--check` (inkl. Ursache und Hinweis bei
+  abgelehnter Anmeldung, `diagnose.device_error`/`http.describe_error`), `--poll`/`--watch` und
+  das Selbst-Update.
+- **Was an den Orchestrator geht, bleibt deutsch:** die `collect_once` je Plattform laufen
+  `@german_only` (Threads der Switches mit `carry`); der Grund der Update-Prüfung entsteht deutsch
+  für `X-Agent-Update` und in der Sprache der Konsole für die Ausgabe (`both`, `Failure`). Der
+  Agent schickt bei nicht deutscher Konsole `Accept-Language`; der Orchestrator speichert trotzdem
+  deutsch (Ergebnis und Teil-Uploads unter `german()`) und gibt die Meldung in der Quittung
+  zusätzlich übersetzt zurück (`ResultAck.shown`, nur wenn übersetzt). Die Konsole zeigt `shown`,
+  sonst die deutsche Meldung (älterer Orchestrator). Teile, die der Collector auch bei `--check`
+  zeigt (Fehler, Ursache, Hinweis, fehlende Zugangsdaten), stehen dort zweisprachig (`L()`) und
+  gleichlautend in `run_text.PHRASES` – `tests/test_i18n_runs.py` erzeugt beide Fassungen mit dem
+  Collector und vergleicht sie mit der Übersetzung des Orchestrators; reine Laufmeldungen
+  (Zusammenfassungen, Routing nicht lesbar) erzeugt der Collector nur deutsch.
+- **CLI** `automato …`: `--lang de|en` vor oder nach dem Befehl bzw. `AUTOMATO_LANG`, Standard
+  Deutsch; Hilfe, Meldungen, Schritte von `tls-init`/`db-roles` und `purge` in der Sprache. Was
+  speichert (`ensure-tenant`, `ensure-source`, `collect`/`lab`, `purge` mit Audit), läuft
+  `@german_only` bzw. unter `german()`; `status` zeigt die gespeicherte Meldung übersetzt.
+- **Oberfläche:** Collector-Agenten → Einrichtung zeigt die Meldungen des Agenten in der
+  Fehlertabelle deutsch und englisch (die Konsole folgt `AUTOMATO_LANG`, nicht der Oberfläche);
+  die erzeugte `agent.env` enthält `AUTOMATO_LANG=en`, wenn die Oberfläche englisch ist.
+- **Neue Meldungen** im Collector bzw. Orchestrator, die gespeichert werden: deutsch erzeugen
+  und die Teile in `run_text.PHRASES` ergänzen (sonst erscheinen sie in beiden Sprachen deutsch).

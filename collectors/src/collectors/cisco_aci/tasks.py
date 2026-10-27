@@ -22,6 +22,7 @@ from collectors.cisco_aci.normalize import filter_objects, normalize_contract
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, NormalizedEpg, Target
+from collectors.common.i18n import L, german_only
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
 
@@ -69,8 +70,15 @@ def _credentials(target: Target | None) -> _Apic | None:
 
 
 def _no_credentials(target: Target | None) -> str:
-    name = f"„{target.name}“" if target is not None and target.name else "den APIC"
-    return f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen"
+    name = (
+        L(f"„{target.name}“", f"“{target.name}”")
+        if target is not None and target.name
+        else L("den APIC", "the APIC")
+    )
+    return L(
+        f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen",
+        f"no credentials for {name} - store them at the source system in the web UI",
+    )
 
 
 def gather(target: Target | None = None) -> dict:
@@ -96,15 +104,21 @@ def check(target: Target | None = None) -> tuple[bool, str]:
     """Erreichbarkeit/Login am APIC pruefen (read-only, kein Ingest)."""
     apic = _credentials(target)
     if apic is None:
-        return False, _no_credentials(target) if target else "keine APIC-Creds"
+        return False, _no_credentials(target) if target else L(
+            "keine APIC-Creds", "no APIC credentials"
+        )
     try:
         with apic.client() as client:
             count = client.ping()
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, diagnose.device_error(exc, "cisco_aci", target, local=True)
-    return True, f"erreichbar: {apic.url} ({count} Tenants sichtbar)"
+    return True, L(
+        f"erreichbar: {apic.url} ({count} Tenants sichtbar)",
+        f"reachable: {apic.url} ({count} tenants visible)",
+    )
 
 
+@german_only  # Ergebnis und Meldung speichert der Orchestrator - deutsch (ADR 0028)
 def collect_once(
     run_id: str, target: Target | None = None, via_agent: bool = False
 ) -> CollectorResult:

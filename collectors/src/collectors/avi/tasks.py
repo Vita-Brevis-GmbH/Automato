@@ -16,6 +16,7 @@ from collectors.celery_app import app
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, Target
+from collectors.common.i18n import L, german_only
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
 
@@ -33,8 +34,15 @@ def _client(target: Target | None) -> AviClient | None:
 
 
 def _no_credentials(target: Target | None) -> str:
-    name = f"„{target.name}“" if target is not None and target.name else "den Avi-Controller"
-    return f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen"
+    name = (
+        L(f"„{target.name}“", f"“{target.name}”")
+        if target is not None and target.name
+        else L("den Avi-Controller", "the Avi controller")
+    )
+    return L(
+        f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen",
+        f"no credentials for {name} - store them at the source system in the web UI",
+    )
 
 
 def gather(target: Target | None = None) -> dict:
@@ -50,7 +58,7 @@ def gather(target: Target | None = None) -> dict:
 
 def summary(data: dict, entries: int) -> str:
     """Meldung des Laufs (0.78.5): was gelesen wurde - zum Vergleich mit dem Controller - und
-    was nicht lesbar war."""
+    was nicht lesbar war. Deutsch - der Orchestrator speichert sie und uebersetzt beim Abruf."""
     tenants = data.get("tenants") or {}
     count = {k: sum(len((t or {}).get(k) or []) for t in tenants.values())
              for k in ("virtualservice", "pool", "poolgroup", "vsvip")}  # fmt: skip
@@ -70,15 +78,21 @@ def check(target: Target | None = None) -> tuple[bool, str]:
     """Anmeldung und Leserecht pruefen (read-only, kein Ingest)."""
     client = _client(target)
     if client is None:
-        return False, _no_credentials(target) if target else "keine Avi-Creds"
+        return False, _no_credentials(target) if target else L(
+            "keine Avi-Creds", "no Avi credentials"
+        )
     try:
         with client:
             count = client.ping(target.read_scope if target else "")
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, diagnose.device_error(exc, "avi", target, local=True)
-    return True, f"erreichbar: Avi {client.version}, {count} Virtual Services sichtbar"
+    return True, L(
+        f"erreichbar: Avi {client.version}, {count} Virtual Services sichtbar",
+        f"reachable: Avi {client.version}, {count} Virtual Services visible",
+    )
 
 
+@german_only  # Ergebnis und Meldung speichert der Orchestrator - deutsch (ADR 0028)
 def collect_once(
     run_id: str, target: Target | None = None, via_agent: bool = False
 ) -> CollectorResult:

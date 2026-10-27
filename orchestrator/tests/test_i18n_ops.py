@@ -103,8 +103,9 @@ def test_laufmeldung_beim_abruf_englisch_gespeicherte_bleibt(monkeypatch):
         assert jobs_api._message(run) == "Result arrived – waiting to be ingested (2 ahead)"
     assert jobs_api._message(run) == "Ergebnis angekommen – wartet aufs Einspielen (2 davor)"
     monkeypatch.setattr(jobs_api.tenant_lock, "state", lambda rid: None)
-    with use("en"):
-        assert jobs_api._message(run) == "abgebrochen von x"  # gespeichert: deutsch
+    with use("en"):  # seit 0.88.0 beim Abruf uebersetzt (test_i18n_runs.py)
+        assert jobs_api._message(run) == "cancelled by x"
+    assert run.message == "abgebrochen von x"  # gespeichert: deutsch
 
 
 def _port(**kw):

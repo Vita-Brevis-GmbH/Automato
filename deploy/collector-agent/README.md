@@ -104,6 +104,11 @@ alle OK, 2 = mindestens eines fehlerhaft). Ohne zugewiesene Geräte erscheint ei
 Alte `agent.env` mit `AUTOMATO_FORTIGATE_URL/_TOKEN` (bzw. `AUTOMATO_ACI_*`) funktionieren als Rückfall weiter,
 die Angaben am Quellsystem haben aber Vorrang.
 
+**Sprache (0.88.0):** `AUTOMATO_LANG=en` in der `agent.env` stellt die Konsole und das Log des
+Agenten auf Englisch um (Standard Deutsch). Was der Agent an den Orchestrator meldet (Meldung des
+Laufs, Grund der Update-Prüfung), bleibt deutsch gespeichert und erscheint im Web-UI in der dort
+gewählten Sprache.
+
 ## Ohne Python auf der Station (optional)
 
 Statt venv+Wheel eine eigenständige `.exe` bauen (auf einer Windows-Build-Maschine):

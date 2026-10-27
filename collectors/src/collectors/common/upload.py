@@ -18,6 +18,7 @@ import httpx
 
 from collectors.common import http
 from collectors.common.dto import CollectorResult, ReferenceBatch
+from collectors.common.i18n import L, language_header
 from collectors.common.selfupdate import agent_headers
 from collectors.config import get_settings
 
@@ -38,16 +39,19 @@ def _post(url: str, body: dict, headers: dict, timeout: httpx.Timeout, retry_on:
         except retry_on as exc:
             if delay is None:
                 raise
-            log.warning("%s: %s - neuer Versuch in %.0f s", url, http.describe_error(exc), delay)
+            log.warning(L("%s: %s - neuer Versuch in %.0f s", "%s: %s - retrying in %.0f s"),
+                        url, http.describe_error(exc), delay)  # fmt: skip
             _sleep(delay)
     raise AssertionError("unreachable")  # pragma: no cover
 
 
 def _headers(via_agent: bool) -> dict[str, str]:
+    """Token und Sprache der Konsole: der Orchestrator speichert deutsch und gibt die Meldung
+    in der Quittung zusaetzlich uebersetzt zurueck (`shown`, ADR 0028 Schritt 4)."""
     settings = get_settings()
     if via_agent:
         return agent_headers()
-    return {"X-Internal-Token": settings.internal_api_token}
+    return {"X-Internal-Token": settings.internal_api_token, **language_header()}
 
 
 def submit_references(run_id: str, batch: ReferenceBatch, via_agent: bool = False) -> None:
@@ -81,11 +85,17 @@ def submit_result(run_id: str, result: CollectorResult, via_agent: bool = False)
 def confirmed(result: CollectorResult, ack: dict | None) -> CollectorResult:
     """Ergebnis mit dem Urteil des Orchestrators - z. B. failed, wenn das Einspielen in den
     Store scheitert, obwohl das Lesen geklappt hat, bzw. completed, wenn ein abgebrochener
-    Upload doch noch eingespielt wurde. Fehlschlaege landen auch im Log."""
-    final = ack.get("status") if isinstance(ack, dict) else None
+    Upload doch noch eingespielt wurde. Fehlschlaege landen auch im Log.
+
+    Die Meldung bleibt deutsch (`message`); passt die Quittung zu ihr, kommt die Uebersetzung
+    des Orchestrators in der Sprache der Konsole nach `shown` (0.88.0)."""
+    ack = ack if isinstance(ack, dict) else {}
+    final = ack.get("status")
     if final in ("completed", "failed") and final != result.status:
         result = result.model_copy(update={"status": final, "message": ack.get("message")})
+    if ack.get("shown") and ack.get("message") == result.message:
+        result = result.model_copy(update={"shown": ack["shown"]})
     if result.status == "failed":
-        run_id = ack.get("run_id") if isinstance(ack, dict) else None
-        log.warning("Lauf %s fehlgeschlagen: %s", run_id or "?", result.message)
+        log.warning(L("Lauf %s fehlgeschlagen: %s", "Run %s failed: %s"),
+                    ack.get("run_id") or "?", result.shown or result.message)  # fmt: skip
     return result

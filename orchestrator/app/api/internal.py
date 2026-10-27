@@ -20,11 +20,12 @@ from app import audit, credentials
 from app.auth import mtls
 from app.config import get_settings
 from app.db import get_session
+from app.i18n import german
 from app.models import REFERENCE_PLATFORMS, CollectorRun, RunStatus, SourceSystem, Tenant
 from app.schemas.collector import CollectorResult, ReferenceBatch
 from app.sot import build_adapter
 from app.store import agents as agent_store
-from app.store import customers, ingest, reconcile, references, rule_index, tenant_lock
+from app.store import customers, ingest, reconcile, references, rule_index, runs, tenant_lock
 
 log = logging.getLogger(__name__)
 
@@ -78,7 +79,10 @@ class ResultAck(BaseModel):
 
     run_id: str
     status: str
-    message: str | None = None
+    message: str | None = None  # gespeicherte Meldung (deutsch)
+    # dieselbe in der Sprache der Anfrage (`Accept-Language` des Agenten, 0.88.0) - fuer seine
+    # Konsole; nur wenn uebersetzt (sonst fehlt das Feld), gespeichert wird nur die deutsche
+    shown: str | None = None
 
 
 def _settled(run, result: CollectorResult) -> bool:
@@ -138,7 +142,8 @@ def submit_references(
         raise HTTPException(status_code=409, detail="run already finished")
     if not run.tenant_id or not run.source_system_id:
         raise HTTPException(status_code=422, detail="run has no tenant/source system")
-    references.add_batch(session, run, batch.records)
+    with german():  # gespeichert deutsch, gleich welche Sprache der Agent schickt
+        references.add_batch(session, run, batch.records)
 
 
 def _finish_reference_run(session: Session, run, result: CollectorResult, actor) -> "ResultAck":
@@ -217,7 +222,9 @@ def _entry_count(result: CollectorResult) -> int:
     return len(result.inventory.devices) if result.inventory is not None else 0
 
 
-@router.post("/collector-runs/{run_id}/result", response_model=ResultAck)
+@router.post(
+    "/collector-runs/{run_id}/result", response_model=ResultAck, response_model_exclude_unset=True
+)
 def submit_result(
     run_id: str,
     result: CollectorResult,
@@ -230,7 +237,24 @@ def submit_result(
     Token - dann nur fuer einen Lauf, den genau dieser Agent abgeholt hat (ADR 0009).
 
     Seit 0.80.1 nacheinander (`tenant_lock.slot`): wer wartet, gibt seine Verbindung vorher
-    zurueck; ein schon abgeschlossener Lauf wird ohne Warten quittiert."""
+    zurueck; ein schon abgeschlossener Lauf wird ohne Warten quittiert.
+
+    Gespeichert wird deutsch, auch wenn der Agent eine andere Sprache schickt (`german`); die
+    Quittung bringt die Meldung zusaetzlich in seiner Sprache (`shown`, ADR 0028 Schritt 4)."""
+    with german():
+        ack = _receive(session, run_id, result, x_internal_token, x_agent_token, channel)
+    shown = runs.show_message(ack.message)
+    return ack if shown == ack.message else ack.model_copy(update={"shown": shown})
+
+
+def _receive(
+    session: Session,
+    run_id: str,
+    result: CollectorResult,
+    x_internal_token: str | None,
+    x_agent_token: str | None,
+    channel: mtls.Channel,
+) -> ResultAck:
     run, actor = _authorized_run(session, run_id, x_internal_token, x_agent_token, channel)
     if _settled(run, result):
         return ResultAck(run_id=run.id, status=run.status.value, message=run.message)

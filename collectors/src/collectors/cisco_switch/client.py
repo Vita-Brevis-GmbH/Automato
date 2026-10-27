@@ -28,6 +28,8 @@ import time
 import paramiko
 from sot_gateway.readonly import ReadOnlyViolation
 
+from collectors.common.i18n import L
+
 # Feste Befehle je Plattform - nur lesend; `show version` erkennt die Plattform
 COMMANDS: dict[str, tuple[str, ...]] = {
     "ios": (
@@ -169,10 +171,16 @@ class SwitchClient:
             )  # fmt: skip
         except paramiko.BadHostKeyException as exc:
             ssh.close()
+            stored = fingerprint(self.host_key)
+            shown = fingerprint(f"{exc.key.get_name()} {exc.key.get_base64()}")
             raise HostKeyChanged(
-                f"{self.entry}: Host-Schluessel hat sich geaendert ({fingerprint(self.host_key)} "
-                f"gespeichert, {fingerprint(f'{exc.key.get_name()} {exc.key.get_base64()}')} "
-                "vorgewiesen) - Geraet pruefen und im Web-UI den Schluessel neu lernen lassen"
+                L(
+                    f"{self.entry}: Host-Schluessel hat sich geaendert ({stored} gespeichert, "
+                    f"{shown} vorgewiesen) - Geraet pruefen und im Web-UI den Schluessel neu "
+                    "lernen lassen",
+                    f"{self.entry}: host key has changed ({stored} stored, {shown} presented) - "
+                    "check the device and let the web UI learn the key again",
+                )
             ) from None
         except Exception:
             ssh.close()
@@ -220,7 +228,7 @@ class SwitchClient:
         """Erlaubten `show`-Befehl ausfuehren und die Ausgabe zurueckgeben. Manche Switches
         beenden die Sitzung nach einem Exec-Aufruf - dann neu verbinden (gleicher Schluessel)."""
         if command not in ALLOWED:
-            raise ReadOnlyViolation(f"nur lesend: Befehl „{command}“ blockiert")
+            raise ReadOnlyViolation(_blocked(command))
         if self._shell is not None:
             return self._shell.run(command)
         for attempt in (1, 2):
@@ -246,7 +254,12 @@ class SwitchClient:
             deadline = time.monotonic() + timeout
             while True:
                 if time.monotonic() > deadline:
-                    raise TimeoutError(f"„{command}“: keine vollstaendige Antwort")
+                    raise TimeoutError(
+                        L(
+                            f"„{command}“: keine vollstaendige Antwort",
+                            f"“{command}”: no complete response",
+                        )
+                    )
                 try:
                     data = chan.recv(65536)
                 except TimeoutError:  # socket.timeout
@@ -255,13 +268,19 @@ class SwitchClient:
                     break
                 size += len(data)
                 if size > MAX_OUTPUT:
-                    raise RuntimeError(f"„{command}“: Ausgabe zu gross")
+                    raise RuntimeError(
+                        L(f"„{command}“: Ausgabe zu gross", f"“{command}”: output too large")
+                    )
                 out.append(data)
             while chan.recv_stderr_ready():
                 chan.recv_stderr(65536)
             return b"".join(out).decode("utf-8", errors="replace")
         finally:
             chan.close()
+
+
+def _blocked(command: str) -> str:
+    return L(f"nur lesend: Befehl „{command}“ blockiert", f"read-only: command “{command}” blocked")
 
 
 # -- begrenzte Sitzung (0.68.0) -------------------------------------------------------------
@@ -297,7 +316,7 @@ class _Shell:
     def run(self, command: str, session: bool = False) -> str:
         allowed = command in SESSION.values() if session else command in ALLOWED
         if not allowed or "\n" in command or "\r" in command:
-            raise ReadOnlyViolation(f"nur lesend: Befehl „{command}“ blockiert")
+            raise ReadOnlyViolation(_blocked(command))
         self.chan.send(command + "\n")
         text = self._read()
         lines = text.split("\n")
@@ -314,17 +333,17 @@ class _Shell:
         deadline = time.monotonic() + COMMAND_TIMEOUT
         while True:
             if time.monotonic() > deadline:
-                raise TimeoutError("Sitzung: kein Prompt")
+                raise TimeoutError(L("Sitzung: kein Prompt", "session: no prompt"))
             try:
                 data = self.chan.recv(65536)
             except TimeoutError:  # socket.timeout
                 data = None
             if data == b"":
-                raise EOFError("Sitzung beendet")
+                raise EOFError(L("Sitzung beendet", "session ended"))
             if data:
                 size += len(data)
                 if size > MAX_OUTPUT:
-                    raise RuntimeError("Ausgabe zu gross")
+                    raise RuntimeError(L("Ausgabe zu gross", "output too large"))
                 buf += _NOISE.sub("", data.decode("utf-8", errors="replace").replace("\r", ""))
             tail = buf[-200:]
             if MORE.search(tail):

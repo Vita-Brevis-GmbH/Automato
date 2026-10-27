@@ -3,7 +3,8 @@
 Wie in der Oberflaeche steht der deutsche Text im Code und der englische daneben:
 `L("gesperrt", "blocked")`. Die Sprache gilt je Anfrage - die Middleware `middleware` liest
 `?lang=` (Downloads/Exporte) bzw. `Accept-Language` und setzt sie fuer die Dauer der Anfrage.
-Ohne Anfrage (Celery, Zeitplan, CLI, Threads) gilt Deutsch.
+Ohne Anfrage (Celery, Zeitplan, Threads) gilt Deutsch; die CLI setzt sie fuer die Dauer des
+Befehls (`--lang`, `AUTOMATO_LANG`, 0.88.0).
 
 Regeln:
 - `L` nur fuer Texte, die beim Abruf entstehen (Antwort, Export). Was gespeichert wird
