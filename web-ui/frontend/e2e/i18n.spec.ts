@@ -69,3 +69,16 @@ test("Englisch: Sprache der Datei im Export-Dialog gemerkt", async ({ page }) =>
   await page.click(".tabbar button:has-text('Zone plan')");
   await expect(page.locator(".plan-export .export-lang-select")).toHaveValue("de");
 });
+
+// 0.95.0: Kette VIP der Firewall → Load Balancer → Server in NAT / VIPs auf Englisch
+test("Englisch: NAT-Kette über den Load Balancer", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("automato_lang", "en"));
+  await page.goto("/#nat");
+  await page.locator(".filterbar .search input").fill("203.0.113.30");
+  const front = page.locator("tr[data-nat='V-EXT_lb.example.ch']");
+  await expect(front.locator(".nat-via")).toContainText("via vs-shop");
+  await expect(page.locator("tr[data-nat='vs-shop'] .nat-front")).toContainText("in front 203.0.113.30:443");
+  await expect(page.locator("thead")).toContainText("Destination servers");
+  await front.click();
+  await expect(page.locator(".drawer")).toContainText("Chain via the load balancer (1)");
+});

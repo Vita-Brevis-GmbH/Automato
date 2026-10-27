@@ -192,6 +192,14 @@ class FortiGateClient:
         """IPv6-VIPs inkl. Virtual Server (server-load-balance)."""
         return self._optional("firewall/vip6", vdom)
 
+    def vip_groups(self, vdom: str | None = None) -> list[dict[str, Any]]:
+        """VIP-Gruppen (Policies verweisen auf sie wie auf eine VIP, 0.95.0) - ohne Tabelle
+        bzw. Recht leer."""
+        return self._optional("firewall/vipgrp", vdom)
+
+    def vip_groups6(self, vdom: str | None = None) -> list[dict[str, Any]]:
+        return self._optional("firewall/vipgrp6", vdom)
+
     def ldb_monitors(self, vdom: str | None = None) -> list[dict[str, Any]]:
         """Health-Checks der Virtual Server (Typ, Port, Intervall) - ohne Lese-Recht leer."""
         return self._optional("firewall/ldb-monitor", vdom)
@@ -307,6 +315,8 @@ class FortiGateClient:
             "service_groups": self.service_groups(vdom),
             "vips": self.vips(vdom),
             "vips6": self.vips6(vdom),
+            "vipgrps": self.vip_groups(vdom),
+            "vipgrps6": self.vip_groups6(vdom),
             "ldb_monitors": self.ldb_monitors(vdom),
             "ippools": self.ippools(vdom),
             "ippools6": self.ippools6(vdom),

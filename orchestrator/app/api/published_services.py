@@ -22,13 +22,18 @@ from app.store import rules as rules_store
 router = APIRouter(prefix="/published-services", tags=["published-services"])
 
 
-def _chain(nats: list[NatRule]) -> tuple[nat_store.Balancers, dict]:
-    """0.79.0: Virtual Services hinter den VIPs der FortiGate und umgekehrt die VIPs davor."""
-    lbs = nat_store.Balancers(nats)
-    front: dict[int, list[NatRule]] = {}
+def _chain(
+    session: Session, tenant_id: int | None, nats: list[NatRule]
+) -> tuple[nat_store.Balancers, dict]:
+    """0.79.0: Virtual Services hinter den VIPs der FortiGate und umgekehrt die VIPs davor -
+    seit 0.95.0 je Glied mit der externen Adresse und dem Port dorthin (`nat.Link`), auch
+    FQDN-VIPs."""
+    fqdns = nat_store.address_fqdns(session, tenant_id, nats) if tenant_id is not None else {}
+    lbs = nat_store.Balancers(nats, fqdns)
+    front: dict[int, list[nat_store.Link]] = {}
     for n in nats:
-        for lb in lbs.behind(n):
-            front.setdefault(lb.id, []).append(n)
+        for link in lbs.links(n):
+            front.setdefault(link.lb.id, []).append(link)
     return lbs, front
 
 
@@ -40,7 +45,7 @@ def _links(nat: NatRule, lbs, front: dict, sources: dict) -> dict:
     return {
         "balancers": [nat_store.balancer_brief(lb, name(lb)) for lb in behind],
         "fronted_by": [
-            {"name": f.name, "ext_ip": f.ext_ip, "ext_port": f.ext_port, "source": name(f)}
+            {"name": f.vip.name, "ext_ip": f.ext_ip, "ext_port": f.ext_port, "source": name(f.vip)}
             for f in front.get(nat.id, [])
         ],
     }
@@ -84,7 +89,7 @@ def list_published_services(
         if n.ext_ip and app_store.is_balancer(sources.get(n.source_system_id, ("", ""))[1])
     }
     imap = app_store.ip_rule_ids(session, lb_ips, tenant_id)
-    lbs, front = _chain(app_store.list_vips(session, tenant_id))
+    lbs, front = _chain(session, tenant_id, app_store.list_vips(session, tenant_id))
     out = []
     for nat in nats:
         source = sources.get(nat.source_system_id)
@@ -92,7 +97,7 @@ def list_published_services(
         if source and app_store.is_balancer(source[1]):
             rules = imap.get(nat.ext_ip or "", set())
             for f in front.get(nat.id, []):  # Regeln der VIPs davor (0.79.0)
-                rules = rules | vmap.get(f.name, set())
+                rules = rules | vmap.get(f.vip.name, set())
         base = _base(nat, len(rules), source) | _links(nat, lbs, front, sources)
         out.append(PublishedServiceOut(**base))
     return out
@@ -115,11 +120,11 @@ def get_published_service(
     source = systems.get(nat.source_system_id)
     vmap = app_store.vip_rule_ids(session, tenant_id)
     found = vmap.get(name, set())
-    lbs, front = _chain(app_store.list_vips(session, tenant_id))
+    lbs, front = _chain(session, tenant_id, app_store.list_vips(session, tenant_id))
     if source and app_store.is_balancer(source[1]) and nat.ext_ip:
         found = app_store.ip_rule_ids(session, {nat.ext_ip}, tenant_id).get(nat.ext_ip, set())
         for f in front.get(nat.id, []):  # Regeln der VIPs der FortiGate davor (0.79.0)
-            found = found | vmap.get(f.name, set())
+            found = found | vmap.get(f.vip.name, set())
     rule_ids = sorted(found)
     rules: list[AppRule] = []
     for rid in rule_ids:

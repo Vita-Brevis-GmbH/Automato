@@ -20,6 +20,51 @@ class NatTargetOut(BaseModel):
     dns: list[str] = []  # DNS-Namen aus DDI/NetBox
 
 
+class NatServerOut(BaseModel):
+    """Ziel-Server eines VIP (0.95.0): direkt bzw. ueber einen Load Balancer (`via`)."""
+
+    ip: str | None = None
+    port: str | None = None
+    status: str | None = None  # active | standby | disable
+    via: str | None = None  # Virtual Service des NSX ALB, ueber den der Server erreicht wird
+    names: list[str] = []  # Firewall-Objekte mit dieser IP
+    dns: list[str] = []  # DNS-Namen aus DDI/NetBox
+
+
+class NatChainOut(BaseModel):
+    """Kette einer VIP der Firewall ueber einen Load Balancer (0.95.0): externe IP:Port →
+    interne IP (VIP des Load Balancers) → Virtual Service → Pool → Server."""
+
+    ext_ip: str | None = None
+    ext_port: str | None = None
+    vip_ip: str | None = None  # VIP des Load Balancers = internes Ziel der VIP der Firewall
+    vip_port: str | None = None
+    via: str = "ip"  # ip | fqdn (FQDN-VIP auf den FQDN des Virtual Service)
+    balancer_id: int
+    balancer: str  # Name des Virtual Service
+    source: str | None = None  # Quellsystem des Load Balancers
+    source_system_id: int | None = None
+    pool: str | None = None
+    tenant: str | None = None  # Avi-Tenant
+    vrf: str | None = None
+    floating: bool = False  # Floating IP des Virtual Service
+    down: bool = False  # Virtual Service aus bzw. OPER_DOWN
+    servers: list[NatServerOut] = []
+
+
+class NatFrontOut(BaseModel):
+    """VIP einer Firewall vor einem Virtual Service (0.95.0, umgekehrte Kette)."""
+
+    id: int
+    name: str
+    source: str | None = None
+    source_system_id: int
+    vdom: str | None = None
+    ext_ip: str | None = None  # externe Adresse, die zum Virtual Service fuehrt
+    ext_port: str | None = None
+    via: str = "ip"
+
+
 class NatOut(BaseModel):
     id: int
     tenant_id: int
@@ -48,6 +93,13 @@ class NatOut(BaseModel):
     attrs: dict = {}  # Virtual Server: Server-Typ, Methode, Persistenz, Health-Checks
     # Korrektheitspruefung (0.14.0): Befunde des VIP-/Pool-Objekts, internes Ziel ohne IPAM
     issues: list[str] = []
+    source: str | None = None  # Name des Quellsystems (Firewall bzw. Load Balancer)
+    # 0.95.0: Kette ueber den Load Balancer, VIPs davor, Ziel-Server (direkt bzw. ueber LB),
+    # VIP-Gruppen der Firewall mit diesem VIP
+    chain: list[NatChainOut] = []
+    fronted_by: list[NatFrontOut] = []
+    dest_servers: list[NatServerOut] = []
+    groups: list[str] = []
 
 
 class NatDetailOut(NatOut):

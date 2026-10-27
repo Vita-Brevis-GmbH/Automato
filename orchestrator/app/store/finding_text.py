@@ -575,6 +575,8 @@ def _invalid_name(subject: str, d: dict, on: str) -> tuple[str, str]:
             "FT_https) or FT_<proto><port> (e.g. FT_tcp8443) – or add the prefix in the naming "
             "profile (object prefix → type “Service / ACI filter”).",
         )
+    if d.get("convention") in _NAT_CONVENTION:
+        return _invalid_nat_name(subject, d, on, prefixes)
     return (
         L(
             f"{what} {_q(subject)}{on} beginnt mit keinem Präfix der Namenskonvention{known}.",
@@ -582,6 +584,41 @@ def _invalid_name(subject: str, d: dict, on: str) -> tuple[str, str]:
             f"convention{known}.",
         ),
         hint,
+    )
+
+
+# Namen der VIPs und IP-Pools (0.95.0): Präfix ihres Typs - (Art im Satz, Typ im Namensprofil,
+# Beispiel nach dem ersten erwarteten Präfix)
+_NAT_CONVENTION = {
+    "vip": (("VIP-Präfix", "VIP prefix"), ("„VIP“ bzw. „VIP / DNAT“", "“VIP” or “VIP / DNAT”"),
+            ("{p}<FQDN>", "{p}<FQDN>")),
+    "virtual_server": (("Präfix für Virtual Server", "prefix for virtual servers"),
+                       ("„Virtual Server“", "“Virtual Server”"), ("{p}<FQDN>", "{p}<FQDN>")),
+    "snat_pool": (("Pool-Präfix", "pool prefix"), ("„SNAT IP-Pool“", "“SNAT IP pool”"),
+                  ("{p}<FQDN> bzw. {p}<Tenant>-<Standort>-<Zweck>",
+                   "{p}<FQDN> or {p}<tenant>-<site>-<purpose>")),
+}  # fmt: skip
+
+
+def _invalid_nat_name(subject: str, d: dict, on: str, prefixes: str) -> tuple[str, str]:
+    """VIP, Virtual Server bzw. IP-Pool ohne Präfix seines Typs (0.95.0)."""
+    prefix, kind, example = (L(*pair) for pair in _NAT_CONVENTION[d["convention"]])
+    example = example.replace("{p}", str((d.get("prefixes") or ["…"])[0]))
+    what = "Virtual Server" if d.get("virtual_server") else _category(d)
+    known = L(f" (erwartet: {prefixes})", f" (expected: {prefixes})") if prefixes else ""
+    return (
+        L(
+            f"{what} {_q(subject)}{on} beginnt mit keinem {prefix} der Namenskonvention{known}.",
+            f"{what} {_q(subject)}{on} does not start with any {prefix} of the naming "
+            f"convention{known}.",
+        ),
+        L(
+            f"Nach Konvention benennen (z. B. {example}) oder den Präfix im Namensprofil ergänzen "
+            f"(Objekt-Präfix → Typ {kind}). NAT / VIPs zeigt den Eintrag mit Kette und Regeln.",
+            f"Name it according to the convention (e.g. {example}) or add the prefix in the "
+            f"naming profile (object prefix → type {kind}). NAT / VIPs shows the entry with its "
+            "chain and rules.",
+        ),
     )
 
 

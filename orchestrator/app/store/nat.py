@@ -1,6 +1,7 @@
 """NAT-/VIP-Store: Lesezugriff auf nat_rule, Anreicherung (DNS, Server, Regeln), Suche."""
 
 import ipaddress
+from dataclasses import dataclass
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -171,6 +172,7 @@ def external_name(nat: NatRule) -> str | None:
 
 
 SLB = "server-load-balance"  # FortiGate Virtual Server (Lastverteilung)
+VIP_GROUP = "vipgrp"  # FortiGate VIP-Gruppe: Adressgruppe mit diesem Typ (0.95.0)
 
 
 def internal_ips(nat: NatRule) -> list[str]:
@@ -202,22 +204,137 @@ def host_ip(text: str | None) -> str | None:
         return None
 
 
+Address = ipaddress.IPv4Address | ipaddress.IPv6Address
+Span = tuple[Address, Address]
+
+
+def span(text: str | None) -> Span | None:
+    """Adresse, Bereich `a-b` bzw. Netz -> (erste, letzte) Adresse; unlesbar -> None."""
+    value = str(text or "").strip()
+    if not value:
+        return None
+    start, sep, end = value.partition("-")
+    try:
+        if sep:
+            lo, hi = ipaddress.ip_address(start.strip()), ipaddress.ip_address(end.strip())
+            return (lo, hi) if lo.version == hi.version and lo <= hi else None
+        net = ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        return None
+    return net[0], net[-1]
+
+
+_UNSET = {"0.0.0.0", "::", "0.0.0.0-0.0.0.0"}  # noqa: S104 - FortiOS-Standardwert = leer
+
+
+def mapped_values(nat: NatRule) -> list[str]:
+    """Interne Adressen einer VIP der Firewall wie auf dem Geraet (0.95.0): alle Eintraege von
+    `mappedip` (Bereiche, mehrere Werte) aus den Rohdaten - gespeichert ist nur der erste -,
+    sonst die zugeordnete IP."""
+    raw = nat.raw if isinstance(nat.raw, dict) else {}
+    value = raw.get("mappedip")
+    items = value if isinstance(value, list) else [value] if isinstance(value, str) else []
+    out: list[str] = []
+    for v in items:
+        text = str((v.get("range") if isinstance(v, dict) else v) or "").strip()
+        if text and text not in _UNSET and text not in out:
+            out.append(text)
+    return out or ([nat.mapped_ip] if nat.mapped_ip else [])
+
+
+def mapped_addr(nat: NatRule) -> str | None:
+    """FQDN-VIP der FortiGate: Name des Adressobjekts hinter `mapped-addr`."""
+    raw = nat.raw if isinstance(nat.raw, dict) else {}
+    value = raw.get("mapped-addr")
+    if isinstance(value, list):  # manche FortiOS-Versionen: [{"name": ...}]
+        value = next((m.get("name") for m in value if isinstance(m, dict)), None)
+    return str(value) if value else None
+
+
+def _fqdn_key(text: str | None) -> str:
+    return str(text or "").strip().rstrip(".").lower()
+
+
+def _overlap(a: tuple[int, int] | None, b: tuple[int, int] | None) -> bool:
+    """Port-Bereiche ueberlappen; ohne Angabe = jeder Port."""
+    return a is None or b is None or (a[0] <= b[1] and b[0] <= a[1])
+
+
+def _port_text(lo: int, hi: int) -> str:
+    return str(lo) if lo == hi else f"{lo}-{hi}"
+
+
+def address_fqdns(
+    session: Session, tenant_id: int, rows: list[NatRule]
+) -> dict[tuple[int, str | None, str], str]:
+    """FQDN der Adressobjekte hinter FQDN-VIPs (`mapped-addr`) - (Quellsystem, VDOM, Name klein)
+    -> FQDN; nur wenn es solche VIPs gibt (eine Abfrage)."""
+    wanted = {(n.source_system_id, n.vdom, name) for n in rows if (name := mapped_addr(n))}
+    if not wanted:
+        return {}
+    stmt = select(DeviceObject).where(
+        DeviceObject.tenant_id == tenant_id,
+        DeviceObject.category == ObjectCategory.ADDRESS,
+        DeviceObject.name.in_({name for _, _, name in wanted}),
+    )
+    out: dict[tuple[int, str | None, str], str] = {}
+    for o in session.scalars(stmt):
+        fqdn = o.fqdn or next(
+            (str(v)[5:] for v in o.values or [] if str(v).startswith("fqdn:")), None
+        )
+        if fqdn and (o.source_system_id, o.vdom, o.name) in wanted:
+            out[(o.source_system_id, o.vdom, o.name.lower())] = fqdn
+    return out
+
+
+@dataclass(frozen=True)
+class Link:
+    """Glied der Kette (0.95.0): VIP einer Firewall -> Virtual Service des Load Balancers, mit
+    der externen Adresse und dem Port, die zu ihm fuehren (Bereich 1:1, Port-Weiterleitung)."""
+
+    vip: NatRule
+    lb: NatRule
+    ext_ip: str | None
+    ext_port: str | None
+    via: str = "ip"  # ip | fqdn (FQDN-VIP auf den FQDN des Virtual Service)
+
+
 class Balancers:
     """Virtual Services des NSX ALB je VIP-Adresse (0.79.0): zeigt eine VIP der FortiGate (bzw.
     eine Regel) auf die VIP eines Load Balancers, geht es weiter zu dessen Servern -
-    öffentliche IP → VIP der FortiGate → Virtual Service → Server des Pools."""
+    öffentliche IP → VIP der FortiGate → Virtual Service → Server des Pools.
 
-    def __init__(self, rows: list[NatRule]) -> None:
+    Seit 0.95.0 auch mit Bereichen und mehreren Werten in `mappedip` (Bereich auf Bereich mit
+    demselben Abstand), Port-Weiterleitung mit Port-Bereichen, Virtual Server der FortiGate
+    (Real Server auf die VIP des Load Balancers), FQDN-VIPs (`mapped-addr` = FQDN des Virtual
+    Service) und umgekehrt den VIPs davor (`fronts`)."""
+
+    def __init__(
+        self, rows: list[NatRule], fqdns: dict[tuple[int, str | None, str], str] | None = None
+    ) -> None:
+        self.rows = rows
         self.by_ip: dict[str, list[NatRule]] = {}
+        self.by_fqdn: dict[str, list[NatRule]] = {}
         for n in rows:
             ip = host_ip(n.ext_ip) if is_balancer(n) else None
             if ip:
                 self.by_ip.setdefault(ip, []).append(n)
+            if is_balancer(n):
+                for f in (n.attrs or {}).get("fqdn") or []:
+                    if _fqdn_key(f):
+                        self.by_fqdn.setdefault(_fqdn_key(f), [])
+                        if n not in self.by_fqdn[_fqdn_key(f)]:
+                            self.by_fqdn[_fqdn_key(f)].append(n)
+        self._addrs = [(ipaddress.ip_address(ip), lbs) for ip, lbs in self.by_ip.items()]
+        self.fqdns = fqdns or {}  # (Quellsystem, VDOM, Objekt klein) -> FQDN des Objekts
+        self._links: dict[int, list[Link]] = {}
+        self._front: dict[int, list[Link]] | None = None
 
     @classmethod
     def load(cls, session: Session, tenant_id: int) -> "Balancers":
         stmt = select(NatRule).where(NatRule.tenant_id == tenant_id, NatRule.nat_type == "dnat_vip")
-        return cls(list(session.scalars(stmt.order_by(NatRule.name, NatRule.id))))
+        rows = list(session.scalars(stmt.order_by(NatRule.name, NatRule.id)))
+        return cls(rows, address_fqdns(session, tenant_id, rows))
 
     def at(self, ip: str | None, port: str | None = None) -> list[NatRule]:
         """Virtual Services mit dieser VIP-Adresse; mit Port nur die, deren Port ihn umfasst."""
@@ -235,13 +352,104 @@ class Balancers:
     def behind(self, nat: NatRule) -> list[NatRule]:
         """Virtual Services hinter einer VIP der FortiGate: ihr internes Ziel ist die VIP des
         Load Balancers - bei Port-Weiterleitung nur der weitergeleitete Port."""
-        if is_balancer(nat):
-            return []
-        port = nat.mapped_port if nat.portforward else None
         out: list[NatRule] = []
-        for ip in internal_ips(nat):
-            out += [n for n in self.at(ip, port) if n not in out]
+        for link in self.links(nat):
+            if link.lb not in out:
+                out.append(link.lb)
         return out
+
+    def _legs(self, nat: NatRule) -> list[tuple[Span, str | None]]:
+        """Interne Ziele einer VIP mit dem Port dorthin: Virtual Server = Real Server mit ihrem
+        Port, sonst `mappedip` (bei Port-Weiterleitung der weitergeleitete Port)."""
+        if nat.vip_type == SLB and nat.targets:
+            out = []
+            for t in nat.targets:
+                s = span(t.get("ip")) if isinstance(t, dict) else None
+                if s is not None:
+                    out.append((s, str(t["port"]) if t.get("port") else None))
+            return out
+        port = nat.mapped_port if nat.portforward else None
+        return [(s, port) for v in mapped_values(nat) if (s := span(v)) is not None]
+
+    def _within(self, s: Span) -> list[NatRule]:
+        if s[0] == s[1]:
+            return list(self.by_ip.get(s[0].compressed, []))
+        return [
+            lb
+            for addr, lbs in self._addrs
+            if addr.version == s[0].version and s[0] <= addr <= s[1]
+            for lb in lbs
+        ]
+
+    def links(self, nat: NatRule) -> list[Link]:
+        """Kette einer VIP der Firewall: je Virtual Service dahinter die externe Adresse und
+        der Port, die zu ihm fuehren."""
+        if is_balancer(nat) or nat.nat_type != "dnat_vip":
+            return []
+        if nat.id in self._links and nat.id is not None:
+            return self._links[nat.id]
+        out: list[Link] = []
+        ext = span(nat.ext_ip)
+
+        def fits(lb: NatRule, want) -> bool:  # nur im selben Mandanten, Port passt
+            if lb.tenant_id != nat.tenant_id or any(x.lb is lb for x in out):
+                return False
+            return _overlap(want, _ports(lb.ext_port))
+
+        for s, port in self._legs(nat):
+            want = _ports(port)
+            for lb in self._within(s):
+                if fits(lb, want):
+                    ext_ip = self._ext_ip(nat, ext, s, lb)
+                    out.append(Link(nat, lb, ext_ip, self._ext_port(nat, lb)))
+        name = mapped_addr(nat)
+        fqdn = self.fqdns.get((nat.source_system_id, nat.vdom, name.lower())) if name else None
+        for lb in self.by_fqdn.get(_fqdn_key(fqdn), []) if fqdn else []:
+            if fits(lb, _ports(nat.mapped_port if nat.portforward else None)):
+                out.append(Link(nat, lb, nat.ext_ip, self._ext_port(nat, lb), "fqdn"))
+        if nat.id is not None:
+            self._links[nat.id] = out
+        return out
+
+    @staticmethod
+    def _ext_ip(nat: NatRule, ext: Span | None, s: Span, lb: NatRule) -> str | None:
+        """Externe Adresse zum Virtual Service: Bereich auf Bereich gleicher Groesse = dieselbe
+        Stelle im externen Bereich, sonst die externe Adresse der VIP."""
+        addr = span(lb.ext_ip)
+        if ext is None or addr is None or ext[0] == ext[1] or s[0] == s[1]:
+            return nat.ext_ip
+        if ext[0].version != s[0].version or int(ext[1]) - int(ext[0]) != int(s[1]) - int(s[0]):
+            return nat.ext_ip
+        return ipaddress.ip_address(int(ext[0]) + int(addr[0]) - int(s[0])).compressed
+
+    @staticmethod
+    def _ext_port(nat: NatRule, lb: NatRule) -> str | None:
+        """Externer Port zum Virtual Service: Virtual Server der FortiGate bzw. VIP ohne
+        Port-Weiterleitung - der Port der VIP bzw. des Virtual Service; mit Port-Weiterleitung
+        der Teil des externen Bereichs, der auf den Port des Virtual Service fuehrt."""
+        if nat.vip_type == SLB:
+            return nat.ext_port
+        if not nat.portforward:
+            return lb.ext_port or nat.ext_port
+        ext, mapped, want = _ports(nat.ext_port), _ports(nat.mapped_port), _ports(lb.ext_port)
+        if ext is None or mapped is None or mapped[0] == mapped[1] or want is None:
+            return nat.ext_port
+        if ext[1] - ext[0] != mapped[1] - mapped[0]:
+            return nat.ext_port
+        lo, hi = max(want[0], mapped[0]), min(want[1], mapped[1])
+        if lo > hi:
+            return nat.ext_port
+        shift = ext[0] - mapped[0]
+        return _port_text(lo + shift, hi + shift)
+
+    def fronts(self, lb: NatRule) -> list[Link]:
+        """VIPs der Firewalls vor einem Virtual Service (umgekehrte Kette)."""
+        if self._front is None:
+            self._front = {}
+            for n in self.rows:
+                for link in self.links(n):
+                    self._front.setdefault(link.lb.id, []).append(link)
+        return list(self._front.get(lb.id, []))
 
     def servers(self, nat: NatRule) -> list[str]:
         """Server-IPs der Virtual Services hinter einer VIP der FortiGate."""

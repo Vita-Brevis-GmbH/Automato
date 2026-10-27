@@ -200,6 +200,7 @@ class _Builder:
             attrs = lb.attrs or {}
             parts.extend([lb.name, lb.ext_ip, attrs.get("pool"), attrs.get("pool_group")])
             names.add(lb.name.lower())
+            nat_names.add(lb.name.lower())  # 0.95.0: Filter nat= und Regeln in NAT / VIPs
             for ip in nat_store.internal_ips(lb):
                 values.append(ip)
                 add_range("dst", ip, via)

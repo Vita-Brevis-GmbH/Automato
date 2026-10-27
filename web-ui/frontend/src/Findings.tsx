@@ -206,6 +206,10 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
               params: { tab: "policy", q: `${String(d.source ?? "")} ${String(d.name ?? d.seq ?? "")}`.trim() } }];
   if (f.type === "parallel_nat_mismatch" && d.name)
     return [{ label: String(d.name), view: "nat", params: { q: String(d.name) } }];
+  // 0.95.0: VIP bzw. IP-Pool (z. B. Name ohne Präfix seines Typs) in NAT / VIPs öffnen
+  if (f.subject_kind === "device_object" && (d.category === "vip" || d.category === "ippool") && d.name)
+    return [{ label: L(`${String(d.name)} in NAT / VIPs`, `${String(d.name)} in NAT / VIPs`), view: "nat",
+              params: { q: String(d.name) } }];
   // Datenqualität (ADR 0029): Läufe des Quellsystems, nicht lesbarer Routing-Kontext
   if ((f.type === "source_stale" || f.type === "source_partial") && sid != null) {
     const out: { label: string; view: View; params: ViewParams }[] = [
