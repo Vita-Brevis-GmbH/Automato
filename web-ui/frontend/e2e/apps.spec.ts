@@ -494,3 +494,18 @@ test("Applikationen: Stammdaten aus CSV, ohne VMs ausblenden und mehrere lösche
   await expect(list.locator("tbody tr", { hasText: "Import A" })).toHaveCount(0);
   await expect(list.locator("tbody tr", { hasText: "Webshop" })).toBeVisible();
 });
+
+test("Publizierte Dienste: Virtual Service des NSX ALB mit Quelle und Pool (0.77.0)", async ({ page }) => {
+  await page.goto("/#apps");
+  await page.click("button:has-text('Publizierte Dienste')");
+  const row = page.locator("tr[data-platform='avi']", { hasText: "vs-shop" });
+  await expect(row).toContainText("10.10.10.80:443");
+  await expect(row).toContainText("10.10.10.5:8443");
+  await expect(row).toContainText("pool-shop · 1 Server");
+  await expect(row).toContainText("avi-01");
+  await expect(row).toContainText("NSX ALB");
+  await row.click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer).toContainText("Quelle");
+  await expect(drawer).toContainText("NSX ALB (Avi)");
+});

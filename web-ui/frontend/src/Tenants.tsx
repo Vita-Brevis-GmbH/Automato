@@ -971,8 +971,9 @@ function SystemDialog({
   const isNetbox = platform === "netbox";
   const isVmware = platform === "vmware";
   const isSwitch = platform === "cisco_switch";
+  const isAvi = platform === "avi";
   const isRef = REFERENCE_PLATFORMS.includes(platform);
-  const userPass = isAci || isInfoblox || isVmware || isSwitch;
+  const userPass = isAci || isInfoblox || isVmware || isSwitch || isAvi;
   // Switches (0.62.0): Host-Schlüssel vergessen (beim nächsten Lauf neu lernen)
   const [forget, setForget] = useState<string[]>([]);
 
@@ -999,7 +1000,7 @@ function SystemDialog({
       base_url: baseUrl.trim(),
       agent_id: agentId,
       verify_tls: verifyTls,
-      ...(isAci || isSwitch ? { read_scope: readScope.trim() } : {}),
+      ...(isAci || isSwitch || isAvi ? { read_scope: readScope.trim() } : {}),
       ...(isRef && refRole ? { ref_role: refRole } : {}),
       ...(isRef ? {} : { site_id: siteId }),
       schedule: schedule.trim(),
@@ -1076,6 +1077,7 @@ function SystemDialog({
             <option value="cisco_aci">Cisco ACI</option>
             <option value="vmware">VMware vCenter</option>
             <option value="cisco_switch">Switches &amp; Router (SSH: Cisco Catalyst/Nexus, Juniper)</option>
+            <option value="avi">VMware NSX ALB (Avi, Load Balancer)</option>
             <option value="infoblox">Infoblox DDI (Referenzquelle)</option>
             <option value="netbox">NetBox (Referenzquelle)</option>
           </select>
@@ -1163,6 +1165,8 @@ function SystemDialog({
                 ? "https://apic-01.kunde.lan"
                 : isVmware
                   ? "https://vcenter.kunde.lan"
+                  : isAvi
+                  ? "https://avi-controller.kunde.lan"
                   : isInfoblox
                   ? "https://ddi.kunde.lan"
                   : isNetbox
@@ -1373,6 +1377,47 @@ function SystemDialog({
                 Catalyst 1200/1300 wird über eine Sitzung gelesen, in der ausschliesslich dieselben Befehle und das
                 Abschalten des Seitenumbruchs für die Sitzung gesendet werden. Wird verschlüsselt gespeichert.
               </div>
+            </div>
+          </>
+        ) : isAvi ? (
+          <>
+            <div className="field">
+              <label htmlFor="ss-user">Avi-Benutzer (nur Leserechte)</label>
+              <CredentialInput
+                id="ss-user"
+                value={username}
+                maxLength={200}
+                disabled={clearCreds}
+                placeholder={hasCreds ? kept : "z. B. ro-automato"}
+                onChange={setUsername}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="ss-password">Avi-Passwort</label>
+              <SecretInput
+                id="ss-password"
+                value={password}
+                disabled={clearCreds}
+                onChange={setPassword}
+                placeholder={hasCreds ? kept : "Passwort des Avi-Benutzers"}
+              />
+              <div className="hint">
+                Konto mit einer eigenen Rolle nur mit Leserechten (Virtual Service, VS VIP, Pool, Pool Group, VRF Context,
+                Application Profile, Tenant). Automato meldet sich an und ab und liest sonst nur (GET); Zertifikate,
+                Schlüssel und Benutzer liest es nicht. Wird verschlüsselt gespeichert und nie wieder angezeigt.
+              </div>
+            </div>
+            <div className="field">
+              <label htmlFor="ss-scope">Avi-Tenants</label>
+              <input
+                id="ss-scope"
+                className="input mono"
+                value={readScope}
+                maxLength={500}
+                placeholder="z. B. admin, kunde-a"
+                onChange={(e) => setReadScope(e.target.value)}
+              />
+              <div className="hint">Kommagetrennt. Leer = alle Tenants, die das Konto sieht.</div>
             </div>
           </>
         ) : isAci ? (

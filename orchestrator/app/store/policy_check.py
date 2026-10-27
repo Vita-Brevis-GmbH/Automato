@@ -544,7 +544,11 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
     for path in paths:
         verdicts = []
         cur_src, cur_svc = src, service
+        lb = None
         for hop in path["hops"]:
+            if lb is not None:  # nach dem Load Balancer (NSX ALB): Quelle und Port zum Server
+                cur_src, cur_svc = _behind_balancer(lb, cur_src, cur_svc)
+            lb = hop.get("lb")
             kind = hop.get("kind")
             if kind not in FIREWALL_KINDS + ACI_KINDS:
                 continue
@@ -582,6 +586,20 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
                     to = snat.get("to")
                     cur_src = endpoint(to) if to else None  # unbekannt: nur moeglich
         path["policy"] = _overall(verdicts)
+
+
+def _behind_balancer(lb: dict, src, service):
+    """Verkehr vom Load Balancer zum Server (ADR 0027): Quelle = Service Engine (SNAT, Adresse
+    unbekannt - die VIP steht fuer ihr Netz) bzw. der Client; Port = Port des Servers."""
+    if lb.get("snat") != "client":
+        src = endpoint(lb["ext"]) if lb.get("ext") else None
+    port = lb.get("server_port")
+    if service and port not in (None, ""):
+        try:
+            service = (service[0], int(port))
+        except (TypeError, ValueError):
+            pass
+    return src, service
 
 
 def _forwarded(service, nat: dict | None):

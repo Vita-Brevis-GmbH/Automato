@@ -59,6 +59,7 @@ from app.models import (
     InvInterface,
     InvSubnet,
     NatRule,
+    Platform,
     SourceSystem,
     TopoContext,
     TopoExit,
@@ -212,6 +213,7 @@ class Graph:
         self._zones: dict[tuple[int, str], str] = {}
         self._tables: dict[Key, dict[str, Table]] = {}
         self._vips: dict[Key, list[NatRule]] = {}
+        self._lbs: list[tuple[NatRule, str]] | None = None  # NSX ALB (ADR 0027), bei Bedarf
         self._vlinks: dict[int, dict[tuple[str, str], tuple[str, str]]] = {}
         self._leaks = None  # aci_shared.Leaks, erst bei Bedarf
         self._ribs: dict[Key | None, _Rib] = {}  # beste RIB-Routen je Kontext (0.74.1)
@@ -611,6 +613,54 @@ class Graph:
             }
         return None
 
+    def balancer(self, ip, service: tuple[str, int | None] | None) -> dict | None:
+        """Virtual Service eines Load Balancers (NSX ALB, ADR 0027) mit dieser VIP: Port des
+        Dienstes passt (ohne Dienst der erste) -> Server des Pools (aktive zuerst)."""
+        if is_net(ip):
+            return None
+        if self._lbs is None:
+            self._lbs = list(
+                self.session.execute(
+                    select(NatRule, SourceSystem.name)
+                    .join(SourceSystem, SourceSystem.id == NatRule.source_system_id)
+                    .where(
+                        NatRule.tenant_id == self.tenant_id,
+                        NatRule.nat_type == "dnat_vip",
+                        SourceSystem.platform == Platform.AVI,
+                    )
+                    .order_by(NatRule.name, NatRule.id)
+                ).tuples()
+            )
+        port = service[1] if service else None
+        for n, source in self._lbs:
+            ext = _bounds(n.ext_ip)
+            if ext is None or ext[0] != ext[1] or ext[0] != ip:
+                continue
+            ports = _port_span(n.ext_port)
+            if port is not None and ports is not None and not ports[0] <= port <= ports[1]:
+                continue
+            attrs = n.attrs or {}
+            servers = [t for t in n.targets or [] if t.get("ip")]
+            ready = [t for t in servers if t.get("status", "active") == "active"] or servers
+            out = {
+                "name": n.name,
+                "id": n.id,
+                "source_system_id": n.source_system_id,
+                "source": source,
+                "ext": n.ext_ip,
+                "port": n.ext_port,
+                "to": [t["ip"] for t in ready],
+                "server_port": ready[0].get("port") if ready else None,
+                "servers": len(servers),
+                "pool": attrs.get("pool") or attrs.get("pool_group"),
+                "tenant": attrs.get("tenant"),
+                # Quelle danach: Service Engine (SNAT) bzw. der Client (preserve_client_ip)
+                "snat": attrs.get("snat") or "service_engine",
+                "down": attrs.get("oper_status") == "OPER_DOWN" or attrs.get("enabled") is False,
+            }
+            return {k: v for k, v in out.items() if v not in (None, "", False)}
+        return None
+
     def policies(self, key: Key, src, dst, ingress: str | None) -> list[dict]:
         """Policy-Routen bzw. SD-WAN-Regeln des Knotens, die fuer den Verkehr gelten (koennen):
         `certain` = Quelle, Ziel und Eingangs-Interface passen sicher."""
@@ -699,6 +749,27 @@ def trace(
             )
     paths: list[dict] = []
     backups_found: list[dict] = []
+
+    def behind(hops, hop, key, iface, table, dev, cur) -> bool:
+        """VIP eines Load Balancers hier angeschlossen (NSX ALB, ADR 0027): der Weg geht am
+        selben Knoten vom Netz der VIP zum Server des Pools weiter (einmal je Weg)."""
+        if any(h.get("lb") for h in hops):
+            return False
+        lb = g.balancer(cur, service)
+        if lb is None:
+            return False
+        hop["lb"] = lb
+        if not lb.get("to"):
+            text = f"Load Balancer {lb['name']}: kein Server mit IP im Pool"
+            _record(paths if dev is None else backups_found, hops, hop, "unknown", text, dev)
+            return True
+        via = f"über Load Balancer {lb['name']} ({lb.get('source', 'NSX ALB')})"
+        server = ipaddress.ip_address(lb["to"][0])
+        (active if dev is None else backup).append(
+            ([*hops, hop], key, iface, via, table, dev, server)
+        )
+        return True
+
     # (Hops, Knoten, Eingang, wie erreicht, VRF, Abweichung, Ziel nach NAT) - aktive zuerst
     active = [([], key, iface, via, g.table(key, iface), None, dst) for key, iface, via in starts]
     backup: list[tuple] = []
@@ -714,7 +785,8 @@ def trace(
         hop = {**node.out(), "via": via, "ingress": _port(g, key, ingress)}
         if table != 0:
             hop["vrf"] = table
-        if any((h["key"], h.get("vrf", 0)) == (node.key, table) for h in hops):
+        leg = hops[_after_balancer(hops) :]  # nach einem Load Balancer: neuer Abschnitt
+        if any((h["key"], h.get("vrf", 0)) == (node.key, table) for h in leg):
             _record(out, hops, hop, "loop", f"Schleife: {node.label} ist schon auf dem Weg", dev)
             continue
         if len(hops) >= MAX_HOPS:
@@ -748,6 +820,8 @@ def trace(
             devices = follow["output_device"] or [None]
             next_hops = [{"ip": follow["gateway"], "interface": devices[0]}]
         elif inside:
+            if behind(hops, hop, key, None, table, dev, cur):
+                continue
             _record(out, hops, hop, "fabric", f"Ziel im Fabric: {inside[0][1]}", dev)
             continue
         elif node.kind == "vrf" and (leak := g.leaked(key, cur)) is not None:
@@ -769,6 +843,8 @@ def trace(
         ):
             iface = next((h.get("interface") for h in route["next_hops"]), None)
             hop["egress"] = _port(g, key, iface)
+            if behind(hops, hop, key, iface, table, dev, cur):
+                continue
             where = f" ({iface})" if iface else ""
             _record(out, hops, hop, "connected", f"Ziel angeschlossen an {node.label}{where}", dev)
             continue
@@ -988,6 +1064,20 @@ def _bounds(text: str | None):
     except ValueError:
         return None
     return (lo, hi) if lo.version == hi.version else None
+
+
+def _after_balancer(hops: list[dict]) -> int:
+    """Index nach dem letzten Hop mit Load Balancer (0 ohne): dort beginnt ein neuer Abschnitt."""
+    return max((i + 1 for i, h in enumerate(hops) if h.get("lb")), default=0)
+
+
+def _port_span(text: str | None) -> tuple[int, int] | None:
+    """`443` bzw. `8000-8010` -> (von, bis); leer bzw. unlesbar = jeder Port."""
+    lo, _, hi = (text or "").partition("-")
+    try:
+        return (int(lo), int(hi or lo)) if lo.strip() else None
+    except ValueError:
+        return None
 
 
 def _vip_target(n: NatRule, ip) -> list[str]:

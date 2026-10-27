@@ -1,0 +1,93 @@
+{
+  "version": "22.1.6",
+  "missing": [],
+  "tenants": {
+    "admin": {
+      "virtualservice": [
+        {
+          "uuid": "virtualservice-web",
+          "name": "vs-web",
+          "type": "VS_TYPE_NORMAL",
+          "enabled": true,
+          "traffic_enabled": true,
+          "vsvip_ref": "https://avi.example.ch/api/vsvip/vsvip-web#vsvip-web",
+          "pool_ref": "https://avi.example.ch/api/pool/pool-web#pool-web",
+          "application_profile_ref": "https://avi.example.ch/api/applicationprofile/ap-http#System-Secure-HTTP",
+          "cloud_ref": "https://avi.example.ch/api/cloud/cloud-1#Default-Cloud",
+          "vrf_context_ref": "https://avi.example.ch/api/vrfcontext/vrf-1#global",
+          "services": [
+            {"port": 80, "enable_ssl": false},
+            {"port": 443, "enable_ssl": true}
+          ]
+        },
+        {
+          "uuid": "virtualservice-app",
+          "name": "vs-app",
+          "type": "VS_TYPE_NORMAL",
+          "enabled": true,
+          "vsvip_ref": "https://avi.example.ch/api/vsvip/vsvip-app#vsvip-app",
+          "pool_group_ref": "https://avi.example.ch/api/poolgroup/pg-app#pg-app",
+          "application_profile_ref": "https://avi.example.ch/api/applicationprofile/ap-l4#System-L4-Application",
+          "services": [{"port": 8443, "enable_ssl": true}]
+        }
+      ],
+      "vsvip": [
+        {
+          "uuid": "vsvip-web",
+          "name": "vsvip-web",
+          "vip": [{"vip_id": "1", "ip_address": {"addr": "10.20.0.50", "type": "V4"}}],
+          "dns_info": [{"fqdn": "web.example.ch"}]
+        },
+        {
+          "uuid": "vsvip-app",
+          "name": "vsvip-app",
+          "vip": [{"vip_id": "1", "ip_address": {"addr": "10.20.0.51", "type": "V4"}}]
+        }
+      ],
+      "pool": [
+        {
+          "uuid": "pool-web",
+          "name": "pool-web",
+          "default_server_port": 8080,
+          "lb_algorithm": "LB_ALGORITHM_ROUND_ROBIN",
+          "health_monitor_refs": ["https://avi.example.ch/api/healthmonitor/hm-1#System-HTTP"],
+          "servers": [
+            {"ip": {"addr": "10.20.0.5", "type": "V4"}, "enabled": true, "ratio": 1},
+            {"ip": {"addr": "10.20.0.6", "type": "V4"}, "port": 8081, "enabled": false}
+          ]
+        },
+        {
+          "uuid": "pool-app-a",
+          "name": "pool-app-a",
+          "default_server_port": 8443,
+          "servers": [{"ip": {"addr": "10.20.0.7", "type": "V4"}}]
+        },
+        {
+          "uuid": "pool-app-b",
+          "name": "pool-app-b",
+          "default_server_port": 8443,
+          "servers": [{"ip": {"addr": "10.30.0.7", "type": "V4"}}]
+        }
+      ],
+      "poolgroup": [
+        {
+          "uuid": "pg-app",
+          "name": "pg-app",
+          "members": [
+            {"pool_ref": "https://avi.example.ch/api/pool/pool-app-b#pool-app-b", "priority_label": "5"},
+            {"pool_ref": "https://avi.example.ch/api/pool/pool-app-a#pool-app-a", "priority_label": "10"}
+          ]
+        }
+      ],
+      "vrfcontext": [{"uuid": "vrf-1", "name": "global"}],
+      "applicationprofile": [
+        {"uuid": "ap-http", "name": "System-Secure-HTTP", "type": "APPLICATION_PROFILE_TYPE_HTTP"},
+        {"uuid": "ap-l4", "name": "System-L4-Application", "type": "APPLICATION_PROFILE_TYPE_L4", "preserve_client_ip": true}
+      ],
+      "virtualservice-inventory": [
+        {"uuid": "virtualservice-web", "runtime": {"oper_status": {"state": "OPER_UP"}}},
+        {"uuid": "virtualservice-app", "runtime": {"oper_status": {"state": "OPER_DOWN"}}}
+      ]
+    }
+  }
+}

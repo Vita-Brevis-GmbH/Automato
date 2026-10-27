@@ -18,6 +18,11 @@ from collectors.common.dto import Target
 from collectors.config import get_settings
 
 _HINTS = {
+    "avi": (
+        "Avi-Benutzer/-Passwort im Web-UI neu setzen; das Konto braucht eine Rolle mit nur "
+        "Leserechten (Virtual Service, VS VIP, Pool, Pool Group, VRF Context, Application "
+        "Profile, Tenant) und Zugriff auf die Tenants im Lesebereich"
+    ),
     "vmware": (
         "vCenter-Benutzer/-Passwort im Web-UI neu setzen (SSO-Konto als benutzer@vsphere.local "
         "bzw. DOMAENE\\benutzer); das Konto braucht nur die Rolle Read-only (oberste Ebene, "

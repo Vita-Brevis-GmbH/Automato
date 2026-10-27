@@ -313,6 +313,8 @@ def _apply_credentials(src: SourceSystem, changes: dict[str, str]) -> bool:
 
 
 _ACI_NAME = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+# Avi-Tenant (NSX ALB, ADR 0027): Name wie im Controller, auch mit Leerzeichen
+_AVI_NAME = re.compile(r"^[A-Za-z0-9_.:@ -]{1,128}$")
 
 
 def _schedule(value: str | None) -> str | None:
@@ -377,15 +379,20 @@ def _switch_base_url(read_scope: str) -> str:
 
 
 def _read_scope(platform: Platform, value: str) -> str:
-    """Lesebereich normalisieren: ACI-Tenant-Namen, kommagetrennt (Cisco ACI) bzw. die
-    Adressen der Switches (Cisco-Switches)."""
+    """Lesebereich normalisieren: ACI- bzw. Avi-Tenant-Namen, kommagetrennt (Cisco ACI, NSX
+    ALB) bzw. die Adressen der Switches (Cisco-Switches)."""
     if platform == Platform.CISCO_SWITCH:
         return _switch_hosts(value)
     names = [x.strip() for x in value.split(",") if x.strip()]
     if not names:
         return ""
+    if platform == Platform.AVI:
+        bad = [n for n in names if not _AVI_NAME.match(n)]
+        if bad:
+            raise HTTPException(status_code=422, detail=f"invalid Avi tenant name: {bad[0]}")
+        return ",".join(dict.fromkeys(names))
     if platform != Platform.CISCO_ACI:
-        detail = "read_scope only supported for cisco_aci/cisco_switch"
+        detail = "read_scope only supported for cisco_aci/cisco_switch/avi"
         raise HTTPException(status_code=422, detail=detail)
     bad = [n for n in names if not _ACI_NAME.match(n)]
     if bad:

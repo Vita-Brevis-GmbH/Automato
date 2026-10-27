@@ -21,8 +21,13 @@ from app.store import rules as rules_store
 router = APIRouter(prefix="/published-services", tags=["published-services"])
 
 
-def _base(nat: NatRule, rule_count: int) -> dict:
+def _base(nat: NatRule, rule_count: int, source: tuple[str, str] | None = None) -> dict:
+    attrs = nat.attrs or {}
     return {
+        "source": source[0] if source else None,
+        "platform": source[1] if source else None,
+        "servers": len([t for t in nat.targets or [] if t.get("ip") or t.get("address")]),
+        "pool": attrs.get("pool") or attrs.get("pool_group"),
         "name": nat.name,
         "ext_ip": nat.ext_ip,
         "ext_port": nat.ext_port,
@@ -46,11 +51,22 @@ def list_published_services(
     view = customer_view(session, principal, tenant_id, customer_id)  # 0.76.0: VIPs des Kunden
     mine = view_ids(session, view, "nat")
     vmap = app_store.vip_rule_ids(session, tenant_id)
-    return [
-        PublishedServiceOut(**_base(nat, len(vmap.get(nat.name, set()))))
-        for nat in app_store.list_vips(session, tenant_id)
-        if mine is None or nat.id in mine
-    ]
+    sources = app_store.platforms(session, tenant_id)
+    nats = [n for n in app_store.list_vips(session, tenant_id) if mine is None or n.id in mine]
+    lb_ips = {
+        n.ext_ip
+        for n in nats
+        if n.ext_ip and app_store.is_balancer(sources.get(n.source_system_id, ("", ""))[1])
+    }
+    imap = app_store.ip_rule_ids(session, lb_ips, tenant_id)
+    out = []
+    for nat in nats:
+        source = sources.get(nat.source_system_id)
+        rules = vmap.get(nat.name, set())
+        if source and app_store.is_balancer(source[1]):
+            rules = imap.get(nat.ext_ip or "", set())
+        out.append(PublishedServiceOut(**_base(nat, len(rules), source)))
+    return out
 
 
 @router.get("/{name}", response_model=PublishedServiceDetailOut)
@@ -66,7 +82,11 @@ def get_published_service(
     if nat is None:
         raise HTTPException(status_code=404, detail="published service not found")
 
-    rule_ids = sorted(app_store.vip_rule_ids(session, tenant_id).get(name, set()))
+    source = app_store.platforms(session, tenant_id).get(nat.source_system_id)
+    found = app_store.vip_rule_ids(session, tenant_id).get(name, set())
+    if source and app_store.is_balancer(source[1]) and nat.ext_ip:
+        found = app_store.ip_rule_ids(session, {nat.ext_ip}, tenant_id).get(nat.ext_ip, set())
+    rule_ids = sorted(found)
     rules: list[AppRule] = []
     for rid in rule_ids:
         r = rules_store.get_rule(session, rid)
@@ -91,4 +111,4 @@ def get_published_service(
             )
         )
 
-    return PublishedServiceDetailOut(**_base(nat, len(rule_ids)), rules=rules)
+    return PublishedServiceDetailOut(**_base(nat, len(rule_ids), source), rules=rules)

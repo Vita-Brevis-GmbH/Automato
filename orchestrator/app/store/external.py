@@ -1,11 +1,13 @@
 """Externe Adressen (0.76.1, Rückmeldung des Anwenders): öffentliche Netze und Hosts, die keinem
 gemanagten Netz angehören, erwartet niemand im IPAM – kein Befund „nicht im IPAM“.
 
-Gemanagt sind die Netze der gelesenen Geräte (`inv_subnet`: Interface-Netze der Firewalls inkl.
-WAN, ACI-BD/-EPG-Subnetze, Interfaces der Router). Eine öffentliche Adresse in einem solchen Netz
-(z. B. im Interface-Netz am WAN-Anschluss) bleibt ein Befund, ebenso private Adressen, VIPs und
-Objekte ohne Wert. Werte-Objekte, die so extern sind, stehen auf `expected_external`; der Stand
-wird nach jedem Abgleich neu berechnet (ein neues Interface-Netz macht sie wieder „gemanagt“).
+Gemanagt sind die Netze der gelesenen Geräte (`inv_subnet`: Interface-Netze der Firewalls
+inkl. WAN, ACI-BD/-EPG-Subnetze, Interfaces der Router) und seit 0.77.0 die eigenen
+publizierten Adressen (VIPs der FortiGate und des NSX ALB, ADR 0027). Eine öffentliche Adresse
+in einem solchen Netz (z. B. im Interface-Netz am WAN-Anschluss) bleibt ein Befund, ebenso
+private Adressen, VIPs und Objekte ohne Wert. Werte-Objekte, die so extern sind, stehen auf
+`expected_external`; der Stand wird nach jedem Abgleich neu berechnet (ein neues Interface-Netz
+macht sie wieder „gemanagt“).
 """
 
 import bisect
@@ -14,7 +16,7 @@ import ipaddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import InvSubnet, MatchStatus, NetworkObject, ObjectClass
+from app.models import InvSubnet, MatchStatus, NatRule, NetworkObject, ObjectClass
 
 # Werte-Objekte (IP, Netz, Bereich); VIPs sind eigene, publizierte Adressen und bleiben Befund
 VALUE_CLASSES = (ObjectClass.HOST, ObjectClass.NETWORK, ObjectClass.RANGE)
@@ -43,7 +45,7 @@ class Managed:
         spans: dict[int, list[tuple[int, int]]] = {4: [], 6: []}
         for prefix in prefixes:
             b = _bounds(prefix) if prefix else None
-            if b is not None and "-" not in prefix:
+            if b is not None:
                 spans[b[0]].append((b[1], b[2]))
         self._lo: dict[int, list[int]] = {}
         self._hi: dict[int, list[int]] = {}
@@ -69,9 +71,11 @@ class Managed:
 
 
 def managed(session: Session, tenant_id: int) -> Managed:
-    return Managed(
-        session.scalars(select(InvSubnet.prefix).where(InvSubnet.tenant_id == tenant_id)).all()
+    nets = session.scalars(select(InvSubnet.prefix).where(InvSubnet.tenant_id == tenant_id))
+    vips = session.scalars(
+        select(NatRule.ext_ip).where(NatRule.tenant_id == tenant_id, NatRule.nat_type == "dnat_vip")
     )
+    return Managed([*nets, *vips])
 
 
 def apply(session: Session, tenant_id: int, nets: Managed | None = None) -> int:

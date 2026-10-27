@@ -38,6 +38,7 @@ FIELDS: dict[str, tuple[str, ...]] = {
     "netbox": ("token",),  # Lese-Token
     "vmware": ("username", "password"),  # vCenter-Konto mit Rolle Read-only (ADR 0017)
     "cisco_switch": ("username", "password"),  # SSH-Konto nur mit Leserechten (ADR 0025)
+    "avi": ("username", "password"),  # NSX ALB: Rolle nur mit Leserechten (ADR 0027)
 }
 # Optionale Felder: NetBox-Schreib-Token nur fuer den NetBox-Sync des Orchestrators - wird nie
 # an einen Agenten ausgeliefert (siehe store.agents.target_for), ADR 0010.

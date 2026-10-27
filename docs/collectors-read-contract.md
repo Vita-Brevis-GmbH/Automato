@@ -1,4 +1,4 @@
-# Collector-Lesevertrag — FortiGate, Cisco ACI, VMware & Cisco-Switches (read-only)
+# Collector-Lesevertrag — FortiGate, Cisco ACI, VMware, Cisco-Switches & NSX ALB (read-only)
 
 > Was die Collectors **rein lesend** erfassen (Felder/Relationen) und wie es auf das
 > Datenmodell (ADR 0004 + Ergänzung) abgebildet wird. Abgeleitet aus realen Samples einer Referenzumgebung
@@ -244,6 +244,30 @@ Teil leer und steht als Hinweis in der Meldung des Laufs. Nicht gelesen: Konfigu
 Zugangsdaten, Logs, Zähler, IPv6-Nachbarn. MAC- und ARP-Einträge werden gesammelt und nach
 `AUTOMATO_RETENTION_L2_DAYS` (30) Tagen ohne neue Sichtung gelöscht. Die Verkabelung leitet der Orchestrator
 aus den Nachbarn aller Quellen ab (Switches, ACI-Leafs über `lldpAdjEp`/`cdpAdjEp`).
+
+## 6. VMware NSX Advanced Load Balancer (Avi; REST, nur GET; ADR 0027)
+
+Ein Quellsystem `avi` ist ein Controller (bzw. die Cluster-Adresse) mit einem Konto in einer
+Rolle **nur mit Leserechten** (`READ_ACCESS`) auf die Objekte unten. Anmeldung per
+`POST /login` (Sitzungs-Cookie), Abmelden mit `POST /logout` – die einzigen POST-Aufrufe; jeder
+andere Schreibversuch bricht vor dem Senden ab (`ReadOnlyViolation`). Header `X-Avi-Version`
+nach `GET /api/initial-data` (ohne Anmeldung). Je Avi-Tenant (Lesebereich, leer = alle, die das
+Konto sieht, `GET /api/tenant`) mit `X-Avi-Tenant`; Seiten zu 200 (`include_name=true`), höchstens
+20 000 Objekte je Art.
+
+| Objekt (`/api/…`) | gelesen | → Automato |
+|---|---|---|
+| `virtualservice` | Name, Typ (normal, SNI-Parent/-Child), aktiv, Services (Port bzw. Bereich, SSL), Verweise auf VS VIP, Pool bzw. Pool Group, Application Profile, Cloud, VRF, Parent; HTTP-Richtlinien nur ob vorhanden | `nat_rule` (Art `dnat_vip`, Typ `server-load-balance`) je Virtual Service, VIP-Adresse und Port; `attrs` |
+| `vsvip` | VIP-Adressen (IPv4, IPv6, Floating IP), aktiv, FQDN aus `dns_info`, VRF | `ext_ip`, `family`, `attrs.fqdn`/`floating_ip` |
+| `pool` | Name, Server (IP bzw. Hostname, Port bzw. `default_server_port`, aktiv, Gewicht), Methode, Health-Monitor-Namen | `targets` (wie Real Server), `mapped_ip`/`mapped_port` = erster aktiver Server, `attrs.pool`/`lb_algorithm`/`health_monitors` |
+| `poolgroup` | Mitglieder mit Priorität | Server aller Pools, höchste Priorität zuerst, `attrs.pool_group` |
+| `vrfcontext` | Name | `attrs.vrf` |
+| `applicationprofile` | Name, Typ, `preserve_client_ip` | `attrs.snat` (`service_engine` bzw. `client`) |
+| `virtualservice-inventory` | Betriebszustand (`runtime.oper_status.state`) | `attrs.oper_status` |
+
+Nicht gelesen: Zertifikate und Schlüssel (`sslkeyandcertificate`), Benutzer, Rollen,
+Systemeinstellungen, Service Engines, Statistiken, Logs, DataScripts. Fehlende Rechte auf einen
+Tenant bzw. ein Objekt stehen als Teilfehler in der Meldung des Laufs.
 
 ## Daraus folgende Modell-/Collector-Arbeiten (später, je Phase)
 

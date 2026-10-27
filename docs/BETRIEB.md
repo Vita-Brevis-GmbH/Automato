@@ -404,6 +404,14 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
         Der Weg geht zur internen IP weiter, der nächste Hop zeigt „Ziel …“.
       - Bei Port-Weiterleitung gilt für die Policy der interne Port (Dienst mit dem externen
         Port eingeben, z. B. `tcp/443`).
+      - **Load Balancer (NSX ALB, seit 0.77.0, ADR 0027):** Ist das Ziel die VIP eines Virtual
+        Service und ist sie an einem Knoten angeschlossen (Interface-Netz der FortiGate bzw. im
+        ACI-Fabric), steht dort „Load Balancer vs-…: VIP:Port → Server:Port“ (Pool, Zustand). Der
+        Weg geht am selben Knoten vom Netz der VIP zum ersten aktiven Server weiter (Hop „über
+        Load Balancer …“). Quelle für die Regeln danach ist die Service Engine – ihre Adresse
+        liest Automato nicht, die VIP steht für ihr Netz – bzw. der Client, wenn das Application
+        Profile die Client-IP erhält; Port ist der Port des Servers. Der Dienst (`tcp/443`) wählt
+        den Virtual Service mit diesem Port, ohne Dienst gilt der erste.
       - SNAT der erlaubenden Policy steht als „SNAT → IP (Pool …)“. Diese Quelle gilt für die
         Firewalls danach. Seit 0.47.0 genauer:
         - *IP-Pool:* `overload`, `one-to-one` und `port-block-allocation` – die Quelle danach
@@ -607,7 +615,10 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
     NAT.
   Dazu
   *Doku je System* (10 Kategorien, Standort verorten) und *Publizierte Dienste* (VIPs mit
-  Regeln). Die Doku erfasst **alle** Regeln eines Systems. Der **Bezug** (in den Regeln der
+  Regeln; seit 0.77.0 auch die **Virtual Services des NSX ALB** – je VIP und Port mit Quelle,
+  Pool und Zahl der Server, Regeln über die VIP-Adresse; im NAT als Virtual Server mit den
+  Servern des Pools und Avi-Tenant, Pool, Methode, Health-Monitor, Zustand und „Quelle zum
+  Server“ – Service Engine (SNAT) bzw. Client-IP). Die Doku erfasst **alle** Regeln eines Systems. Der **Bezug** (in den Regeln der
   Applikation und in der Erklärung, nicht mehr als Spalte der Kategorien) sagt, wie die Regel
   greift:
   - direkt,
@@ -1016,7 +1027,7 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   gruppiert. Den Standort aus dem Namen (Netz `N_<tenant>-000-…`, Cluster
   `fwc11-000-<tenant>`, Host `evh01-chzrh1-<tenant>`) zeigen Objekte, Inventar (Geräte,
   Subnetze) und der Quellsystem-Dialog als Vorschlag („?“ = Code nicht erfasst). Weiter: die **Quellsysteme des
-  Mandanten** (**+ Quellsystem** / **Bearbeiten**: FortiGate/Cisco ACI/Infoblox DDI/NetBox/VMware/Switches & Router,
+  Mandanten** (**+ Quellsystem** / **Bearbeiten**: FortiGate/Cisco ACI/Infoblox DDI/NetBox/VMware/Switches & Router/NSX ALB,
   Adresse, **Standort** des Geräts (für den NetBox-Sync), **Verwaltet von** = Collector-Agent
   oder zentraler Worker, read-only Zugangsdaten – FortiGate: **API-Token**, Cisco ACI:
   **APIC-Benutzer/Passwort** + **ACI-Tenants** (leer = alle ausser infra/mgmt), Infoblox:
@@ -1032,7 +1043,11 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
   (IOS/IOS-XE), Nexus 9000 (NX-OS), Catalyst 1200/1300 (Business-CLI, gelesen über eine
   begrenzte Sitzung, weil diese Geräte kein Exec annehmen) und Juniper MX/EX/QFX (Junos) – die
   Plattform erkennt der Collector je Gerät, „Verbindung prüfen“ nennt sie; die **SSH-Host-Schlüssel** hält der erste
-  Lauf je Adresse fest (Fingerabdruck im Dialog, „vergessen“ nach Tausch des Geräts), NetBox: **Lese-Token** + optional **Schreib-Token** (nur
+  Lauf je Adresse fest (Fingerabdruck im Dialog, „vergessen“ nach Tausch des Geräts), **NSX ALB (Avi)**
+  (seit 0.77.0, ADR 0027): Adresse des Controllers, **Avi-Benutzer/Passwort** eines Kontos in einer
+  Rolle nur mit Leserechten (Virtual Service, VS VIP, Pool, Pool Group, VRF Context, Application
+  Profile, Tenant) und **Avi-Tenants** (kommagetrennt, leer = alle, die das Konto sieht) –
+  Automato meldet sich an und ab und liest sonst nur, NetBox: **Lese-Token** + optional **Schreib-Token** (nur
   NetBox-Sync, geht nie an einen Agenten) – nur schreibbar, verschlüsselt gespeichert, Anzeige
   nur „hinterlegt"; bei Infoblox/NetBox die **Rolle** *IPAM führend* oder *Anreicherung*
   (genau ein führendes IPAM je Mandant); TLS-Prüfung, aktiv; **Zeitplan** (stündlich,

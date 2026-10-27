@@ -7,6 +7,33 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.77.0 – 2026-10-27
+
+VMware NSX Advanced Load Balancer (Avi) als lesende Quelle für die Doku (Frage des Anwenders,
+ADR 0027). Ohne Migration.
+
+- **Collector** `collectors/avi/` (strikt lesend): Anmeldung `POST /login`, Abmelden
+  `POST /logout` – sonst nur `GET` auf die Positivliste Virtual Service, VS VIP, Pool, Pool
+  Group, VRF Context, Application Profile und `virtualservice-inventory`, je Avi-Tenant
+  (`X-Avi-Tenant`, Lesebereich, leer = alle sichtbaren), Seiten zu 200, `X-Avi-Version` aus
+  `/api/initial-data`; jeder andere Schreibversuch `ReadOnlyViolation`; Teilfehler je Tenant
+  und Objekt in der Meldung. Keine Zertifikate, Schlüssel oder Benutzer.
+- **Abbildung:** je Virtual Service, VIP-Adresse (IPv4/IPv6/Floating) und Port ein publizierter
+  Dienst (`nat_rule`, Typ `server-load-balance` wie der Virtual Server der FortiGate): Server
+  der Pools (Pool Group nach Priorität), Methode, Health-Monitore, FQDN, Tenant/Cloud/VRF,
+  Zustand, SNI-Child mit der VIP des Parents, SNAT der Service Engine bzw. Client-IP
+  (`preserve_client_ip`).
+- **Publizierte Dienste:** Quelle, Pool und Zahl der Server; Regeln über die VIP-Adresse.
+  **NAT:** Avi-Angaben als Einstellungen. VIP-Adressen gelten als gemanagt (kein Befund
+  „extern“, 0.76.1).
+- **Weg-Suche:** an der angeschlossenen VIP „Load Balancer …“, dann am selben Knoten weiter zum
+  ersten aktiven Server; Regeln danach mit der Service Engine (VIP-Netz) bzw. dem Client als
+  Quelle und dem Port des Servers (`Graph.balancer`, `policy_check._behind_balancer`); auch in
+  den Verbindungen der Applikations-Doku.
+- **Oberfläche:** Plattform „NSX ALB (Avi)“ im Quellsystem-Dialog (Benutzer/Passwort,
+  Avi-Tenants), Spalte Quelle bei den publizierten Diensten, „LB“ in der Weg-Suche.
+- ADR 0027, Lesevertrag Abschnitt 6, BETRIEB, TESTS.
+
 ## 0.76.1 – 2026-10-26
 
 Korrektur nach Rückmeldung des Anwenders: externe Netze und Hosts tauchen nicht mehr als

@@ -585,6 +585,10 @@ export interface PublishedService {
   protocol: string | null;
   portforward: boolean;
   rule_count: number;
+  source?: string | null; // Quellsystem (FortiGate bzw. NSX ALB)
+  platform?: string | null; // fortigate | avi (0.77.0, ADR 0027)
+  servers?: number; // Server des Pools bzw. Real Server
+  pool?: string | null; // NSX ALB: Pool bzw. Pool Group
 }
 
 export interface AppRule {
@@ -1711,6 +1715,7 @@ export interface AppConnHop {
   context: string;
   verdict: string | null;
   checks: AppConnCheck[];
+  lb?: TraceHop["lb"]; // NSX ALB: vom Load Balancer weiter zum Server (0.77.0)
 }
 export interface AppConnState {
   rule_id: number;
@@ -2085,6 +2090,21 @@ export interface TraceHop extends RoutingNode {
   dst?: string; // Ziel an diesem Hop nach NAT auf einem Hop davor (0.23.0)
   // VIP (DNAT) an diesem Hop: ab hier zur internen IP (Virtual Server: alle Real Server)
   nat?: { name: string; id: number; ext: string | null; to: string[]; type: string | null; ports: (string | null)[] | null };
+  // NSX ALB (0.77.0, ADR 0027): VIP hier angeschlossen, der Weg geht vom Load Balancer zum Server
+  lb?: {
+    name: string;
+    id: number;
+    source?: string;
+    ext: string;
+    port?: string;
+    to?: string[];
+    server_port?: number | string;
+    servers?: number;
+    pool?: string;
+    tenant?: string;
+    snat?: string; // service_engine | client
+    down?: boolean;
+  };
   // SNAT der erlaubenden Policy (0.47.0: VIP mit nat-source-vip, Pool mit Typ und Bereich)
   snat?: {
     pool?: string;

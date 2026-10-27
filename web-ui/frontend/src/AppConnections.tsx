@@ -62,7 +62,8 @@ export function hopText(h: AppConnHop): string {
   const deciding = h.checks.flatMap((c) =>
     c.rules.filter((r) => r.decides).map((r) => (h.checks.length > 1 ? `${c.label}: ` : "") + (r.label || r.name || r.external_id || "Regel")),
   );
-  return deciding.length ? `${h.label} (${[...new Set(deciding)].join(", ")})` : h.label;
+  const text = deciding.length ? `${h.label} (${[...new Set(deciding)].join(", ")})` : h.label;
+  return h.lb ? `${text} → LB ${h.lb.name}` : text;
 }
 
 const sideText = (s: AppConnSide) => {

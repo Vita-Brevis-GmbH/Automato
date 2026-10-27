@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchPublishedService, fetchPublishedServices, PublishedService, PublishedServiceDetail } from "./api";
+import { PLATFORM_LABEL } from "./refs";
 import { ActionBadge, Dash, download, Drawer, Empty, ErrorBox, Icon, Loading } from "./ui";
 
 function ext(a: PublishedService): string {
@@ -15,12 +16,21 @@ function target(a: PublishedService): string {
   return t;
 }
 
+// Pool bzw. Real Server: „pool-web · 2 Server“ (NSX ALB) bzw. „3 Real Server“ (FortiGate)
+function pool(a: PublishedService): string | null {
+  const n = a.servers ?? 0;
+  if (a.pool) return `${a.pool} · ${n} Server`;
+  return n > 1 ? `${n} Real Server` : null;
+}
+
 function toMarkdown(d: PublishedServiceDetail): string {
   const lines = [
     `# Publizierter Dienst: ${d.name}`,
     "",
     `- **Extern:** ${ext(d)}`,
     `- **Internes Ziel:** ${target(d)}`,
+    ...(d.source ? [`- **Quelle:** ${d.source} (${PLATFORM_LABEL[d.platform ?? ""] ?? d.platform})`] : []),
+    ...(pool(d) ? [`- **Pool:** ${pool(d)}`] : []),
     `- **Port-Forward:** ${d.portforward ? "an" : "aus"}`,
     "",
     `## Regeln (${d.rules.length})`,
@@ -66,6 +76,20 @@ function AppDrawer({
             <dd className="mono">{ext(d)}</dd>
             <dt>Intern</dt>
             <dd className="mono">{target(d)}</dd>
+            {d.source && (
+              <>
+                <dt>Quelle</dt>
+                <dd>
+                  {d.source} <span className="faint">{PLATFORM_LABEL[d.platform ?? ""] ?? d.platform}</span>
+                </dd>
+              </>
+            )}
+            {pool(d) && (
+              <>
+                <dt>Pool</dt>
+                <dd>{pool(d)}</dd>
+              </>
+            )}
             <dt>Port-Forward</dt>
             <dd>{d.portforward ? <span className="chip ok">an</span> : "aus"}</dd>
           </dl>
@@ -151,17 +175,30 @@ export default function PublishedServices({ tenantId }: { tenantId: number | nul
                   <th>Dienst</th>
                   <th>Extern</th>
                   <th>→ Intern</th>
+                  <th>Quelle</th>
                   <th className="num">Regeln</th>
                 </tr>
               </thead>
               <tbody>
-                {apps.map((a) => (
-                  <tr key={a.name} className="clickable" onClick={() => setSelected(a.name)}>
+                {apps.map((a, i) => (
+                  <tr
+                    key={`${a.name}|${a.ext_ip}|${a.ext_port}|${i}`}
+                    className="clickable"
+                    data-platform={a.platform ?? undefined}
+                    onClick={() => setSelected(a.name)}
+                  >
                     <td>
                       <b>{a.name}</b>
                     </td>
                     <td className="mono">{ext(a)}</td>
-                    <td className="mono">{target(a)}</td>
+                    <td className="mono">
+                      {target(a)}
+                      {pool(a) && <div className="faint">{pool(a)}</div>}
+                    </td>
+                    <td>
+                      {a.source ?? <Dash />}
+                      {a.platform === "avi" && <span className="chip info" style={{ marginLeft: 6 }}>NSX ALB</span>}
+                    </td>
                     <td className="num">{a.rule_count}</td>
                   </tr>
                 ))}

@@ -277,6 +277,21 @@ def run(app) -> None:
     groups = [{"name": "TE|AP|EG_db", "vlan": 1107, "vm_count": 1}]  # fmt: skip
     run_result(vc, "vmware", virtual={"vms": [vm], "portgroups": groups})
 
+    # NSX ALB (0.77.0, ADR 0027): Virtual Service vs-shop mit der VIP 10.10.10.80 auf web01
+    avi = system(name="avi-01", platform="avi", base_url="https://avi.example.ch", username="ro",
+                 password="e2e", read_scope="admin")  # fmt: skip
+    avi_vs = {
+        "source_platform": "avi", "external_id": "admin|vs-shop|10.10.10.80|443",
+        "name": "vs-shop", "ext_ip": "10.10.10.80", "ext_port": "443",
+        "mapped_ip": "10.10.10.5", "mapped_port": "8443", "protocol": "tcp",
+        "portforward": True, "vip_type": "server-load-balance", "family": "v4",
+        "targets": [{"ip": "10.10.10.5", "port": 8443, "status": "active", "pool": "pool-shop"}],
+        "attrs": {"platform": "avi", "tenant": "admin", "pool": "pool-shop",
+                  "lb_algorithm": "LB_ALGORITHM_ROUND_ROBIN", "snat": "service_engine",
+                  "oper_status": "OPER_UP"},
+    }  # fmt: skip
+    run_result(avi, "avi", nat_rules=[avi_vs])
+
     # Switches (0.62.0, ADR 0025): zwei Cisco-Switches per SSH; Gi1/0/48 <-> Eth1/2 mit
     # abweichendem Speed und Native VLAN, Uplink zu fw-08 (dmz), ESXi-Host, ein Port zu leaf-101
     sw = system(name="Switches Zürich", platform="cisco_switch", read_scope="10.0.0.11\n10.0.0.2",

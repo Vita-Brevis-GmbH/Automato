@@ -32,7 +32,7 @@ from app.models import InvDevice, InvInterface, Rule, SourceSystem, TopoContext
 
 HIDDEN = frozenset({"host", "cluster", "datacenter", "switch", "neighbor"})  # Felder -> leer
 _KIND = {"fortigate": "Firewall", "cisco_aci": "ACI", "vmware": "vCenter", "netbox": "IPAM",
-         "infoblox": "IPAM"}  # fmt: skip
+         "infoblox": "IPAM", "avi": "Load Balancer"}  # fmt: skip
 _ROLE = {"leaf": "Leaf", "spine": "Spine", "controller": "Controller"}
 
 

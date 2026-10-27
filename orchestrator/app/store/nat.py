@@ -100,7 +100,39 @@ def interface(nat: NatRule) -> str | None:
     return raw_text(value) if value else None
 
 
+# NSX ALB (ADR 0027): Angaben des Virtual Service aus `attrs`
+_AVI_SETTINGS = {
+    "tenant": "Avi-Tenant",
+    "cloud": "Cloud",
+    "vrf": "VRF",
+    "vsvip": "VS VIP",
+    "pool": "Pool",
+    "pool_group": "Pool Group",
+    "lb_algorithm": "Methode",
+    "health_monitors": "Health-Monitor",
+    "application_profile": "Application Profile",
+    "snat": "Quelle zum Server",
+    "oper_status": "Zustand",
+    "parent": "Parent (SNI)",
+    "domains": "Domains",
+    "fqdn": "FQDN",
+}
+_AVI_VALUES = {"service_engine": "Service Engine (SNAT)", "client": "Client-IP bleibt"}
+
+
 def settings(nat: NatRule) -> dict[str, str]:
+    attrs = nat.attrs if isinstance(nat.attrs, dict) else {}
+    if attrs.get("platform") == "avi":
+        out = {
+            label: _AVI_VALUES.get(str(attrs[key]), raw_text(attrs[key]))
+            for key, label in _AVI_SETTINGS.items()
+            if attrs.get(key) not in (None, "", [])
+        }
+        if attrs.get("content_switching"):
+            out["Richtlinien"] = "weitere Pools über HTTP-Richtlinien möglich (nicht ausgewertet)"
+        if attrs.get("enabled") is False:
+            out["Aktiv"] = "nein"
+        return out
     raw = nat.raw if isinstance(nat.raw, dict) else {}
     return {
         label: raw_text(raw[key])

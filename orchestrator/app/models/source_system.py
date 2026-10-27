@@ -6,10 +6,12 @@ ist nur fuer Altbestaende vor Migration 0015 leer ("nicht zugeordnet").
 Geraete-Zugangsdaten (ADR 0009): `agent_id` = Collector-Agent, der das Geraet verwaltet;
 `credentials` = verschluesselte Zugangsdaten (app.credentials, nie im Klartext gespeichert
 oder ausgegeben) - der Agent bekommt sie beim Abholen eines Laufs. Inhalt je Plattform:
-FortiGate `{"token"}`, Cisco ACI, VMware vCenter und Cisco-Switches `{"username", "password"}`.
+FortiGate `{"token"}`, Cisco ACI, VMware vCenter, Cisco-Switches und NSX ALB (Avi)
+`{"username", "password"}`.
 `read_scope` = Lesebereich: bei Cisco ACI die zu lesenden ACI-Tenants (kommagetrennt, leer =
 alle ausser infra/mgmt), bei Cisco-Switches die Adressen der Switches (0.62.0, ADR 0025; je
-Zeile bzw. kommagetrennt). `ssh_host_keys` = beim ersten Lauf festgehaltene SSH-Host-Schluessel
+Zeile bzw. kommagetrennt), beim NSX ALB die Avi-Tenants (0.77.0, ADR 0027; leer = alle
+sichtbaren). `ssh_host_keys` = beim ersten Lauf festgehaltene SSH-Host-Schluessel
 je Adresse (`<typ> <base64>`); ein anderer Schluessel bricht die Verbindung ab.
 
 Referenzquellen (Infoblox, NetBox; ADR 0010): `ref_role` = primary | enrichment,
@@ -37,6 +39,7 @@ class Platform(enum.StrEnum):
     # Switches und Router per SSH (ADR 0025): Cisco IOS/IOS-XE/NX-OS, seit 0.68.0 auch Business-CLI
     # (Catalyst 1200/1300) und Juniper Junos (MX, EX, QFX); Gruppe von Geraeten
     CISCO_SWITCH = "cisco_switch"
+    AVI = "avi"  # VMware NSX Advanced Load Balancer: Virtual Services, VIPs, Pools (ADR 0027)
 
 
 # Referenzquellen (IPAM) - liefern keinen Regeln, sondern den Referenz-Stand

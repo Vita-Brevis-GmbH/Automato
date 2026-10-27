@@ -295,6 +295,15 @@ function PathOverview({ trace }: { trace: TraceResult }) {
                             DNAT
                           </span>
                         )}
+                        {h.lb && (
+                          <span
+                            className="chip info"
+                            style={{ marginLeft: 4 }}
+                            title={`Load Balancer ${h.lb.name}: ${h.lb.ext} → ${(h.lb.to ?? []).join(", ")}`}
+                          >
+                            LB
+                          </span>
+                        )}
                         {h.leak && (
                           <span className="chip local" style={{ marginLeft: 4 }} title={h.leak.text}>
                             → VRF {h.leak.vrf}
@@ -507,6 +516,35 @@ function TraceCard({
                           </span>
                           {h.nat.ports && <span className="faint"> · Port {h.nat.ports.join(" → ")}</span>}
                           {h.nat.to.length > 1 && <div className="faint">Weg über den ersten Real Server</div>}
+                        </div>
+                      )}
+                      {h.lb && (
+                        <div style={{ marginBottom: 4 }} className="trace-lb">
+                          <span
+                            className={`chip ${h.lb.down ? "warn" : "info"}`}
+                            title="NSX ALB: die VIP ist hier angeschlossen, der Weg geht vom Load Balancer zum Server weiter"
+                          >
+                            Load Balancer {h.lb.name}
+                          </span>{" "}
+                          <span className="mono">
+                            {h.lb.ext}
+                            {h.lb.port ? `:${h.lb.port}` : ""} → {(h.lb.to ?? []).slice(0, 3).join(", ")}
+                            {h.lb.server_port ? `:${h.lb.server_port}` : ""}
+                            {(h.lb.to?.length ?? 0) > 3 ? ` (+${(h.lb.to?.length ?? 0) - 3})` : ""}
+                          </span>
+                          <div className="faint">
+                            {[
+                              h.lb.source,
+                              h.lb.pool && `Pool ${h.lb.pool}`,
+                              h.lb.down && "Zustand: down bzw. aus",
+                              h.lb.snat === "client"
+                                ? "Quelle zum Server: Client-IP"
+                                : "Quelle zum Server: Service Engine (SNAT)",
+                              (h.lb.to?.length ?? 0) > 1 && "Weg über den ersten aktiven Server",
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </div>
                         </div>
                       )}
                       {h.backup ? (

@@ -379,11 +379,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.75.0** | Stammdaten der Applikationen aus CSV (Vorschau, Ausnahme vom „kein CSV-Import“), Applikationen ohne VMs ausblenden bzw. mehrere löschen, Routing-Kontexte zugeklappt, Erklärung je Seite einzeilig (ADR 0012 Ergänzung 0.75.0) |
 | **0.76.0** | Kunde oben wählen filtert alle Ansichten (Routing, Topologie, Weg-Suche, Inventar, Verkabelung, Abgleich, Zonen, parallele Firewalls, publizierte Dienste), Geteiltes markiert (ADR 0018 Ergänzung 0.76.0) |
 | **0.76.1** | Korrektur: externe Netze und Hosts (öffentlich, ausserhalb der Interface-/BD-Netze der gelesenen Geräte) ohne Befund „nicht im IPAM“; im WAN-Interface-Netz bleibt der Befund (ADR 0010 Ergänzung 0.76.1) |
+| **0.77.0** | VMware NSX Advanced Load Balancer (Avi) lesend: Virtual Services, VIPs, Pools als publizierte Dienste, NAT-Einstellungen, Weg-Suche über den Load Balancer bis zum Server (ADR 0027) |
 
-### Nächste Arbeiten (Stand 0.76.1)
+### Nächste Arbeiten (Stand 0.77.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.76.1.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.77.0.
 
 **Rückmeldung des Anwenders (2026-10-26, zweite Runde):** Korrekturen (Wartezeiten beim
 Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) – **umgesetzt in
@@ -391,9 +392,9 @@ Speichern, Mitglieder, Vorschläge je Tenant, Objekt-Filter, IPAM-Container) –
 dafür), Applikationen ohne VMs ausblenden bzw. löschen, Infos zuklappbar (Routing: „Gelesene
 Kontexte“ zu, Reiter ohne Scrollen sichtbar) – **umgesetzt in 0.75.0**; Kunde oben wählen
 filtert alles (eigenes plus geteiltes, markiert) – **umgesetzt in 0.76.0**; externe Netze/Hosts
-ohne IPAM-Befund (ausser im WAN-Interface-Netz) – **umgesetzt in 0.76.1**; als Nächstes
-**VMware NSX Advanced Load Balancer (Avi)** als lesende Quelle für die Doku (eigene ADR); dann
-weiter mit Schritt 5.
+ohne IPAM-Befund (ausser im WAN-Interface-Netz) – **umgesetzt in 0.76.1**; **VMware NSX
+Advanced Load Balancer (Avi)** als lesende Quelle für die Doku – **umgesetzt in 0.77.0** (ADR
+0027; offen: Adressen der Service Engines, Content Switching, GSLB); weiter mit Schritt 5.
 
 **Dazwischen (Rückmeldung des Anwenders zur Applikations-Doku, 2026-10-26):** Übersicht mit
 zuklappbaren Bereichen, Systeme kompakt, Export mit Auswahl, Abhängigkeiten vorerst entfernt,

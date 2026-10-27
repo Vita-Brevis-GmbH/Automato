@@ -8,6 +8,7 @@ export const PLATFORM_LABEL: Record<string, string> = {
   cisco_aci: "Cisco ACI",
   vmware: "VMware vCenter",
   cisco_switch: "Switches & Router",
+  avi: "NSX ALB (Avi)",
   infoblox: "Infoblox DDI",
   netbox: "NetBox",
 };

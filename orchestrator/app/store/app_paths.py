@@ -719,6 +719,8 @@ def _hop(h: dict, l3: L3Outs | None = None) -> dict:
         "context": h["context"],
         "verdict": _hop_verdict(checks),
         "checks": checks,
+        # NSX ALB (0.77.0): an diesem Hop vom Load Balancer weiter zum Server
+        **({"lb": h["lb"]} if h.get("lb") else {}),
     }
 
 
