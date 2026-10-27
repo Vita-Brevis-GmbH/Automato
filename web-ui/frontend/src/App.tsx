@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AuthConfig,
+  Capability,
   Customer,
   fetchAuthConfig,
   fetchCustomers,
@@ -19,7 +20,7 @@ import {
 } from "./api";
 import Agents from "./Agents";
 import AppDoc from "./AppDoc";
-import Customers from "./Customers";
+import Customers, { OwnCustomerUsers } from "./Customers";
 import * as auth from "./auth";
 import Cabling from "./Cabling";
 import Design from "./Design";
@@ -56,6 +57,7 @@ export type View =
   | "users"
   | "tenants"
   | "kunden"
+  | "kundenbenutzer"
   | "dict"
   | "agents"
   | "netbox"
@@ -68,6 +70,8 @@ interface NavEntry {
   section: "doc" | "admin";
   adminOnly?: boolean;
   customer?: boolean; // auch für Kunden-Benutzer (ADR 0018; serverseitig eingeschränkt)
+  customerOnly?: boolean; // nur für Kunden-Benutzer (feinere Rollen)
+  cap?: Capability; // Kunden-Benutzer: nur mit dieser Capability
 }
 
 const NAV: NavEntry[] = [
@@ -85,6 +89,16 @@ const NAV: NavEntry[] = [
   { key: "users", label: L("Benutzer & Rollen", "Users & roles"), icon: "users", section: "admin" },
   { key: "tenants", label: L("Mandanten & Standorte", "Tenants & sites"), icon: "tenants", section: "admin" },
   { key: "kunden", label: L("Kunden", "Customers"), icon: "customers", section: "admin" },
+  // Kunden-Admin (feinere Rollen): die Kunden-Benutzer des eigenen Kunden
+  {
+    key: "kundenbenutzer",
+    label: L("Kunden-Benutzer", "Customer users"),
+    icon: "users",
+    section: "admin",
+    customer: true,
+    customerOnly: true,
+    cap: "customer_users.manage",
+  },
   { key: "dict", label: L("Namensprofile", "Naming profiles"), icon: "dict", section: "admin" },
   { key: "agents", label: L("Collector-Agenten", "Collector agents"), icon: "agents", section: "admin", adminOnly: true },
   { key: "laeufe", label: L("Läufe", "Runs"), icon: "play", section: "admin" },
@@ -421,11 +435,15 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
     findings: { n: openFindings, warn: (openFindings ?? 0) > 0 },
   };
 
-  // Kunden-Benutzer sehen nur die freigegebenen Doku-Ansichten
-  const shown = (n: NavEntry) => (!n.adminOnly || me.isAdmin) && (!me.isCustomer || !!n.customer);
+  // Kunden-Benutzer sehen nur die freigegebenen Doku-Ansichten (feinere Rollen: dazu, was ihre
+  // Capabilities erlauben); Betreuer nicht die Seiten nur für Kunden-Benutzer
+  const shown = (n: NavEntry) =>
+    (!n.adminOnly || me.isAdmin) &&
+    (me.isCustomer ? !!n.customer && (!n.cap || auth.customerCan(me, n.cap)) : !n.customerOnly);
   const entry = NAV.find((n) => n.key === view);
   const current: View = entry && shown(entry) ? view : "uebersicht";
-  // Applikationen: Kunden-Benutzer pflegen nichts (Triage eigener Findings bleibt)
+  // Applikationen: Kunden-Benutzer pflegen nichts als Operator – mit der Kunden-Rolle editor nur
+  // die Applikationen, die der Server als `editable` meldet (feinere Rollen)
   const docMe = me.isCustomer ? { ...me, isOperator: false } : me;
   const docView = NAV.find((n) => n.key === current)?.section === "doc";
   const https = window.location.protocol === "https:";
@@ -520,7 +538,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
       <nav className="nav">
         <div className="nav-sec">{L("Dokumentation", "Documentation")}</div>
         {renderNav("doc")}
-        {!me.isCustomer && <div className="nav-sec">{L("Administration", "Administration")}</div>}
+        {NAV.some((n) => n.section === "admin" && shown(n)) && (
+          <div className="nav-sec">{L("Administration", "Administration")}</div>
+        )}
         {renderNav("admin")}
         <div className="nav-foot">
           <span className={`dot ${health?.status === "ok" ? "g" : "r"}`} />
@@ -603,7 +623,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                 onGo={go}
                 isAdmin={me.isAdmin}
                 customer={me.isCustomer}
-                canAssign={me.isOperator && !me.isCustomer}
+                canAssign={(me.isOperator && !me.isCustomer) || auth.customerCan(me, "applications.edit")}
               />
             )}
             {current === "objekte" && tenantReady && (
@@ -698,6 +718,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                 onChanged={() => setCustomersVersion((v) => v + 1)}
               />
             )}
+            {current === "kundenbenutzer" && <OwnCustomerUsers me={me} tenantId={tenantId} />}
             {current === "dict" && <NamingProfiles me={me} tenants={tenants ?? []} />}
             {current === "agents" && <Agents tenants={tenants ?? []} tenantId={tenantId} onGo={go} />}
             {current === "netbox" && <NetBoxSync tenantId={tenantId} tenantLabel={tenantLabel} onGo={go} />}

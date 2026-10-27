@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.89.0 – 2026-10-27
+
+Feinere Rollen der Kunden-Benutzer (Anwender: „Kunden: feinere Rollen“; ADR 0018 Ergänzung).
+
+- **Kunden-Rollen je Kunde:** Lesen (`viewer`), Triage (`triage` = bisher „operator“ des
+  Kunden), Editor (`editor`), Kunden-Admin (`customer_admin`) – aufgelöst in Capabilities
+  (`auth/capabilities.py`). Unbekannte Rolle = Lesen, `admin` bleibt dem globalen Admin
+  vorbehalten; kein bestehendes Recht wird erweitert.
+- **Freigabeliste mit Capability** je Methode und Pfad; ein schreibender Endpunkt öffnet sich nie
+  mit dem Leserecht.
+- **Editor** pflegt Applikationen, die ganz beim Kunden liegen: Stammdaten, Regeln
+  zuordnen/ausschliessen, Regeln je Kategorie ausblenden – nur mit Regeln des eigenen
+  Ausschnitts; `editable` an den Applikationen, Chip „pflegbar“.
+- **Kunden-Admin** ordnet die Kunden-Benutzer seines Kunden selbst zu (höchstens die eigene
+  Rolle, nie das eigene Konto, nie andere Kunden); Seite „Kunden-Benutzer“. Migration `0058`
+  `customer_user.origin` – seine Zuordnungen wirken nie auf Betreuer.
+- **Keycloak:** optionaler Claim `customer_role` (Mapper in der Realm-Vorlage,
+  `AUTOMATO_OIDC_CUSTOMER_ROLE_CLAIM`, SAML fest je IdP); mit Zuordnung gilt je Kunde die höhere
+  Rolle.
+- `GET /auth/me` mit `capabilities`, `customer_role`, `customer_roles`; Audit mit
+  `customer_roles`, `origin`, `previous_role`.
+
 ## 0.88.0 – 2026-10-27
 
 Abhängigkeiten zwischen Applikationen wieder in der Doku (Anwender: „Abhängigkeiten wieder

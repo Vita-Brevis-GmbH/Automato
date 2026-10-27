@@ -320,7 +320,7 @@ export default function RulesTable({
   onGo?: (v: View, p?: ViewParams) => void;
   isAdmin?: boolean;
   customer?: boolean; // Kunden-Benutzer: keine Verbund-Vorschläge (ADR 0018)
-  canAssign?: boolean; // Operator: Regel einer Applikation zuordnen (0.60.0)
+  canAssign?: boolean; // Operator bzw. Kunden-Editor: Regel einer Applikation zuordnen (0.60.0)
 }) {
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -871,8 +871,9 @@ function AssignToApp({ tenantId, ruleId, onGo }: { tenantId: number; ruleId: num
   const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     setDone(null);
+    // Kunden-Editor (feinere Rollen): nur die Applikationen, die er pflegen darf
     fetchApps(tenantId)
-      .then(setApps)
+      .then((list) => setApps(list.filter((a) => a.editable !== false)))
       .catch(() => setApps([]));
   }, [tenantId, ruleId]);
   if (!apps?.length) return null;

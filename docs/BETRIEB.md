@@ -1284,6 +1284,21 @@ Aufruf als `Accept-Language` mit.
     Audit (`customer_user.*`). Das Attribut `customer_ids` bleibt als Alternative, beides
     zusammen ergibt die Kunden beider Quellen. Vorführen im dev-Modus:
     `localStorage.setItem("automato_dev_user", "<Benutzer>")`.
+  - **Kunden-Rollen (0.89.0, ADR 0018 Ergänzung „Feinere Rollen“):** je Zuordnung die Rolle
+    **Lesen** (`viewer`), **Triage** (`triage`, eigene Findings quittieren/kommentieren – bisher
+    „lesen + eigene Findings triagieren“), **Editor** (`editor`, zusätzlich eigene Applikationen
+    pflegen: Stammdaten, Regeln zuordnen/ausschliessen, Regeln je Kategorie ausblenden – nur
+    Applikationen, die ganz beim Kunden liegen; Chip „pflegbar“) oder **Kunden-Admin**
+    (`customer_admin`, zusätzlich die Kunden-Benutzer des eigenen Kunden zuordnen – höchstens
+    mit der eigenen Rolle, nie das eigene Konto, nie andere Kunden). Kunden-Admins finden unter
+    Administration → Kunden-Benutzer nur ihre Kunden; ihre Zuordnungen wirken nie auf Betreuer.
+    Die Rolle gilt je Kunde. Alternativ das Keycloak-Attribut `customer_role` (Mapper
+    `customer_role`; im bestehenden Realm von Hand anlegen, `deploy/keycloak/README.md`;
+    `AUTOMATO_OIDC_CUSTOMER_ROLE_CLAIM`); Claim und Zuordnung zusammen = je Kunde die höhere
+    Rolle. Die Attribute `customer_ids`/`customer_role` im User Profile nur für Admins
+    bearbeitbar machen. Anlegen, Löschen, CSV-Import und die Mitglieder AP/EPG/Server bleiben
+    den Betreuern. Nach dem Update `alembic upgrade head` (Migration `0058`). Vorführen im
+    dev-Modus: `automato_dev_customer` als `<Mandant>:<Kunden>:<Rolle>`, z. B. `1:2:editor`.
   - **Zonen des Kunden (0.53.0):** In Netzwerkdesign → Zonen „Kunde“ setzen; ihre Netze, EPGs und
     alles daran gehören dann zum Kunden (Spalte „Zonen“ in der Kundenliste). Die Selektoren des
     Kunden bleiben für Ausnahmen; ausschliessende gelten auch für seine Zonen.

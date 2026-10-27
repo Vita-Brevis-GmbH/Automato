@@ -35,6 +35,13 @@ Beim Start importiert Keycloak den Realm **`automato`** aus `realm-automato.json
 - Protocol-Mapper **`customer_ids`** (User-Attribut → Token-Claim, multivalued) — macht den
   Benutzer zum Kunden-Benutzer, eingeschränkt auf diese Kunden (IDs aus der Ansicht
   „Kunden“). Ohne Attribut bleibt ein Benutzer Betreuer.
+- Protocol-Mapper **`customer_role`** (User-Attribut → Token-Claim, einwertig, optional;
+  feinere Rollen, ADR 0018 Ergänzung) — Kunden-Rolle für die Kunden aus `customer_ids`:
+  `viewer` (lesen), `triage` (+ eigene Findings), `editor` (+ eigene Applikationen pflegen),
+  `customer_admin` (+ Kunden-Benutzer des eigenen Kunden in Automato zuordnen). Fehlt das
+  Attribut, gilt die Rolle aus den Realm-Rollen wie bisher (`operator` = `triage`, sonst
+  `viewer`); unbekannte Werte – auch `admin` – gelten als `viewer`. Mit einer Zuordnung in
+  Automato gilt je Kunde die höhere der beiden Rollen.
 - Geseedter **`automato-admin`** mit Rolle `admin` und erzwungenem
   **`UPDATE_PASSWORD` + `CONFIGURE_TOTP`** (OTP) beim ersten Login.
 
@@ -55,13 +62,34 @@ AUTOMATO_OIDC_JWKS_URL=http://localhost:8081/realms/automato/protocol/openid-con
 # Defaults passen zu Keycloak:
 # AUTOMATO_OIDC_ROLES_CLAIM=realm_access.roles
 # AUTOMATO_OIDC_TENANTS_CLAIM=tenant_ids
+# AUTOMATO_OIDC_CUSTOMERS_CLAIM=customer_ids
+# AUTOMATO_OIDC_CUSTOMER_ROLE_CLAIM=customer_role
 ```
 
 Der Orchestrator validiert dann das Bearer-JWT (JWKS/Issuer/Audience), liest Rollen aus
 `realm_access.roles` und Mandanten aus `tenant_ids`; `admin` = alle Mandanten. Mit der Rolle
 `customer` bzw. Kunden in `customer_ids` (`AUTOMATO_OIDC_CUSTOMERS_CLAIM`) ist der Benutzer ein
 Kunden-Benutzer: nur die freigegebenen Doku-Endpunkte, eingeschränkt auf seine Kunden; ohne
-Kunden sieht er nichts (fail-closed).
+Kunden sieht er nichts (fail-closed). Was er darüber hinaus darf, bestimmt seine Kunden-Rolle
+(`customer_role` bzw. die Zuordnung in Automato, siehe oben).
+
+**Bestehender Realm:** Keycloak importiert `realm-automato.json` nur, wenn der Realm noch fehlt.
+Den Mapper `customer_role` in einem bestehenden Realm von Hand anlegen (die anderen Mapper
+bleiben unverändert):
+
+```bash
+kcadm.sh get clients -r automato -q clientId=automato-web --fields id   # <client-id>
+kcadm.sh create clients/<client-id>/protocol-mappers/models -r automato \
+  -s name=customer_role -s protocol=openid-connect \
+  -s protocolMapper=oidc-usermodel-attribute-mapper \
+  -s 'config."user.attribute"=customer_role' -s 'config."claim.name"=customer_role' \
+  -s 'config."jsonType.label"=String' -s 'config."access.token.claim"=true' \
+  -s 'config."id.token.claim"=true' -s 'config."userinfo.token.claim"=true'
+```
+
+Die Attribute `customer_ids` und `customer_role` dürfen Benutzer **nicht selbst ändern**: im
+Realm unter *User profile* nur für Admins bearbeitbar (bzw. als nicht verwaltete Attribute
+abgeschaltet) – sonst könnte sich ein Kunden-Benutzer selbst hochstufen.
 
 ## SAML-Broker je Kunde
 
@@ -90,8 +118,10 @@ Mandanten-IDs dieses Kunden); `admin` wird **nie** per Broker-Default vergeben, 
 gezielt. Für Kunden-Benutzer (ADR 0018) werden `customer_ids` und die Rolle `customer`
 **fest je IdP** hinterlegt (`hardcoded-attribute-idp-mapper`, `oidc-hardcoded-role-idp-mapper`
 in `saml-mappers.example.json`), nie aus der Assertion übernommen – sonst könnte ein
-Kunden-IdP sich fremde Kunden geben. OTP-Pflicht/Passwort-Policy gelten nur für lokale User; föderierte User
-authentifizieren am Kunden-IdP.
+Kunden-IdP sich fremde Kunden geben. Ebenso die Kunden-Rolle `customer_role` (optional, fest
+je IdP, z. B. `viewer`); einzelne Benutzer stuft der Betreuer bzw. der Kunden-Admin über die
+Zuordnung in Automato feiner ein. OTP-Pflicht/Passwort-Policy gelten nur für lokale User;
+föderierte User authentifizieren am Kunden-IdP.
 
 ## Produktion
 

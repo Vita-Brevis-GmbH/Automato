@@ -299,6 +299,19 @@ export default function Apps({
                     )}
                     <td>
                       <b>{a.name}</b>
+                      {a.editable && (
+                        // feinere Rollen: Kunden-Editor darf diese Applikation pflegen
+                        <span
+                          className="chip info app-editable"
+                          style={{ marginLeft: 6 }}
+                          title={L(
+                            "Sie dürfen diese Applikation pflegen: Stammdaten, Regeln zuordnen/ausschliessen, Regeln je Kategorie ausblenden",
+                            "You may maintain this application: master data, assign/exclude rules, hide rules per category",
+                          )}
+                        >
+                          {L("pflegbar", "editable")}
+                        </span>
+                      )}
                       {(a.external_name || a.internal_name) && (
                         <div className="faint">{[a.external_name, a.internal_name].filter(Boolean).join(" · ")}</div>
                       )}
@@ -569,15 +582,16 @@ function AppDrawer({
                 <Icon name="apps" size={13} /> {L("Doku", "Documentation")}
               </button>
             )}
+            {(me.isOperator || !!d.editable) && (
+              <button className="btn btn-ghost btn-sm" onClick={() => onEdit(d)}>
+                {L("Bearbeiten", "Edit")}
+              </button>
+            )}
+            {/* Löschen und Mitglieder (AP, EPG, Server) bleiben Betreuern – auch Kunden-Editoren nicht */}
             {me.isOperator && (
-              <>
-                <button className="btn btn-ghost btn-sm" onClick={() => onEdit(d)}>
-                  {L("Bearbeiten", "Edit")}
-                </button>
-                <button className="btn btn-danger btn-sm" onClick={() => setConfirmDelete(true)}>
-                  {L("Löschen", "Delete")}
-                </button>
-              </>
+              <button className="btn btn-danger btn-sm" onClick={() => setConfirmDelete(true)}>
+                {L("Löschen", "Delete")}
+              </button>
             )}
           </div>
           <dl className="kv">

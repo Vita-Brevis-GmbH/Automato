@@ -255,6 +255,9 @@ export default function ApplicationDocView({
   if (err) return <ErrorBox error={err} prefix={L("Doku laden", "Load documentation")} />;
   if (!doc) return <Loading>{L("Erzeuge Doku…", "Generating documentation…")}</Loading>;
   const a = doc.application;
+  // pflegen: Operator bzw. Kunden-Benutzer mit der Kunden-Rolle editor, wenn die Applikation ganz
+  // bei seinem Kunden liegt (Server: `editable`, feinere Rollen ADR 0018)
+  const maintain = me.isOperator || !!a.editable;
   const s = doc.summary;
   const sourceName = (sid: number) => systems.find((x) => x.id === sid)?.name ?? `#${sid}`;
   // Firewall mit VDOM, wenn sie mehrere hat (0.43.2) – wie in Regeln & Contracts
@@ -328,9 +331,10 @@ export default function ApplicationDocView({
   const tables = doc.tables.filter((t) => (t.hidden?.length ?? 0) > 0 || (!onlyHidden && (showEmpty || t.rows.length > 0)));
   const foldKeys = ["systems", "epgs", "connections", "dependencies", "rules", "findings", "categories", ...doc.tables.map((t) => `cat:${t.index}`)];
   const categories = fold("categories", false);
-  // Ausblenden je Kategorie (0.69.0): nur Operator, Kunden-Benutzer sehen die Liste ohne Knöpfe
+  // Ausblenden je Kategorie (0.69.0): nur Operator, Kunden-Benutzer sehen die Liste ohne Knöpfe –
+  // ausser als Editor ihrer Applikation (feinere Rollen)
   const hideControls = {
-    canEdit: me.isOperator && !me.isCustomer,
+    canEdit: (me.isOperator && !me.isCustomer) || !!a.editable,
     onHide: (table: DocTable) => (row: DocRow) => setHiding({ table, row }),
     onShow: async (hides: { id: number }[]) => {
       setBusy(null);
@@ -358,8 +362,8 @@ export default function ApplicationDocView({
         >
           {L("Mitglieder", "Members")}
         </button>
-        {me.isOperator && (
-          <button className="btn btn-ghost btn-sm" onClick={onEdit}>
+        {maintain && (
+          <button className="btn btn-ghost btn-sm" id="app-doc-edit" onClick={onEdit}>
             {L("Bearbeiten", "Edit")}
           </button>
         )}
@@ -532,7 +536,7 @@ export default function ApplicationDocView({
           {(doc.rule_members ?? []).length > 0 && (
             <RuleMembers
               members={doc.rule_members ?? []}
-              canEdit={me.isOperator}
+              canEdit={maintain}
               onOpen={setRule}
               onRemove={(mid) =>
                 removeAppMember(id, mid)
@@ -810,7 +814,7 @@ export default function ApplicationDocView({
           intro={
             selected ? (
               <>
-                {me.isOperator && (
+                {maintain && (
                   <RuleMemberActions
                     appId={id}
                     ruleId={selected.id}
@@ -830,7 +834,7 @@ export default function ApplicationDocView({
                 onGo={onGo}
               />
               </>
-            ) : rule != null && me.isOperator ? (
+            ) : rule != null && maintain ? (
               <RuleMemberActions appId={id} ruleId={rule} hits={[]} members={doc.rule_members ?? []} onDone={() => setTick((n) => n + 1)} onError={setBusy} />
             ) : null
           }

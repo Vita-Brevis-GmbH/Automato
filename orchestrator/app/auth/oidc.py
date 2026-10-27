@@ -20,6 +20,7 @@ from fastapi import HTTPException
 from jwt import PyJWKClient
 from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 
+from app.auth import capabilities as caps
 from app.auth.principal import Principal
 from app.i18n import L
 
@@ -64,6 +65,21 @@ def logins_of(claims: dict) -> tuple[str, ...]:
     return tuple(out)
 
 
+def customer_role_of(roles: frozenset[str], claimed) -> str | None:
+    """Kunden-Rolle aus dem Token (feinere Rollen, ADR 0018 Ergaenzung): der Claim
+    `customer_role` (Text bzw. Liste - die hoechste; Unbekanntes = viewer), sonst aus den
+    Realm-Rollen wie bis 0.87.0: `operator` = triage, `viewer` bzw. `customer` = viewer. Ohne
+    beides keine Rolle (keine Rechte, fail-closed). `admin` gibt nie eine Kunden-Rolle."""
+    if claimed not in (None, "", [], ()):
+        values = claimed if isinstance(claimed, list | tuple) else str(claimed).split(",")
+        return caps.highest(caps.normalize(v) for v in values) or caps.VIEWER
+    if "operator" in roles:
+        return caps.TRIAGE_ROLE
+    if "viewer" in roles or CUSTOMER_ROLE in roles:
+        return caps.VIEWER
+    return None
+
+
 def claims_to_principal(claims: dict, settings) -> Principal:
     subject = claims.get("sub") or claims.get("preferred_username") or "unknown"
     logins = logins_of(claims)
@@ -73,20 +89,26 @@ def claims_to_principal(claims: dict, settings) -> Principal:
     )
     # Kunden-Benutzer (ADR 0018): Rolle `customer` bzw. Kunden im Attribut - nie Admin, immer
     # auf Mandanten und Kunden eingeschraenkt (ohne Zuordnung: nichts). Die Rolle `customer`
-    # liest (viewer); operator erlaubt zusaetzlich die Triage eigener Findings.
+    # liest (viewer); operator erlaubt zusaetzlich die Triage eigener Findings; feiner ueber den
+    # Claim `customer_role` (viewer, triage, editor, customer_admin).
     # Ein leerer Claim allein (Mapper ohne Attribut) macht niemanden zum Kunden-Benutzer.
     raw_customers = _dig(claims, settings.oidc_customers_claim)
     if CUSTOMER_ROLE in roles or raw_customers not in (None, "", [], ()):
+        # Kunden-Rolle (feinere Rollen) aus dem Claim `customer_role` bzw. den Realm-Rollen -
+        # gilt fuer alle Kunden des Claims
+        role = customer_role_of(roles, _dig(claims, settings.oidc_customer_role_claim))
         if CUSTOMER_ROLE in roles:
             roles = roles | {"viewer"}
         roles = roles - {"admin", CUSTOMER_ROLE}
+        customers = _parse_tenant_ids(raw_customers)
         return Principal(
             subject=str(subject),
             roles=roles,
             tenant_ids=_parse_tenant_ids(_dig(claims, settings.oidc_tenants_claim)),
-            customer_ids=_parse_tenant_ids(raw_customers),
+            customer_ids=customers,
             logins=logins,
             customer_source="claim",
+            customer_roles=tuple((c, role) for c in customers) if role else (),
         )
     tenant_ids = (
         None if "admin" in roles else _parse_tenant_ids(_dig(claims, settings.oidc_tenants_claim))

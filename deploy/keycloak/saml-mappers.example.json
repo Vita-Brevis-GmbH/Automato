@@ -36,6 +36,17 @@
     }
   },
   {
+    "_hinweis": "Feinere Rollen (ADR 0018 Ergaenzung, optional): Kunden-Rolle FEST je IdP - viewer | triage | editor | customer_admin, nie aus der Assertion. Ohne diesen Mapper gilt viewer (bzw. triage mit Realm-Rolle operator); einzelne Benutzer feiner ueber die Zuordnung in Automato (die hoehere Rolle gilt). Unbekannte Werte (auch 'admin') = viewer.",
+    "name": "customer_role-fest",
+    "identityProviderAlias": "kunde-saml",
+    "identityProviderMapper": "hardcoded-attribute-idp-mapper",
+    "config": {
+      "syncMode": "FORCE",
+      "attribute": "customer_role",
+      "attribute.value": "viewer"
+    }
+  },
+  {
     "_hinweis": "Rolle customer fuer alle Benutzer dieses Kunden-IdP: nur die Doku ihres Ausschnitts, nie Admin (auch wenn admin vergeben waere).",
     "name": "rolle-customer",
     "identityProviderAlias": "kunde-saml",
