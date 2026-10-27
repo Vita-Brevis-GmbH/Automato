@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.79.1 – 2026-10-27
+
+Korrekturen nach Rückmeldung des Anwenders. Ohne Migration.
+
+- **Verbindungen Ende zu Ende zu einem Netz:** War die Gegenstelle einer Firewall-Regel ein
+  ganzes Netz (z. B. eine grosse Gruppe), lief die Verbindung über die Route, die das ganze
+  Netz enthält – oft 0.0.0.0/0. Netze, die genauer über andere L3Outs bzw. Interfaces geroutet
+  werden, standen damit auf dem falschen Weg. Jetzt sind die genauer gerouteten Teile eigene
+  Verbindungen mit ihrem Weg („Netz › Teil“, „Teil der Verbindung …“, höchstens acht je Netz,
+  ohne Host-Routen); die Verbindung zum ganzen Netz nennt sie.
+- **Contract mit EPG als Consumer und Provider:** neuer Befund „Contract: EPG Consumer und
+  Provider“ (`aci_contract_both_sides`, Warnung, je Contract mit den EPGs): der Contract gilt
+  zwischen diesen EPGs in beide Richtungen, gegenüber sich selbst wirkt er nicht. In der
+  Applikations-Doku ist die eigene EPG keine Gegenstelle mehr (bisher Quelle die Server, Ziel
+  die EPG selbst); die Zeile trägt im Bezug „Consumer und Provider“.
+- BETRIEB, TESTS.
+
 ## 0.79.0 – 2026-10-27
 
 VIP der FortiGate vor dem NSX ALB (Rückmeldung des Anwenders): zeigt das Ziel einer VIP der

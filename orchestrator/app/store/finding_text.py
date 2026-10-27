@@ -391,6 +391,18 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
             "Prüfen, ob die VM an der richtigen Portgruppe hängt, die IP doppelt vergeben ist "
             "oder der statische Endpunkt veraltet ist.",
         )
+    if ftype == "aci_contract_both_sides":
+        name = d.get("name") or subject
+        n = d.get("count") or len(d.get("epgs") or [])
+        epgs = _list(d.get("epgs") or [], 5)
+        which = f"die EPG {epgs} ist" if n == 1 else f"{n} EPGs ({epgs}) sind"
+        return (
+            f"Contract {_q(name)}: {which} Consumer und Provider zugleich.",
+            "Der Contract gilt zwischen diesen EPGs in beide Richtungen; gegenüber sich selbst "
+            "wirkt er nicht (Verkehr in der EPG ist ohnehin erlaubt). Prüfen, ob das gewollt ist "
+            "oder jede EPG nur Consumer bzw. Provider sein soll. Die Applikations-Doku zeigt die "
+            "eigene EPG nicht als Gegenstelle.",
+        )
     if ftype == "aci_scope_unpaired":
         scope = {"application-profile": "AP", "context": "VRF", "tenant": "Tenant"}.get(
             d.get("scope") or "", d.get("scope") or "?"

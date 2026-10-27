@@ -764,6 +764,14 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
       Objekte der Regel (Host, Netz als Ganzes) bzw. beim Contract die Gegenstellen im Scope
       (EPG mit der IP ihrer ersten VM bzw. ihres ersten Endpunkts). Gegenstelle any, vzAny und
       Preferred Group bleiben Regeln ohne Verbindung; FQDN/ISDB stehen als Hinweis da.
+    - **Netz als Ziel (seit 0.79.1):** Die Route, die das ganze Netz enthält (oft 0.0.0.0/0),
+      gilt nicht für seine genauer gerouteten Teile. Diese Teile (z. B. Netze hinter einem
+      anderen L3Out bzw. Interface) sind eigene Verbindungen mit ihrem Weg, beschriftet „Netz ›
+      Teil“ und „Teil der Verbindung …“; die Verbindung zum ganzen Netz nennt sie („ohne die
+      genauer gerouteten Teile: …“). Höchstens acht Teile je Netz, Host-Routen nicht.
+    - **Contract mit EPG als Consumer und Provider (seit 0.79.1):** die eigene EPG ist keine
+      Gegenstelle (Verkehr in der EPG ist ohnehin erlaubt), die Zeile trägt im Bezug
+      „Consumer und Provider“; dazu der Befund „Contract: EPG Consumer und Provider“.
     - Klick zeigt je Hop die entscheidende Policy bzw. den Contract mit den Objekten (Quelle,
       Ziel, Dienste), Ein-/Ausgang, NAT und Leak, dazu je Regel der Doku: *entscheidet*,
       *möglich*, *greift nicht* (vorher entscheidet eine andere bzw. sie passt nicht), *nicht auf

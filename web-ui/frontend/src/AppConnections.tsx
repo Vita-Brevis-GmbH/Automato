@@ -857,6 +857,16 @@ export default function ConnectionsCard({
                     <td>
                       <HopChain hops={c.hops} />
                       {!c.reached && c.end && <div className="faint">{c.end.text}</div>}
+                      {c.parts && c.parts.length > 0 && (
+                        <div className="faint conn-parts" title="Diese Teile des Netzes werden genauer anders geroutet – je eine eigene Verbindung">
+                          ohne die genauer gerouteten Teile: {c.parts.join(", ")}
+                        </div>
+                      )}
+                      {c.part_of && (
+                        <div className="faint conn-part-of" title="Teil eines Netzes, das genauer anders geroutet wird als das ganze Netz">
+                          Teil der Verbindung {c.part_of}
+                        </div>
+                      )}
                       {c.hops.length > 0 && <div className="print-only faint">{c.hops.map(hopText).join(" → ")}</div>}
                       {c.zones && <ZoneLine z={c.zones} />}
                     </td>

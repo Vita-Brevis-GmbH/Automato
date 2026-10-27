@@ -594,6 +594,12 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
         for side in sorted(sides, key=lambda x: x != "dst"):  # zuerst eingehend
             cp_role = "src" if side == "dst" else "dst"
             cp = [e for e in eps if e.role.value == cp_role]
+            # Consumer und Provider zugleich (0.79.1, Anwender): die eigene EPG ist keine
+            # Gegenstelle (Verkehr in der EPG ist ohnehin erlaubt) - nur die anderen
+            mutual = any(e.epg_id == epg.id for e in cp)
+            cp = [e for e in cp if e.epg_id != epg.id]
+            if mutual and not cp:
+                continue
             # nur Gegenstellen im Scope des Contracts (Dev-Befund 0.43.0: Contract aus common
             # mit Scope VRF - die Consumer anderer Tenants bzw. VRFs erreicht er nicht)
             kept = [e for e in cp if e.epg_id not in by_id
@@ -633,6 +639,8 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
             only_external = bool(external) and len(external) == len(cp_epgs)
             how = sides[side]
             text = how if via is None else (via if how == "direkt" else f"{how} · {via}")
+            if mutual:
+                text += " · Consumer und Provider"
             obj = f"EPG {epg_store.inventory_label(epg)}" if how == "direkt" else how
             targets = ", ".join(n for n in cp_names if n)
             forward = "in" if side == "dst" else "out"

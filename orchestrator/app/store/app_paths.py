@@ -56,6 +56,7 @@ from app.store.topology import endpoint, is_net, within
 
 MAX_TRACES = 120  # Wege je Applikation
 MAX_COUNTER = 6  # Gegenstellen je Regel und Seite
+MAX_PARTS = 8  # genauer geroutete Teile eines Netzes als eigene Verbindungen (0.79.1)
 MAX_SERVICES = 3  # Dienste je Regel
 MAX_SYSTEMS = 12  # genannte Systeme je Seite
 _SKIP = ("any", "vzany", "pref_group")  # unspezifisch: Regel ohne Verbindung
@@ -115,7 +116,17 @@ def build(session: Session, app: Application, doc: dict | None = None,
     l3 = L3Outs(session, {k[0] for k in graph.nodes})
     zctx = zone_path.ZoneContext(session, tid, graph) if zones else None
     for c in list(conns.values())[:MAX_TRACES]:
-        out.append(_connection(session, tid, graph, checks, data, rules, c, l3, zctx))
+        conn = _connection(session, tid, graph, checks, data, rules, c, l3, zctx)
+        out.append(conn)
+        # Netz als Ziel (0.79.1, Anwender): genauer geroutete Teile (z. B. ueber einen anderen
+        # L3Out als die 0/0-Route, die das ganze Netz enthaelt) als eigene Verbindungen
+        for prefix in conn["parts"][:MAX_PARTS]:
+            part = _Conn(_copy(c.src), _copy(c.dst), c.service, c.direction, dict(c.rules),
+                         list(c.starts), c.reverse)  # fmt: skip
+            part.dst.ip, part.dst.label = prefix, f"{c.dst.label} › {prefix}"
+            child = _connection(session, tid, graph, checks, data, rules, part, l3, zctx)
+            child["part_of"] = conn["key"]
+            out.append(child)
     if cut:
         notes.append(f"{len(conns)} Verbindungen – nur die ersten {MAX_TRACES} geprüft")
     order = {"deny": 0, "depends": 1, "unknown": 2, "allow": 3}
@@ -611,6 +622,7 @@ def _connection(
     states = [_state(rules[rid], active, data) for rid in c.rules if rid in rules]
     mismatch = _mismatch(states, verdict, text, reached)
     variants = path_variants(res["paths"])
+    parts = _net_parts(c, first)
     return {
         "key": f"{c.src.ip}>{c.dst.ip}>{_service_text(c.service) or 'alle'}",
         "direction": c.direction,
@@ -633,7 +645,24 @@ def _connection(
         "inconsistent": inconsistent(variants),
         "notes": res["notes"],
         "zones": _zones_out(res.get("zones"), first),
+        # Teile des Ziel-Netzes, die genauer anders geroutet werden (eigene Verbindungen)
+        "parts": parts,
     }
+
+
+def _net_parts(c: _Conn, first: dict | None) -> list[str]:
+    """Genauer geroutete Teile des Ziels, wenn es ein Netz ist: die Route, die das ganze Netz
+    enthaelt (z. B. 0.0.0.0/0), gilt fuer sie nicht (0.79.1)."""
+    if first is None or c.dst.kind != "object" or not is_net(endpoint(c.dst.ip)):
+        return []  # nur Netze der Firewall-Regeln (EPG-Subnetze nicht in Host-Routen zerlegen)
+    out: list[str] = []
+    for h in first["hops"]:
+        for r in (h.get("route") or {}).get("inner") or []:
+            net = endpoint(r["prefix"])
+            host = net.prefixlen == (32 if net.version == 4 else 128)
+            if not host and r["prefix"] not in out and r["prefix"] != c.dst.ip:
+                out.append(r["prefix"])
+    return out
 
 
 def _zones_out(zones: dict | None, first: dict | None) -> dict | None:

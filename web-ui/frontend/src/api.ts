@@ -1770,6 +1770,9 @@ export interface AppConnection {
   notes: string[];
   // logische Zonen (0.78.0, ADR 0024): Quelle/Ziel, Kette des Wegs, Absichten mit Urteil
   zones?: AppConnZones | null;
+  // Netz als Ziel (0.79.1): genauer geroutete Teile (eigene Verbindungen) bzw. Teil von
+  parts?: string[];
+  part_of?: string;
 }
 export interface AppConnZones {
   src: string[];
