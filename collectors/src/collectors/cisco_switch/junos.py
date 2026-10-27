@@ -6,6 +6,8 @@ ARP, MAC-Tabelle (`ethernet-switching` bzw. `bridge mac-table` beim MX) und VLAN
 Eine Unit mit VLAN-Tag wird ein VLAN-Interface am Port (wie ein Subinterface der FortiGate), Unit 0
 ohne Tag gehoert zum Port selbst; Netze der Adressen werden Interface-Netze des Inventars.
 
+Seit 0.88.x auch die IPv6-Nachbarn (`show ipv6 neighbors`, NDP) wie ARP.
+
 Ein MX ist ein Router (Rolle `router`, leitet in der L2-Sicht nicht weiter), EX/QFX Switches.
 Interne Interfaces des Systems (`pfe-`, `pfh-`, `cbp`, `dsc`, `lsi`, `tap` …) fallen weg.
 """
@@ -14,6 +16,7 @@ import ipaddress
 import json
 import re
 
+from collectors.cisco_switch import nd
 from collectors.common.dto import (
     NetworkInventory,
     NormalizedArp,
@@ -41,6 +44,7 @@ CMD_VLANS = _cmd("show vlans")
 CMD_ARP = _cmd("show arp no-resolve")
 CMD_MAC_ELS = _cmd("show ethernet-switching table")
 CMD_MAC_MX = _cmd("show bridge mac-table")
+CMD_ND = _cmd("show ipv6 neighbors")  # 0.88.x: IPv6-Nachbarn (NDP)
 # Befehle, die es je nach Plattform nicht gibt (MX ohne ELS, EX ohne Bridge-Domains): kein Hinweis
 OPTIONAL = frozenset({CMD_VLANS, CMD_MAC_ELS, CMD_MAC_MX})
 
@@ -260,6 +264,11 @@ def inventory(
         if mac and ip:
             iface = (v(a, "interface-name") or "").split(" ")[0] or None
             arps.append(NormalizedArp(device=name, ip=ip, mac=mac, interface=iface))
+    rows = [{"address": _ending(a, "neighbor-address"), "mac": _ending(a, "l2-address"),
+             "interface": (_ending(a, "interface-name") or "").split(" ")[0],
+             "state": _ending(a, "nd-state")}
+            for a in nodes(parsed(CMD_ND), "ipv6-nd-entry")]  # fmt: skip
+    arps += nd.entries(name, rows)
 
     interfaces = [_interface(name, e, first.get(e["name"])) for e in ifaces.values()]
     return NetworkInventory(devices=[device], interfaces=interfaces,

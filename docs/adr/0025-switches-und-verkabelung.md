@@ -5,7 +5,8 @@
 Entwurf (2026-10-25), umgesetzt in 0.62.0, 0.63.0 (Endpunkte aus MAC-Tabelle und ARP,
 Nr. 8), 0.64.0 (L2-Sicht: Plan, Ausfall, Redundanz, VLAN-Wege, L2 in der Weg-Suche, Nr. 9) und
 0.65.0 (vPC-Paare, Spanning Tree, mehrere Ausfälle, Export des Plans, Nr. 10), 0.68.0 (weitere
-Produkte: Catalyst 1200/1300, Juniper MX/EX/QFX, Nr. 11).
+Produkte: Catalyst 1200/1300, Juniper MX/EX/QFX, Nr. 11), 0.70.0 (Patchungen im Plan, Nr. 12) und
+0.88.x (IPv6-Nachbarn, Arista EOS, Aruba CX, Nr. 13).
 Nächster Schritt der ROADMAP nach Zonen/Kunden und
 Applikationen (Entscheid des Anwenders 2026-10-25: „Switching/Verkabelung“). Ergänzt ADR 0010
 (Inventar, Schreiben nur nach NetBox), ADR 0008/0009 (Agent, Zugangsdaten zentral) und ADR 0019
@@ -204,6 +205,53 @@ Secrets, Open Source bevorzugt.
     Gruppe. Die Gegenstelle öffnet ihre Patchungen, die Zahl der Endpunkte den Reiter
     Endpunkte. Rein lesend.
 
+### Ergänzung 0.88.x: IPv6-Nachbarn und weitere Hersteller
+
+13. **IPv6-Nachbarn und weitere Hersteller** (Wunsch des Anwenders; dasselbe Quellsystem
+    „Switches & Router“, strikt lesend über SSH, je Plattform eine eigene Positivliste):
+    - **IPv6-Nachbarn (NDP) wie ARP** – je Plattform ein weiterer `show`-Befehl:
+      IOS/IOS-XE `show ipv6 neighbors` (ntc-Vorlage, passt sie nicht, dieselben Spalten selbst
+      gelesen), NX-OS `show ipv6 neighbor vrf all` (keine Vorlage: eigene Auswertung mit
+      umgebrochenen Adressen und Abschnitten je VRF; die Detailform versteht sie ebenfalls),
+      Junos `show ipv6 neighbors | display json | no-more`, Catalyst 1200/1300
+      `show ipv6 neighbors all` (Tabellenform wie die übrigen Befehle), Arista und Aruba CX unten.
+      Übernommen werden Unicast-Adressen mit bekannter MAC (nicht Multicast, Unspezifiziert,
+      unvollständige Einträge), ohne Zone (`fe80::1%Vlan10` → `fe80::1`). Fehlt der Befehl (alte
+      Software, IPv6 aus), bleibt der Teil **ohne Hinweis** leer.
+    - **Keine Migration**: die Einträge stehen in `arp_entry` (die Spalte `ip` fasst IPv6),
+      gesammelt mit `first_seen`/`last_seen` und derselben Frist wie ARP
+      (`AUTOMATO_RETENTION_L2_DAYS`).
+    - **Link-local** (`fe80::/10`) bleibt gespeichert, steht in den Endpunkten getrennt
+      (`link_local`) und zählt **nicht als Identität** – keine IPAM-Namen, keine Zugehörigkeit zu
+      einem Kunden über seine Netze: sie gilt nur am Link, Router nutzen oft dieselbe. Gesucht
+      werden kann nach ihr („Wo hängt fe80::…“). Globale Adressen (auch ULA) zählen wie IPv4.
+    - Endpunkte, „Wo hängt …“ (Grund „NDP <IP>“) und der Anschluss von Quelle und Ziel in der
+      Weg-Suche nehmen IPv6 wie IPv4.
+    - **Arista EOS** (7000er-Serie): erkannt an `show version` („Arista …“, „Software image
+      version“), danach nur `show`-Befehle mit `| json` (Struktur wie eAPI): `show version`,
+      `show hostname`, `show interfaces status`, `show interfaces description`,
+      `show interfaces switchport`, `show vlan`, `show port-channel`,
+      `show lldp neighbors detail`, `show mac address-table`, `show ip arp vrf all`,
+      `show ipv6 neighbors vrf all`. Konto mit der Rolle `network-operator`. Portnamen in der
+      Kurzform wie bei Cisco (`Eth1`, `Eth49/1`, `Po100`), Speed aus der Bandbreite (`10G`),
+      MAC-Tabelle ohne Router, CPU und VXLAN. MLAG (`show mlag`) wird noch nicht gelesen – das
+      Paar erscheint im Plan als zwei Switches (offen, wie vPC).
+    - **HPE Aruba CX (AOS-CX**, z. B. 6100, 6300, 8360): erkannt an „ArubaOS-CX“/„AOS-CX“;
+      `show system`, `show interface`, `show vlan`, `show lldp neighbor-info detail`,
+      `show mac-address-table`, `show arp all-vrfs` mit den ntc-Vorlagen `aruba_aoscx`. Die
+      Vorlage von `show interface` nimmt höchstens sechs Einträge der erlaubten VLANs bzw. acht
+      Mitglieder eines LAG – beide Listen liest der Collector aus dem Block des Interfaces.
+      `show ipv6 neighbors all-vrfs` ohne Vorlage (Tabellenform wie ARP). Konto in der Gruppe
+      `operators`. Nimmt ein Gerät kein Exec an, liest die begrenzte Sitzung (Nr. 11) mit `no page`
+      (Seitenumbruch nur für die Sitzung). Portnamen wie auf dem Switch (`1/1/1`, `lag1`).
+    - **Nicht umgesetzt: ArubaOS-Switch/ProCurve** (2530, 2930F, 3810, 5400R). Kein SSH-Exec; die
+      Sitzung verlangt „Press any key to continue“ und steuert den Bildschirm (VT100-Cursor-
+      befehle), ihre Tabellen lassen sich ohne Terminal-Emulation nicht verlässlich lesen; die
+      VLANs je Port gibt es nur mit Parametern je VLAN bzw. Port (`show vlans <id>`), die eine feste
+      Positivliste nicht kennt. Der Collector erkennt das Banner und bricht ab, **bevor er etwas
+      sendet** („ArubaOS-Switch/ProCurve wird nicht gelesen“).
+    - Keine neue Abhängigkeit (ntc-templates enthält die Vorlagen bereits).
+
 ## Konsequenzen
 
 - Neuer Lese-Zugang über SSH. Anders als bei REST schützt keine HTTP-Methode; die
@@ -218,10 +266,12 @@ Secrets, Open Source bevorzugt.
   Freigabe – nie auf die Switches.
 - Offen bzw. später:
   - **SNMPv3** (nur lesend, `authPriv`) als Alternative, wo SSH nicht erlaubt ist.
-  - ~~MAC-Adress-Tabelle und ARP~~ – umgesetzt in 0.63.0 (Nr. 8). Offen: IPv6-Nachbarn
-    (`show ipv6 neighbors`), ARP der VRFs auf IOS (`show ip arp vrf …`), ARP der FortiGate.
+  - ~~MAC-Adress-Tabelle und ARP~~ – umgesetzt in 0.63.0 (Nr. 8); ~~IPv6-Nachbarn~~ – umgesetzt
+    in 0.88.x (Nr. 13). Offen: ARP bzw. IPv6-Nachbarn der VRFs auf IOS (`show ip arp vrf …`),
+    ARP der FortiGate.
   - ~~L2-Sicht~~ – umgesetzt in 0.64.0 (Nr. 9); ~~vPC-Paar, Spanning Tree, mehrere Ausfälle,
     Export des Plans~~ – umgesetzt in 0.65.0 (Nr. 10). Offen: Root-Bridge und Topologie-
     Wechsel je VLAN (`show spanning-tree detail`), StackWise/VSS als ein Gerät.
-  - Weitere Hersteller (z. B. Aruba, Juniper) über dieselbe Struktur (Positivliste,
-    Vorlagen).
+  - ~~Weitere Hersteller~~ – Juniper in 0.68.0 (Nr. 11), Arista EOS und Aruba CX in 0.88.x
+    (Nr. 13). Offen: MLAG der Arista als ein Paar (wie vPC), ArubaOS-Switch/ProCurve (nur mit
+    Terminal-Emulation bzw. über die REST-API des Switches).

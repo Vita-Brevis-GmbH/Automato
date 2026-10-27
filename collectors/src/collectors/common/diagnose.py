@@ -45,7 +45,8 @@ _HINTS = {
     "cisco_switch": (
         "SSH-Benutzer/-Passwort im Web-UI neu setzen; das Konto braucht nur Leserechte (IOS "
         "privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle network-operator, Junos-"
-        "Klasse read-only, Catalyst 1200/1300 Stufe 1), Anmeldung mit Passwort "
+        "Klasse read-only, Catalyst 1200/1300 Stufe 1, Arista-Rolle network-operator, AOS-CX-"
+        "Gruppe operators), Anmeldung mit Passwort "
         "(keyboard-interactive bzw. password) muss erlaubt sein"
     ),
 }
@@ -105,7 +106,7 @@ def _ssh_error(exc: Exception, platform: str, target: Target | None, local: bool
         if local and target is not None:
             parts.extend(_credential_notes(platform, target))
         return ". ".join([*parts, f"Hinweis: {_HINTS['cisco_switch']}"])
-    if name == "HostKeyChanged":
+    if name in ("HostKeyChanged", "UnsupportedDevice"):
         return str(exc)
     if name == "SessionLoginFailed":  # Catalyst 1200/1300: Anmeldung in der Sitzung (0.68.0)
         return (

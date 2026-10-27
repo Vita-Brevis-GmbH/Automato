@@ -116,12 +116,12 @@ export default function Cabling({ tenantId, tenantLabel }: { tenantId: number | 
       <PageHead title={L("Verkabelung", "Cabling")}>
         {L(
           <>
-            Verbindungen zwischen Geräten aus CDP/LLDP von {tenantLabel}: Switches und Router (Cisco IOS/IOS-XE, NX-OS, Catalyst 1200/1300, Juniper Junos – per SSH gelesen),
+            Verbindungen zwischen Geräten aus CDP/LLDP von {tenantLabel}: Switches und Router (Cisco IOS/IOS-XE, NX-OS, Catalyst 1200/1300, Juniper Junos, Arista EOS, Aruba CX – per SSH gelesen),
             ACI-Leafs und weitere Geräte. Beidseitig = beide Seiten melden die Verbindung; Abweichungen (Speed, Duplex, VLANs,
             Port-Channel) zwischen zwei gelesenen Switches sind Befunde. Rein lesend.
           </>,
           <>
-            Links between devices from CDP/LLDP of {tenantLabel}: switches and routers (Cisco IOS/IOS-XE, NX-OS, Catalyst 1200/1300, Juniper Junos – read via SSH),
+            Links between devices from CDP/LLDP of {tenantLabel}: switches and routers (Cisco IOS/IOS-XE, NX-OS, Catalyst 1200/1300, Juniper Junos, Arista EOS, Aruba CX – read via SSH),
             ACI leafs and other devices. Two-sided = both sides report the link; deviations (speed, duplex, VLANs,
             Port-Channel) between two read switches are findings. Read-only.
           </>,
@@ -478,8 +478,8 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
   );
 }
 
-// Wer ist das: VM (mit Host), sonst IPAM-Namen, IPs, EPG
-function Who({ e }: { e: { vm: CablingEndpoint["vm"]; names: string[]; ips: string[]; epgs: string[] } }) {
+// Wer ist das: VM (mit Host), sonst IPAM-Namen, IPs (IPv4/IPv6), EPG; Link-local getrennt (0.88.x)
+function Who({ e }: { e: { vm: CablingEndpoint["vm"]; names: string[]; ips: string[]; epgs: string[]; link_local?: string[] } }) {
   return (
     <>
       {e.vm ? (
@@ -496,6 +496,15 @@ function Who({ e }: { e: { vm: CablingEndpoint["vm"]; names: string[]; ips: stri
         <span className="faint">{L("unbekannt", "unknown")}</span>
       )}
       {e.ips.length > 0 && <span className="mono faint"> · {e.ips.join(", ")}</span>}
+      {(e.link_local ?? []).length > 0 && (
+        <span
+          className="mono faint link-local"
+          title={L("IPv6 Link-local – gilt nur am Link, nicht als Identität", "IPv6 link-local – valid on the link only, not used as identity")}
+        >
+          {" "}
+          · link-local {(e.link_local ?? []).join(", ")}
+        </span>
+      )}
       {e.epgs.length > 0 && <span className="faint"> · EPG {e.epgs.join(", ")}</span>}
     </>
   );
@@ -526,7 +535,7 @@ function Locate({ tenantId }: { tenantId: number }) {
       <div className="card-head">
         <h2>{L("Wo hängt …", "Where is … connected?")}</h2>
         <form onSubmit={run} style={{ marginLeft: "auto", display: "inline-flex", gap: 8 }}>
-          <input className="input" type="search" aria-label={L("Wo hängt", "Where is connected")} placeholder={L("MAC, IP oder Name (VM, DNS)", "MAC, IP or name (VM, DNS)")} value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 280 }} />
+          <input className="input" type="search" aria-label={L("Wo hängt", "Where is connected")} placeholder={L("MAC, IP (v4/v6) oder Name (VM, DNS)", "MAC, IP (v4/v6) or name (VM, DNS)")} value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 280 }} />
           <button className="btn btn-sm" type="submit" disabled={busy || q.trim().length < 2}>
             {busy ? L("Suche…", "Searching…") : L("Suchen", "Search")}
           </button>
@@ -538,12 +547,12 @@ function Locate({ tenantId }: { tenantId: number }) {
           <span className="faint">
             {L(
               <>
-                Sucht die MAC über das vCenter (VM), ARP der Switches, ACI-Endpunkte bzw. das IPAM und zeigt den Port, an dem sie
-                gelernt ist – nicht die Uplinks zwischen den Switches.
+                Sucht die MAC über das vCenter (VM), ARP und IPv6-Nachbarn (NDP) der Switches, ACI-Endpunkte bzw. das IPAM und
+                zeigt den Port, an dem sie gelernt ist – nicht die Uplinks zwischen den Switches.
               </>,
               <>
-                Searches the MAC via the vCenter (VM), ARP of the switches, ACI endpoints or the IPAM and shows the port where it
-                is learned – not the uplinks between the switches.
+                Searches the MAC via the vCenter (VM), ARP and IPv6 neighbors (NDP) of the switches, ACI endpoints or the IPAM and
+                shows the port where it is learned – not the uplinks between the switches.
               </>,
             )}
           </span>

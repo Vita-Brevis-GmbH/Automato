@@ -3390,6 +3390,7 @@ export interface CablingEndpoint {
   names: string[];
   vm: EndpointVm | null;
   epgs: string[];
+  link_local?: string[]; // IPv6 fe80::/10 aus dem NDP (0.88.x), nicht als Identität
 }
 export interface EndpointLocation {
   mac: string;
@@ -3397,6 +3398,7 @@ export interface EndpointLocation {
   names: string[];
   vm: EndpointVm | null;
   epgs: string[];
+  link_local?: string[];
   reason: string;
   seen_on: number;
   locations: CablingEndpoint[];

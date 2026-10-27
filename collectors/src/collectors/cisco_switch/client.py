@@ -1,12 +1,14 @@
 """SSH-Client fuer Switches und Router, rein lesend (ADR 0025): Cisco IOS/IOS-XE (z. B. Catalyst
 9200L, 3650, 4500, 9300), NX-OS (Nexus 9000), Cisco Business-CLI (Catalyst 1200/1300) und
-Juniper Junos (MX, EX, QFX; seit 0.68.0).
+Juniper Junos (MX, EX, QFX; seit 0.68.0), Arista EOS und HPE Aruba CX (AOS-CX; seit 0.88.x).
 
 Je Befehl ein SSH-Exec-Aufruf (wie `ssh switch "show version"`): keine interaktive Shell, kein
 Terminal (damit kein Umbruch nach Seiten und kein `terminal length`), kein Konfigurationsmodus.
 Erlaubt sind nur die festen `show`-Befehle aus `COMMANDS`; jeder andere Befehl bricht vor dem
 Senden ab (`ReadOnlyViolation`). Das Konto braucht nur Leserechte (IOS privilege 1 bzw. eine
-View, NX-OS-Rolle `network-operator`, Junos-Klasse `read-only`, Catalyst 1300 Stufe 1).
+View, NX-OS-Rolle `network-operator`, Junos-Klasse `read-only`, Catalyst 1300 Stufe 1, Arista-
+Rolle `network-operator`, AOS-CX-Gruppe `operators`). Seit 0.88.x je Plattform auch die
+IPv6-Nachbarn (NDP); fehlt der Befehl (alte Software), bleibt der Teil ohne Hinweis leer.
 
 Geraete ohne Exec (Catalyst 1200/1300 und andere mit Business-CLI) liest seit 0.68.0 eine
 **begrenzte Sitzung** (`_Shell`): Terminal mit Prompt, Anmeldung in der Sitzung („User Name:“),
@@ -42,6 +44,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show mac address-table",  # 0.63.0: Endpunkte je Port
         "show ip arp",
         "show spanning-tree",  # 0.65.0: blockierte Ports je VLAN
+        "show ipv6 neighbors",  # 0.88.x: IPv6-Nachbarn (NDP) wie ARP
     ),
     "nxos": (
         "show version",
@@ -56,6 +59,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show mac address-table",  # 0.63.0
         "show ip arp detail vrf all",
         "show spanning-tree",  # 0.65.0
+        "show ipv6 neighbor vrf all",  # 0.88.x (ohne ntc-Vorlage, eigene Auswertung)
     ),
     # 0.68.0: Cisco Business-CLI (Catalyst 1200/1300, CBS): Tabellen, eigene Auswertung
     "cbs": (
@@ -69,6 +73,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show lldp neighbors",
         "show mac address-table",
         "show arp",
+        "show ipv6 neighbors all",  # 0.88.x
     ),
     # 0.68.0: Juniper Junos (MX, EX, QFX) - strukturiert als JSON, `no-more` ohne Seiten
     "junos": (
@@ -80,12 +85,40 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show arp no-resolve | display json | no-more",
         "show ethernet-switching table | display json | no-more",
         "show bridge mac-table | display json | no-more",
+        "show ipv6 neighbors | display json | no-more",  # 0.88.x
+    ),
+    # 0.88.x: Arista EOS - `show version` als Text erkennt die Plattform, sonst JSON (`| json`)
+    "eos": (
+        "show version",
+        "show version | json",
+        "show hostname | json",
+        "show interfaces status | json",
+        "show interfaces description | json",
+        "show interfaces switchport | json",
+        "show vlan | json",
+        "show port-channel | json",
+        "show lldp neighbors detail | json",
+        "show mac address-table | json",
+        "show ip arp vrf all | json",
+        "show ipv6 neighbors vrf all | json",
+    ),
+    # 0.88.x: HPE Aruba CX (AOS-CX) - ntc-Vorlagen `aruba_aoscx`, IPv6-Nachbarn selbst
+    "aoscx": (
+        "show version",
+        "show system",
+        "show interface",
+        "show vlan",
+        "show lldp neighbor-info detail",
+        "show mac-address-table",
+        "show arp all-vrfs",
+        "show ipv6 neighbors all-vrfs",
     ),
 }
 ALLOWED = frozenset(c for cmds in COMMANDS.values() for c in cmds)
 # nur in der begrenzten Sitzung: Seitenumbruch fuer diese Sitzung aus (keine Konfiguration)
 SESSION: dict[str, str] = {"cbs": "terminal datadump", "ios": "terminal length 0",
-                           "nxos": "terminal length 0"}  # fmt: skip
+                           "nxos": "terminal length 0", "eos": "terminal length 0",
+                           "aoscx": "no page"}  # fmt: skip
 MAX_OUTPUT = 32 * 1024 * 1024  # je Befehl
 COMMAND_TIMEOUT = 120.0  # Sekunden je Befehl
 PROBE_TIMEOUT = 20.0  # erster Exec-Aufruf: antwortet er nicht, die begrenzte Sitzung versuchen
@@ -97,6 +130,11 @@ class HostKeyChanged(Exception):
 
 class SessionLoginFailed(Exception):
     """Die Anmeldung in der Sitzung („User Name:“/„Password:“) wurde abgelehnt."""
+
+
+class UnsupportedDevice(Exception):
+    """Geraet, das Automato nicht liest (0.88.x: ArubaOS-Switch/ProCurve verlangt in der Sitzung
+    einen Tastendruck und steuert den Bildschirm - abgebrochen, bevor etwas gesendet wird)."""
 
 
 def fingerprint(key_line: str) -> str:
@@ -270,6 +308,7 @@ LOGIN = re.compile(r"(?:User\s*Name|Username|login)\s*:\s*$", re.I | re.M)
 PASSWORD = re.compile(r"Password\s*:\s*$", re.I)
 MORE = re.compile(r"(--\s*More\s*--|More:\s*<space>.*?$)", re.I | re.M)
 PROMPT = re.compile(r"(?:^|\n)([^\s#>()]{1,80})([#>])\s*$")
+ANY_KEY = re.compile(r"Press any key to continue", re.I)  # ArubaOS-Switch/ProCurve (0.88.x)
 _NOISE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
@@ -327,6 +366,11 @@ class _Shell:
                     raise RuntimeError("Ausgabe zu gross")
                 buf += _NOISE.sub("", data.decode("utf-8", errors="replace").replace("\r", ""))
             tail = buf[-200:]
+            if login and ANY_KEY.search(tail):
+                raise UnsupportedDevice(
+                    "ArubaOS-Switch/ProCurve wird nicht gelesen (kein Exec, Sitzung nur mit "
+                    "Tastendruck und Bildschirmsteuerung) - unterstuetzt ist Aruba CX (AOS-CX)"
+                )
             if MORE.search(tail):
                 buf = MORE.sub("", buf)
                 self.chan.send(" ")

@@ -1681,3 +1681,21 @@ test("Endpunkte: Wo hängt … nach Name und IP, MACs je Port, VLAN am ESXi-Upli
   await expect(page.locator(".fgroup", { hasText: "Verkabelung" })).toContainText("VLAN fehlt am ESXi-Uplink");
   expect(problems).toEqual([]);
 });
+
+test("Endpunkte mit IPv6 (NDP), Link-local getrennt, Wo hängt … nach IPv6 (0.88.x)", async ({ page, problems }) => {
+  await page.goto("/#verkabelung");
+  await page.click(".tabbar button:has-text('Endpunkte')");
+  const row = page.locator("#cabling-endpoints tbody tr[data-mac='a0:b1:c2:d3:e4:f5']");
+  await expect(row).toContainText("10.20.0.15, 2001:db8:20::15");
+  await expect(row.locator(".link-local")).toContainText("link-local fe80::a2b1:c2ff:fed3:e4f5");
+  const locate = page.locator("#cabling-locate");
+  await locate.getByLabel("Wo hängt").fill("2001:DB8:20::15");
+  await locate.locator("button:has-text('Suchen')").click();
+  const hit = locate.locator(".locate-hit[data-mac='a0:b1:c2:d3:e4:f5']");
+  await expect(hit.locator(".chip")).toHaveText("NDP 2001:db8:20::15");
+  await expect(hit.locator(".locate-at")).toContainText("sw-acc-01 Gi1/0/5 · VLAN 20");
+  // weitere Hersteller im Hinweis der Verkabelung
+  await page.goto("/#verkabelung");
+  await expect(page.locator("body")).toContainText("Juniper Junos, Arista EOS, Aruba CX");
+  expect(problems).toEqual([]);
+});

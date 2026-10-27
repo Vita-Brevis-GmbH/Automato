@@ -1195,8 +1195,8 @@ function SystemDialog({
             <option value="vmware">VMware vCenter</option>
             <option value="cisco_switch">
               {L(
-                "Switches & Router (SSH: Cisco Catalyst/Nexus, Juniper)",
-                "Switches & routers (SSH: Cisco Catalyst/Nexus, Juniper)",
+                "Switches & Router (SSH: Cisco Catalyst/Nexus, Juniper, Arista, Aruba CX)",
+                "Switches & routers (SSH: Cisco Catalyst/Nexus, Juniper, Arista, Aruba CX)",
               )}
             </option>
             <option value="avi">VMware NSX ALB (Avi, Load Balancer)</option>
@@ -1281,7 +1281,24 @@ function SystemDialog({
                     "Juniper MX (router), EX/QFX – Junos, structured output (JSON)",
                   )}
                 </li>
+                <li>{L("Arista 7000er-Serie – EOS, strukturierte Ausgabe (JSON)", "Arista 7000 series – EOS, structured output (JSON)")}</li>
+                <li>
+                  {L(
+                    "HPE Aruba CX 6000/8000 – AOS-CX (nicht ArubaOS-Switch/ProCurve)",
+                    "HPE Aruba CX 6000/8000 – AOS-CX (not ArubaOS-Switch/ProCurve)",
+                  )}
+                </li>
               </ul>
+              {L(
+                <>
+                  Gelesen werden je Gerät Ports, VLANs, Nachbarn (CDP/LLDP), MAC-Tabelle, ARP und die IPv6-Nachbarn (NDP); fehlt ein
+                  Befehl auf älterer Software, bleibt der Teil leer.
+                </>,
+                <>
+                  Read per device: ports, VLANs, neighbors (CDP/LLDP), MAC table, ARP and the IPv6 neighbors (NDP); if a command
+                  is missing on older software, that part stays empty.
+                </>,
+              )}
             </div>
           </div>
         )}
@@ -1613,17 +1630,20 @@ function SystemDialog({
                 {L(
                   <>
                     Konto nur mit Leserechten (IOS/IOS-XE privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle{" "}
-                    <code>network-operator</code>, Junos-Klasse <code>read-only</code>, Catalyst 1200/1300 Stufe 1). Automato
-                    führt nur feste <code>show</code>-Befehle aus (je Befehl ein SSH-Aufruf, kein Konfigurationsmodus); nur der
-                    Catalyst 1200/1300 wird über eine Sitzung gelesen, in der ausschliesslich dieselben Befehle und das
-                    Abschalten des Seitenumbruchs für die Sitzung gesendet werden. Wird verschlüsselt gespeichert.
+                    <code>network-operator</code>, Junos-Klasse <code>read-only</code>, Catalyst 1200/1300 Stufe 1, Arista-Rolle{" "}
+                    <code>network-operator</code>, AOS-CX-Gruppe <code>operators</code>). Automato
+                    führt nur feste <code>show</code>-Befehle aus (je Befehl ein SSH-Aufruf, kein Konfigurationsmodus); nur Geräte
+                    ohne Exec (Catalyst 1200/1300, je nach Version Aruba CX) werden über eine Sitzung gelesen, in der
+                    ausschliesslich dieselben Befehle und das Abschalten des Seitenumbruchs für die Sitzung gesendet werden. Wird
+                    verschlüsselt gespeichert.
                   </>,
                   <>
                     Account with read-only permissions only (IOS/IOS-XE privilege 1 or a view with the show commands,
                     NX-OS role <code>network-operator</code>, Junos class <code>read-only</code>, Catalyst 1200/1300
-                    level 1). Automato only runs fixed <code>show</code> commands (one SSH call per command, no
-                    configuration mode); only the Catalyst 1200/1300 is read via a session in which only the same
-                    commands and disabling paging for the session are sent. Stored encrypted.
+                    level 1, Arista role <code>network-operator</code>, AOS-CX group <code>operators</code>). Automato
+                    only runs fixed <code>show</code> commands (one SSH call per command, no configuration mode); only
+                    devices without exec (Catalyst 1200/1300, depending on the version Aruba CX) are read via a session
+                    in which only the same commands and disabling paging for the session are sent. Stored encrypted.
                   </>,
                 )}
               </div>

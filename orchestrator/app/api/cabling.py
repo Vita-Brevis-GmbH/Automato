@@ -11,9 +11,10 @@
                           einer Gegenstelle.
 - `GET /cabling/vlans`    VLANs mit den Switches, an denen sie als Access bzw. im Trunk liegen.
 - `GET /cabling/endpoints` (0.63.0) MACs an den Ports der Switches (ohne Uplinks) mit VM, IPs,
-                          IPAM-Namen; Filter Geraet, Port, VLAN, Suche.
-- `GET /cabling/locate`   (0.63.0) „Wo haengt …“: MAC, IP oder Name -> Anschluss (Switch,
-                          Port, VLAN), sonst hinter welcher Gegenstelle, frueher gesehen.
+                          IPAM-Namen; Filter Geraet, Port, VLAN, Suche. Seit 0.88.x auch
+                          IPv6 (NDP), Link-local getrennt (`link_local`).
+- `GET /cabling/locate`   (0.63.0) „Wo haengt …“: MAC, IP (auch IPv6) oder Name -> Anschluss
+                          (Switch, Port, VLAN), sonst hinter welcher Gegenstelle, frueher gesehen.
 - `GET /cabling/plan`     (0.64.0) Plan: Geraete nach Ebenen mit Kabeln; mit `vlan` je Kabel,
                           ob es das VLAN durchlaesst, und die Inseln des VLANs.
 - `GET /cabling/failure`  (0.64.0) Ausfall eines Geraets bzw. Kabels: was ist dann getrennt?
@@ -463,7 +464,7 @@ def _endpoint_text(loc: l2.Locator, e: MacEntry) -> str:
     iface = loc.iface(e)
     vm = ident.vm or {}
     return " ".join(str(t) for t in (e.mac, e.device, e.port, e.vlan, vm.get("name"),
-                                      vm.get("host"), *ident.ips, *ident.epgs,
+                                      vm.get("host"), *ident.ips, *ident.link_local, *ident.epgs,
                                       iface.description if iface is not None else None)
                     if t).casefold()  # fmt: skip
 

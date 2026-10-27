@@ -364,7 +364,12 @@ def run(app) -> None:
         "arps": [{"device": "sw-core-01", "ip": "10.20.0.15", "mac": "a0:b1:c2:d3:e4:f5",
                   "interface": "Vl20"},
                  {"device": "sw-core-01", "ip": "10.30.0.10", "mac": "a0:b1:c2:00:30:10",
-                  "interface": "Vl30"}],
+                  "interface": "Vl30"},
+                 # IPv6-Nachbarn (0.88.x): global und Link-local des physischen Servers
+                 {"device": "sw-core-01", "ip": "2001:db8:20::15", "mac": "a0:b1:c2:d3:e4:f5",
+                  "interface": "Vl20"},
+                 {"device": "sw-core-01", "ip": "fe80::a2b1:c2ff:fed3:e4f5",
+                  "mac": "a0:b1:c2:d3:e4:f5", "interface": "Vl20"}],
     }  # fmt: skip
     run_result(sw, "cisco_switch", inventory=switches, message="Switches: 2 gelesen")
 
