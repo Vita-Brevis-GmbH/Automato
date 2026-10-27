@@ -8,7 +8,9 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 - Deutsch ist die Standardsprache; der deutsche Text steht im Code, der englische daneben
   (`L("Speichern", "Save")`, `web-ui/frontend/src/i18n.ts`).
 - Englisch in US-Schreibweise (*color*, *behavior*), Datum/Uhrzeit nach `en-GB` (Tag zuerst, 24 h).
-- Fachbegriffe der Hersteller bleiben wie im Gerät: Policy, Contract, Filter, Subject, EPG, ESG,
+- Alle Benutzer können umschalten (auch Kunden-Benutzer); die Wahl gilt je Browser.
+- Fachbegriffe bleiben in **beiden** Sprachen englisch, nichts eindeutschen (Entscheid des
+  Anwenders 2026-10-27, „das würde verwirren“). Fachbegriffe der Hersteller bleiben wie im Gerät: Policy, Contract, Filter, Subject, EPG, ESG,
   BD, VRF, L3Out, vzAny, Taboo, Preferred Group, VDOM, VIP, IP-Pool, SNAT/DNAT, Virtual Server,
   Virtual Service, Pool, Service Engine, Load Balancer, Next-Hop, ECMP, BGP, RIB, FGSP, HA, vPC,
   Port-Channel, LLDP/CDP, Spanning Tree, Portgruppe → *port group*, Tenant (ACI).
