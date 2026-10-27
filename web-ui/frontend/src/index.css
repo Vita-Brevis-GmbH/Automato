@@ -677,3 +677,25 @@ tbody tr.group-row td {
   background: var(--accent-weak); border-radius: 8px; padding: 6px 10px; margin-bottom: 12px; }
 .customer-scope b { color: var(--fg); }
 .chip.shared-chip { margin-left: 6px; font-size: 10.5px; }
+
+/* Datenqualität (ADR 0029): Gesamtnote, Bereiche mit Ampel, Kachel in der Übersicht */
+.kpi .k-val.crit { color: var(--crit); }
+.kpis.five { grid-template-columns: repeat(5, 1fr); }
+.dq-score .card-body { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.dq-label { font-size: 11.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+.dq-percent { font-size: 34px; font-weight: 600; font-family: var(--font-mono); letter-spacing: -.02em; }
+.dq-percent.ok { color: var(--good); }
+.dq-percent.warn { color: var(--warn); }
+.dq-percent.crit { color: var(--crit); }
+.dq-score-text { flex: 1; min-width: 260px; font-size: 13px; display: grid; gap: 3px; }
+.dq-toggle { margin-left: auto; }
+.dq-area { margin-top: 14px; }
+.dq-area.dq-na { opacity: .75; }
+.dq-metric { font-size: 12.5px; }
+.dq-table td { vertical-align: top; }
+.dq-table tr.dq-ok td { color: var(--muted); }
+.dq-cause { font-size: 12.5px; margin-top: 2px; }
+.dq-samples, .dq-hint { font-size: 12px; margin-top: 2px; }
+.linkbtn.dq-link { color: var(--accent); font-size: 12.5px; }
+@media (max-width: 1100px) { .kpis.five { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 900px) { .kpis.five { grid-template-columns: repeat(2, 1fr); } }

@@ -48,6 +48,9 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Referenzstand (IPAM) | Reference data |
 | Vorschau → Übernehmen | Preview → Apply |
 | Abgleich | Reconciliation |
+| Datenqualität, Gesamtnote, Bereich | Data quality, overall score, area |
+| Stand veraltet / nur teilweise gelesen | data outdated / only partially collected |
+| Stichprobe | Sample |
 | Befund, Findings | Finding, findings |
 | Hinweis / Warnung / Fehler | Note / warning / error |
 | offen / bestätigt / ignoriert | open / acknowledged / ignored |

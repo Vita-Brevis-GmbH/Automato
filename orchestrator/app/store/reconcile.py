@@ -12,7 +12,8 @@ Pruefungen (Inventar ↔ Konvention):
 - name_type_mismatch    Praefix sagt Host, Wert ist ein Netz (oder umgekehrt)
 - duplicate_value       gleicher Wert in mehreren Adressobjekten derselben Firewall
 - unused_object         Firewall-Objekt in keiner Regel und keiner Gruppe
-Referenz-Pruefungen (IPAM, DDI ↔ NetBox, ACI-Subnetze) ergaenzt `references.checks`.
+Referenz-Pruefungen (IPAM, DDI ↔ NetBox, ACI-Subnetze) ergaenzt `references.checks`; den Stand
+der Quellsysteme (veraltet, nur teilweise gelesen; ADR 0029) `data_quality.source_checks`.
 """
 
 import ipaddress
@@ -92,6 +93,7 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     issues += _device_object_issues(session, tenant_id, prefixes)
     issues += references.checks(session, tenant_id, prefixes, ctx)
     issues += _virtual_issues(session, tenant_id, ctx)
+    issues += _source_issues(session, tenant_id)  # Datenqualitaet (ADR 0029)
     # Parallele Firewalls: Abweichungen als Befund; der Vergleich bleibt fuer den Regelindex
     # (Zwillinge) liegen, der gleich danach neu aufgebaut wird
     comparison = parallel.compare(session, tenant_id)
@@ -409,6 +411,32 @@ def refresh_zone_findings(session: Session, tenant_id: int) -> int:
     tenant_lock.hold(session, tenant_id)
     issues = _zone_issues(session, tenant_id)
     _sync_findings(session, tenant_id, issues, types=ZONE_TYPES)
+    return len(issues)
+
+
+SOURCE_TYPES = frozenset({FindingType.SOURCE_STALE, FindingType.SOURCE_PARTIAL})
+
+
+def _source_issues(session: Session, tenant_id: int, settings=None) -> list[Issue]:
+    """Datenqualitaet (ADR 0029, `store/data_quality.source_checks`): Stand eines Quellsystems
+    veraltet (letzter erfolgreicher Lauf aelter als die Grenze, Zeitplan beachtet) bzw. letzter
+    Lauf nur teilweise gelesen (Geraete nicht erreicht, nicht lesbar, Routing-Kontexte)."""
+    from app.store import data_quality
+
+    return [
+        Issue(FindingType(item["type"]), SubjectKind.SOURCE, item["subject"],
+              item["source_system_id"], Severity(item["severity"]), detail=item["detail"])
+        for item in data_quality.source_checks(session, tenant_id, settings)
+    ]  # fmt: skip
+
+
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
+def refresh_source_findings(session: Session, tenant_id: int, settings=None) -> int:
+    """Nur die Befunde der Quellsysteme neu berechnen (Zeitplan, `data_quality.maybe_refresh`):
+    ein veralteter Stand wird zum Befund, auch wenn kein Lauf mehr gelingt."""
+    tenant_lock.hold(session, tenant_id)
+    issues = _source_issues(session, tenant_id, settings)
+    _sync_findings(session, tenant_id, issues, types=SOURCE_TYPES)
     return len(issues)
 
 

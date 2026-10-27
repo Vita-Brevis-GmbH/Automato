@@ -7,6 +7,25 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.91.0 – 2026-10-27
+
+Datenqualität (Roadmap Schritt 6 „Daten verschärfen“, erste Fassung, ADR 0029 – Inhalt von uns
+vorgeschlagen, zur Abstimmung mit dem Anwender).
+
+- **Reiter „Datenqualität“** im Abgleich und Kachel in der Übersicht: fünf Bereiche
+  (Quellsysteme, Regeln, VMs, IPAM, Zonen & Kunden) mit Ampel, Kennzahl, Ursache, Hinweis und
+  Link in die Ansicht zum Nachbessern; Gesamtnote = Anteil der Bereiche ohne Warnung.
+  `GET /data-quality` (viewer, nicht für Kunden-Benutzer, mit Kunden-Filter).
+- **Relevanz „unbekannt“ nach Ursache:** Firewall ohne Routing, Interface/Zone nicht im Inventar,
+  Stichprobe über höchstens 300 Regeln (keine Route, Interface der Route unbekannt,
+  Policy-Route); `relevance.check` liefert die Ursache als Schlüssel `cause`.
+- **Neue Befunde** „Quellsystem: Stand veraltet“ (`source_stale`, Grenze `AUTOMATO_STALE_DAYS`
+  = 7, mit Zeitplan mindestens ein Abstand plus ein Tag) und „Quellsystem: nur teilweise
+  gelesen“ (`source_partial`: Geräte nicht erreicht, nicht lesbar, Routing-Kontexte
+  unvollständig). Gruppe „Datenqualität“ in den Findings; der Zeitplan rechnet sie stündlich nach.
+- Betriebszustand: „Stand veraltet“ mit derselben Grenze wie der Befund. Läufe: Filter auf ein
+  Quellsystem per Link (`#laeufe?system=`).
+
 ## 0.90.0 – 2026-10-27
 
 Läufe, Agent und CLI auf Deutsch und Englisch (ADR 0028 Schritt 4; Anwender: „3 Sprache“).

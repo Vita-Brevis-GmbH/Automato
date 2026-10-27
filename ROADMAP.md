@@ -401,11 +401,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.88.0** | Abhängigkeiten zwischen Applikationen wieder in der Doku: Infrastruktur (Monitoring, Backup, DNS …) kennzeichnen und getrennt zeigen, Bereich lädt erst beim Aufklappen, Export-Abschnitt (ADR 0012 Ergänzung 0.88.0) |
 | **0.89.0** | Feinere Rollen der Kunden-Benutzer: Lesen, Triage, Editor (eigene Applikationen pflegen), Kunden-Admin (eigene Kunden-Benutzer zuordnen), Rolle je Kunde, Claim `customer_role` (ADR 0018 Ergänzung) |
 | **0.90.0** | Läufe, Agent-Konsole und CLI auf Deutsch und Englisch: Laufmeldungen deutsch gespeichert und beim Abruf übersetzt, `AUTOMATO_LANG`, `automato --lang` (ADR 0028 Schritt 4) |
+| **0.91.0** | Datenqualität (Schritt 6, erste Fassung): Reiter mit Ampel je Bereich, Ursache und Link, Gesamtnote, Befunde „Stand veraltet“ und „nur teilweise gelesen“, Relevanz-Ursachen als Stichprobe (ADR 0029) |
 
-### Nächste Arbeiten (Stand 0.90.0)
+### Nächste Arbeiten (Stand 0.91.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.90.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.91.0.
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4
 Verkabelung, Applikationen, Kunden, Routing“):**
@@ -413,7 +414,7 @@ Verkabelung, Applikationen, Kunden, Routing“):**
 | Bereich | Inhalt | Stand |
 |---|---|---|
 | Ablauf | `main` nachführen | **erledigt** (PR #2, `main` = 0.87.0) |
-| Schritt 6 | Daten verschärfen: Datenqualität der gelesenen Daten und des IPAM | in Arbeit |
+| Schritt 6 | Daten verschärfen: Datenqualität der gelesenen Daten und des IPAM | **erste Fassung in 0.91.0** (ADR 0029, Inhalt zur Abstimmung) |
 | Sprache | ADR 0028 Schritt 4: Laufmeldungen, Collector/Agent, CLI | **umgesetzt in 0.90.0** |
 | Verkabelung | Kabel und Ports nach NetBox (Vorschau → Übernehmen), IPv6-Nachbarn, weitere Hersteller; SNMPv3 als Alternative zu SSH | in Arbeit (SNMPv3 danach) |
 | Applikationen | Abhängigkeiten wieder einblenden (Infrastruktur getrennt) | **umgesetzt in 0.88.0** |
@@ -451,7 +452,7 @@ bleibt) – **umgesetzt in 0.74.0**; weiter mit Schritt 5.
 | 3 | **Schwachstellen** aus der Übersicht 0.70.0: ACI-Filter nur mit Quellport (Urteil statt „möglich“), Rückrichtung in der Doku je System wie in der Applikations-Doku, Leistung der Zonenmatrix mit der Rückrichtung messen (20 000 Contracts ≈ 1,2 s, linear – kein Zwischenspeicher nötig) | **umgesetzt in 0.72.1** |
 | 4 | **Lücken im Ablauf:** nächtlicher CI-Lauf auf dem aktuellen Stand (`main` nachführen), Überschriften der Roadmap | `main` = 0.70.0 (PR #1, 2026-10-26), = 0.87.0 (PR #2, 2026-10-27); weiter nachführen per PR auf Wunsch des Anwenders |
 | 5 | **Zonen komplett:** Zonen je Kunde im Grundschema, Befund „Zone ausserhalb des Schemas“, draw.io-Datei des Zonenplans zurück einlesen, Relevanz nach dem Weg in der Zonenmatrix, Übergänge über Routen ohne gemeinsames Netz, Absicht je Richtung im Plan, Zonen in den Verbindungen der Applikations-Doku (ADR 0024) | Teil 1 **umgesetzt in 0.78.0** (Zonen in den Verbindungen, Absicht je Richtung im Plan, Befund „Zone ausserhalb des Schemas“); Teil 2 **umgesetzt in 0.81.0** (Relevanz nach dem Weg in der Matrix, Übergänge zu Zonen nur hinter einem Router); Teil 3 **umgesetzt in 0.82.0** (Zonen je Kunde im Grundschema); Teil 4 **umgesetzt in 0.83.0** (Zonenplan aus draw.io zurück einlesen) – **abgeschlossen** |
-| 6 | **Daten verschärfen** (Inhalt mit dem Anwender festlegen) | danach |
+| 6 | **Daten verschärfen** (Inhalt mit dem Anwender festlegen) | erste Fassung **Datenqualität in 0.91.0** (ADR 0029: Bereiche mit Ampel/Ursache/Link, Befunde „Stand veraltet“/„nur teilweise gelesen“); Inhalt mit dem Anwender abstimmen |
 | 7 | **Erstes Projekt abschliessen:** Produktivschaltung des DC mit den R14-Massnahmen (ADR 0013, RISKS) | danach |
 
 **Danach (Entscheid nach der Produktivschaltung des DC): Mehrmandanten wie Magister.** Im

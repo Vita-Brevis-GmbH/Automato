@@ -2033,6 +2033,45 @@ export const fetchIpamCompare = (
   tenantId: number,
   params: { status?: string; q?: string; limit?: number; offset?: number } = {},
 ) => getJSON<IpamCompare>(`/api/reconcile/ipam${cq({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
+// Datenqualität (ADR 0029): Bereiche mit Ampel, Kennzahl, Einträgen (Ursache, Hinweis, Link) und
+// Gesamtnote – Werte wie `status`/`key`/`view` kommen als Schlüssel, Texte in der Sprache der Anfrage
+export type DqStatus = "ok" | "info" | "warn" | "crit";
+export interface DqEntry {
+  key: string;
+  status: DqStatus;
+  title: string;
+  count: number | null;
+  cause: string | null;
+  hint: string | null;
+  link: { view: string; params: Record<string, string> } | null;
+  samples: string[];
+}
+export interface DqArea {
+  key: string; // sources | rules | vms | ipam | assignment
+  title: string;
+  status: "ok" | "warn" | "crit";
+  metric: string;
+  applicable: boolean;
+  note: string | null;
+  entries: DqEntry[];
+}
+export interface DataQuality {
+  tenant_id: number;
+  customer_id: number | null;
+  generated_at: string;
+  stale_days: number;
+  score: {
+    percent: number | null;
+    ok: number;
+    total: number;
+    status: "ok" | "warn" | "crit";
+    by_status: Record<string, number>;
+  };
+  sample: { rules: number; of: number } | null;
+  areas: DqArea[];
+}
+export const fetchDataQuality = (tenantId: number) =>
+  getJSON<DataQuality>(`/api/data-quality${cq({ tenant_id: tenantId })}`);
 export const runReconcile = (tenantId: number) =>
   sendJSON<{ tenant_id: number; findings: Record<string, number> }>(
     `/api/reconcile${qs({ tenant_id: tenantId })}`,

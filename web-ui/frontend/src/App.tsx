@@ -613,7 +613,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                 onReload={loadStats}
               />
             )}
-            {current === "laeufe" && <Runs me={me} tenantId={tenantId} tenantLabel={tenantLabel} />}
+            {current === "laeufe" && (
+              <Runs key={JSON.stringify(params)} me={me} tenantId={tenantId} tenantLabel={tenantLabel} params={params} />
+            )}
             {current === "regeln" && tenantReady && (
               <RulesTable
                 key={JSON.stringify(params)}
@@ -665,6 +667,8 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
                 me={me}
                 tenantId={tenantId}
                 tenantLabel={tenantLabel}
+                params={params}
+                onGo={go}
                 onChanged={loadStats}
                 onOpenFindings={(t) => {
                   go("findings");

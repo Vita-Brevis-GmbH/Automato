@@ -86,6 +86,19 @@ def hold(session: Session, tenant_id: int | None) -> None:
     )
 
 
+def try_hold(session: Session, tenant_id: int | None) -> bool:
+    """Wie `hold`, aber ohne zu warten (Zeitplan, ADR 0029): False, wenn gerade ein anderer
+    den Mandanten sperrt - dann ein andermal."""
+    if tenant_id is None or session.get_bind().dialect.name != "postgresql":
+        return True
+    return bool(
+        session.execute(
+            text("SELECT pg_try_advisory_xact_lock(:ns, :tid)"),
+            {"ns": NAMESPACE, "tid": tenant_id},
+        ).scalar()
+    )
+
+
 def transient(exc: BaseException) -> bool:
     """Deadlock bzw. Serialisierungsfehler der Datenbank - ein neuer Versuch hilft."""
     orig = getattr(exc, "orig", None) or exc

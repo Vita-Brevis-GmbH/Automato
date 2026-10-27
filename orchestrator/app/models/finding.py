@@ -93,6 +93,11 @@ class FindingType(enum.StrEnum):
     VLAN_SPLIT = "vlan_split"
     # vPC-Paar (0.65.0): Peer nicht verbunden, vPC nur auf einem Peer, down bzw. inkonsistent
     VPC_MISMATCH = "vpc_mismatch"
+    # Datenqualitaet (ADR 0029, `store/data_quality`): Stand eines Quellsystems aelter als die
+    # Grenze (AUTOMATO_STALE_DAYS, Zeitplan beachtet) bzw. letzter Lauf nur teilweise gelesen
+    # (Geraete nicht erreicht, nicht lesbar, Routing-Kontexte unvollstaendig)
+    SOURCE_STALE = "source_stale"
+    SOURCE_PARTIAL = "source_partial"
 
 
 class Severity(enum.StrEnum):
@@ -121,6 +126,7 @@ class SubjectKind(enum.StrEnum):
     # bzw. ein Port (`<Geraet>|<Port>`, 0.63.0), Geraet, Geraetepaar bzw. `vlan|<VLAN>` (0.64.0)
     NAT = "nat"  # VIP bzw. IP-Pool (`<Quellsystem>|<VDOM>|<Art>|<Familie>|<Name>`, 0.72.0)
     ZONE = "zone"  # logische Zone (Name, 0.78.0)
+    SOURCE = "source"  # Quellsystem (Name; Datenqualitaet, ADR 0029)
 
 
 class Finding(Base):

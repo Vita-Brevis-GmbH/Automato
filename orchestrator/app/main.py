@@ -14,6 +14,7 @@ from app.api import (
     cabling,
     customer_users,
     customers,
+    data_quality,
     findings,
     health,
     internal,
@@ -115,6 +116,7 @@ def create_app() -> FastAPI:
     app.include_router(customer_users.router)
     app.include_router(zones.router)
     app.include_router(cabling.router)
+    app.include_router(data_quality.router)
     return app
 
 

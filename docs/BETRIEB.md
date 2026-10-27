@@ -119,6 +119,21 @@ Aufruf als `Accept-Language` mit.
   status --run-id <id>` (oder `AUTOMATO_LANG=en`); speichernde Befehle laufen deutsch.
 - Begriffe in beiden Sprachen: `docs/GLOSSAR.md`; Fachbegriffe bleiben englisch.
 
+**Datenqualität** (seit 0.91.0, ADR 0029): *Abgleich → Datenqualität* (bzw. Kachel in der
+Übersicht) zeigt, wo Doku, Weg-Suche, Zonen und Kunden unsicher sind – je Bereich Quellsysteme,
+Regeln, VMs, IPAM, Zonen & Kunden mit Ampel. Je Eintrag steht die Ursache mit Link in die Ansicht
+zum Nachbessern (Läufe, Routing-Kontext, Regel, Findings, Netzwerkdesign, Kunden). „Prüfungen
+ohne Befund zeigen“ blendet auch die erfüllten Prüfungen ein; ein oben gewählter Kunde schränkt
+Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
+- **Stand veraltet** (Befund `source_stale`, Betriebszustand): nach `AUTOMATO_STALE_DAYS` Tagen
+  (Standard 7, `0` = nie) ohne erfolgreichen Lauf; mit Zeitplan mindestens der Abstand der
+  Termine plus ein Tag (wöchentlich = 8 Tage). Der Zeitplan rechnet das stündlich nach.
+- **Nur teilweise gelesen** (`source_partial`): Teilfehler aus der Laufmeldung und
+  Routing-Kontexte „nicht lesbar“. Erreichbarkeit bzw. Leserechte prüfen und neu einlesen. Nur
+  „Hinweise“ (Befehle ohne Ausgabe) erscheinen als Hinweis.
+- Die Relevanz-Ursachen sind eine Stichprobe (höchstens 300 Firewall-Regeln, je Seite die erste
+  Adresse); die Seite nennt ihre Grösse.
+
 **Dokumentation**
 - **Übersicht:** KPIs (Regeln, NAT/VIPs, offene Findings, Abdeckung gegen die SoT),
   **Letzte Läufe** und **Jetzt einlesen** (Operator): Mandant + Quellsystem wählen,

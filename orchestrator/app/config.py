@@ -99,6 +99,11 @@ class Settings(BaseSettings):
     # naechsten Mal zuerst dran (0 = ohne Grenze)
     app_findings_seconds: int = 120
 
+    # Datenqualitaet (ADR 0029): Stand eines Quellsystems gilt nach so vielen Tagen ohne
+    # erfolgreichen Lauf als veraltet (Befund `source_stale`, Betriebszustand); mit Zeitplan
+    # mindestens der Abstand seiner Termine plus ein Tag (0 = nie veraltet)
+    stale_days: int = 7
+
     # Getrennte DB-Rollen (0.48.0, R14): die Migration (Eigentuemer der Tabellen) richtet mit
     # `automato db-roles` diese Rolle ohne DDL ein; der Orchestrator verbindet sich dann mit
     # ihr (docker-compose: Dienst migrate, AUTOMATO_DB_USER/AUTOMATO_DB_PASSWORD in .env).
