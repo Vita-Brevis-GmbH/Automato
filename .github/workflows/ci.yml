@@ -43,8 +43,10 @@ jobs:
               - 'deploy/*.sh'
               - 'docker-compose.yml'
               - 'web-ui/frontend/package*.json'
+              - '.github/workflows/**'
             frontend:
               - 'web-ui/frontend/**'
+              - '.github/workflows/**'
             docker:
               - '**/Dockerfile'
               - 'docker-compose.yml'
