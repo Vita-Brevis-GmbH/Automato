@@ -30,6 +30,7 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import (
     Epg,
     InvInterface,
@@ -195,15 +196,17 @@ class Relevance:
                 return {"text": f"{_exit_label(ex)} ({name})", "kind": ex.kind}
         routes = self._routes(key)
         if any(length == 0 and set(ifaces) & via for _p, length, via in routes):
-            return {"text": f"extern (Default-Route über {name})", "kind": "default"}
+            text = L(f"extern (Default-Route über {name})", f"external (default route via {name})")
+            return {"text": text, "kind": "default"}
         nets = sorted(
             {p for p, length, via in routes if length > 0 and set(ifaces) & via}, key=_net_key
         )
         if not nets:
             return None
         more = f" +{len(nets) - SHOWN_NETS}" if len(nets) > SHOWN_NETS else ""
+        listed = f"{', '.join(nets[:SHOWN_NETS])}{more}"
         return {
-            "text": f"Netze hinter {name}: {', '.join(nets[:SHOWN_NETS])}{more}",
+            "text": L(f"Netze hinter {name}: {listed}", f"Networks behind {name}: {listed}"),
             "kind": "nets",
         }
 
@@ -218,7 +221,7 @@ class Relevance:
         results = [self._one(rule, side, names, v) for v in dict.fromkeys(values)]
         results = [r for r in results if r is not None]
         if not results:
-            return {"state": UNKNOWN, "text": "keine IP zum Prüfen"}
+            return {"state": UNKNOWN, "text": L("keine IP zum Prüfen", "no IP to check")}
         for state in (POSSIBLE, UNKNOWN):
             hit = next((r for r in results if r[0] == state), None)
             if hit is not None:
@@ -233,7 +236,9 @@ class Relevance:
             return POSSIBLE, ""  # ohne Interface bzw. any: jede Richtung
         key = self._node(rule)
         if key is None:
-            return UNKNOWN, "Routing der Firewall nicht gelesen"
+            return UNKNOWN, L(
+                "Routing der Firewall nicht gelesen", "routing of the firewall not read"
+            )
         cache_key = (key, side, tuple(names), str(ip))
         if cache_key not in self._cache:
             self._cache[cache_key] = self._decide(key, side, names, ip)
@@ -246,7 +251,8 @@ class Relevance:
         table: Table = next((t for t in (g.table(key, n) for n in names) if t != 0), 0)
         route = g.route(key, ip, table)
         if route is None:
-            return UNKNOWN, f"keine Route zu {ip} auf {node.label}"
+            return UNKNOWN, L(f"keine Route zu {ip} auf {node.label}",
+                              f"no route to {ip} on {node.label}")  # fmt: skip
         ports: dict[str, str | None] = {}
         for h in route["next_hops"] or []:
             iface = h.get("interface")
@@ -255,7 +261,10 @@ class Relevance:
             if iface:
                 ports[iface] = g.zone(key[0], iface)
         if not ports:
-            return UNKNOWN, f"Interface der Route zu {ip} auf {node.label} unbekannt"
+            return UNKNOWN, L(
+                f"Interface der Route zu {ip} auf {node.label} unbekannt",
+                f"interface of the route to {ip} on {node.label} unknown",
+            )
         have = set(ports) | {z for z in ports.values() if z}
         if have & set(names):
             return POSSIBLE, ""
@@ -266,16 +275,29 @@ class Relevance:
             if any(set(p["output_device"]) & set(names) for p in policies):
                 return POSSIBLE, ""
             if policies:
-                return UNKNOWN, f"Policy-Route bzw. SD-WAN auf {node.label} kann {ip} anders leiten"
+                return UNKNOWN, L(
+                    f"Policy-Route bzw. SD-WAN auf {node.label} kann {ip} anders leiten",
+                    f"policy route or SD-WAN on {node.label} can route {ip} differently",
+                )
         if not all(n in self.known(key[0]) for n in names):
-            return UNKNOWN, f"Interface bzw. Zone {', '.join(names)} auf {node.label} unbekannt"
+            listed = ", ".join(names)
+            return UNKNOWN, L(f"Interface bzw. Zone {listed} auf {node.label} unbekannt",
+                              f"interface or zone {listed} on {node.label} unknown")  # fmt: skip
         via = ", ".join(f"{i} (Zone {z})" if z else i for i, z in ports.items())
         rule_side = ", ".join(names)
         if side == "dst":
-            text = f"{node.label} leitet {ip} über {via} – die Regel gilt nur für den Ausgang"
+            text = L(
+                f"{node.label} leitet {ip} über {via} – die Regel gilt nur für den Ausgang",
+                f"{node.label} routes {ip} via {via} – the rule only applies to the outgoing "
+                "interface",
+            )
         else:
-            text = f"Verkehr von {ip} kommt bei {node.label} über {via} an – die Regel gilt nur für"
-            text += " den Eingang"
+            text = L(
+                f"Verkehr von {ip} kommt bei {node.label} über {via} an – die Regel gilt nur für"
+                " den Eingang",
+                f"traffic from {ip} arrives at {node.label} via {via} – the rule only applies to "
+                "the incoming interface",
+            )
         return IMPOSSIBLE, f"{text} {rule_side}"
 
 
@@ -429,7 +451,9 @@ def _covering(session: Session, epgs: list[Epg], ip, cls=None) -> tuple[set[int]
     for sid, vrf in {(e.source_system_id, loc.cls.vrf_of(e)) for e in epgs}:
         found, how = loc.locate(str(ip), sid, vrf)
         out |= {e.id for e in found}
-        if found and how != epg_locate.LABEL[epg_locate.SUBNET]:
-            where = " bzw. ".join(epg_store.inventory_label(e) for e in found)
-            placed[(sid, vrf)] = f"{ip} gehört nach {how} zur EPG {where}"
+        # Stufe am Text in derselben Sprache (`epg_locate.label`, zur Laufzeit)
+        if found and how != epg_locate.label(epg_locate.SUBNET):
+            where = L(" bzw. ", " or ").join(epg_store.inventory_label(e) for e in found)
+            placed[(sid, vrf)] = L(f"{ip} gehört nach {how} zur EPG {where}",
+                                   f"{ip} belongs to EPG {where} by {how}")  # fmt: skip
     return out, placed

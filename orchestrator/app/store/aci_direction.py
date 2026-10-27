@@ -29,13 +29,27 @@ Ende zu Ende und der Zonenmatrix.
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import Rule, RuleAction, RuleDomain, ServiceObject
 from app.models.rule import rule_service
 
 _ANY = ("", "any", "unspecified")
 _PORTLESS = ("ip", "all", "unspecified", "tcp", "udp", "icmp", "icmpv4", "icmpv6")
+# Deutsche Fassungen als Konstanten (bisherige Verwender); in Antworten `text()` bzw. `replies()`
 TEXT = "ACI ist zustandslos: Filter ohne Ports gelten auch vom Provider zum Consumer"
 REPLIES = "Filter nur mit Quellport bzw. ohne SYN: Consumer → Provider nur Antworten"
+
+
+def text() -> str:
+    """Erklaerung der Rueckrichtung in der Sprache der Anfrage."""
+    return L(TEXT, "ACI is stateless: filters without ports also apply from Provider to Consumer")
+
+
+def replies() -> str:
+    """Hinweis „nur Antworten“ in der Sprache der Anfrage."""
+    return L(
+        REPLIES, "Filters only with source port or without SYN: Consumer → Provider replies only"
+    )
 
 
 def portless(name: str) -> bool:
@@ -78,19 +92,28 @@ def info(rule: Rule) -> dict | None:
         return None
     back = reverse(rule)
     only = replies_only(raw, [s.canonical_name for s in rule.services])
+    names = ", ".join(back)
     if only and back:
-        text = (f"nur Provider → Consumer: {', '.join(back)} (Consumer → Provider nur "
-                "Antworten – Filter nur mit Quellport)")  # fmt: skip
+        note = L(f"nur Provider → Consumer: {names} (Consumer → Provider nur Antworten – Filter "
+                 "nur mit Quellport)",
+                 f"Provider → Consumer only: {names} (Consumer → Provider replies only – filters "
+                 "only with source port)")  # fmt: skip
     elif only:
-        text = ("öffnet keine Verbindung: in beide Richtungen nur Antworten (Filter nur mit "
-                "Quellport)")  # fmt: skip
+        note = L("öffnet keine Verbindung: in beide Richtungen nur Antworten (Filter nur mit "
+                 "Quellport)",
+                 "opens no connection: replies only in both directions (filters only with "
+                 "source port)")  # fmt: skip
     elif back:
-        text = (f"gilt in beide Richtungen: der Provider kann {', '.join(back)} zum Consumer "
-                "aufbauen (ACI ist zustandslos, Filter ohne Ports)")  # fmt: skip
+        note = L(f"gilt in beide Richtungen: der Provider kann {names} zum Consumer aufbauen "
+                 "(ACI ist zustandslos, Filter ohne Ports)",
+                 f"applies in both directions: the Provider can open {names} to the Consumer "
+                 "(ACI is stateless, filters without ports)")  # fmt: skip
     else:
-        text = ("nur Consumer → Provider: zurück nur Antworten (Filter mit Zielport bzw. "
-                "stateful)")  # fmt: skip
-    return {"reverse": back, "both": bool(back) and not only, "text": text,
+        note = L("nur Consumer → Provider: zurück nur Antworten (Filter mit Zielport bzw. "
+                 "stateful)",
+                 "Consumer → Provider only: replies only on the way back (filters with "
+                 "destination port or stateful)")  # fmt: skip
+    return {"reverse": back, "both": bool(back) and not only, "text": note,
             "replies_only": only, "derived": not isinstance(raw.get("reverse"), list)}  # fmt: skip
 
 

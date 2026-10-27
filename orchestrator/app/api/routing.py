@@ -44,6 +44,7 @@ from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import L
 from app.models import (
     SourceSystem,
     Tenant,
@@ -140,7 +141,8 @@ def _ip(value: str, what: str):
     try:
         return ipaddress.ip_address(value.strip())
     except ValueError:
-        raise HTTPException(status_code=422, detail=f"{what}: keine gueltige IP") from None
+        detail = L(f"{what}: keine gueltige IP", f"{what}: not a valid IP")
+        raise HTTPException(status_code=422, detail=detail) from None
 
 
 def _endpoint(value: str, what: str):
@@ -148,9 +150,9 @@ def _endpoint(value: str, what: str):
     try:
         return topology.endpoint(value)
     except ValueError:
-        raise HTTPException(
-            status_code=422, detail=f"{what}: keine gueltige IP bzw. kein gueltiges Netz"
-        ) from None
+        detail = L(f"{what}: keine gueltige IP bzw. kein gueltiges Netz",
+                   f"{what}: not a valid IP or network")  # fmt: skip
+        raise HTTPException(status_code=422, detail=detail) from None
 
 
 @router.get("/summary")
@@ -311,7 +313,8 @@ def routes(
     if ip:
         rng = topology.route_range(ip.split("/")[0])
         if rng is None:
-            raise HTTPException(status_code=422, detail="ip: keine gueltige IP")
+            detail = L("ip: keine gueltige IP", "ip: not a valid IP")
+            raise HTTPException(status_code=422, detail=detail)
         family, _, lo, _, _ = rng
         stmt = stmt.where(TopoRoute.family == family, TopoRoute.lo <= lo, TopoRoute.hi >= lo)
         order = [TopoRoute.prefix_len.desc(), *order]
@@ -397,7 +400,8 @@ def trace(
     if src:
         _endpoint(src, "src")
     if not src and not start:
-        raise HTTPException(status_code=422, detail="src oder start angeben")
+        raise HTTPException(status_code=422, detail=L("src oder start angeben",
+                                                      "specify src or start"))  # fmt: skip
     wanted, note = _service(session, tid, service)
     graph = paths.Graph(session, tid)
     result = paths.trace(session, tid, dst, src, start, slack, wanted, graph=graph)
@@ -420,7 +424,9 @@ def _service(session: Session, tid: int, text: str | None) -> tuple[tuple | None
     except ValueError as exc:
         values = resolve.service_values(session, tid, text or "")
         if values is None:
-            detail = f"{exc}; kein Service-Objekt bzw. ACI-Filter „{(text or '').strip()}“"
+            name = (text or "").strip()
+            detail = L(f"{exc}; kein Service-Objekt bzw. ACI-Filter „{name}“",
+                       f"{exc}; no service object or ACI filter “{name}”")  # fmt: skip
             raise HTTPException(status_code=422, detail=detail) from None
     usable = []
     for v in values:
@@ -431,11 +437,16 @@ def _service(session: Session, tid: int, text: str | None) -> tuple[tuple | None
             continue
     name = (text or "").strip()
     if not usable:
-        shown = ", ".join(values) or "keine Dienste"
-        return None, f"{name} ({shown}) ist nicht als Port prüfbar – ohne Dienst geprüft"
+        shown = ", ".join(values) or L("keine Dienste", "no services")
+        return None, L(
+            f"{name} ({shown}) ist nicht als Port prüfbar – ohne Dienst geprüft",
+            f"{name} ({shown}) cannot be checked as a port – checked without service",
+        )
     if len(usable) > 1:
         rest = ", ".join(v for v, _ in usable[1:])
-        return usable[0][1], f"{name}: geprüft {usable[0][0]} – weitere Dienste: {rest}"
+        first = usable[0][0]
+        return usable[0][1], L(f"{name}: geprüft {first} – weitere Dienste: {rest}",
+                               f"{name}: checked {first} – more services: {rest}")  # fmt: skip
     return usable[0][1], None
 
 
@@ -639,7 +650,8 @@ def _net(value: str, what: str) -> str:
     try:
         return str(ipaddress.ip_network(value.strip(), strict=False))
     except ValueError:
-        raise HTTPException(status_code=422, detail=f"{what}: kein gueltiges Netz") from None
+        detail = L(f"{what}: kein gueltiges Netz", f"{what}: not a valid network")
+        raise HTTPException(status_code=422, detail=detail) from None
 
 
 def _clean(session: Session, body: ExitIn) -> dict:
@@ -658,11 +670,14 @@ def _clean(session: Session, body: ExitIn) -> dict:
     hops = [str(_ip(h, "next_hops")) for h in body.next_hops if h.strip()]
     ifaces = [i.strip() for i in body.interfaces if i.strip()]
     if not hops and not ifaces:
-        raise HTTPException(status_code=422, detail="Next-Hop oder Interface/Zone angeben")
+        detail = L("Next-Hop oder Interface/Zone angeben", "specify a next-hop or interface/zone")
+        raise HTTPException(status_code=422, detail=detail)
     routes = []
     for r in body.routes:
         if paths.parse_key(r.target) is None:
-            raise HTTPException(status_code=422, detail="routes.target: <Quellsystem>|<Kontext>")
+            detail = L("routes.target: <Quellsystem>|<Kontext>",
+                       "routes.target: <source system>|<context>")  # fmt: skip
+            raise HTTPException(status_code=422, detail=detail)
         routes.append({"prefix": _net(r.prefix, "routes.prefix"), "target": r.target})
     return {
         "name": body.name.strip(),

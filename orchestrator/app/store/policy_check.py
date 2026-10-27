@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import (
     InvInterface,
     NatRule,
@@ -70,7 +71,9 @@ def parse_service(text: str | None) -> tuple[str, int | None] | None:
             return (proto, None)
         if port.isdigit() and 0 < int(port) < 65536:
             return (proto, int(port))
-    raise ValueError("Dienst: tcp/443, udp/53, tcp oder icmp")
+    raise ValueError(
+        L("Dienst: tcp/443, udp/53, tcp oder icmp", "Service: tcp/443, udp/53, tcp or icmp")
+    )
 
 
 @dataclass
@@ -345,26 +348,29 @@ class Checker:
         Policies dahinter (`after`, greifen nicht mehr - z. B. hinter einer Sperre zuoberst)."""
         policies = self.policies(sid, vdom)
         if not policies:
-            return {"verdict": "unknown", "text": "keine Policies gelesen", "rules": []}
+            return {"verdict": "unknown", "text": L("keine Policies gelesen", "no policies read"),
+                    "rules": []}  # fmt: skip
         known = self.known(sid)
         shown: list[dict] = []
         later: list[dict] = []
         decisive = None
+        # Bedingungen (Anzeige in `unsure`): Bezeichnung in der Sprache der Anfrage
+        words = {k: L(*v) for k, v in _CHECKS.items()}
         for p in policies:
             if not p.enabled:
                 continue
             checks = {
-                "Eingang": _ports(p.srcintf, ingress, known),
-                "Ausgang": _ports(p.dstintf, egress, known),
+                words["in"]: _ports(p.srcintf, ingress, known),
+                words["out"]: _ports(p.dstintf, egress, known),
             }
             src_ok, src_via, src_part = _address(p, "src", src)
             dst_ok, dst_via, dst_part = _address(p, "dst", dst)
             # Netz (0.39.0): erfasst die Policy nur einen Teil, ist sie nur „moeglich“
-            checks["Quelle nur teilweise" if src_part else "Quelle"] = src_ok
-            checks["Ziel nur teilweise" if dst_part else "Ziel"] = dst_ok
-            checks["Dienst"] = _service(p, service)
-            checks["Benutzer/Gruppen"] = None if p.identity else True
-            checks[f"Zeitplan {p.schedule}"] = (
+            checks[words["src_part"] if src_part else words["src"]] = src_ok
+            checks[words["dst_part"] if dst_part else words["dst"]] = dst_ok
+            checks[words["service"]] = _service(p, service)
+            checks[words["identity"]] = None if p.identity else True
+            checks[f"{words['schedule']} {p.schedule}"] = (
                 None if (p.schedule or "").lower() not in _OPEN else True
             )
             if False in checks.values():
@@ -403,8 +409,25 @@ class Checker:
             # Sperre zuoberst (z. B. „Default Block …“): die erlaubende dahinter nennen
             allow = next((e for e in later if e["action"] == "allow"), None)
             if decisive["action"] == "deny" and allow is not None:
-                result["text"] += f" – dahinter würde {_label(allow)} erlauben (nicht erreicht)"
+                result["text"] += L(
+                    f" – dahinter würde {_label(allow)} erlauben (nicht erreicht)",
+                    f" – {_label(allow)} behind it would allow (not reached)",
+                )
         return result
+
+
+# Bedingungen einer Policy (nicht pruefbar = `unsure`) - (Deutsch, Englisch)
+_CHECKS = {
+    "in": ("Eingang", "Incoming"),
+    "out": ("Ausgang", "Outgoing"),
+    "src": ("Quelle", "Source"),
+    "src_part": ("Quelle nur teilweise", "Source only partially"),
+    "dst": ("Ziel", "Destination"),
+    "dst_part": ("Ziel nur teilweise", "Destination only partially"),
+    "service": ("Dienst", "Service"),
+    "identity": ("Benutzer/Gruppen", "Users/groups"),
+    "schedule": ("Zeitplan", "Schedule"),
+}
 
 
 def _family_of(n: NatRule) -> int:
@@ -438,26 +461,35 @@ def _fixed(src, source: str | None, first, last):
 def _verdict(decisive: dict | None, shown: list[dict]) -> dict:
     before = [e for e in shown if not e["decides"]]
     reasons = sorted({u for e in before for u in e["unsure"]})
-    why = f" – abhängig von: {', '.join(reasons)}" if reasons else ""
+    listed = ", ".join(reasons)
+    why = L(f" – abhängig von: {listed}", f" – depends on: {listed}") if reasons else ""
     if decisive is not None:
         name = _label(decisive)
         other = [e for e in before if e["action"] != decisive["action"]]
         if other:
-            return {"verdict": "depends", "rules": shown,
-                    "text": f"{_label(other[0])} kann vor {name} greifen{why}"}  # fmt: skip
-        verb = "erlaubt" if decisive["action"] == "allow" else "gesperrt"
-        return {"verdict": decisive["action"], "rules": shown, "text": f"{verb} durch {name}"}
+            first = _label(other[0])
+            text = L(
+                f"{first} kann vor {name} greifen{why}", f"{first} can apply before {name}{why}"
+            )
+            return {"verdict": "depends", "rules": shown, "text": text}
+        if decisive["action"] == "allow":
+            text = L(f"erlaubt durch {name}", f"allowed by {name}")
+        else:
+            text = L(f"gesperrt durch {name}", f"blocked by {name}")
+        return {"verdict": decisive["action"], "rules": shown, "text": text}
     if before:
-        return {"verdict": "depends", "rules": shown,
-                "text": f"nur mögliche Policies, sonst implizit gesperrt{why}"}  # fmt: skip
-    return {"verdict": "implicit_deny", "rules": [],
-            "text": "keine passende Policy – implizit gesperrt"}  # fmt: skip
+        text = L(f"nur mögliche Policies, sonst implizit gesperrt{why}",
+                 f"only possible policies, otherwise implicitly denied{why}")  # fmt: skip
+        return {"verdict": "depends", "rules": shown, "text": text}
+    text = L("keine passende Policy – implizit gesperrt", "no matching policy – implicitly denied")
+    return {"verdict": "implicit_deny", "rules": [], "text": text}
 
 
 def _label(e: dict) -> str:
     if e.get("label"):
         return e["label"]
-    return f"Policy {e['external_id']}" + (f" „{e['name']}“" if e["name"] else "")
+    name = L(f" „{e['name']}“", f" “{e['name']}”") if e["name"] else ""
+    return f"Policy {e['external_id']}{name}"
 
 
 def _ports(names: list[str], port: dict | None, known: set[str]) -> bool | None:
@@ -495,12 +527,12 @@ def _address(p: _Policy, role: str, ip) -> tuple[bool | None, str | None, bool]:
             return (None, None, False) if unresolved else (False, None, False)
         if part:
             return None, None, True
-        return (None, None, False) if unresolved else (True, "negiert", False)
+        return (None, None, False) if unresolved else (True, L("negiert", "negated"), False)
     if best is not None:
-        return True, "any" if best[3] else (best[4] or "Netz"), False
+        return True, "any" if best[3] else (best[4] or L("Netz", "network")), False
     if part:
         widest = max(part, key=lambda r: r[2] - r[1])
-        return None, f"{widest[4] or 'Netz'} (Teil)", True
+        return None, f"{widest[4] or L('Netz', 'network')} {L('(Teil)', '(part)')}", True
     if unresolved or not p.endpoints.get(role):
         return None, None, False
     return False, None, False
@@ -644,18 +676,20 @@ def _overall(verdicts: list[tuple[str, str, str]]) -> dict | None:
         return None
     for label, v, _kind in verdicts:
         if v in ("deny", "implicit_deny"):
-            return {"verdict": "deny", "text": f"gesperrt an {label}"}
+            return {"verdict": "deny", "text": L(f"gesperrt an {label}", f"blocked at {label}")}
     open_ = [label for label, v, _kind in verdicts if v == "depends"]
+    at = L("an", "at")
     unread = "; ".join(
-        f"{what} an {', '.join(labels)}"
+        f"{what} {at} {', '.join(labels)}"
         for what, kinds in (
-            ("keine Policies gelesen", FIREWALL_KINDS),
-            ("Contracts nicht prüfbar", ACI_KINDS),
+            (L("keine Policies gelesen", "no policies read"), FIREWALL_KINDS),
+            (L("Contracts nicht prüfbar", "contracts not verifiable"), ACI_KINDS),
         )
         if (labels := [label for label, v, k in verdicts if v == "unknown" and k in kinds])
     )
     if open_:
-        text = f"abhängig an {', '.join(open_)}"
+        listed = ", ".join(open_)
+        text = L(f"abhängig an {listed}", f"depends at {listed}")
         if unread:
             text += f"; {unread}"
         return {"verdict": "depends", "text": text}
@@ -663,9 +697,11 @@ def _overall(verdicts: list[tuple[str, str, str]]) -> dict | None:
         return {"verdict": "unknown", "text": unread}
     fw = sum(1 for *_, kind in verdicts if kind in FIREWALL_KINDS)
     vrfs = len(verdicts) - fw
+    allowed = L("erlaubt", "allowed")
     if not vrfs:
-        return {"verdict": "allow",
-                "text": "erlaubt" + (f" an allen {fw} Firewalls" if fw > 1 else "")}  # fmt: skip
-    parts = [f"{fw} Firewall{'s' if fw > 1 else ''}" if fw else "",
-             f"{vrfs} ACI-VRF{'s' if vrfs > 1 else ''}"]  # fmt: skip
-    return {"verdict": "allow", "text": f"erlaubt ({', '.join(p for p in parts if p)})"}
+        every = L(f" an allen {fw} Firewalls", f" at all {fw} firewalls") if fw > 1 else ""
+        return {"verdict": "allow", "text": allowed + every}
+    s_fw, s_vrf = ("s" if fw > 1 else ""), ("s" if vrfs > 1 else "")
+    parts = [L(f"{fw} Firewall{s_fw}", f"{fw} firewall{s_fw}") if fw else "",
+             L(f"{vrfs} ACI-VRF{s_vrf}", f"{vrfs} ACI VRF{s_vrf}")]  # fmt: skip
+    return {"verdict": "allow", "text": f"{allowed} ({', '.join(p for p in parts if p)})"}

@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import null, select, update
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import (
     DeviceObject,
     FindingType,
@@ -430,14 +431,15 @@ def suggestions(session: Session, tenant_id: int, include_rejected: bool = False
     if len(systems) < 2:
         return []
     reasons: dict[tuple[int, int], list[str]] = defaultdict(list)
+    sync = L("Session-Sync (FGSP)", "Session sync (FGSP)")
     owners = paths.Graph(session, tenant_id).owners()
     for h in session.scalars(select(TopoHa).where(TopoHa.tenant_id == tenant_id)):
         for peer in h.sync_peers or []:
             for (sid, _ctx), _iface, _zone in owners.get(str(peer.get("peerip") or ""), []):
                 if sid != h.source_system_id and sid in systems:
                     pair = tuple(sorted((h.source_system_id, sid)))
-                    if "Session-Sync (FGSP)" not in reasons[pair]:
-                        reasons[pair].append("Session-Sync (FGSP)")
+                    if sync not in reasons[pair]:
+                        reasons[pair].append(sync)
     sigs: dict[int, dict[tuple, dict]] = defaultdict(dict)
     for r in session.scalars(
         select(Rule).where(Rule.source_system_id.in_(systems), Rule.domain == RuleDomain.FIREWALL)
@@ -450,7 +452,8 @@ def suggestions(session: Session, tenant_id: int, include_rejected: bool = False
             same = sum(1 for k in common if sigs[a][k] == sigs[b][k])
             smaller = min(len(sigs[a]), len(sigs[b]))
             if smaller and same >= 3 and same * 2 >= smaller:
-                reasons[(a, b)].append(f"{same} von {smaller} Policies gleich")
+                reasons[(a, b)].append(L(f"{same} von {smaller} Policies gleich",
+                                         f"{same} of {smaller} policies identical"))  # fmt: skip
     no = rejected(session, tenant_id)
     if include_rejected:
         for pair in no:

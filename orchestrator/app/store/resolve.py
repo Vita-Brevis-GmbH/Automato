@@ -35,6 +35,7 @@ from sot_gateway.models import IP_KINDS, ReferenceKind
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import (
     DeviceObject,
     InvSubnet,
@@ -276,12 +277,14 @@ def _subnet_label(s: InvSubnet) -> tuple[str, str | None]:
     """Name und Detail eines Inventar-Subnetzes: EPG `Tenant|AP|EPG`, BD bzw. Interface."""
     if s.context == "epg" and s.epg:
         return "|".join(x for x in (s.aci_tenant, s.ap, s.epg) if x), _join(
-            "EPG-Subnetz", f"BD {s.bd}" if s.bd else None, f"VRF {s.vrf}" if s.vrf else None
+            L("EPG-Subnetz", "EPG subnet"),
+            f"BD {s.bd}" if s.bd else None,
+            f"VRF {s.vrf}" if s.vrf else None,
         )
     if s.context == "bd":
         name = "|".join(x for x in (s.aci_tenant, s.bd or s.context_name) if x)
         epg = "|".join(x for x in (s.ap, s.epg) if x)
-        return name, _join("BD-Subnetz", f"EPG {epg}" if epg else None,
+        return name, _join(L("BD-Subnetz", "BD subnet"), f"EPG {epg}" if epg else None,
                            f"VRF {s.vrf}" if s.vrf else None)  # fmt: skip
     return s.context_name, _join(
         "Interface", f"VDOM {s.vdom}" if s.vdom else None, s.description,

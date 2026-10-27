@@ -41,7 +41,7 @@ from sqlalchemy.orm import Session
 
 from app.models import InvInterface, TopoHa, TopoL3Out, TopoPeer, TopoRoute
 from app.store import exits as exit_store
-from app.store.paths import _CONNECTED, EXIT_LABELS, Graph, Key, _vdom_links
+from app.store.paths import _CONNECTED, Graph, Key, _vdom_links, exit_kind
 from app.store.topology import MGMT, table_of
 
 MAX_LOOP_CHECKS = 3000  # Routen ueber gelesene Nachbarn, die auf Schleifen geprueft werden
@@ -466,7 +466,7 @@ class Model:
             nid = f"exit:{e.id}"
             self.nodes[nid] = {
                 "id": nid, "kind": "exit", "exit_kind": e.kind,
-                "label": e.name or EXIT_LABELS.get(e.kind, e.kind), "origin": "manual",
+                "label": e.name or exit_kind(e.kind, e.kind), "origin": "manual",
                 "prefixes": e.prefixes or [], "next_hops": e.next_hops or [],
                 "description": e.description,
             }  # fmt: skip

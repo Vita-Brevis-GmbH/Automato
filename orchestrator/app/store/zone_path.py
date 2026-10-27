@@ -16,6 +16,7 @@ Nur lesend; ohne Zonen bleibt der Weg wie bisher.
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import ZonePolicy
 from app.store import customers, zone_services, zone_struct
 from app.store import zones as zone_store
@@ -94,8 +95,10 @@ def annotate(session: Session, tenant_id: int, result: dict, src: str | None, ds
     ZoneContext(session, tenant_id, graph).annotate(result, src, dst, service, service_name)
 
 
-_NONE = {"id": None, "name": "ohne Zone", "code": None, "kind": "none", "position": 0,
-         "color": None}  # fmt: skip
+def _none() -> dict:
+    """Platzhalter fuer Hops ohne Zone (Name in der Sprache der Anfrage)."""
+    return {"id": None, "name": L("ohne Zone", "no zone"), "code": None, "kind": "none",
+            "position": 0, "color": None}  # fmt: skip
 
 
 def _add(chain: list[dict], z: dict | None, role: str, label: str | None = None) -> None:
@@ -106,7 +109,7 @@ def _add(chain: list[dict], z: dict | None, role: str, label: str | None = None)
         if label:
             last["hops"].append(label)
         return
-    entry = {**(z or _NONE), "role": role, "hops": [label] if label else []}
+    entry = {**(z or _none()), "role": role, "hops": [label] if label else []}
     if last is not None and (last["id"] is not None or entry["id"] is not None):
         entry["transition"] = zone_store.transition_name(last, entry)
     chain.append(entry)
@@ -139,29 +142,42 @@ def _judge(session: Session, tenant_id: int, p, allowed: bool, open_: bool, verd
            service, service_name) -> tuple[str, str]:  # fmt: skip
     """(Urteil, Text): ok, violation (gegen die Absicht), warn (abhaengig bzw. nicht umgesetzt),
     info (nicht pruefbar)."""
-    way = "der Weg erlaubt" if allowed else ("der Weg ist offen" if open_ else "")
+    if allowed:
+        way = L("der Weg erlaubt", "the path allows")
+    else:
+        way = L("der Weg ist offen", "the path is open") if open_ else ""
     if p.intent == "deny":
         if allowed:
-            return "violation", "gegen die Absicht – gesperrt, der Weg erlaubt"
+            return "violation", L("gegen die Absicht – gesperrt, der Weg erlaubt",
+                                  "against the intent – deny, the path allows")  # fmt: skip
         if open_:
-            return "warn", "gesperrt – der Weg ist abhängig bzw. nicht ganz gelesen"
-        return "ok", "gesperrt – der Weg sperrt auch"
+            return "warn", L("gesperrt – der Weg ist abhängig bzw. nicht ganz gelesen",
+                             "deny – the path depends or is not fully read")  # fmt: skip
+        return "ok", L("gesperrt – der Weg sperrt auch", "deny – the path blocks too")
     if p.intent == "limited":
         if not p.services:
-            return "info", "eingeschränkt – ohne Dienste in der Absicht nicht prüfbar"
+            return "info", L("eingeschränkt – ohne Dienste in der Absicht nicht prüfbar",
+                             "limited – not verifiable without services in the intent")  # fmt: skip
         listed = ", ".join(p.services)
         if service is None:
-            return "info", f"eingeschränkt auf {listed} – Dienst angeben, um zu prüfen"
+            return "info", L(f"eingeschränkt auf {listed} – Dienst angeben, um zu prüfen",
+                             f"limited to {listed} – specify a service to verify")  # fmt: skip
         allow = zone_services.allowed(session, tenant_id, list(p.services))
         port = service[1]
         name = (service_name or "").strip() or None
         fits = allow.covers(service[0], port, port, name)  # ohne Port: alle Ports des Protokolls
         shown = name or (f"{service[0]}/{port}" if port else service[0])
         if fits:
-            return "ok", f"eingeschränkt auf {listed} – {shown} ist erlaubt"
+            return "ok", L(f"eingeschränkt auf {listed} – {shown} ist erlaubt",
+                           f"limited to {listed} – {shown} is allowed")  # fmt: skip
         if allowed:
-            return "violation", f"gegen die Absicht – {shown} nicht in {listed}, {way}"
-        return "warn", f"eingeschränkt auf {listed} – {shown} gehört nicht dazu"
+            return "violation", L(
+                f"gegen die Absicht – {shown} nicht in {listed}, {way}",
+                f"against the intent – {shown} not in {listed}, {way}",
+            )
+        return "warn", L(f"eingeschränkt auf {listed} – {shown} gehört nicht dazu",
+                         f"limited to {listed} – {shown} is not included")  # fmt: skip
     if verdicts and not allowed and not open_:
-        return "warn", "erlaubt – der Weg sperrt aber (Absicht nicht umgesetzt)"
-    return "ok", "erlaubt"
+        return "warn", L("erlaubt – der Weg sperrt aber (Absicht nicht umgesetzt)",
+                         "allow – but the path blocks (intent not implemented)")  # fmt: skip
+    return "ok", L("erlaubt", "allow")
