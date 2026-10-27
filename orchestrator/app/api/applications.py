@@ -49,6 +49,7 @@ class ApplicationIn(BaseModel):
     criticality: Criticality | None = None
     site_id: int | None = None
     description: str | None = None
+    infrastructure: bool = False  # Monitoring, Backup, DNS u. a. (0.88.0)
     members: list[MemberIn] = []
 
 
@@ -62,6 +63,7 @@ class ApplicationPatch(BaseModel):
     criticality: Criticality | None = None
     site_id: int | None = None
     description: str | None = None
+    infrastructure: bool | None = None
 
 
 class MembersIn(BaseModel):
@@ -90,6 +92,7 @@ class ApplicationOut(BaseModel):
     criticality: str | None
     site: SiteRef | None
     description: str | None
+    infrastructure: bool = False  # 0.88.0
     member_count: int
     system_count: int
     vm_count: int = 0  # VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern (0.75.0)
@@ -281,6 +284,7 @@ def _out(session: Session, app: Application, resolver: store.Resolver,
         criticality=app.criticality,
         site=_site(session, app.site_id),
         description=app.description,
+        infrastructure=bool(app.infrastructure),
         member_count=len(app.members),
         system_count=store.system_count(session, app, resolver),
         vm_count=(vms or store.VmCounter(session, app.tenant_id)).count(app, resolver),
@@ -390,6 +394,7 @@ def create_application(
         criticality=body.criticality,
         site_id=body.site_id,
         description=body.description,
+        infrastructure=body.infrastructure,
     )
     session.add(app)
     session.flush()
@@ -639,6 +644,8 @@ def update_application(
     for attr in ("owner", "criticality", "purpose", "description"):
         if attr in fields:
             setattr(app, attr, getattr(body, attr))
+    if "infrastructure" in fields and body.infrastructure is not None:
+        app.infrastructure = body.infrastructure
     store.touch(app)
     session.flush()
     audit.record(
@@ -654,6 +661,7 @@ def update_application(
             "criticality": app.criticality,
             "purpose": app.purpose,
             "site_id": app.site_id,
+            "infrastructure": app.infrastructure,
             "fields": sorted(fields),
         },
     )
@@ -829,6 +837,8 @@ def export_application(
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
     doc = store.build_doc(session, app, None)
+    if want is None or "dependencies" in want:  # 0.88.0
+        doc["dependencies"] = store.dependencies(session, app, doc)
     out = ApplicationDocOut(
         application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
     ).model_dump(mode="json")
@@ -872,22 +882,45 @@ def application_doc(
     session: Session = Depends(get_session, scope="function"),
 ):
     """Applikations-Doku ueber alle Systeme der Applikation (Tabellen 1–10). Abhaengigkeiten zu
-    anderen Applikationen (0.60.0) seit 0.73.0 nur mit `dependencies=true` - in der Oberflaeche
-    vorerst entfernt (Anwender: Monitoring u. a. sind keine fachlichen Abhaengigkeiten)."""
+    anderen Applikationen (0.60.0) seit 0.73.0 nur mit `dependencies=true`; die Oberflaeche holt
+    sie seit 0.88.0 einzeln ueber `GET …/dependencies`."""
     app = _load(session, principal, application_id)
     view = _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
     doc = store.build_doc(session, app, view_ids(session, view, "rule"))
-    visible = None
-    if view is not None:  # Kunden-Benutzer: nur Applikationen in ihrem Ausschnitt
-        mine = view.applications(session)
-        stmt = select(Application).where(Application.tenant_id == app.tenant_id)
-        visible = {a.id for a in session.scalars(stmt) if mine(a)}
     if dependencies:
+        visible = _visible_apps(session, principal, app)
         doc["dependencies"] = store.dependencies(session, app, doc, visible)
     return ApplicationDocOut(
         application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
     )
+
+
+def _visible_apps(session: Session, principal: Principal, app: Application) -> set[int] | None:
+    """Kunden-Benutzer: nur Applikationen in ihrem Ausschnitt (sonst None = alle)."""
+    view = _visible(session, principal, app)
+    if view is None:
+        return None
+    mine = view.applications(session)
+    stmt = select(Application).where(Application.tenant_id == app.tenant_id)
+    return {a.id for a in session.scalars(stmt) if mine(a)}
+
+
+@router.get("/{application_id}/dependencies")
+def application_dependencies(
+    application_id: int,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Abhaengigkeiten zu anderen Applikationen (0.60.0, seit 0.88.0 wieder in der Doku): die
+    Oberflaeche holt sie erst, wenn der Bereich aufgeklappt wird. Je Eintrag `infrastructure`
+    (Monitoring, Backup, DNS u. a.) - getrennt von den fachlichen Abhaengigkeiten."""
+    app = _load(session, principal, application_id)
+    view = _visible(session, principal, app)
+    reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
+    doc = store.build_doc(session, app, view_ids(session, view, "rule"))
+    deps = store.dependencies(session, app, doc, _visible_apps(session, principal, app))
+    return {**deps, "infrastructure": bool(app.infrastructure)}
 
 
 @router.post("/{application_id}/hidden", status_code=201)

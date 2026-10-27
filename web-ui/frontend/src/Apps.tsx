@@ -856,6 +856,7 @@ function AppForm({
   const [crit, setCrit] = useState<Criticality | "">(app?.criticality ?? "");
   const [siteId, setSiteId] = useState<number | "">(app?.site?.id ?? "");
   const [description, setDescription] = useState(app?.description ?? "");
+  const [infrastructure, setInfrastructure] = useState(!!app?.infrastructure);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
 
@@ -874,6 +875,7 @@ function AppForm({
       criticality: crit || null,
       site_id: siteId === "" ? null : siteId,
       description: description.trim() || null,
+      infrastructure,
     };
     try {
       onSaved(app ? await patchApp(app.id, body) : await createApp(tenantId, { ...body, name: name.trim() }));
@@ -1011,6 +1013,13 @@ function AppForm({
             onChange={(e) => setDescription(e.target.value)}
           />
         </div>
+        <label className="check" id="ap-infra">
+          <input type="checkbox" checked={infrastructure} onChange={(e) => setInfrastructure(e.target.checked)} />{" "}
+          {L(
+            "Infrastruktur (Monitoring, Backup, DNS …) – Abhängigkeiten zu ihr stehen getrennt von den fachlichen",
+            "Infrastructure (monitoring, backup, DNS …) – dependencies on it are listed apart from the business ones",
+          )}
+        </label>
         {!app && (
           <div className="hint faint">
             {L(

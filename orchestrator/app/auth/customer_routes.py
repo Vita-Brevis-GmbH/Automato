@@ -37,6 +37,7 @@ CUSTOMER_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("GET", "/applications"),
         ("GET", "/applications/{application_id}"),
         ("GET", "/applications/{application_id}/doc"),
+        ("GET", "/applications/{application_id}/dependencies"),
         # 0.53.0: wer bin ich; die eigenen Zonen, Matrix und Plan (ohne fremde Kunden, ohne
         # Netze ohne Zone; Gegenseite fremder Kunden als „anderer Kunde“)
         ("GET", "/auth/me"),

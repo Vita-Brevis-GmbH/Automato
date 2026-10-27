@@ -701,6 +701,7 @@ export interface Application {
   criticality: Criticality | null;
   site: SiteRef | null;
   description: string | null;
+  infrastructure?: boolean; // 0.88.0: Monitoring, Backup, DNS u. a. (Abhängigkeiten getrennt)
   member_count: number;
   system_count: number;
   vm_count: number; // 0.75.0: VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern
@@ -748,6 +749,7 @@ export interface ApplicationInput {
   criticality?: Criticality | null;
   site_id?: number | null;
   description?: string | null;
+  infrastructure?: boolean;
 }
 
 // Applikations-Doku (0.14.0): Systeme (VMs bzw. Server ohne VM), EPGs, Treffer je Regel und
@@ -865,7 +867,13 @@ export interface ApplicationDoc {
 export interface AppDependency {
   application_id: number;
   name: string;
-  rules: { rule_id: number; name: string; domain: string; via: string; services: string[] }[];
+  infrastructure?: boolean; // 0.88.0: andere Applikation ist Infrastruktur
+  rules: { rule_id: number; name: string; domain: string; via: string; services: string[]; reverse?: boolean }[];
+}
+export interface AppDependencies {
+  uses: AppDependency[];
+  used_by: AppDependency[];
+  infrastructure: boolean; // die Applikation selbst
 }
 
 // Firewall-Objekt wie auf dem Gerät (Objekt-Ansicht)
@@ -1715,6 +1723,8 @@ export const acceptAppSuggestion = (tenantId: number, code: string, name?: strin
     name ? { name } : undefined,
   );
 export const fetchAppDoc = (id: number) => getJSON<ApplicationDoc>(`/api/applications/${id}/doc`);
+// Abhängigkeiten zu anderen Applikationen (0.88.0 wieder in der Doku): erst beim Aufklappen
+export const fetchAppDependencies = (id: number) => getJSON<AppDependencies>(`/api/applications/${id}/dependencies`);
 
 // Verbindungen Ende zu Ende (0.45.0): je Verbindung (Quelle → Ziel, Dienst) der Weg über
 // Firewalls und ACI mit der entscheidenden Policy bzw. dem Contract je Hop und dem Abgleich mit

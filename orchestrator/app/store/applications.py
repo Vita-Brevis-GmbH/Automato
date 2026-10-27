@@ -1282,7 +1282,9 @@ def dependencies(session: Session, app: Application, doc: dict,
     einem System einer anderen Applikation verbinden (EPG, Host bzw. Netz in deren EPG-Subnetz -
     nicht any, nicht groessere Netze). Eigene Seite Quelle bzw. Consumer -> sie **nutzt** die
     andere; Ziel bzw. Provider -> sie **wird genutzt**. `visible` = sichtbare Applikationen
-    (Kunden-Benutzer). -> {uses, used_by} je Applikation mit den Regeln."""
+    (Kunden-Benutzer). -> {uses, used_by} je Applikation mit den Regeln; seit 0.88.0 je
+    Eintrag `infrastructure` (Monitoring, Backup, DNS u. a. - in der Doku getrennt von den
+    fachlichen)."""
     from app.models import RuleEndpoint, RuleIpRange
 
     tid = app.tenant_id
@@ -1320,6 +1322,7 @@ def dependencies(session: Session, app: Application, doc: dict,
     rules = {r.id: r for r in doc["rules"]}
     found: dict[str, dict[int, dict]] = {"uses": {}, "used_by": {}}
     names = {a.id: a.name for a in others}
+    infra = {a.id for a in others if a.infrastructure}
     for rid, mine in sides.items():
         r = rules.get(rid)
         if r is None or getattr(r, "action", "allow") != "allow":
@@ -1336,8 +1339,9 @@ def dependencies(session: Session, app: Application, doc: dict,
                 kinds = ["uses", "used_by"] if side == "src" else ["used_by", "uses"]
                 for kind in kinds[: 2 if rid in both else 1]:
                     entry = found[kind].setdefault(
-                        aid, {"application_id": aid, "name": names[aid], "rules": {}}
-                    )
+                        aid, {"application_id": aid, "name": names[aid],
+                              "infrastructure": aid in infra, "rules": {}}
+                    )  # fmt: skip
                     entry["rules"].setdefault(rid, {
                         "rule_id": rid, "name": r.aci.contract if r.aci else r.name,
                         "domain": r.domain, "via": via, "services": list(r.service_names),

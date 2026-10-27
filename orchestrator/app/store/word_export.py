@@ -104,8 +104,8 @@ def _capped(doc: Document, rows: list, what: str) -> list:
 
 # Abschnitte zur Wahl beim Export (0.73.0, wie im Export-Dialog der Oberflaeche); der Kopf mit
 # Steckbrief steht immer da
-SECTIONS = ("overview", "systems", "epgs", "connections", "plan", "rules", "categories",
-            "hidden", "findings")  # fmt: skip
+SECTIONS = ("overview", "systems", "epgs", "connections", "plan", "rules", "dependencies",
+            "categories", "hidden", "findings")  # fmt: skip
 
 
 def application(doc: dict, conns: dict | None, sources: dict[int, str], when: datetime,
@@ -157,6 +157,8 @@ def application(doc: dict, conns: dict | None, sources: dict[int, str], when: da
                    for e in epgs], [4, 2.4, 2.4, 3, 0.8])  # fmt: skip
     if "rules" in want:
         _rules(out, doc, sources)
+    if "dependencies" in want and doc.get("dependencies"):
+        _dependencies(out, doc["dependencies"])
     if conns is not None and "connections" in want:
         _connections(out, conns)
     if "plan" in want:
@@ -239,19 +241,29 @@ def _rules(out: Document, doc: dict, sources: dict[int, str]) -> None:
 
 
 def _dependencies(out: Document, deps: dict) -> None:
-    """Abhaengigkeiten zu anderen Applikationen (0.60.0) - seit 0.73.0 nicht im Export (Anwender:
-    vorerst entfernt, Monitoring u. a. sind keine fachlichen Abhaengigkeiten)."""
-    rows = []
+    """Abhaengigkeiten zu anderen Applikationen (0.60.0, seit 0.88.0 wieder im Export): zuerst
+    die fachlichen, danach die zu Infrastruktur-Applikationen (Monitoring, Backup, DNS u. a.)."""
+    out.heading(L("Abhängigkeiten", "Dependencies"), 1)
     every = L("alle", "all")
-    for label, key in ((L("nutzt", "uses"), "uses"), (L("wird genutzt von", "used by"), "used_by")):
-        for d in deps.get(key) or []:
-            rules = ", ".join(f"{r['name']} ({', '.join(r.get('services') or []) or every})"
-                              for r in d.get("rules") or [])  # fmt: skip
-            rows.append([label, d["name"], rules])
-    if rows:
-        out.heading(L("Abhängigkeiten", "Dependencies"), 1)
+    for infra, title in ((False, None), (True, L("Infrastruktur", "Infrastructure"))):
+        rows = []
+        for label, key in ((L("nutzt", "uses"), "uses"),
+                           (L("wird genutzt von", "used by"), "used_by")):  # fmt: skip
+            for d in deps.get(key) or []:
+                if bool(d.get("infrastructure")) != infra:
+                    continue
+                rules = ", ".join(f"{r['name']} ({', '.join(r.get('services') or []) or every})"
+                                  for r in d.get("rules") or [])  # fmt: skip
+                rows.append([label, d["name"], rules])
+        if not rows:
+            continue
+        if title:
+            out.heading(title, 2)
         out.table([L("Richtung", "Direction"), L("Applikation", "Application"),
                    L("Regeln", "Rules")], rows, [1.4, 2.6, 8])  # fmt: skip
+    if not deps.get("uses") and not deps.get("used_by"):
+        out.note(L("keine Abhängigkeiten zu anderen Applikationen",
+                   "no dependencies on other applications"))  # fmt: skip
 
 
 def _side(s: dict) -> str:

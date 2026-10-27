@@ -943,13 +943,16 @@ Aufruf als `Accept-Language` mit.
       nicht zurück.
     - Nicht für Kunden-Benutzer (die Verbindungen zeigen die Infrastruktur). API
       `GET /applications/{id}/export?format=zip|docx&sections=…` (Komma-Liste `overview`,
-      `systems`, `epgs`, `connections`, `plan`, `rules`, `findings`, `categories`, `hidden`;
-      leer = alle).
-  - **Abhängigkeiten (0.60.0, seit 0.73.0 vorerst entfernt):** sie zeigten z. B. einen
-    Monitoring-Contract als Abhängigkeit ohne fachliche Aussage. Keine Karte, kein Export; die
-    API liefert sie nur noch mit `GET /applications/{id}/doc?dependencies=true` (abgeleitet
-    aus den erlaubenden Regeln mit spezifischem Treffer, deren Gegenseite EPGs, Server bzw. ein
-    Netz im Subnetz der EPGs einer anderen Applikation trifft).
+      `systems`, `epgs`, `connections`, `plan`, `rules`, `dependencies`, `findings`,
+      `categories`, `hidden`; leer = alle).
+  - **Abhängigkeiten (0.60.0, seit 0.88.0 wieder):** Bereich „Abhängigkeiten“ (zugeklappt,
+    lädt beim Aufklappen) mit „nutzt“ und „wird genutzt von“ je Applikation und den Regeln.
+    Abgeleitet aus den erlaubenden Regeln mit spezifischem Treffer, deren Gegenseite EPGs,
+    Server bzw. ein Netz im Subnetz der EPGs einer anderen Applikation trifft. Applikationen wie
+    Monitoring, Backup oder DNS im Formular als **Infrastruktur** kennzeichnen – Abhängigkeiten
+    zu ihnen stehen dann eingeklappt unter „Infrastruktur“, getrennt von den fachlichen.
+    Export-Abschnitt „Abhängigkeiten“ (Markdown, Word, Druck). API
+    `GET /applications/{id}/dependencies`.
   - **Nur die Beteiligten (0.43.2):** Ein Contract zeigt in der Applikation nur ihre EPGs bzw.
     VMs und die Gegenstellen, die über ihn zugreifen können. Die Regel-Liste nennt „von N im
     Contract“. Das Regel-Detail blendet die übrigen Consumer bzw. Provider mit ihren VMs aus,

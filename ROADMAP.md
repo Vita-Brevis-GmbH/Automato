@@ -398,11 +398,26 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.85.0** | Netzwerkplan der Applikation: Load Balancer als Knoten in der EPG seiner VIP, verbunden mit den EPGs der Server; VIP der Firewall am Knoten (ADR 0021 Ergänzung 0.85.0) |
 | **0.86.0** | Oberfläche auf Deutsch und Englisch umschaltbar (Benutzermenü, je Browser, alle Rollen), Glossar; Texte vom Server und Exporte folgen (ADR 0028 Schritt 1) |
 | **0.87.0** | Texte vom Server und Exporte (Word/PDF/SVG/draw.io) auf Deutsch und Englisch, Sprache der Datei wählbar; Gespeichertes bleibt deutsch (ADR 0028 Schritte 2/3) |
+| **0.88.0** | Abhängigkeiten zwischen Applikationen wieder in der Doku: Infrastruktur (Monitoring, Backup, DNS …) kennzeichnen und getrennt zeigen, Bereich lädt erst beim Aufklappen, Export-Abschnitt (ADR 0012 Ergänzung 0.88.0) |
 
-### Nächste Arbeiten (Stand 0.87.0)
+### Nächste Arbeiten (Stand 0.88.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.87.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.88.0.
+
+**Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4
+Verkabelung, Applikationen, Kunden, Routing“):**
+
+| Bereich | Inhalt | Stand |
+|---|---|---|
+| Ablauf | `main` nachführen | **erledigt** (PR #2, `main` = 0.87.0) |
+| Schritt 6 | Daten verschärfen: Datenqualität der gelesenen Daten und des IPAM | in Arbeit |
+| Sprache | ADR 0028 Schritt 4: Laufmeldungen, Collector/Agent, CLI | in Arbeit |
+| Verkabelung | Kabel und Ports nach NetBox (Vorschau → Übernehmen), IPv6-Nachbarn, weitere Hersteller; SNMPv3 als Alternative zu SSH | in Arbeit (SNMPv3 danach) |
+| Applikationen | Abhängigkeiten wieder einblenden (Infrastruktur getrennt) | **umgesetzt in 0.88.0** |
+| Applikationen | Export nach NetBox (Tags) | in Arbeit |
+| Kunden | feinere Rollen der Kunden-Benutzer | in Arbeit |
+| Routing | Verlauf der Routen; Systeme bis an die Firmengrenze (Aussenrouter lesen) | Verlauf in Arbeit, Firmengrenze danach |
 
 **Deutsch/Englisch (Anwender 2026-10-27, ADR 0028):** Schritt 1 Oberfläche – **umgesetzt in
 0.86.0**; Schritt 2 Texte vom Server und Schritt 3 Exporte mit Sprache der Datei – **umgesetzt in
@@ -432,7 +447,7 @@ bleibt) – **umgesetzt in 0.74.0**; weiter mit Schritt 5.
 | 1 | **Export nach Confluence** – Entscheid des Anwenders: kein Schreibweg, Word (.docx) und draw.io zum Import von Hand, zuerst Applikations-Doku und Zonenplan (ADR 0026) | **umgesetzt in 0.71.0** |
 | 2 | **Parallele Firewalls:** Abweichungen bei Policy-Routen, Routing und NAT zwischen den Firewalls eines Verbunds (ADR 0020 Ergänzung 0.72.0) | **umgesetzt in 0.72.0** |
 | 3 | **Schwachstellen** aus der Übersicht 0.70.0: ACI-Filter nur mit Quellport (Urteil statt „möglich“), Rückrichtung in der Doku je System wie in der Applikations-Doku, Leistung der Zonenmatrix mit der Rückrichtung messen (20 000 Contracts ≈ 1,2 s, linear – kein Zwischenspeicher nötig) | **umgesetzt in 0.72.1** |
-| 4 | **Lücken im Ablauf:** nächtlicher CI-Lauf auf dem aktuellen Stand (`main` nachführen), Überschriften der Roadmap | `main` = 0.70.0 (PR #1, 2026-10-26); weiter nachführen per PR auf Wunsch des Anwenders |
+| 4 | **Lücken im Ablauf:** nächtlicher CI-Lauf auf dem aktuellen Stand (`main` nachführen), Überschriften der Roadmap | `main` = 0.70.0 (PR #1, 2026-10-26), = 0.87.0 (PR #2, 2026-10-27); weiter nachführen per PR auf Wunsch des Anwenders |
 | 5 | **Zonen komplett:** Zonen je Kunde im Grundschema, Befund „Zone ausserhalb des Schemas“, draw.io-Datei des Zonenplans zurück einlesen, Relevanz nach dem Weg in der Zonenmatrix, Übergänge über Routen ohne gemeinsames Netz, Absicht je Richtung im Plan, Zonen in den Verbindungen der Applikations-Doku (ADR 0024) | Teil 1 **umgesetzt in 0.78.0** (Zonen in den Verbindungen, Absicht je Richtung im Plan, Befund „Zone ausserhalb des Schemas“); Teil 2 **umgesetzt in 0.81.0** (Relevanz nach dem Weg in der Matrix, Übergänge zu Zonen nur hinter einem Router); Teil 3 **umgesetzt in 0.82.0** (Zonen je Kunde im Grundschema); Teil 4 **umgesetzt in 0.83.0** (Zonenplan aus draw.io zurück einlesen) – **abgeschlossen** |
 | 6 | **Daten verschärfen** (Inhalt mit dem Anwender festlegen) | danach |
 | 7 | **Erstes Projekt abschliessen:** Produktivschaltung des DC mit den R14-Massnahmen (ADR 0013, RISKS) | danach |

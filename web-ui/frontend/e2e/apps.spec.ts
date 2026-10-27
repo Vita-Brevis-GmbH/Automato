@@ -99,9 +99,11 @@ test("Applikation: Stammdaten bearbeiten (Zweck, Namen)", async ({ page }) => {
   const modal = page.locator(".modal");
   await modal.locator("#ap-purpose").selectOption("test");
   await modal.locator("#ap-int").fill("webshop-test");
+  await modal.locator("#ap-infra input").check(); // 0.88.0: Infrastruktur
   await modal.locator("button.btn-primary").click();
   await expect(page.locator(".app-head")).toContainText("Test");
   await expect(page.locator(".app-names")).toContainText("webshop-test");
+  await expect(page.locator("#app-infra-chip")).toHaveText("Infrastruktur");
   // zurück: Zweck in der Liste
   await page.click("button:has-text('← Applikationen')");
   await expect(rows(page).filter({ hasText: "Webshop" })).toContainText("Test");
@@ -110,8 +112,10 @@ test("Applikation: Stammdaten bearbeiten (Zweck, Namen)", async ({ page }) => {
   await page.click("button:has-text('Bearbeiten')");
   await modal.locator("#ap-purpose").selectOption("prod");
   await modal.locator("#ap-int").fill("webshop-ka");
+  await modal.locator("#ap-infra input").uncheck();
   await modal.locator("button.btn-primary").click();
   await expect(page.locator(".app-head")).toContainText("Prod");
+  await expect(page.locator("#app-infra-chip")).toHaveCount(0);
 });
 
 test("Doku je System: routingtechnisch unmögliche Regeln stehen nicht in den Kategorien", async ({ page }) => {
@@ -466,7 +470,7 @@ test("Applikation: Regel in einer Kategorie ausblenden mit Begründung, Export, 
 
 test("Applikation: Regeln zuordnen bzw. ausschliessen (0.60.0)", async ({ page, problems }) => {
   // zweite Applikation mit dem Server H_db01 (172.16.5.9) – Webshop nutzt sie (Policy to-db);
-  // Abhängigkeiten seit 0.73.0 nicht mehr in der Doku (Anwender: vorerst entfernt)
+  // Abhängigkeiten seit 0.88.0 wieder in der Doku: zugeklappt, erst beim Aufklappen geladen
   const created = await page.request.post("/api/applications?tenant_id=1", {
     data: { name: `Datenbank ${test.info().retry}`, members: [{ kind: "host", ref: "172.16.5.9" }] },
   });
@@ -474,7 +478,20 @@ test("Applikation: Regeln zuordnen bzw. ausschliessen (0.60.0)", async ({ page, 
   const db = (await created.json()) as { id: number; name: string };
   await open(page);
   await expect(page.locator("#app-rules")).toBeVisible();
-  await expect(page.locator("#app-dependencies")).toHaveCount(0);
+  const deps = page.locator("#app-dependencies");
+  await expect(deps.locator(".card-body")).toHaveCount(0);
+  await deps.locator(".fold-title").click();
+  await expect(page.locator("#app-deps-uses")).toContainText(db.name);
+  await expect(page.locator("#app-deps-uses")).toContainText("to-db");
+  await expect(page.locator("#app-deps-infra")).toHaveCount(0);
+  // als Infrastruktur gekennzeichnet: steht eingeklappt im eigenen Teil
+  expect((await page.request.patch(`/api/applications/${db.id}`, { data: { infrastructure: true } })).status()).toBe(200);
+  await page.reload();
+  await expect(page.locator("#app-deps-infra")).toBeVisible();
+  await expect(page.locator("#app-deps-uses")).not.toContainText(db.name);
+  await page.locator("#app-deps-infra summary").click();
+  await expect(page.locator("#app-deps-infra-uses")).toContainText(db.name);
+  await deps.locator(".fold-title").click(); // wieder zu (Zustand bleibt im Browser)
 
   // CT_rt ausschliessen: fällt aus der Liste, steht als ausgeschlossen da – und zurück
   const ct = page.locator("#app-rules tbody tr.clickable", { hasText: "CT_rt" });

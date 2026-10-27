@@ -79,6 +79,19 @@ Begründung und Audit):**
   `application.rule_shown` mit Regel-Verweis, Kategorie und Begründung. Kunden-Benutzer sehen
   die ausgeblendeten Zeilen ihrer Regeln, ändern aber nichts (Freigabeliste).
 
+**Ergänzung 0.88.0 (Anwender: Abhängigkeiten wieder einblenden):**
+- **Infrastruktur getrennt:** neues Stammdatum `application.infrastructure` (Migration `0057`,
+  Formular „Infrastruktur (Monitoring, Backup, DNS …)“, Audit `application.updated`). Die
+  Ableitung bleibt wie in 0.60.0; je Eintrag `infrastructure` der anderen Applikation. In der
+  Doku stehen die fachlichen Abhängigkeiten oben, die zu Infrastruktur-Applikationen
+  eingeklappt in einem eigenen Teil – damit beantwortet der Bereich die Frage des Anwenders
+  (Monitoring ist keine fachliche Abhängigkeit), ohne Verbindungen zu verstecken.
+- **Erst auf Klick:** der Bereich ist zugeklappt und lädt beim Aufklappen über
+  `GET /applications/{id}/dependencies` (auch Kunden-Benutzer, nur Applikationen ihres
+  Ausschnitts). Export-Abschnitt `dependencies` für Markdown, Word und Druck
+  (`word_export.SECTIONS`). Das Kennzeichen steuert nur die Anzeige, keine Regel und keinen
+  Befund; der CSV-Import der Stammdaten bleibt bei seinen Feldern.
+
 **Ergänzung 0.73.0 (Anwender: mehr Übersicht in der Applikations-Doku):**
 - **Abhängigkeiten vorerst entfernt:** Die Ableitung aus spezifischen Regeln zeigte z. B. einen
   Monitoring-Contract als Abhängigkeit – technisch eine Verbindung, fachlich keine Aussage über
@@ -199,5 +212,6 @@ gehören zu mehreren Applikationen.
 - Benennt jemand ein AP, eine EPG oder einen Server um, verliert das Mitglied den Bezug und
   erscheint als „nicht mehr gelesen“. Der Vorschlag bietet das umbenannte Objekt wieder an.
 - Regeln direkt zuordnen bzw. ausschliessen und Abhängigkeiten zwischen Applikationen seit
-  0.60.0 (Ergänzung oben; Abhängigkeiten seit 0.73.0 vorerst nicht angezeigt). Noch offen: ein Export nach NetBox (Tag/Custom Field, nur mit
+  0.60.0 (Ergänzung oben; Abhängigkeiten seit 0.73.0 vorerst nicht angezeigt, seit 0.88.0
+  wieder mit Infrastruktur getrennt). Noch offen: ein Export nach NetBox (Tag/Custom Field, nur mit
   eigener Freigabe gemäss ADR 0010).

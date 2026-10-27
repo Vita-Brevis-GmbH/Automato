@@ -4,7 +4,8 @@
 // System/VM, EPG, Richtung (aus Sicht des Systems), Art und Bezug. Das Regel-Detail erklärt,
 // warum die Regel für die Applikation gilt; Links in Regeln, Objekte und Findings. Seit 0.73.0
 // (Anwender: Übersicht) Bereiche zuklappbar, Systeme kompakt mit Detail auf Klick, Export und
-// Druck mit wählbaren Abschnitten; Abhängigkeiten zu anderen Applikationen vorerst entfernt.
+// Druck mit wählbaren Abschnitten; Abhängigkeiten zu anderen Applikationen seit 0.88.0 wieder
+// (auf Klick geladen, Infrastruktur wie Monitoring/Backup getrennt von den fachlichen).
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import {
   AppDocEpg,
@@ -12,12 +13,15 @@ import {
   AppDocHit,
   AppDocSystem2,
   AppConnections,
+  AppDependencies,
+  AppDependency,
   ApplicationDoc,
   assignAppRule,
   DocScope,
   DocTable,
   exportApplication,
   fetchAppConnections,
+  fetchAppDependencies,
   fetchAppDoc,
   fetchSystems,
   hideAppRules,
@@ -166,6 +170,11 @@ const DOC_SECTIONS: [string, string, string][] = [
     L("als draw.io-Datei – nur Word + draw.io (ZIP)", "as draw.io file – only Word + draw.io (ZIP)"),
   ],
   ["rules", L("Regeln & Contracts", "Rules & contracts"), ""],
+  [
+    "dependencies",
+    L("Abhängigkeiten", "Dependencies"),
+    L("zu anderen Applikationen, Infrastruktur getrennt", "on other applications, infrastructure separately"),
+  ],
   ["findings", "Findings", ""],
   ["categories", L("Doku nach Kategorien", "Documentation by category"), L("die 10 Kategorien nach UC1", "the 10 categories according to UC1")],
   ["hidden", L("Ausgeblendete Regeln", "Hidden rules"), L("mit Begründung", "with reason")],
@@ -201,6 +210,7 @@ export default function ApplicationDocView({
   const [exportOpen, setExportOpen] = useState(false);
   const [systemKey, setSystemKey] = useState<string | null>(null); // Detail eines Systems (0.73.0)
   const [conns, setConns] = useState<AppConnections | null>(null); // für den Export (0.59.0)
+  const [deps, setDeps] = useState<AppDependencies | null>(null); // für den Export (0.88.0)
   const [tick, setTick] = useState(0); // Regel zugeordnet bzw. ausgeschlossen (0.60.0)
   const [busy, setBusy] = useState<unknown>(null);
   const [hiding, setHiding] = useState<{ table: DocTable; row: DocRow } | null>(null); // 0.69.0
@@ -305,7 +315,9 @@ export default function ApplicationDocView({
     } else {
       let c = me.isCustomer || !want.has("connections") ? null : conns;
       if (c == null && !me.isCustomer && want.has("connections")) c = await fetchAppConnections(id).catch(() => null);
-      download(`${a.name}.md`, docMarkdown(doc, sourceName, c, want));
+      let d = want.has("dependencies") ? deps : null;
+      if (d == null && want.has("dependencies")) d = await fetchAppDependencies(id).catch(() => null);
+      download(`${a.name}.md`, docMarkdown(doc, sourceName, c, want, d));
     }
     setExportOpen(false);
   };
@@ -314,7 +326,7 @@ export default function ApplicationDocView({
   // im Druck nur mit „Ausgeblendete Regeln“: nur Kategorien mit ausgeblendeten Regeln
   const onlyHidden = !!printing && !printing.has("categories");
   const tables = doc.tables.filter((t) => (t.hidden?.length ?? 0) > 0 || (!onlyHidden && (showEmpty || t.rows.length > 0)));
-  const foldKeys = ["systems", "epgs", "connections", "rules", "findings", "categories", ...doc.tables.map((t) => `cat:${t.index}`)];
+  const foldKeys = ["systems", "epgs", "connections", "dependencies", "rules", "findings", "categories", ...doc.tables.map((t) => `cat:${t.index}`)];
   const categories = fold("categories", false);
   // Ausblenden je Kategorie (0.69.0): nur Operator, Kunden-Benutzer sehen die Liste ohne Knöpfe
   const hideControls = {
@@ -399,6 +411,11 @@ export default function ApplicationDocView({
           )}
           <div className="chips" style={{ marginTop: 8 }}>
             {a.purpose && <PurposeChip value={a.purpose} />}
+            {a.infrastructure && (
+              <span className="chip info" id="app-infra-chip" title={L("Monitoring, Backup, DNS …", "Monitoring, backup, DNS …")}>
+                {L("Infrastruktur", "Infrastructure")}
+              </span>
+            )}
             {a.code && (
               <span className="chip local">
                 {L("Kürzel", "Code")} {a.code}
@@ -499,6 +516,11 @@ export default function ApplicationDocView({
           <ConnectionsCard appId={id} reload={reload + tick} onRule={setRule} onGo={onGo} onData={setConns} fold={fold("connections")} />
         </div>
       )}
+
+      {/* Abhängigkeiten (0.60.0, seit 0.88.0 wieder): zu, erst beim Aufklappen geladen */}
+      <div className={off("dependencies").trim()}>
+        <DependenciesCard appId={id} reload={reload + tick} fold={fold("dependencies", false)} onGo={onGo} onRule={setRule} onData={setDeps} />
+      </div>
 
       <div className={`card${off("rules")}`} id="app-rules" style={{ marginTop: 14 }}>
         <div className="card-head">
@@ -1710,7 +1732,13 @@ function RuleMembers({
 const md = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
 // Doku als Markdown (0.73.0: nur die gewählten Abschnitte, ohne Abhängigkeiten)
-function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string, conns: AppConnections | null, want: Set<string>): string {
+function docMarkdown(
+  doc: ApplicationDoc,
+  sourceName: (id: number) => string,
+  conns: AppConnections | null,
+  want: Set<string>,
+  deps: AppDependencies | null = null,
+): string {
   const a = doc.application;
   const s = doc.summary;
   const lines = [L(`# Applikation ${a.name}`, `# Application ${a.name}`), ""];
@@ -1794,6 +1822,7 @@ function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string, co
     }
     lines.push("");
   }
+  if (deps && want.has("dependencies")) lines.push(...dependenciesMarkdown(deps));
   if (conns && want.has("connections")) lines.push(...connectionsMarkdown(conns));
   if (want.has("findings")) {
     lines.push("## Findings", "");
@@ -1805,6 +1834,176 @@ function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string, co
     }
   }
   return lines.concat(tablesMarkdown(doc.tables, want.has("categories"), want.has("hidden"))).join("\n");
+}
+
+// Abhängigkeiten als Markdown (0.88.0): fachliche zuerst, Infrastruktur als eigener Teil
+function dependenciesMarkdown(deps: AppDependencies): string[] {
+  const lines = [L("## Abhängigkeiten", "## Dependencies"), ""];
+  if (!deps.uses.length && !deps.used_by.length) return [...lines, L("Keine Abhängigkeiten zu anderen Applikationen.", "No dependencies on other applications."), ""];
+  for (const infra of [false, true]) {
+    const rows: string[] = [];
+    for (const [label, items] of [
+      [L("nutzt", "uses"), deps.uses],
+      [L("wird genutzt von", "used by"), deps.used_by],
+    ] as const) {
+      for (const d of items.filter((x) => !!x.infrastructure === infra)) {
+        const rules = d.rules.map((r) => `${r.name} (${r.services.join(", ") || L("alle", "all")})`).join(", ");
+        rows.push(`| ${label} | ${md(d.name)} | ${md(rules)} |`);
+      }
+    }
+    if (!rows.length) continue;
+    if (infra) lines.push(L("### Infrastruktur", "### Infrastructure"), "");
+    lines.push(L("| Richtung | Applikation | Regeln |", "| Direction | Application | Rules |"), "| --- | --- | --- |", ...rows, "");
+  }
+  return lines;
+}
+
+// Abhängigkeiten zu anderen Applikationen (0.60.0, seit 0.88.0 wieder in der Doku): abgeleitet
+// aus Regeln, die ein System gezielt mit einem System einer anderen Applikation verbinden. Erst
+// beim Aufklappen geladen (teuer); Infrastruktur (Monitoring, Backup, DNS …) eingeklappt getrennt.
+function DependenciesCard({
+  appId,
+  reload,
+  fold,
+  onGo,
+  onRule,
+  onData,
+}: {
+  appId: number;
+  reload: number;
+  fold: Fold;
+  onGo?: Go;
+  onRule: (id: number) => void;
+  onData: (d: AppDependencies | null) => void;
+}) {
+  const [data, setData] = useState<AppDependencies | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const loadKey = `${appId}:${reload}`;
+  useEffect(() => {
+    if (!fold.open || loadedFor === loadKey) return;
+    let current = true;
+    setLoadedFor(loadKey);
+    setData(null);
+    setError(null);
+    onData(null);
+    let done = false;
+    fetchAppDependencies(appId)
+      .then((d) => {
+        done = true;
+        if (!current) return;
+        setData(d);
+        onData(d);
+      })
+      .catch((e) => {
+        done = true;
+        if (current) setError(e);
+      });
+    return () => {
+      current = false;
+      if (!done) setLoadedFor(null); // abgebrochen: beim nächsten Öffnen neu laden
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId, reload, fold.open]);
+  const part = (items: AppDependency[], infra: boolean) => items.filter((d) => !!d.infrastructure === infra);
+  const column = (title: string, hint: string, items: AppDependency[], id: string) => (
+    <div style={{ flex: "1 1 320px" }} id={id}>
+      <h3 style={{ margin: "0 0 6px" }} title={hint}>
+        {title} <span className="faint mono">{items.length}</span>
+      </h3>
+      {items.length === 0 ? (
+        <span className="faint">{L("keine", "none")}</span>
+      ) : (
+        <table className="compact">
+          <tbody>
+            {items.map((d) => (
+              <tr key={d.application_id}>
+                <td>
+                  <button className="linkbtn objlink" onClick={() => onGo?.("apps", { app: String(d.application_id) })}>
+                    {d.name}
+                  </button>
+                </td>
+                <td>
+                  {d.rules.map((r) => (
+                    <div key={`${r.rule_id}:${r.reverse ? 1 : 0}`}>
+                      <button className="linkbtn objlink mono" onClick={() => onRule(r.rule_id)} title={L(`über ${r.via}`, `via ${r.via}`)}>
+                        {r.name}
+                      </button>{" "}
+                      <span className="faint mono">{r.services.join(", ")}</span>
+                    </div>
+                  ))}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+  const pair = (infra: boolean, prefix: string) => (
+    <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+      {column(L("nutzt", "uses"), L("diese Applikation ist Quelle bzw. Consumer", "this application is source or consumer"), part(data?.uses ?? [], infra), `${prefix}-uses`)}
+      {column(
+        L("wird genutzt von", "used by"),
+        L("diese Applikation ist Ziel bzw. Provider", "this application is destination or provider"),
+        part(data?.used_by ?? [], infra),
+        `${prefix}-used-by`,
+      )}
+    </div>
+  );
+  const infraCount = data ? part(data.uses, true).length + part(data.used_by, true).length : 0;
+  const count = data ? data.uses.length + data.used_by.length - infraCount : null;
+  return (
+    <div className="card" id="app-dependencies" style={{ marginTop: 14 }}>
+      <div className="card-head">
+        <FoldTitle fold={fold}>{L("Abhängigkeiten", "Dependencies")}</FoldTitle>
+        {count != null && (
+          <span className="mono faint" style={{ fontSize: 12 }}>
+            {count}
+            {infraCount ? L(` + ${infraCount} Infrastruktur`, ` + ${infraCount} infrastructure`) : ""}
+          </span>
+        )}
+        <span className="faint" style={{ fontSize: 12 }}>
+          {L(
+            "aus Regeln, die ein System dieser Applikation gezielt mit einem System einer anderen verbinden (EPG, Host, Netz in deren EPG-Subnetz – nicht any)",
+            "from rules that specifically connect a system of this application with a system of another one (EPG, host, network in its EPG subnet – not any)",
+          )}
+        </span>
+      </div>
+      {fold.open && (
+        <div className="card-body pad">
+          {error ? (
+            <ErrorBox error={error} prefix={L("Abhängigkeiten laden", "Load dependencies")} />
+          ) : !data ? (
+            <Loading>{L("Ermittle Abhängigkeiten…", "Determining dependencies…")}</Loading>
+          ) : (
+            <>
+              {data.infrastructure && (
+                <div className="hint faint" style={{ marginBottom: 8 }}>
+                  {L(
+                    "Diese Applikation ist als Infrastruktur gekennzeichnet – „wird genutzt von“ zeigt, wer sie braucht.",
+                    "This application is marked as infrastructure – “used by” shows who needs it.",
+                  )}
+                </div>
+              )}
+              {pair(false, "app-deps")}
+              {infraCount > 0 && (
+                <details id="app-deps-infra" style={{ marginTop: 14 }}>
+                  <summary className="faint">
+                    {L(
+                      `Infrastruktur (${infraCount}) – Monitoring, Backup, DNS u. a., keine fachlichen Abhängigkeiten`,
+                      `Infrastructure (${infraCount}) – monitoring, backup, DNS etc., no business dependencies`,
+                    )}
+                  </summary>
+                  <div style={{ marginTop: 8 }}>{pair(true, "app-deps-infra")}</div>
+                </details>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Export und Druck mit wählbaren Abschnitten (0.73.0); die Auswahl bleibt im Browser

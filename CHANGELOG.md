@@ -7,6 +7,20 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.88.0 – 2026-10-27
+
+Abhängigkeiten zwischen Applikationen wieder in der Doku (Anwender: „Abhängigkeiten wieder
+einblenden“; 0.73.0 hatte sie entfernt, weil z. B. Monitoring keine fachliche Abhängigkeit ist).
+
+- **Infrastruktur kennzeichnen:** neues Feld im Formular der Applikation („Infrastruktur
+  (Monitoring, Backup, DNS …)“, Migration `0057`, Audit). Abhängigkeiten zu solchen
+  Applikationen stehen eingeklappt in einem eigenen Teil „Infrastruktur“, die fachlichen oben;
+  Chip „Infrastruktur“ im Kopf der Doku.
+- **Bereich „Abhängigkeiten“** in der Applikations-Doku: zugeklappt, lädt erst beim Aufklappen
+  (`GET /applications/{id}/dependencies`, auch für Kunden-Benutzer mit ihrem Ausschnitt);
+  „nutzt“ / „wird genutzt von“ mit den Regeln, Klick öffnet Applikation bzw. Regel.
+- **Export:** Abschnitt „Abhängigkeiten“ für Markdown, Word und Druck (Deutsch/Englisch).
+
 ## 0.87.0 – 2026-10-27
 
 Texte vom Server und Exporte auf Deutsch und Englisch (ADR 0028 Schritte 2 und 3; Anwender: „es

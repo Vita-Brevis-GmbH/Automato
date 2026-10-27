@@ -123,6 +123,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "criticality",
             "purpose",
             "site_id",
+            "infrastructure",
             "fields",
         }
     ),
