@@ -1,4 +1,4 @@
-# Collector-Lesevertrag — FortiGate, Cisco ACI, VMware, Switches & Router, NSX ALB (read-only)
+# Collector-Lesevertrag — FortiGate, Cisco ACI, VMware, Switches & Router (SSH/SNMPv3), NSX ALB (read-only)
 
 > Was die Collectors **rein lesend** erfassen (Felder/Relationen) und wie es auf das
 > Datenmodell (ADR 0004 + Ergänzung) abgebildet wird. Abgeleitet aus realen Samples einer Referenzumgebung
@@ -249,6 +249,38 @@ Teil leer und steht als Hinweis in der Meldung des Laufs. Nicht gelesen: Konfigu
 Zugangsdaten, Logs, Zähler. MAC-, ARP- und IPv6-Nachbar-Einträge werden gesammelt und nach
 `AUTOMATO_RETENTION_L2_DAYS` (30) Tagen ohne neue Sichtung gelöscht. Die Verkabelung leitet der Orchestrator
 aus den Nachbarn aller Quellen ab (Switches, ACI-Leafs über `lldpAdjEp`/`cdpAdjEp`).
+
+### 5a. Switches & Router über SNMPv3 (Zugang „SNMPv3“; nur GET/GETBULK, ADR 0033)
+
+Dasselbe Quellsystem `cisco_switch` mit **Zugang SNMPv3** (`source_system.access = snmp`) statt
+SSH: Adressen im Lesebereich wie oben (`host` bzw. `host:port`, Standard **UDP 161**), ein
+SNMPv3-Benutzer für alle Geräte. **Nur SNMPv3 authPriv** – Auth HMAC-SHA/SHA-2 (SHA-1, SHA-224,
+SHA-256, SHA-384, SHA-512), Priv AES (128/192/256), Passwörter mindestens 8 Zeichen, optional ein
+Context; kein SNMPv1/v2c, keine Community, kein MD5/DES. Der Benutzer gehört auf dem Gerät in eine
+Gruppe **nur mit Read-View** (keine Write-View). Gesendet werden nur **GET** (einzelne Werte) und
+**GETBULK** (Spalten der Tabelle, Fortsetzung nur innerhalb der Spalte) auf die Positivliste
+`collectors/snmp/oids.py`; jede andere Abfrage bricht vor dem Senden ab (`ReadOnlyViolation`), ein
+SET gibt es im Collector nicht. Je Spalte höchstens 20 000 Zeilen bzw. 120 s, MAC-Tabelle höchstens
+50 000 Einträge (wie per SSH). Ergebnis in denselben Tabellen wie per SSH.
+
+| MIB | gelesen | → Automato |
+|---|---|---|
+| SNMPv2-MIB | `sysName` (ohne Domäne), `sysDescr` (Version/Modell als Rückfall), `sysObjectID` (Hersteller) | `inv_device` (Rolle `switch`, Juniper MX `router`) |
+| ENTITY-MIB (optional) | `entPhysicalClass` bis zum ersten Chassis, dessen `entPhysicalModelName`, `entPhysicalSerialNum`, `entPhysicalSoftwareRev` | Modell, Seriennummer, Version |
+| IF-MIB | `ifName`/`ifDescr`, `ifType`, `ifAdminStatus`, `ifOperStatus`, `ifHighSpeed`, `ifAlias`, `ifPhysAddress`; übernommen Ethernet, LAG, VLAN-Interfaces | `inv_interface` (`status` up/down/disabled, `enabled`, `speed`, `description`, `attrs.mac`) |
+| EtherLike-MIB (optional) | `dot3StatsDuplexStatus` | `duplex` |
+| IEEE8023-LAG-MIB (optional) | `dot3adAggPortAttachedAggID` bzw. `…SelectedAggID` | `lag` am Mitglied |
+| BRIDGE-MIB | `dot1dBasePortIfIndex` (Bridge-Port → ifIndex); `dot1dTpFdbPort`/`Status` als Rückfall der MAC-Tabelle (ohne VLAN) | Zuordnung der Ports, `mac_entry` |
+| Q-BRIDGE-MIB bzw. IEEE8021-Q-BRIDGE-MIB | `dot1qVlanStaticName`/`EgressPorts`/`UntaggedPorts` (bzw. `dot1qVlanCurrent…`), `dot1qPvid`, `dot1qVlanFdbId`, `dot1qTpFdbPort`/`Status`; IEEE 802.1Q-2011 mit der Komponente im Index | `inv_vlan`; je Port Access (ein VLAN ungetaggt) bzw. Trunk (`trunk_vlans`, `native_vlan`); `mac_entry` (nur gelernt/statisch, Unicast, nicht eigene) |
+| IP-MIB | `ipNetToPhysicalPhysAddress`/`Type`/`State` (IPv4 und IPv6), Rückfall `ipNetToMediaPhysAddress`/`Type` (IPv4); ohne `local`/`invalid`/unvollständige und eigene MACs | `arp_entry` (IPv6-Nachbarn wie per SSH, Link-local nicht als Identität) |
+| LLDP-MIB | `lldpLocPortIdSubtype`/`Id`/`Desc`, `lldpRemChassisId…`, `lldpRemPortId…`, `lldpRemPortDesc`, `lldpRemSysName`, `lldpRemSysDesc`, `lldpRemSysCap…`, `lldpRemManAddrIfSubtype` (Adresse aus dem Index) | `inv_neighbor` (`protocol` lldp) |
+| CISCO-CDP-MIB (optional) | `cdpCacheDeviceId`, `cdpCacheDevicePort`, `cdpCachePlatform`, `cdpCacheAddress`/`Type`, `cdpCacheCapabilities` | `inv_neighbor` (`protocol` cdp); am Port CDP vor LLDP |
+
+Fehlt IF-MIB, Q-BRIDGE, die MAC-Tabelle oder LLDP (bzw. liegt die Tabelle nicht in der View), steht
+ein Hinweis im Lauf; die optionalen MIBs fehlen ohne Hinweis. **Nicht gelesen**: Konfiguration,
+USM/VACM/Community-Tabellen, Zähler, Routing, Spanning Tree, vPC/MLAG, Traps. **Grenzen**: Cisco
+IOS/IOS-XE führt VLANs je Port und die MAC-Tabelle je VLAN in eigenen MIBs bzw. Contexts – dort
+bleibt SSH genauer. Prüfen (`--check`): ein GET auf `sysName` je Gerät.
 
 ## 6. VMware NSX Advanced Load Balancer (Avi; REST, nur GET; ADR 0027)
 

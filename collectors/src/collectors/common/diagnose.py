@@ -76,6 +76,16 @@ _HINTS = {
         "read-only, Catalyst 1200/1300 level 1, Arista role network-operator, AOS-CX group "
         "operators), login with password (keyboard-interactive or password) must be allowed",
     ),
+    # Switches & Router mit Zugang SNMPv3 (ADR 0033)
+    "snmp": (
+        "SNMPv3-Benutzer im Web-UI pruefen (Benutzer, Auth-/Priv-Protokoll und Passwoerter wie "
+        "auf dem Geraet, nur authPriv mit SHA bzw. SHA-2 und AES); der Benutzer braucht eine "
+        "Gruppe nur mit Lese-View (keine Write-View), die Adresse des Agenten muss in der ACL des "
+        "SNMP-Agenten stehen",
+        "check the SNMPv3 user in the web UI (user, auth/priv protocol and passwords as on the "
+        "device, only authPriv with SHA or SHA-2 and AES); the user needs a group with a read view "
+        "only (no write view), the agent's address must be in the ACL of the SNMP agent",
+    ),
 }
 # vCenter: Rolle Read-only reicht (System.View/System.Read) - fehlt sie, ist sie meist am
 # falschen Ort oder ohne Weitergabe zugewiesen
@@ -110,6 +120,9 @@ def device_error(
     vsphere = _vsphere_fault(exc)
     if vsphere:
         return vsphere
+    snmp = _snmp_error(exc, platform, target, local)
+    if snmp:
+        return snmp
     ssh = _ssh_error(exc, platform, target, local)
     if ssh:
         return ssh
@@ -140,6 +153,35 @@ def device_error(
 
 def _note() -> str:
     return L("Hinweis", "Note")
+
+
+def _snmp_error(exc: Exception, platform: str, target: Target | None, local: bool) -> str | None:
+    """SNMPv3 (Switches, ADR 0033): Anmeldung (USM), keine Antwort, Konfiguration als ein Satz."""
+    name = type(exc).__name__
+    if name == "SnmpAuthError":
+        parts = [L("Anmeldung abgelehnt (SNMPv3: Benutzer, Passwoerter bzw. Protokolle passen "
+                   "nicht zum Geraet)",
+                   "Login rejected (SNMPv3: user, passwords or protocols do not match the "
+                   "device)")]  # fmt: skip
+        if str(exc):  # Art der Ablehnung (unbekannter Benutzer, Digest, Entschluesselung)
+            parts.append(L(f"Geraet meldet: {exc}", f"Device reports: {exc}"))
+        if local and target is not None:
+            parts.extend(_credential_notes(platform, target))
+        return ". ".join([*parts, f"{_note()}: {_hint('snmp')}"])
+    if name == "SnmpTimeout":
+        silent = L(
+            "keine Antwort per SNMPv3 (UDP): Geraet nicht erreichbar, Weg bzw. ACL gesperrt oder "
+            "SNMP aus - manche Geraete antworten bei unbekanntem Benutzer bzw. falschem Passwort "
+            "gar nicht",
+            "no response via SNMPv3 (UDP): device not reachable, path or ACL blocked or SNMP off - "
+            "some devices do not answer at all for an unknown user or a wrong password",
+        )
+        return f"{silent}. {_note()}: {_hint('snmp')}"
+    if name in ("SnmpConfigError", "SnmpUnavailable"):
+        return str(exc)
+    if name == "SnmpError":
+        return L(f"SNMP-Fehler: {exc}", f"SNMP error: {exc}")
+    return None
 
 
 def _ssh_error(exc: Exception, platform: str, target: Target | None, local: bool) -> str | None:

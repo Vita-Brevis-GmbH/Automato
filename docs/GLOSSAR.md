@@ -32,6 +32,7 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Quellsystem | Source system |
 | Gerät | Device |
 | Zugangsdaten | Credentials |
+| Zugang (SSH / SNMPv3) | Access (SSH / SNMPv3) |
 | Lauf, Läufe | Run, runs |
 | einlesen / Alle einlesen | collect / Collect all |
 | einspielen (Ergebnis) | ingest |

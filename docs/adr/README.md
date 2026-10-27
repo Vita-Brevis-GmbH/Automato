@@ -36,3 +36,4 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0029 | Datenqualität: Bereiche mit Ampel, Ursache und Link, Gesamtnote; Befunde „Stand veraltet“ und „nur teilweise gelesen“ (Entwurf, erste Fassung von Roadmap Schritt 6) |
 | 0030 | Verlauf des Routings: Änderungen an Routen, BGP-Nachbarn, HA, Policy-Routen, Kontexten und L3Outs von Lauf zu Lauf (Positivliste der Felder, Ausgangsstand, nicht lesbar ohne Flut, Obergrenze, Frist 180 Tage) (Entwurf) |
 | 0031 | Verkabelung und Applikationen nach NetBox: zwei Abschnitte im NetBox-Sync (Switches/Router mit Ports und beidseitig gemeldeten Kabeln, Modus/VLANs nur mit vorhandenen VLANs; Applikations-Tags `automato-app-…` an VMs und IP-Adressen) |
+| 0033 | SNMPv3 lesend als Alternative zu SSH für Switches & Router: Zugang am Quellsystem, nur authPriv (SHA/SHA-2 + AES), nur GET/GETBULK auf eine Positivliste der Standard-MIBs, dieselben DTOs wie per SSH |

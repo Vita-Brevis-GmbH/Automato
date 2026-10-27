@@ -44,8 +44,31 @@ FIELDS: dict[str, tuple[str, ...]] = {
 # an einen Agenten ausgeliefert (siehe store.agents.target_for), ADR 0010.
 OPTIONAL_FIELDS: dict[str, tuple[str, ...]] = {"netbox": ("write_token",)}
 
+# Switches & Router mit Zugang SNMPv3 (ADR 0033): nur authPriv - Benutzer und beide Passwoerter
+# Pflicht; Protokolle (sonst Vorgabe) und Context optional. Kein v1/v2c, keine Community.
+SNMP_FIELDS: tuple[str, ...] = ("username", "auth_password", "priv_password")
+SNMP_OPTIONAL: tuple[str, ...] = ("auth_protocol", "priv_protocol", "context")
+SNMP_AUTH_PROTOCOLS = ("sha", "sha224", "sha256", "sha384", "sha512")  # HMAC-SHA (RFC 3414/7860)
+SNMP_PRIV_PROTOCOLS = ("aes128", "aes192", "aes256")  # AES-CFB (RFC 3826)
+SNMP_DEFAULTS = {"auth_protocol": "sha256", "priv_protocol": "aes128"}
+SNMP_MIN_PASSWORD = 8  # RFC 3414: kuerzere Passwoerter ergeben keinen sicheren Schluessel
 
-def complete(platform: str, token: str | None) -> bool:
+
+def is_snmp(platform: str, access: str | None) -> bool:
+    """Quellsystem „Switches & Router“ mit Zugang SNMPv3 (statt SSH)."""
+    return platform == "cisco_switch" and access == "snmp"
+
+
+def fields(platform: str, access: str | None = None) -> tuple[str, ...]:
+    """Pflichtfelder der Zugangsdaten je Plattform und Zugang."""
+    return SNMP_FIELDS if is_snmp(platform, access) else FIELDS.get(platform, ())
+
+
+def optional_fields(platform: str, access: str | None = None) -> tuple[str, ...]:
+    return SNMP_OPTIONAL if is_snmp(platform, access) else OPTIONAL_FIELDS.get(platform, ())
+
+
+def complete(platform: str, token: str | None, access: str | None = None) -> bool:
     """Sind die Pflichtfelder der Plattform hinterlegt (z. B. NetBox: Lese-Token)? Ein
     NetBox-Quellsystem nur mit Schreib-Token ist damit *nicht* vollstaendig. Ohne lesbaren
     Schluessel zaehlt, ob ueberhaupt etwas gespeichert ist."""
@@ -55,7 +78,7 @@ def complete(platform: str, token: str | None) -> bool:
         data = decrypt(token)
     except CredentialsUnavailable:
         return True
-    return all(data.get(f) for f in FIELDS.get(platform, ()))
+    return all(data.get(f) for f in fields(platform, access))
 
 
 def _key_from_file(path: Path) -> bytes:

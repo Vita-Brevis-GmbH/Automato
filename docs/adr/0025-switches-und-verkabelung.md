@@ -266,7 +266,8 @@ Secrets, Open Source bevorzugt.
   2026-10-27, **ADR 0031** (nur beidseitig gemeldete Kabel, Modus/VLANs nur mit vorhandenen
   VLANs) – nie auf die Switches.
 - Offen bzw. später:
-  - **SNMPv3** (nur lesend, `authPriv`) als Alternative, wo SSH nicht erlaubt ist.
+  - ~~**SNMPv3** (nur lesend, `authPriv`) als Alternative, wo SSH nicht erlaubt ist~~ –
+    umgesetzt als Zugang „SNMPv3“ desselben Quellsystems, **ADR 0033**.
   - ~~MAC-Adress-Tabelle und ARP~~ – umgesetzt in 0.63.0 (Nr. 8); ~~IPv6-Nachbarn~~ – umgesetzt
     in 0.94.0 (Nr. 13). Offen: ARP bzw. IPv6-Nachbarn der VRFs auf IOS (`show ip arp vrf …`),
     ARP der FortiGate.

@@ -9,6 +9,12 @@ zugewiesenen Collector-Agenten (`agent_id`) beim Abholen eines Laufs übergeben 
 `token`, Cisco ACI: `username` + `password` (APIC-Login). Sie sind **nur schreibbar**:
 gespeichert verschlüsselt, ausgegeben wird nur `has_credentials`. Bei PATCH bleiben nicht
 angegebene Felder erhalten (z. B. nur das Passwort ändern), `""` entfernt ein Feld.
+
+Switches & Router (ADR 0033): `access` = `ssh` (Standard) bzw. `snmp` - mit SNMPv3 sind die
+Zugangsdaten `username`, `auth_password`, `priv_password` (Pflicht, authPriv), `auth_protocol`
+(SHA/SHA-2, Vorgabe sha256), `priv_protocol` (AES, Vorgabe aes128) und optional `context`.
+Ausgegeben werden davon nur die Protokolle (`snmp`). Ein Wechsel des Zugangs verwirft die
+bisherigen Zugangsdaten (sie gehören zum anderen Zugang).
 """
 
 import re
@@ -75,6 +81,14 @@ class SystemOut(BaseModel):
     parallel_group: str | None = None  # Verbund paralleler Firewalls (0.18.0)
     # Switches (0.62.0): festgehaltene SSH-Host-Schluessel je Adresse (nur Fingerabdruck)
     host_keys: list[dict] = []
+    # Switches & Router (ADR 0033): Zugang ssh | snmp; bei SNMPv3 nur die Protokolle und ob ein
+    # Context hinterlegt ist - nie Benutzer oder Passwoerter
+    access: str | None = None
+    snmp: dict | None = None
+
+
+SnmpAuth = Literal["sha", "sha224", "sha256", "sha384", "sha512"]
+SnmpPriv = Literal["aes128", "aes192", "aes256"]
 
 
 class SystemIn(BaseModel):
@@ -94,6 +108,13 @@ class SystemIn(BaseModel):
     username: str | None = Field(default=None, max_length=200)
     password: str | None = Field(default=None, max_length=4096)
     write_token: str | None = Field(default=None, max_length=4096)
+    # Switches & Router: Zugang (ADR 0033); SNMPv3-Zugangsdaten nur schreibbar wie die übrigen
+    access: Literal["ssh", "snmp"] | None = None
+    auth_protocol: SnmpAuth | Literal[""] | None = None
+    auth_password: str | None = Field(default=None, max_length=4096)
+    priv_protocol: SnmpPriv | Literal[""] | None = None
+    priv_password: str | None = Field(default=None, max_length=4096)
+    context: str | None = Field(default=None, max_length=200)
 
 
 class SystemPatch(BaseModel):
@@ -116,6 +137,13 @@ class SystemPatch(BaseModel):
     username: str | None = Field(default=None, max_length=200)
     password: str | None = Field(default=None, max_length=4096)
     write_token: str | None = Field(default=None, max_length=4096)
+    # Switches & Router (ADR 0033): Wechsel des Zugangs verwirft die bisherigen Zugangsdaten
+    access: Literal["ssh", "snmp"] | None = None
+    auth_protocol: SnmpAuth | Literal[""] | None = None
+    auth_password: str | None = Field(default=None, max_length=4096)
+    priv_protocol: SnmpPriv | Literal[""] | None = None
+    priv_password: str | None = Field(default=None, max_length=4096)
+    context: str | None = Field(default=None, max_length=200)
 
 
 class SystemDeleted(BaseModel):
@@ -169,6 +197,22 @@ def _reference_stats(session: Session, sources) -> dict[int, tuple[int, datetime
     return {sid: (counts.get(rid, 0), finished.get(rid)) for rid, sid in runs.items()}
 
 
+def _access_out(s: SourceSystem) -> str | None:
+    return (s.access or "ssh") if s.platform is Platform.CISCO_SWITCH else None
+
+
+def _snmp_out(s: SourceSystem) -> dict | None:
+    """SNMPv3 (ADR 0033): nur die Protokolle und ob ein Context hinterlegt ist."""
+    if not credentials.is_snmp(s.platform.value, s.access) or not s.credentials:
+        return None
+    try:
+        data = credentials.decrypt(s.credentials)
+    except credentials.CredentialsUnavailable:
+        return None
+    return {"auth_protocol": data.get("auth_protocol"), "priv_protocol": data.get("priv_protocol"),
+            "has_context": bool(data.get("context"))}  # fmt: skip
+
+
 def _has_write_token(s: SourceSystem) -> bool:
     if s.platform is not Platform.NETBOX or not s.credentials:
         return False
@@ -216,7 +260,7 @@ def _out(
         agent_id=s.agent_id,
         verify_tls=s.verify_tls,
         read_scope=s.read_scope,
-        has_credentials=credentials.complete(s.platform.value, s.credentials),
+        has_credentials=credentials.complete(s.platform.value, s.credentials, s.access),
         ref_role=s.ref_role,
         has_write_token=_has_write_token(s),
         reference_count=ref_count,
@@ -235,6 +279,8 @@ def _out(
             {"host": h, "fingerprint": fingerprint(k)}
             for h, k in sorted((s.ssh_host_keys or {}).items())
         ],  # fmt: skip
+        access=_access_out(s),
+        snmp=_snmp_out(s),
     )
 
 
@@ -267,35 +313,58 @@ def _check_agent(session: Session, agent_id: int | None, tenant_id: int | None) 
         raise HTTPException(status_code=422, detail="agent belongs to another tenant")
 
 
+_CREDENTIAL_KEYS = ("token", "username", "password", "write_token", "auth_protocol",
+                    "auth_password", "priv_protocol", "priv_password", "context")  # fmt: skip
+_PASSWORDS = ("password", "auth_password", "priv_password")  # ohne strip (Leerzeichen zaehlen)
+
+
 def _credential_changes(body: SystemIn | SystemPatch) -> dict[str, str]:
-    return {
-        key: value
-        for key in ("token", "username", "password", "write_token")
-        if (value := getattr(body, key)) is not None
-    }
+    return {key: value for key in _CREDENTIAL_KEYS if (value := getattr(body, key)) is not None}
 
 
-def _apply_credentials(src: SourceSystem, changes: dict[str, str]) -> bool:
+def _access(platform: Platform, value: str | None) -> str | None:
+    """Zugang eines Quellsystems (ADR 0033): nur bei Switches & Router; `ssh` = Standard."""
+    if value is None:
+        return None
+    if platform is not Platform.CISCO_SWITCH:
+        raise HTTPException(status_code=422, detail="access only supported for cisco_switch")
+    return value
+
+
+def _check_snmp(current: dict) -> None:
+    """SNMPv3 nur authPriv (ADR 0033): Protokolle mit Vorgabe, Passwoerter mit 8 Zeichen."""
+    for key, default in credentials.SNMP_DEFAULTS.items():
+        current[key] = current.get(key) or default
+    for key in ("auth_password", "priv_password"):
+        if len(current[key]) < credentials.SNMP_MIN_PASSWORD:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{key}: at least {credentials.SNMP_MIN_PASSWORD} characters (SNMPv3)",
+            )
+
+
+def _apply_credentials(src: SourceSystem, changes: dict[str, str], reset: bool = False) -> bool:
     """Zugangsdaten-Felder setzen und verschlüsselt ablegen; True, wenn etwas geändert wurde.
 
     Nicht angegebene Felder bleiben erhalten, `""` entfernt ein Feld. Ein Gerät hat entweder
-    alle Felder seiner Plattform oder keine (422)."""
-    if not changes:
+    alle Felder seiner Plattform oder keine (422). `reset`: Zugang gewechselt - die bisherigen
+    Zugangsdaten gehören zum anderen Zugang und fallen weg."""
+    if not changes and not reset:
         return False
     platform = src.platform.value
-    required = credentials.FIELDS[platform]
-    allowed = required + credentials.OPTIONAL_FIELDS.get(platform, ())
+    required = credentials.fields(platform, src.access)
+    allowed = required + credentials.optional_fields(platform, src.access)
     unknown = sorted(set(changes) - set(allowed))
     if unknown:
         raise HTTPException(
             status_code=422, detail=f"{', '.join(unknown)} not supported for {platform}"
         )
     try:
-        current = credentials.decrypt(src.credentials) if src.credentials else {}
+        current = credentials.decrypt(src.credentials) if src.credentials and not reset else {}
     except credentials.CredentialsUnavailable:
         current = {}  # alter Schlüssel: Zugangsdaten nur noch vollständig neu setzbar
     for key, value in changes.items():
-        value = value if key == "password" else value.strip()
+        value = value if key in _PASSWORDS else value.strip()
         if value:
             current[key] = value
         else:
@@ -306,6 +375,11 @@ def _apply_credentials(src: SourceSystem, changes: dict[str, str]) -> bool:
         raise HTTPException(
             status_code=422, detail=f"{' and '.join(required)} required for {platform}"
         )
+    if credentials.is_snmp(platform, src.access):
+        if present:
+            _check_snmp(current)
+        else:
+            current = {}  # Protokolle/Context nur zusammen mit Benutzer und Passwoertern
     try:
         src.credentials = credentials.encrypt(current) if current else None
     except credentials.CredentialsUnavailable as exc:
@@ -373,10 +447,11 @@ def _switch_hosts(value: str) -> str:
     return "\n".join(hosts)
 
 
-def _switch_base_url(read_scope: str) -> str:
-    """Adresse fuer „Verbindung pruefen“: der erste Switch per SSH."""
+def _switch_base_url(read_scope: str, access: str | None = None) -> str:
+    """Adresse fuer „Verbindung pruefen“: der erste Switch per SSH bzw. SNMPv3 (ADR 0033)."""
     first = next(iter(read_scope.split()), "")
-    return f"ssh://{first}" if first else ""
+    scheme = "snmp" if access == "snmp" else "ssh"
+    return f"{scheme}://{first}" if first else ""
 
 
 def _read_scope(platform: Platform, value: str) -> str:
@@ -572,11 +647,12 @@ def create_system(
         verify_tls=body.verify_tls,
         read_scope=_read_scope(body.platform, body.read_scope),
         site_id=body.site_id,
+        access=_access(body.platform, body.access),
     )
     if src.platform == Platform.CISCO_SWITCH:
         if not src.read_scope:
             raise HTTPException(status_code=422, detail="switch addresses required")
-        src.base_url = src.base_url or _switch_base_url(src.read_scope)
+        src.base_url = src.base_url or _switch_base_url(src.read_scope, src.access)
     _set_schedule(src, _schedule(body.schedule))
     _apply_credentials(src, _credential_changes(body))
     session.add(src)
@@ -598,6 +674,7 @@ def create_system(
             "ref_role": src.ref_role,
             "site_id": src.site_id,
             "schedule": src.schedule,
+            **({"access": src.access} if src.access else {}),
         },
     )
     return _out(src, {}, {}, {})
@@ -655,12 +732,19 @@ def update_system(
         src.enabled = data["enabled"]
     if data.get("verify_tls") is not None:
         src.verify_tls = data["verify_tls"]
+    access_changed = False  # Zugang gewechselt (ADR 0033): bisherige Zugangsdaten verwerfen
+    if data.get("access") is not None:
+        access = _access(src.platform, data["access"])
+        access_changed = (access or "ssh") != (src.access or "ssh")
+        src.access = access
+        if access_changed:
+            src.base_url = _switch_base_url(src.read_scope, src.access)
     if data.get("read_scope") is not None:
         src.read_scope = _read_scope(src.platform, data["read_scope"])
         if src.platform == Platform.CISCO_SWITCH:
             if not src.read_scope:
                 raise HTTPException(status_code=422, detail="switch addresses required")
-            src.base_url = _switch_base_url(src.read_scope)
+            src.base_url = _switch_base_url(src.read_scope, src.access)
             hosts = set(src.read_scope.split())  # Schluessel entfernter Switches vergessen
             src.ssh_host_keys = {h: k for h, k in (src.ssh_host_keys or {}).items()
                                  if h in hosts} or None  # fmt: skip
@@ -676,7 +760,7 @@ def update_system(
     regroup = "parallel_group" in data and (data["parallel_group"] or None) != src.parallel_group
     if "parallel_group" in data:
         src.parallel_group = (data["parallel_group"] or "").strip() or None
-    credentials_changed = _apply_credentials(src, _credential_changes(body))
+    credentials_changed = _apply_credentials(src, _credential_changes(body), reset=access_changed)
     session.flush()
     if regroup:
         if src.parallel_group and src.tenant_id is not None:  # von Hand gesetzt: Ablehnung weg
@@ -707,6 +791,7 @@ def update_system(
             "schedule": src.schedule,
             "parallel_group": src.parallel_group,
             **({"host_keys_forgotten": forgotten} if forgotten else {}),
+            **({"access": src.access or "ssh"} if access_changed else {}),
         },
     )
     return _single_out(session, src)
