@@ -3,13 +3,22 @@
 import type { View } from "./App";
 import { OpsHealth, HealthCheck } from "./api";
 import { fmtTime } from "./ui";
+import { L } from "./i18n";
 
 const LIGHT: Record<string, [string, string]> = {
   ok: ["ok", "OK"],
-  warn: ["warn", "Warnung"],
-  error: ["crit", "Fehler"],
+  warn: ["warn", L("Warnung", "Warning")],
+  error: ["crit", L("Fehler", "Error")],
 };
+// Bereiche kommen als Wert vom Server (Vergleich mit c.area); nur die Anzeige ist übersetzt
 const AREAS = ["Plattform", "Agenten", "Quellsysteme", "NetBox-Sync", "Sicherung"];
+const AREA_LABEL: Record<string, string> = {
+  Plattform: L("Plattform", "Platform"),
+  Agenten: L("Agenten", "Agents"),
+  Quellsysteme: L("Quellsysteme", "Source systems"),
+  "NetBox-Sync": L("NetBox-Sync", "NetBox sync"),
+  Sicherung: L("Sicherung", "Backup"),
+};
 
 function Line({ c, onGo }: { c: HealthCheck; onGo?: (v: View) => void }) {
   const [cls, label] = LIGHT[c.status] ?? ["na", c.status];
@@ -44,7 +53,7 @@ export function HealthTable({
   onGo?: (v: View) => void;
 }) {
   const shown = health.checks.filter((c) => !onlyProblems || c.status !== "ok");
-  if (!shown.length) return <p className="muted">Alle Prüfungen in Ordnung.</p>;
+  if (!shown.length) return <p className="muted">{L("Alle Prüfungen in Ordnung.", "All checks OK.")}</p>;
   return (
     <table>
       <tbody>
@@ -54,7 +63,7 @@ export function HealthTable({
           return [
             <tr key={`h-${area}`} className="group-row">
               <td colSpan={3}>
-                <b>{area}</b>
+                <b>{AREA_LABEL[area] ?? area}</b>
               </td>
             </tr>,
             ...rows.map((c) => <Line key={c.key} c={c} onGo={onGo} />),
@@ -69,7 +78,12 @@ export function HealthChip({ health }: { health: OpsHealth }) {
   const [cls] = LIGHT[health.status] ?? ["na"];
   return (
     <span className={`chip ${cls}`}>
-      {health.problems ? `${health.problems} ${health.problems === 1 ? "Problem" : "Probleme"}` : "alles in Ordnung"}
+      {health.problems
+        ? L(
+            `${health.problems} ${health.problems === 1 ? "Problem" : "Probleme"}`,
+            `${health.problems} ${health.problems === 1 ? "problem" : "problems"}`,
+          )
+        : L("alles in Ordnung", "all OK")}
     </span>
   );
 }

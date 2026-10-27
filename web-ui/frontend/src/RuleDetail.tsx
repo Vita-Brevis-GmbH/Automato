@@ -14,6 +14,7 @@ import type { View, ViewParams } from "./App";
 import { EpgCard } from "./EpgCard";
 import { FamilyMarks, RefCard, serviceNames, SideMarks, useVdomShown, VdomChip, VmChip, VmSection } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, fmtTime, Loading, MatchBadge, Note } from "./ui";
+import { L } from "./i18n";
 
 function EndpointList({ items }: { items: Endpoint[] }) {
   if (!items.length) return <Dash />;
@@ -76,7 +77,11 @@ function NatList({ items, onOpen }: { items: NatBrief[]; onOpen?: (name: string)
           <tr key={n.id}>
             <td>
               {onOpen ? (
-                <button className="linkbtn mono objlink" title="In NAT / VIPs öffnen" onClick={() => onOpen(n.name)}>
+                <button
+                  className="linkbtn mono objlink"
+                  title={L("In NAT / VIPs öffnen", "Open in NAT / VIPs")}
+                  onClick={() => onOpen(n.name)}
+                >
                   {n.name}
                 </button>
               ) : (
@@ -84,7 +89,7 @@ function NatList({ items, onOpen }: { items: NatBrief[]; onOpen?: (name: string)
               )}
               <div>
                 <span className={`chip ${n.nat_type === "snat_pool" ? "info" : "local"}`}>
-                  {n.nat_type === "snat_pool" ? "SNAT-Pool" : "VIP / DNAT"}
+                  {n.nat_type === "snat_pool" ? L("SNAT-Pool", "SNAT pool") : "VIP / DNAT"}
                 </span>
               </div>
             </td>
@@ -107,7 +112,14 @@ function NatList({ items, onOpen }: { items: NatBrief[]; onOpen?: (name: string)
                   </span>
                   {n.mapped_dns.length > 0 && <div className="faint">{n.mapped_dns.join(", ")}</div>}
                   {(n.balancers ?? []).map((lb) => (
-                    <div key={lb.id} className="nat-balancer" title="Ziel der VIP ist ein Virtual Service des NSX ALB – weiter zu dessen Servern">
+                    <div
+                      key={lb.id}
+                      className="nat-balancer"
+                      title={L(
+                        "Ziel der VIP ist ein Virtual Service des NSX ALB – weiter zu dessen Servern",
+                        "Target of the VIP is a Virtual Service of the NSX ALB – continues to its servers",
+                      )}
+                    >
                       <span className="chip info">NSX ALB</span> <span className="mono">{lb.name}</span>
                       {lb.ext_ip ? <span className="mono faint"> {lb.ext_ip}{lb.ext_port ? `:${lb.ext_port}` : ""}</span> : null}
                       {lb.pool ? <span className="faint"> · Pool {lb.pool}</span> : null}
@@ -118,7 +130,7 @@ function NatList({ items, onOpen }: { items: NatBrief[]; onOpen?: (name: string)
                   ))}
                 </>
               ) : (
-                <span className="faint">{n.nat_type === "snat_pool" ? "ausgehende Quell-IP" : "–"}</span>
+                <span className="faint">{n.nat_type === "snat_pool" ? L("ausgehende Quell-IP", "outgoing source IP") : "–"}</span>
               )}
             </td>
           </tr>
@@ -151,33 +163,55 @@ function PairActions({
         <>
           <button
             className="linkbtn"
-            title="Die beiden Policies decken (trotz Abweichungen) dasselbe ab – gilt auch nach neuen Läufen"
+            title={L(
+              "Die beiden Policies decken (trotz Abweichungen) dasselbe ab – gilt auch nach neuen Läufen",
+              "Both policies cover the same traffic (despite deviations) – also applies after new runs",
+            )}
             onClick={() => onConfirm(p.rule_id)}
           >
-            Als Paar bestätigen
+            {L("Als Paar bestätigen", "Confirm as pair")}
           </button>{" "}
           ·{" "}
         </>
       )}
       {p && !confirmed && (
-        <button className="linkbtn" title="Kein Gegenstück – nicht mehr als Paar vorschlagen" onClick={() => onReject(p.rule_id)}>
-          Kein Paar
+        <button
+          className="linkbtn"
+          title={L("Kein Gegenstück – nicht mehr als Paar vorschlagen", "No counterpart – do not suggest as pair any more")}
+          onClick={() => onReject(p.rule_id)}
+        >
+          {L("Kein Paar", "No pair")}
         </button>
       )}
       {confirmed && (
         <div className="faint">
-          bestätigt von {confirmed.decided_by} am {fmtTime(confirmed.decided_at)} ·{" "}
+          {L(
+            <>
+              bestätigt von {confirmed.decided_by} am {fmtTime(confirmed.decided_at)} ·{" "}
+            </>,
+            <>
+              confirmed by {confirmed.decided_by}, {fmtTime(confirmed.decided_at)} ·{" "}
+            </>,
+          )}
           <button className="linkbtn" onClick={() => onReset(confirmed.id)}>
-            zurücknehmen
+            {L("zurücknehmen", "undo")}
           </button>
         </div>
       )}
       {rejected.map((d) => (
         <div className="faint" key={d.id}>
-          kein Paar mit {d.partner_name ? `„${d.partner_name}“` : `Policy ${d.partner_external_id}`}
-          {d.partner_id ? ` (#${d.partner_id})` : ""} – von {d.decided_by} am {fmtTime(d.decided_at)} ·{" "}
+          {L(
+            <>
+              kein Paar mit {d.partner_name ? `„${d.partner_name}“` : `Policy ${d.partner_external_id}`}
+              {d.partner_id ? ` (#${d.partner_id})` : ""} – von {d.decided_by} am {fmtTime(d.decided_at)} ·{" "}
+            </>,
+            <>
+              no pair with {d.partner_name ? `“${d.partner_name}”` : `policy ${d.partner_external_id}`}
+              {d.partner_id ? ` (#${d.partner_id})` : ""} – by {d.decided_by}, {fmtTime(d.decided_at)} ·{" "}
+            </>,
+          )}
           <button className="linkbtn" onClick={() => onReset(d.id)}>
-            zurücknehmen
+            {L("zurücknehmen", "undo")}
           </button>
         </div>
       ))}
@@ -242,7 +276,8 @@ export default function RuleDetailDrawer({
   const onNat = onGo ? (name: string) => onGo("nat", { q: name }) : undefined;
   // VMs hinter den Werten bzw. Endpunkten beider Seiten (vCenter) mit allen Angaben
   const vmItems = (["src", "dst"] as const).flatMap((role) => {
-    const label = role === "src" ? (aci ? "Consumer" : "Quelle") : aci ? "Provider" : "Ziel";
+    const label =
+      role === "src" ? (aci ? "Consumer" : L("Quelle", "Source")) : aci ? "Provider" : L("Ziel", "Destination");
     const values = refs(role).flatMap((r) => [...r.values, ...r.members.flatMap((m) => m.values)]);
     return [
       ...values.filter((v) => v.vm).map((v) => ({ vm: v.vm!, role: `${label} · ${v.value}` })),
@@ -252,10 +287,10 @@ export default function RuleDetailDrawer({
 
   return (
     <Drawer
-      title={detail?.name ?? `Regel #${ruleId}`}
+      title={detail?.name ?? L(`Regel #${ruleId}`, `Rule #${ruleId}`)}
       sub={
         detail
-          ? `${aci ? "ACI-Contract" : "Regel"} #${detail.id} · ${systemName(detail.source_system_id)}` +
+          ? `${aci ? L("ACI-Contract", "ACI contract") : L("Regel", "Rule")} #${detail.id} · ${systemName(detail.source_system_id)}` +
             (vdomShown(detail.source_system_id, detail.vdom) ? ` · VDOM ${detail.vdom}` : "")
           : undefined
       }
@@ -267,7 +302,7 @@ export default function RuleDetailDrawer({
         <>
           {intro}
           <dl className="kv">
-            <dt>Aktion</dt>
+            <dt>{L("Aktion", "Action")}</dt>
             <dd>
               <ActionBadge action={detail.action} />
             </dd>
@@ -275,19 +310,24 @@ export default function RuleDetailDrawer({
               <>
                 <dt>VDOM</dt>
                 <dd>
-                  <VdomChip vdom={detail.vdom} always /> <span className="faint">Policy-ID {detail.external_id}</span>
+                  <VdomChip vdom={detail.vdom} always /> <span className="faint">{L("Policy-ID", "Policy ID")} {detail.external_id}</span>
                 </dd>
               </>
             )}
             {detail.parallel && (
               <>
-                <dt>Verbund</dt>
+                <dt>{L("Verbund", "Parallel group")}</dt>
                 <dd>
                   <b>{detail.parallel.group}</b>{" "}
-                  <span className="faint">parallele Firewalls – gleiche Policies sind zusammengefasst</span>
+                  <span className="faint">
+                    {L(
+                      "parallele Firewalls – gleiche Policies sind zusammengefasst",
+                      "parallel firewalls – identical policies are combined",
+                    )}
+                  </span>
                   {(detail.twins ?? []).length > 0 && (
                     <div>
-                      gleich auf:{" "}
+                      {L("gleich auf:", "same on:")}{" "}
                       {(detail.twins ?? []).map((t) => (
                         <span key={t.rule_id} className="chip ok" style={{ marginRight: 4 }}>
                           {t.source}
@@ -296,36 +336,53 @@ export default function RuleDetailDrawer({
                     </div>
                   )}
                   {(detail.parallel.differs ?? []).length > 0 && (
-                    <div className="faint">abweichend auf {(detail.parallel.differs ?? []).join(", ")} (siehe Findings)</div>
+                    <div className="faint">
+                      {L(
+                        `abweichend auf ${(detail.parallel.differs ?? []).join(", ")} (siehe Findings)`,
+                        `different on ${(detail.parallel.differs ?? []).join(", ")} (see findings)`,
+                      )}
+                    </div>
                   )}
                   {(detail.parallel.missing ?? []).length > 0 && (
-                    <div className="faint">fehlt auf {(detail.parallel.missing ?? []).join(", ")}</div>
+                    <div className="faint">
+                      {L(
+                        `fehlt auf ${(detail.parallel.missing ?? []).join(", ")}`,
+                        `missing on ${(detail.parallel.missing ?? []).join(", ")}`,
+                      )}
+                    </div>
                   )}
                   {isAdmin && (
                     <div style={{ marginTop: 4 }}>
                       <button
                         className="btn btn-sm"
-                        title="Die Firewalls sind nicht parallel: Regeln wieder einzeln, kein neuer Vorschlag"
+                        title={L(
+                          "Die Firewalls sind nicht parallel: Regeln wieder einzeln, kein neuer Vorschlag",
+                          "The firewalls are not parallel: rules separate again, no new suggestion",
+                        )}
                         onClick={() => {
-                          if (!window.confirm(`Verbund „${detail.parallel!.group}“ auflösen und nicht mehr vorschlagen?`)) return;
+                          const msg = L(
+                            `Verbund „${detail.parallel!.group}“ auflösen und nicht mehr vorschlagen?`,
+                            `Dissolve parallel group “${detail.parallel!.group}” and do not suggest it again?`,
+                          );
+                          if (!window.confirm(msg)) return;
                           decide(rejectParallel(detail.tenant_id, { group: detail.parallel!.group }).then(() => undefined));
                         }}
                       >
-                        Verbund auflösen
+                        {L("Verbund auflösen", "Dissolve parallel group")}
                       </button>
                     </div>
                   )}
                   {detail.parallel.lead && (
                     <div>
-                      weicht von{" "}
+                      {L("weicht von", "differs from")}{" "}
                       {onRule && detail.parallel.lead_rule_id ? (
                         <button className="linkbtn" onClick={() => onRule(detail.parallel!.lead_rule_id!)}>
                           {detail.parallel.lead}
                         </button>
                       ) : (
                         detail.parallel.lead
-                      )}{" "}
-                      ab: <span className="chip warn">{(detail.parallel.fields ?? []).join(", ")}</span>
+                      )}
+                      {L(" ab", "")}: <span className="chip warn">{(detail.parallel.fields ?? []).join(", ")}</span>
                     </div>
                   )}
                 </dd>
@@ -334,7 +391,7 @@ export default function RuleDetailDrawer({
             {/* ACI: eine Zone gibt es nur bei externen EPGs (L3Out) */}
             {!(aci && !detail.src_zone && !detail.dst_zone) && (
               <>
-                <dt>{aci ? "L3Out" : "Zonen"}</dt>
+                <dt>{aci ? "L3Out" : L("Zonen", "Zones")}</dt>
                 <dd>
                   {detail.src_zone ? <span className="chip">{detail.src_zone}</span> : <Dash />} →{" "}
                   {detail.dst_zone ? <span className="chip">{detail.dst_zone}</span> : <Dash />}
@@ -343,7 +400,7 @@ export default function RuleDetailDrawer({
             )}
             {(detail.family || detail.pair) && (
               <>
-                <dt>Familie</dt>
+                <dt>{L("Familie", "Family")}</dt>
                 <dd>
                   <FamilyMarks r={detail} onPair={onRule} />
                   {!isCustomerUser() && (
@@ -357,7 +414,7 @@ export default function RuleDetailDrawer({
                 </dd>
               </>
             )}
-            <dt>Dienste</dt>
+            <dt>{L("Dienste", "Services")}</dt>
             <dd>
               {/* Objektname der Konvention (FT_https), die Werte (tcp/443) darunter */}
               <div className="chips">
@@ -381,15 +438,21 @@ export default function RuleDetailDrawer({
               <>
                 {aci.kind !== "contract" && (
                   <>
-                    <dt>Art</dt>
+                    <dt>{L("Art", "Type")}</dt>
                     <dd>
                       {aci.kind === "taboo"
-                        ? "Taboo-Contract – verbietet diesen Verkehr zu den geschützten EPGs (jede Quelle)"
-                        : "Preferred Group – alle Mitglieder der VRF sprechen frei miteinander"}
+                        ? L(
+                            "Taboo-Contract – verbietet diesen Verkehr zu den geschützten EPGs (jede Quelle)",
+                            "Taboo contract – denies this traffic to the protected EPGs (any source)",
+                          )
+                        : L(
+                            "Preferred Group – alle Mitglieder der VRF sprechen frei miteinander",
+                            "Preferred Group – all members of the VRF communicate freely with each other",
+                          )}
                     </dd>
                   </>
                 )}
-                <dt>{aci.kind === "taboo" ? "Taboo" : aci.kind === "preferred_group" ? "Gruppe" : "Contract"}</dt>
+                <dt>{aci.kind === "taboo" ? "Taboo" : aci.kind === "preferred_group" ? L("Gruppe", "Group") : "Contract"}</dt>
                 <dd className="mono">{aci.contract ?? <Dash />}</dd>
                 {aci.kind !== "preferred_group" && (
                   <>
@@ -404,10 +467,20 @@ export default function RuleDetailDrawer({
                   {aci.scope ?? <Dash />}
                   {detail.aci_scope && (
                     <div className="faint" id="rule-scope">
-                      {detail.aci_scope.text} · {detail.aci_scope.pairs} Paar{detail.aci_scope.pairs === 1 ? "" : "e"} Consumer → Provider
+                      {L(
+                        <>
+                          {detail.aci_scope.text} · {detail.aci_scope.pairs} Paar{detail.aci_scope.pairs === 1 ? "" : "e"} Consumer → Provider
+                        </>,
+                        <>
+                          {detail.aci_scope.text} · {detail.aci_scope.pairs} pair{detail.aci_scope.pairs === 1 ? "" : "s"} Consumer → Provider
+                        </>,
+                      )}
                       {detail.aci_scope.unpaired > 0 && (
                         <span className="chip warn" style={{ marginLeft: 6 }}>
-                          {detail.aci_scope.unpaired} ohne Gegenstelle im Scope
+                          {L(
+                            `${detail.aci_scope.unpaired} ohne Gegenstelle im Scope`,
+                            `${detail.aci_scope.unpaired} without peer in scope`,
+                          )}
                         </span>
                       )}
                     </div>
@@ -415,13 +488,15 @@ export default function RuleDetailDrawer({
                 </dd>
                 {detail.aci_direction && (
                   <>
-                    <dt>Richtung</dt>
+                    <dt>{L("Richtung", "Direction")}</dt>
                     <dd id="rule-aci-direction">
                       {detail.aci_direction.both ? (
-                        <span className="chip warn">↔ beide Richtungen</span>
+                        <span className="chip warn">{L("↔ beide Richtungen", "↔ both directions")}</span>
                       ) : detail.aci_direction.replies_only ? (
                         <span className="chip warn">
-                          {detail.aci_direction.reverse.length ? "← nur Provider → Consumer" : "nur Antworten"}
+                          {detail.aci_direction.reverse.length
+                            ? L("← nur Provider → Consumer", "← only Provider → Consumer")
+                            : L("nur Antworten", "replies only")}
                         </span>
                       ) : (
                         <span className="chip">→ Consumer → Provider</span>
@@ -429,7 +504,10 @@ export default function RuleDetailDrawer({
                       <div className="faint">
                         {detail.aci_direction.text}
                         {detail.aci_direction.derived && detail.aci_direction.both
-                          ? " – aus den Filtern abgeleitet (Standard des APIC; neu einlesen für die Richtung je Subject)"
+                          ? L(
+                              " – aus den Filtern abgeleitet (Standard des APIC; neu einlesen für die Richtung je Subject)",
+                              " – derived from the filters (APIC default; collect again for the direction per subject)",
+                            )
                           : ""}
                       </div>
                     </dd>
@@ -440,7 +518,7 @@ export default function RuleDetailDrawer({
               </>
             ) : (
               <>
-                <dt>Schutz</dt>
+                <dt>{L("Schutz", "Protection")}</dt>
                 <dd className="chips">
                   {detail.protections?.length ? (
                     detail.protections.map((p) => (
@@ -452,22 +530,22 @@ export default function RuleDetailDrawer({
                     <Dash />
                   )}
                 </dd>
-                <dt>Policy-ID</dt>
+                <dt>{L("Policy-ID", "Policy ID")}</dt>
                 <dd className="mono">{detail.external_id}</dd>
                 <dt>NAT</dt>
                 <dd>
                   {detail.nat?.snat ? (
                     <span className="chip info">
-                      SNAT {detail.nat.pools.length ? detail.nat.pools.join(", ") : "Interface-IP"}
+                      SNAT {detail.nat.pools.length ? detail.nat.pools.join(", ") : L("Interface-IP", "interface IP")}
                     </span>
                   ) : (
-                    <span className="faint">kein Source-NAT</span>
+                    <span className="faint">{L("kein Source-NAT", "no source NAT")}</span>
                   )}
                   {detail.nat?.vips.length ? <span className="chip local">VIP {detail.nat.vips.join(", ")}</span> : null}
                 </dd>
                 {detail.comment && (
                   <>
-                    <dt>Kommentar</dt>
+                    <dt>{L("Kommentar", "Comment")}</dt>
                     <dd>{detail.comment}</dd>
                   </>
                 )}
@@ -478,23 +556,39 @@ export default function RuleDetailDrawer({
           {focus && (hidden > 0 || showAll) && (
             <div className="faint" id="rule-focus" style={{ margin: "10px 0 0" }}>
               {showAll
-                ? "Alle Consumer und Provider des Contracts. "
-                : `Nur die Beteiligten ${focus.label} – ${hidden} weitere Consumer bzw. Provider des Contracts ausgeblendet. `}
+                ? L("Alle Consumer und Provider des Contracts. ", "All consumers and providers of the contract. ")
+                : L(
+                    `Nur die Beteiligten ${focus.label} – ${hidden} weitere Consumer bzw. Provider des Contracts ausgeblendet. `,
+                    `Only the parties ${focus.label} – ${hidden} more consumers or providers of the contract hidden. `,
+                  )}
               <button className="linkbtn" onClick={() => setShowAll((v) => !v)}>
-                {showAll ? "nur Beteiligte" : "alle zeigen"}
+                {showAll ? L("nur Beteiligte", "parties only") : L("alle zeigen", "show all")}
               </button>
             </div>
           )}
           {/* ACI: Consumer-EPGs greifen auf die Provider-EPGs zu */}
           <div className="sub-h">
-            {aci ? (aci.kind === "taboo" ? "Quelle" : aci.kind === "preferred_group" ? "Mitglieder" : "Consumer-EPGs") : "Quellen"} ({refs("src").length || detail.num_src})
+            {aci
+              ? aci.kind === "taboo"
+                ? L("Quelle", "Source")
+                : aci.kind === "preferred_group"
+                  ? L("Mitglieder", "Members")
+                  : L("Consumer-EPGs", "Consumer EPGs")
+              : L("Quellen", "Sources")}{" "}
+            ({refs("src").length || detail.num_src})
           </div>
           <SideMarks r={detail} side="src" />
           <Side refs={refs("src")} endpoints={src} onObject={onObject} />
 
           <div className="sub-h">
-            {aci ? (aci.kind === "taboo" ? "Geschützte EPGs" : aci.kind === "preferred_group" ? "Mitglieder" : "Provider-EPGs") : "Ziele"} (
-            {refs("dst").length || detail.num_dst})
+            {aci
+              ? aci.kind === "taboo"
+                ? L("Geschützte EPGs", "Protected EPGs")
+                : aci.kind === "preferred_group"
+                  ? L("Mitglieder", "Members")
+                  : L("Provider-EPGs", "Provider EPGs")
+              : L("Ziele", "Destinations")}{" "}
+            ({refs("dst").length || detail.num_dst})
           </div>
           <SideMarks r={detail} side="dst" />
           <Side refs={refs("dst")} endpoints={dst} onObject={onObject} />
@@ -510,7 +604,9 @@ export default function RuleDetailDrawer({
 
           {svcRefs.length > 0 && (
             <>
-              <div className="sub-h">Dienste wie auf der Firewall ({svcRefs.length})</div>
+              <div className="sub-h">
+                {L("Dienste wie auf der Firewall", "Services as on the firewall")} ({svcRefs.length})
+              </div>
               {svcRefs.map((r, i) => (
                 <RefCard key={`${r.name}-${i}`} r={r} />
               ))}
@@ -519,7 +615,12 @@ export default function RuleDetailDrawer({
 
           {dst.some((e) => e.nat_target) && (
             <div style={{ marginTop: 18 }}>
-              <Note>VIP/DNAT: die externe IP wird auf das interne Ziel abgebildet (Port-Forward).</Note>
+              <Note>
+                {L(
+                  "VIP/DNAT: die externe IP wird auf das interne Ziel abgebildet (Port-Forward).",
+                  "VIP/DNAT: the external IP is mapped to the internal destination (port forward).",
+                )}
+              </Note>
             </div>
           )}
         </>

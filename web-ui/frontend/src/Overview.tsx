@@ -7,6 +7,7 @@ import CollectDialog, { CollectAllDialog } from "./CollectDialog";
 import { RunsTable } from "./Runs";
 import { ErrorBox, Icon, Loading, PageHead } from "./ui";
 import { FoldTitle, useFolds } from "./fold";
+import { L } from "./i18n";
 
 const RECENT = 8; // letzte Läufe; offene kommen immer dazu (auch ältere, siehe Läufe-Ansicht)
 
@@ -128,31 +129,34 @@ export default function Overview({
   return (
     <>
       <PageHead
-        title="Übersicht"
+        title={L("Übersicht", "Overview")}
         actions={
           me.isOperator &&
           !customer && (
             <>
               {tenantId !== null && (
                 <button className="btn btn-ghost btn-sm" onClick={() => setCollectAllOpen(true)}>
-                  Alle einlesen
+                  {L("Alle einlesen", "Collect all")}
                 </button>
               )}
               <button className="btn btn-primary btn-sm" onClick={() => setCollectOpen(true)}>
-                <Icon name="play" size={13} /> Jetzt einlesen
+                <Icon name="play" size={13} /> {L("Jetzt einlesen", "Collect now")}
               </button>
             </>
           )
         }
       >
-        Mandant „{tenantLabel}“ – Stand der letzten Importe.
+        {L(
+          <>Mandant „{tenantLabel}“ – Stand der letzten Importe.</>,
+          <>Tenant “{tenantLabel}” – state of the latest imports.</>,
+        )}
       </PageHead>
 
-      <ErrorBox error={stats.error} prefix="Daten laden" />
+      <ErrorBox error={stats.error} prefix={L("Daten laden", "Loading data")} />
       {health && health.problems > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-head">
-            <h2>Betriebszustand</h2>
+            <h2>{L("Betriebszustand", "Health")}</h2>
             <HealthChip health={health} />
           </div>
           <div className="card-body scroll">
@@ -163,35 +167,42 @@ export default function Overview({
 
       <div className="kpis">
         <button className="kpi" onClick={() => onGo("regeln")}>
-          <div className="k-label">Regeln &amp; Contracts</div>
+          <div className="k-label">{L("Regeln & Contracts", "Rules & contracts")}</div>
           <div className="k-val">{val(rulesCount)}</div>
           <div className="k-sub">
             {aciCount > 0 ? `${fwCount} Firewall · ${aciCount} ACI · ` : ""}
-            {usedSystems.length} Quellsystem{usedSystems.length === 1 ? "" : "e"}
+            {L(
+              `${usedSystems.length} Quellsystem${usedSystems.length === 1 ? "" : "e"}`,
+              `${usedSystems.length} source system${usedSystems.length === 1 ? "" : "s"}`,
+            )}
             {usedSystems.length > 0 && ` · ${usedSystems.map(systemName).join(", ")}`}
           </div>
         </button>
         <button className="kpi" onClick={() => onGo("nat")}>
           <div className="k-label">NAT / VIPs</div>
           <div className="k-val">{stats.nat === null ? "…" : stats.nat}</div>
-          <div className="k-sub">publizierte Dienste &amp; SNAT-Pools</div>
+          <div className="k-sub">{L("publizierte Dienste & SNAT-Pools", "published services & SNAT pools")}</div>
         </button>
         <button className="kpi" onClick={() => onGo("findings")}>
-          <div className="k-label">Offene Findings</div>
+          <div className="k-label">{L("Offene Findings", "Open findings")}</div>
           <div className={`k-val ${openFindings === 0 ? "ok" : "warn"}`}>
             {stats.findings === null ? "…" : openFindings}
           </div>
           <div className="k-sub">
-            {openFindings === 0 ? "alle Objekte aufgelöst" : "Datenqualität prüfen"}
+            {openFindings === 0
+              ? L("alle Objekte aufgelöst", "all objects resolved")
+              : L("Datenqualität prüfen", "Check data quality")}
           </div>
         </button>
         <div className="kpi">
-          <div className="k-label">Abdeckung</div>
+          <div className="k-label">{L("Abdeckung", "Coverage")}</div>
           <div className={`k-val ${coverage === 100 ? "ok" : coverage === null ? "" : "warn"}`}>
             {rules === null ? "…" : coverage === null ? "–" : `${coverage}%`}
           </div>
           <div className="k-sub">
-            {unmatched > 0 ? `${unmatched} Endpunkte ohne SoT-Treffer` : "Endpunkte gegen die SoT"}
+            {unmatched > 0
+              ? L(`${unmatched} Endpunkte ohne SoT-Treffer`, `${unmatched} endpoints without SoT match`)
+              : L("Endpunkte gegen die SoT", "Endpoints against the SoT")}
           </div>
         </div>
       </div>
@@ -200,34 +211,37 @@ export default function Overview({
         {!customer && (
           <div className="card">
             <div className="card-head">
-              <FoldTitle fold={runsFold}>Letzte Läufe</FoldTitle>
+              <FoldTitle fold={runsFold}>{L("Letzte Läufe", "Recent runs")}</FoldTitle>
               {openTotal > 0 && (
-                <span className="chip info" title="wartet oder läuft">
-                  {openTotal} offen
+                <span className="chip info" title={L("wartet oder läuft", "waiting or running")}>
+                  {L(`${openTotal} offen`, `${openTotal} open`)}
                 </span>
               )}
               <div className="spacer" />
               <button className="btn btn-ghost btn-sm" onClick={() => loadRuns()}>
-                Aktualisieren
+                {L("Aktualisieren", "Refresh")}
               </button>
               {me.isOperator && (
                 <button className="btn btn-ghost btn-sm" onClick={() => setCollectOpen(true)}>
-                  Jetzt einlesen
+                  {L("Jetzt einlesen", "Collect now")}
                 </button>
               )}
             </div>
             {runsFold.open && (
             <>
             <div className="card-body scroll tall">
-              <ErrorBox error={runsErr} prefix="Läufe laden" />
+              <ErrorBox error={runsErr} prefix={L("Läufe laden", "Loading runs")} />
               {runs === null ? (
                 <Loading />
               ) : runs.length === 0 ? (
                 <div className="empty">
-                  <div className="big">Noch keine Läufe</div>
+                  <div className="big">{L("Noch keine Läufe", "No runs yet")}</div>
                   {me.isOperator
-                    ? "Mit „Jetzt einlesen“ ein Quellsystem zentral oder über einen Agenten erfassen."
-                    : "Ein Operator kann Quellsysteme einlesen."}
+                    ? L(
+                        "Mit „Jetzt einlesen“ ein Quellsystem zentral oder über einen Agenten erfassen.",
+                        "Use “Collect now” to collect a source system centrally or via an agent.",
+                      )
+                    : L("Ein Operator kann Quellsysteme einlesen.", "An operator can collect source systems.")}
                 </div>
               ) : (
                 <RunsTable
@@ -241,14 +255,25 @@ export default function Overview({
             {runsTotal > 0 && (
               <div className="card-foot">
                 <button className="linkbtn" onClick={() => onGo("laeufe")}>
-                  Alle Läufe ({runsTotal}) →
+                  {L(`Alle Läufe (${runsTotal}) →`, `All runs (${runsTotal}) →`)}
                 </button>
-                {openTotal > 100 && ` · nur die neuesten 100 offenen hier, alle in der Ansicht „Läufe“`}
+                {openTotal > 100 &&
+                  L(
+                    ` · nur die neuesten 100 offenen hier, alle in der Ansicht „Läufe“`,
+                    ` · only the newest 100 open ones here, all in the “Runs” view`,
+                  )}
               </div>
             )}
             {runs?.some((r) => r.status === "queued" && r.execution === "external") && (
               <div className="card-foot">
-                Externe Läufe warten, bis ein Agent sie per <code>--poll</code> abholt.
+                {L(
+                  <>
+                    Externe Läufe warten, bis ein Agent sie per <code>--poll</code> abholt.
+                  </>,
+                  <>
+                    External runs wait until an agent picks them up via <code>--poll</code>.
+                  </>,
+                )}
               </div>
             )}
             </>
@@ -258,14 +283,17 @@ export default function Overview({
 
         <div className="card">
           <div className="card-head">
-            <FoldTitle fold={zoneFold}>Regeln je Zone (Ziel)</FoldTitle>
+            <FoldTitle fold={zoneFold}>{L("Regeln je Zone (Ziel)", "Rules per zone (destination)")}</FoldTitle>
           </div>
           {!zoneFold.open ? null : rules === null ? (
             <Loading />
           ) : zoneRows.length === 0 ? (
             <div className="empty">
-              <div className="big">Keine Regeln</div>
-              Nach dem ersten Lauf erscheinen hier die Ziel-Zonen.
+              <div className="big">{L("Keine Regeln", "No rules")}</div>
+              {L(
+                "Nach dem ersten Lauf erscheinen hier die Ziel-Zonen.",
+                "The destination zones appear here after the first run.",
+              )}
             </div>
           ) : (
             <>

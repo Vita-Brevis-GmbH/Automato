@@ -19,23 +19,24 @@ import {
 } from "./api";
 import { HealthChip, HealthTable } from "./Health";
 import { Dash, ErrorBox, fmtTime, Loading, Note, PageHead } from "./ui";
+import { L } from "./i18n";
 
 const SIG: Record<string, [string, string]> = {
-  signed: ["ok", "signiert, Signatur gültig"],
-  unchecked: ["warn", "signiert, aber kein Schlüssel zum Prüfen hinterlegt"],
-  unsigned: ["warn", "nicht signiert"],
-  invalid: ["crit", "Signatur ungültig"],
-  no_package: ["na", "kein Agent-Paket im Image"],
+  signed: ["ok", L("signiert, Signatur gültig", "signed, signature valid")],
+  unchecked: ["warn", L("signiert, aber kein Schlüssel zum Prüfen hinterlegt", "signed, but no key stored for verification")],
+  unsigned: ["warn", L("nicht signiert", "not signed")],
+  invalid: ["crit", L("Signatur ungültig", "signature invalid")],
+  no_package: ["na", L("kein Agent-Paket im Image", "no agent package in the image")],
 };
 const MTLS: Record<string, [string, string]> = {
-  off: ["warn", "aus – Agent-Token genügt"],
-  require: ["ok", "nur über das mTLS-Gateway"],
-  bind: ["ok", "nur über das mTLS-Gateway, Zertifikat = Agent"],
+  off: ["warn", L("aus – Agent-Token genügt", "off – agent token is sufficient")],
+  require: ["ok", L("nur über das mTLS-Gateway", "only via the mTLS gateway")],
+  bind: ["ok", L("nur über das mTLS-Gateway, Zertifikat = Agent", "only via the mTLS gateway, certificate = agent")],
 };
 const KEY: Record<string, [string, string]> = {
-  setting: ["ok", "aus der Konfiguration / Secret-Provider"],
-  file: ["info", "Schlüsseldatei im Daten-Volume (mitsichern!)"],
-  missing: ["warn", "noch nicht erzeugt"],
+  setting: ["ok", L("aus der Konfiguration / Secret-Provider", "from the configuration / secrets provider")],
+  file: ["info", L("Schlüsseldatei im Daten-Volume (mitsichern!)", "key file in the data volume (include in backup!)")],
+  missing: ["warn", L("noch nicht erzeugt", "not generated yet")],
 };
 
 function Chip({ map, value }: { map: Record<string, [string, string]>; value: string }) {
@@ -45,9 +46,9 @@ function Chip({ map, value }: { map: Record<string, [string, string]>; value: st
 
 const CONN: Record<ConnectionItem["status"], [string, string]> = {
   ok: ["ok", "ok"],
-  info: ["na", "Hinweis"],
-  warn: ["warn", "Warnung"],
-  error: ["crit", "Fehler"],
+  info: ["na", L("Hinweis", "Note")],
+  warn: ["warn", L("Warnung", "Warning")],
+  error: ["crit", L("Fehler", "Error")],
 };
 
 // Verbindungen (0.40.0): auf Knopfdruck vom Orchestrator-Container aus - derselbe Weg wie
@@ -68,31 +69,41 @@ function Connections() {
   return (
     <div className="card" id="connections" style={{ marginBottom: 16 }}>
       <div className="card-head">
-        <h2>Verbindungen</h2>
+        <h2>{L("Verbindungen", "Connections")}</h2>
         {status && report && (
           <span className={`chip ${status[0]}`}>
-            {report.problems ? `${report.problems} Problem${report.problems === 1 ? "" : "e"}` : "alles erreichbar"}
+            {report.problems
+              ? L(
+                  `${report.problems} Problem${report.problems === 1 ? "" : "e"}`,
+                  `${report.problems} problem${report.problems === 1 ? "" : "s"}`,
+                )
+              : L("alles erreichbar", "all reachable")}
           </span>
         )}
         <span className="faint" style={{ fontSize: 12 }}>
-          vom Orchestrator-Container aus – derselbe Weg wie Einlesen und NetBox-Sync
-          {report?.container.network ? ` · Container-Netz ${report.container.network}` : ""}
+          {L(
+            "vom Orchestrator-Container aus – derselbe Weg wie Einlesen und NetBox-Sync",
+            "from the orchestrator container – the same path as collecting and NetBox sync",
+          )}
+          {report?.container.network
+            ? L(` · Container-Netz ${report.container.network}`, ` · container network ${report.container.network}`)
+            : ""}
         </span>
         <div className="spacer" />
         <button className="btn btn-primary btn-sm" onClick={run} disabled={busy}>
-          {busy ? "Prüfe…" : report ? "Erneut prüfen" : "Jetzt prüfen"}
+          {busy ? L("Prüfe…", "Checking…") : report ? L("Erneut prüfen", "Check again") : L("Jetzt prüfen", "Check now")}
         </button>
       </div>
-      <ErrorBox error={err} prefix="Verbindungen prüfen" />
+      <ErrorBox error={err} prefix={L("Verbindungen prüfen", "Check connections")} />
       {report ? (
         <div className="card-body scroll">
           <table>
             <thead>
               <tr>
-                <th>Ziel</th>
-                <th>Ergebnis</th>
-                <th>Schritte</th>
-                <th>Abhilfe</th>
+                <th>{L("Ziel", "Target")}</th>
+                <th>{L("Ergebnis", "Result")}</th>
+                <th>{L("Schritte", "Steps")}</th>
+                <th>{L("Abhilfe", "Remedy")}</th>
               </tr>
             </thead>
             <tbody>
@@ -120,10 +131,13 @@ function Connections() {
                         <code>{i.ufw.command}</code>
                         <button
                           className="btn btn-ghost btn-sm"
-                          title="Befehl kopieren – auf dem Docker-Host als root ausführen"
+                          title={L(
+                            "Befehl kopieren – auf dem Docker-Host als root ausführen",
+                            "Copy command – run it as root on the Docker host",
+                          )}
                           onClick={() => void navigator.clipboard?.writeText(i.ufw!.command)}
                         >
-                          Kopieren
+                          {L("Kopieren", "Copy")}
                         </button>
                       </div>
                     )}
@@ -133,23 +147,43 @@ function Connections() {
             </tbody>
           </table>
           <div className="faint" style={{ padding: "8px 12px" }}>
-            geprüft {fmtTime(report.checked_at)} · auf der VM dasselbe mit <code>deploy/aufbau.sh pruefen</code>; Firewall-Regeln
-            setzt <code>deploy/aufbau.sh firewall --anwenden</code>
+            {L(
+              <>
+                geprüft {fmtTime(report.checked_at)} · auf der VM dasselbe mit <code>deploy/aufbau.sh pruefen</code>; Firewall-Regeln
+                setzt <code>deploy/aufbau.sh firewall --anwenden</code>
+              </>,
+              <>
+                checked {fmtTime(report.checked_at)} · the same on the VM with <code>deploy/aufbau.sh pruefen</code>; firewall
+                rules are set by <code>deploy/aufbau.sh firewall --anwenden</code>
+              </>,
+            )}
           </div>
         </div>
       ) : (
         <div className="card-body pad faint">
-          Prüft Datenbank, Redis (Warteschlange zum zentralen Worker), Keycloak bei OIDC und jedes zentral gelesene Quellsystem
-          (Name, TCP, bei NetBox die API mit dem Lese-Token – nur lesend). Systeme, die ein Agent liest, prüft der Agent selbst.
+          {L(
+            <>
+              Prüft Datenbank, Redis (Warteschlange zum zentralen Worker), Keycloak bei OIDC und jedes zentral gelesene Quellsystem
+              (Name, TCP, bei NetBox die API mit dem Lese-Token – nur lesend). Systeme, die ein Agent liest, prüft der Agent selbst.
+            </>,
+            <>
+              Checks the database, Redis (queue to the central worker), Keycloak with OIDC and every centrally collected source
+              system (name, TCP, for NetBox the API with the read token – read-only). Systems collected by an agent are checked by
+              the agent itself.
+            </>,
+          )}
         </div>
       )}
     </div>
   );
 }
 
-const days = (n: number) => (n > 0 ? `${n} Tage` : "nie löschen");
+const days = (n: number) => (n > 0 ? L(`${n} Tage`, `${n} days`) : L("nie löschen", "never delete"));
 const counts = (c: RetentionCounts) =>
-  `${c.runs} Läufe · ${c.sync_plans} NetBox-Sync-Vorschauen · ${c.audit} Audit-Einträge · ${c.l2 ?? 0} MAC-/ARP-Einträge`;
+  L(
+    `${c.runs} Läufe · ${c.sync_plans} NetBox-Sync-Vorschauen · ${c.audit} Audit-Einträge · ${c.l2 ?? 0} MAC-/ARP-Einträge`,
+    `${c.runs} runs · ${c.sync_plans} NetBox sync previews · ${c.audit} audit entries · ${c.l2 ?? 0} MAC/ARP entries`,
+  );
 
 // Aufbewahrung (0.48.0, R14): beendete Läufe, alte Sync-Vorschauen und Audit-Einträge nach Frist
 // löschen; der aktuelle Stand bleibt. Der Zeitplan räumt täglich auf, hier auch von Hand.
@@ -167,7 +201,7 @@ function Retention() {
     };
   }, []);
   const purge = () => {
-    if (!r || !window.confirm(`Jetzt löschen: ${counts(r.due)}?`)) return;
+    if (!r || !window.confirm(L(`Jetzt löschen: ${counts(r.due)}?`, `Delete now: ${counts(r.due)}?`))) return;
     setBusy(true);
     setErr(null);
     purgeRetention()
@@ -179,47 +213,69 @@ function Retention() {
   return (
     <div className="card" id="retention">
       <div className="card-head">
-        <h2>Aufbewahrung</h2>
-        {r && (due ? <span className="chip warn">{due} fällig</span> : <span className="chip ok">nichts fällig</span>)}
+        <h2>{L("Aufbewahrung", "Retention")}</h2>
+        {r &&
+          (due ? (
+            <span className="chip warn">{L(<>{due} fällig</>, <>{due} due</>)}</span>
+          ) : (
+            <span className="chip ok">{L("nichts fällig", "nothing due")}</span>
+          ))}
         <div className="spacer" />
         {r?.active && (
           <button className="btn btn-sm" onClick={purge} disabled={busy || !due}>
-            {busy ? "Räume auf…" : "Jetzt aufräumen"}
+            {busy ? L("Räume auf…", "Cleaning up…") : L("Jetzt aufräumen", "Clean up now")}
           </button>
         )}
       </div>
-      <ErrorBox error={err} prefix="Aufbewahrung" />
+      <ErrorBox error={err} prefix={L("Aufbewahrung", "Retention")} />
       {r && (
         <div className="card-body pad">
           <dl className="kv">
-            <dt>Läufe</dt>
+            <dt>{L("Läufe", "Runs")}</dt>
             <dd>{days(r.policy.runs_days)}</dd>
             <dt>NetBox-Sync</dt>
             <dd>{days(r.policy.sync_days)}</dd>
             <dt>Audit-Log</dt>
             <dd>{days(r.policy.audit_days)}</dd>
-            <dt>MAC/ARP der Switches</dt>
+            <dt>{L("MAC/ARP der Switches", "MAC/ARP of the switches")}</dt>
             <dd>{days(r.policy.l2_days ?? 30)}</dd>
-            <dt>Fällig</dt>
+            <dt>{L("Fällig", "Due")}</dt>
             <dd>{counts(r.due)}</dd>
-            <dt>Zuletzt</dt>
+            <dt>{L("Zuletzt", "Last")}</dt>
             <dd>
               {r.last ? (
                 <>
                   {fmtTime(r.last.at)} <span className="faint">({r.last.actor})</span>
-                  <div className="faint">gelöscht: {counts(r.last.counts)}</div>
+                  <div className="faint">
+                    {L("gelöscht:", "deleted:")} {counts(r.last.counts)}
+                  </div>
                 </>
               ) : (
                 <Dash />
               )}
             </dd>
           </dl>
-          {r.deleted && <Note>Gelöscht: {counts(r.deleted)}</Note>}
+          {r.deleted && (
+            <Note>
+              {L("Gelöscht:", "Deleted:")} {counts(r.deleted)}
+            </Note>
+          )}
           <div className="faint" style={{ marginTop: 8 }}>
-            Es bleiben immer: der aktuelle Stand (Läufe, auf die Regeln, Objekte, NAT, VMs bzw. der Referenzstand zeigen), je
-            Quellsystem der neuste und der neuste erfolgreiche Lauf, offene Läufe und die neuste Vorschau je NetBox.{" "}
-            {r.scheduled ? "Der Zeitplan räumt täglich auf." : "Zeitplan aus – nur von Hand bzw. automato purge."} Fristen
-            in <code>.env</code>: <code>AUTOMATO_RETENTION_RUNS_DAYS</code>, <code>…_SYNC_DAYS</code>, <code>…_AUDIT_DAYS</code>.
+            {L(
+              <>
+                Es bleiben immer: der aktuelle Stand (Läufe, auf die Regeln, Objekte, NAT, VMs bzw. der Referenzstand zeigen), je
+                Quellsystem der neuste und der neuste erfolgreiche Lauf, offene Läufe und die neuste Vorschau je NetBox.{" "}
+                {r.scheduled ? "Der Zeitplan räumt täglich auf." : "Zeitplan aus – nur von Hand bzw. automato purge."} Fristen
+                in <code>.env</code>: <code>AUTOMATO_RETENTION_RUNS_DAYS</code>, <code>…_SYNC_DAYS</code>, <code>…_AUDIT_DAYS</code>.
+              </>,
+              <>
+                Always kept: the current state (runs referenced by rules, objects, NAT, VMs or the reference data), per
+                source system the newest and the newest successful run, open runs and the newest preview per NetBox.{" "}
+                {r.scheduled ? "The schedule cleans up daily." : "Schedule off – only by hand or automato purge."} Retention
+                periods in <code>.env</code>: <code>AUTOMATO_RETENTION_RUNS_DAYS</code>, <code>…_SYNC_DAYS</code>,{" "}
+                <code>…_AUDIT_DAYS</code>.
+              </>,
+            )}
           </div>
         </div>
       )}
@@ -239,14 +295,22 @@ export default function System() {
   return (
     <>
       <PageHead title="System">
-        Betriebsstand der Plattform. Updates, Rückfall, Prüfung des Aufbaus und Sicherungen laufen auf der VM
-        (<code>deploy/update.sh</code>, <code>deploy/aufbau.sh</code>, <code>deploy/backup/</code>).
+        {L(
+          <>
+            Betriebsstand der Plattform. Updates, Rückfall, Prüfung des Aufbaus und Sicherungen laufen auf der VM
+            (<code>deploy/update.sh</code>, <code>deploy/aufbau.sh</code>, <code>deploy/backup/</code>).
+          </>,
+          <>
+            Operating status of the platform. Updates, rollback, setup checks and backups run on the VM
+            (<code>deploy/update.sh</code>, <code>deploy/aufbau.sh</code>, <code>deploy/backup/</code>).
+          </>,
+        )}
       </PageHead>
-      <ErrorBox error={err} prefix="Status laden" />
+      <ErrorBox error={err} prefix={L("Status laden", "Load status")} />
       {health && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-head">
-            <h2>Betriebszustand</h2>
+            <h2>{L("Betriebszustand", "Health")}</h2>
             <HealthChip health={health} />
           </div>
           <div className="card-body scroll">
@@ -261,11 +325,11 @@ export default function System() {
           <div className="stack">
             <div className="card">
               <div className="card-head">
-                <h2>Version &amp; Datenbank</h2>
+                <h2>{L("Version & Datenbank", "Version & database")}</h2>
               </div>
               <div className="card-body pad">
                 <dl className="kv">
-                  <dt>Plattform</dt>
+                  <dt>{L("Plattform", "Platform")}</dt>
                   <dd className="mono">{s.version}</dd>
                   <dt>Migration</dt>
                   <dd>
@@ -273,21 +337,22 @@ export default function System() {
                     {" / Code "}
                     <span className="mono">{s.database.head ?? "–"}</span>{" "}
                     {s.database.up_to_date ? (
-                      <span className="chip ok">aktuell</span>
+                      <span className="chip ok">{L("aktuell", "up to date")}</span>
                     ) : (
-                      <span className="chip warn">abweichend</span>
+                      <span className="chip warn">{L("abweichend", "different")}</span>
                     )}
                   </dd>
-                  <dt>DB-Rolle</dt>
+                  <dt>{L("DB-Rolle", "DB role")}</dt>
                   <dd>
                     {s.database.role ? (
                       <>
                         <span className="mono">{s.database.role.role}</span>{" "}
                         {s.database.role.separated ? (
-                          <span className="chip ok">ohne DDL</span>
+                          <span className="chip ok">{L("ohne DDL", "without DDL")}</span>
                         ) : (
                           <span className="chip warn">
-                            {s.database.role.superuser ? "Superuser" : "Eigentümer"} – darf Tabellen ändern
+                            {s.database.role.superuser ? "Superuser" : L("Eigentümer", "Owner")}
+                            {L(" – darf Tabellen ändern", " – may change tables")}
                           </span>
                         )}
                       </>
@@ -295,39 +360,63 @@ export default function System() {
                       <Dash />
                     )}
                   </dd>
-                  <dt>Umgebung</dt>
+                  <dt>{L("Umgebung", "Environment")}</dt>
                   <dd className="mono">{s.security.environment}</dd>
                 </dl>
                 {s.database.role && !s.database.role.separated && (
                   <Note>
-                    Getrennte Rollen einrichten: <code>deploy/aufbau.sh db-rollen</code> – die Migration läuft als Eigentümer
-                    (Dienst <code>migrate</code>), der Orchestrator mit einer Rolle ohne DDL.
+                    {L(
+                      <>
+                        Getrennte Rollen einrichten: <code>deploy/aufbau.sh db-rollen</code> – die Migration läuft als Eigentümer
+                        (Dienst <code>migrate</code>), der Orchestrator mit einer Rolle ohne DDL.
+                      </>,
+                      <>
+                        Set up separate roles: <code>deploy/aufbau.sh db-rollen</code> – the migration runs as owner
+                        (service <code>migrate</code>), the orchestrator with a role without DDL.
+                      </>,
+                    )}
                   </Note>
                 )}
               </div>
             </div>
             <div className="card">
               <div className="card-head">
-                <h2>Collector-Agenten</h2>
+                <h2>{L("Collector-Agenten", "Collector agents")}</h2>
               </div>
               <div className="card-body pad">
                 <dl className="kv">
-                  <dt>Agent-Paket</dt>
+                  <dt>{L("Agent-Paket", "Agent package")}</dt>
                   <dd className="mono">{s.agent_package.version ?? <Dash />}</dd>
-                  <dt>Signatur</dt>
+                  <dt>{L("Signatur", "Signature")}</dt>
                   <dd>
                     <Chip map={SIG} value={s.agent_package.signature} />
                   </dd>
-                  <dt>Aktuell</dt>
+                  <dt>{L("Aktuell", "Current")}</dt>
                   <dd>
-                    {s.agent_package.agents_current} von {s.agent_package.agents} Agenten melden diese Version
+                    {L(
+                      <>
+                        {s.agent_package.agents_current} von {s.agent_package.agents} Agenten melden diese Version
+                      </>,
+                      <>
+                        {s.agent_package.agents_current} of {s.agent_package.agents} agents report this version
+                      </>,
+                    )}
                   </dd>
                 </dl>
                 {s.agent_package.signature !== "signed" && s.agent_package.version && (
                   <Note>
-                    Paket offline signieren: <code>automato agent-package manifest</code> →{" "}
-                    <code>scripts/agent_signing.py sign</code> → <code>automato agent-package install-signature</code>.
-                    Agenten mit <code>AUTOMATO_AGENT_SIGNING_PUBKEY</code> installieren nur signierte Updates.
+                    {L(
+                      <>
+                        Paket offline signieren: <code>automato agent-package manifest</code> →{" "}
+                        <code>scripts/agent_signing.py sign</code> → <code>automato agent-package install-signature</code>.
+                        Agenten mit <code>AUTOMATO_AGENT_SIGNING_PUBKEY</code> installieren nur signierte Updates.
+                      </>,
+                      <>
+                        Sign the package offline: <code>automato agent-package manifest</code> →{" "}
+                        <code>scripts/agent_signing.py sign</code> → <code>automato agent-package install-signature</code>.
+                        Agents with <code>AUTOMATO_AGENT_SIGNING_PUBKEY</code> only install signed updates.
+                      </>,
+                    )}
                   </Note>
                 )}
               </div>
@@ -336,87 +425,100 @@ export default function System() {
           <div className="stack">
             <div className="card">
               <div className="card-head">
-                <h2>Sicherheit</h2>
+                <h2>{L("Sicherheit", "Security")}</h2>
               </div>
               <div className="card-body pad">
                 <dl className="kv">
-                  <dt>Anmeldung</dt>
+                  <dt>{L("Anmeldung", "Login")}</dt>
                   <dd>
                     {s.security.auth_mode === "oidc" ? (
                       <span className="chip ok">OIDC (Keycloak)</span>
                     ) : (
-                      <span className="chip warn">dev – ohne Login</span>
+                      <span className="chip warn">{L("dev – ohne Login", "dev – no login")}</span>
                     )}
                   </dd>
-                  <dt>Intern</dt>
+                  <dt>{L("Intern", "Internal")}</dt>
                   <dd>
                     {s.security.internal_tls?.enabled ? (
                       <>
                         <span className={`chip ${(s.security.internal_tls.days_left ?? 0) < 30 ? "warn" : "ok"}`}>
-                          TLS mit eigener CA
+                          {L("TLS mit eigener CA", "TLS with own CA")}
                         </span>{" "}
                         {s.security.internal_tls.not_after && (
-                          <span className="faint">Zertifikat bis {fmtTime(s.security.internal_tls.not_after)}</span>
+                          <span className="faint">
+                            {L("Zertifikat bis", "Certificate until")} {fmtTime(s.security.internal_tls.not_after)}
+                          </span>
                         )}
                         {s.security.internal_tls.database && (
-                          <div className="faint">Datenbank {s.security.internal_tls.database}</div>
+                          <div className="faint">
+                            {L("Datenbank", "Database")} {s.security.internal_tls.database}
+                          </div>
                         )}
                       </>
                     ) : (
-                      <span className="chip warn">unverschlüsselt – deploy/aufbau.sh tls-intern</span>
+                      <span className="chip warn">
+                        {L("unverschlüsselt – deploy/aufbau.sh tls-intern", "unencrypted – deploy/aufbau.sh tls-intern")}
+                      </span>
                     )}
                   </dd>
-                  <dt>Agent-Kanal</dt>
+                  <dt>{L("Agent-Kanal", "Agent channel")}</dt>
                   <dd>
                     <Chip map={MTLS} value={s.security.internal_mtls_mode} />
                   </dd>
                   <dt>Audit-Log</dt>
                   <dd>
                     {s.security.audit_encryption ? (
-                      <span className="chip ok">verschlüsselt</span>
+                      <span className="chip ok">{L("verschlüsselt", "encrypted")}</span>
                     ) : (
-                      <span className="chip warn">Klartext</span>
+                      <span className="chip warn">{L("Klartext", "plain text")}</span>
                     )}
                   </dd>
-                  <dt>Zugangsdaten</dt>
+                  <dt>{L("Zugangsdaten", "Credentials")}</dt>
                   <dd>
-                    verschlüsselt, Schlüssel: <Chip map={KEY} value={s.security.credentials_key} />
+                    {L("verschlüsselt, Schlüssel:", "encrypted, key:")} <Chip map={KEY} value={s.security.credentials_key} />
                   </dd>
                 </dl>
               </div>
             </div>
             <div className="card">
               <div className="card-head">
-                <h2>Zeitplan &amp; Sicherung</h2>
+                <h2>{L("Zeitplan & Sicherung", "Schedule & backup")}</h2>
               </div>
               <div className="card-body pad">
                 <dl className="kv">
-                  <dt>Zeitplan</dt>
+                  <dt>{L("Zeitplan", "Schedule")}</dt>
                   <dd>
                     {s.scheduler.enabled ? (
-                      <span className="chip ok">aktiv</span>
+                      <span className="chip ok">{L("aktiv", "active")}</span>
                     ) : (
-                      <span className="chip warn">aus</span>
+                      <span className="chip warn">{L("aus", "off")}</span>
                     )}{" "}
-                    {s.scheduler.scheduled_sources} Quellsystem{s.scheduler.scheduled_sources === 1 ? "" : "e"} ·{" "}
+                    {L(
+                      <>
+                        {s.scheduler.scheduled_sources} Quellsystem{s.scheduler.scheduled_sources === 1 ? "" : "e"} ·{" "}
+                      </>,
+                      <>
+                        {s.scheduler.scheduled_sources} source system{s.scheduler.scheduled_sources === 1 ? "" : "s"} ·{" "}
+                      </>,
+                    )}
                     {s.scheduler.timezone}
                   </dd>
-                  <dt>Nächster Lauf</dt>
+                  <dt>{L("Nächster Lauf", "Next run")}</dt>
                   <dd>{s.scheduler.next_run_at ? fmtTime(s.scheduler.next_run_at) : <Dash />}</dd>
-                  <dt>Letzte Sicherung</dt>
+                  <dt>{L("Letzte Sicherung", "Last backup")}</dt>
                   <dd>
                     {s.backup?.at ? (
                       <>
                         {fmtTime(s.backup.at)}{" "}
                         {s.backup.encrypted ? (
-                          <span className="chip ok">verschlüsselt</span>
+                          <span className="chip ok">{L("verschlüsselt", "encrypted")}</span>
                         ) : (
-                          <span className="chip warn">unverschlüsselt</span>
+                          <span className="chip warn">{L("unverschlüsselt", "unencrypted")}</span>
                         )}
                         {s.backup.file && <div className="faint mono">{s.backup.file}</div>}
                       </>
                     ) : (
-                      <span className="chip warn">keine bekannt</span>
+                      <span className="chip warn">{L("keine bekannt", "none known")}</span>
                     )}
                   </dd>
                 </dl>

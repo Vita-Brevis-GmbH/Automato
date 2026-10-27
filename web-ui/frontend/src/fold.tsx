@@ -1,6 +1,7 @@
 // Zuklappbare Bereiche (0.73.0, Anwender: Übersicht in der Applikations-Doku). Der Zustand je
 // Bereich bleibt im Browser (localStorage); beim Drucken sind die gewählten Bereiche offen.
 import { useCallback, useState } from "react";
+import { L } from "./i18n";
 
 export interface Fold {
   open: boolean;
@@ -61,7 +62,7 @@ export function FoldTitle({ fold, children, id }: { fold?: Fold; children: React
       role="button"
       tabIndex={0}
       aria-expanded={fold.open}
-      title={fold.open ? "zuklappen" : "aufklappen"}
+      title={fold.open ? L("zuklappen", "collapse") : L("aufklappen", "expand")}
       onClick={fold.toggle}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {

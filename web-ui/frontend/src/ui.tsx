@@ -1,6 +1,7 @@
 // Gemeinsame Darstellungs-Bausteine: Icons, Chips/Badges, Seitenkopf, Fehler, Modal.
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { describeError } from "./api";
+import { L, locale } from "./i18n";
 
 const ICONS: Record<string, ReactNode> = {
   overview: (
@@ -199,7 +200,9 @@ export function PageHead({
         {children && (
           <p
             className={`page-help${help ? " open" : ""}`}
-            title={help ? "Erklärung zuklappen" : "Erklärung aufklappen"}
+            title={
+              help ? L("Erklärung zuklappen", "Collapse explanation") : L("Erklärung aufklappen", "Expand explanation")
+            }
             onClick={toggle}
           >
             {children}
@@ -217,9 +220,12 @@ export function SharedChip({ shared }: { shared?: boolean }) {
   return (
     <span
       className="chip na shared-chip"
-      title="geteilter Teil der Umgebung – gehört nicht dem gewählten Kunden allein (z. B. Tenant common, VDOM für mehrere Kunden)"
+      title={L(
+        "geteilter Teil der Umgebung – gehört nicht dem gewählten Kunden allein (z. B. Tenant common, VDOM für mehrere Kunden)",
+        "shared part of the environment – does not belong to the selected customer alone (e.g. tenant common, VDOM for several customers)",
+      )}
     >
-      geteilt
+      {L("geteilt", "shared")}
     </span>
   );
 }
@@ -257,7 +263,7 @@ export function ErrorBox({
         {text}
       </div>
       {onClose && (
-        <button className="linkbtn x" onClick={onClose} aria-label="Schliessen">
+        <button className="linkbtn x" onClick={onClose} aria-label={L("Schliessen", "Close")}>
           ✕
         </button>
       )}
@@ -339,13 +345,13 @@ export function SecretInput({
         {...NO_FILL}
       />
       <button className="btn btn-ghost btn-sm" type="button" onClick={() => setShow((s) => !s)}>
-        {show ? "Verbergen" : "Zeigen"}
+        {show ? L("Verbergen", "Hide") : L("Zeigen", "Show")}
       </button>
     </div>
   );
 }
 
-export function Loading({ children = "Lade…" }: { children?: ReactNode }) {
+export function Loading({ children = L("Lade…", "Loading…") }: { children?: ReactNode }) {
   return <div className="loading">{children}</div>;
 }
 
@@ -413,7 +419,7 @@ export function Modal({
       <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true">
         <div className="modal-head">
           <h2>{title}</h2>
-          <button className="iconbtn" onClick={onClose} aria-label="Schliessen">
+          <button className="iconbtn" onClick={onClose} aria-label={L("Schliessen", "Close")}>
             <Icon name="close" />
           </button>
         </div>
@@ -449,7 +455,7 @@ export function Drawer({
             <h2>{title}</h2>
             {sub && <div className="sub">{sub}</div>}
           </div>
-          <button className="iconbtn close" onClick={onClose} aria-label="Schliessen">
+          <button className="iconbtn close" onClick={onClose} aria-label={L("Schliessen", "Close")}>
             <Icon name="close" />
           </button>
         </div>
@@ -462,11 +468,11 @@ export function Drawer({
 // --- Chips für Status/Aktion/Schwere ---
 
 const MATCH: Record<string, [string, string]> = {
-  matched: ["ok", "gematcht"],
-  unmatched: ["crit", "nicht aufgelöst"],
-  expected_external: ["ext", "extern (ohne IPAM)"],
+  matched: ["ok", L("gematcht", "matched")],
+  unmatched: ["crit", L("nicht aufgelöst", "unresolved")],
+  expected_external: ["ext", L("extern (ohne IPAM)", "external (no IPAM)")],
   not_applicable: ["na", "n/a"],
-  ambiguous: ["warn", "mehrdeutig"],
+  ambiguous: ["warn", L("mehrdeutig", "ambiguous")],
 };
 
 const SEVERITY: Record<string, string> = { error: "crit", warning: "warn", info: "info" };
@@ -487,10 +493,10 @@ export function SeverityBadge({ severity }: { severity: string }) {
 }
 
 const RUN_STATUS: Record<string, [string, string, string]> = {
-  queued: ["na", "n", "wartet"],
-  running: ["info", "y", "läuft"],
+  queued: ["na", "n", L("wartet", "waiting")],
+  running: ["info", "y", L("läuft", "running")],
   completed: ["ok", "g", "OK"],
-  failed: ["crit", "r", "Fehler"],
+  failed: ["crit", "r", L("Fehler", "failed")],
 };
 
 export function RunStatusChip({ status }: { status: string }) {
@@ -512,12 +518,12 @@ export function fmtTime(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const now = new Date();
-  const time = d.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
-  if (d.toDateString() === now.toDateString()) return `heute ${time}`;
+  const time = d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return L(`heute ${time}`, `today ${time}`);
   const y = new Date(now);
   y.setDate(now.getDate() - 1);
-  if (d.toDateString() === y.toDateString()) return `gestern ${time}`;
-  return `${d.toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit", year: "2-digit" })} ${time}`;
+  if (d.toDateString() === y.toDateString()) return L(`gestern ${time}`, `yesterday ${time}`);
+  return `${d.toLocaleDateString(locale, { day: "2-digit", month: "2-digit", year: "2-digit" })} ${time}`;
 }
 
 export function download(filename: string, content: string | Blob, type = "text/markdown") {

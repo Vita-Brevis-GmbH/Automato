@@ -3,6 +3,7 @@ import { Agent, cancelRun, CollectAllItem, fetchAgents, startCollect, startColle
 import type { View } from "./App";
 import { PLATFORM_LABEL, REFERENCE_PLATFORMS } from "./refs";
 import { ErrorBox, Modal, Note } from "./ui";
+import { L } from "./i18n";
 
 // "Jetzt einlesen": Collector-Lauf für Mandant + Quellsystem anlegen (operator).
 // Die Ausführung ergibt sich aus dem Gerät (ADR 0009): mit zugewiesenem Agenten holt dieser
@@ -40,7 +41,11 @@ export default function CollectDialog({
   const system = active.find((s) => s.id === systemId);
   const execution: "inprocess" | "external" = system?.agent_id != null ? "external" : "inprocess";
   const agent = agents.find((a) => a.id === system?.agent_id);
-  const agentLabel = agent ? `„${agent.name}“` : system?.agent_id != null ? `#${system.agent_id}` : "";
+  const agentLabel = agent
+    ? L(`„${agent.name}“`, `“${agent.name}”`)
+    : system?.agent_id != null
+      ? `#${system.agent_id}`
+      : "";
 
   const submit = async () => {
     if (tenant === "" || !system) return;
@@ -65,27 +70,47 @@ export default function CollectDialog({
   if (done) {
     return (
       <Modal
-        title="Lauf angelegt"
+        title={L("Lauf angelegt", "Run created")}
         onClose={onClose}
         footer={
           <button className="btn btn-primary" onClick={onClose}>
-            Schliessen
+            {L("Schliessen", "Close")}
           </button>
         }
       >
         <p>
-          Lauf <code>#{done.runId.slice(0, 8)}</code> für <b>{system?.name}</b> wurde angelegt.
+          {L(
+            <>
+              Lauf <code>#{done.runId.slice(0, 8)}</code> für <b>{system?.name}</b> wurde angelegt.
+            </>,
+            <>
+              Run <code>#{done.runId.slice(0, 8)}</code> for <b>{system?.name}</b> has been created.
+            </>,
+          )}
         </p>
         {done.execution === "external" ? (
           <Note>
-            Der Lauf wartet, bis der Agent {agentLabel} ihn abholt (geplante Aufgabe auf dem Agent-Rechner bzw.{" "}
-            <code>run-agent.ps1</code>). Der Status erscheint unter „Letzte Läufe“.
+            {L(
+              <>
+                Der Lauf wartet, bis der Agent {agentLabel} ihn abholt (geplante Aufgabe auf dem Agent-Rechner bzw.{" "}
+                <code>run-agent.ps1</code>). Der Status erscheint unter „Letzte Läufe“.
+              </>,
+              <>
+                The run waits until agent {agentLabel} picks it up (scheduled task on the agent machine or{" "}
+                <code>run-agent.ps1</code>). The status appears under “Recent runs”.
+              </>,
+            )}
           </Note>
         ) : (
-          <Note>Der zentrale Worker erfasst das System jetzt. Der Status aktualisiert sich automatisch.</Note>
+          <Note>
+            {L(
+              "Der zentrale Worker erfasst das System jetzt. Der Status aktualisiert sich automatisch.",
+              "The central worker is collecting the system now. The status updates automatically.",
+            )}
+          </Note>
         )}
         <details>
-          <summary className="muted">Vollständige Lauf-ID</summary>
+          <summary className="muted">{L("Vollständige Lauf-ID", "Full run ID")}</summary>
           <code>{done.runId}</code>
         </details>
         <p />
@@ -95,51 +120,72 @@ export default function CollectDialog({
 
   return (
     <Modal
-      title="Jetzt einlesen"
+      title={L("Jetzt einlesen", "Collect now")}
       onClose={onClose}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            Abbrechen
+            {L("Abbrechen", "Cancel")}
           </button>
           <button
             className="btn btn-primary"
             onClick={submit}
             disabled={busy || tenant === "" || !system}
           >
-            {busy ? "Lege an…" : "Lauf starten"}
+            {busy ? L("Lege an…", "Creating…") : L("Lauf starten", "Start run")}
           </button>
         </>
       }
     >
-      <ErrorBox error={err} prefix="Lauf anlegen" />
+      <ErrorBox error={err} prefix={L("Lauf anlegen", "Creating run")} />
       {tenants.length === 0 || active.length === 0 ? (
         <Note warn>
-          {tenants.length === 0 ? "Es gibt noch keinen Mandanten. " : ""}
-          {active.length === 0 ? "Für diesen Mandanten ist noch kein aktives Quellsystem erfasst. " : ""}
+          {tenants.length === 0 ? L("Es gibt noch keinen Mandanten. ", "There is no tenant yet. ") : ""}
+          {active.length === 0
+            ? L(
+                "Für diesen Mandanten ist noch kein aktives Quellsystem erfasst. ",
+                "No active source system has been recorded for this tenant yet. ",
+              )
+            : ""}
           {isAdmin ? (
-            <>
-              Unter{" "}
-              <a
-                href="#tenants"
-                onClick={(e) => {
-                  e.preventDefault();
-                  onClose();
-                  onGo("tenants");
-                }}
-              >
-                Mandanten &amp; Standorte
-              </a>{" "}
-              anlegen.
-            </>
+            L(
+              <>
+                Unter{" "}
+                <a
+                  href="#tenants"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onClose();
+                    onGo("tenants");
+                  }}
+                >
+                  Mandanten &amp; Standorte
+                </a>{" "}
+                anlegen.
+              </>,
+              <>
+                Create it under{" "}
+                <a
+                  href="#tenants"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onClose();
+                    onGo("tenants");
+                  }}
+                >
+                  Tenants &amp; sites
+                </a>
+                .
+              </>,
+            )
           ) : (
-            "Bitte einen Administrator, es anzulegen."
+            L("Bitte einen Administrator, es anzulegen.", "Please ask an administrator to create it.")
           )}
         </Note>
       ) : null}
 
       <div className="field">
-        <label htmlFor="cd-tenant">Mandant</label>
+        <label htmlFor="cd-tenant">{L("Mandant", "Tenant")}</label>
         <select
           id="cd-tenant"
           className="sel input"
@@ -157,11 +203,16 @@ export default function CollectDialog({
             </option>
           ))}
         </select>
-        <div className="hint">Die gelesenen Regeln werden diesem Mandanten zugeordnet.</div>
+        <div className="hint">
+          {L(
+            "Die gelesenen Regeln werden diesem Mandanten zugeordnet.",
+            "The collected rules are assigned to this tenant.",
+          )}
+        </div>
       </div>
 
       <div className="field">
-        <label htmlFor="cd-system">Quellsystem</label>
+        <label htmlFor="cd-system">{L("Quellsystem", "Source system")}</label>
         <select
           id="cd-system"
           className="sel input"
@@ -178,37 +229,70 @@ export default function CollectDialog({
 
       {system && (
         <div className="field">
-          <span className="label">Ausführung</span>
+          <span className="label">{L("Ausführung", "Execution")}</span>
           <div>
             {execution === "external" ? (
               <span className="chip info">Agent {agentLabel}</span>
             ) : (
-              <span className="chip na">Zentraler Worker</span>
+              <span className="chip na">{L("Zentraler Worker", "Central worker")}</span>
             )}
           </div>
           <div className="hint">
             {execution === "external"
-              ? "Der zugewiesene Agent holt den Lauf ab, bekommt die Zugangsdaten des Geräts und liefert das Ergebnis zurück."
-              : "Kein Agent zugewiesen: der zentrale Worker liest direkt (braucht Netzzugang zum Gerät)."}{" "}
-            Ändern: Mandanten &amp; Standorte → Quellsystem → „Verwaltet von“.
+              ? L(
+                  "Der zugewiesene Agent holt den Lauf ab, bekommt die Zugangsdaten des Geräts und liefert das Ergebnis zurück.",
+                  "The assigned agent picks up the run, receives the device's credentials and returns the result.",
+                )
+              : L(
+                  "Kein Agent zugewiesen: der zentrale Worker liest direkt (braucht Netzzugang zum Gerät).",
+                  "No agent assigned: the central worker reads directly (needs network access to the device).",
+                )}{" "}
+            {L(
+              "Ändern: Mandanten & Standorte → Quellsystem → „Verwaltet von“.",
+              "Change: Tenants & sites → Source system → “Managed by”.",
+            )}
           </div>
           {!system.has_credentials &&
             (REFERENCE_PLATFORMS.includes(system.platform) ? (
               <Note warn>
-                Für „{system.name}“ fehlt der Lese-Zugang (
-                {system.platform === "netbox" ? "API-Token (lesen)" : "Benutzer/Passwort"}) – ohne ihn kann die
-                Referenzquelle nicht eingelesen werden. Das NetBox-Schreib-Token wird nie zum Lesen verwendet.
+                {L(
+                  <>
+                    Für „{system.name}“ fehlt der Lese-Zugang (
+                    {system.platform === "netbox" ? "API-Token (lesen)" : "Benutzer/Passwort"}) – ohne ihn kann die
+                    Referenzquelle nicht eingelesen werden. Das NetBox-Schreib-Token wird nie zum Lesen verwendet.
+                  </>,
+                  <>
+                    Read access is missing for “{system.name}” (
+                    {system.platform === "netbox" ? "API token (read)" : "user/password"}) – without it the reference
+                    source cannot be collected. The NetBox write token is never used for reading.
+                  </>,
+                )}
               </Note>
             ) : (
               <Note warn>
-                Für „{system.name}“ sind keine Zugangsdaten hinterlegt –{" "}
-                {execution === "external"
-                  ? "der Agent bricht den Lauf ab."
-                  : "der zentrale Worker nutzt dann seine lokale Konfiguration bzw. Beispieldaten."}
+                {L(
+                  <>
+                    Für „{system.name}“ sind keine Zugangsdaten hinterlegt –{" "}
+                    {execution === "external"
+                      ? "der Agent bricht den Lauf ab."
+                      : "der zentrale Worker nutzt dann seine lokale Konfiguration bzw. Beispieldaten."}
+                  </>,
+                  <>
+                    No credentials are stored for “{system.name}” –{" "}
+                    {execution === "external"
+                      ? "the agent aborts the run."
+                      : "the central worker then uses its local configuration or sample data."}
+                  </>,
+                )}
               </Note>
             ))}
           {agent && !agent.enabled && (
-            <Note warn>Der Agent {agentLabel} ist deaktiviert – der Lauf würde nicht abgeholt.</Note>
+            <Note warn>
+              {L(
+                <>Der Agent {agentLabel} ist deaktiviert – der Lauf würde nicht abgeholt.</>,
+                <>Agent {agentLabel} is disabled – the run would not be picked up.</>,
+              )}
+            </Note>
           )}
         </div>
       )}
@@ -285,33 +369,52 @@ export function CollectAllDialog({
   const queued = items?.filter((i) => i.run_id).length ?? 0;
   return (
     <Modal
-      title={items ? `${queued} Läufe angelegt` : "Alle Quellsysteme einlesen"}
+      title={
+        items
+          ? L(`${queued} Läufe angelegt`, `${queued} runs created`)
+          : L("Alle Quellsysteme einlesen", "Collect all source systems")
+      }
       onClose={onClose}
       footer={
         items ? (
           <button className="btn btn-primary" onClick={onClose}>
-            Schliessen
+            {L("Schliessen", "Close")}
           </button>
         ) : (
           <>
             <button className="btn btn-ghost" onClick={onClose}>
-              Abbrechen
+              {L("Abbrechen", "Cancel")}
             </button>
             <button className="btn btn-primary" onClick={submit} disabled={busy || active.length === 0}>
-              {busy ? "Lege an…" : `${active.length} Läufe starten`}
+              {busy ? L("Lege an…", "Creating…") : L(`${active.length} Läufe starten`, `Start ${active.length} runs`)}
             </button>
           </>
         )
       }
     >
-      <ErrorBox error={err} prefix="Läufe anlegen" />
+      <ErrorBox error={err} prefix={L("Läufe anlegen", "Creating runs")} />
       {!items && (
         <p>
-          Für jedes aktive Quellsystem von „{tenantLabel}“ wird ein Lauf angelegt – IPAM-Quellen zuerst. Rein lesend;
-          Geräte mit Agent holt der Agent ab, die übrigen liest der zentrale Worker.
+          {L(
+            <>
+              Für jedes aktive Quellsystem von „{tenantLabel}“ wird ein Lauf angelegt – IPAM-Quellen zuerst. Rein lesend;
+              Geräte mit Agent holt der Agent ab, die übrigen liest der zentrale Worker.
+            </>,
+            <>
+              A run is created for every active source system of “{tenantLabel}” – IPAM sources first. Read-only;
+              devices with an agent are picked up by the agent, the others are read by the central worker.
+            </>,
+          )}
         </p>
       )}
-      {active.length === 0 && <Note warn>Für diesen Mandanten ist kein aktives Quellsystem erfasst.</Note>}
+      {active.length === 0 && (
+        <Note warn>
+          {L(
+            "Für diesen Mandanten ist kein aktives Quellsystem erfasst.",
+            "No active source system is recorded for this tenant.",
+          )}
+        </Note>
+      )}
       <table>
         <tbody>
           {(items ?? active.map((s) => ({ source_system_id: s.id, name: s.name, platform: s.platform }) as CollectAllItem)).map(
@@ -326,23 +429,28 @@ export function CollectAllDialog({
                     systems.find((s) => s.id === i.source_system_id)?.agent_id != null ? (
                       <span className="chip info">Agent</span>
                     ) : (
-                      <span className="chip na">Zentraler Worker</span>
+                      <span className="chip na">{L("Zentraler Worker", "Central worker")}</span>
                     )
                   ) : i.run_id ? (
-                    <span className="chip ok">{i.execution === "external" ? "wartet auf Agent" : "läuft"}</span>
+                    <span className="chip ok">
+                      {i.execution === "external" ? L("wartet auf Agent", "waiting for agent") : L("läuft", "running")}
+                    </span>
                   ) : (
                     <>
                       <span className="chip warn" title={i.skipped ?? ""}>
-                        übersprungen: {i.skipped}
+                        {L("übersprungen:", "skipped:")} {i.skipped}
                       </span>
                       {i.blocking_run_id && (
                         <button
                           className="linkbtn"
                           style={{ marginLeft: 6 }}
-                          title="Den offenen Lauf beenden (z. B. hängt er nach einem Neustart des Agenten) und neu einlesen. Liefert der Agent doch noch ab, wird das Ergebnis eingespielt."
+                          title={L(
+                            "Den offenen Lauf beenden (z. B. hängt er nach einem Neustart des Agenten) und neu einlesen. Liefert der Agent doch noch ab, wird das Ergebnis eingespielt.",
+                            "End the open run (e.g. if it hangs after an agent restart) and collect again. If the agent still delivers, the result is ingested.",
+                          )}
                           onClick={() => restart(i)}
                         >
-                          Abbrechen &amp; neu starten
+                          {L("Abbrechen & neu starten", "Cancel & restart")}
                         </button>
                       )}
                     </>
