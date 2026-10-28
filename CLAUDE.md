@@ -54,15 +54,17 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 ## Arbeitsweise (Technik)
 
-- Tests: `uv run --package <orchestrator|collectors|sot-gateway> pytest <paket>/tests`; Lint
-  `uv run ruff check .` + `uv run ruff format --check .`; Frontend in `web-ui/frontend`:
-  `npm run lint` (tsc) + `npm run build`, UI-Tests `npm run e2e` (Playwright, Beispieldaten aus
-  den Orchestrator-Tests). Übersicht und CI-Jobs: `docs/TESTS.md`. Frontend **nicht** mit
+- Tests: `uv run --package <orchestrator|collectors|sot-gateway> pytest <paket>/tests` (parallel
+  mit `-n auto`); Lint `uv run ruff check .` + `uv run ruff format --check .`; Frontend in
+  `web-ui/frontend`: `npm run lint` (tsc) + `npm run build`, UI-Tests `npm run e2e` bzw. schneller
+  `npm run e2e:shards` (Playwright; jeder UI-Test läuft für sich, aufeinander aufbauende nur in
+  `test.describe.serial`). Übersicht und CI-Jobs: `docs/TESTS.md`. Frontend **nicht** mit
   prettier umformatieren.
 - **Neue Texte immer zweisprachig** `L("deutsch", "english")` – Oberfläche `src/i18n.ts`, Server
   `app/i18n.py` (nur zur Laufzeit, nie auf Modulebene; Gespeichertes bleibt deutsch,
   `@german_only`; Werte/Schlüssel nie übersetzen), ADR 0028; Begriffe nach `docs/GLOSSAR.md`.
-- Gegen Postgres: `AUTOMATO_TEST_DATABASE_URL=postgresql+psycopg://…` (Schema je Test neu).
+- Gegen Postgres: `AUTOMATO_TEST_DATABASE_URL=postgresql+psycopg://…` (Schema einmal je
+  Datenbank, Tabellen je Test geleert; mit `-n auto` je Worker eine eigene Datenbank).
   Jede Schemaänderung = Alembic-Migration (up/down gegen Postgres prüfen).
 - **Version:** `python3 scripts/version.py set X.Y.Z` (danach `uv sync --all-packages`), CI prüft
   mit `check`.

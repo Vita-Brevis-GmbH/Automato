@@ -82,7 +82,7 @@ test("Applikation: Klick auf eine EPG öffnet ihr Detail statt zu den Regeln zu 
   await expect(rows(page).filter({ hasText: "TE|AP|EG_db" })).toHaveCount(1);
 });
 
-test("Applikation: Namen der Gegenstellen in den Kategorien – Einstellung des Admins, nicht für Kunden-Benutzer (0.95.0)", async ({ page, browser }) => {
+test("Applikation: Namen der Gegenstellen in den Kategorien – Einstellung des Admins, nicht für Kunden-Benutzer (0.95.0)", async ({ page, browser, baseURL }) => {
   const dmz = (p: import("@playwright/test").Page) => p.locator("#app-categories tbody tr", { hasText: "dmz-to-web" }).first();
   // Kategorien aufklappen - der Zustand bleibt im Browser gespeichert, also nur wenn zu
   const categories = async (p: import("@playwright/test").Page) => {
@@ -118,7 +118,7 @@ test("Applikation: Namen der Gegenstellen in den Kategorien – Einstellung des 
     await categories(page);
     await expect(dmz(page)).toContainText("N_dmz-net (10.10.20.0/24)");
     // Kunden-Benutzer: weiter nur die Adresse
-    const ctx = await browser.newContext({ baseURL: "http://localhost:5173" });
+    const ctx = await browser.newContext({ baseURL });
     const user = await ctx.newPage();
     await user.addInitScript((id) => {
       localStorage.setItem("automato_dev_customer", `1:${id}`);

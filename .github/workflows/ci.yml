@@ -80,9 +80,10 @@ jobs:
           uv run ruff check .
           uv run ruff format --check .
       # Abdeckung: Untergrenze 90 % je Paket (Stand 0.8.0: 94/95/94 %) - faellt sie, fehlt ein Test
+      # Orchestrator parallel (pytest-xdist, ein Worker je Kern; pytest-cov fasst zusammen)
       - name: Tests orchestrator (mit Abdeckung)
         run: >-
-          uv run --package orchestrator pytest orchestrator/tests -q
+          uv run --package orchestrator pytest orchestrator/tests -q -n auto --dist worksteal
           --cov=app --cov-report=term:skip-covered --cov-fail-under=90
       - name: Tests collectors (mit Abdeckung)
         run: >-
@@ -120,6 +121,15 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - name: Sync workspace
         run: uv sync --all-packages
+      # Wegwerf-Datenbank der CI: ohne fsync spuerbar schneller (Leeren der Tabellen je Test)
+      - name: Postgres ohne fsync
+        run: >-
+          uv run --package orchestrator python -c "import sqlalchemy as sa;
+          e = sa.create_engine('$AUTOMATO_DATABASE_URL', isolation_level='AUTOCOMMIT');
+          c = e.connect();
+          [c.execute(sa.text(f'ALTER SYSTEM SET {s} = off'))
+          for s in ('fsync', 'full_page_writes', 'synchronous_commit')];
+          c.execute(sa.text('SELECT pg_reload_conf()'))"
       - name: Migrationen hoch, ganz runter, wieder hoch
         working-directory: orchestrator
         run: |
@@ -135,10 +145,12 @@ jobs:
           uv run --package orchestrator python -c "import sqlalchemy as sa;
           e = sa.create_engine('$AUTOMATO_DATABASE_URL', isolation_level='AUTOCOMMIT');
           e.connect().execute(sa.text('CREATE DATABASE automato_test'))"
+      # parallel: je xdist-Worker eigene Datenbank automato_test_gwN, Schema einmal angelegt,
+      # Tabellen je Test geleert (orchestrator/tests/conftest.py)
       - name: Tests orchestrator gegen Postgres
         env:
           AUTOMATO_TEST_DATABASE_URL: postgresql+psycopg://automato:ci-only@localhost:5432/automato_test
-        run: uv run --package orchestrator pytest orchestrator/tests -q
+        run: uv run --package orchestrator pytest orchestrator/tests -q -n auto --dist worksteal
       # TLS intern (0.49.0): Postgres und Redis aus docker-compose.yml mit eigener CA - nur
       # verschluesselt mit Pruefung von CA und Name, Klartext und fremde CA abgewiesen
       - name: TLS intern mit den echten Containern (Postgres, Redis)
@@ -190,10 +202,16 @@ jobs:
         run: docker build -t automato-web-ui:ci web-ui/frontend
 
   # UI-Tests im Browser (Playwright): Orchestrator mit Beispieldaten + Vite, alle Ansichten und
-  # die Kernablaeufe (Suche, NAT-Links, Findings, Dienste, Standorte, Alle einlesen)
+  # die Kernablaeufe (Suche, NAT-Links, Findings, Dienste, Standorte, Alle einlesen).
+  # Zwei Shards gleichzeitig, je Shard eigener Runner mit eigenem Orchestrator und eigenen Daten.
   e2e:
     needs: changes
     if: needs.changes.outputs.python == 'true' || needs.changes.outputs.frontend == 'true'
+    name: e2e (${{ matrix.shard }}/2)
+    strategy:
+      fail-fast: false # beide Shards zu Ende, damit alle Fehler sichtbar sind
+      matrix:
+        shard: [1, 2]
     # fest auf 24.04: Playwright 1.56 installiert Chromium (--with-deps) nicht auf ubuntu-latest
     # = 26.04 (CI-Lauf 0.77.0)
     runs-on: ubuntu-24.04
@@ -212,13 +230,13 @@ jobs:
       - run: npm install
       - name: Browser (Chromium)
         run: npx playwright install --with-deps chromium
-      - name: UI-Tests
-        run: npm run e2e
+      - name: UI-Tests (Shard ${{ matrix.shard }}/2)
+        run: npm run e2e -- --shard=${{ matrix.shard }}/2
       - name: Bericht bei Fehler
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: |
             web-ui/frontend/playwright-report
             web-ui/frontend/test-results

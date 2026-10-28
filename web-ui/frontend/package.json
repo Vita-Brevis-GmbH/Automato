@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "lint": "tsc --noEmit",
     "preview": "vite preview",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:shards": "node e2e/shards.mjs"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",

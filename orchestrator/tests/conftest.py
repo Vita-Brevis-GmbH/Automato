@@ -1,7 +1,15 @@
 """Test-Setup: SQLite in-memory, Celery-Dispatch gemockt.
 
 Mit `AUTOMATO_TEST_DATABASE_URL` (z. B. `postgresql+psycopg://…`) laufen dieselben Tests gegen
-eine echte Datenbank (CI-Job `postgres`); das Schema wird je Test neu angelegt.
+eine echte Datenbank (CI-Job `postgres`). Das Schema wird je Datenbank einmal neu angelegt (beim
+ersten Test), danach leert jeder Test vorab alle Tabellen samt Zaehlern (`TRUNCATE … RESTART
+IDENTITY`) - derselbe Ausgangszustand wie mit neuem Schema, ohne die DDL von rund 90 Tabellen je
+Test. `AUTOMATO_TEST_DB_RESET=schema` legt das Schema wie bis 0.103.0 vor jedem Test neu an.
+
+Parallel mit pytest-xdist (`pytest -n auto`): SQLite ist je Test eine eigene In-Memory-DB; gegen
+Postgres bekommt jeder Worker eine eigene Datenbank `<name>_<worker>` (z. B.
+`automato_test_gw0`, beim ersten Test angelegt) - Tabellen, Sperren (`pg_advisory_xact_lock`
+gilt je Datenbank) und Verbindungen der Worker kommen sich nicht in die Quere.
 """
 
 import os
@@ -12,7 +20,7 @@ from app.db import get_session, get_session_factory
 from app.main import create_app
 from app.models import Base
 from fastapi.testclient import TestClient
-from sqlalchemy import StaticPool, create_engine, event
+from sqlalchemy import StaticPool, create_engine, event, make_url, text
 from sqlalchemy.orm import close_all_sessions, sessionmaker
 
 
@@ -32,9 +40,45 @@ def _credentials_key():
     credentials._fernet.cache_clear()
 
 
+def _worker_url(url: str):
+    """Eigene Postgres-Datenbank je xdist-Worker; ohne xdist die Datenbank aus der URL."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER")  # gw0, gw1, ... (nur in xdist-Workern)
+    parsed = make_url(url)
+    if not worker or not parsed.drivername.startswith("postgresql"):
+        return parsed
+    name = f"{parsed.database}_{worker}"
+    admin = create_engine(parsed, isolation_level="AUTOCOMMIT")
+    try:
+        with admin.connect() as conn:
+            query = text("SELECT 1 FROM pg_database WHERE datname = :name")
+            if conn.execute(query, {"name": name}).first() is None:
+                conn.exec_driver_sql(f'CREATE DATABASE "{name}"')
+    finally:
+        admin.dispose()
+    return parsed.set(database=name)
+
+
 @lru_cache(maxsize=1)
 def _external_engine(url: str):
-    return create_engine(url, pool_pre_ping=True)
+    return create_engine(_worker_url(url), pool_pre_ping=True)
+
+
+_fresh: set[str] = set()  # Datenbanken mit neu angelegtem Schema (in diesem Prozess)
+
+
+def _reset_external(engine) -> None:
+    """Ausgangszustand je Test: Schema einmal neu anlegen, danach nur alle Tabellen leeren."""
+    key = engine.url.render_as_string()
+    full = os.environ.get("AUTOMATO_TEST_DB_RESET") == "schema"
+    if key not in _fresh or full or engine.dialect.name != "postgresql":
+        Base.metadata.drop_all(engine)
+        Base.metadata.create_all(engine)
+        _fresh.add(key)
+        return
+    quote = engine.dialect.identifier_preparer.quote
+    tables = ", ".join(quote(table.name) for table in Base.metadata.sorted_tables)
+    with engine.begin() as conn:
+        conn.exec_driver_sql(f"TRUNCATE {tables} RESTART IDENTITY CASCADE")
 
 
 @pytest.fixture
@@ -42,17 +86,17 @@ def session_factory():
     url = os.environ.get("AUTOMATO_TEST_DATABASE_URL")
     if url:
         engine = _external_engine(url)
-        Base.metadata.drop_all(engine)
+        _reset_external(engine)
     else:
         engine = create_engine(
             "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
         )
         # Fremdschluessel wie in Postgres pruefen (SQLite tut das sonst nicht)
         event.listen(engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))
-    Base.metadata.create_all(engine)
+        Base.metadata.create_all(engine)
     yield sessionmaker(bind=engine, expire_on_commit=False)
     # Offene Test-Sessions schliessen - eine "idle in transaction"-Verbindung blockiert sonst
-    # das DROP TABLE des naechsten Tests (Postgres)
+    # das TRUNCATE bzw. DROP TABLE des naechsten Tests (Postgres)
     close_all_sessions()
 
 

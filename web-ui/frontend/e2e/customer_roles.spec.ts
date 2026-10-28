@@ -3,7 +3,7 @@
 // Kunden-Benutzer seines Kunden zu (dev: X-Dev-User mit Zuordnung in Automato).
 import { expect, test } from "./fixtures";
 
-test("Kunden-Rollen: Editor pflegt seine Applikation, Kunden-Admin ordnet Benutzer zu", async ({ page, browser }) => {
+test("Kunden-Rollen: Editor pflegt seine Applikation, Kunden-Admin ordnet Benutzer zu", async ({ page, browser, baseURL }) => {
   const retry = test.info().retry;
   const name = `Kunde Rollen ${retry}`;
   const login = `editor${retry}@example.ch`;
@@ -21,7 +21,7 @@ test("Kunden-Rollen: Editor pflegt seine Applikation, Kunden-Admin ordnet Benutz
   const shop = apps.find((a) => a.name === "Webshop")!;
 
   // derselbe Benutzer meldet sich an (eigener Browser-Kontext, eigene Fehlerliste)
-  const ctx = await browser.newContext({ baseURL: "http://localhost:5173" });
+  const ctx = await browser.newContext({ baseURL });
   const user = await ctx.newPage();
   const failed: string[] = [];
   user.on("response", (r) => {
