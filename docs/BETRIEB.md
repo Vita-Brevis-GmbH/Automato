@@ -789,17 +789,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     - **Kategorie 10 (0.78.2):** nur Zugriffe auf die Applikation, nicht ihre Zugriffe auf
       andere Systeme bzw. Adressen ohne Zonensignal. Alle Regeln stehen weiter unter
       „Regeln & Contracts“.
-  Dazu
-  *Doku je System* (Kategorien, Standort verorten; Export Markdown bzw. seit 0.104.0 Word vom
-  Server, `GET /appdoc/systems/{name}/export?format=md|docx`) und *Publizierte Dienste* (VIPs mit
-  Regeln; seit 0.77.0 auch die **Virtual Services des NSX ALB** – je VIP und Port mit Quelle,
-  Pool und Zahl der Server, Regeln über die VIP-Adresse; im NAT als Virtual Server mit den
-  Servern des Pools und Avi-Tenant, Pool, Methode, Health-Monitor, Zustand und „Quelle zum
-  Server“ – Service Engine (SNAT) bzw. Client-IP; seit 0.79.0 die **Kette**: bei der VIP der
-  FortiGate „→ NSX ALB vs-… · n Server“ mit Virtual Service, Pool und Servern im Detail, beim
-  Virtual Service „über V-EXT_… (öffentliche IP)“ – die Regeln der VIP davor zählen mit; das
-  Regel-Detail zeigt bei der VIP ebenso den Virtual Service mit Pool und Servern, und die
-  Suche in den Regeln findet die Regel auch über den Server, Virtual Service oder Pool). Die Doku erfasst **alle** Regeln eines Systems. Der **Bezug** (in den Regeln der
+  Die *Doku je System* und die *Publizierte Dienste* sind seit 0.107.0 entfernt (Anwender
+  2026-10-28): die Doku läuft über die Applikationen, VIPs mit Kette VIP → Load Balancer →
+  Server zeigt NAT / VIPs. Die Doku erfasst **alle** Regeln eines Systems. Der **Bezug** (in den Regeln der
   Applikation und in der Erklärung, nicht mehr als Spalte der Kategorien) sagt, wie die Regel
   greift:
   - direkt,
@@ -811,7 +803,7 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   die VMs an den Portgruppen der EPG; ein Server bringt auch die Contracts der EPG seiner
   Portgruppe mit (ohne gelernten Endpunkt).
   - **Rückrichtung (0.72.1):** Gilt ein ACI-Contract in beide Richtungen und fallen beide in
-    dieselbe Kategorie, steht er in der Doku je System wie in der Applikations-Doku als eine
+    dieselbe Kategorie, steht er in der Applikations-Doku als eine
     Zeile mit „(↔ beide Richtungen)“; in verschiedenen Kategorien (z. B. aus dem Internet und
     ins Internet) bleibt die Rückrichtung eine eigene Zeile „(Rückrichtung)“.
   - **Nur, wo der Verkehr durchkommt (0.24.0):** Automato prüft jede Firewall-Regel gegen das
@@ -821,8 +813,6 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     - Wenn nicht, ist die Regel für dieses System **routingtechnisch nicht möglich** – z. B.
       „lan → internet, any“ für einen Server in der DMZ.
     - Solche Treffer fehlen in den Kategorien, im Export und in den Kennzahlen.
-      - *Doku je System:* Sie stehen oben unter „Routingtechnisch nicht möglich“ mit
-        Begründung.
       - *Applikations-Doku:* Seit 0.34.0 stehen sie gar nicht drin, nur „N routingtechnisch
         unmögliche ausgelassen“. Beispiel: intern → Internet mit `any` im Ziel – die Antwort
         braucht keine Regel, ein Zugriff von dort bräuchte eine eigene.
@@ -903,7 +893,7 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   - **Contracts zwischen VRFs (0.44.0):** Ein Contract zwischen EPGs verschiedener VRFs (z. B.
     einem anderen Tenant) zählt nur, wenn das Fabric die Subnetze leakt – geteiltes Subnetz
     beider Seiten (Shared Service) bzw. Route-Leaking. Sonst fehlt er in der Applikations-Doku
-    und steht in der Doku je System unter „nicht möglich“: „… kein geteiltes Subnetz … im
+    (Grund: „… kein geteiltes Subnetz … im
     Fabric kein Weg. Verkehr geht über das Routing der VRF (L3Out, Firewall) – siehe
     Weg-Suche“. Doku und Weg-Suche urteilen so gleich. Fehlt der Scope der Subnetze (Lauf
     vor 0.44.0), bleibt er „unbekannt“ – neu einlesen. Das Regel-Detail zeigt geteilte
@@ -927,8 +917,17 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       Ziel, Dienste), Ein-/Ausgang, NAT und Leak, dazu je Regel der Doku: *entscheidet*,
       *möglich*, *greift nicht* (vorher entscheidet eine andere bzw. sie passt nicht), *nicht auf
       dem Weg* (ihr Gerät liegt nicht auf dem Weg), *nicht prüfbar* (kein Weg bekannt).
-    - **Abweichung:** Eine Regel erlaubt, aber der Weg sperrt, sie liegt nicht auf dem Weg bzw.
-      greift dort nicht. Abweichungen stehen zuerst; „nur Abweichungen und Gesperrte“ filtert.
+    - **Abweichung:** Eine Regel erlaubt, aber der Weg sperrt bzw. sie greift dort nicht.
+      Abweichungen stehen zuerst; „nur Abweichungen und Gesperrte“ filtert.
+    - **Nur, was auf dem Weg liegt (0.107.0, Anwender: „Wege, welche Routing technisch keinen
+      Sinn ergeben“):** liegt das Gerät einer Regel nicht auf dem Weg bis zum Ziel (z. B. eine
+      andere Firewall mit denselben Regeln), gehört die Regel nicht zur Verbindung – keine
+      Abweichung, sondern unten „Nie auf dem Weg ihres Verkehrs …“ und der Befund
+      **„Applikation: Regel nie gebraucht“** (Hinweis, Findings → Applikationen, mit dem Weg, den
+      der Verkehr nimmt). Verbindungen nur aus solchen Regeln entfallen. Kommt die Quelle von
+      ausserhalb (Internet, Partner), beginnt der Weg dort, wo der **Rückweg** vom Ziel das
+      gelesene Netz verlässt (z. B. `wan1` der Internet-Firewall) – nicht mehr auf irgendeinem
+      Gerät mit einer Regel dafür. Die Doku nach Kategorien zeigt die Regel weiter.
     - **Filter nach Art (0.80.0):** unter der Suche je Gruppe Knöpfe mit Zahl – *Urteil*
       (erlaubt, gesperrt, abhängig, offen = nicht prüfbar bzw. der Weg endet vor dem Ziel),
       *Regeln* (erlaubende bzw. sperrende Regeln der Doku), *Regel auf dem Weg* (entscheidet,
@@ -1079,7 +1078,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     für Betreuer – Kunden-Benutzer sehen weiter nur die Adressen.
     Seit 0.101.0 schaltet der Global Admin die Namen auch direkt in der Karte „Doku nach
     Kategorien“ um („Namen der Gegenstellen“); Netze und Bereiche nennen dann zuerst die Gruppe,
-    wie sie in der Regel steht: „G_clients (10.70.0.0/16, 10.71.0.0/16)“.
+    wie sie in der Regel steht: „G_clients (10.70.0.0/16, 10.71.0.0/16)“. Seit 0.107.0 steht der
+    Schalter sofort auf dem neuen Stand („– lädt…“), bis die Doku neu geladen ist; das IPAM
+    bleibt im Speicher (`AUTOMATO_REF_CACHE`, Vorgabe 4 Referenzquellen, `0` = aus) statt je
+    Anfrage neu gelesen zu werden – ein neuer IPAM-Lauf ersetzt es.
   - **Kategorien nach Zonentyp (seit 0.106.0, ADR 0035):** jede Firewall-Regel bzw. jeder
     Contract steht in der Kategorie seiner **Richtung** Zonentyp der Quelle → Zonentyp des Ziels.
     In drei Schritten einrichten:
@@ -1133,7 +1135,7 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   - **Nur relevante Firewall-Regeln (0.103.0):** ausgehende Firewall-Regeln, die die Systeme nur
     über eine breite Quelle erfassen (z. B. 10.0.0.0/8 → irgendwohin, any → Internet), stehen
     nicht mehr in der Doku – weder in den Kategorien noch unter „Regeln & Contracts“, in den
-    Verbindungen oder in der Doku je System; oben steht „n ausgehende mit breiter Quelle
+    Verbindungen; oben steht „n ausgehende mit breiter Quelle
     ausgelassen“. Eingehende Regeln über grosse Bereiche (Zugriffe auf die Systeme) und Regeln,
     die den Server konkret nennen, bleiben. Gehört eine solche Regel doch zur Applikation: im
     Regel-Detail „der Applikation zuordnen“.
@@ -1376,11 +1378,22 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
 - **Benutzer & Rollen:** Rollen viewer/operator/admin, eigenes Konto, Links in die
   Keycloak-Benutzerverwaltung (`AUTOMATO_OIDC_ADMIN_CONSOLE_URL`, sonst aus dem Issuer
   abgeleitet). Benutzer selbst werden in Keycloak gepflegt (`tenant_ids` = Mandanten-ID).
+- **Module je Mandant (0.107.0, ADR 0036):** Mandanten & Standorte → Mandant → Karte
+  **Module** (Admin schaltet, Audit `module.switched`; `GET /modules?tenant_id=`,
+  `PUT /modules/{key}?tenant_id=`). Kern und Einstellungen sind immer an; ein- bzw. ausschalten
+  lassen sich **Worker** (Läufe), **Gateway** (Referenzquellen IPAM/DNS), **Analyse** (Routing,
+  Verkabelung, Abgleich, Topologie, Datenqualität), **Wegsucher** (Weg-Suche, Verbindungen Ende
+  zu Ende), **Findings**, **Doku** (Applikationen), **Design** (Netzwerkdesign) und der
+  **Schreibpfad** (NetBox-Sync; braucht das Gateway – „Abhängigkeit aus“, einschalten erst mit
+  dem Gateway). Aus heisst: Ansicht weg (auch die Karten Verbindungen bzw. Befunde der
+  Applikations-Doku), API 403 „Modul … ist für diesen Mandanten ausgeschaltet“, keine Läufe
+  (auch nicht nach Zeitplan) bzw. keine Befunde der Applikationen im Hintergrund. Die gelesenen
+  Daten bleiben; wieder an = sofort wieder da.
 - **Mandanten & Standorte (Admin schreibt):** **+ Mandant**, Kürzel, Namensprofil,
   Lese-Audit, **Standorte** (ADR 0015): *virtuell* (dreistellige Nummer, z. B. `000` =
   Stretched DC) und *physisch* (Ort-Code, z. B. `chzrh1`); **+ Standort** mit Art, Code, Name
   und – bei virtuellen – den physischen Standorten, an denen er läuft (**Zuordnen** ändert das
-  später). Die Standort-Auswahl in Quellsystem, Doku je System und Applikation ist nach Art
+  später). Die Standort-Auswahl in Quellsystem und Applikation ist nach Art
   gruppiert. Den Standort aus dem Namen (Netz `N_<tenant>-000-…`, Cluster
   `fwc11-000-<tenant>`, Host `evh01-chzrh1-<tenant>`) zeigen Objekte, Inventar (Geräte,
   Subnetze) und der Quellsystem-Dialog als Vorschlag („?“ = Code nicht erfasst). Weiter: die **Quellsysteme des
@@ -1645,7 +1658,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /vms?tenant_id=` (`q`, `source_system_id`, `epg`, `limit`, `offset`), `GET /portgroups?tenant_id=` (`q`), `GET /portgroups/{id}` | VMware-Inventar (ADR 0017): VMs mit NICs, IPs (DNS, im IPAM?) und EPG der Portgruppe, Seite mit `total`; Portgruppen mit EPG und Art der Zuordnung; Detail mit EPG (BD/VRF), Subnetzen je Quelle und VMs |
 | `GET /reconcile/summary`, `GET /reconcile/ipam`, `POST /reconcile` | Abgleich: Befunde je Typ, DDI ↔ NetBox, neu berechnen (operator) |
 | `GET /findings` (`?status=`,`?type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /findings/summary`, `PATCH /findings/{id}` | Datenqualität seitenweise (je Befund `message` = was nicht stimmt, `hint` = was tun), Zähler je Status/Typ, Triage |
-| `GET /nat` (`?nat_type=`,`?q=`,`?issues_only=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /nat/{id}`, `GET /published-services[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku: NAT mit DNS-Namen, Server, Regelzahl und Prüfung (`issues`) / Detail mit IPAM-Sicht, Regeln, VMs und `object_id`, publizierte Dienste (VIPs), Doku je System |
+| `GET /nat` (`?nat_type=`,`?q=`,`?issues_only=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /nat/{id}` | Doku: NAT mit DNS-Namen, Server, Regelzahl und Prüfung (`issues`) / Detail mit IPAM-Sicht, Regeln, VMs und `object_id`, publizierte Dienste (VIPs), Doku je System |
 | `GET/POST /applications`, `GET/PATCH/DELETE /applications/{id}`, `POST …/{id}/members`, `DELETE …/{id}/members/{mid}`, `POST …/{id}/rules`, `GET …/{id}/doc`, `GET …/{id}/connections` (seit 0.67.0 mit `plan`), `GET …/{id}/connections/plan/export?format=svg\|drawio[&key=…]` (0.67.0), `POST …/{id}/hidden` (`rule_ids`, `category`, `reason`; 0.69.0), `DELETE …/{id}/hidden/{hide_id}`, `GET …/{id}/export?format=zip\|docx` (0.71.0, nicht Kunden-Benutzer) | Applikationen (ADR 0012; Schreiben = operator): Stammdaten (inkl. `external_name`, `internal_name`, `purpose` dev/test/prod), Mitglieder AP/EPG/Server und Regeln (`rule`/`norule`, seit 0.60.0 über `POST …/rules` mit `rule_id`, `exclude`), Doku mit `summary`, `systems` (VMs), `epgs`, `hits` (Regel × System: Richtung, Bezug, `scope` inkl. `assigned`), `rules`, `rule_members`, `dependencies` (`uses`/`used_by`), `findings`, `tables` |
 | `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |

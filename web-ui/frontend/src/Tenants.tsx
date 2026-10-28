@@ -29,6 +29,7 @@ import type { Me } from "./auth";
 import { L } from "./i18n";
 import { PLATFORM_LABEL, REF_ROLE_LABEL, REFERENCE_PLATFORMS } from "./refs";
 import { ScheduleField, scheduleLabel } from "./Schedule";
+import TenantModules from "./TenantModules";
 import { SITE_KIND_GROUP, SITE_KIND_LABEL, SiteChip, SiteOptions } from "./sites";
 import { CredentialInput, Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead, SecretInput } from "./ui";
 
@@ -174,6 +175,7 @@ export default function Tenants({
           <SourceSystems key={`${selected.id}-${systemsVersion}`} me={me} tenant={selected} />
         </div>
       )}
+      {selected && <TenantModules key={`modules-${selected.id}`} me={me} tenant={selected} />}
       {!selected && tenants && tenants.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <Note>

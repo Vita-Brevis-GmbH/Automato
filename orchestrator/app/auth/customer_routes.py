@@ -40,8 +40,6 @@ CUSTOMER_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     ("GET", "/vms"): READ,
     ("GET", "/portgroups"): READ,
     ("GET", "/portgroups/{pg_id}"): READ,
-    ("GET", "/appdoc/systems"): READ,
-    ("GET", "/appdoc/systems/{system}"): READ,
     ("GET", "/applications"): READ,
     ("GET", "/applications/{application_id}"): READ,
     ("GET", "/applications/{application_id}/doc"): READ,
@@ -51,7 +49,6 @@ CUSTOMER_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     # 0.104.0: Export der Doku (Markdown bzw. Word vom Server, bisher Markdown im Browser) -
     # ihr Ausschnitt, ohne Verbindungen und Netzwerkplan, ohne Geraetenamen
     ("GET", "/applications/{application_id}/export"): READ,
-    ("GET", "/appdoc/systems/{system}/export"): READ,
     # 0.53.0: wer bin ich; die eigenen Zonen, Matrix und Plan (ohne fremde Kunden, ohne
     # Netze ohne Zone; Gegenseite fremder Kunden als „anderer Kunde“)
     ("GET", "/auth/me"): READ,

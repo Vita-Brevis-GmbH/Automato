@@ -86,6 +86,7 @@ from app.models.source_system import REFERENCE_PLATFORMS, Platform, SourceSystem
 from app.models.source_system import RefRole as ReferenceRole
 from app.models.sync_plan import SyncPlan, SyncStatus
 from app.models.tenant import DnsType, IpamType, Tenant
+from app.models.tenant_module import TenantModule
 from app.models.topology import (
     TOPOLOGY_MODELS,
     L3OutFirewall,
@@ -177,6 +178,7 @@ __all__ = [
     "ParallelRejection",
     "SubjectKind",
     "Tenant",
+    "TenantModule",
     "TopoChange",
     "TopoContext",
     "TopoExit",

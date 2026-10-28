@@ -161,24 +161,6 @@ def test_applikation_als_markdown_wie_word(client):
     assert r.headers["content-type"].startswith("application/vnd.openxmlformats")
 
 
-def test_doku_je_system_als_markdown_und_word(client):
-    tid = tap._seed(client)
-    system = "10.60.0.5"  # Server hinter fw-02 mit Zeilen in den Kategorien
-    doc = client.get(f"/appdoc/systems/{system}", params={"tenant_id": tid}).json()
-    url = f"/appdoc/systems/{system}/export"
-    r = client.get(url, params={"tenant_id": tid})
-    assert r.status_code == 200, r.text
-    assert r.headers["content-type"].startswith("text/markdown")
-    md = r.text
-    assert md.startswith(f"# Applikations-Doku – {doc['system']}\n")
-    shown = [t for t in doc["tables"] if t["rows"]]
-    assert shown and all(f"### {t['index']}. {t['title']}" in md for t in shown)
-    assert "| " + " | ".join(shown[0]["labels"]) + " |" in md
-    word = _text(client.get(url, params={"tenant_id": tid, "format": "docx"}).content)[1]
-    assert _heads(md) == word
-    assert client.get(url, params={"tenant_id": tid, "format": "pdf"}).status_code == 422
-
-
 def test_zonenplan_als_word_und_drawio(client):
     tid, ids = tz._seed(client)
     z = tz._zones(client, tid, ids)

@@ -59,6 +59,7 @@ export const FINDING_LABEL: Record<string, string> = {
   zone_net_exit: L("Netz nicht über den Übergang zur Zone", "Network not via the transition to the zone"),
   app_connection_mismatch: L("Applikation: Wege uneinheitlich", "Application: inconsistent paths"),
   app_contract_narrower: L("Applikation: Contract enger als Firewall", "Application: contract narrower than firewall"),
+  app_rule_unused: L("Applikation: Regel nie gebraucht", "Application: rule never needed"),
   link_speed_mismatch: L("Kabel: Speed abweichend", "Link: speed differs"),
   link_duplex_mismatch: L("Kabel: Duplex abweichend", "Link: duplex differs"),
   link_vlan_mismatch: L("Kabel: VLANs abweichend", "Link: VLANs differ"),
@@ -174,6 +175,10 @@ export const FINDING_HINT: Record<string, string> = {
   app_contract_narrower: L(
     "Contract Richtung L3Out, der weniger öffnet als die Firewall-Regeln der Applikation (die Firewall ist führend)",
     "Contract towards the L3Out that opens less than the firewall rules of the application (the firewall is leading)",
+  ),
+  app_rule_unused: L(
+    "Regel einer Applikation auf einer Firewall bzw. im ACI, über die der Verkehr ihrer Verbindungen nach dem Routing nie geht",
+    "Rule of an application on a firewall or in the ACI the traffic of its connections never passes according to the routing",
   ),
   link_speed_mismatch: L(
     "zwei verbundene Switch-Ports mit verschiedener Geschwindigkeit",
@@ -319,10 +324,10 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     key: "apps",
     label: L("Applikationen", "Applications"),
     help: L(
-      "Verbindungen Ende zu Ende: über einen Weg offen, über einen anderen gesperrt",
-      "End-to-end connections: open via one path, blocked via another",
+      "Verbindungen Ende zu Ende: über einen Weg offen, über einen anderen gesperrt; Regeln nie auf dem Weg",
+      "End-to-end connections: open via one path, blocked via another; rules never on the path",
     ),
-    types: ["app_connection_mismatch", "app_contract_narrower"],
+    types: ["app_connection_mismatch", "app_contract_narrower", "app_rule_unused"],
   },
   {
     key: "aci",

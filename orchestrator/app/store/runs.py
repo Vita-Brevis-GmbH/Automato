@@ -45,6 +45,15 @@ def queue_collect(
     actor: str,
     trigger: str = "manual",
 ) -> CollectorRun:
+    from app import modules  # spaet: modules nutzt die Modelle
+
+    # Module je Mandant (0.107.0, ADR 0036): Worker aus = keine neuen Laeufe, Gateway aus =
+    # keine Referenzquellen (IPAM) - auch nicht nach Zeitplan
+    if not modules.enabled(session, tenant_id, "worker"):
+        raise RunRejected(modules.disabled_text("worker"))
+    if platform in {p.value for p in REFERENCE_PLATFORMS} and not modules.enabled(
+            session, tenant_id, "gateway"):  # fmt: skip
+        raise RunRejected(modules.disabled_text("gateway"))
     if source_system_id is not None:
         src = session.get(SourceSystem, source_system_id)
         if src is None:

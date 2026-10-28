@@ -75,7 +75,6 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | eingehend / ausgehend | inbound / outbound |
 | beide Richtungen | both directions |
 | Rückrichtung, Rückweg | Reverse direction, return path |
-| publizierte Dienste | Published services |
 | Bereich (Adressen) | Range |
 
 ## Routing, Weg, Topologie
@@ -196,3 +195,5 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | wird geladen… | Loading… |
 | keine Einträge | No entries |
 | rückgängig | undo |
+| Modul (Kern, Einstellungen, Worker, Gateway, Analyse, Wegsucher, Findings, Doku, Design, Schreibpfad) | Module (core, settings, worker, gateway, analysis, path finder, findings, documentation, design, write path) |
+| Regel nie gebraucht | Rule never needed |

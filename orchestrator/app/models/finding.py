@@ -79,6 +79,9 @@ class FindingType(enum.StrEnum):
     APP_CONNECTION_MISMATCH = "app_connection_mismatch"
     # 0.78.2: Contract Richtung L3Out oeffnet weniger als die Firewall-Regeln (fuehrend)
     APP_CONTRACT_NARROWER = "app_contract_narrower"
+    # 0.107.0 (Anwender): Regel einer Applikation auf einem Geraet, ueber das der Weg ihrer
+    # Verbindungen nicht geht - sie wird fuer diesen Verkehr nie gebraucht
+    APP_RULE_UNUSED = "app_rule_unused"
     # Verkabelung (0.62.0, ADR 0025, `store/cabling`): Verbindung zwischen zwei gelesenen
     # Switches mit abweichender Konfiguration bzw. nur von einer Seite gemeldet
     LINK_SPEED_MISMATCH = "link_speed_mismatch"

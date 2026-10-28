@@ -209,6 +209,11 @@ timed("GET /applications/suggestions",
 timed("GET /applications/{id}", lambda: ok(c.get(f"/applications/{aid}")))
 timed("GET /applications/{id}/doc", lambda: ok(c.get(f"/applications/{aid}/doc")))
 timed("GET /applications/{id}/connections", lambda: ok(c.get(f"/applications/{aid}/connections")))
+# Namen der Gegenstellen (0.95.0, Anwender 0.106.0: „es braucht enorm lange, dann sind die Namen da“)
+timed("PATCH /tenants/{id} (Namen an)",
+      lambda: ok(c.patch(f"/tenants/{tid}", json={"appdoc_foreign_names": True}, headers=H)))  # fmt: skip
+timed("GET /applications/{id}/doc (Namen)", lambda: ok(c.get(f"/applications/{aid}/doc")))
+ok(c.patch(f"/tenants/{tid}", json={"appdoc_foreign_names": False}, headers=H))
 timed("PATCH /applications/{id} (Beschreibung)",
       lambda: ok(c.patch(f"/applications/{aid}", json={"description": "neu"}, headers=H)))  # fmt: skip
 member = {"members": [{"kind": "epg", "ref": "uni/tn-TE_02/ap-AP_002/epg-EPG_01"}]}

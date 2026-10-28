@@ -453,7 +453,8 @@ def refresh_source_findings(session: Session, tenant_id: int, settings=None) -> 
     return len(issues)
 
 
-APP_TYPES = frozenset({FindingType.APP_CONNECTION_MISMATCH, FindingType.APP_CONTRACT_NARROWER})
+APP_TYPES = frozenset({FindingType.APP_CONNECTION_MISMATCH, FindingType.APP_CONTRACT_NARROWER,
+                       FindingType.APP_RULE_UNUSED})  # fmt: skip
 APP_CONNECTIONS = 10  # Verbindungen je Befund im Detail
 APP_VARIANTS = 6  # Wege je Verbindung im Detail (0.73.0)
 
@@ -513,12 +514,16 @@ def _app_issues(session: Session, tenant_id: int, apps: list,
                     "service": c["service"], "verdict": c["verdict"],
                     "state": st["state"], "path": c["text"], "variants": variants,
                 })  # fmt: skip
+        unused: dict[int, list[dict]] = defaultdict(list)  # 0.107.0: nie auf dem Weg
+        for x in result.get("unused") or []:
+            unused[x["rule_id"]].append({k: x[k] for k in ("src", "dst", "service", "path")})
         narrower = result.get("narrower") or []
-        wanted = set(per_rule) | {n["rule_id"] for n in narrower}
+        wanted = set(per_rule) | set(unused) | {n["rule_id"] for n in narrower}
         wanted |= {x for n in narrower for x in n["firewall_rules"]}
         rules = {r.id: r for r in session.scalars(select(Rule).where(
             Rule.id.in_(list(wanted))))} if wanted else {}  # fmt: skip
         out += _narrower_issues(app, narrower, rules, names)
+        out += _unused_issues(app, unused, rules, names)
         for rid, conns in per_rule.items():
             r = rules.get(rid)
             if r is None:
@@ -541,6 +546,40 @@ def _app_issues(session: Session, tenant_id: int, apps: list,
                 },
             ))  # fmt: skip
     return out, failed
+
+
+def _rule_subject(r: Rule) -> tuple[str, str, dict]:
+    """(Betreff, Name, Rohdaten) einer Regel fuer Befunde je Applikation."""
+    raw = r.raw if isinstance(r.raw, dict) else {}
+    label = (r.name or f"#{r.external_id}") + vdom_suffix(r.vdom)
+    aci = r.domain is RuleDomain.ACI_CONTRACT
+    return (f"{raw.get('tenant')}/{label}" if aci and raw.get("tenant") else label), label, raw
+
+
+def _unused_issues(app, unused: dict[int, list[dict]], rules: dict, names: dict) -> list[Issue]:
+    """Regel nie gebraucht (0.107.0, Anwender: „Hier solle es eher ein Finding sein, dass es
+    Regeln gibt, welche nie gebraucht werden“): je Regel und Applikation die Verbindungen, deren
+    Weg nicht ueber das Geraet der Regel geht - mit dem Weg, den der Verkehr nimmt."""
+    out = []
+    for rid, conns in unused.items():
+        r = rules.get(rid)
+        if r is None:
+            continue
+        subject, label, raw = _rule_subject(r)
+        seen = list({(c["src"], c["dst"], c["service"]): c for c in conns}.values())
+        out.append(Issue(
+            FindingType.APP_RULE_UNUSED, SubjectKind.RULE, f"{subject} · Applikation {app.name}",
+            r.source_system_id, Severity.INFO,
+            detail={
+                "rule_id": r.id, "external_id": r.external_id, "domain": r.domain.value,
+                "name": label, "source_system_id": r.source_system_id,
+                "source": names.get(r.source_system_id), **({"vdom": r.vdom} if r.vdom else {}),
+                "tenant": raw.get("tenant") if r.domain is RuleDomain.ACI_CONTRACT else None,
+                "application_id": app.id, "application": app.name,
+                "count": len(seen), "connections": seen[:APP_CONNECTIONS],
+            },
+        ))  # fmt: skip
+    return out
 
 
 def _narrower_issues(app, narrower: list[dict], rules: dict, names: dict) -> list[Issue]:
@@ -589,6 +628,11 @@ def refresh_app_findings(session: Session, tenant_id: int | None,
     from app.models import Application
 
     if tenant_id is None:
+        return 0
+    from app import modules  # 0.107.0: ohne Findings bzw. Wegsucher keine Arbeit dafuer
+
+    if not (modules.enabled(session, tenant_id, "findings")
+            and modules.enabled(session, tenant_id, "wege")):  # fmt: skip
         return 0
     session.flush()
     stmt = select(Application).where(Application.tenant_id == tenant_id)

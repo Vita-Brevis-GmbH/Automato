@@ -641,45 +641,7 @@ export interface NatDetail extends Nat {
   vms: VmInfo[]; // VMs hinter dem internen Ziel
 }
 
-// Publizierte Dienste (VIPs)
-export interface PublishedService {
-  name: string;
-  ext_ip: string | null;
-  ext_port: string | null;
-  mapped_ip: string | null;
-  mapped_port: string | null;
-  protocol: string | null;
-  portforward: boolean;
-  rule_count: number;
-  source?: string | null; // Quellsystem (FortiGate bzw. NSX ALB)
-  platform?: string | null; // fortigate | avi (0.77.0, ADR 0027)
-  servers?: number; // Server des Pools bzw. Real Server
-  pool?: string | null; // NSX ALB: Pool bzw. Pool Group
-  balancers?: BalancerBrief[]; // 0.79.0: VIP der FortiGate -> Virtual Services des NSX ALB
-  fronted_by?: { name: string; ext_ip: string | null; ext_port: string | null; source?: string | null }[]; // VIPs davor
-}
-
-export interface AppRule {
-  id: number;
-  name: string;
-  action: string;
-  src_zone: string | null;
-  sources: string[];
-  services: string[];
-}
-
-export interface PublishedServiceDetail extends PublishedService {
-  rules: AppRule[];
-}
-
-// Applikations-Doku (systemzentriert, 10 Kategorien)
-export interface AppDocSystem {
-  name: string;
-  ip: string | null;
-  rule_count: number;
-  kind: string; // host | epg
-}
-
+// Tabellen der Kategorien (Applikations-Doku)
 export interface DocTable {
   index: number;
   title: string;
@@ -716,26 +678,6 @@ export interface DocHide {
   by: string;
   at: string | null;
   active?: boolean; // steht in einer Kategorie
-}
-
-// VM hinter dem System (vCenter): beim Server die VM der IP, bei der EPG die VMs ihrer Portgruppen
-export interface DocVm {
-  name: string;
-  power_state: string | null;
-  portgroup: string | null;
-  ips: string[];
-  epg: string | null;
-}
-
-export interface SystemDoc {
-  system: string;
-  system_ip: string | null;
-  tenant_code: string | null;
-  site: SiteRef | null;
-  vms?: DocVm[];
-  tables: DocTable[];
-  // routingtechnisch nicht möglich (0.24.0) – nicht in den Tabellen, mit Begründung
-  impossible?: { rule_id: number | null; description: string; side: "src" | "dst" | null; text: string }[];
 }
 
 // Applikationen (ADR 0012): Mitglieder AP (`Tenant/AP`), EPG (DN) und Server (Objektname)
@@ -1314,6 +1256,23 @@ export const fetchAuthConfig = async (): Promise<AuthConfig> => {
 export const fetchTenants = () => getJSON<Tenant[]>("/api/tenants");
 export const createTenant = (body: { name: string; code?: string | null }) =>
   sendJSON<Tenant>("/api/tenants", "POST", body);
+// Module je Mandant (0.107.0, ADR 0036): Kern und Einstellungen immer an; `effective` mit den Abhängigkeiten
+export type ModuleKey = "kern" | "einstellungen" | "worker" | "gateway" | "analyse" | "wege" | "findings" | "doku" | "design" | "schreibpfad";
+export interface ModuleInfo {
+  key: ModuleKey;
+  title: string;
+  purpose: string;
+  role: "basis" | "lesen" | "schreiben";
+  switchable: boolean;
+  depends: ModuleKey[];
+  views: string[];
+  enabled: boolean;
+  effective: boolean;
+}
+export const fetchModules = (tenantId: number | null) => getJSON<ModuleInfo[]>(`/api/modules${qs({ tenant_id: tenantId })}`);
+export const switchModule = (tenantId: number, key: ModuleKey, enabled: boolean) =>
+  sendJSON<ModuleInfo[]>(`/api/modules/${key}${qs({ tenant_id: tenantId })}`, "PUT", { enabled });
+
 export const patchTenant = (
   tenantId: number,
   body: { code?: string | null; audit_reads?: boolean; naming_profile_id?: number | null; appdoc_foreign_names?: boolean },
@@ -1614,9 +1573,6 @@ export const exportApplication = (id: number, format: "docx" | "zip" | "md", sec
     `/api/applications/${id}/export${qs({ format, sections: sections?.length ? sections.join(",") : undefined })}`,
     `applikation.${format}`,
   );
-// Doku je System als Markdown bzw. Word vom Server (0.104.0)
-export const exportSystemDoc = (name: string, tenantId: number | null | undefined, format: "md" | "docx") =>
-  fileOf(`/api/appdoc/systems/${encodeURIComponent(name)}/export${qs({ tenant_id: tenantId, format })}`, `doku.${format}`);
 export const zoneSchemaDrawing = (profileId: number) => fileOf(`/api/naming-profiles/${profileId}/zone-schema/drawing`, "zonenschema.drawio");
 // Vorlage: ohne Mandant Beispiel-Zonen, mit Mandant dessen Zonen und Absichten als Ausgangspunkt
 export const zoneSchemaTemplate = (tenantId?: number) =>
@@ -1748,22 +1704,6 @@ export const fetchFindingSummary = (tenantId?: number | null, type?: string, q?:
   getJSON<FindingSummary>(`/api/findings/summary${cq({ tenant_id: tenantId, type, q: q?.trim() })}`);
 export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
   sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);
-export const fetchPublishedServices = (tenantId?: number | null) =>
-  getJSON<PublishedService[]>(`/api/published-services${cq({ tenant_id: tenantId })}`);
-export const fetchPublishedService = (name: string, tenantId?: number | null) =>
-  getJSON<PublishedServiceDetail>(
-    `/api/published-services/${encodeURIComponent(name)}${qs({ tenant_id: tenantId })}`,
-  );
-export const fetchAppDocSystems = (tenantId?: number | null) =>
-  getJSON<AppDocSystem[]>(`/api/appdoc/systems${cq({ tenant_id: tenantId })}`);
-export const fetchSystemDoc = (name: string, tenantId?: number | null) =>
-  getJSON<SystemDoc>(`/api/appdoc/systems/${encodeURIComponent(name)}${qs({ tenant_id: tenantId })}`);
-export const assignSystemSite = (name: string, tenantId: number, siteId: number | null) =>
-  sendJSON<SystemDoc>(
-    `/api/appdoc/systems/${encodeURIComponent(name)}/site${qs({ tenant_id: tenantId })}`,
-    "PATCH",
-    { site_id: siteId },
-  );
 
 // Applikationen
 export const fetchApps = (tenantId: number) =>
@@ -1996,7 +1936,7 @@ export interface AppPlan {
 export interface AppConnections {
   connections: AppConnection[];
   notes: string[];
-  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number };
+  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number; unused?: number };
   plan?: AppPlan;
 }
 export const fetchAppConnections = (id: number) =>

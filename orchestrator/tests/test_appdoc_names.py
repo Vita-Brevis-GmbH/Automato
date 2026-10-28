@@ -15,6 +15,7 @@ import zipfile
 
 from app import audit
 from app.models import AuditLog
+from system_doc import system_doc
 from test_application_doc import _app
 from test_vmware import DDI, TOKEN, _deliver, _run, _system
 
@@ -130,7 +131,7 @@ def test_namen_der_gegenstellen_nur_mit_einstellung(client):
     assert "partner01.example.ch (10.30.0.8)" in xml and "H_tool01 (10.50.0.3)" in xml
 
     # Doku je System (Server 10.20.0.5): gleich
-    system = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}).json()
+    system = system_doc(client, "10.20.0.5", tid)
     assert "partner01.example.ch (10.30.0.8)" in {
         r["Destination"] for t in system["tables"] for r in t["rows"]
     }
@@ -154,9 +155,6 @@ def test_kunden_benutzer_sehen_nur_adressen(client):
     for key, named in NAMED.items():
         assert named == BARE[key] or named not in peers[key], (key, peers[key])
     assert "partner01.example.ch" not in r.text and "H_tool01 (" not in r.text
-    system = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}, headers=user)
-    assert system.status_code == 200, system.text
-    assert "10.30.0.8" in system.text and "partner01.example.ch" not in system.text
     # Betreuer sehen die Namen
     assert "partner01.example.ch (10.30.0.8)" in client.get(f"/applications/{app['id']}/doc").text
 

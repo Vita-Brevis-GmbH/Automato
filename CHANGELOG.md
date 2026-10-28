@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.107.0 – 2026-10-28
+
+Module und Testbefunde zu 0.106.0 (Rückmeldung des Anwenders 2026-10-28; ADR 0036, Migration
+`0066`).
+
+- **Module** (ADR 0036): Kern, Einstellungen (Basis, immer an), Worker, Gateway, Analyse,
+  Wegsucher, Findings, Doku, Design (lesend) und der Schreibpfad (NetBox-Sync, braucht das
+  Gateway). Jede Datei in `app/api` und `app/store` gehört genau einem Modul; die CI prüft das und
+  dass **nur der Schreibpfad** den NetBox-Schreiber nutzt – Worker, Gateway-Leser und alle
+  lesenden Module bleiben starr getrennt.
+- **Module je Mandant schaltbar:** Mandanten & Standorte → Karte „Module“ (Admin, Audit). Aus =
+  Ansicht weg, API 403, keine Läufe (Worker) bzw. Referenzquellen (Gateway) bzw. Befunde der
+  Applikationen im Hintergrund; die Daten bleiben. Erste Stufe der Basis-Settings fürs Cockpit.
+- **Verbindungen Ende zu Ende nur nach dem Routing:** eine Firewall, über die der Verkehr nicht
+  geht, die aber dieselbe Regel hat, steht nicht mehr in der Verbindung. Kommt die Quelle von
+  aussen (Internet), beginnt der Weg dort, wo der Rückweg das gelesene Netz verlässt. Neuer
+  Befund **„Applikation: Regel nie gebraucht“** (Hinweis) mit dem Weg, den der Verkehr nimmt.
+- **Namen der Gegenstellen schneller:** das IPAM bleibt im Speicher statt je Anfrage neu gelesen
+  (`AUTOMATO_REF_CACHE`, gemessen mit 340 000 IPAM-Einträgen: Doku 11,7 s → 4 s); Namen je Regel
+  und Seite einmal berechnet, Gruppen nur mit ihren Mitgliedern geladen; der Schalter zeigt
+  sofort den neuen Stand („– lädt…“).
+- **Entfernt:** „Doku je System“ (Ansicht, API `/appdoc/systems…`, Export, Standort je System) und
+  „Publizierte Dienste“ (Ansicht, API `/published-services`) – VIPs zeigt NAT / VIPs.
+- Tests (orchestrator 651, UI-Tests 147).
+
 ## 0.106.0 – 2026-10-28
 
 Kategorien einfach (Rückmeldung des Anwenders 2026-10-28 zu 0.105.0: „Kategorien und Bereiche sind

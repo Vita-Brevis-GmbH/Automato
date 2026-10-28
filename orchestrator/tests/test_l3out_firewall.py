@@ -20,6 +20,7 @@ import io
 import zipfile
 
 import test_paths as tp
+from system_doc import system_doc, system_list
 
 ADMIN, OP, VIEW = tp.ADMIN, {"X-Dev-Roles": "operator"}, {"X-Dev-Roles": "viewer"}
 EN = {"Accept-Language": "en"}
@@ -391,9 +392,9 @@ def test_unspezifische_zugriffe_nach_l3out(client):
     assert [r["_l3out_in"] for r in rows] == ["L3O_bit", "L3O_bit", "L3O_bit", "L3O_inet"]
     assert [r["_scope"] for r in rows] == ["specific", "specific", "subnet", "subnet"]
     # gleich in der Doku je System (EPG)
-    systems = client.get("/appdoc/systems", params={"tenant_id": ids["tid"]}).json()
+    systems = system_list(client, ids["tid"])
     name = next(s["name"] for s in systems if s["kind"] == "epg")
-    system = client.get(f"/appdoc/systems/{name}", params={"tenant_id": ids["tid"]}).json()
+    system = system_doc(client, name, ids["tid"])
     cat = next(t for t in system["tables"] if t["index"] == 10)
     assert [r["Description"] for r in cat["rows"]] == ["bit-app", "mon-app", "lan-dc", "ext-dc"]
     assert "L3Out" in cat["columns"]

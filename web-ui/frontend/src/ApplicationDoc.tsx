@@ -36,7 +36,8 @@ import {
 } from "./api";
 import type { View, ViewParams } from "./App";
 import ConnectionsCard from "./AppConnections";
-import { DocRow, DocTableView } from "./AppDoc";
+import { useModule } from "./moduleState";
+import { DocRow, DocTableView } from "./DocTable";
 import type { Me } from "./auth";
 import { EpgCard } from "./EpgCard";
 import { Fold, FoldTitle, readStored, useFolds, writeJson } from "./fold";
@@ -219,8 +220,12 @@ export default function ApplicationDocView({
   const [tick, setTick] = useState(0); // Regel zugeordnet bzw. ausgeschlossen (0.60.0)
   const [busy, setBusy] = useState<unknown>(null);
   const [hiding, setHiding] = useState<{ table: DocTable; row: DocRow } | null>(null); // 0.69.0
-  const [namesBusy, setNamesBusy] = useState(false);
+  // Namen der Gegenstellen (0.107.0, Anwender: „es braucht enorm lange, dann sind die Namen da“): der Schalter zeigt
+  // sofort den gewünschten Stand, bis die Doku mit bzw. ohne Namen geladen ist
+  const [namesPending, setNamesPending] = useState<boolean | null>(null);
   const vdomShown = useVdomShown();
+  const wegeOn = useModule("wege"); // Module je Mandant (0.107.0)
+  const findingsOn = useModule("findings");
   const { fold, setAll } = useFolds(FOLD_KEY, printing);
   useEffect(() => {
     if (!printing) return;
@@ -257,6 +262,9 @@ export default function ApplicationDocView({
     doc?.epgs.forEach((e) => m.set(e.key, e));
     return m;
   }, [doc]);
+  useEffect(() => {
+    if (doc && namesPending !== null && Boolean(doc.peer_names) === namesPending) setNamesPending(null);
+  }, [doc, namesPending]);
 
   if (err) return <ErrorBox error={err} prefix={L("Doku laden", "Load documentation")} />;
   if (!doc) return <Loading>{L("Erzeuge Doku…", "Generating documentation…")}</Loading>;
@@ -511,8 +519,8 @@ export default function ApplicationDocView({
         <EpgsCard items={doc.epgs} fold={fold("epgs")} onPick={setEpgKey} />
       </div>
 
-      {/* Verbindungen Ende zu Ende (0.45.0) – zeigt die Infrastruktur, nicht für Kunden-Benutzer */}
-      {!me.isCustomer && (
+      {/* Verbindungen Ende zu Ende (0.45.0) – zeigt die Infrastruktur, nicht für Kunden-Benutzer; Modul Wegsucher (0.107.0) */}
+      {!me.isCustomer && wegeOn && (
         <div className={off("connections").trim()}>
           <ConnectionsCard appId={id} reload={reload + tick} onRule={setRule} onGo={onGo} fold={fold("connections")} />
         </div>
@@ -743,9 +751,11 @@ export default function ApplicationDocView({
         )}
       </div>
 
-      <div className={off("findings").trim()}>
-        <FindingsCard doc={doc} onRule={setRule} onGo={onGo} fold={fold("findings")} />
-      </div>
+      {findingsOn && (
+        <div className={off("findings").trim()}>
+          <FindingsCard doc={doc} onRule={setRule} onGo={onGo} fold={fold("findings")} />
+        </div>
+      )}
 
       {/* Kategorien (UC1): im Druck auch nur mit „Ausgeblendete Regeln“ – dann ohne die Zeilen */}
       <div
@@ -769,22 +779,27 @@ export default function ApplicationDocView({
             <div className="spacer" />
             {categories.open && me.isAdmin && !me.isCustomer && (
               <button
-                className={`toggle no-print ${doc.peer_names ? "on" : ""}`}
+                className={`toggle no-print ${(namesPending ?? doc.peer_names) ? "on" : ""}`}
                 id="app-peer-names"
-                disabled={namesBusy}
+                aria-busy={namesPending !== null}
+                disabled={namesPending !== null}
                 title={L(
                   "Gegenstellen, von denen die Regel nur Adressen kennt, mit Namen zeigen (Gruppe wie in der Regel, IPAM, VM, EPG) – Einstellung des Mandanten, nur Betreuer",
                   "Show peers the rule only knows by address with names (group as in the rule, IPAM, VM, EPG) – tenant setting, staff only",
                 )}
                 onClick={() => {
-                  setNamesBusy(true);
-                  patchTenant(a.tenant_id, { appdoc_foreign_names: !doc.peer_names })
+                  const want = !doc.peer_names;
+                  setNamesPending(want);
+                  patchTenant(a.tenant_id, { appdoc_foreign_names: want })
                     .then(() => setTick((t) => t + 1))
-                    .catch(setBusy)
-                    .finally(() => setNamesBusy(false));
+                    .catch((e) => {
+                      setNamesPending(null);
+                      setBusy(e);
+                    });
                 }}
               >
                 {L("Namen der Gegenstellen", "Names of peers")}
+                {namesPending !== null && <span className="faint">{L(" – lädt…", " – loading…")}</span>}
               </button>
             )}
             {categories.open && !me.isCustomer && onGo && (

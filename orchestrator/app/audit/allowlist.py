@@ -197,6 +197,8 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "zone.updated": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),
     "zone.deleted": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
     "zone.appdoc_set": frozenset({"tenant_id", "changes"}),
+    # Module je Mandant (0.107.0, ADR 0036)
+    "module.switched": frozenset({"tenant_id", "module", "enabled", "changed"}),
     "zone_policy.set": frozenset(
         {"tenant_id", "src_zone_id", "dst_zone_id", "intent", "services", "via"}
     ),
@@ -211,8 +213,6 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "read.nat": frozenset({"tenant_id", "resource", "customers"}),
     "read.findings": frozenset({"tenant_id", "resource", "customers"}),
     "read.applications": frozenset({"tenant_id", "resource", "customers"}),
-    "read.published_services": frozenset({"tenant_id", "resource"}),
-    "read.appdoc": frozenset({"tenant_id", "resource", "customers"}),
     "read.routing": frozenset({"tenant_id", "resource"}),
     "read.objects": frozenset({"tenant_id", "resource", "customers"}),
     "read.virtual": frozenset({"tenant_id", "resource", "customers"}),

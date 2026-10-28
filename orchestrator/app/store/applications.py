@@ -1333,9 +1333,10 @@ def _app_findings(
         .order_by(Finding.type, Finding.subject_id)
     ):
         detail = f.detail if isinstance(f.detail, dict) else {}
-        if (f.type in (FindingType.APP_CONNECTION_MISMATCH, FindingType.APP_CONTRACT_NARROWER)
+        if (f.type in (FindingType.APP_CONNECTION_MISMATCH, FindingType.APP_CONTRACT_NARROWER,
+                       FindingType.APP_RULE_UNUSED)
                 and detail.get("application_id") != app_id):  # fmt: skip
-            continue  # Befund einer anderen Applikation (0.59.0, 0.78.2)
+            continue  # Befund einer anderen Applikation (0.59.0, 0.78.2, 0.107.0)
         rule_id = detail.get("rule_id") if f.subject_kind == SubjectKind.RULE else None
         if (f.subject_kind, f.subject_id) not in wanted and rule_id not in rule_ids:
             continue

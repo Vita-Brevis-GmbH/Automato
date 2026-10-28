@@ -1,6 +1,7 @@
 """ACI-Contracts: wo liegen Consumer (Quelle) und Provider (Ziel)? Tenant, AP, BD, VRF,
 Subnetze mit IPAM-Netz, gelernte IPs mit DNS-Namen aus der DDI (Dev-Befund)."""
 
+from system_doc import system_doc, system_list
 from test_reference_sources import REC, TOKEN, _ddi, _run, _system, _tenant
 
 WEB = "uni/tn-TE_a/ap-AP_100/epg-EG_web"
@@ -112,9 +113,9 @@ def test_app_doku_gleichnamige_epgs_mehrerer_aci_tenants(client):
     run_id = client.post("/jobs/collect", json=body).json()["run_id"]
     client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
 
-    names = {r["name"] for r in client.get(f"/appdoc/systems?tenant_id={tid}").json()}
+    names = {r["name"] for r in system_list(client, tid)}
     assert names == {"EG_app · TE_a · AP_100", "EG_app · TE_b · AP_200"}
-    doc = client.get("/appdoc/systems/EG_app · TE_a · AP_100", params={"tenant_id": tid}).json()
+    doc = system_doc(client, "EG_app · TE_a · AP_100", tid)
     rows = {t["index"]: t["rows"] for t in doc["tables"]}
     # Gegenstelle in einem anderen ACI-Tenant -> Tabelle 9, mit Tenant gekennzeichnet
     assert [r["_peer"] for r in rows[9]] == ["TE_b/AP_200/EG_app"]
@@ -133,7 +134,7 @@ def test_app_doku_externe_gegenstelle_nach_l3out(client):
     run_id = client.post("/jobs/collect", json=body).json()["run_id"]
     client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
 
-    doc = client.get("/appdoc/systems/EG_web", params={"tenant_id": tid}).json()
+    doc = system_doc(client, "EG_web", tid)
     rows = {t["index"]: t["rows"] for t in doc["tables"]}
     assert [r["Source"] for r in rows[2]] == ["L3O_inet/EN_inet"]
     assert not any(rows[i] for i in (7, 8, 9))

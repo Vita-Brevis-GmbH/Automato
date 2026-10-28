@@ -12,6 +12,7 @@
 """
 
 import test_paths as tp
+from system_doc import system_doc
 from test_appdoc_names import ADMIN, OP
 from test_appdoc_zones import _row, _setup, _types, _where
 from test_vmware import _deliver, _system
@@ -57,7 +58,7 @@ def test_zonentyp_und_sonderfaelle(client):
     assert _row(doc, "dc-intern")["Zone"] == "DC Web"
     t4 = next(t for t in doc["tables"] if t["index"] == 4)
     assert [(z["name"], z["type"]) for z in t4["zones"]] == [("Clients", "Edge Office")]
-    system = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}).json()
+    system = system_doc(client, "10.20.0.5", tid)
     assert _where(system)["clients-to-web"] == {4} and _where(system)["dc-intern"] == {8}
 
 
@@ -121,7 +122,7 @@ def test_ausgaenge_aus_geraeten_und_routing(client):
     assert client.put("/zones/appdoc", json={"tenant_id": tid, "zones": other},
                       headers=OP).status_code == 404  # fmt: skip
 
-    doc = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}).json()
+    doc = system_doc(client, "10.20.0.5", tid)
     where = _where(doc)
     # any ueber wan1: die Anbindung der Zone Internet (Public) → Zugriff aus dem Internet
     assert where["inet-to-app"] == {2} and _row(doc, "inet-to-app")["Zone"] == "Internet"

@@ -79,13 +79,6 @@ def test_quellsystem_und_publizierte_dienste(client):
     bad = {"tenant_id": tid, "name": "avi-02", "platform": "avi", "read_scope": "a;b"}
     assert client.post("/systems", json=bad, headers=ADMIN).status_code == 422
 
-    rows = client.get("/published-services", params={"tenant_id": tid}).json()
-    avi = [r for r in rows if r["platform"] == "avi"]
-    assert {(r["name"], r["ext_port"]) for r in avi} == {("vs-web", "443"), ("vs-web", "80")}
-    web = next(r for r in avi if r["ext_port"] == "443")
-    assert (web["source"], web["pool"], web["servers"]) == ("avi-01", "pool-web", 2)
-    assert web["rule_count"] == 1  # Policy 8 mit der VIP-Adresse als Ziel
-
     nats = client.get("/nat", params={"tenant_id": tid}).json()
     nat = next(n for n in nats if n["name"] == "vs-web" and n["ext_port"] == "443")
     assert nat["source_system_id"] == sid

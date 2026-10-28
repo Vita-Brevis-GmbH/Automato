@@ -66,16 +66,6 @@ def test_regeln_und_publizierte_dienste(client):
     assert lb["source"] == "avi-01" and lb["pool"] == "pool-web" and lb["ext_ip"] == VIP
     assert "10.10.0.20:8080" in lb["servers"]
 
-    # Publizierte Dienste: Kette in beide Richtungen, Regeln der VIP davor zaehlen mit
-    rows = client.get("/published-services", params={"tenant_id": tid}).json()
-    shop = next(r for r in rows if r["name"] == "V-EXT_shop")
-    assert {b["name"] for b in shop["balancers"]} == {"vs-web"}
-    web = next(r for r in rows if r["name"] == "vs-web" and r["ext_port"] == "443")
-    assert [f["name"] for f in web["fronted_by"]] == ["V-EXT_shop"]
-    assert web["fronted_by"][0]["ext_ip"] == PUBLIC and web["rule_count"] >= 1
-    one = client.get("/published-services/vs-web", params={"tenant_id": tid}).json()
-    assert "inet-to-shop" in {r["name"] for r in one["rules"]}
-
 
 def test_applikations_doku_ueber_den_load_balancer(client):
     tid = _seed(client)

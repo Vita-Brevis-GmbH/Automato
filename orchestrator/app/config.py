@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     # Neuberechnung nach einem Lauf; was nicht drankommt, behaelt seine Befunde und ist beim
     # naechsten Mal zuerst dran (0 = ohne Grenze)
     app_findings_seconds: int = 120
+    # IPAM im Speicher (0.107.0, Anwender: „es braucht enorm lange, dann sind die Namen da“): so
+    # viele Indizes der Referenzquellen (je Quelle und Lauf) bleiben je Prozess geladen statt je
+    # Anfrage neu gelesen (0 = aus); ein neuer IPAM-Lauf ersetzt sie
+    ref_cache: int = 4
 
     # Datenqualitaet (ADR 0029): Stand eines Quellsystems gilt nach so vielen Tagen ohne
     # erfolgreichen Lauf als veraltet (Befund `source_stale`, Betriebszustand); mit Zeitplan

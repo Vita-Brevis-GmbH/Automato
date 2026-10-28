@@ -106,14 +106,15 @@ def test_eine_zeile_je_verbindung_ueber_aci_und_zwei_firewalls(client):
     assert states["Policy 21 „web-lan“"]["state"] == "decides"
     zu = states["Policy 22 „web-lan-zu“"]
     assert (zu["state"], zu["text"]) == ("other", "vorher entscheidet Policy 21 „web-lan“")
-    alt = states["Policy 31 „web-lan-alt“"]
-    assert (alt["state"], alt["text"]) == (
-        "off_path",
-        "fw-03 liegt nicht auf dem Weg dieser Verbindung",
-    )
-    assert https["mismatch"] == [
-        "Policy 31 „web-lan-alt“: fw-03 liegt nicht auf dem Weg dieser Verbindung"
-    ]
+    # fw-03 hat dieselbe Regel, liegt aber nicht auf dem Weg (0.107.0, Anwender): nicht in der
+    # Verbindung und keine Abweichung, sondern „nie gebraucht“ (Befund)
+    assert "Policy 31 „web-lan-alt“" not in states and https["mismatch"] == []
+    (alt,) = https["unused"]
+    assert (alt["label"], alt["device"], alt["state"]) == (
+        "Policy 31 „web-lan-alt“", "fw-03", "off_path")  # fmt: skip
+    assert {(x["label"], x["service"]) for x in out["unused"]} == {
+        ("Policy 31 „web-lan-alt“", "tcp/443")}  # fmt: skip
+    assert any("Regel nie gebraucht" in n and "fw-03" in n for n in out["notes"])
 
     # fw-01 erlaubt tcp/8080, das ACI hat keinen Contract dafuer: Regel zeigt Zugriff, Weg sperrt
     alt = conns[(WEB, SRV, "tcp/8080")]
@@ -122,8 +123,8 @@ def test_eine_zeile_je_verbindung_ueber_aci_und_zwei_firewalls(client):
     assert alt["mismatch"][0] == (
         "Policy 12 „web-lan-8080“ erlaubt – der Weg ist gesperrt an apic-01 · VRF TE:VRF1"
     )
-    assert out["summary"] == {"total": 2, "allow": 1, "blocked": 1, "open": 0, "mismatch": 2,
-                              "inconsistent": 0, "zone_violations": 0}  # fmt: skip
+    assert out["summary"] == {"total": 2, "allow": 1, "blocked": 1, "open": 0, "mismatch": 1,
+                              "inconsistent": 0, "zone_violations": 0, "unused": 1}  # fmt: skip
     assert https["zones"] is None  # ohne logische Zonen
     # Abweichungen zuerst, gesperrte vor erlaubten
     assert out["connections"][0]["service"] == "tcp/8080"
@@ -155,8 +156,55 @@ def test_durchgehend_gesperrt_ist_kein_befund(client):
         "tcp/443": False,
         "tcp/8080": False,
     }
-    assert out["summary"]["inconsistent"] == 0 and out["summary"]["mismatch"] == 2
+    assert out["summary"]["inconsistent"] == 0 and out["summary"]["mismatch"] == 1
     assert _mismatches(client, tid) == {}
+    # dafuer (0.107.0): die Regel auf fw-03, ueber das der Weg nicht geht, wird nie gebraucht
+    r = client.get("/findings", params={"tenant_id": tid, "type": "app_rule_unused"})
+    (f,) = r.json()
+    assert f["subject_id"] == "web-lan-alt · Applikation Web" and f["severity"] == "info"
+    assert f["detail"]["connections"][0]["path"] == (
+        "apic-01 · VRF TE:VRF1 → fw-01 · VDOM root → fw-02")  # fmt: skip
+    assert "„web-lan-alt“ auf fw-03 wird nie gebraucht" in f["message"]
+    assert "geht nicht über fw-03" in f["message"]
+
+
+# Internet → Server (0.107.0, Anwender: „Wege, welche Routing technisch keinen Sinn ergeben“):
+# fw-02 hat ein eigenes WAN und dieselbe Regel wie fw-01; der Server antwortet aber ueber fw-01
+# (Default-Route wan1/wan2) - dort kommt der Verkehr herein, nicht ueber fw-02
+INET, WEB01 = "203.0.113.77", "10.20.0.5"
+
+
+def _inet(ext, name, srcintf, dstintf):
+    rule = _fw(ext, name, INET, WEB01, 443, srcintf[0], dstintf, ("internet", "server"))
+    rule["raw"]["srcintf"] = [{"name": i} for i in srcintf]
+    return rule
+
+
+def test_internet_beginnt_am_eingang_nach_dem_rueckweg(client):
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=tp.ADMIN).json()["id"]
+    fw1 = {**tp.FW1, "rules": [_inet("41", "inet-web", ["wan1", "wan2"], "srv")]}
+    fw2 = copy.deepcopy(tp.FW2)
+    fw2["inventory"]["interfaces"].append(tp._if("fw-02", "wan", "192.0.2.130/30", "internet"))
+    fw2["routing"]["routes"].append(
+        tp._r("fw-02", "root", "0.0.0.0/0", [{"ip": "192.0.2.129", "interface": "wan"}])
+    )
+    fw2["rules"] = [_inet("42", "inet-web", ["wan"], "to-fw01")]
+    # fw-02 zuerst: bisher begann der Weg auf dem ersten Geraet mit einer Regel dafuer
+    for name, result in (("fw-02", fw2), ("fw-01", fw1)):
+        tp._deliver(client, tid, tp._system(client, tid, name, "fortigate"), "fortigate", result)
+    body = {"name": "Shop", "members": [{"kind": "host", "ref": WEB01}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).json()
+    out = client.get(f"/applications/{app['id']}/connections").json()
+    (conn,) = out["connections"]
+    assert (conn["src"]["ip"], conn["dst"]["ip"]) == (INET, WEB01)
+    assert [h["label"] for h in conn["hops"]] == ["fw-01 · VDOM root"]
+    assert conn["start"] == "fw-01 · VDOM root"  # Eingang wan1 bzw. wan2 (ECMP)
+    assert conn["verdict"] == "allow" and conn["reached"] and conn["mismatch"] == []
+    assert [s["label"] for s in conn["rules"]] == ["Policy 41 „inet-web“"]
+    assert [(x["label"], x["device"]) for x in conn["unused"]] == [
+        ("Policy 42 „inet-web“", "fw-02")]  # fmt: skip
+    r = client.get("/findings", params={"tenant_id": tid, "type": "app_rule_unused"})
+    assert [f["subject_id"] for f in r.json()] == ["inet-web · Applikation Shop"]
 
 
 # Verbund (0.73.0): fw-r leitet 10.88.0.0/16 per ECMP an fw-p1 und fw-p2; fw-r erlaubt den

@@ -20,6 +20,7 @@ import test_aci_check as ac
 import test_aci_relevance as ar
 import test_paths as tp
 import test_zones as tz
+from system_doc import system_doc, system_list
 
 OP = {"X-Dev-Roles": "operator"}
 TE = "uni/tn-TE"
@@ -233,9 +234,9 @@ def test_doku_je_system_rueckrichtung_wie_applikation(client):
     """0.72.1: die Doku je System fasst Vorwaerts- und Rueckrichtung derselben Kategorie zu
     einer Zeile „beide Richtungen“ zusammen - wie die Applikations-Doku."""
     tid = _seed(client)
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     web = next(s for s in systems if s["ip"] == "10.50.1.10" or "10.50.1.10" in s["name"])
-    doc = client.get(f"/appdoc/systems/{web['name']}", params={"tenant_id": tid}).json()
+    doc = system_doc(client, web["name"], tid)
     rows = [r for t in doc["tables"] for r in t["rows"] if r["Description"].startswith("CT_open")]
     assert len(rows) == 1 and rows[0]["TCP/UDP"].endswith("(↔ beide Richtungen)")
     world = [r for t in doc["tables"] for r in t["rows"] if r["Description"].startswith("CT_world")]

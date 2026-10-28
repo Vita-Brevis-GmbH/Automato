@@ -175,7 +175,6 @@ def test_abgleich_zonen_verkabelung_und_dienste(client):
 
     vlans = {v["vid"] for v in _get(client, "/cabling/vlans", tid, a)}
     assert 201 not in vlans
-    assert _get(client, "/published-services", tid, a) == []
     for path in ("/cabling/devices", "/cabling/links", "/cabling/ports", "/cabling/endpoints",
                  "/cabling/plan", "/routing/exits", "/routing/exits/suggestions",
                  "/routing/ha", "/routing/policy-routes", "/routing/l3outs",

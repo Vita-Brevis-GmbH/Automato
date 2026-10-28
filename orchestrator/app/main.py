@@ -3,14 +3,13 @@ import secrets
 from contextlib import asynccontextmanager
 
 from anyio import to_thread
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import __version__, scheduler
+from app import __version__, modules, scheduler
 from app.api import (
     agents,
-    appdoc,
     applications,
     auth_config,
     cabling,
@@ -25,7 +24,6 @@ from app.api import (
     nat,
     netbox_sync,
     objects,
-    published_services,
     reconcile,
     routing,
     rules,
@@ -36,6 +34,7 @@ from app.api import (
     virtual,
     zones,
 )
+from app.api import modules as module_api
 from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
 from app.i18n import middleware as i18n_middleware
@@ -113,26 +112,25 @@ def create_app() -> FastAPI:
     app.include_router(agents.router)
     app.include_router(agents.agent_router)
     app.include_router(rules.router)
-    app.include_router(findings.router)
+    app.include_router(findings.router, dependencies=[Depends(modules.guard("findings"))])
     app.include_router(systems.router)
     app.include_router(tenants.router)
     app.include_router(nat.router)
-    app.include_router(published_services.router)
-    app.include_router(applications.router)
-    app.include_router(appdoc.router)
+    app.include_router(applications.router, dependencies=[Depends(modules.guard("doku"))])
     app.include_router(naming_profiles.router)
-    app.include_router(reconcile.router)
+    app.include_router(reconcile.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(objects.router)
     app.include_router(virtual.router)
-    app.include_router(netbox_sync.router)
+    app.include_router(netbox_sync.router, dependencies=[Depends(modules.guard("schreibpfad"))])
     app.include_router(system.router)
-    app.include_router(routing.router)
-    app.include_router(topology.router)
+    app.include_router(routing.router, dependencies=[Depends(modules.guard(None))])
+    app.include_router(topology.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(customers.router)
     app.include_router(customer_users.router)
-    app.include_router(zones.router)
-    app.include_router(cabling.router)
-    app.include_router(data_quality.router)
+    app.include_router(zones.router, dependencies=[Depends(modules.guard("design"))])
+    app.include_router(cabling.router, dependencies=[Depends(modules.guard("analyse"))])
+    app.include_router(data_quality.router, dependencies=[Depends(modules.guard("analyse"))])
+    app.include_router(module_api.router)
     return app
 
 

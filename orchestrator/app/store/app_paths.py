@@ -14,12 +14,15 @@ mit ihrem Weg; je Hop die Policy bzw. der Contract, der entscheidet, mit den Obj
   Dienste; ACI-Contracts derselben EPG gelten fuer alle Systeme darin (ein System pruefen).
 - **Weg:** `paths.trace` - wie die Weg-Suche (Routing, Policy-Routen, NAT, Verbund als ein Hop,
   ACI zwischen VRFs). Ist die Quelle an keinem gelesenen Geraet angeschlossen (Internet,
-  Partner), beginnt der Weg auf dem Geraet der Regel.
+  Partner), beginnt der Weg seit 0.107.0 am Eingang nach dem Rueckweg (`entries_of`: wo der Weg
+  vom Ziel zur Quelle das gelesene Netz verlaesst), sonst auf dem Geraet der Regel.
 - **Abgleich Regel <-> Weg:** je Regel, aus der die Verbindung stammt, ob sie auf dem Weg
   entscheidet, nur moeglich ist, vorher eine andere entscheidet bzw. nicht passt, oder ob ihr
-  Geraet gar nicht auf dem Weg liegt. Erlaubt eine Regel und sperrt der Weg (bzw. liegt sie
-  nicht auf dem Weg), ist die Verbindung als Abweichung markiert - der Fall „Regel zeigt
-  Zugriff, Weg-Suche sperrt“ (Befund 0.43.2).
+  Geraet gar nicht auf dem Weg liegt. Erlaubt eine Regel und sperrt der Weg, ist die Verbindung
+  als Abweichung markiert - der Fall „Regel zeigt Zugriff, Weg-Suche sperrt“ (Befund 0.43.2).
+  Liegt ihr Geraet nicht auf dem Weg bis zum Ziel, gehoert sie nicht zur Verbindung (0.107.0,
+  Anwender): `unused` bzw. Befund `app_rule_unused` („Regel nie gebraucht“); Verbindungen nur
+  aus solchen Regeln entfallen.
 - **Wege uneinheitlich (0.73.0, Anwender):** je Verbindung alle Wege - aktiv, ECMP, Backup und
   je Firewall eines Verbunds (`variants`). Offen ueber einen Weg und gesperrt ueber einen
   anderen (`inconsistent`) ist der Befund „Applikation: Wege uneinheitlich“; durchgehend
@@ -120,9 +123,22 @@ def build(session: Session, app: Application, doc: dict | None = None,
     l3 = L3Outs(session, {k[0] for k in graph.nodes})
     l3.locator = epg_locate.Locator(session, tid, data.aci, data.epgs_by_id)
     zctx = zone_path.ZoneContext(session, tid, graph) if zones else None
+    unused: list[dict] = []  # Regeln nie auf dem Weg ihrer Verbindung (0.107.0)
+
+    def keep(conn: dict) -> bool:
+        """Verbindung zeigen? Nicht, wenn keine ihrer Regeln auf ihrem Weg liegt."""
+        hops = " → ".join(h["label"] for h in conn["hops"]) or "–"
+        ends = {"src": conn["src"]["label"], "dst": conn["dst"]["label"]}
+        unused.extend({"rule_id": x["rule_id"], "label": x["label"], "device": x["device"],
+                       **ends, "service": conn["service"], "path": hops}
+                      for x in conn["unused"])  # fmt: skip
+        return bool(conn["rules"]) or not conn["unused"]
+
     for c in list(conns.values())[:MAX_TRACES]:
         conn = _connection(session, tid, graph, checks, data, rules, c, l3, zctx)
-        out.append(conn)
+        shown = keep(conn)
+        if shown:
+            out.append(conn)
         # Netz als Ziel (0.79.1, Anwender): genauer geroutete Teile (z. B. ueber einen anderen
         # L3Out als die 0/0-Route, die das ganze Netz enthaelt) als eigene Verbindungen
         for prefix in conn["parts"][:MAX_PARTS]:
@@ -130,13 +146,27 @@ def build(session: Session, app: Application, doc: dict | None = None,
                          list(c.starts), c.reverse)  # fmt: skip
             part.dst.ip, part.dst.label = prefix, f"{c.dst.label} › {prefix}"
             child = _connection(session, tid, graph, checks, data, rules, part, l3, zctx)
-            child["part_of"] = conn["key"]
-            out.append(child)
+            if shown:
+                child["part_of"] = conn["key"]
+            if keep(child):
+                out.append(child)
     if cut:
         notes.append(
             L(
                 f"{len(conns)} Verbindungen – nur die ersten {MAX_TRACES} geprüft",
                 f"{len(conns)} connections – only the first {MAX_TRACES} checked",
+            )
+        )
+    if unused:
+        labels = list(dict.fromkeys(f"{x['label']} ({x['device']})" for x in unused))
+        more = L(f" und {len(labels) - 3} weitere", f" and {len(labels) - 3} more") \
+            if len(labels) > 3 else ""  # fmt: skip
+        notes.append(
+            L(
+                f"Nie auf dem Weg ihres Verkehrs (Befund „Regel nie gebraucht“): "
+                f"{', '.join(labels[:3])}{more}",
+                f"Never on the path of their traffic (finding “rule never needed”): "
+                f"{', '.join(labels[:3])}{more}",
             )
         )
     order = {"deny": 0, "depends": 1, "unknown": 2, "allow": 3}
@@ -155,7 +185,9 @@ def build(session: Session, app: Application, doc: dict | None = None,
             "inconsistent": sum(1 for c in out if c["inconsistent"]),
             # gegen die Absicht der Zonen (0.78.0)
             "zone_violations": sum(1 for c in out if (c.get("zones") or {}).get("violation")),
+            "unused": len({x["rule_id"] for x in unused}),  # 0.107.0
         },
+        "unused": unused,
         "members": members(doc),
         # 0.78.2: L3Out-Contracts, die weniger oeffnen als die Firewall (Befund)
         "narrower": doc.get("narrower") or [],
@@ -635,6 +667,16 @@ def _connection(
                       checks=checks)  # fmt: skip
     start = None
     if not res["paths"]:
+        # Quelle an keinem gelesenen Geraet (0.107.0, Anwender: Wege, „welche Routing technisch
+        # keinen Sinn ergeben“): der Weg beginnt, wo der Rueckweg das gelesene Netz verlaesst -
+        # nicht auf irgendeinem Geraet mit einer Regel dafuer
+        entries = entries_of(session, tid, graph, checks, c.src.ip, c.dst.ip)
+        found = paths.trace(session, tid, c.dst.ip, c.src.ip, None, 0, c.service, graph=graph,
+                            checks=checks, entries=entries) if entries else None  # fmt: skip
+        if found and found["paths"]:
+            res = found
+            start = ", ".join(dict.fromkeys(graph.nodes[k].label for k, *_ in entries))
+    if not res["paths"]:
         for key in c.starts:
             if paths.parse_key(key) in graph.nodes:
                 res = paths.trace(session, tid, c.dst.ip, c.src.ip, key, 0, c.service,
@@ -650,6 +692,11 @@ def _connection(
     verdict, text = _verdict(active, res["notes"])
     reached = bool(active) and all(p["end"]["kind"] in paths.REACHED for p in active)
     states = [_state(rules[rid], active, data) for rid in c.rules if rid in rules]
+    # Regel auf einem Geraet, ueber das der (bis zum Ziel bekannte) Weg nicht geht: diese
+    # Verbindung braucht sie nie (0.107.0, Anwender: „eher ein Finding … aber eigentlich sollte
+    # dies nicht dort auftauchen“) - nicht bei der Verbindung, sondern Befund `app_rule_unused`
+    unused = [x for x in states if x["state"] == "off_path"] if reached else []
+    states = [x for x in states if x not in unused]
     mismatch = _mismatch(states, verdict, text, reached)
     variants = path_variants(res["paths"])
     parts = _net_parts(c, first)
@@ -669,6 +716,7 @@ def _connection(
         "parallel": first.get("parallel") if first else None,
         "hops": hops,
         "rules": states,
+        "unused": unused,
         "mismatch": mismatch,
         # Wege uneinheitlich (0.73.0): je Weg bzw. Firewall im Verbund das Urteil
         "variants": variants if len(variants) > 1 else [],
@@ -678,6 +726,35 @@ def _connection(
         # Teile des Ziel-Netzes, die genauer anders geroutet werden (eigene Verbindungen)
         "parts": parts,
     }
+
+
+def entries_of(session: Session, tid: int, graph: paths.Graph, checks: policy_check.Checks,
+               src: str, dst: str) -> list[tuple]:  # fmt: skip
+    """Eingang einer Quelle ausserhalb der gelesenen Geraete nach dem Rueckweg (0.107.0): der
+    Weg vom Ziel zur Quelle verlaesst das gelesene Netz ueber eine Anbindung bzw. einen Router
+    ohne gelesenes Geraet - dort kommt der Verkehr der Quelle herein. Je aktivem Weg der letzte
+    Knoten mit seinem Ausgang als Eingang: (Knoten, Interface, Zone, wie erreicht) fuer
+    `paths.trace(entries=)`. Leer ohne Rueckweg (Routing nicht gelesen, Ziel nicht
+    angeschlossen)."""
+    back = paths.trace(session, tid, src, dst, None, 0, None, graph=graph, checks=checks,
+                       backups=False)  # fmt: skip
+    via = L("Eingang nach dem Rückweg", "entry by the return path")
+    out: list[tuple] = []
+    for p in back["paths"]:
+        end = p.get("end") or {}
+        if not p["hops"] or p.get("kind") == "backup":
+            continue
+        for part in _parts(p["hops"][-1]):
+            egress = part.get("egress") or {}
+            left = end.get("kind") in ("exit", "external") or (
+                end.get("kind") == "unknown" and egress.get("next_hop"))  # fmt: skip
+            key = paths.parse_key(part.get("key"))
+            if not left or key not in graph.nodes:
+                continue
+            entry = (key, egress.get("interface"), egress.get("zone"), via)
+            if entry[:2] not in [e[:2] for e in out]:
+                out.append(entry)
+    return out
 
 
 def _net_parts(c: _Conn, first: dict | None) -> list[str]:

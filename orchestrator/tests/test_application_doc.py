@@ -8,6 +8,7 @@ import copy
 from app.models import Epg
 from app.store import aci_relevance
 from sqlalchemy import select
+from system_doc import system_doc, system_list
 from test_vmware import ACI, ADMIN, VCENTER, _deliver, _seed, _system
 from test_vmware import DB as DB_DN
 from test_vmware import WEB as WEB_DN
@@ -242,9 +243,9 @@ def test_contracts_anderer_tenants_und_vrfs_nicht_in_der_doku(client):
     assert all(h["epg"] is None for h in doc["hits"] if h["rule_id"] not in {ct})
 
     # Doku je System: der Server 10.20.0.5 (EPG ueber die Portgruppe seiner VM) ebenso
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     name = next(s["name"] for s in systems if s["ip"] == "10.20.0.5")
-    one = client.get(f"/appdoc/systems/{name}", params={"tenant_id": tid}).json()
+    one = system_doc(client, name, tid)
     shown = {r["Description"] for t in one["tables"] for r in t["rows"]}
     assert "CT_app:SJ" in shown and not {"CT_kb:SJ", "CT_kc:SJ"} & shown, shown
 

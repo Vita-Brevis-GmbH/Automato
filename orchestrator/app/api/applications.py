@@ -1,7 +1,7 @@
 """Applikationen (ADR 0012): Stammdaten, Mitglieder (AP/EPG/Server), Vorschlaege, Doku.
 
-Lesen = `viewer`, Schreiben = `operator`, alles mandantsgescoped und auditiert. Die
-publizierten Dienste (VIPs) liegen unter /published-services.
+Lesen = `viewer`, Schreiben = `operator`, alles mandantsgescoped und auditiert. Die Doku je
+System und die publizierten Dienste sind seit 0.107.0 entfernt (Anwender) - VIPs zeigt NAT/VIP.
 
 Kunden-Benutzer mit der Kunden-Rolle `editor` (feinere Rollen, ADR 0018 Ergaenzung) pflegen
 Applikationen, die ganz zu ihren Kunden gehoeren (`customer_scope.Ownership`): Stammdaten,
@@ -19,8 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app import audit
-from app.api.appdoc import DocTableOut, SiteRef
+from app import audit, modules
 from app.api.customer_filter import actor, customer_view, own_view, ownership
 from app.api.customer_filter import ids as view_ids
 from app.api.customer_filter import visible as in_view
@@ -31,6 +30,7 @@ from app.auth.principal import Principal
 from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import Application, Rule, Site, SourceSystem, Tenant
+from app.schemas.appdoc import DocTableOut, SiteRef
 from app.schemas.rules import RuleOut
 from app.store import (
     app_import,
@@ -1003,6 +1003,8 @@ def application_doc(
     names = peer_names.enabled(session, app.tenant_id, principal.is_customer)
     doc = store.build_doc(session, app, view_ids(session, view, "rule"), names=names)
     doc["peer_names"] = names
+    if not modules.enabled(session, app.tenant_id, "findings"):  # Modul aus (0.107.0)
+        doc["findings"] = []
     if dependencies:
         visible = _visible_apps(session, principal, app)
         doc["dependencies"] = store.dependencies(session, app, doc, visible)

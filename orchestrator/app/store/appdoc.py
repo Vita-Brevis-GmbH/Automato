@@ -13,7 +13,6 @@ werden zugeordnet, der Rest landet in Tabelle 10 (unspezifisch). Rein lesend/pur
 
 import ipaddress
 from collections import defaultdict
-from dataclasses import dataclass
 from functools import cached_property
 
 from sqlalchemy import select
@@ -220,63 +219,6 @@ def app_label(name: str, ips: list[str] | None = None) -> str:
 def lines(values) -> str:
     """Einträge einer Zelle je auf einer Zeile, ohne doppelte."""
     return "\n".join(dict.fromkeys(v for v in values if v))
-
-
-@dataclass
-class SystemRef:
-    name: str
-    ip: str | None
-    rule_count: int
-    kind: str = "host"  # host | epg
-
-
-def list_systems(
-    session: Session, tenant_id: int | None, view=None, rule_ids: set[int] | None = None
-) -> list[SystemRef]:
-    """Systeme mit Regelbezug: Host-Objekte (Firewall) und EPGs (ACI); mit `view` nur die
-    eines Kunden (ADR 0018), mit `rule_ids` zaehlen nur diese Regeln (Kunden-Benutzer)."""
-    stmt = (
-        select(NetworkObject.name, NetworkObject.value, RuleEndpoint.rule_id)
-        .join(RuleEndpoint, RuleEndpoint.network_object_id == NetworkObject.id)
-        .where(NetworkObject.object_class == ObjectClass.HOST)
-    )
-    if tenant_id is not None:
-        stmt = stmt.where(NetworkObject.tenant_id == tenant_id)
-    if view is not None:
-        stmt = stmt.where(NetworkObject.id.in_(view.ids("object")))
-    agg: dict[str, tuple[str | None, set[int]]] = {}
-    for name, value, rid in session.execute(stmt):
-        ip, rids = agg.setdefault(name, (value, set()))
-        if rule_ids is None or rid in rule_ids:
-            rids.add(rid)
-    systems = [
-        SystemRef(name=n, ip=v, rule_count=len(rids), kind="host") for n, (v, rids) in agg.items()
-    ]
-
-    # EPGs (ACI) als Systeme - externe EPGs und vzAny sind keine Systeme
-    estmt = select(Epg).where(Epg.kind == "epg")
-    if tenant_id is not None:
-        estmt = estmt.where(Epg.tenant_id == tenant_id)
-    if view is not None:
-        estmt = estmt.where(Epg.id.in_(view.ids("epg")))
-    epgs = list(session.scalars(estmt))
-    names = [(e.tenant_id, e.name) for e in epgs]
-    rules_of: dict[int, set[int]] = {}
-    if epgs:
-        for epg_id, rule_id in session.execute(
-            select(RuleEndpoint.epg_id, RuleEndpoint.rule_id).where(
-                RuleEndpoint.epg_id.in_([e.id for e in epgs])
-            )
-        ):
-            if rule_ids is None or rule_id in rule_ids:
-                rules_of.setdefault(epg_id, set()).add(rule_id)
-    for epg in epgs:
-        name = epg_system_name(epg) if names.count((epg.tenant_id, epg.name)) > 1 else epg.name
-        systems.append(
-            SystemRef(name=name, ip=None, rule_count=len(rules_of.get(epg.id, ())), kind="epg")
-        )
-
-    return sorted(systems, key=lambda s: (s.kind, s.name))
 
 
 def _target(other: Epg | None, inline: str | None, own: Epg) -> str:
@@ -1615,25 +1557,3 @@ def host_epgs(
         by_ip |= set(session.scalars(select(EpgEndpoint.epg_id).where(EpgEndpoint.ip == ip)))
     ids = fabric_epgs(data, set(vm_epgs), by_ip, prefer)
     return [data.epgs_by_id[i] for i in sorted(ids)]
-
-
-def assign_site(
-    session: Session, system_name: str, tenant_id: int | None, site_id: int | None
-) -> NetworkObject | None:
-    """Verortet ein System (Host) an einem Standort. None, wenn System/Site ungueltig."""
-    sys_obj = session.scalars(
-        select(NetworkObject).where(
-            NetworkObject.name == system_name,
-            NetworkObject.object_class == ObjectClass.HOST,
-            *([NetworkObject.tenant_id == tenant_id] if tenant_id is not None else []),
-        )
-    ).first()
-    if sys_obj is None:
-        return None
-    if site_id is not None:
-        site = session.get(Site, site_id)
-        if site is None or site.tenant_id != sys_obj.tenant_id:
-            raise ValueError("site not found for tenant")
-    sys_obj.site_id = site_id
-    session.flush()
-    return sys_obj

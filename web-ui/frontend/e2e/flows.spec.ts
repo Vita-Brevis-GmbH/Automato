@@ -1748,3 +1748,32 @@ test("Endpunkte mit IPv6 (NDP), Link-local getrennt, Wo hängt … nach IPv6 (0.
   await expect(page.locator("body")).toContainText("Juniper Junos, Arista EOS, Aruba CX");
   expect(problems).toEqual([]);
 });
+
+test("Module je Mandant: ausgeschaltet verschwindet die Ansicht, Abhängigkeit zieht mit (0.107.0)", async ({ page }) => {
+  // eigener Mandant: die übrigen Tests (Mandant 1) laufen parallel weiter
+  const name = "Modul-Test";
+  const old = ((await (await page.request.get("/api/tenants")).json()) as { id: number; name: string }[]).filter((t) => t.name === name);
+  for (const t of old) await page.request.delete(`/api/tenants/${t.id}?confirm=${name}`);
+  const created = await page.request.post("/api/tenants", { data: { name } });
+  expect(created.ok()).toBeTruthy();
+  const tid = ((await created.json()) as { id: number }).id;
+  try {
+    await page.goto("/#tenants");
+    await page.locator(".mandant select").selectOption(String(tid));
+    const card = page.locator("#tenant-modules");
+    await expect(card.locator("tr[data-module='kern']")).toContainText("immer an");
+    const doku = card.locator("tr[data-module='doku'] button.toggle");
+    await expect(doku).toHaveClass(/\bon\b/);
+    await expect(page.locator(".nav-item", { hasText: "Applikationen" })).toBeVisible();
+    await doku.click();
+    await expect(doku).not.toHaveClass(/\bon\b/);
+    await expect(page.locator(".nav-item", { hasText: "Applikationen" })).toHaveCount(0);
+    // Gateway aus: der Schreibpfad (braucht das Gateway) ist mit aus
+    await card.locator("tr[data-module='gateway'] button.toggle").click();
+    await expect(card.locator("tr[data-module='schreibpfad']")).toContainText("Abhängigkeit aus");
+    await doku.click();
+    await expect(page.locator(".nav-item", { hasText: "Applikationen" })).toBeVisible();
+  } finally {
+    await page.request.delete(`/api/tenants/${tid}?confirm=${name}`);
+  }
+});

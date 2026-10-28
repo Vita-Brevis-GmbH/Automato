@@ -191,26 +191,6 @@ def application(doc: dict, conns: dict | None, sources: dict[int, str], when: da
     return out.bytes(when)
 
 
-def system(doc: dict, when: datetime, tenant: str | None = None, fmt: str = "docx") -> bytes:
-    """Doku je System (UC1, `GET /appdoc/systems/{system}`) als Word bzw. Markdown (0.104.0):
-    Kopf mit IP, GG, Standort und VMs, die Kategorien."""
-    name = doc["system"]
-    title = L(f"Applikations-Doku – {name}", f"Application documentation – {name}")
-    out = FORMATS[fmt](title, L("Doku je System (Automato)", "Documentation per system (Automato)"))
-    out.heading(title, 0)
-    out.note(_stamp(when, tenant))
-    site = doc.get("site") or {}
-    vms = list(dict.fromkeys(v["name"] for v in doc.get("vms") or []))
-    out.fields([
-        ("IP", doc.get("system_ip")),
-        (L("GG", "GC"), doc.get("tenant_code")),
-        (L("Standort", "Site"), " · ".join(x for x in (site.get("code"), site.get("name")) if x)),
-        ("VM", ", ".join(vms)),
-    ])  # fmt: skip
-    _tables(out, doc.get("tables") or [], True, False)
-    return out.bytes(when)
-
-
 def _systems(out: Writer, doc: dict) -> None:
     out.heading(L("Systeme", "Systems"), 1)
     rows = [[("VM " if x["kind"] == "vm" else "Server ") + x["name"], ", ".join(x.get("ips") or []),

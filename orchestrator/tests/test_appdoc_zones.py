@@ -10,6 +10,7 @@ mit Firewall-Zonen ohne Zonentyp im Namen (lan/srv) - ohne Zonentyp alles Katego
 
 from app import audit
 from app.models import AuditLog
+from system_doc import system_doc
 from test_appdoc_names import ADMIN, OP, _env
 from test_vmware import _deliver, _system
 
@@ -125,7 +126,7 @@ def test_kategorie_nach_dem_zonentyp_der_gegenstelle(client, session_factory):
     )  # Titel ohne Zonen (0.106.0)
 
     # Doku je System: gleiche Kategorien und Zonen im Kopf
-    system = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}).json()
+    system = system_doc(client, "10.20.0.5", tid)
     sys_where = _where(system)
     assert sys_where["clients-to-web"] == {4} and sys_where["remote-to-web"] == {5}
     assert [z["name"] for t in system["tables"] if t["index"] == 5 for z in t["zones"]] == [
@@ -175,8 +176,6 @@ def test_kunden_benutzer_ohne_zonen(client):
     assert all("Zone" not in row for t in doc["tables"] for row in t["rows"])
     # die Kategorie gilt fuer sie gleich
     assert _where(doc).get("clients-to-web") in (None, {4})
-    system = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}, headers=user)
-    assert system.status_code == 200 and '"Zone"' not in system.text
     assert _types(client, tid, {}, user).status_code == 403
 
 
@@ -219,7 +218,7 @@ def test_alle_kategorien_und_dc_management(client):
     assert head["zones"][0]["name"] == "DC Management" and "Zone" in head["columns"]
     en = client.get(url, headers={"Accept-Language": "en"}).json()
     assert _titles(en)[11] == "Management access"
-    system = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}).json()
+    system = system_doc(client, "10.20.0.5", tid)
     assert _where(system)["mgmt-to-web"] == {11}
 
 
@@ -282,7 +281,7 @@ def test_ausgehend_mit_breiter_quelle_nicht_in_der_doku(client):
     assert not [h for h in doc["hits"] if h["rule_id"] not in rules.values()]
     assert doc["summary"]["outbound_broad"] == 2  # dazu any-out (Quelle any) der Grundumgebung
     assert "wide-out" not in _where(doc)
-    system = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}).json()
+    system = system_doc(client, "10.20.0.5", tid)
     assert "wide-out" not in _where(system)
     assert "wide-out" not in {x["description"] for x in system["impossible"]}
     # direkt der Applikation zugeordnet: bleibt da

@@ -11,8 +11,10 @@
 Gegenueber den Quellen nur lesend.
 """
 
+import copy
 import ipaddress
-from collections import defaultdict
+import threading
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 
 from sot_gateway.models import IP_KINDS, NetworkObject, NetworkObjectType, ReferenceKind
@@ -21,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     MatchStatus,
+    Platform,
     ReferenceRecordRow,
     ReferenceRole,
     SourceOfRecord,
@@ -105,11 +108,25 @@ def _range(value: str):
     return (a.version, int(a), int(b)) if a.version == b.version else None
 
 
+@dataclass(frozen=True)
+class SourceInfo:
+    """Was ein Index von seiner Quelle braucht - ohne Sitzung, damit er Anfragen ueberdauert
+    (0.107.0, `context`)."""
+
+    id: int
+    name: str
+    platform: Platform
+
+    @classmethod
+    def of(cls, source: SourceSystem) -> "SourceInfo":
+        return cls(source.id, source.name, source.platform)
+
+
 class ReferenceIndex:
     """Schneller Lookup ueber den aktuellen Stand einer Referenzquelle."""
 
-    def __init__(self, source: SourceSystem, rows: list[Ref]) -> None:
-        self.source = source
+    def __init__(self, source: SourceSystem | SourceInfo, rows: list[Ref]) -> None:
+        self.source = source if isinstance(source, SourceInfo) else SourceInfo.of(source)
         self.by_ip: dict[str, list[Ref]] = defaultdict(list)
         self.prefixes: dict[tuple[int, int], dict[int, Ref]] = defaultdict(dict)
         self.prefix_by_value: dict[str, Ref] = {}
@@ -246,11 +263,49 @@ def tenant_reference_sources(session: Session, tenant_id: int) -> list[SourceSys
     )
 
 
+# Indizes je (Quelle, Lauf) im Speicher des Prozesses (0.107.0, Anwender zu den Namen der
+# Gegenstellen: „es braucht enorm lange“ - ein grosses IPAM neu zu lesen kostete je Anfrage
+# Sekunden). Der Stand eines Laufs aendert sich nicht mehr; ein neuer Lauf hat eine neue ID.
+_INDEXES: OrderedDict[tuple[int, str], ReferenceIndex] = OrderedDict()
+_INDEX_LOCK = threading.Lock()
+
+
+def _cache_size() -> int:
+    from app.config import get_settings  # spaet: Einstellungen erst zur Laufzeit
+
+    return max(0, get_settings().ref_cache)
+
+
 def load_index(session: Session, source: SourceSystem) -> ReferenceIndex:
-    rows = session.execute(
-        select(*_COLUMNS).where(ReferenceRecordRow.collector_run_id == source.reference_run_id)
-    ).all()
-    return ReferenceIndex(source, [Ref(*row) for row in rows])
+    """Index des aktuellen Stands der Quelle - aus dem Speicher, sonst aus der Datenbank."""
+    key = (source.id, source.reference_run_id)
+    size = _cache_size()
+    with _INDEX_LOCK:
+        idx = _INDEXES.get(key) if size else None
+        if idx is not None:
+            _INDEXES.move_to_end(key)
+    if idx is None:
+        rows = session.execute(
+            select(*_COLUMNS).where(ReferenceRecordRow.collector_run_id == source.reference_run_id)
+        ).all()
+        idx = ReferenceIndex(source, [Ref(*row) for row in rows])
+        if size and source.reference_run_id:
+            with _INDEX_LOCK:
+                _INDEXES[key] = idx
+                for old in [k for k in _INDEXES if k[0] == source.id and k != key]:
+                    del _INDEXES[old]  # aelterer Lauf derselben Quelle
+                while len(_INDEXES) > size:
+                    _INDEXES.popitem(last=False)
+    if idx.source.name != source.name:  # Quelle umbenannt: gleicher Index, neuer Name
+        idx = copy.copy(idx)
+        idx.source = SourceInfo.of(source)
+    return idx
+
+
+def forget_indexes() -> None:
+    """Indizes im Speicher verwerfen (Tests, Wiederherstellung einer Sicherung)."""
+    with _INDEX_LOCK:
+        _INDEXES.clear()
 
 
 @dataclass

@@ -11,6 +11,7 @@ EN_any 0.0.0.0/0 und EN_srv 10.20.0.0/24 (L3O_fw), EN_rt 10.20.0.0/16 nur fuer d
 import copy
 
 import test_paths as tp
+from system_doc import system_doc, system_list
 
 OP = {"X-Dev-Roles": "operator"}
 TE = "uni/tn-TE"
@@ -79,9 +80,9 @@ def _seed(client) -> int:
 
 
 def _doc(client, tid, ip) -> tuple[dict[str, dict], dict[str, dict]]:
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     name = next(s["name"] for s in systems if s["ip"] == ip)
-    doc = client.get(f"/appdoc/systems/{name}", params={"tenant_id": tid}).json()
+    doc = system_doc(client, name, tid)
     shown = {r["Description"]: r for t in doc["tables"] for r in t["rows"]}
     return shown, {x["description"]: x for x in doc["impossible"]}
 
@@ -127,7 +128,7 @@ def test_contracts_ueber_die_externe_epg_mit_dem_laengsten_subnetz(client):
 
     # Applikations-Doku: Treffer mit Relevanz, Kennzahlen ohne die unmoeglichen
     body = {"name": "App", "members": [{"kind": "host", "ref": "10.20.0.5"}]}
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     body["members"][0]["ref"] = next(s["name"] for s in systems if s["ip"] == "10.20.0.5")
     app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP)
     assert app.status_code == 201, app.text

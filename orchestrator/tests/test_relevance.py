@@ -7,6 +7,7 @@ routingtechnisch nicht moeglich. Die Regeln „lan -> dmz“ sind moeglich.
 """
 
 import test_policy_check as pc
+from system_doc import system_doc, system_list
 
 ADMIN = {"X-Dev-Roles": "admin"}
 OP = {"X-Dev-Roles": "operator"}
@@ -14,10 +15,10 @@ OP = {"X-Dev-Roles": "operator"}
 
 def test_regeln_nur_wo_der_verkehr_durchkommt(client):
     tid = pc._seed(client)
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     web = next(s["name"] for s in systems if s["ip"] == "10.30.0.10")
 
-    doc = client.get(f"/appdoc/systems/{web}", params={"tenant_id": tid}).json()
+    doc = system_doc(client, web, tid)
     shown = {(row["_rule"], row["_side"]) for t in doc["tables"] for row in t["rows"]}
     gone = {(x["description"], x["side"]): x for x in doc["impossible"]}
     # ausgehend mit breiter Quelle (lan-to-dmz-deny, lan-to-inet-users vom Server aus) stehen
@@ -60,7 +61,7 @@ def test_gegenstelle_any_ist_was_hinter_dem_interface_liegt(client):
     tid = pc._seed(client)
 
     def rows() -> dict[str, tuple[int, dict]]:
-        doc = client.get("/appdoc/systems/10.30.0.10", params={"tenant_id": tid}).json()
+        doc = system_doc(client, "10.30.0.10", tid)
         return {(r["Description"], r["_side"]): (t["index"], r)
                 for t in doc["tables"] for r in t["rows"]}  # fmt: skip
 

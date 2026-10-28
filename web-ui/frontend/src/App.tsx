@@ -8,6 +8,7 @@ import {
   fetchFindingSummary,
   fetchHealth,
   fetchNat,
+  fetchModules,
   fetchRuleSummary,
   fetchServerMe,
   fetchTenants,
@@ -17,6 +18,7 @@ import {
   setCustomerFilter,
   setCustomerUser,
   Tenant,
+  ModuleInfo,
 } from "./api";
 import Agents from "./Agents";
 import AppDoc from "./AppDoc";
@@ -38,6 +40,7 @@ import Runs from "./Runs";
 import System from "./System";
 import Tenants from "./Tenants";
 import { L, lang, setLang } from "./i18n";
+import { hiddenViews, MODULES_CHANGED, ModulesContext } from "./moduleState";
 import { ErrorBox, Icon, Note } from "./ui";
 import Users from "./Users";
 
@@ -317,6 +320,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   const [theme, setTheme] = useState<string | null>(() => stored("automato_theme"));
   const [menuOpen, setMenuOpen] = useState(false);
   const [findingType, setFindingType] = useState(""); // Vorfilter aus der Abgleich-Ansicht
+  // Module je Mandant (0.107.0, ADR 0036): ausgeschaltete blendet die Navigation aus
+  const [mods, setMods] = useState<ModuleInfo[] | null>(null);
+  const [modsVersion, setModsVersion] = useState(0);
 
   const setTenantId = useCallback((id: number | null) => {
     setTenantIdRaw(id);
@@ -413,10 +419,28 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   const noTenant = !me.isAdmin && tenants !== null && tenants.length === 0;
   const tenantReady = tenants !== null && (me.isAdmin || tenantId !== null);
 
+  useEffect(() => {
+    if (!tenantReady) return;
+    let live = true;
+    fetchModules(tenantId)
+      .then((m) => live && setMods(m))
+      .catch(() => live && setMods(null));
+    return () => {
+      live = false;
+    };
+  }, [tenantId, tenantReady, modsVersion]);
+  useEffect(() => {
+    const changed = () => setModsVersion((v) => v + 1);
+    window.addEventListener(MODULES_CHANGED, changed);
+    return () => window.removeEventListener(MODULES_CHANGED, changed);
+  }, []);
+
   const loadStats = useCallback(() => {
     if (!tenantReady) return;
     setStats({ rules: null, nat: null, findings: null, error: null });
-    Promise.all([fetchRuleSummary(tenantId), fetchNat({ tenantId, limit: 1 }), fetchFindingSummary(tenantId)])
+    // Findings aus (0.107.0): der Server antwortet 403 – dann ohne Zähler
+    const findings = fetchFindingSummary(tenantId).catch(() => EMPTY_FINDINGS);
+    Promise.all([fetchRuleSummary(tenantId), fetchNat({ tenantId, limit: 1 }), findings])
       .then(([rules, nat, findings]) => setStats({ rules, nat: nat.total, findings, error: null }))
       .catch((e) => setStats({ rules: EMPTY_RULES, nat: 0, findings: EMPTY_FINDINGS, error: e }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -437,7 +461,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
 
   // Kunden-Benutzer sehen nur die freigegebenen Doku-Ansichten (feinere Rollen: dazu, was ihre
   // Capabilities erlauben); Betreuer nicht die Seiten nur für Kunden-Benutzer
+  const hidden = hiddenViews(mods);
   const shown = (n: NavEntry) =>
+    !hidden.has(n.key) &&
     (!n.adminOnly || me.isAdmin) &&
     (me.isCustomer ? !!n.customer && (!n.cap || auth.customerCan(me, n.cap)) : !n.customerOnly);
   const entry = NAV.find((n) => n.key === view);
@@ -550,6 +576,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
         </div>
       </nav>
 
+      <ModulesContext.Provider value={mods}>
       <main className="main" key={`${tenantId ?? "alle"}-${customerId ?? "alle"}`}>
         {tenantsErr ? <ErrorBox error={tenantsErr} prefix={L("Mandanten laden", "Loading tenants")} /> : null}
         {customerId != null && !me.isCustomer && docView && (
@@ -732,6 +759,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
           </>
         )}
       </main>
+      </ModulesContext.Provider>
     </div>
   );
 }

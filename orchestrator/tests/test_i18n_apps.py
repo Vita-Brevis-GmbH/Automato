@@ -115,9 +115,12 @@ def test_verbindungen_und_plan_englisch(client):
     states = {s["rule_id"]: s for s in https["rules"]}
     texts = {s["state"]: s["text"] for s in states.values()}
     assert texts["decides"] == "decides on the path"
-    assert texts["off_path"] == "fw-03 is not on the path of this connection"
     assert texts["other"].endswith(" decides earlier")
-    assert "Policy 31 “web-lan-alt”" in {s["label"] for s in states.values()}
+    # nicht auf dem Weg (0.107.0): nicht bei der Verbindung, mit englischem Text in `unused`
+    (alt,) = https["unused"]
+    assert alt["label"] == "Policy 31 “web-lan-alt”"
+    assert alt["text"] == "fw-03 is not on the path of this connection"
+    assert any("rule never needed" in n for n in out["notes"])
     blocked = conns[(tap.WEB, tap.SRV, "tcp/8080")]
     assert blocked["mismatch"][0].startswith("Policy 12 “web-lan-8080” allows – the path is ")
     plan = out["plan"]

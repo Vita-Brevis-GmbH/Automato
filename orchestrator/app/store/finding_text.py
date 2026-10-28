@@ -385,6 +385,40 @@ def _app_narrower(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _app_unused(subject: str, d: dict) -> tuple[str, str]:
+    """Regel nie gebraucht (0.107.0): ihr Geraet liegt nicht auf dem Weg der Verbindungen."""
+    name = d.get("name") or subject
+    on = L(f" auf {d['source']}", f" on {d['source']}") if d.get("source") else ""
+    conns = d.get("connections") or []
+    shown = [f"{c.get('src')} → {c.get('dst')}{' ' + c['service'] if c.get('service') else ''}"
+             f" ({L('Weg', 'path')}: {c.get('path') or '–'})" for c in conns[:3]]  # fmt: skip
+    count = d.get("count") or len(conns)
+    rest = count - len(shown)
+    more = L(f" (+{rest} weitere)", f" (+{rest} more)") if rest > 0 else ""
+    app, listed = _q(d.get("application")), "; ".join(shown)
+    device = d.get("source") or L("das Gerät", "the device")
+    return (
+        L(
+            f"Regel {_q(name)}{on} wird nie gebraucht: der Verkehr von {count} "
+            f"Verbindung{'en' if count != 1 else ''} der Applikation {app} geht nicht über "
+            f"{device}: {listed}{more}.",
+            f"Rule {_q(name)}{on} is never needed: the traffic of {count} "
+            f"connection{'s' if count != 1 else ''} of the application {app} does not pass "
+            f"{device}: {listed}{more}.",
+        ),
+        L(
+            "Nach dem Routing nimmt der Verkehr einen anderen Weg – die Regel greift dafür nie. "
+            "Regel prüfen und entfernen, falls sie nichts anderes braucht, bzw. das Routing "
+            "prüfen, wenn der Verkehr über dieses Gerät gehen soll (Weg-Suche). Die Doku nach "
+            "Kategorien zeigt die Regel weiter, die Verbindungen Ende zu Ende nicht.",
+            "According to the routing the traffic takes another path – the rule never applies to "
+            "it. Check the rule and remove it if nothing else needs it, or check the routing if "
+            "the traffic should pass this device (path search). The documentation by category "
+            "still shows the rule, the end-to-end connections do not.",
+        ),
+    )
+
+
 def _app_mismatch(subject: str, d: dict) -> tuple[str, str]:
     """Wege uneinheitlich (0.73.0, ADR 0021): Verbindungen einer Applikation, die über einen
     Weg offen und über einen anderen gesperrt sind. Befunde bis 0.72 (Regel <-> Weg) ohne
@@ -553,6 +587,7 @@ _TOPO_TEXT = {
     "zone_net_exit": _zone_net_exit,
     "app_connection_mismatch": _app_mismatch,
     "app_contract_narrower": _app_narrower,
+    "app_rule_unused": _app_unused,
     "link_speed_mismatch": _link,
     "link_duplex_mismatch": _link,
     "link_vlan_mismatch": _link,

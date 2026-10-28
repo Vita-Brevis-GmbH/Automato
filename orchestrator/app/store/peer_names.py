@@ -94,6 +94,7 @@ class _Names:
         self.hosts = {v: ip for v in values if (ip := _host(v))}
         self.nets = {v: n for v in values if v not in self.hosts and (n := _net(v))}
         self.ctx = references.context(session, tenant_id)
+        self._ipam_cache: dict[str, str | None] = {}
         ips = set(self.hosts.values())
         self.vms: dict[str, set[str]] = defaultdict(set)
         self.epg_ips: dict[str, set[str]] = defaultdict(set)
@@ -149,10 +150,12 @@ class _Names:
         ).all()  # fmt: skip
         found = [(rid, role, o) for rid, role, o in found if o.members]
         if found:
-            directory = objects_store.Directory(session, {o.source_system_id for *_, o in found})
+            directory = objects_store.Directory.closure(session, [o for *_, o in found])
+            expanded: dict[int, set[str]] = {}  # je Gruppe einmal (in vielen Regeln)
             for rid, role, o in sorted(found, key=lambda x: x[2].name):
-                values = {str(v) for m in directory.expand(o) for v in m.values or []}
-                self.groups[(rid, role)].append((o.name, values))
+                if o.id not in expanded:
+                    expanded[o.id] = {str(v) for m in directory.expand(o) for v in m.values or []}
+                self.groups[(rid, role)].append((o.name, expanded[o.id]))
         self.any_object: dict[int, str] = {}
         for oid, name in session.execute(
             select(DeviceObject.network_object_id, DeviceObject.name)
@@ -164,6 +167,11 @@ class _Names:
             self.any_object.setdefault(oid, name)
 
     def _ipam(self, value: str) -> str | None:
+        if value not in self._ipam_cache:
+            self._ipam_cache[value] = self._ipam_lookup(value)
+        return self._ipam_cache[value]
+
+    def _ipam_lookup(self, value: str) -> str | None:
         if value in self.hosts:
             names = references.dns_names(self.ctx, self.hosts[value])
             return names[0] if names else None
@@ -193,6 +201,30 @@ class _Names:
         return next((n for n in candidates if n and n not in (value, ip, net)), None)
 
 
+def _mapping(names: _Names, rid: int, side: str | None, eps) -> dict[str, str]:
+    """Adresse -> Text mit Namen fuer die Gegenstellen einer Regel (die Seite gegenueber
+    `side`): Gruppen der Regel in einer Zeile, sonst „Name (Adresse)“."""
+    mapping: dict[str, str] = {}
+    grouped: dict[str, list[str]] = defaultdict(list)  # Gruppe -> ihre Netze in der Zelle
+    for role, obj in eps:
+        if role == side or obj.value in mapping:
+            continue
+        group = names.group(rid, role, obj.value)
+        if group:
+            grouped[group].append(obj.value)
+            mapping[obj.value] = group
+            continue
+        name = names.name(rid, role, obj)
+        if name:
+            mapping[obj.value] = f"{name} ({obj.value})"
+    for group, values in grouped.items():  # eine Zeile je Gruppe: „G_x (a, b, c +2)“
+        more = f" +{len(values) - SHOWN}" if len(values) > SHOWN else ""
+        line = f"{group} ({', '.join(values[:SHOWN])}{more})"
+        for v in values:
+            mapping[v] = line
+    return mapping
+
+
 def apply(session: Session, tenant_id: int | None, rows: list[dict]) -> int:
     """Gegenstellen der Firewall-Regeln in den Zeilen der Kategorien (`appdoc.PEER`, schon
     verteilt: auch Source/Destination) mit Namen; aendert die Zeilen, liefert ihre Zahl.
@@ -214,27 +246,13 @@ def apply(session: Session, tenant_id: int | None, rows: list[dict]) -> int:
     if not eps:
         return 0
     names = _Names(session, tenant_id, eps)
+    mappings: dict[tuple[int, str | None], dict[str, str]] = {}  # je Regel und Seite einmal
     changed = 0
     for row in rows:
         rid, side = row.get(appdoc.RULE), row.get(appdoc.SIDE)
-        mapping: dict[str, str] = {}
-        grouped: dict[str, list[str]] = defaultdict(list)  # Gruppe -> ihre Netze in der Zelle
-        for role, obj in eps.get(rid, ()):
-            if role == side or obj.value in mapping:
-                continue
-            group = names.group(rid, role, obj.value)
-            if group:
-                grouped[group].append(obj.value)
-                mapping[obj.value] = group
-                continue
-            name = names.name(rid, role, obj)
-            if name:
-                mapping[obj.value] = f"{name} ({obj.value})"
-        for group, values in grouped.items():  # eine Zeile je Gruppe: „G_x (a, b, c +2)“
-            more = f" +{len(values) - SHOWN}" if len(values) > SHOWN else ""
-            line = f"{group} ({', '.join(values[:SHOWN])}{more})"
-            for v in values:
-                mapping[v] = line
+        if (rid, side) not in mappings:
+            mappings[(rid, side)] = _mapping(names, rid, side, eps.get(rid, ()))
+        mapping = mappings[(rid, side)]
         if not mapping:
             continue
         text = row.get(appdoc.PEER) or ""

@@ -354,8 +354,6 @@ def test_kunden_filter_in_den_listen(client):
     assert get("/findings/summary", b).json()["total"] == 0
     assert [v["name"] for v in get("/vms", a).json()["rows"]] == ["web01-007-ka"]
     assert [p["name"] for p in get("/portgroups", b).json()] == ["TE_kb|AP_100|EPG_app"]
-    systems = {s["name"] for s in get("/appdoc/systems", a).json()}
-    assert systems == {"10.50.1.10", "EPG_web", "EPG_db", "EPG_dns"}
     assert get("/objects", a).json()["total"] == 0 and get("/nat", a).json() == []
 
     # Applikationen ueber ihre Mitglieder

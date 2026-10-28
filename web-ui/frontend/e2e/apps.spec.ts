@@ -330,25 +330,6 @@ test("Applikation: Stammdaten bearbeiten (Zweck, Namen)", async ({ page }) => {
   await expect(page.locator("#app-infra-chip")).toHaveCount(0);
 });
 
-test("Doku je System: routingtechnisch unmögliche Regeln stehen nicht in den Kategorien", async ({ page }) => {
-  await page.goto("/#apps");
-  await page.click("button:has-text('Doku je System')");
-  const pick = page.locator(".filterbar select").first();
-  await expect(page.locator(".stack")).toBeVisible(); // erstes System geladen
-  await expect(pick).toContainText("10.30.0.10");
-  await pick.selectOption("10.30.0.10");
-  const gone = page.locator("#doc-impossible");
-  await expect(gone).toContainText("Routingtechnisch nicht möglich");
-  await gone.locator("summary").click();
-  await expect(gone).toContainText("lan-to-inet-users");
-  await expect(gone).toContainText("fw-08 leitet 10.30.0.10 über dmz (Zone dmz) – die Regel gilt nur für den Ausgang internet");
-  await expect(page.locator(".stack")).toContainText("lan-to-dmz-web");
-  await expect(page.locator(".stack")).not.toContainText("lan-to-inet-users");
-  // Gegenstelle any: was hinter dem Interface der Regel liegt (0.25.0)
-  await expect(page.locator(".stack")).toContainText("all → Netze hinter lan: 10.10.0.0/24");
-  await expect(page.locator(".stack")).toContainText("all → extern (Default-Route über internet)");
-});
-
 test("Applikation: Doku nach Kategorien mit Aktion, Gerät und Link zur Regel", async ({ page }) => {
   await open(page);
   // zugeklappt, bis man sie öffnet (0.73.0)
@@ -765,28 +746,4 @@ test("Applikationen: Stammdaten aus CSV, ohne VMs ausblenden und mehrere lösche
   await page.locator("#apps-delete-confirm").click();
   await expect(list.locator("tbody tr", { hasText: "Import A" })).toHaveCount(0);
   await expect(list.locator("tbody tr", { hasText: "Webshop" })).toBeVisible();
-});
-
-test("Publizierte Dienste: Virtual Service des NSX ALB mit Quelle und Pool (0.77.0)", async ({ page }) => {
-  await page.goto("/#apps");
-  await page.click("button:has-text('Publizierte Dienste')");
-  const row = page.locator("tr[data-platform='avi']", { hasText: "vs-shop" });
-  await expect(row).toContainText("10.10.10.80:443");
-  await expect(row).toContainText("10.10.10.5:8443");
-  await expect(row).toContainText("pool-shop · 1 Server");
-  await expect(row).toContainText("avi-01");
-  await expect(row).toContainText("NSX ALB");
-  // 0.79.0: die VIP der FortiGate davor und umgekehrt der Virtual Service hinter ihr
-  await expect(row.locator(".vip-chain")).toContainText("über V-EXT_lb.example.ch (203.0.113.30)");
-  const front = page.locator("tr", { hasText: "V-EXT_lb.example.ch" }).first();
-  await expect(front.locator(".vip-chain")).toContainText("→ NSX ALB vs-shop · 1 Server");
-  await row.click();
-  const drawer = page.locator(".drawer");
-  await expect(drawer).toContainText("Quelle");
-  await expect(drawer).toContainText("NSX ALB (Avi)");
-  await expect(drawer.locator(".vip-fronted")).toContainText("V-EXT_lb.example.ch");
-  await page.locator(".drawer button[aria-label='Schliessen']").first().click();
-  await front.click();
-  await expect(page.locator(".drawer .vip-balancers")).toContainText("vs-shop");
-  await expect(page.locator(".drawer .vip-balancers")).toContainText("10.10.10.5:8443");
 });

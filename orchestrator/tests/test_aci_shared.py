@@ -12,6 +12,7 @@ import copy
 
 import test_aci_check as ac
 import test_paths as tp
+from system_doc import system_doc, system_list
 
 OP = {"X-Dev-Roles": "operator"}
 SRV = "uni/tn-TE2/ap-AP9/epg-EG_srv"
@@ -95,10 +96,10 @@ def test_ohne_geteiltes_subnetz_kein_weg_im_fabric(client):
     assert "CT_shared" not in names
     assert doc["summary"]["impossible"] >= 1
     # Doku je System: unter „nicht möglich“ mit Begruendung
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     name = next(s["name"] for s in systems if s["name"].startswith("TE/AP1/EPG_web")
                 or "EPG_web" in s["name"])  # fmt: skip
-    one = client.get(f"/appdoc/systems/{name}", params={"tenant_id": tid}).json()
+    one = system_doc(client, name, tid)
     gone = {x["description"]: x["text"] for x in one["impossible"]}
     assert "kein geteiltes Subnetz" in gone["CT_shared"]
 
