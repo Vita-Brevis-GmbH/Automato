@@ -1080,47 +1080,56 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Seit 0.101.0 schaltet der Global Admin die Namen auch direkt in der Karte „Doku nach
     Kategorien“ um („Namen der Gegenstellen“); Netze und Bereiche nennen dann zuerst die Gruppe,
     wie sie in der Regel steht: „G_clients (10.70.0.0/16, 10.71.0.0/16)“.
-  - **Kategorien mit Zonen (0.101.0, seit 0.102.0 im Netzwerkdesign):** Firewall-Regeln, die einen
-    grossen Bereich zulassen, aber direkt auf das System zeigen (z. B. 10.0.0.0/8 → Server),
-    kommen in die Kategorie der Zone, aus der sie kommen. Dafür in **Netzwerkdesign →
-    Kategorien** (Operator) je Zone die Kategorie wählen – Internet (1/2), Unternehmensnetzwerk
-    (3/4), VPN (5), Remote Access (6), andere Security Tenants (9), DC Management (11) – und ihre
-    **Netze** (Quell-Adressen, ein Netz je Zeile) mit **Ausschlüssen** („ohne“, z. B. 10.0.0.0/8
-    ohne 10.20.0.0/16) erfassen; „Vorschlag nach Namen“ füllt die Kategorie nach dem Namen der
-    Zone (Edge Internet, Edge Office, Edge VPN, RES-…, … Management), danach „Speichern“. Die
-    übrigen Selektoren der Zone (ACI, Firewall, IPAM, Anbindung) pflegt weiter der Reiter Zonen.
-    In der Doku führt „Zonen der Kategorien ↗“ dorthin. Die Titel der Kategorien nennen ihre
-    Zonen („2. Zugriff aus Edge Internet“), der Kopf die Zonen mit Netzen und Ausschlüssen, die
-    Spalte **Zone** die Zonen der Gegenstelle. **DC Management** (hinter einer eigenen Firewall):
-    Firewall-Regeln und Contracts zu EPGs der Zone stehen in Kategorie 11 – die Kategorie
-    erscheint erst mit einer solchen Zone. Umfasst ein Bereich Zonen mehrerer Kategorien, bleibt
-    die Regel unspezifisch (die Spalte Zone zeigt, welche) – dann den Bereich enger fassen, einen
-    Ausschluss setzen oder die Zonen anders schneiden. Kunden-Benutzer sehen Spalte, Zonen und
-    Titel mit Zonen nicht. Seit 0.104.0 passt der Admin die Auswahl (eigene Kategorien bzw.
-    Bereiche, Titel, Muster für den Vorschlag) unter **Namensprofile → Kategorien der
-    Applikations-Doku** an.
-  - **Zonentyp, Richtungen und Ausgänge (0.105.0, ADR 0035):** einfacher als Bereiche je Zone –
-    in vier Schritten:
-    1. **Zonentyp** je Zone in **Netzwerkdesign → Kategorien** (Spalte „Zonentyp“, auch im
-       Zonen-Editor): die Zone des Grundschemas, das im Namensprofil hochgeladen ist (ohne eigenes
-       die Vorlage: DC, Edge Internet, Edge Office, Edge VPN, …). „automatisch: …“ übernimmt die
-       Erkennung nach Name bzw. Kurzname; nur von Hand wählen, wenn sie nicht passt.
-    2. **Netze** mit Ausschlüssen wie bisher.
-    3. **Ausgänge** (Reiter Zonen, Selektoren „Ausgang Interface“, „Ausgang Firewall-Zone“,
-       „Ausgang L3Out“, optional mit der Firewall): wohin ein L3Out bzw. ein Transfer-Interface führt.
-       Eine Gegenstelle, die nicht in den Netzen einer Zone liegt (any, grosse Bereiche), gehört zur
-       Zone, deren Ausgang die Regel nutzt. Die Spalte „Ausgänge“ im Reiter Kategorien zeigt sie.
-    4. **Richtungen** im Namenskonzept (Namensprofile → Kategorien der Applikations-Doku, Spalte
-       „Richtungen“): je Zeile „Zonentyp der Quelle → Zonentyp des Ziels“, `*` = jeder, z. B.
-       Kategorie 12 „Zugriff aus den Ressourcen“ mit `DC-Ressourcen → DC`, Kategorie 13 „Zugriff
-       aus anderen Kunden“ mit `DC → DC`. Sobald eine Kategorie Richtungen hat, gilt die Einteilung
-       nach Richtungen: zuerst **innerhalb der Applikation** (7), dann **innerhalb der eigenen
-       Zone** (8, Security Tenant), dann die genaueste Richtung, sonst wie bisher; die Bereiche je
-       Zone entfallen (eingeklappt) und die Spalte „Kategorie“ im Netzwerkdesign verschwindet.
-       Zonentypen, die nicht im Grundschema stehen, meldet die Tabelle („nicht im Grundschema“).
-    Lernt eine Firewall ein Netz einer Zone nicht über deren Ausgang (anderes Interface, nur die
-    Default-Route oder gar nicht), steht der Befund **„Netz nicht über den Ausgang der Zone“**
-    unter Findings → Zonen – mit dem Interface, über das sie es lernt, und den Zonen dahinter.
+  - **Kategorien nach Zonentyp (seit 0.106.0, ADR 0035):** jede Firewall-Regel bzw. jeder
+    Contract steht in der Kategorie seiner **Richtung** Zonentyp der Quelle → Zonentyp des Ziels.
+    In drei Schritten einrichten:
+    1. **Netzwerkdesign → Kategorien** (Operator) je Zone:
+       - **Zonentyp**: die Zone des Grundschemas, das im Namensprofil hochgeladen ist (ohne
+         eigenes die Vorlage: DC, Edge Internet, Edge Office, Edge VPN, Public, …).
+         „automatisch: …“ übernimmt die Erkennung nach Name bzw. Kurzname; nur von Hand wählen,
+         wenn sie nicht passt.
+       - **Netze** (Quell-Adressen, ein Netz je Zeile) mit **Ausschlüssen** („ohne“, z. B.
+         10.0.0.0/8 ohne 10.20.0.0/16).
+       - **Geräte**: Firewall bzw. VDOM, ACI-Tenant, ACI-VRF und Anbindungen (zuerst unter
+         Routing → Anbindungen erfassen bzw. übernehmen).
+       - Danach „Speichern“. Die übrigen Selektoren (EPG, Firewall-Zone, IPAM …) pflegt der
+         Reiter Zonen.
+    2. **Namensprofile → Kategorien der Applikations-Doku** (Admin): je Kategorie Titel,
+       Titel englisch, **Source-Zone** und **Dest-Zone**. Je Seite einen oder mehrere Zonentypen
+       wählen, „* jeder“ = jeder Zonentyp, z. B. „Zugriff aus den Ressourcen“ mit `DC-Ressourcen
+       → DC`, „Zugriff aus anderen Kunden“ mit `DC → DC`.
+       - Fest, nur der Titel änderbar: **innerhalb der Applikation** (7), **innerhalb des
+         Security Tenants** (8) und **unspezifisch** (10).
+       - Die Vorgaben (Internet, Unternehmensnetzwerk, VPN, andere Security Tenants, Management)
+         lassen sich ändern oder entfernen; „Auf Vorgaben zurücksetzen“ stellt sie wieder her.
+    3. Die **Doku** teilt so ein:
+       - zuerst innerhalb der Applikation (Server intern, ACI im selben Application Profile),
+         dann innerhalb des Security Tenants (ACI im selben Tenant bzw. Gegenstelle in der eigenen
+         Zone);
+       - dann die genaueste Richtung: beide genannt vor „*“, bei Gleichstand die kleinere Nummer;
+       - sonst unspezifisch.
+
+    **Ohne Netz einer Zone** (any, grosse Bereiche) zählt, was hinter dem Interface der Regel
+    liegt: die Anbindung, die Netze, die die Firewall dort routet, bzw. die Default-Route (Zonen
+    mit 0.0.0.0/0). Ein grosser Bereich zählt nur mit seinen Zonen, die dort liegen. Bei einer
+    externen EPG zählt die Zone der Firewall hinter ihrem L3Out. Ist das nicht eindeutig, bleibt
+    der Zugriff unspezifisch.
+
+    **Ohne gepflegte Zone** nimmt Automato den Zonentyp nach dem Namen der Firewall-Zone bzw. des
+    L3Outs, nach den Mustern des Grundschemas („L3O_inet“ → Edge Internet). Externe Gegenstellen
+    gelten als Internet, Systeme im ACI und die dokumentierten Systeme als DC.
+
+    Zur Anzeige der Doku:
+    - Die Titel bleiben die der Kategorien. Der Kopf nennt die Zonen der Gegenstellen mit Netzen
+      und Ausschlüssen, die Spalte **Zone** die Zonen der Gegenstelle. Kunden-Benutzer sehen
+      Spalte und Zonen nicht.
+    - Die VIP- und NAT-Spalten erscheinen, wenn eine Zeile sie hat.
+    - In der Doku führt „Zonen der Kategorien ↗“ ins Netzwerkdesign.
+
+    Lernt eine Firewall, die einer Zone als Gerät zugewiesen ist, ein Netz einer anderen Zone
+    nicht über den Übergang Richtung dieser Zone im Zonenplan, steht der Befund **„Netz nicht über
+    den Übergang zur Zone“** unter Findings → Zonen. Das gilt bei einem anderen Interface, nur über
+    die Default-Route oder ohne Route; der Befund nennt das Interface und die Zonen dahinter.
   - **Nur relevante Firewall-Regeln (0.103.0):** ausgehende Firewall-Regeln, die die Systeme nur
     über eine breite Quelle erfassen (z. B. 10.0.0.0/8 → irgendwohin, any → Internet), stehen
     nicht mehr in der Doku – weder in den Kategorien noch unter „Regeln & Contracts“, in den

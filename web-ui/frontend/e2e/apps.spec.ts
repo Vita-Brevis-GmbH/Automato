@@ -136,7 +136,7 @@ test("Applikation: Namen der Gegenstellen in den Kategorien – Einstellung des 
   }
 });
 
-test("Netzwerkdesign → Kategorien: Zonen zuordnen, Titel nach der Zone, Netze mit Ausschlüssen, Namen für den Admin (0.102.0)", async ({ page }) => {
+test("Netzwerkdesign → Kategorien: Zonentyp, Geräte, Netze mit Ausschlüssen, Namen für den Admin (0.106.0)", async ({ page }) => {
   const categories = async () => {
     await expect(page.locator("#app-categories > .card")).toBeVisible();
     if ((await page.locator("#app-categories .stack").count()) === 0) await page.locator("#app-categories h2.fold-title").first().click();
@@ -146,6 +146,7 @@ test("Netzwerkdesign → Kategorien: Zonen zuordnen, Titel nach der Zone, Netze 
     page.locator("#app-categories .stack > .card", { has: page.locator("h2", { hasText: new RegExp(`^${index}\\. `) }) });
   const dmz = () => page.locator("#app-categories tbody tr", { hasText: "dmz-to-web" }).first();
   const table = page.locator("#appdoc-zones");
+  const row = table.locator("tbody tr", { hasText: "Partnernetz Test" });
   // Zone mit dem Netz der Gegenstelle (10.10.20.0/24) – am Ende wieder gelöscht, ein Rest aus
   // einem abgebrochenen Versuch vorher
   const zones = (await (await page.request.get("/api/zones?tenant_id=1")).json()) as { id: number; name: string }[];
@@ -158,26 +159,37 @@ test("Netzwerkdesign → Kategorien: Zonen zuordnen, Titel nach der Zone, Netze 
   try {
     await open(page);
     await categories();
-    // ohne Kategorie an der Zone: unspezifisch, die Spalte Zone nennt sie schon
+    // ohne Zonentyp: unspezifisch, die Spalte Zone nennt die Zone schon
     await expect(card(10).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);
     await expect(card(10).locator("thead")).toContainText("Zone");
     await expect(dmz()).toContainText("Partnernetz Test");
-    // zugeordnet wird bei den Zonen im Netzwerkdesign (Anwender 2026-10-28)
+    // Zonentyp bei den Zonen im Netzwerkdesign – keine Spalte „Kategorie“ mehr
     await page.click("#app-zone-areas");
     await expect(page).toHaveURL(/#design\?tab=appdoc/);
     await expect(page.locator(".tabbar button.on")).toHaveText("Kategorien");
-    const area = table.getByLabel("Kategorie der Zone Partnernetz Test");
-    await area.selectOption("bit");
-    await expect(area).toHaveValue("bit");
+    await expect(table.locator("thead")).toContainText("Zonentyp");
+    await expect(table.locator("thead")).toContainText("Geräte");
+    await expect(table.locator("thead")).not.toContainText("Kategorie");
+    await table.getByLabel("Zonentyp der Zone Partnernetz Test").selectOption("Edge Office");
+    // Gerät dazu: das erste zur Auswahl (Firewall bzw. VDOM)
+    const device = table.getByLabel("Gerät der Zone Partnernetz Test");
+    await device.selectOption({ index: 1 });
+    await expect(row.locator(".appdoc-devices .chip")).toHaveCount(1);
     await page.click("#appdoc-save");
     await expect(page.locator("#appdoc-saved")).toBeVisible();
-    // Doku: die Kategorie heisst nach der Zone, im Kopf die Zone mit ihrem Netz
+    await expect(row.locator(".appdoc-devices .chip")).toHaveCount(1);
+    // Gerät wieder weg
+    await row.locator(".appdoc-devices .chip-x").click();
+    await expect(row.locator(".appdoc-devices .chip")).toHaveCount(0);
+    await page.click("#appdoc-save");
+    await expect(page.locator("#appdoc-saved")).toBeVisible();
+    // Doku: Edge Office → DC = Kategorie 4, Titel ohne Zonen, im Kopf die Zone mit ihrem Netz
     await open(page);
     await categories();
-    await expect(card(3).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);
+    await expect(card(4).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);
     await expect(card(10).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(0);
-    await expect(card(3).locator("h2")).toHaveText("3. Zugriff in Partnernetz Test");
-    await expect(card(3).locator(".doc-zones")).toContainText("Partnernetz Test (10.10.20.0/24)");
+    await expect(card(4).locator("h2")).toHaveText("4. Zugriff aus dem Unternehmensnetzwerk");
+    await expect(card(4).locator(".doc-zones")).toContainText("Partnernetz Test (10.10.20.0/24)");
     // Admin: Namen der Gegenstellen direkt in der Doku ein- und ausschalten
     const names = page.locator("#app-peer-names");
     await expect(names).not.toHaveClass(/\bon\b/);
@@ -196,7 +208,6 @@ test("Netzwerkdesign → Kategorien: Zonen zuordnen, Titel nach der Zone, Netze 
     await expect(table.getByLabel("Ausschlüsse der Zone Partnernetz Test")).toHaveValue("10.10.20.0/24");
     await open(page);
     await categories();
-    await expect(card(10).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);
     await expect(dmz()).not.toContainText("Partnernetz Test");
   } finally {
     await page.request.patch("/api/tenants/1", { data: { appdoc_foreign_names: false } });
@@ -204,111 +215,51 @@ test("Netzwerkdesign → Kategorien: Zonen zuordnen, Titel nach der Zone, Netze 
   }
 });
 
-test("Namenskonzept: eigene Kategorie mit Bereich, Auswahl im Netzwerkdesign, Titel in der Doku (0.104.0)", async ({ page }) => {
+test("Namenskonzept: Kategorie mit Titel, Source- und Dest-Zone, Titel in der Doku (0.106.0)", async ({ page }) => {
   const profiles = (await (await page.request.get("/api/naming-profiles")).json()) as { id: number; name: string }[];
   const pid = profiles.find((p) => p.name === "default")!.id;
   const catalogUrl = `/api/naming-profiles/${pid}/appdoc-catalog`;
   const zones = (await (await page.request.get("/api/zones?tenant_id=1")).json()) as { id: number; name: string }[];
   for (const z of zones.filter((x) => x.name === "Partnernetz Test")) await page.request.delete(`/api/zones/${z.id}`);
   await page.request.delete(catalogUrl);
+  // Gegenstelle von dmz-to-web in einer Zone mit dem Zonentyp Edge Transfer (in keiner Vorgabe)
   const created = await page.request.post("/api/zones", {
-    data: { tenant_id: 1, name: "Partnernetz Test", kind: "internal", selectors: [{ kind: "prefix", value: "10.10.20.0/24" }] },
+    data: { tenant_id: 1, name: "Partnernetz Test", kind: "internal", zone_type: "Edge Transfer", selectors: [{ kind: "prefix", value: "10.10.20.0/24" }] },
   });
   expect(created.status()).toBe(201);
   const zoneId = ((await created.json()) as { id: number }).id;
   try {
-    // Namenskonzept: Kategorie 12 und Bereich „part“ dazu (Admin)
     await page.goto("/#dict");
     const card = page.locator("#appdoc-catalog");
-    await expect(card.locator("#appdoc-catalog-categories tbody tr")).toHaveCount(11);
+    const rows = card.locator("#appdoc-catalog-categories tbody tr");
+    await expect(rows).toHaveCount(11);
+    await expect(card.locator("#appdoc-catalog-categories thead")).toContainText("Source-Zone");
+    await expect(card.locator("#appdoc-catalog-categories thead")).toContainText("Dest-Zone");
+    await expect(rows.nth(6)).toContainText("Sonderfall: innerhalb der Applikation"); // fest, nur der Titel
+    await expect(card.locator("#appdoc-catalog-types")).toContainText("Edge Transfer");
     await expect(page.locator("#appdoc-catalog-save")).toBeDisabled();
+    // Kategorie 12: Edge Transfer → DC (Admin)
     await page.click("#appdoc-catalog-add-category");
-    await card.getByLabel("Titel der Kategorie 12").fill("Zugriff Partner");
-    await card.getByLabel("Titel englisch der Kategorie 12").fill("Partner access");
-    await page.click("#appdoc-catalog-add-area");
-    await card.getByLabel("Kürzel des Bereichs 7").fill("part");
-    await card.getByLabel("Bezeichnung des Bereichs part").fill("Partner");
-    await card.getByLabel("Kategorie eingehend des Bereichs part").selectOption("12");
-    await card.getByLabel("Kategorie ausgehend des Bereichs part").selectOption("12");
-    await card.getByLabel("Vorschlag des Bereichs part").fill("*partner*");
+    await card.getByLabel("Titel der Kategorie 12").fill("Zugriff aus dem Partnernetz");
+    await card.getByLabel("Titel englisch der Kategorie 12").fill("Access from the partner network");
+    await expect(page.locator("#appdoc-catalog-save")).toBeDisabled(); // ohne Richtung
+    await card.getByLabel("Source-Zone der Kategorie 12").selectOption("Edge Transfer");
+    await card.getByLabel("Dest-Zone der Kategorie 12").selectOption("DC");
+    await expect(rows.nth(11).locator(".chip")).toHaveCount(2);
     await page.click("#appdoc-catalog-save");
     await expect(page.locator("#appdoc-catalog-saved")).toBeVisible();
-    await expect(card.locator("#appdoc-catalog-categories tbody tr")).toHaveCount(12);
+    await expect(rows).toHaveCount(12);
 
-    // Netzwerkdesign: der Bereich steht zur Auswahl, Vorschlag nach dem Zonennamen
-    await page.goto("/#design?tab=appdoc");
-    const table = page.locator("#appdoc-zones");
-    const area = table.getByLabel("Kategorie der Zone Partnernetz Test");
-    await expect(area.locator("option", { hasText: "Partner (12)" })).toHaveCount(1);
-    await expect(table.locator("tr", { hasText: "Partnernetz Test" })).toContainText("Vorschlag: Partner (12)");
-    await page.click("#appdoc-suggest");
-    await expect(area).toHaveValue("part");
-    await page.click("#appdoc-save");
-    await expect(page.locator("#appdoc-saved")).toBeVisible();
-
-    // Doku: eigene Kategorie, benannt nach der Zone
+    // Doku: die eigene Kategorie mit ihrem Titel, die Zone im Kopf
     await open(page);
     await expect(page.locator("#app-categories > .card")).toBeVisible();
     if ((await page.locator("#app-categories .stack").count()) === 0) await page.locator("#app-categories h2.fold-title").first().click();
     const own = page.locator("#app-categories .stack > .card", { has: page.locator("h2", { hasText: /^12\. / }) });
-    await expect(own.locator("h2")).toHaveText("12. Zugriff aus Partnernetz Test");
+    await expect(own.locator("h2")).toHaveText("12. Zugriff aus dem Partnernetz");
     await expect(own.locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);
+    await expect(own.locator(".doc-zones")).toContainText("Partnernetz Test");
   } finally {
     await page.request.delete(`/api/zones/${zoneId}`);
-    await page.request.delete(catalogUrl);
-  }
-});
-
-test("Zonentyp und Richtungen: Kategorie nach Quelle → Ziel, Zonentyp im Netzwerkdesign (0.105.0)", async ({ page }) => {
-  const profiles = (await (await page.request.get("/api/naming-profiles")).json()) as { id: number; name: string }[];
-  const pid = profiles.find((p) => p.name === "default")!.id;
-  const catalogUrl = `/api/naming-profiles/${pid}/appdoc-catalog`;
-  const zones = (await (await page.request.get("/api/zones?tenant_id=1")).json()) as { id: number; name: string }[];
-  for (const z of zones.filter((x) => ["Partnernetz Test", "DC Web Test"].includes(x.name))) await page.request.delete(`/api/zones/${z.id}`);
-  await page.request.delete(catalogUrl);
-  const made: number[] = [];
-  for (const [name, net] of [
-    ["DC Web Test", "10.10.10.0/24"], // Zone der Applikation, Zonentyp nach dem Namen: DC
-    ["Partnernetz Test", "10.10.20.0/24"], // Gegenstelle von dmz-to-web
-  ]) {
-    const r = await page.request.post("/api/zones", { data: { tenant_id: 1, name, kind: "internal", selectors: [{ kind: "prefix", value: net }] } });
-    expect(r.status()).toBe(201);
-    made.push(((await r.json()) as { id: number }).id);
-  }
-  try {
-    // Namenskonzept: Kategorie 12 mit der Richtung Edge Office → DC
-    await page.goto("/#dict");
-    const card = page.locator("#appdoc-catalog");
-    await expect(card.locator("#appdoc-catalog-types")).toContainText("Edge Office");
-    await page.click("#appdoc-catalog-add-category");
-    await card.getByLabel("Titel der Kategorie 12").fill("Zugriff aus dem Office");
-    await card.getByLabel("Richtungen der Kategorie 12").fill("Edge Office → DC");
-    await card.getByLabel("Richtungen der Kategorie 3").fill("Edge Ofice → DC");
-    await expect(card).toContainText("nicht im Grundschema: Edge Ofice");
-    await card.getByLabel("Richtungen der Kategorie 3").fill("");
-    await page.click("#appdoc-catalog-save");
-    await expect(page.locator("#appdoc-catalog-saved")).toBeVisible();
-    await expect(page.locator("#appdoc-catalog-areas-fold")).not.toHaveAttribute("open", "");
-
-    // Netzwerkdesign: Zonentyp je Zone, ohne Spalte „Kategorie“ (Richtungen gepflegt)
-    await page.goto("/#design?tab=appdoc");
-    const table = page.locator("#appdoc-zones");
-    await expect(table.locator("thead")).toContainText("Zonentyp");
-    await expect(table.locator("thead")).not.toContainText("Kategorie");
-    await expect(table.getByLabel("Zonentyp der Zone DC Web Test").locator("option").first()).toHaveText("automatisch: DC");
-    await table.getByLabel("Zonentyp der Zone Partnernetz Test").selectOption("Edge Office");
-    await page.click("#appdoc-save");
-    await expect(page.locator("#appdoc-saved")).toBeVisible();
-
-    // Doku: dmz-to-web in der Kategorie der Richtung, benannt nach der Zone der Gegenstelle
-    await open(page);
-    await expect(page.locator("#app-categories > .card")).toBeVisible();
-    if ((await page.locator("#app-categories .stack").count()) === 0) await page.locator("#app-categories h2.fold-title").first().click();
-    const own = page.locator("#app-categories .stack > .card", { has: page.locator("h2", { hasText: /^12\. / }) });
-    await expect(own.locator("h2")).toHaveText("12. Zugriff aus Partnernetz Test");
-    await expect(own.locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);
-  } finally {
-    for (const id of made) await page.request.delete(`/api/zones/${id}`);
     await page.request.delete(catalogUrl);
   }
 });

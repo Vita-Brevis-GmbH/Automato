@@ -55,8 +55,8 @@ def test_regeln_nur_wo_der_verkehr_durchkommt(client):
 
 def test_gegenstelle_any_ist_was_hinter_dem_interface_liegt(client):
     """0.25.0: Statt „any“ nennt die Doku, was hinter Interface bzw. Zone der Regel liegt -
-    die Netze dahinter, die Default-Route bzw. eine erfasste Anbindung (dann Kategorie 2
-    „Zugriff aus dem Internet“)."""
+    die Netze dahinter, die Default-Route bzw. eine erfasste Anbindung (Kategorie 2 „Zugriff
+    aus dem Internet“ - seit 0.106.0 schon nach dem Namen der Firewall-Zone)."""
     tid = pc._seed(client)
 
     def rows() -> dict[str, tuple[int, dict]]:
@@ -68,7 +68,8 @@ def test_gegenstelle_any_ist_was_hinter_dem_interface_liegt(client):
     _, deny = found[("lan-to-dmz-deny", "dst")]
     assert deny["Source"] == "all → Netze hinter lan: 10.10.0.0/24"
     idx, inet = found[("inet-to-web", "dst")]
-    assert (idx, inet["Source"]) == (10, "all → extern (Default-Route über internet)")
+    # seit 0.106.0 ohne Zone: Zonentyp nach dem Namen der Firewall-Zone („internet“ → Public)
+    assert (idx, inet["Source"]) == (2, "all → extern (Default-Route über internet)")
 
     # Anbindung Internet an der Zone: die Gegenstelle ist das Internet (Kategorie 2)
     nodes = client.get("/routing/summary", params={"tenant_id": tid}).json()["nodes"]

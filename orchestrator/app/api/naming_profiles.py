@@ -8,8 +8,8 @@ Seit 0.55.0 das **Grundschema der Zonen** als draw.io-Zeichnung je Profil
 Vorlage herunterladen = `viewer`.
 
 Seit 0.104.0 die **Kategorien der Applikations-Doku** je Profil (`store/appdoc_catalog.py`,
-Konfiguration statt Code): lesen = `viewer`, speichern bzw. auf die Vorgaben zuruecksetzen =
-`admin`.
+Konfiguration statt Code; seit 0.106.0 Titel und Richtung Zonentyp → Zonentyp): lesen =
+`viewer`, speichern bzw. auf die Vorgaben zuruecksetzen = `admin`.
 """
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
@@ -422,29 +422,14 @@ class CatalogCategoryIn(BaseModel):
     index: int = Field(ge=1, le=appdoc_catalog.MAX_INDEX)
     title: str = Field(min_length=1, max_length=200)
     title_en: str = Field(default="", max_length=200)
-    zone_title: str = Field(default="", max_length=200)  # mit „{z}“ = Namen der Zonen
-    zone_title_en: str = Field(default="", max_length=200)
-    layout: str = "common"
-    only_with_zones: bool = False
-    # Richtungen (0.105.0, ADR 0035): [[Zonentyp Quelle, Zonentyp Ziel], …], `*` = jeder
-    flows: list[list[str]] = Field(default_factory=list, max_length=appdoc_catalog.MAX_FLOWS)
-
-
-class CatalogAreaIn(BaseModel):
-    key: str = Field(min_length=1, max_length=8)
-    label: str = Field(min_length=1, max_length=200)
-    label_en: str = Field(default="", max_length=200)
-    inbound: int
-    outbound: int
-    markers: list[str] = Field(default_factory=list, max_length=appdoc_catalog.MAX_LIST)
-    match: list[str] = Field(default_factory=list, max_length=appdoc_catalog.MAX_LIST)
-    off: bool = False
+    # Richtung (0.106.0, ADR 0035): Zonentypen der Quelle bzw. des Ziels, `*` = jeder; bei den
+    # festen Kategorien (innerhalb Applikation/Security Tenant, unspezifisch) ohne Bedeutung
+    src: list[str] = Field(default_factory=list, max_length=appdoc_catalog.MAX_TYPES)
+    dst: list[str] = Field(default_factory=list, max_length=appdoc_catalog.MAX_TYPES)
 
 
 class CatalogIn(BaseModel):
     categories: list[CatalogCategoryIn] = Field(default_factory=list, max_length=100)
-    areas: list[CatalogAreaIn] = Field(default_factory=list, max_length=100)
-    options: dict[str, bool] = Field(default_factory=dict)
 
 
 def _catalog_out(session: Session, profile_id: int | None) -> dict:
@@ -452,7 +437,7 @@ def _catalog_out(session: Session, profile_id: int | None) -> dict:
     cat = appdoc_catalog.for_profile(session, profile_id)
     schema = zone_schema.load(session, profile_id) if profile_id is not None else None
     schema = schema if schema is not None and schema.zones else zone_schema.default_schema()
-    return {**cat.out(), "default": appdoc_catalog.default().out(), "has_flows": cat.has_flows,
+    return {**cat.out(), "default": appdoc_catalog.default().out(),
             "zone_types": [z.name for z in schema.zones]}  # fmt: skip
 
 
@@ -490,9 +475,9 @@ def save_appdoc_catalog(
     session: Session = Depends(get_session, scope="function"),
     factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
-    """Kategorien, Auswahl je Zone (Bereiche) und Optionen der Doku speichern (Admin, 0.104.0):
-    gespeichert werden nur Abweichungen von den Vorgaben; eingebaute Kategorien bzw. Bereiche
-    bleiben (anpassen bzw. Bereiche „aus“), eigene kommen dazu bzw. fallen weg."""
+    """Kategorien der Doku speichern (Admin, 0.104.0; seit 0.106.0 Titel und Richtung):
+    gespeichert werden nur Abweichungen von den Vorgaben; die festen Kategorien bleiben (nur der
+    Titel), die uebrigen kommen dazu bzw. fallen weg."""
     _profile(session, profile_id)
     try:
         cat = appdoc_catalog.validate(body.model_dump())
@@ -502,7 +487,6 @@ def save_appdoc_catalog(
     audit.record(session, actor=f"user:{principal.subject}", action="appdoc_catalog.saved",
                  subject=str(profile_id),
                  detail={"profile_id": profile_id, "categories": len(cat.categories),
-                         "areas": len(cat.areas), "options": cat.options.out(),
                          "stored": stored})  # fmt: skip
     _refresh_catalog_tenants(session, background, factory, profile_id)
     return _catalog_out(session, profile_id)

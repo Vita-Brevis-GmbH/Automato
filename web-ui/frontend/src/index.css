@@ -317,6 +317,7 @@ tr.topo-boundary > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .chip.saml { color: #6d5bd0; background: color-mix(in srgb, #6d5bd0 16%, transparent); border-color: transparent; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chips .chip + .chip { margin-left: 0; }
+.chip-x { border: 0; background: none; color: inherit; cursor: pointer; padding: 0 0 0 2px; font-size: 10px; line-height: 1; }
 .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
 .dot.g { background: var(--good); } .dot.r { background: var(--crit); } .dot.y { background: var(--warn); } .dot.n { background: var(--faint); }
 .badge-soon { font-size: 10px; font-weight: 700; color: var(--warn); background: var(--warn-weak); padding: 1px 7px; border-radius: 10px;

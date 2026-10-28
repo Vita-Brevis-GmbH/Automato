@@ -26,8 +26,8 @@ def _rule(pid, name, src, dst, **kw):
     inbound = src[0] != "10.20.0.5"
     return {"source_platform": "fortigate", "external_id": str(pid), "name": name,
             "action": "allow", "sources": src, "destinations": dst, "services": ["tcp/443"],
-            "family": "v4", "src_zone": "L3O_bit" if inbound else "lan",
-            "dst_zone": "lan" if inbound else "L3O_bit", **kw}  # fmt: skip
+            "family": "v4", "src_zone": "L3O_eoff" if inbound else "lan",
+            "dst_zone": "lan" if inbound else "L3O_eoff", **kw}  # fmt: skip
 
 
 FW3 = {

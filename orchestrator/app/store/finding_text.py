@@ -283,11 +283,13 @@ def _zone_overlap(subject: str, d: dict) -> tuple[str, str]:
 
 
 def _zone_net_exit(subject: str, d: dict) -> tuple[str, str]:
-    """Netz der Zone nicht ueber ihre Ausgaenge gelernt (0.105.0, ADR 0035)."""
+    """Netz einer Zone nicht ueber den Uebergang Richtung Zone gelernt (0.105.0, seit 0.106.0 aus
+    den Geraeten der Zonen und dem Zonenplan, ADR 0035)."""
     fw = d.get("source") or L("die Firewall", "the firewall")
     ctx = f" (VDOM {d['context']})" if d.get("context") and d["context"] != "root" else ""
     net, zone = d.get("net"), d.get("zone")
     expected = ", ".join(d.get("expected") or [])
+    toward = ", ".join(d.get("toward") or [])
     via = ", ".join(d.get("via") or [])
     others = ", ".join(d.get("others") or [])
     if d.get("missing"):
@@ -296,19 +298,20 @@ def _zone_net_exit(subject: str, d: dict) -> tuple[str, str]:
         how = L(f"nur über die Default-Route ({via})", f"only via the default route ({via})")
     else:
         how = L(f"über {via}", f"via {via}")
-    tail = L(f" – {via} ist Ausgang der Zone {others}", f" – {via} is an exit of zone {others}") \
+    tail = L(f" – {via} führt zur Zone {others}", f" – {via} leads to zone {others}") \
         if others and not d.get("missing") else ""  # fmt: skip
     return (
         L(
-            f"{fw}{ctx} lernt das Netz {net} der Zone {zone} {how}, erwartet über ihre "
-            f"Ausgänge ({expected}){tail}.",
-            f"{fw}{ctx} learns the network {net} of zone {zone} {how}, expected via its exits "
-            f"({expected}){tail}.",
+            f"{fw}{ctx} lernt das Netz {net} der Zone {zone} {how}, erwartet über {expected} "
+            f"Richtung {toward}{tail}.",
+            f"{fw}{ctx} learns the network {net} of zone {zone} {how}, expected via {expected} "
+            f"towards {toward}{tail}.",
         ),
         L(
-            "Routing prüfen bzw. Netze oder Ausgänge der Zone anpassen (Netzwerkdesign → Zonen).",
-            "Check the routing or adjust the networks or exits of the zone (Network design → "
-            "Zones).",
+            "Routing prüfen bzw. Netze oder Geräte der Zonen anpassen (Netzwerkdesign → "
+            "Kategorien).",
+            "Check the routing or adjust the networks or devices of the zones (Network design → "
+            "Categories).",
         ),
     )
 

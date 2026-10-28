@@ -24,7 +24,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "agent.update_downloaded": frozenset({"agent_id", "from_version", "to"}),
     "naming_profile.created": frozenset({"profile_id", "customer", "name", "copied_from"}),
     "zone_schema.saved": frozenset({"profile_id", "zones", "links"}),
-    "appdoc_catalog.saved": frozenset({"profile_id", "categories", "areas", "options", "stored"}),
+    "appdoc_catalog.saved": frozenset({"profile_id", "categories", "stored"}),
     "appdoc_catalog.reset": frozenset({"profile_id"}),
     "zone_schema.deleted": frozenset({"profile_id"}),
     "zone_schema.edited": frozenset(
@@ -196,8 +196,6 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "zone.created": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),
     "zone.updated": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),
     "zone.deleted": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
-    # Zonen den Kategorien der Applikations-Doku zugeordnet (0.101.0): je Zone [ID, Bereich]
-    "zone.appdoc_areas_set": frozenset({"tenant_id", "changes"}),
     "zone.appdoc_set": frozenset({"tenant_id", "changes"}),
     "zone_policy.set": frozenset(
         {"tenant_id", "src_zone_id", "dst_zone_id", "intent", "services", "via"}

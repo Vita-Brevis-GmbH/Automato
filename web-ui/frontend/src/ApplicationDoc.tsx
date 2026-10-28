@@ -793,8 +793,8 @@ export default function ApplicationDocView({
                 className="btn btn-ghost btn-sm no-print"
                 id="app-zone-areas"
                 title={L(
-                  "Kategorien je Zone mit ihren Netzen und Ausschlüssen – in Netzwerkdesign → Kategorien",
-                  "Categories per zone with their networks and exclusions – in Network design → Categories",
+                  "Zonentyp, Netze mit Ausschlüssen und Geräte je Zone – in Netzwerkdesign → Kategorien",
+                  "Zone type, networks with exclusions and devices per zone – in Network design → Categories",
                 )}
                 onClick={() => onGo("design", { tab: "appdoc" })}
               >

@@ -35,7 +35,7 @@ def _app(client) -> tuple[int, int]:
 
 
 def test_kategorien_spalten_und_marker():
-    cols = appdoc.table_columns(1)
+    cols = appdoc.ALL_COLUMNS  # seit 0.106.0 nach den Zeilen (`table_columns`)
     assert appdoc.table_title(1) == "Internet Zugriff"
     assert appdoc.column_labels(cols) == cols  # Deutsch: Anzeige = Schluessel
     with use("en"):

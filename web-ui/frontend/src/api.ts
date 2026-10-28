@@ -702,7 +702,6 @@ export interface DocTable {
 export interface DocTableZone {
   id: number;
   name: string;
-  area: AppdocArea;
   nets: string[]; // die ersten Netze
   nets_total: number;
   excluded?: string[]; // 0.102.0: ausgeschlossene Netze („ohne“)
@@ -2980,7 +2979,7 @@ export const fetchTopology = (tenantId: number, node?: string) =>
 // Logische Zonen (0.51.0, ADR 0024): in Automato gepflegt, Selektoren wie beim Kunden und dazu
 // `exit` (Netze hinter einer Anbindung); Zonenmatrix mit Absicht je Paar, Zonenplan
 // 0.105.0 (ADR 0035): Ausgänge – Firewall-Interface, Firewall-Zone bzw. L3Out, über die die Zone erreicht wird
-export type ZoneSelectorKind = SelectorKind | "exit" | "via_fw_interface" | "via_fw_zone" | "via_l3out";
+export type ZoneSelectorKind = SelectorKind | "exit";
 // Art = Ebene des Zonenmodells (0.56.0): Datacenter, Edge, Transfer, Core, Distribution, Access,
 // Public (extern) – dazu die bisherigen Arten
 export type ZoneKind =
@@ -3027,59 +3026,39 @@ export interface LogicalZone {
   own_color?: string | null; // an der Zone gespeicherte Farbe
   nodes?: string[]; // Knoten der Zone (Firewall/VDOM, ACI-VRF)
   transitions?: { to: string; to_id: number | string; name: string; count: number }[];
-  appdoc_area?: AppdocArea | null; // 0.101.0: Kategorien der Applikations-Doku
   zone_type?: string | null; // 0.105.0: Zonentyp von Hand (Zone des Grundschemas); wirksam = `schema`
 }
-// Bereich der Kategorien der Applikations-Doku (0.101.0): Kürzel aus dem Katalog (seit 0.104.0 im
-// Namenskonzept anpassbar und erweiterbar; Vorgaben inet, bit, vpn, sra, res, mgmt)
-export type AppdocArea = string;
-// Kategorien der Applikations-Doku als Konfiguration (0.104.0): Vorgaben im Code, Anpassungen im Namensprofil
+// Kategorien der Applikations-Doku als Konfiguration (0.104.0, seit 0.106.0 einfach): Titel und Richtung Zonentyp der
+// Quelle → Zonentyp des Ziels (Zonen des Grundschemas, je Seite einer oder mehrere, `*` = jeder); fest (nur Titel):
+// innerhalb der Applikation, innerhalb des Security Tenants, unspezifisch
 export interface AppdocCategory {
   index: number;
   title: string;
   title_en: string;
-  zone_title: string; // mit „{z}“ = Namen der Zonen
-  zone_title_en: string;
+  src: string[];
+  dst: string[];
+  role: string; // feste Rolle (aci_ap, aci_tenant, fallback) - nur der Titel änderbar
   enforcement: "firewall" | "aci";
-  layout: "common" | "internet_out" | "internet_in";
-  role: string; // feste Rolle (ACI intern, unspezifisch) - nicht änderbar
-  only_with_zones: boolean;
-  builtin: boolean;
-  flows: [string, string][]; // 0.105.0: Richtungen Zonentyp Quelle → Ziel (`*` = jeder)
-}
-export interface AppdocAreaDef {
-  key: string;
-  label: string;
-  label_en: string;
-  inbound: number;
-  outbound: number;
-  markers: string[]; // Teil im Namen der Firewall-Zone (L3O_inet)
-  match: string[]; // Muster für den Vorschlag nach dem Zonennamen (*vpn*)
-  role: string;
-  off: boolean;
   builtin: boolean;
 }
-export interface AppdocOptions {
-  outbound_broad_hidden: boolean;
-  fallback_inbound_only: boolean;
+// Gerät einer Zone (0.106.0): Firewall/VDOM, ACI-Tenant, ACI-VRF, Anbindung
+export type ZoneDeviceKind = "fw_vdom" | "aci_tenant" | "aci_vrf" | "exit";
+export interface ZoneDevice {
+  kind: ZoneDeviceKind;
+  value: string;
+  source_system_id: number | null;
+  label?: string;
 }
 export interface AppdocCatalog {
   profile_id: number | null;
   categories: AppdocCategory[];
-  areas: AppdocAreaDef[];
-  options: AppdocOptions;
-  default?: Omit<AppdocCatalog, "default" | "suggestions">; // Pflege: die Vorgaben
-  suggestions?: Record<string, string>; // Netzwerkdesign: Zone (id) → Bereich nach dem Namen
-  has_flows?: boolean; // 0.105.0: Richtungen gepflegt – dann gelten sie statt der Bereiche
+  default?: Pick<AppdocCatalog, "profile_id" | "categories">; // Pflege: die Vorgaben
   zone_types?: string[]; // Zonen des Grundschemas (Zonentypen)
   types?: Record<string, string | null>; // Netzwerkdesign: Zone (id) → wirksamer Zonentyp
   auto_types?: Record<string, string | null>; // … erkannt (ohne den von Hand)
+  devices?: ZoneDevice[]; // Netzwerkdesign: Geräte zur Auswahl
 }
-export type AppdocCatalogIn = {
-  categories: Omit<AppdocCategory, "enforcement" | "role" | "builtin">[];
-  areas: Omit<AppdocAreaDef, "role" | "builtin">[];
-  options: AppdocOptions;
-};
+export type AppdocCatalogIn = { categories: Pick<AppdocCategory, "index" | "title" | "title_en" | "src" | "dst">[] };
 export const fetchAppdocCatalog = (tenantId: number) => getJSON<AppdocCatalog>(`/api/zones/appdoc/catalog${qs({ tenant_id: tenantId })}`);
 export const fetchProfileAppdocCatalog = (profileId: number) => getJSON<AppdocCatalog>(`/api/naming-profiles/${profileId}/appdoc-catalog`);
 export const saveProfileAppdocCatalog = (profileId: number, body: AppdocCatalogIn) =>
@@ -3096,7 +3075,6 @@ export interface ZoneIn {
   position: number;
   description: string | null;
   selectors: ZoneSelector[];
-  appdoc_area?: AppdocArea | null; // 0.101.0; nicht mitgeschickt = bleibt
   zone_type?: string | null; // 0.105.0; nicht mitgeschickt = bleibt
 }
 export interface ZonePreview {
@@ -3346,17 +3324,17 @@ export const fetchZones = (tenantId: number) => getJSON<LogicalZone[]>(`/api/zon
 export const createZone = (body: ZoneIn) => sendJSON<LogicalZone>("/api/zones", "POST", body);
 export const updateZone = (id: number, body: ZoneIn) => sendJSON<LogicalZone>(`/api/zones/${id}`, "PUT", body);
 export const deleteZone = (id: number) => sendJSON<void>(`/api/zones/${id}`, "DELETE");
-// Kategorien der Applikations-Doku in Netzwerkdesign → Kategorien (0.102.0, Operator): je Zone die
-// Kategorie, ihre Netze und Ausschlüsse (Selektoren „Netz“; die anderen Selektoren bleiben)
+// Netzwerkdesign → Kategorien (0.102.0, Operator): je Zone Zonentyp, Netze mit Ausschlüssen und seit 0.106.0 die
+// Geräte (Firewall/VDOM, ACI-Tenant/-VRF, Anbindung); die anderen Selektoren bleiben
 export interface AppdocZoneIn {
   id: number;
-  appdoc_area?: AppdocArea | null; // nicht mitgeschickt = bleibt
   zone_type?: string | null; // 0.105.0: Zonentyp von Hand; leer = automatisch
   nets?: string[]; // nicht mitgeschickt = bleiben
   excluded?: string[];
+  devices?: Pick<ZoneDevice, "kind" | "value" | "source_system_id">[]; // 0.106.0: Geräte der Zone; fehlt = bleiben
 }
 export const setAppdocZones = (tenantId: number, zones: AppdocZoneIn[]) =>
-  sendJSON<{ id: number; name: string; appdoc_area: AppdocArea | null; zone_type: string | null; nets: string[]; excluded: string[] }[]>(
+  sendJSON<{ id: number; name: string; zone_type: string | null; nets: string[]; excluded: string[]; devices: ZoneDevice[] }[]>(
     "/api/zones/appdoc",
     "PUT",
     { tenant_id: tenantId, zones },

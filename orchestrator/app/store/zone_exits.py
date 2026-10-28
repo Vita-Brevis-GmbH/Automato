@@ -1,34 +1,38 @@
-"""Ausgaenge der Zonen gegen das Routing pruefen (0.105.0, ADR 0035).
+"""Netze der Zonen gegen das Routing pruefen (0.105.0, seit 0.106.0 ohne Ausgaenge von Hand,
+ADR 0035).
 
-Anwender 2026-10-28: „Ich weise in den Zonen die möglichen Ausgänge an, wohin die L3Outs oder
-die Transfer-Netzwerke hinführen dürfen“ und „Findings, wenn ich die Netzwerke nicht von dort
-lerne, wo ich sie erwarte gemäss Netzwerk-Zone“.
+Anwender 2026-10-28: „Findings, wenn ich die Netzwerke nicht von dort lerne, wo ich sie erwarte
+gemaess Netzwerk-Zone“ und „aus den Daten muesste ersichtlich sein, ueber welches L3O die Routen
+und die Zone dahinter feststehen, wenn ich den Zonen Geraete zuweise“.
 
-Eine Zone mit Netzen (Selektoren „Netz“) und Ausgaengen ueber Firewall-Interfaces bzw.
-Firewall-Zonen (`via_fw_interface`, `via_fw_zone`) erwartet: die Firewall erreicht ihre Netze
-ueber diese Interfaces. Je Firewall und Kontext (VDOM), in dem ein Ausgang vorkommt, zaehlt die
-wirksame Route mit dem laengsten Praefix, das das Netz ganz enthaelt (RIB, Standard-VRF):
+Die Erwartung kommt aus dem Zonenplan (`zone_struct`): eine Firewall bzw. VDOM, die einer Zone A
+zugewiesen ist (Geraete der Zone), liegt mit ihren Interfaces an den Uebergaengen zu den
+Nachbarzonen. Ein Netz einer anderen Zone Z erwartet sie ueber die Interfaces zu den Nachbarzonen
+auf dem kuerzesten Weg von A nach Z im Zonenplan. Je Netz zaehlt die wirksame Route mit dem
+laengsten Praefix, das das Netz ganz enthaelt (RIB, Standard-VRF):
 
-- Next-Hop ueber einen Ausgang der Zone: in Ordnung;
+- Next-Hop ueber ein erwartetes Interface: in Ordnung;
 - sonst Befund `zone_net_exit` - mit dem Interface, ueber das die Firewall das Netz lernt, und
-  den Zonen, deren Ausgang es ist; nur die Default-Route bzw. gar keine Route: ebenso.
+  den Zonen dahinter; nur ueber die Default-Route bzw. gar keine Route: ebenso.
 
-ACI-L3Outs (`via_l3out`) ordnen in der Doku zu, geprueft werden hier nur Firewalls. Rein lesend.
+Ohne Interface der Firewall Richtung Z (der Weg fuehrt durch andere Knoten der Zone A) bzw. ohne
+Weg im Zonenplan prueft Automato nichts. Rein lesend.
 """
 
 from __future__ import annotations
 
 import ipaddress
-from collections import defaultdict
+from collections import defaultdict, deque
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import InvInterface, LogicalZone, SourceSystem, TopoRoute
-from app.store import topology
+from app.models import SourceSystem, TopoRoute
+from app.store import topology, zone_struct
 from app.store import zones as zone_store
 
-FW_EXITS = ("via_fw_interface", "via_fw_zone")
+FIREWALL_KINDS = ("firewall", "vdom")
+MAX_NETS = 200  # Netze je Zone
 
 
 def _net(value: str):
@@ -38,76 +42,97 @@ def _net(value: str):
         return None
 
 
+def _distances(adj: dict[int, set[int]], start: int) -> dict[int, int]:
+    dist = {start: 0}
+    todo = deque([start])
+    while todo:
+        z = todo.popleft()
+        for n in adj.get(z, ()):
+            if n not in dist:
+                dist[n] = dist[z] + 1
+                todo.append(n)
+    return dist
+
+
 def checks(session: Session, tenant_id: int) -> list[dict]:
     """Befunde je Zone, Netz und Firewall (siehe oben)."""
-    zones = [(z, [s for s in z.selectors if s.kind in FW_EXITS and not s.exclude])
-             for z in zone_store.load(session, tenant_id)]  # fmt: skip
-    zones = [(z, ex) for z, ex in zones if ex]
-    if not zones:
+    items = zone_store.load(session, tenant_id)
+    if not zone_struct.has_nodes(items):
         return []
-    names = dict(session.execute(
+    st = zone_struct.build(session, tenant_id, items)
+    g = st.graph
+    fws = {k: z for k, z in st.node_zone.items()
+           if k in g.nodes and g.nodes[k].kind in FIREWALL_KINDS}  # fmt: skip
+    if not fws:
+        return []
+    by_id = {zone_struct.node_id(k): k for k in fws}
+    # Zonenplan: Nachbarzonen und je Firewall die Interfaces zu jeder Nachbarzone
+    adj: dict[int, set[int]] = defaultdict(set)
+    faces: dict[tuple, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for (a, b), t in st.transitions.items():
+        if isinstance(a, int) and isinstance(b, int):
+            adj[a].add(b)
+            adj[b].add(a)
+        for info in t.networks:
+            for leg in info["legs"]:
+                key = by_id.get(leg["node"])
+                if key is None or not leg.get("interface"):
+                    continue
+                own = fws[key]
+                other = b if own == a else a if own == b else None
+                if isinstance(other, int):
+                    faces[key][other].add(leg["interface"])
+    if not faces:
+        return []
+    names = {z.id: z.name for z in items}
+    sources = dict(session.execute(
         select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == tenant_id)
     ).all())  # fmt: skip
-    members: dict[int, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-    for sid, name, zone in session.execute(
-        select(InvInterface.source_system_id, InvInterface.name, InvInterface.zone).where(
-            InvInterface.tenant_id == tenant_id
-        )
-    ):
-        members[sid][name.casefold()].add(name)
-        if zone:
-            members[sid][zone.casefold()].add(name)
-    wanted = {s.source_system_id for _z, ex in zones for s in ex}
-    sids = set(members) if None in wanted else {s for s in wanted if s is not None}
-    routes: dict[tuple[int, str], list[tuple]] = defaultdict(list)
+    routes: dict[tuple, list[tuple]] = defaultdict(list)
     for r in session.scalars(
         select(TopoRoute).where(
-            TopoRoute.source_system_id.in_(sids), TopoRoute.table == "rib",
+            TopoRoute.tenant_id == tenant_id, TopoRoute.table == "rib",
             TopoRoute.best.is_(True),
+            TopoRoute.source_system_id.in_({k[0] for k in faces}),
         )
     ):  # fmt: skip
-        net = _net(f"{r.prefix}/{r.prefix_len}") if "/" not in r.prefix else _net(r.prefix)
-        if net is None or topology.table_of(r) != 0:
+        net = _net(r.prefix if "/" in r.prefix else f"{r.prefix}/{r.prefix_len}")
+        if net is None or topology.table_of(r) != 0 or (r.source_system_id, r.context) not in faces:
             continue
         hops = {h.get("interface") for h in r.next_hops or [] if h.get("interface")}
         routes[(r.source_system_id, r.context)].append((net, hops))
 
-    def expected(sid: int, exits) -> set[str]:
-        out: set[str] = set()
-        for s in exits:
-            if s.source_system_id in (None, sid):
-                out |= members.get(sid, {}).get(s.value.strip().casefold(), {s.value.strip()})
-        return out
-
     issues = []
-    for (sid, context), table in sorted(routes.items(), key=lambda kv: (kv[0][0], kv[0][1])):
-        used = set().union(*(hops for _n, hops in table)) if table else set()
-        for z, exits in zones:
-            mine = expected(sid, exits)
-            if not mine or not (mine & used):
-                continue  # kein Ausgang der Zone auf dieser Firewall bzw. in diesem Kontext
-            for s in z.selectors:
-                if s.kind != "prefix" or s.exclude or (net := _net(s.value)) is None:
-                    continue
+    for z in items:
+        nets = [n for n in (_net(str(x)) for x in st.nets(z.id)[1]) if n is not None][:MAX_NETS]
+        if not nets:
+            continue
+        dist = _distances(adj, z.id)
+        for key in sorted(faces, key=lambda k: (k[0], k[1])):
+            home = fws[key]
+            if home == z.id or home not in dist:
+                continue
+            toward = sorted(n for n in adj[home] if dist.get(n) == dist[home] - 1)
+            expected = set().union(*(faces[key].get(n, set()) for n in toward)) if toward else set()
+            if not expected:
+                continue  # der Weg fuehrt nicht ueber ein Interface dieser Firewall
+            table = routes.get(key, [])
+            for net in nets:
                 best = max((r for r in table if r[0].version == net.version
                             and net.subnet_of(r[0])), key=lambda r: r[0].prefixlen,
                            default=None)  # fmt: skip
-                if best is not None and best[1] & mine:
+                if best is not None and best[1] & expected:
                     continue
                 via = sorted(best[1]) if best else []
-                others = sorted({o.name for o, ex in zones if o.id != z.id
-                                 and expected(sid, ex) & set(via)})  # fmt: skip
+                behind = sorted(names[o] for o, ifaces in faces[key].items()
+                                if o in names and ifaces & set(via))  # fmt: skip
                 issues.append({
                     "type": "zone_net_exit", "subject": f"{z.name} · {net}",
-                    "source_system_id": sid, "severity": "warning",
+                    "source_system_id": key[0], "severity": "warning",
                     "zone_id": z.id, "zone": z.name, "net": str(net),
-                    "source": names.get(sid), "context": context, "via": via,
-                    "expected": sorted(mine), "others": others,
-                    "default": best is not None and best[0].prefixlen == 0, "missing": best is None,
+                    "source": sources.get(key[0]), "context": key[1], "via": via,
+                    "expected": sorted(expected), "toward": [names[n] for n in toward],
+                    "others": behind, "default": best is not None and best[0].prefixlen == 0,
+                    "missing": best is None,
                 })  # fmt: skip
     return issues
-
-
-def selectors_of(z: LogicalZone) -> list[str]:
-    """Ausgaenge einer Zone zur Anzeige („fw-01: port3“, „L3Out L3O_inet“)."""
-    return [s.value for s in z.selectors if s.kind in (*FW_EXITS, "via_l3out") and not s.exclude]

@@ -130,22 +130,16 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Verbindungen Ende zu Ende | End-to-end connections |
 | Netzwerkplan | Network diagram |
 | Kategorie | Category |
-| Kategorie der Zone (Bereich der Kategorien) | Category of the zone |
 | Kategorien (Reiter im Netzwerkdesign, 0.102.0) | Categories |
 | Ausschlüsse („ohne“ Netz einer Zone) | Exclusions (“without”) |
 | Zugriff Management (Kategorie 11) | Management access |
 | Kategorien der Applikations-Doku (Namensprofile, 0.104.0) | Categories of the application documentation |
-| Auswahl je Zone (Bereiche) | Choice per zone (areas) |
-| Kategorie eingehend / ausgehend | Category inbound / outbound |
-| Titel mit Zonen (`{z}`) | Title with zones |
-| Merkmal (im Namen der Firewall-Zone) | Marker |
-| Vorschlag bei (Muster nach dem Zonennamen) | Suggest for |
-| angeboten (Bereich) | offered |
 | Auf Vorgaben zurücksetzen | Reset to defaults |
 | Zonentyp (Zone des Grundschemas, 0.105.0) | Zone type |
-| Richtungen (Zonentyp der Quelle → Zonentyp des Ziels) | Directions |
-| Ausgänge, Ausgang Interface / Firewall-Zone / L3Out | Exits, exit interface / firewall zone / L3Out |
-| Netz nicht über den Ausgang der Zone (Befund) | Network not via the exit of the zone |
+| Source-Zone / Dest-Zone (Richtung einer Kategorie, 0.106.0) | Source zone / Destination zone |
+| Sonderfall: innerhalb der Applikation / des Security Tenants | special case: within the application / the security tenant |
+| Geräte (einer Zone: Firewall/VDOM, ACI-Tenant/-VRF, Anbindung) | Devices |
+| Netz nicht über den Übergang zur Zone (Befund) | Network not via the transition to the zone |
 | Zweck (Dev/Test/Prod) | Purpose |
 | Kritikalität | Criticality |
 | Verantwortlich | Owner |

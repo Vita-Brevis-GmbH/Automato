@@ -72,6 +72,6 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 ## Aktueller Stand
 
-0.105.0 – Einzelheiten je Bereich in `docs/STAND.md`. Offene Punkte und nächste Arbeiten in
+0.106.0 – Einzelheiten je Bereich in `docs/STAND.md`. Offene Punkte und nächste Arbeiten in
 `ROADMAP.md` („Nächste Arbeiten“); erstes Projekt abschliessen = Produktivschaltung DC (R14),
 danach Mehrmandanten mit Cockpit (eigene ADR).

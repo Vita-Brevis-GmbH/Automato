@@ -876,13 +876,11 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     # parallele Firewalls (0.18.0): gleiche Policies nur einmal - die der fuehrenden Firewall
     twins = parallel.twin_ids(session, {row.get(appdoc.RULE) for _, _, row in rows})
     rows = [r for r in rows if r[2].get(appdoc.RULE) not in twins]
-    # innerhalb der Applikation (0.105.0, ADR 0035): mit Richtungen im Katalog stehen Zugriffe,
-    # deren Gegenstellen alle Systeme bzw. EPGs der Applikation sind, in der Kategorie mit der
-    # Rolle `aci_ap` (Server intern)
-    if data.catalog.has_flows:
-        mine = {ip for x in systems for ip in x["ips"]} | {e["dn"] for e in epg_out if e["dn"]}
-        inside = data.catalog.role("aci_ap")
-        rows = [(k, inside if _inside(row, mine) else idx, row) for k, idx, row in rows]
+    # innerhalb der Applikation (0.105.0, ADR 0035): Zugriffe, deren Gegenstellen alle Systeme
+    # bzw. EPGs der Applikation sind, stehen in der Kategorie mit der Rolle `aci_ap` (Server intern)
+    mine = {ip for x in systems for ip in x["ips"]} | {e["dn"] for e in epg_out if e["dn"]}
+    inside = data.catalog.role("aci_ap")
+    rows = [(k, inside if _inside(row, mine) else idx, row) for k, idx, row in rows]
     # ausgehende Firewall-Regeln mit breiter Quelle (0.103.0, `appdoc_filter.DROPPED`): kein
     # Zugriff dieser Applikation - nicht in der Doku, nur gezaehlt; direkt zugeordnete bleiben
     dropped = [r for r in rows if appdoc_filter.place(r[2], assigned) == appdoc_filter.DROPPED]
@@ -983,10 +981,9 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
 
 
 def zone_heads(data: appdoc.TenantData, tables: list[dict], restricted: bool) -> None:
-    """Zonen je Kategorie (0.101.0) in den Kopf der Tabellen, Titel nach den Zonen (0.102.0);
-    Kunden-Benutzer ohne Zonen."""
+    """Zonen je Kategorie (0.101.0) in den Kopf der Tabellen; Kunden-Benutzer ohne Zonen."""
     if restricted:
-        appdoc_zones.strip(tables, appdoc.ZONE_COL, data.catalog)
+        appdoc_zones.strip(tables, appdoc.ZONE_COL)
         return
     appdoc_zones.heads(data.zone_map, tables)
 
@@ -1281,7 +1278,7 @@ def _hits_and_tables(
             else:  # Gruppe bzw. Netz mit mehreren Systemen: das Objekt, darunter die Systeme
                 row[appdoc.APP] = appdoc.lines([f"{label}:", *inside]) if inside else label
         appdoc.place(row)
-        visible = (idx, tuple(row.get(c) for c in appdoc.table_columns(idx, catalog)))
+        visible = (idx, tuple(row.get(c) for c in appdoc.ALL_COLUMNS))
         if visible in seen_rows:  # gleiche Zeile (z. B. VM und ihre EPG): Systeme zusammen
             first = seen_rows[visible]
             if "_systems" in row:
@@ -1292,7 +1289,7 @@ def _hits_and_tables(
         tables[idx]["rows"].append(row)
     for t in tables.values():  # leere optionale Spalten (NAT, VIP, Load Balancer …) aus
         t["rows"] = appdoc.by_l3out(t["rows"])  # unspezifische nach L3Out (ADR 0034)
-        t["columns"] = appdoc.visible_columns(t["index"], t["rows"], catalog)
+        t["columns"] = appdoc.visible_columns(t["rows"])
         t["labels"] = appdoc.column_labels(t["columns"])  # Anzeige (0.87.0, ADR 0028)
     return hits, [tables[c.index] for c in catalog.ordered()]
 
@@ -1369,7 +1366,7 @@ def _app_findings(
 
 
 def _table_meta(c, catalog) -> dict:
-    columns = appdoc.table_columns(c.index, catalog)
+    columns = appdoc.table_columns()
     return {
         "index": c.index,
         "title": catalog.title(c.index),

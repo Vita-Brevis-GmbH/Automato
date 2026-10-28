@@ -418,14 +418,16 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.103.0** | Applikations-Doku nur mit relevanten Firewall-Regeln (ausgehend mit breiter Quelle nicht mehr), ACI im Weg: externe EPG nach dem ACI, wenn die Firewall dahinter die IP zurück ins ACI leitet (ADR 0012/0034 Ergänzung 0.103.0) |
 | **0.104.0** | Weniger Entwicklungszeit: Kategorien der Applikations-Doku als Konfiguration im Namenskonzept (Auswahl je Zone anpassen/erweitern), Sichtbarkeit an einer Stelle, Markdown vom Server wie Word (auch Doku je System, Kunden-Benutzer), schlanke `CLAUDE.md`, Tests parallel (ADR 0012/0026 Ergänzung 0.104.0) |
 | **0.105.0** | Kategorien einfacher: Zonentyp je Zone aus dem Grundschema, Kategorien mit Richtungen Zonentyp → Zonentyp (Sonderfälle innerhalb der Applikation bzw. der eigenen Zone), Ausgänge der Zonen (Interface, Firewall-Zone, L3Out), Befund „Netz nicht über den Ausgang der Zone“, Tests parallel (ADR 0035) |
+| **0.106.0** | Kategorien einfach: Titel, Titel englisch, Source-/Dest-Zone (Zonentypen) im Namenskonzept, drei feste Kategorien; Netzwerkdesign je Zone Zonentyp, Netze, Ausschlüsse, Geräte (Firewall/VDOM, ACI, Anbindungen); Ausgänge und Befund aus Geräten, Routing und Zonenplan; ohne Bereiche, Merkmale, Optionen, Layout (ADR 0035) |
 
-### Nächste Arbeiten (Stand 0.105.0)
+### Nächste Arbeiten (Stand 0.106.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
-gleich durch“), bis **0.103.0** (2026-10-28, Rückmeldung ohne Einwand). 0.104.0: Einwand zu den
-Kategorien („nur Ressourcen Tenant“, Kat. 9 nicht auswählbar) – überarbeitet in 0.105.0; zur
-Abnahme stehen 0.104.0 und 0.105.0. Seit 0.104.0 gilt eine Version als abgenommen, sobald
+gleich durch“), bis **0.103.0** (2026-10-28, Rückmeldung ohne Einwand). 0.104.0 und 0.105.0:
+Einwand zu den Kategorien („nur Ressourcen Tenant“; „Kategorien und Bereiche nicht notwendig,
+einfacher ist besser“) – überarbeitet in 0.106.0; zur Abnahme stehen 0.104.0 (übrige Punkte) und
+0.106.0. Seit 0.104.0 gilt eine Version als abgenommen, sobald
 die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
 **Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
@@ -451,6 +453,7 @@ die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md
 | Kategorien-Auswahl anpassen bzw. erweitern, im Namenskonzept (2026-10-28) | **umgesetzt in 0.104.0** (Namensprofile → Kategorien der Applikations-Doku) |
 | Weniger Entwicklungszeit: Ablauf, `CLAUDE.md` schlank, Klärung vor dem Bauen, Modularisierung, Konfiguration statt Code, schnellere Tests (2026-10-28) | **umgesetzt in 0.104.0** (alle sechs Vorschläge) |
 | Kategorien einfacher: Zonentyp je Zone (aus dem Grundschema), Kategorien als Richtungen Zonentyp → Zonentyp mit Sonderfällen (innerhalb Security Tenant, innerhalb der Applikation), Ausgänge der Zonen (L3Out/Transfer-Interface → Zielzone), Darstellung nach Routing und Zonen, Befund bei Netzen nicht über den erwarteten Ausgang (2026-10-28) | **umgesetzt in 0.105.0** (ADR 0035, alles in einer Version) |
+| Kategorien und Bereiche nicht notwendig; Ausgänge aus den Geräten der Zonen und dem Routing statt von Hand; Namensprofil nur Titel, Titel English, Source-/Dest-Zone; any unspezifisch, wenn nicht klar wohin; Anbindungen einer Zone zuordnen; VIP-/NAT-Spalten je nach Übergang (2026-10-28) | **umgesetzt in 0.106.0** (ADR 0035 überarbeitet) |
 | BGP-Filter aus den Netzen und Ausschlüssen je Zone ableiten (2026-10-28, „später“) | offen – nur Vorschlag/Export (Prefix-Liste permit/deny je Zone), kein Schreibweg; mit dem Anwender abstimmen |
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4

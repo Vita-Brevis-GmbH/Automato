@@ -473,7 +473,6 @@ def zone_out(z: LogicalZone, nets: ZoneNets | None = None, color: dict | None = 
         "own_color": z.color,
         "customer_id": z.customer_id,
         "position": z.position,
-        "appdoc_area": z.appdoc_area,  # Kategorien der Applikations-Doku (0.101.0)
         "zone_type": z.zone_type,  # Zonentyp von Hand (0.105.0); erkannt = `schema`
         "nets": len(nets.nets) if nets else 0,
         "epgs": len(nets.epgs) if nets else 0,

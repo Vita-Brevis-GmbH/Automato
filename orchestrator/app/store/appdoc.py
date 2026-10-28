@@ -56,7 +56,7 @@ from app.store import rules as rules_store
 
 SEP = " · "  # gleichnamige EPGs mehrerer ACI-Tenants: "EG_x · TE_a · AP_1"
 
-# Kategorien (Nummer, Titel, Spalten, Bereiche der Zonen) seit 0.104.0 als Katalog
+# Kategorien (Nummer, Titel, Richtung Zonentyp → Zonentyp) seit 0.104.0 als Katalog
 # (`appdoc_catalog`): Vorgaben im Code, angepasst bzw. erweitert im Namensprofil des Mandanten
 # (Anwender 2026-10-28: „Konfiguration statt Code“). `TenantData.catalog` ist der des Mandanten;
 # die Funktionen hier nehmen ohne Katalog die Vorgaben.
@@ -66,11 +66,6 @@ DEFAULT_CATALOG = appdoc_catalog.default()
 def table_title(index: int, catalog: appdoc_catalog.Catalog | None = None) -> str:
     """Titel einer Kategorie in der Sprache der Anfrage."""
     return (catalog or DEFAULT_CATALOG).title(index)
-
-
-def zone_title(index: int, names: list[str], catalog: appdoc_catalog.Catalog | None = None) -> str:
-    """Titel einer Kategorie mit den Namen ihrer Zonen („Zugriff aus Edge Internet“)."""
-    return (catalog or DEFAULT_CATALOG).zone_title(index, names)
 
 
 # "Bezug": wie die Regel das System erfasst - direkt, ueber ein Netz/einen Bereich bzw. eine
@@ -141,24 +136,21 @@ APP, PEER, APP_COL = "_app", "_peer", "_app_col"
 # Zonen der Gegenstelle (0.101.0, `appdoc_zones`): woher der Zugriff kommt bzw. wohin er geht
 ZONE_COL = "Zone"
 # ohne Wert in allen Zeilen einer Kategorie: Spalte ausgeblendet (`visible_columns`)
-OPTIONAL = (NAT, DNS_NAME, VIP_FW, BALANCER, PROTECTION, L3OUT_COL, ZONE_COL)
-_COMMON = [SOURCE, DESTINATION, ZONE_COL, SERVICE, NAT, ACTION, PROTECTION, DEVICE, L3OUT_COL,
-           DESCRIPTION]  # fmt: skip
-# Spalten je Art der Kategorie (`Category.layout`, 0.104.0): Internet ausgehend mit der
-# SNAT-IP, Internet eingehend mit der Kette DNS → VIP → Load Balancer, sonst gemeinsam
-LAYOUT_COLUMNS: dict[str, list[str]] = {
-    "internet_out": [SOURCE, DESTINATION, ZONE_COL, SERVICE, SNAT_IP, ACTION, PROTECTION, DEVICE,
-                     L3OUT_COL, DESCRIPTION],
-    "internet_in": [SOURCE, ZONE_COL, DNS_NAME, VIP_FW, BALANCER, DESTINATION, SERVICE, ACTION,
-                    PROTECTION, DEVICE, L3OUT_COL, DESCRIPTION],
-    "common": _COMMON,
-}  # fmt: skip
+OPTIONAL = (NAT, SNAT_IP, DNS_NAME, VIP_FW, BALANCER, PROTECTION, L3OUT_COL, ZONE_COL)
+_COMMON = [SOURCE, DESTINATION, ZONE_COL, SERVICE, NAT, SNAT_IP, ACTION, PROTECTION, DEVICE,
+           L3OUT_COL, DESCRIPTION]  # fmt: skip
+# Zugriffe ueber eine VIP der Firewall: die Kette DNS → VIP → Load Balancer vor dem Ziel
+_CHAIN = [SOURCE, ZONE_COL, DNS_NAME, VIP_FW, BALANCER, DESTINATION, SERVICE, NAT, SNAT_IP, ACTION,
+          PROTECTION, DEVICE, L3OUT_COL, DESCRIPTION]  # fmt: skip
+ALL_COLUMNS = list(dict.fromkeys([*_CHAIN, *_COMMON]))  # gleiche Zeile erkennen
 
 
-def table_columns(index: int, catalog: appdoc_catalog.Catalog | None = None) -> list[str]:
-    """Spalten einer Kategorie nach ihrer Art (unbekannte Nummer: gemeinsame Spalten)."""
-    c = (catalog or DEFAULT_CATALOG).get(index)
-    return LAYOUT_COLUMNS.get(c.layout if c else "common", _COMMON)
+def table_columns(rows: list[dict] | None = None) -> list[str]:
+    """Spalten einer Kategorie nach ihren Zeilen (0.106.0, Anwender: „je nach Zonenuebergang“):
+    mit einer VIP der Firewall die Kette DNS → VIP → Load Balancer → Server, sonst die
+    gemeinsamen Spalten; NAT bzw. NAT-IP nur, wenn eine Zeile sie hat (`visible_columns`)."""
+    chain = any(r.get(c) for r in rows or [] for c in (DNS_NAME, VIP_FW, BALANCER))
+    return _CHAIN if chain else _COMMON
 
 
 MAX_IPS = 3  # IPs je System in einer Zelle
@@ -208,10 +200,9 @@ def place(row: dict) -> dict:
     return row
 
 
-def visible_columns(index: int, rows: list[dict],
-                    catalog: appdoc_catalog.Catalog | None = None) -> list[str]:  # fmt: skip
+def visible_columns(rows: list[dict]) -> list[str]:
     """Spalten einer Kategorie ohne die optionalen, die in keiner Zeile einen Wert haben."""
-    return [c for c in table_columns(index, catalog)
+    return [c for c in table_columns(rows)
             if c not in OPTIONAL or any(r.get(c) for r in rows)]  # fmt: skip
 
 
@@ -229,29 +220,6 @@ def app_label(name: str, ips: list[str] | None = None) -> str:
 def lines(values) -> str:
     """Einträge einer Zelle je auf einer Zeile, ohne doppelte."""
     return "\n".join(dict.fromkeys(v for v in values if v))
-
-
-def zone_kind(name: str | None, catalog: appdoc_catalog.Catalog | None = None) -> str | None:
-    """Bereich nach dem Merkmal im Namen der Firewall-Zone (`L3O_inet` -> inet, Katalog)."""
-    return (catalog or DEFAULT_CATALOG).kind_of_zone(name)
-
-
-def categorize(
-    *,
-    direction: str,  # "in" (System = Ziel) | "out" (System = Quelle)
-    counterpart_zone: str | None,
-    counterpart_external: bool,
-    is_dnat_target: bool,
-    area: str | None = None,
-    catalog: appdoc_catalog.Catalog | None = None,
-) -> int:
-    """Ordnet eine Regel einer Kategorie zu (pure; testbar). `area` = Bereich der logischen
-    Zone der Gegenstelle (0.101.0, `appdoc_zones`) - geht der Zone der Firewall vor. Die Regeln
-    stehen seit 0.104.0 im Katalog (`appdoc_catalog.Catalog.categorize`)."""
-    return (catalog or DEFAULT_CATALOG).categorize(
-        direction=direction, counterpart_zone=counterpart_zone,
-        counterpart_external=counterpart_external, is_dnat_target=is_dnat_target, area=area,
-    )  # fmt: skip
 
 
 @dataclass
@@ -343,24 +311,24 @@ def _peer_label(obj: NetworkObject | None, inline: str | None) -> str:
     return inline or "any"
 
 
-def by_zones(data: "TenantData", direction: str, own_zones: list[int],
-             cp_zones: list[int]) -> int | None:  # fmt: skip
-    """Kategorie nach Zonen (0.105.0, ADR 0035) - nur mit Richtungen im Katalog: Gegenstelle in
-    der eigenen Zone -> „innerhalb des Security Tenants“ (Rolle `aci_tenant`), sonst die Richtung
-    Zonentyp der Quelle -> Zonentyp des Ziels; None = wie bisher weiter."""
+def categorize(data: "TenantData", direction: str, own_zones: list[int], cp_zones: list[int],
+               *, inside: bool = False, same_tenant: bool = False, own_hint: str | None = None,
+               cp_hint: str | None = None) -> int:  # fmt: skip
+    """Kategorie einer Zeile (0.106.0, ADR 0035): innerhalb der Applikation (ACI im selben AP;
+    Server intern ergaenzt `applications.build_doc`), innerhalb des Security Tenants (ACI im
+    selben Tenant bzw. alle Zonen der Gegenstelle sind eigene), sonst die Richtung Zonentyp der
+    Quelle → Zonentyp des Ziels (eingehend: Gegenstelle → System), sonst unspezifisch.
+    Mehrere Zonentypen auf einer Seite: unspezifisch. Eine Seite ohne Zone nimmt den Zonentyp
+    nach dem Namen (`own_hint`, `cp_hint`: Firewall-Zone bzw. L3Out, System im DC)."""
     cat, zm = data.catalog, data.zone_map
-    if not cat.has_flows or not cp_zones:
-        return None
-    if own_zones and set(cp_zones) <= set(own_zones):
+    if inside:
+        return cat.role("aci_ap")
+    if same_tenant or (own_zones and cp_zones and set(cp_zones) <= set(own_zones)):
         return cat.role("aci_tenant")
-    own_t, cp_t = zm.type_of(own_zones), zm.type_of(cp_zones)
-    return cat.by_flow(cp_t, own_t) if direction == "in" else cat.by_flow(own_t, cp_t)
-
-
-def categorize_aci(scope: str | None, same_ap: bool, same_tenant: bool,
-                   catalog: appdoc_catalog.Catalog | None = None) -> int:  # fmt: skip
-    """ACI-interne Kategorie: innerhalb AP (7), innerhalb Tenant (8), andere Tenants (9)."""
-    return (catalog or DEFAULT_CATALOG).categorize_aci(scope, same_ap, same_tenant)
+    own_t = zm.type_of(own_zones) if own_zones else own_hint
+    cp_t = zm.type_of(cp_zones) if cp_zones else cp_hint
+    idx = cat.by_flow(cp_t, own_t) if direction == "in" else cat.by_flow(own_t, cp_t)
+    return idx if idx is not None else cat.fallback
 
 
 def _merge_reverse(rows: list[dict]) -> list[dict]:
@@ -424,7 +392,7 @@ def _envelope(
     tables = []
     for c in catalog.ordered():
         rows = rows_by_table.get(c.index, [])
-        columns = visible_columns(c.index, rows, catalog)
+        columns = visible_columns(rows)
         tables.append({"index": c.index, "title": catalog.title(c.index),
                        "enforcement": c.enforcement, "columns": columns,
                        "labels": column_labels(columns), "rows": rows})  # fmt: skip
@@ -657,7 +625,7 @@ class TenantData:
         """Logische Zonen mit ihren Netzen (0.101.0): Zone und Kategorie der Gegenstellen."""
         from app.store import appdoc_zones  # spaet: appdoc_zones -> zones -> customers
 
-        return appdoc_zones.ZoneMap(self.session, self.tenant_id, self.catalog)
+        return appdoc_zones.ZoneMap(self.session, self.tenant_id)
 
     @cached_property
     def leaks(self) -> aci_shared.Leaks:
@@ -694,8 +662,9 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
               ips: list[str] | None = None) -> list:  # fmt: skip
     """ACI-Contracts einer EPG (direkt, ueber vzAny der VRF, ueber ESGs) als (Tabelle, Zeile).
 
-    Gegenstelle gleiches AP (im selben ACI-Tenant) -> 7, anderer ACI-Tenant -> 9, hinter
-    einem L3Out nach dessen Zone wie bei Firewall-Regeln. `via` (Server in der EPG) steht im
+    Gegenstelle gleiches AP (im selben ACI-Tenant) -> 7, gleicher Tenant -> 8, sonst nach dem
+    Zonentyp wie bei Firewall-Regeln (hinter einem L3Out die Zone der Firewall dahinter). `via`
+    (Server in der EPG) steht im
     Bezug vor dem Weg der EPG (vzAny, ESG); `ips` = IPs des Systems (Anzeige mit dem Namen)."""
     by_id = data.epgs_by_id
     proxies = _proxies(data, epg)
@@ -768,20 +737,28 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                 c.ap == epg.ap and c.aci_tenant == epg.aci_tenant and epg.ap is not None
                 for c in cp_epgs
             )
-            same_tenant = all(c.aci_tenant == epg.aci_tenant for c in cp_epgs)
             external = [c for c in cp_epgs if c.kind == "external"]
             only_external = bool(external) and len(external) == len(cp_epgs)
-            # Zonen der Gegenstellen (0.102.0): DC Management (11) auch fuer Contracts; externe
-            # EPGs bzw. ein System ausserhalb nach dem Bereich ihrer Zone wie Firewall-Regeln
+            # Zonen der Gegenstellen (0.102.0); eine externe EPG ohne eigene Zone gehoert zur Zone
+            # der Firewall hinter ihrem L3Out (0.106.0, Geraete der Zonen)
             zm = data.zone_map
             cp_zones = zm.zones_of_epgs(cp_epgs) if zm.active else []
-            if not cp_zones and external and zm.active:  # Ausgang ueber den L3Out (0.105.0)
-                cp_zones = zm.of_l3outs([c.l3out for c in external if c.l3out])
-            # Zonen der eigenen Seite zaehlen nicht (0.105.0): innerhalb der eigenen Zone bleibt
-            # es bei 7/8; mit Richtungen gelten die Bereiche der Zonen nicht mehr
-            others = [z for z in cp_zones if z not in own_zones]
-            cp_area = zm.area(others) if others and not data.catalog.has_flows else None
-            inside = same_ap or r.aci_scope == "application-profile"
+            if zm.active:
+                for c in external:
+                    if not zm.zones_of_epgs([c]):
+                        cp_zones += [z for z in _l3out_zones(data, c) if z not in cp_zones]
+            # ACI intern (7/8) nur im Fabric - nie fuer ein System ausserhalb bzw. ueber einen
+            # L3Out (0.83.1); innerhalb des Tenants nicht ueber Scope „global“
+            fabric = epg.kind != "external" and not external
+            inside = fabric and (same_ap or r.aci_scope == "application-profile")
+            in_tenant = (fabric and r.aci_scope != "global"
+                         and all(c.aci_tenant == epg.aci_tenant for c in cp_epgs))  # fmt: skip
+            # ohne Zone (0.106.0): ueber einen L3Out der Zonentyp nach seinem Namen, im Fabric DC
+            if only_external:
+                cp_hint = zm.name_type(*(c.l3out for c in external))
+            else:
+                cp_hint = None if external else zm.dc_type
+            own_hint = (zm.name_type(epg.l3out) if epg.kind == "external" else None) or zm.dc_type
             how = sides[side]  # Schluessel: direkt | vzAny <VRF> | ESG <Name>
             shown = L("direkt", "direct") if how == "direkt" else how
             text = shown if via is None else (via if how == "direkt" else f"{how} · {via}")
@@ -801,39 +778,9 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                 directions = directions[1:]
             for direction in directions:
                 reverse = direction != forward
-                idx = None if inside else by_zones(data, direction, own_zones, cp_zones)
-                if idx is not None:
-                    pass  # Richtung bzw. eigene Zone (0.105.0)
-                elif cp_area:
-                    # Gegenstelle in einer Zone mit Kategorie (0.102.0 DC Management, seit
-                    # 0.104.0 jede Kategorie des Katalogs): wie Firewall-Regeln dorthin
-                    idx = categorize(direction=direction, counterpart_zone=None,
-                                     counterpart_external=False, is_dnat_target=False,
-                                     area=cp_area, catalog=data.catalog)  # fmt: skip
-                elif only_external:
-                    idx = categorize(
-                        direction=direction,
-                        counterpart_zone=external[0].l3out,
-                        counterpart_external=False,
-                        is_dnat_target=False,
-                        catalog=data.catalog,
-                    )
-                elif epg.kind == "external":
-                    # System ausserhalb des Fabrics (0.83.1): der Zugriff kommt ueber seinen
-                    # L3Out - nie „ACI intern“ (7/8); nach der Art des L3Outs, sonst Zugriff auf
-                    # die EPGs eines Security Tenants (9)
-                    idx = categorize(
-                        direction=direction,
-                        counterpart_zone=epg.l3out,
-                        counterpart_external=False,
-                        is_dnat_target=False,
-                        catalog=data.catalog,
-                    )
-                    if idx == data.catalog.fallback:
-                        idx = data.catalog.role("aci_other")
-                else:
-                    idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant,
-                                         catalog=data.catalog)  # fmt: skip
+                idx = categorize(data, direction, own_zones, cp_zones, inside=inside,
+                                 same_tenant=in_tenant, own_hint=own_hint,
+                                 cp_hint=cp_hint)  # fmt: skip
                 services = ", ".join(back if reverse else rule_view.service_labels(r))
                 if only and not reverse:
                     services = L("nur Antworten (Filter nur mit Quellport)",
@@ -876,6 +823,16 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                         },
                     )
                 )
+    return out
+
+
+def _l3out_zones(data: TenantData, ext: Epg) -> list[int]:
+    """Zonen der Firewall(s) hinter dem L3Out einer externen EPG (ADR 0034, Geraete der Zonen)."""
+    o = data.aci.behind.of(ext.source_system_id, ext.aci_tenant, ext.l3out)
+    out: list[int] = []
+    for fw in o.firewalls if o is not None else []:
+        out += [z for z in data.zone_map.of_firewall(fw.source_system_id, fw.context)
+                if z not in out]  # fmt: skip
     return out
 
 
@@ -939,11 +896,11 @@ def mark_categories(data: TenantData, items: list[tuple[int, dict]],
       fehlenden Diensten (Befund `app_contract_narrower`). Ohne Firewall-Regeln dort oeffnet die
       Firewall nichts, der Contract steht nicht da; ohne Firewall im Mandanten bleibt alles wie
       bisher."""
-    options, fallback = data.catalog.options, data.catalog.fallback
+    fallback = data.catalog.fallback
     for idx, row in items:
-        if idx == fallback and row.get(DIRECTION) == "out" and options.fallback_inbound_only:
+        if idx == fallback and row.get(DIRECTION) == "out":
             row[CAT_HIDDEN] = True
-        if options.outbound_broad_hidden and outbound_broad(data, row):
+        if outbound_broad(data, row):
             row[OUT_BROAD] = True
     if not data.has_firewall:
         return items
@@ -1251,35 +1208,27 @@ def _fw_rows(
         ]
         cp_external = any(o is not None and o.object_class == ObjectClass.EXTERNAL for o in cp_objs)
         cp_zone = zones.get(rule.src_zone_id) if direction == "in" else zones.get(rule.dst_zone_id)
+        cp_side = "src" if direction == "in" else "dst"
         # Gegenstelle any (0.25.0): das, was hinter Interface bzw. Zone der Regel liegt
         cp_any = [e.kind is EndpointKind.ANY for e in counterpart_eps]
-        behind = (
-            data.relevance.behind(rule, "src" if direction == "in" else "dst", cp_zone)
-            if any(cp_any)
-            else None
-        )
+        behind = data.relevance.behind(rule, cp_side, cp_zone) if any(cp_any) else None
         if behind is not None:
             cp_labels = [
                 f"{label} → {behind['text']}" if is_any else label
                 for label, is_any in zip(cp_labels, cp_any, strict=True)
             ]
             cp_external = cp_external or behind["kind"] == "internet"
-        # logische Zonen der Gegenstelle (0.101.0): ihr Bereich bestimmt die Kategorie; seit
-        # 0.105.0 auch ueber den Ausgang (Interface der Regel), die eigenen Zonen zaehlen nicht
-        # und mit Richtungen entscheidet der Zonentyp (`by_zones`)
-        cp_side = "src" if direction == "in" else "dst"
-        zone_ids, area = _counterpart_zones(data, counterpart_eps, cp_objs, behind,
-                                            rule, cp_side, cp_zone, own_zones or [])  # fmt: skip
-        idx = by_zones(data, direction, own_zones or [], zone_ids)
-        if idx is None:
-            idx = categorize(
-                direction=direction,
-                counterpart_zone=cp_zone,
-                counterpart_external=cp_external,
-                is_dnat_target=direction == "in" and bool(rule_dnat),
-                area=None if data.catalog.has_flows else area,
-                catalog=data.catalog,
-            )
+        # logische Zonen der Gegenstelle (0.101.0); seit 0.106.0 entscheidet ihr Zonentyp mit der
+        # Richtung im Namenskonzept - nicht ganz in einer Zone: was hinter dem Interface liegt
+        zone_ids = _counterpart_zones(data, counterpart_eps, cp_objs, rule, cp_side, cp_zone)
+        # ohne Zone (0.106.0): Zonentyp nach dem Namen der Firewall-Zone, extern bzw. ueber eine
+        # VIP das Internet; das System selbst im DC
+        zm = data.zone_map
+        dnat_in = direction == "in" and bool(rule_dnat)
+        cp_hint = zm.name_type(cp_zone) or (zm.name_type("internet")
+                                            if cp_external or dnat_in else None)  # fmt: skip
+        idx = categorize(data, direction, own_zones or [], zone_ids, own_hint=zm.dc_type,
+                         cp_hint=cp_hint)  # fmt: skip
         via, scope, obj, value = sides[side]
         own = _ips_in(ips or [], value)
         row = {
@@ -1293,9 +1242,7 @@ def _fw_rows(
             ZONE_COL: data.zone_map.text(zone_ids) if zone_ids else "",
             CP_REFS: _refs(counterpart_eps, cp_objs),
         }
-        if idx == 1:
-            row[SNAT_IP] = snat if direction == "out" else ""
-        elif idx == 2 and direction == "in" and rule_dnat:
+        if direction == "in" and rule_dnat:
             # Kette (0.84.0): öffentliche IP → VIP der Firewall → Load Balancer → Server
             ports = _rule_ports(rule)
             row |= {
@@ -1306,6 +1253,8 @@ def _fw_rows(
             server = [f"{ip}:{p}" for ip in own for p in data.server_ports(rule_dnat, ip, ports)]
             if server:
                 row[APP] = app_label(system_name, server)
+        elif snat and direction == "out" and cp_external:
+            row[SNAT_IP] = snat  # ins Internet: die externe IP (0.84.0)
         elif snat:
             row[NAT] = f"SNAT {snat}"
         meta = {RULE: rule.id, DIRECTION: direction, SCOPE: scope, SIDE: side}
@@ -1328,40 +1277,32 @@ def _refs(eps: list, objs: list) -> list[str]:
     return out
 
 
-def _counterpart_zones(data: TenantData, eps: list, objs: list, behind: dict | None,
-                       rule: Rule | None = None, side: str | None = None,
-                       fw_zone: str | None = None, own: list[int] | None = None,
-                       ) -> tuple[list[int], str | None]:  # fmt: skip
-    """Logische Zonen der Gegenstelle einer Firewall-Regel und ihr Bereich (0.101.0): ueber ihre
-    Werte (auch grosse Bereiche), bei any ueber die Anbindung bzw. die Netze hinter dem
-    Interface der Regel. Seit 0.105.0: liegt der Wert nicht ganz in einer Zone (any, grosser
-    Bereich), entscheidet ein **Ausgang** - Interface bzw. Firewall-Zone der Regel auf der Seite
-    der Gegenstelle; der Bereich zaehlt nur fuer Zonen ausserhalb der eigenen (`own`)."""
+def _counterpart_zones(data: TenantData, eps: list, objs: list, rule: Rule | None = None,
+                       side: str | None = None, fw_zone: str | None = None,
+                       ) -> list[int]:  # fmt: skip
+    """Logische Zonen der Gegenstelle einer Firewall-Regel (0.101.0) ueber ihre Werte. Liegt sie
+    nicht ganz in Zonen (any, grosser Bereich), zaehlt seit 0.106.0, was hinter dem Interface der
+    Regel auf ihrer Seite liegt (`relevance.behind`: Anbindung, geroutete Netze, Default-Route) -
+    any: diese Zonen; ein grosser Bereich: seine Zonen, die dort liegen (sonst alle darin)."""
     zm = data.zone_map
     if not zm.active:
-        return [], None
+        return []
     values: list[str] = []
     for e, o in zip(eps, objs, strict=True):
         if o is not None and o.value:
             values.append(o.value)
         elif e.kind is not EndpointKind.ANY and e.inline_value:
             values.append(e.inline_value)
-    whole = bool(values) and all(zm.match(v)[1] for v in values)
-    if not whole and rule is not None and side is not None:
-        raw = rule.raw if isinstance(rule.raw, dict) else {}
-        names = [str(i.get("name")) for i in raw.get("srcintf" if side == "src" else "dstintf")
-                 or [] if isinstance(i, dict) and i.get("name")]  # fmt: skip
-        via = zm.of_interfaces(rule.source_system_id, [*names, *([fw_zone] if fw_zone else [])])
-        if via:
-            others = [z for z in via if z not in (own or [])]
-            return via, zm.area(others) if others else None
-    exits: list[str] = []
-    if behind is not None and any(e.kind is EndpointKind.ANY for e in eps):
-        exits = list(behind.get("exits") or [])
-        values += [str(n) for n in behind.get("nets") or []]
-    ids = zm.zones_of(values, exits)
-    others = [z for z in ids if z not in (own or [])]
-    return ids, zm.area(others) if others else None
+    has_any = any(e.kind is EndpointKind.ANY for e in eps)
+    if values and not has_any and all(zm.match(v)[1] for v in values):
+        return zm.zones_of(values)
+    there = (zm.behind(data.relevance.behind(rule, side, fw_zone))
+             if rule is not None and side is not None else [])  # fmt: skip
+    inner = zm.zones_of(values)
+    if has_any:
+        return list(dict.fromkeys([*inner, *there]))
+    narrowed = [z for z in inner if z in there]
+    return narrowed or inner
 
 
 def _ips_in(ips: list[str], value: str | None) -> list[str]:

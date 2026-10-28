@@ -104,8 +104,8 @@ test("Englisch: Kategorien der Applikations-Doku im Netzwerkdesign", async ({ pa
   await expect(page.locator("#appdoc-zones h2")).toHaveText("Categories of the application documentation");
   await expect(page.locator("#appdoc-zones thead")).toContainText("without (exclusions)");
   await expect(page.locator("#appdoc-zones thead")).toContainText("Zone type"); // 0.105.0
-  await expect(page.locator("#appdoc-zones thead")).toContainText("Exits");
-  await expect(page.getByLabel("Category of zone LAN").locator("option", { hasText: "Internet (2/1)" })).toHaveCount(1);
+  await expect(page.locator("#appdoc-zones thead")).toContainText("Devices"); // 0.106.0
+  await expect(page.getByLabel("Device of zone LAN").locator("option").first()).toHaveText("+ device");
 });
 
 // 0.104.0: Kategorien der Applikations-Doku im Namenskonzept
@@ -113,9 +113,10 @@ test("Englisch: Kategorien der Applikations-Doku im Namenskonzept", async ({ pag
   await page.addInitScript(() => localStorage.setItem("automato_lang", "en"));
   await page.goto("/#dict");
   await expect(page.locator("#appdoc-catalog h2")).toHaveText("Categories of the application documentation");
-  await expect(page.locator("#appdoc-catalog-areas thead")).toContainText("Category inbound");
+  await expect(page.locator("#appdoc-catalog-categories thead")).toContainText("Source zone"); // 0.106.0
+  await expect(page.locator("#appdoc-catalog-categories thead")).toContainText("Destination zone");
   await expect(page.getByLabel("Title of category 1", { exact: true })).toHaveValue("Internet Zugriff"); // gespeichert deutsch
-  await expect(page.locator("#appdoc-catalog-categories tbody tr").nth(6)).toContainText("ACI within the application profile");
-  await expect(page.locator("#appdoc-catalog-categories thead")).toContainText("Directions"); // 0.105.0
+  await expect(page.locator("#appdoc-catalog-categories tbody tr").nth(6)).toContainText("special case: within the application");
+  await expect(page.getByLabel("Source zone of category 1", { exact: true })).toBeVisible();
   await expect(page.locator("#appdoc-catalog-types")).toContainText("Zone types in the base schema: ");
 });

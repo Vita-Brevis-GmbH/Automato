@@ -36,7 +36,7 @@ from app.auth.principal import Principal
 from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import (
-    EXIT_SELECTOR_KINDS,
+    DEVICE_SELECTOR_KINDS,
     INTENTS,
     ZONE_KINDS,
     ZONE_SELECTOR_KINDS,
@@ -89,19 +89,9 @@ class ZoneIn(BaseModel):
     position: int = Field(default=0, ge=0, le=10000)
     description: str | None = None
     selectors: list[SelectorIn] = Field(default_factory=list, max_length=200)
-    # Bereich der Kategorien in der Applikations-Doku (0.101.0); nicht mitgeschickt = bleibt
-    appdoc_area: str | None = None
     # Zonentyp von Hand (0.105.0): Zone des Grundschemas; leer = automatisch; nicht mitgeschickt
     # = bleibt
     zone_type: str | None = Field(default=None, max_length=200)
-
-
-class AppdocAreasIn(BaseModel):
-    """Zonen den Kategorien der Applikations-Doku zuordnen (0.101.0): Zone -> Bereich
-    (`inet`, `bit`, `vpn`, `sra`, `res`) bzw. leer = keiner; nicht genannte Zonen bleiben."""
-
-    tenant_id: int
-    areas: dict[int, str | None] = Field(max_length=1000)
 
 
 class PreviewIn(BaseModel):
@@ -227,7 +217,7 @@ def _selectors(session: Session, tid: int, items: list[SelectorIn]) -> list[stor
         if s.kind == "prefix" and customer_store._net(value) is None:
             raise HTTPException(status_code=422, detail=f"invalid prefix {value!r}")
         if s.source_system_id is not None:
-            if s.kind not in (*customer_store.FW_KINDS, *EXIT_SELECTOR_KINDS):
+            if s.kind not in customer_store.FW_KINDS:
                 raise HTTPException(status_code=422, detail="source system only for FortiGate")
             if s.source_system_id not in sids:
                 raise HTTPException(status_code=404, detail="source system not found")
@@ -315,16 +305,6 @@ def _zone_type(session: Session, tenant_id: int, value: str | None) -> str | Non
     return hit.name
 
 
-def _area(value: str | None, catalog: appdoc_catalog.Catalog | None = None) -> str | None:
-    """Bereich der Kategorien pruefen (0.101.0; seit 0.104.0 gegen den Katalog des Mandanten,
-    Namensprofil); leer = keiner."""
-    value = (value or "").strip() or None
-    known = catalog.areas if catalog is not None else appdoc_catalog.default().areas
-    if value is not None and (value not in known or known[value].off):
-        raise HTTPException(status_code=422, detail=f"unknown appdoc area {value!r}")
-    return value
-
-
 def _apply(session: Session, z: LogicalZone, body: ZoneIn, sel: list[store.Selector]) -> None:
     name = body.name.strip()
     clash = session.scalar(
@@ -345,8 +325,6 @@ def _apply(session: Session, z: LogicalZone, body: ZoneIn, sel: list[store.Selec
     z.name, z.code = name, (body.code or "").strip() or None
     z.kind, z.customer_id, z.color = body.kind, body.customer_id, body.color
     z.position, z.description = body.position, (body.description or "").strip() or None
-    if "appdoc_area" in body.model_fields_set:  # 0.101.0: nur, wenn mitgeschickt
-        z.appdoc_area = _area(body.appdoc_area, appdoc_catalog.for_tenant(session, z.tenant_id))
     if "zone_type" in body.model_fields_set:  # 0.105.0: nur, wenn mitgeschickt
         z.zone_type = _zone_type(session, z.tenant_id, body.zone_type)
     z.updated_at = datetime.now(UTC)
@@ -1043,39 +1021,6 @@ def create_zone(
     return _out(z, nets[0], _customers(session, tid))
 
 
-@router.put("/appdoc-areas")
-def set_appdoc_areas(
-    body: AppdocAreasIn,
-    background: BackgroundTasks,
-    principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session, scope="function"),
-    factory: sessionmaker = Depends(get_session_factory),
-) -> list[dict]:
-    """Zonen den Kategorien der Applikations-Doku zuordnen (0.101.0, Operator): je Zone der
-    Bereich (Internet, Unternehmensnetzwerk, VPN, Remote Access, andere Security Tenants) bzw.
-    keiner. Die Doku ordnet danach beim naechsten Laden neu; Befunde der Applikationen ziehen
-    nach. Liefert die Zonen mit ihrem Bereich."""
-    tid = tenant_scope(principal, body.tenant_id)
-    items = {z.id: z for z in store.load(session, tid)}
-    unknown = [zid for zid in body.areas if zid not in items]
-    if unknown:
-        raise HTTPException(status_code=404, detail="zone not found")
-    changes: list[list] = []
-    catalog = appdoc_catalog.for_tenant(session, tid)
-    for zid, value in body.areas.items():
-        area = _area(value, catalog)
-        z = items[zid]
-        if z.appdoc_area != area:
-            z.appdoc_area, z.updated_at = area, datetime.now(UTC)
-            changes.append([zid, area])
-    session.flush()
-    if changes:
-        audit.record(session, actor=f"user:{principal.subject}", action="zone.appdoc_areas_set",
-                     subject=str(tid), detail={"tenant_id": tid, "changes": changes})  # fmt: skip
-        app_refresh.schedule_tenant(background, factory, tid)  # Befunde nach den Kategorien
-    return [{"id": z.id, "name": z.name, "appdoc_area": z.appdoc_area} for z in items.values()]
-
-
 @router.get("/appdoc/catalog")
 def appdoc_catalog_of_tenant(
     tenant_id: int | None = None,
@@ -1083,30 +1028,33 @@ def appdoc_catalog_of_tenant(
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Kategorien der Applikations-Doku des Mandanten (0.104.0): Katalog aus Vorgaben und
-    Namensprofil (Auswahl je Zone im Netzwerkdesign → Kategorien) und je Zone ohne Kategorie
-    der Vorschlag nach ihrem Namen."""
+    Namensprofil, dazu fuer Netzwerkdesign → Kategorien die Zonentypen (Zonen des
+    Grundschemas, 0.105.0), je Zone der wirksame bzw. erkannte Typ und die Geraete zur Auswahl
+    (0.106.0: Firewalls bzw. VDOMs, ACI-Tenants, ACI-VRFs, Anbindungen)."""
     tid = tenant_scope(principal, tenant_id)
     catalog = appdoc_catalog.for_tenant(session, tid)
     items = store.load(session, tid)
-    suggestions = {}
-    for z in items:
-        if not catalog.area(z.appdoc_area) and (key := catalog.suggest(z.name, z.code)):
-            suggestions[z.id] = key
-    # Zonentypen (0.105.0): Zonen des Grundschemas zur Auswahl, je Zone der wirksame Typ
     schema = zone_types.schema_for(session, tid)
-    return {**catalog.out(), "suggestions": suggestions, "has_flows": catalog.has_flows,
-            "zone_types": [z.name for z in schema.zones],
+    return {**catalog.out(), "zone_types": [z.name for z in schema.zones],
             "types": zone_types.types(session, tid, items, schema),
-            "auto_types": zone_types.types(session, tid, items, schema, manual=False)}  # fmt: skip
+            "auto_types": zone_types.types(session, tid, items, schema, manual=False),
+            "devices": zone_types.devices(session, tid)}  # fmt: skip
+
+
+class DeviceIn(BaseModel):
+    kind: str = Field(max_length=16)  # fw_vdom | aci_tenant | aci_vrf | exit
+    value: str = Field(min_length=1, max_length=200)
+    source_system_id: int | None = None
 
 
 class AppdocZoneIn(BaseModel):
     id: int
-    appdoc_area: str | None = None  # nicht mitgeschickt = bleibt
     zone_type: str | None = Field(default=None, max_length=200)  # 0.105.0; fehlt = bleibt
     # Netze der Zone (Selektoren „Netz“) bzw. ihre Ausschluesse („ohne“ Netz); None = bleibt
     nets: list[str] | None = Field(default=None, max_length=500)
     excluded: list[str] | None = Field(default=None, max_length=500)
+    # Geraete der Zone (0.106.0): Firewall/VDOM, ACI-Tenant/-VRF, Anbindung; None = bleiben
+    devices: list[DeviceIn] | None = Field(default=None, max_length=200)
 
 
 class AppdocZonesIn(BaseModel):
@@ -1130,6 +1078,26 @@ def _prefixes_of(z: LogicalZone, exclude: bool) -> list[str]:
     return [s.value for s in z.selectors if s.kind == "prefix" and s.exclude is exclude]
 
 
+def _devices_of(z: LogicalZone) -> list[tuple[str, str, int | None]]:
+    return [(s.kind, s.value, s.source_system_id) for s in z.selectors
+            if s.kind in DEVICE_SELECTOR_KINDS and not s.exclude]  # fmt: skip
+
+
+def _device_list(items: list[DeviceIn], sids: set[int]) -> list[tuple[str, str, int | None]]:
+    """Geraete pruefen (Art, Wert, Quellsystem nur bei Firewall/VDOM), ohne doppelte."""
+    out: list[tuple[str, str, int | None]] = []
+    for d in items:
+        if d.kind not in DEVICE_SELECTOR_KINDS:
+            raise HTTPException(status_code=422, detail=f"unknown device kind {d.kind!r}")
+        sid = d.source_system_id if d.kind == "fw_vdom" else None
+        if sid is not None and sid not in sids:
+            raise HTTPException(status_code=404, detail="source system not found")
+        entry = (d.kind, d.value.strip(), sid)
+        if entry[1] and entry not in out:
+            out.append(entry)
+    return out
+
+
 @router.put("/appdoc")
 def set_appdoc_zones(
     body: AppdocZonesIn,
@@ -1138,24 +1106,19 @@ def set_appdoc_zones(
     session: Session = Depends(get_session, scope="function"),
     factory: sessionmaker = Depends(get_session_factory),
 ) -> list[dict]:
-    """Kategorien der Applikations-Doku in Netzwerkdesign → Zonen pflegen (0.102.0, Operator,
-    Anwender: „das Zuordnen gehört zu den Zonen ins Netzwerkdesign“): je Zone die Kategorie und
-    ihre Netze mit Ausschluessen (Selektoren „Netz“ bzw. „ohne“ Netz); die anderen Selektoren
-    (ACI, Firewall, IPAM, Anbindung) bleiben. Spaeter laesst sich daraus z. B. ein BGP-Filter je
-    Zone ableiten. Liefert die Zonen mit Kategorie, Netzen und Ausschluessen."""
+    """Netzwerkdesign → Kategorien pflegen (0.102.0, Operator): je Zone der Zonentyp (0.105.0),
+    ihre Netze mit Ausschluessen (Selektoren „Netz“ bzw. „ohne“ Netz) und seit 0.106.0 ihre
+    Geraete (Firewall/VDOM, ACI-Tenant/-VRF, Anbindung) - die anderen Selektoren bleiben.
+    Spaeter laesst sich daraus z. B. ein BGP-Filter je Zone ableiten. Liefert die Zonen."""
     tid = tenant_scope(principal, body.tenant_id)
     items = {z.id: z for z in store.load(session, tid)}
     if any(x.id not in items for x in body.zones):
         raise HTTPException(status_code=404, detail="zone not found")
+    sids = set(session.scalars(select(SourceSystem.id).where(SourceSystem.tenant_id == tid)))
     changes: list[dict] = []
     owners: set[int | None] = set()
-    catalog = appdoc_catalog.for_tenant(session, tid)
     for x in body.zones:
         z, entry = items[x.id], {}
-        if "appdoc_area" in x.model_fields_set:
-            area = _area(x.appdoc_area, catalog)
-            if z.appdoc_area != area:
-                z.appdoc_area = entry["area"] = area
         if "zone_type" in x.model_fields_set:  # Zonentyp von Hand (0.105.0)
             kind = _zone_type(session, tid, x.zone_type)
             if z.zone_type != kind:
@@ -1173,6 +1136,16 @@ def set_appdoc_zones(
                 ]  # fmt: skip
                 entry["nets"], entry["excluded"] = len(nets), len(excluded)
                 owners.add(z.customer_id)
+        if x.devices is not None:
+            devices = _device_list(x.devices, sids)
+            if devices != _devices_of(z):
+                keep = [s for s in z.selectors if s.kind not in DEVICE_SELECTOR_KINDS or s.exclude]
+                z.selectors = keep + [
+                    LogicalZoneSelector(kind=k, value=v, source_system_id=sid, exclude=False)
+                    for k, v, sid in devices
+                ]  # fmt: skip
+                entry["devices"] = len(devices)
+                owners.add(z.customer_id)
         if entry:
             z.updated_at = datetime.now(UTC)
             changes.append({"zone_id": z.id, **entry})
@@ -1180,12 +1153,14 @@ def set_appdoc_zones(
     if changes:
         audit.record(session, actor=f"user:{principal.subject}", action="zone.appdoc_set",
                      subject=str(tid), detail={"tenant_id": tid, "changes": changes})  # fmt: skip
-        if owners:  # Netze geaendert: Kunden auf den Zonen, Befunde der Zonen
+        if owners:  # Netze bzw. Geraete geaendert: Kunden auf den Zonen, Befunde der Zonen
             _rederive(session, tid, owners)
             reconcile.refresh_zone_findings(session, tid)
         app_refresh.schedule_tenant(background, factory, tid)  # Befunde nach den Kategorien
-    return [{"id": z.id, "name": z.name, "appdoc_area": z.appdoc_area, "zone_type": z.zone_type,
-             "nets": _prefixes_of(z, False), "excluded": _prefixes_of(z, True)}
+    return [{"id": z.id, "name": z.name, "zone_type": z.zone_type,
+             "nets": _prefixes_of(z, False), "excluded": _prefixes_of(z, True),
+             "devices": [{"kind": k, "value": v, "source_system_id": sid}
+                         for k, v, sid in _devices_of(z)]}
             for z in items.values()]  # fmt: skip
 
 

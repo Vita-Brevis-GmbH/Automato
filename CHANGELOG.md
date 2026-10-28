@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.106.0 – 2026-10-28
+
+Kategorien einfach (Rückmeldung des Anwenders 2026-10-28 zu 0.105.0: „Kategorien und Bereiche sind
+nicht notwendig … einfacher ist besser, in allem“; ADR 0035 überarbeitet, Migration `0065`).
+
+- **Namenskonzept → Kategorien:** nur noch Titel, Titel englisch, **Source-Zone** und **Dest-Zone**
+  (je Seite ein oder mehrere Zonentypen des Grundschemas, `* jeder`). Fest mit nur dem Titel:
+  innerhalb der Applikation (7), innerhalb des Security Tenants (8), unspezifisch (10). Die
+  Vorgaben sind Richtungen auf der Vorlage (z. B. Edge Internet, Public → DC = „Zugriff aus dem
+  Internet“) und lassen sich ändern bzw. entfernen.
+- **Entfallen:** Bereiche je Zone, Merkmale im Namen der Firewall-Zone, Optionen, Spalten-Layout,
+  „nur mit Zone“, Titel mit Zonen, Vorschlag nach Namen, die Ausgänge von Hand (0.105.0) und die
+  Spalte „Kategorie“ im Netzwerkdesign.
+- **Netzwerkdesign → Kategorien:** je Zone Zonentyp, Netze, Ausschlüsse und **Geräte**
+  (Firewall/VDOM, ACI-Tenant, ACI-VRF, Anbindungen aus dem Routing).
+- **Ausgänge aus den Daten:** any bzw. ein grosser Bereich gehört zu den Zonen hinter dem
+  Interface der Regel (Anbindung, geroutete Netze, Default-Route); eine externe EPG zur Zone der
+  Firewall hinter ihrem L3Out. Nicht eindeutig: unspezifisch. Ohne Zone der Zonentyp nach dem
+  Namen der Firewall-Zone bzw. des L3Outs (Muster des Grundschemas), Systeme im ACI als DC.
+- **Befund „Netz nicht über den Übergang zur Zone“:** aus den Geräten der Zonen und dem Zonenplan
+  statt aus Ausgängen von Hand.
+- **Spalten nach den Zeilen:** VIP-/Load-Balancer-Kette bzw. NAT-Spalten erscheinen, wo Zeilen sie
+  haben.
+- Tests (orchestrator 649, UI-Tests 148).
+
 ## 0.105.0 – 2026-10-28
 
 Kategorien der Applikations-Doku einfacher: **Zonentyp, Richtungen, Ausgänge** statt Bereichen je
@@ -30,7 +55,7 @@ Zone (Rückmeldung des Anwenders 2026-10-28 zu 0.104.0, ADR 0035, Migration `006
 - Korrektur aus 0.104.0: ein Bereich zählt nicht mehr, wenn die Gegenstelle in der eigenen Zone
   liegt (alle Zonen erschienen als „Ressourcen-Tenant“).
 - **Tests schneller** (Vorschlag 6 aus 0.104.0): siehe unten.
-- Abgenommen bis 0.103.0. Tests (orchestrator 650, UI-Tests 149).
+- Abgenommen bis 0.103.0. Tests (orchestrator 650, UI-Tests 149). Überarbeitet in 0.106.0.
 
 ### Tests schneller
 

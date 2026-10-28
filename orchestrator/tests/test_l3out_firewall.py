@@ -311,7 +311,8 @@ def test_hilfs_contracts_an_der_firewall_regel(client):
     assert internet["app-inet"]["L3Out"] == "L3O_inet · Contract CT_inet"
     cat = next(t for t in doc["tables"] if t["index"] == 1)
     assert "L3Out" in cat["columns"]
-    assert _by_name(doc, 3)["bit-app"]["L3Out"] == "L3O_bit · Contract CT_bit"
+    # „bit“ ist seit 0.106.0 kein Merkmal mehr (kein Zonentyp im Grundschema): unspezifisch
+    assert _by_name(doc, 10)["bit-app"]["L3Out"] == "L3O_bit · Contract CT_bit"
     assert _by_name(doc, 10)["lan-dc"]["L3Out"] == "L3O_bit · Contract CT_bit"
     assert _by_name(doc, 10)["ext-dc"]["L3Out"] == "L3O_inet"  # kein Contract von dort
     hit = next(h for h in doc["hits"] if names.get(h["rule_id"]) == "bit-app")
@@ -385,15 +386,16 @@ def test_unspezifische_zugriffe_nach_l3out(client):
     doc = _doc(client, ids["app"])
     rows = _rows(doc, 10)
     # spezifische zuerst, dann die unspezifischen je L3Out (fw-inet steht im Regelwerk vorn)
-    assert [r["Description"] for r in rows] == ["mon-app", "lan-dc", "ext-dc"]
-    assert [r["_l3out_in"] for r in rows] == ["L3O_bit", "L3O_bit", "L3O_inet"]
-    assert [r["_scope"] for r in rows] == ["specific", "subnet", "subnet"]
+    # seit 0.106.0 auch bit-app (L3O_bit ist kein Zonentyp im Grundschema)
+    assert [r["Description"] for r in rows] == ["bit-app", "mon-app", "lan-dc", "ext-dc"]
+    assert [r["_l3out_in"] for r in rows] == ["L3O_bit", "L3O_bit", "L3O_bit", "L3O_inet"]
+    assert [r["_scope"] for r in rows] == ["specific", "specific", "subnet", "subnet"]
     # gleich in der Doku je System (EPG)
     systems = client.get("/appdoc/systems", params={"tenant_id": ids["tid"]}).json()
     name = next(s["name"] for s in systems if s["kind"] == "epg")
     system = client.get(f"/appdoc/systems/{name}", params={"tenant_id": ids["tid"]}).json()
     cat = next(t for t in system["tables"] if t["index"] == 10)
-    assert [r["Description"] for r in cat["rows"]] == ["mon-app", "lan-dc", "ext-dc"]
+    assert [r["Description"] for r in cat["rows"]] == ["bit-app", "mon-app", "lan-dc", "ext-dc"]
     assert "L3Out" in cat["columns"]
 
 
@@ -418,7 +420,7 @@ def test_zuordnung_von_hand(client, session_factory):
     assert "CT_vpn" not in {r["name"] for r in doc["rules"]}
     assert "CT_vpn" not in _by_name(doc, 5)
     # bit-app bleibt bei L3O_bit (Interface to-aci), nicht bei L3O_vpn
-    assert _by_name(doc, 3)["bit-app"]["L3Out"] == "L3O_bit · Contract CT_bit"
+    assert _by_name(doc, 10)["bit-app"]["L3Out"] == "L3O_bit · Contract CT_bit"
     # L3O_inet: ausdruecklich keine Firewall - CT_inet regelt allein und steht da
     r = _put(client, ids, INET, none=True)
     assert r.status_code == 200 and r.json()["behind"]["origin"] == "none"

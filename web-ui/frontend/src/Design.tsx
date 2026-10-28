@@ -9,7 +9,6 @@
 import { CSSProperties, Fragment, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptZoneSuggestions,
-  AppdocArea,
   AppdocCatalog,
   applySchemaIntents,
   assignZoneNodes,
@@ -65,6 +64,7 @@ import {
   updateZone,
   ZoneCell,
   ZoneCellRules,
+  ZoneDevice,
   ZoneIn,
   ZoneIntent,
   ZoneKind,
@@ -81,7 +81,6 @@ import {
   ZoneSuggestionSource,
   ZoneSummary,
 } from "./api";
-import { areaChoices, areaLabel } from "./zoneAreas";
 import { SELECTOR_LABEL } from "./Customers";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, fmtTime, Loading, Modal, Note, PageHead, SharedChip } from "./ui";
 import { L } from "./i18n";
@@ -114,10 +113,6 @@ const INTENT: Record<ZoneIntent, [string, string]> = {
 const ZONE_SELECTOR_LABEL: Record<ZoneSelectorKind, string> = {
   ...SELECTOR_LABEL,
   exit: L("Anbindung", "Exit"),
-  // Ausgänge (0.105.0): über diese erreicht die Firewall bzw. das ACI die Zone
-  via_fw_interface: L("Ausgang Interface", "Exit interface"),
-  via_fw_zone: L("Ausgang Firewall-Zone", "Exit firewall zone"),
-  via_l3out: L("Ausgang L3Out", "Exit L3Out"),
 };
 const PLACEHOLDER: Partial<Record<ZoneSelectorKind, string>> = {
   aci_tenant: "TE_ka",
@@ -125,12 +120,9 @@ const PLACEHOLDER: Partial<Record<ZoneSelectorKind, string>> = {
   fw_zone: "dmz",
   fw_interface: "port5",
   prefix: "10.20.0.0/16",
-  via_fw_interface: "port3",
-  via_fw_zone: "transfer-core",
-  via_l3out: "L3O_inet",
   exit: "Internet",
 };
-const FW_KINDS: ZoneSelectorKind[] = ["fw_vdom", "fw_zone", "fw_interface", "via_fw_interface", "via_fw_zone"];
+const FW_KINDS: ZoneSelectorKind[] = ["fw_vdom", "fw_zone", "fw_interface"];
 const NODE_KIND: Record<string, string> = { firewall: "Firewall", vdom: "VDOM", vrf: "ACI-VRF" };
 
 const SOURCE: Record<ZoneSuggestionSource, string> = {
@@ -230,14 +222,19 @@ export default function Design({
 }
 
 // -- Kategorien der Applikations-Doku ------------------------------------------------------------
-// 0.102.0 (Anwender: „das Zuordnen gehört zu den Zonen ins Netzwerkdesign“): je Zone die Kategorie, aus der
-// ihre Zugriffe kommen, und ihre Netze mit Ausschlüssen (Selektoren „Netz“; die übrigen Selektoren bleiben,
-// gepflegt im Reiter Zonen). Die Doku benennt die Kategorien nach ihren Zonen („Zugriff aus Edge
-// Internet“); später lässt sich daraus z. B. ein BGP-Filter je Zone ableiten.
-// 0.105.0 (ADR 0035): je Zone der Zonentyp (Zone des Grundschemas, erkannt bzw. von Hand) und die Ausgänge (Interface,
-// Firewall-Zone, L3Out); mit Richtungen im Namenskonzept entscheidet der Zonentyp statt der Kategorie der Zone.
-type AppdocDraft = { area: AppdocArea | null; type: string | null; nets: string; excluded: string };
-const EXIT_KINDS: ZoneSelectorKind[] = ["via_fw_interface", "via_fw_zone", "via_l3out"];
+// 0.102.0 (Anwender: „das Zuordnen gehört zu den Zonen ins Netzwerkdesign“): je Zone ihre Netze mit Ausschlüssen
+// (Selektoren „Netz“). Seit 0.106.0 (ADR 0035, Anwender: „einfacher ist besser“) dazu der Zonentyp (Zone des
+// Grundschemas, erkannt bzw. von Hand) und die Geräte (Firewall/VDOM, ACI-Tenant/-VRF, Anbindungen aus dem Routing):
+// daraus und aus dem Routing ergibt sich, welche Zone hinter einem Interface bzw. L3Out liegt. Die Kategorie folgt
+// der Richtung Zonentyp → Zonentyp im Namenskonzept; die übrigen Selektoren pflegt der Reiter Zonen.
+type AppdocDraft = { type: string | null; nets: string; excluded: string; devices: ZoneDevice[] };
+const DEVICE_KINDS: ZoneDevice["kind"][] = ["fw_vdom", "aci_tenant", "aci_vrf", "exit"];
+const DEVICE_LABEL: Record<ZoneDevice["kind"], string> = {
+  fw_vdom: L("Firewall/VDOM", "Firewall/VDOM"),
+  aci_tenant: L("ACI-Tenant", "ACI tenant"),
+  aci_vrf: L("ACI-VRF", "ACI VRF"),
+  exit: L("Anbindung", "Exit"),
+};
 const splitNets = (text: string) =>
   text
     .split(/[\s,;]+/)
@@ -245,11 +242,17 @@ const splitNets = (text: string) =>
     .filter(Boolean);
 const zonePrefixes = (z: LogicalZone, exclude: boolean) =>
   z.selectors.filter((x) => x.kind === "prefix" && !!x.exclude === exclude).map((x) => x.value);
+const zoneDevices = (z: LogicalZone): ZoneDevice[] =>
+  z.selectors
+    .filter((x) => DEVICE_KINDS.includes(x.kind as ZoneDevice["kind"]) && !x.exclude)
+    .map((x) => ({ kind: x.kind as ZoneDevice["kind"], value: x.value, source_system_id: x.kind === "fw_vdom" ? (x.source_system_id ?? null) : null }));
 const sameNets = (a: string, b: string) => splitNets(a).join(" ") === splitNets(b).join(" ");
+const deviceKey = (d: ZoneDevice) => `${d.kind}|${d.value}|${d.source_system_id ?? ""}`;
+const sameDevices = (a: ZoneDevice[], b: ZoneDevice[]) => a.map(deviceKey).join(",") === b.map(deviceKey).join(",");
 
 function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }) {
   const [rows, setRows] = useState<LogicalZone[] | null>(null);
-  // Auswahl je Zone aus dem Katalog des Mandanten (Namenskonzept, 0.104.0) samt Vorschlag nach dem Namen
+  // Zonentypen, erkannte Typen und Geräte zur Auswahl (0.105.0/0.106.0)
   const [catalog, setCatalog] = useState<AppdocCatalog | null>(null);
   const [systems, setSystems] = useState<System[]>([]);
   const [draft, setDraft] = useState<Record<number, AppdocDraft>>({});
@@ -277,10 +280,10 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
   }, [tenantId]);
 
   const initial = (z: LogicalZone): AppdocDraft => ({
-    area: z.appdoc_area ?? null,
     type: z.zone_type ?? null,
     nets: zonePrefixes(z, false).join("\n"),
     excluded: zonePrefixes(z, true).join("\n"),
+    devices: zoneDevices(z),
   });
   const value = (z: LogicalZone) => draft[z.id] ?? initial(z);
   const set = (z: LogicalZone, patch: Partial<AppdocDraft>) => {
@@ -292,19 +295,14 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
     const i = initial(z);
     return !sameNets(v.nets, i.nets) || !sameNets(v.excluded, i.excluded);
   };
-  const changed = (rows ?? []).filter(
-    (z) => draft[z.id] && (value(z).area !== initial(z).area || value(z).type !== initial(z).type || netsChanged(z)),
-  );
-  const flows = !!catalog?.has_flows; // Richtungen gepflegt: die Kategorie der Zone gilt nicht mehr
-  const hintOf = (z: LogicalZone) => catalog?.suggestions?.[String(z.id)] ?? null;
-  const suggestions = (rows ?? []).filter((z) => !value(z).area && hintOf(z));
-  const suggest = () => {
-    setSaved(false);
-    setDraft((d) => {
-      const out = { ...d };
-      for (const z of suggestions) out[z.id] = { ...(out[z.id] ?? initial(z)), area: hintOf(z) };
-      return out;
-    });
+  const devicesChanged = (z: LogicalZone) => !sameDevices(value(z).devices, initial(z).devices);
+  const changed = (rows ?? []).filter((z) => draft[z.id] && (value(z).type !== initial(z).type || netsChanged(z) || devicesChanged(z)));
+  const devices = catalog?.devices ?? [];
+  const deviceLabel = (d: ZoneDevice) => {
+    const known = devices.find((x) => deviceKey(x) === deviceKey(d));
+    if (known?.label) return known.label;
+    const where = d.source_system_id ? `${systems.find((x) => x.id === d.source_system_id)?.name ?? "?"} · ` : "";
+    return `${where}${d.value}`;
   };
   const save = async () => {
     setBusy(true);
@@ -316,9 +314,9 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
           const v = value(z);
           return {
             id: z.id,
-            appdoc_area: v.area,
             zone_type: v.type,
             ...(netsChanged(z) ? { nets: splitNets(v.nets), excluded: splitNets(v.excluded) } : {}),
+            ...(devicesChanged(z) ? { devices: v.devices.map(({ kind, value: val, source_system_id }) => ({ kind, value: val, source_system_id })) } : {}),
           };
         }),
       );
@@ -340,24 +338,21 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
           <span className="faint">
             {L(
               <>
-                Je Zone die Kategorie, aus der ihre Zugriffe kommen – die Doku benennt die Kategorie nach ihren Zonen. Eine
-                Firewall-Regel bzw. ein Contract steht in der Kategorie der Zone der Gegenstelle, auch über einen grossen
-                Bereich; nennt die Gegenstelle Zonen mehrerer Kategorien, bleibt sie unspezifisch. Die Auswahl (Kategorien
-                und Bereiche) passt ein Admin im Namenskonzept an (Administration → Namensprofile).
+                Je Zone der Zonentyp, ihre Netze und ihre Geräte. Eine Firewall-Regel bzw. ein Contract steht in der Kategorie
+                der Richtung Zonentyp der Quelle → Zonentyp des Ziels (Namenskonzept, Administration → Namensprofile). Liegt
+                eine Gegenstelle nicht in den Netzen einer Zone (any, grosser Bereich), zählt die Zone hinter dem Interface
+                bzw. L3Out der Regel – aus den Geräten und dem Routing; nicht eindeutig: unspezifisch.
               </>,
               <>
-                Per zone the category its accesses come from – the documentation names the category after its zones. A
-                firewall rule or contract goes into the category of its peer's zone, also via a large range; if the peer
-                covers zones of several categories, it stays unspecific. An admin adjusts the choice (categories and
-                areas) in the naming concept (Administration → Naming profiles).
+                Per zone the zone type, its networks and its devices. A firewall rule or contract goes into the category of the
+                direction source zone type → destination zone type (naming concept, Administration → Naming profiles). If a
+                peer is not in the networks of a zone (any, large range), the zone behind the interface or L3Out of the rule
+                counts – from the devices and the routing; not unique: unspecific.
               </>,
             )}
           </span>
           {canEdit && (
             <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-              <button className="btn btn-sm" id="appdoc-suggest" disabled={suggestions.length === 0} onClick={suggest}>
-                {L(`Vorschlag nach Namen (${suggestions.length})`, `Suggest by name (${suggestions.length})`)}
-              </button>
               <button className="btn btn-primary btn-sm" id="appdoc-save" disabled={busy || changed.length === 0} onClick={() => void save()}>
                 {busy ? L("Speichere…", "Saving…") : L(`Speichern (${changed.length})`, `Save (${changed.length})`)}
               </button>
@@ -381,23 +376,21 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
               <colgroup>
                 <col style={{ width: "15%" }} />
                 <col style={{ width: "14%" }} />
-                {!flows && <col style={{ width: "14%" }} />}
                 <col style={{ width: "16%" }} />
                 <col style={{ width: "16%" }} />
-                <col style={{ width: "12%" }} />
+                <col style={{ width: "24%" }} />
                 <col />
               </colgroup>
               <thead>
                 <tr>
                   <th>{L("Zone", "Zone")}</th>
                   <th title={L("Zone des Grundschemas im Namenskonzept", "zone of the base schema in the naming concept")}>{L("Zonentyp", "Zone type")}</th>
-                  {!flows && <th>{L("Kategorie", "Category")}</th>}
                   <th title={L("ein Netz je Zeile (CIDR)", "one network per line (CIDR)")}>{L("Netze (Quell-Adressen)", "Networks (source addresses)")}</th>
                   <th title={L("ein Netz je Zeile – aus den Netzen herausgeschnitten", "one network per line – cut out of the networks")}>
                     {L("ohne (Ausschlüsse)", "without (exclusions)")}
                   </th>
-                  <th title={L("Firewall-Interface, Firewall-Zone bzw. L3Out, über die die Zone erreicht wird – im Reiter Zonen pflegen", "firewall interface, firewall zone or L3Out through which the zone is reached – maintain in the Zones tab")}>
-                    {L("Ausgänge", "Exits")}
+                  <th title={L("Firewall bzw. VDOM, ACI-Tenant, ACI-VRF und Anbindungen (Routing → Anbindungen) in dieser Zone", "firewall or VDOM, ACI tenant, ACI VRF and exits (Routing → Exits) in this zone")}>
+                    {L("Geräte", "Devices")}
                   </th>
                   <th>{L("weitere Selektoren", "other selectors")}</th>
                 </tr>
@@ -405,10 +398,10 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
               <tbody>
                 {rows.map((z) => {
                   const v = value(z);
-                  const others = z.selectors.filter((x) => x.kind !== "prefix" && !EXIT_KINDS.includes(x.kind));
-                  const exitsOf = z.selectors.filter((x) => EXIT_KINDS.includes(x.kind) && !x.exclude);
+                  const others = z.selectors.filter((x) => x.kind !== "prefix" && !(DEVICE_KINDS.includes(x.kind as ZoneDevice["kind"]) && !x.exclude));
                   const auto = catalog?.auto_types?.[String(z.id)] ?? null;
-                  const hint = !v.area ? hintOf(z) : null;
+                  const mine = new Set(v.devices.map(deviceKey));
+                  const choices = devices.filter((d) => !mine.has(deviceKey(d)));
                   return (
                     <tr key={z.id} className={changed.includes(z) ? "row-changed" : ""}>
                       <td>
@@ -436,30 +429,6 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                           {v.type && !(catalog?.zone_types ?? []).includes(v.type) ? <option value={v.type}>{v.type}</option> : null}
                         </select>
                       </td>
-                      {!flows && (
-                        <td>
-                          <select
-                            className="sel"
-                            aria-label={L(`Kategorie der Zone ${z.name}`, `Category of zone ${z.name}`)}
-                            value={v.area ?? ""}
-                            disabled={!canEdit}
-                            onChange={(e) => set(z, { area: (e.target.value || null) as AppdocArea | null })}
-                          >
-                            <option value="">{L("— keine", "— none")}</option>
-                            {areaChoices(catalog, v.area).map((x) => (
-                              <option key={x.key} value={x.key}>
-                                {areaLabel(catalog, x.key)}
-                                {x.off ? L(" – nicht mehr angeboten", " – no longer offered") : ""}
-                              </option>
-                            ))}
-                          </select>
-                          {hint && canEdit && (
-                            <div className="faint" style={{ fontSize: 11 }}>
-                              {L(`Vorschlag: ${areaLabel(catalog, hint)}`, `Suggestion: ${areaLabel(catalog, hint)}`)}
-                            </div>
-                          )}
-                        </td>
-                      )}
                       <td>
                         <textarea
                           className="input mono"
@@ -482,15 +451,50 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                           onChange={(e) => set(z, { excluded: e.target.value })}
                         />
                       </td>
-                      <td className="appdoc-exits">
-                        {exitsOf.length === 0 ? (
-                          <Dash />
-                        ) : (
-                          exitsOf.map((x, i) => (
-                            <span key={i} className="chip info">
-                              {selectorText(x, systems)}
+                      <td className="appdoc-devices">
+                        <div className="chips">
+                          {v.devices.map((d) => (
+                            <span key={deviceKey(d)} className="chip info" title={DEVICE_LABEL[d.kind]}>
+                              {DEVICE_LABEL[d.kind]} {deviceLabel(d)}
+                              {canEdit && (
+                                <button
+                                  className="chip-x"
+                                  aria-label={L(`${deviceLabel(d)} aus der Zone ${z.name} entfernen`, `Remove ${deviceLabel(d)} from zone ${z.name}`)}
+                                  onClick={() => set(z, { devices: v.devices.filter((x) => deviceKey(x) !== deviceKey(d)) })}
+                                >
+                                  ✕
+                                </button>
+                              )}
                             </span>
-                          ))
+                          ))}
+                          {v.devices.length === 0 && !canEdit && <Dash />}
+                        </div>
+                        {canEdit && (
+                          <select
+                            className="sel"
+                            style={{ fontSize: 12, marginTop: 4 }}
+                            aria-label={L(`Gerät der Zone ${z.name}`, `Device of zone ${z.name}`)}
+                            value=""
+                            onChange={(e) => {
+                              const d = choices.find((x) => deviceKey(x) === e.target.value);
+                              if (d) set(z, { devices: [...v.devices, { kind: d.kind, value: d.value, source_system_id: d.source_system_id, label: d.label }] });
+                            }}
+                          >
+                            <option value="">{L("+ Gerät", "+ device")}</option>
+                            {DEVICE_KINDS.map((k) =>
+                              choices.some((d) => d.kind === k) ? (
+                                <optgroup key={k} label={DEVICE_LABEL[k]}>
+                                  {choices
+                                    .filter((d) => d.kind === k)
+                                    .map((d) => (
+                                      <option key={deviceKey(d)} value={deviceKey(d)}>
+                                        {d.label ?? d.value}
+                                      </option>
+                                    ))}
+                                </optgroup>
+                              ) : null,
+                            )}
+                          </select>
                         )}
                       </td>
                       <td>
@@ -1482,8 +1486,6 @@ function ZoneEditor({
   const [customerId, setCustomerId] = useState<number | null>(base?.customer_id ?? null);
   const [position, setPosition] = useState(base?.position ?? 0);
   const [description, setDescription] = useState(base?.description ?? "");
-  // Kategorie der Applikations-Doku (0.101.0): Zugriffe aus dieser Zone stehen in dieser Kategorie
-  const [area, setArea] = useState<AppdocArea | null>(base?.appdoc_area ?? null);
   // Zonentyp von Hand (0.105.0): Zone des Grundschemas; leer = automatisch
   const [zoneType, setZoneType] = useState<string | null>(base?.zone_type ?? null);
   const [catalog, setCatalog] = useState<AppdocCatalog | null>(null);
@@ -1550,7 +1552,6 @@ function ZoneEditor({
       position,
       description: description.trim() || null,
       selectors: valid.map((s) => ({ ...s, value: s.value.trim(), source_system_id: FW_KINDS.includes(s.kind) ? s.source_system_id : null })),
-      appdoc_area: area,
       zone_type: zoneType,
     };
     try {
@@ -1674,26 +1675,8 @@ function ZoneEditor({
         </select>
         <div className="hint">
           {L(
-            "Mit Richtungen im Namenskonzept (z. B. „Edge Internet → DC“) bestimmt der Zonentyp die Kategorie in der Applikations-Doku",
-            "With directions in the naming concept (e.g. “Edge Internet → DC”) the zone type determines the category in the application documentation",
-          )}
-        </div>
-      </div>
-      <div className="field">
-        <label htmlFor="zo-area">{L("Kategorie in der Applikations-Doku", "Category in the application documentation")}</label>
-        <select id="zo-area" className="input" value={area ?? ""} onChange={(e) => setArea((e.target.value || null) as AppdocArea | null)}>
-          <option value="">{L("— keine", "— none")}</option>
-          {areaChoices(catalog, area).map((x) => (
-            <option key={x.key} value={x.key}>
-              {areaLabel(catalog, x.key)}
-              {x.off ? L(" – nicht mehr angeboten", " – no longer offered") : ""}
-            </option>
-          ))}
-        </select>
-        <div className="hint">
-          {L(
-            "Firewall-Regeln mit einer Gegenstelle in dieser Zone (auch über einen grossen Bereich) stehen in dieser Kategorie; die Quell-Adressen sind die Netze der Selektoren",
-            "Firewall rules with a peer in this zone (also via a large range) go into this category; the source addresses are the networks of the selectors",
+            "Mit der Richtung der Kategorien im Namenskonzept (z. B. „Edge Internet → DC“) bestimmt der Zonentyp die Kategorie in der Applikations-Doku",
+            "With the direction of the categories in the naming concept (e.g. “Edge Internet → DC”) the zone type determines the category in the application documentation",
           )}
         </div>
       </div>

@@ -44,18 +44,14 @@ from app.models.customer import SELECTOR_KINDS
 # dieser Reihenfolge von links nach rechts im Zonenplan; die bisherigen Arten bleiben gueltig.
 ZONE_KINDS = ("dc", "edge", "transfer", "core", "distribution", "access", "external", "internal",
               "dmz", "management", "shared")  # fmt: skip
-# Selektoren wie beim Kunden, dazu die Netze hinter einer Anbindung (`topo_exit`, Name); seit
-# 0.105.0 die **Ausgaenge** (ADR 0035): Firewall-Interface, Firewall-Zone bzw. L3Out, ueber die
-# die Zone erreicht wird - Gegenstellen ueber sie gehoeren zur Zone (keine eigenen Netze)
-EXIT_SELECTOR_KINDS = ("via_fw_interface", "via_fw_zone", "via_l3out")
-ZONE_SELECTOR_KINDS = (*SELECTOR_KINDS, "exit", *EXIT_SELECTOR_KINDS)
+# Selektoren wie beim Kunden, dazu die Netze hinter einer Anbindung (`topo_exit`, Name)
+ZONE_SELECTOR_KINDS = (*SELECTOR_KINDS, "exit")
+# Geraete einer Zone (0.106.0, ADR 0035, Netzwerkdesign → Kategorien): Firewall bzw. VDOM,
+# ACI-Tenant, ACI-VRF und Anbindungen aus dem Routing - daraus und aus dem Routing ergibt sich,
+# welche Zone hinter einem Interface bzw. L3Out liegt (Ausgaenge, `appdoc_zones`)
+DEVICE_SELECTOR_KINDS = ("fw_vdom", "aci_tenant", "aci_vrf", "exit")
 # Absicht je Zonenpaar: erlaubt, eingeschraenkt (nur bestimmte Dienste), gesperrt
 INTENTS = ("allow", "limited", "deny")
-# Bereiche der Kategorien der Applikations-Doku (0.101.0, `store/appdoc_zones.py`): Internet
-# (Kategorien 1/2), Unternehmensnetzwerk (3/4), VPN (5), Remote Access (6), andere Security
-# Tenants (9) - dieselben Arten wie die Zonen-Merkmale `appdoc.zone_kind`; seit 0.102.0 DC
-# Management (11, hinter einer eigenen Firewall: Firewall-Regeln und Contracts)
-APPDOC_AREAS = ("inet", "bit", "vpn", "sra", "res", "mgmt")
 
 
 class LogicalZone(Base):
@@ -74,9 +70,6 @@ class LogicalZone(Base):
     color: Mapped[str | None] = mapped_column(String(16), nullable=True)  # #rrggbb im Plan
     position: Mapped[int] = mapped_column(Integer, default=0)  # Reihenfolge in Matrix und Plan
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Bereich der Kategorien in der Applikations-Doku (0.101.0, siehe APPDOC_AREAS): Regeln mit
-    # einer Gegenstelle in dieser Zone stehen in dessen Kategorie; leer = keiner
-    appdoc_area: Mapped[str | None] = mapped_column(String(8), nullable=True)
     # Zonentyp von Hand (0.105.0, ADR 0035): Zone des Grundschemas; leer = automatisch nach
     # Name, Kurzname bzw. Vorlage je Kunde (`store/zone_types.py`)
     zone_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
