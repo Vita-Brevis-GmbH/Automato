@@ -6,8 +6,8 @@ gegen Testdaten (anonymisiert, `example.ch`, „Kunde A“), nie gegen echte Sys
 | Ebene | Was | Lokal | CI-Job |
 |---|---|---|---|
 | Lint | ruff (Python), tsc (Frontend), PowerShell-Syntax der Agent-Skripte | `uv run ruff check .`, `uv run ruff format --check .`, `npm run lint`, `pwsh scripts/check_powershell.ps1` | `python`, `frontend` |
-| Unit/API | Orchestrator (FastAPI-TestClient, SQLite), Collectors (Normalisierung, Clients mit Fakes), SoT-Gateway (Nur-Lese-Schutz, NetBox-Schreiber) | `uv run --package <paket> pytest <paket>/tests` | `python` (Abdeckung ≥ 90 % je Paket) |
-| Postgres | Migrationen hoch/ganz runter/hoch, **`alembic check`** (Modell = Migrationen), alle Orchestrator-Tests gegen Postgres 16 | `AUTOMATO_TEST_DATABASE_URL=postgresql+psycopg://…` | `postgres` |
+| Unit/API | Orchestrator (FastAPI-TestClient, SQLite), Collectors (Normalisierung, Clients mit Fakes), SoT-Gateway (Nur-Lese-Schutz, NetBox-Schreiber) | `uv run --package <paket> pytest <paket>/tests` (Orchestrator parallel mit `-n auto`, siehe [Schnell lokal](#schnell-lokal)) | `python` (Abdeckung ≥ 90 % je Paket, Orchestrator parallel) |
+| Postgres | Migrationen hoch/ganz runter/hoch, **`alembic check`** (Modell = Migrationen), alle Orchestrator-Tests gegen Postgres 16 (parallel, je Worker eigene Datenbank) | `AUTOMATO_TEST_DATABASE_URL=postgresql+psycopg://…` | `postgres` |
 | NetBox-Sync | Fake-NetBox mit Eindeutigkeit wie NetBox (VLAN-Name je Gruppe, Site-Name), auch Abschnitt Virtualisierung (Cluster, VMs, VM-Interfaces, IPs) | in `orchestrator/tests/test_netbox_sync.py`, `test_vmware.py` | `python`, `postgres` |
 | NetBox-Sync Verkabelung/Applikationen (0.93.0, ADR 0031) | Ports, Modus/VLANs nur mit vorhandenen VLANs (fehlend/nicht eindeutig → Hinweis, Gruppe des Quellsystems zuerst), Kabel nur beidseitig, einseitig/nicht gelesen/ohne Modell als Hinweis, belegter/umgesteckter Port, von Hand gepflegtes Kabel bleibt, Abschnitte standardmässig aus und ohne Löschen; Applikations-Tags setzen/entfernen, fremde Tags und von Hand gepflegte Objekte unberührt, eindeutige Tag-Namen, Fingerabdruck, Englisch in der Vorschau – Fake-NetBox mit Kabeln; Schreib-Schutz `dcim/cables` | `orchestrator/tests/test_netbox_sync_cabling_apps.py`, `sot-gateway/tests/test_netbox_writer.py` | `python`, `postgres` |
 | VDOMs | FortiGate mit zwei VDOMs (gleiche Policy-IDs, Objekt- und VIP-Namen): Collector liest je VDOM (`vdom=`), VDOM ohne Leserecht in der Meldung; Orchestrator: Verweise, Gruppen, NAT, Paare, Befunde je VDOM | `collectors/tests/test_fortigate_client.py`, `orchestrator/tests/test_vdom.py` | `python`, `postgres` |
@@ -96,13 +96,56 @@ gegen Testdaten (anonymisiert, `example.ch`, „Kunde A“), nie gegen echte Sys
 | Parallele Firewalls | Verbund aus Vorschlag (Session-Sync, gleiche Policies) bzw. Quellsystem: gleiche Policies einmal, abweichende beide mit Feldern, fehlende markiert, Kennzahlen ohne Zwillinge, Findings (Regel abweichend/fehlt, Objekt anders), Verbund auflösen; Vorschlag ablehnen, Verbund auflösen = ablehnen, rückgängig, von Hand gesetzter Verbund hebt die Ablehnung auf; redundante Wege (BGP-Backup gleicher Länge, schwebende statische Route +1 Hop, abgeschaltete nicht, Filter nach Länge, ECMP über einen Verbund); Anbindungen nach aussen (Internet über Next-Hop, MPLS über Interface mit manueller Route zum anderen Standort, Netze dahinter, Rechte, Löschen mit dem Quellsystem, für mehrere Firewalls); erkannte Anbindungen (vier WAN-Router mit BGP an zwei Firewalls eines Verbunds = ein Vorschlag mit aktiv/Backup/AS, ohne Management-Tabelle und gelesene Nachbarn, andere Firewall eigener Vorschlag, teilweise abgedeckt, Zustand mit nicht eingetragenen Routern, Router n von N, ausblenden und wieder anzeigen mit Rechten); Länge der Wege (gleich lang/+1 Hop); Verbund als ein Hop (ECMP in einen Verbund = ein Weg mit Firewalls je Zeile, Regeln je Firewall, vier WAN-Router an einem Verbund = ein Weg je Router, verschiedene Urteile = abhängig; UI) | `orchestrator/tests/test_parallel.py`, `orchestrator/tests/test_paths.py` | `python`, `postgres` |
 | Agent-Update | veralteter Agent bekommt neue Läufe erst nach dem Update (bzw. nach 10 min), aktualisiert sich sofort; nur ein Update gleichzeitig, fehlende Dateien nachinstalliert, Rückfall auf die zuletzt guten Pakete (`collectors/tests/test_selfupdate.py`); Upload mit langer Wartezeit und Wiederholung, Teil-Uploads nicht doppelt, Lesen wiederholt bei Timeout/503 (`sot-gateway/tests/test_netbox_adapter.py`), Orchestrator quittiert einen abgeschlossenen Lauf nur (`orchestrator/tests/test_internal_ingest.py`) | `orchestrator/tests/test_agent_update.py`, `collectors/tests/test_run.py` | `python`, `postgres` |
 | VMware | Nur-Lese-Schutz (WSDL-Name, z. B. `Destroy_Task` blockiert), Abruf über nachgebaute pyVmomi-Verbindung, Normalisierung; Orchestrator: Portgruppe → EPG, Befunde, VMs in Regeln/Doku | `collectors/tests/test_vmware.py`, `orchestrator/tests/test_vmware.py` | `python`, `postgres` |
-| UI (E2E) | Playwright: jede Ansicht ohne Seiten-/API-Fehler, Kernabläufe (Suche, NAT-Links, Findings, Dienste, Standorte, IPv4/IPv6-Paare und gleichnamige Objekte, Virtual Server, Regeln je Subnetz, VMware-VMs mit EPG, Alle einlesen inkl. Abbrechen & neu starten, Ports je Gerät, Ports kompakt mit Detail, Portgruppe im Detail, Läufe mit Filtern, Paar bestätigen, VIP-Ziel, Betriebszustand, NAT-Prüfung, VM im Regel-Detail, Applikations-Doku mit Filtern und Erklärung, Stammdaten, VDOM-Filter und Objekte je VDOM, Firewall nur mit root ohne „VDOM root“, Weg-Suche als eigene Ansicht (Ziel als Name mit Vorschlag, mehrdeutiger Name zur Auswahl, Dienst als Objekt) und Routing: Weg je Kontext und Hop für Hop mit Quelle bzw. Startpunkt, IPAM-Namen, Kontext-Filter mit Firewall, BGP-Backup, HA, L3Out, Anbindung aus einem Weg erfassen, Wege im Überblick mit ECMP und Backup, erkannte Anbindung ausblenden und wieder anzeigen, mit allen Routern übernehmen (Sprung zum Formular), Wege gleich lang, Regeln auf dem Weg (gesperrt bzw. abhängig mit Dienst, DNAT zur internen IP, Link zur Policy); Doku je System ohne routingtechnisch unmögliche Regeln, mit Begründung, Gegenstelle any als Netze bzw. Default-Route; Regel-Suche nach einer IP mit „nicht möglich“ und Ausblenden; parallele Firewalls per Vorschlag zusammenfassen mit Abweichungen und Findings, Verbund auflösen und wieder vorschlagen; 0.36.0: Standardobjekte zuunterst bzw. ausgeblendet, Typ „dynamisch (SDN-Connector)“, „Objekt öffnen“ filtert die Liste, IPv4/IPv6-Paar zusammen, FT_ im Namensprofil ohne Projektnummern, Kunden-Editor ohne Querscrollen; 0.37.0: unspezifische Regeln in Applikations-Doku und Kategorien nur als Regel, Systeme auf Knopfdruck; 0.38.0: Netze in der Namenssuche der Weg-Suche mit Umschalter Hosts/Netze und geprüfter Adresse, Netz direkt, Paar-Rahmen mit Marke, Vorschläge unter der Applikationsliste, Findings nach Tenant/AP/EPG; 0.39.0: Netz als Ganzes in der Weg-Suche mit „nur teilweise“ und anders gerouteten Teilen; 0.40.0: System → Verbindungen mit ufw-Regel zum Kopieren) gegen Orchestrator + Vite mit Beispieldaten (`web-ui/frontend/e2e/`) | `cd web-ui/frontend && npm run e2e` | `e2e` (Bericht als Artefakt bei Fehler) |
+| UI (E2E) | Playwright: jede Ansicht ohne Seiten-/API-Fehler, Kernabläufe (Suche, NAT-Links, Findings, Dienste, Standorte, IPv4/IPv6-Paare und gleichnamige Objekte, Virtual Server, Regeln je Subnetz, VMware-VMs mit EPG, Alle einlesen inkl. Abbrechen & neu starten, Ports je Gerät, Ports kompakt mit Detail, Portgruppe im Detail, Läufe mit Filtern, Paar bestätigen, VIP-Ziel, Betriebszustand, NAT-Prüfung, VM im Regel-Detail, Applikations-Doku mit Filtern und Erklärung, Stammdaten, VDOM-Filter und Objekte je VDOM, Firewall nur mit root ohne „VDOM root“, Weg-Suche als eigene Ansicht (Ziel als Name mit Vorschlag, mehrdeutiger Name zur Auswahl, Dienst als Objekt) und Routing: Weg je Kontext und Hop für Hop mit Quelle bzw. Startpunkt, IPAM-Namen, Kontext-Filter mit Firewall, BGP-Backup, HA, L3Out, Anbindung aus einem Weg erfassen, Wege im Überblick mit ECMP und Backup, erkannte Anbindung ausblenden und wieder anzeigen, mit allen Routern übernehmen (Sprung zum Formular), Wege gleich lang, Regeln auf dem Weg (gesperrt bzw. abhängig mit Dienst, DNAT zur internen IP, Link zur Policy); Doku je System ohne routingtechnisch unmögliche Regeln, mit Begründung, Gegenstelle any als Netze bzw. Default-Route; Regel-Suche nach einer IP mit „nicht möglich“ und Ausblenden; parallele Firewalls per Vorschlag zusammenfassen mit Abweichungen und Findings, Verbund auflösen und wieder vorschlagen; 0.36.0: Standardobjekte zuunterst bzw. ausgeblendet, Typ „dynamisch (SDN-Connector)“, „Objekt öffnen“ filtert die Liste, IPv4/IPv6-Paar zusammen, FT_ im Namensprofil ohne Projektnummern, Kunden-Editor ohne Querscrollen; 0.37.0: unspezifische Regeln in Applikations-Doku und Kategorien nur als Regel, Systeme auf Knopfdruck; 0.38.0: Netze in der Namenssuche der Weg-Suche mit Umschalter Hosts/Netze und geprüfter Adresse, Netz direkt, Paar-Rahmen mit Marke, Vorschläge unter der Applikationsliste, Findings nach Tenant/AP/EPG; 0.39.0: Netz als Ganzes in der Weg-Suche mit „nur teilweise“ und anders gerouteten Teilen; 0.40.0: System → Verbindungen mit ufw-Regel zum Kopieren) gegen Orchestrator + Vite mit Beispieldaten (`web-ui/frontend/e2e/`) | `cd web-ui/frontend && npm run e2e` (schneller `npm run e2e:shards`) | `e2e (1/2)`, `e2e (2/2)` (zwei Shards, Bericht je Shard als Artefakt bei Fehler) |
 | Leistung | Grosses erzeugtes Regelwerk (Standard 3000 Regeln, 8000 Hosts): Einlesen und Abfragen messen – nur lokal, leere Datenbank | `AUTOMATO_DATABASE_URL=… uv run --package orchestrator python scripts/bench_large_ruleset.py` | – |
 | Images | Compose-Konfiguration aller Profile, Agent-Paket, Images Orchestrator/Collector/Web-UI | `docker compose --env-file .env.example … config --quiet` | `docker` |
 | Secrets | gitleaks über die ganze Historie | – | `gitleaks` |
 
 Die Jobs laufen bei jedem Push nur für geänderte Komponenten; **nächtlich** (02:17 UTC) und
 über *Run workflow* (workflow_dispatch) laufen alle.
+
+## Schnell lokal
+
+Gemessen auf 4 Kernen (vorher → jetzt):
+
+| Was | Befehl | Dauer |
+|---|---|---|
+| Orchestrator (SQLite) | `uv run --package orchestrator pytest orchestrator/tests -n auto` | 9:29 → 2:20 min |
+| Orchestrator gegen Postgres | dazu `AUTOMATO_TEST_DATABASE_URL=postgresql+psycopg://…/automato_test` | 26:03 → 2:46 min (ohne fsync, sonst ≈ 4:30) |
+| UI-Tests | `cd web-ui/frontend && npm run e2e:shards` | 5:20 → 3:00 min |
+
+- **Orchestrator parallel** mit pytest-xdist (`-n auto` = ein Worker je Kern; `--dist worksteal`
+  gleicht ungleich lange Tests aus). Ohne `-n` wie bisher in einem Prozess – für einzelne Tests
+  und den Debugger. SQLite ist je Test eine eigene In-Memory-Datenbank. Die Abdeckung
+  (`--cov=app`) fasst pytest-cov über alle Worker zusammen. Die Tests hängen nicht von der
+  Reihenfolge ab (geprüft auch in umgekehrter Reihenfolge) – neue Tests ebenso.
+- **Postgres**: mit `-n auto` legt jeder Worker seine eigene Datenbank `<name>_gw0`, `_gw1`, …
+  neben der Datenbank aus der URL an (Recht `CREATEDB` nötig, sonst vorab anlegen) – Tabellen,
+  Advisory-Locks (`tenant_lock`) und Verbindungen der Worker bleiben getrennt. Das Schema wird je
+  Datenbank einmal neu angelegt, danach leert jeder Test vorab alle Tabellen samt Zählern
+  (`TRUNCATE … RESTART IDENTITY`) – derselbe Ausgangszustand, ohne die DDL von rund 90 Tabellen je
+  Test (das war der grösste Teil der Laufzeit). `AUTOMATO_TEST_DB_RESET=schema` legt das Schema
+  wie früher vor jedem Test neu an (langsam, zum Gegenprüfen). Eine Wegwerf-Datenbank ohne fsync
+  (`ALTER SYSTEM SET fsync = off`, wie in der CI) spart lokal noch einmal ein Drittel.
+- **UI-Tests in Shards**: `npm run e2e:shards` startet Kerne − 1 Shards (2 bis 4) gleichzeitig,
+  `npm run e2e:shards -- 3` drei; weitere Argumente gehen an Playwright (`-- 2 -g "Zonen"`). Je
+  Shard ein eigener Orchestrator (Port 8100+n) und Vite (5200+n) mit eigener SQLite-Datei, Ergebnisse
+  in `test-results/shard-n` – die Shards teilen keine Daten. `npm run e2e` läuft wie bisher in einem
+  Durchgang (8000/5173); ein Shard wie in der CI: `npm run e2e -- --shard=1/2`. Ports und Datei
+  über `E2E_API_PORT`, `E2E_PORT`, `E2E_DB` (`playwright.config.ts`, `e2e/server.py`, Proxy über
+  `ORCHESTRATOR_URL`).
+- **Shards teilen je Test** (`fullyParallel`), nicht je Datei – `flows.spec.ts` allein wäre sonst
+  der halbe Lauf. Darum läuft **jeder UI-Test für sich allein** auf den Beispieldaten aus
+  `e2e/seed.py` und stellt Geändertes wieder her; bauen Tests aufeinander auf, stehen sie in einem
+  `test.describe.serial` (bleiben zusammen und in ihrer Reihenfolge im selben Shard, z. B. „Kunde
+  TE“ und „Verbund fw-06/fw-07“ in `flows.spec.ts`). Geprüft: jeder der 146 Tests einzeln auf
+  frischen Beispieldaten sowie 1/2/3/4 Shards. Ein zweiter Browser-Kontext nimmt die `baseURL` der
+  Konfiguration (`browser.newContext({ baseURL })`), nie eine feste Adresse.
+
+**In der CI:** `python` und `postgres` mit `-n auto --dist worksteal`, die Postgres-Instanz der
+CI ohne fsync (Schritt „Postgres ohne fsync“); `e2e` als Matrix mit zwei Shards (`e2e (1/2)`,
+`e2e (2/2)`, je eigener Runner, `fail-fast: false`, Bericht bei Fehler als Artefakt
+`playwright-report-<n>`).
 
 **Neue Funktion → neuer Test:** Backend-Logik als Orchestrator-/Collector-Test (Testdaten in
 den Testmodulen, wiederverwendet von `e2e/seed.py`), sichtbare Abläufe zusätzlich in

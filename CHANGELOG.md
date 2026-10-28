@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## Unreleased – Tests schneller
+
+Die Tests laufen parallel – lokal und in der CI; geprüft wird dasselbe wie bisher (Übersicht
+`docs/TESTS.md`, Abschnitt „Schnell lokal“). Gemessen auf 4 Kernen:
+
+- **Orchestrator parallel** mit pytest-xdist (MIT, neue Dev-Abhängigkeit des Orchestrators):
+  `pytest -n auto`, in den CI-Jobs `python` und `postgres` mit `--dist worksteal`; die Abdeckung
+  fasst pytest-cov über alle Worker zusammen. SQLite 9:29 → 2:20 min. Kein Test hing von der
+  Reihenfolge ab (auch umgekehrt geprüft).
+- **Postgres**: je xdist-Worker eine eigene Datenbank `<name>_gwN` (Tabellen, Advisory-Locks und
+  Verbindungen getrennt); das Schema wird je Datenbank einmal angelegt, danach leert jeder Test
+  alle Tabellen samt Zählern (`TRUNCATE … RESTART IDENTITY`) statt rund 90 Tabellen neu anzulegen
+  – `AUTOMATO_TEST_DB_RESET=schema` wie bisher. Die Postgres-Instanz der CI läuft ohne fsync
+  (Wegwerf-Datenbank). Lokal 26:03 → 2:46 min.
+- **UI-Tests in Shards**: je Shard ein eigener Orchestrator und Vite mit eigenen Ports und eigener
+  SQLite-Datei (`E2E_API_PORT`, `E2E_PORT`, `E2E_DB`); CI-Job `e2e` als Matrix mit zwei Shards
+  (Bericht je Shard), lokal `npm run e2e:shards` (Kerne − 1 Shards, 5:20 → 3:00 min);
+  `npm run e2e` wie bisher. Aufgeteilt wird je Test (`fullyParallel`): jeder Test läuft für sich
+  allein auf den Beispieldaten – die zwei Folgen in `flows.spec.ts`, die aufeinander aufbauen
+  (Kunde TE, Verbund fw-06/fw-07), stehen in `test.describe.serial`; ein zweiter Browser-Kontext
+  nimmt die `baseURL` der Konfiguration statt fest Port 5173.
+
 ## 0.103.0 – 2026-10-28
 
 Applikations-Doku nur mit relevanten Firewall-Regeln, ACI im Weg (Rückmeldung des Anwenders
