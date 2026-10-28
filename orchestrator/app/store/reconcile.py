@@ -336,7 +336,7 @@ def _cabling_issues(session: Session, tenant_id: int) -> list[Issue]:
 
 
 ZONE_TYPES = frozenset({FindingType.ZONE_POLICY_VIOLATION, FindingType.ZONE_OVERLAP,
-                        FindingType.ZONE_OUTSIDE_SCHEMA})  # fmt: skip
+                        FindingType.ZONE_OUTSIDE_SCHEMA, FindingType.ZONE_NET_EXIT})  # fmt: skip
 
 
 def _zone_issues(session: Session, tenant_id: int) -> list[Issue]:
@@ -387,6 +387,19 @@ def _zone_issues(session: Session, tenant_id: int) -> list[Issue]:
             )
         )
     out += _schema_issues(session, tenant_id)
+    out += _exit_issues(session, tenant_id)
+    return out
+
+
+def _exit_issues(session: Session, tenant_id: int) -> list[Issue]:
+    """Netze der Zonen, die die Firewall nicht ueber einen Ausgang der Zone lernt (0.105.0)."""
+    from app.store import zone_exits
+
+    out = []
+    for item in zone_exits.checks(session, tenant_id):
+        detail = {k: v for k, v in item.items() if k not in ("type", "subject", "severity")}
+        out.append(Issue(FindingType.ZONE_NET_EXIT, SubjectKind.ZONE, item["subject"],
+                         item["source_system_id"], Severity.WARNING, detail=detail))  # fmt: skip
     return out
 
 

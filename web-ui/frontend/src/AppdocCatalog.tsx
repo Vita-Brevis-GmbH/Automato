@@ -5,6 +5,8 @@
 // Merkmal im Namen der Firewall-Zone, Muster für den Vorschlag) ändern bzw. erweitern. Eingebaute Einträge
 // bleiben (Bereiche lassen sich ausschalten), feste Rollen (ACI intern, unspezifisch) nicht änderbar.
 // Speichern und zurücksetzen = Admin; gilt für die Mandanten mit diesem Profil.
+// Seit 0.105.0 (ADR 0035) mit **Richtungen** je Kategorie: Zonentyp Quelle → Ziel (Zonen des Grundschemas, `*` = jeder),
+// eine je Zeile. Sind Richtungen gepflegt, gelten sie statt der Bereiche (Auswahl je Zone) – die bleiben eingeklappt.
 import { useEffect, useState } from "react";
 import {
   AppdocCatalog,
@@ -18,7 +20,12 @@ import {
 import { ErrorBox, Loading } from "./ui";
 import { L } from "./i18n";
 
-type CatDraft = AppdocCatalogIn["categories"][number] & { builtin: boolean; role: string; enforcement: string };
+type CatDraft = Omit<AppdocCatalogIn["categories"][number], "flows"> & {
+  flows: string; // eine Richtung je Zeile: „Quelle → Ziel“
+  builtin: boolean;
+  role: string;
+  enforcement: string;
+};
 type AreaDraft = {
   key: string;
   label: string;
@@ -50,6 +57,16 @@ const list = (text: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
+// „Edge Office → DC“ (auch „->“ bzw. „>“), eine je Zeile
+export function parseFlows(text: string): [string, string][] {
+  const out: [string, string][] = [];
+  for (const line of text.split("\n")) {
+    const parts = line.split(/→|->|>/).map((x) => x.trim());
+    if (parts.length === 2 && parts[0] && parts[1] && !out.some(([a, b]) => a === parts[0] && b === parts[1])) out.push([parts[0], parts[1]]);
+  }
+  return out;
+}
+
 function toDraft(c: Omit<AppdocCatalog, "default" | "suggestions">): Draft {
   return {
     categories: c.categories.map((x) => ({
@@ -60,6 +77,7 @@ function toDraft(c: Omit<AppdocCatalog, "default" | "suggestions">): Draft {
       zone_title_en: x.zone_title_en,
       layout: x.layout,
       only_with_zones: x.only_with_zones,
+      flows: (x.flows ?? []).map(([a, b]) => `${a} → ${b}`).join("\n"),
       builtin: x.builtin,
       role: x.role,
       enforcement: x.enforcement,
@@ -81,7 +99,11 @@ function toDraft(c: Omit<AppdocCatalog, "default" | "suggestions">): Draft {
 
 function toBody(d: Draft): AppdocCatalogIn {
   return {
-    categories: d.categories.map(({ builtin: _b, role: _r, enforcement: _e, ...c }) => ({ ...c, title: c.title.trim() })),
+    categories: d.categories.map(({ builtin: _b, role: _r, enforcement: _e, flows, ...c }) => ({
+      ...c,
+      title: c.title.trim(),
+      flows: parseFlows(flows),
+    })),
     areas: d.areas.map((a) => ({
       key: a.key.trim().toLowerCase(),
       label: a.label.trim(),
@@ -129,6 +151,10 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
   const base = catalog.default ? toDraft(catalog.default) : null;
   const dirty = JSON.stringify(toBody(draft)) !== JSON.stringify(toBody(toDraft(catalog)));
   const firewallCats = draft.categories.filter((c) => c.enforcement === "firewall");
+  const hasFlows = draft.categories.some((c) => parseFlows(c.flows).length > 0);
+  const known = new Set((catalog.zone_types ?? []).map((t) => t.toLowerCase()));
+  const unknownTypes = (text: string) =>
+    [...new Set(parseFlows(text).flat())].filter((t) => t !== "*" && known.size > 0 && !known.has(t.toLowerCase()));
   const keys = draft.areas.map((a) => a.key.trim().toLowerCase());
   const badKey = keys.some((k, i) => !/^[a-z0-9_-]{1,8}$/.test(k) || keys.indexOf(k) !== i);
   const empty = draft.categories.some((c) => !c.title.trim()) || draft.areas.some((a) => !a.label.trim());
@@ -156,6 +182,7 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
           zone_title_en: "Access from {z}",
           layout: "common",
           only_with_zones: true,
+          flows: "",
           builtin: false,
           role: "",
           enforcement: "firewall",
@@ -237,11 +264,12 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
         <table className="compact form-table" id="appdoc-catalog-categories">
           <colgroup>
             <col style={{ width: 44 }} />
-            <col style={{ width: "20%" }} />
-            <col style={{ width: "17%" }} />
-            <col style={{ width: "16%" }} />
-            <col style={{ width: "14%" }} />
+            <col style={{ width: "15%" }} />
             <col style={{ width: "13%" }} />
+            <col style={{ width: "13%" }} />
+            <col style={{ width: "11%" }} />
+            <col style={{ width: "20%" }} />
+            <col style={{ width: "11%" }} />
             <col style={{ width: 70 }} />
             <col style={{ width: 40 }} />
           </colgroup>
@@ -254,6 +282,9 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
                 {L("Titel mit Zonen", "Title with zones")}
               </th>
               <th>{L("… englisch", "… English")}</th>
+              <th title={L("je Zeile „Zonentyp Quelle → Zonentyp Ziel“, * = jeder", "per line “source zone type → destination zone type”, * = any")}>
+                {L("Richtungen", "Directions")}
+              </th>
               <th>{L("Spalten / Rolle", "Columns / role")}</th>
               <th title={L("nur mit einer Zone dieser Kategorie bzw. mit Zeilen", "only with a zone of this category or with rows")}>{L("nur mit Zone", "only with zone")}</th>
               <th />
@@ -279,6 +310,30 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
                   </td>
                   <td>
                     <input className="input" placeholder="Access from {z}" value={c.zone_title_en} disabled={!editable} onChange={(e) => setCat(i, { zone_title_en: e.target.value })} />
+                  </td>
+                  <td>
+                    {c.role === "aci_ap" || c.role === "aci_tenant" ? (
+                      <span className="faint" style={{ fontSize: 11 }}>
+                        {c.role === "aci_ap"
+                          ? L("Sonderfall: innerhalb der Applikation", "special case: within the application")
+                          : L("Sonderfall: innerhalb der eigenen Zone", "special case: within the own zone")}
+                      </span>
+                    ) : (
+                      <textarea
+                        className="input mono"
+                        rows={Math.min(4, Math.max(1, c.flows.split("\n").length))}
+                        aria-label={L(`Richtungen der Kategorie ${c.index}`, `Directions of category ${c.index}`)}
+                        placeholder="Edge Internet → DC"
+                        value={c.flows}
+                        disabled={!editable}
+                        onChange={(e) => setCat(i, { flows: e.target.value })}
+                      />
+                    )}
+                    {unknownTypes(c.flows).length > 0 && (
+                      <div style={{ color: "var(--warn)", fontSize: 11 }}>
+                        {L(`nicht im Grundschema: ${unknownTypes(c.flows).join(", ")}`, `not in the base schema: ${unknownTypes(c.flows).join(", ")}`)}
+                      </div>
+                    )}
                   </td>
                   <td>
                     {c.role ? (
@@ -318,7 +373,20 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
           </button>
         )}
 
-        <h3 style={{ margin: "14px 0 6px" }}>{L("Auswahl je Zone (Bereiche)", "Choice per zone (areas)")}</h3>
+        <div className="faint" id="appdoc-catalog-types" style={{ fontSize: 12, marginTop: 6 }}>
+          {L("Zonentypen im Grundschema: ", "Zone types in the base schema: ")}
+          {(catalog.zone_types ?? []).join(", ") || "–"}
+          {L(
+            " · Reihenfolge: innerhalb der Applikation (7), innerhalb der eigenen Zone (8), dann die genaueste Richtung; was keine trifft, wie ohne Richtungen.",
+            " · Order: within the application (7), within the own zone (8), then the most specific direction; anything matching none as without directions.",
+          )}
+        </div>
+
+        <details open={!hasFlows} id="appdoc-catalog-areas-fold" style={{ marginTop: 14 }}>
+        <summary>
+        <h3 style={{ margin: "0 0 6px", display: "inline" }}>{L("Auswahl je Zone (Bereiche)", "Choice per zone (areas)")}</h3>
+        {hasFlows && <span className="faint"> {L(" – gilt nur ohne Richtungen", " – only applies without directions")}</span>}
+        </summary>
         <div className="faint" style={{ fontSize: 12, marginBottom: 6 }}>
           {L(
             "Im Netzwerkdesign → Kategorien bekommt jede Zone einen Bereich; Zugriffe aus der Zone stehen in der Kategorie „eingehend“, Zugriffe des Systems in die Zone in „ausgehend“. Ohne Bereich an der Zone zählt das Merkmal im Namen der Firewall-Zone (z. B. L3O_inet); die Muster schlagen den Bereich nach dem Zonennamen vor (* = beliebig).",
@@ -433,6 +501,7 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
             {L("Kürzel: 1–8 Kleinbuchstaben, Ziffern, - oder _, jedes nur einmal", "Key: 1–8 lowercase letters, digits, - or _, each only once")}
           </div>
         )}
+        </details>
 
         <h3 style={{ margin: "14px 0 6px" }}>{L("Optionen", "Options")}</h3>
         <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13 }}>

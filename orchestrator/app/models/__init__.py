@@ -46,6 +46,7 @@ from app.models.inventory import (
 from app.models.l2 import L2_MODELS, ArpEntry, MacEntry
 from app.models.logical_zone import (
     APPDOC_AREAS,
+    EXIT_SELECTOR_KINDS,
     INTENTS,
     ZONE_KINDS,
     ZONE_SELECTOR_KINDS,
@@ -197,6 +198,7 @@ __all__ = [
     "APPDOC_AREAS",
     "INTENTS",
     "ZONE_KINDS",
+    "EXIT_SELECTOR_KINDS",
     "ZONE_SELECTOR_KINDS",
     "LogicalZone",
     "LogicalZoneSelector",

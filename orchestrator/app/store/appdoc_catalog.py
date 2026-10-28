@@ -22,6 +22,13 @@ anpassen und erweitern: Woerterbuch-Arten `appdoc_category` (Schluessel = Nummer
 anpassen, nicht loeschen (Bereiche „aus“); eigene dazu bzw. wieder weg. Feste Rollen (ACI
 intern, unspezifisch, Internet fuer externe Gegenstellen und DNAT) bleiben an ihren Eintraegen.
 
+Seit 0.105.0 (ADR 0035, Anwender 2026-10-28: „Kategorien als Richtung, z. B. DC zu
+DC-Ressourcen, Internet zu DC“) haben Kategorien **Richtungen**: Paare Quelle → Ziel von
+Zonentypen (Zonen des Grundschemas, `store/zone_types.py`; `*` = jeder). Sind Richtungen
+gepflegt, entscheiden sie nach den Sonderfaellen „innerhalb der Applikation“ (Rolle `aci_ap`)
+und „innerhalb der eigenen Zone bzw. des Security Tenants“ (`aci_tenant`); die Bereiche der Zonen
+gelten dann nicht mehr. Ohne Richtungen bleibt alles wie bisher.
+
 Rein Konfiguration der Plattform - nichts davon wirkt auf Geraete.
 """
 
@@ -46,6 +53,7 @@ ENFORCEMENTS = ("firewall", "aci")  # eigene Kategorien: Firewall (ueber die Ber
 ROLES = ("aci_ap", "aci_tenant", "aci_other", "fallback")
 AREA_KEY = re.compile(r"^[a-z0-9_-]{1,8}$")  # `logical_zone.appdoc_area` ist String(8)
 MAX_INDEX, MAX_LIST, MAX_TEXT = 99, 20, 200
+MAX_FLOWS, ANY = 60, "*"  # Richtungen je Kategorie; `*` = jeder Zonentyp
 
 
 @dataclass(frozen=True)
@@ -60,12 +68,15 @@ class Category:
     role: str = ""
     only_with_zones: bool = False  # nur mit einer Zone dieser Kategorie bzw. mit Zeilen
     builtin: bool = False
+    # Richtungen (0.105.0): (Quelle, Ziel) je Paar - Zonentypen bzw. `*`
+    flows: tuple[tuple[str, str], ...] = ()
 
     def out(self) -> dict:
         return {"index": self.index, "title": self.title, "title_en": self.title_en,
                 "zone_title": self.zone_title, "zone_title_en": self.zone_title_en,
                 "enforcement": self.enforcement, "layout": self.layout, "role": self.role,
-                "only_with_zones": self.only_with_zones, "builtin": self.builtin}  # fmt: skip
+                "only_with_zones": self.only_with_zones, "builtin": self.builtin,
+                "flows": [list(f) for f in self.flows]}  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -188,6 +199,29 @@ class Catalog:
     def only_with_zones(self) -> set[int]:
         return {c.index for c in self.categories.values() if c.only_with_zones}
 
+    # -- Richtungen (0.105.0) --------------------------------------------------------------
+
+    @property
+    def has_flows(self) -> bool:
+        """Sind Richtungen gepflegt? Dann gelten sie statt der Bereiche der Zonen."""
+        return any(c.flows for c in self.categories.values())
+
+    def by_flow(self, src: str | None, dst: str | None) -> int | None:
+        """Kategorie der Richtung Zonentyp `src` → `dst`: die genaueste passende (beide genannt
+        vor einem `*`), bei Gleichstand die kleinste Nummer; keine = None."""
+        if not src or not dst:
+            return None
+        a, b = type_key(src), type_key(dst)
+        best: tuple[int, int] | None = None
+        for c in self.ordered():
+            for s, d in c.flows:
+                if (s != ANY and type_key(s) != a) or (d != ANY and type_key(d) != b):
+                    continue
+                score = (s != ANY) + (d != ANY)
+                if best is None or score > best[0]:
+                    best = (score, c.index)
+        return best[1] if best else None
+
     # -- Bereiche --------------------------------------------------------------------------
 
     def active_areas(self) -> list[Area]:
@@ -275,6 +309,30 @@ class Catalog:
         }
 
 
+def type_key(name: str | None) -> str:
+    """Zonentyp zum Vergleich: wie die Namen des Grundschemas normalisiert (`Z_DC` = `dc`)."""
+    from app.store import zone_schema  # spaet: zone_schema -> naming_profiles -> ...
+
+    return zone_schema.key_of(name)
+
+
+def _flows(value) -> tuple[tuple[str, str], ...]:
+    """Richtungen aus der Pflege bzw. dem Woerterbuch: [[Quelle, Ziel], …] oder „A → B“."""
+    out: list[tuple[str, str]] = []
+    for item in value if isinstance(value, list | tuple) else []:
+        if isinstance(item, str):
+            for sep in ("→", "->", ">"):
+                if sep in item:
+                    item = item.split(sep, 1)
+                    break
+        if not isinstance(item, list | tuple) or len(item) != 2:
+            continue
+        src, dst = (str(x).strip()[:MAX_TEXT] for x in item)
+        if src and dst and (src, dst) not in out:
+            out.append((src, dst))
+    return tuple(out[:MAX_FLOWS])
+
+
 def default() -> Catalog:
     return Catalog({c.index: c for c in DEFAULT_CATEGORIES},
                    {a.key: a for a in DEFAULT_AREAS}, Options())  # fmt: skip
@@ -313,6 +371,7 @@ def apply_entries(cat: Catalog, entries: list[DictionaryEntry]) -> Catalog:
                 enforcement=base.enforcement if base.builtin else "firewall",
                 layout=x.get("layout") if x.get("layout") in LAYOUTS else base.layout,
                 only_with_zones=bool(x.get("only_with_zones", base.only_with_zones)),
+                flows=_flows(x["flows"]) if "flows" in x else base.flows,
             )  # fmt: skip
         elif e.kind == KIND_AREA:
             key = (e.key or "").strip().lower()
@@ -399,7 +458,10 @@ def validate(body: dict) -> Catalog:
             zone_title_en=str(item.get("zone_title_en") or "").strip()[:MAX_TEXT],
             enforcement=enforcement, layout=layout, role=base.role if base else "",
             only_with_zones=bool(item.get("only_with_zones")), builtin=bool(base and base.builtin),
+            flows=_flows(item.get("flows")),
         )  # fmt: skip
+        if len(item.get("flows") or []) > MAX_FLOWS:
+            raise Invalid(f"category {index}: more than {MAX_FLOWS} directions")
     keys: set[str] = set()
     for item in body.get("areas") or []:
         key = str(item.get("key") or "").strip().lower()
@@ -446,7 +508,8 @@ def entries_of(cat: Catalog) -> list[tuple[str, str, str, dict]]:
         out.append((KIND_CATEGORY, str(c.index), c.title,
                     {"title_en": c.title_en, "zone_title": c.zone_title,
                      "zone_title_en": c.zone_title_en, "enforcement": c.enforcement,
-                     "layout": c.layout, "only_with_zones": c.only_with_zones}))  # fmt: skip
+                     "layout": c.layout, "only_with_zones": c.only_with_zones,
+                     "flows": [list(f) for f in c.flows]}))  # fmt: skip
     for a in cat.areas.values():
         d = base.areas.get(a.key)
         if d is not None and replace(a, builtin=d.builtin, role=d.role) == d:

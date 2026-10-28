@@ -36,6 +36,7 @@ from app.auth.principal import Principal
 from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import (
+    EXIT_SELECTOR_KINDS,
     INTENTS,
     ZONE_KINDS,
     ZONE_SELECTOR_KINDS,
@@ -61,6 +62,7 @@ from app.store import (
     zone_detect,
     zone_services,
     zone_struct,
+    zone_types,
 )
 from app.store import customers as customer_store
 from app.store import zones as store
@@ -89,6 +91,9 @@ class ZoneIn(BaseModel):
     selectors: list[SelectorIn] = Field(default_factory=list, max_length=200)
     # Bereich der Kategorien in der Applikations-Doku (0.101.0); nicht mitgeschickt = bleibt
     appdoc_area: str | None = None
+    # Zonentyp von Hand (0.105.0): Zone des Grundschemas; leer = automatisch; nicht mitgeschickt
+    # = bleibt
+    zone_type: str | None = Field(default=None, max_length=200)
 
 
 class AppdocAreasIn(BaseModel):
@@ -222,7 +227,7 @@ def _selectors(session: Session, tid: int, items: list[SelectorIn]) -> list[stor
         if s.kind == "prefix" and customer_store._net(value) is None:
             raise HTTPException(status_code=422, detail=f"invalid prefix {value!r}")
         if s.source_system_id is not None:
-            if s.kind not in customer_store.FW_KINDS:
+            if s.kind not in (*customer_store.FW_KINDS, *EXIT_SELECTOR_KINDS):
                 raise HTTPException(status_code=422, detail="source system only for FortiGate")
             if s.source_system_id not in sids:
                 raise HTTPException(status_code=404, detail="source system not found")
@@ -298,6 +303,18 @@ def _rederive(session: Session, tid: int, customer_ids: set[int | None]) -> None
         customer_store.derive(session, tid, cid)
 
 
+def _zone_type(session: Session, tenant_id: int, value: str | None) -> str | None:
+    """Zonentyp von Hand pruefen (0.105.0): eine Zone des Grundschemas (wie dort geschrieben);
+    leer = automatisch."""
+    value = (value or "").strip() or None
+    if value is None:
+        return None
+    hit = zone_types.schema_for(session, tenant_id).zone(value)
+    if hit is None:
+        raise HTTPException(status_code=422, detail=f"unknown zone type {value!r}")
+    return hit.name
+
+
 def _area(value: str | None, catalog: appdoc_catalog.Catalog | None = None) -> str | None:
     """Bereich der Kategorien pruefen (0.101.0; seit 0.104.0 gegen den Katalog des Mandanten,
     Namensprofil); leer = keiner."""
@@ -330,6 +347,8 @@ def _apply(session: Session, z: LogicalZone, body: ZoneIn, sel: list[store.Selec
     z.position, z.description = body.position, (body.description or "").strip() or None
     if "appdoc_area" in body.model_fields_set:  # 0.101.0: nur, wenn mitgeschickt
         z.appdoc_area = _area(body.appdoc_area, appdoc_catalog.for_tenant(session, z.tenant_id))
+    if "zone_type" in body.model_fields_set:  # 0.105.0: nur, wenn mitgeschickt
+        z.zone_type = _zone_type(session, z.tenant_id, body.zone_type)
     z.updated_at = datetime.now(UTC)
     z.selectors = [
         LogicalZoneSelector(kind=s.kind, value=s.value, source_system_id=s.source_system_id,
@@ -1068,16 +1087,23 @@ def appdoc_catalog_of_tenant(
     der Vorschlag nach ihrem Namen."""
     tid = tenant_scope(principal, tenant_id)
     catalog = appdoc_catalog.for_tenant(session, tid)
+    items = store.load(session, tid)
     suggestions = {}
-    for z in store.load(session, tid):
+    for z in items:
         if not catalog.area(z.appdoc_area) and (key := catalog.suggest(z.name, z.code)):
             suggestions[z.id] = key
-    return {**catalog.out(), "suggestions": suggestions}
+    # Zonentypen (0.105.0): Zonen des Grundschemas zur Auswahl, je Zone der wirksame Typ
+    schema = zone_types.schema_for(session, tid)
+    return {**catalog.out(), "suggestions": suggestions, "has_flows": catalog.has_flows,
+            "zone_types": [z.name for z in schema.zones],
+            "types": zone_types.types(session, tid, items, schema),
+            "auto_types": zone_types.types(session, tid, items, schema, manual=False)}  # fmt: skip
 
 
 class AppdocZoneIn(BaseModel):
     id: int
     appdoc_area: str | None = None  # nicht mitgeschickt = bleibt
+    zone_type: str | None = Field(default=None, max_length=200)  # 0.105.0; fehlt = bleibt
     # Netze der Zone (Selektoren „Netz“) bzw. ihre Ausschluesse („ohne“ Netz); None = bleibt
     nets: list[str] | None = Field(default=None, max_length=500)
     excluded: list[str] | None = Field(default=None, max_length=500)
@@ -1130,6 +1156,11 @@ def set_appdoc_zones(
             area = _area(x.appdoc_area, catalog)
             if z.appdoc_area != area:
                 z.appdoc_area = entry["area"] = area
+        if "zone_type" in x.model_fields_set:  # Zonentyp von Hand (0.105.0)
+            kind = _zone_type(session, tid, x.zone_type)
+            if z.zone_type != kind:
+                z.zone_type = entry["type"] = kind
+                owners.add(z.customer_id)  # Befund „ausserhalb des Schemas“ neu
         if x.nets is not None or x.excluded is not None:
             nets = _prefix_list(x.nets) if x.nets is not None else _prefixes_of(z, False)
             excluded = (_prefix_list(x.excluded) if x.excluded is not None
@@ -1153,7 +1184,7 @@ def set_appdoc_zones(
             _rederive(session, tid, owners)
             reconcile.refresh_zone_findings(session, tid)
         app_refresh.schedule_tenant(background, factory, tid)  # Befunde nach den Kategorien
-    return [{"id": z.id, "name": z.name, "appdoc_area": z.appdoc_area,
+    return [{"id": z.id, "name": z.name, "appdoc_area": z.appdoc_area, "zone_type": z.zone_type,
              "nets": _prefixes_of(z, False), "excluded": _prefixes_of(z, True)}
             for z in items.values()]  # fmt: skip
 

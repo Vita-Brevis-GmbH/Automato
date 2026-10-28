@@ -26,6 +26,13 @@ Kategorie nennt ihre Zonen („Zugriff aus Edge Internet“, `appdoc.zone_title`
 je Zone die Netze wie erfasst und die Ausschluesse („10.0.0.0/8 ohne 10.20.0.0/16“). Neu der
 Bereich DC Management (11): hinter einer eigenen Firewall - Firewall-Regeln und Contracts zu
 EPGs der Zone (ACI-Selektor bzw. Subnetz in der Zone) stehen dort.
+
+Seit 0.105.0 (ADR 0035): jede Zone hat einen **Zonentyp** (Zone des Grundschemas,
+`store/zone_types.py`), die eigenen Zonen des Systems zaehlen nicht als Gegenstelle („innerhalb
+der eigenen Zone“) und **Ausgaenge** (Selektoren `via_fw_interface`, `via_fw_zone`, `via_l3out`)
+ordnen Gegenstellen ueber ein Interface der Firewall bzw. einen L3Out der Zone zu - auch any und
+grosse Bereiche. Mit Richtungen im Katalog nennt der Kopf einer Kategorie die Zonen ihrer
+Gegenstellen.
 """
 
 from __future__ import annotations
@@ -38,7 +45,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.i18n import L
-from app.models import Epg, EpgSubnet, LogicalZone
+from app.models import EXIT_SELECTOR_KINDS, Epg, EpgSubnet, LogicalZone
 
 Net = ipaddress.IPv4Network | ipaddress.IPv6Network
 BITS = {4: 32, 6: 128}
@@ -69,7 +76,7 @@ class ZoneMap:
     """Logische Zonen eines Mandanten mit ihren Netzen - einmal je Doku geladen."""
 
     def __init__(self, session: Session, tenant_id: int, catalog=None):
-        from app.store import appdoc_catalog, customers  # spaet: customers -> ... -> appdoc
+        from app.store import appdoc_catalog, customers, zone_types  # spaet: … -> appdoc
         from app.store import zones as zone_store
 
         self.session, self.tenant_id = session, tenant_id
@@ -106,11 +113,19 @@ class ZoneMap:
         self._spans = {f: sorted(spans[f]) for f in (4, 6)}
         self._starts = {f: [s[0] for s in self._spans[f]] for f in (4, 6)}
         self._exits: dict[str, list[int]] = defaultdict(list)
+        # Ausgaenge (0.105.0): (Art, Firewall bzw. APIC oder None, Wert) -> Zone
+        self._via: list[tuple[str, int | None, str, int]] = []
         for z in self.items.values():
             for s in z.selectors:
                 if s.kind == "exit" and not s.exclude:
                     self._exits[s.value.strip().lower()].append(z.id)
+                elif s.kind in EXIT_SELECTOR_KINDS and not s.exclude:
+                    self._via.append((s.kind, s.source_system_id, s.value.strip().casefold(), z.id))
         self._cache: dict[str, tuple[list[int], bool]] = {}
+        # Zonentyp je Zone (0.105.0): Zone des Grundschemas, von Hand bzw. erkannt
+        self.types: dict[int, str | None] = (
+            zone_types.types(session, tenant_id, list(self.items.values())) if self.items else {}
+        )
 
     @property
     def active(self) -> bool:
@@ -177,6 +192,42 @@ class ZoneMap:
             out += [z for z in self.of_exit(name) if z not in out]
         return out
 
+    def own(self, values: list[str]) -> list[int]:
+        """Eigene Zonen eines Systems (0.105.0): die Zonen, die seine Adressen ganz enthalten."""
+        out: list[int] = []
+        for v in values:
+            ids, whole = self.match(v)
+            if whole:
+                out += [z for z in ids if z not in out]
+        return out
+
+    def of_interfaces(self, source_system_id: int | None, names: list[str]) -> list[int]:
+        """Zonen mit einem Ausgang ueber diese Interfaces bzw. Firewall-Zonen (0.105.0)."""
+        wanted = {n.strip().casefold() for n in names if n}
+        return list(dict.fromkeys(
+            zid for kind, sid, value, zid in self._via
+            if kind != "via_l3out" and value in wanted
+            and (sid is None or sid == source_system_id)
+        ))  # fmt: skip
+
+    def of_l3outs(self, names: list[str]) -> list[int]:
+        """Zonen mit einem Ausgang ueber diese L3Outs (0.105.0): Name bzw. „Tenant/L3Out“."""
+        wanted = {n.strip().casefold() for n in names if n}
+        return list(dict.fromkeys(
+            zid for kind, _sid, value, zid in self._via
+            if kind == "via_l3out" and (value in wanted or value.split("/")[-1] in wanted)
+        ))  # fmt: skip
+
+    def type_of(self, zone_ids: list[int]) -> str | None:
+        """Zonentyp der Zonen: genau einer (alle Zonen mit diesem Typ), sonst keiner."""
+        from app.store import appdoc_catalog  # spaet: appdoc_catalog -> zone_schema -> …
+
+        named = [self.types.get(z) for z in zone_ids]
+        if not named or not all(named):
+            return None
+        keys = {appdoc_catalog.type_key(t): t for t in named}
+        return next(iter(keys.values())) if len(keys) == 1 else None
+
     def area(self, zone_ids: list[int]) -> str | None:
         """Bereich der Zonen: genau einer, sonst keiner (mehrere bzw. ohne Bereich)."""
         areas = {a for z in zone_ids if (a := self.items[z].appdoc_area) and self.catalog.area(a)}
@@ -235,23 +286,41 @@ class ZoneMap:
         removed = [str(n) for s in sel if s.exclude for n in self._data.selector_nets(s)]
         return [str(n) for n in shown], list(dict.fromkeys(removed))
 
+    def head(self, zone_id: int) -> dict:
+        """Zone im Kopf einer Kategorie: Netze wie erfasst, Ausschluesse, Zonentyp."""
+        z = self.items[zone_id]
+        nets, excluded = self.shown_nets(z.id)
+        return {"id": z.id, "name": z.name, "area": z.appdoc_area, "type": self.types.get(z.id),
+                "nets": nets[:SHOWN_NETS], "nets_total": len(nets),
+                "excluded": excluded[:SHOWN_NETS]}  # fmt: skip
+
     def table_zones(self, index: int) -> list[dict]:
         """Zonen einer Kategorie mit ihren Netzen und Ausschluessen (Kopf der Kategorie)."""
-        out = []
-        for z in self.items.values():
-            if index not in self.catalog.area_tables(z.appdoc_area):
-                continue
-            nets, excluded = self.shown_nets(z.id)
-            out.append({"id": z.id, "name": z.name, "area": z.appdoc_area,
-                        "nets": nets[:SHOWN_NETS], "nets_total": len(nets),
-                        "excluded": excluded[:SHOWN_NETS]})  # fmt: skip
+        return [self.head(z.id) for z in self.items.values()
+                if index in self.catalog.area_tables(z.appdoc_area)]  # fmt: skip
+
+    def row_zones(self, rows: list[dict], column: str) -> list[int]:
+        """Zonen der Gegenstellen in den Zeilen einer Kategorie (Spalte „Zone“, 0.105.0)."""
+        by_name = {z.name: z.id for z in self.items.values()}
+        out: list[int] = []
+        for row in rows:
+            for name in str(row.get(column) or "").split("\n"):
+                if (zid := by_name.get(name)) is not None and zid not in out:
+                    out.append(zid)
         return out
 
 
 def heads(zm: ZoneMap, tables: list[dict]) -> None:
-    """Zonen je Kategorie in den Kopf; mit Zonen der Titel nach ihnen (0.102.0)."""
+    """Zonen je Kategorie in den Kopf; mit Zonen der Titel nach ihnen (0.102.0). Mit Richtungen
+    (0.105.0) die Zonen der Gegenstellen in den Zeilen der Kategorie."""
+    from app.store import appdoc  # spaet: appdoc -> appdoc_zones
+
+    flows = zm.catalog.has_flows
     for t in tables:
-        zones = zm.table_zones(t["index"]) if zm.has_areas else []
+        if flows:
+            zones = [zm.head(z) for z in zm.row_zones(t.get("rows") or [], appdoc.ZONE_COL)]
+        else:
+            zones = zm.table_zones(t["index"]) if zm.has_areas else []
         t["zones"] = zones
         if zones:
             t["title"] = zm.catalog.zone_title(t["index"], [z["name"] for z in zones])

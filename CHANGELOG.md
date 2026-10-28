@@ -7,7 +7,32 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
-## Unreleased – Tests schneller
+## 0.105.0 – 2026-10-28
+
+Kategorien der Applikations-Doku einfacher: **Zonentyp, Richtungen, Ausgänge** statt Bereichen je
+Zone (Rückmeldung des Anwenders 2026-10-28 zu 0.104.0, ADR 0035, Migration `0064`).
+
+- **Zonentyp** je Zone = Zone des Grundschemas im Namensprofil (ohne eigenes die Vorlage):
+  automatisch nach Name bzw. Kurzname wie beim Befund „Zone ausserhalb des Schemas“, von Hand in
+  Netzwerkdesign → Kategorien (Spalte „Zonentyp“) bzw. im Zonen-Editor; gilt auch für Farbe und
+  Schema im Zonenplan.
+- **Richtungen** je Kategorie im Namenskonzept: „Zonentyp der Quelle → Zonentyp des Ziels“, `*` =
+  jeder (z. B. `DC-Ressourcen → DC`, `Edge Internet → DC`). Mit Richtungen gilt: innerhalb der
+  Applikation (7), innerhalb der eigenen Zone (8, Security Tenant), dann die genaueste Richtung,
+  sonst wie bisher; die Bereiche je Zone entfallen. Zonentypen ausserhalb des Grundschemas meldet
+  die Tabelle.
+- **Ausgänge** einer Zone: neue Selektoren „Ausgang Interface“, „Ausgang Firewall-Zone“ (je
+  optional mit der Firewall) und „Ausgang L3Out“ – eine Gegenstelle wie any gehört zur Zone, deren
+  Ausgang die Regel nutzt; Spalte „Ausgänge“ im Reiter Kategorien.
+- **Befund „Netz nicht über den Ausgang der Zone“** (`zone_net_exit`): lernt eine Firewall ein Netz
+  einer Zone über ein anderes Interface, nur über die Default-Route oder gar nicht, steht es unter
+  Findings → Zonen (mit Interface und den Zonen dahinter).
+- Korrektur aus 0.104.0: ein Bereich zählt nicht mehr, wenn die Gegenstelle in der eigenen Zone
+  liegt (alle Zonen erschienen als „Ressourcen-Tenant“).
+- **Tests schneller** (Vorschlag 6 aus 0.104.0): siehe unten.
+- Abgenommen bis 0.103.0. Tests (orchestrator 650, UI-Tests 149).
+
+### Tests schneller
 
 Die Tests laufen parallel – lokal und in der CI; geprüft wird dasselbe wie bisher (Übersicht
 `docs/TESTS.md`, Abschnitt „Schnell lokal“). Gemessen auf 4 Kernen:

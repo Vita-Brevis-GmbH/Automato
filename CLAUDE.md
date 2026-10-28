@@ -41,7 +41,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 - **Abnahme:** Der Anwender testet jede freigegebene Version sofort. Eine Version gilt als
   abgenommen, sobald seine nächste Rückmeldung keinen Einwand dazu enthält – in `ROADMAP.md`
-  („Abgenommen“) nachführen. Abgenommen bis **0.102.0** (2026-10-28).
+  („Abgenommen“) nachführen. Abgenommen bis **0.103.0** (2026-10-28).
 - **Klärung vor dem Bauen:** ändert sich Bedienung oder Bedeutung und ist der Wunsch mehrdeutig,
   zuerst 3–5 Zeilen Vorschlag mit einer Rückfrage, dann bauen.
 - **Sammeln:** Anpassungen einer Rückmeldungsrunde in **einer** Version (Patch = Korrektur,
@@ -72,6 +72,6 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 ## Aktueller Stand
 
-0.104.0 – Einzelheiten je Bereich in `docs/STAND.md`. Offene Punkte und nächste Arbeiten in
+0.105.0 – Einzelheiten je Bereich in `docs/STAND.md`. Offene Punkte und nächste Arbeiten in
 `ROADMAP.md` („Nächste Arbeiten“); erstes Projekt abschliessen = Produktivschaltung DC (R14),
 danach Mehrmandanten mit Cockpit (eigene ADR).

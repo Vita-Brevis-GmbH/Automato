@@ -111,16 +111,26 @@ const INTENT: Record<ZoneIntent, [string, string]> = {
   limited: ["warn", L("eingeschränkt", "limited")],
   deny: ["crit", L("gesperrt", "deny")],
 };
-const ZONE_SELECTOR_LABEL: Record<ZoneSelectorKind, string> = { ...SELECTOR_LABEL, exit: L("Anbindung", "Exit") };
+const ZONE_SELECTOR_LABEL: Record<ZoneSelectorKind, string> = {
+  ...SELECTOR_LABEL,
+  exit: L("Anbindung", "Exit"),
+  // Ausgänge (0.105.0): über diese erreicht die Firewall bzw. das ACI die Zone
+  via_fw_interface: L("Ausgang Interface", "Exit interface"),
+  via_fw_zone: L("Ausgang Firewall-Zone", "Exit firewall zone"),
+  via_l3out: L("Ausgang L3Out", "Exit L3Out"),
+};
 const PLACEHOLDER: Partial<Record<ZoneSelectorKind, string>> = {
   aci_tenant: "TE_ka",
   aci_epg: "TE_ka/AP_007/EPG_web",
   fw_zone: "dmz",
   fw_interface: "port5",
   prefix: "10.20.0.0/16",
+  via_fw_interface: "port3",
+  via_fw_zone: "transfer-core",
+  via_l3out: "L3O_inet",
   exit: "Internet",
 };
-const FW_KINDS: ZoneSelectorKind[] = ["fw_vdom", "fw_zone", "fw_interface"];
+const FW_KINDS: ZoneSelectorKind[] = ["fw_vdom", "fw_zone", "fw_interface", "via_fw_interface", "via_fw_zone"];
 const NODE_KIND: Record<string, string> = { firewall: "Firewall", vdom: "VDOM", vrf: "ACI-VRF" };
 
 const SOURCE: Record<ZoneSuggestionSource, string> = {
@@ -224,7 +234,10 @@ export default function Design({
 // ihre Zugriffe kommen, und ihre Netze mit Ausschlüssen (Selektoren „Netz“; die übrigen Selektoren bleiben,
 // gepflegt im Reiter Zonen). Die Doku benennt die Kategorien nach ihren Zonen („Zugriff aus Edge
 // Internet“); später lässt sich daraus z. B. ein BGP-Filter je Zone ableiten.
-type AppdocDraft = { area: AppdocArea | null; nets: string; excluded: string };
+// 0.105.0 (ADR 0035): je Zone der Zonentyp (Zone des Grundschemas, erkannt bzw. von Hand) und die Ausgänge (Interface,
+// Firewall-Zone, L3Out); mit Richtungen im Namenskonzept entscheidet der Zonentyp statt der Kategorie der Zone.
+type AppdocDraft = { area: AppdocArea | null; type: string | null; nets: string; excluded: string };
+const EXIT_KINDS: ZoneSelectorKind[] = ["via_fw_interface", "via_fw_zone", "via_l3out"];
 const splitNets = (text: string) =>
   text
     .split(/[\s,;]+/)
@@ -265,6 +278,7 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
 
   const initial = (z: LogicalZone): AppdocDraft => ({
     area: z.appdoc_area ?? null,
+    type: z.zone_type ?? null,
     nets: zonePrefixes(z, false).join("\n"),
     excluded: zonePrefixes(z, true).join("\n"),
   });
@@ -278,7 +292,10 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
     const i = initial(z);
     return !sameNets(v.nets, i.nets) || !sameNets(v.excluded, i.excluded);
   };
-  const changed = (rows ?? []).filter((z) => draft[z.id] && (value(z).area !== initial(z).area || netsChanged(z)));
+  const changed = (rows ?? []).filter(
+    (z) => draft[z.id] && (value(z).area !== initial(z).area || value(z).type !== initial(z).type || netsChanged(z)),
+  );
+  const flows = !!catalog?.has_flows; // Richtungen gepflegt: die Kategorie der Zone gilt nicht mehr
   const hintOf = (z: LogicalZone) => catalog?.suggestions?.[String(z.id)] ?? null;
   const suggestions = (rows ?? []).filter((z) => !value(z).area && hintOf(z));
   const suggest = () => {
@@ -300,6 +317,7 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
           return {
             id: z.id,
             appdoc_area: v.area,
+            zone_type: v.type,
             ...(netsChanged(z) ? { nets: splitNets(v.nets), excluded: splitNets(v.excluded) } : {}),
           };
         }),
@@ -361,19 +379,25 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
           ) : (
             <table className="compact form-table">
               <colgroup>
-                <col style={{ width: "18%" }} />
-                <col style={{ width: "20%" }} />
-                <col style={{ width: "20%" }} />
-                <col style={{ width: "20%" }} />
+                <col style={{ width: "15%" }} />
+                <col style={{ width: "14%" }} />
+                {!flows && <col style={{ width: "14%" }} />}
+                <col style={{ width: "16%" }} />
+                <col style={{ width: "16%" }} />
+                <col style={{ width: "12%" }} />
                 <col />
               </colgroup>
               <thead>
                 <tr>
                   <th>{L("Zone", "Zone")}</th>
-                  <th>{L("Kategorie", "Category")}</th>
+                  <th title={L("Zone des Grundschemas im Namenskonzept", "zone of the base schema in the naming concept")}>{L("Zonentyp", "Zone type")}</th>
+                  {!flows && <th>{L("Kategorie", "Category")}</th>}
                   <th title={L("ein Netz je Zeile (CIDR)", "one network per line (CIDR)")}>{L("Netze (Quell-Adressen)", "Networks (source addresses)")}</th>
                   <th title={L("ein Netz je Zeile – aus den Netzen herausgeschnitten", "one network per line – cut out of the networks")}>
                     {L("ohne (Ausschlüsse)", "without (exclusions)")}
+                  </th>
+                  <th title={L("Firewall-Interface, Firewall-Zone bzw. L3Out, über die die Zone erreicht wird – im Reiter Zonen pflegen", "firewall interface, firewall zone or L3Out through which the zone is reached – maintain in the Zones tab")}>
+                    {L("Ausgänge", "Exits")}
                   </th>
                   <th>{L("weitere Selektoren", "other selectors")}</th>
                 </tr>
@@ -381,7 +405,9 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
               <tbody>
                 {rows.map((z) => {
                   const v = value(z);
-                  const others = z.selectors.filter((x) => x.kind !== "prefix");
+                  const others = z.selectors.filter((x) => x.kind !== "prefix" && !EXIT_KINDS.includes(x.kind));
+                  const exitsOf = z.selectors.filter((x) => EXIT_KINDS.includes(x.kind) && !x.exclude);
+                  const auto = catalog?.auto_types?.[String(z.id)] ?? null;
                   const hint = !v.area ? hintOf(z) : null;
                   return (
                     <tr key={z.id} className={changed.includes(z) ? "row-changed" : ""}>
@@ -396,25 +422,44 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                       <td>
                         <select
                           className="sel"
-                          aria-label={L(`Kategorie der Zone ${z.name}`, `Category of zone ${z.name}`)}
-                          value={v.area ?? ""}
+                          aria-label={L(`Zonentyp der Zone ${z.name}`, `Zone type of zone ${z.name}`)}
+                          value={v.type ?? ""}
                           disabled={!canEdit}
-                          onChange={(e) => set(z, { area: (e.target.value || null) as AppdocArea | null })}
+                          onChange={(e) => set(z, { type: e.target.value || null })}
                         >
-                          <option value="">{L("— keine", "— none")}</option>
-                          {areaChoices(catalog, v.area).map((x) => (
-                            <option key={x.key} value={x.key}>
-                              {areaLabel(catalog, x.key)}
-                              {x.off ? L(" – nicht mehr angeboten", " – no longer offered") : ""}
+                          <option value="">{auto ? L(`automatisch: ${auto}`, `automatic: ${auto}`) : L("— keiner (automatisch)", "— none (automatic)")}</option>
+                          {(catalog?.zone_types ?? []).map((t) => (
+                            <option key={t} value={t}>
+                              {t}
                             </option>
                           ))}
+                          {v.type && !(catalog?.zone_types ?? []).includes(v.type) ? <option value={v.type}>{v.type}</option> : null}
                         </select>
-                        {hint && canEdit && (
-                          <div className="faint" style={{ fontSize: 11 }}>
-                            {L(`Vorschlag: ${areaLabel(catalog, hint)}`, `Suggestion: ${areaLabel(catalog, hint)}`)}
-                          </div>
-                        )}
                       </td>
+                      {!flows && (
+                        <td>
+                          <select
+                            className="sel"
+                            aria-label={L(`Kategorie der Zone ${z.name}`, `Category of zone ${z.name}`)}
+                            value={v.area ?? ""}
+                            disabled={!canEdit}
+                            onChange={(e) => set(z, { area: (e.target.value || null) as AppdocArea | null })}
+                          >
+                            <option value="">{L("— keine", "— none")}</option>
+                            {areaChoices(catalog, v.area).map((x) => (
+                              <option key={x.key} value={x.key}>
+                                {areaLabel(catalog, x.key)}
+                                {x.off ? L(" – nicht mehr angeboten", " – no longer offered") : ""}
+                              </option>
+                            ))}
+                          </select>
+                          {hint && canEdit && (
+                            <div className="faint" style={{ fontSize: 11 }}>
+                              {L(`Vorschlag: ${areaLabel(catalog, hint)}`, `Suggestion: ${areaLabel(catalog, hint)}`)}
+                            </div>
+                          )}
+                        </td>
+                      )}
                       <td>
                         <textarea
                           className="input mono"
@@ -436,6 +481,17 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                           readOnly={!canEdit}
                           onChange={(e) => set(z, { excluded: e.target.value })}
                         />
+                      </td>
+                      <td className="appdoc-exits">
+                        {exitsOf.length === 0 ? (
+                          <Dash />
+                        ) : (
+                          exitsOf.map((x, i) => (
+                            <span key={i} className="chip info">
+                              {selectorText(x, systems)}
+                            </span>
+                          ))
+                        )}
                       </td>
                       <td>
                         {others.length === 0 ? (
@@ -1428,6 +1484,8 @@ function ZoneEditor({
   const [description, setDescription] = useState(base?.description ?? "");
   // Kategorie der Applikations-Doku (0.101.0): Zugriffe aus dieser Zone stehen in dieser Kategorie
   const [area, setArea] = useState<AppdocArea | null>(base?.appdoc_area ?? null);
+  // Zonentyp von Hand (0.105.0): Zone des Grundschemas; leer = automatisch
+  const [zoneType, setZoneType] = useState<string | null>(base?.zone_type ?? null);
   const [catalog, setCatalog] = useState<AppdocCatalog | null>(null);
   useEffect(() => {
     let live = true;
@@ -1493,6 +1551,7 @@ function ZoneEditor({
       description: description.trim() || null,
       selectors: valid.map((s) => ({ ...s, value: s.value.trim(), source_system_id: FW_KINDS.includes(s.kind) ? s.source_system_id : null })),
       appdoc_area: area,
+      zone_type: zoneType,
     };
     try {
       if (initial) await updateZone(initial.id, body);
@@ -1597,6 +1656,28 @@ function ZoneEditor({
       <div className="field">
         <label htmlFor="zo-desc">{L("Beschreibung (optional)", "Description (optional)")}</label>
         <input id="zo-desc" className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
+      </div>
+      <div className="field">
+        <label htmlFor="zo-type">{L("Zonentyp (Zone des Grundschemas)", "Zone type (zone of the base schema)")}</label>
+        <select id="zo-type" className="input" value={zoneType ?? ""} onChange={(e) => setZoneType(e.target.value || null)}>
+          <option value="">
+            {initial && catalog?.auto_types?.[String(initial.id)]
+              ? L(`automatisch: ${catalog.auto_types[String(initial.id)]}`, `automatic: ${catalog.auto_types[String(initial.id)]}`)
+              : L("— automatisch (Name, Kurzname, Vorlage je Kunde)", "— automatic (name, short name, template per customer)")}
+          </option>
+          {(catalog?.zone_types ?? []).map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+          {zoneType && !(catalog?.zone_types ?? []).includes(zoneType) ? <option value={zoneType}>{zoneType}</option> : null}
+        </select>
+        <div className="hint">
+          {L(
+            "Mit Richtungen im Namenskonzept (z. B. „Edge Internet → DC“) bestimmt der Zonentyp die Kategorie in der Applikations-Doku",
+            "With directions in the naming concept (e.g. “Edge Internet → DC”) the zone type determines the category in the application documentation",
+          )}
+        </div>
       </div>
       <div className="field">
         <label htmlFor="zo-area">{L("Kategorie in der Applikations-Doku", "Category in the application documentation")}</label>

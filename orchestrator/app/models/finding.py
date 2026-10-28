@@ -71,6 +71,9 @@ class FindingType(enum.StrEnum):
     # Grundschema (0.78.0, ADR 0024): logische Zone, die zu keiner Zone des Grundschemas im
     # Namensprofil passt (Name, Kurzname bzw. Erkennungsmuster)
     ZONE_OUTSIDE_SCHEMA = "zone_outside_schema"
+    # Ausgaenge der Zonen (0.105.0, ADR 0035): ein Netz der Zone lernt die Firewall nicht ueber
+    # einen Ausgang dieser Zone (anderes Interface, nur Default-Route bzw. keine Route)
+    ZONE_NET_EXIT = "zone_net_exit"
     # Verbindungen Ende zu Ende (0.59.0, ADR 0021): erlaubende Regel einer Applikation, deren
     # Verbindung der Weg sperrt, die nicht auf dem Weg liegt bzw. dort nicht greift
     APP_CONNECTION_MISMATCH = "app_connection_mismatch"

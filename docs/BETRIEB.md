@@ -1099,6 +1099,28 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Titel mit Zonen nicht. Seit 0.104.0 passt der Admin die Auswahl (eigene Kategorien bzw.
     Bereiche, Titel, Muster für den Vorschlag) unter **Namensprofile → Kategorien der
     Applikations-Doku** an.
+  - **Zonentyp, Richtungen und Ausgänge (0.105.0, ADR 0035):** einfacher als Bereiche je Zone –
+    in vier Schritten:
+    1. **Zonentyp** je Zone in **Netzwerkdesign → Kategorien** (Spalte „Zonentyp“, auch im
+       Zonen-Editor): die Zone des Grundschemas, das im Namensprofil hochgeladen ist (ohne eigenes
+       die Vorlage: DC, Edge Internet, Edge Office, Edge VPN, …). „automatisch: …“ übernimmt die
+       Erkennung nach Name bzw. Kurzname; nur von Hand wählen, wenn sie nicht passt.
+    2. **Netze** mit Ausschlüssen wie bisher.
+    3. **Ausgänge** (Reiter Zonen, Selektoren „Ausgang Interface“, „Ausgang Firewall-Zone“,
+       „Ausgang L3Out“, optional mit der Firewall): wohin ein L3Out bzw. ein Transfer-Interface führt.
+       Eine Gegenstelle, die nicht in den Netzen einer Zone liegt (any, grosse Bereiche), gehört zur
+       Zone, deren Ausgang die Regel nutzt. Die Spalte „Ausgänge“ im Reiter Kategorien zeigt sie.
+    4. **Richtungen** im Namenskonzept (Namensprofile → Kategorien der Applikations-Doku, Spalte
+       „Richtungen“): je Zeile „Zonentyp der Quelle → Zonentyp des Ziels“, `*` = jeder, z. B.
+       Kategorie 12 „Zugriff aus den Ressourcen“ mit `DC-Ressourcen → DC`, Kategorie 13 „Zugriff
+       aus anderen Kunden“ mit `DC → DC`. Sobald eine Kategorie Richtungen hat, gilt die Einteilung
+       nach Richtungen: zuerst **innerhalb der Applikation** (7), dann **innerhalb der eigenen
+       Zone** (8, Security Tenant), dann die genaueste Richtung, sonst wie bisher; die Bereiche je
+       Zone entfallen (eingeklappt) und die Spalte „Kategorie“ im Netzwerkdesign verschwindet.
+       Zonentypen, die nicht im Grundschema stehen, meldet die Tabelle („nicht im Grundschema“).
+    Lernt eine Firewall ein Netz einer Zone nicht über deren Ausgang (anderes Interface, nur die
+    Default-Route oder gar nicht), steht der Befund **„Netz nicht über den Ausgang der Zone“**
+    unter Findings → Zonen – mit dem Interface, über das sie es lernt, und den Zonen dahinter.
   - **Nur relevante Firewall-Regeln (0.103.0):** ausgehende Firewall-Regeln, die die Systeme nur
     über eine breite Quelle erfassen (z. B. 10.0.0.0/8 → irgendwohin, any → Internet), stehen
     nicht mehr in der Doku – weder in den Kategorien noch unter „Regeln & Contracts“, in den

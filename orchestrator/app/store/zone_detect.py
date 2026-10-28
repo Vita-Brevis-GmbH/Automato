@@ -633,13 +633,18 @@ def _covered(ranges: customers._Ranges, network: str) -> bool:
 
 
 def _mapped(
-    schema: "zone_schema.Schema", items: list[LogicalZone], owners: dict | None = None
-) -> dict[int, "zone_schema.SchemaZone"]:
+    schema: "zone_schema.Schema", items: list[LogicalZone], owners: dict | None = None,
+    manual: bool = True,
+) -> dict[int, "zone_schema.SchemaZone"]:  # fmt: skip
     """Bestehende Zonen -> Zone des Grundschemas (Name, Kurzname bzw. Erkennungsmuster); Zonen
-    eines Kunden auch ueber die Vorlage je Kunde ohne Name bzw. Kuerzel des Kunden (0.82.0)."""
+    eines Kunden auch ueber die Vorlage je Kunde ohne Name bzw. Kuerzel des Kunden (0.82.0);
+    seit 0.105.0 zuerst der Zonentyp von Hand (`zone_type`, ADR 0035)."""
     out = {}
     for z in items:
-        sz = None
+        sz = schema.zone(z.zone_type) if manual and getattr(z, "zone_type", None) else None
+        if sz is not None:
+            out[z.id] = sz
+            continue
         if z.customer_id is not None and owners and z.customer_id in owners:
             sz = schema.of_customer_zone(z.name, z.code, *owners[z.customer_id])
         sz = sz or schema.match(z.name, z.code)

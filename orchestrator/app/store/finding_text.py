@@ -282,6 +282,37 @@ def _zone_overlap(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _zone_net_exit(subject: str, d: dict) -> tuple[str, str]:
+    """Netz der Zone nicht ueber ihre Ausgaenge gelernt (0.105.0, ADR 0035)."""
+    fw = d.get("source") or L("die Firewall", "the firewall")
+    ctx = f" (VDOM {d['context']})" if d.get("context") and d["context"] != "root" else ""
+    net, zone = d.get("net"), d.get("zone")
+    expected = ", ".join(d.get("expected") or [])
+    via = ", ".join(d.get("via") or [])
+    others = ", ".join(d.get("others") or [])
+    if d.get("missing"):
+        how = L("gar nicht", "not at all")
+    elif d.get("default"):
+        how = L(f"nur über die Default-Route ({via})", f"only via the default route ({via})")
+    else:
+        how = L(f"über {via}", f"via {via}")
+    tail = L(f" – {via} ist Ausgang der Zone {others}", f" – {via} is an exit of zone {others}") \
+        if others and not d.get("missing") else ""  # fmt: skip
+    return (
+        L(
+            f"{fw}{ctx} lernt das Netz {net} der Zone {zone} {how}, erwartet über ihre "
+            f"Ausgänge ({expected}){tail}.",
+            f"{fw}{ctx} learns the network {net} of zone {zone} {how}, expected via its exits "
+            f"({expected}){tail}.",
+        ),
+        L(
+            "Routing prüfen bzw. Netze oder Ausgänge der Zone anpassen (Netzwerkdesign → Zonen).",
+            "Check the routing or adjust the networks or exits of the zone (Network design → "
+            "Zones).",
+        ),
+    )
+
+
 def _zone_outside_schema(subject: str, d: dict) -> tuple[str, str]:
     profile = d.get("profile")
     return (
@@ -516,6 +547,7 @@ _TOPO_TEXT = {
     "zone_policy_violation": _zone_violation,
     "zone_overlap": _zone_overlap,
     "zone_outside_schema": _zone_outside_schema,
+    "zone_net_exit": _zone_net_exit,
     "app_connection_mismatch": _app_mismatch,
     "app_contract_narrower": _app_narrower,
     "link_speed_mismatch": _link,

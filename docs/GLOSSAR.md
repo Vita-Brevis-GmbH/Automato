@@ -142,6 +142,10 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Vorschlag bei (Muster nach dem Zonennamen) | Suggest for |
 | angeboten (Bereich) | offered |
 | Auf Vorgaben zurücksetzen | Reset to defaults |
+| Zonentyp (Zone des Grundschemas, 0.105.0) | Zone type |
+| Richtungen (Zonentyp der Quelle → Zonentyp des Ziels) | Directions |
+| Ausgänge, Ausgang Interface / Firewall-Zone / L3Out | Exits, exit interface / firewall zone / L3Out |
+| Netz nicht über den Ausgang der Zone (Befund) | Network not via the exit of the zone |
 | Zweck (Dev/Test/Prod) | Purpose |
 | Kritikalität | Criticality |
 | Verantwortlich | Owner |

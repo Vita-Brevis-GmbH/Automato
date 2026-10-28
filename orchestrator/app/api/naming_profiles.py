@@ -426,6 +426,8 @@ class CatalogCategoryIn(BaseModel):
     zone_title_en: str = Field(default="", max_length=200)
     layout: str = "common"
     only_with_zones: bool = False
+    # Richtungen (0.105.0, ADR 0035): [[Zonentyp Quelle, Zonentyp Ziel], …], `*` = jeder
+    flows: list[list[str]] = Field(default_factory=list, max_length=appdoc_catalog.MAX_FLOWS)
 
 
 class CatalogAreaIn(BaseModel):
@@ -446,8 +448,12 @@ class CatalogIn(BaseModel):
 
 
 def _catalog_out(session: Session, profile_id: int | None) -> dict:
+    """Katalog des Profils mit den Vorgaben und den Zonentypen seines Grundschemas (0.105.0)."""
     cat = appdoc_catalog.for_profile(session, profile_id)
-    return {**cat.out(), "default": appdoc_catalog.default().out()}
+    schema = zone_schema.load(session, profile_id) if profile_id is not None else None
+    schema = schema if schema is not None and schema.zones else zone_schema.default_schema()
+    return {**cat.out(), "default": appdoc_catalog.default().out(), "has_flows": cat.has_flows,
+            "zone_types": [z.name for z in schema.zones]}  # fmt: skip
 
 
 def _refresh_catalog_tenants(session: Session, background: BackgroundTasks,

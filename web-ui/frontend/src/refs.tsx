@@ -56,6 +56,7 @@ export const FINDING_LABEL: Record<string, string> = {
   zone_policy_violation: L("Zone: gegen die Absicht", "Zone: against the intent"),
   zone_overlap: L("Netz in mehreren Zonen", "Network in several zones"),
   zone_outside_schema: L("Zone ausserhalb des Schemas", "Zone outside the schema"),
+  zone_net_exit: L("Netz nicht über den Ausgang der Zone", "Network not via the exit of the zone"),
   app_connection_mismatch: L("Applikation: Wege uneinheitlich", "Application: inconsistent paths"),
   app_contract_narrower: L("Applikation: Contract enger als Firewall", "Application: contract narrower than firewall"),
   link_speed_mismatch: L("Kabel: Speed abweichend", "Link: speed differs"),
@@ -161,6 +162,10 @@ export const FINDING_HINT: Record<string, string> = {
   zone_outside_schema: L(
     "logische Zone, die zu keiner Zone des Grundschemas im Namensprofil passt",
     "logical zone that matches no zone of the base schema in the naming profile",
+  ),
+  zone_net_exit: L(
+    "Netz einer Zone, das die Firewall nicht über einen Ausgang dieser Zone lernt (anderes Interface, nur Default-Route bzw. keine Route)",
+    "Network of a zone the firewall does not learn via an exit of that zone (other interface, only the default route or no route)",
   ),
   app_connection_mismatch: L(
     "Verbindung einer Applikation, die über einen Weg offen und über einen anderen gesperrt ist (aktiv, ECMP, Backup, Firewalls im Verbund)",
@@ -308,7 +313,7 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "Regeln gegen die Absicht der Zonenmatrix, Netze in mehreren logischen Zonen, Zonen ausserhalb des Grundschemas",
       "Rules against the intent of the zone matrix, networks in several logical zones, zones outside the base schema",
     ),
-    types: ["zone_policy_violation", "zone_overlap", "zone_outside_schema"],
+    types: ["zone_policy_violation", "zone_overlap", "zone_outside_schema", "zone_net_exit"],
   },
   {
     key: "apps",
