@@ -977,7 +977,22 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             for rid, (m, label) in (assigned | excluded).items()
         ],
         "hides": hides,
+        # Eingaben der Befunde (0.108.0): aus dem gespeicherten Stand aktuell nachgerechnet
+        "finding_inputs": {
+            "rule_ids": sorted(set(ordered) | helper_ids),
+            "rule_epgs": [[rid, sorted(v)] for rid, v in sorted(rule_epgs.items())],
+        },
     }
+
+
+def doc_findings(session: Session, app: Application, doc: dict, restricted: bool) -> list[dict]:
+    """Befunde der Doku aktuell (0.108.0, ADR 0037): der Stand der Doku bleibt, die Befunde
+    (Triage, neue Laeufe der Befunde) kommen bei jedem Aufruf aus der Datenbank."""
+    inputs = doc.get("finding_inputs") or {}
+    rule_epgs = {int(rid): set(epgs) for rid, epgs in inputs.get("rule_epgs") or []}
+    return _app_findings(session, app.tenant_id, doc["systems"], doc["epgs"],
+                         set(inputs.get("rule_ids") or []), rule_epgs, restricted=restricted,
+                         app_id=app.id)  # fmt: skip
 
 
 def zone_heads(data: appdoc.TenantData, tables: list[dict], restricted: bool) -> None:
@@ -1425,6 +1440,13 @@ def footprint(session: Session, app: Application, res: Resolver,
     return out
 
 
+def rule_objects(rules: list) -> list:
+    """Regeln der Doku als `RuleOut` - auch aus dem gespeicherten Stand (JSON, 0.108.0)."""
+    from app.schemas.rules import RuleOut  # spaet: Schemas nutzen den Store nicht
+
+    return [r if isinstance(r, RuleOut) else RuleOut.model_validate(r) for r in rules]
+
+
 def dependencies(session: Session, app: Application, doc: dict,
                  visible: set[int] | None = None) -> dict:  # fmt: skip
     """Abhaengigkeiten der Applikation (0.60.0): Regeln, die ein System von ihr spezifisch mit
@@ -1468,7 +1490,7 @@ def dependencies(session: Session, app: Application, doc: dict,
     ):  # fmt: skip
         if not is_any:
             ranges_of[(rid, role)].append((fam, int(lo, 16), int(hi, 16), via))
-    rules = {r.id: r for r in doc["rules"]}
+    rules = {r.id: r for r in rule_objects(doc["rules"])}
     found: dict[str, dict[int, dict]] = {"uses": {}, "used_by": {}}
     names = {a.id: a.name for a in others}
     infra = {a.id for a in others if a.infrastructure}

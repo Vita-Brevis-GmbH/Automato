@@ -40,6 +40,20 @@ def _credentials_key():
     credentials._fernet.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _doc_snapshots_off():
+    """Doku als Stand (0.108.0) in Tests aus: viele Tests aendern Daten direkt in der Datenbank
+    (ohne Lauf bzw. Audit) - `tests/test_doc_snapshots.py` schaltet ihn ein;
+    `AUTOMATO_TEST_DOC_SNAPSHOTS=1` laesst alle Tests mit dem Stand laufen (Fingerabdruck)."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    previous = settings.doc_snapshots
+    settings.doc_snapshots = os.environ.get("AUTOMATO_TEST_DOC_SNAPSHOTS") == "1"
+    yield
+    settings.doc_snapshots = previous
+
+
 def _worker_url(url: str):
     """Eigene Postgres-Datenbank je xdist-Worker; ohne xdist die Datenbank aus der URL."""
     worker = os.environ.get("PYTEST_XDIST_WORKER")  # gw0, gw1, ... (nur in xdist-Workern)

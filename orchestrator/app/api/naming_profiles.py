@@ -21,7 +21,7 @@ from app import audit
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session, get_session_factory
-from app.i18n import L, german, german_only, lang
+from app.i18n import L, german, lang
 from app.models import DictionaryEntry, Tenant
 from app.schemas.naming_profile import (
     DictionaryCopyIn,
@@ -300,25 +300,26 @@ def preview_zone_schema(
             "diff": zone_schema.diff(zone_schema.load(session, profile_id), schema)}  # fmt: skip
 
 
-@german_only  # speichert Texte: immer deutsch (ADR 0028)
-def _refresh_schema_findings(session: Session, profile_id: int) -> None:
-    """Befund „Zone ausserhalb des Schemas“ (0.78.0) der Mandanten mit diesem Profil neu."""
+def _refresh_schema_findings(session: Session, profile_id: int, background: BackgroundTasks,
+                             factory: sessionmaker) -> None:  # fmt: skip
+    """Befund „Zone ausserhalb des Schemas“ (0.78.0) der Mandanten mit diesem Profil neu - seit
+    0.108.0 hinter der Antwort (`app_refresh.schedule_zones`)."""
     from sqlalchemy import select
-
-    from app.store import reconcile
 
     session.flush()
     for tid in session.scalars(select(Tenant.id)):
         if store.profile_id_for_tenant(session, tid) == profile_id:
-            reconcile.refresh_zone_findings(session, tid)
+            app_refresh.schedule_zones(background, factory, tid)
 
 
 @router.put("/{profile_id}/zone-schema")
 def save_zone_schema(
+    background: BackgroundTasks,
     profile_id: int,
     body: ZoneSchemaIn,
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Zeichnung als Grundschema des Profils speichern (Admin) - ersetzt das bisherige."""
     _profile(session, profile_id)
@@ -334,16 +335,18 @@ def save_zone_schema(
         subject=str(profile_id),
         detail={"profile_id": profile_id, "zones": len(schema.zones), "links": len(schema.links)},
     )
-    _refresh_schema_findings(session, profile_id)
+    _refresh_schema_findings(session, profile_id, background, factory)
     return _schema_out(session, profile_id)
 
 
 @router.patch("/{profile_id}/zone-schema")
 def edit_zone_schema(
+    background: BackgroundTasks,
     profile_id: int,
     body: ZoneSchemaEditIn,
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Grundschema in der Oberflaeche bearbeiten (Admin, 0.70.0): Zonen (Name, Art, Kurzname,
     Farbe, Erkennung, Gruppe, Beschreibung, Reihenfolge) und Uebergaenge (Absicht, Dienste,
@@ -371,15 +374,17 @@ def edit_zone_schema(
             + len(change["links"]["changed"]),
         },
     )  # fmt: skip
-    _refresh_schema_findings(session, profile_id)
+    _refresh_schema_findings(session, profile_id, background, factory)
     return _schema_out(session, profile_id)
 
 
 @router.delete("/{profile_id}/zone-schema", status_code=204)
 def delete_zone_schema(
+    background: BackgroundTasks,
     profile_id: int,
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> None:
     """Grundschema entfernen (Admin) - Zonen und Absichten in Automato bleiben."""
     _profile(session, profile_id)
@@ -391,7 +396,7 @@ def delete_zone_schema(
             subject=str(profile_id),
             detail={"profile_id": profile_id},
         )
-        _refresh_schema_findings(session, profile_id)
+        _refresh_schema_findings(session, profile_id, background, factory)
 
 
 @router.get("/{profile_id}/zone-schema/drawing")

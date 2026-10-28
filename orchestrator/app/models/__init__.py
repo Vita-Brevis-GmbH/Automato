@@ -32,6 +32,7 @@ from app.models.device_object import (
     DeviceObject,
     ObjectCategory,
 )
+from app.models.doc_snapshot import DocSnapshot
 from app.models.epg import Epg, EpgEndpoint, EpgSubnet
 from app.models.finding import Finding, FindingStatus, FindingType, Severity, SubjectKind
 from app.models.inventory import (
@@ -125,6 +126,7 @@ __all__ = [
     "DeviceObject",
     "DictionaryEntry",
     "DnsType",
+    "DocSnapshot",
     "EndpointKind",
     "Epg",
     "EpgEndpoint",

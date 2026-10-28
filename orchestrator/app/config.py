@@ -103,6 +103,16 @@ class Settings(BaseSettings):
     # viele Indizes der Referenzquellen (je Quelle und Lauf) bleiben je Prozess geladen statt je
     # Anfrage neu gelesen (0 = aus); ein neuer IPAM-Lauf ersetzt sie
     ref_cache: int = 4
+    # Doku je Applikation als Stand (0.108.0, ADR 0037, Anwender: „das Speichern dauert zu
+    # lange“): gespeichert und nur neu gerechnet, wenn sich ihre Eingaben aendern. Dauerte die
+    # letzte Berechnung mindestens `doc_stale_seconds`, zeigt die Seite sofort den letzten Stand
+    # und rechnet im Hintergrund neu; nach Laeufen und Aenderungen werden die Staende der letzten
+    # `doc_warm_days` Tage vorgerechnet (hoechstens `doc_warm_seconds` je Durchgang, 0 = ohne
+    # Grenze). `doc_snapshots=false`: jedes Mal neu rechnen wie bis 0.107.0
+    doc_snapshots: bool = True
+    doc_stale_seconds: float = 1.5
+    doc_warm_days: int = 7
+    doc_warm_seconds: int = 600
 
     # Datenqualitaet (ADR 0029): Stand eines Quellsystems gilt nach so vielen Tagen ohne
     # erfolgreichen Lauf als veraltet (Befund `source_stale`, Betriebszustand); mit Zeitplan

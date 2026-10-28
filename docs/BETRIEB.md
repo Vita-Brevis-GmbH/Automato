@@ -1082,6 +1082,20 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Schalter sofort auf dem neuen Stand („– lädt…“), bis die Doku neu geladen ist; das IPAM
     bleibt im Speicher (`AUTOMATO_REF_CACHE`, Vorgabe 4 Referenzquellen, `0` = aus) statt je
     Anfrage neu gelesen zu werden – ein neuer IPAM-Lauf ersetzt es.
+  - **Stand der Doku (seit 0.108.0, ADR 0037):** Doku und Verbindungen Ende zu Ende (mit Plan)
+    werden je Applikation gespeichert und nur neu gerechnet, wenn sich etwas ändert, das sie
+    betrifft – ein Lauf eines Quellsystems (Geräte, IPAM), Zonen, Kategorien, Namensprofil,
+    Verbund, L3Outs, Mitglieder bzw. ausgeblendete Regeln. Über der Doku bzw. in der Karte der
+    Verbindungen steht „Stand von heute 14:05“; ändert sich etwas, zeigt die Seite sofort den
+    letzten Stand mit „– wird im Hintergrund aktualisiert…“ und lädt von selbst neu, sobald er
+    fertig ist. „↻ neu berechnen“ rechnet auf Wunsch neu (z. B. nach einer Änderung direkt an
+    einem Gerät, bevor der nächste Lauf sie liest). Befunde in der Doku sind immer aktuell.
+    Exporte (Word, Markdown, Plan) nehmen immer den aktuellen Stand. Nach Läufen und Änderungen
+    rechnet der Orchestrator die zuletzt angesehenen Applikationen im Hintergrund vor.
+    Einstellungen: `AUTOMATO_DOC_SNAPSHOTS` (Vorgabe `true`; `false` = jedes Mal neu wie bis
+    0.107.0), `AUTOMATO_DOC_STALE_SECONDS` (1,5 – kürzere Berechnungen wartet die Seite ab),
+    `AUTOMATO_DOC_WARM_DAYS` (7 – so lange angesehene Stände werden vorgerechnet, `0` = nie),
+    `AUTOMATO_DOC_WARM_SECONDS` (600 – Zeitbudget je Durchgang, `0` = ohne Grenze).
   - **Kategorien nach Zonentyp (seit 0.106.0, ADR 0035):** jede Firewall-Regel bzw. jeder
     Contract steht in der Kategorie seiner **Richtung** Zonentyp der Quelle → Zonentyp des Ziels.
     In drei Schritten einrichten:
@@ -1183,6 +1197,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   ihre Zonen (ohne Selektoren), die geteilten Zonen dahinter nur mit Namen, die Matrix
   mit Zellen ihrer Zonen (Zonen anderer Kunden als „anderer Kunde“), ihren Plan ohne Geräte und
   ohne Netze ohne Zone und können ihn exportieren; keine Versionen, keine Änderungen.
+  **Speichern ohne Warten (seit 0.108.0):** Zone anlegen, ändern, löschen, Absichten,
+  Vorschläge, Zonenplan-Import, Kategorien und Grundschema kehren sofort zurück; die Befunde der
+  Zonen (Absicht, ausserhalb des Schemas, Netz nicht über den Ausgang) rechnet der Orchestrator
+  danach im Hintergrund – in der Liste der Findings stehen sie nach einigen Sekunden. Ebenso nach
+  einem geänderten Verbund paralleler Firewalls.
   - **Zonenmodell** (0.56.0, ADR 0024 Nr. 12): Zonen nach Ebenen – **Datacenter** (die
     ACI-Tenants), **Edge** (Internet, Office-Anbindung, VPN, Management), **Transfer** (zwischen
     den Firewalls), **Core**, **Distribution** und **Access** (Office, Branch), **Public**.

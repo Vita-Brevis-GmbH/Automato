@@ -43,6 +43,7 @@ CUSTOMER_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     ("GET", "/applications"): READ,
     ("GET", "/applications/{application_id}"): READ,
     ("GET", "/applications/{application_id}/doc"): READ,
+    ("GET", "/applications/{application_id}/doc/state"): READ,  # Stand der Doku (0.108.0)
     ("GET", "/applications/{application_id}/dependencies"): READ,  # 0.88.0
     # 0.95.0: EPG der Applikation im Detail (nur EPGs ihres Ausschnitts)
     ("GET", "/applications/{application_id}/epgs/{epg_id}"): READ,

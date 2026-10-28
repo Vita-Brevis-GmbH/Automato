@@ -41,7 +41,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 - **Abnahme:** Der Anwender testet jede freigegebene Version sofort. Eine Version gilt als
   abgenommen, sobald seine nächste Rückmeldung keinen Einwand dazu enthält – in `ROADMAP.md`
-  („Abgenommen“) nachführen. Abgenommen bis **0.106.0** (2026-10-28).
+  („Abgenommen“) nachführen. Abgenommen bis **0.107.0** (2026-10-28).
 - **Klärung vor dem Bauen:** ändert sich Bedienung oder Bedeutung und ist der Wunsch mehrdeutig,
   zuerst 3–5 Zeilen Vorschlag mit einer Rückfrage, dann bauen.
 - **Sammeln:** Anpassungen einer Rückmeldungsrunde in **einer** Version (Patch = Korrektur,
@@ -71,10 +71,12 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 - **Module** (ADR 0036, `orchestrator/app/modules.py`): jede neue Datei in `app/api`/`app/store`
   einem Modul zuordnen (sonst scheitert `tests/test_modules.py`); nur der Schreibpfad nutzt
   `netbox_writer`/`netbox_sync`; neue Router mit `modules.guard(<Modul>)` einbinden.
+- **Stand der Doku** (ADR 0037): was Doku oder Verbindungen verändert, muss den Fingerabdruck
+  ändern (Audit-Eintrag, Lauf oder `store.touch(app)`); prüfen mit `AUTOMATO_TEST_DOC_SNAPSHOTS=1`.
 - Entscheide als ADR in `docs/adr/`, Risiken in `docs/RISKS.md`, Bedienung in `docs/BETRIEB.md`.
 
 ## Aktueller Stand
 
-0.107.0 – Einzelheiten je Bereich in `docs/STAND.md`. Offene Punkte und nächste Arbeiten in
+0.108.0 – Einzelheiten je Bereich in `docs/STAND.md`. Offene Punkte und nächste Arbeiten in
 `ROADMAP.md` („Nächste Arbeiten“); erstes Projekt abschliessen = Produktivschaltung DC (R14),
 danach Mehrmandanten mit Cockpit (eigene ADR).

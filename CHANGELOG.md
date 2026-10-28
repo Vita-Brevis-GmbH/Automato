@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.108.0 – 2026-10-28
+
+Leistung (Anwender: „das Speichern dauert zu lange“, Doku im Hintergrund rechnen; ADR 0037,
+Migration `0067`). Abnahme bis 0.107.0.
+
+- **Doku als Stand:** Doku und Verbindungen Ende zu Ende (mit Plan) je Applikation werden
+  gespeichert und nur neu gerechnet, wenn sich etwas ändert, das sie betrifft (Lauf eines
+  Quellsystems, IPAM, Zonen, Kategorien, Namensprofil, Verbund, L3Outs, Mitglieder, ausgeblendete
+  Regeln) – erkannt am Fingerabdruck der Eingaben. Die Seite zeigt sofort den letzten Stand:
+  „Stand von …“, „– wird im Hintergrund aktualisiert…“, danach lädt sie von selbst neu;
+  „↻ neu berechnen“ stösst eine Berechnung an. Befunde in der Doku sind immer aktuell. Gemessen
+  im grossen Testbestand: Doku 9,5 s → 0,2 s, Verbindungen 4,7 s → 0,04 s.
+- **Vorrechnen:** nach Läufen und Änderungen rechnet der Hintergrund die in den letzten 7 Tagen
+  angesehenen Stände neu – nach dem Speichern ist die Doku meist schon fertig.
+- **Speichern ohne Warten:** Zonen anlegen/ändern/löschen, Absichten, Vorschläge, Zonenplan-Import,
+  Netzwerkdesign, Grundschema und Verbund paralleler Firewalls kehren sofort zurück; die Befunde
+  rechnet der Hintergrund. Die Prüfung der Zonen lädt die EPG-Zuordnung nur noch einmal je
+  Durchgang (grosser Testbestand: Zone speichern 13 min → 3 s).
+- Einstellungen `AUTOMATO_DOC_SNAPSHOTS`, `AUTOMATO_DOC_STALE_SECONDS`, `AUTOMATO_DOC_WARM_DAYS`,
+  `AUTOMATO_DOC_WARM_SECONDS`; API `GET /applications/{id}/doc/state`, `?fresh=true`.
+- Tests (orchestrator 655, UI-Tests 148).
+
 ## 0.107.0 – 2026-10-28
 
 Module und Testbefunde zu 0.106.0 (Rückmeldung des Anwenders 2026-10-28; ADR 0036, Migration

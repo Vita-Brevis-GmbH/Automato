@@ -747,3 +747,38 @@ test("Applikationen: Stammdaten aus CSV, ohne VMs ausblenden und mehrere lösche
   await expect(list.locator("tbody tr", { hasText: "Import A" })).toHaveCount(0);
   await expect(list.locator("tbody tr", { hasText: "Webshop" })).toBeVisible();
 });
+
+test("Applikation: Doku als Stand – sofort der letzte, „wird aktualisiert“, dann neu geladen (0.108.0)", async ({ page }) => {
+  // der Server rechnet im Hintergrund neu: die erste Antwort bringt einen alten Stand mit `building`
+  let docCalls = 0;
+  let stateCalls = 0;
+  await page.route(/\/api\/applications\/\d+\/doc(\?.*)?$/, async (route) => {
+    docCalls += 1;
+    const response = await route.fetch();
+    const json = await response.json();
+    // bis zur ersten Abfrage des Zustands (React lädt im Entwicklungsmodus doppelt)
+    if (stateCalls === 0) json.snapshot = { ...json.snapshot, built_at: "2026-10-27T08:15:00Z", fresh: false, building: true };
+    await route.fulfill({ response, json });
+  });
+  await page.route(/\/api\/applications\/\d+\/doc\/state/, async (route) => {
+    stateCalls += 1;
+    await route.continue();
+  });
+  await open(page);
+  const bar = page.locator("#snapshot-doc");
+  await expect(bar).toContainText("Stand von");
+  await expect(bar).toContainText("wird im Hintergrund aktualisiert");
+  await expect(bar).toHaveAttribute("data-fresh", "0");
+  // fertig (Abfrage des Zustands): die Doku lädt neu, ohne „Erzeuge Doku…“
+  await expect(bar).toHaveAttribute("data-fresh", "1", { timeout: 15_000 });
+  await expect(bar).not.toContainText("wird im Hintergrund aktualisiert");
+  await expect(page.locator("h1.app-title")).toHaveText("Webshop");
+  expect(stateCalls).toBeGreaterThanOrEqual(1);
+  expect(docCalls).toBeGreaterThanOrEqual(2);
+  // „↻ neu berechnen“ fragt den Server mit fresh=true
+  const forced = page.waitForRequest((r) => /\/doc\?fresh=true/.test(r.url()));
+  await bar.getByRole("button", { name: /neu berechnen/ }).click();
+  await forced;
+  // Verbindungen ebenso mit ihrem Stand
+  await expect(page.locator("#snapshot-connections")).toContainText("Stand von");
+});

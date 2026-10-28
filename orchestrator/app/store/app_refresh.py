@@ -9,6 +9,11 @@ Nachziehen laeuft mit eigener Session hinter der Antwort.
 Mehrere Aenderungen kurz hintereinander werden zusammengefasst: ist fuer die Applikation schon
 ein Durchgang vorgemerkt, der noch nicht begonnen hat, kommt kein weiterer dazu. Je Mandant
 laeuft hoechstens ein Durchgang zugleich (im Prozess), damit sich die Befunde nicht ueberholen.
+
+Seit 0.108.0 (Anwender: „das Speichern dauert zu lange“) ebenso die Befunde der Zonen nach dem
+Speichern einer Zone, des Netzwerkdesigns bzw. des Grundschemas (`schedule_zones`) und die
+Befunde nach einem geaenderten Verbund paralleler Firewalls (`schedule_regroup`); danach rechnet
+`doc_snapshots` die Doku der zuletzt angesehenen Applikationen vor.
 """
 
 import logging
@@ -21,7 +26,7 @@ from sqlalchemy.orm import Session, sessionmaker
 log = logging.getLogger(__name__)
 
 _lock = threading.Lock()
-_pending: set[tuple[int, int]] = set()
+_pending: set[tuple] = set()  # (Mandant, Applikation; 0 = alle) bzw. (Art, Mandant)
 _tenant_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
 
 
@@ -51,8 +56,76 @@ def schedule_tenant(background: BackgroundTasks, factory: sessionmaker[Session],
     return True
 
 
+def _claim(key: tuple) -> bool:
+    with _lock:
+        if key in _pending:
+            return False
+        _pending.add(key)
+        return True
+
+
+def _release(key: tuple) -> None:
+    with _lock:
+        _pending.discard(key)
+
+
+def schedule_zones(background: BackgroundTasks, factory: sessionmaker[Session],
+                   tenant_id: int) -> bool:  # fmt: skip
+    """Befunde der Zonen (Absicht, ausserhalb des Schemas, Zonentyp) hinter der Antwort neu."""
+    if not _claim(("zones", tenant_id)):
+        return False
+    background.add_task(run_zones, factory, tenant_id)
+    return True
+
+
+def run_zones(factory: sessionmaker[Session], tenant_id: int) -> None:
+    from app.store import doc_snapshots, reconcile  # spaet: reconcile -> zones -> ...
+
+    with _tenant_locks[tenant_id]:
+        _release(("zones", tenant_id))
+        session = factory()
+        try:
+            reconcile.refresh_zone_findings(session, tenant_id)
+            session.commit()
+        except Exception:
+            session.rollback()
+            log.exception("Mandant %s: Befunde der Zonen fehlgeschlagen", tenant_id)
+        finally:
+            session.close()
+    doc_snapshots.warm(factory, tenant_id)
+
+
+def schedule_regroup(background: BackgroundTasks, factory: sessionmaker[Session],
+                     tenant_id: int) -> bool:  # fmt: skip
+    """Verbund paralleler Firewalls geaendert (0.18.0): Befunde des Mandanten und der
+    Applikationen (Verbund = ein Hop) hinter der Antwort neu; die Zwillinge im Regelindex
+    (`parallel.mark`) setzt das Speichern selbst."""
+    if not _claim(("regroup", tenant_id)):
+        return False
+    background.add_task(run_regroup, factory, tenant_id)
+    return True
+
+
+def run_regroup(factory: sessionmaker[Session], tenant_id: int) -> None:
+    from app.store import doc_snapshots, reconcile  # spaet: reconcile -> app_paths -> ...
+
+    with _tenant_locks[tenant_id]:
+        _release(("regroup", tenant_id))
+        session = factory()
+        try:
+            reconcile.reconcile_tenant(session, tenant_id)
+            reconcile.refresh_app_findings(session, tenant_id)
+            session.commit()
+        except Exception:
+            session.rollback()
+            log.exception("Mandant %s: Befunde nach dem Verbund fehlgeschlagen", tenant_id)
+        finally:
+            session.close()
+    doc_snapshots.warm(factory, tenant_id)
+
+
 def run_tenant(factory: sessionmaker[Session], tenant_id: int) -> None:
-    from app.store import customers, reconcile  # spaet: reconcile -> app_paths -> applications
+    from app.store import customers, doc_snapshots, reconcile  # spaet: reconcile -> app_paths
 
     with _tenant_locks[tenant_id]:
         with _lock:
@@ -68,6 +141,7 @@ def run_tenant(factory: sessionmaker[Session], tenant_id: int) -> None:
             log.exception("Mandant %s: Befunde nach L3Out-Zuordnung fehlgeschlagen", tenant_id)
         finally:
             session.close()
+    doc_snapshots.warm(factory, tenant_id)
 
 
 def pending(tenant_id: int, application_id: int) -> bool:
@@ -76,7 +150,7 @@ def pending(tenant_id: int, application_id: int) -> bool:
 
 
 def run(factory: sessionmaker[Session], tenant_id: int, application_id: int) -> None:
-    from app.store import customers, reconcile  # spaet: reconcile -> app_paths -> applications
+    from app.store import customers, doc_snapshots, reconcile  # spaet: reconcile -> app_paths
 
     with _tenant_locks[tenant_id]:
         with _lock:
@@ -92,3 +166,4 @@ def run(factory: sessionmaker[Session], tenant_id: int, application_id: int) -> 
             log.exception("Applikation %s: Befunde nachziehen fehlgeschlagen", application_id)
         finally:
             session.close()
+    doc_snapshots.warm(factory, tenant_id, application_id)

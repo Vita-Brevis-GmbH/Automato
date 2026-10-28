@@ -56,7 +56,6 @@ from app.store import (
     plan_import,
     plan_versions,
     plan_view,
-    reconcile,
     word_export,
     zone_assist,
     zone_detect,
@@ -445,9 +444,11 @@ def suggestions(
 
 @router.post("/suggestions/accept")
 def accept_suggestions(
+    background: BackgroundTasks,
     body: KeysIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Vorschlaege uebernehmen (Operator): neue Zone mit den Selektoren des Vorschlags bzw.
     die Selektoren einer bestehenden Zone ergaenzen. Ausgeblendete auch."""
@@ -500,7 +501,7 @@ def accept_suggestions(
         owners.add(z.customer_id)
     zone_detect.undismiss(session, tid, [k for k in keys if k not in missing])
     _rederive(session, tid, owners)
-    reconcile.refresh_zone_findings(session, tid)
+    app_refresh.schedule_zones(background, factory, tid)
     return {"created": created, "updated": updated, "missing": missing}
 
 
@@ -546,9 +547,11 @@ def undismiss_suggestions(
 
 @router.post("/schema/intents")
 def apply_schema_intents(
+    background: BackgroundTasks,
     body: SchemaIntentsIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Absichten aus dem Grundschema setzen (Operator): ohne `pairs` alle fehlenden; mit
     `pairs` nur diese, abweichende nur mit `overwrite`."""
@@ -593,7 +596,7 @@ def apply_schema_intents(
         changed.append({"src": pair[0], "dst": pair[1], "intent": x["intent"],
                         "before": x["current"]})  # fmt: skip
     if changed:
-        reconcile.refresh_zone_findings(session, tid)
+        app_refresh.schedule_zones(background, factory, tid)
     return {"changed": changed}
 
 
@@ -640,9 +643,11 @@ def matrix_rules(
 
 @router.put("/policy")
 def set_policy(
+    background: BackgroundTasks,
     body: PolicyIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Absicht fuer ein Zonenpaar setzen (allow, limited, deny) bzw. entfernen (leer)."""
     tid = tenant_scope(principal, body.tenant_id)
@@ -689,7 +694,7 @@ def set_policy(
             "services": services,
         },  # fmt: skip
     )
-    reconcile.refresh_zone_findings(session, tid)
+    app_refresh.schedule_zones(background, factory, tid)
     return {"src": body.src_zone_id, "dst": body.dst_zone_id, "intent": body.intent,
             "note": p.note if body.intent is not None else None,
             "services": services or []}  # fmt: skip
@@ -757,9 +762,11 @@ def plan_import_preview(
 
 @router.post("/plan/import")
 def plan_import_apply(
+    background: BackgroundTasks,
     body: PlanImportIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Zonenplan aus draw.io uebernehmen (0.83.0, Operator): je Teil auf Wunsch; Audit
     `zone_plan.imported`."""
@@ -785,7 +792,8 @@ def plan_import_apply(
         },  # fmt: skip
     )
     if done["intents"] or done["renames"] or done["new_zones"]:
-        reconcile.refresh_zone_findings(session, tid)  # Absichten, Zonen ausserhalb des Schemas
+        # Absichten, Zonen ausserhalb des Schemas - hinter der Antwort (0.108.0)
+        app_refresh.schedule_zones(background, factory, tid)
     return {"view": reading.view, **done}
 
 
@@ -998,9 +1006,11 @@ def delete_version(
 
 @router.post("", status_code=201)
 def create_zone(
+    background: BackgroundTasks,
     body: ZoneIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Zone anlegen (Operator); ohne Reihenfolge ans Ende."""
     tid = tenant_scope(principal, body.tenant_id)
@@ -1016,7 +1026,7 @@ def create_zone(
     session.flush()
     _audit(session, principal, "created", z)
     _rederive(session, tid, {z.customer_id})
-    reconcile.refresh_zone_findings(session, tid)
+    app_refresh.schedule_zones(background, factory, tid)
     nets = store.derive(session, tid, [z])
     return _out(z, nets[0], _customers(session, tid))
 
@@ -1153,10 +1163,10 @@ def set_appdoc_zones(
     if changes:
         audit.record(session, actor=f"user:{principal.subject}", action="zone.appdoc_set",
                      subject=str(tid), detail={"tenant_id": tid, "changes": changes})  # fmt: skip
-        if owners:  # Netze bzw. Geraete geaendert: Kunden auf den Zonen, Befunde der Zonen
+        if owners:  # Netze bzw. Geraete geaendert: Kunden auf den Zonen
             _rederive(session, tid, owners)
-            reconcile.refresh_zone_findings(session, tid)
-        app_refresh.schedule_tenant(background, factory, tid)  # Befunde nach den Kategorien
+        # Befunde nach den Kategorien und der Zonen - hinter der Antwort (0.108.0)
+        app_refresh.schedule_tenant(background, factory, tid)
     return [{"id": z.id, "name": z.name, "zone_type": z.zone_type,
              "nets": _prefixes_of(z, False), "excluded": _prefixes_of(z, True),
              "devices": [{"kind": k, "value": v, "source_system_id": sid}
@@ -1166,10 +1176,12 @@ def set_appdoc_zones(
 
 @router.put("/{zone_id}")
 def update_zone(
+    background: BackgroundTasks,
     zone_id: int,
     body: ZoneIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Zone aendern (Operator) - Selektoren ersetzen."""
     z = _get(session, principal, zone_id)
@@ -1181,16 +1193,18 @@ def update_zone(
     session.flush()
     _audit(session, principal, "updated", z)
     _rederive(session, z.tenant_id, {before, z.customer_id})
-    reconcile.refresh_zone_findings(session, z.tenant_id)
+    app_refresh.schedule_zones(background, factory, z.tenant_id)
     nets = store.derive(session, z.tenant_id, [z])
     return _out(z, nets[0], _customers(session, z.tenant_id))
 
 
 @router.delete("/{zone_id}", status_code=204)
 def delete_zone(
+    background: BackgroundTasks,
     zone_id: int,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> None:
     """Zone loeschen (Operator) - mit ihrer Absicht je Zonenpaar; gelesene Daten bleiben."""
     z = _get(session, principal, zone_id)
@@ -1205,7 +1219,7 @@ def delete_zone(
     session.delete(z)
     session.flush()
     _rederive(session, tid, {owner})
-    reconcile.refresh_zone_findings(session, tid)
+    app_refresh.schedule_zones(background, factory, tid)
 
 
 class NodesIn(BaseModel):
@@ -1214,10 +1228,12 @@ class NodesIn(BaseModel):
 
 @router.post("/{zone_id}/nodes")
 def assign_nodes(
+    background: BackgroundTasks,
     zone_id: int,
     body: NodesIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Knoten (Firewall bzw. VDOM, ACI-VRF) der Zone zuordnen (Operator): als Selektor VDOM
     bzw. ACI-VRF - die Netze daran werden Netze der Zone bzw. Uebergaenge (0.56.0)."""
@@ -1244,7 +1260,7 @@ def assign_nodes(
         session.flush()
         _audit(session, principal, "updated", z, via="node")
         _rederive(session, z.tenant_id, {z.customer_id})
-        reconcile.refresh_zone_findings(session, z.tenant_id)
+        app_refresh.schedule_zones(background, factory, z.tenant_id)
     return {"zone_id": z.id, "added": added}
 
 

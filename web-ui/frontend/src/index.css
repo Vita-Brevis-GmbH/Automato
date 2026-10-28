@@ -371,6 +371,10 @@ tr.topo-boundary > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .empty .big { font-size: 15px; font-weight: 600; color: var(--fg); margin-bottom: 4px; }
 .empty .btn { margin-top: 14px; }
 .loading { color: var(--muted); padding: 22px 16px; }
+/* Stand der Doku (0.108.0): von wann, wird aktualisiert */
+.snapshot-bar { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--muted); margin: 2px 2px 8px; }
+.snapshot-bar.building { color: var(--warn); }
+.snapshot-bar .linkbtn { font-size: 12px; }
 .note { background: var(--accent-weak); border: 1px solid transparent; border-radius: 8px; padding: 11px 14px; font-size: 12.5px;
   color: var(--fg); margin-bottom: 16px; display: flex; gap: 9px; align-items: flex-start; }
 .note .ico { color: var(--accent); flex: none; display: flex; margin-top: 1px; }

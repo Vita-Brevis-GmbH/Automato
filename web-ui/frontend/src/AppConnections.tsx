@@ -23,6 +23,7 @@ import { Fold, FoldTitle } from "./fold";
 import { Verdict, VERDICT } from "./Paths";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, Icon, Loading, Note } from "./ui";
 import { L } from "./i18n";
+import { SnapshotBar } from "./SnapshotBar";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -917,6 +918,14 @@ export default function ConnectionsCard({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId, reload, wanted]);
+  // Stand fertig bzw. neu berechnen (0.108.0): der alte bleibt bis dahin sichtbar
+  const refresh = (force: boolean) =>
+    fetchAppConnections(appId, force)
+      .then((d) => {
+        setData(d);
+        onData?.(d);
+      })
+      .catch(setError);
   const needle = q.trim().toLowerCase();
   const base = (data?.connections ?? []).filter((c) => {
     if (onlyIssues && !c.mismatch.length && !c.inconsistent && c.verdict === "allow" && c.reached) return false;
@@ -997,6 +1006,7 @@ export default function ConnectionsCard({
       {(!fold || fold.open) && (
       <>
       <div className="card-body pad no-print" style={{ paddingBottom: 0 }}>
+        <SnapshotBar snapshot={data?.snapshot} appId={appId} kind="connections" onReload={refresh} />
         <div className="faint" style={{ fontSize: 12, marginBottom: 8 }}>
           {L(
             "Je Verbindung (Quelle → Ziel, Dienst) eine Zeile mit dem Weg über Firewalls und ACI wie in der Weg-Suche; " +

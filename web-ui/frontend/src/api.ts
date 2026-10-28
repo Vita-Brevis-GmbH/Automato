@@ -882,6 +882,7 @@ export interface ApplicationDoc {
   // ADR 0034: Hilfs-Contracts über L3Outs (nicht in rules) mit den Firewall-Regeln, an denen sie stehen
   helpers?: { rule_id: number; name: string; l3outs: string[]; firewall_rules: number[]; systems: string[] }[];
   peer_names?: boolean; // 0.101.0: Namen der Gegenstellen eingeschaltet (Einstellung des Mandanten)
+  snapshot?: DocSnapshot; // 0.108.0: Stand der Doku (von wann, wird aktualisiert)
 }
 export interface AppDependency {
   application_id: number;
@@ -1762,7 +1763,17 @@ export const acceptAppSuggestion = (tenantId: number, code: string, name?: strin
     "POST",
     name ? { name } : undefined,
   );
-export const fetchAppDoc = (id: number) => getJSON<ApplicationDoc>(`/api/applications/${id}/doc`);
+// Stand der Doku (0.108.0, ADR 0037): sofort der letzte, neu im Hintergrund; `fresh` = neu berechnen
+export const fetchAppDoc = (id: number, fresh = false) =>
+  getJSON<ApplicationDoc>(`/api/applications/${id}/doc${fresh ? "?fresh=true" : ""}`);
+export interface DocSnapshot {
+  built_at: string | null;
+  fresh: boolean; // passt zu den Eingaben
+  building: boolean; // rechnet gerade neu
+  seconds: number; // Dauer der letzten Berechnung
+}
+export const fetchDocState = (id: number, kind: "doc" | "connections" = "doc") =>
+  getJSON<DocSnapshot>(`/api/applications/${id}/doc/state?kind=${kind}`);
 // EPG der Applikation im Detail (0.95.0): Lage wie im Regel-Detail (Tenant, AP, BD, VRF, Subnetze, …)
 export const fetchAppEpg = (id: number, epgId: number) => getJSON<EpgLocation>(`/api/applications/${id}/epgs/${epgId}`);
 // Abhängigkeiten zu anderen Applikationen (0.88.0 wieder in der Doku): erst beim Aufklappen
@@ -1938,9 +1949,10 @@ export interface AppConnections {
   notes: string[];
   summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number; unused?: number };
   plan?: AppPlan;
+  snapshot?: DocSnapshot; // 0.108.0
 }
-export const fetchAppConnections = (id: number) =>
-  getJSON<AppConnections>(`/api/applications/${id}/connections`);
+export const fetchAppConnections = (id: number, fresh = false) =>
+  getJSON<AppConnections>(`/api/applications/${id}/connections${fresh ? "?fresh=true" : ""}`);
 // 0.74.0: `rules` = Ebene „Regeln“ mit exportieren
 export async function exportAppPlan(id: number, format: "svg" | "drawio", keys?: string[], rules = true): Promise<{ blob: Blob; filename: string }> {
   const params = new URLSearchParams({ format });

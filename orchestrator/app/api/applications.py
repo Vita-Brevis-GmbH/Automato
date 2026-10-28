@@ -39,6 +39,7 @@ from app.store import (
     app_refresh,
     appdoc_catalog,
     customer_alias,
+    doc_snapshots,
     peer_names,
     sites,
     word_export,
@@ -265,6 +266,15 @@ class DocFindingOut(BaseModel):
     epgs: list[str] = []  # EPGs (Tenant/AP/EPG) des Befunds - Filter nach Tenant, AP, EPG
 
 
+class SnapshotOut(BaseModel):
+    """Stand der Doku (0.108.0, ADR 0037): wann berechnet, passt er noch, rechnet er gerade."""
+
+    built_at: datetime | None = None
+    fresh: bool = True
+    building: bool = False
+    seconds: float = 0.0  # Dauer der letzten Berechnung
+
+
 class ApplicationDocOut(BaseModel):
     application: ApplicationOut
     tenant_code: str | None
@@ -286,6 +296,7 @@ class ApplicationDocOut(BaseModel):
     helpers: list[dict] = []
     # 0.101.0: Namen der Gegenstellen eingeschaltet (Einstellung des Mandanten, nur Betreuer)
     peer_names: bool = False
+    snapshot: SnapshotOut | None = None  # 0.108.0: Stand der Doku
 
 
 class RuleMemberIn(BaseModel):
@@ -862,19 +873,23 @@ def remove_member(
 
 @router.get("/{application_id}/connections")
 def application_connections(
+    background: BackgroundTasks,
     application_id: int,
+    fresh: bool = False,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Verbindungen Ende zu Ende (0.45.0): je Verbindung der Weg ueber Firewalls und ACI mit
     der entscheidenden Policy bzw. dem Contract je Hop und dem Abgleich mit den Regeln der
-    Doku. Nicht fuer Kunden-Benutzer (Freigabeliste): der Weg zeigt die Infrastruktur."""
+    Doku, dazu der Netzwerkplan (0.67.0). Seit 0.108.0 als Stand (`snapshot`, ADR 0037):
+    sofort der letzte, neu im Hintergrund, wenn sich etwas geaendert hat; `fresh=true` rechnet
+    neu. Nicht fuer Kunden-Benutzer (Freigabeliste): der Weg zeigt die Infrastruktur."""
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    out = app_paths.build(session, app)
-    # Netzwerkplan (0.67.0), kompakt nach AP/EPG (0.74.0)
-    out["plan"] = app_plan.build(out["connections"], members=out["members"])
-    return out
+    served = doc_snapshots.serve(session, factory, background, app, doc_snapshots.CONNECTIONS,
+                                 force=fresh)  # fmt: skip
+    return {**served.data, "snapshot": served.state()}
 
 
 _EXPORT = {"svg": ("image/svg+xml", "svg"), "drawio": ("application/xml", "drawio")}
@@ -882,12 +897,14 @@ _EXPORT = {"svg": ("image/svg+xml", "svg"), "drawio": ("application/xml", "drawi
 
 @router.get("/{application_id}/connections/plan/export")
 def export_connections_plan(
+    background: BackgroundTasks,
     application_id: int,
     format: str = Query("svg", pattern="^(svg|drawio)$"),  # noqa: A002 - Name der Abfrage
     key: Annotated[list[str] | None, Query(description="nur diese Verbindungen")] = None,
     rules: bool = True,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> Response:
     """Netzwerkplan der Applikation (0.67.0) als SVG bzw. draw.io - wie in der Ansicht; mit
     `key` nur die Verbindungen des Filters, mit `rules=false` ohne die Ebene „Regeln“ (0.74.0).
@@ -898,7 +915,8 @@ def export_connections_plan(
         )
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    built = app_paths.build(session, app)
+    built = doc_snapshots.serve(session, factory, background, app, doc_snapshots.CONNECTIONS,
+                                wait=True).data  # fmt: skip
     plan = app_plan.build(built["connections"], set(key) if key else None, built["members"])
     when = datetime.now(UTC)
     title = f"{L('Netzwerkplan', 'Network diagram')} {app.name}"
@@ -912,11 +930,13 @@ def export_connections_plan(
 
 @router.get("/{application_id}/export")
 def export_application(
+    background: BackgroundTasks,
     application_id: int,
     format: str = Query("zip", pattern="^(docx|zip|md)$"),  # noqa: A002 - Name der Abfrage
     sections: str | None = Query(None, max_length=200),
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> Response:
     """Export fuer Confluence (0.71.0, ADR 0026): die Applikations-Doku als Word (`docx`) bzw.
     als ZIP mit Word und dem Netzwerkplan als draw.io (`zip`) - zum Verbessern in Word/draw.io
@@ -939,7 +959,9 @@ def export_application(
     with_plan = want is None or "plan" in want
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
     names = peer_names.enabled(session, app.tenant_id, principal.is_customer)  # 0.95.0
-    doc = store.build_doc(session, app, view_ids(session, view, "rule"), names=names)
+    # Stand der Doku (0.108.0): der aktuelle - ein alter wird hier neu gerechnet
+    doc = _doc(session, factory, background, app, view_ids(session, view, "rule"), names,
+               wait=True).data  # fmt: skip
     if want is None or "dependencies" in want:  # 0.88.0
         visible = _visible_apps(session, principal, app)
         doc["dependencies"] = store.dependencies(session, app, doc, visible)
@@ -947,7 +969,8 @@ def export_application(
         application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
     ).model_dump(mode="json")
     needs_paths = want is None or bool(want & {"connections", "plan"})
-    conns = app_paths.build(session, app) if needs_paths else None
+    conns = doc_snapshots.serve(session, factory, background, app, doc_snapshots.CONNECTIONS,
+                                wait=True).data if needs_paths else None  # fmt: skip
     when = datetime.now(UTC)
     tenant = session.get(Tenant, app.tenant_id)
     sources = dict(session.execute(
@@ -985,23 +1008,45 @@ def export_application(
 _DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
+def _doc(session: Session, factory: sessionmaker, background: BackgroundTasks,
+         app: Application, rule_ids: set[int] | None, names: bool, force: bool = False,
+         wait: bool = False) -> doc_snapshots.Served:  # fmt: skip
+    """Doku als Stand (0.108.0, ADR 0037) - die Befunde darin immer aktuell."""
+    served = doc_snapshots.serve(session, factory, background, app, doc_snapshots.DOC, rule_ids,
+                                 names, force=force, wait=wait)  # fmt: skip
+    doc = served.data
+    if served.stored:
+        doc["findings"] = store.doc_findings(session, app, doc, rule_ids is not None)
+        doc["summary"]["findings"] = len(doc["findings"])
+    return served
+
+
 @router.get("/{application_id}/doc", response_model=ApplicationDocOut)
 def application_doc(
+    background: BackgroundTasks,
     application_id: int,
     dependencies: bool = False,
+    fresh: bool = False,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     """Applikations-Doku ueber alle Systeme der Applikation (Tabellen 1–10). Abhaengigkeiten zu
     anderen Applikationen (0.60.0) seit 0.73.0 nur mit `dependencies=true`; die Oberflaeche holt
     sie seit 0.88.0 einzeln ueber `GET …/dependencies`. Gegenstellen nur mit Adresse nennen
-    seit 0.95.0 ihren Namen, wenn der Mandant es vorsieht - nie fuer Kunden-Benutzer."""
+    seit 0.95.0 ihren Namen, wenn der Mandant es vorsieht - nie fuer Kunden-Benutzer.
+
+    Seit 0.108.0 als Stand (`snapshot`, ADR 0037): sofort der letzte, im Hintergrund neu, wenn
+    sich etwas geaendert hat (`GET …/doc/state` sagt, wann er fertig ist); `fresh=true` rechnet
+    neu (Schaltflaeche „neu berechnen“)."""
     app = _load(session, principal, application_id)
     view = _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
     editable = _editable(session, principal, app)
     names = peer_names.enabled(session, app.tenant_id, principal.is_customer)
-    doc = store.build_doc(session, app, view_ids(session, view, "rule"), names=names)
+    served = _doc(session, factory, background, app, view_ids(session, view, "rule"), names,
+                  force=fresh)  # fmt: skip
+    doc = served.data
     doc["peer_names"] = names
     if not modules.enabled(session, app.tenant_id, "findings"):  # Modul aus (0.107.0)
         doc["findings"] = []
@@ -1010,7 +1055,26 @@ def application_doc(
         doc["dependencies"] = store.dependencies(session, app, doc, visible)
     out = _out(session, app, store.Resolver(session, app.tenant_id))
     out.editable = editable
-    return ApplicationDocOut(application=out, **doc)
+    return ApplicationDocOut(application=out, snapshot=served.state(), **doc)
+
+
+@router.get("/{application_id}/doc/state", response_model=SnapshotOut)
+def application_doc_state(
+    application_id: int,
+    kind: Literal["doc", "connections"] = "doc",
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Stand der Doku bzw. der Verbindungen (0.108.0): wann berechnet, ob er noch zu den
+    Eingaben passt und ob er gerade neu rechnet - die Oberflaeche fragt, bis er fertig ist."""
+    app = _load(session, principal, application_id)
+    view = _visible(session, principal, app)
+    if kind == doc_snapshots.CONNECTIONS:
+        if principal.is_customer:  # Verbindungen zeigen die Infrastruktur
+            raise HTTPException(status_code=403, detail="forbidden")
+        return doc_snapshots.state(session, app, kind)
+    names = peer_names.enabled(session, app.tenant_id, principal.is_customer)
+    return doc_snapshots.state(session, app, kind, view_ids(session, view, "rule"), names)
 
 
 def _visible_apps(session: Session, principal: Principal, app: Application) -> set[int] | None:
@@ -1048,9 +1112,11 @@ def application_epg(
 
 @router.get("/{application_id}/dependencies")
 def application_dependencies(
+    background: BackgroundTasks,
     application_id: int,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Abhaengigkeiten zu anderen Applikationen (0.60.0, seit 0.88.0 wieder in der Doku): die
     Oberflaeche holt sie erst, wenn der Bereich aufgeklappt wird. Je Eintrag `infrastructure`
@@ -1058,7 +1124,10 @@ def application_dependencies(
     app = _load(session, principal, application_id)
     view = _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    doc = store.build_doc(session, app, view_ids(session, view, "rule"))
+    names = peer_names.enabled(session, app.tenant_id, principal.is_customer)
+    doc = doc_snapshots.serve(
+        session, factory, background, app, doc_snapshots.DOC, view_ids(session, view, "rule"), names
+    ).data  # Stand (0.108.0)
     deps = store.dependencies(session, app, doc, _visible_apps(session, principal, app))
     return {**deps, "infrastructure": bool(app.infrastructure)}
 

@@ -21,17 +21,17 @@ import re
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit, credentials, schedule, scheduler
 from app.api.customer_filter import customer_view, own_view
 from app.auth.deps import require_admin, require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.config import get_settings
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import (
     REFERENCE_PLATFORMS,
@@ -49,7 +49,7 @@ from app.models import (
     TopoContext,
 )
 from app.models.source_system import Platform
-from app.store import deletion, reachability, sites
+from app.store import app_refresh, deletion, reachability, sites
 from app.store import naming_profiles as profile_store
 
 router = APIRouter(prefix="/systems", tags=["systems"])
@@ -682,10 +682,12 @@ def create_system(
 
 @router.patch("/{system_id}", response_model=SystemOut)
 def update_system(
+    background: BackgroundTasks,
     system_id: int,
     body: SystemPatch,
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     """Quellsystem ändern - Admin. Mandantenwechsel nur, wenn keine Daten eines anderen
     Mandanten daran hängen (sonst stimmten Regeln und Quellsystem nicht mehr überein)."""
@@ -773,7 +775,7 @@ def update_system(
                 )
             )
             parallel.unreject(session, src.tenant_id, list(mates))
-        _regroup(session, src.tenant_id)
+        _regroup(session, src.tenant_id, background, factory)
     audit.record(
         session,
         actor=f"user:{principal.subject}",
@@ -797,15 +799,16 @@ def update_system(
     return _single_out(session, src)
 
 
-def _regroup(session: Session, tenant_id: int | None) -> None:
-    """Verbund geaendert: Befunde und Zwillinge im Regelindex neu (0.18.0)."""
+def _regroup(session: Session, tenant_id: int | None, background: BackgroundTasks,
+             factory: sessionmaker) -> None:  # fmt: skip
+    """Verbund geaendert: Zwillinge im Regelindex neu (0.18.0); die Befunde des Mandanten und
+    der Applikationen (Verbund = ein Hop, 0.59.0) seit 0.108.0 hinter der Antwort."""
     if tenant_id is None:
         return
-    from app.store import parallel, reconcile
+    from app.store import parallel
 
-    reconcile.reconcile_tenant(session, tenant_id)
     parallel.mark(session, tenant_id)
-    reconcile.refresh_app_findings(session, tenant_id)  # Verbund = ein Hop (0.59.0)
+    app_refresh.schedule_regroup(background, factory, tenant_id)
 
 
 class ParallelIn(BaseModel):
@@ -887,9 +890,11 @@ def _reject_ids(session: Session, body: ParallelRejectIn) -> list[int]:
 
 @router.post("/parallel-reject")
 def reject_parallel(
+    background: BackgroundTasks,
     body: ParallelRejectIn,
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Vorschlag ablehnen bzw. Verbund aufloesen - Admin (0.19.0): diese Firewalls sind nicht
     parallel und werden nicht mehr vorgeschlagen."""
@@ -898,7 +903,7 @@ def reject_parallel(
     tenant_scope(principal, body.tenant_id)
     ids = _reject_ids(session, body)
     new = parallel.reject(session, body.tenant_id, ids)
-    _regroup(session, body.tenant_id)
+    _regroup(session, body.tenant_id, background, factory)
     audit.record(
         session,
         actor=f"user:{principal.subject}",
@@ -933,9 +938,11 @@ def unreject_parallel(
 
 @router.post("/parallel-group", response_model=list[SystemOut])
 def set_parallel_group(
+    background: BackgroundTasks,
     body: ParallelIn,
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     """Verbund paralleler Firewalls setzen - Admin. Die Regeln der Firewalls werden
     zusammengefasst, Abweichungen erscheinen als Findings (0.18.0)."""
@@ -957,7 +964,7 @@ def set_parallel_group(
     from app.store import parallel
 
     parallel.unreject(session, body.tenant_id, body.system_ids)  # bewusst gesetzt
-    _regroup(session, body.tenant_id)
+    _regroup(session, body.tenant_id, background, factory)
     audit.record(
         session,
         actor=f"user:{principal.subject}",

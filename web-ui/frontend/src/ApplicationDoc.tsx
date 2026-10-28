@@ -46,6 +46,7 @@ import { findingLabel, serviceNames, useVdomShown } from "./refs";
 import RuleDetailDrawer from "./RuleDetail";
 import { NameCell } from "./RulesTable";
 import { siteLabel } from "./sites";
+import { SnapshotBar } from "./SnapshotBar";
 import { ActionBadge, Dash, download, Drawer, Empty, ErrorBox, Expandable, ExportLangSelect, Icon, Loading, Modal } from "./ui";
 import { L } from "./i18n";
 
@@ -244,6 +245,11 @@ export default function ApplicationDocView({
       .then(setDoc)
       .catch(setErr);
   }, [id, reload, tick]);
+  // Stand fertig bzw. neu berechnen (0.108.0): ohne „Erzeuge Doku…“, der alte bleibt bis dahin sichtbar
+  const refreshDoc = (force: boolean) =>
+    fetchAppDoc(id, force)
+      .then(setDoc)
+      .catch(setBusy);
   useEffect(() => {
     fetchSystems()
       .then(setSystems)
@@ -408,6 +414,7 @@ export default function ApplicationDocView({
         </button>
       </div>
 
+      <SnapshotBar snapshot={doc.snapshot} appId={id} kind="doc" onReload={refreshDoc} />
       <div className="card app-head">
         <div className="card-body pad">
           <h1 className="app-title">{a.name}</h1>

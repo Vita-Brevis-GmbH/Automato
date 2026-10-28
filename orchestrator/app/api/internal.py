@@ -11,21 +11,30 @@ import logging
 import time
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit, credentials
 from app.auth import mtls
 from app.config import get_settings
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.i18n import german
 from app.models import REFERENCE_PLATFORMS, CollectorRun, RunStatus, SourceSystem, Tenant
 from app.schemas.collector import CollectorResult, ReferenceBatch
 from app.sot import build_adapter
 from app.store import agents as agent_store
-from app.store import customers, ingest, reconcile, references, rule_index, runs, tenant_lock
+from app.store import (
+    customers,
+    doc_snapshots,
+    ingest,
+    reconcile,
+    references,
+    rule_index,
+    runs,
+    tenant_lock,
+)
 
 log = logging.getLogger(__name__)
 
@@ -228,10 +237,12 @@ def _entry_count(result: CollectorResult) -> int:
 def submit_result(
     run_id: str,
     result: CollectorResult,
+    background: BackgroundTasks,
     x_internal_token: str | None = Header(default=None),
     x_agent_token: str | None = Header(default=None),
     channel: mtls.Channel = Depends(mtls.agent_channel),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> ResultAck:
     """Ergebnis abliefern: zentraler Worker mit internem Token, Agent mit seinem eigenen
     Token - dann nur fuer einen Lauf, den genau dieser Agent abgeholt hat (ADR 0009).
@@ -243,6 +254,10 @@ def submit_result(
     Quittung bringt die Meldung zusaetzlich in seiner Sprache (`shown`, ADR 0028 Schritt 4)."""
     with german():
         ack = _receive(session, run_id, result, x_internal_token, x_agent_token, channel)
+    run = session.get(CollectorRun, run_id)
+    if run is not None and run.tenant_id and run.status is RunStatus.COMPLETED:
+        # Doku der zuletzt angesehenen Applikationen vorrechnen (0.108.0, ADR 0037)
+        background.add_task(doc_snapshots.warm, factory, run.tenant_id)
     shown = runs.show_message(ack.message)
     return ack if shown == ack.message else ack.model_copy(update={"shown": shown})
 

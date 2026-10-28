@@ -93,6 +93,7 @@ class Relevance:
         self._behind: dict[tuple, dict | None] = {}
         self._balancers: nat_store.Balancers | None = None
         self._balanced: set[int] | None = None
+        self._classifier: aci_relevance.Classifier | None = None
 
     def through_balancer(self, rule, values: list[str]) -> list[str]:
         """0.79.0: erreicht die Regel ein Ziel ueber einen Load Balancer (NSX ALB; VIP der
@@ -116,6 +117,15 @@ class Relevance:
         if self._graph is None:
             self._graph = Graph(self.session, self.tenant_id)
         return self._graph
+
+    @property
+    def classifier(self) -> "aci_relevance.Classifier":
+        """Externe EPGs und die EPG je IP fuer alle Contracts dieses Durchgangs - einmal geladen
+        (0.108.0: je Adresse neu geladen, kostete das Speichern einer Zone Minuten)."""
+        if self._classifier is None:
+            self._classifier = aci_relevance.Classifier(self.session, self.tenant_id,
+                                                        lambda: self.graph)  # fmt: skip
+        return self._classifier
 
     def _node(self, rule: Rule) -> Key | None:
         g = self.graph
@@ -395,7 +405,7 @@ def _aci_for_ip(
     if not rows:
         return {}
     epgs = {e.id: e for e in session.scalars(select(Epg).where(Epg.id.in_({r[2] for r in rows})))}
-    cls = aci_relevance.Classifier(session, tenant_id, lambda: rel.graph)
+    cls = rel.classifier
     found: dict[int, dict[str, list[tuple[str, str]]]] = defaultdict(lambda: defaultdict(list))
     internal: dict[tuple[int, str], list[Epg]] = defaultdict(list)
     members: dict[tuple[int, str], list[Epg]] = defaultdict(list)
@@ -461,7 +471,8 @@ def _covering(session: Session, epgs: list[Epg], ip, cls=None) -> tuple[set[int]
 
     if not epgs:
         return set(), {}
-    loc = epg_locate.Locator(session, epgs[0].tenant_id, cls)
+    # Locator des Classifiers: einmal je Durchgang geladen (VMs, Endpunkte, Subnetze)
+    loc = cls.locator if cls is not None else epg_locate.Locator(session, epgs[0].tenant_id)
     out: set[int] = set()
     placed: dict[tuple, str] = {}
     for sid, vrf in {(e.source_system_id, loc.cls.vrf_of(e)) for e in epgs}:
