@@ -34,6 +34,8 @@ FW4 = {
         _rule(54, "remote-to-web", ["10.77.5.0/24"], ["10.20.0.5"]),  # in Remote Access
         _rule(55, "web-to-clients", ["10.20.0.5"], ["10.71.0.0/16"]),  # ausgehend
         _rule(56, "mgmt-to-web", ["10.79.1.0/24"], ["10.20.0.5"]),  # aus dem DC Management
+        # ausgehend nur ueber eine breite Quelle (0.103.0): kein Zugriff der Applikation
+        _rule(57, "wide-out", ["10.0.0.0/8"], ["10.78.0.0/16"], src_zone="srv", dst_zone="lan"),
     ],
     "objects": [
         {"name": "G_clients", "category": "address", "family": "v4",
@@ -298,3 +300,28 @@ def test_netze_mit_ausschluessen_im_netzwerkdesign(client, session_factory):
     assert audit.decode_detail(rows[0])["changes"] == [
         {"zone_id": zid, "area": "bit", "nets": 1, "excluded": 1}]  # fmt: skip
     s.close()
+
+
+def test_ausgehend_mit_breiter_quelle_nicht_in_der_doku(client):
+    """0.103.0 (Anwender): Firewall-Regeln, deren Quelle offen ist (10.0.0.0/8), damit der
+    Server irgendwo zugreifen kann, zeigen bei dem Server nicht - ausgehend mit dem Server als
+    Host (web-to-clients) bzw. eingehend ueber einen grossen Bereich (clients-to-web) schon."""
+    tid, app, _ids = _setup(client)
+    url = f"/applications/{app['id']}/doc"
+    doc = client.get(url).json()
+    rules = {r["name"]: r["id"] for r in doc["rules"]}
+    assert "wide-out" not in rules and "clients-to-web" in rules
+    assert not [h for h in doc["hits"] if h["rule_id"] not in rules.values()]
+    assert doc["summary"]["outbound_broad"] == 2  # dazu any-out (Quelle any) der Grundumgebung
+    assert "wide-out" not in _where(doc)
+    system = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}).json()
+    assert "wide-out" not in _where(system)
+    assert "wide-out" not in {x["description"] for x in system["impossible"]}
+    # direkt der Applikation zugeordnet: bleibt da
+    rid = next(r["id"] for r in client.get("/rules", params={"tenant_id": tid, "q": "wide-out"})
+               .json() if r["name"] == "wide-out")  # fmt: skip
+    r = client.post(f"/applications/{app['id']}/rules", json={"rule_id": rid}, headers=OP)
+    assert r.status_code == 200, r.text
+    doc = client.get(url).json()
+    assert "wide-out" in {r["name"] for r in doc["rules"]}
+    assert doc["summary"]["outbound_broad"] == 1

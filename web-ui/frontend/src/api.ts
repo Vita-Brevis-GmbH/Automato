@@ -925,6 +925,7 @@ export interface ApplicationDoc {
     excluded?: number; // ausgeschlossene Regeln (0.60.0)
     hidden?: number; // in den Kategorien ausgeblendete Zeilen (0.69.0)
     helpers?: number; // Hilfs-Contracts über L3Outs, an den Firewall-Regeln (ADR 0034)
+    outbound_broad?: number; // 0.103.0: ausgehende Firewall-Regeln mit breiter Quelle, nicht in der Doku
   };
   systems: AppDocSystem2[];
   epgs: AppDocEpg[];

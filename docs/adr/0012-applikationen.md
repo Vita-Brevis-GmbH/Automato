@@ -214,6 +214,21 @@ Firewall, welche die User-Zugriffe steuert – eigene Firewall-Regeln und Contra
 - **Später:** aus den Netzen und Ausschlüssen je Zone lässt sich ein BGP-Filter (Prefix-Liste
   permit/deny) ableiten – nur als Vorschlag/Export, kein Schreibweg auf Geräte (ROADMAP).
 
+**Ergänzung 0.103.0 (Anwender 2026-10-28: „Ich möchte nur Firewall-Regeln sehen, welche Zugriffe
+auf die Systeme offen sind, welche durch zu gross gesetzte Rules möglich sind, und
+Firewall-Regeln, welche konkret den Server beinhalten. Firewall-Regeln, bei denen die Source offen
+ist (z. B. 10.0.0.0/8), damit der Server irgendwo zugreifen kann, sollen bei der Server-Doku nicht
+zeigen“):**
+- **Ausgehend mit breiter Quelle** (`appdoc.OUT_BROAD`, `outbound_broad`): eine Firewall-Regel,
+  die das System nur über ein Netz, einen Bereich bzw. any **in der Quelle** erfasst, ist kein
+  Zugriff dieser Applikation – sie fehlt in den Kategorien, unter „Regeln & Contracts“, in den
+  Treffern, Verbindungen und in der Doku je System (auch nicht unter „nicht möglich“); gezählt in
+  `summary.outbound_broad` („n ausgehende mit breiter Quelle ausgelassen“).
+- **Bleiben:** eingehende Regeln, auch über einen grossen Bereich im Ziel (Zugriffe auf die
+  Systeme, die zu gross gesetzte Regeln öffnen), Regeln, die das System konkret nennen (Host bzw.
+  Gruppe mit dem Host, ausgehend und eingehend), direkt der Applikation zugeordnete Regeln und
+  ACI-Contracts (vzAny/Preferred Group wie bisher).
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:

@@ -266,7 +266,19 @@ class Classifier:
             self._cache[key] = self._decide(epg, ip)
         return self._cache[key]
 
-    def _decide(self, epg: Epg, ip) -> tuple[str, str] | None:
+    def classify(self, epg: Epg, ip) -> tuple[str, str] | None:
+        """Zuordnung im Fabric (0.103.0, Weg-Suche und Verbindungen): das ACI ordnet eine IP
+        VRF-weit der externen EPG mit dem laengsten zuordnenden Subnetz zu - unabhaengig davon,
+        ueber welchen L3Out bzw. welche Firewall dahinter der Verkehr weitergeht. Das Routing der
+        Firewalls (ADR 0034, `_by_firewall`) bestimmt, welche Regeln in der Doku relevant sind,
+        nicht, ob der Contract im Fabric greift (Anwender: 10.67.0.13 liegt in 10.0.0.0/8 der
+        externen EPG - mit Contract erlaubt)."""
+        key = (epg.id, str(ip), "fabric")
+        if key not in self._cache:
+            self._cache[key] = self._decide(epg, ip, firewall=False)
+        return self._cache[key]
+
+    def _decide(self, epg: Epg, ip, firewall: bool = True) -> tuple[str, str] | None:
         vrf = self.vrf_of(epg)
         rows = self._ext.get((epg.source_system_id, vrf or ""), [])
         own = [(n, s) for e, n, s in rows if e.id == epg.id and within(ip, n)]
@@ -290,7 +302,7 @@ class Classifier:
                 f"{ip} is in the fabric of VRF {vrf} ({inside}) – traffic comes from the EPG, not "
                 f"via {epg.l3out or 'an L3Out'}",
             )
-        by_firewall = self._by_firewall(epg, ip, vrf, rows, mine)
+        by_firewall = self._by_firewall(epg, ip, vrf, rows, mine) if firewall else None
         if by_firewall is not None:
             return by_firewall
         best = max(n.prefixlen for n in mine)

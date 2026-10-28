@@ -874,6 +874,12 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     # parallele Firewalls (0.18.0): gleiche Policies nur einmal - die der fuehrenden Firewall
     twins = parallel.twin_ids(session, {row.get(appdoc.RULE) for _, _, row in rows})
     rows = [r for r in rows if r[2].get(appdoc.RULE) not in twins]
+    # ausgehende Firewall-Regeln mit breiter Quelle (0.103.0, `appdoc.OUT_BROAD`): kein Zugriff
+    # dieser Applikation - nicht in der Doku, nur gezaehlt; direkt zugeordnete bleiben
+    broad = {r[2].get(appdoc.RULE) for r in rows
+             if r[2].get(appdoc.OUT_BROAD) and r[2].get(appdoc.RULE) not in assigned}  # fmt: skip
+    rows = [r for r in rows if r[2].get(appdoc.RULE) not in broad or not r[2].get(appdoc.OUT_BROAD)]
+    broad -= {r[2].get(appdoc.RULE) for r in rows}
     if names and not restricted:  # Namen der Gegenstellen (0.95.0) - nie fuer Kunden-Benutzer
         peer_names.apply(session, tid, [row for _, _, row in rows])
     hits, tables = _hits_and_tables(rows, _pairs(session, {r[2].get(appdoc.RULE) for r in rows}))
@@ -939,6 +945,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             "firewall": sum(1 for r in rules if r.domain == RuleDomain.FIREWALL.value),
             "aci": sum(1 for r in rules if r.domain == RuleDomain.ACI_CONTRACT.value),
             "impossible": len(impossible),
+            "outbound_broad": len(broad),  # 0.103.0: ausgehend mit breiter Quelle, nicht da
             "specific": sum(1 for v in best.values() if v in ("specific", "assigned")),
             "assigned": sum(1 for v in best.values() if v == "assigned"),
             "excluded": len(excluded),

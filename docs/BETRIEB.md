@@ -1094,6 +1094,17 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     die Regel unspezifisch (die Spalte Zone zeigt, welche) – dann den Bereich enger fassen, einen
     Ausschluss setzen oder die Zonen anders schneiden. Kunden-Benutzer sehen Spalte, Zonen und
     Titel mit Zonen nicht.
+  - **Nur relevante Firewall-Regeln (0.103.0):** ausgehende Firewall-Regeln, die die Systeme nur
+    über eine breite Quelle erfassen (z. B. 10.0.0.0/8 → irgendwohin, any → Internet), stehen
+    nicht mehr in der Doku – weder in den Kategorien noch unter „Regeln & Contracts“, in den
+    Verbindungen oder in der Doku je System; oben steht „n ausgehende mit breiter Quelle
+    ausgelassen“. Eingehende Regeln über grosse Bereiche (Zugriffe auf die Systeme) und Regeln,
+    die den Server konkret nennen, bleiben. Gehört eine solche Regel doch zur Applikation: im
+    Regel-Detail „der Applikation zuordnen“.
+  - **ACI im Weg (0.103.0):** leitet die Firewall hinter dem L3Out eine IP zurück ins ACI, ordnet
+    die Prüfung im Fabric sie trotzdem der externen EPG mit dem längsten Subnetz zu („… –
+    Zuordnung im ACI“), ein Contract erlaubt dann. Ordnet keine externe EPG zu, steht der Grund in
+    Klammern dahinter.
   - **Abhängigkeiten (0.60.0, seit 0.88.0 wieder):** Bereich „Abhängigkeiten“ (zugeklappt,
     lädt beim Aufklappen) mit „nutzt“ und „wird genutzt von“ je Applikation und den Regeln.
     Abgeleitet aus den erlaubenden Regeln mit spezifischem Treffer, deren Gegenseite EPGs,

@@ -102,10 +102,10 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
     # Regeln wie in der Regel-Ansicht (Aktion, Herkunft), je System Richtung und Bezug
     rules = {r["id"]: r for r in doc["rules"]}
     by_name = {r["name"]: r for r in doc["rules"]}
-    assert set(by_name) == {"web-in", "CT_app:SJ", "net-in", "any-out"}
-    assert (
-        by_name["any-out"]["action"] == "deny" and by_name["CT_app:SJ"]["domain"] == "aci_contract"
-    )
+    # any-out (Quelle any, ausgehend): seit 0.103.0 kein Zugriff der Applikation (Anwender) -
+    # nicht in der Doku, nur gezaehlt
+    assert set(by_name) == {"web-in", "CT_app:SJ", "net-in"}
+    assert by_name["CT_app:SJ"]["domain"] == "aci_contract"
     names = {s["key"]: s["name"] for s in doc["systems"]} | {
         e["key"]: e["label"] for e in doc["epgs"]
     }
@@ -118,7 +118,6 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
         ("CT_app:SJ", "web01-007-ka", "out", "specific"),  # Consumer ueber die EPG der VM
         ("CT_app:SJ", "db01-007-ka", "in", "specific"),
         ("net-in", "db01-007-ka", "in", "subnet"),  # nur ueber 10.20.0.0/16
-        ("any-out", "web01-007-ka", "out", "any"),
         ("web-in", "TE_ka/AP_007/EG_web01", "in", "specific"),  # Host im Subnetz der EPG
         ("net-in", "TE_ka/AP_007/EG_web01", "in", "subnet"),
     } <= hits
@@ -128,10 +127,11 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
 
     # Kennzahlen: eine Regel zaehlt mit ihrem engsten Bezug
     s = doc["summary"]
-    assert (s["vms"], s["servers"], s["epgs"], s["rules"]) == (2, 0, 3, 4)
-    assert (s["firewall"], s["aci"], s["specific"], s["unspecific"]) == (3, 1, 2, 2)
-    assert s["by_scope"] == {"subnet": 1, "any": 1, "vzany": 0, "pref_group": 0}
-    assert web["rules"] == {"specific": 2, "unspecific": 2}
+    assert (s["vms"], s["servers"], s["epgs"], s["rules"]) == (2, 0, 3, 3)
+    assert (s["firewall"], s["aci"], s["specific"], s["unspecific"]) == (2, 1, 2, 1)
+    assert s["by_scope"] == {"subnet": 1, "any": 0, "vzany": 0, "pref_group": 0}
+    assert s["outbound_broad"] == 1  # any-out
+    assert web["rules"] == {"specific": 2, "unspecific": 1}
 
     # Befunde der Applikation (VM-IP fehlt im IPAM)
     assert any(
@@ -150,7 +150,7 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
     }
     assert obj[("net-in", "db01-007-ka")] == ("dst", "N_srv16", "10.20.0.0/16")
     assert obj[("web-in", "web01-007-ka")] == ("dst", "H_web01", "10.20.0.5")
-    assert obj[("any-out", "web01-007-ka")] == ("src", "any", "")
+    assert ("any-out", "web01-007-ka") not in obj
     assert obj[("CT_app:SJ", "web01-007-ka")] == ("src", "EPG TE_ka/AP_007/EG_web01", "")
     # Firewall-Objekte je Name mit den Firewalls und Namenspruefung gegen das IPAM
     assert web["objects"] == [
@@ -168,8 +168,8 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
     everyone = ["db01-007-ka (10.20.1.7)", "web01-007-ka (10.20.0.5)", "TE_ka/AP_007/EG_web01",
                 "TE_ka/AP_007/EPG_db01"]  # fmt: skip
     assert rows["net-in"] == [("N_srv16 (10.20.0.0/16)", everyone)]
-    # Zugriff der Applikation ueber any auf ein anderes Netz (Kategorie 10, ausgehend): seit
-    # 0.78.2 nicht in den Kategorien, als Treffer weiter da
+    # Zugriff der Applikation ueber any auf ein anderes Netz (ausgehend): seit 0.78.2 nicht in
+    # den Kategorien, seit 0.103.0 auch nicht als Treffer
     assert "any-out" not in rows
     # spezifisch: das Objekt mit seinen Systemen, ganzer ACI-Pfad
     assert ("EPG TE_ka/AP_007/EG_web01:\nweb01-007-ka (10.20.0.5)", None) in rows["CT_app:SJ"]

@@ -59,6 +59,7 @@ from app.store.rule_view import bare_service
 from app.store.topology import is_net, overlaps, within
 
 SHOWN = 12
+WHY = 2  # Gruende je Seite, warum keine externe EPG zuordnet (0.103.0)
 _ALL = ("", "any", "unspecified")
 
 
@@ -199,23 +200,49 @@ class AciChecker:
         inside = self._inside(sid, vrf, ip)
         if inside is not None:
             return inside
-        found: list[Member] = []
-        for epg in self.cls.externals(ip):
-            if epg.source_system_id != sid or self.cls.vrf_of(epg) != vrf:
-                continue
-            rel = self.cls.check(epg, ip)
-            if rel is None or rel[0] == aci_relevance.IMPOSSIBLE:
-                continue
-            net = self.cls.subnet_for(epg, ip)
-            name = aci_relevance.ext_label(epg)
-            label = L(f"externe EPG {name}", f"external EPG {name}") + (f" ({net})" if net else "")
-            found.append(Member(epg, rel[0] == aci_relevance.POSSIBLE, label))
+        found, why = self._externals(sid, vrf, ip, self.cls.check)
+        if not found:
+            # 0.103.0 (Anwender): lehnt das Routing der Firewalls hinter den L3Outs jede externe
+            # EPG ab (z. B. die Firewall leitet die IP zurueck ins ACI), ordnet das Fabric sie
+            # trotzdem zu - VRF-weit das laengste zuordnende Subnetz (10.0.0.0/8), mit Contract
+            # erlaubt
+            found, _ = self._externals(sid, vrf, ip, self.cls.classify, fabric=True)
         if not found and is_net(ip):  # Netz (0.39.0): externe EPGs, die nur einen Teil erfassen
             found = self._partial_external(sid, vrf, ip)
         if not found:
-            return [], L(f"keine EPG bzw. externe EPG erfasst {ip} in VRF {vrf}",
-                         f"no EPG or external EPG covers {ip} in VRF {vrf}")  # fmt: skip
+            text = L(f"keine EPG bzw. externe EPG erfasst {ip} in VRF {vrf}",
+                     f"no EPG or external EPG covers {ip} in VRF {vrf}")  # fmt: skip
+            if why:
+                text += f" ({'; '.join(dict.fromkeys(why[:WHY]))})"
+            return [], text
         return found, _either(m.text for m in found)
+
+    def _externals(self, sid: int, vrf: str, ip, decide,
+                   fabric: bool = False) -> tuple[list[Member], list[str]]:  # fmt: skip
+        """Externe EPGs der VRF, die die IP zuordnen, und warum die uebrigen nicht (0.103.0)."""
+        found: list[Member] = []
+        why: list[str] = []
+        for epg in self.cls.externals(ip):
+            if epg.source_system_id != sid:
+                continue
+            name = aci_relevance.ext_label(epg)
+            net = self.cls.subnet_for(epg, ip)
+            if self.cls.vrf_of(epg) != vrf:
+                other = self.cls.vrf_of(epg)
+                why.append(L(f"externe EPG {name} ({net}) liegt in VRF {other}",
+                             f"external EPG {name} ({net}) is in VRF {other}"))  # fmt: skip
+                continue
+            rel = decide(epg, ip)
+            if rel is None:
+                continue
+            if rel[0] == aci_relevance.IMPOSSIBLE:
+                why.append(rel[1])
+                continue
+            label = L(f"externe EPG {name}", f"external EPG {name}") + (f" ({net})" if net else "")
+            if fabric:
+                label += L(" – Zuordnung im ACI", " – assignment in the ACI")
+            found.append(Member(epg, rel[0] == aci_relevance.POSSIBLE, label))
+        return found, why
 
     def _partial_external(self, sid: int, vrf: str, net) -> list[Member]:
         out: dict[int, Member] = {}

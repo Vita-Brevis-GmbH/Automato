@@ -20,10 +20,10 @@ def test_regeln_nur_wo_der_verkehr_durchkommt(client):
     doc = client.get(f"/appdoc/systems/{web}", params={"tenant_id": tid}).json()
     shown = {(row["_rule"], row["_side"]) for t in doc["tables"] for row in t["rows"]}
     gone = {(x["description"], x["side"]): x for x in doc["impossible"]}
+    # ausgehend mit breiter Quelle (lan-to-dmz-deny, lan-to-inet-users vom Server aus) stehen
+    # seit 0.103.0 gar nicht in der Doku des Servers - auch nicht als „nicht möglich“
     assert set(gone) == {
-        ("lan-to-dmz-deny", "src"),  # vom Server aus: sein Verkehr kommt über dmz, nicht lan
         ("lan-to-inet-users", "dst"),
-        ("lan-to-inet-users", "src"),
         ("lan-to-dmz-falsch", "dst"),  # DMZ-Netz am Ausgang internet
     }
     inet = gone[("lan-to-inet-users", "dst")]

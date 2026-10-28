@@ -81,6 +81,15 @@ Ergänzt ADR 0019 (Punkt 6: ACI-Contracts über externe EPGs, 0.28.0), ADR 0012 
   Fabrics, Treffer, Relevanz der Contracts), Weg-Suche und Verbindungen Ende zu Ende (ACI-Hop
   `aci_check`), Regel-Liste nach IP (`relevance.for_ip`), Zonen nach dem Weg und Zugehörigkeit
   der Kunden.
+- **Ergänzung 0.103.0** (Anwender 2026-10-28, Verbindungen Ende zu Ende: „keine EPG bzw. externe
+  EPG erfasst 10.67.0.13 … – jedoch ist die IP bei 10.0.0.0/8 im L3O / external EPG vorhanden und
+  mit Contract erlaubt“): lehnt das Routing der Firewalls **jede** externe EPG der VRF ab (z. B.
+  die Firewall leitet die IP zurück ins ACI), ordnet die Prüfung im Fabric (`aci_check`) die IP
+  nach dem ACI zu – VRF-weit das längste zuordnende Subnetz (`Classifier.classify`), Text
+  „… – Zuordnung im ACI“; ein Contract erlaubt dann wie sonst. Nennt die Firewall einen L3Out,
+  bleibt sie führend (DMZ über L3O_inet). Ordnet trotzdem keine externe EPG zu, nennt der Text
+  die Gründe (andere VRF, Routing der Firewall, genaueres Subnetz). Die Doku bleibt unverändert
+  Firewall führend.
 
 ### 3. Contracts zu externen EPGs: Hilfs-Contracts
 

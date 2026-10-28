@@ -561,6 +561,22 @@ export default function ApplicationDocView({
               {L(`${s.impossible} routingtechnisch unmögliche ausgelassen`, `${s.impossible} impossible by routing omitted`)}
             </span>
           ) : null}
+          {s.outbound_broad ? (
+            <span
+              className="faint"
+              id="app-outbound-broad"
+              style={{ fontSize: 12 }}
+              title={L(
+                "Ausgehende Firewall-Regeln, die die Systeme nur über eine breite Quelle erfassen (z. B. 10.0.0.0/8 bzw. any) – kein Zugriff dieser Applikation. Direkt zugeordnete Regeln bleiben.",
+                "Outbound firewall rules that only cover the systems via a broad source (e.g. 10.0.0.0/8 or any) – no access of this application. Rules assigned directly remain.",
+              )}
+            >
+              {L(
+                `${s.outbound_broad} ausgehende mit breiter Quelle ausgelassen`,
+                `${s.outbound_broad} outbound with a broad source omitted`,
+              )}
+            </span>
+          ) : null}
           {s.helpers ? (
             <span
               className="faint"

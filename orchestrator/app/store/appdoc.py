@@ -148,6 +148,14 @@ REVERSE = "_reverse"
 # in Kategorie 10 („Unspezifische Zugriffe auf die Applikation“: nur eingehend)
 L3OUT, NARROW, FW_RULES, CAT_HIDDEN = "_l3out", "_narrow", "_fw_rules", "_cat_hidden"
 UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
+# Ausgehende Firewall-Regeln mit breiter Quelle (0.103.0, Anwender: „Firewall-Regeln, welche die
+# Source offen ist (z. B. 10.0.0.0/8), damit der Server irgendwo zugreifen kann, sollen bei dem
+# Server nicht zeigen“): das System steht nur ueber ein Netz, einen Bereich bzw. any in der
+# Quelle - kein Zugriff dieser Applikation. Nicht in der Doku (Kategorien, Regeln, Verbindungen,
+# Doku je System), nur gezaehlt; eingehende breite Regeln (Zugriffe auf das System) und Regeln,
+# die das System konkret nennen (Host, Gruppe mit dem Host), bleiben.
+OUT_BROAD = "_out_broad"
+BROAD = ("subnet", "any")
 # L3Outs: die Firewall entscheidet (ADR 0034, Anwender 2026-10-27). Ein Contract zu externen EPGs
 # mit einer Firewall hinter dem L3Out ist nur ein Hilfs-Contract (`HELPER`: L3Outs und die
 # Firewall-Regeln, an denen er steht) - keine eigene Zeile, an der Firewall-Regel vermerkt
@@ -471,6 +479,8 @@ def _envelope(
         for i in rows_by_table:
             keep = []
             for row in rows_by_table[i]:
+                if row.get(OUT_BROAD):  # ausgehend mit breiter Quelle (0.103.0): nicht da
+                    continue
                 if row.get(REL) != relevance_store.IMPOSSIBLE:
                     if not row.get(CAT_HIDDEN):  # Kategorien bereinigt (0.78.2)
                         keep.append(row)
@@ -983,6 +993,8 @@ def mark_categories(data: TenantData, items: list[tuple[int, dict]],
     for idx, row in items:
         if idx == 10 and row.get(DIRECTION) == "out":
             row[CAT_HIDDEN] = True
+        if outbound_broad(data, row):
+            row[OUT_BROAD] = True
     if not data.has_firewall:
         return items
     _mark_l3outs(data, items, vrfs)
@@ -1022,6 +1034,14 @@ def mark_categories(data: TenantData, items: list[tuple[int, dict]],
                 f"öffnet weniger als die Firewall-Regeln, es fehlt {shown}",
                 f"opens less than the firewall rules, missing {shown}")  # fmt: skip
     return items
+
+
+def outbound_broad(data: TenantData, row: dict) -> bool:
+    """Ausgehende Firewall-Regel, die das System nur ueber eine breite Quelle erfasst (0.103.0)."""
+    if row.get(DIRECTION) != "out" or row.get(SCOPE) not in BROAD:
+        return False
+    rule = data.rule(row.get(RULE))
+    return rule is not None and rule.domain is RuleDomain.FIREWALL
 
 
 def _missing_text(missing: list[str]) -> str:

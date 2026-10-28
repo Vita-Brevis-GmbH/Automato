@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.103.0 – 2026-10-28
+
+Applikations-Doku nur mit relevanten Firewall-Regeln, ACI im Weg (Rückmeldung des Anwenders
+2026-10-28; ADR 0012 und 0034 Ergänzung 0.103.0).
+
+- **Ausgehend mit breiter Quelle ausgelassen:** Firewall-Regeln, die das System nur über ein
+  Netz, einen Bereich bzw. any in der Quelle erfassen (z. B. 10.0.0.0/8 → irgendwohin), stehen
+  nicht mehr in der Applikations-Doku (Kategorien, Regeln & Contracts, Treffer, Verbindungen) und
+  nicht in der Doku je System; Anzeige „n ausgehende mit breiter Quelle ausgelassen“
+  (`summary.outbound_broad`). Eingehende über grosse Bereiche, Regeln mit dem Server konkret und
+  direkt zugeordnete bleiben.
+- **ACI im Weg:** leitet die Firewall hinter dem L3Out eine IP zurück ins ACI (keine externe EPG
+  nach ihrem Routing), ordnet die Prüfung im Fabric sie der externen EPG mit dem längsten Subnetz
+  der VRF zu („… – Zuordnung im ACI“) – mit Contract erlaubt statt „das Fabric verwirft den
+  Verkehr“. Ordnet keine externe EPG zu, nennt der Text den Grund.
+- Tests (orchestrator 640).
+
 ## 0.102.0 – 2026-10-28
 
 Kategorien der Applikations-Doku im Netzwerkdesign (Rückmeldung des Anwenders 2026-10-28; ADR 0012
