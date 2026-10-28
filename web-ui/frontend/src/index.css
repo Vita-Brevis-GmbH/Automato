@@ -256,6 +256,8 @@ table.doc-rows tr.doc-l3out td { background: var(--surface-2); font-weight: 600;
 /* Zonen einer Kategorie (0.101.0) */
 .doc-zones { padding: 6px 14px 0; font-size: 12px; }
 .doc-zones b { color: var(--fg); font-weight: 600; }
+.row-changed td { background: var(--surface-2); }
+#appdoc-zones textarea { width: 100%; resize: vertical; font-size: 12px; }
 .l3out-fw-edit { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
 .expandable { margin-top: 2px; }
 .expandable .linkbtn { font-size: 12px; }

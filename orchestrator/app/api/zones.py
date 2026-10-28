@@ -1054,6 +1054,88 @@ def set_appdoc_areas(
     return [{"id": z.id, "name": z.name, "appdoc_area": z.appdoc_area} for z in items.values()]
 
 
+class AppdocZoneIn(BaseModel):
+    id: int
+    appdoc_area: str | None = None  # nicht mitgeschickt = bleibt
+    # Netze der Zone (Selektoren „Netz“) bzw. ihre Ausschluesse („ohne“ Netz); None = bleibt
+    nets: list[str] | None = Field(default=None, max_length=500)
+    excluded: list[str] | None = Field(default=None, max_length=500)
+
+
+class AppdocZonesIn(BaseModel):
+    tenant_id: int
+    zones: list[AppdocZoneIn] = Field(max_length=1000)
+
+
+def _prefix_list(values: list[str]) -> list[str]:
+    """Netze pruefen und schreiben wie gelesen (CIDR, ohne doppelte)."""
+    out: list[str] = []
+    for v in values:
+        net = customer_store._net(v.strip())
+        if net is None:
+            raise HTTPException(status_code=422, detail=f"invalid prefix {v.strip()!r}")
+        if str(net) not in out:
+            out.append(str(net))
+    return out
+
+
+def _prefixes_of(z: LogicalZone, exclude: bool) -> list[str]:
+    return [s.value for s in z.selectors if s.kind == "prefix" and s.exclude is exclude]
+
+
+@router.put("/appdoc")
+def set_appdoc_zones(
+    body: AppdocZonesIn,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> list[dict]:
+    """Kategorien der Applikations-Doku in Netzwerkdesign → Zonen pflegen (0.102.0, Operator,
+    Anwender: „das Zuordnen gehört zu den Zonen ins Netzwerkdesign“): je Zone die Kategorie und
+    ihre Netze mit Ausschluessen (Selektoren „Netz“ bzw. „ohne“ Netz); die anderen Selektoren
+    (ACI, Firewall, IPAM, Anbindung) bleiben. Spaeter laesst sich daraus z. B. ein BGP-Filter je
+    Zone ableiten. Liefert die Zonen mit Kategorie, Netzen und Ausschluessen."""
+    tid = tenant_scope(principal, body.tenant_id)
+    items = {z.id: z for z in store.load(session, tid)}
+    if any(x.id not in items for x in body.zones):
+        raise HTTPException(status_code=404, detail="zone not found")
+    changes: list[dict] = []
+    owners: set[int | None] = set()
+    for x in body.zones:
+        z, entry = items[x.id], {}
+        if "appdoc_area" in x.model_fields_set:
+            area = _area(x.appdoc_area)
+            if z.appdoc_area != area:
+                z.appdoc_area = entry["area"] = area
+        if x.nets is not None or x.excluded is not None:
+            nets = _prefix_list(x.nets) if x.nets is not None else _prefixes_of(z, False)
+            excluded = (_prefix_list(x.excluded) if x.excluded is not None
+                        else _prefixes_of(z, True))  # fmt: skip
+            if (nets, excluded) != (_prefixes_of(z, False), _prefixes_of(z, True)):
+                others = [s for s in z.selectors if s.kind != "prefix"]
+                z.selectors = others + [
+                    LogicalZoneSelector(kind="prefix", value=v, exclude=ex)
+                    for ex, values in ((False, nets), (True, excluded)) for v in values
+                ]  # fmt: skip
+                entry["nets"], entry["excluded"] = len(nets), len(excluded)
+                owners.add(z.customer_id)
+        if entry:
+            z.updated_at = datetime.now(UTC)
+            changes.append({"zone_id": z.id, **entry})
+    session.flush()
+    if changes:
+        audit.record(session, actor=f"user:{principal.subject}", action="zone.appdoc_set",
+                     subject=str(tid), detail={"tenant_id": tid, "changes": changes})  # fmt: skip
+        if owners:  # Netze geaendert: Kunden auf den Zonen, Befunde der Zonen
+            _rederive(session, tid, owners)
+            reconcile.refresh_zone_findings(session, tid)
+        app_refresh.schedule_tenant(background, factory, tid)  # Befunde nach den Kategorien
+    return [{"id": z.id, "name": z.name, "appdoc_area": z.appdoc_area,
+             "nets": _prefixes_of(z, False), "excluded": _prefixes_of(z, True)}
+            for z in items.values()]  # fmt: skip
+
+
 @router.put("/{zone_id}")
 def update_zone(
     zone_id: int,

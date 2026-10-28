@@ -334,13 +334,17 @@ def _zones(z: dict | None) -> str:
 
 
 def zones_text(zones: list[dict]) -> str:
-    """Zonen einer Kategorie (0.101.0): „Zonen: Clients (10.70.0.0/16, …) · …“."""
+    """Zonen einer Kategorie (0.101.0): „Zonen: Clients (10.70.0.0/16, …) · …“; seit 0.102.0
+    mit den Ausschluessen („10.0.0.0/8 ohne 10.20.0.0/16“)."""
     parts = []
     for z in zones:
         more = z.get("nets_total", 0) - len(z.get("nets") or [])
         nets = ", ".join(z.get("nets") or []) + (
             L(f" +{more} weitere", f" +{more} more") if more > 0 else ""
         )
+        if z.get("excluded"):
+            listed = ", ".join(z["excluded"])
+            nets += L(f" ohne {listed}", f" without {listed}")
         parts.append(f"{z['name']} ({nets})" if nets else z["name"])
     return L("Zonen: ", "Zones: ") + " · ".join(parts)
 

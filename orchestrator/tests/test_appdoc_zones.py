@@ -33,6 +33,7 @@ FW4 = {
         _rule(53, "wide-to-web", ["10.64.0.0/10"], ["10.20.0.5"]),  # mehrere Bereiche
         _rule(54, "remote-to-web", ["10.77.5.0/24"], ["10.20.0.5"]),  # in Remote Access
         _rule(55, "web-to-clients", ["10.20.0.5"], ["10.71.0.0/16"]),  # ausgehend
+        _rule(56, "mgmt-to-web", ["10.79.1.0/24"], ["10.20.0.5"]),  # aus dem DC Management
     ],
     "objects": [
         {"name": "G_clients", "category": "address", "family": "v4",
@@ -201,3 +202,99 @@ def test_kategorie_mit_bereich_pure():
                is_dnat_target=False, area="sra") == 6  # fmt: skip
     assert cat(direction="in", counterpart_zone="lan", counterpart_external=True,
                is_dnat_target=False, area="bit") == 2  # fmt: skip
+
+
+def _titles(doc: dict) -> dict[int, str]:
+    return {t["index"]: t["title"] for t in doc["tables"]}
+
+
+def test_titel_nach_den_zonen_und_dc_management(client):
+    """0.102.0 (Anwender): Zuordnung in Netzwerkdesign → Zonen, Titel nach den Zonen; DC
+    Management liegt hinter einer eigenen Firewall - eigene Firewall-Regeln und Contracts im ACI
+    in Kategorie 11."""
+    tid, app, ids = _setup(client)
+    url = f"/applications/{app['id']}/doc"
+    doc = client.get(url).json()
+    assert [t["index"] for t in doc["tables"]] == list(range(1, 11))  # ohne Zone keine 11
+    assert _titles(doc)[3] == "Zugriff in das Unternehmensnetzwerk"
+    assert _where(doc)["mgmt-to-web"] == {10}
+    assert _where(doc)["CT_app:SJ"] == {7}
+
+    body = {"tenant_id": tid, "name": "DC Management", "kind": "dc",
+            "selectors": [{"kind": "prefix", "value": "10.79.0.0/16"},
+                          {"kind": "aci_epg", "value": "TE_ka/AP_007/EPG_db01"}]}  # fmt: skip
+    mgmt = client.post("/zones", json=body, headers=OP).json()["id"]
+    zones = [{"id": ids["Clients"], "appdoc_area": "bit"},
+             {"id": ids["Remote Access"], "appdoc_area": "sra"},
+             {"id": mgmt, "appdoc_area": "mgmt"}]  # fmt: skip
+    assert client.put("/zones/appdoc", json={"tenant_id": tid, "zones": zones},
+                      headers={"X-Dev-Roles": "viewer"}).status_code == 403  # fmt: skip
+    r = client.put("/zones/appdoc", json={"tenant_id": tid, "zones": zones}, headers=OP)
+    assert r.status_code == 200, r.text
+    assert {z["name"]: z["appdoc_area"] for z in r.json()}["DC Management"] == "mgmt"
+
+    doc = client.get(url).json()
+    titles = _titles(doc)
+    assert (titles[3], titles[4]) == ("Zugriff in Clients", "Zugriff aus Clients")
+    assert (titles[6], titles[11]) == ("Zugriff Remote Access", "Zugriff DC Management")
+    assert titles[2] == "Zugriff aus dem Internet"  # ohne Zone der Titel der Vorlage
+    where = _where(doc)
+    assert where["mgmt-to-web"] == {11}
+    # Contract: beim System web01 ist db01 (EPG der Zone) die Gegenstelle -> 11; bei db01 bleibt
+    # web01 die Gegenstelle (ACI intern, 7)
+    assert where["CT_app:SJ"] == {7, 11}
+    head = next(t for t in doc["tables"] if t["index"] == 11)
+    assert head["zones"][0]["name"] == "DC Management" and "Zone" in head["columns"]
+    en = client.get(url, headers={"Accept-Language": "en"}).json()
+    assert (_titles(en)[4], _titles(en)[11]) == ("Access from Clients", "Access DC Management")
+    # Doku je System ebenso
+    system = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}).json()
+    assert _titles(system)[11] == "Zugriff DC Management"
+    assert _where(system)["mgmt-to-web"] == {11}
+
+
+def test_netze_mit_ausschluessen_im_netzwerkdesign(client, session_factory):
+    """0.102.0 (Anwender): Netze einer Zone zuweisen und Ausschluesse machen - im
+    Netzwerkdesign; die anderen Selektoren bleiben. Der Kopf der Kategorie nennt die Netze wie
+    erfasst mit „ohne“."""
+    tid, app, ids = _setup(client)
+    url = f"/applications/{app['id']}/doc"
+    zid = ids["Clients"]
+    base = {"tenant_id": tid, "name": "Clients", "kind": "access",
+            "selectors": [*({"kind": "prefix", "value": n} for n in ZONES["Clients"]),
+                          {"kind": "fw_zone", "value": "lan-x"}]}  # fmt: skip
+    assert client.put(f"/zones/{zid}", json=base, headers=OP).status_code == 200
+    item = {"id": zid, "appdoc_area": "bit", "nets": ["10.70.0.0/15", " 10.70.0.0/15"],
+            "excluded": ["10.71.0.0/16"]}  # fmt: skip
+    r = client.put("/zones/appdoc", json={"tenant_id": tid, "zones": [item]}, headers=OP)
+    assert r.status_code == 200, r.text
+    out = {z["id"]: z for z in r.json()}[zid]
+    assert (out["nets"], out["excluded"], out["appdoc_area"]) == (
+        ["10.70.0.0/15"], ["10.71.0.0/16"], "bit")  # fmt: skip
+    listed = next(z for z in client.get(f"/zones?tenant_id={tid}").json() if z["id"] == zid)
+    assert {(s["kind"], s["value"], s["exclude"]) for s in listed["selectors"]} == {
+        ("fw_zone", "lan-x", False), ("prefix", "10.70.0.0/15", False),
+        ("prefix", "10.71.0.0/16", True)}  # fmt: skip
+
+    doc = client.get(url).json()
+    where = _where(doc)
+    assert where["clients-to-web"] == {3}  # der Rest 10.70.0.0/16 liegt in der Zone
+    assert "web-to-clients" not in where  # 10.71.0.0/16 ausgeschlossen: ausgehend unspezifisch
+    head = next(t for t in doc["tables"] if t["index"] == 3)["zones"]
+    assert [(z["name"], z["nets"], z["excluded"]) for z in head] == [
+        ("Clients", ["10.70.0.0/15"], ["10.71.0.0/16"])]  # fmt: skip
+
+    # nur die Kategorie: Netze bleiben; ungueltig bzw. unbekannt
+    r = client.put("/zones/appdoc", json={"tenant_id": tid, "zones": [{"id": zid,
+                   "appdoc_area": None}]}, headers=OP)  # fmt: skip
+    assert {z["id"]: z for z in r.json()}[zid]["nets"] == ["10.70.0.0/15"]
+    bad = {"tenant_id": tid, "zones": [{"id": zid, "excluded": ["10.71.0.0/33"]}]}
+    assert client.put("/zones/appdoc", json=bad, headers=OP).status_code == 422
+    unknown = {"tenant_id": tid, "zones": [{"id": 999999, "appdoc_area": "bit"}]}
+    assert client.put("/zones/appdoc", json=unknown, headers=OP).status_code == 404
+
+    s = session_factory()
+    rows = [r for r in s.query(AuditLog) if r.action == "zone.appdoc_set"]
+    assert audit.decode_detail(rows[0])["changes"] == [
+        {"zone_id": zid, "area": "bit", "nets": 1, "excluded": 1}]  # fmt: skip
+    s.close()

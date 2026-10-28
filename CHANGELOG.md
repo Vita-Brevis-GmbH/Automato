@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.102.0 – 2026-10-28
+
+Kategorien der Applikations-Doku im Netzwerkdesign (Rückmeldung des Anwenders 2026-10-28; ADR 0012
+Ergänzung 0.102.0).
+
+- **Reiter „Kategorien“ im Netzwerkdesign** (Operator): je Zone die Kategorie, ihre **Netze**
+  (Quell-Adressen) und **Ausschlüsse** („ohne“, aus den Netzen herausgeschnitten) – `PUT
+  /zones/appdoc` ersetzt nur die Selektoren „Netz“, die übrigen bleiben; Audit `zone.appdoc_set`;
+  „Vorschlag nach Namen“ (Edge Internet → 1/2, Edge Office → 3/4, Edge VPN → 5, SRA/Remote → 6,
+  RES-… → 9, … Management → 11). Der Dialog „Zonen zuordnen“ in der Applikations-Doku entfällt;
+  „Zonen der Kategorien ↗“ führt ins Netzwerkdesign (`#design?tab=appdoc`).
+- **Titel nach den Zonen:** die Kategorien nennen ihre Zonen („2. Zugriff aus Edge Internet“,
+  „5. Zugriff Edge VPN“, „9. Zugriff zu RES-DC“); ohne Zone der Titel der Vorlage. Der Kopf nennt
+  die Netze wie erfasst mit den Ausschlüssen („10.0.0.0/8 ohne 10.20.0.0/16“) – Ansicht, Markdown,
+  Word, Doku je System.
+- **Kategorie 11 „Zugriff Management“** für DC Management (hinter einer eigenen Firewall):
+  Firewall-Regeln mit der Gegenstelle in der Zone und Contracts zu EPGs der Zone; erscheint nur
+  mit einer solchen Zone. Externe EPGs folgen dem Bereich ihrer Zone wie Firewall-Regeln; Spalte
+  „Zone“ auch an Contracts.
+- Ausblenden einer Regel in Kategorie 11 möglich; Tests (orchestrator 636, UI 146).
+
 ## 0.101.1 – 2026-10-28
 
 Korrektur zu 0.101.0.

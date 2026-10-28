@@ -66,6 +66,9 @@ TABLES: list[tuple[int, str, str]] = [
     (8, "Zugriff innerhalb des Security Tenant", "aci"),
     (9, "Zugriff zu anderen Security Tenants", "firewall"),
     (10, "Unspezifische Zugriffe auf die Applikation", "firewall"),
+    # 0.102.0 (Anwender): DC Management hinter einer eigenen Firewall, die die Zugriffe der
+    # Benutzer steuert - eigene Firewall-Regeln und Contracts im ACI; nur ueber Zonen
+    (11, "Zugriff Management", "firewall"),
 ]
 # Titel auf Englisch (0.87.0, ADR 0028): `TABLES` bleibt deutsch, gewaehlt wird bei der Ausgabe
 _TITLES_EN = {
@@ -79,13 +82,37 @@ _TITLES_EN = {
     8: "Access within the security tenant",
     9: "Access to other security tenants",
     10: "Unspecific access to the application",
+    11: "Management access",
 }
+# Titel nach den Zonen der Kategorie (0.102.0, Anwender: „die Namen der korrekten Zonen
+# verwenden“): der Wortlaut der Vorlage, statt Internet/Unternehmensnetzwerk/L3O_… die Namen der
+# zugeordneten Zonen (`appdoc_zones.heads`); ohne Zonen der Titel der Vorlage
+_ZONE_TITLES: dict[int, tuple[str, str]] = {
+    1: ("{z} Zugriff", "{z} access"),
+    2: ("Zugriff aus {z}", "Access from {z}"),
+    3: ("Zugriff in {z}", "Access to {z}"),
+    4: ("Zugriff aus {z}", "Access from {z}"),
+    5: ("Zugriff {z}", "Access {z}"),
+    6: ("Zugriff {z}", "Access {z}"),
+    9: ("Zugriff zu {z}", "Access to {z}"),
+    11: ("Zugriff {z}", "Access {z}"),
+}
+TITLE_ZONES = 3  # Zonen-Namen im Titel, dann „…“
 
 
 def table_title(index: int) -> str:
     """Titel einer Kategorie in der Sprache der Anfrage."""
     de = next((t for i, t, _ in TABLES if i == index), "")
     return L(de, _TITLES_EN.get(index, de))
+
+
+def zone_title(index: int, names: list[str]) -> str:
+    """Titel einer Kategorie mit den Namen ihrer Zonen („Zugriff aus Edge Internet“)."""
+    pattern = _ZONE_TITLES.get(index)
+    if not pattern or not names:
+        return table_title(index)
+    shown = ", ".join(names[:TITLE_ZONES]) + (" …" if len(names) > TITLE_ZONES else "")
+    return L(*pattern).replace("{z}", shown)
 
 
 # "Bezug": wie die Regel das System erfasst - direkt, ueber ein Netz/einen Bereich bzw. eine
@@ -176,7 +203,7 @@ TABLE_COLUMNS: dict[int, list[str]] = {
         DESCRIPTION,
     ],  # fmt: skip
 }
-for _i in (3, 4, 5, 6, 7, 8, 9, 10):
+for _i in (3, 4, 5, 6, 7, 8, 9, 10, 11):
     TABLE_COLUMNS[_i] = _COMMON
 MAX_IPS = 3  # IPs je System in einer Zelle
 # Anzeige der Spalten auf Englisch (0.87.0, ADR 0028): die Spaltennamen bleiben Schluessel der
@@ -276,9 +303,12 @@ def categorize(
     is_dnat_target: bool,
     area: str | None = None,
 ) -> int:
-    """Ordnet eine Regel einer der 10 Tabellen zu (pure; testbar). `area` = Bereich der
-    logischen Zone der Gegenstelle (0.101.0, `appdoc_zones`) - geht der Zone der Firewall vor."""
+    """Ordnet eine Regel einer der Tabellen zu (pure; testbar). `area` = Bereich der
+    logischen Zone der Gegenstelle (0.101.0, `appdoc_zones`) - geht der Zone der Firewall vor;
+    DC Management (`mgmt`, 0.102.0) nur ueber Zonen, beide Richtungen in 11."""
     kind = area or zone_kind(counterpart_zone)
+    if kind == "mgmt":
+        return 11
     if direction == "in":
         if is_dnat_target or kind == "inet" or counterpart_external:
             return 2
@@ -798,6 +828,11 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
             same_tenant = all(c.aci_tenant == epg.aci_tenant for c in cp_epgs)
             external = [c for c in cp_epgs if c.kind == "external"]
             only_external = bool(external) and len(external) == len(cp_epgs)
+            # Zonen der Gegenstellen (0.102.0): DC Management (11) auch fuer Contracts; externe
+            # EPGs bzw. ein System ausserhalb nach dem Bereich ihrer Zone wie Firewall-Regeln
+            zm = data.zone_map
+            cp_zones = zm.zones_of_epgs(cp_epgs) if zm.active else []
+            cp_area = zm.area(cp_zones) if cp_zones else None
             how = sides[side]  # Schluessel: direkt | vzAny <VRF> | ESG <Name>
             shown = L("direkt", "direct") if how == "direkt" else how
             text = shown if via is None else (via if how == "direkt" else f"{how} · {via}")
@@ -817,12 +852,15 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                 directions = directions[1:]
             for direction in directions:
                 reverse = direction != forward
-                if only_external:
+                if cp_area == "mgmt":
+                    idx = 11
+                elif only_external:
                     idx = categorize(
                         direction=direction,
                         counterpart_zone=external[0].l3out,
                         counterpart_external=False,
                         is_dnat_target=False,
+                        area=cp_area,
                     )
                 elif epg.kind == "external":
                     # System ausserhalb des Fabrics (0.83.1): der Zugriff kommt ueber seinen
@@ -833,6 +871,7 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                         counterpart_zone=epg.l3out,
                         counterpart_external=False,
                         is_dnat_target=False,
+                        area=cp_area,
                     )
                     idx = 9 if idx == 10 else idx
                 else:
@@ -848,6 +887,7 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                         {
                             APP: app_label(system_name, ips),
                             PEER: targets,
+                            ZONE_COL: zm.text(cp_zones) if cp_zones else "",
                             SERVICE: services + (f" {reverse_mark()}" if reverse else ""),
                             ACTION: action_label(r),
                             PROTECTION: ", ".join(r.protections) if r.protections else "",

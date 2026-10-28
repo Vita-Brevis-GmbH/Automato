@@ -50,8 +50,9 @@ ZONE_SELECTOR_KINDS = (*SELECTOR_KINDS, "exit")
 INTENTS = ("allow", "limited", "deny")
 # Bereiche der Kategorien der Applikations-Doku (0.101.0, `store/appdoc_zones.py`): Internet
 # (Kategorien 1/2), Unternehmensnetzwerk (3/4), VPN (5), Remote Access (6), andere Security
-# Tenants (9) - dieselben Arten wie die Zonen-Merkmale `appdoc.zone_kind`
-APPDOC_AREAS = ("inet", "bit", "vpn", "sra", "res")
+# Tenants (9) - dieselben Arten wie die Zonen-Merkmale `appdoc.zone_kind`; seit 0.102.0 DC
+# Management (11, hinter einer eigenen Firewall: Firewall-Regeln und Contracts)
+APPDOC_AREAS = ("inet", "bit", "vpn", "sra", "res", "mgmt")
 
 
 class LogicalZone(Base):

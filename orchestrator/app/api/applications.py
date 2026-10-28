@@ -191,7 +191,7 @@ class DocHitOut(BaseModel):
 
     rule_id: int
     system: str  # Schluessel aus systems/epgs
-    table: int  # Kategorie 1-10
+    table: int  # Kategorie 1-11
     direction: str  # in (System ist Ziel) | out (System ist Quelle)
     side: str = ""  # src | dst - Seite der Regel
     object: str = ""  # Objekt der Regel, das das System erfasst (H_web01, N_srv16, any, EPG …)
@@ -286,7 +286,7 @@ class HideIn(BaseModel):
     """Regel(n) einer Zeile in einer Kategorie ausblenden (0.69.0): IPv4/IPv6-Paar = zwei."""
 
     rule_ids: list[int] = Field(min_length=1, max_length=4)
-    category: int | None = Field(default=None, ge=1, le=10)  # leer = alle Kategorien
+    category: int | None = Field(default=None, ge=1, le=11)  # leer = alle Kategorien
     reason: str = Field(min_length=5, max_length=1000)
 
 

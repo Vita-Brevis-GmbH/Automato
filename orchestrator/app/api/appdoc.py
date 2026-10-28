@@ -141,9 +141,7 @@ def _with_names(session: Session, principal: Principal, tenant_id: int | None, d
     if principal.is_customer or tid is None:
         appdoc_zones.strip(doc["tables"], store.ZONE_COL)
     else:
-        zm = appdoc_zones.ZoneMap(session, tid)
-        for t in doc["tables"]:
-            t["zones"] = zm.table_zones(t["index"]) if zm.has_areas else []
+        appdoc_zones.heads(appdoc_zones.ZoneMap(session, tid), doc["tables"])
     return doc
 
 

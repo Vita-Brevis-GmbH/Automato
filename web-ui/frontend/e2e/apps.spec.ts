@@ -136,7 +136,7 @@ test("Applikation: Namen der Gegenstellen in den Kategorien – Einstellung des 
   }
 });
 
-test("Applikation: Zonen den Kategorien zuordnen, Spalte Zone, Namen der Gegenstellen für den Admin (0.101.0)", async ({ page }) => {
+test("Netzwerkdesign → Kategorien: Zonen zuordnen, Titel nach der Zone, Netze mit Ausschlüssen, Namen für den Admin (0.102.0)", async ({ page }) => {
   const categories = async () => {
     await expect(page.locator("#app-categories > .card")).toBeVisible();
     if ((await page.locator("#app-categories .stack").count()) === 0) await page.locator("#app-categories h2.fold-title").first().click();
@@ -145,6 +145,7 @@ test("Applikation: Zonen den Kategorien zuordnen, Spalte Zone, Namen der Gegenst
   const card = (index: number) =>
     page.locator("#app-categories .stack > .card", { has: page.locator("h2", { hasText: new RegExp(`^${index}\\. `) }) });
   const dmz = () => page.locator("#app-categories tbody tr", { hasText: "dmz-to-web" }).first();
+  const table = page.locator("#appdoc-zones");
   // Zone mit dem Netz der Gegenstelle (10.10.20.0/24) – am Ende wieder gelöscht, ein Rest aus
   // einem abgebrochenen Versuch vorher
   const zones = (await (await page.request.get("/api/zones?tenant_id=1")).json()) as { id: number; name: string }[];
@@ -161,16 +162,21 @@ test("Applikation: Zonen den Kategorien zuordnen, Spalte Zone, Namen der Gegenst
     await expect(card(10).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);
     await expect(card(10).locator("thead")).toContainText("Zone");
     await expect(dmz()).toContainText("Partnernetz Test");
-    // Zone zuordnen: Unternehmensnetzwerk (3/4)
+    // zugeordnet wird bei den Zonen im Netzwerkdesign (Anwender 2026-10-28)
     await page.click("#app-zone-areas");
-    const dialog = page.locator("#zone-areas-dialog");
-    const area = dialog.getByLabel("Kategorie der Zone Partnernetz Test");
+    await expect(page).toHaveURL(/#design\?tab=appdoc/);
+    await expect(page.locator(".tabbar button.on")).toHaveText("Kategorien");
+    const area = table.getByLabel("Kategorie der Zone Partnernetz Test");
     await area.selectOption("bit");
     await expect(area).toHaveValue("bit");
-    await page.click("#zone-areas-save");
-    await expect(dialog).toHaveCount(0);
+    await page.click("#appdoc-save");
+    await expect(page.locator("#appdoc-saved")).toBeVisible();
+    // Doku: die Kategorie heisst nach der Zone, im Kopf die Zone mit ihrem Netz
+    await open(page);
+    await categories();
     await expect(card(3).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);
     await expect(card(10).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(0);
+    await expect(card(3).locator("h2")).toHaveText("3. Zugriff in Partnernetz Test");
     await expect(card(3).locator(".doc-zones")).toContainText("Partnernetz Test (10.10.20.0/24)");
     // Admin: Namen der Gegenstellen direkt in der Doku ein- und ausschalten
     const names = page.locator("#app-peer-names");
@@ -181,6 +187,17 @@ test("Applikation: Zonen den Kategorien zuordnen, Spalte Zone, Namen der Gegenst
     await names.click();
     await expect(names).not.toHaveClass(/\bon\b/);
     await expect(dmz()).not.toContainText("N_dmz-net");
+    // Netze mit Ausschluss: 10.10.16.0/20 ohne 10.10.20.0/24 – die Gegenstelle liegt nicht mehr in der Zone
+    await page.goto("/#design?tab=appdoc");
+    await table.getByLabel("Netze der Zone Partnernetz Test").fill("10.10.16.0/20");
+    await table.getByLabel("Ausschlüsse der Zone Partnernetz Test").fill("10.10.20.0/24");
+    await page.click("#appdoc-save");
+    await expect(page.locator("#appdoc-saved")).toBeVisible();
+    await expect(table.getByLabel("Ausschlüsse der Zone Partnernetz Test")).toHaveValue("10.10.20.0/24");
+    await open(page);
+    await categories();
+    await expect(card(10).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);
+    await expect(dmz()).not.toContainText("Partnernetz Test");
   } finally {
     await page.request.patch("/api/tenants/1", { data: { appdoc_foreign_names: false } });
     await page.request.delete(`/api/zones/${zoneId}`);

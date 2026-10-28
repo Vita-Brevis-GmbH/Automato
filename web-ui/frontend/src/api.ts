@@ -705,6 +705,7 @@ export interface DocTableZone {
   area: AppdocArea;
   nets: string[]; // die ersten Netze
   nets_total: number;
+  excluded?: string[]; // 0.102.0: ausgeschlossene Netze („ohne“)
 }
 export interface DocHide {
   id: number;
@@ -3023,10 +3024,17 @@ export interface LogicalZone {
   appdoc_area?: AppdocArea | null; // 0.101.0: Kategorien der Applikations-Doku
 }
 // Bereich der Kategorien der Applikations-Doku (0.101.0): Internet (1/2), Unternehmensnetzwerk
-// (3/4), VPN (5), Remote Access (6), andere Security Tenants (9)
-export type AppdocArea = "inet" | "bit" | "vpn" | "sra" | "res";
-export const APPDOC_AREAS: AppdocArea[] = ["inet", "bit", "vpn", "sra", "res"];
-export const APPDOC_AREA_TABLES: Record<AppdocArea, number[]> = { inet: [1, 2], bit: [3, 4], vpn: [5], sra: [6], res: [9] };
+// (3/4), VPN (5), Remote Access (6), andere Security Tenants (9); seit 0.102.0 DC Management (11)
+export type AppdocArea = "inet" | "bit" | "vpn" | "sra" | "res" | "mgmt";
+export const APPDOC_AREAS: AppdocArea[] = ["inet", "bit", "vpn", "sra", "res", "mgmt"];
+export const APPDOC_AREA_TABLES: Record<AppdocArea, number[]> = {
+  inet: [1, 2],
+  bit: [3, 4],
+  vpn: [5],
+  sra: [6],
+  res: [9],
+  mgmt: [11],
+};
 export interface ZoneIn {
   tenant_id: number;
   name: string;
@@ -3286,12 +3294,20 @@ export const fetchZones = (tenantId: number) => getJSON<LogicalZone[]>(`/api/zon
 export const createZone = (body: ZoneIn) => sendJSON<LogicalZone>("/api/zones", "POST", body);
 export const updateZone = (id: number, body: ZoneIn) => sendJSON<LogicalZone>(`/api/zones/${id}`, "PUT", body);
 export const deleteZone = (id: number) => sendJSON<void>(`/api/zones/${id}`, "DELETE");
-// Zonen den Kategorien der Applikations-Doku zuordnen (0.101.0, Operator): Zone -> Bereich bzw. null
-export const setAppdocAreas = (tenantId: number, areas: Record<number, AppdocArea | null>) =>
-  sendJSON<{ id: number; name: string; appdoc_area: AppdocArea | null }[]>("/api/zones/appdoc-areas", "PUT", {
-    tenant_id: tenantId,
-    areas,
-  });
+// Kategorien der Applikations-Doku in Netzwerkdesign → Kategorien (0.102.0, Operator): je Zone die
+// Kategorie, ihre Netze und Ausschlüsse (Selektoren „Netz“; die anderen Selektoren bleiben)
+export interface AppdocZoneIn {
+  id: number;
+  appdoc_area?: AppdocArea | null; // nicht mitgeschickt = bleibt
+  nets?: string[]; // nicht mitgeschickt = bleiben
+  excluded?: string[];
+}
+export const setAppdocZones = (tenantId: number, zones: AppdocZoneIn[]) =>
+  sendJSON<{ id: number; name: string; appdoc_area: AppdocArea | null; nets: string[]; excluded: string[] }[]>(
+    "/api/zones/appdoc",
+    "PUT",
+    { tenant_id: tenantId, zones },
+  );
 // Vorschläge beim Erfassen einer Zone (0.66.0): Selektoren, deren Name zur Zone passt
 export interface ZoneAssistItem {
   selector: ZoneSelector;

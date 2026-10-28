@@ -131,6 +131,9 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Netzwerkplan | Network diagram |
 | Kategorie | Category |
 | Kategorie der Zone (Bereich der Kategorien) | Category of the zone |
+| Kategorien (Reiter im Netzwerkdesign, 0.102.0) | Categories |
+| Ausschlüsse („ohne“ Netz einer Zone) | Exclusions (“without”) |
+| Zugriff Management (Kategorie 11) | Management access |
 | Zweck (Dev/Test/Prod) | Purpose |
 | Kritikalität | Criticality |
 | Verantwortlich | Owner |

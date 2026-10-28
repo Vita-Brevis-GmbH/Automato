@@ -191,6 +191,29 @@ in den Zonen die Source-IP-Adressen hinterlegen“):**
   aus IPAM/VM. Der Global Admin schaltet die Einstellung des Mandanten seit 0.101.0 auch direkt in
   der Karte „Doku nach Kategorien“ ein bzw. aus (`#app-peer-names`).
 
+**Ergänzung 0.102.0 (Anwender 2026-10-28: „das Zuordnen sollte nicht in der Applikation
+stattfinden, sondern bei den Zonen im Netzwerkdesign – dann auch gleich die Namen der korrekten
+Zonen verwenden“, „nebst Subnetzen auch Ausschlüsse machen“, „DC Management ist hinter einer
+Firewall, welche die User-Zugriffe steuert – eigene Firewall-Regeln und Contracts im ACI“):**
+- **Zuordnen im Netzwerkdesign:** Reiter **Kategorien** (Netzwerkdesign, Operator): je Zone die
+  Kategorie, ihre **Netze** und **Ausschlüsse** („ohne“, aus den Netzen herausgeschnitten) –
+  `PUT /zones/appdoc` ersetzt nur die Selektoren „Netz“ der Zone, die übrigen (ACI, Firewall,
+  IPAM, Anbindung) bleiben; Audit `zone.appdoc_set`; Vorschlag nach dem Namen der Zone (Edge
+  Internet → 1/2, Edge Office → 3/4, Edge VPN → 5, SRA/Remote → 6, RES-… → 9, … Management → 11).
+  Die Applikations-Doku hat keinen eigenen Dialog mehr, nur den Weg dorthin (`#app-zone-areas`).
+- **Titel nach den Zonen** (`appdoc.zone_title`): der Wortlaut der Vorlage mit den Namen der
+  zugeordneten Zonen statt Internet/Unternehmensnetzwerk/L3O_… („2. Zugriff aus Edge Internet“,
+  „5. Zugriff Edge VPN“, „9. Zugriff zu RES-DC“); ohne Zone der Titel der Vorlage. Der Kopf nennt
+  je Zone die Netze wie erfasst mit den Ausschlüssen („10.0.0.0/8 ohne 10.20.0.0/16“).
+- **Kategorie 11 „Zugriff Management“** (Bereich `mgmt`, nur über Zonen): DC Management liegt
+  hinter einer eigenen Firewall – Firewall-Regeln mit der Gegenstelle in der Zone und **Contracts**
+  zu EPGs der Zone (ACI-Selektor bzw. Subnetz in der Zone) stehen dort, beide Richtungen. Die
+  Kategorie erscheint nur mit einer Zone dieser Kategorie bzw. mit Zeilen. Externe EPGs bzw. ein
+  System ausserhalb des Fabrics folgen dem Bereich ihrer Zone wie Firewall-Regeln; ACI-intern (7/8)
+  bleibt sonst unverändert. DC selbst bekommt keinen Bereich (eigene Umgebung).
+- **Später:** aus den Netzen und Ausschlüssen je Zone lässt sich ein BGP-Filter (Prefix-Liste
+  permit/deny) ableiten – nur als Vorschlag/Export, kein Schreibweg auf Geräte (ROADMAP).
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:

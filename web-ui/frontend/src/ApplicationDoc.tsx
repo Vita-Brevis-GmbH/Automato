@@ -18,8 +18,6 @@ import {
   AppDependencies,
   AppDependency,
   ApplicationDoc,
-  APPDOC_AREAS,
-  AppdocArea,
   assignAppRule,
   DocScope,
   DocTable,
@@ -30,13 +28,10 @@ import {
   fetchAppDoc,
   fetchAppEpg,
   fetchSystems,
-  fetchZones,
   hideAppRules,
-  LogicalZone,
   patchTenant,
   Purpose,
   removeAppMember,
-  setAppdocAreas,
   showAppRule,
   Rule,
   System,
@@ -54,7 +49,6 @@ import { NameCell } from "./RulesTable";
 import { siteLabel } from "./sites";
 import { ActionBadge, Dash, download, Drawer, Empty, ErrorBox, Expandable, ExportLangSelect, Icon, Loading, Modal } from "./ui";
 import { L } from "./i18n";
-import { areaLabel } from "./zoneAreas";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -229,7 +223,6 @@ export default function ApplicationDocView({
   const [tick, setTick] = useState(0); // Regel zugeordnet bzw. ausgeschlossen (0.60.0)
   const [busy, setBusy] = useState<unknown>(null);
   const [hiding, setHiding] = useState<{ table: DocTable; row: DocRow } | null>(null); // 0.69.0
-  const [zonesOpen, setZonesOpen] = useState(false); // Zonen den Kategorien zuordnen (0.101.0)
   const [namesBusy, setNamesBusy] = useState(false);
   const vdomShown = useVdomShown();
   const { fold, setAll } = useFolds(FOLD_KEY, printing);
@@ -784,9 +777,18 @@ export default function ApplicationDocView({
                 {L("Namen der Gegenstellen", "Names of peers")}
               </button>
             )}
-            {categories.open && me.isOperator && !me.isCustomer && (
-              <button className="btn btn-ghost btn-sm no-print" id="app-zone-areas" onClick={() => setZonesOpen(true)}>
-                {L("Zonen zuordnen", "Assign zones")}
+            {categories.open && !me.isCustomer && onGo && (
+              // 0.102.0 (Anwender): zugeordnet wird bei den Zonen im Netzwerkdesign
+              <button
+                className="btn btn-ghost btn-sm no-print"
+                id="app-zone-areas"
+                title={L(
+                  "Kategorien je Zone mit ihren Netzen und Ausschlüssen – in Netzwerkdesign → Kategorien",
+                  "Categories per zone with their networks and exclusions – in Network design → Categories",
+                )}
+                onClick={() => onGo("design", { tab: "appdoc" })}
+              >
+                {L("Zonen der Kategorien ↗", "Zones of the categories ↗")}
               </button>
             )}
             {categories.open && (
@@ -822,16 +824,6 @@ export default function ApplicationDocView({
 
       {exportOpen && (
         <ExportDialog customer={me.isCustomer} onClose={() => setExportOpen(false)} onRun={runExport} />
-      )}
-      {zonesOpen && (
-        <ZoneAreasDialog
-          tenantId={a.tenant_id}
-          onClose={() => setZonesOpen(false)}
-          onSaved={() => {
-            setZonesOpen(false);
-            setTick((t) => t + 1);
-          }}
-        />
       )}
       {systemKey && (
         <SystemDrawer
@@ -2344,111 +2336,6 @@ function ExportDialog({
 }
 
 // Regel in einer Kategorie ausblenden (0.69.0): Begründung Pflicht, nur diese bzw. alle Kategorien
-// Zonen den Kategorien zuordnen (0.101.0, Anwender 2026-10-28): je Zone der Bereich der Kategorien,
-// aus dem die Zugriffe kommen – Firewall-Regeln mit grossem Quell-Bereich stehen dann dort statt
-// unter „Unspezifische Zugriffe“. Die Netze der Zone (Selektoren) pflegt Netzwerkdesign → Zonen.
-function ZoneAreasDialog({ tenantId, onClose, onSaved }: { tenantId: number; onClose: () => void; onSaved: () => void }) {
-  const [zones, setZones] = useState<LogicalZone[] | null>(null);
-  const [areas, setAreas] = useState<Record<number, AppdocArea | null>>({});
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<unknown>(null);
-  useEffect(() => {
-    // eine spätere Antwort setzt die Auswahl nicht zurück (StrictMode lädt zweimal)
-    let live = true;
-    fetchZones(tenantId)
-      .then((zs) => {
-        if (!live) return;
-        setZones(zs);
-        setAreas((m) => ({ ...Object.fromEntries(zs.map((z) => [z.id, z.appdoc_area ?? null])), ...m }));
-      })
-      .catch((e) => live && setErr(e));
-    return () => {
-      live = false;
-    };
-  }, [tenantId]);
-  const changed = (zones ?? []).filter((z) => (z.appdoc_area ?? null) !== (areas[z.id] ?? null));
-  const save = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await setAppdocAreas(tenantId, Object.fromEntries(changed.map((z) => [z.id, areas[z.id] ?? null])));
-      onSaved();
-    } catch (e) {
-      setErr(e);
-      setBusy(false);
-    }
-  };
-  return (
-    <Modal
-      title={L("Zonen den Kategorien zuordnen", "Assign zones to categories")}
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn btn-ghost" onClick={onClose}>
-            {L("Abbrechen", "Cancel")}
-          </button>
-          <button className="btn btn-primary" id="zone-areas-save" disabled={busy || changed.length === 0} onClick={() => void save()}>
-            {busy ? "…" : L("Speichern", "Save")}
-          </button>
-        </>
-      }
-    >
-      <div id="zone-areas-dialog">
-        <ErrorBox error={err} prefix={L("Zonen zuordnen", "Assign zones")} />
-        <p className="faint" style={{ marginTop: 0, fontSize: 12 }}>
-          {L(
-            "Je Zone die Kategorie, aus der ihre Zugriffe kommen. Eine Firewall-Regel steht in der Kategorie der Zone ihrer Gegenstelle – auch wenn sie einen grossen Bereich zulässt (z. B. 10.0.0.0/8 auf den Server). Nennt die Gegenstelle Zonen mehrerer Kategorien, bleibt sie unspezifisch. Die Netze der Zonen (Quell-Adressen) pflegt Netzwerkdesign → Zonen.",
-            "Per zone the category its accesses come from. A firewall rule goes into the category of its peer's zone – even if it allows a large range (e.g. 10.0.0.0/8 to the server). If the peer covers zones of several categories, it stays unspecific. The networks of the zones (source addresses) are maintained in Network design → Zones.",
-          )}
-        </p>
-        {!zones ? (
-          <Loading>{L("Lade Zonen…", "Loading zones…")}</Loading>
-        ) : zones.length === 0 ? (
-          <Empty title={L("Noch keine Zonen", "No zones yet")}>
-            {L("Zonen mit ihren Netzen in Netzwerkdesign → Zonen erfassen.", "Create zones with their networks in Network design → Zones.")}
-          </Empty>
-        ) : (
-          <table className="compact">
-            <thead>
-              <tr>
-                <th>{L("Zone", "Zone")}</th>
-                <th>{L("Netze", "Networks")}</th>
-                <th>{L("Kategorie", "Category")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {zones.map((z) => (
-                <tr key={z.id}>
-                  <td>
-                    <b>{z.name}</b>
-                    {z.code ? <span className="faint"> · {z.code}</span> : null}
-                  </td>
-                  <td className="mono">{z.nets}</td>
-                  <td>
-                    <select
-                      className="input"
-                      aria-label={L(`Kategorie der Zone ${z.name}`, `Category of zone ${z.name}`)}
-                      value={areas[z.id] ?? ""}
-                      onChange={(e) => setAreas((m) => ({ ...m, [z.id]: (e.target.value || null) as AppdocArea | null }))}
-                    >
-                      <option value="">{L("— keine", "— none")}</option>
-                      {APPDOC_AREAS.map((x) => (
-                        <option key={x} value={x}>
-                          {areaLabel(x)}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </Modal>
-  );
-}
-
 function HideDialog({
   table,
   row,

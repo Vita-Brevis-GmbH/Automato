@@ -414,11 +414,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.100.0** | Switches & Router über SNMPv3 (authPriv, nur GET/GETBULK auf die Positivliste der Standard-MIBs) als Alternative zu SSH; Host-Schlüssel auch bei Agent-Läufen geprüft (ADR 0033) |
 | **0.101.0** | Applikations-Doku: Zonen an den Kategorien (Bereich je Zone), Kategorie nach der Zone der Gegenstelle auch für grosse Quell-Bereiche, Spalte Zone und Zonen mit Netzen im Kopf, Namen breiter Quellen über die Gruppe der Regel, Schalter für den Global Admin (ADR 0012 Ergänzung 0.101.0) |
 | **0.101.1** | Korrektur: „Zonen zuordnen“ behält die gewählte Kategorie, auch wenn die Liste der Zonen später nochmals ankommt |
+| **0.102.0** | Kategorien der Applikations-Doku im Netzwerkdesign (Reiter Kategorien: je Zone Kategorie, Netze und Ausschlüsse, Vorschlag nach Namen), Titel nach den Zonen, Kategorie 11 DC Management mit Firewall-Regeln und Contracts (ADR 0012 Ergänzung 0.102.0) |
 
-### Nächste Arbeiten (Stand 0.101.1)
+### Nächste Arbeiten (Stand 0.102.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.101.1.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.102.0.
 
 **Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
 
@@ -436,6 +437,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | NAT / VIPs: Namen gegen die Namenskonvention prüfen | **umgesetzt in 0.96.0** (Präfix je Typ VIP/Virtual Server/IP-Pool) |
 | Doku nach Kategorien: Namen der unspezifischen Quellen (statt nur IPs) – Möglichkeit für den Global Admin (2026-10-28) | **umgesetzt in 0.101.0** (Gruppe wie in der Regel, Schalter in der Karte) |
 | Unspezifische Zugriffe mit grossem Quell-Bereich auf das System in die passende Kategorie; Zonen an den Kategorien mit ihren Quell-Adressen (2026-10-28) | **umgesetzt in 0.101.0** (Bereich je Zone, Spalte Zone, Zonen im Kopf) |
+| Zuordnen der Kategorien bei den Zonen im Netzwerkdesign, Namen der korrekten Zonen (Edge Internet, DC Management, DC, RES-DC, Edge Office, Edge VPN …) (2026-10-28) | **umgesetzt in 0.102.0** (Reiter Kategorien, Titel nach den Zonen, DC Management = Kategorie 11 mit Firewall-Regeln und Contracts) |
+| Netze einer Zone mit Ausschlüssen zuweisen (2026-10-28) | **umgesetzt in 0.102.0** (Netze und „ohne“ je Zone im Reiter Kategorien) |
+| BGP-Filter aus den Netzen und Ausschlüssen je Zone ableiten (2026-10-28, „später“) | offen – nur Vorschlag/Export (Prefix-Liste permit/deny je Zone), kein Schreibweg; mit dem Anwender abstimmen |
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4
 Verkabelung, Applikationen, Kunden, Routing“):**

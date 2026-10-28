@@ -95,3 +95,12 @@ test("Englisch: NAT-Kette über den Load Balancer", async ({ page }) => {
   await front.click();
   await expect(page.locator(".drawer")).toContainText("Chain via the load balancer (1)");
 });
+
+// 0.102.0: Kategorien der Applikations-Doku im Netzwerkdesign
+test("Englisch: Kategorien der Applikations-Doku im Netzwerkdesign", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("automato_lang", "en"));
+  await page.goto("/#design?tab=appdoc");
+  await expect(page.locator(".tabbar button.on")).toHaveText("Categories");
+  await expect(page.locator("#appdoc-zones h2")).toHaveText("Categories of the application documentation");
+  await expect(page.locator("#appdoc-zones thead")).toContainText("without (exclusions)");
+});

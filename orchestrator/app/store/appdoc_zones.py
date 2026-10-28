@@ -20,6 +20,12 @@ den Netzen.
 
 Rein lesend; nichts davon wird gespeichert. Kunden-Benutzer sehen weder die Spalte noch die
 Zonen im Kopf (Netze der Infrastruktur, `strip`) - die Kategorie gilt fuer sie gleich.
+
+Seit 0.102.0 (Anwender 2026-10-28): zugeordnet wird in Netzwerkdesign → Zonen; der Titel einer
+Kategorie nennt ihre Zonen („Zugriff aus Edge Internet“, `appdoc.zone_title`); der Kopf nennt
+je Zone die Netze wie erfasst und die Ausschluesse („10.0.0.0/8 ohne 10.20.0.0/16“). Neu der
+Bereich DC Management (11): hinter einer eigenen Firewall - Firewall-Regeln und Contracts zu
+EPGs der Zone (ACI-Selektor bzw. Subnetz in der Zone) stehen dort.
 """
 
 from __future__ import annotations
@@ -28,10 +34,11 @@ import bisect
 import ipaddress
 from collections import defaultdict
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.i18n import L
-from app.models import LogicalZone
+from app.models import Epg, EpgSubnet, LogicalZone
 
 Net = ipaddress.IPv4Network | ipaddress.IPv6Network
 BITS = {4: 32, 6: 128}
@@ -42,7 +49,9 @@ AREA_TABLES: dict[str, tuple[int, ...]] = {
     "vpn": (5,),
     "sra": (6,),
     "res": (9,),
+    "mgmt": (11,),
 }
+ONLY_WITH_ZONES = (11,)  # Kategorien nur mit zugeordneter Zone bzw. Zeilen
 SHOWN_NETS = 6  # Netze je Zone im Kopf einer Kategorie
 SHOWN_ZONES = 4  # Zonen je Zelle
 
@@ -69,16 +78,27 @@ class ZoneMap:
     """Logische Zonen eines Mandanten mit ihren Netzen - einmal je Doku geladen."""
 
     def __init__(self, session: Session, tenant_id: int):
-        from app.store import zones as zone_store  # spaet: zones -> customers -> ...
+        from app.store import customers  # spaet: customers -> ... -> appdoc
+        from app.store import zones as zone_store
 
+        self.session, self.tenant_id = session, tenant_id
         self.items: dict[int, LogicalZone] = {z.id: z for z in zone_store.load(session, tenant_id)}
+        self._data = customers._Data(session, tenant_id) if self.items else None
         derived = (
-            zone_store.derive(session, tenant_id, list(self.items.values())) if self.items else []
+            zone_store.derive(session, tenant_id, list(self.items.values()), data=self._data)
+            if self.items
+            else []
         )
         self.nets: dict[int, list[Net]] = {
             d.id: sorted(d.nets, key=lambda n: (n.version, n.prefixlen, int(n.network_address)))
             for d in derived
         }
+        # EPGs der Zonen (ACI-Selektoren) fuer die Contracts (0.102.0)
+        self._epg_zones: dict[int, list[int]] = defaultdict(list)
+        for d in derived:
+            for eid in d.epgs:
+                self._epg_zones[eid].append(d.id)
+        self._epg_nets: dict[int, list[str]] | None = None
         # laengstes Praefix: je Familie und Laenge die Zonen je Netz-Anfang
         self._by_len: dict[int, dict[int, dict[int, list[int]]]] = {4: {}, 6: {}}
         spans: dict[int, list[tuple[int, int, int]]] = {4: [], 6: []}
@@ -182,20 +202,83 @@ class ZoneMap:
         ids, whole = self.match(value)
         return self.items[ids[0]].name if whole and len(ids) == 1 else None
 
+    def zones_of_epgs(self, epgs) -> list[int]:
+        """Zonen von EPGs bzw. externen EPGs (Contracts, 0.102.0): ueber einen ACI-Selektor der
+        Zone bzw. ein Subnetz der EPG, das eine Zone ganz enthaelt."""
+        if self._epg_nets is None:  # einmal je Doku: Subnetze aller EPGs des Mandanten
+            self._epg_nets = defaultdict(list)
+            if self.items:
+                rows = self.session.execute(
+                    select(EpgSubnet.epg_id, EpgSubnet.ip)
+                    .join(Epg, Epg.id == EpgSubnet.epg_id)
+                    .where(Epg.tenant_id == self.tenant_id)
+                )
+                for eid, ip in rows:
+                    self._epg_nets[eid].append(ip)
+        out: list[int] = []
+        for e in epgs:
+            found = list(self._epg_zones.get(e.id, []))
+            for value in self._epg_nets.get(e.id, []):
+                ids, whole = self.match(value)
+                if whole:
+                    found += ids
+            out += [z for z in found if z not in out]
+        return out
+
+    def shown_nets(self, zone_id: int) -> tuple[list[str], list[str]]:
+        """Netze einer Zone wie erfasst und ihre Ausschluesse (Kopf der Kategorie, 0.102.0):
+        „10.0.0.0/8“ ohne „10.20.0.0/16“ statt der Teile, die nach dem Ausschneiden bleiben.
+        Zonen mit Knoten (VDOM, ACI-Tenant/VRF) bzw. ohne Ausschluss: die abgeleiteten Netze."""
+        from app.store import customers, zone_struct
+        from app.store import zones as zone_store
+
+        z = self.items[zone_id]
+        derived = [str(n) for n in self.nets.get(zone_id, [])]
+        sel = zone_store.selectors_of(z)
+        if self._data is None or zone_struct.has_nodes([z]) or not any(s.exclude for s in sel):
+            return derived, []
+        include = [s for s in sel if not s.exclude]
+        _epgs, nets = customers.nets_of(self._data, include)
+        shown = sorted(nets, key=lambda n: (n.version, n.prefixlen, int(n.network_address)))
+        removed = [str(n) for s in sel if s.exclude for n in self._data.selector_nets(s)]
+        return [str(n) for n in shown], list(dict.fromkeys(removed))
+
     def table_zones(self, index: int) -> list[dict]:
-        """Zonen einer Kategorie mit ihren Netzen (Kopf der Kategorie)."""
+        """Zonen einer Kategorie mit ihren Netzen und Ausschluessen (Kopf der Kategorie)."""
         out = []
         for z in self.items.values():
             if index not in AREA_TABLES.get(z.appdoc_area or "", ()):
                 continue
-            nets = [str(n) for n in self.nets.get(z.id, [])]
+            nets, excluded = self.shown_nets(z.id)
             out.append({"id": z.id, "name": z.name, "area": z.appdoc_area,
-                        "nets": nets[:SHOWN_NETS], "nets_total": len(nets)})  # fmt: skip
+                        "nets": nets[:SHOWN_NETS], "nets_total": len(nets),
+                        "excluded": excluded[:SHOWN_NETS]})  # fmt: skip
         return out
+
+
+def heads(zm: ZoneMap, tables: list[dict]) -> None:
+    """Zonen je Kategorie in den Kopf; mit Zonen der Titel nach ihnen (0.102.0)."""
+    from app.store import appdoc  # spaet: appdoc -> appdoc_zones
+
+    for t in tables:
+        zones = zm.table_zones(t["index"]) if zm.has_areas else []
+        t["zones"] = zones
+        if zones:
+            t["title"] = appdoc.zone_title(t["index"], [z["name"] for z in zones])
+    drop_unused(tables)
+
+
+def drop_unused(tables: list[dict]) -> None:
+    """DC Management (11) gibt es nur mit einer Zone dieser Kategorie bzw. mit Zeilen - sonst
+    bleibt die Doku bei den 10 Kategorien der Vorlage."""
+    tables[:] = [t for t in tables
+                 if t["index"] not in ONLY_WITH_ZONES
+                 or t.get("zones") or t.get("rows") or t.get("hidden")]  # fmt: skip
 
 
 def strip(tables: list[dict], column: str) -> None:
     """Kunden-Benutzer: ohne Spalte „Zone“ und ohne Zonen im Kopf (Netze der Infrastruktur)."""
+    drop_unused(tables)
     for t in tables:
         t["zones"] = []
         t["columns"] = [c for c in t.get("columns") or [] if c != column]

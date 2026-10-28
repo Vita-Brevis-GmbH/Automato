@@ -967,13 +967,12 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
 
 
 def zone_heads(data: appdoc.TenantData, tables: list[dict], restricted: bool) -> None:
-    """Zonen je Kategorie (0.101.0) in den Kopf der Tabellen; Kunden-Benutzer ohne Zonen."""
+    """Zonen je Kategorie (0.101.0) in den Kopf der Tabellen, Titel nach den Zonen (0.102.0);
+    Kunden-Benutzer ohne Zonen."""
     if restricted:
         appdoc_zones.strip(tables, appdoc.ZONE_COL)
         return
-    zm = data.zone_map
-    for t in tables:
-        t["zones"] = zm.table_zones(t["index"]) if zm.has_areas else []
+    appdoc_zones.heads(data.zone_map, tables)
 
 
 def hide_out(h: ApplicationRuleHide) -> dict:

@@ -1077,16 +1077,23 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Seit 0.101.0 schaltet der Global Admin die Namen auch direkt in der Karte „Doku nach
     Kategorien“ um („Namen der Gegenstellen“); Netze und Bereiche nennen dann zuerst die Gruppe,
     wie sie in der Regel steht: „G_clients (10.70.0.0/16, 10.71.0.0/16)“.
-  - **Kategorien mit Zonen (0.101.0):** Firewall-Regeln, die einen grossen Bereich zulassen,
-    aber direkt auf das System zeigen (z. B. 10.0.0.0/8 → Server), kommen in die Kategorie der
-    Zone, aus der sie kommen. Dafür in der Karte „Doku nach Kategorien“ → **Zonen zuordnen**
-    (Operator) je Zone die Kategorie wählen – Internet (1/2), Unternehmensnetzwerk (3/4), VPN (5),
-    Remote Access (6), andere Security Tenants (9) – bzw. im Zonen-Editor (Netzwerkdesign →
-    Zonen) „Kategorie in der Applikations-Doku“. Die Quell-Adressen einer Zone sind ihre Netze
-    (Selektoren, z. B. Präfix 10.70.0.0/16). Die Spalte **Zone** nennt die Zonen der Gegenstelle,
-    der Kopf jeder Kategorie ihre Zonen mit den Netzen. Umfasst ein Bereich Zonen mehrerer
-    Kategorien, bleibt die Regel unspezifisch (die Spalte Zone zeigt, welche) – dann den Bereich
-    enger fassen oder die Zonen anders schneiden. Kunden-Benutzer sehen Spalte und Zonen nicht.
+  - **Kategorien mit Zonen (0.101.0, seit 0.102.0 im Netzwerkdesign):** Firewall-Regeln, die einen
+    grossen Bereich zulassen, aber direkt auf das System zeigen (z. B. 10.0.0.0/8 → Server),
+    kommen in die Kategorie der Zone, aus der sie kommen. Dafür in **Netzwerkdesign →
+    Kategorien** (Operator) je Zone die Kategorie wählen – Internet (1/2), Unternehmensnetzwerk
+    (3/4), VPN (5), Remote Access (6), andere Security Tenants (9), DC Management (11) – und ihre
+    **Netze** (Quell-Adressen, ein Netz je Zeile) mit **Ausschlüssen** („ohne“, z. B. 10.0.0.0/8
+    ohne 10.20.0.0/16) erfassen; „Vorschlag nach Namen“ füllt die Kategorie nach dem Namen der
+    Zone (Edge Internet, Edge Office, Edge VPN, RES-…, … Management), danach „Speichern“. Die
+    übrigen Selektoren der Zone (ACI, Firewall, IPAM, Anbindung) pflegt weiter der Reiter Zonen.
+    In der Doku führt „Zonen der Kategorien ↗“ dorthin. Die Titel der Kategorien nennen ihre
+    Zonen („2. Zugriff aus Edge Internet“), der Kopf die Zonen mit Netzen und Ausschlüssen, die
+    Spalte **Zone** die Zonen der Gegenstelle. **DC Management** (hinter einer eigenen Firewall):
+    Firewall-Regeln und Contracts zu EPGs der Zone stehen in Kategorie 11 – die Kategorie
+    erscheint erst mit einer solchen Zone. Umfasst ein Bereich Zonen mehrerer Kategorien, bleibt
+    die Regel unspezifisch (die Spalte Zone zeigt, welche) – dann den Bereich enger fassen, einen
+    Ausschluss setzen oder die Zonen anders schneiden. Kunden-Benutzer sehen Spalte, Zonen und
+    Titel mit Zonen nicht.
   - **Abhängigkeiten (0.60.0, seit 0.88.0 wieder):** Bereich „Abhängigkeiten“ (zugeklappt,
     lädt beim Aufklappen) mit „nutzt“ und „wird genutzt von“ je Applikation und den Regeln.
     Abgeleitet aus den erlaubenden Regeln mit spezifischem Treffer, deren Gegenseite EPGs,

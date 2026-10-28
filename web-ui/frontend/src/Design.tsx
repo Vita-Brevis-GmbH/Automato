@@ -56,6 +56,7 @@ import {
   savePlanArrangement,
   savePlanVersion,
   SchemaZone,
+  setAppdocZones,
   setZonePolicy,
   SuggestionNode,
   System,
@@ -79,7 +80,7 @@ import {
   ZoneSuggestionSource,
   ZoneSummary,
 } from "./api";
-import { areaLabel } from "./zoneAreas";
+import { areaLabel, suggestArea } from "./zoneAreas";
 import { SELECTOR_LABEL } from "./Customers";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, fmtTime, Loading, Modal, Note, PageHead, SharedChip } from "./ui";
 import { L } from "./i18n";
@@ -129,7 +130,8 @@ const SOURCE: Record<ZoneSuggestionSource, string> = {
   schema: L("Grundschema", "Base schema"),
 };
 
-type Tab = "zones" | "suggestions" | "matrix" | "plan" | "versions";
+type Tab = "zones" | "appdoc" | "suggestions" | "matrix" | "plan" | "versions";
+const TAB_KEYS: Tab[] = ["zones", "appdoc", "suggestions", "matrix", "plan", "versions"];
 
 export default function Design({
   tenantId,
@@ -137,14 +139,18 @@ export default function Design({
   canEdit,
   isAdmin,
   isCustomer = false,
+  params = {},
 }: {
   tenantId: number | null;
   tenantLabel: string;
   canEdit: boolean;
   isAdmin: boolean;
   isCustomer?: boolean; // Kunden-Benutzer (0.53.0): eigene Zonen, geteilte nur mit Namen
+  params?: Record<string, string>; // 0.102.0: `tab` (z. B. aus der Applikations-Doku)
 }) {
-  const [tab, setTab] = useState<Tab>("zones");
+  const [tab, setTab] = useState<Tab>(
+    TAB_KEYS.includes(params.tab as Tab) && !(isCustomer && params.tab === "appdoc") ? (params.tab as Tab) : "zones",
+  );
   return (
     <>
       <PageHead title={L("Netzwerkdesign", "Network design")}>
@@ -186,13 +192,14 @@ export default function Design({
             {(
               [
                 ["zones", L("Zonen", "Zones")],
+                ["appdoc", L("Kategorien", "Categories")],
                 ["suggestions", L("Vorschläge", "Suggestions")],
                 ["matrix", L("Zonenmatrix", "Zone matrix")],
                 ["plan", L("Zonenplan", "Zone plan")],
                 ["versions", L("Versionen", "Versions")],
               ] as const
             )
-              .filter(([k]) => !isCustomer || (k !== "versions" && k !== "suggestions"))
+              .filter(([k]) => !isCustomer || (k !== "versions" && k !== "suggestions" && k !== "appdoc"))
               .map(([k, label]) => (
               <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
                 {label}
@@ -200,12 +207,243 @@ export default function Design({
             ))}
           </div>
           {tab === "zones" && <ZonesTab tenantId={tenantId} canEdit={canEdit} isCustomer={isCustomer} />}
+          {tab === "appdoc" && !isCustomer && <AppdocTab tenantId={tenantId} canEdit={canEdit} />}
           {tab === "suggestions" && <SuggestionsTab tenantId={tenantId} canEdit={canEdit} />}
           {tab === "matrix" && <MatrixTab tenantId={tenantId} canEdit={canEdit} />}
           {tab === "plan" && <PlanTab tenantId={tenantId} isCustomer={isCustomer} canArrange={canEdit && !isCustomer} />}
           {tab === "versions" && <VersionsTab tenantId={tenantId} canEdit={canEdit} isAdmin={isAdmin} />}
         </>
       )}
+    </>
+  );
+}
+
+// -- Kategorien der Applikations-Doku ------------------------------------------------------------
+// 0.102.0 (Anwender: „das Zuordnen gehört zu den Zonen ins Netzwerkdesign“): je Zone die Kategorie, aus der
+// ihre Zugriffe kommen, und ihre Netze mit Ausschlüssen (Selektoren „Netz“; die übrigen Selektoren bleiben,
+// gepflegt im Reiter Zonen). Die Doku benennt die Kategorien nach ihren Zonen („Zugriff aus Edge
+// Internet“); später lässt sich daraus z. B. ein BGP-Filter je Zone ableiten.
+type AppdocDraft = { area: AppdocArea | null; nets: string; excluded: string };
+const splitNets = (text: string) =>
+  text
+    .split(/[\s,;]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+const zonePrefixes = (z: LogicalZone, exclude: boolean) =>
+  z.selectors.filter((x) => x.kind === "prefix" && !!x.exclude === exclude).map((x) => x.value);
+const sameNets = (a: string, b: string) => splitNets(a).join(" ") === splitNets(b).join(" ");
+
+function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }) {
+  const [rows, setRows] = useState<LogicalZone[] | null>(null);
+  const [systems, setSystems] = useState<System[]>([]);
+  const [draft, setDraft] = useState<Record<number, AppdocDraft>>({});
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    // eine spätere Antwort überschreibt die Eingaben nicht (StrictMode lädt zweimal, 0.101.1)
+    let live = true;
+    fetchZones(tenantId)
+      .then((zs) => {
+        if (!live) return;
+        setRows(zs);
+        setDraft({});
+      })
+      .catch((e) => live && setErr(e));
+    return () => {
+      live = false;
+    };
+  }, [tenantId, tick]);
+  useEffect(() => {
+    fetchSystems(tenantId).then(setSystems).catch(() => setSystems([]));
+  }, [tenantId]);
+
+  const initial = (z: LogicalZone): AppdocDraft => ({
+    area: z.appdoc_area ?? null,
+    nets: zonePrefixes(z, false).join("\n"),
+    excluded: zonePrefixes(z, true).join("\n"),
+  });
+  const value = (z: LogicalZone) => draft[z.id] ?? initial(z);
+  const set = (z: LogicalZone, patch: Partial<AppdocDraft>) => {
+    setSaved(false);
+    setDraft((d) => ({ ...d, [z.id]: { ...(d[z.id] ?? initial(z)), ...patch } }));
+  };
+  const netsChanged = (z: LogicalZone) => {
+    const v = value(z);
+    const i = initial(z);
+    return !sameNets(v.nets, i.nets) || !sameNets(v.excluded, i.excluded);
+  };
+  const changed = (rows ?? []).filter((z) => draft[z.id] && (value(z).area !== initial(z).area || netsChanged(z)));
+  const suggestions = (rows ?? []).filter((z) => !value(z).area && suggestArea(z.name, z.code));
+  const suggest = () => {
+    setSaved(false);
+    setDraft((d) => {
+      const out = { ...d };
+      for (const z of suggestions) out[z.id] = { ...(out[z.id] ?? initial(z)), area: suggestArea(z.name, z.code) };
+      return out;
+    });
+  };
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await setAppdocZones(
+        tenantId,
+        changed.map((z) => {
+          const v = value(z);
+          return {
+            id: z.id,
+            appdoc_area: v.area,
+            ...(netsChanged(z) ? { nets: splitNets(v.nets), excluded: splitNets(v.excluded) } : {}),
+          };
+        }),
+      );
+      setSaved(true);
+      setTick((t) => t + 1);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <ErrorBox error={err} onClose={() => setErr(null)} />
+      <div className="card" id="appdoc-zones">
+        <div className="card-head">
+          <h2>{L("Kategorien der Applikations-Doku", "Categories of the application documentation")}</h2>
+          <span className="faint">
+            {L(
+              <>
+                Je Zone die Kategorie, aus der ihre Zugriffe kommen – die Doku benennt die Kategorie nach ihren Zonen. Eine
+                Firewall-Regel bzw. ein Contract steht in der Kategorie der Zone der Gegenstelle, auch über einen grossen
+                Bereich; nennt die Gegenstelle Zonen mehrerer Kategorien, bleibt sie unspezifisch.
+              </>,
+              <>
+                Per zone the category its accesses come from – the documentation names the category after its zones. A
+                firewall rule or contract goes into the category of its peer's zone, also via a large range; if the peer
+                covers zones of several categories, it stays unspecific.
+              </>,
+            )}
+          </span>
+          {canEdit && (
+            <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+              <button className="btn btn-sm" id="appdoc-suggest" disabled={suggestions.length === 0} onClick={suggest}>
+                {L(`Vorschlag nach Namen (${suggestions.length})`, `Suggest by name (${suggestions.length})`)}
+              </button>
+              <button className="btn btn-primary btn-sm" id="appdoc-save" disabled={busy || changed.length === 0} onClick={() => void save()}>
+                {busy ? L("Speichere…", "Saving…") : L(`Speichern (${changed.length})`, `Save (${changed.length})`)}
+              </button>
+            </div>
+          )}
+        </div>
+        {saved && changed.length === 0 && (
+          <div className="faint" id="appdoc-saved" style={{ padding: "0 14px", fontSize: 12 }}>
+            {L("Gespeichert – die Applikations-Doku ordnet beim nächsten Laden neu.", "Saved – the application documentation re-sorts on the next load.")}
+          </div>
+        )}
+        <div className="card-body scroll">
+          {rows == null ? (
+            <Loading />
+          ) : rows.length === 0 ? (
+            <Empty title={L("Noch keine Zonen", "No zones yet")}>
+              {L("Zonen im Reiter „Zonen“ anlegen bzw. unter „Vorschläge“ übernehmen.", "Create zones in the “Zones” tab or apply them under “Suggestions”.")}
+            </Empty>
+          ) : (
+            <table className="compact form-table">
+              <colgroup>
+                <col style={{ width: "18%" }} />
+                <col style={{ width: "20%" }} />
+                <col style={{ width: "20%" }} />
+                <col style={{ width: "20%" }} />
+                <col />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>{L("Zone", "Zone")}</th>
+                  <th>{L("Kategorie", "Category")}</th>
+                  <th title={L("ein Netz je Zeile (CIDR)", "one network per line (CIDR)")}>{L("Netze (Quell-Adressen)", "Networks (source addresses)")}</th>
+                  <th title={L("ein Netz je Zeile – aus den Netzen herausgeschnitten", "one network per line – cut out of the networks")}>
+                    {L("ohne (Ausschlüsse)", "without (exclusions)")}
+                  </th>
+                  <th>{L("weitere Selektoren", "other selectors")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((z) => {
+                  const v = value(z);
+                  const others = z.selectors.filter((x) => x.kind !== "prefix");
+                  const hint = !v.area ? suggestArea(z.name, z.code) : null;
+                  return (
+                    <tr key={z.id} className={changed.includes(z) ? "row-changed" : ""}>
+                      <td>
+                        <Swatch color={z.color} /> <b>{z.name}</b>
+                        {z.code ? <span className="faint"> · {z.code}</span> : null}
+                        <div className="faint" style={{ fontSize: 11 }}>
+                          {L(`${z.nets} Netze`, `${z.nets} networks`)}
+                          {z.epgs ? L(` · ${z.epgs} EPGs`, ` · ${z.epgs} EPGs`) : ""}
+                        </div>
+                      </td>
+                      <td>
+                        <select
+                          className="sel"
+                          aria-label={L(`Kategorie der Zone ${z.name}`, `Category of zone ${z.name}`)}
+                          value={v.area ?? ""}
+                          disabled={!canEdit}
+                          onChange={(e) => set(z, { area: (e.target.value || null) as AppdocArea | null })}
+                        >
+                          <option value="">{L("— keine", "— none")}</option>
+                          {APPDOC_AREAS.map((x) => (
+                            <option key={x} value={x}>
+                              {areaLabel(x)}
+                            </option>
+                          ))}
+                        </select>
+                        {hint && canEdit && <div className="faint" style={{ fontSize: 11 }}>{L(`Vorschlag: ${areaLabel(hint)}`, `Suggestion: ${areaLabel(hint)}`)}</div>}
+                      </td>
+                      <td>
+                        <textarea
+                          className="input mono"
+                          rows={Math.min(6, Math.max(2, splitNets(v.nets).length + 1))}
+                          aria-label={L(`Netze der Zone ${z.name}`, `Networks of zone ${z.name}`)}
+                          placeholder="10.70.0.0/16"
+                          value={v.nets}
+                          readOnly={!canEdit}
+                          onChange={(e) => set(z, { nets: e.target.value })}
+                        />
+                      </td>
+                      <td>
+                        <textarea
+                          className="input mono"
+                          rows={Math.min(6, Math.max(2, splitNets(v.excluded).length + 1))}
+                          aria-label={L(`Ausschlüsse der Zone ${z.name}`, `Exclusions of zone ${z.name}`)}
+                          placeholder="10.70.99.0/24"
+                          value={v.excluded}
+                          readOnly={!canEdit}
+                          onChange={(e) => set(z, { excluded: e.target.value })}
+                        />
+                      </td>
+                      <td>
+                        {others.length === 0 ? (
+                          <Dash />
+                        ) : (
+                          others.map((x, i) => (
+                            <span key={i} className={`chip ${x.exclude ? "warn" : ""}`}>
+                              {selectorText(x, systems)}
+                            </span>
+                          ))
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
     </>
   );
 }

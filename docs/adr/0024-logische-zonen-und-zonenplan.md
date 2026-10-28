@@ -390,3 +390,7 @@ Entscheide des Anwenders (2026-10-23):
   (`appdoc_area`: Internet, Unternehmensnetzwerk, VPN, Remote Access, andere Security Tenants –
   ADR 0012 Ergänzung 0.101.0): Firewall-Regeln mit einer Gegenstelle in der Zone stehen in dieser
   Kategorie, auch über einen grossen Quell-Bereich; die Netze der Zone sind die Quell-Adressen.
+  Seit 0.102.0 gepflegt im Reiter **Kategorien** des Netzwerkdesigns – mit Netzen und
+  **Ausschlüssen** je Zone (Selektoren „Netz“ bzw. „ohne“ Netz, `PUT /zones/appdoc`) und dem
+  Bereich DC Management (Kategorie 11); die Titel der Kategorien nennen ihre Zonen. Aus Netzen und
+  Ausschlüssen je Zone lässt sich später ein BGP-Filter ableiten (nur Vorschlag/Export).

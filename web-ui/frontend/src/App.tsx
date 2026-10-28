@@ -697,6 +697,8 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             {current === "verkabelung" && <Cabling tenantId={tenantId} tenantLabel={tenantLabel} />}
             {current === "design" && (
               <Design
+                key={JSON.stringify(params)}
+                params={params}
                 tenantId={tenantId}
                 tenantLabel={tenantLabel}
                 canEdit={!me.isCustomer && (me.isAdmin || me.isOperator)}

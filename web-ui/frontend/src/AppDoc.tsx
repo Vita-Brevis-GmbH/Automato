@@ -393,7 +393,8 @@ function DocZones({ zones }: { zones: DocTableZone[] }) {
           <b>{z.name}</b>{" "}
           <span className="mono">
             ({z.nets.join(", ") || L("ohne Netze", "no networks")}
-            {z.nets_total > z.nets.length ? L(` +${z.nets_total - z.nets.length} weitere`, ` +${z.nets_total - z.nets.length} more`) : ""})
+            {z.nets_total > z.nets.length ? L(` +${z.nets_total - z.nets.length} weitere`, ` +${z.nets_total - z.nets.length} more`) : ""}
+            {(z.excluded ?? []).length > 0 ? L(` ohne ${z.excluded!.join(", ")}`, ` without ${z.excluded!.join(", ")}`) : ""})
           </span>
         </span>
       ))}
@@ -594,10 +595,11 @@ export function tablesMarkdown(tables: DocTable[], rows = true, hiddenToo = true
     if (t.rows.length === 0) continue;
     lines.push(`## ${t.index}. ${t.title}`, "");
     if ((t.zones ?? []).length > 0) {
-      // 0.101.0: Zonen der Kategorie mit ihren Netzen
+      // 0.101.0: Zonen der Kategorie mit ihren Netzen, seit 0.102.0 mit Ausschlüssen
       const zones = t.zones!.map((z) => {
         const more = z.nets_total - z.nets.length;
-        return `${z.name} (${z.nets.join(", ")}${more > 0 ? L(` +${more} weitere`, ` +${more} more`) : ""})`;
+        const without = (z.excluded ?? []).length ? L(` ohne ${z.excluded!.join(", ")}`, ` without ${z.excluded!.join(", ")}`) : "";
+        return `${z.name} (${z.nets.join(", ")}${more > 0 ? L(` +${more} weitere`, ` +${more} more`) : ""}${without})`;
       });
       lines.push(`${L("Zonen", "Zones")}: ${zones.join(" · ")}`, "");
     }
