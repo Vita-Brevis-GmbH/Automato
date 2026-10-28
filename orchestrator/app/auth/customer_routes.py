@@ -52,6 +52,8 @@ CUSTOMER_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     # 0.53.0: wer bin ich; die eigenen Zonen, Matrix und Plan (ohne fremde Kunden, ohne
     # Netze ohne Zone; Gegenseite fremder Kunden als „anderer Kunde“)
     ("GET", "/auth/me"): READ,
+    # 0.107.0 (ADR 0036): welche Module fuer ihren Mandanten an sind (Navigation)
+    ("GET", "/modules"): READ,
     ("GET", "/zones"): READ,
     ("GET", "/zones/{zone_id}/nets"): READ,
     ("GET", "/zones/matrix"): READ,

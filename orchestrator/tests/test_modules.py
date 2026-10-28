@@ -153,3 +153,8 @@ def test_module_je_mandant_schalten(client, session_factory):
     assert len(audits) == 6
     # ohne Mandant (alle): alles an
     assert all(m["effective"] for m in client.get("/modules").json())
+    # Kunden-Benutzer lesen die Module ihres Mandanten (Navigation), schalten nicht
+    user = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid), "X-Dev-Customers": "1"}
+    r = client.get("/modules", params={"tenant_id": tid}, headers=user)
+    assert r.status_code == 200 and {m["key"]: m["effective"] for m in r.json()}["doku"]
+    assert _switch(client, tid, "doku", False, user).status_code == 403
