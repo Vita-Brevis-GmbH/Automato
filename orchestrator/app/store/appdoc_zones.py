@@ -42,16 +42,7 @@ from app.models import Epg, EpgSubnet, LogicalZone
 
 Net = ipaddress.IPv4Network | ipaddress.IPv6Network
 BITS = {4: 32, 6: 128}
-# Kategorien je Bereich (eingehend bzw. ausgehend waehlt `appdoc.categorize`)
-AREA_TABLES: dict[str, tuple[int, ...]] = {
-    "inet": (1, 2),
-    "bit": (3, 4),
-    "vpn": (5,),
-    "sra": (6,),
-    "res": (9,),
-    "mgmt": (11,),
-}
-ONLY_WITH_ZONES = (11,)  # Kategorien nur mit zugeordneter Zone bzw. Zeilen
+# Kategorien je Bereich stehen seit 0.104.0 im Katalog (`appdoc_catalog`, Namensprofil)
 SHOWN_NETS = 6  # Netze je Zone im Kopf einer Kategorie
 SHOWN_ZONES = 4  # Zonen je Zelle
 
@@ -77,11 +68,12 @@ def _nets(value: str | None) -> list[Net]:
 class ZoneMap:
     """Logische Zonen eines Mandanten mit ihren Netzen - einmal je Doku geladen."""
 
-    def __init__(self, session: Session, tenant_id: int):
-        from app.store import customers  # spaet: customers -> ... -> appdoc
+    def __init__(self, session: Session, tenant_id: int, catalog=None):
+        from app.store import appdoc_catalog, customers  # spaet: customers -> ... -> appdoc
         from app.store import zones as zone_store
 
         self.session, self.tenant_id = session, tenant_id
+        self.catalog = catalog or appdoc_catalog.for_tenant(session, tenant_id)
         self.items: dict[int, LogicalZone] = {z.id: z for z in zone_store.load(session, tenant_id)}
         self._data = customers._Data(session, tenant_id) if self.items else None
         derived = (
@@ -127,7 +119,7 @@ class ZoneMap:
 
     @property
     def has_areas(self) -> bool:
-        return any(z.appdoc_area for z in self.items.values())
+        return any(self.catalog.area(z.appdoc_area) for z in self.items.values())
 
     def _covering(self, net: Net) -> list[int]:
         fam, bits = net.version, BITS[net.version]
@@ -187,7 +179,7 @@ class ZoneMap:
 
     def area(self, zone_ids: list[int]) -> str | None:
         """Bereich der Zonen: genau einer, sonst keiner (mehrere bzw. ohne Bereich)."""
-        areas = {self.items[z].appdoc_area for z in zone_ids if self.items[z].appdoc_area}
+        areas = {a for z in zone_ids if (a := self.items[z].appdoc_area) and self.catalog.area(a)}
         return areas.pop() if len(areas) == 1 else None
 
     def text(self, zone_ids: list[int]) -> str:
@@ -247,7 +239,7 @@ class ZoneMap:
         """Zonen einer Kategorie mit ihren Netzen und Ausschluessen (Kopf der Kategorie)."""
         out = []
         for z in self.items.values():
-            if index not in AREA_TABLES.get(z.appdoc_area or "", ()):
+            if index not in self.catalog.area_tables(z.appdoc_area):
                 continue
             nets, excluded = self.shown_nets(z.id)
             out.append({"id": z.id, "name": z.name, "area": z.appdoc_area,
@@ -258,27 +250,28 @@ class ZoneMap:
 
 def heads(zm: ZoneMap, tables: list[dict]) -> None:
     """Zonen je Kategorie in den Kopf; mit Zonen der Titel nach ihnen (0.102.0)."""
-    from app.store import appdoc  # spaet: appdoc -> appdoc_zones
-
     for t in tables:
         zones = zm.table_zones(t["index"]) if zm.has_areas else []
         t["zones"] = zones
         if zones:
-            t["title"] = appdoc.zone_title(t["index"], [z["name"] for z in zones])
-    drop_unused(tables)
+            t["title"] = zm.catalog.zone_title(t["index"], [z["name"] for z in zones])
+    drop_unused(tables, zm.catalog)
 
 
-def drop_unused(tables: list[dict]) -> None:
-    """DC Management (11) gibt es nur mit einer Zone dieser Kategorie bzw. mit Zeilen - sonst
-    bleibt die Doku bei den 10 Kategorien der Vorlage."""
+def drop_unused(tables: list[dict], catalog=None) -> None:
+    """Kategorien „nur mit Zone“ (DC Management) gibt es nur mit einer Zone dieser Kategorie
+    bzw. mit Zeilen - sonst bleibt die Doku bei den Kategorien der Vorlage."""
+    from app.store import appdoc_catalog  # spaet: appdoc_catalog -> models
+
+    only = (catalog or appdoc_catalog.default()).only_with_zones()
     tables[:] = [t for t in tables
-                 if t["index"] not in ONLY_WITH_ZONES
+                 if t["index"] not in only
                  or t.get("zones") or t.get("rows") or t.get("hidden")]  # fmt: skip
 
 
-def strip(tables: list[dict], column: str) -> None:
+def strip(tables: list[dict], column: str, catalog=None) -> None:
     """Kunden-Benutzer: ohne Spalte „Zone“ und ohne Zonen im Kopf (Netze der Infrastruktur)."""
-    drop_unused(tables)
+    drop_unused(tables, catalog)
     for t in tables:
         t["zones"] = []
         t["columns"] = [c for c in t.get("columns") or [] if c != column]

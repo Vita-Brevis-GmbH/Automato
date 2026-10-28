@@ -14,7 +14,6 @@ import {
   AppDocFinding,
   AppDocHit,
   AppDocSystem2,
-  AppConnections,
   AppDependencies,
   AppDependency,
   ApplicationDoc,
@@ -23,7 +22,6 @@ import {
   DocTable,
   EpgLocation,
   exportApplication,
-  fetchAppConnections,
   fetchAppDependencies,
   fetchAppDoc,
   fetchAppEpg,
@@ -37,8 +35,8 @@ import {
   System,
 } from "./api";
 import type { View, ViewParams } from "./App";
-import ConnectionsCard, { connectionsMarkdown } from "./AppConnections";
-import { DocRow, DocTableView, tablesMarkdown } from "./AppDoc";
+import ConnectionsCard from "./AppConnections";
+import { DocRow, DocTableView } from "./AppDoc";
 import type { Me } from "./auth";
 import { EpgCard } from "./EpgCard";
 import { Fold, FoldTitle, readStored, useFolds, writeJson } from "./fold";
@@ -218,8 +216,6 @@ export default function ApplicationDocView({
   const [systemKey, setSystemKey] = useState<string | null>(null); // Detail eines Systems (0.73.0)
   const [epgKey, setEpgKey] = useState<string | null>(null); // Detail einer EPG (0.95.0)
   const [objectId, setObjectId] = useState<number | null>(null); // Firewall-Objekt (0.95.0)
-  const [conns, setConns] = useState<AppConnections | null>(null); // für den Export (0.59.0)
-  const [deps, setDeps] = useState<AppDependencies | null>(null); // für den Export (0.88.0)
   const [tick, setTick] = useState(0); // Regel zugeordnet bzw. ausgeschlossen (0.60.0)
   const [busy, setBusy] = useState<unknown>(null);
   const [hiding, setHiding] = useState<{ table: DocTable; row: DocRow } | null>(null); // 0.69.0
@@ -326,11 +322,9 @@ export default function ApplicationDocView({
       const { blob, filename } = await exportApplication(id, want.has("plan") ? "zip" : "docx", sections);
       download(filename, blob);
     } else {
-      let c = me.isCustomer || !want.has("connections") ? null : conns;
-      if (c == null && !me.isCustomer && want.has("connections")) c = await fetchAppConnections(id).catch(() => null);
-      let d = want.has("dependencies") ? deps : null;
-      if (d == null && want.has("dependencies")) d = await fetchAppDependencies(id).catch(() => null);
-      download(`${a.name}.md`, docMarkdown(doc, sourceName, c, want, d));
+      // 0.104.0: Markdown vom Server aus demselben Aufbau wie Word (bisher hier gebaut)
+      const { blob, filename } = await exportApplication(id, "md", sections);
+      download(filename, blob);
     }
     setExportOpen(false);
   };
@@ -520,13 +514,13 @@ export default function ApplicationDocView({
       {/* Verbindungen Ende zu Ende (0.45.0) – zeigt die Infrastruktur, nicht für Kunden-Benutzer */}
       {!me.isCustomer && (
         <div className={off("connections").trim()}>
-          <ConnectionsCard appId={id} reload={reload + tick} onRule={setRule} onGo={onGo} onData={setConns} fold={fold("connections")} />
+          <ConnectionsCard appId={id} reload={reload + tick} onRule={setRule} onGo={onGo} fold={fold("connections")} />
         </div>
       )}
 
       {/* Abhängigkeiten (0.60.0, seit 0.88.0 wieder): zu, erst beim Aufklappen geladen */}
       <div className={off("dependencies").trim()}>
-        <DependenciesCard appId={id} reload={reload + tick} fold={fold("dependencies", false)} onGo={onGo} onRule={setRule} onData={setDeps} />
+        <DependenciesCard appId={id} reload={reload + tick} fold={fold("dependencies", false)} onGo={onGo} onRule={setRule} />
       </div>
 
       <div className={`card${off("rules")}`} id="app-rules" style={{ marginTop: 14 }}>
@@ -1967,135 +1961,6 @@ function RuleMembers({
   );
 }
 
-const md = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
-
-// Doku als Markdown (0.73.0: nur die gewählten Abschnitte, ohne Abhängigkeiten)
-function docMarkdown(
-  doc: ApplicationDoc,
-  sourceName: (id: number) => string,
-  conns: AppConnections | null,
-  want: Set<string>,
-  deps: AppDependencies | null = null,
-): string {
-  const a = doc.application;
-  const s = doc.summary;
-  const lines = [L(`# Applikation ${a.name}`, `# Application ${a.name}`), ""];
-  const meta = [
-    a.external_name && L(`Extern: ${a.external_name}`, `External: ${a.external_name}`),
-    a.internal_name && L(`Intern: ${a.internal_name}`, `Internal: ${a.internal_name}`),
-    a.purpose && L(`Zweck: ${PURPOSE[a.purpose][1]}`, `Purpose: ${PURPOSE[a.purpose][1]}`),
-    a.code && L(`Kürzel: ${a.code}`, `Code: ${a.code}`),
-    doc.tenant_code && L(`GG: ${doc.tenant_code}`, `GC: ${doc.tenant_code}`),
-    a.criticality &&
-      L(`Kritikalität: ${CRIT_LABEL[a.criticality] ?? a.criticality}`, `Criticality: ${CRIT_LABEL[a.criticality] ?? a.criticality}`),
-    a.owner && L(`Verantwortlich: ${a.owner}`, `Owner: ${a.owner}`),
-    a.site && L(`Standort: ${siteLabel(a.site)}`, `Site: ${siteLabel(a.site)}`),
-  ].filter(Boolean);
-  if (meta.length) lines.push(meta.join(" · "), "");
-  if (a.description) lines.push(a.description, "");
-  if (want.has("overview")) {
-    lines.push(
-      L(
-        `**Übersicht:** ${s.vms} VMs${s.servers ? ` + ${s.servers} Server` : ""} · ${s.epgs} EPGs · ${s.rules} Regeln (${s.specific} spezifisch, ${s.unspecific} unspezifisch) · ${s.findings} Findings`,
-        `**Overview:** ${s.vms} VMs${s.servers ? ` + ${s.servers} servers` : ""} · ${s.epgs} EPGs · ${s.rules} rules (${s.specific} specific, ${s.unspecific} unspecific) · ${s.findings} findings`,
-      ),
-      "",
-    );
-  }
-  if (want.has("systems")) {
-    lines.push(
-      L("## Systeme", "## Systems"),
-      "",
-      L("| System | IPs | EPG | Portgruppe | Regeln spez./unspez. |", "| System | IPs | EPG | Port group | Rules spec./unspec. |"),
-      "| --- | --- | --- | --- | --- |",
-    );
-    for (const x of doc.systems) {
-      lines.push(
-        `| ${x.kind === "vm" ? "VM" : "Server"} ${md(x.name)} | ${md(x.ips.join(", "))} | ${md(x.epgs.join(", "))} | ${md(x.portgroups.join(", "))} | ${x.rules.specific} / ${x.rules.unspecific} |`,
-      );
-    }
-    lines.push("");
-  }
-  if (want.has("epgs") && doc.epgs.length) {
-    lines.push(
-      L("## EPGs im ACI", "## EPGs in the ACI"),
-      "",
-      L("| EPG | BD | VRF | Subnetze | VMs |", "| EPG | BD | VRF | Subnets | VMs |"),
-      "| --- | --- | --- | --- | --- |",
-    );
-    for (const e of doc.epgs) {
-      lines.push(`| ${md(e.label)} | ${md(e.bd ?? "")} | ${md(e.vrf ?? "")} | ${md(e.subnets.join(", "))} | ${e.vm_count} |`);
-    }
-    lines.push("");
-  }
-  const names = new Map<string, string>([...doc.systems.map((x) => [x.key, x.name] as [string, string]), ...doc.epgs.map((e) => [e.key, e.label] as [string, string])]);
-  if (want.has("rules")) {
-    lines.push(
-      L("## Regeln & Contracts", "## Rules & contracts"),
-      "",
-      L(
-        "| Regel | Aktion | Herkunft | Richtung | System | Bezug |",
-        "| Rule | Action | Origin | Direction | System | Reference |",
-      ),
-      "| --- | --- | --- | --- | --- | --- |",
-    );
-    for (const r of doc.rules) {
-      // routingtechnisch unmögliche Treffer gehören nicht in die Doku (0.24.0)
-      const hits = doc.hits.filter((h) => h.rule_id === r.id && h.relevance !== "impossible");
-      if (!hits.length) continue;
-      // unspezifisch (any, Netz): nur die Regel – statt aller Systeme ihre Anzahl (0.37.0)
-      const all = [...new Set(hits.map((h) => names.get(h.system) ?? h.system))];
-      const scope = best(hits);
-      const sys =
-        scope === "assigned"
-          ? L("direkt zugeordnet", "assigned directly")
-          : scope === "specific"
-            ? all.join(", ")
-            : L(`${all.length} System${all.length === 1 ? "" : "e"}`, `${all.length} system${all.length === 1 ? "" : "s"}`);
-      const dir = [...new Set(hits.map((h) => DIRECTION[h.direction]?.[0].replace(/^\S+ /, "") ?? h.direction))].join(", ");
-      const via = [...new Set(hits.map((h) => h.via))].join(", ");
-      lines.push(
-        `| ${md(r.aci?.contract ?? r.name)} | ${r.action} | ${r.domain === "aci_contract" ? "ACI" : "Firewall"} ${md(sourceName(r.source_system_id))} | ${dir} | ${md(sys)} | ${SCOPE[best(hits)][1]}: ${md(via)} |`,
-      );
-    }
-    lines.push("");
-  }
-  if (deps && want.has("dependencies")) lines.push(...dependenciesMarkdown(deps));
-  if (conns && want.has("connections")) lines.push(...connectionsMarkdown(conns));
-  if (want.has("findings")) {
-    lines.push("## Findings", "");
-    if (!doc.findings.length) lines.push(L("Keine offenen Befunde.", "No open findings."), "");
-    else {
-      lines.push(L("| Befund | Meldung | Hinweis |", "| Finding | Message | Note |"), "| --- | --- | --- |");
-      for (const x of doc.findings) lines.push(`| ${md(findingLabel(x.type))} | ${md(x.message)} | ${md(x.hint ?? "")} |`);
-      lines.push("");
-    }
-  }
-  return lines.concat(tablesMarkdown(doc.tables, want.has("categories"), want.has("hidden"))).join("\n");
-}
-
-// Abhängigkeiten als Markdown (0.88.0): fachliche zuerst, Infrastruktur als eigener Teil
-function dependenciesMarkdown(deps: AppDependencies): string[] {
-  const lines = [L("## Abhängigkeiten", "## Dependencies"), ""];
-  if (!deps.uses.length && !deps.used_by.length) return [...lines, L("Keine Abhängigkeiten zu anderen Applikationen.", "No dependencies on other applications."), ""];
-  for (const infra of [false, true]) {
-    const rows: string[] = [];
-    for (const [label, items] of [
-      [L("nutzt", "uses"), deps.uses],
-      [L("wird genutzt von", "used by"), deps.used_by],
-    ] as const) {
-      for (const d of items.filter((x) => !!x.infrastructure === infra)) {
-        const rules = d.rules.map((r) => `${r.name} (${r.services.join(", ") || L("alle", "all")})`).join(", ");
-        rows.push(`| ${label} | ${md(d.name)} | ${md(rules)} |`);
-      }
-    }
-    if (!rows.length) continue;
-    if (infra) lines.push(L("### Infrastruktur", "### Infrastructure"), "");
-    lines.push(L("| Richtung | Applikation | Regeln |", "| Direction | Application | Rules |"), "| --- | --- | --- |", ...rows, "");
-  }
-  return lines;
-}
-
 // Abhängigkeiten zu anderen Applikationen (0.60.0, seit 0.88.0 wieder in der Doku): abgeleitet
 // aus Regeln, die ein System gezielt mit einem System einer anderen Applikation verbinden. Erst
 // beim Aufklappen geladen (teuer); Infrastruktur (Monitoring, Backup, DNS …) eingeklappt getrennt.
@@ -2105,14 +1970,12 @@ function DependenciesCard({
   fold,
   onGo,
   onRule,
-  onData,
 }: {
   appId: number;
   reload: number;
   fold: Fold;
   onGo?: Go;
   onRule: (id: number) => void;
-  onData: (d: AppDependencies | null) => void;
 }) {
   const [data, setData] = useState<AppDependencies | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -2124,14 +1987,12 @@ function DependenciesCard({
     setLoadedFor(loadKey);
     setData(null);
     setError(null);
-    onData(null);
     let done = false;
     fetchAppDependencies(appId)
       .then((d) => {
         done = true;
         if (!current) return;
         setData(d);
-        onData(d);
       })
       .catch((e) => {
         done = true;

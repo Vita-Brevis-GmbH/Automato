@@ -7,6 +7,33 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.104.0 – 2026-10-28
+
+Weniger Entwicklungszeit: Konfiguration statt Code, Modularisierung der Applikations-Doku,
+schlanker Ablauf (Rückmeldung des Anwenders 2026-10-28; ADR 0012 und 0026 Ergänzung 0.104.0).
+
+- **Kategorien im Namenskonzept:** Namensprofile → „Kategorien der Applikations-Doku“ (Admin):
+  Titel (deutsch/englisch, mit Zonen `{z}`), Spalten und „nur mit Zone“ je Kategorie anpassen,
+  eigene Kategorien dazu; die **Auswahl je Zone** (Bereiche mit Kategorie eingehend/ausgehend,
+  Merkmal im Namen der Firewall-Zone, Muster für den Vorschlag nach dem Zonennamen, angeboten)
+  anpassen bzw. erweitern; Optionen (breite Quelle ausgehend ausblenden, unspezifisch nur
+  eingehend). Vorgaben im Code, gespeichert nur Abweichungen, auf Vorgaben zurücksetzen; Audit
+  `appdoc_catalog.saved`/`.reset`. Netzwerkdesign → Kategorien und der Zonen-Editor bieten die
+  Bereiche des Katalogs an, der Vorschlag nach Namen kommt vom Server; Doku, Ausblenden und
+  Exporte folgen dem Katalog des Mandanten.
+- **Modular:** Sichtbarkeit der Zeilen (Kategorie, nur Treffer, nicht möglich, ausgelassen) an
+  einer Stelle (`store/appdoc_filter.py`); Markdown vom Server aus demselben Aufbau wie Word
+  (`store/md_writer.py`, `?format=md`) – der Markdown-Code in der Oberfläche entfällt.
+  Verbindungen im Export mit den Wegen je Variante („Wege uneinheitlich (aktiv über …)“) und dem
+  Load Balancer am Hop, auch in Word.
+- **Doku je System** als Markdown bzw. neu als Word (`GET /appdoc/systems/{name}/export`).
+- **Kunden-Benutzer:** Export ihres Ausschnitts als Markdown bzw. Word – ohne Verbindungen,
+  Netzwerkplan und Gerätenamen (Allowlist ergänzt).
+- **Ablauf:** `CLAUDE.md` auf die Arbeitsregeln gekürzt (Stand je Bereich in `docs/STAND.md`);
+  Abnahme gilt mit der nächsten Rückmeldung ohne Einwand, Klärung vor dem Bauen, Anpassungen
+  einer Runde in einer Version, lokal gezielte Tests.
+- Abgenommen bis 0.102.0. Tests (orchestrator 647, UI-Tests Namenskonzept und Englisch).
+
 ## 0.103.0 – 2026-10-28
 
 Applikations-Doku nur mit relevanten Firewall-Regeln, ACI im Weg (Rückmeldung des Anwenders

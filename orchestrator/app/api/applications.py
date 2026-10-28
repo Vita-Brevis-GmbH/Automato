@@ -32,7 +32,17 @@ from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import Application, Rule, Site, SourceSystem, Tenant
 from app.schemas.rules import RuleOut
-from app.store import app_import, app_paths, app_plan, app_refresh, peer_names, sites, word_export
+from app.store import (
+    app_import,
+    app_paths,
+    app_plan,
+    app_refresh,
+    appdoc_catalog,
+    customer_alias,
+    peer_names,
+    sites,
+    word_export,
+)
 from app.store import applications as store
 from app.store import epgs as epg_store
 
@@ -287,7 +297,7 @@ class HideIn(BaseModel):
     """Regel(n) einer Zeile in einer Kategorie ausblenden (0.69.0): IPv4/IPv6-Paar = zwei."""
 
     rule_ids: list[int] = Field(min_length=1, max_length=4)
-    category: int | None = Field(default=None, ge=1, le=11)  # leer = alle Kategorien
+    category: int | None = Field(default=None, ge=1, le=99)  # leer = alle Kategorien (Katalog)
     reason: str = Field(min_length=5, max_length=1000)
 
 
@@ -903,7 +913,7 @@ def export_connections_plan(
 @router.get("/{application_id}/export")
 def export_application(
     application_id: int,
-    format: str = Query("zip", pattern="^(docx|zip)$"),  # noqa: A002 - Name der Abfrage
+    format: str = Query("zip", pattern="^(docx|zip|md)$"),  # noqa: A002 - Name der Abfrage
     sections: str | None = Query(None, max_length=200),
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
@@ -911,8 +921,9 @@ def export_application(
     """Export fuer Confluence (0.71.0, ADR 0026): die Applikations-Doku als Word (`docx`) bzw.
     als ZIP mit Word und dem Netzwerkplan als draw.io (`zip`) - zum Verbessern in Word/draw.io
     und Import von Hand. Seit 0.73.0 `sections` (Komma-Liste aus `word_export.SECTIONS`, leer =
-    alle) wie im Export-Dialog; den Plan legt das ZIP nur mit `plan` bei. Nicht fuer
-    Kunden-Benutzer (Verbindungen zeigen die Infrastruktur)."""
+    alle) wie im Export-Dialog; den Plan legt das ZIP nur mit `plan` bei. Seit 0.104.0 auch
+    Markdown (`md`) aus demselben Aufbau (bisher in der Oberflaeche gebaut). Kunden-Benutzer
+    ohne Verbindungen (sie zeigen die Infrastruktur)."""
     want = None
     if sections:
         want = {s.strip() for s in sections.split(",") if s.strip()}
@@ -920,13 +931,18 @@ def export_application(
             raise HTTPException(
                 status_code=422, detail=L("unbekannter Abschnitt", "unknown section")
             )
-    with_plan = want is None or "plan" in want
     app = _load(session, principal, application_id)
+    view = _visible(session, principal, app)  # Kunden-Benutzer: ihr Ausschnitt (ADR 0018)
+    if principal.is_customer:  # ohne Infrastruktur: keine Verbindungen, kein Plan
+        want = (set(word_export.SECTIONS) if want is None else want) - {"connections", "plan"}
+        format = "docx" if format == "zip" else format
+    with_plan = want is None or "plan" in want
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
     names = peer_names.enabled(session, app.tenant_id, principal.is_customer)  # 0.95.0
-    doc = store.build_doc(session, app, None, names=names)
+    doc = store.build_doc(session, app, view_ids(session, view, "rule"), names=names)
     if want is None or "dependencies" in want:  # 0.88.0
-        doc["dependencies"] = store.dependencies(session, app, doc)
+        visible = _visible_apps(session, principal, app)
+        doc["dependencies"] = store.dependencies(session, app, doc, visible)
     out = ApplicationDocOut(
         application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
     ).model_dump(mode="json")
@@ -937,13 +953,20 @@ def export_application(
     sources = dict(session.execute(
         select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == app.tenant_id)
     ).all())  # fmt: skip
+    if principal.is_customer:  # ohne Geraetenamen (0.58.0) - die Middleware sieht nur JSON
+        aliases = customer_alias.Aliases(session, [app.tenant_id])
+        out = aliases.clean(out)
+        sources = {sid: aliases.systems.get(sid, "") for sid in sources}
+        tenant = None
     base = (f"{L('applikation', 'application')}-{word_export.slug(app.name, 'applikation')}"
             f"-{when:%Y-%m-%d}")  # fmt: skip
     plan_file = f"{base}-{L('netzwerkplan', 'network-diagram')}.drawio"
     body = word_export.application(out, conns, sources, when, tenant.name if tenant else None,
                                    plan_file if format == "zip" and with_plan else None,
-                                   want)  # fmt: skip
-    if format == "docx":
+                                   want, "md" if format == "md" else "docx")  # fmt: skip
+    if format == "md":
+        media, name = "text/markdown; charset=utf-8", f"{base}.md"
+    elif format == "docx":
         media, name = _DOCX, f"{base}.docx"
     else:
         files = [(f"{base}.docx", body)]
@@ -1052,6 +1075,11 @@ def hide_rules(
     reason = body.reason.strip()
     if len(reason) < 5:
         raise HTTPException(status_code=422, detail=L("Begründung zu kurz", "reason too short"))
+    if (
+        body.category is not None
+        and appdoc_catalog.for_tenant(session, app.tenant_id).get(body.category) is None
+    ):  # Kategorien des Mandanten (0.104.0)
+        raise HTTPException(status_code=422, detail=f"unknown category {body.category}")
     rules = []
     for rule_id in dict.fromkeys(body.rule_ids):
         rule = session.get(Rule, rule_id)

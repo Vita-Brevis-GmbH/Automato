@@ -227,7 +227,6 @@ const sideText = (s: AppConnSide) => {
   return `${s.label}${more} (${s.ip}${s.name ? ` · ${s.name}` : ""})`;
 };
 
-const mdCell = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
 // Zonen einer Verbindung als Text (0.78.0): „Web → LAN · Absicht gesperrt: gegen die Absicht …“
 export function zonesText(z: AppConnZones | null | undefined): string {
@@ -236,37 +235,6 @@ export function zonesText(z: AppConnZones | null | undefined): string {
   const way = [...new Set(names)].join(" → ");
   const intents = z.intents.map((i) => i.text).join("; ");
   return [way, intents].filter(Boolean).join(" · ");
-}
-
-// Verbindungen Ende zu Ende als Markdown (Export der Applikations-Doku, 0.59.0)
-export function connectionsMarkdown(data: AppConnections): string[] {
-  const s = data.summary;
-  const lines = [L("## Verbindungen Ende zu Ende", "## End-to-end connections"), ""];
-  lines.push(
-    L(
-      `${s.total} Verbindungen · ${s.allow} erlaubt · ${s.blocked} gesperrt · ${s.open} abhängig bzw. offen · ${s.mismatch} Abweichungen · ${s.inconsistent ?? 0} Wege uneinheitlich`,
-      `${s.total} connections · ${s.allow} allowed · ${s.blocked} blocked · ${s.open} depends or open · ${s.mismatch} deviations · ${s.inconsistent ?? 0} paths inconsistent`,
-    ),
-    "",
-  );
-  data.notes.forEach((n) => lines.push(`> ${n}`, ""));
-  if (!data.connections.length) return [...lines, L("Keine prüfbaren Verbindungen.", "No checkable connections."), ""];
-  lines.push(
-    L(
-      "| Richtung | Quelle | Ziel | Dienst | Weg (entscheidende Regel) | Urteil | Zonen | Abweichung |",
-      "| Direction | Source | Destination | Service | Path (deciding rule) | Verdict | Zones | Deviation |",
-    ),
-    "| --- | --- | --- | --- | --- | --- | --- | --- |",
-  );
-  for (const c of data.connections) {
-    const way = c.hops.map(hopText).join(" → ") + (!c.reached && c.end ? ` – ${c.end.text}` : "");
-    const verdict = c.text || (VERDICT[c.verdict]?.[1] ?? c.verdict);
-    lines.push(
-      `| ${c.direction === "in" ? L("eingehend", "inbound") : L("ausgehend", "outbound")} | ${mdCell(sideText(c.src))} | ${mdCell(sideText(c.dst))} | ${c.service ?? L("alle", "all")} | ${mdCell(way || "–")} | ${mdCell(verdict)} | ${mdCell(zonesText(c.zones) || "–")} | ${mdCell([...(c.inconsistent ? [variantsText(c)] : []), ...c.mismatch].join("; "))} |`,
-    );
-  }
-  lines.push("");
-  return lines;
 }
 
 // Wege uneinheitlich (0.73.0): je Weg (aktiv, ECMP, Backup) bzw. Firewall im Verbund das Urteil

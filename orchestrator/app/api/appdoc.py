@@ -2,10 +2,13 @@
 
 Liefert pro System (Host) die nach Richtung/Scope/Enforcement gruppierten Tabellen
 (`docs/usecases/uc1-applikations-doku-spec.md`). Lesen = `viewer`, mandantsgescoped.
-Der Markdown-Export wird clientseitig aus dieser Struktur erzeugt.
+Seit 0.104.0 der Export als Markdown bzw. Word vom Server (`word_export.system`, derselbe
+Aufbau wie die Applikations-Doku) - bisher baute die Oberflaeche das Markdown selbst.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -16,8 +19,10 @@ from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import L
+from app.models import Tenant
 from app.store import appdoc as store
-from app.store import appdoc_zones, peer_names
+from app.store import appdoc_zones, customer_alias, peer_names, word_export
 
 router = APIRouter(prefix="/appdoc", tags=["appdoc"])
 
@@ -111,7 +116,34 @@ def system_doc(
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ):
+    return _system_doc(session, principal, system, tenant_scope(principal, tenant_id))
+
+
+@router.get("/systems/{system}/export")
+def export_system_doc(
+    system: str,
+    tenant_id: int | None = None,
+    format: str = Query("md", pattern="^(md|docx)$"),  # noqa: A002 - Name der Abfrage
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> Response:
+    """Doku je System als Markdown bzw. Word (0.104.0) - Inhalt wie `GET /systems/{system}`,
+    Kunden-Benutzer nur ihre Regeln und ohne Geraetenamen."""
     tenant_id = tenant_scope(principal, tenant_id)
+    doc = SystemDocOut(**_system_doc(session, principal, system, tenant_id)).model_dump(mode="json")
+    tenant = session.get(Tenant, tenant_id) if tenant_id is not None else None
+    if principal.is_customer and tenant_id is not None:  # die Middleware sieht nur JSON
+        doc, tenant = customer_alias.Aliases(session, [tenant_id]).clean(doc), None
+    when = datetime.now(UTC)
+    body = word_export.system(doc, when, tenant.name if tenant else None, format)
+    name = f"{L('doku', 'doc')}-{word_export.slug(system, 'system')}-{when:%Y-%m-%d}.{format}"
+    media = ("text/markdown; charset=utf-8" if format == "md" else
+             "application/vnd.openxmlformats-officedocument.wordprocessingml.document")  # fmt: skip
+    return Response(content=body, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+
+
+def _system_doc(session: Session, principal: Principal, system: str, tenant_id: int | None) -> dict:
     reads.maybe_audit_read(session, principal, tenant_id, "appdoc")
     view = own_view(session, principal, tenant_id) if tenant_id is not None else None
     if principal.is_customer and view is None:

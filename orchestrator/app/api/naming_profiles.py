@@ -6,16 +6,21 @@ Lesen = `viewer`, Schreiben (Profile/Einträge pflegen) = `admin` (RBAC, E1/ADR 
 Seit 0.55.0 das **Grundschema der Zonen** als draw.io-Zeichnung je Profil
 (`store/zone_schema.py`): Vorschau, speichern und entfernen = `admin`, lesen, Zeichnung und
 Vorlage herunterladen = `viewer`.
+
+Seit 0.104.0 die **Kategorien der Applikations-Doku** je Profil (`store/appdoc_catalog.py`,
+Konfiguration statt Code): lesen = `viewer`, speichern bzw. auf die Vorgaben zuruecksetzen =
+`admin`.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.i18n import L, german, german_only, lang
 from app.models import DictionaryEntry, Tenant
 from app.schemas.naming_profile import (
@@ -26,8 +31,8 @@ from app.schemas.naming_profile import (
     NamingProfileIn,
     NamingProfileOut,
 )
+from app.store import app_refresh, appdoc_catalog, zone_schema
 from app.store import naming_profiles as store
-from app.store import zone_schema
 
 router = APIRouter(prefix="/naming-profiles", tags=["naming-profiles"])
 
@@ -408,3 +413,107 @@ def zone_schema_drawing(
     return _file(
         m.extra["content"], name if name.endswith((".drawio", ".xml")) else f"{name}.drawio"
     )
+
+
+# -- Kategorien der Applikations-Doku (0.104.0) ----------------------------------------------
+
+
+class CatalogCategoryIn(BaseModel):
+    index: int = Field(ge=1, le=appdoc_catalog.MAX_INDEX)
+    title: str = Field(min_length=1, max_length=200)
+    title_en: str = Field(default="", max_length=200)
+    zone_title: str = Field(default="", max_length=200)  # mit „{z}“ = Namen der Zonen
+    zone_title_en: str = Field(default="", max_length=200)
+    layout: str = "common"
+    only_with_zones: bool = False
+
+
+class CatalogAreaIn(BaseModel):
+    key: str = Field(min_length=1, max_length=8)
+    label: str = Field(min_length=1, max_length=200)
+    label_en: str = Field(default="", max_length=200)
+    inbound: int
+    outbound: int
+    markers: list[str] = Field(default_factory=list, max_length=appdoc_catalog.MAX_LIST)
+    match: list[str] = Field(default_factory=list, max_length=appdoc_catalog.MAX_LIST)
+    off: bool = False
+
+
+class CatalogIn(BaseModel):
+    categories: list[CatalogCategoryIn] = Field(default_factory=list, max_length=100)
+    areas: list[CatalogAreaIn] = Field(default_factory=list, max_length=100)
+    options: dict[str, bool] = Field(default_factory=dict)
+
+
+def _catalog_out(session: Session, profile_id: int | None) -> dict:
+    cat = appdoc_catalog.for_profile(session, profile_id)
+    return {**cat.out(), "default": appdoc_catalog.default().out()}
+
+
+def _refresh_catalog_tenants(session: Session, background: BackgroundTasks,
+                             factory: sessionmaker, profile_id: int) -> None:  # fmt: skip
+    """Befunde der Applikationen der Mandanten mit diesem Profil nachziehen (Kategorien)."""
+    for tid in session.scalars(select(Tenant.id)):
+        if store.profile_id_for_tenant(session, tid) == profile_id:
+            app_refresh.schedule_tenant(background, factory, tid)
+
+
+@router.get("/appdoc-catalog/default")
+def appdoc_catalog_default(_: Principal = Depends(require_viewer)) -> dict:
+    """Vorgaben der Kategorien (ohne Profil)."""
+    return appdoc_catalog.default().out()
+
+
+@router.get("/{profile_id}/appdoc-catalog")
+def get_appdoc_catalog(
+    profile_id: int,
+    _: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Kategorien der Applikations-Doku des Profils: Vorgaben mit den Anpassungen."""
+    _profile(session, profile_id)
+    return _catalog_out(session, profile_id)
+
+
+@router.put("/{profile_id}/appdoc-catalog")
+def save_appdoc_catalog(
+    profile_id: int,
+    body: CatalogIn,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Kategorien, Auswahl je Zone (Bereiche) und Optionen der Doku speichern (Admin, 0.104.0):
+    gespeichert werden nur Abweichungen von den Vorgaben; eingebaute Kategorien bzw. Bereiche
+    bleiben (anpassen bzw. Bereiche „aus“), eigene kommen dazu bzw. fallen weg."""
+    _profile(session, profile_id)
+    try:
+        cat = appdoc_catalog.validate(body.model_dump())
+    except appdoc_catalog.Invalid as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    stored = appdoc_catalog.save(session, profile_id, cat)
+    audit.record(session, actor=f"user:{principal.subject}", action="appdoc_catalog.saved",
+                 subject=str(profile_id),
+                 detail={"profile_id": profile_id, "categories": len(cat.categories),
+                         "areas": len(cat.areas), "options": cat.options.out(),
+                         "stored": stored})  # fmt: skip
+    _refresh_catalog_tenants(session, background, factory, profile_id)
+    return _catalog_out(session, profile_id)
+
+
+@router.delete("/{profile_id}/appdoc-catalog")
+def reset_appdoc_catalog(
+    profile_id: int,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Kategorien des Profils auf die Vorgaben zuruecksetzen (Admin)."""
+    _profile(session, profile_id)
+    appdoc_catalog.save(session, profile_id, appdoc_catalog.default())
+    audit.record(session, actor=f"user:{principal.subject}", action="appdoc_catalog.reset",
+                 subject=str(profile_id), detail={"profile_id": profile_id})  # fmt: skip
+    _refresh_catalog_tenants(session, background, factory, profile_id)
+    return _catalog_out(session, profile_id)

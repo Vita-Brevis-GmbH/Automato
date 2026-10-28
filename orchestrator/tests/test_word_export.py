@@ -11,6 +11,7 @@ import test_app_paths as tap
 import test_zones as tz
 from app.store import word_export
 from app.store.docx_writer import Document
+from app.store.md_writer import Markdown
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 OP = {"X-Dev-Roles": "operator"}
@@ -98,11 +99,84 @@ def test_applikation_als_word_und_drawio(client):
     assert len(zipfile.ZipFile(io.BytesIO(r.content)).namelist()) == 2
     assert client.get(f"/applications/{app['id']}/export",
                       params={"sections": "abhaengigkeiten"}).status_code == 422  # fmt: skip
-    # nicht fuer Kunden-Benutzer
+    # Kunden-Benutzer (seit 0.104.0 freigegeben): nur Applikationen ihres Ausschnitts
     cust = client.post("/customers", json={"tenant_id": tid, "name": "K", "selectors": []},
                        headers=OP).json()  # fmt: skip
     who = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid), "X-Dev-Customers": str(cust["id"])}
-    assert client.get(f"/applications/{app['id']}/export", headers=who).status_code == 403
+    assert client.get(f"/applications/{app['id']}/export", headers=who).status_code == 404
+
+
+def _heads(md: str) -> list[str]:
+    return [line.lstrip("#").strip() for line in md.splitlines() if line.startswith("#")]
+
+
+def test_markdown_schreiber():
+    out = Markdown("T")
+    out.heading("Titel", 0)
+    out.heading("Teil", 1)
+    out.paragraph(("Übersicht: ", {"bold": True}), "3 VMs")
+    out.note("Stand heute")
+    out.fields([("Zweck", "Prod"), ("leer", "")])
+    out.table(["A", "B"], [["x|y", "1\n2"], ["z"]])
+    text = out.bytes().decode()
+    assert text.splitlines()[:4] == ["# Titel", "", "## Teil", ""]
+    assert "**Übersicht:** 3 VMs" in text and "_Stand heute_" in text
+    assert "- **Zweck:** Prod" in text and "leer" not in text
+    assert "| A | B |\n| --- | --- |\n| x\\|y | 1<br>2 |\n| z |  |" in text
+
+
+def test_applikation_als_markdown_wie_word(client):
+    """0.104.0 (Modularisierung): Markdown vom Server aus demselben Aufbau wie Word - gleiche
+    Abschnitte, gleiche Tabellen; bisher baute die Oberflaeche das Markdown selbst."""
+    tid = tap._seed(client)
+    body = {"name": "Web", "members": [{"kind": "epg", "ref": ar.WEB}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).json()
+    url = f"/applications/{app['id']}/export"
+    r = client.get(url, params={"format": "md"})
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/markdown")
+    name = r.headers["content-disposition"].split('filename="')[1].rstrip('"')
+    assert name.startswith("applikation-web-") and name.endswith(".md")
+    md = r.text
+    word = _text(client.get(url, params={"format": "docx"}).content)[1]
+    assert _heads(md) == word  # dieselbe Gliederung
+    assert md.startswith("# Applikation Web\n")
+    assert "| Richtung | Quelle | Ziel | Dienst | Weg (entscheidende Regel) | Urteil |" in md
+    assert "CT_lan" in md and "apic-01" in md
+    assert "Netzwerkplan als draw.io-Datei in Automato" in md  # kein Plan beigelegt
+    # Abschnitte zur Wahl
+    part = client.get(url, params={"format": "md", "sections": "systems,findings"}).text
+    assert "## Systeme" in part and "## Regeln & Contracts" not in part
+    # Kunden-Benutzer: ihr Ausschnitt, ohne Verbindungen und Plan, ohne Geraetenamen
+    sel = [{"kind": "aci_tenant", "value": "TE"}]
+    cust = client.post("/customers", json={"tenant_id": tid, "name": "K", "selectors": sel},
+                       headers=OP).json()  # fmt: skip
+    who = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid), "X-Dev-Customers": str(cust["id"])}
+    r = client.get(url, params={"format": "md"}, headers=who)
+    assert r.status_code == 200, r.text
+    assert "## Systeme" in r.text and "## Regeln & Contracts" in r.text
+    assert "## Verbindungen Ende zu Ende" not in r.text and "## Netzwerkplan" not in r.text
+    assert "apic-01" not in r.text and "fw-01" not in r.text and "Kunde A" not in r.text
+    r = client.get(url, params={"format": "zip"}, headers=who)  # ohne Plan nur Word
+    assert r.headers["content-type"].startswith("application/vnd.openxmlformats")
+
+
+def test_doku_je_system_als_markdown_und_word(client):
+    tid = tap._seed(client)
+    system = "10.60.0.5"  # Server hinter fw-02 mit Zeilen in den Kategorien
+    doc = client.get(f"/appdoc/systems/{system}", params={"tenant_id": tid}).json()
+    url = f"/appdoc/systems/{system}/export"
+    r = client.get(url, params={"tenant_id": tid})
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/markdown")
+    md = r.text
+    assert md.startswith(f"# Applikations-Doku – {doc['system']}\n")
+    shown = [t for t in doc["tables"] if t["rows"]]
+    assert shown and all(f"### {t['index']}. {t['title']}" in md for t in shown)
+    assert "| " + " | ".join(shown[0]["labels"]) + " |" in md
+    word = _text(client.get(url, params={"tenant_id": tid, "format": "docx"}).content)[1]
+    assert _heads(md) == word
+    assert client.get(url, params={"tenant_id": tid, "format": "pdf"}).status_code == 422
 
 
 def test_zonenplan_als_word_und_drawio(client):

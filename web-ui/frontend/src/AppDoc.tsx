@@ -1,10 +1,11 @@
-import { Fragment, ReactNode, useEffect, useMemo, useState } from "react";
+import { Fragment, ReactNode, useEffect, useState } from "react";
 import {
   AppDocSystem,
   assignSystemSite,
   DocHide,
   DocTable,
   DocTableZone,
+  exportSystemDoc,
   fetchAppDocSystems,
   fetchSites,
   fetchSystemDoc,
@@ -151,7 +152,6 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
       .catch(setErr);
   }, [selected, tenantId]);
 
-  const markdown = useMemo(() => (doc ? toMarkdown(doc) : ""), [doc]);
   const selKind = systems?.find((s) => s.name === selected)?.kind ?? "host";
 
   const assign = async (siteId: number | null) => {
@@ -220,13 +220,23 @@ function SystemDocView({ me, tenantId }: { me: Me; tenantId: number | null }) {
               {L("leere Kategorien zeigen", "show empty categories")}
             </button>
             <div className="grow" />
-            <button
-              className="btn btn-ghost btn-sm"
-              disabled={!doc}
-              onClick={() => doc && download(`${doc.system}.md`, markdown)}
-            >
-              <Icon name="download" size={14} /> Export (Markdown)
-            </button>
+            {/* 0.104.0: vom Server aus demselben Aufbau wie Word (bisher hier gebaut) */}
+            {(["md", "docx"] as const).map((format) => (
+              <button
+                key={format}
+                className="btn btn-ghost btn-sm"
+                id={`appdoc-export-${format}`}
+                disabled={!doc || !selected}
+                onClick={() => {
+                  if (!selected) return;
+                  exportSystemDoc(selected, tenantId, format)
+                    .then(({ blob, filename }) => download(filename, blob))
+                    .catch(setErr);
+                }}
+              >
+                <Icon name="download" size={14} /> {format === "md" ? "Export (Markdown)" : "Word (.docx)"}
+              </button>
+            ))}
           </div>
 
           {doc && (
@@ -568,74 +578,6 @@ export function DocTableView({
 
 const MAX_VMS = 8; // Kopf der Doku: weitere VMs nur als Anzahl
 
-function toMarkdown(doc: SystemDoc): string {
-  const lines: string[] = [
-    L(`# Applikations-Doku – ${doc.system}`, `# Application documentation – ${doc.system}`),
-    "",
-  ];
-  const meta: string[] = [];
-  if (doc.system_ip) meta.push(`IP: ${doc.system_ip}`);
-  if (doc.tenant_code) meta.push(L(`GG: ${doc.tenant_code}`, `GC: ${doc.tenant_code}`));
-  if (doc.site) meta.push(L(`Standort: ${siteLabel(doc.site)}`, `Site: ${siteLabel(doc.site)}`));
-  if (doc.vms?.length) meta.push(`VM: ${[...new Set(doc.vms.map((v) => v.name))].join(", ")}`);
-  if (meta.length) lines.push(meta.join(" · "), "");
-  return lines.concat(tablesMarkdown(doc.tables)).join("\n");
-}
-
-const mdCell = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, "<br>");
-
-// Tabellen 1–10 als Markdown (leere Kategorien entfallen) samt Fusszeile; 0.73.0: Kategorien
-// bzw. ausgeblendete Regeln nach Auswahl im Export-Dialog
 // Spaltenkopf in der Sprache der Anfrage (0.87.0: `labels` vom Server, `columns` bleiben Schlüssel)
 export const colLabel = (t: DocTable, column: string, i: number): string => t.labels?.[i] ?? column;
 
-export function tablesMarkdown(tables: DocTable[], rows = true, hiddenToo = true): string[] {
-  const lines: string[] = [];
-  for (const t of rows ? tables : []) {
-    if (t.rows.length === 0) continue;
-    lines.push(`## ${t.index}. ${t.title}`, "");
-    if ((t.zones ?? []).length > 0) {
-      // 0.101.0: Zonen der Kategorie mit ihren Netzen, seit 0.102.0 mit Ausschlüssen
-      const zones = t.zones!.map((z) => {
-        const more = z.nets_total - z.nets.length;
-        const without = (z.excluded ?? []).length ? L(` ohne ${z.excluded!.join(", ")}`, ` without ${z.excluded!.join(", ")}`) : "";
-        return `${z.name} (${z.nets.join(", ")}${more > 0 ? L(` +${more} weitere`, ` +${more} more`) : ""}${without})`;
-      });
-      lines.push(`${L("Zonen", "Zones")}: ${zones.join(" · ")}`, "");
-    }
-    lines.push(`| ${t.columns.map((c, i) => colLabel(t, c, i)).join(" | ")} |`);
-    lines.push(`| ${t.columns.map(() => "---").join(" | ")} |`);
-    for (const row of t.rows) {
-      lines.push(`| ${t.columns.map((c) => mdCell(String(row[c] ?? ""))).join(" | ")} |`);
-    }
-    lines.push("");
-  }
-  // 0.69.0: ausgeblendete Regeln mit Begründung (Nachweis, warum sie in den Kategorien fehlen)
-  const hidden = hiddenToo ? tables.flatMap((t) => (t.hidden ?? []).map((row) => ({ t, row }))) : [];
-  if (hidden.length) {
-    lines.push(
-      L("## Ausgeblendete Regeln", "## Hidden rules"),
-      "",
-      L(
-        "| Kategorie | Regel | System bzw. Objekt | Begründung | von | am |",
-        "| Category | Rule | System or object | Reason | by | on |",
-      ),
-      "| --- | --- | --- | --- | --- | --- |",
-    );
-    for (const { t, row } of hidden) {
-      const hs = row._hides ?? [];
-      lines.push(
-        `| ${t.index}. ${mdCell(t.title)} | ${mdCell(String(row.Description ?? ""))} | ${mdCell(String(row._app ?? ""))} | ${mdCell(hs.map((h) => h.reason).join("; "))} | ${mdCell([...new Set(hs.map((h) => h.by))].join(", "))} | ${dateText(hs[0]?.at)} |`,
-      );
-    }
-    lines.push("");
-  }
-  lines.push(
-    L(
-      `_Erzeugt von Automato – ${new Date().toISOString().slice(0, 10)}_`,
-      `_Generated by Automato – ${new Date().toISOString().slice(0, 10)}_`,
-    ),
-    "",
-  );
-  return lines;
-}

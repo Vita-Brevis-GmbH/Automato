@@ -1,29 +1,20 @@
-// Bereiche der Kategorien der Applikations-Doku (0.101.0): Anzeige je Bereich mit den Kategorien;
-// seit 0.102.0 Vorschlag nach dem Namen der Zone
-import type { AppdocArea } from "./api";
+// Bereiche der Kategorien der Applikations-Doku (0.101.0): Anzeige je Bereich mit den Kategorien. Seit 0.104.0
+// aus dem Katalog des Mandanten (Namenskonzept, `GET /zones/appdoc/catalog`); der Vorschlag nach dem Namen der
+// Zone kommt vom Server (Muster je Bereich).
+import type { AppdocArea, AppdocAreaDef, AppdocCatalog } from "./api";
 import { L } from "./i18n";
 
-export function areaLabel(area: AppdocArea): string {
-  return {
-    inet: L("Internet (1/2)", "Internet (1/2)"),
-    bit: L("Unternehmensnetzwerk (3/4)", "Corporate network (3/4)"),
-    vpn: L("VPN (5)", "VPN (5)"),
-    sra: L("Remote Access (6)", "Remote access (6)"),
-    res: L("andere Security Tenants (9)", "Other security tenants (9)"),
-    mgmt: L("DC Management (11)", "DC management (11)"),
-  }[area];
+export function areaLabel(catalog: AppdocCatalog | null, area: AppdocArea): string {
+  const a = catalog?.areas.find((x) => x.key === area);
+  if (!a) return area;
+  const tables = [...new Set([a.inbound, a.outbound])].join("/");
+  return `${L(a.label, a.label_en || a.label)} (${tables})`;
 }
 
-// Vorschlag nach dem Namen bzw. Kurznamen der Zone (0.102.0): Edge Internet → Internet, Edge Office →
-// Unternehmensnetzwerk, Edge VPN → VPN, SRA/Remote → Remote Access, RES-… → andere Security Tenants,
-// … Management → DC Management; sonst keiner (z. B. DC)
-export function suggestArea(name: string, code?: string | null): AppdocArea | null {
-  const t = `${name} ${code ?? ""}`.toLowerCase();
-  if (/manage?ment|mgmt/.test(t)) return "mgmt";
-  if (/internet|inet|public/.test(t)) return "inet";
-  if (/\bsra\b|remote/.test(t)) return "sra";
-  if (/vpn/.test(t)) return "vpn";
-  if (/office|eoff|\bbit\b|büro|buero|unternehmen/.test(t)) return "bit";
-  if (/(^|[^a-z])res([^a-z]|$)/.test(t)) return "res";
-  return null;
+// angebotene Bereiche; ein gespeicherter, inzwischen nicht mehr angebotener bleibt sichtbar
+export function areaChoices(catalog: AppdocCatalog | null, current?: AppdocArea | null): AppdocAreaDef[] {
+  const active = (catalog?.areas ?? []).filter((a) => !a.off);
+  if (!current || active.some((a) => a.key === current)) return active;
+  const stale = catalog?.areas.find((a) => a.key === current);
+  return [...active, stale ?? { key: current, label: current, label_en: current, inbound: 0, outbound: 0, markers: [], match: [], role: "", off: true, builtin: false }];
 }

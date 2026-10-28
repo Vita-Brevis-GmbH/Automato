@@ -134,6 +134,14 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Kategorien (Reiter im Netzwerkdesign, 0.102.0) | Categories |
 | Ausschlüsse („ohne“ Netz einer Zone) | Exclusions (“without”) |
 | Zugriff Management (Kategorie 11) | Management access |
+| Kategorien der Applikations-Doku (Namensprofile, 0.104.0) | Categories of the application documentation |
+| Auswahl je Zone (Bereiche) | Choice per zone (areas) |
+| Kategorie eingehend / ausgehend | Category inbound / outbound |
+| Titel mit Zonen (`{z}`) | Title with zones |
+| Merkmal (im Namen der Firewall-Zone) | Marker |
+| Vorschlag bei (Muster nach dem Zonennamen) | Suggest for |
+| angeboten (Bereich) | offered |
+| Auf Vorgaben zurücksetzen | Reset to defaults |
 | Zweck (Dev/Test/Prod) | Purpose |
 | Kritikalität | Criticality |
 | Verantwortlich | Owner |

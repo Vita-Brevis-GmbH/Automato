@@ -790,7 +790,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       andere Systeme bzw. Adressen ohne Zonensignal. Alle Regeln stehen weiter unter
       „Regeln & Contracts“.
   Dazu
-  *Doku je System* (10 Kategorien, Standort verorten) und *Publizierte Dienste* (VIPs mit
+  *Doku je System* (Kategorien, Standort verorten; Export Markdown bzw. seit 0.104.0 Word vom
+  Server, `GET /appdoc/systems/{name}/export?format=md|docx`) und *Publizierte Dienste* (VIPs mit
   Regeln; seit 0.77.0 auch die **Virtual Services des NSX ALB** – je VIP und Port mit Quelle,
   Pool und Zahl der Server, Regeln über die VIP-Adresse; im NAT als Virtual Server mit den
   Servern des Pools und Avi-Tenant, Pool, Methode, Health-Monitor, Zustand und „Quelle zum
@@ -1045,7 +1046,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     (Übersicht, Systeme, EPGs, Verbindungen Ende zu Ende, Netzwerkplan, Regeln & Contracts,
     Findings, Doku nach Kategorien, ausgeblendete Regeln; der Kopf mit dem Steckbrief steht
     immer da). Die Auswahl bleibt im Browser.
-    - **Markdown** – die gewählten Abschnitte (ohne Netzwerkplan).
+    - **Markdown** – die gewählten Abschnitte (ohne Netzwerkplan); seit 0.104.0 vom Server aus
+      demselben Aufbau wie Word (gleiche Gliederung und Tabellen).
     - **Word + draw.io (ZIP)** bzw. **Word (.docx)**, wenn der Netzwerkplan nicht gewählt ist –
       für Confluence, siehe unten.
     - **Drucken / PDF** – die gewählten Abschnitte offen, die übrigen fallen im Druck weg.
@@ -1060,8 +1062,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       *Inhalt importieren*); den Plan in draw.io (diagrams.net) bearbeiten und auf der Seite
       mit dem draw.io-Makro *Diagramm importieren* einfügen. Änderungen in Confluence fliessen
       nicht zurück.
-    - Nicht für Kunden-Benutzer (die Verbindungen zeigen die Infrastruktur). API
-      `GET /applications/{id}/export?format=zip|docx&sections=…` (Komma-Liste `overview`,
+    - Kunden-Benutzer (seit 0.104.0): Markdown bzw. Word ihres Ausschnitts – ohne Verbindungen
+      und Netzwerkplan (sie zeigen die Infrastruktur), ohne Gerätenamen. API
+      `GET /applications/{id}/export?format=zip|docx|md&sections=…` (Komma-Liste `overview`,
       `systems`, `epgs`, `connections`, `plan`, `rules`, `dependencies`, `findings`,
       `categories`, `hidden`; leer = alle).
   - **Detail statt Sprung (0.95.0):** Klick auf eine EPG (Karte „EPGs im ACI“ bzw. im Detail
@@ -1093,7 +1096,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     erscheint erst mit einer solchen Zone. Umfasst ein Bereich Zonen mehrerer Kategorien, bleibt
     die Regel unspezifisch (die Spalte Zone zeigt, welche) – dann den Bereich enger fassen, einen
     Ausschluss setzen oder die Zonen anders schneiden. Kunden-Benutzer sehen Spalte, Zonen und
-    Titel mit Zonen nicht.
+    Titel mit Zonen nicht. Seit 0.104.0 passt der Admin die Auswahl (eigene Kategorien bzw.
+    Bereiche, Titel, Muster für den Vorschlag) unter **Namensprofile → Kategorien der
+    Applikations-Doku** an.
   - **Nur relevante Firewall-Regeln (0.103.0):** ausgehende Firewall-Regeln, die die Systeme nur
     über eine breite Quelle erfassen (z. B. 10.0.0.0/8 → irgendwohin, any → Internet), stehen
     nicht mehr in der Doku – weder in den Kategorien noch unter „Regeln & Contracts“, in den
@@ -1512,6 +1517,26 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       hochgeladen) – zum Weiterzeichnen in draw.io. Audit `zone_schema.edited`.
     - Das Schema gilt für alle Mandanten des Profils (bzw. „default“) und ist ohne Funktionszwang:
       ohne Schema arbeiten Zonen und Vorschläge wie bisher.
+  - **Kategorien der Applikations-Doku** (0.104.0, ADR 0012 Ergänzung 0.104.0): die Auswahl je
+    Zone im Netzwerkdesign → Kategorien und die Kategorien selbst – Vorgaben im Code, hier
+    anpassen bzw. erweitern (Admin; gilt für die Mandanten des Profils bzw. „default“).
+    - **Kategorien:** Titel deutsch/englisch, **Titel mit Zonen** (`{z}` = Namen der Zonen,
+      z. B. „Zugriff aus {z}“; leer = Titel bleibt), **Spalten** (Standard, Internet ausgehend,
+      Internet eingehend) und „nur mit Zone“ (erscheint nur mit einer Zone dieser Kategorie bzw.
+      mit Zeilen). **+ Kategorie** legt eine eigene an (nächste freie Nummer, entfernbar).
+      Eingebaute (1–11) bleiben; ACI intern (7/8/9) und unspezifisch (10) behalten ihre Rolle.
+    - **Auswahl je Zone (Bereiche):** Kürzel (1–8 Kleinbuchstaben, Ziffern, `-`, `_`),
+      Bezeichnung, **Kategorie eingehend** (Zugriffe aus der Zone) und **ausgehend** (Zugriffe des
+      Systems in die Zone), **Merkmal** im Namen der Firewall-Zone (`L3O_inet`, gilt ohne Bereich
+      an der Zone), **Vorschlag bei** (Muster nach dem Zonennamen, `*` = beliebig, z. B.
+      `*partner*`), **angeboten** (eingebaute lassen sich ausschalten). **+ Bereich** legt einen
+      eigenen an, z. B. „Partner“ → eigene Kategorie 12.
+    - **Optionen:** ausgehende Firewall-Regeln mit breiter Quelle ausblenden (0.103.0),
+      unspezifische Kategorie nur mit Zugriffen auf die Applikation (0.78.2).
+    - **Speichern** übernimmt (gespeichert werden nur Abweichungen), die Doku der Applikationen
+      ordnet beim nächsten Laden neu; **Auf Vorgaben zurücksetzen** entfernt die Anpassungen.
+      Zonen mit einem nicht mehr angebotenen Bereich zählen wie ohne Bereich (die Auswahl zeigt
+      „nicht mehr angeboten“). Audit `appdoc_catalog.saved` bzw. `appdoc_catalog.reset`.
 - **Collector-Agenten (nur Admin):** **+ Agent** erzeugt das Token einmalig; Spalte
   **Geräte** (zugewiesene Quellsysteme); Status online/keine Meldung aus dem Heartbeat;
   Aktivieren/Deaktivieren. **Einrichtung Schritt für Schritt** direkt in der Ansicht: Geräte
@@ -1608,7 +1633,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `POST /internal/collector-runs/{id}/result`, `GET …/{id}/target` | Ergebnis (Agent-Token des abholenden Agenten oder internes Token; Antwort = Quittung `status`/`message`); Ziel für den zentralen Worker |
 | `POST /internal/collector-runs/{id}/references` | Teil-Upload einer Referenzquelle (Infoblox/NetBox, je bis 2000 Einträge; das Ergebnis meldet `reference_count`, sonst wird der Lauf verworfen) |
 | `GET /netbox-sync/targets`, `GET/POST /netbox-sync/plans`, `GET …/plans/{id}[/items]`, `POST …/plans/{id}/apply` | NetBox-Sync (admin): Vorschau, Aktionen, Übernahme |
-| `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}`; seit 0.55.0 `GET/PUT/DELETE …/{id}/zone-schema`, `POST …/{id}/zone-schema/preview`, `GET …/{id}/zone-schema/drawing`, `GET /naming-profiles/zone-schema/template[?tenant_id=]` | Namensprofile; Grundschema der Zonen (`content` = draw.io-XML, `filename`; schreiben = admin): `schema` mit `zones` (Name, Art, Kurzname, Farbe, `match`, Gruppe, Position) und `links` (`src`, `dst`, `intent`, `reason`), `warnings`, Vorschau mit `diff`; Zeichnung bzw. Vorlage als Datei |
+| `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}`; seit 0.55.0 `GET/PUT/DELETE …/{id}/zone-schema`, `POST …/{id}/zone-schema/preview`, `GET …/{id}/zone-schema/drawing`, `GET /naming-profiles/zone-schema/template[?tenant_id=]`; seit 0.104.0 `GET/PUT/DELETE …/{id}/appdoc-catalog`, `GET /naming-profiles/appdoc-catalog/default`, `GET /zones/appdoc/catalog?tenant_id=` | Namensprofile; Kategorien der Applikations-Doku (`categories`, `areas`, `options`; schreiben = admin; je Mandant mit `suggestions` je Zone); Grundschema der Zonen (`content` = draw.io-XML, `filename`; schreiben = admin): `schema` mit `zones` (Name, Art, Kurzname, Farbe, `match`, Gruppe, Position) und `links` (`src`, `dst`, `intent`, `reason`), `warnings`, Vorschau mit `diff`; Zeichnung bzw. Vorlage als Datei |
 | `GET /system/status` | Betriebsstand (admin, siehe System-Seite) |
 | `GET /system/connections` (`?tenant_id=`) | Verbindungen jetzt prüfen (admin, 0.40.0): `status`, `problems`, `container.network`, `items` je Ziel mit `area`, `status` (ok/warn/error/info), `steps`, `hint`, `ufw` (Regel); dasselbe auf der VM: `automato check-connections [--json]` |
 | `GET /system/health` (`?tenant_id=`) | Betriebszustand als Ampel (viewer, mandantsgescoped): `status`, `problems`, `checks` je Prüfung mit `area`, `status` (ok/warn/error), `title`, `detail`, `view` |

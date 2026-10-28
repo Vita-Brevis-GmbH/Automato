@@ -41,6 +41,8 @@ from app.store import (
     aci_direction,
     aci_relevance,
     aci_shared,
+    appdoc_catalog,
+    appdoc_filter,
     references,
     rule_index,
     rule_view,
@@ -54,65 +56,21 @@ from app.store import rules as rules_store
 
 SEP = " · "  # gleichnamige EPGs mehrerer ACI-Tenants: "EG_x · TE_a · AP_1"
 
-# Tabellen-Metadaten (Index -> Titel, Enforcement). Spaltenlisten siehe TABLE_COLUMNS.
-TABLES: list[tuple[int, str, str]] = [
-    (1, "Internet Zugriff", "firewall"),
-    (2, "Zugriff aus dem Internet", "firewall"),
-    (3, "Zugriff in das Unternehmensnetzwerk", "firewall"),
-    (4, "Zugriff aus dem Unternehmensnetzwerk", "firewall"),
-    (5, "Zugriff L3O_vpn", "firewall"),
-    (6, "Zugriff L3O_sra (Remote Access)", "firewall"),
-    (7, "Zugriff innerhalb des Applikationsprofils", "aci"),
-    (8, "Zugriff innerhalb des Security Tenant", "aci"),
-    (9, "Zugriff zu anderen Security Tenants", "firewall"),
-    (10, "Unspezifische Zugriffe auf die Applikation", "firewall"),
-    # 0.102.0 (Anwender): DC Management hinter einer eigenen Firewall, die die Zugriffe der
-    # Benutzer steuert - eigene Firewall-Regeln und Contracts im ACI; nur ueber Zonen
-    (11, "Zugriff Management", "firewall"),
-]
-# Titel auf Englisch (0.87.0, ADR 0028): `TABLES` bleibt deutsch, gewaehlt wird bei der Ausgabe
-_TITLES_EN = {
-    1: "Internet access",
-    2: "Access from the Internet",
-    3: "Access to the corporate network",
-    4: "Access from the corporate network",
-    5: "Access L3O_vpn",
-    6: "Access L3O_sra (remote access)",
-    7: "Access within the application profile",
-    8: "Access within the security tenant",
-    9: "Access to other security tenants",
-    10: "Unspecific access to the application",
-    11: "Management access",
-}
-# Titel nach den Zonen der Kategorie (0.102.0, Anwender: „die Namen der korrekten Zonen
-# verwenden“): der Wortlaut der Vorlage, statt Internet/Unternehmensnetzwerk/L3O_… die Namen der
-# zugeordneten Zonen (`appdoc_zones.heads`); ohne Zonen der Titel der Vorlage
-_ZONE_TITLES: dict[int, tuple[str, str]] = {
-    1: ("{z} Zugriff", "{z} access"),
-    2: ("Zugriff aus {z}", "Access from {z}"),
-    3: ("Zugriff in {z}", "Access to {z}"),
-    4: ("Zugriff aus {z}", "Access from {z}"),
-    5: ("Zugriff {z}", "Access {z}"),
-    6: ("Zugriff {z}", "Access {z}"),
-    9: ("Zugriff zu {z}", "Access to {z}"),
-    11: ("Zugriff {z}", "Access {z}"),
-}
-TITLE_ZONES = 3  # Zonen-Namen im Titel, dann „…“
+# Kategorien (Nummer, Titel, Spalten, Bereiche der Zonen) seit 0.104.0 als Katalog
+# (`appdoc_catalog`): Vorgaben im Code, angepasst bzw. erweitert im Namensprofil des Mandanten
+# (Anwender 2026-10-28: „Konfiguration statt Code“). `TenantData.catalog` ist der des Mandanten;
+# die Funktionen hier nehmen ohne Katalog die Vorgaben.
+DEFAULT_CATALOG = appdoc_catalog.default()
 
 
-def table_title(index: int) -> str:
+def table_title(index: int, catalog: appdoc_catalog.Catalog | None = None) -> str:
     """Titel einer Kategorie in der Sprache der Anfrage."""
-    de = next((t for i, t, _ in TABLES if i == index), "")
-    return L(de, _TITLES_EN.get(index, de))
+    return (catalog or DEFAULT_CATALOG).title(index)
 
 
-def zone_title(index: int, names: list[str]) -> str:
+def zone_title(index: int, names: list[str], catalog: appdoc_catalog.Catalog | None = None) -> str:
     """Titel einer Kategorie mit den Namen ihrer Zonen („Zugriff aus Edge Internet“)."""
-    pattern = _ZONE_TITLES.get(index)
-    if not pattern or not names:
-        return table_title(index)
-    shown = ", ".join(names[:TITLE_ZONES]) + (" …" if len(names) > TITLE_ZONES else "")
-    return L(*pattern).replace("{z}", shown)
+    return (catalog or DEFAULT_CATALOG).zone_title(index, names)
 
 
 # "Bezug": wie die Regel das System erfasst - direkt, ueber ein Netz/einen Bereich bzw. eine
@@ -183,36 +141,23 @@ ZONE_COL = "Zone"
 OPTIONAL = (NAT, DNS_NAME, VIP_FW, BALANCER, PROTECTION, L3OUT_COL, ZONE_COL)
 _COMMON = [SOURCE, DESTINATION, ZONE_COL, SERVICE, NAT, ACTION, PROTECTION, DEVICE, L3OUT_COL,
            DESCRIPTION]  # fmt: skip
-TABLE_COLUMNS: dict[int, list[str]] = {
-    1: [
-        SOURCE,
-        DESTINATION,
-        ZONE_COL,
-        SERVICE,
-        SNAT_IP,
-        ACTION,
-        PROTECTION,
-        DEVICE,
-        L3OUT_COL,
-        DESCRIPTION,
-    ],
-    2: [
-        SOURCE,
-        ZONE_COL,
-        DNS_NAME,
-        VIP_FW,
-        BALANCER,
-        DESTINATION,
-        SERVICE,
-        ACTION,
-        PROTECTION,
-        DEVICE,
-        L3OUT_COL,
-        DESCRIPTION,
-    ],  # fmt: skip
-}
-for _i in (3, 4, 5, 6, 7, 8, 9, 10, 11):
-    TABLE_COLUMNS[_i] = _COMMON
+# Spalten je Art der Kategorie (`Category.layout`, 0.104.0): Internet ausgehend mit der
+# SNAT-IP, Internet eingehend mit der Kette DNS → VIP → Load Balancer, sonst gemeinsam
+LAYOUT_COLUMNS: dict[str, list[str]] = {
+    "internet_out": [SOURCE, DESTINATION, ZONE_COL, SERVICE, SNAT_IP, ACTION, PROTECTION, DEVICE,
+                     L3OUT_COL, DESCRIPTION],
+    "internet_in": [SOURCE, ZONE_COL, DNS_NAME, VIP_FW, BALANCER, DESTINATION, SERVICE, ACTION,
+                    PROTECTION, DEVICE, L3OUT_COL, DESCRIPTION],
+    "common": _COMMON,
+}  # fmt: skip
+
+
+def table_columns(index: int, catalog: appdoc_catalog.Catalog | None = None) -> list[str]:
+    """Spalten einer Kategorie nach ihrer Art (unbekannte Nummer: gemeinsame Spalten)."""
+    c = (catalog or DEFAULT_CATALOG).get(index)
+    return LAYOUT_COLUMNS.get(c.layout if c else "common", _COMMON)
+
+
 MAX_IPS = 3  # IPs je System in einer Zelle
 # Anzeige der Spalten auf Englisch (0.87.0, ADR 0028): die Spaltennamen bleiben Schluessel der
 # Zeilen (Python und Oberflaeche vergleichen sie), uebersetzt wird nur `labels` je Tabelle
@@ -260,9 +205,10 @@ def place(row: dict) -> dict:
     return row
 
 
-def visible_columns(index: int, rows: list[dict]) -> list[str]:
+def visible_columns(index: int, rows: list[dict],
+                    catalog: appdoc_catalog.Catalog | None = None) -> list[str]:  # fmt: skip
     """Spalten einer Kategorie ohne die optionalen, die in keiner Zeile einen Wert haben."""
-    return [c for c in TABLE_COLUMNS[index]
+    return [c for c in table_columns(index, catalog)
             if c not in OPTIONAL or any(r.get(c) for r in rows)]  # fmt: skip
 
 
@@ -282,25 +228,9 @@ def lines(values) -> str:
     return "\n".join(dict.fromkeys(v for v in values if v))
 
 
-# Zonen-Marker (Substring im Zonennamen) -> Scope-Art. L3O_inet/bit/vpn/sra/res (ACI/Model 1);
-# in Model 2 greifen meist nur NAT-basierte Kategorien (1/2) + Fallback (10).
-_ZONE_MARKERS: list[tuple[str, str]] = [
-    ("inet", "inet"),
-    ("sra", "sra"),
-    ("vpn", "vpn"),
-    ("res", "res"),
-    ("bit", "bit"),
-]
-
-
-def zone_kind(name: str | None) -> str | None:
-    if not name:
-        return None
-    low = name.lower()
-    for sub, kind in _ZONE_MARKERS:
-        if sub in low:
-            return kind
-    return None
+def zone_kind(name: str | None, catalog: appdoc_catalog.Catalog | None = None) -> str | None:
+    """Bereich nach dem Merkmal im Namen der Firewall-Zone (`L3O_inet` -> inet, Katalog)."""
+    return (catalog or DEFAULT_CATALOG).kind_of_zone(name)
 
 
 def categorize(
@@ -310,37 +240,15 @@ def categorize(
     counterpart_external: bool,
     is_dnat_target: bool,
     area: str | None = None,
+    catalog: appdoc_catalog.Catalog | None = None,
 ) -> int:
-    """Ordnet eine Regel einer der Tabellen zu (pure; testbar). `area` = Bereich der
-    logischen Zone der Gegenstelle (0.101.0, `appdoc_zones`) - geht der Zone der Firewall vor;
-    DC Management (`mgmt`, 0.102.0) nur ueber Zonen, beide Richtungen in 11."""
-    kind = area or zone_kind(counterpart_zone)
-    if kind == "mgmt":
-        return 11
-    if direction == "in":
-        if is_dnat_target or kind == "inet" or counterpart_external:
-            return 2
-        if kind == "bit":
-            return 3
-        if kind == "vpn":
-            return 5
-        if kind == "sra":
-            return 6
-        if kind == "res":
-            return 9
-        return 10
-    # direction == "out"
-    if counterpart_external or kind == "inet":
-        return 1
-    if kind == "bit":
-        return 4
-    if kind == "vpn":
-        return 5
-    if kind == "sra":
-        return 6
-    if kind == "res":
-        return 9
-    return 10
+    """Ordnet eine Regel einer Kategorie zu (pure; testbar). `area` = Bereich der logischen
+    Zone der Gegenstelle (0.101.0, `appdoc_zones`) - geht der Zone der Firewall vor. Die Regeln
+    stehen seit 0.104.0 im Katalog (`appdoc_catalog.Catalog.categorize`)."""
+    return (catalog or DEFAULT_CATALOG).categorize(
+        direction=direction, counterpart_zone=counterpart_zone,
+        counterpart_external=counterpart_external, is_dnat_target=is_dnat_target, area=area,
+    )  # fmt: skip
 
 
 @dataclass
@@ -432,13 +340,10 @@ def _peer_label(obj: NetworkObject | None, inline: str | None) -> str:
     return inline or "any"
 
 
-def categorize_aci(scope: str | None, same_ap: bool, same_tenant: bool) -> int:
-    """ACI-interne Kategorie: 7 (innerhalb AP), 8 (innerhalb Tenant), 9 (andere Tenants)."""
-    if scope == "application-profile" or same_ap:
-        return 7
-    if scope == "global" or not same_tenant:
-        return 9
-    return 8  # context/tenant, anderes AP
+def categorize_aci(scope: str | None, same_ap: bool, same_tenant: bool,
+                   catalog: appdoc_catalog.Catalog | None = None) -> int:  # fmt: skip
+    """ACI-interne Kategorie: innerhalb AP (7), innerhalb Tenant (8), andere Tenants (9)."""
+    return (catalog or DEFAULT_CATALOG).categorize_aci(scope, same_ap, same_tenant)
 
 
 def _merge_reverse(rows: list[dict]) -> list[dict]:
@@ -466,10 +371,12 @@ def _envelope(
     rows_by_table: dict[int, list[dict]],
     vms: list[dict] | None = None,
     full: bool = False,
+    catalog: appdoc_catalog.Catalog | None = None,
 ) -> dict:
     """Doku eines Systems. Regeln, die das System nach dem Routing nicht sehen koennen, stehen
     nicht in den Tabellen, sondern unter `impossible` mit Begruendung (`full` = alle Zeilen,
     fuer die Applikations-Doku, die selbst filtert)."""
+    catalog = catalog or appdoc_catalog.for_tenant(session, tenant_id)
     impossible: list[dict] = []
     if not full:
         for rows in rows_by_table.values():
@@ -479,12 +386,10 @@ def _envelope(
         for i in rows_by_table:
             keep = []
             for row in rows_by_table[i]:
-                if row.get(OUT_BROAD):  # ausgehend mit breiter Quelle (0.103.0): nicht da
-                    continue
-                if row.get(REL) != relevance_store.IMPOSSIBLE:
-                    if not row.get(CAT_HIDDEN):  # Kategorien bereinigt (0.78.2)
-                        keep.append(row)
-                elif not any(
+                where = appdoc_filter.place(row)  # 0.104.0: Bedeutung der Merkmale an einer Stelle
+                if where == appdoc_filter.TABLE:
+                    keep.append(row)
+                elif where == appdoc_filter.IMPOSSIBLE and not any(
                     (x["rule_id"], x["side"]) == (row.get(RULE), row.get(SIDE)) for x in impossible
                 ):
                     impossible.append(
@@ -500,11 +405,12 @@ def _envelope(
         for row in rows:
             place(row)
     tables = []
-    for i, _title, enf in TABLES:
-        columns = visible_columns(i, rows_by_table[i])
-        tables.append({"index": i, "title": table_title(i), "enforcement": enf,
-                       "columns": columns, "labels": column_labels(columns),
-                       "rows": rows_by_table[i]})  # fmt: skip
+    for c in catalog.ordered():
+        rows = rows_by_table.get(c.index, [])
+        columns = visible_columns(c.index, rows, catalog)
+        tables.append({"index": c.index, "title": catalog.title(c.index),
+                       "enforcement": c.enforcement, "columns": columns,
+                       "labels": column_labels(columns), "rows": rows})  # fmt: skip
     tenant = session.get(Tenant, tenant_id)
     site = session.get(Site, site_id) if site_id else None
     return {
@@ -725,11 +631,16 @@ class TenantData:
         return aci_relevance.Classifier(self.session, self.tenant_id, lambda: self.relevance.graph)
 
     @cached_property
+    def catalog(self) -> appdoc_catalog.Catalog:
+        """Kategorien des Mandanten (0.104.0): Vorgaben, angepasst im Namensprofil."""
+        return appdoc_catalog.for_tenant(self.session, self.tenant_id)
+
+    @cached_property
     def zone_map(self):
         """Logische Zonen mit ihren Netzen (0.101.0): Zone und Kategorie der Gegenstellen."""
         from app.store import appdoc_zones  # spaet: appdoc_zones -> zones -> customers
 
-        return appdoc_zones.ZoneMap(self.session, self.tenant_id)
+        return appdoc_zones.ZoneMap(self.session, self.tenant_id, self.catalog)
 
     @cached_property
     def leaks(self) -> aci_shared.Leaks:
@@ -862,15 +773,19 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                 directions = directions[1:]
             for direction in directions:
                 reverse = direction != forward
-                if cp_area == "mgmt":
-                    idx = 11
+                if cp_area:
+                    # Gegenstelle in einer Zone mit Kategorie (0.102.0 DC Management, seit
+                    # 0.104.0 jede Kategorie des Katalogs): wie Firewall-Regeln dorthin
+                    idx = categorize(direction=direction, counterpart_zone=None,
+                                     counterpart_external=False, is_dnat_target=False,
+                                     area=cp_area, catalog=data.catalog)  # fmt: skip
                 elif only_external:
                     idx = categorize(
                         direction=direction,
                         counterpart_zone=external[0].l3out,
                         counterpart_external=False,
                         is_dnat_target=False,
-                        area=cp_area,
+                        catalog=data.catalog,
                     )
                 elif epg.kind == "external":
                     # System ausserhalb des Fabrics (0.83.1): der Zugriff kommt ueber seinen
@@ -881,11 +796,13 @@ def _aci_rows(data: TenantData, epg: Epg, system_name: str, via: str | None = No
                         counterpart_zone=epg.l3out,
                         counterpart_external=False,
                         is_dnat_target=False,
-                        area=cp_area,
+                        catalog=data.catalog,
                     )
-                    idx = 9 if idx == 10 else idx
+                    if idx == data.catalog.fallback:
+                        idx = data.catalog.role("aci_other")
                 else:
-                    idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant)
+                    idx = categorize_aci(r.aci_scope, same_ap, same_tenant=same_tenant,
+                                         catalog=data.catalog)  # fmt: skip
                 services = ", ".join(back if reverse else rule_view.service_labels(r))
                 if only and not reverse:
                     services = L("nur Antworten (Filter nur mit Quellport)",
@@ -990,17 +907,18 @@ def mark_categories(data: TenantData, items: list[tuple[int, dict]],
       fehlenden Diensten (Befund `app_contract_narrower`). Ohne Firewall-Regeln dort oeffnet die
       Firewall nichts, der Contract steht nicht da; ohne Firewall im Mandanten bleibt alles wie
       bisher."""
+    options, fallback = data.catalog.options, data.catalog.fallback
     for idx, row in items:
-        if idx == 10 and row.get(DIRECTION) == "out":
+        if idx == fallback and row.get(DIRECTION) == "out" and options.fallback_inbound_only:
             row[CAT_HIDDEN] = True
-        if outbound_broad(data, row):
+        if options.outbound_broad_hidden and outbound_broad(data, row):
             row[OUT_BROAD] = True
     if not data.has_firewall:
         return items
     _mark_l3outs(data, items, vrfs)
     groups: dict[tuple, dict[str, list]] = {}
     for idx, row in items:
-        if idx == 10 and row.get(DIRECTION) == "out":
+        if row.get(CAT_HIDDEN) and idx == fallback:
             continue
         if row.get(REL) == relevance_store.IMPOSSIBLE or row.get(HELPER) or row.get(L3OUT_ALONE):
             continue  # Hilfs-Contract bzw. Contract ohne Firewall dahinter (ADR 0034)
@@ -1321,6 +1239,7 @@ def _fw_rows(
             counterpart_external=cp_external,
             is_dnat_target=direction == "in" and bool(rule_dnat),
             area=area,
+            catalog=data.catalog,
         )
         via, scope, obj, value = sides[side]
         own = _ips_in(ips or [], value)
@@ -1516,12 +1435,12 @@ def epg_doc(session: Session, epg: Epg, data: TenantData | None = None, full: bo
     Endpunkte erfassen (auch ueber groessere Netze und any). Als Name der ganze ACI-Pfad."""
     data = data or TenantData(session, epg.tenant_id)
     name = epg_store.inventory_label(epg)
-    rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
+    rows_by_table: dict[int, list[dict]] = {c.index: [] for c in data.catalog.ordered()}
     own, shared = _epg_values(session, data, epg)
     items = _aci_rows(data, epg, name)
     items += _covered_rows(session, data, own, name, overlap=True, contained=shared, show_ips=False)
     for idx, row in mark_categories(data, items, {vrf_key(data, epg)}):
-        rows_by_table[idx].append(row)
+        rows_by_table.setdefault(idx, []).append(row)
     host = session.get(NetworkObject, epg.network_object_id) if epg.network_object_id else None
     return _envelope(
         session,
@@ -1532,6 +1451,7 @@ def epg_doc(session: Session, epg: Epg, data: TenantData | None = None, full: bo
         rows_by_table,
         epg_store.vms_of(session, [epg.id]).get(epg.id, []),
         full,
+        data.catalog,
     )
 
 
@@ -1576,7 +1496,7 @@ def host_doc(
     sys_ip = sys_obj.value
     data = data or TenantData(session, tenant_id)
 
-    rows_by_table: dict[int, list[dict]] = {i: [] for i, _, _ in TABLES}
+    rows_by_table: dict[int, list[dict]] = {c.index: [] for c in data.catalog.ordered()}
     direct = data.rule_ids(RuleDomain.FIREWALL, network_object_id=sys_obj.id)
     items = _covered_rows(
         session,
@@ -1600,7 +1520,7 @@ def host_doc(
     vrfs = {vrf_key(data, e) for e in epgs}
     items += _ext_rows(data, [ip] if ip else [], system_name, vrfs)
     for idx, row in mark_categories(data, items, vrfs):
-        rows_by_table[idx].append(row)
+        rows_by_table.setdefault(idx, []).append(row)
     info = vms.info(ip)
     return _envelope(
         session,
@@ -1611,6 +1531,7 @@ def host_doc(
         rows_by_table,
         [info] if info else [],
         full,
+        data.catalog,
     )
 
 

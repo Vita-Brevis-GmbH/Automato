@@ -204,6 +204,61 @@ test("Netzwerkdesign → Kategorien: Zonen zuordnen, Titel nach der Zone, Netze 
   }
 });
 
+test("Namenskonzept: eigene Kategorie mit Bereich, Auswahl im Netzwerkdesign, Titel in der Doku (0.104.0)", async ({ page }) => {
+  const profiles = (await (await page.request.get("/api/naming-profiles")).json()) as { id: number; name: string }[];
+  const pid = profiles.find((p) => p.name === "default")!.id;
+  const catalogUrl = `/api/naming-profiles/${pid}/appdoc-catalog`;
+  const zones = (await (await page.request.get("/api/zones?tenant_id=1")).json()) as { id: number; name: string }[];
+  for (const z of zones.filter((x) => x.name === "Partnernetz Test")) await page.request.delete(`/api/zones/${z.id}`);
+  await page.request.delete(catalogUrl);
+  const created = await page.request.post("/api/zones", {
+    data: { tenant_id: 1, name: "Partnernetz Test", kind: "internal", selectors: [{ kind: "prefix", value: "10.10.20.0/24" }] },
+  });
+  expect(created.status()).toBe(201);
+  const zoneId = ((await created.json()) as { id: number }).id;
+  try {
+    // Namenskonzept: Kategorie 12 und Bereich „part“ dazu (Admin)
+    await page.goto("/#dict");
+    const card = page.locator("#appdoc-catalog");
+    await expect(card.locator("#appdoc-catalog-categories tbody tr")).toHaveCount(11);
+    await expect(page.locator("#appdoc-catalog-save")).toBeDisabled();
+    await page.click("#appdoc-catalog-add-category");
+    await card.getByLabel("Titel der Kategorie 12").fill("Zugriff Partner");
+    await card.getByLabel("Titel englisch der Kategorie 12").fill("Partner access");
+    await page.click("#appdoc-catalog-add-area");
+    await card.getByLabel("Kürzel des Bereichs 7").fill("part");
+    await card.getByLabel("Bezeichnung des Bereichs part").fill("Partner");
+    await card.getByLabel("Kategorie eingehend des Bereichs part").selectOption("12");
+    await card.getByLabel("Kategorie ausgehend des Bereichs part").selectOption("12");
+    await card.getByLabel("Vorschlag des Bereichs part").fill("*partner*");
+    await page.click("#appdoc-catalog-save");
+    await expect(page.locator("#appdoc-catalog-saved")).toBeVisible();
+    await expect(card.locator("#appdoc-catalog-categories tbody tr")).toHaveCount(12);
+
+    // Netzwerkdesign: der Bereich steht zur Auswahl, Vorschlag nach dem Zonennamen
+    await page.goto("/#design?tab=appdoc");
+    const table = page.locator("#appdoc-zones");
+    const area = table.getByLabel("Kategorie der Zone Partnernetz Test");
+    await expect(area.locator("option", { hasText: "Partner (12)" })).toHaveCount(1);
+    await expect(table.locator("tr", { hasText: "Partnernetz Test" })).toContainText("Vorschlag: Partner (12)");
+    await page.click("#appdoc-suggest");
+    await expect(area).toHaveValue("part");
+    await page.click("#appdoc-save");
+    await expect(page.locator("#appdoc-saved")).toBeVisible();
+
+    // Doku: eigene Kategorie, benannt nach der Zone
+    await open(page);
+    await expect(page.locator("#app-categories > .card")).toBeVisible();
+    if ((await page.locator("#app-categories .stack").count()) === 0) await page.locator("#app-categories h2.fold-title").first().click();
+    const own = page.locator("#app-categories .stack > .card", { has: page.locator("h2", { hasText: /^12\. / }) });
+    await expect(own.locator("h2")).toHaveText("12. Zugriff aus Partnernetz Test");
+    await expect(own.locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);
+  } finally {
+    await page.request.delete(`/api/zones/${zoneId}`);
+    await page.request.delete(catalogUrl);
+  }
+});
+
 test("Applikation: Regeln filtern (System, Richtung, Bezug) und Erklärung im Detail", async ({ page }) => {
   await open(page);
   const card = page.locator("#app-rules");
@@ -483,7 +538,7 @@ test("Applikation: Wege uneinheitlich, Bereiche zuklappen, Export mit Auswahl (0
   expect(text).toContain("## Systeme");
   expect(text).toContain("## Verbindungen Ende zu Ende");
   expect(text).toContain("Wege uneinheitlich (aktiv über fw-09: erlaubt, aktiv über fw-10: gesperrt)");
-  expect(text).toContain("## Findings");
+  expect(text).toContain("## Befunde");
   expect(text).not.toContain("## Regeln & Contracts");
   await page.reload();
   await page.locator("#app-doc-export").click();

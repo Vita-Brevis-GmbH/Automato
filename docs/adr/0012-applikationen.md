@@ -229,6 +229,27 @@ zeigen“):**
   Gruppe mit dem Host, ausgehend und eingehend), direkt der Applikation zugeordnete Regeln und
   ACI-Contracts (vzAny/Preferred Group wie bisher).
 
+**Ergänzung 0.104.0 (Anwender 2026-10-28: „die Kategorien-Auswahl noch anpassen oder erweitern
+können, dies bitte im Namenskonzept unterbringen“ und „Konfiguration anstelle Code“):**
+- **Katalog** (`store/appdoc_catalog.py`): Kategorien (Nummer, Titel deutsch/englisch, Titel mit
+  Zonen `{z}`, Spalten, feste Rolle, „nur mit Zone“), **Bereiche** (Auswahl je Zone: Kürzel,
+  Bezeichnung, Kategorie eingehend/ausgehend, Merkmal im Namen der Firewall-Zone, Muster für den
+  Vorschlag, angeboten) und **Optionen** (breite Quelle ausgehend ausblenden, unspezifisch nur
+  eingehend). Die bisherigen Festwerte sind die **Vorgaben im Code** – die Plattform läuft ohne
+  Konfiguration.
+- **Im Namensprofil** des Mandanten (eigenes, sonst „default“, wie die Wörterbücher): Arten
+  `appdoc_category`, `appdoc_area`, `appdoc_option`, gespeichert nur die Abweichungen; Pflege
+  im Namenskonzept (Admin, Audit), zurücksetzen auf die Vorgaben. Kein CSV.
+- **Feste Rollen bleiben:** ACI intern (7 im AP, 8 im Security Tenant, 9 zu anderen Tenants),
+  unspezifisch (10, Rückfall) und Internet für externe Gegenstellen bzw. DNAT – eingebaute
+  Einträge lassen sich anpassen, nicht löschen (Bereiche ausschalten). Eigene Kategorien sind
+  Firewall-Kategorien, erreicht über eigene Bereiche (eine Zone → Bereich → Kategorie);
+  Bereiche nur auf Firewall-Kategorien.
+- Doku, Netzwerkdesign (Auswahl, Vorschlag nach dem Zonennamen serverseitig), Ausblenden je
+  Kategorie und Exporte folgen dem Katalog des Mandanten; die Sichtbarkeit der Zeilen
+  (Kategorie, nur Treffer, nicht möglich, ausgelassen) entscheidet eine Stelle
+  (`store/appdoc_filter.py`).
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:

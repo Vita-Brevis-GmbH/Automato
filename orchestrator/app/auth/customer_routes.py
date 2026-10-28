@@ -48,6 +48,10 @@ CUSTOMER_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     ("GET", "/applications/{application_id}/dependencies"): READ,  # 0.88.0
     # 0.95.0: EPG der Applikation im Detail (nur EPGs ihres Ausschnitts)
     ("GET", "/applications/{application_id}/epgs/{epg_id}"): READ,
+    # 0.104.0: Export der Doku (Markdown bzw. Word vom Server, bisher Markdown im Browser) -
+    # ihr Ausschnitt, ohne Verbindungen und Netzwerkplan, ohne Geraetenamen
+    ("GET", "/applications/{application_id}/export"): READ,
+    ("GET", "/appdoc/systems/{system}/export"): READ,
     # 0.53.0: wer bin ich; die eigenen Zonen, Matrix und Plan (ohne fremde Kunden, ohne
     # Netze ohne Zone; Gegenseite fremder Kunden als „anderer Kunde“)
     ("GET", "/auth/me"): READ,

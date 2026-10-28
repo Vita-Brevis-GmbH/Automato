@@ -16,6 +16,7 @@ import type { Me } from "./auth";
 import { L } from "./i18n";
 import { Empty, ErrorBox, Loading, Modal, Note, PageHead } from "./ui";
 import ZoneSchemaCard from "./ZoneSchema";
+import AppdocCatalogCard from "./AppdocCatalog";
 
 // Namensprofile & Wörterbücher: pro Kunde pflegbar und erweiterbar ohne Deployment.
 // `kind` ist offen - neue Namenskonventionsvorgaben = neue Wörterbuch-Art. Die Daten
@@ -95,7 +96,8 @@ const KINDS: Record<string, KindMeta> = {
 
 // nicht mehr Teil der Namenskonvention (0.36.0): bestehende Einträge bleiben gespeichert, werden
 // aber nicht mehr gezeigt; das Grundschema der Zonen (0.55.0) hat eine eigene Karte
-const HIDDEN_KINDS = ["project_code", "zone_schema", "zone_schema_link", "zone_schema_meta"];
+// bzw. die Kategorien der Applikations-Doku (0.104.0)
+const HIDDEN_KINDS = ["project_code", "zone_schema", "zone_schema_link", "zone_schema_meta", "appdoc_category", "appdoc_area", "appdoc_option"];
 
 const KIND_ORDER = Object.keys(KINDS);
 
@@ -257,6 +259,7 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
       ) : (
         <div className="stack">
           <ZoneSchemaCard key={`schema-${profileId}`} profileId={profileId!} editable={me.isAdmin} tenants={tenants} />
+          <AppdocCatalogCard key={`appdoc-${profileId}`} profileId={profileId!} editable={me.isAdmin} />
           {kinds.map((k) => (
             <DictCard
               key={`${profileId}-${k}`}

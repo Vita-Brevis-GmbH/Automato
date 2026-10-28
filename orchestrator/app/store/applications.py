@@ -15,6 +15,7 @@ schon eine Applikation mit diesem Kuerzel, ergaenzt der Vorschlag deren Mitglied
 import ipaddress
 import re
 from collections import defaultdict
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import cached_property
@@ -51,6 +52,7 @@ from app.models import (
 )
 from app.store import (
     appdoc,
+    appdoc_filter,
     appdoc_zones,
     customer_scope,
     finding_text,
@@ -874,16 +876,16 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     # parallele Firewalls (0.18.0): gleiche Policies nur einmal - die der fuehrenden Firewall
     twins = parallel.twin_ids(session, {row.get(appdoc.RULE) for _, _, row in rows})
     rows = [r for r in rows if r[2].get(appdoc.RULE) not in twins]
-    # ausgehende Firewall-Regeln mit breiter Quelle (0.103.0, `appdoc.OUT_BROAD`): kein Zugriff
-    # dieser Applikation - nicht in der Doku, nur gezaehlt; direkt zugeordnete bleiben
-    broad = {r[2].get(appdoc.RULE) for r in rows
-             if r[2].get(appdoc.OUT_BROAD) and r[2].get(appdoc.RULE) not in assigned}  # fmt: skip
-    rows = [r for r in rows if r[2].get(appdoc.RULE) not in broad or not r[2].get(appdoc.OUT_BROAD)]
-    broad -= {r[2].get(appdoc.RULE) for r in rows}
+    # ausgehende Firewall-Regeln mit breiter Quelle (0.103.0, `appdoc_filter.DROPPED`): kein
+    # Zugriff dieser Applikation - nicht in der Doku, nur gezaehlt; direkt zugeordnete bleiben
+    dropped = [r for r in rows if appdoc_filter.place(r[2], assigned) == appdoc_filter.DROPPED]
+    rows = [r for r in rows if appdoc_filter.place(r[2], assigned) != appdoc_filter.DROPPED]
+    broad = {r[2].get(appdoc.RULE) for r in dropped} - {r[2].get(appdoc.RULE) for r in rows}
     if names and not restricted:  # Namen der Gegenstellen (0.95.0) - nie fuer Kunden-Benutzer
         peer_names.apply(session, tid, [row for _, _, row in rows])
-    hits, tables = _hits_and_tables(rows, _pairs(session, {r[2].get(appdoc.RULE) for r in rows}))
-    narrower = _narrower(rows, systems, epg_out)  # 0.78.2: Contracts enger als die Firewall
+    hits, tables = _hits_and_tables(rows, _pairs(session, {r[2].get(appdoc.RULE) for r in rows}),
+                                    data.catalog, assigned)  # fmt: skip
+    narrower = _narrower(rows, systems, epg_out, data.catalog)  # 0.78.2: enger als die Firewall
     # Routingtechnisch unmoegliche Treffer gehoeren nicht in die Applikations-Doku (Dev-Befund
     # 0.33.0, z. B. intern -> Internet ueber any im Ziel: die Antwort braucht keine Regel, ein
     # Zugriff von dort braeuchte eine eigene) - nicht einblendbar, nur gezaehlt
@@ -977,7 +979,7 @@ def zone_heads(data: appdoc.TenantData, tables: list[dict], restricted: bool) ->
     """Zonen je Kategorie (0.101.0) in den Kopf der Tabellen, Titel nach den Zonen (0.102.0);
     Kunden-Benutzer ohne Zonen."""
     if restricted:
-        appdoc_zones.strip(tables, appdoc.ZONE_COL)
+        appdoc_zones.strip(tables, appdoc.ZONE_COL, data.catalog)
         return
     appdoc_zones.heads(data.zone_map, tables)
 
@@ -1123,12 +1125,13 @@ def _helpers_out(hits: list[dict], ids: set[int], systems: list[dict], epgs: lis
     return sorted(out.values(), key=lambda x: x["name"].lower())
 
 
-def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict],
-              epgs: list[dict]) -> list[dict]:  # fmt: skip
+def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict], epgs: list[dict],
+              catalog=None) -> list[dict]:  # fmt: skip
     """L3Out-Contracts, die weniger oeffnen als die Firewall-Regeln (0.78.2, `appdoc.NARROW`):
     je Contract die Systeme mit Kategorie, Richtung, fehlenden Diensten und Firewall-Regeln."""
     names = {x["key"]: x["name"] for x in systems} | {e["key"]: e["label"] for e in epgs}
-    titles = {i: appdoc.table_title(i) for i, _t, _ in appdoc.TABLES}
+    catalog = catalog or appdoc.DEFAULT_CATALOG
+    titles = {c.index: catalog.title(c.index) for c in catalog.ordered()}
     out: dict[int, dict] = {}
     for key, idx, row in rows:
         if not row.get(appdoc.NARROW) or row.get(appdoc.REL) == "impossible":
@@ -1154,9 +1157,10 @@ def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict],
 
 
 def _hits_and_tables(
-    rows: list[tuple[str, int, dict]], pairs: dict[int, int] | None = None
-) -> tuple[list[dict], list[dict]]:
-    """Treffer je (Regel, System, Seite) und die 10 Kategorien-Tabellen.
+    rows: list[tuple[str, int, dict]], pairs: dict[int, int] | None = None, catalog=None,
+    assigned: Collection[int] = (),
+) -> tuple[list[dict], list[dict]]:  # fmt: skip
+    """Treffer je (Regel, System, Seite) und die Kategorien-Tabellen (Katalog des Mandanten).
 
     In den Tabellen steht eine Regel je Seite und Objekt der Regel nur einmal: erfasst ein Netz
     bzw. any mehrere Systeme, nennt die Seite der Applikation (`appdoc.APP`, je nach Richtung in
@@ -1168,15 +1172,17 @@ def _hits_and_tables(
     Objekte (Server, Gruppe) nennen ihre Systeme weiter direkt. Ein IPv4/IPv6-Paar (`pairs`)
     steht als eine Zeile da, beide Regeln in `_rules`."""
     pairs = pairs or {}
-    tables = {t[0]: {**_table_meta(t), "rows": []} for t in appdoc.TABLES}
+    catalog = catalog or appdoc.DEFAULT_CATALOG
+    tables = {c.index: {**_table_meta(c, catalog), "rows": []} for c in catalog.ordered()}
     groups: dict[tuple, dict] = {}
     seen_hits: set[tuple] = set()
     hits: list[dict] = []
     for key, idx, row in rows:
         rid = row.get(appdoc.RULE)
-        # 0.78.2: Contracts Richtung L3Out ohne Einschraenkung und Zugriffe auf andere Systeme
-        # in Kategorie 10 stehen nicht in den Kategorien - Treffer bleiben
-        if not row.get(appdoc.CAT_HIDDEN):
+        # nur Zeilen der Kategorien (`appdoc_filter`, 0.104.0): Hilfs-Contracts, Contracts nicht
+        # enger als die Firewall, unspezifisch ausgehend und routingtechnisch unmoegliche nicht -
+        # Treffer bleiben (unmoegliche nur gezaehlt)
+        if appdoc_filter.in_categories(row, assigned):
             gkey = (idx, pairs.get(rid, rid), row.get(appdoc.SIDE), row.get(appdoc.OBJECT))
             if rid is None:
                 gkey = (idx, None, len(groups))
@@ -1243,8 +1249,6 @@ def _hits_and_tables(
             row.pop(key, None)
         if group.get("both") and not row.get(appdoc.REVERSE):
             row[appdoc.SERVICE] = f"{row.get(appdoc.SERVICE) or ''} {appdoc.both_mark()}".strip()
-        if row.get(appdoc.REL) == "impossible":
-            continue  # Export/Druck: nur, was das Routing zulaesst
         row["_rules"] = list(group["rules"])
         names = list(dict.fromkeys(n for n in group["rules"].values() if n))
         if len(group["rules"]) > 1:  # IPv4/IPv6-Paar
@@ -1264,7 +1268,7 @@ def _hits_and_tables(
             else:  # Gruppe bzw. Netz mit mehreren Systemen: das Objekt, darunter die Systeme
                 row[appdoc.APP] = appdoc.lines([f"{label}:", *inside]) if inside else label
         appdoc.place(row)
-        visible = (idx, tuple(row.get(c) for c in appdoc.TABLE_COLUMNS[idx]))
+        visible = (idx, tuple(row.get(c) for c in appdoc.table_columns(idx, catalog)))
         if visible in seen_rows:  # gleiche Zeile (z. B. VM und ihre EPG): Systeme zusammen
             first = seen_rows[visible]
             if "_systems" in row:
@@ -1275,9 +1279,9 @@ def _hits_and_tables(
         tables[idx]["rows"].append(row)
     for t in tables.values():  # leere optionale Spalten (NAT, VIP, Load Balancer …) aus
         t["rows"] = appdoc.by_l3out(t["rows"])  # unspezifische nach L3Out (ADR 0034)
-        t["columns"] = appdoc.visible_columns(t["index"], t["rows"])
+        t["columns"] = appdoc.visible_columns(t["index"], t["rows"], catalog)
         t["labels"] = appdoc.column_labels(t["columns"])  # Anzeige (0.87.0, ADR 0028)
-    return hits, [tables[i] for i, _, _ in appdoc.TABLES]
+    return hits, [tables[c.index] for c in catalog.ordered()]
 
 
 def _app_findings(
@@ -1351,14 +1355,14 @@ def _app_findings(
     return out
 
 
-def _table_meta(t: tuple[int, str, str]) -> dict:
-    index, _title, enforcement = t
+def _table_meta(c, catalog) -> dict:
+    columns = appdoc.table_columns(c.index, catalog)
     return {
-        "index": index,
-        "title": appdoc.table_title(index),
-        "enforcement": enforcement,
-        "columns": appdoc.TABLE_COLUMNS[index],
-        "labels": appdoc.column_labels(appdoc.TABLE_COLUMNS[index]),
+        "index": c.index,
+        "title": catalog.title(c.index),
+        "enforcement": c.enforcement,
+        "columns": columns,
+        "labels": appdoc.column_labels(columns),
     }
 
 

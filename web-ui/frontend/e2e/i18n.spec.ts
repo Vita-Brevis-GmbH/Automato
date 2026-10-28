@@ -103,4 +103,15 @@ test("Englisch: Kategorien der Applikations-Doku im Netzwerkdesign", async ({ pa
   await expect(page.locator(".tabbar button.on")).toHaveText("Categories");
   await expect(page.locator("#appdoc-zones h2")).toHaveText("Categories of the application documentation");
   await expect(page.locator("#appdoc-zones thead")).toContainText("without (exclusions)");
+  await expect(page.getByLabel("Category of zone LAN").locator("option", { hasText: "Internet (2/1)" })).toHaveCount(1);
+});
+
+// 0.104.0: Kategorien der Applikations-Doku im Namenskonzept
+test("Englisch: Kategorien der Applikations-Doku im Namenskonzept", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("automato_lang", "en"));
+  await page.goto("/#dict");
+  await expect(page.locator("#appdoc-catalog h2")).toHaveText("Categories of the application documentation");
+  await expect(page.locator("#appdoc-catalog-areas thead")).toContainText("Category inbound");
+  await expect(page.getByLabel("Title of category 1", { exact: true })).toHaveValue("Internet Zugriff"); // gespeichert deutsch
+  await expect(page.locator("#appdoc-catalog-categories tbody tr").nth(6)).toContainText("ACI within the application profile");
 });

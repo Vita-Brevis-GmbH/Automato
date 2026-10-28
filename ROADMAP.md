@@ -416,11 +416,14 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.101.1** | Korrektur: „Zonen zuordnen“ behält die gewählte Kategorie, auch wenn die Liste der Zonen später nochmals ankommt |
 | **0.102.0** | Kategorien der Applikations-Doku im Netzwerkdesign (Reiter Kategorien: je Zone Kategorie, Netze und Ausschlüsse, Vorschlag nach Namen), Titel nach den Zonen, Kategorie 11 DC Management mit Firewall-Regeln und Contracts (ADR 0012 Ergänzung 0.102.0) |
 | **0.103.0** | Applikations-Doku nur mit relevanten Firewall-Regeln (ausgehend mit breiter Quelle nicht mehr), ACI im Weg: externe EPG nach dem ACI, wenn die Firewall dahinter die IP zurück ins ACI leitet (ADR 0012/0034 Ergänzung 0.103.0) |
+| **0.104.0** | Weniger Entwicklungszeit: Kategorien der Applikations-Doku als Konfiguration im Namenskonzept (Auswahl je Zone anpassen/erweitern), Sichtbarkeit an einer Stelle, Markdown vom Server wie Word (auch Doku je System, Kunden-Benutzer), schlanke `CLAUDE.md`, Tests parallel (ADR 0012/0026 Ergänzung 0.104.0) |
 
-### Nächste Arbeiten (Stand 0.103.0)
+### Nächste Arbeiten (Stand 0.104.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.103.0.
+**0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
+gleich durch“). Zur Abnahme stehen 0.103.0 und 0.104.0. Seit 0.104.0 gilt eine Version als abgenommen, sobald
+die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
 **Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
 
@@ -442,6 +445,8 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | Netze einer Zone mit Ausschlüssen zuweisen (2026-10-28) | **umgesetzt in 0.102.0** (Netze und „ohne“ je Zone im Reiter Kategorien) |
 | Verbindungen Ende zu Ende: „keine EPG bzw. externe EPG erfasst …“, obwohl die IP in 10.0.0.0/8 der externen EPG liegt (2026-10-28) | **umgesetzt in 0.103.0** (Rückfall auf die Zuordnung im ACI, Gründe im Text) |
 | Applikationen: nur Firewall-Regeln mit Zugriffen auf die Systeme bzw. mit dem Server konkret, nicht ausgehend mit offener Source (2026-10-28) | **umgesetzt in 0.103.0** (ausgehend mit breiter Quelle ausgelassen und gezählt) |
+| Kategorien-Auswahl anpassen bzw. erweitern, im Namenskonzept (2026-10-28) | **umgesetzt in 0.104.0** (Namensprofile → Kategorien der Applikations-Doku) |
+| Weniger Entwicklungszeit: Ablauf, `CLAUDE.md` schlank, Klärung vor dem Bauen, Modularisierung, Konfiguration statt Code, schnellere Tests (2026-10-28) | **umgesetzt in 0.104.0** (alle sechs Vorschläge) |
 | BGP-Filter aus den Netzen und Ausschlüssen je Zone ableiten (2026-10-28, „später“) | offen – nur Vorschlag/Export (Prefix-Liste permit/deny je Zone), kein Schreibweg; mit dem Anwender abstimmen |
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4

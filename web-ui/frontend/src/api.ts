@@ -1608,12 +1608,15 @@ async function fileOf(url: string, fallback: string): Promise<{ blob: Blob; file
   return { blob: await response.blob(), filename: match?.[1] ?? fallback };
 }
 // Export für Confluence (0.71.0): Applikations-Doku als Word bzw. Word + Netzwerkplan (draw.io) im ZIP
-// 0.73.0: `sections` = gewählte Abschnitte (leer = alle)
-export const exportApplication = (id: number, format: "docx" | "zip", sections?: string[]) =>
+// 0.73.0: `sections` = gewählte Abschnitte (leer = alle); seit 0.104.0 auch Markdown (`md`) vom Server
+export const exportApplication = (id: number, format: "docx" | "zip" | "md", sections?: string[]) =>
   fileOf(
     `/api/applications/${id}/export${qs({ format, sections: sections?.length ? sections.join(",") : undefined })}`,
     `applikation.${format}`,
   );
+// Doku je System als Markdown bzw. Word vom Server (0.104.0)
+export const exportSystemDoc = (name: string, tenantId: number | null | undefined, format: "md" | "docx") =>
+  fileOf(`/api/appdoc/systems/${encodeURIComponent(name)}/export${qs({ tenant_id: tenantId, format })}`, `doku.${format}`);
 export const zoneSchemaDrawing = (profileId: number) => fileOf(`/api/naming-profiles/${profileId}/zone-schema/drawing`, "zonenschema.drawio");
 // Vorlage: ohne Mandant Beispiel-Zonen, mit Mandant dessen Zonen und Absichten als Ausgangspunkt
 export const zoneSchemaTemplate = (tenantId?: number) =>
@@ -3024,18 +3027,57 @@ export interface LogicalZone {
   transitions?: { to: string; to_id: number | string; name: string; count: number }[];
   appdoc_area?: AppdocArea | null; // 0.101.0: Kategorien der Applikations-Doku
 }
-// Bereich der Kategorien der Applikations-Doku (0.101.0): Internet (1/2), Unternehmensnetzwerk
-// (3/4), VPN (5), Remote Access (6), andere Security Tenants (9); seit 0.102.0 DC Management (11)
-export type AppdocArea = "inet" | "bit" | "vpn" | "sra" | "res" | "mgmt";
-export const APPDOC_AREAS: AppdocArea[] = ["inet", "bit", "vpn", "sra", "res", "mgmt"];
-export const APPDOC_AREA_TABLES: Record<AppdocArea, number[]> = {
-  inet: [1, 2],
-  bit: [3, 4],
-  vpn: [5],
-  sra: [6],
-  res: [9],
-  mgmt: [11],
+// Bereich der Kategorien der Applikations-Doku (0.101.0): Kürzel aus dem Katalog (seit 0.104.0 im
+// Namenskonzept anpassbar und erweiterbar; Vorgaben inet, bit, vpn, sra, res, mgmt)
+export type AppdocArea = string;
+// Kategorien der Applikations-Doku als Konfiguration (0.104.0): Vorgaben im Code, Anpassungen im Namensprofil
+export interface AppdocCategory {
+  index: number;
+  title: string;
+  title_en: string;
+  zone_title: string; // mit „{z}“ = Namen der Zonen
+  zone_title_en: string;
+  enforcement: "firewall" | "aci";
+  layout: "common" | "internet_out" | "internet_in";
+  role: string; // feste Rolle (ACI intern, unspezifisch) - nicht änderbar
+  only_with_zones: boolean;
+  builtin: boolean;
+}
+export interface AppdocAreaDef {
+  key: string;
+  label: string;
+  label_en: string;
+  inbound: number;
+  outbound: number;
+  markers: string[]; // Teil im Namen der Firewall-Zone (L3O_inet)
+  match: string[]; // Muster für den Vorschlag nach dem Zonennamen (*vpn*)
+  role: string;
+  off: boolean;
+  builtin: boolean;
+}
+export interface AppdocOptions {
+  outbound_broad_hidden: boolean;
+  fallback_inbound_only: boolean;
+}
+export interface AppdocCatalog {
+  profile_id: number | null;
+  categories: AppdocCategory[];
+  areas: AppdocAreaDef[];
+  options: AppdocOptions;
+  default?: Omit<AppdocCatalog, "default" | "suggestions">; // Pflege: die Vorgaben
+  suggestions?: Record<string, string>; // Netzwerkdesign: Zone (id) → Bereich nach dem Namen
+}
+export type AppdocCatalogIn = {
+  categories: Omit<AppdocCategory, "enforcement" | "role" | "builtin">[];
+  areas: Omit<AppdocAreaDef, "role" | "builtin">[];
+  options: AppdocOptions;
 };
+export const fetchAppdocCatalog = (tenantId: number) => getJSON<AppdocCatalog>(`/api/zones/appdoc/catalog${qs({ tenant_id: tenantId })}`);
+export const fetchProfileAppdocCatalog = (profileId: number) => getJSON<AppdocCatalog>(`/api/naming-profiles/${profileId}/appdoc-catalog`);
+export const saveProfileAppdocCatalog = (profileId: number, body: AppdocCatalogIn) =>
+  sendJSON<AppdocCatalog>(`/api/naming-profiles/${profileId}/appdoc-catalog`, "PUT", body);
+export const resetProfileAppdocCatalog = (profileId: number) =>
+  sendJSON<AppdocCatalog>(`/api/naming-profiles/${profileId}/appdoc-catalog`, "DELETE");
 export interface ZoneIn {
   tenant_id: number;
   name: string;

@@ -258,6 +258,8 @@ table.doc-rows tr.doc-l3out td { background: var(--surface-2); font-weight: 600;
 .doc-zones b { color: var(--fg); font-weight: 600; }
 .row-changed td { background: var(--surface-2); }
 #appdoc-zones textarea { width: 100%; resize: vertical; font-size: 12px; }
+#appdoc-catalog table.form-table { width: 100%; table-layout: fixed; }
+#appdoc-catalog table.form-table .input, #appdoc-catalog table.form-table .sel { width: 100%; min-width: 0; box-sizing: border-box; }
 .l3out-fw-edit { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
 .expandable { margin-top: 2px; }
 .expandable .linkbtn { font-size: 12px; }

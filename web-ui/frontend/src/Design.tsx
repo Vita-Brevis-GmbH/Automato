@@ -9,8 +9,8 @@
 import { CSSProperties, Fragment, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptZoneSuggestions,
-  APPDOC_AREAS,
   AppdocArea,
+  AppdocCatalog,
   applySchemaIntents,
   assignZoneNodes,
   createZone,
@@ -57,6 +57,7 @@ import {
   savePlanVersion,
   SchemaZone,
   setAppdocZones,
+  fetchAppdocCatalog,
   setZonePolicy,
   SuggestionNode,
   System,
@@ -80,7 +81,7 @@ import {
   ZoneSuggestionSource,
   ZoneSummary,
 } from "./api";
-import { areaLabel, suggestArea } from "./zoneAreas";
+import { areaChoices, areaLabel } from "./zoneAreas";
 import { SELECTOR_LABEL } from "./Customers";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, fmtTime, Loading, Modal, Note, PageHead, SharedChip } from "./ui";
 import { L } from "./i18n";
@@ -235,6 +236,8 @@ const sameNets = (a: string, b: string) => splitNets(a).join(" ") === splitNets(
 
 function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }) {
   const [rows, setRows] = useState<LogicalZone[] | null>(null);
+  // Auswahl je Zone aus dem Katalog des Mandanten (Namenskonzept, 0.104.0) samt Vorschlag nach dem Namen
+  const [catalog, setCatalog] = useState<AppdocCatalog | null>(null);
   const [systems, setSystems] = useState<System[]>([]);
   const [draft, setDraft] = useState<Record<number, AppdocDraft>>({});
   const [busy, setBusy] = useState(false);
@@ -244,10 +247,11 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
   useEffect(() => {
     // eine spätere Antwort überschreibt die Eingaben nicht (StrictMode lädt zweimal, 0.101.1)
     let live = true;
-    fetchZones(tenantId)
-      .then((zs) => {
+    Promise.all([fetchZones(tenantId), fetchAppdocCatalog(tenantId)])
+      .then(([zs, cat]) => {
         if (!live) return;
         setRows(zs);
+        setCatalog(cat);
         setDraft({});
       })
       .catch((e) => live && setErr(e));
@@ -275,12 +279,13 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
     return !sameNets(v.nets, i.nets) || !sameNets(v.excluded, i.excluded);
   };
   const changed = (rows ?? []).filter((z) => draft[z.id] && (value(z).area !== initial(z).area || netsChanged(z)));
-  const suggestions = (rows ?? []).filter((z) => !value(z).area && suggestArea(z.name, z.code));
+  const hintOf = (z: LogicalZone) => catalog?.suggestions?.[String(z.id)] ?? null;
+  const suggestions = (rows ?? []).filter((z) => !value(z).area && hintOf(z));
   const suggest = () => {
     setSaved(false);
     setDraft((d) => {
       const out = { ...d };
-      for (const z of suggestions) out[z.id] = { ...(out[z.id] ?? initial(z)), area: suggestArea(z.name, z.code) };
+      for (const z of suggestions) out[z.id] = { ...(out[z.id] ?? initial(z)), area: hintOf(z) };
       return out;
     });
   };
@@ -319,12 +324,14 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
               <>
                 Je Zone die Kategorie, aus der ihre Zugriffe kommen – die Doku benennt die Kategorie nach ihren Zonen. Eine
                 Firewall-Regel bzw. ein Contract steht in der Kategorie der Zone der Gegenstelle, auch über einen grossen
-                Bereich; nennt die Gegenstelle Zonen mehrerer Kategorien, bleibt sie unspezifisch.
+                Bereich; nennt die Gegenstelle Zonen mehrerer Kategorien, bleibt sie unspezifisch. Die Auswahl (Kategorien
+                und Bereiche) passt ein Admin im Namenskonzept an (Administration → Namensprofile).
               </>,
               <>
                 Per zone the category its accesses come from – the documentation names the category after its zones. A
                 firewall rule or contract goes into the category of its peer's zone, also via a large range; if the peer
-                covers zones of several categories, it stays unspecific.
+                covers zones of several categories, it stays unspecific. An admin adjusts the choice (categories and
+                areas) in the naming concept (Administration → Naming profiles).
               </>,
             )}
           </span>
@@ -375,7 +382,7 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                 {rows.map((z) => {
                   const v = value(z);
                   const others = z.selectors.filter((x) => x.kind !== "prefix");
-                  const hint = !v.area ? suggestArea(z.name, z.code) : null;
+                  const hint = !v.area ? hintOf(z) : null;
                   return (
                     <tr key={z.id} className={changed.includes(z) ? "row-changed" : ""}>
                       <td>
@@ -395,13 +402,18 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                           onChange={(e) => set(z, { area: (e.target.value || null) as AppdocArea | null })}
                         >
                           <option value="">{L("— keine", "— none")}</option>
-                          {APPDOC_AREAS.map((x) => (
-                            <option key={x} value={x}>
-                              {areaLabel(x)}
+                          {areaChoices(catalog, v.area).map((x) => (
+                            <option key={x.key} value={x.key}>
+                              {areaLabel(catalog, x.key)}
+                              {x.off ? L(" – nicht mehr angeboten", " – no longer offered") : ""}
                             </option>
                           ))}
                         </select>
-                        {hint && canEdit && <div className="faint" style={{ fontSize: 11 }}>{L(`Vorschlag: ${areaLabel(hint)}`, `Suggestion: ${areaLabel(hint)}`)}</div>}
+                        {hint && canEdit && (
+                          <div className="faint" style={{ fontSize: 11 }}>
+                            {L(`Vorschlag: ${areaLabel(catalog, hint)}`, `Suggestion: ${areaLabel(catalog, hint)}`)}
+                          </div>
+                        )}
                       </td>
                       <td>
                         <textarea
@@ -1416,6 +1428,16 @@ function ZoneEditor({
   const [description, setDescription] = useState(base?.description ?? "");
   // Kategorie der Applikations-Doku (0.101.0): Zugriffe aus dieser Zone stehen in dieser Kategorie
   const [area, setArea] = useState<AppdocArea | null>(base?.appdoc_area ?? null);
+  const [catalog, setCatalog] = useState<AppdocCatalog | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchAppdocCatalog(tenantId)
+      .then((c) => live && setCatalog(c))
+      .catch(() => live && setCatalog(null));
+    return () => {
+      live = false;
+    };
+  }, [tenantId]);
   const [selectors, setSelectors] = useState<ZoneSelector[]>(base?.selectors.map((s) => ({ ...s })) ?? [{ ...EMPTY_SELECTOR }]);
   const [preview, setPreview] = useState<ZonePreview | null>(null);
   // Vorschläge beim Erfassen (0.66.0): Firewall-Zonen, Interfaces, IPAM, ACI, Anbindungen nach dem Namen
@@ -1580,9 +1602,10 @@ function ZoneEditor({
         <label htmlFor="zo-area">{L("Kategorie in der Applikations-Doku", "Category in the application documentation")}</label>
         <select id="zo-area" className="input" value={area ?? ""} onChange={(e) => setArea((e.target.value || null) as AppdocArea | null)}>
           <option value="">{L("— keine", "— none")}</option>
-          {APPDOC_AREAS.map((x) => (
-            <option key={x} value={x}>
-              {areaLabel(x)}
+          {areaChoices(catalog, area).map((x) => (
+            <option key={x.key} value={x.key}>
+              {areaLabel(catalog, x.key)}
+              {x.off ? L(" – nicht mehr angeboten", " – no longer offered") : ""}
             </option>
           ))}
         </select>

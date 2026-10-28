@@ -36,7 +36,6 @@ from app.auth.principal import Principal
 from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import (
-    APPDOC_AREAS,
     INTENTS,
     ZONE_KINDS,
     ZONE_SELECTOR_KINDS,
@@ -50,6 +49,7 @@ from app.models import (
 )
 from app.store import (
     app_refresh,
+    appdoc_catalog,
     customer_alias,
     plan_export,
     plan_import,
@@ -298,10 +298,12 @@ def _rederive(session: Session, tid: int, customer_ids: set[int | None]) -> None
         customer_store.derive(session, tid, cid)
 
 
-def _area(value: str | None) -> str | None:
-    """Bereich der Kategorien pruefen (0.101.0); leer = keiner."""
+def _area(value: str | None, catalog: appdoc_catalog.Catalog | None = None) -> str | None:
+    """Bereich der Kategorien pruefen (0.101.0; seit 0.104.0 gegen den Katalog des Mandanten,
+    Namensprofil); leer = keiner."""
     value = (value or "").strip() or None
-    if value is not None and value not in APPDOC_AREAS:
+    known = catalog.areas if catalog is not None else appdoc_catalog.default().areas
+    if value is not None and (value not in known or known[value].off):
         raise HTTPException(status_code=422, detail=f"unknown appdoc area {value!r}")
     return value
 
@@ -327,7 +329,7 @@ def _apply(session: Session, z: LogicalZone, body: ZoneIn, sel: list[store.Selec
     z.kind, z.customer_id, z.color = body.kind, body.customer_id, body.color
     z.position, z.description = body.position, (body.description or "").strip() or None
     if "appdoc_area" in body.model_fields_set:  # 0.101.0: nur, wenn mitgeschickt
-        z.appdoc_area = _area(body.appdoc_area)
+        z.appdoc_area = _area(body.appdoc_area, appdoc_catalog.for_tenant(session, z.tenant_id))
     z.updated_at = datetime.now(UTC)
     z.selectors = [
         LogicalZoneSelector(kind=s.kind, value=s.value, source_system_id=s.source_system_id,
@@ -1040,8 +1042,9 @@ def set_appdoc_areas(
     if unknown:
         raise HTTPException(status_code=404, detail="zone not found")
     changes: list[list] = []
+    catalog = appdoc_catalog.for_tenant(session, tid)
     for zid, value in body.areas.items():
-        area = _area(value)
+        area = _area(value, catalog)
         z = items[zid]
         if z.appdoc_area != area:
             z.appdoc_area, z.updated_at = area, datetime.now(UTC)
@@ -1052,6 +1055,24 @@ def set_appdoc_areas(
                      subject=str(tid), detail={"tenant_id": tid, "changes": changes})  # fmt: skip
         app_refresh.schedule_tenant(background, factory, tid)  # Befunde nach den Kategorien
     return [{"id": z.id, "name": z.name, "appdoc_area": z.appdoc_area} for z in items.values()]
+
+
+@router.get("/appdoc/catalog")
+def appdoc_catalog_of_tenant(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Kategorien der Applikations-Doku des Mandanten (0.104.0): Katalog aus Vorgaben und
+    Namensprofil (Auswahl je Zone im Netzwerkdesign → Kategorien) und je Zone ohne Kategorie
+    der Vorschlag nach ihrem Namen."""
+    tid = tenant_scope(principal, tenant_id)
+    catalog = appdoc_catalog.for_tenant(session, tid)
+    suggestions = {}
+    for z in store.load(session, tid):
+        if not catalog.area(z.appdoc_area) and (key := catalog.suggest(z.name, z.code)):
+            suggestions[z.id] = key
+    return {**catalog.out(), "suggestions": suggestions}
 
 
 class AppdocZoneIn(BaseModel):
@@ -1102,10 +1123,11 @@ def set_appdoc_zones(
         raise HTTPException(status_code=404, detail="zone not found")
     changes: list[dict] = []
     owners: set[int | None] = set()
+    catalog = appdoc_catalog.for_tenant(session, tid)
     for x in body.zones:
         z, entry = items[x.id], {}
         if "appdoc_area" in x.model_fields_set:
-            area = _area(x.appdoc_area)
+            area = _area(x.appdoc_area, catalog)
             if z.appdoc_area != area:
                 z.appdoc_area = entry["area"] = area
         if x.nets is not None or x.excluded is not None:

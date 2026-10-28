@@ -56,3 +56,15 @@ Entscheid des Anwenders (2026-10-26):
   ADR und Freigabe.
 - Offen: weitere Inhalte (Doku je System, Verkabelung), der Plan zusätzlich als Bild in der
   Word-Datei.
+
+## Ergänzung 0.104.0 (Modularisierung, Anwender 2026-10-28: weniger Entwicklungszeit)
+
+- **Ein Aufbau, zwei Formate:** `word_export` schreibt die Abschnitte an einen Schreiber –
+  `docx_writer.Document` (Word) bzw. `md_writer.Markdown` (Markdown, gleiche Schnittstelle).
+  Der Markdown-Export entsteht nicht mehr in der Oberfläche: gleiche Gliederung und Tabellen wie
+  Word, eine Stelle für Änderungen. `GET /applications/{id}/export?format=md`.
+- **Doku je System** als Markdown bzw. Word: `GET /appdoc/systems/{name}/export?format=md|docx`.
+- **Kunden-Benutzer** (Allowlist ADR 0018 ergänzt): Export ihres Ausschnitts (Regeln,
+  Abhängigkeiten, Befunde wie in der Ansicht), **ohne** Verbindungen und Netzwerkplan (sie zeigen
+  die Infrastruktur), ohne Gerätenamen (`customer_alias` vor dem Schreiben – die Middleware
+  sieht nur JSON), ohne Mandantenname; ZIP wird zu Word.
