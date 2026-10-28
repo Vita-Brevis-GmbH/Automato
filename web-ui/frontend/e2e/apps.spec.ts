@@ -145,7 +145,10 @@ test("Applikation: Zonen den Kategorien zuordnen, Spalte Zone, Namen der Gegenst
   const card = (index: number) =>
     page.locator("#app-categories .stack > .card", { has: page.locator("h2", { hasText: new RegExp(`^${index}\\. `) }) });
   const dmz = () => page.locator("#app-categories tbody tr", { hasText: "dmz-to-web" }).first();
-  // Zone mit dem Netz der Gegenstelle (10.10.20.0/24) – am Ende wieder gelöscht
+  // Zone mit dem Netz der Gegenstelle (10.10.20.0/24) – am Ende wieder gelöscht, ein Rest aus
+  // einem abgebrochenen Versuch vorher
+  const zones = (await (await page.request.get("/api/zones?tenant_id=1")).json()) as { id: number; name: string }[];
+  for (const z of zones.filter((x) => x.name === "Partnernetz Test")) await page.request.delete(`/api/zones/${z.id}`);
   const created = await page.request.post("/api/zones", {
     data: { tenant_id: 1, name: "Partnernetz Test", kind: "internal", selectors: [{ kind: "prefix", value: "10.10.20.0/24" }] },
   });
@@ -161,7 +164,9 @@ test("Applikation: Zonen den Kategorien zuordnen, Spalte Zone, Namen der Gegenst
     // Zone zuordnen: Unternehmensnetzwerk (3/4)
     await page.click("#app-zone-areas");
     const dialog = page.locator("#zone-areas-dialog");
-    await dialog.getByLabel("Kategorie der Zone Partnernetz Test").selectOption("bit");
+    const area = dialog.getByLabel("Kategorie der Zone Partnernetz Test");
+    await area.selectOption("bit");
+    await expect(area).toHaveValue("bit");
     await page.click("#zone-areas-save");
     await expect(dialog).toHaveCount(0);
     await expect(card(3).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);

@@ -413,11 +413,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.99.0** | Routing bis an die Firmengrenze: Router und L3-Switches strikt lesend (RIB, BGP je VRF), als Knoten in Weg-Suche und Topologie, Firmengrenze bei eBGP zu fremdem AS, Anbindung bzw. Default-Route zum Provider (ADR 0032) |
 | **0.100.0** | Switches & Router über SNMPv3 (authPriv, nur GET/GETBULK auf die Positivliste der Standard-MIBs) als Alternative zu SSH; Host-Schlüssel auch bei Agent-Läufen geprüft (ADR 0033) |
 | **0.101.0** | Applikations-Doku: Zonen an den Kategorien (Bereich je Zone), Kategorie nach der Zone der Gegenstelle auch für grosse Quell-Bereiche, Spalte Zone und Zonen mit Netzen im Kopf, Namen breiter Quellen über die Gruppe der Regel, Schalter für den Global Admin (ADR 0012 Ergänzung 0.101.0) |
+| **0.101.1** | Korrektur: „Zonen zuordnen“ behält die gewählte Kategorie, auch wenn die Liste der Zonen später nochmals ankommt |
 
-### Nächste Arbeiten (Stand 0.101.0)
+### Nächste Arbeiten (Stand 0.101.1)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.101.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.101.1.
 
 **Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
 

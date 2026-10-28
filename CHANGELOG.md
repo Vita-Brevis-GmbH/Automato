@@ -7,6 +7,15 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.101.1 – 2026-10-28
+
+Korrektur zu 0.101.0.
+
+- **„Zonen zuordnen“ behält die Auswahl:** kam die Liste der Zonen ein zweites Mal an (z. B.
+  langsame Antwort), setzte sie die eben gewählte Kategorie zurück und „Speichern“ blieb
+  gesperrt. Eine spätere Antwort überschreibt die Auswahl nicht mehr.
+- UI-Test räumt eine Zone aus einem abgebrochenen Versuch vorher weg.
+
 ## 0.101.0 – 2026-10-28
 
 Applikations-Doku: Kategorien mit Zonen, Namen breiter Quellen (Rückmeldung des Anwenders

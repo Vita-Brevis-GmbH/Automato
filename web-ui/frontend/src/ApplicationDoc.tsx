@@ -2353,12 +2353,18 @@ function ZoneAreasDialog({ tenantId, onClose, onSaved }: { tenantId: number; onC
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   useEffect(() => {
+    // eine spätere Antwort setzt die Auswahl nicht zurück (StrictMode lädt zweimal)
+    let live = true;
     fetchZones(tenantId)
       .then((zs) => {
+        if (!live) return;
         setZones(zs);
-        setAreas(Object.fromEntries(zs.map((z) => [z.id, z.appdoc_area ?? null])));
+        setAreas((m) => ({ ...Object.fromEntries(zs.map((z) => [z.id, z.appdoc_area ?? null])), ...m }));
       })
-      .catch(setErr);
+      .catch((e) => live && setErr(e));
+    return () => {
+      live = false;
+    };
   }, [tenantId]);
   const changed = (zones ?? []).filter((z) => (z.appdoc_area ?? null) !== (areas[z.id] ?? null));
   const save = async () => {
