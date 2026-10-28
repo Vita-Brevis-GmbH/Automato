@@ -163,6 +163,34 @@ Weg zum Server in die Spalten verteilen):**
   die neutralen Bezeichnungen `customer_alias`). Reine Anzeige – nichts wird gespeichert,
   verglichen oder für Befunde, Verbindungen und Abhängigkeiten verwendet.
 
+**Ergänzung 0.101.0 (Anwender 2026-10-28: „bei den unspezifischen Zugriffen sehe ich nur die IPs
+der Source“ und „Regeln, die grosse Bereiche zulassen, aber direkt auf das Zielsystem zeigen,
+müssen in die entsprechende Kategorie – den Kategorien die Zonen anhängen, woher sie kommen, und
+in den Zonen die Source-IP-Adressen hinterlegen“):**
+- **Zonen an den Kategorien:** eine logische Zone (ADR 0024) gehört höchstens einem **Bereich**
+  der Kategorien (`logical_zone.appdoc_area`, Migration `0063`): Internet (Kategorien 1/2),
+  Unternehmensnetzwerk (3/4), VPN (5), Remote Access (6), andere Security Tenants (9) – das sind
+  die Merkmale, die bisher nur im Namen der Firewall-Zone erkannt wurden (`L3O_inet`, `bit`, `vpn`,
+  `sra`, `res`). Die Quell-Adressen einer Zone sind ihre Netze (Selektoren, z. B. Präfixe).
+- **Kategorie nach der Zone der Gegenstelle** (`store/appdoc_zones.py`): für eine Firewall-Regel
+  die Zone der Gegenstelle (Quelle eingehend, Ziel ausgehend) – das längste Zonen-Netz, das ihren
+  Wert ganz enthält, bei einem grossen Bereich (10.64.0.0/10) die Zonen der Netze darin, bei any
+  die Zonen der Anbindung bzw. der Netze hinter dem Interface der Regel; ein Zonen-Netz 0.0.0.0/0
+  nur für öffentliche Adressen. Nennen diese Zonen genau einen Bereich, gilt dessen Kategorie –
+  vor dem Merkmal im Namen der Firewall-Zone; DNAT/VIP und extern bleiben Kategorie 2 bzw. 1.
+  Mehrere Bereiche (z. B. Clients und Remote Access in 10.64.0.0/10) bleiben unspezifisch.
+- **Sichtbar:** Spalte **Zone** (Zonen der Gegenstelle, optional wie NAT/VIP) und im Kopf jeder
+  Kategorie ihre Zonen mit den ersten Netzen – Ansicht, Markdown, Word, Druck, Doku je System.
+  Zuordnen in der Doku („Zonen zuordnen“, Operator, `PUT /zones/appdoc-areas`, Audit
+  `zone.appdoc_areas_set`) bzw. im Zonen-Editor („Kategorie in der Applikations-Doku“); danach
+  ziehen die Befunde der Applikationen nach (`app_refresh.schedule_tenant`). Kunden-Benutzer sehen
+  weder Spalte noch Zonen im Kopf (Netze der Infrastruktur), die Kategorie gilt für sie gleich.
+- **Namen breiter Quellen:** mit „Namen der Gegenstellen“ nennen Netze und Bereiche zuerst das
+  Objekt, wie es in der Regel steht – die Gruppe der Firewall mit ihren Netzen in einer Zeile
+  („G_clients (10.70.0.0/16, 10.71.0.0/16)“, `peer_names.group`); Hosts behalten ihren Namen
+  aus IPAM/VM. Der Global Admin schaltet die Einstellung des Mandanten seit 0.101.0 auch direkt in
+  der Karte „Doku nach Kategorien“ ein bzw. aus (`#app-peer-names`).
+
 ## Kontext
 
 ADR 0004 (Ergänzung E4) beschreibt die Applikation als System mit AP-/Projekt-Klammer:

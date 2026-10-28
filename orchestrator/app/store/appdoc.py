@@ -142,13 +142,28 @@ NAT, SNAT_IP = "NAT", "NAT Externe IPv4"
 DNS_NAME, VIP_FW, BALANCER = "Externer DNS Name", "VIP (Firewall)", "Load Balancer"
 PROTECTION, DESCRIPTION = "Schutzmechanismen", "Description"
 APP, PEER, APP_COL = "_app", "_peer", "_app_col"
+# Zonen der Gegenstelle (0.101.0, `appdoc_zones`): woher der Zugriff kommt bzw. wohin er geht
+ZONE_COL = "Zone"
 # ohne Wert in allen Zeilen einer Kategorie: Spalte ausgeblendet (`visible_columns`)
-OPTIONAL = (NAT, DNS_NAME, VIP_FW, BALANCER, PROTECTION, L3OUT_COL)
-_COMMON = [SOURCE, DESTINATION, SERVICE, NAT, ACTION, PROTECTION, DEVICE, L3OUT_COL, DESCRIPTION]
+OPTIONAL = (NAT, DNS_NAME, VIP_FW, BALANCER, PROTECTION, L3OUT_COL, ZONE_COL)
+_COMMON = [SOURCE, DESTINATION, ZONE_COL, SERVICE, NAT, ACTION, PROTECTION, DEVICE, L3OUT_COL,
+           DESCRIPTION]  # fmt: skip
 TABLE_COLUMNS: dict[int, list[str]] = {
-    1: [SOURCE, DESTINATION, SERVICE, SNAT_IP, ACTION, PROTECTION, DEVICE, L3OUT_COL, DESCRIPTION],
+    1: [
+        SOURCE,
+        DESTINATION,
+        ZONE_COL,
+        SERVICE,
+        SNAT_IP,
+        ACTION,
+        PROTECTION,
+        DEVICE,
+        L3OUT_COL,
+        DESCRIPTION,
+    ],
     2: [
         SOURCE,
+        ZONE_COL,
         DNS_NAME,
         VIP_FW,
         BALANCER,
@@ -259,9 +274,11 @@ def categorize(
     counterpart_zone: str | None,
     counterpart_external: bool,
     is_dnat_target: bool,
+    area: str | None = None,
 ) -> int:
-    """Ordnet eine Regel einer der 10 Tabellen zu (pure; testbar)."""
-    kind = zone_kind(counterpart_zone)
+    """Ordnet eine Regel einer der 10 Tabellen zu (pure; testbar). `area` = Bereich der
+    logischen Zone der Gegenstelle (0.101.0, `appdoc_zones`) - geht der Zone der Firewall vor."""
+    kind = area or zone_kind(counterpart_zone)
     if direction == "in":
         if is_dnat_target or kind == "inet" or counterpart_external:
             return 2
@@ -666,6 +683,13 @@ class TenantData:
     def aci(self) -> aci_relevance.Classifier:
         """Zuordnung zu externen EPGs (0.28.0); teilt den Graph der Wege."""
         return aci_relevance.Classifier(self.session, self.tenant_id, lambda: self.relevance.graph)
+
+    @cached_property
+    def zone_map(self):
+        """Logische Zonen mit ihren Netzen (0.101.0): Zone und Kategorie der Gegenstellen."""
+        from app.store import appdoc_zones  # spaet: appdoc_zones -> zones -> customers
+
+        return appdoc_zones.ZoneMap(self.session, self.tenant_id)
 
     @cached_property
     def leaks(self) -> aci_shared.Leaks:
@@ -1229,11 +1253,14 @@ def _fw_rows(
                 for label, is_any in zip(cp_labels, cp_any, strict=True)
             ]
             cp_external = cp_external or behind["kind"] == "internet"
+        # logische Zonen der Gegenstelle (0.101.0): ihr Bereich bestimmt die Kategorie
+        zone_ids, area = _counterpart_zones(data, counterpart_eps, cp_objs, behind)
         idx = categorize(
             direction=direction,
             counterpart_zone=cp_zone,
             counterpart_external=cp_external,
             is_dnat_target=direction == "in" and bool(rule_dnat),
+            area=area,
         )
         via, scope, obj, value = sides[side]
         own = _ips_in(ips or [], value)
@@ -1245,6 +1272,7 @@ def _fw_rows(
             ACTION: action_label(rule),
             DEVICE: data.device(rule),
             DESCRIPTION: rule.name or f"#{rule.external_id}",
+            ZONE_COL: data.zone_map.text(zone_ids) if zone_ids else "",
         }
         if idx == 1:
             row[SNAT_IP] = snat if direction == "out" else ""
@@ -1267,6 +1295,28 @@ def _fw_rows(
             meta |= {REL: rel["state"], REL_TEXT: rel["text"]}
         out.append((idx, {**row, VIA: via, **meta, OBJECT: obj, OBJECT_VALUE: value}))
     return out
+
+
+def _counterpart_zones(data: TenantData, eps: list, objs: list, behind: dict | None
+                       ) -> tuple[list[int], str | None]:  # fmt: skip
+    """Logische Zonen der Gegenstelle einer Firewall-Regel und ihr Bereich (0.101.0): ueber ihre
+    Werte (auch grosse Bereiche), bei any ueber die Anbindung bzw. die Netze hinter dem
+    Interface der Regel."""
+    zm = data.zone_map
+    if not zm.active:
+        return [], None
+    values: list[str] = []
+    for e, o in zip(eps, objs, strict=True):
+        if o is not None and o.value:
+            values.append(o.value)
+        elif e.kind is not EndpointKind.ANY and e.inline_value:
+            values.append(e.inline_value)
+    exits: list[str] = []
+    if behind is not None and any(e.kind is EndpointKind.ANY for e in eps):
+        exits = list(behind.get("exits") or [])
+        values += [str(n) for n in behind.get("nets") or []]
+    ids = zm.zones_of(values, exits)
+    return ids, zm.area(ids)
 
 
 def _ips_in(ips: list[str], value: str | None) -> list[str]:

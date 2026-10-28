@@ -130,6 +130,7 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Verbindungen Ende zu Ende | End-to-end connections |
 | Netzwerkplan | Network diagram |
 | Kategorie | Category |
+| Kategorie der Zone (Bereich der Kategorien) | Category of the zone |
 | Zweck (Dev/Test/Prod) | Purpose |
 | Kritikalität | Criticality |
 | Verantwortlich | Owner |

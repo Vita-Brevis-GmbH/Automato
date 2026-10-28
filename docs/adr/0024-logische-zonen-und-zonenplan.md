@@ -386,3 +386,7 @@ Entscheide des Anwenders (2026-10-23):
   0.78.0 (Nr. 17): Befund „Zone ausserhalb des Schemas“, Absicht je Dienst und Richtung im
   Zonenplan, Zonen in den Verbindungen; in 0.81.0 (Nr. 18): Relevanz nach dem Weg in der
   Matrix, Übergänge zu Zonen nur hinter einem Router.
+- Seit 0.101.0 trägt eine Zone optional den **Bereich der Kategorien der Applikations-Doku**
+  (`appdoc_area`: Internet, Unternehmensnetzwerk, VPN, Remote Access, andere Security Tenants –
+  ADR 0012 Ergänzung 0.101.0): Firewall-Regeln mit einer Gegenstelle in der Zone stehen in dieser
+  Kategorie, auch über einen grossen Quell-Bereich; die Netze der Zone sind die Quell-Adressen.

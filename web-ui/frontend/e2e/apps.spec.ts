@@ -136,6 +136,52 @@ test("Applikation: Namen der Gegenstellen in den Kategorien – Einstellung des 
   }
 });
 
+test("Applikation: Zonen den Kategorien zuordnen, Spalte Zone, Namen der Gegenstellen für den Admin (0.101.0)", async ({ page }) => {
+  const categories = async () => {
+    await expect(page.locator("#app-categories > .card")).toBeVisible();
+    if ((await page.locator("#app-categories .stack").count()) === 0) await page.locator("#app-categories h2.fold-title").first().click();
+    await expect(page.locator("#app-categories .stack")).toHaveCount(1);
+  };
+  const card = (index: number) =>
+    page.locator("#app-categories .stack > .card", { has: page.locator("h2", { hasText: new RegExp(`^${index}\\. `) }) });
+  const dmz = () => page.locator("#app-categories tbody tr", { hasText: "dmz-to-web" }).first();
+  // Zone mit dem Netz der Gegenstelle (10.10.20.0/24) – am Ende wieder gelöscht
+  const created = await page.request.post("/api/zones", {
+    data: { tenant_id: 1, name: "Partnernetz Test", kind: "internal", selectors: [{ kind: "prefix", value: "10.10.20.0/24" }] },
+  });
+  expect(created.status()).toBe(201);
+  const zoneId = ((await created.json()) as { id: number }).id;
+  try {
+    await open(page);
+    await categories();
+    // ohne Kategorie an der Zone: unspezifisch, die Spalte Zone nennt sie schon
+    await expect(card(10).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);
+    await expect(card(10).locator("thead")).toContainText("Zone");
+    await expect(dmz()).toContainText("Partnernetz Test");
+    // Zone zuordnen: Unternehmensnetzwerk (3/4)
+    await page.click("#app-zone-areas");
+    const dialog = page.locator("#zone-areas-dialog");
+    await dialog.getByLabel("Kategorie der Zone Partnernetz Test").selectOption("bit");
+    await page.click("#zone-areas-save");
+    await expect(dialog).toHaveCount(0);
+    await expect(card(3).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(1);
+    await expect(card(10).locator("tbody tr", { hasText: "dmz-to-web" })).toHaveCount(0);
+    await expect(card(3).locator(".doc-zones")).toContainText("Partnernetz Test (10.10.20.0/24)");
+    // Admin: Namen der Gegenstellen direkt in der Doku ein- und ausschalten
+    const names = page.locator("#app-peer-names");
+    await expect(names).not.toHaveClass(/\bon\b/);
+    await names.click();
+    await expect(names).toHaveClass(/\bon\b/);
+    await expect(dmz()).toContainText("N_dmz-net (10.10.20.0/24)");
+    await names.click();
+    await expect(names).not.toHaveClass(/\bon\b/);
+    await expect(dmz()).not.toContainText("N_dmz-net");
+  } finally {
+    await page.request.patch("/api/tenants/1", { data: { appdoc_foreign_names: false } });
+    await page.request.delete(`/api/zones/${zoneId}`);
+  }
+});
+
 test("Applikation: Regeln filtern (System, Richtung, Bezug) und Erklärung im Detail", async ({ page }) => {
   await open(page);
   const card = page.locator("#app-rules");

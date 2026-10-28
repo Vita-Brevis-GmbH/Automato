@@ -412,11 +412,12 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.98.0** | Weg-Suche: Details am Weg im Seitenpanel bzw. neuen Tab, „mehr“ je Hop, Suche in der URL, Anbindung als Quelle bzw. Ziel (ADR 0019 Ergänzung 0.98.0) |
 | **0.99.0** | Routing bis an die Firmengrenze: Router und L3-Switches strikt lesend (RIB, BGP je VRF), als Knoten in Weg-Suche und Topologie, Firmengrenze bei eBGP zu fremdem AS, Anbindung bzw. Default-Route zum Provider (ADR 0032) |
 | **0.100.0** | Switches & Router über SNMPv3 (authPriv, nur GET/GETBULK auf die Positivliste der Standard-MIBs) als Alternative zu SSH; Host-Schlüssel auch bei Agent-Läufen geprüft (ADR 0033) |
+| **0.101.0** | Applikations-Doku: Zonen an den Kategorien (Bereich je Zone), Kategorie nach der Zone der Gegenstelle auch für grosse Quell-Bereiche, Spalte Zone und Zonen mit Netzen im Kopf, Namen breiter Quellen über die Gruppe der Regel, Schalter für den Global Admin (ADR 0012 Ergänzung 0.101.0) |
 
-### Nächste Arbeiten (Stand 0.100.0)
+### Nächste Arbeiten (Stand 0.101.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
-**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.100.0.
+**0.68.0** (2026-10-26). Zur Abnahme stehen 0.69.0–0.101.0.
 
 **Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
 
@@ -432,6 +433,8 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | Weg-Suche: mehr Infos am Pfad ohne die Suche zu verlassen (Detail, neuer Tab) | **umgesetzt in 0.98.0** (Seitenpanel, „↗“ neuer Tab, „mehr“ je Hop, Suche in der URL) |
 | Weg-Suche von bzw. zu einer Anbindung | **umgesetzt in 0.98.0** (`src_exit`/`dst_exit`, Start mit dem Eingang der Firewall) |
 | NAT / VIPs: Namen gegen die Namenskonvention prüfen | **umgesetzt in 0.96.0** (Präfix je Typ VIP/Virtual Server/IP-Pool) |
+| Doku nach Kategorien: Namen der unspezifischen Quellen (statt nur IPs) – Möglichkeit für den Global Admin (2026-10-28) | **umgesetzt in 0.101.0** (Gruppe wie in der Regel, Schalter in der Karte) |
+| Unspezifische Zugriffe mit grossem Quell-Bereich auf das System in die passende Kategorie; Zonen an den Kategorien mit ihren Quell-Adressen (2026-10-28) | **umgesetzt in 0.101.0** (Bereich je Zone, Spalte Zone, Zonen im Kopf) |
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4
 Verkabelung, Applikationen, Kunden, Routing“):**

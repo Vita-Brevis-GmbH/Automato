@@ -186,7 +186,13 @@ class Relevance:
         if cache_key not in self._behind:
             parts = [p for p in (self._behind_one(key, n) for n in names) if p]
             self._behind[cache_key] = (
-                {"text": "; ".join(p["text"] for p in parts), "kind": parts[0]["kind"]}
+                {
+                    "text": "; ".join(p["text"] for p in parts),
+                    "kind": parts[0]["kind"],
+                    # Zonen der Gegenstelle any (0.101.0): Anbindungen bzw. Netze dahinter
+                    "exits": [x for p in parts for x in p.get("exits", [])],
+                    "nets": [n for p in parts for n in p.get("nets", [])],
+                }
                 if parts
                 else None
             )
@@ -198,7 +204,8 @@ class Relevance:
         for iface in ifaces:
             ex = g.exit_for(key, iface, g.zone(key[0], iface) or name, None)
             if ex is not None:
-                return {"text": f"{_exit_label(ex)} ({name})", "kind": ex.kind}
+                return {"text": f"{_exit_label(ex)} ({name})", "kind": ex.kind,
+                        "exits": [ex.name, f"#{ex.id}"]}  # fmt: skip
         routes = self._routes(key)
         if any(length == 0 and set(ifaces) & via for _p, length, via in routes):
             text = L(f"extern (Default-Route über {name})", f"external (default route via {name})")
@@ -213,6 +220,7 @@ class Relevance:
         return {
             "text": L(f"Netze hinter {name}: {listed}", f"Networks behind {name}: {listed}"),
             "kind": "nets",
+            "nets": nets,
         }
 
     def check(self, rule: Rule, side: str, values: list[str], zone: str | None = None) -> dict:

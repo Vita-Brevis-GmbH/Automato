@@ -17,7 +17,7 @@ from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.store import appdoc as store
-from app.store import peer_names
+from app.store import appdoc_zones, peer_names
 
 router = APIRouter(prefix="/appdoc", tags=["appdoc"])
 
@@ -40,6 +40,8 @@ class DocTableOut(BaseModel):
     rows: list[dict[str, str | int | list[int] | list[str] | None]]
     # 0.69.0 (Applikations-Doku): ausgeblendete Zeilen mit `_hides` (Begruendung, wer, wann)
     hidden: list[dict] = []
+    # 0.101.0: Zonen der Kategorie mit ihren Netzen (Kopf; nicht fuer Kunden-Benutzer)
+    zones: list[dict] = []
 
 
 class SiteRef(BaseModel):
@@ -131,11 +133,17 @@ def system_doc(
 
 def _with_names(session: Session, principal: Principal, tenant_id: int | None, doc: dict) -> dict:
     """Gegenstellen nur mit Adresse samt Namen (0.95.0) - Einstellung des Mandanten, nie fuer
-    Kunden-Benutzer."""
+    Kunden-Benutzer. Seit 0.101.0 auch die Zonen je Kategorie (Kunden-Benutzer ohne)."""
     rows = [r for t in doc["tables"] for r in t["rows"]]
     tid = tenant_id if tenant_id is not None else peer_names.tenant_of(session, rows)
     if peer_names.enabled(session, tid, principal.is_customer):
         peer_names.apply(session, tid, rows)
+    if principal.is_customer or tid is None:
+        appdoc_zones.strip(doc["tables"], store.ZONE_COL)
+    else:
+        zm = appdoc_zones.ZoneMap(session, tid)
+        for t in doc["tables"]:
+            t["zones"] = zm.table_zones(t["index"]) if zm.has_areas else []
     return doc
 
 

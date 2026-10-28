@@ -4,6 +4,7 @@ import {
   assignSystemSite,
   DocHide,
   DocTable,
+  DocTableZone,
   fetchAppDocSystems,
   fetchSites,
   fetchSystemDoc,
@@ -381,6 +382,25 @@ const dateText = (iso: string | null | undefined) => (iso ? new Date(iso).toLoca
 // ADR 0034: unspezifische Zugriffe (Subnetz, any, vzAny, Preferred Group) stehen je L3Out, über den
 // sie hereinkommen (der Server sortiert) – Zwischenüberschrift „über L3O_inet“, wo der L3Out wechselt
 const UNSPECIFIC = ["subnet", "any", "vzany", "pref_group"];
+// Zonen einer Kategorie (0.101.0): woher die Zugriffe kommen, mit den Netzen der Zone
+function DocZones({ zones }: { zones: DocTableZone[] }) {
+  return (
+    <div className="doc-zones faint">
+      {L("Zonen:", "Zones:")}{" "}
+      {zones.map((z, i) => (
+        <span key={z.id}>
+          {i > 0 && " · "}
+          <b>{z.name}</b>{" "}
+          <span className="mono">
+            ({z.nets.join(", ") || L("ohne Netze", "no networks")}
+            {z.nets_total > z.nets.length ? L(` +${z.nets_total - z.nets.length} weitere`, ` +${z.nets_total - z.nets.length} more`) : ""})
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function l3outGroup(rows: DocRow[], i: number): string | null {
   const broad = (r: DocRow) => UNSPECIFIC.includes(String(r._scope ?? ""));
   if (!broad(rows[i]) || !rows.some((r) => broad(r) && r._l3out_in)) return null;
@@ -425,6 +445,7 @@ export function DocTableView({
           {hidden.length > 0 ? L(` · ${hidden.length} ausgeblendet`, ` · ${hidden.length} hidden`) : ""}
         </span>
       </div>
+      {open && (table.zones ?? []).length > 0 && <DocZones zones={table.zones!} />}
       {open && (
       <div className="card-body scroll">
         {table.rows.length === 0 ? (
@@ -572,6 +593,14 @@ export function tablesMarkdown(tables: DocTable[], rows = true, hiddenToo = true
   for (const t of rows ? tables : []) {
     if (t.rows.length === 0) continue;
     lines.push(`## ${t.index}. ${t.title}`, "");
+    if ((t.zones ?? []).length > 0) {
+      // 0.101.0: Zonen der Kategorie mit ihren Netzen
+      const zones = t.zones!.map((z) => {
+        const more = z.nets_total - z.nets.length;
+        return `${z.name} (${z.nets.join(", ")}${more > 0 ? L(` +${more} weitere`, ` +${more} more`) : ""})`;
+      });
+      lines.push(`${L("Zonen", "Zones")}: ${zones.join(" · ")}`, "");
+    }
     lines.push(`| ${t.columns.map((c, i) => colLabel(t, c, i)).join(" | ")} |`);
     lines.push(`| ${t.columns.map(() => "---").join(" | ")} |`);
     for (const row of t.rows) {

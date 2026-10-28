@@ -8,6 +8,11 @@ Mandanten `appdoc_foreign_names` gesetzt (nur der Admin), steht der Name davor:
 der IP bzw. Netz mit Name/Beschreibung), der VM (vCenter), der EPG (Endpunkt bzw. Subnetz der
 EPG, nur eindeutig) oder dem Firewall-Objekt, ueber das die Regel die Adresse nennt.
 
+Seit 0.101.0 (Anwender 2026-10-28: „bei den unspezifischen Zugriffen sehe ich nur die IPs der
+Source“) nennen Netze und Bereiche zuerst das Objekt, wie es in der Regel steht: die Gruppe der
+Firewall mit ihren Netzen in einer Zeile („G_clients (10.8.0.0/16, 10.9.0.0/16)“) statt einer
+Zeile je Netz. Einzelne Hosts behalten ihren Namen aus IPAM bzw. VM.
+
 Nur fuer Betreuer: Kunden-Benutzer sehen unabhaengig von der Einstellung weiter nur die
 Adressen (`enabled`, fail-closed; die Anonymisierung `customer_alias` bleibt). Reine Anzeige -
 nichts wird gespeichert, verglichen oder fuer Befunde verwendet; Gegenstellen mit eigenem Namen
@@ -36,7 +41,10 @@ from app.models import (
     VmIp,
 )
 from app.store import appdoc, references
+from app.store import objects as objects_store
 from app.store.epgs import inventory_label
+
+SHOWN = 3  # Netze je Gruppe in einer Zeile
 
 
 def enabled(session: Session, tenant_id: int | None, customer: bool) -> bool:
@@ -130,6 +138,21 @@ class _Names:
         ).all()  # fmt: skip
         for rid, role, _direct, name, oid in sorted(rows, key=lambda r: (not r[2], r[3])):
             self.used.setdefault((rid, role, oid), name)
+        # Gruppen, wie sie in der Regel stehen (0.101.0): je (Regel, Seite) Name und Werte
+        self.groups: dict[tuple[int, str], list[tuple[str, set[str]]]] = defaultdict(list)
+        found = session.execute(
+            select(RuleObjectUsage.rule_id, RuleObjectUsage.role, DeviceObject)
+            .join(DeviceObject, DeviceObject.id == RuleObjectUsage.device_object_id)
+            .where(RuleObjectUsage.rule_id.in_(set(eps)), RuleObjectUsage.direct.is_(True),
+                   RuleObjectUsage.role.in_(("src", "dst")),
+                   DeviceObject.category == ObjectCategory.ADDRESS)
+        ).all()  # fmt: skip
+        found = [(rid, role, o) for rid, role, o in found if o.members]
+        if found:
+            directory = objects_store.Directory(session, {o.source_system_id for *_, o in found})
+            for rid, role, o in sorted(found, key=lambda x: x[2].name):
+                values = {str(v) for m in directory.expand(o) for v in m.values or []}
+                self.groups[(rid, role)].append((o.name, values))
         self.any_object: dict[int, str] = {}
         for oid, name in session.execute(
             select(DeviceObject.network_object_id, DeviceObject.name)
@@ -150,6 +173,12 @@ class _Names:
                 if rec is not None and (rec.name or rec.description):
                     return rec.name or rec.description
         return None
+
+    def group(self, rule_id: int, role: str, value: str) -> str | None:
+        """Gruppe der Regel, in der ein Netz bzw. Bereich steht (Hosts behalten ihren Namen)."""
+        if value in self.hosts:
+            return None
+        return next((n for n, vals in self.groups.get((rule_id, role), ()) if value in vals), None)
 
     def name(self, rule_id: int, role: str, obj: NetworkObject) -> str | None:
         value = obj.value or ""
@@ -189,11 +218,23 @@ def apply(session: Session, tenant_id: int | None, rows: list[dict]) -> int:
     for row in rows:
         rid, side = row.get(appdoc.RULE), row.get(appdoc.SIDE)
         mapping: dict[str, str] = {}
+        grouped: dict[str, list[str]] = defaultdict(list)  # Gruppe -> ihre Netze in der Zelle
         for role, obj in eps.get(rid, ()):
-            if role != side and obj.value not in mapping:
-                name = names.name(rid, role, obj)
-                if name:
-                    mapping[obj.value] = f"{name} ({obj.value})"
+            if role == side or obj.value in mapping:
+                continue
+            group = names.group(rid, role, obj.value)
+            if group:
+                grouped[group].append(obj.value)
+                mapping[obj.value] = group
+                continue
+            name = names.name(rid, role, obj)
+            if name:
+                mapping[obj.value] = f"{name} ({obj.value})"
+        for group, values in grouped.items():  # eine Zeile je Gruppe: „G_x (a, b, c +2)“
+            more = f" +{len(values) - SHOWN}" if len(values) > SHOWN else ""
+            line = f"{group} ({', '.join(values[:SHOWN])}{more})"
+            for v in values:
+                mapping[v] = line
         if not mapping:
             continue
         text = row.get(appdoc.PEER) or ""

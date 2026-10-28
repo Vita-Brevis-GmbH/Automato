@@ -48,6 +48,10 @@ ZONE_KINDS = ("dc", "edge", "transfer", "core", "distribution", "access", "exter
 ZONE_SELECTOR_KINDS = (*SELECTOR_KINDS, "exit")
 # Absicht je Zonenpaar: erlaubt, eingeschraenkt (nur bestimmte Dienste), gesperrt
 INTENTS = ("allow", "limited", "deny")
+# Bereiche der Kategorien der Applikations-Doku (0.101.0, `store/appdoc_zones.py`): Internet
+# (Kategorien 1/2), Unternehmensnetzwerk (3/4), VPN (5), Remote Access (6), andere Security
+# Tenants (9) - dieselben Arten wie die Zonen-Merkmale `appdoc.zone_kind`
+APPDOC_AREAS = ("inet", "bit", "vpn", "sra", "res")
 
 
 class LogicalZone(Base):
@@ -66,6 +70,9 @@ class LogicalZone(Base):
     color: Mapped[str | None] = mapped_column(String(16), nullable=True)  # #rrggbb im Plan
     position: Mapped[int] = mapped_column(Integer, default=0)  # Reihenfolge in Matrix und Plan
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Bereich der Kategorien in der Applikations-Doku (0.101.0, siehe APPDOC_AREAS): Regeln mit
+    # einer Gegenstelle in dieser Zone stehen in dessen Kategorie; leer = keiner
+    appdoc_area: Mapped[str | None] = mapped_column(String(8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

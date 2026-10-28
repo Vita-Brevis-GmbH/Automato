@@ -333,6 +333,18 @@ def _zones(z: dict | None) -> str:
     return " · ".join(x for x in (way, "; ".join(i["text"] for i in z.get("intents") or [])) if x)
 
 
+def zones_text(zones: list[dict]) -> str:
+    """Zonen einer Kategorie (0.101.0): „Zonen: Clients (10.70.0.0/16, …) · …“."""
+    parts = []
+    for z in zones:
+        more = z.get("nets_total", 0) - len(z.get("nets") or [])
+        nets = ", ".join(z.get("nets") or []) + (
+            L(f" +{more} weitere", f" +{more} more") if more > 0 else ""
+        )
+        parts.append(f"{z['name']} ({nets})" if nets else z["name"])
+    return L("Zonen: ", "Zones: ") + " · ".join(parts)
+
+
 def _tables(out: Document, tables: list[dict], rows_too: bool = True,
             hidden_too: bool = True) -> None:  # fmt: skip
     hidden_title = L("Ausgeblendete Regeln", "Hidden rules")
@@ -344,6 +356,8 @@ def _tables(out: Document, tables: list[dict], rows_too: bool = True,
             empty.append(f"{t['index']}. {t['title']}")
             continue
         out.heading(f"{t['index']}. {t['title']}", 2)
+        if t.get("zones"):  # 0.101.0: Zonen der Kategorie mit ihren Netzen
+            out.note(zones_text(t["zones"]))
         cols = t.get("columns") or []
         # Anzeige der Spalten (0.87.0): `labels` parallel zu den Schluesseln `columns`
         labels = t.get("labels") or appdoc.column_labels(cols)

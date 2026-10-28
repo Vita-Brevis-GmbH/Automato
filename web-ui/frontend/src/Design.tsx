@@ -9,6 +9,8 @@
 import { CSSProperties, Fragment, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptZoneSuggestions,
+  APPDOC_AREAS,
+  AppdocArea,
   applySchemaIntents,
   assignZoneNodes,
   createZone,
@@ -77,6 +79,7 @@ import {
   ZoneSuggestionSource,
   ZoneSummary,
 } from "./api";
+import { areaLabel } from "./zoneAreas";
 import { SELECTOR_LABEL } from "./Customers";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, fmtTime, Loading, Modal, Note, PageHead, SharedChip } from "./ui";
 import { L } from "./i18n";
@@ -1173,6 +1176,8 @@ function ZoneEditor({
   const [customerId, setCustomerId] = useState<number | null>(base?.customer_id ?? null);
   const [position, setPosition] = useState(base?.position ?? 0);
   const [description, setDescription] = useState(base?.description ?? "");
+  // Kategorie der Applikations-Doku (0.101.0): Zugriffe aus dieser Zone stehen in dieser Kategorie
+  const [area, setArea] = useState<AppdocArea | null>(base?.appdoc_area ?? null);
   const [selectors, setSelectors] = useState<ZoneSelector[]>(base?.selectors.map((s) => ({ ...s })) ?? [{ ...EMPTY_SELECTOR }]);
   const [preview, setPreview] = useState<ZonePreview | null>(null);
   // Vorschläge beim Erfassen (0.66.0): Firewall-Zonen, Interfaces, IPAM, ACI, Anbindungen nach dem Namen
@@ -1227,6 +1232,7 @@ function ZoneEditor({
       position,
       description: description.trim() || null,
       selectors: valid.map((s) => ({ ...s, value: s.value.trim(), source_system_id: FW_KINDS.includes(s.kind) ? s.source_system_id : null })),
+      appdoc_area: area,
     };
     try {
       if (initial) await updateZone(initial.id, body);
@@ -1331,6 +1337,23 @@ function ZoneEditor({
       <div className="field">
         <label htmlFor="zo-desc">{L("Beschreibung (optional)", "Description (optional)")}</label>
         <input id="zo-desc" className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
+      </div>
+      <div className="field">
+        <label htmlFor="zo-area">{L("Kategorie in der Applikations-Doku", "Category in the application documentation")}</label>
+        <select id="zo-area" className="input" value={area ?? ""} onChange={(e) => setArea((e.target.value || null) as AppdocArea | null)}>
+          <option value="">{L("— keine", "— none")}</option>
+          {APPDOC_AREAS.map((x) => (
+            <option key={x} value={x}>
+              {areaLabel(x)}
+            </option>
+          ))}
+        </select>
+        <div className="hint">
+          {L(
+            "Firewall-Regeln mit einer Gegenstelle in dieser Zone (auch über einen grossen Bereich) stehen in dieser Kategorie; die Quell-Adressen sind die Netze der Selektoren",
+            "Firewall rules with a peer in this zone (also via a large range) go into this category; the source addresses are the networks of the selectors",
+          )}
+        </div>
       </div>
 
       <h3 style={{ marginTop: 12 }}>{L("Selektoren", "Selectors")}</h3>

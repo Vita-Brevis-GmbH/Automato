@@ -23,19 +23,20 @@ die es zwischen bestehenden Zonen vorgibt, uebernimmt `POST /zones/schema/intent
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit
 from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_admin, require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import (
+    APPDOC_AREAS,
     INTENTS,
     ZONE_KINDS,
     ZONE_SELECTOR_KINDS,
@@ -48,6 +49,7 @@ from app.models import (
     ZonePolicy,
 )
 from app.store import (
+    app_refresh,
     customer_alias,
     plan_export,
     plan_import,
@@ -85,6 +87,16 @@ class ZoneIn(BaseModel):
     position: int = Field(default=0, ge=0, le=10000)
     description: str | None = None
     selectors: list[SelectorIn] = Field(default_factory=list, max_length=200)
+    # Bereich der Kategorien in der Applikations-Doku (0.101.0); nicht mitgeschickt = bleibt
+    appdoc_area: str | None = None
+
+
+class AppdocAreasIn(BaseModel):
+    """Zonen den Kategorien der Applikations-Doku zuordnen (0.101.0): Zone -> Bereich
+    (`inet`, `bit`, `vpn`, `sra`, `res`) bzw. leer = keiner; nicht genannte Zonen bleiben."""
+
+    tenant_id: int
+    areas: dict[int, str | None] = Field(max_length=1000)
 
 
 class PreviewIn(BaseModel):
@@ -286,6 +298,14 @@ def _rederive(session: Session, tid: int, customer_ids: set[int | None]) -> None
         customer_store.derive(session, tid, cid)
 
 
+def _area(value: str | None) -> str | None:
+    """Bereich der Kategorien pruefen (0.101.0); leer = keiner."""
+    value = (value or "").strip() or None
+    if value is not None and value not in APPDOC_AREAS:
+        raise HTTPException(status_code=422, detail=f"unknown appdoc area {value!r}")
+    return value
+
+
 def _apply(session: Session, z: LogicalZone, body: ZoneIn, sel: list[store.Selector]) -> None:
     name = body.name.strip()
     clash = session.scalar(
@@ -306,6 +326,8 @@ def _apply(session: Session, z: LogicalZone, body: ZoneIn, sel: list[store.Selec
     z.name, z.code = name, (body.code or "").strip() or None
     z.kind, z.customer_id, z.color = body.kind, body.customer_id, body.color
     z.position, z.description = body.position, (body.description or "").strip() or None
+    if "appdoc_area" in body.model_fields_set:  # 0.101.0: nur, wenn mitgeschickt
+        z.appdoc_area = _area(body.appdoc_area)
     z.updated_at = datetime.now(UTC)
     z.selectors = [
         LogicalZoneSelector(kind=s.kind, value=s.value, source_system_id=s.source_system_id,
@@ -998,6 +1020,38 @@ def create_zone(
     reconcile.refresh_zone_findings(session, tid)
     nets = store.derive(session, tid, [z])
     return _out(z, nets[0], _customers(session, tid))
+
+
+@router.put("/appdoc-areas")
+def set_appdoc_areas(
+    body: AppdocAreasIn,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> list[dict]:
+    """Zonen den Kategorien der Applikations-Doku zuordnen (0.101.0, Operator): je Zone der
+    Bereich (Internet, Unternehmensnetzwerk, VPN, Remote Access, andere Security Tenants) bzw.
+    keiner. Die Doku ordnet danach beim naechsten Laden neu; Befunde der Applikationen ziehen
+    nach. Liefert die Zonen mit ihrem Bereich."""
+    tid = tenant_scope(principal, body.tenant_id)
+    items = {z.id: z for z in store.load(session, tid)}
+    unknown = [zid for zid in body.areas if zid not in items]
+    if unknown:
+        raise HTTPException(status_code=404, detail="zone not found")
+    changes: list[list] = []
+    for zid, value in body.areas.items():
+        area = _area(value)
+        z = items[zid]
+        if z.appdoc_area != area:
+            z.appdoc_area, z.updated_at = area, datetime.now(UTC)
+            changes.append([zid, area])
+    session.flush()
+    if changes:
+        audit.record(session, actor=f"user:{principal.subject}", action="zone.appdoc_areas_set",
+                     subject=str(tid), detail={"tenant_id": tid, "changes": changes})  # fmt: skip
+        app_refresh.schedule_tenant(background, factory, tid)  # Befunde nach den Kategorien
+    return [{"id": z.id, "name": z.name, "appdoc_area": z.appdoc_area} for z in items.values()]
 
 
 @router.put("/{zone_id}")

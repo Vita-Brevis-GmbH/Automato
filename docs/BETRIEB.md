@@ -1074,6 +1074,19 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Kategorien, Markdown und Word bei Gegenstellen, von denen die Firewall-Regel nur die Adresse
     kennt, den Namen (IPAM, VM, EPG bzw. Firewall-Objekt): „db01.example.ch (10.30.0.5)“. Gilt nur
     für Betreuer – Kunden-Benutzer sehen weiter nur die Adressen.
+    Seit 0.101.0 schaltet der Global Admin die Namen auch direkt in der Karte „Doku nach
+    Kategorien“ um („Namen der Gegenstellen“); Netze und Bereiche nennen dann zuerst die Gruppe,
+    wie sie in der Regel steht: „G_clients (10.70.0.0/16, 10.71.0.0/16)“.
+  - **Kategorien mit Zonen (0.101.0):** Firewall-Regeln, die einen grossen Bereich zulassen,
+    aber direkt auf das System zeigen (z. B. 10.0.0.0/8 → Server), kommen in die Kategorie der
+    Zone, aus der sie kommen. Dafür in der Karte „Doku nach Kategorien“ → **Zonen zuordnen**
+    (Operator) je Zone die Kategorie wählen – Internet (1/2), Unternehmensnetzwerk (3/4), VPN (5),
+    Remote Access (6), andere Security Tenants (9) – bzw. im Zonen-Editor (Netzwerkdesign →
+    Zonen) „Kategorie in der Applikations-Doku“. Die Quell-Adressen einer Zone sind ihre Netze
+    (Selektoren, z. B. Präfix 10.70.0.0/16). Die Spalte **Zone** nennt die Zonen der Gegenstelle,
+    der Kopf jeder Kategorie ihre Zonen mit den Netzen. Umfasst ein Bereich Zonen mehrerer
+    Kategorien, bleibt die Regel unspezifisch (die Spalte Zone zeigt, welche) – dann den Bereich
+    enger fassen oder die Zonen anders schneiden. Kunden-Benutzer sehen Spalte und Zonen nicht.
   - **Abhängigkeiten (0.60.0, seit 0.88.0 wieder):** Bereich „Abhängigkeiten“ (zugeklappt,
     lädt beim Aufklappen) mit „nutzt“ und „wird genutzt von“ je Applikation und den Regeln.
     Abgeleitet aus den erlaubenden Regeln mit spezifischem Treffer, deren Gegenseite EPGs,

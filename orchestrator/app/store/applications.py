@@ -51,6 +51,7 @@ from app.models import (
 )
 from app.store import (
     appdoc,
+    appdoc_zones,
     customer_scope,
     finding_text,
     parallel,
@@ -924,6 +925,9 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     findings = _app_findings(session, tid, systems, epg_out, set(ordered) | helper_ids,
                              rule_epgs, restricted=restricted, app_id=app.id)  # fmt: skip
     hidden, hides = _apply_hides(session, app, tables, restricted)  # 0.69.0
+    # Zonen je Kategorie (0.101.0): im Kopf die Zonen mit ihren Netzen; Kunden-Benutzer ohne
+    # Zonen und ohne Spalte „Zone“ (Netze der Infrastruktur)
+    zone_heads(data, tables, restricted)
     tenant = session.get(Tenant, tid)
     return {
         "tenant_code": tenant.code if tenant else None,
@@ -960,6 +964,16 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         ],
         "hides": hides,
     }
+
+
+def zone_heads(data: appdoc.TenantData, tables: list[dict], restricted: bool) -> None:
+    """Zonen je Kategorie (0.101.0) in den Kopf der Tabellen; Kunden-Benutzer ohne Zonen."""
+    if restricted:
+        appdoc_zones.strip(tables, appdoc.ZONE_COL)
+        return
+    zm = data.zone_map
+    for t in tables:
+        t["zones"] = zm.table_zones(t["index"]) if zm.has_areas else []
 
 
 def hide_out(h: ApplicationRuleHide) -> dict:

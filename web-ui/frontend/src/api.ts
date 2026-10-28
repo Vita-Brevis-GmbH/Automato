@@ -696,6 +696,15 @@ export interface DocTable {
   rows: Record<string, string | number | number[] | string[] | null>[];
   // 0.69.0 (Applikations-Doku): ausgeblendete Zeilen mit _hides (Begründung, wer, wann)
   hidden?: (Record<string, string | number | number[] | string[] | null> & { _hides?: DocHide[] })[];
+  // 0.101.0: Zonen der Kategorie mit ihren Netzen (nicht für Kunden-Benutzer)
+  zones?: DocTableZone[];
+}
+export interface DocTableZone {
+  id: number;
+  name: string;
+  area: AppdocArea;
+  nets: string[]; // die ersten Netze
+  nets_total: number;
 }
 export interface DocHide {
   id: number;
@@ -928,6 +937,7 @@ export interface ApplicationDoc {
   hides?: DocHide[]; // 0.69.0
   // ADR 0034: Hilfs-Contracts über L3Outs (nicht in rules) mit den Firewall-Regeln, an denen sie stehen
   helpers?: { rule_id: number; name: string; l3outs: string[]; firewall_rules: number[]; systems: string[] }[];
+  peer_names?: boolean; // 0.101.0: Namen der Gegenstellen eingeschaltet (Einstellung des Mandanten)
 }
 export interface AppDependency {
   application_id: number;
@@ -3010,7 +3020,13 @@ export interface LogicalZone {
   own_color?: string | null; // an der Zone gespeicherte Farbe
   nodes?: string[]; // Knoten der Zone (Firewall/VDOM, ACI-VRF)
   transitions?: { to: string; to_id: number | string; name: string; count: number }[];
+  appdoc_area?: AppdocArea | null; // 0.101.0: Kategorien der Applikations-Doku
 }
+// Bereich der Kategorien der Applikations-Doku (0.101.0): Internet (1/2), Unternehmensnetzwerk
+// (3/4), VPN (5), Remote Access (6), andere Security Tenants (9)
+export type AppdocArea = "inet" | "bit" | "vpn" | "sra" | "res";
+export const APPDOC_AREAS: AppdocArea[] = ["inet", "bit", "vpn", "sra", "res"];
+export const APPDOC_AREA_TABLES: Record<AppdocArea, number[]> = { inet: [1, 2], bit: [3, 4], vpn: [5], sra: [6], res: [9] };
 export interface ZoneIn {
   tenant_id: number;
   name: string;
@@ -3021,6 +3037,7 @@ export interface ZoneIn {
   position: number;
   description: string | null;
   selectors: ZoneSelector[];
+  appdoc_area?: AppdocArea | null; // 0.101.0; nicht mitgeschickt = bleibt
 }
 export interface ZonePreview {
   counts: { net: number; epg: number };
@@ -3269,6 +3286,12 @@ export const fetchZones = (tenantId: number) => getJSON<LogicalZone[]>(`/api/zon
 export const createZone = (body: ZoneIn) => sendJSON<LogicalZone>("/api/zones", "POST", body);
 export const updateZone = (id: number, body: ZoneIn) => sendJSON<LogicalZone>(`/api/zones/${id}`, "PUT", body);
 export const deleteZone = (id: number) => sendJSON<void>(`/api/zones/${id}`, "DELETE");
+// Zonen den Kategorien der Applikations-Doku zuordnen (0.101.0, Operator): Zone -> Bereich bzw. null
+export const setAppdocAreas = (tenantId: number, areas: Record<number, AppdocArea | null>) =>
+  sendJSON<{ id: number; name: string; appdoc_area: AppdocArea | null }[]>("/api/zones/appdoc-areas", "PUT", {
+    tenant_id: tenantId,
+    areas,
+  });
 // Vorschläge beim Erfassen einer Zone (0.66.0): Selektoren, deren Name zur Zone passt
 export interface ZoneAssistItem {
   selector: ZoneSelector;

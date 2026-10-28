@@ -273,6 +273,8 @@ class ApplicationDocOut(BaseModel):
     narrower: list[dict] = []
     # ADR 0034: Hilfs-Contracts ueber L3Outs (nicht in `rules`) mit ihren Firewall-Regeln
     helpers: list[dict] = []
+    # 0.101.0: Namen der Gegenstellen eingeschaltet (Einstellung des Mandanten, nur Betreuer)
+    peer_names: bool = False
 
 
 class RuleMemberIn(BaseModel):
@@ -976,6 +978,7 @@ def application_doc(
     editable = _editable(session, principal, app)
     names = peer_names.enabled(session, app.tenant_id, principal.is_customer)
     doc = store.build_doc(session, app, view_ids(session, view, "rule"), names=names)
+    doc["peer_names"] = names
     if dependencies:
         visible = _visible_apps(session, principal, app)
         doc["dependencies"] = store.dependencies(session, app, doc, visible)

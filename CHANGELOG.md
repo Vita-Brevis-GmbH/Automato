@@ -7,6 +7,30 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.101.0 – 2026-10-28
+
+Applikations-Doku: Kategorien mit Zonen, Namen breiter Quellen (Rückmeldung des Anwenders
+2026-10-28; ADR 0012 Ergänzung 0.101.0).
+
+- **Zonen an den Kategorien:** je logischer Zone ein Bereich der Kategorien
+  (`logical_zone.appdoc_area`, Migration `0063`) – Internet (1/2), Unternehmensnetzwerk (3/4),
+  VPN (5), Remote Access (6), andere Security Tenants (9). Zuordnen in der Doku („Zonen
+  zuordnen“, Operator, `PUT /zones/appdoc-areas`, Audit `zone.appdoc_areas_set`) bzw. im
+  Zonen-Editor („Kategorie in der Applikations-Doku“, `appdoc_area` in `PUT /zones/{id}`, ohne
+  Feld bleibt der Wert).
+- **Kategorie nach der Zone der Gegenstelle** (`store/appdoc_zones.py`): Firewall-Regeln mit
+  grossem Quell-Bereich, die direkt auf das System zeigen, stehen in der Kategorie der Zone, aus
+  der sie kommen, statt unter „Unspezifische Zugriffe“ – längstes Zonen-Netz bzw. die Zonen der
+  Netze im Bereich, bei any die Anbindung bzw. die Netze hinter dem Interface; genau ein Bereich
+  entscheidet, vor dem Merkmal im Namen der Firewall-Zone; mehrere Bereiche bleiben unspezifisch.
+- **Spalte „Zone“** (Zonen der Gegenstelle) und **Zonen mit ihren Netzen im Kopf jeder
+  Kategorie** – Ansicht, Markdown, Word, Druck, Doku je System; nicht für Kunden-Benutzer.
+- **Namen breiter Quellen:** mit „Namen der Gegenstellen“ Netze und Bereiche über das Objekt wie
+  in der Regel – die Gruppe mit ihren Netzen in einer Zeile („G_clients (10.70.0.0/16,
+  10.71.0.0/16)“); Hosts behalten den Namen aus IPAM/VM.
+- **Schalter für den Global Admin** direkt in der Karte „Doku nach Kategorien“ („Namen der
+  Gegenstellen“, setzt die Einstellung des Mandanten; `peer_names` in der Antwort der Doku).
+
 ## 0.100.0 – 2026-10-27
 
 Switches & Router über SNMPv3 – zweiter, rein lesender Zugang neben SSH (Auftrag des Anwenders
