@@ -978,7 +978,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       Regel je Hop, Urteil, Abweichung bzw. Wege uneinheitlich); „Drucken / PDF“ zeigt je
       Verbindung den Weg mit den entscheidenden Regeln und die Abweichung ausgeschrieben.
     - Liegt die Quelle an keinem gelesenen Gerät (Internet, Partner), beginnt der Weg auf dem
-      Gerät der Regel. „In der Weg-Suche öffnen“ zeigt den ganzen Weg mit allen Varianten.
+      Gerät der Regel. „In der Weg-Suche öffnen“ zeigt den ganzen Weg mit allen Varianten (seit
+      0.109.1 in einem neuen Tab, die Doku bleibt offen).
       **„Warum dieser Weg?“** (0.109.0) erklärt denselben Weg wie die Verbindung Hop für Hop (wie
       in der Weg-Suche, mit „Erwartet über …“ und „Als Finding erfassen“).
     - **Zonen (0.78.0):** mit logischen Zonen steht unter dem Weg „Zonen: Server → Edge

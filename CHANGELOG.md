@@ -25,6 +25,8 @@ Korrekturen (Fehlerliste des Anwenders 2026-10-29) und neue Roadmap nach Version
   1 057 kB → 270 kB (ohne Warnung beim Bauen).
 - **Fenster:** Seitenpanels und Dialoge am Rand ziehbar (Breite gemerkt, Doppelklick = Vorgabe),
   ⤢ fast volle Breite; Vorgabe nach Bildschirmbreite, lange Namen brechen in Panels um.
+- **Applikation:** „In der Weg-Suche öffnen“ bei einer Verbindung öffnet einen neuen Tab – die
+  Doku bleibt offen (Wunsch des Anwenders).
 - **Tests:** Testclient mit `httpx2` (keine Warnung mehr); nachts bzw. von Hand alle
   Orchestrator-Tests auch mit `AUTOMATO_TEST_DOC_SNAPSHOTS=1` (Fingerabdruck der Doku);
   `test_aus_wie_bisher` schaltet den Stand selbst aus.

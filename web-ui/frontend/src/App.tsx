@@ -631,7 +631,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             )}
           </Note>
         ) : (
-          <Suspense fallback={<Loading />}>
+          // je Ansicht ein eigener Ladebereich: die alte verschwindet sofort, statt versteckt
+          // stehen zu bleiben, bis die neue geladen ist
+          <Suspense key={current} fallback={<Loading />}>
             {current === "uebersicht" && (
               <Overview
                 me={me}

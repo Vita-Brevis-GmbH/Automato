@@ -326,7 +326,7 @@ function HopChain({ hops }: { hops: AppConnHop[] }) {
   );
 }
 
-function ConnDetail({ c, onRule, onGo, onExplain }: { c: AppConnection; onRule: (id: number) => void; onGo?: Go; onExplain?: () => void }) {
+function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: number) => void; onExplain?: () => void }) {
   const params = { src: c.src.ip, dst: c.dst.ip, ...(c.service ? { service: c.service } : {}) };
   return (
     <div className="conn-detail">
@@ -484,15 +484,16 @@ function ConnDetail({ c, onRule, onGo, onExplain }: { c: AppConnection; onRule: 
             {L("Warum dieser Weg?", "Why this path?")}
           </button>
         )}
-        {onGo ? (
-          <button className="btn btn-ghost btn-sm" onClick={() => onGo("wege", params)}>
-            <Icon name="route" size={14} /> {L("In der Weg-Suche öffnen", "Open in path search")}
-          </button>
-        ) : (
-          <a href={`#wege?${new URLSearchParams(params).toString()}`}>
-            {L("In der Weg-Suche öffnen", "Open in path search")}
-          </a>
-        )}
+        {/* 0.109.1 (Wunsch des Anwenders): in einem neuen Tab – die Doku bleibt offen */}
+        <a
+          className="btn btn-ghost btn-sm conn-wege"
+          href={`#wege?${new URLSearchParams(params).toString()}`}
+          target="_blank"
+          rel="noopener"
+          title={L("Weg-Suche in einem neuen Tab", "Path search in a new tab")}
+        >
+          <Icon name="route" size={14} /> {L("In der Weg-Suche öffnen", "Open in path search")} ↗
+        </a>
       </div>
     </div>
   );
@@ -879,7 +880,6 @@ export default function ConnectionsCard({
   appId,
   reload,
   onRule,
-  onGo,
   onData,
   fold,
   tenantId,
@@ -888,7 +888,7 @@ export default function ConnectionsCard({
   appId: number;
   reload: number;
   onRule: (id: number) => void;
-  onGo?: Go;
+  onGo?: Go; // seit 0.109.1 ungenutzt: die Weg-Suche öffnet in einem neuen Tab
   tenantId?: number; // „Warum dieser Weg?“ (0.109.0)
   canCapture?: boolean; // Operator: Finding von Hand erfassen
   onData?: (d: AppConnections | null) => void; // für Export der Doku (0.59.0)
@@ -1176,7 +1176,7 @@ export default function ConnectionsCard({
                   {open === c.key && (
                     <tr className="detail-row">
                       <td colSpan={8}>
-                        <ConnDetail c={c} onRule={onRule} onGo={onGo} onExplain={tenantId != null ? () => setExplain(c) : undefined} />
+                        <ConnDetail c={c} onRule={onRule} onExplain={tenantId != null ? () => setExplain(c) : undefined} />
                       </td>
                     </tr>
                   )}

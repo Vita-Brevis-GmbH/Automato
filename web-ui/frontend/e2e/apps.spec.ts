@@ -435,10 +435,17 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   expect(bytes.toString("latin1")).toMatch(/\.docx/);
   expect(bytes.toString("latin1")).toMatch(/-netzwerkplan\.drawio/);
   // in die Weg-Suche mit Quelle, Ziel und Dienst
-  await card.locator("button", { hasText: "In der Weg-Suche öffnen" }).click();
-  await expect(page).toHaveURL(/#wege\?src=10\.10\.10\.5&dst=172\.16\.5\.9&service=tcp%2F443/);
-  await expect(page.getByPlaceholder("Ziel: IP, Netz oder Name")).toHaveValue("172.16.5.9");
-  await expect(page.getByPlaceholder("Dienst: tcp/443 oder FT_https")).toHaveValue("tcp/443");
+  // seit 0.109.1 in einem neuen Tab – die Doku bleibt offen
+  const [tab] = await Promise.all([
+    page.context().waitForEvent("page"),
+    card.locator("a.conn-wege", { hasText: "In der Weg-Suche öffnen" }).click(),
+  ]);
+  await tab.waitForLoadState();
+  await expect(tab).toHaveURL(/#wege\?src=10\.10\.10\.5&dst=172\.16\.5\.9&service=tcp%2F443/);
+  await expect(tab.getByPlaceholder("Ziel: IP, Netz oder Name")).toHaveValue("172.16.5.9");
+  await expect(tab.getByPlaceholder("Dienst: tcp/443 oder FT_https")).toHaveValue("tcp/443");
+  await tab.close();
+  await expect(page).toHaveURL(/#apps\?app=\d+/);
 
   // seit 0.73.0 kein Befund: der Weg sperrt durchgehend (das hat einen Grund) – Befund nur bei
   // uneinheitlichen Wegen (Applikation „Portal Süd“)
