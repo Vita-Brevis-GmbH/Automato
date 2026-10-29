@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.110.0 – 2026-10-29
+
+Findings als steckbare Prüfungen und Oberfläche je Modul (Roadmap Version 1 Nr. 1, Stufe 1;
+gewählt „Prüfungen + Pakete schrittweise“; ADR 0039). Abnahme bis 0.109.1.
+
+- **Je Prüfung eine Datei** im Paket ihres Moduls (`orchestrator/app/checks/<modul>/`): fünfzehn
+  Prüfungen aus `store/reconcile.py` umgezogen (Kern: Firewall-Objekte und Namenskonvention,
+  Regeln ohne Quelle/Ziel, SNAT-Pool, ACI-Scope, Contract auf beiden Seiten, EPG-Zuordnung;
+  Analyse: Regel-Endpunkte im IPAM, IPAM-Abgleich, VMware, Topologie, Verkabelung, Verbund, Stand
+  der Quellsysteme; Design: Zonen; Doku: Verbindungen der Applikationen). Der Abgleich findet sie
+  selbst; eine neue Prüfung ändert `reconcile.py` nicht mehr. Befunde bleiben gleich.
+- **Seite Findings → Reiter „Prüfungen“:** je Prüfung Zweck, Modul, Befund-Typen (Klick zeigt die
+  Befunde), wann sie läuft, Dauer und Anzahl des letzten Durchgangs, Summe; „Neu abgleichen“
+  (Operator).
+- **Je Mandant schaltbar** (Admin, Audit `check.switched`, Migration `0068`): aus = die Prüfung
+  läuft nicht, ihre Befunde fallen beim nächsten Abgleich weg; wieder an = sie kommen mit Status
+  zurück. Ist ihr Modul aus, läuft sie auch nicht („Modul aus“).
+- **Oberfläche je Modul:** die Ansichten stehen im Ordner ihres Moduls
+  (`web-ui/frontend/src/modules/<modul>/`), Navigation und Anzeige baut die Shell aus dem
+  Verzeichnis; `tests/test_modules.py` prüft Ordner und Pakete gegen das Verzeichnis der Module.
+- Tests: `test_checks.py`, Ordner-Prüfung in `test_modules.py`, UI-Test `e2e/checks.spec.ts`.
+
 ## 0.109.1 – 2026-10-29
 
 Korrekturen (Fehlerliste des Anwenders 2026-10-29) und neue Roadmap nach Versionen. Abnahme bis

@@ -52,6 +52,16 @@ def _central_worker_answers(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _checks_strict(monkeypatch):
+    """Steckbare Pruefungen (0.110.0): ein Befund ausserhalb der Typen einer Pruefung ist in den
+    Tests ein Fehler; Dauer und Anzahl je Test neu."""
+    from app import checks
+
+    monkeypatch.setattr(checks, "STRICT", True)
+    checks._stats.clear()
+
+
+@pytest.fixture(autouse=True)
 def _doc_snapshots_off():
     """Doku als Stand (0.108.0) in Tests aus: viele Tests aendern Daten direkt in der Datenbank
     (ohne Lauf bzw. Audit) - `tests/test_doc_snapshots.py` schaltet ihn ein;

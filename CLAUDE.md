@@ -41,7 +41,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 - **Abnahme:** Der Anwender testet jede freigegebene Version sofort. Eine Version gilt als
   abgenommen, sobald seine nächste Rückmeldung keinen Einwand dazu enthält – in `ROADMAP.md`
-  („Abgenommen“) nachführen. Abgenommen bis **0.109.0** (2026-10-29).
+  („Abgenommen“) nachführen. Abgenommen bis **0.109.1** (2026-10-29).
 - **Klärung vor dem Bauen:** ändert sich Bedienung oder Bedeutung und ist der Wunsch mehrdeutig,
   zuerst 3–5 Zeilen Vorschlag mit einer Rückfrage, dann bauen.
 - **Sammeln:** Anpassungen einer Rückmeldungsrunde in **einer** Version (Patch = Korrektur,
@@ -71,12 +71,17 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 - **Module** (ADR 0036, `orchestrator/app/modules.py`): jede neue Datei in `app/api`/`app/store`
   einem Modul zuordnen (sonst scheitert `tests/test_modules.py`); nur der Schreibpfad nutzt
   `netbox_writer`/`netbox_sync`; neue Router mit `modules.guard(<Modul>)` einbinden.
+- **Prüfungen und Ansichten je Modul** (ADR 0039): eine neue Prüfung der Findings ist eine Datei
+  `app/checks/<modul>/<prüfung>.py` mit `CHECK = Check(...)` (nur Befunde ihrer Typen) –
+  `reconcile.py` nicht ändern; eine neue Ansicht ein Eintrag in
+  `web-ui/frontend/src/modules/<modul>/index.tsx` (und in `views` des Moduls). Neues kommt in
+  den Ordner seines Moduls, bestehende Dateien ziehen um, wenn sie ohnehin angepasst werden.
 - **Stand der Doku** (ADR 0037): was Doku oder Verbindungen verändert, muss den Fingerabdruck
   ändern (Audit-Eintrag, Lauf oder `store.touch(app)`); prüfen mit `AUTOMATO_TEST_DOC_SNAPSHOTS=1`.
 - Entscheide als ADR in `docs/adr/`, Risiken in `docs/RISKS.md`, Bedienung in `docs/BETRIEB.md`.
 
 ## Aktueller Stand
 
-0.109.1 – Einzelheiten je Bereich in `docs/STAND.md`. Offene Punkte und nächste Arbeiten in
+0.110.0 – Einzelheiten je Bereich in `docs/STAND.md`. Offene Punkte und nächste Arbeiten in
 `ROADMAP.md` („Roadmap nach Versionen“): Version 1 bis zur Produktivschaltung DC = **1.0.0** (R14),
 Version 2 = neuer Name und Cockpit (eigenes Projekt), Version 3 = Automatisierung.

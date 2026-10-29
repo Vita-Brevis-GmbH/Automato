@@ -5,6 +5,7 @@ import { fetchFindings, fetchFindingSummary, fetchSystems, Finding, FindingSumma
 import type { View, ViewParams } from "./App";
 import { customerCan, type Me } from "./auth";
 import FindingDialog from "./FindingDialog";
+import Checks from "./modules/findings/Checks";
 import { FINDING_GROUPS, FINDING_HINT, FINDING_LABEL, findingLabel } from "./refs";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
 import { L } from "./i18n";
@@ -259,6 +260,7 @@ export default function Findings({
   tenantLabel,
   initialType = "",
   initialQuery = "",
+  initialTab = "befunde",
   onChanged,
   onGo,
 }: {
@@ -267,6 +269,7 @@ export default function Findings({
   tenantLabel: string;
   initialType?: string; // Vorfilter, z. B. aus der Abgleich-Ansicht
   initialQuery?: string; // Suche aus einem Link (#findings?q=…, z. B. aus der Applikations-Doku)
+  initialTab?: "befunde" | "pruefungen"; // 0.110.0: Reiter Prüfungen (#findings?tab=pruefungen)
   onChanged: () => void;
   onGo?: (v: View, p?: ViewParams) => void; // Links auf die betroffenen Regeln
 }) {
@@ -281,6 +284,11 @@ export default function Findings({
   const [q, setQ] = useState(initialQuery);
   const [open, setOpen] = useState<number | null>(null); // aufgeklappter Befund
   const [adding, setAdding] = useState(false); // Finding von Hand (0.109.0)
+  const [tab, setTab] = useState(initialTab);
+  const choose = (t: "befunde" | "pruefungen") => {
+    setTab(t);
+    window.history.replaceState(null, "", t === "befunde" ? "#findings" : "#findings?tab=pruefungen");
+  };
 
   useEffect(() => setType(initialType), [initialType]);
 
@@ -355,7 +363,7 @@ export default function Findings({
       <PageHead
         title="Findings"
         actions={
-          canAdd ? (
+          canAdd && tab === "befunde" ? (
             <button
               className="btn btn-sm"
               id="finding-add"
@@ -383,231 +391,257 @@ export default function Findings({
           </>,
         )}
       </PageHead>
-      {summary && Object.keys(summary.by_type).length > 0 && (
-        <div className="fgroups">
-          {FINDING_GROUPS.map((g) => {
-            const types = g.types.filter((t) => summary.by_type[t]);
-            if (!types.length) return null;
-            const openN = types.reduce((n, t) => n + summary.by_type[t].open, 0);
-            return (
-              <div key={g.key} className="card fgroup">
-                <div className="fgroup-head">
-                  <b>{g.label}</b>
-                  <span className={`chip ${openN ? "warn" : "ok"}`}>{L(<>{openN} offen</>, <>{openN} open</>)}</span>
-                </div>
-                <div className="faint" style={{ fontSize: 12, marginBottom: 4 }}>
-                  {g.help}
-                </div>
-                {types.map((t) => {
-                  const c = summary.by_type[t];
-                  return (
-                    <button
-                      key={t}
-                      className={`fline ${type === t ? "on" : ""}`}
-                      title={L(`${FINDING_HINT[t] ?? t} – Klick filtert`, `${FINDING_HINT[t] ?? t} – click to filter`)}
-                      onClick={() => setType(type === t ? "" : t)}
-                    >
-                      <span>{findingLabel(t)}</span>
-                      <span className="mono">
-                        <b className={c.open ? "warnfg" : "okfg"}>{c.open}</b>
-                        {c.total > c.open && <span className="faint"> / {c.total}</span>}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <div className="filterbar">
-        <div className="seg">
-          {["open", "acknowledged", "resolved", "ignored", ""].map((s) => (
-            <button key={s || "all"} className={status === s ? "on" : ""} onClick={() => setStatus(s)}>
-              {s ? STATUS_LABEL[s] : L("alle", "all")} ({s ? (counts[s] ?? 0) : (summary?.total ?? 0)})
-            </button>
-          ))}
-        </div>
-        <select className="sel" value={type} onChange={(e) => setType(e.target.value)}>
-          <option value="">{L("Typ: alle", "Type: all")}</option>
-          {types.map((t) => (
-            <option key={t} value={t}>
-              {FINDING_LABEL[t] ?? t}
-            </option>
-          ))}
-        </select>
-        <div className="search">
-          <span className="ico">
-            <Icon name="search" />
-          </span>
-          <input placeholder={L("Objekt oder Detail…", "Object or detail…")} value={q} onChange={(e) => setQ(e.target.value)} />
-        </div>
-        <span className="count">
-          {L(
-            <>
-              {total} Treffer{total > loaded ? ` · ${loaded} geladen` : ""}
-            </>,
-            <>
-              {total} match{total === 1 ? "" : "es"}
-              {total > loaded ? ` · ${loaded} loaded` : ""}
-            </>,
-          )}
-        </span>
+      <div className="tabbar">
+        <button className={tab === "befunde" ? "on" : ""} onClick={() => choose("befunde")}>
+          {L("Befunde", "Findings")}
+        </button>
+        <button id="checks-tab" className={tab === "pruefungen" ? "on" : ""} onClick={() => choose("pruefungen")}>
+          {L("Prüfungen", "Checks")}
+        </button>
       </div>
-      <ErrorBox error={error} prefix="Findings" onClose={() => setError(null)} />
-      {adding && tenantId !== null && (
-        <FindingDialog
+      {tab === "pruefungen" ? (
+        <Checks
+          me={me}
           tenantId={tenantId}
-          draft={{}}
-          systems={systems.map((x) => ({ id: x.id, name: x.name }))}
-          onClose={() => setAdding(false)}
-          onSaved={() => {
-            setAdding(false);
+          onChanged={() => {
             void reload();
             onChanged();
           }}
+          onShowType={(t) => {
+            setType(t);
+            setStatus("");
+            choose("befunde");
+          }}
         />
-      )}
-      <div className="card">
-        <div className="card-body scroll">
-          {findings === null ? (
-            <Loading>{L("Lade Findings…", "Loading findings…")}</Loading>
-          ) : shown.length === 0 ? (
-            <Empty
-              title={
-                status === "open" ? L("Keine offenen Findings 🎉", "No open findings 🎉") : L("Keine Einträge", "No entries")
-              }
-            >
-              {status === "open"
-                ? L(
-                    "Alle Endpunkte wurden gegen die Source of Truth aufgelöst oder als extern bestätigt.",
-                    "All endpoints were resolved against the source of truth or acknowledged as external.",
-                  )
-                : L("Für diesen Status gibt es keine Findings.", "There are no findings for this status.")}
-            </Empty>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>{L("Schwere", "Severity")}</th>
-                  <th>{L("Typ", "Type")}</th>
-                  <th>{L("Objekt", "Object")}</th>
-                  <th>{L("Befund", "Finding")}</th>
-                  <th>{L("Quelle", "Source")}</th>
-                  <th>{L("Zuletzt gesehen", "Last seen")}</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((f) => {
-                  const links = onGo ? ruleLinks(f) : [];
-                  const others = onGo ? viewLinks(f) : [];
-                  const sources = Array.isArray(f.detail?.sources) ? (f.detail!.sources as string[]).join(", ") : null;
-                  return (
-                    <Fragment key={f.id}>
-                      <tr className="clickable" onClick={() => setOpen(open === f.id ? null : f.id)}>
-                        <td>
-                          <SeverityBadge severity={f.severity} />
-                        </td>
-                        <td className="nowrap" title={FINDING_HINT[f.type] ?? f.type}>
-                          {findingLabel(f.type)}
-                        </td>
-                        <td className="mono">{f.subject_id}</td>
-                        <td style={{ maxWidth: 520 }}>
-                          <div>{f.message ?? detailText(f.detail)}</div>
-                          {f.hint && <div className="faint">→ {f.hint}</div>}
-                        </td>
-                        <td className="nowrap">
-                          {systemName(f.source_system_id) ?? sources ?? <span className="faint">–</span>}
-                        </td>
-                        <td className="mono">{fmtTime(f.last_seen)}</td>
-                        <td onClick={(e) => e.stopPropagation()}>
-                          {/* Triage: Operator bzw. Kunden-Benutzer mit der Kunden-Rolle triage (feinere Rollen) */}
-                          {(me.isCustomer ? customerCan(me, "findings.triage") : me.isOperator) ? (
-                            <select className="sel" value={f.status} onChange={(e) => triage(f.id, e.target.value)}>
-                              {Object.entries(STATUS_LABEL).map(([k, v]) => (
-                                <option key={k} value={k}>
-                                  {v}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span className="chip">{STATUS_LABEL[f.status] ?? f.status}</span>
-                          )}
-                        </td>
-                      </tr>
-                      {open === f.id && (
-                        <tr className="subrow">
-                          <td colSpan={7}>
-                            <dl className="kv tight">
-                              {Object.entries(f.detail ?? {})
-                                .filter(([k, v]) => DETAIL_LABEL[k] !== null && v !== null && v !== "")
-                                .map(([k, v]) => (
-                                  <Fragment key={k}>
-                                    <dt>{DETAIL_LABEL[k] ?? k}</dt>
-                                    <dd className="mono">{fmtValue(k, v)}</dd>
-                                  </Fragment>
-                                ))}
-                              <dt>{L("erstmals gesehen", "first seen")}</dt>
-                              <dd className="mono">{fmtTime(f.first_seen)}</dd>
-                            </dl>
-                            <RouteEntries f={f} />
-                            {others.length > 0 && (
-                              <div style={{ marginTop: 6 }}>
-                                <span className="faint">{L("Anzeigen: ", "Show: ")}</span>
-                                {others.map((l) => (
-                                  <button
-                                    key={l.label}
-                                    className="chip local linkchip"
-                                    onClick={() => onGo?.(l.view, l.params)}
-                                  >
-                                    {l.label}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                            {links.length > 0 && (
-                              <div style={{ marginTop: 6 }}>
-                                <span className="faint">{L("Regeln anzeigen: ", "Show rules: ")}</span>
-                                {links.map((l) => (
-                                  <button
-                                    key={l.label}
-                                    className="chip local linkchip"
-                                    onClick={() => onGo?.("regeln", l.params)}
-                                  >
-                                    {l.label}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
+      ) : (
+        <>
+          {summary && Object.keys(summary.by_type).length > 0 && (
+            <div className="fgroups">
+              {FINDING_GROUPS.map((g) => {
+                const types = g.types.filter((t) => summary.by_type[t]);
+                if (!types.length) return null;
+                const openN = types.reduce((n, t) => n + summary.by_type[t].open, 0);
+                return (
+                  <div key={g.key} className="card fgroup">
+                    <div className="fgroup-head">
+                      <b>{g.label}</b>
+                      <span className={`chip ${openN ? "warn" : "ok"}`}>{L(<>{openN} offen</>, <>{openN} open</>)}</span>
+                    </div>
+                    <div className="faint" style={{ fontSize: 12, marginBottom: 4 }}>
+                      {g.help}
+                    </div>
+                    {types.map((t) => {
+                      const c = summary.by_type[t];
+                      return (
+                        <button
+                          key={t}
+                          className={`fline ${type === t ? "on" : ""}`}
+                          title={L(`${FINDING_HINT[t] ?? t} – Klick filtert`, `${FINDING_HINT[t] ?? t} – click to filter`)}
+                          onClick={() => setType(type === t ? "" : t)}
+                        >
+                          <span>{findingLabel(t)}</span>
+                          <span className="mono">
+                            <b className={c.open ? "warnfg" : "okfg"}>{c.open}</b>
+                            {c.total > c.open && <span className="faint"> / {c.total}</span>}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
           )}
-        </div>
-        {findings !== null && total > loaded && (
-          <div className="card-foot">
-            {L(
-              <>
-                {loaded} von {total} geladen – Typ oder Suche eingrenzen oder{" "}
-              </>,
-              <>
-                {loaded} of {total} loaded – narrow down type or search, or{" "}
-              </>,
-            )}
-            <button className="btn btn-ghost btn-sm" onClick={loadMore} disabled={more}>
-              {more
-                ? L("Lade…", "Loading…")
-                : L(`weitere ${Math.min(PAGE, total - loaded)} laden`, `load ${Math.min(PAGE, total - loaded)} more`)}
-            </button>
+          <div className="filterbar">
+            <div className="seg">
+              {["open", "acknowledged", "resolved", "ignored", ""].map((s) => (
+                <button key={s || "all"} className={status === s ? "on" : ""} onClick={() => setStatus(s)}>
+                  {s ? STATUS_LABEL[s] : L("alle", "all")} ({s ? (counts[s] ?? 0) : (summary?.total ?? 0)})
+                </button>
+              ))}
+            </div>
+            <select className="sel" value={type} onChange={(e) => setType(e.target.value)}>
+              <option value="">{L("Typ: alle", "Type: all")}</option>
+              {types.map((t) => (
+                <option key={t} value={t}>
+                  {FINDING_LABEL[t] ?? t}
+                </option>
+              ))}
+            </select>
+            <div className="search">
+              <span className="ico">
+                <Icon name="search" />
+              </span>
+              <input placeholder={L("Objekt oder Detail…", "Object or detail…")} value={q} onChange={(e) => setQ(e.target.value)} />
+            </div>
+            <span className="count">
+              {L(
+                <>
+                  {total} Treffer{total > loaded ? ` · ${loaded} geladen` : ""}
+                </>,
+                <>
+                  {total} match{total === 1 ? "" : "es"}
+                  {total > loaded ? ` · ${loaded} loaded` : ""}
+                </>,
+              )}
+            </span>
           </div>
-        )}
-      </div>
+          <ErrorBox error={error} prefix="Findings" onClose={() => setError(null)} />
+          {adding && tenantId !== null && (
+            <FindingDialog
+              tenantId={tenantId}
+              draft={{}}
+              systems={systems.map((x) => ({ id: x.id, name: x.name }))}
+              onClose={() => setAdding(false)}
+              onSaved={() => {
+                setAdding(false);
+                void reload();
+                onChanged();
+              }}
+            />
+          )}
+          <div className="card">
+            <div className="card-body scroll">
+              {findings === null ? (
+                <Loading>{L("Lade Findings…", "Loading findings…")}</Loading>
+              ) : shown.length === 0 ? (
+                <Empty
+                  title={
+                    status === "open" ? L("Keine offenen Findings 🎉", "No open findings 🎉") : L("Keine Einträge", "No entries")
+                  }
+                >
+                  {status === "open"
+                    ? L(
+                        "Alle Endpunkte wurden gegen die Source of Truth aufgelöst oder als extern bestätigt.",
+                        "All endpoints were resolved against the source of truth or acknowledged as external.",
+                      )
+                    : L("Für diesen Status gibt es keine Findings.", "There are no findings for this status.")}
+                </Empty>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{L("Schwere", "Severity")}</th>
+                      <th>{L("Typ", "Type")}</th>
+                      <th>{L("Objekt", "Object")}</th>
+                      <th>{L("Befund", "Finding")}</th>
+                      <th>{L("Quelle", "Source")}</th>
+                      <th>{L("Zuletzt gesehen", "Last seen")}</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shown.map((f) => {
+                      const links = onGo ? ruleLinks(f) : [];
+                      const others = onGo ? viewLinks(f) : [];
+                      const sources = Array.isArray(f.detail?.sources) ? (f.detail!.sources as string[]).join(", ") : null;
+                      return (
+                        <Fragment key={f.id}>
+                          <tr className="clickable" onClick={() => setOpen(open === f.id ? null : f.id)}>
+                            <td>
+                              <SeverityBadge severity={f.severity} />
+                            </td>
+                            <td className="nowrap" title={FINDING_HINT[f.type] ?? f.type}>
+                              {findingLabel(f.type)}
+                            </td>
+                            <td className="mono">{f.subject_id}</td>
+                            <td style={{ maxWidth: 520 }}>
+                              <div>{f.message ?? detailText(f.detail)}</div>
+                              {f.hint && <div className="faint">→ {f.hint}</div>}
+                            </td>
+                            <td className="nowrap">
+                              {systemName(f.source_system_id) ?? sources ?? <span className="faint">–</span>}
+                            </td>
+                            <td className="mono">{fmtTime(f.last_seen)}</td>
+                            <td onClick={(e) => e.stopPropagation()}>
+                              {/* Triage: Operator bzw. Kunden-Benutzer mit der Kunden-Rolle triage (feinere Rollen) */}
+                              {(me.isCustomer ? customerCan(me, "findings.triage") : me.isOperator) ? (
+                                <select className="sel" value={f.status} onChange={(e) => triage(f.id, e.target.value)}>
+                                  {Object.entries(STATUS_LABEL).map(([k, v]) => (
+                                    <option key={k} value={k}>
+                                      {v}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className="chip">{STATUS_LABEL[f.status] ?? f.status}</span>
+                              )}
+                            </td>
+                          </tr>
+                          {open === f.id && (
+                            <tr className="subrow">
+                              <td colSpan={7}>
+                                <dl className="kv tight">
+                                  {Object.entries(f.detail ?? {})
+                                    .filter(([k, v]) => DETAIL_LABEL[k] !== null && v !== null && v !== "")
+                                    .map(([k, v]) => (
+                                      <Fragment key={k}>
+                                        <dt>{DETAIL_LABEL[k] ?? k}</dt>
+                                        <dd className="mono">{fmtValue(k, v)}</dd>
+                                      </Fragment>
+                                    ))}
+                                  <dt>{L("erstmals gesehen", "first seen")}</dt>
+                                  <dd className="mono">{fmtTime(f.first_seen)}</dd>
+                                </dl>
+                                <RouteEntries f={f} />
+                                {others.length > 0 && (
+                                  <div style={{ marginTop: 6 }}>
+                                    <span className="faint">{L("Anzeigen: ", "Show: ")}</span>
+                                    {others.map((l) => (
+                                      <button
+                                        key={l.label}
+                                        className="chip local linkchip"
+                                        onClick={() => onGo?.(l.view, l.params)}
+                                      >
+                                        {l.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                                {links.length > 0 && (
+                                  <div style={{ marginTop: 6 }}>
+                                    <span className="faint">{L("Regeln anzeigen: ", "Show rules: ")}</span>
+                                    {links.map((l) => (
+                                      <button
+                                        key={l.label}
+                                        className="chip local linkchip"
+                                        onClick={() => onGo?.("regeln", l.params)}
+                                      >
+                                        {l.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            {findings !== null && total > loaded && (
+              <div className="card-foot">
+                {L(
+                  <>
+                    {loaded} von {total} geladen – Typ oder Suche eingrenzen oder{" "}
+                  </>,
+                  <>
+                    {loaded} of {total} loaded – narrow down type or search, or{" "}
+                  </>,
+                )}
+                <button className="btn btn-ghost btn-sm" onClick={loadMore} disabled={more}>
+                  {more
+                    ? L("Lade…", "Loading…")
+                    : L(`weitere ${Math.min(PAGE, total - loaded)} laden`, `load ${Math.min(PAGE, total - loaded)} more`)}
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </>
   );
 }

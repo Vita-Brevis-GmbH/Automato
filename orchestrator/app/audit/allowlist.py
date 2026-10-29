@@ -203,6 +203,8 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "zone.appdoc_set": frozenset({"tenant_id", "changes"}),
     # Module je Mandant (0.107.0, ADR 0036)
     "module.switched": frozenset({"tenant_id", "module", "enabled", "changed"}),
+    # Pruefungen der Findings je Mandant (0.110.0, ADR 0039)
+    "check.switched": frozenset({"tenant_id", "check", "enabled"}),
     "zone_policy.set": frozenset(
         {"tenant_id", "src_zone_id", "dst_zone_id", "intent", "services", "via"}
     ),

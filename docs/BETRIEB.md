@@ -1222,6 +1222,15 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Schwere, Gerät, Quelle/Ziel/Dienst. Typ „Von Hand erfasst“ (Kategorie „Von Hand“); der Abgleich
   nach einem Lauf lässt es stehen, Triage wie bei jedem Finding (z. B. „erledigt“, sobald die
   Konfiguration angepasst ist). Im Audit `finding.created` ohne Titel und Text.
+  **Prüfungen (0.110.0, ADR 0039):** Reiter „Prüfungen“ (`#findings?tab=pruefungen`) – je
+  Prüfung Zweck, Modul, Befund-Typen (Klick zeigt die Befunde des Typs), wann sie läuft (nach
+  jedem Lauf; Zonen auch beim Speichern einer Zone, Stand der Quellsysteme auch im Zeitplan,
+  Applikationen im Hintergrund), **Dauer** und **Anzahl** des letzten Durchgangs (seit dem Start
+  des Orchestrators; „–“ = seither nicht gelaufen bzw. ausgeschaltet). Der **Admin** schaltet eine
+  Prüfung je Mandant aus bzw. ein (Audit `check.switched`; `GET /checks?tenant_id=`,
+  `PUT /checks/{key}?tenant_id=`): aus = sie läuft nicht, ihre Befunde fallen beim nächsten
+  Abgleich weg (nach dem nächsten Lauf bzw. mit „Neu abgleichen“, Operator); wieder an = sie
+  kommen mit ihrem Status zurück. Ist das Modul einer Prüfung aus, steht „Modul aus“.
 - **Abgleich:** Referenzquellen des Mandanten (führend/Anreicherung, eingelesen?), Kacheln je
   Befund-Typ (Klick → Findings vorgefiltert): nicht im IPAM, Name ≠ DNS-Name, Subnetz fehlt
   im IPAM, VLAN weicht ab, Namenskonvention, Präfix/Typ, doppelte Werte, unbenutzte

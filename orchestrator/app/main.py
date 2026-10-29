@@ -13,6 +13,7 @@ from app.api import (
     applications,
     auth_config,
     cabling,
+    checks,
     customer_users,
     customers,
     data_quality,
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.agent_router)
     app.include_router(rules.router)
     app.include_router(findings.router, dependencies=[Depends(modules.guard("findings"))])
+    app.include_router(checks.router, dependencies=[Depends(modules.guard("findings"))])
     app.include_router(systems.router)
     app.include_router(tenants.router)
     app.include_router(nat.router)

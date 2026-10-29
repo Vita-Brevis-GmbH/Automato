@@ -44,6 +44,29 @@ def test_jede_datei_gehoert_genau_einem_modul():
         seen.add(m.key)
 
 
+def test_pruefungen_und_ansichten_im_ordner_ihres_moduls():
+    """0.110.0 (ADR 0039): Pakete der Pruefungen `app/checks/<modul>/` und Ordner der Oberflaeche
+    `web-ui/frontend/src/modules/<modul>/` heissen wie ein Modul; jede Ansicht steht im Ordner des
+    Moduls, das sie im Verzeichnis fuehrt (`views`), und alle Ansichten haben einen Ordner."""
+    import re
+
+    for pkg in (APP / "checks").iterdir():
+        if pkg.is_dir() and pkg.name != "__pycache__":
+            assert pkg.name in modules.BY_KEY, pkg.name
+    ui = ROOT / "web-ui" / "frontend" / "src" / "modules"
+    found: dict[str, str] = {}
+    for folder in sorted(p for p in ui.iterdir() if p.is_dir()):
+        assert folder.name in modules.BY_KEY, folder.name
+        text = (folder / "index.tsx").read_text(encoding="utf-8")
+        keys = re.findall(r'^    key: "([a-z]+)",\n    module: "([a-z]+)",', text, re.M)
+        assert keys, folder.name
+        for key, module in keys:
+            assert module == folder.name, (key, module, folder.name)
+            assert key in modules.BY_KEY[module].views, (key, module)
+            found[key] = module
+    assert set(found) == {v for m in modules.MODULES for v in m.views}
+
+
 def _imports(path: Path) -> set[str]:
     out: set[str] = set()
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -57,6 +80,8 @@ def _imports(path: Path) -> set[str]:
 
 def _owner(path: Path) -> str | None:
     rel = path.relative_to(APP).with_suffix("")
+    if len(rel.parts) == 3 and rel.parts[0] == "checks":  # Pruefungen je Modul (0.110.0)
+        return rel.parts[1]
     if len(rel.parts) == 2 and rel.parts[0] in ("api", "store"):
         return next((m.key for m in modules.MODULES
                      if rel.parts[1] in getattr(m, rel.parts[0])), None)  # fmt: skip

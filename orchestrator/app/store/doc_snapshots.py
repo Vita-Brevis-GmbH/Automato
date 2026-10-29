@@ -50,7 +50,8 @@ KINDS = (DOC, CONNECTIONS)
 # Audit, das die Doku nicht aendert: Lesen, Laeufe (zaehlen ueber `CollectorRun`), Agenten,
 # Befunde (immer aktuell), NetBox-Sync, Versionen des Zonenplans, Vorschlaege, Benutzer der Kunden
 _QUIET = ("read.", "collector_run.", "agent.", "finding.", "reconcile.", "retention.",
-          "netbox_sync.", "zone_plan.version_", "zone_suggestion.", "customer_user.")  # fmt: skip
+          "netbox_sync.", "zone_plan.version_", "zone_suggestion.", "customer_user.",
+          "check.")  # fmt: skip
 # Aenderungen an einer Applikation zaehlen nur fuer sie (Subjekt = ihre ID); der Import betrifft
 # mehrere und zaehlt fuer alle
 _OWN, _ALL_APPS = "application.", "application.imported"

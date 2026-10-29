@@ -54,6 +54,7 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Stichprobe | Sample |
 | Befund, Findings | Finding, findings |
 | Finding erfassen, von Hand erfasst | Capture finding, captured manually |
+| Prüfung (steckbar, je Mandant ein/aus), Prüfungen, Neu abgleichen | Check (pluggable, on/off per tenant), checks, reconcile again |
 | Hinweis / Warnung / Fehler | Note / warning / error |
 | offen / bestätigt / ignoriert | open / acknowledged / ignored |
 | Kennzahlen | Key figures |

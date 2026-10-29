@@ -1274,6 +1274,24 @@ export const fetchModules = (tenantId: number | null) => getJSON<ModuleInfo[]>(`
 export const switchModule = (tenantId: number, key: ModuleKey, enabled: boolean) =>
   sendJSON<ModuleInfo[]>(`/api/modules/${key}${qs({ tenant_id: tenantId })}`, "PUT", { enabled });
 
+// Prüfungen der Findings je Mandant (0.110.0, ADR 0039): lesen = viewer, schalten = admin (Audit)
+export interface CheckInfo {
+  key: string;
+  module: ModuleKey;
+  module_title: string;
+  title: string;
+  purpose: string;
+  types: string[];
+  step: "zonen" | "quellen" | "applikationen" | null; // eigener Teil-Durchgang
+  in_reconcile: boolean;
+  enabled: boolean; // eigene Schaltung
+  effective: boolean; // mit dem Modul
+  stats: { ran_at: string; ms: number; count: number } | null; // letzter Durchgang
+}
+export const fetchChecks = (tenantId: number) => getJSON<CheckInfo[]>(`/api/checks${qs({ tenant_id: tenantId })}`);
+export const switchCheck = (tenantId: number, key: string, enabled: boolean) =>
+  sendJSON<CheckInfo[]>(`/api/checks/${key}${qs({ tenant_id: tenantId })}`, "PUT", { enabled });
+
 export const patchTenant = (
   tenantId: number,
   body: { code?: string | null; audit_reads?: boolean; naming_profile_id?: number | null; appdoc_foreign_names?: boolean },

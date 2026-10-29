@@ -41,7 +41,7 @@ class Module:
     depends: tuple[str, ...] = ()
     api: tuple[str, ...] = ()  # Dateien in app/api (ohne .py)
     store: tuple[str, ...] = ()  # Dateien in app/store
-    views: tuple[str, ...] = ()  # Ansichten der Oberflaeche (View in App.tsx)
+    views: tuple[str, ...] = ()  # Ansichten der Oberflaeche (web-ui/frontend/src/modules/<modul>)
     packages: tuple[str, ...] = ()  # weitere Pakete des Workspace
 
     @property
@@ -216,7 +216,7 @@ MODULES: tuple[Module, ...] = (
             "Befunde mit Triage; Befunde der Applikationen im Hintergrund",
             "Findings with triage; findings of the applications in the background",
         ),
-        api=("findings",),
+        api=("findings", "checks"),  # Pruefungen je Mandant schaltbar (0.110.0, ADR 0039)
         store=("findings", "finding_text"),
         views=("findings",),
     ),  # fmt: skip

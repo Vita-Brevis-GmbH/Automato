@@ -304,8 +304,9 @@ def states(session: Session, tenant_id: int, settings: Settings, now: datetime,
 
 def source_checks(session: Session, tenant_id: int, settings: Settings | None = None,
                   now: datetime | None = None) -> list[dict]:  # fmt: skip
-    """Befunde `source_stale` und `source_partial` je eingeschaltetem Quellsystem (fuer den
-    Abgleich, `reconcile._source_issues`): {type, subject, source_system_id, severity, detail}.
+    """Befunde `source_stale` und `source_partial` je eingeschaltetem Quellsystem (fuer die
+    Pruefung `app/checks/analyse/quellsysteme`): {type, subject, source_system_id, severity,
+    detail}.
     Das Detail haelt nur Werte - den Satz baut `finding_text` beim Abruf."""
     settings = settings or get_settings()
     now = now or datetime.now(UTC)

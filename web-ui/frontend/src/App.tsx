@@ -1,7 +1,6 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   AuthConfig,
-  Capability,
   Customer,
   fetchAuthConfig,
   fetchCustomers,
@@ -23,102 +22,12 @@ import {
 import * as auth from "./auth";
 import { L, lang, setLang } from "./i18n";
 import { hiddenViews, MODULES_CHANGED, ModulesContext } from "./moduleState";
+import { Stats, View, ViewEntry, ViewParams, ViewProps, VIEWS } from "./modules";
 import { ErrorBox, Icon, Loading, Note } from "./ui";
 
-// Ansichten erst beim Öffnen laden (0.109.1): das erste Paket der Oberfläche bleibt klein
-const Agents = lazy(() => import("./Agents"));
-const AppDoc = lazy(() => import("./AppDoc"));
-const Customers = lazy(() => import("./Customers"));
-const OwnCustomerUsers = lazy(() => import("./Customers").then((m) => ({ default: m.OwnCustomerUsers })));
-const Cabling = lazy(() => import("./Cabling"));
-const Design = lazy(() => import("./Design"));
-const Findings = lazy(() => import("./Findings"));
-const NamingProfiles = lazy(() => import("./NamingProfiles"));
-const NatTable = lazy(() => import("./Nat"));
-const NetBoxSync = lazy(() => import("./NetBoxSync"));
-const Objects = lazy(() => import("./Objects"));
-const Overview = lazy(() => import("./Overview"));
-const Reconcile = lazy(() => import("./Reconcile"));
-const Paths = lazy(() => import("./Paths"));
-const Routing = lazy(() => import("./Routing"));
-const RulesTable = lazy(() => import("./RulesTable"));
-const Runs = lazy(() => import("./Runs"));
-const System = lazy(() => import("./System"));
-const Tenants = lazy(() => import("./Tenants"));
-const Users = lazy(() => import("./Users"));
-
-export type View =
-  | "uebersicht"
-  | "laeufe"
-  | "regeln"
-  | "objekte"
-  | "nat"
-  | "routing"
-  | "verkabelung"
-  | "wege"
-  | "apps"
-  | "findings"
-  | "abgleich"
-  | "design"
-  | "users"
-  | "tenants"
-  | "kunden"
-  | "kundenbenutzer"
-  | "dict"
-  | "agents"
-  | "netbox"
-  | "system";
-
-interface NavEntry {
-  key: View;
-  label: string;
-  icon: string;
-  section: "doc" | "admin";
-  adminOnly?: boolean;
-  customer?: boolean; // auch für Kunden-Benutzer (ADR 0018; serverseitig eingeschränkt)
-  customerOnly?: boolean; // nur für Kunden-Benutzer (feinere Rollen)
-  cap?: Capability; // Kunden-Benutzer: nur mit dieser Capability
-}
-
-const NAV: NavEntry[] = [
-  { key: "uebersicht", label: L("Übersicht", "Overview"), icon: "overview", section: "doc", customer: true },
-  { key: "regeln", label: L("Regeln & Contracts", "Rules & contracts"), icon: "rules", section: "doc", customer: true },
-  { key: "objekte", label: L("Objekte & Inventar", "Objects & inventory"), icon: "objects", section: "doc", customer: true },
-  { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc", customer: true },
-  { key: "wege", label: L("Weg-Suche", "Path search"), icon: "path", section: "doc" },
-  { key: "routing", label: "Routing", icon: "route", section: "doc" },
-  { key: "verkabelung", label: L("Verkabelung", "Cabling"), icon: "cable", section: "doc" },
-  { key: "apps", label: L("Applikationen", "Applications"), icon: "apps", section: "doc", customer: true },
-  { key: "findings", label: "Findings", icon: "findings", section: "doc", customer: true },
-  { key: "abgleich", label: L("Abgleich", "Reconciliation"), icon: "reconcile", section: "doc" },
-  { key: "design", label: L("Netzwerkdesign", "Network design"), icon: "design", section: "doc", customer: true },
-  { key: "users", label: L("Benutzer & Rollen", "Users & roles"), icon: "users", section: "admin" },
-  { key: "tenants", label: L("Mandanten & Standorte", "Tenants & sites"), icon: "tenants", section: "admin" },
-  { key: "kunden", label: L("Kunden", "Customers"), icon: "customers", section: "admin" },
-  // Kunden-Admin (feinere Rollen): die Kunden-Benutzer des eigenen Kunden
-  {
-    key: "kundenbenutzer",
-    label: L("Kunden-Benutzer", "Customer users"),
-    icon: "users",
-    section: "admin",
-    customer: true,
-    customerOnly: true,
-    cap: "customer_users.manage",
-  },
-  { key: "dict", label: L("Namensprofile", "Naming profiles"), icon: "dict", section: "admin" },
-  { key: "agents", label: L("Collector-Agenten", "Collector agents"), icon: "agents", section: "admin", adminOnly: true },
-  { key: "laeufe", label: L("Läufe", "Runs"), icon: "play", section: "admin" },
-  { key: "netbox", label: "NetBox-Sync", icon: "upload", section: "admin", adminOnly: true },
-  { key: "system", label: "System", icon: "server", section: "admin", adminOnly: true },
-];
-
-// Daten der Übersicht + Zähler in der Navigation (je Mandant geladen).
-export interface Stats {
-  rules: RuleSummary | null; // Kennzahlen aller Regeln (Firewall + ACI)
-  nat: number | null; // Anzahl VIPs/SNAT-Pools
-  findings: FindingSummary | null; // Zähler (offen/gesamt/je Typ)
-  error: unknown;
-}
+// Ansichten je Modul (0.110.0, ADR 0039): Navigation und Anzeige aus dem Verzeichnis `src/modules`; jede Ansicht lädt erst
+// beim Öffnen (0.109.1), das erste Paket der Oberfläche bleibt klein
+export type { Stats, View, ViewParams } from "./modules";
 
 const EMPTY_FINDINGS: FindingSummary = { total: 0, open: 0, by_status: {}, by_type: {} };
 
@@ -137,7 +46,7 @@ type Boot =
   | { state: "error"; error: unknown; oidc: boolean }
   | { state: "ready"; cfg: AuthConfig; me: auth.Me };
 
-const VIEW_KEYS = NAV.map((n) => n.key) as string[];
+const VIEW_KEYS = VIEWS.map((n) => n.key) as string[];
 
 function viewFromHash(): View {
   const h = window.location.hash.replace(/^#\/?/, "").split("?")[0];
@@ -145,7 +54,6 @@ function viewFromHash(): View {
 }
 
 // Parameter hinter der Ansicht (#regeln?object=H_web01) - Verlinkung zwischen den Ansichten
-export type ViewParams = Record<string, string>;
 function paramsFromHash(): ViewParams {
   const query = window.location.hash.split("?")[1] ?? "";
   return Object.fromEntries(new URLSearchParams(query).entries());
@@ -465,20 +373,43 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   // Kunden-Benutzer sehen nur die freigegebenen Doku-Ansichten (feinere Rollen: dazu, was ihre
   // Capabilities erlauben); Betreuer nicht die Seiten nur für Kunden-Benutzer
   const hidden = hiddenViews(mods);
-  const shown = (n: NavEntry) =>
+  const shown = (n: ViewEntry) =>
     !hidden.has(n.key) &&
     (!n.adminOnly || me.isAdmin) &&
     (me.isCustomer ? !!n.customer && (!n.cap || auth.customerCan(me, n.cap)) : !n.customerOnly);
-  const entry = NAV.find((n) => n.key === view);
+  const entry = VIEWS.find((n) => n.key === view);
   const current: View = entry && shown(entry) ? view : "uebersicht";
   // Applikationen: Kunden-Benutzer pflegen nichts als Operator – mit der Kunden-Rolle editor nur
   // die Applikationen, die der Server als `editable` meldet (feinere Rollen)
   const docMe = me.isCustomer ? { ...me, isOperator: false } : me;
-  const docView = NAV.find((n) => n.key === current)?.section === "doc";
+  const currentEntry = VIEWS.find((n) => n.key === current)!;
+  const docView = currentEntry.section === "doc";
   const https = window.location.protocol === "https:";
+  const viewProps: ViewProps = {
+    cfg,
+    me,
+    docMe,
+    tenantId,
+    tenantLabel,
+    tenants: tenants ?? [],
+    tenantsList: tenants,
+    params,
+    paramsKey: JSON.stringify(params),
+    stats,
+    findingType,
+    go,
+    reloadStats: loadStats,
+    reloadTenants: loadTenants,
+    selectTenant: setTenantId,
+    customersChanged: () => setCustomersVersion((v) => v + 1),
+    openFindings: (t) => {
+      go("findings");
+      setFindingType(t);
+    },
+  };
 
   const renderNav = (section: "doc" | "admin") =>
-    NAV.filter((n) => n.section === section && shown(n)).map((n) => {
+    VIEWS.filter((n) => n.section === section && shown(n)).map((n) => {
       const b = badges[n.key];
       return (
         <button
@@ -567,7 +498,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
       <nav className="nav">
         <div className="nav-sec">{L("Dokumentation", "Documentation")}</div>
         {renderNav("doc")}
-        {NAV.some((n) => n.section === "admin" && shown(n)) && (
+        {VIEWS.some((n) => n.section === "admin" && shown(n)) && (
           <div className="nav-sec">{L("Administration", "Administration")}</div>
         )}
         {renderNav("admin")}
@@ -634,133 +565,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
           // je Ansicht ein eigener Ladebereich: die alte verschwindet sofort, statt versteckt
           // stehen zu bleiben, bis die neue geladen ist
           <Suspense key={current} fallback={<Loading />}>
-            {current === "uebersicht" && (
-              <Overview
-                me={me}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                tenants={tenants ?? []}
-                stats={stats}
-                onGo={go}
-                onReload={loadStats}
-              />
-            )}
-            {current === "laeufe" && (
-              <Runs key={JSON.stringify(params)} me={me} tenantId={tenantId} tenantLabel={tenantLabel} params={params} />
-            )}
-            {current === "regeln" && tenantReady && (
-              <RulesTable
-                key={JSON.stringify(params)}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                params={params}
-                onGo={go}
-                isAdmin={me.isAdmin}
-                customer={me.isCustomer}
-                canAssign={(me.isOperator && !me.isCustomer) || auth.customerCan(me, "applications.edit")}
-              />
-            )}
-            {current === "objekte" && tenantReady && (
-              <Objects
-                key={JSON.stringify(params)}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                params={params}
-                onGo={go}
-                customer={me.isCustomer}
-              />
-            )}
-            {current === "nat" && tenantReady && (
-              <NatTable
-                key={JSON.stringify(params)}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                params={params}
-                onGo={go}
-              />
-            )}
-            {current === "apps" && tenantReady && (
-              <AppDoc me={docMe} tenantId={tenantId} params={params} onGo={go} />
-            )}
-            {current === "findings" && tenantReady && (
-              <Findings
-                key={JSON.stringify(params)}
-                me={me}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                initialType={findingType || params.type || ""}
-                initialQuery={params.q ?? ""}
-                onChanged={loadStats}
-                onGo={go}
-              />
-            )}
-            {current === "abgleich" && tenantReady && (
-              <Reconcile
-                me={me}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                params={params}
-                onGo={go}
-                onChanged={loadStats}
-                onOpenFindings={(t) => {
-                  go("findings");
-                  setFindingType(t);
-                }}
-              />
-            )}
-            {current === "wege" && (
-              <Paths
-                key={JSON.stringify(params)}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                canEdit={me.isAdmin || me.isOperator}
-                params={params}
-              />
-            )}
-            {current === "routing" && (
-              <Routing
-                key={JSON.stringify(params)}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                canEdit={me.isAdmin || me.isOperator}
-                params={params}
-              />
-            )}
-            {current === "verkabelung" && <Cabling tenantId={tenantId} tenantLabel={tenantLabel} />}
-            {current === "design" && (
-              <Design
-                key={JSON.stringify(params)}
-                params={params}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                canEdit={!me.isCustomer && (me.isAdmin || me.isOperator)}
-                isAdmin={me.isAdmin}
-                isCustomer={me.isCustomer}
-              />
-            )}
-            {current === "users" && <Users cfg={cfg} me={me} tenants={tenants ?? []} />}
-            {current === "tenants" && (
-              <Tenants
-                me={me}
-                tenants={tenants}
-                tenantId={tenantId}
-                onSelectTenant={setTenantId}
-                onTenantsChanged={loadTenants}
-              />
-            )}
-            {current === "kunden" && (
-              <Customers
-                tenantId={tenantId}
-                canEdit={me.isAdmin || me.isOperator}
-                isAdmin={me.isAdmin}
-                onChanged={() => setCustomersVersion((v) => v + 1)}
-              />
-            )}
-            {current === "kundenbenutzer" && <OwnCustomerUsers me={me} tenantId={tenantId} />}
-            {current === "dict" && <NamingProfiles me={me} tenants={tenants ?? []} />}
-            {current === "agents" && <Agents tenants={tenants ?? []} tenantId={tenantId} onGo={go} />}
-            {current === "netbox" && <NetBoxSync tenantId={tenantId} tenantLabel={tenantLabel} onGo={go} />}
-            {current === "system" && <System />}
+            {(!currentEntry.needsTenant || tenantReady) && currentEntry.render(viewProps)}
           </Suspense>
         )}
       </main>
