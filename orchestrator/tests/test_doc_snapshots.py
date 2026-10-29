@@ -172,8 +172,10 @@ def test_varianten_sprache_kunde_und_verbindungen(client, session_factory, snaps
     assert _rows(session_factory) == []
 
 
-def test_aus_wie_bisher(client, session_factory):
-    """`doc_snapshots=false` (Vorgabe der Tests): jedes Mal neu, nichts gespeichert."""
+def test_aus_wie_bisher(client, session_factory, monkeypatch):
+    """`doc_snapshots=false` (Vorgabe der Tests): jedes Mal neu, nichts gespeichert – ausdrücklich
+    aus, auch mit `AUTOMATO_TEST_DOC_SNAPSHOTS=1`."""
+    monkeypatch.setattr(get_settings(), "doc_snapshots", False)
     _tid, aid = _app(client)
     out = _doc(client, aid)
     assert out["snapshot"]["fresh"] is True and out["tables"]
