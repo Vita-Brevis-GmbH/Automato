@@ -389,8 +389,30 @@ def test_regel_in_der_weg_suche(client):
         "rule_id": rules["lan-to-dmz-web"], "name": "lan-to-dmz-web",
         "src": [{"value": "10.10.0.0/24", "name": None}],
         "dst": [{"value": "10.30.0.10", "name": None}],
-        "services": ["tcp/443"],
+        "services": ["tcp/443"], "src_exit": None, "start": None,
     }  # fmt: skip
     deny = client.get(f"/rules/{rules['lan-to-dmz-deny']}/path-search").json()
     assert (deny["src"], deny["dst"], deny["services"]) == ([], [], [])  # any, alle Dienste
     assert client.get("/rules/999999/path-search").status_code == 404
+
+    # 0.113.1 (Anwender: „hier jeweils die Quelle mindestens angeben“): Quelle any -> Start an
+    # der Firewall der Regel bzw. die Anbindung an ihrem Eingang; der Weg geht bis zum Ziel
+    sid = client.get("/systems", params={"tenant_id": tid}).json()[0]["id"]
+    inet = client.get(f"/rules/{rules['inet-to-web']}/path-search").json()
+    assert (inet["src"], inet["src_exit"], inet["start"]) == ([], None, f"{sid}|root")
+    assert inet["ports"] == ["internet"]
+    # mit dem Eingang der Regel am Start: Policy 6 sicher, nicht „abhaengig (Eingang)“
+    params = {"tenant_id": tid, "start": inet["start"], "start_port": "internet",
+              "dst": "10.30.0.10", "service": "tcp/443"}  # fmt: skip
+    (path,) = client.get("/routing/trace", params=params).json()["paths"]
+    assert path["policy"]["verdict"] == "allow"
+    body = {"tenant_id": tid, "name": "Internet", "kind": "internet", "interfaces": ["internet"]}
+    exit_id = client.post("/routing/exits", json=body, headers=ADMIN).json()["id"]
+    inet = client.get(f"/rules/{rules['inet-to-web']}/path-search").json()
+    assert inet["src_exit"] == {"ref": f"exit:{exit_id}@{sid}", "name": "Internet",
+                                "kind": "internet", "ports": ["internet"]}  # fmt: skip
+    params = {"tenant_id": tid, "src_exit": inet["src_exit"]["ref"], "dst": "10.30.0.10",
+              "service": "tcp/443"}  # fmt: skip
+    trace = client.get("/routing/trace", params=params).json()
+    (path,) = trace["paths"]
+    assert path["policy"]["verdict"] == "allow"

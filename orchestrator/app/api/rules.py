@@ -16,17 +16,17 @@ import ipaddress
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import exists, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit
 from app.api.customer_filter import customer_view, own_view, visible
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import (
     ObjectClass,
@@ -394,14 +394,18 @@ class PairDecisionIn(BaseModel):
     decision: Literal["confirmed", "rejected"]
 
 
-@router.post("/{rule_id}/pair", status_code=204)
+@router.post("/{rule_id}/pair")
 def decide_pair(
     rule_id: int,
     body: PairDecisionIn,
+    background: BackgroundTasks,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
-) -> None:
-    """IPv4/IPv6-Paar bestaetigen bzw. ablehnen; gilt sofort und fuer alle neuen Laeufe."""
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """IPv4/IPv6-Paar bestaetigen bzw. ablehnen; gilt sofort und fuer alle neuen Laeufe.
+    `pending`: der Mandant ist gerade gesperrt (Einspielen, Abgleich) - die Entscheidung ist
+    gespeichert, der Regelindex folgt im Hintergrund, sobald die Sperre frei ist (0.113.1)."""
     a, b = session.get(Rule, rule_id), session.get(Rule, body.partner_id)
     if a is None or b is None:
         raise HTTPException(status_code=404, detail="rule not found")
@@ -419,7 +423,6 @@ def decide_pair(
             detail="pair = one IPv4 and one IPv6 rule of the same firewall and VDOM",
         )
     v4, v6 = (a, b) if a.ip_family == "v4" else (b, a)
-    tenant_lock.hold(session, a.tenant_id)  # schreibt den Regelindex (0.80.1)
     # eine Entscheidung ohne VDOM (vor 0.15.0) wird zu einer im VDOM des Paares
     decision = session.scalars(
         select(RulePairDecision)
@@ -454,35 +457,43 @@ def decide_pair(
             "decision": body.decision,
         },
     )
-    rows = {
-        i.rule_id: i
-        for i in session.scalars(select(RuleIndex).where(RuleIndex.rule_id.in_([a.id, b.id])))
-    }
-    together = all(rows.get(x.id) and rows[x.id].pair_rule_id == y.id for x, y in ((a, b), (b, a)))
-    if together:  # schon als Paar markiert: nur die Markierung aendern (schnell)
-        for row in rows.values():
-            if body.decision == "confirmed":
-                row.pair_match = "confirmed"
-            else:
-                row.pair_rule_id = row.pair_match = row.pair_diff = None
-        session.flush()
-    else:  # anderes Paar betroffen: Paare des Quellsystems neu bilden
-        rule_index.rebuild(session, a.tenant_id, a.source_system_id)
+    session.flush()
+    # Regelindex nur, wenn der Mandant frei ist - sonst wartete der Klick still, bis ein
+    # Einspielen bzw. Abgleich fertig ist (Anwender 2026-10-29: „kann klicken, macht nichts“)
+    if tenant_lock.try_hold(session, a.tenant_id):
+        rule_index.apply_pair(session, a.id, b.id, body.decision)
+        return {"pending": False}
+    background.add_task(_pair_later, factory, a.tenant_id, a.id, b.id, body.decision)
+    return {"pending": True}
 
 
-@router.delete("/pair-decisions/{decision_id}", status_code=204)
+def _pair_later(factory: sessionmaker, tenant_id: int, a_id: int, b_id: int | None,
+                decision: str | None, source_system_id: int | None = None) -> None:  # fmt: skip
+    """Regelindex nach einer Entscheidung, sobald die Sperre des Mandanten frei ist."""
+    with factory() as session:
+        tenant_lock.hold(session, tenant_id)
+        if b_id is None:
+            rule_index.rebuild(session, tenant_id, source_system_id)
+        else:
+            rule_index.apply_pair(session, a_id, b_id, decision or "confirmed")
+        session.commit()
+
+
+@router.delete("/pair-decisions/{decision_id}")
 def reset_pair(
     decision_id: int,
+    background: BackgroundTasks,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
-) -> None:
-    """Entscheidung zuruecknehmen: das Paar wird wieder automatisch gebildet."""
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Entscheidung zuruecknehmen: das Paar wird wieder automatisch gebildet (`pending` wie
+    beim Entscheiden)."""
     d = session.get(RulePairDecision, decision_id)
     if d is None:
         raise HTTPException(status_code=404, detail="decision not found")
     tenant_scope(principal, d.tenant_id)
     sid, tid = d.source_system_id, d.tenant_id
-    tenant_lock.hold(session, tid)
     session.delete(d)
     audit.record(
         session,
@@ -492,4 +503,8 @@ def reset_pair(
         detail={"source_system_id": sid},
     )
     session.flush()
-    rule_index.rebuild(session, tid, sid)
+    if tenant_lock.try_hold(session, tid):
+        rule_index.rebuild(session, tid, sid)
+        return {"pending": False}
+    background.add_task(_pair_later, factory, tid, 0, None, None, sid)
+    return {"pending": True}

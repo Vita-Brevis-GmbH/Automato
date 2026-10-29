@@ -600,10 +600,12 @@ EXIT_REF = r"^(exit|router):[^@\s]+(@\d+)?$"
 
 
 def _traced(session: Session, tid: int, dst: str | None, src: str | None, start: str | None,
-            slack: int, service: str | None, src_exit: str | None, dst_exit: str | None
+            slack: int, service: str | None, src_exit: str | None, dst_exit: str | None,
+            start_port: str | None = None,
             ) -> tuple[dict, paths.Graph, str | None, str | None, tuple | None]:  # fmt: skip
     """Weg wie in der Weg-Suche (auch fuer „Warum dieser Weg?“) -> (Ergebnis, Graph, Quelle,
-    Ziel, Dienst)."""
+    Ziel, Dienst). `start_port` (0.113.1): Eingang (Interface bzw. Zone) am Startpunkt - z. B.
+    das der Regel, deren Quelle any ist."""
     if not dst and not dst_exit:
         raise HTTPException(status_code=422, detail=L("dst oder dst_exit angeben",
                                                       "specify dst or dst_exit"))  # fmt: skip
@@ -631,6 +633,11 @@ def _traced(session: Session, tid: int, dst: str | None, src: str | None, start:
         family = topology.endpoint(src).version if src else None
         dst, how = (dst, "given") if dst else end.address(graph, family)
         shown["dst"] = end.out(graph, dst, how)
+    chosen = paths.parse_key(start)
+    if entries is None and start_port and chosen in graph.nodes and not src:
+        how = L(f"gewählt, Eingang {start_port} der Regel", f"selected, incoming {start_port} of "
+                "the rule")  # fmt: skip
+        entries = [(chosen, start_port, graph.zone(chosen[0], start_port) or start_port, how)]
     result = paths.trace(session, tid, dst, src, start, slack, wanted, graph=graph,
                          entries=entries)  # fmt: skip
     if note:
@@ -660,6 +667,9 @@ def trace(
     dst_exit: str | None = Query(
         None, max_length=100, pattern=EXIT_REF, description="Anbindung als Ziel (wie src_exit)"
     ),
+    start_port: str | None = Query(
+        None, max_length=100, description="Eingang am Startpunkt (Interface bzw. Zone)"
+    ),
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
@@ -670,7 +680,7 @@ def trace(
     (`src` waehlt ein anderes), als Ziel ihre Netze und je Weg, ob er ueber sie hinausgeht."""
     tid = _tenant(session, principal, tenant_id)
     result, graph, src, dst, wanted = _traced(session, tid, dst, src, start, slack, service,
-                                              src_exit, dst_exit)  # fmt: skip
+                                              src_exit, dst_exit, start_port)  # fmt: skip
     # Zonen je Hop, Uebergaenge und Absicht Quell-/Zielzone (0.57.0)
     zone_path.annotate(session, tid, result, src, dst, wanted, result.get("service_name"), graph)
     # L2 zwischen den Hops, Anschluss von Quelle und Ziel (0.64.0)
@@ -687,6 +697,7 @@ def explain(
     service: str | None = Query(None, max_length=200),
     src_exit: str | None = Query(None, max_length=100, pattern=EXIT_REF),
     dst_exit: str | None = Query(None, max_length=100, pattern=EXIT_REF),
+    start_port: str | None = Query(None, max_length=100),
     connection: bool = Query(False, description="Weg wie bei Verbindungen Ende zu Ende"),
     starts: Annotated[list[str] | None, Query(max_length=20)] = None,
     expect: int | None = Query(None, description="Erwartet ueber dieses Quellsystem"),
@@ -717,7 +728,7 @@ def explain(
                                                     wanted, starts or [])  # fmt: skip
     else:
         result, graph, src, dst, _wanted = _traced(session, tid, dst, src, start, slack, service,
-                                                   src_exit, dst_exit)  # fmt: skip
+                                                   src_exit, dst_exit, start_port)  # fmt: skip
     out = path_explain.explain(session, tid, graph, result, src, dst, expect)
     out["paths_found"] = len(result.get("paths") or [])
     return out

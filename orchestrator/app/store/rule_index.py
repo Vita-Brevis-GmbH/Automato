@@ -412,6 +412,29 @@ def rebuild(
     return len(rules)
 
 
+def apply_pair(session: Session, a_id: int, b_id: int, decision: str) -> None:
+    """Regelindex nach einer Entscheidung ueber das Paar a/b (Sperre des Mandanten beim
+    Aufrufer): sind beide schon als Paar markiert, nur die Markierung aendern (schnell), sonst
+    die Paare des Quellsystems neu bilden."""
+    stmt = select(RuleIndex).where(RuleIndex.rule_id.in_([a_id, b_id]))
+    rows = {i.rule_id: i for i in session.scalars(stmt)}
+    together = all(
+        rows.get(x) is not None and rows[x].pair_rule_id == y
+        for x, y in ((a_id, b_id), (b_id, a_id))
+    )
+    if together:
+        for row in rows.values():
+            if decision == "confirmed":
+                row.pair_match = "confirmed"
+            else:
+                row.pair_rule_id = row.pair_match = row.pair_diff = None
+        session.flush()
+        return
+    rule = session.get(Rule, a_id)
+    if rule is not None:
+        rebuild(session, rule.tenant_id, rule.source_system_id)
+
+
 def pair_decisions(
     session: Session, tenant_id: int, source_system_id: int | None = None
 ) -> rule_pairs.Decisions:

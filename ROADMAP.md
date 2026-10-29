@@ -427,8 +427,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.111.0** | Fehler und Funde zu 0.109: Export Route Control keine Gegenstelle der externen EPG; „Contract öffnet tcp/xy nicht (offen: …)“ statt „kein Contract“; Transfernetz zum eigenen L3Out; grosse Netzlisten bei Anbindungen (einfügen, prüfen, zusammenfassen, aus dem Routing); grosse Netze der Regeln zuordnen (von Hand, Zone, Anbindung, Teile nach dem Routing, Befund „Netz der Regel grösser als die Routen“) (ADR 0040) |
 | **0.112.0** | Fehler zu 0.110: „abhängig“ mit Grund je Firewall bzw. Weg, Geo/Internet Service trifft keine private Adresse, Eingang am Start nach der Route zur Quelle; Backup-Wege nur, was das Gerät gelernt hat (keine Default-Route für private Ziele, kein BGP-Bestpfad, keine Route auf ein Adressobjekt); „↔ auch vom Provider aus: …“ statt „beide Richtungen“; Knopf „Weg-Suche“ bei Regeln, Applikation und Doku nach Kategorie |
 | **0.113.0** | BGP-Filter lesen (Stufe 1): FortiGate `router bgp` mit Prefix-Listen, Route-Maps, Access-Listen (ohne Passwörter), ACI Route Control; je BGP-Nachbar bzw. L3Out Soll/Ist (erwartet, erhalten, angekündigt), Befunde bei Abweichungen, „Netze dahinter“ aus den BGP-Filtern (ADR 0041) |
+| **0.113.1** | Fehler zu 0.112: „Als Paar bestätigen“ wartet nicht mehr still auf die Sperre des Mandanten (gespeichert, Markierung im Hintergrund, Hinweis); Weg-Suche aus einer Regel mit Quelle any über die Anbindung bzw. den Start mit dem Eingang der Regel bis zum Ziel (auch durch DNAT); ohne Quelle Hinweis statt Routenliste; draw.io mit geraden Linien und mehr Abstand |
 
-### Nächste Arbeiten (Stand 0.113.0)
+### Nächste Arbeiten (Stand 0.113.1)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -439,7 +440,8 @@ Testbefunde zu 0.106.0 in 0.107.0), bis **0.107.0** (2026-10-28, „108 go“ oh
 Einwand zu 0.109.0), bis **0.109.1** (2026-10-29, „go 110“ ohne Einwand), bis **0.110.0**
 (2026-10-29, Fehlerliste zu 0.109 ohne Einwand zu 0.110.0), bis **0.111.0** (2026-10-29,
 Fehlerliste zu 0.110 ohne Einwand zu 0.111.0), bis **0.112.0** (2026-10-29, „go 113“ ohne
-Einwand). Zur Abnahme steht 0.113.0. Seit 0.104.0 gilt eine
+Einwand), bis **0.113.0** (2026-10-29, Fehlerliste zu 0.112 ohne Einwand zu 0.113.0). Zur Abnahme
+steht 0.113.1. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 

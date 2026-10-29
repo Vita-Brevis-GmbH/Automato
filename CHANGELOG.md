@@ -7,6 +7,34 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.113.1 – 2026-10-29
+
+Fehler des Anwenders zu 0.112 (2026-10-29), in einer Version. Abnahme bis 0.113.0.
+
+- **„Als Paar bestätigen“ ohne Wirkung:** der Klick wartete still auf die Sperre des Mandanten,
+  solange ein Einspielen bzw. Abgleich lief. Jetzt wird die Entscheidung sofort gespeichert;
+  ist der Mandant gerade gesperrt, folgt die Markierung im Hintergrund („Gespeichert – die
+  Markierung folgt …“, das Detail lädt selbst neu). Während des Speicherns ist der Knopf gesperrt
+  mit „wird gespeichert …“, ein Fehler steht direkt beim Knopf. Gilt auch für „Kein Paar“ und
+  „zurücknehmen“.
+- **Weg-Suche aus einer Regel mit Quelle any:** statt einer leeren Quelle die Anbindung am
+  Eingang der Regel (Interface bzw. Zone der Regel in einer Anbindung, z. B. Internet an `wan1`),
+  sonst der Start an der Firewall der Regel mit ihrem Eingang – „Quelle any – über die Anbindung
+  „Internet“ (wan1)“ bzw. „… Start an der Firewall der Regel“. Der Weg geht damit bis zum Ziel,
+  auch durch eine VIP (DNAT) zum Server, und die Policies prüfen den richtigen Eingang.
+- **Weg-Suche ohne Quelle und Start:** keine Liste aller Routen zur IP mehr, sondern der Hinweis
+  „Quelle oder Startpunkt angeben“ (die Routen je Gerät stehen unter Routing → Routen).
+- **draw.io übersichtlicher:** Zonenplan mit breiteren Spalten und mehr Abstand zwischen den
+  Zonen, gerade Linien von Seite zu Seite wie im Grundschema (rechtwinklig, wo beide Enden an
+  derselben Seite liegen), Beschriftung mit weissem Hintergrund; Netzwerkplan der Applikation mit
+  rechtwinkligen statt geschwungenen Linien und mehr Abstand.
+- API: `POST /rules/{id}/pair` und `DELETE /rules/pair-decisions/{id}` antworten mit
+  `{"pending": …}`; `GET /rules/{id}/path-search` mit `src_exit`, `start`, `ports`;
+  `GET /routing/trace` und `/routing/explain` mit `start_port` (Eingang am Startpunkt).
+- Tests: `test_ip_family.py` (Paar bei gesperrtem Mandanten), `test_policy_check.py` (Regel mit
+  Quelle any: Start, Anbindung, Eingang), UI-Tests in `e2e/paths.spec.ts` und
+  `e2e/flows.spec.ts`.
+
 ## 0.113.0 – 2026-10-29
 
 Roadmap Version 1 Nr. 3, Stufe 1 (Anwender 2026-10-29: „go 113“, gewählt „Filter lesen +

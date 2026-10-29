@@ -246,3 +246,24 @@ test("Regel in der Weg-Suche: Knopf an der Regel, Werte der Regel zur Wahl (0.11
   await expect(choice.locator("[data-side='service'] .chip.info")).toHaveText("tcp/443");
   expect(problems).toEqual([]);
 });
+
+test("Regel mit Quelle any: Start an der Firewall bzw. Anbindung, Weg bis zum Ziel (0.113.1)", async ({ page, problems }) => {
+  const rules = (await (await page.request.get("/api/rules?tenant_id=1&q=inet-to-web")).json()) as { id: number; name: string }[];
+  const rule = rules.find((r) => r.name === "inet-to-web")!;
+  await page.goto(`/#wege?rule=${rule.id}`);
+  const choice = page.locator("#rule-choice");
+  await expect(choice.locator("[data-side='src']")).toContainText("any – ");
+  // Weg bis zum Ziel statt der Liste aller Routen zur IP
+  await expect(page.locator(".card[id^='trace-l2']")).toContainText("Ziel hängt an");
+  await expect(page.locator(".card[id^='trace-']", { hasText: "Regeln: erlaubt" }).first()).toBeVisible();
+  expect(problems).toEqual([]);
+});
+
+test("Weg-Suche nur mit Ziel: Hinweis statt Liste aller Routen (0.113.1)", async ({ page, problems }) => {
+  await page.goto("/#wege");
+  await page.getByPlaceholder(DST).fill("10.20.0.5");
+  await page.click("button:has-text('Weg suchen')");
+  await expect(page.locator("main.main")).toContainText("Quelle oder Startpunkt angeben");
+  await expect(page.locator(".card", { hasText: "Geht vor" })).toHaveCount(0);
+  expect(problems).toEqual([]);
+});

@@ -37,7 +37,7 @@ from app.i18n import L
 from app.store.plan_export import CURVE_STEPS, _bezier, _geometry, _html, _id, _n, _rel, _text
 
 NODE_W, NODE_H = 190, 44
-COL_GAP, ROW_GAP, TOP = 120, 18, 34
+COL_GAP, ROW_GAP, TOP = 160, 26, 34  # 0.113.1: mehr Abstand (vorher 120, 18)
 MAX_SERVICES = 4  # Dienste je Richtung an einer Linie
 MAX_PORTS = 2  # Interfaces je Ende
 HEAD = 56
@@ -833,7 +833,9 @@ def drawio(plan: dict, title: str, when: datetime | None = None, rules: bool = T
         color = COLOR[e["verdict"]]
         style = (
             f"endArrow=none;html=1;strokeColor={color};fontColor={color};fontSize=10;"
-            "fontFamily=Courier New;edgeStyle=orthogonalEdgeStyle;curved=1;rounded=1;"
+            # 0.113.1: rechtwinklig statt geschwungen (Anwender: „normal ziehende Linien“)
+            "fontFamily=Courier New;edgeStyle=orthogonalEdgeStyle;rounded=0;"
+            "labelBackgroundColor=#ffffff;"
             f"exitX={_rel(e['x1'], a['x'], a['w'])};exitY={_rel(e['y1'], a['y'], a['h'])};"
             f"entryX={_rel(e['x2'], b['x'], b['w'])};entryY={_rel(e['y2'], b['y'], b['h'])};"
             "exitDx=0;exitDy=0;entryDx=0;entryDy=0;"

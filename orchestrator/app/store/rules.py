@@ -259,8 +259,43 @@ def path_search(session: Session, rule: Rule) -> dict:
         text = _service_value(s)
         if text and text not in services:
             services.append(text)
-    return {"rule_id": rule.id, "name": rule.name, "src": sides["src"], "dst": sides["dst"],
-            "services": services[:PATH_SEARCH_MAX]}  # fmt: skip
+    out = {"rule_id": rule.id, "name": rule.name, "src": sides["src"], "dst": sides["dst"],
+           "services": services[:PATH_SEARCH_MAX], "src_exit": None, "start": None}  # fmt: skip
+    if not sides["src"]:  # Quelle any (bzw. nur Laender, ISDB): Eingang der Regel (0.113.1)
+        out.update(_ingress(session, rule))
+    return out
+
+
+def _ingress(session: Session, rule: Rule) -> dict:
+    """Ohne bestimmte Quelle (Anwender 0.112: „hier jeweils die Quelle mindestens angeben“): die
+    Anbindung am Eingang der Regel (Interface bzw. Zone in der Anbindung, fuer diese Firewall),
+    sonst der Start an der Firewall der Regel (VDOM) - so geht die Weg-Suche bis zum Ziel, auch
+    durch eine VIP (DNAT)."""
+    from app.models import TopoContext, TopoExit  # spaet: Topologie gehoert zur Analyse
+
+    if rule.domain is not RuleDomain.FIREWALL or rule.source_system_id is None:
+        return {}
+    ports = {str(x.get("name")) for x in (rule.raw or {}).get("srcintf") or []
+             if isinstance(x, dict) and x.get("name")}  # fmt: skip
+    if rule.src_zone_id is not None:
+        zone = session.get(Zone, rule.src_zone_id)
+        if zone is not None:
+            ports.add(zone.name)
+    ports.discard("any")
+    sid = rule.source_system_id
+    for e in session.scalars(select(TopoExit).where(TopoExit.tenant_id == rule.tenant_id)
+                             .order_by(TopoExit.name, TopoExit.id)):  # fmt: skip
+        if ports & set(e.interfaces or []) and (not e.source_system_ids
+                                                or sid in e.source_system_ids):  # fmt: skip
+            return {"src_exit": {"ref": f"exit:{e.id}@{sid}", "name": e.name, "kind": e.kind,
+                                 "ports": sorted(ports & set(e.interfaces or []))}}  # fmt: skip
+    contexts = list(session.scalars(
+        select(TopoContext.context).where(TopoContext.source_system_id == sid,
+                                          TopoContext.kind == "vdom").distinct()))  # fmt: skip
+    context = rule.vdom or ("root" if "root" in contexts else contexts[0] if contexts else None)
+    if context is None or context not in contexts:
+        return {}
+    return {"start": f"{sid}|{context}", "ports": sorted(ports)}
 
 
 PATH_SEARCH_MAX = 20  # Werte je Seite zur Auswahl

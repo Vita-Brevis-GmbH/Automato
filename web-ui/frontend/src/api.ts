@@ -1614,6 +1614,10 @@ export interface RulePathSearch {
   src: PathValue[];
   dst: PathValue[];
   services: string[];
+  // Quelle any (0.113.1): Anbindung am Eingang der Regel bzw. Start an ihrer Firewall (Knoten)
+  src_exit: { ref: string; name: string; kind: string; ports: string[] } | null;
+  start: string | null;
+  ports?: string[]; // Eingang der Regel am Start
 }
 export const fetchRulePathSearch = (ruleId: number) => getJSON<RulePathSearch>(`/api/rules/${ruleId}/path-search`);
 
@@ -1671,9 +1675,13 @@ export async function fetchRules(opts: {
   };
 }
 // IPv4/IPv6-Paar bestätigen bzw. ablehnen (operator) und die Entscheidung zurücknehmen
+// `pending` (0.113.1): gespeichert, der Mandant ist gerade gesperrt – die Markierung folgt im Hintergrund
+export interface PairResult {
+  pending: boolean;
+}
 export const decidePair = (ruleId: number, partnerId: number, decision: "confirmed" | "rejected") =>
-  sendJSON<void>(`/api/rules/${ruleId}/pair`, "POST", { partner_id: partnerId, decision });
-export const resetPairDecision = (id: number) => sendJSON<void>(`/api/rules/pair-decisions/${id}`, "DELETE");
+  sendJSON<PairResult>(`/api/rules/${ruleId}/pair`, "POST", { partner_id: partnerId, decision });
+export const resetPairDecision = (id: number) => sendJSON<PairResult>(`/api/rules/pair-decisions/${id}`, "DELETE");
 export const fetchRuleSummary = (tenantId?: number | null) =>
   getJSON<RuleSummary>(`/api/rules/summary${cq({ tenant_id: tenantId })}`);
 export const fetchRuleDetail = (id: number) => getJSON<RuleDetail>(`/api/rules/${id}`);
@@ -2794,10 +2802,10 @@ export const lookupRoute = (tenantId: number, ip: string) =>
 // wählen dann ein anderes Netz der Anbindung
 export const traceRoute = (
   tenantId: number,
-  opts: { dst: string; src?: string; start?: string; slack?: number; service?: string; srcExit?: string; dstExit?: string },
+  opts: { dst: string; src?: string; start?: string; startPort?: string; slack?: number; service?: string; srcExit?: string; dstExit?: string },
 ) =>
   getJSON<TraceResult>(
-    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim() || undefined, src: opts.src?.trim() || undefined, start: opts.start || undefined, slack: opts.slack, service: opts.service?.trim() || undefined, src_exit: opts.srcExit || undefined, dst_exit: opts.dstExit || undefined })}`,
+    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim() || undefined, src: opts.src?.trim() || undefined, start: opts.start || undefined, start_port: opts.startPort || undefined, slack: opts.slack, service: opts.service?.trim() || undefined, src_exit: opts.srcExit || undefined, dst_exit: opts.dstExit || undefined })}`,
   );
 // Warum dieser Weg? (0.109.0): derselbe Weg Hop für Hop in Sätzen – Start, Eingang und Tabelle,
 // Policy-Routen, alle Routen zum Ziel (gewählt bzw. verworfen mit Grund), Next-Hop, Ende mit Hinweis;
@@ -2838,6 +2846,7 @@ export interface ExplainQuery {
   dst?: string;
   src?: string;
   start?: string;
+  startPort?: string; // Eingang am Startpunkt (0.113.1, Regel mit Quelle any)
   slack?: number;
   service?: string | null;
   srcExit?: string;
@@ -2852,6 +2861,7 @@ export const explainPath = (tenantId: number, q: ExplainQuery, expect?: number |
       dst: q.dst?.trim(),
       src: q.src?.trim(),
       start: q.start,
+      start_port: q.startPort,
       slack: q.slack,
       service: q.service?.trim(),
       src_exit: q.srcExit,

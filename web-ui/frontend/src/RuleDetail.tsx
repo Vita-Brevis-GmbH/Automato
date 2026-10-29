@@ -5,6 +5,7 @@ import {
   fetchRuleDetail,
   isCustomerUser,
   NatBrief,
+  PairResult,
   rejectParallel,
   resetPairDecision,
   RuleDetail,
@@ -144,11 +145,17 @@ function NatList({ items, onOpen }: { items: NatBrief[]; onOpen?: (name: string)
 // Paar bestätigen ("ähnlich" → bestätigt), ablehnen ("Kein Paar") oder zurücknehmen
 function PairActions({
   detail,
+  busy,
+  pending,
+  error,
   onConfirm,
   onReject,
   onReset,
 }: {
   detail: RuleDetail;
+  busy: boolean;
+  pending: boolean;
+  error: unknown;
   onConfirm: (partnerId: number) => void;
   onReject: (partnerId: number) => void;
   onReset: (decisionId: number) => void;
@@ -157,13 +164,24 @@ function PairActions({
   const decisions = detail.pair_decisions ?? [];
   const confirmed = decisions.find((d) => d.decision === "confirmed" && d.partner_id === p?.rule_id);
   const rejected = decisions.filter((d) => d.decision === "rejected");
-  if (!p && !rejected.length) return null;
+  if (!p && !rejected.length && !error) return null;
   return (
-    <div style={{ marginTop: 4 }}>
+    <div style={{ marginTop: 4 }} id="pair-actions">
+      <ErrorBox error={error} prefix={L("Paar entscheiden", "Decide pair")} />
+      {busy && <div className="faint">{L("wird gespeichert …", "saving …")}</div>}
+      {pending && !busy && (
+        <div className="note" id="pair-pending">
+          {L(
+            "Gespeichert – die Markierung folgt, sobald das laufende Einspielen bzw. der Abgleich fertig ist.",
+            "Saved – the mark follows as soon as the running import or reconciliation has finished.",
+          )}
+        </div>
+      )}
       {p && p.match === "similar" && (
         <>
           <button
             className="linkbtn"
+            disabled={busy}
             title={L(
               "Die beiden Policies decken (trotz Abweichungen) dasselbe ab – gilt auch nach neuen Läufen",
               "Both policies cover the same traffic (despite deviations) – also applies after new runs",
@@ -178,6 +196,7 @@ function PairActions({
       {p && !confirmed && (
         <button
           className="linkbtn"
+          disabled={busy}
           title={L("Kein Gegenstück – nicht mehr als Paar vorschlagen", "No counterpart – do not suggest as pair any more")}
           onClick={() => onReject(p.rule_id)}
         >
@@ -194,7 +213,7 @@ function PairActions({
               confirmed by {confirmed.decided_by}, {fmtTime(confirmed.decided_at)} ·{" "}
             </>,
           )}
-          <button className="linkbtn" onClick={() => onReset(confirmed.id)}>
+          <button className="linkbtn" disabled={busy} onClick={() => onReset(confirmed.id)}>
             {L("zurücknehmen", "undo")}
           </button>
         </div>
@@ -211,7 +230,7 @@ function PairActions({
               {d.partner_id ? ` (#${d.partner_id})` : ""} – by {d.decided_by}, {fmtTime(d.decided_at)} ·{" "}
             </>,
           )}
-          <button className="linkbtn" onClick={() => onReset(d.id)}>
+          <button className="linkbtn" disabled={busy} onClick={() => onReset(d.id)}>
             {L("zurücknehmen", "undo")}
           </button>
         </div>
@@ -258,12 +277,32 @@ export default function RuleDetailDrawer({
       .catch(setError);
   }, [ruleId, reload]);
 
-  // IPv4/IPv6-Paar von Hand entscheiden (operator); gilt sofort und für neue Läufe
-  const decide = (action: Promise<void>) =>
-    action.then(() => {
+  // IPv4/IPv6-Paar von Hand entscheiden (operator); gilt sofort und für neue Läufe. 0.113.1 (Anwender: „kann klicken,
+  // macht nichts“): während des Speicherns gesperrt mit Hinweis, Fehler beim Knopf; ist der Mandant gerade gesperrt
+  // (Einspielen, Abgleich), folgt die Markierung im Hintergrund – das Detail lädt dann ein paar Mal neu
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairError, setPairError] = useState<unknown>(null);
+  const [pairPending, setPairPending] = useState(0);
+  const decide = (action: Promise<PairResult>) => {
+    setPairBusy(true);
+    setPairError(null);
+    action
+      .then((r) => {
+        setPairPending(r?.pending ? 12 : 0);
+        setReload((n) => n + 1);
+        onChanged?.();
+      }, setPairError)
+      .finally(() => setPairBusy(false));
+  };
+  useEffect(() => {
+    if (!pairPending) return;
+    const t = window.setTimeout(() => {
+      setPairPending((n) => n - 1);
       setReload((n) => n + 1);
-      onChanged?.();
-    }, setError);
+      if (pairPending === 1) onChanged?.();
+    }, 5000);
+    return () => window.clearTimeout(t);
+  }, [pairPending]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const focused = (e: Endpoint) => !focus || showAll || !e.epg?.dn || focus.dns.includes(e.epg.dn);
   const all = detail?.endpoints ?? [];
@@ -366,7 +405,10 @@ export default function RuleDetailDrawer({
                             `Dissolve parallel group “${detail.parallel!.group}” and do not suggest it again?`,
                           );
                           if (!window.confirm(msg)) return;
-                          decide(rejectParallel(detail.tenant_id, { group: detail.parallel!.group }).then(() => undefined));
+                          rejectParallel(detail.tenant_id, { group: detail.parallel!.group }).then(() => {
+                            setReload((n) => n + 1);
+                            onChanged?.();
+                          }, setError);
                         }}
                       >
                         {L("Verbund auflösen", "Dissolve parallel group")}
@@ -407,6 +449,9 @@ export default function RuleDetailDrawer({
                   {!isCustomerUser() && (
                     <PairActions
                       detail={detail}
+                      busy={pairBusy}
+                      pending={pairPending > 0}
+                      error={pairError}
                       onConfirm={(id) => decide(decidePair(detail.id, id, "confirmed"))}
                       onReject={(id) => decide(decidePair(detail.id, id, "rejected"))}
                       onReset={(id) => decide(resetPairDecision(id))}

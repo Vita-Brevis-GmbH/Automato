@@ -218,7 +218,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Regeln.
   - **Bestätigen bzw. ablehnen** (Operator, 0.12.0): im Detail „Als Paar bestätigen“ (für
     „ähnlich“) bzw. „Kein Paar“, mit „zurücknehmen“. Die Entscheidung gilt sofort und bleibt über
-    neue Läufe erhalten (Policy-ID). Filter „Paar“: ähnlich (offen) zum Abarbeiten, bestätigt,
+    neue Läufe erhalten (Policy-ID). Läuft gerade ein Einspielen bzw. Abgleich (Sperre des
+    Mandanten), ist sie gespeichert und die Markierung folgt im Hintergrund – „Gespeichert – die
+    Markierung folgt …“, das Detail lädt selbst neu (0.113.1). Filter „Paar“: ähnlich (offen) zum Abarbeiten, bestätigt,
     gleich, mit/ohne Paar.
   Klick → Detail: je Objekt Typ, Kommentar, Gruppenmitglieder (Objektnamen verlinkt) und je
   Wert die **Referenzdaten** aus dem IPAM (DNS-Name, Netz, VLAN, Standort; aufklappbar mit
@@ -442,8 +444,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       mit dem Link als Aus- bzw. Eingang geprüft.
     - Das Ende steht oben in der Karte: Ziel erreicht, im Fabric, extern, Weg endet (Next-Hop
       ohne gelesenes Gerät), keine Route.
-    - Ohne Quelle und Start: je Kontext die wirksame Route wie bisher. Geräte, deren Routing
-      nicht gelesen ist (Switches, Router der Provider), beenden den Weg.
+    - Ohne Quelle und Start (seit 0.113.1): der Hinweis „Quelle oder Startpunkt angeben“ – die
+      Routen je Gerät stehen unter Routing → Routen. Geräte, deren Routing nicht gelesen ist
+      (Switches, Router der Provider), beenden den Weg.
     - **Zonen** (0.57.0, wenn logische Zonen gepflegt sind): die Karte **Zonen** oben nennt
       Quell- und Zielzone und die Kette des Wegs mit den Übergängen („LAN →LAN-EINET→ Edge
       Internet →DMZ-EINET→ DMZ“), jeder Hop seine Zone, die Übersicht je Weg die Kette. Dazu die
@@ -821,7 +824,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Weg-Suche (0.112.0)** je Regel – auch in der Regel-Liste, im Regel-Detail und in der Doku
     nach Kategorie: die Weg-Suche öffnet sich in einem neuen Tab mit Quelle, Ziel und Dienst
     der Regel und sucht gleich; darüber „Aus Regel …“ mit den übrigen Quellen, Zielen und
-    Diensten der Regel zum Anklicken (any steht nicht zur Wahl). Unter
+    Diensten der Regel zum Anklicken (any steht nicht zur Wahl). Ist die Quelle any (0.113.1),
+    sucht sie über die Anbindung am Eingang der Regel (Interface bzw. Zone in einer Anbindung)
+    bzw. ab der Firewall der Regel mit ihrem Eingang – so geht der Weg bis zum Ziel, auch durch
+    eine VIP (DNAT). Unter
     Quelle bzw. Ziel steht je Objekt der Regel, über das sie Systeme der Applikation erfasst
     (Host, Netz, any, EPG), welche Systeme darin liegen – eine Regel über ein Subnetz oder any
     erscheint einmal, nicht je VM (0.14.1). **Unspezifische Regeln** (any, Netz, vzAny,

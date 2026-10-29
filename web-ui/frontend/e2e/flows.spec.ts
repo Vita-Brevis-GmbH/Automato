@@ -491,17 +491,13 @@ test("Weg-Suche und Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", asyn
   await expect(ctx).toContainText("fw-05 · VDOM root");
   await expect(ctx.locator("tbody tr").filter({ hasText: "fw-04" })).toContainText("Firewall"); // nur root
   await expect(ctx).toContainText("BGP-Pfade IPv4 (HTTP 403)"); // nicht lesbar -> unbekannt
-  // Weg-Suche als eigene Ansicht; nur Ziel: je Kontext die wirksame Route
+  // Weg-Suche als eigene Ansicht; nur Ziel: Hinweis (0.113.1, keine Liste aller Routen mehr)
   await page.locator("nav.nav a, nav.nav button").filter({ hasText: "Weg-Suche" }).first().click();
   await expect(page.locator("main.main h1")).toHaveText("Weg-Suche");
   const dst = page.getByPlaceholder("Ziel: IP, Netz oder Name");
   await dst.fill("10.20.0.5");
   await page.click("button:has-text('Weg suchen')");
-  const way = page.locator(".card", { hasText: "Geht vor" }).locator("tbody tr");
-  const root = way.filter({ hasText: "fw-05 · VDOM root" });
-  await expect(root).toContainText("10.20.0.0/24");
-  await expect(root).toContainText("Policy-Route #5");
-  await expect(way.filter({ hasText: "leaf-101" })).toContainText("ECMP ×2");
+  await expect(page.locator("main.main")).toContainText("Quelle oder Startpunkt angeben");
   // mit Quelle: Weg Hop für Hop, ECMP über zwei Provider, Namen aus dem IPAM
   await page.getByPlaceholder("Quelle: IP, Netz oder Name").fill("10.20.0.5");
   await dst.fill("203.0.113.10");

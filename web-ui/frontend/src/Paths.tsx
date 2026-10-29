@@ -24,12 +24,10 @@ import {
   InvInterface,
   L2Location,
   L2Segment,
-  lookupRoute,
   NameHit,
   NameResult,
   PathValue,
   resolveName,
-  RouteLookup,
   RoutingNode,
   RulePathSearch,
   snatText,
@@ -48,7 +46,7 @@ import { NatDrawer } from "./Nat";
 import PathExplainDrawer from "./PathExplain";
 import { ObjectDrawer, useDebounced } from "./Objects";
 import RuleDetailDrawer from "./RuleDetail";
-import { Capture, CAPTURE_KEY, Hops, matchText, Missing, Names, policyText, VrfChip, where } from "./Routing";
+import { Capture, CAPTURE_KEY, Hops, matchText, Missing, Names, policyText, VrfChip } from "./Routing";
 import { Dash, Drawer, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 import { FoldTitle, useFolds } from "./fold";
 import { L } from "./i18n";
@@ -1703,80 +1701,6 @@ function TraceCard({
   );
 }
 
-function LookupTable({ rows }: { rows: RouteLookup[] }) {
-  return (
-    <div className="card">
-      <div className="card-body scroll viewport">
-        {rows.length === 0 ? (
-          <Empty title={L("Keine Routing-Daten", "No routing data")}>
-            {L("Noch kein Quellsystem mit Routing eingelesen.", "No source system with routing collected yet.")}
-          </Empty>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>{L("System · Kontext", "System · context")}</th>
-                <th>Route</th>
-                <th>Next-Hop</th>
-                <th>{L("Geht vor", "Takes precedence")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={`${r.source_system_id}|${r.node}|${r.context}|${r.vrf ?? 0}`}>
-                  <td>
-                    {where(r)}
-                    <VrfChip vrf={r.vrf} />
-                    <Missing items={r.missing} />
-                  </td>
-                  <td>
-                    {r.route ? (
-                      <>
-                        <b className="mono">{r.route.prefix}</b>
-                        <div className="faint">
-                          {[r.route.protocol, r.route.distance != null && L(`Distanz ${r.route.distance}`, `Distance ${r.route.distance}`)]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </div>
-                      </>
-                    ) : (
-                      <span className={`chip ${r.missing.length ? "warn" : ""}`}>
-                        {r.missing.length ? L("unbekannt", "unknown") : L("keine Route", "no route")}
-                      </span>
-                    )}
-                  </td>
-                  <td>{r.route ? <Hops hops={r.route.next_hops} /> : <Dash />}</td>
-                  <td>
-                    {r.policy_routes.length ? (
-                      <div className="objs">
-                        {r.policy_routes.map((p, i) => (
-                          <span key={i} title={matchText(p.match)}>
-                            <span className={`chip ${p.certain ? "info" : ""}`}>{policyText(p)}</span>{" "}
-                            <span className="mono">
-                              {[p.gateway, ...p.output_device].filter(Boolean).join(" · ") || "–"}
-                            </span>
-                            {!p.certain && (
-                              <span className="faint">
-                                {L(" (möglich – Ziel über Objekte)", " (possible – destination via objects)")}
-                              </span>
-                            )}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <Dash />
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // Quelle bzw. Ziel: IP, Netz, Name oder Anbindung; `hit` = gewählter Treffer der Namenssuche, bei
 // einer Anbindung `over` = ein anderes ihrer Netze und `fw` = nur diese Firewall (ADR 0019 Ergänzung)
 type Endpoint = { text: string; hit: NameHit | null; over?: string; fw?: number | null };
@@ -1800,7 +1724,14 @@ function RuleChoice({
     <span className="rule-choice-side" data-side={key}>
       <b>{label}</b>{" "}
       {values.length === 0 ? (
-        <span className="faint">any</span>
+        <span className="faint">
+          any
+          {key === "src" && r.src_exit
+            ? L(` – über die Anbindung „${r.src_exit.name}“ (${r.src_exit.ports.join(", ")})`, ` – via the exit “${r.src_exit.name}” (${r.src_exit.ports.join(", ")})`)
+            : key === "src" && r.start
+              ? L(" – Start an der Firewall der Regel", " – start at the firewall of the rule")
+              : ""}
+        </span>
       ) : (
         values.map((v) => (
           <button
@@ -2129,7 +2060,7 @@ type Asked = { ip: string; name?: string; net?: string | null; exit?: string };
 
 // URL der Suche (ADR 0019 Ergänzung): zuerst src, dst, service (wie die Links aus der Applikations-Doku),
 // dann Start, Backup-Wege, die Namen der Eingaben und die Anbindungen
-function searchUrl(src: Asked, dst: Asked, service: string, start: string, slack: string): string {
+function searchUrl(src: Asked, dst: Asked, service: string, start: string, slack: string, startPort = ""): string {
   const p = new URLSearchParams();
   const put = (k: string, v?: string | null) => {
     if (v) p.set(k, v);
@@ -2138,6 +2069,7 @@ function searchUrl(src: Asked, dst: Asked, service: string, start: string, slack
   put("dst", dst.ip);
   put("service", service.trim());
   put("start", start);
+  put("start_port", start ? startPort : "");
   if (slack !== "1") p.set("slack", slack === "" ? "off" : slack);
   put("src_name", src.name);
   put("dst_name", dst.name);
@@ -2163,6 +2095,8 @@ function PathSearch({
 }) {
   const [src, setSrc] = useState<Endpoint>(() => endpointFrom(initial, "src"));
   const [start, setStart] = useState(initial?.start ?? "");
+  // Eingang am Startpunkt (0.113.1): das Interface der Regel, deren Quelle any ist
+  const [startPort, setStartPort] = useState(initial?.start_port ?? "");
   const [dst, setDst] = useState<Endpoint>(() => endpointFrom(initial, "dst"));
   const [choices, setChoices] = useState<{ src?: NameResult; dst?: NameResult }>({});
   const [trace, setTrace] = useState<TraceResult | null>(null);
@@ -2173,7 +2107,6 @@ function PathSearch({
   );
   // tcp/443, udp/53 bzw. Service-Objekt/ACI-Filter (in Links auch `svc`)
   const [service, setService] = useState(initial?.service ?? initial?.svc ?? "");
-  const [rows, setRows] = useState<RouteLookup[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   // Details am Weg im Seitenpanel (ADR 0019 Ergänzung)
@@ -2185,8 +2118,9 @@ function PathSearch({
   const srcNow = src;
   const dstNow = dst;
   const startNow = start;
+  const startPortNow = startPort;
   // `over`: Werte statt des Zustands (Richtung tauschen sucht sofort mit den getauschten)
-  const run = async (over?: { src: Endpoint; dst: Endpoint; start: string; service?: string }) => {
+  const run = async (over?: { src: Endpoint; dst: Endpoint; start: string; service?: string; startPort?: string }) => {
     const src = over?.src ?? srcNow;
     const dst = over?.dst ?? dstNow;
     const svc = over?.service ?? service;
@@ -2194,7 +2128,6 @@ function PathSearch({
     setBusy(true);
     setError(null);
     setTrace(null);
-    setRows(null);
     setChoices({});
     setDetail(null);
     setExplain(null);
@@ -2212,25 +2145,31 @@ function PathSearch({
       const a = { src: named(src, s), dst: named(dst, d) };
       setAsked(a);
       // Eingaben in der URL (#wege?src=…&dst=…&service=…): Zurück bzw. ein neuer Tab stellt die Suche wieder her
-      window.history.replaceState(null, "", searchUrl(a.src, a.dst, svc, start, slack));
+      const port = start && start === (over?.start ?? startNow) ? (over?.startPort ?? startPortNow) : "";
+      window.history.replaceState(null, "", searchUrl(a.src, a.dst, svc, start, slack, port));
       if (s.ip || start || s.exit) {
         const sl = slack === "" ? 0 : Number(slack);
-        setAsks({ dst: d.ip, src: s.ip, start, service: svc, slack: sl, srcExit: s.exit, dstExit: d.exit });
+        setAsks({ dst: d.ip, src: s.ip, start, startPort: port, service: svc, slack: sl, srcExit: s.exit, dstExit: d.exit });
         setTrace(
           await traceRoute(tenantId, {
             dst: d.ip,
             src: s.ip,
             start,
+            startPort: port,
             service: svc,
             slack: slack === "" ? 0 : Number(slack),
             srcExit: s.exit,
             dstExit: d.exit,
           }),
         );
-      } else if (d.ip || d.addr) {
-        setRows(await lookupRoute(tenantId, d.ip || d.addr!));
       } else {
-        throw new Error(L("Quelle oder Start angeben", "Specify a source or a start point"));
+        // 0.113.1 (Anwender: „kein Source angegeben … Liste aller Routen zu der IP, dies braucht es nicht“)
+        throw new Error(
+          L(
+            "Quelle oder Startpunkt angeben – ohne sie sucht die Weg-Suche keinen Weg (die Routen je Gerät stehen unter Routing → Routen).",
+            "Specify a source or a starting point – without them the path search finds no path (the routes per device are under Routing → Routes).",
+          ),
+        );
       }
     } catch (e) {
       setError(e);
@@ -2246,7 +2185,7 @@ function PathSearch({
     setDst(next.dst);
     setStart("");
     setChoices({});
-    if ((trace || rows) && next.dst.text.trim()) void run(next);
+    if (trace && next.dst.text.trim()) void run(next);
   };
   // Anbindung: ein anderes ihrer Netze bzw. eine ihrer Firewalls wählen und gleich neu suchen
   const pickExit = (side: "src" | "dst") => (p: { net: string; fw: number | null }) => {
@@ -2266,15 +2205,21 @@ function PathSearch({
   const pickRule = (r: RulePathSearch, pick: { src?: PathValue | null; dst?: PathValue | null; service?: string }) => {
     const ep = (v: PathValue | null | undefined) =>
       v ? endpointFrom({ src: v.value, ...(v.name ? { src_name: v.name } : {}) }, "src") : endpointOf("");
+    // Quelle any (0.113.1, Anwender: „hier jeweils die Quelle mindestens angeben“): die Anbindung am Eingang der Regel,
+    // sonst der Start an ihrer Firewall – der Weg geht so bis zum Ziel, auch durch eine VIP (DNAT)
+    const anySrc = "src" in pick && !pick.src && r.src.length === 0;
+    const ingress = anySrc && r.src_exit ? endpointFrom({ src_exit: r.src_exit.ref, src_name: r.src_exit.name }, "src") : null;
     const next = {
-      src: "src" in pick ? ep(pick.src) : srcNow,
+      src: ingress ?? ("src" in pick ? ep(pick.src) : srcNow),
       dst: "dst" in pick ? ep(pick.dst) : dstNow,
-      start: "",
+      start: anySrc && !ingress && r.start ? r.start : "src" in pick ? "" : startNow,
+      startPort: anySrc && !ingress && r.start ? (r.ports ?? [])[0] ?? "" : "src" in pick ? "" : startPortNow,
       service: pick.service ?? service,
     };
     setSrc(next.src);
     setDst(next.dst);
-    setStart("");
+    setStart(next.start);
+    setStartPort(next.startPort);
     setService(next.service);
     setFromRule(r);
     if (next.dst.text.trim()) void run(next);
@@ -2314,7 +2259,10 @@ function PathSearch({
         <select
           className="sel"
           value={srcIsExit ? "" : start}
-          onChange={(e) => setStart(e.target.value)}
+          onChange={(e) => {
+            setStart(e.target.value);
+            setStartPort("");
+          }}
           disabled={srcIsExit}
           title={
             srcIsExit
@@ -2466,7 +2414,6 @@ function PathSearch({
         </>
       )}
       </DetailCtx.Provider>
-      {rows && <LookupTable rows={rows} />}
       {asks && explain !== null && (
         <PathExplainDrawer
           tenantId={tenantId}

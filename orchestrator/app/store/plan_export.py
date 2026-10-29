@@ -42,7 +42,10 @@ ZONE_KIND = {
 # Spalten des Zonenplans (0.56.0) von links nach rechts: DC, Edge, Transfer, Core,
 # Distribution, Access, Public
 LAYER = zone_store.LAYER
-GAP, LINE_H, MAX_LINES = 150, 15, 6
+# 0.113.1 (Anwender: draw.io „sehr unübersichtlich … mehr auseinander“): breitere Spalten und
+# mehr Abstand zwischen den Zonen einer Spalte (vorher 150 bzw. 22)
+GAP, LINE_H, MAX_LINES = 200, 15, 6
+ROW_GAP = 36
 RIGHT_KINDS = {"external", "dmz", "shared"}
 NODE_KIND = {"vrf": "ACI-VRF", "vdom": "VDOM", "firewall": "Firewall", "l3": "Router"}
 INTENT = {"allow": ("erlaubt", "allow"), "limited": ("eingeschränkt", "limited"),
@@ -219,7 +222,7 @@ def _layout2(plan: dict) -> dict:
         for z in rest[layer]:
             box = box_of(z, 16 + ci * (ZW + GAP), y)
             boxes.append(box)
-            y += box["h"] + 22
+            y += box["h"] + ROW_GAP
         height = max(height, y)
     offset = [0.0, 0.0]
     if placed:  # an den Rand ruecken
@@ -747,15 +750,19 @@ def _drawio2(lay: dict, title: str, stamp: str, view: str | None = None) -> str:
         end = "block;endFill=1" if e.get("ab") else "none"
         start = "block;startFill=1" if e.get("ba") else "none"
         style = (f"endArrow={end};startArrow={start};html=1;strokeColor={color};fontSize=10;"
-                 "fontFamily=Courier New;")  # fmt: skip
+                 "fontFamily=Courier New;labelBackgroundColor=#ffffff;")  # fmt: skip
         if e.get("flow"):
             style += f"fontColor={FLOW};dashPattern=2 4;"
         elif e.get("intent"):
             style += f"fontColor={color};dashPattern=6 3;"
         a, b = boxes.get(e["a"]), boxes.get(e["b"])
-        if a is not None and b is not None:  # 0.65.1: weich an den Seiten wie in der Ansicht
+        if a is not None and b is not None:
+            # 0.113.1 (Anwender: „ohne die geschwungenen Linien … normal ziehende Linien“, wie
+            # im Grundschema): gerade von Seite zu Seite; liegen beide Enden auf derselben Seite
+            # (rechts herum), rechtwinklig statt im Bogen
+            if (e.get("sides") or ["r", "l"])[0] == (e.get("sides") or ["r", "l"])[1]:
+                style += "edgeStyle=orthogonalEdgeStyle;rounded=0;"
             style += (
-                "edgeStyle=orthogonalEdgeStyle;curved=1;rounded=1;"
                 f"exitX={_rel(e['x1'], a['x'], a['w'])};exitY={_rel(e['y1'], a['y'], a['h'])};"
                 f"entryX={_rel(e['x2'], b['x'], b['w'])};entryY={_rel(e['y2'], b['y'], b['h'])};"
                 "exitDx=0;exitDy=0;entryDx=0;entryDy=0;"
