@@ -735,3 +735,23 @@ tbody tr.group-row td {
 .routing-changes .change-summary { white-space: normal; min-width: 240px; max-width: 520px; font-size: 12.5px; }
 .routing-changes tr.change-detail > td { background: var(--surface-2); padding-top: 4px; padding-bottom: 8px; }
 .routing-changes tr.change-detail table td.mono { white-space: normal; word-break: break-word; }
+
+/* Warum dieser Weg? (0.109.0) */
+.drawer.wide { width: min(900px, 96vw); }
+.critfg { color: var(--crit); }
+.xplain-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.xplain-sec { margin: 0 0 14px; }
+.xplain-sec > h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.xplain-hop { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+.xplain-hop.bad { border-color: var(--crit); }
+.xplain-hop.warn { border-color: var(--warn); }
+.xstep { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; font-size: 13px; line-height: 1.45; }
+.xstep .xmark { flex: 0 0 16px; text-align: center; font-weight: 700; }
+.xstep .xtext { flex: 1; min-width: 0; word-break: break-word; }
+.xstep .xhint { color: var(--muted); }
+.xstep .linkbtn.capture { font-size: 12px; color: var(--accent); padding: 0; margin-top: 2px; }
+.xroutes { margin: 4px 0 2px; font-size: 12px; }
+.xroutes td, .xroutes th { padding: 3px 8px !important; vertical-align: top; }
+.xroutes tr.chosen td { font-weight: 600; }
+.xroutes td.mono { white-space: nowrap; }
+.xexpect { border: 1px dashed var(--border-strong); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; }

@@ -17,6 +17,10 @@
                                  Service-Objekt bzw. ACI-Filter (`FT_https`); Quelle und Ziel
                                  auch als Netz (0.39.0) bzw. als Anbindung (`src_exit=`,
                                  `dst_exit=`, ADR 0019 Ergaenzung)
+- `GET /routing/explain?…&expect=` Warum dieser Weg? (0.109.0): derselbe Weg Hop fuer Hop in
+                                 Saetzen (Routen gewaehlt/verworfen, Next-Hop, Ende mit
+                                 Hinweis), `connection=true` wie bei Verbindungen, `expect`
+                                 = Quellsystem, ueber das der Weg gehen muesste
 - `GET /routing/resolve?q=&type=`  Name bzw. FQDN -> Hosts, Netze und Anbindungen (IPAM,
                                  Objekte, VMs, Inventar, `topo_exit` bzw. erkannt) fuer die
                                  Weg-Suche, seitenweise (`limit`, `offset`)
@@ -41,7 +45,7 @@ Bezeichnung eines Kontexts: eine FortiGate nur mit `root` heisst wie die Firewal
 import ipaddress
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -69,12 +73,14 @@ from app.models import (
     TopoRoute,
 )
 from app.store import (
+    app_paths,
     app_refresh,
     customer_infra,
     exit_ends,
     exits,
     l2_topo,
     l3out_firewall,
+    path_explain,
     paths,
     policy_check,
     resolve,
@@ -592,33 +598,11 @@ def lookup(
 EXIT_REF = r"^(exit|router):[^@\s]+(@\d+)?$"
 
 
-@router.get("/trace")
-def trace(
-    dst: str | None = None,
-    src: str | None = None,
-    start: str | None = Query(None, description="Startpunkt: <Quellsystem>|<Kontext>"),
-    slack: int = Query(1, ge=0, le=3, description="Backup-Wege mit hoechstens so vielen Hops mehr"),
-    service: str | None = Query(
-        None, max_length=200, description="Dienst, z. B. tcp/443, bzw. Service-Objekt FT_https"
-    ),
-    src_exit: str | None = Query(
-        None,
-        max_length=100,
-        pattern=EXIT_REF,
-        description="Anbindung als Quelle: exit:<id> bzw. router:<IP>, optional @<Quellsystem>",
-    ),
-    dst_exit: str | None = Query(
-        None, max_length=100, pattern=EXIT_REF, description="Anbindung als Ziel (wie src_exit)"
-    ),
-    tenant_id: int | None = None,
-    principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session, scope="function"),
-) -> dict:
-    """Weg zum Ziel Hop fuer Hop - ab der Quelle (dort angeschlossen) bzw. dem Startpunkt;
-    Quelle und Ziel als IP bzw. Netz (das Netz als Ganzes, 0.39.0) bzw. als Anbindung (ADR 0019
-    Ergaenzung): als Quelle Start an ihren Firewalls mit ihrem Eingang, Adresse aus ihren Netzen
-    (`src` waehlt ein anderes), als Ziel ihre Netze und je Weg, ob er ueber sie hinausgeht."""
-    tid = _tenant(session, principal, tenant_id)
+def _traced(session: Session, tid: int, dst: str | None, src: str | None, start: str | None,
+            slack: int, service: str | None, src_exit: str | None, dst_exit: str | None
+            ) -> tuple[dict, paths.Graph, str | None, str | None, tuple | None]:  # fmt: skip
+    """Weg wie in der Weg-Suche (auch fuer „Warum dieser Weg?“) -> (Ergebnis, Graph, Quelle,
+    Ziel, Dienst)."""
     if not dst and not dst_exit:
         raise HTTPException(status_code=422, detail=L("dst oder dst_exit angeben",
                                                       "specify dst or dst_exit"))  # fmt: skip
@@ -654,11 +638,88 @@ def trace(
         _exit_notes(result, ends, shown)
     if service and wanted is not None and result["service"] != service.strip().lower():
         result["service_name"] = service.strip()
+    return result, graph, src, dst, wanted
+
+
+@router.get("/trace")
+def trace(
+    dst: str | None = None,
+    src: str | None = None,
+    start: str | None = Query(None, description="Startpunkt: <Quellsystem>|<Kontext>"),
+    slack: int = Query(1, ge=0, le=3, description="Backup-Wege mit hoechstens so vielen Hops mehr"),
+    service: str | None = Query(
+        None, max_length=200, description="Dienst, z. B. tcp/443, bzw. Service-Objekt FT_https"
+    ),
+    src_exit: str | None = Query(
+        None,
+        max_length=100,
+        pattern=EXIT_REF,
+        description="Anbindung als Quelle: exit:<id> bzw. router:<IP>, optional @<Quellsystem>",
+    ),
+    dst_exit: str | None = Query(
+        None, max_length=100, pattern=EXIT_REF, description="Anbindung als Ziel (wie src_exit)"
+    ),
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Weg zum Ziel Hop fuer Hop - ab der Quelle (dort angeschlossen) bzw. dem Startpunkt;
+    Quelle und Ziel als IP bzw. Netz (das Netz als Ganzes, 0.39.0) bzw. als Anbindung (ADR 0019
+    Ergaenzung): als Quelle Start an ihren Firewalls mit ihrem Eingang, Adresse aus ihren Netzen
+    (`src` waehlt ein anderes), als Ziel ihre Netze und je Weg, ob er ueber sie hinausgeht."""
+    tid = _tenant(session, principal, tenant_id)
+    result, graph, src, dst, wanted = _traced(session, tid, dst, src, start, slack, service,
+                                              src_exit, dst_exit)  # fmt: skip
     # Zonen je Hop, Uebergaenge und Absicht Quell-/Zielzone (0.57.0)
     zone_path.annotate(session, tid, result, src, dst, wanted, result.get("service_name"), graph)
     # L2 zwischen den Hops, Anschluss von Quelle und Ziel (0.64.0)
     l2_topo.annotate(session, tid, result, src, dst)
     return result
+
+
+@router.get("/explain")
+def explain(
+    dst: str | None = None,
+    src: str | None = None,
+    start: str | None = Query(None, description="Startpunkt: <Quellsystem>|<Kontext>"),
+    slack: int = Query(1, ge=0, le=3),
+    service: str | None = Query(None, max_length=200),
+    src_exit: str | None = Query(None, max_length=100, pattern=EXIT_REF),
+    dst_exit: str | None = Query(None, max_length=100, pattern=EXIT_REF),
+    connection: bool = Query(False, description="Weg wie bei Verbindungen Ende zu Ende"),
+    starts: Annotated[list[str] | None, Query(max_length=20)] = None,
+    expect: int | None = Query(None, description="Erwartet ueber dieses Quellsystem"),
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Warum dieser Weg? (0.109.0, `store/path_explain.py`): derselbe Weg wie in der Weg-Suche
+    (bzw. mit `connection=true` wie bei Verbindungen Ende zu Ende: ab der Quelle, sonst ab dem
+    Eingang nach dem Rueckweg, sonst ab dem Geraet der Regel `starts`) Hop fuer Hop in Saetzen -
+    Start, Eingang und Routing-Tabelle, Policy-Routen, alle Routen zum Ziel mit Grund, Next-Hop,
+    Ende mit Hinweis; mit `expect` (Quellsystem), ob und wo der Weg von diesem Geraet abbiegt."""
+    tid = _tenant(session, principal, tenant_id)
+    if expect is not None:
+        target = session.get(SourceSystem, expect)
+        if target is None or target.tenant_id != tid:
+            raise HTTPException(status_code=404, detail="source system not found")
+    if connection:
+        if not dst or not src:
+            raise HTTPException(status_code=422, detail=L("src und dst angeben",
+                                                          "specify src and dst"))  # fmt: skip
+        _endpoint(dst, "dst")
+        _endpoint(src, "src")
+        wanted, _note = _service(session, tid, service)
+        graph = paths.Graph(session, tid)
+        checks = policy_check.Checks.load(session, tid)
+        result, _start = app_paths.connection_trace(session, tid, graph, checks, src, dst,
+                                                    wanted, starts or [])  # fmt: skip
+    else:
+        result, graph, src, dst, _wanted = _traced(session, tid, dst, src, start, slack, service,
+                                                   src_exit, dst_exit)  # fmt: skip
+    out = path_explain.explain(session, tid, graph, result, src, dst, expect)
+    out["paths_found"] = len(result.get("paths") or [])
+    return out
 
 
 def _exit_end(graph: paths.Graph, ref: str, what: str) -> exit_ends.End:

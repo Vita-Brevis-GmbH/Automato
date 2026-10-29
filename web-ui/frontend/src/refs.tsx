@@ -74,6 +74,7 @@ export const FINDING_LABEL: Record<string, string> = {
   vpc_mismatch: L("vPC-Paar uneinheitlich", "vPC pair inconsistent"),
   source_stale: L("Quellsystem: Stand veraltet", "Source system: data outdated"),
   source_partial: L("Quellsystem: nur teilweise gelesen", "Source system: only partially collected"),
+  manual: L("Von Hand erfasst", "Captured manually"),
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -236,6 +237,10 @@ export const FINDING_HINT: Record<string, string> = {
     "letzter Lauf mit Teilfehlern: Geräte nicht erreicht, nicht lesbar bzw. Routing-Kontexte unvollständig",
     "last run with partial errors: devices not reached, not readable or routing contexts incomplete",
   ),
+  manual: L(
+    "von Hand erfasster Befund (z. B. aus „Warum dieser Weg?“): etwas in der Konfiguration oder in Automato anzupassen – bleibt bis zur Triage bestehen",
+    "manually captured finding (e.g. from “Why this path?”): something to adjust in the configuration or in Automato – stays until triaged",
+  ),
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -346,6 +351,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "State of the source systems: outdated or only partially collected – Reconciliation → Data quality shows everything",
     ),
     types: ["source_stale", "source_partial"],
+  },
+  {
+    key: "manual",
+    label: L("Von Hand", "Manual"),
+    help: L(
+      "Von Hand erfasste Befunde, z. B. aus „Warum dieser Weg?“ in der Weg-Suche und bei den Verbindungen",
+      "Manually captured findings, e.g. from “Why this path?” in the path search and the connections",
+    ),
+    types: ["manual"],
   },
 ];
 

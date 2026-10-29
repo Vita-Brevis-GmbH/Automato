@@ -662,28 +662,8 @@ def _connection(
     l3: "L3Outs | None" = None,
     zctx=None,
 ) -> dict:
-    # mit Backup-Wegen gleicher Laenge (slack 0): uneinheitliche Wege (0.73.0)
-    res = paths.trace(session, tid, c.dst.ip, c.src.ip, None, 0, c.service, graph=graph,
-                      checks=checks)  # fmt: skip
-    start = None
-    if not res["paths"]:
-        # Quelle an keinem gelesenen Geraet (0.107.0, Anwender: Wege, „welche Routing technisch
-        # keinen Sinn ergeben“): der Weg beginnt, wo der Rueckweg das gelesene Netz verlaesst -
-        # nicht auf irgendeinem Geraet mit einer Regel dafuer
-        entries = entries_of(session, tid, graph, checks, c.src.ip, c.dst.ip)
-        found = paths.trace(session, tid, c.dst.ip, c.src.ip, None, 0, c.service, graph=graph,
-                            checks=checks, entries=entries) if entries else None  # fmt: skip
-        if found and found["paths"]:
-            res = found
-            start = ", ".join(dict.fromkeys(graph.nodes[k].label for k, *_ in entries))
-    if not res["paths"]:
-        for key in c.starts:
-            if paths.parse_key(key) in graph.nodes:
-                res = paths.trace(session, tid, c.dst.ip, c.src.ip, key, 0, c.service,
-                                  graph=graph, checks=checks)  # fmt: skip
-                if res["paths"]:
-                    start = graph.nodes[paths.parse_key(key)].label
-                    break
+    res, start = connection_trace(session, tid, graph, checks, c.src.ip, c.dst.ip, c.service,
+                                  c.starts)  # fmt: skip
     if zctx is not None:  # Zonen je Hop und Absicht zwischen Quell- und Zielzone (0.78.0)
         zctx.annotate(res, c.src.ip, c.dst.ip, c.service)
     active = [p for p in res["paths"] if p.get("kind") != "backup"]
@@ -725,7 +705,46 @@ def _connection(
         "zones": _zones_out(res.get("zones"), first),
         # Teile des Ziel-Netzes, die genauer anders geroutet werden (eigene Verbindungen)
         "parts": parts,
+        # Eingaben des Wegs fuer „Warum dieser Weg?“ (0.109.0, `GET /routing/explain`)
+        "trace": {
+            "src": c.src.ip,
+            "dst": c.dst.ip,
+            "service": _service_text(c.service),
+            "starts": list(c.starts),
+        },  # fmt: skip
     }
+
+
+def connection_trace(session: Session, tid: int, graph: paths.Graph,
+                     checks: policy_check.Checks | None, src: str, dst: str,
+                     service: tuple[str, int | None] | None, starts: list[str]
+                     ) -> tuple[dict, str | None]:  # fmt: skip
+    """Weg einer Verbindung (auch fuer „Warum dieser Weg?“, 0.109.0): ab der Quelle; haengt sie
+    an keinem gelesenen Geraet, ab dem Eingang nach dem Rueckweg (0.107.0), sonst ab dem Geraet
+    der Regel. Mit Backup-Wegen gleicher Laenge (slack 0): uneinheitliche Wege (0.73.0).
+    -> (Ergebnis von `paths.trace`, Start falls nicht an der Quelle)."""
+    res = paths.trace(session, tid, dst, src, None, 0, service, graph=graph,
+                      checks=checks)  # fmt: skip
+    start = None
+    if not res["paths"]:
+        # Quelle an keinem gelesenen Geraet (0.107.0, Anwender: Wege, „welche Routing technisch
+        # keinen Sinn ergeben“): der Weg beginnt, wo der Rueckweg das gelesene Netz verlaesst -
+        # nicht auf irgendeinem Geraet mit einer Regel dafuer
+        entries = entries_of(session, tid, graph, checks, src, dst)
+        found = paths.trace(session, tid, dst, src, None, 0, service, graph=graph,
+                            checks=checks, entries=entries) if entries else None  # fmt: skip
+        if found and found["paths"]:
+            res = found
+            start = ", ".join(dict.fromkeys(graph.nodes[k].label for k, *_ in entries))
+    if not res["paths"]:
+        for key in starts:
+            if paths.parse_key(key) in graph.nodes:
+                res = paths.trace(session, tid, dst, src, key, 0, service, graph=graph,
+                                  checks=checks)  # fmt: skip
+                if res["paths"]:
+                    start = graph.nodes[paths.parse_key(key)].label
+                    break
+    return res, start
 
 
 def entries_of(session: Session, tid: int, graph: paths.Graph, checks: policy_check.Checks,

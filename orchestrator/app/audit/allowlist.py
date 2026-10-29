@@ -36,6 +36,10 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "dictionary_entry.upserted": frozenset({"profile_id", "kind", "key"}),
     "dictionary_entry.deleted": frozenset({"entry_id"}),
     "finding.triaged": frozenset({"finding_id", "status", "customer_roles"}),
+    # von Hand erfasst (0.109.0): ohne Titel und Text (frei eingegeben)
+    "finding.created": frozenset(
+        {"finding_id", "tenant_id", "type", "severity", "source_system_id"}
+    ),  # fmt: skip
     "tenant.created": frozenset({"tenant_id", "name", "code"}),
     "tenant.updated": frozenset(
         {"tenant_id", "code", "audit_reads", "naming_profile_id", "appdoc_foreign_names"}

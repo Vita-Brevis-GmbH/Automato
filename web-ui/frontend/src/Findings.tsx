@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { fetchFindings, fetchFindingSummary, fetchSystems, Finding, FindingSummary, patchFinding, System } from "./api";
 import type { View, ViewParams } from "./App";
 import { customerCan, type Me } from "./auth";
+import FindingDialog from "./FindingDialog";
 import { FINDING_GROUPS, FINDING_HINT, FINDING_LABEL, findingLabel } from "./refs";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
 import { L } from "./i18n";
@@ -279,6 +280,7 @@ export default function Findings({
   const [type, setType] = useState(initialType);
   const [q, setQ] = useState(initialQuery);
   const [open, setOpen] = useState<number | null>(null); // aufgeklappter Befund
+  const [adding, setAdding] = useState(false); // Finding von Hand (0.109.0)
 
   useEffect(() => setType(initialType), [initialType]);
 
@@ -347,9 +349,27 @@ export default function Findings({
   );
   const loaded = findings?.length ?? 0;
 
+  const canAdd = me.isOperator && !me.isCustomer && tenantId !== null;
   return (
     <>
-      <PageHead title="Findings">
+      <PageHead
+        title="Findings"
+        actions={
+          canAdd ? (
+            <button
+              className="btn btn-sm"
+              id="finding-add"
+              onClick={() => setAdding(true)}
+              title={L(
+                "Befund von Hand erfassen (Typ „Von Hand erfasst“): bleibt nach dem Abgleich bestehen, Triage wie jedes Finding",
+                "Capture a finding manually (type “Captured manually”): stays after the reconciliation, triage like any finding",
+              )}
+            >
+              + {L("Finding erfassen", "Capture finding")}
+            </button>
+          ) : undefined
+        }
+      >
         {L(
           <>
             Datenqualität für „{tenantLabel}“: Abgleich der Firewall-/ACI-Daten mit dem IPAM (DDI/NetBox) und der
@@ -435,6 +455,19 @@ export default function Findings({
         </span>
       </div>
       <ErrorBox error={error} prefix="Findings" onClose={() => setError(null)} />
+      {adding && tenantId !== null && (
+        <FindingDialog
+          tenantId={tenantId}
+          draft={{}}
+          systems={systems.map((x) => ({ id: x.id, name: x.name }))}
+          onClose={() => setAdding(false)}
+          onSaved={() => {
+            setAdding(false);
+            void reload();
+            onChanged();
+          }}
+        />
+      )}
       <div className="card">
         <div className="card-body scroll">
           {findings === null ? (

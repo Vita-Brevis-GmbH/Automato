@@ -421,15 +421,16 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.106.0** | Kategorien einfach: Titel, Titel englisch, Source-/Dest-Zone (Zonentypen) im Namenskonzept, drei feste Kategorien; Netzwerkdesign je Zone Zonentyp, Netze, Ausschlüsse, Geräte (Firewall/VDOM, ACI, Anbindungen); Ausgänge und Befund aus Geräten, Routing und Zonenplan; ohne Bereiche, Merkmale, Optionen, Layout (ADR 0035) |
 | **0.107.0** | Module (Kern, Einstellungen, Worker, Gateway, Analyse, Wegsucher, Findings, Doku, Design, Schreibpfad) mit Grenzen-Prüfung in der CI und Schaltung je Mandant; Verbindungen nur nach dem Routing (Befund „Regel nie gebraucht“, Start am Eingang nach dem Rückweg); IPAM im Speicher, Namen der Gegenstellen schneller; Doku je System und Publizierte Dienste entfernt (ADR 0036) |
 | **0.108.0** | Doku und Verbindungen je Applikation als Stand (Fingerabdruck der Eingaben, sofort der letzte Stand, neu im Hintergrund, Vorrechnen nach Läufen und Änderungen, Befunde aktuell); Befunde der Zonen und des Verbunds beim Speichern im Hintergrund, Zonen-Prüfung 13 min → 3 s (ADR 0037) |
+| **0.109.0** | „Warum dieser Weg?“ in Weg-Suche und Verbindungen (Hop für Hop in Sätzen, alle Routen zum Ziel mit Grund, Policy-Routen, Next-Hop, Ende mit Hinweis, Stand des Routings), „Erwartet über …“ ein Gerät, Findings von Hand (bleiben nach dem Abgleich) (ADR 0038) |
 
-### Nächste Arbeiten (Stand 0.108.0)
+### Nächste Arbeiten (Stand 0.109.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
 gleich durch“), bis **0.103.0** (2026-10-28, Rückmeldung ohne Einwand), bis **0.106.0**
 (2026-10-28: „Ansonsten sieht es super aus“; 0.104.0/0.105.0 in 0.106.0 überarbeitet, die zwei
-Testbefunde zu 0.106.0 in 0.107.0), bis **0.107.0** (2026-10-28, „108 go“ ohne Einwand). Zur
-Abnahme steht 0.108.0. Seit 0.104.0 gilt eine Version als abgenommen, sobald
+Testbefunde zu 0.106.0 in 0.107.0), bis **0.107.0** (2026-10-28, „108 go“ ohne Einwand), bis
+**0.108.0** (2026-10-29, Rückmeldung ohne Einwand). Zur Abnahme steht 0.109.0. Seit 0.104.0 gilt eine Version als abgenommen, sobald
 die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
 **Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
@@ -460,6 +461,7 @@ die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md
 | Verbindungen Ende zu Ende: Firewall ohne Verkehr, aber mit denselben Regeln im Weg – „eher ein Finding, dass es Regeln gibt, welche nie gebraucht werden“ (Test 0.106.0) | **umgesetzt in 0.107.0** (nicht in der Verbindung, Befund „Regel nie gebraucht“, Start am Eingang nach dem Rückweg) |
 | Modularität: Worker, Gateway, Doku, Wegsucher, Findings, Analyse als Module, Zonen als Design, je Mandant schaltbar, lesend starr getrennt vom Schreibpfad; Cockpit mit Vorgaben und Basis-Settings vorbereiten; Doku je System und Publizierte Dienste entfernen (2026-10-28) | **erste Stufe in 0.107.0** (ADR 0036: Verzeichnis, CI-Grenzen, Schaltung je Mandant, Karte Module); weitere Stufen siehe unten |
 | „Das Speichern dauert zu lange“, Doku im Hintergrund rechnen (2026-10-28) | **umgesetzt in 0.108.0** (ADR 0037: Stand je Applikation, Vorrechnen, Befunde der Zonen im Hintergrund) |
+| Analyse-Tool für Weg-Suche und Verbindungen: „weshalb dieser Pfad gewählt wird“, verständlich für den Menschen; „Erwartet über …“; Finding-Button zum Erfassen von Hand (2026-10-29) | **umgesetzt in 0.109.0** (ADR 0038: „Warum dieser Weg?“, „Erwartet über …“, Findings von Hand) |
 | BGP-Filter aus den Netzen und Ausschlüssen je Zone ableiten (2026-10-28, „später“) | offen – nur Vorschlag/Export (Prefix-Liste permit/deny je Zone), kein Schreibweg; mit dem Anwender abstimmen |
 
 **Module – nächste Stufen (ADR 0036, Vorschlag):**
@@ -467,8 +469,8 @@ die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md
 | Stufe | Inhalt |
 |---|---|
 | 0.108 | **erledigt in 0.108.0** (ADR 0037): Doku und Verbindungen als Stand mit Fingerabdruck, sofort der letzte Stand, neu im Hintergrund, Vorrechnen; Befunde der Zonen beim Speichern im Hintergrund. |
-| 0.109 | **Schreibpfad mit Nachkontrolle:** nach „Übernehmen“ den Stand über den Lesepfad (Gateway) neu lesen und Zeile für Zeile mit dem Auftrag vergleichen („geschrieben = gelesen?“), Abweichungen als Befund. |
-| 0.110 | **Prüfen vor dem Ändern:** ein geplantes Routing bzw. eine geplante Regel als Überlagerung über den gelesenen Stand legen; Wegsucher und Findings warnen, was sich dadurch ändert (gesperrt, andere Zone, Regel nie gebraucht). |
+| 0.110 | **Schreibpfad mit Nachkontrolle:** nach „Übernehmen“ den Stand über den Lesepfad (Gateway) neu lesen und Zeile für Zeile mit dem Auftrag vergleichen („geschrieben = gelesen?“), Abweichungen als Befund. |
+| 0.111 | **Prüfen vor dem Ändern:** ein geplantes Routing bzw. eine geplante Regel als Überlagerung über den gelesenen Stand legen; Wegsucher und Findings warnen, was sich dadurch ändert (gesperrt, andere Zone, Regel nie gebraucht). |
 | danach | Dateien je Modul in eigene Pakete verschieben, wo es eine Änderung erleichtert; Findings als steckbare Prüfungen; Oberfläche je Modul aufteilen; Cockpit (Mehrmandanten, eigene ADR) mit den Basis-Settings je Mandant. |
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4

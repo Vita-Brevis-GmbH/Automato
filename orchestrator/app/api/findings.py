@@ -5,10 +5,17 @@ Macht Datenqualitaets-/Reconciliation-Befunde sichtbar und **triagierbar**: Stat
 beides mandantsgescoped, Triage auditiert. Kunden-Benutzer triagieren mit der Kunden-Rolle
 `triage` (bzw. hoeher) nur die Findings dieser Kunden (feinere Rollen, ADR 0018). Die
 schreibende Bereinigung am Zielsystem (DDI/Regel) folgt mit dem Schreibpfad (ADR 0002).
+
+Seit 0.109.0 auch **von Hand erfasst** (`POST /findings`, Operator, Typ `manual`): z. B. aus
+„Warum dieser Weg?“, wenn etwas anzupassen ist - mit Titel, Text, Schweregrad und dem Weg; kein
+Abgleich rechnet bzw. löscht ihn, er bleibt bis zur Triage (erledigt bzw. ignoriert).
 """
 
+from datetime import UTC, datetime
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -25,7 +32,14 @@ from app.auth import capabilities as caps
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
-from app.models import FindingStatus
+from app.models import (
+    Finding,
+    FindingStatus,
+    FindingType,
+    Severity,
+    SourceSystem,
+    SubjectKind,
+)
 from app.schemas.findings import FindingOut
 from app.store import finding_text
 from app.store import findings as findings_store
@@ -36,6 +50,21 @@ router = APIRouter(prefix="/findings", tags=["findings"])
 class FindingPatch(BaseModel):
     status: str | None = None
     note: str | None = None
+
+
+class ManualFindingIn(BaseModel):
+    """Von Hand erfasster Befund (0.109.0): Titel und Text frei, dazu Weg und Gerät."""
+
+    tenant_id: int
+    title: str = Field(min_length=3, max_length=300)
+    text: str | None = Field(default=None, max_length=4000)
+    severity: Literal["info", "warning", "error"] = "warning"
+    source_system_id: int | None = None  # Gerät, an dem etwas anzupassen ist
+    hop: str | None = Field(default=None, max_length=300)  # z. B. „fw-01 · VDOM root“
+    src: str | None = Field(default=None, max_length=100)
+    dst: str | None = Field(default=None, max_length=100)
+    service: str | None = Field(default=None, max_length=100)
+    note: str | None = Field(default=None, max_length=4000)
 
 
 def _finding_out(f, principal: Principal | None = None) -> FindingOut:
@@ -105,6 +134,55 @@ def list_findings(
     response.headers["X-Total-Count"] = str(findings_store.count_findings(session, **flt))
     rows = findings_store.list_findings(session, limit=limit, offset=offset, **flt)
     return [_finding_out(f, principal) for f in rows]
+
+
+@router.post("", response_model=FindingOut, status_code=201)
+def create_finding(
+    body: ManualFindingIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Befund von Hand erfassen (0.109.0, Operator; Kunden-Benutzer nicht): Typ `manual`, Subjekt
+    der Weg (`Quelle → Ziel`) bzw. das Gerät; im Audit ohne Titel und Text."""
+    tid = tenant_scope(principal, body.tenant_id)
+    if principal.is_customer:
+        raise HTTPException(status_code=403, detail="forbidden")
+    if body.source_system_id is not None:
+        src = session.get(SourceSystem, body.source_system_id)
+        if src is None or src.tenant_id != tid:
+            raise HTTPException(status_code=404, detail="source system not found")
+    text = lambda v: (v or "").strip() or None  # noqa: E731
+    title = text(body.title)
+    if title is None or len(title) < 3:
+        raise HTTPException(status_code=422, detail="title too short")
+    path = f"{text(body.src) or '?'} → {text(body.dst) or '?'}" if body.src or body.dst else None
+    subject = path or text(body.hop) or title
+    detail = {k: v for k, v in {
+        "title": title, "text": text(body.text), "src": text(body.src), "dst": text(body.dst),
+        "service": text(body.service), "hop": text(body.hop), "by": principal.subject,
+    }.items() if v}  # fmt: skip
+    now = datetime.now(UTC)
+    f = Finding(tenant_id=tid, type=FindingType.MANUAL, severity=Severity(body.severity),
+                status=FindingStatus.OPEN,
+                subject_kind=SubjectKind.PATH if path else SubjectKind.NODE,
+                subject_id=subject[:300], source_system_id=body.source_system_id, detail=detail,
+                note=text(body.note), first_seen=now, last_seen=now)  # fmt: skip
+    session.add(f)
+    session.flush()
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="finding.created",
+        subject=str(f.id),
+        detail={
+            "finding_id": f.id,
+            "tenant_id": tid,
+            "type": f.type.value,
+            "severity": f.severity.value,
+            "source_system_id": f.source_system_id,
+        },  # fmt: skip
+    )
+    return _finding_out(f, principal)
 
 
 @router.patch("/{finding_id}", response_model=FindingOut)

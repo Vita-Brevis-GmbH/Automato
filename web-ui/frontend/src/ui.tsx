@@ -464,11 +464,13 @@ export function Drawer({
   sub,
   onClose,
   children,
+  wide = false,
 }: {
   title: ReactNode;
   sub?: ReactNode;
   onClose: () => void;
   children: ReactNode;
+  wide?: boolean; // breites Panel für Tabellen (z. B. „Warum dieser Weg?“)
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -478,7 +480,7 @@ export function Drawer({
   return (
     <>
       <div className="drawer-scrim" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-modal="true">
+      <aside className={`drawer${wide ? " wide" : ""}`} role="dialog" aria-modal="true">
         <div className="drawer-head">
           <div>
             <h2>{title}</h2>

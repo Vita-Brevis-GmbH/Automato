@@ -1238,6 +1238,8 @@ def _sync_findings(session: Session, tenant_id: int, issues: list[Issue],
     if types is not None:
         stmt = stmt.where(Finding.type.in_(list(types)))
     for f in session.scalars(stmt):
+        if f.type == FindingType.MANUAL:
+            continue  # von Hand erfasst (0.109.0): kein Abgleich rechnet ihn, er bleibt
         key = (f.type, f.subject_kind, f.subject_id, f.source_system_id)
         if keep is not None and key not in wanted and keep(f):
             continue

@@ -1705,6 +1705,20 @@ export const fetchFindingSummary = (tenantId?: number | null, type?: string, q?:
   getJSON<FindingSummary>(`/api/findings/summary${cq({ tenant_id: tenantId, type, q: q?.trim() })}`);
 export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
   sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);
+// Finding von Hand (0.109.0), z. B. aus „Warum dieser Weg?“; bleibt nach dem Abgleich bestehen
+export interface ManualFindingInput {
+  tenant_id: number;
+  title: string;
+  text?: string;
+  severity: "info" | "warning" | "error";
+  source_system_id?: number | null;
+  hop?: string;
+  src?: string;
+  dst?: string;
+  service?: string | null;
+  note?: string;
+}
+export const createFinding = (body: ManualFindingInput) => sendJSON<Finding>("/api/findings", "POST", body);
 
 // Applikationen
 export const fetchApps = (tenantId: number) =>
@@ -1863,6 +1877,8 @@ export interface AppConnection {
   // Netz als Ziel (0.79.1): genauer geroutete Teile (eigene Verbindungen) bzw. Teil von
   parts?: string[];
   part_of?: string;
+  // Eingaben des Wegs für „Warum dieser Weg?“ (0.109.0)
+  trace?: { src: string; dst: string; service: string | null; starts: string[] };
 }
 export interface AppConnZones {
   src: string[];
@@ -2647,6 +2663,72 @@ export const traceRoute = (
   getJSON<TraceResult>(
     `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim() || undefined, src: opts.src?.trim() || undefined, start: opts.start || undefined, slack: opts.slack, service: opts.service?.trim() || undefined, src_exit: opts.srcExit || undefined, dst_exit: opts.dstExit || undefined })}`,
   );
+// Warum dieser Weg? (0.109.0): derselbe Weg Hop für Hop in Sätzen – Start, Eingang und Tabelle,
+// Policy-Routen, alle Routen zum Ziel (gewählt bzw. verworfen mit Grund), Next-Hop, Ende mit Hinweis;
+// `expect` = Gerät (Quellsystem), über das der Verkehr gehen müsste
+export interface ExplainRoute {
+  prefix: string;
+  protocol: string | null;
+  distance: number | null;
+  metric: number | null;
+  table: string; // rib | bgp | static
+  next_hops: { ip: string | null; interface: string | null; owner: string | null }[];
+  chosen: boolean;
+  why: string;
+}
+export interface ExplainStep {
+  kind: string; // start | reached | group | table | nat | lb | policy | backup | routes | leak | next_hop | end | expect | own | note
+  status: "ok" | "info" | "warn" | "stop";
+  text: string;
+  hint?: string;
+  items?: ExplainRoute[];
+}
+export interface ExplainHop {
+  label: string;
+  key: string;
+  source?: string;
+  source_system_id?: number | null;
+  read_at?: string | null; // Routing des Geräts gelesen
+  stale?: boolean;
+  steps: ExplainStep[];
+}
+export interface PathExplanation {
+  start: ExplainStep[];
+  paths: { kind: string; hops: ExplainHop[]; end: ExplainStep }[];
+  expect?: { source_system_id: number; device: string; on_path: boolean; steps: ExplainStep[] };
+  paths_found: number;
+}
+export interface ExplainQuery {
+  dst?: string;
+  src?: string;
+  start?: string;
+  slack?: number;
+  service?: string | null;
+  srcExit?: string;
+  dstExit?: string;
+  connection?: boolean; // Weg wie bei Verbindungen Ende zu Ende
+  starts?: string[];
+}
+export const explainPath = (tenantId: number, q: ExplainQuery, expect?: number | null) => {
+  const params = new URLSearchParams(
+    Object.entries({
+      tenant_id: tenantId,
+      dst: q.dst?.trim(),
+      src: q.src?.trim(),
+      start: q.start,
+      slack: q.slack,
+      service: q.service?.trim(),
+      src_exit: q.srcExit,
+      dst_exit: q.dstExit,
+      connection: q.connection ? "true" : undefined,
+      expect: expect ?? undefined,
+    })
+      .filter(([, v]) => v !== undefined && v !== null && v !== "")
+      .map(([k, v]) => [k, String(v)]),
+  );
+  (q.starts ?? []).forEach((s) => params.append("starts", s));
+  return getJSON<PathExplanation>(`/api/routing/explain?${params.toString()}`);
+};
 export const fetchPeers = (tenantId: number) => getJSON<TopoPeer[]>(`/api/routing/peers${cq({ tenant_id: tenantId })}`);
 export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha${cq({ tenant_id: tenantId })}`);
 export const fetchPolicyRoutes = (tenantId: number) =>

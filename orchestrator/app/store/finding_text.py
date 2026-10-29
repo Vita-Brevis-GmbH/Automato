@@ -608,6 +608,8 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
         on = L(f" auf {d['source']}{in_vdom}", f" on {d['source']}{in_vdom}")
     if ftype == "unmatched_object":
         return _unmatched(subject, d)
+    if ftype == "manual":
+        return _manual(subject, d)
     if ftype in _TOPO_TEXT:
         return _TOPO_TEXT[ftype](subject, d)
     if ftype in _OBJECT_TEXT:
@@ -621,6 +623,20 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
     if ftype in _SOURCE_TEXT:
         return _SOURCE_TEXT[ftype](subject, d)
     return subject, ""
+
+
+def _manual(subject: str, d: dict) -> tuple[str, str]:
+    """Von Hand erfasst (0.109.0): Titel und Text so, wie sie eingegeben wurden; dazu der Weg."""
+    parts = [d.get("text") or ""]
+    if d.get("src") or d.get("dst"):
+        svc = f" ({d['service']})" if d.get("service") else ""
+        parts.append(L(f"Weg: {d.get('src') or '?'} → {d.get('dst') or '?'}{svc}",
+                       f"Path: {d.get('src') or '?'} → {d.get('dst') or '?'}{svc}"))  # fmt: skip
+    if d.get("hop"):
+        parts.append(L(f"Bei: {d['hop']}", f"At: {d['hop']}"))
+    if d.get("by"):
+        parts.append(L(f"Erfasst von {d['by']}", f"Captured by {d['by']}"))
+    return d.get("title") or subject, " · ".join(x for x in parts if x)
 
 
 # -- Objekte und Namenskonvention ---------------------------------------------------------

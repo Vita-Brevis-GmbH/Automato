@@ -13,6 +13,7 @@
 import { createContext, Fragment, ReactNode, useContext, useEffect, useRef, useState } from "react";
 import {
   ExitKind,
+  ExplainQuery,
   fetchInventory,
   fetchObjects,
   fetchRoutes,
@@ -41,6 +42,7 @@ import {
 } from "./api";
 import type { View, ViewParams } from "./App";
 import { NatDrawer } from "./Nat";
+import PathExplainDrawer from "./PathExplain";
 import { ObjectDrawer, useDebounced } from "./Objects";
 import RuleDetailDrawer from "./RuleDetail";
 import { Capture, CAPTURE_KEY, Hops, matchText, Missing, Names, policyText, VrfChip, where } from "./Routing";
@@ -1297,12 +1299,14 @@ function TraceCard({
   title,
   compare,
   onCapture,
+  onExplain,
 }: {
   path: TracePath;
   index: number;
   title: string;
   compare?: boolean; // mehrere Wege: Länge im Vergleich zeigen
   onCapture?: (c: Capture) => void;
+  onExplain?: () => void; // „Warum dieser Weg?“ (0.109.0)
 }) {
   const [cls, label] = END[path.end.kind] ?? ["", path.end.kind];
   const last = path.hops[path.hops.length - 1];
@@ -1363,10 +1367,23 @@ function TraceCard({
           {path.end.text}
           {path.end.also?.length ? L(` bzw. ${path.end.also.join(" bzw. ")}`, ` or ${path.end.also.join(" or ")}`) : ""}
         </span>
+        {onExplain && (
+          <button
+            className="btn btn-ghost btn-sm trace-explain"
+            style={{ marginLeft: "auto" }}
+            title={L(
+              "Hop für Hop in Sätzen: Eingang, Policy-Routen, alle Routen zum Ziel mit Grund (gewählt bzw. verworfen), Next-Hop, Ende – und „Erwartet über …“",
+              "Hop by hop in sentences: incoming, policy routes, all routes to the destination with reason (chosen or rejected), next-hop, end – and “Expected via …”",
+            )}
+            onClick={onExplain}
+          >
+            {L("Warum dieser Weg?", "Why this path?")}
+          </button>
+        )}
         {capturable && (
           <button
             className="btn btn-sm"
-            style={{ marginLeft: "auto" }}
+            style={onExplain ? undefined : { marginLeft: "auto" }}
             title={L(
               "Anbindung nach aussen erfassen – mit allen erkannten Routern und Firewalls dieser Anbindung; der Weg endet dann dort bzw. geht nach manuellen Routen weiter",
               "Capture exit to the outside – with all detected routers and firewalls of this exit; the path then ends there or continues along manual routes",
@@ -2073,11 +2090,13 @@ function PathSearch({
   nodes,
   onCapture,
   initial,
+  canEdit = false,
 }: {
   tenantId: number;
   nodes: RoutingNode[];
   onCapture?: (c: Capture) => void;
   initial?: ViewParams; // aus einem Link (#wege?src=…&dst=…&service=…), z. B. Applikations-Doku
+  canEdit?: boolean; // Operator: Finding von Hand erfassen (0.109.0)
 }) {
   const [src, setSrc] = useState<Endpoint>(() => endpointFrom(initial, "src"));
   const [start, setStart] = useState(initial?.start ?? "");
@@ -2096,6 +2115,9 @@ function PathSearch({
   const [busy, setBusy] = useState(false);
   // Details am Weg im Seitenpanel (ADR 0019 Ergänzung)
   const [detail, setDetail] = useState<DetailRef | null>(null);
+  // „Warum dieser Weg?“ (0.109.0): dieselben Eingaben wie die letzte Suche, gezeigter Weg
+  const [asks, setAsks] = useState<ExplainQuery | null>(null);
+  const [explain, setExplain] = useState<number | null>(null);
   const systemName = (id: number) => nodes.find((n) => n.source_system_id === id)?.source ?? `#${id}`;
   const srcNow = src;
   const dstNow = dst;
@@ -2111,6 +2133,7 @@ function PathSearch({
     setRows(null);
     setChoices({});
     setDetail(null);
+    setExplain(null);
     try {
       const [s, d] = await Promise.all([
         toIp(tenantId, src, L("Quelle", "Source"), setSrc, (h) => setChoices((c) => ({ ...c, src: h }))),
@@ -2127,6 +2150,8 @@ function PathSearch({
       // Eingaben in der URL (#wege?src=…&dst=…&service=…): Zurück bzw. ein neuer Tab stellt die Suche wieder her
       window.history.replaceState(null, "", searchUrl(a.src, a.dst, service, start, slack));
       if (s.ip || start || s.exit) {
+        const sl = slack === "" ? 0 : Number(slack);
+        setAsks({ dst: d.ip, src: s.ip, start, service, slack: sl, srcExit: s.exit, dstExit: d.exit });
         setTrace(
           await traceRoute(tenantId, {
             dst: d.ip,
@@ -2341,6 +2366,7 @@ function PathSearch({
                     title={pathTitle(shown, p)}
                     compare={shown.length > 1}
                     onCapture={onCapture}
+                    onExplain={asks ? () => setExplain(trace.paths.indexOf(p)) : undefined}
                   />
                 ))}
               </>
@@ -2350,6 +2376,16 @@ function PathSearch({
       )}
       </DetailCtx.Provider>
       {rows && <LookupTable rows={rows} />}
+      {asks && explain !== null && (
+        <PathExplainDrawer
+          tenantId={tenantId}
+          query={asks}
+          pathIndex={explain}
+          nodes={nodes}
+          canCapture={canEdit}
+          onClose={() => setExplain(null)}
+        />
+      )}
       {detail && (
         <PathDetailDrawer
           d={detail}
@@ -2425,7 +2461,7 @@ export default function Paths({
         )}
       </PageHead>
       <ErrorBox error={error} prefix={L("Routing laden", "Load routing")} />
-      {nodes === null ? <Loading /> : <PathSearch tenantId={tenantId} nodes={nodes} onCapture={canEdit ? capture : undefined} initial={params} />}
+      {nodes === null ? <Loading /> : <PathSearch tenantId={tenantId} nodes={nodes} onCapture={canEdit ? capture : undefined} initial={params} canEdit={canEdit} />}
     </>
   );
 }

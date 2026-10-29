@@ -529,7 +529,15 @@ export default function ApplicationDocView({
       {/* Verbindungen Ende zu Ende (0.45.0) – zeigt die Infrastruktur, nicht für Kunden-Benutzer; Modul Wegsucher (0.107.0) */}
       {!me.isCustomer && wegeOn && (
         <div className={off("connections").trim()}>
-          <ConnectionsCard appId={id} reload={reload + tick} onRule={setRule} onGo={onGo} fold={fold("connections")} />
+          <ConnectionsCard
+            appId={id}
+            reload={reload + tick}
+            onRule={setRule}
+            onGo={onGo}
+            fold={fold("connections")}
+            tenantId={a.tenant_id}
+            canCapture={me.isOperator && !me.isCustomer}
+          />
         </div>
       )}
 

@@ -205,6 +205,7 @@ MODULES: tuple[Module, ...] = (
             "app_paths",
             "app_plan",
             "zone_path",
+            "path_explain",  # Warum dieser Weg? (0.109.0)
         ),
         views=("wege",),
     ),  # fmt: skip
@@ -283,7 +284,8 @@ MODULES: tuple[Module, ...] = (
 BY_KEY = {m.key: m for m in MODULES}
 # Teile eines Moduls, die bei einem anderen liegen: Pfad-Teil -> Modul (Verbindungen der
 # Applikations-Doku sind der Wegsucher, die Weg-Suche liegt in der Routing-API)
-PATHS = {"/connections": "wege", "/routing/trace": "wege", "/routing/resolve": "wege"}
+PATHS = {"/connections": "wege", "/routing/trace": "wege", "/routing/resolve": "wege",
+         "/routing/explain": "wege"}  # fmt: skip
 
 
 def _rows(session: Session, tenant_id: int) -> dict[str, bool]:

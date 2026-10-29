@@ -372,6 +372,21 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       Netz bzw. eine der Firewalls wählen (mehrere Firewalls = je ein Weg, Verbund als ein Hop).
       Als Ziel zeigt jeder Weg, ob er über die Anbindung hinausgeht („über die Anbindung“ bzw.
       Hinweis); das Routing lenkt die Anbindung nicht um.
+    - **Warum dieser Weg? (0.109.0):** der Knopf an jeder Weg-Karte öffnet rechts den Weg Hop für
+      Hop in Sätzen – Start (wo die Quelle angeschlossen ist), je Hop Eingang mit Zone und
+      Routing-Tabelle, NAT, Policy-Routen bzw. SD-WAN-Regeln (passt sicher, möglich, keine
+      passt), **alle Routen zum Ziel** in einer Tabelle (gewählt bzw. verworfen mit Grund:
+      kürzeres Präfix, höhere Distanz, nur BGP-Tabelle, statische Route nicht aktiv, Policy-Route
+      geht vor), der Next-Hop und wem er gehört, am Ende das Ergebnis mit Hinweis (fehlende
+      Route, unbekannter Next-Hop mit IPAM-Name, Schleife, Default-Route nach aussen). Je Hop
+      steht, wann das Routing des Geräts gelesen wurde (orange = alt). Grün = passt, orange =
+      prüfen, rot = hier endet bzw. bricht der Weg. **„Erwartet über …“** wählt ein Gerät, über das
+      der Verkehr gehen müsste: liegt es auf dem Weg, steht der Hop; sonst zeigt die Erklärung,
+      wo der Weg an diesem Gerät vorbeigeht (direkt verbunden, Netz und Interface), welche Route
+      über das Gerät es gäbe und warum sie verliert – bzw. dass sie fehlt –, und wie das Gerät
+      selbst Ziel und Rückweg routet. Als Operator „+ Als Finding erfassen“ an jedem orangen bzw.
+      roten Schritt (vorausgefüllt mit Satz, Hinweis, Gerät und Weg) bzw. „+ Finding erfassen“
+      oben (frei). Rein lesend; erfasst wird nur in Automato.
     - **Quelle und Ziel als Name** (0.35.0): IP, Netz oder Name bzw. FQDN. Ab zwei Zeichen
       schlägt das Feld Treffer vor – DNS-Namen aus dem IPAM (auch nur das erste Label,
       `web01`), Adressobjekte der Firewalls (auch ohne Präfix, `web01` findet `H_web01`;
@@ -955,6 +970,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       Verbindung den Weg mit den entscheidenden Regeln und die Abweichung ausgeschrieben.
     - Liegt die Quelle an keinem gelesenen Gerät (Internet, Partner), beginnt der Weg auf dem
       Gerät der Regel. „In der Weg-Suche öffnen“ zeigt den ganzen Weg mit allen Varianten.
+      **„Warum dieser Weg?“** (0.109.0) erklärt denselben Weg wie die Verbindung Hop für Hop (wie
+      in der Weg-Suche, mit „Erwartet über …“ und „Als Finding erfassen“).
     - **Zonen (0.78.0):** mit logischen Zonen steht unter dem Weg „Zonen: Server → Edge
       Internet → Public“ (die Zonen auf dem Weg, sonst die von Quelle und Ziel) und die Absicht
       zwischen Quell- und Zielzone als Chip (grün = passt, rot = gegen die Absicht, orange =
@@ -1186,6 +1203,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   öffentliche Adresse im Interface-Netz am WAN-Anschluss bleibt ein Befund, ebenso das WAN-Netz
   selbst („Subnetz fehlt im IPAM“), private Adressen und VIPs. Steht die Adresse später im
   IPAM, gilt sie wieder als gefunden.
+  **Finding von Hand (0.109.0):** „+ Finding erfassen“ oben (Operator, nicht für Kunden-Benutzer)
+  bzw. „Als Finding erfassen“ in „Warum dieser Weg?“: was nicht stimmt, was anzupassen ist,
+  Schwere, Gerät, Quelle/Ziel/Dienst. Typ „Von Hand erfasst“ (Kategorie „Von Hand“); der Abgleich
+  nach einem Lauf lässt es stehen, Triage wie bei jedem Finding (z. B. „erledigt“, sobald die
+  Konfiguration angepasst ist). Im Audit `finding.created` ohne Titel und Text.
 - **Abgleich:** Referenzquellen des Mandanten (führend/Anreicherung, eingelesen?), Kacheln je
   Befund-Typ (Klick → Findings vorgefiltert): nicht im IPAM, Name ≠ DNS-Name, Subnetz fehlt
   im IPAM, VLAN weicht ab, Namenskonvention, Präfix/Typ, doppelte Werte, unbenutzte

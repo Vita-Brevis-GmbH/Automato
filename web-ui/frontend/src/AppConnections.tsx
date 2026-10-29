@@ -20,6 +20,7 @@ import {
   snatText,
 } from "./api";
 import { Fold, FoldTitle } from "./fold";
+import PathExplainDrawer from "./PathExplain";
 import { Verdict, VERDICT } from "./Paths";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, Icon, Loading, Note } from "./ui";
 import { L } from "./i18n";
@@ -325,7 +326,7 @@ function HopChain({ hops }: { hops: AppConnHop[] }) {
   );
 }
 
-function ConnDetail({ c, onRule, onGo }: { c: AppConnection; onRule: (id: number) => void; onGo?: Go }) {
+function ConnDetail({ c, onRule, onGo, onExplain }: { c: AppConnection; onRule: (id: number) => void; onGo?: Go; onExplain?: () => void }) {
   const params = { src: c.src.ip, dst: c.dst.ip, ...(c.service ? { service: c.service } : {}) };
   return (
     <div className="conn-detail">
@@ -470,7 +471,19 @@ function ConnDetail({ c, onRule, onGo }: { c: AppConnection; onRule: (id: number
           ))}
         </ul>
       </div>
-      <div className="no-print" style={{ marginTop: 6 }}>
+      <div className="no-print" style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {onExplain && (
+          <button
+            className="btn btn-ghost btn-sm conn-explain"
+            onClick={onExplain}
+            title={L(
+              "Hop für Hop in Sätzen, warum die Verbindung diesen Weg nimmt – mit allen Routen zum Ziel und „Erwartet über …“",
+              "Hop by hop in sentences why the connection takes this path – with all routes to the destination and “Expected via …”",
+            )}
+          >
+            {L("Warum dieser Weg?", "Why this path?")}
+          </button>
+        )}
         {onGo ? (
           <button className="btn btn-ghost btn-sm" onClick={() => onGo("wege", params)}>
             <Icon name="route" size={14} /> {L("In der Weg-Suche öffnen", "Open in path search")}
@@ -869,17 +882,22 @@ export default function ConnectionsCard({
   onGo,
   onData,
   fold,
+  tenantId,
+  canCapture = false,
 }: {
   appId: number;
   reload: number;
   onRule: (id: number) => void;
   onGo?: Go;
+  tenantId?: number; // „Warum dieser Weg?“ (0.109.0)
+  canCapture?: boolean; // Operator: Finding von Hand erfassen
   onData?: (d: AppConnections | null) => void; // für Export der Doku (0.59.0)
   fold?: Fold; // 0.73.0: Bereich zuklappbar
 }) {
   const [data, setData] = useState<AppConnections | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [explain, setExplain] = useState<AppConnection | null>(null);
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<Picked>({});
@@ -1158,7 +1176,7 @@ export default function ConnectionsCard({
                   {open === c.key && (
                     <tr className="detail-row">
                       <td colSpan={8}>
-                        <ConnDetail c={c} onRule={onRule} onGo={onGo} />
+                        <ConnDetail c={c} onRule={onRule} onGo={onGo} onExplain={tenantId != null ? () => setExplain(c) : undefined} />
                       </td>
                     </tr>
                   )}
@@ -1170,6 +1188,17 @@ export default function ConnectionsCard({
       </div>
       )}
       </>
+      )}
+      {explain && tenantId != null && (
+        <PathExplainDrawer
+          tenantId={tenantId}
+          query={{
+            ...(explain.trace ?? { src: explain.src.ip, dst: explain.dst.ip, service: explain.service, starts: [] }),
+            connection: true,
+          }}
+          canCapture={canCapture}
+          onClose={() => setExplain(null)}
+        />
       )}
     </div>
   );

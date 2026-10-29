@@ -452,6 +452,49 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   await expect(finding).toContainText("über fw-09 erlaubt; über fw-10 gesperrt");
 });
 
+// „Warum dieser Weg?“ bei einer Verbindung (0.109.0): derselbe Weg wie in der Doku, Hop für Hop erklärt;
+// Finding von Hand auf der Seite Findings (Speichern abgefangen, den Server prüft test_path_explain.py)
+test("Applikation: Verbindung erklärt (Warum dieser Weg?) und Finding von Hand (0.109.0)", async ({ page }) => {
+  await open(page);
+  const card = page.locator("#app-connections");
+  await card.locator("tbody tr.clickable").filter({ hasText: "EN_rt" }).click();
+  await card.locator("tr.detail-row button.conn-explain").click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer.locator("h2")).toHaveText("Warum dieser Weg?");
+  await expect(drawer.locator(".drawer-head .sub")).toContainText("→ 10.10.10.5");
+  await expect(drawer.locator("#xplain-start")).toContainText("Start bei apic-01 · VRF TE:VRF1: als Startpunkt gewählt");
+  await expect(drawer.locator(".xplain-hop").first()).toContainText("apic-01");
+  await expect(drawer.locator("#xplain-end")).toBeVisible();
+  await expect(drawer.locator("#xplain-capture")).toBeVisible();
+  await drawer.locator("button.close").click();
+  await expect(drawer).toHaveCount(0);
+
+  let posted: Record<string, unknown> | null = null;
+  await page.route("**/api/findings", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    posted = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: 4712, tenant_id: 1, type: "manual", severity: "error", status: "open", subject_kind: "node",
+        subject_id: "fw-08", source_system_id: null, detail: {}, message: "Route fehlt", hint: null, note: null,
+        first_seen: null, last_seen: null,
+      }),
+    });
+  });
+  await page.goto("/#findings");
+  await page.locator("#finding-add").click();
+  const dialog = page.locator(".modal");
+  await dialog.locator("#finding-title").fill("Route fehlt");
+  await dialog.locator("#finding-severity").selectOption("error");
+  await dialog.locator("#finding-system").selectOption({ label: "fw-08" });
+  await dialog.locator("#finding-save").click();
+  await expect(dialog).toHaveCount(0);
+  expect(posted).toMatchObject({ tenant_id: 1, title: "Route fehlt", severity: "error" });
+  expect(typeof posted!["source_system_id"]).toBe("number");
+});
+
 test("Applikation: Verbindungen nach Urteil, Regeln und Hinweisen filtern (0.80.0)", async ({ page }) => {
   await open(page);
   const card = page.locator("#app-connections");

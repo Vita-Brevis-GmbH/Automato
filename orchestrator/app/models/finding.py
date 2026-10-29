@@ -104,6 +104,8 @@ class FindingType(enum.StrEnum):
     # (Geraete nicht erreicht, nicht lesbar, Routing-Kontexte unvollstaendig)
     SOURCE_STALE = "source_stale"
     SOURCE_PARTIAL = "source_partial"
+    # von Hand erfasst (0.109.0, z. B. aus „Warum dieser Weg?“): bleibt, bis jemand ihn erledigt
+    MANUAL = "manual"
 
 
 class Severity(enum.StrEnum):
@@ -133,6 +135,7 @@ class SubjectKind(enum.StrEnum):
     NAT = "nat"  # VIP bzw. IP-Pool (`<Quellsystem>|<VDOM>|<Art>|<Familie>|<Name>`, 0.72.0)
     ZONE = "zone"  # logische Zone (Name, 0.78.0)
     SOURCE = "source"  # Quellsystem (Name; Datenqualitaet, ADR 0029)
+    PATH = "path"  # Weg `<Quelle> → <Ziel>` (von Hand erfasst, 0.109.0)
 
 
 class Finding(Base):

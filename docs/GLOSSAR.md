@@ -53,6 +53,7 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Stand veraltet / nur teilweise gelesen | data outdated / only partially collected |
 | Stichprobe | Sample |
 | Befund, Findings | Finding, findings |
+| Finding erfassen, von Hand erfasst | Capture finding, captured manually |
 | Hinweis / Warnung / Fehler | Note / warning / error |
 | offen / bestätigt / ignoriert | open / acknowledged / ignored |
 | Kennzahlen | Key figures |
@@ -83,6 +84,9 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 |---|---|
 | Weg-Suche | Path search |
 | Weg, Hop | Path, hop |
+| Warum dieser Weg? | Why this path? |
+| Erwartet über … | Expected via … |
+| gewählt / verworfen (Route) | chosen / rejected |
 | erlaubt / gesperrt / abhängig | allowed / blocked / depends |
 | möglich / unmöglich / unbekannt | possible / impossible / unknown |
 | implizit gesperrt | implicitly denied |

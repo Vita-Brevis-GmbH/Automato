@@ -7,6 +7,29 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.109.0 – 2026-10-29
+
+Analyse der Wege (Anwender: „weshalb dieser Pfad gewählt wird … dass ich es als Mensch verstehen
+kann“, „Erwartet über …“ und „ein Finding-Button“; ADR 0038). Abnahme bis 0.108.0.
+
+- **Warum dieser Weg?** an jeder Weg-Karte der Weg-Suche und im Detail einer Verbindung Ende zu
+  Ende: derselbe Weg Hop für Hop in Sätzen – Start (wo die Quelle angeschlossen ist), Eingang mit
+  Zone und Routing-Tabelle, NAT, Policy-Routen bzw. SD-WAN-Regeln, **alle Routen zum Ziel** mit
+  Grund (gewählt; kürzeres Präfix, höhere Distanz, nur in der BGP-Tabelle, statische Route nicht
+  aktiv, Policy-Route geht vor), Next-Hop und wem er gehört, Ende mit Hinweis (fehlende Route,
+  unbekannter Next-Hop mit IPAM-Name, Schleife, Default-Route nach aussen). Je Hop, wann das
+  Routing gelesen wurde (alt = orange). Bei mehreren Wegen wählbar.
+- **Erwartet über …:** ein Gerät wählen, über das der Verkehr gehen müsste – liegt es nicht auf dem
+  Weg, zeigt die Erklärung, wo der Weg daran vorbeigeht, welche Route über das Gerät es gibt und
+  warum sie verliert bzw. dass sie fehlt, und wie das Gerät selbst Ziel und Rückweg routet.
+- **Findings von Hand:** „Als Finding erfassen“ an jedem Schritt mit einem Problem (vorausgefüllt
+  mit Satz, Hinweis, Gerät, Quelle/Ziel/Dienst), „+ Finding erfassen“ in der Erklärung und auf der
+  Seite Findings (frei). Typ „Von Hand erfasst“, Kategorie „Von Hand“; bleibt nach dem Abgleich
+  stehen, Triage wie jedes Finding; nur Operator.
+- API `GET /routing/explain` (Parameter wie `/routing/trace`, dazu `expect`, `connection`,
+  `starts`), `POST /findings`; Verbindungen liefern ihre Eingaben (`trace`).
+- Tests (orchestrator 660, UI-Tests 150).
+
 ## 0.108.0 – 2026-10-28
 
 Leistung (Anwender: „das Speichern dauert zu lange“, Doku im Hintergrund rechnen; ADR 0037,

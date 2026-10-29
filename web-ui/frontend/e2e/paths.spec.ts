@@ -139,3 +139,57 @@ test("Weg-Suche: Host-Name bleibt beim Zurückgehen gewählt", async ({ page }) 
   await expect(page.locator(".search", { has: dst })).toContainText("= 203.0.113.10");
   await expect(page.locator("#trace-asked")).toContainText("Ziel www.example.ch (203.0.113.10)");
 });
+
+// „Warum dieser Weg?“ (0.109.0): derselbe Weg Hop für Hop in Sätzen, „Erwartet über …“ und ein Finding von
+// Hand aus einem Schritt. Das Speichern des Findings wird hier abgefangen (der Bestand der anderen Tests bleibt
+// gleich); den Weg zum Server prüft test_path_explain.py.
+test("Weg-Suche: Warum dieser Weg?, Erwartet über und Finding von Hand", async ({ page }) => {
+  let posted: Record<string, unknown> | null = null;
+  await page.route("**/api/findings", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    posted = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: 4711, tenant_id: 1, type: "manual", severity: "warning", status: "open", subject_kind: "path",
+        subject_id: "10.10.0.5 → 10.30.0.10", source_system_id: null, detail: {}, message: "Route prüfen",
+        hint: null, note: null, first_seen: null, last_seen: null,
+      }),
+    });
+  });
+  await page.goto("/#wege?src=10.10.0.5&dst=10.30.0.10&service=tcp%2F443");
+  const card = page.locator("#trace-0");
+  await expect(card).toContainText("Regeln: erlaubt");
+  await card.locator("button.trace-explain").click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer.locator("h2")).toHaveText("Warum dieser Weg?");
+  await expect(drawer.locator("#xplain-start")).toContainText("Start bei fw-08");
+  const hop = drawer.locator(".xplain-hop[data-hop='1']");
+  await expect(hop).toContainText("Routing gelesen");
+  await expect(hop).toContainText("Route für 10.30.0.10: 10.30.0.0/24");
+  // alle Routen zum Ziel: die gewählte mit Grund, die Default-Route verworfen (kürzeres Präfix)
+  await expect(hop.locator(".xroutes tr.chosen")).toContainText("10.30.0.0/24");
+  await expect(hop.locator(".xroutes")).toContainText("0.0.0.0/0");
+  await expect(hop.locator(".xroutes")).toContainText("kürzeres Präfix");
+  await expect(drawer.locator("#xplain-end")).toContainText("Ziel angeschlossen an fw-08");
+
+  // Erwartet über fw-08: liegt auf dem Weg
+  await drawer.locator("#xplain-expect").selectOption({ label: "Erwartet über fw-08" });
+  await expect(drawer.locator("#xplain-expect-result")).toContainText("Der Weg geht über fw-08");
+  await expect(drawer.locator("#xplain-expect-result .chip")).toHaveText("auf dem Weg");
+
+  // Finding von Hand: vorausgefüllt mit dem Weg, Titel frei
+  await drawer.locator("#xplain-capture").click();
+  const dialog = page.locator(".modal");
+  await expect(dialog.locator("#finding-src")).toHaveValue("10.10.0.5");
+  await expect(dialog.locator("#finding-dst")).toHaveValue("10.30.0.10");
+  await expect(dialog.locator("#finding-save")).toBeDisabled();
+  await dialog.locator("#finding-title").fill("Route prüfen");
+  await dialog.locator("#finding-text").fill("Default-Route auf fw-08 ist nicht vorgesehen");
+  await dialog.locator("#finding-save").click();
+  await expect(dialog).toHaveCount(0);
+  await expect(drawer).toContainText("Finding #4711 erfasst");
+  expect(posted).toMatchObject({ tenant_id: 1, title: "Route prüfen", src: "10.10.0.5", dst: "10.30.0.10", service: "tcp/443", severity: "warning" });
+  await expect(drawer.locator("a[href='#findings?type=manual']")).toBeVisible();
+});
